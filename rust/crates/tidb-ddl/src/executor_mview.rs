@@ -40,7 +40,7 @@ pub(crate) fn check_materialized_view_enabled(context: &dyn DdlSessionContext) -
 /// columns, the session's time zone.
 struct SessionExprContext<'a>(&'a dyn DdlSessionContext);
 
-impl tidb_expr::rewriter::ColumnResolver for SessionExprContext<'_> {
+impl tidb_expr::column_resolver::ColumnResolver for SessionExprContext<'_> {
     fn resolve(&self, _path: &[String]) -> Option<(usize, tidb_datatype::FieldType, i64)> {
         None
     }
@@ -780,7 +780,7 @@ struct MViewBaseColumns<'a> {
     columns: &'a [tidb_model::ColumnInfo],
 }
 
-impl tidb_expr::rewriter::ColumnResolver for MViewBaseColumns<'_> {
+impl tidb_expr::column_resolver::ColumnResolver for MViewBaseColumns<'_> {
     fn resolve(&self, path: &[String]) -> Option<(usize, tidb_datatype::FieldType, i64)> {
         let lower = |name: &str| tidb_hack::go_to_lower(name);
         let (schema, table, column) = match path {
@@ -884,7 +884,7 @@ pub(crate) fn validate_create_materialized_view_query(
             table: alias.filter(|alias| !alias.is_empty()).unwrap_or(base_table).to_owned(),
             columns: &base_columns,
         };
-        let built = tidb_expr::rewriter::rewrite_expr_resolved(condition, &scope)
+        let built = tidb_expr::column_resolver::rewrite_expr_resolved(condition, &scope)
             .map_err(|_| general_unsupported("CREATE MATERIALIZED VIEW WHERE clause is not supported"))?;
         if tidb_expr::expr_util::predicates::check_non_deterministic(&built) {
             return Err(general_unsupported("CREATE MATERIALIZED VIEW WHERE clause must be deterministic"));

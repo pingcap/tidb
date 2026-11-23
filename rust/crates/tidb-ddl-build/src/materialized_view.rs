@@ -195,7 +195,7 @@ pub fn restore_node_to_canonical_sql(expr: &Expr) -> String {
 /// The expression does not build, or its type is another one
 /// (`ErrGeneralUnsupportedDDL`).
 pub fn build_and_validate_mview_schedule_expr(
-    ctx: &dyn tidb_expr::rewriter::ColumnResolver,
+    ctx: &dyn tidb_expr::column_resolver::ColumnResolver,
     expr: &Expr,
     clause: &str,
 ) -> Result<String, MysqlError> {
@@ -237,7 +237,7 @@ pub fn build_mlog_accumulation_alert_rows(alert: Option<&MLogAccumulationAlertCl
 ///
 /// `PURGE IMMEDIATE`, or a schedule expression that is not a time.
 pub fn build_mlog_purge_meta(
-    ctx: &dyn tidb_expr::rewriter::ColumnResolver,
+    ctx: &dyn tidb_expr::column_resolver::ColumnResolver,
     purge: Option<&MLogPurgeClause>,
 ) -> Result<(String, String, String), MysqlError> {
     let Some(purge) = purge else {
@@ -264,7 +264,7 @@ pub fn build_mlog_purge_meta(
 ///
 /// A schedule expression that is not a time.
 pub fn build_mview_refresh_meta(
-    ctx: &dyn tidb_expr::rewriter::ColumnResolver,
+    ctx: &dyn tidb_expr::column_resolver::ColumnResolver,
     refresh: Option<&tidb_ast::MViewRefreshClause>,
 ) -> Result<(String, String, String), MysqlError> {
     let Some(refresh) = refresh else {
@@ -414,7 +414,7 @@ pub fn build_mview_import_into_options(
 #[allow(clippy::too_many_arguments)]
 pub fn build_materialized_view_log_table_info(
     context: &tidb_metabuild::Context,
-    expr_ctx: &dyn tidb_expr::rewriter::ColumnResolver,
+    expr_ctx: &dyn tidb_expr::column_resolver::ColumnResolver,
     schema_name: &str,
     schema_charset: &str,
     schema_collate: &str,
@@ -545,7 +545,7 @@ impl ScheduleEvalContext {
     }
 }
 
-impl tidb_expr::rewriter::ColumnResolver for ScheduleEvalContext {
+impl tidb_expr::column_resolver::ColumnResolver for ScheduleEvalContext {
     fn resolve(&self, _path: &[String]) -> Option<(usize, FieldType, i64)> {
         None
     }
@@ -696,7 +696,7 @@ mod tests {
 
     struct NoColumns;
 
-    impl tidb_expr::rewriter::ColumnResolver for NoColumns {
+    impl tidb_expr::column_resolver::ColumnResolver for NoColumns {
         fn resolve(&self, _path: &[String]) -> Option<(usize, FieldType, i64)> {
             None
         }

@@ -58,7 +58,7 @@ use tidb_codec::{decode_cmp_uint_to_int, decode_one, BYTES_FLAG, INT_FLAG, UINT_
 use tidb_datatype::{Datum, FieldType, SessionTimeZone};
 use tidb_charset::Collation;
 use tidb_exprstatic::ExprContext;
-use tidb_expr::rewriter::ZonedNoResolver;
+use tidb_expr::column_resolver::ZonedNoResolver;
 use tidb_expr::simple_expr::{parse_simple_expr, BuildOptions};
 use tidb_expr::eval_expression_once;
 use tidb_exprctx::ZonedNoColumns;
@@ -1031,7 +1031,7 @@ fn truncate_to_second<Tz: chrono::TimeZone>(value: DateTime<Tz>) -> DateTime<Tz>
 ///
 /// `// boundary:` Go passes the one `exprstatic.ExprContext` as both the build
 /// and the eval context. In Rust the two roles are separate traits
-/// (`tidb_expr::rewriter::ColumnResolver` and `tidb_expr::Columns`) that
+/// (`tidb_expr::column_resolver::ColumnResolver` and `tidb_expr::Columns`) that
 /// `exprstatic::ExprContext` does not implement, so the context is still built
 /// here — it is what pins the evaluation zone, and Go asserts exactly that
 /// (`intest.Assert(exprCtx.GetEvalCtx().Location() == time.UTC)`) — and its

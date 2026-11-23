@@ -383,3 +383,7 @@ pub fn ttl_info_from_options(
     }
     Ok(info)
 }
+
+// Go's test binary links `planner/core`, whose `init` sets `expression.BuildSimpleExpr`.
+#[cfg(test)]
+tidb_planner_init::link!();

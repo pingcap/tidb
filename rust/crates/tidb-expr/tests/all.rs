@@ -15,6 +15,4 @@
 //! All topology-independent `tidb-expr` integration tests in one process.
 
 // Register module-safe suites here; isolated suites remain explicit Cargo targets.
-mod benchmark_source;
 mod field_name_resolution_source;
-mod info_metadata_source;

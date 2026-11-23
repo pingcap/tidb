@@ -349,7 +349,7 @@ pub(crate) fn refine_integer_comparison_for_rewrite_with_context(
 
 /// Go expressionRewriter.inToExpression refines integer IN candidates before
 /// deciding whether every equality can share a single comparison signature.
-pub(crate) fn refine_integer_in_arguments(
+pub fn refine_integer_in_arguments(
     args: &mut [Expression],
     ctx: &dyn Columns,
 ) -> Result<(), EvalError> {

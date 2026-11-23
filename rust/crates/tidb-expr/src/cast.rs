@@ -2207,7 +2207,7 @@ pub(crate) fn cast_arg_as_string_type(
         target.set_charset_name(charset);
         target.set_collation_name(collation);
     }
-    target.set_flen(crate::rewriter::result_type::string_cast_flen(source));
+    target.set_flen(crate::result_type::string_cast_flen(source));
     target.set_decimal(tidb_datatype::UNSPECIFIED_LENGTH);
     target
 }

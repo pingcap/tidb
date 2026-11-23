@@ -48,6 +48,7 @@ chrono = { workspace = true }
 prometheus = { version = "0.14", default-features = false }
 
 [dev-dependencies]
+tidb-planner-init = { path = "../tidb-planner-init" }
 tidb-resolve = { path = "../tidb-resolve" }
 
 [lints]

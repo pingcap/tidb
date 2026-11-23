@@ -27,6 +27,9 @@ tidb-server-internal-column = { path = "../../crates/tidb-server-internal-column
 tidb-format-textrow = { path = "../../crates/tidb-format-textrow" }
 tidb-config = { path = "../../crates/tidb-config" }
 
+[dev-dependencies]
+tidb-planner-init = { path = "../../crates/tidb-planner-init" }
+
 [[test]]
 name = "expr_diff"
 path = "tests/expr_diff.rs"

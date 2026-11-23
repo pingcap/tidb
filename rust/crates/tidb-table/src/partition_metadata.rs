@@ -384,7 +384,7 @@ fn build_stored_expression(
             ]),
         )
     };
-    let built = tidb_expr::rewriter::rewrite_expr_resolved(expr, &resolver).map_err(|_| {
+    let built = tidb_expr::column_resolver::rewrite_expr_resolved(expr, &resolver).map_err(|_| {
         match resolver.missing_name() {
             // Go's `extractColumns` quotes the folded name.
             Some(name) => unknown_column(&name),

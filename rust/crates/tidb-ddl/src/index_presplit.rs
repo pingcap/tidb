@@ -386,7 +386,7 @@ fn convert_to(
 /// The empty column scope Go's DDL expression context gives a split value.
 struct NoColumns;
 
-impl tidb_expr::rewriter::ColumnResolver for NoColumns {
+impl tidb_expr::column_resolver::ColumnResolver for NoColumns {
     fn resolve(&self, _path: &[String]) -> Option<(usize, tidb_datatype::FieldType, i64)> {
         None
     }

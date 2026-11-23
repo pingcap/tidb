@@ -309,7 +309,7 @@ fn the_match_against_modifier_is_set_on_its_own_signature_only() {
 #[test]
 fn a_like_escape_is_as_wide_as_its_digits() {
     struct NoneResolver;
-    impl crate::rewriter::ColumnResolver for NoneResolver {
+    impl crate::column_resolver::ColumnResolver for NoneResolver {
         fn resolve(&self, _: &[String]) -> Option<(usize, FieldType, i64)> {
             None
         }
@@ -328,7 +328,7 @@ fn a_like_escape_is_as_wide_as_its_digits() {
         let tidb_ast::SelectField::Expr { expr, .. } = &select.fields[0] else {
             panic!("{text}: no expression")
         };
-        let built = crate::rewriter::rewrite_expr_resolved(expr, &NoneResolver).expect("rewrite");
+        let built = crate::column_resolver::rewrite_expr_resolved(expr, &NoneResolver).expect("rewrite");
         let Expression::ScalarFunction(like) = &built else {
             panic!("{text}: {built:?}");
         };

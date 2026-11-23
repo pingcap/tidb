@@ -122,5 +122,6 @@ serde_json.workspace = true
 workspace = true
 
 [dev-dependencies]
+tidb-planner-init = { path = "../tidb-planner-init" }
 flate2.workspace = true
 tidb-executor = { path = "../tidb-executor" }

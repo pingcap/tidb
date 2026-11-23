@@ -17,7 +17,7 @@
 use tidb_ast::CiString;
 use tidb_datatype::{FieldType, FieldTypeCode};
 use tidb_expr::constant::Constant;
-use tidb_expr::rewriter::NoResolver;
+use tidb_expr::column_resolver::NoResolver;
 
 use tidb_planner_core_partidx::*;
 use tidb_datatype::Datum;

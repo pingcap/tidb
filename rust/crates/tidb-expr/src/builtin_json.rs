@@ -75,7 +75,7 @@ fn json_modify_function(
 macro_rules! json_class {
     ($(#[$doc:meta])* $class:ident, $_name:literal, |$ctx:ident, $args:ident| $body:block) => {
         $(#[$doc])*
-        pub(crate) struct $class;
+        pub struct $class;
 
         impl FunctionClass for $class {
             fn get_function(

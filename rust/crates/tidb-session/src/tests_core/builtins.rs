@@ -833,7 +833,7 @@ fn cast_and_convert() {
 /// query using any of them failed outright.
 ///
 /// STILL REFUSED, each for its own reason recorded at
-/// `tidb_expr::rewriter::builtin_return_type`: the session-state
+/// `tidb_expr::result_type::builtin_return_type`: the session-state
 /// functions (`DATABASE`, `VERSION`, `CURRENT_USER`, `NOW`) need a
 /// resolver carrying session state into the chunk path, `CAST`/`CONVERT`
 /// take a target type rather than a value, `GROUP_CONCAT` is an

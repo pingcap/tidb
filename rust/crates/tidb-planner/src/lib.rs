@@ -85,6 +85,15 @@ pub mod configured_order_limit_contract;
 pub mod common_plans;
 pub mod explain;
 pub mod expression_rewriter;
+
+/// Go `core_init.go`'s package `init`, for the function variables lower
+/// packages call the planner through: `expression.BuildSimpleExpr`. Rust has
+/// no package initializers, so the server and every test that reaches a lower
+/// crate's simple-expression build run this once first; it is idempotent.
+pub fn init() {
+    tidb_expr::column_resolver::set_rewrite_expr_func(expression_rewriter::leave::build_simple_expr);
+}
+
 pub mod telemetry;
 pub mod find_best_task;
 pub mod from_scope;
@@ -326,3 +335,7 @@ pub mod recursive_flatten {
         }
     }
 }
+
+// Go runs this package's `init` before its tests.
+#[cfg(test)]
+tidb_planner_init::link!();

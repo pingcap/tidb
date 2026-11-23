@@ -37,7 +37,7 @@ fn json_comparison_parses_an_explicit_cast_string_as_a_document() {
     // ParseToJSONFlag on non-column JSON operands. Therefore the explicit
     // cast contributes the JSON string "1", not the JSON number 1.
     use tidb_exprctx::context::NoColumns;
-    use crate::rewriter::{rewrite_expr_resolved, ColumnResolver};
+    use crate::column_resolver::{rewrite_expr_resolved, ColumnResolver};
     use tidb_ast::{QueryStmt, SelectField, Stmt};
     use tidb_datatype::{BinaryJSON, FieldType, FieldTypeCode};
 
@@ -123,7 +123,7 @@ fn eval_over_date_column(sql: &str, code: tidb_datatype::FieldTypeCode, literal:
     use tidb_datatype::{FieldType, TimeType};
 
     struct Resolver(FieldType);
-    impl crate::rewriter::ColumnResolver for Resolver {
+    impl crate::column_resolver::ColumnResolver for Resolver {
         fn resolve(&self, path: &[String]) -> Option<(usize, FieldType, i64)> {
             (path.last()? == "d").then(|| (0, self.0.clone(), 1))
         }
@@ -160,7 +160,7 @@ fn eval_over_date_column(sql: &str, code: tidb_datatype::FieldTypeCode, literal:
         panic!("no expr")
     };
     let rewritten =
-        match crate::rewriter::rewrite_expr_resolved(expr, &Resolver(field_type.clone())) {
+        match crate::column_resolver::rewrite_expr_resolved(expr, &Resolver(field_type.clone())) {
             Ok(rewritten) => rewritten,
             Err(err) => return format!("{err:?}"),
         };

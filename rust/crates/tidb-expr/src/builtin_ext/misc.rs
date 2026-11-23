@@ -90,7 +90,7 @@ pub(crate) fn opt_prop_error(error: tidb_expropt::ExprOptError) -> EvalError {
 /// Go `TIDB_DECODE_SQL_DIGESTS`' check, at build and at evaluation:
 /// `GetPrivilegeChecker(ctx)`, then `RequestVerification("", "", "",
 /// mysql.ProcessPriv)`.
-pub(crate) fn check_process_privilege(ctx: &dyn crate::Columns) -> Result<(), EvalError> {
+pub fn check_process_privilege(ctx: &dyn crate::Columns) -> Result<(), EvalError> {
     let priv_checker = tidb_expropt::PrivilegeCheckerPropReader.get_privilege_checker(ctx).map_err(opt_prop_error)?;
     if !priv_checker.request_verification("", "", "", tidb_mysql::ProcessPriv) {
         return Err(err_specific_access_denied());

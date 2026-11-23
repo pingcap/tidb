@@ -28,7 +28,7 @@ use tidb_datatype::FieldTypeFlags;
 /// this artifact: `f.getRetTp()` after `fc.getFunction`.
 fn rewritten_convert_result_type(expr_text: &str) -> tidb_datatype::FieldType {
     struct NoneResolver;
-    impl crate::rewriter::ColumnResolver for NoneResolver {
+    impl crate::column_resolver::ColumnResolver for NoneResolver {
         fn resolve(&self, _: &[String]) -> Option<(usize, tidb_datatype::FieldType, i64)> {
             None
         }
@@ -46,7 +46,7 @@ fn rewritten_convert_result_type(expr_text: &str) -> tidb_datatype::FieldType {
     let SelectField::Expr { expr, .. } = &select.fields[0] else {
         panic!("no expression")
     };
-    match crate::rewriter::rewrite_expr_resolved(expr, &NoneResolver).expect("rewrite") {
+    match crate::column_resolver::rewrite_expr_resolved(expr, &NoneResolver).expect("rewrite") {
         crate::expression::Expression::ScalarFunction(function) => function
             .get_static_type()
             .cloned()

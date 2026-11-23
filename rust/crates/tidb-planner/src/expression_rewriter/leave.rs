@@ -12,566 +12,48 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Go-shaped AST-to-planner expression rewriting and constant-fold ordering.
+//! Go `expressionRewriter`'s AST half (`pkg/planner/core/expression_rewriter.go`):
+//! `Leave` and its `*ToExpression` members turn an `ast.ExprNode` into an
+//! `expression.Expression`. [`build_simple_expr`] is Go's `buildSimpleExpr`,
+//! which [`crate::init`] installs as `expression.BuildSimpleExpr`.
 
-use crate::wrap_cast::{
+
+use tidb_expr::wrap_cast::{
     wrap_with_cast_as_decimal, wrap_with_cast_as_duration, wrap_with_cast_as_int,
     wrap_with_cast_as_real, wrap_with_cast_as_string,
     wrap_with_cast_as_time,
 };
-use crate::column::Column;
-use crate::constant::Constant;
-use crate::constant_fold::ConstantFoldMode;
-use crate::grouping::GroupingMode;
+use tidb_expr::constant::Constant;
+use tidb_expr::constant_fold::ConstantFoldMode;
 use tidb_exprctx::context::JsonError;
-use crate::expression::{Expression, ScalarFunction};
-use crate::scalar_function::{binary_op_name, unary_op_name};
-use crate::EvalError;
+use tidb_expr::expression::{Expression, ScalarFunction};
+use tidb_expr::scalar_function::{binary_op_name, unary_op_name};
+use tidb_exprctx::EvalError;
 use tidb_ast::{BinaryOp, Expr, GetFormatSelector, IsTarget, UnaryOp};
 use tidb_datatype::{
     Datum, EvalType, FieldType, FieldTypeCode,
 };
+use tidb_expr::column_resolver::{ColumnResolver, MatchAgainstPlanCtx, NoResolver, RollExpandGrouping};
 
 /// Go `mysql.DefaultDecimal` (`parser/mysql/const.go`): the value a decimal
 /// literal too large for a `MyDecimal` saturates to.
 const DEFAULT_DECIMAL_LITERAL: &str =
     "99999999999999999999999999999999999999999999999999999999999999999";
 
+#[path = "fold_mode.rs"]
 mod fold_mode;
-pub(crate) mod result_type;
 
 use fold_mode::FoldModeResolver;
-pub(crate) use result_type::adjust_ret_ft_for_cast_string;
-use result_type::{
-    binary_literal_type, cast_target, decimal_literal_type, int_literal_type,
-    set_binary_charset, check_func_cast_expr, validate_name_const_args,
+use tidb_expr::result_type::{
+    binary_literal_type, cast_target, check_func_cast_expr,
+    decimal_literal_type, int_literal_type, set_binary_charset, validate_name_const_args,
 };
 
-/// What Go's `ast.Grouping` rewrite takes from `planCtx.rollExpand`: the
-/// Expand's grouping-id column (`GID`), its `GroupingMode`, and
-/// `GenerateGroupingMarks` over the GROUP BY columns the GROUPING arguments
-/// resolve to (`ResolveGroupingFuncArgsInGroupBy`).
-pub struct RollExpandGrouping {
-    /// Go `rollExpand.GID`.
-    pub gid: Column,
-    /// Go `rollExpand.GroupingMode`.
-    pub grouping_mode: GroupingMode,
-    /// Go `rollExpand.GenerateGroupingMarks(resolvedCols)`.
-    pub grouping_marks: Vec<std::collections::BTreeSet<u64>>,
+/// Go `buildSimpleExpr`, the function `expression.BuildSimpleExpr` calls.
+pub fn build_simple_expr(expr: &Expr, resolver: &dyn ColumnResolver) -> Result<Expression, EvalError> {
+    rewrite_expr_resolved(expr, &resolver)
 }
 
-/// Go `expressionRewriter.planCtx` as `matchAgainstToExpression` reads it:
-/// the plan builder's clause and node stack, the statement's alternative
-/// logical plan signals and the info schema.
-pub trait MatchAgainstPlanCtx {
-    /// Go `inDirectMatchBooleanContext` for the MATCH `node`: it is under
-    /// WHERE, HAVING or ON, and every ancestor is AND, OR, NOT or parentheses.
-    fn in_direct_match_boolean_context(&self, node: &Expr) -> bool;
-    /// Go `SessionVars.EnableAlternativeLogicalPlans`.
-    fn enable_alternative_logical_plans(&self) -> bool;
-    /// Go `StmtCtx.AlternativeLogicalPlanFTSLikeFallback`.
-    fn alternative_logical_plan_fts_like_fallback(&self) -> bool;
-    /// Go `PlanBuilder.MarkPredicateMatch`.
-    fn mark_predicate_match(&self);
-    /// Go `PlanBuilder.MarkNonViableFTSMatch`.
-    fn mark_non_viable_fts_match(&self);
-    /// Go `ftsNativeViable`'s test of one matched column: its table has an
-    /// available TiFlash replica and a public FULLTEXT index on the column.
-    fn fts_native_viable_column(&self, path: &[String]) -> bool;
-}
-
-/// Resolves a dotted column path to an output column, standing in for the
-/// schema/name resolution Go's `expression_rewriter` performs against the
-/// plan's schema (`resolveColumn`).
-pub trait ColumnResolver {
-    /// Go `er.planCtx` for a MATCH AGAINST; a rewrite outside the planner
-    /// has none.
-    fn match_against_plan_ctx(&self) -> Option<&dyn MatchAgainstPlanCtx> {
-        None
-    }
-
-    /// Go `planCtx.rollExpand` as the rewriter's `ast.Grouping` arm reads it
-    /// for the rewritten GROUPING arguments `args`. Outside a ROLLUP block it
-    /// is nil, which is `ErrInvalidGroupFuncUse`.
-    fn roll_expand_grouping(&self, _args: &[Expression]) -> Result<RollExpandGrouping, EvalError> {
-        Err(EvalError::InvalidGroupFuncUse)
-    }
-
-    /// Resolves `path` (e.g. `["t", "a"]` or `["a"]`) to
-    /// `(row index, result type, unique id)`, or `None` when unknown.
-    fn resolve(&self, path: &[String]) -> Option<(usize, FieldType, i64)>;
-
-    /// Go's session user-variable owner: declared types are resolved at build time.
-    fn user_vars(&self) -> Option<&tidb_variable::user_vars::UserVars> {
-        None
-    }
-
-    /// Go `er.planCtx.builder.ctx.BuiltinFunctionUsageInc`. A rewrite with no
-    /// plan builder behind it (Go's nil `planCtx`) counts nothing.
-    fn builtin_function_usage_inc(&self, _scalar_func_sig_name: &str) {}
-
-    /// The current typed value of a prepared marker. Its absolute order is
-    /// retained in the compiled expression, independently of this snapshot.
-    fn param_value(&self, _order: usize) -> Result<Datum, EvalError> {
-        Err(EvalError::Unsupported("unbound prepared parameter"))
-    }
-
-    /// Resolves `path` to a COMPLETE output column rather than the three
-    /// fields [`Self::resolve`] reports.
-    ///
-    /// Go's `expressionRewriter.toColumn` hands back `schema.Columns[idx]`
-    /// itself, so the built expression keeps that column's `ID`, `OrigName`,
-    /// `IsHidden`, `VirtualExpr` and derived collation. A resolver that owns
-    /// real [`Column`] values (one built over a
-    /// [`Schema`](crate::schema::Schema), as
-    /// [`crate::simple_expr::build_simple_expr`] does) should override this so
-    /// none of that identity is dropped on the way into the tree.
-    ///
-    /// The default combines `(index, type, unique id)` with the optional
-    /// source name. Overrides return all metadata in one lookup; rewriting
-    /// does not resolve the name again after receiving a complete column.
-    fn resolve_column(&self, path: &[String]) -> Option<Column> {
-        let (index, ret_type, unique_id) = self.resolve(path)?;
-        let mut col = Column::new(unique_id, ret_type);
-        col.index = index as i64;
-        col.orig_name = self.orig_name(path).unwrap_or_default();
-        Some(col)
-    }
-
-    /// Resolves a column-shaped AST leaf to the complete expression Go's
-    /// plan-aware rewriter produces. Ordinary scopes return a plain column;
-    /// a nested-query scope may override this with a `CorrelatedColumn` that
-    /// retains the outer binding identity.
-    fn resolve_expression(&self, path: &[String]) -> Option<Expression> {
-        self.resolve_column(path).map(Expression::Column)
-    }
-
-    /// Go `clauseMsg` (`planbuilder.go:132`): the clause an unknown-column
-    /// error names. Go's plan-aware rewriter reads it from `er.clause()`; the
-    /// default is Go's `expressionClause` spelling, which is what a resolver
-    /// without a statement clause reports.
-    fn clause_message(&self) -> &'static str {
-        "expression"
-    }
-
-    /// The name Go's `toColumn` quotes for a column that resolved to nothing:
-    /// `v.String()`, the reference as written.
-    fn unknown_column_name(&self, path: &[String]) -> String {
-        path.join(".")
-    }
-
-    /// Go `toColumn`'s answer for a column no scope resolves: by default
-    /// `ErrUnknownColumn` over [`Self::unknown_column_name`] in
-    /// [`Self::clause_message`].
-    fn unknown_column_error(&self, path: &[String]) -> EvalError {
-        EvalError::UnknownColumnInClause(self.unknown_column_name(path), self.clause_message())
-    }
-
-    /// Resolves the Go `Column.OrigName` carried by a source column. The
-    /// planner uses this metadata for EXPLAIN and diagnostics after a column
-    /// crosses a Projection or aggregate boundary; execution still binds by
-    /// index and unique id. Resolvers without source-name metadata keep the
-    /// empty default.
-    fn orig_name(&self, _path: &[String]) -> Option<String> {
-        None
-    }
-
-    /// Resolves a planner-owned column-shaped value to the constant it
-    /// represents. Go uses this for an evaluated scalar subquery: its
-    /// `Constant` keeps `SubqueryRefID` for EXPLAIN, while estimation and
-    /// execution consume the ordinary datum.
-    fn resolve_constant(&self, _path: &[String]) -> Option<Expression> {
-        None
-    }
-
-    /// Whether any column path in this resolver can currently materialize as
-    /// a planner-owned constant. Consumers that only need to substitute such
-    /// columns can use this to keep an ordinary AST borrowed instead of
-    /// cloning it speculatively.
-    fn has_resolved_constants(&self) -> bool {
-        false
-    }
-
-    /// Resolves a `DEFAULT(column)` leaf to the statement-scoped constant its
-    /// DML planner prepared. A default implementation keeps ordinary query
-    /// resolvers unaware of write-only metadata; write resolvers override it
-    /// after materializing defaults in Go's planning order.
-    fn resolve_default(&self, _path: &[String]) -> Option<Expression> {
-        None
-    }
-
-    /// Go `evalDefaultExprWithPlanCtx`: `DEFAULT(column)` inside a query,
-    /// resolved through the plan's name scopes with Go's own errors (1052,
-    /// 1054, 1364). `None` leaves the leaf to [`Self::resolve_default`].
-    fn resolve_default_in_query(&self, _path: &[String]) -> Option<Result<Expression, EvalError>> {
-        None
-    }
-
-    /// Resolves `VALUES(column)` to the offset and type Go's rewriter hands
-    /// `NewValuesFunc`. Go's rewriter builds it in every scope over the
-    /// column the current schema names (`FindFieldName`, else 1054); an
-    /// INSERT's ON DUPLICATE KEY UPDATE resolves `insertPlan.TableColNames`
-    /// instead, which its resolver overrides this with. Outside that scope
-    /// the function reads an empty `CurrInsertValues` and answers NULL.
-    fn resolve_values(&self, path: &[String]) -> Option<(usize, FieldType)> {
-        let (index, field_type, _) = self.resolve(path)?;
-        Some((index, field_type))
-    }
-
-    /// The session `time_zone` the rewrite runs under -- Go's
-    /// `ctx.Location()`, which `getFunction` reaches while BUILDING the
-    /// expression and which the `TIMESTAMP 'lit'` fold both normalizes an
-    /// explicit `+HH:MM` offset into and applies a fractional-second carry
-    /// in (see `crate::time_literal`).
-    ///
-    /// There is NO default on purpose: Go has no session-less rewrite, so
-    /// every implementor must decide what zone its callers' statements run
-    /// in rather than silently inheriting a hardcode -- which is exactly the
-    /// dropped-Context bug this accessor closes.
-    fn time_zone(&self) -> tidb_datatype::SessionTimeZone;
-
-    /// The statement's temporal SQL-mode bits. Typed `DATE`/`TIMESTAMP`
-    /// literals are built under the same session context as ordinary casts;
-    /// a resolver with no session uses TiDB's shipped default mode.
-    fn date_modes(&self) -> tidb_datatype::DateModes {
-        tidb_datatype::DateModes::TIDB_DEFAULT_SQL_MODE
-    }
-
-    /// Go's `BuildContext.GetCharsetInfo`: the connection charset/collation
-    /// stamped onto ordinary string literals and string results with no
-    /// stronger collation source.
-    fn connection_charset_info(&self) -> (&str, &str) {
-        crate::collation_derive::connection_charset_info()
-    }
-
-    /// Go `GetDefaultCollationForUTF8MB4`: the collation a `_utf8mb4'...'`
-    /// literal takes (`adjustUTF8MB4Collation`). A resolver bound to a live
-    /// statement reads the session variable through it.
-    fn default_collation_for_utf8mb4(&self) -> String {
-        self.comparison_context()
-            .and_then(|ctx| ctx.sysvar(None, "default_collation_for_utf8mb4"))
-            .and_then(|value| {
-                value
-                    .as_raw_bytes()
-                    .map(|bytes| String::from_utf8_lossy(bytes).into_owned())
-            })
-            .unwrap_or_else(|| "utf8mb4_bin".to_owned())
-    }
-
-    /// Length of the process identity returned by `TIDB_VERSION()`.
-    /// Go reads the process globals while building this function and uses the
-    /// same rendered value to set its result width.
-    fn tidb_info_len(&self) -> usize {
-        tidb_printer::get_tidb_info().len()
-    }
-
-    /// The third argument Go supplies to `like()` when SQL omitted `ESCAPE`.
-    /// Session-aware resolvers override this for `NO_BACKSLASH_ESCAPES`.
-    fn like_default_escape(&self) -> u8 {
-        b'\\'
-    }
-
-    /// Whether integer subtraction is forced onto the signed result domain.
-    fn no_unsigned_subtraction(&self) -> bool {
-        false
-    }
-
-    /// The live statement context Go's comparison builder uses while
-    /// refining an integer column against a non-integer constant. A planner
-    /// resolver can expose it so conversion diagnostics are raised once at
-    /// build time; context-free resolvers retain the historical no-warning
-    /// structural rewrite.
-    fn comparison_context(&self) -> Option<&dyn tidb_exprctx::context::Columns> {
-        None
-    }
-
-    /// The statement's `div_precision_increment` used to build `/` metadata.
-    fn div_precision_increment(&self) -> u32 {
-        4
-    }
-
-    /// Go `SessionVars.CurrentDB`, used to qualify an unknown function name.
-    fn current_database(&self) -> Option<String> {
-        None
-    }
-
-    /// Go `expressionRewriter.allowBuildCastArray`: only a functional
-    /// index's generated expression may build `CAST(... AS ... ARRAY)`.
-    fn allow_build_cast_array(&self) -> bool {
-        false
-    }
-
-    /// Construction mode inherited from the current AST parent.
-    fn fold_mode(&self) -> ConstantFoldMode {
-        ConstantFoldMode::Normal
-    }
-
-    /// Folds the node just built in its statement context and selected mode.
-    fn fold_constant(&self, expression: &mut Expression, mode: ConstantFoldMode) {
-        if mode != ConstantFoldMode::Disabled {
-            crate::constant_fold::derive_constant_null_flag(expression);
-        }
-    }
-
-    /// Evaluates a column-free expression in the same context used to build
-    /// it. Ranger endpoints must not lose parameters, warnings or session
-    /// settings by reconstructing a sessionless evaluation context.
-    /// Session-backed resolvers override this; the standalone default carries
-    /// only the explicitly supplied timezone.
-    fn eval_constant(&self, expression: &Expression) -> Result<Datum, EvalError> {
-        // The fold context COLLECTS the warnings the expression raises
-        // (go appends them to StmtCtx.warnings): ADDDATE('abc', INTERVAL 1
-        // DAY) warns `Incorrect datetime value: 'abc'` even on an empty
-        // table. The statement driver drains the stash into the warning
-        // buffer right after planning.
-        let ctx = crate::constant_fold::FoldWarningContext::new(self.time_zone());
-        crate::eval_expression_once(expression, &ctx)
-    }
-}
-
-// Keep a borrowed resolver's complete context, including trait objects, when
-// passing it through the rewriter's statically dispatched recursive helpers.
-impl<T: ColumnResolver + ?Sized> ColumnResolver for &T {
-    fn match_against_plan_ctx(&self) -> Option<&dyn MatchAgainstPlanCtx> {
-        (**self).match_against_plan_ctx()
-    }
-    fn user_vars(&self) -> Option<&tidb_variable::user_vars::UserVars> {
-        (**self).user_vars()
-    }
-    fn builtin_function_usage_inc(&self, scalar_func_sig_name: &str) {
-        (**self).builtin_function_usage_inc(scalar_func_sig_name);
-    }
-    fn allow_build_cast_array(&self) -> bool {
-        (**self).allow_build_cast_array()
-    }
-
-    fn roll_expand_grouping(&self, args: &[Expression]) -> Result<RollExpandGrouping, EvalError> {
-        (**self).roll_expand_grouping(args)
-    }
-
-    fn resolve(&self, path: &[String]) -> Option<(usize, FieldType, i64)> {
-        (**self).resolve(path)
-    }
-    fn resolve_column(&self, path: &[String]) -> Option<Column> {
-        (**self).resolve_column(path)
-    }
-    fn resolve_expression(&self, path: &[String]) -> Option<Expression> {
-        (**self).resolve_expression(path)
-    }
-    fn clause_message(&self) -> &'static str {
-        (**self).clause_message()
-    }
-    fn unknown_column_name(&self, path: &[String]) -> String {
-        (**self).unknown_column_name(path)
-    }
-    fn param_value(&self, order: usize) -> Result<Datum, EvalError> {
-        (**self).param_value(order)
-    }
-    fn orig_name(&self, path: &[String]) -> Option<String> {
-        (**self).orig_name(path)
-    }
-    fn resolve_constant(&self, path: &[String]) -> Option<Expression> {
-        (**self).resolve_constant(path)
-    }
-    fn has_resolved_constants(&self) -> bool {
-        (**self).has_resolved_constants()
-    }
-    fn resolve_default(&self, path: &[String]) -> Option<Expression> {
-        (**self).resolve_default(path)
-    }
-    fn resolve_default_in_query(&self, path: &[String]) -> Option<Result<Expression, EvalError>> {
-        (**self).resolve_default_in_query(path)
-    }
-    fn resolve_values(&self, path: &[String]) -> Option<(usize, FieldType)> {
-        (**self).resolve_values(path)
-    }
-    fn time_zone(&self) -> tidb_datatype::SessionTimeZone {
-        (**self).time_zone()
-    }
-    fn date_modes(&self) -> tidb_datatype::DateModes {
-        (**self).date_modes()
-    }
-    fn connection_charset_info(&self) -> (&str, &str) {
-        (**self).connection_charset_info()
-    }
-    fn tidb_info_len(&self) -> usize {
-        (**self).tidb_info_len()
-    }
-    fn like_default_escape(&self) -> u8 {
-        (**self).like_default_escape()
-    }
-    fn no_unsigned_subtraction(&self) -> bool {
-        (**self).no_unsigned_subtraction()
-    }
-    fn div_precision_increment(&self) -> u32 {
-        (**self).div_precision_increment()
-    }
-    fn current_database(&self) -> Option<String> {
-        (**self).current_database()
-    }
-    fn fold_mode(&self) -> ConstantFoldMode {
-        (**self).fold_mode()
-    }
-    fn fold_constant(&self, expression: &mut Expression, mode: ConstantFoldMode) {
-        (**self).fold_constant(expression, mode);
-    }
-    fn eval_constant(&self, expression: &Expression) -> Result<Datum, EvalError> {
-        (**self).eval_constant(expression)
-    }
-}
-
-/// A no-column resolver carrying a real session zone and `LIKE` escape.
-pub struct ZonedNoResolver {
-    zone: tidb_datatype::SessionTimeZone,
-    like_default_escape: u8,
-    /// The session's `GetCharsetInfo`, when the caller evaluates under one.
-    connection_charset: Option<(String, String)>,
-}
-
-impl ZonedNoResolver {
-    /// Builds a no-column resolver with the historic implicit backslash
-    /// `LIKE` escape.
-    #[must_use]
-    pub fn new(zone: tidb_datatype::SessionTimeZone) -> Self {
-        Self {
-            zone,
-            like_default_escape: b'\\',
-            connection_charset: None,
-        }
-    }
-
-    /// Builds a no-column resolver from the live statement's zone and
-    /// implicit `LIKE` escape.
-    #[must_use]
-    pub fn with_like_default_escape(zone: tidb_datatype::SessionTimeZone, escape: u8) -> Self {
-        Self {
-            zone,
-            like_default_escape: escape,
-            connection_charset: None,
-        }
-    }
-
-    /// Stamps string literals with the session's connection charset and
-    /// collation (Go `BuildContext.GetCharsetInfo`), as an expression Go
-    /// evaluates under the session context (`EvalSimpleAst`,
-    /// `ParseSimpleExpr`) does.
-    #[must_use]
-    pub fn with_connection_charset(mut self, charset: &str, collation: &str) -> Self {
-        self.connection_charset = Some((charset.to_owned(), collation.to_owned()));
-        self
-    }
-}
-
-impl ColumnResolver for ZonedNoResolver {
-    fn resolve(&self, _path: &[String]) -> Option<(usize, FieldType, i64)> {
-        None
-    }
-
-    fn time_zone(&self) -> tidb_datatype::SessionTimeZone {
-        self.zone.clone()
-    }
-
-    fn like_default_escape(&self) -> u8 {
-        self.like_default_escape
-    }
-
-    fn connection_charset_info(&self) -> (&str, &str) {
-        match &self.connection_charset {
-            Some((charset, collation)) => (charset, collation),
-            None => crate::collation_derive::connection_charset_info(),
-        }
-    }
-}
-
-/// Go `EvalSimpleAst`'s build context: a rewrite over no schema that builds
-/// and folds each node in the evaluation context itself, so the fold reads
-/// the SQL mode and raises its warnings where the evaluation would.
-pub struct ContextResolver<'a>(pub &'a dyn tidb_exprctx::context::Columns);
-
-impl ColumnResolver for ContextResolver<'_> {
-    fn user_vars(&self) -> Option<&tidb_variable::user_vars::UserVars> {
-        self.0.user_vars()
-    }
-
-    fn param_value(&self, order: usize) -> Result<Datum, EvalError> {
-        self.0.param_value(order)
-    }
-
-    fn resolve(&self, _path: &[String]) -> Option<(usize, FieldType, i64)> {
-        None
-    }
-
-    fn time_zone(&self) -> tidb_datatype::SessionTimeZone {
-        self.0.time_zone()
-    }
-
-    fn date_modes(&self) -> tidb_datatype::DateModes {
-        self.0.date_modes()
-    }
-
-    fn connection_charset_info(&self) -> (&str, &str) {
-        self.0.connection_charset_info()
-    }
-
-    fn like_default_escape(&self) -> u8 {
-        self.0.like_default_escape()
-    }
-
-    fn no_unsigned_subtraction(&self) -> bool {
-        self.0.no_unsigned_subtraction()
-    }
-
-    fn comparison_context(&self) -> Option<&dyn tidb_exprctx::context::Columns> {
-        Some(self.0)
-    }
-
-    fn div_precision_increment(&self) -> u32 {
-        self.0.div_precision_increment()
-    }
-
-    fn current_database(&self) -> Option<String> {
-        self.0.current_database()
-    }
-
-    fn fold_constant(&self, expression: &mut Expression, mode: ConstantFoldMode) {
-        if mode != ConstantFoldMode::Disabled {
-            crate::constant_fold::derive_constant_null_flag(expression);
-        }
-        crate::constant_fold::fold_constant_in_mode(expression, self.0, mode);
-    }
-
-    fn eval_constant(&self, expression: &Expression) -> Result<Datum, EvalError> {
-        crate::eval_expression_once(expression, self.0)
-    }
-}
-
-/// A resolver that knows no columns (for constant-only expressions).
-pub struct NoResolver;
-
-impl ColumnResolver for NoResolver {
-    fn resolve(&self, _path: &[String]) -> Option<(usize, FieldType, i64)> {
-        None
-    }
-
-    /// UTC: the zone the pre-accessor code hardcoded, kept so the
-    /// constant-only callers (DDL partition bounds, column defaults, index
-    /// ranges) answer exactly what they answered before. Each such site that
-    /// Go runs under a real session should migrate to a session-aware
-    /// resolver; until then this is a named, greppable stand-in rather than
-    /// a buried literal.
-    fn time_zone(&self) -> tidb_datatype::SessionTimeZone {
-        tidb_datatype::SessionTimeZone::utc()
-    }
-}
-
-/// The function name and result type a `CAST(expr AS type)` becomes.
-///
-/// Go picks one `builtinCast*As*Sig` per target type; the name here carries
-/// that choice, so evaluation never has to re-derive the target from a result
-/// type that may not describe it. JSON and DATE/DATETIME retain their native
-/// datum domains.
-///
-/// The `ARRAY` modifier is outside this AST's cast surface.
 /// The literal text a typed temporal literal wraps.
 ///
 /// Go's `getFunction` asserts the argument is a `*Constant` and PANICS
@@ -637,14 +119,14 @@ fn new_function(
     args: Vec<Expression>,
     resolver: &impl ColumnResolver,
 ) -> Result<Expression, EvalError> {
-    let class = crate::builtin::funcs(name).expect("builtin.go registers the operator");
+    let class = tidb_expr::builtin::funcs(name).expect("builtin.go registers the operator");
     class_function(class, name, args, resolver)
 }
 
 /// Go `er.newFunction` for a name `funcs` lists: [`expression_new_function`],
 /// counted when it stays a scalar function.
 fn class_function(
-    class: &dyn crate::builtin::FunctionClass,
+    class: &dyn tidb_expr::builtin::FunctionClass,
     name: &str,
     args: Vec<Expression>,
     resolver: &impl ColumnResolver,
@@ -659,7 +141,7 @@ fn class_function(
 /// Go `expression.NewFunction(er.sctx, ...)` as the rewriter calls it
 /// directly: `class` builds the node and `newFunctionImpl` folds it.
 fn expression_new_function(
-    class: &dyn crate::builtin::FunctionClass,
+    class: &dyn tidb_expr::builtin::FunctionClass,
     name: &str,
     args: Vec<Expression>,
     resolver: &impl ColumnResolver,
@@ -679,17 +161,17 @@ fn builtin_function_usage_inc(function: &ScalarFunction, resolver: &impl ColumnR
 /// [`class_function`]'s node, for a caller that initializes it (Go
 /// `newFunctionWithInit`, `SetFTSMysqlMatchAgainstModifier`).
 fn class_scalar_function(
-    class: &dyn crate::builtin::FunctionClass,
+    class: &dyn tidb_expr::builtin::FunctionClass,
     name: &str,
     mut args: Vec<Expression>,
     resolver: &impl ColumnResolver,
 ) -> Result<ScalarFunction, EvalError> {
     // Go `newFunctionImpl`: the control functions and ROW infer their own.
     if !matches!(name, "if" | "ifnull" | "nullif" | "row") {
-        crate::new_function::type_infer_for_null(&mut args);
+        tidb_expr::new_function::type_infer_for_null(&mut args);
     }
-    let f = class.get_function(&crate::builtin::ResolverBuildContext(resolver), args)?;
-    Ok(crate::new_function::scalar_function_of(
+    let f = class.get_function(&tidb_expr::builtin::ResolverBuildContext(resolver), args)?;
+    Ok(tidb_expr::new_function::scalar_function_of(
         name,
         FieldType::new(FieldTypeCode::Unspecified),
         f,
@@ -706,13 +188,13 @@ fn not_to_expression(
     args: Vec<Expression>,
     resolver: &impl ColumnResolver,
 ) -> Result<Expression, EvalError> {
-    let class = crate::builtin::funcs(op).expect("the operator's function class is ported");
+    let class = tidb_expr::builtin::funcs(op).expect("the operator's function class is ported");
     let call = class_function(class, op, args, resolver)?;
     if !has_not {
         return Ok(call);
     }
     let name = unary_op_name(UnaryOp::Not);
-    let class = crate::builtin::funcs(name).expect("builtin_op.go registers NOT");
+    let class = tidb_expr::builtin::funcs(name).expect("builtin_op.go registers NOT");
     class_function(class, name, vec![call], resolver)
 }
 
@@ -783,7 +265,7 @@ fn match_against_to_like(
     let ctx = resolver.comparison_context().unwrap_or(&tidb_exprctx::context::NoColumns);
     // The fallback bakes the search value into the plan, so a plan built
     // from a mutable one is not for another execution.
-    if crate::expr_util::predicates::maybe_over_optimized_4_plan_cache(
+    if tidb_expr::expr_util::predicates::maybe_over_optimized_4_plan_cache(
         ctx.use_plan_cache(),
         std::slice::from_ref(&against),
     ) {
@@ -816,7 +298,7 @@ fn match_against_to_like(
         }
     };
     if let Err(error) =
-        crate::fts::validate_fts_search_string_for_like_fallback(&search_text, modifier)
+        tidb_expr::fts::validate_fts_search_string_for_like_fallback(&search_text, modifier)
     {
         if fts_native_viable(plan_ctx, modifier, paths) {
             return match_against_to_builtin(modifier, against, cols, true, resolver);
@@ -824,12 +306,12 @@ fn match_against_to_like(
         return Err(EvalError::NotImplemented(error.message.into()));
     }
     // Go `convertMatchAgainstToLike`.
-    crate::fts::build_fts_to_i_like_expression(ctx, &cols, &search_text, modifier).map_err(
+    tidb_expr::fts::build_fts_to_i_like_expression(ctx, &cols, &search_text, modifier).map_err(
         |error| match error {
-            crate::fts::FtsBuildError::NotSupportedYet(error) => {
+            tidb_expr::fts::FtsBuildError::NotSupportedYet(error) => {
                 EvalError::NotImplemented(error.message.into())
             }
-            crate::fts::FtsBuildError::Build(error) => error,
+            tidb_expr::fts::FtsBuildError::Build(error) => error,
         },
     )
 }
@@ -855,7 +337,7 @@ fn match_against_to_builtin(
     args.push(against);
     args.extend(cols);
     let name = "match_against";
-    let class = crate::builtin::funcs(name).expect("builtin_fts.go registers MATCH AGAINST");
+    let class = tidb_expr::builtin::funcs(name).expect("builtin_fts.go registers MATCH AGAINST");
     let mut function = class_scalar_function(class, name, args, resolver)?;
     function.set_fts_mysql_match_against_modifier(modifier)?;
     builtin_function_usage_inc(&function, resolver);
@@ -932,7 +414,7 @@ fn resolve_type4_between(args: [&Expression; 3]) -> EvalType {
 /// type is deliberately chosen once, rather than allowing the lower and upper
 /// comparisons to infer independently from their two arms.
 fn wrap_between_arguments(
-    ctx: &dyn crate::builtin::BuildContext,
+    ctx: &dyn tidb_expr::builtin::BuildContext,
     args: [&Expression; 3],
     cmp_type: EvalType,
 ) -> Result<[Expression; 3], EvalError> {
@@ -991,14 +473,14 @@ fn construct_binary_op_function(
     op: BinaryOp,
     resolver: &impl ColumnResolver,
 ) -> Result<Expression, EvalError> {
-    let (l_len, r_len) = (crate::expr_util::get_row_len(l), crate::expr_util::get_row_len(r));
+    let (l_len, r_len) = (tidb_expr::expr_util::get_row_len(l), tidb_expr::expr_util::get_row_len(r));
     if l_len == 1 && r_len == 1 {
         return binary_expression(op, l.clone(), r.clone(), resolver);
     } else if r_len != l_len {
         return Err(EvalError::OperandColumns(l_len));
     }
     let pair = |op: BinaryOp, i: usize| -> Result<Expression, EvalError> {
-        let arg = |row| crate::expr_util::get_func_arg(row, i).expect("a row has its length's arguments");
+        let arg = |row| tidb_expr::expr_util::get_func_arg(row, i).expect("a row has its length's arguments");
         construct_binary_op_function(arg(l), arg(r), op, resolver)
     };
     if matches!(op, BinaryOp::Eq | BinaryOp::Ne | BinaryOp::NullEq) {
@@ -1042,7 +524,7 @@ fn compose_condition_with_binary_op(
     let right = conditions.split_off(length / 2);
     let left = compose_condition_with_binary_op(conditions, func_name, resolver);
     let right = compose_condition_with_binary_op(right, func_name, resolver);
-    let class = crate::builtin::funcs(func_name).expect("builtin_op.go registers AND and OR");
+    let class = tidb_expr::builtin::funcs(func_name).expect("builtin_op.go registers AND and OR");
     expression_new_function(class, func_name, vec![left, right], resolver)
         .expect("AND and OR take any two single values")
 }
@@ -1052,7 +534,7 @@ fn compose_condition_with_binary_op(
 fn ensure_single_column(args: &[&Expression]) -> Result<(), EvalError> {
     if args
         .iter()
-        .any(|arg| crate::expr_util::get_row_len(arg) != 1)
+        .any(|arg| tidb_expr::expr_util::get_row_len(arg) != 1)
     {
         return Err(EvalError::OperandColumns(1));
     }
@@ -1211,10 +693,10 @@ fn rewrite_json_sum_crc32(
         }
     }
     let mut ret_type = FieldType::new(FieldTypeCode::LongLong);
-    result_type::set_binary_charset(&mut ret_type);
+    tidb_expr::result_type::set_binary_charset(&mut ret_type);
     // Go `newBaseBuiltinFunc(ctx, c.funcName, args, c.tp)`.
-    let f = crate::builtin::new_base_builtin_func(
-        &crate::builtin::ResolverBuildContext(resolver),
+    let f = tidb_expr::builtin::new_base_builtin_func(
+        &tidb_expr::builtin::ResolverBuildContext(resolver),
         "json_sum_crc32",
         vec![arg],
         array_type.clone(),
@@ -1224,11 +706,11 @@ fn rewrite_json_sum_crc32(
     ));
     // `jsonSumFunction.SetCoercibility(CoercibilityNumeric)` and
     // `SetRepertoire(ASCII)`.
-    crate::collation_derive::apply_derived_collation(
+    tidb_expr::collation_derive::apply_derived_collation(
         &mut node,
-        &crate::expr_collation::ExprCollation {
-            coer: crate::expr_collation::Coercibility::NUMERIC,
-            repe: crate::expr_collation::Repertoire::ASCII,
+        &tidb_expr::expr_collation::ExprCollation {
+            coer: tidb_expr::expr_collation::Coercibility::NUMERIC,
+            repe: tidb_expr::expr_collation::Repertoire::ASCII,
             charset: "binary".to_owned(),
             collation: "binary".to_owned(),
         },
@@ -1317,7 +799,7 @@ fn rewrite_leaf(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expressio
             // `toParamMarker`: `initConstantRepertoire` on the built constant.
             let mut literal = rewrite_leaf_literal(expr, resolver)?;
             if let Expression::Constant(constant) = &mut literal {
-                crate::collation_derive::init_constant_repertoire(constant);
+                tidb_expr::collation_derive::init_constant_repertoire(constant);
             }
             Ok(literal)
         }
@@ -1364,13 +846,13 @@ fn rewrite_leaf_literal(
                 (true, Some(value)) => value.clone(),
                 _ => resolver.param_value(*order)?,
             };
-            let value = crate::expr_util::ParamMarkerValue {
+            let value = tidb_expr::expr_util::ParamMarkerValue {
                 datum,
                 order: i64::try_from(*order)
                     .map_err(|_| EvalError::Unsupported("prepared parameter index overflow"))?,
             };
             Ok(Expression::Constant(
-                crate::expr_util::param_marker_expression(&value, true, false, None),
+                tidb_expr::expr_util::param_marker_expression(&value, true, false, None),
             ))
         }
         // Go's `ast.NewValueExpr` hands the scanned literal to
@@ -1397,24 +879,24 @@ fn rewrite_leaf_literal(
         }
         Expr::Float(value) => Ok(Expression::Constant(Constant::new(
             Datum::Real(*value),
-            result_type::float_literal_type(*value),
+            tidb_expr::result_type::float_literal_type(*value),
         ))),
         // A `TRUE`/`FALSE` literal is `0`/`1` typed `bigint(1)` with
         // `IsBooleanFlag` (Go `DefaultTypeForValue` -> `KindMysqlBool`), so
         // `JSON_ARRAY(true)` is `[true]`, not `[1]`.
         Expr::Bool(value) => Ok(Expression::Constant(Constant::new(
             Datum::Int(i64::from(*value)),
-            result_type::bool_literal_type(),
+            tidb_expr::result_type::bool_literal_type(),
         ))),
         Expr::Null => Ok(Expression::Constant(Constant::new(
             Datum::Null,
-            result_type::null_literal_type(),
+            tidb_expr::result_type::null_literal_type(),
         ))),
         // Go `expressionRewriter.Leave`'s `*driver.ValueExpr` arm: the value's
         // own type, NotNull by its kind, and the datum re-collated by that
         // type (`v.Datum.SetValue(v.Datum.GetValue(), retType)`).
         Expr::Value(value) => {
-            let value = crate::ValueExprDatum::of(value)
+            let value = tidb_expr::ValueExprDatum::of(value)
                 .ok_or(EvalError::Unsupported("value expression holds no datum"))?;
             let mut field_type = value.field_type.clone();
             if value.datum.is_null() {
@@ -1537,14 +1019,14 @@ fn rewrite_leaf_literal(
                     field.set_flen(65_535);
                     field
                 });
-            let mut function = crate::builtin_other::build_get_var_function(
-                &crate::builtin::ResolverBuildContext(resolver),
+            let mut function = tidb_expr::builtin_other::build_get_var_function(
+                &tidb_expr::builtin::ResolverBuildContext(resolver),
                 constant_string(&name),
                 declared,
             )?;
-            crate::collation_derive::set_coercibility(
+            tidb_expr::collation_derive::set_coercibility(
                 &mut function,
-                crate::expr_collation::Coercibility::IMPLICIT,
+                tidb_expr::expr_collation::Coercibility::IMPLICIT,
             );
             Ok(function)
         }
@@ -1559,7 +1041,7 @@ fn rewrite_leaf_literal(
                 .ok_or(EvalError::Unsupported("user variable RHS has no type"))?;
             let args = vec![constant_string(&name), value];
             let function =
-                class_function(crate::builtin::funcs("setvar").expect("setvar"), "setvar", args, resolver)?;
+                class_function(tidb_expr::builtin::funcs("setvar").expect("setvar"), "setvar", args, resolver)?;
             if let Some(vars) = resolver.user_vars() {
                 vars.set_user_var_type(&name, declared);
             }
@@ -1603,7 +1085,7 @@ fn rewrite_leaf_literal(
                     }
                 })
                 .unwrap_or_default();
-            if !crate::collation_derive::collation_matches_charset(collation, &arg_charset) {
+            if !tidb_expr::collation_derive::collation_matches_charset(collation, &arg_charset) {
                 return Err(EvalError::CollationCharsetMismatch {
                     collation: name,
                     charset: arg_charset,
@@ -1633,13 +1115,13 @@ fn rewrite_leaf_literal(
                         .unwrap_or_else(|| FieldType::new(FieldTypeCode::VarString))
                 };
                 expr_type.set_collation_name(collation.name());
-                arg = crate::builtin_cast::build_cast_function(
-                    &crate::builtin::ResolverBuildContext(resolver),
+                arg = tidb_expr::builtin_cast::build_cast_function(
+                    &tidb_expr::builtin::ResolverBuildContext(resolver),
                     arg,
                     expr_type,
                 )?;
             }
-            crate::collation_derive::set_explicit_collation(&mut arg, collation);
+            tidb_expr::collation_derive::set_explicit_collation(&mut arg, collation);
             Ok(arg)
         }
         // A charset introducer (`_binary'a'`, `_latin1'x'`): Go's parser gives
@@ -1704,19 +1186,19 @@ fn rewrite_leaf_compound(
                 args.push(rewrite_expr_resolved(item, resolver)?);
             }
             // Go `inToExpression`: every candidate has the tested value's width.
-            let l = crate::expr_util::get_row_len(&args[0]);
-            if args[1..].iter().any(|candidate| crate::expr_util::get_row_len(candidate) != l) {
+            let l = tidb_expr::expr_util::get_row_len(&args[0]);
+            if args[1..].iter().any(|candidate| tidb_expr::expr_util::get_row_len(candidate) != l) {
                 return Err(EvalError::OperandColumns(l));
             }
-            let ctx = resolver.comparison_context().unwrap_or(&crate::NoColumns);
-            crate::builtin_compare::refine_integer_in_arguments(&mut args, ctx)?;
+            let ctx = resolver.comparison_context().unwrap_or(&tidb_exprctx::NoColumns);
+            tidb_expr::builtin_compare::refine_integer_in_arguments(&mut args, ctx)?;
             let left = &args[0];
             let left_type = left.static_type();
             if left_type.is_some_and(|field| field.code() == FieldTypeCode::Null) {
                 return Ok(Expression::Constant(Constant::new_null()));
             }
-            fn operand(expression: &Expression) -> crate::builtin_compare::CmpOperand<'_> {
-                crate::builtin_compare::CmpOperand {
+            fn operand(expression: &Expression) -> tidb_expr::builtin_compare::CmpOperand<'_> {
+                tidb_expr::builtin_compare::CmpOperand {
                     field_type: expression.static_type().expect("typed IN argument"),
                     is_constant: matches!(expression, Expression::Constant(_)),
                     is_column: matches!(expression, Expression::Column(_)),
@@ -1726,7 +1208,7 @@ fn rewrite_leaf_compound(
                 args[1..].iter().all(|argument| {
                     argument.static_type().is_some_and(|other| {
                         other.code() == FieldTypeCode::Null
-                            || crate::builtin_compare::get_accurate_cmp_type(
+                            || tidb_expr::builtin_compare::get_accurate_cmp_type(
                                 operand(left),
                                 operand(argument),
                             ) == field.eval_type()
@@ -1742,25 +1224,25 @@ fn rewrite_leaf_compound(
                 // Neither handles a tuple: `(a, b) IN ((x, y), ...)` compares
                 // each element under its own pair's collation.
                 if l == 1 && tidb_datatype::new_collation_enabled() {
-                    let derived = crate::collation_derive::check_and_derive_collation_from_exprs(
+                    let derived = tidb_expr::collation_derive::check_and_derive_collation_from_exprs(
                         "IN",
                         EvalType::Int,
                         &args,
                     )?;
                     for index in 1..args.len() {
-                        let compares_as_string = crate::builtin_compare::get_accurate_cmp_type(
+                        let compares_as_string = tidb_expr::builtin_compare::get_accurate_cmp_type(
                             operand(&args[0]),
                             operand(&args[index]),
                         ) == EvalType::String;
-                        if let Some(mut cast) = crate::simple_expr::build_cast_collation_function(
-                            &crate::builtin::ResolverBuildContext(resolver),
+                        if let Some(mut cast) = tidb_expr::simple_expr::build_cast_collation_function(
+                            &tidb_expr::builtin::ResolverBuildContext(resolver),
                             &args[index],
                             &derived,
                             compares_as_string,
                         )? {
-                            crate::collation_derive::set_coercibility(
+                            tidb_expr::collation_derive::set_coercibility(
                                 &mut cast,
-                                crate::expr_collation::Coercibility::EXPLICIT,
+                                tidb_expr::expr_collation::Coercibility::EXPLICIT,
                             );
                             args[index] = cast;
                         }
@@ -1792,7 +1274,7 @@ fn rewrite_leaf_compound(
             let low = rewrite_expr_resolved(low, resolver)?;
             let high = rewrite_expr_resolved(high, resolver)?;
             let [value, low, high] = wrap_between_arguments(
-                &crate::builtin::ResolverBuildContext(resolver),
+                &tidb_expr::builtin::ResolverBuildContext(resolver),
                 [&value, &low, &high],
                 resolve_type4_between([&value, &low, &high]),
             )?;
@@ -1800,7 +1282,7 @@ fn rewrite_leaf_compound(
             // operands, each cast to it, so `a BETWEEN binary_col AND
             // ci_col` compares both bounds as binary instead of picking a
             // collation per comparison.
-            let derived = crate::collation_derive::check_and_derive_collation_from_exprs(
+            let derived = tidb_expr::collation_derive::check_and_derive_collation_from_exprs(
                 "BETWEEN",
                 EvalType::Int,
                 &[value.clone(), low.clone(), high.clone()],
@@ -1810,13 +1292,13 @@ fn rewrite_leaf_compound(
                 right.static_type(),
             ) {
                 (Some(left_type), Some(right_type)) => {
-                    crate::builtin_compare::get_accurate_cmp_type(
-                        crate::builtin_compare::CmpOperand {
+                    tidb_expr::builtin_compare::get_accurate_cmp_type(
+                        tidb_expr::builtin_compare::CmpOperand {
                             field_type: left_type,
                             is_constant: matches!(left, Expression::Constant(_)),
                             is_column: matches!(left, Expression::Column(_)),
                         },
-                        crate::builtin_compare::CmpOperand {
+                        tidb_expr::builtin_compare::CmpOperand {
                             field_type: right_type,
                             is_constant: matches!(right, Expression::Constant(_)),
                             is_column: matches!(right, Expression::Column(_)),
@@ -1828,8 +1310,8 @@ fn rewrite_leaf_compound(
             let enum_or_set_real_type_is_str =
                 accurate(&value, &low) != EvalType::Int && accurate(&value, &high) != EvalType::Int;
             let cast = |operand: Expression| -> Result<Expression, EvalError> {
-                Ok(crate::simple_expr::build_cast_collation_function(
-                    &crate::builtin::ResolverBuildContext(resolver),
+                Ok(tidb_expr::simple_expr::build_cast_collation_function(
+                    &tidb_expr::builtin::ResolverBuildContext(resolver),
                     &operand,
                     &derived,
                     enum_or_set_real_type_is_str,
@@ -1844,7 +1326,7 @@ fn rewrite_leaf_compound(
             // joining function is the rewriter's own `newFunction`.
             let compare = |op: BinaryOp, left: Expression, right: Expression| {
                 let name = binary_op_name(op);
-                let class = crate::builtin::funcs(name).expect("builtin.go registers the operator");
+                let class = tidb_expr::builtin::funcs(name).expect("builtin.go registers the operator");
                 expression_new_function(class, name, vec![left, right], resolver)
             };
             let lower = compare(BinaryOp::Ge, value.clone(), low)?;
@@ -1920,7 +1402,7 @@ fn rewrite_leaf_compound(
                 args.push(rewrite_expr_resolved(else_clause, &child_resolver)?);
             }
             // Go `caseToExpression`: `er.newFunction(ast.Case, &v.Type, args...)`.
-            class_function(&crate::builtin_control::CaseWhenFunctionClass, "case", args, resolver)
+            class_function(&tidb_expr::builtin_control::CaseWhenFunctionClass, "case", args, resolver)
         }
         // Go's parser represents `candidate MEMBER OF (document)` as a
         // two-argument JSON_MEMBER_OF call; only the restore syntax is infix.
@@ -1932,7 +1414,7 @@ fn rewrite_leaf_compound(
             // Go's function name is `ast.JSONMemberOf` = "json_memberof",
             // which EXPLAIN prints and TiKV push-down recognises.
             class_function(
-                &crate::builtin_json::JsonMemberOfFunctionClass,
+                &tidb_expr::builtin_json::JsonMemberOfFunctionClass,
                 "json_memberof",
                 args,
                 resolver,
@@ -1965,7 +1447,7 @@ fn rewrite_leaf_compound(
             // Go `unaryOpToExpression`.
             ensure_single_column(&[&arg])?;
             let name = unary_op_name(*op);
-            let class = crate::builtin::funcs(name).expect("builtin_op.go registers the unary operators");
+            let class = tidb_expr::builtin::funcs(name).expect("builtin_op.go registers the unary operators");
             class_function(class, name, vec![arg], resolver)
         }
         _ => unreachable!("dispatched by rewrite_leaf"),
@@ -2026,8 +1508,8 @@ fn finish_function_call(
     } else {
         lowered
     };
-    let Some(class) = crate::builtin::funcs_or_extension(&lowered) else {
-        return Err(crate::builtin_registry::unresolved_error(
+    let Some(class) = tidb_expr::builtin::funcs_or_extension(&lowered) else {
+        return Err(tidb_expr::builtin_registry::unresolved_error(
             &lowered,
             resolver.current_database(),
         ));
@@ -2055,7 +1537,7 @@ fn rewrite_leaf_call(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expr
         Expr::Extract { unit, value } => {
             let unit = keyword_constant(unit);
             let value = rewrite_expr_resolved(value, resolver)?;
-            let class = crate::builtin::funcs("extract").expect("builtin_time.go registers EXTRACT");
+            let class = tidb_expr::builtin::funcs("extract").expect("builtin_time.go registers EXTRACT");
             class_function(class, "extract", vec![unit, value], resolver)
         }
         // The first GET_FORMAT argument is grammar, not an expression. Go's
@@ -2072,7 +1554,7 @@ fn rewrite_leaf_call(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expr
                 rewrite_expr_resolved(expr, resolver)?,
             ];
             let class =
-                crate::builtin::funcs("get_format").expect("builtin_time.go registers GET_FORMAT");
+                tidb_expr::builtin::funcs("get_format").expect("builtin_time.go registers GET_FORMAT");
             class_function(class, "get_format", args, resolver)
         }
         // Go parses POSITION with its own `substr IN str` grammar into an
@@ -2108,7 +1590,7 @@ fn rewrite_leaf_call(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expr
                 rewrite_expr_resolved(interval, resolver)?,
                 rewrite_expr_resolved(expr, resolver)?,
             ];
-            let class = crate::builtin::funcs("timestampadd")
+            let class = tidb_expr::builtin::funcs("timestampadd")
                 .expect("builtin_time.go registers TIMESTAMPADD");
             class_function(class, "timestampadd", args, resolver)
         }
@@ -2118,7 +1600,7 @@ fn rewrite_leaf_call(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expr
                 rewrite_expr_resolved(expr1, resolver)?,
                 rewrite_expr_resolved(expr2, resolver)?,
             ];
-            let class = crate::builtin::funcs("timestampdiff")
+            let class = tidb_expr::builtin::funcs("timestampdiff")
                 .expect("builtin_time.go registers TIMESTAMPDIFF");
             class_function(class, "timestampdiff", args, resolver)
         }
@@ -2128,8 +1610,8 @@ fn rewrite_leaf_call(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expr
             if lowered == "values" {
                 if let [Expr::Column(path)] = args.as_slice() {
                     if let Some((offset, ret_tp)) = resolver.resolve_values(path) {
-                        return crate::builtin_other::new_values_func(
-                            &crate::builtin::ResolverBuildContext(resolver),
+                        return tidb_expr::builtin_other::new_values_func(
+                            &tidb_expr::builtin::ResolverBuildContext(resolver),
                             offset,
                             ret_tp,
                         )
@@ -2149,7 +1631,7 @@ fn rewrite_leaf_call(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expr
                     grouping_mode,
                     grouping_marks,
                 } = resolver.roll_expand_grouping(&args)?;
-                let class = crate::builtin::funcs("grouping")
+                let class = tidb_expr::builtin::funcs("grouping")
                     .expect("builtin_grouping.go registers GROUPING");
                 let mut function = class_scalar_function(
                     class,
@@ -2176,12 +1658,12 @@ fn rewrite_leaf_call(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expr
             } else {
                 args.len()
             };
-            crate::builtin_registry::verify_args_by_count(&lowered, arity_count)?;
+            tidb_expr::builtin_registry::verify_args_by_count(&lowered, arity_count)?;
             // Go `tidbDecodeSQLDigestsFunctionClass.getFunction` checks the
             // PROCESS privilege while building, before any row is read.
             if lowered == "tidb_decode_sql_digests" {
                 if let Some(ctx) = resolver.comparison_context() {
-                    crate::builtin_ext::misc::check_process_privilege(ctx)?;
+                    tidb_expr::builtin_ext::misc::check_process_privilege(ctx)?;
                 }
             }
             let child_resolver = FoldModeResolver::for_function(resolver, &lowered);
@@ -2199,9 +1681,9 @@ fn rewrite_leaf_call(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expr
             // node needs no resolver of its own.
             if matches!(lowered.as_str(), "nextval" | "lastval" | "setval") {
                 if let Some(Expr::Column(path)) = args.first() {
-                    let mut rewritten = vec![Expression::Constant(crate::constant::Constant::new(
+                    let mut rewritten = vec![Expression::Constant(tidb_expr::constant::Constant::new(
                         Datum::Bytes(
-                            path.join(&crate::func::SEQUENCE_PATH_SEPARATOR.to_string())
+                            path.join(&tidb_expr::func::SEQUENCE_PATH_SEPARATOR.to_string())
                                 .into_bytes(),
                         ),
                         tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::VarString),
@@ -2209,7 +1691,7 @@ fn rewrite_leaf_call(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expr
                     for arg in &args[1..] {
                         rewritten.push(rewrite_expr_resolved(arg, &child_resolver)?);
                     }
-                    let class = crate::builtin::funcs(&lowered).expect("sequence function class");
+                    let class = tidb_expr::builtin::funcs(&lowered).expect("sequence function class");
                     return class_function(class, &lowered, rewritten, resolver);
                 }
             }
@@ -2264,7 +1746,7 @@ fn rewrite_leaf_call(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expr
                         rewrite_expr_resolved(value, &child_resolver)?,
                         keyword_constant(&unit),
                     ];
-                    let class = crate::builtin::funcs(&lowered)
+                    let class = tidb_expr::builtin::funcs(&lowered)
                         .expect("builtin_time.go registers the DATE_ADD family");
                     return class_function(class, &lowered, args, resolver);
                 }
@@ -2300,12 +1782,12 @@ fn rewrite_leaf_call(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expr
                                 // warnings stash for the error door's drain --
                                 // the successful path re-warns at evaluation,
                                 // which is why this branch stashes instead.
-                                let stash = crate::constant_fold::FoldWarningContext::new(
+                                let stash = tidb_expr::constant_fold::FoldWarningContext::new(
                                     resolver.time_zone(),
                                 );
                                 for code_point in &rewritten[..rewritten.len() - 1] {
                                     if let Expression::Constant(constant) = code_point {
-                                        let _ = crate::cast::report_int_truncation(
+                                        let _ = tidb_expr::cast::report_int_truncation(
                                             &constant.value,
                                             &stash,
                                         );
@@ -2335,7 +1817,7 @@ fn rewrite_leaf_call(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expr
         // their own fractional precision. Folding them here -- where Go also
         // resolves them, in `getFunction` -- is what keeps them from being
         // lowered into the never-failing, fraction-dropping cast below.
-        // See `crate::time_literal`.
+        // See `tidb_expr::time_literal`.
         Expr::Cast(cast)
             if matches!(
                 cast.style,
@@ -2349,7 +1831,7 @@ fn rewrite_leaf_call(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expr
             let modes = resolver.date_modes();
             if cast.style == tidb_ast::CastStyle::TimeLiteral {
                 let (duration, mut ret_type) =
-                    crate::time_literal::time_literal(&text, &zone, modes)?;
+                    tidb_expr::time_literal::time_literal(&text, &zone, modes)?;
                 // Go folds the literal call (`foldConstant`), and a non-null
                 // folded value carries the NotNull flag.
                 ret_type.add_flags(tidb_datatype::FieldTypeFlags::NOT_NULL);
@@ -2360,9 +1842,9 @@ fn rewrite_leaf_call(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expr
             }
             let (time, mut ret_type) = match cast.style {
                 tidb_ast::CastStyle::DateLiteral => {
-                    crate::time_literal::date_literal(&text, &zone, modes)?
+                    tidb_expr::time_literal::date_literal(&text, &zone, modes)?
                 }
-                _ => crate::time_literal::timestamp_literal(&text, &zone, modes)?,
+                _ => tidb_expr::time_literal::timestamp_literal(&text, &zone, modes)?,
             };
             ret_type.add_flags(tidb_datatype::FieldTypeFlags::NOT_NULL);
             // The folded constant carries Go's OWN result type -- `TypeDate`
@@ -2407,26 +1889,26 @@ fn rewrite_leaf_call(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expr
             );
             let (coer, repe) = if target_tp.eval_type() == tidb_datatype::EvalType::String {
                 let repe = if target_tp.charset_name() == "ascii" {
-                    crate::expr_collation::Repertoire::ASCII
+                    tidb_expr::expr_collation::Repertoire::ASCII
                 } else {
-                    crate::expr_collation::Repertoire::UNICODE
+                    tidb_expr::expr_collation::Repertoire::UNICODE
                 };
-                (crate::expr_collation::Coercibility::IMPLICIT, repe)
+                (tidb_expr::expr_collation::Coercibility::IMPLICIT, repe)
             } else {
                 (
-                    crate::expr_collation::Coercibility::NUMERIC,
-                    crate::expr_collation::Repertoire::ASCII,
+                    tidb_expr::expr_collation::Coercibility::NUMERIC,
+                    tidb_expr::expr_collation::Repertoire::ASCII,
                 )
             };
-            let mut cast_function = crate::builtin_cast::build_cast_function_with_check(
-                &crate::builtin::ResolverBuildContext(resolver),
+            let mut cast_function = tidb_expr::builtin_cast::build_cast_function_with_check(
+                &tidb_expr::builtin::ResolverBuildContext(resolver),
                 arg,
                 target_tp,
                 false,
                 explicit_charset,
             )?;
-            crate::collation_derive::set_coercibility(&mut cast_function, coer);
-            crate::collation_derive::set_repertoire(&mut cast_function, repe);
+            tidb_expr::collation_derive::set_coercibility(&mut cast_function, coer);
+            tidb_expr::collation_derive::set_repertoire(&mut cast_function, repe);
             Ok(cast_function)
         }
         // `CONVERT(expr USING charset)` -- Go `convertFunctionClass`. The
@@ -2438,7 +1920,7 @@ fn rewrite_leaf_call(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expr
                 rewrite_expr_resolved(expr, resolver)?,
                 constant_string(charset),
             ];
-            let class = crate::builtin::funcs("convert").expect("convert is registered");
+            let class = tidb_expr::builtin::funcs("convert").expect("convert is registered");
             class_function(class, "convert_using", args, resolver)
         }
         // Go `weightStringFunctionClass`: the `AS CHAR(n)`/`AS BINARY(n)`
@@ -2458,7 +1940,7 @@ fn rewrite_leaf_call(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expr
                 )));
             }
             let class =
-                crate::builtin::funcs("weight_string").expect("weight_string is registered");
+                tidb_expr::builtin::funcs("weight_string").expect("weight_string is registered");
             class_function(class, "weight_string", args, resolver)
         }
         // Go's parser builds `trim(str)`, `trim(str, remstr)` or
@@ -2568,7 +2050,7 @@ mod tests {
 
     struct PreparedValues(Vec<Datum>);
 
-    impl crate::Columns for PreparedValues {
+    impl tidb_exprctx::Columns for PreparedValues {
         fn get(&self, _: &[String]) -> Option<Datum> {
             None
         }
@@ -2591,15 +2073,15 @@ mod tests {
         }
 
         fn param_value(&self, order: usize) -> Result<Datum, EvalError> {
-            crate::Columns::param_value(self, order)
+            tidb_exprctx::Columns::param_value(self, order)
         }
 
         fn fold_constant(&self, expression: &mut Expression, mode: ConstantFoldMode) {
-            crate::fold_constant_in_mode(expression, self, mode);
+            tidb_expr::fold_constant_in_mode(expression, self, mode);
         }
 
         fn eval_constant(&self, expression: &Expression) -> Result<Datum, EvalError> {
-            crate::eval_expression_once(expression, self)
+            tidb_expr::eval_expression_once(expression, self)
         }
     }
 
@@ -2612,20 +2094,20 @@ mod tests {
             ConstantFoldMode::Disabled,
         ] {
             let resolver = FoldModeResolver::new(&context, mode);
-            let integer = crate::simple_expr::parse_simple_expr(
+            let integer = tidb_expr::simple_expr::parse_simple_expr(
                 &resolver,
                 "CAST('2' AS SIGNED)",
-                &crate::simple_expr::BuildOptions::new(),
+                &tidb_expr::simple_expr::BuildOptions::new(),
             )
             .unwrap();
             assert!(
                 matches!(integer, Expression::Constant(ref constant) if constant.value == Datum::Int(2)),
                 "{mode:?}: {integer:?}"
             );
-            let json = crate::simple_expr::parse_simple_expr(
+            let json = tidb_expr::simple_expr::parse_simple_expr(
                 &resolver,
                 "CAST('2' AS JSON)",
-                &crate::simple_expr::BuildOptions::new(),
+                &tidb_expr::simple_expr::BuildOptions::new(),
             )
             .unwrap();
             assert!(
@@ -2638,10 +2120,10 @@ mod tests {
     #[test]
     fn prepared_rewriter_retains_distinct_markers_with_equal_initial_values() {
         let ctx = PreparedValues(vec![Datum::Int(2), Datum::Int(2)]);
-        let mut compiled = crate::simple_expr::parse_simple_expr(
+        let mut compiled = tidb_expr::simple_expr::parse_simple_expr(
             &ctx,
             "? - ?",
-            &crate::simple_expr::BuildOptions::new(),
+            &tidb_expr::simple_expr::BuildOptions::new(),
         )
         .unwrap();
         let Expression::Constant(planned) = &compiled else {
@@ -2663,7 +2145,7 @@ mod tests {
         for (values, expected) in [(vec![2, 2], 0), (vec![9, 2], 7), (vec![2, 9], -7)] {
             let ctx = PreparedValues(values.into_iter().map(Datum::Int).collect());
             assert_eq!(
-                crate::eval_expression_once(&compiled, &ctx).unwrap(),
+                tidb_expr::eval_expression_once(&compiled, &ctx).unwrap(),
                 Datum::Int(expected),
             );
         }
@@ -2679,10 +2161,10 @@ mod tests {
             Datum::Int(40),
             Datum::Int(2),
         ]);
-        let compiled = crate::simple_expr::parse_simple_expr(
+        let compiled = tidb_expr::simple_expr::parse_simple_expr(
             &planning,
             "IF(?, ? - ?, ? + ?)",
-            &crate::simple_expr::BuildOptions::new(),
+            &tidb_expr::simple_expr::BuildOptions::new(),
         )
         .unwrap();
         for (condition, expected) in [(Datum::Int(1), 7), (Datum::Int(0), 42), (Datum::Null, 42)] {
@@ -2694,14 +2176,14 @@ mod tests {
                 Datum::Int(2),
             ]);
             assert_eq!(
-                crate::eval_expression_once(&compiled, &ctx).unwrap(),
+                tidb_expr::eval_expression_once(&compiled, &ctx).unwrap(),
                 Datum::Int(expected),
             );
         }
-        assert!(crate::simple_expr::parse_simple_expr(
+        assert!(tidb_expr::simple_expr::parse_simple_expr(
             &PreparedValues(vec![]),
             "?",
-            &crate::simple_expr::BuildOptions::new(),
+            &tidb_expr::simple_expr::BuildOptions::new(),
         )
         .is_err());
     }
@@ -2709,16 +2191,16 @@ mod tests {
     #[test]
     fn prepared_rewriter_keeps_parameter_dependent_implicit_real_casts() {
         let planning = PreparedValues(vec![Datum::Int(2), Datum::Int(3)]);
-        let compiled = crate::simple_expr::parse_simple_expr(
+        let compiled = tidb_expr::simple_expr::parse_simple_expr(
             &planning,
             "POW(?, ?)",
-            &crate::simple_expr::BuildOptions::new(),
+            &tidb_expr::simple_expr::BuildOptions::new(),
         )
         .unwrap();
         for (values, expected) in [([2, 3], 8.0), ([3, 2], 9.0), ([5, 0], 1.0)] {
             let context = PreparedValues(values.into_iter().map(Datum::Int).collect());
             assert_eq!(
-                crate::eval_expression_once(&compiled, &context).unwrap(),
+                tidb_expr::eval_expression_once(&compiled, &context).unwrap(),
                 Datum::Real(expected),
             );
         }
@@ -2728,10 +2210,10 @@ mod tests {
     fn prepared_rewriter_keeps_changing_string_in_members() {
         let text = |value: &str| Datum::new_string_datum(value.to_owned());
         let planning = PreparedValues(vec![text("a"), text("a"), text("a")]);
-        let compiled = crate::simple_expr::parse_simple_expr(
+        let compiled = tidb_expr::simple_expr::parse_simple_expr(
             &planning,
             "? IN (?, ?, 'literal')",
-            &crate::simple_expr::BuildOptions::new(),
+            &tidb_expr::simple_expr::BuildOptions::new(),
         )
         .unwrap();
         for (values, expected) in [
@@ -2741,7 +2223,7 @@ mod tests {
             (vec![text("a"), text("b"), Datum::Null], Datum::Null),
         ] {
             assert_eq!(
-                crate::eval_expression_once(&compiled, &PreparedValues(values)).unwrap(),
+                tidb_expr::eval_expression_once(&compiled, &PreparedValues(values)).unwrap(),
                 expected,
             );
         }
@@ -2785,10 +2267,10 @@ mod tests {
             ),
         ] {
             let context = PreparedValues(values);
-            let compiled = crate::simple_expr::parse_simple_expr(
+            let compiled = tidb_expr::simple_expr::parse_simple_expr(
                 &context,
                 sql,
-                &crate::simple_expr::BuildOptions::new(),
+                &tidb_expr::simple_expr::BuildOptions::new(),
             )
             .unwrap();
             let actual = compiled.static_type().unwrap();
@@ -2798,7 +2280,7 @@ mod tests {
                 "{sql}",
             );
             assert_eq!(
-                crate::eval_expression_once(&compiled, &context)
+                tidb_expr::eval_expression_once(&compiled, &context)
                     .unwrap()
                     .sql_string()
                     .unwrap(),
@@ -2806,7 +2288,7 @@ mod tests {
                 "{sql}",
             );
             assert_eq!(
-                crate::eval_expression_once(&compiled, &PreparedValues(replay))
+                tidb_expr::eval_expression_once(&compiled, &PreparedValues(replay))
                     .unwrap()
                     .sql_string()
                     .unwrap(),
@@ -3050,7 +2532,7 @@ mod tests {
             }
 
             fn fold_constant(&self, expression: &mut Expression, mode: ConstantFoldMode) {
-                crate::fold_constant_in_mode(expression, &crate::NoColumns, mode);
+                tidb_expr::fold_constant_in_mode(expression, &tidb_exprctx::NoColumns, mode);
             }
         }
 
@@ -3475,7 +2957,7 @@ mod literal_tests {
 /// not a passing port.
 #[cfg(test)]
 mod builtin_type_tests {
-    use crate::builtin_string::base64_needed_encoded_length;
+    use tidb_expr::builtin_string::base64_needed_encoded_length;
     use super::*;
 
     fn rewrite(sql_expr: &str) -> Expression {

@@ -46,7 +46,7 @@ fn eval_row(select_list: &str) -> String {
             let SelectField::Expr { expr, .. } = field else {
                 panic!("every field is an expression")
             };
-            let rewritten = crate::rewriter::rewrite_expr(expr).expect("rewrite");
+            let rewritten = crate::column_resolver::rewrite_expr(expr).expect("rewrite");
             rewritten
                 .eval(&NoColumns, chunk.get_row(0))
                 .expect("eval")

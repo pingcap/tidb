@@ -933,7 +933,7 @@ impl Columns for PlanCacheParams<'_> {
 
 /// [`NoColumns`] carrying the session's `time_zone`.
 ///
-/// The eval-time twin of `tidb_expr::rewriter::ZonedNoResolver`, and it exists
+/// The eval-time twin of `tidb_expr::column_resolver::ZonedNoResolver`, and it exists
 /// for the same reason: [`NoColumns`] answers the trait's DEFAULT zone
 /// (`UTC+11`, the goeval oracle's mock session), which is nobody's session.
 /// Any evaluation that HAS a session behind it -- restoring a virtual

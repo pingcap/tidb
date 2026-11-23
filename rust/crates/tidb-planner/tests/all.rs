@@ -47,3 +47,6 @@ mod selectivity_pseudo_source;
 mod tests_pointget_plan_cache_source;
 mod tiflash_mpp_root_shape_source;
 mod tikv_table_read_task_runtime_source;
+
+// Go's test binary links `planner/core`, whose `init` sets `expression.BuildSimpleExpr`.
+tidb_planner_init::link!();

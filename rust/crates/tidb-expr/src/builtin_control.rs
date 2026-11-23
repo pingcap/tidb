@@ -296,7 +296,7 @@ pub fn infer_type_4_control_funcs(
 }
 
 /// Go `caseWhenFunctionClass`.
-pub(crate) struct CaseWhenFunctionClass;
+pub struct CaseWhenFunctionClass;
 
 impl FunctionClass for CaseWhenFunctionClass {
     fn get_function(

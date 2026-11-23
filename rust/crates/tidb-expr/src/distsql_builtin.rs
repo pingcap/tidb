@@ -275,7 +275,7 @@ pub fn pb_to_expr_in(
             .map_err(|error| format!("invalid date interval unit: {error:?}"))?
             .unwrap_or_default();
         let unit = std::str::from_utf8(&bytes).map_err(|error| error.to_string())?;
-        crate::rewriter::result_type::date_arithmetic_return_type(unit, &args[..2])
+        crate::result_type::date_arithmetic_return_type(unit, &args[..2])
             .ok_or_else(|| "invalid date arithmetic argument types".to_owned())?
     } else {
         typed_or(expr, FieldTypeCode::Null)

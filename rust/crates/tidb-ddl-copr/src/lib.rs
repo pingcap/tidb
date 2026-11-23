@@ -21,7 +21,7 @@ use tidb_datatype::{FieldName, FieldNameMetadata, FieldType, IdentifierMetadata}
 use tidb_expr::column::Column;
 use tidb_exprctx::PlanColumnIdAllocator;
 use tidb_expr::expression::Expression;
-use tidb_expr::rewriter::ColumnResolver;
+use tidb_expr::column_resolver::ColumnResolver;
 use tidb_expr::schema::Schema;
 use tidb_expr::simple_expr::{
     column_infos_2_columns_and_names_with_collate, compose_dnf_condition, extract_columns,
@@ -678,7 +678,7 @@ mod tests {
     use super::*;
     use tidb_datatype::{FieldTypeCode, FieldTypeFlags};
     use tidb_exprctx::SimplePlanColumnIdAllocator;
-    use tidb_expr::rewriter::NoResolver;
+    use tidb_expr::column_resolver::NoResolver;
     use tidb_model::SchemaState;
 
     fn column(name: &str, id: i64, offset: i64) -> ColumnInfo {

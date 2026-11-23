@@ -177,7 +177,7 @@ mod tests {
             crate::eval_in(&expression, &crate::NoColumns),
             Ok(Datum::Real(5.0))
         );
-        let rewritten = crate::rewriter::rewrite_expr(&expression).expect("vector rewrite");
+        let rewritten = crate::column_resolver::rewrite_expr(&expression).expect("vector rewrite");
         assert_eq!(
             rewritten.static_type().expect("vector result type").code(),
             FieldTypeCode::Double

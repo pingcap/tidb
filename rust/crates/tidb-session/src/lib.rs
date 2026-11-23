@@ -1017,6 +1017,8 @@ impl Session {
         catalog: SharedCatalog,
         node: Box<crate::domain::cluster_session_node::NodeConn>,
     ) -> Self {
+        // Go's package `init`s have run before any session exists.
+        tidb_planner::init();
         let plan_cache_invalidation = catalog.plan_cache_invalidation();
         let stats_handle = catalog.stats_handle();
         Session {
@@ -4357,3 +4359,7 @@ pub type TestSetConfigServerInfo =
 /// status text, response body).
 pub type TestSetConfigHttpHandler =
     Arc<dyn Fn(&str, String) -> Result<(u16, String, String), String> + Send + Sync>;
+
+// Go's test binary links `planner/core`, whose `init` sets `expression.BuildSimpleExpr`.
+#[cfg(test)]
+tidb_planner_init::link!();

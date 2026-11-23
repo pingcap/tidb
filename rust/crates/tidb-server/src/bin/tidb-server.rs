@@ -41,6 +41,8 @@ fn main() -> ExitCode {
     tidb_worker_stack::install_as_default_thread_stack();
     // Go's runtime records its start, which `time.Now()` measures from.
     tidb_monotime::mark_process_start();
+    // Go's package `init`s, which run before `main`.
+    tidb_planner::init();
     let arguments = std::env::args().collect::<Vec<_>>();
     // Go `initFlagSet`: `fset.Parse`, then `-help` prints the usage and exits.
     let flags = match tidb_server::parse_main_flags(arguments.clone()) {

@@ -584,7 +584,7 @@ impl ScalarFunction {
 
     /// Go `BuildJSONSumCrc32FunctionWithCheck`'s node: a `BIGINT` result over
     /// `arg`, whose elements convert to `array_type`'s element type.
-    pub(crate) fn new_json_sum_crc32(
+    pub fn new_json_sum_crc32(
         f: crate::builtin::BaseBuiltinFunc,
         ret_type: FieldType,
         array_type: FieldType,
@@ -1196,7 +1196,7 @@ impl ScalarFunction {
     /// string literals this expression model can evaluate without a statement
     /// context. Other constant families remain in the row path because their
     /// implicit casts can raise warnings or errors.
-    pub(crate) fn prepare_in_string_hash_set(&mut self) {
+    pub fn prepare_in_string_hash_set(&mut self) {
         if self.func_name.lowercase() != "in"
             || self.args.len() < 2
             || self
@@ -1729,7 +1729,7 @@ impl ScalarFunction {
     pub(crate) fn extremum_signature(&self) -> Option<crate::builtin_ext::GlSignature> {
         self.gl_signature
             .or_else(|| crate::builtin_ext::GlSignature::of_signature(self.pb_code()))
-            .or_else(|| crate::rewriter::result_type::gl_signature(&self.args))
+            .or_else(|| crate::result_type::gl_signature(&self.args))
     }
 
 

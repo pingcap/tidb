@@ -393,7 +393,7 @@ pub fn check_partial_index_paths<C: OptimizeContext>(
     use tidb_planner_core_operator_logicalop::fold::{fold_owned, Descend, OwnedRewrite};
 
     struct PartialIndexChecker<'a> {
-        resolver: &'a tidb_expr::rewriter::ZonedNoResolver,
+        resolver: &'a tidb_expr::column_resolver::ZonedNoResolver,
         use_plan_cache: bool,
         opt_prefix_index_single_scan: bool,
     }
@@ -418,7 +418,7 @@ pub fn check_partial_index_paths<C: OptimizeContext>(
         }
     }
 
-    let resolver = tidb_expr::rewriter::ZonedNoResolver::with_like_default_escape(
+    let resolver = tidb_expr::column_resolver::ZonedNoResolver::with_like_default_escape(
         ctx.session_zone(),
         tidb_exprctx::Columns::like_default_escape(ctx),
     );

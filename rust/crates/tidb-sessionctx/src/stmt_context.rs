@@ -8218,7 +8218,7 @@ mod tests {
                 panic!("not an expression field")
             };
             let expression =
-                tidb_expr::rewriter::rewrite_expr_resolved(expr, &tidb_expr::rewriter::NoResolver)
+                tidb_expr::column_resolver::rewrite_expr_resolved(expr, &tidb_expr::column_resolver::NoResolver)
                     .expect("SPACE rewrites");
             let mut dual = tidb_chunk::chunk::Chunk::new_empty_chunk(&[]);
             dual.set_num_virtual_rows(1);
@@ -8357,7 +8357,7 @@ mod tests {
             panic!("not an expression field")
         };
         let expression =
-            tidb_expr::rewriter::rewrite_expr_resolved(expr, &tidb_expr::rewriter::NoResolver)
+            tidb_expr::column_resolver::rewrite_expr_resolved(expr, &tidb_expr::column_resolver::NoResolver)
                 .expect("CURRENT_RESOURCE_GROUP rewrites");
         let mut dual = tidb_chunk::chunk::Chunk::new_empty_chunk(&[]);
         dual.set_num_virtual_rows(1);

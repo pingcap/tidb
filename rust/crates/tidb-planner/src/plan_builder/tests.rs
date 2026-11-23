@@ -1571,7 +1571,7 @@ fn plan_scope_resolver_uses_the_statement_connection_collation() {
     let resolver = PlanScopeResolver::new(&schema, &names, &markers, SessionTimeZone::utc())
         .with_connection_charset_info(("utf8mb4", "utf8mb4_general_ci"));
     let expression =
-        tidb_expr::rewriter::rewrite_expr_resolved(&Expr::String("a".to_owned()), &resolver)
+        crate::expression_rewriter::leave::rewrite_expr_resolved(&Expr::String("a".to_owned()), &resolver)
             .expect("literal rewrite");
     assert_eq!(
         expression
@@ -1594,7 +1594,7 @@ fn plan_scope_resolver_uses_no_unsigned_subtraction_mode() {
     let resolver = PlanScopeResolver::new(&schema, &names, &markers, SessionTimeZone::utc())
         .with_no_unsigned_subtraction(true);
     let rewritten =
-        tidb_expr::rewriter::rewrite_expr_resolved(expr, &resolver).expect("subtraction rewrite");
+        crate::expression_rewriter::leave::rewrite_expr_resolved(expr, &resolver).expect("subtraction rewrite");
     let Expression::ScalarFunction(function) = rewritten else {
         panic!("subtraction should remain a scalar function")
     };
@@ -1615,7 +1615,7 @@ fn plan_scope_resolver_keeps_char_using_for_runtime_warnings() {
     let names = [];
     let markers = BTreeMap::new();
     let resolver = PlanScopeResolver::new(&schema, &names, &markers, SessionTimeZone::utc());
-    let rewritten = tidb_expr::rewriter::rewrite_expr_resolved(expr, &resolver)
+    let rewritten = crate::expression_rewriter::leave::rewrite_expr_resolved(expr, &resolver)
         .expect("CHAR expression rewrite");
     let Expression::ScalarFunction(function) = rewritten else {
         panic!("CHAR USING must remain executable at statement time")
@@ -1644,7 +1644,7 @@ fn plan_scope_resolver_refines_integer_string_with_live_warning_context() {
         panic!("expected comparison expression")
     };
     let rewritten =
-        tidb_expr::rewriter::rewrite_expr_resolved(expr, &resolver).expect("comparison rewrite");
+        crate::expression_rewriter::leave::rewrite_expr_resolved(expr, &resolver).expect("comparison rewrite");
     let Expression::ScalarFunction(function) = rewritten else {
         panic!("comparison should remain a scalar function")
     };

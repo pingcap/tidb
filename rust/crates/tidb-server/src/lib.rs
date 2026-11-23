@@ -658,3 +658,7 @@ pub(crate) fn isolate_process_globals() -> bool {
 pub(crate) use tidb_session::domain::{log_mysql_listening, log_status_listen, log_status_listen_failed, open_spill_storage, MemoryArbitratorAuthority};
 pub(crate) use tidb_logutil::zap_error;
 pub(crate) use tidb_logutil::zap_stack;
+
+// Go's test binary links `planner/core`, whose `init` sets `expression.BuildSimpleExpr`.
+#[cfg(test)]
+tidb_planner_init::link!();

@@ -44,7 +44,7 @@ use tidb_charset::Collation;
 use tidb_expr::column::Column;
 use tidb_expr::expr_util::normal_form::split_cnf_items;
 use tidb_expr::expression::{CorrelatedColumn, Expression};
-use tidb_expr::rewriter::ColumnResolver;
+use tidb_expr::column_resolver::ColumnResolver;
 use tidb_expr::schema::Schema;
 use tidb_expr::simple_expr::{
     extract_columns_from_expressions, extract_cor_columns, parse_simple_expr, BuildOptions,

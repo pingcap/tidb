@@ -57,3 +57,6 @@ mod realtikv_addindextest4;
 mod realtikv_brietest;
 mod realtikv_txntest;
 mod realtikv_pessimistictest;
+
+// Go's test binary links `planner/core`, whose `init` sets `expression.BuildSimpleExpr`.
+tidb_planner_init::link!();

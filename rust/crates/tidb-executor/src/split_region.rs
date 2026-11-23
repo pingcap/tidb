@@ -613,7 +613,7 @@ impl ValueConverter<'_> {
         column_name: &str,
         target: &FieldType,
     ) -> Result<Datum, DriverError> {
-        let built = tidb_expr::rewriter::rewrite_expr_resolved(value, &self.resolver)
+        let built = tidb_expr::column_resolver::rewrite_expr_resolved(value, &self.resolver)
             .map_err(ExecError::Eval)?;
         if !matches!(built, tidb_expr::expression::Expression::Constant(_)) {
             return Err(unknown("Expect constant values".to_owned()));

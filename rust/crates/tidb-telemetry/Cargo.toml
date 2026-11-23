@@ -28,4 +28,5 @@ tidb-ttl = { path = "../tidb-ttl" }
 tidb-vardef = { path = "../tidb-vardef" }
 
 [dev-dependencies]
+tidb-planner-init = { path = "../tidb-planner-init" }
 tidb-charset = { path = "../tidb-charset" }

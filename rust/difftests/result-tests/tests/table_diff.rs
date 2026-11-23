@@ -105,3 +105,6 @@ fn table_execution_matches_go_engine() {
         failures.join("")
     );
 }
+
+// Go's test binary links `planner/core`, whose `init` sets `expression.BuildSimpleExpr`.
+tidb_planner_init::link!();

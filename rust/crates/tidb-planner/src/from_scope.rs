@@ -19,7 +19,7 @@
 use tidb_datatype::{Datum, FieldType};
 use tidb_driver_error::DriverError;
 use tidb_expr::expression::Expression;
-use tidb_expr::rewriter::ColumnResolver;
+use tidb_expr::column_resolver::ColumnResolver;
 use tidb_infoschema::{split_table_path, TableEntry};
 use tidb_hack::GoCaseCompare;
 use tidb_hack::GoToLower;

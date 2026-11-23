@@ -290,7 +290,7 @@ pub fn new_function_impl(
 /// Go `newFunctionImpl` between `getFunction` and `checkOrInit`: the node
 /// over the builtin function `f`, typed by `f.getRetTp()` unless that is
 /// unspecified and the caller's `ret_type` is not.
-pub(crate) fn scalar_function_of(
+pub fn scalar_function_of(
     registered_name: &str,
     ret_type: FieldType,
     f: crate::builtin::BaseBuiltinFunc,

@@ -143,7 +143,7 @@ impl MaskingExec<'_> {
         let resolver = TableColumnResolver::new(&names, &types, self.context.session_zone())
             .with_current_database(&self.current_db)
             .with_source_table(table.name.original());
-        tidb_expr::rewriter::rewrite_expr_resolved(expr, &resolver)
+        tidb_expr::column_resolver::rewrite_expr_resolved(expr, &resolver)
             .map_err(|error| error.to_mysql_error())?;
         if resolver
             .dependency_names()

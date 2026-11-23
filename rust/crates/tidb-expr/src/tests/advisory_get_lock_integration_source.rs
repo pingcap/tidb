@@ -37,7 +37,7 @@
 use super::*;
 use crate::constant::Constant;
 use crate::expression::Expression;
-use crate::rewriter::{rewrite_expr_resolved, ColumnResolver};
+use crate::column_resolver::{rewrite_expr_resolved, ColumnResolver};
 use std::cell::RefCell;
 use std::collections::BTreeSet;
 use tidb_ast::{QueryStmt, SelectField, Stmt};

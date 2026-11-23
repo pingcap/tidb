@@ -19,5 +19,6 @@ tidb-codec = { path = "../tidb-codec" }
 serde = { workspace = true }
 
 [dev-dependencies]
+tidb-planner-init = { path = "../tidb-planner-init" }
 tidb-ast = { path = "../tidb-ast" }
 tidb-datatype = { path = "../tidb-datatype" }

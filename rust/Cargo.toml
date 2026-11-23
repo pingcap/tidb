@@ -234,6 +234,7 @@ members = [
     "crates/tidb-format-textrow",
     "crates/tidb-distsql",
     "crates/tidb-planner",
+    "crates/tidb-planner-init",
     "crates/tidb-planner-core-joinorder",
     "crates/tidb-planner-core-operator-physicalop",
     "crates/tidb-planner-core-operator-logicalop",

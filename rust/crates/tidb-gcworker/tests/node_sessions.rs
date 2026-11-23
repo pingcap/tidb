@@ -112,3 +112,6 @@ fn gc_worker_sessions_run_gos_system_table_statements() {
     assert!(!session.is_raft_kv2().unwrap());
     assert!(session.history_job(1).unwrap().is_none());
 }
+
+// Go's test binary links `planner/core`, whose `init` sets `expression.BuildSimpleExpr`.
+tidb_planner_init::link!();

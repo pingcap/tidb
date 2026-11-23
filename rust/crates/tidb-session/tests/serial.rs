@@ -26,3 +26,6 @@ mod serial_db_integration_config_source;
 mod serial_multi_schema_change_config_source;
 
 mod serial_ddl_ingest_source;
+
+// Go's test binary links `planner/core`, whose `init` sets `expression.BuildSimpleExpr`.
+tidb_planner_init::link!();

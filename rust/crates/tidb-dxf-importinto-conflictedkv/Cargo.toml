@@ -34,6 +34,7 @@ tidb-tablecodec = { path = "../tidb-tablecodec" }
 tidb-txnkv = { path = "../tidb-txnkv" }
 
 [dev-dependencies]
+tidb-planner-init = { path = "../tidb-planner-init" }
 tempfile.workspace = true
 tidb-lightning-backend-encode = { path = "../tidb-lightning-backend-encode" }
 tidb-meta = { path = "../tidb-meta" }

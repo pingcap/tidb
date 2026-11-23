@@ -15,7 +15,7 @@
 //! and signatures, and their evaluation.
 //!
 //! There is one evaluator, as in Go. A parsed [`tidb_ast::Expr`] is rewritten
-//! into an [`Expression`] tree ([`rewriter`]), each function node is built by
+//! into an [`Expression`] tree (through [`column_resolver::rewrite_expr_resolved`], the planner's rewriter), each function node is built by
 //! its Go function class ([`builtin`]) -- which infers the result type, wraps
 //! the arguments in the casts its declared eval types ask for and picks the
 //! signature -- and the tree is evaluated over a row or a chunk
@@ -30,7 +30,7 @@ pub mod wrap_cast;
 mod arg_eval_type;
 mod binary_literal;
 mod build;
-pub(crate) mod builtin;
+pub mod builtin;
 pub mod builtin_arithmetic;
 #[cfg(test)]
 mod builtin_cast_semantics;
@@ -38,20 +38,20 @@ mod builtin_cast_semantics;
 mod test_identity;
 mod chunk_executor;
 pub mod builtin_compare;
-mod builtin_cast;
-mod builtin_control;
+pub mod builtin_cast;
+pub mod builtin_control;
 pub use builtin::UnfoldedBuildContext;
 pub use builtin_control::infer_type_4_control_funcs;
 mod builtin_encryption;
-mod builtin_ext;
+pub mod builtin_ext;
 pub use builtin_ext::misc::{
     set_decode_key_from_string, set_encode_index_key_from_row, set_encode_record_key_from_row, DecodeKeyFromStringFn,
     EncodeKeyFromRowFn,
 };
-mod builtin_json;
-mod builtin_other;
+pub mod builtin_json;
+pub mod builtin_other;
 mod builtin_regexp;
-mod builtin_string;
+pub mod builtin_string;
 mod builtin_time;
 mod builtin_vec;
 mod builtin_fts;
@@ -89,8 +89,8 @@ pub mod expression;
 mod field_name;
 pub mod fts;
 pub mod fts_helper;
-mod func;
-mod grouping;
+pub mod func;
+pub mod grouping;
 pub mod grouping_sets;
 pub mod expr_to_pb;
 pub mod infer_pushdown;
@@ -106,7 +106,8 @@ pub use new_function::{
 mod ops;
 pub mod distsql_builtin;
 mod regexp;
-pub mod rewriter;
+pub mod column_resolver;
+pub mod result_type;
 mod row;
 pub mod scalar_function;
 pub mod scalar_subquery;
@@ -117,7 +118,7 @@ pub use string_fn::quote_str;
 mod string_packet;
 mod string_signature;
 mod time_fn;
-mod time_literal;
+pub mod time_literal;
 
 pub use field_name::{find_field_name, find_field_name_idx_by_col_name, NonUniqueFieldName};
 
@@ -477,9 +478,19 @@ pub fn fit_decimal_column(value: Datum, precision: u32, scale: u32) -> Option<Da
 
 /// Evaluates an expression, resolving column references via `cols`.
 pub fn eval_in(expr: &Expr, cols: &dyn Columns) -> Result<Datum, EvalError> {
-    let built = rewriter::rewrite_expr_resolved(expr, &rewriter::ContextResolver(cols))?;
+    let built = column_resolver::rewrite_expr_resolved(expr, &column_resolver::ContextResolver(cols))?;
     eval_expression_once(&built, cols)
 }
+
+// Go's `pkg/expression` test binary links `planner/core` (its external test
+// package imports it), whose `init` sets `expression.BuildSimpleExpr`. This
+// crate's test build compiles the planner's rewriter source in place, over
+// this crate's own types, and installs it on first use.
+#[cfg(test)]
+extern crate self as tidb_expr;
+#[cfg(test)]
+#[path = "../../tidb-planner/src/expression_rewriter/leave.rs"]
+mod planner_expression_rewriter;
 
 #[cfg(test)]
 mod tests;

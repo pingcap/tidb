@@ -23,5 +23,8 @@ tidb-hack = { path = "../tidb-hack" }
 tidb-parser = { path = "../tidb-parser" }
 tidb-tablecodec = { path = "../tidb-tablecodec" }
 
+[dev-dependencies]
+tidb-planner-init = { path = "../tidb-planner-init" }
+
 [lints]
 workspace = true

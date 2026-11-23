@@ -20,3 +20,7 @@ pub use sql2kv::{Pairs, TableKVEncoder};
 
 #[cfg(test)]
 mod tests;
+
+// Go's test binary links `planner/core`, whose `init` sets `expression.BuildSimpleExpr`.
+#[cfg(test)]
+tidb_planner_init::link!();

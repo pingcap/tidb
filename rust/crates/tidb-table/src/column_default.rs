@@ -58,7 +58,7 @@ use tidb_datatype::{
     ConversionFlags, Datum, DatumValueError, FieldType, FieldTypeCode, SessionTimeZone,
 };
 use tidb_expr::expression::Expression;
-use tidb_expr::rewriter::{rewrite_expr_resolved, NoResolver};
+use tidb_expr::column_resolver::{rewrite_expr_resolved, NoResolver};
 use tidb_model::column::COLUMN_INFO_VERSION1;
 
 /// Go's pair (`ColumnInfo.DefaultValue`, `ColumnInfo.DefaultIsExpr`): where

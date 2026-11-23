@@ -318,7 +318,7 @@ impl FunctionClass for GetVarFunctionClass {
 const MAX_DATETIME_WIDTH_NO_FSP: i64 = 19;
 
 /// Go `BuildGetVarFunction`.
-pub(crate) fn build_get_var_function(
+pub fn build_get_var_function(
     ctx: &dyn BuildContext,
     expr: Expression,
     ret_type: FieldType,
@@ -388,7 +388,7 @@ impl FunctionClass for ValuesFunctionClass {
 }
 
 /// Go `NewValuesFunc`.
-pub(crate) fn new_values_func(
+pub fn new_values_func(
     ctx: &dyn BuildContext,
     offset: usize,
     ret_tp: FieldType,

@@ -37,4 +37,5 @@ failpoints = ["dep:tidb-failpoint", "tidb-failpoint/failpoints"]
 workspace = true
 
 [dev-dependencies]
+tidb-planner-init = { path = "../tidb-planner-init" }
 tidb-ast = { path = "../tidb-ast" }

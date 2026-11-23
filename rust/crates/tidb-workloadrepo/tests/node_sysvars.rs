@@ -123,3 +123,6 @@ fn test_setting_sql_variables() {
         .run("SET GLOBAL tidb_workload_repository_dest = 'invalid'")
         .is_err());
 }
+
+// Go's test binary links `planner/core`, whose `init` sets `expression.BuildSimpleExpr`.
+tidb_planner_init::link!();

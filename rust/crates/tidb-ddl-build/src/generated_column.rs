@@ -305,7 +305,7 @@ pub fn build_generated_columns_with_like_default_escape(
             zone.clone(),
             like_default_escape,
         );
-        let expr = tidb_expr::rewriter::rewrite_expr_resolved(expression, &resolver)
+        let expr = tidb_expr::column_resolver::rewrite_expr_resolved(expression, &resolver)
             .map_err(|error| rewrite_error(error, resolver.missing_name()))?;
         // A rewrite can succeed while an unrelated branch of the tree failed
         // to resolve only if the resolver was never consulted, so the missing

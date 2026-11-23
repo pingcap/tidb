@@ -182,3 +182,7 @@ pub(crate) fn delay_for_async_commit() {
     );
     std::thread::sleep(duration);
 }
+
+// Go's test binary links `planner/core`, whose `init` sets `expression.BuildSimpleExpr`.
+#[cfg(test)]
+tidb_planner_init::link!();

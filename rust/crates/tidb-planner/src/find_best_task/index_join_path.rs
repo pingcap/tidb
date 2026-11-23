@@ -866,7 +866,7 @@ mod tests {
         let options = tidb_expr::simple_expr::BuildOptions::new()
             .with_input_schema_and_names(schema.clone(), names.to_vec());
         let expr = tidb_expr::simple_expr::parse_simple_expr(
-            &tidb_expr::rewriter::NoResolver,
+            &tidb_expr::column_resolver::NoResolver,
             text,
             &options,
         )

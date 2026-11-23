@@ -166,3 +166,6 @@ fn check_query_results() {
         failures.join("")
     );
 }
+
+// Go's test binary links `planner/core`, whose `init` sets `expression.BuildSimpleExpr`.
+tidb_planner_init::link!();

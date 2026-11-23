@@ -30,7 +30,7 @@ use tidb_expr::expr_util::builder::RealFunctionBuilder;
 use tidb_expr::expr_util::normal_form::split_cnf_items;
 use tidb_expr::expr_util::push_not::push_down_not;
 use tidb_expr::expression::Expression;
-use tidb_expr::rewriter::{rewrite_expr_resolved, ColumnResolver};
+use tidb_expr::column_resolver::{rewrite_expr_resolved, ColumnResolver};
 
 use super::detacher::detach_conds_for_column;
 use super::ranger::build_table_range;

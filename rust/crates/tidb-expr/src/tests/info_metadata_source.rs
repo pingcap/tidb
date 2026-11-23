@@ -17,7 +17,7 @@
 
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
 use tidb_charset::Collation;
-use tidb_expr::rewriter::{rewrite_expr, rewrite_expr_resolved, ColumnResolver};
+use tidb_expr::column_resolver::{rewrite_expr, rewrite_expr_resolved, ColumnResolver};
 use tidb_exprctx::NoColumns;
 
 fn parse_expr(sql_expr: &str) -> tidb_ast::Expr {

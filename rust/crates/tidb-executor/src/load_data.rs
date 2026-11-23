@@ -445,7 +445,7 @@ pub fn run_load_data(
     };
     let mut assignment_exprs = Vec::with_capacity(prepared.assignments.len());
     for assignment in &prepared.assignments {
-        let expr = tidb_expr::rewriter::rewrite_expr_resolved(&assignment.value, &resolver)
+        let expr = tidb_expr::column_resolver::rewrite_expr_resolved(&assignment.value, &resolver)
             .map_err(|error| match error {
                 tidb_exprctx::EvalError::UnknownColumn(column) => DriverError::from(
                     tidb_plannererrors::ERR_UNKNOWN_COLUMN.gen_with_stack_by_args(&[

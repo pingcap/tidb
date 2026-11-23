@@ -26,13 +26,13 @@
 //! chunk-cell panic rather than a wrong answer, so the rules deserve to be
 //! read as one table instead of scattered through the rewrite arms.
 
-use super::Expression;
+use crate::expression::Expression;
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
 
 use crate::builtin_ext::{GlCmpStringMode, GlSignature};
 
 /// Go `types.SetBinChsClnFlag`: stamp binary charset, collation and flag.
-pub(super) fn set_binary_charset(ft: &mut FieldType) {
+pub fn set_binary_charset(ft: &mut FieldType) {
     ft.set_charset_name("binary");
     // `set_collation_name` resolves the cached `Collation` enum that
     // `is_binary_string` reads, so naming the collation once is enough; there
@@ -44,7 +44,7 @@ pub(super) fn set_binary_charset(ft: &mut FieldType) {
 /// Go `preprocessor.checkFuncCastExpr` plus the duration precision check in
 /// `expressionRewriter.checkTimePrecision`. These reject the statement before
 /// the cast argument is evaluated.
-pub(super) fn check_func_cast_expr(cast: &tidb_ast::CastExpr) -> Result<(), crate::EvalError> {
+pub fn check_func_cast_expr(cast: &tidb_ast::CastExpr) -> Result<(), crate::EvalError> {
     use tidb_ast::CastType;
 
     let invalid = |code, message| crate::EvalError::InvalidTypeDeclaration { code, message };
@@ -83,7 +83,7 @@ pub(super) fn check_func_cast_expr(cast: &tidb_ast::CastExpr) -> Result<(), crat
 /// Go `preprocessor` accepts `NAME_CONST` only when the name is a literal and
 /// the value is a literal or unary expression. This check precedes name/type
 /// resolution, so invalid source shapes always report 1210.
-pub(super) fn validate_name_const_args(args: &[tidb_ast::Expr]) -> Result<(), crate::EvalError> {
+pub fn validate_name_const_args(args: &[tidb_ast::Expr]) -> Result<(), crate::EvalError> {
     use tidb_ast::Expr;
 
     if args.len() != 2 {
@@ -114,7 +114,9 @@ pub(super) fn validate_name_const_args(args: &[tidb_ast::Expr]) -> Result<(), cr
     }
 }
 
-pub(super) fn cast_target(cast_type: &tidb_ast::CastType) -> Option<FieldType> {
+/// The result type `CAST(expr AS cast_type)` builds, with its character set
+/// not yet settled (Go `ast.FuncCastExpr.Tp` as the parser leaves it).
+pub fn cast_target(cast_type: &tidb_ast::CastType) -> Option<FieldType> {
     use tidb_ast::CastType;
     let ft = match cast_type {
         // parser.y `"SIGNED" OptInteger`: TypeLonglong + CharsetBin/
@@ -261,7 +263,7 @@ pub(super) fn cast_target(cast_type: &tidb_ast::CastType) -> Option<FieldType> {
 /// produces, per the argument's family (and `CAST(json AS CHAR)` widens the
 /// code to `TypeLongBlob`). Fixed `TypeString` targets return untouched, so
 /// the caller gates on `VarString` — Go's own early return.
-pub(crate) fn adjust_ret_ft_for_cast_string(ret_ft: &mut FieldType, arg_ft: &FieldType) {
+pub fn adjust_ret_ft_for_cast_string(ret_ft: &mut FieldType, arg_ft: &FieldType) {
     use tidb_datatype::FieldTypeFlags;
     const MAX_TINY_BLOB_SIZE: i64 = 255;
     const CAST_BLOB_FLEN: i64 = 65_535 * 4;
@@ -396,7 +398,7 @@ pub(crate) fn adjust_ret_ft_for_cast_string(ret_ft: &mut FieldType, arg_ft: &Fie
 
 /// Go `types.DefaultTypeForValue` for a `*MyDecimal`: the printed length plus
 /// one for the decimal point, and the literal's own fractional digits.
-pub(super) fn decimal_literal_type(value: &tidb_datatype::Decimal) -> FieldType {
+pub fn decimal_literal_type(value: &tidb_datatype::Decimal) -> FieldType {
     let mut ft = FieldType::new(FieldTypeCode::NewDecimal);
     ft.set_flen_under_limit(value.to_string().chars().count() as i64);
     ft.set_decimal_under_limit(i64::from(value.scale()));
@@ -412,7 +414,7 @@ pub(super) fn decimal_literal_type(value: &tidb_datatype::Decimal) -> FieldType 
 ///
 /// The flen counts the digits of the VALUE, not of the source text, because
 /// Go measures `StrLenOfInt64Fast(x)` after the parse -- so `007` is flen 1.
-pub(super) fn int_literal_type(printed_len: usize, unsigned: bool) -> FieldType {
+pub fn int_literal_type(printed_len: usize, unsigned: bool) -> FieldType {
     let mut ft = FieldType::new(FieldTypeCode::LongLong);
     ft.set_flen(printed_len as i64);
     ft.set_decimal(0);
@@ -426,7 +428,7 @@ pub(super) fn int_literal_type(printed_len: usize, unsigned: bool) -> FieldType 
 
 /// Go `types.DefaultTypeForValue` for a `float64`: a binary, NOT NULL
 /// `DOUBLE` as wide as the shortest printed form and of unspecified scale.
-pub(super) fn float_literal_type(value: f64) -> FieldType {
+pub fn float_literal_type(value: f64) -> FieldType {
     let mut ft = FieldType::new(FieldTypeCode::Double);
     ft.set_flen(tidb_goruntime::go_strconv::format_float(value, b'f', -1, 64).len() as i64);
     ft.set_decimal(-1);
@@ -437,7 +439,7 @@ pub(super) fn float_literal_type(value: f64) -> FieldType {
 
 /// Go `types.DefaultTypeForValue` for a `nil`: the only literal that is not
 /// NOT NULL, typed `NULL`, zero wide, binary.
-pub(super) fn null_literal_type() -> FieldType {
+pub fn null_literal_type() -> FieldType {
     let mut ft = FieldType::new(FieldTypeCode::Null);
     ft.set_flen(0);
     ft.set_decimal(0);
@@ -447,7 +449,7 @@ pub(super) fn null_literal_type() -> FieldType {
 
 /// Go `types.DefaultTypeForValue` for a `bool`: a one-wide, binary, NOT NULL
 /// `BIGINT` that remembers it was boolean.
-pub(super) fn bool_literal_type() -> FieldType {
+pub fn bool_literal_type() -> FieldType {
     let mut ft = FieldType::new(FieldTypeCode::LongLong);
     ft.set_flen(1);
     ft.set_decimal(0);
@@ -461,7 +463,7 @@ pub(super) fn bool_literal_type() -> FieldType {
 /// Go `types.DefaultTypeForValue` for a `BitLiteral`/`HexLiteral`: a binary
 /// `VarString` three bytes wide per literal byte. Only the hex form is
 /// unsigned, which is what makes `0x41 + 0` read the bytes as a number.
-pub(super) fn binary_literal_type(byte_len: usize, unsigned: bool) -> FieldType {
+pub fn binary_literal_type(byte_len: usize, unsigned: bool) -> FieldType {
     let mut ft = FieldType::new(FieldTypeCode::VarString);
     ft.set_flen(byte_len as i64 * 3);
     ft.set_decimal(0);

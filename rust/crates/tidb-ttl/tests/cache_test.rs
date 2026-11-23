@@ -1871,3 +1871,6 @@ fn test_table_eval_ttl_expire_time() {
     let tm = ttl_tbl2.eval_expire_time(&ctx, &se, &now).unwrap();
     assert_eq!(format_date_time(&tm), "2021-06-07 08:09:10");
 }
+
+// Go's test binary links `planner/core`, whose `init` sets `expression.BuildSimpleExpr`.
+tidb_planner_init::link!();

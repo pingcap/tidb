@@ -32,7 +32,7 @@
 
 use super::*;
 use tidb_exprctx::context::NoColumns;
-use crate::rewriter::{rewrite_expr, rewrite_expr_resolved, ColumnResolver};
+use crate::column_resolver::{rewrite_expr, rewrite_expr_resolved, ColumnResolver};
 use tidb_ast::{QueryStmt, SelectField, Stmt};
 use tidb_datatype::{BinaryJSON, FieldType, FieldTypeCode};
 

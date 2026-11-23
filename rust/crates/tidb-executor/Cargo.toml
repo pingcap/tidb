@@ -234,6 +234,7 @@ tidb-vardef = { path = "../tidb-vardef" }
 tracing = "0.1"
 
 [dev-dependencies]
+tidb-planner-init = { path = "../tidb-planner-init" }
 # The integration tests build their tables with the test-only in-process
 # CREATE TABLE (`run_create_table_on`), which `test-util` exposes.
 tidb-executor = { path = ".", features = ["test-util"] }

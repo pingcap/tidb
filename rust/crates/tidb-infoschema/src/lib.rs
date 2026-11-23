@@ -2272,3 +2272,6 @@ pub fn register_performance_schema(tables: fn() -> HashMap<String, Arc<TableEntr
     let _ = PERFORMANCE_SCHEMA_TABLES.set(tables);
 }
 
+// Go's test binary links `planner/core`, whose `init` sets `expression.BuildSimpleExpr`.
+#[cfg(test)]
+tidb_planner_init::link!();

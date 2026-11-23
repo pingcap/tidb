@@ -17,7 +17,7 @@ use crate::constant::Constant;
 use crate::constant_fold::{fold_constant_in_mode, ConstantFoldMode};
 use crate::expr_collation::{CollationInfo, ExprCollation};
 use crate::expression::Expression;
-use crate::rewriter::ColumnResolver;
+use crate::column_resolver::ColumnResolver;
 use crate::wrap_cast::{
     type_of, wrap_with_cast_as_decimal, wrap_with_cast_as_duration, wrap_with_cast_as_int,
     wrap_with_cast_as_json, wrap_with_cast_as_real, wrap_with_cast_as_string,
@@ -165,7 +165,7 @@ impl<R: ColumnResolver> BuildContext for ResolverBuildContext<'_, R> {
 }
 
 /// Go `functionClass`.
-pub(crate) trait FunctionClass: Sync {
+pub trait FunctionClass: Sync {
     /// Go `getFunction`: the builtin function over `args`. The argument
     /// count is verified by the caller (`verify_args_by_count`, Go
     /// `verifyArgs`).
@@ -178,14 +178,14 @@ pub(crate) trait FunctionClass: Sync {
 
 /// Go `newFunctionImpl`'s lookup: `funcs[funcName]`, then
 /// `extensionFuncs.Load(funcName)`.
-pub(crate) fn funcs_or_extension(name: &str) -> Option<&'static dyn FunctionClass> {
+pub fn funcs_or_extension(name: &str) -> Option<&'static dyn FunctionClass> {
     funcs(name).or_else(|| {
         crate::extension::extension_func(name).map(|(_, class)| class as &'static dyn FunctionClass)
     })
 }
 
 /// Go `funcs`, for the names whose class is ported.
-pub(crate) fn funcs(name: &str) -> Option<&'static dyn FunctionClass> {
+pub fn funcs(name: &str) -> Option<&'static dyn FunctionClass> {
     use crate::builtin_arithmetic::{
         ArithmeticDivideFunctionClass, ArithmeticIntDivideFunctionClass,
         ArithmeticMinusFunctionClass, ArithmeticModFunctionClass,
@@ -578,7 +578,7 @@ pub(crate) enum SigFields {
 
 /// Go `baseBuiltinFunc` with the signature's `pbCode`.
 #[derive(Debug)]
-pub(crate) struct BaseBuiltinFunc {
+pub struct BaseBuiltinFunc {
     /// Go `baseInSig` and its typed constant hash set.
     pub(crate) in_cache: Option<std::sync::Arc<crate::builtin_other::InHashSet>>,
     /// Go `args`: the arguments after their implicit casts.
@@ -870,7 +870,7 @@ pub(crate) fn new_base_builtin_func_with_field_types(
 /// Go `newBaseBuiltinFunc`: the builtin function over `args` as given,
 /// returning `tp`. Go's own caveat applies: the charset and collation of
 /// `tp` are left as the caller set them.
-pub(crate) fn new_base_builtin_func(
+pub fn new_base_builtin_func(
     ctx: &dyn BuildContext,
     func_name: &str,
     args: Vec<Expression>,

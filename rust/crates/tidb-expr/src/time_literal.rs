@@ -51,7 +51,7 @@
 //! literal folds to its formatted value here, and no per-row work remains.
 //!
 //! The parse runs in the SESSION's time zone, as Go's does: the rewriter
-//! hands it down through [`crate::rewriter::ColumnResolver::time_zone`], the
+//! hands it down through [`crate::column_resolver::ColumnResolver::time_zone`], the
 //! fold-time sibling of the [`crate::Columns::time_zone`] the cast path
 //! consults at eval time. A literal carrying an explicit offset
 //! (`'... 14:00:00+02:00'`) normalizes into that zone, and a fractional
@@ -121,7 +121,7 @@ fn date_pattern() -> &'static Regex {
 /// neither a fractional carry nor an explicit offset can reach the parse --
 /// but Go's `getFunction` passes its ctx location all the same, and so does
 /// this, so the two literals cannot drift apart.
-pub(crate) fn date_literal(
+pub fn date_literal(
     text: &str,
     zone: &tidb_datatype::SessionTimeZone,
     modes: tidb_datatype::DateModes,
@@ -183,7 +183,7 @@ pub(crate) fn unpadded_datetime_message(text: &str) -> Option<String> {
 /// The two codes are Go's own and are NOT interchangeable: the regex gate is
 /// `ErrWrongValue2` (1525) and the parse failure is `ErrWrongValue` (1292),
 /// which is why the recorded topic carries both against this one syntax.
-pub(crate) fn timestamp_literal(
+pub fn timestamp_literal(
     text: &str,
     zone: &tidb_datatype::SessionTimeZone,
     modes: tidb_datatype::DateModes,
@@ -231,7 +231,7 @@ fn duration_pattern() -> &'static Regex {
 /// error -- a leftover suffix or an out-of-range value included -- is its
 /// `ErrTruncatedWrongVal` (1292, `Truncated incorrect time value`), never a
 /// warning. The literal's own fsp (`types.GetFsp`) types the result.
-pub(crate) fn time_literal(
+pub fn time_literal(
     text: &str,
     zone: &tidb_datatype::SessionTimeZone,
     modes: tidb_datatype::DateModes,
@@ -281,7 +281,7 @@ pub(crate) fn time_literal(
 ///
 /// This used to hardcode `chrono::Utc` -- the dropped-Context seam -- and
 /// answered the UTC row for every session. The zone now arrives from
-/// [`crate::rewriter::ColumnResolver::time_zone`], the fold-time sibling of
+/// [`crate::column_resolver::ColumnResolver::time_zone`], the fold-time sibling of
 /// the [`crate::Columns::time_zone`] the eval-time cast already consults, so
 /// the same statement rounds identically whichever of the two paths builds
 /// it. An explicit `+HH:MM` offset in the literal likewise normalizes into

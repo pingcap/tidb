@@ -18,7 +18,7 @@ use tidb_ast::CiString;
 use tidb_datatype::{Datum, DatumKind, FieldType, FieldTypeCode, FieldTypeFlags};
 use tidb_exprctx::{PlanColumnIdAllocator, SimplePlanColumnIdAllocator};
 use tidb_expr::expression::Expression;
-use tidb_expr::rewriter::NoResolver;
+use tidb_expr::column_resolver::NoResolver;
 use tidb_expr::simple_expr::{build_simple_expr, parse_simple_expr, BuildOptions, ColumnInfoSource};
 use tidb_expr::fold_constant_in_mode;
 use tidb_exprctx::NoColumns;
@@ -28,7 +28,7 @@ use tidb_exprctx::NoColumns;
 /// the NULL flag without substituting constants).
 struct FoldResolver;
 
-impl tidb_expr::rewriter::ColumnResolver for FoldResolver {
+impl tidb_expr::column_resolver::ColumnResolver for FoldResolver {
     fn resolve(&self, _path: &[String]) -> Option<(usize, FieldType, i64)> {
         None
     }

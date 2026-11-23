@@ -43,7 +43,7 @@ pub enum GlCmpStringMode {
 
 /// Go's `resolveType4Extremum` answer for one GREATEST/LEAST call: which of
 /// the eight signatures `getFunction` built. Produced by
-/// `crate::rewriter::result_type::gl_signature`.
+/// `crate::result_type::gl_signature`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct GlSignature {
     /// Go `argTp` -- `aggregateType(args).EvalType()`, forced to
@@ -1393,7 +1393,7 @@ mod tests {
         // Go `mergeFieldType`: a vector and a string aggregate to VARCHAR, so
         // `resolveType4Extremum` picks the string signature.
         let rewritten =
-            crate::rewriter::rewrite_expr(&expression).expect("vector extremum rewrite");
+            crate::column_resolver::rewrite_expr(&expression).expect("vector extremum rewrite");
         assert_eq!(
             rewritten
                 .static_type()

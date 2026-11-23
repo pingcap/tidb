@@ -115,7 +115,7 @@ use crate::constant_fold::ConstantFoldMode;
 use tidb_exprctx::PlanColumnIdAllocator;
 use crate::expression::Expression;
 use crate::field_name::{find_field_name, NonUniqueFieldName};
-use crate::rewriter::{rewrite_expr_resolved, ColumnResolver};
+use crate::column_resolver::{rewrite_expr_resolved, ColumnResolver};
 use crate::schema::Schema;
 use crate::EvalError;
 
@@ -542,7 +542,7 @@ pub fn build_simple_expr(
 ///
 /// A character string cast to the binary charset becomes a VARSTRING, not a
 /// fixed-length BINARY: zero padding would change what it compares equal to.
-pub(crate) fn build_cast_collation_function(
+pub fn build_cast_collation_function(
     ctx: &dyn crate::builtin::BuildContext,
     expr: &Expression,
     ec: &crate::expr_collation::ExprCollation,
@@ -807,7 +807,7 @@ mod tests {
     use tidb_exprctx::context::NoColumns;
     use tidb_exprctx::SimplePlanColumnIdAllocator;
     use crate::expression::Constant;
-    use crate::rewriter::NoResolver;
+    use crate::column_resolver::NoResolver;
     use crate::scalar_function::ScalarFunction;
     use tidb_chunk::chunk::Chunk;
     use tidb_datatype::{Datum, FieldTypeFlags};

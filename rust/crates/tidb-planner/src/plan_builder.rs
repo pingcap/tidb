@@ -220,7 +220,8 @@ use tidb_expr::constant::Constant;
 
 use tidb_expr::expr_util::normal_form::into_cnf_items;
 use tidb_expr::expression::Expression;
-use tidb_expr::rewriter::{rewrite_expr_resolved, ColumnResolver};
+use crate::expression_rewriter::leave::rewrite_expr_resolved;
+use tidb_expr::column_resolver::ColumnResolver;
 use tidb_expr::schema::Schema;
 use tidb_exprctx::Columns;
 use tidb_exprctx::EvalError;
@@ -1049,7 +1050,7 @@ struct MatchAgainstScope<'a> {
     native_viable_column: &'a dyn Fn(&[String]) -> bool,
 }
 
-impl tidb_expr::rewriter::MatchAgainstPlanCtx for PlanScopeResolver<'_> {
+impl tidb_expr::column_resolver::MatchAgainstPlanCtx for PlanScopeResolver<'_> {
     fn in_direct_match_boolean_context(&self, node: &Expr) -> bool {
         self.match_against_scope
             .as_ref()
@@ -1446,7 +1447,7 @@ impl ColumnResolver for PlanScopeResolver<'_> {
     fn roll_expand_grouping(
         &self,
         args: &[Expression],
-    ) -> Result<tidb_expr::rewriter::RollExpandGrouping, EvalError> {
+    ) -> Result<tidb_expr::column_resolver::RollExpandGrouping, EvalError> {
         let expand = self.block_expand.ok_or(EvalError::InvalidGroupFuncUse)?;
         expand.roll_expand_grouping(args)
     }
@@ -1504,7 +1505,7 @@ impl ColumnResolver for PlanScopeResolver<'_> {
         self.warning_context
     }
 
-    fn match_against_plan_ctx(&self) -> Option<&dyn tidb_expr::rewriter::MatchAgainstPlanCtx> {
+    fn match_against_plan_ctx(&self) -> Option<&dyn tidb_expr::column_resolver::MatchAgainstPlanCtx> {
         self.match_against_scope.as_ref().map(|_| self as _)
     }
 

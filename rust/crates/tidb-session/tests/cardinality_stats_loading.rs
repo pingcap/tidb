@@ -165,3 +165,6 @@ fn datetime_range_overflow_survives_async_statistics_load() {
     assert!(!queued());
     assert!(rows(&mut session, sql).is_empty());
 }
+
+// Go's test binary links `planner/core`, whose `init` sets `expression.BuildSimpleExpr`.
+tidb_planner_init::link!();

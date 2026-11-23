@@ -35,4 +35,5 @@ tidb-mysql = { path = "../tidb-mysql" }
 tidb-txnkv = { path = "../tidb-txnkv" }
 
 [dev-dependencies]
+tidb-planner-init = { path = "../tidb-planner-init" }
 chrono-tz = { workspace = true }

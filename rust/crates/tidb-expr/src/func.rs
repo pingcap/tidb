@@ -53,7 +53,7 @@ pub(crate) fn ensure_benchmark_eval_type(
 /// a backquoted identifier may contain a dot, but no identifier can contain a
 /// NUL byte. That keeps the chunk path handing `Columns::sequence_nextval` the
 /// SAME `&[String]` the row path hands it straight from the parser.
-pub(crate) const SEQUENCE_PATH_SEPARATOR: char = '\0';
+pub const SEQUENCE_PATH_SEPARATOR: char = '\0';
 
 pub(crate) fn sequence_path(value: &Datum) -> Result<Vec<String>, EvalError> {
     match value {

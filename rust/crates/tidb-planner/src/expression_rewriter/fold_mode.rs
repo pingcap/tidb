@@ -12,18 +12,19 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::{ColumnResolver, ConstantFoldMode};
-use crate::expression::Expression;
+use tidb_expr::column_resolver::ColumnResolver;
+use tidb_expr::constant_fold::ConstantFoldMode;
+use tidb_expr::expression::Expression;
 use tidb_datatype::{FieldType, SessionTimeZone};
 
 /// A child-scope resolver carrying Go's expression-rewriter fold counters.
-pub(super) struct FoldModeResolver<'a> {
+pub(crate) struct FoldModeResolver<'a> {
     base: &'a dyn ColumnResolver,
     mode: ConstantFoldMode,
 }
 
 impl<'a> FoldModeResolver<'a> {
-    pub(super) fn new(base: &'a dyn ColumnResolver, requested: ConstantFoldMode) -> Self {
+    pub(crate) fn new(base: &'a dyn ColumnResolver, requested: ConstantFoldMode) -> Self {
         let mode = match (base.fold_mode(), requested) {
             (ConstantFoldMode::Disabled, _) | (_, ConstantFoldMode::Disabled) => {
                 ConstantFoldMode::Disabled
@@ -34,7 +35,7 @@ impl<'a> FoldModeResolver<'a> {
         Self { base, mode }
     }
 
-    pub(super) fn for_function(base: &'a dyn ColumnResolver, name: &str) -> Self {
+    pub(crate) fn for_function(base: &'a dyn ColumnResolver, name: &str) -> Self {
         let mode = match name {
             "benchmark" => ConstantFoldMode::Disabled,
             "if" | "ifnull" | "coalesce" | "interval" => ConstantFoldMode::Try,
@@ -60,11 +61,11 @@ impl ColumnResolver for FoldModeResolver<'_> {
     fn roll_expand_grouping(
         &self,
         args: &[Expression],
-    ) -> Result<super::RollExpandGrouping, crate::EvalError> {
+    ) -> Result<super::RollExpandGrouping, tidb_exprctx::EvalError> {
         self.base.roll_expand_grouping(args)
     }
 
-    fn param_value(&self, order: usize) -> Result<tidb_datatype::Datum, crate::EvalError> {
+    fn param_value(&self, order: usize) -> Result<tidb_datatype::Datum, tidb_exprctx::EvalError> {
         self.base.param_value(order)
     }
 
@@ -78,7 +79,7 @@ impl ColumnResolver for FoldModeResolver<'_> {
     /// to sit under a function -- Go's `toColumn` hands back the schema column
     /// itself at every depth. Callers that read `VirtualExpr` off a built
     /// expression (`pkg/ddl/copr`'s `GetCondition`) depend on this.
-    fn resolve_column(&self, path: &[String]) -> Option<crate::column::Column> {
+    fn resolve_column(&self, path: &[String]) -> Option<tidb_expr::column::Column> {
         self.base.resolve_column(path)
     }
 
@@ -114,7 +115,7 @@ impl ColumnResolver for FoldModeResolver<'_> {
     fn resolve_default_in_query(
         &self,
         path: &[String],
-    ) -> Option<Result<Expression, crate::EvalError>> {
+    ) -> Option<Result<Expression, tidb_exprctx::EvalError>> {
         self.base.resolve_default_in_query(path)
     }
 
@@ -169,7 +170,7 @@ impl ColumnResolver for FoldModeResolver<'_> {
     fn eval_constant(
         &self,
         expression: &Expression,
-    ) -> Result<tidb_datatype::Datum, crate::EvalError> {
+    ) -> Result<tidb_datatype::Datum, tidb_exprctx::EvalError> {
         self.base.eval_constant(expression)
     }
 }

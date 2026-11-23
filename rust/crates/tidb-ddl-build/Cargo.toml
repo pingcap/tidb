@@ -65,6 +65,7 @@ tidb-util = { path = "../tidb-util" }
 tidb-vardef = { path = "../tidb-vardef" }
 
 [dev-dependencies]
+tidb-planner-init = { path = "../tidb-planner-init" }
 tidb-exprstatic = { path = "../tidb-exprstatic" }
 
 [lints]

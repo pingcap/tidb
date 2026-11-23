@@ -24,7 +24,7 @@ use std::cell::RefCell;
 use super::{chunk_e, e};
 use crate::builtin_compare::refine_comparisons;
 use crate::expression::Expression;
-use crate::rewriter::{rewrite_expr_resolved, ColumnResolver};
+use crate::column_resolver::{rewrite_expr_resolved, ColumnResolver};
 use crate::{Columns, Datum};
 use tidb_ast::{QueryStmt, SelectField, Stmt};
 use tidb_datatype::{FieldType, FieldTypeCode, FieldTypeFlags, SessionTimeZone};

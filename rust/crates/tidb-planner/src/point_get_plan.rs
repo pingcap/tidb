@@ -20,7 +20,8 @@ use tidb_ast::{JoinNode, SelectField};
 use tidb_datatype::{Datum, FieldType};
 use tidb_expr::column::Column;
 use tidb_expr::expression::Expression;
-use tidb_expr::rewriter::{rewrite_expr_resolved, ColumnResolver};
+use crate::expression_rewriter::leave::rewrite_expr_resolved;
+use tidb_expr::column_resolver::ColumnResolver;
 use tidb_expr::schema::Schema;
 use tidb_infoschema::{split_table_path, SessionExtendedInfoSchema, TableEntry};
 use crate::plan_builder::field_name::default_field_display_name;
@@ -960,7 +961,7 @@ fn batch_point_constant(
 ) -> Option<(Datum, Option<usize>)> {
     let Ok(Expression::Constant(constant)) = rewrite_expr_resolved(
         item,
-        &tidb_expr::rewriter::ZonedNoResolver::new(zone.clone()),
+        &tidb_expr::column_resolver::ZonedNoResolver::new(zone.clone()),
     ) else {
         return None;
     };
@@ -1529,7 +1530,7 @@ fn point_equal_pairs_visiting(
             } else {
                 let Ok(value) = rewrite_expr_resolved(
                     value_expr,
-                    &tidb_expr::rewriter::ZonedNoResolver::new(zone.clone()),
+                    &tidb_expr::column_resolver::ZonedNoResolver::new(zone.clone()),
                 ) else {
                     return false;
                 };

@@ -27,6 +27,7 @@ tidb-txnkv = { path = "../tidb-txnkv" }
 tidb-vardef = { path = "../tidb-vardef" }
 
 [dev-dependencies]
+tidb-planner-init = { path = "../tidb-planner-init" }
 hex = "0.4"
 serde_json = { workspace = true }
 tidb-meta = { path = "../tidb-meta" }

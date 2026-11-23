@@ -237,7 +237,7 @@ mod tests {
             else {
                 panic!("no field");
             };
-            let Ok(mut condition) = tidb_expr::rewriter::rewrite_expr_resolved(expr, &resolver)
+            let Ok(mut condition) = tidb_expr::column_resolver::rewrite_expr_resolved(expr, &resolver)
             else {
                 continue;
             };
@@ -295,7 +295,7 @@ mod tests {
                 panic!("no field");
             };
             let mut condition =
-                tidb_expr::rewriter::rewrite_expr_resolved(expr, &resolver).expect("rewrites");
+                tidb_expr::column_resolver::rewrite_expr_resolved(expr, &resolver).expect("rewrites");
             tidb_expr::scalar_function::into_coprocessor_form(&mut condition);
             let zone = tidb_datatype::SessionTimeZone::utc();
             assert!(

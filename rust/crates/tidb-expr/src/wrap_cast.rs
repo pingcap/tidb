@@ -40,7 +40,7 @@
 //!   `collationInfo`. Go's `expr.CharsetAndCollation()` returns the derived
 //!   collation, which for an EXPLICIT-coercibility node (a `COLLATE` clause)
 //!   is exactly what the node's own field type carries in this crate, since
-//!   [`crate::rewriter`] writes the derived collation back into the type.
+//!   the planner's expression rewriter writes the derived collation back into the type.
 //! - **`WrapWithCastAsInt`'s ENUM flag mutation is applied to a CLONE.** Go
 //!   deep-clones a `*Column`/`*CorrelatedColumn` before adding
 //!   `EnumSetAsIntFlag` and mutates the shared field type in place for every

@@ -19,7 +19,7 @@ use tidb_datatype::{Datum, FieldType};
 #[allow(unused_imports)]
 use tidb_expr::expression::Expression;
 #[allow(unused_imports)]
-use tidb_expr::rewriter::ColumnResolver;
+use tidb_expr::column_resolver::ColumnResolver;
 #[allow(unused_imports)]
 use tidb_hack::GoCaseCompare;
 #[allow(unused_imports)]
@@ -95,7 +95,7 @@ fn chain(stored: bool) -> Vec<Slot> {
         let resolver =
             TableColumnResolver::new(&names, &types, tidb_datatype::SessionTimeZone::utc());
         let expr = parse_generated_expr(text);
-        let built = tidb_expr::rewriter::rewrite_expr_resolved(&expr, &resolver).unwrap();
+        let built = tidb_expr::column_resolver::rewrite_expr_resolved(&expr, &resolver).unwrap();
         GeneratedColumn {
             expr_text: text.to_owned(),
             stored,
@@ -182,7 +182,7 @@ fn an_unknown_dependency_is_reported_by_name() {
     let resolver =
         TableColumnResolver::new(&names, &types, tidb_datatype::SessionTimeZone::utc());
     let expr = parse_generated_expr("zz + 1");
-    assert!(tidb_expr::rewriter::rewrite_expr_resolved(&expr, &resolver).is_err());
+    assert!(tidb_expr::column_resolver::rewrite_expr_resolved(&expr, &resolver).is_err());
     assert_eq!(resolver.missing_name().as_deref(), Some("zz"));
 }
 
@@ -193,6 +193,6 @@ fn dependencies_are_the_offsets_the_expression_reads() {
     let resolver =
         TableColumnResolver::new(&names, &types, tidb_datatype::SessionTimeZone::utc());
     let expr = parse_generated_expr("c + a");
-    tidb_expr::rewriter::rewrite_expr_resolved(&expr, &resolver).unwrap();
+    tidb_expr::column_resolver::rewrite_expr_resolved(&expr, &resolver).unwrap();
     assert_eq!(resolver.dependencies(), vec![2, 0]);
 }

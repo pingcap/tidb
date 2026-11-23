@@ -20,7 +20,7 @@ use super::*;
 use crate::builtin_registry::verify_args_by_count;
 use crate::expression::Expression;
 use crate::math_fn::conv_valid_prefix;
-use crate::rewriter::result_type::builtin_return_type;
+use crate::result_type::builtin_return_type;
 use crate::scalar_function::ScalarFunction;
 use tidb_ast::{CiString, QueryStmt, SelectField, Stmt};
 use tidb_datatype::{FieldType, FieldTypeCode as C, FieldTypeFlags, MySqlDuration, SessionTimeZone, Time};
@@ -137,7 +137,7 @@ impl Columns for WarnCountCtx {
 /// flag or a declared width travels there, never on a `Datum`.
 fn chunk_row_value(sql: &str, columns: &[(&str, FieldType, Datum)]) -> String {
     struct Resolver(Vec<(String, FieldType)>);
-    impl crate::rewriter::ColumnResolver for Resolver {
+    impl crate::column_resolver::ColumnResolver for Resolver {
         fn resolve(&self, path: &[String]) -> Option<(usize, FieldType, i64)> {
             let name = path.last()?;
             let index = self.0.iter().position(|(n, _)| n == name)?;
@@ -165,7 +165,7 @@ fn chunk_row_value(sql: &str, columns: &[(&str, FieldType, Datum)]) -> String {
     let SelectField::Expr { expr, .. } = &select.fields[0] else {
         panic!("no field expression")
     };
-    let rewritten = match crate::rewriter::rewrite_expr_resolved(expr, &resolver) {
+    let rewritten = match crate::column_resolver::rewrite_expr_resolved(expr, &resolver) {
         Ok(rewritten) => rewritten,
         Err(err) => return format!("{err:?}"),
     };
@@ -213,7 +213,7 @@ fn call(name: &str, vals: &[Datum]) -> Datum {
 fn crc32_gbk_charset_connection_rows() {
     struct GbkSession;
 
-    impl crate::rewriter::ColumnResolver for GbkSession {
+    impl crate::column_resolver::ColumnResolver for GbkSession {
         fn resolve(&self, _: &[String]) -> Option<(usize, FieldType, i64)> {
             None
         }
@@ -248,7 +248,7 @@ fn crc32_gbk_charset_connection_rows() {
         let SelectField::Expr { expr, .. } = &select.fields[0] else {
             panic!("expected expression")
         };
-        let rewritten = crate::rewriter::rewrite_expr_resolved(expr, &GbkSession).expect("rewrite");
+        let rewritten = crate::column_resolver::rewrite_expr_resolved(expr, &GbkSession).expect("rewrite");
         let mut chunk = tidb_chunk::chunk::Chunk::new_empty_chunk(&[]);
         chunk.set_num_virtual_rows(1);
         rewritten.eval(&GbkSession, chunk.get_row(0))

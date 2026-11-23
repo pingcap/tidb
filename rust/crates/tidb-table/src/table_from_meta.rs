@@ -480,7 +480,7 @@ pub fn table_from_meta(
             };
             // A default that names a column loads, and fails when a row needs
             // it (Go answers 1054 at INSERT).
-            let rewritten = match tidb_expr::rewriter::rewrite_expr(expr) {
+            let rewritten = match tidb_expr::column_resolver::rewrite_expr(expr) {
                 Ok(expression) => Ok(expression),
                 Err(error @ tidb_exprctx::EvalError::UnknownColumnInClause(..)) => Err(error),
                 Err(error) => {

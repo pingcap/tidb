@@ -188,7 +188,7 @@ fn chunk_rewrite(expr: &str) -> Result<crate::expression::Expression, crate::Eva
     let SelectField::Expr { expr, .. } = &select.fields[0] else {
         panic!("expected an expression field")
     };
-    crate::rewriter::rewrite_expr(expr)
+    crate::column_resolver::rewrite_expr(expr)
 }
 
 // ---------------------------------------------------------------------------
@@ -868,7 +868,7 @@ fn test_to_base64_gbk_session_rows() {
     // the process-default UTF-8 resolver used by `chunk_e`.
     struct GbkSession;
 
-    impl crate::rewriter::ColumnResolver for GbkSession {
+    impl crate::column_resolver::ColumnResolver for GbkSession {
         fn resolve(&self, _path: &[String]) -> Option<(usize, FieldType, i64)> {
             None
         }
@@ -903,7 +903,7 @@ fn test_to_base64_gbk_session_rows() {
         let SelectField::Expr { expr, .. } = &select.fields[0] else {
             panic!("expected expression")
         };
-        let rewritten = crate::rewriter::rewrite_expr_resolved(expr, &GbkSession).unwrap();
+        let rewritten = crate::column_resolver::rewrite_expr_resolved(expr, &GbkSession).unwrap();
         let mut chunk = tidb_chunk::chunk::Chunk::new_empty_chunk(&[]);
         chunk.set_num_virtual_rows(1);
         rewritten.eval(&GbkSession, chunk.get_row(0)).unwrap()
@@ -1658,7 +1658,7 @@ fn test_lock() {
         let SelectField::Expr { expr, .. } = &select.fields[0] else {
             panic!("expr")
         };
-        crate::rewriter::rewrite_expr(expr)
+        crate::column_resolver::rewrite_expr(expr)
             .expect("rewrites")
             .eval(&LockSession, tidb_chunk::row::Row::empty())
             .unwrap()

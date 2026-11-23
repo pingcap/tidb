@@ -37,7 +37,7 @@ fn over_columns(sql: &str, columns: &[(&str, FieldType, Datum)]) -> String {
     use tidb_ast::{QueryStmt, SelectField, Stmt};
 
     struct Resolver(Vec<(String, FieldType)>);
-    impl crate::rewriter::ColumnResolver for Resolver {
+    impl crate::column_resolver::ColumnResolver for Resolver {
         fn resolve(&self, path: &[String]) -> Option<(usize, FieldType, i64)> {
             let name = path.last()?;
             let index = self.0.iter().position(|(n, _)| n == name)?;
@@ -66,7 +66,7 @@ fn over_columns(sql: &str, columns: &[(&str, FieldType, Datum)]) -> String {
     let SelectField::Expr { expr, .. } = &select.fields[0] else {
         panic!("no field expression")
     };
-    let rewritten = match crate::rewriter::rewrite_expr_resolved(expr, &resolver) {
+    let rewritten = match crate::column_resolver::rewrite_expr_resolved(expr, &resolver) {
         Ok(rewritten) => rewritten,
         Err(err) => return format!("{err:?}"),
     };

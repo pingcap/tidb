@@ -138,7 +138,7 @@
 //! family. They need Go's argument-driven width -- a string builtin copies
 //! `args[0]`'s flen onto its result and `baseBuiltinFunc.getRetTp` re-types a
 //! wide one as MEDIUM/LONG blob, see
-//! [`tidb_expr::rewriter`]'s result-type table -- and all three now answer
+//! [`tidb_expr::result_type`]'s result-type table -- and all three now answer
 //! Go's code:
 //!
 //! ```text
@@ -688,7 +688,7 @@ pub fn build_hidden_columns_with_like_default_escape(
             like_default_escape,
         )
         .with_source_table(table);
-        let built_expr = match tidb_expr::rewriter::rewrite_expr_resolved(expr, &resolver) {
+        let built_expr = match tidb_expr::column_resolver::rewrite_expr_resolved(expr, &resolver) {
             Ok(built_expr) => built_expr,
             Err(error) => {
                 return Err(match (resolver.missing_name(), error) {

@@ -1,0 +1,21 @@
+[package]
+name = "tidb-planner-init"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Go's package init for planner/core in binaries that do not call tidb_planner::init themselves (test binaries)."
+
+[lints.rust]
+missing_docs = "warn"
+# The load-time initializer is a static in the platform's init-function
+# section, which Rust marks unsafe. Keep this exception inside this crate; the
+# workspace remains `forbid`.
+unsafe_code = "allow"
+
+[lints.clippy]
+all = "warn"
+
+[dependencies]
+tidb-planner = { path = "../tidb-planner" }

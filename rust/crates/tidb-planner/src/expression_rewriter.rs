@@ -32,9 +32,9 @@
 //! struct. The EXPRESSION half — `ast.ExprNode` to `expression.Expression`,
 //! i.e. `Leave`'s `binaryOpToExpression` / `caseToExpression` /
 //! `inToExpression` / `funcCallToExpression` / `betweenToExpression` and their
-//! ~40 kin — is ALREADY PORTED in [`tidb_expr::rewriter`], and is REUSED, not
-//! restated: nothing in this module rebuilds an AST node into an
-//! `Expression`.
+//! ~40 kin — is [`leave`], which is also `expression.BuildSimpleExpr` for the
+//! lower layers ([`crate::init`]): nothing else in this module rebuilds an AST
+//! node into an `Expression`.
 //!
 //! What only exists once a PLAN TREE exists is here:
 //!
@@ -2511,6 +2511,8 @@ fn resolve_in_join<'p>(
     let (column, name) = join.resolve_redundant_column(col, self_schema, node.output_names())?;
     Some((column, name?))
 }
+
+pub mod leave;
 
 #[cfg(test)]
 mod tests;

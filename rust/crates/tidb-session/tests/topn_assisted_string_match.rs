@@ -203,3 +203,6 @@ fn topn_assisted_string_match_estimates_match_go_in_both_collation_modes() {
     run_topn_fixture(true, &input, &output);
     run_collation_column_fixture(&input, &output);
 }
+
+// Go's test binary links `planner/core`, whose `init` sets `expression.BuildSimpleExpr`.
+tidb_planner_init::link!();

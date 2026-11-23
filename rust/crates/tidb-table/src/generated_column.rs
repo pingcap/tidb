@@ -22,7 +22,7 @@ use std::cell::{Cell, RefCell};
 
 use tidb_datatype::{Datum, FieldType};
 use tidb_expr::expression::Expression;
-use tidb_expr::rewriter::ColumnResolver;
+use tidb_expr::column_resolver::ColumnResolver;
 use tidb_hack::GoCaseCompare;
 
 /// What makes a column generated: Go `ColumnInfo.GeneratedExprString` /
@@ -115,7 +115,7 @@ impl GeneratedColumn {
         // The dependency namespace is derived from the EXPRESSION's first-seen
         // order, so re-resolving the same AST reproduces the same one and the
         // rebuilt `Column` indexes stay the ones `dependencies` names.
-        tidb_expr::rewriter::rewrite_expr_resolved(&self.source, &resolver)
+        tidb_expr::column_resolver::rewrite_expr_resolved(&self.source, &resolver)
             .map(std::borrow::Cow::Owned)
             .map_err(|_| ())
     }
@@ -492,7 +492,7 @@ pub fn resolve_generated_expr(
         zone.clone(),
         like_default_escape,
     );
-    let expr = tidb_expr::rewriter::rewrite_expr_resolved(expression, &resolver)
+    let expr = tidb_expr::column_resolver::rewrite_expr_resolved(expression, &resolver)
         .map_err(|error| rewrite_error(error, resolver.missing_name()))?;
     if let Some(name) = resolver.missing_name() {
         return Err(GeneratedDdlError::UnknownDependency(name));

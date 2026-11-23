@@ -40,3 +40,6 @@ mod cluster_config_source;
 mod cluster_peer_source;
 mod tikv_scan_dag_lowering_source;
 mod txn_summary_source;
+
+// Go's test binary links `planner/core`, whose `init` sets `expression.BuildSimpleExpr`.
+tidb_planner_init::link!();

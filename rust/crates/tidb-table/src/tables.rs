@@ -2329,7 +2329,7 @@ impl TableCommon {
             like_default_escape,
         );
         let expr =
-            tidb_expr::rewriter::rewrite_expr_resolved(expression, &resolver).map_err(|error| {
+            tidb_expr::column_resolver::rewrite_expr_resolved(expression, &resolver).map_err(|error| {
                 KvTableError::CheckConstraint {
                     name: name.to_owned(),
                     detail: format!("{error:?}"),
@@ -2385,7 +2385,7 @@ impl TableCommon {
                         ctx.time_zone(),
                         ctx.like_default_escape(),
                     );
-                rebuilt = tidb_expr::rewriter::rewrite_expr_resolved(&constraint.source, &resolver)
+                rebuilt = tidb_expr::column_resolver::rewrite_expr_resolved(&constraint.source, &resolver)
                     .map_err(|error| KvTableError::CheckConstraint {
                         name: constraint.name.clone(),
                         detail: format!("{error:?}"),

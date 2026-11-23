@@ -208,6 +208,7 @@ tidb-syssession = { path = "../tidb-syssession" }
 serde = { workspace = true }
 
 [dev-dependencies]
+tidb-planner-init = { path = "../tidb-planner-init" }
 tikv-client = { workspace = true, features = ["failpoints"] }
 flate2 = "1"
 tidb-sem-v2 = { path = "../tidb-sem-v2" }

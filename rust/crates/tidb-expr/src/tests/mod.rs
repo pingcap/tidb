@@ -19,6 +19,7 @@ use tidb_ast::{QueryStmt, SelectField, Stmt};
 
 mod advisory_get_lock_integration_source;
 mod aggregation_arithmetic_cast_source;
+mod benchmark_source;
 mod binary_string_signature;
 mod builtin_info_json_math_source;
 mod builtin_math_misc_op_source;
@@ -57,6 +58,7 @@ mod go_time_values;
 mod hash_group_key_codec_matrix_source;
 mod helper_current_timestamp_source;
 mod ilike_info_cast_source;
+mod info_metadata_source;
 mod in_func_decimal_collation_source;
 mod json_merge_patch_integration_source;
 mod math;
@@ -222,7 +224,7 @@ pub(super) fn chunk_e_with(expr: &str, ctx: &impl Columns) -> String {
     let SelectField::Expr { expr, .. } = &s.fields[0] else {
         panic!("no expr")
     };
-    let rewritten = match crate::rewriter::rewrite_expr(expr) {
+    let rewritten = match crate::column_resolver::rewrite_expr(expr) {
         Ok(rewritten) => rewritten,
         Err(err) => return format!("{err:?}"),
     };
@@ -2184,7 +2186,7 @@ fn weight_string_and_load_file_source_vectors() {
     // collation rather than the temporal type's binary metadata.
     // Go wraps the cast when the class builds the function, so the
     // connection collation is the build context's.
-    impl crate::rewriter::ColumnResolver for GeneralCi {
+    impl crate::column_resolver::ColumnResolver for GeneralCi {
         fn resolve(&self, _: &[String]) -> Option<(usize, tidb_datatype::FieldType, i64)> {
             None
         }
@@ -2208,7 +2210,7 @@ fn weight_string_and_load_file_source_vectors() {
     let SelectField::Expr { expr, .. } = &select.fields[0] else {
         panic!("no expr")
     };
-    let rewritten = crate::rewriter::rewrite_expr_resolved(expr, &GeneralCi).expect("rewrite");
+    let rewritten = crate::column_resolver::rewrite_expr_resolved(expr, &GeneralCi).expect("rewrite");
     let mut chunk = tidb_chunk::chunk::Chunk::new_empty_chunk(&[]);
     chunk.set_num_virtual_rows(1);
     assert_eq!(

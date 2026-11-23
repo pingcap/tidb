@@ -57,3 +57,6 @@ pub mod types;
 pub use ranger::{range_single_col_to_string, ranges_to_string};
 pub use types::{HasFullRange, Range, Ranges};
 
+// Go's test binary links `planner/core`, whose `init` sets `expression.BuildSimpleExpr`.
+#[cfg(test)]
+tidb_planner_init::link!();

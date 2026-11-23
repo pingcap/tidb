@@ -53,6 +53,8 @@ tidb-mysql = { path = "../tidb-mysql" }
 tidb-stats = { path = "../tidb-stats" }
 tidb-tablecodec = { path = "../tidb-tablecodec" }
 
+[dev-dependencies]
+tidb-planner-init = { path = "../tidb-planner-init" }
 
 [lints]
 workspace = true

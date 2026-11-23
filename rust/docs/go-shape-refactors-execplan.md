@@ -15,19 +15,25 @@ The symbol-level audit of 2026-11-23 (`rust/docs/parity/current-audit/structural
 - [x] (2026-11-23) T06: Go's `PartitionProcessor` and pruners live in `tidb-planner-core-rule/src/rule_partition_processor/`; `DataSource.table` is Go's `ds.Table`; the executor's pruning callback is gone.
 - [ ] T05 (partly): done: `optimize`'s rounds (`planner_optimize.rs`), `PlanBuilder.Init`'s session reads, `TryFastPlan`'s global-index bypass, `CheckPrivilege` / `CheckTableLock` (`privilege_check.rs`), `stats.GetStatsTable` (`stats/stats_table.rs`). Remaining: the statement entry (`Optimize`, `optimizeNoCache`), `buildLogicalPlan`'s catalog and evaluator wiring (`driver/planner_bridge.rs`), `OptimizeForForeignKeyCascade`, `queryPlanCost`, `genBriefPlanWithSCtx`, `calculatePlanDigestFunc`.
 - [ ] T07 (partly): done: `pb_to_plan.rs`, the non-prepared cacheability walk, `RequestLoadStats` / `SyncWaitStatsLoad`, the plan-cache key side (`plan_cache_utils.rs`). Remaining: the prepared statement and cached plan values (`PreparedSelectPlan`, `CachedSelectPlan`, `CachedDmlPlan`, `SessionPlanCache`).
-- [ ] T08: the AST expression rewriter in `tidb-expr` (Go's is `pkg/planner/core/expression_rewriter.go`, reached from lower layers through `expression.BuildSimpleExpr`).
+- [x] (2026-11-24) T08: `expressionRewriter`'s AST half is `tidb-planner/src/expression_rewriter/leave.rs`; lower crates reach it through `tidb_expr::column_resolver::rewrite_expr_resolved`, the `expression.BuildSimpleExpr` function variable that `tidb_planner::init` sets (server `main`, every `Session`, and test binaries through `tidb_planner_init::link!()`).
 - [ ] T10: `pkg/executor` code implemented as `Session` methods in `tidb-session`.
+- [ ] T21: Go's `preprocessor` as one Rust owner in `tidb-planner` (its checks now sit in session dispatch, ddl-build, `preprocess.rs` and the rewriter's NAME_CONST check).
 - [ ] T14, then T01: a transaction's writes in the store transaction's MemDB (`LazyTxn`), then pipelined DML over it.
-- [ ] T16-T20 (duplicates and executor shapes found after the audit): the unused warning-handler port, the second row decoder, index merge's partial workers, the `kv.TiDB` table reader, IMPORT INTO's URI handling.
+- [x] (2026-11-24) T16-T20 (duplicates and executor shapes found after the audit): the unused warning-handler port, the second row decoder, index merge's partial workers, the `kv.TiDB` table reader, IMPORT INTO's URI handling.
 - [ ] Re-verify on a live cluster the realtikv transaction tests the retired realtikv-txn plan last left failing (2026-11-16): the stale-read group (`test_stale_*`, `test_staleness_and_history_read`, `test_stmt_ctx_stale_flag`, `test_validate_read_only_in_staleness_transaction`), `test_replica_read_effect_scope`, `test_stale_read_no_backoff`, `test_stale_select`, pessimistictest `test_plan_cache_schema_change` and `test_statements_interrupted_on_disconnect`; register any that still fail.
 
 ## Surprises & Discoveries
+
+- Untested by the scoped gate and found while moving T08 (2026-11-24): `difftest-result-tests` `expr_diff` fails on `name_const('test_float', cast(3.14159 as double))` since `33bb8315173` (Go checks NAME_CONST's arguments in `preprocess.go`, not in the rewriter); `table_diff` once returned `1;3` for `select 1 union all select 2 union all select 3 limit 2`; `tidb-mvservice` `test_task_executor_backpressure` hung on its mock clock under load; `tidb-exprstatic`'s tests did not compile after T09. `difftest-result-tests` `query_diff` does not finish in 25 min, at the pushed tip as with T08: each topic's mock-store shutdown spends about a minute in `catalog_watch::Syncer::shutdown` joining a PD-client thread (`init_global_var_from_system_db` dropping the DDL session pool).
 
 - The nextest LEAKs seen in several gates are sibling test processes inheriting another test's stderr pipe (macOS `pipe()` + `FD_CLOEXEC` race in parallel spawns), captured with `lsof` during gate 66; not product code.
 - Gate 64's panic-recovery retry was a real race: a connection that had already failed could still be cancelled by a starting drain, because it left the drained-clients registry after closing its transport. Go deletes it first (`clientConn.Close`); fixed in `18776e43537`.
 - Go's `planner/util.ByItems` had three Rust copies; one remains (`tidb_expression_aggregation::ByItems`).
 
 ## Decision Log
+
+- Decision: Go runs `planner/core`'s `init` in every binary that links it; Rust test binaries that reach `BuildSimpleExpr` from a lower crate name `tidb_planner_init::link!()` once at their root (Go's blank import), and `tidb-planner-init` alone allows `unsafe_code` for the init-section static. `tidb-expr`'s own unit tests compile `leave.rs` in place (`extern crate self as tidb_expr`) and install it on first use, as Go's `pkg/expression` test binary links the planner through its external test package. Date: 2026-11-24.
+- Decision: `ScalarSubQueryExpr`'s struct stays in `tidb-expr`: Go's `Expression` is an interface the planner implements, Rust's is a closed enum whose variant payloads live with it. Date: 2026-11-24.
 
 - Decision: skip-init variables (`tidb_ddl_reorg_priority`, the metric-schema step and range) keep `NewSessionVars`' default in their typed field until SET, as Go's fields do. Date: 2026-11-23.
 - Decision: the executor keeps thin re-exports (`table_privilege`, `access_cost`, `stats_stmt_ctx` types) while its callers move; no logic stays behind them. Date: 2026-11-23.

@@ -18,3 +18,6 @@ mod cluster_ddl_alter_source;
 mod cluster_ddl_source;
 mod fixture_ddl;
 mod placement_delivery_source;
+
+// Go's test binary links `planner/core`, whose `init` sets `expression.BuildSimpleExpr`.
+tidb_planner_init::link!();

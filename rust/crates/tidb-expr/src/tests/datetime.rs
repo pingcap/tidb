@@ -157,7 +157,7 @@ fn clock_precision_is_checked_at_build_time() {
         let SelectField::Expr { expr, .. } = &s.fields[0] else {
             panic!("expected expr field")
         };
-        crate::rewriter::rewrite_expr(expr)
+        crate::column_resolver::rewrite_expr(expr)
     }
     assert!(matches!(
         build("now(7)"),

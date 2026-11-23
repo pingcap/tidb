@@ -26,7 +26,7 @@ fn create_col_assign_simple_exprs(
     assignments: &[tidb_ast::Assignment],
 ) -> Result<Vec<Expression>, EncodeError> {
     let ctx = base.session().context();
-    let resolver = tidb_expr::rewriter::ContextResolver(ctx);
+    let resolver = tidb_expr::column_resolver::ContextResolver(ctx);
     assignments
         .iter()
         .map(|a| {

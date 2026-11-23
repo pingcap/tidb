@@ -397,7 +397,7 @@ mod tests {
                 0,
             ),
         ] {
-            let field_type = crate::rewriter::builtin_cast_result_type(&cast).expect("target");
+            let field_type = crate::result_type::cast_target(&cast).expect("target");
             assert_eq!(field_type.code(), code);
             if decimal >= 0 {
                 assert_eq!(field_type.decimal(), decimal);
@@ -405,12 +405,12 @@ mod tests {
         }
 
         let time =
-            crate::rewriter::builtin_cast_result_type(&tidb_ast::CastType::Time { fsp: Some(3) })
+            crate::result_type::cast_target(&tidb_ast::CastType::Time { fsp: Some(3) })
                 .expect("TIME target");
         assert_eq!(time.flen(), 14);
         assert!(time.has_flag(tidb_datatype::FieldTypeFlags::BINARY));
 
-        let vector = crate::rewriter::builtin_cast_result_type(&tidb_ast::CastType::Vector {
+        let vector = crate::result_type::cast_target(&tidb_ast::CastType::Vector {
             dimensions: Some(3),
         })
         .expect("VECTOR target");
@@ -460,7 +460,7 @@ mod tests {
             let tidb_ast::SelectField::Expr { expr, .. } = &select.fields.fields()[0] else {
                 panic!("expected an expression")
             };
-            crate::rewriter::rewrite_expr_resolved(expr, &crate::rewriter::NoResolver)
+            crate::column_resolver::rewrite_expr_resolved(expr, &crate::column_resolver::NoResolver)
         };
 
         assert_eq!(

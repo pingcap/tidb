@@ -212,7 +212,7 @@ pub fn build_constraint_infos(
             context.get_expr_ctx().get_eval_ctx().time_zone(),
             context.get_expr_ctx().get_eval_ctx().like_default_escape(),
         );
-        let built = match tidb_expr::rewriter::rewrite_expr_resolved(
+        let built = match tidb_expr::column_resolver::rewrite_expr_resolved(
             &check.definition.expression,
             &resolver,
         ) {

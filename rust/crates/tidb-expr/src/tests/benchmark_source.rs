@@ -15,7 +15,7 @@
 //! Source-contract cases from `pkg/expression/builtin_info.go::builtinBenchmarkSig`.
 
 use tidb_datatype::Datum;
-use tidb_expr::rewriter::rewrite_expr;
+use tidb_expr::column_resolver::rewrite_expr;
 use tidb_exprctx::Columns;
 use tidb_exprctx::ErrorLevel;
 use tidb_exprctx::EvalError;

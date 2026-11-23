@@ -24,3 +24,7 @@ pub mod mdl_info_load;
 
 /// Go cross-keyspace loader and schema-coordination predicates.
 pub mod cross_ks;
+
+// Go's test binary links `planner/core`, whose `init` sets `expression.BuildSimpleExpr`.
+#[cfg(test)]
+tidb_planner_init::link!();

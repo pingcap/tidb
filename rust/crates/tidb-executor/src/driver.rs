@@ -20,7 +20,7 @@
 //! [LIMIT ...]` over a single in-memory [`SessionExtendedInfoSchema`] table or the implicit dual
 //! row. It parses via `tidb-parser`, resolves `FROM` against the catalog,
 //! rewrites fields/predicates/by-items through
-//! [`tidb_expr::rewriter::rewrite_expr_resolved`] (columns bound by the
+//! [`tidb_expr::column_resolver::rewrite_expr_resolved`] (columns bound by the
 //! [`TableResolver`]), and wires `MemTableSource|TableDual ->
 //! [Selection] -> [Sort] -> Projection -> [Limit]`.
 //!
@@ -37,7 +37,7 @@ use tidb_ast::{QueryStmt, Stmt, Visitable, Visitor};
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
 use tidb_expr::column::Column;
 use tidb_expr::expression::Expression;
-use tidb_expr::rewriter::{rewrite_expr_resolved, ColumnResolver};
+use tidb_expr::column_resolver::{rewrite_expr_resolved, ColumnResolver};
 
 use tidb_expr::schema::Schema;
 use tidb_planner::plan_builder::field_name::default_field_display_name;

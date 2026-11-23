@@ -439,7 +439,9 @@ pub(crate) fn is_registered_builtin(name: &str) -> bool {
     function_class(name).is_some()
 }
 
-pub(crate) fn unresolved_error(name: &str, current_database: Option<String>) -> crate::EvalError {
+/// The error for a function name no class resolves (Go `newFunctionImpl`'s
+/// `ErrFunctionNotExists` / `ErrNotSupportedYet`).
+pub fn unresolved_error(name: &str, current_database: Option<String>) -> crate::EvalError {
     if is_registered_builtin(name) {
         return crate::EvalError::Unsupported("this builtin is not yet built for chunk evaluation");
     }

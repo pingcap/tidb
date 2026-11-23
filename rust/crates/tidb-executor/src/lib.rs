@@ -356,3 +356,7 @@ pub(crate) fn notify_before_executor_first_run(ctx: &StmtContext) {
 
 pub mod brie;
 pub mod brie_utils;
+
+// Go's test binary links `planner/core`, whose `init` sets `expression.BuildSimpleExpr`.
+#[cfg(test)]
+tidb_planner_init::link!();

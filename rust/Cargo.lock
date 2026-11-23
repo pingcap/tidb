@@ -1358,6 +1358,7 @@ dependencies = [
  "tidb-format-textrow",
  "tidb-memory",
  "tidb-parser",
+ "tidb-planner-init",
  "tidb-server-internal-column",
  "tidb-session",
  "tidb-util",
@@ -5054,6 +5055,7 @@ dependencies = [
  "tidb-owner",
  "tidb-parser",
  "tidb-planner",
+ "tidb-planner-init",
  "tidb-plannererrors",
  "tidb-resolve",
  "tidb-ristretto",
@@ -5580,6 +5582,7 @@ dependencies = [
  "tidb-pd-client",
  "tidb-placement",
  "tidb-planner",
+ "tidb-planner-init",
  "tidb-plannererrors",
  "tidb-proto",
  "tidb-resourcemanager-pool-workerpool",
@@ -5663,6 +5666,7 @@ dependencies = [
  "tidb-mysql",
  "tidb-parser",
  "tidb-parser-format",
+ "tidb-planner-init",
  "tidb-plannererrors",
  "tidb-sessionctx",
  "tidb-sqlescape",
@@ -6062,6 +6066,7 @@ dependencies = [
  "tidb-pd-client",
  "tidb-pdhelper",
  "tidb-planner-extstore",
+ "tidb-planner-init",
  "tidb-privilege",
  "tidb-proto",
  "tidb-replayer",
@@ -6430,6 +6435,7 @@ dependencies = [
  "tidb-model",
  "tidb-objstore",
  "tidb-parser",
+ "tidb-planner-init",
  "tidb-redact",
  "tidb-table",
  "tidb-tablecodec",
@@ -6865,6 +6871,7 @@ dependencies = [
  "tidb-planner-core-rule",
  "tidb-planner-costusage",
  "tidb-planner-indexadvisor",
+ "tidb-planner-init",
  "tidb-planner-property",
  "tidb-planner-util",
  "tidb-plannererrors",
@@ -7496,6 +7503,7 @@ dependencies = [
  "tidb-monotime",
  "tidb-mysql",
  "tidb-placement",
+ "tidb-planner-init",
  "tidb-sem",
  "tidb-session",
  "tidb-sqlescape",
@@ -7646,6 +7654,7 @@ dependencies = [
  "tidb-mysql",
  "tidb-parser",
  "tidb-placement",
+ "tidb-planner-init",
  "tidb-plannererrors",
  "tidb-rowcodec",
  "tidb-sessionctx",
@@ -7682,6 +7691,7 @@ dependencies = [
  "tidb-meta",
  "tidb-metadef",
  "tidb-model",
+ "tidb-planner-init",
  "tidb-store-driver-error",
  "tidb-syssession",
  "tidb-table",
@@ -7868,6 +7878,7 @@ dependencies = [
  "tidb-datatype",
  "tidb-infoschema",
  "tidb-model",
+ "tidb-planner-init",
  "tidb-table",
  "tidb-tablecodec",
 ]
@@ -7965,6 +7976,7 @@ dependencies = [
  "tidb-meta",
  "tidb-model",
  "tidb-mysql",
+ "tidb-planner-init",
  "tidb-table",
  "tidb-tablecodec",
  "tidb-tblctx",
@@ -8650,6 +8662,7 @@ version = "0.0.0"
 dependencies = [
  "chrono",
  "regex",
+ "stacker",
  "tidb-ast",
  "tidb-autoid",
  "tidb-charset",
@@ -8708,6 +8721,7 @@ dependencies = [
  "tidb-planner-coretestsdk",
  "tidb-planner-coreusage",
  "tidb-planner-costusage",
+ "tidb-planner-init",
  "tidb-planner-property",
  "tidb-planner-tablesampler",
  "tidb-planner-util",
@@ -9046,6 +9060,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "tidb-planner-init"
+version = "0.0.0"
+dependencies = [
+ "tidb-planner",
+]
+
+[[package]]
 name = "tidb-planner-property"
 version = "0.0.0"
 dependencies = [
@@ -9251,6 +9272,7 @@ dependencies = [
  "tidb-goruntime",
  "tidb-hack",
  "tidb-parser",
+ "tidb-planner-init",
  "tidb-tablecodec",
  "tidb-terror",
 ]
@@ -9636,6 +9658,7 @@ dependencies = [
  "tidb-planner",
  "tidb-planner-core-metrics",
  "tidb-planner-extstore",
+ "tidb-planner-init",
  "tidb-plannererrors",
  "tidb-ppcpuusage",
  "tidb-printer",
@@ -9904,6 +9927,7 @@ dependencies = [
  "tidb-planner-core-operator-logicalop",
  "tidb-planner-core-operator-physicalop",
  "tidb-planner-extstore",
+ "tidb-planner-init",
  "tidb-plannererrors",
  "tidb-ppcpuusage",
  "tidb-privilege",
@@ -10033,6 +10057,7 @@ dependencies = [
  "tidb-model",
  "tidb-mysql",
  "tidb-parser",
+ "tidb-planner-init",
  "tidb-plannererrors",
  "tidb-ppcpuusage",
  "tidb-printer",
@@ -10563,6 +10588,7 @@ dependencies = [
  "tidb-logutil",
  "tidb-model",
  "tidb-parser",
+ "tidb-planner-init",
  "tidb-sqlescape",
  "tidb-sqlexec",
  "tidb-stats",
@@ -11056,6 +11082,7 @@ dependencies = [
  "tidb-memory",
  "tidb-metrics",
  "tidb-model",
+ "tidb-planner-init",
  "tidb-ttl",
  "tidb-vardef",
  "tikv-client",
@@ -11334,6 +11361,7 @@ dependencies = [
  "tidb-model",
  "tidb-mysql",
  "tidb-parser-format",
+ "tidb-planner-init",
  "tidb-sqlescape",
  "tidb-sqlexec",
  "tidb-sqlkiller",
@@ -11742,6 +11770,7 @@ dependencies = [
  "tidb-mysql",
  "tidb-owner",
  "tidb-pd-client",
+ "tidb-planner-init",
  "tidb-session",
  "tidb-stmtsummary",
  "tidb-terror",

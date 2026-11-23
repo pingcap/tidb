@@ -436,7 +436,7 @@ impl BlockExpand {
     pub(super) fn roll_expand_grouping(
         &self,
         args: &[Expression],
-    ) -> Result<tidb_expr::rewriter::RollExpandGrouping, tidb_exprctx::EvalError> {
+    ) -> Result<tidb_expr::column_resolver::RollExpandGrouping, tidb_exprctx::EvalError> {
         use tidb_exprctx::EvalError;
         if args.len() > 64 {
             return Err(EvalError::TooManyGroupingArguments);
@@ -465,7 +465,7 @@ impl BlockExpand {
         let grouping_mode = self
             .grouping_mode
             .ok_or(EvalError::Unsupported("ROLLUP Expand has no grouping mode"))?;
-        Ok(tidb_expr::rewriter::RollExpandGrouping {
+        Ok(tidb_expr::column_resolver::RollExpandGrouping {
             gid,
             grouping_mode,
             grouping_marks: marks,

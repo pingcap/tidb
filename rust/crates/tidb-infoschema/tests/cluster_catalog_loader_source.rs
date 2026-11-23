@@ -254,3 +254,6 @@ fn executor_schema_is_the_latest_image_only_at_the_snapshot_version() {
     let image = load_executor_info_schema(&mut none).expect("catalog loads");
     assert_eq!(image.schema_meta_version(), 412);
 }
+
+// Go's test binary links `planner/core`, whose `init` sets `expression.BuildSimpleExpr`.
+tidb_planner_init::link!();

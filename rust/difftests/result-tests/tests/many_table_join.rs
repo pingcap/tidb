@@ -358,3 +358,6 @@ fn an_equality_is_executed_whatever_it_is_spelled_like() {
         assert_eq!(rows(&mut session, &sql), expected, "{sql}");
     }
 }
+
+// Go's test binary links `planner/core`, whose `init` sets `expression.BuildSimpleExpr`.
+tidb_planner_init::link!();

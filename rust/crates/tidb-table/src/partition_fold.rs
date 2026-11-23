@@ -74,9 +74,9 @@ pub fn fold_range_column_value(
 /// connection charset, so a string literal takes `collation_connection`.
 pub fn partition_value_resolver(
     ctx: &tidb_metabuild::Context,
-) -> tidb_expr::rewriter::ZonedNoResolver {
+) -> tidb_expr::column_resolver::ZonedNoResolver {
     let (charset, collation) = ctx.get_expr_ctx().get_charset_info();
-    tidb_expr::rewriter::ZonedNoResolver::with_like_default_escape(
+    tidb_expr::column_resolver::ZonedNoResolver::with_like_default_escape(
         ctx.get_expr_ctx().get_eval_ctx().time_zone(),
         ctx.get_expr_ctx().get_eval_ctx().like_default_escape(),
     )
@@ -106,7 +106,7 @@ pub fn eval_column_value(
     expr: &Expr,
     ctx: &tidb_metabuild::Context,
 ) -> Result<Datum, MysqlError> {
-    let rewritten = tidb_expr::rewriter::rewrite_expr_resolved(
+    let rewritten = tidb_expr::column_resolver::rewrite_expr_resolved(
         expr,
         &partition_value_resolver(ctx),
     )
@@ -324,7 +324,7 @@ fn fold_list_value(
     ctx: &tidb_metabuild::Context,
 ) -> Result<Option<i64>, MysqlError> {
     let rewritten =
-        tidb_expr::rewriter::rewrite_expr_resolved(expr, &partition_value_resolver(ctx)).map_err(
+        tidb_expr::column_resolver::rewrite_expr_resolved(expr, &partition_value_resolver(ctx)).map_err(
             |error| {
                 partition_value_failure(
                     error,
@@ -420,7 +420,7 @@ pub fn fold_range_bound(
     ctx: &tidb_metabuild::Context,
 ) -> Result<FoldedRangeBound, MysqlError> {
     let rewritten =
-        tidb_expr::rewriter::rewrite_expr_resolved(expr, &partition_value_resolver(ctx)).map_err(
+        tidb_expr::column_resolver::rewrite_expr_resolved(expr, &partition_value_resolver(ctx)).map_err(
             |error| {
                 partition_value_failure(
                     error,

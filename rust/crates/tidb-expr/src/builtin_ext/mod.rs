@@ -25,7 +25,7 @@ pub(crate) mod compare2;
 pub(crate) mod crypto;
 pub(crate) mod info;
 pub(crate) mod json;
-pub(crate) mod misc;
+pub mod misc;
 pub(crate) mod regexp;
 pub(crate) mod string2;
 pub(crate) mod vec;

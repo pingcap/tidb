@@ -267,3 +267,6 @@ fn create_table_build(statement: &tidb_ast::Stmt) -> tidb_ddl::cluster_ddl::Crea
     let (schema, _) = tidb_ddl::cluster_ddl::split_name(&create.name, "test", "table").unwrap();
     tidb_ddl::cluster_ddl::CreateTableBuild::new(create, &schema, &context).unwrap()
 }
+
+// Go's test binary links `planner/core`, whose `init` sets `expression.BuildSimpleExpr`.
+tidb_planner_init::link!();

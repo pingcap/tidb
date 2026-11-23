@@ -1793,3 +1793,6 @@ fn an_mview_refresh_cutover_diff_replaces_the_view_with_its_shadow() {
     assert_eq!(table.read().id, 90);
     assert!(next.table_info_by_name("campaign", "shadow").is_none());
 }
+
+// Go's test binary links `planner/core`, whose `init` sets `expression.BuildSimpleExpr`.
+tidb_planner_init::link!();

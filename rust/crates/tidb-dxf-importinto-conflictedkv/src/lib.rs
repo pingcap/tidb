@@ -68,3 +68,7 @@ pub(crate) fn table_handle(handle: &tidb_txnkv::Handle) -> tidb_table::tables::T
 
 #[cfg(test)]
 mod tests;
+
+// Go's test binary links `planner/core`, whose `init` sets `expression.BuildSimpleExpr`.
+#[cfg(test)]
+tidb_planner_init::link!();

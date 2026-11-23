@@ -126,6 +126,7 @@ tokio = { workspace = true }
 reqwest = { workspace = true, features = ["blocking"] }
 tidb-failpoint = { path = "../tidb-failpoint" }
 [dev-dependencies]
+tidb-planner-init = { path = "../tidb-planner-init" }
 tidb-session = { path = "../tidb-session", features = ["failpoints"] }
 tidb-planner = { path = "../tidb-planner" }
 chrono-tz.workspace = true

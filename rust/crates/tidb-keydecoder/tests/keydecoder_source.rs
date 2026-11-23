@@ -216,3 +216,6 @@ fn test_decode_key() {
     assert!(!decoded.is_partition_handle);
     assert_eq!(decoded.index_values, None);
 }
+
+// Go's test binary links `planner/core`, whose `init` sets `expression.BuildSimpleExpr`.
+tidb_planner_init::link!();

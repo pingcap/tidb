@@ -1032,7 +1032,7 @@ fn gsk_one_two_three_bytes() -> Vec<u8> {
 fn encoding_error_rows_follow_session_charset_conversion() {
     struct GbkSession;
 
-    impl crate::rewriter::ColumnResolver for GbkSession {
+    impl crate::column_resolver::ColumnResolver for GbkSession {
         fn resolve(&self, _: &[String]) -> Option<(usize, FieldType, i64)> {
             None
         }
@@ -1067,7 +1067,7 @@ fn encoding_error_rows_follow_session_charset_conversion() {
         let SelectField::Expr { expr, .. } = &select.fields[0] else {
             panic!("expected expression")
         };
-        let rewritten = crate::rewriter::rewrite_expr_resolved(expr, &GbkSession).expect("rewrite");
+        let rewritten = crate::column_resolver::rewrite_expr_resolved(expr, &GbkSession).expect("rewrite");
         let mut chunk = tidb_chunk::chunk::Chunk::new_empty_chunk(&[]);
         chunk.set_num_virtual_rows(1);
         rewritten.eval(&GbkSession, chunk.get_row(0))

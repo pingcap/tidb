@@ -50,6 +50,7 @@ tidb-variable = { path = "../tidb-variable" }
 tidb-txnkv = { path = "../tidb-txnkv" }
 
 [dev-dependencies]
+tidb-planner-init = { path = "../tidb-planner-init" }
 fail = { version = "0.4", features = ["failpoints"] }
 # Go's `tikvclient/...` failpoints, which the GC tests enable.
 tikv-client = { workspace = true, features = ["failpoints"] }

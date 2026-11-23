@@ -28,5 +28,6 @@ tidb-pd-client = { path = "../tidb-pd-client" }
 tidb-stmtsummary = { path = "../tidb-stmtsummary" }
 
 [dev-dependencies]
+tidb-planner-init = { path = "../tidb-planner-init" }
 tidb-config = { path = "../tidb-config" }
 chrono-tz.workspace = true

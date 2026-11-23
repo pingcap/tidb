@@ -506,7 +506,7 @@ fn build_table_partitioning_inner(
             ctx.get_expr_ctx().get_eval_ctx().like_default_escape(),
         )
         .with_source_table(table);
-        let rebuilt = tidb_expr::rewriter::rewrite_expr_resolved(expr, &resolver);
+        let rebuilt = tidb_expr::column_resolver::rewrite_expr_resolved(expr, &resolver);
         if let (Err(_), Some(missing)) = (rebuilt, resolver.missing_name()) {
             return Err(tidb_terror::MysqlError::from_terror(
                 &tidb_plannererrors::ERR_UNKNOWN_COLUMN.gen_with_stack_by_args(&[
@@ -841,7 +841,7 @@ fn build_partition_expression(
         like_default_escape,
     );
     let built =
-        tidb_expr::rewriter::rewrite_expr_resolved(expr, &resolver).map_err(|_| match resolver
+        tidb_expr::column_resolver::rewrite_expr_resolved(expr, &resolver).map_err(|_| match resolver
             .missing_name()
         {
             // Go's `extractColumns` quotes `columnNameExpr.Name.Name.L`,

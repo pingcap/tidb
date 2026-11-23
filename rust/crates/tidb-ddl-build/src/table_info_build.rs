@@ -2660,7 +2660,7 @@ fn expression_default_origin(
     };
     let expression = tidb_model::generated_expr::parse_expression(text)
         .map_err(|error| failed(error.message))?;
-    let rewritten = tidb_expr::rewriter::rewrite_expr(&expression)
+    let rewritten = tidb_expr::column_resolver::rewrite_expr(&expression)
         .map_err(|error| failed(format!("{error:?}")))?;
     let value = tidb_expr::eval_expression_once(&rewritten, context.get_expr_ctx().get_eval_ctx())
         .map_err(|error| failed(format!("{error:?}")))?;
@@ -3880,7 +3880,7 @@ fn stage_column_default(
                 context.get_expr_ctx().get_eval_ctx().time_zone(),
                 context.get_expr_ctx().get_eval_ctx().like_default_escape(),
             );
-            let rewritten = tidb_expr::rewriter::rewrite_expr_resolved(expr, &resolver).map_err(
+            let rewritten = tidb_expr::column_resolver::rewrite_expr_resolved(expr, &resolver).map_err(
                 |error| match (resolver.missing_name(), error) {
                     (Some(name), _) => MysqlError::from_terror(
                         &tidb_plannererrors::ERR_UNKNOWN_COLUMN.gen_with_stack_by_args(

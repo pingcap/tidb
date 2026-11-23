@@ -29,3 +29,7 @@ pub mod read;
 pub mod save;
 pub mod stats_read_writer;
 pub mod update;
+
+// Go's test binary links `planner/core`, whose `init` sets `expression.BuildSimpleExpr`.
+#[cfg(test)]
+tidb_planner_init::link!();

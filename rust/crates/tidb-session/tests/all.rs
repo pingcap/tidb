@@ -418,3 +418,6 @@ mod autoid_service_autoid_test;
 mod ddl_placement_policy_test;
 mod executor_distribute_table_test;
 mod executor_test_ddl_ddl_test;
+
+// Go's test binary links `planner/core`, whose `init` sets `expression.BuildSimpleExpr`.
+tidb_planner_init::link!();

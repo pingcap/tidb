@@ -41,5 +41,8 @@ tidb-stats-handle-util = { path = "../tidb-stats-handle-util" }
 tidb-logutil = { path = "../tidb-logutil" }
 tidb-variable = { path = "../tidb-variable" }
 
+[dev-dependencies]
+tidb-planner-init = { path = "../tidb-planner-init" }
+
 [lints]
 workspace = true

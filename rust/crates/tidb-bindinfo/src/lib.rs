@@ -28,3 +28,7 @@ pub mod binding_auto;
 pub mod binding_plan_evolution;
 pub mod binding_plan_generation;
 pub mod cluster_binding_seam;
+
+// Go's test binary links `planner/core`, whose `init` sets `expression.BuildSimpleExpr`.
+#[cfg(test)]
+tidb_planner_init::link!();

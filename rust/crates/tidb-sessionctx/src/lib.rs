@@ -27,3 +27,7 @@ pub mod select_lock;
 pub mod telemetry_info;
 mod stmt_context;
 pub use stmt_context::*;
+
+// Go's test binary links `planner/core`, whose `init` sets `expression.BuildSimpleExpr`.
+#[cfg(test)]
+tidb_planner_init::link!();

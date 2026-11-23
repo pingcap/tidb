@@ -21,7 +21,7 @@ use crate::builtin::{
 };
 use crate::expr_collation::{Coercibility, ExprCollation, Repertoire};
 use crate::expression::{propagate_type, Expression};
-use crate::rewriter::adjust_ret_ft_for_cast_string;
+use crate::result_type::adjust_ret_ft_for_cast_string;
 use crate::scalar_function::ScalarFunction;
 use crate::wrap_cast::type_of;
 use crate::EvalError;
