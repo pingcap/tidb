@@ -270,12 +270,7 @@ func (m *MetadataHelper) ReadFile(
 		return m.decodeCompressedData(decryptedData, compressionType)
 	}
 
-<<<<<<< HEAD
 	cref.ref -= 1
-=======
-	// unlock as soon as possible because the data slice is read only.
-	cref.mu.Lock()
->>>>>>> f7539bdeae7 (br: fix iv panic (#73545))
 
 	if len(cref.data) == 0 {
 		cref.data, err = storage.ReadFile(ctx, path)
@@ -283,7 +278,13 @@ func (m *MetadataHelper) ReadFile(
 			return nil, errors.Trace(err)
 		}
 	}
-<<<<<<< HEAD
+
+	// Check using subtraction so corrupt metadata cannot overflow offset+length.
+	dataLength := uint64(len(cref.data))
+	if offset > dataLength || length > dataLength-offset {
+		return nil, errors.Errorf("invalid log file range: offset %d, length %d, file size %d", offset, length, dataLength)
+	}
+
 	// decrypt if needed
 	decryptedData, err := m.verifyChecksumAndDecryptIfNeeded(ctx, cref.data[offset:offset+length], encryptionInfo)
 	if err != nil {
@@ -291,16 +292,6 @@ func (m *MetadataHelper) ReadFile(
 	}
 	buf, err := m.decodeCompressedData(decryptedData, compressionType)
 
-=======
-	// Check using subtraction so corrupt metadata cannot overflow offset+length.
-	dataLength := uint64(len(cref.data))
-	if offset > dataLength || length > dataLength-offset {
-		cref.mu.Unlock()
-		return nil, errors.Errorf("invalid log file range: offset %d, length %d, file size %d", offset, length, dataLength)
-	}
-	data := cref.data[offset : offset+length]
-	cref.ref -= 1
->>>>>>> f7539bdeae7 (br: fix iv panic (#73545))
 	if cref.ref <= 0 {
 		// need reset reference information.
 		cref.data = nil

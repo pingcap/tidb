@@ -16,6 +16,7 @@ package stream
 
 import (
 	"encoding/binary"
+	"math"
 
 	"github.com/pingcap/errors"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
