@@ -182,7 +182,7 @@ func (mgr *TaskManager) CancelPausedSubtasks(ctx context.Context, taskID int64) 
 		id := r.GetInt64(0)
 		size := uint64(r.GetInt64(1)) + pausedSubtaskRowOverhead
 		if len(ids) > batchStart && currBytes+size > maxBatchBytes {
-			batches = append(batches, ids[batchStart:len(ids)])
+			batches = append(batches, ids[batchStart:])
 			batchStart = len(ids)
 			currBytes = 0
 		}
