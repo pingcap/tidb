@@ -257,6 +257,11 @@ fn test_task_executor_backpressure() {
     assert!(started.try_recv().is_err(), "task should still be blocked");
     eventually(|| exec.metrics.counters.backpressure_count.load(SeqCst) > 0, TEST_EVENTUALLY_WAIT, TEST_EVENTUALLY_TICK);
     assert_eq!(exec.metrics.counters.backpressure_count.load(SeqCst), 1);
+    // The 5 s advance fired the worker's backpressure wait; the worker then
+    // re-checks and waits again. The next advance must find that wait, or its
+    // deadline lies past the last mock instant and the task never runs (Go's
+    // test has the same race, which load widens).
+    eventually(|| module.after_waiters_len() == 1, TEST_EVENTUALLY_WAIT, TEST_EVENTUALLY_TICK);
 
     controller.blocked.store(false, SeqCst);
     module.advance(SECOND);
