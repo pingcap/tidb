@@ -2,8 +2,8 @@
   "date": "2026-11-23",
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports, from the 2026-11-23 symbol-level re-audit (method in structural-audit-2026-11-23.md).",
   "counts": {
-    "unresolved": 10,
-    "open": 10,
+    "unresolved": 9,
+    "open": 9,
     "partial": 0
   },
   "findings": [
@@ -56,14 +56,6 @@
       "go_owner": "`pkg/session/txn.go` (`LazyTxn`), `pkg/session/session.go` (`PrepareTSFuture`, `NewTxn`), `pkg/sessiontxn/isolation`"
     },
     {
-      "id": "T17",
-      "group": "Duplicates",
-      "status": "open",
-      "finding": "Two row decoders: `PreparedPointGetRowDecoder` (`tidb-table/src/tables/row_decoder.rs`) is a second decoder beside `RowDecoder`, kept as a fast path for batch handle reads in `tidb-executor/src/kv_table/table_scan.rs` after the prepared point get that introduced it was removed (T15). Go decodes rows through one `rowcodec` decoder.",
-      "rust_evidence": "`tidb-table/src/tables/row_decoder.rs` (`PreparedPointGetRowDecoder`), `tidb-table/src/tables/table_meta.rs` (`PreparedPointGetDecodeContext`), `tidb-executor/src/kv_table/table_scan.rs`.",
-      "go_owner": "`pkg/util/rowcodec/decoder.go`"
-    },
-    {
       "id": "T18",
       "group": "Executors",
       "status": "open",
@@ -88,7 +80,7 @@
       "go_owner": "`pkg/executor/importer/import.go` (`InitDataStore`)"
     }
   ],
-  "unresolved": 10,
-  "open": 10,
+  "unresolved": 9,
+  "open": 9,
   "partial": 0
 }

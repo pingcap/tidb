@@ -63,11 +63,11 @@ pub use auto_increment::{AutoIncrement, TableAutoId};
 pub use auto_random::{AutoRandom, AutoRandomError, AutoRandomSpec};
 
 pub use row_decoder::{
-    DecodedRow, GeneratedColumnSelection, PreparedPointGetRowDecoder, RowDecoder,
+    DecodedRow, GeneratedColumnSelection, RowDecoder,
 };
 pub use table_meta::{
     Column,
-    Index, PreparedPointGetDecodeContext,
+    Index,
     RowDecodeContext, TableCharset, TableHandle,
 };
 pub use index_entries::index_key_bounds;

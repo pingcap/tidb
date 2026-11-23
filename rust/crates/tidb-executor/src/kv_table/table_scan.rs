@@ -26,10 +26,10 @@
 //! `DecodeRowToDatumMap`/`DecodeRecordKey`: the writes live with the table in
 //! the parent module, and this file is only the read direction.
 
-use super::row_decoder::{PreparedPointGetRowDecoder, RowDecoder};
+use super::row_decoder::RowDecoder;
 use tidb_ranger::types::Range;
 use super::{
-    index_entry_handle, Index, TableCommon, KvTableError, PreparedPointGetDecodeContext,
+    index_entry_handle, Index, TableCommon, KvTableError, 
     RowDecodeContext, TableHandle,
 };
 
@@ -463,37 +463,7 @@ impl KvTableReader for TableCommon {
         // Each handle owns a contiguous window of physical keys. Preserve
         // handle order and the first matching partition without a second
         // key/handle collection or a tree lookup for every output row.
-        // The ordinary index-lookup shape has no generated or origin-default
-        // columns. Use the same projection-only decoder as Go's prepared
-        // point path so each returned record avoids rebuilding the general
-        // RowDecoder's dependency maps and full table row.
-        let prepared = self
-            .pk_handle_offset()
-            .filter(|_| self.common_handle_offsets().is_empty())
-            .and_then(|pk_offset| {
-                let keep = keep?;
-                if keep.iter().any(|offset| {
-                    self.columns()[*offset].generated.is_some()
-                        || self.columns()[*offset].origin_default.is_some()
-                }) {
-                    return None;
-                }
-                PreparedPointGetRowDecoder::new_with_handles(
-                    &self.columns(),
-                    Some(pk_offset),
-                    &[],
-                    keep,
-                )
-                .ok()
-            });
-        let prepared_context = prepared
-            .as_ref()
-            .map(|_| PreparedPointGetDecodeContext::for_query(false, context.zone().clone()));
-        let decoder = if prepared.is_none() {
-            Some(self.row_decoder_projected(keep, context)?)
-        } else {
-            None
-        };
+        let decoder = self.row_decoder_projected(keep, context)?;
         let mut rows = Vec::with_capacity(handles.len());
         let mut located = Vec::with_capacity(handles.len());
         for (handle_index, keys) in keys.chunks_exact(candidates).enumerate() {
@@ -513,17 +483,7 @@ impl KvTableReader for TableCommon {
                 Some(ids) => ids[handle_index],
                 None => physical_ids[candidate],
             }));
-            let values = if let (Some(prepared), Some(prepared_context)) =
-                (prepared.as_ref(), prepared_context.as_ref())
-            {
-                prepared.decode(&handles[handle_index], entry, prepared_context)?
-            } else {
-                decoder
-                    .as_ref()
-                    .expect("general decoder exists when prepared decoder is absent")
-                    .decode_record(key.as_bytes(), entry)?
-                    .1
-            };
+            let values = decoder.decode_record(key.as_bytes(), entry)?.1;
             rows.push(Some(values));
         }
         Ok((rows, located))
