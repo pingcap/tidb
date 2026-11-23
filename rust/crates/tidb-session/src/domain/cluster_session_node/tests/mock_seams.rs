@@ -619,16 +619,16 @@ pub(super) struct MockAnalyze;
 impl ClusterAnalyze for MockAnalyze {
     fn execute(
         &self,
-        statement: &AnalyzeStatement,
+        statements: &[AnalyzeStatement],
         _: &str,
         _: &dyn tidb_pdhelper::ApproximateTableCountProvider,
         _: &tidb_sqlkiller::SqlKiller,
         _: &dyn tidb_executor::real_tikv_analyze::AnalyzeJobLifecycle,
         _: &dyn tidb_stats_handle_storage::stats_read_writer::StatsSessionPool,
-    ) -> Result<tidb_executor::real_tikv_analyze::ClusterAnalyzeReport, SqlQueryError> {
+    ) -> Result<tidb_executor::real_tikv_analyze::AnalyzeExecReport, SqlQueryError> {
         Err(SqlQueryError::unknown(format!(
             "the mock node stores no statistics for `{}`.`{}`",
-            statement.schema, statement.table
+            statements[0].schema, statements[0].table
         )))
     }
 }

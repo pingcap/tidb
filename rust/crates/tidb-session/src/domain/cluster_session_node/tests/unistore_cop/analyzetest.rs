@@ -653,8 +653,52 @@ fn global_stats_missing_column_warning_uses_lower_case_names() {
     rows(&mut session, "set @@session.tidb_partition_prune_mode = 'dynamic'");
     rows(&mut session, "analyze table MixedT partition P1 columns A,B");
     let warnings = joined(displayed(rows(&mut session, "show warnings")));
-    assert!(
-        warnings.contains(&"Warning 8244 Build global-level stats failed due to missing partition-level column stats: table `mixedt` partition `p0` column `b`, please run analyze table to refresh columns of all partitions".to_owned()),
-        "{warnings:?}"
+    // Go's order: the planner's warning, the builder's note, then the
+    // executor's global-stats warning.
+    let kinds = warnings.iter().map(|warning| warning.split(' ').take(2).collect::<Vec<_>>().join(" ")).collect::<Vec<_>>();
+    assert_eq!(kinds, ["Warning 1105", "Note 1105", "Warning 8244"], "{warnings:?}");
+    assert_eq!(
+        warnings[2],
+        "Warning 8244 Build global-level stats failed due to missing partition-level column stats: table `mixedt` partition `p0` column `b`, please run analyze table to refresh columns of all partitions"
     );
+}
+
+const PANIC_TABLE: &str = "create table tbl_2 ( col_20 decimal default 84232 , col_21 tinyint not null , col_22 int default 80814394 , col_23 mediumint default -8036687 not null , col_24 smallint default 9185 not null , col_25 tinyint unsigned default 65 , col_26 char(115) default 'ZyfroRODMbNDRZnPNRW' not null , col_27 bigint not null , col_28 tinyint not null , col_29 char(130) default 'UMApsVgzHblmY' , primary key idx_14 ( col_28,col_22 ) , unique key idx_15 ( col_24,col_22 ) , key idx_16 ( col_21,col_20,col_24,col_25,col_27,col_28,col_26,col_29 ) , key idx_17 ( col_24,col_25 ) , unique key idx_18 ( col_25,col_23,col_29,col_27,col_26,col_22 ) , key idx_19 ( col_25,col_22,col_26,col_23 ) , unique key idx_20 ( col_22,col_24,col_28,col_29,col_26,col_20 ) , key idx_21 ( col_25,col_24,col_26,col_29,col_27,col_22,col_28 ) )";
+
+/// Go `TestPanicInHandleResultErrorWithSingleGoroutine` (panictest).
+#[test]
+fn test_panic_in_handle_result_error_with_single_goroutine() {
+    let (_stack, _users, mut session) = stack_and_session(411);
+    rows(&mut session, PANIC_TABLE);
+    rows(&mut session, "insert ignore into tbl_2 values ( 942,33,-1915007317,3408149,-3699,193,'Trywdis',1876334369465184864,115,null );");
+    let _panic = tidb_failpoint::enable_for_test(
+        "github.com/pingcap/tidb/pkg/executor/handleResultsErrorSingleThreadPanic",
+        r#"panic("TestPanicInHandleResultErrorWithSingleGoroutine")"#,
+    );
+    session.node_conn().execute_write("analyze table tbl_2;").expect_err("the handler panics");
+}
+
+/// Go `TestPanicInHandleAnalyzeWorkerPanic` (panictest).
+#[test]
+fn test_panic_in_handle_analyze_worker_panic() {
+    let (_stack, _users, mut session) = stack_and_session(412);
+    rows(&mut session, &format!("{PANIC_TABLE} partition by range ( col_22 ) ( partition p0 values less than (-1938341588), partition p1 values less than (-1727506184), partition p2 values less than (-1700184882), partition p3 values less than (-1596142809), partition p4 values less than (445165686) );"));
+    for values in [
+        "( 942,33,-1915007317,3408149,-3699,193,'Trywdis',1876334369465184864,115,null )",
+        "( null,55,-388460319,-2292918,10130,162,'UqjDlYvdcNY',4872802276956896607,-51,'ORBQjnumcXP' )",
+        "( 42,-19,-9677826,-1168338,16904,79,'TzOqH',8173610791128879419,65,'lNLcvOZDcRzWvDO' )",
+        "( 2,26,369867543,-6773303,-24953,41,'BvbdrKTNtvBgsjjnxt',5996954963897924308,-95,'wRJYPBahkIGDfz' )",
+        "( 6896,3,444460824,-2070971,-13095,167,'MvWNKbaOcnVuIrtbT',6968339995987739471,-5,'zWipNBxGeVmso' )",
+        "( 58761,112,-1535034546,-5837390,-14204,157,'',-8319786912755096816,15,'WBjsozfBfrPPHmKv' )",
+        "( 84923,113,-973946646,406140,25040,51,'THQdwkQvppWZnULm',5469507709881346105,94,'oGNmoxLLgHkdyDCT' )",
+        "( 0,-104,-488745187,-1941015,-2646,39,'jyKxfs',-5307175470406648836,46,'KZpfjFounVgFeRPa' )",
+        "( 4,97,2105289255,1034363,28385,192,'',4429378142102752351,8,'jOk' )",
+    ] {
+        rows(&mut session, &format!("insert ignore into tbl_2 values {values};"));
+    }
+    let _panic = tidb_failpoint::enable_for_test(
+        "github.com/pingcap/tidb/pkg/executor/handleAnalyzeWorkerPanic",
+        r#"panic("TestPanicInHandleAnalyzeWorkerPanic")"#,
+    );
+    session.node_conn().execute_write("analyze table tbl_2;").expect_err("the workers panic");
 }

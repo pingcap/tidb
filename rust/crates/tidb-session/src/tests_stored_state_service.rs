@@ -162,7 +162,7 @@ mod analyze {
     use std::sync::Arc;
 
     use tidb_executor::cluster_analyze::AnalyzeStatement;
-    use tidb_executor::real_tikv_analyze::ClusterAnalyzeReport;
+    use tidb_executor::real_tikv_analyze::AnalyzeExecReport;
 
     use tidb_executor::analyze::exec::AnalyzeService;
     use crate::*;
@@ -182,10 +182,11 @@ mod analyze {
             true
         }
 
-        fn execute(&self, statement: &AnalyzeStatement) -> Result<ClusterAnalyzeReport, DriverError> {
+        fn execute(&self, statements: &[AnalyzeStatement]) -> Result<AnalyzeExecReport, DriverError> {
+            let tables = statements.iter().map(|statement| statement.table.as_str()).collect::<Vec<_>>();
             self.0
                 .borrow_mut()
-                .push(format!("execute {}", statement.table));
+                .push(format!("execute {}", tables.join(",")));
             Err(DriverError::Mysql(tidb_terror::MysqlError::unknown(
                 "sampling failed",
             )))
@@ -209,10 +210,10 @@ mod analyze {
             .unwrap()
     }
 
-    /// Deltas are flushed before sampling, and the first table that fails
-    /// ends the statement: Go stores nothing for the tables after it.
+    /// Deltas are flushed before sampling, and one `AnalyzeExec` runs every
+    /// table the statement names; its failure is the statement's.
     #[test]
-    fn analyze_flushes_first_and_stops_at_the_first_failure() {
+    fn analyze_flushes_first_and_runs_every_table_in_one_executor() {
         let mut session = Session::new();
         session.run("CREATE TABLE test.an1 (a INT)").unwrap();
         session.run("CREATE TABLE test.an2 (a INT)").unwrap();
@@ -221,7 +222,7 @@ mod analyze {
             .run_analyze_statements(&statements("ANALYZE TABLE an1, an2"), &service)
             .expect_err("the service's failure reaches the client");
         assert_eq!(error.to_mysql_error().message, "sampling failed");
-        assert_eq!(*service.0.borrow(), ["flush 2", "execute an1"]);
+        assert_eq!(*service.0.borrow(), ["flush 2", "execute an1,an2"]);
     }
 
     /// A temporary table is analyzed by the service as any other table (Go's

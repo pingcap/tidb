@@ -26,7 +26,7 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use crate::analyze::AnalyzeStatement;
-use crate::analyze::ClusterAnalyzeReport;
+use crate::real_tikv_analyze::AnalyzeExecReport;
 use crate::{DriverError, TableEntry};
 
 use tidb_hack::go_to_lower;
@@ -98,7 +98,7 @@ pub trait AnalyzeExec: crate::show::exec::ShowExec {
             .collect::<Vec<_>>();
         self.flush_stats_delta_for_analyze(&column_task_tables, service)?;
         self.begin_routed_statement_warnings();
-        let mut cache_update_physical_ids: Option<Vec<i64>> = None;
+        let mut statements = Vec::with_capacity(tables.len());
         let mut local_temporary_tables = Vec::new();
         for statement in tables {
             let mut statement = self.analyze_statement_with_session_options(statement);
@@ -106,20 +106,38 @@ pub trait AnalyzeExec: crate::show::exec::ShowExec {
             // TiKV, which holds none of its rows.
             statement.local_temporary_table = self.local_temporary_table(&statement)?;
             local_temporary_tables.extend(statement.local_temporary_table.clone());
-            let statement = &statement;
-            let analyzed = service.execute(statement);
+            statements.push(statement);
+        }
+        let analyzed = service.execute(&statements);
+        // Go appends the planner's and executor builder's diagnostics before
+        // the executor runs, then the executor's.
+        let report = match analyzed {
+            Ok(report) => report,
+            Err(error) => {
+                if let Some(statement) = statements.first() {
+                    self.drain_context_warnings(&statement.eval_context);
+                }
+                return Err(error);
+            }
+        };
+        for (note, code, message) in report.build_diagnostics {
+            if note {
+                self.append_routed_note(code, message);
+            } else {
+                self.append_routed_warning(code, message);
+            }
+        }
+        if let Some(statement) = statements.first() {
             self.drain_context_warnings(&statement.eval_context);
-            let report = analyzed?;
-            self.append_analyze_report_warnings(statement, &report);
-            cache_update_physical_ids
-                .get_or_insert_with(Vec::new)
-                .extend_from_slice(report.cache_update_physical_ids());
+        }
+        for (code, message) in report.exec_warnings {
+            self.append_routed_warning(code, message);
         }
         // Go ends `AnalyzeExec.Next` with `return statsHandle.Update(...)`, so
         // a failed cache update fails the statement although every table's
         // statistics are already stored. Its InfoSchema is the session's, so
         // a LOCAL temporary table is reloaded too.
-        if let Some(physical_ids) = cache_update_physical_ids {
+        if let Some(physical_ids) = report.table_and_partition_ids {
             service.update_stats_cache(&physical_ids, &local_temporary_tables)?;
         }
         Ok(())
@@ -307,61 +325,21 @@ pub trait AnalyzeExec: crate::show::exec::ShowExec {
             .and_then(|value| value.parse().ok())
             .unwrap_or(tidb_vardef::defaults::DEF_ANALYZE_DIST_SQL_SCAN_CONCURRENCY);
         statement.store_batch_size = self.session_vars().analyze_store_batch_size();
+        // Go `getBuildStatsConcurrency`: the session or global value.
+        statement.build_stats_concurrency = self
+            .session_vars()
+            .get_system(tidb_vardef::tidb_vars::TIDB_BUILD_STATS_CONCURRENCY)
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(tidb_vardef::defaults::DEF_BUILD_STATS_CONCURRENCY as usize);
+        statement.analyze_partition_concurrency = self
+            .session_vars()
+            .get_system(tidb_vardef::tidb_vars::TIDB_ANALYZE_PARTITION_CONCURRENCY)
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(tidb_vardef::defaults::DEF_TIDB_ANALYZE_PARTITION_CONCURRENCY as usize);
         statement.eval_context = self.analyze_statement_context().into();
         statement
-    }
-
-    /// The warnings and notes Go's planner and analyze executor raise for
-    /// one finished table, in Go's order.
-    fn append_analyze_report_warnings(
-        &mut self,
-        statement: &AnalyzeStatement,
-        report: &ClusterAnalyzeReport,
-    ) {
-        // Go's planner raises these while it builds the plan, before any
-        // execution diagnostic.
-        for (_, code, warning) in report.build_diagnostics.iter().filter(|(note, ..)| !note) {
-            self.append_routed_warning(*code, warning.clone());
-        }
-        if report.predicate_columns_empty {
-            self.append_routed_warning(
-                1105,
-                format!(
-                    "No predicate column has been collected yet for table {}.{}, so only indexes and the columns composing the indexes will be analyzed",
-                    go_to_lower(&statement.schema),
-                    go_to_lower(&statement.table)
-                ),
-            );
-        }
-        if report.ignored_partition_overrides {
-            self.append_routed_warning(
-                1105,
-                "Ignore columns and options when analyze partition in dynamic mode".to_owned(),
-            );
-        }
-        if report.collected_all_for_index_target {
-            self.append_routed_warning(
-                1105,
-                "The version 2 would collect all statistics not only the selected indexes"
-                    .to_owned(),
-            );
-        }
-        for index in &report.skipped_columnar_indexes {
-            self.append_routed_warning(
-                1105,
-                format!("analyzing columnar index is not supported, skip {index}"),
-            );
-        }
-        if let Some(warning) = &report.option_save_warning {
-            self.append_routed_warning(1105, warning.clone());
-        }
-        for (code, warning) in &report.global_stats_warnings {
-            self.append_routed_warning(*code, warning.clone());
-        }
-        // Go `builder.go:3185`/`3194`: the sample-rate notice is a NOTE.
-        for (_, code, note) in report.build_diagnostics.iter().filter(|(note, ..)| *note) {
-            self.append_routed_note(*code, note.clone());
-        }
     }
 }
 
@@ -374,8 +352,9 @@ pub trait AnalyzeService {
     /// Whether `statement` builds a column task, the tables Go flushes
     /// deltas for before sampling (`collectStatsDeltaFlushObjectsForAnalyze`).
     fn builds_column_task(&self, statement: &AnalyzeStatement) -> bool;
-    /// Runs and persists one table's analysis.
-    fn execute(&self, statement: &AnalyzeStatement) -> Result<ClusterAnalyzeReport, DriverError>;
+    /// Go `AnalyzeExec.Next` over every table the statement names: runs and
+    /// persists their analysis.
+    fn execute(&self, statements: &[AnalyzeStatement]) -> Result<AnalyzeExecReport, DriverError>;
     /// Go `AnalyzeExec.Next`'s closing `statsHandle.Update(ctx, infoSchema,
     /// tableAndPartitionIDs...)` over every analyzed table's physical ids;
     /// its failure is the statement's error. `local_temporary_tables` are

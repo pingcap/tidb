@@ -185,7 +185,7 @@ wait_for_cluster_session_ready "${RUST_PID}" "${RUST_LOG_FILE}"
 echo
 echo "=== the RUST node analyzes statdiff.rust_side ==="
 rust_sql -e "ANALYZE TABLE statdiff.rust_side WITH 32 BUCKETS, 20 TOPN;"
-analyzed=$(grep -F '"event":"cluster_table_analyzed"' "${RUST_LOG_FILE}" | tail -1)
+analyzed=$(grep -F 'has finished' "${RUST_LOG_FILE}" | grep -F 'rust_side' | tail -1)
 [[ -n "${analyzed}" ]] || { echo "the Rust node logged no analysis"; cat "${RUST_LOG_FILE}"; exit 1; }
 echo "  ${analyzed}"
 

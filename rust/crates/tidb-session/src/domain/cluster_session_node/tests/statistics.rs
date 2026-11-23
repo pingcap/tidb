@@ -24,13 +24,13 @@ struct UndeterminedAnalyze;
 impl ClusterAnalyze for UndeterminedAnalyze {
     fn execute(
         &self,
-        _: &tidb_executor::cluster_analyze::AnalyzeStatement,
+        _: &[tidb_executor::cluster_analyze::AnalyzeStatement],
         _: &str,
         _: &dyn tidb_pdhelper::ApproximateTableCountProvider,
         _: &tidb_sqlkiller::SqlKiller,
         _: &dyn tidb_executor::real_tikv_analyze::AnalyzeJobLifecycle,
         _: &dyn tidb_stats_handle_storage::stats_read_writer::StatsSessionPool,
-    ) -> Result<tidb_executor::real_tikv_analyze::ClusterAnalyzeReport, tidb_store_driver_error::sql_query_error::SqlQueryError>
+    ) -> Result<tidb_executor::real_tikv_analyze::AnalyzeExecReport, tidb_store_driver_error::sql_query_error::SqlQueryError>
     {
         Err(tidb_executor::real_tikv_analyze::cluster_analyze_error(
             tidb_executor::real_tikv_analyze::ClusterAnalyzeError::Undetermined(
@@ -45,13 +45,13 @@ struct PanickingAnalyze(&'static str);
 impl ClusterAnalyze for PanickingAnalyze {
     fn execute(
         &self,
-        _: &tidb_executor::cluster_analyze::AnalyzeStatement,
+        _: &[tidb_executor::cluster_analyze::AnalyzeStatement],
         _: &str,
         _: &dyn tidb_pdhelper::ApproximateTableCountProvider,
         _: &tidb_sqlkiller::SqlKiller,
         _: &dyn tidb_executor::real_tikv_analyze::AnalyzeJobLifecycle,
         _: &dyn tidb_stats_handle_storage::stats_read_writer::StatsSessionPool,
-    ) -> Result<tidb_executor::real_tikv_analyze::ClusterAnalyzeReport, tidb_store_driver_error::sql_query_error::SqlQueryError>
+    ) -> Result<tidb_executor::real_tikv_analyze::AnalyzeExecReport, tidb_store_driver_error::sql_query_error::SqlQueryError>
     {
         panic!("{}", self.0)
     }

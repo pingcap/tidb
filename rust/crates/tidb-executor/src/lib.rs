@@ -106,6 +106,8 @@ pub mod checksum;
 pub mod analyze;
 pub mod cluster_analyze;
 pub mod real_tikv_analyze;
+mod analyze_global_stats;
+mod analyze_worker;
 pub mod apply;
 pub(crate) use tidb_table::bad_null;
 #[cfg(test)]

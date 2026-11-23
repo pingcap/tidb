@@ -483,8 +483,8 @@ impl tidb_executor::analyze::exec::AnalyzeService for ClusterAnalyzeService {
 
     fn execute(
         &self,
-        statement: &AnalyzeStatement,
-    ) -> Result<tidb_executor::real_tikv_analyze::ClusterAnalyzeReport, tidb_driver_error::DriverError> {
+        statements: &[AnalyzeStatement],
+    ) -> Result<tidb_executor::real_tikv_analyze::AnalyzeExecReport, tidb_driver_error::DriverError> {
         let jobs = PersistedAnalyzeJobs {
             session_pool: self.session_pool.clone(),
             instance: self.instance.clone(),
@@ -492,7 +492,7 @@ impl tidb_executor::analyze::exec::AnalyzeService for ClusterAnalyzeService {
         };
         let report = recover_analyze_panic(|| {
             self.analyze.execute(
-                statement,
+                statements,
                 &self.resource_group,
                 self.approximate_table_counts.as_ref(),
                 self.statement_memory.sql_killer(),
@@ -510,23 +510,6 @@ impl tidb_executor::analyze::exec::AnalyzeService for ClusterAnalyzeService {
                     .with_identity_opt(error.identity),
             )
         })?;
-        // Not log content (Go has no such per-statement summary):
-        // rust/scripts/run-realtikv-analyze.sh reads this JSON line.
-        eprintln!(
-            "{{\"event\":\"cluster_table_analyzed\",\"schema\":{},\"table\":{},\
-             \"table_id\":{},\"version\":{},\"scanned_rows\":{},\"sampled_rows\":{},\
-             \"sample_rate\":{},\"histograms\":{},\"buckets\":{},\"topn\":{}}}",
-            serde_json::to_string(&statement.schema).unwrap_or_else(|_| "\"\"".to_owned()),
-            serde_json::to_string(&statement.table).unwrap_or_else(|_| "\"\"".to_owned()),
-            report.table_id,
-            report.version,
-            report.scanned_rows,
-            report.sampled_rows,
-            report.sample_rate,
-            report.histogram_count,
-            report.bucket_count,
-            report.topn_count,
-        );
         Ok(report)
     }
 

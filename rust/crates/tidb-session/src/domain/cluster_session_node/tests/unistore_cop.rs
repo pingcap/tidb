@@ -54,6 +54,7 @@ mod materialized_view;
 mod ddl_executor;
 mod create_with_info;
 mod analyzetest;
+mod lockstats;
 mod pointget;
 mod aggregates;
 mod set_operations;
@@ -3174,13 +3175,13 @@ struct ObservedSystemAnalyze {
 impl tidb_executor::cluster_analyze_seam::ClusterAnalyze for ObservedSystemAnalyze {
     fn execute(
         &self,
-        statement: &tidb_executor::cluster_analyze::AnalyzeStatement,
+        statements: &[tidb_executor::cluster_analyze::AnalyzeStatement],
         resource_group: &str,
         approximate_counts: &dyn tidb_pdhelper::ApproximateTableCountProvider,
         killer: &tidb_sqlkiller::SqlKiller,
         jobs: &dyn tidb_executor::real_tikv_analyze::AnalyzeJobLifecycle,
         stats_pool: &dyn tidb_stats_handle_storage::stats_read_writer::StatsSessionPool,
-    ) -> Result<tidb_executor::real_tikv_analyze::ClusterAnalyzeReport, tidb_store_driver_error::sql_query_error::SqlQueryError>
+    ) -> Result<tidb_executor::real_tikv_analyze::AnalyzeExecReport, tidb_store_driver_error::sql_query_error::SqlQueryError>
     {
         let process = self
             .processes
@@ -3204,7 +3205,7 @@ impl tidb_executor::cluster_analyze_seam::ClusterAnalyze for ObservedSystemAnaly
                 .store(killer.handle_signal().is_some(), Ordering::SeqCst);
         }
         self.inner.execute(
-            statement,
+            statements,
             resource_group,
             approximate_counts,
             killer,
@@ -3235,13 +3236,13 @@ struct KillingSystemAnalyze {
 impl tidb_executor::cluster_analyze_seam::ClusterAnalyze for KillingSystemAnalyze {
     fn execute(
         &self,
-        statement: &tidb_executor::cluster_analyze::AnalyzeStatement,
+        statements: &[tidb_executor::cluster_analyze::AnalyzeStatement],
         resource_group: &str,
         approximate_counts: &dyn tidb_pdhelper::ApproximateTableCountProvider,
         killer: &tidb_sqlkiller::SqlKiller,
         jobs: &dyn tidb_executor::real_tikv_analyze::AnalyzeJobLifecycle,
         stats_pool: &dyn tidb_stats_handle_storage::stats_read_writer::StatsSessionPool,
-    ) -> Result<tidb_executor::real_tikv_analyze::ClusterAnalyzeReport, tidb_store_driver_error::sql_query_error::SqlQueryError>
+    ) -> Result<tidb_executor::real_tikv_analyze::AnalyzeExecReport, tidb_store_driver_error::sql_query_error::SqlQueryError>
     {
         let process_id = self
             .processes
@@ -3259,7 +3260,7 @@ impl tidb_executor::cluster_analyze_seam::ClusterAnalyze for KillingSystemAnalyz
         let mut admin = factory.open_session(session_context(88)).unwrap();
         rows(&mut admin, &format!("KILL QUERY {process_id}"));
         self.inner.execute(
-            statement,
+            statements,
             resource_group,
             approximate_counts,
             killer,
@@ -18744,16 +18745,16 @@ struct FailingStatsCacheUpdate {
 impl tidb_executor::cluster_analyze_seam::ClusterAnalyze for FailingStatsCacheUpdate {
     fn execute(
         &self,
-        statement: &tidb_executor::cluster_analyze::AnalyzeStatement,
+        statements: &[tidb_executor::cluster_analyze::AnalyzeStatement],
         resource_group: &str,
         approximate_counts: &dyn tidb_pdhelper::ApproximateTableCountProvider,
         killer: &tidb_sqlkiller::SqlKiller,
         jobs: &dyn tidb_executor::real_tikv_analyze::AnalyzeJobLifecycle,
         stats_pool: &dyn tidb_stats_handle_storage::stats_read_writer::StatsSessionPool,
-    ) -> Result<tidb_executor::real_tikv_analyze::ClusterAnalyzeReport, tidb_store_driver_error::sql_query_error::SqlQueryError>
+    ) -> Result<tidb_executor::real_tikv_analyze::AnalyzeExecReport, tidb_store_driver_error::sql_query_error::SqlQueryError>
     {
         self.inner.execute(
-            statement,
+            statements,
             resource_group,
             approximate_counts,
             killer,
