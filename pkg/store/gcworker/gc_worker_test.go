@@ -20,6 +20,8 @@ import (
 	"encoding/hex"
 	"fmt"
 	"math"
+	"os"
+	"path/filepath"
 	"slices"
 	"sort"
 	"strconv"
@@ -46,6 +48,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -60,6 +63,7 @@ import (
 	pd "github.com/tikv/pd/client"
 	"github.com/tikv/pd/client/clients/gc"
 	"github.com/tikv/pd/client/constants"
+	"github.com/tikv/pd/client/pkg/caller"
 )
 
 type mockGCWorkerLockResolver struct {
@@ -201,6 +205,14 @@ func withMockStoreOptions(opt ...mockstore.MockTiKVStoreOption) mockGCWorkerSuit
 	}
 }
 
+func newTestGCWorker(t *testing.T, store kv.Storage, pdClient pd.Client) *GCWorker {
+	t.Helper()
+	worker, err := NewGCWorker(store, pdClient)
+	require.NoError(t, err)
+	t.Cleanup(func() { variable.UnregisterStatistics(worker) })
+	return worker
+}
+
 func createGCWorkerSuite(t *testing.T, opts ...mockGCWorkerSuiteOption) *mockGCWorkerSuite {
 	options := &mockGCWorkerSuiteOptions{
 		storeType:        mockstore.EmbedUnistore,
@@ -241,11 +253,9 @@ func createGCWorkerSuite(t *testing.T, opts ...mockGCWorkerSuiteOption) *mockGCW
 
 	s.tikvStore = s.store.(tikv.Storage)
 
-	gcWorker, err := NewGCWorker(s.store, s.pdClient)
-	require.NoError(t, err)
-	gcWorker.Start()
-	gcWorker.Close()
-	s.gcWorker = gcWorker
+	s.gcWorker = newTestGCWorker(t, s.store, s.pdClient)
+	s.gcWorker.Start()
+	s.gcWorker.Close()
 
 	return s
 }
@@ -441,7 +451,14 @@ func TestGetOracleTime(t *testing.T) {
 }
 
 func TestCheckGCEnableWithDisableGC(t *testing.T) {
+	// Starter can schedule a GC job on the first tick in a normal build.
+	if kerneltype.IsNextGen() {
+		mode := deploymode.Get()
+		t.Cleanup(func() { require.NoError(t, deploymode.Set(mode)) })
+		require.NoError(t, deploymode.Set(deploymode.Starter))
+	}
 	t.Cleanup(config.RestoreFunc())
+	config.UpdateGlobal(func(conf *config.Config) { conf.DisableGC = true })
 	s := createGCWorkerSuite(t)
 	se := createSession(s.store)
 	defer se.Close()
@@ -459,9 +476,12 @@ func TestCheckGCEnableWithDisableGC(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			config.UpdateGlobal(func(conf *config.Config) { conf.DisableGC = tc.disableGC })
+			worker := newTestGCWorker(t, s.store, s.pdClient)
+			// A live worker retains the configuration it started with.
+			config.UpdateGlobal(func(conf *config.Config) { conf.DisableGC = !tc.disableGC })
 			_, err := se.ExecuteInternal(gcContext(), "SET GLOBAL tidb_gc_enable = "+tc.sqlEnable)
 			require.NoError(t, err)
-			enabled, err := s.gcWorker.checkGCEnable()
+			enabled, err := worker.checkGCEnable()
 			require.NoError(t, err)
 			require.Equal(t, tc.want, enabled)
 			sqlEnable, err := se.GetSessionVars().GetGlobalSystemVar(gcContext(), "tidb_gc_enable")
@@ -488,7 +508,8 @@ func TestDisableGCDoesNotInitializeEnable(t *testing.T) {
 	require.Empty(t, value)
 
 	config.UpdateGlobal(func(conf *config.Config) { conf.DisableGC = false })
-	enabled, err = s.gcWorker.checkGCEnable()
+	worker := newTestGCWorker(t, s.store, s.pdClient)
+	enabled, err = worker.checkGCEnable()
 	require.NoError(t, err)
 	require.True(t, enabled)
 	value, err = s.gcWorker.loadValueFromSysTable(gcEnableKey)
@@ -496,79 +517,119 @@ func TestDisableGCDoesNotInitializeEnable(t *testing.T) {
 	require.Equal(t, booleanTrue, value)
 }
 
-func TestDisableGCPreventsPrepare(t *testing.T) {
+// Keyspace-level GC must use its own controller. Report unexpected writes even
+// if the worker handles the error or the target safepoint was already reached.
+type keyspaceGCWorkerTestClient struct {
+	pd.Client
+	t          *testing.T
+	keyspaceID uint32
+}
+
+func (c keyspaceGCWorkerTestClient) WithCallerComponent(component caller.Component) pd.Client {
+	c.Client = c.Client.WithCallerComponent(component)
+	return c
+}
+
+func (c keyspaceGCWorkerTestClient) GetGCInternalController(id uint32) gc.InternalController {
+	if id != c.keyspaceID {
+		c.t.Errorf("GC worker for keyspace %d requested a controller for %d", c.keyspaceID, id)
+	}
+	return c.Client.GetGCInternalController(id)
+}
+
+func (c keyspaceGCWorkerTestClient) UpdateGCSafePoint(ctx context.Context, safePoint uint64) (uint64, error) {
+	if safePoint != 0 {
+		c.t.Errorf("keyspace GC worker attempted global GC safepoint update to %d", safePoint)
+	}
+	return c.Client.UpdateGCSafePoint(ctx, safePoint)
+}
+
+func (c keyspaceGCWorkerTestClient) UpdateServiceGCSafePoint(ctx context.Context, serviceID string, ttl int64, safePoint uint64) (uint64, error) {
+	c.t.Errorf("keyspace GC worker attempted global service safepoint update for %q with TTL %d and safepoint %d", serviceID, ttl, safePoint)
+	return c.Client.UpdateServiceGCSafePoint(ctx, serviceID, ttl, safePoint)
+}
+
+func TestDisableGCAcrossWorkerRestart(t *testing.T) {
 	t.Cleanup(config.RestoreFunc())
 	config.UpdateGlobal(func(conf *config.Config) { conf.DisableGC = true })
-	// The default mock uses the null keyspace in classic builds and SYSTEM with
-	// keyspace-level GC in nextgen builds. Both advance through prepare.
-	s := createGCWorkerSuite(t, withSchemaLease(220*time.Minute))
-	// Keep the seeded state ahead of any preparation during suite startup.
-	s.oracle.AddOffset(3 * time.Hour)
+	oldWait := txnSafePointSyncWaitTime
+	txnSafePointSyncWaitTime = 0
+	t.Cleanup(func() { txnSafePointSyncWaitTime = oldWait })
+
+	s := createGCWorkerSuite(t)
+	ctx := gcContext()
+	keyspaceID := uint32(s.store.GetCodec().GetKeyspaceID())
+	client := s.pdClient
 	if kerneltype.IsNextGen() {
+		require.NotEqual(t, uint32(constants.NullKeyspaceID), keyspaceID)
 		require.True(t, pd.IsKeyspaceUsingKeyspaceLevelGC(s.store.GetCodec().GetKeyspaceMeta()))
+		client = keyspaceGCWorkerTestClient{Client: client, t: t, keyspaceID: keyspaceID}
 	} else {
-		require.Nil(t, s.store.GetCodec().GetKeyspaceMeta())
+		require.Equal(t, uint32(constants.NullKeyspaceID), keyspaceID)
 	}
+
 	now, err := s.gcWorker.getOracleTime()
 	require.NoError(t, err)
 	oldSafePointTime := now.Add(-2 * time.Hour)
 	oldSafePoint := oracle.GoTimeToTS(oldSafePointTime)
 	oldLastRun := now.Add(-time.Hour)
 	require.NoError(t, s.gcWorker.saveValueToSysTable(gcEnableKey, booleanTrue))
-	require.NoError(t, s.gcWorker.saveDuration(gcRunIntervalKey, gcDefaultRunInterval))
-	require.NoError(t, s.gcWorker.saveDuration(gcLifeTimeKey, gcDefaultLifeTime))
 	require.NoError(t, s.gcWorker.saveTime(gcLastRunTimeKey, oldLastRun))
 	require.NoError(t, s.gcWorker.saveTime(gcSafePointKey, oldSafePointTime))
-	_, err = s.gcWorker.pdGCControllerClient.AdvanceTxnSafePoint(gcContext(), oldSafePoint)
+	controller := s.pdClient.GetGCInternalController(keyspaceID)
+	_, err = controller.AdvanceTxnSafePoint(ctx, oldSafePoint)
 	require.NoError(t, err)
-	_, err = s.gcWorker.pdGCControllerClient.AdvanceGCSafePoint(gcContext(), oldSafePoint)
+	_, err = controller.AdvanceGCSafePoint(ctx, oldSafePoint)
 	require.NoError(t, err)
-	gcStatesClient := s.pdClient.GetGCStatesClient(s.gcWorker.keyspaceID)
+	states := s.pdClient.GetGCStatesClient(keyspaceID)
 	barrierTS := oracle.GoTimeToTS(now.Add(-5 * time.Minute))
-	_, err = gcStatesClient.SetGCBarrier(gcContext(), "backup", barrierTS, gc.TTLNeverExpire)
+	_, err = states.SetGCBarrier(ctx, "backup", barrierTS, gc.TTLNeverExpire)
 	require.NoError(t, err)
 
-	ok, safePoint, err := s.gcWorker.prepare(gcContext())
-	require.NoError(t, err)
-	require.False(t, ok)
-	require.Zero(t, safePoint)
-	require.NoError(t, s.gcWorker.leaderTick(gcContext()))
-	require.False(t, s.gcWorker.gcIsRunning)
-	lastRun, err := s.gcWorker.loadTime(gcLastRunTimeKey)
-	require.NoError(t, err)
-	require.True(t, oldLastRun.Equal(*lastRun))
-	savedSafePoint, err := s.gcWorker.loadTime(gcSafePointKey)
-	require.NoError(t, err)
-	require.True(t, oldSafePointTime.Equal(*savedSafePoint))
-	state, err := gcStatesClient.GetGCState(gcContext(), gc.ExcludeGCBarriers(false))
-	require.NoError(t, err)
-	require.Equal(t, oldSafePoint, state.TxnSafePoint)
-	require.Equal(t, oldSafePoint, state.GCSafePoint)
-	barriers, err := state.GetGCBarriers()
-	require.NoError(t, err)
-	// The current GC worker uses AdvanceTxnSafePoint directly, so it must not
-	// create a legacy gc_worker barrier or modify other services' barriers.
-	require.Len(t, barriers, 1)
-	require.Equal(t, "backup", barriers[0].BarrierID)
-	require.Equal(t, barrierTS, barriers[0].BarrierTS)
-	require.Equal(t, gc.TTLNeverExpire, barriers[0].TTL)
+	configFile := filepath.Join(t.TempDir(), "tidb.toml")
+	for _, frozen := range []bool{true, false} {
+		require.NoError(t, os.WriteFile(configFile, []byte(fmt.Sprintf("disable-gc = %t", frozen)), 0600))
+		config.UpdateGlobal(func(conf *config.Config) { require.NoError(t, conf.Load(configFile)) })
+		worker := newTestGCWorker(t, s.store, client)
+		// Exercise Start's first tick with an expired leader lease and startup cooldown.
+		require.NoError(t, worker.saveTime(gcLeaderLeaseKey, time.Now().Add(-gcWorkerLease)))
+		worker.lastFinish = time.Now().Add(-gcWaitTime)
+		worker.tick(ctx)
+		if worker.gcIsRunning {
+			select {
+			case err := <-worker.done:
+				require.NoError(t, err)
+			case <-time.After(10 * time.Second):
+				t.Fatal("timed out waiting for GC")
+			}
+		}
+		require.Equal(t, !frozen, worker.gcIsRunning)
+		leader, err := worker.loadValueFromSysTable(gcLeaderUUIDKey)
+		require.NoError(t, err)
+		require.Equal(t, worker.uuid, leader)
 
-	// The same preparation advances without the startup override.
-	config.UpdateGlobal(func(conf *config.Config) { conf.DisableGC = false })
-	ok, safePoint, err = s.gcWorker.prepare(gcContext())
-	require.NoError(t, err)
-	require.True(t, ok)
-	require.Greater(t, safePoint, oldSafePoint)
-	lastRun, err = s.gcWorker.loadTime(gcLastRunTimeKey)
-	require.NoError(t, err)
-	require.True(t, lastRun.After(oldLastRun))
-	savedSafePoint, err = s.gcWorker.loadTime(gcSafePointKey)
-	require.NoError(t, err)
-	require.True(t, savedSafePoint.After(oldSafePointTime))
-	state, err = gcStatesClient.GetGCState(gcContext())
-	require.NoError(t, err)
-	require.Equal(t, safePoint, state.TxnSafePoint)
-	require.Equal(t, oldSafePoint, state.GCSafePoint)
+		lastRun, err := worker.loadTime(gcLastRunTimeKey)
+		require.NoError(t, err)
+		sqlSafePoint, err := worker.loadTime(gcSafePointKey)
+		require.NoError(t, err)
+		state, err := states.GetGCState(ctx, gc.ExcludeGCBarriers(false))
+		require.NoError(t, err)
+		if frozen {
+			require.True(t, lastRun.Equal(oldLastRun))
+			require.Equal(t, oldSafePoint, state.GCSafePoint)
+		} else {
+			require.True(t, lastRun.After(oldLastRun))
+			require.Greater(t, state.GCSafePoint, oldSafePoint)
+		}
+		require.Equal(t, state.GCSafePoint, state.TxnSafePoint)
+		require.Equal(t, state.GCSafePoint, oracle.GoTimeToTS(*sqlSafePoint))
+		barriers, err := state.GetGCBarriers()
+		require.NoError(t, err)
+		require.Len(t, barriers, 1)
+		require.Equal(t, "backup", barriers[0].BarrierID)
+		require.Equal(t, barrierTS, barriers[0].BarrierTS)
+		require.Equal(t, gc.TTLNeverExpire, barriers[0].TTL)
+	}
 }
 
 func TestPrepareGC(t *testing.T) {
