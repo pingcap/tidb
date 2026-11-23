@@ -34,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn/staleread"
 	"github.com/pingcap/tidb/pkg/types"
 	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
@@ -461,9 +460,9 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared
 	}
 
 	// put this plan into the plan cache.
-	// Skip caching WARN-mode SQL_CALC_FOUND_ROWS fallbacks so repeated executions
-	// of view-triggered fallbacks continue emitting the noop warning.
-	if stmtCtx.UseCache() && !(stmtCtx.CalcFoundRowsNoop && sessVars.NoopFuncsMode == variable.WarnInt) {
+	// Skip caching SQL_CALC_FOUND_ROWS noop fallbacks so mode changes
+	// (OFF/ON/WARN) and view-triggered fallbacks are always rechecked.
+	if stmtCtx.UseCache() && !stmtCtx.CalcFoundRowsNoop {
 		stmt.NormalizedPlan, stmt.PlanDigest = NormalizePlan(p)
 		cached := NewPlanCacheValue(sctx, stmt, cacheKey, binding, p, names, paramTypes, &stmtCtx.StmtHints)
 		stmtCtx.SetPlan(p)
