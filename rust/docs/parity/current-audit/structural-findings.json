@@ -67,8 +67,8 @@
       "id": "T19",
       "group": "Executors",
       "status": "open",
-      "finding": "The `kv.TiDB` store's table read is a separate executor, `TiDbTableReaderExecutor`, whose request `build_tidb_cop_request` assembles by hand, because that store's table scan has no `ToPB`; Go has one `TableReaderExecutor` whose DAG is the plan's `ToPB` for every store.",
-      "rust_evidence": "`tidb-executor/src/table_reader.rs` (`TiDbTableReaderExecutor`), `tidb-executor/src/builder_utils.rs` (`build_tidb_cop_request`).",
+      "finding": "Two implementations of Go's `TableReaderExecutor` over two request stacks: `TableReaderExecutor` (TiKV, TiFlash) sends through `cop_reader`'s `RemoteScanPlan` / `open_scan`, and `TiDbTableReaderExecutor` (the `kv.TiDB` store's CLUSTER_* tables, reached through the memory-table retrieval) sends through `tidb_distsql`'s `RequestBuilder` (Go `distsql.RequestBuilder`). Go has one executor whose `buildKVReq` branches on the store type (`SetTiDBServerID` for a DDL-owner table, the user on the DAG) and one `RequestBuilder`.",
+      "rust_evidence": "`tidb-executor/src/table_reader.rs` (`TableReaderExecutor`, `TiDbTableReaderExecutor`), `tidb-executor/src/cop_reader.rs` (`open_table_read`, `RemoteScanPlan`), `driver/physical_builder.rs` (`build_cluster_table_reader`).",
       "go_owner": "`pkg/executor/table_reader.go`, `pkg/planner/core/operator/physicalop` `ToPB`"
     }
   ],
