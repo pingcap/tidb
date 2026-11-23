@@ -5,7 +5,7 @@ Re-audited against the tree on 2026-11-23; the [JSON register](structural-findin
 rows. A repaired finding is removed, not kept. The method and the live probes behind the rows
 are in [structural-audit-2026-11-23.md](structural-audit-2026-11-23.md).
 
-**10 unresolved: 10 open, 0 partial.**
+**9 unresolved: 9 open, 0 partial.**
 
 A row states the remaining gap only.
 
@@ -29,7 +29,6 @@ A row states the remaining gap only.
 
 | ID | Status | Remaining gap | Go owner |
 | --- | --- | --- | --- |
-| T12 | open | Login verification (`ConnectionVerification`'s plugin, password, lock and TLS checks) is split between the session crate and the privilege crate. Rust: `tidb-session/src/identity.rs`, `tidb-session/src/domain/configured_user_store.rs`. | `pkg/privilege/privileges/privileges.go` |
 
 ### DDL
 

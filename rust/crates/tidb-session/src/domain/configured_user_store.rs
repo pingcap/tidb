@@ -30,12 +30,8 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use tidb_privilege::{check_password_for_plugin, AccountLockout, PrivilegeRegistry};
+use tidb_privilege::{AccountLockout, PrivilegeRegistry};
 use crate::GlobalSysvars;
-use tidb_mysql::consts::{
-    AuthCachingSha2Password, AuthLDAPSASL, AuthLDAPSimple, AuthNativePassword, AuthSocket,
-    AuthTiDBAuthToken, AuthTiDBSM3Password,
-};
 
 use crate::domain::auth_identity::{
     IdentityCatalog, IdentityLookupPolicy, IdentityLookupRequest, IdentityLookupResult,
@@ -674,162 +670,6 @@ impl ConfiguredUserStore {
         // auto-unlocks an account whose `PASSWORD_LOCK_TIME` has run out, so
         // the very next correct password works.
         self.apply_login_policy(user, host, tidb_privilege::LoginPolicyAction::Verify)?;
-        // Go `ConnectionVerification` from here. `checkSSL` runs on the
-        // matched account's `mysql.global_priv` row before the password is
-        // compared, and reports the generic access-denied on failure.
-        if !self.accounts.admits_account_tls_peer(
-            user,
-            host,
-            is_tls,
-            admission.verified_client_certificate,
-            admission.tls_peer.as_ref(),
-        ) {
-            return Err(AuthenticationFailure::AccessDenied);
-        }
-        let (primary, plugin, secondary) = self
-            .accounts
-            .login_credentials(user, host)
-            .expect("a matched identity has its account row");
-        // A stored string that is not its plugin's hash shape is refused
-        // before any password.
-        if !tidb_privilege::is_valid_hash(&plugin, &primary) {
-            return Err(AuthenticationFailure::AccessDenied);
-        }
-        if session_token {
-            // Go skips the account's own plugin for a session token, and a
-            // token that does not verify is no wrong password.
-            if let Err(error) = tidb_sessionstates::validate_session_token(response, username) {
-                tidb_log::warn(
-                    "verify session token failed",
-                    &[
-                        tidb_log::Field::new("username", tidb_log::Value::Str(username.to_owned())),
-                        tidb_log::Field::new("error", tidb_log::Value::Str(error)),
-                    ],
-                );
-                return Err(AuthenticationFailure::AccessDenied);
-            }
-        } else if plugin == AuthTiDBAuthToken {
-            if response.is_empty() {
-                tidb_logutil::bg_logger().warn("empty authentication", &[]);
-                return Err(AuthenticationFailure::AccessDenied);
-            }
-            let token_string = String::from_utf8_lossy(&response[..response.len() - 1]);
-            let claims = match tidb_privilege::tidb_auth_token::GLOBAL_JWKS.check_sig_with_retry(&token_string, 1) {
-                Ok(claims) => claims,
-                Err(error) => {
-                    tidb_logutil::bg_logger()
-                        .warn("verify JWT failed", &[tidb_log::Field::new("error", tidb_log::Value::Str(error))]);
-                    return Err(AuthenticationFailure::AccessDenied);
-                }
-            };
-            let (auth_token_issuer, email) = self.accounts.auth_token_record(user, host).unwrap_or_default();
-            let record = tidb_privilege::tidb_auth_token::AuthTokenRecord {
-                user,
-                email: &email,
-                auth_token_issuer: &auth_token_issuer,
-            };
-            if let Err(error) = tidb_privilege::tidb_auth_token::check_auth_token_claims(
-                &claims,
-                &record,
-                tidb_privilege::tidb_auth_token::DEFAULT_TOKEN_LIFE,
-            ) {
-                tidb_logutil::bg_logger()
-                    .warn("check claims failed", &[tidb_log::Field::new("error", tidb_log::Value::Str(error))]);
-                return Err(AuthenticationFailure::AccessDenied);
-            }
-        } else if plugin == AuthLDAPSASL {
-            let Some(auth_conn) = auth_conn else {
-                return Err(AuthenticationFailure::AccessDenied);
-            };
-            if let Err(error) =
-                tidb_privilege_ldap::LDAP_SASL_AUTH_IMPL.auth_ldap_sasl(user, &primary, response, auth_conn)
-            {
-                // though the pwd stores only `dn` for LDAP SASL, it could be
-                // unsafe to print it out. for example, someone may alter the
-                // auth plugin name but forgot to change the password...
-                tidb_logutil::bg_logger().warn(
-                    "verify through LDAP SASL failed",
-                    &[
-                        tidb_log::Field::new("username", tidb_log::Value::Str(username.to_owned())),
-                        tidb_log::Field::new("error", tidb_log::Value::Str(error)),
-                    ],
-                );
-                return Err(AuthenticationFailure::AccessDenied);
-            }
-        } else if plugin == AuthLDAPSimple {
-            if let Err(error) =
-                tidb_privilege_ldap::LDAP_SIMPLE_AUTH_IMPL.auth_ldap_simple(user, &primary, response)
-            {
-                tidb_logutil::bg_logger().warn(
-                    "verify through LDAP Simple failed",
-                    &[
-                        tidb_log::Field::new("username", tidb_log::Value::Str(username.to_owned())),
-                        tidb_log::Field::new("error", tidb_log::Value::Str(error)),
-                    ],
-                );
-                return Err(AuthenticationFailure::AccessDenied);
-            }
-        } else if plugin == AuthSocket {
-            // The response is the peer's OS user, which must be the
-            // account's user or its authentication string.
-            if response != user.as_bytes() && response != primary.as_bytes() {
-                return Err(AuthenticationFailure::AccessDenied);
-            }
-        } else if let Some(p) = tidb_extension::get_extensions()
-            .map_err(|_| AuthenticationFailure::AccessDenied)?
-            .and_then(|es| es.get_auth_plugins().remove(&plugin))
-        {
-            let authenticate = p.authenticate_user.as_ref().expect("validated auth plugin");
-            // Never surface the callback's error: it may contain credentials.
-            authenticate(tidb_extension::AuthenticateRequest {
-                user: username,
-                stored_auth_string: &primary,
-                input_auth_string: response,
-                salt,
-                conn_state,
-                auth_conn,
-            })
-            .map_err(|_| AuthenticationFailure::AccessDenied)?;
-        } else if !primary.is_empty() || !response.is_empty() {
-            // The password plugins. Deliberately reachable with an EMPTY
-            // stored primary when the client supplied a password, so a
-            // retained secondary can still authenticate; a passwordless login
-            // (empty primary AND empty response) never enters here.
-            if plugin != AuthNativePassword
-                && plugin != AuthCachingSha2Password
-                && plugin != AuthTiDBSM3Password
-            {
-                tidb_log::warn(
-                    "unknown authentication plugin",
-                    &[
-                        tidb_log::Field::new("authUser", tidb_log::Value::Str(user.to_owned())),
-                        tidb_log::Field::new("plugin", tidb_log::Value::Str(plugin.clone())),
-                    ],
-                );
-                return Err(AuthenticationFailure::AccessDenied);
-            }
-            let primary_ok = check_password_for_plugin(&plugin, &primary, salt, response);
-            // A malformed stored native primary is a wrong password that no
-            // secondary can rescue.
-            let verified = match primary_ok {
-                Err(_) if plugin == AuthNativePassword => false,
-                Ok(true) => true,
-                _ => secondary.as_deref().is_some_and(|secondary| {
-                    check_password_for_plugin(&plugin, secondary, salt, response).unwrap_or(false)
-                }),
-            };
-            if !verified {
-                // Go's `FailedDueToWrongPassword`: the only failure that
-                // counts toward `FAILED_LOGIN_ATTEMPTS`.
-                self.apply_login_policy(user, host, tidb_privilege::LoginPolicyAction::Failure)?;
-                return Err(AuthenticationFailure::AccessDenied);
-            }
-        }
-        // Login to a locked account is not allowed: a ROLE is a `mysql.user`
-        // row with `account_locked = 'Y'` and an empty password.
-        if self.accounts.is_role(user, host) {
-            return Err(AuthenticationFailure::AccountLocked);
-        }
         // Go reads the global `default_password_lifetime` for an account
         // whose own `Password_lifetime` is NULL. `default_password_lifetime`
         // is TypeInt (see `sysvar.rs`), so a value the registry's own
@@ -842,13 +682,47 @@ impl ConfiguredUserStore {
             .ok()
             .and_then(|value| value.parse::<i64>().ok())
             .unwrap_or(0);
-        // A session migrated from another TiDB skips the expiration check,
-        // or it could neither log in nor run statements after migration.
-        let in_sandbox_mode = !session_token
-            && self
-                .accounts
-                .check_password_expired(user, host, default_password_lifetime)
-                .map_err(|_| AuthenticationFailure::PasswordExpired)?;
+        // Go `pm.ConnectionVerification(user, authUser, authHost, ...)`.
+        let pm = tidb_privilege::UserPrivileges {
+            user: "",
+            host: "",
+            handle: &self.accounts,
+            auth_plugin: None,
+            extension_access_check_funcs: &[],
+        };
+        let (info, verified) = pm.connection_verification(
+            tidb_privilege::connection_verification::VerificationRequest {
+                username,
+                auth_user: user,
+                auth_host: host,
+                response,
+                salt,
+                session_token,
+                is_tls,
+                verified_client_certificate: admission.verified_client_certificate,
+                tls_peer: admission.tls_peer.as_ref(),
+                conn_state,
+                default_password_lifetime,
+            },
+            auth_conn,
+        );
+        if let Err(error) = verified {
+            // Go: "when user enables the account locking function for
+            // consecutive login failures, the system updates the login
+            // failure count and determines whether to lock the account when
+            // authentication fails."
+            if info.failed_due_to_wrong_password {
+                self.apply_login_policy(user, host, tidb_privilege::LoginPolicyAction::Failure)?;
+            }
+            use tidb_privilege::connection_verification::VerificationError;
+            return Err(match error {
+                VerificationError::AccessDenied => AuthenticationFailure::AccessDenied,
+                VerificationError::AccountLocked => AuthenticationFailure::AccountLocked,
+                VerificationError::PasswordExpired => AuthenticationFailure::PasswordExpired,
+            });
+        }
+        let in_sandbox_mode = info.in_sandbox_mode;
+        let plugin = self.accounts.plugin(user, host).unwrap_or_default();
         self.apply_login_policy(user, host, tidb_privilege::LoginPolicyAction::Success)?;
         Ok(AuthenticatedIdentity {
             identity,

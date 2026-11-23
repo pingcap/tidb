@@ -2,8 +2,8 @@
   "date": "2026-11-23",
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports, from the 2026-11-23 symbol-level re-audit (method in structural-audit-2026-11-23.md).",
   "counts": {
-    "unresolved": 10,
-    "open": 10,
+    "unresolved": 9,
+    "open": 9,
     "partial": 0
   },
   "findings": [
@@ -64,14 +64,6 @@
       "go_owner": "`pkg/executor` (`adapter.go`, `select.go`, `plan_replayer.go`, `simple.go`, `ddl.go`, `show.go`, `prepared.go`, ...)"
     },
     {
-      "id": "T12",
-      "group": "Privileges, wire and administration",
-      "status": "open",
-      "finding": "Login verification (`ConnectionVerification`'s plugin, password, lock and TLS checks) is split between the session crate and the privilege crate.",
-      "rust_evidence": "`tidb-session/src/identity.rs`, `tidb-session/src/domain/configured_user_store.rs`.",
-      "go_owner": "`pkg/privilege/privileges/privileges.go`"
-    },
-    {
       "id": "T13",
       "group": "Executor, DML and expressions",
       "status": "open",
@@ -88,7 +80,7 @@
       "go_owner": "`pkg/session/txn.go` (`LazyTxn`), `pkg/session/session.go` (`PrepareTSFuture`, `NewTxn`), `pkg/sessiontxn/isolation`"
     }
   ],
-  "unresolved": 10,
-  "open": 10,
+  "unresolved": 9,
+  "open": 9,
   "partial": 0
 }
