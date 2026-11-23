@@ -579,10 +579,10 @@ type StatementContext struct {
 	// acquired in this case.
 	ForShareLockEnabledByNoop bool
 
-	// CalcFoundRowsNoop indicates that SQL_CALC_FOUND_ROWS is ignored for this
+	// IgnoreCalcFoundRows indicates that SQL_CALC_FOUND_ROWS is ignored for this
 	// statement because its shape has no native count plan and
 	// tidb_enable_noop_functions is ON or WARN.
-	CalcFoundRowsNoop bool
+	IgnoreCalcFoundRows bool
 
 	// OperatorNum is used to record the number of operators in the current logical plan.
 	OperatorNum uint64

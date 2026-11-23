@@ -27,9 +27,9 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 )
 
-// nativeCalcFoundRows reports whether this SELECT should build a native count branch.
-func nativeCalcFoundRows(ctx base.PlanContext, opts *ast.SelectStmtOpts) bool {
-	return opts != nil && opts.CalcFoundRows && !ctx.GetSessionVars().StmtCtx.CalcFoundRowsNoop
+// shouldCalcFoundRows reports whether this SELECT should build a count branch.
+func shouldCalcFoundRows(ctx base.PlanContext, opts *ast.SelectStmtOpts) bool {
+	return opts != nil && opts.CalcFoundRows && !ctx.GetSessionVars().StmtCtx.IgnoreCalcFoundRows
 }
 
 // GetFoundRowsPlan returns the logical count branch for SQL_CALC_FOUND_ROWS, or nil.
@@ -57,7 +57,7 @@ func (b *PlanBuilder) buildSelectWithFoundRows(ctx context.Context, sel *ast.Sel
 	if err != nil {
 		return nil, err
 	}
-	if !b.ctx.GetSessionVars().StmtCtx.CalcFoundRowsNoop {
+	if !b.ctx.GetSessionVars().StmtCtx.IgnoreCalcFoundRows {
 		count, _, err = b.buildAggregation(ctx, count, []*ast.AggregateFuncExpr{{
 			F: ast.AggFuncCount, Args: []ast.ExprNode{ast.NewValueExpr(1, "", "")},
 		}}, nil, nil)
@@ -83,7 +83,7 @@ func (b *PlanBuilder) buildSelectWithFoundRows(ctx context.Context, sel *ast.Sel
 	if err != nil {
 		return nil, err
 	}
-	if b.ctx.GetSessionVars().StmtCtx.CalcFoundRowsNoop {
+	if b.ctx.GetSessionVars().StmtCtx.IgnoreCalcFoundRows {
 		b.foundRowsPlan = nil
 	}
 	return plan, nil
@@ -93,7 +93,7 @@ func (b *PlanBuilder) buildSelectWithFoundRows(ctx context.Context, sel *ast.Sel
 // the SQL_CALC_FOUND_ROWS count branch.
 func (b *PlanBuilder) checkViewCalcFoundRows(selectNode ast.Node) error {
 	vars := b.ctx.GetSessionVars()
-	if vars.StmtCtx.CalcFoundRowsNoop {
+	if vars.StmtCtx.IgnoreCalcFoundRows {
 		return nil
 	}
 	checker := &foundRowsChecker{inView: true}
@@ -109,10 +109,10 @@ func (b *PlanBuilder) checkViewCalcFoundRows(selectNode ast.Node) error {
 func handleUnsupportedCalcFoundRows(vars *variable.SessionVars, err error) error {
 	switch vars.NoopFuncsMode {
 	case variable.OnInt:
-		vars.StmtCtx.CalcFoundRowsNoop = true
+		vars.StmtCtx.IgnoreCalcFoundRows = true
 		return nil
 	case variable.WarnInt:
-		vars.StmtCtx.CalcFoundRowsNoop = true
+		vars.StmtCtx.IgnoreCalcFoundRows = true
 		appendNoopCalcFoundRowsWarning(vars)
 		return nil
 	default:

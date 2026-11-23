@@ -462,7 +462,7 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared
 	// put this plan into the plan cache.
 	// Skip caching SQL_CALC_FOUND_ROWS noop fallbacks so mode changes
 	// (OFF/ON/WARN) and view-triggered fallbacks are always rechecked.
-	if stmtCtx.UseCache() && !stmtCtx.CalcFoundRowsNoop {
+	if stmtCtx.UseCache() && !stmtCtx.IgnoreCalcFoundRows {
 		stmt.NormalizedPlan, stmt.PlanDigest = NormalizePlan(p)
 		cached := NewPlanCacheValue(sctx, stmt, cacheKey, binding, p, names, paramTypes, &stmtCtx.StmtHints)
 		stmtCtx.SetPlan(p)

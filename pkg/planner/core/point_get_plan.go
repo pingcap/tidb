@@ -91,7 +91,7 @@ func TryFastPlan(ctx base.PlanContext, node *resolve.NodeW) (p base.Plan) {
 	switch x := node.Node.(type) {
 	case *ast.SelectStmt:
 		// SQL_CALC_FOUND_ROWS must reach PlanBuilder to build the count branch.
-		if x.SelectIntoOpt != nil || nativeCalcFoundRows(ctx, x.SelectStmtOpts) {
+		if x.SelectIntoOpt != nil || shouldCalcFoundRows(ctx, x.SelectStmtOpts) {
 			return nil
 		}
 		defer func() {
