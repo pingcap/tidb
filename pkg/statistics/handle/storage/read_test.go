@@ -298,7 +298,7 @@ func TestLoadNonExistentIndexStats(t *testing.T) {
 	// but doesn't have histogram data in mysql.stats_histograms yet.
 	err = util.CallWithSCtx(h.SPool(), func(sctx sessionctx.Context) error {
 		require.NotPanics(t, func() {
-			err := storage.LoadNeededHistograms(sctx, dom.InfoSchema(), h)
+			err := storage.LoadNeededHistograms(sctx, dom.InfoSchema(), h, h)
 			require.NoError(t, err)
 		})
 		return nil
@@ -386,7 +386,7 @@ func TestLoadNeededHistogramsSkipsInternalColumnID(t *testing.T) {
 	asyncload.AsyncLoadHistogramNeededItems.Insert(internalColumnItem, true)
 
 	require.NotPanics(t, func() {
-		err = storage.LoadNeededHistograms(nil, dom.InfoSchema(), h)
+		err = storage.LoadNeededHistograms(nil, dom.InfoSchema(), h, h)
 		require.NoError(t, err)
 	})
 	require.NotContains(t, asyncload.AsyncLoadHistogramNeededItems.AllItems(), model.StatsLoadItem{

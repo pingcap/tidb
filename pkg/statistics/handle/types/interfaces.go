@@ -348,21 +348,34 @@ type MetaUpdate struct {
 	ModifyCount int64
 }
 
-// StatsReadWriter is used to read and write stats to the storage.
-// TODO: merge and remove some methods.
-type StatsReadWriter interface {
+// StatsMetaReader reads the stats meta of a table from the storage.
+type StatsMetaReader interface {
 	// StatsMetaCountAndModifyCount reads count and modify_count for the given table from mysql.stats_meta.
 	StatsMetaCountAndModifyCount(tableID int64) (count, modifyCount int64, err error)
+}
 
-	// LoadNeededHistograms will load histograms for those needed columns/indices and put them into the cache.
-	LoadNeededHistograms(is infoschema.InfoSchema) (err error)
+// AnalyzeResultSaver saves the results of ANALYZE to the storage.
+type AnalyzeResultSaver interface {
+	// SaveAnalyzeResultToStorage saves the analyze result to the storage.
+	SaveAnalyzeResultToStorage(results *statistics.AnalyzeResults, analyzeSnapshot bool) (err error)
+}
 
+// ColOrIdxStatsSaver saves the statistics of one column or index to the storage.
+type ColOrIdxStatsSaver interface {
 	// SaveColOrIdxStatsToStorage save the column or index stats to storage.
 	SaveColOrIdxStatsToStorage(tableID int64, count, modifyCount int64, isIndex int, hg *statistics.Histogram,
 		cms *statistics.CMSketch, topN *statistics.TopN, fms *statistics.FMSketch, statsVersion int, updateAnalyzeTime bool) (err error)
+}
 
-	// SaveAnalyzeResultToStorage saves the analyze result to the storage.
-	SaveAnalyzeResultToStorage(results *statistics.AnalyzeResults, analyzeSnapshot bool) (err error)
+// StatsReadWriter is used to read and write stats to the storage.
+// TODO: merge and remove some methods.
+type StatsReadWriter interface {
+	StatsMetaReader
+	AnalyzeResultSaver
+	ColOrIdxStatsSaver
+
+	// LoadNeededHistograms will load histograms for those needed columns/indices and put them into the cache.
+	LoadNeededHistograms(is infoschema.InfoSchema) (err error)
 
 	// SaveMetaToStorage saves the stats meta of a table to storage.
 	// Use the param `refreshLastHistVer` to indicate whether we need to update the last_histograms_versions in stats_meta table.

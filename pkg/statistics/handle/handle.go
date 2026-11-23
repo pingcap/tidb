@@ -162,8 +162,8 @@ func NewHandle(
 		StatsCache:                 statsCache,
 		StatsLock:                  lockstats.NewStatsLock(pool),
 		StatsGC:                    storage.NewStatsGC(statsPool, leaseHolder, tables),
+		StatsReadWriter:            storage.NewStatsReadWriter(statsPool, leaseHolder, tables, statsCache),
 	}
-	handle.StatsReadWriter = storage.NewStatsReadWriter(handle)
 	handle.StatsUsage = usage.NewStatsUsageImpl(handle)
 	handle.StatsAnalyze = autoanalyze.NewStatsAnalyze(ctx, handle, tracker, ddlNotifier)
 	handle.StatsSyncLoad = syncload.NewStatsSyncLoad(handle)

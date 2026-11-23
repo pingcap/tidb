@@ -42,19 +42,76 @@ import (
 	"go.uber.org/zap"
 )
 
-// statsReadWriter implements the util.StatsReadWriter interface.
-type statsReadWriter struct {
-	statsHandler statstypes.StatsHandle
+// StatsCache is the part of the stats cache that the stats read-writer reads and updates.
+type StatsCache interface {
+	statstypes.StatsCacheGetter
+	statstypes.StatsCacheUpdater
+	statstypes.StatsCacheLoader
+	statstypes.TableStatsReader
 }
 
-// NewStatsReadWriter creates a new StatsReadWriter.
-func NewStatsReadWriter(statsHandler statstypes.StatsHandle) statstypes.StatsReadWriter {
-	return &statsReadWriter{statsHandler: statsHandler}
+// statsSaver implements statstypes.AnalyzeResultSaver and statstypes.ColOrIdxStatsSaver in the
+// sessions of a pool. The lease tells when a save is so slow that other TiDB nodes can miss it.
+type statsSaver struct {
+	pool  util.SessionPool
+	lease util.LeaseGetter
+}
+
+// newAnalyzeResultSaver creates a statstypes.AnalyzeResultSaver that saves in the sessions of pool.
+// It needs no stats cache.
+func newAnalyzeResultSaver(pool util.SessionPool, lease util.LeaseGetter) statstypes.AnalyzeResultSaver {
+	return &statsSaver{pool: pool, lease: lease}
+}
+
+// newColOrIdxStatsSaver creates a statstypes.ColOrIdxStatsSaver that saves in the sessions of pool.
+// It needs no stats cache.
+func newColOrIdxStatsSaver(pool util.SessionPool, lease util.LeaseGetter) statstypes.ColOrIdxStatsSaver {
+	return &statsSaver{pool: pool, lease: lease}
+}
+
+// statsMetaReader implements statstypes.StatsMetaReader in the sessions of a pool.
+type statsMetaReader struct {
+	pool util.SessionPool
+}
+
+// newStatsMetaReader creates a statstypes.StatsMetaReader that reads in the sessions of pool.
+// It needs no stats cache.
+func newStatsMetaReader(pool util.SessionPool) statstypes.StatsMetaReader {
+	return &statsMetaReader{pool: pool}
+}
+
+// statsReadWriter implements the util.StatsReadWriter interface.
+type statsReadWriter struct {
+	statstypes.StatsMetaReader
+	statstypes.AnalyzeResultSaver
+	statstypes.ColOrIdxStatsSaver
+	pool       util.Pool
+	tables     util.TableInfoGetter
+	statsCache StatsCache
+}
+
+// NewStatsReadWriter creates a new StatsReadWriter that runs its SQL in the sessions of pool,
+// and keeps statsCache up to date with what it writes. It also loads JSON stats in the
+// goroutines of pool.
+func NewStatsReadWriter(
+	pool util.Pool,
+	lease util.LeaseGetter,
+	tables util.TableInfoGetter,
+	statsCache StatsCache,
+) statstypes.StatsReadWriter {
+	return &statsReadWriter{
+		StatsMetaReader:    newStatsMetaReader(pool),
+		AnalyzeResultSaver: newAnalyzeResultSaver(pool, lease),
+		ColOrIdxStatsSaver: newColOrIdxStatsSaver(pool, lease),
+		pool:               pool,
+		tables:             tables,
+		statsCache:         statsCache,
+	}
 }
 
 // ChangeGlobalStatsID changes the table ID in global-stats to the new table ID.
 func (s *statsReadWriter) ChangeGlobalStatsID(from, to int64) (err error) {
-	return util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionctx.Context) error {
+	return util.CallWithSCtx(s.pool.SPool(), func(sctx sessionctx.Context) error {
 		return errors.Trace(ChangeGlobalStatsID(util.StatsCtx, sctx, from, to))
 	}, util.FlagWrapTxn)
 }
@@ -62,7 +119,7 @@ func (s *statsReadWriter) ChangeGlobalStatsID(from, to int64) (err error) {
 // UpdateStatsMetaVersionForGC update the version of mysql.stats_meta. See more
 // details in the interface definition.
 func (s *statsReadWriter) UpdateStatsMetaVersionForGC(physicalID int64) (err error) {
-	return util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionctx.Context) error {
+	return util.CallWithSCtx(s.pool.SPool(), func(sctx sessionctx.Context) error {
 		_, err := UpdateStatsMetaVerAndLastHistUpdateVer(util.StatsCtx, sctx, physicalID)
 		return errors.Trace(err)
 	}, util.FlagWrapTxn)
@@ -82,9 +139,9 @@ func IsStatsMetaWriteTooSlow(lease, dur time.Duration) bool {
 // Also, we need to update the stats meta with a more recent version to avoid other nodes missing the delta update.
 // Combined with the stats meta version update, we can ensure the stats cache on other TiDB nodes is consistent.
 // See more at stats cache's Update function.
-func (s *statsReadWriter) handleSlowStatsSaving(tableID int64, start time.Time) error {
+func (s *statsSaver) handleSlowStatsSaving(tableID int64, start time.Time) error {
 	dur := time.Since(start)
-	isLoadIntervalExceeded := IsStatsMetaWriteTooSlow(s.statsHandler.Lease(), dur)
+	isLoadIntervalExceeded := IsStatsMetaWriteTooSlow(s.lease.Lease(), dur)
 	// Use failpoint to simulate slow saving.
 	failpoint.Inject("slowStatsSaving", func(val failpoint.Value) {
 		if val.(bool) {
@@ -103,7 +160,7 @@ func (s *statsReadWriter) handleSlowStatsSaving(tableID int64, start time.Time) 
 
 	// Update stats meta to avoid other nodes missing the delta update.
 	statsVer := uint64(0)
-	err := util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionctx.Context) error {
+	err := util.CallWithSCtx(s.pool.SPool(), func(sctx sessionctx.Context) error {
 		startTS, err := UpdateStatsMetaVerAndLastHistUpdateVer(util.StatsCtx, sctx, tableID)
 		failpoint.Inject("failToSaveStats", func(val failpoint.Value) {
 			if val.(bool) {
@@ -132,10 +189,10 @@ func (s *statsReadWriter) handleSlowStatsSaving(tableID int64, start time.Time) 
 }
 
 // SaveAnalyzeResultToStorage saves the stats of a table to storage.
-func (s *statsReadWriter) SaveAnalyzeResultToStorage(results *statistics.AnalyzeResults, analyzeSnapshot bool) (err error) {
+func (s *statsSaver) SaveAnalyzeResultToStorage(results *statistics.AnalyzeResults, analyzeSnapshot bool) (err error) {
 	var statsVer uint64
 	start := time.Now()
-	err = util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionctx.Context) error {
+	err = util.CallWithSCtx(s.pool.SPool(), func(sctx sessionctx.Context) error {
 		statsVer, err = SaveAnalyzeResultToStorage(sctx, results, analyzeSnapshot)
 		return err
 	}, util.FlagWrapTxn)
@@ -159,8 +216,8 @@ func (s *statsReadWriter) SaveAnalyzeResultToStorage(results *statistics.Analyze
 }
 
 // StatsMetaCountAndModifyCount reads count and modify_count for the given table from mysql.stats_meta.
-func (s *statsReadWriter) StatsMetaCountAndModifyCount(tableID int64) (count, modifyCount int64, err error) {
-	err = util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionctx.Context) error {
+func (s *statsMetaReader) StatsMetaCountAndModifyCount(tableID int64) (count, modifyCount int64, err error) {
+	err = util.CallWithSCtx(s.pool.SPool(), func(sctx sessionctx.Context) error {
 		count, modifyCount, _, err = StatsMetaCountAndModifyCount(util.StatsCtx, sctx, tableID)
 		return err
 	}, util.FlagWrapTxn)
@@ -171,7 +228,7 @@ func (s *statsReadWriter) StatsMetaCountAndModifyCount(tableID int64) (count, mo
 // If count is negative, both count and modify count would not be used and not be written to the table. Unless, corresponding
 // fields in the stats_meta table will be updated.
 // TODO: refactor to reduce the number of parameters
-func (s *statsReadWriter) SaveColOrIdxStatsToStorage(
+func (s *statsSaver) SaveColOrIdxStatsToStorage(
 	tableID int64,
 	count, modifyCount int64,
 	isIndex int,
@@ -184,7 +241,7 @@ func (s *statsReadWriter) SaveColOrIdxStatsToStorage(
 ) (err error) {
 	var statsVer uint64
 	start := time.Now()
-	err = util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionctx.Context) error {
+	err = util.CallWithSCtx(s.pool.SPool(), func(sctx sessionctx.Context) error {
 		statsVer, err = SaveColOrIdxStatsToStorage(sctx, tableID,
 			count, modifyCount, isIndex, hg, cms, topN, fms, statsVersion, updateAnalyzeTime)
 		return err
@@ -207,7 +264,7 @@ func (s *statsReadWriter) SaveMetaToStorage(
 	metaUpdates ...statstypes.MetaUpdate,
 ) (err error) {
 	intest.Assert(len(metaUpdates) > 0, "meta updates is empty")
-	err = util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionctx.Context) error {
+	err = util.CallWithSCtx(s.pool.SPool(), func(sctx sessionctx.Context) error {
 		return SaveMetaToStorage(sctx, refreshLastHistVer, metaUpdates)
 	}, util.FlagWrapTxn)
 	return
@@ -215,8 +272,8 @@ func (s *statsReadWriter) SaveMetaToStorage(
 
 // LoadNeededHistograms will load histograms for those needed columns/indices.
 func (s *statsReadWriter) LoadNeededHistograms(is infoschema.InfoSchema) (err error) {
-	err = util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionctx.Context) error {
-		return LoadNeededHistograms(sctx, is, s.statsHandler)
+	err = util.CallWithSCtx(s.pool.SPool(), func(sctx sessionctx.Context) error {
+		return LoadNeededHistograms(sctx, is, s.statsCache, s.tables)
 	}, util.FlagWrapTxn)
 	return err
 }
@@ -279,7 +336,7 @@ func (s *statsReadWriter) PersistStatsBySnapshot(
 
 // DumpStatsToJSONBySnapshot dumps statistic to json.
 func (s *statsReadWriter) DumpStatsToJSONBySnapshot(dbName string, tableInfo *model.TableInfo, snapshot uint64, dumpPartitionStats bool) (*statsutil.JSONTable, error) {
-	pruneMode, err := util.GetCurrentPruneMode(s.statsHandler.SPool())
+	pruneMode, err := util.GetCurrentPruneMode(s.pool.SPool())
 	if err != nil {
 		return nil, err
 	}
@@ -319,12 +376,12 @@ func (s *statsReadWriter) DumpStatsToJSONBySnapshot(dbName string, tableInfo *mo
 
 // TableStatsToJSON dumps statistic to json.
 func (s *statsReadWriter) TableStatsToJSON(dbName string, tableInfo *model.TableInfo, physicalID int64, snapshot uint64) (*statsutil.JSONTable, error) {
-	tbl, err := s.statsHandler.TableStatsFromStorage(tableInfo, physicalID, true, snapshot)
+	tbl, err := s.statsCache.TableStatsFromStorage(tableInfo, physicalID, true, snapshot)
 	if err != nil || tbl == nil {
 		return nil, err
 	}
 	var jsonTbl *statsutil.JSONTable
-	err = util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionctx.Context) error {
+	err = util.CallWithSCtx(s.pool.SPool(), func(sctx sessionctx.Context) error {
 		tbl.Version, tbl.ModifyCount, tbl.RealtimeCount, err = StatsMetaByTableIDFromStorage(sctx, physicalID, snapshot)
 		if err != nil {
 			return err
@@ -363,7 +420,7 @@ func (s *statsReadWriter) LoadStatsFromJSONConcurrently(
 	e := new(atomic.Pointer[error])
 	for range concurrencyForPartition {
 		wg.Add(1)
-		s.statsHandler.GPool().Go(func() {
+		s.pool.GPool().Go(func() {
 			defer func() {
 				if r := recover(); r != nil {
 					err := fmt.Errorf("%v", r)
@@ -450,7 +507,7 @@ func (s *statsReadWriter) LoadStatsFromJSON(ctx context.Context, is infoschema.I
 	if err := s.LoadStatsFromJSONNoUpdate(ctx, is, jsonTbl, concurrencyForPartition); err != nil {
 		return errors.Trace(err)
 	}
-	return errors.Trace(s.statsHandler.Update(ctx, is))
+	return errors.Trace(s.statsCache.Update(ctx, is))
 }
 
 func (s *statsReadWriter) loadStatsFromJSON(tableInfo *model.TableInfo, physicalID int64, jsonTbl *statsutil.JSONTable) error {
@@ -497,7 +554,7 @@ func (s *statsReadWriter) loadStatsFromJSON(tableInfo *model.TableInfo, physical
 
 // SaveColumnStatsUsageToStorage saves column statistics usage information for a table into mysql.column_stats_usage.
 func (s *statsReadWriter) SaveColumnStatsUsageToStorage(physicalID int64, predicateColumns []*statsutil.JSONPredicateColumn) error {
-	return util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionctx.Context) error {
+	return util.CallWithSCtx(s.pool.SPool(), func(sctx sessionctx.Context) error {
 		colStatsUsage := make(map[model.TableItemID]statstypes.ColStatsTimeInfo, len(predicateColumns))
 		for _, col := range predicateColumns {
 			if col == nil {

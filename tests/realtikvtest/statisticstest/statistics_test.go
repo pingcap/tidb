@@ -272,7 +272,7 @@ func TestLoadNonExistentIndexStats(t *testing.T) {
 	// but doesn't have histogram data in mysql.stats_histograms yet.
 	err = util.CallWithSCtx(h.SPool(), func(sctx sessionctx.Context) error {
 		require.NotPanics(t, func() {
-			err := storage.LoadNeededHistograms(sctx, dom.InfoSchema(), h)
+			err := storage.LoadNeededHistograms(sctx, dom.InfoSchema(), h, h)
 			require.NoError(t, err)
 		})
 		return nil
