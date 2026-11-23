@@ -27,9 +27,9 @@
       "id": "T07",
       "group": "Planner and bindings",
       "status": "open",
-      "finding": "Planner code owned by the executor: the prepared and non-prepared plan cache's statement and key (`plan_cache.go` / `plan_cache_utils.go`: `PlanCacheStmt`, `NewPlanCacheKey`, `GeneratePlanCacheStmtWithAST`) live in `tidb-executor`. (`pb_to_plan.go` is `tidb-planner/src/pb_to_plan.rs`; the non-prepared cacheability walk and `GetParamSQLFromAST` are `tidb-planner/src/plan_cacheable_checker.rs`; `RequestLoadStats` / `SyncWaitStatsLoad` are `tidb-planner-core-rule/src/rule_collect_plan_stats.rs`.)",
-      "rust_evidence": "`tidb-executor/src/driver/access.rs` (`PreparedSelectPlan`, `PlanCacheStmtInfo`, `PreparedPlanCacheEnvironment`), `driver/plan_cache.rs`.",
-      "go_owner": "`pkg/planner/core/plan_cache.go`, `plan_cache_utils.go`"
+      "finding": "Planner code owned by the executor: the prepared statement and cached plan of Go's plan cache (`PlanCacheStmt`, `GeneratePlanCacheStmtWithAST`, the cached `PhysicalPlan` values and their rebuild, `RebuildPlan4CachedPlan`) and the session's plan-cache owner live in `tidb-executor` (`PreparedSelectPlan`, `CachedSelectPlan`, `CachedDmlPlan`, `SessionPlanCache`). (The key side, `planCacheStmtProcessor`'s info, `NewPlanCacheKey`'s environment, `PlanCacheKey` and `getLatestVersionFromStatsTable`, is `tidb-planner/src/plan_cache_utils.rs`; `pb_to_plan.go` is `tidb-planner/src/pb_to_plan.rs`; the non-prepared cacheability walk is `plan_cacheable_checker.rs`; `RequestLoadStats` / `SyncWaitStatsLoad` are `rule_collect_plan_stats.rs`.)",
+      "rust_evidence": "`tidb-executor/src/driver/access.rs` (`PreparedSelectPlan`), `driver/plan_cache.rs` (`SessionPlanCache`, `CachedPhysicalPlan`), `driver/planner_bridge.rs` (`CachedSelectPlan`), `driver/dml.rs` (`CachedDmlPlan`).",
+      "go_owner": "`pkg/planner/core/plan_cache.go`, `plan_cache_utils.go`, `plan_cache_rebuild.go`"
     },
     {
       "id": "T08",

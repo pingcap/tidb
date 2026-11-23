@@ -16,40 +16,12 @@
 //! and DML. Prepared definitions retain syntax and key metadata; executions may keep an
 //! entry alive after eviction, but cannot make it a cache hit again.
 
-use super::access::{
-    prepared_parameter_types_compatible, PreparedParameterType, PreparedPlanCacheEnvironment,
-};
+use super::access::{prepared_parameter_types_compatible, PreparedParameterType};
+pub(super) use tidb_planner::plan_cache_utils::PhysicalPlanCacheKey;
 use super::{dml::CachedDmlPlan, planner_bridge::CachedSelectPlan};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use tidb_planner::plan_cache_instance::InstancePlanCache;
-use tidb_planner::plan_cache_lru::{LruPlanCache, PlanCacheKey, PlanCacheValue};
-
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub(super) struct PhysicalPlanCacheKey {
-    pub statement: String,
-    pub schema_version: u64,
-    pub stats_version_hash: u64,
-    pub environment: PreparedPlanCacheEnvironment,
-    pub limit_values: Vec<u64>,
-    /// Go `NewPlanCacheKey`'s dirty tables: the statement's tables this
-    /// transaction has written, which plan with a `UnionScan` over them.
-    pub dirty_tables: Vec<i64>,
-    /// Go `PlanCacheStmt.RelateVersion`: each of the statement's tables and
-    /// its `TableInfo.Revision` in the schema this execution reads (after
-    /// `GetPlanFromPlanCache` step 3 swapped in a table changed since the
-    /// transaction began), so a plan built over an older definition misses.
-    pub relate_version: Vec<(i64, u64)>,
-}
-
-impl PlanCacheKey for PhysicalPlanCacheKey {
-    fn memory_usage(&self) -> i64 {
-        (std::mem::size_of::<Self>() + self.statement.capacity() + self.environment.memory_usage()
-            - std::mem::size_of::<PreparedPlanCacheEnvironment>()
-            + self.limit_values.capacity() * std::mem::size_of::<u64>()
-            + self.dirty_tables.capacity() * std::mem::size_of::<i64>()
-            + self.relate_version.capacity() * std::mem::size_of::<(i64, u64)>()) as i64
-    }
-}
+use tidb_planner::plan_cache_lru::{LruPlanCache, PlanCacheValue};
 
 #[derive(Clone)]
 pub(super) enum CachedPhysicalPlan {

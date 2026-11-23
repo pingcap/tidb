@@ -145,43 +145,8 @@ pub fn load_table_stats(
     ctx.used_stats_info(physical_table_id)
 }
 
-/// Go `getLatestVersionFromStatsTable` (`logical_plan_builder.go`), the
-/// plan-cache key's statistics version for one table: zero for any table
-/// `GetStatsTable` answers with a pseudo table by rule 2, otherwise the
-/// largest `LastUpdateVersion` among the cached column and index objects.
-///
-/// It is NOT the `stats_meta` version: a stats-delta flush moves that, and Go
-/// keeps the cached plan across it.
-#[must_use]
-pub fn get_latest_version_from_stats_table(
-    handle: &tidb_stats_handle::StatsHandle,
-    catalog: &tidb_infoschema::SessionExtendedInfoSchema,
-    table_id: i64,
-    opt_objective_determinate: bool,
-) -> u64 {
-    let Some(statistics) = handle.table_statistics(table_id, || catalog.statistics_schema(table_id))
-    else {
-        return 0;
-    };
-    let realtime_row_count = if opt_objective_determinate {
-        statistics.hist_coll.analyze_row_count().max(0.0) as i64
-    } else {
-        statistics.hist_coll.realtime_count
-    };
-    if realtime_row_count == 0 {
-        return 0;
-    }
-    let mut version = 0;
-    statistics.hist_coll.for_each_column(|_, column| {
-        version = version.max(column.histogram.last_update_version);
-        false
-    });
-    statistics.hist_coll.for_each_index(|_, index| {
-        version = version.max(index.histogram.last_update_version);
-        false
-    });
-    version
-}
+pub use tidb_planner::plan_cache_utils::get_latest_version_from_stats_table;
+
 
 /// The estimate one committed access path carries into `EXPLAIN`.
 #[derive(Clone, Copy, Debug, PartialEq)]

@@ -8723,6 +8723,7 @@ dependencies = [
  "tidb-size",
  "tidb-sqlescape",
  "tidb-stats",
+ "tidb-stats-handle",
  "tidb-stats-handle-util",
  "tidb-stringutil",
  "tidb-table",
