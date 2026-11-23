@@ -194,6 +194,34 @@ func TestFieldType(t *testing.T) {
 	require.True(t, HasCharset(ft))
 }
 
+func TestUpdateFlenAndDecimalUnderLimit(t *testing.T) {
+	tests := []struct {
+		flen, decimal, deltaDecimal, deltaFlen int
+		wantFlen, wantDecimal                  int
+	}{
+		{15, 2, 4, 4, 19, 6},
+		{40, 26, 4, 4, 44, 30},
+		{40, 27, 4, 4, 44, 30},
+		{40, 30, 4, 4, 44, 30},
+		{40, 30, 30, 30, 65, 30},
+		{40, 30, 0, 22, 62, 30},
+		{UnspecifiedLength, 30, 4, 4, 65, 30},
+		{10, UnspecifiedLength, 4, 4, 44, 30},
+		{UnspecifiedLength, UnspecifiedLength, 4, 4, 65, 30},
+	}
+	for _, tt := range tests {
+		t.Run(fmt.Sprintf("%d_%d_%d_%d", tt.flen, tt.decimal, tt.deltaDecimal, tt.deltaFlen), func(t *testing.T) {
+			old := NewFieldType(mysql.TypeNewDecimal)
+			old.SetFlen(tt.flen)
+			old.SetDecimal(tt.decimal)
+			ft := NewFieldType(mysql.TypeNewDecimal)
+			ft.UpdateFlenAndDecimalUnderLimit(old, tt.deltaDecimal, tt.deltaFlen)
+			require.Equal(t, tt.wantFlen, ft.GetFlen())
+			require.Equal(t, tt.wantDecimal, ft.GetDecimal())
+		})
+	}
+}
+
 func TestHasCharsetFromStmt(t *testing.T) {
 	template := "CREATE TABLE t(a %s)"
 
