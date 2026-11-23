@@ -17,11 +17,11 @@ package s3store
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -37,22 +37,38 @@ const (
 	volcengineProvider           = "volcengine"
 	domainVolcengine             = "volces.com"
 	domainVolcenginePrivate      = "ivolces.com"
+	volcengineTOSS3HostPrefix    = "tos-s3-"
 	volcengineOIDCTokenFileEnv   = "VOLCENGINE_OIDC_TOKEN_FILE"
 	volcengineOIDCRoleTRNEnv     = "VOLCENGINE_OIDC_ROLE_TRN"
+	volcengineOIDCRolePolicyEnv  = "VOLCENGINE_OIDC_ROLE_POLICY"
+	volcengineOIDCSTSEndpointEnv = "VOLCENGINE_OIDC_STS_ENDPOINT"
 	volcengineRegionEnv          = "VOLCENGINE_REGION"
-	volcengineLegacyRegionEnv    = "REGION"
-	volcengineOIDCSessionName    = "tidb-s3store"
-	volcengineOIDCDuration       = 3600 * time.Second
-	volcengineOIDCRefreshTimeout = 10 * time.Second
-	volcengineOIDCRefreshBackoff = 30 * time.Second
-	volcengineOIDCSource         = "VolcengineOIDC"
-	volcengineOIDCMaxRespBytes   = 64 << 10
+	// VKE IRSA injects REGION alongside the OIDC variables. It is used only to
+	// pick the regional STS endpoint, never as a fallback for S3 signing region.
+	volcengineIRSARegionEnv        = "REGION"
+	volcengineGlobalSTSHost        = "sts.volcengineapi.com"
+	volcengineOIDCSTSQuery         = "Action=AssumeRoleWithOIDC&Version=2018-01-01"
+	volcengineOIDCSessionName      = "tidb-s3store"
+	volcengineOIDCDuration         = 3600 * time.Second
+	volcengineOIDCMaxRefreshWindow = 6 * time.Minute
+	volcengineOIDCRefreshTimeout   = 10 * time.Second
+	volcengineOIDCRefreshBackoff   = 30 * time.Second
+	volcengineOIDCMaxRetries       = 3
+	volcengineOIDCRetryInterval    = time.Second
+	volcengineOIDCSource           = "VolcengineOIDC"
+	volcengineOIDCMaxRespBytes     = 64 << 10
 )
 
-var (
-	volcengineOIDCSTSURL = defaultVolcengineOIDCSTSURL
-	volcengineOIDCClient = &http.Client{Timeout: 10 * time.Second}
-)
+var newVolcengineOIDCHTTPClient = func() *http.Client {
+	return &http.Client{
+		Timeout:       volcengineOIDCRefreshTimeout,
+		CheckRedirect: disableVolcengineOIDCRedirect,
+	}
+}
+
+func disableVolcengineOIDCRedirect(*http.Request, []*http.Request) error {
+	return http.ErrUseLastResponse
+}
 
 type volcengineOIDCRefresh struct {
 	done chan struct{}
@@ -65,19 +81,24 @@ type volcengineOIDCRefresh struct {
 // refreshes asynchronously inside the pre-expiry window while serving still-valid
 // credentials, and applies a backoff after refresh failures.
 type volcengineOIDCCredentialsProvider struct {
-	region    string
-	roleTRN   string
-	tokenFile string
+	stsURL     string
+	roleTRN    string
+	tokenFile  string
+	policy     string
+	httpClient *http.Client
+	retryDelay time.Duration // zero uses volcengineOIDCRetryInterval
 
 	mu         sync.Mutex
 	cached     aws.Credentials
+	refreshAt  time.Time
 	inflight   *volcengineOIDCRefresh
 	retryAfter time.Time
 }
 
 type volcengineOIDCSTSResponse struct {
 	ResponseMetadata struct {
-		Error *struct {
+		RequestID string `json:"RequestId"`
+		Error     *struct {
 			Code    string `json:"Code"`
 			Message string `json:"Message"`
 		} `json:"Error"`
@@ -88,13 +109,14 @@ type volcengineOIDCSTSResponse struct {
 			SecretAccessKey string `json:"SecretAccessKey"`
 			SessionToken    string `json:"SessionToken"`
 			Expiration      string `json:"Expiration"`
+			ExpiredTime     string `json:"ExpiredTime"`
 		} `json:"Credentials"`
 	} `json:"Result"`
 }
 
-func isVolcengineTOSEndpoint(endpoint string) bool {
+func parseVolcengineHost(endpoint string) (string, bool) {
 	if endpoint == "" {
-		return false
+		return "", false
 	}
 	raw := endpoint
 	if !strings.Contains(raw, "://") {
@@ -102,11 +124,48 @@ func isVolcengineTOSEndpoint(endpoint string) bool {
 	}
 	u, err := url.Parse(raw)
 	if err != nil {
-		return false
+		return "", false
 	}
 	host := strings.ToLower(u.Hostname())
+	if host == "" {
+		return "", false
+	}
+	return host, true
+}
+
+func isVolcengineTOSEndpoint(endpoint string) bool {
+	host, ok := parseVolcengineHost(endpoint)
+	if !ok {
+		return false
+	}
 	return host == domainVolcengine || strings.HasSuffix(host, "."+domainVolcengine) ||
 		host == domainVolcenginePrivate || strings.HasSuffix(host, "."+domainVolcenginePrivate)
+}
+
+func inferVolcengineRegionFromEndpoint(endpoint string) string {
+	host, ok := parseVolcengineHost(endpoint)
+	if !ok {
+		return ""
+	}
+	var prefix string
+	switch {
+	case strings.HasSuffix(host, "."+domainVolcengine):
+		prefix = strings.TrimSuffix(host, "."+domainVolcengine)
+	case strings.HasSuffix(host, "."+domainVolcenginePrivate):
+		prefix = strings.TrimSuffix(host, "."+domainVolcenginePrivate)
+	default:
+		return ""
+	}
+	// Handle both tos-s3-<region>.(i)volces.com and <bucket>.tos-s3-<region>.(i)volces.com.
+	label := prefix
+	if idx := strings.LastIndexByte(prefix, '.'); idx >= 0 {
+		label = prefix[idx+1:]
+	}
+	region, found := strings.CutPrefix(label, volcengineTOSS3HostPrefix)
+	if !found || !isValidVolcengineRegion(region) {
+		return ""
+	}
+	return region
 }
 
 func isVolcengineTOS(qs *backuppb.S3) bool {
@@ -115,25 +174,21 @@ func isVolcengineTOS(qs *backuppb.S3) bool {
 
 // normalizeVolcengineTOS reports whether qs targets Volcengine TOS and applies
 // TOS-specific defaults on the local S3 copy: virtual-hosted-style addressing
-// and region fallback from environment variables so S3 signing and STS agree.
+// and signing region fallback from standard tos-s3-<region> endpoints or
+// VOLCENGINE_REGION when region is omitted from the URI.
 func normalizeVolcengineTOS(qs *backuppb.S3) bool {
 	if !isVolcengineTOS(qs) {
 		return false
 	}
 	qs.ForcePathStyle = false
+	qs.Region = strings.TrimSpace(qs.Region)
 	if qs.Region == "" {
-		qs.Region = resolveVolcengineRegion(qs)
+		qs.Region = inferVolcengineRegionFromEndpoint(qs.Endpoint)
+	}
+	if qs.Region == "" {
+		qs.Region = strings.TrimSpace(os.Getenv(volcengineRegionEnv))
 	}
 	return true
-}
-
-func resolveVolcengineRegion(qs *backuppb.S3) string {
-	for _, value := range []string{qs.GetRegion(), os.Getenv(volcengineRegionEnv), os.Getenv(volcengineLegacyRegionEnv)} {
-		if trimmed := strings.TrimSpace(value); trimmed != "" {
-			return trimmed
-		}
-	}
-	return ""
 }
 
 // isValidVolcengineRegion restricts region to a single lowercase DNS label so
@@ -152,26 +207,70 @@ func isValidVolcengineRegion(region string) bool {
 	return true
 }
 
+func buildVolcengineOIDCSTSURLFromEndpoint(rawEndpoint string) (string, error) {
+	raw := strings.TrimSpace(rawEndpoint)
+	if !strings.Contains(raw, "://") {
+		raw = "https://" + raw
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		// Do not wrap url.Error because it embeds the raw URL.
+		return "", errors.Errorf("invalid %s", volcengineOIDCSTSEndpointEnv)
+	}
+	if u.Scheme != "https" || u.Hostname() == "" ||
+		u.User != nil || u.RawQuery != "" || u.Fragment != "" || (u.Path != "" && u.Path != "/") {
+		return "", errors.Errorf("invalid %s", volcengineOIDCSTSEndpointEnv)
+	}
+	return u.Scheme + "://" + u.Host + "/?" + volcengineOIDCSTSQuery, nil
+}
+
+// resolveVolcengineOIDCSTSURL selects the AssumeRoleWithOIDC endpoint in order:
+//  1. VOLCENGINE_OIDC_STS_ENDPOINT (official SDK override, HTTPS only)
+//  2. REGION (injected by VKE IRSA) -> sts.<region>.volcengineapi.com
+//  3. qs.Region (URI, inferred TOS endpoint, or VOLCENGINE_REGION) -> sts.<region>.volcengineapi.com
+//  4. VOLCENGINE_REGION -> sts.<region>.volcengineapi.com
+//  5. sts.volcengineapi.com (official SDK global default)
+func resolveVolcengineOIDCSTSURL(qs *backuppb.S3) (string, error) {
+	if override := strings.TrimSpace(os.Getenv(volcengineOIDCSTSEndpointEnv)); override != "" {
+		return buildVolcengineOIDCSTSURLFromEndpoint(override)
+	}
+	for _, candidate := range []string{os.Getenv(volcengineIRSARegionEnv), qs.GetRegion(), os.Getenv(volcengineRegionEnv)} {
+		if region := strings.TrimSpace(candidate); region != "" {
+			if !isValidVolcengineRegion(region) {
+				return "", errors.Errorf("invalid volcengine region %q", region)
+			}
+			return regionalVolcengineOIDCSTSURL(region), nil
+		}
+	}
+	return "https://" + volcengineGlobalSTSHost + "/?" + volcengineOIDCSTSQuery, nil
+}
+
 func createVolcengineTOSCred(qs *backuppb.S3) (aws.CredentialsProvider, error) {
+	if strings.TrimSpace(qs.GetRoleArn()) != "" {
+		return nil, errors.New("volcengine TOS does not support role-arn")
+	}
 	tokenFile := strings.TrimSpace(os.Getenv(volcengineOIDCTokenFileEnv))
 	roleTRN := strings.TrimSpace(os.Getenv(volcengineOIDCRoleTRNEnv))
-	region := resolveVolcengineRegion(qs)
-	if tokenFile == "" || roleTRN == "" || region == "" {
+	if tokenFile == "" && roleTRN == "" {
 		// Keep the AWS default credential chain as a fallback, matching
 		// createTencentCOSCred.
-		log.Warn("volcengine OIDC environment is incomplete; falling back to default credential chain",
-			zap.Bool("has_token_file", tokenFile != ""),
-			zap.Bool("has_role_trn", roleTRN != ""),
-			zap.Bool("has_region", region != ""))
+		log.Warn("volcengine OIDC environment is not configured; falling back to default credential chain")
 		return nil, nil
 	}
-	if !isValidVolcengineRegion(region) {
-		return nil, errors.Errorf("invalid volcengine region %q", region)
+	if tokenFile == "" || roleTRN == "" {
+		return nil, errors.Errorf("incomplete volcengine OIDC environment: both %s and %s must be set",
+			volcengineOIDCTokenFileEnv, volcengineOIDCRoleTRNEnv)
+	}
+	stsURL, err := resolveVolcengineOIDCSTSURL(qs)
+	if err != nil {
+		return nil, err
 	}
 	return &volcengineOIDCCredentialsProvider{
-		region:    region,
-		roleTRN:   roleTRN,
-		tokenFile: tokenFile,
+		stsURL:     stsURL,
+		roleTRN:    roleTRN,
+		tokenFile:  tokenFile,
+		policy:     strings.TrimSpace(os.Getenv(volcengineOIDCRolePolicyEnv)),
+		httpClient: newVolcengineOIDCHTTPClient(),
 	}, nil
 }
 
@@ -198,16 +297,12 @@ func (p *volcengineOIDCCredentialsProvider) current() (aws.Credentials, bool, *v
 	now := time.Now()
 	cached := p.cached
 	valid := cached.HasKeys() && cached.CanExpire && now.Before(cached.Expires)
-	refreshDue := !now.Before(p.refreshAt()) && !now.Before(p.retryAfter)
+	refreshDue := !now.Before(p.refreshAt) && !now.Before(p.retryAfter)
 	if p.inflight == nil && (!valid || refreshDue) {
 		p.inflight = &volcengineOIDCRefresh{done: make(chan struct{})}
 		go p.refreshCredential(p.inflight)
 	}
 	return cached, valid, p.inflight
-}
-
-func (p *volcengineOIDCCredentialsProvider) refreshAt() time.Time {
-	return p.cached.Expires.Add(-volcengineOIDCDuration / 10)
 }
 
 func (p *volcengineOIDCCredentialsProvider) refreshCredential(inflight *volcengineOIDCRefresh) {
@@ -220,14 +315,16 @@ func (p *volcengineOIDCCredentialsProvider) refreshCredential(inflight *volcengi
 
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	now := time.Now()
 	if err != nil {
-		now := time.Now()
 		p.retryAfter = now.Add(volcengineOIDCRefreshBackoff)
 		if p.cached.HasKeys() && now.Before(p.cached.Expires) {
 			log.Warn("failed to refresh volcengine OIDC credentials, reuse cached credentials", zap.Error(err))
 		}
 	} else {
 		p.cached = fresh
+		window := min(fresh.Expires.Sub(now)/10, volcengineOIDCMaxRefreshWindow)
+		p.refreshAt = fresh.Expires.Add(-window)
 		p.retryAfter = time.Time{}
 		inflight.cred = fresh
 	}
@@ -236,13 +333,21 @@ func (p *volcengineOIDCCredentialsProvider) refreshCredential(inflight *volcengi
 	close(inflight.done)
 }
 
-func (p *volcengineOIDCCredentialsProvider) runRefresh(ctx context.Context) (cred aws.Credentials, err error) {
-	defer func() {
-		if r := recover(); r != nil {
-			cred, err = aws.Credentials{}, errors.Errorf("volcengine OIDC credential refresh panicked: %v", r)
-		}
-	}()
+func (p *volcengineOIDCCredentialsProvider) getHTTPClient() *http.Client {
+	if p.httpClient != nil {
+		return p.httpClient
+	}
+	return newVolcengineOIDCHTTPClient()
+}
 
+func (p *volcengineOIDCCredentialsProvider) getRetryDelay() time.Duration {
+	if p.retryDelay > 0 {
+		return p.retryDelay
+	}
+	return volcengineOIDCRetryInterval
+}
+
+func (p *volcengineOIDCCredentialsProvider) runRefresh(ctx context.Context) (aws.Credentials, error) {
 	raw, err := os.ReadFile(p.tokenFile)
 	if err != nil {
 		return aws.Credentials{}, errors.Annotate(err, "read volcengine OIDC token file")
@@ -252,59 +357,91 @@ func (p *volcengineOIDCCredentialsProvider) runRefresh(ctx context.Context) (cre
 		return aws.Credentials{}, errors.New("volcengine OIDC token file is empty")
 	}
 
+	var lastErr error
+	for attempt := range volcengineOIDCMaxRetries {
+		cred, retryable, err := p.exchangeTokenOnce(ctx, oidcToken)
+		if err == nil {
+			return cred, nil
+		}
+		lastErr = err
+		if !retryable || attempt == volcengineOIDCMaxRetries-1 || ctx.Err() != nil {
+			return aws.Credentials{}, err
+		}
+		if err := sleepWithContext(ctx, p.getRetryDelay()); err != nil {
+			return aws.Credentials{}, lastErr
+		}
+	}
+	return aws.Credentials{}, lastErr
+}
+
+func (p *volcengineOIDCCredentialsProvider) exchangeTokenOnce(ctx context.Context, oidcToken string) (aws.Credentials, bool, error) {
 	form := url.Values{}
 	form.Set("RoleTrn", p.roleTRN)
 	form.Set("OIDCToken", oidcToken)
 	form.Set("RoleSessionName", volcengineOIDCSessionName)
-	form.Set("DurationSeconds", fmt.Sprintf("%d", int(volcengineOIDCDuration/time.Second)))
+	form.Set("DurationSeconds", strconv.Itoa(int(volcengineOIDCDuration/time.Second)))
+	if p.policy != "" {
+		form.Set("Policy", p.policy)
+	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, volcengineOIDCSTSURL(p.region), strings.NewReader(form.Encode()))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, p.stsURL, strings.NewReader(form.Encode()))
 	if err != nil {
-		return aws.Credentials{}, errors.Annotate(err, "build volcengine OIDC STS request")
+		return aws.Credentials{}, false, errors.Annotate(err, "build volcengine OIDC STS request")
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
 
-	resp, err := volcengineOIDCClient.Do(req)
+	resp, err := p.getHTTPClient().Do(req)
 	if err != nil {
-		return aws.Credentials{}, errors.Annotate(err, "request volcengine OIDC STS")
+		return aws.Credentials{}, ctx.Err() == nil, errors.Annotate(err, "request volcengine OIDC STS")
 	}
 	defer resp.Body.Close()
 	body, err := io.ReadAll(io.LimitReader(resp.Body, volcengineOIDCMaxRespBytes))
 	if err != nil {
-		return aws.Credentials{}, errors.Annotate(err, "read volcengine OIDC STS response")
+		return aws.Credentials{}, ctx.Err() == nil, errors.Annotate(err, "read volcengine OIDC STS response")
+	}
+	if resp.StatusCode != http.StatusOK {
+		return aws.Credentials{}, isRetryableVolcengineSTSStatus(resp.StatusCode), buildVolcengineOIDCStatusError(resp.StatusCode, body)
 	}
 
 	var stsResp volcengineOIDCSTSResponse
 	if err := json.Unmarshal(body, &stsResp); err != nil {
-		return aws.Credentials{}, errors.Annotatef(err, "decode volcengine OIDC STS response: status=%d", resp.StatusCode)
+		return aws.Credentials{}, false, errors.Annotatef(err, "decode volcengine OIDC STS response: status=%d body-length=%d", resp.StatusCode, len(body))
 	}
+	reqID := strings.TrimSpace(stsResp.ResponseMetadata.RequestID)
 	// Volcengine can return HTTP 200 with ResponseMetadata.Error set.
 	if stsResp.ResponseMetadata.Error != nil {
-		return aws.Credentials{}, errors.Errorf("volcengine OIDC STS %s: %s",
+		if reqID != "" {
+			return aws.Credentials{}, false, errors.Errorf("volcengine OIDC STS %s: %s (request-id=%s)",
+				stsResp.ResponseMetadata.Error.Code, stsResp.ResponseMetadata.Error.Message, reqID)
+		}
+		return aws.Credentials{}, false, errors.Errorf("volcengine OIDC STS %s: %s",
 			stsResp.ResponseMetadata.Error.Code, stsResp.ResponseMetadata.Error.Message)
-	}
-	if resp.StatusCode != http.StatusOK {
-		return aws.Credentials{}, errors.Errorf("volcengine OIDC STS returned status %d", resp.StatusCode)
 	}
 
 	accessKey := strings.TrimSpace(stsResp.Result.Credentials.AccessKeyID)
 	secretKey := strings.TrimSpace(stsResp.Result.Credentials.SecretAccessKey)
 	sessionToken := strings.TrimSpace(stsResp.Result.Credentials.SessionToken)
 	if accessKey == "" || secretKey == "" || sessionToken == "" {
-		return aws.Credentials{}, errors.New("volcengine OIDC STS returned incomplete credentials")
+		if reqID != "" {
+			return aws.Credentials{}, false, errors.Errorf("volcengine OIDC STS returned incomplete credentials (request-id=%s)", reqID)
+		}
+		return aws.Credentials{}, false, errors.New("volcengine OIDC STS returned incomplete credentials")
 	}
 
 	rawExp := strings.TrimSpace(stsResp.Result.Credentials.Expiration)
 	if rawExp == "" {
-		return aws.Credentials{}, errors.New("volcengine OIDC STS returned empty expiration")
+		rawExp = strings.TrimSpace(stsResp.Result.Credentials.ExpiredTime)
+	}
+	if rawExp == "" {
+		return aws.Credentials{}, false, errors.New("volcengine OIDC STS returned empty expiration")
 	}
 	expires, err := time.Parse(time.RFC3339, rawExp)
 	if err != nil {
-		return aws.Credentials{}, errors.Annotate(err, "parse volcengine OIDC STS expiration")
+		return aws.Credentials{}, false, errors.Annotate(err, "parse volcengine OIDC STS expiration")
 	}
 	if !time.Now().Before(expires) {
-		return aws.Credentials{}, errors.New("volcengine OIDC STS returned expired credentials")
+		return aws.Credentials{}, false, errors.New("volcengine OIDC STS returned expired credentials")
 	}
 	return aws.Credentials{
 		AccessKeyID:     accessKey,
@@ -313,9 +450,44 @@ func (p *volcengineOIDCCredentialsProvider) runRefresh(ctx context.Context) (cre
 		Source:          volcengineOIDCSource,
 		CanExpire:       true,
 		Expires:         expires,
-	}, nil
+	}, false, nil
 }
 
-func defaultVolcengineOIDCSTSURL(region string) string {
-	return "https://sts." + region + ".volcengineapi.com/?Action=AssumeRoleWithOIDC&Version=2018-01-01"
+func isRetryableVolcengineSTSStatus(statusCode int) bool {
+	return statusCode == http.StatusTooManyRequests ||
+		statusCode == http.StatusBadGateway ||
+		statusCode == http.StatusServiceUnavailable ||
+		statusCode == http.StatusGatewayTimeout
+}
+
+func buildVolcengineOIDCStatusError(statusCode int, body []byte) error {
+	var stsResp volcengineOIDCSTSResponse
+	if err := json.Unmarshal(body, &stsResp); err == nil && stsResp.ResponseMetadata.Error != nil {
+		reqID := strings.TrimSpace(stsResp.ResponseMetadata.RequestID)
+		if reqID != "" {
+			return errors.Errorf("volcengine OIDC STS failed: status=%d code=%s message=%s request-id=%s",
+				statusCode, stsResp.ResponseMetadata.Error.Code, stsResp.ResponseMetadata.Error.Message, reqID)
+		}
+		return errors.Errorf("volcengine OIDC STS failed: status=%d code=%s message=%s",
+			statusCode, stsResp.ResponseMetadata.Error.Code, stsResp.ResponseMetadata.Error.Message)
+	}
+	return errors.Errorf("volcengine OIDC STS returned status %d (body-length=%d)", statusCode, len(body))
+}
+
+func sleepWithContext(ctx context.Context, d time.Duration) error {
+	if d <= 0 {
+		return ctx.Err()
+	}
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+func regionalVolcengineOIDCSTSURL(region string) string {
+	return "https://sts." + region + ".volcengineapi.com/?" + volcengineOIDCSTSQuery
 }

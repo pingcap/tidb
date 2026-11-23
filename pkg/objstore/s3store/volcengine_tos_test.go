@@ -15,6 +15,7 @@
 package s3store
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -34,8 +35,10 @@ import (
 func TestAutoNewCredVolcengine(t *testing.T) {
 	t.Setenv(volcengineOIDCTokenFileEnv, "")
 	t.Setenv(volcengineOIDCRoleTRNEnv, "")
+	t.Setenv(volcengineOIDCRolePolicyEnv, "")
+	t.Setenv(volcengineOIDCSTSEndpointEnv, "")
 	t.Setenv(volcengineRegionEnv, "")
-	t.Setenv(volcengineLegacyRegionEnv, "")
+	t.Setenv(volcengineIRSARegionEnv, "")
 
 	t.Run("Volcengine TOS endpoint recognition", func(t *testing.T) {
 		testCases := []struct {
@@ -51,6 +54,64 @@ func TestAutoNewCredVolcengine(t *testing.T) {
 		for _, tc := range testCases {
 			require.Equal(t, tc.expected, isVolcengineTOSEndpoint(tc.endpoint), tc.endpoint)
 		}
+	})
+
+	t.Run("infer signing region from TOS S3 endpoint", func(t *testing.T) {
+		testCases := []struct {
+			endpoint string
+			expected string
+		}{
+			{endpoint: "https://tos-s3-cn-beijing.volces.com", expected: "cn-beijing"},
+			{endpoint: "https://tos-s3-cn-shanghai.ivolces.com", expected: "cn-shanghai"},
+			{endpoint: "https://bucket.tos-s3-ap-southeast-1.ivolces.com:443", expected: "ap-southeast-1"},
+			{endpoint: "tos-s3-CN-BEIJING.ivolces.com", expected: "cn-beijing"},
+			{endpoint: "https://tos-cn-beijing.volces.com", expected: ""},
+			{endpoint: "https://volces.com", expected: ""},
+			{endpoint: "https://s3.example.com", expected: ""},
+		}
+		for _, tc := range testCases {
+			require.Equal(t, tc.expected, inferVolcengineRegionFromEndpoint(tc.endpoint), tc.endpoint)
+		}
+	})
+
+	t.Run("normalizeVolcengineTOS signing region precedence", func(t *testing.T) {
+		t.Run("standard TOS endpoint beats VOLCENGINE_REGION", func(t *testing.T) {
+			t.Setenv(volcengineRegionEnv, "cn-shanghai")
+			t.Setenv(volcengineIRSARegionEnv, "cn-guangzhou")
+			qs := &backuppb.S3{
+				Endpoint:       "https://tos-s3-cn-beijing.ivolces.com",
+				ForcePathStyle: true,
+			}
+			require.True(t, normalizeVolcengineTOS(qs))
+			require.False(t, qs.ForcePathStyle)
+			require.Equal(t, "cn-beijing", qs.Region)
+		})
+
+		t.Run("custom TOS endpoint falls back to VOLCENGINE_REGION", func(t *testing.T) {
+			t.Setenv(volcengineRegionEnv, "cn-beijing")
+			t.Setenv(volcengineIRSARegionEnv, "cn-shanghai")
+			qs := &backuppb.S3{
+				Provider:       "volcengine",
+				Endpoint:       "https://tos.internal.example.com",
+				ForcePathStyle: true,
+			}
+			require.True(t, normalizeVolcengineTOS(qs))
+			require.False(t, qs.ForcePathStyle)
+			require.Equal(t, "cn-beijing", qs.Region)
+		})
+
+		t.Run("custom TOS endpoint ignores generic REGION env", func(t *testing.T) {
+			t.Setenv(volcengineRegionEnv, "")
+			t.Setenv(volcengineIRSARegionEnv, "cn-shanghai")
+			qs := &backuppb.S3{
+				Provider:       "volcengine",
+				Endpoint:       "https://tos.internal.example.com",
+				ForcePathStyle: true,
+			}
+			require.True(t, normalizeVolcengineTOS(qs))
+			require.False(t, qs.ForcePathStyle)
+			require.Empty(t, qs.Region)
+		})
 	})
 
 	t.Run("explicit credentials take precedence", func(t *testing.T) {
@@ -81,31 +142,178 @@ func TestAutoNewCredVolcengine(t *testing.T) {
 		require.Nil(t, provider)
 	})
 
-	t.Run("invalid region rejected before sending STS request", func(t *testing.T) {
+	t.Run("role-arn is rejected instead of falling back to pod OIDC credentials", func(t *testing.T) {
+		provider, err := autoNewCred(&backuppb.S3{
+			Endpoint: "https://tos-s3-cn-beijing.ivolces.com",
+			Provider: "volcengine",
+			Region:   "cn-beijing",
+			RoleArn:  "trn:iam::1234567890:role/restricted",
+		})
+		require.EqualError(t, err, "volcengine TOS does not support role-arn")
+		require.Nil(t, provider)
+
+		t.Setenv(volcengineOIDCTokenFileEnv, "/var/run/secrets/token")
+		t.Setenv(volcengineOIDCRoleTRNEnv, "trn:iam::1234567890:role/pod-dfs")
+		provider, err = autoNewCred(&backuppb.S3{
+			Endpoint: "https://tos-s3-cn-beijing.ivolces.com",
+			Provider: "volcengine",
+			Region:   "cn-beijing",
+			RoleArn:  "trn:iam::1234567890:role/restricted",
+		})
+		require.EqualError(t, err, "volcengine TOS does not support role-arn")
+		require.Nil(t, provider)
+	})
+
+	t.Run("partial OIDC env fails closed", func(t *testing.T) {
+		t.Run("only token file set", func(t *testing.T) {
+			t.Setenv(volcengineOIDCTokenFileEnv, "/var/run/secrets/token")
+			t.Setenv(volcengineOIDCRoleTRNEnv, "")
+			provider, err := autoNewCred(&backuppb.S3{
+				Endpoint: "https://tos-s3-cn-beijing.ivolces.com",
+				Region:   "cn-beijing",
+			})
+			require.ErrorContains(t, err, "incomplete volcengine OIDC environment")
+			require.ErrorContains(t, err, volcengineOIDCTokenFileEnv)
+			require.ErrorContains(t, err, volcengineOIDCRoleTRNEnv)
+			require.Nil(t, provider)
+		})
+
+		t.Run("only role TRN set", func(t *testing.T) {
+			t.Setenv(volcengineOIDCTokenFileEnv, "")
+			t.Setenv(volcengineOIDCRoleTRNEnv, "trn:iam::1234567890:role/metering")
+			provider, err := autoNewCred(&backuppb.S3{
+				Endpoint: "https://tos-s3-cn-beijing.ivolces.com",
+				Region:   "cn-beijing",
+			})
+			require.ErrorContains(t, err, "incomplete volcengine OIDC environment")
+			require.Nil(t, provider)
+		})
+	})
+
+	t.Run("STS endpoint resolution priority", func(t *testing.T) {
 		tokenFile := filepath.Join(t.TempDir(), "token")
 		require.NoError(t, os.WriteFile(tokenFile, []byte("oidc-token"), 0o600))
 		t.Setenv(volcengineOIDCTokenFileEnv, tokenFile)
 		t.Setenv(volcengineOIDCRoleTRNEnv, "trn:iam::1234567890:role/metering")
 
-		var hits atomic.Int32
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			hits.Add(1)
-		}))
-		t.Cleanup(server.Close)
+		t.Run("VOLCENGINE_OIDC_STS_ENDPOINT takes highest precedence", func(t *testing.T) {
+			t.Setenv(volcengineOIDCSTSEndpointEnv, "sts.internal.example.com:8443")
+			t.Setenv(volcengineIRSARegionEnv, "cn-shanghai")
+			provider, err := autoNewCred(&backuppb.S3{
+				Endpoint: "https://tos-s3-cn-beijing.ivolces.com",
+				Region:   "cn-beijing",
+			})
+			require.NoError(t, err)
+			p := provider.(*volcengineOIDCCredentialsProvider)
+			require.Equal(t, "https://sts.internal.example.com:8443/?"+volcengineOIDCSTSQuery, p.stsURL)
+		})
 
-		prevURL := volcengineOIDCSTSURL
-		volcengineOIDCSTSURL = func(string) string { return server.URL }
-		t.Cleanup(func() { volcengineOIDCSTSURL = prevURL })
+		t.Run("VOLCENGINE_OIDC_STS_ENDPOINT accepts explicit https scheme", func(t *testing.T) {
+			t.Setenv(volcengineOIDCSTSEndpointEnv, "https://sts.internal.example.com:8443/")
+			provider, err := autoNewCred(&backuppb.S3{
+				Provider: "volcengine",
+			})
+			require.NoError(t, err)
+			p := provider.(*volcengineOIDCCredentialsProvider)
+			require.Equal(t, "https://sts.internal.example.com:8443/?"+volcengineOIDCSTSQuery, p.stsURL)
+		})
+
+		t.Run("REGION takes precedence over backend region", func(t *testing.T) {
+			t.Setenv(volcengineOIDCSTSEndpointEnv, "")
+			t.Setenv(volcengineRegionEnv, "cn-guangzhou")
+			t.Setenv(volcengineIRSARegionEnv, "cn-shanghai")
+			provider, err := autoNewCred(&backuppb.S3{
+				Endpoint: "https://tos-s3-cn-beijing.ivolces.com",
+				Region:   "cn-beijing",
+			})
+			require.NoError(t, err)
+			p := provider.(*volcengineOIDCCredentialsProvider)
+			require.Equal(t, "https://sts.cn-shanghai.volcengineapi.com/?"+volcengineOIDCSTSQuery, p.stsURL)
+		})
+
+		t.Run("backend region used when REGION is empty", func(t *testing.T) {
+			t.Setenv(volcengineOIDCSTSEndpointEnv, "")
+			t.Setenv(volcengineRegionEnv, "cn-guangzhou")
+			t.Setenv(volcengineIRSARegionEnv, "")
+			provider, err := autoNewCred(&backuppb.S3{
+				Endpoint: "https://tos-s3-cn-beijing.ivolces.com",
+				Region:   " cn-beijing ",
+			})
+			require.NoError(t, err)
+			p := provider.(*volcengineOIDCCredentialsProvider)
+			require.Equal(t, "https://sts.cn-beijing.volcengineapi.com/?"+volcengineOIDCSTSQuery, p.stsURL)
+		})
+
+		t.Run("VOLCENGINE_REGION used when REGION and backend region are empty", func(t *testing.T) {
+			t.Setenv(volcengineOIDCSTSEndpointEnv, "")
+			t.Setenv(volcengineRegionEnv, "cn-beijing")
+			t.Setenv(volcengineIRSARegionEnv, "")
+			provider, err := autoNewCred(&backuppb.S3{
+				Provider: "volcengine",
+				Endpoint: "https://tos.internal.example.com",
+			})
+			require.NoError(t, err)
+			p := provider.(*volcengineOIDCCredentialsProvider)
+			require.Equal(t, "https://sts.cn-beijing.volcengineapi.com/?"+volcengineOIDCSTSQuery, p.stsURL)
+		})
+
+		t.Run("global STS default when no region is configured", func(t *testing.T) {
+			t.Setenv(volcengineOIDCSTSEndpointEnv, "")
+			t.Setenv(volcengineRegionEnv, "")
+			t.Setenv(volcengineIRSARegionEnv, "")
+			provider, err := autoNewCred(&backuppb.S3{
+				Provider: "volcengine",
+				Endpoint: "https://tos.internal.example.com",
+			})
+			require.NoError(t, err)
+			p := provider.(*volcengineOIDCCredentialsProvider)
+			require.Equal(t, "https://sts.volcengineapi.com/?"+volcengineOIDCSTSQuery, p.stsURL)
+		})
+	})
+
+	t.Run("invalid region and STS endpoint rejected before sending STS request", func(t *testing.T) {
+		tokenFile := filepath.Join(t.TempDir(), "token")
+		require.NoError(t, os.WriteFile(tokenFile, []byte("oidc-token"), 0o600))
+		t.Setenv(volcengineOIDCTokenFileEnv, tokenFile)
+		t.Setenv(volcengineOIDCRoleTRNEnv, "trn:iam::1234567890:role/metering")
 
 		for _, badRegion := range []string{"evil.com#", "cn-beijing@evil.com", "cn-beijing/foo", "-cn-beijing"} {
+			t.Setenv(volcengineOIDCSTSEndpointEnv, "")
+			t.Setenv(volcengineIRSARegionEnv, "")
 			provider, err := autoNewCred(&backuppb.S3{
 				Endpoint: "https://tos-s3-cn-beijing.ivolces.com",
 				Region:   badRegion,
 			})
 			require.ErrorContains(t, err, "invalid volcengine region")
 			require.Nil(t, provider)
+
+			t.Setenv(volcengineIRSARegionEnv, badRegion)
+			provider, err = autoNewCred(&backuppb.S3{
+				Endpoint: "https://tos-s3-cn-beijing.ivolces.com",
+				Region:   "cn-beijing",
+			})
+			require.ErrorContains(t, err, "invalid volcengine region")
+			require.Nil(t, provider)
 		}
-		require.Zero(t, hits.Load())
+
+		t.Setenv(volcengineIRSARegionEnv, "")
+		for _, badEndpoint := range []string{
+			"http://sts.example.com",
+			"http://127.0.0.1:18080/",
+			"https://user:supersecret@sts.example.com",
+			"ftp://sts.example.com",
+			"sts.example.com/extra?foo=bar",
+			"://bad-url",
+		} {
+			t.Setenv(volcengineOIDCSTSEndpointEnv, badEndpoint)
+			provider, err := autoNewCred(&backuppb.S3{
+				Provider: "volcengine",
+				Region:   "cn-beijing",
+			})
+			require.ErrorContains(t, err, "invalid "+volcengineOIDCSTSEndpointEnv)
+			require.NotContains(t, err.Error(), "supersecret")
+			require.Nil(t, provider)
+		}
 	})
 }
 
@@ -114,14 +322,24 @@ func TestVolcengineTOSEndpointOnlyEndToEnd(t *testing.T) {
 	require.NoError(t, os.WriteFile(tokenFile, []byte(" oidc-token \n"), 0o600))
 	t.Setenv(volcengineOIDCTokenFileEnv, tokenFile)
 	t.Setenv(volcengineOIDCRoleTRNEnv, "trn:iam::1234567890:role/metering")
-	t.Setenv(volcengineRegionEnv, "cn-beijing")
-	t.Setenv(volcengineLegacyRegionEnv, "")
+	const sessionPolicy = `{"Statement":[{"Effect":"Allow","Action":["tos:GetObject"],"Resource":["trn:tos:::my-bucket/prefix/*"]}]}`
+	t.Setenv(volcengineOIDCRolePolicyEnv, " "+sessionPolicy+" ")
+	t.Setenv(volcengineRegionEnv, "")
+	// Simulate VKE IRSA injecting REGION=cn-shanghai while accessing a cn-beijing
+	// TOS bucket without explicit region/provider in the URI: S3 SigV4 signing
+	// must use cn-beijing inferred from the TOS host, never REGION from env.
+	t.Setenv(volcengineIRSARegionEnv, "cn-shanghai")
 
-	stsServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	var stsHits atomic.Int32
+	stsServer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		stsHits.Add(1)
 		require.Equal(t, http.MethodPost, r.Method)
+		require.Equal(t, "AssumeRoleWithOIDC", r.URL.Query().Get("Action"))
+		require.Equal(t, "2018-01-01", r.URL.Query().Get("Version"))
 		require.NoError(t, r.ParseForm())
 		require.Equal(t, "oidc-token", r.PostForm.Get("OIDCToken"))
 		require.Equal(t, "trn:iam::1234567890:role/metering", r.PostForm.Get("RoleTrn"))
+		require.Equal(t, sessionPolicy, r.PostForm.Get("Policy"))
 
 		resp := volcengineOIDCSTSResponse{}
 		resp.Result.Credentials.AccessKeyID = "oidc-ak"
@@ -131,13 +349,10 @@ func TestVolcengineTOSEndpointOnlyEndToEnd(t *testing.T) {
 		require.NoError(t, json.NewEncoder(w).Encode(resp))
 	}))
 	t.Cleanup(stsServer.Close)
-
-	prevURL := volcengineOIDCSTSURL
-	volcengineOIDCSTSURL = func(region string) string {
-		require.Equal(t, "cn-beijing", region)
-		return stsServer.URL
-	}
-	t.Cleanup(func() { volcengineOIDCSTSURL = prevURL })
+	prevClientFactory := newVolcengineOIDCHTTPClient
+	newVolcengineOIDCHTTPClient = stsServer.Client
+	t.Cleanup(func() { newVolcengineOIDCHTTPClient = prevClientFactory })
+	t.Setenv(volcengineOIDCSTSEndpointEnv, stsServer.URL)
 
 	var (
 		mu      sync.Mutex
@@ -159,8 +374,6 @@ func TestVolcengineTOSEndpointOnlyEndToEnd(t *testing.T) {
 	}))
 	t.Cleanup(tosServer.Close)
 
-	// Omit provider and region from the URI to verify endpoint-only TOS handling
-	// shares virtual-host addressing, skips AWS HeadBucket, and signs with VOLCENGINE_REGION.
 	rawURL := "s3://my-bucket/prefix?endpoint=https://tos-s3-cn-beijing.ivolces.com"
 	s3Opts := s3like.S3BackendOptions{
 		Endpoint:       "https://tos-s3-cn-beijing.ivolces.com",
@@ -180,9 +393,15 @@ func TestVolcengineTOSEndpointOnlyEndToEnd(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, []byte("hello-tos"), data)
 
+	// Subsequent requests reuse cached credentials without another STS exchange.
+	data, err = store.ReadFile(t.Context(), "hello.txt")
+	require.NoError(t, err)
+	require.Equal(t, []byte("hello-tos"), data)
+	require.Equal(t, int32(1), stsHits.Load())
+
 	mu.Lock()
 	defer mu.Unlock()
-	require.Equal(t, []string{http.MethodGet}, methods)
+	require.Equal(t, []string{http.MethodGet, http.MethodGet}, methods)
 	require.Equal(t, "my-bucket.tos-s3-cn-beijing.ivolces.com", gotHost)
 	require.Equal(t, "/prefix/hello.txt", gotPath)
 	require.Contains(t, gotAuth, "/cn-beijing/s3/aws4_request")
@@ -193,35 +412,39 @@ func TestVolcengineOIDCCredentialsProviderRefresh(t *testing.T) {
 	tokenFile := filepath.Join(t.TempDir(), "token")
 	require.NoError(t, os.WriteFile(tokenFile, []byte("oidc-token"), 0o600))
 
-	// STS issues one credential and fails subsequent refreshes.
-	newProvider := func(t *testing.T, validity time.Duration) (*volcengineOIDCCredentialsProvider, *atomic.Int32) {
-		var hits atomic.Int32
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if hits.Add(1) > 1 {
-				w.WriteHeader(http.StatusServiceUnavailable)
-				return
-			}
-			resp := volcengineOIDCSTSResponse{}
-			resp.Result.Credentials.AccessKeyID = "oidc-ak"
-			resp.Result.Credentials.SecretAccessKey = "oidc-sk"
-			resp.Result.Credentials.SessionToken = "oidc-sess"
-			resp.Result.Credentials.Expiration = time.Now().Add(validity).Format(time.RFC3339)
-			require.NoError(t, json.NewEncoder(w).Encode(resp))
-		}))
+	newProvider := func(t *testing.T, handler http.HandlerFunc) (*volcengineOIDCCredentialsProvider, *httptest.Server) {
+		server := httptest.NewServer(handler)
 		t.Cleanup(server.Close)
-		prevURL := volcengineOIDCSTSURL
-		volcengineOIDCSTSURL = func(string) string { return server.URL }
-		t.Cleanup(func() { volcengineOIDCSTSURL = prevURL })
-
 		return &volcengineOIDCCredentialsProvider{
-			region:    "cn-beijing",
-			roleTRN:   "trn:iam::1234567890:role/metering",
-			tokenFile: tokenFile,
-		}, &hits
+			stsURL:     server.URL,
+			roleTRN:    "trn:iam::1234567890:role/metering",
+			tokenFile:  tokenFile,
+			httpClient: server.Client(),
+			retryDelay: time.Millisecond,
+		}, server
+	}
+
+	writeCred := func(t *testing.T, w http.ResponseWriter, ak string, validity time.Duration, useExpiredTime bool) {
+		resp := volcengineOIDCSTSResponse{}
+		resp.Result.Credentials.AccessKeyID = ak
+		resp.Result.Credentials.SecretAccessKey = ak + "-sk"
+		resp.Result.Credentials.SessionToken = ak + "-sess"
+		exp := time.Now().Add(validity).Format(time.RFC3339)
+		if useExpiredTime {
+			resp.Result.Credentials.ExpiredTime = exp
+		} else {
+			resp.Result.Credentials.Expiration = exp
+		}
+		require.NoError(t, json.NewEncoder(w).Encode(resp))
 	}
 
 	t.Run("concurrent cold calls share one exchange", func(t *testing.T) {
-		provider, hits := newProvider(t, time.Hour)
+		var hits atomic.Int32
+		provider, _ := newProvider(t, func(w http.ResponseWriter, r *http.Request) {
+			hits.Add(1)
+			writeCred(t, w, "oidc-ak", time.Hour, false)
+		})
+
 		const workers = 4
 		errs := make([]error, workers)
 		aks := make([]string, workers)
@@ -240,10 +463,83 @@ func TestVolcengineOIDCCredentialsProviderRefresh(t *testing.T) {
 		require.Equal(t, int32(1), hits.Load())
 	})
 
+	t.Run("short-lived credential uses proportional refresh window", func(t *testing.T) {
+		var hits atomic.Int32
+		provider, _ := newProvider(t, func(w http.ResponseWriter, r *http.Request) {
+			hits.Add(1)
+			writeCred(t, w, "short-ak", time.Minute, true)
+		})
+
+		first, err := provider.Retrieve(t.Context())
+		require.NoError(t, err)
+		require.Equal(t, "short-ak", first.AccessKeyID)
+
+		// Must not immediately trigger early refresh right after fetching a 1m credential.
+		cached, valid, inflight := provider.current()
+		require.True(t, valid)
+		require.Equal(t, first, cached)
+		require.Nil(t, inflight)
+		require.Equal(t, int32(1), hits.Load())
+	})
+
+	t.Run("successful early refresh asynchronously replaces cached credentials", func(t *testing.T) {
+		var hits atomic.Int32
+		refreshStarted := make(chan struct{})
+		releaseRefresh := make(chan struct{})
+		provider, _ := newProvider(t, func(w http.ResponseWriter, r *http.Request) {
+			if hits.Add(1) == 1 {
+				writeCred(t, w, "ak-v1", time.Hour, false)
+				return
+			}
+			close(refreshStarted)
+			<-releaseRefresh
+			writeCred(t, w, "ak-v2", time.Hour, false)
+		})
+
+		v1, err := provider.Retrieve(t.Context())
+		require.NoError(t, err)
+		require.Equal(t, "ak-v1", v1.AccessKeyID)
+
+		// Move into the early-refresh window.
+		provider.mu.Lock()
+		provider.refreshAt = time.Now().Add(-time.Second)
+		provider.mu.Unlock()
+
+		// Caller immediately gets still-valid v1 while refresh runs in background.
+		got, err := provider.Retrieve(t.Context())
+		require.NoError(t, err)
+		require.Equal(t, "ak-v1", got.AccessKeyID)
+
+		<-refreshStarted
+		provider.mu.Lock()
+		refresh := provider.inflight
+		provider.mu.Unlock()
+		require.NotNil(t, refresh)
+		close(releaseRefresh)
+		<-refresh.done
+
+		v2, err := provider.Retrieve(t.Context())
+		require.NoError(t, err)
+		require.Equal(t, "ak-v2", v2.AccessKeyID)
+		require.Equal(t, int32(2), hits.Load())
+	})
+
 	t.Run("failed early refresh backs off while cached credentials are valid", func(t *testing.T) {
-		provider, hits := newProvider(t, time.Minute)
+		var hits atomic.Int32
+		provider, _ := newProvider(t, func(w http.ResponseWriter, r *http.Request) {
+			if hits.Add(1) > 1 {
+				w.WriteHeader(http.StatusForbidden)
+				return
+			}
+			writeCred(t, w, "oidc-ak", time.Hour, false)
+		})
+
 		cred, err := provider.Retrieve(t.Context())
 		require.NoError(t, err)
+
+		provider.mu.Lock()
+		provider.refreshAt = time.Now().Add(-time.Second)
+		provider.mu.Unlock()
 
 		got, err := provider.Retrieve(t.Context())
 		require.NoError(t, err)
@@ -261,6 +557,76 @@ func TestVolcengineOIDCCredentialsProviderRefresh(t *testing.T) {
 		require.Nil(t, retry)
 		require.Equal(t, int32(2), hits.Load())
 	})
+
+	t.Run("canceled waiter does not abort shared refresh", func(t *testing.T) {
+		var hits atomic.Int32
+		started := make(chan struct{})
+		release := make(chan struct{})
+		provider, _ := newProvider(t, func(w http.ResponseWriter, r *http.Request) {
+			hits.Add(1)
+			close(started)
+			<-release
+			writeCred(t, w, "shared-ak", time.Hour, false)
+		})
+
+		ctx1, cancel1 := context.WithCancel(t.Context())
+		errCh1 := make(chan error, 1)
+		go func() {
+			_, err := provider.Retrieve(ctx1)
+			errCh1 <- err
+		}()
+
+		<-started
+		credCh2 := make(chan string, 1)
+		errCh2 := make(chan error, 1)
+		go func() {
+			cred, err := provider.Retrieve(t.Context())
+			credCh2 <- cred.AccessKeyID
+			errCh2 <- err
+		}()
+
+		cancel1()
+		require.ErrorIs(t, <-errCh1, context.Canceled)
+
+		close(release)
+		require.NoError(t, <-errCh2)
+		require.Equal(t, "shared-ak", <-credCh2)
+		require.Equal(t, int32(1), hits.Load())
+	})
+
+	t.Run("retryable STS statuses retry and recover", func(t *testing.T) {
+		var hits atomic.Int32
+		provider, _ := newProvider(t, func(w http.ResponseWriter, r *http.Request) {
+			switch hits.Add(1) {
+			case 1:
+				w.WriteHeader(http.StatusTooManyRequests)
+			case 2:
+				w.WriteHeader(http.StatusServiceUnavailable)
+			default:
+				writeCred(t, w, "recovered-ak", time.Hour, false)
+			}
+		})
+
+		cred, err := provider.Retrieve(t.Context())
+		require.NoError(t, err)
+		require.Equal(t, "recovered-ak", cred.AccessKeyID)
+		require.Equal(t, int32(3), hits.Load())
+	})
+
+	t.Run("non-retryable STS status does not retry", func(t *testing.T) {
+		var hits atomic.Int32
+		provider, _ := newProvider(t, func(w http.ResponseWriter, r *http.Request) {
+			hits.Add(1)
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = w.Write([]byte(`{"ResponseMetadata":{"RequestId":"req-403","Error":{"Code":"AccessDenied","Message":"denied"}}}`))
+		})
+
+		_, err := provider.Retrieve(t.Context())
+		require.ErrorContains(t, err, "status=403")
+		require.ErrorContains(t, err, "AccessDenied")
+		require.ErrorContains(t, err, "request-id=req-403")
+		require.Equal(t, int32(1), hits.Load())
+	})
 }
 
 func TestVolcengineOIDCCredentialsProviderErrors(t *testing.T) {
@@ -268,18 +634,22 @@ func TestVolcengineOIDCCredentialsProviderErrors(t *testing.T) {
 	require.NoError(t, os.WriteFile(tokenFile, []byte("oidc-token"), 0o600))
 
 	testCases := []struct {
-		name    string
-		resp    func() volcengineOIDCSTSResponse
-		wantErr string
+		name         string
+		statusCode   int
+		rawBody      string
+		resp         func() volcengineOIDCSTSResponse
+		wantErr      string
+		forbidSubstr string
 	}{
 		{
-			name: "incomplete credentials",
+			name: "incomplete credentials with request id",
 			resp: func() volcengineOIDCSTSResponse {
 				var r volcengineOIDCSTSResponse
+				r.ResponseMetadata.RequestID = "req-incomplete"
 				r.Result.Credentials.AccessKeyID = "oidc-ak"
 				return r
 			},
-			wantErr: "volcengine OIDC STS returned incomplete credentials",
+			wantErr: "volcengine OIDC STS returned incomplete credentials (request-id=req-incomplete)",
 		},
 		{
 			name: "missing expiration",
@@ -292,26 +662,103 @@ func TestVolcengineOIDCCredentialsProviderErrors(t *testing.T) {
 			},
 			wantErr: "volcengine OIDC STS returned empty expiration",
 		},
+		{
+			name: "expired credentials",
+			resp: func() volcengineOIDCSTSResponse {
+				var r volcengineOIDCSTSResponse
+				r.Result.Credentials.AccessKeyID = "oidc-ak"
+				r.Result.Credentials.SecretAccessKey = "oidc-sk"
+				r.Result.Credentials.SessionToken = "oidc-sess"
+				r.Result.Credentials.Expiration = time.Now().Add(-time.Minute).Format(time.RFC3339)
+				return r
+			},
+			wantErr: "volcengine OIDC STS returned expired credentials",
+		},
+		{
+			name: "http 200 with metadata error",
+			resp: func() volcengineOIDCSTSResponse {
+				var r volcengineOIDCSTSResponse
+				r.ResponseMetadata.RequestID = "req-200-err"
+				r.ResponseMetadata.Error = &struct {
+					Code    string `json:"Code"`
+					Message string `json:"Message"`
+				}{
+					Code:    "InvalidParameter",
+					Message: "bad token",
+				}
+				return r
+			},
+			wantErr: "volcengine OIDC STS InvalidParameter: bad token (request-id=req-200-err)",
+		},
+		{
+			name:         "non-200 non-JSON does not leak raw body",
+			statusCode:   http.StatusBadRequest,
+			rawBody:      "<html>sensitive-proxy-secret</html>",
+			wantErr:      "volcengine OIDC STS returned status 400 (body-length=35)",
+			forbidSubstr: "sensitive-proxy-secret",
+		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if tc.statusCode != 0 {
+					w.WriteHeader(tc.statusCode)
+				}
+				if tc.rawBody != "" {
+					_, _ = w.Write([]byte(tc.rawBody))
+					return
+				}
 				require.NoError(t, json.NewEncoder(w).Encode(tc.resp()))
 			}))
 			t.Cleanup(server.Close)
 
-			prevURL := volcengineOIDCSTSURL
-			volcengineOIDCSTSURL = func(string) string { return server.URL }
-			t.Cleanup(func() { volcengineOIDCSTSURL = prevURL })
-
 			provider := &volcengineOIDCCredentialsProvider{
-				region:    "cn-beijing",
-				roleTRN:   "trn:iam::1234567890:role/metering",
-				tokenFile: tokenFile,
+				stsURL:     server.URL,
+				roleTRN:    "trn:iam::1234567890:role/metering",
+				tokenFile:  tokenFile,
+				httpClient: server.Client(),
+				retryDelay: time.Millisecond,
 			}
 			_, err := provider.Retrieve(t.Context())
 			require.EqualError(t, err, tc.wantErr)
+			if tc.forbidSubstr != "" {
+				require.NotContains(t, err.Error(), tc.forbidSubstr)
+			}
 		})
 	}
+
+	t.Run("missing token file", func(t *testing.T) {
+		provider := &volcengineOIDCCredentialsProvider{
+			stsURL:    "https://sts.volcengineapi.com/?" + volcengineOIDCSTSQuery,
+			roleTRN:   "trn:iam::1234567890:role/metering",
+			tokenFile: filepath.Join(t.TempDir(), "does-not-exist"),
+		}
+		_, err := provider.Retrieve(t.Context())
+		require.ErrorContains(t, err, "read volcengine OIDC token file")
+	})
+
+	t.Run("STS redirects are not followed", func(t *testing.T) {
+		var redirectTargetHits atomic.Int32
+		targetServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			redirectTargetHits.Add(1)
+			w.WriteHeader(http.StatusOK)
+		}))
+		t.Cleanup(targetServer.Close)
+
+		stsServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, targetServer.URL, http.StatusTemporaryRedirect)
+		}))
+		t.Cleanup(stsServer.Close)
+
+		provider := &volcengineOIDCCredentialsProvider{
+			stsURL:     stsServer.URL,
+			roleTRN:    "trn:iam::1234567890:role/metering",
+			tokenFile:  tokenFile,
+			retryDelay: time.Millisecond,
+		}
+		_, err := provider.Retrieve(t.Context())
+		require.EqualError(t, err, "volcengine OIDC STS returned status 307 (body-length=0)")
+		require.Zero(t, redirectTargetHits.Load())
+	})
 }
