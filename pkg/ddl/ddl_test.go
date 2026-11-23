@@ -79,7 +79,7 @@ func TestJobStepStateRestore(t *testing.T) {
 	job.Error = toTError(dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("retry"))
 	job.ErrorCount = 1
 	job.ReorgMeta.UseCloudStorage = true
-	restoreAll()
+	restoreAll(job.Error)
 	require.Equal(t, model.StateWriteReorganization, job.SchemaState)
 	require.EqualValues(t, 1, job.BinlogInfo.SchemaVersion)
 	require.Nil(t, job.BinlogInfo.TableInfo)

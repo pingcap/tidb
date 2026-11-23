@@ -221,7 +221,7 @@ func checkpointStorageClassTransitionStep(se *sess.Session, txn kv.Transaction, 
 	return func() {
 		txnCtx.RestoreBySavepoint(txnCtxSavepoint)
 		txn.RollbackMemDBToCheckpoint(checkpoint)
-		restoreAll()
+		restoreAll(nil)
 	}
 }
 

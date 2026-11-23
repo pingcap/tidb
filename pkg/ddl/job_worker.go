@@ -697,8 +697,9 @@ func (w *worker) accountJobRU(job *model.Job) error {
 
 // snapshotJobStepState saves metadata progress that must match the transaction.
 // restoreKV leaves sub-job cancellation decisions intact. restoreAll also
-// restores the sub-jobs so the step can be retried from its persisted state.
-func snapshotJobStepState(job *model.Job) (restoreAll, restoreKV func()) {
+// restores completion and sub-job progress so the step can be retried.
+func snapshotJobStepState(job *model.Job) (restoreAll func(error), restoreKV func()) {
+	state := job.State
 	schemaState := job.SchemaState
 	binlogInfo := job.BinlogInfo
 	if binlogInfo != nil {
@@ -723,9 +724,21 @@ func snapshotJobStepState(job *model.Job) (restoreAll, restoreKV func()) {
 		job.ResumeReason = resumeReason
 		job.LastSchemaVersion = 0
 	}
-	restoreAll = func() {
+	restoreAll = func(runJobErr error) {
 		restoreKV()
+		if state == model.JobStateRunning && job.IsDone() {
+			job.State = state
+		}
 		if job.MultiSchemaInfo != nil {
+			if meta.ErrDDLReorgElementNotExist.Equal(runJobErr) {
+				// Keep the recovery reset from getReorgInfo so the next step
+				// recreates the missing handle.
+				for i, sub := range job.MultiSchemaInfo.SubJobs {
+					if subJobs[i].SnapshotVer != 0 && sub.SnapshotVer == 0 {
+						subJobs[i].SnapshotVer = 0
+					}
+				}
+			}
 			job.MultiSchemaInfo.SubJobs = subJobs
 		}
 	}
@@ -842,7 +855,7 @@ func (w *worker) transitOneJobStep(
 				// Preserve the sub-job states selected for cancellation or rollback.
 				restoreKV()
 			} else {
-				restoreAll()
+				restoreAll(runJobErr)
 				updateRawArgs = false
 			}
 			failpoint.InjectCall("afterRollbackTxnForMustRollbackTxnOnError", job)
@@ -866,7 +879,7 @@ func (w *worker) transitOneJobStep(
 			// requires the whole transaction to be rolled back.
 			w.sess.Reset()
 			if !job.IsCancelled() {
-				restoreAll()
+				restoreAll(runJobErr)
 				updateRawArgs = false
 			}
 			// If error happens after updateSchemaVersion(), then the schemaVer is updated.

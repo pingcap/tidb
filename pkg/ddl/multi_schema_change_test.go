@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -40,6 +41,49 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestMultiSchemaChangeRetryMissingReorgHandle(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	observer := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (id int primary key, v int)")
+	tk.MustExec("insert into t values (1, 10), (2, 20)")
+	originalFastReorg := vardef.EnableFastReorg.Swap(false)
+	t.Cleanup(func() { vardef.EnableFastReorg.Store(originalFastReorg) })
+	originalWait := ddl.GetWaitTimeWhenErrorOccurred()
+	ddl.SetWaitTimeWhenErrorOccurred(time.Millisecond)
+	t.Cleanup(func() { ddl.SetWaitTimeWhenErrorOccurred(originalWait) })
+	tk.MustExec("set global tidb_ddl_error_count_limit = 3")
+	t.Cleanup(func() { tk.MustExec("set global tidb_ddl_error_count_limit = default") })
+
+	const sql = "alter table t add index idx(v), add column c int default 42"
+	var removed, retried atomic.Bool
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
+		if job.Query != sql || job.Type != model.ActionMultiSchemaChange {
+			return
+		}
+		sub := job.MultiSchemaInfo.SubJobs[0]
+		if removed.Load() && meta.ErrDDLReorgElementNotExist.Equal(job.Error) && retried.CompareAndSwap(false, true) {
+			assert.Zero(t, sub.SnapshotVer, "the next step must reinitialize the missing handle")
+			assert.Equal(t, model.StateWriteReorganization, sub.SchemaState)
+		}
+		if sub.SchemaState == model.StateWriteReorganization && sub.SnapshotVer != 0 && removed.CompareAndSwap(false, true) {
+			_, err := sqlexec.ExecSQL(ctx, observer.Session().GetSQLExecutor(),
+				"delete from mysql.tidb_ddl_reorg where job_id = %?", job.ID)
+			if assert.NoError(t, err) {
+				assert.EqualValues(t, 1, observer.Session().GetSessionVars().StmtCtx.AffectedRows())
+			}
+		}
+	})
+
+	tk.MustExec(sql)
+	require.True(t, removed.Load())
+	require.True(t, retried.Load())
+	tk.MustQuery("select v, c from t force index(idx) order by v").Check(testkit.Rows("10 42", "20 42"))
+	tk.MustExec("admin check table t")
+}
 
 func TestMultiSchemaChangeRollbackDoesNotLeakBinlogInfo(t *testing.T) {
 	t.Cleanup(config.RestoreFunc())

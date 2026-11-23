@@ -17,23 +17,134 @@ package ddl_test
 import (
 	"context"
 	"fmt"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/errno"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/session"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/store/helper"
+	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testenv"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
 )
+
+type flashbackTestStore struct{ helper.Storage }
+
+func (flashbackTestStore) Name() string { return "TiKV" }
+
+func TestFlashbackClusterRetryAfterSchemaVersionError(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		testenv.UpdateConfigForNextgen(t)
+	}
+	rawStore, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, rawStore.Close()) })
+	store := flashbackTestStore{rawStore.(helper.Storage)}
+	session.DisableStats4Test()
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/domain/afterDDLNotifierCreated", func(n *notifier.DDLNotifier) {
+		n.RegisterHandler(notifier.TestHandlerID, func(_ context.Context, _ sessionctx.Context, event *notifier.SchemaChangeEvent) error {
+			if event.GetType() == model.ActionFlashbackCluster {
+				return notifier.ErrNotReadyRetryLater
+			}
+			return nil
+		})
+	})
+	dom, err := session.BootstrapSession(store)
+	require.NoError(t, err)
+	t.Cleanup(dom.Close)
+	tk := testkit.NewTestKit(t, store)
+	observer := testkit.NewTestKit(t, store)
+	originalWait := ddl.GetWaitTimeWhenErrorOccurred()
+	ddl.SetWaitTimeWhenErrorOccurred(time.Millisecond)
+	t.Cleanup(func() { ddl.SetWaitTimeWhenErrorOccurred(originalWait) })
+
+	timeBeforeDrop, _, safePointSQL, resetGC := MockGC(tk)
+	defer resetGC()
+	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
+	ts, err := store.GetOracle().GetTimestamp(context.Background(), &oracle.Option{})
+	require.NoError(t, err)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/injectSafeTS",
+		fmt.Sprintf("return(%v)", oracle.GoTimeToTS(time.Now().Add(10*time.Second))))
+
+	var jobID atomic.Int64
+	var publications atomic.Int32
+	var injected, checkedRetry atomic.Bool
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
+		if job.Type != model.ActionFlashbackCluster || job.SchemaState != model.StateWriteOnly {
+			return
+		}
+		// Use the production finalization path with no ranges to send to TiKV.
+		args, err := model.GetFlashbackClusterArgs(job)
+		if assert.NoError(t, err) {
+			args.FlashbackKeyRanges = nil
+			job.FillArgs(args)
+			_, err = job.Encode(true)
+			assert.NoError(t, err)
+		}
+	})
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterAsyncNotifyEvent", func(job *model.Job, err *error) {
+		if job.Type == model.ActionFlashbackCluster && *err == nil {
+			jobID.Store(job.ID)
+			publications.Add(1)
+		}
+	})
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeUpdateSchemaVersion", func(job *model.Job, err *error) {
+		if job.Type == model.ActionFlashbackCluster && publications.Load() == 1 && injected.CompareAndSwap(false, true) {
+			*err = fmt.Errorf("injected flashback schema version error")
+		}
+	})
+	const eventSQL = "select cast(schema_change as char) from mysql.tidb_ddl_notifier where ddl_job_id = %?"
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeTransitOneJobStep", func(jobW *model.JobW) {
+		job := jobW.Job
+		if job.ID != jobID.Load() || !injected.Load() || !checkedRetry.CompareAndSwap(false, true) {
+			return
+		}
+		assert.Equal(t, model.JobStateRunning, job.State)
+		assert.Equal(t, model.StateWriteReorganization, job.SchemaState)
+		rows, err := sqlexec.ExecSQL(ctx, observer.Session().GetSQLExecutor(), eventSQL, job.ID)
+		if assert.NoError(t, err) {
+			assert.Empty(t, rows, "the failed step must roll back its notification")
+		}
+	})
+
+	tk.MustExec(fmt.Sprintf("flashback cluster to tso %d", ts))
+	require.True(t, injected.Load())
+	require.True(t, checkedRetry.Load())
+	require.EqualValues(t, 2, publications.Load())
+	rows, err := sqlexec.ExecSQL(ctx, observer.Session().GetSQLExecutor(), eventSQL, jobID.Load())
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	require.Contains(t, rows[0].GetString(0), fmt.Sprintf(`"type":%d`, model.ActionFlashbackCluster))
+
+	reader := meta.NewReader(store.GetSnapshot(kv.MaxVersion))
+	ver, err := reader.GetSchemaVersion()
+	require.NoError(t, err)
+	diff, err := reader.GetSchemaDiff(ver)
+	require.NoError(t, err)
+	require.NotNil(t, diff)
+	require.Equal(t, model.ActionFlashbackCluster, diff.Type)
+	require.True(t, diff.RegenerateSchemaMap)
+}
 
 func TestFlashbackCloseAndResetPDSchedule(t *testing.T) {
 	store := testkit.CreateMockStore(t)
