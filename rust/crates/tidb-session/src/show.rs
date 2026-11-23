@@ -96,27 +96,6 @@ impl Session {
         Ok(StmtOutput::Rows { columns, rows })
     }
 
-    /// Go `ShowExec.fetchShowStatus`: one `Variable_name | Value` row per
-    /// status variable `variable.GetStatusVars` collects from the registered
-    /// `Statistics` providers, sorted by name; `GLOBAL` skips the
-    /// session-only ones, and SEM hides its invisible ones.
-    fn show_status_rows(&self, global: bool) -> Result<Vec<Vec<Datum>>, DriverError> {
-        let status_vars = tidb_variable::statusvar::get_status_vars(Some(&self.vars))
-            .map_err(|error| DriverError::Mysql(tidb_terror::MysqlError::unknown(error)))?;
-        Ok(status_vars
-            .into_iter()
-            .filter(|(name, status)| {
-                !(global && status.scope == tidb_variable::sysvar::SCOPE_SESSION)
-                    && !self.sem_hides_status_var(name)
-            })
-            .map(|(name, status)| {
-                vec![
-                    Datum::Bytes(name.into_bytes()),
-                    Datum::Bytes(status.value.into_bytes()),
-                ]
-            })
-            .collect())
-    }
 
 }
 
@@ -185,26 +164,16 @@ impl tidb_executor::show::exec::ShowExec for Session {
         self.show_materialized_view_rows(contents, extractor)
     }
 
-    /// Go `ShowExec.fetchShowTableStatus`: query TABLES on the issuer,
-    /// using its transaction timestamp unless tidb_snapshot overrides it.
-    fn show_table_status_rows(&mut self, database: &str) -> Result<Vec<Vec<Datum>>, DriverError> {
-        let snapshot = if self.vars.snapshot_ts() != 0 {
-            self.vars.snapshot_ts()
-        } else {
-            u64::try_from(self.vars.current_tso.value()).unwrap_or_default()
-        };
-        let context = tikv_client::util::with_internal_source_type(
-            &tikv_client::trace::TraceContext::new(),
-            tidb_txnkv::INTERNAL_TXN_STATS_FOREGROUND_PRIORITY,
-        );
-        let options = [
-            tidb_sqlexec::exec_option_with_snapshot(snapshot),
-            std::sync::Arc::new(tidb_sqlexec::exec_option_use_cur_session) as tidb_sqlexec::OptionFuncAlias,
-        ];
-        self.execute_restricted_sql(&context, &options,
-            "SELECT table_name, engine, version, row_format, table_rows, avg_row_length, data_length, max_data_length, index_length, data_free, auto_increment, create_time, update_time, check_time, table_collation, IFNULL(checksum,''), create_options, table_comment FROM information_schema.tables WHERE lower(table_schema)=%? ORDER BY table_name",
-            &[tidb_sqlescape::SqlArg::from(tidb_hack::go_to_lower(database).as_str())],
-        ).map(|(rows, _)| rows).map_err(tidb_driver_error::sql_exec_driver_error)
+    fn exec_restricted_sql_with_options(
+        &mut self,
+        ctx: &tikv_client::trace::TraceContext,
+        options: &[tidb_sqlexec::OptionFuncAlias],
+        sql: &str,
+        args: &[tidb_sqlescape::SqlArg],
+    ) -> Result<Vec<Vec<Datum>>, DriverError> {
+        self.execute_restricted_sql(ctx, options, sql, args)
+            .map(|(rows, _)| rows)
+            .map_err(tidb_driver_error::sql_exec_driver_error)
     }
 
     fn with_catalog_scope<T>(
@@ -276,8 +245,8 @@ impl tidb_executor::show::exec::ShowExec for Session {
         self.analyze_status.clone()
     }
 
-    fn show_status_rows(&self, global: bool) -> Result<Vec<Vec<Datum>>, DriverError> {
-        Session::show_status_rows(self, global)
+    fn sem_hides_status_var(&self, name: &str) -> bool {
+        Session::sem_hides_status_var(self, name)
     }
 
     fn warning_rows(&self, count_only: bool, errors_only: bool) -> Vec<Vec<Datum>> {

@@ -68,14 +68,77 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
     /// Go `infoschema`'s `TableSizeStats` image: the statement's catalog
     /// with the table-size cache folded in.
     fn table_storage_statistics_catalog(&mut self) -> Result<crate::SessionExtendedInfoSchema, DriverError>;
-    /// Go `fetchShowTableStatus`'s current-session restricted SELECT.
-    fn show_table_status_rows(&mut self, database: &str) -> Result<Vec<Vec<Datum>>, DriverError>;
+    /// Go `ExecRestrictedSQL` with `options` on the session's restricted
+    /// executor: the rows.
+    ///
+    /// # Errors
+    ///
+    /// The statement's failure.
+    fn exec_restricted_sql_with_options(
+        &mut self,
+        ctx: &tikv_client::trace::TraceContext,
+        options: &[tidb_sqlexec::OptionFuncAlias],
+        sql: &str,
+        args: &[tidb_sqlescape::SqlArg],
+    ) -> Result<Vec<Vec<Datum>>, DriverError>;
+    /// Go `fetchShowTableStatus`: query TABLES on the issuer, using its
+    /// transaction timestamp unless tidb_snapshot overrides it.
+    ///
+    /// # Errors
+    ///
+    /// The query's failure.
+    fn show_table_status_rows(&mut self, database: &str) -> Result<Vec<Vec<Datum>>, DriverError>
+    where
+        Self: crate::sessionctx::SessionContext,
+    {
+        let vars = self.session_vars();
+        let snapshot = if vars.snapshot_ts() != 0 {
+            vars.snapshot_ts()
+        } else {
+            u64::try_from(vars.current_tso.value()).unwrap_or_default()
+        };
+        let context = tikv_client::util::with_internal_source_type(
+            &tikv_client::trace::TraceContext::new(),
+            tidb_txnkv::INTERNAL_TXN_STATS_FOREGROUND_PRIORITY,
+        );
+        let options = [
+            tidb_sqlexec::exec_option_with_snapshot(snapshot),
+            std::sync::Arc::new(tidb_sqlexec::exec_option_use_cur_session) as tidb_sqlexec::OptionFuncAlias,
+        ];
+        self.exec_restricted_sql_with_options(&context, &options,
+            "SELECT table_name, engine, version, row_format, table_rows, avg_row_length, data_length, max_data_length, index_length, data_free, auto_increment, create_time, update_time, check_time, table_collation, IFNULL(checksum,''), create_options, table_comment FROM information_schema.tables WHERE lower(table_schema)=%? ORDER BY table_name",
+            &[tidb_sqlescape::SqlArg::from(tidb_hack::go_to_lower(database).as_str())],
+        )
+    }
     /// Go `statstypes.ColumnStatsUsage` storage reader.
     fn column_stats_usage_provider(&self) -> Option<std::sync::Arc<dyn ColumnStatsUsageProvider>>;
     /// Go's `mysql.analyze_jobs` reader.
     fn analyze_status_provider(&self) -> Option<std::sync::Arc<dyn AnalyzeStatusProvider>>;
-    /// Go `fetchShowStatus` over `variable.GetStatusVars`.
-    fn show_status_rows(&self, global: bool) -> Result<Vec<Vec<Datum>>, DriverError>;
+    /// Whether SEM hides the status variable `name`.
+    fn sem_hides_status_var(&self, name: &str) -> bool;
+    /// Go `ShowExec.fetchShowStatus`: one `Variable_name | Value` row per
+    /// status variable `variable.GetStatusVars` collects from the registered
+    /// `Statistics` providers, sorted by name; `GLOBAL` skips the
+    /// session-only ones, and SEM hides its invisible ones.
+    ///
+    /// # Errors
+    ///
+    /// A provider's failure.
+    fn show_status_rows(&self, global: bool) -> Result<Vec<Vec<Datum>>, DriverError>
+    where
+        Self: crate::sessionctx::SessionContext,
+    {
+        let status_vars = tidb_variable::statusvar::get_status_vars(Some(self.session_vars()))
+            .map_err(|error| DriverError::Mysql(tidb_terror::MysqlError::unknown(error)))?;
+        Ok(status_vars
+            .into_iter()
+            .filter(|(name, status)| {
+                !(global && status.scope == tidb_variable::sysvar::SCOPE_SESSION)
+                    && !self.sem_hides_status_var(name)
+            })
+            .map(|(name, status)| vec![Datum::Bytes(name.into_bytes()), Datum::Bytes(status.value.into_bytes())])
+            .collect())
+    }
     /// Go `fetchShowWarnings`.
     fn warning_rows(&self, count_only: bool, errors_only: bool) -> Vec<Vec<Datum>>;
     /// What the instance-wide `information_schema` readers read of this
