@@ -544,7 +544,10 @@ func filterAliveStoresHelper(ctx context.Context, stores []string, ttl time.Dura
 
 			tikvClient := kvStore.GetTiKVClient()
 			if ok := detectMPPStore(ctx, tikvClient, s, DetectTimeoutLimit); !ok {
-				GlobalMPPFailedStoreProber.Add(ctx, s, tikvClient)
+				// Caller cancellation must not affect store availability for other queries.
+				if ctx.Err() == nil {
+					GlobalMPPFailedStoreProber.Add(ctx, s, tikvClient)
+				}
 				return
 			}
 
