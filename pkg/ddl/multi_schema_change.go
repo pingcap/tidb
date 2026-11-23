@@ -16,7 +16,9 @@ package ddl
 
 import (
 	"context"
+	"fmt"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -47,6 +49,26 @@ func updateParentJobFromProxy(parentJob, proxyJob *model.Job) {
 	}
 }
 
+func resolvePanickedSubJobErr(runErr error, fallbackErrs ...*terror.Error) error {
+	if runErr != nil {
+		return runErr
+	}
+	for _, fallbackErr := range fallbackErrs {
+		if fallbackErr != nil {
+			return fallbackErr
+		}
+	}
+	return dbterror.ErrCancelledDDLJob
+}
+
+func (w *worker) panicErrorLimitExceeded(jobCtx *jobContext, nextErrorCount int64) (int64, bool) {
+	if err1 := w.loadGlobalVars(vardef.TiDBDDLErrorCountLimit); err1 != nil {
+		jobCtx.logger.Error("load DDL global variable failed", zap.Error(err1))
+	}
+	errorCountLimit := vardef.GetDDLErrorCountLimit()
+	return errorCountLimit, nextErrorCount > errorCountLimit
+}
+
 func onMultiSchemaChange(w *worker, jobCtx *jobContext, job *model.Job) (ver int64, err error) {
 	jobCtx.inInnerRunOneJobStep = true
 	jobCtx.deferStorageClassTransitionStaging = false
@@ -74,20 +96,18 @@ func onMultiSchemaChange(w *worker, jobCtx *jobContext, job *model.Job) (ver int
 				err = res.err
 				updateParentJobFromProxy(job, &proxyJob)
 				if res.panicked {
-					if err == nil && proxyJob.Error != nil {
-						err = proxyJob.Error
-					}
-					if err == nil && job.Error != nil {
-						err = job.Error
-					}
-					if err == nil {
-						err = dbterror.ErrCancelledDDLJob
-					}
 					subIdx := i
 					panickedSubState := proxyJob.State
-					if panickedSubState == model.JobStateRollingback || panickedSubState == model.JobStateCancelling {
+					if panickedSubState == model.JobStateRollingback {
 						panickedSubState = model.JobStateCancelled
+					} else if panickedSubState == model.JobStateCancelling {
+						// Keep Cancelling eligible so convertJob2RollbackJob + rollback
+						// runs on retry unless parent failures exceed the configured limit.
+						if _, exceeded := w.panicErrorLimitExceeded(jobCtx, job.ErrorCount+1); exceeded {
+							panickedSubState = model.JobStateCancelled
+						}
 					}
+					err = resolvePanickedSubJobErr(err, proxyJob.Error, job.Error)
 					jobCtx.stepOutcome = &stepOutcome{
 						writes:   stepWritesDiscard,
 						baseline: stepJobEntryBaseline,
@@ -133,9 +153,7 @@ func onMultiSchemaChange(w *worker, jobCtx *jobContext, job *model.Job) (ver int
 			sub.FromProxyJob(&proxyJob, ver)
 			job.ResumeReason = proxyJob.ResumeReason
 			if res.panicked {
-				if err == nil {
-					err = dbterror.ErrCancelledDDLJob
-				}
+				err = resolvePanickedSubJobErr(err, proxyJob.Error)
 				panickedSubState := proxyJob.State
 				panickedSubErr := proxyJob.Error
 				if panickedSubErr == nil {
@@ -309,16 +327,18 @@ func onMultiSchemaChange(w *worker, jobCtx *jobContext, job *model.Job) (ver int
 				return ver, nil
 			}
 			if err != nil || proxyJob.Error != nil || res.panicked {
-				if err == nil && proxyJob.Error != nil {
+				if res.panicked {
+					err = resolvePanickedSubJobErr(err, proxyJob.Error)
+				} else if err == nil && proxyJob.Error != nil {
 					err = proxyJob.Error
 				}
-				if err == nil && res.panicked {
-					err = dbterror.ErrCancelledDDLJob
+				failedSubErr := proxyJob.Error
+				if failedSubErr == nil && res.panicked {
+					failedSubErr = toTError(err)
 				}
 				if migrated {
 					failedSubNormal := sub.IsNormal()
 					failedSubState := sub.State
-					failedSubErr := proxyJob.Error
 					handleRevertibleException(job, sub, failedSubErr)
 					jobCtx.stepOutcome = &stepOutcome{
 						writes:   stepWritesDiscard,
@@ -339,7 +359,7 @@ func onMultiSchemaChange(w *worker, jobCtx *jobContext, job *model.Job) (ver int
 				}
 				// The failed sub-job's state still determines whether to roll back
 				// the parent; its persisted state must match the restored transaction.
-				handleRevertibleException(job, sub, proxyJob.Error)
+				handleRevertibleException(job, sub, failedSubErr)
 				// Earlier sub-jobs may have updated related tables. Discard the
 				// entire transaction before persisting the error and restored jobs.
 				// External effects such as allocator rebases cannot be undone here.
@@ -389,14 +409,29 @@ func onMultiSchemaChange(w *worker, jobCtx *jobContext, job *model.Job) (ver int
 		sub.FromProxyJob(&proxyJob, ver)
 		job.ResumeReason = proxyJob.ResumeReason
 		if res.panicked {
-			if err == nil {
-				err = dbterror.ErrCancelledDDLJob
+			err = resolvePanickedSubJobErr(err, proxyJob.Error)
+			var cancelParent bool
+			if errorCountLimit, exceeded := w.panicErrorLimitExceeded(jobCtx, job.ErrorCount+1); exceeded {
+				cancelParent = true
+				msg := fmt.Sprintf("panic in handling DDL logic and error count beyond the limitation %d, cancelled", errorCountLimit)
+				jobCtx.logger.Warn(msg)
+				err = errors.New(msg)
+			}
+			finish := stepFinishUpdateJob
+			if cancelParent {
+				finish = stepFinishFinalizeJob
+				job.State = model.JobStateCancelled
 			}
 			jobCtx.stepOutcome = &stepOutcome{
 				writes:   stepWritesDiscard,
 				baseline: stepJobEntryBaseline,
-				finish:   stepFinishUpdateJob,
+				finish:   finish,
 				err:      err,
+				applyJobDelta: func(restored, _ *model.Job) {
+					if cancelParent {
+						restored.State = model.JobStateCancelled
+					}
+				},
 			}
 			return 0, err
 		}

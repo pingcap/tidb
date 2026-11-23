@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -810,16 +811,18 @@ func TestMultiSchemaRollbackSubJobPanicAdvancesAndFinishes(t *testing.T) {
 	tk.MustExec("CREATE TABLE t (id INT, c1 INT)")
 	tk.MustExec("INSERT INTO t VALUES (1, 1), (2, 1)")
 
-	// Trigger panics inside rollback sub-jobs (both Rollingback and Cancelling)
-	// and verify the parent multi-schema job marks each panicked sub-job Cancelled,
-	// advances through the rollback loop, and reaches JobStateRollbackDone.
+	// Trigger panics inside rollback sub-jobs:
+	// - Rollingback sub-job[1] transitions to Cancelled so rollback advances.
+	// - Cancelling sub-job[0] stays eligible for rollback so a transient panic
+	//   still converts to drop-column rollback and removes non-public c2 cleanly.
 	var (
-		mu              sync.Mutex
-		jobID           int64
-		remainingPanics = 2
-		armOnRunStep    atomic.Bool
-		sawSub1Cancel   atomic.Bool
-		sawSub0Cancel   atomic.Bool
+		mu               sync.Mutex
+		jobID            int64
+		panicStage       int
+		armOnRunStep     atomic.Bool
+		sawSub1Cancel    atomic.Bool
+		sawSub0Panic     atomic.Bool
+		sawSub0Cancelled atomic.Bool
 	)
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 		if job.Type != model.ActionMultiSchemaChange {
@@ -831,15 +834,26 @@ func TestMultiSchemaRollbackSubJobPanicAdvancesAndFinishes(t *testing.T) {
 		if !job.IsRollingback() || job.MultiSchemaInfo == nil || len(job.MultiSchemaInfo.SubJobs) != 2 {
 			return
 		}
-		if job.MultiSchemaInfo.SubJobs[1].State == model.JobStateCancelled {
+		sub0 := job.MultiSchemaInfo.SubJobs[0]
+		sub1 := job.MultiSchemaInfo.SubJobs[1]
+		if sub1.State == model.JobStateCancelled {
 			sawSub1Cancel.Store(true)
 		}
-		if job.MultiSchemaInfo.SubJobs[0].State == model.JobStateCancelled {
-			sawSub0Cancel.Store(true)
+		if sub0.State == model.JobStateCancelled {
+			sawSub0Cancelled.Store(true)
 		}
-		if remainingPanics > 0 && (!job.MultiSchemaInfo.SubJobs[0].IsFinished() || !job.MultiSchemaInfo.SubJobs[1].IsFinished()) {
-			remainingPanics--
-			armOnRunStep.Store(true)
+		switch panicStage {
+		case 0:
+			if sub1.State == model.JobStateRollingback {
+				panicStage = 1
+				armOnRunStep.Store(true)
+			}
+		case 1:
+			if sub1.IsFinished() && sub0.State == model.JobStateCancelling {
+				panicStage = 2
+				sawSub0Panic.Store(true)
+				armOnRunStep.Store(true)
+			}
 		}
 	})
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onRunOneJobStep", func() {
@@ -853,15 +867,198 @@ func TestMultiSchemaRollbackSubJobPanicAdvancesAndFinishes(t *testing.T) {
 
 	err := tk.ExecToErr("ALTER TABLE t ADD COLUMN c2 INT, ADD UNIQUE INDEX idx(c1)")
 	require.Error(t, err)
-	require.Zero(t, remainingPanics)
+	require.Equal(t, 2, panicStage)
 	require.True(t, sawSub1Cancel.Load())
-	require.True(t, sawSub0Cancel.Load())
+	require.True(t, sawSub0Panic.Load())
+	require.False(t, sawSub0Cancelled.Load(), "transient panic in Cancelling must not skip rollback")
 
 	historyJob, histErr := ddl.GetHistoryJobByID(tk.Session(), jobID)
 	require.NoError(t, histErr)
 	require.NotNil(t, historyJob)
 	require.Equal(t, model.JobStateRollbackDone, historyJob.State)
 	require.NotNil(t, historyJob.Error)
+	require.Len(t, historyJob.MultiSchemaInfo.SubJobs, 2)
+	require.Equal(t, model.JobStateRollbackDone, historyJob.MultiSchemaInfo.SubJobs[0].State)
+	require.Equal(t, model.JobStateCancelled, historyJob.MultiSchemaInfo.SubJobs[1].State)
+
+	// Verify durable TableInfo contains no residual c2 column, including non-public columns.
+	is := domain.GetDomain(tk.Session()).InfoSchema()
+	dbInfo, ok := is.SchemaByName(ast.NewCIStr("test"))
+	require.True(t, ok)
+	tbl, tblErr := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, tblErr)
+	require.NoError(t, kv.RunInNewTxn(context.Background(), store, false, func(_ context.Context, txn kv.Transaction) error {
+		durableTbl, getErr := meta.NewMutator(txn).GetTable(dbInfo.ID, tbl.Meta().ID)
+		require.NoError(t, getErr)
+		require.NotNil(t, durableTbl)
+		for _, col := range durableTbl.Columns {
+			require.NotEqual(t, "c2", col.Name.L, "unexpected column %s in state %s", col.Name.O, col.State)
+		}
+		require.Len(t, durableTbl.Columns, 2)
+		for _, idx := range durableTbl.Indices {
+			require.NotEqual(t, model.StatePublic, idx.State)
+		}
+		return nil
+	}))
+	tk.MustExec("ADMIN CHECK TABLE t")
 	// Confirm DDL execution on the table is unblocked afterwards.
 	tk.MustExec("ALTER TABLE t ADD COLUMN c3 INT")
+}
+
+func TestMultiSchemaPanicErrorLimitTerminates(t *testing.T) {
+	t.Run("cancelling rollback sub-job deterministic panic terminates at error count limit", func(t *testing.T) {
+		store := testkit.CreateMockStore(t)
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("USE test")
+		tk.MustExec("CREATE TABLE t2 (id INT, c1 INT)")
+		tk.MustExec("INSERT INTO t2 VALUES (1, 1), (2, 1)")
+
+		limit := vardef.GetDDLErrorCountLimit()
+		tk.MustExec("SET GLOBAL tidb_ddl_error_count_limit = 2")
+		defer func() {
+			tk.MustExec(fmt.Sprintf("SET GLOBAL tidb_ddl_error_count_limit = %d", limit))
+			vardef.SetDDLErrorCountLimit(limit)
+		}()
+
+		var (
+			jobID            atomic.Int64
+			cancellingPanics atomic.Int64
+			armOnRunStep     atomic.Bool
+		)
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
+			if job.Type != model.ActionMultiSchemaChange {
+				return
+			}
+			jobID.Store(job.ID)
+			if job.IsRollingback() && job.MultiSchemaInfo != nil && len(job.MultiSchemaInfo.SubJobs) == 2 {
+				if job.MultiSchemaInfo.SubJobs[1].IsFinished() && job.MultiSchemaInfo.SubJobs[0].State == model.JobStateCancelling {
+					armOnRunStep.Store(true)
+				}
+			}
+		})
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onRunOneJobStep", func() {
+			if armOnRunStep.Swap(false) {
+				cancellingPanics.Add(1)
+				require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockPanicInRunDDLJob", `1*panic("injected deterministic cancelling panic")`))
+			}
+		})
+		t.Cleanup(func() {
+			_ = failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockPanicInRunDDLJob")
+		})
+
+		err := tk.ExecToErr("ALTER TABLE t2 ADD COLUMN c2 INT, ADD UNIQUE INDEX idx(c1)")
+		require.Error(t, err)
+		require.Equal(t, int64(2), cancellingPanics.Load())
+
+		historyJob, histErr := ddl.GetHistoryJobByID(tk.Session(), jobID.Load())
+		require.NoError(t, histErr)
+		require.NotNil(t, historyJob)
+		require.Equal(t, model.JobStateRollbackDone, historyJob.State)
+		require.NotNil(t, historyJob.Error)
+		require.Greater(t, historyJob.ErrorCount, int64(2))
+		require.Equal(t, model.JobStateCancelled, historyJob.MultiSchemaInfo.SubJobs[0].State)
+		tk.MustExec("ALTER TABLE t2 ADD COLUMN c3 INT")
+	})
+
+	t.Run("non-revertible sub-job transient panic recovers and finishes", func(t *testing.T) {
+		store := testkit.CreateMockStore(t)
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("USE test")
+		tk.MustExec("CREATE TABLE t3 (id INT, c1 INT)")
+
+		limit := vardef.GetDDLErrorCountLimit()
+		tk.MustExec("SET GLOBAL tidb_ddl_error_count_limit = 2")
+		defer func() {
+			tk.MustExec(fmt.Sprintf("SET GLOBAL tidb_ddl_error_count_limit = %d", limit))
+			vardef.SetDDLErrorCountLimit(limit)
+		}()
+
+		var (
+			jobID        atomic.Int64
+			injectedOnce atomic.Bool
+			armOnRunStep atomic.Bool
+		)
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
+			if job.Type != model.ActionMultiSchemaChange {
+				return
+			}
+			jobID.Store(job.ID)
+			if job.MultiSchemaInfo != nil && !job.MultiSchemaInfo.Revertible && !injectedOnce.Swap(true) {
+				armOnRunStep.Store(true)
+			}
+		})
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onRunOneJobStep", func() {
+			if armOnRunStep.Swap(false) {
+				require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockPanicInRunDDLJob", `1*panic("injected transient non-revertible panic")`))
+			}
+		})
+		t.Cleanup(func() {
+			_ = failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockPanicInRunDDLJob")
+		})
+
+		tk.MustExec("ALTER TABLE t3 DROP COLUMN c1, COMMENT = 'done'")
+		require.True(t, injectedOnce.Load())
+
+		historyJob, histErr := ddl.GetHistoryJobByID(tk.Session(), jobID.Load())
+		require.NoError(t, histErr)
+		require.NotNil(t, historyJob)
+		require.Equal(t, model.JobStateSynced, historyJob.State)
+		require.Equal(t, int64(1), historyJob.ErrorCount)
+
+		tbl, tblErr := domain.GetDomain(tk.Session()).InfoSchema().TableByName(
+			context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t3"))
+		require.NoError(t, tblErr)
+		require.Len(t, tbl.Meta().Columns, 1)
+		require.Equal(t, "done", tbl.Meta().Comment)
+	})
+
+	t.Run("non-revertible sub-job deterministic panic terminates at error count limit", func(t *testing.T) {
+		store := testkit.CreateMockStore(t)
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("USE test")
+		tk.MustExec("CREATE TABLE t4 (id INT, c1 INT)")
+
+		limit := vardef.GetDDLErrorCountLimit()
+		tk.MustExec("SET GLOBAL tidb_ddl_error_count_limit = 2")
+		defer func() {
+			tk.MustExec(fmt.Sprintf("SET GLOBAL tidb_ddl_error_count_limit = %d", limit))
+			vardef.SetDDLErrorCountLimit(limit)
+		}()
+
+		var (
+			jobID        atomic.Int64
+			panicHits    atomic.Int64
+			armOnRunStep atomic.Bool
+		)
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
+			if job.Type != model.ActionMultiSchemaChange {
+				return
+			}
+			jobID.Store(job.ID)
+			if job.MultiSchemaInfo != nil && !job.MultiSchemaInfo.Revertible {
+				armOnRunStep.Store(true)
+			}
+		})
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onRunOneJobStep", func() {
+			if armOnRunStep.Swap(false) {
+				panicHits.Add(1)
+				require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockPanicInRunDDLJob", `1*panic("injected deterministic non-revertible panic")`))
+			}
+		})
+		t.Cleanup(func() {
+			_ = failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockPanicInRunDDLJob")
+		})
+
+		err := tk.ExecToErr("ALTER TABLE t4 DROP COLUMN c1, COMMENT = 'fail'")
+		require.ErrorContains(t, err, "panic in handling DDL logic and error count beyond the limitation 2, cancelled")
+		require.Equal(t, int64(3), panicHits.Load())
+
+		historyJob, histErr := ddl.GetHistoryJobByID(tk.Session(), jobID.Load())
+		require.NoError(t, histErr)
+		require.NotNil(t, historyJob)
+		require.Equal(t, model.JobStateCancelled, historyJob.State)
+		require.Equal(t, int64(3), historyJob.ErrorCount)
+		require.NotNil(t, historyJob.Error)
+		tk.MustExec("ALTER TABLE t4 ADD COLUMN c3 INT")
+	})
 }
