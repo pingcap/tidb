@@ -1429,6 +1429,7 @@ func TestTruncatePartitionWithGlobalIndex(t *testing.T) {
 	tk2.MustExec(`begin`)
 	tk2.MustExec(`insert into test_global values (5,5,5)`)
 
+<<<<<<< HEAD
 	v1 := dom.InfoSchema().SchemaMetaVersion()
 	syncChan := make(chan bool)
 	go func() {
@@ -1449,6 +1450,36 @@ func TestTruncatePartitionWithGlobalIndex(t *testing.T) {
 				}
 			}
 			time.Sleep(10 * time.Millisecond)
+=======
+		tk1 := testkit.NewTestKit(t, store)
+		tk1.MustExec("use test")
+		tk1.MustQuery(`explain format='brief' select * from test_global where b in (1,15)`).CheckContain("Batch_Point_Get")
+		assert.Equal(t, tk1.MustQuery(`select * from test_global where b = 15`).Rows(),
+			tk1.MustQuery(`select * from test_global where b in (15)`).Rows())
+		expected := testkit.Rows("1 1 1")
+		if job.SchemaState == model.StateWriteOnly {
+			expected = testkit.Rows("1 1 1", "15 15 15")
+		}
+		assert.Equal(t, expected, tk1.MustQuery(`select * from test_global where b in (1,15)`).Sort().Rows())
+		switch job.SchemaState {
+		case model.StateWriteOnly:
+			tk1.MustQuery(`select count(*) from test_global`).Check(testkit.Rows("5"))
+			tk1.MustExec(`insert into test_global values (5,5,5)`)
+		case model.StateDeleteOnly:
+			tk1.MustQuery(`explain format='brief' select b from test_global use index(idx_b) where b = 15`).CheckContain("Point_Get")
+			tk1.MustQuery(`explain format='brief' select c from test_global use index(idx_c) where c = 15`).CheckContain("Point_Get")
+			tk1.MustQuery(`select b from test_global use index(idx_b) where b = 15`).Check(testkit.Rows())
+			tk1.MustQuery(`select c from test_global use index(idx_c) where c = 15`).Check(testkit.Rows())
+			err := tk1.ExecToErr(`insert into test_global values (15,15,15)`)
+			assert.Error(t, err)
+			assert.ErrorContains(t, err, "Duplicate entry '15'")
+		case model.StateDeleteReorganization:
+			tk1.MustQuery(`select b from test_global use index(idx_b) where b = 15`).Check(testkit.Rows())
+			tk1.MustQuery(`select c from test_global use index(idx_c) where c = 15`).Check(testkit.Rows())
+			err := tk1.ExecToErr(`insert into test_global values (15,15,15)`)
+			assert.NoError(t, err)
+			assert.Equal(t, testkit.Rows("15 15 15"), tk1.MustQuery(`select * from test_global where b in (15)`).Rows())
+>>>>>>> 377c9e608b8 (executor: filter invisible global-index partitions in batch point get (#71258))
 		}
 	}
 	waitFor(4, "write only")
@@ -1642,6 +1673,8 @@ func TestGlobalIndexReaderInDropPartition(t *testing.T) {
 			tk1.MustExec("use test")
 
 			indexScanResult = tk1.MustQuery("select b from test_global use index(idx_b)").Sort()
+			tk1.MustQuery(`explain format='brief' select * from test_global where b in (1,11)`).CheckContain("Batch_Point_Get")
+			assert.Equal(t, testkit.Rows("11 11 11"), tk1.MustQuery(`select * from test_global where b in (1,11)`).Rows())
 		}
 	})
 
