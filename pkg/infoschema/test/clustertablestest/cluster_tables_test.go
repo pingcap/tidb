@@ -168,10 +168,10 @@ func TestTestDataLockWaits(t *testing.T) {
 	_, digest1 := parser.NormalizeDigest("select * from test_data_lock_waits for update")
 	_, digest2 := parser.NormalizeDigest("update test_data_lock_waits set f1=1 where id=2")
 	s.store.(mockstorage.MockLockWaitSetter).SetMockLockWaits([]*deadlock.WaitForEntry{
-		{Txn: 1, WaitForTxn: 2, Key: []byte("key1"), ResourceGroupTag: kv.NewResourceGroupTagBuilder(nil).SetSQLDigest(digest1).EncodeTagWithKey([]byte(""))},
-		{Txn: 3, WaitForTxn: 4, Key: []byte("key2"), ResourceGroupTag: kv.NewResourceGroupTagBuilder(nil).SetSQLDigest(digest2).EncodeTagWithKey([]byte(""))},
+		{Txn: 1, WaitForTxn: 2, Key: []byte("key1"), RequestedLockMode: deadlock.RequestedLockMode_Shared, ResourceGroupTag: kv.NewResourceGroupTagBuilder(nil).SetSQLDigest(digest1).EncodeTagWithKey([]byte(""))},
+		{Txn: 3, WaitForTxn: 4, Key: []byte("key2"), RequestedLockMode: deadlock.RequestedLockMode_Exclusive, ResourceGroupTag: kv.NewResourceGroupTagBuilder(nil).SetSQLDigest(digest2).EncodeTagWithKey([]byte(""))},
 		// Invalid digests
-		{Txn: 5, WaitForTxn: 6, Key: []byte("key3"), ResourceGroupTag: kv.NewResourceGroupTagBuilder(nil).EncodeTagWithKey([]byte(""))},
+		{Txn: 5, WaitForTxn: 6, Key: []byte("key3"), RequestedLockMode: deadlock.RequestedLockMode_Upgrade, ResourceGroupTag: kv.NewResourceGroupTagBuilder(nil).EncodeTagWithKey([]byte(""))},
 		{Txn: 7, WaitForTxn: 8, Key: []byte("key4"), ResourceGroupTag: []byte("asdfghjkl")},
 	})
 	tk := s.newTestKitWithRoot(t)
@@ -181,10 +181,10 @@ func TestTestDataLockWaits(t *testing.T) {
 	tk.MustExec("select * from test_data_lock_waits for update")
 
 	tk.MustQuery("select * from information_schema.DATA_LOCK_WAITS").Check(testkit.Rows(
-		"6B657931 <nil> 1 2 "+digest1.String()+" select * from `test_data_lock_waits` for update",
-		"6B657932 <nil> 3 4 "+digest2.String()+" <nil>",
-		"6B657933 <nil> 5 6 <nil> <nil>",
-		"6B657934 <nil> 7 8 <nil> <nil>"))
+		"6B657931 <nil> 1 2 "+digest1.String()+" select * from `test_data_lock_waits` for update S",
+		"6B657932 <nil> 3 4 "+digest2.String()+" <nil> X",
+		"6B657933 <nil> 5 6 <nil> <nil> S->X",
+		"6B657934 <nil> 7 8 <nil> <nil> <nil>"))
 }
 
 func TestDataLockWaitsPrivilege(t *testing.T) {

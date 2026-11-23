@@ -298,7 +298,7 @@ func (e *SelectLockExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	for id := range e.tblID2Handle {
 		e.UpdateDeltaForTableID(id)
 	}
-	lockCtx, err := newLockCtx(e.Ctx(), lockWaitTime, len(e.keys), false)
+	lockCtx, err := newSelectLockCtx(e.Ctx(), lockWaitTime, len(e.keys), e.Ctx().GetSessionVars().UseSelectForShare(e.Lock))
 	if err != nil {
 		return err
 	}
@@ -334,6 +334,16 @@ func checkMaxExecutionTimeExceeded(sctx sessionctx.Context) error {
 	}
 
 	return nil
+}
+
+func newSelectLockCtx(sctx sessionctx.Context, lockWaitTime int64, numKeys int, inShareMode bool) (*tikvstore.LockCtx, error) {
+	lockCtx, err := newLockCtx(sctx, lockWaitTime, numKeys, inShareMode)
+	if err != nil || !inShareMode {
+		return lockCtx, err
+	}
+	lockCtx.AllowSharedLockPrimary = true
+	lockCtx.AllowSharedLockUpgrade = true
+	return lockCtx, nil
 }
 
 func newLockCtx(sctx sessionctx.Context, lockWaitTime int64, numKeys int, inSharedMode bool) (*tikvstore.LockCtx, error) {

@@ -1907,6 +1907,18 @@ func TestTiDBForeignKeyCheckInSharedLockGate(t *testing.T) {
 	require.Equal(t, vardef.On, sessionVal)
 }
 
+func TestSelectForSharePersistedMode(t *testing.T) {
+	vars := NewSessionVars(nil)
+	err := vars.SetSystemVar(vardef.TiDBEnableSelectForShare, vardef.On)
+	if kerneltype.IsNextGen() {
+		require.True(t, ErrWrongValueForVar.Equal(err), err)
+	} else {
+		require.NoError(t, err)
+	}
+	require.NoError(t, vars.SetSystemVarWithRelaxedValidation(vardef.TiDBEnableSelectForShare, vardef.On))
+	require.Equal(t, !kerneltype.IsNextGen(), vars.EnableSelectForShare)
+}
+
 func TestTiDBEnableSharedLockUpgradeGate(t *testing.T) {
 	ctx := context.Background()
 	restore := config.RestoreFunc()

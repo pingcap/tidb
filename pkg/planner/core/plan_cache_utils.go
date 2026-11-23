@@ -366,7 +366,7 @@ func newPlanCacheKeyWithMatchedBinding(
 	// In rc or for update read, we need the latest schema version to decide whether we need to
 	// rebuild the plan. So we set this value in rc or for update read. In other cases, let it be 0.
 	var latestSchemaVersion int64
-	if sctx.GetSessionVars().IsIsolation(ast.ReadCommitted) || stmt.ForUpdateRead {
+	if sctx.GetSessionVars().IsIsolation(ast.ReadCommitted) || stmt.isForUpdateRead(sctx.GetSessionVars()) {
 		// In Rc or ForUpdateRead, we should check if the information schema has been changed since
 		// last time. If it changed, we should rebuild the plan. Here, we use a different and more
 		// up-to-date schema version which can lead plan cache miss and thus, the plan will be rebuilt.
@@ -440,8 +440,8 @@ func newPlanCacheKeyWithMatchedBinding(
 	}
 	// dirty tables
 	hashLen += 8 * len(vars.StmtCtx.TblInfo2UnionScan)
-	// txn status
-	hashLen += 6
+	// txn status and locking read mode
+	hashLen += 7
 
 	hash := make([]byte, 0, hashLen)
 	// hashInitCap is not used, just for test purposes
@@ -557,6 +557,7 @@ func newPlanCacheKeyWithMatchedBinding(
 	hash = append(hash, bool2Byte(config.GetGlobalConfig().PessimisticTxn.PessimisticAutoCommit.Load()))
 	hash = append(hash, bool2Byte(vars.StmtCtx.ForShareLockEnabledByNoop))
 	hash = append(hash, bool2Byte(vars.SharedLockPromotion))
+	hash = append(hash, bool2Byte(vars.EnableSelectForShare))
 
 	if intest.InTest {
 		if cap(hash) != hashInitCap {
@@ -762,6 +763,10 @@ func (f *planCacheStmtProcessor) Enter(in ast.Node) (skipChildren bool) {
 	switch node := in.(type) {
 	case *ast.Limit:
 		f.stmt.limits = append(f.stmt.limits, node)
+	case *ast.SelectStmt:
+		if node.LockInfo.IsForShare() {
+			f.stmt.hasForShare = true
+		}
 	case *ast.SubqueryExpr, *ast.ExistsSubqueryExpr:
 		f.stmt.hasSubquery = true
 	case *ast.TableName:
@@ -834,6 +839,7 @@ type PlanCacheStmt struct {
 
 	limits      []*ast.Limit
 	hasSubquery bool
+	hasForShare bool
 	// schemaReadOnlyTarget caches whether the statement has a node that may
 	// need a database read-only check. It depends only on the statement.
 	schemaReadOnlyTarget schemaReadOnlyTargetState
@@ -888,6 +894,10 @@ func ExtractAndSortParamMarkers(stmtNode ast.StmtNode) []ast.ParamMarkerExpr {
 		p.InExecute = false
 	}
 	return extractor.markers
+}
+
+func (stmt *PlanCacheStmt) isForUpdateRead(vars *variable.SessionVars) bool {
+	return stmt.ForUpdateRead || (stmt.hasForShare && vars.EnableSelectForShare)
 }
 
 // CollectPlanCacheStmtInfo walks the AST to populate the limits, hasSubquery,

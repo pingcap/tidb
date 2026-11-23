@@ -574,8 +574,9 @@ func (p *preprocessor) extractSchema(in ast.Node) []ast.CIStr {
 		dbNames = append(dbNames, p.extractUpdateSchemas(node)...)
 	case *ast.SelectStmt:
 		if node.LockInfo != nil {
+			vars := p.sctx.GetSessionVars()
 			if logicalop.IsSelectForUpdateLockType(node.LockInfo.LockType) ||
-				(logicalop.IsSelectForShareLockType(node.LockInfo.LockType) && p.sctx.GetSessionVars().SharedLockPromotion) {
+				(node.LockInfo.IsForShare() && (vars.EnableSelectForShare || vars.SharedLockPromotion)) {
 				allTables := func(*ast.TableName, *resolve.TableNameW) bool { return true }
 				dbNames = append(dbNames, p.schemasForMatchingTables(node.LockInfo.Tables, allTables)...)
 				if len(dbNames) == 0 {
@@ -1752,32 +1753,32 @@ func (p *preprocessor) checkConstraintGrammar(stmt *ast.Constraint) {
 }
 
 func (p *preprocessor) checkSelectNoopFuncs(stmt *ast.SelectStmt) {
-	noopFuncsMode := p.sctx.GetSessionVars().NoopFuncsMode
-	if noopFuncsMode == variable.OnInt {
-		// Set `ForShareLockEnabledByNoop` properly before returning.
-		// When `tidb_enable_shared_lock_promotion` is enabled, the `for share` statements would be
-		// executed as `for update` statements despite setting of noop functions.
-		if stmt.LockInfo != nil && (stmt.LockInfo.LockType == ast.SelectLockForShare ||
-			stmt.LockInfo.LockType == ast.SelectLockForShareNoWait) &&
-			!p.sctx.GetSessionVars().SharedLockPromotion {
-			p.sctx.GetSessionVars().StmtCtx.ForShareLockEnabledByNoop = true
-		}
-		return
-	}
-	// When `tidb_enable_shared_lock_promotion` is enabled, the `for share` statements would be
-	// executed as `for update` statements.
-	if stmt.LockInfo != nil && (stmt.LockInfo.LockType == ast.SelectLockForShare ||
-		stmt.LockInfo.LockType == ast.SelectLockForShareNoWait) &&
-		!p.sctx.GetSessionVars().SharedLockPromotion {
-		err := expression.ErrFunctionsNoopImpl.GenWithStackByArgs("LOCK IN SHARE MODE")
-		if noopFuncsMode == variable.OffInt {
-			p.err = err
+	if stmt.LockInfo != nil {
+		switch stmt.LockInfo.LockType {
+		case ast.SelectLockForUpdateSkipLocked, ast.SelectLockForShareSkipLocked:
+			p.err = plannererrors.ErrNotSupportedYet.GenWithStackByArgs("SKIP LOCKED")
 			return
 		}
-		// NoopFuncsMode is Warn, append an error
-		p.sctx.GetSessionVars().StmtCtx.AppendWarning(err)
-		p.sctx.GetSessionVars().StmtCtx.ForShareLockEnabledByNoop = true
 	}
+	if stmt.LockInfo.IsForShare() {
+		p.err = checkForShareMode(p.sctx.GetSessionVars())
+	}
+}
+
+// Prepared statements must check the current mode again at EXECUTE.
+func checkForShareMode(vars *variable.SessionVars) error {
+	if vars.EnableSelectForShare || vars.SharedLockPromotion {
+		return nil
+	}
+	if vars.NoopFuncsMode != variable.OnInt {
+		err := expression.ErrFunctionsNoopImpl.GenWithStackByArgs("LOCK IN SHARE MODE")
+		if vars.NoopFuncsMode == variable.OffInt {
+			return err
+		}
+		vars.StmtCtx.AppendWarning(err)
+	}
+	vars.StmtCtx.ForShareLockEnabledByNoop = true
+	return nil
 }
 
 func (p *preprocessor) checkGroupBy(stmt *ast.GroupByClause) {

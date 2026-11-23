@@ -80,6 +80,7 @@ type PointGetPlan struct {
 	UnsignedHandle   bool
 	IsTableDual      bool
 	Lock             bool
+	InShareMode      bool
 	outputNames      []*types.FieldName `plan-cache-clone:"shallow"`
 	LockWaitTime     int64
 	Columns          []*model.ColumnInfo `plan-cache-clone:"shallow"`
@@ -521,6 +522,7 @@ type BatchPointGetPlan struct {
 	KeepOrder     bool
 	Desc          bool
 	Lock          bool
+	InShareMode   bool
 	LockWaitTime  int64
 	Columns       []*model.ColumnInfo `plan-cache-clone:"shallow"`
 	cost          float64

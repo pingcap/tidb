@@ -108,7 +108,7 @@ func (b *executorBuilder) buildPointGet(p *physicalop.PointGetPlan) exec.Executo
 	}
 
 	if e.lock {
-		b.hasLock = true
+		b.recordSelectLock(e.inShareMode)
 	}
 
 	return e
@@ -134,6 +134,7 @@ type PointGetExecutor struct {
 	snapshot         kv.Snapshot
 	done             bool
 	lock             bool
+	inShareMode      bool
 	lockWaitTime     int64
 	rowDecoder       *rowcodec.ChunkDecoder
 
@@ -205,10 +206,12 @@ func (e *PointGetExecutor) Init(p *physicalop.PointGetPlan) {
 	e.done = false
 	if e.tblInfo.TempTableType == model.TempTableNone {
 		e.lock = p.Lock
+		e.inShareMode = p.InShareMode
 		e.lockWaitTime = p.LockWaitTime
 	} else {
 		// Temporary table should not do any lock operations
 		e.lock = false
+		e.inShareMode = false
 		e.lockWaitTime = 0
 	}
 	e.rowDecoder = decoder
@@ -645,7 +648,7 @@ func (e *PointGetExecutor) lockKeyBase(ctx context.Context,
 			return nil, err
 		}
 
-		lockCtx, err := newLockCtx(e.Ctx(), lockWaitTime, 1, false)
+		lockCtx, err := newSelectLockCtx(e.Ctx(), lockWaitTime, 1, e.inShareMode)
 		if err != nil {
 			return nil, err
 		}

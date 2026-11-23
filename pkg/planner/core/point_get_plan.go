@@ -111,10 +111,11 @@ func TryFastPlan(ctx base.PlanContext, node *resolve.NodeW) (p base.Plan) {
 				return nil
 			}
 			fp.Lock, fp.LockWaitTime = getLockWaitTime(ctx, x.LockInfo)
+			fp.InShareMode = ctx.GetSessionVars().UseSelectForShare(x.LockInfo)
 			p = fp
 			return
 		}
-		if fp := tryPointGetPlan(ctx, x, node.GetResolveContext(), isForUpdateReadSelectLock(x.LockInfo)); fp != nil {
+		if fp := tryPointGetPlan(ctx, x, node.GetResolveContext(), isForUpdateReadSelectLock(ctx, x.LockInfo)); fp != nil {
 			if checkFastPlanPrivilege(ctx, fp.DBName, fp.TblInfo.Name.L, mysql.SelectPriv) != nil {
 				return nil
 			}
@@ -129,6 +130,7 @@ func TryFastPlan(ctx base.PlanContext, node *resolve.NodeW) (p base.Plan) {
 				return
 			}
 			fp.Lock, fp.LockWaitTime = getLockWaitTime(ctx, x.LockInfo)
+			fp.InShareMode = ctx.GetSessionVars().UseSelectForShare(x.LockInfo)
 			p = fp
 			return
 		}

@@ -2725,3 +2725,39 @@ func TestPruneColumnsForDelete(t *testing.T) {
 		require.Equal(t, outputs[i].InsidePlan, ToString(deletePlan.SelectPlan), comment)
 	}
 }
+
+func TestSelectForShareFastPlans(t *testing.T) {
+	s := coretestsdk.CreatePlannerSuiteElems()
+	defer s.Close()
+	ctx := s.GetCtx()
+	vars := ctx.GetSessionVars()
+	vars.SnapshotInfoschema = s.GetIS()
+	vars.SetInTxn(true)
+	vars.SharedLockPromotion = true
+
+	for _, native := range []bool{false, true} {
+		vars.EnableSelectForShare = native
+		for _, pred := range []string{"a=1", "a in (1,2)"} {
+			for _, clause := range []string{"for share nowait", "for update nowait"} {
+				sql := "select * from t where " + pred + " " + clause
+				stmt, err := s.GetParser().ParseOneStmt(sql, "", "")
+				require.NoError(t, err)
+				node := resolve.NewNodeW(stmt)
+				require.NoError(t, Preprocess(context.Background(), s.GetSCtx(), node, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.GetIS()})))
+				plan := TryFastPlan(ctx, node)
+				expectShared := native && clause == "for share nowait"
+				switch p := plan.(type) {
+				case *physicalop.PointGetPlan:
+					require.True(t, p.Lock)
+					require.Equal(t, expectShared, p.InShareMode)
+					require.Equal(t, expectShared, FastClonePointGetForPlanCache(ctx, p, nil).InShareMode)
+				case *physicalop.BatchPointGetPlan:
+					require.True(t, p.Lock)
+					require.Equal(t, expectShared, p.InShareMode)
+				default:
+					t.Fatalf("unexpected plan %T for %s", plan, sql)
+				}
+			}
+		}
+	}
+}

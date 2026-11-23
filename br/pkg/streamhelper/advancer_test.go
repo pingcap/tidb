@@ -15,6 +15,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	backup "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	logbackup "github.com/pingcap/kvproto/pkg/logbackuppb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/logutil"
@@ -714,7 +715,7 @@ func TestResolveLockRetryWithLowerMaxVersionOnScanLockLocked(t *testing.T) {
 	firstMaxVersion := atomic.NewUint64(0)
 	secondMaxVersion := atomic.NewUint64(0)
 	thirdMaxVersion := atomic.NewUint64(0)
-	env.scanLocks = func(_ []byte, _ []byte, maxVersion uint64) ([]*txnlock.Lock, *tikv.KeyLocation, error) {
+	env.scanLocks = func(startKey []byte, _ []byte, maxVersion uint64) ([]*txnlock.Lock, *tikv.KeyLocation, error) {
 		switch scanLockCount.Inc() {
 		case 1:
 			firstMaxVersion.Store(maxVersion)
@@ -724,6 +725,17 @@ func TestResolveLockRetryWithLowerMaxVersionOnScanLockLocked(t *testing.T) {
 			return nil, nil, errors.New("unexpected scanlock error: error:<locked:<primary_lock:\"011\" lock_version:1>>")
 		case 3:
 			thirdMaxVersion.Store(maxVersion)
+			// ScanLock expands a shared wrapper into its members. A full
+			// page of those locks should be skipped without resolving them.
+			shared := make([]*txnlock.Lock, tikv.GCScanLockLimit)
+			for i := range shared {
+				shared[i] = &txnlock.Lock{Key: []byte("010"), TxnID: uint64(i + 1), LockType: kvrpcpb.Op_Lock}
+			}
+			return shared, &tikv.KeyLocation{Region: tikv.NewRegionVerID(lockRegion.ID, 0, 0)}, nil
+		case 4:
+			if string(startKey) != "010\x00" {
+				return nil, nil, errors.Errorf("unexpected cursor after shared key: %x", startKey)
+			}
 			return allLocks, &tikv.KeyLocation{Region: tikv.NewRegionVerID(lockRegion.ID, 0, 0)}, nil
 		default:
 			return nil, nil, errors.Errorf("unexpected scan lock retry count %d", scanLockCount.Load())
@@ -732,8 +744,10 @@ func TestResolveLockRetryWithLowerMaxVersionOnScanLockLocked(t *testing.T) {
 
 	resolveLockCount := atomic.NewInt32(0)
 	env.resolveLocks = func(locks []*txnlock.Lock, loc *tikv.KeyLocation) (*tikv.KeyLocation, error) {
+		if len(locks) != 1 || locks[0] != allLocks[0] {
+			return nil, errors.Errorf("expected only the data lock in progress repair, got %d locks", len(locks))
+		}
 		resolveLockCount.Inc()
-		require.ElementsMatch(t, locks, allLocks)
 		return loc, nil
 	}
 
@@ -758,7 +772,7 @@ func TestResolveLockRetryWithLowerMaxVersionOnScanLockLocked(t *testing.T) {
 		8*time.Second, 50*time.Microsecond)
 	require.Eventually(t, func() bool { return !adv.GetInResolvingLock() },
 		8*time.Second, 50*time.Microsecond)
-	require.Equal(t, int32(3), scanLockCount.Load())
+	require.Equal(t, int32(4), scanLockCount.Load())
 
 	expectedUpperBound := streamhelper.TESTResolveLockTargetUpperBound(
 		minCheckpoint, adv.Config().GetResolveLockInterval(), checkpointTime.Add(30*time.Second))
