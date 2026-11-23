@@ -46,9 +46,6 @@ func (b *PlanBuilder) GetFoundRowsPlan() base.LogicalPlan {
 func (b *PlanBuilder) buildSelectWithFoundRows(ctx context.Context, sel *ast.SelectStmt) (base.Plan, error) {
 	b.buildingFoundRows = true
 	defer func() { b.buildingFoundRows = false }()
-	savedState := b.ctx.GetSessionVars().StmtCtx.SaveLogicalPlanBuildState()
-	savedVisitInfoLen := len(b.visitInfo)
-	savedOptFlag := b.optFlag
 	countSel := *sel
 	countSel.Limit = nil
 	countSel.OrderBy = nil
@@ -66,9 +63,6 @@ func (b *PlanBuilder) buildSelectWithFoundRows(ctx context.Context, sel *ast.Sel
 	if err != nil {
 		if errors.ErrorEqual(err, errCalcFoundRowsNoopFallback) {
 			vars := b.ctx.GetSessionVars()
-			vars.StmtCtx.RestoreLogicalPlanBuildState(savedState)
-			b.visitInfo = b.visitInfo[:savedVisitInfoLen]
-			b.optFlag = savedOptFlag
 			clear(b.colMapper)
 			clear(b.correlatedAggMapper)
 			b.foundRowsPlan = nil
@@ -112,7 +106,7 @@ func (b *PlanBuilder) checkViewCalcFoundRows(selectNode ast.Node) error {
 	if checker.err == nil {
 		return nil
 	}
-	if checker.reason != "" && b.ctx.GetSessionVars().NoopFuncsMode != variable.OffInt {
+	if plannererrors.ErrNotSupportedYet.Equal(checker.err) && b.ctx.GetSessionVars().NoopFuncsMode != variable.OffInt {
 		return errCalcFoundRowsNoopFallback
 	}
 	return checker.err
@@ -120,7 +114,7 @@ func (b *PlanBuilder) checkViewCalcFoundRows(selectNode ast.Node) error {
 
 // handleUnsupportedCalcFoundRows applies tidb_enable_noop_functions when a
 // valid SQL_CALC_FOUND_ROWS placement has no native count plan.
-func handleUnsupportedCalcFoundRows(vars *variable.SessionVars, reason string) error {
+func handleUnsupportedCalcFoundRows(vars *variable.SessionVars, err error) error {
 	switch vars.NoopFuncsMode {
 	case variable.OnInt:
 		vars.StmtCtx.CalcFoundRowsNoop = true
@@ -130,7 +124,7 @@ func handleUnsupportedCalcFoundRows(vars *variable.SessionVars, reason string) e
 		appendNoopCalcFoundRowsWarning(vars)
 		return nil
 	default:
-		return plannererrors.ErrNotSupportedYet.GenWithStackByArgs(reason)
+		return err
 	}
 }
 
@@ -163,6 +157,18 @@ func resolveSQLCalcFoundRowsTarget(node ast.Node) (*ast.SelectStmt, string) {
 	return allowedSelect, unsupportedReason
 }
 
+func checkAllowedSelectCalcFoundRows(vars *variable.SessionVars, stmt *ast.SelectStmt, unsupportedReason string) error {
+	if unsupportedReason != "" {
+		return handleUnsupportedCalcFoundRows(vars, plannererrors.ErrNotSupportedYet.GenWithStackByArgs(unsupportedReason))
+	}
+	checker := &foundRowsChecker{root: stmt}
+	ast.Walk(stmt, checker)
+	if plannererrors.ErrNotSupportedYet.Equal(checker.err) {
+		return handleUnsupportedCalcFoundRows(vars, checker.err)
+	}
+	return checker.err
+}
+
 // preprocessSQLCalcFoundRows checks modifier placement in the same traversal as
 // preprocessing, preserving its error order and skipped subtrees.
 func preprocessSQLCalcFoundRows(node ast.Node, p *preprocessor) {
@@ -182,16 +188,7 @@ func revalidateSQLCalcFoundRows(sctx sessionctx.Context, node ast.Node) error {
 	if allowedSelect == nil || allowedSelect.SelectStmtOpts == nil || !allowedSelect.SelectStmtOpts.CalcFoundRows {
 		return nil
 	}
-	vars := sctx.GetSessionVars()
-	if unsupportedReason != "" {
-		return handleUnsupportedCalcFoundRows(vars, unsupportedReason)
-	}
-	checker := &foundRowsChecker{root: allowedSelect}
-	ast.Walk(allowedSelect, checker)
-	if checker.reason != "" {
-		return handleUnsupportedCalcFoundRows(vars, checker.reason)
-	}
-	return checker.err
+	return checkAllowedSelectCalcFoundRows(sctx.GetSessionVars(), allowedSelect, unsupportedReason)
 }
 
 // foundRowsPreprocessor validates SELECT entry while retaining the preprocessor's
@@ -219,15 +216,7 @@ func (v *foundRowsPreprocessor) checkSelect(stmt *ast.SelectStmt) error {
 	if stmt != v.allowedSelect {
 		return plannererrors.ErrCantUseOptionHere.GenWithStackByArgs("SQL_CALC_FOUND_ROWS")
 	}
-	if v.unsupportedReason != "" {
-		return handleUnsupportedCalcFoundRows(v.sctx.GetSessionVars(), v.unsupportedReason)
-	}
-	checker := &foundRowsChecker{root: stmt}
-	ast.Walk(stmt, checker)
-	if checker.reason != "" {
-		return handleUnsupportedCalcFoundRows(v.sctx.GetSessionVars(), checker.reason)
-	}
-	return checker.err
+	return checkAllowedSelectCalcFoundRows(v.sctx.GetSessionVars(), stmt, v.unsupportedReason)
 }
 
 // findSQLCalcFoundRowsAllowedSelect returns the SELECT where the modifier is
@@ -270,7 +259,6 @@ type foundRowsChecker struct {
 	depth      int
 	outerOrder bool
 	inView     bool
-	reason     string
 	err        error
 }
 
@@ -318,7 +306,6 @@ func (v *foundRowsChecker) Enter(node ast.Node) bool {
 		}
 	}
 	if reason != "" {
-		v.reason = reason
 		v.err = plannererrors.ErrNotSupportedYet.GenWithStackByArgs(reason)
 	}
 	return v.err != nil
