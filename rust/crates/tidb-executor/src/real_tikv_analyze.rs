@@ -48,42 +48,7 @@ const ANALYZE_JOB_MAX_DELTA: i64 = 10_000_000;
 const ANALYZE_JOB_DUMP_INTERVAL: Duration = Duration::from_secs(5);
 
 
-/// One row Go publishes in `mysql.analyze_jobs` before dispatching the
-/// corresponding physical analyze task.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct AnalyzeJobSpec {
-    /// Database name stored in `table_schema`.
-    pub schema: String,
-    /// Logical table name stored in `table_name`.
-    pub table: String,
-    /// Physical partition name, or empty for a nonpartition/global job.
-    pub partition: String,
-    /// Go-compatible human-readable task description.
-    pub job_info: String,
-}
-
-/// Whether finishing a job also flushes its residual processed-row count.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum AnalyzeJobKind {
-    /// A table, partition, or independent-index analysis.
-    Table,
-    /// A partition-to-global statistics merge.
-    GlobalStatsMerge,
-}
-
-/// Storage boundary used by the analyzer for Go's job lifecycle. Persistence
-/// errors are deliberately swallowed by implementations: Go logs them and
-/// never changes the result of `ANALYZE`.
-pub trait AnalyzeJobLifecycle: Send + Sync {
-    /// Inserts a pending job and returns its generated ID when bookkeeping succeeds.
-    fn insert(&self, spec: &AnalyzeJobSpec) -> Option<u64>;
-    /// Marks a pending job running.
-    fn start(&self, job_id: u64);
-    /// Persists an executor-throttled processed-row delta.
-    fn update_progress(&self, job_id: u64, processed_rows: i64);
-    /// Finishes or fails a job, flushing residual table-job progress.
-    fn finish(&self, job_id: u64, processed_rows: i64, failure: Option<&str>, kind: AnalyzeJobKind);
-}
+pub use tidb_stats_handle_types::analyze_jobs::{AnalyzeJobKind, AnalyzeJobLifecycle, AnalyzeJobSpec};
 
 /// Go `statistics.AnalyzeProgress`: progress writes are throttled by both a
 /// row threshold and elapsed time, while finish consumes the residual count.

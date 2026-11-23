@@ -13,7 +13,6 @@
 use std::sync::Arc;
 use tidb_executor::cluster_analyze::AnalyzeStatement;
 use tidb_executor_lockstats::ClusterStatsLockStatement;
-use tidb_executor::real_tikv_analyze::{AnalyzeJobKind, AnalyzeJobLifecycle, AnalyzeJobSpec};
 use tidb_executor::analyze::exec::AnalyzeExec as _;
 use tidb_executor::analyze::panic_recovery::recover_analyze_panic;
 use tidb_executor::stats_exec::StatsExec as _;
@@ -41,218 +40,6 @@ fn into_driver_error(error: SqlQueryError) -> tidb_driver_error::DriverError {
         tidb_terror::MysqlError::from_parts(error.code, error.state, error.message)
             .with_identity_opt(error.identity),
     )
-}
-
-/// Go `statsAnalyze`'s analyze-job lifecycle: Go's statements on the
-/// statistics handle's session pool (`util.CallWithSCtx(sa.statsHandle.SPool(),
-/// ...)`), each in its own autocommit transaction.
-struct PersistedAnalyzeJobs {
-    session_pool: Option<Arc<tidb_domain_core::sys_session::DomainSysSessionPool>>,
-    instance: String,
-    process_id: u64,
-}
-
-/// Go `statistics.AnalyzePending` / `AnalyzeRunning` / `AnalyzeFinished` /
-/// `AnalyzeFailed`.
-const ANALYZE_PENDING: &str = "pending";
-const ANALYZE_RUNNING: &str = "running";
-const ANALYZE_FINISHED: &str = "finished";
-const ANALYZE_FAILED: &str = "failed";
-/// Go's `textMaxLength` for `job_info` and `fail_reason`.
-const TEXT_MAX_LENGTH: usize = 65535;
-
-/// Go `time.Now().UTC().Format(types.TimeFormat)`.
-fn utc_now_text() -> String {
-    chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string()
-}
-
-impl PersistedAnalyzeJobs {
-    /// Go `statsutil.CallWithSCtx(pool, f)` without a wrapping transaction.
-    fn call_with_sctx(
-        &self,
-        f: impl FnOnce(
-            &dyn tidb_domain_core::sys_session::DomainSysSession,
-        ) -> Result<(), tidb_sqlexec::SqlExecError>,
-    ) -> Result<(), String> {
-        let pool = self
-            .session_pool
-            .as_ref()
-            .ok_or_else(|| "the node's domain is closed".to_owned())?;
-        tidb_stats_handle_util::call_with_sctx(pool.as_ref(), |sctx| f(sctx), &[])
-            .map_err(|error| error.to_string())
-    }
-}
-
-impl AnalyzeJobLifecycle for PersistedAnalyzeJobs {
-    /// Go `insertAnalyzeJob`.
-    fn insert(&self, spec: &AnalyzeJobSpec) -> Option<u64> {
-        let mut job_id = None;
-        let result = self.call_with_sctx(|sctx| {
-            use tidb_sqlescape::SqlArg;
-            let job_info = spec.job_info.as_bytes();
-            let job_info = &job_info[..job_info.len().min(TEXT_MAX_LENGTH)];
-            tidb_stats_handle_util::exec_rows(
-                sctx,
-                "INSERT INTO mysql.analyze_jobs (table_schema, table_name, partition_name, job_info, state, instance, process_id) VALUES (%?, %?, %?, %?, %?, %?, %?)",
-                &[
-                    SqlArg::from(spec.schema.as_str()),
-                    SqlArg::from(spec.table.as_str()),
-                    SqlArg::from(spec.partition.as_str()),
-                    SqlArg::String(job_info),
-                    SqlArg::from(ANALYZE_PENDING),
-                    SqlArg::from(self.instance.as_str()),
-                    SqlArg::Unsigned(self.process_id),
-                ],
-            )?;
-            let (rows, _) = tidb_stats_handle_util::exec_rows(sctx, "SELECT LAST_INSERT_ID()", &[])?;
-            job_id = match rows.first().and_then(|row| row.first()) {
-                Some(tidb_datatype::Datum::UInt(id)) => Some(*id),
-                Some(tidb_datatype::Datum::Int(id)) => Some(*id as u64),
-                _ => Some(0),
-            };
-            Ok(())
-        });
-        match result {
-            Ok(()) => job_id,
-            Err(error) => {
-                // Go `AddNewAnalyzeJob`.
-                tidb_stats_handle_logutil::stats_err_verbose_logger()
-                    .error("failed to insert analyze job", &[crate::domain::zap_error(error)]);
-                None
-            }
-        }
-    }
-
-    /// Go `startAnalyzeJob`.
-    fn start(&self, job_id: u64) {
-        let result = self.call_with_sctx(|sctx| {
-            use tidb_sqlescape::SqlArg;
-            let start_time = utc_now_text();
-            tidb_stats_handle_util::exec_rows(
-                sctx,
-                "UPDATE mysql.analyze_jobs SET start_time = CONVERT_TZ(%?, '+00:00', @@TIME_ZONE), state = %? WHERE id = %?",
-                &[
-                    SqlArg::from(start_time.as_str()),
-                    SqlArg::from(ANALYZE_RUNNING),
-                    SqlArg::Unsigned(job_id),
-                ],
-            )?;
-            Ok(())
-        });
-        if let Err(error) = result {
-            log_update_analyze_job_failed(
-                &tidb_stats_handle_logutil::stats_logger(),
-                format!("{ANALYZE_PENDING}->{ANALYZE_RUNNING}"),
-                error,
-            );
-        }
-    }
-
-    /// Go `updateAnalyzeJobProgress`, `processed_rows` being the delta.
-    fn update_progress(&self, job_id: u64, processed_rows: i64) {
-        let result = self.call_with_sctx(|sctx| {
-            use tidb_sqlescape::SqlArg;
-            tidb_stats_handle_util::exec_rows(
-                sctx,
-                "UPDATE mysql.analyze_jobs SET processed_rows = processed_rows + %? WHERE id = %?",
-                &[SqlArg::Signed(processed_rows), SqlArg::Unsigned(job_id)],
-            )?;
-            Ok(())
-        });
-        if let Err(error) = result {
-            log_update_analyze_job_failed(
-                &tidb_stats_handle_logutil::stats_logger(),
-                format!("process {processed_rows} rows"),
-                error,
-            );
-        }
-    }
-
-    /// Go `finishAnalyzeJob`.
-    fn finish(
-        &self,
-        job_id: u64,
-        processed_rows: i64,
-        failure: Option<&str>,
-        kind: AnalyzeJobKind,
-    ) {
-        let result = self.call_with_sctx(|sctx| {
-            use tidb_sqlescape::SqlArg;
-            let end_time = utc_now_text();
-            let fail_reason = failure.map(|reason| {
-                let reason = reason.as_bytes();
-                &reason[..reason.len().min(TEXT_MAX_LENGTH)]
-            });
-            let table_job = kind == AnalyzeJobKind::Table;
-            let (sql, args): (&str, Vec<SqlArg<'_>>) = match (fail_reason, table_job) {
-                (Some(reason), true) => (
-                    "UPDATE mysql.analyze_jobs SET processed_rows = processed_rows + %?, end_time = CONVERT_TZ(%?, '+00:00', @@TIME_ZONE), state = %?, fail_reason = %?, process_id = NULL WHERE id = %?",
-                    vec![
-                        SqlArg::Signed(processed_rows),
-                        SqlArg::from(end_time.as_str()),
-                        SqlArg::from(ANALYZE_FAILED),
-                        SqlArg::String(reason),
-                        SqlArg::Unsigned(job_id),
-                    ],
-                ),
-                (Some(reason), false) => (
-                    "UPDATE mysql.analyze_jobs SET end_time = CONVERT_TZ(%?, '+00:00', @@TIME_ZONE), state = %?, fail_reason = %?, process_id = NULL WHERE id = %?",
-                    vec![
-                        SqlArg::from(end_time.as_str()),
-                        SqlArg::from(ANALYZE_FAILED),
-                        SqlArg::String(reason),
-                        SqlArg::Unsigned(job_id),
-                    ],
-                ),
-                (None, true) => (
-                    "UPDATE mysql.analyze_jobs SET processed_rows = processed_rows + %?, end_time = CONVERT_TZ(%?, '+00:00', @@TIME_ZONE), state = %?, process_id = NULL WHERE id = %?",
-                    vec![
-                        SqlArg::Signed(processed_rows),
-                        SqlArg::from(end_time.as_str()),
-                        SqlArg::from(ANALYZE_FINISHED),
-                        SqlArg::Unsigned(job_id),
-                    ],
-                ),
-                (None, false) => (
-                    "UPDATE mysql.analyze_jobs SET end_time = CONVERT_TZ(%?, '+00:00', @@TIME_ZONE), state = %?, process_id = NULL WHERE id = %?",
-                    vec![
-                        SqlArg::from(end_time.as_str()),
-                        SqlArg::from(ANALYZE_FINISHED),
-                        SqlArg::Unsigned(job_id),
-                    ],
-                ),
-            };
-            tidb_stats_handle_util::exec_rows(sctx, sql, &args)?;
-            Ok(())
-        });
-        if let Err(error) = result {
-            // Go `autoanalyze.finishAnalyzeJob`, through the plain logger.
-            let state = if failure.is_some() {
-                ANALYZE_FAILED
-            } else {
-                ANALYZE_FINISHED
-            };
-            log_update_analyze_job_failed(
-                &tidb_logutil::bg_logger(),
-                format!("{ANALYZE_RUNNING}->{state}"),
-                error,
-            );
-        }
-    }
-}
-
-fn log_update_analyze_job_failed(
-    logger: &tidb_logutil::Logger,
-    update: String,
-    error: impl std::fmt::Display,
-) {
-    logger.warn(
-        "failed to update analyze job",
-        &[
-            tidb_log::Field::new("update", tidb_log::Value::Str(update)),
-            crate::domain::zap_error(error),
-        ],
-    );
 }
 
 impl<'s> ClusterServerSession<'s> {
@@ -527,11 +314,14 @@ impl tidb_executor::analyze::exec::AnalyzeService for ClusterAnalyzeService {
         plan: &tidb_planner::plan_builder::analyze::Analyze,
         vars: &AnalyzeStatement,
     ) -> Result<tidb_executor::real_tikv_analyze::AnalyzeExecReport, tidb_driver_error::DriverError> {
-        let jobs = PersistedAnalyzeJobs {
-            session_pool: self.session_pool.clone(),
-            instance: self.instance.clone(),
-            process_id: self.connection_id,
-        };
+        // Go `statsHandle`'s `StatsAnalyze` analyze-job methods.
+        let jobs = tidb_stats_handle_autoanalyze::analyze_jobs::StatsAnalyzeJobs::new(
+            self.session_pool.clone().map(|pool| {
+                pool as Arc<dyn tidb_syssession::Pool<dyn tidb_domain_core::sys_session::DomainSysSession>>
+            }),
+            self.instance.clone(),
+            self.connection_id,
+        );
         let report = recover_analyze_panic(|| {
             self.analyze.execute(
                 plan,

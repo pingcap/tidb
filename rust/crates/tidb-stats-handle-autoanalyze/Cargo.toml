@@ -14,6 +14,14 @@ tidb-model = { path = "../tidb-model" }
 tidb-stats = { path = "../tidb-stats" }
 tidb-syssession = { path = "../tidb-syssession" }
 tidb-table = { path = "../tidb-table" }
+chrono.workspace = true
+tidb-log = { path = "../tidb-log" }
+tidb-logutil = { path = "../tidb-logutil" }
+tidb-sqlescape = { path = "../tidb-sqlescape" }
+tidb-sqlexec = { path = "../tidb-sqlexec" }
+tidb-stats-handle-logutil = { path = "../tidb-stats-handle-logutil" }
+tidb-stats-handle-types = { path = "../tidb-stats-handle-types" }
+tidb-stats-handle-util = { path = "../tidb-stats-handle-util" }
 
 [lints]
 workspace = true

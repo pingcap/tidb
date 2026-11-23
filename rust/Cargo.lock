@@ -10311,10 +10311,18 @@ dependencies = [
 name = "tidb-stats-handle-autoanalyze"
 version = "0.0.0"
 dependencies = [
+ "chrono",
  "tidb-datatype",
  "tidb-infoschema",
+ "tidb-log",
+ "tidb-logutil",
  "tidb-model",
+ "tidb-sqlescape",
+ "tidb-sqlexec",
  "tidb-stats",
+ "tidb-stats-handle-logutil",
+ "tidb-stats-handle-types",
+ "tidb-stats-handle-util",
  "tidb-syssession",
  "tidb-table",
 ]
