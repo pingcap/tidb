@@ -506,3 +506,217 @@ func TestHashJoinRandomFail(t *testing.T) {
 	}
 	util.CheckNoLeakFiles(t, testFuncName)
 }
+
+func buildNullableSpillDataSources(ctx *mock.Context, rows int, hasSel bool) (*testutil.MockDataSource, *testutil.MockDataSource, []*types.FieldType, []*types.FieldType) {
+	nullableIntTp := types.NewFieldType(mysql.TypeLonglong)
+	nullableStringTp := types.NewFieldType(mysql.TypeVarString)
+
+	leftTypes := []*types.FieldType{nullableIntTp, nullableIntTp, nullableIntTp, nullableStringTp, nullableIntTp}
+	rightTypes := []*types.FieldType{nullableIntTp, nullableIntTp, nullableStringTp, nullableIntTp, nullableIntTp}
+
+	nullableLeftCols := []*expression.Column{
+		{Index: 0, RetType: nullableIntTp},
+		{Index: 1, RetType: nullableIntTp},
+		{Index: 2, RetType: nullableIntTp},
+		{Index: 3, RetType: nullableStringTp},
+		{Index: 4, RetType: nullableIntTp},
+	}
+	nullableRightCols := []*expression.Column{
+		{Index: 0, RetType: nullableIntTp},
+		{Index: 1, RetType: nullableIntTp},
+		{Index: 2, RetType: nullableStringTp},
+		{Index: 3, RetType: nullableIntTp},
+		{Index: 4, RetType: nullableIntTp},
+	}
+
+	leftNulls := make([][]bool, 5)
+	rightNulls := make([][]bool, 5)
+	for col := range 5 {
+		leftNulls[col] = make([]bool, rows)
+		rightNulls[col] = make([]bool, rows)
+	}
+	for i := range rows {
+		leftNulls[0][i] = i%17 == 0
+		leftNulls[1][i] = i%11 == 0
+		leftNulls[3][i] = i%13 == 0
+		rightNulls[0][i] = i%11 == 0
+		rightNulls[2][i] = i%13 == 0
+		rightNulls[4][i] = i%19 == 0
+	}
+
+	joinKeyIntDatums := buildJoinKeyIntDatums(5000)
+	joinKeyStringDatums := buildJoinKeyStringDatums(4)
+	leftMockSrcParm := testutil.MockDataSourceParameters{
+		DataSchema: expression.NewSchema(nullableLeftCols...),
+		Ctx:        ctx,
+		Rows:       rows,
+		Ndvs:       []int{0, -1, 0, -1, 0},
+		Datums:     [][]any{nil, joinKeyIntDatums, nil, joinKeyStringDatums, nil},
+		Nulls:      leftNulls,
+		HasSel:     hasSel,
+	}
+	rightMockSrcParm := testutil.MockDataSourceParameters{
+		DataSchema: expression.NewSchema(nullableRightCols...),
+		Ctx:        ctx,
+		Rows:       rows,
+		Ndvs:       []int{-1, 0, -1, 0, 0},
+		Datums:     [][]any{joinKeyIntDatums, nil, joinKeyStringDatums, nil, nil},
+		Nulls:      rightNulls,
+		HasSel:     hasSel,
+	}
+	return testutil.BuildMockDataSource(leftMockSrcParm), testutil.BuildMockDataSource(rightMockSrcParm), leftTypes, rightTypes
+}
+
+func TestAllPartitionsSpilledUnmatchedProbeRows(t *testing.T) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TempStoragePath = t.TempDir()
+	})
+	testFuncName := util.GetFunctionName()
+
+	ctx := mock.NewContext()
+	ctx.GetSessionVars().InitChunkSize = 32
+	ctx.GetSessionVars().MaxChunkSize = 32
+
+	nullableIntTp := types.NewFieldType(mysql.TypeLonglong)
+	nullableStringTp := types.NewFieldType(mysql.TypeVarString)
+	tinyTp := types.NewFieldType(mysql.TypeTiny)
+
+	leftKeys := []*expression.Column{
+		{Index: 1, RetType: nullableIntTp},
+		{Index: 3, RetType: nullableStringTp},
+	}
+	rightKeys := []*expression.Column{
+		{Index: 0, RetType: nullableIntTp},
+		{Index: 2, RetType: nullableStringTp},
+	}
+
+	// Probe-side filter rejecting rows where probe col > 500000 is false/NULL.
+	thresholdConst := &expression.Constant{Value: types.NewIntDatum(500000), RetType: nullableIntTp}
+	leftProbeFilterFn, err := expression.NewFunction(mock.NewContext(), ast.GT, tinyTp, &expression.Column{Index: 0, RetType: nullableIntTp}, thresholdConst)
+	require.NoError(t, err)
+	leftProbeFilter := expression.CNFExprs{leftProbeFilterFn}
+
+	rightProbeFilterFn, err := expression.NewFunction(mock.NewContext(), ast.GT, tinyTp, &expression.Column{Index: 4, RetType: nullableIntTp}, thresholdConst)
+	require.NoError(t, err)
+	rightProbeFilter := expression.CNFExprs{rightProbeFilterFn}
+
+	otherCondFn, err := expression.NewFunction(mock.NewContext(), ast.GT, tinyTp, &expression.Column{Index: 0, RetType: nullableIntTp}, &expression.Column{Index: 9, RetType: nullableIntTp})
+	require.NoError(t, err)
+	otherCond := expression.CNFExprs{otherCondFn}
+
+	semiOtherCondFn, err := expression.NewFunction(mock.NewContext(), ast.GT, tinyTp, &expression.Column{Index: 0, RetType: nullableIntTp}, &expression.Column{Index: 8, RetType: nullableIntTp})
+	require.NoError(t, err)
+	semiOtherCond := expression.CNFExprs{semiOtherCondFn}
+
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/join/slowWorkers", "return(true)")
+	spillChunkSize = 64
+
+	type subCase struct {
+		name                  string
+		joinType              base.JoinType
+		rightAsBuildSide      bool
+		leftUsed              []int
+		rightUsed             []int
+		probeFilter           expression.CNFExprs
+		otherCondition        expression.CNFExprs
+		lUsedInOtherCondition []int
+		rUsedInOtherCondition []int
+		hasSel                bool
+	}
+
+	cases := []subCase{
+		// 1. LeftOuterJoin with right as build side (probe is outer side)
+		{name: "left_outer_null_keys", joinType: base.LeftOuterJoin, rightAsBuildSide: true, leftUsed: []int{0, 1, 3, 4}, rightUsed: []int{0, 2, 3, 4}},
+		{name: "left_outer_probe_filter", joinType: base.LeftOuterJoin, rightAsBuildSide: true, leftUsed: []int{0, 1, 3, 4}, rightUsed: []int{0, 2, 3, 4}, probeFilter: leftProbeFilter},
+		{name: "left_outer_other_cond_and_sel", joinType: base.LeftOuterJoin, rightAsBuildSide: true, leftUsed: []int{0, 1, 3, 4}, rightUsed: []int{0, 2, 3, 4}, probeFilter: leftProbeFilter, otherCondition: otherCond, lUsedInOtherCondition: []int{0}, rUsedInOtherCondition: []int{4}, hasSel: true},
+		{name: "left_outer_empty_used", joinType: base.LeftOuterJoin, rightAsBuildSide: true, leftUsed: []int{}, rightUsed: []int{}, probeFilter: leftProbeFilter},
+		// 2. RightOuterJoin with left as build side (probe is outer side)
+		{name: "right_outer_null_and_filter", joinType: base.RightOuterJoin, rightAsBuildSide: false, leftUsed: []int{0, 1, 3, 4}, rightUsed: []int{0, 2, 3, 4}, probeFilter: rightProbeFilter},
+		{name: "right_outer_other_cond_and_sel", joinType: base.RightOuterJoin, rightAsBuildSide: false, leftUsed: []int{0, 1, 3, 4}, rightUsed: []int{0, 2, 3, 4}, probeFilter: rightProbeFilter, otherCondition: otherCond, lUsedInOtherCondition: []int{0}, rUsedInOtherCondition: []int{4}, hasSel: true},
+		// 3. AntiSemiJoin with right as build side (probe is left side)
+		{name: "anti_semi_null_and_filter", joinType: base.AntiSemiJoin, rightAsBuildSide: true, leftUsed: []int{0, 1, 3, 4}, rightUsed: []int{}, probeFilter: leftProbeFilter},
+		{name: "anti_semi_other_cond_and_sel", joinType: base.AntiSemiJoin, rightAsBuildSide: true, leftUsed: []int{0, 1, 3, 4}, rightUsed: []int{}, probeFilter: leftProbeFilter, otherCondition: semiOtherCond, lUsedInOtherCondition: []int{0}, rUsedInOtherCondition: []int{3}, hasSel: true},
+		{name: "anti_semi_empty_used", joinType: base.AntiSemiJoin, rightAsBuildSide: true, leftUsed: []int{}, rightUsed: []int{}, probeFilter: leftProbeFilter},
+		// 4. LeftOuterSemiJoin (right is always build side)
+		{name: "left_outer_semi_null_and_filter", joinType: base.LeftOuterSemiJoin, rightAsBuildSide: true, leftUsed: []int{0, 1, 3, 4}, rightUsed: []int{}, probeFilter: leftProbeFilter},
+		{name: "left_outer_semi_other_cond_and_sel", joinType: base.LeftOuterSemiJoin, rightAsBuildSide: true, leftUsed: []int{0, 1, 3, 4}, rightUsed: []int{}, probeFilter: leftProbeFilter, otherCondition: semiOtherCond, lUsedInOtherCondition: []int{0}, rUsedInOtherCondition: []int{3}, hasSel: true},
+		{name: "left_outer_semi_empty_used", joinType: base.LeftOuterSemiJoin, rightAsBuildSide: true, leftUsed: []int{}, rightUsed: []int{}, probeFilter: leftProbeFilter},
+		// 5. AntiLeftOuterSemiJoin (right is always build side)
+		{name: "anti_left_outer_semi_null_and_filter", joinType: base.AntiLeftOuterSemiJoin, rightAsBuildSide: true, leftUsed: []int{0, 1, 3, 4}, rightUsed: []int{}, probeFilter: leftProbeFilter},
+		{name: "anti_left_outer_semi_other_cond_and_sel", joinType: base.AntiLeftOuterSemiJoin, rightAsBuildSide: true, leftUsed: []int{0, 1, 3, 4}, rightUsed: []int{}, probeFilter: leftProbeFilter, otherCondition: semiOtherCond, lUsedInOtherCondition: []int{0}, rUsedInOtherCondition: []int{3}, hasSel: true},
+		{name: "anti_left_outer_semi_empty_used", joinType: base.AntiLeftOuterSemiJoin, rightAsBuildSide: true, leftUsed: []int{}, rightUsed: []int{}, probeFilter: leftProbeFilter},
+	}
+
+	leftDSNoSel, rightDSNoSel, leftTypes, rightTypes := buildNullableSpillDataSources(ctx, 12000, false)
+	leftDSWithSel, rightDSWithSel, _, _ := buildNullableSpillDataSources(ctx, 12000, true)
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			leftDS, rightDS := leftDSNoSel, rightDSNoSel
+			if tc.hasSel {
+				leftDS, rightDS = leftDSWithSel, rightDSWithSel
+			}
+			param := spillTestParam{
+				rightAsBuildSide:          tc.rightAsBuildSide,
+				leftKeys:                  leftKeys,
+				rightKeys:                 rightKeys,
+				leftTypes:                 leftTypes,
+				rightTypes:                rightTypes,
+				leftUsed:                  tc.leftUsed,
+				rightUsed:                 tc.rightUsed,
+				otherCondition:            tc.otherCondition,
+				leftUsedByOtherCondition:  tc.lUsedInOtherCondition,
+				rightUsedByOtherCondition: tc.rUsedInOtherCondition,
+				fileNamePrefixForTest:     testFuncName,
+			}
+			returnTypes := getReturnTypes(tc.joinType, param)
+			buildKeys, probeKeys := param.leftKeys, param.rightKeys
+			if param.rightAsBuildSide {
+				buildKeys, probeKeys = param.rightKeys, param.leftKeys
+			}
+			info := &hashJoinInfo{
+				ctx:                   ctx,
+				schema:                buildSchema(returnTypes),
+				leftExec:              leftDS,
+				rightExec:             rightDS,
+				joinType:              tc.joinType,
+				rightAsBuildSide:      param.rightAsBuildSide,
+				buildKeys:             buildKeys,
+				probeKeys:             probeKeys,
+				probeFilter:           tc.probeFilter,
+				lUsed:                 param.leftUsed,
+				rUsed:                 param.rightUsed,
+				otherCondition:        param.otherCondition,
+				lUsedInOtherCondition: param.leftUsedByOtherCondition,
+				rUsedInOtherCondition: param.rightUsedByOtherCondition,
+				fileNamePrefixForTest: param.fileNamePrefixForTest,
+			}
+
+			expectedResult := getExpectedResults(t, ctx, info, returnTypes, leftDS, rightDS)
+
+			// Tight memory limit forces all 4 partitions to spill in Round 0.
+			memLimit := int64(80000)
+			if tc.hasSel || len(tc.rightUsed) == 0 {
+				memLimit = 35000
+			}
+			ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSQLText, memLimit)
+			ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
+			ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
+
+			leftDS.PrepareChunks()
+			rightDS.PrepareChunks()
+			hashJoinExec := buildHashJoinV2Exec(info)
+			actualResult := getSortedResults(t, hashJoinExec, returnTypes)
+
+			require.True(t, hashJoinExec.isAllMemoryClearedForTest())
+			require.True(t, hashJoinExec.spillHelper.areAllPartitionsSpilledForTest())
+			checkResults(t, returnTypes, actualResult, expectedResult)
+			if !tc.hasSel && len(tc.rightUsed) > 0 {
+				require.True(t, hashJoinExec.spillHelper.isRespillTriggeredForTest())
+				require.True(t, hashJoinExec.spillHelper.isProbeSkippedInRestoreForTest())
+			}
+		})
+	}
+	util.CheckNoLeakFiles(t, testFuncName)
+}

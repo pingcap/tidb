@@ -125,11 +125,12 @@ type baseJoinProbe struct {
 	cachedBuildRows               []matchedRowInfo
 	nextCachedBuildRowIndex       int
 
-	keyIndex         []int
-	keyTypes         []*types.FieldType
-	hasNullableKey   bool
-	maxChunkSize     int
-	rightAsBuildSide bool
+	keyIndex               []int
+	keyTypes               []*types.FieldType
+	hasNullableKey         bool
+	maxChunkSize           int
+	rightAsBuildSide       bool
+	keepUnmatchedProbeSide bool
 	// lUsed/rUsed show which columns are used by father for left child and right child.
 	// NOTE:
 	// 1. lUsed/rUsed should never be nil.
@@ -178,15 +179,11 @@ func (j *baseJoinProbe) finishCurrentLookupLoop(joinedChk *chunk.Chunk) {
 	j.appendProbeRowToChunk(joinedChk, j.currentChunk)
 }
 
-func (j *baseJoinProbe) SetChunkForProbe(chk *chunk.Chunk) (err error) {
-	defer func() {
-		if j.ctx.spillHelper.areAllPartitionsSpilled() {
-			// We will not call `Probe` function when all partitions are spilled.
-			// So it's necessary to manually set `currentProbeRow` to avoid check fail.
-			j.currentProbeRow = j.chunkRows
-		}
-	}()
+func (j *baseJoinProbe) canSkipProbeWhenAllPartitionsSpilled() bool {
+	return !j.keepUnmatchedProbeSide || len(j.spilledIdx) == j.chunkRows
+}
 
+func (j *baseJoinProbe) SetChunkForProbe(chk *chunk.Chunk) (err error) {
 	if j.currentChunk != nil {
 		if j.currentProbeRow < j.chunkRows {
 			return errors.New("Previous chunk is not probed yet")
@@ -326,6 +323,12 @@ func (j *baseJoinProbe) SetChunkForProbe(chk *chunk.Chunk) (err error) {
 	}
 
 	j.currentProbeRow = 0
+	if j.ctx.spillHelper.areAllPartitionsSpilled() && j.canSkipProbeWhenAllPartitionsSpilled() {
+		// When all partitions are spilled and no unmatched probe rows need to be emitted
+		// in this round, `Probe` will be skipped, so mark the chunk as probed.
+		j.currentProbeRow = j.chunkRows
+		return
+	}
 	for i := range int(j.ctx.partitionNumber) {
 		for index := range j.hashValues[i] {
 			j.matchedRowsHeaders[j.hashValues[i][index].pos] = j.ctx.hashTableContext.lookup(i, j.hashValues[i][index].hashValue)
@@ -395,14 +398,6 @@ func (j *baseJoinProbe) preAllocForSetRestoredChunkForProbe(logicalRowCount int,
 }
 
 func (j *baseJoinProbe) SetRestoredChunkForProbe(chk *chunk.Chunk) error {
-	defer func() {
-		if j.ctx.spillHelper.areAllPartitionsSpilled() {
-			// We will not call `Probe` function when all partitions are spilled.
-			// So it's necessary to manually set `currentProbeRow` to avoid check fail.
-			j.currentProbeRow = j.chunkRows
-		}
-	}()
-
 	if j.currentChunk != nil {
 		if j.currentProbeRow < j.chunkRows {
 			return errors.New("Previous chunk is not probed yet")
@@ -484,6 +479,9 @@ func (j *baseJoinProbe) SetRestoredChunkForProbe(chk *chunk.Chunk) error {
 	}
 
 	j.currentProbeRow = 0
+	if j.ctx.spillHelper.areAllPartitionsSpilled() && j.canSkipProbeWhenAllPartitionsSpilled() {
+		j.currentProbeRow = j.chunkRows
+	}
 	return nil
 }
 
@@ -899,8 +897,10 @@ func NewJoinProbe(ctx *HashJoinCtxV2, workID uint, joinType plannerbase.JoinType
 	case plannerbase.InnerJoin:
 		return &innerJoinProbe{base}
 	case plannerbase.LeftOuterJoin:
+		base.keepUnmatchedProbeSide = rightAsBuildSide
 		return newOuterJoinProbe(base, !rightAsBuildSide, rightAsBuildSide)
 	case plannerbase.RightOuterJoin:
+		base.keepUnmatchedProbeSide = !rightAsBuildSide
 		return newOuterJoinProbe(base, rightAsBuildSide, rightAsBuildSide)
 	case plannerbase.SemiJoin:
 		if len(base.rUsed) != 0 {
@@ -911,12 +911,14 @@ func NewJoinProbe(ctx *HashJoinCtxV2, workID uint, joinType plannerbase.JoinType
 		if len(base.rUsed) != 0 {
 			panic("len(base.rUsed) != 0 for anti semi join")
 		}
+		base.keepUnmatchedProbeSide = rightAsBuildSide
 		return newAntiSemiJoinProbe(base, !rightAsBuildSide)
 	case plannerbase.LeftOuterSemiJoin:
 		if len(base.rUsed) != 0 {
 			panic("len(base.rUsed) != 0 for left outer semi join")
 		}
 		if rightAsBuildSide {
+			base.keepUnmatchedProbeSide = true
 			return newLeftOuterSemiJoinProbe(base, false)
 		}
 		panic("unsupported join type")
@@ -925,6 +927,7 @@ func NewJoinProbe(ctx *HashJoinCtxV2, workID uint, joinType plannerbase.JoinType
 			panic("len(base.rUsed) != 0 for left outer anti semi join")
 		}
 		if rightAsBuildSide {
+			base.keepUnmatchedProbeSide = true
 			return newLeftOuterSemiJoinProbe(base, true)
 		}
 		panic("unsupported join type")
