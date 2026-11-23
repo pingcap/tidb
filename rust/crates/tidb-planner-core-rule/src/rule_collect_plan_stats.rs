@@ -91,6 +91,105 @@ impl LogicalOptRule for CollectPredicateColumnsPoint {
     }
 }
 
+/// Go `CollectPredicateColumnsPoint.Optimize`'s load of the needed items:
+/// under `tidb_stats_load_sync_wait` they are requested
+/// ([`request_load_stats`]); without it every needed item is queued for the
+/// async loader as it is (only `SendLoadRequests` drops the items the cache
+/// already holds).
+///
+/// # Errors
+/// [`request_load_stats`]'s.
+pub fn load_needed_items(
+    catalog: &tidb_infoschema::SessionExtendedInfoSchema,
+    ctx: &tidb_sessionctx::StmtContext,
+    usage: &ColumnStatsUsage,
+) -> Result<(), PlanError> {
+    use tidb_stats_handle::catalog_statistics::CatalogStatistics as _;
+    use tidb_stats_handle::stmt_ctx::StatsStmtCtx as _;
+    let sync_wait = ctx.stats_load_wait_ms();
+    if sync_wait > 0 {
+        return request_load_stats(catalog, ctx, usage, sync_wait);
+    }
+    for (item, full_load) in catalog.statistics_demand(ctx.stats_handle(), usage) {
+        tidb_stats_asyncload::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS.insert(item, full_load);
+    }
+    Ok(())
+}
+
+/// Go `RequestLoadStats`: the statistics handle's `SendLoadRequests` for the
+/// needed items the cache does not hold, waited for at
+/// [`SyncWaitStatsLoadPoint`] within `sync_wait` milliseconds (already
+/// capped by `max_execution_time`).
+///
+/// # Errors
+/// None today: `SendLoadRequests` only hands the items to the workers.
+pub fn request_load_stats(
+    catalog: &tidb_infoschema::SessionExtendedInfoSchema,
+    ctx: &tidb_sessionctx::StmtContext,
+    usage: &ColumnStatsUsage,
+    sync_wait: u64,
+) -> Result<(), PlanError> {
+    use tidb_stats_handle::catalog_statistics::CatalogStatistics as _;
+    use tidb_stats_handle::stmt_ctx::StatsStmtCtx as _;
+    let timeout = std::time::Duration::from_millis(sync_wait);
+    // Go `statsSyncLoad.SendLoadRequests`: `removeHistLoadedColumns`, then
+    // one singleflight request per remaining item.
+    let remained_items = catalog.statistics_load_items(ctx.stats_handle(), usage, true);
+    if remained_items.is_empty() {
+        return Ok(());
+    }
+    let Some(service) = ctx.stats_handle().sync_load_service() else {
+        return Ok(());
+    };
+    let result_ch = service.request(&remained_items, timeout);
+    ctx.install_pending_statistics_load(result_ch, remained_items, timeout);
+    Ok(())
+}
+
+/// Go `SyncWaitStatsLoad`: waits for the loads [`request_load_stats`] sent,
+/// recording the wait as `DurationOptimizer.StatsSyncWait`. A failed wait
+/// marks the statement `IsSyncStatsFailed`; under
+/// `tidb_stats_load_pseudo_timeout` the statement goes on with pseudo
+/// statistics, skipping the plan cache, with the error as a warning.
+///
+/// # Errors
+/// The wait's error, when `tidb_stats_load_pseudo_timeout` is off.
+pub fn sync_wait_stats_load(ctx: &tidb_sessionctx::StmtContext) -> Result<(), PlanError> {
+    use tidb_stats_handle::stmt_ctx::StatsStmtCtx as _;
+    /// Go `SyncWaitStatsLoad`'s deferred `DurationOptimizer.StatsSyncWait`.
+    struct RecordStatsSyncWait<'a>(&'a tidb_sessionctx::StmtContext, std::time::Instant);
+    impl Drop for RecordStatsSyncWait<'_> {
+        fn drop(&mut self) {
+            self.0.phase_durations().set_stats_sync_wait(self.1.elapsed());
+        }
+    }
+    if ctx.sync_stats_failed() {
+        return Ok(());
+    }
+    let Some(stats_load) = ctx.take_pending_statistics_load() else {
+        return Ok(());
+    };
+    if stats_load.items.is_empty() {
+        return Ok(());
+    }
+    let _record_wait = RecordStatsSyncWait(ctx, std::time::Instant::now());
+    let Err(error) = tidb_stats_handle_syncload::sync_load::SyncLoadService::sync_wait_stats_load(
+        stats_load.receivers,
+        &stats_load.items,
+        stats_load.timeout,
+        stats_load.started,
+    ) else {
+        return Ok(());
+    };
+    ctx.report_sync_stats_failed();
+    if ctx.stats_load_pseudo_timeout() {
+        ctx.set_skip_plan_cache("sync-load timed out and fell back to pseudo stats");
+        ctx.append_warning_parts(1105, error);
+        return Ok(());
+    }
+    Err(PlanError::internal(error))
+}
+
 #[derive(Clone, Default)]
 struct InterestingColumnsDown {
     join_columns: Vec<Column>,

@@ -47,7 +47,7 @@ use tidb_planner_core_operator_physicalop::PhysicalPlan;
 use tidb_planner_core_base::PlanIdAllocator;
 use tidb_planner::plan_builder::PlanBuilder;
 use tidb_infoschema::table_source::TableSource;
-use super::{CatalogStatisticsLoad, PlannerCatalogContext};
+use super::PlannerCatalogContext;
 use tidb_planner_property::stats_info::StatsInfo;
 
 use super::FromTable;
@@ -3255,11 +3255,11 @@ fn optimize_built_logical(
                 .borrow_mut()
                 .get_or_insert_with(Default::default)
                 .extend(self.catalog.statistics_demand(self.context.stats_handle(), usage));
-            self.catalog.request_statistics_load(usage, self.context)
+            tidb_planner_core_rule::rule_collect_plan_stats::load_needed_items(self.catalog, self.context, usage)
         }
 
         fn wait(&self) -> Result<(), tidb_planner_core_base::PlanError> {
-            self.catalog.wait_statistics_load(self.context)
+            tidb_planner_core_rule::rule_collect_plan_stats::sync_wait_stats_load(self.context)
         }
 
         fn initialize(

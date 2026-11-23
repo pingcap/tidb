@@ -35,9 +35,9 @@
       "id": "T07",
       "group": "Planner and bindings",
       "status": "open",
-      "finding": "Planner code owned by the executor: the prepared and non-prepared plan cache's statement and key (`plan_cache.go` / `plan_cache_utils.go`: `PlanCacheStmt`, `NewPlanCacheKey`, `GeneratePlanCacheStmtWithAST`) and `rule_collect_plan_stats.go`'s statistics loading (`RequestLoadStats` / `SyncWaitStatsLoad`) live in `tidb-executor`. (`pb_to_plan.go` is `tidb-planner/src/pb_to_plan.rs`; the non-prepared cacheability walk and `GetParamSQLFromAST` are `tidb-planner/src/plan_cacheable_checker.rs`.)",
-      "rust_evidence": "`tidb-executor/src/driver/access.rs` (`PreparedSelectPlan`, `PlanCacheStmtInfo`, `PreparedPlanCacheEnvironment`), `driver/plan_cache.rs`, `driver/catalog_ctx.rs` (`CatalogStatisticsLoad`).",
-      "go_owner": "`pkg/planner/core/plan_cache.go`, `plan_cache_utils.go`, `rule/rule_collect_plan_stats.go`"
+      "finding": "Planner code owned by the executor: the prepared and non-prepared plan cache's statement and key (`plan_cache.go` / `plan_cache_utils.go`: `PlanCacheStmt`, `NewPlanCacheKey`, `GeneratePlanCacheStmtWithAST`) live in `tidb-executor`. (`pb_to_plan.go` is `tidb-planner/src/pb_to_plan.rs`; the non-prepared cacheability walk and `GetParamSQLFromAST` are `tidb-planner/src/plan_cacheable_checker.rs`; `RequestLoadStats` / `SyncWaitStatsLoad` are `tidb-planner-core-rule/src/rule_collect_plan_stats.rs`.)",
+      "rust_evidence": "`tidb-executor/src/driver/access.rs` (`PreparedSelectPlan`, `PlanCacheStmtInfo`, `PreparedPlanCacheEnvironment`), `driver/plan_cache.rs`.",
+      "go_owner": "`pkg/planner/core/plan_cache.go`, `plan_cache_utils.go`"
     },
     {
       "id": "T08",

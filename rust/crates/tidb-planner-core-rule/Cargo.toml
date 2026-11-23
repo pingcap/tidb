@@ -27,6 +27,10 @@ tidb-planner-property = { path = "../tidb-planner-property" }
 tidb-planner-util = { path = "../tidb-planner-util" }
 tidb-ranger = { path = "../tidb-ranger" }
 tidb-stats = { path = "../tidb-stats" }
+tidb-stats-asyncload = { path = "../tidb-stats-asyncload" }
+tidb-stats-handle = { path = "../tidb-stats-handle" }
+tidb-stats-handle-syncload = { path = "../tidb-stats-handle-syncload" }
+tidb-sessionctx = { path = "../tidb-sessionctx" }
 
 [dev-dependencies]
 tidb-ast = { path = "../tidb-ast" }
@@ -36,5 +40,4 @@ tidb-exprctx = { path = "../tidb-exprctx" }
 tidb-kv = { path = "../tidb-kv" }
 tidb-planner-core-cost = { path = "../tidb-planner-core-cost" }
 tidb-plannererrors = { path = "../tidb-plannererrors" }
-tidb-sessionctx = { path = "../tidb-sessionctx" }
 tidb-vardef = { path = "../tidb-vardef" }

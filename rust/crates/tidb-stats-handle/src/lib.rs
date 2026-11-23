@@ -24,6 +24,7 @@ use std::sync::Arc;
 pub mod bootstrap;
 pub mod catalog_statistics;
 pub mod source;
+pub mod stmt_ctx;
 pub mod table_size_stats;
 
 pub use source::{StatisticsSource, StatisticsView};
@@ -63,19 +64,6 @@ impl std::fmt::Debug for StatsHandle {
     }
 }
 
-pub fn enqueue_sync_load_failures(
-    requested_items: &[tidb_model::StatsLoadItem],
-    remaining_items: &std::collections::HashSet<tidb_model::TableItemID>,
-) {
-    for requested in requested_items {
-        if !remaining_items.contains(&requested.table_item_id) {
-            continue;
-        }
-        let mut item = requested.table_item_id;
-        item.is_sync_load_failed = true;
-        tidb_stats_asyncload::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS.insert(item, requested.full_load);
-    }
-}
 
 
 

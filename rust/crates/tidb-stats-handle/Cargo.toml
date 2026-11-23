@@ -30,6 +30,7 @@ tidb-vardef = { path = "../tidb-vardef" }
 tidb-infoschema = { path = "../tidb-infoschema" }
 tidb-hack = { path = "../tidb-hack" }
 tidb-model = { path = "../tidb-model" }
+tidb-sessionctx = { path = "../tidb-sessionctx" }
 tidb-stats = { path = "../tidb-stats" }
 tidb-stats-handle-metrics = { path = "../tidb-stats-handle-metrics" }
 crossbeam-channel = "0.5"

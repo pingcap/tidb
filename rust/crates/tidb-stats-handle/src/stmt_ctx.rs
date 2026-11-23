@@ -26,15 +26,18 @@ use std::time::{Duration, Instant};
 use tidb_sessionctx::{StmtContext, StmtContextData};
 use tidb_stats::Table;
 use tidb_stats_handle_syncload::sync_load::SyncLoadOutcome;
-use tidb_stats_handle::StatsHandle;
+use crate::StatsHandle;
 
 /// Go `StmtCtx.StatsLoad`: the synchronous statistics loads one statement
 /// waits for.
 pub struct PendingStatisticsLoad {
     /// Go `StatsLoad.ResultCh`.
     pub receivers: Vec<Receiver<SyncLoadOutcome>>,
+    /// Go `StatsLoad.NeededItems`.
     pub items: Vec<tidb_model::StatsLoadItem>,
+    /// Go `StatsLoad.Timeout`.
     pub timeout: Duration,
+    /// Go `StatsLoad.LoadStartTime`.
     pub started: Instant,
 }
 

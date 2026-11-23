@@ -19,7 +19,7 @@
     use tidb_infoschema::*;
     use tidb_stats_handle::StatsHandle;
     use tidb_stats_handle_syncload::sync_load::StatisticsLoadWorkers;
-    use crate::driver::CatalogStatisticsLoad;
+    use tidb_planner_core_rule::rule_collect_plan_stats::{load_needed_items, sync_wait_stats_load};
     use tidb_stats_handle::catalog_statistics::CatalogStatistics;
     
     
@@ -236,11 +236,9 @@
         };
 
         let context = crate::StmtContext::for_query().with_stats_handle(Arc::clone(&handle)).with_stats_load_policy(100, true, 0);
-        catalog
-            .request_statistics_load(&usage, &context)
+        load_needed_items(&catalog, &context, &usage)
             .expect("start synchronous load");
-        catalog
-            .wait_statistics_load(&context)
+        sync_wait_stats_load(&context)
             .expect("finish synchronous load");
         let requests = loader
             .requests
@@ -286,7 +284,7 @@
             );
             let consumed = tidb_stats_handle_metrics::SYNC_LOAD_TOTAL.get();
             let timeouts = tidb_stats_handle_metrics::SYNC_LOAD_TIMEOUT_TOTAL.get();
-            let result = catalog.wait_statistics_load(&context);
+            let result = sync_wait_stats_load(&context);
             assert!(tidb_stats_handle_metrics::SYNC_LOAD_TOTAL.get() >= consumed + 1.0);
             assert!(tidb_stats_handle_metrics::SYNC_LOAD_TIMEOUT_TOTAL.get() >= timeouts + 1.0);
             assert!(
@@ -347,8 +345,7 @@
         let observed = SYNC_LOAD_HISTOGRAM.get_sample_count();
         let elapsed = SYNC_LOAD_HISTOGRAM.get_sample_sum();
         std::thread::sleep(std::time::Duration::from_millis(10));
-        catalog
-            .wait_statistics_load(&context)
+        sync_wait_stats_load(&context)
             .expect("worker errors are delivered results");
         assert!(!context.sync_stats_failed());
         let mut failed = requested.table_item_id;
@@ -396,7 +393,7 @@
             );
             let count = SYNC_LOAD_TOTAL.get();
             let timeouts = SYNC_LOAD_TIMEOUT_TOTAL.get();
-            let error = catalog.wait_statistics_load(&context).unwrap_err();
+            let error = sync_wait_stats_load(&context).unwrap_err();
             assert!(error.to_string().contains(if closed {
                 "channel closed unexpectedly"
             } else {
@@ -441,8 +438,7 @@
         };
         let context = crate::StmtContext::for_query().with_stats_handle(Arc::clone(&handle)).with_stats_load_policy(0, true, 0);
 
-        catalog
-            .request_statistics_load(&usage, &context)
+        load_needed_items(&catalog, &context, &usage)
             .expect("start asynchronous load");
         assert_eq!(catalog.clean_needed_statistics_items(&handle), 1);
         catalog
@@ -542,8 +538,7 @@
         };
         let context = crate::StmtContext::for_query().with_stats_handle(Arc::clone(&handle)).with_stats_load_policy(0, true, 0);
 
-        catalog
-            .request_statistics_load(&usage, &context)
+        load_needed_items(&catalog, &context, &usage)
             .expect("start asynchronous load");
         assert!(catalog.load_needed_histograms(&handle).is_err());
         assert!(!tidb_stats_asyncload::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS

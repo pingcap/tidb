@@ -84,7 +84,6 @@ pub(crate) mod write_cast;
 pub(crate) use access::*;
 pub(crate) use point_get_plan::*;
 use tidb_infoschema::*;
-pub use catalog_ctx::CatalogStatisticsLoad;
 pub(crate) use catalog_ctx::PlannerCatalogContext;
 pub use dml::*;
 pub(crate) use from::*;

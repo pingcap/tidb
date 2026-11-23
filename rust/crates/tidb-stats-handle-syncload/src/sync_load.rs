@@ -197,6 +197,92 @@ impl SyncLoadService {
             .collect()
     }
 
+    /// Go `statsSyncLoad.SyncWaitStatsLoad` over a statement's pending loads
+    /// (Go `sc.StatsLoad`: `ResultCh`, `NeededItems`, `Timeout`,
+    /// `LoadStartTime`): every result channel is read before one timer of
+    /// `timeout` fires, and each needed item must have been delivered.
+    ///
+    /// A needed item left undelivered is queued for the async loader marked
+    /// `IsSyncLoadFailed`, which Go's statistics reads queue when they find
+    /// the item missing after a timed-out sync load.
+    ///
+    /// # Errors
+    /// Go's messages: the timer fired, a channel closed, or an item was not
+    /// delivered in time.
+    pub fn sync_wait_stats_load(
+        result_ch: Vec<mpsc::Receiver<SyncLoadOutcome>>,
+        needed_items: &[tidb_model::StatsLoadItem],
+        timeout: Duration,
+        load_start_time: Instant,
+    ) -> Result<(), &'static str> {
+        use tidb_stats_handle_metrics::{SYNC_LOAD_HISTOGRAM, SYNC_LOAD_TIMEOUT_TOTAL, SYNC_LOAD_TOTAL};
+
+        if needed_items.is_empty() {
+            return Ok(());
+        }
+        let mut error_msgs = Vec::new();
+        let mut result_check_map =
+            needed_items.iter().map(|item| item.table_item_id).collect::<std::collections::HashSet<_>>();
+        let now = Instant::now();
+        let deadline = now.checked_add(timeout).unwrap_or(now);
+        let mut result = Ok(());
+        for result_ch in result_ch {
+            let received = result_ch.recv_timeout(deadline.saturating_duration_since(Instant::now()));
+            SYNC_LOAD_TOTAL.inc();
+            match received {
+                // This error is from `SendLoadRequests`, which hands the
+                // task to a worker, not the statistics loading error.
+                Ok(SyncLoadOutcome::TransportError(error)) => error_msgs.push(error),
+                Ok(SyncLoadOutcome::Item { item, error }) => {
+                    // This error is from the statistics loading.
+                    if let Some(error) = error {
+                        error_msgs.push(error);
+                    }
+                    result_check_map.remove(&item);
+                }
+                Err(mpsc::RecvTimeoutError::Timeout) => {
+                    SYNC_LOAD_TIMEOUT_TOTAL.inc();
+                    result = Err("sync load stats timeout");
+                    break;
+                }
+                Err(mpsc::RecvTimeoutError::Disconnected) => {
+                    result = Err("sync load stats channel closed unexpectedly");
+                    break;
+                }
+            }
+        }
+        if !error_msgs.is_empty() {
+            tidb_stats_handle_logutil::stats_logger().warn(
+                "SyncWaitStatsLoad meets error",
+                &[tidb_log::Field::new(
+                    "errors",
+                    tidb_log::Value::Array(error_msgs.into_iter().map(tidb_log::Value::Str).collect()),
+                )],
+            );
+        }
+        if result.is_ok() {
+            if result_check_map.is_empty() {
+                SYNC_LOAD_HISTOGRAM.observe(load_start_time.elapsed().as_millis() as f64);
+                return Ok(());
+            }
+            // Some items were not delivered within the wait window, e.g. the
+            // singleflight request timed out before any worker picked it up,
+            // or the request channel was full. It is reported as an error
+            // just like the timer, so the caller marks the statement as
+            // sync-load failed whichever of the two timeouts fires first.
+            SYNC_LOAD_TIMEOUT_TOTAL.inc();
+            result = Err("sync load stats failed: some requested items are not loaded in time");
+        }
+        for needed in needed_items {
+            if result_check_map.contains(&needed.table_item_id) {
+                let mut item = needed.table_item_id;
+                item.is_sync_load_failed = true;
+                tidb_stats_asyncload::ASYNC_LOAD_HISTOGRAM_NEEDED_ITEMS.insert(item, needed.full_load);
+            }
+        }
+        result
+    }
+
     fn request_one(
         self: &Arc<Self>,
         item: tidb_model::StatsLoadItem,

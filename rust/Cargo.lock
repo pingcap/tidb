@@ -8949,6 +8949,9 @@ dependencies = [
  "tidb-ranger",
  "tidb-sessionctx",
  "tidb-stats",
+ "tidb-stats-asyncload",
+ "tidb-stats-handle",
+ "tidb-stats-handle-syncload",
  "tidb-vardef",
 ]
 
@@ -10295,6 +10298,7 @@ dependencies = [
  "tidb-logutil",
  "tidb-memory",
  "tidb-model",
+ "tidb-sessionctx",
  "tidb-sqlexec",
  "tidb-stats",
  "tidb-stats-asyncload",
@@ -10603,6 +10607,7 @@ dependencies = [
  "tidb-stats",
  "tidb-stats-asyncload",
  "tidb-stats-handle-cache",
+ "tidb-stats-handle-logutil",
  "tidb-stats-handle-metrics",
  "tidb-stats-handle-storage",
  "tidb-stats-handle-types",

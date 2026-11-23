@@ -17,6 +17,7 @@ tidb-stats-handle-types = { path = "../tidb-stats-handle-types" }
 tidb-stats-asyncload = { path = "../tidb-stats-asyncload" }
 tidb-store-driver-txn = { path = "../tidb-store-driver-txn" }
 tidb-logutil = { path = "../tidb-logutil" }
+tidb-stats-handle-logutil = { path = "../tidb-stats-handle-logutil" }
 tidb-ast = { path = "../tidb-ast" }
 tidb-datatype = { path = "../tidb-datatype" }
 tidb-infoschema = { path = "../tidb-infoschema" }
