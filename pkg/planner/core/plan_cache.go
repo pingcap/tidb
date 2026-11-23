@@ -180,8 +180,10 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 		}
 		stmt.ResolveCtx = nodeW.GetResolveContext()
 		stmt.SchemaVersion = is.SchemaMetaVersion()
-	} else if err := revalidateSQLCalcFoundRows(sctx, stmtAst.Stmt); err != nil {
-		return err
+	} else if hasSQLCalcFoundRows(stmtAst.Stmt) {
+		if err := revalidateSQLCalcFoundRows(sctx, stmtAst.Stmt); err != nil {
+			return err
+		}
 	}
 	// A privilege revocation or SET ROLE does not change the schema version.
 	// Recheck the resolved targets on every execution, including cache misses.

@@ -149,15 +149,19 @@ func preprocessSQLCalcFoundRows(node ast.Node, p *preprocessor) {
 	ast.Walk(node, &v)
 }
 
+func hasSQLCalcFoundRows(node ast.Node) bool {
+	sel := findSQLCalcFoundRowsAllowedSelect(node)
+	return sel != nil && sel.SelectStmtOpts != nil && sel.SelectStmtOpts.CalcFoundRows
+}
+
 // revalidateSQLCalcFoundRows re-applies tidb_enable_noop_functions for
 // prepared/cached statements whose AST was preprocessed in an earlier mode.
 func revalidateSQLCalcFoundRows(sctx sessionctx.Context, node ast.Node) error {
-	v := newFoundRowsPreprocessor(node, nil)
+	v := newFoundRowsPreprocessor(node, &preprocessor{sctx: sctx})
 	if v.allowedSelect == nil || v.allowedSelect.SelectStmtOpts == nil ||
 		!v.allowedSelect.SelectStmtOpts.CalcFoundRows {
 		return nil
 	}
-	v.preprocessor = &preprocessor{sctx: sctx}
 	return v.checkSelect(v.allowedSelect)
 }
 
