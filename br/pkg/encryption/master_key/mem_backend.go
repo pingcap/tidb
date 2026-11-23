@@ -79,6 +79,10 @@ func (m *MemAesGcmBackend) DecryptContent(_ctx context.Context, content *encrypt
 		return nil, err
 	}
 
+	if iv.Type != IvTypeGcm {
+		return nil, errors.Errorf("invalid IV length for AES-GCM: expected %d, got %d", GcmIv12, len(ivValue))
+	}
+
 	tag, ok := content.Metadata[MetadataKeyAesGcmTag]
 	if !ok {
 		return nil, errors.New("aes gcm tag not found")
