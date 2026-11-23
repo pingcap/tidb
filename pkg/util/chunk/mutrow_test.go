@@ -191,6 +191,31 @@ func TestMutRowShallowCopyPartialRow(t *testing.T) {
 	require.Equal(t, mutRow.ToRow().GetString(0), row.GetString(0))
 	require.Equal(t, mutRow.ToRow().GetInt64(1), row.GetInt64(1))
 	require.Equal(t, mutRow.ToRow().GetTime(2), row.GetTime(2))
+
+	mutRow.ReleaseShallowReferences()
+	for i, col := range mutRow.c.columns {
+		require.True(t, mutRow.ToRow().IsNull(i))
+		if col.IsFixed() {
+			require.Same(t, &col.elemBuf[0], &col.data[0])
+		} else {
+			require.Nil(t, col.data)
+			require.Equal(t, []int64{0, 0}, col.offsets)
+		}
+	}
+	// Restoring owned scratch storage must allow setters without modifying
+	// the previously aliased source row.
+	mutRow.SetValues("reused", 42, types.ZeroTimestamp)
+	require.Equal(t, "reused", mutRow.ToRow().GetString(0))
+	require.Equal(t, int64(42), mutRow.ToRow().GetInt64(1))
+	require.Equal(t, types.ZeroTimestamp, mutRow.ToRow().GetTime(2))
+	require.Equal(t, "dfg", row.GetString(0))
+	require.Equal(t, int64(567), row.GetInt64(1))
+	require.Equal(t, d.GetMysqlTime(), row.GetTime(2))
+	mutRow.ShallowCopyPartialRow(0, row)
+	require.Equal(t, row.GetDatumRow(colTypes), mutRow.ToRow().GetDatumRow(colTypes))
+
+	var empty MutRow
+	require.NotPanics(t, empty.ReleaseShallowReferences)
 }
 
 var rowsNum = 1024

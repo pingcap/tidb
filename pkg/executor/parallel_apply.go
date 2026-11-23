@@ -327,7 +327,9 @@ func (e *ParallelNestedLoopApplyExec) outerWorker(ctx context.Context) {
 	var seq uint64
 	for {
 		failpoint.Inject("parallelApplyOuterWorkerPanic", nil)
-		chk := exec.TryNewCacheChunk(e.outerExec)
+		// The session allocator retains chunks until statement completion.
+		// Allocate outside it so completed outer input can be reclaimed sooner.
+		chk := exec.NewFirstChunk(e.outerExec)
 		if err := exec.Next(ctx, e.outerExec, chk); err != nil {
 			// If the executor is shutting down, the error is from
 			// deliberate context cancellation — not a real failure.
@@ -383,6 +385,7 @@ func (e *ParallelNestedLoopApplyExec) outerWorker(ctx context.Context) {
 
 func (e *ParallelNestedLoopApplyExec) releaseOuterRow(id int) {
 	e.outerRow[id] = nil
+	e.joiners[id].ReleaseRowReferences()
 	// Variable-width correlated values may alias the outer chunk even after
 	// the inner executor closes. Discard them before releasing its accounting.
 	for _, col := range e.corCols[id] {

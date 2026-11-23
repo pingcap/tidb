@@ -413,3 +413,16 @@ func (mr MutRow) ShallowCopyPartialRow(colIdx int, row Row) {
 		}
 	}
 }
+
+// ReleaseShallowReferences resets cells to NULL and drops source data referenced
+// by ShallowCopyPartialRow. It preserves column metadata and fixed-width scratch
+// for subsequent shallow copies or setters, and is safe on a zero-value MutRow.
+func (mr MutRow) ReleaseShallowReferences() {
+	if mr.c == nil {
+		return
+	}
+	for _, col := range mr.c.columns {
+		col.data = col.elemBuf
+		cleanColOfMutRow(col)
+	}
+}

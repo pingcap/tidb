@@ -17,10 +17,12 @@ package executor
 import (
 	"context"
 	"fmt"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+	"weak"
 
 	"github.com/pingcap/tidb/pkg/distsql"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
@@ -154,6 +156,17 @@ func TestNestedLoopApply(t *testing.T) {
 	}
 }
 
+type parallelApplyPanicJoiner struct {
+	join.Joiner
+}
+
+func (j *parallelApplyPanicJoiner) TryToMatchInners(outer chunk.Row, inners chunk.Iterator, chk *chunk.Chunk, opt ...join.NAAJType) (bool, bool, error) {
+	if _, _, err := j.Joiner.TryToMatchInners(outer, inners, chk, opt...); err != nil {
+		return false, false, err
+	}
+	panic("parallel Apply panic after matching")
+}
+
 func TestParallelApplyOuterMemory(t *testing.T) {
 	const chunkSize, rowCount = 8, 256
 	ctx := context.Background()
@@ -208,7 +221,7 @@ func TestParallelApplyOuterMemory(t *testing.T) {
 			require.Zero(t, outerTracker.BytesConsumed(), "EOF must release outer input")
 		})
 		for _, useCache := range []bool{false, true} {
-			for _, mode := range []string{"drain", "early close", "filtered", "mismatch", "memory quota", "cache panic"} {
+			for _, mode := range []string{"drain", "chunk reuse", "early close", "filtered", "mismatch", "memory quota", "cache panic", "join panic"} {
 				t.Run(fmt.Sprintf("ordered=%t/cache=%t/%s", keepOrder, useCache, mode), func(t *testing.T) {
 					if mode == "cache panic" && !useCache {
 						return
@@ -216,6 +229,9 @@ func TestParallelApplyOuterMemory(t *testing.T) {
 					sctx := mock.NewContext()
 					vars := sctx.GetSessionVars()
 					vars.InitChunkSize, vars.MaxChunkSize = chunkSize, chunkSize
+					if mode == "chunk reuse" {
+						vars.SetAlloc(chunk.NewAllocator())
+					}
 					idCol := &expression.Column{Index: 0, RetType: types.NewFieldType(mysql.TypeLonglong)}
 					wideCol := &expression.Column{Index: 1, RetType: types.NewFieldType(mysql.TypeVarString)}
 					outer := testutil.BuildMockDataSource(testutil.MockDataSourceParameters{
@@ -228,6 +244,12 @@ func TestParallelApplyOuterMemory(t *testing.T) {
 						},
 					})
 					outer.PrepareChunks()
+					// PrepareChunks copies the fixture data. Next swaps those copies
+					// into the caller's chunk, so the source no longer owns them.
+					outerBuffers := make([]weak.Pointer[byte], len(outer.Chunks))
+					for i := range outer.Chunks {
+						outerBuffers[i] = weak.Make(&outer.Chunks[i].Column(1).GetBytes(0)[0])
+					}
 					e := &ParallelNestedLoopApplyExec{
 						BaseExecutor: exec.NewBaseExecutor(sctx, expression.NewSchema(idCol), 1),
 						outerExec:    outer, concurrency: 3, keepOrder: keepOrder, useCache: useCache,
@@ -255,9 +277,28 @@ func TestParallelApplyOuterMemory(t *testing.T) {
 						e.innerExecs = append(e.innerExecs, inner)
 						e.innerFilter = append(e.innerFilter, nil)
 						e.corCols = append(e.corCols, []*expression.CorrelatedColumn{corCol})
-						condition := expression.NewFunctionInternal(sctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), wideCol, innerCol)
-						e.joiners = append(e.joiners, join.NewJoiner(sctx, joinType, false, nil, []expression.Expression{condition},
-							exec.RetTypes(outer), exec.RetTypes(inner), [][]int{{0}, {}}, false))
+						conditions := []expression.Expression{expression.NewFunctionInternal(sctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), wideCol, innerCol)}
+						if mode == "chunk reuse" {
+							// Isolate allocator ownership from the conditional joiner's
+							// shallow row, which the other modes exercise.
+							conditions = nil
+						}
+						joiner := join.NewJoiner(sctx, joinType, false, nil, conditions,
+							exec.RetTypes(outer), exec.RetTypes(inner), [][]int{{0}, {}}, false)
+						if mode == "join panic" {
+							joiner = &parallelApplyPanicJoiner{Joiner: joiner}
+						}
+						e.joiners = append(e.joiners, joiner)
+					}
+					checkOuterBuffersReleased := func() {
+						runtime.GC()
+						// Unread fixture chunks are still owned by the data source.
+						for i, buffer := range outerBuffers[:outer.ChunkPtr] {
+							require.Nil(t, buffer.Value(), "completed outer chunk %d must be collectable", i)
+						}
+						// The executor, its joiners, and its session allocator must
+						// remain live while testing whether input buffers are retained.
+						runtime.KeepAlive(e)
 					}
 					require.NoError(t, e.Open(ctx))
 					t.Cleanup(func() { require.NoError(t, e.Close()) })
@@ -265,16 +306,17 @@ func TestParallelApplyOuterMemory(t *testing.T) {
 					require.NotNil(t, outerTracker)
 					maxOuterBytes := int64(e.concurrency+1) * outer.GenData[0].MemoryUsage()
 					req := exec.NewFirstChunk(e)
-					if mode == "memory quota" || mode == "cache panic" {
+					if mode == "memory quota" || mode == "cache panic" || mode == "join panic" {
 						if mode == "memory quota" {
 							outerTracker.SetBytesLimit(1)
 							outerTracker.SetActionOnExceed(&memory.PanicOnExceed{Killer: &vars.SQLKiller})
-						} else {
+						} else if mode == "cache panic" {
 							testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/parallelApplyGetCachePanic", "panic")
 						}
 						require.Error(t, e.Next(ctx, req))
 						require.NoError(t, e.Close())
 						require.Zero(t, outerTracker.BytesConsumed(), "worker failure must release outer input")
+						checkOuterBuffersReleased()
 						return
 					}
 					seen := make(map[int64]bool)
@@ -295,18 +337,22 @@ func TestParallelApplyOuterMemory(t *testing.T) {
 							break
 						}
 					}
-					if mode == "drain" || mode == "mismatch" {
+					if mode == "drain" || mode == "chunk reuse" || mode == "mismatch" {
 						require.Len(t, seen, rowCount)
 					} else if mode == "filtered" {
 						require.Empty(t, seen)
 					}
 					if mode != "early close" {
 						require.Zero(t, outerTracker.BytesConsumed(), "EOF must release outer input")
+						checkOuterBuffersReleased()
 					}
-					if mode == "drain" && useCache {
+					if (mode == "drain" || mode == "chunk reuse") && useCache {
 						require.Positive(t, e.cacheHitCounter)
 					}
 					require.NoError(t, e.Close())
+					if mode == "early close" {
+						checkOuterBuffersReleased()
+					}
 					require.LessOrEqual(t, outerTracker.MaxConsumed(), maxOuterBytes,
 						"completed outer chunks must not accumulate")
 					require.Zero(t, outerTracker.BytesConsumed(), "Close must release outer input")
