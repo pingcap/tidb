@@ -619,7 +619,8 @@ pub(super) struct MockAnalyze;
 impl ClusterAnalyze for MockAnalyze {
     fn execute(
         &self,
-        statements: &[AnalyzeStatement],
+        plan: &tidb_planner::plan_builder::analyze::Analyze,
+        _: &tidb_executor::cluster_analyze::AnalyzeStatement,
         _: &str,
         _: &dyn tidb_pdhelper::ApproximateTableCountProvider,
         _: &tidb_sqlkiller::SqlKiller,
@@ -628,7 +629,8 @@ impl ClusterAnalyze for MockAnalyze {
     ) -> Result<tidb_executor::real_tikv_analyze::AnalyzeExecReport, SqlQueryError> {
         Err(SqlQueryError::unknown(format!(
             "the mock node stores no statistics for `{}`.`{}`",
-            statements[0].schema, statements[0].table
+            plan.col_tasks.first().map_or("", |task| task.analyze_info.db_name.as_str()),
+            plan.col_tasks.first().map_or("", |task| task.analyze_info.table_name.as_str())
         )))
     }
 }

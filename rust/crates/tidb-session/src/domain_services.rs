@@ -47,9 +47,25 @@ pub struct DomainServices {
     /// The statistics handle's statement surface: LOAD STATS, FLUSH
     /// STATS_DELTA, DROP STATS and the statistics locks.
     pub stats: StatementService<dyn StatsStatementService>,
+    /// What Go's `buildAnalyze` reads off the statistics handle while it
+    /// plans.
+    pub analyze_plan: Arc<dyn AnalyzePlanService + Send + Sync>,
     /// Go `domain.GetDomain(sctx)`, for what the session reads off the
     /// domain itself (its plan replayer handle).
     pub domain: std::sync::Weak<tidb_domain_core::domain::Domain>,
+}
+
+/// The statistics handle as Go's `buildAnalyze` reads it.
+pub trait AnalyzePlanService {
+    /// Go `statsHandle.GetPredicateColumns(tableID)`.
+    ///
+    /// # Errors
+    ///
+    /// The statistics read's failure.
+    fn get_predicate_columns(&self, table_id: i64) -> Result<Vec<i64>, crate::DriverError>;
+    /// Go `statistics.AnalyzeVersionMatchesForTableStats(
+    /// statsHandle.GetPhysicalTableStats(physicalID, tblInfo), version)`.
+    fn analyze_version_matches(&self, physical_id: i64, table: &tidb_model::TableInfo, version: i64) -> bool;
 }
 
 impl Session {

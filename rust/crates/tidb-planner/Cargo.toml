@@ -42,6 +42,8 @@ tidb-charset = { path = "../tidb-charset" }
 tidb-variable = { path = "../tidb-variable" }
 tidb-autoid = { path = "../tidb-autoid" }
 tidb-plannererrors = { path = "../tidb-plannererrors" }
+tidb-sqlescape = { path = "../tidb-sqlescape" }
+tidb-stats-handle-util = { path = "../tidb-stats-handle-util" }
 tidb-terror = { path = "../tidb-terror" }
 tidb-parser-types = { path = "../tidb-parser-types" }
 tidb-config-configtypes = { path = "../tidb-config-configtypes" }

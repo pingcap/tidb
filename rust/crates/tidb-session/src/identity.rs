@@ -655,10 +655,15 @@ impl Session {
         self.statement_kind = crate::classify::statement_kind_of(stmt);
         // What the build notes is filed by the executor's own compile, which
         // builds the plan again; a DDL job's lowering notes its own.
-        let Some((plan, visits, _)) = self.preprocess_and_build(stmt)? else {
+        let Some((plan, visits, build_ctx)) = self.preprocess_and_build(stmt)? else {
             return Ok(CompiledExecutor::Other);
         };
-        let executor = CompiledExecutor::of(&plan);
+        let executor = match CompiledExecutor::of(&plan) {
+            // A routed ANALYZE is not built again, so its planner warnings
+            // stay with the plan.
+            CompiledExecutor::Analyze(plan, _) => CompiledExecutor::Analyze(plan, Some(BuildContext(build_ctx))),
+            executor => executor,
+        };
         let requests: Vec<_> = visits
             .iter()
             .map(tidb_executor::table_privilege::request_of_visit)
@@ -1712,15 +1717,26 @@ pub(crate) struct PrecompiledStatement {
     requests: Vec<tidb_executor::table_privilege::TablePrivilegeRequest>,
 }
 
+/// The statement context a plan's build appended its warnings to.
+#[derive(Clone)]
+pub struct BuildContext(pub tidb_sessionctx::StmtContext);
+
+impl std::fmt::Debug for BuildContext {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BuildContext").finish_non_exhaustive()
+    }
+}
+
 /// The executor Go's `executorBuilder.build` picks for a compiled plan, as
 /// far as this session's node runs it differently from the session's own
 /// statement path.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 pub enum CompiledExecutor {
     /// Go `DDLExec` (`core.DDL`).
     Ddl,
-    /// Go `AnalyzeExec` (`core.Analyze`).
-    Analyze,
+    /// Go `AnalyzeExec` (`core.Analyze`), with the plan it executes and the
+    /// statement context its build appended the planner's warnings to.
+    Analyze(Box<tidb_planner::plan_builder::analyze::Analyze>, Option<BuildContext>),
     /// Go `LoadStatsExec` (`core.LoadStats`).
     LoadStats,
     /// Go `LockStatsExec` / `UnlockStatsExec`.
@@ -1740,7 +1756,7 @@ impl CompiledExecutor {
         use tidb_planner::common_plans::Plan;
         match plan {
             Plan::Ddl(_) => Self::Ddl,
-            Plan::Analyze(_) => Self::Analyze,
+            Plan::Analyze(plan) => Self::Analyze(plan.clone(), None),
             Plan::LoadStats(_) => Self::LoadStats,
             Plan::LockStats(_) | Plan::UnlockStats(_) => Self::StatsLock,
             Plan::Simple(simple) => Self::Simple(Box::new(simple.statement.clone())),

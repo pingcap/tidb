@@ -27,7 +27,7 @@ use std::sync::Arc;
 
 use crate::analyze::AnalyzeStatement;
 use crate::real_tikv_analyze::AnalyzeExecReport;
-use crate::{DriverError, TableEntry};
+use crate::DriverError;
 
 use tidb_hack::go_to_lower;
 
@@ -42,23 +42,6 @@ pub trait AnalyzeExec: crate::show::exec::ShowExec {
     /// Moves the statement context's warnings onto the session.
     fn drain_context_warnings(&mut self, ctx: &crate::StmtContext);
 
-    /// Go's session `InfoSchema` (`TemporaryTableAttachedInfoSchema`)
-    /// resolving the statement's name: the LOCAL temporary table it names,
-    /// which the TiKV catalog never holds.
-    fn local_temporary_table(
-        &mut self,
-        statement: &AnalyzeStatement,
-    ) -> Result<Option<tidb_model::GoShared<tidb_model::TableInfo>>, DriverError> {
-        self.with_catalog_mut(|catalog| {
-            Ok(match catalog.table_in(&statement.schema, &statement.table) {
-                Some(TableEntry::Kv(table)) if table.temp_table_type() == tidb_model::TempTableType::LOCAL => {
-                    Some(table.meta())
-                }
-                _ => None,
-            })
-        })
-    }
-
     /// Go `AnalyzeExec.Next`'s `FLUSH STATS_DELTA` of this session's own
     /// pending deltas before sampling.
     fn publish_table_delta(&self);
@@ -71,18 +54,18 @@ pub trait AnalyzeExec: crate::show::exec::ShowExec {
     /// The session's catalog, read even after a panic poisoned its lock.
     fn catalog_ignoring_poison(&self) -> std::sync::MutexGuard<'_, crate::SessionExtendedInfoSchema>;
 
-    /// Go `AnalyzeExec.Next`: runs `ANALYZE TABLE` over `tables` through
-    /// `service`, after `Compile` checked their privileges. The user's
-    /// transaction is left alone, as Go's executor leaves it.
+    /// Go `AnalyzeExec` for the planned `Analyze`: runs it through `service`
+    /// after `Compile` checked its privileges. The user's transaction is left
+    /// alone, as Go's executor leaves it.
     fn run_analyze_statements(
         &mut self,
-        tables: &[AnalyzeStatement],
+        plan: &tidb_planner::plan_builder::analyze::Analyze,
+        build_ctx: Option<&crate::StmtContext>,
         service: &dyn AnalyzeService,
     ) -> Result<(), DriverError> {
-        // `Compile` already checked every named table (`buildAnalyze`'s visit
-        // infos), so `ANALYZE TABLE ok, no` stores nothing at all.
-        // Go `AnalyzeExec.Next` broadcasts `FLUSH STATS_DELTA` before
-        // sampling; this session's pending deltas are published first.
+        // Go `executorBuilder.buildAnalyze` flushes `FLUSH STATS_DELTA` for
+        // the column tasks' tables before they read `mysql.stats_meta`; this
+        // session's pending deltas are published first.
         self.publish_table_delta();
         // Go `ResetContextOfStmt`'s ANALYZE branch: the session's MemTracker
         // takes no limit of its own and joins `GlobalAnalyzeMemoryTracker`,
@@ -91,35 +74,37 @@ pub trait AnalyzeExec: crate::show::exec::ShowExec {
         let session_tracker = Arc::clone(self.analyze_statement_context().statement_memory().session_tracker());
         session_tracker.set_bytes_limit(-1);
         session_tracker.attach_to(&tidb_memory::GLOBAL_ANALYZE_MEMORY_TRACKER);
-        let column_task_tables = tables
-            .iter()
-            .filter(|statement| service.builds_column_task(statement))
-            .cloned()
-            .collect::<Vec<_>>();
+        let column_task_tables = crate::real_tikv_analyze::analyze_col_task_tables(plan);
         self.flush_stats_delta_for_analyze(&column_task_tables, service)?;
         self.begin_routed_statement_warnings();
-        let mut statements = Vec::with_capacity(tables.len());
-        let mut local_temporary_tables = Vec::new();
-        for statement in tables {
-            let mut statement = self.analyze_statement_with_session_options(statement);
-            // A temporary table is analyzed as any other: its requests go to
-            // TiKV, which holds none of its rows.
-            statement.local_temporary_table = self.local_temporary_table(&statement)?;
-            local_temporary_tables.extend(statement.local_temporary_table.clone());
-            statements.push(statement);
+        // The planner's warnings, appended while `Compile` built the plan.
+        if let Some(build_ctx) = build_ctx {
+            self.drain_context_warnings(build_ctx);
         }
-        let analyzed = service.execute(&statements);
-        // Go appends the planner's and executor builder's diagnostics before
-        // the executor runs, then the executor's.
+        let vars = self.analyze_statement_with_session_options(&AnalyzeStatement::session_vars());
+        // Go's session `InfoSchema` holds the LOCAL temporary tables beside
+        // the stored ones, so the cache update reloads them too.
+        let mut local_temporary_tables = Vec::new();
+        for tbl_info in plan
+            .col_tasks
+            .iter()
+            .map(|task| &task.tbl_info)
+            .chain(plan.idx_tasks.iter().map(|task| &task.tbl_info))
+        {
+            let local = tbl_info.read().temp_table_type == tidb_model::TempTableType::LOCAL;
+            if local && !local_temporary_tables.iter().any(|known: &tidb_model::GoShared<tidb_model::TableInfo>| known.read().id == tbl_info.read().id) {
+                local_temporary_tables.push(tbl_info.clone());
+            }
+        }
+        let analyzed = service.execute(plan, &vars);
         let report = match analyzed {
             Ok(report) => report,
             Err(error) => {
-                if let Some(statement) = statements.first() {
-                    self.drain_context_warnings(&statement.eval_context);
-                }
+                self.drain_context_warnings(&vars.eval_context);
                 return Err(error);
             }
         };
+        // Go's builder appends its notes before the executor runs.
         for (note, code, message) in report.build_diagnostics {
             if note {
                 self.append_routed_note(code, message);
@@ -127,16 +112,13 @@ pub trait AnalyzeExec: crate::show::exec::ShowExec {
                 self.append_routed_warning(code, message);
             }
         }
-        if let Some(statement) = statements.first() {
-            self.drain_context_warnings(&statement.eval_context);
-        }
+        self.drain_context_warnings(&vars.eval_context);
         for (code, message) in report.exec_warnings {
             self.append_routed_warning(code, message);
         }
         // Go ends `AnalyzeExec.Next` with `return statsHandle.Update(...)`, so
         // a failed cache update fails the statement although every table's
-        // statistics are already stored. Its InfoSchema is the session's, so
-        // a LOCAL temporary table is reloaded too.
+        // statistics are already stored.
         if let Some(physical_ids) = report.table_and_partition_ids {
             service.update_stats_cache(&physical_ids, &local_temporary_tables)?;
         }
@@ -153,13 +135,13 @@ pub trait AnalyzeExec: crate::show::exec::ShowExec {
     /// modifications.
     fn flush_stats_delta_for_analyze(
         &mut self,
-        column_task_tables: &[AnalyzeStatement],
+        column_task_tables: &[(String, String)],
         service: &dyn AnalyzeService,
     ) -> Result<(), DriverError> {
         let flush_objects = collect_stats_delta_flush_objects_for_analyze(
             column_task_tables
                 .iter()
-                .map(|task| (task.schema.as_str(), task.table.as_str())),
+                .map(|(db_name, table_name)| (db_name.as_str(), table_name.as_str())),
         );
         if flush_objects.is_empty() {
             return Ok(());
@@ -209,7 +191,7 @@ pub trait AnalyzeExec: crate::show::exec::ShowExec {
     /// instance dumps the tables' deltas itself.
     fn flush_analyze_stats_delta_for_test(
         &mut self,
-        column_task_tables: &[AnalyzeStatement],
+        column_task_tables: &[(String, String)],
         service: &dyn AnalyzeService,
     ) -> Result<bool, DriverError> {
         if self.can_broadcast_analyze_stats_delta_for_test() {
@@ -252,19 +234,16 @@ pub trait AnalyzeExec: crate::show::exec::ShowExec {
         can_broadcast_to_tidb_rpc_for_test(&rpc_addrs)
     }
 
-    fn analyze_stats_delta_target_ids(&self, tables: &[AnalyzeStatement]) -> Vec<i64> {
+    /// Go `collectAnalyzeStatsDeltaTargetIDsForTest`.
+    fn analyze_stats_delta_target_ids(&self, tables: &[(String, String)]) -> Vec<i64> {
         let catalog = self.catalog_ignoring_poison();
         let mut seen = BTreeSet::new();
         let mut ids = Vec::new();
-        for statement in tables {
-            if !seen.insert((
-                go_to_lower(&statement.schema),
-                go_to_lower(&statement.table),
-            )) {
+        for (db_name, table_name) in tables {
+            if !seen.insert((go_to_lower(db_name), go_to_lower(table_name))) {
                 continue;
             }
-            let Some(crate::TableEntry::Kv(table)) =
-                catalog.table_in(&statement.schema, &statement.table)
+            let Some(crate::TableEntry::Kv(table)) = catalog.table_in(db_name, table_name)
             else {
                 continue;
             };
@@ -290,21 +269,8 @@ pub trait AnalyzeExec: crate::show::exec::ShowExec {
         };
         // Go `buildAnalyze`: "auto " when the session is `InRestrictedSQL`.
         statement.auto_analyze = self.session_vars().restricted_sql;
-        statement.persist_options = on(tidb_vardef::tidb_vars::TIDB_PERSIST_ANALYZE_OPTIONS);
-        statement.default_columns = if self
-            .session_vars()
-            .get_system(tidb_vardef::tidb_vars::TIDB_ANALYZE_COLUMN_OPTIONS)
-            .is_ok_and(|value| value.eq_ignore_ascii_case("PREDICATE"))
-        {
-            crate::analyze::AnalyzeColumnChoice::Predicate
-        } else {
-            crate::analyze::AnalyzeColumnChoice::All
-        };
-        statement.skip_column_types = self
-            .session_vars()
-            .get_system(tidb_vardef::tidb_vars::TIDB_ANALYZE_SKIP_COLUMN_TYPES)
-            .map(|value| tidb_variable::varsutil::parse_analyze_skip_column_types(&value))
-            .unwrap_or_default();
+        // Go `vardef.PersistAnalyzeOptions`.
+        statement.persist_options = tidb_vardef::PERSIST_ANALYZE_OPTIONS.load(std::sync::atomic::Ordering::SeqCst);
         statement.dynamic_partition_prune = !self
             .session_vars()
             .partition_prune_mode().eq_ignore_ascii_case("static");
@@ -357,12 +323,13 @@ pub trait AnalyzeService {
     /// physical ids the session resolved (never empty: empty would mean
     /// every table).
     fn flush_stats_delta(&self, target_ids: &[i64]) -> Result<(), DriverError>;
-    /// Whether `statement` builds a column task, the tables Go flushes
-    /// deltas for before sampling (`collectStatsDeltaFlushObjectsForAnalyze`).
-    fn builds_column_task(&self, statement: &AnalyzeStatement) -> bool;
-    /// Go `AnalyzeExec.Next` over every table the statement names: runs and
-    /// persists their analysis.
-    fn execute(&self, statements: &[AnalyzeStatement]) -> Result<AnalyzeExecReport, DriverError>;
+    /// Go `buildAnalyze` and `AnalyzeExec.Next` over the planned `Analyze`:
+    /// runs and persists its analysis.
+    fn execute(
+        &self,
+        plan: &tidb_planner::plan_builder::analyze::Analyze,
+        vars: &AnalyzeStatement,
+    ) -> Result<AnalyzeExecReport, DriverError>;
     /// Go `AnalyzeExec.Next`'s closing `statsHandle.Update(ctx, infoSchema,
     /// tableAndPartitionIDs...)` over every analyzed table's physical ids;
     /// its failure is the statement's error. `local_temporary_tables` are

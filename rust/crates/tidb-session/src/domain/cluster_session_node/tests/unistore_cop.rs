@@ -3175,7 +3175,8 @@ struct ObservedSystemAnalyze {
 impl tidb_executor::cluster_analyze_seam::ClusterAnalyze for ObservedSystemAnalyze {
     fn execute(
         &self,
-        statements: &[tidb_executor::cluster_analyze::AnalyzeStatement],
+        plan: &tidb_planner::plan_builder::analyze::Analyze,
+        vars: &tidb_executor::cluster_analyze::AnalyzeStatement,
         resource_group: &str,
         approximate_counts: &dyn tidb_pdhelper::ApproximateTableCountProvider,
         killer: &tidb_sqlkiller::SqlKiller,
@@ -3205,7 +3206,8 @@ impl tidb_executor::cluster_analyze_seam::ClusterAnalyze for ObservedSystemAnaly
                 .store(killer.handle_signal().is_some(), Ordering::SeqCst);
         }
         self.inner.execute(
-            statements,
+            plan,
+            vars,
             resource_group,
             approximate_counts,
             killer,
@@ -3236,7 +3238,8 @@ struct KillingSystemAnalyze {
 impl tidb_executor::cluster_analyze_seam::ClusterAnalyze for KillingSystemAnalyze {
     fn execute(
         &self,
-        statements: &[tidb_executor::cluster_analyze::AnalyzeStatement],
+        plan: &tidb_planner::plan_builder::analyze::Analyze,
+        vars: &tidb_executor::cluster_analyze::AnalyzeStatement,
         resource_group: &str,
         approximate_counts: &dyn tidb_pdhelper::ApproximateTableCountProvider,
         killer: &tidb_sqlkiller::SqlKiller,
@@ -3260,7 +3263,8 @@ impl tidb_executor::cluster_analyze_seam::ClusterAnalyze for KillingSystemAnalyz
         let mut admin = factory.open_session(session_context(88)).unwrap();
         rows(&mut admin, &format!("KILL QUERY {process_id}"));
         self.inner.execute(
-            statements,
+            plan,
+            vars,
             resource_group,
             approximate_counts,
             killer,
@@ -18745,7 +18749,8 @@ struct FailingStatsCacheUpdate {
 impl tidb_executor::cluster_analyze_seam::ClusterAnalyze for FailingStatsCacheUpdate {
     fn execute(
         &self,
-        statements: &[tidb_executor::cluster_analyze::AnalyzeStatement],
+        plan: &tidb_planner::plan_builder::analyze::Analyze,
+        vars: &tidb_executor::cluster_analyze::AnalyzeStatement,
         resource_group: &str,
         approximate_counts: &dyn tidb_pdhelper::ApproximateTableCountProvider,
         killer: &tidb_sqlkiller::SqlKiller,
@@ -18754,7 +18759,8 @@ impl tidb_executor::cluster_analyze_seam::ClusterAnalyze for FailingStatsCacheUp
     ) -> Result<tidb_executor::real_tikv_analyze::AnalyzeExecReport, tidb_store_driver_error::sql_query_error::SqlQueryError>
     {
         self.inner.execute(
-            statements,
+            plan,
+            vars,
             resource_group,
             approximate_counts,
             killer,

@@ -429,6 +429,7 @@ pub(crate) fn analyze_table<S>(
     killer: &tidb_sqlkiller::SqlKiller,
     resource_group: &str,
     progress: &(dyn Fn(i64) + Sync),
+    ndv_jobs: Option<(&dyn crate::real_tikv_analyze::AnalyzeJobLifecycle, &crate::real_tikv_analyze::AnalyzeJobSpec)>,
 ) -> Result<super::AnalyzeReport, AnalyzeError>
 where
     S: tidb_store_driver_txn::transaction::StoreClient,
@@ -479,6 +480,7 @@ where
                 timeout,
                 cancellation.clone(),
                 resource_group,
+                ndv_jobs,
             )
         }));
         let collected = collect_regions(
@@ -536,6 +538,7 @@ fn handle_ndv_for_special_indexes<S>(
     timeout: std::time::Duration,
     cancellation: std::sync::Arc<tidb_txnkv::CancelHandle>,
     resource_group: &str,
+    ndv_jobs: Option<(&dyn crate::real_tikv_analyze::AnalyzeJobLifecycle, &crate::real_tikv_analyze::AnalyzeJobSpec)>,
 ) -> Result<Vec<(usize, i64, tidb_stats::FmSketch)>, AnalyzeError>
 where
     S: tidb_store_driver_txn::transaction::StoreClient,
@@ -543,6 +546,42 @@ where
     if special_indexes.is_empty() {
         return Ok(Vec::new());
     }
+    // Go `buildSubIndexJobForSpecialIndex`: one `analyze ndv for index` job
+    // per special index, added before the workers start
+    // (`AddNewAnalyzeJob`).
+    let jobs = special_indexes
+        .iter()
+        .map(|(_, index)| {
+            ndv_jobs.map(|(lifecycle, base)| {
+                let name = table
+                    .indices
+                    .iter_deref()
+                    .find_map(|info| {
+                        let info = info.read();
+                        (info.id == index.id).then(|| info.name.original().to_owned())
+                    })
+                    .unwrap_or_default();
+                let auto_analyze = if statement.auto_analyze { "auto " } else { "" };
+                crate::real_tikv_analyze::AnalyzeJobHandle::pending(
+                    lifecycle,
+                    &crate::real_tikv_analyze::AnalyzeJobSpec {
+                        schema: base.schema.clone(),
+                        table: base.table.clone(),
+                        partition: base.partition.clone(),
+                        job_info: format!("{auto_analyze}analyze ndv for index {name}"),
+                    },
+                )
+            })
+        })
+        .collect::<Vec<_>>();
+    let finished = (0..special_indexes.len()).map(|_| std::sync::atomic::AtomicBool::new(false)).collect::<Vec<_>>();
+    let finish = |task: usize, failure: Option<&str>| {
+        if let (Some(job), Some((lifecycle, _))) = (&jobs[task], ndv_jobs) {
+            if !finished[task].swap(true, std::sync::atomic::Ordering::SeqCst) {
+                job.finish(lifecycle, failure, crate::real_tikv_analyze::AnalyzeJobKind::Table);
+            }
+        }
+    };
     let workers = statement.sampling_stats_concurrency.clamp(1, special_indexes.len());
     let (task_tx, task_rx) = crossbeam_channel::bounded::<usize>(special_indexes.len());
     for task in 0..special_indexes.len() {
@@ -554,10 +593,13 @@ where
     std::thread::scope(|scope| {
         for _ in 0..workers {
             let task_rx = task_rx.clone();
-            let (results, failure, cancellation) = (&results, &failure, cancellation.clone());
+            let (results, failure, cancellation, jobs, finish) = (&results, &failure, cancellation.clone(), &jobs, &finish);
             scope.spawn(tidb_cpuprofile::labels::inherit(move || {
                 // Go `subIndexWorkerForNDV`.
                 for task in task_rx.iter() {
+                    if let (Some(job), Some((lifecycle, _))) = (&jobs[task], ndv_jobs) {
+                        job.start(lifecycle);
+                    }
                     let (position, index) = special_indexes[task];
                     let primary = table.is_common_handle
                         && table.get_primary_key().is_some_and(|primary| primary.read().id == index.id);
@@ -584,11 +626,15 @@ where
                         resource_group,
                     };
                     match exec.analyze_index_ndv_push_down() {
-                        Ok((null_count, sketch)) => results
-                            .lock()
-                            .expect("special index NDV results")
-                            .push((position, null_count, sketch)),
+                        Ok((null_count, sketch)) => {
+                            finish(task, None);
+                            results
+                                .lock()
+                                .expect("special index NDV results")
+                                .push((position, null_count, sketch));
+                        }
                         Err(error) => {
+                            finish(task, Some(&error.to_string()));
                             failure.lock().expect("special index NDV failure").get_or_insert(error);
                             return;
                         }
@@ -598,6 +644,11 @@ where
         }
     });
     if let Some(error) = failure.into_inner().expect("special index NDV failure") {
+        // Go finishes the jobs no worker reached with the error.
+        let failure = error.to_string();
+        for task in 0..special_indexes.len() {
+            finish(task, Some(&failure));
+        }
         return Err(error);
     }
     Ok(results.into_inner().expect("special index NDV results"))

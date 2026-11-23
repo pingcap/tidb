@@ -4217,6 +4217,81 @@ impl tidb_planner::plan_builder::stmt_build::SessionPlanContext for Session {
         Some((row.user, host))
     }
 
+    fn analyze_plan_vars(&self) -> tidb_planner::plan_builder::analyze::AnalyzePlanVars {
+        use tidb_vardef::tidb_vars;
+        let vars = &self.vars;
+        let system = |name: &str| vars.get_system(name).ok();
+        tidb_planner::plan_builder::analyze::AnalyzePlanVars {
+            analyze_version: system(tidb_vars::TIDB_ANALYZE_VERSION)
+                .and_then(|value| value.parse().ok())
+                .unwrap_or(2),
+            dynamic_prune: !vars.partition_prune_mode().eq_ignore_ascii_case("static"),
+            enable_ddl_analyze_exec_opt: vars.enable_ddl_analyze_exec_opt,
+            analyze_skip_column_types: system(tidb_vars::TIDB_ANALYZE_SKIP_COLUMN_TYPES)
+                .map(|value| tidb_variable::varsutil::parse_analyze_skip_column_types(&value))
+                .unwrap_or_default(),
+            // Go `vardef.PersistAnalyzeOptions` / `vardef.AnalyzeColumnOptions`:
+            // process-wide, set by the global variables' hooks.
+            persist_analyze_options: tidb_vardef::PERSIST_ANALYZE_OPTIONS.load(std::sync::atomic::Ordering::SeqCst),
+            analyze_column_options: {
+                let value = tidb_vardef::ANALYZE_COLUMN_OPTIONS
+                    .read()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .clone();
+                if value.is_empty() {
+                    tidb_vardef::defaults::DEF_TIDB_ANALYZE_COLUMN_OPTIONS.to_owned()
+                } else {
+                    value
+                }
+            },
+        }
+    }
+
+    fn exec_restricted_sql(
+        &self,
+        sql: &str,
+        args: &[tidb_sqlescape::SqlArg],
+    ) -> Result<Vec<Vec<tidb_datatype::Datum>>, tidb_planner_core_base::PlanError> {
+        // Go `kv.InternalTxnStatsForegroundPriority`.
+        tidb_executor::memtable_reader::exec_restricted_sql_over(
+            self.restricted_sql_executor().as_deref(),
+            "StatsForegroundPriority",
+            sql,
+            args,
+        )
+        .map_err(|error| tidb_planner_core_base::PlanError::from(error.to_mysql_error()))
+    }
+
+    fn get_predicate_columns(&self, table_id: i64) -> Result<Vec<i64>, tidb_planner_core_base::PlanError> {
+        let Some(services) = self.domain_services() else {
+            return Ok(Vec::new());
+        };
+        services
+            .analyze_plan
+            .get_predicate_columns(table_id)
+            .map_err(|error| tidb_planner_core_base::PlanError::from(error.to_mysql_error()))
+    }
+
+    fn analyze_version_matches(&self, physical_id: i64, table: &tidb_model::TableInfo, version: i64) -> bool {
+        self.domain_services()
+            .is_none_or(|services| services.analyze_plan.analyze_version_matches(physical_id, table, version))
+    }
+
+    fn analyze_version_matches_for_table(&self, table: &tidb_model::TableInfo, version: i64) -> bool {
+        // Go `statsAnalyze.AnalyzeVersionMatchesForTable`: the global stats,
+        // then each partition's.
+        if !self.analyze_version_matches(table.id, table, version) {
+            return false;
+        }
+        let Some(pi) = table.get_partition_info() else {
+            return true;
+        };
+        let definitions = pi.read().definitions.snapshot();
+        definitions
+            .iter()
+            .all(|def| self.analyze_version_matches(def.id, table, version))
+    }
+
     fn is_auto_analyze_process(&self, connection_id: u64) -> bool {
         // Go `sm != nil && handleutil.GlobalAutoAnalyzeProcessList.Contains(id)`:
         // the session manager is the process registry this session sits in.

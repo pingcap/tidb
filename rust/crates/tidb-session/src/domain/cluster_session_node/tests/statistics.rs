@@ -24,7 +24,8 @@ struct UndeterminedAnalyze;
 impl ClusterAnalyze for UndeterminedAnalyze {
     fn execute(
         &self,
-        _: &[tidb_executor::cluster_analyze::AnalyzeStatement],
+        _: &tidb_planner::plan_builder::analyze::Analyze,
+        _: &tidb_executor::cluster_analyze::AnalyzeStatement,
         _: &str,
         _: &dyn tidb_pdhelper::ApproximateTableCountProvider,
         _: &tidb_sqlkiller::SqlKiller,
@@ -45,7 +46,8 @@ struct PanickingAnalyze(&'static str);
 impl ClusterAnalyze for PanickingAnalyze {
     fn execute(
         &self,
-        _: &[tidb_executor::cluster_analyze::AnalyzeStatement],
+        _: &tidb_planner::plan_builder::analyze::Analyze,
+        _: &tidb_executor::cluster_analyze::AnalyzeStatement,
         _: &str,
         _: &dyn tidb_pdhelper::ApproximateTableCountProvider,
         _: &tidb_sqlkiller::SqlKiller,
@@ -196,6 +198,8 @@ fn analyze_internal_panics_become_query_errors_and_leave_the_session_usable() {
         let mut session =
             open_session_on_with_analyze(&node, Arc::new(PanickingAnalyze(source_test)));
 
+        without_saved_analyze_options(&node);
+
         let query_error = session
             .node_conn()
             .execute_write("ANALYZE TABLE t")
@@ -219,6 +223,7 @@ fn analyze_internal_panics_become_query_errors_and_leave_the_session_usable() {
 fn analyze_commit_keeps_an_undetermined_verdict_connection_fatal() {
     let node = MockNode::start();
     let mut session = open_session_on_with_analyze(&node, Arc::new(UndeterminedAnalyze));
+    without_saved_analyze_options(&node);
     let query_error = session
         .node_conn()
         .execute_write("ANALYZE TABLE t")
@@ -275,7 +280,8 @@ fn analyze_merge_keeps_the_statement_kill_error_coded_on_the_wire() {
 /// would have left the cluster's statistics silently untouched.
 #[test]
 fn analyze_table_routes_to_the_statistics_seam() {
-    let (mut session, _node) = open_session();
+    let (mut session, node) = open_session();
+    without_saved_analyze_options(&node);
     let refusal = session
         .node_conn()
         .execute_write("ANALYZE TABLE t")
@@ -289,6 +295,13 @@ fn analyze_table_routes_to_the_statistics_seam() {
         refusal.contains("`t`"),
         "the refusal must name the table: {refusal}"
     );
+}
+
+/// The mock node holds no `mysql.analyze_options`, which Go's planner reads
+/// (`getSavedAnalyzeOpts`) only while `tidb_persist_analyze_options` is on.
+fn without_saved_analyze_options(_node: &MockNode) {
+    // Go `vardef.PersistAnalyzeOptions`, which `SET GLOBAL` sets.
+    tidb_vardef::PERSIST_ANALYZE_OPTIONS.store(false, std::sync::atomic::Ordering::SeqCst);
 }
 
 /// Opens a connection authenticated as `user`, which is how a test says
@@ -362,6 +375,7 @@ fn analyze_without_privileges_on_the_table_is_refused_before_the_seam() {
     // visible without carrying either privilege `ANALYZE` demands.
     node.accounts.grant_db("low", "app", &["CREATE TEMPORARY TABLES"]);
     let mut session = open_session_as(&node, "low");
+    without_saved_analyze_options(&node);
     let refusal = session
         .node_conn()
         .execute_write("ANALYZE TABLE t")
@@ -385,6 +399,7 @@ fn analyze_with_only_select_on_the_table_is_still_refused() {
     node.accounts.create_user("ro");
     node.accounts.grant_table("ro", "app", "t", &["Select"]);
     let mut session = open_session_as(&node, "ro");
+    without_saved_analyze_options(&node);
     let refusal = session
         .node_conn()
         .execute_write("ANALYZE TABLE t")
@@ -404,6 +419,7 @@ fn analyze_with_insert_and_select_on_the_table_reaches_the_seam() {
     node.accounts.create_user("rw");
     node.accounts.grant_table("rw", "app", "t", &["Select", "Insert"]);
     let mut session = open_session_as(&node, "rw");
+    without_saved_analyze_options(&node);
     let refusal = session
         .node_conn()
         .execute_write("ANALYZE TABLE t")

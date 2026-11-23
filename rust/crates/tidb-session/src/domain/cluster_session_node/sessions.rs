@@ -98,6 +98,7 @@ impl DomainSessions for Domain {
             }),
             analyze: super::statistics::analyze_service(self),
             stats: super::statistics::stats_statement_service(self),
+            analyze_plan: super::statistics::analyze_plan_service(self),
             domain: self.binding_session_factory.clone(),
         });
         // Go `GetBindingHandle(sctx)` reads the domain's handle at match time:

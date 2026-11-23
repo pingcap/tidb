@@ -52,7 +52,7 @@ use tidb_store_driver_txn::transaction::StoreClient;
 use crate::cluster_analyze::AnalyzeStatement;
 use tidb_infoschema::cluster_catalog::load_info_schema;
 use crate::real_tikv_analyze::{
-    analyze_exec_next, resolve_cluster_analyze_statement, AnalyzeExecReport, AnalyzeJobLifecycle,
+    analyze_exec_next, AnalyzeExecReport, AnalyzeJobLifecycle,
 };
 use tidb_pdhelper::ApproximateTableCountProvider;
 use tidb_infoschema_issyncer::real_tikv_catalog::TransactionMetaSnapshot;
@@ -74,11 +74,13 @@ use tidb_store_driver_error::sql_query_error::SqlQueryError;
 /// `ANALYZE TABLE`, and what happens when it fails -- is exercised without a
 /// cluster. The production implementation is [`RealClusterAnalyze`].
 pub trait ClusterAnalyze: Send + Sync {
-    /// Go `AnalyzeExec.Next` over every table one `ANALYZE` statement names:
-    /// analyzes them and stores their statistics.
+    /// Go `buildAnalyze` and `AnalyzeExec.Next` over the planned `Analyze`
+    /// (`vars`: the session's analyze variables): analyzes its tables and
+    /// stores their statistics.
     fn execute(
         &self,
-        statements: &[AnalyzeStatement],
+        plan: &tidb_planner::plan_builder::analyze::Analyze,
+        vars: &AnalyzeStatement,
         resource_group: &str,
         approximate_counts: &dyn ApproximateTableCountProvider,
         killer: &SqlKiller,
@@ -86,10 +88,6 @@ pub trait ClusterAnalyze: Send + Sync {
         stats_pool: &dyn StatsSessionPool,
     ) -> Result<AnalyzeExecReport, SqlQueryError>;
 
-    /// Go `AnalyzeExec.Next`'s closing `statsHandle.Update(ctx, infoSchema,
-    /// tableAndPartitionIDs...)`: once per statement, after every table's
-    /// results are saved, over the physical ids of all of them. Its failure
-    /// is the statement's error.
     fn update_stats_cache(
         &self,
         _physical_ids: Vec<i64>,
@@ -223,33 +221,20 @@ where
 {
     fn execute(
         &self,
-        statements: &[AnalyzeStatement],
+        plan: &tidb_planner::plan_builder::analyze::Analyze,
+        vars: &AnalyzeStatement,
         resource_group: &str,
         approximate_counts: &dyn ApproximateTableCountProvider,
         killer: &SqlKiller,
         jobs: &dyn AnalyzeJobLifecycle,
         stats_pool: &dyn StatsSessionPool,
     ) -> Result<AnalyzeExecReport, SqlQueryError> {
-        // Go plans every table before the executor runs: a planner error
-        // stores nothing.
-        let resolved = statements
-            .iter()
-            .map(|statement| {
-                resolve_cluster_analyze_statement(
-                    &self.opener,
-                    statement,
-                    self.timeout,
-                    resource_group,
-                    approximate_counts,
-                    &self.stats,
-                    stats_pool,
-                )
-            })
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(cluster_analyze_error)?;
         analyze_exec_next(
             &self.opener,
-            &resolved,
+            plan,
+            vars,
+            &self.stats,
+            approximate_counts,
             resource_group,
             self.timeout,
             self.stats_lease,

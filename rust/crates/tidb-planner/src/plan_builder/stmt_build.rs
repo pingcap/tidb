@@ -73,6 +73,46 @@ pub trait SessionPlanContext {
     fn process_info(&self, connection_id: u64) -> Option<(String, String)>;
     /// Go `handleutil.GlobalAutoAnalyzeProcessList.Contains(id)`.
     fn is_auto_analyze_process(&self, connection_id: u64) -> bool;
+
+    /// What Go's `buildAnalyze` reads from `SessionVars` and the analyze
+    /// globals.
+    fn analyze_plan_vars(&self) -> super::analyze::AnalyzePlanVars {
+        super::analyze::AnalyzePlanVars::default()
+    }
+
+    /// Go `b.ctx.GetRestrictedSQLExecutor().ExecRestrictedSQL(ctx, nil,
+    /// sql, args...)`.
+    ///
+    /// # Errors
+    ///
+    /// The statement's failure.
+    fn exec_restricted_sql(
+        &self,
+        _sql: &str,
+        _args: &[tidb_sqlescape::SqlArg],
+    ) -> Result<Vec<Vec<tidb_datatype::Datum>>, PlanError> {
+        Ok(Vec::new())
+    }
+
+    /// Go `statsHandle.GetPredicateColumns(tableID)`.
+    ///
+    /// # Errors
+    ///
+    /// The statistics read's failure.
+    fn get_predicate_columns(&self, _table_id: i64) -> Result<Vec<i64>, PlanError> {
+        Ok(Vec::new())
+    }
+
+    /// Go `statistics.AnalyzeVersionMatchesForTableStats(
+    /// statsHandle.GetPhysicalTableStats(physicalID, tblInfo), version)`.
+    fn analyze_version_matches(&self, _physical_id: i64, _table: &tidb_model::TableInfo, _version: i64) -> bool {
+        true
+    }
+
+    /// Go `statsHandle.AnalyzeVersionMatchesForTable(tblInfo, version)`.
+    fn analyze_version_matches_for_table(&self, _table: &tidb_model::TableInfo, _version: i64) -> bool {
+        true
+    }
 }
 
 /// Go `appendVisitInfo(vi, priv, db, tbl, "", err)`.
@@ -213,14 +253,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             AdminStmt::RefreshStats(refresh) => return self.build_refresh_stats(stmt, refresh),
             AdminStmt::AnalyzeTable(analyze) => {
                 // Go `buildAnalyze`.
-                if analyze.no_write_to_binlog {
-                    return Err(PlanError::from(
-                        tidb_plannererrors::ERR_NOT_SUPPORTED_YET
-                            .gen_with_stack_by_args(&["[NO_WRITE_TO_BINLOG | LOCAL]".into()]),
-                    ));
-                }
-                self.require_insert_and_select_priv(analyze.tables.iter());
-                Plan::Analyze(Box::new(admin.clone()))
+                Plan::Analyze(Box::new(self.build_analyze(analyze)?))
             }
             AdminStmt::AnalyzeIncremental(_) => {
                 return Err(PlanError::internal(
@@ -657,7 +690,7 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
     }
 
     /// Go `requireInsertAndSelectPriv`.
-    fn require_insert_and_select_priv<'p>(&mut self, tables: impl Iterator<Item = &'p Vec<String>>) {
+    pub(super) fn require_insert_and_select_priv<'p>(&mut self, tables: impl Iterator<Item = &'p Vec<String>>) {
         for table in tables {
             let (database, table_l, table_o) = self.qualified(table);
             self.visit_info.push(visit(

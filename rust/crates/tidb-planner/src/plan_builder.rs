@@ -164,6 +164,7 @@
 //!   (`ConsumerCount` and `limitLP`) are named in [`cte`]'s own narrowings.
 
 pub mod aggregation;
+pub mod analyze;
 #[cfg(test)]
 mod aggregation_tests;
 pub mod catalog;

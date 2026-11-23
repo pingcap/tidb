@@ -2,21 +2,12 @@
   "date": "2026-11-22",
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports, from the 2026-11-22 file-level re-audit (method in structural-audit-2026-11-22.md).",
   "counts": {
-    "unresolved": 1,
+    "unresolved": 0,
     "open": 0,
-    "partial": 1
+    "partial": 0
   },
-  "findings": [
-    {
-      "id": "R03",
-      "status": "partial",
-      "group": "Statistics",
-      "finding": "ANALYZE's planning is not in Go's shape: the planner's `buildAnalyze*` / `getMustAnalyzedColumns` / `genV2AnalyzeOptions` / `getSavedAnalyzeOpts` and the executor builder's `buildAnalyzeSamplingPushdown` (sample rate) still run at execution time in `real_tikv_analyze.rs` (`resolve_cluster_analyze_statement`, over a fresh TiKV catalog snapshot) instead of building `core.Analyze` at compile time. Done: globalstats, `AnalyzeExec.Next` (`analyze_exec_next`, `analyze_worker.rs`, `analyze_global_stats.rs`), `buildSamplingStats`' workers, and `analyze_idx.rs`'s `AnalyzeIndexExec`.",
-      "rust_evidence": "`tidb-executor/src/real_tikv_analyze.rs` (`resolve_cluster_analyze_statement`, `select_index_tasks`, `final_column_choice`, `selected_columns`, `get_saved_analyze_opts`), `analyze.rs` (`lower_analyze_admin`, `resolve_analyze_options`)",
-      "go_owner": "`pkg/executor/analyze*.go`, `pkg/planner/core/planbuilder.go` (`buildAnalyze*`), `pkg/executor/builder.go` (`buildAnalyze*`)"
-    }
-  ],
-  "unresolved": 1,
+  "findings": [],
+  "unresolved": 0,
   "open": 0,
-  "partial": 1
+  "partial": 0
 }

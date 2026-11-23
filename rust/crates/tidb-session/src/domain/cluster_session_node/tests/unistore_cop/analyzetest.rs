@@ -744,3 +744,24 @@ fn test_failed_analyze_request_v2() {
     let error = session.node_conn().execute_write("analyze table t index idx_b").expect_err("the index request fails");
     assert_eq!(error.message, "mock buildStatsFromResult error");
 }
+
+/// Go `buildSubIndexJobForSpecialIndex`: an index over a virtual column
+/// takes its NDV from TiKV in a job of its own, `analyze ndv for index`,
+/// after the column task's (captured from a Go server).
+#[test]
+fn special_index_ndv_has_its_own_analyze_job() {
+    let (_stack, _users, mut session) = stack_and_session(415);
+    rows(&mut session, "create table a2 (a int, b json, c int as (a+1), key(c))");
+    rows(&mut session, "insert into a2(a,b) values (1,'{}'),(2,'[]')");
+    rows(&mut session, "analyze table a2");
+    assert_eq!(
+        joined(displayed(rows(
+            &mut session,
+            "select job_info from mysql.analyze_jobs where table_schema = 'test' and table_name = 'a2' order by id"
+        ))),
+        [
+            "analyze table all indexes, columns a, c with 256 buckets, 100 topn, 1 samplerate",
+            "analyze ndv for index c"
+        ]
+    );
+}

@@ -185,10 +185,8 @@ use tidb_infoschema_issyncer::catalog_watch::InfoCache;
 use tidb_infoschema::SessionExtendedInfoSchema;
 use tidb_infoschema_issyncer::real_tikv_catalog::SnapshotMetaSnapshot;
 use tidb_infoschema_isvalidator::SchemaValidator;
-use tidb_executor::cluster_analyze::AnalyzeStatement;
 use tidb_stats_handle_storage::cluster_load_stats::prepare_cluster_load_stats_parsed;
 use tidb_executor_lockstats::{prepare_cluster_stats_lock_parsed, ClusterStatsLockStatement};
-use tidb_executor::real_tikv_analyze::prepare_cluster_analyze_parsed;
 use tidb_stats_handle_syncload::stats_watch::SharedStats;
 use tidb_executor::access_path::StatementReadShape;
 use tidb_kv::cluster_storage::ClusterSnapshot;
@@ -282,7 +280,7 @@ enum StatementRoute {
     /// `DDLExec.Next` over a LOCAL temporary table).
     SessionDdl,
     /// One `ANALYZE TABLE`, per table it named.
-    Analyze(Vec<AnalyzeStatement>),
+    Analyze(Box<tidb_planner::plan_builder::analyze::Analyze>, Option<crate::identity::BuildContext>),
     /// One LOAD STATS statement awaiting its client-local file bytes.
     LoadStats,
     /// One foreground dump of this node's pending statistics deltas.
@@ -1391,17 +1389,7 @@ impl<'s> ClusterServerSession<'s> {
                 Ok(StatementRoute::Ordinary)
             }
             CompiledExecutor::LoadStats => Ok(StatementRoute::LoadStats),
-            CompiledExecutor::Analyze => {
-                match prepare_cluster_analyze_parsed(stmt, self.session.current_database()) {
-                    Ok(Some(tables)) if !tables.is_empty() => Ok(StatementRoute::Analyze(tables)),
-                    Ok(_) => Err(SqlQueryError::unknown(
-                        "this node runs ANALYZE TABLE for a named table only",
-                    )),
-                    Err(error) => Err(tidb_executor::real_tikv_analyze::cluster_analyze_error(
-                        tidb_executor::real_tikv_analyze::ClusterAnalyzeError::Analyze(error),
-                    )),
-                }
-            }
+            CompiledExecutor::Analyze(plan, build_ctx) => Ok(StatementRoute::Analyze(plan.clone(), build_ctx.clone())),
             CompiledExecutor::StatsLock => {
                 match prepare_cluster_stats_lock_parsed(
                     stmt,
@@ -1489,8 +1477,8 @@ impl<'s> ClusterServerSession<'s> {
             StatementRoute::SessionDdl => {
                 self.observe_routed_write(sql, stmt, |node| node.run_session_ddl(sql, stmt))
             }
-            StatementRoute::Analyze(tables) => {
-                self.observe_routed_write(sql, stmt, |node| node.run_analyze(&tables))
+            StatementRoute::Analyze(plan, build_ctx) => {
+                self.observe_routed_write(sql, stmt, |node| node.run_analyze(&plan, build_ctx.as_ref().map(|ctx| &ctx.0)))
             }
             // Go `LoadStatsExec` records the path and the connection reads the
             // file from the client; a session's own reader is that transfer.

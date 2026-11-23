@@ -330,19 +330,11 @@ impl<'s> ClusterServerSession<'s> {
         Ok(NO_ROWS)
     }
 
-    /// Performs one `ANALYZE TABLE`, one table at a time.
-    ///
-    /// Each table is its own transaction, which is what Go does too: an
-    /// `ANALYZE TABLE t1, t2` is two analyses, and holding one transaction
-    /// open across both would make the second table's row count describe the
-    /// moment the first was read.
-    ///
-    /// An open transaction is committed first, for the same reason a DDL or
-    /// an account statement commits one: MySQL and Go both commit implicitly
-    /// before a statement that changes stored state outside it.
+    /// Go `AnalyzeExec` over the planned `Analyze`.
     pub(super) fn run_analyze(
         &mut self,
-        tables: &[AnalyzeStatement],
+        plan: &tidb_planner::plan_builder::analyze::Analyze,
+        build_ctx: Option<&tidb_sessionctx::StmtContext>,
     ) -> Result<WriteOutcome, SqlQueryError> {
         // Go `AnalyzeExec.Next` (`pkg/executor/analyze.go:300`) has no
         // `NewTxnInStmt`: the statistics are written by internal sessions and
@@ -356,7 +348,7 @@ impl<'s> ClusterServerSession<'s> {
             crate::temptable::bind_temporary_read_snapshot(&self.node.slot, &self.session);
         let analyzed = self
             .session
-            .run_analyze_statements(tables, service.as_ref())
+            .run_analyze_statements(plan, build_ctx, service.as_ref())
             .map_err(super::map_error);
         crate::temptable::finish_temporary_read_snapshot(&self.node.slot, bound_here);
         analyzed?;
@@ -366,6 +358,59 @@ impl<'s> ClusterServerSession<'s> {
             last_insert_id: 0,
         })
     }
+}
+
+/// The statistics handle as the planner's `buildAnalyze` reads it.
+pub(super) struct ClusterAnalyzePlanService {
+    stats: Arc<tidb_stats_handle_syncload::stats_watch::SharedStats>,
+    session_pool: Option<Arc<tidb_domain_core::sys_session::DomainSysSessionPool>>,
+}
+
+/// The domain's [`ClusterAnalyzePlanService`].
+pub(super) fn analyze_plan_service(domain: &super::Domain) -> Arc<dyn crate::domain_services::AnalyzePlanService + Send + Sync> {
+    Arc::new(ClusterAnalyzePlanService {
+        stats: Arc::clone(&domain.stats),
+        session_pool: domain
+            .binding_session_factory
+            .upgrade()
+            .map(|domain| domain.advanced_sys_session_pool()),
+    })
+}
+
+impl crate::domain_services::AnalyzePlanService for ClusterAnalyzePlanService {
+    fn get_predicate_columns(&self, table_id: i64) -> Result<Vec<i64>, tidb_driver_error::DriverError> {
+        let mut columns = Vec::new();
+        tidb_stats_handle_storage::stats_read_writer::StatsSessionPool::call_with_sctx(
+            &tidb_domain_core::sys_session::StatsPool {
+                session_pool: self.session_pool.as_ref(),
+            },
+            &mut |sctx| {
+                columns = tidb_stats_handle_usage_predicatecolumn::predicate_column::get_predicate_columns(sctx, table_id)?;
+                Ok(())
+            },
+            &[tidb_stats_handle_util::FLAG_WRAP_TXN],
+        )
+        .map_err(|error| {
+            tidb_driver_error::DriverError::Mysql(
+                tidb_terror::MysqlError::from_parts(error.code, error.state, error.message).with_identity_opt(error.identity),
+            )
+        })?;
+        Ok(columns)
+    }
+
+    fn analyze_version_matches(&self, physical_id: i64, table: &tidb_model::TableInfo, version: i64) -> bool {
+        // Go `GetPhysicalTableStats` caches a pseudo table on a miss.
+        let cacheable = table.temp_table_type == tidb_model::TempTableType::NONE;
+        let stats = self.stats.get_physical_table_stats(physical_id, table.partition.is_some(), cacheable, || {
+            tidb_stats::pseudo_table(table, false, true)
+        });
+        tidb_stats::analyze_version_policy::analyze_version_matches(
+            stats.as_ref().map(|stats| i64::from(stats.hist_coll.stats_version)),
+            stats.as_ref().is_some_and(|stats| stats.hist_coll.pseudo),
+            version,
+        )
+    }
+
 }
 
 /// The cluster analyzer as the session's [`AnalyzeService`], for the
@@ -477,13 +522,10 @@ impl tidb_executor::analyze::exec::AnalyzeService for ClusterAnalyzeService {
         .map_err(tidb_driver_error::DriverError::unsupported)
     }
 
-    fn builds_column_task(&self, statement: &AnalyzeStatement) -> bool {
-        tidb_executor::real_tikv_analyze::analyze_builds_column_task(&self.catalog.get_latest(), statement)
-    }
-
     fn execute(
         &self,
-        statements: &[AnalyzeStatement],
+        plan: &tidb_planner::plan_builder::analyze::Analyze,
+        vars: &AnalyzeStatement,
     ) -> Result<tidb_executor::real_tikv_analyze::AnalyzeExecReport, tidb_driver_error::DriverError> {
         let jobs = PersistedAnalyzeJobs {
             session_pool: self.session_pool.clone(),
@@ -492,7 +534,8 @@ impl tidb_executor::analyze::exec::AnalyzeService for ClusterAnalyzeService {
         };
         let report = recover_analyze_panic(|| {
             self.analyze.execute(
-                statements,
+                plan,
+                vars,
                 &self.resource_group,
                 self.approximate_table_counts.as_ref(),
                 self.statement_memory.sql_killer(),

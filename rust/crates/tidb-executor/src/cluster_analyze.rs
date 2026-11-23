@@ -47,22 +47,7 @@ use tidb_stats_handle_storage::cluster_stats_load::{ClusterStatsItem, ClusterTab
 use tidb_syssession::mysql_system_tables::SystemTableError;
 use tidb_table::origin_default::origin_default;
 
-pub use crate::analyze::{resolve_analyze_options, AnalyzeColumnChoice, AnalyzeOptionOverrides, AnalyzeOptions, AnalyzeStatement, STATS_VERSION_2};
-
-/// Whether this statement is an `ANALYZE TABLE` this node runs, and against
-/// which tables.
-///
-/// [`crate::analyze::lower_analyze`] answers it -- one refusal set for
-/// both tiers -- and this only carries the answer in this module's error type.
-pub fn lower_analyze(
-    statement: &tidb_ast::Stmt,
-    default_schema: &str,
-) -> Result<Option<Vec<AnalyzeStatement>>, AnalyzeError> {
-    Ok(crate::analyze::lower_analyze(
-        statement,
-        default_schema,
-    )?)
-}
+pub use crate::analyze::{AnalyzeOptions, AnalyzeStatement, STATS_VERSION_2};
 
 /// Why one `ANALYZE TABLE` could not run on this tier.
 ///
@@ -469,11 +454,9 @@ mod tests {
                 &plan.indexes()[0]
             ));
             let schema = super::sampling::SamplingSchema::new(&table, &plan).unwrap();
-            let mut statement =
-                super::lower_analyze(&tidb_parser::parse("ANALYZE TABLE t").unwrap(), "test")
-                    .unwrap()
-                    .unwrap()
-                    .remove(0);
+            let mut statement = crate::analyze::AnalyzeStatement::session_vars();
+            statement.schema = "test".to_owned();
+            statement.table = "t".to_owned();
             statement.options.sample_rate = Some(1.0);
             let proto = RowSampleCollectorProto {
                 count: 4,

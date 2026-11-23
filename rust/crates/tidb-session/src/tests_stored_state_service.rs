@@ -81,6 +81,16 @@ impl DdlService for Unreached {
     }
 }
 
+impl crate::domain_services::AnalyzePlanService for Unreached {
+    fn get_predicate_columns(&self, _table_id: i64) -> Result<Vec<i64>, DriverError> {
+        unreachable!("a SET plans no ANALYZE")
+    }
+
+    fn analyze_version_matches(&self, _physical_id: i64, _table: &tidb_model::TableInfo, _version: i64) -> bool {
+        unreachable!("a SET plans no ANALYZE")
+    }
+}
+
 impl AccountService for Unreached {
     fn load_accounts(&self) -> Result<tidb_privilege::PrivilegeRegistry, DriverError> {
         unreachable!("a SET reads no account")
@@ -108,6 +118,7 @@ fn domain_with_sysvars(sysvars: FakeSysvars) -> DomainServices {
         stats: Arc::new(|_: &Session| -> Box<dyn StatsStatementService> {
             unreachable!("a SET changes no statistics")
         }),
+        analyze_plan: Arc::new(Unreached),
         domain: std::sync::Weak::new(),
     }
 }
@@ -178,12 +189,17 @@ mod analyze {
             Ok(())
         }
 
-        fn builds_column_task(&self, _statement: &AnalyzeStatement) -> bool {
-            true
-        }
-
-        fn execute(&self, statements: &[AnalyzeStatement]) -> Result<AnalyzeExecReport, DriverError> {
-            let tables = statements.iter().map(|statement| statement.table.as_str()).collect::<Vec<_>>();
+        fn execute(
+            &self,
+            plan: &tidb_planner::plan_builder::analyze::Analyze,
+            _vars: &AnalyzeStatement,
+        ) -> Result<AnalyzeExecReport, DriverError> {
+            let mut tables = plan
+                .col_tasks
+                .iter()
+                .map(|task| task.analyze_info.table_name.as_str())
+                .collect::<Vec<_>>();
+            tables.dedup();
             self.0
                 .borrow_mut()
                 .push(format!("execute {}", tables.join(",")));
@@ -204,10 +220,13 @@ mod analyze {
         }
     }
 
-    fn statements(sql: &str) -> Vec<AnalyzeStatement> {
-        tidb_executor::real_tikv_analyze::prepare_cluster_analyze(sql, "test")
-            .unwrap()
-            .unwrap()
+    /// The planner's `Analyze` for `sql`.
+    fn plan(session: &mut Session, sql: &str) -> tidb_planner::plan_builder::analyze::Analyze {
+        let stmt = tidb_parser::parse(sql).unwrap();
+        match session.compile_statement(&stmt).unwrap() {
+            crate::identity::CompiledExecutor::Analyze(plan, _) => *plan,
+            _ => panic!("{sql} plans an Analyze"),
+        }
     }
 
     /// Deltas are flushed before sampling, and one `AnalyzeExec` runs every
@@ -218,8 +237,9 @@ mod analyze {
         session.run("CREATE TABLE test.an1 (a INT)").unwrap();
         session.run("CREATE TABLE test.an2 (a INT)").unwrap();
         let service = Recording::default();
+        let planned = plan(&mut session, "ANALYZE TABLE an1, an2");
         let error = session
-            .run_analyze_statements(&statements("ANALYZE TABLE an1, an2"), &service)
+            .run_analyze_statements(&planned, None, &service)
             .expect_err("the service's failure reaches the client");
         assert_eq!(error.to_mysql_error().message, "sampling failed");
         assert_eq!(*service.0.borrow(), ["flush 2", "execute an1,an2"]);
@@ -237,8 +257,9 @@ mod analyze {
             .run("INSERT INTO test.an_tmp VALUES (1), (2)")
             .unwrap();
         let service = Recording::default();
+        let planned = plan(&mut session, "ANALYZE TABLE an_tmp");
         let error = session
-            .run_analyze_statements(&statements("ANALYZE TABLE an_tmp"), &service)
+            .run_analyze_statements(&planned, None, &service)
             .expect_err("the service's failure reaches the client");
         assert_eq!(error.to_mysql_error().message, "sampling failed");
         // Nothing to flush: an empty target list would mean every table.
@@ -257,8 +278,9 @@ mod analyze {
             )
             .unwrap();
         let service = Recording::default();
+        let planned = plan(&mut session, "ANALYZE TABLE an_pt PARTITION p0");
         let _ = session
-            .run_analyze_statements(&statements("ANALYZE TABLE an_pt PARTITION p0"), &service);
+            .run_analyze_statements(&planned, None, &service);
         assert_eq!(*service.0.borrow(), ["flush 3", "execute an_pt"]);
     }
 }

@@ -298,7 +298,7 @@ pub enum Plan {
     /// Go `SplitRegion` / `SplitIndexRegion`.
     SplitRegion(Box<tidb_ast::SplitRegionStmt>),
     /// Go `Analyze`.
-    Analyze(Box<tidb_ast::AdminStmt>),
+    Analyze(Box<crate::plan_builder::analyze::Analyze>),
     /// Go `RecommendIndexPlan`.
     RecommendIndex(Box<tidb_ast::RecommendIndexStmt>),
     /// Go `CompactTable` (`buildCompactTable`), over the preprocessed
