@@ -728,6 +728,10 @@ impl Session {
         if tidb_executor::mem_table_retrieval::MemTableRetriever::serves(&retriever, read) {
             return Some(std::sync::Arc::new(retriever));
         }
+        let retriever = crate::perfschema_retriever::PerfSchemaRetriever::new(self);
+        if tidb_executor::mem_table_retrieval::MemTableRetriever::serves(&retriever, read) {
+            return Some(std::sync::Arc::new(retriever));
+        }
         let retriever = crate::account_state::VariablesRetriever::new(self.variables_state());
         if tidb_executor::mem_table_retrieval::MemTableRetriever::serves(&retriever, read) {
             return Some(std::sync::Arc::new(retriever));

@@ -402,16 +402,12 @@ impl MemTableRetriever for VariablesRetriever {
         if read.is_cluster_scan {
             return false;
         }
-        (read
+        read
             .db_name
             .go_lower_eq(tidb_infoschema::infoschema_meta::INFORMATION_SCHEMA)
             && ["VARIABLES_INFO", "PROFILING"]
                 .iter()
-                .any(|name| read.table_name.go_lower_eq(name)))
-            || (read
-                .db_name
-                .go_lower_eq(tidb_infoschema_perfschema::PERFORMANCE_SCHEMA)
-                && read.table_name.go_lower_eq("SESSION_VARIABLES"))
+                .any(|name| read.table_name.go_lower_eq(name))
     }
 
     fn retrieve(
@@ -422,9 +418,6 @@ impl MemTableRetriever for VariablesRetriever {
     ) -> Result<Vec<Vec<Datum>>, DriverError> {
         if read.table_name.go_lower_eq("VARIABLES_INFO") {
             return Ok(self.state.set_data_for_variables_info());
-        }
-        if read.table_name.go_lower_eq("SESSION_VARIABLES") {
-            return self.state.get_data_from_session_variables();
         }
         Ok(tidb_executor::memtable_retrievers::set_data_for_pseudo_profiling(
             tidb_vardef::option_values::tidb_opt_on(

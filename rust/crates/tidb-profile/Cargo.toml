@@ -1,0 +1,20 @@
+[package]
+name = "tidb-profile"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TiDB util/profile: Go pkg/util/profile (Rust rewrite), the profile flamegraph rows of the performance_schema profile tables."
+
+[lints]
+workspace = true
+
+[dependencies]
+flate2 = "1"
+prost.workspace = true
+tidb-cpuprofile = { path = "../tidb-cpuprofile" }
+tidb-datatype = { path = "../tidb-datatype" }
+tidb-goruntime = { path = "../tidb-goruntime" }
+tidb-proto = { path = "../tidb-proto" }
+tidb-texttree = { path = "../tidb-texttree" }

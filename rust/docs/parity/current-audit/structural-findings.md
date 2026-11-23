@@ -5,7 +5,7 @@ Re-audited against the tree on 2026-11-23; the [JSON register](structural-findin
 rows. A repaired finding is removed, not kept. The method and the live probes behind the rows
 are in [structural-audit-2026-11-23.md](structural-audit-2026-11-23.md).
 
-**12 unresolved: 12 open, 0 partial.**
+**11 unresolved: 11 open, 0 partial.**
 
 A row states the remaining gap only.
 
@@ -23,7 +23,6 @@ A row states the remaining gap only.
 
 | ID | Status | Remaining gap | Go owner |
 | --- | --- | --- | --- |
-| T02 | open | `performance_schema` virtual tables return no rows: `session_connect_attrs`, `session_account_connect_attrs`, the `tidb_profile_*` tables, and the `tikv_profile_cpu` / `pd_profile_*` remote profiles. Go `perfSchemaTable.getRows` fills them (Go answers 3 connect attributes and non-empty goroutine / memory profiles). Rust: `tidb-session/src/account_state.rs` serves only `session_variables`; no port of `getRows`, `GetDataFromSessionConnectAttrs`, `profile.Collector`, `dataForRemoteProfile`. | `pkg/infoschema/perfschema/tables.go`, `pkg/infoschema/tables.go` `GetDataFromSessionConnectAttrs`, `pkg/util/profile` |
 
 ### Privileges, wire and administration
 

@@ -2,8 +2,8 @@
   "date": "2026-11-23",
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports, from the 2026-11-23 symbol-level re-audit (method in structural-audit-2026-11-23.md).",
   "counts": {
-    "unresolved": 12,
-    "open": 12,
+    "unresolved": 11,
+    "open": 11,
     "partial": 0
   },
   "findings": [
@@ -14,14 +14,6 @@
       "finding": "Pipelined DML is not ported: `tidb_dml_type='bulk'` runs a standard transaction; Go's `usePipelinedDmlOrWarn` (fallback warnings for temporary tables, `tidb_constraint_check_in_place=ON`, explicit transactions, ...) and the pipelined transaction are missing. A Go server reports `pipelined:true` in `tidb_last_txn_info` after a bulk INSERT; this one reports `false` and no warnings.",
       "rust_evidence": "`tidb-session/src/lib.rs` hard-codes `\"pipelined\":false`; no `use_pipelined_dml_or_warn`.",
       "go_owner": "`pkg/session/session.go` `usePipelinedDmlOrWarn`, `NewTxn` pipelined path; `pkg/store/driver/txn`"
-    },
-    {
-      "id": "T02",
-      "group": "System tables and startup",
-      "status": "open",
-      "finding": "`performance_schema` virtual tables return no rows: `session_connect_attrs`, `session_account_connect_attrs`, the `tidb_profile_*` tables, and the `tikv_profile_cpu` / `pd_profile_*` remote profiles. Go `perfSchemaTable.getRows` fills them (Go answers 3 connect attributes and non-empty goroutine / memory profiles).",
-      "rust_evidence": "`tidb-session/src/account_state.rs` serves only `session_variables`; no port of `getRows`, `GetDataFromSessionConnectAttrs`, `profile.Collector`, `dataForRemoteProfile`.",
-      "go_owner": "`pkg/infoschema/perfschema/tables.go`, `pkg/infoschema/tables.go` `GetDataFromSessionConnectAttrs`, `pkg/util/profile`"
     },
     {
       "id": "T03",
@@ -104,7 +96,7 @@
       "go_owner": "`pkg/privilege/privileges/privileges.go`"
     }
   ],
-  "unresolved": 12,
-  "open": 12,
+  "unresolved": 11,
+  "open": 11,
   "partial": 0
 }

@@ -249,6 +249,13 @@ struct ProcessEntry {
     statement_holds: usize,
     /// Go `clientConn.capability`.
     client_capability: u32,
+    /// Go `clientConn.peerHost`: the client's host without its port.
+    peer_host: String,
+    /// Go `clientConn.attrs`: the handshake's connection attributes.
+    conn_attrs: std::collections::BTreeMap<String, String>,
+    /// Go `clientConn.getTLSState()` as `GetStatusVars` names it: the
+    /// negotiated cipher suite and protocol version, for a TLS connection.
+    tls_status: Option<(String, String)>,
 }
 
 type SharedProcessEntry = Arc<Mutex<ProcessEntry>>;
@@ -601,6 +608,9 @@ impl ProcessRegistry {
             restricted: false,
             statement_holds: 0,
             client_capability: 0,
+            peer_host: String::new(),
+            conn_attrs: std::collections::BTreeMap::new(),
+            tls_status: None,
         }));
         self.lock().insert(id, Arc::clone(&entry));
         ProcessGuard {
@@ -900,6 +910,21 @@ impl ProcessRegistry {
         self.with_entry(id, |entry| entry.client_capability = capability);
     }
 
+    /// Go `clientConn.peerHost`.
+    pub fn set_peer_host(&self, id: u64, peer_host: String) {
+        self.with_entry(id, |entry| entry.peer_host = peer_host);
+    }
+
+    /// Go `clientConn.attrs`, set from the handshake response.
+    pub fn set_conn_attrs(&self, id: u64, attrs: std::collections::BTreeMap<String, String>) {
+        self.with_entry(id, |entry| entry.conn_attrs = attrs);
+    }
+
+    /// Go `clientConn.tlsConn`'s state: the cipher suite and version names.
+    pub fn set_tls_status(&self, id: u64, cipher: String, version: String) {
+        self.with_entry(id, |entry| entry.tls_status = Some((cipher, version)));
+    }
+
     /// [`Self::kill`] with the signal the statement observes (Go server
     /// `Kill`'s `killQuery`).
     fn kill_with_signal(
@@ -1122,6 +1147,41 @@ impl SessionManager for ProcessRegistry {
                     .client_capability
             })
             .collect()
+    }
+
+    /// Go `Server.GetConAttrs`: every client's attributes by process id, only
+    /// `user`'s (user name and peer host) when given.
+    fn get_con_attrs(&self, user: Option<(&str, &str)>) -> HashMap<u64, std::collections::BTreeMap<String, String>> {
+        let mut rs = HashMap::new();
+        for (id, entry) in self.client_entry_snapshot() {
+            let entry = entry.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            if let Some((username, hostname)) = user {
+                if username != entry.user || hostname != entry.peer_host {
+                    continue;
+                }
+            }
+            rs.insert(id, entry.conn_attrs.clone());
+        }
+        rs
+    }
+
+    /// Go `Server.GetStatusVars`: each TLS client's `Ssl_cipher` and
+    /// `Ssl_version`.
+    fn get_status_vars(&self) -> HashMap<u64, std::collections::BTreeMap<String, String>> {
+        let mut rs = HashMap::new();
+        for (id, entry) in self.client_entry_snapshot() {
+            let entry = entry.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            if let Some((cipher, version)) = &entry.tls_status {
+                rs.insert(
+                    id,
+                    std::collections::BTreeMap::from([
+                        ("Ssl_cipher".to_owned(), cipher.clone()),
+                        ("Ssl_version".to_owned(), version.clone()),
+                    ]),
+                );
+            }
+        }
+        rs
     }
 }
 
@@ -1370,6 +1430,33 @@ pub fn normalize_statement_digest(sql: &str) -> (String, tidb_parser::Digest) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Go `Server.GetConAttrs` and `GetStatusVars`: every client, or the
+    /// clients of one user name and peer host.
+    #[test]
+    fn con_attrs_and_status_vars_by_client() {
+        let registry = ProcessRegistry::default();
+        let _a = registry.register(1, "alice".to_owned(), "10.0.0.1:4001".to_owned(), String::new(), None);
+        let _b = registry.register(2, "alice".to_owned(), "10.0.0.2:4002".to_owned(), String::new(), None);
+        registry.set_peer_host(1, "10.0.0.1".to_owned());
+        registry.set_peer_host(2, "10.0.0.2".to_owned());
+        let _internal = registry.register_internal(3, String::new());
+        registry.set_conn_attrs(1, std::collections::BTreeMap::from([("_client_name".to_owned(), "a".to_owned())]));
+        registry.set_conn_attrs(2, std::collections::BTreeMap::from([("_client_name".to_owned(), "b".to_owned())]));
+        registry.set_tls_status(2, "TLS_AES_128_GCM_SHA256".to_owned(), "TLSv1.3".to_owned());
+
+        let all = registry.get_con_attrs(None);
+        assert_eq!(all.keys().copied().collect::<std::collections::BTreeSet<_>>(), [1, 2].into());
+        let mine = registry.get_con_attrs(Some(("alice", "10.0.0.2")));
+        assert_eq!(mine.len(), 1);
+        assert_eq!(mine[&2]["_client_name"], "b");
+        assert!(registry.get_con_attrs(Some(("bob", "10.0.0.2"))).is_empty());
+
+        let status = registry.get_status_vars();
+        assert_eq!(status.len(), 1);
+        assert_eq!(status[&2]["Ssl_version"], "TLSv1.3");
+        assert_eq!(status[&2]["Ssl_cipher"], "TLS_AES_128_GCM_SHA256");
+    }
 
     /// Go `ProcessInfo.StmtCtx.IsDDLJobInQueue`: the process list shows the
     /// flag the session's statement context sets on its shared cell.

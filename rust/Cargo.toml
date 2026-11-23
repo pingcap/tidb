@@ -130,6 +130,7 @@ members = [
     "crates/tidb-topsql-reporter-metrics",
     "crates/tidb-topsql-state",
     "crates/tidb-cpuprofile",
+    "crates/tidb-profile",
     "crates/tidb-topsql",
     "crates/tidb-topsql-collector",
     "crates/tidb-topsql-stmtstats",

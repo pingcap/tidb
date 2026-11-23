@@ -23,6 +23,8 @@
 //! (`session_variables`, `events_statements_summary_by_digest`, ...) get
 //! their rows per statement, as the `information_schema` tables do.
 
+pub mod tables;
+
 use tidb_infoschema::SessionExtendedInfoSchema;
 use tidb_hack::GoCaseCompare;
 

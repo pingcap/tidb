@@ -1382,6 +1382,7 @@ mod session_telemetry;
 mod identity;
 pub mod load_stats_arm;
 mod account_state;
+mod perfschema_retriever;
 use tidb_executor::compiler::non_prepared_plan_cache;
 mod nontransactional;
 pub use nontransactional::{NonTransactionalDml, NonTransactionalInput, NonTransactionalStep};
@@ -1541,6 +1542,10 @@ impl Session {
         &mut self,
         attributes: std::collections::BTreeMap<String, String>,
     ) {
+        // Go `clientConn.attrs`, which `Server.GetConAttrs` reads.
+        if let Some(process) = &self.process {
+            process.registry().set_conn_attrs(process.id(), attributes.clone());
+        }
         self.connection_attributes = attributes;
     }
 

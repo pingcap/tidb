@@ -178,4 +178,16 @@ pub trait SessionManager: Send + Sync {
     fn get_client_capability_list(&self) -> Vec<u32> {
         Vec::new()
     }
+
+    /// Go `Manager.GetConAttrs`: the connection attributes of every client by
+    /// process id, or only of `user` (Go `auth.UserIdentity`'s `Username` and
+    /// `Hostname`) when given.
+    fn get_con_attrs(&self, _user: Option<(&str, &str)>) -> HashMap<u64, std::collections::BTreeMap<String, String>> {
+        HashMap::new()
+    }
+
+    /// Go `Manager.GetStatusVars`: the per-connection status variables.
+    fn get_status_vars(&self) -> HashMap<u64, std::collections::BTreeMap<String, String>> {
+        HashMap::new()
+    }
 }

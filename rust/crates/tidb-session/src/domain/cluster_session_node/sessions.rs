@@ -180,7 +180,7 @@ impl DomainSessions for Domain {
             format!("{}@{}", identity.username(), context.peer_addr.host()),
         );
         session.set_client_capability(context.client_capability);
-        session.set_tls_state(context.tls_state);
+        session.set_tls_state(context.tls_state.clone());
         session.set_auth_plugin(identity.auth_plugin());
         session.set_compression_level(context.compression_level);
         session.set_compression_algorithm(context.compression_algorithm);
@@ -214,6 +214,16 @@ impl DomainSessions for Domain {
         // of every client with a session.
         self.processes
             .set_client_capability(context.connection_id, context.client_capability);
+        // Go `Server.GetConAttrs` matches `clientConn.peerHost`.
+        self.processes.set_peer_host(context.connection_id, context.peer_addr.host());
+        // Go `Server.GetStatusVars` reads `clientConn.getTLSState()`.
+        if let Some(state) = &context.tls_state {
+            self.processes.set_tls_status(
+                context.connection_id,
+                tidb_tls::cipher_suite_name(state.cipher_suite).to_owned(),
+                tidb_tls::version_name(state.version),
+            );
+        }
         self.attach_connection(session, context.connection_id, guard);
         Ok(opened)
     }

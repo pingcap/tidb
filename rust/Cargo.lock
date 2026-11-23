@@ -7701,15 +7701,27 @@ dependencies = [
 name = "tidb-infoschema-perfschema"
 version = "0.0.0"
 dependencies = [
+ "reqwest 0.13.4",
  "tidb-ast",
+ "tidb-config",
+ "tidb-cpuprofile",
+ "tidb-datatype",
  "tidb-ddl-build",
+ "tidb-domain",
  "tidb-driver-error",
+ "tidb-failpoint",
  "tidb-hack",
  "tidb-infoschema",
  "tidb-kv",
+ "tidb-log",
+ "tidb-logutil",
  "tidb-model",
  "tidb-mysql",
  "tidb-parser",
+ "tidb-pd-client",
+ "tidb-profile",
+ "tidb-sessmgr",
+ "tidb-store-driver-txn",
  "tidb-table",
  "tidb-util",
 ]
@@ -9150,6 +9162,19 @@ dependencies = [
  "tidb-log",
  "tidb-logutil",
  "tidb-privilege-conn",
+]
+
+[[package]]
+name = "tidb-profile"
+version = "0.0.0"
+dependencies = [
+ "flate2",
+ "prost 0.14.4",
+ "tidb-cpuprofile",
+ "tidb-datatype",
+ "tidb-goruntime",
+ "tidb-proto",
+ "tidb-texttree",
 ]
 
 [[package]]
