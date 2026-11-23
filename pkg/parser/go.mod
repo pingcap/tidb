@@ -11,7 +11,7 @@ require (
 	github.com/stretchr/testify v1.8.4
 	go.uber.org/goleak v1.3.0
 	go.uber.org/zap v1.27.0
-	golang.org/x/text v0.39.0
+	golang.org/x/text v0.41.0
 	modernc.org/mathutil v1.6.0
 	modernc.org/parser v1.1.0
 	modernc.org/sortutil v1.2.0

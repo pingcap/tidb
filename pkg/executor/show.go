@@ -1083,12 +1083,9 @@ func getDefaultCollate(charsetName string) string {
 	return ch.DefaultCollation
 }
 
-// ConstructResultOfShowCreateTable constructs the result for show create table.
-func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.TableInfo, allocators autoid.Allocators, buf *bytes.Buffer) (err error) {
-	return constructResultOfShowCreateTable(ctx, nil, tableInfo, allocators, buf)
-}
-
-func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *ast.CIStr, tableInfo *model.TableInfo, allocators autoid.Allocators, buf *bytes.Buffer) (err error) {
+// ConstructResultOfShowCreateTable renders SHOW CREATE TABLE in the named database,
+// including schema qualifiers for foreign keys referencing another database.
+func ConstructResultOfShowCreateTable(ctx sessionctx.Context, dbName ast.CIStr, tableInfo *model.TableInfo, allocators autoid.Allocators, buf *bytes.Buffer) (err error) {
 	if tableInfo.IsView() {
 		fetchShowCreateTable4View(ctx, tableInfo, buf)
 		return nil
@@ -1245,7 +1242,7 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *ast.CIStr,
 
 	// consider hypo-indexes
 	hypoIndexes := ctx.GetSessionVars().HypoIndexes
-	if hypoIndexes != nil && dbName != nil {
+	if hypoIndexes != nil {
 		schemaName := dbName.L
 		tblName := tableInfo.Name.L
 		if hypoIndexes[schemaName] != nil && hypoIndexes[schemaName][tblName] != nil {
@@ -1340,7 +1337,7 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *ast.CIStr,
 			colNames = append(colNames, stringutil.Escape(col.O, sqlMode))
 		}
 		fmt.Fprintf(buf, "(%s)", strings.Join(colNames, ","))
-		if fk.RefSchema.L != "" && dbName != nil && fk.RefSchema.L != dbName.L {
+		if fk.RefSchema.L != "" && fk.RefSchema.L != dbName.L {
 			fmt.Fprintf(buf, " REFERENCES %s.%s ", stringutil.Escape(fk.RefSchema.O, sqlMode), stringutil.Escape(fk.RefTable.O, sqlMode))
 		} else {
 			fmt.Fprintf(buf, " REFERENCES %s ", stringutil.Escape(fk.RefTable.O, sqlMode))
@@ -1701,7 +1698,7 @@ func (e *ShowExec) fetchShowCreateTable() error {
 	tableInfo := tb.Meta()
 	var buf bytes.Buffer
 	// TODO: let the result more like MySQL.
-	if err = constructResultOfShowCreateTable(e.Ctx(), &e.DBName, tableInfo, tb.Allocators(e.Ctx().GetTableCtx()), &buf); err != nil {
+	if err = ConstructResultOfShowCreateTable(e.Ctx(), e.DBName, tableInfo, tb.Allocators(e.Ctx().GetTableCtx()), &buf); err != nil {
 		return err
 	}
 	if tableInfo.IsView() {
@@ -2533,7 +2530,7 @@ func (e *ShowExec) fetchShowSessionStates(ctx context.Context) error {
 	if user := e.Ctx().GetSessionVars().User; user != nil {
 		// The token may be leaked without secure transport, but the cloud can ensure security in some situations,
 		// so we don't enforce secure connections.
-		if token, err = sessionstates.CreateSessionToken(user.Username); err != nil {
+		if token, err = sessionstates.CreateSessionToken(user.AuthUsername, user.AuthHostname); err != nil {
 			// Some users deploy TiProxy after the cluster is running and configuring signing certs will restart TiDB.
 			// The users may don't need connection migration, e.g. they only want traffic replay, which requires session states
 			// but not session tokens. So we don't return errors, just log it.

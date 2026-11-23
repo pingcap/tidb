@@ -4,6 +4,10 @@
 
 set -eux
 
+# Verify both certificate chains before testing TLS connections.
+openssl verify -CAfile "$DUMPLING_TEST_DIR/ca.pem" -purpose sslserver "$DUMPLING_TEST_DIR/tidb.pem"
+openssl verify -CAfile "$DUMPLING_TEST_DIR/ca.pem" -purpose sslclient "$DUMPLING_TEST_DIR/dumpling.pem"
+
 WITH_TLS="--ssl-ca=$DUMPLING_TEST_DIR/ca.pem --ssl-cert=$DUMPLING_TEST_DIR/dumpling.pem --ssl-key=$DUMPLING_TEST_DIR/dumpling.key"
 
 # create a user which can only connect using the "dumpling" cert.
