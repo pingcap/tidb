@@ -58,7 +58,7 @@ func TestSubscriberHandlesMaterializedViewMetadataEvents(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			h := ddl.NewDDLHandler(nil, nil)
+			h := ddl.NewDDLHandler()
 			require.NoError(t, h.HandleDDLEvent(context.Background(), nil, tt.event))
 		})
 	}

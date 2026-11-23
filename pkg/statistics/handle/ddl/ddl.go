@@ -34,22 +34,15 @@ import (
 )
 
 type ddlHandlerImpl struct {
-	ddlEventCh   chan *notifier.SchemaChangeEvent
-	statsWriter  types.StatsReadWriter
-	statsHandler types.StatsHandle
-	sub          *subscriber
+	ddlEventCh chan *notifier.SchemaChangeEvent
+	sub        *subscriber
 }
 
 // NewDDLHandler creates a new ddl handler.
-func NewDDLHandler(
-	statsWriter types.StatsReadWriter,
-	statsHandler types.StatsHandle,
-) types.DDL {
+func NewDDLHandler() types.DDL {
 	return &ddlHandlerImpl{
-		ddlEventCh:   make(chan *notifier.SchemaChangeEvent, 1000),
-		statsWriter:  statsWriter,
-		statsHandler: statsHandler,
-		sub:          newSubscriber(),
+		ddlEventCh: make(chan *notifier.SchemaChangeEvent, 1000),
+		sub:        newSubscriber(),
 	}
 }
 

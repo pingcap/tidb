@@ -161,11 +161,8 @@ func NewHandle(
 		StatsUsage:                 usage.NewStatsUsageImpl(statsPool, leaseHolder, statsLock, tableStats),
 		StatsSyncLoad:              syncload.NewStatsSyncLoad(statsPool, leaseHolder, tables, statsCache),
 		StatsAnalyze:               statsAnalyze,
+		DDL:                        ddl.NewDDLHandler(),
 	}
-	handle.DDL = ddl.NewDDLHandler(
-		handle.StatsReadWriter,
-		handle,
-	)
 	if ddlNotifier != nil {
 		// In test environments, we use a channel-based approach to handle DDL events.
 		// This maintains compatibility with existing test cases that expect events to be delivered through channels.
