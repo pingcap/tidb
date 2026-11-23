@@ -17,6 +17,7 @@ package executor
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -34,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/table/tables"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/memory"
@@ -148,6 +150,172 @@ func TestNestedLoopApply(t *testing.T) {
 			obtainedResult := fmt.Sprintf("%v %v", row.GetInt64(0), row.GetInt64(1))
 			require.Equal(t, correctResult, obtainedResult)
 			rowIdx++
+		}
+	}
+}
+
+func TestParallelApplyOuterMemory(t *testing.T) {
+	const chunkSize, rowCount = 8, 256
+	ctx := context.Background()
+	for _, keepOrder := range []bool{false, true} {
+		t.Run(fmt.Sprintf("ordered=%t/multiple output chunks", keepOrder), func(t *testing.T) {
+			sctx := mock.NewContext()
+			sctx.GetSessionVars().InitChunkSize, sctx.GetSessionVars().MaxChunkSize = chunkSize, chunkSize
+			wideCol := &expression.Column{Index: 0, RetType: types.NewFieldType(mysql.TypeVarString)}
+			innerCol := &expression.Column{Index: 1, RetType: types.NewFieldType(mysql.TypeLonglong)}
+			wideValue := strings.Repeat("x", 4096)
+			outer := testutil.BuildMockDataSource(testutil.MockDataSourceParameters{
+				Ctx: sctx, DataSchema: expression.NewSchema(wideCol), Rows: 1,
+				GenDataFunc: func(int, *types.FieldType) any { return wideValue },
+			})
+			outer.PrepareChunks()
+			e := &ParallelNestedLoopApplyExec{
+				BaseExecutor: exec.NewBaseExecutor(sctx, expression.NewSchema(wideCol, innerCol), 1),
+				outerExec:    outer, concurrency: 2, keepOrder: keepOrder,
+			}
+			for range e.concurrency {
+				inner := testutil.BuildMockDataSource(testutil.MockDataSourceParameters{
+					Ctx: sctx, DataSchema: expression.NewSchema(innerCol), Rows: rowCount,
+					GenDataFunc: func(row int, _ *types.FieldType) any { return int64(row) },
+				})
+				inner.PrepareChunks()
+				e.innerExecs = append(e.innerExecs, inner)
+				e.innerFilter = append(e.innerFilter, nil)
+				e.corCols = append(e.corCols, nil)
+				e.joiners = append(e.joiners, join.NewJoiner(sctx, base.InnerJoin, false, nil, nil,
+					exec.RetTypes(outer), exec.RetTypes(inner), nil, false))
+			}
+			require.NoError(t, e.Open(ctx))
+			t.Cleanup(func() { require.NoError(t, e.Close()) })
+			outerTracker := e.memTracker.SearchTrackerWithoutLock(memory.LabelForOuterList)
+			req := exec.NewFirstChunk(e)
+			rows := 0
+			for {
+				require.NoError(t, e.Next(ctx, req))
+				if req.NumRows() == 0 {
+					break
+				}
+				if rows == 0 && !keepOrder {
+					require.Positive(t, outerTracker.BytesConsumed(), "unfinished outer row must remain accounted")
+				}
+				for i := range req.NumRows() {
+					require.Equal(t, wideValue, req.GetRow(i).GetString(0))
+					require.EqualValues(t, rows, req.GetRow(i).GetInt64(1))
+					rows++
+				}
+			}
+			require.Equal(t, rowCount, rows)
+			require.Zero(t, outerTracker.BytesConsumed(), "EOF must release outer input")
+		})
+		for _, useCache := range []bool{false, true} {
+			for _, mode := range []string{"drain", "early close", "filtered", "mismatch", "memory quota", "cache panic"} {
+				t.Run(fmt.Sprintf("ordered=%t/cache=%t/%s", keepOrder, useCache, mode), func(t *testing.T) {
+					if mode == "cache panic" && !useCache {
+						return
+					}
+					sctx := mock.NewContext()
+					vars := sctx.GetSessionVars()
+					vars.InitChunkSize, vars.MaxChunkSize = chunkSize, chunkSize
+					idCol := &expression.Column{Index: 0, RetType: types.NewFieldType(mysql.TypeLonglong)}
+					wideCol := &expression.Column{Index: 1, RetType: types.NewFieldType(mysql.TypeVarString)}
+					outer := testutil.BuildMockDataSource(testutil.MockDataSourceParameters{
+						Ctx: sctx, DataSchema: expression.NewSchema(idCol, wideCol), Rows: rowCount,
+						GenDataFunc: func(row int, typ *types.FieldType) any {
+							if typ.GetType() == mysql.TypeLonglong {
+								return int64(row)
+							}
+							return strings.Repeat(fmt.Sprint(row%4), 4096)
+						},
+					})
+					outer.PrepareChunks()
+					e := &ParallelNestedLoopApplyExec{
+						BaseExecutor: exec.NewBaseExecutor(sctx, expression.NewSchema(idCol), 1),
+						outerExec:    outer, concurrency: 3, keepOrder: keepOrder, useCache: useCache,
+					}
+					joinType := base.SemiJoin
+					if mode == "mismatch" {
+						e.outer = true
+						joinType = base.AntiSemiJoin
+					}
+					if mode == "filtered" || mode == "mismatch" {
+						e.outerFilter = expression.CNFExprs{expression.NewZero()}
+					}
+					for range e.concurrency {
+						dual := &TableDualExec{
+							BaseExecutorV2: exec.NewBaseExecutorV2(vars, expression.NewSchema(), 2),
+							numDualRows:    1,
+						}
+						corCol := &expression.CorrelatedColumn{Column: *wideCol, Data: new(types.Datum)}
+						innerCol := &expression.Column{Index: 2, RetType: wideCol.RetType}
+						inner := &ProjectionExec{
+							projectionExecutorContext: newProjectionExecutorContext(sctx),
+							BaseExecutorV2:            exec.NewBaseExecutorV2(vars, expression.NewSchema(innerCol), 3, dual),
+							evaluatorSuit:             expression.NewEvaluatorSuite([]expression.Expression{corCol}, false),
+						}
+						e.innerExecs = append(e.innerExecs, inner)
+						e.innerFilter = append(e.innerFilter, nil)
+						e.corCols = append(e.corCols, []*expression.CorrelatedColumn{corCol})
+						condition := expression.NewFunctionInternal(sctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), wideCol, innerCol)
+						e.joiners = append(e.joiners, join.NewJoiner(sctx, joinType, false, nil, []expression.Expression{condition},
+							exec.RetTypes(outer), exec.RetTypes(inner), [][]int{{0}, {}}, false))
+					}
+					require.NoError(t, e.Open(ctx))
+					t.Cleanup(func() { require.NoError(t, e.Close()) })
+					outerTracker := e.memTracker.SearchTrackerWithoutLock(memory.LabelForOuterList)
+					require.NotNil(t, outerTracker)
+					maxOuterBytes := int64(e.concurrency+1) * outer.GenData[0].MemoryUsage()
+					req := exec.NewFirstChunk(e)
+					if mode == "memory quota" || mode == "cache panic" {
+						if mode == "memory quota" {
+							outerTracker.SetBytesLimit(1)
+							outerTracker.SetActionOnExceed(&memory.PanicOnExceed{Killer: &vars.SQLKiller})
+						} else {
+							testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/parallelApplyGetCachePanic", "panic")
+						}
+						require.Error(t, e.Next(ctx, req))
+						require.NoError(t, e.Close())
+						require.Zero(t, outerTracker.BytesConsumed(), "worker failure must release outer input")
+						return
+					}
+					seen := make(map[int64]bool)
+					for {
+						require.NoError(t, e.Next(ctx, req))
+						if req.NumRows() == 0 {
+							break
+						}
+						for i := range req.NumRows() {
+							id := req.GetRow(i).GetInt64(0)
+							require.False(t, seen[id], "duplicate outer row %d", id)
+							if keepOrder {
+								require.EqualValues(t, len(seen), id)
+							}
+							seen[id] = true
+						}
+						if mode == "early close" {
+							break
+						}
+					}
+					if mode == "drain" || mode == "mismatch" {
+						require.Len(t, seen, rowCount)
+					} else if mode == "filtered" {
+						require.Empty(t, seen)
+					}
+					if mode != "early close" {
+						require.Zero(t, outerTracker.BytesConsumed(), "EOF must release outer input")
+					}
+					if mode == "drain" && useCache {
+						require.Positive(t, e.cacheHitCounter)
+					}
+					require.NoError(t, e.Close())
+					require.LessOrEqual(t, outerTracker.MaxConsumed(), maxOuterBytes,
+						"completed outer chunks must not accumulate")
+					require.Zero(t, outerTracker.BytesConsumed(), "Close must release outer input")
+					for i := range e.concurrency {
+						require.Nil(t, e.outerRow[i])
+						require.Equal(t, types.Datum{}, *e.corCols[i][0].Data)
+					}
+				})
+			}
 		}
 	}
 }
