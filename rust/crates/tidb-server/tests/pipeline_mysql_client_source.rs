@@ -3454,6 +3454,13 @@ fn a_connections_statements_reuse_each_others_chunks_like_go() {
     let mut client = TcpStream::connect(address).unwrap();
     let mut reader = PacketReader::new(client.try_clone().unwrap());
     authenticate(&mut client, &mut reader);
+    // A parallel HashAgg's peak is one group higher when a final worker
+    // charges a group before the partial worker releases its chunk (the same
+    // goroutine race in Go), so the aggregation runs unparallel (Go
+    // `buildHashAgg`: both concurrencies 1); the figures are Go's for that,
+    // from the same statement loop.
+    run_write(&mut client, &mut reader, "SET tidb_hashagg_partial_concurrency = 1");
+    run_write(&mut client, &mut reader, "SET tidb_hashagg_final_concurrency = 1");
     run_write(&mut client, &mut reader, "CREATE TABLE ch (a VARCHAR(10) PRIMARY KEY CLUSTERED, b INT, c INT, KEY(b))");
     run_write(
         &mut client,
@@ -3466,8 +3473,8 @@ fn a_connections_statements_reuse_each_others_chunks_like_go() {
     for (sql, operator, memory) in [
         ("SELECT * FROM ch USE INDEX(b) WHERE b > 1", "IndexLookUp_7", "3.18 KB"),
         ("SELECT * FROM ch USE INDEX(b) WHERE b > 1 ORDER BY b", "IndexLookUp_14", "3.54 KB"),
-        ("SELECT count(c) FROM t USE INDEX(b) WHERE b > 1", "HashAgg_13", "13.5 KB"),
-        ("SELECT count(c) FROM t USE INDEX(b) WHERE b > 1", "HashAgg_13", "21.3 KB"),
+        ("SELECT count(c) FROM t USE INDEX(b) WHERE b > 1", "HashAgg_13", "1012 Bytes"),
+        ("SELECT count(c) FROM t USE INDEX(b) WHERE b > 1", "HashAgg_13", "1012 Bytes"),
         ("SELECT * FROM t WHERE c > 2 LIMIT 3", "Limit_8", "N/A"),
         ("SELECT b, c FROM t USE INDEX(b) WHERE b > 1", "IndexLookUp_7", "14.1 KB"),
         ("SELECT * FROM t WHERE c > 2 LIMIT 3", "Limit_8", "N/A"),
@@ -3586,6 +3593,11 @@ fn a_plain_explain_and_a_show_write_through_pooled_chunks_like_go() {
         "USE w",
         "CREATE TABLE t (a INT, b VARCHAR(20), KEY(a))",
         "INSERT INTO t VALUES (1,'x'),(2,'yy'),(2,'zzz'),(3,'w')",
+        // The HashAggs run unparallel (both concurrencies 1): a parallel
+        // HashAgg's peak depends on whether its partial worker releases its
+        // chunk before a final worker charges a group, in Go as here.
+        "SET tidb_hashagg_partial_concurrency = 1",
+        "SET tidb_hashagg_final_concurrency = 1",
     ] {
         run_write(&mut client, &mut reader, sql);
     }
@@ -3598,10 +3610,10 @@ fn a_plain_explain_and_a_show_write_through_pooled_chunks_like_go() {
     };
     run_query(&mut client, &mut reader, "EXPLAIN SELECT /*+ hash_agg() */ a, group_concat(b) FROM t GROUP BY a");
     let sql = "SELECT /*+ hash_agg() */ a, group_concat(b) FROM t GROUP BY a";
-    assert_eq!(memory(&mut client, &mut reader, sql, "HashAgg_5"), "16.5 KB");
+    assert_eq!(memory(&mut client, &mut reader, sql, "HashAgg_5"), "2.31 KB");
     run_query(&mut client, &mut reader, "EXPLAIN FORMAT='brief' SELECT * FROM t WHERE a > 1 ORDER BY b");
     let sql = "SELECT /*+ hash_agg() */ b, count(a) FROM t GROUP BY b";
-    assert_eq!(memory(&mut client, &mut reader, sql, "HashAgg_9"), "16.9 KB");
+    assert_eq!(memory(&mut client, &mut reader, sql, "HashAgg_9"), "2.00 KB");
     run_query(&mut client, &mut reader, "SHOW COLUMNS FROM t");
     let sql = "SELECT * FROM t USE INDEX(a) WHERE a > 0";
     assert_eq!(memory(&mut client, &mut reader, sql, "IndexLookUp_7"), "2.10 KB");
@@ -3609,11 +3621,17 @@ fn a_plain_explain_and_a_show_write_through_pooled_chunks_like_go() {
     // handleNoDelayExecutor BEFORE the Explain record set takes its chunk.
     // One projection worker fixes the empty-output swap's allocation order.
     run_write(&mut client, &mut reader, "SET tidb_executor_concurrency=1");
-    assert_eq!(memory(&mut client, &mut reader, "UPDATE t SET b='changed' WHERE a=1", "Update_4"), "1.36 KB");
+    assert_eq!(memory(&mut client, &mut reader, "UPDATE t SET b='changed' WHERE a=1", "Update_4"), "1.61 KB");
     let sql = "SELECT /*+ hash_agg() */ b, count(a) FROM t GROUP BY b";
     assert_eq!(memory(&mut client, &mut reader, sql, "HashAgg_9"), "1.76 KB");
-    assert_eq!(memory(&mut client, &mut reader, "INSERT INTO t SELECT a+10,b FROM t", "Insert_1"), "1.58 KB");
-    assert_eq!(memory(&mut client, &mut reader, sql, "HashAgg_9"), "2.38 KB");
+    assert_eq!(memory(&mut client, &mut reader, "INSERT INTO t SELECT a+10,b FROM t", "Insert_1"), "1.83 KB");
+    // The aggregate reuses a string column an earlier EXPLAIN ANALYZE result
+    // grew, whose capacity follows the length of that result's timing text:
+    // Go's own allocator trace pops the same columns in the same order and
+    // reads 2.01 KB, or 2.38 KB when the column had grown to 896 bytes (13 of
+    // 48 Go runs under load). An unpooled INSERT source leaves 1.76 KB.
+    let after_insert = memory(&mut client, &mut reader, sql, "HashAgg_9");
+    assert!(matches!(after_insert.as_str(), "2.01 KB" | "2.38 KB"), "{after_insert}");
     run_query(&mut client, &mut reader, "TRACE SELECT * FROM t");
     assert_eq!(memory(&mut client, &mut reader, sql, "HashAgg_9"), "1.76 KB");
     let _ = std::fs::remove_dir_all(&base);
