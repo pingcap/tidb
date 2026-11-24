@@ -54,6 +54,8 @@ import (
 	semv2 "github.com/pingcap/tidb/pkg/util/sem/v2"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 )
 
 func TestCheckDBPrivilege(t *testing.T) {
@@ -2723,4 +2725,44 @@ func TestInsertValuesSubqueryChecksSelectPrivilege(t *testing.T) {
 	rootTk.MustExec(`GRANT SELECT ON insert_subq_secret.* TO 'insert_subq_low'@'%'`)
 	tk.MustExec(`INSERT INTO insert_subq_atk.exfil VALUES (2, (SELECT secret FROM insert_subq_secret.victim WHERE id = 1))`)
 	rootTk.MustQuery(`SELECT v FROM insert_subq_atk.exfil WHERE id = 2`).Check(testkit.Rows("topsecret"))
+}
+
+func TestDualPasswordFallbackLogAfterAccountChecks(t *testing.T) {
+	core, logs := observer.New(zap.InfoLevel)
+	defer privileges.SetDualPasswordFallbackLoggerForTest(zap.New(core))()
+	const msg = "authenticated using retained (secondary) password"
+	sandboxMode := vardef.IsSandBoxModeEnabled.Load()
+	defer vardef.IsSandBoxModeEnabled.Store(sandboxMode)
+	vardef.IsSandBoxModeEnabled.Store(false)
+
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("CREATE USER dpfallbacklog IDENTIFIED WITH caching_sha2_password BY 'p1'")
+	tk.MustExec("ALTER USER dpfallbacklog IDENTIFIED BY 'p2' RETAIN CURRENT PASSWORD")
+	login := func(password string) error {
+		sub := testkit.NewTestKit(t, store)
+		return sub.Session().Auth(&auth.UserIdentity{Username: "dpfallbacklog", Hostname: "%"}, []byte(password), nil, nil)
+	}
+
+	// A locked account is denied after the retained password matched, so the
+	// login must not be reported as authenticated.
+	tk.MustExec("ALTER USER dpfallbacklog ACCOUNT LOCK")
+	require.Error(t, login("p1"))
+	require.Zero(t, logs.FilterMessage(msg).Len())
+
+	tk.MustExec("ALTER USER dpfallbacklog ACCOUNT UNLOCK")
+	require.NoError(t, login("p1"))
+	require.Equal(t, 1, logs.FilterMessage(msg).Len())
+
+	// A login with the primary password is not a fallback login.
+	require.NoError(t, login("p2"))
+	require.Equal(t, 1, logs.FilterMessage(msg).Len())
+
+	// An expired password is rejected, unless sandbox mode lets the login in.
+	tk.MustExec("ALTER USER dpfallbacklog PASSWORD EXPIRE")
+	require.Error(t, login("p1"))
+	require.Equal(t, 1, logs.FilterMessage(msg).Len())
+	vardef.IsSandBoxModeEnabled.Store(true)
+	require.NoError(t, login("p1"))
+	require.Equal(t, 2, logs.FilterMessage(msg).Len())
 }

@@ -676,6 +676,7 @@ func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUse
 	if !p.isValidHash(record) {
 		return info, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
 	}
+	secondaryAccepted := false
 
 	// If the user uses session token to log in, skip checking record.AuthPlugin.
 	if user.AuthPlugin == mysql.AuthTiDBSessionToken {
@@ -731,7 +732,6 @@ func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUse
 		// blanked can still authenticate. A passwordless login (empty primary
 		// AND empty client auth) never enters here and keeps authenticating
 		// via the no-password success path below.
-		secondaryAccepted := false
 		switch record.AuthPlugin {
 		// NOTE: If the checking of the clear-text password fails, please set `info.FailedDueToWrongPassword = true`.
 		case mysql.AuthNativePassword, mysql.AuthCachingSha2Password, mysql.AuthTiDBSM3Password:
@@ -761,16 +761,6 @@ func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUse
 			logutil.BgLogger().Warn("unknown authentication plugin", zap.String("authUser", authUser), zap.String("plugin", record.AuthPlugin))
 			return info, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
 		}
-		if secondaryAccepted {
-			// Surface fallback logins so operators can tell which accounts
-			// have finished rotating and can safely DISCARD OLD PASSWORD.
-			// Sampled to avoid log flooding on high-churn services that
-			// are mid-rotation.
-			dualPasswordFallbackLogger().Info("authenticated using retained (secondary) password",
-				zap.String("auth_user", authUser),
-				zap.String("auth_host", authHost),
-				zap.String("auth_plugin", record.AuthPlugin))
-		}
 	}
 
 	// Login a locked account is not allowed.
@@ -788,6 +778,16 @@ func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUse
 	// Otherwise, the user cannot log in or execute statements after migration.
 	if user.AuthPlugin != mysql.AuthTiDBSessionToken {
 		info.InSandBoxMode, err = p.CheckPasswordExpired(sessionVars, record)
+	}
+	if err == nil && secondaryAccepted {
+		// Surface fallback logins so operators can tell which accounts
+		// have finished rotating and can safely DISCARD OLD PASSWORD.
+		// Sampled to avoid log flooding on high-churn services that
+		// are mid-rotation.
+		dualPasswordFallbackLogger().Info("authenticated using retained (secondary) password",
+			zap.String("auth_user", authUser),
+			zap.String("auth_host", authHost),
+			zap.String("auth_plugin", record.AuthPlugin))
 	}
 	return
 }

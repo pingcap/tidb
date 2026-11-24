@@ -55,6 +55,7 @@ go_test(
     timeout = "short",
     srcs = [
         "cache_test.go",
+        "export_test.go",
         "main_test.go",
         "privileges_test.go",
         "tidb_auth_token_test.go",
@@ -95,5 +96,7 @@ go_test(
         "@com_github_lestrrat_go_jwx_v2//jwt/openid",
         "@com_github_stretchr_testify//require",
         "@org_uber_go_goleak//:goleak",
+        "@org_uber_go_zap//:zap",
+        "@org_uber_go_zap//zaptest/observer",
     ],
 )
