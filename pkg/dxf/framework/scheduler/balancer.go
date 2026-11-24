@@ -47,8 +47,9 @@ type balancer struct {
 	// a helper temporary map to record the used slots of each node during balance
 	// to avoid passing it around.
 	currUsedSlots map[string]int
-	// slots used by active subtasks of all tasks on each node, unlike currUsedSlots,
-	// it includes tasks of lower ranking. It's loaded lazily for each balance round.
+	// Best-effort estimate of slots used by active subtasks of all tasks (including
+	// lower-ranking ones) on each node. Loaded lazily once per balance round and
+	// updated in memory on relocation; concurrent task activity can make it stale.
 	actualUsedSlots map[string]int
 }
 
@@ -150,6 +151,7 @@ func (b *balancer) canRunWithoutPreempt(task *proto.Task, taskNodes map[string]s
 
 func (b *balancer) updateActualUsedSlots(task *proto.Task, oldNodes, newNodes map[string]struct{}) {
 	for node := range oldNodes {
+		// Clamp if stale; nodes also in newNodes then keep max(actual, task.RequiredSlots).
 		b.actualUsedSlots[node] = max(0, b.actualUsedSlots[node]-task.RequiredSlots)
 	}
 	for node := range newNodes {
