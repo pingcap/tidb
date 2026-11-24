@@ -218,12 +218,8 @@ pub trait PreparedAstCompile: super::CompilerSession {
         // (`handleTableName` pins every unqualified name to the current
         // database), then collects the `VisitInfos` from it -- so the retained
         // statement, its requests and every EXECUTE name the same tables.
-        tidb_planner::preprocess::preprocess(
-            &mut statement,
-            self.preprocess_context(),
-        )
-        .map_err(crate::driver::planner_error_to_driver)?;
-        tidb_planner::preprocess::pin_current_database(&mut statement, self.session_vars().current_db.as_str())?;
+        tidb_planner::preprocess::preprocess_in_prepare(&mut statement, self.preprocess_context())
+            .map_err(crate::driver::planner_error_to_driver)?;
         let parameter_count = crate::parsed_parameter_count(&statement);
         let privilege_requests = self.collect_table_privileges(&statement, true)?;
         let planner_context = self.statement_context_for_stmt(&statement, false);

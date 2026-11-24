@@ -158,8 +158,36 @@ pub fn preprocess(
     stmt: &mut tidb_ast::Stmt,
     ctx: &dyn PreprocessContext,
 ) -> Result<PreprocessorReturn, PlanError> {
+    preprocess_with(stmt, ctx, false)
+}
+
+/// Go `Preprocess(..., InPrepare)`: the walk at PREPARE, then
+/// `handleTableName`'s pinning of every unqualified table to the database
+/// current now, so the retained statement and each EXECUTE after a `USE`
+/// agree.
+///
+/// # Errors
+///
+/// The walk's error, or `ErrNoDB` for an unqualified table with no current
+/// database.
+pub fn preprocess_in_prepare(
+    stmt: &mut tidb_ast::Stmt,
+    ctx: &dyn PreprocessContext,
+) -> Result<PreprocessorReturn, PlanError> {
+    let result = preprocess_with(stmt, ctx, true)?;
+    handle_table_name(stmt, ctx.current_db())
+        .map_err(|_| PlanError::from(tidb_plannererrors::ERR_NO_DB.gen_with_stack_by_args(&[])))?;
+    Ok(result)
+}
+
+fn preprocess_with(
+    stmt: &mut tidb_ast::Stmt,
+    ctx: &dyn PreprocessContext,
+    in_prepare: bool,
+) -> Result<PreprocessorReturn, PlanError> {
     let mut preprocessor = Preprocessor {
         ctx,
+        in_prepare,
         stmt_tp: StmtType::Invalid,
         vars_mutable: std::collections::HashSet::new(),
         result: PreprocessorReturn::default(),
@@ -175,6 +203,8 @@ pub fn preprocess(
 /// Go `preprocessor`.
 struct Preprocessor<'a> {
     ctx: &'a dyn PreprocessContext,
+    /// Go `preprocessor.flag & inPrepare`.
+    in_prepare: bool,
     stmt_tp: StmtType,
     /// Go `varsMutable`.
     vars_mutable: std::collections::HashSet<String>,
@@ -190,7 +220,7 @@ impl Preprocessor<'_> {
     /// for a RENAME or FOREIGN KEY spec (`resolveAlterTableStmt`).
     fn ddl_table_names(&self, ddl: &tidb_ast::DdlStmt) -> Result<(), PlanError> {
         use tidb_ast::{AlterTableAction, DdlStmt};
-        let prepare_skips = self.ctx.in_prepare();
+        let prepare_skips = self.in_prepare || self.ctx.in_prepare();
         match ddl {
             DdlStmt::AlterTable(alter)
                 if !prepare_skips
