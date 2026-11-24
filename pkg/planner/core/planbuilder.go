@@ -2339,7 +2339,7 @@ func (b *PlanBuilder) getPredicateColumns(tbl *resolve.TableNameW, cols *calcOnc
 	tblInfo := tbl.TableInfo
 	cols.data = make(map[int64]struct{}, len(tblInfo.Columns))
 	h := domain.GetAnalyzeStatsHandle(b.ctx)
-	colList, err := h.GetPredicateColumns(tblInfo.ID)
+	colList, err := h.GetPredicateColumns(tblInfo)
 	if err != nil {
 		return nil, err
 	}
