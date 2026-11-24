@@ -501,8 +501,7 @@ func GetStatsInfo(i any) map[string]uint64 {
 // With the lowest cost and how many plans are found in this function.
 func FindBestTask(e base.LogicalPlan, prop *property.PhysicalProperty) (bestTask base.Task, err error) {
 	if prop != nil && prop.SkipScanInfo != nil {
-		if prop.TaskTp != property.CopSingleReadTaskType || prop.CanAddEnforcer ||
-			prop.NoCopPushDown || prop.IndexJoinProp != nil || prop.IsSortItemEmpty() {
+		if prop.CanAddEnforcer || prop.IndexJoinProp != nil || prop.IsSortItemEmpty() {
 			return base.InvalidTask, nil
 		}
 		switch e.GetWrappedLogicalPlan().(type) {

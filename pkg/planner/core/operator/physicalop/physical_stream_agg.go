@@ -18,7 +18,6 @@ import (
 	"math"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -31,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	h "github.com/pingcap/tidb/pkg/util/hint"
-	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -114,17 +112,13 @@ func getStreamAggs(lp base.LogicalPlan, prop *property.PhysicalProperty) []base.
 
 	allTaskTypes := prop.GetAllPossibleChildTaskTypes()
 	streamAggs := make([]base.PhysicalPlan, 0, len(la.PossibleProperties.Orders)*(len(allTaskTypes)-1)+len(allTaskTypes))
-	var enableSkipScan bool
-	// Enable only in planner tests until both scans can send the attributes to TiKV.
-	if intest.InTest {
-		failpoint.Inject("enablePlannerSkipScan", func() { enableSkipScan = true })
-	}
+	vars := la.SCtx().GetSessionVars()
+	enableSkipScan := vars.GetEnableSkipScan() && vars.SQLMode.HasOnlyFullGroupBy() &&
+		len(groupByCols) > 0 && prop.IndexJoinProp == nil
 	var skipTarget *expression.Column
 	var skipDesc bool
-	if enableSkipScan && len(groupByCols) > 0 && prop.IndexJoinProp == nil {
+	if enableSkipScan {
 		skipTarget, skipDesc, enableSkipScan = getSkipScanAggRequirement(la.AggFuncs, groupByCols, desc)
-	} else {
-		enableSkipScan = false
 	}
 	childProp := &property.PhysicalProperty{
 		ExpectedCnt:   math.Max(prop.ExpectedCnt*la.InputCount/la.StatsInfo().RowCount, prop.ExpectedCnt),
@@ -166,7 +160,7 @@ func getStreamAggs(lp base.LogicalPlan, prop *property.PhysicalProperty) []base.
 				return baseAgg.InitForStream(la.SCtx(), la.StatsInfo().ScaleByExpectCnt(la.SCtx().GetSessionVars(), prop.ExpectedCnt), la.QueryBlockOffset(), la.Schema().Clone(), child)
 			}
 			streamAggs = append(streamAggs, makeStreamAgg(copiedChildProperty))
-			if enableSkipScan && taskTp == property.CopSingleReadTaskType {
+			if enableSkipScan {
 				req := copiedChildProperty.CloneEssentialFields()
 				req.SortItems = property.SortItemsFromCols(groupOrder, skipDesc)
 				if prop.IsPrefix(req) {
@@ -187,6 +181,21 @@ func getStreamAggs(lp base.LogicalPlan, prop *property.PhysicalProperty) []base.
 	return streamAggs
 }
 
+// getSkipScanAggRequirement checks whether the aggregate expressions can use Skip Scan.
+// 1. It accepts MIN, MAX, and FIRST_ROW without DISTINCT or an aggregate ORDER BY.
+// 2. Each with one non-virtual column argument
+// 3. All arguments outside GROUP BY must refer to the same target column.
+// 4. MIN and MAX on the target cannot be combined.
+// 5. The type of column cannot be ENUM or SET
+// 6. The scan matcher verifies that the grouping columns form a full-length leftmost key prefix
+
+// For example,
+// SELECT a, MIN(b) FROM t GROUP BY a returns b and requires an ascending scan.
+//
+// Attention:
+// Aggregates on grouping columns can use any representative row. For example,
+// SELECT a, MIN(a) FROM t GROUP BY a returns target == nil and ok == true. The scan
+// needs only the grouping prefix, and scanDesc retains the input desc.
 func getSkipScanAggRequirement(aggs []*aggregation.AggFuncDesc, groupBy []*expression.Column, desc bool) (target *expression.Column, scanDesc bool, ok bool) {
 	schema := expression.NewSchema(groupBy...)
 	var hasMin, hasMax bool
@@ -204,11 +213,8 @@ func getSkipScanAggRequirement(aggs []*aggregation.AggFuncDesc, groupBy []*expre
 			return nil, false, false
 		}
 		if schema.Contains(col) {
-			if agg.Name == ast.AggFuncFirstRow {
-				// The logical builder uses FIRSTROW to return grouping keys.
-				continue
-			}
-			return nil, false, false
+			// Aggregates on grouping keys can use any representative row in the group.
+			continue
 		}
 		if target != nil && !target.EqualColumn(col) {
 			return nil, false, false

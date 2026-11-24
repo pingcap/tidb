@@ -183,13 +183,6 @@ func enumeratePhysicalPlans4TaskHelper(
 			continue
 		}
 
-		if _, ok := pp.(*physicalop.PhysicalStreamAgg); ok && pp.GetChildReqProps(0).SkipScanInfo != nil {
-			cop, ok := childTasks[0].(*physicalop.CopTask)
-			if !ok || !cop.SkipScan {
-				continue
-			}
-		}
-
 		// Combine the best child tasks with parent physical plan.
 		curTask := pp.Attach2Task(childTasks...)
 		if curTask.Invalid() {
@@ -2646,7 +2639,7 @@ func findBestTask4LogicalDataSource(super base.LogicalPlan, prop *property.Physi
 
 func findBestSkipScanTask(ds *logicalop.DataSource, prop *property.PhysicalProperty) (base.Task, error) {
 	best := base.InvalidTask
-	if ds.SampleInfo != nil || ds.PreferStoreType&h.PreferTiFlash != 0 ||
+	if prop.IsFlashProp() || ds.SampleInfo != nil || ds.PreferStoreType&h.PreferTiFlash != 0 ||
 		len(ds.AllConds)+len(ds.PushedDownConds) != 0 {
 		return best, nil
 	}
@@ -2680,6 +2673,12 @@ func findBestSkipScanTask(ds *logicalop.DataSource, prop *property.PhysicalPrope
 		}
 	}
 	ndv, _ := cardinality.EstimateColsNDVWithMatchedLen(ds.SCtx(), cols, ds.Schema(), &prefixStats)
+	scanProp := prop
+	if prop.TaskTp == property.RootTaskType {
+		// Keep the scan in a cop task until its Skip Scan stats are set.
+		scanProp = prop.CloneEssentialFields()
+		scanProp.TaskTp = property.CopSingleReadTaskType
+	}
 	for _, path := range ds.PossibleAccessPaths {
 		if !matchesSkipScanPath(ds, path, prop.SkipScanInfo) {
 			continue
@@ -2694,9 +2693,9 @@ func findBestSkipScanTask(ds *logicalop.DataSource, prop *property.PhysicalPrope
 		var task base.Task
 		var err error
 		if path.IsTablePath() {
-			task, err = convertToTableScan(ds, prop, candidate)
+			task, err = convertToTableScan(ds, scanProp, candidate)
 		} else {
-			task, err = convertToIndexScan(ds, prop, candidate)
+			task, err = convertToIndexScan(ds, scanProp, candidate)
 		}
 		if err != nil {
 			return nil, err
@@ -2721,12 +2720,15 @@ func findBestSkipScanTask(ds *logicalop.DataSource, prop *property.PhysicalPrope
 		}
 		setSkipScanRows(scan, rows)
 		cop.SkipScan = true
-		better, err := compareTaskCost(cop, best)
+		if prop.TaskTp == property.RootTaskType {
+			task = cop.ConvertToRootTask(ds.SCtx())
+		}
+		better, err := compareTaskCost(task, best)
 		if err != nil {
 			return nil, err
 		}
 		if better {
-			best = cop
+			best = task
 		}
 	}
 	return best, nil

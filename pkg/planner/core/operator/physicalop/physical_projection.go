@@ -197,3 +197,8 @@ func (p *PhysicalProjection) ToPB(ctx *base.BuildPBContext, storeType kv.StoreTy
 func (p *PhysicalProjection) Attach2Task(tasks ...base.Task) base.Task {
 	return utilfuncp.Attach2Task4PhysicalProjection(p, tasks...)
 }
+
+// RequiresSkipScan reports whether the projection was planned over a Skip Scan subtree.
+func (p *PhysicalProjection) RequiresSkipScan() bool {
+	return len(p.childrenReqProps) > 0 && p.childrenReqProps[0] != nil && p.childrenReqProps[0].SkipScanInfo != nil
+}
