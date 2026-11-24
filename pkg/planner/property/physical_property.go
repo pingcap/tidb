@@ -345,6 +345,8 @@ type PartialOrderInfo struct {
 }
 
 // SkipScanInfo is immutable after the property is constructed.
+// With an index on (a, b, c), SELECT a, b, MIN(c) FROM t GROUP BY a, b
+// uses (a, b) as GroupByCols and c as TargetCol.
 type SkipScanInfo struct {
 	GroupByCols []*expression.Column
 	// TargetCol, when present, must immediately follow the grouping key.
