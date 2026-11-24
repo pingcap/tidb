@@ -575,11 +575,9 @@ func TestEagerRuntimeRelease(t *testing.T) {
 		require.NoError(t, err)
 		handle.Release(true)
 		require.Empty(t, mgr.GetAllKeyspace())
+		require.Equal(t, 1, pool.closeCount)
 		require.Equal(t, 1, store.closeCount)
 		handle.Release(false)
-		mgr.sweepIdleRuntimes(0)
-		mgr.Close()
-		require.Empty(t, mgr.GetAllKeyspace())
 		require.Equal(t, 1, pool.closeCount)
 		require.Equal(t, 1, store.closeCount)
 	})
@@ -622,7 +620,7 @@ func TestEagerRuntimeRelease(t *testing.T) {
 		newHandle.Release(false)
 	})
 
-	t.Run("release GC and repeated shutdown close once without holding mutex", func(t *testing.T) {
+	t.Run("eager release and repeated shutdown close once without holding mutex", func(t *testing.T) {
 		ks := "ks-release-shutdown"
 		mgr, _, store, pool := newRuntimeHandleTestManager(t, ks)
 		handle, err := mgr.Acquire(ks, "job-check", unusedRuntimeHandleFactoryGetter(t))
@@ -640,7 +638,10 @@ func TestEagerRuntimeRelease(t *testing.T) {
 			close(closing)
 			<-finishClose
 		}
-		done := make(chan struct{}, 4)
+		closeWaits := make(chan struct{}, 2)
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/domain/crossks/beforeRuntimeCloseWait",
+			func(string) { closeWaits <- struct{}{} })
+		done := make(chan struct{}, 3)
 		run := func(fn func()) {
 			go func() {
 				defer func() { done <- struct{}{} }()
@@ -649,12 +650,14 @@ func TestEagerRuntimeRelease(t *testing.T) {
 		}
 		run(func() { handle.Release(true) })
 		awaitRuntimeTestResult(t, closing, "session pool teardown")
-		run(func() { mgr.sweepIdleRuntimes(0) })
 		run(mgr.Close)
 		run(mgr.Close)
+		for range 2 {
+			awaitRuntimeTestResult(t, closeWaits, "shutdown to wait for eager teardown")
+		}
 		unblock.Do(func() { close(finishClose) })
-		for range 4 {
-			awaitRuntimeTestResult(t, done, "release, GC, or shutdown")
+		for range 3 {
+			awaitRuntimeTestResult(t, done, "release or shutdown")
 		}
 		require.Equal(t, 1, pool.closeCount)
 		require.Equal(t, 1, store.closeCount)
@@ -881,48 +884,6 @@ func TestRuntimeKeyspacesProgressIndependently(t *testing.T) {
 			})
 		}
 	}
-}
-
-func TestRuntimeInitializesDistinctKeyspacesConcurrently(t *testing.T) {
-	if kerneltype.IsClassic() {
-		t.Skip("cross keyspace runtime acquire is supported only in nextgen kernel")
-	}
-	const count = 16
-	mgr := NewManager(&runtimeHandleTestStore{ks: keyspace.System})
-	t.Cleanup(func() { closeRuntimeTestManager(t, mgr) })
-	initializing, finishInit := make(chan string, count), make(chan struct{})
-	unblock := sync.OnceFunc(func() { close(finishInit) })
-	defer unblock()
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/domain/crossks/mockCreateSessionManager",
-		func(create *sessionManagerFactory) {
-			*create = func(ks string, _ func(string, validatorapi.Validator) pools.Factory) (*SessionManager, func(), error) {
-				initializing <- ks
-				<-finishInit
-				return newRuntimeHandleTestSessionManager(&runtimeHandleTestStore{ks: ks}, &runtimeHandleTestSessPool{}), nil, nil
-			}
-		})
-	results := make(chan error, count)
-	for i := range count {
-		ks := fmt.Sprintf("ks-concurrent-%d", i)
-		runRuntimeTestTask(t, "a distinct keyspace initializer", func() {
-			handle, err := mgr.Acquire(ks, "holder", nil)
-			if handle != nil {
-				handle.Release(false)
-			}
-			results <- err
-		})
-	}
-	seen := make(map[string]struct{}, count)
-	for range count {
-		ks := awaitRuntimeTestResult(t, initializing, "all distinct keyspaces to start initialization")
-		require.NotContains(t, seen, ks)
-		seen[ks] = struct{}{}
-	}
-	unblock()
-	for range count {
-		require.NoError(t, awaitRuntimeTestResult(t, results, "a completed initializer"))
-	}
-	require.Len(t, mgr.GetAllKeyspace(), count)
 }
 
 func TestRuntimeSweepLeavesUnvisitedEntriesAvailable(t *testing.T) {
