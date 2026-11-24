@@ -52,7 +52,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
-	"golang.org/x/sync/semaphore"
 )
 
 const (
@@ -63,31 +62,51 @@ const (
 
 var errManagerClosed = errors.New("cross keyspace runtime manager is closed")
 
-// runtimeEntry is the runtime of one keyspace. activeHolders and lastReleaseAt
-// are guarded by the keyspace lock.
+type runtimeState uint8
+
+const (
+	runtimeReady runtimeState = iota
+	runtimeInitializing
+	runtimeClosing
+)
+
+// runtimeEntry is the runtime of one keyspace. Its fields are guarded by
+// Manager.mu. sessMgr is immutable after publication because handles retain it.
 type runtimeEntry struct {
-	sessMgr       *SessionManager
-	activeHolders map[string]struct{}
-	lastReleaseAt time.Time
+	sessMgr        *SessionManager
+	state          runtimeState
+	done           chan struct{}
+	workersStopped bool
+	activeHolders  map[string]struct{}
+	lastReleaseAt  time.Time
+}
+
+// visible must be called with Manager.mu held. Session factories can use a
+// published runtime until its workers have stopped, including during teardown.
+func (e *runtimeEntry) visible() bool {
+	return e.sessMgr != nil && !e.workersStopped
+}
+
+// startClosing must be called with Manager.mu held and the entry ready.
+func (e *runtimeEntry) startClosing() {
+	e.state = runtimeClosing
+	e.done = make(chan struct{})
 }
 
 // Manager manages all cross keyspace sessions.
 //
-// Creating, acquiring, releasing and closing the runtime of a keyspace are
-// serialized by the manager's per-keyspace locks. The lock order is the
-// keyspace lock, then mu. TiKV store opens and closes share a driver mutex,
-// so cold acquisitions can still wait on work for another keyspace.
+// Runtime state transitions are serialized by mu. Initialization, worker
+// startup, teardown and waits happen outside mu. TiKV store opens and closes
+// share a driver mutex, so cold acquisitions can still wait on work for another
+// keyspace.
 type Manager struct {
 	// the store of current instance
-	store   kv.Storage
-	ksLocks keyspaceLocks
+	store kv.Storage
 
-	// mu guards runtimes and closed. It is never held while creating or closing
-	// a runtime.
+	// mu guards runtimes, their entries and closed.
 	mu sync.RWMutex
-	// keyspace name -> runtime entry. An entry is removed only after its
-	// teardown finishes, so in-flight session factories can still reach its
-	// store, schema cache, and global variables through GetOrCreate.
+	// keyspace name -> runtime entry. Placeholders serialize initialization and
+	// teardown for each keyspace and remain until all resource cleanup finishes.
 	runtimes map[string]*runtimeEntry
 	closed   bool
 }
@@ -96,7 +115,6 @@ type Manager struct {
 func NewManager(store kv.Storage) *Manager {
 	return &Manager{
 		store:    store,
-		ksLocks:  keyspaceLocks{locks: make(map[string]*keyspaceLock)},
 		runtimes: make(map[string]*runtimeEntry),
 	}
 }
@@ -105,26 +123,22 @@ func NewManager(store kv.Storage) *Manager {
 func (m *Manager) GetAllKeyspace() []string {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	return slices.Collect(maps.Keys(m.runtimes))
+	keyspaces := make([]string, 0, len(m.runtimes))
+	for ks, entry := range m.runtimes {
+		if entry.visible() {
+			keyspaces = append(keyspaces, ks)
+		}
+	}
+	return keyspaces
 }
 
 func (m *Manager) get(ks string) (*SessionManager, bool) {
-	if entry := m.getEntry(ks); entry != nil {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if entry := m.runtimes[ks]; entry != nil && entry.visible() {
 		return entry.sessMgr, true
 	}
 	return nil, false
-}
-
-func (m *Manager) getEntry(ks string) *runtimeEntry {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	return m.runtimes[ks]
-}
-
-func (m *Manager) isClosed() bool {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	return m.closed
 }
 
 // GetOrCreate gets or creates a session manager for the specified keyspace.
@@ -135,16 +149,14 @@ func (m *Manager) GetOrCreate(
 	if err := m.validateTargetKS(ks); err != nil {
 		return nil, err
 	}
-	// Don't take the keyspace lock for an existing runtime: session factories
-	// call this while the runtime is closing under that lock.
+	// Session factories must find their published runtime during startup and
+	// while teardown is waiting for the workers that use those factories.
 	mgr, _ := m.get(ks)
 	failpoint.InjectCall("afterGetOrCreateLookup", ks, &mgr)
 	if mgr != nil {
 		return mgr, nil
 	}
-	m.ksLocks.lock(ks)
-	defer m.ksLocks.unlock(ks)
-	entry, err := m.getOrCreateEntryKSLocked(ks, ksSessFactoryGetter)
+	entry, _, err := m.getOrCreateEntry(ks, "", ksSessFactoryGetter)
 	if err != nil {
 		return nil, err
 	}
@@ -167,29 +179,14 @@ func (m *Manager) Acquire(
 		return nil, err
 	}
 
-	// Waiting for the keyspace lock also waits for an in-flight initialization
-	// or teardown of the runtime to finish.
-	m.ksLocks.lock(ks)
-	defer m.ksLocks.unlock(ks)
-	entry, err := m.getOrCreateEntryKSLocked(ks, ksSessFactoryGetter)
+	entry, holderCount, err := m.getOrCreateEntry(ks, holderID, ksSessFactoryGetter)
 	if err != nil {
 		return nil, err
 	}
-	if m.isClosed() {
-		return nil, errManagerClosed
-	}
-	if _, ok := entry.activeHolders[holderID]; ok {
-		logutil.BgLogger().Warn("cross keyspace runtime already acquired",
-			zap.String("targetKS", ks),
-			zap.String("holderID", holderID),
-			zap.Int("activeHolderCount", len(entry.activeHolders)))
-		return nil, errors.Errorf("cross keyspace runtime for keyspace %s is already acquired by holderID %s", ks, holderID)
-	}
-	entry.activeHolders[holderID] = struct{}{}
 	logutil.BgLogger().Info("acquire cross keyspace runtime",
 		zap.String("targetKS", ks),
 		zap.String("holderID", holderID),
-		zap.Int("activeHolderCount", len(entry.activeHolders)))
+		zap.Int("activeHolderCount", holderCount))
 	return &runtimeHandle{
 		manager:  m,
 		targetKS: ks,
@@ -211,42 +208,114 @@ func (m *Manager) validateTargetKS(ks string) error {
 
 type sessionManagerFactory func(string, func(string, validatorapi.Validator) pools.Factory) (*SessionManager, func(), error)
 
-// getOrCreateEntryKSLocked must be called with the lock of ks held.
-func (m *Manager) getOrCreateEntryKSLocked(
+// getOrCreateEntry admits holderID only after initialization finishes. An empty
+// holderID is a raw lookup, which can also return a published transitioning
+// runtime while its workers still need it.
+func (m *Manager) getOrCreateEntry(
 	ks string,
+	holderID string,
 	ksSessFactoryGetter func(string, validatorapi.Validator) pools.Factory,
-) (*runtimeEntry, error) {
-	m.mu.RLock()
-	entry, closed := m.runtimes[ks], m.closed
-	m.mu.RUnlock()
-	if entry != nil {
-		return entry, nil
+) (*runtimeEntry, int, error) {
+	for {
+		m.mu.Lock()
+		if holderID != "" && m.closed {
+			m.mu.Unlock()
+			return nil, 0, errManagerClosed
+		}
+		entry := m.runtimes[ks]
+		if entry == nil {
+			if m.closed {
+				m.mu.Unlock()
+				return nil, 0, errManagerClosed
+			}
+			entry = &runtimeEntry{
+				state:         runtimeInitializing,
+				done:          make(chan struct{}),
+				activeHolders: make(map[string]struct{}),
+			}
+			m.runtimes[ks] = entry
+			m.mu.Unlock()
+			return m.initializeEntry(ks, entry, holderID, ksSessFactoryGetter)
+		}
+		if holderID == "" && entry.visible() {
+			m.mu.Unlock()
+			return entry, 0, nil
+		}
+		if entry.state != runtimeReady {
+			done := entry.done
+			m.mu.Unlock()
+			failpoint.InjectCall("beforeRuntimeEntryWait", ks)
+			<-done
+			continue
+		}
+		if _, ok := entry.activeHolders[holderID]; ok {
+			holderCount := len(entry.activeHolders)
+			m.mu.Unlock()
+			logutil.BgLogger().Warn("cross keyspace runtime already acquired",
+				zap.String("targetKS", ks),
+				zap.String("holderID", holderID),
+				zap.Int("activeHolderCount", holderCount))
+			return nil, 0, errors.Errorf("cross keyspace runtime for keyspace %s is already acquired by holderID %s", ks, holderID)
+		}
+		entry.activeHolders[holderID] = struct{}{}
+		holderCount := len(entry.activeHolders)
+		m.mu.Unlock()
+		return entry, holderCount, nil
 	}
-	if closed {
-		return nil, errManagerClosed
-	}
+}
 
+// initializeEntry owns the initializing placeholder until worker registration
+// finishes. Shutdown waits for that same placeholder, including private cleanup
+// when shutdown wins before publication.
+func (m *Manager) initializeEntry(
+	ks string,
+	entry *runtimeEntry,
+	holderID string,
+	ksSessFactoryGetter func(string, validatorapi.Validator) pools.Factory,
+) (*runtimeEntry, int, error) {
 	createSessionManager := sessionManagerFactory(m.createSessionManager)
 	failpoint.InjectCall("mockCreateSessionManager", &createSessionManager)
 	mgr, startWorkers, err := createSessionManager(ks, ksSessFactoryGetter)
 	if err != nil {
-		return nil, err
+		m.mu.Lock()
+		delete(m.runtimes, ks)
+		close(entry.done)
+		m.mu.Unlock()
+		return nil, 0, err
 	}
-	entry = &runtimeEntry{
-		sessMgr:       mgr,
-		activeHolders: make(map[string]struct{}),
-	}
-	// Publish before starting workers that call GetOrCreate through the session
-	// factory. Keep the keyspace lock through startup so teardown can safely
-	// wait for those workers. Close will tear down the entry even if shutdown
-	// started during initialization.
 	m.mu.Lock()
-	m.runtimes[ks] = entry
+	if m.closed {
+		m.mu.Unlock()
+		mgr.close(nil)
+		m.mu.Lock()
+		delete(m.runtimes, ks)
+		close(entry.done)
+		m.mu.Unlock()
+		return nil, 0, errManagerClosed
+	}
+	// Publish before startup so session factories can reenter GetOrCreate. The
+	// entry stays initializing until all workers have been registered.
+	entry.sessMgr = mgr
 	m.mu.Unlock()
 	if startWorkers != nil {
 		startWorkers()
 	}
-	return entry, nil
+	m.mu.Lock()
+	closed := m.closed
+	if !closed && holderID != "" {
+		// Admit the creator before waking waiters, which could otherwise acquire
+		// and eagerly release the runtime before its first holder is registered.
+		entry.activeHolders[holderID] = struct{}{}
+	}
+	holderCount := len(entry.activeHolders)
+	entry.state = runtimeReady
+	close(entry.done)
+	entry.done = nil
+	m.mu.Unlock()
+	if closed {
+		return nil, 0, errManagerClosed
+	}
+	return entry, holderCount, nil
 }
 
 // createSessionManager initializes the runtime and returns a function that
@@ -404,43 +473,67 @@ func (*Manager) createSessionManager(
 }
 
 func (m *Manager) release(h *runtimeHandle, closeIfIdle bool) {
-	m.ksLocks.lock(h.targetKS)
-	defer m.ksLocks.unlock(h.targetKS)
+	m.mu.Lock()
 	entry := h.entry
-	if m.getEntry(h.targetKS) != entry {
+	if m.runtimes[h.targetKS] != entry || entry.state != runtimeReady {
 		// The runtime is already closed, and a replacement may have reused the
 		// same holder ID.
+		m.mu.Unlock()
 		return
 	}
 	delete(entry.activeHolders, h.holderID)
+	holderCount := len(entry.activeHolders)
+	closeEntry := holderCount == 0 && closeIfIdle
+	if holderCount == 0 {
+		entry.lastReleaseAt = time.Now()
+		if closeEntry {
+			entry.startClosing()
+		}
+	}
+	m.mu.Unlock()
 	logutil.BgLogger().Info("release cross keyspace runtime",
 		zap.String("targetKS", h.targetKS),
 		zap.String("holderID", h.holderID),
-		zap.Int("activeHolderCount", len(entry.activeHolders)))
-	if len(entry.activeHolders) > 0 {
-		return
-	}
-	entry.lastReleaseAt = time.Now()
-	if closeIfIdle {
-		m.closeEntryKSLocked(h.targetKS, entry)
+		zap.Int("activeHolderCount", holderCount))
+	if closeEntry {
+		m.closeEntry(h.targetKS, entry)
 	}
 }
 
 // closeRuntime waits for in-flight work on ks and then closes its runtime, if
 // any.
 func (m *Manager) closeRuntime(ks string) {
-	m.ksLocks.lock(ks)
-	defer m.ksLocks.unlock(ks)
-	if entry := m.getEntry(ks); entry != nil {
-		m.closeEntryKSLocked(ks, entry)
+	for {
+		m.mu.Lock()
+		entry := m.runtimes[ks]
+		if entry == nil {
+			m.mu.Unlock()
+			return
+		}
+		if entry.state != runtimeReady {
+			done := entry.done
+			m.mu.Unlock()
+			failpoint.InjectCall("beforeRuntimeCloseWait", ks)
+			<-done
+			continue
+		}
+		entry.startClosing()
+		m.mu.Unlock()
+		m.closeEntry(ks, entry)
+		return
 	}
 }
 
-// closeEntryKSLocked must be called with the lock of ks held.
-func (m *Manager) closeEntryKSLocked(ks string, entry *runtimeEntry) {
-	entry.sessMgr.close()
+// closeEntry must be called outside mu by the owner of the closing transition.
+func (m *Manager) closeEntry(ks string, entry *runtimeEntry) {
+	entry.sessMgr.close(func() {
+		m.mu.Lock()
+		entry.workersStopped = true
+		m.mu.Unlock()
+	})
 	m.mu.Lock()
 	delete(m.runtimes, ks)
+	close(entry.done)
 	m.mu.Unlock()
 }
 
@@ -470,21 +563,23 @@ func (m *Manager) RunSystemKSGCLoop(ctx context.Context) {
 func (m *Manager) sweepIdleRuntimes(idleTimeout time.Duration) {
 	cutoff := time.Now().Add(-idleTimeout)
 	for _, ks := range m.GetAllKeyspace() {
-		// A locked keyspace is being acquired, released or closed, so it is
-		// not idle. Skipping it also keeps a slow teardown from stalling GC.
-		if !m.ksLocks.tryLock(ks) {
+		m.mu.Lock()
+		entry := m.runtimes[ks]
+		if entry == nil || entry.state != runtimeReady || len(entry.activeHolders) > 0 ||
+			entry.lastReleaseAt.IsZero() || entry.lastReleaseAt.After(cutoff) {
+			m.mu.Unlock()
 			continue
 		}
-		entry := m.getEntry(ks)
-		if entry != nil && len(entry.activeHolders) == 0 &&
-			!entry.lastReleaseAt.IsZero() && !entry.lastReleaseAt.After(cutoff) {
-			logutil.BgLogger().Info("evict idle cross keyspace runtime",
-				zap.String("targetKS", ks),
-				zap.Duration("idleTimeout", idleTimeout),
-				zap.Time("lastReleaseAt", entry.lastReleaseAt))
-			m.closeEntryKSLocked(ks, entry)
-		}
-		m.ksLocks.unlock(ks)
+		// Claim only the runtime about to be closed. Other idle runtimes remain
+		// available for acquisition while its cleanup is in progress.
+		entry.startClosing()
+		lastReleaseAt := entry.lastReleaseAt
+		m.mu.Unlock()
+		logutil.BgLogger().Info("evict idle cross keyspace runtime",
+			zap.String("targetKS", ks),
+			zap.Duration("idleTimeout", idleTimeout),
+			zap.Time("lastReleaseAt", lastReleaseAt))
+		m.closeEntry(ks, entry)
 	}
 }
 
@@ -492,15 +587,12 @@ func (m *Manager) sweepIdleRuntimes(idleTimeout time.Duration) {
 func (m *Manager) Close() {
 	m.mu.Lock()
 	m.closed = true
+	// The map includes every in-flight initialization and teardown. Repeated
+	// Close calls also wait for those transitions instead of returning early.
+	keyspaces := slices.Collect(maps.Keys(m.runtimes))
 	m.mu.Unlock()
-	// Only initializations already in progress can publish a runtime. Snapshot
-	// their locks first so an initialization that finishes between the snapshots
-	// is included even if it has already dropped its lock.
-	keyspaces := m.ksLocks.keys()
-	failpoint.InjectCall("afterCloseKeyspaceSnapshot")
-	keyspaces = append(keyspaces, m.GetAllKeyspace()...)
 	slices.Sort(keyspaces)
-	for _, ks := range slices.Compact(keyspaces) {
+	for _, ks := range keyspaces {
 		m.closeRuntime(ks)
 	}
 }
@@ -510,81 +602,6 @@ func getOrCreateStore(targetKS string) (kv.Storage, error) {
 		return kvstore.GetSystemStorage(), nil
 	}
 	return kvstore.InitStorage(targetKS)
-}
-
-// keyspaceLocks is a set of per-keyspace mutexes. Waiting for a lock can be
-// canceled, and a lock is dropped once no caller holds or waits for it.
-type keyspaceLocks struct {
-	mu    sync.Mutex
-	locks map[string]*keyspaceLock
-}
-
-type keyspaceLock struct {
-	// A semaphore of size one provides cancelable mutual exclusion.
-	sem *semaphore.Weighted
-	// refs counts the owner and waiters, guarded by keyspaceLocks.mu.
-	refs int
-}
-
-func (l *keyspaceLocks) lock(ks string) {
-	// A background context cannot be canceled.
-	_ = l.lockWithContext(context.Background(), ks)
-}
-
-func (l *keyspaceLocks) lockWithContext(ctx context.Context, ks string) error {
-	if err := l.ref(ks).sem.Acquire(ctx, 1); err != nil {
-		l.unref(ks)
-		return err
-	}
-	return nil
-}
-
-func (l *keyspaceLocks) tryLock(ks string) bool {
-	if l.ref(ks).sem.TryAcquire(1) {
-		return true
-	}
-	l.unref(ks)
-	return false
-}
-
-func (l *keyspaceLocks) unlock(ks string) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	l.locks[ks].sem.Release(1)
-	l.unrefLocked(ks)
-}
-
-// keys returns the keyspaces whose lock is held or waited for.
-func (l *keyspaceLocks) keys() []string {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	return slices.Collect(maps.Keys(l.locks))
-}
-
-func (l *keyspaceLocks) ref(ks string) *keyspaceLock {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	kl := l.locks[ks]
-	if kl == nil {
-		kl = &keyspaceLock{sem: semaphore.NewWeighted(1)}
-		l.locks[ks] = kl
-	}
-	kl.refs++
-	return kl
-}
-
-func (l *keyspaceLocks) unref(ks string) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	l.unrefLocked(ks)
-}
-
-func (l *keyspaceLocks) unrefLocked(ks string) {
-	kl := l.locks[ks]
-	kl.refs--
-	if kl.refs == 0 {
-		delete(l.locks, ks)
-	}
 }
 
 type runtimeHandle struct {
@@ -685,7 +702,7 @@ func (m *SessionManager) startWorkers(minJobIDRefresher *systable.MinJobIDRefres
 	}
 }
 
-func (m *SessionManager) close() {
+func (m *SessionManager) close(afterWorkersStopped func()) {
 	ks := m.store.GetKeyspace()
 	logger := logutil.BgLogger().With(zap.String("targetKS", ks))
 	logger.Info("close cross keyspace session manager")
@@ -693,6 +710,11 @@ func (m *SessionManager) close() {
 	close(m.exitCh)
 	m.cancel()
 	m.wg.Wait()
+	if afterWorkersStopped != nil {
+		// Hide the drained runtime before removing metadata or closing clients
+		// and storage, but keep its placeholder until that cleanup is complete.
+		afterWorkersStopped()
+	}
 	if m.svrInfoSyncer != nil {
 		m.svrInfoSyncer.RemoveServerInfo()
 		m.svrInfoSyncer.RevokeSession()

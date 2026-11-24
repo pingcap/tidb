@@ -434,6 +434,17 @@ func closeRuntimeTestManager(t *testing.T, mgr *Manager) {
 	awaitRuntimeTestResult(t, done, "manager cleanup")
 }
 
+func runRuntimeTestTask(t *testing.T, waitingFor string, fn func()) <-chan struct{} {
+	t.Helper()
+	done := make(chan struct{})
+	t.Cleanup(func() { awaitRuntimeTestResult(t, done, waitingFor) })
+	go func() {
+		defer close(done)
+		fn()
+	}()
+	return done
+}
+
 func TestEagerRuntimeRelease(t *testing.T) {
 	if kerneltype.IsClassic() {
 		t.Skip("cross keyspace runtime acquire is supported only in nextgen kernel")
@@ -515,6 +526,44 @@ func TestEagerRuntimeRelease(t *testing.T) {
 		require.Same(t, entry.sessMgr, initial, "the startup lookup must find the published runtime")
 		require.Empty(t, mgr.GetAllKeyspace())
 		require.Equal(t, 1, targetStore.closeCount)
+	})
+
+	t.Run("worker can begin lookup after eager teardown cancellation", func(t *testing.T) {
+		const ks = "ks-release-draining-worker"
+		mgr, entry, store, pool := newRuntimeHandleTestManager(t, ks)
+		handle, err := mgr.Acquire(ks, "holder", nil)
+		require.NoError(t, err)
+		runtime := entry.sessMgr
+		defer runtime.cancel()
+		lookup := make(chan *SessionManager, 1)
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/domain/crossks/afterGetOrCreateLookup",
+			func(_ string, found **SessionManager) {
+				lookup <- *found
+				if *found == nil {
+					// Preserve the observed miss, but let a regressed worker exit
+					// instead of waiting on the teardown that is draining it.
+					*found = runtime
+				}
+			})
+		workerResult := make(chan lookupResult, 1)
+		workerDone := make(chan struct{})
+		runtime.wg.RunWithLog(func() {
+			defer close(workerDone)
+			<-runtime.ctx.Done()
+			found, err := mgr.GetOrCreate(ks, nil)
+			workerResult <- lookupResult{found, err}
+		})
+		t.Cleanup(func() { awaitRuntimeTestResult(t, workerDone, "the draining worker") })
+		released := runRuntimeTestTask(t, "eager release after worker cancellation", func() { handle.Release(true) })
+		observed := awaitRuntimeTestResult(t, lookup, "a worker lookup after cancellation")
+		result := awaitRuntimeTestResult(t, workerResult, "the draining worker lookup")
+		awaitRuntimeTestResult(t, released, "eager release to drain the worker")
+		require.Same(t, runtime, observed, "workers must still find their runtime after cancellation")
+		require.NoError(t, result.err)
+		require.Same(t, runtime, result.runtime)
+		require.Empty(t, mgr.GetAllKeyspace())
+		require.Equal(t, 1, pool.closeCount)
+		require.Equal(t, 1, store.closeCount)
 	})
 
 	t.Run("final release closes immediately and once", func(t *testing.T) {
@@ -618,92 +667,458 @@ func TestRuntimeShutdownDuringInitialization(t *testing.T) {
 	if kerneltype.IsClassic() {
 		t.Skip("cross keyspace runtime acquire is supported only in nextgen kernel")
 	}
-	t.Run("runtime published between shutdown snapshots", func(t *testing.T) {
-		const ks = "cold"
-		mgr := NewManager(&runtimeHandleTestStore{ks: keyspace.System})
-		t.Cleanup(func() { closeRuntimeTestManager(t, mgr) })
-		store := &runtimeHandleTestStore{ks: ks}
-		initializing, finishInit := make(chan struct{}), make(chan struct{})
-		snapshotTaken, finishClose := make(chan struct{}), make(chan struct{})
-		unblockInit := sync.OnceFunc(func() { close(finishInit) })
-		unblockClose := sync.OnceFunc(func() { close(finishClose) })
-		defer unblockInit()
-		defer unblockClose()
-		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/domain/crossks/mockCreateSessionManager",
-			func(create *sessionManagerFactory) {
-				*create = func(string, func(string, validatorapi.Validator) pools.Factory) (*SessionManager, func(), error) {
-					close(initializing)
-					<-finishInit
-					return newRuntimeHandleTestSessionManager(store, &runtimeHandleTestSessPool{}), nil, nil
+	for _, operation := range []string{"Acquire", "GetOrCreate"} {
+		t.Run(operation, func(t *testing.T) {
+			const ks = "ks-shutdown-initializing"
+			mgr := NewManager(&runtimeHandleTestStore{ks: keyspace.System})
+			t.Cleanup(func() { closeRuntimeTestManager(t, mgr) })
+			store, pool := &runtimeHandleTestStore{ks: ks}, &runtimeHandleTestSessPool{}
+			runtime := newRuntimeHandleTestSessionManager(store, pool)
+			initializing, finishInit := make(chan struct{}), make(chan struct{})
+			unblock := sync.OnceFunc(func() { close(finishInit) })
+			defer unblock()
+			workersStarted, publishedDuringCleanup := false, false
+			pool.onClose = func() {
+				_, publishedDuringCleanup = mgr.get(ks)
+			}
+			waitingForInit := make(chan struct{})
+			signalCloseWait := sync.OnceFunc(func() { close(waitingForInit) })
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/domain/crossks/beforeRuntimeCloseWait",
+				func(string) { signalCloseWait() })
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/domain/crossks/mockCreateSessionManager",
+				func(create *sessionManagerFactory) {
+					*create = func(string, func(string, validatorapi.Validator) pools.Factory) (*SessionManager, func(), error) {
+						close(initializing)
+						<-finishInit
+						return runtime, func() { workersStarted = true }, nil
+					}
+				})
+			var handle sqlsvrapi.KSRuntimeHandle
+			var found *SessionManager
+			var operationErr error
+			initialized := runRuntimeTestTask(t, "initialization during shutdown", func() {
+				if operation == "Acquire" {
+					handle, operationErr = mgr.Acquire(ks, "holder", nil)
+				} else {
+					found, operationErr = mgr.GetOrCreate(ks, nil)
 				}
 			})
-		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/domain/crossks/afterCloseKeyspaceSnapshot", func() {
-			close(snapshotTaken)
-			<-finishClose
+			awaitRuntimeTestResult(t, initializing, "the blocked initializer")
+			closed := runRuntimeTestTask(t, "shutdown during initialization", mgr.Close)
+			awaitRuntimeTestResult(t, waitingForInit, "shutdown to wait for the initializer")
+			select {
+			case <-closed:
+				t.Fatal("shutdown returned while a runtime was initializing")
+			default:
+			}
+			unblock()
+			awaitRuntimeTestResult(t, initialized, "the initializer to reject shutdown")
+			awaitRuntimeTestResult(t, closed, "manager shutdown")
+			require.ErrorIs(t, operationErr, errManagerClosed)
+			require.Nil(t, handle)
+			require.Nil(t, found)
+			require.False(t, workersStarted, "shutdown won before the runtime could start workers")
+			require.False(t, publishedDuringCleanup, "an abandoned initializer must never publish its runtime")
+			require.Equal(t, 1, pool.closeCount)
+			require.Equal(t, 1, store.closeCount)
+			require.Empty(t, mgr.GetAllKeyspace())
 		})
-		acquired := make(chan error, 1)
-		go func() {
-			_, err := mgr.Acquire(ks, "holder", unusedRuntimeHandleFactoryGetter(t))
-			acquired <- err
-		}()
-		awaitRuntimeTestResult(t, initializing, "runtime initialization")
-		closed := make(chan struct{})
-		go func() {
-			defer close(closed)
-			mgr.Close()
-		}()
-		awaitRuntimeTestResult(t, snapshotTaken, "the first shutdown snapshot")
-		unblockInit()
-		acquireErr := awaitRuntimeTestResult(t, acquired, "the acquire to publish and unlock")
-		unblockClose()
-		awaitRuntimeTestResult(t, closed, "manager shutdown")
-		require.ErrorIs(t, acquireErr, errManagerClosed)
-		require.Empty(t, mgr.GetAllKeyspace())
-		require.Equal(t, 1, store.closeCount)
-	})
+	}
+}
 
+func TestRuntimeRetiresBeforeStoreClose(t *testing.T) {
+	if kerneltype.IsClassic() {
+		t.Skip("cross keyspace runtime acquire is supported only in nextgen kernel")
+	}
+	for _, operation := range []string{"eager release", "idle sweep", "keyspace close"} {
+		t.Run(operation, func(t *testing.T) {
+			const ks = "ks-retiring"
+			mgr, entry, store, pool := newRuntimeHandleTestManager(t, ks)
+			handle, err := mgr.Acquire(ks, "holder", nil)
+			require.NoError(t, err)
+			closing, finishClose := make(chan struct{}), make(chan struct{})
+			store.closed = make(chan struct{})
+			store.onClose = func() {
+				close(closing)
+				<-finishClose
+			}
+			unblock := sync.OnceFunc(func() { close(finishClose) })
+			defer unblock()
+			var newRuntime *SessionManager
+			createdBeforeClose := false
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/domain/crossks/mockCreateSessionManager",
+				func(create *sessionManagerFactory) {
+					*create = func(string, func(string, validatorapi.Validator) pools.Factory) (*SessionManager, func(), error) {
+						select {
+						case <-store.closed:
+						default:
+							createdBeforeClose = true
+						}
+						newRuntime = newRuntimeHandleTestSessionManager(&runtimeHandleTestStore{ks: ks}, &runtimeHandleTestSessPool{})
+						return newRuntime, nil, nil
+					}
+				})
+			lookup := make(chan struct{})
+			lookupStarted := sync.OnceFunc(func() { close(lookup) })
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/domain/crossks/beforeRuntimeEntryWait",
+				func(string) { lookupStarted() })
+			closeRuntime := func() { handle.Release(true) }
+			switch operation {
+			case "idle sweep":
+				handle.Release(false)
+				closeRuntime = func() { mgr.sweepIdleRuntimes(0) }
+			case "keyspace close":
+				closeRuntime = func() { mgr.CloseKS(ks) }
+			}
+			closed := runRuntimeTestTask(t, "runtime teardown", closeRuntime)
+			awaitRuntimeTestResult(t, closing, "store close after workers have drained")
+			var visible *SessionManager
+			var ok bool
+			checkedVisibility := runRuntimeTestTask(t, "lookup during store cleanup", func() { visible, ok = mgr.get(ks) })
+			awaitRuntimeTestResult(t, checkedVisibility, "runtime visibility during store cleanup")
+			var found *SessionManager
+			var lookupErr error
+			returnedBeforeClose := false
+			lookedUp := runRuntimeTestTask(t, "replacement lookup", func() {
+				found, lookupErr = mgr.GetOrCreate(ks, nil)
+				select {
+				case <-store.closed:
+				default:
+					returnedBeforeClose = true
+				}
+			})
+			awaitRuntimeTestResult(t, lookup, "lookup to wait for blocked store cleanup")
+			unblock()
+			awaitRuntimeTestResult(t, closed, "the old runtime to close")
+			awaitRuntimeTestResult(t, lookedUp, "the replacement runtime")
+			require.False(t, ok, "a drained runtime must be hidden while its store closes")
+			require.Nil(t, visible)
+			require.NoError(t, lookupErr)
+			require.Same(t, newRuntime, found)
+			require.NotSame(t, entry.sessMgr, found)
+			require.False(t, createdBeforeClose, "replacement initialization must wait for store cleanup")
+			require.False(t, returnedBeforeClose, "GetOrCreate must wait for store cleanup")
+			require.Equal(t, 1, pool.closeCount)
+			require.Equal(t, 1, store.closeCount)
+		})
+	}
+}
+
+func TestRuntimeKeyspacesProgressIndependently(t *testing.T) {
+	if kerneltype.IsClassic() {
+		t.Skip("cross keyspace runtime acquire is supported only in nextgen kernel")
+	}
+	for _, blockedOperation := range []string{"initialization", "teardown"} {
+		for _, otherRuntime := range []string{"warm", "cold"} {
+			t.Run(blockedOperation+"/"+otherRuntime, func(t *testing.T) {
+				const blockedKS, otherKS = "ks-blocked", "ks-other"
+				mgr := NewManager(&runtimeHandleTestStore{ks: keyspace.System})
+				t.Cleanup(func() { closeRuntimeTestManager(t, mgr) })
+				blocked, resume := make(chan struct{}), make(chan struct{})
+				unblock := sync.OnceFunc(func() { close(resume) })
+				defer unblock()
+				blockedStore := &runtimeHandleTestStore{ks: blockedKS}
+				otherStore := &runtimeHandleTestStore{ks: otherKS}
+				if blockedOperation == "teardown" {
+					blockedStore.onClose = func() {
+						close(blocked)
+						<-resume
+					}
+				}
+				testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/domain/crossks/mockCreateSessionManager",
+					func(create *sessionManagerFactory) {
+						*create = func(ks string, _ func(string, validatorapi.Validator) pools.Factory) (*SessionManager, func(), error) {
+							store := otherStore
+							if ks == blockedKS {
+								store = blockedStore
+								if blockedOperation == "initialization" {
+									close(blocked)
+									<-resume
+								}
+							}
+							return newRuntimeHandleTestSessionManager(store, &runtimeHandleTestSessPool{}), nil, nil
+						}
+					})
+				if otherRuntime == "warm" {
+					handle, err := mgr.Acquire(otherKS, "warmup", nil)
+					require.NoError(t, err)
+					handle.Release(false)
+				}
+				var blockedErr error
+				var blockingWork func()
+				if blockedOperation == "initialization" {
+					blockingWork = func() {
+						var handle sqlsvrapi.KSRuntimeHandle
+						handle, blockedErr = mgr.Acquire(blockedKS, "blocked", nil)
+						if handle != nil {
+							handle.Release(false)
+						}
+					}
+				} else {
+					handle, err := mgr.Acquire(blockedKS, "blocked", nil)
+					require.NoError(t, err)
+					blockingWork = func() { handle.Release(true) }
+				}
+				blockedDone := runRuntimeTestTask(t, "the blocked keyspace operation", blockingWork)
+				awaitRuntimeTestResult(t, blocked, "the blocked keyspace")
+				var otherHandle sqlsvrapi.KSRuntimeHandle
+				var otherErr error
+				otherDone := runRuntimeTestTask(t, "the independent keyspace operation", func() {
+					otherHandle, otherErr = mgr.Acquire(otherKS, "other", nil)
+					if otherHandle != nil {
+						otherHandle.Release(false)
+					}
+				})
+				awaitRuntimeTestResult(t, otherDone, "another keyspace to acquire and release")
+				require.NoError(t, otherErr)
+				require.NotNil(t, otherHandle)
+				require.Same(t, otherStore, otherHandle.Store())
+				unblock()
+				awaitRuntimeTestResult(t, blockedDone, "the blocked keyspace to finish")
+				require.NoError(t, blockedErr)
+			})
+		}
+	}
+}
+
+func TestRuntimeInitializesDistinctKeyspacesConcurrently(t *testing.T) {
+	if kerneltype.IsClassic() {
+		t.Skip("cross keyspace runtime acquire is supported only in nextgen kernel")
+	}
+	const count = 16
 	mgr := NewManager(&runtimeHandleTestStore{ks: keyspace.System})
-	t.Cleanup(mgr.Close)
-	store := &runtimeHandleTestStore{ks: "cold"}
-	started := make(chan struct{})
-	unblock := make(chan struct{})
+	t.Cleanup(func() { closeRuntimeTestManager(t, mgr) })
+	initializing, finishInit := make(chan string, count), make(chan struct{})
+	unblock := sync.OnceFunc(func() { close(finishInit) })
+	defer unblock()
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/domain/crossks/mockCreateSessionManager",
+		func(create *sessionManagerFactory) {
+			*create = func(ks string, _ func(string, validatorapi.Validator) pools.Factory) (*SessionManager, func(), error) {
+				initializing <- ks
+				<-finishInit
+				return newRuntimeHandleTestSessionManager(&runtimeHandleTestStore{ks: ks}, &runtimeHandleTestSessPool{}), nil, nil
+			}
+		})
+	results := make(chan error, count)
+	for i := range count {
+		ks := fmt.Sprintf("ks-concurrent-%d", i)
+		runRuntimeTestTask(t, "a distinct keyspace initializer", func() {
+			handle, err := mgr.Acquire(ks, "holder", nil)
+			if handle != nil {
+				handle.Release(false)
+			}
+			results <- err
+		})
+	}
+	seen := make(map[string]struct{}, count)
+	for range count {
+		ks := awaitRuntimeTestResult(t, initializing, "all distinct keyspaces to start initialization")
+		require.NotContains(t, seen, ks)
+		seen[ks] = struct{}{}
+	}
+	unblock()
+	for range count {
+		require.NoError(t, awaitRuntimeTestResult(t, results, "a completed initializer"))
+	}
+	require.Len(t, mgr.GetAllKeyspace(), count)
+}
+
+func TestRuntimeSweepLeavesUnvisitedEntriesAvailable(t *testing.T) {
+	if kerneltype.IsClassic() {
+		t.Skip("cross keyspace runtime acquire is supported only in nextgen kernel")
+	}
+	mgr := NewManager(&runtimeHandleTestStore{ks: keyspace.System})
+	t.Cleanup(func() { closeRuntimeTestManager(t, mgr) })
+	closing, finishClose := make(chan string, 3), make(chan struct{})
+	unblock := sync.OnceFunc(func() { close(finishClose) })
+	defer unblock()
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/domain/crossks/mockCreateSessionManager",
+		func(create *sessionManagerFactory) {
+			*create = func(ks string, _ func(string, validatorapi.Validator) pools.Factory) (*SessionManager, func(), error) {
+				pool := &runtimeHandleTestSessPool{onClose: func() {
+					closing <- ks
+					<-finishClose
+				}}
+				return newRuntimeHandleTestSessionManager(&runtimeHandleTestStore{ks: ks}, pool), nil, nil
+			}
+		})
+	keyspaces := []string{"ks-sweep-a", "ks-sweep-b", "ks-sweep-c"}
+	for _, ks := range keyspaces {
+		handle, err := mgr.Acquire(ks, "idle", nil)
+		require.NoError(t, err)
+		handle.Release(false)
+	}
+	swept := runRuntimeTestTask(t, "idle sweep", func() { mgr.sweepIdleRuntimes(0) })
+	closingKS := awaitRuntimeTestResult(t, closing, "the first idle runtime to start teardown")
+	otherKS := keyspaces[0]
+	if otherKS == closingKS {
+		otherKS = keyspaces[1]
+	}
+	var handle sqlsvrapi.KSRuntimeHandle
+	var acquireErr error
+	acquired := runRuntimeTestTask(t, "acquire an unvisited idle runtime", func() {
+		handle, acquireErr = mgr.Acquire(otherKS, "active", nil)
+	})
+	awaitRuntimeTestResult(t, acquired, "an unvisited runtime to remain acquirable")
+	require.NoError(t, acquireErr)
+	require.NotNil(t, handle)
+	unblock()
+	awaitRuntimeTestResult(t, swept, "idle sweep after cleanup resumes")
+	pool := handle.SysSessionPool().(*runtimeHandleTestSessPool)
+	require.Zero(t, pool.closeCount, "the sweep must recheck holders before closing another entry")
+	visible, ok := mgr.get(otherKS)
+	require.True(t, ok)
+	require.Same(t, handle.Store(), visible.store)
+	handle.Release(false)
+}
+
+func TestRuntimeStartupBarrier(t *testing.T) {
+	if kerneltype.IsClassic() {
+		t.Skip("cross keyspace runtime acquire is supported only in nextgen kernel")
+	}
+	const ks = "ks-starting"
+	mgr := NewManager(&runtimeHandleTestStore{ks: keyspace.System})
+	t.Cleanup(func() { closeRuntimeTestManager(t, mgr) })
+	starting, finishStartup, startupFinished := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	unblock := sync.OnceFunc(func() { close(finishStartup) })
+	defer unblock()
+	acquireWaiting, closeWaiting := make(chan struct{}), make(chan struct{})
+	signalAcquireWait := sync.OnceFunc(func() { close(acquireWaiting) })
+	signalCloseWait := sync.OnceFunc(func() { close(closeWaiting) })
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/domain/crossks/beforeRuntimeEntryWait",
+		func(string) { signalAcquireWait() })
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/domain/crossks/beforeRuntimeCloseWait",
+		func(string) { signalCloseWait() })
+	closedDuringStartup := false
+	pool := &runtimeHandleTestSessPool{onClose: func() {
+		select {
+		case <-startupFinished:
+		default:
+			closedDuringStartup = true
+		}
+	}}
+	store := &runtimeHandleTestStore{ks: ks}
+	runtime := newRuntimeHandleTestSessionManager(store, pool)
+	var reentered *SessionManager
+	var reenterErr error
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/domain/crossks/mockCreateSessionManager",
 		func(create *sessionManagerFactory) {
 			*create = func(string, func(string, validatorapi.Validator) pools.Factory) (*SessionManager, func(), error) {
-				close(started)
-				<-unblock
-				return newRuntimeHandleTestSessionManager(store, &runtimeHandleTestSessPool{}), nil, nil
+				return runtime, func() {
+					reentered, reenterErr = mgr.GetOrCreate(ks, nil)
+					close(starting)
+					<-finishStartup
+					close(startupFinished)
+				}, nil
 			}
 		})
-	acquired := make(chan error, 1)
-	go func() {
-		handle, err := mgr.Acquire("cold", "holder", unusedRuntimeHandleFactoryGetter(t))
+	var initialHandle, waitingHandle sqlsvrapi.KSRuntimeHandle
+	var initialErr, waitingErr error
+	initialized := runRuntimeTestTask(t, "startup initialization", func() {
+		initialHandle, initialErr = mgr.Acquire(ks, "initial", nil)
+	})
+	awaitRuntimeTestResult(t, starting, "workers to start after runtime publication")
+	require.NoError(t, reenterErr)
+	require.Same(t, runtime, reentered, "startup session factories must find their published runtime")
+	acquiredDuringStartup := false
+	waiting := runRuntimeTestTask(t, "acquire during startup", func() {
+		waitingHandle, waitingErr = mgr.Acquire(ks, "waiting", nil)
+		if waitingHandle != nil {
+			select {
+			case <-startupFinished:
+			default:
+				acquiredDuringStartup = true
+			}
+		}
+	})
+	awaitRuntimeTestResult(t, acquireWaiting, "the same-keyspace acquisition to wait for startup")
+	closed := runRuntimeTestTask(t, "shutdown during startup", mgr.Close)
+	awaitRuntimeTestResult(t, closeWaiting, "shutdown to wait for worker registration")
+	unblock()
+	awaitRuntimeTestResult(t, initialized, "initial acquisition after startup")
+	awaitRuntimeTestResult(t, waiting, "the same-keyspace acquisition")
+	awaitRuntimeTestResult(t, closed, "shutdown after startup finishes")
+	require.False(t, acquiredDuringStartup, "Acquire must wait for worker startup to finish")
+	require.False(t, closedDuringStartup, "teardown must wait for worker startup to finish")
+	require.Nil(t, initialHandle)
+	require.ErrorIs(t, initialErr, errManagerClosed)
+	require.Nil(t, waitingHandle)
+	require.ErrorIs(t, waitingErr, errManagerClosed)
+	require.Equal(t, 1, pool.closeCount)
+	require.Equal(t, 1, store.closeCount)
+}
+
+func TestRuntimeInitializationFailureWakesWaiters(t *testing.T) {
+	if kerneltype.IsClassic() {
+		t.Skip("cross keyspace runtime acquire is supported only in nextgen kernel")
+	}
+	const ks, waiterCount = "ks-retry-initialization", 8
+	mgr := NewManager(&runtimeHandleTestStore{ks: keyspace.System})
+	t.Cleanup(func() { closeRuntimeTestManager(t, mgr) })
+	initializing, finishInit := make(chan struct{}), make(chan struct{})
+	unblock := sync.OnceFunc(func() { close(finishInit) })
+	defer unblock()
+	var createMu sync.Mutex
+	createCount := 0
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/domain/crossks/mockCreateSessionManager",
+		func(create *sessionManagerFactory) {
+			*create = func(string, func(string, validatorapi.Validator) pools.Factory) (*SessionManager, func(), error) {
+				createMu.Lock()
+				createCount++
+				attempt := createCount
+				createMu.Unlock()
+				if attempt == 1 {
+					close(initializing)
+					<-finishInit
+					return nil, nil, kv.ErrNotExist
+				}
+				return newRuntimeHandleTestSessionManager(&runtimeHandleTestStore{ks: ks}, &runtimeHandleTestSessPool{}), nil, nil
+			}
+		})
+	var initialErr error
+	initial := runRuntimeTestTask(t, "the failing initializer", func() {
+		handle, err := mgr.Acquire(ks, "initial", nil)
+		initialErr = err
 		if handle != nil {
 			handle.Release(false)
 		}
-		acquired <- err
-	}()
-	<-started
-	closed := make(chan struct{})
-	go func() { mgr.Close(); close(closed) }()
-	var once sync.Once
-	finish := func() {
-		once.Do(func() { close(unblock) })
-		<-closed
+	})
+	awaitRuntimeTestResult(t, initializing, "the first initializer")
+	type acquireResult struct {
+		handle sqlsvrapi.KSRuntimeHandle
+		err    error
 	}
-	defer finish()
-	require.Eventually(t, func() bool {
-		mgr.mu.RLock()
-		defer mgr.mu.RUnlock()
-		return mgr.closed
-	}, 5*time.Second, time.Millisecond)
-	select {
-	case <-closed:
-		t.Fatal("shutdown returned while a runtime was initializing")
-	default:
+	started := make(chan struct{}, waiterCount)
+	results := make(chan acquireResult, waiterCount)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/domain/crossks/beforeRuntimeEntryWait",
+		func(string) { started <- struct{}{} })
+	for i := range waiterCount {
+		runRuntimeTestTask(t, "a retrying initializer", func() {
+			handle, err := mgr.Acquire(ks, fmt.Sprintf("waiter-%d", i), nil)
+			if handle != nil {
+				handle.Release(false)
+			}
+			results <- acquireResult{handle, err}
+		})
 	}
-	finish()
-	require.ErrorContains(t, <-acquired, "closed")
-	require.Empty(t, mgr.GetAllKeyspace())
-	require.Equal(t, 1, store.closeCount)
+	for range waiterCount {
+		awaitRuntimeTestResult(t, started, "same-keyspace waiters to wait for the failed initializer")
+	}
+	unblock()
+	awaitRuntimeTestResult(t, initial, "the initializer to fail")
+	require.ErrorIs(t, initialErr, kv.ErrNotExist)
+	var store kv.Storage
+	for range waiterCount {
+		result := awaitRuntimeTestResult(t, results, "a waiter to retry initialization")
+		require.NoError(t, result.err)
+		require.NotNil(t, result.handle)
+		if store == nil {
+			store = result.handle.Store()
+		}
+		require.Same(t, store, result.handle.Store())
+	}
+	createMu.Lock()
+	attempts := createCount
+	createMu.Unlock()
+	require.Equal(t, 2, attempts, "the failed initializer must permit exactly one replacement")
 }
