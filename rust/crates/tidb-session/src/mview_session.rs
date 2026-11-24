@@ -106,6 +106,8 @@ impl tidb_executor::mview::MvSession for Session {
         )>,
         DriverError,
     > {
+        // Go `Compile`: the preprocessor, then `PlanBuilder.Build`.
+        self.validate_ddl_preprocess(stmt)?;
         Session::build_statement_plan(self, stmt)
     }
 

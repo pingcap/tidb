@@ -412,7 +412,8 @@ impl Session {
         stmt: &tidb_ast::Stmt,
         in_explain: bool,
     ) -> Result<(), DriverError> {
-        self.validate_ddl_preprocess(stmt)?;
+        // Go `CheckPrivilege` reads the visit infos of the statement
+        // `Compile` already preprocessed: no second walk.
         if Self::checks_privileges_while_planned(stmt) {
             // Go's preprocessor only: `CheckPrivilege` reads the visit infos
             // of the `PlanBuilder` that builds the statement, which the
@@ -464,7 +465,6 @@ impl Session {
         preparing: bool,
         in_explain: bool,
     ) -> Result<Vec<tidb_executor::table_privilege::TablePrivilegeRequest>, DriverError> {
-        self.validate_ddl_preprocess(stmt)?;
         self.deny_missing_tables_without_privileges(stmt)?;
         // Both resolvers plan against the same catalog image the executor will
         // use, under the statement's own context.
@@ -541,7 +541,9 @@ impl Session {
         if !Self::compiles_as_statement_plan(stmt) {
             return Ok(None);
         }
-        self.validate_ddl_preprocess(stmt)?;
+        // `PlanBuilder.Build` alone: the statement was preprocessed by the
+        // `Compile` that called it ([`Self::preprocess_and_build`], or the
+        // statement funnel's compile phase).
         let ctx = self.statement_context_for_stmt(stmt, false);
         let (plan, visits) = self.with_planning_catalog(|catalog| {
             tidb_executor::driver::plan_statement(stmt, catalog, &self.vars.current_db, &ctx, self)
@@ -653,9 +655,14 @@ impl Session {
         // one this build refuses (a missing table's 1146) still sets what
         // the next `ROW_COUNT()` reads.
         self.statement_kind = crate::classify::statement_kind_of(stmt);
+        // Go `Compile`'s one preprocessor walk, whose statement and answers
+        // the funnel's compile phase takes over (`take_precompiled_preprocess`).
+        let mut walked = stmt.clone();
+        let scan = tidb_planner::preprocess::preprocess(&mut walked, &*self)
+            .map_err(tidb_executor::driver::planner_error_to_driver)?;
         // What the build notes is filed by the executor's own compile, which
         // builds the plan again; a DDL job's lowering notes its own.
-        let Some((plan, visits, build_ctx)) = self.preprocess_and_build(stmt)? else {
+        let Some((plan, visits, build_ctx)) = self.build_statement_plan(stmt)? else {
             return Ok(CompiledExecutor::Other);
         };
         let executor = match CompiledExecutor::of(&plan) {
@@ -671,8 +678,9 @@ impl Session {
         self.check_table_privilege_requests(&requests)?;
         self.check_table_mode(stmt)?;
         self.precompiled = Some(PrecompiledStatement {
-            stmt: stmt.clone(),
+            stmt: walked.clone(),
             requests,
+            preprocessed: Some(PrecompiledPreprocess { original: stmt.clone(), walked, scan }),
         });
         Ok(executor)
     }
@@ -697,7 +705,7 @@ impl Session {
     }
 
     /// Go `Compile`'s preprocessor and `PlanBuilder.Build`.
-    fn preprocess_and_build(
+    pub(crate) fn preprocess_and_build(
         &mut self,
         stmt: &tidb_ast::Stmt,
     ) -> Result<
@@ -710,6 +718,22 @@ impl Session {
     > {
         self.validate_ddl_preprocess(stmt)?;
         self.build_statement_plan(stmt)
+    }
+
+    /// The preprocessed statement and walk answers of the statement
+    /// [`Self::compile_statement`] compiled, when `stmt` is that statement.
+    pub(crate) fn take_precompiled_preprocess(
+        &mut self,
+        stmt: &tidb_ast::Stmt,
+    ) -> Option<(tidb_ast::Stmt, tidb_planner::preprocess::PreprocessorReturn)> {
+        let precompiled = self.precompiled.as_mut()?;
+        if precompiled.preprocessed.as_ref()?.original != *stmt {
+            return None;
+        }
+        precompiled
+            .preprocessed
+            .take()
+            .map(|preprocessed| (preprocessed.walked, preprocessed.scan))
     }
 
     /// Forgets a statement [`Self::compile_statement`] compiled; the node
@@ -1599,6 +1623,18 @@ fn scoped_privilege(
 pub(crate) struct PrecompiledStatement {
     stmt: tidb_ast::Stmt,
     requests: Vec<tidb_executor::table_privilege::TablePrivilegeRequest>,
+    /// The statement as the preprocessor left it and what the walk
+    /// answered, which the statement funnel's compile phase takes instead of
+    /// walking again.
+    preprocessed: Option<PrecompiledPreprocess>,
+}
+
+/// [`PrecompiledStatement::preprocessed`]: the statement as compiled, as the
+/// walk left it, and the walk's answers.
+pub(crate) struct PrecompiledPreprocess {
+    original: tidb_ast::Stmt,
+    walked: tidb_ast::Stmt,
+    scan: tidb_planner::preprocess::PreprocessorReturn,
 }
 
 /// The statement context a plan's build appended its warnings to.

@@ -1553,11 +1553,17 @@ impl Session {
         // prepared statement it runs.
         let region = (!CompileDepth::is_nested())
             .then(|| tidb_tracing::start_thread_region("planner.Preprocess"));
-        let mut scan = tidb_planner::preprocess::preprocess(
-            &mut stmt,
-            &*self,
-        )
-        .map_err(tidb_executor::driver::planner_error_to_driver)?;
+        // A statement the node compiled ([`Self::compile_statement`]) was
+        // walked there: its preprocessed statement and the walk's answers
+        // continue here, as Go's one `Compile` carries them to `Optimize`.
+        let mut scan = match self.take_precompiled_preprocess(&stmt) {
+            Some((walked, scan)) => {
+                stmt = walked;
+                scan
+            }
+            None => tidb_planner::preprocess::preprocess(&mut stmt, &*self)
+                .map_err(tidb_executor::driver::planner_error_to_driver)?,
+        };
         drop(region);
         // Go `checkSelectNoopFuncs` warns as the walk reaches each clause.
         for warning in std::mem::take(&mut scan.noop_warnings) {

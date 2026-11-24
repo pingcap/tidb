@@ -14,7 +14,7 @@ impl Session {
     pub fn new_import_plan_for_test(&mut self, sql: &str) -> Result<ImportPlan, DriverError> {
         let (stmt, _) = self.parse_import_query(sql)?;
         let node = tidb_ast::Stmt::Dml(tidb_ast::NodeBox::new(tidb_ast::DmlStmt::ImportInto(Box::new(stmt.clone()))));
-        let Some((tidb_planner::common_plans::Plan::ImportInto(plan), _, _)) = self.build_statement_plan(&node)? else {
+        let Some((tidb_planner::common_plans::Plan::ImportInto(plan), _, _)) = self.preprocess_and_build(&node)? else {
             return Err(DriverError::from(tidb_terror::MysqlError::unknown("IMPORT INTO compiles to an import plan")));
         };
         let ctx = tidb_dxf_storage::with_internal_source_type(&Context::background(), tidb_txnkv::INTERNAL_IMPORT_INTO);
