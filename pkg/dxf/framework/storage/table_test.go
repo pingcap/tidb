@@ -1514,37 +1514,30 @@ func TestTaskHistoryTable(t *testing.T) {
 
 func TestPauseAndResume(t *testing.T) {
 	_, sm, ctx := testutil.InitTableTest(t)
-	require.NoError(t, sm.InitMeta(ctx, ":4000", ""))
 
-	taskID, err := sm.CreateTask(ctx, "pause-and-resume", proto.TaskTypeExample, "", 4, "", 0, proto.ExtraParams{}, []byte("test"))
-	require.NoError(t, err)
-	found, err := sm.PauseTask(ctx, "pause-and-resume")
-	require.NoError(t, err)
-	require.True(t, found)
-
-	testutil.CreateSubTask(t, sm, taskID, proto.StepInit, "tidb1", []byte("test"), proto.TaskTypeExample, 11)
-	testutil.CreateSubTask(t, sm, taskID, proto.StepInit, "tidb1", []byte("test"), proto.TaskTypeExample, 11)
-	testutil.CreateSubTask(t, sm, taskID, proto.StepInit, "tidb1", []byte("test"), proto.TaskTypeExample, 11)
+	testutil.CreateSubTask(t, sm, 1, proto.StepInit, "tidb1", []byte("test"), proto.TaskTypeExample, 11)
+	testutil.CreateSubTask(t, sm, 1, proto.StepInit, "tidb1", []byte("test"), proto.TaskTypeExample, 11)
+	testutil.CreateSubTask(t, sm, 1, proto.StepInit, "tidb1", []byte("test"), proto.TaskTypeExample, 11)
 	// 1.1 pause all subtasks.
-	require.NoError(t, sm.PauseSubtasks(ctx, "tidb1", taskID))
-	cntByStates, err := sm.GetSubtaskCntGroupByStates(ctx, taskID, proto.StepInit)
+	require.NoError(t, sm.PauseSubtasks(ctx, "tidb1", 1))
+	cntByStates, err := sm.GetSubtaskCntGroupByStates(ctx, 1, proto.StepInit)
 	require.NoError(t, err)
 	require.Equal(t, int64(3), cntByStates[proto.SubtaskStatePaused])
 	// 1.2 resume all subtasks.
-	require.NoError(t, sm.ResumeSubtasks(ctx, taskID))
-	cntByStates, err = sm.GetSubtaskCntGroupByStates(ctx, taskID, proto.StepInit)
+	require.NoError(t, sm.ResumeSubtasks(ctx, 1))
+	cntByStates, err = sm.GetSubtaskCntGroupByStates(ctx, 1, proto.StepInit)
 	require.NoError(t, err)
 	require.Equal(t, int64(3), cntByStates[proto.SubtaskStatePending])
 
 	// 2.1 pause 2 subtasks.
 	require.NoError(t, sm.UpdateSubtaskStateAndError(ctx, "tidb1", 1, proto.SubtaskStateSucceed, nil))
-	require.NoError(t, sm.PauseSubtasks(ctx, "tidb1", taskID))
-	cntByStates, err = sm.GetSubtaskCntGroupByStates(ctx, taskID, proto.StepInit)
+	require.NoError(t, sm.PauseSubtasks(ctx, "tidb1", 1))
+	cntByStates, err = sm.GetSubtaskCntGroupByStates(ctx, 1, proto.StepInit)
 	require.NoError(t, err)
 	require.Equal(t, int64(2), cntByStates[proto.SubtaskStatePaused])
 	// 2.2 resume 2 subtasks.
-	require.NoError(t, sm.ResumeSubtasks(ctx, taskID))
-	cntByStates, err = sm.GetSubtaskCntGroupByStates(ctx, taskID, proto.StepInit)
+	require.NoError(t, sm.ResumeSubtasks(ctx, 1))
+	cntByStates, err = sm.GetSubtaskCntGroupByStates(ctx, 1, proto.StepInit)
 	require.NoError(t, err)
 	require.Equal(t, int64(2), cntByStates[proto.SubtaskStatePending])
 }

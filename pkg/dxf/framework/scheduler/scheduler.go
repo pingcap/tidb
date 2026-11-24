@@ -376,20 +376,15 @@ func (s *BaseScheduler) onReverting() error {
 	task := s.getTaskClone()
 	s.logger.Debug("on reverting state", zap.Stringer("state", task.State),
 		zap.String("step", proto.Step2Str(task.Type, task.Step)))
+	// Batched step publication can leave paused subtasks beyond task.Step.
+	// Drain the whole task before deciding whether reversion is complete.
+	if err := s.taskMgr.CancelPausedSubtasks(s.ctx, task.ID); err != nil {
+		return errors.Trace(err)
+	}
 	cntByStates, err := s.taskMgr.GetSubtaskCntGroupByStates(s.ctx, task.ID, task.Step)
 	if err != nil {
 		s.logger.Warn("check task failed", zap.Error(err))
 		return err
-	}
-	if cntByStates[proto.SubtaskStatePaused] > 0 {
-		if err = s.taskMgr.CancelPausedSubtasks(s.ctx, task.ID); err != nil {
-			return errors.Trace(err)
-		}
-		cntByStates, err = s.taskMgr.GetSubtaskCntGroupByStates(s.ctx, task.ID, task.Step)
-		if err != nil {
-			s.logger.Warn("check task failed", zap.Error(err))
-			return err
-		}
 	}
 	runnableSubtaskCnt := cntByStates[proto.SubtaskStatePending] + cntByStates[proto.SubtaskStateRunning] + cntByStates[proto.SubtaskStatePaused]
 	if runnableSubtaskCnt == 0 {

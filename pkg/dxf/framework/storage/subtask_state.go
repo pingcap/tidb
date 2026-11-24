@@ -16,11 +16,8 @@ package storage
 
 import (
 	"context"
-	"strings"
 
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
-	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/injectfailpoint"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
@@ -126,119 +123,30 @@ func (mgr *TaskManager) PauseSubtasks(ctx context.Context, execID string, taskID
 	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
 		return err
 	}
-	failpoint.InjectCall("beforePauseSubtasks")
-	return mgr.WithNewTxn(ctx, func(se sessionctx.Context) error {
-		// Lock and recheck the parent task so PauseSubtasks serializes with
-		// concurrent cancellation transitions and does not pause subtasks after cancel commits.
-		rs, err := sqlexec.ExecSQL(ctx, se.GetSQLExecutor(),
-			`select state from mysql.tidb_global_task where id = %? for update`,
-			taskID,
-		)
-		if err != nil {
-			return err
-		}
-		if len(rs) == 0 || rs[0].GetString(0) != string(proto.TaskStatePausing) {
-			return nil
-		}
-		failpoint.InjectCall("beforePauseSubtasksUpdate")
-		_, err = sqlexec.ExecSQL(ctx, se.GetSQLExecutor(),
-			`update mysql.tidb_background_subtask
-			 set state = %?, state_update_time = unix_timestamp()
-			 where task_key = %? and state in (%?, %?) and exec_id = %?`,
-			proto.SubtaskStatePaused, TaskIDToKey(taskID),
-			proto.SubtaskStateRunning, proto.SubtaskStatePending, execID,
-		)
-		return err
-	})
+	_, err := mgr.ExecuteSQLWithNewSession(ctx,
+		`update mysql.tidb_background_subtask
+		 set state = %?, state_update_time = unix_timestamp()
+		 where task_key = %? and state in (%?, %?) and exec_id = %?`,
+		proto.SubtaskStatePaused, TaskIDToKey(taskID),
+		proto.SubtaskStateRunning, proto.SubtaskStatePending, execID,
+	)
+	return err
 }
 
-// CancelPausedSubtasks cancels all paused subtasks of taskID in bounded,
-// retryable transactions so large subtask metadata does not trigger ErrTxnTooLarge.
+// CancelPausedSubtasks cancels all paused subtasks of taskID across all steps.
 func (mgr *TaskManager) CancelPausedSubtasks(ctx context.Context, taskID int64) error {
 	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
 		return err
 	}
-	taskKey := TaskIDToKey(taskID)
-	rs, err := mgr.ExecuteSQLWithNewSession(ctx,
-		`select id, coalesce(length(meta), 0) + coalesce(length(checkpoint), 0) + coalesce(length(summary), 0) + coalesce(length(error), 0)
-		 from mysql.tidb_background_subtask
-		 where task_key = %? and state = %?
-		 order by id`,
-		taskKey, proto.SubtaskStatePaused,
+	_, err := mgr.ExecuteSQLWithNewSession(ctx,
+		`update mysql.tidb_background_subtask
+		 set state = %?,
+			 state_update_time = unix_timestamp(),
+			 end_time = CURRENT_TIMESTAMP()
+		 where task_key = %? and state = %?`,
+		proto.SubtaskStateCanceled, TaskIDToKey(taskID), proto.SubtaskStatePaused,
 	)
-	if err != nil || len(rs) == 0 {
-		return err
-	}
-
-	const pausedSubtaskRowOverhead = 1024
-	// Keep each update transaction comfortably below TxnTotalSizeLimit because
-	// UPDATE rewrites full row values and index entries in the transaction buffer.
-	maxBatchBytes := max(min(kv.TxnTotalSizeLimit.Load(), uint64(maxSubtaskBatchSize))/2, uint64(1))
-	ids := make([]int64, 0, len(rs))
-	batches := make([][]int64, 0, 1)
-	var batchStart int
-	var currBytes uint64
-	for _, r := range rs {
-		id := r.GetInt64(0)
-		size := uint64(r.GetInt64(1)) + pausedSubtaskRowOverhead
-		if len(ids) > batchStart && currBytes+size > maxBatchBytes {
-			batches = append(batches, ids[batchStart:])
-			batchStart = len(ids)
-			currBytes = 0
-		}
-		ids = append(ids, id)
-		currBytes += size
-	}
-	if len(ids) > batchStart {
-		batches = append(batches, ids[batchStart:])
-	}
-
-	var cancelBatch func(ids []int64) error
-	cancelBatch = func(ids []int64) error {
-		if len(ids) == 0 {
-			return nil
-		}
-		var injectedErr error
-		failpoint.InjectCall("beforeCancelPausedSubtasksBatch", ids, &injectedErr)
-		if injectedErr != nil {
-			return injectedErr
-		}
-		err := mgr.WithNewTxn(ctx, func(se sessionctx.Context) error {
-			var sb strings.Builder
-			args := make([]any, 0, 2+len(ids))
-			sb.WriteString(`update mysql.tidb_background_subtask
-				set state = %?,
-					state_update_time = unix_timestamp(),
-					end_time = CURRENT_TIMESTAMP()
-				where state = %? and id in (`)
-			args = append(args, proto.SubtaskStateCanceled, proto.SubtaskStatePaused)
-			for i, id := range ids {
-				if i > 0 {
-					sb.WriteByte(',')
-				}
-				sb.WriteString("%?")
-				args = append(args, id)
-			}
-			sb.WriteByte(')')
-			_, execErr := sqlexec.ExecSQL(ctx, se.GetSQLExecutor(), sb.String(), args...)
-			return execErr
-		})
-		if err != nil && kv.ErrTxnTooLarge.Equal(err) && len(ids) > 1 {
-			mid := len(ids) / 2
-			if err2 := cancelBatch(ids[:mid]); err2 != nil {
-				return err2
-			}
-			return cancelBatch(ids[mid:])
-		}
-		return err
-	}
-
-	for _, batch := range batches {
-		if err := cancelBatch(batch); err != nil {
-			return err
-		}
-	}
-	return nil
+	return err
 }
 
 // ResumeSubtasks update all paused subtasks to pending state.

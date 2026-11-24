@@ -420,6 +420,7 @@ func TestSchedulerNotAllocateSlots(t *testing.T) {
 		return &cloneTask.TaskBase, nil
 	})
 
+	taskMgr.EXPECT().CancelPausedSubtasks(gomock.Any(), cloneTask.ID).Return(nil)
 	taskMgr.EXPECT().GetSubtaskCntGroupByStates(gomock.Any(), cloneTask.ID, cloneTask.Step).Return(map[proto.SubtaskState]int64{
 		proto.SubtaskStatePending: 0,
 		proto.SubtaskStateRunning: 0}, nil)
@@ -592,37 +593,38 @@ func TestSchedulerMaintainTaskFields(t *testing.T) {
 	t.Run("test onReverting", func(t *testing.T) {
 		scheduler.task.Store(&schTask)
 
-		// paused subtasks must be drained before OnDone/RevertedTask run
-		taskMgr.EXPECT().GetSubtaskCntGroupByStates(gomock.Any(), task.ID, gomock.Any()).Return(map[proto.SubtaskState]int64{
-			proto.SubtaskStatePaused: 2,
-		}, nil)
+		// paused subtasks must be drained before checking current step or calling OnDone/RevertedTask
 		taskMgr.EXPECT().CancelPausedSubtasks(gomock.Any(), task.ID).Return(fmt.Errorf("cancel paused err"))
 		require.ErrorContains(t, scheduler.onReverting(), "cancel paused err")
 		require.Equal(t, *scheduler.getTaskClone(), task)
 		require.True(t, ctrl.Satisfied())
 
-		// draining paused subtasks allows reversion to finish in the same tick
-		taskMgr.EXPECT().GetSubtaskCntGroupByStates(gomock.Any(), task.ID, gomock.Any()).Return(map[proto.SubtaskState]int64{
-			proto.SubtaskStatePaused: 2,
-		}, nil)
-		taskMgr.EXPECT().CancelPausedSubtasks(gomock.Any(), task.ID).Return(nil)
-		taskMgr.EXPECT().GetSubtaskCntGroupByStates(gomock.Any(), task.ID, gomock.Any()).Return(nil, nil)
-		schExt.EXPECT().OnDone(gomock.Any(), gomock.Any(), gomock.Any()).Return(fmt.Errorf("on done err"))
+		gomock.InOrder(
+			taskMgr.EXPECT().CancelPausedSubtasks(gomock.Any(), task.ID).Return(nil),
+			taskMgr.EXPECT().GetSubtaskCntGroupByStates(gomock.Any(), task.ID, task.Step).Return(nil, nil),
+			schExt.EXPECT().OnDone(gomock.Any(), gomock.Any(), gomock.Any()).Return(fmt.Errorf("on done err")),
+		)
 		require.ErrorContains(t, scheduler.onReverting(), "on done err")
 		require.Equal(t, *scheduler.getTaskClone(), task)
 		require.True(t, ctrl.Satisfied())
 
-		taskMgr.EXPECT().GetSubtaskCntGroupByStates(gomock.Any(), task.ID, gomock.Any()).Return(nil, nil)
-		schExt.EXPECT().OnDone(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
-		taskMgr.EXPECT().RevertedTask(gomock.Any(), task.ID).Return(fmt.Errorf("reverted err"))
+		gomock.InOrder(
+			taskMgr.EXPECT().CancelPausedSubtasks(gomock.Any(), task.ID).Return(nil),
+			taskMgr.EXPECT().GetSubtaskCntGroupByStates(gomock.Any(), task.ID, task.Step).Return(nil, nil),
+			schExt.EXPECT().OnDone(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil),
+			taskMgr.EXPECT().RevertedTask(gomock.Any(), task.ID).Return(fmt.Errorf("reverted err")),
+		)
 		require.ErrorContains(t, scheduler.onReverting(), "reverted err")
 		require.Equal(t, *scheduler.getTaskClone(), task)
 		require.True(t, ctrl.Satisfied())
 
 		// revert task successfully
-		taskMgr.EXPECT().GetSubtaskCntGroupByStates(gomock.Any(), task.ID, gomock.Any()).Return(nil, nil)
-		schExt.EXPECT().OnDone(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
-		taskMgr.EXPECT().RevertedTask(gomock.Any(), task.ID).Return(nil)
+		gomock.InOrder(
+			taskMgr.EXPECT().CancelPausedSubtasks(gomock.Any(), task.ID).Return(nil),
+			taskMgr.EXPECT().GetSubtaskCntGroupByStates(gomock.Any(), task.ID, task.Step).Return(nil, nil),
+			schExt.EXPECT().OnDone(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil),
+			taskMgr.EXPECT().RevertedTask(gomock.Any(), task.ID).Return(nil),
+		)
 		require.NoError(t, scheduler.onReverting())
 		tmpTask := task
 		tmpTask.State = proto.TaskStateReverted
