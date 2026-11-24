@@ -655,3 +655,66 @@ func TestModifyColumnReorgCheckpoint(t *testing.T) {
 	require.Len(t, rangeCnts, 2)                // It should have two rounds for loading table ranges.
 	require.Less(t, rangeCnts[1], rangeCnts[0]) // Verify if the checkpoint is progressing.
 }
+<<<<<<< HEAD
+=======
+
+func TestIssue37611(t *testing.T) {
+	store := testkit.CreateMockStoreWithSchemaLease(t, columnModifyLease)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a char(5), b char(6) as (concat(a, a)), index idx(b));")
+	tk.MustExec("set @@sql_mode='';")
+	tk.MustExec("insert into t (a) values ('aaa');")
+	tk.MustExec("insert into t (a) values ('aaaa');")
+	tk.MustGetErrCode("alter table t modify b char(10) as (concat(a, a));", errno.ErrUnsupportedOnGeneratedColumn)
+	tk.MustExec("set @@sql_mode=default;")
+	tk.MustQuery("select * from t ignore index(idx) where b = 'aaaaaa';").Check(testkit.Rows("aaa aaaaaa", "aaaa aaaaaa"))
+	tk.MustQuery("select * from t force index(idx) where b = 'aaaaaa';").Check(testkit.Rows("aaa aaaaaa", "aaaa aaaaaa"))
+	tk.MustGetErrCode("alter table t change column b c char(10) as (concat(a, a));", errno.ErrUnsupportedOnGeneratedColumn)
+
+	tk.MustExec("create table t2(a char(5), b char(6) as (concat(a, a)) stored, index idx(b));")
+	tk.MustGetErrCode("alter table t2 modify b char(10) as (concat(a, a)) stored;", errno.ErrUnsupportedOnGeneratedColumn)
+}
+
+func TestModifyColumnCrossCharsetRequiresReorg(t *testing.T) {
+	store := testkit.CreateMockStoreWithSchemaLease(t, columnModifyLease)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	// BINARY(2) -> VARCHAR(10) utf8mb4 with invalid UTF-8 bytes must reorg and fail.
+	tk.MustExec("create table t0 (id int primary key, c binary(2))")
+	tk.MustExec("insert into t0 values (1, x'FFFE')")
+	tk.MustGetErrCode("alter table t0 modify column c varchar(10) character set utf8mb4 collate utf8mb4_general_ci", errno.ErrTruncatedWrongValueForField)
+
+	// CHAR(4) utf8mb4 -> VARCHAR(10) ascii with non-ASCII character must reorg and fail.
+	tk.MustExec("create table t2 (id int primary key, c char(4) character set utf8mb4)")
+	tk.MustExec("insert into t2 values (1, 'é')")
+	tk.MustGetErrCode("alter table t2 modify column c varchar(10) character set ascii", errno.ErrTruncatedWrongValueForField)
+
+	// CHAR(4) utf8mb4 -> VARBINARY(4) with 8-byte UTF-8 value must reorg and fail with truncation.
+	tk.MustExec("create table t3 (id int primary key, c char(4) character set utf8mb4)")
+	tk.MustExec("insert into t3 values (1, 'éééé')")
+	tk.MustGetErrCode("alter table t3 modify column c varbinary(4)", errno.WarnDataTruncated)
+
+	// Same-charset collation change with multi-byte chars must check character length, not byte length.
+	tk.MustExec("create table t4 (id int primary key, c varchar(4) character set utf8mb4 collate utf8mb4_bin)")
+	tk.MustExec("insert into t4 values (1, 'éééé')")
+	tk.MustExec("alter table t4 modify column c varchar(4) character set utf8mb4 collate utf8mb4_general_ci")
+
+	// utf8 -> utf8mb4 with compatible collation does not require reorg even with an index or narrowing.
+	tk.MustExec("create table t5 (id int primary key, c varchar(10) character set utf8 collate utf8_bin, key idx_c(c))")
+	tk.MustExec("insert into t5 values (1, 'abc')")
+	tk.MustExec("alter table t5 modify column c varchar(10) character set utf8mb4 collate utf8mb4_bin")
+	tk.MustQuery("select row_count from information_schema.ddl_jobs where table_name = 't5' order by job_id desc limit 1").Check(testkit.Rows("0"))
+	tk.MustExec("alter table t5 modify column c varchar(5) character set utf8mb4 collate utf8mb4_bin")
+	tk.MustQuery("select row_count from information_schema.ddl_jobs where table_name = 't5' order by job_id desc limit 1").Check(testkit.Rows("0"))
+	tk.MustExec("admin check table t5")
+
+	// Same-length utf8mb4 -> utf8 is rejected upfront; narrowing utf8mb4 -> utf8 triggers row reorg and rejects 4-byte UTF-8 data.
+	tk.MustExec("create table t6 (id int primary key, c varchar(10) character set utf8mb4 collate utf8mb4_bin)")
+	tk.MustExec("insert into t6 values (1, '🐱')")
+	tk.MustGetErrCode("alter table t6 modify column c varchar(10) character set utf8 collate utf8_bin", errno.ErrUnsupportedDDLOperation)
+	tk.MustGetErrCode("alter table t6 modify column c varchar(5) character set utf8 collate utf8_bin", errno.ErrTruncatedWrongValueForField)
+}
+>>>>>>> a935aa47b6e (ddl: require reorg when MODIFY COLUMN changes column charset or indexed collation (#73524))
