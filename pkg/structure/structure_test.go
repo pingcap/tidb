@@ -259,6 +259,26 @@ func TestHash(t *testing.T) {
 		{Field: []byte("2"), Value: []byte("2")},
 		{Field: []byte("1"), Value: []byte("1")}}, res)
 
+	for _, ca := range []struct {
+		lowerBound string
+		values     []string
+	}{
+		{"1", []string{"2", "1"}},
+		{"2", []string{"2"}},
+		{"15", []string{"2"}},
+		{"3", nil},
+	} {
+		iter, err := structure.NewHashReverseIterWithLowerBound(tx, key, []byte(ca.lowerBound))
+		require.NoError(t, err)
+		var values []string
+		for iter.Valid() {
+			values = append(values, string(iter.Value()))
+			require.NoError(t, iter.Next())
+		}
+		require.Equal(t, ca.values, values)
+		iter.Close()
+	}
+
 	err = tx.HDel(key, []byte("1"))
 	require.NoError(t, err)
 

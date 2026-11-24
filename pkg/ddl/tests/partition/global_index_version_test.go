@@ -23,10 +23,12 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -327,6 +329,78 @@ func TestGlobalUniqueIndexAfterValidatedExchange(t *testing.T) {
 			tk.MustExec("ADMIN CHECK TABLE t")
 		})
 	}
+}
+
+// TestGlobalUniqueIndexDeleteGuardAfterValidatedExchange reproduces issue #73217.
+func TestGlobalUniqueIndexDeleteGuardAfterValidatedExchange(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("transactional backfill settings are read-only in NextGen")
+	}
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("USE test")
+	tk.MustExec("SET @@tidb_enable_exchange_partition = 1")
+	settings := tk.MustQuery("SELECT @@GLOBAL.tidb_enable_dist_task, @@GLOBAL.tidb_ddl_enable_fast_reorg").Rows()[0]
+	t.Cleanup(func() {
+		tk.MustExec("SET GLOBAL tidb_enable_dist_task = " + settings[0].(string))
+		tk.MustExec("SET GLOBAL tidb_ddl_enable_fast_reorg = " + settings[1].(string))
+	})
+	tk.MustExec("SET GLOBAL tidb_enable_dist_task = 0")
+	tk.MustExec("SET GLOBAL tidb_ddl_enable_fast_reorg = 1")
+
+	tk.MustExec(`CREATE TABLE t (
+		a INT,
+		b INT,
+		c VARCHAR(20) NOT NULL,
+		PRIMARY KEY (a, b) NONCLUSTERED
+	) PARTITION BY RANGE (a) (
+		PARTITION p0 VALUES LESS THAN (10),
+		PARTITION p1 VALUES LESS THAN MAXVALUE
+	)`)
+	tk.MustExec("INSERT INTO t VALUES (1, 1, 'y')")
+	tk.MustExec("CREATE TABLE tx LIKE t")
+	tk.MustExec("ALTER TABLE tx REMOVE PARTITIONING")
+	tk.MustExec("INSERT INTO tx VALUES (11, 1, 'x')")
+	// Both rows satisfy their partition rules and `c` has no duplicates, while sharing `_tidb_rowid = 1`.
+	tk.MustExec("ALTER TABLE t EXCHANGE PARTITION p1 WITH TABLE tx WITH VALIDATION")
+	tk.MustQuery("SELECT a, b, c, _tidb_rowid FROM t ORDER BY a").Check(testkit.Rows("1 1 y 1", "11 1 x 1"))
+
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("USE test")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/skipReorgWorkForTempIndex", "return(false)")
+
+	var updatedP0, deletedP0 atomic.Bool
+	ddl.MockDMLExecution = func() {
+		if updatedP0.CompareAndSwap(false, true) {
+			_, err := tk1.Exec("UPDATE t SET c = 'x' WHERE a = 1")
+			assert.NoError(t, err)
+		}
+	}
+	t.Cleanup(func() {
+		assert.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockDMLExecution"))
+		ddl.MockDMLExecution = nil
+	})
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockDMLExecution", "1*return(true)->return(false)"))
+
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
+		if job.SchemaState == model.StateWriteReorganization && updatedP0.Load() {
+			idx := testutil.FindIdxInfo(dom, "test", "t", "uk")
+			if idx != nil && idx.BackfillState == model.BackfillStateReadyToMerge && deletedP0.CompareAndSwap(false, true) {
+				_, err := tk1.Exec("DELETE FROM t WHERE a = 1")
+				assert.NoError(t, err)
+			}
+		}
+	})
+
+	tk.MustExec("ALTER TABLE t ADD UNIQUE KEY uk(c) GLOBAL")
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockDMLExecution"))
+	ddl.MockDMLExecution = nil
+	require.True(t, updatedP0.Load(), "mockDMLExecution never fired")
+	require.True(t, deletedP0.Load(), "ReadyToMerge delete never fired")
+
+	tk.MustQuery("SELECT a, b, c FROM t IGNORE INDEX(uk)").Check(testkit.Rows("11 1 x"))
+	tk.MustQuery("SELECT a, b, c FROM t USE INDEX(uk)").Check(testkit.Rows("11 1 x"))
+	tk.MustExec("ADMIN CHECK TABLE t")
 }
 
 // TestGlobalIndexTruncateAndDropPartition verifies that TRUNCATE PARTITION and

@@ -29,6 +29,8 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/mock"
 	tidb "github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/configtypes"
+	"github.com/pingcap/tidb/pkg/config/deploymode"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/dxf/framework/handle"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
@@ -577,4 +579,49 @@ func TestCalResourceParams(t *testing.T) {
 	require.Equal(t, 8, c.ThreadCnt)
 	require.Equal(t, 2, c.MaxNodeCnt)
 	require.Equal(t, 124, c.DistSQLScanConcurrency)
+}
+
+func TestShouldUseAsyncPrepare(t *testing.T) {
+	localSortPlan := &importer.Plan{}
+	globalSortPlan := &importer.Plan{CloudStorageURI: "s3://bucket/path"}
+	queryPlan := &importer.Plan{CloudStorageURI: "s3://bucket/path", QuerySource: &importer.QuerySource{}}
+
+	require.False(t, importer.ShouldUseAsyncPrepare(nil))
+	require.False(t, importer.ShouldUseAsyncPrepare(localSortPlan))
+
+	if kerneltype.IsClassic() {
+		require.False(t, importer.ShouldUseAsyncPrepare(globalSortPlan))
+		return
+	}
+
+	originalMode := deploymode.Get()
+	originalConfig := tidb.GetGlobalConfig()
+	t.Cleanup(func() {
+		require.NoError(t, deploymode.Set(originalMode))
+		tidb.StoreGlobalConfig(originalConfig)
+	})
+
+	tests := []struct {
+		name              string
+		mode              deploymode.Mode
+		maxImportDataSize configtypes.ByteSize
+		want              bool
+	}{
+		{name: "premium", mode: deploymode.Premium, want: true},
+		{name: "premium reserved", mode: deploymode.PremiumReserved, want: true},
+		{name: "starter without import size limit", mode: deploymode.Starter, want: false},
+		{name: "starter with import size limit", mode: deploymode.Starter, maxImportDataSize: 1, want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.NoError(t, deploymode.Set(tt.mode))
+			tidb.UpdateGlobal(func(conf *tidb.Config) {
+				conf.DeployMode = tt.mode
+				conf.StarterParams.MaxImportDataSize = tt.maxImportDataSize
+			})
+			require.Equal(t, tt.want, importer.ShouldUseAsyncPrepare(globalSortPlan))
+			// Query imports have no source files to discover.
+			require.False(t, importer.ShouldUseAsyncPrepare(queryPlan))
+		})
+	}
 }

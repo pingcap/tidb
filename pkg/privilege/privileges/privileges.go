@@ -679,7 +679,7 @@ func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUse
 
 	// If the user uses session token to log in, skip checking record.AuthPlugin.
 	if user.AuthPlugin == mysql.AuthTiDBSessionToken {
-		if err = sessionstates.ValidateSessionToken(authentication, user.Username); err != nil {
+		if err = sessionstates.ValidateSessionToken(authentication, authUser, authHost); err != nil {
 			logutil.BgLogger().Warn("verify session token failed", zap.String("username", user.Username), zap.Error(err))
 			return info, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
 		}

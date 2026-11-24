@@ -16,6 +16,7 @@ package ddl
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"time"
 
@@ -31,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	storeerr "github.com/pingcap/tidb/pkg/store/driver/error"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/mviewutil"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"go.uber.org/zap"
@@ -93,7 +95,8 @@ func (w *worker) onCreateMaterializedViewLog(jobCtx *jobContext, job *model.Job)
 				// Do not retry this job while retaining its DDL scheduling claim:
 				// an OOP refresh holds the lock while waiting for its cutover DDL.
 				job.State = model.JobStateCancelled
-				return ver, errors.Errorf("cannot create materialized view log on %s.%s: materialized view refresh is running, please retry later", job.SchemaName, baseTblInfo.Name.O)
+				return ver, exeerrors.ErrMVAdvisoryLockConflict.FastGenByArgs(fmt.Sprintf(
+					"cannot create materialized view log on %s.%s: materialized view refresh is running, please retry later", job.SchemaName, baseTblInfo.Name.O))
 			}
 			return ver, errors.Trace(err)
 		}
@@ -180,14 +183,13 @@ func onCreateMaterializedViewBaseCheck(metaMut *meta.Mutator, schemaID, baseTabl
 	if err != nil {
 		return nil, err
 	}
-	if baseTblInfo.IsView() || baseTblInfo.IsSequence() || baseTblInfo.TempTableType != model.TempTableNone || baseTblInfo.MaterializedView != nil {
-		return nil, dbterror.ErrWrongObject.GenWithStackByArgs(schemaName, baseTblInfo.Name, "BASE TABLE")
+	if err := validateMaterializedViewSourceState(schemaName, baseTblInfo); err != nil {
+		return nil, err
 	}
-	if baseTblInfo.GetPartitionInfo() != nil {
-		return nil, errUnsupportedMaterializedViewOnPartitionTable("CREATE MATERIALIZED VIEW")
-	}
-	if baseTblInfo.State != model.StatePublic {
-		return nil, dbterror.ErrInvalidDDLState.GenWithStackByArgs("table", baseTblInfo.State)
+	if err := validateMaterializedViewNestingDepth(baseTblInfo, func(tableID int64) (*model.TableInfo, error) {
+		return getTableInfo(metaMut, tableID, schemaID)
+	}); err != nil {
+		return nil, err
 	}
 	if baseTblInfo.MaterializedViewBase == nil || baseTblInfo.MaterializedViewBase.MLogID == 0 {
 		return nil, dbterror.ErrInvalidDDLJob.GenWithStackByArgs("create materialized view: base table has no materialized view log")
@@ -196,11 +198,8 @@ func onCreateMaterializedViewBaseCheck(metaMut *meta.Mutator, schemaID, baseTabl
 	if err != nil {
 		return nil, err
 	}
-	if mlogTableInfo.MaterializedViewLog == nil || mlogTableInfo.MaterializedViewLog.BaseTableID != baseTblInfo.ID {
-		return nil, dbterror.ErrInvalidDDLJob.GenWithStackByArgs("create materialized view: invalid materialized view log metadata")
-	}
-	if mlogTableInfo.State != model.StatePublic {
-		return nil, dbterror.ErrInvalidDDLState.GenWithStackByArgs("table", mlogTableInfo.State)
+	if err := validateMaterializedViewSourceMLog(schemaName, baseTblInfo, mlogTableInfo); err != nil {
+		return nil, dbterror.ErrInvalidDDLJob.GenWithStack("create materialized view: invalid materialized view log metadata: %s", err.Error())
 	}
 	return baseTblInfo, nil
 }

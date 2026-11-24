@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/access"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/property"
+	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/dbutil"
@@ -433,7 +434,14 @@ func buildOnDeleteOrUpdateFKTrigger(ctx base.PlanContext, is infoschema.InfoSche
 	switch fkReferOption {
 	case ast.ReferOptionCascade, ast.ReferOptionSetNull:
 		fkCascade, err := buildFKCascade(ctx, tp, referredFK, childTable, fk)
-		return nil, fkCascade, err
+		if err != nil {
+			return nil, nil, err
+		}
+		db, ok := infoschema.SchemaByTable(is, childTable.Meta())
+		if ok && db.ReadOnly && !privilege.CanWriteReadOnlySchema(ctx, db.Name.L) {
+			return nil, nil, errors.Trace(infoschema.ErrSchemaInReadOnlyMode.GenWithStackByArgs(db.Name.O))
+		}
+		return nil, fkCascade, nil
 	default:
 		fkCheck, err := buildFKCheckForReferredFK(ctx, childTable, fk, referredFK)
 		return fkCheck, nil, err

@@ -433,6 +433,12 @@ func JobNeedGC(job *model.Job) bool {
 			}
 			return false
 		}
+	} else if job.Type == model.ActionMViewRefreshOutOfPlaceCutover {
+		// Placement and TiFlash PD rules can survive rollback of the replacement log's metadata.
+		// Return true to queue a delete-range record for NewMLogID: processing that
+		// record also removes those rules, even if the log contains no data.
+		args, err := model.GetRefreshMaterializedViewCompleteOutOfPlaceCutoverArgs(job)
+		return err == nil && args.NewMLogID != 0
 	}
 	return false
 }
@@ -505,8 +511,15 @@ func (w *worker) deleteDDLJob(job *model.Job) error {
 }
 
 func finishRecoverTable(w *worker, job *model.Job) error {
+	var firstErr error
+	if err := deleteRecoverGCBarrier(w.workCtx, w, job.ID); err != nil {
+		firstErr = errors.Trace(err)
+	}
 	args, err := model.GetRecoverArgs(job)
 	if err != nil {
+		if firstErr != nil {
+			return firstErr
+		}
 		return errors.Trace(err)
 	}
 	if args.CheckFlag == recoverCheckFlagEnableGC {
@@ -515,21 +528,11 @@ func finishRecoverTable(w *worker, job *model.Job) error {
 			return errors.Trace(err)
 		}
 	}
-	return nil
+	return firstErr
 }
 
 func finishRecoverSchema(w *worker, job *model.Job) error {
-	args, err := model.GetRecoverArgs(job)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	if args.CheckFlag == recoverCheckFlagEnableGC {
-		err = enableGC(w)
-		if err != nil {
-			return errors.Trace(err)
-		}
-	}
-	return nil
+	return finishRecoverTable(w, job)
 }
 
 func (w *ReorgContext) attachTopProfilingInfo(jobQuery string) {
@@ -923,6 +926,11 @@ func (w *worker) countForPanic(jobCtx *jobContext, job *model.Job) {
 // countForError records the error count for DDL job.
 func (w *worker) countForError(jobCtx *jobContext, job *model.Job, err error) error {
 	job.Error = toTError(err)
+	// Refresh lock contention is an expected wait for an already-started
+	// MLog ADD COLUMN, including its multi-schema parent.
+	if isMLogAddColumnRefreshLockWait(job, err) {
+		return err
+	}
 	job.ErrorCount++
 
 	logger := jobCtx.logger
@@ -1037,7 +1045,15 @@ func (w *worker) runOneJobStep(
 		jobCtx.stepCtx = w.workCtx
 	} else {
 		job.State = model.JobStateRunning
-
+		if job.CheckSchemaReadOnly {
+			if err := checkSchemaReadOnlyBeforeJob(jobCtx, job); err != nil {
+				if infoschema.ErrSchemaInReadOnlyMode.Equal(err) {
+					job.State = model.JobStateCancelled
+				}
+				return ver, false, w.countForError(jobCtx, job, err)
+			}
+			job.CheckSchemaReadOnly = false
+		}
 		if jobCtx.shouldPollDDLJob() {
 			failpoint.InjectCall("beforePollDDLJob")
 			stopCheckingJobCancelled := make(chan struct{})
@@ -1263,6 +1279,8 @@ func (w *worker) runOneJobStep(
 		ver, err = onAlterTableAffinity(jobCtx, job)
 	case model.ActionAlterTableSetRegionSplitPolicy:
 		ver, err = w.onAlterTableSetRegionSplitPolicy(jobCtx, job)
+	case model.ActionModifySchemaReadOnly:
+		ver, err = w.onModifySchemaReadOnly(jobCtx, job)
 	default:
 		// Invalid job, cancel it.
 		job.State = model.JobStateCancelled

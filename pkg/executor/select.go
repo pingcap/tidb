@@ -1094,6 +1094,10 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	// execute missed stmtID uses empty sql
 	sc.OriginalSQL = s.Text()
 	if explainStmt, ok := s.(*ast.ExplainStmt); ok {
+		// Plain EXPLAIN preserves the count; DESCRIBE table follows SHOW COLUMNS.
+		if _, isShow := explainStmt.Stmt.(*ast.ShowStmt); !isShow {
+			sc.PreserveFoundRows = !explainStmt.Analyze
+		}
 		sc.InExplainStmt = true
 		// Normalize to lowercase to avoid repeated conversions in shouldRemoveColumnNumbers and other places
 		sc.ExplainFormat = strings.ToLower(explainStmt.Format)
@@ -1105,6 +1109,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.ExplainFormat = ""
 	}
 	if explainForStmt, ok := s.(*ast.ExplainForStmt); ok {
+		sc.PreserveFoundRows = true
 		sc.InExplainStmt = true
 		sc.InExplainAnalyzeStmt = true
 		// Normalize to lowercase to avoid repeated conversions in shouldRemoveColumnNumbers and other places
@@ -1204,6 +1209,19 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 			WithIgnoreTruncateErr(true).
 			WithIgnoreZeroInDate(true).
 			WithIgnoreInvalidDateErr(vars.SQLMode.HasAllowInvalidDatesMode()))
+		// Some SHOW statements leave FOUND_ROWS() unchanged in MySQL.
+		// TiDB's additional SHOW CREATE forms follow the same introspection rule.
+		// SHOW SESSION_STATES must also preserve it when exporting session state.
+		switch stmt.Tp {
+		case ast.ShowWarnings, ast.ShowErrors:
+			// SHOW COUNT(*) WARNINGS/ERRORS sets FOUND_ROWS() to 1.
+			sc.PreserveFoundRows = !stmt.CountWarningsOrErrors
+		case ast.ShowCreateTable, ast.ShowCreateView, ast.ShowCreateDatabase, ast.ShowCreateUser,
+			ast.ShowCreateSequence, ast.ShowCreatePlacementPolicy, ast.ShowCreateResourceGroup,
+			ast.ShowGrants, ast.ShowPrivileges, ast.ShowProfiles, ast.ShowMasterStatus, ast.ShowBinlogStatus,
+			ast.ShowProcessList, ast.ShowSessionStates:
+			sc.PreserveFoundRows = true
+		}
 		if stmt.Tp == ast.ShowWarnings || stmt.Tp == ast.ShowErrors || stmt.Tp == ast.ShowSessionStates {
 			sc.InShowWarning = true
 			sc.SetWarnings(vars.StmtCtx.GetWarnings())

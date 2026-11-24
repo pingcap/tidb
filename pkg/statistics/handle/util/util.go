@@ -107,7 +107,6 @@ type statsSessionVarsSnapshot struct {
 	analyzePartitionConcurrency int
 	skipMissingPartitionStats   bool
 	enableAnalyzeSnapshot       bool
-	enableAsyncMergeGlobalStats bool
 }
 
 // UpdateSCtxVarsForStats updates all necessary variables that may affect the behavior of statistics.
@@ -117,7 +116,6 @@ func UpdateSCtxVarsForStats(sctx sessionctx.Context) (func(), error) {
 	snapshot := statsSessionVarsSnapshot{
 		analyzeSkipColumnTypes:      vars.AnalyzeSkipColumnTypes,
 		partitionPruneMode:          vars.PartitionPruneMode.Load(),
-		enableAsyncMergeGlobalStats: vars.EnableAsyncMergeGlobalStats,
 		enableAnalyzeSnapshot:       vars.EnableAnalyzeSnapshot,
 		skipMissingPartitionStats:   vars.SkipMissingPartitionStats,
 		analyzePartitionConcurrency: vars.AnalyzePartitionConcurrency,
@@ -151,13 +149,6 @@ func UpdateSCtxVarsForStats(sctx sessionctx.Context) (func(), error) {
 		restore()
 		return nil, err
 	}
-
-	// async merge global stats
-	enableAsyncMergeGlobalStats, err := vars.GlobalVarsAccessor.GetGlobalSysVar(vardef.TiDBEnableAsyncMergeGlobalStats)
-	if err != nil {
-		return restoreOnErr(err)
-	}
-	vars.EnableAsyncMergeGlobalStats = variable.TiDBOptOn(enableAsyncMergeGlobalStats)
 
 	// concurrency of save stats to storage
 	analyzePartitionConcurrency, err := vars.GlobalVarsAccessor.GetGlobalSysVar(vardef.TiDBAnalyzePartitionConcurrency)
@@ -251,7 +242,6 @@ func (s statsSessionVarsSnapshot) restore(vars *variable.SessionVars) {
 	}
 	vars.AnalyzeSkipColumnTypes = s.analyzeSkipColumnTypes
 	vars.PartitionPruneMode.Store(s.partitionPruneMode)
-	vars.EnableAsyncMergeGlobalStats = s.enableAsyncMergeGlobalStats
 	vars.EnableAnalyzeSnapshot = s.enableAnalyzeSnapshot
 	vars.SkipMissingPartitionStats = s.skipMissingPartitionStats
 	vars.AnalyzePartitionConcurrency = s.analyzePartitionConcurrency

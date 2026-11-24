@@ -16,6 +16,7 @@ go_library(
         "//pkg/kv",
         "//pkg/meta/model",
         "//pkg/parser/ast",
+        "//pkg/privilege",
         "//pkg/sessionctx/variable",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_log//:log",

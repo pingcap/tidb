@@ -2,6 +2,10 @@
 CN = 127.0.0.1
 [req]
 distinguished_name = dn
+# OpenSSL 3.2+ generates v3 certificates, which need explicit CA constraints.
+[CA]
+basicConstraints = critical,CA:TRUE
+keyUsage = critical,keyCertSign,cRLSign
 [EXT]
 subjectAltName = @alt_names
 keyUsage = digitalSignature,keyEncipherment

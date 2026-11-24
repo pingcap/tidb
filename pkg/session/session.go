@@ -509,7 +509,9 @@ func (s *session) FieldList(tableName string) ([]*resolve.ResultField, error) {
 }
 
 // TxnInfo returns a pointer to a *copy* of the internal TxnInfo, thus is *read only*
-// Process field may not initialize if this is a session used internally.
+// It returns nil without an active transaction. Otherwise ProcessInfo includes
+// related tables even for internal sessions without a process-list entry; their
+// connection identity fields may be zero-valued.
 func (s *session) TxnInfo() *txninfo.TxnInfo {
 	s.txn.mu.RLock()
 	// Copy on read to get a snapshot, this API shouldn't be frequently called.
@@ -522,7 +524,9 @@ func (s *session) TxnInfo() *txninfo.TxnInfo {
 
 	processInfo := s.ShowProcess()
 	if processInfo == nil {
-		return &txnInfo
+		// Internal sessions can write user tables without a process-list entry.
+		// Their access set is still needed by database read-only draining.
+		processInfo = &sessmgr.ProcessInfo{}
 	}
 	txnInfo.ProcessInfo = &txninfo.ProcessInfo{
 		ConnectionID:    processInfo.ID,
@@ -531,6 +535,10 @@ func (s *session) TxnInfo() *txninfo.TxnInfo {
 		RelatedTableIDs: make(map[int64]struct{}),
 	}
 	s.GetSessionVars().GetRelatedTableForMDL().Range(func(key, _ any) bool {
+		txnInfo.ProcessInfo.RelatedTableIDs[key.(int64)] = struct{}{}
+		return true
+	})
+	s.GetSessionVars().GetRelatedTableForReadOnly().Range(func(key, _ any) bool {
 		txnInfo.ProcessInfo.RelatedTableIDs[key.(int64)] = struct{}{}
 		return true
 	})
@@ -558,7 +566,7 @@ func (s *session) doCommit(ctx context.Context) error {
 		// to prevent the case that a long running auto-commit statement is now trying to commit.
 		pm := privilege.GetPrivilegeManager(s)
 		roles := s.sessionVars.ActiveRoles
-		if pm != nil && !pm.HasExplicitlyGrantedDynamicPrivilege(roles, "RESTRICTED_REPLICA_WRITER_ADMIN", false) {
+		if pm != nil && !pm.HasExplicitlyGrantedDynamicPrivilege(roles, privilege.ReplicaWriterAdminPriv, false) {
 			s.RollbackTxn(ctx)
 			return plannererrors.ErrSQLInReadOnlyMode
 		}
@@ -1935,12 +1943,10 @@ func (s *session) executeInternalImpl(ctx context.Context, sql string, args ...a
 	rs, err = s.ExecuteStmt(ctx, stmtNode)
 	if err != nil {
 		s.sessionVars.StmtCtx.AppendError(err)
-	}
-	if rs == nil {
 		return nil, err
 	}
 
-	return rs, err
+	return rs, nil
 }
 
 // Execute is deprecated, we can remove it as soon as plugins are migrated.
@@ -2836,7 +2842,7 @@ func (s *session) executeStmtImpl(ctx context.Context, stmtNode ast.StmtNode) (r
 				zap.Error(err),
 				zap.String("session", s.String()))
 		}
-		return recordSet, err
+		return nil, err
 	}
 	if !s.isInternal() && config.GetGlobalConfig().EnableTelemetry {
 		telemetry.CurrentExecuteCount.Inc()
@@ -3151,6 +3157,7 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 			err = errors.New("statement RU result-set test error")
 		}
 	})
+	failpoint.InjectCall("afterRunStmtExec", &sessVars.SQLKiller, rs != nil, &err)
 
 	if se.txn.Valid() && se.txn.IsPipelined() {
 		// Pipelined-DMLs can return assertion errors and write conflicts here because they flush
@@ -3169,6 +3176,13 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 	if rs != nil {
 		if err != nil {
 			s.(*executor.ExecStmt).RecordStatementRUFinalOutcome(false)
+			if finisher, ok := rs.(interface{ Finish() error }); ok {
+				terror.Log(finisher.Finish())
+			}
+			// Pass the execution error to finalization before EXPLAIN ANALYZE DML can commit.
+			err = finishStmt(ctx, se, err, s)
+			terror.Log(executor.CloseRecordSetWithError(rs, err))
+			return nil, err
 		}
 		if se.GetSessionVars().StmtCtx.IsExplainAnalyzeDML {
 			if !sessVars.InTxn() {
@@ -3187,7 +3201,7 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 			RecordSet: rs,
 			sql:       s,
 			se:        se,
-		}, err
+		}, nil
 	}
 
 	err = finishStmt(ctx, se, err, s)
@@ -4412,18 +4426,27 @@ func InitDDLTables(store kv.Storage) error {
 	})
 }
 
-// initBootstrapDependentTables creates system tables that classic kernel upgrade
-// DDL may consult before the ordinary upgrade DDL reaches their creation step.
+// initBootstrapDependentTables creates system tables that Classic and legacy
+// NextGen upgrade DDL may consult before reaching their ordinary creation step.
 func initBootstrapDependentTables(store kv.Storage, ver int64) error {
-	// This is only for classic upgrades from below version280. Fresh bootstrap and
-	// next-gen create the table elsewhere. After version280, the table may have been renamed.
-	if !kerneltype.IsClassic() || ver <= notBootstrapped || ver >= version280 || currentBootstrapVersion < version280 {
+	// After version280, the table may have been renamed. Fresh bootstrap and
+	// native NextGen create the table elsewhere.
+	if ver <= notBootstrapped || ver >= version280 || currentBootstrapVersion < version280 {
 		return nil
 	}
 
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	return kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMutator(txn)
+		if kerneltype.IsNextGen() {
+			isLegacyNextGen, err := t.IsLegacyNextGen()
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if !isLegacyNextGen {
+				return nil
+			}
+		}
 		dbID, err := t.CreateMySQLDatabaseIfNotExists()
 		if err != nil {
 			return err
@@ -4539,6 +4562,34 @@ func InitTiDBSchemaCacheSize(store kv.Storage) error {
 	return nil
 }
 
+// initLegacyECDSASessionToken loads the one-way compatibility gate. Only the
+// owner of a fresh bootstrap may persist it without checking cluster versions.
+func initLegacyECDSASessionToken(store kv.Storage, bootstrap bool) error {
+	if kerneltype.IsNextGen() {
+		return nil
+	}
+	disabled := false
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
+	err := kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
+		m := meta.NewMutator(txn)
+		if bootstrap {
+			disabled = true
+			return m.SetLegacyECDSASessionTokenDisabled()
+		}
+		var err error
+		disabled, err = m.GetLegacyECDSASessionTokenDisabled()
+		return err
+	})
+	if err != nil {
+		return err
+	}
+	if disabled {
+		// Publish only after persistence succeeds, and never undo an observed gate.
+		vardef.SetLegacyECDSASessionTokenDisabled(true)
+	}
+	return nil
+}
+
 // BootstrapSession bootstrap session and domain.
 func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	return BootstrapSessionWithExternalWorkloadManager(store, nil)
@@ -4567,6 +4618,10 @@ func BootstrapSession4DistExecution(store kv.Storage) (*domain.Domain, error) {
 // such as system time zone
 // - start domain and other routines.
 func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsImpl func(store kv.Storage, cnt int) ([]*session, error), extWorkloadMgr extworkload.Manager) (*domain.Domain, error) {
+	// Load before any bootstrap, upgrade, normal, or diagnostic domain can start.
+	if err := initLegacyECDSASessionToken(store, false); err != nil {
+		return nil, err
+	}
 	if diagnosticmode.Enabled() {
 		return bootstrapSessionImplDiagnostic(ctx, store)
 	}
@@ -4596,7 +4651,7 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 		}
 	}
 	if kerneltype.IsNextGen() {
-		if err := bootstrapSchemas(store); err != nil {
+		if err := bootstrapNextGenSchemas(store); err != nil {
 			return nil, err
 		}
 	}
@@ -4611,6 +4666,10 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 	if ver < currentBootstrapVersion {
 		err = runInBootstrapSession(store, ver, domainCreateOptions{extWorkloadMgr: extWorkloadMgr})
 		if err != nil {
+			return nil, err
+		}
+		// Another node may have completed fresh bootstrap while this node waited.
+		if err = initLegacyECDSASessionToken(store, false); err != nil {
 			return nil, err
 		}
 	} else {

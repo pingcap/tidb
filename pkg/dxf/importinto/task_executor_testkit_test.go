@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/dxf/importinto"
+	"github.com/pingcap/tidb/pkg/dxf/importinto/taskinfo"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
@@ -81,7 +82,7 @@ func TestPostProcessStepExecutor(t *testing.T) {
 	require.True(t, ok)
 	table, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
-	taskMeta := &importinto.TaskMeta{
+	taskMeta := &taskinfo.TaskMeta{
 		Plan: importer.Plan{
 			DBID:             db.ID,
 			Checksum:         config.OpLevelRequired,
@@ -147,7 +148,7 @@ func TestImportStepExecutorCleanupAllLocalEnginesOnRetry(t *testing.T) {
 	dataPath := filepath.ToSlash(filepath.Join(t.TempDir(), "data.csv"))
 	require.NoError(t, os.WriteFile(dataPath, []byte("1,1\n"), 0o600))
 
-	taskMetaBytes, err := json.Marshal(importinto.TaskMeta{
+	taskMetaBytes, err := json.Marshal(taskinfo.TaskMeta{
 		Plan: importer.Plan{
 			DBID:             dbInfo.ID,
 			DBName:           "test",
@@ -249,7 +250,7 @@ func newQueryStepExecutor(t *testing.T, tk *testkit.TestKit, sql string) (execut
 	plan.QuerySource, err = importer.CaptureQuerySource(tk.Session(), sql)
 	require.NoError(t, err)
 
-	meta, err := json.Marshal(importinto.TaskMeta{Plan: *plan, Stmt: sql})
+	meta, err := json.Marshal(taskinfo.TaskMeta{Plan: *plan, Stmt: sql})
 	require.NoError(t, err)
 	task := &proto.Task{
 		TaskBase: proto.TaskBase{ID: queryStepTaskID, Type: proto.ImportInto, Step: proto.ImportStepQuery, RequiredSlots: 2},

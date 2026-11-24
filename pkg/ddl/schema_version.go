@@ -281,6 +281,12 @@ func SetSchemaDiffForMViewRefreshOutOfPlaceCutover(diff *model.SchemaDiff, jobCt
 	args := jobCtx.jobArgs.(*model.RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs)
 	diff.TableID = args.ShadowTableID
 	diff.OldTableID = args.OldMViewID
+	if args.OldMLogID != 0 {
+		diff.AffectedOpts = append(diff.AffectedOpts, &model.AffectedOption{
+			SchemaID: diff.SchemaID, OldSchemaID: diff.SchemaID,
+			TableID: args.NewMLogID, OldTableID: args.OldMLogID,
+		})
+	}
 }
 
 // SetSchemaDiffForRecoverSchema set SchemaDiff for ActionRecoverSchema.
@@ -435,6 +441,11 @@ func waitVersionSynced(
 func shouldCheckAssumedServer(job *model.Job) bool {
 	if kerneltype.IsClassic() {
 		return false
+	}
+	if !metadef.IsReservedID(job.SchemaID) {
+		// Legacy NextGen uses ordinary schema IDs for mysql.
+		// The owner's InfoSchema may not have loaded a newly created built-in yet.
+		return metadef.IsBuiltinSystemTable(job.SchemaName, job.TableName)
 	}
 
 	// check the table ID is enough, as we forbid doing DDL which involve multiple

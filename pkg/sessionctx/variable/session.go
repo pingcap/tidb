@@ -245,6 +245,10 @@ type TxnCtxNoNeedToRestore struct {
 	EnableMDL bool
 	// relatedTableForMDL records the `lock` table for metadata lock. It maps from int64 to int64(version).
 	relatedTableForMDL *sync.Map
+	// relatedTableForReadOnly maps table IDs to database names for read-only
+	// draining and lazy activation checks, including when MDL is enabled:
+	// database read-only jobs do not acquire table metadata locks.
+	relatedTableForReadOnly *sync.Map
 
 	// FairLockingUsed marking whether at least one of the statements in the transaction was executed in
 	// fair locking mode.
@@ -421,6 +425,7 @@ func (tc *TransactionContext) Cleanup() {
 	tc.tdmLock.Lock()
 	tc.TableDeltaMap = nil
 	tc.relatedTableForMDL = nil
+	tc.relatedTableForReadOnly = nil
 	tc.tdmLock.Unlock()
 	tc.pessimisticLockCache = nil
 	tc.CurrentStmtPessimisticLockCache = nil
@@ -1380,6 +1385,9 @@ type SessionVars struct {
 	// preferRangeScan allows optimizer to always prefer range scan over table scan.
 	preferRangeScan bool
 
+	// enableSkipScan controls whether the optimizer can use skip index scan.
+	enableSkipScan bool
+
 	// EnableIndexMerge enables the generation of IndexMergePath.
 	enableIndexMerge bool
 	// EnableNoBackslashEscapesInLike controls whether NO_BACKSLASH_ESCAPES affects LIKE default escape.
@@ -1712,9 +1720,6 @@ type SessionVars struct {
 
 	// AnalyzePartitionConcurrency indicates concurrency for partitions in Analyze
 	AnalyzePartitionConcurrency int
-
-	// EnableAsyncMergeGlobalStats indicates whether to enable async merge global stats
-	EnableAsyncMergeGlobalStats bool
 
 	// EnableExternalTSRead indicates whether to enable read through external ts
 	EnableExternalTSRead bool
@@ -2397,6 +2402,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		DDLReorgPriority:                 kv.PriorityLow,
 		allowInSubqToJoinAndAgg:          vardef.DefOptInSubqToJoinAndAgg,
 		preferRangeScan:                  vardef.DefOptPreferRangeScan,
+		enableSkipScan:                   vardef.DefOptEnableSkipScan,
 		EnableCorrelationAdjustment:      vardef.DefOptEnableCorrelationAdjustment,
 		LimitPushDownThreshold:           vardef.DefOptLimitPushDownThreshold,
 		CorrelationThreshold:             vardef.DefOptCorrelationThreshold,
@@ -2621,6 +2627,17 @@ func (s *SessionVars) GetAllowPreferRangeScan() bool {
 // SetAllowPreferRangeScan set SessionVars.preferRangeScan.
 func (s *SessionVars) SetAllowPreferRangeScan(val bool) {
 	s.preferRangeScan = val
+}
+
+// GetEnableSkipScan returns whether skip index scan is enabled.
+func (s *SessionVars) GetEnableSkipScan() bool {
+	s.RecordRelevantOptVar(vardef.TiDBOptEnableSkipScan)
+	return s.enableSkipScan
+}
+
+// SetEnableSkipScan sets whether skip index scan is enabled.
+func (s *SessionVars) SetEnableSkipScan(val bool) {
+	s.enableSkipScan = val
 }
 
 // GetEnableCascadesPlanner get EnableCascadesPlanner from sql hints and SessionVars.EnableCascadesPlanner.
@@ -3764,6 +3781,20 @@ func (s *SessionVars) GetRelatedTableForMDL() *sync.Map {
 		s.TxnCtx.relatedTableForMDL = new(sync.Map)
 	}
 	return s.TxnCtx.relatedTableForMDL
+}
+
+// GetRelatedTableForReadOnly gets the MDL-independent table-access set used to
+// drain transactions before a database read-only transition finishes.
+func (s *SessionVars) GetRelatedTableForReadOnly() *sync.Map {
+	s.TxnCtxMu.Lock()
+	txnCtx := s.TxnCtx
+	s.TxnCtxMu.Unlock()
+	txnCtx.tdmLock.Lock()
+	defer txnCtx.tdmLock.Unlock()
+	if txnCtx.relatedTableForReadOnly == nil {
+		txnCtx.relatedTableForReadOnly = new(sync.Map)
+	}
+	return txnCtx.relatedTableForReadOnly
 }
 
 // ClearRelatedTableForMDL clears the related table for MDL.

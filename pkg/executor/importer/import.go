@@ -35,6 +35,7 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
 	tidb "github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/deploymode"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/dumpformat/parquetfile"
@@ -264,6 +265,9 @@ type Plan struct {
 	QuerySource *QuerySource `json:",omitempty"`
 	DBName      string
 	DBID        int64
+	// SchemaReadOnlyBypass carries the submitting SQL session's authorization to
+	// the internal table-mode job. It is not inherited by background task metadata.
+	SchemaReadOnlyBypass bool `json:"-"`
 	// TableInfo is the table info we used during import, we might change it
 	// if add index by SQL is enabled(it's disabled now).
 	TableInfo *model.TableInfo
@@ -1900,6 +1904,20 @@ func (p *Plan) IsLocalSort() bool {
 // IsGlobalSort returns true if we sort data on global storage.
 func (p *Plan) IsGlobalSort() bool {
 	return !p.IsLocalSort()
+}
+
+// ShouldUseAsyncPrepare returns whether IMPORT INTO should use
+// DXF prepare-mode asynchronous prepare. Starter imports are usually small, and
+// their maximum size is controlled by starter-params.max-import-data-size, so
+// synchronous prepare is fast and provides more responsive validation feedback.
+// Nextgen only supports global sort for IMPORT INTO in production, but local
+// sort can still be exercised in tests, so keep the IsGlobalSort check.
+// Query imports have no source files to discover during asynchronous prepare.
+func ShouldUseAsyncPrepare(plan *Plan) bool {
+	failpoint.Inject("mockDisableAsyncPrepare", func() {
+		failpoint.Return(false)
+	})
+	return plan != nil && plan.QuerySource == nil && kerneltype.IsNextGen() && !deploymode.IsStarter() && plan.IsGlobalSort()
 }
 
 // CheckNonCSVFormatOptions non CSV format should not specify CSV only options,

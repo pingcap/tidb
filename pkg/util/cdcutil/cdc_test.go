@@ -69,6 +69,9 @@ func testGetConflictChangefeeds(t *testing.T, cli *clientv3.Client) {
 	putChangefeed("not-skipped", "failed", 1, 41)
 	putLameChangefeed("nost-ok", "normal", 43)
 	putLameChangefeed("nost-fail", "normal", 41)
+	putChangefeed("equal", "normal", 1, 42)
+	putChangefeed("start-ahead", "normal", 43, 1)
+	putChangefeed("paused", "stopped", 1, 41)
 
 	names, err := cdcutil.GetIncompatibleChangefeedsWithSafeTS(context.Background(), cli, 42)
 	require.NoError(t, err)
@@ -76,7 +79,20 @@ func testGetConflictChangefeeds(t *testing.T, cli *clientv3.Client) {
 		"default/default/not-skipped",
 		"default/default/nost-fail",
 		"default/default/st-fail",
+		"default/default/paused",
 	})
+	message := names.MessageToUser()
+	require.Contains(t, message, "effective checkpointTS < restoreTS")
+	for _, name := range []string{"not-skipped", "nost-fail", "st-fail", "paused"} {
+		require.Contains(t, message, "default/default/"+name+": effective checkpointTS=41 < restoreTS=42")
+	}
+	for _, name := range []string{"equal", "start-ahead", "skipped", "st-ok", "nost-ok"} {
+		require.NotContains(t, message, "default/default/"+name+":")
+	}
+	running, err := cdcutil.GetRunningChangefeeds(context.Background(), cli)
+	require.NoError(t, err)
+	require.Contains(t, running.MessageToUser(), "found CDC changefeed(s): ")
+	require.NotContains(t, running.MessageToUser(), "restoreTS")
 
 	names2, err := cdcutil.GetIncompatibleChangefeedsWithSafeTS(context.Background(), cli, 40)
 	require.NoError(t, err)
@@ -90,7 +106,11 @@ func testGetConflictChangefeeds(t *testing.T, cli *clientv3.Client) {
 		"default/default/st-fail",
 		"default/default/nost-ok",
 		"default/default/st-ok",
+		"default/default/equal",
+		"default/default/start-ahead",
+		"default/default/paused",
 	})
+	require.Contains(t, names3.MessageToUser(), "default/default/start-ahead: effective checkpointTS=43 < restoreTS=48")
 }
 
 func testGetCDCChangefeedNameSet(t *testing.T, cli *clientv3.Client) {
@@ -147,6 +167,9 @@ func testGetCDCChangefeedNameSet(t *testing.T, cli *clientv3.Client) {
 	require.NoError(t, err)
 	require.False(t, nameSet.Empty())
 	require.ElementsMatch(t, nameSet.TESTGetChangefeedNames(), []string{"<nil>/test"})
+	incompatible, err := cdcutil.GetIncompatibleChangefeedsWithSafeTS(ctx, cli, 42)
+	require.NoError(t, err)
+	require.Contains(t, incompatible.MessageToUser(), "<nil>/test: effective checkpointTS=0 < restoreTS=42")
 
 	_, err = cli.Delete(ctx, "/tidb/cdc/", clientv3.WithPrefix())
 	require.NoError(t, err)

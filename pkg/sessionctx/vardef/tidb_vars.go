@@ -382,6 +382,9 @@ const (
 	// TiDBOptPreferRangeScan is used to enable/disable the optimizer to always prefer range scan over table scan, ignoring their costs.
 	TiDBOptPreferRangeScan = "tidb_opt_prefer_range_scan"
 
+	// TiDBOptEnableSkipScan controls whether the optimizer can use skip index scan.
+	TiDBOptEnableSkipScan = "tidb_opt_enable_skip_scan"
+
 	// TiDBOptEnableNoDecorrelateInSelect is used to control whether to enable the NO_DECORRELATE hint for subqueries in the select list.
 	TiDBOptEnableNoDecorrelateInSelect = "tidb_opt_enable_no_decorrelate_in_select"
 
@@ -1098,7 +1101,8 @@ const (
 	// TiDBMergePartitionStatsConcurrency is deprecated. It is kept for backward compatibility
 	// but no longer affects behavior. Global stats always use the combined merge algorithm.
 	TiDBMergePartitionStatsConcurrency = "tidb_merge_partition_stats_concurrency"
-	// TiDBEnableAsyncMergeGlobalStats indicates whether to enable async merge global stats
+	// TiDBEnableAsyncMergeGlobalStats is deprecated. It is kept for backward compatibility
+	// but no longer affects behavior. Global stats are always merged asynchronously.
 	TiDBEnableAsyncMergeGlobalStats = "tidb_enable_async_merge_global_stats"
 	// TiDBOptPrefixIndexSingleScan indicates whether to do some optimizations to avoid double scan for prefix index.
 	// When set to true, `col is (not) null`(`col` is index prefix column) is regarded as index filter rather than table filter.
@@ -1619,6 +1623,7 @@ const (
 	DefOptForceInlineCTE                = false
 	DefOptInSubqToJoinAndAgg            = true
 	DefOptPreferRangeScan               = true
+	DefOptEnableSkipScan                = false
 	DefOptEnableNoDecorrelateInSelect   = false
 	DefOptEnableAlternativeLogicalPlans = false
 	DefOptEnableSemiJoinRewrite         = false
@@ -1889,7 +1894,6 @@ const (
 	DefTiDBGOGCMinValue                               = 100
 	DefTiDBOptPrefixIndexSingleScan                   = true
 	DefTiDBOptPartialOrderedIndexForTopN              = "DISABLE"
-	DefTiDBEnableAsyncMergeGlobalStats                = true
 	DefTiDBExternalTS                                 = 0
 	DefTiDBEnableExternalTSRead                       = false
 	DefTiDBEnableReusechunk                           = true

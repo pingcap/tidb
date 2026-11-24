@@ -772,6 +772,12 @@ func TestPurgeMaterializedViewLogNowaitConflict(t *testing.T) {
 	require.NoError(t, err)
 	mlogID := mlogTable.Meta().ID
 
+	advisoryLockName := fmt.Sprintf("mlog_purge_%d", mlogID)
+	require.NoError(t, tk1.Session().GetAdvisoryLock(advisoryLockName, 1))
+	defer tk1.Session().ReleaseAllAdvisoryLocks()
+	tk2.MustGetErrCode("purge materialized view log on t_purge_nowait_conflict", errno.ErrMVAdvisoryLockConflict)
+	require.True(t, tk1.Session().ReleaseAdvisoryLock(advisoryLockName))
+
 	tk1.MustExec("begin pessimistic")
 	tk1.MustQuery(fmt.Sprintf("select 1 from mysql.tidb_mlog_purge_info where mlog_id = %d for update", mlogID)).
 		Check(testkit.Rows("1"))

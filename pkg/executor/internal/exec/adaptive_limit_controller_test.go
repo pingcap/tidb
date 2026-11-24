@@ -50,6 +50,78 @@ func newAdaptiveLimitControllerForTest(
 	})
 }
 
+func TestAdaptiveLimitControllerOuterOnly(t *testing.T) {
+	t.Run("zero output with in-flight work", func(t *testing.T) {
+		controller := NewAdaptiveLimitOuterJoinController(AdaptiveLimitConfig{
+			DemandRows: 32000, InitialOuterWindow: 32000, MaxOuterWindow: 125000,
+		})
+		admit := func(rows int) {
+			t.Helper()
+			reserved, ok := reserveOuterForTest(t, controller, 25000)
+			require.True(t, ok)
+			require.Equal(t, rows, reserved)
+			controller.CommitOuter(reserved, reserved)
+		}
+
+		admit(25000)
+		admit(7000)
+		controller.ObserveJoinProgress(25000, 0)
+		admit(25000)
+		controller.ObserveJoinProgress(7000, 0)
+		require.Equal(t, uint64(64000), controller.Snapshot().OuterWindow)
+
+		admit(25000)
+		// With 50,000 rows outstanding, wait for a full batch of room.
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+		defer cancel()
+		_, _, err := controller.ReserveOuter(ctx, 25000)
+		require.ErrorIs(t, err, context.DeadlineExceeded)
+		require.Positive(t, controller.Snapshot().OuterAdmissionBlocked)
+
+		controller.ObserveJoinProgress(25000, 0)
+		admit(25000)
+		controller.Reset()
+		admit(25000)
+		admit(7000)
+	})
+
+	controller := NewAdaptiveLimitOuterJoinController(AdaptiveLimitConfig{
+		DemandRows: 3, InitialOuterWindow: 3, MaxOuterWindow: 12,
+		InitialLookupWindow: 4, MaxLookupWindow: 8,
+	})
+	require.False(t, controller.HasLookupStage())
+	reserved, ok := reserveLookupForTest(t, controller, 1)
+	require.False(t, ok)
+	require.Zero(t, reserved)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, _, err := controller.ReserveLookup(ctx, 1)
+	require.ErrorIs(t, err, context.Canceled)
+
+	reserved, ok = reserveOuterForTest(t, controller, 12)
+	require.True(t, ok)
+	require.Equal(t, 3, reserved)
+	controller.CommitOuter(reserved, reserved)
+	controller.ObserveJoinProgress(reserved, 0)
+	require.Equal(t, uint64(3), controller.Snapshot().OuterWindow)
+
+	reserved, ok = reserveOuterForTest(t, controller, 12)
+	require.True(t, ok)
+	require.Equal(t, 3, reserved)
+	controller.CommitOuter(reserved, reserved)
+	controller.ObserveJoinProgress(reserved, 3)
+	require.True(t, controller.Snapshot().Stopped)
+
+	controller.Reset()
+	snapshot := controller.Snapshot()
+	require.False(t, snapshot.Stopped)
+	require.False(t, snapshot.HasLookupStage)
+	require.Zero(t, snapshot.LookupWindow)
+	require.Zero(t, snapshot.LookupBatchSize)
+	require.Zero(t, snapshot.OuterFetched)
+	require.Equal(t, uint64(3), snapshot.OuterWindow)
+}
+
 func TestAdaptiveLimitControllerUsesCurrentExecutionYield(t *testing.T) {
 	controller := newAdaptiveLimitControllerForTest(1000, 32, 100000, 32, 100000)
 
@@ -160,6 +232,62 @@ func TestAdaptiveLimitControllerPairsOutputWithCompletedOuterRows(t *testing.T) 
 }
 
 func TestAdaptiveLimitControllerGrowsWhenConsumedInputHasNoOutput(t *testing.T) {
+	t.Run("double read recovers after productive input", func(t *testing.T) {
+		controller := newAdaptiveLimitControllerForTest(128, 16, 128, 16, 64)
+		readBatch := func(want int) {
+			t.Helper()
+			rows, ok := reserveOuterForTest(t, controller, want)
+			require.True(t, ok)
+			require.Equal(t, want, rows)
+			for remaining := rows; remaining > 0; {
+				handles, ok := reserveLookupForTest(t, controller, remaining)
+				require.True(t, ok)
+				require.Positive(t, handles)
+				controller.CompleteLookup(handles, handles, handles)
+				remaining -= handles
+			}
+			controller.CommitOuter(rows, rows)
+		}
+		readBatch(16)
+		controller.ObserveJoinProgress(16, 1)
+		require.Equal(t, uint64(32), controller.Snapshot().OuterWindow)
+
+		readBatch(16)
+		readBatch(16)
+		controller.ObserveJoinProgress(16, 0)
+		readBatch(16)
+		controller.ObserveJoinProgress(16, 0)
+		require.Equal(t, uint64(64), controller.Snapshot().OuterWindow)
+		require.Equal(t, 16, controller.SuggestedBatchSize(64))
+
+		readBatch(16)
+		readBatch(16)
+		for range 4 {
+			controller.ObserveJoinProgress(16, 0)
+			readBatch(16)
+		}
+		require.Equal(t, uint64(128), controller.Snapshot().OuterWindow)
+		require.Equal(t, 32, controller.SuggestedBatchSize(64))
+
+		// A matching outer row can fill a result chunk before it is consumed.
+		controller.ObserveJoinProgress(0, 8)
+		require.Equal(t, 16, controller.SuggestedBatchSize(64))
+		require.Equal(t, uint64(128), controller.Snapshot().OuterWindow)
+		input, output := controller.recentOuterYield.totals()
+		require.Zero(t, input)
+		require.Zero(t, output)
+
+		controller.ObserveJoinProgress(16, 112)
+		require.Less(t, controller.Snapshot().OuterWindow, uint64(128))
+		require.Equal(t, 16, controller.SuggestedBatchSize(64))
+		input, output = controller.recentOuterYield.totals()
+		require.Equal(t, uint64(16), input)
+		require.Equal(t, uint64(120), output)
+		controller.Reset()
+		require.Equal(t, uint64(16), controller.Snapshot().OuterWindow)
+		require.Equal(t, 16, controller.SuggestedBatchSize(64))
+	})
+
 	controller := newAdaptiveLimitControllerForTest(1000, 32, 100000, 32, 100000)
 
 	for _, expected := range []int{32, 64, 128} {
@@ -493,6 +621,143 @@ func TestAdaptiveLimitControllerDirectLookupUsesLookupYield(t *testing.T) {
 }
 
 func TestAdaptiveLimitControllerDirectLookupGrowsOnNoOutput(t *testing.T) {
+	for _, tc := range []struct {
+		name              string
+		demand, firstRows int
+	}{
+		{"limit_one_empty", 1, 0},
+		{"limit_two_empty", 2, 0},
+		{"limit_two_partial", 2, 1},
+		{"limit_two_full", 2, 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			controller := NewAdaptiveLimitLookupController(AdaptiveLimitConfig{
+				DemandRows:              uint64(tc.demand),
+				InitialLookupWindow:     uint64(tc.demand),
+				MaxLookupWindow:         5000,
+				InitialLookupBatchSize:  uint64(tc.demand),
+				MaxLookupBatchSize:      1000,
+				NoOutputLookupBatchSize: 32,
+				NoOutputLookupWindow:    160,
+			})
+			defer controller.Stop()
+			reserved, ok := reserveLookupForTest(t, controller, 1000)
+			require.True(t, ok)
+			require.Equal(t, tc.demand, reserved)
+			if tc.firstRows == tc.demand {
+				controller.CompleteLookup(reserved, reserved, tc.firstRows)
+				require.True(t, controller.Snapshot().Stopped)
+				require.Zero(t, controller.Snapshot().LookupReserved)
+				return
+			}
+			pending := []int{reserved}
+			if tc.firstRows > 0 {
+				controller.CompleteLookup(reserved, reserved, tc.firstRows)
+				// Productive feedback can grow the window before the next miss.
+				controller.mu.Lock()
+				window := int(controller.lookupPhysicalWindowLocked())
+				controller.mu.Unlock()
+				pending = pending[:0]
+				for remaining := window; remaining > 0; remaining -= reserved {
+					reserved, ok = reserveLookupForTest(t, controller, 1000)
+					require.True(t, ok)
+					require.Equal(t, min(tc.demand, remaining), reserved)
+					pending = append(pending, reserved)
+				}
+			}
+			if tc.firstRows > 0 {
+				// Refilling an intermediate slot is valid. Drain the window before
+				// testing the next reservation so this case does not race a refill.
+				for i, reserved := range pending {
+					controller.CompleteLookup(reserved, reserved, 0)
+					if i+1 < len(pending) {
+						require.Equal(t, uint64(tc.demand), controller.Snapshot().LookupBatchSize)
+					}
+				}
+				reserved, ok = reserveLookupForTest(t, controller, 1000)
+				require.True(t, ok)
+				require.Equal(t, 32, reserved)
+			} else {
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				admitted := make(chan int, 1)
+				go func() {
+					n, _, _ := controller.ReserveLookup(ctx, 1000)
+					admitted <- n
+				}()
+				require.Eventually(t, func() bool {
+					controller.mu.Lock()
+					defer controller.mu.Unlock()
+					return controller.lookupAdmissionBlocked.waiters == 1
+				}, time.Second, time.Millisecond)
+				controller.CompleteLookup(reserved, reserved, 0)
+				select {
+				case n := <-admitted:
+					require.Equal(t, 32, n)
+				case <-ctx.Done():
+					t.Fatal(ctx.Err())
+				}
+			}
+			for range 4 {
+				reserved, ok := reserveLookupForTest(t, controller, 1000)
+				require.True(t, ok)
+				require.Equal(t, 32, reserved)
+			}
+			require.Equal(t, uint64(160), controller.Snapshot().LookupReserved)
+			controller.CompleteLookup(32, 32, tc.demand-tc.firstRows)
+			require.True(t, controller.Snapshot().Stopped)
+			require.Zero(t, controller.Snapshot().LookupReserved)
+			controller.Reset()
+			reserved, ok = reserveLookupForTest(t, controller, 1000)
+			require.True(t, ok)
+			require.Equal(t, tc.demand, reserved)
+		})
+	}
+
+	t.Run("small_limit_sustained_miss_with_in_flight_tasks", func(t *testing.T) {
+		controller := NewAdaptiveLimitLookupController(AdaptiveLimitConfig{
+			DemandRows:              2,
+			InitialLookupWindow:     2,
+			MaxLookupWindow:         5000,
+			InitialLookupBatchSize:  2,
+			MaxLookupBatchSize:      1000,
+			NoOutputLookupBatchSize: 32,
+			NoOutputLookupWindow:    160,
+		})
+		defer controller.Stop()
+
+		reserved, ok := reserveLookupForTest(t, controller, 1000)
+		require.True(t, ok)
+		require.Equal(t, 2, reserved)
+		controller.CompleteLookup(reserved, reserved, 0)
+		for range 5 {
+			reserved, ok := reserveLookupForTest(t, controller, 1000)
+			require.True(t, ok)
+			require.Equal(t, 32, reserved)
+		}
+
+		// Simulate refilling the window as each empty task completes.
+		for range 4 {
+			controller.CompleteLookup(32, 32, 0)
+			snapshot := controller.Snapshot()
+			require.Equal(t, uint64(32), snapshot.LookupBatchSize)
+			require.Equal(t, uint64(160), snapshot.LookupWindow)
+			reserved, ok := reserveLookupForTest(t, controller, 1000)
+			require.True(t, ok)
+			require.Equal(t, 32, reserved)
+		}
+
+		controller.CompleteLookup(32, 32, 0)
+		snapshot := controller.Snapshot()
+		require.Equal(t, uint64(128), snapshot.LookupReserved)
+		require.Equal(t, uint64(320), snapshot.LookupWindow)
+		require.Equal(t, uint64(64), snapshot.LookupBatchSize)
+		reserved, ok = reserveLookupForTest(t, controller, 1000)
+		require.True(t, ok)
+		require.Equal(t, 64, reserved)
+		require.Equal(t, uint64(192), controller.Snapshot().LookupReserved)
+	})
+
 	controller := NewAdaptiveLimitLookupController(AdaptiveLimitConfig{
 		DemandRows:             1000,
 		InitialLookupWindow:    32,

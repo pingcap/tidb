@@ -132,6 +132,7 @@ go_test(
         "//br/pkg/mock",
         "//br/pkg/streamhelper",
         "//pkg/config",
+        "//pkg/config/configtypes",
         "//pkg/config/deploymode",
         "//pkg/config/kerneltype",
         "//pkg/ddl",
