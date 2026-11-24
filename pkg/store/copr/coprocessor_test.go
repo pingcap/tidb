@@ -759,6 +759,7 @@ func TestBuildPagingTasks(t *testing.T) {
 func TestBuildCopTaskContext(t *testing.T) {
 	t.Run("does not cancel backoffer context", testBuildCopTaskDoesNotCancelBoCtx)
 	t.Run("statement timeout during PD region scan", testBuildCopTasksTimeoutDuringPDRegionScan)
+	t.Run("batch statement timeout during PD region scan", testBuildBatchCopTasksTimeoutDuringPDRegionScan)
 }
 
 func testBuildCopTaskDoesNotCancelBoCtx(t *testing.T) {
@@ -840,6 +841,51 @@ func testBuildCopTasksTimeoutDuringPDRegionScan(t *testing.T) {
 		require.ErrorContains(t, err, "batchScanRegion from PD failed")
 		require.False(t, exeerrors.ErrMaxExecTimeExceeded.Equal(err))
 	})
+}
+
+func testBuildBatchCopTasksTimeoutDuringPDRegionScan(t *testing.T) {
+	mockClient, cluster, pdClient, err := testutils.NewMockTiKV("", nil)
+	require.NoError(t, err)
+	testutils.BootstrapWithSingleStore(cluster)
+	tikvStore, err := tikv.NewTestTiKVStore(mockClient, cancelRegionScanPDClient{Client: pdClient}, nil, nil, 0)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, tikvStore.Close()) })
+	copStore, err := NewStore(tikvStore, nil)
+	require.NoError(t, err)
+	t.Cleanup(copStore.Close)
+	client := &CopClient{store: copStore}
+
+	for _, partitioned := range []bool{false, true} {
+		name := "non-partitioned"
+		if partitioned {
+			name = "partitioned"
+		}
+		t.Run(name, func(t *testing.T) {
+			build := func(ctx context.Context) error {
+				req := &kv.Request{StoreType: kv.TiFlash, MaxExecutionTime: 1}
+				ranges := BuildKeyRanges("a", "c")
+				if partitioned {
+					req.PartitionIDAndRanges = []kv.PartitionIDAndRanges{{ID: 1, KeyRanges: ranges}}
+				} else {
+					req.KeyRanges = kv.NewNonPartitionedKeyRanges(ranges)
+				}
+				resp := client.sendBatch(ctx, req, kv.NewVariables(nil), &kv.ClientSendOption{})
+				defer func() { require.NoError(t, resp.Close()) }()
+				_, err := resp.Next(ctx)
+				return err
+			}
+			t.Run("statement deadline", func(t *testing.T) {
+				require.ErrorIs(t, build(context.Background()), exeerrors.ErrMaxExecTimeExceeded)
+			})
+			t.Run("caller deadline", func(t *testing.T) {
+				ctx, cancel := context.WithTimeout(context.Background(), 0)
+				defer cancel()
+				err := build(ctx)
+				require.ErrorContains(t, err, "batchScanRegion from PD failed")
+				require.False(t, exeerrors.ErrMaxExecTimeExceeded.Equal(err))
+			})
+		})
+	}
 }
 
 func TestBuildPagingTasksDisablePagingForSmallLimit(t *testing.T) {
