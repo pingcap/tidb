@@ -523,7 +523,7 @@ func TestMultipleMatchAgainstBooleanPredicatesUseTiFlashSelection(t *testing.T) 
 	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
 	tk.MustExec("set @@session.tidb_allow_tiflash_cop=ON")
 	tk.MustExec("set @@session.tidb_isolation_read_engines='tiflash'")
-	tk.MustExec("set @@session.tidb_enable_local_match_against=ON")
+	// Local MATCH is eligible for TiFlash pushdown without an explicit opt-in.
 
 	sql := "select id from multi_match_articles where " +
 		"match(title) against('+tidb' in boolean mode) OR " +
