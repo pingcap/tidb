@@ -2023,14 +2023,19 @@ func GetRefreshMetaArgs(job *Job) (*RefreshMetaArgs, error) {
 // ModifyTableEngineAttributeArgs is the arguments for ActionModifyTableEngineAttribute ddl.
 type ModifyTableEngineAttributeArgs struct {
 	EngineAttribute string `json:"engine_attribute,omitempty"`
+	// IntervalRecalculation marks a job submitted by the DDL owner to re-evaluate
+	// storage class interval selectors. Such a job carries the EngineAttribute it
+	// read, and does nothing unless the table still has that EngineAttribute and
+	// re-evaluation only converts partitions from STANDARD to IA.
+	IntervalRecalculation bool `json:"interval_recalculation,omitempty"`
 }
 
 func (a *ModifyTableEngineAttributeArgs) getArgsV1(*Job) []any {
-	return []any{a.EngineAttribute}
+	return []any{a.EngineAttribute, a.IntervalRecalculation}
 }
 
 func (a *ModifyTableEngineAttributeArgs) decodeV1(job *Job) error {
-	return errors.Trace(job.decodeArgs(&a.EngineAttribute))
+	return errors.Trace(job.decodeArgs(&a.EngineAttribute, &a.IntervalRecalculation))
 }
 
 // GetModifyTableEngineAttributeArgs gets the args for ActionModifyTableEngineAttribute.

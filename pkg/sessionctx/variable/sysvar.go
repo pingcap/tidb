@@ -1014,6 +1014,23 @@ var defaultSysVars = []*SysVar{
 			return stmtsummaryv2.SetHistorySize(TidbOptInt(val, vardef.DefTiDBStmtSummaryHistorySize))
 		}},
 	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBStorageClassTransitionHistorySize, Value: strconv.Itoa(vardef.DefTiDBStorageClassTransitionHistorySize), Type: vardef.TypeInt, MinValue: 100, MaxValue: 100000},
+	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBStorageClassIntervalRecalcPeriod, Value: vardef.DefTiDBStorageClassIntervalRecalcPeriod.String(), Type: vardef.TypeDuration, MinValue: 0, MaxValue: uint64(time.Hour * 24 * 365),
+		Validation: func(vars *SessionVars, normalizedValue string, originalValue string, _ vardef.ScopeFlag) (string, error) {
+			// 0 disables the recalculation; other values are at least 10m. A negative
+			// value is rejected instead of silently disabling the recalculation.
+			if original, err := time.ParseDuration(originalValue); err == nil && original < 0 {
+				return normalizedValue, ErrWrongValueForVar.GenWithStackByArgs(vardef.TiDBStorageClassIntervalRecalcPeriod, originalValue)
+			}
+			period, err := time.ParseDuration(normalizedValue)
+			if err != nil {
+				return normalizedValue, err
+			}
+			if period > 0 && period < 10*time.Minute {
+				vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.FastGenByArgs(vardef.TiDBStorageClassIntervalRecalcPeriod, originalValue))
+				return (10 * time.Minute).String(), nil
+			}
+			return normalizedValue, nil
+		}},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeInstance, Name: vardef.TiDBStmtSummaryMaxStmtCount, Value: strconv.Itoa(vardef.DefTiDBStmtSummaryMaxStmtCount), Type: vardef.TypeInt, MinValue: 1, MaxValue: math.MaxInt16, AllowEmpty: true,
 		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 			return stmtsummaryv2.SetMaxStmtCount(TidbOptInt(val, vardef.DefTiDBStmtSummaryMaxStmtCount))
