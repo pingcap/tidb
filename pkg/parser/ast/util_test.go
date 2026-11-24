@@ -117,6 +117,36 @@ func TestUnionReadOnly(t *testing.T) {
 	require.False(t, IsReadOnly(setOprStmt, true))
 }
 
+func TestSequenceFuncReadOnly(t *testing.T) {
+	p := parser.New()
+	cases := []struct {
+		sql      string
+		readOnly bool
+	}{
+		{"SELECT SETVAL(seq, 100)", false},
+		{"SELECT setval(seq, 100)", false},
+		{"SELECT NEXTVAL(seq)", false},
+		{"SELECT next value for seq", false},
+		{"SELECT COALESCE(SETVAL(seq, 100), 1)", false},
+		{"SELECT 1 UNION SELECT NEXTVAL(seq)", false},
+		{"DO SETVAL(seq, 100)", false},
+		{"DO NEXTVAL(seq)", false},
+		{"DO COALESCE(SETVAL(seq, 100), 1)", false},
+		{"EXPLAIN ANALYZE SELECT NEXTVAL(seq)", false},
+		{"EXPLAIN SELECT NEXTVAL(seq)", true},
+		{"SELECT LASTVAL(seq)", true},
+		{"DO LASTVAL(seq)", true},
+		{"DO 1", true},
+		{"SELECT 1", true},
+	}
+	for _, tc := range cases {
+		stmt, err := p.ParseOneStmt(tc.sql, "", "")
+		require.NoError(t, err, tc.sql)
+		require.Equal(t, tc.readOnly, IsReadOnly(stmt, true), "checkGlobalVars=true: %s", tc.sql)
+		require.Equal(t, tc.readOnly, IsReadOnly(stmt, false), "checkGlobalVars=false: %s", tc.sql)
+	}
+}
+
 // CleanNodeText set the text of node and all child node empty.
 // For test only.
 func CleanNodeText(node Node) {
