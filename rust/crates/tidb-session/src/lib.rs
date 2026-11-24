@@ -547,6 +547,13 @@ pub struct Session {
     /// the statement currently executing. It is reset at every statement
     /// boundary and replaced after `hint.ParseStmtHints`.
     stmt_hints: tidb_hint::StmtHints,
+    /// Go `ExecStmt` of the running INSERT / UPDATE / DELETE, kept after its
+    /// execution for a pessimistic retry ([`Session::take_retry_exec_stmt`]).
+    exec_stmt: Option<Box<crate::dispatch::CompiledDml>>,
+    /// The running statement is being retried after a pessimistic lock
+    /// conflict (Go `handlePessimisticLockError`), not replayed by
+    /// `session.retry`: its compiled plan executes again.
+    pessimistic_retry: bool,
     /// Go `StmtCtx.ResourceGroupName`: the group selected for the statement
     /// currently passing through the session funnel. It starts from
     /// [`Self::resource_group`] at every statement boundary and may be
@@ -1086,6 +1093,8 @@ impl Session {
             },
             global_config_syncer: None,
             stmt_hints: tidb_hint::StmtHints::default(),
+            exec_stmt: None,
+            pessimistic_retry: false,
             active_resource_group: "default".to_owned(),
             warnings: Vec::new(),
             deferred_multi_statement_warning: false,

@@ -230,6 +230,11 @@ impl CompileDepth {
         Self { nested }
     }
 
+    /// How many statement compiles this thread is inside.
+    fn depth() -> usize {
+        COMPILES.with(|compiles| compiles.borrow().len())
+    }
+
     /// Whether the compile running now is a prepared statement's inside an
     /// EXECUTE's.
     fn is_nested() -> bool {
@@ -241,6 +246,35 @@ impl Drop for CompileDepth {
     fn drop(&mut self) {
         COMPILES.with(|compiles| compiles.borrow_mut().pop());
     }
+}
+
+/// Go `ExecStmt` for an INSERT / UPDATE / DELETE the funnel compiled
+/// ([`Session::compile_dml`]): the statement as compiled (its variables bound,
+/// its binding applied), the database it resolved names in, its final plan,
+/// the statement's hints, and where its warnings began. A pessimistic retry
+/// executes the same plan again (Go `handlePessimisticLockError` re-runs
+/// `buildExecutor` over `ExecStmt.Plan`).
+pub(crate) struct CompiledDml {
+    stmt: Stmt,
+    current_db: String,
+    plan: CompiledDmlPlan,
+    stmt_hints: tidb_hint::StmtHints,
+    warnings_start: usize,
+}
+
+enum CompiledDmlPlan {
+    Insert(tidb_executor::driver::CompiledInsert),
+    Update(tidb_planner_core_operator_physicalop::PhysicalPlan),
+    Delete(tidb_planner_core_operator_physicalop::PhysicalPlan),
+}
+
+/// An INSERT, UPDATE or DELETE: the statements the funnel compiles to a
+/// [`CompiledDml`].
+fn compiles_to_dml_plan(stmt: &Stmt) -> bool {
+    matches!(stmt, Stmt::Dml(dml) if matches!(
+        dml.as_ref(),
+        DmlStmt::Insert(_) | DmlStmt::Update(_) | DmlStmt::Delete(_)
+    ))
 }
 
 fn cached_dml_plan<'a>(
@@ -1644,6 +1678,216 @@ impl Session {
         Ok(execution)
     }
 
+    /// Go's non-prepared plan cache for a DML statement (the
+    /// `tidb_enable_non_prepared_plan_cache_for_dml` switch, true by
+    /// default): the statement is parameterized and, on a hit, the cached
+    /// plan executes.
+    fn execute_non_prepared_cached_dml(
+        &mut self,
+        stmt: &Stmt,
+        prepared: Option<&[tidb_executor::table_privilege::TablePrivilegeRequest]>,
+        binding_sql: Option<&str>,
+        sql: &str,
+    ) -> Result<Option<PendingExecution>, DriverError> {
+        let non_prepared_dml = prepared
+            .is_none()
+            .then(|| self.parameterize_non_prepared_dml(stmt))
+            .flatten();
+        let Some(parameterized) = non_prepared_dml.as_ref() else {
+            return Ok(None);
+        };
+        let mut effective_parameterized = parameterized.statement.clone();
+        if binding_sql.is_some() {
+            let binding_hints = tidb_bindinfo::binding::collect_hints(stmt);
+            tidb_bindinfo::binding::bind_hints(&mut effective_parameterized, &binding_hints);
+        }
+        let Some((execution, requests)) =
+            self.bind_non_prepared_dml(parameterized, &effective_parameterized, binding_sql)?
+        else {
+            return Ok(None);
+        };
+        // The cache entry's requests, Go's `PlanCacheStmt.VisitInfos`, which
+        // `checkPreparedPriv` reads on every use.
+        self.execute_cached_prepared_dml(&execution, sql, &requests)
+            .map(|output| Some(PendingExecution::Complete(output)))
+    }
+
+    /// Go `ResetContextOfStmt`'s DML arm (`ResetUpdateStmtCtx`,
+    /// `ResetDeleteStmtCtx`) and the plan's privilege check, the context a
+    /// DML statement compiles and executes under.
+    fn dml_stmt_ctx(&mut self, stmt: &Stmt) -> Result<tidb_sessionctx::StmtContext, DriverError> {
+        let Stmt::Dml(dml) = stmt else {
+            unreachable!("a compiled DML statement")
+        };
+        let ctx = match dml.as_ref() {
+            DmlStmt::Insert(insert) => self.reset_insert_stmt_ctx(insert, stmt),
+            DmlStmt::Update(update) => self.reset_update_stmt_ctx(update, stmt),
+            DmlStmt::Delete(delete) => self.reset_delete_stmt_ctx(delete, stmt),
+            _ => unreachable!("a compiled DML statement"),
+        };
+        self.with_plan_privilege_check(ctx, stmt)
+    }
+
+    /// Go `Compiler.Compile` for an INSERT / UPDATE / DELETE: its final plan
+    /// over the statement's context, which the first execution runs under.
+    fn compile_dml(
+        &mut self,
+        stmt: Stmt,
+        warnings_start: usize,
+    ) -> Result<(CompiledDml, tidb_sessionctx::StmtContext), DriverError> {
+        let current_db = self.vars.current_db.clone();
+        let ctx = self.dml_stmt_ctx(&stmt)?;
+        let Stmt::Dml(dml) = &stmt else {
+            unreachable!("a compiled DML statement")
+        };
+        let plan = match dml.as_ref() {
+            DmlStmt::Insert(insert) => {
+                if insert.source.is_some() {
+                    self.write_sli.set_invalid();
+                }
+                self.with_catalog_retrieving(&ctx, |catalog| {
+                    tidb_executor::driver::compile_insert_plan(insert, catalog, &current_db, &ctx)
+                })
+                .map(CompiledDmlPlan::Insert)
+            }
+            DmlStmt::Update(update) => self
+                .with_catalog_retrieving(&ctx, |catalog| {
+                    tidb_executor::driver::compile_update_plan(update, catalog, &current_db, &ctx)
+                })
+                .map(CompiledDmlPlan::Update),
+            DmlStmt::Delete(delete) => self
+                .with_catalog_retrieving(&ctx, |catalog| {
+                    tidb_executor::driver::compile_delete_plan(delete, catalog, &current_db, &ctx)
+                })
+                .map(CompiledDmlPlan::Delete),
+            _ => unreachable!("a compiled DML statement"),
+        };
+        let plan = match plan {
+            Ok(plan) => plan,
+            Err(error) => {
+                self.drain_eval_warnings(&ctx);
+                if matches!(dml.as_ref(), DmlStmt::Insert(_)) {
+                    self.vars.statement_insert_id = ctx
+                        .published_last_insert_id()
+                        .unwrap_or_else(|| ctx.given_insert_id());
+                }
+                self.statement_message = ctx.message();
+                return Err(error);
+            }
+        };
+        let stmt_hints = self.stmt_hints.clone();
+        Ok((
+            CompiledDml {
+                stmt,
+                current_db,
+                plan,
+                stmt_hints,
+                warnings_start,
+            },
+            ctx,
+        ))
+    }
+
+    /// Go `ExecStmt.Exec` -> `handleNoDelayExecutor` for a compiled INSERT /
+    /// UPDATE / DELETE: the executor over the final plan, under the
+    /// compile's context the first time and a fresh one on a retry. A
+    /// top-level statement keeps its compiled form for a pessimistic retry.
+    fn exec_compiled_dml(
+        &mut self,
+        mut compiled: CompiledDml,
+        ctx: Option<tidb_sessionctx::StmtContext>,
+    ) -> Result<StmtOutput, DriverError> {
+        let ctx = match ctx {
+            Some(ctx) => ctx,
+            None => self.dml_stmt_ctx(&compiled.stmt)?,
+        };
+        let CompiledDml { stmt, current_db, plan, .. } = &mut compiled;
+        let Stmt::Dml(dml) = &*stmt else {
+            unreachable!("a compiled DML statement")
+        };
+        let output = match (dml.as_ref(), plan) {
+            (DmlStmt::Insert(insert), CompiledDmlPlan::Insert(plan)) => {
+                let result = self.retrieving_memory_tables(&ctx, |session| {
+                    session.with_staged_catalog(|catalog| {
+                        tidb_executor::driver::run_compiled_insert(insert, catalog, current_db, &ctx, plan)
+                    })
+                });
+                self.drain_eval_warnings(&ctx);
+                // Go `session.LastInsertID()`, the OK packet's field:
+                // `StmtCtx.LastInsertID` when the statement PUBLISHED an
+                // allocated id, `StmtCtx.InsertID` -- the last explicit value
+                // -- otherwise.
+                self.vars.statement_insert_id = ctx
+                    .published_last_insert_id()
+                    .unwrap_or_else(|| ctx.given_insert_id());
+                // Go `InsertExec.setMessage`'s `Records: ...` text.
+                self.statement_message = ctx.message();
+                result.map(|(affected, _)| StmtOutput::Affected(affected))
+            }
+            (DmlStmt::Update(update), CompiledDmlPlan::Update(plan)) => {
+                let result = self.retrieving_memory_tables(&ctx, |session| {
+                    session.with_staged_catalog(|catalog| {
+                        tidb_executor::run_update_stmt_with_physical(update, catalog, current_db, &ctx, Some(&mut *plan))
+                    })
+                });
+                self.drain_eval_warnings(&ctx);
+                self.statement_message = ctx.message();
+                result.map(StmtOutput::Affected)
+            }
+            (DmlStmt::Delete(delete), CompiledDmlPlan::Delete(plan)) => {
+                let result = self.retrieving_memory_tables(&ctx, |session| {
+                    session.with_staged_catalog(|catalog| {
+                        tidb_executor::run_delete_stmt_with_physical(delete, catalog, current_db, &ctx, Some(&mut *plan))
+                    })
+                });
+                self.drain_eval_warnings(&ctx);
+                // Go's info is the statement context's message, which a
+                // DELETE's foreign-key cascade `UPDATE` sets.
+                self.statement_message = ctx.message();
+                result.map(StmtOutput::Affected)
+            }
+            _ => unreachable!("a compiled DML statement and its plan agree"),
+        };
+        if CompileDepth::depth() <= 1 {
+            self.exec_stmt = Some(Box::new(compiled));
+        }
+        output
+    }
+
+    /// The statement [`Self::exec_compiled_dml`] kept, when the statement is
+    /// being retried after a pessimistic lock conflict
+    /// ([`Self::record_statement_retry`]); any other entry forgets it.
+    pub(crate) fn forget_exec_stmt(&mut self) {
+        self.exec_stmt = None;
+        self.pessimistic_retry = false;
+    }
+
+    pub(crate) fn take_retry_exec_stmt(&mut self) -> Option<Box<CompiledDml>> {
+        let retry = std::mem::take(&mut self.pessimistic_retry);
+        self.exec_stmt.take().filter(|_| retry)
+    }
+
+    /// Go `ExecStmt.handlePessimisticLockError`'s re-execution of a compiled
+    /// INSERT / UPDATE / DELETE: `StmtCtx.ResetForRetry` (the statement's
+    /// warnings go, the parser's stay), then the executor over the same plan,
+    /// with no compile.
+    pub(crate) fn exec_compiled_dml_retry(
+        &mut self,
+        compiled: Box<CompiledDml>,
+        sql: &str,
+    ) -> Result<StmtOutput, DriverError> {
+        self.run_with_columns_using(sql, false, move |session| {
+            session.warnings.truncate(compiled.warnings_start);
+            session.statement_kind = statement_kind_of(&compiled.stmt);
+            session.stmt_hints = compiled.stmt_hints.clone();
+            let output = session.exec_compiled_dml(*compiled, None)?;
+            // Go `handleNoDelayExecutor`'s `TryNewCacheChunk`.
+            let _ = session.statement_pool_chunk(&[]);
+            Ok(output)
+        })
+        .map(|(output, _)| output)
+    }
+
     /// Go `Compiler.Compile` and then `ExecStmt.Exec` for a query: the
     /// final plan is the one the statement retained while its schema still
     /// holds, else `planner.Optimize`'s
@@ -1720,6 +1964,10 @@ impl Session {
         mut select_plan: Option<RetainedSelectPlan<'_>>,
         dml_plan: Option<&mut tidb_planner_core_operator_physicalop::PhysicalPlan>,
     ) -> Result<PendingExecution, DriverError> {
+        // Where the statement's warnings begin: what a pessimistic retry
+        // truncates back to (Go `StmtCtx.ResetForRetry`), the parser's
+        // warnings before it staying.
+        let warnings_start = self.warnings.len();
         self.set_statement_arbitration_key(sql);
         // Go `ResetContextOfStmt`: every statement's `StmtCtx.ResourceGroupName`
         // starts as the session's group (a RESOURCE_GROUP hint replaces it
@@ -1922,6 +2170,21 @@ impl Session {
         } else {
             self.require_statement_table_privileges(&stmt)?;
         }
+        // Go `Compiler.Compile` and then `ExecStmt.Exec` for an INSERT /
+        // UPDATE / DELETE that brought no cached plan: the compiled statement
+        // outlives its first execution, so a pessimistic retry executes it
+        // again ([`Self::exec_compiled_dml_retry`]) without compiling.
+        if dml_plan.is_none() && compiles_to_dml_plan(&stmt) {
+            if let Some(cached) =
+                self.execute_non_prepared_cached_dml(&stmt, prepared, binding_sql.as_deref(), sql)?
+            {
+                return Ok(cached);
+            }
+            let (compiled, ctx) = self.compile_dml(stmt, warnings_start)?;
+            return self
+                .exec_compiled_dml(compiled, Some(ctx))
+                .map(PendingExecution::Complete);
+        }
         // Go raises ErrNoDB where an unqualified NAME is resolved, not for
         // every statement: `SELECT 1` and `SELECT DATABASE()` both run with
         // no database selected (captured). The driver's own
@@ -2013,31 +2276,10 @@ impl Session {
                 // `tidb_enable_non_prepared_plan_cache_for_dml` switch, true
                 // by default) and sends the retained marker-bearing statement
                 // through the same plan cache as PREPARE.
-                let non_prepared_dml = prepared
-                    .is_none()
-                    .then(|| self.parameterize_non_prepared_dml(&stmt))
-                    .flatten();
-                if let Some(parameterized) = non_prepared_dml.as_ref() {
-                    let mut effective_parameterized = parameterized.statement.clone();
-                    if binding_sql.is_some() {
-                        let binding_hints = tidb_bindinfo::binding::collect_hints(&stmt);
-                        tidb_bindinfo::binding::bind_hints(
-                            &mut effective_parameterized,
-                            &binding_hints,
-                        );
-                    }
-                    if let Some((execution, requests)) = self.bind_non_prepared_dml(
-                        &parameterized,
-                        &effective_parameterized,
-                        binding_sql.as_deref(),
-                    )? {
-                        // The cache entry's requests, Go's
-                        // `PlanCacheStmt.VisitInfos`, which
-                        // `checkPreparedPriv` reads on every use.
-                        return self
-                            .execute_cached_prepared_dml(&execution, sql, &requests)
-                            .map(PendingExecution::Complete);
-                    }
+                if let Some(cached) =
+                    self.execute_non_prepared_cached_dml(&stmt, prepared, binding_sql.as_deref(), sql)?
+                {
+                    return Ok(cached);
                 }
                 match &**dml {
                     DmlStmt::Insert(insert) => {
@@ -2048,44 +2290,24 @@ impl Session {
                         if insert.source.is_some() {
                             self.write_sli.set_invalid();
                         }
-                        // Go `Compiler.Compile`, unless the statement brought
-                        // its cached plan; then `ExecStmt.Exec` over it.
-                        let compiled = physical_plan.is_none().then(|| {
-                            self.with_catalog_retrieving(&ctx, |catalog| {
-                                tidb_executor::driver::compile_insert_plan(insert, catalog, &current_db, &ctx)
+                        // The statement's cached plan (a statement without one
+                        // compiled above, `compile_dml`).
+                        let result = self.retrieving_memory_tables(&ctx, |session| {
+                            session.with_staged_catalog(|catalog| {
+                                // Go executes the statement the protocol
+                                // BOUND (`pkg/server`'s `statement` /
+                                // `executableParams` carry the values):
+                                // re-parsing `sql` here would run a tree whose
+                                // markers never met their execute-time values.
+                                tidb_executor::run_insert_stmt_with_physical(
+                                    insert,
+                                    catalog,
+                                    &current_db,
+                                    &ctx,
+                                    physical_plan.as_deref_mut(),
+                                )
                             })
                         });
-                        let result = match compiled {
-                            Some(Err(error)) => Err(error),
-                            Some(Ok(mut compiled)) => self.retrieving_memory_tables(&ctx, |session| {
-                                session.with_staged_catalog(|catalog| {
-                                    tidb_executor::driver::run_compiled_insert(
-                                        insert,
-                                        catalog,
-                                        &current_db,
-                                        &ctx,
-                                        &mut compiled,
-                                    )
-                                })
-                            }),
-                            None => self.retrieving_memory_tables(&ctx, |session| {
-                                session.with_staged_catalog(|catalog| {
-                                    // Go executes the statement the protocol
-                                    // BOUND (`pkg/server`'s `statement` /
-                                    // `executableParams` carry the values):
-                                    // re-parsing `sql` here would run a tree
-                                    // whose markers never met their
-                                    // execute-time values.
-                                    tidb_executor::run_insert_stmt_with_physical(
-                                        insert,
-                                        catalog,
-                                        &current_db,
-                                        &ctx,
-                                        physical_plan.as_deref_mut(),
-                                    )
-                                })
-                            }),
-                        };
                         self.drain_eval_warnings(&ctx);
                         // Go `session.LastInsertID()`, the OK packet's field:
                         // `StmtCtx.LastInsertID` when the statement PUBLISHED an
@@ -2116,22 +2338,9 @@ impl Session {
                         let current_db = self.vars.current_db.clone();
                         let ctx = self.reset_update_stmt_ctx(update, &stmt);
                         let ctx = self.with_plan_privilege_check(ctx, &stmt)?;
-                        // Go `Compiler.Compile`, unless the statement brought
-                        // its cached plan; then `ExecStmt.Exec` over it.
-                        let mut compiled = match physical_plan {
-                            Some(_) => None,
-                            None => match self.with_catalog_retrieving(&ctx, |catalog| {
-                                tidb_executor::driver::compile_update_plan(update, catalog, &current_db, &ctx)
-                            }) {
-                                Ok(plan) => Some(plan),
-                                Err(error) => {
-                                    self.drain_eval_warnings(&ctx);
-                                    self.statement_message = ctx.message();
-                                    return Err(error);
-                                }
-                            },
-                        };
-                        let mut physical_plan = physical_plan.or(compiled.as_mut());
+                        // The statement's cached plan (a statement without one
+                        // compiled above, `compile_dml`).
+                        let mut physical_plan = physical_plan;
                         let output = match &update.kind {
                             tidb_ast::UpdateKind::Single(_) => {
                                 self.retrieving_memory_tables(&ctx, |session| {
@@ -2176,22 +2385,9 @@ impl Session {
                         let current_db = self.vars.current_db.clone();
                         let ctx = self.reset_delete_stmt_ctx(delete, &stmt);
                         let ctx = self.with_plan_privilege_check(ctx, &stmt)?;
-                        // Go `Compiler.Compile`, unless the statement brought
-                        // its cached plan; then `ExecStmt.Exec` over it.
-                        let mut compiled = match physical_plan {
-                            Some(_) => None,
-                            None => match self.with_catalog_retrieving(&ctx, |catalog| {
-                                tidb_executor::driver::compile_delete_plan(delete, catalog, &current_db, &ctx)
-                            }) {
-                                Ok(plan) => Some(plan),
-                                Err(error) => {
-                                    self.drain_eval_warnings(&ctx);
-                                    self.statement_message = ctx.message();
-                                    return Err(error);
-                                }
-                            },
-                        };
-                        let mut physical_plan = physical_plan.or(compiled.as_mut());
+                        // The statement's cached plan (a statement without one
+                        // compiled above, `compile_dml`).
+                        let mut physical_plan = physical_plan;
                         let output = match &delete.kind {
                             tidb_ast::DeleteKind::Single(_) => {
                                 self.retrieving_memory_tables(&ctx, |session| {

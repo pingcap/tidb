@@ -143,6 +143,7 @@ impl Session {
     /// executed again at a newer for-update timestamp.
     pub fn record_statement_retry(&mut self) {
         self.retrying_statement = true;
+        self.pessimistic_retry = true;
         if let Some(observation) = &self.statement_observation {
             let mut phases = observation
                 .phases

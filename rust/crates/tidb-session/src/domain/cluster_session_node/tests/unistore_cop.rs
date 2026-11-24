@@ -26476,6 +26476,56 @@ fn a_row_error_in_a_pessimistic_update_preempts_its_lock_wait() {
 /// `handlePessimisticLockError` -> `OnStmtRetry`): `SET w = w + 1` computes
 /// from the committed 100, not the 0 it first read. Captured live from the Go
 /// server on TiKV: the rows end 1, 101, 1 and the statement affects 3.
+/// Go `ExecStmt.handlePessimisticLockError` re-runs `buildExecutor` over the
+/// compiled `Plan` and `StmtCtx.ResetForRetry` truncates the statement's
+/// warnings: a warning the compile raised (an inapplicable index hint) is
+/// gone after a retry, since nothing compiles again. Captured from a Go
+/// testkit probe of the same statements: the hint's 1176 without a
+/// conflict, no warning after the retry.
+#[test]
+fn a_pessimistic_retry_does_not_compile_the_statement_again() {
+    let (stack, _users) = cop_backed_stack();
+    let factory = &stack.factory;
+    let mut session = factory
+        .open_session(session_context(2013))
+        .expect("session opens");
+    let mut other = factory
+        .open_session(session_context(2014))
+        .expect("session opens");
+    session.node_conn().execute_write("USE test").expect("use").expect("use");
+    other.node_conn().execute_write("USE test").expect("use").expect("use");
+    rows(&mut session, "CREATE TABLE rwarn (id int primary key, v int, key iv(v))");
+    rows(&mut session, "INSERT INTO rwarn VALUES (1, 10)");
+    for retry in [false, true] {
+        session
+            .node_conn()
+            .control_transaction("BEGIN PESSIMISTIC")
+            .expect("begin");
+        if retry {
+            other
+                .node_conn()
+                .execute_write("UPDATE rwarn SET v = v + 1 WHERE id = 1")
+                .expect("conflicting write")
+                .expect("write result");
+        }
+        session
+            .node_conn()
+            .execute_write("UPDATE /*+ use_index(rwarn, nonexist) */ rwarn SET v = 12 WHERE id = 1")
+            .expect("the update runs")
+            .expect("write result");
+        let expected: &[[&str; 3]] = if retry {
+            &[]
+        } else {
+            &[["Warning", "1176", "Key 'nonexist' doesn't exist in table 'rwarn'"]]
+        };
+        assert_eq!(displayed(rows(&mut session, "SHOW WARNINGS")), expected, "retry={retry}");
+        session
+            .node_conn()
+            .control_transaction("ROLLBACK")
+            .expect("rollback");
+    }
+}
+
 #[test]
 fn a_non_point_pessimistic_update_retries_after_a_conflict_found_by_its_lock() {
     let (stack, _users) = cop_backed_stack();

@@ -964,13 +964,18 @@ impl<'s> ClusterServerSession<'s> {
             stmt,
             Stmt::Admin(admin) if matches!(admin.as_ref(), tidb_ast::AdminStmt::RefreshMaterializedViewImplement(_))
         );
+        // Go `ExecuteStmt` compiles the statement once; its
+        // `handlePessimisticLockError` re-executes the compiled plan.
+        self.session.forget_exec_stmt();
         let attempt = self.with_prelocked_statement(
             shape,
             &resource_group,
             is_dml,
-            move |session| match session
-                .exec_statement_parsed(stmt.clone(), &owned)
-                .map_err(sql_query_error)?
+            move |session| match match session.take_retry_exec_stmt() {
+                Some(compiled) => session.exec_compiled_dml_retry(compiled, &owned),
+                None => session.exec_statement_parsed(stmt.clone(), &owned),
+            }
+            .map_err(sql_query_error)?
             {
                 StmtOutput::Affected(count) => Ok(count),
                 StmtOutput::Done(_) => Ok(0),
