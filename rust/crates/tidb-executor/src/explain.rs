@@ -4136,31 +4136,21 @@ pub fn explain_select_stmt(
     )
 }
 
-/// The Index Advisor's `queryPlanCost` (`pkg/planner/optimize.go`): the
-/// root cost of the plan the optimizer picks for `query`, with the
-/// `tidb_opt_fix_control` 43817 rule the advisor turns on -- a plan that would
-/// evaluate an uncorrelated scalar subquery while planning is refused.
+/// The Index Advisor's `queryPlanCost`
+/// ([`tidb_planner::statement_plan::query_plan_cost`]).
 pub fn query_plan_cost(
     query: &tidb_ast::QueryStmt,
     catalog: &SessionExtendedInfoSchema,
     current_db: &str,
     ctx: &crate::StmtContext,
 ) -> Result<f64, DriverError> {
-    tidb_planner::preprocess::validate_query_usage(query, ctx)?;
-    let (mut physical, scalar_subqueries) =
-        crate::driver::optimize_query_stmt_with_scalar_subqueries(query, catalog, current_db, ctx)?;
-    if !scalar_subqueries.is_empty() {
-        return Err(DriverError::Mysql(crate::driver::MysqlError::unknown("evaluate non-correlated sub-queries during optimization phase is not allowed by fix-control 43817"
-                .to_owned(),
-        )));
-    }
-    crate::driver::physical_builder::prepare_plan_for_explain(&mut physical, catalog, ctx)?;
-    let coster = Ver2Coster::from_env(ctx.optimizer_cost_env())
-        .with_scan_penalty_vars(ctx.allow_prefer_range_scan(), ctx.get_index_force())
-        .with_explain_cache();
-    Ok(coster
-        .plan_cost(&physical, tidb_planner_property::task_type::TaskType::Root, false)
-        .value())
+    tidb_planner::statement_plan::query_plan_cost(
+        &crate::driver::planner_bridge::driver_hooks(catalog),
+        query,
+        catalog,
+        current_db,
+        ctx,
+    )
 }
 
 /// Go `genBriefPlanWithSCtx` (`pkg/planner/optimize.go`): the optimized
