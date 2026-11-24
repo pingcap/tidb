@@ -822,6 +822,7 @@ func TestMVServiceCollectRefreshAlertTasksDedupByLastSuccessReadTSO(t *testing.T
 }
 
 func TestMVServiceMaybeLogRefreshAlertTasksSyncsAlertStates(t *testing.T) {
+	installMockTimeForTest(t)
 	helper := &mockMVServiceHelper{}
 	svc := NewMVService(context.Background(), mockSessionPool{}, helper, DefaultMVServiceConfig())
 	defer svc.closeTaskExecutors()
@@ -894,6 +895,35 @@ func TestMVServiceMaybeLogRefreshAlertTasksSyncsAlertStates(t *testing.T) {
 	svc.maybeLogRefreshAlertTasks(now)
 	require.Equal(t, int32(1), helper.syncRefreshAlertCalls.Load())
 	require.Equal(t, int32(2), helper.cleanupStaleRefreshAlertCalls.Load())
+
+	// Another checker may persist the next alert level before this checker scans it.
+	// An unchanged snapshot with an already-correct persisted level needs no write.
+	helper.fetchViews = map[int64]*mviewTask{warnTask.ID: warnTask}
+	warnTask.persistedAlertLevel = mvRefreshAlertLevelOverdue
+	now = now.Add(90 * time.Second)
+	svc.nextRefreshAlertScanMillis.Store(0)
+	svc.maybeLogRefreshAlertTasks(now)
+	require.Equal(t, int32(1), helper.syncRefreshAlertCalls.Load())
+	require.Equal(t, int64(0), svc.metrics.alertWarningCount.Load())
+	require.Equal(t, int64(1), svc.metrics.alertOverdueCount.Load())
+
+	// A failed write must not acknowledge a missing persisted alert.
+	warnTask.persistedAlertLevel = ""
+	helper.syncRefreshAlertErr = errors.New("mock alert sync failure")
+	svc.nextRefreshAlertScanMillis.Store(0)
+	svc.maybeLogRefreshAlertTasks(now)
+	require.Equal(t, int32(2), helper.syncRefreshAlertCalls.Load())
+	require.Empty(t, warnTask.persistedAlertLevel)
+
+	helper.syncRefreshAlertErr = nil
+	svc.nextRefreshAlertScanMillis.Store(0)
+	svc.maybeLogRefreshAlertTasks(now)
+	require.Equal(t, int32(3), helper.syncRefreshAlertCalls.Load())
+	require.Equal(t, mvRefreshAlertLevelOverdue, warnTask.persistedAlertLevel)
+
+	svc.nextRefreshAlertScanMillis.Store(0)
+	svc.maybeLogRefreshAlertTasks(now)
+	require.Equal(t, int32(3), helper.syncRefreshAlertCalls.Load())
 }
 
 func TestMVServiceMaybeLogRefreshAlertTasksCleansUpStaleRowsWithoutLocalPendingTasks(t *testing.T) {
@@ -936,6 +966,7 @@ func TestMVServiceBuildMVRefreshTasksDoesNotClearRemovedAlertStates(t *testing.T
 }
 
 func TestMVServiceMaybeLogRefreshAlertTasksResyncsWhenLastSuccessReadTSOChanges(t *testing.T) {
+	installMockTimeForTest(t)
 	helper := &mockMVServiceHelper{}
 	svc := NewMVService(context.Background(), mockSessionPool{}, helper, DefaultMVServiceConfig())
 	defer svc.closeTaskExecutors()
@@ -960,10 +991,29 @@ func TestMVServiceMaybeLogRefreshAlertTasksResyncsWhenLastSuccessReadTSOChanges(
 
 	task.lastSuccessReadTSO = 22345
 	task.lastSuccessTime = now.Add(-35 * time.Second)
+	task.persistedAlertSnapshotMatches = false
+	helper.syncRefreshAlertErr = errors.New("mock alert sync failure")
 
 	svc.nextRefreshAlertScanMillis.Store(0)
 	svc.maybeLogRefreshAlertTasks(now)
 	require.Equal(t, int32(2), helper.syncRefreshAlertCalls.Load())
+	require.Equal(t, uint64(12345), task.lastSyncedAlertReadTSO)
+	require.False(t, task.persistedAlertSnapshotMatches)
+
+	helper.syncRefreshAlertErr = nil
+	svc.nextRefreshAlertScanMillis.Store(0)
+	svc.maybeLogRefreshAlertTasks(now)
+	require.Equal(t, int32(3), helper.syncRefreshAlertCalls.Load())
+	require.Equal(t, uint64(22345), task.lastSyncedAlertReadTSO)
+	require.True(t, task.persistedAlertSnapshotMatches)
+	require.Len(t, helper.lastRefreshAlertSync, 1)
+	require.Equal(t, mvRefreshAlertLevelWarning, helper.lastRefreshAlertSync[0].alertLevel)
+	require.Equal(t, uint64(22345), helper.lastRefreshAlertSync[0].lastSuccessReadTSO)
+	require.Equal(t, task.lastSuccessTime, helper.lastRefreshAlertSync[0].lastSuccessTime)
+
+	svc.nextRefreshAlertScanMillis.Store(0)
+	svc.maybeLogRefreshAlertTasks(now)
+	require.Equal(t, int32(3), helper.syncRefreshAlertCalls.Load())
 }
 
 func TestMVServiceMaybeLogRefreshAlertTasksSkipsUnresolvedMetadata(t *testing.T) {
@@ -1007,7 +1057,6 @@ func TestMVServiceBuildMVRefreshTasksDoesNotDeleteAlertsOnTemporaryMetadataMiss(
 		lastSuccessReadTSO:     12345,
 		lastSuccessTime:        now.Add(-40 * time.Second),
 		alertWarningSec:        30,
-		lastSyncedAlertLevel:   mvRefreshAlertLevelWarning,
 		lastSyncedAlertReadTSO: 12345,
 		alertStateInitialized:  true,
 	}
@@ -1034,7 +1083,9 @@ func TestMVServiceBuildMVRefreshTasksDoesNotDeleteAlertsOnTemporaryMetadataMiss(
 	require.True(t, ok)
 	require.NotNil(t, preserved)
 	require.True(t, preserved.alertStateInitialized)
-	require.Equal(t, mvRefreshAlertLevelWarning, preserved.lastSyncedAlertLevel)
+	require.Equal(t, "test", preserved.schemaName)
+	require.Equal(t, "mv", preserved.mviewName)
+	require.Equal(t, int64(30), preserved.alertWarningSec)
 	require.Equal(t, uint64(12345), preserved.lastSyncedAlertReadTSO)
 }
 
