@@ -102,7 +102,9 @@ func captureStepCheckpoint(se *sess.Session, txn kv.Transaction, jobW *model.Job
 	var startTS uint64
 	if txn != nil && txn.Valid() {
 		startTS = txn.StartTS()
-		if !txn.IsPipelined() {
+		// MemDB.Update can overwrite pre-checkpoint same-length keys in place;
+		// only use a MemDB checkpoint when the transaction buffer starts empty.
+		if !txn.IsPipelined() && txn.Len() == 0 {
 			memCP = txn.GetMemDBCheckpoint()
 		}
 	}
@@ -166,23 +168,22 @@ func (cp *stepCheckpoint) discardWrites(w *worker, jobCtx *jobContext, jobW *mod
 
 func (cp *stepCheckpoint) restoreJob(
 	jobCtx *jobContext,
-	job *model.Job,
+	postStep *model.Job,
 	applyDelta func(restored, postStep *model.Job),
-) error {
+) (*model.Job, error) {
 	if cp == nil || len(cp.entryJobBytes) == 0 {
-		return nil
+		return postStep, nil
 	}
 	var restored model.Job
 	if err := restored.Decode(cp.entryJobBytes); err != nil {
-		return errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
-	applyAbortedStepDiagnostics(&restored, job)
+	applyAbortedStepDiagnostics(&restored, postStep)
 	if applyDelta != nil {
-		applyDelta(&restored, job)
+		applyDelta(&restored, postStep)
 	}
-	job.RestoreFrom(&restored)
 	jobCtx.jobArgs = nil
-	return nil
+	return &restored, nil
 }
 
 // applyAbortedStepDiagnostics transfers post-runOneJobStep error accounting and
@@ -306,10 +307,13 @@ func (w *worker) applyStepOutcome(
 	}
 
 	if outcome.baseline == stepJobEntryBaseline {
-		if err := cp.restoreJob(jobCtx, job, outcome.applyJobDelta); err != nil {
+		restoredJob, err := cp.restoreJob(jobCtx, job, outcome.applyJobDelta)
+		if err != nil {
 			w.sess.Rollback()
 			return 0, err
 		}
+		jobW.Job = restoredJob
+		job = restoredJob
 	}
 
 	switch outcome.finish {
@@ -320,7 +324,8 @@ func (w *worker) applyStepOutcome(
 		if job.IsCancelled() {
 			deleteAffinityGroupsOfCancelledJob(jobCtx, job)
 		}
-		return 0, w.handleJobDone(jobCtx, job)
+		updateRawArgs := outcome.baseline != stepJobEntryBaseline || outcome.updateRawArgs
+		return 0, w.handleJobDoneWithUpdateRawArgs(jobCtx, job, updateRawArgs)
 	case stepFinishUpdateJob:
 		return w.commitActiveJobStep(jobCtx, jobW, outcome.schemaVer, outcome.updateRawArgs, outcome.err)
 	default:

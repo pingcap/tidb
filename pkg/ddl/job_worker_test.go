@@ -1062,4 +1062,78 @@ func TestMultiSchemaPanicErrorLimitTerminates(t *testing.T) {
 		require.NotNil(t, historyJob.Error)
 		tk.MustExec("ALTER TABLE t4 ADD COLUMN c3 INT")
 	})
+
+	t.Run("cancelled engine attribute job retains RawArgs in history", func(t *testing.T) {
+		defer config.RestoreFunc()()
+		config.UpdateGlobal(func(conf *config.Config) {
+			conf.EnableStorageClass = true
+		})
+		store := testkit.CreateMockStore(t)
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("USE test")
+		tk.MustExec("CREATE TABLE t5 (id INT PRIMARY KEY)")
+
+		limit := vardef.GetDDLErrorCountLimit()
+		tk.MustExec("SET GLOBAL tidb_ddl_error_count_limit = 0")
+		defer func() {
+			tk.MustExec(fmt.Sprintf("SET GLOBAL tidb_ddl_error_count_limit = %d", limit))
+			vardef.SetDDLErrorCountLimit(limit)
+		}()
+
+		var jobID atomic.Int64
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
+			if job.Type == model.ActionModifyEngineAttribute {
+				jobID.Store(job.ID)
+			}
+		})
+		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockPanicInRunDDLJob", `1*panic("injected engine attribute cancel panic")`)
+
+		err := tk.ExecToErr(`ALTER TABLE t5 ENGINE_ATTRIBUTE='{"storage_class":"IA"}'`)
+		require.Error(t, err)
+		historyJob, histErr := ddl.GetHistoryJobByID(tk.Session(), jobID.Load())
+		require.NoError(t, histErr)
+		require.NotNil(t, historyJob)
+		require.Equal(t, model.JobStateCancelled, historyJob.State)
+		args, argErr := model.GetModifyTableEngineAttributeArgs(historyJob)
+		require.NoError(t, argErr)
+		require.Equal(t, `{"storage_class":"IA"}`, args.EngineAttribute)
+	})
+
+	t.Run("unmigrated batch error restores BinlogInfo without leaking uncommitted snapshot", func(t *testing.T) {
+		store := testkit.CreateMockStore(t)
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("USE test")
+		tk.MustExec("CREATE TABLE t6 (id INT, c1 INT, INDEX idx_c1(c1))")
+
+		var (
+			jobID    atomic.Int64
+			injected atomic.Bool
+		)
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
+			if job.Type == model.ActionMultiSchemaChange {
+				jobID.Store(job.ID)
+			}
+		})
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterBatchedMultiSchemaParentJobUpdate",
+			func(_ *model.Job, proxyJob *model.Job) {
+				if proxyJob.Type == model.ActionModifyTableComment && !injected.Swap(true) {
+					require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockPanicInRunDDLJob", `1*panic("injected second sub-job batch panic")`))
+				}
+			},
+		)
+		t.Cleanup(func() {
+			_ = failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockPanicInRunDDLJob")
+		})
+
+		err := tk.ExecToErr("ALTER TABLE t6 COMMENT = 'discarded', RENAME INDEX idx_c1 TO idx_c1_new")
+		require.Error(t, err)
+		require.True(t, injected.Load())
+
+		historyJob, histErr := ddl.GetHistoryJobByID(tk.Session(), jobID.Load())
+		require.NoError(t, histErr)
+		require.NotNil(t, historyJob)
+		require.Equal(t, model.JobStateRollbackDone, historyJob.State)
+		require.Zero(t, historyJob.BinlogInfo.SchemaVersion)
+		require.Nil(t, historyJob.BinlogInfo.TableInfo)
+	})
 }

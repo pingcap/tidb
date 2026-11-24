@@ -455,7 +455,11 @@ func JobNeedGC(job *model.Job) bool {
 
 // finishDDLJob deletes the finished DDL job from the DDL queue and puts it in the history queue.
 // If the finished job needs deferred cleanup, it enqueues delete-range tasks first.
-func (w *worker) finishDDLJob(jobCtx *jobContext, job *model.Job) (err error) {
+func (w *worker) finishDDLJob(jobCtx *jobContext, job *model.Job) error {
+	return w.finishDDLJobWithUpdateRawArgs(jobCtx, job, true)
+}
+
+func (w *worker) finishDDLJobWithUpdateRawArgs(jobCtx *jobContext, job *model.Job, updateRawArgs bool) (err error) {
 	// Failed DDL jobs are not accounted for yet. Clear any RU accumulated by
 	// earlier steps before moving a cancelled or rolled-back job to history.
 	if job.IsCancelled() || job.IsRollbackDone() {
@@ -480,6 +484,7 @@ func (w *worker) finishDDLJob(jobCtx *jobContext, job *model.Job) (err error) {
 			// it may be too large that it can not be added to the history queue, so
 			// delete its arguments
 			job.ClearDecodedArgs()
+			updateRawArgs = true
 		}
 	case model.ActionAlterNoCacheTable:
 		if !job.IsCancelled() {
@@ -501,7 +506,6 @@ func (w *worker) finishDDLJob(jobCtx *jobContext, job *model.Job) (err error) {
 	metaMut := jobCtx.metaMut
 	job.BinlogInfo.FinishedTS = metaMut.StartTS
 	jobCtx.logger.Info("finish DDL job", zap.String("job", job.String()))
-	updateRawArgs := true
 	if job.Type == model.ActionAddPrimaryKey && !job.IsCancelled() {
 		// ActionAddPrimaryKey needs to check the warnings information in job.Args.
 		// Notice: warnings is used to support non-strict mode.
@@ -584,6 +588,10 @@ func (w *ReorgContext) setDDLLabelForDiagnosis(jobType model.ActionType) {
 }
 
 func (w *worker) handleJobDone(jobCtx *jobContext, job *model.Job) error {
+	return w.handleJobDoneWithUpdateRawArgs(jobCtx, job, true)
+}
+
+func (w *worker) handleJobDoneWithUpdateRawArgs(jobCtx *jobContext, job *model.Job, updateRawArgs bool) error {
 	start := time.Now()
 	defer func() {
 		metrics.DDLHandleJobDoneOpHist.Observe(time.Since(start).Seconds())
@@ -591,7 +599,7 @@ func (w *worker) handleJobDone(jobCtx *jobContext, job *model.Job) error {
 	if err := w.checkBeforeCommit(); err != nil {
 		return err
 	}
-	err := w.finishDDLJob(jobCtx, job)
+	err := w.finishDDLJobWithUpdateRawArgs(jobCtx, job, updateRawArgs)
 	if err != nil {
 		w.sess.Rollback()
 		return err
@@ -1394,7 +1402,8 @@ func updateGlobalVersionAndWaitSynced(
 	latestSchemaVersion int64,
 	job *model.Job,
 ) error {
-	if !job.IsRunning() && !job.IsRollingback() && !job.IsDone() && !job.IsRollbackDone() {
+	if !job.IsRunning() && !job.IsRollingback() && !job.IsDone() && !job.IsRollbackDone() &&
+		!(job.IsPausingOrPausedBySystemForKVDiskFull() && latestSchemaVersion != 0) {
 		return nil
 	}
 

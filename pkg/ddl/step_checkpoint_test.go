@@ -48,7 +48,7 @@ func newTestDDLCtx(ctx context.Context, store kv.Storage, ownerMgr owner.Manager
 func TestStepCheckpointSameTxnAndFallback(t *testing.T) {
 	ctx := context.Background()
 
-	t.Run("same txn rollback restores memdb and txn ctx", func(t *testing.T) {
+	t.Run("same txn rollback on empty memdb checkpoint handles same-length overwrite", func(t *testing.T) {
 		store, err := mockstore.NewMockStore()
 		require.NoError(t, err)
 		t.Cleanup(func() { require.NoError(t, store.Close()) })
@@ -71,8 +71,6 @@ func TestStepCheckpointSameTxnAndFallback(t *testing.T) {
 		require.NoError(t, err)
 		origStartTS := txn.StartTS()
 
-		// Seed pre-step MemDB and TxnCtx state that must survive step rollback.
-		require.NoError(t, txn.Set(kv.Key("base-key"), []byte("base-val")))
 		txnCtx := sessCtx.GetSessionVars().TxnCtx
 		txnCtx.TableDeltaMap = map[int64]variable.TableDelta{
 			1: {Delta: 2, Count: 5},
@@ -83,9 +81,9 @@ func TestStepCheckpointSameTxnAndFallback(t *testing.T) {
 		require.NoError(t, err)
 		jobCtx := &jobContext{ctx: ctx, logger: zap.NewNop(), metaMut: meta.NewMutator(txn)}
 
-		// Simulate step mutations (including MemDB writes that outlive StmtCommit).
-		require.NoError(t, txn.Set(kv.Key("step-key"), []byte("step-val")))
-		require.NoError(t, txn.Set(kv.Key("base-key"), []byte("mutated-val")))
+		// Simulate step mutations (including same-length overwrite + StmtCommit).
+		require.NoError(t, txn.Set(kv.Key("step-key"), []byte("val1")))
+		require.NoError(t, txn.Set(kv.Key("step-key"), []byte("val2")))
 		w.sess.StmtCommit(ctx)
 		txnCtx.TableDeltaMap[2] = variable.TableDelta{Delta: 9, Count: 11}
 		txnCtx.InsertTTLRowsCount = 99
@@ -99,15 +97,68 @@ func TestStepCheckpointSameTxnAndFallback(t *testing.T) {
 		afterTxn, err := w.sess.Txn()
 		require.NoError(t, err)
 		require.Equal(t, origStartTS, afterTxn.StartTS())
-		baseVal, err := afterTxn.Get(ctx, kv.Key("base-key"))
-		require.NoError(t, err)
-		require.Equal(t, []byte("base-val"), baseVal.Value)
 		_, err = afterTxn.Get(ctx, kv.Key("step-key"))
 		require.True(t, kv.ErrNotExist.Equal(err), "%v", err)
 
 		require.Equal(t, map[int64]variable.TableDelta{1: {Delta: 2, Count: 5}}, sessCtx.GetSessionVars().TxnCtx.TableDeltaMap)
 		require.Equal(t, 3, sessCtx.GetSessionVars().TxnCtx.InsertTTLRowsCount)
 		require.NotNil(t, jobCtx.metaMut)
+	})
+
+	t.Run("dirty pre-step memdb falls back to reopen instead of checkpointing", func(t *testing.T) {
+		store, err := mockstore.NewMockStore()
+		require.NoError(t, err)
+		t.Cleanup(func() { require.NoError(t, store.Close()) })
+
+		ctrl := gomock.NewController(t)
+		sysTblMgr := ddlmock.NewMockManager(ctrl)
+
+		sessCtx := mock.NewContext()
+		sessCtx.Store = store
+		if sessCtx.GetSessionVars().TxnCtx == nil {
+			sessCtx.GetSessionVars().TxnCtx = &variable.TransactionContext{}
+		}
+		w := newWorker(ctx, generalWorker, nil, nil, newTestDDLCtx(ctx, store, nil))
+		w.sess = sess.NewSession(sessCtx)
+		t.Cleanup(w.sess.Rollback)
+
+		job := &model.Job{ID: 1011, Version: model.GetJobVerInUse(), Type: model.ActionModifyEngineAttribute}
+		entryBytes, err := job.Encode(true)
+		require.NoError(t, err)
+		jobW := model.NewJobW(job, entryBytes)
+
+		// Commit baseline value first, then seed pre-step MemDB write before capture.
+		require.NoError(t, kv.RunInNewTxn(ctx, store, true, func(_ context.Context, preTxn kv.Transaction) error {
+			return preTxn.Set(kv.Key("base-key"), []byte("base-val"))
+		}))
+
+		txn, err := w.prepareTxn(job)
+		require.NoError(t, err)
+		origStartTS := txn.StartTS()
+		require.NoError(t, txn.Set(kv.Key("base-key"), []byte("pre-valu")))
+
+		cp, err := captureStepCheckpoint(w.sess, txn, jobW)
+		require.NoError(t, err)
+		_, canSameTxn := cp.canRollbackInSameTxn()
+		require.False(t, canSameTxn)
+
+		// Same-length overwrite inside step would corrupt MemDB checkpoint if allowed.
+		require.NoError(t, txn.Set(kv.Key("base-key"), []byte("new-valu")))
+		w.sess.StmtCommit(ctx)
+
+		sysTblMgr.EXPECT().
+			GetJobBytesByIDWithSe(gomock.Any(), gomock.Any(), job.ID).
+			Return(entryBytes, nil)
+
+		jobCtx := &jobContext{ctx: ctx, logger: zap.NewNop(), sysTblMgr: sysTblMgr, metaMut: meta.NewMutator(txn)}
+		require.NoError(t, cp.discardWrites(w, jobCtx, jobW))
+
+		afterTxn, err := w.sess.Txn()
+		require.NoError(t, err)
+		require.NotEqual(t, origStartTS, afterTxn.StartTS())
+		baseVal, err := afterTxn.Get(ctx, kv.Key("base-key"))
+		require.NoError(t, err)
+		require.Equal(t, []byte("base-val"), baseVal.Value)
 	})
 
 	t.Run("fallback reopens txn and guards durable job bytes", func(t *testing.T) {
@@ -213,22 +264,27 @@ func TestStepCheckpointRestoreJobPreservesDiagnostics(t *testing.T) {
 	job.LastSchemaVersion = 99
 	job.ReorgMeta.UseCloudStorage = true
 
-	err = cp.restoreJob(jobCtx, job, func(restored, _ *model.Job) {
+	restoredJob, err := cp.restoreJob(jobCtx, job, func(restored, _ *model.Job) {
 		restored.Warning = toTError(dbterror.ErrCancelledDDLJob)
 	})
 	require.NoError(t, err)
-	require.Equal(t, model.JobStateCancelled, job.State)
-	require.Equal(t, model.AdminCommandByEndUser, job.AdminOperator)
-	require.True(t, dbterror.ErrCancelledDDLJob.Equal(job.Error), "%v", job.Error)
-	require.Equal(t, int64(3), job.ErrorCount)
-	require.Equal(t, uint64(777), job.RealStartTS)
-	require.Zero(t, job.LastSchemaVersion)
-	require.True(t, job.ReorgMeta.UseCloudStorage)
-	require.Equal(t, model.StatePublic, job.SchemaState)
-	require.NotNil(t, job.Warning)
+	require.NotSame(t, job, restoredJob)
+	// Verify restoreJob leaves the post-step Job struct untouched for concurrent readers.
+	require.Equal(t, model.StateDeleteOnly, job.SchemaState)
+	require.Equal(t, int64(99), job.LastSchemaVersion)
+
+	require.Equal(t, model.JobStateCancelled, restoredJob.State)
+	require.Equal(t, model.AdminCommandByEndUser, restoredJob.AdminOperator)
+	require.True(t, dbterror.ErrCancelledDDLJob.Equal(restoredJob.Error), "%v", restoredJob.Error)
+	require.Equal(t, int64(3), restoredJob.ErrorCount)
+	require.Equal(t, uint64(777), restoredJob.RealStartTS)
+	require.Zero(t, restoredJob.LastSchemaVersion)
+	require.True(t, restoredJob.ReorgMeta.UseCloudStorage)
+	require.Equal(t, model.StatePublic, restoredJob.SchemaState)
+	require.NotNil(t, restoredJob.Warning)
 	require.Nil(t, jobCtx.jobArgs)
 
-	restoredArgs, err := model.GetModifyTableEngineAttributeArgs(job)
+	restoredArgs, err := model.GetModifyTableEngineAttributeArgs(restoredJob)
 	require.NoError(t, err)
 	require.Equal(t, `{"storage_class":"IA"}`, restoredArgs.EngineAttribute)
 }

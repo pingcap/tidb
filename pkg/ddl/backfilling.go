@@ -471,9 +471,13 @@ func (w *backfillWorker) run(d *ddlCtx, bf backfiller, job *model.Job) {
 		d.attachTopProfilingInfo(job.ID, job.Query)
 
 		logger.Debug("backfill worker got task", zap.Int("workerID", w.GetCtx().id), zap.Stringer("task", task))
-		failpoint.Inject("mockBackfillRunErr", func() {
+		failpoint.Inject("mockBackfillRunErr", func(val failpoint.Value) {
 			if w.GetCtx().id == 0 {
-				result := &backfillResult{taskID: task.id, addedCount: 0, nextKey: nil, err: errors.Errorf("mock backfill error")}
+				err := errors.Errorf("mock backfill error")
+				if s, ok := val.(string); ok && s == "txnRetryable" {
+					err = kv.ErrTxnRetryable
+				}
+				result := &backfillResult{taskID: task.id, addedCount: 0, nextKey: nil, err: err}
 				w.sendResult(result)
 				failpoint.Continue()
 			}
