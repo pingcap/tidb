@@ -2048,23 +2048,44 @@ impl Session {
                         if insert.source.is_some() {
                             self.write_sli.set_invalid();
                         }
-                        let result = self.retrieving_memory_tables(&ctx, |session| {
-                            session.with_staged_catalog(|catalog| {
-                                // Go executes the statement the protocol BOUND
-                                // (`pkg/server`'s `statement`/`executableParams`
-                                // carry the values): re-parsing `sql` here would
-                                // run a tree whose markers never met their
-                                // execute-time values, which is a wrong answer
-                                // for every binary-protocol write.
-                                tidb_executor::run_insert_stmt_with_physical(
-                                    insert,
-                                    catalog,
-                                    &current_db,
-                                    &ctx,
-                                    physical_plan.as_deref_mut(),
-                                )
+                        // Go `Compiler.Compile`, unless the statement brought
+                        // its cached plan; then `ExecStmt.Exec` over it.
+                        let compiled = physical_plan.is_none().then(|| {
+                            self.with_catalog_retrieving(&ctx, |catalog| {
+                                tidb_executor::driver::compile_insert_plan(insert, catalog, &current_db, &ctx)
                             })
                         });
+                        let result = match compiled {
+                            Some(Err(error)) => Err(error),
+                            Some(Ok(mut compiled)) => self.retrieving_memory_tables(&ctx, |session| {
+                                session.with_staged_catalog(|catalog| {
+                                    tidb_executor::driver::run_compiled_insert(
+                                        insert,
+                                        catalog,
+                                        &current_db,
+                                        &ctx,
+                                        &mut compiled,
+                                    )
+                                })
+                            }),
+                            None => self.retrieving_memory_tables(&ctx, |session| {
+                                session.with_staged_catalog(|catalog| {
+                                    // Go executes the statement the protocol
+                                    // BOUND (`pkg/server`'s `statement` /
+                                    // `executableParams` carry the values):
+                                    // re-parsing `sql` here would run a tree
+                                    // whose markers never met their
+                                    // execute-time values.
+                                    tidb_executor::run_insert_stmt_with_physical(
+                                        insert,
+                                        catalog,
+                                        &current_db,
+                                        &ctx,
+                                        physical_plan.as_deref_mut(),
+                                    )
+                                })
+                            }),
+                        };
                         self.drain_eval_warnings(&ctx);
                         // Go `session.LastInsertID()`, the OK packet's field:
                         // `StmtCtx.LastInsertID` when the statement PUBLISHED an
@@ -2091,10 +2112,26 @@ impl Session {
                         Ok(StmtOutput::Affected(affected))
                     }
                     DmlStmt::Update(update) => {
-                        let mut physical_plan = cached_dml_plan(dml_plan, "Update")?;
+                        let physical_plan = cached_dml_plan(dml_plan, "Update")?;
                         let current_db = self.vars.current_db.clone();
                         let ctx = self.reset_update_stmt_ctx(update, &stmt);
                         let ctx = self.with_plan_privilege_check(ctx, &stmt)?;
+                        // Go `Compiler.Compile`, unless the statement brought
+                        // its cached plan; then `ExecStmt.Exec` over it.
+                        let mut compiled = match physical_plan {
+                            Some(_) => None,
+                            None => match self.with_catalog_retrieving(&ctx, |catalog| {
+                                tidb_executor::driver::compile_update_plan(update, catalog, &current_db, &ctx)
+                            }) {
+                                Ok(plan) => Some(plan),
+                                Err(error) => {
+                                    self.drain_eval_warnings(&ctx);
+                                    self.statement_message = ctx.message();
+                                    return Err(error);
+                                }
+                            },
+                        };
+                        let mut physical_plan = physical_plan.or(compiled.as_mut());
                         let output = match &update.kind {
                             tidb_ast::UpdateKind::Single(_) => {
                                 self.retrieving_memory_tables(&ctx, |session| {
@@ -2135,10 +2172,26 @@ impl Session {
                         output
                     }
                     DmlStmt::Delete(delete) => {
-                        let mut physical_plan = cached_dml_plan(dml_plan, "Delete")?;
+                        let physical_plan = cached_dml_plan(dml_plan, "Delete")?;
                         let current_db = self.vars.current_db.clone();
                         let ctx = self.reset_delete_stmt_ctx(delete, &stmt);
                         let ctx = self.with_plan_privilege_check(ctx, &stmt)?;
+                        // Go `Compiler.Compile`, unless the statement brought
+                        // its cached plan; then `ExecStmt.Exec` over it.
+                        let mut compiled = match physical_plan {
+                            Some(_) => None,
+                            None => match self.with_catalog_retrieving(&ctx, |catalog| {
+                                tidb_executor::driver::compile_delete_plan(delete, catalog, &current_db, &ctx)
+                            }) {
+                                Ok(plan) => Some(plan),
+                                Err(error) => {
+                                    self.drain_eval_warnings(&ctx);
+                                    self.statement_message = ctx.message();
+                                    return Err(error);
+                                }
+                            },
+                        };
+                        let mut physical_plan = physical_plan.or(compiled.as_mut());
                         let output = match &delete.kind {
                             tidb_ast::DeleteKind::Single(_) => {
                                 self.retrieving_memory_tables(&ctx, |session| {

@@ -132,40 +132,90 @@ pub(crate) fn run_insert_stmt_with_physical_and_visits(
     physical_plan: Option<&mut tidb_planner_core_operator_physicalop::PhysicalPlan>,
     built: Option<PlannedInsert>,
 ) -> Result<(u64, Option<u64>), DriverError> {
+    let Some(physical) = physical_plan else {
+        let mut compiled = compile_insert_plan(insert, catalog, current_db, ctx)?;
+        return run_compiled_insert(insert, catalog, current_db, ctx, &mut compiled);
+    };
     resolve_insert_target(insert, catalog, current_db, ctx)?;
     let optimize = super::start_optimize_region();
-    let mut fresh;
-    let (mut physical_plan, planned, check_visits) = match physical_plan {
+    // A cache hit's plan, or EXPLAIN ANALYZE's completed build.
+    let check_visits = built.is_some();
+    let planned = match built {
+        Some(planned) => planned,
         None => {
-            let (physical, planned) = build_insert_plan(insert, catalog, current_db, ctx, false)?;
-            fresh = physical;
-            (Some(&mut fresh), planned, true)
-        }
-        Some(physical) => {
-            let check_visits = built.is_some();
-            let planned = match built {
-                Some(planned) => planned,
-                None => {
-                    let expressions = match physical {
-                        tidb_planner_core_operator_physicalop::PhysicalPlan::Dml(root) =>
-                            root.insert_expressions.take(),
-                        _ => None,
-                    };
-                    let expressions = match expressions {
-                        Some(expressions) => expressions,
-                        None => super::planner_bridge::cached_insert_expressions(&crate::driver::planner_bridge::driver_hooks(catalog), insert, physical, catalog, current_db, ctx,
-                        ).map_err(super::planner_error_to_driver)?,
-                    };
-                    PlannedInsert::new(expressions, physical, Vec::new(), Vec::new())
-                }
+            let expressions = match physical {
+                tidb_planner_core_operator_physicalop::PhysicalPlan::Dml(root) =>
+                    root.insert_expressions.take(),
+                _ => None,
             };
-            (Some(physical), planned, check_visits)
+            let expressions = match expressions {
+                Some(expressions) => expressions,
+                None => super::planner_bridge::cached_insert_expressions(&crate::driver::planner_bridge::driver_hooks(catalog), insert, physical, catalog, current_db, ctx,
+                ).map_err(super::planner_error_to_driver)?,
+            };
+            PlannedInsert::new(expressions, physical, Vec::new(), Vec::new())
         }
     };
     if check_visits {
         crate::table_privilege::check_plan_privilege(ctx, catalog, &planned.visits)?;
     }
     optimize.end();
+    execute_insert_plan(insert, catalog, current_db, ctx, physical, &planned)
+}
+
+/// Go `Compiler.Compile` for an INSERT: `buildInsert`'s target resolution,
+/// `planner.Optimize` and `CheckPrivilege` over the build's visit infos,
+/// answering the plan [`run_compiled_insert`] executes.
+///
+/// # Errors
+///
+/// The build's refusals, the optimizer's and the privilege check's errors.
+pub fn compile_insert_plan(
+    insert: &tidb_ast::InsertStmt,
+    catalog: &SessionExtendedInfoSchema,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+) -> Result<CompiledInsert, DriverError> {
+    resolve_insert_target(insert, catalog, current_db, ctx)?;
+    let optimize = super::start_optimize_region();
+    let (physical, planned) = build_insert_plan(insert, catalog, current_db, ctx, false)?;
+    crate::table_privilege::check_plan_privilege(ctx, catalog, &planned.visits)?;
+    optimize.end();
+    Ok(CompiledInsert { physical, planned })
+}
+
+/// An INSERT's final plan and the planner's expressions over its target, as
+/// [`compile_insert_plan`] built them (Go's `ExecStmt.Plan`).
+pub struct CompiledInsert {
+    physical: tidb_planner_core_operator_physicalop::PhysicalPlan,
+    planned: PlannedInsert,
+}
+
+/// Go `ExecStmt.Exec` for a compiled INSERT: the executor over the final
+/// plan, run by `handleNoDelayExecutor`.
+///
+/// # Errors
+///
+/// The execution's errors.
+pub fn run_compiled_insert(
+    insert: &tidb_ast::InsertStmt,
+    catalog: &mut SessionExtendedInfoSchema,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+    compiled: &mut CompiledInsert,
+) -> Result<(u64, Option<u64>), DriverError> {
+    execute_insert_plan(insert, catalog, current_db, ctx, &mut compiled.physical, &compiled.planned)
+}
+
+fn execute_insert_plan(
+    insert: &tidb_ast::InsertStmt,
+    catalog: &mut SessionExtendedInfoSchema,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+    plan: &mut tidb_planner_core_operator_physicalop::PhysicalPlan,
+    planned: &PlannedInsert,
+) -> Result<(u64, Option<u64>), DriverError> {
+    let mut physical_plan = Some(plan);
     if let Some(plan) = physical_plan.as_deref_mut() {
         super::physical_builder::prepare_execution_plan(plan, catalog, ctx)?;
         crate::isolation_advise::advise_optimize_with_plan(
@@ -190,7 +240,7 @@ pub(crate) fn run_insert_stmt_with_physical_and_visits(
     dml.next(|| {
         run_insert_rows(
             insert,
-            Some(&planned),
+            Some(planned),
             catalog,
             current_db,
             ctx,
@@ -2622,13 +2672,19 @@ pub fn run_update_stmt(
 
 /// The ordinary UPDATE executor, optionally consuming the cached
 /// `Update.SelectPlan` selected by the shared physical planner.
-pub fn run_update_stmt_with_physical(
+/// Go `Compiler.Compile` for an UPDATE: `buildUpdate`'s refusals,
+/// `planner.Optimize` and `CheckPrivilege` over the build's visit infos,
+/// answering the final plan [`run_update_stmt_with_physical`] executes.
+///
+/// # Errors
+///
+/// The build's refusals, the optimizer's and the privilege check's errors.
+pub fn compile_update_plan(
     update: &tidb_ast::UpdateStmt,
-    catalog: &mut SessionExtendedInfoSchema,
+    catalog: &SessionExtendedInfoSchema,
     current_db: &str,
     ctx: &crate::StmtContext,
-    physical_plan: Option<&mut tidb_planner_core_operator_physicalop::PhysicalPlan>,
-) -> Result<u64, DriverError> {
+) -> Result<tidb_planner_core_operator_physicalop::PhysicalPlan, DriverError> {
     // Go `buildUpdateLists` resolves a CTE target's assignment columns and
     // then refuses it (1288); `update_target_columns` takes the same steps.
     if let tidb_ast::UpdateKind::Single(table) = &update.kind {
@@ -2643,9 +2699,7 @@ pub fn run_update_stmt_with_physical(
     let source = update_source_query(update);
     // Go `planner.Optimize`.
     let optimize = super::start_optimize_region();
-    let mut fresh = physical_plan
-        .is_none()
-        .then(|| match &update.kind {
+    let physical = match &update.kind {
             tidb_ast::UpdateKind::Single(_) => physical_dml_plan(&crate::driver::planner_bridge::driver_hooks(catalog), "Update",
                 source.as_ref(),
                 super::multi_dml::MultiDmlRef::Update(update),
@@ -2661,9 +2715,22 @@ pub fn run_update_stmt_with_physical(
                 super::planner_bridge::BuildVisits::Check,
             )
             .map(|(plan, _)| plan),
-        })
-        .transpose()?;
+    }?;
     optimize.end();
+    Ok(physical)
+}
+
+pub fn run_update_stmt_with_physical(
+    update: &tidb_ast::UpdateStmt,
+    catalog: &mut SessionExtendedInfoSchema,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+    physical_plan: Option<&mut tidb_planner_core_operator_physicalop::PhysicalPlan>,
+) -> Result<u64, DriverError> {
+    let mut fresh = match physical_plan {
+        Some(_) => None,
+        None => Some(compile_update_plan(update, catalog, current_db, ctx)?),
+    };
     let mut physical_plan = physical_plan.or(fresh.as_mut());
     if let Some(plan) = physical_plan.as_deref_mut() {
         mark_dml_point_source_lock(plan, ctx.pessimistic_transaction());
@@ -3334,13 +3401,19 @@ pub fn run_delete_stmt(
 
 /// The ordinary DELETE executor, optionally consuming the cached
 /// `Delete.SelectPlan` selected by the shared physical planner.
-pub fn run_delete_stmt_with_physical(
+/// Go `Compiler.Compile` for a DELETE: `buildDelete`'s refusals,
+/// `planner.Optimize` and `CheckPrivilege` over the build's visit infos,
+/// answering the final plan [`run_delete_stmt_with_physical`] executes.
+///
+/// # Errors
+///
+/// The build's refusals, the optimizer's and the privilege check's errors.
+pub fn compile_delete_plan(
     delete: &tidb_ast::DeleteStmt,
-    catalog: &mut SessionExtendedInfoSchema,
+    catalog: &SessionExtendedInfoSchema,
     current_db: &str,
     ctx: &crate::StmtContext,
-    physical_plan: Option<&mut tidb_planner_core_operator_physicalop::PhysicalPlan>,
-) -> Result<u64, DriverError> {
+) -> Result<tidb_planner_core_operator_physicalop::PhysicalPlan, DriverError> {
     // Go's `PlanBuilder.buildDelete` resolves the target and refuses a view or
     // sequence before it builds the read child.  A sequence is not a row
     // source, so letting the physical planner inspect it first would turn the
@@ -3380,9 +3453,7 @@ pub fn run_delete_stmt_with_physical(
     let source = delete_source_query(delete);
     // Go `planner.Optimize`.
     let optimize = super::start_optimize_region();
-    let mut fresh = physical_plan
-        .is_none()
-        .then(|| match &delete.kind {
+    let physical = match &delete.kind {
             tidb_ast::DeleteKind::Single(_) => physical_dml_plan(&crate::driver::planner_bridge::driver_hooks(catalog), "Delete",
                 source.as_ref(),
                 super::multi_dml::MultiDmlRef::Delete(delete),
@@ -3398,9 +3469,22 @@ pub fn run_delete_stmt_with_physical(
                 super::planner_bridge::BuildVisits::Check,
             )
             .map(|(plan, _)| plan),
-        })
-        .transpose()?;
+    }?;
     optimize.end();
+    Ok(physical)
+}
+
+pub fn run_delete_stmt_with_physical(
+    delete: &tidb_ast::DeleteStmt,
+    catalog: &mut SessionExtendedInfoSchema,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+    physical_plan: Option<&mut tidb_planner_core_operator_physicalop::PhysicalPlan>,
+) -> Result<u64, DriverError> {
+    let mut fresh = match physical_plan {
+        Some(_) => None,
+        None => Some(compile_delete_plan(delete, catalog, current_db, ctx)?),
+    };
     let mut physical_plan = physical_plan.or(fresh.as_mut());
     if let Some(plan) = physical_plan.as_deref_mut() {
         mark_dml_point_source_lock(plan, ctx.pessimistic_transaction());
