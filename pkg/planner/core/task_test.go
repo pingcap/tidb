@@ -131,6 +131,14 @@ func TestSkipScanCandidateProperties(t *testing.T) {
 	require.Equal(t, float64(100), stats.RowCount)
 	require.Equal(t, float64(50), stats.ColNDVs[2])
 
+	rootProp := strict.CloneEssentialFields()
+	rootProp.TaskTp = property.RootTaskType
+	rootScan := &physicalop.RootTask{}
+	rootScan.SetPlan(scan)
+	rootProjection := (physicalop.PhysicalProjection{}).Init(ctx, stats, 0, rootProp)
+	rootProjection.Attach2Task(rootScan)
+	require.Equal(t, scan.StatsCount(), rootProjection.StatsCount())
+
 	t.Run("same access path competes on cost", func(t *testing.T) {
 		ctx := mock.NewContext()
 		ctx.Store = &mock.Store{Client: &mock.Client{}}

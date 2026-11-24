@@ -82,12 +82,11 @@ func TestStreamAggSkipScan(t *testing.T) {
 	}
 	indexSQL := "select /*+ stream_agg() */ g from skip_idx group by g"
 	tableSQL := "select /*+ stream_agg() */ g from skip_pk_only group by g"
+	tk.MustExec("set session sql_mode = 'ONLY_FULL_GROUP_BY'")
 	require.NotContains(t, explain(indexSQL), "skip scan:true")
 	require.NotContains(t, explain(tableSQL), "skip scan:true")
 
-	const fp = "github.com/pingcap/tidb/pkg/planner/core/operator/physicalop/enablePlannerSkipScan"
-	require.NoError(t, failpoint.Enable(fp, "return(true)"))
-	t.Cleanup(func() { require.NoError(t, failpoint.Disable(fp)) })
+	tk.MustExec("set session tidb_opt_enable_skip_scan = ON")
 	scanCost := func(sql, name string, expectSkip, desc bool) float64 {
 		t.Helper()
 		rows := tk.MustQuery("explain format='verbose' " + sql).Rows()
@@ -118,15 +117,17 @@ func TestStreamAggSkipScan(t *testing.T) {
 		}{
 			{indexSQL, "IndexFullScan", false},
 			{tableSQL, "TableFullScan", false},
+			{"select /*+ stream_agg() */ g, min(g) from skip_idx group by g", "IndexFullScan", false},
+			{"select /*+ stream_agg() */ g, min(g), max(g) from skip_pk_only group by g", "TableFullScan", false},
 			{"select /*+ stream_agg() */ g, min(n) from skip_idx group by g", "IndexFullScan", false},
 			{"select /*+ stream_agg() */ g, max(n) from skip_idx group by g", "IndexFullScan", true},
 			{"select /*+ stream_agg() */ g, min(n) from skip_pk_only group by g", "TableFullScan", false},
 			{"select /*+ stream_agg() */ g, max(n) from skip_pk_only group by g", "TableFullScan", true},
 		} {
 			skipCost := scanCost(tc.sql, tc.scan, true, tc.desc)
-			require.NoError(t, failpoint.Disable(fp))
+			tk.MustExec("set session tidb_opt_enable_skip_scan = OFF")
 			normalCost := scanCost(tc.sql, tc.scan, false, false)
-			require.NoError(t, failpoint.Enable(fp, "return(true)"))
+			tk.MustExec("set session tidb_opt_enable_skip_scan = ON")
 			require.Less(t, skipCost, normalCost)
 		}
 	}
@@ -137,6 +138,7 @@ func TestStreamAggSkipScan(t *testing.T) {
 		{"a, b", false},
 		{"a, b, min(c)", false},
 		{"a, b, max(c)", true},
+		{"a, b, min(a), max(c)", true},
 	} {
 		rows := tk.MustQuery("explain format='verbose' select /*+ stream_agg() */ " + tc.selectList + " from skip_nullable group by a, b").Rows()
 		var found bool
@@ -151,13 +153,22 @@ func TestStreamAggSkipScan(t *testing.T) {
 		require.True(t, found, "%v", rows)
 	}
 	tk.MustExec("set session sql_mode = ''")
-	require.Contains(t, explain("select /*+ stream_agg() */ a, b, c from skip_nullable group by a, b"), "skip scan:true, prefix column count:2")
-	tk.MustExec("set session sql_mode = default")
+	require.NotContains(t, explain(indexSQL), "skip scan:true")
+	require.NotContains(t, explain(tableSQL), "skip scan:true")
+	require.NotContains(t, explain("select /*+ stream_agg() */ a, b, c from skip_nullable group by a, b"), "skip scan:true")
+	tk.MustExec("set session sql_mode = 'ONLY_FULL_GROUP_BY'")
 	orderedMax := explain("select /*+ stream_agg() */ g, max(n) from skip_idx group by g order by g asc")
 	if strings.Contains(orderedMax, "skip scan:true") {
 		// A reverse skip scan needs an upper sort to provide ascending order.
 		require.Contains(t, orderedMax, "keep order:true, desc")
 		require.Contains(t, orderedMax, "Sort")
+	}
+	// Apply keeps the outer aggregation at root, while its scan can run a Skip Scan in TiKV.
+	for _, tc := range []struct{ table, scan string }{{"skip_idx", "IndexFullScan"}, {"skip_pk_only", "TableFullScan"}} {
+		sql := "select q.g, (select /*+ no_decorrelate() */ count(*) from skip_pseudo where n = q.n) " +
+			"from (select /*+ stream_agg() */ g, min(n) as n from " + tc.table + " group by g) q"
+		require.Contains(t, explain(sql), "Apply", "%s", sql)
+		scanCost(sql, tc.scan, true, false)
 	}
 	bothSQL := "select /*+ stream_agg() */ g from skip_pk group by g"
 	// Both paths satisfy the same required property and compete on scan cost.
@@ -173,7 +184,6 @@ func TestStreamAggSkipScan(t *testing.T) {
 		"select /*+ stream_agg() */ g from skip_idx where n > 0 group by g",
 		"select /*+ stream_agg() */ g from skip_idx where g > 0 group by g",
 		"select /*+ stream_agg() */ n from skip_idx group by n",
-		"select /*+ stream_agg() */ g, min(g) from skip_idx group by g",
 		"select /*+ stream_agg() */ g, min(n), max(n) from skip_idx group by g",
 		"select /*+ stream_agg() */ a, b, min(d) from skip_nullable group by a, b",
 		"select /*+ stream_agg() */ a, b, min(c), min(d) from skip_nullable group by a, b",

@@ -1533,9 +1533,6 @@ func attach2Task4PhysicalProjection(pp base.PhysicalPlan, tasks ...base.Task) ba
 			copTask := attachPlan2Task(p, cop)
 			return copTask
 		}
-		if cop.SkipScan {
-			return base.InvalidTask
-		}
 	} else if mpp, ok := t.(*physicalop.MppTask); ok {
 		if expression.CanExprsPushDown(util.GetPushDownCtx(p.SCtx()), p.Exprs, kv.TiFlash) {
 			p.SetChildren(mpp.Plan())
@@ -1544,6 +1541,9 @@ func attach2Task4PhysicalProjection(pp base.PhysicalPlan, tasks ...base.Task) ba
 		}
 	}
 	t = t.ConvertToRootTask(p.SCtx())
+	if p.RequiresSkipScan() {
+		setSkipScanRows(p, t.Plan().StatsCount())
+	}
 	t = attachPlan2Task(p, t)
 	return t
 }
