@@ -6945,6 +6945,7 @@ dependencies = [
  "tidb-tiflash",
  "tidb-tiflashcompute",
  "tidb-tls",
+ "tidb-topsql",
  "tidb-topsql-state",
  "tidb-topsql-stmtstats",
  "tidb-traceevent",

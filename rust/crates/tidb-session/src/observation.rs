@@ -310,51 +310,28 @@ impl Session {
                     }
                 }
             }
-            // Go `observeStmtBeginForTopProfiling`: non-fast executions are
-            // admitted even while profiling is disabled, so enabling it during
-            // execution can still observe their begin.
+            // Go `observeStmtBeginForTopProfiling`.
             let Some(plan) = plan.upgrade() else {
                 return;
             };
-            let (fast, normalized_plan, plan_digest) = {
+            let plan = {
                 let plan = plan.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-                (plan.is_fast_plan, plan.normalized_plan.clone(), plan.plan_digest.clone())
+                tidb_executor::exec_stmt_observation::TopProfilingPlan {
+                    is_fast_plan: plan.is_fast_plan,
+                    normalized_plan: plan.normalized_plan.clone(),
+                    plan_digest: plan.plan_digest.clone(),
+                }
             };
-            let top_profiling = tidb_topsql_state::top_profiling_enabled();
-            if fast && !top_profiling {
-                return;
-            }
-            // Go `GetPlanDigest`: empty until the plan is published.
-            let plan_digest_bytes = decode_hex_digest(&plan_digest);
-            let sql_digest = (!normalized.is_empty()).then_some(&digest);
-            let plan_digest = (!plan_digest.is_empty()).then(|| tidb_parser::Digest::new(plan_digest_bytes.clone()));
-            let info = top_profiling_begin_info(&ru_details, &user);
-            stats.on_execution_begin(digest.as_bytes(), &plan_digest_bytes, Some(&info));
-            if !top_profiling {
-                // Always attach the SQL and plan info uses to catch the
-                // running SQL when Top Profiling is enabled in execution.
-                tidb_topsql::attach_sql_and_plan_info(
-                    tidb_cpuprofile::labels::goroutine_labels(),
-                    sql_digest,
-                    plan_digest.as_ref(),
-                );
-                return;
-            }
-            if tidb_topsql_state::top_sql_enabled() {
-                // This is a special logic prepared for TiKV's SQLExecCount.
-                kv_exec_counter.initialize(&stats, digest.as_bytes(), &plan_digest_bytes);
-            }
-            if !phases.sql_registered {
-                tidb_topsql::register_sql(&normalized, sql_digest, restricted_sql);
-            }
-            if normalized_plan.is_empty() {
-                return;
-            }
-            tidb_topsql::register_plan(&normalized_plan, plan_digest.as_ref());
-            tidb_topsql::attach_sql_and_plan_info(
-                tidb_cpuprofile::labels::goroutine_labels(),
-                sql_digest,
-                plan_digest.as_ref(),
+            tidb_executor::exec_stmt_observation::observe_stmt_begin_for_top_profiling(
+                &stats,
+                &kv_exec_counter,
+                &normalized,
+                &digest,
+                restricted_sql,
+                phases.sql_registered,
+                &plan,
+                &ru_details,
+                &user,
             );
         }))
     }
@@ -754,26 +731,28 @@ impl Session {
                     &**session_stmt,
                     tidb_ast::SessionStmt::Set(_)
                 ));
-                if !fast || tidb_topsql_state::top_profiling_enabled() {
-                    let info = top_profiling_begin_info(&observation.ru_details, &user);
-                    self.statement_stats.on_execution_begin(
-                        observation.digest.as_bytes(),
-                        &[],
-                        Some(&info),
-                    );
-                    if tidb_topsql_state::top_sql_enabled() {
-                        observation.kv_exec_counter.initialize(
-                            &self.statement_stats,
-                            observation.digest.as_bytes(),
-                            &[],
-                        );
-                    }
-                }
-                observation
+                let mut phases = observation
                     .phases
                     .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)
-                    .execution_started = true;
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                // Go `observeStmtBeginForTopProfiling` over a plan with no
+                // digest or normalized text.
+                tidb_executor::exec_stmt_observation::observe_stmt_begin_for_top_profiling(
+                    &self.statement_stats,
+                    &observation.kv_exec_counter,
+                    &observation.normalized,
+                    &observation.digest,
+                    self.vars.restricted_sql,
+                    phases.sql_registered,
+                    &tidb_executor::exec_stmt_observation::TopProfilingPlan {
+                        is_fast_plan: fast,
+                        normalized_plan: String::new(),
+                        plan_digest: String::new(),
+                    },
+                    &observation.ru_details,
+                    &user,
+                );
+                phases.execution_started = true;
             }
             observation.label = stmt.label().to_owned();
             if tidb_stmtsummary::v2::stmtsummary::enabled() {
@@ -1263,29 +1242,6 @@ fn is_crucial_stmt(stmt: &Stmt) -> bool {
     }
 }
 
-/// Go `observeStmtBeginForTopProfiling`'s `ExecBeginInfo`: under Top RU it
-/// carries the statement's `RUDetails` (Go's `Ctx`, whose only use is that
-/// lookup), the user and the domain's RU version (Go
-/// `NormalizeRUVersion(do.GetRUVersion())`).
-fn top_profiling_begin_info(
-    ru_details: &Arc<tikv_client::RuDetails>,
-    user: &str,
-) -> tidb_topsql_stmtstats::ExecBeginInfo {
-    let top_ru = tidb_topsql_state::top_ru_enabled();
-    let mut info = tidb_topsql_stmtstats::ExecBeginInfo {
-        top_ru_enabled: top_ru,
-        ..Default::default()
-    };
-    if top_ru {
-        info.ru_details = Some(Arc::clone(ru_details));
-        info.user = user.to_owned();
-        // Go `stmtstats.NormalizeRUVersion(do.GetRUVersion())`.
-        info.ru_version = tidb_topsql_stmtstats::normalize_ru_version(
-            tidb_topsql_stmtstats::bound_ru_version(),
-        );
-    }
-    info
-}
 
 /// The bytes of a digest held as its lowercase hex text (Go
 /// `parser.Digest.Bytes` of `Digest.String`); empty for no digest.

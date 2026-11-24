@@ -1093,3 +1093,93 @@ pub trait FinishExecuteStmt: ExecStmtObservation + PlanReplayerCapture {
         self.summary_stmt(observation, phases, elapsed, succeeded, affected_rows, result_rows);
     }
 }
+
+/// The statement's plan as Go `observeStmtBeginForTopProfiling` reads it off
+/// the statement context: whether it is a fast plan, its normalized text and
+/// its digest's hex text (empty until the plan is published).
+pub struct TopProfilingPlan {
+    pub is_fast_plan: bool,
+    pub normalized_plan: String,
+    pub plan_digest: String,
+}
+
+/// Go `ExecStmt.observeStmtBeginForTopProfiling`, run once the executor is
+/// built: the statement's begin in its Top SQL stats (Top RU with its
+/// `RUDetails` and user), and with Top Profiling on, its SQL and plan
+/// registered and attached to this thread's labels. A non-fast execution is
+/// admitted while profiling is off, so enabling it during the execution
+/// still observes the begin.
+#[allow(clippy::too_many_arguments)]
+pub fn observe_stmt_begin_for_top_profiling(
+    stats: &Arc<tidb_topsql_stmtstats::StatementStats>,
+    kv_exec_counter: &tidb_topsql_stmtstats::KvExecCounterHandle,
+    normalized: &str,
+    digest: &tidb_parser::Digest,
+    restricted_sql: bool,
+    sql_registered: bool,
+    plan: &TopProfilingPlan,
+    ru_details: &Arc<tikv_client::RuDetails>,
+    user: &str,
+) {
+    use tidb_topsql_stmtstats::StatementObserver as _;
+    let top_profiling = tidb_topsql_state::top_profiling_enabled();
+    if plan.is_fast_plan && !top_profiling {
+        return;
+    }
+    // Go `GetPlanDigest`: empty until the plan is published.
+    let plan_digest_bytes = decode_hex_digest(&plan.plan_digest);
+    let sql_digest = (!normalized.is_empty()).then_some(digest);
+    let plan_digest =
+        (!plan.plan_digest.is_empty()).then(|| tidb_parser::Digest::new(plan_digest_bytes.clone()));
+    let info = top_profiling_begin_info(ru_details, user);
+    stats.on_execution_begin(digest.as_bytes(), &plan_digest_bytes, Some(&info));
+    if !top_profiling {
+        // Always attach the SQL and plan info uses to catch the running SQL
+        // when Top Profiling is enabled in execution.
+        tidb_topsql::attach_sql_and_plan_info(
+            tidb_cpuprofile::labels::goroutine_labels(),
+            sql_digest,
+            plan_digest.as_ref(),
+        );
+        return;
+    }
+    if tidb_topsql_state::top_sql_enabled() {
+        // This is a special logic prepared for TiKV's SQLExecCount.
+        kv_exec_counter.initialize(stats, digest.as_bytes(), &plan_digest_bytes);
+    }
+    if !sql_registered {
+        tidb_topsql::register_sql(normalized, sql_digest, restricted_sql);
+    }
+    if plan.normalized_plan.is_empty() {
+        return;
+    }
+    tidb_topsql::register_plan(&plan.normalized_plan, plan_digest.as_ref());
+    tidb_topsql::attach_sql_and_plan_info(
+        tidb_cpuprofile::labels::goroutine_labels(),
+        sql_digest,
+        plan_digest.as_ref(),
+    );
+}
+
+/// Go `observeStmtBeginForTopProfiling`'s `ExecBeginInfo`: with Top RU on,
+/// the statement's `RUDetails`, user and RU version.
+#[must_use]
+pub fn top_profiling_begin_info(
+    ru_details: &Arc<tikv_client::RuDetails>,
+    user: &str,
+) -> tidb_topsql_stmtstats::ExecBeginInfo {
+    let top_ru = tidb_topsql_state::top_ru_enabled();
+    let mut info = tidb_topsql_stmtstats::ExecBeginInfo {
+        top_ru_enabled: top_ru,
+        ..Default::default()
+    };
+    if top_ru {
+        info.ru_details = Some(Arc::clone(ru_details));
+        info.user = user.to_owned();
+        // Go `stmtstats.NormalizeRUVersion(do.GetRUVersion())`.
+        info.ru_version = tidb_topsql_stmtstats::normalize_ru_version(
+            tidb_topsql_stmtstats::bound_ru_version(),
+        );
+    }
+    info
+}
