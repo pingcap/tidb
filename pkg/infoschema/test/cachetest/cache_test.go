@@ -65,6 +65,13 @@ func TestInsert(t *testing.T) {
 	require.Nil(t, ic.GetBySnapshotTS(2))
 	require.Equal(t, is5, ic.GetBySnapshotTS(5))
 	require.Equal(t, is6, ic.GetBySnapshotTS(10))
+	// Only a schema followed by a newer cached one is known to be valid at ts.
+	is, valid := ic.GetBySnapshotTSWithValidity(5)
+	require.Equal(t, is5, is)
+	require.True(t, valid)
+	is, valid = ic.GetBySnapshotTSWithValidity(10)
+	require.Equal(t, is6, is)
+	require.False(t, valid)
 
 	// replace 2, drop 2
 	is3 := infoschema.MockInfoSchemaWithSchemaVer(nil, 3)

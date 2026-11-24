@@ -259,7 +259,7 @@ func (p *PhysicalIndexScan) ExplainNormalizedInfo() string {
 // OperatorInfo implements DataAccesser interface.
 func (p *PhysicalIndexScan) OperatorInfo(normalized bool) string {
 	ectx := p.SCtx().GetExprCtx().GetEvalCtx()
-	redact := p.SCtx().GetSessionVars().EnableRedactLog
+	redact := p.SCtx().GetSessionVars().PlanRedactLog()
 	var buffer strings.Builder
 	if len(p.RangeInfo) > 0 {
 		if !normalized {

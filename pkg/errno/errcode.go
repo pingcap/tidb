@@ -1144,6 +1144,7 @@ const (
 	ErrPlacementPolicyNotExists           = 8239
 	ErrPlacementPolicyWithDirectOption    = 8240
 	ErrPlacementPolicyInUse               = 8241
+	ErrAccessDeniedToMaskedColumn         = 8278
 	ErrOptOnCacheTable                    = 8242
 	ErrHTTPServiceError                   = 8243
 	ErrPartitionColumnStatsMissing        = 8244

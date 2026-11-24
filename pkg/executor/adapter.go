@@ -203,7 +203,7 @@ func (a *recordSet) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	if e == nil {
 		err = exeerrors.ErrQueryInterrupted.GenWithStackByArgs()
 		a.lastErrs = append(a.lastErrs, err)
-		return err
+		return a.stmt.Ctx.GetSessionVars().StmtCtx.RedactExecError(err)
 	}
 
 	err = a.stmt.next(ctx, e, req)
@@ -214,7 +214,7 @@ func (a *recordSet) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 			}
 		}
 		a.lastErrs = append(a.lastErrs, err)
-		return err
+		return a.stmt.Ctx.GetSessionVars().StmtCtx.RedactExecError(err)
 	}
 	if numRows := req.NumRows(); numRows != 0 {
 		a.returnedRows += uint64(numRows)
@@ -301,6 +301,9 @@ func (a *recordSet) Finish() error {
 	})
 	if err != nil {
 		a.lastErrs = append(a.lastErrs, err)
+		if a.stmt != nil {
+			err = a.stmt.Ctx.GetSessionVars().StmtCtx.RedactExecError(err)
+		}
 	}
 	return err
 }

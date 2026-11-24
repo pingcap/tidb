@@ -4923,3 +4923,28 @@ func enableNonStarterDeployModeForEmbeddingTest(t *testing.T) {
 		require.NoError(t, deploymode.Set(originalMode))
 	})
 }
+
+func TestGetLockIsNotRunWhilePlanning(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	other := testkit.NewTestKit(t, store)
+	free := func(name string) string {
+		return fmt.Sprint(other.MustQuery("select is_free_lock(?)", name).Rows()[0][0])
+	}
+	// A lock function with constant arguments must not be folded: preparing the
+	// statement would take the lock, and executing it would take it again.
+	tk.MustExec("prepare st from 'select get_lock(''plan_lock'', 0)'")
+	require.Equal(t, "1", free("plan_lock"))
+	tk.MustQuery("execute st").Check(testkit.Rows("1"))
+	require.Equal(t, "0", free("plan_lock"))
+	tk.MustQuery("select release_lock('plan_lock')").Check(testkit.Rows("1"))
+	require.Equal(t, "1", free("plan_lock"))
+
+	tk.MustQuery("execute st").Check(testkit.Rows("1"))
+	tk.MustExec("prepare rel from 'select release_lock(''plan_lock'')'")
+	require.Equal(t, "0", free("plan_lock"))
+	tk.MustQuery("execute rel").Check(testkit.Rows("1"))
+	require.Equal(t, "1", free("plan_lock"))
+	// Nothing is left to release.
+	tk.MustQuery("select release_lock('plan_lock')").Check(testkit.Rows("0"))
+}

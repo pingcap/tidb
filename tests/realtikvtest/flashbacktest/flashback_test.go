@@ -576,3 +576,39 @@ func TestFlashbackInProcessErrorMsg(t *testing.T) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/injectSafeTS"))
 	}
 }
+
+func TestFlashbackMaskingPolicyBindings(t *testing.T) {
+	if !*realtikvtest.WithRealTiKV {
+		t.Skip("requires TiKV flashback RPCs")
+	}
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	before, _, safePointSQL, reset := MockGC(tk)
+	defer reset()
+	tk.MustExec(fmt.Sprintf(safePointSQL, before))
+	tk.MustExec("use test")
+	for _, operation := range []string{"truncate table flashback_mask", "drop table flashback_mask"} {
+		tk.MustExec("drop table if exists flashback_mask")
+		tk.MustExec("create table flashback_mask(c varchar(20))")
+		tk.MustExec("create table if not exists flashback_mask_dst(c varchar(20))")
+		tk.MustExec("insert into flashback_mask values('secret')")
+		tk.MustExec("create masking policy p on flashback_mask(c) as mask_full(c) restrict on(insert_into_select)")
+		tk.MustQuery("select c from flashback_mask").Check(testkit.Rows("XXXXXX"))
+		// SQL timestamps discard the TSO's logical component. Wait for a
+		// later physical millisecond so the target includes the policy DDL.
+		time.Sleep(time.Second)
+		ts, err := store.GetOracle().GetTimestamp(context.Background(), &oracle.Option{})
+		require.NoError(t, err)
+		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/injectSafeTS",
+			fmt.Sprintf("return(%v)", oracle.GoTimeToTS(oracle.GetTimeFromTS(ts).Add(100*time.Second))))
+		tk.MustExec(operation)
+		tk.MustExec(fmt.Sprintf("flashback cluster to timestamp '%s'", oracle.GetTimeFromTS(ts).Format(types.TimeFSPFormat)))
+		// A new session also checks that the restored InfoSchema reloads policies.
+		reader := testkit.NewTestKit(t, store)
+		reader.MustExec("use test")
+		reader.MustQuery("select c from flashback_mask").Check(testkit.Rows("XXXXXX"))
+		reader.MustGetErrCode("insert into flashback_mask_dst select c from flashback_mask",
+			errno.ErrAccessDeniedToMaskedColumn)
+		testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/injectSafeTS")
+	}
+}

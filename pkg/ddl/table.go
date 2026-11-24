@@ -191,6 +191,9 @@ func (w *worker) onDropTableOrView(jobCtx *jobContext, job *model.Job) (ver int6
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
+		if err = w.dropMaskingPoliciesOnTable(jobCtx, tblInfo.ID); err != nil {
+			return ver, errors.Trace(err)
+		}
 		metaMut := jobCtx.metaMut
 		if tblInfo.IsSequence() {
 			if err = metaMut.DropSequence(job.SchemaID, job.TableID); err != nil {
@@ -241,11 +244,6 @@ func (w *worker) onDropTableOrView(jobCtx *jobContext, job *model.Job) (ver int6
 
 		if err := deleteTableAffinityGroupsInPD(jobCtx, tblInfo, nil); err != nil {
 			logutil.DDLLogger().Error("failed to delete affinity groups from PD", zap.Error(err), zap.Int64("tableID", tblInfo.ID))
-		}
-
-		// Clean up masking policies associated with the dropped table.
-		if err := w.dropMaskingPoliciesOnTable(jobCtx, tblInfo.ID); err != nil {
-			return ver, errors.Wrapf(err, "failed to drop masking policies on table %d", tblInfo.ID)
 		}
 
 		// Finish this job.
@@ -428,6 +426,9 @@ func (w *worker) recoverTable(
 	recoverInfo *model.RecoverTableInfo,
 ) (ver int64, err error) {
 	ctx := jobCtx.stepCtx
+	if err := w.restoreMaskingPoliciesForRecoveredTable(jobCtx, recoverInfo); err != nil {
+		return ver, err
+	}
 	tableRuleID, partRuleIDs, oldRuleIDs, oldRules, err := getOldLabelRules(w.store.GetCodec(), recoverInfo.TableInfo, recoverInfo.OldSchemaName, recoverInfo.OldTableName)
 	if err != nil {
 		job.State = model.JobStateCancelled
@@ -887,13 +888,6 @@ func (w *worker) onTruncateTable(jobCtx *jobContext, job *model.Job) (ver int64,
 
 	tblInfo.ID = args.NewTableID
 
-	// Update masking policy table_id from old to new. Column IDs stay the same.
-	oldTableID := oldTblInfo.ID
-	if err := w.updateMaskingPolicyTableIDAfterTruncate(jobCtx, oldTableID, tblInfo.ID); err != nil {
-		job.State = model.JobStateCancelled
-		return ver, errors.Trace(err)
-	}
-
 	// build table & partition bundles if any.
 	bundles, err := placement.NewFullTableBundles(metaMut, tblInfo)
 	if err != nil {
@@ -941,6 +935,9 @@ func (w *worker) onTruncateTable(jobCtx *jobContext, job *model.Job) (ver int64,
 	ver, err = updateSchemaVersion(jobCtx, job)
 	if err != nil {
 		return ver, errors.Trace(err)
+	}
+	if err := w.updateMaskingPolicyTableID(jobCtx, oldTblInfo.ID, tblInfo.ID); err != nil {
+		return ver, err
 	}
 	truncateTableEvent := notifier.NewTruncateTableEvent(tblInfo, oldTblInfo)
 	err = asyncNotifyEvent(jobCtx, truncateTableEvent, job, noSubJob, w.sess)
@@ -1209,6 +1206,7 @@ func (w *worker) onRenameTable(jobCtx *jobContext, job *model.Job) (ver int64, _
 	}
 	if err = w.updateMaskingPolicyNamesAfterRename(jobCtx, tblInfo.ID,
 		oldSchemaName, newDB.Name, oldTableName, tableName); err != nil {
+		job.State = model.JobStateCancelled
 		return ver, errors.Wrapf(err, "failed to update masking policy names after table rename")
 	}
 	ver, err = updateSchemaVersion(jobCtx, job, fkh.getLoadedTables()...)
@@ -1253,21 +1251,26 @@ func (w *worker) onRenameTables(jobCtx *jobContext, job *model.Job) (ver int64, 
 		}
 		finalRenameByTableID[info.TableID] = info
 		renamedTableByID[info.TableID] = schemaIDAndTableInfo{schemaID: info.NewSchemaID, tblInfo: tblInfo}
-		// Update masking policy names after table rename.
-		newDB, ok := is.SchemaByID(info.NewSchemaID)
-		if !ok {
-			job.State = model.JobStateCancelled
-			return ver, infoschema.ErrDatabaseNotExists.GenWithStackByArgs(fmt.Sprintf("schema-ID: %v", info.NewSchemaID))
-		}
-		if err = w.updateMaskingPolicyNamesAfterRename(jobCtx, tblInfo.ID,
-			info.OldSchemaName, newDB.Name, info.OldTableName, info.NewTableName); err != nil {
-			return ver, errors.Wrapf(err, "failed to update masking policy names after table rename")
-		}
 	}
 	err = adjustForeignKeyChildTableInfoAfterRenameTables(
 		is, metaMut, &fkh, firstRenameByTableID, finalRenameByTableID, renamedTableByID)
 	if err != nil {
 		return ver, errors.Trace(err)
+	}
+	// A table can be renamed more than once in one statement. Policy rows are
+	// keyed by table ID, so write each table's final schema and table name once.
+	for tableID, info := range finalRenameByTableID {
+		newDB, ok := is.SchemaByID(info.NewSchemaID)
+		if !ok {
+			job.State = model.JobStateCancelled
+			return ver, infoschema.ErrDatabaseNotExists.GenWithStackByArgs(fmt.Sprintf("schema-ID: %v", info.NewSchemaID))
+		}
+		err = w.updateMaskingPolicyNamesAfterRename(jobCtx, tableID,
+			info.OldSchemaName, newDB.Name, info.OldTableName, info.NewTableName)
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Wrapf(err, "failed to update masking policy names after table rename")
+		}
 	}
 
 	ver, err = updateSchemaVersion(jobCtx, job, fkh.getLoadedTables()...)

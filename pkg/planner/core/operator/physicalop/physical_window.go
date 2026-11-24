@@ -147,7 +147,7 @@ func (p *PhysicalWindow) formatFrameBound(buffer *bytes.Buffer, bound *logicalop
 			fmt.Fprintf(buffer, "%s", sf.GetArgs()[1].ExplainInfo(evalCtx))
 		}
 	} else {
-		switch p.SCtx().GetSessionVars().EnableRedactLog {
+		switch p.SCtx().GetSessionVars().PlanRedactLog() {
 		case perrors.RedactLogDisable:
 			fmt.Fprintf(buffer, "%d", bound.Num)
 		case perrors.RedactLogMarker:

@@ -69,9 +69,19 @@ func AllocateTaskID() uint64 {
 // SQLWarn relates a sql warning and it's level.
 type SQLWarn = contextutil.SQLWarn
 
+// MaskingPolicyCheck records a source column whose restricted operation must be
+// authorized again when a physical plan is reused. A check without an
+// operation records a column that the statement reads: reusing the plan only
+// decides again whether the diagnostics of the statement are redacted.
+type MaskingPolicyCheck struct {
+	PolicyID, TableID, ColumnID int64
+	Operation                   ast.MaskingPolicyRestrictOps
+}
+
 // LogicalPlanBuildState stores the statement-scoped planner state that is mutated while
 // building a logical plan from AST.
 type LogicalPlanBuildState struct {
+	maskingPolicyChecks  []MaskingPolicyCheck
 	warnings             []SQLWarn
 	extraWarnings        []SQLWarn
 	tables               []TableEntry
@@ -276,6 +286,7 @@ type StatementContext struct {
 	// the min start TS to PD.
 	IsDDLJobInQueue        atomic.Bool
 	DDLJobID               int64
+	MaskingPolicyChecks    []MaskingPolicyCheck
 	InInsertStmt           bool
 	InUpdateStmt           bool
 	InDeleteStmt           bool
@@ -289,6 +300,8 @@ type StatementContext struct {
 	InShowWarning          bool
 	// PreserveFoundRows prevents result consumption from replacing the preceding FOUND_ROWS() value.
 	PreserveFoundRows bool
+	RedactDiagnostics bool
+	ReadsMaskedColumn bool
 
 	contextutil.PlanCacheTracker
 	contextutil.RangeFallbackHandler
@@ -610,8 +623,8 @@ func NewStmtCtxWithTimeZone(tz *time.Location) *StatementContext {
 		StaleTSOProvider:     &staleTSOProvider{},
 		MatchSQLBindingCache: nil,
 	}
-	sc.typeCtx = types.NewContext(types.DefaultStmtFlags, tz, sc)
-	sc.errCtx = newErrCtx(sc.typeCtx, DefaultStmtErrLevels, sc)
+	sc.typeCtx = types.NewContext(types.DefaultStmtFlags, tz, sc.EvalWarnAppender())
+	sc.errCtx = newErrCtx(sc.typeCtx, DefaultStmtErrLevels, sc.EvalWarnAppender())
 	sc.PlanCacheTracker = contextutil.NewPlanCacheTracker(sc)
 	sc.RangeFallbackHandler = contextutil.NewRangeFallbackHandler(&sc.PlanCacheTracker, sc)
 	sc.WarnHandler = contextutil.NewStaticWarnHandler(0)
@@ -658,8 +671,8 @@ func (sc *StatementContext) Reset() bool {
 	sc.affectedRows.Store(0)
 	sc.stmtCache = sc.stmtCache.reset()
 	sc.StaleTSOProvider = sc.StaleTSOProvider.reset()
-	sc.typeCtx = types.NewContext(types.DefaultStmtFlags, time.UTC, sc)
-	sc.errCtx = newErrCtx(sc.typeCtx, DefaultStmtErrLevels, sc)
+	sc.typeCtx = types.NewContext(types.DefaultStmtFlags, time.UTC, sc.EvalWarnAppender())
+	sc.errCtx = newErrCtx(sc.typeCtx, DefaultStmtErrLevels, sc.EvalWarnAppender())
 	sc.PlanCacheTracker = contextutil.NewPlanCacheTracker(sc)
 	sc.RangeFallbackHandler = contextutil.NewRangeFallbackHandler(&sc.PlanCacheTracker, sc)
 	if h, ok := sc.WarnHandler.(interface{ Reset() }); ok && sc.WarnHandler != nil {
@@ -680,6 +693,7 @@ func (sc *StatementContext) Reset() bool {
 func (sc *StatementContext) SaveLogicalPlanBuildState() LogicalPlanBuildState {
 	planCacheUseCache, planCacheType, planCacheUnqualified, planCacheForce, planCacheAlwaysWarn := sc.PlanCacheTracker.Save()
 	return LogicalPlanBuildState{
+		maskingPolicyChecks:  slices.Clone(sc.MaskingPolicyChecks),
 		warnings:             slices.Clone(sc.GetWarnings()),
 		extraWarnings:        slices.Clone(sc.GetExtraWarnings()),
 		tables:               slices.Clone(sc.Tables),
@@ -701,6 +715,7 @@ func (sc *StatementContext) SaveLogicalPlanBuildState() LogicalPlanBuildState {
 // RestoreLogicalPlanBuildState restores the statement-scoped planner state after a
 // discarded logical plan build attempt.
 func (sc *StatementContext) RestoreLogicalPlanBuildState(state LogicalPlanBuildState) {
+	sc.MaskingPolicyChecks = slices.Clone(state.maskingPolicyChecks)
 	sc.SetWarnings(slices.Clone(state.warnings))
 	sc.SetExtraWarnings(slices.Clone(state.extraWarnings))
 	sc.Tables = slices.Clone(state.tables)
@@ -815,7 +830,7 @@ func (sc *StatementContext) ErrCtx() errctx.Context {
 // SetErrLevels sets the error levels for statement
 // The argument otherLevels is used to set the error levels except truncate
 func (sc *StatementContext) SetErrLevels(otherLevels errctx.LevelMap) {
-	sc.errCtx = newErrCtx(sc.typeCtx, otherLevels, sc)
+	sc.errCtx = newErrCtx(sc.typeCtx, otherLevels, sc.EvalWarnAppender())
 }
 
 // ErrLevels returns the current `errctx.LevelMap`
@@ -836,7 +851,7 @@ func (sc *StatementContext) TypeFlags() types.Flags {
 // SetTypeFlags sets the type flags
 func (sc *StatementContext) SetTypeFlags(flags types.Flags) {
 	sc.typeCtx = sc.typeCtx.WithFlags(flags)
-	sc.errCtx = newErrCtx(sc.typeCtx, sc.errCtx.LevelMap(), sc)
+	sc.errCtx = newErrCtx(sc.typeCtx, sc.errCtx.LevelMap(), sc.EvalWarnAppender())
 }
 
 // HandleTruncate ignores or returns the error based on the TypeContext inside.

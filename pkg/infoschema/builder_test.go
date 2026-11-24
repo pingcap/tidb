@@ -15,10 +15,13 @@
 package infoschema
 
 import (
+	"context"
 	"fmt"
+	"math"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/infoschema/internal"
+	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
@@ -223,4 +226,55 @@ func TestTableName2IDWithUnloadedTables(t *testing.T) {
 	id, exists := dbInfo.TableName2ID[unloadedTableName]
 	require.True(t, exists, "UnloadedTable should remain in TableName2ID")
 	require.Equal(t, unloadedTableID, id)
+}
+
+func TestMaskingPolicyCacheInvalidatedByMaterializedViewDrop(t *testing.T) {
+	for _, useV2 := range []bool{false, true} {
+		for _, action := range []model.ActionType{model.ActionDropMaterializedView, model.ActionDropMaterializedViewLog} {
+			t.Run(fmt.Sprintf("v2=%t/%s", useV2, action), func(t *testing.T) {
+				re := internal.CreateAutoIDRequirement(t)
+				t.Cleanup(func() { require.NoError(t, re.Store().Close()) })
+				db := internal.MockDBInfo(t, re.Store(), "test")
+				tbl := internal.MockTableInfo(t, re.Store(), "mv")
+				if action == model.ActionDropMaterializedView {
+					tbl.MaterializedView = &model.MaterializedViewInfo{}
+				} else {
+					tbl.MaterializedViewLog = &model.MaterializedViewLogInfo{}
+				}
+				db.Deprecated.Tables = []*model.TableInfo{tbl}
+				internal.AddDB(t, re.Store(), db)
+				internal.AddTable(t, re.Store(), db.ID, tbl)
+
+				schemaCacheSize := uint64(0)
+				if useV2 {
+					schemaCacheSize = 1
+				}
+				data := NewData()
+				builder := NewBuilder(re, schemaCacheSize, nil, data, useV2)
+				require.NoError(t, builder.InitWithDBInfos([]*model.DBInfo{db}, nil, nil, nil, 1))
+				policy := &model.MaskingPolicyInfo{ID: 1, TableID: tbl.ID, ColumnID: tbl.Columns[0].ID}
+				// Seed the state of a schema whose policies have already been loaded.
+				builder.infoSchema.maskingPolicyTableColumnMap[tbl.ID] = map[int64]*model.MaskingPolicyInfo{policy.ColumnID: policy}
+				builder.infoSchema.maskingPoliciesLoaded = true
+				oldInfoSchema := builder.Build(math.MaxUint64)
+
+				internal.DropTable(t, re.Store(), db, tbl.ID, tbl.Name.O)
+				txn, err := re.Store().Begin()
+				require.NoError(t, err)
+				defer func() { require.NoError(t, txn.Rollback()) }()
+				builder = NewBuilder(re, schemaCacheSize, nil, data, useV2)
+				require.NoError(t, builder.InitWithOldInfoSchema(oldInfoSchema))
+				_, err = builder.ApplyDiff(meta.NewMutator(txn), &model.SchemaDiff{
+					Type: action, SchemaID: db.ID, TableID: tbl.ID, Version: 2,
+				})
+				require.NoError(t, err)
+				policies, err := builder.Build(math.MaxUint64).AllMaskingPolicies(context.Background())
+				require.NoError(t, err)
+				require.Empty(t, policies, "the dropped table's policy must not survive the diff")
+				policies, err = oldInfoSchema.AllMaskingPolicies(context.Background())
+				require.NoError(t, err)
+				require.Equal(t, []*model.MaskingPolicyInfo{policy}, policies, "the old snapshot must retain its policy")
+			})
+		}
+	}
 }

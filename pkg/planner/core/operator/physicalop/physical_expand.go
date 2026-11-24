@@ -118,7 +118,7 @@ func (p *PhysicalExpand) MemoryUsage() (sum int64) {
 func (p *PhysicalExpand) explainInfoV2() string {
 	sb := strings.Builder{}
 	evalCtx := p.SCtx().GetExprCtx().GetEvalCtx()
-	enableRedactLog := p.SCtx().GetSessionVars().EnableRedactLog
+	enableRedactLog := p.SCtx().GetSessionVars().PlanRedactLog()
 	for i, oneL := range p.LevelExprs {
 		if i == 0 {
 			sb.WriteString("level-projection:")

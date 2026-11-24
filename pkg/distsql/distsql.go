@@ -68,7 +68,7 @@ func Select(ctx context.Context, dctx *distsqlctx.DistSQLContext, kvReq *kv.Requ
 	}
 
 	// For testing purpose.
-	if hook := ctx.Value("CheckSelectRequestHook"); hook != nil {
+	if hook := ctx.Value("CheckSelectRequestHook"); hook != nil && !kvReq.RequestSource.RequestSourceInternal {
 		hook.(func(*kv.Request))(kvReq)
 	}
 

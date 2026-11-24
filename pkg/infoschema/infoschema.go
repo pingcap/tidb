@@ -21,31 +21,23 @@ import (
 	"maps"
 	"slices"
 	"sort"
-	"strings"
 	"sync"
-	"time"
 
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/infoschema/context"
-	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util"
-	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/intest"
-	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/mock"
-	"github.com/pingcap/tidb/pkg/util/sqlexec"
-	"go.uber.org/zap"
 )
 
 var _ context.Misc = &infoSchema{}
@@ -88,10 +80,11 @@ type infoSchema struct {
 	// to avoid name collision when different tables have policies with the same name.
 	maskingPolicyTableColumnMap map[int64]map[int64]*model.MaskingPolicyInfo
 	// maskingPoliciesLoaded indicates whether masking policies have been loaded.
-	maskingPoliciesLoaded bool
-	// maskingPoliciesLoadCh is non-nil when a masking-policy load is in progress.
+	maskingPoliciesLoaded   bool
+	maskingPolicySnapshotTS uint64
+	// maskingPoliciesLoad is non-nil when a masking-policy load is in progress.
 	// Waiters block on this channel to avoid serving partially initialized policy maps.
-	maskingPoliciesLoadCh chan struct{}
+	maskingPoliciesLoad *maskingPolicyLoad
 	// maskingPolicyMutex protects maskingPolicyTableColumnMap and loading state.
 	maskingPolicyMutex sync.RWMutex
 	// factory is used to execute SQL for delayed loading of masking policies.
@@ -364,7 +357,7 @@ func (is *infoSchema) PolicyByID(id int64) (val *model.PolicyInfo, ok bool) {
 }
 
 func (is *infoSchema) MaskingPolicyByID(id int64) (val *model.MaskingPolicyInfo, ok bool) {
-	is.loadMaskingPoliciesIfNeeded()
+	_ = is.loadMaskingPoliciesIfNeeded(stdctx.Background())
 	is.maskingPolicyMutex.RLock()
 	defer is.maskingPolicyMutex.RUnlock()
 	for _, colMap := range is.maskingPolicyTableColumnMap {
@@ -680,42 +673,6 @@ func (is *infoSchemaMisc) ResourceGroupByName(name ast.CIStr) (*model.ResourceGr
 	return t, r
 }
 
-// MaskingPolicyByName returns masking policy metadata by policy name with delayed loading.
-// Note: Policy name is only unique per table, not globally. This method returns the first matching
-// policy if multiple tables have policies with the same name. For precise lookup, use MaskingPolicyByTableColumn.
-func (is *infoSchema) MaskingPolicyByName(name ast.CIStr) (*model.MaskingPolicyInfo, bool) {
-	is.loadMaskingPoliciesIfNeeded()
-
-	is.maskingPolicyMutex.RLock()
-	defer is.maskingPolicyMutex.RUnlock()
-	var found *model.MaskingPolicyInfo
-	for _, colMap := range is.maskingPolicyTableColumnMap {
-		for _, policy := range colMap {
-			if policy.Name.L == name.L {
-				if found != nil {
-					return nil, false
-				}
-				found = policy
-			}
-		}
-	}
-	return found, found != nil
-}
-
-// MaskingPolicyByTableColumn returns masking policy metadata by table and column IDs with delayed loading.
-func (is *infoSchema) MaskingPolicyByTableColumn(tableID, columnID int64) (*model.MaskingPolicyInfo, bool) {
-	is.loadMaskingPoliciesIfNeeded()
-
-	is.maskingPolicyMutex.RLock()
-	defer is.maskingPolicyMutex.RUnlock()
-	colMap, ok := is.maskingPolicyTableColumnMap[tableID]
-	if !ok {
-		return nil, false
-	}
-	t, r := colMap[columnID]
-	return t, r
-}
-
 // ResourceGroupByID is used to find the resource group.
 func (is *infoSchemaMisc) ResourceGroupByID(id int64) (*model.ResourceGroupInfo, bool) {
 	is.resourceGroupMutex.RLock()
@@ -743,341 +700,6 @@ func (is *infoSchemaMisc) CloneResourceGroups() map[string]*model.ResourceGroupI
 	is.resourceGroupMutex.RLock()
 	defer is.resourceGroupMutex.RUnlock()
 	return maps.Clone(is.resourceGroupMap)
-}
-
-// AllMaskingPolicies returns all masking policies in a stable order with delayed loading.
-func (is *infoSchema) AllMaskingPolicies() []*model.MaskingPolicyInfo {
-	is.loadMaskingPoliciesIfNeeded()
-
-	is.maskingPolicyMutex.RLock()
-	defer is.maskingPolicyMutex.RUnlock()
-	policies := make([]*model.MaskingPolicyInfo, 0)
-	for _, colMap := range is.maskingPolicyTableColumnMap {
-		for _, policy := range colMap {
-			policies = append(policies, policy)
-		}
-	}
-	sort.Slice(policies, func(i, j int) bool {
-		if policies[i].Name.L == policies[j].Name.L {
-			return policies[i].ID < policies[j].ID
-		}
-		return policies[i].Name.L < policies[j].Name.L
-	})
-	return policies
-}
-
-func (is *infoSchema) CloneMaskingPoliciesByTableColumn() map[int64]map[int64]*model.MaskingPolicyInfo {
-	is.loadMaskingPoliciesIfNeeded()
-
-	is.maskingPolicyMutex.RLock()
-	defer is.maskingPolicyMutex.RUnlock()
-	cloned := make(map[int64]map[int64]*model.MaskingPolicyInfo, len(is.maskingPolicyTableColumnMap))
-	for tableID, colMap := range is.maskingPolicyTableColumnMap {
-		cloned[tableID] = maps.Clone(colMap)
-	}
-	return cloned
-}
-
-// loadMaskingPoliciesIfNeeded loads masking policies from system table on first access.
-// Only one goroutine performs loading, others wait for completion.
-func (is *infoSchema) loadMaskingPoliciesIfNeeded() {
-	for {
-		var loadCh chan struct{}
-		is.maskingPolicyMutex.Lock()
-		if is.maskingPoliciesLoaded {
-			is.maskingPolicyMutex.Unlock()
-			return
-		}
-		if is.factory == nil {
-			logutil.BgLogger().Debug("factory is nil, skipping masking policies loading")
-			is.maskingPoliciesLoaded = true
-			is.maskingPolicyMutex.Unlock()
-			return
-		}
-		if is.maskingPoliciesLoadCh != nil {
-			loadCh = is.maskingPoliciesLoadCh
-			is.maskingPolicyMutex.Unlock()
-			<-loadCh
-			continue
-		}
-		loadCh = make(chan struct{})
-		is.maskingPoliciesLoadCh = loadCh
-		is.maskingPolicyMutex.Unlock()
-
-		policies, err := LoadMaskingPolicies(is.factory, is.ts)
-
-		is.maskingPolicyMutex.Lock()
-		if err != nil {
-			if isMaskingPolicyTableNotReady(err) {
-				logutil.BgLogger().Debug("masking policy table not available yet, skipping", zap.Error(err))
-				is.maskingPoliciesLoaded = true
-			} else {
-				logutil.BgLogger().Warn("failed to load masking policies", zap.Error(err))
-			}
-		} else if !is.maskingPoliciesLoaded {
-			newMap := make(map[int64]map[int64]*model.MaskingPolicyInfo, len(policies))
-			for _, policy := range policies {
-				if newMap[policy.TableID] == nil {
-					newMap[policy.TableID] = make(map[int64]*model.MaskingPolicyInfo)
-				}
-				newMap[policy.TableID][policy.ColumnID] = policy
-			}
-			is.maskingPolicyTableColumnMap = newMap
-			is.maskingPoliciesLoaded = true
-			logutil.BgLogger().Info("masking policies loaded", zap.Int("count", len(policies)))
-		}
-		close(loadCh)
-		is.maskingPoliciesLoadCh = nil
-		is.maskingPolicyMutex.Unlock()
-		return
-	}
-}
-
-// LoadMaskingPolicies loads all masking policy metadata through mysql.tidb_masking_policy.
-func LoadMaskingPolicies(factory func() (pools.Resource, error), snapshotTS uint64) ([]*model.MaskingPolicyInfo, error) {
-	return loadMaskingPoliciesWithTableIDs(factory, nil, snapshotTS)
-}
-
-// loadMaskingPoliciesWithTableIDs loads masking policy metadata through mysql.tidb_masking_policy.
-// If tableIDs is empty, all policies are loaded.
-// snapshotTS is used for snapshot-aware loading: when non-zero, the query runs at that timestamp
-// to preserve stale-read semantics.
-func loadMaskingPoliciesWithTableIDs(factory func() (pools.Resource, error), tableIDs []int64, snapshotTS uint64) ([]*model.MaskingPolicyInfo, error) {
-	const maxBatchSize = 1024
-
-	resource, err := factory()
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	if closer, ok := resource.(interface{ Close() }); ok {
-		defer closer.Close()
-	}
-
-	sctx, ok := resource.(sessionctx.Context)
-	if !ok {
-		return nil, errors.New("failed to cast resource to sessionctx.Context")
-	}
-
-	ids, hasFilter := normalizeMaskingPolicyTableIDs(tableIDs)
-	if hasFilter && len(ids) == 0 {
-		return nil, nil
-	}
-
-	loadBatch := func(batchIDs []int64, policies []*model.MaskingPolicyInfo) ([]*model.MaskingPolicyInfo, error) {
-		query, args := buildLoadMaskingPoliciesQuery(batchIDs)
-		internalCtx := kv.WithInternalSourceType(stdctx.Background(), kv.InternalTxnDDL)
-		opts := []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}
-		if snapshotTS > 0 {
-			opts = append(opts, sqlexec.ExecOptionWithSnapshot(snapshotTS))
-		}
-		rows, _, err := sctx.GetRestrictedSQLExecutor().ExecRestrictedSQL(
-			internalCtx,
-			opts,
-			query,
-			args...,
-		)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-
-		for _, row := range rows {
-			policy, err := maskingPolicyInfoFromChunkRow(row)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			policies = append(policies, policy)
-		}
-		return policies, nil
-	}
-
-	policies := make([]*model.MaskingPolicyInfo, 0)
-	if !hasFilter {
-		policies, err = loadBatch(nil, policies)
-		if err != nil {
-			return nil, err
-		}
-	} else {
-		for start := 0; start < len(ids); start += maxBatchSize {
-			end := min(start+maxBatchSize, len(ids))
-			policies, err = loadBatch(ids[start:end], policies)
-			if err != nil {
-				return nil, err
-			}
-		}
-	}
-
-	slices.SortFunc(policies, func(a, b *model.MaskingPolicyInfo) int {
-		if x := cmp.Compare(a.TableID, b.TableID); x != 0 {
-			return x
-		}
-		if x := cmp.Compare(a.ColumnID, b.ColumnID); x != 0 {
-			return x
-		}
-		return cmp.Compare(a.ID, b.ID)
-	})
-	return policies, nil
-}
-
-func buildLoadMaskingPoliciesQuery(tableIDs []int64) (string, []any) {
-	const baseQuery = `SELECT policy_id, policy_name, db_name, table_name, table_id, column_name, column_id, expression, status, masking_type, restrict_on, created_at, updated_at, created_by
-FROM mysql.tidb_masking_policy`
-
-	var sb strings.Builder
-	sb.WriteString(baseQuery)
-	args := make([]any, 0, len(tableIDs))
-	if len(tableIDs) > 0 {
-		sb.WriteString(" WHERE table_id IN (")
-		for i, id := range tableIDs {
-			if i > 0 {
-				sb.WriteString(", ")
-			}
-			sb.WriteString("%?")
-			args = append(args, id)
-		}
-		sb.WriteString(")")
-	}
-	sb.WriteString(" ORDER BY table_id, column_id, policy_id")
-	return sb.String(), args
-}
-
-func normalizeMaskingPolicyTableIDs(tableIDs []int64) ([]int64, bool) {
-	hasFilter := len(tableIDs) > 0
-	if !hasFilter {
-		return nil, false
-	}
-
-	idSet := make(map[int64]struct{}, len(tableIDs))
-	ids := make([]int64, 0, len(tableIDs))
-	for _, id := range tableIDs {
-		if id <= 0 {
-			continue
-		}
-		if _, ok := idSet[id]; ok {
-			continue
-		}
-		idSet[id] = struct{}{}
-		ids = append(ids, id)
-	}
-	slices.Sort(ids)
-	return ids, true
-}
-
-func maskingPolicyInfoFromChunkRow(row chunk.Row) (*model.MaskingPolicyInfo, error) {
-	status, err := maskingPolicyStatusFromString(row.GetString(8))
-	if err != nil {
-		return nil, err
-	}
-	restrictOn := ""
-	if !row.IsNull(10) {
-		restrictOn = row.GetString(10)
-	}
-	restrictOps, err := maskingPolicyRestrictOpsFromString(restrictOn)
-	if err != nil {
-		return nil, err
-	}
-
-	createdAt := time.Time{}
-	if !row.IsNull(11) {
-		createdAt, err = row.GetTime(11).GoTime(time.Local)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-	}
-	updatedAt := time.Time{}
-	if !row.IsNull(12) {
-		updatedAt, err = row.GetTime(12).GoTime(time.Local)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-	}
-	createdBy := ""
-	if !row.IsNull(13) {
-		createdBy = row.GetString(13)
-	}
-	maskingType, err := maskingPolicyTypeFromString(row.GetString(9))
-	if err != nil {
-		return nil, err
-	}
-
-	return &model.MaskingPolicyInfo{
-		ID:          row.GetInt64(0),
-		Name:        ast.NewCIStr(row.GetString(1)),
-		DBName:      ast.NewCIStr(row.GetString(2)),
-		TableName:   ast.NewCIStr(row.GetString(3)),
-		TableID:     row.GetInt64(4),
-		ColumnName:  ast.NewCIStr(row.GetString(5)),
-		ColumnID:    row.GetInt64(6),
-		Expression:  row.GetString(7),
-		Status:      status,
-		MaskingType: maskingType,
-		RestrictOps: restrictOps,
-		CreatedAt:   createdAt,
-		UpdatedAt:   updatedAt,
-		CreatedBy:   createdBy,
-		State:       model.StatePublic,
-	}, nil
-}
-
-func maskingPolicyStatusFromString(status string) (model.MaskingPolicyStatus, error) {
-	switch strings.ToUpper(strings.TrimSpace(status)) {
-	case "ENABLE", "ENABLED":
-		return model.MaskingPolicyStatusEnable, nil
-	case "DISABLE", "DISABLED":
-		return model.MaskingPolicyStatusDisable, nil
-	default:
-		return model.MaskingPolicyStatusDisable, errors.Errorf("unknown masking policy status: %s", status)
-	}
-}
-
-func maskingPolicyTypeFromString(tp string) (model.MaskingPolicyType, error) {
-	normalized := model.MaskingPolicyType(strings.ToUpper(strings.TrimSpace(tp)))
-	switch normalized {
-	case model.MaskingPolicyTypeFull,
-		model.MaskingPolicyTypePartial,
-		model.MaskingPolicyTypeNull,
-		model.MaskingPolicyTypeDate,
-		model.MaskingPolicyTypeCustom:
-		return normalized, nil
-	default:
-		return "", errors.Errorf("unknown masking policy type: %s", tp)
-	}
-}
-
-func maskingPolicyRestrictOpsFromString(restrictOn string) (ast.MaskingPolicyRestrictOps, error) {
-	restrictOn = strings.TrimSpace(strings.ToUpper(restrictOn))
-	if restrictOn == "" || restrictOn == "NONE" {
-		return ast.MaskingPolicyRestrictOpNone, nil
-	}
-	ops := ast.MaskingPolicyRestrictOpNone
-	for _, token := range strings.Split(restrictOn, ",") {
-		switch strings.TrimSpace(token) {
-		case ast.MaskingPolicyRestrictNameInsertIntoSelect:
-			ops |= ast.MaskingPolicyRestrictOpInsertIntoSelect
-		case ast.MaskingPolicyRestrictNameUpdateSelect:
-			ops |= ast.MaskingPolicyRestrictOpUpdateSelect
-		case ast.MaskingPolicyRestrictNameDeleteSelect:
-			ops |= ast.MaskingPolicyRestrictOpDeleteSelect
-		case ast.MaskingPolicyRestrictNameCTAS:
-			ops |= ast.MaskingPolicyRestrictOpCTAS
-		case "NONE", "":
-			// No-op.
-		default:
-			return ast.MaskingPolicyRestrictOpNone, errors.Errorf("unknown masking policy restrict option: %s", token)
-		}
-	}
-	return ops, nil
-}
-
-func isMaskingPolicyTableNotReady(err error) bool {
-	return ErrTableNotExists.Equal(err)
-}
-
-func (is *infoSchema) resetMaskingPolicyCache() {
-	is.maskingPolicyMutex.Lock()
-	defer is.maskingPolicyMutex.Unlock()
-	is.maskingPoliciesLoaded = false
-	is.maskingPolicyTableColumnMap = make(map[int64]map[int64]*model.MaskingPolicyInfo)
-	is.maskingPoliciesLoadCh = nil
 }
 
 // AllPlacementPolicies returns all placement policies
@@ -1329,12 +951,25 @@ type SessionExtendedInfoSchema struct {
 	LocalTemporaryTablesOnce sync.Once
 	LocalTemporaryTables     *SessionTables
 	MdlTables                *SessionTables
+	// mdlPolicySchemas holds, by table ID, the schema that a table in MdlTables
+	// was taken from when its ID differs from the one InfoSchema has for its name.
+	mdlPolicySchemas map[int64]mdlPolicySchema
+}
+
+// mdlPolicySchema is the schema a table replaced by MDL was taken from, and
+// the ID InfoSchema has for the table.
+type mdlPolicySchema struct {
+	schema InfoSchema
+	oldID  int64
 }
 
 // TableByName implements InfoSchema.TableByName
 func (ts *SessionExtendedInfoSchema) TableByName(ctx stdctx.Context, schema, table ast.CIStr) (table.Table, error) {
 	if tbl, ok := ts.sessionTableByName(ctx, schema, table); ok {
 		return tbl, nil
+	}
+	if ts.InfoSchema == nil {
+		return nil, fmt.Errorf("InfoSchema is nil when looking up table %s.%s", schema.O, table.O)
 	}
 	return ts.InfoSchema.TableByName(ctx, schema, table)
 }
@@ -1426,6 +1061,99 @@ func (ts *SessionExtendedInfoSchema) UpdateTableInfo(db *model.DBInfo, tableInfo
 	return nil
 }
 
+// SetMaskingPolicySchema records that the table in MdlTables with ID tableID
+// was taken from src, while InfoSchema has it under oldID, which may be the
+// same ID, as after TRUNCATE TABLE, EXCHANGE PARTITION or a MODIFY COLUMN that
+// replaces the column ID. The DDL moved the masking policies of the table to
+// the new IDs, so only src has them.
+func (ts *SessionExtendedInfoSchema) SetMaskingPolicySchema(oldID, tableID int64, src InfoSchema) {
+	if ts.mdlPolicySchemas == nil {
+		ts.mdlPolicySchemas = make(map[int64]mdlPolicySchema)
+	}
+	ts.mdlPolicySchemas[tableID] = mdlPolicySchema{schema: src, oldID: oldID}
+}
+
+// MaskingPolicyByTableColumn implements InfoSchema.MaskingPolicyByTableColumn.
+// The policies of a table recorded by SetMaskingPolicySchema are looked up in
+// the schema its definition was taken from.
+func (ts *SessionExtendedInfoSchema) MaskingPolicyByTableColumn(ctx stdctx.Context, tableID, columnID int64) (*model.MaskingPolicyInfo, bool, error) {
+	if src, ok := ts.mdlPolicySchemas[tableID]; ok {
+		return src.schema.MaskingPolicyByTableColumn(ctx, tableID, columnID)
+	}
+	return ts.InfoSchema.MaskingPolicyByTableColumn(ctx, tableID, columnID)
+}
+
+// AllMaskingPolicies implements InfoSchema.AllMaskingPolicies. The policies of
+// a table recorded by SetMaskingPolicySchema are taken from the schema its
+// definition was taken from, in place of those InfoSchema has under its old ID.
+func (ts *SessionExtendedInfoSchema) AllMaskingPolicies(ctx stdctx.Context) ([]*model.MaskingPolicyInfo, error) {
+	policies, err := ts.InfoSchema.AllMaskingPolicies(ctx)
+	if err != nil || len(ts.mdlPolicySchemas) == 0 {
+		return policies, err
+	}
+	replaced := make(map[int64]struct{}, 2*len(ts.mdlPolicySchemas))
+	for tableID, src := range ts.mdlPolicySchemas {
+		replaced[tableID] = struct{}{}
+		replaced[src.oldID] = struct{}{}
+	}
+	merged := make([]*model.MaskingPolicyInfo, 0, len(policies))
+	for _, policy := range policies {
+		if _, ok := replaced[policy.TableID]; !ok {
+			merged = append(merged, policy)
+		}
+	}
+	for tableID, src := range ts.mdlPolicySchemas {
+		srcPolicies, err := src.schema.AllMaskingPolicies(ctx)
+		if err != nil {
+			return nil, err
+		}
+		for _, policy := range srcPolicies {
+			if policy.TableID == tableID {
+				merged = append(merged, policy)
+			}
+		}
+	}
+	sortMaskingPolicies(merged)
+	return merged, nil
+}
+
+// MaskingPolicyByName implements InfoSchema.MaskingPolicyByName over the
+// policies returned by AllMaskingPolicies.
+func (ts *SessionExtendedInfoSchema) MaskingPolicyByName(ctx stdctx.Context, name ast.CIStr) (*model.MaskingPolicyInfo, bool, error) {
+	if len(ts.mdlPolicySchemas) == 0 {
+		return ts.InfoSchema.MaskingPolicyByName(ctx, name)
+	}
+	policies, err := ts.AllMaskingPolicies(ctx)
+	if err != nil {
+		return nil, false, err
+	}
+	var found *model.MaskingPolicyInfo
+	for _, policy := range policies {
+		if policy.Name.L == name.L {
+			if found != nil {
+				return nil, false, nil
+			}
+			found = policy
+		}
+	}
+	return found, found != nil, nil
+}
+
+// HasMaskingPolicies implements InfoSchema.HasMaskingPolicies. It also counts
+// the policies of the schemas recorded by SetMaskingPolicySchema.
+func (ts *SessionExtendedInfoSchema) HasMaskingPolicies(ctx stdctx.Context) (bool, error) {
+	hasPolicies, err := ts.InfoSchema.HasMaskingPolicies(ctx)
+	if err != nil || hasPolicies {
+		return hasPolicies, err
+	}
+	for _, src := range ts.mdlPolicySchemas {
+		if hasPolicies, err = src.schema.HasMaskingPolicies(ctx); err != nil || hasPolicies {
+			return hasPolicies, err
+		}
+	}
+	return false, nil
+}
+
 // HasTemporaryTable returns whether information schema has temporary table
 func (ts *SessionExtendedInfoSchema) HasTemporaryTable() bool {
 	return ts.LocalTemporaryTables != nil && ts.LocalTemporaryTables.Count() > 0 || ts.InfoSchema.HasTemporaryTable()
@@ -1434,8 +1162,9 @@ func (ts *SessionExtendedInfoSchema) HasTemporaryTable() bool {
 // DetachTemporaryTableInfoSchema returns a new SessionExtendedInfoSchema without temporary tables
 func (ts *SessionExtendedInfoSchema) DetachTemporaryTableInfoSchema() *SessionExtendedInfoSchema {
 	return &SessionExtendedInfoSchema{
-		InfoSchema: ts.InfoSchema,
-		MdlTables:  ts.MdlTables,
+		InfoSchema:       ts.InfoSchema,
+		MdlTables:        ts.MdlTables,
+		mdlPolicySchemas: ts.mdlPolicySchemas,
 	}
 }
 

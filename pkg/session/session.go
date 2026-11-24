@@ -1820,6 +1820,7 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 		Command:               command,
 		Plan:                  p,
 		BriefBinaryPlan:       plannercore.GetBriefBinaryPlan(p),
+		RedactPlanValues:      p != nil && s.sessionVars.StmtCtx.ReadsMaskedColumn,
 		RuntimeStatsColl:      s.sessionVars.StmtCtx.RuntimeStatsColl,
 		Time:                  t,
 		State:                 s.Status(),
@@ -1842,14 +1843,19 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 		SessionAlias:          s.sessionVars.SessionAlias,
 		CursorTracker:         s.cursorTracker,
 	}
+	if pi.RedactPlanValues {
+		pi.PlanExplainRows = plannercore.GetExplainRowsForPlan(p)
+	}
 	oldPi := s.ShowProcess()
 	if p == nil {
 		// Store the last valid plan when the current plan is nil.
 		// This is for `explain for connection` statement has the ability to query the last valid plan.
-		if oldPi != nil && oldPi.Plan != nil && len(oldPi.BriefBinaryPlan) > 0 {
+		if oldPi != nil && oldPi.Plan != nil && (len(oldPi.BriefBinaryPlan) > 0 || len(oldPi.PlanExplainRows) > 0) {
 			pi.Plan = oldPi.Plan
 			pi.RuntimeStatsColl = oldPi.RuntimeStatsColl
 			pi.BriefBinaryPlan = oldPi.BriefBinaryPlan
+			pi.PlanExplainRows = oldPi.PlanExplainRows
+			pi.RedactPlanValues = oldPi.RedactPlanValues
 		}
 	}
 	// Preserve the statement start time across process-info updates and retries.
@@ -2560,6 +2566,9 @@ func (s *session) executeStmtImpl(ctx context.Context, stmtNode ast.StmtNode) (r
 	if err := executor.ResetContextOfStmt(s, stmtNode); err != nil {
 		return nil, err
 	}
+	if sessVars.TxnCtx.RedactDiagnostics {
+		sessVars.StmtCtx.SetRedactTxnDiagnostics()
+	}
 	// ResetContextOfStmt clears SQLKiller, so honor a canceled caller before executing the next statement.
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -2681,6 +2690,10 @@ func (s *session) executeStmtImpl(ctx context.Context, stmtNode ast.StmtNode) (r
 		}
 	})
 
+	if sessVars.StmtCtx.RedactDiagnostics {
+		// Mark the transaction before the statement may end it.
+		sessVars.TxnCtx.RedactDiagnostics = true
+	}
 	// check if resource group hint is valid, can't do this in planner.Optimize because we can access
 	// infoschema there.
 	if sessVars.StmtCtx.ResourceGroupName != sessVars.ResourceGroupName {
@@ -2712,7 +2725,8 @@ func (s *session) executeStmtImpl(ctx context.Context, stmtNode ast.StmtNode) (r
 				}
 			}
 		}
-		return nil, err
+		// Compiling evaluates the subqueries and constants of the statement.
+		return nil, sessVars.StmtCtx.RedactExecError(err)
 	}
 	durCompile := time.Since(s.sessionVars.StartTime)
 	s.GetSessionVars().DurationCompile = durCompile
@@ -2842,7 +2856,7 @@ func (s *session) executeStmtImpl(ctx context.Context, stmtNode ast.StmtNode) (r
 				zap.Error(err),
 				zap.String("session", s.String()))
 		}
-		return nil, err
+		return nil, sessVars.StmtCtx.RedactExecError(err)
 	}
 	if !s.isInternal() && config.GetGlobalConfig().EnableTelemetry {
 		telemetry.CurrentExecuteCount.Inc()
@@ -3288,6 +3302,10 @@ func (rs *execStmtResult) TryDetach() (sqlexec.RecordSet, bool, error) {
 		return nil, false, nil
 	}
 	if !plannercore.IsAutoCommitTxn(rs.se.GetSessionVars()) {
+		return nil, false, nil
+	}
+	// A detached record set leaves the statement that redacts its diagnostics.
+	if rs.se.GetSessionVars().StmtCtx.RedactDiagnostics {
 		return nil, false, nil
 	}
 
@@ -4434,6 +4452,9 @@ func initBootstrapDependentTables(store kv.Storage, ver int64) error {
 	if ver <= notBootstrapped || ver >= version280 || currentBootstrapVersion < version280 {
 		return nil
 	}
+	failpoint.Inject("mockInitBootstrapDependentTablesError", func() {
+		failpoint.Return(errors.New("mock init bootstrap dependent tables error"))
+	})
 
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	return kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
@@ -4666,6 +4687,7 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 	if ver < currentBootstrapVersion {
 		err = runInBootstrapSession(store, ver, domainCreateOptions{extWorkloadMgr: extWorkloadMgr})
 		if err != nil {
+			store.SetOption(StoreBootstrappedKey, nil)
 			return nil, err
 		}
 		// Another node may have completed fresh bootstrap while this node waited.
@@ -5767,6 +5789,9 @@ func (s *session) GetInfoSchema() infoschemactx.MetaOnlyInfoSchema {
 
 func (s *session) GetLatestInfoSchema() infoschemactx.MetaOnlyInfoSchema {
 	is := s.infoCache.GetLatest()
+	if is == nil {
+		is, _ = s.sessionVars.SnapshotInfoschema.(infoschema.InfoSchema)
+	}
 	extIs := &infoschema.SessionExtendedInfoSchema{InfoSchema: is}
 	return temptable.AttachLocalTemporaryTableInfoSchema(s, extIs)
 }

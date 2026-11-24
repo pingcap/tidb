@@ -576,6 +576,7 @@ func bool2Byte(flag bool) byte {
 
 // PlanCacheValue stores the cached Statement and StmtNode.
 type PlanCacheValue struct {
+	maskingPolicyChecks []stmtctx.MaskingPolicyCheck
 	// Meta Info, all are READ-ONLY once initialized.
 	SQLDigest        string
 	SQLText          string
@@ -666,6 +667,7 @@ func (v *PlanCacheValue) MemoryUsage() (sum int64) {
 		}
 	}
 
+	sum += size.SizeOfSlice + int64(cap(v.maskingPolicyChecks))*(size.SizeOfInt64*4)
 	for _, name := range v.OutputColumns {
 		sum += name.MemoryUsage()
 	}

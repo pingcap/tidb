@@ -76,9 +76,11 @@ const (
 
 // Loader is the main structure for syncing the info schema.
 type Loader struct {
-	mode      LoadMode
-	store     kv.Storage
-	infoCache *infoschema.InfoCache
+	schemaLease       time.Duration
+	schemaLoadContext context.Context
+	mode              LoadMode
+	store             kv.Storage
+	infoCache         *infoschema.InfoCache
 	// deferFn is used to release infoschema object lazily during v1 and v2 switch
 	deferFn *deferFn
 	// if true, it means the loader is used for cross keyspace, we only allow
@@ -208,6 +210,7 @@ func (l *Loader) LoadWithTS(startTS uint64, isSnapshot bool) (infoschema.InfoSch
 
 		// try to insert here as well to correct the schemaTs if previous is wrong
 		// the insert method check if schemaTs is zero
+		infoschema.UpdateMaskingPolicySnapshotTS(is, startTS)
 		l.infoCache.Insert(is, schemaTs)
 
 		if !isV1V2Switch {
@@ -228,6 +231,9 @@ func (l *Loader) LoadWithTS(startTS uint64, isSnapshot bool) (infoschema.InfoSch
 		if err == nil {
 			infoschema_metrics.LoadSchemaDurationLoadDiff.Observe(time.Since(startTime).Seconds())
 			isV2, _ := infoschema.IsV2(is)
+			if !isSnapshot {
+				l.preloadMaskingPolicies(is, beginTime)
+			}
 			l.infoCache.Insert(is, schemaTs)
 			l.logger.Info("diff load InfoSchema success",
 				zap.Bool("isV2", isV2),
@@ -255,6 +261,7 @@ func (l *Loader) LoadWithTS(startTS uint64, isSnapshot bool) (infoschema.InfoSch
 	})
 
 	// full load.
+	failpoint.InjectCall("beforeFullLoadFetchSchemas")
 	schemas, err := l.fetchAllSchemasWithTables(m, schemaCacheSize)
 	if err != nil {
 		return nil, false, currentSchemaVersion, nil, err
@@ -293,6 +300,9 @@ func (l *Loader) LoadWithTS(startTS uint64, isSnapshot bool) (infoschema.InfoSch
 		return nil, false, currentSchemaVersion, nil, err
 	}
 	is := builder.Build(startTS)
+	if !isSnapshot {
+		l.preloadMaskingPolicies(is, beginTime)
+	}
 	isV2, _ := infoschema.IsV2(is)
 	l.logger.Info("full load InfoSchema success",
 		zap.Bool("isV2", isV2),

@@ -225,7 +225,7 @@ func (p *PhysicalHashJoin) explainInfo(normalized bool) string {
 			return expression.SortedExplainNormalizedExpressionList(exprs)
 		}
 	}
-	redact := p.SCtx().GetSessionVars().EnableRedactLog
+	redact := p.SCtx().GetSessionVars().PlanRedactLog()
 	buffer := new(strings.Builder)
 
 	if len(p.EqualConditions) == 0 {

@@ -275,6 +275,22 @@ func (w *worker) onModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, 
 		}
 	}
 
+	// A masking policy may have been created on the column after this job was
+	// submitted, so the submission-time check alone cannot protect its shape.
+	// Jobs on the same table run serially: checking once before the first step
+	// is enough.
+	if job.SchemaState == model.StateNone && !job.IsRollingback() &&
+		isMaskedColumnTypeLengthOrPrecisionChanged(oldCol, args.Column) {
+		policy, err := w.getMaskingPolicyByTableColumnFromSysTable(jobCtx.stepCtx, tblInfo.ID, oldCol.ID)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		if policy != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("masked column type/length/precision change is forbidden"))
+		}
+	}
+
 	// For first time running this job, or the job from older version,
 	// we need to fill the ModifyColumnType.
 	if args.ModifyColumnType == model.ModifyTypeNone ||
@@ -1454,6 +1470,9 @@ func (w *worker) doModifyColumnTypeWithData(
 			// because we will allocate new indexID for previous temp index.
 			reorderChangingIdx(oldIdxInfos, changingIdxInfos)
 
+			if err := w.syncMaskingPolicyForModifiedColumn(jobCtx, tblInfo, oldCol, targetCol); err != nil {
+				return ver, err
+			}
 			updateObjectState(oldCol, oldIdxInfos, model.StateWriteOnly)
 			updateObjectState(changingCol, changingIdxInfos, model.StatePublic)
 			markOldObjectRemoving(oldCol, changingCol, oldIdxInfos, changingIdxInfos, colName)
@@ -1481,9 +1500,6 @@ func (w *worker) doModifyColumnTypeWithData(
 		case model.StateDeleteOnly:
 			removedIdxIDs := removeOldObjects(tblInfo, oldCol, oldIdxInfos)
 			removedIdxIDs = append(removedIdxIDs, getIngestTempIndexIDs(job, changingIdxs)...)
-			if err := w.syncMaskingPolicyForModifiedColumn(jobCtx, tblInfo, oldCol, targetCol); err != nil {
-				return ver, errors.Trace(err)
-			}
 			analyzed := job.ReorgMeta.AnalyzeState == model.AnalyzeStateDone
 			modifyColumnEvent := notifier.NewModifyColumnEvent(tblInfo, []*model.ColumnInfo{changingCol}, analyzed)
 			err = asyncNotifyEvent(jobCtx, modifyColumnEvent, job, noSubJob, w.sess)
@@ -2310,6 +2326,15 @@ func GetModifiableColumnJob(
 	if err = ProcessModifyColumnOptions(sctx, newCol, specNewColumn.Options); err != nil {
 		return nil, errors.Trace(err)
 	}
+	if is != nil {
+		_, masked, err := is.MaskingPolicyByTableColumn(context.Background(), t.Meta().ID, col.ID)
+		if err != nil {
+			return nil, err
+		}
+		if masked && isMaskedColumnTypeLengthOrPrecisionChanged(col.ColumnInfo, newCol.ColumnInfo) {
+			return nil, errors.Trace(dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("masked column type/length/precision change is forbidden"))
+		}
+	}
 
 	if err = checkModifyTypes(col.ColumnInfo, newCol.ColumnInfo, isColumnWithIndex(col.Name.L, t.Meta().Indices)); err != nil {
 		return nil, errors.Trace(err)
@@ -2814,8 +2839,21 @@ func checkModifyTypes(from, to *model.ColumnInfo, needRewriteCollationData bool)
 	return errors.Trace(err)
 }
 
-// ProcessModifyColumnOptions process column options.
-// Export for tiflow.
+func isMaskedColumnTypeLengthOrPrecisionChanged(oldCol, newCol *model.ColumnInfo) bool {
+	if oldCol == nil || newCol == nil {
+		return false
+	}
+	if oldCol.GetType() != newCol.GetType() {
+		return true
+	}
+	if oldCol.GetFlen() != newCol.GetFlen() {
+		return true
+	}
+	return oldCol.GetDecimal() != newCol.GetDecimal()
+}
+
+// ProcessModifyColumnOptions processes column options.
+// Exported for tiflow.
 func ProcessModifyColumnOptions(ctx sessionctx.Context, col *table.Column, options []*ast.ColumnOption) error {
 	var sb strings.Builder
 	restoreFlags := format.RestoreStringSingleQuotes | format.RestoreKeyWordLowercase | format.RestoreNameBackQuotes |

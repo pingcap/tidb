@@ -125,7 +125,7 @@ func (p *PhysicalLimit) MemoryUsage() (sum int64) {
 // ExplainInfo implements Plan interface.
 func (p *PhysicalLimit) ExplainInfo() string {
 	ectx := p.SCtx().GetExprCtx().GetEvalCtx()
-	redact := p.SCtx().GetSessionVars().EnableRedactLog
+	redact := p.SCtx().GetSessionVars().PlanRedactLog()
 	buffer := bytes.NewBufferString("")
 	if len(p.GetPartitionBy()) > 0 {
 		buffer = property.ExplainPartitionBy(ectx, buffer, p.GetPartitionBy(), false)

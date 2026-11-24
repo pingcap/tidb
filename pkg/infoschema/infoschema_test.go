@@ -651,7 +651,9 @@ func TestBuildSchemaWithGlobalTemporaryTable(t *testing.T) {
 	require.True(t, ok)
 	schemaCacheSize = vardef.SchemaCacheSize.Load()
 	builder = infoschema.NewBuilder(re, schemaCacheSize, nil, data, schemaCacheSize > 0)
-	err = builder.InitWithDBInfos([]*model.DBInfo{newDB}, newIS.AllPlacementPolicies(), newIS.AllResourceGroups(), newIS.AllMaskingPolicies(), newIS.SchemaMetaVersion())
+	maskingPolicies, err := newIS.AllMaskingPolicies(context.Background())
+	require.NoError(t, err)
+	err = builder.InitWithDBInfos([]*model.DBInfo{newDB}, newIS.AllPlacementPolicies(), newIS.AllResourceGroups(), maskingPolicies, newIS.SchemaMetaVersion())
 	require.NoError(t, err)
 	require.True(t, builder.Build(math.MaxUint64).HasTemporaryTable())
 
@@ -783,7 +785,9 @@ func TestBuildBundle(t *testing.T) {
 	}
 	schemaCacheSize := vardef.SchemaCacheSize.Load()
 	builder := infoschema.NewBuilder(dom, schemaCacheSize, nil, infoschema.NewData(), schemaCacheSize > 0)
-	err = builder.InitWithDBInfos([]*model.DBInfo{db}, is.AllPlacementPolicies(), is.AllResourceGroups(), is.AllMaskingPolicies(), is.SchemaMetaVersion())
+	maskingPolicies, err := is.AllMaskingPolicies(context.Background())
+	require.NoError(t, err)
+	err = builder.InitWithDBInfos([]*model.DBInfo{db}, is.AllPlacementPolicies(), is.AllResourceGroups(), maskingPolicies, is.SchemaMetaVersion())
 	require.NoError(t, err)
 	is2 := builder.Build(math.MaxUint64)
 	assertBundle(is2, tbl1.Meta().ID, tb1Bundle)

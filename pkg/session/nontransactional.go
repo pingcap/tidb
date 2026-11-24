@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/opcode"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
+	"github.com/pingcap/tidb/pkg/privilege"
 	session_metrics "github.com/pingcap/tidb/pkg/session/metrics"
 	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
@@ -109,6 +110,26 @@ func HandleNonTransactionalDML(ctx context.Context, stmt *ast.NonTransactionalDM
 
 	if err := checkConstraintWithShardColumn(se, stmt, tableName, shardColumnInfo, tableSources); err != nil {
 		return nil, err
+	}
+
+	// The shard boundaries are read by a SELECT of this session and then used
+	// as predicates on the stored values. Masked boundaries would match other
+	// rows, or none, while every job still reports success.
+	//
+	// A user who cannot select the shard column must not learn from this check
+	// that it has a policy: the boundary SELECT reports the privilege error.
+	shardTable := nodeW.GetResolveContext().GetTableName(tableName)
+	pm := privilege.GetPrivilegeManager(se)
+	canSelectShardColumn := shardColumnInfo != nil && (pm == nil || pm.RequestVerification(
+		sessVars.ActiveRoles, shardTable.DBInfo.Name.L, tableName.Name.L, shardColumnInfo.Name.L, mysql.SelectPriv))
+	if canSelectShardColumn {
+		unmasked, err := core.CanReadUnmaskedColumn(ctx, se, domain.GetDomain(se).InfoSchema(), shardTable.TableInfo, shardColumnInfo)
+		if err != nil {
+			return nil, err
+		}
+		if !unmasked {
+			return nil, errors.Errorf("Non-transactional DML, shard column %s is masked for the current user by a masking policy. Please specify another shard column", shardColumnInfo.Name.L)
+		}
 	}
 
 	if stmt.DryRun == ast.DryRunQuery {

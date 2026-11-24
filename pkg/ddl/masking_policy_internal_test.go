@@ -60,7 +60,7 @@ func TestMaskingPolicyOperationsRequireSysTable(t *testing.T) {
 		{
 			name: "truncate",
 			run: func() error {
-				return w.updateMaskingPolicyTableIDAfterTruncate(jobCtx, 1, 2)
+				return w.updateMaskingPolicyTableID(jobCtx, 1, 2)
 			},
 		},
 		{

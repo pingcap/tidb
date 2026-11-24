@@ -149,9 +149,13 @@ func buildSimpleExpr(ctx expression.BuildContext, node ast.ExprNode, opts ...exp
 		names:               options.InputNames,
 		sourceTable:         options.SourceTable,
 		allowBuildCastArray: options.AllowCastArray,
+		deferredFunctions:   options.DeferredFunctions,
 		asScalar:            true,
 	}
 
+	if options.DisableFold {
+		rewriter.disableFoldCounter++
+	}
 	if tbl := options.SourceTable; tbl != nil && rewriter.schema == nil {
 		cols, names, err := expression.ColumnInfos2ColumnsAndNames(ctx, options.SourceTableDB, tbl.Name, tbl.Cols(), tbl)
 		if err != nil {
@@ -179,6 +183,7 @@ func buildSimpleExpr(ctx expression.BuildContext, node ast.ExprNode, opts ...exp
 }
 
 func (b *PlanBuilder) rewriteInsertOnDuplicateUpdate(ctx context.Context, exprNode ast.ExprNode, mockPlan base.LogicalPlan, insertPlan *physicalop.Insert) (expression.Expression, error) {
+	defer b.enterMaskedValueContext()()
 	b.rewriterCounter++
 	defer func() { b.rewriterCounter-- }()
 
@@ -237,6 +242,13 @@ func (b *PlanBuilder) rewriteWithPreprocess(
 	rewriter.asScalar = asScalar
 	rewriter.allowBuildCastArray = b.allowBuildCastArray
 	rewriter.preprocess = preprocess
+	if b.curClause == fieldList && p != nil {
+		var err error
+		rewriter.preserveMaskingDependencies, err = b.maskingEnabled(ctx, p)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
 
 	expr, resultPlan, err := rewriteExprNode(rewriter, exprNode, asScalar)
 	return expr, resultPlan, err
@@ -281,6 +293,7 @@ func (b *PlanBuilder) getExpressionRewriter(ctx context.Context, p base.LogicalP
 	rewriter.asScalar = false
 	rewriter.preprocess = nil
 	rewriter.disableFoldCounter = 0
+	rewriter.preserveMaskingDependencies = false
 	rewriter.tryFoldCounter = 0
 	rewriter.ctxStack = rewriter.ctxStack[:0]
 	rewriter.ctxNameStk = rewriter.ctxNameStk[:0]
@@ -390,7 +403,11 @@ type expressionRewriter struct {
 	// leaving the scope(enable again), the counter will -1.
 	// NOTE: This value can be changed during expression rewritten.
 	disableFoldCounter int
-	tryFoldCounter     int
+	// Preserve column dependencies in result expressions until policies have
+	// been substituted, since a policy can change a NOT NULL column to NULL.
+	preserveMaskingDependencies bool
+	tryFoldCounter              int
+	deferredFunctions           map[string]struct{}
 
 	astNodeStack []ast.Node
 
@@ -499,6 +516,29 @@ func (er *expressionRewriter) constructBinaryOpFunction(l expression.Expression,
 func (er *expressionRewriter) buildSubquery(ctx context.Context, planCtx *exprRewriterPlanCtx, subq *ast.SubqueryExpr, subqueryCtx subQueryCtx) (np base.LogicalPlan, hintFlags uint64, err error) {
 	intest.AssertNotNil(planCtx)
 	b := planCtx.builder
+	b.maskingOuterPlans = append(b.maskingOuterPlans, planCtx.plan)
+	defer func() { b.maskingOuterPlans = b.maskingOuterPlans[:len(b.maskingOuterPlans)-1] }()
+	// The inner query block is not a value context of the outer statement.
+	// Scalar callers decide before this call whether to mask their own result.
+	savedValueCtx := b.maskScalarSubqueryValue
+	b.maskScalarSubqueryValue = 0
+	defer func() { b.maskScalarSubqueryValue = savedValueCtx }()
+	// Nor is it a key of the window whose items are being rewritten.
+	savedWindowKey := b.rewritingWindowKey
+	b.rewritingWindowKey = false
+	defer func() { b.rewritingWindowKey = savedWindowKey }()
+	// UPDATE and DELETE only compare or sort by the subqueries outside their
+	// assignments, so the fields of these, and of the query blocks whose fields
+	// make up their fields, are not results.
+	useClause := b.curClause
+	if b.scalarSubqueryClause != unknowClause {
+		useClause = b.scalarSubqueryClause
+	}
+	savedComparedSubquery := b.comparedSubquery
+	b.comparedSubquery = (b.inUpdateStmt || b.inDeleteStmt) && savedValueCtx == 0 && (useClause != fieldList || savedComparedSubquery)
+	defer func() { b.comparedSubquery = savedComparedSubquery }()
+	// Its own clauses decide how the scalar subqueries inside it are used.
+	defer b.enterScalarSubqueryClause(unknowClause)()
 	if er.schema != nil {
 		outerSchema := er.schema.Clone()
 		b.outerSchemas = append(b.outerSchemas, outerSchema)
@@ -525,9 +565,27 @@ func (er *expressionRewriter) buildSubquery(ctx context.Context, planCtx *exprRe
 		b.subQueryHintFlags = oldHintFlags
 	}()
 
+	// The subquery's clauses must not replace the clause of the outer
+	// expression: the fields after it are still built for the outer clause.
+	outerClause := b.curClause
 	np, err = b.buildResultSetNode(ctx, subq.Query, false)
+	b.curClause = outerClause
 	if err != nil {
 		return nil, 0, err
+	}
+	restrictOp := ast.MaskingPolicyRestrictOpNone
+	// Every subquery of an UPDATE or DELETE statement is a SELECT source of the
+	// write, whichever clause holds it: one in JOIN ON or ORDER BY decides the
+	// written rows as much as one in WHERE, and may be evaluated right here.
+	if b.inUpdateStmt {
+		restrictOp = ast.MaskingPolicyRestrictOpUpdateSelect
+	} else if b.inDeleteStmt {
+		restrictOp = ast.MaskingPolicyRestrictOpDeleteSelect
+	}
+	if restrictOp != ast.MaskingPolicyRestrictOpNone {
+		if err = b.checkMaskingPolicyRestrictOnSelectPlan(ctx, np, restrictOp); err != nil {
+			return nil, 0, err
+		}
 	}
 	hintFlags = b.subQueryHintFlags
 	// Pop the handle map generated by the subquery.
@@ -671,8 +729,12 @@ func (er *expressionRewriter) Enter(inNode ast.Node) bool {
 			er.ctxStackAppend(er.schema.Columns[index], er.names[index])
 			return true
 		})
+	case *ast.VariableExpr:
+		er.asScalar = true
+		er.enterMaskingStateWrite(v, 1)
 	case *ast.FuncCallExpr:
 		er.asScalar = true
+		er.enterMaskingStateWrite(v, 1)
 		if _, ok := expression.DisableFoldFunctions[v.FnName.L]; ok {
 			er.disableFoldCounter++
 		}
@@ -853,6 +915,10 @@ func (er *expressionRewriter) handleCompareSubquery(ctx context.Context, planCtx
 	}
 	np, hintFlags, err := er.buildSubquery(ctx, planCtx, subq, handlingCompareSubquery)
 	if err != nil {
+		er.err = err
+		return true
+	}
+	if np, err = er.maskSubqueryResult(ctx, planCtx, np); err != nil {
 		er.err = err
 		return true
 	}
@@ -1341,6 +1407,10 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, planCtx *exp
 		er.err = err
 		return true
 	}
+	if np, err = er.maskSubqueryResult(ctx, planCtx, np); err != nil {
+		er.err = err
+		return true
+	}
 	lLen := expression.GetRowLen(lexpr)
 	if lLen != np.Schema().Len() {
 		er.err = expression.ErrOperandColumns.GenWithStackByArgs(lLen)
@@ -1527,12 +1597,74 @@ func isNoDecorrelate(planCtx *exprRewriterPlanCtx, corCols []*expression.Correla
 
 func (er *expressionRewriter) handleScalarSubquery(ctx context.Context, planCtx *exprRewriterPlanCtx, v *ast.SubqueryExpr) bool {
 	intest.AssertNotNil(planCtx)
+	clause := planCtx.curClause
+	if c := planCtx.builder.scalarSubqueryClause; c != unknowClause {
+		// Aggregate and window function arguments are rewritten while curClause
+		// still holds an earlier clause, such as WHERE.
+		clause = c
+	}
+	// The fields of a query block are its results, unless an UPDATE or DELETE
+	// only compares them. In 8.5, UPDATE assignments also use fieldList, but
+	// they are stored values, which take precedence below.
+	resultField := clause == fieldList && !planCtx.builder.comparedSubquery
+	// Outside the displayed fields, a scalar subquery masks its own result:
+	// SET, DO, UPDATE assignments and INSERT values store or return it without
+	// a final SELECT projection, and predicates compare against the masked
+	// value. buildSubquery resets the context, so subqueries nested in it keep
+	// the ordinary rules.
+	storedValue := planCtx.builder.maskScalarSubqueryValue > 0
+	// Grouping, ordering and window keys are relational operations: like any
+	// other expression below the final projection they work on the original
+	// values. Masking the key first would merge the groups whose keys mask to
+	// the same value, and no final projection could tell them apart again.
+	relationalKey := planCtx.builder.rewritingWindowKey
+	switch clause {
+	case groupByClause, orderByClause, globalOrderByClause:
+		relationalKey = true
+	}
+	relationalKey = relationalKey && !storedValue
+	predicateValue := !storedValue && !resultField && !relationalKey
 	ci := planCtx.builder.prepareCTECheckForSubQuery()
 	defer resetCTECheckForSubQuery(ci)
+	savedClause := planCtx.builder.curClause
 	np, hintFlags, err := er.buildSubquery(ctx, planCtx, v, handlingScalarSubquery)
+	planCtx.builder.curClause = savedClause
 	if err != nil {
 		er.err = err
 		return true
+	}
+	maskingEnabled, err := planCtx.builder.maskingEnabled(ctx, np, planCtx.plan)
+	if err != nil {
+		er.err = err
+		return true
+	}
+	if predicateValue && maskingEnabled {
+		np, err = maskPredicateSubqueryResult(ctx, planCtx, np)
+		if err != nil {
+			er.err = err
+			return true
+		}
+	} else if storedValue && maskingEnabled {
+		np, err = planCtx.builder.buildFinalProjectionWithMasking(ctx, np, np.Schema().Len(), planCtx.plan)
+		if err != nil {
+			er.err = err
+			return true
+		}
+	} else if maskingEnabled && !relationalKey {
+		// Scalar preprocessing may turn the raw result into a constant, losing
+		// its policy identity before the outer final projection can inspect it.
+		m := maskingResultBuilder{b: planCtx.builder, ctx: ctx, outerPlan: planCtx.plan, cache: make(map[maskingResultKey]maskingResult)}
+		for _, col := range np.Schema().Columns {
+			result, err := m.column(np, col)
+			if err != nil {
+				er.err = err
+				return true
+			}
+			if result.masked {
+				er.err = errors.New("masking policy cannot be preserved through scalar subquery")
+				return true
+			}
+		}
 	}
 	np = planCtx.builder.buildMaxOneRow(np)
 	correlatedColumn := coreusage.ExtractCorColumnsBySchema4LogicalPlan(np, planCtx.plan.Schema())
@@ -1599,46 +1731,33 @@ func (er *expressionRewriter) handleScalarSubquery(ctx context.Context, planCtx 
 		}
 		return true
 	}
-
-	// register the subquery plan but continue with normal execution
-	subqueryCtx := ScalarSubqueryEvalCtx{
-		scalarSubQuery: physicalPlan,
-		ctx:            ctx,
-		is:             planCtx.builder.is,
-	}.Init(planCtx.builder.ctx, np.QueryBlockOffset())
-	newColIDs := make([]int64, 0, np.Schema().Len())
-	for range np.Schema().Columns {
-		newColID := planCtx.builder.ctx.GetSessionVars().AllocPlanColumnID()
-		newColIDs = append(newColIDs, newColID)
-	}
-	subqueryCtx.outputColIDs = newColIDs
-
-	planCtx.builder.ctx.GetSessionVars().RegisterScalarSubQ(subqueryCtx)
 	row, err := EvalSubqueryFirstRow(ctx, physicalPlan, planCtx.builder.is, planCtx.builder.ctx)
 	if err != nil {
 		er.err = err
 		return true
 	}
-	newCols := make([]expression.Expression, 0, np.Schema().Len())
-	for i, data := range row {
-		constant := &expression.Constant{
-			Value:         data,
-			RetType:       np.Schema().Columns[i].GetType(er.sctx.GetEvalCtx()),
-			SubqueryRefID: newColIDs[i],
-		}
-		constant.SetCoercibility(np.Schema().Columns[i].Coercibility())
-		newCols = append(newCols, constant)
-	}
-
 	if np.Schema().Len() > 1 {
-		expr, err := er.newFunction(ast.RowFunc, newCols[0].GetType(er.sctx.GetEvalCtx()), newCols...)
-		if err != nil {
-			er.err = err
+		newCols := make([]expression.Expression, 0, np.Schema().Len())
+		for i, data := range row {
+			constant := &expression.Constant{
+				Value:   data,
+				RetType: np.Schema().Columns[i].GetType(er.sctx.GetEvalCtx())}
+			constant.SetCoercibility(np.Schema().Columns[i].Coercibility())
+			newCols = append(newCols, constant)
+		}
+		expr, err1 := er.newFunction(ast.RowFunc, newCols[0].GetType(er.sctx.GetEvalCtx()), newCols...)
+		if err1 != nil {
+			er.err = err1
 			return true
 		}
 		er.ctxStackAppend(expr, types.EmptyName)
 	} else {
-		er.ctxStackAppend(newCols[0], types.EmptyName)
+		constant := &expression.Constant{
+			Value:   row[0],
+			RetType: np.Schema().Columns[0].GetType(er.sctx.GetEvalCtx()),
+		}
+		constant.SetCoercibility(np.Schema().Columns[0].Coercibility())
+		er.ctxStackAppend(constant, types.EmptyName)
 	}
 	return true
 }
@@ -1721,9 +1840,11 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) bool {
 				er.rewriteSystemVariable(planCtx, v)
 			}, "accessing system variable requires plan context")
 		} else {
+			er.enterMaskingStateWrite(v, -1)
 			er.rewriteUserVariable(v)
 		}
 	case *ast.FuncCallExpr:
+		er.enterMaskingStateWrite(v, -1)
 		switch v.FnName.L {
 		case ast.Grouping:
 			withPlanCtx(func(planCtx *exprRewriterPlanCtx) {
@@ -1750,7 +1871,7 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) bool {
 		}
 		er.binaryOpToExpression(v)
 	case *ast.BetweenExpr:
-		er.betweenToExpression(v)
+		er.betweenToExpression(v.Not, &v.Type)
 	case *ast.CaseExpr:
 		if _, ok := expression.TryFoldFunctions["case"]; ok {
 			er.tryFoldCounter--
@@ -1776,22 +1897,26 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) bool {
 			return false
 		}
 
-		targetTp := v.Tp.DeepCopy()
-		castFunction, err := expression.BuildCastFunctionWithCheck(er.sctx, arg, targetTp, false, v.ExplicitCharSet)
+		source := er.maskingSource([]expression.Expression{arg})
+		// Building the cast completes its type, for example with the length
+		// of its argument. A prepared statement is planned again from this
+		// AST, by then maybe for another argument type or masking policy,
+		// so the type must stay as written. So must the definition stored
+		// for a view, which is restored from this AST.
+		castType, sourceType := v.Tp.DeepCopy(), v.Tp.DeepCopy()
+		if source != nil {
+			sourceType = v.Tp.DeepCopy()
+		}
+		castFunction, err := buildExplicitCast(er.sctx, arg, castType, v.ExplicitCharSet)
 		if err != nil {
 			er.err = err
 			return false
 		}
-		if v.Tp.EvalType() == types.ETString {
-			castFunction.SetCoercibility(expression.CoercibilityImplicit)
-			if v.Tp.GetCharset() == charset.CharsetASCII {
-				castFunction.SetRepertoire(expression.ASCII)
-			} else {
-				castFunction.SetRepertoire(expression.UNICODE)
-			}
-		} else {
-			castFunction.SetCoercibility(expression.CoercibilityNumeric)
-			castFunction.SetRepertoire(expression.ASCII)
+		if source != nil {
+			explicitCharset := v.ExplicitCharSet
+			er.setMaskingSource(castFunction, source, func(ctx expression.BuildContext, args []expression.Expression) (expression.Expression, error) {
+				return buildExplicitCast(ctx, args[0], sourceType.Clone(), explicitCharset)
+			})
 		}
 
 		er.ctxStack[len(er.ctxStack)-1] = castFunction
@@ -1853,6 +1978,12 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) bool {
 		}, types.EmptyName)
 	case *ast.SetCollationExpr:
 		arg := er.ctxStack[len(er.ctxStack)-1]
+		// A masking policy may replace the argument: the collation is then
+		// applied again to what the expression becomes.
+		collation := v.Collate
+		reapply := func(ctx expression.BuildContext, arg expression.Expression) (expression.Expression, error) {
+			return applyExplicitCollation(ctx, arg, collation)
+		}
 		if er.sctx.NewCollationEnabled() {
 			var collInfo *charset.Collation
 			// TODO(bb7133): use charset.ValidCharsetAndCollation when its bug is fixed.
@@ -1865,7 +1996,13 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) bool {
 				chs = mysql.UTF8MB4Charset
 			}
 			if chs != "" && collInfo.CharsetName != chs {
-				er.err = charset.ErrCollationCharsetMismatch.GenWithStackByArgs(collInfo.Name, chs)
+				mismatch := charset.ErrCollationCharsetMismatch.GenWithStackByArgs(collInfo.Name, chs)
+				// The collation may be valid for what a masking policy returns.
+				if deferred := er.deferCollation(v, arg, mismatch, reapply); deferred != nil {
+					er.ctxStack[len(er.ctxStack)-1] = deferred
+					break
+				}
+				er.err = mismatch
 				break
 			}
 		}
@@ -1883,13 +2020,22 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) bool {
 				exprType.SetCharset(mysql.UTF8MB4Charset)
 			}
 			exprType.SetCollate(v.Collate)
+			source := er.maskingSource([]expression.Expression{arg})
 			casted := expression.BuildCastFunction(er.sctx, arg, exprType)
+			// The cast is built for the length of the original argument.
+			er.setMaskingSource(casted, source, func(ctx expression.BuildContext, args []expression.Expression) (expression.Expression, error) {
+				return reapply(ctx, args[0])
+			})
 			arg = casted
 			er.ctxStackPop(1)
 			er.ctxStackAppend(casted, types.EmptyName)
 		} else {
 			// For constant and scalar function, we can set its collate directly.
 			arg.GetType(er.sctx.GetEvalCtx()).SetCollate(v.Collate)
+			if sf, ok := arg.(*expression.ScalarFunction); ok && er.preserveMaskingDependencies {
+				// Building the function again derives its collation from its arguments.
+				er.planCtx.builder.maskingSources.Wrap(sf, reapply)
+			}
 		}
 		er.ctxStack[len(er.ctxStack)-1].SetCoercibility(expression.CoercibilityExplicit)
 		er.ctxStack[len(er.ctxStack)-1].SetCharsetAndCollation(arg.GetType(er.sctx.GetEvalCtx()).GetCharset(), arg.GetType(er.sctx.GetEvalCtx()).GetCollate())
@@ -1903,16 +2049,175 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) bool {
 	return er.err == nil
 }
 
+// buildCtx returns the context to build functions with. A result expression
+// that masking may substitute later must not be simplified using the NOT NULL
+// constraint of its original columns.
+func (er *expressionRewriter) buildCtx() expression.BuildContext {
+	if er.preserveMaskingDependencies {
+		return maskingProjectionBuildContext{er.sctx}
+	}
+	return er.sctx
+}
+
+// deferCollation handles an explicit collation that is invalid for the charset
+// of arg in a result expression. The charset that matters is the one of the
+// value a masking policy returns for the columns of arg, so the expression is
+// kept without the collation and mismatch is deferred: it is raised when the
+// statement is built unless the expression was built again for such a value,
+// which validates the collation for it. The statement may build node more than
+// once. It returns nil when the error cannot be deferred.
+func (er *expressionRewriter) deferCollation(
+	node *ast.SetCollationExpr, arg expression.Expression, mismatch error,
+	reapply func(expression.BuildContext, expression.Expression) (expression.Expression, error),
+) expression.Expression {
+	if !er.preserveMaskingDependencies || len(expression.ExtractColumns(arg)) == 0 {
+		return nil
+	}
+	b := er.planCtx.builder
+	if sf, ok := arg.(*expression.ScalarFunction); ok {
+		if !b.maskingSources.Wrap(sf, reapply) {
+			return nil
+		}
+		b.maskingSources.Defer(sf, node, mismatch)
+		return sf
+	}
+	// A column has no source: keep it in a cast to its own type.
+	source := er.maskingSource([]expression.Expression{arg})
+	kept, ok := expression.BuildCastFunction(er.sctx, arg, arg.GetType(er.sctx.GetEvalCtx()).Clone()).(*expression.ScalarFunction)
+	if !ok {
+		return nil
+	}
+	er.setMaskingSource(kept, source, func(ctx expression.BuildContext, args []expression.Expression) (expression.Expression, error) {
+		return reapply(ctx, args[0])
+	})
+	b.maskingSources.Defer(kept, node, mismatch)
+	return kept
+}
+
+// buildExplicitCast builds CAST(arg AS tp) as written in the statement.
+func buildExplicitCast(ctx expression.BuildContext, arg expression.Expression, tp *types.FieldType, explicitCharset bool) (expression.Expression, error) {
+	castFunction, err := expression.BuildCastFunctionWithCheck(ctx, arg, tp, false, explicitCharset)
+	if err != nil {
+		return nil, err
+	}
+	if tp.EvalType() == types.ETString {
+		castFunction.SetCoercibility(expression.CoercibilityImplicit)
+		if tp.GetCharset() == charset.CharsetASCII {
+			castFunction.SetRepertoire(expression.ASCII)
+		} else {
+			castFunction.SetRepertoire(expression.UNICODE)
+		}
+	} else {
+		castFunction.SetCoercibility(expression.CoercibilityNumeric)
+		castFunction.SetRepertoire(expression.ASCII)
+	}
+	return castFunction, nil
+}
+
+// applyExplicitCollation builds `arg COLLATE collation` for an argument that
+// replaced the one of the statement. The argument may be shared with other
+// expressions, so it is always wrapped rather than changed. The cast keeps the
+// type of the argument, and with it its length.
+func applyExplicitCollation(ctx expression.BuildContext, arg expression.Expression, collation string) (expression.Expression, error) {
+	argType := arg.GetType(ctx.GetEvalCtx())
+	isJSON := argType.GetType() == mysql.TypeJSON
+	if collate.NewCollationEnabled() {
+		collInfo, err := collate.GetCollationByName(collation)
+		if err != nil {
+			return nil, err
+		}
+		chs := argType.GetCharset()
+		if isJSON {
+			chs = mysql.UTF8MB4Charset
+		}
+		if chs != "" && collInfo.CharsetName != chs {
+			return nil, charset.ErrCollationCharsetMismatch.GenWithStackByArgs(collInfo.Name, chs)
+		}
+	}
+	if _, ok := arg.(*expression.Column); ok && (argType.GetType() == mysql.TypeEnum || argType.GetType() == mysql.TypeSet) {
+		return nil, plannererrors.ErrNotSupportedYet.GenWithStackByArgs("use collate clause for enum or set")
+	}
+	exprType := argType.Clone()
+	if isJSON {
+		exprType = types.NewFieldType(mysql.TypeLongBlob)
+		exprType.SetCharset(mysql.UTF8MB4Charset)
+	}
+	exprType.SetCollate(collation)
+	casted := expression.BuildCastFunction(ctx, arg, exprType)
+	casted.SetCoercibility(expression.CoercibilityExplicit)
+	casted.SetCharsetAndCollation(exprType.GetCharset(), exprType.GetCollate())
+	return casted, nil
+}
+
+// maskingSource returns the arguments a result expression is about to be built
+// from. A masking policy may replace a column by a value of another type, and
+// the expression is then built again from these arguments rather than from the
+// constants and implicit casts chosen for the original column. It returns nil
+// when masking cannot apply.
+func (er *expressionRewriter) maskingSource(args []expression.Expression) []expression.Expression {
+	if !er.preserveMaskingDependencies {
+		return nil
+	}
+	return expression.CloneConstants(args)
+}
+
+// setMaskingSource records the source of expr: the arguments returned by
+// maskingSource, and how to build expr from such arguments. build must not keep
+// anything of this statement or session: the plan holding expr may be cached.
+func (er *expressionRewriter) setMaskingSource(
+	expr expression.Expression, source []expression.Expression,
+	build func(ctx expression.BuildContext, args []expression.Expression) (expression.Expression, error),
+) {
+	sf, ok := expr.(*expression.ScalarFunction)
+	if !ok || source == nil {
+		return
+	}
+	b := er.planCtx.builder
+	if b.maskingSources == nil {
+		b.maskingSources = &expression.SubstituteSources{}
+	}
+	b.maskingSources.Set(sf, source, build)
+}
+
+// maskingRebuilder returns how to build an expression again from its source:
+// build runs as it does for an ordinary expression, with the source as stack
+// and the given context.
+func maskingRebuilder(build func(er *expressionRewriter)) func(expression.BuildContext, []expression.Expression) (expression.Expression, error) {
+	return func(ctx expression.BuildContext, args []expression.Expression) (expression.Expression, error) {
+		sub := &expressionRewriter{
+			sctx:     ctx,
+			ctxStack: slices.Clone(args), ctxNameStk: make([]*types.FieldName, len(args)),
+		}
+		build(sub)
+		if sub.err != nil {
+			return nil, sub.err
+		}
+		return sub.ctxStack[len(sub.ctxStack)-1], nil
+	}
+}
+
 // newFunctionWithInit chooses which expression.NewFunctionImpl() will be used.
 func (er *expressionRewriter) newFunctionWithInit(funcName string, retType *types.FieldType, init expression.ScalarFunctionCallBack, args ...expression.Expression) (ret expression.Expression, err error) {
+	buildCtx := er.buildCtx()
+	newFunc := expression.NewFunction
 	if init != nil {
-		ret, err = expression.NewFunctionWithInit(er.sctx, funcName, retType, init, args...)
-	} else if er.disableFoldCounter > 0 {
-		ret, err = expression.NewFunctionBase(er.sctx, funcName, retType, args...)
-	} else if er.tryFoldCounter > 0 {
-		ret, err = expression.NewFunctionTryFold(er.sctx, funcName, retType, args...)
+		ret, err = expression.NewFunctionWithInit(buildCtx, funcName, retType, init, args...)
 	} else {
-		ret, err = expression.NewFunction(er.sctx, funcName, retType, args...)
+		if er.disableFoldCounter > 0 {
+			newFunc = expression.NewFunctionBase
+		} else if er.tryFoldCounter > 0 {
+			newFunc = expression.NewFunctionTryFold
+		}
+		source := er.maskingSource(args)
+		ret, err = newFunc(buildCtx, funcName, retType, args...)
+		// Folding may return an argument, which keeps its own source.
+		if err == nil && source != nil && !slices.Contains(args, ret) {
+			// The caller's type often belongs to the statement's AST.
+			sourceType := retType.Clone()
+			er.setMaskingSource(ret, source, func(ctx expression.BuildContext, args []expression.Expression) (expression.Expression, error) {
+				return newFunc(ctx, funcName, sourceType, args...)
+			})
+		}
 	}
 	if err != nil {
 		return
@@ -1941,6 +2246,42 @@ func (er *expressionRewriter) useCache() bool {
 	return er.sctx.IsUseCache()
 }
 
+// maskingStateWriteFuncArgs maps the functions that keep arguments in session
+// state to the number of those leading arguments. SETVAR is what a user
+// variable assignment is rewritten to, and can also be called by name: it
+// keeps its value under its name, which is evaluated for every row as well.
+// GET_LOCK keeps the lock name in the session and in the lock it holds.
+var maskingStateWriteFuncArgs = map[string]int{ast.SetVar: 2, ast.LastInsertId: 1, ast.GetLock: 1}
+
+// enterMaskingStateWrite enters (delta 1) or leaves (delta -1) an expression
+// that keeps its argument in session state. A scalar subquery in the argument
+// is a stored value and masks its own result, as in SET and DO.
+func (er *expressionRewriter) enterMaskingStateWrite(node ast.Node, delta int) {
+	if er.planCtx == nil || er.planCtx.builder == nil {
+		return
+	}
+	switch v := node.(type) {
+	case *ast.VariableExpr:
+		if v.IsSystem || v.Value == nil {
+			return
+		}
+	case *ast.FuncCallExpr:
+		if _, ok := maskingStateWriteFuncArgs[v.FnName.L]; !ok || len(v.Args) == 0 {
+			return
+		}
+	}
+	er.planCtx.builder.maskScalarSubqueryValue += delta
+}
+
+// checkMaskingStateWrite rejects keeping stored in session state when it reads
+// a column that is masked for the current session.
+func (er *expressionRewriter) checkMaskingStateWrite(stored expression.Expression, shape string) {
+	if er.planCtx == nil || er.planCtx.builder == nil {
+		return
+	}
+	er.err = er.planCtx.builder.checkMaskingPolicyStateWrite(er.ctx, er.planCtx.plan, er.planCtx.insertPlan, stored, shape)
+}
+
 func (er *expressionRewriter) rewriteUserVariable(v *ast.VariableExpr) {
 	stkLen := len(er.ctxStack)
 	name := strings.ToLower(v.Name)
@@ -1959,6 +2300,9 @@ func (er *expressionRewriter) rewriteUserVariable(v *ast.VariableExpr) {
 
 		intest.Assert(er.planCtx == nil || sessionVars == er.planCtx.builder.ctx.GetSessionVars())
 
+		if er.checkMaskingStateWrite(er.ctxStack[stkLen-1], "user variable assignment"); er.err != nil {
+			return
+		}
 		tp := er.ctxStack[stkLen-1].GetType(er.sctx.GetEvalCtx())
 		er.ctxStack[stkLen-1], er.err = er.newFunction(ast.SetVar, tp,
 			expression.DatumToConstant(types.NewDatum(name), mysql.TypeString, 0),
@@ -2188,6 +2532,7 @@ func (er *expressionRewriter) inToExpression(lLen int, not bool, tp *types.Field
 		}
 	}
 	args := er.ctxStack[stkLen-lLen-1:]
+	source := er.maskingSource(args)
 	leftFt := args[0].GetType(er.sctx.GetEvalCtx())
 	leftEt, leftIsNull := leftFt.EvalType(), leftFt.GetType() == mysql.TypeNull
 	if leftIsNull {
@@ -2251,6 +2596,10 @@ func (er *expressionRewriter) inToExpression(lLen int, not bool, tp *types.Field
 				return
 			}
 		}
+	}
+	if source != nil {
+		sourceType := tp.Clone()
+		er.setMaskingSource(function, source, maskingRebuilder(func(sub *expressionRewriter) { sub.inToExpression(lLen, not, sourceType) }))
 	}
 	er.ctxStackPop(lLen + 1)
 	er.ctxStackAppend(function, types.EmptyName)
@@ -2788,13 +3137,14 @@ func (er *expressionRewriter) wrapExpWithCast() (expr, lexp, rexp expression.Exp
 	return
 }
 
-func (er *expressionRewriter) betweenToExpression(v *ast.BetweenExpr) {
+func (er *expressionRewriter) betweenToExpression(not bool, tp *types.FieldType) {
 	stkLen := len(er.ctxStack)
 	er.err = expression.CheckArgsNotMultiColumnRow(er.ctxStack[stkLen-3:]...)
 	if er.err != nil {
 		return
 	}
 
+	source := er.maskingSource(er.ctxStack[stkLen-3:])
 	expr, lexp, rexp := er.wrapExpWithCast()
 
 	coll, err := expression.CheckAndDeriveCollationFromExprs(er.sctx, "BETWEEN", types.ETInt, expr, lexp, rexp)
@@ -2813,25 +3163,30 @@ func (er *expressionRewriter) betweenToExpression(v *ast.BetweenExpr) {
 	rexp = expression.BuildCastCollationFunction(er.sctx, rexp, coll, enumOrSetRealTypeIsStr)
 
 	var l, r expression.Expression
-	l, er.err = expression.NewFunction(er.sctx, ast.GE, v.Type.DeepCopy(), expr, lexp)
+	buildCtx := er.buildCtx()
+	l, er.err = expression.NewFunction(buildCtx, ast.GE, tp, expr, lexp)
 	if er.err != nil {
 		return
 	}
-	r, er.err = expression.NewFunction(er.sctx, ast.LE, v.Type.DeepCopy(), expr, rexp)
+	r, er.err = expression.NewFunction(buildCtx, ast.LE, tp, expr, rexp)
 	if er.err != nil {
 		return
 	}
-	function, err := er.newFunction(ast.LogicAnd, v.Type.DeepCopy(), l, r)
+	function, err := er.newFunction(ast.LogicAnd, tp, l, r)
 	if err != nil {
 		er.err = err
 		return
 	}
-	if v.Not {
-		function, err = er.newFunction(ast.UnaryNot, v.Type.DeepCopy(), function)
+	if not {
+		function, err = er.newFunction(ast.UnaryNot, tp, function)
 		if err != nil {
 			er.err = err
 			return
 		}
+	}
+	if source != nil {
+		sourceType := tp.Clone()
+		er.setMaskingSource(function, source, maskingRebuilder(func(sub *expressionRewriter) { sub.betweenToExpression(not, sourceType) }))
 	}
 	er.ctxStackPop(3)
 	er.ctxStackAppend(function, types.EmptyName)
@@ -2857,7 +3212,7 @@ func (er *expressionRewriter) rewriteFuncCall(v *ast.FuncCallExpr) bool {
 			isEnumSet = true
 		}
 		// if expr1 is a column with not null flag, then we can optimize it as a cast.
-		if isColumn && !isEnumSet && mysql.HasNotNullFlag(col.RetType.GetFlag()) {
+		if !er.preserveMaskingDependencies && isColumn && !isEnumSet && mysql.HasNotNullFlag(col.RetType.GetFlag()) {
 			retTp, err := expression.InferType4ControlFuncs(er.sctx, ast.Ifnull, lhs, rhs)
 			if err != nil {
 				er.err = err
@@ -3008,10 +3363,16 @@ func (er *expressionRewriter) funcCallToExpression(v *ast.FuncCallExpr) {
 	if er.rewriteFuncCall(v) {
 		return
 	}
+	for _, arg := range args[:min(len(args), maskingStateWriteFuncArgs[v.FnName.L])] {
+		if er.checkMaskingStateWrite(arg, strings.ToUpper(v.FnName.L)); er.err != nil {
+			return
+		}
+	}
 
 	var function expression.Expression
 	er.ctxStackPop(len(v.Args))
-	if ok := expression.IsDeferredFunctions(er.sctx, v.FnName.L); er.useCache() && ok {
+	_, forceDeferred := er.deferredFunctions[v.FnName.L]
+	if forceDeferred || (er.useCache() && expression.IsDeferredFunctions(er.sctx, v.FnName.L)) {
 		// When the expression is unix_timestamp and the number of argument is not zero,
 		// we deal with it as normal expression.
 		if v.FnName.L == ast.UnixTimestamp && len(v.Args) != 0 {
@@ -3019,6 +3380,9 @@ func (er *expressionRewriter) funcCallToExpression(v *ast.FuncCallExpr) {
 			er.ctxStackAppend(function, types.EmptyName)
 		} else {
 			function, er.err = expression.NewFunctionBase(er.sctx, v.FnName.L, v.Type.DeepCopy(), args...)
+			if er.err != nil {
+				return
+			}
 			c := &expression.Constant{Value: types.NewDatum(nil), RetType: function.GetType(er.sctx.GetEvalCtx()).Clone(), DeferredExpr: function}
 			er.ctxStackAppend(c, types.EmptyName)
 		}
@@ -3383,4 +3747,16 @@ func hasLimit(plan base.LogicalPlan) bool {
 		}
 	}
 	return false
+}
+
+func (*expressionRewriter) maskSubqueryResult(ctx context.Context, planCtx *exprRewriterPlanCtx, np base.LogicalPlan) (base.LogicalPlan, error) {
+	enabled, err := planCtx.builder.maskingEnabled(ctx, np, planCtx.plan)
+	if err != nil || !enabled {
+		return np, err
+	}
+	return maskPredicateSubqueryResult(ctx, planCtx, np)
+}
+
+func maskPredicateSubqueryResult(ctx context.Context, planCtx *exprRewriterPlanCtx, np base.LogicalPlan) (base.LogicalPlan, error) {
+	return planCtx.builder.buildPredicateProjectionWithMasking(ctx, np, planCtx.plan)
 }

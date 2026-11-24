@@ -289,7 +289,7 @@ func optimizeNoCache(ctx context.Context, sctx sessionctx.Context, node *resolve
 		} else {
 			fp = core.TryFastPlan(pctx, node)
 		}
-		if fp != nil {
+		if fp != nil && core.RecordFastPlanMaskingPolicyReads(ctx, pctx, fp) {
 			return fp, fp.OutputNames(), nil
 		}
 	}

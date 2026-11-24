@@ -216,6 +216,53 @@ func checkFlashbackMaterializedViews(ctx context.Context, se sessionctx.Context,
 	return nil
 }
 
+// checkSystemSchemaDiff rejects a schema diff that modifies a system schema.
+func checkSystemSchemaDiff(t meta.Reader, diff *model.SchemaDiff, flashbackTSString string) error {
+	switch diff.Type {
+	case model.ActionCreateMaskingPolicy, model.ActionAlterMaskingPolicy, model.ActionDropMaskingPolicy:
+		// SchemaID of a masking policy diff is the policy ID, which is allocated
+		// independently of database IDs. Check the bound table instead.
+		return checkSystemSchemaTableID(t, diff.TableID, flashbackTSString)
+	}
+	if err := checkSystemSchemaID(t, diff.SchemaID, flashbackTSString); err != nil {
+		return err
+	}
+	if diff.Type == model.ActionRenameTables {
+		// SchemaID is the target schema of the first table only. The targets
+		// of the other tables are in AffectedOpts.
+		for _, opt := range diff.AffectedOpts {
+			if err := checkSystemSchemaID(t, opt.SchemaID, flashbackTSString); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// checkSystemSchemaTableID checks whether the table was in a system schema at
+// the flashback snapshot. A table that enters a system schema later does so by
+// a diff carrying that schema ID as a target, which checkSystemSchemaDiff
+// rejects.
+func checkSystemSchemaTableID(t meta.Reader, tableID int64, flashbackTSString string) error {
+	dbs, err := t.ListDatabases()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	for _, dbInfo := range dbs {
+		if !filter.IsSystemSchema(dbInfo.Name.L) {
+			continue
+		}
+		tblInfo, err := t.GetTable(dbInfo.ID, tableID)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if tblInfo != nil {
+			return errors.Errorf("Detected modified system table during [%s, now), can't do flashback", flashbackTSString)
+		}
+	}
+	return nil
+}
+
 func checkAndSetFlashbackClusterInfo(ctx context.Context, se sessionctx.Context, store kv.Storage, t *meta.Mutator, job *model.Job, flashbackTS uint64) (err error) {
 	if err = ValidateFlashbackTS(ctx, se, flashbackTS); err != nil {
 		return err
@@ -287,7 +334,7 @@ func checkAndSetFlashbackClusterInfo(ctx context.Context, se sessionctx.Context,
 		if !isFlashbackSupportedDDLAction(diff.Type) {
 			return errors.Errorf("Detected unsupported DDL job type(%s) during [%s, now), can't do flashback", diff.Type.String(), flashbackTSString)
 		}
-		err = checkSystemSchemaID(flashbackSnapshotMeta, diff.SchemaID, flashbackTSString)
+		err = checkSystemSchemaDiff(flashbackSnapshotMeta, diff, flashbackTSString)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -317,7 +364,10 @@ func checkAndSetFlashbackClusterInfo(ctx context.Context, se sessionctx.Context,
 }
 
 func addToSlice(schema string, tableName string, tableID int64, flashbackIDs []int64) []int64 {
-	if filter.IsSystemSchema(schema) && !strings.HasPrefix(tableName, "stats_") && tableName != "gc_delete_range" {
+	// Policies bind to the user-table IDs restored by flashback. Their rows
+	// must return to the same snapshot, including policies deleted by DROP.
+	if filter.IsSystemSchema(schema) && !strings.HasPrefix(tableName, "stats_") &&
+		tableName != "gc_delete_range" && tableName != "tidb_masking_policy" {
 		flashbackIDs = append(flashbackIDs, tableID)
 	}
 	return flashbackIDs

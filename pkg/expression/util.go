@@ -564,6 +564,23 @@ func ColumnSubstituteAll(ctx BuildContext, expr Expression, schema *Schema, newE
 // @return bool means whether the expr should change (has the dependency in schema, while the corresponding expr has some compatibility), but finally fallback.
 // @return Expression, the original expr or the changed expr, it depends on the first @return bool.
 func ColumnSubstituteImpl(ctx BuildContext, expr Expression, schema *Schema, newExprs []Expression, fail1Return bool) (bool, bool, Expression) {
+	return columnSubstituteImpl(ctx, expr, schema, newExprs, fail1Return, nil)
+}
+
+// ColumnSubstituteAllFromSource is ColumnSubstituteAll for new expressions whose
+// types may differ from the columns they replace. A function that recorded its
+// source in a SubstituteSources is built again from it, so that its type
+// inference, implicit casts and constant refinement follow the new types. The
+// error is the one of building such a function from the new expressions, as an
+// ordinary expression over them would report it.
+func ColumnSubstituteAllFromSource(ctx BuildContext, expr Expression, schema *Schema, newExprs []Expression) (bool, Expression, error) {
+	var buildErr error
+	_, hasFail, resExpr := columnSubstituteImpl(ctx, expr, schema, newExprs, true, &buildErr)
+	return hasFail, resExpr, buildErr
+}
+
+// columnSubstituteImpl uses the sources of functions when buildErr is not nil.
+func columnSubstituteImpl(ctx BuildContext, expr Expression, schema *Schema, newExprs []Expression, fail1Return bool, buildErr *error) (bool, bool, Expression) {
 	switch v := expr.(type) {
 	case *Column:
 		id := schema.ColumnIndex(v)
@@ -578,9 +595,38 @@ func ColumnSubstituteImpl(ctx BuildContext, expr Expression, schema *Schema, new
 	case *ScalarFunction:
 		substituted := false
 		hasFail := false
+		if source := v.source.get(); buildErr != nil && source.matches(v) {
+			args := CloneConstants(source.args)
+			for i, arg := range args {
+				changed, failed, newArg := columnSubstituteImpl(ctx, arg, schema, newExprs, fail1Return, buildErr)
+				if failed {
+					return changed, true, v
+				}
+				if changed {
+					args[i] = newArg
+					substituted = true
+				}
+			}
+			if !substituted {
+				return false, false, v
+			}
+			// Building may record other sources and move this one.
+			build, deferred := source.build, source.deferred
+			newFunc, err := build(ctx, args)
+			if err != nil {
+				if *buildErr == nil {
+					*buildErr = err
+				}
+				return true, true, v
+			}
+			if deferred != nil {
+				deferred.rebuilt = true
+			}
+			return true, false, newFunc
+		}
 		if v.FuncName.L == ast.Cast || v.FuncName.L == ast.Grouping {
 			var newArg Expression
-			substituted, hasFail, newArg = ColumnSubstituteImpl(ctx, v.GetArgs()[0], schema, newExprs, fail1Return)
+			substituted, hasFail, newArg = columnSubstituteImpl(ctx, v.GetArgs()[0], schema, newExprs, fail1Return, buildErr)
 			if fail1Return && hasFail {
 				return substituted, hasFail, v
 			}
@@ -589,6 +635,12 @@ func ColumnSubstituteImpl(ctx BuildContext, expr Expression, schema *Schema, new
 				var e Expression
 				var err error
 				if v.FuncName.L == ast.Cast {
+					// A substituted argument can become nullable (for example after
+					// result masking). Do not restore the old non-null guarantee or
+					// mutate the type shared with the original expression.
+					if !mysql.HasNotNullFlag(newArg.GetType(ctx.GetEvalCtx()).GetFlag()) {
+						flag &^= mysql.NotNullFlag
+					}
 					// If the newArg is a ScalarFunction(cast), BuildCastFunctionWithCheck will modify the newArg.RetType,
 					// So we need to deep copy RetType.
 					// TODO: Expression interface needs a deep copy method.
@@ -596,7 +648,7 @@ func ColumnSubstituteImpl(ctx BuildContext, expr Expression, schema *Schema, new
 						newArgFunc.RetType = newArgFunc.RetType.DeepCopy()
 						newArg = newArgFunc
 					}
-					e, err = BuildCastFunctionWithCheck(ctx, newArg, v.RetType, false, v.Function.IsExplicitCharset())
+					e, err = BuildCastFunctionWithCheck(ctx, newArg, v.RetType.Clone(), false, v.Function.IsExplicitCharset())
 					terror.Log(err)
 				} else {
 					// for grouping function recreation, use clone (meta included) instead of newFunction
@@ -648,7 +700,7 @@ func ColumnSubstituteImpl(ctx BuildContext, expr Expression, schema *Schema, new
 			tmpArgForCollCheck = make([]Expression, len(v.GetArgs()))
 		}
 		for idx, arg := range v.GetArgs() {
-			changed, failed, newFuncExpr := ColumnSubstituteImpl(ctx, arg, schema, newExprs, fail1Return)
+			changed, failed, newFuncExpr := columnSubstituteImpl(ctx, arg, schema, newExprs, fail1Return, buildErr)
 			if fail1Return && failed {
 				return changed, failed, v
 			}
