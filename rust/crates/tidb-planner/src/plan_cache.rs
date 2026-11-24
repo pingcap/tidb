@@ -1664,3 +1664,13 @@ pub fn build_prepared_dml_plan(
         ),
     ))
 }
+
+/// A plan-cache miss whose plan the optimizer refused: Go `generateNewPlan`'s
+/// error, with the warnings the optimizer left on the statement before it.
+#[derive(Debug, Clone)]
+pub struct GenerateNewPlanError {
+    /// The optimizer's error.
+    pub error: DriverError,
+    /// The warnings it left before failing.
+    pub warnings: Vec<tidb_context::SqlWarn>,
+}

@@ -16,6 +16,7 @@
 //! Go `session.ExecutePreparedStmt`: running a prepared statement through
 //! the session's statement lifecycle.
 
+use tidb_planner::optimize::PlanCacheContext as _;
 use crate::record_set::PendingExecution;
 use crate::*;
 use tidb_ast::Expr;
@@ -145,7 +146,7 @@ impl Session {
             && self.prepared_plan_cache_allowed_for_statement(&effective_statement)
         {
             let cached = match prepared.select_plan.as_ref() {
-                Some(plan) => self.bind_cached_prepared_select_for_statement(
+                Some(plan) => self.get_plan_from_plan_cache(
                     plan,
                     &values,
                     &effective_statement,
@@ -171,7 +172,7 @@ impl Session {
                 return result;
             }
             let cached = match prepared.dml_plan.as_ref() {
-                Some(plan) => self.bind_cached_prepared_dml_for_statement(
+                Some(plan) => self.get_plan_from_plan_cache(
                     plan,
                     &values,
                     &effective_statement,

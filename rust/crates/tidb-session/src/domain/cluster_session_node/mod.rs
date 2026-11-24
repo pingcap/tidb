@@ -165,6 +165,7 @@
 //! [`StatementSnapshot`]: tidb_store_driver_txn::cluster_table_storage::StatementSnapshot
 //! [`SessionTransaction`]: tidb_store_driver_txn::cluster_table_storage::SessionTransaction
 
+use tidb_planner::optimize::PlanCacheContext as _;
 use tidb_executor::ddl_exec::TemporaryTableDdlExec;
 use crate::statement_lifecycle::CatalogFollowing as _;
 use crate::store_session::{sql_query_error, StoreTxnOps};
@@ -2261,7 +2262,7 @@ impl<'s> ClusterServerSession<'s> {
             .flatten()
             .and_then(|plan| {
                 self.session
-                    .bind_cached_prepared_dml_for_statement(
+                    .get_plan_from_plan_cache(
                         &plan,
                         &params,
                         effective.expect("cacheable prepared DML retains a statement"),
@@ -2330,7 +2331,7 @@ impl<'s> ClusterServerSession<'s> {
                         );
                     }
                     let cached_select = match &select_candidate {
-                        Some(plan) => match session.bind_cached_prepared_select_for_statement(
+                        Some(plan) => match session.get_plan_from_plan_cache(
                             plan,
                             &params,
                             effective.expect("cacheable prepared SELECT retains a statement"),

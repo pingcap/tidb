@@ -36,7 +36,7 @@ pub mod plan_cacheable_checker;
 pub use plan_cacheable_checker::PlanCacheableChecker;
 
 /// The session primitives Go's compiler reads through `sctx`.
-pub trait CompilerSession: crate::admin::AdminExec + tidb_planner::optimize::NonPreparedPlanCacheContext {
+pub trait CompilerSession: crate::admin::AdminExec + tidb_planner::optimize::PlanCacheContext {
 
 
     /// Holds an autocommit `EXPLAIN ANALYZE` write's rendering until the

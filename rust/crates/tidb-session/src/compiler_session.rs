@@ -168,7 +168,7 @@ impl tidb_planner::plan_cache_utils::PlanCacheSessionContext for Session {
     }
 }
 
-impl tidb_planner::optimize::NonPreparedPlanCacheContext for Session {
+impl tidb_planner::optimize::PlanCacheContext for Session {
     fn non_prepared_plan_cache_mut(&mut self) -> &mut tidb_planner::optimize::NonPreparedPlanCache {
         &mut self.non_prepared_plan_cache
     }
@@ -213,6 +213,19 @@ impl tidb_planner::optimize::NonPreparedPlanCacheContext for Session {
 
     fn non_prepared_statement_context(&self) -> tidb_sessionctx::StmtContext {
         tidb_executor::stmt_ctx_build::ResetContextOfStmt::statement_context(self, false)
+    }
+
+    fn prepared_miss_statement_context(&self, statement: &tidb_ast::Stmt) -> tidb_sessionctx::StmtContext {
+        use tidb_executor::stmt_ctx_build::ResetContextOfStmt as _;
+        match statement {
+            tidb_ast::Stmt::Query(_) => self.statement_context_for_stmt(statement, false),
+            tidb_ast::Stmt::Dml(dml)
+                if matches!(dml.as_ref(), tidb_ast::DmlStmt::Update(_) | tidb_ast::DmlStmt::Delete(_)) =>
+            {
+                self.statement_context_for_update_read(false)
+            }
+            _ => self.statement_context(true),
+        }
     }
 
     fn planning_hooks<'a>(

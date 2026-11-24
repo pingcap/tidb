@@ -16,6 +16,7 @@
 //! `@@last_plan_from_cache` reports across `EXECUTE`s. See
 //! [`tidb_executor::compiler::plan_cacheable_checker`] for what is and is not modelled.
 
+use tidb_planner::optimize::PlanCacheContext as _;
 use tidb_executor::compiler::PreparedAstCompile;
 use tidb_datatype::Datum;
 
@@ -109,11 +110,11 @@ fn cached_dml_binding_refuses_a_pinned_historical_read() {
     let plan = prepared.dml_plan().expect("prepared point UPDATE plan");
 
     assert!(session
-        .bind_cached_prepared_dml(&plan, &[Datum::Int(20), Datum::Int(1)])
+        .bind_cached_prepared(&plan, &[Datum::Int(20), Datum::Int(1)])
         .is_some());
     session.run("SET tidb_read_staleness = -1").unwrap();
     assert!(session
-        .bind_cached_prepared_dml(&plan, &[Datum::Int(20), Datum::Int(1)])
+        .bind_cached_prepared(&plan, &[Datum::Int(20), Datum::Int(1)])
         .is_none());
 }
 
@@ -1603,7 +1604,7 @@ fn session_plan_cache_counts_parameter_variants_as_entries() {
         .unwrap();
     for value in [Datum::Int(1), Datum::UInt(1), Datum::Int(1)] {
         let execution = session
-            .bind_cached_prepared_select(&prepared.select_plan().unwrap(), &[value])
+            .bind_cached_prepared(&prepared.select_plan().unwrap(), &[value])
             .unwrap();
         assert!(
             !execution.cache_hit(),
@@ -1821,7 +1822,7 @@ fn session_plan_cache_sql_and_binary_close_share_gos_retention_policy() {
             .unwrap();
         let plan = prepared.select_plan().unwrap();
         let execution = session
-            .bind_cached_prepared_select(&plan, &[Datum::Int(1)])
+            .bind_cached_prepared(&plan, &[Datum::Int(1)])
             .unwrap();
         assert!(execution.cache_hit());
         session.close_prepared(&prepared);
@@ -1836,14 +1837,14 @@ fn session_plan_cache_eviction_does_not_destroy_an_open_execution() {
         .prepare_ast("SELECT v FROM cache_lifecycle WHERE id=?")
         .unwrap();
     let execution = session
-        .bind_cached_prepared_select(&prepared.select_plan().unwrap(), &[Datum::Int(2)])
+        .bind_cached_prepared(&prepared.select_plan().unwrap(), &[Datum::Int(2)])
         .unwrap();
     assert!(session.plan_cache_rebuild.memory_usage() > 0);
     let other = session
         .prepare_ast("SELECT id FROM cache_lifecycle WHERE id=?")
         .unwrap();
     session
-        .bind_cached_prepared_select(&other.select_plan().unwrap(), &[Datum::Int(1)])
+        .bind_cached_prepared(&other.select_plan().unwrap(), &[Datum::Int(1)])
         .unwrap();
     session.bind_committed_snapshot().unwrap();
     let output = session
@@ -1855,7 +1856,7 @@ fn session_plan_cache_eviction_does_not_destroy_an_open_execution() {
     };
     assert_eq!(rows, vec![vec![Datum::Int(20)]]);
     assert!(!session
-        .bind_cached_prepared_select(&prepared.select_plan().unwrap(), &[Datum::Int(1)])
+        .bind_cached_prepared(&prepared.select_plan().unwrap(), &[Datum::Int(1)])
         .unwrap()
         .cache_hit());
 }
@@ -1967,10 +1968,10 @@ fn instance_cache_bindings_do_not_invalidate_another_sessions_open_execution() {
         .prepare_ast("SELECT v FROM cache_lifecycle WHERE id=?")
         .unwrap();
     let first_bound = first
-        .bind_cached_prepared_select(&a.select_plan().unwrap(), &[Datum::Int(1)])
+        .bind_cached_prepared(&a.select_plan().unwrap(), &[Datum::Int(1)])
         .unwrap();
     let peer_bound = peer
-        .bind_cached_prepared_select(&b.select_plan().unwrap(), &[Datum::Int(2)])
+        .bind_cached_prepared(&b.select_plan().unwrap(), &[Datum::Int(2)])
         .unwrap();
     first.bind_committed_snapshot().unwrap();
     let first_rows = crate::tests_support::collect_record_set(

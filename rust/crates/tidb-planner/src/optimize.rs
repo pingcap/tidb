@@ -1194,8 +1194,9 @@ impl NonPreparedPlanCache {
 }
 
 /// Go `getPlanFromNonPreparedPlanCache` and `NonPreparedPlanCacheableWithCtx` over the session.
-/// What Go `getPlanFromNonPreparedPlanCache` reads and writes on `sctx`.
-pub trait NonPreparedPlanCacheContext: crate::plan_cache_utils::PlanCacheSessionContext {
+/// What Go `GetPlanFromPlanCache` and `getPlanFromNonPreparedPlanCache` read
+/// and write on `sctx`.
+pub trait PlanCacheContext: crate::plan_cache_utils::PlanCacheSessionContext {
     /// Go `SessionVars`' non-prepared plan cache.
     fn non_prepared_plan_cache_mut(&mut self) -> &mut NonPreparedPlanCache;
     /// The session's physical plan cache (Go `GetSessionPlanCache`).
@@ -1243,11 +1244,182 @@ pub trait NonPreparedPlanCacheContext: crate::plan_cache_utils::PlanCacheSession
     ) -> std::sync::Arc<std::sync::Mutex<tidb_infoschema::SessionExtendedInfoSchema>>;
     /// A statement context for a non-DML statement.
     fn non_prepared_statement_context(&self) -> StmtContext;
+    /// The context a prepared EXECUTE's plan-cache miss plans `statement`
+    /// under.
+    fn prepared_miss_statement_context(&self, statement: &Stmt) -> StmtContext;
     /// The executor's half of planning over `catalog`.
     fn planning_hooks<'a>(
         &self,
         catalog: &'a tidb_infoschema::SessionExtendedInfoSchema,
     ) -> Box<dyn PlanningHooks + 'a>;
+
+    /// Execute-time prepared-cache policy from Go `GetPlanFromPlanCache`.
+    /// The explicit statement hint and `hint_only` strategy are evaluated for
+    /// every EXECUTE because the strategy may change after PREPARE.
+    #[must_use]
+    fn prepared_plan_cache_allowed_for_statement(&self, statement: &Stmt) -> bool {
+        if !self.get_session_vars().enable_prepared_plan_cache() {
+            return false;
+        }
+        let hints = self.parse_statement_hints_without_catalog(
+            statement,
+            self.get_session_vars().current_db.as_str(),
+        );
+        if hints.ignore_plan_cache {
+            return false;
+        }
+        // Compared, not kept: `get_system` would copy the value into a
+        // `String` for every statement that consults the plan cache.
+        let hint_only = self
+            .get_session_vars()
+            .system_value(tidb_vardef::tidb_vars::TIDB_PLAN_CACHE_STRATEGY)
+            .is_ok_and(|strategy| {
+                strategy.eq_ignore_ascii_case(
+                    tidb_vardef::tidb_vars::TIDB_PLAN_CACHE_STRATEGY_HINT_ONLY,
+                )
+            });
+        !hint_only || hints.use_plan_cache
+    }
+
+    /// Why Go's prepared plan cache refuses this EXECUTE, as its warning
+    /// names it: the `hint_only` strategy without `use_plan_cache()`
+    /// (`GetPlanFromPlanCache`), or an `ignore_plan_cache()` hint from the
+    /// statement or from its matched binding (`Optimize`).
+    #[must_use]
+    fn prepared_plan_cache_refusal(
+        &self,
+        original: &Stmt,
+        effective: &Stmt,
+    ) -> Option<&'static str> {
+        if !self.get_session_vars().enable_prepared_plan_cache() {
+            return None;
+        }
+        let hints = self.parse_statement_hints_without_catalog(
+            effective,
+            self.get_session_vars().current_db.as_str(),
+        );
+        let hint_only = self
+            .get_session_vars()
+            .system_value(tidb_vardef::tidb_vars::TIDB_PLAN_CACHE_STRATEGY)
+            .is_ok_and(|strategy| {
+                strategy.eq_ignore_ascii_case(
+                    tidb_vardef::tidb_vars::TIDB_PLAN_CACHE_STRATEGY_HINT_ONLY,
+                )
+            });
+        if hint_only && !hints.use_plan_cache {
+            return Some("plan cache strategy is hint_only and use_plan_cache hint is absent");
+        }
+        if !hints.ignore_plan_cache {
+            return None;
+        }
+        let own = self.parse_statement_hints_without_catalog(
+            original,
+            self.get_session_vars().current_db.as_str(),
+        );
+        Some(if own.ignore_plan_cache {
+            "ignore_plan_cache hint used in SQL query"
+        } else {
+            "ignore_plan_cache hint used in SQL binding"
+        })
+    }
+
+    /// Go `GetPlanFromPlanCache` for an EXECUTE of `plan` with `values` over
+    /// `statement` (the prepared one, or the one a matched binding rewrote,
+    /// whose `BindSQL` keys the entry): the rebuilt entry on a hit, else a
+    /// new plan under the statement's own context.
+    ///
+    /// # Errors
+    /// A miss whose plan the optimizer refused (Go `generateNewPlan`).
+    fn get_plan_from_plan_cache(
+        &self,
+        plan: &std::sync::Arc<PlanCacheStmt>,
+        values: &[tidb_datatype::Datum],
+        statement: &Stmt,
+        binding_sql: Option<&str>,
+    ) -> Result<
+        Option<crate::plan_cache::PlanCacheExecution>,
+        crate::plan_cache::GenerateNewPlanError,
+    > {
+        if !self.get_session_vars().enable_prepared_plan_cache()
+            || self
+                .get_session_vars()
+                .optimizer_fix_control()
+                .get_bool_with_default(tidb_fixcontrol::FIX_52592, false)
+        {
+            return Ok(None);
+        }
+        let Some(environment) =
+            crate::plan_cache_utils::prepared_plan_cache_environment_for_binding(self, binding_sql)
+        else {
+            return Ok(None);
+        };
+        self.configure_session_plan_cache();
+        let lookup_start = std::time::Instant::now();
+        {
+            let Ok(catalog) = self.plan_cache_catalog() else {
+                return Ok(None);
+            };
+            let hooks = self.planning_hooks(&catalog);
+            if let Some(cached) = plan.bind_cached_for_statement(
+                &*hooks,
+                self.plan_cache_rebuild(),
+                values,
+                &catalog,
+                self.get_session_vars().current_db.as_str(),
+                &crate::plan_cache_utils::plan_cache_dirty_tables(self),
+                &environment,
+                statement,
+            ) {
+                // Go `GetPlanFromPlanCache`'s hit arm (prepared label).
+                // `lookupPlanCache`'s defer observes the lookup duration on
+                // hits only, for the prepared and non-prepared paths alike.
+                tidb_planner_core_metrics::inc_plan_cache_hit(false);
+                tidb_planner_core_metrics::get_plan_cache_lookup_duration(
+                    self.plan_cache_rebuild().uses_instance(),
+                )
+                .observe(lookup_start.elapsed().as_secs_f64());
+                return Ok(Some(cached));
+            }
+        }
+        // The statement context snapshots sequence/key-decode metadata from
+        // this same catalog: build it after releasing the cache-probe guard,
+        // as the PREPARE path does, then reacquire the catalog.
+        let planner_context = self.prepared_miss_statement_context(statement);
+        let Ok(catalog) = self.plan_cache_catalog() else {
+            return Ok(None);
+        };
+        let hooks = self.planning_hooks(&catalog);
+        // Go's miss arm: the replan is recorded on the miss counter
+        // (plan_cache.go:366).
+        tidb_planner_core_metrics::plan_cache_miss_counter(false).inc();
+        plan.bind_for_statement(
+            &*hooks,
+            self.plan_cache_rebuild(),
+            values,
+            &catalog,
+            self.get_session_vars().current_db.as_str(),
+            &planner_context,
+            &crate::plan_cache_utils::plan_cache_dirty_tables(self),
+            &environment,
+            statement,
+        )
+        .map_err(|error| crate::plan_cache::GenerateNewPlanError {
+            error,
+            warnings: planner_context.take_warnings(),
+        })
+    }
+
+    /// [`Self::get_plan_from_plan_cache`] over the prepared statement itself,
+    /// without a binding.
+    fn bind_cached_prepared(
+        &self,
+        plan: &std::sync::Arc<PlanCacheStmt>,
+        values: &[tidb_datatype::Datum],
+    ) -> Option<crate::plan_cache::PlanCacheExecution> {
+        self.get_plan_from_plan_cache(plan, values, plan.statement(), None)
+            .ok()
+            .flatten()
+    }
 
     /// Parameterizes one admitted non-prepared SELECT. Refused statements use
     /// the ordinary planner and publish no cache hit.
