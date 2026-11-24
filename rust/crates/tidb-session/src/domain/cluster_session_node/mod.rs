@@ -1214,8 +1214,9 @@ impl<'s> ClusterServerSession<'s> {
         result
     }
 
-    /// Go `TraceExec`: runs the wrapped statement through its normal route
-    /// (write or result set), then answers with the spans of that run.
+    /// Go `TraceExec` (`tidb_executor::trace::trace_exec_next`) on this
+    /// connection: the wrapped statement runs through its normal route
+    /// (write or result set), then the spans of that run answer.
     fn execute_trace(
         mut self,
         trace: &tidb_ast::TraceStmt,
@@ -1235,73 +1236,17 @@ impl<'s> ClusterServerSession<'s> {
         // TRACE is being written by a connection.
         let writes = std::mem::replace(&mut self.session.connection_writes_results, false);
         let alloc_failed = self.session.chunk_alloc_failed;
-        let inner = (*trace.statement).clone();
-        let inner_sql = tidb_executor::trace::statement_text(&inner);
-        // Go `TraceExec.Next`: the statement runs under the recording
-        // tracer's `trace` span, `util.ContextWithTraceExecDetails` set.
-        let recorder = tidb_executor::trace::StatementTrace::start();
-        let entered = recorder.enter();
-        // Go `executeChild`: `ExecuteStmt`, then `drainRecordSet` pulls the
-        // record set it returned under the same span.
-        let child = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let mut affected = 0_u64;
-            match self.run_statement(&inner_sql, &inner, false) {
-                Ok(Executed::Done(outcome)) => affected = outcome.affected_rows,
-                Ok(opened) => match match opened {
-                    Executed::Query(execute_stmt) => {
-                        let opened = self.reborrow().open_query(&inner_sql, &inner);
-                        drop(execute_stmt);
-                        opened
-                    }
-                    Executed::Trace => self.reborrow().execute_trace(trace_of(&inner)),
-                    Executed::Done(_) => unreachable!("an OK outcome is matched above"),
-                } {
-                    Ok(mut result) => {
-                        let mut rows = 0_u64;
-                        loop {
-                            match result.source().next_batch(1024) {
-                                Ok(batch) if batch.is_empty() => {
-                                    recorder.event(&format!(
-                                        "execute done, ReturnRow: {rows}, ModifyRow: 0"
-                                    ));
-                                    break;
-                                }
-                                Ok(batch) => rows += batch.len() as u64,
-                                Err(failure) => {
-                                    recorder.event(&format!(
-                                        "execute with error({}): {}",
-                                        failure.code, failure.message
-                                    ));
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                    Err(failure) => recorder.event(&format!(
-                        "execute with error({}): {}",
-                        failure.code, failure.message
-                    )),
-                },
-                Err(failure) => recorder.event(&format!(
-                    "execute with error({}): {}",
-                    failure.code, failure.message
-                )),
-            }
-            affected
+        let traced = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            tidb_executor::trace::trace_exec_next(&mut self.reborrow(), trace)
         }));
         self.session.nested_chunk_alloc = nested;
         self.session.connection_writes_results = writes;
         // A child error becomes a trace event, not a failed client command.
         self.session.chunk_alloc_failed = alloc_failed;
-        let affected = match child {
-            Ok(affected) => affected,
+        let (columns, result_rows) = match traced {
+            Ok(rendered) => rendered.map_err(SqlQueryError::unknown)?,
             Err(panic) => std::panic::resume_unwind(panic),
         };
-        drop(entered);
-        recorder.event(&format!("execute done, modify row: {affected}"));
-        let (spans, started) = recorder.finish();
-        let (columns, result_rows) = tidb_executor::trace::render(&trace.format, &spans, started)
-            .map_err(SqlQueryError::unknown)?;
         let columns = crate::domain::pipeline_session::select_fields(&columns);
         Ok(QueryResult::new(Box::new(
             crate::domain::pipeline_session::MaterializedResultSetSource::new(columns, result_rows)
@@ -1717,7 +1662,7 @@ impl tidb_executor::ddl_exec::DdlExec for ClusterServerSession<'_> {
     }
 
     fn validate_snapshot_write(&self, stmt: &Stmt) -> Result<(), tidb_driver_error::DriverError> {
-        self.session.validate_snapshot_write(stmt)
+        tidb_executor::adapter::check_no_delay_snapshot_writes(&*self.session, stmt)
     }
 
     fn ddl_preserves_transaction(&self, stmt: &Stmt) -> bool {
@@ -3654,4 +3599,43 @@ pub(crate) fn prepare_restricted_caller(session: &mut Session, context: &dyn tid
         session.set_internal_request_source(&source.source_type);
     }
     sessions::honor_canceled_caller(context)
+}
+
+/// A traced statement's record set as Go's `drainRecordSet` pulls it.
+struct TraceChildQuery<'a>(QueryResult<'a>);
+
+impl tidb_executor::trace::TraceChildRows for TraceChildQuery<'_> {
+    fn next_batch(&mut self) -> Result<usize, tidb_executor::trace::TraceChildError> {
+        self.0
+            .source()
+            .next_batch(1024)
+            .map(|batch| batch.len())
+            .map_err(|failure| tidb_executor::trace::TraceChildError { code: failure.code, message: failure.message })
+    }
+}
+
+impl tidb_executor::trace::TraceExecSession for ClusterServerSession<'_> {
+    /// Go `executeChild`'s `ExecuteStmt`: the statement's own route on this
+    /// connection, a query opened as the record set `drainRecordSet` pulls.
+    fn execute_child(
+        &mut self,
+        sql: &str,
+        stmt: &Stmt,
+    ) -> Result<tidb_executor::trace::TraceChild<'_>, tidb_executor::trace::TraceChildError> {
+        let child_error = |failure: SqlQueryError| tidb_executor::trace::TraceChildError {
+            code: failure.code,
+            message: failure.message,
+        };
+        match self.run_statement(sql, stmt, false).map_err(child_error)? {
+            Executed::Done(outcome) => Ok(tidb_executor::trace::TraceChild::Done(outcome.affected_rows)),
+            Executed::Query(execute_stmt) => {
+                let opened = self.reborrow().open_query(sql, stmt);
+                drop(execute_stmt);
+                Ok(tidb_executor::trace::TraceChild::Rows(Box::new(TraceChildQuery(opened.map_err(child_error)?))))
+            }
+            Executed::Trace => Ok(tidb_executor::trace::TraceChild::Rows(Box::new(TraceChildQuery(
+                self.reborrow().execute_trace(trace_of(stmt)).map_err(child_error)?,
+            )))),
+        }
+    }
 }

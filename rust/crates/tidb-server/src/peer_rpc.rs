@@ -150,7 +150,13 @@ impl PeerService {
             // snapshot of its own.
             _ => session
                 .with_committed_snapshot(|session| {
-                    session.handle_cop_plan(&dag, &plan, Some(&self.processes), &zone)
+                    tidb_executor::coprocessor::CoprocessorDagHandler::handle_cop_plan(
+                        session,
+                        &dag,
+                        &plan,
+                        Some(&self.processes),
+                        &zone,
+                    )
                 })
                 .map_err(|error| error.to_string())??,
         };

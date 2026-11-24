@@ -402,7 +402,7 @@ impl TxnManager {
                 let options = Self::implicit_statement_options(session);
                 self.decide_could_retry(session, pessimistic, EnterNewTxnType::BeforeStmt, false);
                 let isolation = session.isolation_for_provider();
-                let low_resolution = session.use_low_resolution_tso();
+                let low_resolution = session.vars().use_low_resolution_tso();
                 self.enter_implicit(pessimistic, &isolation, low_resolution, inputs.resource_group, options, read_ts.clone());
                 Ok(())
             }
@@ -615,7 +615,7 @@ impl TxnManager {
             .with_statement_kv_context(session.statement_kv_context_cell())
             .with_temporary_tables(session.temporary_table_ids())
             .with_guarantee_linearizability(session.guarantee_linearizability())
-            .with_low_resolution_tso(session.use_low_resolution_tso())
+            .with_low_resolution_tso(session.vars().use_low_resolution_tso())
             .with_kill_signal(session.kv_kill_signal())
     }
 

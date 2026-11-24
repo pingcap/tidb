@@ -612,6 +612,92 @@ pub fn statement_text(stmt: &tidb_ast::Stmt) -> String {
     }
 }
 
+/// A statement failure `TraceExec` records as an event (Go `Eventf(ctx,
+/// "execute with error(%d): %s", ...)`).
+#[derive(Clone, Debug)]
+pub struct TraceChildError {
+    /// The error's code (Go `terror.ToSQLError(err).Code`).
+    pub code: u16,
+    /// The error's message.
+    pub message: String,
+}
+
+/// What Go's `executeChild` got from `ExecuteStmt` for the traced statement.
+pub enum TraceChild<'a> {
+    /// An executor with no record set (Go's `rs == nil`), with the rows it
+    /// modified.
+    Done(u64),
+    /// The record set `drainRecordSet` pulls.
+    Rows(Box<dyn TraceChildRows + 'a>),
+}
+
+/// The record set Go's `drainRecordSet` pulls chunk by chunk.
+pub trait TraceChildRows {
+    /// The rows of the next chunk, 0 once the set is drained.
+    ///
+    /// # Errors
+    ///
+    /// The statement's failure while it is read.
+    fn next_batch(&mut self) -> Result<usize, TraceChildError>;
+}
+
+/// What Go's `TraceExec` reaches through `sctx`.
+pub trait TraceExecSession {
+    /// Go `executeChild`'s `ExecuteStmt` of the traced statement (`sql` its
+    /// text), on the connection's own route.
+    ///
+    /// # Errors
+    ///
+    /// The statement's failure before a record set exists.
+    fn execute_child(&mut self, sql: &str, stmt: &tidb_ast::Stmt) -> Result<TraceChild<'_>, TraceChildError>;
+}
+
+/// Go `TraceExec.Next`: runs the traced statement under a recording tracer's
+/// `trace` span (`executeChild`, then `drainRecordSet` of what it returned),
+/// a failure becoming the trace's event, and answers the spans in the
+/// statement's format.
+///
+/// # Errors
+///
+/// Go's option checks (`check_options`), or the format's.
+pub fn trace_exec_next(
+    session: &mut impl TraceExecSession,
+    trace: &tidb_ast::TraceStmt,
+) -> Result<(Vec<(String, FieldType)>, Vec<Vec<Datum>>), String> {
+    let inner = (*trace.statement).clone();
+    let inner_sql = statement_text(&inner);
+    let recorder = StatementTrace::start();
+    let entered = recorder.enter();
+    let mut affected = 0_u64;
+    match session.execute_child(&inner_sql, &inner) {
+        Ok(TraceChild::Done(modified)) => affected = modified,
+        // Go `drainRecordSet`.
+        Ok(TraceChild::Rows(mut rows)) => {
+            let mut returned = 0_u64;
+            loop {
+                match rows.next_batch() {
+                    Ok(0) => {
+                        recorder.event(&format!("execute done, ReturnRow: {returned}, ModifyRow: 0"));
+                        break;
+                    }
+                    Ok(batch) => returned += batch as u64,
+                    Err(failure) => {
+                        recorder.event(&format!("execute with error({}): {}", failure.code, failure.message));
+                        break;
+                    }
+                }
+            }
+        }
+        Err(failure) => {
+            recorder.event(&format!("execute with error({}): {}", failure.code, failure.message));
+        }
+    }
+    drop(entered);
+    recorder.event(&format!("execute done, modify row: {affected}"));
+    let (spans, started) = recorder.finish();
+    render(&trace.format, &spans, started)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

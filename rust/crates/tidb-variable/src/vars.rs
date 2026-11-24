@@ -1562,6 +1562,17 @@ impl SessionVars {
     }
 
     /// Go `SessionVars.BulkDMLEnabled`, set by `tidb_dml_type`.
+    /// Go `SessionVars.UseLowResolutionTSO`: a user connection's
+    /// `tidb_low_resolution_tso`.
+    #[must_use]
+    pub fn use_low_resolution_tso(&self) -> bool {
+        !self.restricted_sql
+            && self.connection_id.is_some_and(|id| id > 0)
+            && self
+                .get_system(tidb_vardef::tidb_vars::TIDB_LOW_RESOLUTION_TSO)
+                .is_ok_and(|value| tidb_vardef::option_values::tidb_opt_on(&value))
+    }
+
     #[must_use]
     pub const fn bulk_dml_enabled(&self) -> bool {
         self.bulk_dml_enabled

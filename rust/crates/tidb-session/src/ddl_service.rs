@@ -155,7 +155,7 @@ impl Session {
     /// staleness check precedes `Compile` and the privileges are `Compile`'s
     /// ([`Session::compile_statement`]).
     pub fn begin_ddl_statement(&mut self, parsed: &tidb_ast::Stmt) -> Result<(), DriverError> {
-        self.validate_snapshot_write(parsed)
+        tidb_executor::adapter::check_no_delay_snapshot_writes(self, parsed)
     }
 }
 

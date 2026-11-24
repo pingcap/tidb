@@ -231,3 +231,90 @@ mod tests {
         );
     }
 }
+
+/// Go `handleNoDelayExecutor`'s switch on the executor (`DeleteExec`,
+/// `InsertExec`, `UpdateExec`, `ReplaceExec`, `LoadDataExec`, `DDLExec`,
+/// `ImportIntoExec`), which `handleNoDelay` hands an `EXPLAIN ANALYZE`'s
+/// analyzed executor.
+#[must_use]
+pub fn is_write_executor(stmt: &tidb_ast::Stmt) -> bool {
+    match stmt {
+        tidb_ast::Stmt::Dml(dml) => matches!(
+            dml.as_ref(),
+            tidb_ast::DmlStmt::Insert(_)
+                | tidb_ast::DmlStmt::Update(_)
+                | tidb_ast::DmlStmt::Delete(_)
+                | tidb_ast::DmlStmt::ImportInto(_)
+                | tidb_ast::DmlStmt::LoadData(_)
+        ),
+        tidb_ast::Stmt::Ddl(_) => true,
+        tidb_ast::Stmt::Admin(admin) => match admin.as_ref() {
+            tidb_ast::AdminStmt::Explain(explain) if explain.analyze => {
+                explain.statement().is_some_and(is_write_executor)
+            }
+            _ => false,
+        },
+        _ => false,
+    }
+}
+
+/// Go `ExecStmt.isSelectForUpdate`: a SELECT whose lock the executor builder
+/// keeps (`hasLock`), which `PessimisticLockEligible` allows only inside a
+/// transaction or with autocommit off, and which a `FOR SHARE` the no-op
+/// switch admitted never takes.
+pub fn is_select_for_update(session: &impl crate::stmt_ctx_build::StmtCtxSession, stmt: &tidb_ast::Stmt) -> bool {
+    let tidb_ast::Stmt::Query(query) = stmt else {
+        return false;
+    };
+    let tidb_ast::QueryStmt::Select(select) = query.as_ref() else {
+        return false;
+    };
+    let Some(lock) = &select.lock else {
+        return false;
+    };
+    let takes_lock = match lock.kind {
+        tidb_ast::LockKind::Update => true,
+        tidb_ast::LockKind::Share => {
+            crate::sessionctx::SessionContext::session_vars(session).shared_lock_promotion()
+        }
+    };
+    takes_lock && (!session.is_autocommit() || session.in_transaction())
+}
+
+/// Go `ExecStmt`'s refusals for a session reading at `tidb_snapshot` or a
+/// low-resolution TSO, once the statement has compiled: a write executor
+/// (`handleNoDelay`, `adapter.go:1152`), and a SELECT whose lock is taken --
+/// under `tidb_snapshot` in a pessimistic transaction only
+/// (`handlePessimisticSelectForUpdate`, `adapter.go:1067`; `Exec`,
+/// `adapter.go:830`).
+///
+/// # Errors
+///
+/// Go's refusal.
+pub fn check_no_delay_snapshot_writes(
+    session: &impl crate::stmt_ctx_build::StmtCtxSession,
+    stmt: &tidb_ast::Stmt,
+) -> Result<(), crate::DriverError> {
+    let vars = crate::sessionctx::SessionContext::session_vars(session);
+    let writes = is_write_executor(stmt);
+    if vars.snapshot_ts() != 0
+        && (writes || (is_select_for_update(session, stmt) && session.statement_txn_mode().is_pessimistic()))
+    {
+        return Err(crate::DriverError::unsupported(
+            "can not execute write statement when 'tidb_snapshot' is set",
+        ));
+    }
+    if vars.use_low_resolution_tso() {
+        if writes {
+            return Err(crate::DriverError::unsupported(
+                "can not execute write statement when 'tidb_low_resolution_tso' is set",
+            ));
+        }
+        if is_select_for_update(session, stmt) {
+            return Err(crate::DriverError::unsupported(
+                "can not execute select for update statement when 'tidb_low_resolution_tso' is set",
+            ));
+        }
+    }
+    Ok(())
+}

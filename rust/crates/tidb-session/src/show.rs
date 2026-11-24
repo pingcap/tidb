@@ -52,7 +52,7 @@ impl Session {
         let mut physical = match plan {
             tidb_planner::common_plans::Plan::Physical(physical) => physical,
             tidb_planner::common_plans::Plan::ShowNextRowID(plan) => {
-                return self.show_next_row_id_exec(&plan);
+                return tidb_executor::builder::show_next_row_id_exec(self, &plan);
             }
             _ => return Err(DriverError::unsupported("a SHOW planned as no SHOW plan")),
         };
@@ -68,28 +68,6 @@ impl Session {
         Ok(StmtOutput::Rows { columns, rows })
     }
 
-    /// Go `executorBuilder.buildShowNextRowID`'s executor, for both
-    /// spellings (`SHOW TABLE t NEXT_ROW_ID` and `ADMIN SHOW t NEXT_ROW_ID`).
-    pub(crate) fn show_next_row_id_exec(
-        &mut self,
-        plan: &tidb_planner::common_plans::ShowNextRowID,
-    ) -> Result<StmtOutput, DriverError> {
-        let rows = self.show_next_row_id_rows(&plan.table_name)?;
-        let columns = plan
-            .names
-            .iter()
-            .zip(&plan.schema.columns)
-            .map(|(name, column)| {
-                (
-                    name.names.column.original.clone(),
-                    column.ret_type.clone().unwrap_or_else(|| {
-                        tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::Varchar)
-                    }),
-                )
-            })
-            .collect();
-        Ok(StmtOutput::Rows { columns, rows })
-    }
 
 
 }

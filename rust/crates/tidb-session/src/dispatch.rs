@@ -402,7 +402,7 @@ impl Session {
             std::time::SystemTime::now() - elapsed + std::time::Duration::from_millis(max_ms)
         });
         self.statement_kv_context.publish(kv_context);
-        self.validate_snapshot_write(stmt)?;
+        tidb_executor::adapter::check_no_delay_snapshot_writes(self, stmt)?;
         if matches!(stmt, Stmt::Ddl(_)) && !self.ddl_preserves_transaction(stmt) {
             // Go commits the open transaction before ordinary DDL
             // (`session.ExecuteStmt`, which calls `sessiontxn`'s
@@ -453,71 +453,6 @@ impl Session {
                 | tidb_ast::AdminStmt::DropUser { .. }
                 | tidb_ast::AdminStmt::RenameUser { .. }
         ))
-    }
-
-    /// Go `SetConfigExec`: `Open` checks the target and converts the value,
-    /// `Next` posts it to the selected nodes (`GetClusterServerInfo`), each
-    /// node's failure a warning.
-    pub(crate) fn set_config_exec(
-        &mut self,
-        plan: &tidb_planner::common_plans::SetConfig,
-    ) -> Result<StmtOutput, DriverError> {
-        let ctx = self.statement_context(false);
-        let mut exec = tidb_executor::set_config::SetConfigExec::new(plan.clone());
-        exec.open(&ctx)?;
-        let mut warnings = Vec::new();
-        let unknown = |error: String| DriverError::Mysql(tidb_terror::MysqlError::unknown(error));
-        // Go `TestSetConfigServerInfoKey`, else `infoschema.GetClusterServerInfo`.
-        let servers = match &self.test_set_config_server_info {
-            Some(server_info) => server_info(),
-            None => tidb_executor::calibrate_resource::get_cluster_server_info(
-                self.cluster_topology.as_deref(),
-                &mut warnings,
-            ),
-        }
-        .map_err(unknown)?;
-        let client = match &self.cluster_config {
-            Some(client) => std::sync::Arc::clone(client),
-            None => std::sync::Arc::new(
-                tidb_executor::cluster_config::ClusterConfigClient::new(&Default::default())
-                    .map_err(unknown)?,
-            ),
-        };
-        // Go `TestSetConfigHTTPHandlerKey`, else `InternalHTTPClient().Do`.
-        let post = |url: &str, body: String| client.post(url, body);
-        let handler: tidb_executor::set_config::HttpHandler<'_> = match &self.test_set_config_http_handler {
-            Some(handler) => handler.as_ref(),
-            None => &post,
-        };
-        let result = exec.next(servers, client.scheme(), handler, &mut warnings);
-        for warning in warnings {
-            self.append_sql_warning(tidb_context::SqlWarn::with_code(
-                tidb_context::WarningLevel::Warning,
-                1105,
-                warning,
-            ));
-        }
-        result.map(|()| StmtOutput::Affected(0))
-    }
-
-    /// Go `CompactTableTiFlashExec.Next` over the table the planner resolved
-    /// through the session's infoschema (`buildCompactTable`'s
-    /// `resolveCtx.GetTableName`), a read.
-    pub(crate) fn compact_table_tiflash_exec(
-        &mut self,
-        compact: &tidb_ast::CompactTableStmt,
-    ) -> Result<StmtOutput, DriverError> {
-        let ctx = self.statement_context(false);
-        let result = self.with_planning_catalog(|catalog| {
-            tidb_executor::compact_table::build_compact_table(
-                compact,
-                catalog,
-                &self.vars.current_db,
-                &ctx,
-            )
-        });
-        self.drain_eval_warnings(&ctx);
-        result.map(|()| StmtOutput::Affected(0))
     }
 
     /// Answers the memory-table scans the statement's executors asked for
@@ -664,29 +599,6 @@ impl Session {
         });
         self.drain_eval_warnings(&ctx);
         rows
-    }
-
-    /// Go `CoprocessorDAGHandler.HandleRequest` on this session for a
-    /// cluster memory-table `plan` (`PBPlanBuilder.Build` of `dag`): the
-    /// request's zone is the statement's (Go `InitFromPBFlagAndTz`), and its
-    /// rows come from this node's tables.
-    ///
-    /// # Errors
-    /// The plan or its table reader fails.
-    pub fn handle_cop_plan(
-        &mut self,
-        dag: &tidb_proto::tipb::DagRequest,
-        plan: &tidb_executor::coprocessor::PbPlan,
-        registry: Option<&tidb_sessmgr::ProcessRegistry>,
-        zone: &tidb_datatype::SessionTimeZone,
-    ) -> Result<tidb_proto::tipb::SelectResponse, String> {
-        let ctx = self.statement_context(false).with_time_zone(zone.clone());
-        let viewer = self.viewer_state();
-        let response = self.with_catalog_mut(|catalog| {
-            Ok(viewer.handle_cop_plan(&ctx, catalog, registry, dag, plan))
-        });
-        self.drain_eval_warnings(&ctx);
-        response.map_err(|error: DriverError| error.to_string())?
     }
 
     /// `@@tidb_distsql_scan_concurrency`, the statement-summary history
@@ -2460,61 +2372,6 @@ impl Session {
         Ok(())
     }
 
-    /// Go `ExecStmt`'s refusals for a session reading at `tidb_snapshot` or a
-    /// low-resolution TSO, once the statement has compiled: a write executor
-    /// (`adapter.go:1152`), and a SELECT whose lock is taken -- under
-    /// `tidb_snapshot` in a pessimistic transaction only
-    /// (`handlePessimisticSelectForUpdate`, `adapter.go:1067`).
-    pub fn validate_snapshot_write(&self, stmt: &Stmt) -> Result<(), DriverError> {
-        let writes = Self::is_write_executor(stmt);
-        if self.vars.snapshot_ts() != 0
-            && (writes
-                || (self.is_select_for_update(stmt) && self.statement_txn_mode().is_pessimistic()))
-        {
-            return Err(DriverError::unsupported(
-                "can not execute write statement when 'tidb_snapshot' is set",
-            ));
-        }
-        if self.use_low_resolution_tso() {
-            if writes {
-                return Err(DriverError::unsupported(
-                    "can not execute write statement when 'tidb_low_resolution_tso' is set",
-                ));
-            }
-            if self.is_select_for_update(stmt) {
-                return Err(DriverError::unsupported(
-                    "can not execute select for update statement when 'tidb_low_resolution_tso' is set",
-                ));
-            }
-        }
-        Ok(())
-    }
-
-    /// Go `handleNoDelayExecutor`'s switch on the executor (`DeleteExec`,
-    /// `InsertExec`, `UpdateExec`, `ReplaceExec`, `LoadDataExec`, `DDLExec`,
-    /// `ImportIntoExec`), which `handleNoDelay` hands an `EXPLAIN ANALYZE`'s
-    /// analyzed executor.
-    fn is_write_executor(stmt: &Stmt) -> bool {
-        match stmt {
-            Stmt::Dml(dml) => matches!(
-                dml.as_ref(),
-                tidb_ast::DmlStmt::Insert(_)
-                    | tidb_ast::DmlStmt::Update(_)
-                    | tidb_ast::DmlStmt::Delete(_)
-                    | tidb_ast::DmlStmt::ImportInto(_)
-                    | tidb_ast::DmlStmt::LoadData(_)
-            ),
-            Stmt::Ddl(_) => true,
-            Stmt::Admin(admin) => match admin.as_ref() {
-                tidb_ast::AdminStmt::Explain(explain) if explain.analyze => {
-                    explain.statement().is_some_and(Self::is_write_executor)
-                }
-                _ => false,
-            },
-            _ => false,
-        }
-    }
-
     /// Go `NeedSetRCCheckTSFlag`, which `PessimisticRCTxnContextProvider`
     /// asks at statement start: a user connection's read-only statement,
     /// not a retry, inside a transaction, with `tidb_rc_read_check_ts` on.
@@ -2619,38 +2476,6 @@ impl Session {
         self.node_conn().retry_after_query_error(code)
     }
 
-    /// Go `SessionVars.UseLowResolutionTSO`: a user connection's
-    /// `tidb_low_resolution_tso`.
-    pub(crate) fn use_low_resolution_tso(&self) -> bool {
-        !self.vars.restricted_sql
-            && self.vars.connection_id.is_some_and(|id| id > 0)
-            && self
-                .vars
-                .get_system(tidb_vardef::tidb_vars::TIDB_LOW_RESOLUTION_TSO)
-                .is_ok_and(|value| tidb_vardef::option_values::tidb_opt_on(&value))
-    }
-
-    /// Go `ExecStmt.isSelectForUpdate`: a SELECT whose lock the executor
-    /// builder keeps (`hasLock`), which `PessimisticLockEligible` allows only
-    /// inside a transaction or with autocommit off, and which a `FOR SHARE`
-    /// the no-op switch admitted never takes.
-    fn is_select_for_update(&self, stmt: &Stmt) -> bool {
-        let Stmt::Query(query) = stmt else {
-            return false;
-        };
-        let tidb_ast::QueryStmt::Select(select) = query.as_ref() else {
-            return false;
-        };
-        let Some(lock) = &select.lock else {
-            return false;
-        };
-        let takes_lock = match lock.kind {
-            tidb_ast::LockKind::Update => true,
-            tidb_ast::LockKind::Share => self.vars.shared_lock_promotion(),
-        };
-        takes_lock && (!self.is_autocommit() || self.in_transaction())
-    }
-
     pub(crate) fn external_timestamp_read_enabled(&self) -> bool {
         !self.vars.restricted_sql
             && self
@@ -2723,7 +2548,7 @@ impl Session {
     fn refuse_pinned_historical_read(&mut self, stmt: &Stmt) -> Result<(), DriverError> {
         if self.historical_read_provider.is_some() {
             self.validate_statement_read_only_in_staleness(stmt)?;
-            return self.validate_snapshot_write(stmt);
+            return tidb_executor::adapter::check_no_delay_snapshot_writes(self, stmt);
         }
 
         if self.vars.snapshot_ts() != 0 {
@@ -2758,19 +2583,27 @@ impl tidb_executor::builder::BuildSession for Session {
         tidb_parser::carry_client_sql(stmt.original_text(), client).into_owned()
     }
 
-    fn set_config_exec(&mut self, plan: &tidb_planner::common_plans::SetConfig) -> Result<StmtOutput, DriverError> {
-        Session::set_config_exec(self, plan)
+    fn set_config_server_info(
+        &self,
+        warnings: &mut Vec<String>,
+    ) -> Result<Vec<tidb_domain::cluster_topology::ClusterServer>, String> {
+        match &self.test_set_config_server_info {
+            Some(server_info) => server_info(),
+            None => tidb_executor::calibrate_resource::get_cluster_server_info(self.cluster_topology.as_deref(), warnings),
+        }
     }
 
-    fn compact_table_tiflash_exec(&mut self, compact: &tidb_ast::CompactTableStmt) -> Result<StmtOutput, DriverError> {
-        Session::compact_table_tiflash_exec(self, compact)
+    fn cluster_config_client(&self) -> Result<std::sync::Arc<tidb_executor::cluster_config::ClusterConfigClient>, String> {
+        match &self.cluster_config {
+            Some(client) => Ok(std::sync::Arc::clone(client)),
+            None => tidb_executor::cluster_config::ClusterConfigClient::new(&Default::default()).map(std::sync::Arc::new),
+        }
     }
 
-    fn show_next_row_id_exec(
-        &mut self,
-        plan: &tidb_planner::common_plans::ShowNextRowID,
-    ) -> Result<StmtOutput, DriverError> {
-        Session::show_next_row_id_exec(self, plan)
+    fn set_config_http_handler(
+        &self,
+    ) -> Option<std::sync::Arc<dyn Fn(&str, String) -> Result<(u16, String, String), String> + Send + Sync>> {
+        self.test_set_config_http_handler.clone()
     }
 
     fn alter_ddl_job(&mut self, alter: &tidb_planner::common_plans::AlterDdlJob) -> Result<(), DriverError> {

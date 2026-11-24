@@ -400,3 +400,32 @@ pub fn required_columns(table: &PbMemTable) -> HashSet<String> {
         .map(|offset| columns[*offset].0.clone())
         .collect()
 }
+
+/// Go `CoprocessorDAGHandler` over its session (`h.sctx`).
+pub trait CoprocessorDagHandler: crate::show::exec::ShowExec + crate::compiler::CompilerSession {
+    /// Go `CoprocessorDAGHandler.HandleRequest` for a cluster memory-table
+    /// `plan` (`PBPlanBuilder.Build` of `dag`): the request's zone is the
+    /// statement's (Go `InitFromPBFlagAndTz`), and its rows come from this
+    /// node's tables.
+    ///
+    /// # Errors
+    ///
+    /// The plan or its table reader fails.
+    fn handle_cop_plan(
+        &mut self,
+        dag: &tidb_proto::tipb::DagRequest,
+        plan: &PbPlan,
+        registry: Option<&tidb_sessmgr::ProcessRegistry>,
+        zone: &tidb_datatype::SessionTimeZone,
+    ) -> Result<tidb_proto::tipb::SelectResponse, String> {
+        let ctx = crate::stmt_ctx_build::ResetContextOfStmt::statement_context(self, false).with_time_zone(zone.clone());
+        let viewer = crate::show::exec::ShowExec::viewer_state(self);
+        let response = crate::compiler::CompilerSession::with_staged_catalog(self, |catalog| {
+            Ok(viewer.handle_cop_plan(&ctx, catalog, registry, dag, plan))
+        });
+        crate::compiler::CompilerSession::drain_eval_warnings(self, &ctx);
+        response.map_err(|error: crate::DriverError| error.to_string())?
+    }
+}
+
+impl<T: crate::show::exec::ShowExec + crate::compiler::CompilerSession> CoprocessorDagHandler for T {}
