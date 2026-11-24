@@ -173,7 +173,10 @@ fn planner_physical_select(
     )
 }
 
-pub(crate) use tidb_planner::statement_optimize::{BuildVisits, QueryBuild};
+pub(crate) use tidb_planner::statement_optimize::{
+    BuildVisits, QueryBuild, RegisteredScalarSubquery, ScalarSubqueryRegistry,
+};
+use tidb_planner::statement_optimize::{DiscardedSubquery, subquery_output_width};
 
 fn planner_physical_query(
     query: &tidb_ast::QueryStmt,
@@ -401,121 +404,6 @@ pub(crate) fn physical_query_plan_with_allocators(
     .map(|(_, physical)| physical)
 }
 
-/// One uncorrelated subquery Go registers in the statement context while
-/// `handleScalarSubquery` / `handleExistSubquery` evaluates it.
-///
-/// Go's `ScalarSubqueryEvalCtx` (`pkg/planner/core/scalar_subq_expression.go`)
-/// keeps the OPTIMIZED child plan and the output column ids its placeholder
-/// expressions carry; `FlatPhysicalPlan.flatten` appends the plan as an extra
-/// EXPLAIN root whose `ExplainInfo` names those ids.
-///
-/// The non-eval `ScalarSubQueryExpr` placeholders hold the same object and
-/// evaluate through it (Go `selfEval`), so it keeps the statement's catalog
-/// and context the way Go's keeps `is` and `ctx`.
-pub(crate) struct RegisteredScalarSubquery {
-    /// Go `ScalarSubqueryEvalCtx.outputColIDs`.
-    pub output_col_ids: Vec<i64>,
-    /// Go `ScalarSubqueryEvalCtx.scalarSubQuery`, the optimized child.
-    pub physical: PhysicalPlan,
-    /// Go `ScalarSubqueryEvalCtx.ID()`: `Init` allocates it from the plan id
-    /// counter once the child has been optimized, and EXPLAIN prints it.
-    pub plan_id: i32,
-    /// Go `ScalarSubqueryEvalCtx.is`.
-    catalog: SessionExtendedInfoSchema,
-    /// Go `ScalarSubqueryEvalCtx.SCtx()`.
-    ctx: crate::StmtContext,
-    /// Go `evaled` / `evalErr` / `colsData`.
-    evaluated: std::sync::OnceLock<Result<Vec<tidb_datatype::Datum>, tidb_exprctx::EvalError>>,
-}
-
-impl std::fmt::Debug for RegisteredScalarSubquery {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("RegisteredScalarSubquery")
-            .field("output_col_ids", &self.output_col_ids)
-            .field("plan_id", &self.plan_id)
-            .finish_non_exhaustive()
-    }
-}
-
-impl tidb_expr::expression::ScalarSubqueryEval for RegisteredScalarSubquery {
-    /// Go `ScalarSubqueryEvalCtx.getColVal`, running `selfEval` once.
-    fn get_col_val(&self, col_id: i64) -> Result<tidb_datatype::Datum, tidb_exprctx::EvalError> {
-        let row = self
-            .evaluated
-            .get_or_init(|| {
-                let mut physical = self.physical.clone();
-                crate::driver::physical_builder::eval_subquery_first_row(
-                    &mut physical,
-                    &self.catalog,
-                    &self.ctx,
-                )
-                .map(|(row, _)| row)
-                .map_err(driver_error_to_eval)
-            })
-            .as_ref()
-            .map_err(Clone::clone)?;
-        self.output_col_ids
-            .iter()
-            .position(|id| *id == col_id)
-            .and_then(|index| row.get(index).cloned())
-            .ok_or_else(|| {
-                tidb_exprctx::EvalError::Conversion(tidb_terror::TerrorError::compatible(
-                    tidb_terror::TerrorCode::new(1105),
-                    format!(
-                        "Could not found the ScalarSubQueryExpr#{col_id} in the ScalarSubquery_{}",
-                        self.plan_id
-                    ),
-                ))
-            })
-    }
-}
-
-/// The per-statement list of [`RegisteredScalarSubquery`]s, Go's
-/// `SessionVars.MapScalarSubQ` narrowed to one statement.
-pub(crate) type ScalarSubqueryRegistry = Rc<RefCell<Vec<std::sync::Arc<RegisteredScalarSubquery>>>>;
-
-/// The subquery hook of a build whose plan is discarded (the privilege
-/// passes): nothing is run, and a placeholder reads NULL.
-#[derive(Debug)]
-struct DiscardedSubquery;
-
-impl tidb_expr::expression::ScalarSubqueryEval for DiscardedSubquery {
-    fn get_col_val(&self, _col_id: i64) -> Result<tidb_datatype::Datum, tidb_exprctx::EvalError> {
-        Ok(tidb_datatype::Datum::Null)
-    }
-}
-
-/// Go's output-id count for one subquery: a single id for a non-eval
-/// `EXISTS` (`handleExistSubquery` reads only its first column), one per
-/// output column otherwise.
-fn subquery_output_width(
-    inner_width: usize,
-    kind: tidb_planner::plan_builder::SubqueryKind,
-    evaluate: bool,
-) -> usize {
-    if !evaluate && kind == tidb_planner::plan_builder::SubqueryKind::Exists {
-        1
-    } else {
-        inner_width
-    }
-}
-
-/// [`driver_error_to_plan`]'s counterpart for a placeholder evaluated as an
-/// expression: Go's `getColVal` hands `EvalSubqueryFirstRow`'s error back as
-/// it is.
-fn driver_error_to_eval(error: crate::DriverError) -> tidb_exprctx::EvalError {
-    match error {
-        crate::DriverError::Exec(crate::ExecError::Eval(eval)) => eval,
-        other => {
-            let error = other.to_mysql_error();
-            tidb_exprctx::EvalError::Conversion(tidb_terror::TerrorError::compatible(
-                tidb_terror::TerrorCode::new(error.code as isize),
-                error.message,
-            ))
-        }
-    }
-}
-
 use tidb_planner::statement_optimize::driver_error_to_plan;
 
 /// Go `evalFieldDefaultValue` (`expression_rewriter.go:3303`) for the
@@ -586,103 +474,14 @@ fn default_evaluator_using<'a>(
 
 /// The executor's half of one statement's planning
 /// ([`tidb_planner::statement_optimize::PlanningHooks`]): Go's function
-/// variables `EvalSubqueryFirstRow`, the column default evaluators and
-/// `DoOptimize`'s statistics, closed over the statement's catalog and
-/// allocators.
+/// variable `EvalSubqueryFirstRow` and the column default evaluators.
 struct DriverHooks<'a> {
     catalog: &'a SessionExtendedInfoSchema,
-    plan_ids: &'a PlanIdAllocator,
-    column_ids: &'a ColumnIdAllocator,
-    use_plan_cache: bool,
-    registry: ScalarSubqueryRegistry,
 }
 
 impl tidb_planner::statement_optimize::PlanningHooks for DriverHooks<'_> {
-    /// Go's `EvalSubqueryFirstRow` function variable
-    /// (`pkg/planner/core/expression_rewriter.go:55`): the executor half of
-    /// `handleScalarSubquery` / `handleExistSubquery` -- `DoOptimize` the
-    /// child, allocate its output column ids, register it for EXPLAIN, then
-    /// run it and report the first row.
-    fn evaluate_subquery(
-        &self,
-        ctx: &crate::StmtContext,
-        inner: &LogicalPlan,
-        kind: tidb_planner::plan_builder::SubqueryKind,
-        opt_flag: u64,
-        evaluate: bool,
-    ) -> Result<tidb_planner::plan_builder::EvaluatedSubquery, tidb_planner_core_base::PlanError>
-    {
-        let (catalog, plan_ids, column_ids) = (self.catalog, self.plan_ids, self.column_ids);
-        let (use_plan_cache, registry) = (self.use_plan_cache, &self.registry);
-        let session_zone = &ctx.session_zone();
-        // Go `DoOptimize(ctx, planCtx.builder.ctx, planCtx.builder.optFlag, np)`.
-        let logical = optimize_built_logical(
-            inner.clone(),
-            opt_flag,
-            catalog,
-            ctx,
-            use_plan_cache,
-            plan_ids,
-            column_ids,
-            session_zone,
-        )?;
-        let mut physical = physical_plan_for_logical(&logical, plan_ids, column_ids, catalog, ctx)?;
-        // Go allocates `outputColIDs` from `np.Schema()` before it runs the
-        // child, so the ids precede any execution-time allocation.
-        let width = subquery_output_width(
-            logical.schema().map_or(0, |schema| schema.len()),
-            kind,
-            evaluate,
-        );
-        let output_col_ids = (0..width).map(|_| column_ids.alloc()).collect::<Vec<_>>();
-        let plan_id = plan_ids.alloc();
-        let register = |physical: PhysicalPlan| {
-            let registered = std::sync::Arc::new(RegisteredScalarSubquery {
-                output_col_ids: output_col_ids.clone(),
-                physical,
-                plan_id,
-                catalog: catalog.clone(),
-                ctx: ctx.clone(),
-                evaluated: std::sync::OnceLock::new(),
-            });
-            registry
-                .borrow_mut()
-                .push(std::sync::Arc::clone(&registered));
-            registered
-        };
-        if !evaluate {
-            // Go's non-eval branch registers the child and stops there.
-            return Ok(tidb_planner::plan_builder::EvaluatedSubquery {
-                column_ids: output_col_ids.clone(),
-                row: Vec::new(),
-                has_row: false,
-                eval_ctx: register(physical),
-            });
-        }
-        // Go executor.EvalSubqueryFirstRow prevents evaluated constants from
-        // surviving into a later EXECUTE with a different snapshot.
-        if use_plan_cache {
-            ctx.set_skip_plan_cache("query has uncorrelated sub-queries is un-cacheable");
-        }
-        // Go `EvalSubqueryFirstRow`'s deferred `PreprocessSubQueries++` and
-        // `DurationPreprocessSubQuery += time.Since(begin)`, error or not.
-        let begin_evaluation = std::time::Instant::now();
-        // Go `EvalSubqueryFirstRow`'s region: the subquery's executors run
-        // under it.
-        let region = tidb_tracing::start_thread_region_ex("executor.EvalSubQuery");
-        let evaluated =
-            crate::driver::physical_builder::eval_subquery_first_row(&mut physical, catalog, ctx);
-        region.end();
-        ctx.phase_durations()
-            .add_preprocess_sub_query(begin_evaluation.elapsed());
-        let (row, has_row) = evaluated.map_err(driver_error_to_plan)?;
-        let eval_ctx = register(physical);
-        Ok(tidb_planner::plan_builder::EvaluatedSubquery {
-            column_ids: output_col_ids,
-            row,
-            has_row,
-            eval_ctx,
-        })
+    fn eval_subquery_first_row(&self) -> tidb_planner::statement_optimize::EvalSubqueryFirstRow {
+        crate::driver::physical_builder::eval_subquery_first_row
     }
 
     fn field_default(
@@ -705,14 +504,6 @@ impl tidb_planner::statement_optimize::PlanningHooks for DriverHooks<'_> {
         default_evaluator_using(self.catalog, ctx, super::dml::DefaultUse::Insert)(
             database, table, column,
         )
-    }
-
-    fn registered_scalar_subqueries(&self) -> usize {
-        self.registry.borrow().len()
-    }
-
-    fn truncate_scalar_subqueries(&self, count: usize) {
-        self.registry.borrow_mut().truncate(count);
     }
 }
 
@@ -1060,10 +851,6 @@ impl QueryBuilderParts<'_> {
     ) -> R {
         let hooks = DriverHooks {
             catalog: self.catalog,
-            plan_ids: self.plan_ids,
-            column_ids: self.column_ids,
-            use_plan_cache: self.use_plan_cache,
-            registry: Rc::clone(self.registry),
         };
         plan(&tidb_planner::statement_optimize::BuilderParts {
             catalog: self.catalog,
@@ -1073,6 +860,7 @@ impl QueryBuilderParts<'_> {
             plan_ids: self.plan_ids,
             column_ids: self.column_ids,
             session_ctx: self.session_ctx,
+            registry: self.registry,
             hooks: &hooks,
             on_delete_root,
         })

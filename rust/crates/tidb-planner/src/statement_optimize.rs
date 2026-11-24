@@ -21,6 +21,9 @@
 //! default, the statistics `DoOptimize` loads, `CheckPrivilege` -- is
 //! [`PlanningHooks`].
 
+use std::cell::RefCell;
+use std::rc::Rc;
+
 use tidb_expr::expression::Expression;
 use tidb_planner_core_base::{ColumnIdAllocator, PlanError, PlanIdAllocator};
 use tidb_planner_core_operator_logicalop::LogicalPlan;
@@ -34,21 +37,9 @@ use crate::stmt_ctx::PlannerStmtCtx as _;
 
 /// What Go's executor gives the planner for one statement's planning.
 pub trait PlanningHooks {
-    /// Go `EvalSubqueryFirstRow` after `DoOptimize` of the subquery `plan`:
-    /// the subquery optimized, registered for EXPLAIN, and (when `evaluate`)
-    /// run for its first row.
-    ///
-    /// # Errors
-    ///
-    /// The optimization's or the run's failure.
-    fn evaluate_subquery(
-        &self,
-        ctx: &StmtContext,
-        plan: &LogicalPlan,
-        kind: SubqueryKind,
-        opt_flag: u64,
-        evaluate: bool,
-    ) -> Result<EvaluatedSubquery, PlanError>;
+    /// Go's `EvalSubqueryFirstRow` function variable, which the executor
+    /// sets: run a subquery's physical plan for its first row.
+    fn eval_subquery_first_row(&self) -> EvalSubqueryFirstRow;
     /// Go `evalFieldDefaultValue`: `DEFAULT(column)` as a constant.
     ///
     /// # Errors
@@ -73,11 +64,6 @@ pub trait PlanningHooks {
         table: &str,
         column: &str,
     ) -> Result<Expression, tidb_exprctx::EvalError>;
-    /// The number of scalar subqueries the statement registered so far
-    /// (a round restarts from it).
-    fn registered_scalar_subqueries(&self) -> usize;
-    /// Forgets the scalar subqueries registered after the first `count`.
-    fn truncate_scalar_subqueries(&self, count: usize);
 }
 
 /// What Go `NewPlanBuilder().Init(sctx, is, ...)` configures a builder from.
@@ -97,6 +83,8 @@ pub struct BuilderParts<'a> {
     pub column_ids: &'a ColumnIdAllocator,
     /// Go `PlanContext`'s session-side reach for the statement builders.
     pub session_ctx: Option<&'a dyn crate::plan_builder::stmt_build::SessionPlanContext>,
+    /// The statement's registered scalar subqueries.
+    pub registry: &'a ScalarSubqueryRegistry,
     /// The executor's half.
     pub hooks: &'a dyn PlanningHooks,
     /// Called when an UPDATE/DELETE build allocates its root (see
@@ -131,7 +119,7 @@ impl BuilderParts<'_> {
         let session_zone = ctx.session_zone();
         let hooks = self.hooks;
         let evaluator = |inner: &LogicalPlan, kind: SubqueryKind, opt_flag: u64, evaluate: bool| {
-            hooks.evaluate_subquery(ctx, inner, kind, opt_flag, evaluate)
+            evaluate_subquery(self, inner, kind, opt_flag, evaluate)
         };
         let prune_fallback = |table_id: i64, table_name: &str| {
             dynamic_prune_fallback(catalog, ctx, table_id, table_name)
@@ -211,6 +199,217 @@ pub fn dynamic_prune_fallback(
         &format!("disable dynamic pruning due to {table_name} has no global stats"),
     );
     true
+}
+
+/// Go `handleScalarSubquery` / `handleExistSubquery` over an uncorrelated
+/// subquery: `DoOptimize` the child, allocate its output column ids,
+/// register it for EXPLAIN, then (`evaluate`) run it through
+/// `EvalSubqueryFirstRow` and report the first row.
+fn evaluate_subquery(
+    parts: &BuilderParts<'_>,
+    inner: &LogicalPlan,
+    kind: SubqueryKind,
+    opt_flag: u64,
+    evaluate: bool,
+) -> Result<EvaluatedSubquery, PlanError> {
+    let (catalog, ctx, plan_ids, column_ids) =
+        (parts.catalog, parts.ctx, parts.plan_ids, parts.column_ids);
+    let run = parts.hooks.eval_subquery_first_row();
+    // Go `DoOptimize(ctx, planCtx.builder.ctx, planCtx.builder.optFlag, np)`.
+    let logical = crate::do_optimize::optimize_built_logical(
+        inner.clone(),
+        opt_flag,
+        catalog,
+        ctx,
+        parts.use_plan_cache,
+        plan_ids,
+        column_ids,
+        &ctx.session_zone(),
+    )?;
+    let mut physical = crate::do_optimize::physical_plan_for_logical(
+        &logical, plan_ids, column_ids, catalog, ctx,
+    )?;
+    // Go allocates `outputColIDs` from `np.Schema()` before it runs the
+    // child, so the ids precede any execution-time allocation.
+    let width = subquery_output_width(
+        logical.schema().map_or(0, |schema| schema.len()),
+        kind,
+        evaluate,
+    );
+    let output_col_ids = (0..width).map(|_| column_ids.alloc()).collect::<Vec<_>>();
+    let plan_id = plan_ids.alloc();
+    let register = |physical: PhysicalPlan| {
+        let registered = std::sync::Arc::new(RegisteredScalarSubquery {
+            output_col_ids: output_col_ids.clone(),
+            physical,
+            plan_id,
+            catalog: catalog.clone(),
+            ctx: ctx.clone(),
+            run,
+            evaluated: std::sync::OnceLock::new(),
+        });
+        parts
+            .registry
+            .borrow_mut()
+            .push(std::sync::Arc::clone(&registered));
+        registered
+    };
+    if !evaluate {
+        // Go's non-eval branch registers the child and stops there.
+        return Ok(EvaluatedSubquery {
+            column_ids: output_col_ids.clone(),
+            row: Vec::new(),
+            has_row: false,
+            eval_ctx: register(physical),
+        });
+    }
+    // Go executor.EvalSubqueryFirstRow prevents evaluated constants from
+    // surviving into a later EXECUTE with a different snapshot.
+    if parts.use_plan_cache {
+        ctx.set_skip_plan_cache("query has uncorrelated sub-queries is un-cacheable");
+    }
+    // Go `EvalSubqueryFirstRow`'s deferred `PreprocessSubQueries++` and
+    // `DurationPreprocessSubQuery += time.Since(begin)`, error or not.
+    let begin_evaluation = std::time::Instant::now();
+    // Go `EvalSubqueryFirstRow`'s region: the subquery's executors run
+    // under it.
+    let region = tidb_tracing::start_thread_region_ex("executor.EvalSubQuery");
+    let evaluated = run(&mut physical, catalog, ctx);
+    region.end();
+    ctx.phase_durations()
+        .add_preprocess_sub_query(begin_evaluation.elapsed());
+    let (row, has_row) = evaluated.map_err(driver_error_to_plan)?;
+    let eval_ctx = register(physical);
+    Ok(EvaluatedSubquery {
+        column_ids: output_col_ids,
+        row,
+        has_row,
+        eval_ctx,
+    })
+}
+
+/// Go's `EvalSubqueryFirstRow` function variable
+/// (`pkg/planner/core/expression_rewriter.go:55`), which the executor sets.
+pub type EvalSubqueryFirstRow =
+    fn(
+        &mut PhysicalPlan,
+        &tidb_infoschema::SessionExtendedInfoSchema,
+        &StmtContext,
+    ) -> Result<(Vec<tidb_datatype::Datum>, bool), tidb_driver_error::DriverError>;
+
+/// One uncorrelated subquery Go registers in the statement context while
+/// `handleScalarSubquery` / `handleExistSubquery` evaluates it.
+///
+/// Go's `ScalarSubqueryEvalCtx` (`pkg/planner/core/scalar_subq_expression.go`)
+/// keeps the OPTIMIZED child plan and the output column ids its placeholder
+/// expressions carry; `FlatPhysicalPlan.flatten` appends the plan as an extra
+/// EXPLAIN root whose `ExplainInfo` names those ids.
+///
+/// The non-eval `ScalarSubQueryExpr` placeholders hold the same object and
+/// evaluate through it (Go `selfEval`), so it keeps the statement's catalog
+/// and context the way Go's keeps `is` and `ctx`.
+pub struct RegisteredScalarSubquery {
+    /// Go `ScalarSubqueryEvalCtx.outputColIDs`.
+    pub output_col_ids: Vec<i64>,
+    /// Go `ScalarSubqueryEvalCtx.scalarSubQuery`, the optimized child.
+    pub physical: PhysicalPlan,
+    /// Go `ScalarSubqueryEvalCtx.ID()`: `Init` allocates it from the plan id
+    /// counter once the child has been optimized, and EXPLAIN prints it.
+    pub plan_id: i32,
+    /// Go `ScalarSubqueryEvalCtx.is`.
+    catalog: tidb_infoschema::SessionExtendedInfoSchema,
+    /// Go `ScalarSubqueryEvalCtx.SCtx()`.
+    ctx: StmtContext,
+    /// Go's `EvalSubqueryFirstRow`, which `selfEval` calls.
+    run: EvalSubqueryFirstRow,
+    /// Go `evaled` / `evalErr` / `colsData`.
+    evaluated: std::sync::OnceLock<Result<Vec<tidb_datatype::Datum>, tidb_exprctx::EvalError>>,
+}
+
+impl std::fmt::Debug for RegisteredScalarSubquery {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RegisteredScalarSubquery")
+            .field("output_col_ids", &self.output_col_ids)
+            .field("plan_id", &self.plan_id)
+            .finish_non_exhaustive()
+    }
+}
+
+impl tidb_expr::expression::ScalarSubqueryEval for RegisteredScalarSubquery {
+    /// Go `ScalarSubqueryEvalCtx.getColVal`, running `selfEval` once.
+    fn get_col_val(&self, col_id: i64) -> Result<tidb_datatype::Datum, tidb_exprctx::EvalError> {
+        let row = self
+            .evaluated
+            .get_or_init(|| {
+                let mut physical = self.physical.clone();
+                (self.run)(&mut physical, &self.catalog, &self.ctx)
+                    .map(|(row, _)| row)
+                    .map_err(driver_error_to_eval)
+            })
+            .as_ref()
+            .map_err(Clone::clone)?;
+        self.output_col_ids
+            .iter()
+            .position(|id| *id == col_id)
+            .and_then(|index| row.get(index).cloned())
+            .ok_or_else(|| {
+                tidb_exprctx::EvalError::Conversion(tidb_terror::TerrorError::compatible(
+                    tidb_terror::TerrorCode::new(1105),
+                    format!(
+                        "Could not found the ScalarSubQueryExpr#{col_id} in the ScalarSubquery_{}",
+                        self.plan_id
+                    ),
+                ))
+            })
+    }
+}
+
+/// The per-statement list of [`RegisteredScalarSubquery`]s, Go's
+/// `SessionVars.MapScalarSubQ` narrowed to one statement.
+pub type ScalarSubqueryRegistry = Rc<RefCell<Vec<std::sync::Arc<RegisteredScalarSubquery>>>>;
+
+/// The subquery hook of a build whose plan is discarded (the privilege
+/// passes): nothing is run, and a placeholder reads NULL.
+#[derive(Debug)]
+pub struct DiscardedSubquery;
+
+impl tidb_expr::expression::ScalarSubqueryEval for DiscardedSubquery {
+    fn get_col_val(&self, _col_id: i64) -> Result<tidb_datatype::Datum, tidb_exprctx::EvalError> {
+        Ok(tidb_datatype::Datum::Null)
+    }
+}
+
+/// Go's output-id count for one subquery: a single id for a non-eval
+/// `EXISTS` (`handleExistSubquery` reads only its first column), one per
+/// output column otherwise.
+#[must_use]
+pub fn subquery_output_width(
+    inner_width: usize,
+    kind: crate::plan_builder::SubqueryKind,
+    evaluate: bool,
+) -> usize {
+    if !evaluate && kind == crate::plan_builder::SubqueryKind::Exists {
+        1
+    } else {
+        inner_width
+    }
+}
+
+/// [`driver_error_to_plan`]'s counterpart for a placeholder evaluated as an
+/// expression: Go's `getColVal` hands `EvalSubqueryFirstRow`'s error back as
+/// it is.
+#[must_use]
+pub fn driver_error_to_eval(error: tidb_driver_error::DriverError) -> tidb_exprctx::EvalError {
+    match error {
+        tidb_driver_error::DriverError::Exec(tidb_driver_error::ExecError::Eval(eval)) => eval,
+        other => {
+            let error = other.to_mysql_error();
+            tidb_exprctx::EvalError::Conversion(tidb_terror::TerrorError::compatible(
+                tidb_terror::TerrorCode::new(error.code as isize),
+                error.message,
+            ))
+        }
+    }
 }
 
 /// Go `buildLogicalPlan` for a query: the logical plan, its optimizer
@@ -376,7 +575,7 @@ impl crate::planner_optimize::LogicalPlanRounds for QueryRounds<'_, '_> {
         self.round_start = (
             self.parts.plan_ids.current(),
             self.parts.column_ids.current(),
-            self.parts.hooks.registered_scalar_subqueries(),
+            self.parts.registry.borrow().len(),
         );
     }
 
@@ -384,9 +583,7 @@ impl crate::planner_optimize::LogicalPlanRounds for QueryRounds<'_, '_> {
         let (plan_id, column_id, scalar_subqueries) = self.round_start;
         self.parts.plan_ids.store(plan_id);
         self.parts.column_ids.store(column_id);
-        self.parts
-            .hooks
-            .truncate_scalar_subqueries(scalar_subqueries);
+        self.parts.registry.borrow_mut().truncate(scalar_subqueries);
     }
 }
 

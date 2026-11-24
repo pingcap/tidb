@@ -8828,6 +8828,7 @@ dependencies = [
  "tidb-tablecodec",
  "tidb-terror",
  "tidb-texttree",
+ "tidb-tracing",
  "tidb-txnkv",
  "tidb-util",
  "tidb-vardef",
