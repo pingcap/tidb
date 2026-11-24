@@ -2,9 +2,9 @@
   "date": "2026-11-23",
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports, from the 2026-11-23 symbol-level re-audit (method in structural-audit-2026-11-23.md).",
   "counts": {
-    "unresolved": 6,
+    "unresolved": 5,
     "open": 3,
-    "partial": 3
+    "partial": 2
   },
   "findings": [
     {
@@ -14,14 +14,6 @@
       "finding": "Pipelined DML is not ported: `tidb_dml_type='bulk'` runs a standard transaction; Go's `usePipelinedDmlOrWarn` (fallback warnings for temporary tables, `tidb_constraint_check_in_place=ON`, explicit transactions, ...) and the pipelined transaction are missing. A Go server reports `pipelined:true` in `tidb_last_txn_info` after a bulk INSERT; this one reports `false` and no warnings. Depends on T14: the statement's writes have to land in a pipelined store transaction.",
       "rust_evidence": "`tidb-session/src/lib.rs` hard-codes `\"pipelined\":false`; no `use_pipelined_dml_or_warn`.",
       "go_owner": "`pkg/session/session.go` `usePipelinedDmlOrWarn`, `NewTxn` pipelined path; `pkg/store/driver/txn`"
-    },
-    {
-      "id": "T07",
-      "group": "Planner and bindings",
-      "status": "partial",
-      "finding": "Go's plan cache is the planner's except its compile-time caller: `getPlanFromNonPreparedPlanCache` (`pkg/planner/optimize.go`, with `SessionVars.nonPreparedPlanCacheStmts`) and `GetPlanFromPlanCache`'s session side (`planCachePreprocess`, the key environment and dirty tables) are default methods of the executor's `CompilerSession` traits in `tidb-executor/src/compiler/non_prepared_plan_cache.rs` and `compiler/prepared_ast.rs`. (Moved: `PlanCacheStmt`, `GeneratePlanCacheStmtWithAST`, `GetPlanFromPlanCache`, the cached plan value `CachedPlan` for every statement, `RebuildPlan4CachedPlan` (`plan_cache_rebuild.rs`), `SetParameterValuesIntoSCtx`, `checkTypesCompatibility4PC` and the session plan cache are `tidb-planner/src/plan_cache.rs` / `plan_cache_utils.rs`; the executor's duplicate SELECT/DML copies of the cached plan, the prepared statement and the execution lease are gone.)",
-      "rust_evidence": "`tidb-executor/src/compiler/non_prepared_plan_cache.rs`, `compiler/prepared_ast.rs` (`prepared_plan_cache_environment_for_binding`, `plan_cache_dirty_tables`).",
-      "go_owner": "`pkg/planner/optimize.go` (`getPlanFromNonPreparedPlanCache`), `pkg/planner/core/plan_cache.go` (`planCachePreprocess`)"
     },
     {
       "id": "T10",
@@ -56,7 +48,7 @@
       "go_owner": "`pkg/planner/core/explain.go`, `common_plans.go`, `flat_plan.go`, `encode.go`; `pkg/planner/optimize.go`"
     }
   ],
-  "unresolved": 6,
+  "unresolved": 5,
   "open": 3,
-  "partial": 3
+  "partial": 2
 }

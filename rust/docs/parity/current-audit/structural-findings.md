@@ -5,7 +5,7 @@ Re-audited against the tree on 2026-11-23; the [JSON register](structural-findin
 rows. A repaired finding is removed, not kept. The method and the live probes behind the rows
 are in [structural-audit-2026-11-23.md](structural-audit-2026-11-23.md).
 
-**6 unresolved: 3 open, 3 partial.**
+**5 unresolved: 3 open, 2 partial.**
 
 A row states the remaining gap only.
 
@@ -37,7 +37,6 @@ A row states the remaining gap only.
 
 | ID | Status | Remaining gap | Go owner |
 | --- | --- | --- | --- |
-| T07 | partial | Go's plan cache is the planner's except its compile-time caller: `getPlanFromNonPreparedPlanCache` (`pkg/planner/optimize.go`, with `SessionVars.nonPreparedPlanCacheStmts`) and `GetPlanFromPlanCache`'s session side (`planCachePreprocess`, the key environment and dirty tables) are default methods of the executor's `CompilerSession` traits in `tidb-executor/src/compiler/non_prepared_plan_cache.rs` and `compiler/prepared_ast.rs`. (Moved: `PlanCacheStmt`, `GeneratePlanCacheStmtWithAST`, `GetPlanFromPlanCache`, the cached plan value `CachedPlan` for every statement, `RebuildPlan4CachedPlan` (`plan_cache_rebuild.rs`), `SetParameterValuesIntoSCtx`, `checkTypesCompatibility4PC` and the session plan cache are `tidb-planner/src/plan_cache.rs` / `plan_cache_utils.rs`; the executor's duplicate SELECT/DML copies of the cached plan, the prepared statement and the execution lease are gone.) Rust: `tidb-executor/src/compiler/non_prepared_plan_cache.rs`, `compiler/prepared_ast.rs` (`prepared_plan_cache_environment_for_binding`, `plan_cache_dirty_tables`). | `pkg/planner/optimize.go` (`getPlanFromNonPreparedPlanCache`), `pkg/planner/core/plan_cache.go` (`planCachePreprocess`) |
 
 ### Executor, DML and expressions
 
