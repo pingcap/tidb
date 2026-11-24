@@ -67,7 +67,10 @@ func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *storeapi.Opti
 	}
 	qs := *backend
 	gcsS3Compatible := isGCSS3Compatible(&qs)
-	volcengineTOS := normalizeVolcengineTOS(&qs)
+	volcengineTOS, err := normalizeVolcengineTOS(&qs)
+	if err != nil {
+		return nil, err
+	}
 
 	// Start with default configuration loading
 	var configOpts []func(*config.LoadOptions) error

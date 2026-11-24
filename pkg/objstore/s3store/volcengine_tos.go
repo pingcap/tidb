@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
+	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"go.uber.org/zap"
 )
 
@@ -175,13 +176,18 @@ func isVolcengineTOS(qs *backuppb.S3) bool {
 	return qs.Provider == volcengineProvider || isVolcengineTOSEndpoint(qs.Endpoint)
 }
 
-// normalizeVolcengineTOS reports whether qs targets Volcengine TOS and applies
-// TOS-specific defaults on the local S3 copy: virtual-hosted-style addressing
-// and signing region fallback from standard tos-s3-<region> endpoints or
-// VOLCENGINE_REGION when region is omitted from the URI.
-func normalizeVolcengineTOS(qs *backuppb.S3) bool {
+// normalizeVolcengineTOS reports whether qs targets Volcengine TOS, validates
+// TOS-unsupported options, and applies TOS-specific defaults on the local S3
+// copy: virtual-hosted-style addressing and signing region fallback from
+// standard tos-s3-<region> endpoints or VOLCENGINE_REGION when region is
+// omitted from the URI.
+func normalizeVolcengineTOS(qs *backuppb.S3) (bool, error) {
 	if !isVolcengineTOS(qs) {
-		return false
+		return false, nil
+	}
+	qs.RoleArn = strings.TrimSpace(qs.RoleArn)
+	if qs.RoleArn != "" {
+		return true, errors.Annotate(berrors.ErrStorageInvalidConfig, "volcengine TOS does not support role-arn")
 	}
 	qs.ForcePathStyle = false
 	qs.Region = strings.TrimSpace(qs.Region)
@@ -191,7 +197,7 @@ func normalizeVolcengineTOS(qs *backuppb.S3) bool {
 	if qs.Region == "" {
 		qs.Region = strings.TrimSpace(os.Getenv(volcengineRegionEnv))
 	}
-	return true
+	return true, nil
 }
 
 // isValidVolcengineRegion restricts region to a single lowercase DNS label so
@@ -249,9 +255,6 @@ func resolveVolcengineOIDCSTSURL(qs *backuppb.S3) (string, error) {
 }
 
 func createVolcengineTOSCred(qs *backuppb.S3) (aws.CredentialsProvider, error) {
-	if strings.TrimSpace(qs.GetRoleArn()) != "" {
-		return nil, errors.New("volcengine TOS does not support role-arn")
-	}
 	tokenFile := strings.TrimSpace(os.Getenv(volcengineOIDCTokenFileEnv))
 	roleTRN := strings.TrimSpace(os.Getenv(volcengineOIDCRoleTRNEnv))
 	if tokenFile == "" && roleTRN == "" {

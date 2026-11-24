@@ -27,6 +27,7 @@ import (
 	"time"
 
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/pkg/objstore/s3like"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/stretchr/testify/require"
@@ -82,7 +83,9 @@ func TestAutoNewCredVolcengine(t *testing.T) {
 				Endpoint:       "https://tos-s3-cn-beijing.ivolces.com",
 				ForcePathStyle: true,
 			}
-			require.True(t, normalizeVolcengineTOS(qs))
+			ok, err := normalizeVolcengineTOS(qs)
+			require.NoError(t, err)
+			require.True(t, ok)
 			require.False(t, qs.ForcePathStyle)
 			require.Equal(t, "cn-beijing", qs.Region)
 		})
@@ -95,7 +98,9 @@ func TestAutoNewCredVolcengine(t *testing.T) {
 				Endpoint:       "https://tos.internal.example.com",
 				ForcePathStyle: true,
 			}
-			require.True(t, normalizeVolcengineTOS(qs))
+			ok, err := normalizeVolcengineTOS(qs)
+			require.NoError(t, err)
+			require.True(t, ok)
 			require.False(t, qs.ForcePathStyle)
 			require.Equal(t, "cn-beijing", qs.Region)
 		})
@@ -107,10 +112,26 @@ func TestAutoNewCredVolcengine(t *testing.T) {
 				Provider:       "volcengine",
 				Endpoint:       "https://tos.internal.example.com",
 				ForcePathStyle: true,
+				RoleArn:        "   ",
 			}
-			require.True(t, normalizeVolcengineTOS(qs))
+			ok, err := normalizeVolcengineTOS(qs)
+			require.NoError(t, err)
+			require.True(t, ok)
 			require.False(t, qs.ForcePathStyle)
 			require.Empty(t, qs.Region)
+			require.Empty(t, qs.RoleArn)
+		})
+
+		t.Run("non-TOS provider preserves role-arn", func(t *testing.T) {
+			qs := &backuppb.S3{
+				Provider: "aws",
+				Endpoint: "https://s3.us-east-1.amazonaws.com",
+				RoleArn:  "arn:aws:iam::123456789012:role/test-role",
+			}
+			ok, err := normalizeVolcengineTOS(qs)
+			require.NoError(t, err)
+			require.False(t, ok)
+			require.Equal(t, "arn:aws:iam::123456789012:role/test-role", qs.RoleArn)
 		})
 	})
 
@@ -142,26 +163,72 @@ func TestAutoNewCredVolcengine(t *testing.T) {
 		require.Nil(t, provider)
 	})
 
-	t.Run("role-arn is rejected instead of falling back to pod OIDC credentials", func(t *testing.T) {
-		provider, err := autoNewCred(&backuppb.S3{
-			Endpoint: "https://tos-s3-cn-beijing.ivolces.com",
-			Provider: "volcengine",
-			Region:   "cn-beijing",
-			RoleArn:  "trn:iam::1234567890:role/restricted",
-		})
-		require.EqualError(t, err, "volcengine TOS does not support role-arn")
-		require.Nil(t, provider)
-
-		t.Setenv(volcengineOIDCTokenFileEnv, "/var/run/secrets/token")
-		t.Setenv(volcengineOIDCRoleTRNEnv, "trn:iam::1234567890:role/pod-dfs")
-		provider, err = autoNewCred(&backuppb.S3{
-			Endpoint: "https://tos-s3-cn-beijing.ivolces.com",
-			Provider: "volcengine",
-			Region:   "cn-beijing",
-			RoleArn:  "trn:iam::1234567890:role/restricted",
-		})
-		require.EqualError(t, err, "volcengine TOS does not support role-arn")
-		require.Nil(t, provider)
+	t.Run("role-arn is rejected for all TOS credential modes", func(t *testing.T) {
+		testCases := []struct {
+			name    string
+			oidcEnv bool
+			backend *backuppb.S3
+		}{
+			{
+				name: "default credential chain",
+				backend: &backuppb.S3{
+					Bucket:   "test-bucket",
+					Endpoint: "https://tos-s3-cn-beijing.ivolces.com",
+					Provider: "volcengine",
+					Region:   "cn-beijing",
+					RoleArn:  "trn:iam::1234567890:role/restricted",
+				},
+			},
+			{
+				name:    "pod OIDC env configured",
+				oidcEnv: true,
+				backend: &backuppb.S3{
+					Bucket:   "test-bucket",
+					Endpoint: "https://tos-s3-cn-beijing.ivolces.com",
+					Provider: "volcengine",
+					Region:   "cn-beijing",
+					RoleArn:  "trn:iam::1234567890:role/restricted",
+				},
+			},
+			{
+				name: "explicit static credentials",
+				backend: &backuppb.S3{
+					Bucket:          "test-bucket",
+					Endpoint:        "https://tos-s3-cn-beijing.ivolces.com",
+					Provider:        "volcengine",
+					Region:          "cn-beijing",
+					AccessKey:       "explicit-id",
+					SecretAccessKey: "explicit-key",
+					RoleArn:         "trn:iam::1234567890:role/restricted",
+				},
+			},
+			{
+				name: "shared config profile",
+				backend: &backuppb.S3{
+					Bucket:   "test-bucket",
+					Endpoint: "https://tos-s3-cn-beijing.ivolces.com",
+					Provider: "volcengine",
+					Region:   "cn-beijing",
+					Profile:  "volcengine-profile",
+					RoleArn:  "trn:iam::1234567890:role/restricted",
+				},
+			},
+		}
+		for _, tc := range testCases {
+			t.Run(tc.name, func(t *testing.T) {
+				if tc.oidcEnv {
+					t.Setenv(volcengineOIDCTokenFileEnv, "/var/run/secrets/token")
+					t.Setenv(volcengineOIDCRoleTRNEnv, "trn:iam::1234567890:role/pod-dfs")
+				} else {
+					t.Setenv(volcengineOIDCTokenFileEnv, "")
+					t.Setenv(volcengineOIDCRoleTRNEnv, "")
+				}
+				storage, err := NewS3Storage(t.Context(), tc.backend, &storeapi.Options{})
+				require.ErrorIs(t, err, berrors.ErrStorageInvalidConfig)
+				require.ErrorContains(t, err, "volcengine TOS does not support role-arn")
+				require.Nil(t, storage)
+			})
+		}
 	})
 
 	t.Run("partial OIDC env fails closed", func(t *testing.T) {
