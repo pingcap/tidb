@@ -79,7 +79,10 @@ type volcengineOIDCRefresh struct {
 // volcengineOIDCCredentialsProvider exchanges a VKE projected OIDC token for
 // temporary Volcengine STS credentials. It coalesces concurrent refreshes,
 // refreshes asynchronously inside the pre-expiry window while serving still-valid
-// credentials, and applies a backoff after refresh failures.
+// credentials. The backoff after a failed refresh applies only to early refreshes
+// while cached credentials are still valid. Without valid credentials, every
+// Retrieve starts or joins a refresh so that a short STS outage does not keep
+// failing requests for the whole backoff interval.
 type volcengineOIDCCredentialsProvider struct {
 	stsURL     string
 	roleTRN    string

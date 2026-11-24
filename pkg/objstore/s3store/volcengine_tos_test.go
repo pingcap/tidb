@@ -318,6 +318,23 @@ func TestAutoNewCredVolcengine(t *testing.T) {
 }
 
 func TestVolcengineTOSEndpointOnlyEndToEnd(t *testing.T) {
+	testCases := []struct {
+		name            string
+		sendCredentials bool
+	}{
+		{name: "without SendCredentials", sendCredentials: false},
+		// SendCredentials retrieves from the AWS config credentials before the S3
+		// client signs requests; both must share one OIDC exchange.
+		{name: "with SendCredentials", sendCredentials: true},
+	}
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			testVolcengineTOSEndpointOnlyEndToEnd(t, tc.sendCredentials)
+		})
+	}
+}
+
+func testVolcengineTOSEndpointOnlyEndToEnd(t *testing.T, sendCredentials bool) {
 	tokenFile := filepath.Join(t.TempDir(), "token")
 	require.NoError(t, os.WriteFile(tokenFile, []byte(" oidc-token \n"), 0o600))
 	t.Setenv(volcengineOIDCTokenFileEnv, tokenFile)
@@ -384,10 +401,17 @@ func TestVolcengineTOSEndpointOnlyEndToEnd(t *testing.T) {
 	require.NoError(t, s3Opts.Apply(backend))
 
 	store, err := NewS3Storage(t.Context(), backend, &storeapi.Options{
-		HTTPClient: newRewriteHostHTTPClient(tosServer.URL),
+		HTTPClient:      newRewriteHostHTTPClient(tosServer.URL),
+		SendCredentials: sendCredentials,
 	})
 	require.NoError(t, err)
 	defer store.Close()
+	if sendCredentials {
+		require.Equal(t, "oidc-ak", backend.AccessKey)
+		require.Equal(t, "oidc-sess", backend.SessionToken)
+	} else {
+		require.Empty(t, backend.AccessKey)
+	}
 
 	data, err := store.ReadFile(t.Context(), "hello.txt")
 	require.NoError(t, err)
@@ -555,6 +579,25 @@ func TestVolcengineOIDCCredentialsProviderRefresh(t *testing.T) {
 		require.True(t, valid)
 		require.Equal(t, cred, cached)
 		require.Nil(t, retry)
+		require.Equal(t, int32(2), hits.Load())
+	})
+
+	t.Run("failed cold refresh does not back off without valid credentials", func(t *testing.T) {
+		var hits atomic.Int32
+		provider, _ := newProvider(t, func(w http.ResponseWriter, r *http.Request) {
+			if hits.Add(1) == 1 {
+				w.WriteHeader(http.StatusForbidden)
+				return
+			}
+			writeCred(t, w, "recovered-ak", time.Hour, false)
+		})
+
+		_, err := provider.Retrieve(t.Context())
+		require.ErrorContains(t, err, "returned status 403")
+		// The next caller retries STS immediately instead of failing for the backoff interval.
+		cred, err := provider.Retrieve(t.Context())
+		require.NoError(t, err)
+		require.Equal(t, "recovered-ak", cred.AccessKeyID)
 		require.Equal(t, int32(2), hits.Load())
 	})
 

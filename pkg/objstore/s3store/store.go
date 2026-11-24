@@ -103,11 +103,15 @@ func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *storeapi.Opti
 		}))
 	}
 
+	// cred is shared by the AWS config and the S3 client so stateful providers,
+	// such as Volcengine OIDC, are created and refreshed only once per storage.
+	var cred aws.CredentialsProvider
 	if qs.Profile != "" {
 		configOpts = append(configOpts, config.WithSharedConfigProfile(qs.Profile))
 	} else {
 		// Handle custom credentials
-		cred, err := autoNewCred(&qs)
+		var err error
+		cred, err = autoNewCred(&qs)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -169,18 +173,12 @@ func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *storeapi.Opti
 			o.HTTPClient = opts.HTTPClient
 		})
 	}
-	// When using a profile, let AWS SDK handle credentials through the profile
-	// Don't call autoNewCred as it interferes with profile-based authentication
-	if qs.Profile == "" {
-		cred, err := autoNewCred(&qs)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if cred != nil {
-			s3Opts = append(s3Opts, func(o *s3.Options) {
-				o.Credentials = cred
-			})
-		}
+	// When using a profile, cred stays nil and the AWS SDK handles credentials
+	// through the profile.
+	if cred != nil {
+		s3Opts = append(s3Opts, func(o *s3.Options) {
+			o.Credentials = cred
+		})
 	}
 
 	// Handle role assumption if specified
