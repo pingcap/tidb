@@ -80,7 +80,7 @@ pub fn query_visit_info(
 mod record_set;
 pub use record_set::RecordSet;
 pub(crate) mod physical_builder;
-pub mod plan_cache;
+pub use tidb_planner::plan_cache;
 pub(crate) mod planner_bridge;
 pub(crate) use tidb_planner::point_get_key;
 pub(crate) mod set_opr;

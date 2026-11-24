@@ -32,7 +32,8 @@ pub fn get_latest_version_from_stats_table(
     table_id: i64,
     opt_objective_determinate: bool,
 ) -> u64 {
-    let Some(statistics) = handle.table_statistics(table_id, || catalog.statistics_schema(table_id))
+    let Some(statistics) =
+        handle.table_statistics(table_id, || catalog.statistics_schema(table_id))
     else {
         return 0;
     };
@@ -202,7 +203,10 @@ impl PreparedPlanCacheEnvironment {
 
     /// The statement's statistics handle (Go `sctx.GetStatsHandle()`).
     #[must_use]
-    pub fn with_stats_handle(mut self, handle: std::sync::Arc<tidb_stats_handle::StatsHandle>) -> Self {
+    pub fn with_stats_handle(
+        mut self,
+        handle: std::sync::Arc<tidb_stats_handle::StatsHandle>,
+    ) -> Self {
         self.stats_handle = StatsHandleRef(handle);
         self
     }
@@ -376,7 +380,11 @@ impl PreparedPlanCacheEnvironment {
     /// Go `NewPlanCacheKey`'s `statsVerHash`: the sum of every table's
     /// `getLatestVersionFromStatsTable(sctx, t.Meta(), t.Meta().ID)`, zero
     /// when the key omits statistics.
-    pub fn stats_version_hash(&self, catalog: &tidb_infoschema::SessionExtendedInfoSchema, keys: &[tidb_infoschema::CatalogTableKey]) -> u64 {
+    pub fn stats_version_hash(
+        &self,
+        catalog: &tidb_infoschema::SessionExtendedInfoSchema,
+        keys: &[tidb_infoschema::CatalogTableKey],
+    ) -> u64 {
         if !self.hashes_fresh_statistics() {
             return 0;
         }
@@ -430,4 +438,109 @@ impl crate::plan_cache_lru::PlanCacheKey for PhysicalPlanCacheKey {
             + self.dirty_tables.capacity() * std::mem::size_of::<i64>()
             + self.relate_version.capacity() * std::mem::size_of::<(i64, u64)>()) as i64
     }
+}
+
+/// Go's prepared-plan cache keys physical plans by the current parameter
+/// types. Values with the same type rebuild one retained tree; a different
+/// type gets its own physical enumeration instead of inheriting a path chosen
+/// for an incompatible comparison domain.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[allow(missing_docs)] // one variant per `Datum` kind
+pub enum PreparedParameterType {
+    Null,
+    Int,
+    UInt,
+    Decimal {
+        precision: i32,
+        scale: i32,
+    },
+    Real,
+    Float32,
+    String {
+        charset: tidb_charset::Charset,
+        collation: tidb_charset::Collation,
+    },
+    Bytes,
+    Raw,
+    BinaryLiteral,
+    Bit,
+    Duration,
+    Enum,
+    Set,
+    Date,
+    DateTime,
+    Timestamp,
+    Json,
+    VectorFloat32,
+    MinNotNull,
+    MaxValue,
+}
+
+impl PreparedParameterType {
+    #[must_use]
+    pub fn of(value: &tidb_datatype::Datum) -> Self {
+        match value {
+            tidb_datatype::Datum::Null => Self::Null,
+            tidb_datatype::Datum::Int(_) => Self::Int,
+            tidb_datatype::Datum::UInt(_) => Self::UInt,
+            tidb_datatype::Datum::Decimal(value) => {
+                let (precision, scale) = value.precision_and_frac();
+                Self::Decimal { precision, scale }
+            }
+            tidb_datatype::Datum::Real(_) => Self::Real,
+            tidb_datatype::Datum::Float32(_) => Self::Float32,
+            tidb_datatype::Datum::String(value) => Self::String {
+                charset: value.charset(),
+                collation: value.collation(),
+            },
+            tidb_datatype::Datum::Bytes(_) => Self::Bytes,
+            tidb_datatype::Datum::Raw(_) => Self::Raw,
+            tidb_datatype::Datum::BinaryLiteral(_) => Self::BinaryLiteral,
+            tidb_datatype::Datum::Bit(_) => Self::Bit,
+            tidb_datatype::Datum::Duration(_) => Self::Duration,
+            tidb_datatype::Datum::Enum(_, _) => Self::Enum,
+            tidb_datatype::Datum::Set(_, _) => Self::Set,
+            tidb_datatype::Datum::Time(value) => match value.kind() {
+                tidb_datatype::TimeType::Date => Self::Date,
+                tidb_datatype::TimeType::DateTime => Self::DateTime,
+                tidb_datatype::TimeType::Timestamp => Self::Timestamp,
+            },
+            tidb_datatype::Datum::Json(_) => Self::Json,
+            tidb_datatype::Datum::VectorFloat32(_) => Self::VectorFloat32,
+            tidb_datatype::Datum::MinNotNull => Self::MinNotNull,
+            tidb_datatype::Datum::MaxValue => Self::MaxValue,
+        }
+    }
+
+    /// Go `checkTypesCompatibility4PC`: decimal precision and scale are
+    /// asymmetric. A plan generated for a wider decimal can serve a narrower
+    /// value, but the reverse must enumerate a new physical plan.
+    fn compatible_with(self, actual: Self) -> bool {
+        match (self, actual) {
+            (
+                Self::Decimal {
+                    precision: expected_precision,
+                    scale: expected_scale,
+                },
+                Self::Decimal {
+                    precision: actual_precision,
+                    scale: actual_scale,
+                },
+            ) => expected_precision >= actual_precision && expected_scale >= actual_scale,
+            _ => self == actual,
+        }
+    }
+}
+
+/// Go `checkTypesCompatibility4PC` over a statement's parameter types.
+#[must_use]
+pub fn prepared_parameter_types_compatible(
+    expected: &[PreparedParameterType],
+    actual: &[PreparedParameterType],
+) -> bool {
+    expected.len() == actual.len()
+        && expected
+            .iter()
+            .zip(actual)
+            .all(|(expected, actual)| expected.compatible_with(*actual))
 }

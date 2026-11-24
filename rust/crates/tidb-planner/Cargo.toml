@@ -78,6 +78,7 @@ tidb-ranger = { path = "../tidb-ranger" }
 tidb-lexer = { path = "../tidb-lexer" }
 tidb-kvcache = { path = "../tidb-kvcache" }
 tidb-fixcontrol = { path = "../tidb-fixcontrol" }
+tidb-planner-core-metrics = { path = "../tidb-planner-core-metrics" }
 tidb-tracing = { path = "../tidb-tracing" }
 tidb-failpoint = { path = "../tidb-failpoint" }
 chrono.workspace = true
