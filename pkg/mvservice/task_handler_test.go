@@ -1989,7 +1989,7 @@ func TestServerHelperLoadAllTiDBMVRefresh(t *testing.T) {
 			types.NewIntDatum(101),
 			types.NewIntDatum(123456789),
 			types.NewStringDatum(mvRefreshAlertLevelWarning),
-			types.NewTimeDatum(types.NewTime(types.FromGoTime(mvsUnixMilli(oracle.ExtractPhysical(123456789)).UTC()), mysql.TypeDatetime, types.MaxFsp)),
+			types.NewTimeDatum(types.NewTime(types.FromGoTime(mvsUnixMilli(oracle.ExtractPhysical(123456789))), mysql.TypeDatetime, types.MaxFsp)),
 		}).ToRow(),
 		// Valid row.
 		chunk.MutRowFromDatums([]types.Datum{
@@ -2065,7 +2065,7 @@ func TestMVServiceRefreshAlertRestoresMissingPersistedState(t *testing.T) {
 				setPersistedAlert := func(level any, snapshotTime time.Time) {
 					var snapshot any
 					if !snapshotTime.IsZero() {
-						snapshot = types.NewTime(types.FromGoTime(snapshotTime.UTC()), mysql.TypeDatetime, types.MaxFsp)
+						snapshot = types.NewTime(types.FromGoTime(snapshotTime), mysql.TypeDatetime, types.MaxFsp)
 					}
 					se.restrictedRows[testSQLFetchMVRefresh] = []chunk.Row{
 						chunk.MutRowFromValues(nextRefresh.Unix(), int64(101), lastSuccessReadTSO, level, snapshot).ToRow(),
@@ -2134,7 +2134,7 @@ func TestMVServiceRefreshAlertRestoresMissingPersistedState(t *testing.T) {
 		setPersistedState := func(readTime time.Time, level any, snapshotTime time.Time) {
 			se.restrictedRows[testSQLFetchMVRefresh] = []chunk.Row{
 				chunk.MutRowFromValues(now.Add(24*time.Hour).Unix(), int64(101), oracle.GoTimeToTS(readTime), level,
-					types.NewTime(types.FromGoTime(snapshotTime.UTC()), mysql.TypeDatetime, types.MaxFsp)).ToRow(),
+					types.NewTime(types.FromGoTime(snapshotTime), mysql.TypeDatetime, types.MaxFsp)).ToRow(),
 			}
 		}
 		newChecker := func(id string) *MVService {
