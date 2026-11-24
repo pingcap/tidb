@@ -25,12 +25,16 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/session"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/slowlogrule"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -598,5 +602,113 @@ func BenchmarkCheckSlowLogRulesPreAlloc(b *testing.B) {
 	b.StartTimer()
 	for i := 0; i < b.N; i++ {
 		execStmt.LogSlowQuery(ts, true, false)
+	}
+}
+
+type batchActivationErrorTxnManager struct {
+	sessiontxn.TxnManager
+	failActivation *bool
+}
+
+func (m batchActivationErrorTxnManager) ActivateTxn() (kv.Transaction, error) {
+	if *m.failActivation {
+		return nil, fmt.Errorf("injected transaction activation failure")
+	}
+	return m.TxnManager.ActivateTxn()
+}
+
+func TestBatchReadOnlyActivationError(t *testing.T) {
+	for _, operation := range []string{"Insert", "Delete"} {
+		for _, afterBatch := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/afterBatch=%t", operation, afterBatch), func(t *testing.T) {
+				store := testkit.CreateMockStore(t)
+				writer := testkit.NewTestKit(t, store)
+				writer.MustExec("create table test.batch_activation(a int primary key)")
+				writer.MustExec("set global tidb_enable_batch_dml = 1")
+				defer writer.MustExec("set global tidb_enable_batch_dml = 0")
+				writer.MustExec("set tidb_dml_batch_size = 1")
+				sql := "insert into test.batch_activation values (1), (2)"
+				if operation == "Delete" {
+					writer.MustExec(sql)
+					sql = "delete from test.batch_activation"
+				}
+				writer.MustExec("set tidb_batch_" + strings.ToLower(operation) + " = 1")
+				failActivation := !afterBatch
+				testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/afterBatch"+operation+"NewTxn", func(sessionctx.Context) {
+					failActivation = true
+				})
+				vars := writer.Session().GetSessionVars()
+				manager := sessiontxn.GetTxnManager(writer.Session())
+				defer func() { vars.TxnManager = manager }()
+				vars.TxnManager = batchActivationErrorTxnManager{TxnManager: manager, failActivation: &failActivation}
+				err := writer.ExecToErr(sql)
+				vars.TxnManager = manager
+				require.ErrorContains(t, err, "injected transaction activation failure")
+				require.Equal(t, afterBatch, exeerrors.ErrBatchInsertFail.Equal(err), "%v", err)
+				var expected []string
+				if operation == "Delete" {
+					expected = []string{"1", "2"}
+					if afterBatch {
+						expected = []string{"2"}
+					}
+				} else if afterBatch {
+					expected = []string{"1"}
+				}
+				writer.MustQuery("select * from test.batch_activation order by a").Check(testkit.Rows(expected...))
+			})
+		}
+	}
+}
+
+func TestBatchInsertForeignKeyAtomicity(t *testing.T) {
+	for _, fromSelect := range []bool{false, true} {
+		for _, operation := range []string{"insert", "replace", "on duplicate", "replace success"} {
+			t.Run(fmt.Sprintf("%s/select=%t", operation, fromSelect), func(t *testing.T) {
+				store := testkit.CreateMockStore(t)
+				tk := testkit.NewTestKit(t, store)
+				tk.MustExec("use test")
+				tk.MustExec("set sql_mode = 'STRICT_ALL_TABLES'")
+				tk.MustExec("create table p(id int primary key, u int not null unique)")
+				tk.MustExec("create table c(id int primary key, pid int, foreign key(pid) references p(id) on delete cascade on update cascade)")
+				tk.MustExec("create table src(a int, b int)")
+				tk.MustExec("insert into p values (1,10)")
+				values, target, prefix, suffix := "(2,10),(3,null)", "p", "replace", ""
+				errCode := 1048
+				switch operation {
+				case "insert":
+					values, target, prefix, errCode = "(1,1),(2,999)", "c", "insert", 1452
+				case "on duplicate":
+					prefix, suffix = "insert", " on duplicate key update id = values(id)"
+				case "replace success":
+					values, errCode = "(2,10),(3,20)", 0
+				}
+				if target == "p" {
+					tk.MustExec("insert into c values (1,1)")
+				}
+				tk.MustExec("insert into src values " + values)
+				tk.MustExec("set global tidb_enable_batch_dml = 1")
+				defer tk.MustExec("set global tidb_enable_batch_dml = 0")
+				tk.MustExec("set tidb_batch_insert = 1")
+				tk.MustExec("set tidb_dml_batch_size = 1")
+				sql := prefix + " into " + target + " values " + values + suffix
+				if fromSelect {
+					sql = prefix + " into " + target + " select a,b from src order by a" + suffix
+				}
+				if errCode == 0 {
+					tk.MustExec(sql)
+					tk.MustQuery("select * from p order by id").Check(testkit.Rows("2 10", "3 20"))
+					tk.MustQuery("select * from c").Check(testkit.Rows())
+				} else {
+					tk.MustGetErrCode(sql, errCode)
+					tk.MustQuery("select * from p").Check(testkit.Rows("1 10"))
+					if target == "c" {
+						tk.MustQuery("select * from c").Check(testkit.Rows())
+					} else {
+						tk.MustQuery("select * from c").Check(testkit.Rows("1 1"))
+					}
+				}
+				tk.MustQuery("select c.id from c left join p on c.pid = p.id where p.id is null").Check(testkit.Rows())
+			})
+		}
 	}
 }

@@ -161,6 +161,7 @@ func TestTopology(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, "bar", v)
 	selfInfo := info.getLocalServerInfo()
+	require.True(t, selfInfo.SchemaReadOnly)
 	require.Equal(t, selfInfo.asTopologyInfo(), *topology)
 
 	nonTTLKey := fmt.Sprintf("%s/%s:%v/info", TopologyInformationPath, selfInfo.IP, selfInfo.Port)
@@ -400,6 +401,7 @@ func TestInfoSyncerMarshal(t *testing.T) {
 	require.Equal(t, info.StartTimestamp, decodeInfo.StartTimestamp)
 	require.Equal(t, info.JSONServerID, decodeInfo.JSONServerID)
 	require.Equal(t, info.Labels, decodeInfo.Labels)
+	require.False(t, decodeInfo.SchemaReadOnly)
 	require.False(t, decodeInfo.DisableRPC) // Older server info omits disable_rpc.
 }
 

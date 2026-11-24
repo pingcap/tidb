@@ -260,6 +260,8 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			err = e.setDataFromTablePrivileges(sctx)
 		case infoschema.TableSchemaPrivileges:
 			err = e.setDataFromSchemaPrivileges(sctx)
+		case infoschema.TableSchemataExtensions:
+			err = e.setDataFromSchemataExtensions(sctx)
 		}
 		if err != nil {
 			return nil, err
@@ -3040,6 +3042,11 @@ func (e *tidbTrxTableRetriever) retrieve(ctx context.Context, sctx sessionctx.Co
 		e.initialized = true
 
 		sm := sctx.GetSessionManager()
+		failpoint.Inject("mockModifySchemaReadOnlyDDL", func() {
+			if sm == nil {
+				sm = domain.GetDomain(sctx).InfoSyncer().GetSessionManager()
+			}
+		})
 		if sm == nil {
 			e.retrieved = true
 			return nil, nil
@@ -3048,6 +3055,14 @@ func (e *tidbTrxTableRetriever) retrieve(ctx context.Context, sctx sessionctx.Co
 		loginUser := sctx.GetSessionVars().User
 		hasProcessPriv := hasPriv(sctx, mysql.ProcessPriv)
 		infoList := sm.ShowTxnList()
+		// Internal SQL requests have no authenticated user, including on remote
+		// TiDB coprocessors. Only these requests need internal write transactions
+		// for database read-only draining; preserve client-visible TIDB_TRX rows.
+		if loginUser == nil {
+			if provider, ok := sm.(interface{ ShowInternalTxnList() []*txninfo.TxnInfo }); ok {
+				infoList = append(infoList, provider.ShowInternalTxnList()...)
+			}
+		}
 		e.txnInfo = make([]*txninfo.TxnInfo, 0, len(infoList))
 		for _, info := range infoList {
 			// If you have the PROCESS privilege, you can see all running transactions.
@@ -4113,6 +4128,40 @@ func (e *memtableRetriever) setDataFromSchemaPrivileges(sctx sessionctx.Context)
 
 	e.rows = rows
 	return nil
+}
+
+func (e *memtableRetriever) setDataFromSchemataExtensions(ctx sessionctx.Context) (err error) {
+	const readOnly = "READ ONLY=1"
+	checker := privilege.GetPrivilegeManager(ctx)
+	ex, ok := e.extractor.(*plannercore.InfoSchemaSchemataExtractor)
+	if !ok {
+		return errors.Errorf("wrong extractor type: %T, expected InfoSchemaSchemataExtractor", e.extractor)
+	}
+	if ex.SkipRequest {
+		return nil
+	}
+	schemas := ex.ListSchemas(e.is)
+	rows := make([][]types.Datum, 0, len(schemas))
+
+	for _, schemaName := range schemas {
+		schema, _ := e.is.SchemaByName(schemaName)
+		if checker != nil && !checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, schema.Name.L, "", "", mysql.AllPrivMask) {
+			continue
+		}
+		record := types.MakeDatums(
+			infoschema.CatalogVal, // CATALOG_NAME
+			schema.Name.O,         // SCHEMA_NAME
+		)
+		if schema.ReadOnly {
+			record = append(record, types.NewStringDatum(readOnly))
+		} else {
+			record = append(record, types.NewStringDatum(""))
+		}
+		e.recordMemoryConsume(record)
+		rows = append(rows, record)
+	}
+	e.rows = rows
+	return
 }
 
 func checkRule(rule *label.Rule) (dbName, tableName string, partitionName string, err error) {
