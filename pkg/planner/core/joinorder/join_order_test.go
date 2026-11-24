@@ -247,7 +247,8 @@ func TestAlignEQCondsWithProjectionExpressions(t *testing.T) {
 		require.Same(t, right, newRight.Children()[0])
 
 		check := &CheckConnectionResult{
-			node1: &Node{p: left}, node2: &Node{p: right},
+			// Cached costs include costs accumulated in earlier enumeration steps.
+			node1: &Node{p: left, cumCost: 30}, node2: &Node{p: right, cumCost: 20},
 			appliedInnerEdges: []*edge{{joinType: base.InnerJoin, eqConds: []*expression.ScalarFunction{cond}}},
 		}
 		vertexHints := map[int]*JoinMethodHint{
@@ -260,6 +261,14 @@ func TestAlignEQCondsWithProjectionExpressions(t *testing.T) {
 		require.Same(t, right, check.node2.p)
 		require.Equal(t, hint.PreferHashJoin, inner.(*logicalop.LogicalJoin).LeftPreferJoinType)
 		require.Equal(t, hint.PreferHashJoin, inner.(*logicalop.LogicalJoin).RightPreferJoinType)
+		t.Run("expression key materialization cost", func(t *testing.T) {
+			result, err := newConflictDetector(ctx).MakeJoin(check, vertexHints)
+			require.NoError(t, err)
+			inputCost := check.node1.cumCost + check.node2.cumCost
+			// One new projection per input, each preserving its input row count.
+			want := inputCost + left.StatsInfo().RowCount + right.StatsInfo().RowCount + result.p.StatsInfo().RowCount
+			require.Equal(t, want, result.cumCost)
+		})
 		check.appliedNonInnerEdge = &edge{joinType: base.LeftOuterJoin, eqConds: []*expression.ScalarFunction{cond}}
 		outer, err := makeNonInnerJoin(ctx, check, vertexHints)
 		require.NoError(t, err)
@@ -267,6 +276,17 @@ func TestAlignEQCondsWithProjectionExpressions(t *testing.T) {
 		require.Same(t, right, check.node2.p)
 		require.Equal(t, hint.PreferHashJoin, outer.LeftPreferJoinType)
 		require.Equal(t, hint.PreferHashJoin, outer.RightPreferJoinType)
+		t.Run("selection over outer join cost", func(t *testing.T) {
+			columnEQ := expression.NewFunctionInternal(ctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), left.Schema().Columns[0], right.Schema().Columns[0]).(*expression.ScalarFunction)
+			check.appliedNonInnerEdge.eqConds = []*expression.ScalarFunction{columnEQ}
+			result, err := newConflictDetector(ctx).MakeJoin(check, vertexHints)
+			require.NoError(t, err)
+			require.IsType(t, &logicalop.LogicalSelection{}, result.p)
+			child := result.p.Children()[0].(*logicalop.LogicalJoin)
+			require.Equal(t, base.LeftOuterJoin, child.JoinType)
+			want := check.node1.cumCost + check.node2.cumCost + child.StatsInfo().RowCount + result.p.StatsInfo().RowCount
+			require.Equal(t, want, result.cumCost)
+		})
 		require.Len(t, left.Exprs, 1)
 		require.Len(t, right.Exprs, 1)
 	}

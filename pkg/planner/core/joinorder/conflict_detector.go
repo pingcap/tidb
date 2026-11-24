@@ -226,21 +226,18 @@ func validateCumCost(cost float64) error {
 	}
 }
 
+// calcCumCost sums estimated row counts, reusing the cost of each input
+// subtree so that penalties applied during earlier join choices are preserved.
 func calcCumCost(p base.LogicalPlan, node1, node2 *Node) float64 {
-	var cost1, cost2 float64
-	if node1 != nil {
-		cost1 = node1.cumCost
+	if node1 != nil && p == node1.p {
+		return node1.cumCost
 	}
-	if node2 != nil {
-		cost2 = node2.cumCost
+	if node2 != nil && p == node2.p {
+		return node2.cumCost
 	}
-	return p.StatsInfo().RowCount + cost1 + cost2
-}
-
-func calcCumCostByChildren(p base.LogicalPlan) float64 {
 	cost := p.StatsInfo().RowCount
 	for _, child := range p.Children() {
-		cost += calcCumCostByChildren(child)
+		cost += calcCumCost(child, node1, node2)
 	}
 	return cost
 }
@@ -270,7 +267,7 @@ func (d *ConflictDetector) Build(group *joinGroup) ([]*Node, error) {
 		vertexMap[v.ID()] = &Node{
 			bitSet:  intset.NewFastIntSet(i),
 			p:       v,
-			cumCost: calcCumCostByChildren(v),
+			cumCost: calcCumCost(v, nil, nil),
 		}
 		if err := validateCumCost(vertexMap[v.ID()].cumCost); err != nil {
 			return nil, err
