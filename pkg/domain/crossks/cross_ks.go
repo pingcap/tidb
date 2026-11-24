@@ -65,8 +65,8 @@ var errManagerClosed = errors.New("cross keyspace runtime manager is closed")
 type runtimeState uint8
 
 const (
-	runtimeReady runtimeState = iota
-	runtimeInitializing
+	runtimeInitializing runtimeState = iota
+	runtimeReady
 	// Workers may still reenter GetOrCreate while they drain.
 	runtimeDraining
 	// Workers have stopped; the runtime is hidden until resource cleanup ends.

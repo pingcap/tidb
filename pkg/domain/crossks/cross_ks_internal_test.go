@@ -80,6 +80,7 @@ func newRuntimeHandleTestManager(t *testing.T, targetKS string) (*Manager, *runt
 	sessPool := &runtimeHandleTestSessPool{}
 	entry := &runtimeEntry{
 		sessMgr:       newRuntimeHandleTestSessionManager(targetStore, sessPool),
+		state:         runtimeReady,
 		activeHolders: make(map[string]struct{}),
 	}
 	mgr.runtimes[targetKS] = entry
@@ -370,6 +371,7 @@ func TestRuntimeHandleManagerCloseClosesAllEntriesRegardlessOfIdleTimeout(t *tes
 	secondSessPool := &runtimeHandleTestSessPool{}
 	mgr.runtimes[secondKS] = &runtimeEntry{
 		sessMgr:       newRuntimeHandleTestSessionManager(secondStore, secondSessPool),
+		state:         runtimeReady,
 		activeHolders: make(map[string]struct{}),
 	}
 	firstEntry.lastReleaseAt = time.Now()
