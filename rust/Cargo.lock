@@ -8738,7 +8738,10 @@ name = "tidb-planner"
 version = "0.0.0"
 dependencies = [
  "chrono",
+ "prost 0.14.4",
  "regex",
+ "serde",
+ "serde_json",
  "stacker",
  "tidb-ast",
  "tidb-autoid",
@@ -8794,6 +8797,7 @@ dependencies = [
  "tidb-planner-core-constraint",
  "tidb-planner-core-cost",
  "tidb-planner-core-joinorder",
+ "tidb-planner-core-metrics",
  "tidb-planner-core-operator-logicalop",
  "tidb-planner-core-operator-physicalop",
  "tidb-planner-core-partidx",
@@ -8812,6 +8816,7 @@ dependencies = [
  "tidb-privilege",
  "tidb-proto",
  "tidb-ranger",
+ "tidb-redact",
  "tidb-resolve",
  "tidb-sem",
  "tidb-sem-compat",
