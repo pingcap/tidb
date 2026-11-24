@@ -1422,6 +1422,40 @@ func (b *Builder) WithCrossKS(crossKS bool) *Builder {
 	return b
 }
 
+// TableWithDB is a table and its database, as the meta stores them.
+type TableWithDB struct {
+	DB    *model.DBInfo
+	Table *model.TableInfo
+}
+
+// BuildForTables builds an info schema with only tables and their databases, which the caller read
+// from the meta at schemaVersion and ts, for a session that runs a statement of another keyspace.
+// It changes the infos. It reads a cached table as a normal one: a cached table needs a session to
+// load its cache. The auto ID requirement and the placement policies come from parent.
+func BuildForTables(parent InfoSchema, schemaVersion int64, ts uint64, tables ...TableWithDB) (InfoSchema, error) {
+	dbByID := make(map[int64]*model.DBInfo, 1)
+	dbs := make([]*model.DBInfo, 0, 1)
+	for _, t := range tables {
+		db, ok := dbByID[t.DB.ID]
+		if !ok {
+			db = t.DB
+			dbByID[db.ID] = db
+			dbs = append(dbs, db)
+		}
+		tbl := t.Table
+		ConvertOldVersionUTF8ToUTF8MB4IfNeed(tbl)
+		ConvertCharsetCollateToLowerCaseIfNeed(tbl)
+		tbl.DBID = db.ID
+		tbl.TableCacheStatusType = model.TableCacheStatusDisable
+		db.Deprecated.Tables = append(db.Deprecated.Tables, tbl)
+	}
+	b := NewBuilder(parent.GetAutoIDRequirement(), 0, nil, NewData(), false).WithCrossKS(true)
+	if err := b.InitWithDBInfos(dbs, parent.AllPlacementPolicies(), nil, nil, schemaVersion); err != nil {
+		return nil, err
+	}
+	return b.Build(ts), nil
+}
+
 func tableBucketIdx(tableID int64) int {
 	intest.Assert(tableID > 0)
 	return int(tableID % bucketCount)

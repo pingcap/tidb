@@ -109,7 +109,7 @@ func (q *QuerySource) BuildMinimalInfoSchema(
 ) (infoschema.InfoSchema, error) {
 	m := meta.NewReader(store.GetSnapshot(tidbkv.NewVersion(q.ReadTS)))
 	dbByID := make(map[int64]*model.DBInfo)
-	dbs := make([]*model.DBInfo, 0, 1)
+	tables := make([]infoschema.TableWithDB, 0, len(q.Tables))
 	for _, src := range q.Tables {
 		db := dbByID[src.DBID]
 		if db == nil {
@@ -121,7 +121,6 @@ func (q *QuerySource) BuildMinimalInfoSchema(
 				return nil, errors.Errorf("source database %d not found at the import query snapshot", src.DBID)
 			}
 			dbByID[src.DBID] = db
-			dbs = append(dbs, db)
 		}
 		tbl, err := m.GetTable(src.DBID, src.ID)
 		if err != nil {
@@ -131,18 +130,9 @@ func (q *QuerySource) BuildMinimalInfoSchema(
 		if tbl == nil || tbl.Revision != src.Revision {
 			return nil, errors.Errorf("source table %d changed before the import query snapshot", src.ID)
 		}
-		infoschema.ConvertOldVersionUTF8ToUTF8MB4IfNeed(tbl)
-		infoschema.ConvertCharsetCollateToLowerCaseIfNeed(tbl)
-		tbl.DBID = db.ID
-		tbl.TableCacheStatusType = model.TableCacheStatusDisable
-		db.Deprecated.Tables = append(db.Deprecated.Tables, tbl)
+		tables = append(tables, infoschema.TableWithDB{DB: db, Table: tbl})
 	}
-	b := infoschema.NewBuilder(parent.GetAutoIDRequirement(), 0, nil, infoschema.NewData(), false).
-		WithCrossKS(true)
-	if err := b.InitWithDBInfos(dbs, parent.AllPlacementPolicies(), nil, nil, q.SchemaVersion); err != nil {
-		return nil, err
-	}
-	return b.Build(q.ReadTS), nil
+	return infoschema.BuildForTables(parent, q.SchemaVersion, q.ReadTS, tables...)
 }
 
 // newQueryParser returns a parser with the parser config of the session, like
