@@ -6,6 +6,7 @@ go_test(
     srcs = [
         "cannot_find_column_test.go",
         "main_test.go",
+        "using_subquery_scope_test.go",
     ],
     data = glob(["testdata/**"]),
     flaky = True,

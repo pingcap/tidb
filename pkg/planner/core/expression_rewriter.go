@@ -245,8 +245,16 @@ func (b *PlanBuilder) rewriteWithPreprocess(
 // rewriterSchemaAndNames returns the schema and names an expression rewriter
 // over p resolves column references against.
 func rewriterSchemaAndNames(p base.LogicalPlan) (*expression.Schema, types.NameSlice) {
-	if join, ok := p.(*logicalop.LogicalJoin); ok && join.FullSchema != nil {
-		return join.FullSchema, join.FullNames
+	switch x := p.(type) {
+	case *logicalop.LogicalJoin:
+		if x.FullSchema != nil {
+			return x.FullSchema, x.FullNames
+		}
+	case *logicalop.LogicalApply:
+		// An apply built over a USING/NATURAL join carries that join's FullSchema.
+		if x.FullSchema != nil {
+			return x.FullSchema, x.FullNames
+		}
 	}
 	return p.Schema(), p.OutputNames()
 }
@@ -1459,9 +1467,9 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, planCtx *exp
 		copy(join.OutputNames()[planCtx.plan.Schema().Len():], agg.OutputNames())
 		join.AttachOnConds(onConds)
 		// set FullSchema and FullNames for this join
-		if left, ok := planCtx.plan.(*logicalop.LogicalJoin); ok && left.FullSchema != nil {
-			join.FullSchema = left.FullSchema
-			join.FullNames = left.FullNames
+		if fullSchema, fullNames := findJoinFullSchema(planCtx.plan); fullSchema != nil {
+			join.FullSchema = fullSchema
+			join.FullNames = fullNames
 		}
 		// Set join hint for this join.
 		if planCtx.builder.TableHints() != nil {
