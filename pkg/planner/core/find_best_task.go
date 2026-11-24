@@ -1027,6 +1027,9 @@ func hasStatsForEstimation(sctx base.PlanContext, c *candidatePath, statsTbl *st
 	if len(c.accessCondsColMap) == 0 || statsTbl.Pseudo {
 		return false
 	}
+	// Estimation can request stats loading. Skyline only inspects the snapshot.
+	histColl := statsTbl.HistColl
+	histColl.CanNotTriggerLoad = true
 	firstCorrelatedCol := c.path.EqOrInCondCount
 	endCorrelatedCol := firstCorrelatedCol + c.path.CorrelatedAccessColCount
 	found := 0
@@ -1041,7 +1044,7 @@ func hasStatsForEstimation(sctx base.PlanContext, c *candidatePath, statsTbl *st
 			if colStats == nil || !colStats.IsStatsInitialized() || (indexJoinRuntimeCol && colStats.NDV <= 0) {
 				return false
 			}
-		} else if !statistics.ColumnStatsAreUsable(colStats, sctx, &statsTbl.HistColl) {
+		} else if statistics.ColumnStatsIsInvalid(colStats, sctx, &histColl, col.ID) {
 			return false
 		}
 		found++
