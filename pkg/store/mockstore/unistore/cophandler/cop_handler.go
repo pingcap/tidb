@@ -616,6 +616,7 @@ func genRespWithMPPExec(chunks []tipb.Chunk, intermediateOutput []*tipb.Intermed
 		for i := range warnings {
 			selResp.Warnings = append(selResp.Warnings, toPBError(warnings[i].Err))
 		}
+		failpoint.InjectCall("copResponseWarnings", selResp.Warnings)
 	}
 	if locked, ok := errors.Cause(err).(*ErrLocked); ok {
 		resp.Locked = &kvrpcpb.LockInfo{

@@ -607,6 +607,16 @@ func TestStatsAnalyzedInDDL(t *testing.T) {
 }
 
 func TestPartialStatsInExplain(t *testing.T) {
+	// Mock stores reuse table IDs, so requests left by other tests can load
+	// this test's histograms before the assertions below.
+	clearAsyncItems := func() {
+		for _, item := range asyncload.AsyncLoadHistogramNeededItems.AllItems() {
+			asyncload.AsyncLoadHistogramNeededItems.Delete(item.TableItemID)
+		}
+	}
+	clearAsyncItems()
+	// Register first so the Domain's workers stop before the final cleanup.
+	t.Cleanup(clearAsyncItems)
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
