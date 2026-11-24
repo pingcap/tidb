@@ -48,6 +48,25 @@ func TestFDSet_ExtractFD(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@session.tidb_enable_new_only_full_group_by_check = 'on';")
+	tk.MustExec("create table heap(a int, b int)")
+	tk.MustExec("insert into heap values (1, 10), (1, 20)")
+	tk.MustQuery("select b, count(*) from heap group by _tidb_rowid order by b").Check(testkit.Rows("10 1", "20 1"))
+
+	tk.MustExec("create table pt(a int, b int) partition by hash(a) partitions 2")
+	tk.MustExec("insert into pt values (0, 10), (1, 20)")
+	tk.MustQuery("select b from pt partition(p0) group by _tidb_rowid").Check(testkit.Rows("10"))
+	tk.MustContainErrMsg("select b from pt group by _tidb_rowid", "contains nonaggregated column 'test.pt.b'")
+
+	// A dynamic UnionScan includes the physical partition ID to read uncommitted rows.
+	tk.MustExec("set tidb_partition_prune_mode = 'dynamic'")
+	tk.MustExec("set tidb_skip_missing_partition_stats = on")
+	tk.MustExec("begin")
+	tk.MustExec("insert into pt values (2, 30)")
+	tk.MustContainErrMsg("select b from pt group by _tidb_rowid", "contains nonaggregated column 'test.pt.b'")
+	tk.MustContainErrMsg("select b from pt group by _tidb_tid", "contains nonaggregated column 'test.pt.b'")
+	tk.MustQuery("select b from pt group by _tidb_tid, _tidb_rowid order by b").Check(testkit.Rows("10", "20", "30"))
+	tk.MustExec("rollback")
+
 	tk.MustExec("create table t1(a int key, b int, c int, unique(b,c))")
 	tk.MustExec("create table t2(m int key, n int, p int, unique(m,n))")
 	tk.MustExec("create table x1(a int not null primary key, b int not null, c int default null, d int not null, unique key I_b_c (b,c), unique key I_b_d (b,d))")
