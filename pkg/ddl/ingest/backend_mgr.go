@@ -261,7 +261,7 @@ func CreateIngestor(ctx context.Context, store kv.Storage, job *model.Job, adjus
 	}
 	tls, err := NewDDLTLS()
 	if err != nil {
-		logutil.Logger(ctx).Error(LitErrCreateBackendFail, zap.Error(err))
+		logutil.Logger(ctx).Warn(LitErrCreateBackendFail, zap.Error(err))
 		return nil, err
 	}
 
