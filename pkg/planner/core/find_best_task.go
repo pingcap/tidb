@@ -629,8 +629,7 @@ func findBestTask(super base.LogicalPlan, prop *property.PhysicalProperty) (best
 			return base.InvalidTask, nil
 		}
 	}
-	_, isProjection := self.(*logicalop.LogicalProjection)
-	if !(prop.SkipScanInfo != nil && isProjection) && !checkOpSelfSatisfyPropTaskTypeRequirement(p.Self(), prop) {
+	if !checkOpSelfSatisfyPropTaskTypeRequirement(p.Self(), prop) {
 		// Currently all plan cannot totally push down to TiKV.
 		p.StoreTask(prop, base.InvalidTask)
 		return base.InvalidTask, nil
@@ -797,6 +796,9 @@ type candidatePath struct {
 	countAfterAccess4IndexJoinOK bool    // whether countAfterAccess4IndexJoin is stable enough for skyline pruning.
 	isFullRange                  bool    // cached result of whether this path covers the full scan range.
 	eqOrInCount                  int     // cached result of equalPredicateCount().
+	// A positive prefix count marks a Skip Scan candidate. The NDV estimates the number of representatives to scan.
+	skipScanPrefixColumnCount int
+	skipScanNDV               float64
 }
 
 func compareBool(l, r bool) int {
@@ -864,6 +866,9 @@ func compareRiskRatio(lhs, rhs *candidatePath) (int, float64) {
 }
 
 func (c *candidatePath) getCountAfterAccess4SkylinePruning() (float64, bool) {
+	if c.skipScanPrefixColumnCount > 0 {
+		return c.skipScanNDV, true
+	}
 	if c.indexJoinCols > 0 {
 		if !c.countAfterAccess4IndexJoinOK {
 			return 0, false
@@ -1904,8 +1909,8 @@ const prunedRangeMaxRowsPerSavedSeek = 100
 // conversion and cost comparison as every other candidate.
 // Eligibility: need a strong equality prefix (EqCondCount > 1) or at least 2 IN-list columns.
 func appendPrunedRangeCandidates(ds *logicalop.DataSource, prop *property.PhysicalProperty, candidates []*candidatePath) []*candidatePath {
-	// Pruned candidates are index scans, which TiFlash and TableSample don't support.
-	if ds.PreferStoreType&h.PreferTiFlash != 0 || ds.SampleInfo != nil {
+	// Range pruning applies to ordinary index scans.
+	if prop.SkipScanInfo != nil || ds.PreferStoreType&h.PreferTiFlash != 0 || ds.SampleInfo != nil {
 		return candidates
 	}
 	for _, candidate := range candidates[:len(candidates):len(candidates)] {
@@ -2053,6 +2058,21 @@ func getIndexMergeCandidate(ds *logicalop.DataSource, path *util.AccessPath, pro
 // skylinePruning prunes access paths according to different factors. An access path can be pruned only if
 // there exists a path that is not worse than it at all factors and there is at least one better factor.
 func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) []*candidatePath {
+	skip := prop.SkipScanInfo
+	var skipNDV float64
+	if skip != nil {
+		if prop.IsFlashProp() || ds.IsForUpdateRead || ds.SampleInfo != nil || ds.PreferStoreType&h.PreferTiFlash != 0 ||
+			len(ds.AllConds)+len(ds.PushedDownConds) != 0 {
+			return nil
+		}
+		if _, ok := ds.SCtx().GetSessionVars().GetIsolationReadEngines()[kv.TiKV]; !ok {
+			return nil
+		}
+		skipNDV = estimateSkipScanNDV(ds, skip.GroupByCols)
+		if !(skipNDV > 0) {
+			return nil
+		}
+	}
 	candidates := make([]*candidatePath, 0, 4)
 	idxMissingStats := false
 	// tidb_opt_prefer_range_scan is the master switch to control index preferencing
@@ -2061,6 +2081,14 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 		// We should check whether the possible access path is valid first.
 		if path.StoreType != kv.TiFlash && prop.IsFlashProp() {
 			continue
+		}
+		if skip != nil {
+			if !matchesSkipScanPath(ds, path, skip) {
+				continue
+			}
+			// Keep matchProperty's range grouping changes local to this Skip Scan request.
+			pathCopy := *path
+			path = &pathCopy
 		}
 		if len(path.PartialAlternativeIndexPaths) > 0 {
 			// OR normal index merge path, try to determine every index partial path for this property.
@@ -2120,6 +2148,13 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 
 			// After passing the check, generate the candidate
 			currentCandidate = getIndexCandidate(ds, path, prop)
+		}
+		if skip != nil {
+			if currentCandidate.matchPropResult != property.PropMatched {
+				continue
+			}
+			currentCandidate.skipScanPrefixColumnCount = len(skip.GroupByCols)
+			currentCandidate.skipScanNDV = skipNDV
 		}
 		pruned := false
 		for i := len(candidates) - 1; i >= 0; i-- {
@@ -2337,12 +2372,10 @@ func findBestTask4LogicalDataSource(super base.LogicalPlan, prop *property.Physi
 	if prop == nil {
 		return nil, nil
 	}
-	if prop.SkipScanInfo != nil && ds.IsForUpdateRead {
-		return base.InvalidTask, nil
-	}
+	skipScanRequired := prop.SkipScanInfo != nil
 	sessionVars := ds.SCtx().GetSessionVars()
 	_, isolationReadEnginesHasTiKV := sessionVars.GetIsolationReadEngines()[kv.TiKV]
-	if ds.IsForUpdateRead && sessionVars.TxnCtx.IsExplicit && isolationReadEnginesHasTiKV {
+	if !skipScanRequired && ds.IsForUpdateRead && sessionVars.TxnCtx.IsExplicit && isolationReadEnginesHasTiKV {
 		hasPointGetPath := false
 		for _, path := range ds.PossibleAccessPaths {
 			if isPointGetPath(ds, path) {
@@ -2372,13 +2405,6 @@ func findBestTask4LogicalDataSource(super base.LogicalPlan, prop *property.Physi
 		if t != nil {
 			return
 		}
-	}
-	if prop.SkipScanInfo != nil {
-		t, err = findBestSkipScanTask(ds, prop)
-		if err == nil && ge == nil {
-			ds.StoreTask(prop, t)
-		}
-		return
 	}
 	// if prop is require an index join's probe side, check the inner pattern admission here.
 	if prop.IndexJoinProp != nil {
@@ -2507,7 +2533,8 @@ func findBestTask4LogicalDataSource(super base.LogicalPlan, prop *property.Physi
 			return t, nil
 		}
 
-		canConvertPointGet := len(path.Ranges) > 0 && path.StoreType == kv.TiKV && isPointGetConvertableSchema(ds, len(path.Ranges) == 1) && !accessesCommitTS
+		canConvertPointGet := !skipScanRequired && !accessesCommitTS && len(path.Ranges) > 0 && path.StoreType == kv.TiKV &&
+			isPointGetConvertableSchema(ds, len(path.Ranges) == 1)
 		if fixcontrol.GetBoolWithDefault(ds.SCtx().GetSessionVars().OptimizerFixControl, fixcontrol.Fix52592, false) {
 			canConvertPointGet = false
 		}
@@ -2647,30 +2674,21 @@ func findBestTask4LogicalDataSource(super base.LogicalPlan, prop *property.Physi
 	return
 }
 
-func findBestSkipScanTask(ds *logicalop.DataSource, prop *property.PhysicalProperty) (base.Task, error) {
-	best := base.InvalidTask
-	if prop.IsFlashProp() || ds.SampleInfo != nil || ds.PreferStoreType&h.PreferTiFlash != 0 ||
-		len(ds.AllConds)+len(ds.PushedDownConds) != 0 {
-		return best, nil
-	}
-	if _, ok := ds.SCtx().GetSessionVars().GetIsolationReadEngines()[kv.TiKV]; !ok {
-		return best, nil
-	}
-	cols := prop.SkipScanInfo.GroupByCols
+func estimateSkipScanNDV(ds *logicalop.DataSource, cols []*expression.Column) float64 {
 	stats := ds.TableStats
 	if len(cols) == 0 || stats == nil || ds.StatisticTable == nil || stats.StatsVersion == statistics.PseudoVersion {
-		return best, nil
+		return 0
 	}
 	prefixStats := *stats
 	if stats.GetGroupNDV4Cols(cols) == nil {
 		if len(stats.ColNDVs) == 0 {
-			return best, nil
+			return 0
 		}
 		prefixStats.ColNDVs = maps.Clone(stats.ColNDVs)
 		for _, col := range cols {
 			hist := ds.StatisticTable.GetCol(col.ID)
 			if hist == nil || !hist.IsStatsInitialized() {
-				return best, nil
+				return 0
 			}
 			// Column histograms account for NULL separately, while GROUP
 			// BY needs one representative for the NULL group too.
@@ -2678,70 +2696,12 @@ func findBestSkipScanTask(ds *logicalop.DataSource, prop *property.PhysicalPrope
 				prefixStats.ColNDVs[col.UniqueID]++
 			}
 			if prefixStats.ColNDVs[col.UniqueID] <= 0 {
-				return best, nil
+				return 0
 			}
 		}
 	}
 	ndv, _ := cardinality.EstimateColsNDVWithMatchedLen(ds.SCtx(), cols, ds.Schema(), &prefixStats)
-	scanProp := prop
-	if prop.TaskTp == property.RootTaskType {
-		// Keep the scan in a cop task until its Skip Scan stats are set.
-		scanProp = prop.CloneEssentialFields()
-		scanProp.TaskTp = property.CopSingleReadTaskType
-	}
-	for _, path := range ds.PossibleAccessPaths {
-		if !matchesSkipScanPath(ds, path, prop.SkipScanInfo) {
-			continue
-		}
-		// matchProperty updates per-search range grouping on the path.
-		pathCopy := *path
-		match, _ := matchProperty(ds, &pathCopy, prop)
-		if match != property.PropMatched {
-			continue
-		}
-		candidate := &candidatePath{path: &pathCopy, matchPropResult: match, isFullRange: true}
-		var task base.Task
-		var err error
-		if path.IsTablePath() {
-			task, err = convertToTableScan(ds, scanProp, candidate)
-		} else {
-			task, err = convertToIndexScan(ds, scanProp, candidate, accessesExtraCommitTSColumn(ds))
-		}
-		if err != nil {
-			return nil, err
-		}
-		cop, ok := task.(*physicalop.CopTask)
-		if !ok || cop.Invalid() || !cop.KeepOrder || len(cop.RootTaskConds) != 0 {
-			continue
-		}
-		scan := cop.Plan()
-		originalRows := scan.StatsCount()
-		rows := min(ndv, originalRows)
-		if !(rows > 0 && rows < originalRows) {
-			continue
-		}
-		switch scan := scan.(type) {
-		case *physicalop.PhysicalIndexScan:
-			scan.SkipScan, scan.SkipScanPrefixColumnCount = true, len(cols)
-		case *physicalop.PhysicalTableScan:
-			scan.SkipScan, scan.SkipScanPrefixColumnCount = true, len(cols)
-		default:
-			continue
-		}
-		setSkipScanRows(scan, rows)
-		cop.SkipScan = true
-		if prop.TaskTp == property.RootTaskType {
-			task = cop.ConvertToRootTask(ds.SCtx())
-		}
-		better, err := compareTaskCost(task, best)
-		if err != nil {
-			return nil, err
-		}
-		if better {
-			best = task
-		}
-	}
-	return best, nil
+	return ndv
 }
 
 func matchesSkipScanPath(ds *logicalop.DataSource, path *util.AccessPath, skip *property.SkipScanInfo) bool {
@@ -2791,6 +2751,34 @@ func matchesSkipScanPath(ds *logicalop.DataSource, path *util.AccessPath, skip *
 			return !mysql.HasNotNullFlag(ds.TableInfo.Columns[col.Offset].GetFlag())
 		})
 	}
+	return true
+}
+
+// applySkipScanToCopTask applies Skip Scan metadata before the reader inherits scan statistics.
+func applySkipScanToCopTask(candidate *candidatePath, cop *physicalop.CopTask) bool {
+	prefixCount := candidate.skipScanPrefixColumnCount
+	if prefixCount <= 0 {
+		return true
+	}
+	if cop.Invalid() || !cop.KeepOrder || len(cop.RootTaskConds) != 0 {
+		return false
+	}
+	scan := cop.Plan()
+	originalRows := scan.StatsCount()
+	rows := min(candidate.skipScanNDV, originalRows)
+	if !(rows > 0 && rows < originalRows) {
+		return false
+	}
+	switch scan := scan.(type) {
+	case *physicalop.PhysicalIndexScan:
+		scan.SkipScan, scan.SkipScanPrefixColumnCount = true, prefixCount
+	case *physicalop.PhysicalTableScan:
+		scan.SkipScan, scan.SkipScanPrefixColumnCount = true, prefixCount
+	default:
+		return false
+	}
+	setSkipScanRows(scan, rows)
+	cop.SkipScan = true
 	return true
 }
 
@@ -3205,6 +3193,9 @@ func convertToIndexScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 	if err = addPushedDownSelection4PhysicalIndexScan(is, cop, ds, path, finalStats); err != nil {
 		return base.InvalidTask, err
 	}
+	if !applySkipScanToCopTask(candidate, cop) {
+		return base.InvalidTask, nil
+	}
 	if prop.TaskTp == property.RootTaskType {
 		task = task.ConvertToRootTask(ds.SCtx())
 	} else if _, ok := task.(*physicalop.RootTask); ok {
@@ -3466,6 +3457,9 @@ func convertToTableScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 	}
 	addPushedDownSelection4PhysicalTableScan(ts, copTask, ds.StatsInfo().ScaleByExpectCnt(ds.SCtx().GetSessionVars(), prop.ExpectedCnt), ds.AstIndexHints)
 	if prop.IsFlashProp() && len(copTask.RootTaskConds) != 0 {
+		return base.InvalidTask, nil
+	}
+	if !applySkipScanToCopTask(candidate, copTask) {
 		return base.InvalidTask, nil
 	}
 	if prop.TaskTp == property.RootTaskType {
