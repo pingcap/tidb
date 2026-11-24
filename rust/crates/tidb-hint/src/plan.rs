@@ -512,10 +512,13 @@ pub fn parse_plan_hints(
                     continue;
                 }
                 plan.no_index_lookup_pushdown.push(HintedTable {
-                    database_name: table
-                        .db_name
-                        .clone()
-                        .unwrap_or_else(|| current_database.to_owned()),
+                    database_name: hint_table_db_name(
+                        table,
+                        hint,
+                        query_blocks,
+                        current_level,
+                        current_database,
+                    ),
                     table_name: table.name.clone(),
                     ..HintedTable::default()
                 });
@@ -537,10 +540,13 @@ pub fn parse_plan_hints(
                     continue;
                 }
                 let entry = HintedIndex {
-                    database_name: table
-                        .db_name
-                        .clone()
-                        .unwrap_or_else(|| current_database.to_owned()),
+                    database_name: hint_table_db_name(
+                        table,
+                        hint,
+                        query_blocks,
+                        current_level,
+                        current_database,
+                    ),
                     table_name: table.name.clone(),
                     partitions: table.partitions.clone(),
                     kind: match name.as_str() {
@@ -673,6 +679,32 @@ fn requires_table_names(name: &str) -> bool {
     )
 }
 
+/// The database of an index hint's table: its own, else Go
+/// `resolveHintDBName` in the query block the hint names
+/// (`getHintTableQBName`: the table's `@qb`, else the hint's).
+fn hint_table_db_name(
+    table: &tidb_ast::HintTable,
+    hint: &Hint,
+    query_blocks: &QBHintHandler,
+    current_level: i32,
+    current_database: &str,
+) -> String {
+    if let Some(db_name) = &table.db_name {
+        return db_name.clone();
+    }
+    let hint_qb_name = match &hint.kind {
+        HintKind::Index { qb_name, .. } => qb_name.as_deref(),
+        _ => None,
+    };
+    let qb_name = table
+        .qb_name
+        .as_deref()
+        .filter(|qb_name| !qb_name.is_empty())
+        .or(hint_qb_name);
+    let offset = query_blocks.get_hint_offset(qb_name, current_level);
+    query_blocks.resolve_hint_db_name(offset, &table.name, current_database)
+}
+
 fn table_infos(
     current_database: &str,
     hint_name: &str,
@@ -683,15 +715,18 @@ fn table_infos(
 ) -> Vec<HintedTable> {
     let result = tables
         .iter()
-        .map(|table| HintedTable {
-            database_name: table
-                .db_name
-                .clone()
-                .unwrap_or_else(|| current_database.to_owned()),
-            table_name: table.name.clone(),
-            partitions: table.partitions.clone(),
-            select_offset: query_blocks.get_hint_offset(table.qb_name.as_deref(), current_offset),
-            matched: false,
+        .map(|table| {
+            let select_offset =
+                query_blocks.get_hint_offset(table.qb_name.as_deref(), current_offset);
+            HintedTable {
+                database_name: table.db_name.clone().unwrap_or_else(|| {
+                    query_blocks.resolve_hint_db_name(select_offset, &table.name, current_database)
+                }),
+                table_name: table.name.clone(),
+                partitions: table.partitions.clone(),
+                select_offset,
+                matched: false,
+            }
         })
         .collect::<Vec<_>>();
     if join_hint_disallows_partitions(hint_name)

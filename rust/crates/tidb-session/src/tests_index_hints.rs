@@ -1573,3 +1573,150 @@ fn pushed_lookup_limits_after_its_table_side_filter() {
     .collect();
     assert_eq!(ids, ["3", "4", "6", "7"]);
 }
+
+/// Go `TestHintTableNameWithoutDBName` (`pkg/planner/core/casetest/hint`,
+/// Go master #72838): a hint table name without a database matches the
+/// table or alias of that name in any database of its query block
+/// (`QBHintHandler.resolveHintDBName`), the point-get fast path included;
+/// the current database wins when it has the name, a name in several other
+/// databases is ambiguous, and an explicit database must match exactly.
+#[test]
+fn test_hint_table_name_without_db_name() {
+    let mut session = Session::new();
+    for sql in [
+        "create database hintdb1",
+        "create table hintdb1.j (ns bigint, id bigint, primary key (ns, id) clustered)",
+        "create table hintdb1.c (oid bigint, hlc bigint, ns bigint, sjid bigint, primary key (oid, hlc) clustered, key ns_sjid (ns, sjid))",
+        "create table hintdb1.u (a int, b int, unique key ub (b))",
+    ] {
+        session.run(sql).unwrap();
+    }
+    fn plan_has(session: &mut Session, sql: &str, op: &str) -> bool {
+        row_text(session.run(&format!("explain format = 'brief' {sql}")))
+            .iter()
+            .any(|row| row.join(" ").contains(op))
+    }
+    fn warnings(session: &mut Session) -> Vec<Vec<String>> {
+        row_text(session.run("show warnings"))
+    }
+    let join_sql = |hint: &str, alias: &str| {
+        let name = if alias.is_empty() { "c" } else { alias };
+        format!(
+            "select /*+ {hint} */ j.id, {name}.oid from hintdb1.j left join hintdb1.c {alias} on {name}.ns = j.ns and {name}.sjid = j.id where j.ns = 1 and j.id in (1, 2)"
+        )
+    };
+    // The tables are in hintdb1, which is not the current database (first
+    // "test", then none).
+    for use_db in [true, false] {
+        if use_db {
+            session.run("use test").unwrap();
+        } else {
+            session.vars.current_db.clear();
+        }
+        for (hint, alias) in [("hash_join(c)", ""), ("hash_join(x)", "x"), ("hash_join_build(c)", "")] {
+            let sql = join_sql(hint, alias);
+            assert!(plan_has(&mut session, &sql, "HashJoin"), "{sql}");
+            assert_eq!(warnings(&mut session), Vec::<Vec<String>>::new(), "{sql}");
+        }
+        assert!(plan_has(&mut session, &join_sql("inl_join(c)", ""), "IndexJoin"));
+        assert_eq!(warnings(&mut session), Vec::<Vec<String>>::new());
+        assert!(plan_has(&mut session, &join_sql("merge_join(c)", ""), "MergeJoin"));
+        assert_eq!(warnings(&mut session), Vec::<Vec<String>>::new());
+
+        // Index hints, including the point-get fast path.
+        assert!(plan_has(&mut session, "select /*+ use_index(c, ns_sjid) */ oid from hintdb1.c where ns = 1", "ns_sjid"));
+        assert_eq!(warnings(&mut session), Vec::<Vec<String>>::new());
+        assert!(plan_has(&mut session, "select /*+ use_index(x, primary) */ oid from hintdb1.c x where ns = 1", "TableFullScan"));
+        assert_eq!(warnings(&mut session), Vec::<Vec<String>>::new());
+        assert!(plan_has(&mut session, "select * from hintdb1.u where b = 1", "Point_Get"));
+        assert!(!plan_has(&mut session, "select /*+ ignore_index(u, ub) */ * from hintdb1.u where b = 1", "Point_Get"));
+        assert_eq!(warnings(&mut session), Vec::<Vec<String>>::new());
+
+        // An explicit database name must still match exactly.
+        assert!(!plan_has(&mut session, &join_sql("hash_join(test.c)", ""), "HashJoin"));
+        let warned = warnings(&mut session);
+        assert!(
+            warned.iter().any(|row| row.join(" ").contains("There are no matching table names for (c)")),
+            "{warned:?}"
+        );
+        assert!(plan_has(&mut session, &join_sql("hash_join(hintdb1.c)", ""), "HashJoin"));
+        assert_eq!(warnings(&mut session), Vec::<Vec<String>>::new());
+    }
+
+    // The same table name in two databases: the table in the current
+    // database wins, and with neither in the current database the name is
+    // ambiguous and the hint does not match.
+    for sql in [
+        "create database hintdb2",
+        "create table hintdb1.t (a int, key ia1 (a))",
+        "create table hintdb2.t (a int, key ia2 (a))",
+    ] {
+        session.run(sql).unwrap();
+    }
+    let two_schemas = |hint: &str| {
+        format!("select /*+ {hint} */ * from hintdb1.t join hintdb2.t on hintdb1.t.a = hintdb2.t.a")
+    };
+    fn build_side_index(session: &mut Session, sql: &str) -> String {
+        let rows = row_text(session.run(&format!("explain format = 'brief' {sql}")));
+        assert!(rows[0].join(" ").contains("HashJoin"), "{rows:?}");
+        assert!(rows[1].join(" ").contains("(Build)"), "{rows:?}");
+        rows[2].join(" ")
+    }
+    session.run("use hintdb1").unwrap();
+    assert!(build_side_index(&mut session, &two_schemas("hash_join_build(t)")).contains("index:ia1(a)"));
+    assert_eq!(warnings(&mut session), Vec::<Vec<String>>::new());
+    assert!(build_side_index(&mut session, &two_schemas("hash_join_probe(t)")).contains("index:ia2(a)"));
+    assert_eq!(warnings(&mut session), Vec::<Vec<String>>::new());
+    session.run("use test").unwrap();
+    session.run(&format!("explain format = 'brief' {}", two_schemas("hash_join_build(t)"))).unwrap();
+    let warned = warnings(&mut session);
+    assert!(
+        warned.iter().any(|row| row.join(" ").contains("There are no matching table names for (t)")),
+        "{warned:?}"
+    );
+    assert!(build_side_index(&mut session, &two_schemas("hash_join_build(hintdb2.t)")).contains("index:ia2(a)"));
+    assert_eq!(warnings(&mut session), Vec::<Vec<String>>::new());
+
+    // Index hints resolve as join hints do, without leaking an index name
+    // to the other database's table.
+    for (current_db, index_name) in [("hintdb1", "ia1"), ("hintdb2", "ia2")] {
+        session.run(&format!("use {current_db}")).unwrap();
+        let sql = two_schemas(&format!("use_index(t, {index_name})"));
+        assert!(plan_has(&mut session, &sql, "index:ia1(a)"), "{sql}");
+        assert!(plan_has(&mut session, &sql, "index:ia2(a)"), "{sql}");
+        assert_eq!(warnings(&mut session), Vec::<Vec<String>>::new(), "{sql}");
+    }
+    for current_db in ["test", ""] {
+        if current_db.is_empty() {
+            session.vars.current_db.clear();
+        } else {
+            session.run(&format!("use {current_db}")).unwrap();
+        }
+        session.run(&format!("explain format = 'brief' {}", two_schemas("use_index(t, ia1)"))).unwrap();
+        let warned = warnings(&mut session);
+        assert!(warned.iter().any(|row| row.join(" ").contains("is inapplicable")), "{warned:?}");
+        let aliased = "select /*+ use_index(x, ia1) use_index(y, ia2) */ * from hintdb1.t x join hintdb2.t y on x.a = y.a";
+        assert!(plan_has(&mut session, aliased, "index:ia1(a)"));
+        assert!(plan_has(&mut session, aliased, "index:ia2(a)"));
+        assert_eq!(warnings(&mut session), Vec::<Vec<String>>::new());
+    }
+    session.run("use test").unwrap();
+
+    // A binding resolves the unqualified hint name the same way when it is
+    // created.
+    session
+        .run("create table test.j (ns bigint, id bigint, primary key (ns, id) clustered)")
+        .unwrap();
+    let binding_query = "select j.id, c.oid from j left join hintdb1.c on c.ns = j.ns and c.sjid = j.id where j.ns = 1 and j.id in (1, 2)";
+    session
+        .run(&format!(
+            "create global binding for {binding_query} using {}",
+            binding_query.replacen("select ", "select /*+ hash_join(c) */ ", 1)
+        ))
+        .unwrap();
+    assert!(plan_has(&mut session, binding_query, "HashJoin"));
+    session.run(&format!("explain format = 'brief' {binding_query}")).unwrap();
+    assert_eq!(row_text(session.run("select @@last_plan_from_binding")), [["1"]]);
+    assert_eq!(warnings(&mut session), Vec::<Vec<String>>::new());
+    session.run(&format!("drop global binding for {binding_query}")).unwrap();
+}

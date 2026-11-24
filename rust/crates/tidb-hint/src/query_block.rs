@@ -65,6 +65,18 @@ pub struct QBHintHandler {
     left_hints: HashMap<i32, Vec<Hint>>,
     warnings: Vec<HintWarning>,
     select_stmt_offset: i32,
+    /// The tables of each query block, see [`Self::resolve_hint_db_name`].
+    block_tables: HashMap<i32, Vec<BlockTable>>,
+    /// The offsets of the query blocks being visited.
+    offset_stack: Vec<i32>,
+}
+
+/// Go `blockTable`: a table referenced in a query block, by its alias if it
+/// has one; `db_name` is empty when the name is written without a database.
+#[derive(Clone, Debug, Default)]
+struct BlockTable {
+    db_name: String,
+    name: String,
 }
 
 impl QBHintHandler {
@@ -118,6 +130,43 @@ impl QBHintHandler {
                 .then(|| HashSet::with_capacity(self.view_qb_name_to_table.len())),
             ..QBHintBuildState::default()
         }
+    }
+
+    /// Go `recordBlockTable`: a table or aliased derived table of the query
+    /// block being visited; tables outside any SELECT (UPDATE and DELETE
+    /// targets) belong to block 0.
+    fn record_block_table(&mut self, db_name: Option<&str>, name: &str) {
+        let offset = self.offset_stack.last().copied().unwrap_or(0);
+        self.block_tables.entry(offset).or_default().push(BlockTable {
+            db_name: tidb_mysql::to_lowercase(db_name.unwrap_or_default()),
+            name: tidb_mysql::to_lowercase(name),
+        });
+    }
+
+    /// Go `resolveHintDBName`: the database of a hint table name written
+    /// without one. The current database if the query block at `offset` has
+    /// a table or alias of that name in the current database, or none at
+    /// all; otherwise, if every table of that name in the block is in one
+    /// other database, that database (`HASH_JOIN(t)` applies to `db1.t`
+    /// whatever the current database); if they are in several, the name is
+    /// ambiguous and the current database is kept, so the hint matches none.
+    pub fn resolve_hint_db_name(&self, offset: i32, table_name: &str, current_db: &str) -> String {
+        let current = tidb_mysql::to_lowercase(current_db);
+        let table_name = tidb_mysql::to_lowercase(table_name);
+        let mut resolved: Option<&str> = None;
+        for table in self.block_tables.get(&offset).into_iter().flatten() {
+            if table.name != table_name {
+                continue;
+            }
+            if table.db_name.is_empty() || table.db_name == current {
+                return current_db.to_owned();
+            }
+            if resolved.is_some_and(|resolved| resolved != table.db_name) {
+                return current_db.to_owned();
+            }
+            resolved = Some(&table.db_name);
+        }
+        resolved.map_or_else(|| current_db.to_owned(), str::to_owned)
     }
 
     /// Go `MaxSelectStmtOffset`.
@@ -473,13 +522,36 @@ impl Visitor for QBHintHandler {
             self.check_query_block_hints(&select.hints, self.select_stmt_offset);
             self.left_hints
                 .insert(self.select_stmt_offset, select.hints.clone());
+            self.offset_stack.push(self.select_stmt_offset);
+        } else if let Some(table) = node.downcast_mut::<tidb_ast::TableRef>() {
+            let (db_name, name) = match table.name.as_slice() {
+                [db, name] => (Some(db.as_str()), name.as_str()),
+                [.., name] => (None, name.as_str()),
+                [] => return false,
+            };
+            match table.alias.as_deref().filter(|alias| !alias.is_empty()) {
+                Some(alias) => self.record_block_table(db_name, alias),
+                None => self.record_block_table(db_name, name),
+            }
+        } else if let Some(tidb_ast::JoinNode::Derived { alias, .. }) =
+            node.downcast_mut::<tidb_ast::JoinNode>()
+        {
+            // A derived table is in the current database for hint matching,
+            // like `ExtractTableAlias`; one without an alias names nothing.
+            if let Some(alias) = alias.as_deref().filter(|alias| !alias.is_empty()) {
+                let alias = alias.to_owned();
+                self.record_block_table(None, &alias);
+            }
         } else if node.is::<tidb_ast::ExplainStmt>() || node.is::<tidb_ast::CreateBindingStmt>() {
             return true;
         }
         false
     }
 
-    fn leave(&mut self, _node: &mut dyn Any) -> bool {
+    fn leave(&mut self, node: &mut dyn Any) -> bool {
+        if node.is::<tidb_ast::SelectStmt>() {
+            self.offset_stack.pop();
+        }
         true
     }
 }

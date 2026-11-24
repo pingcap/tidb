@@ -819,7 +819,6 @@ pub fn apply_table_index_hints(
 /// rejected fast candidate falls back to ordinary planning, which owns those
 /// full behaviors.
 pub fn index_is_available_by_hints(
-    current_db: &str,
     db_name: &str,
     table_alias: &str,
     index_name: Option<&str>,
@@ -875,9 +874,12 @@ pub fn index_is_available_by_hints(
             "force_index" => IndexHintKind::Force,
             _ => continue,
         };
-        let hint_db = table.db_name.as_deref().unwrap_or(current_db);
+        // The fast path has a single table, so a hint without a database
+        // name refers to it whatever its database (Go
+        // `QBHintHandler.resolveHintDBName`).
+        let hint_db = table.db_name.as_deref().unwrap_or_default();
         if !tidb_mysql::lowercase_equal(&table.name, table_alias)
-            || !(tidb_mysql::lowercase_equal(hint_db, db_name) || hint_db == "*")
+            || !(hint_db.is_empty() || tidb_mysql::lowercase_equal(hint_db, db_name) || hint_db == "*")
         {
             continue;
         }

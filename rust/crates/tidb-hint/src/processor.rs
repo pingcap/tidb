@@ -347,7 +347,13 @@ pub fn parse_hints_set(
             }
             let qb_name = generate_qb_name(top_node_type, offset)?;
             set_hint_qb_name(&mut hint, qb_name);
-            fill_default_database(&mut hint, database);
+            fill_default_database(&mut hint, &|table: &HintTable| {
+                query_blocks.resolve_hint_db_name(
+                    query_blocks.get_hint_offset(table.qb_name.as_deref(), offset),
+                    &table.name,
+                    database,
+                )
+            });
             normalized.push(hint);
         }
         *block_hints = normalized;
@@ -425,7 +431,9 @@ fn set_hint_qb_name(hint: &mut Hint, value: String) {
     }
 }
 
-fn fill_default_database(hint: &mut Hint, database: &str) {
+/// Go `ParseHintsSet`'s database of a hint table written without one
+/// (`resolveHintDBName` in the table's query block).
+fn fill_default_database(hint: &mut Hint, database: &dyn Fn(&HintTable) -> String) {
     match &mut hint.kind {
         HintKind::Tables { tables, .. } => fill_tables_database(tables, database),
         HintKind::Leading { elements, .. } => fill_leading_database(elements, database),
@@ -440,13 +448,13 @@ fn fill_default_database(hint: &mut Hint, database: &str) {
     }
 }
 
-fn fill_tables_database(tables: &mut [HintTable], database: &str) {
+fn fill_tables_database(tables: &mut [HintTable], database: &dyn Fn(&HintTable) -> String) {
     for table in tables {
         fill_table_database(table, database);
     }
 }
 
-fn fill_leading_database(elements: &mut [LeadingElement], database: &str) {
+fn fill_leading_database(elements: &mut [LeadingElement], database: &dyn Fn(&HintTable) -> String) {
     for element in elements {
         match element {
             LeadingElement::Table(table) => fill_table_database(table, database),
@@ -455,9 +463,9 @@ fn fill_leading_database(elements: &mut [LeadingElement], database: &str) {
     }
 }
 
-fn fill_table_database(table: &mut HintTable, database: &str) {
+fn fill_table_database(table: &mut HintTable, database: &dyn Fn(&HintTable) -> String) {
     if table.db_name.as_deref().is_none_or(str::is_empty) {
-        table.db_name = Some(database.to_owned());
+        table.db_name = Some(database(table));
     }
 }
 

@@ -1345,7 +1345,6 @@ fn test_fast_index_hint_check_keeps_go_smaller_boundary() {
     assert!(
         !crate::access_path::index_is_available_by_hints(
             "test",
-            "test",
             "t",
             Some("idx_b"),
             &select.hints,
@@ -1362,7 +1361,6 @@ fn test_fast_index_hint_check_keeps_go_smaller_boundary() {
     assert!(
         crate::access_path::index_is_available_by_hints(
             "test",
-            "test",
             "t",
             None,
             &select.hints,
@@ -1378,14 +1376,12 @@ fn test_fast_index_hint_check_keeps_go_smaller_boundary() {
     };
     assert!(crate::access_path::index_is_available_by_hints(
         "test",
-        "test",
         "t",
         None,
         &select.hints,
         table_hints,
     ));
     assert!(!crate::access_path::index_is_available_by_hints(
-        "test",
         "test",
         "t",
         Some("idx_b"),
