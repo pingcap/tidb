@@ -709,8 +709,11 @@ func (w *worker) transitOneJobStep(
 			if err := w.checkBeforeCommit(); err != nil {
 				return 0, err
 			}
-			if job.Type == model.ActionMViewRefreshOutOfPlaceCutover {
+			switch job.Type {
+			case model.ActionMViewRefreshOutOfPlaceCutover:
 				w.cleanupMViewOutOfPlaceCutoverAfterCommit(jobCtx, job)
+			case model.ActionTruncateTable:
+				cleanupTruncateTableAffinityGroupsAfterCommit(jobCtx, job)
 			}
 			job.State = model.JobStateSynced
 		}
@@ -760,18 +763,13 @@ func (w *worker) transitOneJobStep(
 
 	failpoint.InjectCall("afterRunOneJobStep", job)
 
-	// Internal SQL may release statement mutations before a terminal cancellation.
-	if job.IsCancelled() && !jobCtx.mustRollbackTxnOnError {
-		defer jobCtx.unlockSchemaVersion(jobCtx, job.ID)
-		w.sess.Reset()
-		return 0, w.handleJobDone(jobCtx, job)
-	}
-
 	if err = w.checkBeforeCommit(); err != nil {
 		jobCtx.unlockSchemaVersion(jobCtx, job.ID)
 		return 0, err
 	}
 
+	// countForError consumes errors for cancelled jobs, so cancellation must
+	// also trigger a full rollback when internal SQL has flushed step writes.
 	if runJobErr != nil || job.IsCancelled() {
 		if jobCtx.mustRollbackTxnOnError {
 			// Discard all mutations from this job step, including related-table
@@ -806,6 +804,9 @@ func (w *worker) transitOneJobStep(
 
 	if job.IsCancelled() {
 		defer jobCtx.unlockSchemaVersion(jobCtx, job.ID)
+		// Delete PD groups before the cancellation commits. If the commit fails,
+		// the job runs again and repeats this idempotent cleanup.
+		deleteAffinityGroupsOfCancelledJob(jobCtx, job)
 		return 0, w.handleJobDone(jobCtx, job)
 	}
 
