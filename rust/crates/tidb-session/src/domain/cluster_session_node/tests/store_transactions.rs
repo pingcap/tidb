@@ -177,7 +177,7 @@ fn session_activation_retains_options_after_timestamp_future_failure() {
             request_source: None,
         };
         let pending = transactions
-            .prepare_autocommit_write("default", pessimistic, false, options)
+            .prepare_autocommit_txn("default", pessimistic, false, false, options)
             .unwrap();
         let transaction = pending.wait().unwrap();
         assert!(!fail.load(Ordering::Acquire));

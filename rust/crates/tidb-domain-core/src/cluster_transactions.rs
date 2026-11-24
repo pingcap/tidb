@@ -304,26 +304,15 @@ pub trait ClusterTransactions: Send + Sync {
     /// (`pkg/sessiontxn/isolation/base.go:711`): the session's
     /// `@@tidb_pessimistic_txn_fair_locking`, false for an internal
     /// statement.
-    fn prepare_autocommit_write(
+    /// `low_resolution` is Go `newOracleFuture`'s `UseLowResolutionTSO`.
+    fn prepare_autocommit_txn(
         &self,
         resource_group: &str,
         pessimistic: bool,
         fair_locking: bool,
-        options: SessionTransactionOptions,
-    ) -> Result<Box<dyn PendingClusterTransaction>, String>;
-
-    /// [`Self::prepare_autocommit_write`] for an autocommit read's implicit
-    /// (optimistic) transaction; `low_resolution` is Go
-    /// `newOracleFuture`'s `UseLowResolutionTSO`.
-    fn prepare_autocommit_read(
-        &self,
-        resource_group: &str,
         low_resolution: bool,
         options: SessionTransactionOptions,
-    ) -> Result<Box<dyn PendingClusterTransaction>, String> {
-        let _ = low_resolution;
-        self.prepare_autocommit_write(resource_group, false, false, options)
-    }
+    ) -> Result<Box<dyn PendingClusterTransaction>, String>;
 
     /// Go `StalenessTxnContextProvider.activateStaleTxn`: a read-only
     /// transaction at the as-of timestamp (`PrepareTSFuture(ConstantFuture(ts))`).
@@ -356,24 +345,6 @@ pub trait ClusterTransactions: Send + Sync {
         resource_group: &str,
         options: SessionTransactionOptions,
     ) -> Result<Option<CommittedTxnInfo>, SqlQueryError>;
-
-    /// [`Self::commit`] with the session's schema lease checker bound to the
-    /// publication (Go `SetOptionsBeforeCommit`); a tier with no validator
-    /// publishes unchecked.
-    fn commit_with_schema_lease(
-        &self,
-        buffer: &MutationBuffer,
-        read_ts: Option<u64>,
-        resource_group: &str,
-        _schema_lease_checker: Option<Arc<dyn SchemaLeaseChecker>>,
-        options: SessionTransactionOptions,
-        observer: Option<tidb_sessmgr::ProcessTransactionObserver>,
-    ) -> Result<Option<CommittedTxnInfo>, SqlQueryError> {
-        if let (Some(observer), Some(ts)) = (observer, read_ts) {
-            observer.activated(ts);
-        }
-        self.commit(buffer, read_ts, resource_group, options)
-    }
 
     /// Publishes one restricted-session write plan at the snapshot timestamp
     /// that produced it.
@@ -652,13 +623,6 @@ pub trait OpenClusterTransaction: Send {
     /// (`forcePrepareConstStartTS`) until the transaction activates. `None`
     /// for a transaction opened with its future already chosen.
     fn txn_future_preparer(&self) -> Option<Arc<dyn TxnFuturePreparer>> {
-        None
-    }
-
-    /// Go `LazyTxn.initStmtBuf` at activation: the statement checkpoint an
-    /// autocommit write's implicit transaction took on the buffer as it
-    /// activated, `None` before that (and for any other transaction).
-    fn stmt_checkpoint(&self) -> Option<tidb_store_driver_txn::cluster_storage::BufferCheckpoint> {
         None
     }
 }
@@ -1210,31 +1174,11 @@ where
         )))
     }
 
-    fn prepare_autocommit_write(
+    fn prepare_autocommit_txn(
         &self,
         resource_group: &str,
         pessimistic: bool,
         fair_locking: bool,
-        options: SessionTransactionOptions,
-    ) -> Result<Box<dyn PendingClusterTransaction>, String> {
-        let opener = self.opener_for_resource_group(resource_group);
-        let start_ts = opener
-            .prepare_read_only_start_ts(false)
-            .map_err(|error| error.to_string())?;
-        Ok(Box::new(PendingSessionTransaction {
-            opener,
-            start_ts: StartTsFuture::Oracle(start_ts),
-            timeout: self.timeout,
-            pessimistic,
-            fair_locking,
-            read_only: false,
-            options,
-        }))
-    }
-
-    fn prepare_autocommit_read(
-        &self,
-        resource_group: &str,
         low_resolution: bool,
         options: SessionTransactionOptions,
     ) -> Result<Box<dyn PendingClusterTransaction>, String> {
@@ -1246,9 +1190,9 @@ where
             opener,
             start_ts: StartTsFuture::Oracle(start_ts),
             timeout: self.timeout,
-            pessimistic: false,
-            fair_locking: false,
-            read_only: true,
+            pessimistic,
+            fair_locking,
+            read_only: false,
             options,
         }))
     }
@@ -1277,18 +1221,6 @@ where
         resource_group: &str,
         options: SessionTransactionOptions,
     ) -> Result<Option<CommittedTxnInfo>, SqlQueryError> {
-        self.commit_with_schema_lease(buffer, read_ts, resource_group, None, options, None)
-    }
-
-    fn commit_with_schema_lease(
-        &self,
-        buffer: &MutationBuffer,
-        read_ts: Option<u64>,
-        resource_group: &str,
-        schema_lease_checker: Option<Arc<dyn SchemaLeaseChecker>>,
-        options: SessionTransactionOptions,
-        observer: Option<tidb_sessmgr::ProcessTransactionObserver>,
-    ) -> Result<Option<CommittedTxnInfo>, SqlQueryError> {
         // Go's autocommit `finishStmt` on a statement that staged nothing
         // publishes nothing; skip the opener and protocol lookups too.
         if buffer.is_empty() {
@@ -1300,12 +1232,8 @@ where
             buffer,
             read_ts,
             options,
-            schema_lease_checker,
-            |ts| {
-                if let Some(observer) = observer {
-                    observer.activated(ts);
-                }
-            },
+            None,
+            |_| {},
         )
         .map(|outcome| outcome.as_ref().and_then(CommittedTxnInfo::from_outcome))
         .map_err(sql_error)

@@ -715,11 +715,12 @@ impl ClusterTransactions for StepTransactions {
         self.inner.open_max_ts_snapshot(resource_group)
     }
 
-    fn prepare_autocommit_write(
+    fn prepare_autocommit_txn(
         &self,
         _resource_group: &str,
         _pessimistic: bool,
         _fair_locking: bool,
+        _low_resolution: bool,
         _options: tidb_store_driver_txn::session_commit_protocol::SessionTransactionOptions,
     ) -> Result<Box<dyn tidb_domain_core::cluster_transactions::PendingClusterTransaction>, String> {
         Err(outside_the_step())

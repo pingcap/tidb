@@ -427,9 +427,10 @@ impl StatementLifecycle<'_> {
         run: &mut impl FnMut(&mut Session) -> Result<T, SqlQueryError>,
         read_ts: &transactions::StatementReadTs,
     ) -> Result<T, SqlQueryError> {
-        // The statement checkpoint, retaken once an autocommit write's
-        // implicit transaction binds the SQL buffer it is taken on.
-        let mut savepoint = *outer_savepoint;
+        // The statement checkpoint (Go `LazyTxn.stagingHandle`): the
+        // activation that binds the SQL buffer moves it into the store
+        // transaction's MemDB.
+        let savepoint = *outer_savepoint;
         if let Some(transaction) = self.txn.explicit() {
             transaction
                 .set_resource_group_name(resource_group)
@@ -505,14 +506,6 @@ impl StatementLifecycle<'_> {
                 break Err(error);
             }
             let outcome = run(&mut self.session);
-            // Go `LazyTxn.initStmtBuf`: the statement checkpoint is the one
-            // the implicit transaction took on the buffer as the executor
-            // builder activated it (`updateForUpdateTS`).
-            if autocommit_write {
-                if let Some(checkpoint) = self.txn.current().and_then(|transaction| transaction.stmt_checkpoint()) {
-                    savepoint = checkpoint;
-                }
-            }
             // Go `CommitTxn` / `RollbackTxn` -> `setLastTxnInfoBeforeTxnEnd`
             // for the transaction an autocommit statement ends: recorded
             // only when the statement activated one (`TxnCtx.StartTS != 0`),
@@ -589,7 +582,7 @@ impl StatementLifecycle<'_> {
                                 ),
                             )
                         });
-                        self.flush_if_autocommit(read_ts.get(), resource_group)
+                        self.flush_if_autocommit(read_ts.get())
                     }) {
                         Ok(()) => break Ok(value),
                         Err(error) => break Err(error),
@@ -1172,7 +1165,7 @@ impl StatementLifecycle<'_> {
             finished
                 .and_then(|()| self.commit_if_session_left_transaction())
                 .and_then(|()| {
-                    self.flush_if_autocommit(statement.read_ts.get(), &statement.resource_group)
+                    self.flush_if_autocommit(statement.read_ts.get())
                 })
         } else {
             self.txn.buffer().restore(statement.savepoint);
@@ -1219,14 +1212,10 @@ impl StatementLifecycle<'_> {
         self.commit_explicit()
     }
 
-    /// Publishes the buffer when the session is not inside `BEGIN`; see
-    /// [`TxnManager::flush_if_autocommit`].
-    pub fn flush_if_autocommit(
-        &mut self,
-        read_ts: Option<u64>,
-        resource_group: &str,
-    ) -> Result<(), SqlQueryError> {
-        self.txn.flush_if_autocommit(self.session, self.hooks.as_ref(), read_ts, resource_group)
+    /// Commits the implicit transaction when the session is not inside
+    /// `BEGIN`; see [`TxnManager::flush_if_autocommit`].
+    pub fn flush_if_autocommit(&mut self, read_ts: Option<u64>) -> Result<(), SqlQueryError> {
+        self.txn.flush_if_autocommit(self.session, self.hooks.as_ref(), read_ts)
     }
 
     /// Ends the explicit transaction by publishing its buffer at its own start

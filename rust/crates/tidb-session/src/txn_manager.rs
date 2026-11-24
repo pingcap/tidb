@@ -169,10 +169,11 @@ pub struct EnterNewTxnInputs<'a> {
 enum TxnKind {
     /// Entered by `BEGIN` or an `autocommit = 0` statement (Go `InTxn()`).
     Explicit,
-    /// An autocommit INSERT / UPDATE / DELETE's implicit transaction.
-    ImplicitWrite,
-    /// An autocommit read's implicit transaction, ended without a commit.
-    ImplicitRead,
+    /// An autocommit statement's implicit transaction (Go's `LazyTxn`
+    /// entered by `EnterNewTxnBeforeStmt` or, for a statement's `AS OF`
+    /// read, `EnterNewTxnWithReplaceProvider`), committed by the statement's
+    /// `finishStmt`: a transaction that staged nothing reaches no store.
+    Implicit,
     /// `START TRANSACTION READ ONLY AS OF`: Go's stale transaction. Its
     /// statements read through the staleness provider; it publishes nothing
     /// and ends without a commit.
@@ -390,16 +391,9 @@ impl TxnManager {
                 let read_ts = inputs.read_ts.expect("checked by the arm above");
                 let options = Self::implicit_statement_options(session);
                 self.decide_could_retry(session, pessimistic, EnterNewTxnType::BeforeStmt, false);
-                if inputs.autocommit_write {
-                    // Fair locking starts per statement, from the provider's
-                    // `OnPessimisticStmtStart`.
-                    let fair_locking = false;
-                    let isolation = session.isolation_for_provider();
-                    self.enter_implicit_write(pessimistic, &isolation, fair_locking, inputs.resource_group, options, read_ts.clone());
-                } else {
-                    let low_resolution = session.use_low_resolution_tso();
-                    self.enter_implicit_read(low_resolution, inputs.resource_group, options, read_ts.clone());
-                }
+                let isolation = session.isolation_for_provider();
+                let low_resolution = session.use_low_resolution_tso();
+                self.enter_implicit(pessimistic, &isolation, low_resolution, inputs.resource_group, options, read_ts.clone());
                 Ok(())
             }
             EnterNewTxnType::WithReplaceProvider => {
@@ -434,53 +428,21 @@ impl TxnManager {
         self.txn.take().map(|entered| entered.provider.into_txn())
     }
 
-    /// Go `PrepareTxnCtx` -> `EnterNewTxn(EnterNewTxnBeforeStmt)` for an
-    /// autocommit INSERT / UPDATE / DELETE: the statement's implicit
-    /// transaction, entered unprepared; `AdviseWarmup` requests its
-    /// timestamp (`prepare_autocommit_write`, Go's oracle future), the
-    /// executor builder activates it (`updateForUpdateTS`) and records its
-    /// start in `read_ts`.
-    fn enter_implicit_write(
+    /// Go `PrepareTxnCtx` -> `EnterNewTxn(EnterNewTxnBeforeStmt)` for a
+    /// statement outside any transaction: the implicit transaction (Go's one
+    /// `LazyTxn`, writable whatever the statement), entered unprepared and
+    /// pessimistic when `decideTxnMode` says so. `AdviseWarmup` requests its
+    /// timestamp (Go `newOracleFuture`, a low-resolution one under
+    /// `tidb_low_resolution_tso`); an optimistic provider's
+    /// `AdviseOptimizeWithPlan` may make it a `MaxUint64` read
+    /// (`forcePrepareConstStartTS`); otherwise its first read, lock or write
+    /// activates it (`ActivateTxn`) and records its start in `read_ts`.
+    /// Fair locking starts per statement, from the pessimistic provider's
+    /// `OnPessimisticStmtStart`.
+    fn enter_implicit(
         &mut self,
         pessimistic: bool,
         isolation: &str,
-        fair_locking: bool,
-        resource_group: &str,
-        options: SessionTransactionOptions,
-        read_ts: tidb_domain_core::cluster_transactions::StatementReadTs,
-    ) {
-        let oracle: OracleFuture = {
-            let transactions = Arc::clone(&self.transactions);
-            let resource_group = resource_group.to_owned();
-            let options = options.clone();
-            Box::new(move || {
-                let pending =
-                    transactions.prepare_autocommit_write(&resource_group, pessimistic, fair_locking, options);
-                oracle_opener(pending, read_ts)
-            })
-        };
-        let txn: Box<dyn OpenClusterTransaction> = Box::new(LazyClusterTransaction::new_unprepared_implicit(
-            pessimistic,
-            options,
-            self.buffer.clone(),
-            oracle,
-        ));
-        debug_assert!(self.txn.is_none(), "a transaction entered over another");
-        self.txn = Some(EnteredTxn {
-            kind: TxnKind::ImplicitWrite,
-            provider: new_provider_with_request(false, pessimistic, isolation, txn),
-        });
-    }
-
-    /// Go `PrepareTxnCtx` -> `EnterNewTxn(EnterNewTxnBeforeStmt)` for an
-    /// autocommit read: the implicit optimistic transaction, entered
-    /// unprepared. Its provider's `AdviseOptimizeWithPlan` may make it a
-    /// `MaxUint64` read (`forcePrepareConstStartTS`); otherwise `AdviseWarmup`
-    /// requests its timestamp (a low-resolution one under
-    /// `tidb_low_resolution_tso`), or the first read does. A read-only
-    /// statement ends it without a commit.
-    fn enter_implicit_read(
-        &mut self,
         low_resolution: bool,
         resource_group: &str,
         options: SessionTransactionOptions,
@@ -492,11 +454,12 @@ impl TxnManager {
             let options = options.clone();
             let read_ts = read_ts.clone();
             Box::new(move || {
-                let pending = transactions.prepare_autocommit_read(&resource_group, low_resolution, options);
+                let pending =
+                    transactions.prepare_autocommit_txn(&resource_group, pessimistic, false, low_resolution, options);
                 oracle_opener(pending, read_ts)
             })
         };
-        let constant: ConstantFuture = {
+        let constant: Option<ConstantFuture> = (!pessimistic).then(|| {
             let transactions = Arc::clone(&self.transactions);
             let resource_group = resource_group.to_owned();
             Box::new(move |ts| {
@@ -505,10 +468,11 @@ impl TxnManager {
                     read_ts.activate_const_start_ts(ts);
                     Ok(Box::new(MaxTsReadTransaction::new(transactions, &resource_group))
                         as Box<dyn OpenClusterTransaction>)
-                })
-            })
-        };
-        let txn: Box<dyn OpenClusterTransaction> = Box::new(LazyClusterTransaction::new_unprepared_implicit_read(
+                }) as TransactionOpener
+            }) as ConstantFuture
+        });
+        let txn: Box<dyn OpenClusterTransaction> = Box::new(LazyClusterTransaction::new_unprepared_implicit(
+            pessimistic,
             options,
             self.buffer.clone(),
             oracle,
@@ -516,8 +480,8 @@ impl TxnManager {
         ));
         debug_assert!(self.txn.is_none(), "a transaction entered over another");
         self.txn = Some(EnteredTxn {
-            kind: TxnKind::ImplicitRead,
-            provider: new_provider_with_request(false, false, "", txn),
+            kind: TxnKind::Implicit,
+            provider: new_provider_with_request(false, pessimistic, isolation, txn),
         });
     }
 
@@ -539,7 +503,7 @@ impl TxnManager {
         debug_assert!(self.txn.is_none(), "a transaction entered over another");
         self.could_retry = false;
         self.txn = Some(EnteredTxn {
-            kind: if statement_only { TxnKind::ImplicitRead } else { TxnKind::Stale },
+            kind: if statement_only { TxnKind::Implicit } else { TxnKind::Stale },
             provider: new_provider_with_request(true, false, "", txn),
         });
     }
@@ -821,93 +785,32 @@ impl TxnManager {
         }
     }
 
-    /// Publishes one autocommit statement's staged writes as its own
-    /// transaction, at the timestamp the statement read at. A failed
-    /// publication discards them, which is what a failed COMMIT does.
+    /// Commits the autocommit statement's implicit transaction when the
+    /// session is not inside `BEGIN`: the statement's `CommitTxn` (Go
+    /// `autoCommitAfterStmt`).
     ///
-    /// A publication that lost the race against a commit made after the read is
-    /// a 9007 the client is told about, where publishing at a fresh timestamp
-    /// made it a silent overwrite.
-    pub fn commit_autocommit_buffer(
-        &mut self,
-        session: &mut Session,
-        hooks: &dyn CommitHooks,
-        read_ts: Option<u64>,
-        resource_group: &str,
-    ) -> Result<(), SqlQueryError> {
-        let result = self.commit_autocommit_buffer_once(session, hooks, read_ts, resource_group);
-        // Go `finishStmt`'s `FinishExecuteStmt` after the commit ran.
-        session.finish_txn_fair_locking(true);
-        result
-    }
-
-    fn commit_autocommit_buffer_once(
-        &mut self,
-        session: &mut Session,
-        hooks: &dyn CommitHooks,
-        read_ts: Option<u64>,
-        resource_group: &str,
-    ) -> Result<(), SqlQueryError> {
-        let bindings_changed = hooks.binding_records_changed(&self.buffer);
-        let renew = session.start_cached_table_renew_lease()?;
-        let mut options = Self::statement_transaction_options(session);
-        options.commit_ts_upper_bound_check = renew.as_ref().map(CachedTableRenewLease::commit_ts_check);
-        let temporary = session
-            .stage_temporary_data_commit(&self.buffer)
-            .map_err(|error| SqlQueryError::unknown(format!("{error:?}")))?;
-        let committed = self.transactions.commit_with_schema_lease(
-            &self.buffer,
-            read_ts,
-            resource_group,
-            hooks.schema_lease_checker(),
-            options,
-            session.transaction_observer(),
-        );
-        drop(renew);
-        Session::finish_temporary_data_commit(temporary, committed.is_ok());
-        match committed {
-            Ok(committed) => {
-                Self::record_committed_txn_info(session, committed);
-                hooks.refresh_committed_bindings(bindings_changed);
-                Ok(())
-            }
-            Err(error) => {
-                self.buffer.reset();
-                Err(hooks.rewrite_write_conflict(error))
-            }
-        }
-    }
-
-    /// Publishes the buffer when the session is not inside `BEGIN`: the
-    /// autocommit statement's `CommitTxn` (Go `autoCommitAfterStmt`).
-    ///
-    /// An empty buffer -- every read statement -- publishes nothing and spends
-    /// no timestamp, as a Go COMMIT of a transaction that wrote nothing does.
+    /// A transaction that staged nothing -- every read statement -- reaches
+    /// no store and spends no timestamp, as a Go COMMIT of a transaction that
+    /// wrote nothing does.
     pub fn flush_if_autocommit(
         &mut self,
         session: &mut Session,
         hooks: &dyn CommitHooks,
         read_ts: Option<u64>,
-        resource_group: &str,
     ) -> Result<(), SqlQueryError> {
         if self.explicit().is_some() || session.in_transaction() {
             return Ok(());
         }
-        let read_only = self.txn.as_ref().is_some_and(|entered| entered.kind == TxnKind::ImplicitRead);
-        let mut write_transaction = self.take_implicit();
-        // Go commits a read-only transaction by doing nothing that reaches
-        // the store. An autocommit read's implicit transaction is read-only;
-        // whatever a non-DML statement staged publishes as before.
-        if read_only {
-            if let Some(transaction) = write_transaction.take() {
-                let _ = transaction.rollback();
-            }
-        }
+        let transaction = self.take_implicit();
         // Go's autocommit `CommitTxn`, which a failed commit has run too.
         session.set_txn_isolation_level_one_shot_state_for_next_txn();
         // Go `doCommitWithRetry` -> `recordOnTransactionExecution`: a
-        // transaction the statement activated counts once, committed or not.
-        if read_ts.is_some() || write_transaction.is_some() {
+        // transaction the statement activated (Go `txn.Valid()`) counts once,
+        // committed or not.
+        let activated = transaction
+            .as_ref()
+            .is_some_and(|transaction| transaction.start_ts_if_active().is_some());
+        if read_ts.is_some() || activated {
             if let Some(metrics) = session.session_ruv2_metrics() {
                 metrics.add_txn_cnt(1);
             }
@@ -918,55 +821,52 @@ impl TxnManager {
         // committing from here on.
         session.publish_transaction_committing();
         tidb_failpoint::eval("github.com/pingcap/tidb/pkg/session/mockSlowCommit");
-        if let Some(write_transaction) = write_transaction {
-            {
-                let mut transaction = write_transaction;
-                if let Some(checker) = hooks.schema_lease_checker() {
-                    transaction.set_schema_lease_checker(checker);
-                }
-                let bindings_changed = hooks.binding_records_changed(&self.buffer);
-                let renew = session.start_cached_table_renew_lease()?;
-                if let Some(renew) = &renew {
-                    transaction.set_commit_ts_upper_bound_check(renew.commit_ts_check());
-                }
-                let temporary = session
-                    .stage_temporary_data_commit(&self.buffer)
-                    .map_err(|error| SqlQueryError::unknown(format!("{error:?}")))?;
-                let committed = transaction.commit(&self.buffer);
-                drop(renew);
-                Session::finish_temporary_data_commit(temporary, committed.is_ok());
-                return match committed {
-                    Ok(committed) => {
-                        Self::record_committed_txn_info(session, committed);
-                        hooks.refresh_committed_bindings(bindings_changed);
-                        Self::record_write_details(session, write_details);
-                        session.publish_table_delta();
-                        Ok(())
-                    }
-                    Err(error) => {
-                        self.buffer.reset();
-                        session.clear_table_delta();
-                        Err(hooks.rewrite_write_conflict(error))
-                    }
-                };
+        let Some(mut transaction) = transaction else {
+            // Go `doCommitWithRetry` returns for a transaction that is not
+            // valid: a statement that entered none staged nothing (a write
+            // activates the transaction it stages in).
+            debug_assert!(self.buffer.is_empty(), "writes staged outside a transaction");
+            session.finish_txn_fair_locking(true);
+            return Ok(());
+        };
+        if let Some(checker) = hooks.schema_lease_checker() {
+            transaction.set_schema_lease_checker(checker);
+        }
+        let bindings_changed = hooks.binding_records_changed(&self.buffer);
+        let renew = session.start_cached_table_renew_lease()?;
+        if let Some(renew) = &renew {
+            transaction.set_commit_ts_upper_bound_check(renew.commit_ts_check());
+        }
+        let temporary = session
+            .stage_temporary_data_commit(&self.buffer)
+            .map_err(|error| SqlQueryError::unknown(format!("{error:?}")))?;
+        let committed = transaction.commit(&self.buffer);
+        drop(renew);
+        Session::finish_temporary_data_commit(temporary, committed.is_ok());
+        let outcome = match committed {
+            Ok(committed) => {
+                Self::record_committed_txn_info(session, committed);
+                hooks.refresh_committed_bindings(bindings_changed);
+                Self::record_write_details(session, write_details);
+                session.publish_table_delta();
+                Ok(())
             }
-        }
-        let outcome = self.commit_autocommit_buffer(session, hooks, read_ts, resource_group);
-        if outcome.is_ok() {
-            Self::record_write_details(session, write_details);
-            session.publish_table_delta();
-        } else {
-            session.clear_table_delta();
-        }
+            Err(error) => {
+                self.buffer.reset();
+                session.clear_table_delta();
+                Err(hooks.rewrite_write_conflict(error))
+            }
+        };
+        // Go `finishStmt`'s `FinishExecuteStmt` after the commit ran.
+        session.finish_txn_fair_locking(true);
         outcome
     }
 
     /// Ends the explicit transaction by publishing its buffer at its own start
     /// timestamp (Go `CommitTxn`).
     ///
-    /// A `COMMIT` with no transaction open is the autocommit path: it can only
-    /// find writes the previous statement already published, so the buffer is
-    /// empty and nothing is spent.
+    /// A `COMMIT` with no transaction open commits nothing: the previous
+    /// statement's implicit transaction already ended.
     pub fn commit(
         &mut self,
         session: &mut Session,
@@ -990,11 +890,10 @@ impl TxnManager {
             if let Some(observer) = session.transaction_observer() {
                 observer.finished();
             }
-            // No transaction and no statement read: the buffer can only hold
-            // what a previous statement already published, so there is nothing
-            // to publish and no timestamp to publish it at.
-            let resource_group = session.current_resource_group().to_owned();
-            return self.commit_autocommit_buffer(session, hooks, None, &resource_group);
+            // Go `CommitTxn` -> `doCommitWithRetry` of a transaction that is
+            // not valid: nothing to publish.
+            debug_assert!(self.buffer.is_empty(), "writes staged outside a transaction");
+            return Ok(());
         };
         if let Some(checker) = hooks.schema_lease_checker() {
             transaction.set_schema_lease_checker(checker);

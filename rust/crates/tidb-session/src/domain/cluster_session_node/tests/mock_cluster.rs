@@ -489,11 +489,12 @@ impl ClusterTransactions for MockTransactions {
         }))
     }
 
-    fn prepare_autocommit_write(
+    fn prepare_autocommit_txn(
         &self,
         resource_group: &str,
         pessimistic: bool,
         _fair_locking: bool,
+        _low_resolution: bool,
         _options: SessionTransactionOptions,
     ) -> Result<Box<dyn PendingClusterTransaction>, String> {
         self.0.record_resource_group(resource_group);

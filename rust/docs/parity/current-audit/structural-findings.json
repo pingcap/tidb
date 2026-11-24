@@ -2,8 +2,8 @@
   "date": "2026-11-23",
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports, from the 2026-11-23 symbol-level re-audit (method in structural-audit-2026-11-23.md).",
   "counts": {
-    "unresolved": 3,
-    "open": 2,
+    "unresolved": 2,
+    "open": 1,
     "partial": 1
   },
   "findings": [
@@ -11,7 +11,7 @@
       "id": "T01",
       "group": "Executor, DML and expressions",
       "status": "open",
-      "finding": "Pipelined DML is not ported: `tidb_dml_type='bulk'` runs a standard transaction; Go's `usePipelinedDmlOrWarn` (fallback warnings for temporary tables, `tidb_constraint_check_in_place=ON`, explicit transactions, ...) and the pipelined transaction are missing. A Go server reports `pipelined:true` in `tidb_last_txn_info` after a bulk INSERT; this one reports `false` and no warnings. Depends on T14: the statement's writes have to land in a pipelined store transaction.",
+      "finding": "Pipelined DML is not ported: `tidb_dml_type='bulk'` runs a standard transaction; Go's `usePipelinedDmlOrWarn` (fallback warnings for temporary tables, `tidb_constraint_check_in_place=ON`, explicit transactions, ...) and the pipelined transaction are missing. A Go server reports `pipelined:true` in `tidb_last_txn_info` after a bulk INSERT; this one reports `false` and no warnings. The statement's writes land in the implicit transaction's MemDB (T14, resolved); a pipelined transaction flushes that MemDB while the statement runs.",
       "rust_evidence": "`tidb-session/src/lib.rs` hard-codes `\"pipelined\":false`; no `use_pipelined_dml_or_warn`.",
       "go_owner": "`pkg/session/session.go` `usePipelinedDmlOrWarn`, `NewTxn` pipelined path; `pkg/store/driver/txn`"
     },
@@ -22,17 +22,9 @@
       "finding": "Go `pkg/executor`'s `ExecStmt` (`adapter.go`: `Exec`, `FinishExecuteStmt`, `handlePessimisticLockError`, `handleNoDelayExecutor`, the observation's begin and publish, `isSelectForUpdate`) and `ResetContextOfStmt` / `executorBuilder.build`'s dispatch are implemented as `Session` methods in the session crate (`lib.rs`, `dispatch.rs`, `observation.rs`, `statement_lifecycle.rs`), as are `TraceExec` (the node) and `CoprocessorDAGHandler`. Moved to `tidb-executor` already: PlanReplayerExec and PlanReplayerLoadInfo, ImportIntoExec, DDLExec.Next's call, SimpleExec's transaction statements, ShowDDLExec, fetchShowWarnings / fetchShowStatus / fetchShowTableStatus, the account and variable memtable retrievers, and Go master's materialized-view executors (`tidb-executor/src/mview/`). The session's compile routes (queries in `dispatch.rs`'s compile phase, DDL through `identity.rs`'s `preprocess_and_build`, EXPLAIN, privilege collection, MDL table recording) each run Go's preprocess walk (`tidb_planner::preprocess`), where Go's `Compile` runs it once.",
       "rust_evidence": "`tidb-session/src/lib.rs` (`ExecStmt.Exec`), `dispatch.rs` (`execute_plan`, `handle_cop_plan`, `is_select_for_update`), `observation.rs`, `statement_lifecycle.rs`, `domain/cluster_session_node/mod.rs` (`TraceExec`, `handleNoDelayExecutor`).",
       "go_owner": "`pkg/executor` (`adapter.go`, `select.go`, `plan_replayer.go`, `simple.go`, `ddl.go`, `show.go`, `prepared.go`, ...)"
-    },
-    {
-      "id": "T14",
-      "group": "Structure: Go's shape before more ports",
-      "status": "open",
-      "finding": "A transaction's writes are not Go's `LazyTxn` over the store transaction's MemDB: executors stage them in the session's `MutationBuffer`, and an autocommit statement publishes the buffer at commit through `ClusterTransactions::commit_with_schema_lease`. Go activates the `kv.Transaction` (or its pending future) before the statement writes and commits that transaction; pipelined DML (T01) flushes that MemDB while the statement runs.",
-      "rust_evidence": "`tidb-session/src/txn_manager.rs` (`buffer`, `commit_autocommit_buffer`), `tidb-domain-core/src/cluster_transactions.rs`.",
-      "go_owner": "`pkg/session/txn.go` (`LazyTxn`), `pkg/session/session.go` (`PrepareTSFuture`, `NewTxn`), `pkg/sessiontxn/isolation`"
     }
   ],
-  "unresolved": 3,
-  "open": 2,
+  "unresolved": 2,
+  "open": 1,
   "partial": 1
 }

@@ -19,7 +19,8 @@ The symbol-level audit of 2026-11-23 (`rust/docs/parity/current-audit/structural
 - [x] (2026-11-24) T22: Go's plan renderer is `tidb-planner/src/flat_plan.rs`; `genBriefPlanWithSCtx` / `calculatePlanDigestFunc` / `recordRelevantOptVarsAndFixes` are `optimize.rs`'s. `tidb-executor/src/explain.rs` keeps `ExplainExec`'s run and the process-info publishing.
 - [ ] T10: `pkg/executor` code implemented as `Session` methods in `tidb-session`.
 - [x] (2026-11-24) T21: Go's preprocessor checks are the walk's (`tidb-planner/src/preprocess.rs`): checkSelectNoopFuncs, checkCreateViewWithSelect, resolveShowStmt, DDL tableByName, checkCreateTableGrammar's LIKE source, and `Preprocess(..., InPrepare)` with handleTableName's pinning; ddl-build, the executor and the session lost their copies. That the walk runs once per compile route rather than once in `Compile` is T10's.
-- [ ] T14, then T01: a transaction's writes in the store transaction's MemDB (`LazyTxn`), then pipelined DML over it.
+- [x] (2026-11-24) T14: one writable implicit transaction per autocommit statement (`TxnManager::enter_implicit`), whose activation binds the SQL buffer to the store transaction's MemDB and whose commit is the statement's; the session-level publication (`commit_autocommit_buffer`, `commit_with_schema_lease`) and the activation's second statement staging are gone.
+- [ ] T01: pipelined DML over the implicit transaction's MemDB.
 - [x] (2026-11-24) T16-T20 (duplicates and executor shapes found after the audit): the unused warning-handler port, the second row decoder, index merge's partial workers, the `kv.TiDB` table reader, IMPORT INTO's URI handling.
 - [ ] Re-verify on a live cluster the realtikv transaction tests the retired realtikv-txn plan last left failing (2026-11-16): the stale-read group (`test_stale_*`, `test_staleness_and_history_read`, `test_stmt_ctx_stale_flag`, `test_validate_read_only_in_staleness_transaction`), `test_replica_read_effect_scope`, `test_stale_read_no_backoff`, `test_stale_select`, pessimistictest `test_plan_cache_schema_change` and `test_statements_interrupted_on_disconnect`; register any that still fail.
 
@@ -51,13 +52,15 @@ T08: `tidb-expr/src/rewriter.rs` (AST to expression) is used by `tidb-expr`'s ow
 
 T10: `tidb-session/src/{dispatch,show,plan_replayer,ddl_service,import_into,statement_lifecycle,observation}.rs`.
 
-T14/T01: `tidb-session/src/txn_manager.rs` (`MutationBuffer` staging, `commit_autocommit_buffer`), `tidb-domain-core/src/cluster_transactions.rs`.
+T01: `tidb-session/src/txn_manager.rs` (`enter_implicit`, `flush_if_autocommit`), `tidb-session/src/lazy_transaction.rs`, `tidb-domain-core/src/cluster_transactions.rs` (`prepare_autocommit_txn`), the client's pipelined transaction (`tikv-client-rs`, `is_pipelined`).
+
+T14 (2026-11-24). Go enters one `LazyTxn` per autocommit statement (`PrepareTxnCtx` -> `EnterNewTxnBeforeStmt`), writable whatever the statement, pessimistic only when `decideTxnMode` says so, its timestamp future from `newOracleFuture` (low-resolution under `tidb_low_resolution_tso`, whose writes `handleNoDelay` refuses). `finishStmt` commits it; a transaction that staged nothing sends nothing. The Rust node entered two kinds: an INSERT/UPDATE/DELETE classified as an autocommit write got a writable implicit transaction, every other statement a read-only one, and whatever such a statement staged (LOAD DATA, INSERT on routes whose shape reads as `Unknown`, materialized-view refresh, prepared point writes, ...) was published by `commit_autocommit_buffer` through `ClusterTransactions::commit_with_schema_lease` at the read timestamp. Now `TxnManager::enter_implicit` enters Go's one implicit transaction (`ClusterTransactions::prepare_autocommit_txn`), its activation always binds the SQL buffer to the store transaction's MemDB (what was staged before moves in, the statement checkpoint with it: Go's one `stagingHandle`, so the activation takes no second staging), and `flush_if_autocommit` commits it. A survey (a panic on a non-empty buffer in the old publication, over the whole session suite) found no statement left there, so the publication and `commit_with_schema_lease` are gone.
 
 ## Plan of Work
 
 2. T08: move the rewriter into `tidb-planner` behind a `BuildSimpleExpr` hook in `tidb-expr`, installed at server start and by each lower crate's tests.
 3. T10: move each `pkg/executor` executor out of the session crate onto a `sessionctx` trait surface, one Go file at a time.
-4. T14 then T01.
+4. T01 over T14's implicit transaction.
 
 ## Concrete Steps
 

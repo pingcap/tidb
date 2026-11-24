@@ -70,20 +70,16 @@ struct Pending {
     options: SessionTransactionOptions,
     resource_group: Option<String>,
     assertion_level: Option<tidb_proto::KvrpcAssertionLevel>,
+    /// The session's SQL buffer, which the activation binds to the store
+    /// transaction's MemDB (Go `GetMemBuffer` of the valid `LazyTxn`): what a
+    /// statement staged before the activation moves into it, statement
+    /// checkpoint included, which is the statement's one staging (Go
+    /// `LazyTxn.stagingHandle`).
     buffer: Option<MutationBuffer>,
-    /// An autocommit statement's implicit transaction takes the SQL buffer
-    /// over only while nothing is staged in it: one activated after the
-    /// statement staged its writes leaves the buffer to the lock and the
-    /// commit, which are handed it explicitly.
-    bind_only_if_empty: bool,
     checker: Option<Arc<dyn SchemaLeaseChecker>>,
     /// Go `enterFairLockingOnValid`: the statement's fair locking, set while
     /// the transaction was pending, for the activation to start.
     fair_locking_on_valid: Option<bool>,
-    /// Go `LazyTxn.initStmtBuf` at `changePendingToValid`: an autocommit
-    /// write's statement checkpoint, taken on the buffer as the transaction
-    /// activates.
-    stmt_checkpoint: Option<tidb_store_driver_txn::cluster_storage::BufferCheckpoint>,
     /// The activation's own failure, reported by every later call that needs
     /// the transaction.
     failed: Option<String>,
@@ -121,12 +117,7 @@ impl Shared {
         match opener(state.options.clone()) {
             Ok(transaction) => {
                 if let Some(buffer) = &state.buffer {
-                    if !state.bind_only_if_empty || buffer.is_empty() {
-                        transaction.bind_mutation_buffer(buffer);
-                    }
-                    if state.bind_only_if_empty {
-                        state.stmt_checkpoint = Some(buffer.checkpoint());
-                    }
+                    transaction.bind_mutation_buffer(buffer);
                 }
                 if let Some(enabled) = state.fair_locking_on_valid.take() {
                     transaction.set_fair_locking(enabled);
@@ -236,29 +227,13 @@ impl LazyClusterTransaction {
                     resource_group: None,
                     assertion_level: None,
                     buffer: Some(buffer),
-                    bind_only_if_empty: false,
                     checker: None,
                     fair_locking_on_valid: None,
-                    stmt_checkpoint: None,
                     failed: None,
                     open: None,
                 }),
             }),
         }
-    }
-
-    /// An autocommit statement's implicit transaction (see
-    /// `Pending::bind_only_if_empty`).
-    #[must_use]
-    pub fn new_implicit(
-        pessimistic: bool,
-        options: SessionTransactionOptions,
-        buffer: MutationBuffer,
-        opener: TransactionOpener,
-    ) -> Self {
-        let transaction = Self::new(pessimistic, options, buffer, opener);
-        transaction.shared.state().bind_only_if_empty = true;
-        transaction
     }
 
     /// An autocommit read's implicit transaction: it never takes the SQL
@@ -270,33 +245,20 @@ impl LazyClusterTransaction {
         transaction
     }
 
-    /// Go `EnterNewTxnBeforeStmt` for an autocommit read: the implicit
+    /// Go `EnterNewTxnBeforeStmt`: an autocommit statement's implicit
     /// transaction entered UNPREPARED (no timestamp requested); the
-    /// provider's warm-up requests one (`oracle`), its plan advice may
-    /// replace it by a constant (`constant`), and activation prepares one
-    /// if neither ran.
-    #[must_use]
-    pub fn new_unprepared_implicit_read(
-        options: SessionTransactionOptions,
-        buffer: MutationBuffer,
-        oracle: OracleFuture,
-        constant: ConstantFuture,
-    ) -> Self {
-        Self::new_implicit_read(options, buffer, unprepared_opener()).unprepared(oracle, Some(constant))
-    }
-
-    /// Go `EnterNewTxnBeforeStmt` for an autocommit INSERT / UPDATE /
-    /// DELETE: the implicit transaction entered unprepared; the provider's
-    /// warm-up (`AdviseWarmup`) requests its timestamp, and the executor
-    /// builder activates it (`updateForUpdateTS`).
+    /// provider's warm-up requests one (`oracle`), an optimistic provider's
+    /// plan advice may replace it by a constant (`constant`), and activation
+    /// prepares one if neither ran.
     #[must_use]
     pub fn new_unprepared_implicit(
         pessimistic: bool,
         options: SessionTransactionOptions,
         buffer: MutationBuffer,
         oracle: OracleFuture,
+        constant: Option<ConstantFuture>,
     ) -> Self {
-        Self::new_implicit(pessimistic, options, buffer, unprepared_opener()).unprepared(oracle, None)
+        Self::new(pessimistic, options, buffer, unprepared_opener()).unprepared(oracle, constant)
     }
 
     fn unprepared(self, oracle: OracleFuture, constant: Option<ConstantFuture>) -> Self {
@@ -499,10 +461,6 @@ impl OpenClusterTransaction for LazyClusterTransaction {
             Some(transaction) => transaction.set_fair_locking(enabled),
             None => state.fair_locking_on_valid = Some(enabled),
         }
-    }
-
-    fn stmt_checkpoint(&self) -> Option<tidb_store_driver_txn::cluster_storage::BufferCheckpoint> {
-        self.shared.state().stmt_checkpoint
     }
 
     fn advance_for_update_ts(&self) -> Result<u64, String> {
