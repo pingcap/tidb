@@ -173,13 +173,21 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 		nodeW := resolve.NewNodeW(stmtAst.Stmt)
 		err := Preprocess(ctx, sctx, nodeW, InPrepare, WithPreprocessorReturn(ret))
 		if err != nil {
-			if !schemaChanged || infoschema.ErrSchemaInReadOnlyMode.Equal(err) {
+			if !schemaChanged || infoschema.ErrSchemaInReadOnlyMode.Equal(err) || plannererrors.ErrNotSupportedYet.Equal(err) {
 				return err
 			}
 			return plannererrors.ErrSchemaChanged.GenWithStack("Schema change caused error: %s", err.Error())
 		}
 		stmt.ResolveCtx = nodeW.GetResolveContext()
 		stmt.SchemaVersion = is.SchemaMetaVersion()
+	} else {
+		// Re-apply tidb_enable_noop_functions for prepared/cached statements when
+		// schema didn't change. For ordinary statements without SQL_CALC_FOUND_ROWS,
+		// this only does a few type switches on the root AST node and returns nil
+		// with zero allocations and no AST walk.
+		if err := revalidateSQLCalcFoundRows(sctx, stmtAst.Stmt); err != nil {
+			return err
+		}
 	}
 	// A privilege revocation or SET ROLE does not change the schema version.
 	// Recheck the resolved targets on every execution, including cache misses.
@@ -309,7 +317,7 @@ func GetPlanFromPlanCache(ctx context.Context, sctx sessionctx.Context,
 			stmtCtx.WarnSkipPlanCache(planCacheHintOnlyNoHintReason)
 		}
 	}
-	if stmt.StmtCacheable && cacheEnabled {
+	if stmt.StmtCacheable && cacheEnabled && !stmtCtx.IgnoreCalcFoundRows {
 		stmtCtx.EnablePlanCache()
 	}
 	if stmt.UncacheableReason != "" {
@@ -458,7 +466,9 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared
 	}
 
 	// put this plan into the plan cache.
-	if stmtCtx.UseCache() {
+	// Skip caching SQL_CALC_FOUND_ROWS noop fallbacks so mode changes
+	// (OFF/ON/WARN) and view-triggered fallbacks are always rechecked.
+	if stmtCtx.UseCache() && !stmtCtx.IgnoreCalcFoundRows {
 		stmt.NormalizedPlan, stmt.PlanDigest = NormalizePlan(p)
 		cached := NewPlanCacheValue(sctx, stmt, cacheKey, binding, p, names, paramTypes, &stmtCtx.StmtHints)
 		stmtCtx.SetPlan(p)

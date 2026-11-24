@@ -161,8 +161,8 @@ func deleteTableAffinityGroupsInPD(jobCtx *jobContext, tblInfo *model.TableInfo,
 	return deleteTableAffinityGroups(ctx, jobCtx.store.GetCodec(), tblInfo, partitionDefs)
 }
 
-func deleteTableAffinityGroupsOnRollback(jobCtx *jobContext, tblInfo *model.TableInfo, partitionDefs []model.PartitionDefinition) error {
-	// The step context may already have been canceled while creating groups.
+func deleteTableAffinityGroupsWithTimeout(jobCtx *jobContext, tblInfo *model.TableInfo, partitionDefs []model.PartitionDefinition) error {
+	// Rollback and post-commit cleanup can run after the step context is canceled.
 	ctx, cancel := context.WithTimeout(jobCtx.ctx, affinityCleanupTimeout)
 	defer cancel()
 	return deleteTableAffinityGroups(ctx, jobCtx.store.GetCodec(), tblInfo, partitionDefs)
@@ -211,6 +211,9 @@ func batchDeleteTableAffinityGroups(jobCtx *jobContext, groupIDs map[string]stru
 	}
 
 	ctx := jobCtx.stepCtx
+	if ctx == nil {
+		ctx = jobCtx.ctx
+	}
 	ids := make([]string, 0, len(groupIDs))
 	for id := range groupIDs {
 		ids = append(ids, id)

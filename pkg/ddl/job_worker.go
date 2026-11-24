@@ -318,7 +318,13 @@ func injectFailPointForGetJob(job *model.Job) {
 }
 
 // handleUpdateJobError handles the too large DDL job.
-func (w *worker) handleUpdateJobError(jobCtx *jobContext, jobW *model.JobW, err error, updateRawArgs bool) (bool, error) {
+func (w *worker) handleUpdateJobError(
+	jobCtx *jobContext,
+	jobW *model.JobW,
+	rawArgsBeforeUpdate []byte,
+	err error,
+	updateRawArgs bool,
+) (bool, error) {
 	if err == nil {
 		return false, nil
 	}
@@ -337,13 +343,26 @@ func (w *worker) handleUpdateJobError(jobCtx *jobContext, jobW *model.JobW, err 
 			}
 		}
 		jobCtx.metaMut = meta.NewMutator(txn)
-		// Reduce this txn entry size.
+		// Discard rolled-back schema metadata and reduce the history entry size.
 		job.BinlogInfo.Clean()
 		job.LastSchemaVersion = 0
 		job.Error = toTError(err)
 		job.ErrorCount++
 		job.SchemaState = model.StateNone
 		job.State = model.JobStateCancelled
+		cleanupJob := job
+		if rawArgsBeforeUpdate != nil {
+			// Decode the original arguments for cleanup without growing the history entry.
+			cleanupJob = &model.Job{
+				ID:       job.ID,
+				Type:     job.Type,
+				SchemaID: job.SchemaID,
+				TableID:  job.TableID,
+				Version:  job.Version,
+				RawArgs:  rawArgsBeforeUpdate,
+			}
+		}
+		deleteAffinityGroupsOfCancelledJob(jobCtx, cleanupJob)
 		return true, errors.Trace(w.finishDDLJob(jobCtx, job, updateRawArgs))
 	}
 	return false, errors.Trace(err)
@@ -683,6 +702,56 @@ func (w *worker) accountJobRU(job *model.Job) error {
 	return nil
 }
 
+// snapshotJobStepState saves metadata progress that must match the transaction.
+// restoreKV leaves sub-job cancellation decisions intact. restoreAll also
+// restores completion and sub-job progress so the step can be retried.
+func snapshotJobStepState(job *model.Job) (restoreAll func(error), restoreKV func()) {
+	state := job.State
+	schemaState := job.SchemaState
+	binlogInfo := job.BinlogInfo
+	if binlogInfo != nil {
+		saved := *binlogInfo
+		binlogInfo = &saved
+	}
+	resumeReason := job.ResumeReason
+	var subJobs []*model.SubJob
+	if job.MultiSchemaInfo != nil {
+		subJobs = make([]*model.SubJob, len(job.MultiSchemaInfo.SubJobs))
+		for i, sub := range job.MultiSchemaInfo.SubJobs {
+			subJobs[i] = sub.Clone()
+		}
+	}
+	restoreKV = func() {
+		// ALTER SCHEMA READ ONLY records the attempted change in its schema
+		// state so cancellation can run the rollback even after a failed step.
+		if job.Type != model.ActionModifySchemaReadOnly {
+			job.SchemaState = schemaState
+		}
+		job.BinlogInfo = binlogInfo
+		job.ResumeReason = resumeReason
+		job.LastSchemaVersion = 0
+	}
+	restoreAll = func(runJobErr error) {
+		restoreKV()
+		if state == model.JobStateRunning && job.IsDone() {
+			job.State = state
+		}
+		if job.MultiSchemaInfo != nil {
+			if meta.ErrDDLReorgElementNotExist.Equal(runJobErr) {
+				// Keep the recovery reset from getReorgInfo so the next step
+				// recreates the missing handle.
+				for i, sub := range job.MultiSchemaInfo.SubJobs {
+					if subJobs[i].SnapshotVer != 0 && sub.SnapshotVer == 0 {
+						subJobs[i].SnapshotVer = 0
+					}
+				}
+			}
+			job.MultiSchemaInfo.SubJobs = subJobs
+		}
+	}
+	return restoreAll, restoreKV
+}
+
 // transitOneJobStep runs one step of the DDL job and persist the new job
 // information.
 //
@@ -728,6 +797,8 @@ func (w *worker) transitOneJobStep(
 				w.cleanupMViewOutOfPlaceCutoverAfterCommit(jobCtx, job)
 			case model.ActionTruncateTable:
 				cleanupTruncateTableAffinityGroupsAfterCommit(jobCtx, job)
+			case model.ActionAlterTableAffinity:
+				cleanupAlterTableAffinityGroupsAfterCommit(jobCtx, job)
 			}
 			job.State = model.JobStateSynced
 		}
@@ -765,6 +836,7 @@ func (w *worker) transitOneJobStep(
 	defer func() {
 		jobCtx.pendingReorgRU = 0
 	}()
+	restoreAll, restoreKV := snapshotJobStepState(job)
 	res := w.runOneJobStep(jobCtx, job)
 	schemaVer, updateRawArgs, runJobErr := res.ver, res.updateRawArgs, res.err
 
@@ -785,6 +857,14 @@ func (w *worker) transitOneJobStep(
 			// Discard all mutations from this job step, including related-table
 			// updates and ones made while the job is already rolling back.
 			w.sess.Rollback()
+			schemaVer = 0
+			if job.IsCancelled() || job.IsRollingback() || job.IsRollbackDone() {
+				// Preserve the sub-job states selected for cancellation or rollback.
+				restoreKV()
+			} else {
+				restoreAll(runJobErr)
+				updateRawArgs = false
+			}
 			failpoint.InjectCall("afterRollbackTxnForMustRollbackTxnOnError", job)
 			txn, txnErr := w.prepareTxn(job)
 			if txnErr != nil {
@@ -797,13 +877,16 @@ func (w *worker) transitOneJobStep(
 				return 0, txnErr
 			}
 			jobCtx.metaMut = meta.NewMutator(txn)
-			schemaVer = 0
 		} else if !job.IsRollingback() && !job.IsRollbackDone() {
 			// If the running job meets an error and the job state is rolling back,
 			// the rollback path may have intentionally updated table info and the
 			// schema version. Keep those mutations unless the error explicitly
 			// requires the whole transaction to be rolled back.
 			w.sess.Reset()
+			if !job.IsCancelled() {
+				restoreAll(runJobErr)
+				updateRawArgs = false
+			}
 			// If error happens after updateSchemaVersion(), then the schemaVer is updated.
 			// Result in the retry duration is up to 2 * lease.
 			schemaVer = 0
@@ -837,9 +920,13 @@ func (w *worker) commitActiveJobStep(
 		w.sess.Rollback()
 		return 0, err
 	}
+	var rawArgsBeforeUpdate []byte
+	if job.Type == model.ActionTruncateTable || job.Type == model.ActionTruncateTablePartition {
+		rawArgsBeforeUpdate = job.RawArgs
+	}
 	err = w.updateDDLJob(jobCtx, job, updateRawArgs)
 	failpoint.InjectCall("afterUpdateJobToTable", job, &err)
-	handledErr, err := w.handleUpdateJobError(jobCtx, jobW, err, updateRawArgs)
+	handledErr, err := w.handleUpdateJobError(jobCtx, jobW, rawArgsBeforeUpdate, err, updateRawArgs)
 	if err != nil {
 		w.sess.Rollback()
 		return 0, err

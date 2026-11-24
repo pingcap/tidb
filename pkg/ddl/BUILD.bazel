@@ -256,6 +256,7 @@ go_test(
     name = "ddl_test",
     timeout = "moderate",
     srcs = [
+        "affinity_internal_test.go",
         "affinity_test.go",
         "attributes_sql_test.go",
         "backfill_metrics_test.go",
@@ -360,6 +361,7 @@ go_test(
         "//pkg/ddl/label",
         "//pkg/ddl/logutil",
         "//pkg/ddl/mock",
+        "//pkg/ddl/notifier",
         "//pkg/ddl/placement",
         "//pkg/ddl/schematracker",
         "//pkg/ddl/schemaver",
@@ -435,6 +437,7 @@ go_test(
         "//pkg/tablecodec",
         "//pkg/testkit",
         "//pkg/testkit/external",
+        "//pkg/testkit/testenv",
         "//pkg/testkit/testfailpoint",
         "//pkg/testkit/testsetup",
         "//pkg/testkit/testutil",

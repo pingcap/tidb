@@ -254,3 +254,24 @@ func pdStatusErr(statusCode int) error {
 func pdHTTPServiceErr(msg string) error {
 	return terror.ClassDomain.Synthesize(terror.ErrCode(errno.ErrHTTPServiceError), fmt.Sprintf("HTTP request failed with status %s", msg))
 }
+
+func TestCreateGroupsIfNotExistsNilContextForwardsNonNil(t *testing.T) {
+	prevManager, prevClient := manager, pdClient
+	t.Cleanup(func() {
+		manager = prevManager
+		pdClient = prevClient
+	})
+	client := &mockPDClient{}
+	InitManager(client)
+
+	groups := map[string][]pdhttp.AffinityGroupKeyRange{
+		"g1": {{StartKey: []byte("a"), EndKey: []byte("b")}},
+	}
+	client.On("CreateAffinityGroups", mock.MatchedBy(func(ctx context.Context) bool {
+		return ctx != nil
+	}), groups, 1).Return(map[string]*pdhttp.AffinityGroupState{"g1": affinityGroupState("g1")}, nil).Once()
+
+	//nolint:staticcheck // SA1012: intentionally test nil context normalization
+	require.NoError(t, CreateGroupsIfNotExists(nil, groups))
+	client.AssertExpectations(t)
+}
