@@ -179,7 +179,8 @@ UPDATE_TIME
 		}
 		var lastSuccessTime any
 		if !state.lastSuccessTime.IsZero() {
-			lastSuccessTime = state.lastSuccessTime.Round(0)
+			// DATETIME stores no time zone; use UTC across checker processes.
+			lastSuccessTime = state.lastSuccessTime.UTC().Round(0)
 		}
 		sqlescape.MustFormatSQL(
 			&sql,
@@ -1819,7 +1820,7 @@ WHERE i.NEXT_REFRESH_UNIX_SECONDS IS NOT NULL`
 			m.persistedAlertLevel = row.GetString(3)
 		}
 		if !row.IsNull(4) && !lastSuccessTime.IsZero() {
-			m.persistedAlertSnapshotMatches = row.GetTime(4).CoreTime() == types.FromGoTime(lastSuccessTime)
+			m.persistedAlertSnapshotMatches = row.GetTime(4).CoreTime() == types.FromGoTime(lastSuccessTime.UTC())
 		}
 		schemaName, mviewName, alertWarningSec, alertOverdueSec, found, resolveErr := resolveMVIdentityByID(ctx, sctx, mviewID)
 		if resolveErr == nil && found {
