@@ -2750,7 +2750,7 @@ type havingWindowAndOrderbyExprResolver struct {
 	selectFields []*ast.SelectField
 	aggMapper    map[*ast.AggregateFuncExpr]int
 	colMapper    map[*ast.ColumnNameExpr]int
-	gbyItems     []*ast.ByItem
+	gbyExprs     []ast.ExprNode
 	outerSchemas []*expression.Schema
 	outerNames   [][]*types.FieldName
 	curClause    clauseCode
@@ -2928,8 +2928,8 @@ func (a *havingWindowAndOrderbyExprResolver) Leave(n ast.Node) (node ast.Node, o
 			resolveFieldsFirst = false
 		}
 		if !a.inAggFunc && a.curClause != orderByClause {
-			for _, item := range a.gbyItems {
-				if col, ok := item.Expr.(*ast.ColumnNameExpr); ok &&
+			for _, expr := range a.gbyExprs {
+				if col, ok := expr.(*ast.ColumnNameExpr); ok &&
 					(v.Name.Match(col.Name) || col.Name.Match(v.Name)) {
 					resolveFieldsFirst = false
 					break
@@ -3012,7 +3012,7 @@ func (a *havingWindowAndOrderbyExprResolver) Leave(n ast.Node) (node ast.Node, o
 // resolveHavingAndOrderBy will process aggregate functions and resolve the columns that don't exist in select fields.
 // If we found some columns that are not in select fields, we will append it to select fields and update the colMapper.
 // When we rewrite the order by / having expression, we will find column in map at first.
-func (b *PlanBuilder) resolveHavingAndOrderBy(ctx context.Context, sel *ast.SelectStmt, p base.LogicalPlan) (
+func (b *PlanBuilder) resolveHavingAndOrderBy(ctx context.Context, sel *ast.SelectStmt, p base.LogicalPlan, gbyExprs []ast.ExprNode) (
 	havingAggMapper, _ map[*ast.AggregateFuncExpr]int, err error) {
 	extractor := &havingWindowAndOrderbyExprResolver{
 		p:            p,
@@ -3022,8 +3022,13 @@ func (b *PlanBuilder) resolveHavingAndOrderBy(ctx context.Context, sel *ast.Sele
 		outerSchemas: b.outerSchemas,
 		outerNames:   b.outerNames,
 	}
-	if sel.GroupBy != nil {
-		extractor.gbyItems = sel.GroupBy.Items
+	if len(gbyExprs) > 0 {
+		extractor.gbyExprs = gbyExprs
+	} else if sel.GroupBy != nil {
+		extractor.gbyExprs = make([]ast.ExprNode, 0, len(sel.GroupBy.Items))
+		for _, item := range sel.GroupBy.Items {
+			extractor.gbyExprs = append(extractor.gbyExprs, item.Expr)
+		}
 	}
 	// Extract agg funcs from having clause.
 	if sel.Having != nil {
@@ -3300,7 +3305,7 @@ func (r *correlatedAggregateResolver) resolveSelect(sel *ast.SelectStmt) (err er
 		}
 	}
 
-	_, _, err = r.b.resolveHavingAndOrderBy(r.ctx, sel, p)
+	_, _, err = r.b.resolveHavingAndOrderBy(r.ctx, sel, p, nil)
 	if err != nil {
 		return err
 	}
@@ -3478,7 +3483,6 @@ type gbyResolver struct {
 	names      []*types.FieldName
 	err        error
 	inExpr     bool
-	isParam    bool
 	skipAggMap map[*ast.AggregateFuncExpr]*expression.CorrelatedColumn
 
 	exprDepth int // exprDepth is the depth of current expression in expression tree.
@@ -3490,7 +3494,6 @@ func (g *gbyResolver) Enter(inNode ast.Node) (ast.Node, bool) {
 	case *ast.SubqueryExpr, *ast.CompareSubqueryExpr, *ast.ExistsSubqueryExpr:
 		return inNode, true
 	case *driver.ParamMarkerExpr:
-		g.isParam = true
 		if g.exprDepth == 1 && !n.UseAsValueInGbyByClause && canParamMarkerBePositionExpr(n) {
 			_, isNull, isExpectedType := getUintFromNode(g.ctx.GetExprCtx(), n, false)
 			// For constant uint expression in top level, it should be treated as position expression.
@@ -3836,9 +3839,9 @@ func checkExprInGroupByOrIsSingleValue(
 	}
 }
 
-func (b *PlanBuilder) checkOnlyFullGroupBy(p base.LogicalPlan, sel *ast.SelectStmt) (err error) {
+func (b *PlanBuilder) checkOnlyFullGroupBy(p base.LogicalPlan, sel *ast.SelectStmt, gbyExprs []ast.ExprNode) (err error) {
 	if sel.GroupBy != nil {
-		err = b.checkOnlyFullGroupByWithGroupClause(p, sel)
+		err = b.checkOnlyFullGroupByWithGroupClause(p, sel, gbyExprs)
 	} else {
 		err = b.checkOnlyFullGroupByWithOutGroupClause(p, sel)
 	}
@@ -3886,11 +3889,11 @@ func extractSingeValueColNamesFromWhere(p base.LogicalPlan, where ast.ExprNode, 
 	}
 }
 
-func (b *PlanBuilder) checkOnlyFullGroupByWithGroupClause(p base.LogicalPlan, sel *ast.SelectStmt) error {
+func (b *PlanBuilder) checkOnlyFullGroupByWithGroupClause(p base.LogicalPlan, sel *ast.SelectStmt, resolvedGbyExprs []ast.ExprNode) error {
 	gbyOrSingleValueColNames := make(map[*types.FieldName]struct{}, len(sel.Fields.Fields))
 	gbyExprs := make([]ast.ExprNode, 0, len(sel.Fields.Fields))
-	for _, byItem := range sel.GroupBy.Items {
-		expr := getInnerFromParenthesesAndUnaryPlus(byItem.Expr)
+	for _, byExpr := range resolvedGbyExprs {
+		expr := getInnerFromParenthesesAndUnaryPlus(byExpr)
 		if colExpr, ok := expr.(*ast.ColumnNameExpr); ok {
 			addGbyOrSingleValueColName(p, colExpr.Name, gbyOrSingleValueColNames)
 		} else {
@@ -4132,9 +4135,8 @@ func allColFromExprNode(p base.LogicalPlan, n ast.Node, names map[*types.FieldNa
 }
 
 // resolveGbyExprs resolves group by expressions from the group by clause of a select statement.
-// The returned `[]ast.Node` may differ from the original `gby.Items` in the group by clause for params. For params, the
-// `gby.Items[].Expr` will not be overwritten. However, the resolved expression is still needed for further processing, so
-// it's returned out.
+// It returns the resolved expressions without mutating `gby.Items[].Expr` in place, so the same
+// AST can be safely built multiple times (e.g., prepared statements or alternative logical plans).
 func (b *PlanBuilder) resolveGbyExprs(p base.LogicalPlan, gby *ast.GroupByClause, fields []*ast.SelectField) ([]ast.ExprNode, error) {
 	b.curClause = groupByClause
 	exprs := make([]ast.ExprNode, 0, len(gby.Items))
@@ -4157,15 +4159,10 @@ func (b *PlanBuilder) resolveGbyExprs(p base.LogicalPlan, gby *ast.GroupByClause
 	for _, item := range gby.Items {
 		resolver.inExpr = false
 		resolver.exprDepth = 0
-		resolver.isParam = false
 		retExpr, _ := item.Expr.Accept(resolver)
 		if resolver.err != nil {
 			return exprs, errors.Trace(resolver.err)
 		}
-		if !resolver.isParam {
-			item.Expr = retExpr.(ast.ExprNode)
-		}
-
 		exprs = append(exprs, retExpr.(ast.ExprNode))
 	}
 	return exprs, nil
@@ -4477,7 +4474,7 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p b
 	// `checkOnlyFullGroupBy` should be executed before rewrite gbyExprs, because the field type of the fields
 	// may change. For example, the length of a string field may change in `adjustRetFtForCastString`
 	if b.ctx.GetSessionVars().SQLMode.HasOnlyFullGroupBy() && sel.From != nil && !b.ctx.GetSessionVars().OptimizerEnableNewOnlyFullGroupByCheck {
-		err = b.checkOnlyFullGroupBy(p, sel)
+		err = b.checkOnlyFullGroupBy(p, sel, gbyExprs)
 		if err != nil {
 			return nil, err
 		}
@@ -4507,7 +4504,7 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p b
 	// We must resolve having and order by clause before build projection,
 	// because when the query is "select a+1 as b from t having sum(b) < 0", we must replace sum(b) to sum(a+1),
 	// which only can be done before building projection and extracting Agg functions.
-	havingMap, orderMap, err = b.resolveHavingAndOrderBy(ctx, sel, p)
+	havingMap, orderMap, err = b.resolveHavingAndOrderBy(ctx, sel, p, gbyExprs)
 	if err != nil {
 		return nil, err
 	}
