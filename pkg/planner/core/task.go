@@ -1778,8 +1778,9 @@ func attach2Task4PhysicalStreamAgg(pp base.PhysicalPlan, tasks ...base.Task) bas
 	return t
 }
 
-// A skip scan drops whole duplicate prefixes, not a random sample. Preserve
-// the existing NDV estimates up to the new row count.
+// setSkipScanRows updates the row estimate and caps existing NDVs at the new row count.
+// DataSource and partial aggregation can both emit more rows than estimated when
+// the same grouping prefix appears in multiple Regions.
 func setSkipScanRows(plan base.PhysicalPlan, rows float64) {
 	stats := *plan.StatsInfo()
 	stats.RowCount = rows
