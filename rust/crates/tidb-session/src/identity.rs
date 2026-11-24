@@ -1738,4 +1738,10 @@ impl tidb_planner::preprocess::PreprocessContext for Session {
     fn shared_lock_promotion(&self) -> bool {
         self.vars.shared_lock_promotion()
     }
+
+    fn auth_user(&self) -> Option<(String, String)> {
+        self.vars.current_user.as_ref().and_then(|identity| {
+            identity.split_once('@').map(|(user, host)| (user.to_owned(), host.to_owned()))
+        })
+    }
 }

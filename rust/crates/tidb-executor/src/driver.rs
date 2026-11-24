@@ -467,17 +467,14 @@ pub fn open_query_meta_stmt_with_physical_without_sequence_validation(
     }
 }
 
-/// Go `Compile` for a `ShowStmt`: the preprocessor
-/// ([`tidb_planner::preprocess::resolve_show_stmt`], `CURRENT_USER` as
-/// `auth_user`) and `planner.Optimize`.
+/// Go `planner.Optimize` for a `ShowStmt` the preprocess walk resolved
+/// (`resolveShowStmt`).
 ///
 /// # Errors
 ///
-/// The preprocessor's `ErrNoDB`, `buildShow`'s errors and any optimization
-/// failure.
+/// `buildShow`'s errors and any optimization failure.
 pub fn plan_show_stmt(
     show: &tidb_ast::ShowStmt,
-    auth_user: Option<(&str, &str)>,
     catalog: &SessionExtendedInfoSchema,
     current_db: &str,
     ctx: &crate::StmtContext,
@@ -488,10 +485,7 @@ pub fn plan_show_stmt(
     ),
     DriverError,
 > {
-    let mut show = show.clone();
-    tidb_planner::preprocess::resolve_show_stmt(&mut show, current_db, auth_user)
-        .map_err(planner_error_to_driver)?;
-    planner_bridge::physical_show_plan(&crate::driver::planner_bridge::driver_hooks(catalog), &show, catalog, current_db, ctx)
+    planner_bridge::physical_show_plan(&crate::driver::planner_bridge::driver_hooks(catalog), show, catalog, current_db, ctx)
         .map_err(planner_error_to_driver)
 }
 

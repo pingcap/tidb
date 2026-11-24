@@ -108,6 +108,9 @@ pub trait PreprocessContext {
     /// Go `tidb_enable_shared_lock_promotion`: a shared lock is promoted to
     /// `FOR UPDATE` rather than gated.
     fn shared_lock_promotion(&self) -> bool;
+    /// Go `SessionVars.User.AuthUsername` / `AuthHostname`, which a SHOW's
+    /// `CURRENT_USER` becomes.
+    fn auth_user(&self) -> Option<(String, String)>;
 }
 
 /// Go `PreprocessorReturn` and what the walk learns for its callers.
@@ -333,8 +336,14 @@ impl Visitor for Preprocessor<'_> {
             self.stmt_tp = StmtType::Update;
         } else if node.is::<tidb_ast::InsertStmt>() {
             self.stmt_tp = StmtType::Insert;
-        } else if node.is::<tidb_ast::ShowStmt>() {
+        } else if let Some(show) = node.downcast_mut::<tidb_ast::ShowStmt>() {
             self.stmt_tp = StmtType::Show;
+            // Go `resolveShowStmt`.
+            let auth_user = self.ctx.auth_user();
+            let auth_user = auth_user.as_ref().map(|(user, host)| (user.as_str(), host.as_str()));
+            if let Err(error) = resolve_show_stmt(show, self.ctx.current_db(), auth_user) {
+                self.err = Some(error);
+            }
         } else if let Some(ddl) = node.downcast_mut::<tidb_ast::DdlStmt>() {
             if let Err(error) = self.check_ddl(ddl) {
                 self.err = Some(error);
@@ -1861,6 +1870,9 @@ mod preprocessor_tests {
         }
         fn shared_lock_promotion(&self) -> bool {
             false
+        }
+        fn auth_user(&self) -> Option<(String, String)> {
+            None
         }
     }
 

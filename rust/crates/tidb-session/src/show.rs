@@ -27,7 +27,7 @@ use tidb_executor::show::exec::ShowExec;
 
 impl Session {
     /// Go `Compile` + `runStmt` for a SHOW the planner builds: the statement
-    /// preprocessed (`resolveShowStmt`) and planned (`buildShow` and the
+    /// the preprocess walk resolved (`resolveShowStmt`), planned (`buildShow` and the
     /// optimizer), its `PhysicalShow`'s rows fetched ([`Self::fetch_show`],
     /// Go `ShowExec.fetchAll`), and the plan's selections, limit, projection
     /// and sort run over them. Planning and running read the statement's
@@ -37,17 +37,11 @@ impl Session {
         &mut self,
         show: &tidb_ast::ShowStmt,
     ) -> Result<StmtOutput, DriverError> {
-        let auth_user = self.vars.current_user.clone().and_then(|identity| {
-            identity
-                .split_once('@')
-                .map(|(user, host)| (user.to_owned(), host.to_owned()))
-        });
         let ctx = self.statement_context(false);
         let current_db = self.vars.current_db.clone();
         let (plan, visits) = self.with_catalog_mut(|catalog| {
             tidb_executor::driver::plan_show_stmt(
                 show,
-                auth_user.as_ref().map(|(user, host)| (user.as_str(), host.as_str())),
                 catalog,
                 &current_db,
                 &ctx,
