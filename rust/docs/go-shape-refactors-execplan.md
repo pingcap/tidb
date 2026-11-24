@@ -36,7 +36,7 @@ The symbol-level audit of 2026-11-23 (`rust/docs/parity/current-audit/structural
 - Gate 64's panic-recovery retry was a real race: a connection that had already failed could still be cancelled by a starting drain, because it left the drained-clients registry after closing its transport. Go deletes it first (`clientConn.Close`); fixed in `18776e43537`.
 - Go's `planner/util.ByItems` had three Rust copies; one remains (`tidb_expression_aggregation::ByItems`).
 
-- Found while pinning T24 (2026-11-25): Go master `ae5be6915c7` (#72838) matches a hint table name without a database to the table in any database (`indexIsAvailableByHints`, `QBHintHandler.resolveHintDBName`); the Rust ports still resolve it to the current database, so with no current database `use_index(t, nonexist)` on a point read is ignored (no 1176) and a non-point read warns 1815 with an empty database. A parity gap for the next master merge, not a structural one.
+- Found while pinning T24 (2026-11-25): Go master `ae5be6915c7` (#72838) matches a hint table name without a database to the table in any database of its query block (`QBHintHandler.resolveHintDBName`, the point-get `indexIsAvailableByHints`); the Rust hint code still resolved it to the current database. Ported in `3a2e1c51272` with Go's `TestHintTableNameWithoutDBName`.
 - Go's warnings after a pessimistic retry are only what the execution raised: `StmtCtx.ResetForRetry` truncates them and nothing compiles again, so a compile-time hint warning is gone (Go testkit probe, point UPDATE and SELECT FOR UPDATE). That is what pins T24.
 
 ## Decision Log
