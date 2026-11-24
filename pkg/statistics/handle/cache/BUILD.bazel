@@ -36,9 +36,11 @@ go_test(
     srcs = ["statscache_test.go"],
     embed = [":cache"],
     flaky = True,
-    shard_count = 2,
+    shard_count = 3,
     deps = [
+        "//pkg/meta/model",
         "//pkg/statistics",
+        "//pkg/statistics/handle/cache/internal/testutil",
         "//pkg/statistics/handle/metrics",
         "@com_github_prometheus_client_golang//prometheus/testutil",
         "@com_github_stretchr_testify//require",
