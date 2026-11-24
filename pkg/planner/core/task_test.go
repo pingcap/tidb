@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/statistics"
+	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/pkg/util/ranger"
@@ -101,6 +102,64 @@ func TestSkipScanCandidateProperties(t *testing.T) {
 	prefix.Index = secondary.Index.Clone()
 	prefix.Index.Columns[2].Length = 4
 	require.False(t, matchesSkipScanPath(ds, &prefix, withTarget.SkipScanInfo))
+
+	t.Run("skyline filters paths before pruning", func(t *testing.T) {
+		ctx := mock.NewContext()
+		ctx.GetSessionVars().IsolationReadEngines[kv.TiKV] = struct{}{}
+		tblInfo := &model.TableInfo{ID: 1, IsCommonHandle: true}
+		hist := statistics.NewHistColl(tblInfo.ID, 120, 0, 0, 0)
+		indexPath, tablePath := *secondary, *clustered
+		indexPath.CountAfterAccess = 120
+		tablePath.CountAfterAccess = 120
+		tablePath.IdxCols, tablePath.IdxColLens = cols, lengths
+		tablePath.IsSingleScan = true
+		flashPath := tablePath
+		flashPath.StoreType = kv.TiFlash
+		emptyPath := indexPath
+		emptyPath.Ranges = nil
+		ds := (logicalop.DataSource{
+			Table:            tables.MockTableFromMeta(tblInfo),
+			TableInfo:        tblInfo,
+			CommonHandleCols: cols,
+			CommonHandleLens: lengths,
+			TableStats: &property.StatsInfo{
+				RowCount:     120,
+				StatsVersion: 1,
+				HistColl:     hist,
+				GroupNDVs:    []property.GroupNDV{{Cols: []int64{groupCol.UniqueID}, NDV: 3}},
+			},
+			StatisticTable: &statistics.Table{
+				HistColl:              *hist,
+				ColAndIdxExistenceMap: statistics.NewColAndIndexExistenceMapWithoutSize(),
+			},
+		}).Init(ctx, 0)
+		ds.SetSchema(expression.NewSchema(cols...))
+		ds.PossibleAccessPaths = []*util.AccessPath{&emptyPath, &prefix, &flashPath, &indexPath, &tablePath}
+		candidates := skylinePruning(ds, withTarget)
+		require.Len(t, candidates, 2)
+		require.Same(t, indexPath.Index, candidates[0].path.Index)
+		require.Same(t, tablePath.Index, candidates[1].path.Index)
+		require.NotSame(t, &indexPath, candidates[0].path)
+		require.NotSame(t, &tablePath, candidates[1].path)
+		for _, candidate := range candidates {
+			require.Equal(t, 1, candidate.skipScanPrefixColumnCount)
+			require.Equal(t, 3.0, candidate.skipScanNDV)
+		}
+		ds.PossibleAccessPaths = ds.PossibleAccessPaths[:3]
+		require.Empty(t, skylinePruning(ds, withTarget))
+	})
+
+	t.Run("constant false produces a table dual", func(t *testing.T) {
+		ctx := mock.NewContext()
+		ds := (logicalop.DataSource{PushedDownConds: []expression.Expression{expression.NewZero()}}).Init(ctx, 0)
+		ds.SetSchema(expression.NewSchema(groupCol))
+		ds.SetStats(&property.StatsInfo{})
+		rootProp := strict.CloneEssentialFields()
+		rootProp.TaskTp = property.RootTaskType
+		task, err := physicalop.FindBestTask(ds, rootProp)
+		require.NoError(t, err)
+		require.IsType(t, &physicalop.PhysicalTableDual{}, task.Plan())
+	})
 
 	ctx := mock.NewContext()
 	projection := (logicalop.LogicalProjection{Exprs: []expression.Expression{secondCol, thirdCol}}).Init(ctx, 0)
