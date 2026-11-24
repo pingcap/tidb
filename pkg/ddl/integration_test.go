@@ -161,7 +161,16 @@ func TestPartialIndex(t *testing.T) {
 		reorgType = model.ReorgTypeNone
 		tk.MustExec("create index idx_normal on standalone_idx(b)")
 		require.Equal(t, model.ReorgTypeTxnMerge, reorgType)
+		tk.MustExec("create index idx_sparse on standalone_idx(b) where enabled = 2")
+		// Index entries written are zero, but all four table rows were scanned.
+		require.Equal(t, "4", tk.MustQuery("admin show ddl jobs 1").Rows()[0][7])
+		var multiIndexRows int64 = -1
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterBackfillStateRunningDone", func(job *model.Job) {
+			multiIndexRows = job.GetRowCount()
+		})
 		tk.MustExec("alter table standalone_idx add index idx_empty(b) where enabled = 2, add index idx_mixed(id)")
+		testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/afterBackfillStateRunningDone")
+		require.Equal(t, int64(4), multiIndexRows)
 		tk.MustExec("admin check table standalone_idx")
 		tk.MustGetDBError("insert into standalone_idx values (5, 10, 1)", kv.ErrKeyExists)
 		tk.MustGetDBError("insert into standalone_idx values (5, 30, 1)", kv.ErrKeyExists)
