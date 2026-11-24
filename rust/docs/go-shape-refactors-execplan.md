@@ -13,9 +13,10 @@ The symbol-level audit of 2026-11-23 (`rust/docs/parity/current-audit/structural
 - [x] (2026-11-23) T02 performance_schema `getRows`, T03 `tidb_auth_token`, T04 `logutil/consistency`, T11 analyze-job lifecycle, T12 `ConnectionVerification`, T13 PointGet / BatchPointGet executors.
 - [x] (2026-11-23) T09: `tidb-variable/src/vars_typed.rs` holds 81 `SessionVars` fields, each maintained by its variable's `SetSession` hook; the statement snapshot copies fields instead of parsing variables.
 - [x] (2026-11-23) T06: Go's `PartitionProcessor` and pruners live in `tidb-planner-core-rule/src/rule_partition_processor/`; `DataSource.table` is Go's `ds.Table`; the executor's pruning callback is gone.
-- [ ] T05 (partly): done: `optimize`'s rounds (`planner_optimize.rs`), `PlanBuilder.Init`'s session reads, `TryFastPlan`'s global-index bypass, `CheckPrivilege` / `CheckTableLock` (`privilege_check.rs`), `stats.GetStatsTable` (`stats/stats_table.rs`). Remaining: the statement entry (`Optimize`, `optimizeNoCache`), `buildLogicalPlan`'s catalog and evaluator wiring (`driver/planner_bridge.rs`), `OptimizeForForeignKeyCascade`, `queryPlanCost`, `genBriefPlanWithSCtx`, `calculatePlanDigestFunc`.
+- [x] (2026-11-24) T05: Go `planner.Optimize` is the planner's: `statement_optimize.rs` (`NewPlanBuilder().Init` as `BuilderParts`, `buildLogicalPlan`, the rounds, the query entry with `TryFastPlan`, `ScalarSubqueryEvalCtx`), `statement_plan.rs` (the other statement entries, `queryPlanCost`), `dml_optimize.rs` (UPDATE/DELETE, `OptimizeForForeignKeyCascade`, FK trigger plans), `do_optimize.rs` (`DoOptimize`), `binding_match.rs` (the binding step; `matchSQLBindingCore` is tidb-bindinfo's, which no longer depends on the planner). The executor implements `PlanningHooks` (`EvalSubqueryFirstRow`, column defaults, plan preparation). `genBriefPlanWithSCtx` and `calculatePlanDigestFunc` render the plan and go with the renderer (T22).
 - [ ] T07 (partly): done: `pb_to_plan.rs`, the non-prepared cacheability walk, `RequestLoadStats` / `SyncWaitStatsLoad`, the plan-cache key side (`plan_cache_utils.rs`). Remaining: the prepared statement and cached plan values (`PreparedSelectPlan`, `CachedSelectPlan`, `CachedDmlPlan`, `SessionPlanCache`).
 - [x] (2026-11-24) T08: `expressionRewriter`'s AST half is `tidb-planner/src/expression_rewriter/leave.rs`; lower crates reach it through `tidb_expr::column_resolver::rewrite_expr_resolved`, the `expression.BuildSimpleExpr` function variable that `tidb_planner::init` sets (server `main`, every `Session`, and test binaries through `tidb_planner_init::link!()`).
+- [ ] T22: Go's plan renderer (`explain.go`, `flat_plan.go`, `encode.go`) out of `tidb-executor/src/explain.rs` into the planner, then `genBriefPlanWithSCtx` / `calculatePlanDigestFunc`.
 - [ ] T10: `pkg/executor` code implemented as `Session` methods in `tidb-session`.
 - [ ] T21: Go's `preprocessor` as one Rust owner in `tidb-planner` (its checks now sit in session dispatch, ddl-build, `preprocess.rs` and the rewriter's NAME_CONST check).
 - [ ] T14, then T01: a transaction's writes in the store transaction's MemDB (`LazyTxn`), then pipelined DML over it.
@@ -44,7 +45,7 @@ The symbol-level audit of 2026-11-23 (`rust/docs/parity/current-audit/structural
 
 ## Context and Orientation
 
-T05/T07: the executor's `driver/` module is the planner's front end: `planner_bridge.rs` configures Go's `PlanBuilder`, evaluates subqueries, runs `optimize` and keeps cached plans; `access.rs`, `plan_cache.rs` and `dml.rs` hold the plan cache's prepared statements and values. Go reaches the executor from the planner only through function variables the executor sets (`EvalSubqueryFirstRow`, `BuildSimpleExpr`).
+T07: `tidb-executor/src/driver/planner_bridge.rs` keeps the cached plans (`CachedSelectPlan`) beside the executor's `PlanningHooks`; `access.rs`, `plan_cache.rs` and `dml.rs` hold the plan cache's prepared statements and values. Go reaches the executor from the planner only through function variables the executor sets (`EvalSubqueryFirstRow`, `BuildSimpleExpr`).
 
 T08: `tidb-expr/src/rewriter.rs` (AST to expression) is used by `tidb-expr`'s own builtins and tests and by ddl, table, ttl and ranger code; Go hooks `expression.BuildSimpleExpr` to the planner's `buildSimpleExpr` in `core_init.go`.
 
@@ -54,7 +55,7 @@ T14/T01: `tidb-session/src/txn_manager.rs` (`MutationBuffer` staging, `commit_au
 
 ## Plan of Work
 
-1. T05/T07: move `planner_bridge.rs`'s planning core into `tidb-planner` behind one hook trait the executor implements (Go's executor-set function variables). Moves: `QueryBuilderParts::build` (Go `NewPlanBuilder().Init`: the `PlannerCatalog` source, `init_session_vars`, static-prune switch, `PRUNE_COLUMNS`), `planner_built_query_with_allocators` (Go `buildLogicalPlan`), `build_logical_plan_and_do_optimize` and `QueryRounds` (Go `buildAndOptimizeLogicalPlanRound`), `planner_optimized_query_with_allocators` (Go `optimize`). Hooks the executor keeps implementing: the subquery evaluator (`EvalSubqueryFirstRow`), the default-value evaluators, the dynamic-prune fallback, `CheckPrivilege` over the visit infos, and `OptimizeServices` (statistics load, stats initialization, used-stats recorder, CTE optimizer). Then `explain.rs`'s `query_plan_cost` / `gen_brief_plan` / `calculate_plan_digest` call the planner entry, and the cached select plan (`CachedSelectPlan`, T07) follows.
+1. T07: move the cached plans (`CachedSelectPlan`, `CachedDmlPlan`, `PreparedSelectPlan`) and `SessionPlanCache` into the planner over the same `PlanningHooks`; T22: split the plan renderer out of `explain.rs`.
 2. T08: move the rewriter into `tidb-planner` behind a `BuildSimpleExpr` hook in `tidb-expr`, installed at server start and by each lower crate's tests.
 3. T10: move each `pkg/executor` executor out of the session crate onto a `sessionctx` trait surface, one Go file at a time.
 4. T14 then T01.
