@@ -433,7 +433,14 @@ impl MutationBuffer {
         ));
         assert!(
             access(&mut |buffer| {
-                if buffer.is_empty() {
+                if buffer.is_managed_pipelined() {
+                    // Go `LazyTxn.initStmtBuf` takes no statement staging on a
+                    // pipelined transaction, whose MemDB is its own: what the
+                    // statement staged before the activation is only its
+                    // checkpoints, which a pipelined flush cannot carry.
+                    let local = local.take().unwrap();
+                    assert!(local.is_empty(), "bind pending SQL writes before a pipelined transaction activates");
+                } else if buffer.is_empty() {
                     // The transaction's own size limits (its activation's
                     // `kv.SizeLimits`) stay in force over the SQL writes.
                     let (entry_limit, total_limit) = buffer.entry_size_limit();
@@ -613,9 +620,63 @@ impl MutationBuffer {
     /// Starts a native staging scope and records the SQL delta position.
     pub fn checkpoint(&self) -> BufferCheckpoint {
         let mut state = self.state();
+        // Go `LazyTxn.initStmtBuf`: no statement staging on a pipelined
+        // transaction.
+        let native = if state.memdb.read(|buffer| buffer.is_managed_pipelined()) {
+            0
+        } else {
+            state.memdb.staging()
+        };
         BufferCheckpoint {
             change_len: state.changes.len(),
-            native: state.memdb.staging(),
+            native,
+        }
+    }
+
+    /// Go `LazyTxn.IsPipelined`: the buffer is bound to a pipelined
+    /// transaction's MemDB.
+    pub fn is_pipelined(&self) -> bool {
+        self.state().memdb.read(|buffer| buffer.is_managed_pipelined())
+    }
+
+    /// Go `tikvTxn.MayFlush`: a pipelined transaction's MemDB flushes when
+    /// its thresholds say so; any other transaction's does nothing.
+    ///
+    /// # Errors
+    ///
+    /// The flush's failure (a key error the flush met is the statement's).
+    pub fn may_flush(&self) -> Result<(), StorageError> {
+        let mut state = self.state();
+        if !state.memdb.read(|buffer| buffer.is_managed_pipelined()) {
+            return Ok(());
+        }
+        match state.memdb.write(|buffer| buffer.flush(false)) {
+            Ok(_) => Ok(()),
+            // Go `extractKeyErr`: a key the flush found present is the
+            // statement's `ErrKeyExists`, named by the row it staged.
+            Err(tikv_client::transaction::unionstore::PipelinedError::KeyExists(error)) => {
+                let key = Key::from(error.already_exist.key.clone());
+                match state.hints.get(&key) {
+                    Some(hint) => Err(StorageError::Sql(tidb_terror::MysqlError::from_terror(
+                        &tidb_kv::kv_errors::ERR_KEY_EXISTS
+                            .gen_with_stack_by_args(&[hint.value.as_str().into(), hint.key.as_str().into()]),
+                    ))),
+                    None => Err(StorageError::Backend(error.to_string())),
+                }
+            }
+            // Go `extractKeyErr` -> `newWriteConflictError`.
+            Err(tikv_client::transaction::unionstore::PipelinedError::Client(error)) => {
+                match crate::driver::tikv_transaction::classify_client_cause(&error) {
+                    tidb_txnkv::transaction::TransactionCause::WriteConflict { detail, .. } => {
+                        Err(StorageError::Sql(tidb_terror::MysqlError::from_terror(
+                            &tidb_kv::kv_errors::ERR_WRITE_CONFLICT
+                                .gen_with_stack(format!("Write conflict, {detail} [try again later]")),
+                        )))
+                    }
+                    _ => Err(StorageError::Backend(error.to_string())),
+                }
+            }
+            Err(error) => Err(StorageError::Backend(error.to_string())),
         }
     }
     /// Go LazyTxn.flushStmtBuf keeps earlier successful absence checks when
@@ -759,6 +820,14 @@ impl MutationBuffer {
     pub fn restore(&self, checkpoint: BufferCheckpoint) {
         let mut state = self.state();
         if state.memdb.detach_finished() {
+            state.changes.clear();
+            state.hints.clear();
+            return;
+        }
+        // Go `LazyTxn.cleanupStmtBuf` skips a pipelined transaction: what it
+        // flushed is the transaction's, which the statement's failure rolls
+        // back as a whole.
+        if state.memdb.read(|buffer| buffer.is_managed_pipelined()) {
             state.changes.clear();
             state.hints.clear();
             return;
@@ -1395,6 +1464,14 @@ impl ClusterTableStorage {
 }
 
 impl TableStorage for ClusterTableStorage {
+    fn may_flush(&self) -> Result<(), StorageError> {
+        self.buffer().may_flush()
+    }
+
+    fn is_pipelined(&self) -> bool {
+        self.buffer().is_pipelined()
+    }
+
     fn lock_keys_optimistically(&mut self, keys: &[Key]) -> Result<(), StorageError> {
         let keys: Vec<Vec<u8>> = keys.iter().map(|key| key.as_bytes().to_vec()).collect();
         self.buffer().lock_keys_optimistically(&keys);

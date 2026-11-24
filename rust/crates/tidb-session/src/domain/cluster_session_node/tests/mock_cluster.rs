@@ -495,6 +495,7 @@ impl ClusterTransactions for MockTransactions {
         pessimistic: bool,
         _fair_locking: bool,
         _low_resolution: bool,
+        _pipelined: Option<tikv_client::PipelinedTxnOptions>,
         _options: SessionTransactionOptions,
     ) -> Result<Box<dyn PendingClusterTransaction>, String> {
         self.0.record_resource_group(resource_group);

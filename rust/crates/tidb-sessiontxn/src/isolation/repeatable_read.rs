@@ -169,6 +169,9 @@ impl tidb_sessionctx::TxnPlanAdvisor for RRPlanAdvisor {
     fn advise_warmup(&self) {
         crate::advise_warmup(self.future.as_ref());
     }
+    fn prepare_txn_pipelined(&self, pipelined: &mut dyn FnMut() -> Option<tikv_client::PipelinedTxnOptions>) {
+        crate::prepare_txn_pipelined(self.future.as_ref(), pipelined);
+    }
 }
 
 /// Go `notNeedGetLatestTSFromPD`.

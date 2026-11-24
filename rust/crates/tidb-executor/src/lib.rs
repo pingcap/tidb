@@ -246,6 +246,19 @@ pub fn statement_store(ctx: &StmtContext) -> Box<dyn tidb_kv::storage::TableStor
         .expect("a statement runs over its session's transaction store")
 }
 
+/// Go `txn.MayFlush()` after a write executor's batch: the statement's
+/// pipelined transaction flushes its MemDB when its thresholds say so.
+///
+/// # Errors
+///
+/// The flush's failure.
+pub(crate) fn txn_may_flush(ctx: &StmtContext) -> Result<(), DriverError> {
+    match ctx.txn_store() {
+        Some(store) => store.may_flush().map_err(DriverError::from),
+        None => Ok(()),
+    }
+}
+
 /// [`with_statement_store`] as a method of the table being written.
 pub trait WithStatementStore {
     /// See [`with_statement_store`].

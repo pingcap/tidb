@@ -473,9 +473,7 @@ impl tikv_client::tikv::Client for RpcClient {
             // (dr *delRange) startEmulator()".
             return Ok(Box::new(kvrpcpb::UnsafeDestroyRangeResponse::default()));
         }
-        if any.is::<kvrpcpb::FlushRequest>() {
-            return Err(Error::Unimplemented);
-        }
+        serve!(kvrpcpb::FlushRequest, kv_flush);
         serve!(kvrpcpb::BufferBatchGetRequest, kv_buffer_batch_get);
         if let Some(request) = any.downcast_ref::<BatchCoprocessorStreamRequest>() {
             if tidb_failpoint::eval("github.com/pingcap/tidb/pkg/store/mockstore/unistore/BatchCopCancelled").is_some_and(|val| val.bool()) {

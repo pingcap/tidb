@@ -868,6 +868,7 @@ impl StatementLifecycle<'_> {
         error.code == ERR_WRITE_CONFLICT
             && !self.session.vars().batch_insert()
             && could_retry
+            && !self.txn.implicit_txn_pipelined()
             && retried < self.autocommit_retry_budget()
             && self.txn.explicit().is_none()
     }

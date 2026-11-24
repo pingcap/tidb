@@ -1020,8 +1020,10 @@ impl TableCommon {
         write_untouched: bool,
     ) -> Result<(), KvTableError> {
         debug_assert!(!lazy_dup_check || pessimistic);
-        // Go's untouched rewrite exists only where the commit drops it.
-        let write_untouched = write_untouched && store.filters_untouched_index_values();
+        // Go's untouched rewrite exists only where the commit drops it; for
+        // pipelined DML Go disables the untouched optimization to avoid extra
+        // RPCs for `MemBuffer.Get()`.
+        let write_untouched = write_untouched && store.filters_untouched_index_values() && !store.is_pipelined();
         let (indexes, nonpublic) = self.partition_index_sets(physical_id);
         self.rebuild_update_record_indices(store, 
             &nonpublic,

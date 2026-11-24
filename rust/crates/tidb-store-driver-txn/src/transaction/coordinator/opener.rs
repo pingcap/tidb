@@ -216,6 +216,16 @@ where
         self.open_at(Some(start_ts), false)
     }
 
+    /// Go `txnFuture.wait` with `tikv.WithPipelinedTxn`: [`Self::begin_at`]
+    /// as a pipelined transaction.
+    pub fn begin_pipelined_at(
+        &self,
+        start_ts: u64,
+        pipelined: tikv_client::PipelinedTxnOptions,
+    ) -> Result<TikvTxn<S>, OptimisticCoordinatorError> {
+        self.open_at_with(Some(start_ts), false, Some(pipelined))
+    }
+
     /// Opens a transaction that may only read.
     ///
     /// The native snapshot option enforces read-only access.
@@ -317,6 +327,15 @@ where
         start_ts: Option<u64>,
         read_only: bool,
     ) -> Result<TikvTxn<S>, OptimisticCoordinatorError> {
+        self.open_at_with(start_ts, read_only, None)
+    }
+
+    fn open_at_with(
+        &self,
+        start_ts: Option<u64>,
+        read_only: bool,
+        pipelined: Option<tikv_client::PipelinedTxnOptions>,
+    ) -> Result<TikvTxn<S>, OptimisticCoordinatorError> {
         let start_ts = match start_ts {
             Some(start_ts) => start_ts,
             None => self
@@ -331,7 +350,7 @@ where
             ));
         }
         let mut transaction =
-            TikvTxn::new_opened(&self.store, start_ts, read_only, self.authority_id())?;
+            TikvTxn::new_opened_with(&self.store, start_ts, read_only, pipelined, self.authority_id())?;
         transaction.set_commit_protocol(self.protocol);
         if let Some(resource_group_name) = self.resource_group_name.as_deref() {
             tidb_txnkv::new_txn::TxnResourceGroup::set_resource_group_name(

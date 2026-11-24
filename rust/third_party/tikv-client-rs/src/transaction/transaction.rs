@@ -2288,14 +2288,24 @@ impl<PdC: PdClient> Transaction<PdC> {
         let key = key.into();
         if self.is_pipelined() {
             let physical_key = key.clone().encode_keyspace(self.keyspace, KeyMode::Txn);
-            if let Some(value) = self.buffer.pipelined_value(&physical_key) {
+            if let Some(value) = self.buffer.pipelined_local_value(&physical_key) {
                 return Ok(value);
             }
-            return Ok(self
-                .batch_get_from_buffer(std::iter::once(key))
-                .await?
-                .next()
-                .map(|pair| pair.1));
+            let remote = match self.buffer.pipelined_value(&physical_key) {
+                // The batch-get cache's answer for the remote buffer.
+                Some(cached) => cached,
+                None => self
+                    .batch_get_from_buffer(std::iter::once(key.clone()))
+                    .await?
+                    .next()
+                    .map(|pair| pair.1),
+            };
+            if let Some(value) = remote {
+                // An empty buffered value is the transaction's deletion.
+                return Ok((!value.is_empty()).then_some(value));
+            }
+            // client-go `KVUnionStore.Get`: a key absent from the buffer
+            // tiers is the snapshot's.
         }
         let timestamp = self.snapshot_timestamp.clone();
         let cache_snapshot_read = timestamp.version() != u64::MAX;
@@ -2667,7 +2677,7 @@ impl<PdC: PdClient> Transaction<PdC> {
             }
             if !remote_keys.is_empty() {
                 let fetched = self
-                    .batch_get_from_buffer(remote_keys)
+                    .batch_get_from_buffer(remote_keys.clone())
                     .await?
                     .collect::<Vec<_>>();
                 let fetched_by_physical = fetched
@@ -2681,10 +2691,26 @@ impl<PdC: PdClient> Transaction<PdC> {
                     .collect::<BTreeMap<_, _>>();
                 self.buffer
                     .cache_pipelined_batch_get(remote_physical_keys, &fetched_by_physical);
-                buffered.extend(fetched);
+                // client-go `BufferBatchGetter.BatchGet`: the keys absent from
+                // the buffer tiers are the snapshot's; an empty buffered value
+                // is the transaction's deletion.
+                let found = fetched.iter().map(|pair| pair.0.clone()).collect::<std::collections::BTreeSet<_>>();
+                let missing = remote_keys.into_iter().filter(|key| !found.contains(key)).collect::<Vec<_>>();
+                buffered.extend(fetched.into_iter().filter(|pair| !pair.1.is_empty()));
+                if !missing.is_empty() {
+                    buffered.extend(self.batch_get_snapshot_in_statement(missing).await?);
+                }
             }
             return Ok(buffered.into_iter());
         }
+        Ok(self.batch_get_snapshot_in_statement(keys).await?.collect::<Vec<_>>().into_iter())
+    }
+
+    /// The snapshot half of [`Self::batch_get`] (client-go `KVSnapshot.BatchGet`).
+    async fn batch_get_snapshot_in_statement(
+        &mut self,
+        keys: Vec<Key>,
+    ) -> Result<impl Iterator<Item = KvPair>> {
         let timestamp = self.snapshot_timestamp.clone();
         let snapshot_version = timestamp.version();
         let cache_snapshot_read = timestamp.version() != u64::MAX;
@@ -7873,6 +7899,9 @@ impl<PdC: PdClient> Committer<PdC> {
         }
 
         let commit_timestamp = self.prepare_txn_file_commit_timestamp().await?;
+        if crate::util::eval_failpoint_async("pipelinedCommitFail", |_| ()).await.ok().flatten().is_some() {
+            return Err(Error::StringError("pipelined DML commit failed".to_owned()));
+        }
         let primary_key = self.primary_key.clone().ok_or(Error::NoPrimaryKey)?;
         let mut request = new_commit_request(
             std::iter::once(primary_key.clone()),
@@ -7916,6 +7945,9 @@ impl<PdC: PdClient> Committer<PdC> {
         }
         self.committed = true;
 
+        if crate::util::eval_failpoint_async("pipelinedSkipResolveLock", |_| ()).await.ok().flatten().is_some() {
+            return Ok(Some(commit_timestamp));
+        }
         let secondary = self.clone().detached();
         let secondary_commit_timestamp = commit_timestamp.clone();
         let hooks = self.settings.lifecycle_hooks.clone();

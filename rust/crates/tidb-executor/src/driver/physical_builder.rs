@@ -7903,6 +7903,7 @@ pub(crate) fn execute_dml_source_writing(
     super::visit_executor_rows_writing(
         root,
         &field_types,
+        ctx,
         &ctx.statement_memory(),
         dml,
         catalog,

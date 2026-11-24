@@ -2,19 +2,11 @@
   "date": "2026-11-23",
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports, from the 2026-11-23 symbol-level re-audit (method in structural-audit-2026-11-23.md).",
   "counts": {
-    "unresolved": 2,
-    "open": 1,
+    "unresolved": 1,
+    "open": 0,
     "partial": 1
   },
   "findings": [
-    {
-      "id": "T01",
-      "group": "Executor, DML and expressions",
-      "status": "open",
-      "finding": "Pipelined DML is not ported: `tidb_dml_type='bulk'` runs a standard transaction; Go's `usePipelinedDmlOrWarn` (fallback warnings for temporary tables, `tidb_constraint_check_in_place=ON`, explicit transactions, ...) and the pipelined transaction are missing. A Go server reports `pipelined:true` in `tidb_last_txn_info` after a bulk INSERT; this one reports `false` and no warnings. The statement's writes land in the implicit transaction's MemDB (T14, resolved); a pipelined transaction flushes that MemDB while the statement runs.",
-      "rust_evidence": "`tidb-session/src/lib.rs` hard-codes `\"pipelined\":false`; no `use_pipelined_dml_or_warn`.",
-      "go_owner": "`pkg/session/session.go` `usePipelinedDmlOrWarn`, `NewTxn` pipelined path; `pkg/store/driver/txn`"
-    },
     {
       "id": "T10",
       "group": "Executor, DML and expressions",
@@ -24,7 +16,7 @@
       "go_owner": "`pkg/executor` (`adapter.go`, `select.go`, `plan_replayer.go`, `simple.go`, `ddl.go`, `show.go`, `prepared.go`, ...)"
     }
   ],
-  "unresolved": 2,
-  "open": 1,
+  "unresolved": 1,
+  "open": 0,
   "partial": 1
 }

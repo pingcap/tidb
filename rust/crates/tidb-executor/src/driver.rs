@@ -790,6 +790,7 @@ fn visit_executor_row_chunks(
 fn visit_executor_rows_writing<C: ?Sized>(
     mut exec: Box<dyn Executor>,
     types: &[FieldType],
+    ctx: &crate::StmtContext,
     memory: &crate::StatementMemory,
     dml: &physical_builder::DmlExec,
     state: &mut C,
@@ -813,6 +814,9 @@ fn visit_executor_rows_writing<C: ?Sized>(
                 for r in 0..req.num_rows() {
                     visit(state, req.get_row(r).get_datum_row(types))?;
                 }
+                // Go `UpdateExec.exec` / `DeleteExec.deleteSingleTableByChunk`'s
+                // `txn.MayFlush()` after the rows it wrote.
+                crate::txn_may_flush(ctx)?;
             }
             Ok(())
         })

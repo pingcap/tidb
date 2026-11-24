@@ -143,6 +143,9 @@ impl tidb_sessionctx::TxnPlanAdvisor for OptimisticPlanAdvisor {
     fn advise_warmup(&self) {
         crate::advise_warmup(Some(&self.future));
     }
+    fn prepare_txn_pipelined(&self, pipelined: &mut dyn FnMut() -> Option<tikv_client::PipelinedTxnOptions>) {
+        crate::prepare_txn_pipelined(Some(&self.future), pipelined);
+    }
 }
 
 /// Go `isOptimisticTxnRetryable`: the `TxnCtx.CouldRetry` an optimistic

@@ -634,6 +634,79 @@ pub(crate) fn registry_executor_concurrency() -> usize {
     parse_executor_concurrency(&registry_default("tidb_executor_concurrency"))
 }
 
+pub(crate) fn registry_pipelined_dml_config() -> crate::session_vars::PipelinedDmlConfig {
+    parse_pipelined_dml_resource_policy(registry_default("tidb_pipelined_dml_resource_policy").trim())
+        .unwrap_or_default()
+}
+
+/// Go `setPipelinedDmlResourcePolicy`'s parse of a trimmed value: `standard`,
+/// `conservative`, or `custom{key=value, ...}` over `concurrency`,
+/// `resolve_concurrency` and `write_throttle_ratio`; `None` is Go's
+/// `ErrWrongValueForVar`.
+fn parse_pipelined_dml_resource_policy(value: &str) -> Option<crate::session_vars::PipelinedDmlConfig> {
+    use tidb_vardef::defaults::{DEFAULT_FLUSH_CONCURRENCY, DEFAULT_RESOLVE_CONCURRENCY};
+    use tidb_vardef::tidb_vars::{
+        CONSERVATIVE_FLUSH_CONCURRENCY, CONSERVATIVE_RESOLVE_CONCURRENCY, MAX_PIPELINED_DML_CONCURRENCY,
+        MIN_PIPELINED_DML_CONCURRENCY, STRATEGY_CONSERVATIVE, STRATEGY_CUSTOM, STRATEGY_STANDARD,
+    };
+    let low_val = value.to_lowercase();
+    if low_val == STRATEGY_STANDARD {
+        return Some(crate::session_vars::PipelinedDmlConfig {
+            pipelined_flush_concurrency: DEFAULT_FLUSH_CONCURRENCY,
+            pipelined_resolve_lock_concurrency: DEFAULT_RESOLVE_CONCURRENCY,
+            pipelined_write_throttle_ratio: 0.0,
+        });
+    }
+    if low_val == STRATEGY_CONSERVATIVE {
+        return Some(crate::session_vars::PipelinedDmlConfig {
+            pipelined_flush_concurrency: CONSERVATIVE_FLUSH_CONCURRENCY,
+            pipelined_resolve_lock_concurrency: CONSERVATIVE_RESOLVE_CONCURRENCY,
+            pipelined_write_throttle_ratio: 0.0,
+        });
+    }
+    // A temporary config holds the new values to avoid partial application.
+    let mut new_config = crate::session_vars::PipelinedDmlConfig {
+        pipelined_flush_concurrency: DEFAULT_FLUSH_CONCURRENCY,
+        pipelined_resolve_lock_concurrency: DEFAULT_RESOLVE_CONCURRENCY,
+        pipelined_write_throttle_ratio: 0.0,
+    };
+    let remaining = low_val.strip_prefix(STRATEGY_CUSTOM)?.trim();
+    if remaining.len() < 2 || !remaining.starts_with('{') || !remaining.ends_with('}') {
+        return None;
+    }
+    let content = remaining[1..remaining.len() - 1].trim();
+    if content.is_empty() {
+        return None;
+    }
+    let concurrency = |text: &str| {
+        text.parse::<i64>()
+            .ok()
+            .filter(|concurrency| (MIN_PIPELINED_DML_CONCURRENCY..=MAX_PIPELINED_DML_CONCURRENCY).contains(concurrency))
+    };
+    for raw_param in content.split(',') {
+        let param = raw_param.trim();
+        if param.is_empty() {
+            return None;
+        }
+        // Go `strings.FieldsFunc(param, '=' or ':')`: empty fields vanish.
+        let parts = param.split(['=', ':']).filter(|part| !part.is_empty()).collect::<Vec<_>>();
+        let [key, text] = parts.as_slice() else {
+            return None;
+        };
+        let (key, text) = (key.trim(), text.trim());
+        match key {
+            "concurrency" => new_config.pipelined_flush_concurrency = concurrency(text)?,
+            "resolve_concurrency" => new_config.pipelined_resolve_lock_concurrency = concurrency(text)?,
+            "write_throttle_ratio" => {
+                new_config.pipelined_write_throttle_ratio =
+                    text.parse::<f64>().ok().filter(|ratio| (0.0..1.0).contains(ratio))?;
+            }
+            _ => return None,
+        }
+    }
+    Some(new_config)
+}
+
 fn parse_executor_concurrency(value: &str) -> usize {
     value.parse::<usize>().ok().filter(|value| *value > 0).unwrap_or(tidb_vardef::defaults::DEF_EXECUTOR_CONCURRENCY as usize)
 }
@@ -1579,6 +1652,25 @@ impl SessionVars {
         self.mem_quota_apply_cache
     }
 
+    /// Go `setPipelinedDmlResourcePolicy`, `tidb_pipelined_dml_resource_policy`'s
+    /// `SetSession`: a refused value leaves the config as it was.
+    pub(crate) fn set_session_pipelined_dml_resource_policy(&mut self, value: &str) -> Result<(), VarError> {
+        let value = value.trim();
+        self.pipelined_dml_config = parse_pipelined_dml_resource_policy(value).ok_or_else(|| {
+            tidb_terror::MysqlError::from_terror(&crate::variable_errors::ERR_WRONG_VALUE_FOR_VAR.gen_with_stack_by_args(&[
+                tidb_vardef::tidb_vars::TIDB_PIPELINED_DML_RESOURCE_POLICY.into(),
+                value.to_owned().into(),
+            ]))
+        })?;
+        Ok(())
+    }
+
+    /// Go `SessionVars.PipelinedDMLConfig`.
+    #[must_use]
+    pub const fn pipelined_dml_config(&self) -> crate::session_vars::PipelinedDmlConfig {
+        self.pipelined_dml_config
+    }
+
     /// Go `tidb_executor_concurrency`'s `SetSession`.
     pub(crate) fn set_session_executor_concurrency(&mut self, value: &str) -> Result<(), VarError> {
         self.executor_concurrency = parse_executor_concurrency(value);
@@ -1686,5 +1778,77 @@ mod tests {
         assert_eq!(vars.cte_max_recursion_depth(), 9);
         vars.restore_system(saved);
         assert_eq!(vars.cte_max_recursion_depth(), 7);
+    }
+
+    /// Go `tests/realtikvtest/pipelineddmltest.TestVariable`'s
+    /// `tidb_pipelined_dml_resource_policy` half: the policy's `SetSession`
+    /// fills `PipelinedDMLConfig`, and a refused value leaves it as it was.
+    #[test]
+    fn test_variable() {
+        let mut vars = SessionVars::default();
+        let config = |vars: &SessionVars| {
+            let config = vars.pipelined_dml_config();
+            (
+                config.pipelined_flush_concurrency,
+                config.pipelined_resolve_lock_concurrency,
+                config.pipelined_write_throttle_ratio,
+            )
+        };
+        let mut set = |vars: &mut SessionVars, value: &str| {
+            vars.set_system("tidb_pipelined_dml_resource_policy", value.to_owned())
+        };
+        assert!(!vars.bulk_dml_enabled());
+        vars.set_system("tidb_dml_type", "bulk".to_owned()).unwrap();
+        assert!(vars.bulk_dml_enabled());
+        vars.set_system("tidb_dml_type", "standard".to_owned()).unwrap();
+        assert!(!vars.bulk_dml_enabled());
+        // not supported yet.
+        assert!(vars.set_system("tidb_dml_type", "bulk(10)".to_owned()).is_err());
+
+        // Basic policy tests
+        assert_eq!(config(&vars), (128, 8, 0.0));
+        set(&mut vars, "STANDARD").unwrap();
+        assert_eq!(config(&vars), (128, 8, 0.0));
+        set(&mut vars, "conserVative").unwrap();
+        assert_eq!(config(&vars), (2, 2, 0.0));
+        set(&mut vars, "Standard").unwrap();
+        assert_eq!(config(&vars), (128, 8, 0.0));
+
+        // Test custom configuration with valid values
+        set(&mut vars, "custom{concurrency=64}").unwrap();
+        assert_eq!((config(&vars).0, config(&vars).1), (64, 8));
+        set(&mut vars, "custom{write_throttle_ratio=0.5}").unwrap();
+        assert_eq!(config(&vars).2, 0.5);
+        // Test multiple parameters
+        set(&mut vars, "custom{concurrency=32,write_throttle_ratio=0.3}").unwrap();
+        assert_eq!((config(&vars).0, config(&vars).2), (32, 0.3));
+        // Test different separators
+        set(&mut vars, "custom{concurrency:64,write_throttle_ratio:0.4}").unwrap();
+        assert_eq!((config(&vars).0, config(&vars).2), (64, 0.4));
+        // Test whitespace handling
+        set(&mut vars, "  custom  {  concurrency  =  64  ,  write_throttle_ratio  =  0.4  }  ").unwrap();
+        assert_eq!((config(&vars).0, config(&vars).2), (64, 0.4));
+        // Test case insensitivity
+        set(&mut vars, "CUSTOM{CONCURRENCY=64,WRITE_THROTTLE_RATIO=0.4}").unwrap();
+        assert_eq!((config(&vars).0, config(&vars).2), (64, 0.4));
+        // Test boundary values
+        set(&mut vars, "custom{concurrency=1}").unwrap();
+        assert_eq!(config(&vars).0, 1);
+        set(&mut vars, "custom{write_throttle_ratio=0.999}").unwrap();
+        assert_eq!(config(&vars).2, 0.999);
+
+        // Test error cases and state consistency
+        let orig = config(&vars);
+        for bad in [
+            "custom",
+            "custom{}",
+            "custom{unknown=1}",
+            "custom{concurrency=8193}",
+            "custom{write_throttle_ratio=1.1}",
+            "custom{concurrency=abc}",
+        ] {
+            assert!(set(&mut vars, bad).is_err(), "{bad}");
+            assert_eq!(config(&vars), orig, "{bad}");
+        }
     }
 }

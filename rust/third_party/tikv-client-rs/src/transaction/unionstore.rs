@@ -197,6 +197,7 @@ struct ManagedPipelinedState {
 
 impl ManagedPipelinedState {
     fn new(flush: ManagedFlushFunction) -> Self {
+        let flush_option = new_flush_option();
         Self {
             flush: Some(flush),
             remote_batch_get: None,
@@ -209,9 +210,9 @@ impl ManagedPipelinedState {
             accumulated_cache_hits: 0,
             accumulated_cache_misses: 0,
             batch_get_cache: BTreeMap::new(),
-            min_flush_keys: MIN_FLUSH_KEYS,
-            min_flush_memory: MIN_FLUSH_MEMORY,
-            force_flush_memory: FORCE_FLUSH_MEMORY,
+            min_flush_keys: flush_option.min_flush_keys,
+            min_flush_memory: flush_option.min_flush_mem_size,
+            force_flush_memory: flush_option.force_flush_mem_size_threshold,
             write_throttle_ratio: 0.0,
             flush_duration_ewma_ms: 0.0,
             mem_change_hook: None,
@@ -309,7 +310,8 @@ impl MemDb {
             .unwrap_or_default()
     }
 
-    pub(crate) fn is_managed_pipelined(&self) -> bool {
+    /// client-go `MemBuffer` of a pipelined transaction (`IsPipelined`).
+    pub fn is_managed_pipelined(&self) -> bool {
         self.managed_pipelined.is_some()
     }
 
@@ -961,6 +963,7 @@ impl MemDb {
             if let Some(duration) = throttle_sleep {
                 std::thread::sleep(duration);
             }
+            let _ = crate::util::eval_failpoint("beforePipelinedFlush", |_| ());
             let outcome = flush(generation, old, primary_key);
             is_flushing.store(false, Ordering::Release);
             let _ = sender.send(outcome);
@@ -1683,6 +1686,40 @@ pub const MIN_FLUSH_KEYS: usize = 10_000;
 pub const MIN_FLUSH_MEMORY: u64 = 16 * 1024 * 1024;
 pub const FORCE_FLUSH_MEMORY: u64 = 128 * 1024 * 1024;
 
+/// client-go `flushOption`.
+struct FlushOption {
+    min_flush_keys: usize,
+    min_flush_mem_size: u64,
+    force_flush_mem_size_threshold: u64,
+}
+
+/// client-go `newFlushOption`: the thresholds, which the
+/// `pipelinedMemDBMinFlushKeys`, `pipelinedMemDBMinFlushSize` and
+/// `pipelinedMemDBForceFlushSizeThreshold` failpoints override.
+fn new_flush_option() -> FlushOption {
+    let int_failpoint = |name: &str| {
+        crate::util::eval_failpoint(name, |value| value.and_then(|value| value.trim().parse::<u64>().ok()))
+            .ok()
+            .flatten()
+            .flatten()
+    };
+    let mut opt = FlushOption {
+        min_flush_keys: MIN_FLUSH_KEYS,
+        min_flush_mem_size: MIN_FLUSH_MEMORY,
+        force_flush_mem_size_threshold: FORCE_FLUSH_MEMORY,
+    };
+    if let Some(value) = int_failpoint("pipelinedMemDBMinFlushKeys") {
+        opt.min_flush_keys = value as usize;
+    }
+    if let Some(value) = int_failpoint("pipelinedMemDBMinFlushSize") {
+        opt.min_flush_mem_size = value;
+    }
+    if let Some(value) = int_failpoint("pipelinedMemDBForceFlushSizeThreshold") {
+        opt.force_flush_mem_size_threshold = value;
+    }
+    opt
+}
+
 type FlushFunction = Arc<dyn Fn(u64, Arc<MemDb>) -> Result<(), PipelinedError> + Send + Sync>;
 type RemoteBatchGetter =
     Arc<dyn Fn(&[Vec<u8>]) -> Result<BTreeMap<Vec<u8>, Vec<u8>>, String> + Send + Sync>;
@@ -1696,6 +1733,9 @@ type RemoteBatchGetter =
 pub enum PipelinedError {
     Message(String),
     KeyExists(KeyExistsError),
+    /// Any other client error the flush met, kept whole so the caller can
+    /// read it as client-go's caller does (`extractKeyErr`'s write conflict).
+    Client(Box<crate::Error>),
 }
 
 impl PipelinedError {
@@ -1709,6 +1749,7 @@ impl fmt::Display for PipelinedError {
         match self {
             Self::Message(message) => formatter.write_str(message),
             Self::KeyExists(error) => error.fmt(formatter),
+            Self::Client(error) => error.fmt(formatter),
         }
     }
 }
@@ -1716,7 +1757,7 @@ impl fmt::Display for PipelinedError {
 impl StdError for PipelinedError {
     fn source(&self) -> Option<&(dyn StdError + 'static)> {
         match self {
-            Self::Message(_) => None,
+            Self::Message(_) | Self::Client(_) => None,
             Self::KeyExists(error) => Some(error),
         }
     }
@@ -1735,6 +1776,20 @@ impl From<crate::Error> for PipelinedError {
             }
         }
 
+        fn has_key_exists(error: &crate::Error) -> bool {
+            match error {
+                crate::Error::KeyExists(_) => true,
+                crate::Error::ExtractedErrors(errors) | crate::Error::MultipleKeyErrors(errors) => {
+                    errors.iter().any(has_key_exists)
+                }
+                crate::Error::PessimisticLockError { inner, .. } => has_key_exists(inner),
+                _ => false,
+            }
+        }
+
+        if !has_key_exists(&error) {
+            return Self::Client(Box::new(error));
+        }
         let message = error.to_string();
         match take_key_exists(error) {
             Some(error) => Self::KeyExists(error),
@@ -1748,6 +1803,7 @@ impl From<PipelinedError> for crate::Error {
         match error {
             PipelinedError::KeyExists(error) => Self::KeyExists(error),
             PipelinedError::Message(message) => Self::StringError(message),
+            PipelinedError::Client(error) => *error,
         }
     }
 }
@@ -1781,6 +1837,7 @@ pub struct PipelinedMemDb {
 
 impl PipelinedMemDb {
     pub fn new(remote_batch_get: RemoteBatchGetter, flush: FlushFunction) -> Self {
+        let flush_option = new_flush_option();
         Self {
             mem: MemDb::new(),
             flushing: None,
@@ -1791,9 +1848,9 @@ impl PipelinedMemDb {
             accumulated_size: 0,
             generation: 0,
             entry_limit: u64::MAX,
-            min_flush_keys: MIN_FLUSH_KEYS,
-            min_flush_memory: MIN_FLUSH_MEMORY,
-            force_flush_memory: FORCE_FLUSH_MEMORY,
+            min_flush_keys: flush_option.min_flush_keys,
+            min_flush_memory: flush_option.min_flush_mem_size,
+            force_flush_memory: flush_option.force_flush_mem_size_threshold,
             batch_cache: None,
             mem_change_hook: None,
             is_flushing: Arc::new(AtomicBool::new(false)),
@@ -2150,6 +2207,7 @@ impl PipelinedMemDb {
         is_flushing.store(true, Ordering::Release);
         let (sender, receiver) = mpsc::sync_channel(1);
         std::thread::spawn(move || {
+            let _ = crate::util::eval_failpoint("beforePipelinedFlush", |_| ());
             let started = Instant::now();
             let result = flush(generation, old);
             crate::stats::observe_pipelined_flush(flush_len, flush_size, started.elapsed());

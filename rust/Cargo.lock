@@ -10230,6 +10230,7 @@ dependencies = [
  "tidb-planner-core-operator-physicalop",
  "tidb-sessionctx",
  "tidb-store-driver-error",
+ "tikv-client",
 ]
 
 [[package]]

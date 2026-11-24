@@ -1728,50 +1728,6 @@ pub fn supported_collation(
     })
 }
 
-/// Go `setPipelinedDmlResourcePolicy`'s validation half.
-fn pipelined_dml_resource_policy_is_valid(value: &str) -> bool {
-    let value = value.trim();
-    let lowered = value.to_lowercase();
-    if lowered == "standard" || lowered == "conservative" {
-        return true;
-    }
-    let Some(remaining) = lowered.strip_prefix("custom") else {
-        return false;
-    };
-    let remaining = remaining.trim();
-    if remaining.len() < 2 || !remaining.starts_with('{') || !remaining.ends_with('}') {
-        return false;
-    }
-    let content = remaining[1..remaining.len() - 1].trim();
-    if content.is_empty() {
-        return false;
-    }
-    content.split(',').all(|raw| {
-        let param = raw.trim();
-        if param.is_empty() {
-            return false;
-        }
-        // Go `strings.FieldsFunc(param, '=' or ':')`: empty fields vanish.
-        let parts = param
-            .split(['=', ':'])
-            .filter(|part| !part.is_empty())
-            .collect::<Vec<_>>();
-        let [key, text] = parts.as_slice() else {
-            return false;
-        };
-        let (key, text) = (key.trim(), text.trim());
-        match key {
-            "concurrency" | "resolve_concurrency" => text
-                .parse::<i64>()
-                .is_ok_and(|concurrency| (1..=8192).contains(&concurrency)),
-            "write_throttle_ratio" => text
-                .parse::<f64>()
-                .is_ok_and(|ratio| (0.0..1.0).contains(&ratio)),
-            _ => false,
-        }
-    })
-}
-
 /// Go workloadrepo's `tidb_workload_repository_dest` validation, which Go's
 /// workload repository registers with this package: `''` or `table`.
 pub fn validate_workload_repository_dest(value: &str) -> Result<String, String> {

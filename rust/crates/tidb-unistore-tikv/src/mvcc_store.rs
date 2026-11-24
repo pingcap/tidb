@@ -609,6 +609,81 @@ impl MvccStore {
         Ok(outcome)
     }
 
+    /// Go `MVCCStore.Flush` (`mvcc.go:986`): a pipelined transaction's
+    /// flushed generation, prewritten as locks of `start_ts` under the
+    /// request's primary. A key this transaction already locks is skipped by
+    /// the primary's status check (a re-flushed generation overwrites it).
+    pub fn flush(
+        &mut self,
+        mutations: &[KvrpcMutation],
+        primary_key: &[u8],
+        start_ts: u64,
+    ) -> Result<(), KvError> {
+        if !mutations.windows(2).all(|pair| pair[0].key <= pair[1].key) {
+            return Err(KvError::Message("mutations are not sorted".to_owned()));
+        }
+        // Only check the PK's status first.
+        for mutation in mutations {
+            if self
+                .check_conflict_in_lock_store(&mutation.key, start_ts)?
+                .is_some()
+            {
+                continue;
+            }
+            if mutation.key == primary_key {
+                let status = self.check_extra_txn_status(&mutation.key, start_ts);
+                if status.is_rollback {
+                    return Err(KvError::AlreadyRollback);
+                }
+                if status.is_op_lock_committed() {
+                    // duplicated command
+                    return Ok(());
+                }
+            }
+        }
+        let items: Vec<Option<(Vec<u8>, DbUserMeta)>> = mutations
+            .iter()
+            .map(|mutation| {
+                self.engine
+                    .get_at(&mutation.key, u64::MAX)
+                    .map(|(value, meta)| (value.to_vec(), meta.clone()))
+            })
+            .collect();
+        for (mutation, item) in mutations.iter().zip(&items) {
+            if let Some((value, meta)) = item {
+                if meta.commit_ts() > start_ts {
+                    return Err(KvError::Conflict {
+                        reason: tidb_proto::kvrpcpb::write_conflict::Reason::Optimistic,
+                        start_ts,
+                        conflict_ts: meta.start_ts(),
+                        conflict_commit_ts: meta.commit_ts(),
+                        key: mutation.key.clone(),
+                    });
+                }
+                // Op_CheckNotExists type requests should not add lock
+                if mutation.op == KvrpcOp::CheckNotExists as i32 && !value.is_empty() {
+                    return Err(KvError::KeyAlreadyExists {
+                        key: mutation.key.clone(),
+                    });
+                }
+            }
+        }
+        let dummy_prewrite_req = PrewriteReq {
+            primary_lock: primary_key.to_vec(),
+            start_version: start_ts,
+            ..PrewriteReq::default()
+        };
+        for (mutation, item) in mutations.iter().zip(&items) {
+            if mutation.op == KvrpcOp::CheckNotExists as i32 {
+                continue;
+            }
+            let lock = build_prewrite_lock(mutation, item.as_ref(), &dummy_prewrite_req)?;
+            // Go `writeBatch.Prewrite` (`write.go:252`).
+            self.lock_store_put(&mutation.key, &lock.marshal_binary());
+        }
+        Ok(())
+    }
+
     /// Go `checkConflictInLockStore` (`mvcc.go`): a same-ts lock is a
     /// duplicate, any other live lock is `BuildLockErr`.
     fn check_conflict_in_lock_store(

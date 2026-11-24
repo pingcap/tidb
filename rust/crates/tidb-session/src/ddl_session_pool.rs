@@ -721,6 +721,7 @@ impl ClusterTransactions for StepTransactions {
         _pessimistic: bool,
         _fair_locking: bool,
         _low_resolution: bool,
+        _pipelined: Option<tikv_client::PipelinedTxnOptions>,
         _options: tidb_store_driver_txn::session_commit_protocol::SessionTransactionOptions,
     ) -> Result<Box<dyn tidb_domain_core::cluster_transactions::PendingClusterTransaction>, String> {
         Err(outside_the_step())

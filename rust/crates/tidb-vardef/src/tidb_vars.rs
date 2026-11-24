@@ -1764,6 +1764,15 @@ pub const STRATEGY_CONSERVATIVE: &str = "conservative";
 /// StrategyCustom is a choice of variable TiDBPipelinedDmlResourcePolicy,
 /// Go `StrategyCustom`.
 pub const STRATEGY_CUSTOM: &str = "custom";
+/// Go `MinPipelinedDMLConcurrency`: the minimum acceptable concurrency.
+pub const MIN_PIPELINED_DML_CONCURRENCY: i64 = 1;
+/// Go `MaxPipelinedDMLConcurrency`: the maximum acceptable concurrency.
+pub const MAX_PIPELINED_DML_CONCURRENCY: i64 = 8192;
+/// Go `ConservativeFlushConcurrency`: the flush concurrency in conservative mode.
+pub const CONSERVATIVE_FLUSH_CONCURRENCY: i64 = 2;
+/// Go `ConservativeResolveConcurrency`: the resolve_lock concurrency in
+/// conservative mode.
+pub const CONSERVATIVE_RESOLVE_CONCURRENCY: i64 = 2;
 /// IndexLookUpPushDownPolicyHintOnly indicates only use the hint to decide whether to push down the index lookup or not.
 /// Go `IndexLookUpPushDownPolicyHintOnly`.
 pub const INDEX_LOOK_UP_PUSH_DOWN_POLICY_HINT_ONLY: &str = "hint-only";

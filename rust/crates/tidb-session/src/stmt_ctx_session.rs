@@ -526,6 +526,10 @@ impl tidb_executor::stmt_ctx_build::StmtCtxSession for Session {
         Some(std::sync::Arc::new(move || owner.as_ref().is_none_or(|owner| owner.is_owner())))
     }
 
+    fn session_txn_future(&self) -> Option<std::sync::Arc<dyn tidb_sessionctx::SessionTxnFuture>> {
+        Some(self.pipelined_dml_decision())
+    }
+
     fn stale_tso_timestamp(&self) -> Option<f64> {
         self.stale_tso_now
     }

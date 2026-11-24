@@ -232,7 +232,7 @@ pub fn run_mview_complete_delta_apply(
     let mut root = plan.root.clone().ok_or_else(|| plain("MViewCompleteDeltaApply: the plan is not optimized"))?;
     crate::explain::publish_physical_process_info(ctx, &root, catalog)?;
     // Go `buildMViewCompleteDeltaApply`'s `updateForUpdateTS`.
-    crate::isolation_advise::update_for_update_ts(ctx)?;
+    crate::isolation_advise::update_for_update_ts(ctx, catalog)?;
     let dml = super::physical_builder::DmlExec::new(&root, ctx);
     let root_id = i64::from(root.id());
     let tidb_planner_core_operator_physicalop::PhysicalPlan::Dml(root_plan) = &mut root else {

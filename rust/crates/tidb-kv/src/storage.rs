@@ -186,6 +186,22 @@ pub trait TableStorage: fmt::Debug + Send + Sync {
         0
     }
 
+    /// Go `kv.Transaction.MayFlush`: a pipelined transaction's MemDB flushes
+    /// when its thresholds say so; any other storage does nothing.
+    ///
+    /// # Errors
+    ///
+    /// The flush's failure.
+    fn may_flush(&self) -> Result<(), StorageError> {
+        Ok(())
+    }
+
+    /// Go `kv.Transaction.IsPipelined`: the storage writes through a
+    /// pipelined transaction's MemDB.
+    fn is_pipelined(&self) -> bool {
+        false
+    }
+
     /// Installs immutable statement policy on the native snapshot, where available.
     fn set_snapshot_read_options(&self, _options: tidb_txnkv::SnapshotReadOptions) {}
 

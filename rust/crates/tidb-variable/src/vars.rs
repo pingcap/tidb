@@ -733,6 +733,8 @@ pub struct SessionVars {
     pub(crate) mem_quota_apply_cache: i64,
     /// Go `SessionVars.ExecutorConcurrency`, maintained by `tidb_executor_concurrency`'s `SetSession`.
     pub(crate) executor_concurrency: usize,
+    /// Go `SessionVars.PipelinedDMLConfig`, maintained by `tidb_pipelined_dml_resource_policy`'s `SetSession`.
+    pub(crate) pipelined_dml_config: crate::session_vars::PipelinedDmlConfig,
     /// Go `SessionVars.hashAggPartialConcurrency`, maintained by `tidb_hashagg_partial_concurrency`'s `SetSession`.
     pub(crate) hash_agg_partial_concurrency: i64,
     /// Go `SessionVars.hashAggFinalConcurrency`, maintained by `tidb_hashagg_final_concurrency`'s `SetSession`.
@@ -956,6 +958,7 @@ impl Default for SessionVars {
             allow_derive_topn: crate::vars_typed::registry_allow_derive_topn(),
             mem_quota_apply_cache: crate::vars_typed::registry_mem_quota_apply_cache(),
             executor_concurrency: crate::vars_typed::registry_executor_concurrency(),
+            pipelined_dml_config: crate::vars_typed::registry_pipelined_dml_config(),
             hash_agg_partial_concurrency: crate::vars_typed::registry_hash_agg_partial_concurrency(),
             hash_agg_final_concurrency: crate::vars_typed::registry_hash_agg_final_concurrency(),
             ddl_reorg_priority: crate::vars_typed::registry_ddl_reorg_priority(),

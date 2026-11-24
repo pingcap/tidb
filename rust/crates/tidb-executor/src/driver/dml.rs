@@ -175,7 +175,7 @@ pub(crate) fn run_insert_stmt_with_physical_and_visits(
         );
         crate::explain::publish_physical_process_info(ctx, plan, catalog)?;
     }
-    crate::isolation_advise::update_for_update_ts(ctx)?;
+    crate::isolation_advise::update_for_update_ts(ctx, catalog)?;
     // Go `runStmt` -> `handleNoDelayExecutor` -> the DML executor's `Next`.
     let _execution = super::begin_dml_execution(if insert.replace {
         "*executor.ReplaceExec.Next"
@@ -1906,6 +1906,9 @@ fn run_insert_rows(
             }
         }
         finish_batch(&mut batch_started);
+        // Go `InsertExec.exec` / `ReplaceExec.exec`'s `txn.MayFlush()` after
+        // the batch's rows were written.
+        crate::txn_may_flush(ctx)?;
         // Go releases the batch's rows, and the chunk they came from, once they
         // were written.
         mem_tracker
@@ -2668,7 +2671,7 @@ pub fn run_update_stmt_with_physical(
         crate::isolation_advise::advise_optimize_with_plan(ctx, plan, false);
         crate::explain::publish_physical_process_info(ctx, plan, catalog)?;
     }
-    crate::isolation_advise::update_for_update_ts(ctx)?;
+    crate::isolation_advise::update_for_update_ts(ctx, catalog)?;
     // Go `runStmt` -> `handleNoDelayExecutor` -> the DML executor's `Next`.
     let _execution = super::begin_dml_execution("*executor.UpdateExec.Next");
     let Some(plan) = physical_plan else {
@@ -3405,7 +3408,7 @@ pub fn run_delete_stmt_with_physical(
         crate::isolation_advise::advise_optimize_with_plan(ctx, plan, false);
         crate::explain::publish_physical_process_info(ctx, plan, catalog)?;
     }
-    crate::isolation_advise::update_for_update_ts(ctx)?;
+    crate::isolation_advise::update_for_update_ts(ctx, catalog)?;
     // Go `runStmt` -> `handleNoDelayExecutor` -> the DML executor's `Next`.
     let _execution = super::begin_dml_execution("*executor.DeleteExec.Next");
     let dml = physical_plan

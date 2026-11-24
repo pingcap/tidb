@@ -1773,6 +1773,7 @@ impl Session {
         // statement's `ROW_COUNT()` (captured: a failed SELECT leaves -1, a
         // failed INSERT leaves 0).
         self.statement_kind = statement_kind_of(&stmt);
+        self.statement_read_only = stmt.is_read_only(true);
         self.begin_statement_keys_read();
         // Go `buildDo`: DO evaluates its expressions as a Projection over a
         // one-row TableDual and discards the row, so `DO @a := 1` assigns and

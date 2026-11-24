@@ -35,15 +35,28 @@ pub(crate) fn advise_optimize_with_plan(
     if advisor.optimize_with_max_ts() {
         ctx.set_priority_high_if_no_priority();
     }
-    // Go `AdviseOptimizeWithPlanAndThenWarmUp`.
-    advisor.advise_warmup();
+    // Go `AdviseOptimizeWithPlanAndThenWarmUp` -> `txnManager.AdviseWarmup`,
+    // which warms nothing up under `tidb_dml_type = bulk`: the transaction
+    // prepares at its activation, where pipelined DML is decided.
+    if !ctx.session_txn_future().is_some_and(|session| session.bulk_dml_enabled()) {
+        advisor.advise_warmup();
+    }
 }
 
 /// Go `executorBuilder.updateForUpdateTS` (`buildInsert`, `buildUpdate`,
 /// `buildDelete`): `GetStmtForUpdateTS`, which activates the statement's
 /// transaction -- after `AdviseOptimizeWithPlanAndThenWarmUp`, so a kept
 /// for-update timestamp is not fetched again.
-pub(crate) fn update_for_update_ts(ctx: &crate::StmtContext) -> Result<(), crate::DriverError> {
+pub(crate) fn update_for_update_ts(
+    ctx: &crate::StmtContext,
+    is: &tidb_infoschema::SessionExtendedInfoSchema,
+) -> Result<(), crate::DriverError> {
+    // Go `ActivateTxn` -> `prepareTxn` -> `sctx.PrepareTSFuture`: a
+    // transaction the warm-up left unprepared prepares now, pipelined as
+    // the session's `usePipelinedDmlOrWarn` answers.
+    if let (Some(advisor), Some(session)) = (ctx.txn_plan_advisor(), ctx.session_txn_future()) {
+        advisor.prepare_txn_pipelined(&mut || session.use_pipelined_dml_or_warn(ctx, is));
+    }
     if let Some(store) = ctx.txn_store() {
         store.stmt_for_update_ts()?;
     }

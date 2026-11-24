@@ -264,6 +264,9 @@ pub struct TxnManager {
     /// the autocommit commit that may fail: the commit resets the buffer, and
     /// the retry budget is decided after it.
     autocommit_txn_bytes: usize,
+    /// Go `doCommitWithRetry`'s `isPipelined` of the implicit transaction
+    /// last ended, which no retry replays.
+    implicit_txn_pipelined: bool,
 }
 
 impl TxnManager {
@@ -296,7 +299,14 @@ impl TxnManager {
             pin: None,
             could_retry: false,
             autocommit_txn_bytes: 0,
+            implicit_txn_pipelined: false,
         }
+    }
+
+    /// Go `txn.IsPipelined()` of the implicit transaction last ended.
+    #[must_use]
+    pub fn implicit_txn_pipelined(&self) -> bool {
+        self.implicit_txn_pipelined
     }
 
     /// Go `TxnCtx.CouldRetry` of the transaction last entered.
@@ -425,7 +435,10 @@ impl TxnManager {
         if self.explicit().is_some() {
             return None;
         }
-        self.txn.take().map(|entered| entered.provider.into_txn())
+        let pipelined = self.buffer.is_pipelined();
+        let entered = self.txn.take()?;
+        self.implicit_txn_pipelined = pipelined;
+        Some(entered.provider.into_txn())
     }
 
     /// Go `PrepareTxnCtx` -> `EnterNewTxn(EnterNewTxnBeforeStmt)` for a
@@ -453,9 +466,15 @@ impl TxnManager {
             let resource_group = resource_group.to_owned();
             let options = options.clone();
             let read_ts = read_ts.clone();
-            Box::new(move || {
-                let pending =
-                    transactions.prepare_autocommit_txn(&resource_group, pessimistic, false, low_resolution, options);
+            Box::new(move |pipelined| {
+                let pending = transactions.prepare_autocommit_txn(
+                    &resource_group,
+                    pessimistic,
+                    false,
+                    low_resolution,
+                    pipelined,
+                    options,
+                );
                 oracle_opener(pending, read_ts)
             })
         };
@@ -759,11 +778,7 @@ impl TxnManager {
     /// statement recorded.
     fn record_committed_txn_info(session: &mut Session, committed: Option<CommittedTxnInfo>) {
         if let Some(committed) = committed {
-            session.record_committed_txn_info(
-                committed.start_ts,
-                committed.commit_ts,
-                committed.commit_mode,
-            );
+            session.record_committed_txn_info(&committed);
         }
     }
 
@@ -829,12 +844,20 @@ impl TxnManager {
             session.finish_txn_fair_locking(true);
             return Ok(());
         };
-        if let Some(checker) = hooks.schema_lease_checker() {
-            transaction.set_schema_lease_checker(checker);
+        let pipelined = self.buffer.is_pipelined();
+        if !pipelined {
+            if let Some(checker) = hooks.schema_lease_checker() {
+                transaction.set_schema_lease_checker(checker);
+            }
         }
         let bindings_changed = hooks.binding_records_changed(&self.buffer);
         let renew = session.start_cached_table_renew_lease()?;
-        if let Some(renew) = &renew {
+        if pipelined {
+            // Go `SetOptionsBeforeCommit`: a pipelined transaction already
+            // flushed its mutations into the stores, so it takes no option;
+            // the invariants its designed use keeps are checked instead.
+            Self::check_pipelined_before_commit(session, renew.is_some())?;
+        } else if let Some(renew) = &renew {
             transaction.set_commit_ts_upper_bound_check(renew.commit_ts_check());
         }
         let temporary = session
@@ -860,6 +883,31 @@ impl TxnManager {
         // Go `finishStmt`'s `FinishExecuteStmt` after the commit ran.
         session.finish_txn_fair_locking(true);
         outcome
+    }
+
+    /// Go `SetOptionsBeforeCommit`'s checks of a pipelined transaction.
+    fn check_pipelined_before_commit(session: &Session, commit_ts_checker: bool) -> Result<(), SqlQueryError> {
+        if !tidb_vardef::is_mdl_enabled(tidb_config_kerneltype::is_next_gen()) {
+            return Err(SqlQueryError::unknown(
+                "cannot commit pipelined transaction without Metadata Lock: MDL is OFF",
+            ));
+        }
+        if !session.txn_temporary_tables.lock().unwrap_or_else(std::sync::PoisonError::into_inner).is_empty() {
+            return Err(SqlQueryError::unknown("pipelined dml with temporary tables is not allowed"));
+        }
+        let cdc_write_source = session
+            .vars()
+            .get_system(tidb_vardef::tidb_vars::TIDB_CDC_WRITE_SOURCE)
+            .ok()
+            .and_then(|value| value.parse::<u64>().ok())
+            .unwrap_or(0);
+        if cdc_write_source != 0 {
+            return Err(SqlQueryError::unknown("pipelined dml with CDC source is not allowed"));
+        }
+        if commit_ts_checker {
+            return Err(SqlQueryError::unknown("pipelined dml with commitTS checker is not allowed"));
+        }
+        Ok(())
     }
 
     /// Ends the explicit transaction by publishing its buffer at its own start

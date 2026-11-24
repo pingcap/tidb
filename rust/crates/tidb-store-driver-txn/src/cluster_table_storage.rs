@@ -991,9 +991,29 @@ impl<S: StoreClient> SessionTransaction<S> {
         timeout: Duration,
         options: impl Into<crate::session_commit_protocol::SessionTransactionOptions>,
     ) -> Result<Self, OptimisticCoordinatorError> {
-        let mut transaction = opener.begin_at(start_ts)?;
+        Ok(Self::optimistic_opened(opener.begin_at(start_ts)?, start_ts, timeout, options))
+    }
+
+    /// [`Self::begin_at`] as Go's pipelined transaction (`txnFuture.wait`
+    /// with `tikv.WithPipelinedTxn`): its MemDB flushes while it runs.
+    pub fn begin_pipelined_at(
+        opener: Arc<RealOptimisticTransactionOpener<S>>,
+        start_ts: u64,
+        timeout: Duration,
+        options: impl Into<crate::session_commit_protocol::SessionTransactionOptions>,
+        pipelined: tikv_client::PipelinedTxnOptions,
+    ) -> Result<Self, OptimisticCoordinatorError> {
+        Ok(Self::optimistic_opened(opener.begin_pipelined_at(start_ts, pipelined)?, start_ts, timeout, options))
+    }
+
+    fn optimistic_opened(
+        mut transaction: TikvTxn<S>,
+        start_ts: u64,
+        timeout: Duration,
+        options: impl Into<crate::session_commit_protocol::SessionTransactionOptions>,
+    ) -> Self {
         options.into().apply(&mut transaction);
-        Ok(Self {
+        Self {
             opened_at: std::time::Instant::now(),
             statement_count: std::cell::Cell::new(0),
             state: Arc::new(Mutex::new(SessionTransactionState::Optimistic(transaction))),
@@ -1005,7 +1025,7 @@ impl<S: StoreClient> SessionTransaction<S> {
             commit_ts_upper_bound_check: None,
             statement_lock_failure: Arc::default(),
             bound_buffer: Arc::default(),
-        })
+        }
     }
 
     /// [`Self::begin_at`] for an autocommit read's implicit transaction: the

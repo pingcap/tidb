@@ -82,7 +82,9 @@ impl<F: CatalogFollowing> TxnManagerOps for StoreTxnOps<'_, F> {
         };
         self.txn
             .enter_new_txn(session, &request, inputs)
-            .map_err(driver_error_of)
+            .map_err(driver_error_of)?;
+        session.warn_pipelined_dml_at_begin();
+        Ok(())
     }
 
     fn savepoint_checkpoint(

@@ -154,6 +154,10 @@ pub struct CommittedTxnInfo {
     pub commit_ts: u64,
     /// client-go's `txn_commit_mode`: `2pc`, `async_commit` or `1pc`.
     pub commit_mode: &'static str,
+    /// client-go's `pipelined`.
+    pub pipelined: bool,
+    /// client-go's `flush_wait_ms`.
+    pub flush_wait_ms: i64,
 }
 
 impl CommittedTxnInfo {
@@ -174,6 +178,8 @@ impl CommittedTxnInfo {
                 tidb_txnkv::transaction::CommittedProtocol::AsyncCommit => "async_commit",
                 tidb_txnkv::transaction::CommittedProtocol::OnePc => "1pc",
             },
+            pipelined: receipt.pipelined,
+            flush_wait_ms: receipt.flush_wait_ms,
         })
     }
 }
@@ -304,13 +310,16 @@ pub trait ClusterTransactions: Send + Sync {
     /// (`pkg/sessiontxn/isolation/base.go:711`): the session's
     /// `@@tidb_pessimistic_txn_fair_locking`, false for an internal
     /// statement.
-    /// `low_resolution` is Go `newOracleFuture`'s `UseLowResolutionTSO`.
+    /// `low_resolution` is Go `newOracleFuture`'s `UseLowResolutionTSO`;
+    /// `pipelined` is Go `PrepareTSFuture`'s `usePipelinedDmlOrWarn` with the
+    /// session's `PipelinedDMLConfig` (`tikv.WithPipelinedTxn`).
     fn prepare_autocommit_txn(
         &self,
         resource_group: &str,
         pessimistic: bool,
         fair_locking: bool,
         low_resolution: bool,
+        pipelined: Option<tikv_client::PipelinedTxnOptions>,
         options: SessionTransactionOptions,
     ) -> Result<Box<dyn PendingClusterTransaction>, String>;
 
@@ -647,6 +656,22 @@ pub trait TxnFuturePreparer: Send + Sync {
     ///
     /// Go's "cannot force prepare const start ts because txn is active".
     fn force_prepare_const_start_ts(&self, ts: u64) -> Result<(), String>;
+
+    /// Go `prepareTxn` -> `sctx.PrepareTSFuture` as `ActivateTxn` runs it:
+    /// requests the start timestamp of a transaction not yet prepared, its
+    /// future pipelined as `pipelined` answers (Go `usePipelinedDmlOrWarn`,
+    /// which only a prepare runs, and so warns only then).
+    ///
+    /// # Errors
+    ///
+    /// The timestamp request could not be started.
+    fn prepare_txn_pipelined(
+        &self,
+        pipelined: &mut dyn FnMut() -> Option<tikv_client::PipelinedTxnOptions>,
+    ) -> Result<(), String> {
+        let _ = pipelined;
+        self.prepare_txn()
+    }
 }
 
 /// The transaction Go's `ActivateTxn` begins over
@@ -941,8 +966,10 @@ where
     timeout: Duration,
     pessimistic: bool,
     fair_locking: bool,
-    /// An autocommit read's implicit transaction opens read-only.
+    /// A stale read's transaction opens read-only.
     read_only: bool,
+    /// Go `txnFuture.pipelined` with its `PipelinedDMLConfig`.
+    pipelined: Option<tikv_client::PipelinedTxnOptions>,
     options: SessionTransactionOptions,
 }
 
@@ -1007,6 +1034,10 @@ where
                     transaction.set_fair_locking(self.fair_locking);
                     Box::new(transaction) as Box<dyn OpenClusterTransaction>
                 })
+                .map_err(|error| error.to_string())
+        } else if let Some(pipelined) = self.pipelined {
+            SessionTransaction::begin_pipelined_at(self.opener, start_ts, self.timeout, options, pipelined)
+                .map(|transaction| Box::new(transaction) as Box<dyn OpenClusterTransaction>)
                 .map_err(|error| error.to_string())
         } else if self.read_only {
             SessionTransaction::begin_read_only_at(self.opener, start_ts, self.timeout, options)
@@ -1180,6 +1211,7 @@ where
         pessimistic: bool,
         fair_locking: bool,
         low_resolution: bool,
+        pipelined: Option<tikv_client::PipelinedTxnOptions>,
         options: SessionTransactionOptions,
     ) -> Result<Box<dyn PendingClusterTransaction>, String> {
         let opener = self.opener_for_resource_group(resource_group);
@@ -1193,6 +1225,7 @@ where
             pessimistic,
             fair_locking,
             read_only: false,
+            pipelined,
             options,
         }))
     }
@@ -1210,6 +1243,7 @@ where
             pessimistic: false,
             fair_locking: false,
             read_only: true,
+            pipelined: None,
             options,
         }))
     }

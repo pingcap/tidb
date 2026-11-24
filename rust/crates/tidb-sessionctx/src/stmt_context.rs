@@ -398,6 +398,33 @@ pub trait TxnPlanAdvisor: Send + Sync + std::fmt::Debug {
     /// Go `AdviseWarmup`, which `AdviseOptimizeWithPlanAndThenWarmUp` runs
     /// after the advice: the transaction requests its timestamp now.
     fn advise_warmup(&self) {}
+
+    /// Go `ActivateTxn`'s `prepareTxn` -> `sctx.PrepareTSFuture`: a
+    /// transaction not yet prepared requests its timestamp, its future
+    /// pipelined as `pipelined` answers (asked only then).
+    fn prepare_txn_pipelined(&self, pipelined: &mut dyn FnMut() -> Option<tikv_client::PipelinedTxnOptions>) {
+        let _ = pipelined;
+    }
+}
+
+/// Go `session.PrepareTSFuture`'s session half, which a transaction's
+/// preparation runs, and `txnManager.AdviseWarmup`'s gate on it.
+pub trait SessionTxnFuture: Send + Sync + std::fmt::Debug {
+    /// Go `SessionVars.BulkDMLEnabled`: `txnManager.AdviseWarmup` warms
+    /// nothing up under it, so the transaction prepares at its activation,
+    /// after the statement planned (and named its tables).
+    fn bulk_dml_enabled(&self) -> bool;
+
+    /// Go `usePipelinedDmlOrWarn` with the session's `PipelinedDMLConfig`
+    /// over the latest schema `is` (the session's
+    /// `SessionExtendedInfoSchema`, which this crate cannot name): the
+    /// options of a pipelined transaction, or `None` after appending the
+    /// fallback's warning to `ctx`.
+    fn use_pipelined_dml_or_warn(
+        &self,
+        ctx: &StmtContext,
+        is: &dyn std::any::Any,
+    ) -> Option<tikv_client::PipelinedTxnOptions>;
 }
 
 /// Go `SessionVars`' inputs to `handleFineGrainedShuffle` and
@@ -612,6 +639,9 @@ pub struct StmtContextSessionState {
     /// Go `sessionexpr`'s DDL-owner property (`DDLOwnerInfoProvider`):
     /// whether this node is the DDL owner; `None` is a context with no node.
     pub ddl_owner_info: Option<Arc<dyn Fn() -> bool + Send + Sync>>,
+    /// Go `session.PrepareTSFuture`'s session half; `None` is a context with
+    /// no session transaction.
+    pub session_txn_future: Option<Arc<dyn SessionTxnFuture>>,
     /// Go `kv.Storage.GetMinSafeTS`, which `GetStmtMinSafeTime` asks of the
     /// session's store; `None` is a context with no store.
     pub min_safe_ts_provider: Option<MinSafeTsProvider>,
@@ -665,6 +695,7 @@ impl Default for StmtContextSessionState {
             related_table_ids: None,
             sql_executor: None,
             ddl_owner_info: None,
+            session_txn_future: None,
             min_safe_ts_provider: None,
             locked_tables: None,
             ddl_sql_mode: tidb_mysql::get_sql_mode(tidb_mysql::DefaultSQLMode)
@@ -1155,6 +1186,8 @@ pub struct StmtContextData {
     sql_executor: Option<Arc<dyn tidb_expropt::SqlExecutor>>,
     /// See [`StmtContextSessionState::ddl_owner_info`]: Go `IsDDLOwner`.
     ddl_owner_info: Option<Arc<dyn Fn() -> bool + Send + Sync>>,
+    /// See [`StmtContextSessionState::session_txn_future`].
+    session_txn_future: Option<Arc<dyn SessionTxnFuture>>,
     /// See [`StmtContextSessionState::min_safe_ts_provider`]: the store's Go
     /// `GetMinSafeTS`.
     min_safe_ts_provider: Option<MinSafeTsProvider>,
@@ -3589,6 +3622,7 @@ impl StmtContext {
         Self(Arc::new(StmtContextData {
             sql_executor: session.sql_executor,
             ddl_owner_info: session.ddl_owner_info,
+            session_txn_future: session.session_txn_future,
             min_safe_ts_provider: session.min_safe_ts_provider,
             mpp_query_info: session.mpp_query_info,
             mpp_server_id: session.mpp_server_id,
@@ -5967,6 +6001,13 @@ impl StmtContext {
     #[must_use]
     pub fn rc_check_ts(&self) -> bool {
         self.rc_check_ts
+    }
+
+    /// Go `session.PrepareTSFuture`'s session half (see
+    /// [`SessionTxnFuture`]).
+    #[must_use]
+    pub fn session_txn_future(&self) -> Option<&Arc<dyn SessionTxnFuture>> {
+        self.session_txn_future.as_ref()
     }
 
     /// The pessimistic provider that takes this statement's

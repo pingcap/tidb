@@ -53,9 +53,11 @@ pub type TransactionOpener = Box<
     dyn FnOnce(SessionTransactionOptions) -> Result<Box<dyn OpenClusterTransaction>, String> + Send,
 >;
 
-/// Go `newOracleFuture`: requests the start timestamp, returning the opener
-/// that waits for it.
-pub type OracleFuture = Box<dyn FnOnce() -> TransactionOpener + Send>;
+/// Go `newOracleFuture` with `PrepareTSFuture`'s `txnFuture`: requests the
+/// start timestamp, returning the opener that waits for it and begins the
+/// transaction, pipelined with the given options (Go `txnFuture.pipelined`).
+pub type OracleFuture =
+    Box<dyn FnOnce(Option<tikv_client::PipelinedTxnOptions>) -> TransactionOpener + Send>;
 
 /// Go `sessiontxn.ConstantFuture(ts)`: the opener of a transaction valid at
 /// `ts` without a timestamp request.
@@ -110,7 +112,7 @@ impl Shared {
             return Err(error.clone());
         }
         // Go `ActivateTxn` -> `prepareTxn`.
-        Self::prepare_in(state);
+        Self::prepare_in(state, &mut || None);
         let Some(opener) = state.opener.take() else {
             return Err("the pending transaction was already consumed".to_owned());
         };
@@ -154,13 +156,17 @@ impl Shared {
     }
 
     /// Go `prepareTxn`: requests the timestamp of a transaction entered
-    /// unprepared.
-    fn prepare_in(state: &mut Pending) {
+    /// unprepared, `pipelined` answering `PrepareTSFuture`'s
+    /// `usePipelinedDmlOrWarn` only when it does.
+    fn prepare_in(
+        state: &mut Pending,
+        pipelined: &mut dyn FnMut() -> Option<tikv_client::PipelinedTxnOptions>,
+    ) {
         if state.open.is_some() || state.opener.is_some() {
             return;
         }
         if let Some(oracle) = state.oracle_future.take() {
-            state.opener = Some(oracle());
+            state.opener = Some(oracle(pipelined()));
         }
     }
 
@@ -177,7 +183,15 @@ impl Shared {
 
 impl TxnFuturePreparer for Shared {
     fn prepare_txn(&self) -> Result<(), String> {
-        Self::prepare_in(&mut self.state());
+        Self::prepare_in(&mut self.state(), &mut || None);
+        Ok(())
+    }
+
+    fn prepare_txn_pipelined(
+        &self,
+        pipelined: &mut dyn FnMut() -> Option<tikv_client::PipelinedTxnOptions>,
+    ) -> Result<(), String> {
+        Self::prepare_in(&mut self.state(), pipelined);
         Ok(())
     }
 

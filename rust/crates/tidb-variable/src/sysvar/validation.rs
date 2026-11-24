@@ -1075,27 +1075,6 @@ pub(super) fn init_connect(
 }
 
 
-/// Go's `setPipelinedDmlResourcePolicy` (`sysvar.go`), a SetSession
-/// hook: `standard`, `conservative`, or `custom{key=value, ...}` over
-/// `concurrency`, `resolve_concurrency` (1..=8192) and
-/// `write_throttle_ratio` (0 <= ratio < 1); anything else is
-/// `ErrWrongValueForVar`.
-pub(super) fn tidb_pipelined_dml_resource_policy(
-    def: &SysVarDef,
-    validated: Validated,
-    original: &str,
-    scope: u8,
-    lookup: Lookup<'_>,
-) -> Result<Validated, ValidationError> {
-    if scope == SCOPE_SESSION {
-        if !pipelined_dml_resource_policy_is_valid(&validated.value) {
-            return Err(ValidationError::WrongValue);
-        }
-        return Ok(validated);
-    }
-    Ok(validated)
-}
-
 /// Go's mpp_version Validation (`sysvar.go:3335`): the value must
 /// parse (`ToMppVersion`); a miss is refused with the option list
 /// `-1 (unspecified), 0, 1, 2, 3` (a bare errors.Errorf, so it

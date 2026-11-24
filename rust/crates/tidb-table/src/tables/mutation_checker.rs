@@ -55,6 +55,9 @@ impl TableCommon {
             // Go: "TODO: Support check for partitions as well".
             return Ok(());
         }
+        if store.is_pipelined() {
+            return Ok(());
+        }
         if sh.0 == 0 {
             // A backend that stages nothing.
             return Ok(());

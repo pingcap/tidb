@@ -431,12 +431,26 @@ impl Buffer {
     /// Return the source PipelinedMemDB read precedence as a tri-state:
     /// `None` means the remote buffer tier is still required, while
     /// `Some(None)` is a buffered delete or cached remote miss.
+    /// client-go `PipelinedMemDB.get` before its remote read: `Some(value)`
+    /// when the mutable or flushing buffer, or the batch-get cache, holds
+    /// the key; `Some(None)` is a key the cache found absent from the
+    /// buffer (client-go's `ErrNotExist`, which the union store answers
+    /// from the snapshot); `None` is a key to read from the remote buffer.
     pub(crate) fn pipelined_value(&self, key: &Key) -> Option<Option<Value>> {
         match self.memdb_value(key) {
             MutationValue::Determined(value) => Some(value),
             MutationValue::Undetermined => self
                 .memdb
                 .managed_batch_get_cached_value(&self.logical_key(key)),
+        }
+    }
+
+    /// Whether the mutable or flushing buffer determines `key` (a value or
+    /// the transaction's deletion), as client-go `PipelinedMemDB.GetLocal`.
+    pub(crate) fn pipelined_local_value(&self, key: &Key) -> Option<Option<Value>> {
+        match self.memdb_value(key) {
+            MutationValue::Determined(value) => Some(value),
+            MutationValue::Undetermined => None,
         }
     }
 

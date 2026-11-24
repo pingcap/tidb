@@ -612,6 +612,9 @@ pub struct Session {
     /// `ResetContextOfStmt`). It is recorded even for a statement that ends
     /// in an error, because Go's bits survive the failure too.
     statement_kind: StatementKind,
+    /// Go `StmtCtx.IsReadOnly` (`core.IsReadOnly`), set beside
+    /// [`Self::statement_kind`] by `ResetContextOfStmt`.
+    statement_read_only: bool,
     /// Go `StmtCtx.InSelectStmt` for the running statement, which
     /// `GetMaxKeysRead` reads: a SELECT or set operation, EXPLAIN unwrapped.
     statement_in_select: bool,
@@ -1100,6 +1103,7 @@ impl Session {
             local_infile_accepted: false,
             set_var_hint_restore: Vec::new(),
             statement_kind: StatementKind::Other,
+            statement_read_only: false,
             statement_in_select: false,
             statement_keys_read: Arc::default(),
             current_for_update_ts: tidb_exprctx::CurrentTso::default(),
@@ -1737,11 +1741,18 @@ impl Session {
     /// Go's `kv.CommitHook` (`sessiontxn/isolation/base.go:510`): the cluster
     /// transaction's own start and commit timestamps and the protocol that
     /// committed it, recorded once the commit is done.
-    pub fn record_committed_txn_info(&mut self, start_ts: u64, commit_ts: u64, commit_mode: &str) {
+    pub fn record_committed_txn_info(&mut self, committed: &tidb_domain_core::cluster_transactions::CommittedTxnInfo) {
+        let tidb_domain_core::cluster_transactions::CommittedTxnInfo {
+            start_ts,
+            commit_ts,
+            commit_mode,
+            pipelined,
+            flush_wait_ms,
+        } = *committed;
         // Go `CommitTxn` retains LazyTxn.lastCommitTS when committing a read-only transaction.
         if commit_ts != 0 { self.vars.last_commit_ts = commit_ts; }
         self.vars.last_txn_info = format!(
-            "{{\"txn_scope\":\"global\",\"start_ts\":{start_ts},\"commit_ts\":{commit_ts},\"txn_commit_mode\":\"{commit_mode}\",\"async_commit_fallback\":false,\"one_pc_fallback\":false,\"pipelined\":false,\"flush_wait_ms\":0}}"
+            "{{\"txn_scope\":\"global\",\"start_ts\":{start_ts},\"commit_ts\":{commit_ts},\"txn_commit_mode\":\"{commit_mode}\",\"async_commit_fallback\":false,\"one_pc_fallback\":false,\"pipelined\":{pipelined},\"flush_wait_ms\":{flush_wait_ms}}}"
         );
     }
 
@@ -4289,3 +4300,203 @@ pub type TestSetConfigHttpHandler =
 // Go's test binary links `planner/core`, whose `init` sets `expression.BuildSimpleExpr`.
 #[cfg(test)]
 tidb_planner_init::link!();
+
+/// Go `session.PrepareTSFuture`'s session half for one statement: the session
+/// facts Go `usePipelinedDmlOrWarn` reads, taken as the statement's context is
+/// built (after its `SET_VAR` hints), and its tables read when the
+/// transaction prepares.
+struct PipelinedDmlDecision {
+    bulk_dml_enabled: bool,
+    config: tidb_variable::session_vars::PipelinedDmlConfig,
+    read_only: bool,
+    in_dml_stmt: bool,
+    batch_dml: bool,
+    internal: bool,
+    in_txn: bool,
+    autocommit: bool,
+    phases: Option<Arc<std::sync::Mutex<tidb_executor::exec_stmt_observation::StatementPhases>>>,
+}
+
+impl std::fmt::Debug for PipelinedDmlDecision {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PipelinedDmlDecision")
+            .field("bulk_dml_enabled", &self.bulk_dml_enabled)
+            .finish_non_exhaustive()
+    }
+}
+
+impl PipelinedDmlDecision {
+    /// Go `GetTableReferredForeignKeys(db, table)` is not empty.
+    fn table_is_referred(is: &SessionExtendedInfoSchema, db: &str, table: &str) -> bool {
+        use tidb_hack::{GoCaseCompare as _, GoToLower as _};
+        if let Some(v2) = is.v2() {
+            return !v2.get_table_referred_foreign_keys(&db.go_to_lower(), &table.go_to_lower()).is_empty();
+        }
+        is.table_entries().any(|(_, _, entry)| {
+            let tidb_infoschema::TableEntry::Kv(child) = entry else {
+                return false;
+            };
+            child.meta().read().foreign_keys.iter_deref().any(|fk| {
+                let fk = fk.read();
+                fk.version >= tidb_model::table::FK_VERSION1
+                    && fk.ref_schema.original().go_lower_eq(db)
+                    && fk.ref_table.original().go_lower_eq(table)
+            })
+        })
+    }
+}
+
+impl tidb_sessionctx::SessionTxnFuture for PipelinedDmlDecision {
+    fn bulk_dml_enabled(&self) -> bool {
+        self.bulk_dml_enabled
+    }
+
+    /// Go `usePipelinedDmlOrWarn`.
+    fn use_pipelined_dml_or_warn(
+        &self,
+        ctx: &tidb_sessionctx::StmtContext,
+        is: &dyn std::any::Any,
+    ) -> Option<tikv_client::PipelinedTxnOptions> {
+        let warn = |message: &str| ctx.append_warning_parts(tidb_errno::errcode::ErrUnknown, message);
+        if !self.bulk_dml_enabled || self.read_only {
+            return None;
+        }
+        // The Starter deploy mode schedules background workloads on separate
+        // worker instances that do not support the pipelined protocol, so
+        // fall back to the standard path there.
+        if tidb_config_deploymode::is_starter() {
+            warn("Pipelined DML is not supported in this deployment. Fallback to standard mode");
+            return None;
+        }
+        if !tidb_vardef::is_mdl_enabled(tidb_config_kerneltype::is_next_gen()) {
+            warn("Pipelined DML can not be used without Metadata Lock. Fallback to standard mode");
+            return None;
+        }
+        if self.batch_dml {
+            warn("Pipelined DML can not be used with the deprecated Batch DML. Fallback to standard mode");
+            return None;
+        }
+        if !self.in_dml_stmt {
+            warn("Pipelined DML can only be used for auto-commit INSERT, REPLACE, UPDATE or DELETE. Fallback to standard mode");
+            return None;
+        }
+        if self.internal {
+            warn("Pipelined DML can not be used for internal SQL. Fallback to standard mode");
+            return None;
+        }
+        if self.in_txn {
+            warn("Pipelined DML can not be used in transaction. Fallback to standard mode");
+            return None;
+        }
+        if !self.autocommit {
+            warn("Pipelined DML can only be used in autocommit mode. Fallback to standard mode");
+            return None;
+        }
+        if ctx.constraint_check_in_place() {
+            // we enforce that pipelined DML must lazily check key.
+            warn("Pipelined DML can not be used when tidb_constraint_check_in_place=ON. Fallback to standard mode");
+            return None;
+        }
+        let Some(is) = is.downcast_ref::<SessionExtendedInfoSchema>() else {
+            warn("Pipelined DML failed to get latest InfoSchema. Fallback to standard mode");
+            return None;
+        };
+        let tables = self.phases.as_ref().map(|phases| {
+            phases.lock().unwrap_or_else(std::sync::PoisonError::into_inner).tables.clone()
+        });
+        for table in tables.unwrap_or_default() {
+            // get table schema from current infoschema
+            let info = match is.table_in(&table.db, &table.table) {
+                Some(tidb_infoschema::TableEntry::Kv(kv)) => kv.meta(),
+                Some(tidb_infoschema::TableEntry::View(_)) => {
+                    warn("Pipelined DML can not be used on view. Fallback to standard mode");
+                    return None;
+                }
+                Some(tidb_infoschema::TableEntry::Sequence(_)) => {
+                    warn("Pipelined DML can not be used on sequence. Fallback to standard mode");
+                    return None;
+                }
+                None => {
+                    warn("Pipelined DML failed to get table schema. Fallback to standard mode");
+                    return None;
+                }
+            };
+            let info = info.read();
+            if ctx.foreign_key_checks()
+                && (!info.foreign_keys.is_empty() || Self::table_is_referred(is, &table.db, &table.table))
+            {
+                warn("Pipelined DML can not be used on table with foreign keys when foreign_key_checks = ON. Fallback to standard mode");
+                return None;
+            }
+            if info.temp_table_type != tidb_model::table::TempTableType::NONE {
+                warn("Pipelined DML can not be used on temporary tables. Fallback to standard mode");
+                return None;
+            }
+            if info.table_cache_status_type != tidb_model::table::TableCacheStatusType::DISABLE {
+                warn("Pipelined DML can not be used on cached tables. Fallback to standard mode");
+                return None;
+            }
+        }
+        // tidb_dml_type=bulk will invalidate the config pessimistic-auto-commit.
+        // The behavior is as if the config is set to false. But we generate a warning for it.
+        if tidb_config::config_tree::config::get_global_config().pessimistic_txn.pessimistic_auto_commit.load() {
+            warn("pessimistic-auto-commit config is ignored in favor of Pipelined DML");
+        }
+        Some(tikv_client::tikv::pipelined_txn_options(
+            self.config.pipelined_flush_concurrency as usize,
+            self.config.pipelined_resolve_lock_concurrency as usize,
+            self.config.pipelined_write_throttle_ratio,
+        ))
+    }
+}
+
+impl Session {
+    /// Go `PrepareTSFuture` of a `BEGIN`, which activates its transaction at
+    /// once (`EnterNewTxnWithBeginStmt`): `usePipelinedDmlOrWarn` over the
+    /// `BEGIN` statement, never a DML, warns under `tidb_dml_type = bulk`.
+    pub(crate) fn warn_pipelined_dml_at_begin(&mut self) {
+        let mut decision = PipelinedDmlDecision::from_session(self);
+        decision.read_only = false;
+        decision.in_dml_stmt = false;
+        decision.phases = None;
+        let ctx = tidb_executor::stmt_ctx_build::ResetContextOfStmt::statement_context(self, false);
+        if let Ok(catalog) = self.lock_catalog() {
+            let _ = tidb_sessionctx::SessionTxnFuture::use_pipelined_dml_or_warn(&decision, &ctx, &*catalog);
+        }
+        self.drain_eval_warnings(&ctx);
+    }
+
+    /// Go `session.PrepareTSFuture`'s session half for the statement about to
+    /// run (see [`PipelinedDmlDecision`]).
+    pub(crate) fn pipelined_dml_decision(&self) -> Arc<dyn tidb_sessionctx::SessionTxnFuture> {
+        Arc::new(PipelinedDmlDecision::from_session(self))
+    }
+}
+
+impl PipelinedDmlDecision {
+    fn from_session(session: &Session) -> Self {
+        let this = session;
+        let on = |name: &str| this.vars.get_system(name).is_ok_and(|value| tidb_vardef::option_values::tidb_opt_on(&value));
+        let dml_batch_size = this
+            .vars
+            .get_system(tidb_vardef::tidb_vars::TIDB_DML_BATCH_SIZE)
+            .ok()
+            .and_then(|value| value.parse::<i64>().ok())
+            .unwrap_or(0);
+        PipelinedDmlDecision {
+            bulk_dml_enabled: this.vars.bulk_dml_enabled(),
+            config: this.vars.pipelined_dml_config(),
+            read_only: this.statement_read_only,
+            in_dml_stmt: this.statement_kind == StatementKind::Dml,
+            batch_dml: (on(tidb_vardef::tidb_vars::TIDB_BATCH_COMMIT)
+                || this.vars.batch_insert()
+                || on(tidb_vardef::tidb_vars::TIDB_BATCH_DELETE))
+                && dml_batch_size > 0
+                && tidb_vardef::ENABLE_BATCH_DML.load(std::sync::atomic::Ordering::SeqCst),
+            internal: this.vars.restricted_sql,
+            in_txn: this.in_transaction(),
+            autocommit: this.is_autocommit(),
+            phases: this.statement_observation.as_ref().map(|observation| Arc::clone(&observation.phases)),
+        }
+    }
+}

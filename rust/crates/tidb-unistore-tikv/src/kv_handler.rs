@@ -34,8 +34,7 @@
 //!
 //! * `Server.Stop` / `refCount` / `ErrRetryable("server is closed")`: the
 //!   handler lives as long as its owner; there is no stopped state.
-//! * `KvFlush` (`MVCCStore.Flush`, pipelined DML's bulk load), MPP, batch
-//!   coprocessor, the raw KV and debug services, and the deadlock detector
+//! * MPP, batch coprocessor, the raw KV and debug services, and the deadlock detector
 //!   RPCs: not ported.
 //! * `KvPessimisticLock`'s lock waiting: see `mvcc_store`'s header.
 //! * `extractRegionError` / `pberror.PBError`: the store raises no
@@ -399,6 +398,7 @@ macro_rules! from_region_error {
 }
 
 from_region_error!(
+    kvrpcpb::FlushResponse,
     kvrpcpb::GetResponse,
     kvrpcpb::ScanResponse,
     kvrpcpb::BatchGetResponse,
@@ -573,6 +573,18 @@ impl KvHandler {
             Err(err) => kvrpcpb::PrewriteResponse {
                 errors: vec![convert_to_key_error(&err)],
                 ..kvrpcpb::PrewriteResponse::default()
+            },
+        }
+    }
+
+    /// Go `Server.KvFlush`.
+    pub fn kv_flush(&mut self, req: &kvrpcpb::FlushRequest) -> kvrpcpb::FlushResponse {
+        let _req_ctx = region_checked!(self, req, kvrpcpb::FlushResponse);
+        match self.store.flush(&req.mutations, &req.primary_key, req.start_ts) {
+            Ok(()) => kvrpcpb::FlushResponse::default(),
+            Err(err) => kvrpcpb::FlushResponse {
+                errors: vec![convert_to_key_error(&err)],
+                ..kvrpcpb::FlushResponse::default()
             },
         }
     }

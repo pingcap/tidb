@@ -203,6 +203,11 @@ pub struct OptimisticTransactionReceipt {
     pub mutation_count: usize,
     /// Source-shaped lock TTL including size and elapsed read time.
     pub lock_ttl_ms: u64,
+    /// client-go `TxnInfo.Pipelined`: a pipelined transaction committed.
+    pub pipelined: bool,
+    /// client-go `TxnInfo.FlushWaitMs`: the time a pipelined transaction
+    /// waited for its flushes.
+    pub flush_wait_ms: i64,
 }
 
 impl OptimisticTransactionReceipt {
@@ -224,6 +229,8 @@ impl OptimisticTransactionReceipt {
             primary_key,
             mutation_count,
             lock_ttl_ms: 0,
+            pipelined: false,
+            flush_wait_ms: 0,
         }
     }
 }

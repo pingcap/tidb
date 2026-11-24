@@ -48,7 +48,8 @@ pub struct TikvTxn<S: PdClient> {
     read_ts: u64,
     snapshot_read_options: Option<tidb_txnkv::SnapshotReadOptions>,
     collect_snapshot_stats: bool,
-    commit_mode: Arc<std::sync::Mutex<Option<CommittedProtocol>>>,
+    /// The commit hook's protocol, `pipelined` and `flush_wait_ms`.
+    commit_mode: Arc<std::sync::Mutex<Option<(CommittedProtocol, bool, i64)>>>,
     schema_error: Arc<std::sync::Mutex<Option<tidb_txnkv::transaction::SchemaLeaseError>>>,
     /// Go `KVTxn.isPessimistic`.
     pessimistic: bool,
@@ -95,26 +96,45 @@ impl<S: PdClient> TikvTxn<S> {
         read_only: bool,
         authority_id: u64,
     ) -> Result<Self, OptimisticCoordinatorError> {
+        Self::new_opened_with(store, start_ts, read_only, None, authority_id)
+    }
+
+    /// [`Self::new_opened`] with Go `tikv.WithPipelinedTxn`'s options: a
+    /// pipelined transaction, whose MemDB flushes while it runs.
+    pub fn new_opened_with(
+        store: &TikvStore<S>,
+        start_ts: u64,
+        read_only: bool,
+        pipelined: Option<tikv_client::PipelinedTxnOptions>,
+        authority_id: u64,
+    ) -> Result<Self, OptimisticCoordinatorError> {
         if start_ts == 0 {
             return Err(OptimisticCoordinatorError::Timestamp(
                 "a transaction requires a nonzero start timestamp".into(),
             ));
         }
         let calls = CallSlot::default();
-        let mut transaction = Self::begin_on(store, start_ts, read_only, &calls)?;
+        let mut transaction = Self::begin_on(store, start_ts, read_only, pipelined, &calls)?;
         let snapshot_stats = Arc::new(tikv_client::SnapshotRuntimeStats::default());
         transaction.set_snapshot_runtime_stats(Some(snapshot_stats.clone()));
         let commit_mode = Arc::new(std::sync::Mutex::new(None));
         let observed_mode = commit_mode.clone();
+        // Go `kv.CommitHook`: client-go's `TxnInfo` of the commit.
         transaction.set_commit_callback(move |info, _| {
             if let Ok(info) = serde_json::from_str::<serde_json::Value>(&info) {
-                *observed_mode.lock().unwrap_or_else(|e| e.into_inner()) =
-                    match info["txn_commit_mode"].as_str() {
-                        Some("1pc") => Some(CommittedProtocol::OnePc),
-                        Some("async_commit") => Some(CommittedProtocol::AsyncCommit),
-                        Some("2pc") => Some(CommittedProtocol::TwoPhase),
-                        _ => None,
-                    };
+                let protocol = match info["txn_commit_mode"].as_str() {
+                    Some("1pc") => Some(CommittedProtocol::OnePc),
+                    Some("async_commit") => Some(CommittedProtocol::AsyncCommit),
+                    Some("2pc") => Some(CommittedProtocol::TwoPhase),
+                    _ => None,
+                };
+                *observed_mode.lock().unwrap_or_else(|e| e.into_inner()) = protocol.map(|protocol| {
+                    (
+                        protocol,
+                        info["pipelined"].as_bool().unwrap_or(false),
+                        info["flush_wait_ms"].as_i64().unwrap_or(0),
+                    )
+                });
             }
         });
         let engine = if read_only {
@@ -156,6 +176,7 @@ impl<S: PdClient> TikvTxn<S> {
         store: &TikvStore<S>,
         start_ts: u64,
         read_only: bool,
+        pipelined: Option<tikv_client::PipelinedTxnOptions>,
         calls: &CallSlot,
     ) -> Result<tikv_client::Transaction<S>, OptimisticCoordinatorError> {
         let options = TransactionOptions::new_optimistic()
@@ -165,6 +186,10 @@ impl<S: PdClient> TikvTxn<S> {
             options.read_only()
         } else {
             options
+        };
+        let options = match pipelined {
+            Some(pipelined) => options.pipelined(pipelined),
+            None => options,
         };
         let mut transaction = store
             .block_on(store.store().begin_with_options(options))
@@ -700,7 +725,7 @@ impl<S: PdClient> TikvTxn<S> {
             );
         self.calls.set(&scan_call);
         self.apply_statement_kv_context();
-        let mut transaction = Self::begin_on(&self.store, read_ts, true, &self.calls)?;
+        let mut transaction = Self::begin_on(&self.store, read_ts, true, None, &self.calls)?;
         if let Some(options) = &self.snapshot_read_options {
             Self::apply_snapshot_read_options(&mut transaction, options);
         }
@@ -876,8 +901,10 @@ impl<S: PdClient> TikvTxn<S> {
             OptimisticCommitOutcome::CleanupFailed(value) => &mut value.receipt,
         };
         receipt.authority_id = self.authority_id;
-        if let Some(mode) = *self.commit_mode.lock().unwrap_or_else(|e| e.into_inner()) {
+        if let Some((mode, pipelined, flush_wait_ms)) = *self.commit_mode.lock().unwrap_or_else(|e| e.into_inner()) {
             receipt.commit_protocol = mode;
+            receipt.pipelined = pipelined;
+            receipt.flush_wait_ms = flush_wait_ms;
         }
         Ok(outcome)
     }

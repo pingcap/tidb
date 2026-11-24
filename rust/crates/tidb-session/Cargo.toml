@@ -66,6 +66,7 @@ tidb-terror = { path = "../tidb-terror" }
 tidb-store-driver-txn = { path = "../tidb-store-driver-txn" }
 tidb-config-configtypes = { path = "../tidb-config-configtypes" }
 tidb-config-kerneltype = { path = "../tidb-config-kerneltype" }
+tidb-config-deploymode = { path = "../tidb-config-deploymode" }
 tidb-domain-affinity = { path = "../tidb-domain-affinity" }
 tidb-domain-globalconfigsync = { path = "../tidb-domain-globalconfigsync" }
 tidb-domain-infosync = { path = "../tidb-domain-infosync" }
@@ -236,7 +237,6 @@ tidb-ddl-ingest = { path = "../tidb-ddl-ingest" }
 tidb-rowcodec = { path = "../tidb-rowcodec" }
 tidb-tiflashcompute = { path = "../tidb-tiflashcompute" }
 tidb-failpoint = { path = "../tidb-failpoint", features = ["failpoints"] }
-tidb-config-deploymode = { path = "../tidb-config-deploymode" }
 tidb-dxf = { path = "../tidb-dxf" }
 tidb-dxf-execute = { path = "../tidb-dxf-execute" }
 tidb-dxf-example = { path = "../tidb-dxf-example" }

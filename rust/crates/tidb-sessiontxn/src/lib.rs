@@ -173,6 +173,18 @@ pub fn advise_warmup(future: Option<&WeakTxnFuture>) {
     }
 }
 
+/// Go `ActivateTxn` -> `prepareTxn` -> `sctx.PrepareTSFuture`: requests the
+/// timestamp of a transaction not yet prepared, pipelined as `pipelined`
+/// answers.
+pub fn prepare_txn_pipelined(
+    future: Option<&WeakTxnFuture>,
+    pipelined: &mut dyn FnMut() -> Option<tikv_client::PipelinedTxnOptions>,
+) {
+    if let Some(future) = future.and_then(std::sync::Weak::upgrade) {
+        let _ = future.prepare_txn_pipelined(pipelined);
+    }
+}
+
 /// Go `baseTxnContextProvider`'s advice: no plan optimization, and the
 /// warm-up.
 #[derive(Debug)]
@@ -191,6 +203,10 @@ impl tidb_sessionctx::TxnPlanAdvisor for BaseTxnAdvisor {
 
     fn advise_warmup(&self) {
         advise_warmup(Some(&self.future));
+    }
+
+    fn prepare_txn_pipelined(&self, pipelined: &mut dyn FnMut() -> Option<tikv_client::PipelinedTxnOptions>) {
+        prepare_txn_pipelined(Some(&self.future), pipelined);
     }
 }
 

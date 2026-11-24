@@ -1469,6 +1469,7 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
             related_table_ids: self.related_table_ids_recorder(),
             sql_executor: self.sql_executor(),
             ddl_owner_info: self.ddl_owner_info(),
+            session_txn_future: self.session_txn_future(),
             min_safe_ts_provider: self.min_safe_ts_provider(),
             locked_tables: self.locked_tables(),
             point_plan_val: self.point_plan_val(),
@@ -2579,6 +2580,11 @@ pub trait StmtCtxSession: crate::sessionctx::SessionContext + Sized {
     /// Go `sessionexpr`'s DDL-owner property: whether this node is the DDL
     /// owner (`dom.DDL().OwnerManager().IsOwner()`).
     fn ddl_owner_info(&self) -> Option<Arc<dyn Fn() -> bool + Send + Sync>>;
+    /// Go `session.PrepareTSFuture`'s session half for the statement about
+    /// to run; `None` for a session with no transaction of its own.
+    fn session_txn_future(&self) -> Option<Arc<dyn tidb_sessionctx::SessionTxnFuture>> {
+        None
+    }
     /// Go `kv.Storage.GetMinSafeTS` of the session's store, which the
     /// statement's `GetStmtMinSafeTime` reads; `None` without a store.
     fn min_safe_ts_provider(&self) -> Option<tidb_sessionctx::MinSafeTsProvider>;
