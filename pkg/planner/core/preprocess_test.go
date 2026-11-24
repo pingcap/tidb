@@ -122,6 +122,23 @@ func TestValidator(t *testing.T) {
 	}{
 		{"select ?", false, parser.ErrSyntax},
 		{"select ?", true, nil},
+		// TABLE and VALUES use SelectStmt without SelectStmtOpts.
+		{"table t", false, nil},
+		{"values row(1)", false, nil},
+		{"explain table t", false, nil},
+		// Keep error precedence and skipped binding subtrees covered here.
+		{"create table new_t as select SQL_CALC_FOUND_ROWS 1", false,
+			errors.New("'CREATE TABLE ... SELECT' is not implemented yet")},
+		{"insert into missing_t select SQL_CALC_FOUND_ROWS 1", false,
+			infoschema.ErrTableNotExists.GenWithStackByArgs("test", "missing_t")},
+		{"select * from missing_t where (select SQL_CALC_FOUND_ROWS 1)", false,
+			infoschema.ErrTableNotExists.GenWithStackByArgs("test", "missing_t")},
+		{"select SQL_CALC_FOUND_ROWS * from missing_t where (select SQL_CALC_FOUND_ROWS 1)", false,
+			plannererrors.ErrCantUseOptionHere.GenWithStackByArgs("SQL_CALC_FOUND_ROWS")},
+		{"select SQL_CALC_FOUND_ROWS * from t for update of missing_t", false,
+			plannererrors.ErrUnknownTable.GenWithStackByArgs("missing_t", "locking clause")},
+		{"create global binding for select SQL_CALC_FOUND_ROWS a from t using select SQL_CALC_FOUND_ROWS a from t", false, nil},
+		{"drop global binding for select SQL_CALC_FOUND_ROWS a from t", false, nil},
 		{"create table t(id int not null auto_increment default 2, key (id))", true,
 			errors.New("[types:1067]Invalid default value for 'id'")},
 		{"create table t(id int not null default 2 auto_increment, key (id))", true,
@@ -395,6 +412,14 @@ func TestValidator(t *testing.T) {
 		// {"CREATE TABLE t(a int, COLUMNAR INDEX(b) USING VECTOR)", false, errors.New(`[ddl:8200]VECTOR INDEX must specify an expression like ((VEC_XX_DISTANCE(<COLUMN>)))`)},
 		{"CREATE TABLE t(c TEXT, FULLTEXT INDEX (t) WITH PARSER foo)", false, errors.New(`[ddl:8200]Unsupported parser 'foo'`)},
 		{"CREATE TABLE t(c TEXT, FULLTEXT INDEX (t) USING HNSW)", false, errors.New(`[ddl:8200]'USING HNSW' is not supported for FULLTEXT INDEX`)},
+		{"CREATE TABLE t(g POINT NOT NULL SRID 4326, SPATIAL KEY sk (g))", false, errors.New(`[ddl:8200]SPATIAL index is not supported`)},
+		{"CREATE TABLE t(g GEOMETRY NOT NULL, SPATIAL INDEX (g))", false, errors.New(`[ddl:8200]SPATIAL index is not supported`)},
+		{"CREATE TABLE t(g GEOMETRY NOT NULL, SPATIAL (g))", false, errors.New(`[ddl:8200]SPATIAL index is not supported`)},
+		{"ALTER TABLE t ADD SPATIAL INDEX ai (g)", false, errors.New(`[ddl:8200]SPATIAL index is not supported`)},
+		{"SELECT CAST(0x00000000010100000000000000000000000000000000000000 AS POINT)", false, errors.New(`[planner:1235]This version of TiDB doesn't yet support 'spatial type casts'`)},
+		{"SELECT CONVERT(0x00, MULTIPOLYGON)", false, errors.New(`[planner:1235]This version of TiDB doesn't yet support 'spatial type casts'`)},
+		{"SELECT CAST('[]' AS POINT ARRAY)", false, errors.New(`[planner:1235]This version of TiDB doesn't yet support 'spatial type casts'`)},
+		{"SELECT JSON_SUM_CRC32('[]' AS POINT ARRAY)", false, errors.New(`[planner:1235]This version of TiDB doesn't yet support 'spatial type casts'`)},
 
 		// The following columnar index usages are valid, they only fail due to table not found.
 		{"CREATE VECTOR INDEX ident USING HNSW ON d_n.t_n ((VEC_L2_DISTANCE(ident)))", false, errors.New(`[schema:1146]Table 'd_n.t_n' doesn't exist`)},

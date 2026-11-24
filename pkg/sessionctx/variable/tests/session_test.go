@@ -104,9 +104,9 @@ func TestSession(t *testing.T) {
 	require.Equal(t, uint64(2), ss.RecordRows())
 
 	// For FoundRows
-	ss.AddFoundRows(1)
+	ss.SetFoundRows(1)
 	require.Equal(t, uint64(1), ss.FoundRows())
-	ss.AddFoundRows(1)
+	ss.SetFoundRows(2)
 	require.Equal(t, uint64(2), ss.FoundRows())
 
 	// For UpdatedRows

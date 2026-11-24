@@ -88,6 +88,7 @@ func TestTopology(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, "bar", v)
 	selfInfo := info.GetLocalServerInfo()
+	require.True(t, selfInfo.SchemaReadOnly)
 	require.Equal(t, selfInfo.ToTopologyInfo(), *topology)
 
 	nonTTLKey := fmt.Sprintf("%s/%s:%v/info", TopologyInformationPath, selfInfo.IP, selfInfo.Port)
@@ -1118,6 +1119,43 @@ func TestCleanupStaleServerAndOwnerInfo(t *testing.T) {
 	resp, err = client.Get(ctx, newInfoPath)
 	require.NoError(t, err)
 	require.Len(t, resp.Kvs, 1, "new server info should be registered")
+
+	for _, assumedCaller := range []bool{true, false} {
+		t.Run(fmt.Sprintf("assumed caller=%t", assumedCaller), func(t *testing.T) {
+			scopedClient, err := cluster.NewClientV3(0)
+			require.NoError(t, err)
+			defer scopedClient.Close()
+			etcd.SetEtcdCliByNamespace(scopedClient, t.Name()+"/")
+
+			member := staleInfo.Clone()
+			member.ID = "existing-member"
+			if !assumedCaller {
+				member.AssumedKeyspace = "target-ks"
+			}
+			memberBuf, err := member.Marshal()
+			require.NoError(t, err)
+			memberPath := serverInfoKeyPath(member.ID)
+			_, err = scopedClient.Put(ctx, memberPath, string(memberBuf))
+			require.NoError(t, err)
+			ownerKey := util.DDLOwnerKey + "/existing-member"
+			_, err = scopedClient.Put(ctx, ownerKey, member.ID)
+			require.NoError(t, err)
+
+			caller := NewSyncer("registering-member", func() uint64 { return 1 }, scopedClient, nil)
+			if assumedCaller {
+				caller = NewCrossKSSyncer("registering-member", func() uint64 { return 1 }, scopedClient, nil, "target-ks")
+			}
+			defer caller.RevokeSession()
+			require.NoError(t, caller.NewSessionAndStoreServerInfo(ctx))
+
+			// A cross-keyspace participant sharing an address is not evidence
+			// of a native process restart, in either registration direction.
+			requireServerInfoKey(ctx, t, scopedClient, memberPath)
+			ownerID, _ := requireEtcdKV(ctx, t, scopedClient, ownerKey)
+			require.Equal(t, member.ID, ownerID)
+			requireServerInfoKey(ctx, t, scopedClient, caller.serverInfoPath)
+		})
+	}
 }
 
 func TestAssumedServerInfoSyncer(t *testing.T) {

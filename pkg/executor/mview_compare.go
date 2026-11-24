@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	mvmerge "github.com/pingcap/tidb/pkg/planner/mview"
+	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/sessiontxn/staleread"
@@ -437,9 +438,16 @@ func (e *CompareMaterializedViewExec) openCompareMaterializedViewOutputWriter(
 		e.ReleaseSysSession(ctx, ddlSctx)
 		return nil, err
 	}
-	if _, err := ddlSctx.GetSQLExecutor().ExecuteInternal(ctx, createSQL); err != nil {
+	createErr := func() error {
+		if privilege.CanWriteReadOnlySchema(e.Ctx(), e.stmt.OutputTable.Schema.L) {
+			defer privilege.WithInternalSchemaReadOnlyBypass(ddlSctx, e.stmt.OutputTable.Schema.L)()
+		}
+		_, err := ddlSctx.GetSQLExecutor().ExecuteInternal(ctx, createSQL)
+		return err
+	}()
+	if createErr != nil {
 		e.ReleaseSysSession(ctx, ddlSctx)
-		return nil, err
+		return nil, createErr
 	}
 	e.ReleaseSysSession(ctx, ddlSctx)
 	dropOutputTable := func(dropCtx context.Context) {
@@ -452,12 +460,17 @@ func (e *CompareMaterializedViewExec) openCompareMaterializedViewOutputWriter(
 		return nil, err
 	}
 	sessVars := insertSctx.GetSessionVars()
+	restoreAuthorization := func() {}
+	if privilege.CanWriteReadOnlySchema(e.Ctx(), e.stmt.OutputTable.Schema.L) {
+		restoreAuthorization = privilege.WithInternalSchemaReadOnlyBypass(insertSctx, e.stmt.OutputTable.Schema.L)
+	}
 	origTimeZone := sessVars.TimeZone
 	origStmtCtxTimeZone := sessVars.StmtCtx.TimeZone()
 	// The query rows use the MV definition timezone, including TIMESTAMP values.
 	sessVars.TimeZone = loc
 	sessVars.StmtCtx.SetTimeZone(loc)
 	releaseInsertSession := func(releaseCtx context.Context) {
+		restoreAuthorization()
 		sessVars.TimeZone = origTimeZone
 		sessVars.StmtCtx.SetTimeZone(origStmtCtxTimeZone)
 		e.ReleaseSysSession(releaseCtx, insertSctx)
@@ -500,6 +513,9 @@ func (e *CompareMaterializedViewExec) cleanupCompareMaterializedViewOutputTable(
 		return
 	}
 	defer e.ReleaseSysSession(ctx, ddlSctx)
+	if privilege.CanWriteReadOnlySchema(e.Ctx(), outputTable.Schema.L) {
+		defer privilege.WithInternalSchemaReadOnlyBypass(ddlSctx, outputTable.Schema.L)()
+	}
 
 	dropSQL := sqlescape.MustEscapeSQL("DROP TABLE IF EXISTS %n.%n", outputTable.Schema.O, outputTable.Name.O)
 	if err := executeRefreshMaterializedViewInternalSQL(ctx, ddlSctx.GetSQLExecutor(), dropSQL); err != nil {
@@ -912,6 +928,11 @@ func (w *compareMaterializedViewOutputWriter) ensureTxn(ctx context.Context) err
 	if err := sessiontxn.NewTxnInStmt(ctx, w.sctx); err != nil {
 		return err
 	}
+	failpoint.InjectCall("beforeCompareOutputWriteTxn", w.sctx)
+	if err := activateSchemaReadOnlyWrite(w.sctx, w.targetTable.Meta()); err != nil {
+		w.sctx.RollbackTxn(context.WithoutCancel(ctx))
+		return err
+	}
 	txn, err := w.sctx.Txn(true)
 	if err != nil {
 		return err
@@ -959,6 +980,7 @@ func (w *compareMaterializedViewOutputWriter) writeRow(ctx context.Context, row 
 		return err
 	}
 	w.pendingRows++
+	failpoint.Inject("compareOutputBatchSize", func(val failpoint.Value) { w.batchSize = val.(int) })
 	if w.pendingRows >= w.batchSize || w.txn.Size() >= w.batchBytes {
 		return w.flushBatch(ctx)
 	}

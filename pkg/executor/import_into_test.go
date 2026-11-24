@@ -543,6 +543,17 @@ func TestImportIntoValidateColAssignmentsWithEncodeCtx(t *testing.T) {
 }
 
 func TestImportIntoChildSessionInheritsMaintenanceFlag(t *testing.T) {
+	t.Run("ReadOnlyEntry", func(t *testing.T) {
+		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockModifySchemaReadOnlyDDL", "return")
+		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/mockModifySchemaReadOnlyDDL", "return")
+		store := testkit.CreateMockStore(t)
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("create database ro_import")
+		tk.MustExec("create table ro_import.t(a int)")
+		tk.MustExec("alter database ro_import read only = 1")
+		tk.MustGetErrCode("import into ro_import.t from ''", 3989)
+		tk.MustGetErrCode("import into ro_import.t from select 1 with disable_precheck", 3989)
+	})
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
