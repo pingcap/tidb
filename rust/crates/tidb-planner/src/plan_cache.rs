@@ -306,12 +306,12 @@ mod tests {
     }
 }
 
-/// The complete physical tree retained by the prepared-plan cache. A hit
-/// recursively rebuilds every parameter-dependent range in place and derives
-/// the executor receipt from that rebuilt tree. No access,
-/// aggregation, join, sort, or reader policy is re-run in the executor.
+/// Go `PlanCacheValue.Plan` beside the `PlanCacheStmt.PreparedAst` it was
+/// planned from, for any cached statement (a query, an UPDATE or a DELETE). A
+/// hit recursively rebuilds every parameter-dependent range in place
+/// (`RebuildPlan4CachedPlan`); nothing is re-planned.
 #[derive(Debug)]
-pub struct CachedSelectPlan {
+pub struct CachedPlan {
     statement: tidb_ast::Stmt,
     physical: PhysicalPlan,
     generation: u64,
@@ -320,7 +320,23 @@ pub struct CachedSelectPlan {
     digest: std::sync::Arc<std::sync::OnceLock<(String, String)>>,
 }
 
-impl CachedSelectPlan {
+impl CachedPlan {
+    /// An entry `generateNewPlan` just planned, not yet rebuilt.
+    #[must_use]
+    pub fn new(statement: tidb_ast::Stmt, physical: PhysicalPlan) -> Self {
+        Self {
+            statement,
+            physical,
+            generation: 0,
+            digest: std::sync::Arc::default(),
+        }
+    }
+
+    /// The cached plan itself.
+    pub fn physical_mut(&mut self) -> &mut PhysicalPlan {
+        &mut self.physical
+    }
+
     /// A copy an execution owns, sharing the entry's digest.
     pub fn clone_for_execution(&self) -> Self {
         Self {
@@ -398,14 +414,14 @@ pub fn cached_query_plan(
     current_database: &str,
     ctx: &StmtContext,
     cacheability: crate::plan_cache_rebuild::PlanCacheabilityContext,
-) -> Result<Option<(CachedSelectPlan, bool)>, tidb_driver_error::DriverError> {
+) -> Result<Option<(CachedPlan, bool)>, tidb_driver_error::DriverError> {
     let Some((physical, cacheable)) =
         cached_physical_query_plan(hooks, query, catalog, current_database, ctx, cacheability)?
     else {
         return Ok(None);
     };
     Ok(Some((
-        CachedSelectPlan {
+        CachedPlan {
             statement: tidb_ast::Stmt::Query(tidb_ast::NodeBox::new(query.clone())),
             physical,
             generation: 0,

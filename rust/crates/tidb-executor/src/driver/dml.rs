@@ -20,9 +20,8 @@
 
 use crate::WithStatementStore as _;
 pub(crate) use tidb_planner::dml_optimize::*;
-use tidb_planner::plan_cache_rebuild::RebuildPlanForCache;
 use crate::KvTableReader;
-use super::plan_cache::{CachedPhysicalPlan, PhysicalPlanCacheKey, SessionPlanCache};
+use super::plan_cache::{PhysicalPlanCacheKey, SessionPlanCache};
 use super::*;
 use tidb_table::tables::AutoRandomError;
 use tidb_table::tables::AutoRandom;
@@ -2817,64 +2816,7 @@ pub struct PreparedDmlPlan {
     last_limit_values: std::sync::Mutex<Vec<u64>>,
 }
 
-#[derive(Debug)]
-pub(super) struct CachedDmlPlan {
-    statement: Stmt,
-    physical: tidb_planner_core_operator_physicalop::PhysicalPlan,
-    generation: u64,
-}
 
-impl CachedDmlPlan {
-    pub(super) fn clone_for_execution(&self) -> Self {
-        Self {
-            statement: self.statement.clone(),
-            physical: self.physical.deep_clone(),
-            generation: self.generation,
-        }
-    }
-
-    pub(super) fn memory_usage(&self) -> i64 {
-        tidb_planner::plan_cache_rebuild::cached_plan_memory_usage(&self.physical) as i64
-    }
-
-    fn bind(
-        &mut self,
-        values: &[Datum],
-        ctx: Option<&crate::StmtContext>,
-    ) -> Result<u64, super::planner_bridge::CachedPlanBindFailure> {
-        use super::planner_bridge::CachedPlanBindFailure;
-        super::bind_prepared_statement_in_place(&mut self.statement, values)
-            .map_err(|_| CachedPlanBindFailure::unbound())?;
-        let needs_statement = std::sync::atomic::AtomicBool::new(false);
-        let statement = super::planner_bridge::deferred_rebuild_context(ctx, values);
-        let parameters = tidb_planner::plan_cache_rebuild::CachedPlanRebuildContext::new(values);
-        let evaluator = |expression: &tidb_expr::expression::Expression| {
-            super::planner_bridge::rebuild_evaluate(
-                expression,
-                statement.as_ref(),
-                &parameters,
-                &needs_statement,
-            )
-        };
-        let rebuilt = self.physical.rebuild_plan_for_cache_in_place(
-            &tidb_planner::plan_cache_rebuild::CachedPlanRebuildContext::new(values)
-                .with_deferred_evaluator(&evaluator),
-        );
-        if needs_statement.load(std::sync::atomic::Ordering::Relaxed) {
-            return Err(CachedPlanBindFailure::NeedsStatement);
-        }
-        rebuilt.map_err(CachedPlanBindFailure::rebuild_failed)?;
-        self.generation = self.generation.wrapping_add(1);
-        Ok(self.generation)
-    }
-
-    fn execution_mut(
-        &mut self,
-        generation: u64,
-    ) -> Option<(&Stmt, &mut tidb_planner_core_operator_physicalop::PhysicalPlan)> {
-        (self.generation == generation).then_some((&self.statement, &mut self.physical))
-    }
-}
 
 /// One bound execution rebuilt from a retained prepared DML definition.
 #[derive(Debug)]
@@ -2882,7 +2824,7 @@ pub struct PreparedDmlExecution {
     parameters: Arc<[Datum]>,
     planning_warnings: std::sync::Mutex<Vec<tidb_context::SqlWarn>>,
     plan: Arc<PreparedDmlPlan>,
-    cached_plan: Arc<std::sync::Mutex<CachedDmlPlan>>,
+    cached_plan: Arc<std::sync::Mutex<super::planner_bridge::CachedPlan>>,
     generation: u64,
     cache_hit: bool,
 }
@@ -3068,10 +3010,7 @@ impl PreparedDmlPlan {
         };
         let refusal = environment.refusal(self.stmt_info);
         let admitted = refusal.is_none();
-        let cached = match admitted.then(|| cache.get(&cache_key, &parameter_types)).flatten() {
-            Some(CachedPhysicalPlan::Dml(plan)) => Some(plan),
-            _ => None,
-        };
+        let cached = admitted.then(|| cache.get(&cache_key, &parameter_types)).flatten();
         // Go `GetPlanFromPlanCache` refuses with `SetSkipPlanCache`, which
         // warns why.
         if let (Some(reason), Some(ctx)) = (refusal, ctx) {
@@ -3087,7 +3026,7 @@ impl PreparedDmlPlan {
                 let Ok(mut cached) = plan.lock() else {
                     return Ok(None);
                 };
-                if let tidb_planner_core_operator_physicalop::PhysicalPlan::Dml(root) = &mut cached.physical {
+                if let tidb_planner_core_operator_physicalop::PhysicalPlan::Dml(root) = cached.physical_mut() {
                     root.insert_expressions = None;
                 }
                 let generation = cached.bind(params, ctx);
@@ -3127,11 +3066,7 @@ impl PreparedDmlPlan {
                 // tree was generated from the current marker values; `bind`
                 // below performs the one recursive rebuild used to publish
                 // this retained entry.
-                let mut plan = CachedDmlPlan {
-                    statement: bound,
-                    physical,
-                    generation: 0,
-                };
+                let mut plan = super::planner_bridge::CachedPlan::new(bound, physical);
                 // A rejected candidate executes once without a cache rebuild or insertion.
                 let cacheable = cacheable && admitted;
                 // Go `generateNewPlan` caches the tree it just optimized
@@ -3147,7 +3082,7 @@ impl PreparedDmlPlan {
                     cache.put(
                         cache_key,
                         parameter_types,
-                        CachedPhysicalPlan::Dml(Arc::clone(&plan)),
+                        Arc::clone(&plan),
                     );
                 }
                 (plan, generation, false)

@@ -28,7 +28,7 @@
 //! and the cap is offered last, after the residual `WHERE` is known, because
 //! a residual filter above the source forbids one.
 //!
-use super::plan_cache::{CachedPhysicalPlan, PhysicalPlanCacheKey, SessionPlanCache};
+use super::plan_cache::{PhysicalPlanCacheKey, SessionPlanCache};
 use super::*;
 pub use tidb_planner::plan_cache_utils::{PlanCacheStmtInfo, PreparedPlanCacheEnvironment};
 use std::sync::Arc;
@@ -100,7 +100,7 @@ pub struct PreparedSelectExecution {
     plan: Arc<PreparedSelectPlan>,
     schema_version: u64,
     cache_hit: bool,
-    cached_plan: Arc<std::sync::Mutex<super::planner_bridge::CachedSelectPlan>>,
+    cached_plan: Arc<std::sync::Mutex<super::planner_bridge::CachedPlan>>,
     generation: u64,
     planning_warnings: std::sync::Mutex<Vec<tidb_context::SqlWarn>>,
 }
@@ -334,10 +334,7 @@ impl PreparedSelectPlan {
         };
         let refusal = environment.refusal(self.stmt_info);
         let admitted = refusal.is_none();
-        let cached = match admitted.then(|| cache.get(&cache_key, &parameter_types)).flatten() {
-            Some(CachedPhysicalPlan::Select(plan)) => Some(plan),
-            _ => None,
-        };
+        let cached = admitted.then(|| cache.get(&cache_key, &parameter_types)).flatten();
         // Go `GetPlanFromPlanCache` refuses with `SetSkipPlanCache`, which
         // warns why.
         if let (Some(reason), Some(ctx)) = (refusal, ctx) {
@@ -411,7 +408,7 @@ impl PreparedSelectPlan {
                     cache.put(
                         cache_key,
                         parameter_types,
-                        CachedPhysicalPlan::Select(Arc::clone(&plan)),
+                        Arc::clone(&plan),
                     );
                 }
                 (plan, generation, false)

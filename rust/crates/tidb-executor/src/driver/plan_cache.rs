@@ -18,33 +18,13 @@
 
 use super::access::{prepared_parameter_types_compatible, PreparedParameterType};
 pub(super) use tidb_planner::plan_cache_utils::PhysicalPlanCacheKey;
-use super::{dml::CachedDmlPlan, planner_bridge::CachedSelectPlan};
+use super::planner_bridge::CachedPlan;
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use tidb_planner::plan_cache_instance::InstancePlanCache;
 use tidb_planner::plan_cache_lru::{LruPlanCache, PlanCacheValue};
 
-#[derive(Clone)]
-pub(super) enum CachedPhysicalPlan {
-    Select(Arc<Mutex<CachedSelectPlan>>),
-    Dml(Arc<Mutex<CachedDmlPlan>>),
-}
-
-impl CachedPhysicalPlan {
-    fn clone_for_execution(&self) -> Self {
-        match self {
-            Self::Select(plan) => Self::Select(Arc::new(Mutex::new(
-                plan.lock()
-                    .expect("cached SELECT poisoned")
-                    .clone_for_execution(),
-            ))),
-            Self::Dml(plan) => Self::Dml(Arc::new(Mutex::new(
-                plan.lock()
-                    .expect("cached DML poisoned")
-                    .clone_for_execution(),
-            ))),
-        }
-    }
-}
+/// A cached entry, shared by its executions.
+pub(super) type CachedPhysicalPlan = Arc<Mutex<CachedPlan>>;
 
 #[derive(Clone)]
 struct CachedPlanValue {
@@ -378,7 +358,9 @@ impl SessionPlanCache {
         {
             let value = instance.get(&self.instance_key(key), parameter_types)?;
             let begin = std::time::Instant::now();
-            let plan = value.plan.clone_for_execution();
+            let plan = Arc::new(Mutex::new(
+                value.plan.lock().expect("cached plan poisoned").clone_for_execution(),
+            ));
             tidb_planner_core_metrics::get_plan_cache_clone_duration()
                 .observe(begin.elapsed().as_secs_f64());
             return Some(plan);
@@ -396,14 +378,7 @@ impl SessionPlanCache {
         parameter_types: Arc<[PreparedParameterType]>,
         plan: CachedPhysicalPlan,
     ) {
-        let memory = match &plan {
-            CachedPhysicalPlan::Select(plan) => {
-                plan.lock().expect("cached SELECT poisoned").memory_usage()
-            }
-            CachedPhysicalPlan::Dml(plan) => {
-                plan.lock().expect("cached DML poisoned").memory_usage()
-            }
-        } + (std::mem::size_of::<CachedPlanValue>()
+        let memory = plan.lock().expect("cached plan poisoned").memory_usage() + (std::mem::size_of::<CachedPlanValue>()
             + parameter_types.len() * std::mem::size_of::<PreparedParameterType>())
             as i64;
         if let Some(instance) = self
@@ -416,7 +391,9 @@ impl SessionPlanCache {
                 self.instance_key(&key),
                 CachedPlanValue {
                     parameter_types,
-                    plan: plan.clone_for_execution(),
+                    plan: Arc::new(Mutex::new(
+                        plan.lock().expect("cached plan poisoned").clone_for_execution(),
+                    )),
                     memory,
                 },
             );

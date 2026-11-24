@@ -21,7 +21,7 @@
 //! column identities understood by the executor's physical source builder.
 
 pub(crate) use tidb_planner::dml_optimize::update_target_columns;
-pub(crate) use tidb_planner::plan_cache::{CachedSelectPlan, cached_query_plan};
+pub(crate) use tidb_planner::plan_cache::{CachedPlan, cached_query_plan};
 pub(crate) use tidb_planner::plan_cache_rebuild::{
     CachedPlanBindFailure, deferred_rebuild_context, rebuild_evaluate,
 };
