@@ -21,7 +21,6 @@
 //! DDL's implicit commit), then transaction control and `SET`, then the parsed
 //! dispatch over query/DML/DDL.
 
-use tidb_executor::mview::{mlog_purge::MlogPurgeExec as _, mv_refresh_observability::MvRefreshObservabilityExec as _, mview_compare::MviewCompareExec as _, mview_refresh::MviewRefreshExec as _, mview_show::MviewShowExec as _, mview_task::MviewTaskExec as _};
 use tidb_executor::ddl_exec::TemporaryTableDdlExec;
 use tidb_executor::mem_table_retrieval::StmtMemTableRetrieval as _;
 use tidb_executor::stmt_ctx_build::ResetContextOfStmt;
@@ -456,111 +455,10 @@ impl Session {
         ))
     }
 
-    /// Go `executorBuilder.build` and the executor's `Next` for a common
-    /// plan: `SimpleExec`, `DDLExec` (the schema statements this tier
-    /// answers here; table DDL runs in the statement's later arms) and the
-    /// ADMIN plans. `None` for a plan another door runs.
-    pub(crate) fn execute_plan(
-        &mut self,
-        plan: &tidb_planner::common_plans::Plan,
-        stmt: &Stmt,
-    ) -> Result<Option<StmtOutput>, DriverError> {
-        use tidb_planner::common_plans::Plan;
-        match plan {
-            // The account statements' executors write the domain's
-            // privilege tables (`Session::with_account_service`).
-            Plan::Simple(_)
-                if Self::is_account_statement(stmt) =>
-            {
-                self.with_account_service(|session| {
-                    tidb_executor::simple::exec::SimpleExec::simple_next(session, stmt)
-                })
-            }
-            // Go `ImportIntoActionExec`.
-            Plan::Simple(_)
-                if matches!(stmt, Stmt::Admin(admin) if matches!(&**admin, tidb_ast::AdminStmt::CancelImportJob(_))) =>
-            {
-                let Stmt::Admin(admin) = stmt else { unreachable!() };
-                let tidb_ast::AdminStmt::CancelImportJob(job_id) = &**admin else { unreachable!() };
-                tidb_executor::import_into::ImportIntoExec::cancel_import_job(self, *job_id).map(Some)
-            }
-            // Go master `CancelMaterializedViewJobExec`.
-            Plan::Simple(_)
-                if matches!(stmt, Stmt::Admin(admin) if matches!(&**admin, tidb_ast::AdminStmt::CancelMaterializedViewJob(_))) =>
-            {
-                let Stmt::Admin(admin) = stmt else { unreachable!() };
-                let tidb_ast::AdminStmt::CancelMaterializedViewJob(cancel) = &**admin else { unreachable!() };
-                self.cancel_materialized_view_job(cancel).map(Some)
-            }
-            Plan::Simple(_) => tidb_executor::simple::exec::SimpleExec::simple_next(self, stmt),
-            Plan::ImportInto(_) => {
-                let Stmt::Dml(dml) = stmt else { unreachable!("ImportInto plan has an IMPORT statement") };
-                let tidb_ast::DmlStmt::ImportInto(import) = dml.as_ref() else { unreachable!("ImportInto plan has an IMPORT statement") };
-                tidb_executor_importer::import_into_options::validate_import_into_options(import)?;
-                let Plan::ImportInto(plan) = plan else { unreachable!() };
-                tidb_executor::import_into::ImportIntoExec::import_into_exec(self, plan, import).map(Some)
-            }
-            Plan::Ddl(_) => self.ddl_exec(stmt),
-            // Go master `RefreshMaterializedViewExec`.
-            Plan::RefreshMaterializedView(refresh) => {
-                let client = self.vars.build_parser_config().charset_client;
-                let sql = tidb_parser::carry_client_sql(stmt.original_text(), client).into_owned();
-                self.refresh_materialized_view(refresh, &sql).map(Some)
-            }
-            // Go master `RefreshMaterializedViewDryRunExec` /
-            // `RefreshMaterializedViewProfileExec`.
-            Plan::DryRunRefreshMaterializedView(plan) => self.refresh_materialized_view_dry_run(&plan.statement).map(Some),
-            Plan::ProfileRefreshMaterializedView(plan) => {
-                let client = self.vars.build_parser_config().charset_client;
-                let sql = tidb_parser::carry_client_sql(stmt.original_text(), client).into_owned();
-                self.refresh_materialized_view_profile(&plan.statement, &sql).map(Some)
-            }
-            // Go master `PurgeMaterializedViewLogExec`.
-            Plan::PurgeMaterializedViewLog(purge) => self.purge_materialized_view_log(purge).map(Some),
-            // Go master `CompareMaterializedViewExec`.
-            Plan::CompareMaterializedView(compare) => self.compare_materialized_view(compare).map(Some),
-            // Go master `MViewDeltaMergeAggExec`.
-            Plan::MViewDeltaMerge(merge) => self.mview_delta_merge(merge).map(Some),
-            // Go master `MViewCompleteDeltaApplyExec`.
-            Plan::MViewCompleteDeltaApply(apply) => self.mview_complete_delta_apply(apply).map(Some),
-            Plan::CompactTable(compact) => self.compact_table_tiflash_exec(compact).map(Some),
-            Plan::SetConfig(plan) => self.set_config_exec(plan).map(Some),
-            // Go `DistributeTableExec`: the job's ID, or no row.
-            Plan::DistributeTable(plan) => {
-                let job_id = tidb_executor::distribute::DistributeTableExec::open((**plan).clone())?.next()?;
-                Ok(Some(StmtOutput::Rows {
-                    columns: vec![(
-                        "JOB_ID".to_owned(),
-                        tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
-                    )],
-                    rows: job_id.map(|id| vec![tidb_datatype::Datum::UInt(id)]).into_iter().collect(),
-                }))
-            }
-            // Go `AlterDDLJobExec`: the job's row rewritten, no result set.
-            Plan::AlterDdlJob(alter) => {
-                match self.domain_services() {
-                    Some(services) => services.ddl.alter_ddl_job(alter)?,
-                    None => {
-                        return Err(DriverError::Mysql(
-                            tidb_executor::operate_ddl_jobs::ddl_job_not_running(alter.job_id),
-                        ))
-                    }
-                }
-                Ok(Some(StmtOutput::Done(true)))
-            }
-            Plan::ShowNextRowID(plan) => self.show_next_row_id_exec(plan).map(Some),
-            Plan::Logical(_) | Plan::Physical(_) | Plan::Set(_) => Ok(None),
-            _ => match stmt {
-                Stmt::Admin(admin) => tidb_executor::admin::AdminExec::admin_next(self, admin),
-                _ => Ok(None),
-            },
-        }
-    }
-
     /// Go `SetConfigExec`: `Open` checks the target and converts the value,
     /// `Next` posts it to the selected nodes (`GetClusterServerInfo`), each
     /// node's failure a warning.
-    fn set_config_exec(
+    pub(crate) fn set_config_exec(
         &mut self,
         plan: &tidb_planner::common_plans::SetConfig,
     ) -> Result<StmtOutput, DriverError> {
@@ -605,7 +503,7 @@ impl Session {
     /// Go `CompactTableTiFlashExec.Next` over the table the planner resolved
     /// through the session's infoschema (`buildCompactTable`'s
     /// `resolveCtx.GetTableName`), a read.
-    fn compact_table_tiflash_exec(
+    pub(crate) fn compact_table_tiflash_exec(
         &mut self,
         compact: &tidb_ast::CompactTableStmt,
     ) -> Result<StmtOutput, DriverError> {
@@ -1917,7 +1815,7 @@ impl Session {
         let compiled = self.compile_stmt(&stmt, prepared)?;
         self.statement_preamble(&stmt)?;
         let executed = match &compiled {
-            Some(plan) => self.execute_plan(plan, &stmt)?,
+            Some(plan) => tidb_executor::builder::ExecutorBuild::execute_plan(self, plan, &stmt)?,
             None => None,
         };
         if let Some(output) = executed {
@@ -2839,5 +2737,45 @@ impl Session {
         // client-go's `getMinSafeTSByStores` reads as MaxUint64: the read is
         // clamped to now, the current read. Any other statement ignores it.
         Ok(())
+    }
+}
+
+impl tidb_executor::builder::BuildSession for Session {
+    fn with_account_service(
+        &mut self,
+        run: &mut dyn FnMut(&mut Self) -> Result<Option<StmtOutput>, DriverError>,
+    ) -> Result<Option<StmtOutput>, DriverError> {
+        Session::with_account_service(self, |session| run(session))
+    }
+
+    fn is_account_statement(&self, stmt: &Stmt) -> bool {
+        Session::is_account_statement(stmt)
+    }
+
+    fn client_statement_sql(&self, stmt: &Stmt) -> String {
+        let client = self.vars.build_parser_config().charset_client;
+        tidb_parser::carry_client_sql(stmt.original_text(), client).into_owned()
+    }
+
+    fn set_config_exec(&mut self, plan: &tidb_planner::common_plans::SetConfig) -> Result<StmtOutput, DriverError> {
+        Session::set_config_exec(self, plan)
+    }
+
+    fn compact_table_tiflash_exec(&mut self, compact: &tidb_ast::CompactTableStmt) -> Result<StmtOutput, DriverError> {
+        Session::compact_table_tiflash_exec(self, compact)
+    }
+
+    fn show_next_row_id_exec(
+        &mut self,
+        plan: &tidb_planner::common_plans::ShowNextRowID,
+    ) -> Result<StmtOutput, DriverError> {
+        Session::show_next_row_id_exec(self, plan)
+    }
+
+    fn alter_ddl_job(&mut self, alter: &tidb_planner::common_plans::AlterDdlJob) -> Result<(), DriverError> {
+        match self.domain_services() {
+            Some(services) => services.ddl.alter_ddl_job(alter),
+            None => Err(DriverError::Mysql(tidb_executor::operate_ddl_jobs::ddl_job_not_running(alter.job_id))),
+        }
     }
 }

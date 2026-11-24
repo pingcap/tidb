@@ -56,6 +56,7 @@ pub use sessionctx::StmtOutput;
 pub mod account_state;
 pub mod admin;
 pub mod operate_ddl_jobs;
+pub mod builder;
 pub mod ddl_exec;
 pub mod stats_exec;
 pub mod record_set;
