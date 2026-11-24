@@ -444,6 +444,53 @@ pub fn check_param_marker<N: Visitable + Clone>(node: &N) -> Result<(), tidb_ter
     Ok(())
 }
 
+/// Go `preprocessor.handleTableName` over a statement PREPARE retains
+/// ([`handle_table_name`]): an unqualified name is pinned to `current_db`.
+///
+/// # Errors
+///
+/// 1046 when a name needs a database and none is selected.
+pub fn pin_current_database(
+    stmt: &mut tidb_ast::Stmt,
+    current_db: &str,
+) -> Result<(), tidb_driver_error::DriverError> {
+    handle_table_name(stmt, current_db).map_err(|_| {
+        tidb_driver_error::DriverError::from(tidb_plannererrors::ERR_NO_DB.gen_with_stack_by_args(&[]))
+    })
+}
+
+/// Physical read sources in traversal order. Qualified names always name a
+/// table, even when a visible CTE has the same name. Binding matching keeps its
+/// separate, deliberately unfiltered syntactic table-name collection.
+#[must_use]
+pub fn collect_physical_table_refs(stmt: &tidb_ast::Stmt) -> Vec<Vec<String>> {
+    #[derive(Default)]
+    struct Collector {
+        refs: Vec<Vec<String>>,
+        scope: CteScope,
+    }
+    impl Visitor for Collector {
+        fn enter(&mut self, node: &mut dyn Any) -> bool {
+            self.scope.enter(node);
+            if let Some(table_ref) = node.downcast_mut::<tidb_ast::TableRef>() {
+                if !self.scope.contains(&table_ref.name) {
+                    self.refs.push(table_ref.name.clone());
+                }
+            }
+            false
+        }
+
+        fn leave(&mut self, node: &mut dyn Any) -> bool {
+            self.scope.leave(node);
+            true
+        }
+    }
+    let mut stmt = stmt.clone();
+    let mut collector = Collector::default();
+    stmt.accept(&mut collector);
+    collector.refs
+}
+
 /// Go `preprocessor.handleTableName` (`pkg/planner/core/preprocess.go:1758`):
 /// every unqualified table name that does not name a CTE takes the current
 /// database. PREPARE runs it on the statement it retains, so the stored

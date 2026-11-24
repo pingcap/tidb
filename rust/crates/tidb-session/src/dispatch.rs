@@ -194,51 +194,6 @@ pub(crate) fn query_has_lock(stmt: &Stmt) -> bool {
     finder.found
 }
 
-pub(crate) fn filter_sem_restricted_hints(stmt: &mut Stmt) -> Vec<String> {
-    struct Filter {
-        warnings: Vec<String>,
-    }
-
-    impl Filter {
-        fn retain(&mut self, hints: &mut Vec<tidb_ast::Hint>) {
-            hints.retain(
-                |hint| match tidb_sem_v2::is_restricted_hint(&hint.lower_name()) {
-                    Ok(()) => true,
-                    Err(warning) => {
-                        self.warnings.push(warning);
-                        false
-                    }
-                },
-            );
-        }
-    }
-
-    impl tidb_ast::Visitor for Filter {
-        fn enter(&mut self, node: &mut dyn std::any::Any) -> bool {
-            if let Some(select) = node.downcast_mut::<tidb_ast::SelectStmt>() {
-                self.retain(&mut select.hints);
-            } else if let Some(insert) = node.downcast_mut::<tidb_ast::InsertStmt>() {
-                self.retain(&mut insert.hints);
-            } else if let Some(update) = node.downcast_mut::<tidb_ast::UpdateStmt>() {
-                self.retain(&mut update.hints);
-            } else if let Some(delete) = node.downcast_mut::<tidb_ast::DeleteStmt>() {
-                self.retain(&mut delete.hints);
-            }
-            false
-        }
-
-        fn leave(&mut self, _node: &mut dyn std::any::Any) -> bool {
-            true
-        }
-    }
-
-    let mut filter = Filter {
-        warnings: Vec::new(),
-    };
-    tidb_ast::Visitable::accept(stmt, &mut filter);
-    filter.warnings
-}
-
 /// A planner-owned SELECT tree offered to the ordinary statement executor.
 /// `used` records whether the schema still matched while the catalog was
 /// locked; a moved schema falls through to ordinary physical planning.
@@ -1777,7 +1732,7 @@ impl Session {
         // Go `ResetContextOfStmt`'s new `StmtCtx`: no related tables yet.
         self.stmt_related_table_ids.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clear();
         self.check_sem_stmt(sql, &stmt)?;
-        for warning in filter_sem_restricted_hints(&mut stmt) {
+        for warning in tidb_planner::binding_match::filter_sem_restricted_hints(&mut stmt) {
             self.append_warning(WarningLevel::Warning, 1105, warning);
         }
         // Go's `Preprocess` walks the AST once per statement and answers

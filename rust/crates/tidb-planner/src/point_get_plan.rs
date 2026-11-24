@@ -2201,3 +2201,35 @@ fn unparen_expression(mut expression: &tidb_ast::Expr) -> &tidb_ast::Expr {
     }
     expression
 }
+
+/// Go `plannercore.PointPlanVal`: the point plan a multi-statement query's
+/// prefetch built for one statement (`None`: it has none), which that
+/// statement's planning takes instead of trying `TryFastPlan` again.
+pub struct PointPlanVal {
+    /// The statement the plan was tried for.
+    pub kind: PointPlanKind,
+    /// Go's `TryFastPlan` result.
+    pub plan: Option<tidb_planner_core_operator_physicalop::PhysicalPlan>,
+    /// The plan ids the plan took; a DML statement allocates its root after
+    /// them.
+    pub plan_ids: i32,
+}
+
+/// Which planning step a [`PointPlanVal`] answers.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PointPlanKind {
+    /// A SELECT: the query's `TryFastPlan`.
+    Select,
+    /// A single-table UPDATE or DELETE: its point read.
+    Dml,
+    /// A statement `TryFastPlan` answers nothing for.
+    Other,
+}
+
+/// The [`PointPlanVal`] the statement context carries for `kind`, if any.
+#[must_use]
+pub fn handed_point_plan(ctx: &tidb_sessionctx::StmtContext, kind: PointPlanKind) -> Option<&PointPlanVal> {
+    ctx.point_plan_val()
+        .and_then(|value| value.downcast_ref::<PointPlanVal>())
+        .filter(|value| value.kind == kind)
+}

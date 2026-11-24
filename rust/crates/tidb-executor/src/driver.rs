@@ -44,7 +44,6 @@ use tidb_planner::plan_builder::field_name::default_field_display_name;
 
 pub mod access;
 use tidb_planner::point_get_plan;
-mod catalog_ctx;
 #[cfg(test)]
 mod catalog_planner_view_tests;
 #[cfg(test)]
@@ -84,7 +83,7 @@ pub(crate) mod write_cast;
 pub(crate) use access::*;
 pub(crate) use point_get_plan::*;
 use tidb_infoschema::*;
-pub(crate) use catalog_ctx::PlannerCatalogContext;
+pub(crate) use tidb_planner::catalog_ctx::PlannerCatalogContext;
 pub use dml::*;
 pub(crate) use from::*;
 pub use params::*;
@@ -328,16 +327,10 @@ pub(crate) fn begin_dml_execution(executor: &'static str) -> DmlExecutionRegions
     }
 }
 
-/// Go `planner.optimize`: try the complete fast physical plan first, then
-/// build and optimize the ordinary logical tree exactly once.
-/// Go `PlanBuilder.recordPlanBuilderMetric`: one `PlanBuilder.Build` call,
-/// RU v2's `plan_cnt`.
-pub(crate) fn record_plan_builder_metric(ctx: &crate::StmtContext) {
-    if let Some(metrics) = ctx.ruv2_metrics() {
-        metrics.add_plan_cnt(1);
-    }
-}
+pub(crate) use tidb_planner::statement_optimize::record_plan_builder_metric;
 
+/// Go `planner.Optimize` for a query statement: `TryFastPlan`, else the
+/// statement's one build and optimization.
 pub(crate) fn optimize_query_stmt(
     query: &QueryStmt,
     catalog: &SessionExtendedInfoSchema,
@@ -364,57 +357,7 @@ pub(crate) fn optimize_query_stmt_with_scalar_subqueries(
     ),
     DriverError,
 > {
-    if let (QueryStmt::Select(select), true) = (query, ctx.isolation_read_contains_tikv()) {
-        // Go `TryFastPlan`'s `checkFastPlanPrivilege(..., mysql.SelectPriv)`.
-        let fast_plan_privilege = |database: &str, table: &str| {
-            crate::table_privilege::check_fast_plan_privilege(
-                ctx,
-                catalog,
-                database,
-                table,
-                &[tidb_mysql::SelectPriv],
-            )
-        };
-        let fast = match dml::handed_point_plan(ctx, dml::PointPlanKind::Select) {
-            // Go `Optimize`: the point plan a multi-statement query's
-            // prefetch already tried (`PointPlanKey`), not `TryFastPlan`
-            // again.
-            Some(handed) => handed.plan.clone(),
-            None => point_get_plan::try_fast_plan_checked(
-                select,
-                catalog,
-                current_db,
-                ctx,
-                &fast_plan_privilege,
-            )?,
-        };
-        if let Some(plan) = fast {
-            return Ok((plan, Vec::new()));
-        }
-    }
-    // Go `optimize` -> `buildLogicalPlan` -> `PlanBuilder.Build`, past
-    // `TryFastPlan`: the statement's one build, whose visit infos
-    // `CheckPrivilege` reads before the optimizer runs.
-    record_plan_builder_metric(ctx);
-    let planned = planner_bridge::physical_query_plan_with_scalar_subqueries(
-        query,
-        catalog,
-        current_db,
-        ctx,
-        planner_bridge::BuildVisits::Check,
-    )
-    .map_err(planner_error_to_driver)?;
-    // Go `buildSelectInto` optimizes the target query (whose own
-    // `CheckPrivilege` ran above) and only then appends FILE, which the
-    // statement's `CheckPrivilege` checks.
-    if matches!(query, QueryStmt::Select(select) if select.into_outfile.is_some()) {
-        crate::table_privilege::check_plan_privilege_requests(
-            ctx,
-            catalog,
-            &[crate::table_privilege::select_into_file_request()],
-        )?;
-    }
-    Ok(planned)
+    planner_bridge::optimize_query_stmt(query, catalog, current_db, ctx)
 }
 
 pub(super) fn run_physical_set_opr_stmt(
@@ -431,33 +374,7 @@ pub(super) fn run_physical_set_opr_stmt(
     )
 }
 
-/// The statement layer's error for a planner failure.
-pub fn planner_error_to_driver(error: tidb_planner_core_base::PlanError) -> DriverError {
-    match error.kind() {
-        tidb_planner_core_base::PlanErrorKind::Mysql(error) => DriverError::Mysql(error.clone()),
-        tidb_planner_core_base::PlanErrorKind::Eval(tidb_exprctx::EvalError::InvalidGroupFuncUse) => {
-            DriverError::from(
-                tidb_plannererrors::ERR_INVALID_GROUP_FUNC_USE
-                    .gen_with_stack_by_args(&[]),
-            )
-        }
-        tidb_planner_core_base::PlanErrorKind::Eval(
-            tidb_exprctx::EvalError::FieldInGroupingNotGroupBy(index),
-        ) => DriverError::from(
-            tidb_plannererrors::ERR_FIELD_IN_GROUPING_NOT_GROUP_BY
-                .gen_with_stack_by_args(&[format!("#{}", *index).into()]),
-        ),
-        tidb_planner_core_base::PlanErrorKind::Eval(eval) => {
-            DriverError::Exec(ExecError::Eval(eval.clone()))
-        }
-        tidb_planner_core_base::PlanErrorKind::Internal => {
-            DriverError::unsupported(error.to_string())
-        }
-        tidb_planner_core_base::PlanErrorKind::MemTableRetrievalNeeded => {
-            DriverError::MemTableRetrievalNeeded
-        }
-    }
-}
+pub use tidb_planner::statement_optimize::planner_error_to_driver;
 
 /// Runs one parsed `SELECT` against the catalog, for a caller that has
 /// already rewritten the statement (session-variable binding, for instance)

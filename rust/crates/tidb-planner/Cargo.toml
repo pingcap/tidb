@@ -70,6 +70,7 @@ tidb-paging = { path = "../tidb-paging" }
 tidb-printer = { path = "../tidb-printer" }
 tidb-sem-compat = { path = "../tidb-sem-compat" }
 tidb-sem-v2 = { path = "../tidb-sem-v2" }
+tidb-bindinfo = { path = "../tidb-bindinfo" }
 tidb-size = { path = "../tidb-size" }
 tidb-stringutil = { path = "../tidb-stringutil" }
 tidb-texttree = { path = "../tidb-texttree" }
@@ -77,6 +78,7 @@ tidb-ranger = { path = "../tidb-ranger" }
 tidb-lexer = { path = "../tidb-lexer" }
 tidb-kvcache = { path = "../tidb-kvcache" }
 tidb-fixcontrol = { path = "../tidb-fixcontrol" }
+tidb-failpoint = { path = "../tidb-failpoint" }
 chrono.workspace = true
 regex.workspace = true
 tidb-hack = { path = "../tidb-hack" }
@@ -104,6 +106,7 @@ tidb-util = { path = "../tidb-util" }
 tidb-vardef = { path = "../tidb-vardef" }
 
 [dev-dependencies]
+tidb-infoschema-perfschema = { path = "../tidb-infoschema-perfschema" }
 tidb-planner-init = { path = "../tidb-planner-init" }
 tidb-goruntime = { path = "../tidb-goruntime" }
 tidb-planner-coretestsdk = { path = "../tidb-planner-coretestsdk" }

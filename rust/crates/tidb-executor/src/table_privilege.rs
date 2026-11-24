@@ -23,7 +23,7 @@ use tidb_ast::Stmt;
 /// sources Go's `buildDataSource` visits, and therefore the tables it
 /// demands `SELECT` on.
 pub fn read_tables(stmt: &Stmt, current_db: &str) -> Vec<(String, String)> {
-    tidb_bindinfo::binding::collect_physical_table_refs(stmt)
+    tidb_planner::preprocess::collect_physical_table_refs(stmt)
         .iter()
         .filter_map(|path| split_path(path, current_db))
         .collect()

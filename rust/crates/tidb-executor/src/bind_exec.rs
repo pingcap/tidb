@@ -173,7 +173,7 @@ pub trait SqlBindExec:
         // (`Binding.TableNames`) carry the database current at CREATE -- the
         // same names a statement PREPAREd under that database carries.
         let mut pinned_origin = origin.clone();
-        binding::pin_current_database(&mut pinned_origin, &current_db)?;
+        tidb_planner::preprocess::pin_current_database(&mut pinned_origin, &current_db)?;
         let now = self.binding_timestamp();
         let binding = Binding {
             original_sql,

@@ -396,7 +396,7 @@ pub trait PrepareExec: super::CompilerSession {
             self.preprocess_context(),
         )
         .map_err(crate::driver::planner_error_to_driver)?;
-        tidb_bindinfo::binding::pin_current_database(&mut statement, self.session_vars().current_db.as_str())?;
+        tidb_planner::preprocess::pin_current_database(&mut statement, self.session_vars().current_db.as_str())?;
         let param_count = crate::parsed_parameter_count(&statement);
         let limit_markers = limit_marker_orders(&statement);
         // Go's PrepareExec builds the plan with each variable read as its value

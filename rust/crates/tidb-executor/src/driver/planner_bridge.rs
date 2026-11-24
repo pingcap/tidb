@@ -20,41 +20,27 @@
 //! and translates the aggregation property back to stable relation-qualified
 //! column identities understood by the executor's physical source builder.
 
-use tidb_planner::physical_plan_cache::RebuildPlanForCache;
-use tidb_stats_handle::catalog_statistics::CatalogStatistics;
-use crate::StatsStmtCtx as _;
-use tidb_planner::stmt_ctx::PlannerStmtCtx as _;
 use std::cell::RefCell;
-use std::collections::{BTreeSet, HashSet};
 use std::rc::Rc;
-use std::sync::Arc;
+use tidb_planner::physical_plan_cache::RebuildPlanForCache;
+use tidb_planner::stmt_ctx::PlannerStmtCtx as _;
 
-use tidb_expr::expr_util::RealFunctionBuilder;
-use tidb_expr::expr_util::normal_form::extract_filters_from_dn_fs;
-use tidb_expr::expression::Expression;
-use tidb_expr::simple_expr::compose_dnf_condition;
-use tidb_hack::{GoCaseCompare, GoToLower};
-use tidb_planner_core_base::ColumnIdAllocator;
-use tidb_planner_core_operator_logicalop::cte::CteClass;
-use tidb_planner_core_operator_logicalop::fold::{Descend, OwnedRewrite, fold_owned};
-use tidb_planner::rule::logical_optimize;
-use tidb_planner_core_rule::flags;
-use tidb_planner_core_operator_logicalop::plan_context::{RuleContext};
-use tidb_planner_core_operator_logicalop::{
-    BaseLogicalPlan, LogicalPlan, LogicalSelection, prepare_possible_properties,
-};
-use tidb_planner_core_operator_physicalop::PhysicalPlan;
-use tidb_planner_core_base::PlanIdAllocator;
-use tidb_planner::plan_builder::PlanBuilder;
-use tidb_infoschema::table_source::TableSource;
 use super::PlannerCatalogContext;
-use tidb_planner_property::stats_info::StatsInfo;
+use tidb_expr::expr_util::RealFunctionBuilder;
+use tidb_expr::expression::Expression;
+use tidb_hack::{GoCaseCompare, GoToLower};
+use tidb_infoschema::table_source::TableSource;
+pub(crate) use tidb_planner::do_optimize::{
+    optimize_built_logical, physical_plan_for_logical, physical_plan_for_logical_with_update_refs,
+};
+use tidb_planner::plan_builder::PlanBuilder;
+use tidb_planner_core_base::ColumnIdAllocator;
+use tidb_planner_core_base::PlanIdAllocator;
+use tidb_planner_core_operator_logicalop::LogicalPlan;
+use tidb_planner_core_operator_physicalop::PhysicalPlan;
+use tidb_planner_core_rule::flags;
 
-use super::FromTable;
 use tidb_infoschema::SessionExtendedInfoSchema;
-use super::from::FromScope;
-use tidb_planner_cardinality::derive_stats::StatsInfoScale;
-
 
 /// Go `partitionpruning.PartitionPruning` over the table `table_id` names
 /// in the statement's catalog.
@@ -67,13 +53,19 @@ pub(crate) fn partition_pruning(
     context: &crate::StmtContext,
 ) -> Result<Vec<usize>, tidb_planner_core_base::PlanError> {
     let table = catalog.kv_table_by_id(table_id).ok_or_else(|| {
-        tidb_planner_core_base::PlanError::internal("partitioned logical table is absent from the catalog")
+        tidb_planner_core_base::PlanError::internal(
+            "partitioned logical table is absent from the catalog",
+        )
     })?;
     let partition = table.partition().ok_or_else(|| {
-        tidb_planner_core_base::PlanError::internal("partition processor received an unpartitioned table")
+        tidb_planner_core_base::PlanError::internal(
+            "partition processor received an unpartitioned table",
+        )
     })?;
     let pi = table.meta().read().get_partition_info().ok_or_else(|| {
-        tidb_planner_core_base::PlanError::internal("partition processor received an unpartitioned table")
+        tidb_planner_core_base::PlanError::internal(
+            "partition processor received an unpartitioned table",
+        )
     })?;
     let pi = pi.read();
     let builder = RealFunctionBuilder::new(context);
@@ -92,13 +84,6 @@ pub(crate) fn partition_pruning(
         },
     )
 }
-
-
-
-
-
-
-
 
 pub(super) use tidb_planner::point_get_plan::is_cte;
 
@@ -152,7 +137,8 @@ pub(crate) fn admin_check_table_plan(
 /// tree keeps its markers and is rebuilt before this executor copy is made.
 pub(super) fn materialize_physical_expression(expression: &mut Expression) {
     match expression {
-        Expression::Column(_) | Expression::CorrelatedColumn(_) | Expression::ScalarSubQuery(_) => {}
+        Expression::Column(_) | Expression::CorrelatedColumn(_) | Expression::ScalarSubQuery(_) => {
+        }
         Expression::Constant(constant) => {
             constant.param_marker = None;
             constant.deferred_expr = None;
@@ -162,289 +148,6 @@ pub(super) fn materialize_physical_expression(expression: &mut Expression) {
                 materialize_physical_expression(argument);
             }
         }
-    }
-}
-
-struct InitStats<'a> {
-    error: Option<tidb_planner_core_base::PlanError>,
-    catalog: &'a SessionExtendedInfoSchema,
-    /// Go's statistics demand for this statement (`statistics_demand`), once
-    /// `CollectPredicateColumnsPoint` has seen the plan: the columns and
-    /// indexes whose payloads the synchronous load makes available. `None`
-    /// before that point.
-    demanded: Option<&'a std::collections::HashMap<tidb_model::TableItemID, bool>>,
-    context: &'a crate::StmtContext,
-    /// Whether this walk records the statement's used statistics (Go
-    /// `initStats`' `RecordUsedInfo` and `recordUsedItemStatsStatus`). Go
-    /// initializes a source when its statistics are derived, after the
-    /// partition processor; the walk this port runs before the logical rules
-    /// would record a statically pruned table's logical id, so it does not.
-    record_used_stats: bool,
-}
-
-/// Go `recordUsedItemStatsStatus` (`cardinality/trace.go`) over the table
-/// `GetStatsTable` answered with. `statistics` is `None` for a fresh
-/// `PseudoTable`, whose pseudo column and index objects carry a zero
-/// `StatsLoadedStatus` -- `unInitialized` -- for every public, non-hidden
-/// column and public index (`in_pseudo_table`), while anything else is a nil
-/// object its all-false existence map reports `missing`. The table's ledger
-/// entry carries what Go's `initStats` records for it: the pseudo version
-/// (zero) and the `PseudoTable` counts.
-pub(crate) fn record_used_item_stats_status(
-    context: &crate::StmtContext,
-    table_name: &str,
-    physical_table_id: i64,
-    statistics: Option<&tidb_stats::Table>,
-    in_pseudo_table: bool,
-    item_id: i64,
-    is_index: bool,
-) {
-    // Go `recordUsedItemStatsStatus`: `_tidb_rowid` (id -1) and other internal
-    // pseudo columns have no statistics to report.
-    if item_id <= 0 {
-        return;
-    }
-    let Some(statistics) = statistics else {
-        context.record_used_stats_status(
-            physical_table_id,
-            table_name,
-            tidb_stats::PSEUDO_VERSION,
-            tidb_stats::PSEUDO_ROW_COUNT,
-            0,
-            item_id,
-            is_index,
-            if in_pseudo_table {
-                tidb_stats::StatsLoadedStatus::default().status_to_string()
-            } else {
-                "missing"
-            },
-        );
-        return;
-    };
-    let loaded_status = if is_index {
-        statistics
-            .hist_coll
-            .get_index(item_id)
-            .map(|index| read(&index).stats_loaded_status)
-    } else {
-        statistics
-            .hist_coll
-            .get_column(item_id)
-            .map(|column| read(&column).stats_loaded_status)
-    };
-    let analyzed = statistics
-        .existence_map
-        .as_ref()
-        .is_some_and(|map| read(map).has_analyzed(item_id, is_index));
-    if loaded_status.is_some_and(tidb_stats::StatsLoadedStatus::is_full_load) {
-        return;
-    }
-    let status = loaded_status.map_or_else(
-        || {
-            if analyzed { "unInitialized" } else { "missing" }
-        },
-        tidb_stats::StatsLoadedStatus::status_to_string,
-    );
-    context.record_used_stats_status(
-        physical_table_id,
-        table_name,
-        if statistics.hist_coll.pseudo {
-            0
-        } else {
-            statistics.version
-        },
-        statistics.hist_coll.realtime_count,
-        statistics.hist_coll.modify_count,
-        item_id,
-        is_index,
-        status,
-    );
-}
-
-
-
-fn read<T>(lock: &std::sync::RwLock<T>) -> std::sync::RwLockReadGuard<'_, T> {
-    lock.read().unwrap_or_else(std::sync::PoisonError::into_inner)
-}
-
-impl InitStats<'_> {
-    /// The `(column ids, index ids)` Go's lite statistics initialization
-    /// leaves loaded for this source: what `CollectPredicateColumnsPoint`'s
-    /// demand (read off the plan after predicate pushdown) names for its
-    /// physical table and the cache holds in full.
-    ///
-    /// `None` before that demand exists or when it names no column of this
-    /// source, which leaves the caller on the cache's fully loaded subset.
-    fn predicate_loaded_items(
-        &self,
-        source: &tidb_planner_core_operator_logicalop::DataSource,
-        statistics: Option<&tidb_stats::Table>,
-    ) -> Option<(BTreeSet<i64>, BTreeSet<i64>)> {
-        statistics?;
-        let demanded = self.demanded?;
-        let mut columns = BTreeSet::new();
-        let mut indexes = BTreeSet::new();
-        for (item, full_load) in demanded {
-            if item.table_id != source.physical_table_id {
-                continue;
-            }
-            if item.is_index {
-                indexes.insert(item.id);
-            } else if *full_load {
-                // Go `addPredicateColumnsFromExpressions(..., false)`: a join
-                // key asks for the column's essential statistics only, so its
-                // histogram stays evicted.
-                columns.insert(item.id);
-            }
-        }
-        if columns.is_empty() {
-            return None;
-        }
-        // Payload shape is not load state: fully loaded TopN-only statistics
-        // have no buckets, while evicted statistics retain metadata.
-        // Use the same retained load status as the statistics cache.
-        columns.retain(|id| {
-            statistics
-                .and_then(|statistics| statistics.hist_coll.get_column(*id))
-                .is_some_and(|column| read(&column).is_full_load())
-        });
-        indexes.retain(|id| {
-            statistics
-                .and_then(|statistics| statistics.hist_coll.get_index(*id))
-                .is_some_and(|index| read(&index).is_full_load())
-        });
-        if columns.is_empty() {
-            return None;
-        }
-        Some((columns, indexes))
-    }
-}
-
-impl InitStats<'_> {
-    fn initialize_source(
-        &mut self,
-        node: &mut LogicalPlan,
-    ) -> Result<Descend<(), ()>, tidb_planner_core_base::PlanError> {
-        let LogicalPlan::DataSource(source) = node else {
-            return Ok(Descend::Children(vec![(); node.children().len()]));
-        };
-        source.base.base.set_stats(None);
-        source.possible_access_paths = None;
-        for path in &mut source.all_possible_access_paths {
-            // The fill's outputs; derivation fills them again.
-            path.row_estimate = None;
-            path.idx_cols.clear();
-            path.ranges.clear();
-            path.access_conds.clear();
-            path.eq_cond_count = 0;
-            path.eq_or_in_cond_count = 0;
-            path.is_dnf_cond = false;
-            path.min_access_conds_for_dnf_cond = 0;
-            path.index_filters.clear();
-            path.table_filters.clear();
-            path.count_after_index = None;
-            path.correlated_access_count = 0;
-            path.is_single_scan = None;
-        }
-        source.access_path_min_selectivity = 1.0;
-        // Go `deriveStats4DataSource`: `EliminateNoPrecisionLossCast` over the
-        // pushed conditions before any index path is filled, so `cast(a AS
-        // SIGNED) = 1` on an INT key -- a UNION branch's widening cast --
-        // builds a point range.
-        let builder = tidb_expr::expr_util::RealFunctionBuilder::new(self.context);
-        for condition in &mut source.pushed_down_conds {
-            *condition =
-                tidb_expr::expr_util::eliminate_no_precision_loss_cast(condition, &builder);
-        }
-        // Go `initStats` calls `GetStatsTable(..., ds.PhysicalTableID)`: a
-        // static-pruning child owns one physical partition's statistics,
-        // while an ordinary/dynamic source keeps the logical table ID here.
-        // `None` is the fresh `PseudoTable` -- a table without statistics,
-        // and rule 2's answer to a zero `RealtimeCount`.
-        let statistic_table = crate::access_cost::get_stats_table(
-            self.context,
-            self.catalog,
-            source.physical_table_id,
-        );
-        let statistics = statistic_table.as_deref();
-        let row_count = crate::access_cost::realtime_row_count(statistics);
-        // Go `buildDataSource`: a table with an available TiFlash replica
-        // marks the statement as reading TiFlash whenever MPP is allowed.
-        if source.has_available_tiflash_replica()
-            && self.context.optimizer_cost_env().session.mpp_allowed
-        {
-            self.context.mark_is_tiflash();
-        }
-        // Go `initStats`: the statement's `UsedStatsInfo` entry for this
-        // source's physical table, `PseudoVersion` (0) for a pseudo table.
-        if self.record_used_stats {
-            self.context.record_used_stats_info(
-                source.physical_table_id,
-                self.catalog.get_tbl_info_for_used_stats_by_physical_id(source.physical_table_id),
-                statistics
-                    .filter(|statistics| !statistics.hist_coll.pseudo)
-                    .map_or(0, |statistics| statistics.version),
-                row_count as i64,
-                statistics.map_or(0, |statistics| statistics.hist_coll.modify_count),
-            );
-        }
-        // Retain Go's loaded subset, including empty and TopN-only payloads.
-        // The cache's explicit status excludes evicted metadata from NDV
-        // scaling and histogram estimates without inferring state from buckets.
-        let predicate_loaded = self.predicate_loaded_items(source, statistics);
-        // Go `ds.TableInfo`.
-        let table_info = source
-            .table_info
-            .clone()
-            .expect("a planned data source carries its TableInfo");
-        tidb_planner::stats::init_stats::init_stats(
-            source,
-            &table_info.read(),
-            statistic_table.as_ref(),
-            row_count,
-            predicate_loaded,
-        );
-        tidb_planner_core_rule::rule_collect_plan_stats::refresh_source_group_ndvs_with_scale_ratio(
-            source, self.context.optimizer_cost_env().session.scale_ndv_skew_ratio,
-        );
-        Ok(Descend::Stop(()))
-    }
-}
-
-impl OwnedRewrite for InitStats<'_> {
-    type Down = ();
-    type Up = ();
-
-    fn descend(&mut self, node: &mut LogicalPlan, (): Self::Down) -> Descend<Self::Down, Self::Up> {
-        if self.error.is_some() {
-            return Descend::Stop(());
-        }
-        let result = self.initialize_source(node);
-        match result {
-            Ok(descend) => descend,
-            Err(error) => {
-                self.error = Some(error);
-                Descend::Stop(())
-            }
-        }
-    }
-
-    fn ascend(
-        &mut self,
-        mut node: LogicalPlan,
-        _children: Vec<Self::Up>,
-    ) -> (LogicalPlan, Self::Up) {
-        // Clear EVERY node's cached derived statistics, DataSources included.
-        // The sources' cached `stats_info` was derived from whatever histogram
-        // snapshot was loaded when the first derive ran -- commonly BEFORE
-        // `SyncWaitStatsLoadPoint` finishes the synchronous load (Go derives
-        // lazily at physical time, after the wait, so it never caches a cold
-        // estimate). Preserving the source's cached estimate here made every
-        // downstream derive early-return the cold value: TPC-DS q7's
-        // `eq(cd_education_status, 'Primary')` estimated 1.00 instead of
-        // 276934.43 and collapsed the whole plan's row counts.
-        node.set_stats(None);
-        (node, ())
     }
 }
 
@@ -470,32 +173,7 @@ fn planner_physical_select(
     )
 }
 
-/// Whose build a query's is.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum QueryBuild {
-    /// Go `planner.optimize` of a statement that is a query, with the
-    /// alternative rounds only a logical plan gets.
-    Statement,
-    /// The read of a DML, which Go builds inside the DML's `PlanBuilder`:
-    /// the DML's plan is no logical plan, so its one round is the only one.
-    DmlRead,
-}
-
-/// What one query build does with its `PlanBuilder`'s visit infos (Go
-/// `builder.GetVisitInfo()`).
-pub(crate) enum BuildVisits<'a> {
-    /// The statement's own build: Go `planner.optimize` checks them
-    /// (`CheckPrivilege`, `CheckTableLock`) between `buildLogicalPlan` and
-    /// `DoOptimize`.
-    Check,
-    /// The read of a DML, which Go builds inside the same `PlanBuilder` as
-    /// the write: its visits join the DML's, checked once the DML is built.
-    Collect(&'a mut Vec<tidb_planner::plan_builder::visit_info::VisitInfo>),
-    /// A build that is no statement's: a cached plan's (whose statement
-    /// checks the visit infos PREPARE kept, Go `checkPreparedPriv`) or an
-    /// inspection's.
-    Discard,
-}
+pub(crate) use tidb_planner::statement_optimize::{BuildVisits, QueryBuild};
 
 fn planner_physical_query(
     query: &tidb_ast::QueryStmt,
@@ -560,7 +238,11 @@ fn planner_physical_query_with_registry(
     visits: BuildVisits<'_>,
     build: QueryBuild,
 ) -> Result<
-    (LogicalPlan, PhysicalPlan, Vec<std::sync::Arc<RegisteredScalarSubquery>>),
+    (
+        LogicalPlan,
+        PhysicalPlan,
+        Vec<std::sync::Arc<RegisteredScalarSubquery>>,
+    ),
     tidb_planner_core_base::PlanError,
 > {
     let registry = ScalarSubqueryRegistry::default();
@@ -580,249 +262,6 @@ fn planner_physical_query_with_registry(
         .map(RefCell::into_inner)
         .unwrap_or_default();
     Ok((logical, physical, registered))
-}
-
-/// Go `recordUsedItemStatsStatus` over the statement: the statistics item
-/// an estimate of `physical_table_id` read, recorded against the table the
-/// planner reads statistics from (`GetStatsTable`).
-struct StatementUsedStats<'a> {
-    catalog: &'a SessionExtendedInfoSchema,
-    context: &'a crate::StmtContext,
-}
-
-impl tidb_planner_core_operator_logicalop::plan_context::UsedStatsRecorder for StatementUsedStats<'_> {
-    fn record_used_item(
-        &self,
-        physical_table_id: i64,
-        table_name: &str,
-        in_pseudo_table: bool,
-        item_id: i64,
-        is_index: bool,
-    ) {
-        let statistics = crate::access_cost::get_stats_table(self.context, self.catalog, physical_table_id);
-        record_used_item_stats_status(
-            self.context,
-            table_name,
-            physical_table_id,
-            statistics.as_deref(),
-            in_pseudo_table,
-            item_id,
-            is_index,
-        );
-    }
-
-    fn used_info(&self, physical_table_id: i64) -> Option<tidb_stmtctx::used_stats::SharedUsedStatsInfo> {
-        self.context.used_stats_info_shared(physical_table_id)
-    }
-}
-
-pub(crate) fn physical_plan_for_logical(
-    logical: &LogicalPlan,
-    plan_ids: &PlanIdAllocator,
-    column_ids: &ColumnIdAllocator,
-    catalog: &SessionExtendedInfoSchema,
-    ctx: &crate::StmtContext,
-) -> Result<PhysicalPlan, tidb_planner_core_base::PlanError> {
-    physical_plan_for_logical_with_update_refs(
-        logical,
-        plan_ids,
-        column_ids,
-        catalog,
-        ctx,
-        &std::collections::BTreeSet::new(),
-    )
-}
-
-/// [`physical_plan_for_logical`] for an UPDATE's read plan: Go's
-/// `StmtCtx.ColRefFromUpdatePlan`, the columns its assignments read, keeps
-/// the projection that names them.
-pub(crate) fn physical_plan_for_logical_with_update_refs(
-    logical: &LogicalPlan,
-    plan_ids: &PlanIdAllocator,
-    column_ids: &ColumnIdAllocator,
-    catalog: &SessionExtendedInfoSchema,
-    ctx: &crate::StmtContext,
-    col_ref_from_update_plan: &std::collections::BTreeSet<i64>,
-) -> Result<PhysicalPlan, tidb_planner_core_base::PlanError> {
-    tidb_planner::optimize::physical_optimize(
-        logical,
-        plan_ids,
-        column_ids,
-        ctx,
-        col_ref_from_update_plan,
-        &StatementUsedStats { catalog, context: ctx },
-    )
-    .map(|(physical, _)| physical)
-}
-
-/// Go `utilfuncp.DoOptimize` as `LogicalCTE.DeriveStats` calls it
-/// (`logical_cte.go:172`): the CTE class is optimized lazily, the first time a
-/// reference's statistics are derived, with the DNF of every predicate its
-/// references have recorded by then. It is never re-optimized.
-struct DriverCteOptimizer<'a> {
-    catalog: &'a SessionExtendedInfoSchema,
-    ctx: &'a crate::StmtContext,
-    plan_ids: &'a PlanIdAllocator,
-    column_ids: &'a ColumnIdAllocator,
-    /// Classes being optimized right now; a class reaching itself is a cycle.
-    visiting: RefCell<HashSet<usize>>,
-    parallel_apply_allowed: std::cell::Cell<bool>,
-}
-
-impl tidb_planner_core_operator_logicalop::plan_context::CteOptimizer for DriverCteOptimizer<'_> {
-    fn optimize_cte(
-        &self,
-        class: &Arc<std::sync::RwLock<CteClass>>,
-        seed_stat: Option<&Arc<std::sync::RwLock<StatsInfo>>>,
-        rule_context: &RuleContext<'_>,
-    ) -> Result<(), tidb_planner_core_base::PlanError> {
-        if class.read().unwrap().seed_part_physical_plan.is_some() {
-            return Ok(());
-        }
-        let identity = Arc::as_ptr(class) as usize;
-        if !self.visiting.borrow_mut().insert(identity) {
-            return Err(tidb_planner_core_base::PlanError::internal(
-                "LogicalCTE.DeriveStats: cyclic CTE class optimization",
-            ));
-        }
-        let result = self.optimize_class(class, seed_stat, rule_context);
-        self.visiting.borrow_mut().remove(&identity);
-        result
-    }
-}
-
-impl DriverCteOptimizer<'_> {
-    fn optimize_class(
-        &self,
-        class: &Arc<std::sync::RwLock<CteClass>>,
-        seed_stat: Option<&Arc<std::sync::RwLock<StatsInfo>>>,
-        rule_context: &RuleContext<'_>,
-    ) -> Result<(), tidb_planner_core_base::PlanError> {
-        let (mut seed, mut opt_flag, predicates) = {
-            let class = class.read().unwrap();
-            let seed = class
-                .seed_part_logical_plan
-                .as_deref()
-                .ok_or_else(|| {
-                    tidb_planner_core_base::PlanError::internal(
-                        "LogicalCTE.DeriveStats: seed logical plan is nil",
-                    )
-                })?
-                .deep_clone();
-            (seed, class.opt_flag, class.push_down_predicates.clone())
-        };
-        // Go composes the predicates recorded by every reference as one DNF,
-        // extracts common conjuncts, and puts that Selection above the seed
-        // before running the CTE's own optimizer pass.
-        if let Some(dnf) = compose_dnf_condition(predicates) {
-            let conditions = extract_filters_from_dn_fs(vec![dnf]);
-            let query_block_offset = seed.base().base.query_block_offset();
-            let mut selection = LogicalSelection::new(
-                BaseLogicalPlan::new(self.plan_ids, LogicalSelection::TYPE, query_block_offset),
-                conditions,
-            );
-            selection.base.set_children(vec![seed]);
-            seed = LogicalPlan::Selection(selection);
-            opt_flag = tidb_planner_core_rule::set_predicate_push_down_flag(opt_flag);
-            class.write().unwrap().opt_flag = opt_flag;
-        }
-        let (seed_logical, seed_physical) = self.optimize_tree(seed, opt_flag, rule_context)?;
-        // Go `*p.SeedStat = *resStat` precedes the recursive DoOptimize.
-        if let (Some(seed_stat), Some(stats)) = (seed_stat, seed_physical.stats_info()) {
-            *seed_stat.write().unwrap() = stats.clone();
-        }
-        {
-            let mut class = class.write().unwrap();
-            class.seed_part_logical_plan = Some(Box::new(seed_logical));
-            class.seed_part_physical_plan = Some(Box::new(seed_physical));
-        }
-        let recursive = {
-            let class = class.read().unwrap();
-            match (
-                class.recursive_part_logical_plan.as_deref(),
-                class.recursive_part_physical_plan.is_none(),
-            ) {
-                (Some(recursive), true) => Some(recursive.deep_clone()),
-                _ => None,
-            }
-        };
-        if let Some(recursive) = recursive {
-            // Go temporarily disables parallel Apply throughout recursive
-            // body optimization, including lazily optimized nested CTE parts.
-            let previous = self.parallel_apply_allowed.replace(false);
-            let optimized = self.optimize_tree(recursive, opt_flag, rule_context);
-            self.parallel_apply_allowed.set(previous);
-            let (logical, physical) = optimized?;
-            let mut class = class.write().unwrap();
-            class.recursive_part_logical_plan = Some(Box::new(logical));
-            class.recursive_part_physical_plan = Some(Box::new(physical));
-        }
-        Ok(())
-    }
-
-    /// Go `DoOptimize` over one CTE part: logical rules, statistics (which
-    /// optimize nested CTE classes lazily through the same hook), and the
-    /// physical search.
-    fn optimize_tree(
-        &self,
-        plan: LogicalPlan,
-        opt_flag: u64,
-        rule_context: &RuleContext<'_>,
-    ) -> Result<(LogicalPlan, PhysicalPlan), tidb_planner_core_base::PlanError> {
-        let context = self
-            .ctx
-            .clone()
-            .with_parallel_apply(self.parallel_apply_allowed.get());
-        let ctx = &context;
-        // Go DataSource.DeriveStats initializes base statistics even when
-        // called from a logical rule; CTE roots need the same preinitialization
-        // as the outer query before join reorder can inspect their sources.
-        let mut initializer = InitStats {
-            error: None,
-            catalog: self.catalog,
-            demanded: None,
-            context: ctx,
-            record_used_stats: true,
-        };
-        let (plan, ()) = fold_owned(&mut initializer, plan, ());
-        if let Some(error) = initializer.error {
-            return Err(error);
-        }
-        let opt_flag = tidb_planner::optimize::adjust_optimization_flags(opt_flag, ctx);
-        // Go's CTE `DoOptimize` is `doOptimize`: `CascadesOptimize`
-        // (`normalizeOptimize`, then the memo's derivation, no optimizer
-        // clock) under `tidb_enable_cascades_planner`, else
-        // `logicalOptimize` and `physicalOptimize`, which set the session's
-        // optimizer clocks like any other pass.
-        let cascades = tidb_planner::optimize::OptimizeContext::enable_cascades_planner(ctx);
-        let optimized = if cascades {
-            tidb_planner::rule::normalize_optimize(rule_context, opt_flag, plan)
-                .map_err(|(_, error)| error)?
-                .plan
-        } else {
-            let begin_logical_opt = std::time::Instant::now();
-            let logical_result = logical_optimize(rule_context, opt_flag, plan);
-            ctx.phase_durations()
-                .set_logical_opt(begin_logical_opt.elapsed());
-            logical_result.map_err(|(_, error)| error)?.plan
-        };
-        let mut optimized = tidb_planner::optimize::check_partial_index_paths(
-            optimized,
-            ctx,
-            rule_context.use_plan_cache,
-        );
-        if cascades {
-            optimized.memo_derive_stats_with_context(rule_context)?;
-        } else {
-            let begin_physical_opt = std::time::Instant::now();
-            optimized.recursive_derive_stats_with_context(&[], rule_context)?;
-            ctx.phase_durations()
-                .finish_stats_derive(begin_physical_opt);
-        }
-        let logical = tidb_planner::optimize::prepare_possible_properties_for(ctx, optimized);
-        let physical = physical_plan_for_logical(&logical, self.plan_ids, self.column_ids, self.catalog, ctx)?;
-        Ok((logical, physical))
-    }
 }
 
 /// Builds the ordinary physical SELECT tree consumed by the common executor
@@ -913,7 +352,10 @@ pub(crate) fn physical_query_plan_with_scalar_subqueries(
     current_database: &str,
     ctx: &crate::StmtContext,
     visits: BuildVisits<'_>,
-) -> Result<(PhysicalPlan, Vec<std::sync::Arc<RegisteredScalarSubquery>>), tidb_planner_core_base::PlanError> {
+) -> Result<
+    (PhysicalPlan, Vec<std::sync::Arc<RegisteredScalarSubquery>>),
+    tidb_planner_core_base::PlanError,
+> {
     let plan_ids = PlanIdAllocator::new();
     let column_ids = ColumnIdAllocator::new();
     planner_physical_query_with_registry(
@@ -1030,8 +472,7 @@ impl tidb_expr::expression::ScalarSubqueryEval for RegisteredScalarSubquery {
 
 /// The per-statement list of [`RegisteredScalarSubquery`]s, Go's
 /// `SessionVars.MapScalarSubQ` narrowed to one statement.
-pub(crate) type ScalarSubqueryRegistry =
-    Rc<RefCell<Vec<std::sync::Arc<RegisteredScalarSubquery>>>>;
+pub(crate) type ScalarSubqueryRegistry = Rc<RefCell<Vec<std::sync::Arc<RegisteredScalarSubquery>>>>;
 
 /// The subquery hook of a build whose plan is discarded (the privilege
 /// passes): nothing is run, and a placeholder reads NULL.
@@ -1075,25 +516,7 @@ fn driver_error_to_eval(error: crate::DriverError) -> tidb_exprctx::EvalError {
     }
 }
 
-/// Carries an executor failure back across the planner boundary.
-///
-/// Go's `EvalSubqueryFirstRow` returns a plain error, so the typed identities
-/// the driver layer owns have to survive the round trip through
-/// [`tidb_planner_core_base::PlanError`]; `planner_error_to_driver` maps them
-/// back when the statement unwinds.
-fn driver_error_to_plan(error: crate::DriverError) -> tidb_planner_core_base::PlanError {
-    match error {
-        // Go's `EvalSubqueryFirstRow` returns the executor's error as it is.
-        crate::DriverError::Mysql(error) => tidb_planner_core_base::PlanError::from(error),
-        crate::DriverError::MemTableRetrievalNeeded => {
-            tidb_planner_core_base::PlanError::mem_table_retrieval_needed()
-        }
-        crate::DriverError::Exec(crate::ExecError::Eval(eval)) => {
-            tidb_planner_core_base::PlanError::eval(eval)
-        }
-        other => tidb_planner_core_base::PlanError::internal(other.to_string()),
-    }
-}
+use tidb_planner::statement_optimize::driver_error_to_plan;
 
 /// Go `evalFieldDefaultValue` (`expression_rewriter.go:3303`) for the
 /// planner's [`tidb_planner::plan_builder::DefaultEvaluator`]: the public
@@ -1147,13 +570,11 @@ fn default_evaluator_using<'a>(
                     // instance) keeps the code the client would have seen.
                     error => {
                         let error = error.to_mysql_error();
-                        tidb_exprctx::EvalError::Conversion(
-                            tidb_terror::TerrorError::registered(
-                                tidb_terror::TerrorClass::Types,
-                                tidb_terror::TerrorCode::new(error.code as isize),
-                                error.message,
-                            ),
-                        )
+                        tidb_exprctx::EvalError::Conversion(tidb_terror::TerrorError::registered(
+                            tidb_terror::TerrorClass::Types,
+                            tidb_terror::TerrorCode::new(error.code as isize),
+                            error.message,
+                        ))
                     }
                 })?;
         Ok(Expression::Constant(tidb_expr::constant::Constant::new(
@@ -1163,31 +584,37 @@ fn default_evaluator_using<'a>(
     }
 }
 
-/// Go's `EvalSubqueryFirstRow` function variable
-/// (`pkg/planner/core/expression_rewriter.go:55`), closed over one
-/// statement's catalog and allocators.
-///
-/// The body is the executor half of `handleScalarSubquery` /
-/// `handleExistSubquery`: `DoOptimize` the child, allocate its output column
-/// ids, register it for EXPLAIN, then run it and report the first row.
-fn subquery_evaluator<'a>(
+/// The executor's half of one statement's planning
+/// ([`tidb_planner::statement_optimize::PlanningHooks`]): Go's function
+/// variables `EvalSubqueryFirstRow`, the column default evaluators and
+/// `DoOptimize`'s statistics, closed over the statement's catalog and
+/// allocators.
+struct DriverHooks<'a> {
     catalog: &'a SessionExtendedInfoSchema,
-    ctx: &'a crate::StmtContext,
     plan_ids: &'a PlanIdAllocator,
     column_ids: &'a ColumnIdAllocator,
     use_plan_cache: bool,
-    session_zone: &'a tidb_datatype::SessionTimeZone,
-    registry: &ScalarSubqueryRegistry,
-) -> impl Fn(
-    &LogicalPlan,
-    tidb_planner::plan_builder::SubqueryKind,
-    u64,
-    bool,
-)
-    -> Result<tidb_planner::plan_builder::EvaluatedSubquery, tidb_planner_core_base::PlanError>
-+ 'a {
-    let registry = Rc::clone(registry);
-    move |inner, kind, opt_flag, evaluate| {
+    registry: ScalarSubqueryRegistry,
+}
+
+impl tidb_planner::statement_optimize::PlanningHooks for DriverHooks<'_> {
+    /// Go's `EvalSubqueryFirstRow` function variable
+    /// (`pkg/planner/core/expression_rewriter.go:55`): the executor half of
+    /// `handleScalarSubquery` / `handleExistSubquery` -- `DoOptimize` the
+    /// child, allocate its output column ids, register it for EXPLAIN, then
+    /// run it and report the first row.
+    fn evaluate_subquery(
+        &self,
+        ctx: &crate::StmtContext,
+        inner: &LogicalPlan,
+        kind: tidb_planner::plan_builder::SubqueryKind,
+        opt_flag: u64,
+        evaluate: bool,
+    ) -> Result<tidb_planner::plan_builder::EvaluatedSubquery, tidb_planner_core_base::PlanError>
+    {
+        let (catalog, plan_ids, column_ids) = (self.catalog, self.plan_ids, self.column_ids);
+        let (use_plan_cache, registry) = (self.use_plan_cache, &self.registry);
+        let session_zone = &ctx.session_zone();
         // Go `DoOptimize(ctx, planCtx.builder.ctx, planCtx.builder.optFlag, np)`.
         let logical = optimize_built_logical(
             inner.clone(),
@@ -1218,7 +645,9 @@ fn subquery_evaluator<'a>(
                 ctx: ctx.clone(),
                 evaluated: std::sync::OnceLock::new(),
             });
-            registry.borrow_mut().push(std::sync::Arc::clone(&registered));
+            registry
+                .borrow_mut()
+                .push(std::sync::Arc::clone(&registered));
             registered
         };
         if !evaluate {
@@ -1255,104 +684,71 @@ fn subquery_evaluator<'a>(
             eval_ctx,
         })
     }
-}
 
-/// Go `buildDataSource`'s dynamic-mode check for a partitioned table
-/// (`logical_plan_builder.go:4997`): a table whose global statistics were
-/// never analyzed (`Table.IsAnalyzed`) turns this statement's pruning static
-/// -- `UseDynamicPruneMode = false` and the 1105 warning -- unless missing
-/// partition statistics may be skipped (`tidb_skip_missing_partition_stats`,
-/// which fix control 44262 overrides).
-fn dynamic_prune_fallback<'a>(
-    catalog: &'a SessionExtendedInfoSchema,
-    ctx: &'a crate::StmtContext,
-) -> impl Fn(i64, &str) -> bool + 'a {
-    move |table_id, table_name| {
-        let global_stats_ready = crate::access_cost::table_statistics(ctx, catalog, table_id)
-            .is_some_and(|statistics| statistics.last_analyze_version > 0);
-        let allow_dynamic_without_stats = ctx.optimizer_fix_control().get_bool_with_default(
-            tidb_fixcontrol::FIX_44262,
-            ctx.skip_missing_partition_stats(),
-        );
-        let mut use_partition_processor = !global_stats_ready && !allow_dynamic_without_stats;
-        tidb_failpoint::inject("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune", |val| {
-            if val.bool() {
-                use_partition_processor = false;
-            }
-        });
-        if !use_partition_processor {
-            return false;
-        }
-        ctx.disable_dynamic_prune();
-        tidb_exprctx::Columns::append_warning(
-            ctx,
-            1105,
-            &format!("disable dynamic pruning due to {table_name} has no global stats"),
-        );
-        true
-    }
-}
-
-/// One statement's planning rounds over its catalog and allocators: Go
-/// `buildAndOptimizeLogicalPlanRound`'s `buildLogicalPlan`,
-/// `CheckPrivilege` / `CheckTableLock` and `core.DoOptimize`, which
-/// [`tidb_planner::planner_optimize::optimize`] runs once per round.
-struct QueryRounds<'q, 'v> {
-    query: &'q tidb_ast::QueryStmt,
-    catalog: &'q SessionExtendedInfoSchema,
-    current_database: &'q str,
-    use_plan_cache: bool,
-    plan_ids: &'q PlanIdAllocator,
-    column_ids: &'q ColumnIdAllocator,
-    registry: &'q ScalarSubqueryRegistry,
-    visits: BuildVisits<'v>,
-    /// The statement's visit infos are checked once, after its first build.
-    checked: bool,
-    /// The plan id, column id and scalar-subquery count the first round
-    /// started from.
-    round_start: (i32, i64, usize),
-}
-
-impl tidb_planner::planner_optimize::LogicalPlanRounds for QueryRounds<'_, '_> {
-    fn build_and_optimize(
-        &mut self,
+    fn field_default(
+        &self,
         ctx: &crate::StmtContext,
-        opt_flag_adjust: fn(u64) -> u64,
-    ) -> Result<(LogicalPlan, PhysicalPlan, f64), tidb_planner_core_base::PlanError> {
-        build_logical_plan_and_do_optimize(
-            self.query,
-            self.catalog,
-            self.current_database,
-            ctx,
-            self.use_plan_cache,
-            self.plan_ids,
-            self.column_ids,
-            self.registry,
-            &mut self.visits,
-            &mut self.checked,
-            opt_flag_adjust,
+        database: &str,
+        table: &str,
+        column: &str,
+    ) -> Result<Expression, tidb_exprctx::EvalError> {
+        default_evaluator(self.catalog, ctx)(database, table, column)
+    }
+
+    fn insert_default(
+        &self,
+        ctx: &crate::StmtContext,
+        database: &str,
+        table: &str,
+        column: &str,
+    ) -> Result<Expression, tidb_exprctx::EvalError> {
+        default_evaluator_using(self.catalog, ctx, super::dml::DefaultUse::Insert)(
+            database, table, column,
         )
     }
 
-    fn save_round_start(&mut self) {
-        self.round_start = (
-            self.plan_ids.current(),
-            self.column_ids.current(),
-            self.registry.borrow().len(),
-        );
+    fn registered_scalar_subqueries(&self) -> usize {
+        self.registry.borrow().len()
     }
 
-    fn restore_round_start(&mut self) {
-        let (plan_id, column_id, scalar_subqueries) = self.round_start;
-        self.plan_ids.store(plan_id);
-        self.column_ids.store(column_id);
-        self.registry.borrow_mut().truncate(scalar_subqueries);
+    fn truncate_scalar_subqueries(&self, count: usize) {
+        self.registry.borrow_mut().truncate(count);
     }
 }
 
-/// Go `planner.optimize` over a query: its rounds
-/// ([`tidb_planner::planner_optimize::optimize`]), or the one build of a
-/// DML's read.
+/// Go `planner.Optimize` for a query statement
+/// ([`tidb_planner::statement_optimize::optimize_query_stmt`]), handing back
+/// the uncorrelated subqueries the build evaluated: plain EXPLAIN appends
+/// each registered child as its own `ScalarSubQuery` root.
+pub(crate) fn optimize_query_stmt(
+    query: &tidb_ast::QueryStmt,
+    catalog: &SessionExtendedInfoSchema,
+    current_database: &str,
+    ctx: &crate::StmtContext,
+) -> Result<(PhysicalPlan, Vec<std::sync::Arc<RegisteredScalarSubquery>>), crate::DriverError> {
+    let (plan_ids, column_ids) = (PlanIdAllocator::new(), ColumnIdAllocator::new());
+    let registry = ScalarSubqueryRegistry::default();
+    let parts = QueryBuilderParts {
+        catalog,
+        current_database,
+        ctx,
+        use_plan_cache: false,
+        plan_ids: &plan_ids,
+        column_ids: &column_ids,
+        registry: &registry,
+        session_ctx: None,
+    };
+    let physical = parts
+        .planning(|parts| tidb_planner::statement_optimize::optimize_query_stmt(parts, query))?;
+    let registered = Rc::try_unwrap(registry)
+        .map(RefCell::into_inner)
+        .unwrap_or_default();
+    Ok((physical, registered))
+}
+
+/// Go `planner.optimize` over a query
+/// ([`tidb_planner::statement_optimize::optimize_query`]) with this
+/// statement's hooks.
 #[allow(clippy::too_many_arguments)]
 fn planner_optimized_query_with_allocators(
     query: &tidb_ast::QueryStmt,
@@ -1366,108 +762,19 @@ fn planner_optimized_query_with_allocators(
     visits: BuildVisits<'_>,
     build: QueryBuild,
 ) -> Result<(LogicalPlan, PhysicalPlan), tidb_planner_core_base::PlanError> {
-    use tidb_planner::planner_optimize::LogicalPlanRounds as _;
-    let mut rounds = QueryRounds {
-        query,
+    let parts = QueryBuilderParts {
         catalog,
         current_database,
+        ctx,
         use_plan_cache,
         plan_ids,
         column_ids,
         registry,
-        visits,
-        checked: false,
-        round_start: (0, 0, 0),
+        session_ctx: None,
     };
-    if build == QueryBuild::DmlRead {
-        return rounds
-            .build_and_optimize(ctx, |flag| flag)
-            .map(|(logical, physical, _)| (logical, physical));
-    }
-    tidb_planner::planner_optimize::optimize(ctx, &mut rounds)
-}
-
-/// The part of Go `buildAndOptimizeLogicalPlanRound` every query build runs,
-/// a DML's read included: `buildLogicalPlan`, the statement's privilege
-/// check, and `core.DoOptimize` with the plan's cost.
-#[allow(clippy::too_many_arguments)]
-fn build_logical_plan_and_do_optimize(
-    query: &tidb_ast::QueryStmt,
-    catalog: &SessionExtendedInfoSchema,
-    current_database: &str,
-    ctx: &crate::StmtContext,
-    use_plan_cache: bool,
-    plan_ids: &PlanIdAllocator,
-    column_ids: &ColumnIdAllocator,
-    registry: &ScalarSubqueryRegistry,
-    visits: &mut BuildVisits<'_>,
-    checked: &mut bool,
-    opt_flag_adjust: fn(u64) -> u64,
-) -> Result<(LogicalPlan, PhysicalPlan, f64), tidb_planner_core_base::PlanError> {
-    use std::sync::atomic::Ordering;
-    // Go `buildLogicalPlan`: `RewritePhaseInfo.Reset()`, then
-    // `DurationRewrite` is the time `builder.Build` took.
-    ctx.phase_durations().reset_rewrite_phase_info();
-    let begin_rewrite = std::time::Instant::now();
-    let (plan, opt_flag, built_visits) = planner_built_query_with_allocators(
-        query,
-        catalog,
-        current_database,
-        ctx,
-        use_plan_cache,
-        plan_ids,
-        column_ids,
-        registry,
-        None,
-    )?;
-    ctx.phase_durations()
-        .set_duration_rewrite(begin_rewrite.elapsed());
-    // Go `buildAndOptimizeLogicalPlanRound`: `CheckPrivilege` and
-    // `CheckTableLock` over `builder.GetVisitInfo()`, once for the statement,
-    // after the build (whose errors, and whose evaluated subqueries', come
-    // first) and before `DoOptimize` (whose errors come after).
-    if !*checked {
-        match visits {
-            BuildVisits::Check => {
-                crate::table_privilege::check_plan_privilege(ctx, catalog, &built_visits)
-                    .map_err(driver_error_to_plan)?;
-            }
-            BuildVisits::Collect(collected) => collected.extend(built_visits),
-            BuildVisits::Discard => {}
-        }
-        *checked = true;
-    }
-    // Go `buildAndOptimizeLogicalPlanRound`: the optimization clock starts
-    // before the first `DoOptimize` of a logical plan.
-    ctx.phase_durations().begin_optimize();
-    let signals = ctx.alternative_logical_plan_signals();
-    if ctx.enable_alternative_logical_plans()
-        && opt_flag & tidb_planner_core_rule::flags::PUSH_DOWN_TOPN > 0
-        && opt_flag & tidb_planner_core_rule::flags::JOIN_REORDER > 0
-    {
-        signals.order_aware_join_reorder.store(true, Ordering::Release);
-    }
-    // Go `core.DoOptimize`: `logicalOptimize`, then `physicalOptimize` and
-    // `postOptimize`.
-    let logical = optimize_built_logical(
-        plan,
-        opt_flag_adjust(opt_flag),
-        catalog,
-        ctx,
-        use_plan_cache,
-        plan_ids,
-        column_ids,
-        &ctx.session_zone(),
-    )?;
-    let (physical, cost) = tidb_planner::optimize::physical_optimize(
-        &logical,
-        plan_ids,
-        column_ids,
-        ctx,
-        &std::collections::BTreeSet::new(),
-        &StatementUsedStats { catalog, context: ctx },
-    )?;
-    Ok((logical, physical, cost))
+    parts.planning(|parts| {
+        tidb_planner::statement_optimize::optimize_query(parts, query, visits, build)
+    })
 }
 
 /// Go `planner.Optimize` for a `ShowStmt`: `PlanBuilder.Build`'s
@@ -1590,10 +897,21 @@ pub(crate) fn statement_plan(
             let tidb_planner::common_plans::Plan::Logical(logical) = *select else {
                 unreachable!("buildImportInto supplies a logical SELECT");
             };
-            let logical = optimize_built_logical(logical, opt_flag, catalog, ctx, false,
-                &plan_ids, &column_ids, &ctx.session_zone())?;
-            let physical = physical_plan_for_logical(&logical, &plan_ids, &column_ids, catalog, ctx)?;
-            import.select_plan = Some(Box::new(tidb_planner::common_plans::Plan::Physical(physical)));
+            let logical = optimize_built_logical(
+                logical,
+                opt_flag,
+                catalog,
+                ctx,
+                false,
+                &plan_ids,
+                &column_ids,
+                &ctx.session_zone(),
+            )?;
+            let physical =
+                physical_plan_for_logical(&logical, &plan_ids, &column_ids, catalog, ctx)?;
+            import.select_plan = Some(Box::new(tidb_planner::common_plans::Plan::Physical(
+                physical,
+            )));
         }
     }
     Ok((plan, visits))
@@ -1608,7 +926,8 @@ pub(crate) fn import_query_plan(
     current_database: &str,
     ctx: &crate::StmtContext,
     session_ctx: &dyn tidb_planner::plan_builder::stmt_build::SessionPlanContext,
-) -> Result<tidb_planner_core_operator_physicalop::PhysicalPlan, tidb_planner_core_base::PlanError> {
+) -> Result<tidb_planner_core_operator_physicalop::PhysicalPlan, tidb_planner_core_base::PlanError>
+{
     let plan_ids = PlanIdAllocator::new();
     let column_ids = ColumnIdAllocator::new();
     let registry = ScalarSubqueryRegistry::default();
@@ -1626,7 +945,16 @@ pub(crate) fn import_query_plan(
         let logical = builder.build_query_stmt(query, false)?;
         Ok((logical, builder.get_opt_flag()))
     })?;
-    let logical = optimize_built_logical(logical, opt_flag, catalog, ctx, false, &plan_ids, &column_ids, &ctx.session_zone())?;
+    let logical = optimize_built_logical(
+        logical,
+        opt_flag,
+        catalog,
+        ctx,
+        false,
+        &plan_ids,
+        &column_ids,
+        &ctx.session_zone(),
+    )?;
     physical_plan_for_logical(&logical, &plan_ids, &column_ids, catalog, ctx)
 }
 
@@ -1667,44 +995,6 @@ pub(crate) fn physical_admin_show_ddl_jobs_plan(
         &ctx.session_zone(),
     )?;
     physical_plan_for_logical(&logical, &plan_ids, &column_ids, catalog, ctx)
-}
-
-/// Go `PlanBuilder.Build` for a query: the logical plan before any
-/// optimization, with the optimizer flags and the visit infos the build
-/// collected (`GetOptFlag`, `GetVisitInfo`).
-/// `building_view` names the view whose stored body this is, which Go builds
-/// from `BuildDataSourceFromView` with the view on its building stack.
-#[allow(clippy::too_many_arguments)]
-fn planner_built_query_with_allocators(
-    query: &tidb_ast::QueryStmt,
-    catalog: &SessionExtendedInfoSchema,
-    current_database: &str,
-    ctx: &crate::StmtContext,
-    use_plan_cache: bool,
-    plan_ids: &PlanIdAllocator,
-    column_ids: &ColumnIdAllocator,
-    registry: &ScalarSubqueryRegistry,
-    building_view: Option<(&str, &str)>,
-) -> Result<
-    (LogicalPlan, u64, Vec<tidb_planner::plan_builder::visit_info::VisitInfo>),
-    tidb_planner_core_base::PlanError,
-> {
-    let parts = QueryBuilderParts {
-        catalog,
-        current_database,
-        ctx,
-        use_plan_cache,
-        plan_ids,
-        column_ids,
-        registry,
-        session_ctx: None,
-    };
-    parts.build(Some(query), building_view, |builder| {
-        let node = tidb_resolve::NodeW::new(query.clone());
-        let plan = builder.build_query_node(&node, false)?;
-        ctx.set_block_as_names(builder.statement_block_as_names());
-        Ok((plan, builder.get_opt_flag(), std::mem::take(&mut builder.visit_info)))
-    })
 }
 
 /// Go `buildDDL`'s `*ast.CreateViewStmt` arm over this catalog: the body is
@@ -1752,10 +1042,44 @@ struct QueryBuilderParts<'a> {
 }
 
 impl QueryBuilderParts<'_> {
-    /// Go `NewPlanBuilder().Init(sctx, is, ...)` for a query: a builder over
-    /// this catalog with the session's planner variables, handed to `build`.
-    /// `query` is the statement the build is for, when there is one, which
-    /// decides static pruning's global-index exception.
+    /// The planner's [`tidb_planner::statement_optimize::BuilderParts`] over
+    /// these parts, with this statement's [`DriverHooks`].
+    fn planning<R>(
+        &self,
+        plan: impl FnOnce(&tidb_planner::statement_optimize::BuilderParts<'_>) -> R,
+    ) -> R {
+        self.planning_with(None, plan)
+    }
+
+    /// [`Self::planning`] for an UPDATE/DELETE whose root allocation
+    /// `on_delete_root` observes.
+    fn planning_with<R>(
+        &self,
+        on_delete_root: Option<&dyn Fn()>,
+        plan: impl FnOnce(&tidb_planner::statement_optimize::BuilderParts<'_>) -> R,
+    ) -> R {
+        let hooks = DriverHooks {
+            catalog: self.catalog,
+            plan_ids: self.plan_ids,
+            column_ids: self.column_ids,
+            use_plan_cache: self.use_plan_cache,
+            registry: Rc::clone(self.registry),
+        };
+        plan(&tidb_planner::statement_optimize::BuilderParts {
+            catalog: self.catalog,
+            current_database: self.current_database,
+            ctx: self.ctx,
+            use_plan_cache: self.use_plan_cache,
+            plan_ids: self.plan_ids,
+            column_ids: self.column_ids,
+            session_ctx: self.session_ctx,
+            hooks: &hooks,
+            on_delete_root,
+        })
+    }
+
+    /// Go `NewPlanBuilder().Init(sctx, is, ...)` for a query
+    /// ([`tidb_planner::statement_optimize::BuilderParts::build`]).
     fn build<R>(
         &self,
         query: Option<&tidb_ast::QueryStmt>,
@@ -1764,54 +1088,7 @@ impl QueryBuilderParts<'_> {
             &mut PlanBuilder<'_, tidb_infoschema::PlannerCatalog, crate::StmtContext>,
         ) -> Result<R, tidb_planner_core_base::PlanError>,
     ) -> Result<R, tidb_planner_core_base::PlanError> {
-        let (catalog, current_database, ctx) = (self.catalog, self.current_database, self.ctx);
-        let (plan_ids, column_ids) = (self.plan_ids, self.column_ids);
-        let source = catalog
-            .planner_catalog(current_database, ctx.latest_index_schema())
-            .with_statement_hypo_state(ctx)
-            .with_statement_dirty_tables(ctx)
-            .with_statement_privilege_verifier(ctx)
-            .with_statement_related_tables_for_mdl(ctx);
-        let session_zone = ctx.session_zone();
-        let evaluator = subquery_evaluator(
-            catalog,
-            ctx,
-            plan_ids,
-            column_ids,
-            self.use_plan_cache,
-            &session_zone,
-            self.registry,
-        );
-        let prune_fallback = dynamic_prune_fallback(catalog, ctx);
-        let defaults = default_evaluator(catalog, ctx);
-        let insert_defaults = default_evaluator_using(catalog, ctx, super::dml::DefaultUse::Insert);
-        let mut builder =
-            PlanBuilder::new(&source, ctx, plan_ids, column_ids, session_zone.clone())
-                .with_subquery_evaluator(&evaluator)
-                .with_default_evaluator(&defaults)
-                .with_insert_default_evaluator(&insert_defaults)
-                .with_mpp_warning_sink(ctx);
-        if let Some(session_ctx) = self.session_ctx {
-            builder = builder.with_session_ctx(session_ctx);
-        }
-        // Go `PlanBuilder.Init(sctx, ...)`: the session variables the build reads.
-        builder.init_session_vars();
-        builder.set_partition_processor_enabled(
-            ctx.static_partition_prune()
-                && !query
-                    .is_some_and(|query| tidb_planner::point_get_plan::static_global_index_point_lookup(query, &source, ctx)),
-        );
-        builder.set_dynamic_prune_fallback(&prune_fallback);
-        // Go `PlanBuilder.Build`: `b.optFlag |= FlagPruneColumns` for every
-        // statement, which each evaluated subquery's `DoOptimize` reads.
-        builder.add_opt_flag(flags::PRUNE_COLUMNS);
-        if let Some((database, view)) = building_view {
-            builder.building_view_stack.insert((
-                tidb_mysql::to_lowercase(database),
-                tidb_mysql::to_lowercase(view),
-            ));
-        }
-        build(&mut builder)
+        self.planning(|parts| parts.build(query, building_view, build))
     }
 }
 
@@ -1928,8 +1205,11 @@ fn query_visit_info_inner(
                      kind: tidb_planner::plan_builder::SubqueryKind,
                      _opt_flag: u64,
                      evaluate: bool| {
-        let width =
-            subquery_output_width(inner.schema().map_or(0, |schema| schema.len()), kind, evaluate);
+        let width = subquery_output_width(
+            inner.schema().map_or(0, |schema| schema.len()),
+            kind,
+            evaluate,
+        );
         Ok(tidb_planner::plan_builder::EvaluatedSubquery {
             column_ids: (0..width).map(|_| column_ids.alloc()).collect(),
             row: vec![tidb_datatype::Datum::Null; width],
@@ -2000,18 +1280,26 @@ pub(crate) fn insert_plan(
             insert,
             |builder, logical, opt_flag| {
                 ctx.set_block_as_names(builder.statement_block_as_names());
-                ctx.phase_durations().set_duration_rewrite(begin_rewrite.elapsed());
+                ctx.phase_durations()
+                    .set_duration_rewrite(begin_rewrite.elapsed());
                 ctx.phase_durations().begin_optimize();
                 if ctx.enable_alternative_logical_plans()
                     && opt_flag & flags::PUSH_DOWN_TOPN != 0
                     && opt_flag & flags::JOIN_REORDER != 0
                 {
-                    ctx.alternative_logical_plan_signals().order_aware_join_reorder
+                    ctx.alternative_logical_plan_signals()
+                        .order_aware_join_reorder
                         .store(true, std::sync::atomic::Ordering::Release);
                 }
                 let logical = optimize_built_logical(
-                    logical, opt_flag, catalog, ctx, use_plan_cache,
-                    &plan_ids, &column_ids, &ctx.session_zone(),
+                    logical,
+                    opt_flag,
+                    catalog,
+                    ctx,
+                    use_plan_cache,
+                    &plan_ids,
+                    &column_ids,
+                    &ctx.session_zone(),
                 )?;
                 physical_plan_for_logical(&logical, &plan_ids, &column_ids, catalog, ctx)
             },
@@ -2042,7 +1330,8 @@ pub(crate) fn cached_insert_expressions(
     catalog: &SessionExtendedInfoSchema,
     current_database: &str,
     ctx: &crate::StmtContext,
-) -> Result<tidb_planner::plan_builder::insert::InsertExpressions, tidb_planner_core_base::PlanError> {
+) -> Result<tidb_planner::plan_builder::insert::InsertExpressions, tidb_planner_core_base::PlanError>
+{
     let plan_ids = PlanIdAllocator::new();
     let column_ids = ColumnIdAllocator::new();
     let registry = ScalarSubqueryRegistry::default();
@@ -2059,8 +1348,11 @@ pub(crate) fn cached_insert_expressions(
     parts.build(insert.source.as_deref(), None, |builder| {
         let target = builder.resolve_insert_target(insert)?;
         let select = match physical {
-            PhysicalPlan::Dml(root) => root.select_plan.as_deref()
-                .and_then(PhysicalPlan::schema).zip(root.insert_select.as_ref()),
+            PhysicalPlan::Dml(root) => root
+                .select_plan
+                .as_deref()
+                .and_then(PhysicalPlan::schema)
+                .zip(root.insert_select.as_ref()),
             _ => None,
         };
         builder.build_insert_expressions(insert, &target, select)
@@ -2142,183 +1434,160 @@ pub(crate) fn physical_dml_source_plan_with_allocators(
     // non-logical `Update`/`Delete` never starts `optimize`'s total clock.
     ctx.phase_durations().reset_rewrite_phase_info();
     let begin_rewrite = std::time::Instant::now();
-    let source = catalog
-        .planner_catalog(current_database, ctx.latest_index_schema())
-        .with_statement_hypo_state(ctx)
-        .with_statement_dirty_tables(ctx)
-        .with_statement_privilege_verifier(ctx)
-        .with_statement_related_tables_for_mdl(ctx);
-    let session_zone = ctx.session_zone();
     let registry = ScalarSubqueryRegistry::default();
-    let evaluator = subquery_evaluator(
+    let parts = QueryBuilderParts {
         catalog,
+        current_database,
         ctx,
+        use_plan_cache,
         plan_ids,
         column_ids,
-        use_plan_cache,
-        &session_zone,
-        &registry,
-    );
-    let prune_fallback = dynamic_prune_fallback(catalog, ctx);
-    let defaults = default_evaluator(catalog, ctx);
-    let mut builder = PlanBuilder::new(&source, ctx, plan_ids, column_ids, session_zone.clone())
-        .with_subquery_evaluator(&evaluator)
-        .with_default_evaluator(&defaults)
-        .with_mpp_warning_sink(ctx);
-    builder.enable_pipelined_window_exec = ctx.enable_pipelined_window_exec();
-    builder.enable_full_outer_join = ctx.enable_full_outer_join();
-    builder.enable_cascades_planner = ctx.enable_cascades_planner();
-    builder.new_only_full_group_by_check = ctx.new_only_full_group_by_check();
-    builder.only_full_group_by = ctx.only_full_group_by();
-    builder.enable_unsafe_substitute = ctx.enable_unsafe_substitute();
-    builder.enable_force_inline_cte = ctx.enable_force_inline_cte();
-    builder.enable_mpp_shared_cte_execution = ctx.enable_mpp_shared_cte_execution();
-    builder.skip_cte_consumer_counts = ctx.skip_cte_consumer_counts();
-    builder.oracle_mode = ctx.ddl_sql_mode() & tidb_mysql::consts::ModeOracle.0 != 0;
-    builder.remove_orderby_in_subquery = ctx.remove_orderby_in_subquery();
-    builder.set_isolation_read_engines(ctx.isolation_read_engines());
-    builder.set_tiflash_engine_removed_due_to_strict_sql_mode(
-        ctx.tiflash_engine_removed_due_to_strict_sql_mode(),
-    );
-    builder.advanced_join_hint = ctx.enable_advanced_join_hint();
-    builder.in_explain_stmt = ctx.in_explain_stmt();
-    builder.in_explain_analyze_stmt = ctx.in_explain_analyze_stmt();
-    builder.explain_non_evaled_sub_query = ctx.explain_non_evaled_sub_query();
-    builder.parser_config = ctx.parser_config();
-    builder.set_partition_processor_enabled(ctx.static_partition_prune());
-    builder.set_dynamic_prune_fallback(&prune_fallback);
-    builder.flags.allow_in_subq_to_join_and_agg = ctx.allow_in_subq_to_join_and_agg();
-    builder.flags.enable_semi_join_rewrite = ctx.enable_semi_join_rewrite();
-    builder.flags.enable_correlate_subquery = ctx.enable_correlate_subquery();
-    builder.flags.enable_no_decorrelate_in_select = ctx.enable_no_decorrelate_in_select();
-    builder.enable_skew_distinct_agg = ctx.enable_skew_distinct_agg();
-    builder.index_lookup_push_down_session = ctx.index_lookup_push_down_session();
-    builder.add_opt_flag(flags::PRUNE_COLUMNS);
-    builder.delete_prune_has_fk = delete_prune_has_fk;
-    builder.delete_multi = delete_multi;
-    builder.allocate_delete_root = operator.eq_ignore_ascii_case("Delete");
-    builder.on_delete_root = on_delete_root;
-    // Go `buildUpdate`/`buildDelete` lock the read only for a single-table
-    // source (`TableRefs.Right == nil` / `!IsMultiTable`); a multi-table
-    // write locks the rows it writes instead.
-    let single_source = select.from.as_ref().is_some_and(|from| {
-        from.right.is_none() && matches!(from.left, tidb_ast::JoinNode::Table(_))
-    });
-    let wrap_lock = ctx.pessimistic_transaction() && single_source;
-    let mut single_assignments = None;
-    let (plan, mut update_expressions, mut plan_flags) = match (single_update, multi_update)
-    {
-        (Some(update), _) => {
-            let (plan, expressions, assignments, flags) =
-                builder.build_update_dml_source(select, update, ctx.allow_write_row_id(), wrap_lock)?;
-            single_assignments = Some(assignments);
-            (plan, expressions, flags)
-        }
-        (None, Some(update)) => {
-            builder.build_multi_update_dml_source(select, update, ctx.allow_write_row_id())?
-        }
-        (None, None) => {
-            let (plan, build_flags) = builder.build_dml_source(select, wrap_lock)?;
-            (plan, Vec::new(), build_flags)
-        }
+        registry: &registry,
+        session_ctx: None,
     };
-    ctx.set_block_as_names(builder.statement_block_as_names());
-    // Go `buildUpdate` / `buildDelete`: the write's visit infos follow the
-    // read's, before the read is optimized. The write targets resolve on
-    // their own allocators: resolving a joined UPDATE's columns walks its
-    // table refs again, which must not shift this build's plan ids.
-    let mut visit_info = std::mem::take(&mut builder.visit_info);
-    if let Some(write) = write {
-        let (target_plan_ids, target_column_ids) = (PlanIdAllocator::new(), ColumnIdAllocator::new());
-        let mut targets = PlanBuilder::new(
-            &source,
-            ctx,
-            &target_plan_ids,
-            &target_column_ids,
-            session_zone.clone(),
-        );
-        match write {
-            super::multi_dml::MultiDmlRef::Update(update) => {
-                visit_info.extend(targets.update_write_visits(update)?);
-            }
-            super::multi_dml::MultiDmlRef::Delete(delete) => {
-                // "If the delete is non-qualified it does not require Select
-                // Priv".
-                if delete.where_clause.is_none() && delete.order_by.is_empty() {
-                    visit_info.pop();
+    // Go `buildUpdate` / `buildDelete` run inside `PlanBuilder.Build`.
+    let built = parts.planning_with(on_delete_root, |parts| {
+        parts.build(None, None, |builder| {
+            let source = builder.source;
+            let session_zone = ctx.session_zone();
+            builder.delete_prune_has_fk = delete_prune_has_fk;
+            builder.delete_multi = delete_multi;
+            builder.allocate_delete_root = operator.eq_ignore_ascii_case("Delete");
+            // Go `buildUpdate`/`buildDelete` lock the read only for a single-table
+            // source (`TableRefs.Right == nil` / `!IsMultiTable`); a multi-table
+            // write locks the rows it writes instead.
+            let single_source = select.from.as_ref().is_some_and(|from| {
+                from.right.is_none() && matches!(from.left, tidb_ast::JoinNode::Table(_))
+            });
+            let wrap_lock = ctx.pessimistic_transaction() && single_source;
+            let mut single_assignments = None;
+            let (plan, mut update_expressions, mut plan_flags) = match (single_update, multi_update)
+            {
+                (Some(update), _) => {
+                    let (plan, expressions, assignments, flags) = builder.build_update_dml_source(
+                        select,
+                        update,
+                        ctx.allow_write_row_id(),
+                        wrap_lock,
+                    )?;
+                    single_assignments = Some(assignments);
+                    (plan, expressions, flags)
                 }
-                visit_info.extend(targets.delete_write_visits(delete)?);
+                (None, Some(update)) => builder.build_multi_update_dml_source(
+                    select,
+                    update,
+                    ctx.allow_write_row_id(),
+                )?,
+                (None, None) => {
+                    let (plan, build_flags) = builder.build_dml_source(select, wrap_lock)?;
+                    (plan, Vec::new(), build_flags)
+                }
+            };
+            ctx.set_block_as_names(builder.statement_block_as_names());
+            // Go `buildUpdate` / `buildDelete`: the write's visit infos follow the
+            // read's, before the read is optimized. The write targets resolve on
+            // their own allocators: resolving a joined UPDATE's columns walks its
+            // table refs again, which must not shift this build's plan ids.
+            let mut visit_info = std::mem::take(&mut builder.visit_info);
+            if let Some(write) = write {
+                let (target_plan_ids, target_column_ids) =
+                    (PlanIdAllocator::new(), ColumnIdAllocator::new());
+                let mut targets = PlanBuilder::new(
+                    source,
+                    ctx,
+                    &target_plan_ids,
+                    &target_column_ids,
+                    session_zone.clone(),
+                );
+                match write {
+                    super::multi_dml::MultiDmlRef::Update(update) => {
+                        visit_info.extend(targets.update_write_visits(update)?);
+                    }
+                    super::multi_dml::MultiDmlRef::Delete(delete) => {
+                        // "If the delete is non-qualified it does not require Select
+                        // Priv".
+                        if delete.where_clause.is_none() && delete.order_by.is_empty() {
+                            visit_info.pop();
+                        }
+                        visit_info.extend(targets.delete_write_visits(delete)?);
+                    }
+                }
             }
-        }
-    }
-    // Go `buildUpdate`: "We cannot apply projection elimination when building
-    // the subplan, because columns in orderedList cannot be resolved" -- the
-    // assignments live outside the plan, so a rewrite that substitutes a
-    // projected column never reaches them (`DoOptimize(..., b.optFlag &^
-    // rule.FlagEliminateProjection, p)`).
-    if operator.eq_ignore_ascii_case("Update") {
-        plan_flags &= !tidb_planner_core_rule::flags::ELIMINATE_PROJECTION;
-    }
-    // Go `buildUpdate`/`buildDelete` allocate the `Update`/`Delete` root
-    // after the logical build (which now includes `buildSelectLock` and the
-    // freezing projection) and before `DoOptimize`. The optimize pass then
-    // allocates the physical projection candidate (Go id 6 in the captured
-    // W51 receipt) before the physical `SelectLock` — reproducing Go's
-    // exact id sequence without a filler.
-    let root = builder
-        .dml_root
-        .take()
-        .unwrap_or_else(|| tidb_planner_core_operator_physicalop::BasePhysicalPlan::new(plan_ids, operator, 0));
-    let logical = optimize_built_logical(
-        plan,
-        plan_flags,
-        catalog,
-        ctx,
-        use_plan_cache,
-        plan_ids,
-        column_ids,
-        &session_zone,
-    )?;
-    // Go `buildUpdateLists`: the columns a non-constant assignment reads
-    // join `StmtCtx.ColRefFromUpdatePlan`.
-    let col_ref_from_update_plan: std::collections::BTreeSet<i64> = update_expressions
-        .iter()
-        .flatten()
-        .flat_map(tidb_expr::simple_expr::extract_columns)
-        .map(|column| column.unique_id)
-        .collect();
-    let physical = physical_plan_for_logical_with_update_refs(
-        &logical,
-        plan_ids,
-        column_ids,
-        catalog,
-        ctx,
-        &col_ref_from_update_plan,
-    )?;
-    let schema = physical.schema().ok_or_else(|| {
-        tidb_planner_core_base::PlanError::internal("physical DML source has no schema")
+            // Go `buildUpdate`: "We cannot apply projection elimination when building
+            // the subplan, because columns in orderedList cannot be resolved" -- the
+            // assignments live outside the plan, so a rewrite that substitutes a
+            // projected column never reaches them (`DoOptimize(..., b.optFlag &^
+            // rule.FlagEliminateProjection, p)`).
+            if operator.eq_ignore_ascii_case("Update") {
+                plan_flags &= !tidb_planner_core_rule::flags::ELIMINATE_PROJECTION;
+            }
+            // Go `buildUpdate`/`buildDelete` allocate the `Update`/`Delete` root
+            // after the logical build (which now includes `buildSelectLock` and the
+            // freezing projection) and before `DoOptimize`. The optimize pass then
+            // allocates the physical projection candidate (Go id 6 in the captured
+            // W51 receipt) before the physical `SelectLock` — reproducing Go's
+            // exact id sequence without a filler.
+            let root = builder.dml_root.take().unwrap_or_else(|| {
+                tidb_planner_core_operator_physicalop::BasePhysicalPlan::new(plan_ids, operator, 0)
+            });
+            let logical = optimize_built_logical(
+                plan,
+                plan_flags,
+                catalog,
+                ctx,
+                use_plan_cache,
+                plan_ids,
+                column_ids,
+                &session_zone,
+            )?;
+            // Go `buildUpdateLists`: the columns a non-constant assignment reads
+            // join `StmtCtx.ColRefFromUpdatePlan`.
+            let col_ref_from_update_plan: std::collections::BTreeSet<i64> = update_expressions
+                .iter()
+                .flatten()
+                .flat_map(tidb_expr::simple_expr::extract_columns)
+                .map(|column| column.unique_id)
+                .collect();
+            let physical = physical_plan_for_logical_with_update_refs(
+                &logical,
+                plan_ids,
+                column_ids,
+                catalog,
+                ctx,
+                &col_ref_from_update_plan,
+            )?;
+            let schema = physical.schema().ok_or_else(|| {
+                tidb_planner_core_base::PlanError::internal("physical DML source has no schema")
+            })?;
+            for expression in update_expressions.iter_mut().flatten() {
+                tidb_expr::simple_expr::resolve_indices_in_place(expression, schema).map_err(
+                    |_| {
+                        tidb_planner_core_base::PlanError::internal(
+                            "UPDATE assignment does not resolve in its physical source",
+                        )
+                    },
+                )?;
+            }
+            ctx.phase_durations()
+                .set_duration_rewrite(begin_rewrite.elapsed());
+            Ok(DmlSourcePlan {
+                plan: physical,
+                update_expressions,
+                single_assignments,
+                root,
+                delete_col_pos: builder.delete_col_pos.take(),
+                delete_tables: std::mem::take(&mut builder.delete_tables),
+                update_tables: std::mem::take(&mut builder.update_tables),
+                update_assigns: std::mem::take(&mut builder.update_assigns),
+                visit_info,
+                scalar_subqueries: Vec::new(),
+            })
+        })
     })?;
-    for expression in update_expressions.iter_mut().flatten() {
-        tidb_expr::simple_expr::resolve_indices_in_place(expression, schema).map_err(|_| {
-            tidb_planner_core_base::PlanError::internal(
-                "UPDATE assignment does not resolve in its physical source",
-            )
-        })?;
-    }
-    ctx.phase_durations()
-        .set_duration_rewrite(begin_rewrite.elapsed());
     let scalar_subqueries = registry.borrow().clone();
     Ok(DmlSourcePlan {
-        plan: physical,
-        update_expressions,
-        single_assignments,
-        root,
-        delete_col_pos: builder.delete_col_pos.take(),
-        delete_tables: std::mem::take(&mut builder.delete_tables),
-        update_tables: std::mem::take(&mut builder.update_tables),
-        update_assigns: std::mem::take(&mut builder.update_assigns),
-        visit_info,
         scalar_subqueries,
+        ..built
     })
 }
 
@@ -2343,7 +1612,8 @@ pub(crate) struct DmlSourcePlan {
     pub update_assigns: Vec<tidb_planner_core_operator_physicalop::UpdateAssign>,
     /// A single-table UPDATE's SET items, resolved over the read (Go
     /// `buildUpdateLists`).
-    pub single_assignments: Option<Vec<tidb_planner::plan_builder::single_update::SingleUpdateAssignment>>,
+    pub single_assignments:
+        Option<Vec<tidb_planner::plan_builder::single_update::SingleUpdateAssignment>>,
     /// The scalar subqueries the read evaluated while it was built (Go
     /// `SessionVars.MapScalarSubQ`), which EXPLAIN renders after the plan.
     pub scalar_subqueries: Vec<std::sync::Arc<RegisteredScalarSubquery>>,
@@ -2402,149 +1672,6 @@ pub(crate) fn delete_targets(
     let column_ids = ColumnIdAllocator::new();
     PlanBuilder::new(&source, ctx, &plan_ids, &column_ids, ctx.session_zone())
         .resolve_delete_targets(delete)
-}
-
-#[allow(clippy::too_many_arguments)]
-fn optimize_built_logical(
-    plan: LogicalPlan,
-    flags: u64,
-    catalog: &SessionExtendedInfoSchema,
-    ctx: &crate::StmtContext,
-    use_plan_cache: bool,
-    plan_ids: &PlanIdAllocator,
-    column_ids: &ColumnIdAllocator,
-    _session_zone: &tidb_datatype::SessionTimeZone,
-) -> Result<LogicalPlan, tidb_planner_core_base::PlanError> {
-    struct PlannerStatisticsLoad<'a> {
-        catalog: &'a SessionExtendedInfoSchema,
-        context: &'a crate::StmtContext,
-        /// The statement's accumulated statistics demand; see
-        /// [`InitStats::demanded`]. A CTE body optimized on its own adds its
-        /// own demand.
-        demanded: RefCell<Option<std::collections::HashMap<tidb_model::TableItemID, bool>>>,
-        /// See [`InitStats::record_used_stats`].
-        record_used_stats: std::cell::Cell<bool>,
-        /// Whether the planner's own statistics derivation records the items
-        /// it reads. Go records them when it derives a source, after the
-        /// partition processor and the synchronous statistics load; the first
-        /// initialization walk runs before both.
-        records_used_items: std::cell::Cell<bool>,
-    }
-
-    impl tidb_planner_core_operator_logicalop::plan_context::UsedStatsRecorder for PlannerStatisticsLoad<'_> {
-        fn record_used_item(
-            &self,
-            physical_table_id: i64,
-            table_name: &str,
-            in_pseudo_table: bool,
-            item_id: i64,
-            is_index: bool,
-        ) {
-            if !self.records_used_items.get() {
-                return;
-            }
-            tidb_planner_core_operator_logicalop::plan_context::UsedStatsRecorder::record_used_item(
-                &StatementUsedStats { catalog: self.catalog, context: self.context },
-                physical_table_id,
-                table_name,
-                in_pseudo_table,
-                item_id,
-                is_index,
-            );
-        }
-    }
-
-    impl tidb_planner_core_operator_logicalop::plan_context::StatisticsLoadRequester
-        for PlannerStatisticsLoad<'_>
-    {
-        fn request(
-            &self,
-            usage: &tidb_stats::table_statistics::ColumnStatsUsage,
-        ) -> Result<(), tidb_planner_core_base::PlanError> {
-            self.context.set_operator_num(usage.operator_count);
-            self.context
-                .update_col_stats_usage(usage.predicate_columns.keys().copied());
-            self.context.record_table_runtime_statistics(
-                usage.visited_logical_table_ids.iter().copied(),
-                |table_id| crate::access_cost::table_statistics(self.context, self.catalog, table_id),
-            );
-            self.demanded
-                .borrow_mut()
-                .get_or_insert_with(Default::default)
-                .extend(self.catalog.statistics_demand(self.context.stats_handle(), usage));
-            tidb_planner_core_rule::rule_collect_plan_stats::load_needed_items(self.catalog, self.context, usage)
-        }
-
-        fn wait(&self) -> Result<(), tidb_planner_core_base::PlanError> {
-            tidb_planner_core_rule::rule_collect_plan_stats::sync_wait_stats_load(self.context)
-        }
-
-        fn initialize(
-            &self,
-            plan: LogicalPlan,
-        ) -> Result<LogicalPlan, (LogicalPlan, tidb_planner_core_base::PlanError)> {
-            let demanded = self.demanded.borrow();
-            let mut initializer = InitStats {
-                error: None,
-                catalog: self.catalog,
-                demanded: demanded.as_ref(),
-                context: self.context,
-                record_used_stats: self.record_used_stats.get(),
-            };
-            let (plan, ()) = fold_owned(&mut initializer, plan, ());
-            if let Some(error) = initializer.error {
-                return Err((plan, error));
-            }
-            if self.record_used_stats.get() {
-                self.records_used_items.set(true);
-            }
-            Ok(plan)
-        }
-    }
-
-    let function_builder = RealFunctionBuilder::new(ctx);
-    let statistics_load = PlannerStatisticsLoad {
-        catalog,
-        context: ctx,
-        demanded: RefCell::new(None),
-        record_used_stats: std::cell::Cell::new(true),
-        records_used_items: std::cell::Cell::new(false),
-    };
-    let cte_optimizer = DriverCteOptimizer {
-        catalog,
-        ctx,
-        plan_ids,
-        column_ids,
-        visiting: RefCell::new(HashSet::new()),
-        parallel_apply_allowed: std::cell::Cell::new(ctx.enable_parallel_apply()),
-    };
-    // The base statistics are attached before the rule list with used-item
-    // recording suspended for that walk.
-    let initialize_statistics = |plan: LogicalPlan| {
-        statistics_load.record_used_stats.set(false);
-        let initialized =
-            tidb_planner_core_operator_logicalop::plan_context::StatisticsLoadRequester::initialize(
-                &statistics_load,
-                plan,
-            );
-        statistics_load.record_used_stats.set(true);
-        initialized
-    };
-    let services = tidb_planner::optimize::OptimizeServices {
-        statistics_load: &statistics_load,
-        initialize_statistics: &initialize_statistics,
-        used_stats_recorder: &statistics_load,
-        cte_optimizer: &cte_optimizer,
-    };
-    tidb_planner::optimize::optimize_logical(
-        plan,
-        flags,
-        ctx,
-        &services,
-        use_plan_cache,
-        plan_ids,
-        column_ids,
-    )
 }
 
 /// The complete physical tree retained by the prepared-plan cache. A hit
@@ -2739,7 +1866,10 @@ pub(super) fn deferred_rebuild_context(
     ctx: Option<&crate::StmtContext>,
     values: &[tidb_datatype::Datum],
 ) -> Option<crate::StmtContext> {
-    ctx.map(|ctx| ctx.clone().with_prepared_params(std::sync::Arc::from(values)))
+    ctx.map(|ctx| {
+        ctx.clone()
+            .with_prepared_params(std::sync::Arc::from(values))
+    })
 }
 
 /// Builds the same logical and physical plan as ordinary execution, with
@@ -2806,7 +1936,9 @@ pub(crate) fn cached_physical_query_plan(
     }
     // Go `generateNewPlan`: an uncacheable physical plan still executes, and
     // `SetSkipPlanCache` says why.
-    if let Err(reason) = tidb_planner::physical_plan_cache::is_plan_cacheable(&physical, cacheability) {
+    if let Err(reason) =
+        tidb_planner::physical_plan_cache::is_plan_cacheable(&physical, cacheability)
+    {
         ctx.set_skip_plan_cache(reason);
         return Ok(Some((physical, false)));
     }
@@ -2835,7 +1967,9 @@ pub(crate) fn statistics_usage_before_and_after_logical_optimization(
         .with_statement_privilege_verifier(ctx)
         .with_statement_related_tables_for_mdl(ctx);
     let session_zone = ctx.session_zone();
-    let prune_fallback = dynamic_prune_fallback(catalog, ctx);
+    let prune_fallback = |table_id: i64, table_name: &str| {
+        tidb_planner::statement_optimize::dynamic_prune_fallback(catalog, ctx, table_id, table_name)
+    };
     let mut builder = PlanBuilder::new(&source, ctx, &plan_ids, &column_ids, session_zone.clone());
     builder.enable_pipelined_window_exec = ctx.enable_pipelined_window_exec();
     builder.enable_full_outer_join = ctx.enable_full_outer_join();
@@ -2868,10 +2002,11 @@ pub(crate) fn statistics_usage_before_and_after_logical_optimization(
     let node = tidb_resolve::NodeW::new(query.clone());
     let plan = builder.build_query_node(&node, false)?;
     let flags = builder.get_opt_flag();
-    let (plan, before) = tidb_planner_core_rule::rule_collect_plan_stats::collect_column_stats_usage(
-        plan,
-        ctx.opt_index_prune_threshold(),
-    );
+    let (plan, before) =
+        tidb_planner_core_rule::rule_collect_plan_stats::collect_column_stats_usage(
+            plan,
+            ctx.opt_index_prune_threshold(),
+        );
     let optimized = optimize_built_logical(
         plan,
         flags,
@@ -2887,594 +2022,4 @@ pub(crate) fn statistics_usage_before_and_after_logical_optimization(
         ctx.opt_index_prune_threshold(),
     );
     Ok((before, after))
-}
-
-#[cfg(test)]
-mod predicate_column_tests {
-    use super::*;
-    use tidb_planner_core_operator_logicalop::DataSource;
-    use tidb_model::TableItemID;
-
-    /// The loaded set follows `CollectPredicateColumnsPoint`'s demand over the
-    /// plan: a column the source filters on loads, and a column only a join
-    /// key asked for (Go's `needFullStats` false) stays evicted, so it borrows
-    /// a loaded index's analyzed row count.
-    #[test]
-    fn filter_columns_load_and_join_keys_do_not() {
-        let mut source = DataSource::new(Default::default(), 7, "history");
-        source.physical_table_id = 7;
-        let statistics = tidb_stats::Table::from_analyzed_items(
-            7,
-            0,
-            0,
-            [1, 2].map(|id| (id, tidb_stats::column::Column::default())),
-            [],
-        );
-        let item = |id| TableItemID {
-            table_id: 7,
-            id,
-            is_index: false,
-            is_sync_load_failed: false,
-        };
-        let demanded = std::collections::HashMap::from([(item(1), true), (item(2), false)]);
-        let catalog = tidb_infoschema_perfschema::mock_catalog();
-        let context = crate::StmtContext::default();
-        let initializer = InitStats {
-            error: None,
-            catalog: &catalog,
-            demanded: Some(&demanded),
-            context: &context,
-            record_used_stats: false,
-        };
-        let (columns, indexes) = initializer
-            .predicate_loaded_items(&source, Some(&statistics))
-            .expect("the demand names a column of the source");
-        assert_eq!(columns, BTreeSet::from([1]));
-        assert!(indexes.is_empty());
-        // Before the demand exists, the cache's fully loaded subset stands.
-        let initializer = InitStats {
-            demanded: None,
-            ..initializer
-        };
-        assert!(initializer
-            .predicate_loaded_items(&source, Some(&statistics))
-            .is_none());
-    }
-}
-
-#[cfg(test)]
-mod statistics_initialization_tests {
-    use super::*;
-    use tidb_planner_property::stats_info::HistCollExt as _;
-    use tidb_table::tables::TableCommon;
-    use tidb_table::tables::Index;
-    use tidb_datatype::{Datum, FieldType, FieldTypeCode};
-    use tidb_expr::column::Column;
-    use tidb_expr::constant::{Constant, ParamMarker};
-    use tidb_expr::expression::Expression;
-    use tidb_expr::scalar_function::ScalarFunction;
-    use tidb_expr::schema::Schema;
-    use tidb_planner_core_operator_logicalop::DataSource;
-
-    #[test]
-    fn unfiltered_table_path_count_uses_realtime_row_count() {
-        let table = TableCommon::new(
-            7,
-            vec![tidb_table::column::Column {
-                info: tidb_model::GoShared::new(tidb_model::ColumnInfo {
-                    id: 1,
-                    name: tidb_ast::CiString::new("a"),
-                    field_type: FieldType::new(FieldTypeCode::LongLong),
-                    version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
-                    state: tidb_model::SchemaState::PUBLIC,
-                    ..tidb_model::ColumnInfo::default()
-                }),
-                generated: None,
-                default_value: None,
-                origin_default: None,
-            }],
-        );
-        let mut catalog = tidb_infoschema_perfschema::mock_catalog();
-        let table_info = table.meta();
-        catalog.register_kv("t", table);
-        let context = crate::StmtContext::default();
-        context.stats_handle().set_table_statistics(
-            7,
-            std::sync::Arc::new(tidb_stats::Table::from_analyzed_items(7, 1000, 0, [], [])),
-        );
-        let mut source = DataSource::new(Default::default(), 7, "t");
-        // Go `ds.TableInfo`.
-        source.table_info = Some(table_info);
-        source.db_name = "test".to_owned();
-        source.physical_table_id = 7;
-        let index = |id: i64| {
-            tidb_model::GoShared::new(tidb_model::IndexInfo {
-                id,
-                ..tidb_model::IndexInfo::default()
-            })
-        };
-        source.all_possible_access_paths.push(tidb_planner_util::path::AccessPath {
-            row_estimate: Some(
-                tidb_stats::RowEstimate::new(
-                    900.0, 800.0, 1000.0,
-                ),
-            ),
-            is_single_scan: Some(true),
-            ..tidb_planner_util::path::AccessPath::index_path(index(99))
-        });
-        source.all_possible_access_paths.push(
-            tidb_planner_util::path::AccessPath {
-                full_idx_cols: Some(vec![Some((
-                    Column::new(1, FieldType::new(FieldTypeCode::LongLong)),
-                    -1,
-                ))]),
-                row_estimate: Some(
-                    tidb_stats::RowEstimate::new(
-                        900.0, 800.0, 1000.0,
-                    ),
-                ),
-                is_single_scan: Some(true),
-                ..tidb_planner_util::path::AccessPath::index_path(index(77))
-            },
-        );
-        source.possible_access_paths = Some(Vec::new());
-
-        let mut initializer = InitStats {
-            error: None,
-            catalog: &catalog,
-            demanded: None,
-            context: &context,
-            record_used_stats: true,
-        };
-        let (plan, ()) = fold_owned(&mut initializer, LogicalPlan::DataSource(source), ());
-        let LogicalPlan::DataSource(returned) = plan else {
-            panic!("lost datasource");
-        };
-        assert!(returned.possible_access_paths.is_none(), "statistics refresh invalidates candidate derivation");
-        assert!(initializer.error.is_none(), "{:?}", initializer.error);
-        // InitStats discards stale estimates without erasing declared keys.
-        let stale = returned.path_by_index_id(99).unwrap();
-        assert_eq!((stale.row_estimate, stale.is_single_scan), (None, None));
-        let retained = returned.path_by_index_id(77).unwrap();
-        assert_eq!(
-            retained.full_idx_cols.as_ref().unwrap()[0]
-                .as_ref()
-                .unwrap()
-                .0
-                .unique_id,
-            1
-        );
-        assert_eq!(retained.row_estimate, None);
-        assert_eq!(retained.is_single_scan, None);
-    }
-
-    #[test]
-    fn statistics_collection_preserves_estimation_validity() {
-        let field_type = FieldType::new(FieldTypeCode::LongLong);
-        let mut table = TableCommon::new(
-            7,
-            vec![tidb_table::column::Column {
-                info: tidb_model::GoShared::new(tidb_model::ColumnInfo {
-                    id: 1,
-                    name: tidb_ast::CiString::new("a"),
-                    field_type: field_type.clone(),
-                    version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
-                    state: tidb_model::SchemaState::PUBLIC,
-                    ..tidb_model::ColumnInfo::default()
-                }),
-                generated: None,
-                default_value: None,
-                origin_default: None,
-            }],
-        );
-        table.add_index(
-            Index {
-                info: tidb_model::GoShared::new(tidb_model::IndexInfo {
-                    id: 9,
-                    name: tidb_ast::CiString::new("ia"),
-                    columns: (vec![0])
-                        .iter()
-                        .enumerate()
-                        .map(|(position, _)| tidb_model::IndexColumn {
-                            length: (vec![-1]).get(position).copied().unwrap_or(tidb_datatype::UNSPECIFIED_LENGTH),
-                            ..tidb_model::IndexColumn::default()
-                        })
-                        .collect::<Vec<_>>()
-                        .into(),
-                    state: tidb_model::SchemaState::PUBLIC,
-                    ..tidb_model::IndexInfo::default()
-                }),
-                column_offsets: vec![0],
-                clustered_primary: false,
-            },
-            false,
-        );
-        for id in [10, 11] {
-            let mut index = table.indexes()[0].clone();
-            let detached = tidb_model::GoShared::new(index.read().clone_like_go());
-            index.info = detached;
-            index.info.write().id = id;
-            index.info.write().name = tidb_ast::CiString::new(format!("ia_{id}"));
-            table.add_index(index, false);
-        }
-        let mut catalog = tidb_infoschema_perfschema::mock_catalog();
-        let table_info = table.meta();
-        catalog.register_kv("t", table);
-        let mut source = DataSource::new(Default::default(), 7, "t");
-        // Go `ds.TableInfo`.
-        source.table_info = Some(table_info.clone());
-        source.db_name = "test".to_owned();
-        source.columns = vec![tidb_model::GoShared::new({
-                let info = tidb_model::ColumnInfo {
-                    id: 1,
-                    name: tidb_ast::CiString::new("a"),
-                    state: tidb_model::SchemaState::PUBLIC,
-                    ..tidb_model::ColumnInfo::default()
-                };
-                info
-            })];
-        let mut column = Column::new(1, field_type.clone());
-        column.id = 1;
-        column.index = 0;
-        source
-            .base
-            .base
-            .set_schema(Some(Schema::new(vec![column.clone()])));
-        source.set_table_indices(vec![tidb_model::GoShared::new(tidb_model::IndexInfo {
-            id: 9,
-            name: tidb_ast::CiString::new("ia"),
-            columns: vec![tidb_model::IndexColumn {
-                name: tidb_ast::CiString::new("a"),
-                offset: 0,
-                length: -1,
-                ..tidb_model::IndexColumn::default()
-            }].into(),
-            state: tidb_model::SchemaState::PUBLIC,
-            ..tidb_model::IndexInfo::default()
-        })]);
-
-        for id in [10, 11] {
-            let index = tidb_model::GoShared::new(source.table_indices()[0].read().clone_like_go());
-            index.write().id = id;
-            index.write().name = tidb_ast::CiString::new(format!("ia_{id}"));
-            { let mut indexes = source.table_indices(); indexes.push(index); source.set_table_indices(indexes); }
-        }
-        source.table_columns = vec![column.clone()];
-        source.physical_table_id = 7;
-        let histogram = tidb_stats::Histogram {
-            id: 1,
-            ndv: 2,
-            null_count: 3,
-            ..Default::default()
-        };
-        let column_stats = tidb_stats::column::Column {
-            histogram: histogram.clone(),
-            top_n: None,
-            cmsketch: None,
-            stats_version: 2,
-            ..Default::default()
-        };
-        let index_stats = tidb_stats::index::Index {
-            histogram: tidb_stats::Histogram { id: 9, ..histogram },
-            top_n: None,
-            cmsketch: None,
-            stats_version: 2,
-            info: Some(tidb_model::GoShared::new(tidb_model::IndexInfo {
-                columns: (vec![String::new(); 1])
-                    .into_iter()
-                    .map(|name: String| tidb_model::IndexColumn {
-                        name: tidb_ast::CiString::new(name),
-                        ..Default::default()
-                    })
-                    .collect::<Vec<_>>()
-                    .into(),
-                ..tidb_model::IndexInfo::default()
-            })),
-            ..Default::default()
-        };
-        let mut empty_index = index_stats.clone();
-        empty_index.histogram = tidb_stats::Histogram { id: 11, ..Default::default() };
-        let mut statistics = tidb_stats::Table::from_analyzed_items(
-            7,
-            100,
-            0,
-            [(1, column_stats)],
-            [(9, index_stats), (11, empty_index)],
-        );
-        let evicted = tidb_stats::StatsLoadedStatus::all_evicted();
-        statistics.hist_coll.get_column(1).unwrap().write().unwrap().stats_loaded_status = evicted;
-        statistics.hist_coll.get_index(9).unwrap().write().unwrap().stats_loaded_status = evicted;
-        // Index 11 is an unloaded placeholder that storage never recorded.
-        statistics.hist_coll.get_index(11).unwrap().write().unwrap().stats_loaded_status =
-            tidb_stats::StatsLoadedStatus::default();
-        statistics.col_and_idx_existence_map().write().unwrap().delete_index_not_found(11);
-        for ndv in [2, 0] {
-            let published = statistics.copy_as(tidb_stats::CopyIntent::AllDataWritable);
-            let cache_usable = {
-                let column = published.hist_coll.get_column(1).unwrap();
-                let mut column = column.write().unwrap();
-                column.histogram.ndv = ndv;
-                // Go `ColumnStatsIsInvalid`'s estimation gate.
-                let essential = column.stats_loaded_status.is_essential_stats_loaded();
-                column.is_valid_for_estimation(published.hist_coll.pseudo, essential)
-            };
-            statistics = published;
-            let context = crate::StmtContext::default();
-            context
-                .stats_handle()
-                .set_table_statistics(7, std::sync::Arc::new(statistics.copy_as(
-                    tidb_stats::CopyIntent::MetaOnly,
-                )));
-            let mut initializer = InitStats {
-                error: None,
-                catalog: &catalog,
-                demanded: None,
-                context: &context,
-                record_used_stats: true,
-            };
-            let (plan, ()) = fold_owned(
-                &mut initializer,
-                LogicalPlan::DataSource(source.clone()),
-                (),
-            );
-            assert!(initializer.error.is_none(), "{:?}", initializer.error);
-            let LogicalPlan::DataSource(returned) = plan else {
-                panic!("lost datasource");
-            };
-            let hist = returned.table_stats.as_ref().unwrap().hist_coll().unwrap();
-            assert_eq!(hist.index_ids_for_column(1), &[9, 11]);
-            assert!(hist.index_columns(10).is_empty());
-            assert_eq!(
-                hist.index_histogram(11).unwrap().read().unwrap().total_row_count(),
-                0.0
-            );
-            assert!(
-                hist.histogram(column.unique_id).is_some(),
-                "raw metadata survives eviction"
-            );
-            assert_eq!(
-                hist.histogram_for_estimation(column.unique_id).is_some(),
-                cache_usable,
-                "snapshot must preserve column validity for NDV {ndv}"
-            );
-            assert!(
-                hist.index_histogram(9).is_some(),
-                "Go retains nonzero index payload regardless of full-load status"
-            );
-            let estimate =
-                tidb_planner_cardinality::row_count_estimator::get_row_count_by_column_ranges(
-                    hist.histogram_for_estimation(column.unique_id)
-                        .as_ref()
-                        .map(|column| column.read().unwrap())
-                        .as_deref(),
-                    &[tidb_planner_cardinality::row_count_estimator::ColumnRange::point(Datum::Null)],
-                    tidb_charset::Collation::Binary,
-                    hist.realtime_count,
-                    hist.modify_count,
-                    false,
-                    &Default::default(),
-                )
-                .unwrap();
-            assert_eq!(
-                estimate.est,
-                if ndv > 0 { 0.1 } else { 100.0 },
-                "Go NULL estimate after snapshot for NDV {ndv}"
-            );
-            let scaled = returned.table_stats.as_ref().unwrap().scale(0.1, 1.0);
-            assert_eq!(
-                scaled
-                    .hist_coll()
-                    .unwrap()
-                    .histogram_for_estimation(column.unique_id)
-                    .is_some(),
-                cache_usable
-            );
-        }
-    }
-
-    #[test]
-    fn statistics_initialization_preserves_range_evaluation_error() {
-        let field_type = FieldType::new(FieldTypeCode::LongLong);
-        let mut table = TableCommon::new(
-            7,
-            vec![tidb_table::column::Column {
-                info: tidb_model::GoShared::new(tidb_model::ColumnInfo {
-                    id: 1,
-                    name: tidb_ast::CiString::new("a"),
-                    field_type: field_type.clone(),
-                    version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
-                    state: tidb_model::SchemaState::PUBLIC,
-                    ..tidb_model::ColumnInfo::default()
-                }),
-                generated: None,
-                default_value: None,
-                origin_default: None,
-            }],
-        );
-        table.add_index(
-            Index {
-                info: tidb_model::GoShared::new(tidb_model::IndexInfo {
-                    id: 9,
-                    name: tidb_ast::CiString::new("ia"),
-                    columns: (vec![0])
-                        .iter()
-                        .enumerate()
-                        .map(|(position, _)| tidb_model::IndexColumn {
-                            length: (vec![-1]).get(position).copied().unwrap_or(tidb_datatype::UNSPECIFIED_LENGTH),
-                            ..tidb_model::IndexColumn::default()
-                        })
-                        .collect::<Vec<_>>()
-                        .into(),
-                    state: tidb_model::SchemaState::PUBLIC,
-                    ..tidb_model::IndexInfo::default()
-                }),
-                column_offsets: vec![0],
-                clustered_primary: false,
-            },
-            false,
-        );
-        let mut catalog = tidb_infoschema_perfschema::mock_catalog();
-        let table_info = table.meta();
-        catalog.register_kv("t", table);
-        let mut source = DataSource::new(Default::default(), 7, "t");
-        // Go `ds.TableInfo`.
-        source.table_info = Some(table_info.clone());
-        source.db_name = "test".to_owned();
-        source.columns = vec![tidb_model::GoShared::new({
-                let info = tidb_model::ColumnInfo {
-                    id: 1,
-                    name: tidb_ast::CiString::new("a"),
-                    state: tidb_model::SchemaState::PUBLIC,
-                    ..tidb_model::ColumnInfo::default()
-                };
-                info
-            })];
-        let mut column = Column::new(1, field_type.clone());
-        column.id = 1;
-        column.index = 0;
-        source
-            .base
-            .base
-            .set_schema(Some(Schema::new(vec![column.clone()])));
-        source.set_table_indices(vec![tidb_model::GoShared::new(tidb_model::IndexInfo {
-            id: 9,
-            name: tidb_ast::CiString::new("ia"),
-            columns: vec![tidb_model::IndexColumn {
-                name: tidb_ast::CiString::new("a"),
-                offset: 0,
-                length: -1,
-                ..tidb_model::IndexColumn::default()
-            }].into(),
-            state: tidb_model::SchemaState::PUBLIC,
-            ..tidb_model::IndexInfo::default()
-        })]);
-        source.all_possible_access_paths = vec![tidb_planner_util::path::AccessPath::index_path(source.table_indices()[0].clone())];
-        let mut parameter = Constant::new(Datum::Int(1), field_type);
-        parameter.param_marker = Some(ParamMarker { order: 0 });
-        let comparison = tidb_expr::new_function_base(
-            &tidb_exprctx::PlanCacheParams(&[tidb_datatype::Datum::Int(0), tidb_datatype::Datum::Int(0)]),
-            "eq",
-            FieldType::new(FieldTypeCode::Tiny),
-            vec![
-                Expression::Column(column.clone()),
-                Expression::Constant(parameter.clone()),
-            ],
-        ).unwrap();
-        let conditions = [
-            Expression::Constant(parameter.clone()),
-            tidb_expr::new_function_base(
-                &tidb_exprctx::PlanCacheParams(&[tidb_datatype::Datum::Int(0), tidb_datatype::Datum::Int(0)]),
-                "in",
-                FieldType::new(FieldTypeCode::Tiny),
-                vec![Expression::Column(column), Expression::Constant(parameter)],
-            ).unwrap(),
-        ];
-        for condition in conditions {
-            source.pushed_down_conds = vec![condition];
-            for bound in [false, true] {
-                let context = if bound {
-                    crate::StmtContext::default().with_prepared_params(vec![Datum::Int(2)].into())
-                } else {
-                    crate::StmtContext::default()
-                };
-                let column = source.base.base.schema().unwrap().columns[0].clone();
-                let evaluate =
-                    |expression: &Expression| tidb_expr::eval_expression_once(expression, &context);
-                if !bound {
-                    // Go buildFromBinOp deliberately returns no points on Eval error.
-                    let comparison_ranges = tidb_ranger::detacher::detach_index_range_with_fallback_handler_in(
-                        std::slice::from_ref(&comparison), std::slice::from_ref(&column), &[-1],
-                        context.range_max_size(), context.range_fallback_handler(), &evaluate,
-                        context.ranger_options(),
-                    ).unwrap();
-                    assert!(comparison_ranges.ranges.is_empty());
-                }
-                let direct =
-                    tidb_ranger::detacher::detach_index_range_with_fallback_handler_in(
-                        &source.pushed_down_conds,
-                        &[column],
-                        &[-1],
-                        context.range_max_size(),
-                        context.range_fallback_handler(),
-                        &evaluate,
-                        context.ranger_options(),
-                    );
-                assert_eq!(direct.is_err(), !bound, "direct result: {direct:?}");
-                let expected_error = direct.err().map(|error| match error {
-                    tidb_ranger::points::PointBuilderError::Eval(error) => error.into(),
-                    tidb_ranger::points::PointBuilderError::Unsupported(message) => {
-                        assert!(message.ends_with("is not evaluated"));
-                        tidb_planner_core_base::PlanError::from(
-                            tidb_plannererrors::ERR_UNSUPPORTED_TYPE
-                                .gen_with_stack(message),
-                        )
-                    }
-                    other => panic!("unexpected error: {other:?}"),
-                });
-                // Go builds the ranges and the row count in `fillIndexPath`,
-                // which the planner's statistics derivation runs.
-                let plan_ids = PlanIdAllocator::new();
-                let column_ids = ColumnIdAllocator::new();
-                let optimized = optimize_built_logical(
-                    LogicalPlan::DataSource(source.clone()),
-                    0,
-                    &catalog,
-                    &context,
-                    false,
-                    &plan_ids,
-                    &column_ids,
-                    &tidb_datatype::SessionTimeZone::utc(),
-                );
-                if bound {
-                    let plan = optimized.expect("bound parameter plans");
-                    let LogicalPlan::DataSource(returned) = plan else {
-                        panic!("lost datasource");
-                    };
-                    assert_eq!(returned.table_id(), 7);
-                    assert!(returned.path_by_index_id(9).and_then(|path| path.count_after_access()).is_some());
-                } else {
-                    assert_eq!(optimized.err(), expected_error.clone());
-                    if let Some(error) = expected_error {
-                        if error.equal(&tidb_plannererrors::ERR_UNSUPPORTED_TYPE) {
-                            let expected_message = error.to_string();
-                            let crate::DriverError::Mysql(mysql) =
-                                crate::driver::planner_error_to_driver(error)
-                            else {
-                                panic!("lost unsupported-type error identity");
-                            };
-                            assert_eq!(mysql.code, 8108);
-                            assert_eq!(mysql.message, expected_message);
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-
-
-#[cfg(test)]
-mod subquery_error_identity_tests {
-    use super::driver_error_to_plan;
-
-    /// Go's `EvalSubqueryFirstRow` returns the executor's error as it is, so
-    /// any Go error a planning-time subquery raises -- here a recursive CTE
-    /// that never stops -- reaches the client with its own code, not 1105.
-    #[test]
-    fn a_planning_time_subquery_keeps_the_go_error_it_raised() {
-        let raised = tidb_exeerrors::ERR_CTE_MAX_RECURSION_DEPTH
-            .gen_with_stack_by_args(&[1000_i64.into()]);
-        let planned = driver_error_to_plan(crate::DriverError::from(raised.clone()));
-        assert!(planned.equal(&tidb_exeerrors::ERR_CTE_MAX_RECURSION_DEPTH));
-        let crate::DriverError::Mysql(back) = crate::driver::planner_error_to_driver(planned)
-        else {
-            panic!("the Go error was flattened");
-        };
-        assert_eq!(back.code, 3636);
-        assert_eq!(
-            back.message,
-            tidb_terror::MysqlError::from_terror(&raised).message
-        );
-    }
 }

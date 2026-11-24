@@ -24,25 +24,6 @@ use tidb_driver_error::DriverError;
 use tidb_bindinfo::binding::{self, Binding};
 use crate::Session;
 
-/// Go `bindinfo.mayHaveSQLBinding`: INSERT/REPLACE value forms have no
-/// binding-capable SELECT source. Keep the filter at the matcher boundary so
-/// stored bindings remain visible to administrative operations while ordinary
-/// DML and EXPLAIN do not report a false match.
-fn may_have_sql_binding(stmt: &Stmt) -> bool {
-    match stmt {
-        Stmt::Query(_) => true,
-        Stmt::Dml(dml) => may_have_dml_binding(dml),
-        _ => true,
-    }
-}
-
-fn may_have_dml_binding(dml: &tidb_ast::DmlStmt) -> bool {
-    match dml {
-        tidb_ast::DmlStmt::Insert(insert) => insert.source.is_some(),
-        _ => true,
-    }
-}
-
 use tidb_bindinfo::binding::BIND_INFO_COLUMNS;
 
 /// Go `GetBindingHandle(sctx)`: the global binding handle a statement
@@ -119,117 +100,7 @@ impl Session {
     /// nothing matched, so a session with no bindings pays one map-emptiness
     /// test and nothing else.
     pub(crate) fn bind_statement_hints_with_sql(&mut self, stmt: &Stmt) -> Option<(Stmt, String)> {
-        if !may_have_sql_binding(stmt) {
-            return None;
-        }
-        // Go gates the whole step on `SessionVars.UsePlanBaselines`.
-        if !self.session_bool("tidb_use_plan_baselines", true) {
-            return None;
-        }
-        // Go `matchSQLBindingCore`'s deferred `DurationOptimizer.BindingMatch`.
-        let begin_binding_match = std::time::Instant::now();
-        let matched = self.match_statement_binding(stmt);
-        self.phase_durations
-            .set_binding_match(begin_binding_match.elapsed());
-        let (hints, bind_sql) = matched?;
-        let mut bound = stmt.clone();
-        binding::bind_hints(&mut bound, &hints);
-        self.bind_matched_statement(stmt, bound, bind_sql)
-    }
-
-    /// Go `matchSQLBindingCore`: the session binding, else the global one,
-    /// matching the statement's no-DB digest and tables -- the matched
-    /// binding's hints and bind SQL.
-    fn match_statement_binding(&mut self, stmt: &Stmt) -> Option<(tidb_hint::HintsSet, String)> {
-        let source = self.global_binding_source.cache();
-        let global = source.clone().flatten().map(|cache| cache.load());
-        let has_global = match (&source, &global) {
-            (_, Some(cache)) => cache.size() != 0,
-            // A session outside any domain reads `mysql.bind_info` itself;
-            // Go's nil handle matches no global binding.
-            (source, None) => source.is_none(),
-        };
-        if self.session_bindings.is_empty() && !has_global {
-            return None;
-        }
-        let no_db_digest = binding::no_db_digest(stmt);
-        let table_names = binding::collect_table_names(stmt);
-        // Go `crossDBMatchBindings` reads `EnableFuzzyBinding` at MATCH
-        // time, so flipping the switch changes what an existing wildcard
-        // binding does without touching the row.
-        let fuzzy_enabled = self.session_bool("tidb_opt_enable_fuzzy_binding", false);
-        // Session bindings shadow global ones, which is Go's order in
-        // `planner.optimize`: `getBindingFromSession` first, the domain
-        // handle only on a miss.
-        let (hints, bind_sql) = match self.session_bindings.match_session_binding(
-            &no_db_digest,
-            &table_names,
-            &self.vars.current_db,
-            fuzzy_enabled,
-        ) {
-            Some(matched) => (matched.hints.clone(), matched.bind_sql.clone()),
-            None if global.is_some() => {
-                let matched = global.as_ref()?.matching_binding(
-                    &no_db_digest,
-                    &table_names,
-                    &self.vars.current_db,
-                    fuzzy_enabled,
-                )?;
-                if self
-                    .vars
-                    .global_sysvars()
-                    .get("tidb_enable_binding_usage")
-                    .ok()
-                    .is_some_and(|value| value == "1" || value.eq_ignore_ascii_case("ON"))
-                {
-                    matched.mark_used();
-                }
-                (matched.hints.clone(), matched.bind_sql.clone())
-            }
-            None if source.is_some() => return None,
-            None => {
-                let global = self.load_global_bindings().ok()?;
-                let matched = global.match_session_binding(
-                    &no_db_digest,
-                    &table_names,
-                    &self.vars.current_db,
-                    fuzzy_enabled,
-                )?;
-                (matched.hints.clone(), matched.bind_sql.clone())
-            }
-        };
-        Some((hints, bind_sql))
-    }
-
-    /// The rest of Go `planner.optimize`'s binding step once a binding
-    /// matched: the session records the match and the warnings of the
-    /// statement `bound` with the binding's hints.
-    fn bind_matched_statement(
-        &mut self,
-        stmt: &Stmt,
-        mut bound: Stmt,
-        bind_sql: String,
-    ) -> Option<(Stmt, String)> {
-        for warning in crate::dispatch::filter_sem_restricted_hints(&mut bound) {
-            self.append_warning(crate::WarningLevel::Warning, 1105, warning);
-        }
-        self.vars.found_in_binding = true;
-        // Go `optimize`: `originStmtHints.QueryHasHints` -- the statement
-        // wrote hints of its own, which the binding's replace.
-        if !tidb_hint::extract_table_hints_from_stmt_node(stmt)
-            .0
-            .is_empty()
-        {
-            self.append_warning(
-                crate::WarningLevel::Warning,
-                1105,
-                format!(
-                    "The system ignores the hints in the current query and uses the hints \
-                     specified in the bindSQL: {bind_sql}"
-                ),
-            );
-        }
-        Some((bound, bind_sql))
+        tidb_planner::binding_match::bind_sql_binding(self, stmt)
     }
 
     pub(crate) fn bind_statement_hints(&mut self, stmt: &Stmt) -> Option<Stmt> {
@@ -469,5 +340,53 @@ impl Session {
             + chrono::Duration::seconds(i64::from(offset))
             + chrono::Duration::microseconds(offset_micros);
         at.format("%Y-%m-%d %H:%M:%S%.6f").to_string()
+    }
+}
+
+impl binding::BindingMatchContext for Session {
+    fn session_bindings(&self) -> &binding::SessionBindings {
+        &self.session_bindings
+    }
+
+    fn global_binding_cache(&self) -> Option<Option<tidb_bindinfo::binding_cache::SharedBindingCache>> {
+        self.global_binding_source.cache()
+    }
+
+    fn load_global_bindings(&mut self) -> Result<binding::SessionBindings, DriverError> {
+        Session::load_global_bindings(self)
+    }
+
+    fn current_db(&self) -> &str {
+        &self.vars.current_db
+    }
+
+    fn fuzzy_binding_enabled(&self) -> bool {
+        self.session_bool("tidb_opt_enable_fuzzy_binding", false)
+    }
+
+    fn binding_usage_enabled(&self) -> bool {
+        self.vars
+            .global_sysvars()
+            .get("tidb_enable_binding_usage")
+            .ok()
+            .is_some_and(|value| value == "1" || value.eq_ignore_ascii_case("ON"))
+    }
+}
+
+impl tidb_planner::binding_match::PlannerBindingContext for Session {
+    fn use_plan_baselines(&self) -> bool {
+        self.session_bool("tidb_use_plan_baselines", true)
+    }
+
+    fn set_binding_match_duration(&mut self, elapsed: std::time::Duration) {
+        self.phase_durations.set_binding_match(elapsed);
+    }
+
+    fn append_binding_warning(&mut self, message: String) {
+        self.append_warning(crate::WarningLevel::Warning, 1105, message);
+    }
+
+    fn set_found_in_binding(&mut self) {
+        self.vars.found_in_binding = true;
     }
 }

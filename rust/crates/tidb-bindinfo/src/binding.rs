@@ -152,45 +152,6 @@ pub fn collect_table_names(stmt: &Stmt) -> Vec<(String, String)> {
     collector.names
 }
 
-/// Physical read sources in traversal order. Qualified names always name a
-/// table, even when a visible CTE has the same name. Binding matching keeps its
-/// separate, deliberately unfiltered syntactic table-name collection.
-pub fn collect_physical_table_refs(stmt: &Stmt) -> Vec<Vec<String>> {
-    #[derive(Default)]
-    struct Collector {
-        refs: Vec<Vec<String>>,
-        scope: tidb_planner::preprocess::CteScope,
-    }
-    impl Visitor for Collector {
-        fn enter(&mut self, node: &mut dyn Any) -> bool {
-            self.scope.enter(node);
-            if let Some(table_ref) = node.downcast_mut::<tidb_ast::TableRef>() {
-                if !self.scope.contains(&table_ref.name) {
-                    self.refs.push(table_ref.name.clone());
-                }
-            }
-            false
-        }
-
-        fn leave(&mut self, node: &mut dyn Any) -> bool {
-            self.scope.leave(node);
-            true
-        }
-    }
-    let mut stmt = stmt.clone();
-    let mut collector = Collector::default();
-    stmt.accept(&mut collector);
-    collector.refs
-}
-
-/// Go `preprocessor.handleTableName` over a retained statement; see
-/// [`tidb_planner::preprocess::handle_table_name`].
-pub fn pin_current_database(stmt: &mut Stmt, current_db: &str) -> Result<(), DriverError> {
-    tidb_planner::preprocess::handle_table_name(stmt, current_db).map_err(|_| {
-        DriverError::from(tidb_plannererrors::ERR_NO_DB.gen_with_stack_by_args(&[]))
-    })
-}
-
 /// Go's shared binding, including stored plan digest and live usage times.
 ///
 /// `Default` is derived so [`crate::binding_cache`]'s ported Go tests can
@@ -475,3 +436,88 @@ pub fn check_origin_matches_hinted(
 /// committed cache; standalone in-memory sessions read their local catalog.
 pub const BIND_INFO_COLUMNS: &str = "original_sql, bind_sql, default_db, status, create_time, \
      update_time, charset, collation, source, sql_digest";
+
+/// Go `bindinfo.mayHaveSQLBinding`: INSERT/REPLACE value forms have no
+/// binding-capable SELECT source. Keep the filter at the matcher boundary so
+/// stored bindings remain visible to administrative operations while ordinary
+/// DML and EXPLAIN do not report a false match.
+#[must_use]
+pub fn may_have_sql_binding(stmt: &Stmt) -> bool {
+    match stmt {
+        Stmt::Dml(dml) => match &**dml {
+            tidb_ast::DmlStmt::Insert(insert) => insert.source.is_some(),
+            _ => true,
+        },
+        _ => true,
+    }
+}
+
+/// What Go `matchSQLBindingCore` reads off `sctx`.
+pub trait BindingMatchContext {
+    /// Go `SessionVars`' session binding handle.
+    fn session_bindings(&self) -> &SessionBindings;
+    /// Go `GetBindingHandle(sctx)`'s cache: `None` when the session reads
+    /// `mysql.bind_info` itself (outside any domain), `Some(None)` for Go's
+    /// nil handle.
+    fn global_binding_cache(&self) -> Option<Option<crate::binding_cache::SharedBindingCache>>;
+    /// The global bindings read from `mysql.bind_info`.
+    ///
+    /// # Errors
+    ///
+    /// The read's failure.
+    fn load_global_bindings(&mut self) -> Result<SessionBindings, DriverError>;
+    /// Go `SessionVars.CurrentDB`.
+    fn current_db(&self) -> &str;
+    /// Go `EnableFuzzyBinding`.
+    fn fuzzy_binding_enabled(&self) -> bool;
+    /// Go `vardef.EnableBindingUsage`.
+    fn binding_usage_enabled(&self) -> bool;
+}
+
+/// Go `matchSQLBindingCore`: the session binding, else the global one,
+/// matching the statement's no-DB digest and tables -- the matched
+/// binding's hints and bind SQL.
+pub fn match_sql_binding_core<C: BindingMatchContext + ?Sized>(
+    ctx: &mut C,
+    stmt: &Stmt,
+) -> Option<(tidb_hint::HintsSet, String)> {
+    let source = ctx.global_binding_cache();
+    let global = source.clone().flatten().map(|cache| cache.load());
+    let has_global = match (&source, &global) {
+        (_, Some(cache)) => cache.size() != 0,
+        // A session outside any domain reads `mysql.bind_info` itself;
+        // Go's nil handle matches no global binding.
+        (source, None) => source.is_none(),
+    };
+    if ctx.session_bindings().is_empty() && !has_global {
+        return None;
+    }
+    let no_db_digest = no_db_digest(stmt);
+    let table_names = collect_table_names(stmt);
+    // Go `crossDBMatchBindings` reads `EnableFuzzyBinding` at MATCH
+    // time, so flipping the switch changes what an existing wildcard
+    // binding does without touching the row.
+    let fuzzy_enabled = ctx.fuzzy_binding_enabled();
+    let current_db = ctx.current_db().to_owned();
+    // Session bindings shadow global ones, which is Go's order:
+    // `getBindingFromSession` first, the domain handle only on a miss.
+    let (hints, bind_sql) =
+        match ctx.session_bindings().match_session_binding(&no_db_digest, &table_names, &current_db, fuzzy_enabled) {
+            Some(matched) => (matched.hints.clone(), matched.bind_sql.clone()),
+            None if global.is_some() => {
+                let matched =
+                    global.as_ref()?.matching_binding(&no_db_digest, &table_names, &current_db, fuzzy_enabled)?;
+                if ctx.binding_usage_enabled() {
+                    matched.mark_used();
+                }
+                (matched.hints.clone(), matched.bind_sql.clone())
+            }
+            None if source.is_some() => return None,
+            None => {
+                let global = ctx.load_global_bindings().ok()?;
+                let matched = global.match_session_binding(&no_db_digest, &table_names, &current_db, fuzzy_enabled)?;
+                (matched.hints.clone(), matched.bind_sql.clone())
+            }
+        };
+    Some((hints, bind_sql))
+}

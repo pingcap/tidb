@@ -3275,36 +3275,7 @@ pub(crate) fn update_source_query(update: &tidb_ast::UpdateStmt) -> Option<tidb_
     }
 }
 
-/// Go `plannercore.PointPlanVal`: the point plan a multi-statement query's
-/// prefetch built for one statement (`None`: it has none), which that
-/// statement's planning takes instead of trying `TryFastPlan` again.
-pub struct PointPlanVal {
-    /// The statement the plan was tried for.
-    pub kind: PointPlanKind,
-    /// Go's `TryFastPlan` result.
-    pub plan: Option<tidb_planner_core_operator_physicalop::PhysicalPlan>,
-    /// The plan ids the plan took; a DML statement allocates its root after
-    /// them.
-    pub plan_ids: i32,
-}
-
-/// Which planning step a [`PointPlanVal`] answers.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum PointPlanKind {
-    /// A SELECT: the query's `TryFastPlan`.
-    Select,
-    /// A single-table UPDATE or DELETE: its point read.
-    Dml,
-    /// A statement `TryFastPlan` answers nothing for.
-    Other,
-}
-
-/// The [`PointPlanVal`] the statement context carries for `kind`, if any.
-pub(crate) fn handed_point_plan(ctx: &crate::StmtContext, kind: PointPlanKind) -> Option<&PointPlanVal> {
-    ctx.point_plan_val()
-        .and_then(|value| value.downcast_ref::<PointPlanVal>())
-        .filter(|value| value.kind == kind)
-}
+pub use tidb_planner::point_get_plan::{handed_point_plan, PointPlanKind, PointPlanVal};
 
 /// Go `prefetchPointPlanKeys` over one statement of a multi-statement query:
 /// `TryFastPlan`'s point plan for it, which the statement is handed when it

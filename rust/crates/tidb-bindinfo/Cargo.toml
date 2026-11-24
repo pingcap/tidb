@@ -37,7 +37,6 @@ tidb-hack = { path = "../tidb-hack" }
 tidb-hint = { path = "../tidb-hint" }
 tidb-mysql = { path = "../tidb-mysql" }
 tidb-parser = { path = "../tidb-parser" }
-tidb-planner = { path = "../tidb-planner" }
 tidb-ristretto = { path = "../tidb-ristretto" }
 tidb-vardef = { path = "../tidb-vardef" }
 tidb-model = { path = "../tidb-model" }

@@ -109,7 +109,11 @@ pub mod optimize;
 pub mod privilege_check;
 pub mod plan_cache_utils;
 pub mod pb_to_plan;
+pub mod binding_match;
+pub mod catalog_ctx;
+pub mod do_optimize;
 pub mod planner_optimize;
+pub mod statement_optimize;
 #[cfg(test)]
 mod partidx_tests;
 pub mod post_optimize;

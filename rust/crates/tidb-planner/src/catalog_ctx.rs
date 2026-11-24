@@ -15,15 +15,24 @@
 //! The statement state a [`PlannerCatalog`] is planned under, read off the
 //! statement's context.
 
-use crate::StmtContext;
 use tidb_infoschema::PlannerCatalog;
+use tidb_sessionctx::StmtContext;
 
 /// The statement state a [`PlannerCatalog`] is planned under, read off the
 /// statement's context.
-pub(crate) trait PlannerCatalogContext: Sized {
+pub trait PlannerCatalogContext: Sized {
+    /// Go `tableHasDirtyContent`: the tables the transaction wrote.
+    #[must_use]
     fn with_statement_dirty_tables(self, ctx: &StmtContext) -> Self;
+    /// Go `PlanBuilder`'s `visitInfo` checker: the view definer's or the
+    /// session's privileges.
+    #[must_use]
     fn with_statement_privilege_verifier(self, ctx: &StmtContext) -> Self;
+    /// Go `RelatedTableIDs` / `MDLRelatedTableIDs`.
+    #[must_use]
     fn with_statement_related_tables_for_mdl(self, ctx: &StmtContext) -> Self;
+    /// Go `hypoIndexes` / `hypoTiFlashReplicas` under EXPLAIN.
+    #[must_use]
     fn with_statement_hypo_state(self, ctx: &StmtContext) -> Self;
 }
 
