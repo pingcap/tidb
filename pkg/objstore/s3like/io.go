@@ -19,6 +19,7 @@ import (
 	"context"
 	"io"
 	"sync"
+	"sync/atomic"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
@@ -40,23 +41,21 @@ type s3ObjectReader struct {
 	ctx          context.Context
 	prefetchSize int
 
-	// mu protects the reader lifecycle and serializes closing the underlying reader.
-	// Read and Seek must not be called concurrently with each other.
+	// mu serializes reader replacement and closure, and protects readerClosed.
+	// Calls to Read and Seek must be serialized. Close never replaces reader,
+	// so the normal Read path can access it without mu.
 	mu           sync.Mutex
 	reader       io.ReadCloser
 	readerClosed bool
-	closed       bool
+	closed       atomic.Bool
 }
 
 // Read implement the io.Reader interface.
 func (r *s3ObjectReader) Read(p []byte) (n int, err error) {
-	r.mu.Lock()
-	if r.closed {
-		r.mu.Unlock()
+	if r.closed.Load() {
 		return 0, io.ErrClosedPipe
 	}
 	reader := r.reader
-	r.mu.Unlock()
 	retryCnt := 0
 	maxCnt := r.rangeInfo.End + 1 - r.pos
 	if maxCnt == 0 {
@@ -71,7 +70,7 @@ func (r *s3ObjectReader) Read(p []byte) (n int, err error) {
 	// doesn't implement this method yet.
 	for err != nil && errors.Cause(err) != io.EOF && r.ctx.Err() == nil && retryCnt < maxErrorRetries { //nolint:errorlint
 		r.mu.Lock()
-		if r.closed {
+		if r.closed.Load() {
 			r.mu.Unlock()
 			err = io.ErrClosedPipe
 			break
@@ -112,7 +111,7 @@ func (r *s3ObjectReader) Read(p []byte) (n int, err error) {
 func (r *s3ObjectReader) Close() error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.closed = true
+	r.closed.Store(true)
 	return r.closeReaderLocked()
 }
 
@@ -132,7 +131,7 @@ func (r *s3ObjectReader) setReader(reader io.ReadCloser, info RangeInfo) (io.Rea
 	defer r.mu.Unlock()
 	// Opening happens without mu so Close can interrupt a pending read. A late
 	// response must be closed before it can start another prefetch goroutine.
-	if r.closed {
+	if r.closed.Load() {
 		_ = reader.Close()
 		return nil, io.ErrClosedPipe
 	}
@@ -164,7 +163,7 @@ func (r *s3ObjectReader) Seek(offset int64, whence int) (int64, error) {
 	}
 
 	r.mu.Lock()
-	if r.closed {
+	if r.closed.Load() {
 		r.mu.Unlock()
 		return 0, io.ErrClosedPipe
 	}
@@ -200,7 +199,7 @@ func (r *s3ObjectReader) Seek(offset int64, whence int) (int64, error) {
 
 	// close current read and open a new one which target offset
 	r.mu.Lock()
-	if r.closed {
+	if r.closed.Load() {
 		r.mu.Unlock()
 		return 0, io.ErrClosedPipe
 	}

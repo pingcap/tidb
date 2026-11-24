@@ -30,6 +30,7 @@ import (
 	"sync/atomic"
 	"testing"
 	"testing/synctest"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -1213,6 +1214,89 @@ type closeCountingReader struct {
 func (r *closeCountingReader) Close() error {
 	r.closeCount.Add(1)
 	return r.ReadCloser.Close()
+}
+
+type delayedCloseReader struct {
+	io.ReadCloser
+	closeStarted chan struct{}
+	closeRelease chan struct{}
+}
+
+func (r *delayedCloseReader) Close() error {
+	close(r.closeStarted)
+	<-r.closeRelease
+	return r.ReadCloser.Close()
+}
+
+func TestS3ReaderReadDuringClose(t *testing.T) {
+	for _, prefetchSize := range []int{0, 16} {
+		t.Run(fmt.Sprintf("prefetch=%d", prefetchSize), func(t *testing.T) {
+			s := CreateS3Suite(t)
+			body := &delayedCloseReader{
+				ReadCloser:   io.NopCloser(strings.NewReader("test")),
+				closeStarted: make(chan struct{}),
+				closeRelease: make(chan struct{}),
+			}
+			s.MockS3.EXPECT().GetObject(gomock.Any(), gomock.Any(), gomock.Any()).
+				Return(&s3.GetObjectOutput{Body: body, ContentLength: aws.Int64(4)}, nil)
+			reader, err := s.Storage.Open(context.Background(), "test", &storeapi.ReaderOption{PrefetchSize: prefetchSize})
+			require.NoError(t, err)
+			closeDone := make(chan error, 1)
+			readDone := make(chan struct{})
+			go func() { closeDone <- reader.Close() }()
+			defer func() {
+				close(body.closeRelease)
+				require.NoError(t, <-closeDone)
+				<-readDone
+				require.NoError(t, reader.Close())
+				_, err := reader.Read(make([]byte, 1))
+				require.ErrorIs(t, err, io.ErrClosedPipe)
+			}()
+			<-body.closeStarted
+
+			var n int
+			var readErr error
+			go func() {
+				n, readErr = reader.Read(make([]byte, 1))
+				close(readDone)
+			}()
+			select {
+			case <-readDone:
+				require.Zero(t, n)
+				require.ErrorIs(t, readErr, io.ErrClosedPipe)
+			case <-time.After(5 * time.Second):
+				t.Fatal("Read waited for the underlying reader's Close to finish")
+			}
+		})
+	}
+}
+
+func BenchmarkS3ReaderRead(b *testing.B) {
+	for _, size := range []int{1, 32, 4096} {
+		b.Run(fmt.Sprintf("bytes=%d", size), func(b *testing.B) {
+			mockS3 := mock.NewMockS3API(gomock.NewController(b))
+			data := make([]byte, size)
+			body := bytes.NewReader(data)
+			mockS3.EXPECT().GetObject(gomock.Any(), gomock.Any(), gomock.Any()).
+				Return(&s3.GetObjectOutput{Body: io.NopCloser(body), ContentLength: aws.Int64(int64(b.N) * int64(size))}, nil)
+			storage := NewS3StorageForTest(mockS3, &backuppb.S3{Bucket: "bucket"}, nil)
+			reader, err := storage.Open(context.Background(), "test", nil)
+			require.NoError(b, err)
+			defer reader.Close()
+			buf := make([]byte, size)
+			b.SetBytes(int64(size))
+			b.ReportAllocs()
+			b.ResetTimer()
+			for range b.N {
+				// Reuse the source buffer to measure read overhead without network I/O or reopening.
+				body.Reset(data)
+				n, err := reader.Read(buf)
+				if err != nil || n != len(buf) {
+					b.Fatalf("Read returned (%d, %v)", n, err)
+				}
+			}
+		})
+	}
 }
 
 func TestS3CompressedReaderCloseDuringRetry(t *testing.T) {
