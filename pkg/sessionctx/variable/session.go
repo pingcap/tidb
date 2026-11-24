@@ -1136,6 +1136,8 @@ type SessionVars struct {
 	// logical alternative when decorrelation does not produce an equivalent
 	// same-order index join candidate.
 	EnableAlternativeLogicalPlans bool
+	// AlternativePlanRiskMode enables experimental risk selection among alternative plans.
+	AlternativePlanRiskMode bool
 
 	// EnableLocalMatchAgainst enables row-wise no-score MATCH ... AGAINST
 	// evaluation in TiDB and permits the equivalent scalar expression to run in TiFlash.

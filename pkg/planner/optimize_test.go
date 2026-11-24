@@ -33,13 +33,17 @@ func TestTiFlashOnlyAlternative(t *testing.T) {
 	sv := variable.NewSessionVars(nil)
 	sv.EnableAlternativeLogicalPlans = true
 	sv.IsolationReadEngines = map[kv.StoreType]struct{}{kv.TiKV: {}, kv.TiFlash: {}}
+	require.False(t, round.enabled(sv))
+	sv.StmtCtx.AlternativeLogicalPlanNeedsTiFlashRound = true
 	require.True(t, round.enabled(sv))
 	sv.StmtCtx.AlternativeLogicalPlanMissingTiFlashPath = true
 	require.False(t, round.enabled(sv))
 	sv.StmtCtx.ResetAlternativeLogicalPlanSignals()
+	sv.StmtCtx.AlternativeLogicalPlanNeedsTiFlashRound = true
 	sv.StmtCtx.AlternativeLogicalPlanHasStoreTypeHint = true
 	require.False(t, round.enabled(sv))
 	sv.StmtCtx.ResetAlternativeLogicalPlanSignals()
+	sv.StmtCtx.AlternativeLogicalPlanNeedsTiFlashRound = true
 	require.True(t, round.enabled(sv))
 	sv.EnableAlternativeLogicalPlans = false
 	require.False(t, round.enabled(sv))

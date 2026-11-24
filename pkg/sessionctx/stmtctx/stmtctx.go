@@ -489,6 +489,8 @@ type StatementContext struct {
 	// AlternativeLogicalPlanMissingTiFlashPath prevents a TiFlash-only rebuild
 	// when a data source cannot be read from TiFlash.
 	AlternativeLogicalPlanMissingTiFlashPath bool
+	// AlternativeLogicalPlanNeedsTiFlashRound records a join/apply in the default physical plan.
+	AlternativeLogicalPlanNeedsTiFlashRound bool
 	// AlternativeLogicalPlanHasStoreTypeHint preserves explicit storage choices.
 	AlternativeLogicalPlanHasStoreTypeHint bool
 
@@ -663,6 +665,7 @@ func (sc *StatementContext) ResetAlternativeLogicalPlanSignals() {
 	sc.AlternativeLogicalPlanPreferCorrelate = false
 	sc.AlternativeLogicalPlanOrderAwareJoinReorder = false
 	sc.AlternativeLogicalPlanMissingTiFlashPath = false
+	sc.AlternativeLogicalPlanNeedsTiFlashRound = false
 	sc.AlternativeLogicalPlanHasStoreTypeHint = false
 }
 

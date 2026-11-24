@@ -516,6 +516,7 @@ func buildAndOptimizeLogicalPlanRound(
 	bestNames *types.NameSlice,
 	bestCost *float64,
 	bestLogicalPlanCtx *logicalPlanBuildCtx,
+	riskSelection *alternativeRiskSelection,
 	optFlagAdjust func(uint64) uint64,
 ) (base.Plan, types.NameSlice, bool, error) {
 	builder := planBuilderPool.Get().(*core.PlanBuilder)
@@ -587,10 +588,19 @@ func buildAndOptimizeLogicalPlanRound(
 	if optErr != nil {
 		return nil, nil, false, optErr
 	}
+	if sctx.GetSessionVars().EnableAlternativeLogicalPlans {
+		sctx.GetSessionVars().StmtCtx.AlternativeLogicalPlanNeedsTiFlashRound = core.NeedsTiFlashAlternative(finalPlan)
+	}
 
+	var risk core.PhysicalPlanRisk
+	if sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace || riskSelection.enabled {
+		risk = core.AssessPhysicalPlanRisk(finalPlan)
+	}
+	riskSelection.consider(finalPlan, names, cost, risk, sctx.GetSessionVars())
 	if sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.RecordAnyValuesWithNames(sctx,
-			"Candidate cost", cost, "Selected", *bestPlan == nil || cost < *bestCost)
+			"Candidate cost", cost, "Selected", *bestPlan == nil || cost < *bestCost,
+			"Physical plan risk", risk)
 	}
 	if *bestPlan == nil || cost < *bestCost {
 		*bestCost = cost
@@ -636,6 +646,7 @@ type alternativeRound struct {
 func shouldTryTiFlashOnlyRound(sv *variable.SessionVars) bool {
 	_, allowed := sv.IsolationReadEngines[kv.TiFlash]
 	return sv.EnableAlternativeLogicalPlans && allowed && sv.IsMPPAllowed() &&
+		sv.StmtCtx.AlternativeLogicalPlanNeedsTiFlashRound &&
 		!sv.IsMPPEnforced() &&
 		!sv.StmtCtx.AlternativeLogicalPlanMissingTiFlashPath &&
 		!sv.StmtCtx.AlternativeLogicalPlanHasStoreTypeHint
@@ -709,6 +720,7 @@ func optimize(ctx context.Context, sctx planctx.PlanContext, node *resolve.NodeW
 	// AST-derived metadata; per-build state is allocated inside PlanBuilder.
 	hintProcessor := hint.NewQBHintHandler(sctx.GetSessionVars().StmtCtx)
 	node.Node.Accept(hintProcessor)
+	riskSelection := newAlternativeRiskSelection(sessVars, node.Node)
 
 	// build multi logical plan from raw AST.
 	var (
@@ -739,6 +751,7 @@ func optimize(ctx context.Context, sctx planctx.PlanContext, node *resolve.NodeW
 		&bestNames,
 		&bestCost,
 		&bestLogicalPlanCtx,
+		riskSelection,
 		nil,
 	)
 	if err != nil {
@@ -803,6 +816,7 @@ func optimize(ctx context.Context, sctx planctx.PlanContext, node *resolve.NodeW
 				&bestNames,
 				&bestCost,
 				&bestLogicalPlanCtx,
+				riskSelection,
 				round.adjustFlag,
 			)
 		}()
@@ -830,6 +844,28 @@ func optimize(ctx context.Context, sctx planctx.PlanContext, node *resolve.NodeW
 			return nil, nil, 0, lastAltErr
 		}
 		return nil, nil, 0, errors.New("failed to build logical plan")
+	}
+	if riskSelection.enabled || sessVars.StmtCtx.EnableOptimizerDebugTrace {
+		cboRisk := core.AssessPhysicalPlanRisk(bestPlan)
+		candidate, reason := riskSelection.choose(cboRisk)
+		if riskSelection.enabled && sessVars.StmtCtx.AlternativeLogicalPlanHasStoreTypeHint {
+			candidate, reason = nil, "storage_hint"
+		}
+		if sessVars.StmtCtx.EnableOptimizerDebugTrace {
+			decision := map[string]any{
+				"policy": "experimental_v3", "enabled": riskSelection.enabled, "reason": reason,
+				"cbo_cost": bestCost, "cbo_risk": cboRisk.Risk,
+				"cbo_read_rows": core.EstimatePhysicalPlanReadRows(bestPlan),
+			}
+			if riskSelection.mpp != nil {
+				decision["mpp_cost"] = riskSelection.mpp.cost
+				decision["mpp_read_rows"] = core.EstimatePhysicalPlanReadRows(riskSelection.mpp.plan)
+			}
+			debugtrace.RecordAnyValuesWithNames(sctx, "Risk selection", decision)
+		}
+		if candidate != nil {
+			bestPlan, bestNames, bestCost, bestLogicalPlanCtx = candidate.plan, candidate.names, candidate.cost, candidate.logicalCtx
+		}
 	}
 	if needRestoreLogicalPlanCtx {
 		restoreLogicalPlanBuildCtx(sessVars, bestLogicalPlanCtx)

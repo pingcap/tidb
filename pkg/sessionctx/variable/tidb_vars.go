@@ -340,6 +340,8 @@ const (
 	// an extra non-decorrelate logical alternative when decorrelation does not
 	// produce an equivalent same-order index join candidate.
 	TiDBOptEnableAlternativeLogicalPlans = "tidb_opt_enable_alternative_logical_plans"
+	// TiDBOptAlternativePlanRiskMode enables experimental physical risk selection.
+	TiDBOptAlternativePlanRiskMode = "tidb_opt_alternative_plan_risk_mode"
 
 	// TiDBEnableLocalMatchAgainst enables row-wise no-score MATCH ... AGAINST
 	// evaluation in TiDB and permits the equivalent scalar expression to run in TiFlash.

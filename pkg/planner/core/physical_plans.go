@@ -1346,7 +1346,10 @@ type PhysicalApply struct {
 	PhysicalHashJoin
 
 	CanUseCache bool
-	Concurrency int
+	// UnorderedOutputPerOuter is the estimated Apply output per outer row
+	// before ExpectedCnt scales the output of an unordered Apply.
+	UnorderedOutputPerOuter float64
+	Concurrency             int
 	// KeepOrder preserves the outer child row order during parallel execution.
 	KeepOrder   bool
 	OuterSchema []*expression.CorrelatedColumn
@@ -1368,6 +1371,7 @@ func (la *PhysicalApply) Clone(newCtx base.PlanContext) (base.PhysicalPlan, erro
 	hj := base.(*PhysicalHashJoin)
 	cloned.PhysicalHashJoin = *hj
 	cloned.CanUseCache = la.CanUseCache
+	cloned.UnorderedOutputPerOuter = la.UnorderedOutputPerOuter
 	cloned.Concurrency = la.Concurrency
 	cloned.KeepOrder = la.KeepOrder
 	for _, col := range la.OuterSchema {
@@ -1393,7 +1397,7 @@ func (la *PhysicalApply) MemoryUsage() (sum int64) {
 		return
 	}
 
-	sum = la.PhysicalHashJoin.MemoryUsage() + size.SizeOfBool + size.SizeOfBool + size.SizeOfSlice +
+	sum = la.PhysicalHashJoin.MemoryUsage() + size.SizeOfBool + size.SizeOfBool + size.SizeOfFloat64 + size.SizeOfSlice +
 		int64(cap(la.OuterSchema))*size.SizeOfPointer
 	for _, corrCol := range la.OuterSchema {
 		sum += corrCol.MemoryUsage()

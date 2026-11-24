@@ -2569,14 +2569,19 @@ func exhaustPhysicalPlans4LogicalApply(lp base.LogicalPlan, prop *property.Physi
 	// Account for extra outer rows needed to satisfy an ordered Apply's LIMIT,
 	// using the same ordering selectivity model as IndexJoin and MergeJoin.
 	outerExpectedCnt := math.MaxFloat64
+	outerRows := la.Children()[0].StatsInfo().RowCount
+	var unorderedOutputPerOuter float64
 	if !prop.IsSortItemEmpty() {
-		outerExpectedCnt = calcChildExpectedCnt(la.SCtx(), prop, la.Children()[0].StatsInfo().RowCount, la.StatsInfo().RowCount)
+		outerExpectedCnt = calcChildExpectedCnt(la.SCtx(), prop, outerRows, la.StatsInfo().RowCount)
+	} else if outerRows > 0 {
+		unorderedOutputPerOuter = la.StatsInfo().RowCount / outerRows
 	}
 
 	apply := PhysicalApply{
-		PhysicalHashJoin: *join,
-		OuterSchema:      la.CorCols,
-		CanUseCache:      canUseCache,
+		PhysicalHashJoin:        *join,
+		OuterSchema:             la.CorCols,
+		CanUseCache:             canUseCache,
+		UnorderedOutputPerOuter: unorderedOutputPerOuter,
 	}.Init(la.SCtx(),
 		la.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt),
 		la.QueryBlockOffset(),
