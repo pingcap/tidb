@@ -894,7 +894,7 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, prop *
 	lhsPseudo, rhsPseudo, tablePseudo := false, false, false
 	if statsTbl != nil {
 		tablePseudo = statsTbl.HistColl.Pseudo
-		lhsPseudo, rhsPseudo = isCandidatesPseudo(sctx, lhs, rhs, statsTbl)
+		lhsPseudo, rhsPseudo = isCandidatesPseudo(lhs, rhs, statsTbl)
 	}
 	// matchResult: comparison result of whether LHS vs RHS matches the required properties (1=LHS better, -1=RHS better, 0=equal)
 	// globalResult: comparison result of global index vs local index preference (1=LHS better, -1=RHS better, 0=equal)
@@ -1002,58 +1002,37 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, prop *
 	return 0, false // No winner (0). Do not return the pseudo result
 }
 
-func isCandidatesPseudo(sctx base.PlanContext, lhs, rhs *candidatePath, statsTbl *statistics.Table) (lhsPseudo, rhsPseudo bool) {
+func isCandidatesPseudo(lhs, rhs *candidatePath, statsTbl *statistics.Table) (lhsPseudo, rhsPseudo bool) {
 	lhsPseudo, rhsPseudo = statsTbl.HistColl.Pseudo, statsTbl.HistColl.Pseudo
 	if len(lhs.path.PartialIndexPaths) == 0 && len(rhs.path.PartialIndexPaths) == 0 {
 		if !lhs.path.IsTablePath() && lhs.path.Index != nil {
-			lhsPseudo = !hasStatsForEstimation(sctx, lhs, statsTbl)
+			lhsPseudo = !hasStatsForEstimation(lhs, statsTbl)
 		}
 		if !rhs.path.IsTablePath() && rhs.path.Index != nil {
-			rhsPseudo = !hasStatsForEstimation(sctx, rhs, statsTbl)
+			rhsPseudo = !hasStatsForEstimation(rhs, statsTbl)
 		}
 	}
 	return lhsPseudo, rhsPseudo
 }
 
-// hasStatsForEstimation reports whether the candidate has index statistics or can be
-// compared using column statistics. IndexJoin retains the analyzed-column heuristic for
-// its lookup templates, which can bind columns absent from the static range estimate.
-func hasStatsForEstimation(sctx base.PlanContext, c *candidatePath, statsTbl *statistics.Table) bool {
+// hasStatsForEstimation returns true if the index of the candidate has statistics, or if every column
+// referenced by its access conditions has statistics. In the latter case, the row count of the index
+// is estimated from the column statistics (using exponential backoff for multiple columns), so the
+// candidate can be compared on its estimates rather than on the missing-statistics heuristics.
+func hasStatsForEstimation(c *candidatePath, statsTbl *statistics.Table) bool {
 	if statsTbl.ColAndIdxExistenceMap.HasAnalyzed(c.path.Index.ID, true) {
 		return true
 	}
 	if len(c.accessCondsColMap) == 0 {
 		return false
 	}
-	// Estimation can request stats loading. Skyline only inspects the snapshot.
-	histColl := statsTbl.HistColl
-	histColl.CanNotTriggerLoad = true
-	// deriveIndexPathStats appends runtime conditions after the static EQ/IN
-	// prefix. SplitCorColAccessCondFromFilters requires the first appended
-	// condition to be correlated. The whole suffix, including any following
-	// equalities to constants, is estimated using NDV.
-	firstRuntimeCol := c.path.EqOrInCondCount
-	accessConds := c.path.AccessConds
-	hasRuntimeSuffix := firstRuntimeCol < len(accessConds) && accessConds[firstRuntimeCol].IsCorrelated()
 	found := 0
-	for i, col := range c.path.IdxCols {
+	for _, col := range c.path.IdxCols {
 		if _, ok := c.accessCondsColMap[col.UniqueID]; !ok {
 			continue
 		}
-		switch {
-		case c.indexJoinCols > 0:
-			if !statsTbl.ColAndIdxExistenceMap.HasAnalyzed(col.ID, false) {
-				return false
-			}
-		case hasRuntimeSuffix && i >= firstRuntimeCol && i < len(accessConds):
-			colStats := statsTbl.GetCol(col.ID)
-			if statsTbl.Pseudo || colStats == nil || !colStats.IsStatsInitialized() {
-				return false
-			}
-		default:
-			if statistics.ColumnStatsIsInvalid(statsTbl.GetCol(col.ID), sctx, &histColl, col.ID) {
-				return false
-			}
+		if !statsTbl.ColAndIdxExistenceMap.HasAnalyzed(col.ID, false) {
+			return false
 		}
 		found++
 	}

@@ -1019,6 +1019,7 @@ func TestMissingStatsIndexRangeMaxIncludesTopN(t *testing.T) {
 	ctx.GetSessionVars().RiskRangeSkewRatio = 0
 	field := types.NewFieldType(mysql.TypeLonglong)
 	coll := statistics.NewHistColl(1, 1000, 0, 2, 0)
+	coll.CanNotTriggerLoad = true
 	topNEntry := func(value int64, count uint64) statistics.TopNMeta {
 		encoded, err := codec.EncodeKey(ctx.GetSessionVars().StmtCtx.TimeZone(), nil, types.NewIntDatum(value))
 		require.NoError(t, err)
@@ -1055,6 +1056,7 @@ func TestMissingStatsIndexRangeMaxIncludesTopN(t *testing.T) {
 	columnEstimate, err := cardinality.GetRowCountByColumnRanges(ctx, coll, 2, []*ranger.Range{columnRange}, false)
 	require.NoError(t, err)
 	require.InDelta(t, 369, columnEstimate.Est, 1e-9)
+	require.InDelta(t, 69, columnEstimate.MinEst, 1e-9)
 	indexCols := []*expression.Column{{ID: 1, UniqueID: 1, RetType: field}, {ID: 2, UniqueID: 2, RetType: field}}
 	indexEstimate, err := cardinality.GetRowCountByIndexRanges(ctx, coll, 3, []*ranger.Range{indexRange}, indexCols)
 	require.NoError(t, err)
