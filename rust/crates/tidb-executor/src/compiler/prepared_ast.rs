@@ -526,6 +526,7 @@ pub trait PreparedAstCompile: super::CompilerSession {
                 return Ok(None);
             };
             if let Some(cached) = plan.bind_cached_for_statement(
+                &crate::driver::planner_bridge::driver_hooks(&catalog),
                 self.plan_cache_rebuild(),
                 values,
                 &catalog,
@@ -567,6 +568,7 @@ pub trait PreparedAstCompile: super::CompilerSession {
         // (plan_cache.go:366).
         tidb_planner_core_metrics::plan_cache_miss_counter(false).inc();
         plan.bind_for_statement(
+            &crate::driver::planner_bridge::driver_hooks(&catalog),
             self.plan_cache_rebuild(),
             values,
             &catalog,
@@ -627,6 +629,7 @@ pub trait PreparedAstCompile: super::CompilerSession {
                 return Ok(None);
             };
             if let Some(execution) = plan.bind_cached_for_statement(
+                &crate::driver::planner_bridge::driver_hooks(&catalog),
                 self.plan_cache_rebuild(),
                 values,
                 &catalog,
@@ -653,6 +656,7 @@ pub trait PreparedAstCompile: super::CompilerSession {
             return Ok(None);
         };
         plan.bind_for_statement(
+            &crate::driver::planner_bridge::driver_hooks(&catalog),
             self.plan_cache_rebuild(),
             values,
             &catalog,

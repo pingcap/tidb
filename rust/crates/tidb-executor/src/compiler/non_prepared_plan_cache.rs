@@ -258,6 +258,7 @@ pub trait NonPreparedPlanCacheCompile: super::CompilerSession {
         {
             let catalog = self.lock_catalog().ok()?;
             if let Some(execution) = plan.bind_cached_for_statement(
+                &crate::driver::planner_bridge::driver_hooks(&catalog),
                 self.plan_cache_rebuild(),
                 &parameterized.values,
                 &catalog,
@@ -281,6 +282,7 @@ pub trait NonPreparedPlanCacheCompile: super::CompilerSession {
         let ctx = self.statement_context(false).with_non_prepared_plan_cache();
         let catalog = self.lock_catalog().ok()?;
         plan.bind_for_statement(
+            &crate::driver::planner_bridge::driver_hooks(&catalog),
             self.plan_cache_rebuild(),
             &parameterized.values,
             &catalog,
@@ -396,6 +398,7 @@ pub trait NonPreparedPlanCacheCompile: super::CompilerSession {
         {
             let catalog = self.lock_catalog().ok()?;
             if let Some(execution) = plan.bind_cached_for_statement(
+                &crate::driver::planner_bridge::driver_hooks(&catalog),
                 self.plan_cache_rebuild(),
                 &parameterized.values,
                 &catalog,
@@ -420,6 +423,7 @@ pub trait NonPreparedPlanCacheCompile: super::CompilerSession {
         }
         let catalog = self.lock_catalog().ok()?;
         let execution = plan.bind_for_statement(
+            &crate::driver::planner_bridge::driver_hooks(&catalog),
             self.plan_cache_rebuild(),
             &parameterized.values,
             &catalog,

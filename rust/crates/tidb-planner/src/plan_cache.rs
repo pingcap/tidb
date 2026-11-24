@@ -29,6 +29,11 @@ use tidb_infoschema::SessionExtendedInfoSchema;
 use tidb_planner_core_operator_physicalop::PhysicalPlan;
 use tidb_sessionctx::StmtContext;
 
+use crate::plan_cache_utils::{
+    PreparedPlanCacheEnvironment, collect_prepared_table_names, prepared_dml_kind,
+    prepared_dml_table_names, statement_contains_sequence_functions,
+};
+
 use crate::plan_cache_rebuild::RebuildPlanForCache as _;
 
 /// Binds a prepared statement's parameters, replacing every `?` marker with
@@ -1328,4 +1333,629 @@ pub fn cached_dml_physical_plan(
         return Ok(None);
     }
     Ok(Some((root, true)))
+}
+
+/// The retained SELECT syntax and key metadata. The session cache owns the
+/// complete physical operator tree and rebuilds its ranges on a cache hit.
+#[derive(Debug)]
+pub struct PreparedSelectPlan {
+    /// Go `PlanCacheStmt`.
+    stmt: crate::plan_cache::PlanCacheStmt,
+    /// The qualified tables the statement reads, for MDL.
+    table_names: Vec<(String, String)>,
+    contains_sequence_functions: bool,
+}
+
+/// One execution lease on a cache-owned, recursively rebuilt physical tree.
+/// The generation prevents another bind from silently changing the retained
+/// parameter values between admission and executor construction.
+#[derive(Debug)]
+pub struct PreparedSelectExecution {
+    parameters: Arc<[Datum]>,
+    plan: Arc<PreparedSelectPlan>,
+    schema_version: u64,
+    cache_hit: bool,
+    cached_plan: Arc<std::sync::Mutex<CachedPlan>>,
+    generation: u64,
+    planning_warnings: std::sync::Mutex<Vec<tidb_context::SqlWarn>>,
+}
+
+impl PreparedSelectPlan {
+    /// Go's non-prepared plan cache collects its statistics tables from the
+    /// parameterized statement, where an unqualified table name has no
+    /// schema and resolves to no table (`planCacheStmtProcessor`): only a
+    /// name written with its database invalidates the entry on fresh
+    /// statistics.
+    #[must_use]
+    pub fn with_non_prepared_stats_tables(mut self) -> Self {
+        let mut names = Vec::new();
+        if let tidb_ast::Stmt::Query(query) = &self.stmt.statement {
+            collect_prepared_table_names(query, "", &mut names);
+        }
+        self.stmt.stats_table_keys = names
+            .iter()
+            .map(|(database, table)| tidb_infoschema::CatalogTableKey::new(database, table))
+            .collect();
+        self
+    }
+
+    /// Retain Go's original/parameterized SQL identity alongside PREPARE input.
+    #[must_use]
+    pub fn with_sql(mut self, sql: &str) -> Self {
+        self.stmt.set_sql(sql);
+        self
+    }
+
+    /// Go DEALLOCATE/COM_STMT_CLOSE deletes the current environment's key,
+    /// including every parameter-type variant, unless the session retains it.
+    pub fn discard_cached_plan(
+        &self,
+        cache: &SessionPlanCache,
+        catalog: &SessionExtendedInfoSchema,
+        environment: &PreparedPlanCacheEnvironment,
+    ) {
+        self.stmt.discard_cached_plan(cache, catalog, environment);
+    }
+
+    /// The immutable statement retained at PREPARE time.
+    #[must_use]
+    pub const fn statement(&self) -> &tidb_ast::Stmt {
+        &self.stmt.statement
+    }
+
+    /// Go `PlanCacheStmt.StmtDB`.
+    #[must_use]
+    pub fn current_database(&self) -> &str {
+        &self.stmt.current_database
+    }
+
+    /// Qualified table names read by this plan, for transaction MDL tracking.
+    #[must_use]
+    pub fn table_names(&self) -> &[(String, String)] {
+        &self.table_names
+    }
+
+    /// Whether the prepared statement contains a sequence builtin whose name
+    /// must be validated again when the physical executor is opened.
+    #[must_use]
+    pub const fn contains_sequence_functions(&self) -> bool {
+        self.contains_sequence_functions
+    }
+
+    /// On the first execution for a schema and parameter-type key, runs the
+    /// shared optimizer with the real parameter values and retains its entire
+    /// physical tree. A hit recursively rebuilds every parameter-dependent
+    /// range in place before extracting its lowering receipt.
+    #[must_use]
+    pub fn bind(
+        self: &Arc<Self>,
+        hooks: &dyn crate::optimize::PlanningHooks,
+        cache: &SessionPlanCache,
+        values: &[Datum],
+        catalog: &SessionExtendedInfoSchema,
+        current_database: &str,
+        ctx: &StmtContext,
+        environment: &PreparedPlanCacheEnvironment,
+    ) -> Option<PreparedSelectExecution> {
+        self.bind_for_statement(
+            hooks,
+            cache,
+            values,
+            catalog,
+            current_database,
+            ctx,
+            &ctx.staged_writes().dirty_table_ids(),
+            environment,
+            &self.stmt.statement,
+        )
+        .ok()
+        .flatten()
+    }
+
+    /// Generates and retains a plan from the statement after a matched SQL
+    /// binding has replaced its hints. The binding SQL itself belongs to
+    /// `environment`, mirroring Go's prepared-plan cache key.
+    ///
+    /// # Errors
+    /// The optimizer's error on a miss (Go `generateNewPlan`).
+    pub fn bind_for_statement(
+        self: &Arc<Self>,
+        hooks: &dyn crate::optimize::PlanningHooks,
+        cache: &SessionPlanCache,
+        values: &[Datum],
+        catalog: &SessionExtendedInfoSchema,
+        current_database: &str,
+        ctx: &StmtContext,
+        dirty_ids: &[i64],
+        environment: &PreparedPlanCacheEnvironment,
+        statement: &tidb_ast::Stmt,
+    ) -> Result<Option<PreparedSelectExecution>, DriverError> {
+        self.bind_inner(
+            hooks,
+            cache,
+            values,
+            catalog,
+            current_database,
+            Some(ctx),
+            dirty_ids,
+            environment,
+            statement,
+        )
+    }
+
+    /// Rebuilds an existing cache entry without constructing a planner
+    /// statement context. A miss returns `None`; the caller can then build
+    /// the context and call [`Self::bind`] to enumerate and retain a plan.
+    #[must_use]
+    pub fn bind_cached(
+        self: &Arc<Self>,
+        hooks: &dyn crate::optimize::PlanningHooks,
+        cache: &SessionPlanCache,
+        values: &[Datum],
+        catalog: &SessionExtendedInfoSchema,
+        current_database: &str,
+        dirty_ids: &[i64],
+        environment: &PreparedPlanCacheEnvironment,
+    ) -> Option<PreparedSelectExecution> {
+        self.bind_cached_for_statement(
+            hooks,
+            cache,
+            values,
+            catalog,
+            current_database,
+            dirty_ids,
+            environment,
+            &self.stmt.statement,
+        )
+    }
+
+    /// Rebuilds an entry keyed by the currently matched binding and effective
+    /// statement, without allocating a planner context on a hit.
+    #[must_use]
+    pub fn bind_cached_for_statement(
+        self: &Arc<Self>,
+        hooks: &dyn crate::optimize::PlanningHooks,
+        cache: &SessionPlanCache,
+        values: &[Datum],
+        catalog: &SessionExtendedInfoSchema,
+        current_database: &str,
+        dirty_ids: &[i64],
+        environment: &PreparedPlanCacheEnvironment,
+        statement: &tidb_ast::Stmt,
+    ) -> Option<PreparedSelectExecution> {
+        self.bind_inner(
+            hooks,
+            cache,
+            values,
+            catalog,
+            current_database,
+            None,
+            dirty_ids,
+            environment,
+            statement,
+        )
+        .ok()
+        .flatten()
+    }
+
+    fn bind_inner(
+        self: &Arc<Self>,
+        hooks: &dyn crate::optimize::PlanningHooks,
+        cache: &SessionPlanCache,
+        values: &[Datum],
+        catalog: &SessionExtendedInfoSchema,
+        current_database: &str,
+        ctx: Option<&StmtContext>,
+        dirty_ids: &[i64],
+        environment: &PreparedPlanCacheEnvironment,
+        statement: &tidb_ast::Stmt,
+    ) -> Result<Option<PreparedSelectExecution>, DriverError> {
+        // Go keys the entry by `PlanCacheStmt.StmtDB`, the PREPARE-time
+        // database its table names were pinned to, so a `USE` between
+        // EXECUTEs keeps it; a non-prepared key names the current database.
+        if !matches!(statement, tidb_ast::Stmt::Query(_)) {
+            return Ok(None);
+        }
+        let parameter_count = self.stmt.parameter_count;
+        let Some(found) = self.stmt.get_plan_from_plan_cache(
+            cache,
+            values,
+            catalog,
+            ctx,
+            dirty_ids,
+            environment,
+            statement,
+            |bound, ctx| {
+                // Go `GetPlanFromPlanCache` enables the cache before
+                // `generateNewPlan` optimizes, so the LIKE fallback's
+                // `SetSkipPlanCache` over a parameter warns on this statement.
+                ctx.start_prepared_range_tracking();
+                let tidb_ast::Stmt::Query(query) = bound else {
+                    return Ok(None);
+                };
+                cached_query_plan(
+                    hooks,
+                    &query.into_inner(),
+                    catalog,
+                    current_database,
+                    ctx,
+                    environment.plan_cacheability(parameter_count),
+                )
+            },
+        )?
+        else {
+            return Ok(None);
+        };
+        Ok(Some(PreparedSelectExecution {
+            parameters: found.parameters,
+            plan: Arc::clone(self),
+            schema_version: found.schema_version,
+            cache_hit: found.cache_hit,
+            cached_plan: found.cached_plan,
+            generation: found.generation,
+            planning_warnings: std::sync::Mutex::new(found.planning_warnings),
+        }))
+    }
+}
+
+impl PreparedSelectExecution {
+    /// Values owned by this execution, independent of later cache rebuilds.
+    #[must_use]
+    pub fn parameters(&self) -> Arc<[Datum]> {
+        Arc::clone(&self.parameters)
+    }
+    /// Takes warnings produced by this execution's cache-miss planning once.
+    pub fn take_planning_warnings(&self) -> Vec<tidb_context::SqlWarn> {
+        std::mem::take(
+            &mut *self
+                .planning_warnings
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+        )
+    }
+
+    /// The immutable plan whose schema identity gates this execution.
+    #[must_use]
+    pub fn plan(&self) -> &PreparedSelectPlan {
+        &self.plan
+    }
+
+    /// Whether this execute rebuilt an existing physical plan rather than
+    /// generating the first plan for its schema and parameter-type key.
+    #[must_use]
+    pub const fn cache_hit(&self) -> bool {
+        self.cache_hit
+    }
+
+    /// The schema identity used when the retained physical tree was built.
+    /// The ordinary statement executor compares it with the catalog while
+    /// holding the catalog guard and plans normally if a DDL moved it.
+    #[must_use]
+    pub const fn schema_version(&self) -> u64 {
+        self.schema_version
+    }
+
+    /// Runs a callback while the cache-owned SELECT root is pinned to the
+    /// generation rebuilt for this execution. The callback is the ordinary
+    /// session statement funnel; this type does not own another executor.
+    /// Go `PlanCacheStmt.NormalizedPlan` / `PlanDigest` of the cached plan.
+    #[must_use]
+    pub fn plan_digest_cell(&self) -> Arc<std::sync::OnceLock<(String, String)>> {
+        self.cached_plan
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .digest()
+    }
+
+    pub fn with_plan<R>(
+        &self,
+        callback: impl FnOnce(
+            &tidb_ast::Stmt,
+            &mut tidb_planner_core_operator_physicalop::PhysicalPlan,
+        ) -> R,
+    ) -> Option<R> {
+        let mut cached = self.cached_plan.lock().ok()?;
+        let (statement, physical) = cached.execution_mut(self.generation)?;
+        Some(callback(statement, physical))
+    }
+}
+
+/// Builds the complete shared-planner tree retained by a prepared SELECT.
+#[must_use]
+pub fn build_prepared_select_plan(
+    stmt: &tidb_ast::Stmt,
+    parameter_count: usize,
+    _catalog: &SessionExtendedInfoSchema,
+    current_database: &str,
+    _ctx: &StmtContext,
+) -> Option<PreparedSelectPlan> {
+    let tidb_ast::Stmt::Query(query) = stmt else {
+        return None;
+    };
+    if parsed_parameter_count(stmt) != parameter_count {
+        return None;
+    }
+    let mut table_names = Vec::new();
+    collect_prepared_table_names(query, current_database, &mut table_names);
+    Some(PreparedSelectPlan {
+        stmt: crate::plan_cache_utils::generate_plan_cache_stmt_with_ast(
+            stmt,
+            parameter_count,
+            current_database,
+            &table_names,
+        ),
+        table_names,
+        contains_sequence_functions: statement_contains_sequence_functions(stmt),
+    })
+}
+
+/// The retained definition and cache key for a prepared DML statement.
+///
+/// Go caches an ordinary `Insert`, `Update`, or `Delete` plan and builds
+/// the same executor for a cache hit and a miss. Rust keeps the same lifecycle
+/// contract here: this object owns only immutable PREPARE input and cache-key
+/// state. The bound statement is executed by the ordinary session DML funnel;
+/// there is no cache-only write executor.
+#[derive(Debug)]
+pub struct PreparedDmlPlan {
+    /// Go `PlanCacheStmt`.
+    stmt: crate::plan_cache::PlanCacheStmt,
+}
+
+/// One bound execution rebuilt from a retained prepared DML definition.
+#[derive(Debug)]
+pub struct PreparedDmlExecution {
+    parameters: Arc<[Datum]>,
+    planning_warnings: std::sync::Mutex<Vec<tidb_context::SqlWarn>>,
+    plan: Arc<PreparedDmlPlan>,
+    cached_plan: Arc<std::sync::Mutex<CachedPlan>>,
+    generation: u64,
+    cache_hit: bool,
+}
+
+impl PreparedDmlPlan {
+    /// Go's non-prepared plan cache collects its statistics tables from the
+    /// parameterized statement, where an unqualified table name resolves to
+    /// no table: only a name written with its database invalidates the
+    /// entry on fresh statistics.
+    #[must_use]
+    pub fn with_non_prepared_stats_tables(mut self) -> Self {
+        self.stmt.stats_table_keys = prepared_dml_table_names(&self.stmt.statement, "")
+            .iter()
+            .map(|(database, table)| tidb_infoschema::CatalogTableKey::new(database, table))
+            .collect();
+        self
+    }
+
+    /// Retain Go's original/parameterized SQL identity alongside PREPARE input.
+    #[must_use]
+    pub fn with_sql(mut self, sql: &str) -> Self {
+        self.stmt.set_sql(sql);
+        self
+    }
+
+    /// Go DEALLOCATE/COM_STMT_CLOSE deletes the current environment's key,
+    /// including every parameter-type variant, unless the session retains it.
+    pub fn discard_cached_plan(
+        &self,
+        cache: &SessionPlanCache,
+        catalog: &SessionExtendedInfoSchema,
+        environment: &PreparedPlanCacheEnvironment,
+    ) {
+        self.stmt.discard_cached_plan(cache, catalog, environment);
+    }
+
+    /// The immutable statement retained at PREPARE time.
+    #[must_use]
+    pub const fn statement(&self) -> &Stmt {
+        &self.stmt.statement
+    }
+
+    /// Binds one EXECUTE's values and checks Go's schema, session, and
+    /// parameter-type cache key. A different key is a cache miss, not a
+    /// reason to choose a different executor implementation.
+    #[must_use]
+    pub fn bind(
+        self: &Arc<Self>,
+        hooks: &dyn crate::optimize::PlanningHooks,
+        cache: &SessionPlanCache,
+        params: &[Datum],
+        catalog: &SessionExtendedInfoSchema,
+        current_database: &str,
+        environment: &PreparedPlanCacheEnvironment,
+    ) -> Option<PreparedDmlExecution> {
+        let ctx = StmtContext::for_query();
+        self.bind_for_statement(
+            hooks,
+            cache,
+            params,
+            catalog,
+            current_database,
+            &ctx,
+            &[],
+            environment,
+            &self.stmt.statement,
+        )
+        .ok()
+        .flatten()
+    }
+
+    /// Binds the statement after the SQL binding selected for this EXECUTE
+    /// has replaced its hints. The matching `BindSQL` is carried by
+    /// `environment`, so changing a binding cannot hit an older entry.
+    ///
+    /// # Errors
+    /// The optimizer's error on a miss (Go `generateNewPlan`).
+    pub fn bind_for_statement(
+        self: &Arc<Self>,
+        hooks: &dyn crate::optimize::PlanningHooks,
+        cache: &SessionPlanCache,
+        params: &[Datum],
+        catalog: &SessionExtendedInfoSchema,
+        current_database: &str,
+        ctx: &StmtContext,
+        dirty_ids: &[i64],
+        environment: &PreparedPlanCacheEnvironment,
+        statement: &Stmt,
+    ) -> Result<Option<PreparedDmlExecution>, DriverError> {
+        self.bind_inner(
+            hooks,
+            cache,
+            params,
+            catalog,
+            current_database,
+            Some(ctx),
+            dirty_ids,
+            environment,
+            statement,
+        )
+    }
+
+    /// Rebuilds an existing physical DML root without constructing a planner
+    /// statement context. A miss leaves physical enumeration to
+    /// [`Self::bind_for_statement`].
+    #[must_use]
+    pub fn bind_cached_for_statement(
+        self: &Arc<Self>,
+        hooks: &dyn crate::optimize::PlanningHooks,
+        cache: &SessionPlanCache,
+        params: &[Datum],
+        catalog: &SessionExtendedInfoSchema,
+        current_database: &str,
+        dirty_ids: &[i64],
+        environment: &PreparedPlanCacheEnvironment,
+        statement: &Stmt,
+    ) -> Option<PreparedDmlExecution> {
+        self.bind_inner(
+            hooks,
+            cache,
+            params,
+            catalog,
+            current_database,
+            None,
+            dirty_ids,
+            environment,
+            statement,
+        )
+        .ok()
+        .flatten()
+    }
+
+    fn bind_inner(
+        self: &Arc<Self>,
+        hooks: &dyn crate::optimize::PlanningHooks,
+        cache: &SessionPlanCache,
+        params: &[Datum],
+        catalog: &SessionExtendedInfoSchema,
+        current_database: &str,
+        ctx: Option<&StmtContext>,
+        dirty_ids: &[i64],
+        environment: &PreparedPlanCacheEnvironment,
+        statement: &Stmt,
+    ) -> Result<Option<PreparedDmlExecution>, DriverError> {
+        let parameter_count = self.stmt.parameter_count;
+        let Some(found) = self.stmt.get_plan_from_plan_cache(
+            cache,
+            params,
+            catalog,
+            ctx,
+            dirty_ids,
+            environment,
+            statement,
+            |bound, ctx| {
+                let planned = cached_dml_physical_plan(
+                    hooks,
+                    &bound,
+                    catalog,
+                    current_database,
+                    ctx,
+                    environment.plan_cacheability(parameter_count),
+                )?;
+                // Keep the marker-bearing statement beside the root just as
+                // Go keeps PreparedAst and PlanCacheValue.Plan.
+                Ok(planned
+                    .map(|(physical, cacheable)| (CachedPlan::new(bound, physical), cacheable)))
+            },
+        )?
+        else {
+            return Ok(None);
+        };
+        Ok(Some(PreparedDmlExecution {
+            parameters: found.parameters,
+            planning_warnings: std::sync::Mutex::new(found.planning_warnings),
+            plan: Arc::clone(self),
+            cached_plan: found.cached_plan,
+            generation: found.generation,
+            cache_hit: found.cache_hit,
+        }))
+    }
+}
+
+impl PreparedDmlExecution {
+    /// Values owned by this execution, independent of later cache rebuilds.
+    #[must_use]
+    pub fn parameters(&self) -> Arc<[Datum]> {
+        Arc::clone(&self.parameters)
+    }
+    /// Takes warnings produced by this execution's cache-miss planning once.
+    pub fn take_planning_warnings(&self) -> Vec<tidb_context::SqlWarn> {
+        std::mem::take(
+            &mut *self
+                .planning_warnings
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+        )
+    }
+
+    /// The immutable PREPARE-time definition used for schema ownership.
+    #[must_use]
+    pub fn plan(&self) -> &PreparedDmlPlan {
+        &self.plan
+    }
+
+    /// Whether this execution's full Go cache key matches the last successful
+    /// execution.
+    #[must_use]
+    pub const fn cache_hit(&self) -> bool {
+        self.cache_hit
+    }
+
+    /// Runs a callback while the cache-owned DML root is pinned to the
+    /// generation rebuilt for this EXECUTE. The callback is the ordinary
+    /// session statement funnel; this type does not own another executor.
+    pub fn with_plan<R>(
+        &self,
+        callback: impl FnOnce(&Stmt, &mut tidb_planner_core_operator_physicalop::PhysicalPlan) -> R,
+    ) -> Option<R> {
+        let mut cached = self.cached_plan.lock().ok()?;
+        let (statement, physical) = cached.execution_mut(self.generation)?;
+        Some(callback(statement, physical))
+    }
+}
+
+/// Builds the retained definition for an AST-cacheable prepared write.
+///
+/// Shape-specific physical decisions deliberately do not happen here. Go
+/// builds a normal DML root and uses the common executor builder; the session
+/// cacheability checker owns admission before this function is called.
+pub fn build_prepared_dml_plan(
+    statement: &Stmt,
+    parameter_count: usize,
+    _catalog: &SessionExtendedInfoSchema,
+    current_db: &str,
+) -> Result<Option<PreparedDmlPlan>, DriverError> {
+    if parsed_parameter_count(statement) != parameter_count
+        || !matches!(statement, Stmt::Dml(dml) if prepared_dml_kind(dml))
+    {
+        return Ok(None);
+    }
+    let table_names = prepared_dml_table_names(statement, current_db);
+    Ok(Some(PreparedDmlPlan {
+        stmt: crate::plan_cache_utils::generate_plan_cache_stmt_with_ast(
+            statement,
+            parameter_count,
+            current_db,
+            &table_names,
+        ),
+    }))
 }
