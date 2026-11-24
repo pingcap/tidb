@@ -688,7 +688,7 @@ func TestJobNeedGC(t *testing.T) {
 	require.True(t, ddl.JobNeedGC(job))
 }
 
-func TestStepCheckpointPanicAndErrEntryTooLarge(t *testing.T) {
+func TestStepSavepointPanicAndErrEntryTooLarge(t *testing.T) {
 	t.Run("panic resets LastSchemaVersion and preserves error count on retry", func(t *testing.T) {
 		store := testkit.CreateMockStore(t)
 		tk := testkit.NewTestKit(t, store)
@@ -801,6 +801,57 @@ func TestStepCheckpointPanicAndErrEntryTooLarge(t *testing.T) {
 		require.Zero(t, historyJob.LastSchemaVersion)
 		require.Positive(t, historyJob.BinlogInfo.FinishedTS)
 		tk.MustQuery("SELECT COUNT(*) FROM t3").Check(testkit.Rows("0"))
+	})
+
+	t.Run("ErrEntryTooLarge after restored entry baseline preserves RawArgs", func(t *testing.T) {
+		store := testkit.CreateMockStore(t)
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("USE test")
+		tk.MustExec("CREATE TABLE t4 (a INT)")
+
+		limit := vardef.GetDDLErrorCountLimit()
+		tk.MustExec("SET GLOBAL tidb_ddl_error_count_limit = 2")
+		defer tk.MustExec(fmt.Sprintf("SET GLOBAL tidb_ddl_error_count_limit = %d", limit))
+
+		var (
+			jobID        atomic.Int64
+			entryRawArgs atomic.Value
+			injectedOnce atomic.Bool
+		)
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
+			if job.Type != model.ActionAddColumn {
+				return
+			}
+			jobID.Store(job.ID)
+			if len(job.RawArgs) > 0 && entryRawArgs.Load() == nil {
+				entryRawArgs.Store(append([]byte(nil), job.RawArgs...))
+			}
+		})
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterRollbackStepForStepSavepoint", func(job *model.Job) {
+			if job.ID == jobID.Load() && !injectedOnce.Swap(true) {
+				require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockErrEntrySizeTooLarge", "1*return(true)"))
+			}
+		})
+		t.Cleanup(func() {
+			_ = failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockErrEntrySizeTooLarge")
+		})
+		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockPanicInRunDDLJob", `1*panic("injected step panic")`)
+
+		err := tk.ExecToErr("ALTER TABLE t4 ADD COLUMN b INT")
+		require.Error(t, err)
+		require.True(t, injectedOnce.Load())
+
+		historyJob, getErr := ddl.GetHistoryJobByID(tk.Session(), jobID.Load())
+		require.NoError(t, getErr)
+		require.NotNil(t, historyJob)
+		require.Equal(t, model.JobStateCancelled, historyJob.State)
+		require.True(t, kv.ErrEntryTooLarge.Equal(historyJob.Error), "%v", historyJob.Error)
+		rawArgs, ok := entryRawArgs.Load().([]byte)
+		require.True(t, ok)
+		require.NotEmpty(t, rawArgs)
+		require.NotEqual(t, "null", string(historyJob.RawArgs))
+		require.Equal(t, string(rawArgs), string(historyJob.RawArgs))
+		require.Positive(t, historyJob.BinlogInfo.FinishedTS)
 	})
 }
 

@@ -45,10 +45,10 @@ func newTestDDLCtx(ctx context.Context, store kv.Storage, ownerMgr owner.Manager
 	return d
 }
 
-func TestStepCheckpointSameTxnAndFallback(t *testing.T) {
+func TestStepSavepointSameTxnAndFallback(t *testing.T) {
 	ctx := context.Background()
 
-	t.Run("same txn rollback on empty memdb checkpoint handles same-length overwrite", func(t *testing.T) {
+	t.Run("same txn rollback on empty memdb savepoint handles same-length overwrite", func(t *testing.T) {
 		store, err := mockstore.NewMockStore()
 		require.NoError(t, err)
 		t.Cleanup(func() { require.NoError(t, store.Close()) })
@@ -77,7 +77,7 @@ func TestStepCheckpointSameTxnAndFallback(t *testing.T) {
 		}
 		txnCtx.InsertTTLRowsCount = 3
 
-		cp, err := captureStepCheckpoint(w.sess, txn, jobW)
+		sp, err := captureStepSavepoint(w.sess, txn, jobW)
 		require.NoError(t, err)
 		jobCtx := &jobContext{ctx: ctx, logger: zap.NewNop(), metaMut: meta.NewMutator(txn)}
 
@@ -88,11 +88,11 @@ func TestStepCheckpointSameTxnAndFallback(t *testing.T) {
 		txnCtx.TableDeltaMap[2] = variable.TableDelta{Delta: 9, Count: 11}
 		txnCtx.InsertTTLRowsCount = 99
 
-		curTxn, ok := cp.canRollbackInSameTxn()
+		curTxn, ok := sp.canRollbackInSameTxn()
 		require.True(t, ok)
 		require.Equal(t, origStartTS, curTxn.StartTS())
 
-		require.NoError(t, cp.discardWrites(w, jobCtx, jobW))
+		require.NoError(t, sp.discardWrites(w, jobCtx, jobW))
 
 		afterTxn, err := w.sess.Txn()
 		require.NoError(t, err)
@@ -105,7 +105,7 @@ func TestStepCheckpointSameTxnAndFallback(t *testing.T) {
 		require.NotNil(t, jobCtx.metaMut)
 	})
 
-	t.Run("dirty pre-step memdb falls back to reopen instead of checkpointing", func(t *testing.T) {
+	t.Run("dirty pre-step memdb falls back to reopen instead of in-place rollback", func(t *testing.T) {
 		store, err := mockstore.NewMockStore()
 		require.NoError(t, err)
 		t.Cleanup(func() { require.NoError(t, store.Close()) })
@@ -137,12 +137,12 @@ func TestStepCheckpointSameTxnAndFallback(t *testing.T) {
 		origStartTS := txn.StartTS()
 		require.NoError(t, txn.Set(kv.Key("base-key"), []byte("pre-valu")))
 
-		cp, err := captureStepCheckpoint(w.sess, txn, jobW)
+		sp, err := captureStepSavepoint(w.sess, txn, jobW)
 		require.NoError(t, err)
-		_, canSameTxn := cp.canRollbackInSameTxn()
+		_, canSameTxn := sp.canRollbackInSameTxn()
 		require.False(t, canSameTxn)
 
-		// Same-length overwrite inside step would corrupt MemDB checkpoint if allowed.
+		// Same-length overwrite inside step would corrupt MemDB rollback if allowed.
 		require.NoError(t, txn.Set(kv.Key("base-key"), []byte("new-valu")))
 		w.sess.StmtCommit(ctx)
 
@@ -151,7 +151,7 @@ func TestStepCheckpointSameTxnAndFallback(t *testing.T) {
 			Return(entryBytes, nil)
 
 		jobCtx := &jobContext{ctx: ctx, logger: zap.NewNop(), sysTblMgr: sysTblMgr, metaMut: meta.NewMutator(txn)}
-		require.NoError(t, cp.discardWrites(w, jobCtx, jobW))
+		require.NoError(t, sp.discardWrites(w, jobCtx, jobW))
 
 		afterTxn, err := w.sess.Txn()
 		require.NoError(t, err)
@@ -185,7 +185,7 @@ func TestStepCheckpointSameTxnAndFallback(t *testing.T) {
 
 		txn, err := w.prepareTxn(job)
 		require.NoError(t, err)
-		cp, err := captureStepCheckpoint(w.sess, txn, jobW)
+		sp, err := captureStepSavepoint(w.sess, txn, jobW)
 		require.NoError(t, err)
 		jobCtx := &jobContext{
 			ctx:       ctx,
@@ -199,11 +199,11 @@ func TestStepCheckpointSameTxnAndFallback(t *testing.T) {
 		stepTxn, err := w.prepareTxn(job)
 		require.NoError(t, err)
 		stepStartTS := stepTxn.StartTS()
-		_, ok := cp.canRollbackInSameTxn()
+		_, ok := sp.canRollbackInSameTxn()
 		require.False(t, ok)
 
 		sysTblMgr.EXPECT().GetJobBytesByIDWithSe(ctx, w.sess, job.ID).Return(rawBytes, nil)
-		require.NoError(t, cp.discardWrites(w, jobCtx, jobW))
+		require.NoError(t, sp.discardWrites(w, jobCtx, jobW))
 		reopenedTxn, err := w.sess.Txn()
 		require.NoError(t, err)
 		require.NotEqual(t, stepStartTS, reopenedTxn.StartTS())
@@ -211,12 +211,12 @@ func TestStepCheckpointSameTxnAndFallback(t *testing.T) {
 
 		// Concurrent job metadata modification must fail closed before overwrite.
 		sysTblMgr.EXPECT().GetJobBytesByIDWithSe(ctx, w.sess, job.ID).Return([]byte("concurrent-update"), nil)
-		err = cp.discardWrites(w, jobCtx, jobW)
+		err = sp.discardWrites(w, jobCtx, jobW)
 		require.ErrorContains(t, err, "job meta changed by others")
 	})
 }
 
-func TestStepCheckpointRestoreJobPreservesDiagnostics(t *testing.T) {
+func TestStepSavepointRestoreJobPreservesDiagnostics(t *testing.T) {
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, store.Close()) })
@@ -245,12 +245,12 @@ func TestStepCheckpointRestoreJobPreservesDiagnostics(t *testing.T) {
 	_, err = entryJob.Encode(true)
 	require.NoError(t, err)
 
-	// Capture without pre-existing jobW.Bytes so captureStepCheckpoint exercises
+	// Capture without pre-existing jobW.Bytes so captureStepSavepoint exercises
 	// Encode(false) while keeping RawArgs intact.
 	jobW := model.NewJobW(entryJob, nil)
-	cp, err := captureStepCheckpoint(se, txn, jobW)
+	sp, err := captureStepSavepoint(se, txn, jobW)
 	require.NoError(t, err)
-	require.False(t, cp.hasDurableBytes)
+	require.False(t, sp.hasDurableBytes)
 
 	job := jobW.Job
 	job.FillArgs(&model.ModifyTableEngineAttributeArgs{EngineAttribute: `{"storage_class":"STANDARD"}`})
@@ -264,7 +264,7 @@ func TestStepCheckpointRestoreJobPreservesDiagnostics(t *testing.T) {
 	job.LastSchemaVersion = 99
 	job.ReorgMeta.UseCloudStorage = true
 
-	restoredJob, err := cp.restoreJob(jobCtx, job, func(restored, _ *model.Job) {
+	restoredJob, err := sp.restoreJob(jobCtx, job, func(restored, _ *model.Job) {
 		restored.Warning = toTError(dbterror.ErrCancelledDDLJob)
 	})
 	require.NoError(t, err)
@@ -290,13 +290,13 @@ func TestStepCheckpointRestoreJobPreservesDiagnostics(t *testing.T) {
 }
 
 func TestResolveStepOutcomeContracts(t *testing.T) {
-	t.Run("panic on unmigrated action uses stepCheckpoint", func(t *testing.T) {
+	t.Run("panic on unmigrated action uses stepSavepoint", func(t *testing.T) {
 		res := runStepResult{ver: 15, updateRawArgs: true, panicked: true}
 		job := &model.Job{Type: model.ActionCreateTable, State: model.JobStateCancelling}
 		outcome, ok := resolveStepOutcome(job, &jobContext{}, res)
 		require.True(t, ok)
-		require.Equal(t, stepWritesDiscard, outcome.writes)
-		require.Equal(t, stepJobEntryBaseline, outcome.baseline)
+		require.True(t, outcome.discardWrites)
+		require.True(t, outcome.restoreEntryJob)
 		require.Equal(t, stepFinishUpdateJob, outcome.finish)
 		require.Zero(t, outcome.schemaVer)
 		require.False(t, outcome.updateRawArgs)
@@ -310,12 +310,7 @@ func TestResolveStepOutcomeContracts(t *testing.T) {
 	t.Run("explicit stepOutcome upgrades cancelled discard to finalize", func(t *testing.T) {
 		job := &model.Job{Type: model.ActionMultiSchemaChange, State: model.JobStateCancelled}
 		jobCtx := &jobContext{
-			stepOutcome: &stepOutcome{
-				writes:   stepWritesDiscard,
-				baseline: stepJobEntryBaseline,
-				finish:   stepFinishUpdateJob,
-				err:      errors.New("boom"),
-			},
+			stepOutcome: discardStepOutcome(errors.New("boom"), nil),
 		}
 		outcome, ok := resolveStepOutcome(job, jobCtx, runStepResult{})
 		require.True(t, ok)
@@ -326,16 +321,15 @@ func TestResolveStepOutcomeContracts(t *testing.T) {
 		job := &model.Job{Type: model.ActionMultiSchemaChange, State: model.JobStatePaused}
 		jobCtx := &jobContext{
 			stepOutcome: &stepOutcome{
-				writes:   stepWritesDiscard,
-				baseline: stepJobCurrent,
-				finish:   stepFinishUpdateJob,
-				err:      dbterror.ErrPausedDDLJob,
+				discardWrites: true,
+				finish:        stepFinishUpdateJob,
+				err:           dbterror.ErrPausedDDLJob,
 			},
 		}
 		outcome, ok := resolveStepOutcome(job, jobCtx, runStepResult{err: dbterror.ErrPausedDDLJob})
 		require.True(t, ok)
-		require.Equal(t, stepWritesDiscard, outcome.writes)
-		require.Equal(t, stepJobCurrent, outcome.baseline)
+		require.True(t, outcome.discardWrites)
+		require.False(t, outcome.restoreEntryJob)
 		require.Equal(t, stepFinishUpdateJob, outcome.finish)
 		require.True(t, dbterror.ErrPausedDDLJob.Equal(outcome.err))
 	})
@@ -354,24 +348,24 @@ func TestResolveStepOutcomeContracts(t *testing.T) {
 			job.State = model.JobStateRunning
 			out, ok := resolveStepOutcome(job, &jobContext{}, runStepResult{ver: 8, updateRawArgs: true})
 			require.True(t, ok)
-			require.Equal(t, stepWritesKeep, out.writes)
-			require.Equal(t, stepJobCurrent, out.baseline)
+			require.False(t, out.discardWrites)
+			require.False(t, out.restoreEntryJob)
 			require.Equal(t, stepFinishUpdateJob, out.finish)
 			require.Equal(t, int64(8), out.schemaVer)
 			require.True(t, out.updateRawArgs)
 
 			out, ok = resolveStepOutcome(job, &jobContext{}, runStepResult{ver: 8, err: errors.New("fail")})
 			require.True(t, ok)
-			require.Equal(t, stepWritesDiscard, out.writes)
-			require.Equal(t, stepJobEntryBaseline, out.baseline)
+			require.True(t, out.discardWrites)
+			require.True(t, out.restoreEntryJob)
 			require.Equal(t, stepFinishUpdateJob, out.finish)
 			require.Zero(t, out.schemaVer)
 
 			job.State = model.JobStateCancelled
 			out, ok = resolveStepOutcome(job, &jobContext{}, runStepResult{})
 			require.True(t, ok)
-			require.Equal(t, stepWritesDiscard, out.writes)
-			require.Equal(t, stepJobEntryBaseline, out.baseline)
+			require.True(t, out.discardWrites)
+			require.True(t, out.restoreEntryJob)
 			require.Equal(t, stepFinishFinalizeJob, out.finish)
 		}
 	})
@@ -459,5 +453,62 @@ func TestApplyStepOutcomeGuards(t *testing.T) {
 		curTxn, err := sessCtx.Txn(false)
 		require.NoError(t, err)
 		require.False(t, curTxn != nil && curTxn.Valid())
+	})
+
+	t.Run("restored baseline preserves RawArgs even if outcome updateRawArgs is true", func(t *testing.T) {
+		ctx := context.Background()
+		ownerID := "rawargs-owner"
+		ownerMgr := owner.NewMockManager(ctx, ownerID, store, ddlutil.DDLOwnerKey)
+		owner.MockGlobalStateEntry.OwnerKey(store.UUID(), ddlutil.DDLOwnerKey).SetOwner(ownerID)
+		t.Cleanup(func() {
+			owner.MockGlobalStateEntry.OwnerKey(store.UUID(), ddlutil.DDLOwnerKey).UnsetOwner(ownerID)
+		})
+
+		sessCtx := mock.NewContext()
+		sessCtx.Store = store
+		if sessCtx.GetSessionVars().TxnCtx == nil {
+			sessCtx.GetSessionVars().TxnCtx = &variable.TransactionContext{}
+		}
+		w := newWorker(ctx, generalWorker, nil, nil, newTestDDLCtx(ctx, store, ownerMgr))
+		w.sess = sess.NewSession(sessCtx)
+		t.Cleanup(w.sess.Rollback)
+
+		entryJob := &model.Job{
+			ID:      4,
+			Version: model.JobVersion2,
+			Type:    model.ActionModifyEngineAttribute,
+			State:   model.JobStateRunning,
+		}
+		entryJob.FillArgs(&model.ModifyTableEngineAttributeArgs{EngineAttribute: `{"storage_class":"IA"}`})
+		entryBytes, err := entryJob.Encode(true)
+		require.NoError(t, err)
+		origRawArgs := append([]byte(nil), entryJob.RawArgs...)
+
+		txn, err := w.prepareTxn(entryJob)
+		require.NoError(t, err)
+		jobW := model.NewJobW(entryJob, entryBytes)
+		sp, err := captureStepSavepoint(w.sess, txn, jobW)
+		require.NoError(t, err)
+
+		// Mutate post-step job args as if the step overwrote them before failing.
+		jobW.Job.FillArgs(&model.ModifyTableEngineAttributeArgs{EngineAttribute: `{"storage_class":"STANDARD"}`})
+		jobCtx := &jobContext{ctx: ctx, logger: zap.NewNop(), metaMut: meta.NewMutator(txn)}
+
+		_, _ = w.applyStepOutcome(jobCtx, jobW, sp, stepOutcome{
+			discardWrites:   true,
+			restoreEntryJob: true,
+			finish:          stepFinishUpdateJob,
+			updateRawArgs:   true,
+			err:             errors.New("step failed"),
+		})
+		require.NotNil(t, jobW.Job)
+		require.Equal(t, string(origRawArgs), string(jobW.Job.RawArgs))
+		_, err = jobW.Job.Encode(true)
+		require.NoError(t, err)
+		require.Equal(t, string(origRawArgs), string(jobW.Job.RawArgs))
+
+		restoredArgs, err := model.GetModifyTableEngineAttributeArgs(jobW.Job)
+		require.NoError(t, err)
+		require.Equal(t, `{"storage_class":"IA"}`, restoredArgs.EngineAttribute)
 	})
 }

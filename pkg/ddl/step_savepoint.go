@@ -26,25 +26,8 @@ import (
 	"github.com/tikv/client-go/v2/tikv"
 )
 
-// stepWriteDisposition decides whether KV / MemDB / TxnCtx mutations produced
-// during runOneJobStep are kept or discarded.
-type stepWriteDisposition uint8
-
-const (
-	stepWritesKeep stepWriteDisposition = iota
-	stepWritesDiscard
-)
-
-// stepJobBaseline decides which job metadata state is persisted on exit.
-type stepJobBaseline uint8
-
-const (
-	stepJobCurrent stepJobBaseline = iota
-	stepJobEntryBaseline
-)
-
 // stepFinishAction decides how transitOneJobStep concludes after applying
-// write disposition and job baseline restoration.
+// write discard and job baseline restoration.
 type stepFinishAction uint8
 
 const (
@@ -53,17 +36,36 @@ const (
 	stepFinishAbandonRound
 )
 
-// stepOutcome explicitly separates the three orthogonal step exit decisions:
-// whether step KV writes survive, which job baseline/delta is persisted, and
-// whether the round updates the active job, archives it, or abandons the step.
+// stepOutcome describes how transitOneJobStep concludes a step:
+// whether to discard KV/MemDB/TxnCtx writes, whether to restore the entry job
+// baseline (plus an optional delta), and how to persist or finalize the job.
 type stepOutcome struct {
-	writes        stepWriteDisposition
-	baseline      stepJobBaseline
-	finish        stepFinishAction
-	schemaVer     int64
-	updateRawArgs bool
-	err           error
-	applyJobDelta func(restored, postStep *model.Job)
+	discardWrites   bool
+	restoreEntryJob bool
+	finish          stepFinishAction
+	schemaVer       int64
+	updateRawArgs   bool
+	err             error
+	applyJobDelta   func(restored, postStep *model.Job)
+}
+
+func keepStepOutcome(schemaVer int64, updateRawArgs bool, err error) *stepOutcome {
+	return &stepOutcome{
+		finish:        stepFinishUpdateJob,
+		schemaVer:     schemaVer,
+		updateRawArgs: updateRawArgs,
+		err:           err,
+	}
+}
+
+func discardStepOutcome(err error, applyDelta func(restored, postStep *model.Job)) *stepOutcome {
+	return &stepOutcome{
+		discardWrites:   true,
+		restoreEntryJob: true,
+		finish:          stepFinishUpdateJob,
+		err:             err,
+		applyJobDelta:   applyDelta,
+	}
 }
 
 type runStepResult struct {
@@ -73,10 +75,10 @@ type runStepResult struct {
 	err           error
 }
 
-// stepCheckpoint captures the outer worker transaction identity, MemDB
-// checkpoint, TransactionContext savepoint, and immutable entry job bytes at
-// the start of a DDL job step.
-type stepCheckpoint struct {
+// stepSavepoint captures the outer worker transaction identity, MemDB
+// rollback handle, TransactionContext savepoint, and immutable entry job bytes
+// at the start of a DDL job step.
+type stepSavepoint struct {
 	se              *sess.Session
 	origTxnCtx      *variable.TransactionContext
 	origTxnStartTS  uint64
@@ -86,7 +88,7 @@ type stepCheckpoint struct {
 	hasDurableBytes bool
 }
 
-func captureStepCheckpoint(se *sess.Session, txn kv.Transaction, jobW *model.JobW) (*stepCheckpoint, error) {
+func captureStepSavepoint(se *sess.Session, txn kv.Transaction, jobW *model.JobW) (*stepSavepoint, error) {
 	entryBytes := jobW.Bytes
 	hasDurableBytes := len(entryBytes) > 0
 	if !hasDurableBytes && jobW.Job != nil {
@@ -102,13 +104,13 @@ func captureStepCheckpoint(se *sess.Session, txn kv.Transaction, jobW *model.Job
 	var startTS uint64
 	if txn != nil && txn.Valid() {
 		startTS = txn.StartTS()
-		// MemDB.Update can overwrite pre-checkpoint same-length keys in place;
-		// only use a MemDB checkpoint when the transaction buffer starts empty.
+		// MemDB.Update can overwrite pre-savepoint same-length keys in place;
+		// only use in-place MemDB rollback when the transaction buffer starts empty.
 		if !txn.IsPipelined() && txn.Len() == 0 {
 			memCP = txn.GetMemDBCheckpoint()
 		}
 	}
-	return &stepCheckpoint{
+	return &stepSavepoint{
 		se:              se,
 		origTxnCtx:      origTxnCtx,
 		origTxnStartTS:  startTS,
@@ -119,19 +121,19 @@ func captureStepCheckpoint(se *sess.Session, txn kv.Transaction, jobW *model.Job
 	}, nil
 }
 
-func (cp *stepCheckpoint) canRollbackInSameTxn() (kv.Transaction, bool) {
-	if cp == nil || cp.memDBCheckpoint == nil || cp.origTxnCtx == nil || cp.origTxnStartTS == 0 {
+func (sp *stepSavepoint) canRollbackInSameTxn() (kv.Transaction, bool) {
+	if sp == nil || sp.memDBCheckpoint == nil || sp.origTxnCtx == nil || sp.origTxnStartTS == 0 {
 		return nil, false
 	}
-	curTxn, err := cp.se.Session().Txn(false)
+	curTxn, err := sp.se.Session().Txn(false)
 	if err != nil || curTxn == nil || !curTxn.Valid() || curTxn.IsPipelined() {
 		return nil, false
 	}
-	curTxnCtx := cp.se.GetSessionVars().TxnCtx
-	if curTxnCtx != cp.origTxnCtx || curTxnCtx.IsPessimistic {
+	curTxnCtx := sp.se.GetSessionVars().TxnCtx
+	if curTxnCtx != sp.origTxnCtx || curTxnCtx.IsPessimistic {
 		return nil, false
 	}
-	if curTxn.StartTS() != cp.origTxnStartTS {
+	if curTxn.StartTS() != sp.origTxnStartTS {
 		return nil, false
 	}
 	return curTxn, true
@@ -143,22 +145,22 @@ func (cp *stepCheckpoint) canRollbackInSameTxn() (kv.Transaction, bool) {
 // Otherwise, the framework rolls back, reopens a transaction, and re-verifies
 // jobW.Bytes against persistent storage so an already-committed or concurrently
 // modified step is never overwritten.
-func (cp *stepCheckpoint) discardWrites(w *worker, jobCtx *jobContext, jobW *model.JobW) error {
-	if curTxn, ok := cp.canRollbackInSameTxn(); ok {
-		curTxn.RollbackMemDBToCheckpoint(cp.memDBCheckpoint)
-		cp.origTxnCtx.RestoreBySavepoint(cp.txnCtxSavepoint)
+func (sp *stepSavepoint) discardWrites(w *worker, jobCtx *jobContext, jobW *model.JobW) error {
+	if curTxn, ok := sp.canRollbackInSameTxn(); ok {
+		curTxn.RollbackMemDBToCheckpoint(sp.memDBCheckpoint)
+		sp.origTxnCtx.RestoreBySavepoint(sp.txnCtxSavepoint)
 		jobCtx.metaMut = meta.NewMutator(curTxn)
 		return nil
 	}
 
-	cp.se.Rollback()
+	sp.se.Rollback()
 	newTxn, err := w.prepareTxn(jobW.Job)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if cp.hasDurableBytes {
+	if sp.hasDurableBytes {
 		if err = w.checkJobMetaUnchanged(jobCtx, jobW); err != nil {
-			cp.se.Rollback()
+			sp.se.Rollback()
 			return errors.Trace(err)
 		}
 	}
@@ -166,16 +168,16 @@ func (cp *stepCheckpoint) discardWrites(w *worker, jobCtx *jobContext, jobW *mod
 	return nil
 }
 
-func (cp *stepCheckpoint) restoreJob(
+func (sp *stepSavepoint) restoreJob(
 	jobCtx *jobContext,
 	postStep *model.Job,
 	applyDelta func(restored, postStep *model.Job),
 ) (*model.Job, error) {
-	if cp == nil || len(cp.entryJobBytes) == 0 {
+	if sp == nil || len(sp.entryJobBytes) == 0 {
 		return postStep, nil
 	}
 	var restored model.Job
-	if err := restored.Decode(cp.entryJobBytes); err != nil {
+	if err := restored.Decode(sp.entryJobBytes); err != nil {
 		return nil, errors.Trace(err)
 	}
 	applyAbortedStepDiagnostics(&restored, postStep)
@@ -217,7 +219,7 @@ func multiSchemaHasAction(job *model.Job, target model.ActionType) bool {
 	return false
 }
 
-func usesStepCheckpointContract(job *model.Job) bool {
+func usesStepOutcomeContract(job *model.Job) bool {
 	if job == nil {
 		return false
 	}
@@ -230,68 +232,40 @@ func usesStepCheckpointContract(job *model.Job) bool {
 
 func resolveStepOutcome(job *model.Job, jobCtx *jobContext, res runStepResult) (stepOutcome, bool) {
 	if res.panicked {
-		finish := stepFinishUpdateJob
+		outcome := *discardStepOutcome(res.err, nil)
 		if job.IsCancelled() {
-			finish = stepFinishFinalizeJob
-		}
-		return stepOutcome{
-			writes:        stepWritesDiscard,
-			baseline:      stepJobEntryBaseline,
-			finish:        finish,
-			schemaVer:     0,
-			updateRawArgs: false,
-			err:           res.err,
-		}, true
-	}
-
-	if jobCtx.stepOutcome != nil {
-		outcome := *jobCtx.stepOutcome
-		if job.IsCancelled() && outcome.finish == stepFinishUpdateJob && outcome.writes == stepWritesDiscard {
 			outcome.finish = stepFinishFinalizeJob
 		}
 		return outcome, true
 	}
 
-	if !usesStepCheckpointContract(job) {
+	if jobCtx.stepOutcome != nil {
+		outcome := *jobCtx.stepOutcome
+		if job.IsCancelled() && outcome.finish == stepFinishUpdateJob && outcome.discardWrites {
+			outcome.finish = stepFinishFinalizeJob
+		}
+		return outcome, true
+	}
+
+	if !usesStepOutcomeContract(job) {
 		return stepOutcome{}, false
 	}
 
 	if job.IsCancelled() {
-		return stepOutcome{
-			writes:        stepWritesDiscard,
-			baseline:      stepJobEntryBaseline,
-			finish:        stepFinishFinalizeJob,
-			schemaVer:     0,
-			updateRawArgs: false,
-			err:           nil,
-		}, true
+		outcome := *discardStepOutcome(nil, nil)
+		outcome.finish = stepFinishFinalizeJob
+		return outcome, true
 	}
-
 	if res.err != nil {
-		return stepOutcome{
-			writes:        stepWritesDiscard,
-			baseline:      stepJobEntryBaseline,
-			finish:        stepFinishUpdateJob,
-			schemaVer:     0,
-			updateRawArgs: false,
-			err:           res.err,
-		}, true
+		return *discardStepOutcome(res.err, nil), true
 	}
-
-	return stepOutcome{
-		writes:        stepWritesKeep,
-		baseline:      stepJobCurrent,
-		finish:        stepFinishUpdateJob,
-		schemaVer:     res.ver,
-		updateRawArgs: res.updateRawArgs,
-		err:           nil,
-	}, true
+	return *keepStepOutcome(res.ver, res.updateRawArgs, nil), true
 }
 
 func (w *worker) applyStepOutcome(
 	jobCtx *jobContext,
 	jobW *model.JobW,
-	cp *stepCheckpoint,
+	sp *stepSavepoint,
 	outcome stepOutcome,
 ) (int64, error) {
 	job := jobW.Job
@@ -299,21 +273,25 @@ func (w *worker) applyStepOutcome(
 		return 0, err
 	}
 
-	if outcome.writes == stepWritesDiscard {
-		if err := cp.discardWrites(w, jobCtx, jobW); err != nil {
+	if outcome.discardWrites {
+		if err := sp.discardWrites(w, jobCtx, jobW); err != nil {
 			return 0, err
 		}
-		failpoint.InjectCall("afterRollbackStepForStepCheckpoint", job)
+		failpoint.InjectCall("afterRollbackStepForStepSavepoint", job)
 	}
 
-	if outcome.baseline == stepJobEntryBaseline {
-		restoredJob, err := cp.restoreJob(jobCtx, job, outcome.applyJobDelta)
+	updateRawArgs := outcome.updateRawArgs
+	if outcome.restoreEntryJob {
+		restoredJob, err := sp.restoreJob(jobCtx, job, outcome.applyJobDelta)
 		if err != nil {
 			w.sess.Rollback()
 			return 0, err
 		}
 		jobW.Job = restoredJob
 		job = restoredJob
+		// Restored baseline jobs only carry RawArgs (`job.args == nil`), so
+		// updating or recovering must not serialize nil args over RawArgs.
+		updateRawArgs = false
 	}
 
 	switch outcome.finish {
@@ -324,10 +302,9 @@ func (w *worker) applyStepOutcome(
 		if job.IsCancelled() {
 			deleteAffinityGroupsOfCancelledJob(jobCtx, job)
 		}
-		updateRawArgs := outcome.baseline != stepJobEntryBaseline || outcome.updateRawArgs
-		return 0, w.handleJobDoneWithUpdateRawArgs(jobCtx, job, updateRawArgs)
+		return 0, w.handleJobDone(jobCtx, job, !outcome.restoreEntryJob)
 	case stepFinishUpdateJob:
-		return w.commitActiveJobStep(jobCtx, jobW, outcome.schemaVer, outcome.updateRawArgs, outcome.err)
+		return w.commitActiveJobStep(jobCtx, jobW, outcome.schemaVer, updateRawArgs, outcome.err)
 	default:
 		w.sess.Rollback()
 		return 0, dbterror.ErrInvalidDDLJob.GenWithStack("invalid step finish action: %d", outcome.finish)

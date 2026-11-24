@@ -51,11 +51,11 @@ The submitter-side wait loop assumes this simplified sequence (see the comment i
 Internal SQL can move earlier metadata writes out of the current statement buffer.
 Steps that use `jobContext.mustRollbackTxnOnError` discard the entire transaction
 on error before persisting either a retry or a cancelled job. Actions migrated to
-the unified step-boundary contract (`stepCheckpoint` and `stepOutcome` in
-`pkg/ddl/step_checkpoint.go`, such as `ActionModifyEngineAttribute`,
-`ActionMultiSchemaChange`, and recovered step panics) capture an entry
+the unified step-boundary contract (`stepSavepoint` and `stepOutcome` in
+`pkg/ddl/step_savepoint.go`, such as `ActionModifyEngineAttribute`,
+multi-schema jobs containing it, and recovered step panics) capture an entry
 `MemDBCheckpoint` (when `txn.Len() == 0`), `TransactionContext` savepoint, and
-entry job bytes before `runOneJobStepInternal`; on discard, they either roll back
+entry job bytes before `runOneJobStep`; on discard, they either roll back
 in-place on the same optimistic TSO or fall back to transaction rollback, reopen,
 and `checkJobMetaUnchanged` while restoring a fresh `*model.Job` baseline from the
 captured bytes. This also protects TRUNCATE TABLE when masking-policy SQL has

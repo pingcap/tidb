@@ -117,6 +117,61 @@ func preserveRetryableSubJobProgress(
 	}
 }
 
+func handleMultiSchemaRollbackPanic(
+	jobCtx *jobContext,
+	job *model.Job,
+	subIdx int,
+	proxyJob *model.Job,
+	runErr error,
+) error {
+	panickedSubState := proxyJob.State
+	if panickedSubState == model.JobStateRollingback {
+		panickedSubState = model.JobStateCancelled
+	} else if panickedSubState == model.JobStateCancelling {
+		// Keep Cancelling eligible so convertJob2RollbackJob + rollback
+		// runs on retry unless parent failures exceed the configured limit.
+		if _, exceeded := panicErrorLimitExceeded(job.ErrorCount + 1); exceeded {
+			panickedSubState = model.JobStateCancelled
+		}
+	}
+	err := resolvePanickedSubJobErr(runErr, proxyJob.Error, job.Error)
+	jobCtx.stepOutcome = discardStepOutcome(err, func(restored, _ *model.Job) {
+		if restored.MultiSchemaInfo == nil || subIdx >= len(restored.MultiSchemaInfo.SubJobs) {
+			return
+		}
+		restored.MultiSchemaInfo.SubJobs[subIdx].State = panickedSubState
+	})
+	return err
+}
+
+func handleMultiSchemaRevertiblePanic(jobCtx *jobContext, proxyJob *model.Job, runErr error) error {
+	err := resolvePanickedSubJobErr(runErr, proxyJob.Error)
+	panickedSubState := proxyJob.State
+	panickedSubErr := proxyJob.Error
+	if panickedSubErr == nil {
+		panickedSubErr = toTError(err)
+	}
+	jobCtx.stepOutcome = discardStepOutcome(err, func(restored, _ *model.Job) {
+		if restored.MultiSchemaInfo == nil {
+			return
+		}
+		handleRevertibleException(restored, &model.SubJob{State: panickedSubState}, panickedSubErr)
+	})
+	return err
+}
+
+func handleMultiSchemaNonRevertiblePanic(jobCtx *jobContext, job, proxyJob *model.Job, runErr error) error {
+	err := resolvePanickedSubJobErr(runErr, proxyJob.Error)
+	if errorCountLimit, exceeded := panicErrorLimitExceeded(job.ErrorCount + 1); exceeded {
+		msg := fmt.Sprintf("panic in handling DDL logic and error count beyond the limitation %d, cancelled", errorCountLimit)
+		jobCtx.logger.Warn(msg)
+		err = errors.New(msg)
+		job.State = model.JobStateCancelled
+	}
+	jobCtx.stepOutcome = discardStepOutcome(err, nil)
+	return err
+}
+
 func onMultiSchemaChange(w *worker, jobCtx *jobContext, job *model.Job) (ver int64, err error) {
 	jobCtx.inInnerRunOneJobStep = true
 	jobCtx.deferStorageClassTransitionStaging = false
@@ -139,36 +194,12 @@ func onMultiSchemaChange(w *worker, jobCtx *jobContext, job *model.Job) (ver int
 					continue
 				}
 				proxyJob := sub.ToProxyJob(job, i)
-				res := w.runOneJobStepInternal(jobCtx, &proxyJob)
+				res := w.runOneJobStep(jobCtx, &proxyJob)
 				ver = res.ver
 				err = res.err
 				updateParentJobFromProxy(job, &proxyJob)
 				if res.panicked {
-					subIdx := i
-					panickedSubState := proxyJob.State
-					if panickedSubState == model.JobStateRollingback {
-						panickedSubState = model.JobStateCancelled
-					} else if panickedSubState == model.JobStateCancelling {
-						// Keep Cancelling eligible so convertJob2RollbackJob + rollback
-						// runs on retry unless parent failures exceed the configured limit.
-						if _, exceeded := panicErrorLimitExceeded(job.ErrorCount + 1); exceeded {
-							panickedSubState = model.JobStateCancelled
-						}
-					}
-					err = resolvePanickedSubJobErr(err, proxyJob.Error, job.Error)
-					jobCtx.stepOutcome = &stepOutcome{
-						writes:   stepWritesDiscard,
-						baseline: stepJobEntryBaseline,
-						finish:   stepFinishUpdateJob,
-						err:      err,
-						applyJobDelta: func(restored, _ *model.Job) {
-							if restored.MultiSchemaInfo == nil || subIdx >= len(restored.MultiSchemaInfo.SubJobs) {
-								return
-							}
-							restored.MultiSchemaInfo.SubJobs[subIdx].State = panickedSubState
-						},
-					}
-					return 0, err
+					return 0, handleMultiSchemaRollbackPanic(jobCtx, job, i, &proxyJob, err)
 				}
 				err = handleRollbackException(err, proxyJob.Error)
 				if err != nil {
@@ -185,7 +216,7 @@ func onMultiSchemaChange(w *worker, jobCtx *jobContext, job *model.Job) (ver int
 
 		// The sub-jobs are normally running.
 		// Run the first executable sub-job.
-		migrated := usesStepCheckpointContract(job)
+		migrated := usesStepOutcomeContract(job)
 		for i, sub := range job.MultiSchemaInfo.SubJobs {
 			if !sub.Revertible || sub.IsFinished() {
 				// Skip the sub-jobs which related schema states
@@ -196,84 +227,37 @@ func onMultiSchemaChange(w *worker, jobCtx *jobContext, job *model.Job) (ver int
 			prevSubState := sub.State
 			prevSnapshotVer := sub.SnapshotVer
 			proxyJob := sub.ToProxyJob(job, i)
-			res := w.runOneJobStepInternal(jobCtx, &proxyJob)
+			res := w.runOneJobStep(jobCtx, &proxyJob)
 			ver, err = res.ver, res.err
 			updateParentJobFromProxy(job, &proxyJob)
 			sub.FromProxyJob(&proxyJob, ver)
 			job.ResumeReason = proxyJob.ResumeReason
 			if res.panicked {
-				err = resolvePanickedSubJobErr(err, proxyJob.Error)
-				panickedSubState := proxyJob.State
-				panickedSubErr := proxyJob.Error
-				if panickedSubErr == nil {
-					panickedSubErr = toTError(err)
-				}
-				jobCtx.stepOutcome = &stepOutcome{
-					writes:   stepWritesDiscard,
-					baseline: stepJobEntryBaseline,
-					finish:   stepFinishUpdateJob,
-					err:      err,
-					applyJobDelta: func(restored, _ *model.Job) {
-						if restored.MultiSchemaInfo == nil {
-							return
-						}
-						handleRevertibleException(restored, &model.SubJob{State: panickedSubState}, panickedSubErr)
-					},
-				}
-				return 0, err
+				return 0, handleMultiSchemaRevertiblePanic(jobCtx, &proxyJob, err)
 			}
 			if promoteProxyKVDiskFullPause(job, sub, prevSubState, &proxyJob) {
 				if migrated {
-					jobCtx.stepOutcome = &stepOutcome{
-						writes:        stepWritesKeep,
-						baseline:      stepJobCurrent,
-						finish:        stepFinishUpdateJob,
-						schemaVer:     ver,
-						updateRawArgs: true,
-					}
+					jobCtx.stepOutcome = keepStepOutcome(ver, true, nil)
 				}
 				return ver, nil
 			}
 			handleRevertibleException(job, sub, proxyJob.Error)
 			if migrated {
-				if err == nil && !job.IsCancelled() {
-					updateRawArgs := res.updateRawArgs
-					if !sub.IsNormal() {
-						updateRawArgs = true
-					}
-					jobCtx.stepOutcome = &stepOutcome{
-						writes:        stepWritesKeep,
-						baseline:      stepJobCurrent,
-						finish:        stepFinishUpdateJob,
-						schemaVer:     ver,
-						updateRawArgs: updateRawArgs,
-					}
-				} else if err != nil && sub.State == model.JobStateRollingback {
-					jobCtx.stepOutcome = &stepOutcome{
-						writes:        stepWritesKeep,
-						baseline:      stepJobCurrent,
-						finish:        stepFinishUpdateJob,
-						schemaVer:     ver,
-						updateRawArgs: true,
-						err:           err,
-					}
-				} else {
+				switch {
+				case err == nil && !job.IsCancelled():
+					jobCtx.stepOutcome = keepStepOutcome(ver, res.updateRawArgs || !sub.IsNormal(), nil)
+				case err != nil && sub.State == model.JobStateRollingback:
+					jobCtx.stepOutcome = keepStepOutcome(ver, true, err)
+				default:
 					subIdx := i
 					postSubSnapshot := *sub
 					failedSubErr := proxyJob.Error
-					jobCtx.stepOutcome = &stepOutcome{
-						writes:   stepWritesDiscard,
-						baseline: stepJobEntryBaseline,
-						finish:   stepFinishUpdateJob,
-						err:      err,
-						applyJobDelta: func(restored, postStep *model.Job) {
-							preserveRetryableSubJobProgress(restored, postStep, subIdx, prevSnapshotVer, postSubSnapshot)
-							if postSubSnapshot.IsNormal() || restored.MultiSchemaInfo == nil {
-								return
-							}
+					jobCtx.stepOutcome = discardStepOutcome(err, func(restored, postStep *model.Job) {
+						preserveRetryableSubJobProgress(restored, postStep, subIdx, prevSnapshotVer, postSubSnapshot)
+						if !postSubSnapshot.IsNormal() && restored.MultiSchemaInfo != nil {
 							handleRevertibleException(restored, &model.SubJob{State: postSubSnapshot.State}, failedSubErr)
-						},
-					}
+						}
+					})
 				}
 			}
 			return ver, err
@@ -304,13 +288,7 @@ func onMultiSchemaChange(w *worker, jobCtx *jobContext, job *model.Job) (ver int
 		}
 		discardBatchOnFailure := func(upto int, err error, applyDelta func(target, postStep *model.Job)) (int64, error) {
 			if migrated {
-				jobCtx.stepOutcome = &stepOutcome{
-					writes:        stepWritesDiscard,
-					baseline:      stepJobEntryBaseline,
-					finish:        stepFinishUpdateJob,
-					err:           err,
-					applyJobDelta: applyDelta,
-				}
+				jobCtx.stepOutcome = discardStepOutcome(err, applyDelta)
 				return 0, err
 			}
 			for j := 0; j <= upto && j < len(subJobs); j++ {
@@ -345,7 +323,7 @@ func onMultiSchemaChange(w *worker, jobCtx *jobContext, job *model.Job) (ver int
 			if schemaVersionGenerated {
 				proxyJob.MultiSchemaInfo.SkipVersion = true
 			}
-			res := w.runOneJobStepInternal(jobCtx, &proxyJob)
+			res := w.runOneJobStep(jobCtx, &proxyJob)
 			proxyJobVer := res.ver
 			err = res.err
 			failpoint.InjectCall("beforeBatchedMultiSchemaParentJobUpdate", job, &proxyJob)
@@ -381,20 +359,14 @@ func onMultiSchemaChange(w *worker, jobCtx *jobContext, job *model.Job) (ver int
 					job.MarkNonRevertible()
 				}
 				if migrated {
-					jobCtx.stepOutcome = &stepOutcome{
-						writes:        stepWritesKeep,
-						baseline:      stepJobCurrent,
-						finish:        stepFinishUpdateJob,
-						schemaVer:     ver,
-						updateRawArgs: true,
-					}
+					jobCtx.stepOutcome = keepStepOutcome(ver, true, nil)
 				}
 				return ver, nil
 			}
 			if err != nil || proxyJob.Error != nil || res.panicked {
 				if res.panicked {
 					err = resolvePanickedSubJobErr(err, proxyJob.Error)
-				} else if err == nil && proxyJob.Error != nil {
+				} else if err == nil {
 					err = proxyJob.Error
 				}
 				failedSubErr := proxyJob.Error
@@ -429,7 +401,7 @@ func onMultiSchemaChange(w *worker, jobCtx *jobContext, job *model.Job) (ver int
 		}
 		if err = w.flushPendingStorageClassTransitions(jobCtx); err != nil {
 			// Staging is part of the same transaction as the TableInfo changes.
-			// Outer stepCheckpoint rolls the transaction and job state back so the
+			// Outer stepSavepoint rolls the transaction and job state back so the
 			// whole batch retries cleanly.
 			return discardBatchOnFailure(len(job.MultiSchemaInfo.SubJobs)-1, err, nil)
 		}
@@ -438,54 +410,24 @@ func onMultiSchemaChange(w *worker, jobCtx *jobContext, job *model.Job) (ver int
 		return ver, err
 	}
 	// Run the rest non-revertible sub-jobs one by one.
-	migrated := usesStepCheckpointContract(job)
+	migrated := usesStepOutcomeContract(job)
 	for i, sub := range job.MultiSchemaInfo.SubJobs {
 		if sub.IsFinished() {
 			continue
 		}
 		prevSubState := sub.State
 		proxyJob := sub.ToProxyJob(job, i)
-		res := w.runOneJobStepInternal(jobCtx, &proxyJob)
+		res := w.runOneJobStep(jobCtx, &proxyJob)
 		ver, err = res.ver, res.err
 		updateParentJobFromProxy(job, &proxyJob)
 		sub.FromProxyJob(&proxyJob, ver)
 		job.ResumeReason = proxyJob.ResumeReason
 		if res.panicked {
-			err = resolvePanickedSubJobErr(err, proxyJob.Error)
-			var cancelParent bool
-			if errorCountLimit, exceeded := panicErrorLimitExceeded(job.ErrorCount + 1); exceeded {
-				cancelParent = true
-				msg := fmt.Sprintf("panic in handling DDL logic and error count beyond the limitation %d, cancelled", errorCountLimit)
-				jobCtx.logger.Warn(msg)
-				err = errors.New(msg)
-			}
-			finish := stepFinishUpdateJob
-			if cancelParent {
-				finish = stepFinishFinalizeJob
-				job.State = model.JobStateCancelled
-			}
-			jobCtx.stepOutcome = &stepOutcome{
-				writes:   stepWritesDiscard,
-				baseline: stepJobEntryBaseline,
-				finish:   finish,
-				err:      err,
-				applyJobDelta: func(restored, _ *model.Job) {
-					if cancelParent {
-						restored.State = model.JobStateCancelled
-					}
-				},
-			}
-			return 0, err
+			return 0, handleMultiSchemaNonRevertiblePanic(jobCtx, job, &proxyJob, err)
 		}
 		if promoteProxyKVDiskFullPause(job, sub, prevSubState, &proxyJob) {
 			if migrated {
-				jobCtx.stepOutcome = &stepOutcome{
-					writes:        stepWritesKeep,
-					baseline:      stepJobCurrent,
-					finish:        stepFinishUpdateJob,
-					schemaVer:     ver,
-					updateRawArgs: true,
-				}
+				jobCtx.stepOutcome = keepStepOutcome(ver, true, nil)
 			}
 			return ver, nil
 		}

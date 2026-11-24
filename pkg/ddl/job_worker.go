@@ -318,7 +318,7 @@ func injectFailPointForGetJob(job *model.Job) {
 }
 
 // handleUpdateJobError handles the too large DDL job.
-func (w *worker) handleUpdateJobError(jobCtx *jobContext, jobW *model.JobW, err error) (bool, error) {
+func (w *worker) handleUpdateJobError(jobCtx *jobContext, jobW *model.JobW, err error, updateRawArgs bool) (bool, error) {
 	if err == nil {
 		return false, nil
 	}
@@ -344,7 +344,7 @@ func (w *worker) handleUpdateJobError(jobCtx *jobContext, jobW *model.JobW, err 
 		job.ErrorCount++
 		job.SchemaState = model.StateNone
 		job.State = model.JobStateCancelled
-		return true, errors.Trace(w.finishDDLJob(jobCtx, job))
+		return true, errors.Trace(w.finishDDLJob(jobCtx, job, updateRawArgs))
 	}
 	return false, errors.Trace(err)
 }
@@ -455,11 +455,7 @@ func JobNeedGC(job *model.Job) bool {
 
 // finishDDLJob deletes the finished DDL job from the DDL queue and puts it in the history queue.
 // If the finished job needs deferred cleanup, it enqueues delete-range tasks first.
-func (w *worker) finishDDLJob(jobCtx *jobContext, job *model.Job) error {
-	return w.finishDDLJobWithUpdateRawArgs(jobCtx, job, true)
-}
-
-func (w *worker) finishDDLJobWithUpdateRawArgs(jobCtx *jobContext, job *model.Job, updateRawArgs bool) (err error) {
+func (w *worker) finishDDLJob(jobCtx *jobContext, job *model.Job, updateRawArgs bool) (err error) {
 	// Failed DDL jobs are not accounted for yet. Clear any RU accumulated by
 	// earlier steps before moving a cancelled or rolled-back job to history.
 	if job.IsCancelled() || job.IsRollbackDone() {
@@ -484,6 +480,7 @@ func (w *worker) finishDDLJobWithUpdateRawArgs(jobCtx *jobContext, job *model.Jo
 			// it may be too large that it can not be added to the history queue, so
 			// delete its arguments
 			job.ClearDecodedArgs()
+			job.RawArgs = nil
 			updateRawArgs = true
 		}
 	case model.ActionAlterNoCacheTable:
@@ -587,11 +584,7 @@ func (w *ReorgContext) setDDLLabelForDiagnosis(jobType model.ActionType) {
 	w.ddlJobCtx = kv.WithInternalSourceAndTaskType(w.ddlJobCtx, w.ddlJobSourceType(), kvutil.ExplicitTypeDDL)
 }
 
-func (w *worker) handleJobDone(jobCtx *jobContext, job *model.Job) error {
-	return w.handleJobDoneWithUpdateRawArgs(jobCtx, job, true)
-}
-
-func (w *worker) handleJobDoneWithUpdateRawArgs(jobCtx *jobContext, job *model.Job, updateRawArgs bool) error {
+func (w *worker) handleJobDone(jobCtx *jobContext, job *model.Job, updateRawArgs bool) error {
 	start := time.Now()
 	defer func() {
 		metrics.DDLHandleJobDoneOpHist.Observe(time.Since(start).Seconds())
@@ -599,7 +592,7 @@ func (w *worker) handleJobDoneWithUpdateRawArgs(jobCtx *jobContext, job *model.J
 	if err := w.checkBeforeCommit(); err != nil {
 		return err
 	}
-	err := w.finishDDLJobWithUpdateRawArgs(jobCtx, job, updateRawArgs)
+	err := w.finishDDLJob(jobCtx, job, updateRawArgs)
 	if err != nil {
 		w.sess.Rollback()
 		return err
@@ -754,7 +747,7 @@ func (w *worker) transitOneJobStep(
 				}
 			}
 		})
-		return 0, w.handleJobDone(jobCtx, job)
+		return 0, w.handleJobDone(jobCtx, job, true)
 	}
 	failpoint.InjectCall("beforeRunOneJobStep", job)
 
@@ -764,7 +757,7 @@ func (w *worker) transitOneJobStep(
 	}()
 	defer jobCtx.unlockSchemaVersion(jobCtx, job.ID)
 
-	cp, err := captureStepCheckpoint(w.sess, txn, jobW)
+	sp, err := captureStepSavepoint(w.sess, txn, jobW)
 	if err != nil {
 		w.sess.Rollback()
 		return 0, err
@@ -773,13 +766,13 @@ func (w *worker) transitOneJobStep(
 	defer func() {
 		jobCtx.pendingReorgRU = 0
 	}()
-	res := w.runOneJobStepInternal(jobCtx, job)
+	res := w.runOneJobStep(jobCtx, job)
 	schemaVer, updateRawArgs, runJobErr := res.ver, res.updateRawArgs, res.err
 
 	failpoint.InjectCall("afterRunOneJobStep", job)
 
 	if outcome, ok := resolveStepOutcome(job, jobCtx, res); ok {
-		return w.applyStepOutcome(jobCtx, jobW, cp, outcome)
+		return w.applyStepOutcome(jobCtx, jobW, sp, outcome)
 	}
 
 	if err = w.checkBeforeCommit(); err != nil {
@@ -822,7 +815,7 @@ func (w *worker) transitOneJobStep(
 		// Delete PD groups before the cancellation commits. If the commit fails,
 		// the job runs again and repeats this idempotent cleanup.
 		deleteAffinityGroupsOfCancelledJob(jobCtx, job)
-		return 0, w.handleJobDone(jobCtx, job)
+		return 0, w.handleJobDone(jobCtx, job, true)
 	}
 
 	return w.commitActiveJobStep(jobCtx, jobW, schemaVer, updateRawArgs, runJobErr)
@@ -847,7 +840,7 @@ func (w *worker) commitActiveJobStep(
 	}
 	err = w.updateDDLJob(jobCtx, job, updateRawArgs)
 	failpoint.InjectCall("afterUpdateJobToTable", job, &err)
-	handledErr, err := w.handleUpdateJobError(jobCtx, jobW, err)
+	handledErr, err := w.handleUpdateJobError(jobCtx, jobW, err, updateRawArgs)
 	if err != nil {
 		w.sess.Rollback()
 		return 0, err
@@ -1019,32 +1012,13 @@ func (*worker) processJobPausingRequest(jobCtx *jobContext, job *model.Job) (isR
 // user that the job is finished because other nodes in cluster may not be
 // synchronized. So JobStateSynced *step* is added to make sure there is
 // updateGlobalVersionAndWaitSynced to wait for all nodes to catch up JobStateDone.
-func (w *worker) runOneJobStepInternal(
-	jobCtx *jobContext,
-	job *model.Job,
-) (res runStepResult) {
-	res.ver, res.updateRawArgs, res.err = w.runOneJobStepWithPanicFlag(jobCtx, job, &res.panicked)
-	return res
-}
-
 func (w *worker) runOneJobStep(
 	jobCtx *jobContext,
 	job *model.Job,
-) (ver int64, updateRawArgs bool, err error) {
-	var panicked bool
-	return w.runOneJobStepWithPanicFlag(jobCtx, job, &panicked)
-}
-
-func (w *worker) runOneJobStepWithPanicFlag(
-	jobCtx *jobContext,
-	job *model.Job,
-	panicked *bool,
-) (ver int64, updateRawArgs bool, err error) {
+) (res runStepResult) {
 	defer tidbutil.Recover(metrics.LabelDDLWorker, fmt.Sprintf("%s runOneJobStep", w),
 		func() {
-			if panicked != nil {
-				*panicked = true
-			}
+			res.panicked = true
 			w.countForPanic(jobCtx, job)
 		}, false)
 
@@ -1064,29 +1038,31 @@ func (w *worker) runOneJobStepWithPanicFlag(
 		job.RealStartTS = jobCtx.metaMut.StartTS
 	}
 	defer func() {
-		metrics.DDLWorkerHistogram.WithLabelValues(metrics.DDLRunOneStep, job.Type.String(), metrics.RetLabel(err)).Observe(time.Since(timeStart).Seconds())
+		metrics.DDLWorkerHistogram.WithLabelValues(metrics.DDLRunOneStep, job.Type.String(), metrics.RetLabel(res.err)).Observe(time.Since(timeStart).Seconds())
 	}()
 
+	var (
+		ver int64
+		err error
+	)
 	if job.IsCancelling() {
 		jobCtx.logger.Debug("cancel DDL job", zap.String("job", job.String()))
 		ver, err = convertJob2RollbackJob(w, jobCtx, job)
 		// if job is converted to rollback job, the job.Args may be changed for the
 		// rollback logic, so we let caller persist the new arguments.
-		updateRawArgs = job.IsRollingback()
-		return
+		return runStepResult{ver: ver, updateRawArgs: job.IsRollingback(), err: err}
 	}
 
 	isRunnable, err := w.processJobPausingRequest(jobCtx, job)
 	if !isRunnable {
 		if !jobCtx.inInnerRunOneJobStep {
 			jobCtx.stepOutcome = &stepOutcome{
-				writes:   stepWritesDiscard,
-				baseline: stepJobCurrent,
-				finish:   stepFinishUpdateJob,
-				err:      err,
+				discardWrites: true,
+				finish:        stepFinishUpdateJob,
+				err:           err,
 			}
 		}
-		return ver, false, err
+		return runStepResult{ver: ver, err: err}
 	}
 
 	// It would be better to do the positive check, but no idea to list all valid states here now.
@@ -1108,7 +1084,7 @@ func (w *worker) runOneJobStepWithPanicFlag(
 				if infoschema.ErrSchemaInReadOnlyMode.Equal(err) {
 					job.State = model.JobStateCancelled
 				}
-				return ver, false, w.countForError(jobCtx, job, err)
+				return runStepResult{ver: ver, err: w.countForError(jobCtx, job, err)}
 			}
 			job.CheckSchemaReadOnly = false
 		}
@@ -1351,7 +1327,7 @@ func (w *worker) runOneJobStepWithPanicFlag(
 	//
 	// if job has no error, some arguments may be changed, there's no harm to update
 	// it.
-	updateRawArgs = err == nil
+	updateRawArgs := err == nil
 	// if job changed from running to rolling back, arguments may be changed
 	if prevState == model.JobStateRunning && job.IsRollingback() {
 		updateRawArgs = true
@@ -1361,7 +1337,7 @@ func (w *worker) runOneJobStepWithPanicFlag(
 	if err != nil {
 		err = w.countForError(jobCtx, job, err)
 	}
-	return ver, updateRawArgs, err
+	return runStepResult{ver: ver, updateRawArgs: updateRawArgs, err: err}
 }
 
 // loadGlobalVars loads global variables from system table

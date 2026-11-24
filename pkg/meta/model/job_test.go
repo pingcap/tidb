@@ -454,6 +454,24 @@ func TestJobEncodeV2(t *testing.T) {
 	args := &TruncateTableArgs{}
 	require.NoError(t, json.Unmarshal(j.RawArgs, args))
 	require.EqualValues(t, j.args[0], args)
+
+	// Decoded jobs without materialized args must preserve RawArgs even on Encode(true).
+	encoded, err := j.Encode(false)
+	require.NoError(t, err)
+	decoded := &Job{}
+	require.NoError(t, decoded.Decode(encoded))
+	origRawArgs := append([]byte(nil), decoded.RawArgs...)
+	require.NotEmpty(t, origRawArgs)
+	_, err = decoded.Encode(true)
+	require.NoError(t, err)
+	require.Equal(t, string(origRawArgs), string(decoded.RawArgs))
+
+	// Explicit RawArgs removal clears arguments cleanly.
+	decoded.ClearDecodedArgs()
+	decoded.RawArgs = nil
+	_, err = decoded.Encode(true)
+	require.NoError(t, err)
+	require.Equal(t, "null", string(decoded.RawArgs))
 }
 
 func TestJobVerInUse(t *testing.T) {

@@ -1445,7 +1445,7 @@ func TestStorageClassMultiSchemaBatchFailureRollbackAndRetry(t *testing.T) {
 
 		tk.MustExec("ALTER TABLE t_reorg ADD INDEX idx_c1(c1), STORAGE_CLASS STANDARD")
 		require.True(t, deletedReorgOnce.Load())
-		require.True(t, sawResetSnapshot.Load(), "SnapshotVer = 0 recovery must survive step-checkpoint restoration")
+		require.True(t, sawResetSnapshot.Load(), "SnapshotVer = 0 recovery must survive step-savepoint restoration")
 		tk.MustExec("ADMIN CHECK TABLE t_reorg")
 	})
 
