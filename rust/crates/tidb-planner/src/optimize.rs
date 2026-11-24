@@ -1144,3 +1144,557 @@ pub fn filter_sem_restricted_hints(stmt: &mut Stmt) -> Vec<String> {
     tidb_ast::Visitable::accept(stmt, &mut filter);
     filter.warnings
 }
+
+use crate::plan_cache::PlanCacheStmt;
+use crate::plan_cacheable_checker::{
+    MAX_NUM_PARAM, ParameterizedSelect, Refusal, get_param_sql_from_ast, parameterize_dml,
+};
+use tidb_charset::Collation;
+use tidb_driver_error::DriverError;
+use tidb_kvcache::SimpleLruCache;
+use tidb_planner_core_metrics::get_non_prep_plan_cache_unsupported_counter;
+
+/// Go SessionVars.nonPreparedPlanCacheStmts: syntax metadata only, with one
+/// definition LRU shared by SELECT and DML. Physical entries live in the
+/// session owner independently of metadata eviction.
+///
+/// Each entry keeps the privilege requests of its statement, Go's
+/// `PlanCacheStmt.VisitInfos` (`GeneratePlanCacheStmtWithAST`), which every
+/// use checks (`checkPreparedPriv`) before it binds a plan.
+#[derive(Clone)]
+pub enum NonPreparedPlan {
+    /// A parameterized query.
+    Select(std::sync::Arc<PlanCacheStmt>, NonPreparedPrivileges),
+    /// A parameterized INSERT, UPDATE or DELETE.
+    Dml(std::sync::Arc<PlanCacheStmt>, NonPreparedPrivileges),
+}
+
+/// Go `PlanCacheStmt.VisitInfos` of a non-prepared plan-cache entry.
+pub type NonPreparedPrivileges = std::sync::Arc<[crate::privilege_check::TablePrivilegeRequest]>;
+
+#[derive(Default)]
+/// Go `SessionVars.nonPreparedPlanCacheStmts`.
+pub struct NonPreparedPlanCache {
+    plans: Option<SimpleLruCache<String, NonPreparedPlan>>,
+}
+
+impl NonPreparedPlanCache {
+    /// The entry of a parameterized statement text.
+    pub fn get(&mut self, key: &str) -> Option<NonPreparedPlan> {
+        self.plans.as_mut()?.get(key).cloned()
+    }
+
+    /// Admits an entry.
+    pub fn put(&mut self, key: String, plan: NonPreparedPlan, capacity: usize) {
+        // Go allocates the metadata LRU at the first admitted insertion.
+        self.plans
+            .get_or_insert_with(|| SimpleLruCache::new(capacity))
+            .put(key, plan);
+    }
+}
+
+/// Go `getPlanFromNonPreparedPlanCache` and `NonPreparedPlanCacheableWithCtx` over the session.
+/// What Go `getPlanFromNonPreparedPlanCache` reads and writes on `sctx`.
+pub trait NonPreparedPlanCacheContext: crate::plan_cache_utils::PlanCacheSessionContext {
+    /// Go `SessionVars`' non-prepared plan cache.
+    fn non_prepared_plan_cache_mut(&mut self) -> &mut NonPreparedPlanCache;
+    /// The session's physical plan cache (Go `GetSessionPlanCache`).
+    fn plan_cache_rebuild(&self) -> &crate::plan_cache::SessionPlanCache;
+    /// The statement's hints, parsed without catalog metadata.
+    fn parse_statement_hints_without_catalog(
+        &self,
+        stmt: &Stmt,
+        current_database: &str,
+    ) -> tidb_hint::StmtHints;
+    /// Sizes the session plan cache from its variables.
+    fn configure_session_plan_cache(&self);
+    /// Go `tidb_session_plan_cache_size`.
+    fn session_plan_cache_capacity(&self) -> usize;
+    /// Go `PlanBuilder`'s visit infos of `stmt` (`GeneratePlanCacheStmtWithAST`).
+    ///
+    /// # Errors
+    ///
+    /// The build's failure.
+    fn collect_table_privileges(
+        &self,
+        stmt: &Stmt,
+        preparing: bool,
+    ) -> Result<Vec<crate::privilege_check::TablePrivilegeRequest>, DriverError>;
+    /// Go `checkPreparedPriv`.
+    ///
+    /// # Errors
+    ///
+    /// The first refused request.
+    fn check_table_privilege_requests(
+        &self,
+        requests: &[crate::privilege_check::TablePrivilegeRequest],
+    ) -> Result<(), DriverError>;
+    /// The statement's infoschema, locked.
+    ///
+    /// # Errors
+    ///
+    /// When the catalog is unavailable.
+    fn plan_cache_catalog(
+        &self,
+    ) -> Result<std::sync::MutexGuard<'_, tidb_infoschema::SessionExtendedInfoSchema>, DriverError>;
+    /// The domain's infoschema.
+    fn plan_cache_domain_info_schema(
+        &self,
+    ) -> std::sync::Arc<std::sync::Mutex<tidb_infoschema::SessionExtendedInfoSchema>>;
+    /// A statement context for a non-DML statement.
+    fn non_prepared_statement_context(&self) -> StmtContext;
+    /// The executor's half of planning over `catalog`.
+    fn planning_hooks<'a>(
+        &self,
+        catalog: &'a tidb_infoschema::SessionExtendedInfoSchema,
+    ) -> Box<dyn PlanningHooks + 'a>;
+
+    /// Parameterizes one admitted non-prepared SELECT. Refused statements use
+    /// the ordinary planner and publish no cache hit.
+    fn parameterize_non_prepared_select(&mut self, stmt: &Stmt) -> Option<ParameterizedSelect> {
+        if !self.non_prepared_plan_cache_enabled() {
+            return None;
+        }
+        self.parameterize_non_prepared_select_or_refusal(stmt).ok()
+    }
+
+    /// [`Self::parameterize_non_prepared_select`] with Go
+    /// `NonPreparedPlanCacheableWithCtx`'s refusal reason.
+    fn parameterize_non_prepared_select_or_refusal(
+        &mut self,
+        stmt: &Stmt,
+    ) -> Result<ParameterizedSelect, Refusal> {
+        // Go's unsupported counter increments only for checker-walk refusals
+        // (cacheable=false after `Accept`); clause-level fast-check refusals
+        // return their reason without touching any counter. The
+        // classification rides on `Refusal::counted`.
+        let enable_param_limit = self
+            .get_session_vars()
+            .system_bool("tidb_enable_plan_cache_for_param_limit", true);
+        let string_collation = self
+            .get_session_vars()
+            .get_system("collation_connection")
+            .ok()
+            .and_then(|name| Collation::from_name(&name))
+            .unwrap_or(Collation::Utf8Mb4Bin);
+        let configured_max = self
+            .get_session_vars()
+            .optimizer_fix_control()
+            .get_int_with_default(tidb_fixcontrol::FIX_44823, MAX_NUM_PARAM as i64);
+        let max_num_param = match configured_max {
+            0 => usize::MAX,
+            value if value > 0 => usize::try_from(value).unwrap_or(usize::MAX),
+            _ => MAX_NUM_PARAM,
+        };
+        let domain = self.plan_cache_domain_info_schema();
+        let catalog = domain
+            .lock()
+            .map_err(|_| Refusal::fast("the catalog is unavailable"))?;
+        get_param_sql_from_ast(
+            stmt,
+            &catalog,
+            &self.get_session_vars().current_db,
+            enable_param_limit,
+            self.non_prepared_plan_cache_for_dml_enabled(),
+            string_collation,
+            max_num_param,
+        )
+        .inspect_err(|refusal| {
+            // Go `NonPreparedPlanCacheableWithCtx`'s unsupported counter:
+            // only checker-walk refusals count; clause-level fast-check
+            // refusals return their reason without touching the counter.
+            if refusal.counted {
+                get_non_prep_plan_cache_unsupported_counter().inc();
+            }
+        })
+    }
+
+    /// Go's DML switch: `EnableNonPreparedPlanCacheForDML`, true by default.
+    fn non_prepared_plan_cache_for_dml_enabled(&self) -> bool {
+        self.get_session_vars()
+            .system_bool("tidb_enable_non_prepared_plan_cache_for_dml", true)
+    }
+
+    /// Parameterizes one non-prepared UPDATE/INSERT/DELETE statement.
+    fn parameterize_non_prepared_dml(&mut self, stmt: &Stmt) -> Option<ParameterizedSelect> {
+        if !self.non_prepared_plan_cache_enabled()
+            || !self.non_prepared_plan_cache_for_dml_enabled()
+        {
+            return None;
+        }
+        let enable_param_limit = self
+            .get_session_vars()
+            .system_bool("tidb_enable_plan_cache_for_param_limit", true);
+        let string_collation = self
+            .get_session_vars()
+            .get_system("collation_connection")
+            .ok()
+            .and_then(|name| Collation::from_name(&name))
+            .unwrap_or(Collation::Utf8Mb4Bin);
+        let configured_max = self
+            .get_session_vars()
+            .optimizer_fix_control()
+            .get_int_with_default(tidb_fixcontrol::FIX_44823, MAX_NUM_PARAM as i64);
+        let max_num_param = match configured_max {
+            0 => usize::MAX,
+            value if value > 0 => usize::try_from(value).unwrap_or(usize::MAX),
+            _ => MAX_NUM_PARAM,
+        };
+        let domain = self.plan_cache_domain_info_schema();
+        let catalog = domain.lock().ok()?;
+        parameterize_dml(
+            stmt,
+            &catalog,
+            &self.get_session_vars().current_db,
+            enable_param_limit,
+            string_collation,
+            max_num_param,
+        )
+        .ok()
+    }
+
+    /// Go `GeneratePlanCacheStmtWithAST`'s `VisitInfos` for a new
+    /// non-prepared entry over its parameterized statement; `None` when they
+    /// cannot be collected, which leaves the statement to the ordinary path
+    /// (whose build reports why).
+    fn non_prepared_privilege_requests(&self, statement: &Stmt) -> Option<NonPreparedPrivileges> {
+        self.collect_table_privileges(statement, true)
+            .ok()
+            .map(std::sync::Arc::from)
+    }
+
+    /// Generates or recursively rebuilds the retained DML root for one
+    /// parameterized non-prepared statement, through the same plan object
+    /// SQL and binary PREPARE use. Answers the entry's privilege requests,
+    /// already checked (Go `GetPlanFromPlanCache`'s `checkPreparedPriv`),
+    /// with the execution.
+    fn bind_non_prepared_dml(
+        &mut self,
+        parameterized: &ParameterizedSelect,
+        effective_statement: &Stmt,
+        binding_sql: Option<&str>,
+    ) -> Result<Option<(crate::plan_cache::PlanCacheExecution, NonPreparedPrivileges)>, DriverError>
+    {
+        if !self.non_prepared_plan_cache_allowed(effective_statement) {
+            return Ok(None);
+        }
+        let Some(environment) =
+            crate::plan_cache_utils::prepared_plan_cache_environment_for_binding(self, binding_sql)
+        else {
+            return Ok(None);
+        };
+        let lookup_start = std::time::Instant::now();
+        let (plan, requests) = match self.non_prepared_plan_cache_mut().get(&parameterized.key) {
+            Some(NonPreparedPlan::Dml(plan, requests)) => (plan, requests),
+            Some(_) => return Ok(None),
+            None => {
+                let plan = {
+                    let Ok(catalog) = self.plan_cache_catalog() else {
+                        return Ok(None);
+                    };
+                    let Ok(Some(plan)) = crate::plan_cache::build_prepared_dml_plan(
+                        &parameterized.statement,
+                        parameterized.values.len(),
+                        &catalog,
+                        self.get_session_vars().current_db.as_str(),
+                    ) else {
+                        return Ok(None);
+                    };
+                    plan
+                };
+                let Some(requests) = self.non_prepared_privilege_requests(&parameterized.statement)
+                else {
+                    return Ok(None);
+                };
+                let plan = std::sync::Arc::new(
+                    plan.with_sql(&parameterized.key)
+                        .with_non_prepared_stats_tables(),
+                );
+                let capacity = self.session_plan_cache_capacity();
+                self.non_prepared_plan_cache_mut().put(
+                    parameterized.key.clone(),
+                    NonPreparedPlan::Dml(
+                        std::sync::Arc::clone(&plan),
+                        std::sync::Arc::clone(&requests),
+                    ),
+                    capacity,
+                );
+                (plan, requests)
+            }
+        };
+        self.check_table_privilege_requests(&requests)?;
+        Ok(self
+            .bind_non_prepared_dml_plan(
+                &plan,
+                parameterized,
+                effective_statement,
+                &environment,
+                lookup_start,
+            )
+            .map(|execution| (execution, requests)))
+    }
+
+    /// [`Self::bind_non_prepared_dml`]'s lookup or replan of the entry.
+    fn bind_non_prepared_dml_plan(
+        &mut self,
+        plan: &std::sync::Arc<PlanCacheStmt>,
+        parameterized: &ParameterizedSelect,
+        effective_statement: &Stmt,
+        environment: &crate::plan_cache_utils::PreparedPlanCacheEnvironment,
+        lookup_start: std::time::Instant,
+    ) -> Option<crate::plan_cache::PlanCacheExecution> {
+        self.configure_session_plan_cache();
+        {
+            let catalog = self.plan_cache_catalog().ok()?;
+            let hooks = self.planning_hooks(&catalog);
+            if let Some(execution) = plan.bind_cached_for_statement(
+                &*hooks,
+                self.plan_cache_rebuild(),
+                &parameterized.values,
+                &catalog,
+                self.get_session_vars().current_db.as_str(),
+                &crate::plan_cache_utils::plan_cache_dirty_tables(self),
+                &environment,
+                effective_statement,
+            ) {
+                // Go `GetPlanFromPlanCache`'s hit arm; `lookupPlanCache`'s
+                // defer observes the lookup duration on hits only.
+                tidb_planner_core_metrics::inc_plan_cache_hit(true);
+                tidb_planner_core_metrics::get_plan_cache_lookup_duration(
+                    self.plan_cache_rebuild().uses_instance(),
+                )
+                .observe(lookup_start.elapsed().as_secs_f64());
+                return Some(execution);
+            }
+        }
+        // Go's miss arm re-plans; its miss counter records the replan.
+        tidb_planner_core_metrics::plan_cache_miss_counter(true).inc();
+        let ctx = self
+            .non_prepared_statement_context()
+            .with_non_prepared_plan_cache();
+        let catalog = self.plan_cache_catalog().ok()?;
+        let hooks = self.planning_hooks(&catalog);
+        plan.bind_for_statement(
+            &*hooks,
+            self.plan_cache_rebuild(),
+            &parameterized.values,
+            &catalog,
+            self.get_session_vars().current_db.as_str(),
+            &ctx,
+            &crate::plan_cache_utils::plan_cache_dirty_tables(self),
+            &environment,
+            effective_statement,
+        )
+        .ok()
+        .flatten()
+    }
+
+    /// Generates or recursively rebuilds the physical plan owned by one
+    /// parameterized non-prepared statement. This is Go's
+    /// `GetPlanFromPlanCache(..., isNonPrepared=true)` over the same Rust plan
+    /// object SQL and binary PREPARE use.
+    fn bind_non_prepared_select(
+        &mut self,
+        parameterized: &ParameterizedSelect,
+        effective_statement: &Stmt,
+        binding_sql: Option<&str>,
+    ) -> Result<Option<crate::plan_cache::PlanCacheExecution>, DriverError> {
+        self.bind_non_prepared_select_warning(
+            parameterized,
+            effective_statement,
+            binding_sql,
+            false,
+        )
+    }
+
+    /// [`Self::bind_non_prepared_select`]; `always_warn` is Go's
+    /// `SetAlwaysWarnSkipCache`, which EXPLAIN FORMAT = 'plan_cache' sets.
+    /// The entry's privilege requests are checked first (Go
+    /// `GetPlanFromPlanCache`'s `checkPreparedPriv`).
+    fn bind_non_prepared_select_warning(
+        &mut self,
+        parameterized: &ParameterizedSelect,
+        effective_statement: &Stmt,
+        binding_sql: Option<&str>,
+        always_warn: bool,
+    ) -> Result<Option<crate::plan_cache::PlanCacheExecution>, DriverError> {
+        if !self.non_prepared_plan_cache_allowed(effective_statement) {
+            return Ok(None);
+        }
+        let lookup_start = std::time::Instant::now();
+        let Some(environment) =
+            crate::plan_cache_utils::prepared_plan_cache_environment_for_binding(self, binding_sql)
+        else {
+            return Ok(None);
+        };
+        let (plan, requests) = match self.non_prepared_plan_cache_mut().get(&parameterized.key) {
+            Some(NonPreparedPlan::Select(plan, requests)) => (plan, requests),
+            Some(_) => return Ok(None),
+            None => {
+                let ctx = self.non_prepared_statement_context();
+                let plan = {
+                    let Ok(catalog) = self.plan_cache_catalog() else {
+                        return Ok(None);
+                    };
+                    let Some(plan) = crate::plan_cache::build_prepared_select_plan(
+                        &parameterized.statement,
+                        parameterized.values.len(),
+                        &catalog,
+                        self.get_session_vars().current_db.as_str(),
+                        &ctx,
+                    ) else {
+                        return Ok(None);
+                    };
+                    plan
+                };
+                let Some(requests) = self.non_prepared_privilege_requests(&parameterized.statement)
+                else {
+                    return Ok(None);
+                };
+                let plan = std::sync::Arc::new(
+                    plan.with_sql(&parameterized.key)
+                        .with_non_prepared_stats_tables(),
+                );
+                let capacity = self.session_plan_cache_capacity();
+                self.non_prepared_plan_cache_mut().put(
+                    parameterized.key.clone(),
+                    NonPreparedPlan::Select(
+                        std::sync::Arc::clone(&plan),
+                        std::sync::Arc::clone(&requests),
+                    ),
+                    capacity,
+                );
+                (plan, requests)
+            }
+        };
+        self.check_table_privilege_requests(&requests)?;
+        Ok(self.bind_non_prepared_select_plan(
+            &plan,
+            parameterized,
+            effective_statement,
+            &environment,
+            lookup_start,
+            always_warn,
+        ))
+    }
+
+    /// [`Self::bind_non_prepared_select_warning`]'s lookup or replan of the
+    /// entry.
+    fn bind_non_prepared_select_plan(
+        &mut self,
+        plan: &std::sync::Arc<PlanCacheStmt>,
+        parameterized: &ParameterizedSelect,
+        effective_statement: &Stmt,
+        environment: &crate::plan_cache_utils::PreparedPlanCacheEnvironment,
+        lookup_start: std::time::Instant,
+        always_warn: bool,
+    ) -> Option<crate::plan_cache::PlanCacheExecution> {
+        self.configure_session_plan_cache();
+        let observe = |start: std::time::Instant| {
+            tidb_planner_core_metrics::get_plan_cache_lookup_duration(
+                self.plan_cache_rebuild().uses_instance(),
+            )
+            .observe(start.elapsed().as_secs_f64());
+        };
+        {
+            let catalog = self.plan_cache_catalog().ok()?;
+            let hooks = self.planning_hooks(&catalog);
+            if let Some(execution) = plan.bind_cached_for_statement(
+                &*hooks,
+                self.plan_cache_rebuild(),
+                &parameterized.values,
+                &catalog,
+                self.get_session_vars().current_db.as_str(),
+                &crate::plan_cache_utils::plan_cache_dirty_tables(self),
+                &environment,
+                effective_statement,
+            ) {
+                // Go `GetPlanFromPlanCache`'s hit arm. Go's `lookupPlanCache`
+                // defer observes the lookup duration ONLY when it hit; a
+                // miss/re-plan records the miss counter and nothing else.
+                tidb_planner_core_metrics::inc_plan_cache_hit(true);
+                observe(lookup_start);
+                return Some(execution);
+            }
+        }
+        // Go's miss arm re-plans; its miss counter records the replan.
+        tidb_planner_core_metrics::plan_cache_miss_counter(true).inc();
+        let mut ctx = self
+            .non_prepared_statement_context()
+            .with_non_prepared_plan_cache();
+        if always_warn {
+            ctx = ctx.with_always_warn_skip_plan_cache();
+        }
+        let catalog = self.plan_cache_catalog().ok()?;
+        let hooks = self.planning_hooks(&catalog);
+        let execution = plan.bind_for_statement(
+            &*hooks,
+            self.plan_cache_rebuild(),
+            &parameterized.values,
+            &catalog,
+            self.get_session_vars().current_db.as_str(),
+            &ctx,
+            &crate::plan_cache_utils::plan_cache_dirty_tables(self),
+            &environment,
+            effective_statement,
+        );
+        execution.ok().flatten()
+    }
+
+    /// Whether `@@last_plan_from_cache` should report a hit, which is the
+    /// PRECEDING statement's outcome (Go `PrevFoundInPlanCache`).
+    fn last_plan_from_cache(&self) -> bool {
+        self.get_session_vars().prev_found_in_plan_cache
+    }
+
+    /// Go `EnableNonPreparedPlanCache`.
+    fn non_prepared_plan_cache_enabled(&self) -> bool {
+        self.get_session_vars()
+            .system_bool("tidb_enable_non_prepared_plan_cache", false)
+    }
+
+    /// Go `getPlanFromNonPreparedPlanCache`'s strategy gate: `hint_only`
+    /// admits only a statement carrying `use_plan_cache()`.
+    fn non_prepared_hint_only_refuses(&self, statement: &Stmt) -> bool {
+        let hint_only = self
+            .get_session_vars()
+            .get_system(tidb_vardef::tidb_vars::TIDB_PLAN_CACHE_STRATEGY)
+            .is_ok_and(|strategy| {
+                strategy.eq_ignore_ascii_case(
+                    tidb_vardef::tidb_vars::TIDB_PLAN_CACHE_STRATEGY_HINT_ONLY,
+                )
+            });
+        hint_only
+            && !self
+                .parse_statement_hints_without_catalog(
+                    statement,
+                    self.get_session_vars().current_db.as_str(),
+                )
+                .use_plan_cache
+    }
+
+    /// Whether the statement may use the non-prepared cache now.
+    fn non_prepared_plan_cache_allowed(&self, statement: &Stmt) -> bool {
+        // Go `getPlanFromNonPreparedPlanCache`: a statement of a
+        // multi-statement query never reaches the cache.
+        if self.get_session_vars().in_multi_stmts {
+            return false;
+        }
+        let hints = self.parse_statement_hints_without_catalog(
+            statement,
+            self.get_session_vars().current_db.as_str(),
+        );
+        if hints.ignore_plan_cache {
+            return false;
+        }
+        let hint_only = self
+            .get_session_vars()
+            .get_system(tidb_vardef::tidb_vars::TIDB_PLAN_CACHE_STRATEGY)
+            .is_ok_and(|strategy| {
+                strategy.eq_ignore_ascii_case(
+                    tidb_vardef::tidb_vars::TIDB_PLAN_CACHE_STRATEGY_HINT_ONLY,
+                )
+            });
+        !hint_only || hints.use_plan_cache
+    }
+}

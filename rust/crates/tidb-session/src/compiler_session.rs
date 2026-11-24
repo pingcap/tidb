@@ -18,35 +18,16 @@
 use crate::*;
 
 impl tidb_executor::compiler::CompilerSession for Session {
-    fn non_prepared_plan_cache_mut(&mut self) -> &mut tidb_executor::compiler::non_prepared_plan_cache::NonPreparedPlanCache {
-        &mut self.non_prepared_plan_cache
-    }
 
-    fn plan_cache_rebuild(&self) -> &tidb_executor::SessionPlanCache {
-        &self.plan_cache_rebuild
-    }
 
     fn defer_explain_analyze_render(&mut self, write: tidb_executor::AnalyzedWrite) {
         self.pending_explain_analyze = Some(write);
     }
 
-    fn parse_statement_hints_without_catalog(
-        &self,
-        stmt: &tidb_ast::Stmt,
-        current_database: &str,
-    ) -> tidb_hint::StmtHints {
-        crate::variables::parse_statement_hints_without_catalog(stmt, current_database)
-    }
 
 
 
-    fn configure_session_plan_cache(&self) {
-        Session::configure_session_plan_cache(self)
-    }
 
-    fn session_plan_cache_capacity(&self) -> usize {
-        Session::session_plan_cache_capacity(self)
-    }
 
     fn staged_dirty_table_ids(&self) -> Vec<i64> {
         self.staged_writes.dirty_table_ids()
@@ -67,13 +48,7 @@ impl tidb_executor::compiler::CompilerSession for Session {
         Session::external_timestamp_read_enabled(self)
     }
 
-    fn collect_table_privileges(&self, stmt: &tidb_ast::Stmt, preparing: bool) -> Result<Vec<tidb_executor::table_privilege::TablePrivilegeRequest>, DriverError> {
-        Session::collect_table_privileges(self, stmt, preparing)
-    }
 
-    fn check_table_privilege_requests(&self, requests: &[tidb_executor::table_privilege::TablePrivilegeRequest]) -> Result<(), DriverError> {
-        Session::check_table_privilege_requests(self, requests)
-    }
     fn prepared_statements_mut(&mut self) -> &mut tidb_executor::compiler::prepared::PreparedStore {
         &mut self.prepared_statements
     }
@@ -190,5 +165,60 @@ impl tidb_planner::plan_cache_utils::PlanCacheSessionContext for Session {
         &self,
     ) -> &std::cell::RefCell<Option<tidb_planner::plan_cache_utils::PreparedPlanCacheEnvironmentCache>> {
         tidb_executor::compiler::CompilerSession::prepared_plan_cache_environment_cache(self)
+    }
+}
+
+impl tidb_planner::optimize::NonPreparedPlanCacheContext for Session {
+    fn non_prepared_plan_cache_mut(&mut self) -> &mut tidb_planner::optimize::NonPreparedPlanCache {
+        &mut self.non_prepared_plan_cache
+    }
+
+    fn plan_cache_rebuild(&self) -> &tidb_planner::plan_cache::SessionPlanCache {
+        &self.plan_cache_rebuild
+    }
+
+    fn parse_statement_hints_without_catalog(
+        &self,
+        stmt: &tidb_ast::Stmt,
+        current_database: &str,
+    ) -> tidb_hint::StmtHints {
+        crate::variables::parse_statement_hints_without_catalog(stmt, current_database)
+    }
+
+    fn configure_session_plan_cache(&self) {
+        Session::configure_session_plan_cache(self)
+    }
+
+    fn session_plan_cache_capacity(&self) -> usize {
+        Session::session_plan_cache_capacity(self)
+    }
+
+    fn collect_table_privileges(&self, stmt: &tidb_ast::Stmt, preparing: bool) -> Result<Vec<tidb_executor::table_privilege::TablePrivilegeRequest>, DriverError> {
+        Session::collect_table_privileges(self, stmt, preparing)
+    }
+
+    fn check_table_privilege_requests(&self, requests: &[tidb_executor::table_privilege::TablePrivilegeRequest]) -> Result<(), DriverError> {
+        Session::check_table_privilege_requests(self, requests)
+    }
+
+    fn plan_cache_catalog(
+        &self,
+    ) -> Result<std::sync::MutexGuard<'_, tidb_infoschema::SessionExtendedInfoSchema>, DriverError> {
+        tidb_executor::simple::account_tables::AccountSession::lock_catalog(self)
+    }
+
+    fn plan_cache_domain_info_schema(&self) -> std::sync::Arc<std::sync::Mutex<tidb_infoschema::SessionExtendedInfoSchema>> {
+        tidb_executor::stmt_ctx_build::StmtCtxSession::domain_info_schema(self)
+    }
+
+    fn non_prepared_statement_context(&self) -> tidb_sessionctx::StmtContext {
+        tidb_executor::stmt_ctx_build::ResetContextOfStmt::statement_context(self, false)
+    }
+
+    fn planning_hooks<'a>(
+        &self,
+        catalog: &'a tidb_infoschema::SessionExtendedInfoSchema,
+    ) -> Box<dyn tidb_planner::optimize::PlanningHooks + 'a> {
+        Box::new(tidb_executor::driver_hooks(catalog))
     }
 }

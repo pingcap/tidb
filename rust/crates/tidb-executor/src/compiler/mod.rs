@@ -32,37 +32,22 @@ pub mod non_prepared_plan_cache;
 pub use explain::ExplainCompile;
 pub use prepared::PrepareExec;
 pub use prepared_ast::{GenerateNewPlanError, PreparedAstCompile};
-pub use non_prepared_plan_cache::NonPreparedPlanCacheCompile;
 pub mod plan_cacheable_checker;
 pub use plan_cacheable_checker::PlanCacheableChecker;
 
 /// The session primitives Go's compiler reads through `sctx`.
-pub trait CompilerSession: crate::admin::AdminExec + tidb_planner::plan_cache_utils::PlanCacheSessionContext {
-/// Go `SessionVars`' non-prepared plan cache.
-    fn non_prepared_plan_cache_mut(&mut self) -> &mut crate::compiler::non_prepared_plan_cache::NonPreparedPlanCache;
+pub trait CompilerSession: crate::admin::AdminExec + tidb_planner::optimize::NonPreparedPlanCacheContext {
 
-    /// The session's physical plan cache (Go `GetSessionPlanCache`).
-    fn plan_cache_rebuild(&self) -> &crate::SessionPlanCache;
 
     /// Holds an autocommit `EXPLAIN ANALYZE` write's rendering until the
     /// statement committed (Go `runStmt`'s `IsExplainAnalyzeDML` commit
     /// before the `ExplainExec` record set renders).
     fn defer_explain_analyze_render(&mut self, write: crate::AnalyzedWrite);
 
-    /// The statement's hints, parsed without catalog metadata.
-    fn parse_statement_hints_without_catalog(
-        &self,
-        stmt: &tidb_ast::Stmt,
-        current_database: &str,
-    ) -> tidb_hint::StmtHints;
 
 
 
-    /// Sizes the session plan cache from its variables.
-    fn configure_session_plan_cache(&self);
 
-    /// Go `tidb_session_plan_cache_size`.
-    fn session_plan_cache_capacity(&self) -> usize;
 
 /// Whether the statement reads a pinned snapshot (`tidb_snapshot`).
 
@@ -78,11 +63,6 @@ pub trait CompilerSession: crate::admin::AdminExec + tidb_planner::plan_cache_ut
     fn historical_read_ts(&self) -> Option<u64>;
     /// Session primitive.
     fn external_timestamp_read_enabled(&self) -> bool;
-    /// Session primitive.
-    fn collect_table_privileges(&self, stmt: &tidb_ast::Stmt, preparing: bool) -> Result<Vec<crate::table_privilege::TablePrivilegeRequest>, DriverError>;
-    /// Checks one statement's `visitInfo`s as Go's optimizer does:
-    /// `CheckPrivilege` against the live grants, then `CheckTableLock`.
-    fn check_table_privilege_requests(&self, requests: &[crate::table_privilege::TablePrivilegeRequest]) -> Result<(), DriverError>;
 /// Go `SessionVars.PreparedStmts` / `PreparedStmtNameToID`.
     fn prepared_statements_mut(&mut self) -> &mut crate::compiler::prepared::PreparedStore;
 

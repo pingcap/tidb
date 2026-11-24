@@ -228,13 +228,13 @@ fn default_evaluator_using<'a>(
 /// The executor's half of one statement's planning
 /// ([`tidb_planner::optimize::PlanningHooks`]): Go's function
 /// variable `EvalSubqueryFirstRow` and the column default evaluators.
-pub(crate) struct DriverHooks<'a> {
+pub struct DriverHooks<'a> {
     catalog: &'a SessionExtendedInfoSchema,
 }
 
 /// The executor's [`tidb_planner::optimize::PlanningHooks`] over
 /// `catalog`.
-pub(crate) fn driver_hooks(catalog: &SessionExtendedInfoSchema) -> DriverHooks<'_> {
+pub fn driver_hooks(catalog: &SessionExtendedInfoSchema) -> DriverHooks<'_> {
     DriverHooks { catalog }
 }
 

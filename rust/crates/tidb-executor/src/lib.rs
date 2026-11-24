@@ -203,6 +203,7 @@ pub use ddl_sequence::show_create_sequence;
 #[cfg(test)]
 pub(crate) use driver::access::run_prepared_select_for_test;
 pub use driver::plan_cache::{PlanCacheInvalidation, SessionPlanCache};
+pub use driver::planner_bridge::driver_hooks;
 pub use driver::{
     access::{
         build_prepared_select_plan, PreparedPlanCacheEnvironment, PlanCacheExecution,

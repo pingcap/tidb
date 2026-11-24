@@ -23,7 +23,6 @@
 
 #[allow(unused_imports)]
 use super::*;
-use crate::compiler::NonPreparedPlanCacheCompile;
 
 use tidb_ast::Stmt;
 

@@ -22,7 +22,6 @@
 //! both live here.
 
 use tidb_executor::stmt_ctx_build::ResetContextOfStmt;
-use tidb_executor::compiler::NonPreparedPlanCacheCompile;
 use std::borrow::Cow;
 
 use tidb_ast::{DmlStmt, Hint, SessionStmt, Stmt, Visitable, Visitor};

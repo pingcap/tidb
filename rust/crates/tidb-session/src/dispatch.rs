@@ -26,7 +26,7 @@ use tidb_executor::ddl_exec::TemporaryTableDdlExec;
 use tidb_executor::mem_table_retrieval::StmtMemTableRetrieval as _;
 use tidb_executor::stmt_ctx_build::ResetContextOfStmt;
 use tidb_executor::compiler::PrepareExec;
-use tidb_executor::compiler::NonPreparedPlanCacheCompile;
+use tidb_planner::optimize::NonPreparedPlanCacheContext as _;
 use tidb_executor::compiler::PlanCacheableChecker;
 use tidb_ast::{DmlStmt, SessionStmt, Stmt};
 use tidb_infoschema::SessionExtendedInfoSchema;
