@@ -33,7 +33,7 @@
         let tidb_ast::QueryStmt::Select(select) = &*query else {
             panic!("not a SELECT");
         };
-        crate::driver::planner_bridge::physical_select_plan(select, catalog, DEFAULT_DATABASE, context)
+        crate::driver::planner_bridge::physical_select_plan(&crate::driver::planner_bridge::driver_hooks(catalog), select, catalog, DEFAULT_DATABASE, context)
             .expect("ordinary planning");
     }
 

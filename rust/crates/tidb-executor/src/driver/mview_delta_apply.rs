@@ -139,7 +139,7 @@ fn diff_source_physical_plan(
     ctx: &crate::StmtContext,
 ) -> Result<tidb_planner_core_operator_physicalop::PhysicalPlan, DriverError> {
     let plan_ctx = ctx.clone().with_full_outer_join(true).with_cascades_planner(false);
-    let physical = super::planner_bridge::physical_select_plan(&plan.diff.diff_source_select, catalog, current_db, &plan_ctx)
+    let physical = super::planner_bridge::physical_select_plan(&crate::driver::planner_bridge::driver_hooks(catalog), &plan.diff.diff_source_select, catalog, current_db, &plan_ctx)
         .map_err(super::planner_error_to_driver)?;
     let source_len = physical.schema().map_or(0, |schema| schema.columns.len());
     plan.diff.validate_source_layout(source_len).map_err(plain)?;

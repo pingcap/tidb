@@ -115,6 +115,7 @@ pub mod dml_optimize;
 pub mod do_optimize;
 pub mod planner_optimize;
 pub mod statement_optimize;
+pub mod statement_plan;
 #[cfg(test)]
 mod partidx_tests;
 pub mod post_optimize;

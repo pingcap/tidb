@@ -63,7 +63,20 @@ pub(crate) mod mview_delta_merge_agg_builder;
 pub(crate) use multi_dml::{multi_dml_explain_plan, MultiDmlRef};
 
 pub use dml::dml_visit_info;
-pub use planner_bridge::query_visit_info;
+/// Go `PlanBuilder.Build` for a query whose plan is discarded: the visit
+/// infos it collects ([`tidb_planner::statement_plan::query_visit_info`]).
+///
+/// # Errors
+///
+/// The build's failure.
+pub fn query_visit_info(
+    query: &QueryStmt,
+    catalog: &SessionExtendedInfoSchema,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+) -> Result<Vec<tidb_planner::plan_builder::visit_info::VisitInfo>, DriverError> {
+    planner_bridge::query_visit_info(&planner_bridge::driver_hooks(catalog), query, catalog, current_db, ctx)
+}
 mod record_set;
 pub use record_set::RecordSet;
 pub(crate) use tidb_planner::dml_optimize as fk_trigger_plan;
@@ -159,7 +172,7 @@ pub(crate) fn build_create_view(
 ) -> Result<Vec<FieldType>, DriverError> {
     validate_query_sequence_names(&create.query, ctx)?;
     tidb_planner::preprocess::validate_query_usage(&create.query, ctx)?;
-    planner_bridge::build_create_view(create, view_schema, catalog, current_db, ctx)
+    planner_bridge::build_create_view(&crate::driver::planner_bridge::driver_hooks(catalog), create, view_schema, catalog, current_db, ctx)
         .map_err(planner_error_to_driver)
 }
 
@@ -173,7 +186,7 @@ pub(crate) fn view_column_types(
     catalog: &SessionExtendedInfoSchema,
     ctx: &crate::StmtContext,
 ) -> Result<Vec<Option<FieldType>>, DriverError> {
-    planner_bridge::view_column_types(database, view_name, columns, catalog, ctx)
+    planner_bridge::view_column_types(&crate::driver::planner_bridge::driver_hooks(catalog), database, view_name, columns, catalog, ctx)
         .map_err(planner_error_to_driver)
 }
 
@@ -356,7 +369,7 @@ pub(crate) fn optimize_query_stmt_with_scalar_subqueries(
     ),
     DriverError,
 > {
-    planner_bridge::optimize_query_stmt(query, catalog, current_db, ctx)
+    planner_bridge::optimize_query_stmt(&crate::driver::planner_bridge::driver_hooks(catalog), query, catalog, current_db, ctx)
 }
 
 pub(super) fn run_physical_set_opr_stmt(
@@ -480,7 +493,7 @@ pub fn plan_show_stmt(
     let mut show = show.clone();
     tidb_planner::preprocess::resolve_show_stmt(&mut show, current_db, auth_user)
         .map_err(planner_error_to_driver)?;
-    planner_bridge::physical_show_plan(&show, catalog, current_db, ctx)
+    planner_bridge::physical_show_plan(&crate::driver::planner_bridge::driver_hooks(catalog), &show, catalog, current_db, ctx)
         .map_err(planner_error_to_driver)
 }
 
@@ -504,7 +517,7 @@ pub fn plan_statement(
     ),
     DriverError,
 > {
-    planner_bridge::statement_plan(stmt, catalog, current_db, ctx, session_ctx)
+    planner_bridge::statement_plan(&crate::driver::planner_bridge::driver_hooks(catalog), stmt, catalog, current_db, ctx, session_ctx)
         .map_err(planner_error_to_driver)
 }
 
@@ -557,7 +570,7 @@ pub fn plan_import_query(
     ctx: &crate::StmtContext,
     session_ctx: &dyn tidb_planner::plan_builder::stmt_build::SessionPlanContext,
 ) -> Result<tidb_planner_core_operator_physicalop::PhysicalPlan, DriverError> {
-    planner_bridge::import_query_plan(query, catalog, current_db, ctx, session_ctx).map_err(planner_error_to_driver)
+    planner_bridge::import_query_plan(&crate::driver::planner_bridge::driver_hooks(catalog), query, catalog, current_db, ctx, session_ctx).map_err(planner_error_to_driver)
 }
 
 /// Go `Compile` for `SET`: `buildSet` over this catalog, with the
@@ -580,7 +593,7 @@ pub fn plan_set_stmt(
     ),
     DriverError,
 > {
-    planner_bridge::set_plan(set, catalog, current_db, ctx).map_err(planner_error_to_driver)
+    planner_bridge::set_plan(&crate::driver::planner_bridge::driver_hooks(catalog), set, catalog, current_db, ctx).map_err(planner_error_to_driver)
 }
 
 /// The `PhysicalShow` a planned SHOW reads: the node whose rows the session
@@ -608,8 +621,7 @@ pub fn plan_admin_show_ddl_jobs(
     current_db: &str,
     ctx: &crate::StmtContext,
 ) -> Result<tidb_planner_core_operator_physicalop::PhysicalPlan, DriverError> {
-    planner_bridge::physical_admin_show_ddl_jobs_plan(
-        job_number,
+    planner_bridge::physical_admin_show_ddl_jobs_plan(&crate::driver::planner_bridge::driver_hooks(catalog), job_number,
         where_clause,
         catalog,
         current_db,
@@ -656,7 +668,7 @@ pub fn plan_query_meta_stmt(
     ctx: &crate::StmtContext,
 ) -> Result<tidb_planner_core_operator_physicalop::PhysicalPlan, DriverError> {
     validate_query_sequence_names(query, ctx)?;
-    planner_bridge::physical_query_plan(query, catalog, current_db, ctx)
+    planner_bridge::physical_query_plan(&crate::driver::planner_bridge::driver_hooks(catalog), query, catalog, current_db, ctx)
         .map_err(planner_error_to_driver)
 }
 
@@ -677,8 +689,7 @@ pub fn plan_query_meta_stmt_with_subqueries(
     DriverError,
 > {
     validate_query_sequence_names(query, ctx)?;
-    planner_bridge::physical_query_plan_with_scalar_subqueries(
-        query,
+    planner_bridge::physical_query_plan_with_scalar_subqueries(&crate::driver::planner_bridge::driver_hooks(catalog), query,
         catalog,
         current_db,
         ctx,

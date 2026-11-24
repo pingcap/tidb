@@ -154,8 +154,7 @@ pub(crate) fn run_insert_stmt_with_physical_and_visits(
                     };
                     let expressions = match expressions {
                         Some(expressions) => expressions,
-                        None => super::planner_bridge::cached_insert_expressions(
-                            insert, physical, catalog, current_db, ctx,
+                        None => super::planner_bridge::cached_insert_expressions(&crate::driver::planner_bridge::driver_hooks(catalog), insert, physical, catalog, current_db, ctx,
                         ).map_err(super::planner_error_to_driver)?,
                     };
                     PlannedInsert::new(expressions, physical, Vec::new(), Vec::new())
@@ -214,7 +213,7 @@ pub(crate) fn build_insert_plan(
     use_plan_cache: bool,
 ) -> Result<(tidb_planner_core_operator_physicalop::PhysicalPlan, PlannedInsert), DriverError> {
     let (built, visits, scalar_subqueries) =
-        super::planner_bridge::insert_plan(insert, catalog, current_db, ctx, use_plan_cache)
+        super::planner_bridge::insert_plan(&crate::driver::planner_bridge::driver_hooks(catalog), insert, catalog, current_db, ctx, use_plan_cache)
             .map_err(super::planner_error_to_driver)?;
     let mut physical = built;
     let tidb_planner_core_operator_physicalop::PhysicalPlan::Dml(root) = &mut physical else {
@@ -3271,8 +3270,7 @@ fn cached_dml_physical_plan(
     };
     if let tidb_ast::DmlStmt::Insert(insert) = dml.as_ref() {
         ctx.start_prepared_range_tracking();
-        let (built, _, _) = super::planner_bridge::insert_plan(
-            insert, catalog, current_database, ctx, true,
+        let (built, _, _) = super::planner_bridge::insert_plan(&crate::driver::planner_bridge::driver_hooks(catalog), insert, catalog, current_database, ctx, true,
         ).map_err(super::planner_error_to_driver)?;
         let mut root = built;
         super::physical_builder::prepare_plan_for_explain(&mut root, catalog, ctx)?;

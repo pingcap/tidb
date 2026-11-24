@@ -264,8 +264,7 @@ pub fn plan_mview_delta_merge(
     // session: both draw from its plan-id and column-id counters.
     let (plan_ids, column_ids) =
         (tidb_planner_core_base::PlanIdAllocator::new(), tidb_planner_core_base::ColumnIdAllocator::new());
-    let source = super::planner_bridge::physical_select_plan_with_allocators(
-        &build.merge_source_select,
+    let source = super::planner_bridge::physical_select_plan_with_allocators(&crate::driver::planner_bridge::driver_hooks(catalog), &build.merge_source_select,
         catalog,
         current_db,
         &plan_ctx,
@@ -308,8 +307,7 @@ pub fn plan_mview_delta_merge(
             let mut select = template.clone();
             tidb_planner::mview::set_full_update_lookup_index_hint(&mut select, &indexes).map_err(plain)?;
             let lookup_ctx = plan_ctx.clone().with_inl_join_inner_multi_pattern(true);
-            let lookup_plan = super::planner_bridge::physical_select_plan_with_allocators(
-                &select,
+            let lookup_plan = super::planner_bridge::physical_select_plan_with_allocators(&crate::driver::planner_bridge::driver_hooks(catalog), &select,
                 lookup_catalog,
                 current_db,
                 &lookup_ctx,
