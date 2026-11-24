@@ -19,10 +19,14 @@ import (
 
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
+	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
+	"github.com/pingcap/tidb/pkg/statistics"
+	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/stretchr/testify/require"
 )
 
@@ -162,4 +166,31 @@ func TestHintCannotFitProperty(t *testing.T) {
 	mockPhysicalPlan, ok = task.Plan().(*mockPhysicalPlan4Test)
 	require.True(t, ok)
 	require.Equal(t, 1, mockPhysicalPlan.planType)
+}
+
+func TestMissingStatsIndexVsFullScan(t *testing.T) {
+	ctx := coretestsdk.MockContext()
+	defer domain.GetDomain(ctx).StatsHandle().Close()
+	prop := property.NewPhysicalProperty(property.RootTaskType, nil, false, 0, false)
+	// The table has statistics, but index 1 does not.
+	stats := &statistics.Table{ColAndIdxExistenceMap: statistics.NewColAndIndexExistenceMapWithoutSize()}
+	idx := &candidatePath{
+		path:              &util.AccessPath{Index: &model.IndexInfo{ID: 1}, Ranges: make(ranger.Ranges, 1), CountAfterAccess: 10},
+		accessCondsColMap: map[int64]int{1: -1, 2: -1},
+		eqOrInCount:       2,
+	}
+	tbl := &candidatePath{
+		path:              &util.AccessPath{IsIntHandlePath: true, Ranges: ranger.FullIntRange(false), IsSingleScan: true, CountAfterAccess: 1000},
+		accessCondsColMap: map[int64]int{},
+	}
+	// The missing-statistics index with 2 equal predicates wins over a full table scan,
+	// independent of tidb_opt_prefer_range_scan.
+	for _, preferRange := range []bool{false, true} {
+		ctx.GetSessionVars().SetAllowPreferRangeScan(preferRange)
+		result, missingStats := compareCandidates(ctx.GetPlanCtx(), stats, prop, idx, tbl)
+		require.Equal(t, 1, result, "preferRange=%v", preferRange)
+		require.True(t, missingStats)
+		result, _ = compareCandidates(ctx.GetPlanCtx(), stats, prop, tbl, idx)
+		require.Equal(t, -1, result, "reversed: preferRange=%v", preferRange)
+	}
 }
