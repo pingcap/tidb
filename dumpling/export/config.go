@@ -75,6 +75,8 @@ const (
 	flagCA                       = "ca"
 	flagCert                     = "cert"
 	flagKey                      = "key"
+	flagSPIFFEWorkloadAPIAddr    = "spiffe-workload-api-addr"
+	flagSPIFFEServerID           = "spiffe-server-id"
 	flagCsvSeparator             = "csv-separator"
 	flagCsvDelimiter             = "csv-delimiter"
 	flagCsvLineTerminator        = "csv-line-terminator"
@@ -121,6 +123,8 @@ var dumpServiceIncompatibleFlags = []string{
 	flagCA,
 	flagCert,
 	flagKey,
+	flagSPIFFEWorkloadAPIAddr,
+	flagSPIFFEServerID,
 	flagCompleteInsert,
 	flagParams,
 	flagReadTimeout,
@@ -204,6 +208,10 @@ type Config struct {
 		SSLCABytes   []byte `json:"-"`
 		SSLCertBytes []byte `json:"-"`
 		SSLKeyBytes  []byte `json:"-"`
+		// SPIFFEWorkloadAPIAddr is the absolute Unix socket URL for SQL TLS credentials.
+		SPIFFEWorkloadAPIAddr string
+		// SPIFFEServerID is the expected SQL server SPIFFE ID, with * matching one path segment.
+		SPIFFEServerID string
 	}
 
 	LogLevel          string
@@ -465,6 +473,8 @@ func (*Config) DefineFlags(flags *pflag.FlagSet) {
 	flags.String(flagCA, "", "The path name to the certificate authority file for TLS connection")
 	flags.String(flagCert, "", "The path name to the client certificate file for TLS connection")
 	flags.String(flagKey, "", "The path name to the client private key file for TLS connection")
+	flags.String(flagSPIFFEWorkloadAPIAddr, "", "SPIFFE Workload API Unix socket URL for SQL mTLS (unix:///absolute/path.sock); requires --spiffe-server-id and replaces --ca, --cert, and --key")
+	flags.String(flagSPIFFEServerID, "", "Expected SQL server SPIFFE ID, with * matching one complete path segment (requires --spiffe-workload-api-addr)")
 	flags.String(flagCsvSeparator, ",", "The separator for csv files, default ','")
 	flags.String(flagCsvDelimiter, "\"", "The delimiter for values in csv files, default '\"'")
 	flags.String(flagCsvLineTerminator, "\r\n", "The line terminator for csv files, default '\\r\\n'")
@@ -632,6 +642,14 @@ func (conf *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 		return errors.Trace(err)
 	}
 	conf.Security.KeyPath, err = flags.GetString(flagKey)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	conf.Security.SPIFFEWorkloadAPIAddr, err = flags.GetString(flagSPIFFEWorkloadAPIAddr)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	conf.Security.SPIFFEServerID, err = flags.GetString(flagSPIFFEServerID)
 	if err != nil {
 		return errors.Trace(err)
 	}

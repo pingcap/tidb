@@ -3,6 +3,9 @@
 package export
 
 import (
+	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/tls"
@@ -11,6 +14,7 @@ import (
 	"fmt"
 	"math/big"
 	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"testing"
@@ -22,7 +26,10 @@ import (
 	"github.com/pingcap/tidb/pkg/dumpformat/parquetfile"
 	"github.com/pingcap/tidb/pkg/objstore/compressedio"
 	"github.com/spf13/pflag"
+	"github.com/spiffe/go-spiffe/v2/proto/spiffe/workload"
+	"github.com/spiffe/go-spiffe/v2/spiffeid"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc"
 )
 
 func TestGetDriverConfigTLSCipherSuites(t *testing.T) {
@@ -117,6 +124,178 @@ func TestGetDriverConfigTLSHandshake(t *testing.T) {
 				require.NoError(t, <-serverErr)
 			})
 		}
+	}
+}
+
+func TestSPIFFETLS(t *testing.T) {
+	const clientID, serverID = "spiffe://example.org/dumpling", "spiffe://example.org/ns/prod/tidb"
+
+	caKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	ca := &x509.Certificate{
+		SerialNumber:          big.NewInt(1),
+		NotBefore:             time.Now().Add(-time.Minute),
+		NotAfter:              time.Now().Add(time.Hour),
+		BasicConstraintsValid: true,
+		IsCA:                  true,
+		KeyUsage:              x509.KeyUsageCertSign,
+	}
+	caDER, err := x509.CreateCertificate(rand.Reader, ca, ca, &caKey.PublicKey, caKey)
+	require.NoError(t, err)
+	issue := func(id string, serial int64) ([]byte, []byte) {
+		uri, err := url.Parse(id)
+		require.NoError(t, err)
+		key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+		require.NoError(t, err)
+		leaf := &x509.Certificate{
+			SerialNumber: big.NewInt(serial),
+			NotBefore:    ca.NotBefore,
+			NotAfter:     ca.NotAfter,
+			KeyUsage:     x509.KeyUsageDigitalSignature,
+			URIs:         []*url.URL{uri},
+		}
+		der, err := x509.CreateCertificate(rand.Reader, leaf, ca, &key.PublicKey, caKey)
+		require.NoError(t, err)
+		keyDER, err := x509.MarshalPKCS8PrivateKey(key)
+		require.NoError(t, err)
+		return der, keyDER
+	}
+	clientDER, clientKeyDER := issue(clientID, 2)
+	serverDER, _ := issue(serverID, 3)
+
+	socket := filepath.Join(t.TempDir(), "api.sock")
+	listener, err := net.Listen("unix", socket)
+	require.NoError(t, err)
+	server := grpc.NewServer()
+	workload.RegisterSpiffeWorkloadAPIServer(server, &testSPIFFEWorkloadAPI{
+		response: &workload.X509SVIDResponse{Svids: []*workload.X509SVID{{
+			SpiffeId:    clientID,
+			X509Svid:    clientDER,
+			X509SvidKey: clientKeyDER,
+			Bundle:      caDER,
+		}}},
+	})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_ = server.Serve(listener)
+	}()
+	t.Cleanup(func() {
+		server.Stop()
+		<-done
+	})
+
+	for _, tc := range []struct {
+		name string
+		id   string
+	}{
+		{name: "exact", id: serverID},
+		{name: "wildcard", id: "spiffe://example.org/ns/*/tidb"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+			defer cancel()
+			conf := parseConfigFromArgsForTest(t, "--spiffe-workload-api-addr", "unix://"+socket, "--spiffe-server-id", tc.id)
+			d := &Dumper{
+				conf:      conf,
+				tctx:      tcontext.Background().WithContext(ctx),
+				cancelCtx: cancel,
+				metrics:   newMetrics(conf.PromFactory, conf.Labels),
+			}
+			d.metrics.registerTo(conf.PromRegistry)
+			require.NoError(t, d.initTLS())
+			t.Cleanup(func() {
+				require.NoError(t, d.Close())
+				_, err := conf.Security.TLS.GetClientCertificate(nil)
+				require.Error(t, err)
+			})
+			driverCfg := conf.GetDriverConfig("")
+			require.False(t, driverCfg.AllowFallbackToPlaintext)
+			require.NotNil(t, driverCfg.TLS.GetClientCertificate)
+			require.NotNil(t, driverCfg.TLS.VerifyPeerCertificate)
+			clientCert, err := driverCfg.TLS.GetClientCertificate(nil)
+			require.NoError(t, err)
+			require.Equal(t, [][]byte{clientDER}, clientCert.Certificate)
+			require.NoError(t, driverCfg.TLS.VerifyPeerCertificate([][]byte{serverDER}, nil))
+			require.Error(t, driverCfg.TLS.VerifyPeerCertificate([][]byte{clientDER}, nil))
+		})
+	}
+}
+
+type testSPIFFEWorkloadAPI struct {
+	workload.UnimplementedSpiffeWorkloadAPIServer
+	response *workload.X509SVIDResponse
+}
+
+func (s *testSPIFFEWorkloadAPI) FetchX509SVID(_ *workload.X509SVIDRequest, stream workload.SpiffeWorkloadAPI_FetchX509SVIDServer) error {
+	if err := stream.Send(s.response); err != nil {
+		return err
+	}
+	<-stream.Context().Done()
+	return stream.Context().Err()
+}
+
+func TestSPIFFETLSConfigValidation(t *testing.T) {
+	const endpoint, serverID = "unix:///tmp/spiffe.sock", "spiffe://example.org/tidb"
+	for _, tc := range []struct {
+		name     string
+		endpoint string
+		serverID string
+		caPath   string
+		caBytes  []byte
+		want     string
+	}{
+		{name: "TCP endpoint", endpoint: "tcp://127.0.0.1:8081", serverID: serverID, want: "unix:///"},
+		{name: "relative Unix endpoint", endpoint: "unix://relative.sock", serverID: serverID, want: "unix:///"},
+		{name: "missing server ID", endpoint: endpoint, want: "--spiffe-server-id"},
+		{name: "missing endpoint", serverID: serverID, want: "--spiffe-workload-api-addr"},
+		{name: "invalid server ID", endpoint: endpoint, serverID: "example.org", want: "--spiffe-server-id"},
+		{name: "server ID without a workload path", endpoint: endpoint, serverID: "spiffe://example.org", want: "--spiffe-server-id"},
+		{name: "wildcard trust domain", endpoint: endpoint, serverID: "spiffe://*.example.org/ns/tidb", want: "--spiffe-server-id"},
+		{name: "partial wildcard segment", endpoint: endpoint, serverID: "spiffe://example.org/ns/tidb-*", want: "--spiffe-server-id"},
+		{name: "globstar segment", endpoint: endpoint, serverID: "spiffe://example.org/ns/**/tidb", want: "--spiffe-server-id"},
+		{name: "PEM path conflict", endpoint: endpoint, serverID: serverID, caPath: "ca.pem", want: "file or byte TLS credentials"},
+		{name: "PEM content conflict", endpoint: endpoint, serverID: serverID, caBytes: []byte("ca"), want: "file or byte TLS credentials"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			conf := DefaultConfig()
+			conf.Security.SPIFFEWorkloadAPIAddr = tc.endpoint
+			conf.Security.SPIFFEServerID = tc.serverID
+			conf.Security.CAPath = tc.caPath
+			conf.Security.SSLCABytes = tc.caBytes
+			ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+			defer cancel()
+			d := &Dumper{conf: conf, tctx: tcontext.Background().WithContext(ctx)}
+			require.ErrorContains(t, d.initTLS(), tc.want)
+		})
+	}
+	_, err := parseConfigFromArgsForTestWithErr(t, "--dump-service", "unix:///tmp/dump.sock", "--spiffe-workload-api-addr", endpoint)
+	require.ErrorContains(t, err, "--spiffe-workload-api-addr cannot be combined with --dump-service")
+}
+
+func TestSPIFFEServerMatcher(t *testing.T) {
+	match, err := parseSPIFFEServerMatcher("spiffe://example.org/ns/*/tidb/*")
+	require.NoError(t, err)
+	for _, tc := range []struct {
+		name  string
+		id    string
+		match bool
+	}{
+		{name: "one segment per wildcard", id: "spiffe://example.org/ns/prod/tidb/server-1", match: true},
+		{name: "different trust domain", id: "spiffe://other.org/ns/prod/tidb/server-1"},
+		{name: "missing segment", id: "spiffe://example.org/ns/tidb/server-1"},
+		{name: "extra segment", id: "spiffe://example.org/ns/prod/zone/tidb/server-1"},
+		{name: "different literal segment", id: "spiffe://example.org/ns/prod/pd/server-1"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			id, err := spiffeid.FromString(tc.id)
+			require.NoError(t, err)
+			if tc.match {
+				require.NoError(t, match(id))
+			} else {
+				require.Error(t, match(id))
+			}
+		})
 	}
 }
 
