@@ -147,6 +147,7 @@ func MergeOverlappingFilesV2(
 			readRanges[1],
 			bufPool,
 			bufPool,
+			concurrency,
 			loaded,
 		)
 		if err1 != nil {
