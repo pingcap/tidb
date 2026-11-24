@@ -438,17 +438,52 @@ pub fn open_query_meta_stmt_with_physical(
     current_db: &str,
     ctx: &crate::StmtContext,
 ) -> Result<RecordSet, DriverError> {
-    validate_query_sequence_names(query, ctx)?;
     match physical {
-        Some(physical) => physical_builder::open_query(query, physical, catalog, ctx),
+        Some(physical) => {
+            validate_query_sequence_names(query, ctx)?;
+            physical_builder::open_query(query, physical, catalog, ctx)
+        }
         None => {
-            tidb_planner::preprocess::validate_query_usage(query, ctx)?;
-            let optimize = start_optimize_region();
-            let mut physical = optimize_query_stmt(query, catalog, current_db, ctx)?;
-            optimize.end();
+            let mut physical = compile_query_plan(query, catalog, current_db, ctx)?;
             physical_builder::open_query(query, &mut physical, catalog, ctx)
         }
     }
+}
+
+/// Go `Compiler.Compile` for a query: the preprocessor's checks
+/// (`validate_query_usage`, the sequence names) and `planner.Optimize`,
+/// answering the final plan [`open_compiled_query`] executes.
+///
+/// # Errors
+///
+/// The checks' and the optimizer's errors.
+pub fn compile_query_plan(
+    query: &QueryStmt,
+    catalog: &SessionExtendedInfoSchema,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+) -> Result<tidb_planner_core_operator_physicalop::PhysicalPlan, DriverError> {
+    validate_query_sequence_names(query, ctx)?;
+    tidb_planner::preprocess::validate_query_usage(query, ctx)?;
+    let optimize = start_optimize_region();
+    let physical = optimize_query_stmt(query, catalog, current_db, ctx)?;
+    optimize.end();
+    Ok(physical)
+}
+
+/// Go `ExecStmt.Exec` for a query [`compile_query_plan`] planned: build the
+/// executors over the final plan and open its record set.
+///
+/// # Errors
+///
+/// The executors' build and open errors.
+pub fn open_compiled_query(
+    query: &QueryStmt,
+    physical: &mut tidb_planner_core_operator_physicalop::PhysicalPlan,
+    catalog: &SessionExtendedInfoSchema,
+    ctx: &crate::StmtContext,
+) -> Result<RecordSet, DriverError> {
+    physical_builder::open_query(query, physical, catalog, ctx)
 }
 
 /// Opens a prepared query whose sequence expressions were checked when the

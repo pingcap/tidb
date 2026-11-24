@@ -1644,6 +1644,47 @@ impl Session {
         Ok(execution)
     }
 
+    /// Go `Compiler.Compile` and then `ExecStmt.Exec` for a query: the
+    /// final plan is the one the statement retained while its schema still
+    /// holds, else `planner.Optimize`'s
+    /// ([`tidb_executor::driver::compile_query_plan`]); the execution builds
+    /// the executors over it and opens the record set. Each step answers the
+    /// memory-table reads it asks for and runs again
+    /// ([`Self::with_catalog_retrieving`]); the execution's rerun reuses the
+    /// compiled plan, as Go's `ExecStmt` keeps its `Plan`.
+    fn compile_and_open_query(
+        &mut self,
+        query: &tidb_ast::QueryStmt,
+        select_plan: &mut Option<RetainedSelectPlan<'_>>,
+        current_db: &str,
+        ctx: &tidb_sessionctx::StmtContext,
+    ) -> Result<tidb_executor::driver::RecordSet, DriverError> {
+        let mut compiled = None;
+        self.with_catalog_retrieving(ctx, |catalog| {
+            compiled = match select_plan {
+                Some(retained) if retained.schema_version == catalog.schema_version() => None,
+                _ => Some(tidb_executor::driver::compile_query_plan(query, catalog, current_db, ctx)?),
+            };
+            Ok(())
+        })?;
+        self.with_catalog_retrieving(ctx, |catalog| match (compiled.as_mut(), select_plan.as_mut()) {
+            (Some(physical), _) => {
+                tidb_executor::driver::open_compiled_query(query, physical, catalog, ctx)
+            }
+            (None, Some(retained)) => {
+                *retained.used = true;
+                tidb_executor::driver::open_query_meta_stmt_with_physical(
+                    query,
+                    Some(&mut *retained.physical),
+                    catalog,
+                    current_db,
+                    ctx,
+                )
+            }
+            (None, None) => unreachable!("a query compiles to a plan or keeps its retained one"),
+        })
+    }
+
     // Go keys memory arbitration by StatementContext.SQLDigest's normalized
     // OriginalSQL, not binding normalization of a restored AST. The caller
     // supplies PREPARE's original text, so bound values do not change the key.
@@ -1913,21 +1954,8 @@ impl Session {
                     Ok(PendingExecution::Complete(tidb_executor::StmtOutput::Affected(closed?)))
                 };
                 let tidb_ast::QueryStmt::Select(_) = &**query else {
-                    let record_set = self.with_catalog_retrieving(&ctx, |catalog| {
-                        let physical = select_plan.as_mut().and_then(|retained| {
-                            (retained.schema_version == catalog.schema_version()).then(|| {
-                                *retained.used = true;
-                                &mut *retained.physical
-                            })
-                        });
-                        tidb_executor::driver::open_query_meta_stmt_with_physical(
-                            query,
-                            physical,
-                            catalog,
-                            &current_db,
-                            &ctx,
-                        )
-                    })?;
+                    let record_set =
+                        self.compile_and_open_query(query, &mut select_plan, &current_db, &ctx)?;
                     return Ok(PendingExecution::Query(PendingQuery::new(record_set, ctx)));
                 };
                 if let Some(parameterized) = non_prepared.as_ref() {
@@ -1976,21 +2004,8 @@ impl Session {
                         }
                     }
                 }
-                let record_set = self.with_catalog_retrieving(&ctx, |catalog| {
-                    let physical = select_plan.as_mut().and_then(|retained| {
-                        (retained.schema_version == catalog.schema_version()).then(|| {
-                            *retained.used = true;
-                            &mut *retained.physical
-                        })
-                    });
-                    tidb_executor::driver::open_query_meta_stmt_with_physical(
-                        query,
-                        physical,
-                        catalog,
-                        &current_db,
-                        &ctx,
-                    )
-                })?;
+                let record_set =
+                    self.compile_and_open_query(query, &mut select_plan, &current_db, &ctx)?;
                 return finish_select(record_set, ctx);
             }
             Stmt::Dml(dml) => {
