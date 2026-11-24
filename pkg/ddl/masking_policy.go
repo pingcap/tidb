@@ -510,8 +510,9 @@ func restoreMaskingExpression(expr ast.ExprNode) (string, error) {
 func validateMaskingPolicyExpression(ctx sessionctx.Context, tblInfo *model.TableInfo, targetCol *model.ColumnInfo, exprStr string) error {
 	// Worker sessions do not load common global variables. Supply the default
 	// when validating an AES signature, without changing a submitter's setting.
-	if _, exists := ctx.GetSessionVars().GetSystemVar(vardef.BlockEncryptionMode); !exists {
-		if err := ctx.GetSessionVars().SetSystemVar(vardef.BlockEncryptionMode, vardef.DefBlockEncryptionMode); err != nil {
+	sessVars := ctx.GetSessionVars() //nolint:forbidigo
+	if _, exists := sessVars.GetSystemVar(vardef.BlockEncryptionMode); !exists {
+		if err := sessVars.SetSystemVar(vardef.BlockEncryptionMode, vardef.DefBlockEncryptionMode); err != nil {
 			return err
 		}
 	}
