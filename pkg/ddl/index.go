@@ -1054,6 +1054,9 @@ SwitchIndexState:
 	case model.StateNone:
 		// none -> delete only
 		err = initForReorgIndexes(w, job, allIndexInfos)
+		if err == nil && job.ReorgMeta.ReorgTp == model.ReorgTypeTxnMerge {
+			err = checkPartialIndexOnTxnMerge(tblInfo, allIndexInfos)
+		}
 		if err != nil {
 			job.State = model.JobStateCancelled
 			return ver, err
@@ -1209,6 +1212,30 @@ SwitchIndexState:
 	return ver, errors.Trace(err)
 }
 
+func checkPartialIndexOnTxnMerge(tblInfo *model.TableInfo, idxInfos []*model.IndexInfo) error {
+	for _, idxInfo := range idxInfos {
+		if !idxInfo.HasCondition() {
+			continue
+		}
+		for _, col := range idxInfo.AffectColumn {
+			if tblInfo.Columns[col.Offset].GetType() != mysql.TypeTimestamp {
+				continue
+			}
+			condition, err := generatedexpr.ParseExpression(idxInfo.ConditionExprString)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if _, ok := condition.(*ast.IsNullExpr); !ok {
+				// TIMESTAMP comparisons can disagree between backfill and DML sessions
+				// in different time zones. NULL predicates are independent of time zones.
+				return dbterror.ErrUnsupportedAddPartialIndex.GenWithStackByArgs(
+					"TIMESTAMP comparisons with transactional backfill are not supported")
+			}
+		}
+	}
+	return nil
+}
+
 func initForReorgIndexes(w *worker, job *model.Job, idxInfos []*model.IndexInfo) error {
 	if len(idxInfos) == 0 {
 		return nil
@@ -1217,10 +1244,12 @@ func initForReorgIndexes(w *worker, job *model.Job, idxInfos []*model.IndexInfo)
 	if err != nil {
 		return err
 	}
-	// Partial Index is not supported without fast reorg.
-	for _, indexInfo := range idxInfos {
-		if (reorgTp == model.ReorgTypeTxn || reorgTp == model.ReorgTypeTxnMerge) && indexInfo.HasCondition() {
-			return dbterror.ErrUnsupportedAddPartialIndex.GenWithStackByArgs("add partial index without fast reorg is not supported")
+	standaloneTxnMerge := kv.StandAloneTiDB && job.Type == model.ActionAddIndex && reorgTp == model.ReorgTypeTxnMerge
+	if reorgTp != model.ReorgTypeIngest && !standaloneTxnMerge {
+		for _, indexInfo := range idxInfos {
+			if indexInfo.HasCondition() {
+				return dbterror.ErrUnsupportedAddPartialIndex.GenWithStackByArgs("add partial index without fast reorg is not supported")
+			}
 		}
 	}
 	loadCloudStorageURI(w, job)
@@ -2205,7 +2234,7 @@ type indexRecord struct {
 	key    []byte        // It's used to lock a record. Record it to reduce the encoding time.
 	vals   []types.Datum // It's the index values.
 	rsData []types.Datum // It's the restored data for handle.
-	skip   bool          // skip indicates that the index key is already exists, we should not add it.
+	skip   bool          // skip indicates the row fails the predicate or the index entry already exists.
 }
 
 type baseIndexWorker struct {
@@ -2387,19 +2416,28 @@ func (w *baseIndexWorker) fetchRowColVals(txn kv.Transaction, taskRange reorgBac
 			}
 
 			for _, index := range w.indexes {
-				if index.Meta().HasCondition() {
-					return false, dbterror.ErrUnsupportedAddPartialIndex.GenWithStackByArgs("add partial index without fast reorg")
-				}
+				idxInfo := index.Meta()
 				actualHandle := handle
 				// For global indexes V1+ on partitioned tables, we need to wrap the handle
 				// with the partition ID to create a PartitionHandle.
 				// This is critical for non-clustered tables after EXCHANGE PARTITION,
 				// where duplicate _tidb_rowid values exist across partitions.
 				// Legacy indexes (version 0) don't use PartitionHandle in the key.
-				if index.Meta().Global && index.Meta().GlobalIndexVersion >= model.GlobalIndexVersionV1 {
+				if idxInfo.Global && idxInfo.GlobalIndexVersion >= model.GlobalIndexVersionV1 {
 					actualHandle = kv.NewPartitionHandle(taskRange.physicalTable.GetPhysicalID(), handle)
 				}
-				idxRecord, err1 := w.getIndexRecord(index.Meta(), actualHandle, recordKey)
+				if idxInfo.HasCondition() {
+					matches, err := index.MeetPartialConditionWithChunk(w.rowDecoder.CurrentRowWithDefaultVal())
+					if err != nil {
+						return false, err
+					}
+					if !matches {
+						// Keep one record per index so positional lookup and scan progress include skipped rows.
+						w.idxRecords = append(w.idxRecords, &indexRecord{handle: actualHandle, skip: true})
+						continue
+					}
+				}
+				idxRecord, err1 := w.getIndexRecord(idxInfo, actualHandle, recordKey)
 				if err1 != nil {
 					return false, errors.Trace(err1)
 				}
@@ -2467,13 +2505,7 @@ func (w *addIndexTxnWorker) batchCheckUniqueKey(txn kv.Transaction, idxRecords [
 	cnt := 0
 	for i, record := range idxRecords {
 		idx := w.indexes[i%len(w.indexes)]
-		if !idx.Meta().Unique {
-			// non-unique key need not to check, use `nil` as a placeholder to keep
-			// `idxRecords[i]` belonging to `indexes[i%len(indexes)]`.
-			w.batchCheckKeys = append(w.batchCheckKeys, nil)
-			w.batchCheckValues = append(w.batchCheckValues, nil)
-			w.distinctCheckFlags = append(w.distinctCheckFlags, false)
-			w.recordIdx = append(w.recordIdx, 0)
+		if record.skip || !idx.Meta().Unique {
 			continue
 		}
 		// skip by default.
@@ -2515,14 +2547,13 @@ func (w *addIndexTxnWorker) batchCheckUniqueKey(txn kv.Transaction, idxRecords [
 	// 2. unique-key/primary-key is duplicate and the handle is not equal, return duplicate error.
 	// 3. non-unique-key is duplicate, skip it.
 	for i, key := range w.batchCheckKeys {
-		if len(key) == 0 {
-			continue
-		}
-		idx := w.indexes[i%len(w.indexes)]
+		recordIdx := w.recordIdx[i]
+		record := idxRecords[recordIdx]
 		val, found := batchVals[string(key)]
 		if found {
 			if w.distinctCheckFlags[i] {
-				if err := w.checkHandleExists(idx.Meta(), key, val, idxRecords[w.recordIdx[i]].handle); err != nil {
+				idx := w.indexes[recordIdx%len(w.indexes)]
+				if err := w.checkHandleExists(idx.Meta(), key, val, record.handle); err != nil {
 					return errors.Trace(err)
 				}
 			}
@@ -2531,7 +2562,7 @@ func (w *addIndexTxnWorker) batchCheckUniqueKey(txn kv.Transaction, idxRecords [
 			// so we need to backfill the not found key into `batchVals` map.
 			batchVals[string(key)] = w.batchCheckValues[i]
 		}
-		idxRecords[w.recordIdx[i]].skip = found && idxRecords[w.recordIdx[i]].skip
+		record.skip = found && record.skip
 	}
 	return nil
 }
@@ -2726,8 +2757,6 @@ func (w *addIndexTxnWorker) BackfillData(_ context.Context, handleRange reorgBac
 
 		for i, idxRecord := range idxRecords {
 			taskCtx.scanCount++
-			// The index is already exists, we skip it, no needs to backfill it.
-			// The following update, delete, insert on these rows, TiDB can handle it correctly.
 			if idxRecord.skip {
 				continue
 			}
@@ -3572,6 +3601,9 @@ func (w *cleanUpIndexWorker) BackfillData(_ context.Context, handleRange reorgBa
 		recordValues := make([][][]types.Datum, len(idxRecords))
 		recordKeys := make([][]kv.Key, len(idxRecords))
 		for i, idxRecord := range idxRecords {
+			if idxRecord.skip {
+				continue
+			}
 			index := w.indexes[i%n]
 			iter := index.GenIndexKVIter(ec, loc, idxRecord.vals, idxRecord.handle, idxRecord.rsData)
 			for iter.Valid() {
@@ -3596,6 +3628,9 @@ func (w *cleanUpIndexWorker) BackfillData(_ context.Context, handleRange reorgBa
 
 		for i, idxRecord := range idxRecords {
 			taskCtx.scanCount++
+			if idxRecord.skip {
+				continue
+			}
 			// Count records with empty arrays as processed even though they have no index keys to delete.
 			cleaned := len(recordKeys[i]) == 0
 			for j, key := range recordKeys[i] {
