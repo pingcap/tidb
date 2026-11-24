@@ -160,7 +160,7 @@ func (m *Manager) GetOrCreate(
 	if mgr != nil {
 		return mgr, nil
 	}
-	entry, _, err := m.getOrCreateEntry(ks, "", ksSessFactoryGetter)
+	entry, err := m.getOrCreateRawEntry(ks, ksSessFactoryGetter)
 	if err != nil {
 		return nil, err
 	}
@@ -183,7 +183,7 @@ func (m *Manager) Acquire(
 		return nil, err
 	}
 
-	entry, holderCount, err := m.getOrCreateEntry(ks, holderID, ksSessFactoryGetter)
+	entry, holderCount, err := m.acquireEntry(ks, holderID, ksSessFactoryGetter)
 	if err != nil {
 		return nil, err
 	}
@@ -212,38 +212,67 @@ func (m *Manager) validateTargetKS(ks string) error {
 
 type sessionManagerFactory func(string, func(string, validatorapi.Validator) pools.Factory) (*SessionManager, func(), error)
 
-// getOrCreateEntry admits holderID only after initialization finishes. An empty
-// holderID is a raw lookup, which can also return a published transitioning
-// runtime while its workers still need it.
-func (m *Manager) getOrCreateEntry(
+// newInitializingEntry must be called with Manager.mu held and no existing
+// entry for ks.
+func (m *Manager) newInitializingEntry(ks string) *runtimeEntry {
+	entry := &runtimeEntry{
+		state:         runtimeInitializing,
+		done:          make(chan struct{}),
+		activeHolders: make(map[string]struct{}),
+	}
+	m.runtimes[ks] = entry
+	return entry
+}
+
+// getOrCreateRawEntry can return a published runtime while its workers start
+// or drain. It waits for unpublished initialization or teardown to finish.
+func (m *Manager) getOrCreateRawEntry(
+	ks string,
+	ksSessFactoryGetter func(string, validatorapi.Validator) pools.Factory,
+) (*runtimeEntry, error) {
+	for {
+		m.mu.Lock()
+		entry := m.runtimes[ks]
+		if entry != nil && entry.visible() {
+			m.mu.Unlock()
+			return entry, nil
+		}
+		if entry == nil {
+			if m.closed {
+				m.mu.Unlock()
+				return nil, errManagerClosed
+			}
+			entry = m.newInitializingEntry(ks)
+			m.mu.Unlock()
+			initialized, _, err := m.initializeEntry(ks, entry, "", ksSessFactoryGetter)
+			return initialized, err
+		}
+		// An existing entry is invisible only before publication or after its
+		// workers have stopped. Wait for that transition and retry the lookup.
+		done := entry.done
+		m.mu.Unlock()
+		failpoint.InjectCall("beforeRuntimeEntryWait", ks)
+		<-done
+	}
+}
+
+// acquireEntry admits holderID only after initialization finishes.
+func (m *Manager) acquireEntry(
 	ks string,
 	holderID string,
 	ksSessFactoryGetter func(string, validatorapi.Validator) pools.Factory,
 ) (*runtimeEntry, int, error) {
 	for {
 		m.mu.Lock()
-		if holderID != "" && m.closed {
+		if m.closed {
 			m.mu.Unlock()
 			return nil, 0, errManagerClosed
 		}
 		entry := m.runtimes[ks]
 		if entry == nil {
-			if m.closed {
-				m.mu.Unlock()
-				return nil, 0, errManagerClosed
-			}
-			entry = &runtimeEntry{
-				state:         runtimeInitializing,
-				done:          make(chan struct{}),
-				activeHolders: make(map[string]struct{}),
-			}
-			m.runtimes[ks] = entry
+			entry = m.newInitializingEntry(ks)
 			m.mu.Unlock()
 			return m.initializeEntry(ks, entry, holderID, ksSessFactoryGetter)
-		}
-		if holderID == "" && entry.visible() {
-			m.mu.Unlock()
-			return entry, 0, nil
 		}
 		if entry.state != runtimeReady {
 			done := entry.done
