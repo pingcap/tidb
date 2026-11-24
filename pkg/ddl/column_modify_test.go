@@ -674,3 +674,40 @@ func TestIssue37611(t *testing.T) {
 	tk.MustExec("create table t2(a char(5), b char(6) as (concat(a, a)) stored, index idx(b));")
 	tk.MustGetErrCode("alter table t2 modify b char(10) as (concat(a, a)) stored;", errno.ErrUnsupportedOnGeneratedColumn)
 }
+
+func TestModifyColumnCharsetClassification(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set sql_mode = 'STRICT_ALL_TABLES'")
+	for _, tc := range []struct{ name, oldType, newType, value string }{
+		{"binary", "binary(2)", "varchar(10) character set utf8mb4", "x'FFFE'"},
+		{"utf8", "char(4) character set utf8mb4 collate utf8mb4_bin", "varchar(10) character set utf8 collate utf8_bin", "'😀'"},
+		{"ascii", "char(4) character set utf8mb4", "varchar(10) character set ascii", "'é'"},
+		{"bytes", "char(4) character set utf8mb4", "varbinary(4)", "'éééé'"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tk.MustExec("drop table if exists t")
+			tk.MustExec("create table t (c " + tc.oldType + ")")
+			tk.MustExec("insert into t values (" + tc.value + ")")
+			before := tk.MustQuery("select hex(c) from t").Rows()
+			require.Error(t, tk.ExecToErr("alter table t modify c "+tc.newType))
+			require.Equal(t, before, tk.MustQuery("select hex(c) from t").Rows())
+		})
+	}
+	tk.MustExec("drop table t")
+	tk.MustExec("create table t (c varchar(5) character set utf8 collate utf8_bin primary key)")
+	tk.MustExec("insert into t values ('éééé')")
+	tk.MustExec("alter table t modify c varchar(5) character set utf8mb4 collate utf8mb4_bin")
+	tk.MustExec("drop table t")
+	tk.MustExec("create table t (c varchar(5) character set utf8mb4 collate utf8mb4_bin)")
+	tk.MustExec("insert into t values ('éééé')")
+	tk.MustExec("alter table t modify c varchar(4) character set utf8mb4 collate utf8mb4_bin")
+	tk.MustQuery("select c from t").Check(testkit.Rows("éééé"))
+	tk.MustExec("admin check table t")
+	tk.MustExec("drop table t")
+	tk.MustExec("create table t (c set('', 'a') character set utf8 collate utf8_bin)")
+	tk.MustExec("insert into t values (1)")
+	tk.MustExec("alter table t modify c set('', 'a') character set utf8mb4 collate utf8mb4_bin")
+	tk.MustQuery("select c+0 from t").Check(testkit.Rows("1"))
+}

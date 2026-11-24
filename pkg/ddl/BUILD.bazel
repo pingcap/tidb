@@ -55,6 +55,7 @@ go_library(
         "metabuild.go",
         "mock.go",
         "modify_column.go",
+        "modify_column_change.go",
         "multi_schema_change.go",
         "mview_recover.go",
         "mview_refresh_source.go",

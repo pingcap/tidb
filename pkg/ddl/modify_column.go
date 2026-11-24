@@ -39,7 +39,6 @@ import (
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	parser_types "github.com/pingcap/tidb/pkg/parser/types"
@@ -105,9 +104,11 @@ func getModifyColumnType(
 	args *model.ModifyColumnArgs,
 	tblInfo *model.TableInfo,
 	oldCol *model.ColumnInfo,
-	sqlMode mysql.SQLMode) byte {
+	sqlMode mysql.SQLMode,
+	change columnChange,
+) byte {
 	newCol := args.Column
-	if noReorgDataStrict(tblInfo, oldCol, args.Column) {
+	if change == columnChangeMetadata {
 		// It's not NULL->NOTNULL change
 		if !isNullToNotNullChange(oldCol, newCol) {
 			return model.ModifyTypeNoReorg
@@ -145,12 +146,11 @@ func getModifyColumnType(
 		return model.ModifyTypeReorg
 	}
 
-	if needRowReorg(oldCol, args.Column) {
+	if change == columnChangeRow {
 		return model.ModifyTypeReorg
 	}
 
-	relatedIndexes := getRelatedIndexIDs(tblInfo, oldCol.ID, false)
-	if len(relatedIndexes) == 0 || !needIndexReorg(oldCol, args.Column) {
+	if change != columnChangeIndex {
 		return model.ModifyTypeNoReorgWithCheck
 	}
 	return model.ModifyTypeIndexReorg
@@ -287,12 +287,13 @@ func (w *worker) onModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, 
 		// Previously, the second DDL will be submitted successfully (VARCHAR(255) utf8 -> VARCHAR(100) utf8 is OK)
 		// but fail during execution, since the columnID has changed. However, as we now may reuse the old column,
 		// we must check the type again here as utf8mb4->utf8 is an invalid change.
-		if err = checkModifyTypes(oldCol, args.Column, isColumnWithIndex(oldCol.Name.L, tblInfo.Indices)); err != nil {
+		change, analyzeErr := analyzeModifyColumn(tblInfo, oldCol, args.Column)
+		if analyzeErr != nil {
 			job.State = model.JobStateCancelled
-			return ver, errors.Trace(err)
+			return ver, errors.Trace(analyzeErr)
 		}
 
-		args.ModifyColumnType = getModifyColumnType(args, tblInfo, oldCol, job.SQLMode)
+		args.ModifyColumnType = getModifyColumnType(args, tblInfo, oldCol, job.SQLMode, change)
 		logutil.DDLLogger().Info("get type for modify column",
 			zap.String("query", job.Query),
 			zap.String("oldColumnName", args.OldColumnName.L),
@@ -980,7 +981,7 @@ func (w *worker) precheckForVarcharToChar(
 	// If existing data is in range, we continue running without row reorg.
 	// The flag is retained, so string with trailing spaces still can't be inserted.
 	if err == nil {
-		args.ModifyColumnType = getModifyColumnType(args, tblInfo, oldCol, job.SQLMode)
+		args.ModifyColumnType = getModifyColumnType(args, tblInfo, oldCol, job.SQLMode, classifyColumnChange(tblInfo, oldCol, newCol))
 		logutil.DDLLogger().Info("precheck done, change modify type",
 			zap.String("query", job.Query),
 			zap.String("oldColumnName", args.OldColumnName.L),
@@ -1148,39 +1149,6 @@ func adjustForeignKeyChildTableInfoAfterModifyColumn(infoCache *infoschema.InfoC
 	return infoList, nil
 }
 
-func needIndexReorg(oldCol, changingCol *model.ColumnInfo) bool {
-	if isIntegerChange(oldCol, changingCol) {
-		return mysql.HasUnsignedFlag(oldCol.GetFlag()) != mysql.HasUnsignedFlag(changingCol.GetFlag())
-	}
-
-	intest.Assert(isCharChange(oldCol, changingCol))
-
-	// Check index key part, ref tablecodec.GenIndexKey
-	if !collate.CompatibleCollate(oldCol.GetCollate(), changingCol.GetCollate()) {
-		return true
-	}
-
-	// Check index value part, ref tablecodec.GenIndexValuePortal
-	// TODO(joechenrh): It's better to check each index here, because not all indexes need
-	// reorg even if the below condition is true.
-	return types.NeedRestoredData(&oldCol.FieldType) != types.NeedRestoredData(&changingCol.FieldType)
-}
-
-func needRowReorg(oldCol, changingCol *model.ColumnInfo) bool {
-	// Integer changes can skip reorg
-	if isIntegerChange(oldCol, changingCol) {
-		return false
-	}
-
-	// Other changes except char changes need row reorg.
-	if !isCharChange(oldCol, changingCol) {
-		return true
-	}
-
-	// We have checked charset before, only need to check binary string, which needs padding.
-	return types.IsBinaryStr(&oldCol.FieldType) || types.IsBinaryStr(&changingCol.FieldType)
-}
-
 // checkModifyColumnData checks the values of the old column data
 func checkModifyColumnData(
 	ctx context.Context,
@@ -1240,7 +1208,7 @@ func buildCheckSQLFromModifyColumn(
 			// Integer conversion
 			conditions = append(conditions, buildCheckRangeForIntegerTypes(oldCol, changingCol))
 		} else {
-			conditions = append(conditions, fmt.Sprintf("LENGTH(%s) > %d", checkColName, changingCol.FieldType.GetFlen()))
+			conditions = append(conditions, fmt.Sprintf("CHAR_LENGTH(%s) > %d", checkColName, changingCol.FieldType.GetFlen()))
 			if oldTp == mysql.TypeVarchar && changingTp == mysql.TypeString {
 				conditions = append(conditions, fmt.Sprintf("%s LIKE '%% '", checkColName))
 			}
@@ -2302,10 +2270,11 @@ func GetModifiableColumnJob(
 		return nil, errors.Trace(err)
 	}
 
-	if err = checkModifyTypes(col.ColumnInfo, newCol.ColumnInfo, isColumnWithIndex(col.Name.L, t.Meta().Indices)); err != nil {
+	change, err := analyzeModifyColumn(t.Meta(), col.ColumnInfo, newCol.ColumnInfo)
+	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	mayNeedChangeColData := !noReorgDataStrict(t.Meta(), col.ColumnInfo, newCol.ColumnInfo)
+	mayNeedChangeColData := change != columnChangeMetadata
 	if err := validateMaterializedViewBaseModifyColumn(ctx, is, t, col.ColumnInfo, newCol.ColumnInfo, spec, mayNeedChangeColData); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -2546,78 +2515,6 @@ func validateMaterializedViewBaseModifyColumn(
 	return err
 }
 
-// noReorgDataStrict is a strong check to decide whether we need to change the column data.
-// If it returns true, it means we don't need the reorg no matter what the data is.
-func noReorgDataStrict(tblInfo *model.TableInfo, oldCol, newCol *model.ColumnInfo) bool {
-	toUnsigned := mysql.HasUnsignedFlag(newCol.GetFlag())
-	originUnsigned := mysql.HasUnsignedFlag(oldCol.GetFlag())
-	needTruncationOrToggleSign := func() bool {
-		return (newCol.GetFlen() > 0 && (newCol.GetFlen() < oldCol.GetFlen() || newCol.GetDecimal() < oldCol.GetDecimal())) ||
-			(toUnsigned != originUnsigned)
-	}
-	// Ignore the potential max display length represented by integer's flen, use default flen instead.
-	defaultOldColFlen, _ := mysql.GetDefaultFieldLengthAndDecimal(oldCol.GetType())
-	defaultNewColFlen, _ := mysql.GetDefaultFieldLengthAndDecimal(newCol.GetType())
-	needTruncationOrToggleSignForInteger := func() bool {
-		return (defaultNewColFlen > 0 && defaultNewColFlen < defaultOldColFlen) || (toUnsigned != originUnsigned)
-	}
-
-	// Deal with the same type.
-	if oldCol.GetType() == newCol.GetType() {
-		switch oldCol.GetType() {
-		case mysql.TypeNewDecimal:
-			// Since type decimal will encode the precision, frac, negative(signed) and wordBuf into storage together, there is no short
-			// cut to eliminate data reorg change for column type change between decimal.
-			return oldCol.GetFlen() == newCol.GetFlen() && oldCol.GetDecimal() == newCol.GetDecimal() && toUnsigned == originUnsigned
-		case mysql.TypeEnum, mysql.TypeSet:
-			return !IsElemsChangedToModifyColumn(oldCol.GetElems(), newCol.GetElems())
-		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
-			return toUnsigned == originUnsigned
-		case mysql.TypeString:
-			// Due to the behavior of padding \x00 at binary type, always change column data when binary length changed
-			if types.IsBinaryStr(&oldCol.FieldType) {
-				return newCol.GetFlen() == oldCol.GetFlen()
-			}
-		case mysql.TypeTiDBVectorFloat32:
-			return !(newCol.GetFlen() != types.UnspecifiedLength && oldCol.GetFlen() != newCol.GetFlen())
-		}
-
-		return !needTruncationOrToggleSign()
-	}
-
-	oldTp := oldCol.GetType()
-	newTp := newCol.GetType()
-	// VARCHAR->CHAR, may need reorg.
-	if types.IsTypeVarchar(oldTp) && newTp == mysql.TypeString {
-		return false
-	}
-	// CHAR->VARCHAR
-	if oldTp == mysql.TypeString && types.IsTypeVarchar(newTp) {
-		// If there are related index, the index may need reorg.
-		relatedIndexes := getRelatedIndexIDs(tblInfo, oldCol.ID, false)
-		if len(relatedIndexes) > 0 {
-			return false
-		}
-	}
-
-	// Deal with the different type.
-	switch oldCol.GetType() {
-	case mysql.TypeVarchar, mysql.TypeString, mysql.TypeVarString, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
-		switch newCol.GetType() {
-		case mysql.TypeVarchar, mysql.TypeString, mysql.TypeVarString, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
-			return !needTruncationOrToggleSign()
-		}
-	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
-		switch newCol.GetType() {
-		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
-			return !needTruncationOrToggleSignForInteger()
-		}
-		// conversion between float and double needs reorganization, see issue #31372
-	}
-
-	return false
-}
-
 // ConvertBetweenCharAndVarchar check whether column converted between char and varchar
 // TODO: it is used for plugins. so change plugin's using and remove it.
 func ConvertBetweenCharAndVarchar(oldCol, newCol byte) bool {
@@ -2762,42 +2659,6 @@ func checkIndexInModifiableColumns(columns []*model.ColumnInfo, idxInfo *model.I
 		}
 	}
 	return nil
-}
-
-// checkModifyTypes checks if the 'origin' type can be modified to 'to' type no matter directly change
-// or change by reorg. It returns error if the two types are incompatible and correlated change are not
-// supported. However, even the two types can be change, if the "origin" type contains primary key, error will be returned.
-func checkModifyTypes(from, to *model.ColumnInfo, needRewriteCollationData bool) error {
-	fromFt := &from.FieldType
-	toFt := &to.FieldType
-	canReorg, err := types.CheckModifyTypeCompatible(fromFt, toFt)
-	if err != nil {
-		if !canReorg {
-			return errors.Trace(dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs(err.Error()))
-		}
-		if mysql.HasPriKeyFlag(fromFt.GetFlag()) {
-			msg := "this column has primary key flag"
-			return dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs(msg)
-		}
-	}
-
-	err = checkModifyCharsetAndCollation(toFt.GetCharset(), toFt.GetCollate(), fromFt.GetCharset(), fromFt.GetCollate(), needRewriteCollationData)
-
-	if err != nil {
-		if toFt.GetCharset() == charset.CharsetGBK || fromFt.GetCharset() == charset.CharsetGBK {
-			return errors.Trace(err)
-		}
-		if strings.Contains(err.Error(), "Unsupported modifying collation") {
-			colErrMsg := "Unsupported modifying collation of column '%s' from '%s' to '%s' when index is defined on it."
-			err = dbterror.ErrUnsupportedModifyCollation.GenWithStack(colErrMsg, from.Name.L, from.GetCollate(), to.GetCollate())
-		}
-
-		// column type change can handle the charset change between these two types in the process of the reorg.
-		if dbterror.ErrUnsupportedModifyCharset.Equal(err) && canReorg {
-			return nil
-		}
-	}
-	return errors.Trace(err)
 }
 
 // ProcessModifyColumnOptions process column options.

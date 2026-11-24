@@ -33,7 +33,26 @@ Job execution (owner worker):
 Modify-column behavior is driven by `args.ModifyColumnType`:
 
 - Selection logic: `pkg/ddl/modify_column.go:getModifyColumnType`
-- Fast-path predicate: `pkg/ddl/modify_column.go:noReorgDataStrict` (strong check: “no reorg no matter what data is”)
+- Fast-path predicate: `pkg/ddl/modify_column_change.go:noReorgDataStrict` (strong check: “no reorg no matter what data is”)
+
+Submission and initial execution both call `analyzeModifyColumn` in
+`pkg/ddl/modify_column_change.go`, using their own metadata snapshot. It validates
+type/charset/collation support and classifies the conversion as metadata-only,
+validation-only, index rewrite, or row rewrite. `noReorgDataStrict` uses the same
+classification for dependent-object checks. Nullability remains a separate check.
+Charset conversions requiring validation/conversion cannot take the metadata or
+length-only paths; safe UTF8/Latin1 widening and ENUM/SET ordinal rules are retained.
+Value/storage rules are grouped by type family in `preservesColumnValues`:
+integer ranges ignore display width; DECIMAL requires identical precision/scale;
+ENUM/SET preserve member ordinals; BINARY length changes require padding changes;
+vector dimensions must match unless the target is unconstrained. String range
+and padding checks live in `preservesStringValues`. The classifier handles the
+indexed CHAR-to-VARCHAR exception separately, then checks index key/restored-data
+encoding through `needIndexReorg`. These are conservative storage rules, not a
+complete SQL conversion support matrix; `checkModifyTypes` still validates support.
+
+Job compatibility, SQL mode, partition/TiFlash and statistics restrictions remain
+in `getModifyColumnType` and can force a more conservative execution path.
 
 High-level rules (read `getModifyColumnType` for the exact gates):
 
@@ -43,10 +62,10 @@ High-level rules (read `getModifyColumnType` for the exact gates):
 - Otherwise:
   - Partitioned tables / TiFlash replica → force `ModifyTypeReorg` (see the `FIXME` gate in `getModifyColumnType`)
   - Non-strict SQL mode → `ModifyTypeReorg`
-  - If row rewrite is required → `ModifyTypeReorg` (`needRowReorg`)
+  - If row rewrite is required → `ModifyTypeReorg` (`columnChangeRow`)
   - Else:
     - No related indexes or index rewrite not needed → `ModifyTypeNoReorgWithCheck`
-    - Index rewrite needed → `ModifyTypeIndexReorg` (`needIndexReorg`)
+    - Index rewrite needed → `ModifyTypeIndexReorg` (`columnChangeIndex`)
 
 Special-case: `VARCHAR` → `CHAR` may start as `ModifyTypePrecheck` and then “downgrade” to a no-reorg type if data is safe:
 
