@@ -1267,7 +1267,8 @@ func (c *CopClient) sendBatch(ctx context.Context, req *kv.Request, vars *tikv.V
 	}
 
 	if err != nil {
-		// PD backoff can format the cancellation into an opaque region lookup error.
+		// Region lookup may format cancellation errors as text, losing the error chain.
+		// Check the context cause to recover the statement timeout.
 		if context.Cause(bo.GetCtx()) == exeerrors.ErrMaxExecTimeExceeded {
 			return copErrorResponse{exeerrors.ErrMaxExecTimeExceeded.GenWithStackByArgs()}
 		}

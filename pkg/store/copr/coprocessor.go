@@ -570,7 +570,8 @@ func buildCopTasks(bo *Backoffer, ranges *KeyRanges, opt *buildCopTaskOpt) ([]*c
 		locs, err = cache.SplitKeyRangesByBuckets(bo, ranges)
 	}
 	if err != nil {
-		// PD backoff can format the cancellation into an opaque region lookup error.
+		// Region lookup may format cancellation errors as text, losing the error chain.
+		// Check the context cause to recover the statement timeout.
 		if context.Cause(ctx) == exeerrors.ErrMaxExecTimeExceeded {
 			return nil, exeerrors.ErrMaxExecTimeExceeded.GenWithStackByArgs()
 		}
