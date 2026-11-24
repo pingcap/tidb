@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/url"
+	"reflect"
 	"regexp"
 	"strconv"
 	"strings"
@@ -120,18 +121,21 @@ func (rs *Storage) GetOptions() *backuppb.S3 {
 	return rs.options
 }
 
+func (rs *Storage) s3likeStorage() *Storage {
+	return rs
+}
+
 // CopyFrom implements the Storage interface.
 func (rs *Storage) CopyFrom(ctx context.Context, inStore storeapi.Storage, spec storeapi.CopySpec) error {
-	// OSS store wraps this type, so we check by interface.
-	srcStore, ok := inStore.(interface {
-		GetBucketPrefix() storeapi.BucketPrefix
-	})
-	if !ok {
-		return errors.Annotatef(berrors.ErrStorageInvalidConfig, "CopyFrom is only supported by S3 storage, get %T", inStore)
+	// Require source and destination to share the same concrete backend client
+	// so server-side copy never crosses distinct object storage services.
+	src, ok := inStore.(interface{ s3likeStorage() *Storage })
+	if !ok || src.s3likeStorage() == nil || reflect.TypeOf(rs.s3Cli) != reflect.TypeOf(src.s3likeStorage().s3Cli) {
+		return errors.Annotatef(berrors.ErrStorageInvalidConfig, "CopyFrom is only supported between the same storage service, get %T", inStore)
 	}
 
 	return rs.s3Cli.CopyObject(ctx, &CopyInput{
-		FromLoc: srcStore.GetBucketPrefix(),
+		FromLoc: src.s3likeStorage().GetBucketPrefix(),
 		FromKey: spec.From,
 		ToKey:   spec.To,
 	})

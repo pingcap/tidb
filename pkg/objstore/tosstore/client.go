@@ -437,9 +437,12 @@ func (u *multipartUploader) Upload(ctx context.Context, rd io.Reader) error {
 	if err := w.start(ctx); err != nil {
 		return err
 	}
-	group, uploadCtx := errgroup.WithContext(ctx)
+	partCtx, cancelParts := context.WithCancel(ctx)
+	defer cancelParts()
+	group, uploadCtx := errgroup.WithContext(partCtx)
 	group.SetLimit(u.concurrency)
 	var mu sync.Mutex
+	var readErr error
 	for number := 1; len(data) > 0 && uploadCtx.Err() == nil; number++ {
 		part := data
 		group.Go(func() error {
@@ -463,16 +466,17 @@ func (u *multipartUploader) Upload(ctx context.Context, rd io.Reader) error {
 		}
 		data, err = u.readPart(r)
 		if err != nil && err != io.EOF {
+			readErr = err
+			cancelParts()
 			break
 		}
 	}
 	uploadErr := group.Wait()
-	if uploadErr == nil {
-		if ctx.Err() != nil {
-			uploadErr = ctx.Err()
-		} else if err != nil && err != io.EOF {
-			uploadErr = err
-		}
+	if readErr != nil && ctx.Err() == nil && (uploadErr == nil || goerrors.Is(uploadErr, context.Canceled)) {
+		uploadErr = readErr
+	}
+	if uploadErr == nil && ctx.Err() != nil {
+		uploadErr = ctx.Err()
 	}
 	if uploadErr != nil {
 		w.abort(ctx)

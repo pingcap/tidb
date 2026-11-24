@@ -32,6 +32,7 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/pkg/objstore/recording"
+	"github.com/pingcap/tidb/pkg/objstore/s3like"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -233,13 +234,17 @@ func TestStorageConfig(t *testing.T) {
 		require.NoError(t, err)
 		defer dst.Close()
 		spec := storeapi.CopySpec{From: "src", To: "dst"}
+		otherService := s3like.NewStorage(nil, storeapi.NewBucketPrefix("bucket", "backup"), q, nil)
 		require.ErrorIs(t, dst.CopyFrom(ctx, src.Storage, spec), berrors.ErrStorageInvalidConfig)
 		require.ErrorIs(t, dst.CopyFrom(ctx, (*TOSStore)(nil), spec), berrors.ErrStorageInvalidConfig)
+		require.ErrorIs(t, dst.CopyFrom(ctx, otherService, spec), berrors.ErrStorageInvalidConfig)
+		require.ErrorIs(t, otherService.CopyFrom(ctx, src, spec), berrors.ErrStorageInvalidConfig)
 		require.NoError(t, dst.CopyFrom(ctx, src, spec))
 		require.Equal(t, 1, copies)
 	})
-	s, err := NewTOSStorage(context.Background(), &backuppb.S3{Bucket: "bucket", Region: "cn-beijing"}, nil)
+	s, err := NewTOSStorage(context.Background(), &backuppb.S3{Bucket: "bucket", Prefix: "reports#old", Region: "cn-beijing"}, nil)
 	require.NoError(t, err)
+	require.Equal(t, "tos://bucket/reports%23old/", s.URI())
 	s.Close()
 }
 

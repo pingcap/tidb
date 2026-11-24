@@ -42,7 +42,7 @@ type TOSStore struct {
 // URI returns the bucket and normalized prefix.
 func (s *TOSStore) URI() string {
 	loc := s.GetBucketPrefix()
-	return "tos://" + loc.Bucket + "/" + loc.PrefixStr()
+	return (&url.URL{Scheme: "tos", Host: loc.Bucket, Path: "/" + loc.PrefixStr()}).String()
 }
 
 // CopyFrom copies an object between native TOS stores.

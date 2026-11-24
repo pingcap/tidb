@@ -475,7 +475,11 @@ func TestPartFailureUnblocksStream(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("uploader is blocked reading the next part after a failed upload")
 	}
-	<-aborted
+	select {
+	case <-aborted:
+	default:
+		t.Fatal("failed multipart upload did not abort before returning")
+	}
 }
 
 func TestTruncatedMultipartInput(t *testing.T) {
@@ -524,6 +528,51 @@ func TestTruncatedMultipartInput(t *testing.T) {
 		})
 		err := c.MultipartUploader("key", 2, 1).Upload(ctx, strings.NewReader("abcdef"))
 		require.ErrorIs(t, err, context.Canceled)
+		require.EqualValues(t, 1, aborted.Load())
+	})
+
+	t.Run("reader error cancels in-flight part upload", func(t *testing.T) {
+		partStarted := make(chan struct{})
+		partCanceled := make(chan struct{})
+		var aborted atomic.Int32
+		c := testClient(t, func(req *http.Request) (*http.Response, error) {
+			switch {
+			case req.URL.Query().Has("uploads"):
+				return response(200, `{"UploadId":"id"}`), nil
+			case req.URL.Query().Has("partNumber"):
+				close(partStarted)
+				<-req.Context().Done()
+				close(partCanceled)
+				return nil, req.Context().Err()
+			case req.Method == http.MethodDelete:
+				aborted.Add(1)
+				return response(204, ""), nil
+			default:
+				t.Error("failed read must never complete upload")
+				return response(200, "{}"), nil
+			}
+		})
+		reader, writer := io.Pipe()
+		defer reader.Close()
+		done := make(chan error, 1)
+		go func() {
+			done <- c.MultipartUploader("key", 4, 2).Upload(context.Background(), reader)
+		}()
+		_, err := writer.Write([]byte("abcde"))
+		require.NoError(t, err)
+		<-partStarted
+		require.NoError(t, writer.CloseWithError(io.ErrUnexpectedEOF))
+		select {
+		case err := <-done:
+			require.ErrorIs(t, err, io.ErrUnexpectedEOF)
+		case <-time.After(3 * time.Second):
+			t.Fatal("in-flight part upload was not canceled on reader error")
+		}
+		select {
+		case <-partCanceled:
+		default:
+			t.Fatal("in-flight part upload context was not canceled")
+		}
 		require.EqualValues(t, 1, aborted.Load())
 	})
 }
