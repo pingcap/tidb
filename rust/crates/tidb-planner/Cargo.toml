@@ -99,6 +99,10 @@ tidb-table = { path = "../tidb-table" }
 tidb-metadef = { path = "../tidb-metadef" }
 tidb-model = { path = "../tidb-model" }
 tidb-proto = { path = "../tidb-proto" }
+tidb-redact = { path = "../tidb-redact" }
+prost = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
 tidb-mysql = { path = "../tidb-mysql" }
 tidb-parser = { path = "../tidb-parser" }
 tidb-resolve = { path = "../tidb-resolve" }

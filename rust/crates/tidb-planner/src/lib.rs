@@ -105,6 +105,7 @@ pub mod fulltext;
 pub mod rule;
 pub mod memtable_infoschema_extractor;
 pub mod memtable_predicate_extractor;
+pub mod flat_plan;
 pub mod optimize;
 pub mod optimizer;
 pub mod privilege_check;
