@@ -66,14 +66,13 @@ pub use dml::dml_visit_info;
 pub use planner_bridge::query_visit_info;
 mod record_set;
 pub use record_set::RecordSet;
-pub(crate) mod fk_trigger_plan;
+pub(crate) use tidb_planner::dml_optimize as fk_trigger_plan;
 pub(crate) mod params;
 pub(crate) mod physical_builder;
 pub mod plan_cache;
 pub(crate) mod planner_bridge;
 pub(crate) use tidb_planner::point_get_key;
 pub(crate) mod set_opr;
-mod subquery;
 #[cfg(test)]
 mod tests;
 pub(crate) mod write_cast;
@@ -159,7 +158,7 @@ pub(crate) fn build_create_view(
     ctx: &crate::StmtContext,
 ) -> Result<Vec<FieldType>, DriverError> {
     validate_query_sequence_names(&create.query, ctx)?;
-    set_opr::validate_query_usage(&create.query, ctx)?;
+    tidb_planner::preprocess::validate_query_usage(&create.query, ctx)?;
     planner_bridge::build_create_view(create, view_schema, catalog, current_db, ctx)
         .map_err(planner_error_to_driver)
 }
@@ -432,7 +431,7 @@ pub fn open_query_meta_stmt_with_physical(
     match physical {
         Some(physical) => physical_builder::open_query(query, physical, catalog, ctx),
         None => {
-            set_opr::validate_query_usage(query, ctx)?;
+            tidb_planner::preprocess::validate_query_usage(query, ctx)?;
             let optimize = start_optimize_region();
             let mut physical = optimize_query_stmt(query, catalog, current_db, ctx)?;
             optimize.end();

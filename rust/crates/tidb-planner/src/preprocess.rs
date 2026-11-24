@@ -125,7 +125,10 @@ pub struct PreprocessorReturn {
 /// # Errors
 ///
 /// The preprocessor's error for the first node it refuses.
-pub fn preprocess(stmt: &mut tidb_ast::Stmt, ctx: &dyn PreprocessContext) -> Result<PreprocessorReturn, PlanError> {
+pub fn preprocess(
+    stmt: &mut tidb_ast::Stmt,
+    ctx: &dyn PreprocessContext,
+) -> Result<PreprocessorReturn, PlanError> {
     let mut preprocessor = Preprocessor {
         ctx,
         stmt_tp: StmtType::Invalid,
@@ -157,7 +160,9 @@ impl Preprocessor<'_> {
             [schema, table] => (schema.clone(), table.clone()),
             _ => return,
         };
-        self.result.table_names.push((go_to_lower(schema), go_to_lower(table)));
+        self.result
+            .table_names
+            .push((go_to_lower(schema), go_to_lower(table)));
     }
 
     /// Go `handleTableName`'s schema fill for a repair lookup: the lowered
@@ -167,7 +172,11 @@ impl Preprocessor<'_> {
         let (schema, name) = match path {
             [schema, name] => (schema.as_str(), name.as_str()),
             [name] if !self.ctx.current_db().is_empty() => (self.ctx.current_db(), name.as_str()),
-            _ => return Err(PlanError::from(tidb_plannererrors::ERR_NO_DB.gen_with_stack_by_args(&[]))),
+            _ => {
+                return Err(PlanError::from(
+                    tidb_plannererrors::ERR_NO_DB.gen_with_stack_by_args(&[]),
+                ));
+            }
         };
         Ok((
             tidb_ast::CiString::new(schema).lowercase().to_owned(),
@@ -192,11 +201,17 @@ impl Preprocessor<'_> {
                 repair_info.get_repair_table_list().is_empty(),
             )?;
             let (schema, name) = self.repair_table_name(&repair.table)?;
-            handle_repair_name(&schema, &name, repair_info.get_repaired_table_info_by_table_name(&schema, &name))?;
+            handle_repair_name(
+                &schema,
+                &name,
+                repair_info.get_repaired_table_info_by_table_name(&schema, &name),
+            )?;
         }
         let qualified;
         let graded = match ddl {
-            DdlStmt::CreateTable(create) if create.name.len() == 1 && !self.ctx.current_db().is_empty() => {
+            DdlStmt::CreateTable(create)
+                if create.name.len() == 1 && !self.ctx.current_db().is_empty() =>
+            {
                 let mut create = create.clone();
                 create.name.insert(0, self.ctx.current_db().to_owned());
                 qualified = Stmt::Ddl(tidb_ast::NodeBox::new(DdlStmt::CreateTable(create)));
@@ -216,9 +231,14 @@ impl Preprocessor<'_> {
             }
         }
         if let DdlStmt::CreateTable(create) = ddl {
-            if create.like_table.as_ref().is_some_and(|name| self.ctx.is_local_temporary_table(name)) {
+            if create
+                .like_table
+                .as_ref()
+                .is_some_and(|name| self.ctx.is_local_temporary_table(name))
+            {
                 return Err(PlanError::from(
-                    tidb_plannererrors::ERR_OPT_ON_TEMPORARY_TABLE.gen_with_stack_by_args(&["create table like".into()]),
+                    tidb_plannererrors::ERR_OPT_ON_TEMPORARY_TABLE
+                        .gen_with_stack_by_args(&["create table like".into()]),
                 ));
             }
         }
@@ -227,7 +247,8 @@ impl Preprocessor<'_> {
                 for path in &drop.names {
                     if self.ctx.is_not_global_temporary_table(path)? {
                         return Err(PlanError::from(
-                            tidb_plannererrors::ERR_DROP_TABLE_ON_TEMPORARY_TABLE.gen_with_stack_by_args(&[]),
+                            tidb_plannererrors::ERR_DROP_TABLE_ON_TEMPORARY_TABLE
+                                .gen_with_stack_by_args(&[]),
                         ));
                     }
                 }
@@ -238,17 +259,22 @@ impl Preprocessor<'_> {
 
     /// Go `Enter`'s `*ast.ColumnName` arm.
     fn check_column_name(&mut self, path: &[String]) {
-        let names_commit_ts = path
-            .last()
-            .is_some_and(|name| go_to_lower(name.clone()) == crate::plan_builder::EXTRA_COMMIT_TS_NAME);
+        let names_commit_ts = path.last().is_some_and(|name| {
+            go_to_lower(name.clone()) == crate::plan_builder::EXTRA_COMMIT_TS_NAME
+        });
         if names_commit_ts
-            && matches!(self.stmt_tp, StmtType::Select | StmtType::Update | StmtType::Delete)
+            && matches!(
+                self.stmt_tp,
+                StmtType::Select | StmtType::Update | StmtType::Delete
+            )
             && !self.ctx.enable_mview()
         {
-            self.err = Some(PlanError::from(tidb_plannererrors::ERR_INTERNAL.gen_with_stack(format!(
-                "Usage of column name '{}' is not supported for now",
-                crate::plan_builder::EXTRA_COMMIT_TS_NAME
-            ))));
+            self.err = Some(PlanError::from(
+                tidb_plannererrors::ERR_INTERNAL.gen_with_stack(format!(
+                    "Usage of column name '{}' is not supported for now",
+                    crate::plan_builder::EXTRA_COMMIT_TS_NAME
+                )),
+            ));
         }
     }
 }
@@ -301,13 +327,15 @@ impl Visitor for Preprocessor<'_> {
                 }
                 // Go `*ast.FuncCallExpr`: stored procedures are not supported.
                 tidb_ast::Expr::GenericFuncCall { schema, name, .. } => {
-                    self.err = Some(PlanError::from(tidb_expr::expression_errors::ERR_FUNCTION_NOT_EXISTS.gen_with_stack(
-                        format!(
-                            "FUNCTION {}.{} does not exist",
-                            tidb_mysql::to_lowercase(schema),
-                            tidb_mysql::to_lowercase(name)
+                    self.err = Some(PlanError::from(
+                        tidb_expr::expression_errors::ERR_FUNCTION_NOT_EXISTS.gen_with_stack(
+                            format!(
+                                "FUNCTION {}.{} does not exist",
+                                tidb_mysql::to_lowercase(schema),
+                                tidb_mysql::to_lowercase(name)
+                            ),
                         ),
-                    )));
+                    ));
                 }
                 tidb_ast::Expr::Column(path) => {
                     let path = path.clone();
@@ -324,7 +352,9 @@ impl Visitor for Preprocessor<'_> {
             // The INSERT target, which Go's `Enter` resolves before the rest.
             let table = insert.table.clone();
             self.collect_table_name(&table);
-        } else if let Some(tidb_ast::Expr::Func { name, args, .. }) = node.downcast_ref::<tidb_ast::Expr>() {
+        } else if let Some(tidb_ast::Expr::Func { name, args, .. }) =
+            node.downcast_ref::<tidb_ast::Expr>()
+        {
             // Go `Leave`'s `*ast.FuncCallExpr` arm: NAME_CONST's arguments are
             // constants.
             if go_to_lower(name.clone()) == "name_const" {
@@ -342,16 +372,18 @@ impl Visitor for Preprocessor<'_> {
 /// LIKE source.
 fn create_or_drop_table_names(ddl: &DdlStmt) -> Vec<&[String]> {
     match ddl {
-        DdlStmt::CreateTable(create) => {
-            std::iter::once(create.name.as_slice()).chain(create.like_table.as_deref()).collect()
-        }
+        DdlStmt::CreateTable(create) => std::iter::once(create.name.as_slice())
+            .chain(create.like_table.as_deref())
+            .collect(),
         DdlStmt::CreateView(create) => vec![create.name.as_slice()],
         DdlStmt::CreateSequence(create) => vec![create.name.as_slice()],
         DdlStmt::DropTable(drop) => drop.names.iter().map(Vec::as_slice).collect(),
         DdlStmt::DropSequence(drop) => drop.names.iter().map(Vec::as_slice).collect(),
-        DdlStmt::RenameTable(rename) => {
-            rename.pairs.iter().flat_map(|(old, new)| [old.as_slice(), new.as_slice()]).collect()
-        }
+        DdlStmt::RenameTable(rename) => rename
+            .pairs
+            .iter()
+            .flat_map(|(old, new)| [old.as_slice(), new.as_slice()])
+            .collect(),
         _ => Vec::new(),
     }
 }
@@ -373,11 +405,17 @@ fn check_func_cast_expr(cast: &tidb_ast::CastExpr) -> Result<(), tidb_exprctx::E
         )),
         CastType::Decimal { flen, .. } if flen > 65 => Err(invalid(
             1426,
-            format!("Too-big precision {flen} specified for '{}'. Maximum is 65.", cast.expr.restore()),
+            format!(
+                "Too-big precision {flen} specified for '{}'. Maximum is 65.",
+                cast.expr.restore()
+            ),
         )),
         CastType::Decimal { scale, .. } if scale > 30 => Err(invalid(
             1425,
-            format!("Too big scale {scale} specified for column '{}'. Maximum is 30.", cast.expr.restore()),
+            format!(
+                "Too big scale {scale} specified for column '{}'. Maximum is 30.",
+                cast.expr.restore()
+            ),
         )),
         CastType::DateTime { fsp: Some(fsp) } if fsp > 6 => Err(invalid(
             1426,
@@ -414,7 +452,9 @@ fn check_name_const_args(args: &[tidb_ast::Expr]) -> Result<(), tidb_exprctx::Ev
     if literal(&args[0]) && (literal(&args[1]) || matches!(args[1], Expr::Unary(_, _))) {
         Ok(())
     } else {
-        Err(tidb_exprctx::EvalError::IncorrectArguments("Incorrect arguments to NAME_CONST".to_owned()))
+        Err(tidb_exprctx::EvalError::IncorrectArguments(
+            "Incorrect arguments to NAME_CONST".to_owned(),
+        ))
     }
 }
 
@@ -426,7 +466,10 @@ pub fn check_param_marker<N: Visitable + Clone>(node: &N) -> Result<(), tidb_ter
     }
     impl Visitor for Finder {
         fn enter(&mut self, node: &mut dyn Any) -> bool {
-            if matches!(node.downcast_ref::<tidb_ast::Expr>(), Some(tidb_ast::Expr::ParamMarker { .. })) {
+            if matches!(
+                node.downcast_ref::<tidb_ast::Expr>(),
+                Some(tidb_ast::Expr::ParamMarker { .. })
+            ) {
                 self.found = true;
             }
             self.found
@@ -439,7 +482,9 @@ pub fn check_param_marker<N: Visitable + Clone>(node: &N) -> Result<(), tidb_ter
     let mut finder = Finder { found: false };
     node.accept(&mut finder);
     if finder.found {
-        return Err(tidb_parser::parser_errors::ERR_SYNTAX.gen_with_stack("syntax error, unexpected '?'"));
+        return Err(
+            tidb_parser::parser_errors::ERR_SYNTAX.gen_with_stack("syntax error, unexpected '?'")
+        );
     }
     Ok(())
 }
@@ -455,7 +500,9 @@ pub fn pin_current_database(
     current_db: &str,
 ) -> Result<(), tidb_driver_error::DriverError> {
     handle_table_name(stmt, current_db).map_err(|_| {
-        tidb_driver_error::DriverError::from(tidb_plannererrors::ERR_NO_DB.gen_with_stack_by_args(&[]))
+        tidb_driver_error::DriverError::from(
+            tidb_plannererrors::ERR_NO_DB.gen_with_stack_by_args(&[]),
+        )
     })
 }
 
@@ -784,9 +831,9 @@ use tidb_ast::{
 };
 use tidb_datatype::FieldTypeCode;
 
-use tidb_terror::MysqlError;
 use tidb_hack::GoCaseCompare;
 use tidb_hack::GoToLower;
+use tidb_terror::MysqlError;
 
 /// `mysql.MaxKeyParts`.
 const MAX_KEY_PARTS: usize = 16;
@@ -890,8 +937,7 @@ pub fn check_repair_table_grammar(
 ) -> Result<(), MysqlError> {
     let repair_table_fail = |reason: &str| {
         MysqlError::from_terror(
-            &tidb_dbterror::ERR_REPAIR_TABLE_FAIL
-                .gen_with_stack_by_args(&[reason.into()]),
+            &tidb_dbterror::ERR_REPAIR_TABLE_FAIL.gen_with_stack_by_args(&[reason.into()]),
         )
     };
     if !in_repair_mode {
@@ -975,8 +1021,7 @@ fn check_database_name(name: &str) -> Result<(), MysqlError> {
 fn check_table_name(name: &str) -> Result<(), MysqlError> {
     if is_incorrect_identifier_name(name) {
         return Err(MysqlError::from_terror(
-            &tidb_dbterror::ERR_WRONG_TABLE_NAME
-                .gen_with_stack_by_args(&[name.to_owned().into()]),
+            &tidb_dbterror::ERR_WRONG_TABLE_NAME.gen_with_stack_by_args(&[name.to_owned().into()]),
         ));
     }
     Ok(())
@@ -1016,13 +1061,13 @@ fn check_create_table(create: &CreateTableStmt, strict: bool) -> Result<(), Mysq
                     return Err(MysqlError::from_terror(
                         &tidb_plannererrors::ERR_OPT_ON_TEMPORARY_TABLE
                             .gen_with_stack_by_args(&["shard_row_id_bits".into()]),
-                    ))
+                    ));
                 }
                 TableOption::PlacementPolicy(_) => {
                     return Err(MysqlError::from_terror(
                         &tidb_plannererrors::ERR_OPT_ON_TEMPORARY_TABLE
                             .gen_with_stack_by_args(&["PLACEMENT".into()]),
-                    ))
+                    ));
                 }
                 _ => {}
             }
@@ -1140,12 +1185,12 @@ pub fn check_unsupported_table_options(options: &[TableOption]) -> Result<(), My
             TableOption::Union(_) => {
                 return Err(MysqlError::from_terror(
                     &tidb_dbterror::ERR_TABLE_OPTION_UNION_UNSUPPORTED,
-                ))
+                ));
             }
             TableOption::InsertMethod(_) => {
                 return Err(MysqlError::from_terror(
                     &tidb_dbterror::ERR_TABLE_OPTION_INSERT_METHOD_UNSUPPORTED,
-                ))
+                ));
             }
             TableOption::Engine(engine)
                 if !VALID_ENGINES
@@ -1155,7 +1200,7 @@ pub fn check_unsupported_table_options(options: &[TableOption]) -> Result<(), My
                 return Err(MysqlError::from_terror(
                     &tidb_dbterror::ERR_UNKNOWN_ENGINE
                         .gen_with_stack_by_args(&[(engine.clone()).to_string().into()]),
-                ))
+                ));
             }
             _ => {}
         }
@@ -1227,8 +1272,7 @@ fn check_alter_table(alter: &tidb_ast::AlterTableStmt) -> Result<(), MysqlError>
 fn check_index_info(name: &str, parts: &[IndexPart]) -> Result<(), MysqlError> {
     if name.go_equal_fold("PRIMARY") {
         return Err(MysqlError::from_terror(
-            &tidb_dbterror::ERR_WRONG_NAME_FOR_INDEX
-                .gen_with_stack_by_args(&[name.into()]),
+            &tidb_dbterror::ERR_WRONG_NAME_FOR_INDEX.gen_with_stack_by_args(&[name.into()]),
         ));
     }
     if parts.len() > MAX_KEY_PARTS {
@@ -1298,13 +1342,11 @@ fn check_column_options(temporary: bool, options: &[ColumnOption]) -> Result<usi
     }
     if primary > 0 && generated && !stored {
         return Err(MysqlError::from_terror(
-            &tidb_dbterror::ERR_UNSUPPORTED_ON_GENERATED_COLUMN.gen_with_stack_by_args(
-                &[
-                    ("Defining a virtual generated column as primary key".to_owned())
-                        .to_string()
-                        .into(),
-                ],
-            ),
+            &tidb_dbterror::ERR_UNSUPPORTED_ON_GENERATED_COLUMN.gen_with_stack_by_args(&[
+                ("Defining a virtual generated column as primary key".to_owned())
+                    .to_string()
+                    .into(),
+            ]),
         ));
     }
     Ok(primary)
@@ -1334,16 +1376,19 @@ impl ColumnCheckError {
         };
         match self {
             Self::WrongColumnName => MysqlError::from_terror(
-        &tidb_dbterror::ERR_WRONG_COLUMN_NAME
-            .gen_with_stack_by_args(&[(name.clone()).to_string().into()]),
-    ),
+                &tidb_dbterror::ERR_WRONG_COLUMN_NAME
+                    .gen_with_stack_by_args(&[(name.clone()).to_string().into()]),
+            ),
             Self::InvalidDefault => coded(
                 &tidb_dbterror::ERR_INVALID_DEFAULT_VALUE,
                 format!("Invalid default value for '{name}'"),
             ),
             Self::DisplayWidthOutOfRange => coded(
                 &tidb_datatype::types_errors::ERR_TOO_BIG_DISPLAY_WIDTH,
-                format!("Display width out of range for column '{name}' (max = {})", u32::MAX),
+                format!(
+                    "Display width out of range for column '{name}' (max = {})",
+                    u32::MAX
+                ),
             ),
             Self::TooBigFieldLength => {
                 let maximum = if is_varchar(column) {
@@ -1364,16 +1409,18 @@ impl ColumnCheckError {
             ),
             Self::TooBigScale { scale, maximum } => coded(
                 &tidb_datatype::types_errors::ERR_TOO_BIG_SCALE,
-                format!("Too big scale {scale} specified for column '{name}'. Maximum is {maximum}."),
+                format!(
+                    "Too big scale {scale} specified for column '{name}'. Maximum is {maximum}."
+                ),
             ),
             Self::TooBigDisplayWidth { maximum } => coded(
                 &tidb_datatype::types_errors::ERR_TOO_BIG_DISPLAY_WIDTH,
                 format!("Display width out of range for column '{name}' (max = {maximum})"),
             ),
             Self::MBiggerThanD => MysqlError::from_terror(
-        &tidb_datatype::types_errors::ERR_M_BIGGER_THAN_D
-            .gen_with_stack_by_args(&[(name.clone()).to_string().into()]),
-    ),
+                &tidb_datatype::types_errors::ERR_M_BIGGER_THAN_D
+                    .gen_with_stack_by_args(&[(name.clone()).to_string().into()]),
+            ),
             Self::TooBigSet => coded(
                 &tidb_datatype::types_errors::ERR_TOO_BIG_SET,
                 format!("Too many strings for column {name} and SET"),
@@ -1398,7 +1445,9 @@ impl ColumnCheckError {
 
 /// Whether the declared type is VARCHAR or VARBINARY (Go `TypeVarchar`).
 fn is_varchar(column: &ColumnDef) -> bool {
-    column.ty.type_code()
+    column
+        .ty
+        .type_code()
         .is_some_and(|code| code == FieldTypeCode::Varchar)
 }
 
@@ -1630,19 +1679,18 @@ fn check_auto_increment(create: &CreateTableStmt) -> Result<(), MysqlError> {
         ));
     }
     for column in auto_columns {
-        let integer_or_float =
-            column.ty.type_code().is_some_and(|code| {
-                matches!(
-                    code,
-                    FieldTypeCode::Tiny
-                        | FieldTypeCode::Short
-                        | FieldTypeCode::Long
-                        | FieldTypeCode::Float
-                        | FieldTypeCode::Double
-                        | FieldTypeCode::LongLong
-                        | FieldTypeCode::Int24
-                )
-            });
+        let integer_or_float = column.ty.type_code().is_some_and(|code| {
+            matches!(
+                code,
+                FieldTypeCode::Tiny
+                    | FieldTypeCode::Short
+                    | FieldTypeCode::Long
+                    | FieldTypeCode::Float
+                    | FieldTypeCode::Double
+                    | FieldTypeCode::LongLong
+                    | FieldTypeCode::Int24
+            )
+        });
         if !integer_or_float {
             return Err(MysqlError::unknown(format!(
                 "Incorrect column specifier for column '{}'",
@@ -1669,8 +1717,7 @@ fn check_contain_dot_column(create: &CreateTableStmt) -> Result<(), MysqlError> 
         };
         if !column_schema.is_empty() && column_schema != schema {
             return Err(MysqlError::from_terror(
-                &tidb_dbterror::ERR_WRONG_DB_NAME
-                    .gen_with_stack_by_args(&[column_schema.into()]),
+                &tidb_dbterror::ERR_WRONG_DB_NAME.gen_with_stack_by_args(&[column_schema.into()]),
             ));
         }
         if !column_table.is_empty() && column_table != table {
@@ -1862,7 +1909,8 @@ mod preprocessor_tests {
         let int = || Expr::Int("1".to_owned());
         assert!(check_name_const_args(&[string(), int()]).is_ok());
         assert!(
-            check_name_const_args(&[string(), Expr::Unary(UnaryOp::Minus, Box::new(int()))]).is_ok()
+            check_name_const_args(&[string(), Expr::Unary(UnaryOp::Minus, Box::new(int()))])
+                .is_ok()
         );
 
         for args in [
@@ -1909,8 +1957,9 @@ mod preprocessor_tests {
             eval(run("select cast(12.1 as decimal(3, 4))")),
             tidb_exprctx::EvalError::InvalidTypeDeclaration {
                 code: 1427,
-                message: "For float(M,D), double(M,D) or decimal(M,D), M must be >= D (column '12.1')."
-                    .to_owned(),
+                message:
+                    "For float(M,D), double(M,D) or decimal(M,D), M must be >= D (column '12.1')."
+                        .to_owned(),
             }
         );
         assert_eq!(
@@ -1924,19 +1973,134 @@ mod preprocessor_tests {
         assert!(run("select cast(1 as time(7))").is_ok());
         assert_eq!(
             eval(run("select name_const('x', cast(1 as double))")),
-            tidb_exprctx::EvalError::IncorrectArguments("Incorrect arguments to NAME_CONST".to_owned())
+            tidb_exprctx::EvalError::IncorrectArguments(
+                "Incorrect arguments to NAME_CONST".to_owned()
+            )
         );
         // The first refusal in walk order wins.
         assert_eq!(
-            eval(run("select cast(1 as decimal(70)), name_const('x', a) from t")),
+            eval(run(
+                "select cast(1 as decimal(70)), name_const('x', a) from t"
+            )),
             tidb_exprctx::EvalError::InvalidTypeDeclaration {
                 code: 1426,
                 message: "Too-big precision 70 specified for '1'. Maximum is 65.".to_owned(),
             }
         );
-        let names = run("select @a, @b := 1, @b from t1 join db.t2 as of timestamp now()").expect("preprocesses");
-        assert_eq!(names.table_names, vec![(String::new(), "t1".to_owned()), ("db".to_owned(), "t2".to_owned())]);
+        let names = run("select @a, @b := 1, @b from t1 join db.t2 as of timestamp now()")
+            .expect("preprocesses");
+        assert_eq!(
+            names.table_names,
+            vec![
+                (String::new(), "t1".to_owned()),
+                ("db".to_owned(), "t2".to_owned())
+            ]
+        );
         assert!(names.has_as_of);
-        assert_eq!(names.readonly_user_vars, ["a".to_owned()].into_iter().collect());
+        assert_eq!(
+            names.readonly_user_vars,
+            ["a".to_owned()].into_iter().collect()
+        );
     }
+}
+
+/// Runs Go's set-operation and derived-alias preprocessing over a complete
+/// query, including the ORACLE-mode exception for unnamed derived tables.
+///
+/// Go's preprocessor is a full `ast.Visitor`, so EVERY child query is
+/// visited: a CTE definition, a derived table in `FROM`, a scalar subquery, an
+/// `IN`/`EXISTS` subquery, and a nested set operation all reach
+/// `checkSetOprSelectList`. Validating only the outer `SetOprStmt` (plus its
+/// own `WITH`) accepted
+/// `select 1 from (select a from t0 limit 1 union all select a from t0 limit 1) tmp`,
+/// which Go rejects with 1221.
+pub fn validate_query_usage(
+    query: &tidb_ast::QueryStmt,
+    ctx: &tidb_sessionctx::StmtContext,
+) -> Result<(), tidb_driver_error::DriverError> {
+    struct SetOprUsage {
+        error: Option<tidb_driver_error::DriverError>,
+        oracle_mode: bool,
+    }
+
+    impl tidb_ast::Visitor for SetOprUsage {
+        fn enter(&mut self, node: &mut dyn std::any::Any) -> bool {
+            if self.error.is_some() {
+                return true;
+            }
+            if let Some(tidb_ast::JoinNode::Derived { alias, .. }) =
+                node.downcast_ref::<tidb_ast::JoinNode>()
+            {
+                if !self.oracle_mode && alias.as_ref().is_none_or(String::is_empty) {
+                    self.error = Some(tidb_driver_error::DriverError::from(
+                        tidb_dbterror::ERR_DERIVED_MUST_HAVE_ALIAS.gen_with_stack_by_args(&[]),
+                    ));
+                    return true;
+                }
+            }
+            if let Some(set_opr) = node.downcast_ref::<tidb_ast::SetOprStmt>() {
+                if let Err(error) = check_set_opr_select_list(set_opr) {
+                    self.error = Some(error);
+                    return true;
+                }
+            }
+            false
+        }
+
+        fn leave(&mut self, _node: &mut dyn std::any::Any) -> bool {
+            self.error.is_none()
+        }
+    }
+
+    // `Visitable` walks a MUTABLE child graph, which is what Go's visitor
+    // takes; the check itself only reads, so a clone is enough.
+    let mut owned = query.clone();
+    let mut visitor = SetOprUsage {
+        error: None,
+        oracle_mode: ctx.ddl_sql_mode() & tidb_mysql::ModeOracle.0 != 0,
+    };
+    tidb_ast::Visitable::accept(&mut owned, &mut visitor);
+    match visitor.error {
+        Some(error) => Err(error),
+        None => Ok(()),
+    }
+}
+
+/// Go `preprocessor.checkSetOprSelectList`: every nested set-operation list is
+/// checked, and every plain term except that list's last one must put its own
+/// `ORDER BY`/`LIMIT` inside parentheses. `INTO` is incompatible with UNION
+/// even when that term is parenthesized.
+pub fn check_set_opr_select_list(
+    stmt: &tidb_ast::SetOprStmt,
+) -> Result<(), tidb_driver_error::DriverError> {
+    for (index, term) in stmt.terms.iter().enumerate() {
+        match &term.body {
+            tidb_ast::SetOprTermBody::Nested(nested) => check_set_opr_select_list(nested)?,
+            tidb_ast::SetOprTermBody::Select(select) if index + 1 < stmt.terms.len() => {
+                if select.into_outfile.is_some() {
+                    return Err(tidb_driver_error::DriverError::from(
+                        tidb_plannererrors::ERR_WRONG_USAGE
+                            .gen_with_stack_by_args(&["UNION".into(), ("INTO").into()]),
+                    ));
+                }
+                if term.in_braces {
+                    continue;
+                }
+                if select.limit.is_some() {
+                    return Err(tidb_driver_error::DriverError::from(
+                        tidb_plannererrors::ERR_WRONG_USAGE
+                            .gen_with_stack_by_args(&["UNION".into(), ("LIMIT").into()]),
+                    ));
+                }
+                if !select.order_by.is_empty() {
+                    return Err(tidb_driver_error::DriverError::from(
+                        tidb_plannererrors::ERR_WRONG_USAGE
+                            .gen_with_stack_by_args(&["UNION".into(), ("ORDER BY").into()]),
+                    ));
+                }
+            }
+            tidb_ast::SetOprTermBody::Select(_) => {}
+        }
+    }
+    Ok(())
 }

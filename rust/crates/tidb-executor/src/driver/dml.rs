@@ -19,6 +19,7 @@
 //! the `executor` package's `InsertExec` / `UpdateExec` / `DeleteExec`.
 
 use crate::WithStatementStore as _;
+pub(crate) use tidb_planner::dml_optimize::*;
 use tidb_planner::physical_plan_cache::RebuildPlanForCache;
 use crate::KvTableReader;
 use super::plan_cache::{CachedPhysicalPlan, PhysicalPlanCacheKey, SessionPlanCache};
@@ -293,84 +294,6 @@ pub(crate) fn set_update_message(ctx: &crate::StmtContext, matched: u64) {
     ));
 }
 
-/// Go `FKCascadeExec.buildFKCascadePlan`'s planning half: `Preprocess` and
-/// `OptimizeForForeignKeyCascade` of the cascade statement, which build the
-/// plan with the statement's plan-id counter and without the fast point
-/// plans `planner.Optimize` alone tries.
-pub(crate) fn physical_fk_cascade_plan(
-    stmt: &crate::foreign_key::FKCascadeStmt,
-    catalog: &SessionExtendedInfoSchema,
-    ctx: &crate::StmtContext,
-    plan_ids: &tidb_planner_core_base::PlanIdAllocator,
-) -> Result<tidb_planner_core_operator_physicalop::PhysicalPlan, DriverError> {
-    match stmt {
-        crate::foreign_key::FKCascadeStmt::Delete(delete) => {
-            let current_db = cascade_database(&delete.kind_table())?;
-            let source = delete_source_query(delete);
-            physical_dml_plan_with_cache_mode(
-                "Delete",
-                source.as_ref(),
-                Some(super::multi_dml::MultiDmlRef::Delete(delete)),
-                catalog,
-                &current_db,
-                ctx,
-                false,
-                &[fk_spec_for_delete(delete, &current_db)?],
-                DmlKeep::Auto,
-                // Go's `buildFKCascadePlan` checks no privileges.
-                super::planner_bridge::BuildVisits::Discard,
-                Some(plan_ids),
-            )
-        }
-        crate::foreign_key::FKCascadeStmt::Update(update) => {
-            let current_db = cascade_database(&update.kind_table())?;
-            let source = update_source_query(update);
-            physical_dml_plan_with_cache_mode(
-                "Update",
-                source.as_ref(),
-                Some(super::multi_dml::MultiDmlRef::Update(update)),
-                catalog,
-                &current_db,
-                ctx,
-                false,
-                &[build_tbl_2_update_columns(update, &current_db)?],
-                DmlKeep::Auto,
-                super::planner_bridge::BuildVisits::Discard,
-                Some(plan_ids),
-            )
-        }
-    }
-}
-
-/// The child schema a cascade statement names (`genTableRefsAST`).
-fn cascade_database(table: &Option<&tidb_ast::TableRef>) -> Result<String, DriverError> {
-    table
-        .and_then(|table| (table.name.len() == 2).then(|| table.name[0].clone()))
-        .ok_or_else(|| DriverError::unsupported("a cascade statement names no child table"))
-}
-
-trait CascadeTarget {
-    fn kind_table(&self) -> Option<&tidb_ast::TableRef>;
-}
-
-impl CascadeTarget for tidb_ast::DeleteStmt {
-    fn kind_table(&self) -> Option<&tidb_ast::TableRef> {
-        match &self.kind {
-            tidb_ast::DeleteKind::Single(table) => Some(table),
-            tidb_ast::DeleteKind::Multi { .. } => None,
-        }
-    }
-}
-
-impl CascadeTarget for tidb_ast::UpdateStmt {
-    fn kind_table(&self) -> Option<&tidb_ast::TableRef> {
-        match &self.kind {
-            tidb_ast::UpdateKind::Single(table) => Some(table),
-            tidb_ast::UpdateKind::Multi { .. } => None,
-        }
-    }
-}
-
 /// Go `handleForeignKeyCascade`'s `exec.Open` / `exec.Next` / `exec.Close`
 /// of the cascade executor `fkc.b.build(p)` built: the statement runs, and
 /// its own checks and cascades are returned for the next depth.
@@ -463,7 +386,7 @@ fn build_dml_visit_info(
             ),
             None => {
                 let write = MultiDmlRef::Update(update);
-                multi_dml_physical_plan(write, catalog, current_db, ctx, BuildVisits::Collect(&mut visits))?;
+                multi_dml_physical_plan(&crate::driver::planner_bridge::driver_hooks(catalog), write, catalog, current_db, ctx, BuildVisits::Collect(&mut visits))?;
                 return Ok(visits);
             }
         },
@@ -476,7 +399,7 @@ fn build_dml_visit_info(
             ),
             None => {
                 let write = MultiDmlRef::Delete(delete);
-                multi_dml_physical_plan(write, catalog, current_db, ctx, BuildVisits::Collect(&mut visits))?;
+                multi_dml_physical_plan(&crate::driver::planner_bridge::driver_hooks(catalog), write, catalog, current_db, ctx, BuildVisits::Collect(&mut visits))?;
                 return Ok(visits);
             }
         },
@@ -488,8 +411,7 @@ fn build_dml_visit_info(
         }
         _ => return Ok(visits),
     };
-    physical_dml_plan_with_cache_mode(
-        operator,
+    physical_dml_plan_with_cache_mode(&crate::driver::planner_bridge::driver_hooks(catalog), operator,
         Some(&source),
         Some(write),
         catalog,
@@ -504,476 +426,12 @@ fn build_dml_visit_info(
     Ok(visits)
 }
 
-/// Builds and prepares the same UPDATE or DELETE plan for execution and
-/// EXPLAIN, checking the statement's privileges once it is built.
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn physical_dml_plan(
-    operator: &str,
-    source: Option<&tidb_ast::QueryStmt>,
-    write: super::multi_dml::MultiDmlRef<'_>,
-    catalog: &SessionExtendedInfoSchema,
-    current_db: &str,
-    ctx: &crate::StmtContext,
-    fk_spec: &fk_trigger_plan::FkPlanSpec,
-) -> Result<tidb_planner_core_operator_physicalop::PhysicalPlan, DriverError> {
-    physical_dml_plan_with_cache_mode(
-        operator,
-        source,
-        Some(write),
-        catalog,
-        current_db,
-        ctx,
-        false,
-        std::slice::from_ref(fk_spec),
-        DmlKeep::Auto,
-        super::planner_bridge::BuildVisits::Check,
-        None,
-    )
-}
 
-/// [`physical_dml_plan`] with the scalar subqueries its read evaluated, for
-/// EXPLAIN.
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn physical_dml_plan_and_scalar_subqueries(
-    operator: &str,
-    source: Option<&tidb_ast::QueryStmt>,
-    write: super::multi_dml::MultiDmlRef<'_>,
-    catalog: &SessionExtendedInfoSchema,
-    current_db: &str,
-    ctx: &crate::StmtContext,
-    fk_spec: &fk_trigger_plan::FkPlanSpec,
-) -> Result<
-    (
-        tidb_planner_core_operator_physicalop::PhysicalPlan,
-        Vec<std::sync::Arc<super::planner_bridge::RegisteredScalarSubquery>>,
-    ),
-    DriverError,
-> {
-    physical_dml_plan_and_scalar_subqueries_with_cache_mode(
-        operator,
-        source,
-        Some(write),
-        catalog,
-        current_db,
-        ctx,
-        false,
-        std::slice::from_ref(fk_spec),
-        DmlKeep::Auto,
-        super::planner_bridge::BuildVisits::Check,
-        None,
-    )
-}
 
-/// Multi-table callers carry all resolved table policies into the same DML
-/// allocator and source builder used by single-table writes.
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn physical_multi_dml_plan(
-    operator: &str,
-    source: &tidb_ast::QueryStmt,
-    write: super::multi_dml::MultiDmlRef<'_>,
-    catalog: &SessionExtendedInfoSchema,
-    current_db: &str,
-    ctx: &crate::StmtContext,
-    fk_specs: &[fk_trigger_plan::FkPlanSpec],
-    keep: DmlKeep,
-    visits: super::planner_bridge::BuildVisits<'_>,
-) -> Result<
-    (
-        tidb_planner_core_operator_physicalop::PhysicalPlan,
-        Vec<std::sync::Arc<super::planner_bridge::RegisteredScalarSubquery>>,
-    ),
-    DriverError,
-> {
-    physical_dml_plan_and_scalar_subqueries_with_cache_mode(
-        operator,
-        Some(source),
-        Some(write),
-        catalog,
-        current_db,
-        ctx,
-        false,
-        fk_specs,
-        keep,
-        visits,
-        None,
-    )
-}
 
-/// Shared UPDATE/DELETE construction, following Go's
-/// plan-builder allocation order and DML-local plan nodes:
-///
-/// * Go's single-table point UPDATE/DELETE (`point_get_plan.go:1254/1374`)
-///   builds the locked `PointGet` first; the UPDATE path allocates one extra
-///   plan before the `Update` root, the DELETE path does not.
-/// * Non-point UPDATE/DELETE build the source logically, allocate the
-///   `Update`/`Delete` root, then `DoOptimize` — with `buildSelectLock`
-///   wrapping the single-table source (`logical_plan_builder.go:6117/6552`).
-/// * `BuildOn{Update,Delete}FKTriggers` runs last, allocating the
-///   `Foreign_Key_Check` / `Foreign_Key_Cascade` leaves.
-#[allow(clippy::too_many_arguments)]
-///
-/// `write` is the UPDATE or DELETE being planned.
-/// `visits` is what becomes of the visit infos Go's one `PlanBuilder` would
-/// hold once `buildUpdate` / `buildDelete` returns: `Check`ed
-/// here (Go `planner.optimize`'s `CheckPrivilege` after the build, which for a
-/// DML includes the read's `DoOptimize`), `Collect`ed for PREPARE, or
-/// `Discard`ed for a cached plan's rebuild.
-/// A fast point plan is checked as Go's `checkFastPlanPrivilege` checks it,
-/// and a denied one leaves the statement to the ordinary build.
-#[allow(clippy::too_many_arguments)]
-fn physical_dml_plan_with_cache_mode(
-    operator: &str,
-    source: Option<&tidb_ast::QueryStmt>,
-    write: Option<super::multi_dml::MultiDmlRef<'_>>,
-    catalog: &SessionExtendedInfoSchema,
-    current_db: &str,
-    ctx: &crate::StmtContext,
-    use_plan_cache: bool,
-    fk_specs: &[fk_trigger_plan::FkPlanSpec],
-    keep: DmlKeep,
-    visits: super::planner_bridge::BuildVisits<'_>,
-    cascade_plan_ids: Option<&tidb_planner_core_base::PlanIdAllocator>,
-) -> Result<tidb_planner_core_operator_physicalop::PhysicalPlan, DriverError> {
-    physical_dml_plan_and_scalar_subqueries_with_cache_mode(
-        operator,
-        source,
-        write,
-        catalog,
-        current_db,
-        ctx,
-        use_plan_cache,
-        fk_specs,
-        keep,
-        visits,
-        cascade_plan_ids,
-    )
-    .map(|(plan, _)| plan)
-}
 
-/// [`physical_dml_plan_with_cache_mode`] with the scalar subqueries its read
-/// evaluated (Go `SessionVars.MapScalarSubQ`), which EXPLAIN renders.
-#[allow(clippy::too_many_arguments)]
-fn physical_dml_plan_and_scalar_subqueries_with_cache_mode(
-    operator: &str,
-    source: Option<&tidb_ast::QueryStmt>,
-    write: Option<super::multi_dml::MultiDmlRef<'_>>,
-    catalog: &SessionExtendedInfoSchema,
-    current_db: &str,
-    ctx: &crate::StmtContext,
-    use_plan_cache: bool,
-    fk_specs: &[fk_trigger_plan::FkPlanSpec],
-    keep: DmlKeep,
-    visits: super::planner_bridge::BuildVisits<'_>,
-    cascade_plan_ids: Option<&tidb_planner_core_base::PlanIdAllocator>,
-) -> Result<
-    (
-        tidb_planner_core_operator_physicalop::PhysicalPlan,
-        Vec<std::sync::Arc<super::planner_bridge::RegisteredScalarSubquery>>,
-    ),
-    DriverError,
-> {
-    use super::planner_bridge::BuildVisits;
-    use tidb_planner_core_operator_physicalop::{BasePhysicalPlan, PhysicalDmlRoot, PhysicalPlan};
 
-    let mut scalar_subqueries = Vec::new();
-    // A foreign-key cascade's statement continues the plan ids of the
-    // statement that runs it (Go's one `SessionVars.PlanID`).
-    let own_plan_ids;
-    let plan_ids = match cascade_plan_ids {
-        Some(plan_ids) => plan_ids,
-        None => {
-            own_plan_ids = tidb_planner_core_base::PlanIdAllocator::new();
-            &own_plan_ids
-        }
-    };
-    let update = match write {
-        Some(super::multi_dml::MultiDmlRef::Update(update)) => Some(update),
-        _ => None,
-    };
-    let checking = matches!(visits, BuildVisits::Check);
-    let collecting = !matches!(visits, BuildVisits::Discard);
-    let mut statement_visits = Vec::new();
-    let mut fast_plan_checked = false;
 
-    let column_ids = tidb_planner_core_base::ColumnIdAllocator::new();
-    let mut update_expressions = Vec::new();
-    let mut delete_col_pos = None;
-    let mut delete_tables = Vec::new();
-    let mut update_tables = Vec::new();
-    let mut update_assigns = Vec::new();
-    let single_update = update.filter(|update| matches!(update.kind, tidb_ast::UpdateKind::Single(_)));
-    let mut fast_update_list = false;
-    let build_fk_triggers = || -> Result<Vec<FkTriggerNode>, DriverError> {
-        let mut fk_triggers = Vec::new();
-        for spec in fk_specs {
-            fk_triggers.extend(fk_trigger_plan::build_fk_triggers(
-                catalog, ctx, operator, spec, plan_ids,
-            )?);
-        }
-        Ok(fk_triggers)
-    };
-    // Go `buildDelete` builds its triggers once the `Delete` root is
-    // initialized, before the pruning projection and `DoOptimize`.
-    let delete_fk_triggers = std::cell::RefCell::new(None);
-    let build_delete_fk_triggers = || {
-        *delete_fk_triggers.borrow_mut() = Some(build_fk_triggers());
-    };
-
-    let mut root_base = None;
-
-    let select_plan = match source {
-        None => None,
-        Some(tidb_ast::QueryStmt::Select(select)) => {
-            let multi_update = update
-                .filter(|update| matches!(update.kind, tidb_ast::UpdateKind::Multi { .. }));
-            // Go's `TryFastPlan` belongs to `planner.Optimize`, which a
-            // cascade's `OptimizeForForeignKeyCascade` does not run, and
-            // which tries it only when TiKV is an isolation read engine.
-            // PREPARE's `destBuilder.Build` is the plan builder alone.
-            let allow_fast_plan = multi_update.is_none()
-                && !matches!(visits, BuildVisits::Collect(_))
-                && cascade_plan_ids.is_none()
-                && ctx.isolation_read_contains_tikv()
-                && update.is_none_or(|update| try_update_point_plan(update));
-            // Go `tryUpdatePointPlan` / `tryDeletePointPlan`'s
-            // `checkFastPlanPrivilege(..., SelectPriv, UpdatePriv /
-            // DeletePriv)`.
-            let write_privilege = if operator.eq_ignore_ascii_case("Update") {
-                tidb_mysql::UpdatePriv
-            } else {
-                tidb_mysql::DeletePriv
-            };
-            let fast_plan_privilege = |database: &str, table: &str| {
-                !checking
-                    || crate::table_privilege::check_fast_plan_privilege(
-                        ctx,
-                        catalog,
-                        database,
-                        table,
-                        &[tidb_mysql::SelectPriv, write_privilege],
-                    )
-            };
-            // Go `Optimize` tries the fast plan whether or not the plan cache
-            // builds this plan (`generateNewPlan` -> `OptimizeAstNodeNoCache`);
-            // a cached point plan's key is rebuilt from the EXECUTE parameters
-            // (`RebuildPlan4CachedPlan` -> `buildRangesForPointGet`).
-            let fast = match handed_point_plan(ctx, PointPlanKind::Dml)
-                .filter(|_| allow_fast_plan)
-            {
-                // Go `Optimize`: the point plan a multi-statement query's
-                // prefetch already tried (`PointPlanKey`), not `TryFastPlan`
-                // again; its plan ids come first.
-                Some(handed) => handed.plan.clone().inspect(|_| {
-                    for _ in 0..handed.plan_ids {
-                        plan_ids.alloc();
-                    }
-                }),
-                None => allow_fast_plan
-                    .then(|| {
-                        super::point_get_plan::try_fast_dml_point_physical_plan_with_allocator(
-                            select,
-                            catalog,
-                            current_db,
-                            ctx,
-                            plan_ids,
-                            &fast_plan_privilege,
-                        )
-                    })
-                    .transpose()?
-                    .flatten(),
-            };
-            if let Some(mut fast) = fast {
-                // Go's `Optimize` returns the fast plan without `optimize`'s
-                // `CheckPrivilege`: `checkFastPlanPrivilege` was its check.
-                fast_plan_checked = true;
-                // Go's point plans carry `Lock` for UPDATE and DELETE, the
-                // batch one as well (`tryUpdatePointPlan`/`tryDeletePointPlan`).
-                match &mut fast {
-                    PhysicalPlan::PointGet(point) => point.lock = ctx.pessimistic_transaction(),
-                    PhysicalPlan::BatchPointGet(batch) => {
-                        batch.lock = ctx.pessimistic_transaction();
-                    }
-                    _ => {}
-                }
-                // Go's point-UPDATE builder allocates one extra plan between
-                // the PointGet and the Update root; the DELETE builder does
-                // not.
-                // Go `buildOrderedList`'s `rewriteAstExprWithPlanCtx` inits a
-                // `LogicalTableDual` for each assignment.
-                if let Some(update) = update.filter(|_| operator.eq_ignore_ascii_case("Update")) {
-                    for _ in &update.assignments {
-                        let _point_update_filler = plan_ids.alloc();
-                    }
-                }
-                root_base = Some(BasePhysicalPlan::new(plan_ids, operator, 0));
-                if let Some(update) = update {
-                    // Go `tryUpdatePointPlan`'s `buildOrderedList`, over the
-                    // point plan.
-                    let assignments = update_assignments_for_plan(update, catalog, current_db, ctx)?;
-                    update_assigns = single_update_assigns(&assignments);
-                    update_expressions = fast_update_ordered_list(
-                        update,
-                        &assignments,
-                        &fast,
-                        catalog,
-                        current_db,
-                        ctx,
-                        &plan_ids,
-                        &column_ids,
-                    )?;
-                    fast_update_list = true;
-                }
-                Some(fast)
-            } else {
-                // Go `optimize` past `TryFastPlan`: `PlanBuilder.Build`.
-                super::record_plan_builder_metric(ctx);
-                // Go `buildDelete` prunes the read to what removing a record
-                // needs (the planner's `pruneAndBuildColPositionInfoForDelete`);
-                // a point plan above keeps every column. Foreign keys other
-                // tables reference to this one decline the pruning.
-                let (delete_prune_has_fk, delete_multi) = match keep {
-                    DmlKeep::Auto => (
-                        operator
-                            .eq_ignore_ascii_case("Delete")
-                            .then(|| delete_has_fk(select, catalog, current_db, ctx)),
-                        None,
-                    ),
-                    DmlKeep::MultiDelete(input) => (None, Some(input)),
-                };
-                let built =
-                    super::planner_bridge::physical_dml_source_plan_with_allocators(
-                        select,
-                        single_update,
-                        multi_update,
-                        catalog,
-                        current_db,
-                        ctx,
-                        use_plan_cache,
-                        &plan_ids,
-                        &column_ids,
-                        operator,
-                        delete_prune_has_fk,
-                        delete_multi,
-                        Some(&build_delete_fk_triggers),
-                        write.filter(|_| collecting),
-                    )
-                    .map_err(super::planner_error_to_driver)?;
-                scalar_subqueries = built.scalar_subqueries;
-                statement_visits.extend(built.visit_info);
-                update_expressions = built.update_expressions;
-                delete_col_pos = built.delete_col_pos;
-                delete_tables = built.delete_tables;
-                update_tables = built.update_tables;
-                if multi_update.is_some() {
-                    update_assigns = built.update_assigns;
-                }
-                if let Some(assignments) = &built.single_assignments {
-                    update_assigns = single_update_assigns(assignments);
-                }
-                root_base = Some(built.root);
-                Some(built.plan)
-            }
-        }
-        Some(query) => Some(
-            super::planner_bridge::physical_query_plan_with_allocators(
-                query,
-                catalog,
-                current_db,
-                ctx,
-                use_plan_cache,
-                &plan_ids,
-                &column_ids,
-                if collecting {
-                    BuildVisits::Collect(&mut statement_visits)
-                } else {
-                    BuildVisits::Discard
-                },
-            )
-            .map_err(super::planner_error_to_driver)?,
-        ),
-    };
-
-    let base = root_base.ok_or_else(|| DriverError::unsupported("DML build produced no root"))?;
-    // Go `BuildOn{Update,Delete}FKTriggers`, last in the builders but
-    // `buildDelete`, which runs them before optimizing its source.
-    let mut fk_triggers = match delete_fk_triggers.take() {
-        Some(built) => built?,
-        None => build_fk_triggers()?,
-    };
-    // Go flattens all checks before all cascades, preserving table order.
-    fk_triggers.sort_by_key(|node| node.operator == "Foreign_Key_Cascade");
-    // Go `planner.optimize`'s `CheckPrivilege` / `CheckTableLock` once
-    // `buildUpdate` / `buildDelete` returned.
-    match visits {
-        BuildVisits::Check if !fast_plan_checked => {
-            crate::table_privilege::check_plan_privilege(ctx, catalog, &statement_visits)?;
-        }
-        BuildVisits::Collect(collected) => collected.extend(statement_visits),
-        BuildVisits::Check | BuildVisits::Discard => {}
-    }
-    let mut plan = PhysicalPlan::Dml(PhysicalDmlRoot {
-        base,
-        go_operator: operator.to_owned(),
-        explain_info: None,
-        select_plan: select_plan.map(Box::new),
-        full_update_inner: None,
-        update_expressions,
-        fk_triggers,
-        delete_col_pos,
-        delete_tables,
-        fast_update_list,
-        update_tables,
-        update_assigns,
-        insert_select: None,
-        insert_expressions: None,
-        plan_id: plan_ids.current(),
-    });
-    super::physical_builder::prepare_plan_for_explain(&mut plan, catalog, ctx)?;
-    Ok((plan, scalar_subqueries))
-}
-
-/// Go `buildTbl2UpdateColumns` narrowed to the SET column names.
-pub(crate) fn build_tbl_2_update_columns(
-    update: &tidb_ast::UpdateStmt,
-    current_db: &str,
-) -> Result<fk_trigger_plan::FkPlanSpec, DriverError> {
-    let tidb_ast::UpdateKind::Single(table_ref) = &update.kind else {
-        return Err(DriverError::unsupported(
-            "multi-table UPDATE plans are not supported yet",
-        ));
-    };
-    let (database, table) = tidb_infoschema::split_table_path(&table_ref.name, current_db)?;
-    Ok(fk_trigger_plan::FkPlanSpec {
-        database: database.to_owned(),
-        table: table.to_owned(),
-        updated_cols: update
-            .assignments
-            .iter()
-            .filter_map(|assignment| assignment.col.last().cloned())
-            .collect(),
-        replace: false,
-        on_duplicate_cols: Vec::new(),
-    })
-}
-
-pub(crate) fn fk_spec_for_delete(
-    delete: &tidb_ast::DeleteStmt,
-    current_db: &str,
-) -> Result<fk_trigger_plan::FkPlanSpec, DriverError> {
-    let tidb_ast::DeleteKind::Single(table_ref) = &delete.kind else {
-        return Err(DriverError::unsupported(
-            "multi-table DELETE plans are not supported yet",
-        ));
-    };
-    let (database, table) = tidb_infoschema::split_table_path(&table_ref.name, current_db)?;
-    Ok(fk_trigger_plan::FkPlanSpec {
-        database: database.to_owned(),
-        table: table.to_owned(),
-        updated_cols: Vec::new(),
-        replace: false,
-        on_duplicate_cols: Vec::new(),
-    })
-}
 
 struct InsertTargetLayout {
     database: String,
@@ -3187,8 +2645,7 @@ pub fn run_update_stmt_with_physical(
     let mut fresh = physical_plan
         .is_none()
         .then(|| match &update.kind {
-            tidb_ast::UpdateKind::Single(_) => physical_dml_plan(
-                "Update",
+            tidb_ast::UpdateKind::Single(_) => physical_dml_plan(&crate::driver::planner_bridge::driver_hooks(catalog), "Update",
                 source.as_ref(),
                 super::multi_dml::MultiDmlRef::Update(update),
                 catalog,
@@ -3196,8 +2653,7 @@ pub fn run_update_stmt_with_physical(
                 ctx,
                 &build_tbl_2_update_columns(update, current_db)?,
             ),
-            tidb_ast::UpdateKind::Multi { .. } => super::multi_dml::multi_dml_physical_plan(
-                super::multi_dml::MultiDmlRef::Update(update),
+            tidb_ast::UpdateKind::Multi { .. } => super::multi_dml::multi_dml_physical_plan(&crate::driver::planner_bridge::driver_hooks(catalog), super::multi_dml::MultiDmlRef::Update(update),
                 catalog,
                 current_db,
                 ctx,
@@ -3257,23 +2713,6 @@ pub fn run_update_stmt_with_physical(
     Ok(ctx.affected_rows())
 }
 
-///
-/// The SELECT carries the statement's hints, as Go's `tryUpdatePointPlan`
-/// builds its `SelectStmt{TableHints: updateStmt.TableHints}` and
-/// `buildUpdate` pushes them for the read.
-pub(crate) fn update_source_query(update: &tidb_ast::UpdateStmt) -> Option<tidb_ast::QueryStmt> {
-    match &update.kind {
-        tidb_ast::UpdateKind::Single(table_ref) => Some(super::multi_dml::multi_dml_select(
-            update.with.as_ref(),
-            &update.hints,
-            &tidb_planner::plan_builder::dml_source::single_table_join(table_ref),
-            update.where_clause.as_ref(),
-            &update.order_by,
-            update.limit.as_ref(),
-        )),
-        tidb_ast::UpdateKind::Multi { .. } => None,
-    }
-}
 
 pub use tidb_planner::point_get_plan::{handed_point_plan, PointPlanKind, PointPlanVal};
 
@@ -3352,81 +2791,9 @@ pub fn prefetch_point_plan_keys(
     Ok((PointPlanVal { kind, plan, plan_ids: plan_ids.current() }, keys))
 }
 
-/// Go `tryUpdatePointPlan` declines the complete fast DML plan when any SET
-/// expression contains a subquery. The ordinary builder must then attach the
-/// subquery plan while rewriting the assignment.
-pub(crate) fn try_update_point_plan(update: &tidb_ast::UpdateStmt) -> bool {
-    !update
-        .assignments
-        .iter()
-        .any(|assignment| super::subquery::expr_has_subquery(&assignment.value))
-}
 
-/// Go `tryUpdatePointPlan`'s `buildOrderedList`: the assignments of a point
-/// UPDATE as expressions over the point plan's row.
-fn fast_update_ordered_list(
-    update: &tidb_ast::UpdateStmt,
-    assignments: &[tidb_planner::plan_builder::single_update::SingleUpdateAssignment],
-    fast: &tidb_planner_core_operator_physicalop::PhysicalPlan,
-    catalog: &SessionExtendedInfoSchema,
-    current_db: &str,
-    ctx: &crate::StmtContext,
-    plan_ids: &tidb_planner_core_base::PlanIdAllocator,
-    column_ids: &tidb_planner_core_base::ColumnIdAllocator,
-) -> Result<Vec<Option<Expression>>, DriverError> {
-    let tidb_ast::UpdateKind::Single(table_ref) = &update.kind else {
-        return Ok(Vec::new());
-    };
-    let schema = fast
-        .schema()
-        .ok_or_else(|| DriverError::unsupported("a fast UPDATE's point plan has no schema"))?;
-    let targets: Vec<(Vec<String>, Option<tidb_ast::Expr>)> = update
-        .assignments
-        .iter()
-        .map(|assignment| assignment.col.clone())
-        .zip(assignments.iter().map(|assignment| assignment.value.clone()))
-        .collect();
-    super::planner_bridge::point_update_ordered_list(
-        table_ref,
-        schema,
-        &targets,
-        catalog,
-        current_db,
-        ctx,
-        plan_ids,
-        column_ids,
-    )
-    .map_err(super::planner_error_to_driver)
-}
 
-/// Go `buildOrderedList`'s resolution for a fast point UPDATE: every SET item
-/// resolved to its column (see `PlanBuilder::resolve_single_update_assignments`).
-fn update_assignments_for_plan(
-    update: &tidb_ast::UpdateStmt,
-    catalog: &SessionExtendedInfoSchema,
-    current_db: &str,
-    ctx: &crate::StmtContext,
-) -> Result<Vec<tidb_planner::plan_builder::single_update::SingleUpdateAssignment>, DriverError> {
-    super::planner_bridge::single_update_assignments(update, catalog, current_db, ctx)
-        .map_err(super::planner_error_to_driver)
-}
 
-/// The Update root's assignments of a single-table UPDATE: each SET item with
-/// a value, by its place in the list.
-fn single_update_assigns(
-    assignments: &[tidb_planner::plan_builder::single_update::SingleUpdateAssignment],
-) -> Vec<tidb_planner_core_operator_physicalop::UpdateAssign> {
-    assignments
-        .iter()
-        .enumerate()
-        .filter(|(_, assignment)| assignment.value.is_some())
-        .map(|(index, assignment)| tidb_planner_core_operator_physicalop::UpdateAssign {
-            table: 0,
-            column: assignment.column,
-            expr: index,
-        })
-        .collect()
-}
 
 /// The retained definition and cache key for a prepared DML statement.
 ///
@@ -3945,8 +3312,7 @@ fn cached_dml_physical_plan(
         return Ok(None);
     };
     ctx.start_prepared_range_tracking();
-    let root = physical_dml_plan_with_cache_mode(
-        operator,
+    let root = physical_dml_plan_with_cache_mode(&crate::driver::planner_bridge::driver_hooks(catalog), operator,
         source.as_ref(),
         write,
         catalog,
@@ -4590,8 +3956,7 @@ pub fn run_delete_stmt_with_physical(
     let mut fresh = physical_plan
         .is_none()
         .then(|| match &delete.kind {
-            tidb_ast::DeleteKind::Single(_) => physical_dml_plan(
-                "Delete",
+            tidb_ast::DeleteKind::Single(_) => physical_dml_plan(&crate::driver::planner_bridge::driver_hooks(catalog), "Delete",
                 source.as_ref(),
                 super::multi_dml::MultiDmlRef::Delete(delete),
                 catalog,
@@ -4599,8 +3964,7 @@ pub fn run_delete_stmt_with_physical(
                 ctx,
                 &fk_spec_for_delete(delete, current_db)?,
             ),
-            tidb_ast::DeleteKind::Multi { .. } => super::multi_dml::multi_dml_physical_plan(
-                super::multi_dml::MultiDmlRef::Delete(delete),
+            tidb_ast::DeleteKind::Multi { .. } => super::multi_dml::multi_dml_physical_plan(&crate::driver::planner_bridge::driver_hooks(catalog), super::multi_dml::MultiDmlRef::Delete(delete),
                 catalog,
                 current_db,
                 ctx,
@@ -4648,46 +4012,8 @@ pub fn run_delete_stmt_with_physical(
     Ok(ctx.affected_rows())
 }
 
-/// How a DML read decides the columns it keeps (see [`DeletePruning`]).
-pub(crate) enum DmlKeep {
-    /// A single-table statement: the planner prunes a DELETE's read.
-    Auto,
-    /// A multi-table DELETE: the planner prunes each target's read and lays
-    /// out its rows.
-    MultiDelete(tidb_planner::plan_builder::delete_pruning::DeleteMultiInput),
-}
 
-/// Whether a foreign key another table declares references the table a
-/// single-table DELETE targets: Go's `len(del.FKCascades) > 0 ||
-/// len(del.FKChecks) > 0`, which declines the read's column pruning.
-fn delete_has_fk(
-    select: &tidb_ast::SelectStmt,
-    catalog: &SessionExtendedInfoSchema,
-    current_db: &str,
-    ctx: &crate::StmtContext,
-) -> bool {
-    let Some(table_ref) = super::point_get_plan::sole_table_ref(&select.from) else {
-        return false;
-    };
-    let Ok((database, name)) = single_table_name(table_ref, current_db) else {
-        return false;
-    };
-    ctx.foreign_key_checks() && !crate::foreign_key::referring(catalog, &database, &name).is_empty()
-}
 
-pub(crate) fn delete_source_query(delete: &tidb_ast::DeleteStmt) -> Option<tidb_ast::QueryStmt> {
-    match &delete.kind {
-        tidb_ast::DeleteKind::Single(table_ref) => Some(super::multi_dml::multi_dml_select(
-            delete.with.as_ref(),
-            &delete.hints,
-            &tidb_planner::plan_builder::dml_source::single_table_join(table_ref),
-            delete.where_clause.as_ref(),
-            &delete.order_by,
-            delete.limit.as_ref(),
-        )),
-        tidb_ast::DeleteKind::Multi { .. } => None,
-    }
-}
 
 fn run_delete_with_physical(
     delete: &tidb_ast::DeleteStmt,

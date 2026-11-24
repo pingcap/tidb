@@ -111,6 +111,7 @@ pub mod plan_cache_utils;
 pub mod pb_to_plan;
 pub mod binding_match;
 pub mod catalog_ctx;
+pub mod dml_optimize;
 pub mod do_optimize;
 pub mod planner_optimize;
 pub mod statement_optimize;

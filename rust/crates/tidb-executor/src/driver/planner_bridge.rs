@@ -22,6 +22,7 @@
 
 use std::cell::RefCell;
 use std::rc::Rc;
+pub(crate) use tidb_planner::dml_optimize::update_target_columns;
 use tidb_planner::physical_plan_cache::RebuildPlanForCache;
 use tidb_planner::stmt_ctx::PlannerStmtCtx as _;
 
@@ -30,9 +31,7 @@ use tidb_expr::expr_util::RealFunctionBuilder;
 use tidb_expr::expression::Expression;
 use tidb_hack::{GoCaseCompare, GoToLower};
 use tidb_infoschema::table_source::TableSource;
-pub(crate) use tidb_planner::do_optimize::{
-    optimize_built_logical, physical_plan_for_logical, physical_plan_for_logical_with_update_refs,
-};
+pub(crate) use tidb_planner::do_optimize::{optimize_built_logical, physical_plan_for_logical};
 use tidb_planner::plan_builder::PlanBuilder;
 use tidb_planner_core_base::ColumnIdAllocator;
 use tidb_planner_core_base::PlanIdAllocator;
@@ -86,29 +85,6 @@ pub(crate) fn partition_pruning(
 }
 
 pub(super) use tidb_planner::point_get_plan::is_cte;
-
-pub(super) fn update_target_columns(
-    update: &tidb_ast::UpdateStmt,
-    catalog: &SessionExtendedInfoSchema,
-    current_db: &str,
-    ctx: &crate::StmtContext,
-) -> Result<Vec<(String, String, String)>, super::DriverError> {
-    let source = catalog
-        .planner_catalog(current_db, ctx.latest_index_schema())
-        .with_statement_hypo_state(ctx)
-        .with_statement_dirty_tables(ctx)
-        .with_statement_privilege_verifier(ctx)
-        .with_statement_related_tables_for_mdl(ctx);
-    let plan_ids = PlanIdAllocator::new();
-    let column_ids = ColumnIdAllocator::new();
-    let targets = PlanBuilder::new(&source, ctx, &plan_ids, &column_ids, ctx.session_zone())
-        .resolve_update_targets(update)
-        .map_err(super::planner_error_to_driver)?;
-    Ok(targets
-        .into_iter()
-        .map(|target| (target.database, target.table, target.column))
-        .collect())
-}
 
 /// Go `PlanBuilder.buildAdminCheckTable` over the statement's catalog.
 pub(crate) fn admin_check_table_plan(
@@ -375,35 +351,6 @@ pub(crate) fn physical_query_plan_with_scalar_subqueries(
     .map(|(_, physical, registered)| (physical, registered))
 }
 
-/// Builds a query below a non-query physical root using that statement's
-/// plan and column allocators. Go's DML builders allocate the write root and
-/// its `SelectPlan` from the same session counters; keeping those counters
-/// shared preserves both tree ownership and explain identities.
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn physical_query_plan_with_allocators(
-    query: &tidb_ast::QueryStmt,
-    catalog: &SessionExtendedInfoSchema,
-    current_database: &str,
-    ctx: &crate::StmtContext,
-    use_plan_cache: bool,
-    plan_ids: &PlanIdAllocator,
-    column_ids: &ColumnIdAllocator,
-    visits: BuildVisits<'_>,
-) -> Result<PhysicalPlan, tidb_planner_core_base::PlanError> {
-    planner_physical_query_with_allocators(
-        query,
-        catalog,
-        current_database,
-        ctx,
-        use_plan_cache,
-        plan_ids,
-        column_ids,
-        visits,
-        QueryBuild::DmlRead,
-    )
-    .map(|(_, physical)| physical)
-}
-
 use tidb_planner::statement_optimize::driver_error_to_plan;
 
 /// Go `evalFieldDefaultValue` (`expression_rewriter.go:3303`) for the
@@ -475,13 +422,27 @@ fn default_evaluator_using<'a>(
 /// The executor's half of one statement's planning
 /// ([`tidb_planner::statement_optimize::PlanningHooks`]): Go's function
 /// variable `EvalSubqueryFirstRow` and the column default evaluators.
-struct DriverHooks<'a> {
+pub(crate) struct DriverHooks<'a> {
     catalog: &'a SessionExtendedInfoSchema,
+}
+
+/// The executor's [`tidb_planner::statement_optimize::PlanningHooks`] over
+/// `catalog`.
+pub(crate) fn driver_hooks(catalog: &SessionExtendedInfoSchema) -> DriverHooks<'_> {
+    DriverHooks { catalog }
 }
 
 impl tidb_planner::statement_optimize::PlanningHooks for DriverHooks<'_> {
     fn eval_subquery_first_row(&self) -> tidb_planner::statement_optimize::EvalSubqueryFirstRow {
         crate::driver::physical_builder::eval_subquery_first_row
+    }
+
+    fn prepare_plan(
+        &self,
+        plan: &mut PhysicalPlan,
+        ctx: &crate::StmtContext,
+    ) -> Result<(), crate::DriverError> {
+        crate::driver::physical_builder::prepare_plan_for_explain(plan, self.catalog, ctx)
     }
 
     fn field_default(
@@ -1147,27 +1108,6 @@ pub(crate) fn cached_insert_expressions(
     })
 }
 
-/// Go `buildUpdateLists`'s resolution of a single-table UPDATE's SET items.
-pub(crate) fn single_update_assignments(
-    update: &tidb_ast::UpdateStmt,
-    catalog: &SessionExtendedInfoSchema,
-    current_database: &str,
-    ctx: &crate::StmtContext,
-) -> Result<
-    Vec<tidb_planner::plan_builder::single_update::SingleUpdateAssignment>,
-    tidb_planner_core_base::PlanError,
-> {
-    let source = catalog
-        .planner_catalog(current_database, ctx.latest_index_schema())
-        .with_statement_hypo_state(ctx)
-        .with_statement_dirty_tables(ctx)
-        .with_statement_privilege_verifier(ctx);
-    let plan_ids = PlanIdAllocator::new();
-    let column_ids = ColumnIdAllocator::new();
-    PlanBuilder::new(&source, ctx, &plan_ids, &column_ids, ctx.session_zone())
-        .resolve_single_update_assignments(update, ctx.allow_write_row_id())
-}
-
 /// Go `getAffectCols` of `buildInsert`: the columns an INSERT writes.
 pub(crate) fn insert_target(
     insert: &tidb_ast::InsertStmt,
@@ -1184,282 +1124,6 @@ pub(crate) fn insert_target(
         .with_statement_dirty_tables(ctx)
         .with_statement_privilege_verifier(ctx);
     tidb_planner::plan_builder::insert_values::resolve_insert_target(&source, ctx, insert)
-}
-
-/// The shared DML-source build, following Go's allocation order:
-/// the source builds logically, `buildSelectLock` wraps the single-table
-/// UPDATE/DELETE source (`logical_plan_builder.go:6117/6552`, pessimistic
-/// mode), the `Update`/`Delete` root allocates, and only then `DoOptimize`
-/// lowers the tree. Returns the physical source, the UPDATE assignment
-/// expressions, and the allocated DML root base for `PhysicalDmlRoot`.
-///
-/// `write` is the statement whose `visitInfo` the build collects, Go's
-/// `buildUpdate` / `buildDelete` over one `PlanBuilder`: the read's (a
-/// non-qualified DELETE pops its last, `popVisitInfo`), then the write's
-/// (`UpdatePriv` per assigned table, `DeletePriv` per target); `None` for a
-/// cached plan's rebuild, whose statement checks the visit infos PREPARE
-/// kept.
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn physical_dml_source_plan_with_allocators(
-    select: &tidb_ast::SelectStmt,
-    single_update: Option<&tidb_ast::UpdateStmt>,
-    multi_update: Option<&tidb_ast::UpdateStmt>,
-    catalog: &SessionExtendedInfoSchema,
-    current_database: &str,
-    ctx: &crate::StmtContext,
-    use_plan_cache: bool,
-    plan_ids: &PlanIdAllocator,
-    column_ids: &ColumnIdAllocator,
-    operator: &str,
-    delete_prune_has_fk: Option<bool>,
-    delete_multi: Option<tidb_planner::plan_builder::delete_pruning::DeleteMultiInput>,
-    on_delete_root: Option<&dyn Fn()>,
-    write: Option<super::multi_dml::MultiDmlRef<'_>>,
-) -> Result<DmlSourcePlan, tidb_planner_core_base::PlanError> {
-    // Go builds an UPDATE/DELETE inside `builder.Build` (`buildUpdate` /
-    // `buildDelete` run the read plan's `DoOptimize` themselves), so its
-    // `DurationRewrite` covers the read plan's optimization too, and the
-    // non-logical `Update`/`Delete` never starts `optimize`'s total clock.
-    ctx.phase_durations().reset_rewrite_phase_info();
-    let begin_rewrite = std::time::Instant::now();
-    let registry = ScalarSubqueryRegistry::default();
-    let parts = QueryBuilderParts {
-        catalog,
-        current_database,
-        ctx,
-        use_plan_cache,
-        plan_ids,
-        column_ids,
-        registry: &registry,
-        session_ctx: None,
-    };
-    // Go `buildUpdate` / `buildDelete` run inside `PlanBuilder.Build`.
-    let built = parts.planning_with(on_delete_root, |parts| {
-        parts.build(None, None, |builder| {
-            let source = builder.source;
-            let session_zone = ctx.session_zone();
-            builder.delete_prune_has_fk = delete_prune_has_fk;
-            builder.delete_multi = delete_multi;
-            builder.allocate_delete_root = operator.eq_ignore_ascii_case("Delete");
-            // Go `buildUpdate`/`buildDelete` lock the read only for a single-table
-            // source (`TableRefs.Right == nil` / `!IsMultiTable`); a multi-table
-            // write locks the rows it writes instead.
-            let single_source = select.from.as_ref().is_some_and(|from| {
-                from.right.is_none() && matches!(from.left, tidb_ast::JoinNode::Table(_))
-            });
-            let wrap_lock = ctx.pessimistic_transaction() && single_source;
-            let mut single_assignments = None;
-            let (plan, mut update_expressions, mut plan_flags) = match (single_update, multi_update)
-            {
-                (Some(update), _) => {
-                    let (plan, expressions, assignments, flags) = builder.build_update_dml_source(
-                        select,
-                        update,
-                        ctx.allow_write_row_id(),
-                        wrap_lock,
-                    )?;
-                    single_assignments = Some(assignments);
-                    (plan, expressions, flags)
-                }
-                (None, Some(update)) => builder.build_multi_update_dml_source(
-                    select,
-                    update,
-                    ctx.allow_write_row_id(),
-                )?,
-                (None, None) => {
-                    let (plan, build_flags) = builder.build_dml_source(select, wrap_lock)?;
-                    (plan, Vec::new(), build_flags)
-                }
-            };
-            ctx.set_block_as_names(builder.statement_block_as_names());
-            // Go `buildUpdate` / `buildDelete`: the write's visit infos follow the
-            // read's, before the read is optimized. The write targets resolve on
-            // their own allocators: resolving a joined UPDATE's columns walks its
-            // table refs again, which must not shift this build's plan ids.
-            let mut visit_info = std::mem::take(&mut builder.visit_info);
-            if let Some(write) = write {
-                let (target_plan_ids, target_column_ids) =
-                    (PlanIdAllocator::new(), ColumnIdAllocator::new());
-                let mut targets = PlanBuilder::new(
-                    source,
-                    ctx,
-                    &target_plan_ids,
-                    &target_column_ids,
-                    session_zone.clone(),
-                );
-                match write {
-                    super::multi_dml::MultiDmlRef::Update(update) => {
-                        visit_info.extend(targets.update_write_visits(update)?);
-                    }
-                    super::multi_dml::MultiDmlRef::Delete(delete) => {
-                        // "If the delete is non-qualified it does not require Select
-                        // Priv".
-                        if delete.where_clause.is_none() && delete.order_by.is_empty() {
-                            visit_info.pop();
-                        }
-                        visit_info.extend(targets.delete_write_visits(delete)?);
-                    }
-                }
-            }
-            // Go `buildUpdate`: "We cannot apply projection elimination when building
-            // the subplan, because columns in orderedList cannot be resolved" -- the
-            // assignments live outside the plan, so a rewrite that substitutes a
-            // projected column never reaches them (`DoOptimize(..., b.optFlag &^
-            // rule.FlagEliminateProjection, p)`).
-            if operator.eq_ignore_ascii_case("Update") {
-                plan_flags &= !tidb_planner_core_rule::flags::ELIMINATE_PROJECTION;
-            }
-            // Go `buildUpdate`/`buildDelete` allocate the `Update`/`Delete` root
-            // after the logical build (which now includes `buildSelectLock` and the
-            // freezing projection) and before `DoOptimize`. The optimize pass then
-            // allocates the physical projection candidate (Go id 6 in the captured
-            // W51 receipt) before the physical `SelectLock` — reproducing Go's
-            // exact id sequence without a filler.
-            let root = builder.dml_root.take().unwrap_or_else(|| {
-                tidb_planner_core_operator_physicalop::BasePhysicalPlan::new(plan_ids, operator, 0)
-            });
-            let logical = optimize_built_logical(
-                plan,
-                plan_flags,
-                catalog,
-                ctx,
-                use_plan_cache,
-                plan_ids,
-                column_ids,
-                &session_zone,
-            )?;
-            // Go `buildUpdateLists`: the columns a non-constant assignment reads
-            // join `StmtCtx.ColRefFromUpdatePlan`.
-            let col_ref_from_update_plan: std::collections::BTreeSet<i64> = update_expressions
-                .iter()
-                .flatten()
-                .flat_map(tidb_expr::simple_expr::extract_columns)
-                .map(|column| column.unique_id)
-                .collect();
-            let physical = physical_plan_for_logical_with_update_refs(
-                &logical,
-                plan_ids,
-                column_ids,
-                catalog,
-                ctx,
-                &col_ref_from_update_plan,
-            )?;
-            let schema = physical.schema().ok_or_else(|| {
-                tidb_planner_core_base::PlanError::internal("physical DML source has no schema")
-            })?;
-            for expression in update_expressions.iter_mut().flatten() {
-                tidb_expr::simple_expr::resolve_indices_in_place(expression, schema).map_err(
-                    |_| {
-                        tidb_planner_core_base::PlanError::internal(
-                            "UPDATE assignment does not resolve in its physical source",
-                        )
-                    },
-                )?;
-            }
-            ctx.phase_durations()
-                .set_duration_rewrite(begin_rewrite.elapsed());
-            Ok(DmlSourcePlan {
-                plan: physical,
-                update_expressions,
-                single_assignments,
-                root,
-                delete_col_pos: builder.delete_col_pos.take(),
-                delete_tables: std::mem::take(&mut builder.delete_tables),
-                update_tables: std::mem::take(&mut builder.update_tables),
-                update_assigns: std::mem::take(&mut builder.update_assigns),
-                visit_info,
-                scalar_subqueries: Vec::new(),
-            })
-        })
-    })?;
-    let scalar_subqueries = registry.borrow().clone();
-    Ok(DmlSourcePlan {
-        scalar_subqueries,
-        ..built
-    })
-}
-
-/// What the shared DML-source build produces for the `Update`/`Delete` root.
-pub(crate) struct DmlSourcePlan {
-    /// The optimized physical read.
-    pub plan: PhysicalPlan,
-    /// The statement's visit infos (Go `builder.GetVisitInfo()`): the read's,
-    /// then the write's.
-    pub visit_info: Vec<tidb_planner::plan_builder::visit_info::VisitInfo>,
-    /// The UPDATE assignments' expressions, resolved against the read.
-    pub update_expressions: Vec<Option<tidb_expr::expression::Expression>>,
-    /// The allocated root base.
-    pub root: tidb_planner_core_operator_physicalop::BasePhysicalPlan,
-    /// A pruned single-table DELETE's layout.
-    pub delete_col_pos: Option<tidb_planner_core_operator_physicalop::DeleteColPos>,
-    /// A multi-table DELETE's layouts.
-    pub delete_tables: Vec<tidb_planner_core_operator_physicalop::DeleteTablePos>,
-    /// A multi-table UPDATE's layouts.
-    pub update_tables: Vec<tidb_planner_core_operator_physicalop::UpdateTablePos>,
-    /// A multi-table UPDATE's assignments.
-    pub update_assigns: Vec<tidb_planner_core_operator_physicalop::UpdateAssign>,
-    /// A single-table UPDATE's SET items, resolved over the read (Go
-    /// `buildUpdateLists`).
-    pub single_assignments:
-        Option<Vec<tidb_planner::plan_builder::single_update::SingleUpdateAssignment>>,
-    /// The scalar subqueries the read evaluated while it was built (Go
-    /// `SessionVars.MapScalarSubQ`), which EXPLAIN renders after the plan.
-    pub scalar_subqueries: Vec<std::sync::Arc<RegisteredScalarSubquery>>,
-}
-
-/// Go `buildOrderedList` for the fast point UPDATE (`tryUpdatePointPlan`): the
-/// assignments rewritten over the point plan's schema and cast to their
-/// target columns, resolved to that schema's row.
-pub(crate) fn point_update_ordered_list(
-    table_ref: &tidb_ast::TableRef,
-    schema: &tidb_expr::schema::Schema,
-    assignments: &[(Vec<String>, Option<tidb_ast::Expr>)],
-    catalog: &SessionExtendedInfoSchema,
-    current_database: &str,
-    ctx: &crate::StmtContext,
-    plan_ids: &PlanIdAllocator,
-    column_ids: &ColumnIdAllocator,
-) -> Result<Vec<Option<Expression>>, tidb_planner_core_base::PlanError> {
-    let source = catalog
-        .planner_catalog(current_database, ctx.latest_index_schema())
-        .with_statement_hypo_state(ctx)
-        .with_statement_dirty_tables(ctx)
-        .with_statement_privilege_verifier(ctx)
-        .with_statement_related_tables_for_mdl(ctx);
-    let defaults = default_evaluator(catalog, ctx);
-    let builder = PlanBuilder::new(&source, ctx, plan_ids, column_ids, ctx.session_zone())
-        .with_default_evaluator(&defaults);
-    let mut list = builder.build_point_ordered_list(table_ref, schema, assignments)?;
-    for expression in list.iter_mut().flatten() {
-        tidb_expr::simple_expr::resolve_indices_in_place(expression, schema).map_err(|_| {
-            tidb_planner_core_base::PlanError::internal(
-                "a fast UPDATE assignment does not resolve in its point plan",
-            )
-        })?;
-    }
-    Ok(list)
-}
-
-/// Go `buildDelete`'s resolution of a multi-table DELETE's targets.
-pub(crate) fn delete_targets(
-    delete: &tidb_ast::DeleteStmt,
-    catalog: &SessionExtendedInfoSchema,
-    current_database: &str,
-    ctx: &crate::StmtContext,
-) -> Result<
-    Vec<tidb_planner::plan_builder::delete_pruning::DeleteTarget>,
-    tidb_planner_core_base::PlanError,
-> {
-    let source = catalog
-        .planner_catalog(current_database, ctx.latest_index_schema())
-        .with_statement_hypo_state(ctx)
-        .with_statement_dirty_tables(ctx)
-        .with_statement_privilege_verifier(ctx)
-        .with_statement_related_tables_for_mdl(ctx);
-    let plan_ids = PlanIdAllocator::new();
-    let column_ids = ColumnIdAllocator::new();
-    PlanBuilder::new(&source, ctx, &plan_ids, &column_ids, ctx.session_zone())
-        .resolve_delete_targets(delete)
 }
 
 /// The complete physical tree retained by the prepared-plan cache. A hit

@@ -40,6 +40,17 @@ pub trait PlanningHooks {
     /// Go's `EvalSubqueryFirstRow` function variable, which the executor
     /// sets: run a subquery's physical plan for its first row.
     fn eval_subquery_first_row(&self) -> EvalSubqueryFirstRow;
+    /// The executor's preparation of a built DML plan before it runs or is
+    /// explained (the virtual tables it reads requested for retrieval).
+    ///
+    /// # Errors
+    ///
+    /// The preparation's failure.
+    fn prepare_plan(
+        &self,
+        plan: &mut PhysicalPlan,
+        ctx: &StmtContext,
+    ) -> Result<(), tidb_driver_error::DriverError>;
     /// Go `evalFieldDefaultValue`: `DEFAULT(column)` as a constant.
     ///
     /// # Errors

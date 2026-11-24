@@ -3928,7 +3928,7 @@ fn render_physical_query(
     format: ExplainFormat,
     analyze: bool,
 ) -> Result<SelectMeta, DriverError> {
-    crate::driver::set_opr::validate_query_usage(query, ctx)?;
+    tidb_planner::preprocess::validate_query_usage(query, ctx)?;
     let (mut physical, scalar_subqueries) =
         crate::driver::optimize_query_stmt_with_scalar_subqueries(query, catalog, current_db, ctx)?;
     if analyze {
@@ -4146,7 +4146,7 @@ pub fn query_plan_cost(
     current_db: &str,
     ctx: &crate::StmtContext,
 ) -> Result<f64, DriverError> {
-    crate::driver::set_opr::validate_query_usage(query, ctx)?;
+    tidb_planner::preprocess::validate_query_usage(query, ctx)?;
     let (mut physical, scalar_subqueries) =
         crate::driver::optimize_query_stmt_with_scalar_subqueries(query, catalog, current_db, ctx)?;
     if !scalar_subqueries.is_empty() {
@@ -4172,7 +4172,7 @@ pub fn gen_brief_plan(
     current_db: &str,
     ctx: &crate::StmtContext,
 ) -> Result<(String, String, Vec<Vec<String>>), DriverError> {
-    crate::driver::set_opr::validate_query_usage(query, ctx)?;
+    tidb_planner::preprocess::validate_query_usage(query, ctx)?;
     let (mut physical, scalar_subqueries) =
         crate::driver::optimize_query_stmt_with_scalar_subqueries(query, catalog, current_db, ctx)?;
     crate::driver::physical_builder::prepare_plan_for_explain(&mut physical, catalog, ctx)?;
@@ -4209,7 +4209,7 @@ pub fn calculate_plan_digest(
     current_db: &str,
     ctx: &crate::StmtContext,
 ) -> Result<String, DriverError> {
-    crate::driver::set_opr::validate_query_usage(query, ctx)?;
+    tidb_planner::preprocess::validate_query_usage(query, ctx)?;
     let (mut physical, _) =
         crate::driver::optimize_query_stmt_with_scalar_subqueries(query, catalog, current_db, ctx)?;
     crate::driver::physical_builder::prepare_plan_for_explain(&mut physical, catalog, ctx)?;
@@ -4225,7 +4225,7 @@ pub fn record_relevant_opt_vars_and_fixes(
     ctx: &crate::StmtContext,
 ) -> Result<(Vec<String>, Vec<u64>), DriverError> {
     let scope = tidb_variable::relevant_opt::record_scope();
-    crate::driver::set_opr::validate_query_usage(query, ctx)?;
+    tidb_planner::preprocess::validate_query_usage(query, ctx)?;
     crate::driver::optimize_query_stmt_with_scalar_subqueries(query, catalog, current_db, ctx)?;
     Ok(scope.recorded())
 }
@@ -4427,8 +4427,7 @@ pub fn explain_update_stmt(
 ) -> Result<SelectMeta, DriverError> {
     // Go `PlanBuilder.Build` for the EXPLAIN itself (`buildExplain`).
     crate::driver::record_plan_builder_metric(ctx);
-    if let Some((physical, scalar_subqueries)) = crate::driver::multi_dml_explain_plan(
-        crate::driver::MultiDmlRef::Update(update),
+    if let Some((physical, scalar_subqueries)) = crate::driver::multi_dml_explain_plan(&crate::driver::planner_bridge::driver_hooks(catalog), crate::driver::MultiDmlRef::Update(update),
         catalog,
         current_db,
         ctx,
@@ -4439,8 +4438,7 @@ pub fn explain_update_stmt(
         DriverError::unsupported("UPDATE has no single-table source")
     })?;
     let fk_spec = crate::driver::build_tbl_2_update_columns(update, current_db)?;
-    let (physical, scalar_subqueries) = crate::driver::physical_dml_plan_and_scalar_subqueries(
-        "Update",
+    let (physical, scalar_subqueries) = crate::driver::physical_dml_plan_and_scalar_subqueries(&crate::driver::planner_bridge::driver_hooks(catalog), "Update",
         Some(&source),
         crate::driver::MultiDmlRef::Update(update),
         catalog,
@@ -4462,8 +4460,7 @@ pub fn explain_delete_stmt(
 ) -> Result<SelectMeta, DriverError> {
     // Go `PlanBuilder.Build` for the EXPLAIN itself (`buildExplain`).
     crate::driver::record_plan_builder_metric(ctx);
-    if let Some((physical, scalar_subqueries)) = crate::driver::multi_dml_explain_plan(
-        crate::driver::MultiDmlRef::Delete(delete),
+    if let Some((physical, scalar_subqueries)) = crate::driver::multi_dml_explain_plan(&crate::driver::planner_bridge::driver_hooks(catalog), crate::driver::MultiDmlRef::Delete(delete),
         catalog,
         current_db,
         ctx,
@@ -4474,8 +4471,7 @@ pub fn explain_delete_stmt(
         DriverError::unsupported("DELETE has no single-table source")
     })?;
     let fk_spec = crate::driver::fk_spec_for_delete(delete, current_db)?;
-    let (physical, scalar_subqueries) = crate::driver::physical_dml_plan_and_scalar_subqueries(
-        "Delete",
+    let (physical, scalar_subqueries) = crate::driver::physical_dml_plan_and_scalar_subqueries(&crate::driver::planner_bridge::driver_hooks(catalog), "Delete",
         Some(&source),
         crate::driver::MultiDmlRef::Delete(delete),
         catalog,
@@ -4505,8 +4501,7 @@ pub fn explain_analyze_update_stmt(
     let ctx = &analyzed;
     // Go `PlanBuilder.Build` for the EXPLAIN itself (`buildExplain`).
     crate::driver::record_plan_builder_metric(ctx);
-    let (mut physical, scalar_subqueries) = match crate::driver::multi_dml_explain_plan(
-        crate::driver::MultiDmlRef::Update(update),
+    let (mut physical, scalar_subqueries) = match crate::driver::multi_dml_explain_plan(&crate::driver::planner_bridge::driver_hooks(catalog), crate::driver::MultiDmlRef::Update(update),
         catalog,
         current_db,
         ctx,
@@ -4516,8 +4511,7 @@ pub fn explain_analyze_update_stmt(
             let source = crate::driver::update_source_query(update).ok_or_else(|| {
                 DriverError::unsupported("UPDATE has no single-table source")
             })?;
-            crate::driver::physical_dml_plan_and_scalar_subqueries(
-                "Update",
+            crate::driver::physical_dml_plan_and_scalar_subqueries(&crate::driver::planner_bridge::driver_hooks(catalog), "Update",
                 Some(&source),
                 crate::driver::MultiDmlRef::Update(update),
                 catalog,
@@ -4558,8 +4552,7 @@ pub fn explain_analyze_delete_stmt(
     let ctx = &analyzed;
     // Go `PlanBuilder.Build` for the EXPLAIN itself (`buildExplain`).
     crate::driver::record_plan_builder_metric(ctx);
-    let (mut physical, scalar_subqueries) = match crate::driver::multi_dml_explain_plan(
-        crate::driver::MultiDmlRef::Delete(delete),
+    let (mut physical, scalar_subqueries) = match crate::driver::multi_dml_explain_plan(&crate::driver::planner_bridge::driver_hooks(catalog), crate::driver::MultiDmlRef::Delete(delete),
         catalog,
         current_db,
         ctx,
@@ -4569,8 +4562,7 @@ pub fn explain_analyze_delete_stmt(
             let source = crate::driver::delete_source_query(delete).ok_or_else(|| {
                 DriverError::unsupported("DELETE has no single-table source")
             })?;
-            crate::driver::physical_dml_plan_and_scalar_subqueries(
-                "Delete",
+            crate::driver::physical_dml_plan_and_scalar_subqueries(&crate::driver::planner_bridge::driver_hooks(catalog), "Delete",
                 Some(&source),
                 crate::driver::MultiDmlRef::Delete(delete),
                 catalog,

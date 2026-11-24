@@ -74,7 +74,7 @@ use std::time::{Duration, Instant};
 
 use crate::driver::DriverError;
 use tidb_datatype::{Datum, FieldType};
-use tidb_hack::{GoCaseCompare, GoToLower};
+use tidb_hack::GoCaseCompare;
 use tidb_infoschema::{SessionExtendedInfoSchema, TableEntry};
 use tidb_planner_core_base::PlanIdAllocator;
 use tidb_planner_core_operator_physicalop::{FkTriggerKind, FkTriggerNode, PhysicalPlan};
@@ -901,13 +901,7 @@ pub(crate) struct FKCascadeExec {
     cascade_plans: Vec<Box<PhysicalPlan>>,
 }
 
-/// The cascade statement Go's `buildFKCascadePlan` generates.
-pub(crate) enum FKCascadeStmt {
-    /// `GenCascadeDeleteAST`.
-    Delete(tidb_ast::DeleteStmt),
-    /// `GenCascadeSetNullAST` / `GenCascadeUpdateAST`.
-    Update(tidb_ast::UpdateStmt),
-}
+pub(crate) use tidb_planner::dml_optimize::FKCascadeStmt;
 
 impl FKCascadeExec {
     /// Go `executorBuilder.buildFKCascadeExec`.
@@ -1308,7 +1302,7 @@ fn handle_foreign_key_cascade(
             };
             check_fk_cascade_table_lock(fkc, &stmt, catalog, ctx)?;
             ctx.set_plans_fk_cascade(true);
-            let planned = crate::driver::physical_fk_cascade_plan(&stmt, catalog, ctx, plan_ids);
+            let planned = crate::driver::physical_fk_cascade_plan(&crate::driver::planner_bridge::driver_hooks(catalog), &stmt, catalog, ctx, plan_ids);
             ctx.set_plans_fk_cascade(false);
             let mut plan = Box::new(planned?);
             let sub = crate::driver::run_fk_cascade(&stmt, &mut plan, catalog, ctx)?;
@@ -1459,79 +1453,6 @@ impl tidb_execdetails::RuntimeStats for FKCascadeRuntimeStats {
     }
 }
 
-/// Go `buildFKCheckForReferredFK`'s index, computed on demand: every
-/// `(schema, table, foreign key)` whose constraint REFERS to `database.table`.
-pub(crate) fn referring(
-    catalog: &SessionExtendedInfoSchema,
-    database: &str,
-    table: &str,
-) -> Vec<(
-    String,
-    String,
-    tidb_model::GoShared<tidb_model::table::FKInfo>,
-)> {
-    // Sysbench and the normal TiDB bootstrap have no foreign-key declarations.
-    // Avoid rebuilding and sorting the complete catalog path list for every
-    // UPDATE/DELETE in that case; catalogs that do declare one retain the
-    // deterministic scan below.
-    if !catalog.has_foreign_keys() {
-        return Vec::new();
-    }
-    if let Some(v2) = catalog.v2() {
-        let mut found = Vec::new();
-        // Go buildOnDeleteOrUpdateFKTrigger resolves only indexed children
-        // and deliberately ignores a TableByName error at this boundary.
-        for referred in
-            v2.get_table_referred_foreign_keys(&database.go_to_lower(), &table.go_to_lower())
-        {
-            let Some(TableEntry::Kv(child)) = catalog.get_in(
-                referred.child_schema.original(),
-                referred.child_table.original(),
-            ) else {
-                continue;
-            };
-            if let Some(fk) = child.meta().read().foreign_keys.iter_deref().find(|fk| {
-                let fk = fk.read();
-                fk.name.lowercase() == referred.child_fk_name.lowercase()
-                    && fk.state == tidb_model::SchemaState::PUBLIC
-                    && fk.version >= tidb_model::table::FK_VERSION1
-            }) {
-                found.push((
-                    referred.child_schema.lowercase().to_owned(),
-                    referred.child_table.lowercase().to_owned(),
-                    fk,
-                ));
-            }
-        }
-        return found;
-    }
-    let mut found = Vec::new();
-    for (child_db, child_table, entry) in catalog.table_entries() {
-        let TableEntry::Kv(child) = entry else {
-            continue;
-        };
-        for foreign_key in child.meta().read().foreign_keys.iter_deref() {
-            let key = foreign_key.read();
-            if key.state == tidb_model::SchemaState::PUBLIC
-                && key.version >= tidb_model::table::FK_VERSION1
-                && key.ref_schema.original().go_lower_eq(database)
-                && key.ref_table.original().go_lower_eq(table)
-            {
-                drop(key);
-                found.push((child_db.clone(), child_table, foreign_key));
-            }
-        }
-    }
-    // Preserve the existing schema/table cascade order and declaration order
-    // within each child. Only matching constraints need owned metadata: the
-    // cascade mutates the catalog after this borrow ends. Unrelated tables
-    // contribute no name, column, or constraint copies.
-    found.sort_by(|left, right| (&left.0, left.1).cmp(&(&right.0, right.1)));
-    found
-        .into_iter()
-        .map(|(database, table, key)| (database, table.to_owned(), key))
-        .collect()
-}
 
 #[cfg(test)]
 mod tests {
@@ -1708,7 +1629,7 @@ mod tests {
         );
         catalog.set_schema_ts(42);
         catalog.init_with_db_infos_v2(Arc::new(Data::new()), loader.clone(), 1 << 20);
-        let refs = referring(&catalog, "test", "parent");
+        let refs = tidb_planner::dml_optimize::referring(&catalog, "test", "parent");
         assert_eq!(refs.len(), 1);
         assert_eq!(
             (
