@@ -854,11 +854,6 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
         )
         .map_err(crate::driver::planner_error_to_driver)?
         .has_as_of;
-        // Go's preprocessor drops each body SELECT's lock
-        // (`checkCreateViewWithSelect`) before it reaches the SELECTs.
-        let mut body = (*create.query).clone();
-        crate::view::check_create_view_with_select(&mut body)?;
-        self.check_noop_functions(&body)?;
         self.refuse_stale_view_body(create, has_as_of)?;
         let create = create.clone();
         let current_db = self.session_vars().current_db.clone();
@@ -2463,19 +2458,6 @@ pub trait StmtCtxSession: crate::sessionctx::SessionContext + Sized {
     /// statement's implicit transaction when `decideTxnMode` chose
     /// pessimistic (see [`Self::set_autocommit_pessimistic_statement`]).
     fn statement_is_pessimistic(&self) -> bool;
-    /// Go `preprocessor.checkNoopFuncs` + `checkGroupBy`: refuses the clauses
-    /// TiDB parses but only implements as no-ops, unless
-    /// `tidb_enable_noop_functions` says otherwise.
-    ///
-    /// Captured from TiDB with the variable at its `OFF` default:
-    /// `SELECT SQL_CALC_FOUND_ROWS ...`, `... FOR SHARE` and `... LOCK IN
-    /// SHARE MODE` all raise 1235; `FOR UPDATE` does not.
-    ///
-    /// `tidb_enable_shared_lock_promotion` turns `FOR SHARE` into `FOR UPDATE`
-    /// before this check. The eventual lock executor still owns the
-    /// `ForShareLockEnabledByNoop` statement flag, but admission must already
-    /// skip the no-op gate when promotion is enabled.
-    fn check_noop_functions(&mut self, query: &tidb_ast::QueryStmt) -> Result<(), DriverError>;
     /// The statement's infoschema, mutably (the in-process tables).
     fn with_catalog_mut<T>(
         &mut self,

@@ -89,46 +89,6 @@ impl Session {
         }
     }
 
-    /// Go `preprocessor.checkNoopFuncs` + `checkGroupBy`: refuses the clauses
-    /// TiDB parses but only implements as no-ops, unless
-    /// `tidb_enable_noop_functions` says otherwise.
-    ///
-    /// Captured from TiDB with the variable at its `OFF` default:
-    /// `SELECT SQL_CALC_FOUND_ROWS ...`, `... FOR SHARE` and `... LOCK IN
-    /// SHARE MODE` all raise 1235; `FOR UPDATE` does not.
-    ///
-    /// `tidb_enable_shared_lock_promotion` turns `FOR SHARE` into `FOR UPDATE`
-    /// before this check. The eventual lock executor still owns the
-    /// `ForShareLockEnabledByNoop` statement flag, but admission must already
-    /// skip the no-op gate when promotion is enabled.
-    pub(crate) fn check_noop_functions(
-        &mut self,
-        query: &tidb_ast::QueryStmt,
-    ) -> Result<(), DriverError> {
-        let mode = self.vars.noop_funcs_mode(false);
-        let mut gated: Vec<&'static str> = Vec::new();
-        tidb_planner::preprocess::collect_noop_clauses(query, &mut gated);
-        if self.vars.shared_lock_promotion() {
-            // Go's preprocessor rewrites the shared-lock clause to the real
-            // FOR UPDATE path before `checkNoopFuncs`; it must not warn or
-            // refuse the source-shaped `FOR SHARE` spelling here.
-            gated.retain(|clause| *clause != "LOCK IN SHARE MODE");
-        }
-        if gated.is_empty() || mode == NoopFuncsMode::On {
-            return Ok(());
-        }
-        for clause in gated {
-            let error = DriverError::from(
-                tidb_expr::expression_errors::ERR_FUNCTIONS_NOOP_IMPL
-                    .gen_with_stack_by_args(&[(clause).into()]),
-            );
-            if mode == NoopFuncsMode::Off {
-                return Err(error);
-            }
-            self.append_driver_error(WarningLevel::Warning, &error);
-        }
-        Ok(())
-    }
 }
 
 /// Whether this assignment is the ON that Go's `TiDBOptOn(normalizedValue)`

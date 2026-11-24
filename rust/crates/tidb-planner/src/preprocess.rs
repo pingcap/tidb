@@ -103,6 +103,11 @@ pub trait PreprocessContext {
     ///
     /// When the catalog cannot be read.
     fn is_not_global_temporary_table(&self, path: &[String]) -> Result<bool, PlanError>;
+    /// Go `SessionVars.NoopFuncsMode` (`tidb_enable_noop_functions`).
+    fn noop_funcs_mode(&self) -> tidb_variable::set_hooks::NoopFuncsMode;
+    /// Go `tidb_enable_shared_lock_promotion`: a shared lock is promoted to
+    /// `FOR UPDATE` rather than gated.
+    fn shared_lock_promotion(&self) -> bool;
 }
 
 /// Go `PreprocessorReturn` and what the walk learns for its callers.
@@ -116,6 +121,9 @@ pub struct PreprocessorReturn {
     /// Go `preprocessor.varsReadonly`: the user variables a SELECT reads and
     /// the statement never assigns, lowercased as the session stores them.
     pub readonly_user_vars: std::collections::HashSet<String>,
+    /// Go `checkSelectNoopFuncs`' warnings under `tidb_enable_noop_functions
+    /// = WARN`, in walk order.
+    pub noop_warnings: Vec<PlanError>,
 }
 
 /// Go `Preprocess`: one walk of the statement that checks what the planner
@@ -154,6 +162,41 @@ struct Preprocessor<'a> {
 }
 
 impl Preprocessor<'_> {
+    /// Go `checkSelectNoopFuncs` (and `checkGroupBy`'s ASC/DESC) over one
+    /// SELECT: a clause TiDB parses but only implements as a no-op is an
+    /// error under `tidb_enable_noop_functions = OFF` and a warning under
+    /// `WARN`.
+    fn check_select_noop_funcs(&mut self, select: &tidb_ast::SelectStmt) {
+        use tidb_variable::set_hooks::NoopFuncsMode;
+        let mode = self.ctx.noop_funcs_mode();
+        if mode == NoopFuncsMode::On {
+            return;
+        }
+        let mut clauses = Vec::new();
+        if select.calc_found_rows {
+            clauses.push("SQL_CALC_FOUND_ROWS");
+        }
+        // Go rewrites a shared lock to the FOR UPDATE path before the check
+        // when shared-lock promotion is on.
+        if share_lock(&select.lock) && !self.ctx.shared_lock_promotion() {
+            clauses.push("LOCK IN SHARE MODE");
+        }
+        if select.group_by.iter().any(|item| item.desc.is_some()) {
+            clauses.push("GROUP BY expr ASC|DESC");
+        }
+        for clause in clauses {
+            let error = PlanError::from(
+                tidb_expr::expression_errors::ERR_FUNCTIONS_NOOP_IMPL
+                    .gen_with_stack_by_args(&[clause.into()]),
+            );
+            if mode == NoopFuncsMode::Off {
+                self.err = Some(error);
+                return;
+            }
+            self.result.noop_warnings.push(error);
+        }
+    }
+
     fn collect_table_name(&mut self, name: &[String]) {
         let (schema, table) = match name {
             [table] => (String::new(), table.clone()),
@@ -281,8 +324,9 @@ impl Preprocessor<'_> {
 
 impl Visitor for Preprocessor<'_> {
     fn enter(&mut self, node: &mut dyn Any) -> bool {
-        if node.is::<tidb_ast::SelectStmt>() {
+        if let Some(select) = node.downcast_ref::<tidb_ast::SelectStmt>() {
             self.stmt_tp = StmtType::Select;
+            self.check_select_noop_funcs(select);
         } else if node.is::<tidb_ast::DeleteStmt>() {
             self.stmt_tp = StmtType::Delete;
         } else if node.is::<tidb_ast::UpdateStmt>() {
@@ -291,9 +335,15 @@ impl Visitor for Preprocessor<'_> {
             self.stmt_tp = StmtType::Insert;
         } else if node.is::<tidb_ast::ShowStmt>() {
             self.stmt_tp = StmtType::Show;
-        } else if let Some(ddl) = node.downcast_ref::<tidb_ast::DdlStmt>() {
+        } else if let Some(ddl) = node.downcast_mut::<tidb_ast::DdlStmt>() {
             if let Err(error) = self.check_ddl(ddl) {
                 self.err = Some(error);
+            } else if let tidb_ast::DdlStmt::CreateView(create) = ddl {
+                // Go `checkCreateViewWithSelectGrammar`, before the walk
+                // reaches the body's SELECTs.
+                if let Err(error) = check_create_view_with_select(&mut create.query) {
+                    self.err = Some(error);
+                }
             }
         } else if let Some(table_ref) = node.downcast_mut::<tidb_ast::TableRef>() {
             if table_ref.as_of.is_some() {
@@ -1733,37 +1783,6 @@ fn check_contain_dot_column(create: &CreateTableStmt) -> Result<(), MysqlError> 
 // Go's error constructors this file raises, rendered as the driver rendered
 // them (`tidb-dbterror`'s `to_mysql_error` arms, verbatim).
 
-/// Go `preprocessor.checkNoopFuncs`' walk: the clauses TiDB parses but only
-/// implements as no-ops, which the session refuses or warns about under
-/// `tidb_enable_noop_functions`.
-///
-/// Names every gated clause the query uses, in the order Go's preprocessor
-/// would reach them.
-///
-/// Go walks the whole statement tree, so a gated clause inside a derived
-/// table, a CTE or a subquery counts too; this walk covers the same
-/// containers.
-pub fn collect_noop_clauses(query: &tidb_ast::QueryStmt, out: &mut Vec<&'static str>) {
-    match query {
-        tidb_ast::QueryStmt::Select(select) => collect_noop_in_select(select, out),
-        tidb_ast::QueryStmt::SetOpr(set_opr) => collect_noop_in_set_opr(set_opr, out),
-    }
-}
-
-fn collect_noop_in_set_opr(set_opr: &tidb_ast::SetOprStmt, out: &mut Vec<&'static str>) {
-    if let Some(with) = &set_opr.with {
-        for cte in &with.ctes {
-            collect_noop_clauses(&cte.query, out);
-        }
-    }
-    for term in &set_opr.terms {
-        match &term.body {
-            tidb_ast::SetOprTermBody::Select(select) => collect_noop_in_select(select, out),
-            tidb_ast::SetOprTermBody::Nested(nested) => collect_noop_in_set_opr(nested, out),
-        }
-    }
-}
-
 /// Whether a locking clause is the shared kind, which is the gated one --
 /// `FOR UPDATE` is a real lock in TiDB and is never gated.
 fn share_lock(lock: &Option<tidb_ast::SelectLock>) -> bool {
@@ -1774,68 +1793,6 @@ fn share_lock(lock: &Option<tidb_ast::SelectLock>) -> bool {
             ..
         })
     )
-}
-
-fn collect_noop_in_select(select: &tidb_ast::SelectStmt, out: &mut Vec<&'static str>) {
-    if select.calc_found_rows {
-        out.push("SQL_CALC_FOUND_ROWS");
-    }
-    if share_lock(&select.lock) {
-        out.push("LOCK IN SHARE MODE");
-    }
-    // Go's `checkGroupBy`: a written ASC/DESC on a GROUP BY item is a no-op,
-    // because TiDB does not order groups.
-    if select.group_by.iter().any(|item| item.desc.is_some()) {
-        out.push("GROUP BY expr ASC|DESC");
-    }
-    if let Some(with) = &select.with {
-        for cte in &with.ctes {
-            collect_noop_clauses(&cte.query, out);
-        }
-    }
-    if let Some(from) = &select.from {
-        collect_noop_in_join(from, out);
-    }
-    for expr in select
-        .where_clause
-        .iter()
-        .chain(select.having.iter())
-        .chain(select.group_by.iter().map(|item| &item.expr))
-        .chain(select.order_by.iter().map(|item| &item.expr))
-    {
-        collect_noop_in_expr(expr, out);
-    }
-}
-
-/// The subqueries a `FROM` clause holds, which are derived tables.
-fn collect_noop_in_join(join: &tidb_ast::Join, out: &mut Vec<&'static str>) {
-    for node in std::iter::once(&join.left).chain(join.right.iter()) {
-        match node {
-            tidb_ast::JoinNode::Derived { subquery, .. } => collect_noop_clauses(subquery, out),
-            tidb_ast::JoinNode::Join(nested) => collect_noop_in_join(nested, out),
-            tidb_ast::JoinNode::Table(_) => {}
-        }
-    }
-    if let Some(on) = &join.on {
-        collect_noop_in_expr(on, out);
-    }
-}
-
-/// The subqueries an expression holds.
-fn collect_noop_in_expr(expr: &tidb_ast::Expr, out: &mut Vec<&'static str>) {
-    match expr {
-        tidb_ast::Expr::Subquery(query) => collect_noop_clauses(query, out),
-        tidb_ast::Expr::Exists { subquery, .. } => collect_noop_clauses(subquery, out),
-        tidb_ast::Expr::InSubquery { expr, subquery, .. } => {
-            collect_noop_in_expr(expr, out);
-            collect_noop_clauses(subquery, out);
-        }
-        tidb_ast::Expr::CompareSubquery { left, subquery, .. } => {
-            collect_noop_in_expr(left, out);
-            collect_noop_clauses(subquery, out);
-        }
-        _ => {}
-    }
 }
 
 #[cfg(test)]
@@ -1898,6 +1855,12 @@ mod preprocessor_tests {
         }
         fn is_not_global_temporary_table(&self, _path: &[String]) -> Result<bool, PlanError> {
             Ok(false)
+        }
+        fn noop_funcs_mode(&self) -> tidb_variable::set_hooks::NoopFuncsMode {
+            tidb_variable::set_hooks::NoopFuncsMode::Off
+        }
+        fn shared_lock_promotion(&self) -> bool {
+            false
         }
     }
 
@@ -2103,4 +2066,47 @@ pub fn check_set_opr_select_list(
         }
     }
     Ok(())
+}
+
+/// Go `preprocessor.checkCreateViewWithSelectGrammar` over
+/// `checkCreateViewWithSelect`: each SELECT of the body -- the body itself, or
+/// every term of a set operation, nested ones included -- may not carry an
+/// `INTO` clause (1350), and its lock becomes `SelectLockNone`. Returns which
+/// of them had a lock, in body order, for the trailing space
+/// `ddl.BuildViewInfo` restores in its place.
+///
+/// # Errors
+///
+/// `ErrViewSelectClause` for a SELECT with `INTO OUTFILE`.
+pub fn check_create_view_with_select(
+    query: &mut tidb_ast::QueryStmt,
+) -> Result<Vec<bool>, PlanError> {
+    fn check(select: &mut tidb_ast::SelectStmt, locked: &mut Vec<bool>) -> Result<(), PlanError> {
+        if select.into_outfile.is_some() {
+            return Err(PlanError::from(
+                (&tidb_dbterror::ERR_VIEW_SELECT_CLAUSE)
+                    .gen_with_stack("View's SELECT contains a 'INFO' clause".to_owned()),
+            ));
+        }
+        locked.push(select.lock.take().is_some());
+        Ok(())
+    }
+    fn check_set_opr(
+        set_opr: &mut tidb_ast::SetOprStmt,
+        locked: &mut Vec<bool>,
+    ) -> Result<(), PlanError> {
+        for term in &mut set_opr.terms {
+            match &mut term.body {
+                tidb_ast::SetOprTermBody::Select(select) => check(select, locked)?,
+                tidb_ast::SetOprTermBody::Nested(nested) => check_set_opr(nested, locked)?,
+            }
+        }
+        Ok(())
+    }
+    let mut locked = Vec::new();
+    match query {
+        tidb_ast::QueryStmt::Select(select) => check(select, &mut locked)?,
+        tidb_ast::QueryStmt::SetOpr(set_opr) => check_set_opr(set_opr, &mut locked)?,
+    }
+    Ok(locked)
 }

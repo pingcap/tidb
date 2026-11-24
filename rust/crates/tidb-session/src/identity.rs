@@ -1730,4 +1730,12 @@ impl tidb_planner::preprocess::PreprocessContext for Session {
                 if table.temp_table_type() == tidb_model::TempTableType::GLOBAL)
         }))
     }
+
+    fn noop_funcs_mode(&self) -> tidb_variable::set_hooks::NoopFuncsMode {
+        self.vars.noop_funcs_mode(false)
+    }
+
+    fn shared_lock_promotion(&self) -> bool {
+        self.vars.shared_lock_promotion()
+    }
 }

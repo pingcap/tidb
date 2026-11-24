@@ -1749,6 +1749,13 @@ impl Session {
         )
         .map_err(tidb_executor::driver::planner_error_to_driver)?;
         drop(region);
+        // Go `checkSelectNoopFuncs` warns as the walk reaches each clause.
+        for warning in std::mem::take(&mut scan.noop_warnings) {
+            self.append_driver_error(
+                crate::WarningLevel::Warning,
+                &tidb_executor::driver::planner_error_to_driver(warning),
+            );
+        }
         // An execution of a prepared statement preprocesses its EXECUTE,
         // which reads no variable under a SELECT.
         self.readonly_user_vars = std::sync::Arc::new(if prepared.is_none() {
@@ -1789,14 +1796,6 @@ impl Session {
         // a stale read there: a table read `AS OF`, or `tidb_read_staleness`.
         if let Stmt::Ddl(ddl) = &stmt {
             if let tidb_ast::DdlStmt::CreateView(create) = ddl.as_ref() {
-                // The preprocessor walks the whole CREATE VIEW statement at
-                // compile time, so a gated clause in the body is refused
-                // before the executor ever looks at the view. It enters the
-                // CREATE VIEW first, whose `checkCreateViewWithSelect` has
-                // already dropped each body SELECT's lock.
-                let mut body = (*create.query).clone();
-                tidb_executor::view::check_create_view_with_select(&mut body)?;
-                self.check_noop_functions(&body)?;
                 self.refuse_stale_view_body(create, scan.has_as_of)?;
             }
         }
@@ -2039,11 +2038,6 @@ impl Session {
         // transaction instead of joining it.
         if self.statement_kind != StatementKind::Other {
             self.begin_implicit_transaction()?;
-        }
-        // Go's preprocessor runs before planning, so a gated clause is
-        // refused before any table is touched.
-        if let Stmt::Query(query) = &stmt {
-            self.check_noop_functions(query)?;
         }
         // Go's `CheckPrivilege` runs on the `visitInfo` the planner
         // collected, so it too refuses before any table is touched. Every

@@ -448,9 +448,6 @@ impl tidb_executor::stmt_ctx_build::StmtCtxSession for Session {
     }
 
 
-    fn check_noop_functions(&mut self, query: &tidb_ast::QueryStmt) -> Result<(), DriverError> {
-        Session::check_noop_functions(self, query)
-    }
 
 
     fn with_catalog_mut<T>(

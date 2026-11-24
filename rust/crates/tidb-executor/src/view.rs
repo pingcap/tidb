@@ -115,45 +115,14 @@ pub fn resolve_view_definition(
     Ok((database, name, view))
 }
 
-/// Go `preprocessor.checkCreateViewWithSelectGrammar` over
-/// `checkCreateViewWithSelect`: each SELECT of the body -- the body itself, or
-/// every term of a set operation, nested ones included -- may not carry an
-/// `INTO` clause (1350), and its lock becomes `SelectLockNone`. Returns which
-/// of them had a lock, in [`body_selects`] order, for the trailing space
-/// `ddl.BuildViewInfo` restores in its place.
+/// Go `checkCreateViewWithSelect`
+/// ([`tidb_planner::preprocess::check_create_view_with_select`]).
 ///
 /// # Errors
 ///
 /// `ErrViewSelectClause` for a SELECT with `INTO OUTFILE`.
 pub fn check_create_view_with_select(query: &mut QueryStmt) -> Result<Vec<bool>, DriverError> {
-    fn check(select: &mut tidb_ast::SelectStmt, locked: &mut Vec<bool>) -> Result<(), DriverError> {
-        if select.into_outfile.is_some() {
-            return Err(DriverError::from(
-                (&tidb_dbterror::ERR_VIEW_SELECT_CLAUSE)
-                    .gen_with_stack("View's SELECT contains a 'INFO' clause".to_owned()),
-            ));
-        }
-        locked.push(select.lock.take().is_some());
-        Ok(())
-    }
-    fn check_set_opr(
-        set_opr: &mut tidb_ast::SetOprStmt,
-        locked: &mut Vec<bool>,
-    ) -> Result<(), DriverError> {
-        for term in &mut set_opr.terms {
-            match &mut term.body {
-                SetOprTermBody::Select(select) => check(select, locked)?,
-                SetOprTermBody::Nested(nested) => check_set_opr(nested, locked)?,
-            }
-        }
-        Ok(())
-    }
-    let mut locked = Vec::new();
-    match query {
-        QueryStmt::Select(select) => check(select, &mut locked)?,
-        QueryStmt::SetOpr(set_opr) => check_set_opr(set_opr, &mut locked)?,
-    }
-    Ok(locked)
+    tidb_planner::preprocess::check_create_view_with_select(query).map_err(crate::driver::planner_error_to_driver)
 }
 
 /// The SELECTs [`check_create_view_with_select`] visits, in its order, which
