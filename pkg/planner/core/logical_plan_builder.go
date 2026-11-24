@@ -248,7 +248,7 @@ func (b *PlanBuilder) buildExpand(p base.LogicalPlan, gbyItems []expression.Expr
 }
 
 func (b *PlanBuilder) buildAggregation(ctx context.Context, p base.LogicalPlan, aggFuncList []*ast.AggregateFuncExpr, gbyItems []expression.Expression,
-	correlatedAggMap map[*ast.AggregateFuncExpr]int) (base.LogicalPlan, map[int]int, error) {
+	correlatedAggMap, havingMap, orderMap map[*ast.AggregateFuncExpr]int) (base.LogicalPlan, map[int]int, error) {
 	b.optFlag |= rule.FlagBuildKeyInfo
 	b.optFlag |= rule.FlagPushDownAgg
 	// We may apply aggregation eliminate optimization.
@@ -291,8 +291,19 @@ func (b *PlanBuilder) buildAggregation(ctx context.Context, p base.LogicalPlan, 
 	allAggsFirstRow := true
 	for i, aggFunc := range aggFuncList {
 		newArgList := make([]expression.Expression, 0, len(aggFunc.Args))
+		// curClause is left over from an earlier clause here. An aggregate only
+		// used by HAVING or ORDER BY takes the arguments as that clause does; the
+		// output of any other aggregate is a result of the query block.
+		argClause := fieldList
+		if _, ok := havingMap[aggFunc]; ok {
+			argClause = havingClause
+		} else if _, ok := orderMap[aggFunc]; ok {
+			argClause = orderByClause
+		}
 		for _, arg := range aggFunc.Args {
+			restoreClause := b.enterScalarSubqueryClause(argClause)
 			newArg, np, err := b.rewrite(ctx, arg, p, nil, true)
+			restoreClause()
 			if err != nil {
 				return nil, nil, err
 			}
@@ -319,7 +330,9 @@ func (b *PlanBuilder) buildAggregation(ctx context.Context, p base.LogicalPlan, 
 				if resolver.err != nil {
 					return nil, nil, errors.Trace(resolver.err)
 				}
+				restoreClause := b.enterScalarSubqueryClause(orderByClause)
 				newByItem, np, err := b.rewrite(ctx, retExpr.(ast.ExprNode), p, nil, true)
+				restoreClause()
 				if err != nil {
 					return nil, nil, err
 				}
@@ -435,6 +448,11 @@ func (b *PlanBuilder) buildTableRefs(ctx context.Context, from *ast.TableRefsCla
 func (b *PlanBuilder) buildResultSetNode(ctx context.Context, node ast.ResultSetNode, isCTE bool) (p base.LogicalPlan, err error) {
 	//If it is building the CTE queries, we will mark them.
 	b.isCTE = isCTE
+	// Mark that we are inside a result-set node so that derived-table subqueries
+	// do not apply AT RESULT masking (the outer query needs original values).
+	oldBuildingResultSetNode := b.buildingResultSetNode
+	b.buildingResultSetNode = true
+	defer func() { b.buildingResultSetNode = oldBuildingResultSetNode }()
 	switch x := node.(type) {
 	case *ast.Join:
 		return b.buildJoin(ctx, x)
@@ -494,6 +512,24 @@ func (b *PlanBuilder) buildResultSetNode(ctx context.Context, node ast.ResultSet
 		}
 		if err != nil {
 			return nil, err
+		}
+
+		// Derived tables, views and CTEs are SELECT sources of write statements.
+		// Plain target-table reads keep their ordinary write semantics.
+		// A table that is dirty in the transaction, or a cached table, is read
+		// through a LogicalUnionScan over its DataSource: still a base table.
+		source := p
+		if us, ok := source.(*logicalop.LogicalUnionScan); ok && len(us.Children()) == 1 {
+			source = us.Children()[0]
+		}
+		if _, baseTable := source.(*logicalop.DataSource); (b.inUpdateStmt || b.inDeleteStmt) && (!isTableName || !baseTable) {
+			op := ast.MaskingPolicyRestrictOpUpdateSelect
+			if b.inDeleteStmt {
+				op = ast.MaskingPolicyRestrictOpDeleteSelect
+			}
+			if err := b.checkMaskingPolicyRestrictOnSelectPlan(ctx, p, op); err != nil {
+				return nil, err
+			}
 		}
 
 		if x.AsName.L != "" {
@@ -822,6 +858,9 @@ func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (base.L
 		}
 		b.outerSchemas = append(b.outerSchemas, outerSchema)
 		b.outerNames = append(b.outerNames, outerNames)
+		// The left side is also the source of the right side's correlated
+		// columns for masking, like the outer plan of a subquery.
+		b.maskingOuterPlans = append(b.maskingOuterPlans, leftPlan)
 		b.lateralOuterCount++
 		// Use a single defer to ensure consistent cleanup in all paths (success and error).
 		// Note: buildingLateralSubquery is NOT set here — it is set per-TableSource in
@@ -830,6 +869,7 @@ func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (base.L
 		defer func() {
 			b.outerSchemas = b.outerSchemas[:len(b.outerSchemas)-1]
 			b.outerNames = b.outerNames[:len(b.outerNames)-1]
+			b.maskingOuterPlans = b.maskingOuterPlans[:len(b.maskingOuterPlans)-1]
 			b.lateralOuterCount--
 		}()
 	}
@@ -1581,6 +1621,32 @@ func buildExpandFieldName(ctx expression.EvalContext, expr expression.Expression
 	return newName
 }
 
+// findMaskingPolicy returns the policy of the table column that the scan reads.
+// The table and the column are those bound to the scan. Looking the table up
+// by name again could find another table, such as a local temporary table that
+// shares its name with the base table of a view.
+func (b *PlanBuilder) findMaskingPolicy(ctx context.Context, ds *logicalop.DataSource, col *expression.Column) (*model.MaskingPolicyInfo, *model.TableInfo, *model.ColumnInfo, error) {
+	if b.is == nil || ds == nil || col == nil {
+		return nil, nil, nil, nil
+	}
+	tblInfo := ds.TableInfo
+	if tblInfo == nil || tblInfo.TempTableType != model.TempTableNone {
+		return nil, nil, nil, nil
+	}
+	colInfo := model.FindColumnInfoByID(tblInfo.Columns, col.ID)
+	if colInfo == nil || colInfo.State != model.StatePublic {
+		return nil, nil, nil, nil
+	}
+	policy, ok, err := b.is.MaskingPolicyByTableColumn(ctx, tblInfo.ID, colInfo.ID)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	if !ok || policy == nil {
+		return nil, nil, nil, nil
+	}
+	return policy, tblInfo, colInfo, nil
+}
+
 // buildProjectionField builds the field object according to SelectField in projection.
 func (b *PlanBuilder) buildProjectionField(ctx context.Context, p base.LogicalPlan, field *ast.SelectField, expr expression.Expression) (*expression.Column, *types.FieldName, error) {
 	var origTblName, tblName, origColName, colName, dbName pmodel.CIStr
@@ -1725,52 +1791,30 @@ func findColFromNaturalUsingJoin(p base.LogicalPlan, col *expression.Column) (na
 	return nil
 }
 
-type resolveGroupingTraverseAction struct {
-	CurrentBlockExpand *logicalop.LogicalExpand
-}
-
-func (r resolveGroupingTraverseAction) Transform(expr expression.Expression) (res expression.Expression) {
-	switch x := expr.(type) {
-	case *expression.Column:
-		// when meeting a column, judge whether it's a relate grouping set col.
-		// eg: select a, b from t group by a, c with rollup, here a is, while b is not.
-		// in underlying Expand schema (a,b,c,a',c'), a select list should be resolved to a'.
-		res, _ = r.CurrentBlockExpand.TrySubstituteExprWithGroupingSetCol(x)
-	case *expression.CorrelatedColumn:
-		// select 1 in (select t2.a from t group by t2.a, b with rollup) from t2;
-		// in this case: group by item has correlated column t2.a, and it's select list contains t2.a as well.
-		res, _ = r.CurrentBlockExpand.TrySubstituteExprWithGroupingSetCol(x)
-	case *expression.Constant:
-		// constant just keep it real: select 1 from t group by a, b with rollup.
-		res = x
-	case *expression.ScalarFunction:
-		// scalar function just try to resolve itself first, then if not changed, trying resolve its children.
-		var substituted bool
-		res, substituted = r.CurrentBlockExpand.TrySubstituteExprWithGroupingSetCol(x)
-		if !substituted {
-			// if not changed, try to resolve it children.
-			// select a+1, grouping(b) from t group by a+1 (projected as c), b with rollup: in this case, a+1 is resolved as c as a whole.
-			// select a+1, grouping(b) from t group by a(projected as a'), b with rollup  : in this case, a+1 is resolved as a'+ 1.
-			newArgs := x.GetArgs()
-			for i, arg := range newArgs {
-				newArgs[i] = r.Transform(arg)
-			}
-			res = x
-		}
-	default:
-		res = expr
-	}
-	return res
-}
-
 func (b *PlanBuilder) replaceGroupingFunc(expr expression.Expression) expression.Expression {
 	// current block doesn't have an expand OP, just return it.
-	if b.currentBlockExpand == nil {
+	expand := b.currentBlockExpand
+	if expand == nil {
 		return expr
 	}
 	// curExpand can supply the DistinctGbyExprs and gid col.
-	traverseAction := resolveGroupingTraverseAction{CurrentBlockExpand: b.currentBlockExpand}
-	return expr.Traverse(traverseAction)
+	return expression.NewInPlaceTransformer(func(expr expression.Expression) (expression.Expression, bool) {
+		switch expr.(type) {
+		case *expression.Column, *expression.CorrelatedColumn, *expression.ScalarFunction:
+			// A column is resolved to its grouping set col when it is one:
+			// select a, b from t group by a, c with rollup, here a is, while b is not.
+			// in underlying Expand schema (a,b,c,a',c'), a select list should be resolved to a'.
+			// A correlated column can be a group by item as well:
+			// select 1 in (select t2.a from t group by t2.a, b with rollup) from t2;
+			// A scalar function tries to resolve itself first. When it is not
+			// changed, its children are resolved:
+			// select a+1, grouping(b) from t group by a+1 (projected as c), b with rollup: in this case, a+1 is resolved as c as a whole.
+			// select a+1, grouping(b) from t group by a(projected as a'), b with rollup  : in this case, a+1 is resolved as a'+ 1.
+			return expand.TrySubstituteExprWithGroupingSetCol(expr)
+		}
+		// constant just keep it real: select 1 from t group by a, b with rollup.
+		return expr, false
+	}).Transform(expr)
 }
 
 func (b *PlanBuilder) implicitProjectGroupingSetCols(projSchema *expression.Schema, projNames []*types.FieldName, projExprs []expression.Expression) (*expression.Schema, []*types.FieldName, []expression.Expression) {
@@ -2133,10 +2177,13 @@ func (b *PlanBuilder) buildProjection4Union(_ context.Context, u *logicalop.Logi
 		resultTp.SetCharset(collation.Charset)
 		resultTp.SetCollate(collation.Collation)
 		b.setUnionFlen(resultTp, tmpExprs)
+		// UNION outputs have no single source table. Masking resolves policy
+		// provenance through each branch instead of the output field names.
 		names = append(names, &types.FieldName{ColName: u.Children()[0].OutputNames()[i].ColName})
 		unionCols = append(unionCols, &expression.Column{
 			RetType:  resultTp,
 			UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
+			ID:       col.ID,
 		})
 	}
 	u.SetSchema(expression.NewSchema(unionCols...))
@@ -2178,6 +2225,10 @@ func (b *PlanBuilder) buildSetOpr(ctx context.Context, setOpr *ast.SetOprStmt) (
 			return nil, err
 		}
 	}
+
+	// Track nesting depth so masking is applied only on the outermost set-operator result.
+	b.buildingSetOprOperands++
+	defer func() { b.buildingSetOprOperands-- }()
 
 	// Because INTERSECT has higher precedence than UNION and EXCEPT. We build it first.
 	selectPlans := make([]base.LogicalPlan, 0, len(setOpr.SelectList.Selects))
@@ -2253,8 +2304,20 @@ func (b *PlanBuilder) buildSetOpr(ctx context.Context, setOpr *ast.SetOprStmt) (
 		}
 		proj.SetOutputNames(setOprPlan.OutputNames()[:oldLen])
 		proj.SetSchema(schema)
-		return proj, nil
+		setOprPlan = proj
 	}
+
+	if b.buildingSetOprOperands == 1 && !b.isCTE && !b.buildingCTE && !b.buildingResultSetNode {
+		// Apply masking at the final result stage (AT RESULT semantics).
+		// This ensures set operators (UNION/INTERSECT/EXCEPT) use original values.
+		// For CTEs and derived tables, we skip masking here because they should
+		// preserve original values for correct outer filtering/joining.
+		setOprPlan, err = b.buildFinalProjectionWithMasking(ctx, setOprPlan, oldLen)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	return setOprPlan, nil
 }
 
@@ -2989,7 +3052,9 @@ func (b *PlanBuilder) resolveHavingAndOrderBy(ctx context.Context, sel *ast.Sele
 		for _, byItem := range sel.OrderBy.Items {
 			if _, ok := byItem.Expr.(*ast.SubqueryExpr); ok {
 				// correlated agg will be extracted completely latter.
+				restoreClause := b.enterScalarSubqueryClause(orderByClause)
 				_, np, err := b.rewrite(ctx, byItem.Expr, p, nil, true)
+				restoreClause()
 				if err != nil {
 					return nil, nil, errors.Trace(err)
 				}
@@ -4644,7 +4709,7 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p b
 			}
 		}
 		var aggIndexMap map[int]int
-		p, aggIndexMap, err = b.buildAggregation(ctx, p, aggFuncs, gbyCols, correlatedAggMap)
+		p, aggIndexMap, err = b.buildAggregation(ctx, p, aggFuncs, gbyCols, correlatedAggMap, havingMap, orderMap)
 		if err != nil {
 			return nil, err
 		}
@@ -4746,7 +4811,19 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p b
 		}
 		proj.SetOutputNames(p.OutputNames()[:oldLen])
 		proj.SetSchema(schema)
-		return b.tryToBuildSequence(currentLayerCTEs, proj), nil
+		p = proj
+	}
+
+	// Apply masking at the final result stage (AT RESULT semantics).
+	// This ensures HAVING, ORDER BY, set operators, etc. all used original values.
+	// For CTEs, we skip masking here because:
+	// 1. CTE definitions should preserve original values for correct filtering/joining
+	// 2. Masking is applied when CTE results are materialized to the final output
+	if b.buildingSetOprOperands == 0 && !b.isCTE && !b.buildingCTE && !b.buildingResultSetNode {
+		p, err = b.buildFinalProjectionWithMasking(ctx, p, oldLen)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	return b.tryToBuildSequence(currentLayerCTEs, p), nil
@@ -5119,6 +5196,16 @@ func (b *PlanBuilder) computeCTEInlineFlag(cte *cteInfo) {
 }
 
 func (b *PlanBuilder) buildDataSourceFromCTEMerge(ctx context.Context, cte *ast.CommonTableExpression) (base.LogicalPlan, error) {
+	// Set b.isCTE to true to ensure masking is skipped during CTE definition building.
+	// This preserves original values in CTE for correct WHERE/HAVING/GROUP BY behavior.
+	// Note: we do NOT set b.buildingCTE here — that flag has a specific meaning for
+	// recursive CTE tracking and requires b.outerCTEs to be non-empty.
+	oldIsCTE := b.isCTE
+	b.isCTE = true
+	defer func() {
+		b.isCTE = oldIsCTE
+	}()
+
 	p, err := b.buildResultSetNode(ctx, cte.Query.Query, true)
 	if err != nil {
 		return nil, err
@@ -5126,6 +5213,14 @@ func (b *PlanBuilder) buildDataSourceFromCTEMerge(ctx context.Context, cte *ast.
 	b.handleHelper.popMap()
 	outPutNames := p.OutputNames()
 	for _, name := range outPutNames {
+		// Preserve OrigTblName and OrigColName for masking policy lookup.
+		// If they are not set, copy from TblName and ColName before overwriting.
+		if name.OrigTblName.L == "" {
+			name.OrigTblName = name.TblName
+		}
+		if name.OrigColName.L == "" {
+			name.OrigColName = name.ColName
+		}
 		name.TblName = cte.Name
 		name.DBName = pmodel.NewCIStr(b.ctx.GetSessionVars().CurrentDB)
 	}
@@ -5135,6 +5230,10 @@ func (b *PlanBuilder) buildDataSourceFromCTEMerge(ctx context.Context, cte *ast.
 			return nil, errors.New("CTE columns length is not consistent")
 		}
 		for i, n := range cte.ColNameList {
+			// Preserve original column name before overwriting.
+			if outPutNames[i].OrigColName.L == "" {
+				outPutNames[i].OrigColName = outPutNames[i].ColName
+			}
 			outPutNames[i].ColName = n
 		}
 	}
@@ -6482,6 +6581,7 @@ func isCTE(tlW *resolve.TableNameW) bool {
 }
 
 func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.TableName, list []*ast.Assignment, p base.LogicalPlan) (newList []*expression.Assignment, po base.LogicalPlan, allAssignmentsAreConstant bool, e error) {
+	defer b.enterMaskedValueContext()()
 	b.curClause = fieldList
 	// modifyColumns indicates which columns are in set list,
 	// and if it is set to `DEFAULT`
@@ -6612,6 +6712,9 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 			}
 			newExpr, np, err = b.rewrite(ctx, assign.Expr, p, nil, true)
 			if err != nil {
+				return nil, nil, false, err
+			}
+			if err = b.checkMaskingPolicyRestrictOnAssignment(ctx, np, col, newExpr); err != nil {
 				return nil, nil, false, err
 			}
 			dependentColumnsModified[col.UniqueID] = true
@@ -6990,19 +7093,28 @@ func (b *PlanBuilder) buildProjectionForWindow(ctx context.Context, p base.Logic
 
 	propertyItems := make([]property.SortItem, 0, len(partitionItems)+len(orderItems))
 	var err error
+	// The keys are rewritten under the clause of the window function itself.
+	// Mark them, so a scalar subquery among them keeps its original value.
+	savedWindowKey := b.rewritingWindowKey
+	b.rewritingWindowKey = true
 	p, propertyItems, err = b.buildByItemsForWindow(ctx, p, proj, partitionItems, propertyItems, aggMap)
 	if err != nil {
+		b.rewritingWindowKey = savedWindowKey
 		return nil, nil, nil, nil, err
 	}
 	lenPartition := len(propertyItems)
 	p, propertyItems, err = b.buildByItemsForWindow(ctx, p, proj, orderItems, propertyItems, aggMap)
+	b.rewritingWindowKey = savedWindowKey
 	if err != nil {
 		return nil, nil, nil, nil, err
 	}
 
 	newArgList := make([]expression.Expression, 0, len(args))
 	for _, arg := range args {
+		// curClause may be HAVING here, but a window function is a result.
+		restoreClause := b.enterScalarSubqueryClause(fieldList)
 		newArg, np, err := b.rewrite(ctx, arg, p, aggMap, true)
+		restoreClause()
 		if err != nil {
 			return nil, nil, nil, nil, err
 		}
@@ -7034,7 +7146,9 @@ func (b *PlanBuilder) buildArgs4WindowFunc(ctx context.Context, p base.LogicalPl
 	// it's okay here because we only want to return the args used in window function
 	newColIndex := 0
 	for _, arg := range args {
+		restoreClause := b.enterScalarSubqueryClause(fieldList)
 		newArg, np, err := b.rewrite(ctx, arg, p, aggMap, true)
+		restoreClause()
 		if err != nil {
 			return nil, err
 		}
@@ -7997,8 +8111,12 @@ func isJoinHintSupportedInMPPMode(preferJoinType uint) bool {
 func (b *PlanBuilder) buildCte(ctx context.Context, cte *ast.CommonTableExpression, isRecursive bool) (p base.LogicalPlan, err error) {
 	saveBuildingCTE := b.buildingCTE
 	b.buildingCTE = true
+	// Building the CTE body marks b.isCTE. A body without a FROM clause never
+	// resets it, so the enclosing query would skip AT RESULT masking.
+	saveIsCTE := b.isCTE
 	defer func() {
 		b.buildingCTE = saveBuildingCTE
+		b.isCTE = saveIsCTE
 	}()
 
 	if isRecursive {
@@ -8235,7 +8353,12 @@ func (b *PlanBuilder) adjustCTEPlanOutputName(p base.LogicalPlan, def *ast.Commo
 		}
 		for i, n := range def.ColNameList {
 			clonedNames[i].ColName = n
-			clonedNames[i].OrigColName = n
+			// Preserve OrigColName for masking policy lookup — it points to the
+			// real source column name, which is needed for policy resolution.
+			// Only set OrigColName when it wasn't already set by the CTE merge path.
+			if clonedNames[i].OrigColName.L == "" {
+				clonedNames[i].OrigColName = n
+			}
 		}
 	}
 	p.SetOutputNames(clonedNames)

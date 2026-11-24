@@ -27,7 +27,10 @@ import (
 )
 
 func createSampleTestkit(t *testing.T, store kv.Storage) *testkit.TestKit {
-	atomic.StoreUint32(&ddl.EnableSplitTableRegion, 1)
+	originalSplitTableRegion := atomic.SwapUint32(&ddl.EnableSplitTableRegion, 1)
+	t.Cleanup(func() {
+		atomic.StoreUint32(&ddl.EnableSplitTableRegion, originalSplitTableRegion)
+	})
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("drop database if exists test_table_sample;")
 	tk.MustExec("create database test_table_sample;")

@@ -1135,6 +1135,10 @@ const (
 	ErrPlacementPolicyNotExists           = 8239
 	ErrPlacementPolicyWithDirectOption    = 8240
 	ErrPlacementPolicyInUse               = 8241
+	ErrMaskingPolicyExists                = 8268
+	ErrMaskingPolicyNotExists             = 8269
+	ErrAccessDeniedToMaskedColumn         = 8277
+	ErrMaskingPolicyExprInvalidColumn     = 8275
 	ErrOptOnCacheTable                    = 8242
 	ErrHTTPServiceError                   = 8243
 	ErrPartitionColumnStatsMissing        = 8244
@@ -1153,8 +1157,7 @@ const (
 	ErrGlobalIndexNotExplicitlySet = 8264
 
 	ErrWarnGlobalIndexNeedManuallyAnalyze = 8265
-
-	ErrInvalidAffinityOption = 8266
+	ErrInvalidAffinityOption              = 8266
 
 	// Resource group errors.
 	ErrResourceGroupExists                    = 8248

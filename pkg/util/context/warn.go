@@ -141,6 +141,8 @@ var _ WarnHandler = &StaticWarnHandler{}
 type StaticWarnHandler struct {
 	sync.Mutex
 	warnings []SQLWarn
+	// redact, when set, rewrites each warning before it is recorded.
+	redact func(error) error
 }
 
 // NewStaticWarnHandler creates a new StaticWarnHandler.
@@ -171,6 +173,26 @@ func (h *StaticWarnHandler) Reset() {
 	if h.warnings != nil {
 		h.warnings = h.warnings[:0]
 	}
+	h.redact = nil
+}
+
+// SetRedactor makes the handler rewrite every warning recorded from now on
+// with fn, until the handler is reset.
+func (h *StaticWarnHandler) SetRedactor(fn func(error) error) {
+	h.Lock()
+	defer h.Unlock()
+	h.redact = fn
+}
+
+func (h *StaticWarnHandler) redactWarnings(warns []SQLWarn) []SQLWarn {
+	if h.redact == nil || len(warns) == 0 {
+		return warns
+	}
+	redacted := make([]SQLWarn, len(warns))
+	for i, w := range warns {
+		redacted[i] = SQLWarn{Level: w.Level, Err: h.redact(w.Err)}
+	}
+	return redacted
 }
 
 // AppendWarning implements the StaticWarnHandler.AppendWarning.
@@ -186,7 +208,7 @@ func (h *StaticWarnHandler) AppendWarnings(warns []SQLWarn) {
 	h.Lock()
 	defer h.Unlock()
 	if len(h.warnings) < math.MaxUint16 {
-		h.warnings = append(h.warnings, warns...)
+		h.warnings = append(h.warnings, h.redactWarnings(warns)...)
 	}
 }
 
@@ -250,6 +272,9 @@ func (h *StaticWarnHandler) GetWarnings() []SQLWarn {
 
 func (h *StaticWarnHandler) appendWarningWithLevel(level string, warn error) {
 	if len(h.warnings) < math.MaxUint16 {
+		if h.redact != nil {
+			warn = h.redact(warn)
+		}
 		h.warnings = append(h.warnings, SQLWarn{level, warn})
 	}
 }
@@ -259,7 +284,7 @@ func (h *StaticWarnHandler) SetWarnings(warns []SQLWarn) {
 	h.Lock()
 	defer h.Unlock()
 
-	h.warnings = warns
+	h.warnings = h.redactWarnings(warns)
 }
 
 // NumErrorWarnings returns the number of warnings with level 'Error' and the total number of warnings.

@@ -1,0 +1,983 @@
+// Copyright 2026 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package core
+
+import (
+	"context"
+	"errors"
+	"slices"
+
+	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/expression/aggregation"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tipb/go-tipb"
+)
+
+// maskingResult describes how to display one raw output column. policyID is set
+// only for a policy applied to an otherwise unchanged source column.
+type maskingResult struct {
+	expr     expression.Expression
+	masked   bool
+	policyID int64
+}
+
+type maskingResultKey struct {
+	planID   int
+	columnID int64
+}
+
+// maskingCTEKey identifies an output column of a CTE definition.
+type maskingCTEKey struct {
+	cte *logicalop.CTEClass
+	idx int
+}
+
+// maskingCTEResult is the result of a CTE definition's output column, in
+// terms of its seed column, or the reason it cannot be preserved.
+type maskingCTEResult struct {
+	err    error
+	result maskingResult
+}
+
+type maskingPolicySource struct {
+	policy  *model.MaskingPolicyInfo
+	tblInfo *model.TableInfo
+	colInfo *model.ColumnInfo
+}
+
+type maskingProjectionBuildContext struct{ expression.BuildContext }
+
+func (maskingProjectionBuildContext) SkipNotNullFolding() bool { return true }
+
+type maskingResultBuilder struct {
+	b           *PlanBuilder
+	ctx         context.Context
+	outerPlan   base.LogicalPlan
+	rootPlan    base.LogicalPlan
+	cache       map[maskingResultKey]maskingResult
+	joinMatches map[int]*expression.Column
+	// cteResults and ctePolicies hold the lineage of a CTE definition's output
+	// columns, which all consumers of the definition share.
+	cteResults  map[maskingCTEKey]maskingCTEResult
+	ctePolicies map[maskingCTEKey]maskingPolicySource
+	// predicate is set when the result is only compared by an outer predicate.
+	predicate bool
+}
+
+func (b *PlanBuilder) maskingEnabled(ctx context.Context, plans ...base.LogicalPlan) (bool, error) {
+	if b.is == nil || b.ctx.GetSessionVars().InRestrictedSQL {
+		return false, nil
+	}
+	// Only a plan reading a table with a policy can produce masked values. Other
+	// plans keep all the simplifications of ordinary statements, even when
+	// policies exist on other tables. Policy DDL changes the schema version, so
+	// a cached plan is rebuilt when a table gains a policy. Policies are looked
+	// up, and loaded, only for the persistent tables the plan reads.
+	// References to one CTE share its seed plan: visit each plan only once.
+	visited := make(map[int]struct{})
+	var err error
+	hasSource := func(p base.LogicalPlan) bool {
+		found, srcErr := b.planHasMaskingSource(ctx, p, visited)
+		if srcErr != nil {
+			err = srcErr
+			return true
+		}
+		return found
+	}
+	found := slices.ContainsFunc(plans, hasSource) || slices.ContainsFunc(b.maskingOuterPlans, hasSource)
+	return found && err == nil, err
+}
+
+// planHasMaskingSource reports whether p reads a table with a masking policy.
+// Local temporary tables cannot have policies and must remain usable without
+// TiKV. A plan in visited has already been searched without finding a source.
+func (b *PlanBuilder) planHasMaskingSource(ctx context.Context, p base.LogicalPlan, visited map[int]struct{}) (bool, error) {
+	if p == nil {
+		return false, nil
+	}
+	if _, ok := visited[p.ID()]; ok {
+		return false, nil
+	}
+	visited[p.ID()] = struct{}{}
+	if ds, ok := p.(*logicalop.DataSource); ok {
+		if ds.TableInfo == nil || ds.TableInfo.TempTableType != model.TempTableNone {
+			return false, nil
+		}
+		return b.tableHasMaskingPolicy(ctx, ds.TableInfo)
+	}
+	children := p.Children()
+	if cte, ok := p.(*logicalop.LogicalCTE); ok {
+		children = []base.LogicalPlan{cte.Cte.SeedPartLogicalPlan, cte.Cte.RecursivePartLogicalPlan}
+	}
+	for _, child := range children {
+		if found, err := b.planHasMaskingSource(ctx, child, visited); err != nil || found {
+			return found, err
+		}
+	}
+	return false, nil
+}
+
+func (b *PlanBuilder) tableHasMaskingPolicy(ctx context.Context, tblInfo *model.TableInfo) (bool, error) {
+	if found, ok := b.maskingPolicyTables[tblInfo.ID]; ok {
+		return found, nil
+	}
+	found := false
+	for _, col := range tblInfo.Columns {
+		_, ok, err := b.is.MaskingPolicyByTableColumn(ctx, tblInfo.ID, col.ID)
+		if err != nil {
+			return false, err
+		}
+		if ok {
+			found = true
+			break
+		}
+	}
+	if b.maskingPolicyTables == nil {
+		b.maskingPolicyTables = make(map[int64]bool)
+	}
+	b.maskingPolicyTables[tblInfo.ID] = found
+	return found, nil
+}
+
+// buildFinalProjectionWithMasking keeps all relational expressions on raw
+// values. Only the final projection evaluates masking, using raw dependencies
+// carried through intermediate projections and DISTINCT as auxiliary columns.
+func (b *PlanBuilder) buildFinalProjectionWithMasking(ctx context.Context, p base.LogicalPlan, oldLen int, outerPlan ...base.LogicalPlan) (base.LogicalPlan, error) {
+	if b.ctx.GetSessionVars().StmtCtx.InInsertStmt {
+		// Check original output lineage before rejecting an unsupported masked
+		// result, so INSERT ... SELECT reports its policy's access restriction.
+		if err := b.checkMaskingPolicyRestrictOnSelectPlan(ctx, p, ast.MaskingPolicyRestrictOpInsertIntoSelect); err != nil {
+			return nil, err
+		}
+	}
+	return b.buildMaskingProjection(ctx, p, oldLen, false, outerPlan...)
+}
+
+// buildPredicateProjectionWithMasking masks each result column used by a
+// predicate. A column whose policy cannot be preserved keeps its original
+// value, while the other columns of the same row are still masked.
+func (b *PlanBuilder) buildPredicateProjectionWithMasking(ctx context.Context, p base.LogicalPlan, outerPlan base.LogicalPlan) (base.LogicalPlan, error) {
+	return b.buildMaskingProjection(ctx, p, p.Schema().Len(), true, outerPlan)
+}
+
+func (b *PlanBuilder) buildMaskingProjection(ctx context.Context, p base.LogicalPlan, oldLen int, rawOnUnsupported bool, outerPlan ...base.LogicalPlan) (base.LogicalPlan, error) {
+	if p == nil {
+		return p, nil
+	}
+	enabled, err := b.maskingEnabled(ctx, append(outerPlan, p)...)
+	if err != nil || !enabled {
+		return p, err
+	}
+	m := maskingResultBuilder{b: b, ctx: ctx, rootPlan: p, cache: make(map[maskingResultKey]maskingResult), predicate: rawOnUnsupported}
+	if len(outerPlan) > 0 {
+		m.outerPlan = outerPlan[0]
+	}
+	cols := append([]*expression.Column(nil), p.Schema().Columns[:oldLen]...)
+	names := append(types.NameSlice(nil), p.OutputNames()[:oldLen]...)
+	exprs := make([]expression.Expression, oldLen)
+	hasMask := false
+	for i, col := range cols {
+		result, err := m.column(p, col)
+		if err != nil {
+			if !rawOnUnsupported || !isMaskingNotPreservedErr(err) {
+				return nil, err
+			}
+			result = maskingResult{expr: col}
+		}
+		hasMask = hasMask || result.masked
+		exprs[i] = result.expr
+	}
+	// A failed attempt may leave auxiliary raw inputs on the root schema.
+	if !hasMask && p.Schema().Len() == oldLen {
+		return p, nil
+	}
+	proj := logicalop.LogicalProjection{Exprs: exprs}.Init(b.ctx, p.QueryBlockOffset())
+	schema := expression.NewSchema()
+	for i, col := range cols {
+		newCol := &expression.Column{
+			UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
+			ID:       col.ID,
+			RetType:  exprs[i].GetType(b.ctx.GetExprCtx().GetEvalCtx()).Clone(),
+		}
+		newCol.SetCoercibility(col.Coercibility())
+		newCol.SetRepertoire(col.Repertoire())
+		schema.Append(newCol)
+	}
+	proj.SetSchema(schema)
+	proj.SetOutputNames(names)
+	proj.SetChildren(p)
+	if b.maskingSourcePlans == nil {
+		b.maskingSourcePlans = make(map[int]base.LogicalPlan)
+	}
+	b.maskingSourcePlans[proj.ID()] = p
+	return proj, nil
+}
+
+func (m *maskingResultBuilder) column(p base.LogicalPlan, col *expression.Column) (maskingResult, error) {
+	key := maskingResultKey{planID: p.ID(), columnID: col.UniqueID}
+	if result, ok := m.cache[key]; ok {
+		return result, nil
+	}
+	result, err := m.buildColumn(p, col)
+	if err == nil {
+		m.cache[key] = result
+	}
+	return result, err
+}
+
+func (m *maskingResultBuilder) buildColumn(p base.LogicalPlan, col *expression.Column) (maskingResult, error) {
+	failpoint.InjectCall("maskingTraceColumn")
+	plain := maskingResult{expr: col}
+	idx := p.Schema().ColumnIndex(col)
+	if idx < 0 {
+		// USING/NATURAL joins retain table-qualified common columns only in
+		// FullSchema. Their source is still available in the join's children.
+		if full, _ := findJoinFullSchema(p); full != nil && full.Contains(col) {
+			return m.passThrough(p, col)
+		}
+		return plain, nil
+	}
+	if inputs, generated := maskingScalarJoinInputs(p, idx); generated {
+		for _, input := range inputs {
+			result, err := m.expr(p, input)
+			if err != nil {
+				return plain, err
+			}
+			if result.masked {
+				return plain, &maskingNotPreservedError{shape: "scalar subquery comparison"}
+			}
+		}
+		return plain, nil
+	}
+	switch x := p.(type) {
+	case *logicalop.LogicalProjection:
+		result, err := m.expr(x.Children()[0], x.Exprs[idx])
+		if err != nil || !result.masked {
+			return plain, err
+		}
+		result.expr, err = m.projectInputs(x, result.expr)
+		return result, err
+	case *logicalop.LogicalAggregation:
+		return m.aggregate(x, idx)
+	case *logicalop.LogicalUnionAll:
+		return m.union(x, idx)
+	case *logicalop.LogicalCTE:
+		return m.cte(x, idx)
+	case *logicalop.DataSource:
+		policy, tblInfo, colInfo, err := m.b.findMaskingPolicy(m.ctx, x, col)
+		if err != nil {
+			return plain, err
+		}
+		if policy == nil || policy.Status != model.MaskingPolicyStatusEnable {
+			return plain, nil
+		}
+		expr, placeholder, err := getMaskingPolicyExpr(m.b.ctx.GetExprCtx(), m.b.ctx.GetSessionVars(), m.b.is.SchemaMetaVersion(), policy, tblInfo, colInfo)
+		if err != nil {
+			return plain, err
+		}
+		expr, err = m.substitute(expr, expression.NewSchema(placeholder), []expression.Expression{col})
+		return maskingResult{expr: expr, masked: true, policyID: policy.ID}, err
+	case *logicalop.LogicalWindow:
+		child := x.Children()[0]
+		if idx < child.Schema().Len() {
+			windowColumns := x.GetWindowResultColumns()
+			windowNames := x.OutputNames()[child.Schema().Len():]
+			result, err := m.column(child, col)
+			if err != nil || !result.masked {
+				return plain, err
+			}
+			// Raw dependencies added to the child must precede window outputs;
+			// window column pruning identifies its results at the schema's end.
+			x.SetSchema(child.Schema().Clone())
+			x.Schema().Append(windowColumns...)
+			x.SetOutputNames(append(child.OutputNames().Shallow(), windowNames...))
+			return result, nil
+		}
+		// Window outputs have no source-column identity. Keep their arguments
+		// raw for relational processing, but reject protected result values.
+		for _, arg := range x.WindowFuncDescs[idx-child.Schema().Len()].Args {
+			result, err := m.expr(child, arg)
+			if err != nil {
+				return plain, err
+			}
+			if result.masked {
+				return plain, &maskingNotPreservedError{shape: "window function"}
+			}
+		}
+		return plain, nil
+	case *logicalop.LogicalExpand:
+		result, err := m.passThrough(p, col)
+		isGroupingCol := slices.ContainsFunc(x.DistinctGroupByCol, func(c *expression.Column) bool {
+			return c.UniqueID == col.UniqueID
+		})
+		if err != nil || !result.masked || !isGroupingCol {
+			return result, err
+		}
+		// Grouping-set levels that do not group on this column set it to NULL.
+		// The masked value is rebuilt from raw inputs that Expand keeps, so it
+		// must follow those levels back to NULL. The levels are identified by
+		// the grouping ID, so a NULL already present in the data still goes
+		// through the policy.
+		nullGIDs := []expression.Expression{x.GID}
+		seen := make(map[uint64]struct{}, len(x.RollupGroupingSets))
+		for offset, groupingSet := range x.RollupGroupingSets {
+			if groupingSet.AllColIDs().Has(int(col.UniqueID)) {
+				continue
+			}
+			gid := x.GenerateGroupingIDModeBitAnd(groupingSet)
+			if x.GroupingMode == tipb.GroupingMode_ModeNumericSet {
+				gid = x.GenerateGroupingIDIncrementModeNumericSet(offset)
+			}
+			if _, ok := seen[gid]; ok {
+				continue
+			}
+			seen[gid] = struct{}{}
+			nullGIDs = append(nullGIDs, expression.NewUInt64ConstWithFieldType(gid, x.GID.RetType.Clone()))
+		}
+		if len(nullGIDs) == 1 {
+			return result, nil
+		}
+		ectx := m.b.ctx.GetExprCtx()
+		isRollupNull, err := expression.NewFunction(ectx, ast.In, types.NewFieldType(mysql.TypeLonglong), nullGIDs...)
+		if err != nil {
+			return plain, err
+		}
+		retType := result.expr.GetType(ectx.GetEvalCtx()).Clone()
+		retType.DelFlag(mysql.NotNullFlag)
+		result.expr, err = expression.NewFunction(ectx, ast.If, retType, isRollupNull, expression.NewNull(), result.expr)
+		if err != nil {
+			return plain, err
+		}
+		return result, nil
+	default:
+		return m.passThrough(p, col)
+	}
+}
+
+// passThrough builds the result of a column that a row-preserving operator
+// inherits from one of its children.
+func (m *maskingResultBuilder) passThrough(p base.LogicalPlan, col *expression.Column) (maskingResult, error) {
+	plain := maskingResult{expr: col}
+	for childIdx, child := range p.Children() {
+		if !child.Schema().Contains(col) {
+			if full, _ := findJoinFullSchema(child); full == nil || !full.Contains(col) {
+				continue
+			}
+		}
+		result, err := m.column(child, col)
+		if err != nil || !result.masked {
+			return plain, err
+		}
+		// Row-preserving operators inherit their child's schema. For joins,
+		// dependencies of a derived output may need explicit propagation.
+		inputs := expression.ExtractColumns(result.expr)
+		replacements := make([]expression.Expression, len(inputs))
+		for i, input := range inputs {
+			inputIdx := p.Schema().ColumnIndex(input)
+			if inputIdx < 0 {
+				output := input.Clone().(*expression.Column)
+				output.RetType = output.RetType.Clone()
+				output.RetType.DelFlag(mysql.NotNullFlag)
+				inputIdx = appendMaskingInput(p, output)
+			}
+			replacements[i] = p.Schema().Columns[inputIdx]
+		}
+		result.expr, err = m.substitute(result.expr, expression.NewSchema(inputs...), replacements)
+		// A derived value was evaluated below the join and must retain its
+		// NULL extension. A direct source column still applies its policy to
+		// the value exposed by the join, as for other AT RESULT expressions.
+		if err == nil && result.policyID == 0 && maskingNullableChild(p, childIdx) {
+			result.expr, err = m.preserveOuterJoinNull(p, childIdx, result.expr)
+		}
+		return result, err
+	}
+	return plain, nil
+}
+
+// Expand and scalar semi joins keep their generated columns at the schema's end.
+func appendMaskingInput(p base.LogicalPlan, col *expression.Column) int {
+	idx := p.Schema().Len()
+	if expand, ok := p.(*logicalop.LogicalExpand); ok {
+		idx = p.Schema().ColumnIndex(expand.GID)
+	} else if maskingScalarJoin(p) != nil {
+		idx--
+	}
+	p.Schema().Columns = slices.Insert(p.Schema().Columns, idx, col)
+	p.SetOutputNames(slices.Insert(p.OutputNames(), idx, types.EmptyName))
+	return idx
+}
+
+func maskingNullableChild(p base.LogicalPlan, childIdx int) bool {
+	var tp logicalop.JoinType
+	switch x := p.(type) {
+	case *logicalop.LogicalJoin:
+		tp = x.JoinType
+	case *logicalop.LogicalApply:
+		tp = x.JoinType
+	default:
+		return false
+	}
+	return tp == logicalop.LeftOuterJoin && childIdx == 1 || tp == logicalop.RightOuterJoin && childIdx == 0
+}
+
+func (m *maskingResultBuilder) preserveOuterJoinNull(
+	p base.LogicalPlan, childIdx int, expr expression.Expression,
+) (expression.Expression, error) {
+	marker := m.joinMatches[p.ID()]
+	if marker == nil {
+		child := p.Children()[childIdx]
+		one := expression.NewOne()
+		col := &expression.Column{UniqueID: m.b.ctx.GetSessionVars().AllocPlanColumnID(), RetType: one.RetType.Clone()}
+		exprs := append(expression.Column2Exprs(child.Schema().Columns), one)
+		proj := logicalop.LogicalProjection{Exprs: exprs}.Init(m.b.ctx, p.QueryBlockOffset())
+		proj.SetSchema(child.Schema().Clone())
+		proj.Schema().Append(col)
+		proj.SetOutputNames(append(child.OutputNames().Shallow(), types.EmptyName))
+		proj.SetChildren(child)
+		children := append([]base.LogicalPlan(nil), p.Children()...)
+		children[childIdx] = proj
+		p.SetChildren(children...)
+		marker = col.Clone().(*expression.Column)
+		marker.RetType = col.RetType.Clone()
+		marker.RetType.DelFlag(mysql.NotNullFlag)
+		appendMaskingInput(p, marker)
+		if m.joinMatches == nil {
+			m.joinMatches = make(map[int]*expression.Column)
+		}
+		m.joinMatches[p.ID()] = marker
+	}
+	ctx := m.b.ctx.GetExprCtx()
+	missing, err := expression.NewFunction(ctx, ast.IsNull, types.NewFieldType(mysql.TypeTiny), marker)
+	if err != nil {
+		return nil, err
+	}
+	tp := expr.GetType(ctx.GetEvalCtx()).Clone()
+	tp.DelFlag(mysql.NotNullFlag)
+	return expression.NewFunction(ctx, ast.If, tp, missing, expression.NewNull(), expr)
+}
+
+func (m *maskingResultBuilder) expr(p base.LogicalPlan, expr expression.Expression) (maskingResult, error) {
+	for _, col := range expression.ExtractCorColumns(expr) {
+		outer := m.correlatedSource(&col.Column)
+		if outer == nil {
+			return maskingResult{}, &maskingNotPreservedError{shape: "scalar subquery"}
+		}
+		result, err := m.column(outer, &col.Column)
+		if err != nil {
+			return result, err
+		}
+		if result.masked {
+			return result, &maskingNotPreservedError{shape: "scalar subquery"}
+		}
+	}
+	if col, ok := expr.(*expression.Column); ok {
+		return m.column(p, col)
+	}
+	cols := expression.ExtractColumns(expr)
+	replacements := make([]expression.Expression, len(cols))
+	result := maskingResult{expr: expr}
+	for i, col := range cols {
+		input, err := m.column(p, col)
+		if err != nil {
+			return result, err
+		}
+		replacements[i] = input.expr
+		result.masked = result.masked || input.masked
+	}
+	if result.masked {
+		// Rebuilding a result must not evaluate RAND, variable assignments or
+		// other mutable expressions a second time after sorting/filtering.
+		if expression.IsMutableEffectsExpr(expr) {
+			return result, &maskingNotPreservedError{shape: "mutable expression"}
+		}
+		var err error
+		result.expr, err = m.substitute(expr, expression.NewSchema(cols...), replacements)
+		if err != nil {
+			return result, err
+		}
+	}
+	return result, nil
+}
+
+// projectInputs exposes raw inputs, never masked values, to the final projection.
+func (m *maskingResultBuilder) projectInputs(p *logicalop.LogicalProjection, expr expression.Expression) (expression.Expression, error) {
+	cols := expression.ExtractColumns(expr)
+	replacements := make([]expression.Expression, len(cols))
+	for i, col := range cols {
+		for j, projected := range p.Exprs {
+			if source, ok := projected.(*expression.Column); ok && source.UniqueID == col.UniqueID {
+				replacements[i] = p.Schema().Columns[j]
+				break
+			}
+		}
+		if replacements[i] == nil {
+			p.Exprs = append(p.Exprs, col)
+			p.Schema().Append(col)
+			p.SetOutputNames(append(p.OutputNames(), types.EmptyName))
+			replacements[i] = col
+		}
+	}
+	return m.substitute(expr, expression.NewSchema(cols...), replacements)
+}
+
+func (m *maskingResultBuilder) substitute(expr expression.Expression, schema *expression.Schema, replacements []expression.Expression) (expression.Expression, error) {
+	// A policy may return another type than its column.
+	failed, result, err := expression.ColumnSubstituteAllFromSource(m.b.ctx.GetExprCtx(), expr, schema, replacements)
+	if err != nil {
+		// The expression is invalid for the value the policy returns.
+		return nil, err
+	}
+	if failed {
+		return nil, &maskingNotPreservedError{shape: "expression substitution"}
+	}
+	return result, nil
+}
+
+func (m *maskingResultBuilder) correlatedSource(col *expression.Column) base.LogicalPlan {
+	var find func(base.LogicalPlan) base.LogicalPlan
+	find = func(p base.LogicalPlan) base.LogicalPlan {
+		if p == nil {
+			return nil
+		}
+		if p.Schema().Contains(col) {
+			return p
+		}
+		for _, child := range p.Children() {
+			if source := find(child); source != nil {
+				return source
+			}
+		}
+		if cte, ok := p.(*logicalop.LogicalCTE); ok {
+			return find(cte.Cte.SeedPartLogicalPlan)
+		}
+		return nil
+	}
+	for _, p := range append([]base.LogicalPlan{m.outerPlan, m.rootPlan}, m.b.maskingOuterPlans...) {
+		if source := find(p); source != nil {
+			return source
+		}
+	}
+	return nil
+}
+
+func (m *maskingResultBuilder) aggregate(p *logicalop.LogicalAggregation, idx int) (maskingResult, error) {
+	col := p.Schema().Columns[idx]
+	agg := p.AggFuncs[idx]
+	plain := maskingResult{expr: col}
+	for _, arg := range agg.Args {
+		result, err := m.expr(p.Children()[0], arg)
+		if err != nil {
+			return plain, err
+		}
+		if !result.masked {
+			continue
+		}
+		if agg.Name == ast.AggFuncFirstRow {
+			result.expr, err = m.aggregateInputs(p, result.expr)
+			return result, err
+		}
+		if (agg.Name == ast.AggFuncMax || agg.Name == ast.AggFuncMin) && m.predicate {
+			// Predicates compare the MIN/MAX of a subquery with its original value.
+			return plain, nil
+		}
+		if (agg.Name == ast.AggFuncMax || agg.Name == ast.AggFuncMin) && result.policyID != 0 {
+			// MIN/MAX select an original value. Apply its policy after the raw
+			// aggregate rather than changing comparisons inside the aggregate.
+			result.expr, err = m.substitute(result.expr, expression.NewSchema(arg.(*expression.Column)), []expression.Expression{col})
+			return result, err
+		}
+		return plain, &maskingNotPreservedError{shape: "aggregate"}
+	}
+	return plain, nil
+}
+
+func (m *maskingResultBuilder) aggregateInputs(p *logicalop.LogicalAggregation, expr expression.Expression) (expression.Expression, error) {
+	cols := expression.ExtractColumns(expr)
+	replacements := make([]expression.Expression, len(cols))
+	for i, col := range cols {
+		for j, agg := range p.AggFuncs {
+			if agg.Name == ast.AggFuncFirstRow && len(agg.Args) == 1 {
+				if source, ok := agg.Args[0].(*expression.Column); ok && source.UniqueID == col.UniqueID {
+					replacements[i] = p.Schema().Columns[j]
+					break
+				}
+			}
+		}
+		if replacements[i] != nil {
+			continue
+		}
+		// Keep DISTINCT/grouping keys unchanged. Auxiliary first_row inputs
+		// preserve raw expression dependencies without splitting any group.
+		agg, err := aggregation.NewAggFuncDesc(m.b.ctx.GetExprCtx(), ast.AggFuncFirstRow, []expression.Expression{col}, false)
+		if err != nil {
+			return nil, err
+		}
+		if err = agg.UpdateNotNullFlag4RetType(len(p.GroupByItems) > 0, false); err != nil {
+			return nil, err
+		}
+		output := col.Clone().(*expression.Column)
+		output.UniqueID = m.b.ctx.GetSessionVars().AllocPlanColumnID()
+		output.CleanHashCode()
+		output.RetType = agg.RetTp
+		p.AggFuncs = append(p.AggFuncs, agg)
+		p.Schema().Append(output)
+		p.SetOutputNames(append(p.OutputNames(), types.EmptyName))
+		replacements[i] = output
+	}
+	return m.substitute(expr, expression.NewSchema(cols...), replacements)
+}
+
+func (m *maskingResultBuilder) union(p *logicalop.LogicalUnionAll, idx int) (maskingResult, error) {
+	col := p.Schema().Columns[idx]
+	result := maskingResult{expr: col}
+	if m.predicate {
+		return m.predicateUnion(p, idx)
+	}
+	for i, child := range p.Children() {
+		input := child.Schema().Columns[idx]
+		branch, err := m.column(child, input)
+		if err != nil {
+			return result, err
+		}
+		// Until operand provenance can be represented through de-duplication,
+		// only an unchanged column with the same policy in every branch is safe.
+		if i > 0 && (result.masked != branch.masked || result.policyID != branch.policyID) || branch.masked && branch.policyID == 0 {
+			return result, &maskingNotPreservedError{shape: "UNION"}
+		}
+		if branch.masked {
+			branch.expr, err = m.substitute(branch.expr, expression.NewSchema(input), []expression.Expression{col})
+			if err != nil {
+				return result, err
+			}
+			if i > 0 && !result.expr.Equal(m.b.ctx.GetExprCtx().GetEvalCtx(), branch.expr) {
+				return result, &maskingNotPreservedError{shape: "UNION"}
+			}
+			result = branch
+		}
+	}
+	return result, nil
+}
+
+// predicateUnion applies the policy of the first branch whose output is
+// computed from a protected column to the whole UNION column, so a predicate
+// compares every value of that column with the masked form. Results of
+// aggregate and window functions do not carry a policy.
+func (m *maskingResultBuilder) predicateUnion(p *logicalop.LogicalUnionAll, idx int) (maskingResult, error) {
+	col := p.Schema().Columns[idx]
+	plain := maskingResult{expr: col}
+	policy, tblInfo, colInfo, err := m.predicatePolicySource(p, col)
+	if err != nil || policy == nil {
+		return plain, err
+	}
+	expr, placeholder, err := getMaskingPolicyExpr(m.b.ctx.GetExprCtx(), m.b.ctx.GetSessionVars(), m.b.is.SchemaMetaVersion(), policy, tblInfo, colInfo)
+	if err != nil {
+		return plain, err
+	}
+	expr, err = m.substitute(expr, expression.NewSchema(placeholder), []expression.Expression{col})
+	return maskingResult{expr: expr, masked: true, policyID: policy.ID}, err
+}
+
+// predicatePolicySource returns the first enabled policy of a table column
+// that col is computed from by row-level expressions.
+func (m *maskingResultBuilder) predicatePolicySource(p base.LogicalPlan, col *expression.Column) (*model.MaskingPolicyInfo, *model.TableInfo, *model.ColumnInfo, error) {
+	failpoint.InjectCall("maskingTraceColumn")
+	idx := p.Schema().ColumnIndex(col)
+	if idx < 0 {
+		// USING/NATURAL joins retain table-qualified common columns only in
+		// FullSchema. Their source is still available in the join's children.
+		if full, _ := findJoinFullSchema(p); full == nil || !full.Contains(col) {
+			return nil, nil, nil, nil
+		}
+		return m.predicatePolicySourceFromChildren(p, []*expression.Column{col})
+	}
+	var inputs []*expression.Column
+	switch x := p.(type) {
+	case *logicalop.DataSource:
+		policy, tblInfo, colInfo, err := m.b.findMaskingPolicy(m.ctx, x, col)
+		if err != nil || policy == nil || policy.Status != model.MaskingPolicyStatusEnable {
+			return nil, nil, nil, err
+		}
+		return policy, tblInfo, colInfo, nil
+	case *logicalop.LogicalProjection:
+		if idx >= len(x.Exprs) {
+			return nil, nil, nil, nil
+		}
+		inputs = expression.ExtractColumns(x.Exprs[idx])
+	case *logicalop.LogicalAggregation:
+		// Grouping columns pass through FIRST_ROW; other aggregates do not
+		// carry a policy.
+		if idx >= len(x.AggFuncs) || x.AggFuncs[idx].Name != ast.AggFuncFirstRow {
+			return nil, nil, nil, nil
+		}
+		for _, arg := range x.AggFuncs[idx].Args {
+			inputs = append(inputs, expression.ExtractColumns(arg)...)
+		}
+	case *logicalop.LogicalWindow:
+		child := x.Children()[0]
+		if idx >= child.Schema().Len() {
+			return nil, nil, nil, nil
+		}
+		return m.predicatePolicySource(child, child.Schema().Columns[idx])
+	case *logicalop.LogicalUnionAll:
+		for _, child := range x.Children() {
+			policy, tblInfo, colInfo, err := m.predicatePolicySource(child, child.Schema().Columns[idx])
+			if err != nil || policy != nil {
+				return policy, tblInfo, colInfo, err
+			}
+		}
+		return nil, nil, nil, nil
+	case *logicalop.LogicalCTE:
+		// A materialized CTE outputs its seed columns by position. A recursive
+		// CTE cannot carry a policy; see cte.
+		if x.Cte.RecursivePartLogicalPlan != nil || x.Cte.SeedPartLogicalPlan == nil {
+			return nil, nil, nil, nil
+		}
+		seed := x.Cte.SeedPartLogicalPlan
+		if idx >= seed.Schema().Len() {
+			return nil, nil, nil, nil
+		}
+		key := maskingCTEKey{cte: x.Cte, idx: idx}
+		if source, ok := m.ctePolicies[key]; ok {
+			return source.policy, source.tblInfo, source.colInfo, nil
+		}
+		policy, tblInfo, colInfo, err := m.predicatePolicySource(seed, seed.Schema().Columns[idx])
+		if err == nil {
+			if m.ctePolicies == nil {
+				m.ctePolicies = make(map[maskingCTEKey]maskingPolicySource)
+			}
+			m.ctePolicies[key] = maskingPolicySource{policy: policy, tblInfo: tblInfo, colInfo: colInfo}
+		}
+		return policy, tblInfo, colInfo, err
+	default:
+		inputs = []*expression.Column{col}
+	}
+	return m.predicatePolicySourceFromChildren(p, inputs)
+}
+
+// predicatePolicySourceFromChildren continues the search for each input in
+// the children of p that provide it, in their schema or in the full schema of
+// a USING/NATURAL join.
+func (m *maskingResultBuilder) predicatePolicySourceFromChildren(p base.LogicalPlan, inputs []*expression.Column) (*model.MaskingPolicyInfo, *model.TableInfo, *model.ColumnInfo, error) {
+	for _, input := range inputs {
+		for _, child := range p.Children() {
+			if !child.Schema().Contains(input) {
+				if full, _ := findJoinFullSchema(child); full == nil || !full.Contains(input) {
+					continue
+				}
+			}
+			policy, tblInfo, colInfo, err := m.predicatePolicySource(child, input)
+			if err != nil || policy != nil {
+				return policy, tblInfo, colInfo, err
+			}
+		}
+	}
+	return nil, nil, nil, nil
+}
+
+func (m *maskingResultBuilder) cte(p *logicalop.LogicalCTE, idx int) (maskingResult, error) {
+	key := maskingCTEKey{cte: p.Cte, idx: idx}
+	traced, ok := m.cteResults[key]
+	if !ok {
+		traced = m.traceCTE(p.Cte, idx)
+		if traced.err != nil && !isMaskingNotPreservedErr(traced.err) {
+			return maskingResult{}, traced.err
+		}
+		if m.cteResults == nil {
+			m.cteResults = make(map[maskingCTEKey]maskingCTEResult)
+		}
+		m.cteResults[key] = traced
+	}
+	// Bind the definition's result to the output column of this consumer.
+	col := p.Schema().Columns[idx]
+	if traced.err != nil {
+		return maskingResult{expr: col}, traced.err
+	}
+	result := traced.result
+	if !result.masked {
+		return maskingResult{expr: col}, nil
+	}
+	input := p.Cte.SeedPartLogicalPlan.Schema().Columns[idx]
+	var err error
+	result.expr, err = m.substitute(result.expr, expression.NewSchema(input), []expression.Expression{col})
+	if err != nil {
+		return result, err
+	}
+	for _, dep := range expression.ExtractColumns(result.expr) {
+		if dep.UniqueID != col.UniqueID {
+			return result, &maskingNotPreservedError{shape: "materialized CTE"}
+		}
+	}
+	return result, nil
+}
+
+// traceCTE returns the result of an output column of a CTE definition in terms
+// of its seed column.
+func (m *maskingResultBuilder) traceCTE(cte *logicalop.CTEClass, idx int) maskingCTEResult {
+	// The seed and recursive parts are shared by every consumer of the CTE and
+	// must keep its columns. Tracing them may expose raw inputs on their plans,
+	// so they are restored whatever the outcome; a result that is preserved
+	// depends only on the seed column.
+	defer m.snapshotPlans(cte.SeedPartLogicalPlan, cte.RecursivePartLogicalPlan).restore(m)
+	seed := cte.SeedPartLogicalPlan
+	result, err := m.column(seed, seed.Schema().Columns[idx])
+	if err != nil {
+		return maskingCTEResult{err: err}
+	}
+	if recursive := cte.RecursivePartLogicalPlan; recursive != nil {
+		branch, err := m.column(recursive, recursive.Schema().Columns[idx])
+		if err != nil {
+			return maskingCTEResult{err: err}
+		}
+		if result.masked || branch.masked {
+			return maskingCTEResult{err: &maskingNotPreservedError{shape: "recursive CTE"}}
+		}
+	}
+	if result.masked && result.policyID == 0 {
+		return maskingCTEResult{err: &maskingNotPreservedError{shape: "materialized CTE"}}
+	}
+	return maskingCTEResult{result: result}
+}
+
+// maskingPlanState is the part of a plan that tracing may change.
+type maskingPlanState struct {
+	plan     base.LogicalPlan
+	schema   *expression.Schema
+	columns  []*expression.Column
+	names    types.NameSlice
+	children []base.LogicalPlan
+	exprs    []expression.Expression
+	aggFuncs []*aggregation.AggFuncDesc
+}
+
+type maskingPlanSnapshot []maskingPlanState
+
+// snapshotPlans records the plans reachable from roots. The parts of a nested
+// CTE are restored by the trace of that CTE itself.
+func (*maskingResultBuilder) snapshotPlans(roots ...base.LogicalPlan) maskingPlanSnapshot {
+	var snapshot maskingPlanSnapshot
+	visited := make(map[int]struct{})
+	var walk func(base.LogicalPlan)
+	walk = func(p base.LogicalPlan) {
+		if p == nil {
+			return
+		}
+		if _, ok := visited[p.ID()]; ok {
+			return
+		}
+		visited[p.ID()] = struct{}{}
+		state := maskingPlanState{
+			plan:     p,
+			schema:   p.Schema(),
+			columns:  slices.Clone(p.Schema().Columns),
+			names:    slices.Clone(p.OutputNames()),
+			children: slices.Clone(p.Children()),
+		}
+		switch x := p.(type) {
+		case *logicalop.LogicalProjection:
+			state.exprs = slices.Clone(x.Exprs)
+		case *logicalop.LogicalAggregation:
+			state.aggFuncs = slices.Clone(x.AggFuncs)
+		}
+		snapshot = append(snapshot, state)
+		for _, child := range p.Children() {
+			walk(child)
+		}
+	}
+	for _, root := range roots {
+		walk(root)
+	}
+	return snapshot
+}
+
+// changed reports whether tracing changed the plan. Tracing only adds
+// expressions, columns and children, or replaces the schema.
+func (s *maskingPlanState) changed() bool {
+	p := s.plan
+	if p.Schema() != s.schema || p.Schema().Len() != len(s.columns) || len(p.OutputNames()) != len(s.names) ||
+		!slices.Equal(p.Children(), s.children) {
+		return true
+	}
+	switch x := p.(type) {
+	case *logicalop.LogicalProjection:
+		return len(x.Exprs) != len(s.exprs)
+	case *logicalop.LogicalAggregation:
+		return len(x.AggFuncs) != len(s.aggFuncs)
+	}
+	return false
+}
+
+// restore undoes the changes of tracing. A result refers only to the output
+// columns of its plan, so it remains valid unless it refers to a raw input
+// that tracing exposed on that plan.
+func (s maskingPlanSnapshot) restore(m *maskingResultBuilder) {
+	changed := false
+	for i := range s {
+		state := &s[i]
+		if !state.changed() {
+			continue
+		}
+		changed = true
+		p := state.plan
+		state.schema.Columns = state.columns
+		if x, ok := p.(interface{ SetSchema(*expression.Schema) }); ok {
+			x.SetSchema(state.schema)
+		}
+		p.SetOutputNames(state.names)
+		p.SetChildren(state.children...)
+		switch x := p.(type) {
+		case *logicalop.LogicalProjection:
+			x.Exprs = state.exprs
+		case *logicalop.LogicalAggregation:
+			x.AggFuncs = state.aggFuncs
+		}
+		delete(m.joinMatches, p.ID())
+	}
+	if !changed {
+		return
+	}
+	schemas := make(map[int]*expression.Schema, len(s))
+	for _, state := range s {
+		schemas[state.plan.ID()] = state.schema
+	}
+	for key, result := range m.cache {
+		schema, ok := schemas[key.planID]
+		if !ok {
+			continue
+		}
+		for _, dep := range expression.ExtractColumns(result.expr) {
+			if !schema.Contains(dep) {
+				delete(m.cache, key)
+				break
+			}
+		}
+	}
+}
+
+type maskingNotPreservedError struct{ shape string }
+
+func (e *maskingNotPreservedError) Error() string {
+	return "masking policy cannot be preserved through " + e.shape
+}
+
+func isMaskingNotPreservedErr(err error) bool {
+	var target *maskingNotPreservedError
+	return errors.As(err, &target)
+}

@@ -66,13 +66,16 @@ start_s3() {
     bin/minio server --address $S3_ENDPOINT "$TEST_DIR/$DB" &
     s3_pid=$!
     i=0
-    while ! curl -o /dev/null -v -s "http://$S3_ENDPOINT/"; do
+    # MinIO may accept connections while initialization still returns HTTP 503.
+    status="$(curl -o /dev/null -v -s "http://$S3_ENDPOINT/" -w '%{http_code}' || true)"
+    while ! { [ "$status" -gt 0 ] && [ "$status" -lt 500 ]; }; do
         i=$(($i+1))
         if [ $i -gt 30 ]; then
             echo 'Failed to start minio'
             exit 1
         fi
         sleep 2
+        status="$(curl -o /dev/null -v -s "http://$S3_ENDPOINT/" -w '%{http_code}' || true)"
     done
 }
 

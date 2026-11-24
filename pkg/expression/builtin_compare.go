@@ -1721,6 +1721,11 @@ func (c *compareFunctionClass) refineArgs(ctx BuildContext, args []Expression) (
 	arg1, arg1IsCon := args[1].(*Constant)
 	isExceptional, finalArg0, finalArg1 := false, args[0], args[1]
 	isPositiveInfinite, isNegativeInfinite := false, false
+	// A comparison that is always true or false for a NOT NULL argument is NULL
+	// once that argument is replaced by a nullable expression.
+	keepNotNull := !skipNotNullFolding(ctx)
+	arg0NotNull := keepNotNull && mysql.HasNotNullFlag(arg0Type.GetFlag())
+	arg1NotNull := keepNotNull && mysql.HasNotNullFlag(arg1Type.GetFlag())
 
 	if !allowCmpArgsRefining4PlanCache(ctx, args) {
 		return args, nil
@@ -1751,12 +1756,12 @@ func (c *compareFunctionClass) refineArgs(ctx BuildContext, args []Expression) (
 		// Why check not null flag
 		// eg: int_col > const_val(which is less than min_int32)
 		// If int_col got null, compare result cannot be true
-		if !isExceptional || (isExceptional && mysql.HasNotNullFlag(arg0Type.GetFlag())) {
+		if !isExceptional || (isExceptional && arg0NotNull) {
 			finalArg1 = arg1
 		}
 		// TODO if the plan doesn't care about whether the result of the function is null or false, we don't need
 		// to check the NotNullFlag, then more optimizations can be enabled.
-		isExceptional = isExceptional && mysql.HasNotNullFlag(arg0Type.GetFlag())
+		isExceptional = isExceptional && arg0NotNull
 		if isExceptional && arg1.GetType(ctx.GetEvalCtx()).EvalType() == types.ETInt {
 			// Judge it is inf or -inf
 			// For int:
@@ -1775,12 +1780,12 @@ func (c *compareFunctionClass) refineArgs(ctx BuildContext, args []Expression) (
 	// non-int constant [cmp] int non-constant
 	if arg1IsInt && !arg1IsCon && !arg0IsInt && arg0IsCon {
 		arg0, isExceptional = RefineComparedConstant(ctx, *arg1Type, arg0, symmetricOp[c.op])
-		if !isExceptional || (isExceptional && mysql.HasNotNullFlag(arg1Type.GetFlag())) {
+		if !isExceptional || (isExceptional && arg1NotNull) {
 			finalArg0 = arg0
 		}
 		// TODO if the plan doesn't care about whether the result of the function is null or false, we don't need
 		// to check the NotNullFlag, then more optimizations can be enabled.
-		isExceptional = isExceptional && mysql.HasNotNullFlag(arg1Type.GetFlag())
+		isExceptional = isExceptional && arg1NotNull
 		if isExceptional && arg0.GetType(ctx.GetEvalCtx()).EvalType() == types.ETInt {
 			if arg0.Value.GetInt64()&1 == 1 {
 				isNegativeInfinite = true
@@ -1871,25 +1876,27 @@ func (c *compareFunctionClass) refineArgsByUnsignedFlag(ctx BuildContext, args [
 			colArgs[i] = &x.Column
 		}
 	}
+	keepNotNull := !skipNotNullFolding(ctx)
 	for i := 0; i < 2; i++ {
 		if con, col := constArgs[1-i], colArgs[i]; con != nil && col != nil {
 			v, isNull, err := con.EvalInt(ctx.GetEvalCtx(), chunk.Row{})
 			if err != nil || isNull || v > 0 {
 				return args
 			}
+			colNotNull := keepNotNull && mysql.HasNotNullFlag(col.RetType.GetFlag())
 			if mysql.HasUnsignedFlag(con.RetType.GetFlag()) && !mysql.HasUnsignedFlag(col.RetType.GetFlag()) {
 				op := c.op
 				if i == 1 {
 					op = symmetricOp[c.op]
 				}
-				if (op == opcode.EQ && mysql.HasNotNullFlag(col.RetType.GetFlag())) || op == opcode.NullEQ {
+				if (op == opcode.EQ && colNotNull) || op == opcode.NullEQ {
 					if _, err := types.ConvertUintToInt(uint64(v), types.IntegerSignedUpperBound(col.RetType.GetType()), col.RetType.GetType()); err != nil {
 						args[i], args[1-i] = NewOne(), NewZero()
 						return args
 					}
 				}
 			}
-			if mysql.HasUnsignedFlag(col.RetType.GetFlag()) && mysql.HasNotNullFlag(col.RetType.GetFlag()) && !mysql.HasUnsignedFlag(con.RetType.GetFlag()) {
+			if mysql.HasUnsignedFlag(col.RetType.GetFlag()) && colNotNull && !mysql.HasUnsignedFlag(con.RetType.GetFlag()) {
 				op := c.op
 				if i == 1 {
 					op = symmetricOp[c.op]

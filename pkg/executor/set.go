@@ -345,7 +345,7 @@ func loadSnapshotInfoSchemaIfNeeded(sctx sessionctx.Context, snapshotTS uint64) 
 		zap.Uint64("conn", vars.ConnectionID),
 		zap.Uint64("SnapshotTS", snapshotTS))
 	dom := domain.GetDomain(sctx)
-	snapInfo, err := dom.GetSnapshotInfoSchema(snapshotTS)
+	snapInfo, err := dom.GetHistoricalInfoSchema(snapshotTS)
 	if err != nil {
 		return err
 	}

@@ -16,6 +16,7 @@ package expression
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -151,6 +152,182 @@ func TestClone(t *testing.T) {
 		cf := f.Clone()
 		require.IsType(t, f, cf)
 	}
+}
+
+func TestSubstituteSource(t *testing.T) {
+	ctx := mock.NewContext()
+	tp := types.NewFieldType(mysql.TypeTiny)
+	col := &Column{UniqueID: 1, RetType: types.NewFieldType(mysql.TypeLonglong)}
+	other := &Column{UniqueID: 2, RetType: types.NewFieldType(mysql.TypeLonglong)}
+	newLT := func() *ScalarFunction {
+		f, err := NewFunction(ctx, ast.LT, tp, col, NewOne())
+		require.NoError(t, err)
+		return f.(*ScalarFunction)
+	}
+	// The name of the substituted function tells whether it was built from its
+	// source (gt) or from its current arguments (lt).
+	substitute := func(f *ScalarFunction, fromSource bool) string {
+		schema, replacements := NewSchema(col), []Expression{other}
+		failed, result := ColumnSubstituteAll(ctx, f, schema, replacements)
+		if fromSource {
+			var err error
+			failed, result, err = ColumnSubstituteAllFromSource(ctx, f, schema, replacements)
+			require.NoError(t, err)
+		}
+		require.False(t, failed)
+		require.Equal(t, []*Column{other}, ExtractColumns(result))
+		return result.(*ScalarFunction).FuncName.L
+	}
+	hash64 := func(f *ScalarFunction) uint64 {
+		hasher := base.NewHashEqualer()
+		f.Hash64(hasher)
+		return hasher.Sum64()
+	}
+	requireSame := func(a, b *ScalarFunction) {
+		require.True(t, a.Equal(ctx, b))
+		require.True(t, a.Equals(b))
+		require.Equal(t, a.HashCode(), b.HashCode())
+		require.Equal(t, a.CanonicalHashCode(), b.CanonicalHashCode())
+		require.Equal(t, hash64(a), hash64(b))
+		require.Equal(t, a.MemoryUsage(), b.MemoryUsage())
+	}
+
+	plain, sourced := newLT(), newLT()
+	sources := &SubstituteSources{}
+	sources.Set(sourced, []Expression{col, NewOne()}, func(ctx BuildContext, args []Expression) (Expression, error) {
+		return NewFunction(ctx, ast.GT, tp, args...)
+	})
+	clone := sourced.Clone().(*ScalarFunction)
+	requireSame(plain, sourced)
+	requireSame(plain, clone)
+	require.Equal(t, ast.LT, substitute(plain, true))
+	require.Equal(t, ast.GT, substitute(sourced, true))
+	require.Equal(t, ast.GT, substitute(clone, true))
+	// Only ColumnSubstituteAllFromSource uses the source.
+	require.Equal(t, ast.LT, substitute(sourced, false))
+
+	// Changing the source of a clone does not change the one it was cloned
+	// from. A source over other columns than the function is not used.
+	clone.transformSubstituteSource(func(e Expression) Expression {
+		if e == col {
+			return other
+		}
+		return e
+	})
+	requireSame(plain, clone)
+	require.Equal(t, ast.LT, substitute(clone, true))
+	require.Equal(t, ast.GT, substitute(sourced, true))
+
+	// Wrap applies to what the source builds. The error of building a
+	// function from its source is returned as it is.
+	wrapped, twin := newLT(), newLT()
+	require.False(t, sources.Wrap(wrapped, nil))
+	sources.Set(wrapped, []Expression{col, NewOne()}, func(ctx BuildContext, args []Expression) (Expression, error) {
+		return NewFunction(ctx, ast.GT, tp, args...)
+	})
+	require.True(t, sources.Wrap(wrapped, func(ctx BuildContext, built Expression) (Expression, error) {
+		return NewFunction(ctx, ast.UnaryNot, tp, built)
+	}))
+	requireSame(twin, wrapped)
+	require.Equal(t, ast.UnaryNot, substitute(wrapped, true))
+	buildErr := errors.New("cannot build")
+	require.True(t, sources.Wrap(wrapped, func(BuildContext, Expression) (Expression, error) { return nil, buildErr }))
+	failed, _, err := ColumnSubstituteAllFromSource(ctx, wrapped, NewSchema(col), []Expression{other})
+	require.True(t, failed)
+	require.ErrorIs(t, err, buildErr)
+
+	// A deferred error is pending until a function sharing its key is built
+	// again from its source.
+	require.False(t, sources.Defer(newLT(), "key", buildErr))
+	require.NoError(t, sources.PendingError())
+	deferred, duplicate := newLT(), newLT()
+	for _, f := range []*ScalarFunction{deferred, duplicate} {
+		sources.Set(f, []Expression{col, NewOne()}, func(ctx BuildContext, args []Expression) (Expression, error) {
+			return NewFunction(ctx, ast.GT, tp, args...)
+		})
+		require.True(t, sources.Defer(f, "key", buildErr))
+	}
+	requireSame(twin, deferred)
+	require.ErrorIs(t, sources.PendingError(), buildErr)
+	require.Equal(t, ast.LT, substitute(deferred, false))
+	require.ErrorIs(t, sources.PendingError(), buildErr)
+	require.True(t, sources.Wrap(duplicate, func(_ BuildContext, built Expression) (Expression, error) { return built, nil }))
+	require.Equal(t, ast.GT, substitute(duplicate, true))
+	require.NoError(t, sources.PendingError())
+
+	sources.Release()
+	require.NoError(t, sources.PendingError())
+	requireSame(plain, sourced)
+	require.Equal(t, ast.LT, substitute(sourced, true))
+	require.Equal(t, ast.LT, substitute(sourced.Clone().(*ScalarFunction), true))
+	clone.transformSubstituteSource(func(e Expression) Expression { return e })
+	require.Equal(t, ast.LT, substitute(clone, true))
+}
+
+func TestSubstituteSourceInPlaceTransform(t *testing.T) {
+	ctx := mock.NewContext()
+	tp := types.NewFieldType(mysql.TypeLonglong)
+	col := &Column{UniqueID: 1, RetType: types.NewFieldType(mysql.TypeLonglong)}
+	other := &Column{UniqueID: 2, RetType: types.NewFieldType(mysql.TypeLonglong)}
+	third := &Column{UniqueID: 3, RetType: types.NewFieldType(mysql.TypeLonglong)}
+	sources := &SubstituteSources{}
+	// Each level is a function of the level below, held twice as the same
+	// object by both the arguments and the source of the function.
+	const depth = 6
+	var expr Expression = col
+	nodes := []Expression{col}
+	for range depth {
+		f, err := NewFunction(ctx, ast.Plus, tp, expr, expr)
+		require.NoError(t, err)
+		sf := f.(*ScalarFunction)
+		require.Same(t, expr, sf.GetArgs()[0])
+		require.Same(t, expr, sf.GetArgs()[1])
+		sources.Set(sf, []Expression{expr, expr}, func(ctx BuildContext, args []Expression) (Expression, error) {
+			return NewFunction(ctx, ast.Minus, tp, args...)
+		})
+		expr = sf
+		nodes = append(nodes, sf)
+	}
+	clone := nodes[1].Clone().(*ScalarFunction)
+	require.Len(t, sources.entries, depth)
+
+	visits := make(map[Expression]int)
+	replace := func(e Expression) (Expression, bool) {
+		visits[e]++
+		if e == col {
+			return other, true
+		}
+		return e, false
+	}
+	require.Same(t, expr, NewInPlaceTransformer(replace).Transform(expr))
+	// Every node is transformed once, however many times it is referenced.
+	require.Len(t, visits, len(nodes))
+	for _, node := range nodes {
+		require.Equal(t, 1, visits[node])
+	}
+	// Only the function whose source held the column gets a new source.
+	require.Len(t, sources.entries, depth+1)
+	require.Equal(t, []*Column{other}, ExtractColumns(expr)[:1])
+	for _, c := range ExtractColumns(expr) {
+		require.Same(t, other, c)
+	}
+	// The sources follow the arguments, so they are still used.
+	failed, result, err := ColumnSubstituteAllFromSource(ctx, expr, NewSchema(other), []Expression{third})
+	require.NoError(t, err)
+	require.False(t, failed)
+	require.Equal(t, ast.Minus, result.(*ScalarFunction).FuncName.L)
+	for _, c := range ExtractColumns(result) {
+		require.Same(t, third, c)
+	}
+	// A clone taken before keeps the source recorded for it.
+	require.Same(t, col, clone.source.get().args[0])
+	require.Same(t, other, nodes[1].(*ScalarFunction).source.get().args[0])
+
+	// Another round over the transformed expression changes nothing.
+	clear(visits)
+	NewInPlaceTransformer(replace).Transform(expr)
+	require.Len(t, visits, len(nodes))
+	require.Len(t, sources.entries, depth+1)
 }
 
 func TestGetUint64FromConstant(t *testing.T) {
@@ -852,3 +1029,56 @@ func (m *MockExpr) Traverse(action TraverseAction) Expression {
 }
 func (m *MockExpr) Hash64(_ base.Hasher) {}
 func (m *MockExpr) Equals(_ any) bool    { return false }
+
+func TestColumnSubstituteNullableCastPreservesOriginalType(t *testing.T) {
+	ctx := mock.NewContext().GetExprCtx()
+	tp := types.NewFieldType(mysql.TypeVarString)
+	tp.AddFlag(mysql.NotNullFlag)
+	col := &Column{UniqueID: 1, RetType: tp}
+	castType := types.NewFieldType(mysql.TypeDouble)
+	castType.AddFlag(mysql.NotNullFlag)
+	original := BuildCastFunction(ctx, col, castType)
+	replacement, err := NewFunction(ctx, ast.MaskNull, tp.Clone(), col)
+	require.NoError(t, err)
+	failed, result := ColumnSubstituteAll(ctx, original, NewSchema(col), []Expression{replacement})
+	require.False(t, failed)
+	require.False(t, mysql.HasNotNullFlag(result.GetType(ctx.GetEvalCtx()).GetFlag()))
+	require.True(t, mysql.HasNotNullFlag(original.GetType(ctx.GetEvalCtx()).GetFlag()))
+	require.True(t, mysql.HasNotNullFlag(col.GetType(ctx.GetEvalCtx()).GetFlag()))
+	value, err := result.Eval(ctx.GetEvalCtx(), chunk.MutRowFromValues("42").ToRow())
+	require.NoError(t, err)
+	require.True(t, value.IsNull())
+}
+
+func TestLockFunctionsKeepEveryEvaluation(t *testing.T) {
+	ctx := mock.NewContext()
+	tp := types.NewFieldType(mysql.TypeLonglong)
+	name := &Constant{Value: types.NewStringDatum("lock"), RetType: types.NewFieldType(mysql.TypeVarString)}
+	build := func(funcName string, args ...Expression) Expression {
+		f, err := NewFunctionBase(ctx, funcName, tp, args...)
+		require.NoError(t, err)
+		return f
+	}
+	for _, tc := range []struct {
+		funcName string
+		args     []Expression
+	}{
+		{ast.GetLock, []Expression{name, NewZero()}},
+		{ast.ReleaseLock, []Expression{name}},
+		{ast.ReleaseAllLocks, nil},
+		{ast.IsFreeLock, []Expression{name}},
+		{ast.IsUsedLock, []Expression{name}},
+		// The control: SLEEP is evaluated once per call as well.
+		{ast.Sleep, []Expression{NewZero()}},
+	} {
+		first, second := build(tc.funcName, tc.args...), build(tc.funcName, tc.args...)
+		require.True(t, IsMutableEffectsExpr(first), tc.funcName)
+		// Two calls with the same arguments are two evaluations: the second
+		// GET_LOCK takes the lock again, the second RELEASE_LOCK finds it gone.
+		require.Len(t, RemoveDupExprs([]Expression{first, second}), 2, tc.funcName)
+		_, ok := first.(*ScalarFunction)
+		require.True(t, ok, "%s must not be folded", tc.funcName)
+	}
+	plus := func() Expression { return build(ast.Plus, NewOne(), &Column{UniqueID: 1, RetType: tp}) }
+	require.Len(t, RemoveDupExprs([]Expression{plus(), plus()}), 1)
+}
