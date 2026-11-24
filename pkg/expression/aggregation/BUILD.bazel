@@ -69,7 +69,11 @@ go_test(
     ],
     embed = [":aggregation"],
     flaky = True,
+<<<<<<< HEAD
     shard_count = 16,
+=======
+    shard_count = 25,
+>>>>>>> bcc879cc839 (types: cap the DECIMAL result scale of AVG at 30 (#73633))
     deps = [
         "//pkg/expression",
         "//pkg/kv",
