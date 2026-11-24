@@ -21,7 +21,7 @@ The symbol-level audit of 2026-11-23 (`rust/docs/parity/current-audit/structural
 - [x] (2026-11-25) T23: Go's `Compile` -> `ExecStmt` -> `Exec` split in the session's statement funnel (`dispatch.rs`).
   - [x] (2026-11-25) M1: a query compiles (`driver::compile_query_plan`) before it opens (`open_compiled_query`), each under its own retrieval loop (ffbc81b0afe).
   - [x] (2026-11-25) M2: INSERT / UPDATE / DELETE compile (`compile_insert_plan` -> `CompiledInsert`, `compile_update_plan`, `compile_delete_plan`) before they execute; the build's privilege check is the compile's (15986c152b8).
-- [ ] T24: Go's `ExecStmt.Exec` holds the pessimistic retry over the compiled plan; the Rust statement lifecycle wraps the whole session statement (boundary, compile, execution) per attempt, and `ExecStmt.Exec`'s begin observation is the session's. The compile needs the statement snapshot (a plan's uncorrelated subquery reads data), which the lifecycle binds per attempt.
+- [x] (2026-11-25) T24: a compiled INSERT / UPDATE / DELETE or locking SELECT (`dispatch.rs` `ExecStmt`: `CompiledDml`, `CompiledQuery`, Go's `ExecStmt`) outlives its execution; the lifecycle's pessimistic retry executes it again under a fresh context with the statement's warnings truncated (`exec_compiled_dml_retry`, `open_compiled_query_retry`: Go `handlePessimisticLockError` + `StmtCtx.ResetForRetry`), the retry's statement boundary being the session's `reset_for_retry`; a `session.retry` replay recompiles (Go `RebuildPlan`). `observeStmtBeginForTopProfiling` is `tidb_executor::exec_stmt_observation`'s (one copy; the session had a second, partial one for administrative statements); `SetProcessInfo` is a session method in Go too. Statements that execute while compiling (a cached prepared plan, EXECUTE) still re-run the funnel on a retry.
 - [x] (2026-11-24) T21: Go's preprocessor checks are the walk's (`tidb-planner/src/preprocess.rs`): checkSelectNoopFuncs, checkCreateViewWithSelect, resolveShowStmt, DDL tableByName, checkCreateTableGrammar's LIKE source, and `Preprocess(..., InPrepare)` with handleTableName's pinning; ddl-build, the executor and the session lost their copies. That the walk runs once per compile route rather than once in `Compile` is T10's.
 - [x] (2026-11-24) T14: one writable implicit transaction per autocommit statement (`TxnManager::enter_implicit`), whose activation binds the SQL buffer to the store transaction's MemDB and whose commit is the statement's; the session-level publication (`commit_autocommit_buffer`, `commit_with_schema_lease`) and the activation's second statement staging are gone.
 - [x] (2026-11-24) T01: pipelined DML. The session's `usePipelinedDmlOrWarn` (`PipelinedDmlDecision`, its warnings, BEGIN's included) runs where Go's `PrepareTSFuture` does: at the DML's activation (`update_for_update_ts`), the warm-up being skipped under `tidb_dml_type = bulk` as Go's `txnManager.AdviseWarmup` skips it; the implicit transaction then begins pipelined (`prepare_autocommit_txn`'s `pipelined`, Go `tikv.WithPipelinedTxn`) with `tidb_pipelined_dml_resource_policy`'s `SetSession` config; the SQL buffer binds the pipelined MemDB without a statement staging (Go `initStmtBuf`), write executors call `MayFlush` per batch, `tidb_last_txn_info` reports `pipelined`, the autocommit retry and the mutation checker skip it, and `SetOptionsBeforeCommit`'s invariants are checked. Unistore serves `KvFlush` (Go `MVCCStore.Flush`); the vendored client gained client-go's pipelined failpoints, a union read (buffer tiers then snapshot, Go `KVUnionStore.Get` / `BufferBatchGetter`) and whole client errors from a flush.
@@ -36,6 +36,9 @@ The symbol-level audit of 2026-11-23 (`rust/docs/parity/current-audit/structural
 - Gate 64's panic-recovery retry was a real race: a connection that had already failed could still be cancelled by a starting drain, because it left the drained-clients registry after closing its transport. Go deletes it first (`clientConn.Close`); fixed in `18776e43537`.
 - Go's `planner/util.ByItems` had three Rust copies; one remains (`tidb_expression_aggregation::ByItems`).
 
+- Found while pinning T24 (2026-11-25): Go master `ae5be6915c7` (#72838) matches a hint table name without a database to the table in any database (`indexIsAvailableByHints`, `QBHintHandler.resolveHintDBName`); the Rust ports still resolve it to the current database, so with no current database `use_index(t, nonexist)` on a point read is ignored (no 1176) and a non-point read warns 1815 with an empty database. A parity gap for the next master merge, not a structural one.
+- Go's warnings after a pessimistic retry are only what the execution raised: `StmtCtx.ResetForRetry` truncates them and nothing compiles again, so a compile-time hint warning is gone (Go testkit probe, point UPDATE and SELECT FOR UPDATE). That is what pins T24.
+
 ## Decision Log
 
 - Decision: Go runs `planner/core`'s `init` in every binary that links it; Rust test binaries that reach `BuildSimpleExpr` from a lower crate name `tidb_planner_init::link!()` once at their root (Go's blank import), and `tidb-planner-init` alone allows `unsafe_code` for the init-section static. `tidb-expr`'s own unit tests compile `leave.rs` in place (`extern crate self as tidb_expr`) and install it on first use, as Go's `pkg/expression` test binary links the planner through its external test package. Date: 2026-11-24.
@@ -46,7 +49,7 @@ The symbol-level audit of 2026-11-23 (`rust/docs/parity/current-audit/structural
 
 ## Outcomes & Retrospective
 
-(At completion.)
+(2026-11-25) Every register row is closed: each Go owner the audit named has one Rust owner in the matching layer. T10's split showed the next mismatch each time it closed (the funnel's compile/execute interleaving, T23; the retry loop around the whole statement, T24); recording each as its own row kept every gate to one row. Left: the realtikv re-verification below needs a live cluster.
 
 ## Context and Orientation
 
@@ -54,7 +57,6 @@ T22: `tidb-executor/src/explain.rs` renders plans (`normalize_flat_plan`, `physi
 
 T08: `tidb-expr/src/rewriter.rs` (AST to expression) is used by `tidb-expr`'s own builtins and tests and by ddl, table, ttl and ranger code; Go hooks `expression.BuildSimpleExpr` to the planner's `buildSimpleExpr` in `core_init.go`.
 
-T24: `cluster_session_node/mod.rs` (`run_ordinary_write`), `statement_lifecycle.rs` (`with_bound_statement`), `lib.rs` (`run_with_columns_using`), `dispatch.rs` (the funnel), `observation.rs` (`statement_phase_observer`). A probe (2026-11-25) showed a contended pessimistic UPDATE runs the funnel's compile (`compile_update_plan`) once per attempt; Go re-runs only `buildExecutor`. No Go-observable counter distinguishes the two today: each attempt's fresh statement context restarts plan ids, and a failed attempt's compile is not counted (`successful_compiles`, the compile-duration metric).
 
 T01: `tidb-session/src/txn_manager.rs` (`enter_implicit`, `flush_if_autocommit`), `tidb-session/src/lazy_transaction.rs`, `tidb-domain-core/src/cluster_transactions.rs` (`prepare_autocommit_txn`), the client's pipelined transaction (`tikv-client-rs`, `is_pipelined`).
 
@@ -63,7 +65,6 @@ T14 (2026-11-24). Go enters one `LazyTxn` per autocommit statement (`PrepareTxnC
 ## Plan of Work
 
 2. T08: move the rewriter into `tidb-planner` behind a `BuildSimpleExpr` hook in `tidb-expr`, installed at server start and by each lower crate's tests.
-3. T24: compile once per statement into an `ExecStmt` held across the pessimistic retry, whose loop moves inside the execution (Go `ExecStmt.Exec`), the lifecycle binding the statement snapshot before the compile.
 4. T01 over T14's implicit transaction.
 
 ## Concrete Steps
