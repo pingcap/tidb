@@ -637,11 +637,9 @@ func UpdateJobArgsForTest(job *Job, update func(args []any) []any) {
 func (job *Job) Encode(updateRawArgs bool) ([]byte, error) {
 	var err error
 	if updateRawArgs {
-		if job.args != nil || len(job.RawArgs) == 0 {
-			job.RawArgs, err = marshalArgs(job.Version, job.args)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
+		job.RawArgs, err = marshalArgs(job.Version, job.args)
+		if err != nil {
+			return nil, errors.Trace(err)
 		}
 
 		if job.MultiSchemaInfo != nil {

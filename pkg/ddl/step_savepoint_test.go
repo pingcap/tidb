@@ -16,7 +16,11 @@ package ddl
 
 import (
 	"context"
+	"encoding/hex"
 	"errors"
+	"fmt"
+	"strconv"
+	"strings"
 	"testing"
 
 	ddlmock "github.com/pingcap/tidb/pkg/ddl/mock"
@@ -30,10 +34,50 @@ import (
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/mock"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 	"go.uber.org/zap"
 )
+
+type jobMetaRowContext struct {
+	*mock.Context
+	rows        map[int64][]byte
+	updateCount int
+}
+
+func (c *jobMetaRowContext) GetSQLExecutor() sqlexec.SQLExecutor {
+	return c
+}
+
+func (c *jobMetaRowContext) ExecuteInternal(_ context.Context, query string, _ ...any) (sqlexec.RecordSet, error) {
+	const (
+		prefix = "update mysql.tidb_ddl_job set job_meta = 0x"
+		mid    = " where job_id = "
+	)
+	if !strings.HasPrefix(query, prefix) {
+		return nil, fmt.Errorf("unexpected query: %s", query)
+	}
+	rest := strings.TrimPrefix(query, prefix)
+	hexMeta, idStr, ok := strings.Cut(rest, mid)
+	if !ok {
+		return nil, fmt.Errorf("malformed update query: %s", query)
+	}
+	jobID, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		return nil, err
+	}
+	rawMeta, err := hex.DecodeString(hexMeta)
+	if err != nil {
+		return nil, err
+	}
+	if _, exists := c.rows[jobID]; !exists {
+		return nil, fmt.Errorf("job row %d not found", jobID)
+	}
+	c.rows[jobID] = rawMeta
+	c.updateCount++
+	return nil, nil
+}
 
 func newTestDDLCtx(ctx context.Context, store kv.Storage, ownerMgr owner.Manager) *ddlCtx {
 	d := &ddlCtx{
@@ -455,7 +499,7 @@ func TestApplyStepOutcomeGuards(t *testing.T) {
 		require.False(t, curTxn != nil && curTxn.Valid())
 	})
 
-	t.Run("restored baseline preserves RawArgs even if outcome updateRawArgs is true", func(t *testing.T) {
+	t.Run("restored baseline preserves RawArgs in persisted row even if outcome updateRawArgs is true", func(t *testing.T) {
 		ctx := context.Background()
 		ownerID := "rawargs-owner"
 		ownerMgr := owner.NewMockManager(ctx, ownerID, store, ddlutil.DDLOwnerKey)
@@ -463,15 +507,6 @@ func TestApplyStepOutcomeGuards(t *testing.T) {
 		t.Cleanup(func() {
 			owner.MockGlobalStateEntry.OwnerKey(store.UUID(), ddlutil.DDLOwnerKey).UnsetOwner(ownerID)
 		})
-
-		sessCtx := mock.NewContext()
-		sessCtx.Store = store
-		if sessCtx.GetSessionVars().TxnCtx == nil {
-			sessCtx.GetSessionVars().TxnCtx = &variable.TransactionContext{}
-		}
-		w := newWorker(ctx, generalWorker, nil, nil, newTestDDLCtx(ctx, store, ownerMgr))
-		w.sess = sess.NewSession(sessCtx)
-		t.Cleanup(w.sess.Rollback)
 
 		entryJob := &model.Job{
 			ID:      4,
@@ -484,6 +519,19 @@ func TestApplyStepOutcomeGuards(t *testing.T) {
 		require.NoError(t, err)
 		origRawArgs := append([]byte(nil), entryJob.RawArgs...)
 
+		baseCtx := mock.NewContext()
+		baseCtx.Store = store
+		if baseCtx.GetSessionVars().TxnCtx == nil {
+			baseCtx.GetSessionVars().TxnCtx = &variable.TransactionContext{}
+		}
+		rowCtx := &jobMetaRowContext{
+			Context: baseCtx,
+			rows:    map[int64][]byte{entryJob.ID: append([]byte(nil), entryBytes...)},
+		}
+		w := newWorker(ctx, generalWorker, nil, nil, newTestDDLCtx(ctx, store, ownerMgr))
+		w.sess = sess.NewSession(rowCtx)
+		t.Cleanup(w.sess.Rollback)
+
 		txn, err := w.prepareTxn(entryJob)
 		require.NoError(t, err)
 		jobW := model.NewJobW(entryJob, entryBytes)
@@ -492,22 +540,28 @@ func TestApplyStepOutcomeGuards(t *testing.T) {
 
 		// Mutate post-step job args as if the step overwrote them before failing.
 		jobW.Job.FillArgs(&model.ModifyTableEngineAttributeArgs{EngineAttribute: `{"storage_class":"STANDARD"}`})
-		jobCtx := &jobContext{ctx: ctx, logger: zap.NewNop(), metaMut: meta.NewMutator(txn)}
+		jobCtx := &jobContext{
+			ctx:                  ctx,
+			logger:               zap.NewNop(),
+			metaMut:              meta.NewMutator(txn),
+			schemaVersionManager: &schemaVersionManager{},
+			unSyncedJobTracker:   &unSyncedJobTracker{unSyncedJobs: map[int64]struct{}{}},
+		}
 
-		_, _ = w.applyStepOutcome(jobCtx, jobW, sp, stepOutcome{
+		ver, err := w.applyStepOutcome(jobCtx, jobW, sp, stepOutcome{
 			discardWrites:   true,
 			restoreEntryJob: true,
 			finish:          stepFinishUpdateJob,
 			updateRawArgs:   true,
-			err:             errors.New("step failed"),
 		})
-		require.NotNil(t, jobW.Job)
-		require.Equal(t, string(origRawArgs), string(jobW.Job.RawArgs))
-		_, err = jobW.Job.Encode(true)
 		require.NoError(t, err)
-		require.Equal(t, string(origRawArgs), string(jobW.Job.RawArgs))
+		require.Zero(t, ver)
+		require.Equal(t, 1, rowCtx.updateCount)
 
-		restoredArgs, err := model.GetModifyTableEngineAttributeArgs(jobW.Job)
+		var persisted model.Job
+		require.NoError(t, persisted.Decode(rowCtx.rows[entryJob.ID]))
+		require.Equal(t, string(origRawArgs), string(persisted.RawArgs))
+		restoredArgs, err := model.GetModifyTableEngineAttributeArgs(&persisted)
 		require.NoError(t, err)
 		require.Equal(t, `{"storage_class":"IA"}`, restoredArgs.EngineAttribute)
 	})

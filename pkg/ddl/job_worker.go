@@ -480,7 +480,6 @@ func (w *worker) finishDDLJob(jobCtx *jobContext, job *model.Job, updateRawArgs 
 			// it may be too large that it can not be added to the history queue, so
 			// delete its arguments
 			job.ClearDecodedArgs()
-			job.RawArgs = nil
 			updateRawArgs = true
 		}
 	case model.ActionAlterNoCacheTable:
