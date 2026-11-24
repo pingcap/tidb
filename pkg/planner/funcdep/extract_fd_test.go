@@ -396,6 +396,15 @@ func TestFDSet_MakeOuterJoin(t *testing.T) {
 	tk.MustExec("CREATE UNIQUE INDEX uni ON X (b, c)")
 	tk.MustExec("CREATE TABLE Y (m INT, n INT, p INT, q INT, PRIMARY KEY (m, n) NONCLUSTERED)")
 
+	tk.MustExec("create table l(a int)")
+	tk.MustExec("create table r(b int, c int)")
+	tk.MustExec("insert into l values (1)")
+	tk.MustExec("insert into r values (10, 1), (20, 1)")
+	// The derived table's FD graph contains the constant or computed column,
+	// but neither determines b, which has no FD edge.
+	tk.MustContainErrMsg("select d.b, count(*) from l left join (select b, 1 as c from r) d on true group by l._tidb_rowid", "contains nonaggregated column 'd.b'")
+	tk.MustContainErrMsg("select d.b, count(*) from l left join (select b, c, c+1 as cp from r) d on true group by l._tidb_rowid, d.c", "contains nonaggregated column 'd.b'")
+
 	tests := []struct {
 		sql  string
 		best string
