@@ -709,7 +709,6 @@ impl Session {
         DriverError,
     > {
         self.validate_ddl_preprocess(stmt)?;
-        self.ddl_preprocess_table_names(stmt)?;
         self.build_statement_plan(stmt)
     }
 
@@ -1743,5 +1742,57 @@ impl tidb_planner::preprocess::PreprocessContext for Session {
         self.vars.current_user.as_ref().and_then(|identity| {
             identity.split_once('@').map(|(user, host)| (user.to_owned(), host.to_owned()))
         })
+    }
+
+    fn in_prepare(&self) -> bool {
+        self.in_prepare || self.binary_prepared_execution
+    }
+
+    fn table_by_name(&self, path: &[String], verb: &'static str) -> Result<(), tidb_planner_core_base::PlanError> {
+        use tidb_planner_core_base::PlanError;
+        let (database, name) = tidb_infoschema::split_table_path_pub(path, &self.vars.current_db)
+            .map_err(|_| PlanError::from(tidb_plannererrors::ERR_NO_DB.gen_with_stack_by_args(&[])))?;
+        let (database, name) = (tidb_hack::go_to_lower(database), name.to_owned());
+        // The session's infoschema Go resolves through carries its LOCAL
+        // temporary tables (`AttachLocalTemporaryTableInfoSchema`).
+        if self.is_local_temporary_table(&database, &name) {
+            return Ok(());
+        }
+        let shared = self.lock_catalog().map_err(|error| PlanError::internal(error.to_string()))?;
+        let catalog = self.txn_ctx_stale_catalog().unwrap_or(&*shared);
+        if catalog.table_in(&database, &name).is_some() {
+            return Ok(());
+        }
+        drop(shared);
+        if let Some((_, user, host)) = self.privilege_context() {
+            if !self.has_any_scoped_privilege(&database, &name, tidb_privilege::all_priv_mask()) {
+                return Err(PlanError::from(tidb_plannererrors::ERR_TABLEACCESS_DENIED.gen_with_stack_by_args(&[
+                    verb.into(),
+                    user.to_owned().into(),
+                    host.to_owned().into(),
+                    name.into(),
+                ])));
+            }
+        }
+        Err(PlanError::from(
+            tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
+                .gen_with_stack_by_args(&[(&database).into(), (&name).into()]),
+        ))
+    }
+
+    fn require_table_exists(&self, path: &[String]) -> Result<(), tidb_planner_core_base::PlanError> {
+        use tidb_planner_core_base::PlanError;
+        let (database, name) = tidb_infoschema::split_table_path_pub(path, &self.vars.current_db)
+            .map_err(|_| PlanError::from(tidb_plannererrors::ERR_NO_DB.gen_with_stack_by_args(&[])))?;
+        let shared = self.lock_catalog().map_err(|error| PlanError::internal(error.to_string()))?;
+        let catalog = self.txn_ctx_stale_catalog().unwrap_or(&*shared);
+        if catalog.table_in(database, name).is_some() {
+            Ok(())
+        } else {
+            Err(PlanError::from(
+                tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
+                    .gen_with_stack_by_args(&[database.into(), name.into()]),
+            ))
+        }
     }
 }

@@ -30,7 +30,6 @@ use tidb_driver_error::DriverError;
 use tidb_sessionctx::StmtContext;
 
 use crate::Session;
-use tidb_hack::go_to_lower;
 
 impl Session {
     /// Go `preprocessor.Enter`: inPrepare sets inCreateOrDropTable for
@@ -39,54 +38,6 @@ impl Session {
         (self.in_prepare || self.binary_prepared_execution)
             && matches!(stmt, tidb_ast::Stmt::Ddl(ddl)
                 if matches!(&**ddl, tidb_ast::DdlStmt::AlterTable(_) | tidb_ast::DdlStmt::CreateIndex(_)))
-    }
-
-    /// Go's preprocessor name resolution for a DDL (`tableByName`, masked
-    /// as a privilege error for an account that holds nothing on the table,
-    /// and `checkCreateTableGrammar`'s LIKE source), part of `Compile`: it
-    /// precedes the planner's privilege check
-    /// ([`Session::compile_statement`]).
-    pub(crate) fn ddl_preprocess_table_names(
-        &mut self,
-        stmt: &tidb_ast::Stmt,
-    ) -> Result<(), DriverError> {
-        use tidb_ast::{AlterTableAction, DdlStmt};
-        if self.ddl_names_skipped_in_prepare(stmt) {
-            return Ok(());
-        }
-        let tidb_ast::Stmt::Ddl(ddl) = stmt else {
-            return Ok(());
-        };
-        match ddl.as_ref() {
-            // `resolveAlterTableStmt` sets `inCreateOrDropTable` for a RENAME
-            // or FOREIGN KEY spec, which skips resolution.
-            DdlStmt::AlterTable(alter)
-                if !alter.actions.iter().any(|action| {
-                    matches!(
-                        action,
-                        AlterTableAction::RenameTable { .. } | AlterTableAction::AddForeignKey(_)
-                    )
-                }) =>
-            {
-                self.preprocess_table_by_name(&alter.name, "ALTER")?;
-            }
-            // `stmtType()`: CREATE INDEX is TypeCreate; DROP INDEX and
-            // TRUNCATE fall to its default, "SELECT".
-            DdlStmt::CreateIndex(create) => {
-                self.preprocess_table_by_name(&create.table, "CREATE")?
-            }
-            DdlStmt::DropIndex(drop) => self.preprocess_table_by_name(&drop.table, "SELECT")?,
-            DdlStmt::TruncateTable(path) => self.preprocess_table_by_name(path, "SELECT")?,
-            // `checkCreateTableGrammar` resolves the LIKE source with no
-            // privilege masking.
-            DdlStmt::CreateTable(create) => {
-                if let Some(like) = &create.like_table {
-                    self.require_table_exists(like)?;
-                }
-            }
-            _ => {}
-        }
-        Ok(())
     }
 
     /// The executor's target checks Go makes before a DDL is built into a
@@ -148,45 +99,6 @@ impl Session {
             _ => {}
         }
         Ok(())
-    }
-
-    /// Go `preprocessor.tableByName`: 1046 without a schema; a missing table
-    /// is 1146, unless the account holds no privilege at all on it, which
-    /// answers 1142 naming the statement type and the table as written so a
-    /// stranger cannot probe which tables exist.
-    fn preprocess_table_by_name(
-        &mut self,
-        path: &[String],
-        verb: &'static str,
-    ) -> Result<(), DriverError> {
-        let current_db = self.vars.current_db.clone();
-        let (database, name) = tidb_infoschema::split_table_path_pub(path, &current_db)?;
-        let (database, name) = (go_to_lower(database), name.to_owned());
-        // The session's infoschema Go resolves through carries its LOCAL
-        // temporary tables (`AttachLocalTemporaryTableInfoSchema`).
-        let exists = self.is_local_temporary_table(&database, &name)
-            || self.with_catalog_mut(|catalog| Ok(catalog.table_in(&database, &name).is_some()))?;
-        if exists {
-            return Ok(());
-        }
-        if let Some((_, user, host)) = self.privilege_context() {
-            if !self.has_any_scoped_privilege(&database, &name, tidb_privilege::all_priv_mask()) {
-                return Err(DriverError::from(
-                    tidb_plannererrors::ERR_TABLEACCESS_DENIED.gen_with_stack_by_args(
-                        &[
-                            verb.into(),
-                            user.to_owned().into(),
-                            host.to_owned().into(),
-                            name.into(),
-                        ],
-                    ),
-                ));
-            }
-        }
-        Err(DriverError::from(
-            tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
-                .gen_with_stack_by_args(&[(&database).into(), (&name).into()]),
-        ))
     }
 
     /// Go's preprocessor name resolution for one table reference: no current

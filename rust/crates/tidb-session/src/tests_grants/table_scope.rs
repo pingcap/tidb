@@ -673,7 +673,17 @@ fn ddl_visit_batch_partition_and_fk_visits_follow_go_order() {
         AlterPriv as Alter, CreatePriv as Create, DropPriv as Drop, InsertPriv as Insert,
         ReferencesPriv as References,
     };
-    let session = Session::new();
+    let mut session = Session::new();
+    // Go's preprocessor resolves an ALTER TABLE's target (`tableByName`)
+    // before the planner collects the visits, so the targets exist.
+    for sql in [
+        "CREATE DATABASE other",
+        "CREATE TABLE t (a INT PRIMARY KEY)",
+        "CREATE TABLE u (a INT)",
+        "CREATE TABLE other.u (a INT)",
+    ] {
+        session.run(sql).unwrap();
+    }
     let cases = [
         // Go `buildDDL` (`planbuilder.go:5324`) visits the exchanged table
         // under the ALTER table's schema (`dbName`), not `spec.NewTable`'s.

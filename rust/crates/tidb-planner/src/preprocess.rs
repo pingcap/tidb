@@ -111,6 +111,24 @@ pub trait PreprocessContext {
     /// Go `SessionVars.User.AuthUsername` / `AuthHostname`, which a SHOW's
     /// `CURRENT_USER` becomes.
     fn auth_user(&self) -> Option<(String, String)>;
+    /// Go `preprocessor`'s `inPrepare` flag: a PREPARE (or a binary-protocol
+    /// execution) is being preprocessed.
+    fn in_prepare(&self) -> bool;
+    /// Go `preprocessor.tableByName` for a DDL target: 1046 without a
+    /// schema; a missing table is 1146, unless the account holds no
+    /// privilege at all on it, which answers 1142 naming `verb`.
+    ///
+    /// # Errors
+    ///
+    /// The lookup's refusal.
+    fn table_by_name(&self, path: &[String], verb: &'static str) -> Result<(), PlanError>;
+    /// Go `checkCreateTableGrammar`'s LIKE source: 1046 without a schema,
+    /// 1146 when the table is missing.
+    ///
+    /// # Errors
+    ///
+    /// The lookup's refusal.
+    fn require_table_exists(&self, path: &[String]) -> Result<(), PlanError>;
 }
 
 /// Go `PreprocessorReturn` and what the walk learns for its callers.
@@ -165,6 +183,42 @@ struct Preprocessor<'a> {
 }
 
 impl Preprocessor<'_> {
+    /// Go `handleTableName` / `tableByName` over a DDL's target table (and
+    /// `checkCreateTableGrammar`'s LIKE source, resolved without privilege
+    /// masking). At PREPARE, ALTER TABLE and CREATE INDEX set
+    /// `inCreateOrDropTable`, which skips the resolution; ALTER TABLE does too
+    /// for a RENAME or FOREIGN KEY spec (`resolveAlterTableStmt`).
+    fn ddl_table_names(&self, ddl: &tidb_ast::DdlStmt) -> Result<(), PlanError> {
+        use tidb_ast::{AlterTableAction, DdlStmt};
+        let prepare_skips = self.ctx.in_prepare();
+        match ddl {
+            DdlStmt::AlterTable(alter)
+                if !prepare_skips
+                    && !alter.actions.iter().any(|action| {
+                        matches!(
+                            action,
+                            AlterTableAction::RenameTable { .. }
+                                | AlterTableAction::AddForeignKey(_)
+                        )
+                    }) =>
+            {
+                self.ctx.table_by_name(&alter.name, "ALTER")
+            }
+            // `stmtType()`: CREATE INDEX is TypeCreate; DROP INDEX and
+            // TRUNCATE fall to its default, "SELECT".
+            DdlStmt::CreateIndex(create) if !prepare_skips => {
+                self.ctx.table_by_name(&create.table, "CREATE")
+            }
+            DdlStmt::DropIndex(drop) => self.ctx.table_by_name(&drop.table, "SELECT"),
+            DdlStmt::TruncateTable(path) => self.ctx.table_by_name(path, "SELECT"),
+            DdlStmt::CreateTable(create) => match &create.like_table {
+                Some(like) => self.ctx.require_table_exists(like),
+                None => Ok(()),
+            },
+            _ => Ok(()),
+        }
+    }
+
     /// Go `checkSelectNoopFuncs` (and `checkGroupBy`'s ASC/DESC) over one
     /// SELECT: a clause TiDB parses but only implements as a no-op is an
     /// error under `tidb_enable_noop_functions = OFF` and a warning under
@@ -340,7 +394,9 @@ impl Visitor for Preprocessor<'_> {
             self.stmt_tp = StmtType::Show;
             // Go `resolveShowStmt`.
             let auth_user = self.ctx.auth_user();
-            let auth_user = auth_user.as_ref().map(|(user, host)| (user.as_str(), host.as_str()));
+            let auth_user = auth_user
+                .as_ref()
+                .map(|(user, host)| (user.as_str(), host.as_str()));
             if let Err(error) = resolve_show_stmt(show, self.ctx.current_db(), auth_user) {
                 self.err = Some(error);
             }
@@ -351,6 +407,11 @@ impl Visitor for Preprocessor<'_> {
                 // Go `checkCreateViewWithSelectGrammar`, before the walk
                 // reaches the body's SELECTs.
                 if let Err(error) = check_create_view_with_select(&mut create.query) {
+                    self.err = Some(error);
+                }
+            }
+            if self.err.is_none() {
+                if let Err(error) = self.ddl_table_names(ddl) {
                     self.err = Some(error);
                 }
             }
@@ -1873,6 +1934,15 @@ mod preprocessor_tests {
         }
         fn auth_user(&self) -> Option<(String, String)> {
             None
+        }
+        fn in_prepare(&self) -> bool {
+            false
+        }
+        fn table_by_name(&self, _path: &[String], _verb: &'static str) -> Result<(), PlanError> {
+            Ok(())
+        }
+        fn require_table_exists(&self, _path: &[String]) -> Result<(), PlanError> {
+            Ok(())
         }
     }
 
