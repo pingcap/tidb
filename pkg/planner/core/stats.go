@@ -269,7 +269,6 @@ func scaleCorColCountAfterAccess(path *util.AccessPath, countBeforeSplit float64
 func deriveIndexPathStats(ds *logicalop.DataSource, path *util.AccessPath, _ []expression.Expression, isIm bool) {
 	if path.EqOrInCondCount == len(path.AccessConds) {
 		accesses, remained := path.SplitCorColAccessCondFromFilters(ds.SCtx(), path.EqOrInCondCount)
-		path.CorrelatedAccessColCount = len(accesses)
 		path.AccessConds = append(path.AccessConds, accesses...)
 		path.TableFilters = remained
 		countBeforeSplit := path.CountAfterAccess
@@ -453,7 +452,6 @@ func detachCondAndBuildRangeForPath(
 	conds []expression.Expression,
 	histColl *statistics.HistColl,
 ) error {
-	path.CorrelatedAccessColCount = 0
 	if len(path.IdxCols) == 0 {
 		path.TableFilters = conds
 		return nil

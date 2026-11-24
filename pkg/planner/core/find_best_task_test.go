@@ -403,9 +403,13 @@ func testMissingStatsIndexVsFullScan(t *testing.T) {
 
 	// An unanalyzed index can use loaded column statistics even when expression IDs
 	// differ from the column IDs in the table statistics.
-	stats.HistColl = *statistics.NewHistColl(1, 1000, 0, 2, 0)
+	stats.HistColl = *statistics.NewHistColl(1, 1000, 0, 3, 0)
 	fieldType := types.NewFieldType(mysql.TypeLonglong)
-	idx.path.IdxCols = []*expression.Column{{ID: 10, UniqueID: 1, RetType: fieldType}, {ID: 20, UniqueID: 2, RetType: fieldType}}
+	idx.path.IdxCols = []*expression.Column{
+		{ID: 10, UniqueID: 1, RetType: fieldType},
+		{ID: 20, UniqueID: 2, RetType: fieldType},
+		{ID: 30, UniqueID: 3, RetType: fieldType},
+	}
 	for _, col := range idx.path.IdxCols {
 		stats.ColAndIdxExistenceMap.InsertCol(col.ID, true)
 		stats.SetCol(col.ID, &statistics.Column{
@@ -432,34 +436,48 @@ func testMissingStatsIndexVsFullScan(t *testing.T) {
 	require.Equal(t, 1, result)
 	require.True(t, missingStats)
 
-	// Only a is ranged at plan time. The correlated b condition uses its retained NDV.
-	idx.path.Index.Columns = []*model.IndexColumn{{}, {}}
+	// With a = 1, b = outer.b and c = 1, only the a range is known at planning
+	// time. Both b and c use NDV after deriveIndexPathStats appends their predicates.
+	planCtx := ctx.GetPlanCtx()
+	eq := func(col, val expression.Expression) expression.Expression {
+		return expression.NewFunctionInternal(planCtx.GetExprCtx(), ast.EQ, types.NewFieldType(mysql.TypeTiny), col, val)
+	}
+	cols := idx.path.IdxCols
+	idx.path.Index.Columns = []*model.IndexColumn{{}, {}, {}}
+	idx.path.IdxColLens = []int{types.UnspecifiedLength, types.UnspecifiedLength, types.UnspecifiedLength}
+	idx.path.FullIdxCols, idx.path.FullIdxColLens = cols, idx.path.IdxColLens
 	idx.path.EqOrInCondCount = 1
-	idx.path.CorrelatedAccessColCount = 1
-	idx.indexCondsColMap = map[int64]int{1: -1, 2: -1}
-	idx.eqOrInCount = 1
-	result, missingStats = compareCandidates(ctx.GetPlanCtx(), stats, prop, idx, tbl)
-	require.Zero(t, result)
-	require.False(t, missingStats)
-
-	// The IndexJoin candidate adds b as a runtime join key while retaining a's static range.
-	idx.path.CorrelatedAccessColCount = 0
-	idx.path.IdxColLens = []int{types.UnspecifiedLength, types.UnspecifiedLength}
-	idx.path.FullIdxCols, idx.path.FullIdxColLens = idx.path.IdxCols, idx.path.IdxColLens
-	idx.path.AccessConds = []expression.Expression{expression.NewFunctionInternal(
-		ctx.GetPlanCtx().GetExprCtx(), ast.EQ, types.NewFieldType(mysql.TypeTiny), idx.path.IdxCols[0], expression.NewOne(),
-	)}
+	idx.path.AccessConds = []expression.Expression{eq(cols[0], expression.NewOne())}
+	outerValue := types.NewIntDatum(1)
+	outer := &expression.CorrelatedColumn{
+		Column: expression.Column{UniqueID: 4, RetType: fieldType}, Data: &outerValue,
+	}
+	idx.path.TableFilters = []expression.Expression{eq(cols[1], outer), eq(cols[2], expression.NewOne())}
 	idx.path.Ranges = ranger.Ranges{{
 		LowVal: []types.Datum{types.NewIntDatum(1)}, HighVal: []types.Datum{types.NewIntDatum(1)},
 	}}
-	join := getIndexCandidateForIndexJoin(ctx.GetPlanCtx(), idx.path, 2, []int{-1, 0}, 10, true)
-	result, missingStats = compareCandidates(ctx.GetPlanCtx(), stats, prop, join, tbl)
+	stats.GetCol(30).DropUnnecessaryData()
+	ds := logicalop.DataSource{StatisticTable: stats}.Init(planCtx, 0)
+	deriveIndexPathStats(ds, idx.path, nil, true)
+	require.Len(t, idx.path.AccessConds, 3)
+	idx.accessCondsColMap = util.ExtractCol2Len(planCtx.GetExprCtx().GetEvalCtx(), idx.path.AccessConds, cols, idx.path.IdxColLens)
+	idx.indexCondsColMap = idx.accessCondsColMap
+	idx.eqOrInCount = 1
+	result, missingStats = compareCandidates(planCtx, stats, prop, idx, tbl)
 	require.Zero(t, result)
 	require.False(t, missingStats)
 
-	// Without initialized NDV, the runtime adjustment can no longer use column statistics.
-	stats.SetCol(20, nil)
-	result, missingStats = compareCandidates(ctx.GetPlanCtx(), stats, prop, join, tbl)
+	// A missing NDV makes the ordinary access estimate rely on pseudo statistics.
+	stats.SetCol(30, nil)
+	result, missingStats = compareCandidates(planCtx, stats, prop, idx, tbl)
 	require.Equal(t, 1, result)
 	require.True(t, missingStats)
+
+	// IndexJoin's lookup template keeps the analyzed-column heuristic, even if
+	// an access column is absent from the static range or its histogram was evicted.
+	idx.path.AccessConds = idx.path.AccessConds[:1]
+	join := getIndexCandidateForIndexJoin(planCtx, idx.path, 3, 10, true)
+	require.True(t, hasStatsForEstimation(planCtx, join, stats))
+	stats.ColAndIdxExistenceMap.InsertCol(30, false)
+	require.False(t, hasStatsForEstimation(planCtx, join, stats))
 }

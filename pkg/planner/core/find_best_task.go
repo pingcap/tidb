@@ -793,7 +793,6 @@ type candidatePath struct {
 	// Length equals len(path.PartialIndexPaths). Only set for IndexMerge paths.
 	partialPathMatchResults      []indexMergePathMatch
 	indexJoinCols                int     // how many index columns are used in access conditions in this IndexJoin.
-	indexJoinRuntimeCols         []int64 // join keys without a static access condition, by column unique ID.
 	countAfterAccess4IndexJoin   float64 // adjusted CountAfterAccess used only by index join candidate comparison.
 	countAfterAccess4IndexJoinOK bool    // whether countAfterAccess4IndexJoin is stable enough for skyline pruning.
 	isFullRange                  bool    // cached result of whether this path covers the full scan range.
@@ -1016,36 +1015,45 @@ func isCandidatesPseudo(sctx base.PlanContext, lhs, rhs *candidatePath, statsTbl
 	return lhsPseudo, rhsPseudo
 }
 
-// hasStatsForEstimation returns true if the index of the candidate has statistics, or if every column
-// referenced by its access conditions has statistics. In the latter case, the row count of the index
-// is estimated from the column statistics (using exponential backoff for multiple columns), so the
-// candidate can be compared on its estimates rather than on the missing-statistics heuristics.
+// hasStatsForEstimation reports whether the candidate has index statistics or can be
+// compared using column statistics. IndexJoin retains the analyzed-column heuristic for
+// its lookup templates, which can bind columns absent from the static range estimate.
 func hasStatsForEstimation(sctx base.PlanContext, c *candidatePath, statsTbl *statistics.Table) bool {
 	if statsTbl.ColAndIdxExistenceMap.HasAnalyzed(c.path.Index.ID, true) {
 		return true
 	}
-	if len(c.accessCondsColMap) == 0 || statsTbl.Pseudo {
+	if len(c.accessCondsColMap) == 0 {
 		return false
 	}
 	// Estimation can request stats loading. Skyline only inspects the snapshot.
 	histColl := statsTbl.HistColl
 	histColl.CanNotTriggerLoad = true
-	firstCorrelatedCol := c.path.EqOrInCondCount
-	endCorrelatedCol := firstCorrelatedCol + c.path.CorrelatedAccessColCount
+	// deriveIndexPathStats appends runtime conditions after the static EQ/IN
+	// prefix. SplitCorColAccessCondFromFilters requires the first appended
+	// condition to be correlated. The whole suffix, including any following
+	// equalities to constants, is estimated using NDV.
+	firstRuntimeCol := c.path.EqOrInCondCount
+	accessConds := c.path.AccessConds
+	hasRuntimeSuffix := firstRuntimeCol < len(accessConds) && accessConds[firstRuntimeCol].IsCorrelated()
 	found := 0
 	for i, col := range c.path.IdxCols {
 		if _, ok := c.accessCondsColMap[col.UniqueID]; !ok {
 			continue
 		}
-		colStats := statsTbl.GetCol(col.ID)
-		indexJoinRuntimeCol := slices.Contains(c.indexJoinRuntimeCols, col.UniqueID)
-		if (i >= firstCorrelatedCol && i < endCorrelatedCol) || indexJoinRuntimeCol {
-			// Runtime access conditions use NDV, which can survive histogram eviction.
-			if colStats == nil || !colStats.IsStatsInitialized() || (indexJoinRuntimeCol && colStats.NDV <= 0) {
+		switch {
+		case c.indexJoinCols > 0:
+			if !statsTbl.ColAndIdxExistenceMap.HasAnalyzed(col.ID, false) {
 				return false
 			}
-		} else if statistics.ColumnStatsIsInvalid(colStats, sctx, &histColl, col.ID) {
-			return false
+		case hasRuntimeSuffix && i >= firstRuntimeCol && i < len(accessConds):
+			colStats := statsTbl.GetCol(col.ID)
+			if statsTbl.Pseudo || colStats == nil || !colStats.IsStatsInitialized() {
+				return false
+			}
+		default:
+			if statistics.ColumnStatsIsInvalid(statsTbl.GetCol(col.ID), sctx, &histColl, col.ID) {
+				return false
+			}
 		}
 		found++
 	}
@@ -2002,14 +2010,7 @@ func indexHasAnalyzedStats(ds *logicalop.DataSource, path *util.AccessPath) bool
 	return idx != nil && idx.IsAnalyzed()
 }
 
-func getIndexCandidateForIndexJoin(
-	sctx planctx.PlanContext,
-	path *util.AccessPath,
-	indexJoinCols int,
-	idxOff2KeyOff []int,
-	countAfterAccess4IndexJoin float64,
-	countAfterAccess4IndexJoinOK bool,
-) *candidatePath {
+func getIndexCandidateForIndexJoin(sctx planctx.PlanContext, path *util.AccessPath, indexJoinCols int, countAfterAccess4IndexJoin float64, countAfterAccess4IndexJoinOK bool) *candidatePath {
 	candidate := &candidatePath{
 		path:                         path,
 		indexJoinCols:                indexJoinCols,
@@ -2023,12 +2024,8 @@ func getIndexCandidateForIndexJoin(
 	// For example, `where t1.a=t2.a and t2.b=1`, `t1=a=t2.a` is not pushed down to t2's accessConds since it's a join
 	// predicate. We need to set columns used as join keys to accessCondsColMap/indexCondsColMap manually.
 	for i := range indexJoinCols {
-		colID := path.IdxCols[i].UniqueID
-		if _, ok := candidate.accessCondsColMap[colID]; !ok && i < len(idxOff2KeyOff) && idxOff2KeyOff[i] >= 0 {
-			candidate.indexJoinRuntimeCols = append(candidate.indexJoinRuntimeCols, colID)
-		}
-		candidate.accessCondsColMap[colID] = path.IdxColLens[i]
-		candidate.indexCondsColMap[colID] = path.IdxColLens[i]
+		candidate.accessCondsColMap[path.IdxCols[i].UniqueID] = path.IdxColLens[i]
+		candidate.indexCondsColMap[path.IdxCols[i].UniqueID] = path.IdxColLens[i]
 	}
 	candidate.isFullRange = ranger.HasFullRange(path.Ranges, false)
 	candidate.eqOrInCount = candidate.equalPredicateCount()
