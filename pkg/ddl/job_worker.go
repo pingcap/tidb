@@ -101,7 +101,9 @@ type jobContext struct {
 	stepCtx              context.Context
 	stepCtxCancel        context.CancelCauseFunc
 	reorgTimeoutOccurred bool
-	inInnerRunOneJobStep bool // Only used for multi-schema change DDL job.
+	// A failed read-only metadata step must discard all writes before saving job progress.
+	mustRollbackTxnOnError bool
+	inInnerRunOneJobStep   bool // Only used for multi-schema change DDL job.
 
 	metaMut *meta.Mutator
 	// decoded JobArgs, we store it here to avoid decoding it multiple times and
@@ -585,6 +587,7 @@ func (w *worker) transitOneJobStep(
 ) (int64, error) {
 	failpoint.InjectCall("beforeTransitOneJobStep", jobW)
 	job := jobW.Job
+	jobCtx.mustRollbackTxnOnError = false
 	txn, err := w.prepareTxn(job)
 	if err != nil {
 		return 0, err
@@ -638,7 +641,7 @@ func (w *worker) transitOneJobStep(
 
 	failpoint.InjectCall("onJobRunAfter", job)
 
-	if job.IsCancelled() {
+	if job.IsCancelled() && !jobCtx.mustRollbackTxnOnError {
 		defer jobCtx.unlockSchemaVersion(job.ID)
 		if err := w.resetFailedJobStep(jobCtx, jobW); err != nil {
 			return 0, err
@@ -651,11 +654,11 @@ func (w *worker) transitOneJobStep(
 		return 0, err
 	}
 
-	if (runJobErr != nil && !job.IsRollingback() && !job.IsRollbackDone()) ||
+	if ((runJobErr != nil || job.IsCancelled()) && jobCtx.mustRollbackTxnOnError) ||
+		(runJobErr != nil && !job.IsRollingback() && !job.IsRollbackDone()) ||
 		(w.maskingPolicyTxn && (runJobErr != nil || w.maskingPolicyStepRestored || job.IsCancelling() || job.IsRollingback() && !wasRollingback)) {
 		// Preserve the existing rollback behavior for other DDLs, but discard
-		// the entire transaction if policy SQL may have flushed partial writes.
-
+		// the entire transaction for failed read-only metadata steps or policy SQL.
 		if err := w.resetFailedJobStep(jobCtx, jobW); err != nil {
 			jobCtx.unlockSchemaVersion(job.ID)
 			return 0, err
@@ -706,7 +709,7 @@ func (w *worker) transitOneJobStep(
 // Recheck the persisted job after restarting so concurrent cancellation or an
 // owner change cannot be overwritten by the failed step's bookkeeping.
 func (w *worker) resetFailedJobStep(jobCtx *jobContext, jobW *model.JobW) error {
-	if !w.maskingPolicyTxn {
+	if !w.maskingPolicyTxn && !jobCtx.mustRollbackTxnOnError {
 		w.sess.Reset()
 		return nil
 	}
@@ -765,7 +768,7 @@ func chooseLeaseTime(t, maxv time.Duration) time.Duration {
 // countForPanic records the error count for DDL job.
 func (w *worker) countForPanic(jobCtx *jobContext, job *model.Job) {
 	// If run DDL job panic, just cancel the DDL jobs.
-	if job.State == model.JobStateRollingback {
+	if job.State == model.JobStateRollingback && !needsSchemaReadOnlyRollback(job) {
 		job.State = model.JobStateCancelled
 	} else {
 		job.State = model.JobStateCancelling
@@ -779,7 +782,7 @@ func (w *worker) countForPanic(jobCtx *jobContext, job *model.Job) {
 	}
 	errorCount := variable.GetDDLErrorCountLimit()
 
-	if job.ErrorCount > errorCount {
+	if job.ErrorCount > errorCount && !needsSchemaReadOnlyRollback(job) {
 		msg := fmt.Sprintf("panic in handling DDL logic and error count beyond the limitation %d, cancelled", errorCount)
 		logger.Warn(msg)
 		job.Error = toTError(errors.New(msg))
@@ -854,6 +857,7 @@ func (w *worker) runOneJobStep(
 ) (ver int64, updateRawArgs bool, err error) {
 	defer tidbutil.Recover(metrics.LabelDDLWorker, fmt.Sprintf("%s runOneJobStep", w),
 		func() {
+			err = errors.New("panic in handling DDL job")
 			w.countForPanic(jobCtx, job)
 		}, false)
 
@@ -900,7 +904,15 @@ func (w *worker) runOneJobStep(
 		jobCtx.stepCtx = w.workCtx
 	} else {
 		job.State = model.JobStateRunning
-
+		if job.CheckSchemaReadOnly {
+			if err := checkSchemaReadOnlyBeforeJob(jobCtx, job); err != nil {
+				if infoschema.ErrSchemaInReadOnlyMode.Equal(err) {
+					job.State = model.JobStateCancelled
+				}
+				return ver, false, w.countForError(jobCtx, job, err)
+			}
+			job.CheckSchemaReadOnly = false
+		}
 		if jobCtx.shouldPollDDLJob() {
 			failpoint.InjectCall("beforePollDDLJob")
 			stopCheckingJobCancelled := make(chan struct{})
@@ -1103,6 +1115,8 @@ func (w *worker) runOneJobStep(
 		ver, err = onRefreshMeta(jobCtx, job)
 	case model.ActionAlterTableAffinity:
 		ver, err = onAlterTableAffinity(jobCtx, job)
+	case model.ActionModifySchemaReadOnly:
+		ver, err = w.onModifySchemaReadOnly(jobCtx, job)
 	default:
 		// Invalid job, cancel it.
 		job.State = model.JobStateCancelled

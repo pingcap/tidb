@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/bindinfo/norm"
 	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -278,7 +277,7 @@ func NewPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt) (key, binding
 		// In Rc or ForUpdateRead, we should check if the information schema has been changed since
 		// last time. If it changed, we should rebuild the plan. Here, we use a different and more
 		// up-to-date schema version which can lead plan cache miss and thus, the plan will be rebuilt.
-		latestSchemaVersion = domain.GetDomain(sctx).InfoSchema().SchemaMetaVersion()
+		latestSchemaVersion = sctx.GetDomainInfoSchema().SchemaMetaVersion()
 	}
 
 	// rebuild key to exclude kv.TiFlash when stmt is not read only
@@ -565,6 +564,16 @@ type PointGetExecutorCache struct {
 	Executor any
 }
 
+// schemaReadOnlyTargetState tells whether a statement may need a database
+// read-only check on each execution.
+type schemaReadOnlyTargetState uint8
+
+const (
+	schemaReadOnlyTargetUnknown schemaReadOnlyTargetState = iota
+	schemaReadOnlyTargetAbsent
+	schemaReadOnlyTargetPresent
+)
+
 // PlanCacheStmt store prepared ast from PrepareExec and other related fields
 type PlanCacheStmt struct {
 	PreparedAst *ast.Prepared
@@ -589,7 +598,10 @@ type PlanCacheStmt struct {
 
 	limits      []*ast.Limit
 	hasSubquery bool
-	tables      []table.Table // to capture table stats changes
+	// schemaReadOnlyTarget caches whether the statement has a node that may
+	// need a database read-only check. It depends only on the statement.
+	schemaReadOnlyTarget schemaReadOnlyTargetState
+	tables               []table.Table // to capture table stats changes
 
 	NormalizedSQL       string
 	NormalizedPlan      string

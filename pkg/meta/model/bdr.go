@@ -92,6 +92,7 @@ var BDRActionMap = map[DDLBDRType][]ActionType{
 		ActionAlterTablePartitionAttributes,
 		ActionAlterTablePartitionPlacement,
 		ActionModifySchemaDefaultPlacement,
+		ActionModifySchemaReadOnly,
 		ActionAlterTablePlacement,
 		ActionAlterCacheTable,
 		ActionAlterTableStatsOptions,

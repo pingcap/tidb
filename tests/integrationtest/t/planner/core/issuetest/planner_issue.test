@@ -483,7 +483,11 @@ PARTITION BY RANGE (`col_18`)
  PARTITION `p2` VALUES LESS THAN (56927));
 INSERT INTO `tceb7972c` VALUES(NULL,32768,3820.5208),('[2978991857918245466, 2358633058135455779]',14958,9050.871),('[3209216649516490663, 8796285761077563704, 8679842102776923655, 7938639730493564777]',50028,5950.6714),('[1835017567976206479, 2]',25510,6779.271),('[7771897049175925887, 1, 5907722896328501457, 2218303279528464844, 4106409123325473016]',56899,9767.853),('[7839602274985524695, 4773627824242235154, 5873227109465605544, 4833046260666832936]',33174,3820.5208);
 
-analyze table tceb7972c;
+# Collect JSON stats explicitly so EXPLAIN does not depend on whether an empty
+# stats object was initialized for this otherwise skipped column.
+set @previous_analyze_skip_column_types = @@tidb_analyze_skip_column_types;
+set tidb_analyze_skip_column_types = '';
+analyze table tceb7972c all columns;
 explain SELECT 1
 FROM (
     SELECT /*+ USE_INDEX_MERGE(tceb7972c t61a85298)*/ tceb7972c.col_17 AS col_60767
@@ -492,6 +496,7 @@ FROM (
 ) AS derived_table
 WHERE 16739493649928310215 MEMBER OF (derived_table.col_60767)
    OR NOT (JSON_CONTAINS(derived_table.col_60767, '6019730272580550835'));
+set tidb_analyze_skip_column_types = @previous_analyze_skip_column_types;
 
 # TestIssue53766
 drop table if exists t0, t1;

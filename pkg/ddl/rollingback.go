@@ -660,6 +660,8 @@ func convertJob2RollbackJob(w *worker, jobCtx *jobContext, job *model.Job) (ver 
 		ver, err = rollingBackDropConstraint(jobCtx, job)
 	case model.ActionAlterCheckConstraint:
 		ver, err = rollingBackAlterConstraint(jobCtx, job)
+	case model.ActionModifySchemaReadOnly:
+		ver, err = rollbackModifySchemaReadOnly(jobCtx, job)
 	default:
 		job.State = model.JobStateCancelled
 		err = dbterror.ErrCancelledDDLJob
@@ -688,7 +690,9 @@ func convertJob2RollbackJob(w *worker, jobCtx *jobContext, job *model.Job) (ver 
 				logger.Error("load DDL global variable failed", zap.Error(err1))
 			}
 			errorCount := variable.GetDDLErrorCountLimit()
-			if job.ErrorCount > errorCount {
+			// Once the read-only flag was published, recovery must finish before
+			// the job can enter a terminal state, even after repeated failures.
+			if job.ErrorCount > errorCount && !needsSchemaReadOnlyRollback(job) {
 				logger.Warn("rollback DDL job error count exceed the limit, cancelled it now", zap.Int64("errorCountLimit", errorCount))
 				job.Error = toTError(errors.Errorf("rollback DDL job error count exceed the limit %d, cancelled it now", errorCount))
 				job.State = model.JobStateCancelled
@@ -766,4 +770,39 @@ func rollingBackAlterConstraint(jobCtx *jobContext, job *model.Job) (ver int64, 
 	}
 	ver, err = updateVersionAndTableInfoWithCheck(jobCtx, job, tblInfo, true)
 	return ver, errors.Trace(err)
+}
+
+func needsSchemaReadOnlyRollback(job *model.Job) bool {
+	return job.Type == model.ActionModifySchemaReadOnly && job.SchemaState == model.StatePendingReadOnly
+}
+
+func rollbackModifySchemaReadOnly(jobCtx *jobContext, job *model.Job) (ver int64, err error) {
+	jobCtx.mustRollbackTxnOnError = true
+	// The execution path records progress before writing database metadata.
+	// A cancelled queued job must not undo a preceding job's successful change.
+	if job.SchemaState == model.StateNone {
+		job.State = model.JobStateCancelled
+		return ver, dbterror.ErrCancelledDDLJob
+	}
+	dbInfo, err := jobCtx.metaMut.GetDatabase(job.SchemaID)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	args, err := model.GetModifySchemaArgs(job)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	dbInfo.ReadOnly = !args.ReadOnly
+	if err = jobCtx.metaMut.UpdateDatabase(dbInfo); err != nil {
+		return ver, errors.Trace(err)
+	}
+	if ver, err = updateSchemaVersion(jobCtx, job); err != nil {
+		return ver, errors.Trace(err)
+	}
+	job.State = model.JobStateRollbackDone
+	job.SchemaState = model.StateNone
+	if job.Error == nil {
+		job.Error = toTError(dbterror.ErrCancelledDDLJob)
+	}
+	return ver, nil
 }
