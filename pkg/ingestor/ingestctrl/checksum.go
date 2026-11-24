@@ -286,6 +286,9 @@ type TiKVChecksumManager struct {
 	backoffWeight          int
 	resourceGroupName      string
 	requestSource          tikvutil.RequestSource
+	// tikvClientReadTimeoutMs is an optional per-request coprocessor read
+	// deadline (ms) for affinity tables; 0 keeps the global default.
+	tikvClientReadTimeoutMs uint64
 }
 
 var _ ChecksumManager = &TiKVChecksumManager{}
@@ -320,12 +323,20 @@ func NewTiKVChecksumManagerForImportInto(store kv.Storage, taskID int64, distSQL
 	}
 }
 
+// SetTiKVClientReadTimeout sets an optional per-request coprocessor read
+// deadline (ms) for checksumming tables whose affinity regions may exceed
+// the global copr-req-timeout; 0 keeps the default.
+func (e *TiKVChecksumManager) SetTiKVClientReadTimeout(ms uint64) {
+	e.tikvClientReadTimeoutMs = ms
+}
+
 func (e *TiKVChecksumManager) checksumDB(ctx context.Context, tableInfo *importdef.TableInfo, ts uint64) (*RemoteChecksum, error) {
 	executor, err := checksum.NewExecutorBuilder(tableInfo.Core, ts).
 		SetConcurrency(e.distSQLScanConcurrency).
 		SetBackoffWeight(e.backoffWeight).
 		SetResourceGroupName(e.resourceGroupName).
 		SetRequestSource(e.requestSource).
+		SetTiKVClientReadTimeout(e.tikvClientReadTimeoutMs).
 		Build()
 	if err != nil {
 		return nil, errors.Trace(err)

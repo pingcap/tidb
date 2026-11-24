@@ -386,6 +386,17 @@ type buildCopTaskOpt struct {
 	exceedsBoundRetry int
 }
 
+// rebuildIgnoreReadTimeout reports whether rebuilt cop tasks should keep
+// ignoring kv.Request.TiKVClientReadTimeout and fall back to the default
+// CoprReqTimeout budget. Checksum requests are the exception: they cannot
+// page, so a rebuilt task with the default budget re-arms the livelock on
+// regions larger than one default-budget scan (e.g. affinity regions). Other
+// request types keep the existing behavior, where rebuilt ranges retry with
+// the default budget.
+func rebuildIgnoreReadTimeout(req *kv.Request) bool {
+	return req.Tp != kv.ReqTypeChecksum
+}
+
 const (
 	rangeIssueDuplicate    = "duplicate"
 	rangeIssueOverlap      = "overlap"
@@ -2261,7 +2272,7 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, lockHints *req
 			cache:                       worker.store.GetRegionCache(),
 			respChan:                    false,
 			eventCb:                     task.eventCb,
-			ignoreTiKVClientReadTimeout: true,
+			ignoreTiKVClientReadTimeout: rebuildIgnoreReadTimeout(worker.req),
 		})
 		if err != nil {
 			return nil, err
@@ -2319,7 +2330,7 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, lockHints *req
 					cache:                       worker.store.GetRegionCache(),
 					respChan:                    false,
 					eventCb:                     task.eventCb,
-					ignoreTiKVClientReadTimeout: true,
+					ignoreTiKVClientReadTimeout: rebuildIgnoreReadTimeout(worker.req),
 					skipBuckets:                 true,
 					exceedsBoundRetry:           task.exceedsBoundRetry + 1,
 				})
@@ -2352,7 +2363,7 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, lockHints *req
 				cache:                       worker.store.GetRegionCache(),
 				respChan:                    false,
 				eventCb:                     task.eventCb,
-				ignoreTiKVClientReadTimeout: true,
+				ignoreTiKVClientReadTimeout: rebuildIgnoreReadTimeout(worker.req),
 				skipBuckets:                 true,
 				exceedsBoundRetry:           task.exceedsBoundRetry + 1,
 			})
@@ -2457,7 +2468,7 @@ func (worker *copIteratorWorker) rebuildStoreBatchAfterRegionCacheMiss(bo *Backo
 		cache:                       worker.store.GetRegionCache(),
 		respChan:                    false,
 		eventCb:                     task.eventCb,
-		ignoreTiKVClientReadTimeout: true,
+		ignoreTiKVClientReadTimeout: rebuildIgnoreReadTimeout(&req),
 	})
 	if err != nil {
 		return nil, err
@@ -2555,7 +2566,7 @@ func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, lockHints
 				cache:                       worker.store.GetRegionCache(),
 				respChan:                    false,
 				eventCb:                     task.eventCb,
-				ignoreTiKVClientReadTimeout: true,
+				ignoreTiKVClientReadTimeout: rebuildIgnoreReadTimeout(worker.req),
 				skipBuckets:                 task.skipBuckets,
 				exceedsBoundRetry:           task.exceedsBoundRetry,
 			})

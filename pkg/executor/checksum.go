@@ -20,11 +20,13 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/distsql"
+	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/ranger"
@@ -53,7 +55,7 @@ func (e *ChecksumTableExec) Open(ctx context.Context) error {
 		return err
 	}
 
-	tasks, err := e.buildTasks()
+	tasks, err := e.buildTasks(ctx)
 	if err != nil {
 		return err
 	}
@@ -61,7 +63,7 @@ func (e *ChecksumTableExec) Open(ctx context.Context) error {
 	taskCh := make(chan *checksumTask, len(tasks))
 	resultCh := make(chan *checksumResult, len(tasks))
 	for range concurrency {
-		go e.checksumWorker(taskCh, resultCh)
+		go e.checksumWorker(ctx, taskCh, resultCh)
 	}
 
 	for _, task := range tasks {
@@ -111,11 +113,20 @@ func (e *ChecksumTableExec) Next(_ context.Context, req *chunk.Chunk) error {
 	return nil
 }
 
-func (e *ChecksumTableExec) buildTasks() ([]*checksumTask, error) {
+func (e *ChecksumTableExec) buildTasks(ctx context.Context) ([]*checksumTask, error) {
+	var affinityDeadlineMs uint64
+	for _, t := range e.tables {
+		// Only an affinity table without an explicit @@tikv_client_read_timeout
+		// needs the derived deadline, so the PD lookup is skipped otherwise.
+		if t.tableInfo.Affinity != nil && e.Ctx().GetSessionVars().GetTiKVClientReadTimeout() == 0 {
+			affinityDeadlineMs = importer.AffinityChecksumReadTimeoutMs(ctx)
+			break
+		}
+	}
 	allTasks := make([][]*checksumTask, 0, len(e.tables))
 	taskCnt := 0
 	for _, t := range e.tables {
-		tasks, err := t.buildTasks(e.Ctx())
+		tasks, err := t.buildTasks(e.Ctx(), affinityDeadlineMs)
 		if err != nil {
 			return nil, err
 		}
@@ -134,23 +145,23 @@ func (e *ChecksumTableExec) handleResult(result *checksumResult) {
 	table.handleResponse(result.response)
 }
 
-func (e *ChecksumTableExec) checksumWorker(taskCh <-chan *checksumTask, resultCh chan<- *checksumResult) {
+func (e *ChecksumTableExec) checksumWorker(ctx context.Context, taskCh <-chan *checksumTask, resultCh chan<- *checksumResult) {
 	for task := range taskCh {
 		result := &checksumResult{
 			tableID:         task.tableID,
 			physicalTableID: task.physicalTableID,
 			indexID:         task.indexID,
 		}
-		result.response, result.err = e.handleChecksumRequest(task.request)
+		result.response, result.err = e.handleChecksumRequest(ctx, task.request)
 		resultCh <- result
 	}
 }
 
-func (e *ChecksumTableExec) handleChecksumRequest(req *kv.Request) (resp *tipb.ChecksumResponse, err error) {
+func (e *ChecksumTableExec) handleChecksumRequest(ctx context.Context, req *kv.Request) (resp *tipb.ChecksumResponse, err error) {
 	if err = e.Ctx().GetSessionVars().SQLKiller.HandleSignal(); err != nil {
 		return nil, err
 	}
-	ctx := distsql.WithSQLKvExecCounterInterceptor(context.TODO(), e.Ctx().GetSessionVars().StmtCtx.KvExecCounter)
+	ctx = distsql.WithSQLKvExecCounterInterceptor(ctx, e.Ctx().GetSessionVars().StmtCtx.KvExecCounter)
 	res, err := distsql.Checksum(ctx, e.Ctx().GetClient(), req, e.Ctx().GetSessionVars().KVVars)
 	if err != nil {
 		return nil, err
@@ -216,19 +227,19 @@ func newChecksumContext(db *model.DBInfo, table *model.TableInfo, startTs uint64
 	}
 }
 
-func (c *checksumContext) buildTasks(ctx sessionctx.Context) ([]*checksumTask, error) {
+func (c *checksumContext) buildTasks(ctx sessionctx.Context, affinityDeadlineMs uint64) ([]*checksumTask, error) {
 	var partDefs []model.PartitionDefinition
 	if part := c.tableInfo.Partition; part != nil {
 		partDefs = part.Definitions
 	}
 
 	reqs := make([]*checksumTask, 0, (len(c.tableInfo.Indices)+1)*(len(partDefs)+1))
-	if err := c.appendRequest4PhysicalTable(ctx, c.tableInfo.ID, c.tableInfo.ID, &reqs); err != nil {
+	if err := c.appendRequest4PhysicalTable(ctx, c.tableInfo.ID, c.tableInfo.ID, &reqs, affinityDeadlineMs); err != nil {
 		return nil, err
 	}
 
 	for _, partDef := range partDefs {
-		if err := c.appendRequest4PhysicalTable(ctx, c.tableInfo.ID, partDef.ID, &reqs); err != nil {
+		if err := c.appendRequest4PhysicalTable(ctx, c.tableInfo.ID, partDef.ID, &reqs, affinityDeadlineMs); err != nil {
 			return nil, err
 		}
 	}
@@ -241,8 +252,9 @@ func (c *checksumContext) appendRequest4PhysicalTable(
 	tableID int64,
 	physicalTableID int64,
 	reqs *[]*checksumTask,
+	affinityDeadlineMs uint64,
 ) error {
-	req, err := c.buildTableRequest(ctx, physicalTableID)
+	req, err := c.buildTableRequest(ctx, physicalTableID, affinityDeadlineMs)
 	if err != nil {
 		return err
 	}
@@ -257,7 +269,7 @@ func (c *checksumContext) appendRequest4PhysicalTable(
 		if indexInfo.State != model.StatePublic {
 			continue
 		}
-		req, err = c.buildIndexRequest(ctx, physicalTableID, indexInfo)
+		req, err = c.buildIndexRequest(ctx, physicalTableID, indexInfo, affinityDeadlineMs)
 		if err != nil {
 			return err
 		}
@@ -272,7 +284,7 @@ func (c *checksumContext) appendRequest4PhysicalTable(
 	return nil
 }
 
-func (c *checksumContext) buildTableRequest(ctx sessionctx.Context, physicalTableID int64) (*kv.Request, error) {
+func (c *checksumContext) buildTableRequest(ctx sessionctx.Context, physicalTableID int64, affinityDeadlineMs uint64) (*kv.Request, error) {
 	checksum := &tipb.ChecksumRequest{
 		ScanOn:    tipb.ChecksumScanOn_Table,
 		Algorithm: tipb.ChecksumAlgorithm_Crc64_Xor,
@@ -286,6 +298,7 @@ func (c *checksumContext) buildTableRequest(ctx sessionctx.Context, physicalTabl
 	}
 
 	var builder distsql.RequestBuilder
+	builder.Request.TiKVClientReadTimeout = checksumTiKVClientReadTimeout(ctx.GetSessionVars(), c.tableInfo, affinityDeadlineMs)
 	builder.SetResourceGroupTagger(ctx.GetSessionVars().StmtCtx.GetResourceGroupTagger())
 	return builder.SetHandleRanges(ctx.GetDistSQLCtx(), physicalTableID, c.tableInfo.IsCommonHandle, ranges).
 		SetChecksumRequest(checksum).
@@ -296,7 +309,7 @@ func (c *checksumContext) buildTableRequest(ctx sessionctx.Context, physicalTabl
 		Build()
 }
 
-func (c *checksumContext) buildIndexRequest(ctx sessionctx.Context, physicalTableID int64, indexInfo *model.IndexInfo) (*kv.Request, error) {
+func (c *checksumContext) buildIndexRequest(ctx sessionctx.Context, physicalTableID int64, indexInfo *model.IndexInfo, affinityDeadlineMs uint64) (*kv.Request, error) {
 	checksum := &tipb.ChecksumRequest{
 		ScanOn:    tipb.ChecksumScanOn_Index,
 		Algorithm: tipb.ChecksumAlgorithm_Crc64_Xor,
@@ -305,6 +318,7 @@ func (c *checksumContext) buildIndexRequest(ctx sessionctx.Context, physicalTabl
 	ranges := ranger.FullRange()
 
 	var builder distsql.RequestBuilder
+	builder.Request.TiKVClientReadTimeout = checksumTiKVClientReadTimeout(ctx.GetSessionVars(), c.tableInfo, affinityDeadlineMs)
 	builder.SetResourceGroupTagger(ctx.GetSessionVars().StmtCtx.GetResourceGroupTagger())
 	return builder.SetIndexRanges(ctx.GetDistSQLCtx(), physicalTableID, indexInfo.ID, ranges).
 		SetChecksumRequest(checksum).
@@ -333,4 +347,19 @@ func updateChecksumResponse(resp, update *tipb.ChecksumResponse) {
 	resp.Checksum ^= update.Checksum
 	resp.TotalKvs += update.TotalKvs
 	resp.TotalBytes += update.TotalBytes
+}
+
+// checksumTiKVClientReadTimeout returns the value for
+// kv.Request.TiKVClientReadTimeout (ms) of a checksum request. An explicit
+// @@tikv_client_read_timeout wins. Otherwise, only tables with affinity
+// enabled need a derived longer deadline; everything else keeps 0, i.e. the
+// global copr-req-timeout default.
+func checksumTiKVClientReadTimeout(sessVars *variable.SessionVars, tableInfo *model.TableInfo, affinityDeadlineMs uint64) uint64 {
+	if t := sessVars.GetTiKVClientReadTimeout(); t > 0 {
+		return t
+	}
+	if tableInfo.Affinity == nil {
+		return 0
+	}
+	return affinityDeadlineMs
 }
