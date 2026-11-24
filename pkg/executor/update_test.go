@@ -145,6 +145,13 @@ func TestLockUnchangedUniqueKeys(t *testing.T) {
 				false,
 			},
 			{
+				"MultiValueUniqueAndRowUnchanged",
+				"create table t (k int, v json, unique key uk((cast(v as signed array))))",
+				"insert into t values (1, '[7,8,7]')",
+				"update t set v = v where k = 1",
+				false,
+			},
+			{
 				"UniqueAndRowUnchangedAndParted",
 				"create table t (k int, v int, unique key uk(k), key sk(k)) partition by hash(k) partitions 4",
 				"insert into t values (1, 10)",
@@ -192,6 +199,25 @@ func TestLockUnchangedUniqueKeys(t *testing.T) {
 			)
 		}
 	}
+}
+
+func TestUnchangedRowsOutsidePartialUniqueIndex(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk1 := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+	tk2.MustExec("use test")
+	tk1.MustExec("create table partial_lock (pk int primary key, k int, flag int, unique index ux(k) where flag = 1)")
+	tk1.MustExec("insert into partial_lock values (1,7,0), (2,7,0)")
+	tk1.MustExec("set tidb_lock_unchanged_keys = on")
+	tk2.MustExec("set tidb_lock_unchanged_keys = on")
+	tk2.MustExec("set innodb_lock_wait_timeout = 1")
+	tk1.MustExec("begin pessimistic")
+	defer tk1.MustExec("rollback")
+	tk2.MustExec("begin pessimistic")
+	defer tk2.MustExec("rollback")
+	tk1.MustExec("update partial_lock set flag = flag where pk = 1")
+	tk2.MustExec("update partial_lock set flag = flag where pk = 2")
 }
 
 func TestLockUnchangedKeysGlobalIndex(t *testing.T) {
