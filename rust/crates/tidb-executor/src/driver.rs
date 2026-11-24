@@ -79,8 +79,6 @@ pub fn query_visit_info(
 }
 mod record_set;
 pub use record_set::RecordSet;
-pub(crate) use tidb_planner::dml_optimize as fk_trigger_plan;
-pub(crate) mod params;
 pub(crate) mod physical_builder;
 pub mod plan_cache;
 pub(crate) mod planner_bridge;
@@ -98,7 +96,7 @@ use tidb_infoschema::*;
 pub(crate) use tidb_planner::catalog_ctx::PlannerCatalogContext;
 pub use dml::*;
 pub(crate) use from::*;
-pub use params::*;
+pub use tidb_planner::plan_cache::*;
 pub use set_opr::*;
 pub(crate) use write_cast::*;
 
@@ -725,56 +723,8 @@ pub fn plan_query_result_columns(
 /// into the result fields.
 pub type PlannedResultColumns = (Vec<(String, FieldType)>, Vec<tidb_datatype::FieldNameMetadata>);
 
-/// Go turns a subquery's result `Datum` into an `expression.Constant`; the
-/// same value has to travel back through the AST here, so it becomes the
-/// literal that parses to it.
-/// A byte string as a literal expression: readable text stays a string, and
-/// anything that is not UTF-8 becomes a hex literal so no byte is lost.
-pub(crate) fn bytes_to_literal(bytes: &[u8]) -> tidb_ast::Expr {
-    match std::str::from_utf8(bytes) {
-        Ok(text) => tidb_ast::Expr::String(text.to_owned()),
-        Err(_) => tidb_ast::Expr::Hex(hex_digits(bytes)),
-    }
-}
 
-/// The lowercase, even-length hex digits an `Expr::Hex` carries.
-fn hex_digits(bytes: &[u8]) -> String {
-    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
-}
 
-pub(crate) fn datum_to_literal(value: &Datum) -> Result<tidb_ast::Expr, DriverError> {
-    use tidb_ast::Expr;
-    Ok(match value {
-        Datum::Null => Expr::Null,
-        Datum::Int(v) => {
-            // A negative literal is a unary minus over a positive one, which
-            // is how the parser itself represents it.
-            if *v < 0 {
-                Expr::Unary(
-                    tidb_ast::UnaryOp::Minus,
-                    Box::new(Expr::Int(v.unsigned_abs().to_string())),
-                )
-            } else {
-                Expr::Int(v.to_string())
-            }
-        }
-        Datum::UInt(v) => Expr::Int(v.to_string()),
-        Datum::Real(v) => Expr::Float(*v),
-        Datum::Decimal(d) => Expr::Decimal(d.to_string()),
-        // A byte string that is not UTF-8 becomes a hex literal, which is
-        // lossless where a lossy string conversion would corrupt it.
-        Datum::String(s) => bytes_to_literal(s.bytes()),
-        Datum::Bytes(b) => bytes_to_literal(b),
-        Datum::BinaryLiteral(literal) | Datum::Bit(literal) => {
-            Expr::Hex(hex_digits(literal.as_bytes()))
-        }
-        _ => {
-            return Err(DriverError::unsupported(
-                "this subquery result kind is not supported yet",
-            ))
-        }
-    })
-}
 
 pub(crate) use tidb_planner::from_scope::FromTable;
 

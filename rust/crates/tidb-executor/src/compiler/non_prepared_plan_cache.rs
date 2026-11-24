@@ -258,7 +258,7 @@ pub trait NonPreparedPlanCacheCompile: super::CompilerSession {
         {
             let catalog = self.lock_catalog().ok()?;
             if let Some(execution) = plan.bind_cached_for_statement(
-                self.physical_plan_cache(),
+                self.plan_cache_rebuild(),
                 &parameterized.values,
                 &catalog,
                 self.session_vars().current_db.as_str(),
@@ -270,7 +270,7 @@ pub trait NonPreparedPlanCacheCompile: super::CompilerSession {
                 // defer observes the lookup duration on hits only.
                 tidb_planner_core_metrics::inc_plan_cache_hit(true);
                 tidb_planner_core_metrics::get_plan_cache_lookup_duration(
-                    self.physical_plan_cache().uses_instance(),
+                    self.plan_cache_rebuild().uses_instance(),
                 )
                 .observe(lookup_start.elapsed().as_secs_f64());
                 return Some(execution);
@@ -281,7 +281,7 @@ pub trait NonPreparedPlanCacheCompile: super::CompilerSession {
         let ctx = self.statement_context(false).with_non_prepared_plan_cache();
         let catalog = self.lock_catalog().ok()?;
         plan.bind_for_statement(
-            self.physical_plan_cache(),
+            self.plan_cache_rebuild(),
             &parameterized.values,
             &catalog,
             self.session_vars().current_db.as_str(),
@@ -389,14 +389,14 @@ pub trait NonPreparedPlanCacheCompile: super::CompilerSession {
         self.configure_session_plan_cache();
         let observe = |start: std::time::Instant| {
             tidb_planner_core_metrics::get_plan_cache_lookup_duration(
-                self.physical_plan_cache().uses_instance(),
+                self.plan_cache_rebuild().uses_instance(),
             )
             .observe(start.elapsed().as_secs_f64());
         };
         {
             let catalog = self.lock_catalog().ok()?;
             if let Some(execution) = plan.bind_cached_for_statement(
-                self.physical_plan_cache(),
+                self.plan_cache_rebuild(),
                 &parameterized.values,
                 &catalog,
                 self.session_vars().current_db.as_str(),
@@ -420,7 +420,7 @@ pub trait NonPreparedPlanCacheCompile: super::CompilerSession {
         }
         let catalog = self.lock_catalog().ok()?;
         let execution = plan.bind_for_statement(
-            self.physical_plan_cache(),
+            self.plan_cache_rebuild(),
             &parameterized.values,
             &catalog,
             self.session_vars().current_db.as_str(),

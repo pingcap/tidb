@@ -15,7 +15,7 @@
 //! Semantic tests for the physical plan tree. Written, not transcreated; see
 //! the note in `tidb_planner_core_operator_logicalop::tests`.
 
-use crate::physical_plan_cache::RebuildPlanForCache;
+use crate::plan_cache_rebuild::RebuildPlanForCache;
 use crate::post_optimize::{eliminate_physical_projection, eliminate_union_scan_and_lock, remove_union_scans};
 use crate::resolve_indices::ResolveIndices;
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
@@ -158,7 +158,7 @@ fn with_int_handle_table(scan: &mut PhysicalTableScan, unique_id: i64) {
 
 #[test]
 fn cached_plan_rebuilds_normal_and_reader_scan_trees_without_mutating_template() {
-    use crate::physical_plan_cache::{CachedPlanRebuildContext};
+    use crate::plan_cache_rebuild::{CachedPlanRebuildContext};
 
     let int_type = FieldType::new(FieldTypeCode::LongLong);
     let handle = Column::new(1, int_type.clone());
@@ -257,7 +257,7 @@ fn cached_plan_rebuilds_normal_and_reader_scan_trees_without_mutating_template()
 
 #[test]
 fn cached_index_lookup_rebuilds_only_gos_index_plan() {
-    use crate::physical_plan_cache::{CachedPlanRebuildContext};
+    use crate::plan_cache_rebuild::{CachedPlanRebuildContext};
 
     // No `ts.Table`: Go's buildRangeForTableScan would fail on it, so the
     // rebuild must not reach the table side.
@@ -279,7 +279,7 @@ fn cached_index_lookup_rebuilds_only_gos_index_plan() {
 
 #[test]
 fn physical_plan_cache_admission_matches_go_refusals() {
-    use crate::physical_plan_cache::{is_plan_cacheable, PlanCacheabilityContext};
+    use crate::plan_cache_rebuild::{is_plan_cacheable, PlanCacheabilityContext};
 
     let context = PlanCacheabilityContext {
         parameter_count: 1,
@@ -322,7 +322,7 @@ fn physical_plan_cache_admission_matches_go_refusals() {
 
 #[test]
 fn physical_plan_cache_reads_noncacheable_reason_and_size() {
-    use crate::physical_plan_cache::{is_plan_cacheable, PlanCacheabilityContext};
+    use crate::plan_cache_rebuild::{is_plan_cacheable, PlanCacheabilityContext};
 
     let mut plan = selection(920, scan(921, &[1]));
     plan.base_mut()
@@ -355,7 +355,7 @@ fn physical_plan_cache_reads_noncacheable_reason_and_size() {
 
 #[test]
 fn cached_plan_rebuilds_the_same_tree_for_consecutive_parameter_sets() {
-    use crate::physical_plan_cache::{CachedPlanRebuildContext};
+    use crate::plan_cache_rebuild::{CachedPlanRebuildContext};
 
     let int_type = FieldType::new(FieldTypeCode::LongLong);
     let handle = Column::new(1, int_type);
@@ -386,7 +386,7 @@ fn cached_plan_rebuilds_the_same_tree_for_consecutive_parameter_sets() {
 
 #[test]
 fn cached_plan_rebuilds_point_batch_index_merge_and_dml_owned_trees() {
-    use crate::physical_plan_cache::{CachedPlanRebuildContext};
+    use crate::plan_cache_rebuild::{CachedPlanRebuildContext};
     use tidb_planner_core_operator_physicalop::range_rebuild::{IndexRangeRebuild, PointRangeRebuild, TableRangeRebuild};
 
     let int_type = FieldType::new(FieldTypeCode::LongLong);
@@ -482,7 +482,7 @@ fn cached_plan_rebuilds_point_batch_index_merge_and_dml_owned_trees() {
 /// common handle and for a unique index alike.
 #[test]
 fn cached_point_plan_rebuilds_composite_equalities_as_one_closed_point() {
-    use crate::physical_plan_cache::{CachedPlanRebuildContext};
+    use crate::plan_cache_rebuild::{CachedPlanRebuildContext};
     use tidb_planner_core_operator_physicalop::range_rebuild::{IndexRangeRebuild, PointRangeRebuild, TableRangeRebuild};
 
     let int_type = FieldType::new(FieldTypeCode::LongLong);
@@ -563,7 +563,7 @@ fn cached_point_plan_rebuilds_composite_equalities_as_one_closed_point() {
 /// it, as in Go's `buildRangeForIndexInfo`.
 #[test]
 fn cached_point_plan_rebuilds_a_collated_string_key_as_its_sort_key() {
-    use crate::physical_plan_cache::{CachedPlanRebuildContext};
+    use crate::plan_cache_rebuild::{CachedPlanRebuildContext};
     use tidb_planner_core_operator_physicalop::range_rebuild::{IndexRangeRebuild, PointRangeRebuild};
 
     let mut string_type = FieldType::new(FieldTypeCode::Varchar);
@@ -643,7 +643,7 @@ fn cached_point_plan_rebuilds_a_collated_string_key_as_its_sort_key() {
 /// point per item, unioned in encoded key order like the detacher's DNF path.
 #[test]
 fn cached_batch_point_plan_rebuilds_dnf_equalities_as_unioned_points() {
-    use crate::physical_plan_cache::{CachedPlanRebuildContext};
+    use crate::plan_cache_rebuild::{CachedPlanRebuildContext};
     use tidb_planner_core_operator_physicalop::range_rebuild::{IndexRangeRebuild, PointRangeRebuild};
 
     let int_type = FieldType::new(FieldTypeCode::LongLong);
@@ -724,7 +724,7 @@ fn cached_batch_point_plan_rebuilds_dnf_equalities_as_unioned_points() {
 /// over `IdxCols` into a full range -- the join keeps the ranges it reads
 /// (a Go testkit probe shows `[NULL,+inf]` on the inner scan after a hit).
 fn cached_plan_rebuilds_index_join_range_and_updates_inner_reader() {
-    use crate::physical_plan_cache::{CachedPlanRebuildContext};
+    use crate::plan_cache_rebuild::{CachedPlanRebuildContext};
     use tidb_planner_core_operator_physicalop::range_rebuild::{IndexRangeRebuild, PointRangeRebuild};
 
     let index_column = Column::new(2, FieldType::new(FieldTypeCode::LongLong));
@@ -2230,9 +2230,9 @@ fn shuffle_resolves_partition_keys_against_source_not_worker_output() {
     );
     assert!(cloned.referenced_plan(999).is_err());
     assert_eq!(
-        crate::physical_plan_cache::is_plan_cacheable(
+        crate::plan_cache_rebuild::is_plan_cacheable(
             &plan,
-            crate::physical_plan_cache::PlanCacheabilityContext {
+            crate::plan_cache_rebuild::PlanCacheabilityContext {
                 parameter_count: 0,
                 enable_generated_columns: false,
                 max_plan_size: 0

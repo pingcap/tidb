@@ -28,14 +28,17 @@
 //! while the cached plan no longer carries the residual filter needed to make
 //! that widening safe.
 
-use tidb_planner_core_operator_physicalop::range_rebuild::{PointConstantsRebuild, PointRangeRebuild};
 use std::fmt;
+use tidb_planner_core_operator_physicalop::range_rebuild::{
+    PointConstantsRebuild, PointRangeRebuild,
+};
+use tidb_sessionctx::StmtContext;
 
 use tidb_datatype::Datum;
 use tidb_expr::expression::Expression;
 
 use tidb_planner_core_operator_physicalop::{PhysicalPlan, PhysicalTableScan};
-use tidb_ranger::types::{has_full_range, Ranges};
+use tidb_ranger::types::{Ranges, has_full_range};
 
 /// Session inputs read by Go's `isPlanCacheable` /
 /// `isPhysicalPlanCacheable` after physical optimization.
@@ -55,7 +58,6 @@ pub struct PlanCacheabilityContext {
 pub fn cached_plan_memory_usage(plan: &PhysicalPlan) -> u64 {
     u64::try_from(plan.memory_usage()).unwrap_or(u64::MAX)
 }
-
 
 fn physical_plan_cacheable(
     plan: &PhysicalPlan,
@@ -199,7 +201,10 @@ pub fn is_safe_point_get_path_4_plan_cache(
 /// Go `isPlanCacheable` over the physical operators represented by this
 /// planner. Every represented refusal is checked
 /// recursively, including reader-owned subplans.
-pub fn is_plan_cacheable(plan: &PhysicalPlan, context: PlanCacheabilityContext) -> Result<(), String> {
+pub fn is_plan_cacheable(
+    plan: &PhysicalPlan,
+    context: PlanCacheabilityContext,
+) -> Result<(), String> {
     let physical = match plan {
         PhysicalPlan::Dml(dml) => match dml.select_plan.as_deref() {
             Some(select) => select,
@@ -496,7 +501,13 @@ fn bind_plan_expressions(
                 bind_conditions(level, context)?;
             }
         }
-        PhysicalPlan::IndexJoin(join) | PhysicalPlan::IndexHashJoin(tidb_planner_core_operator_physicalop::PhysicalIndexHashJoin { physical_index_join: join, .. }) => {
+        PhysicalPlan::IndexJoin(join)
+        | PhysicalPlan::IndexHashJoin(
+            tidb_planner_core_operator_physicalop::PhysicalIndexHashJoin {
+                physical_index_join: join,
+                ..
+            },
+        ) => {
             bind_conditions(&mut join.left_conditions, context)?;
             bind_conditions(&mut join.right_conditions, context)?;
             bind_conditions(&mut join.other_conditions, context)?;
@@ -602,21 +613,34 @@ fn rebuild_table_scan(
     let table = scan
         .table
         .as_ref()
-        .ok_or(PlanCacheRebuildError::InvalidMetadata { plan_id, detail: "table scan has no table" })?
+        .ok_or(PlanCacheRebuildError::InvalidMetadata {
+            plan_id,
+            detail: "table scan has no table",
+        })?
         .read()
         .clone();
     bind_conditions(&mut scan.access_condition, context)?;
-    let schema_columns = scan.base.base.schema().map_or(&[][..], |schema| &schema.columns[..]);
+    let schema_columns = scan
+        .base
+        .base
+        .schema()
+        .map_or(&[][..], |schema| &schema.columns[..]);
     if table.is_common_handle {
         let pk = tidb_table::tables::scan_from_infos::find_primary_index(&table).ok_or(
-            PlanCacheRebuildError::InvalidMetadata { plan_id, detail: "common-handle table has no primary index" },
+            PlanCacheRebuildError::InvalidMetadata {
+                plan_id,
+                detail: "common-handle table has no primary index",
+            },
         )?;
         let pk = pk.read();
         let mut pk_cols = Vec::with_capacity(pk.columns.len());
         let mut pk_cols_len = Vec::with_capacity(pk.columns.len());
         for col_info in pk.columns.iter_deref() {
             let col_info = col_info.read();
-            let Some(table_column) = usize::try_from(col_info.offset).ok().and_then(|offset| table.columns.get(offset)) else {
+            let Some(table_column) = usize::try_from(col_info.offset)
+                .ok()
+                .and_then(|offset| table.columns.get(offset))
+            else {
                 continue;
             };
             let table_column_id = table_column.read().id;
@@ -671,12 +695,18 @@ fn rebuild_table_scan(
             .pk_is_handle
             .then(|| table.get_pk_col_info())
             .flatten()
-            .and_then(|pk_col_info| tidb_expr::column::column_by_id(schema_columns, pk_col_info.read().id).cloned());
+            .and_then(|pk_col_info| {
+                tidb_expr::column::column_by_id(schema_columns, pk_col_info.read().id).cloned()
+            });
         if let Some(pk_col) = pk_col {
-            let pk_type = pk_col.ret_type.clone().ok_or(PlanCacheRebuildError::InvalidMetadata {
-                plan_id,
-                detail: "the primary key column has no type",
-            })?;
+            let pk_type =
+                pk_col
+                    .ret_type
+                    .clone()
+                    .ok_or(PlanCacheRebuildError::InvalidMetadata {
+                        plan_id,
+                        detail: "the primary key column has no type",
+                    })?;
             let result = tidb_ranger::ranger::build_table_range_in(
                 &scan.access_condition,
                 &pk_type,
@@ -711,8 +741,9 @@ fn rebuild_table_scan(
         }
     }
     // Rebuild GroupedRanges if GroupByColIdxs is set
-    scan.grouped_ranges = crate::find_best_task::dispatch::grouped_ranges(&scan.ranges, &scan.group_by_col_idxs)
-        .map_err(PlanCacheRebuildError::RangeBuild)?;
+    scan.grouped_ranges =
+        crate::find_best_task::dispatch::grouped_ranges(&scan.ranges, &scan.group_by_col_idxs)
+            .map_err(PlanCacheRebuildError::RangeBuild)?;
     Ok(())
 }
 
@@ -756,8 +787,9 @@ fn rebuild_index_scan(
     }
     scan.ranges = result.ranges;
     // Rebuild GroupedRanges if GroupByColIdxs is set
-    scan.grouped_ranges = crate::find_best_task::dispatch::grouped_ranges(&scan.ranges, &scan.group_by_col_idxs)
-        .map_err(PlanCacheRebuildError::RangeBuild)?;
+    scan.grouped_ranges =
+        crate::find_best_task::dispatch::grouped_ranges(&scan.ranges, &scan.group_by_col_idxs)
+            .map_err(PlanCacheRebuildError::RangeBuild)?;
     Ok(())
 }
 
@@ -847,7 +879,8 @@ fn rebuild_point_ranges(
                 )
                 .map_err(|error| PlanCacheRebuildError::RangeBuild(format!("{error:?}")))?;
             note_skipped(context, &skip_plan_cache);
-            let (rebuilt, range_info) = rebuilt.ok_or(PlanCacheRebuildError::UnsafeRange { plan_id })?;
+            let (rebuilt, range_info) =
+                rebuilt.ok_or(PlanCacheRebuildError::UnsafeRange { plan_id })?;
             *rebuilt_range_info = Some(range_info);
             if rebuilt.len() != original.len()
                 || rebuilt.first().map(|range| range.width())
@@ -904,7 +937,11 @@ fn rebuild_point_ranges(
     Ok(())
 }
 
-fn update_inner_scan_ranges(plan: &mut PhysicalPlan, ranges: &Ranges, range_info: Option<&str>) -> bool {
+fn update_inner_scan_ranges(
+    plan: &mut PhysicalPlan,
+    ranges: &Ranges,
+    range_info: Option<&str>,
+) -> bool {
     match plan {
         PhysicalPlan::TableScan(scan) => {
             scan.ranges = ranges.clone();
@@ -996,13 +1033,26 @@ pub fn rebuild_ranges_for_cached_plan(
                 bind_subtree_expressions(table_plan, context)?;
             }
         }
-        PhysicalPlan::IndexJoin(join) | PhysicalPlan::IndexHashJoin(tidb_planner_core_operator_physicalop::PhysicalIndexHashJoin { physical_index_join: join, .. }) => {
+        PhysicalPlan::IndexJoin(join)
+        | PhysicalPlan::IndexHashJoin(
+            tidb_planner_core_operator_physicalop::PhysicalIndexHashJoin {
+                physical_index_join: join,
+                ..
+            },
+        ) => {
             let plan_id = join.base.base.id();
             if let Some(rebuild) = join.range_rebuild.as_mut() {
                 // Go `rebuildRange`: `updateRange(innerPlan, x.Ranges.Range(),
                 // mutableRange.rangeInfo)`.
                 let mut range_info = None;
-                rebuild_point_ranges(plan_id, &mut join.ranges, rebuild, None, context, &mut range_info)?;
+                rebuild_point_ranges(
+                    plan_id,
+                    &mut join.ranges,
+                    rebuild,
+                    None,
+                    context,
+                    &mut range_info,
+                )?;
                 let Some(inner) = join.base.children_mut().get_mut(join.inner_child_idx) else {
                     return Err(PlanCacheRebuildError::InvalidMetadata {
                         plan_id,
@@ -1022,7 +1072,14 @@ pub fn rebuild_ranges_for_cached_plan(
             let Some(rebuild) = point.range_rebuild.as_mut() else {
                 return Ok(());
             };
-            rebuild_point_ranges(plan_id, &mut point.ranges, rebuild, Some(1), context, &mut None)?;
+            rebuild_point_ranges(
+                plan_id,
+                &mut point.ranges,
+                rebuild,
+                Some(1),
+                context,
+                &mut None,
+            )?;
         }
         PhysicalPlan::BatchPointGet(batch) => {
             let plan_id = batch.base.base.id();
@@ -1168,4 +1225,131 @@ fn rebuild_point_constants(
             high_exclude: false,
         })
         .collect())
+}
+
+/// Why a cached plan could not be rebuilt for an execute.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum CachedPlanBindFailure {
+    /// The rebuild reached a deferred expression (`NOW()`) and was given no
+    /// statement to evaluate it in: the entry stays, and a bind with the
+    /// executing statement rebuilds it.
+    NeedsStatement,
+    /// Go rejects an entry whose in-place rebuild fails.
+    Rejected {
+        /// Go `RebuildPlan4CachedPlan`'s `rebuildRange` error, which it
+        /// reports as "skip plan-cache: plan rebuild failed, %s".
+        rebuild_error: Option<String>,
+        /// The reason Go's ranger passed to `SetSkipPlanCache` while
+        /// rebuilding: the hit is refused and the replanned statement is not
+        /// cached either.
+        skip_plan_cache: Option<String>,
+    },
+}
+
+impl CachedPlanBindFailure {
+    /// The failure Go's `RebuildPlan4CachedPlan` reports for `error`.
+    #[must_use]
+    pub fn rebuild_failed(error: crate::plan_cache_rebuild::PlanCacheRebuildError) -> Self {
+        match error {
+            crate::plan_cache_rebuild::PlanCacheRebuildError::SkipPlanCache(reason) => {
+                Self::Rejected {
+                    rebuild_error: None,
+                    skip_plan_cache: Some(reason),
+                }
+            }
+            crate::plan_cache_rebuild::PlanCacheRebuildError::SkippedThenFailed {
+                reason,
+                error,
+            } => Self::Rejected {
+                rebuild_error: Some(error.to_string()),
+                skip_plan_cache: Some(reason),
+            },
+            error => Self::Rejected {
+                rebuild_error: Some(error.to_string()),
+                skip_plan_cache: None,
+            },
+        }
+    }
+
+    /// The statement-binding failure, which carries no rebuild reason.
+    #[must_use]
+    pub const fn unbound() -> Self {
+        Self::Rejected {
+            rebuild_error: None,
+            skip_plan_cache: None,
+        }
+    }
+
+    /// Go `RebuildPlan4CachedPlan` warns and `generateNewPlan` replans. The
+    /// entry stays: a cacheable new plan replaces it under the same key, an
+    /// uncacheable one leaves it for the next execute. A context-free probe
+    /// answers `false`, so the bind that carries the statement replans.
+    pub fn replan(&self, ctx: Option<&StmtContext>) -> bool {
+        let (
+            Self::Rejected {
+                rebuild_error,
+                skip_plan_cache,
+            },
+            Some(ctx),
+        ) = (self, ctx)
+        else {
+            return false;
+        };
+        if let Some(reason) = skip_plan_cache {
+            ctx.start_prepared_range_tracking();
+            ctx.set_skip_plan_cache(reason.as_str());
+        }
+        if let Some(error) = rebuild_error {
+            ctx.append_warning_parts(
+                1105,
+                &format!("skip plan-cache: plan rebuild failed, {error}"),
+            );
+        }
+        true
+    }
+}
+
+/// One evaluation during a cached plan's rebuild. A bound parameter or a
+/// literal is its own value, so a context-free probe rebuilds the same
+/// ranges the statement would. Anything else -- a deferred expression
+/// (`NOW()`) or a function of a parameter (`FROM_UNIXTIME(?)`, which reads
+/// the session time zone) -- is evaluated in the executing statement, and
+/// the probe reports `NeedsStatement` instead of building from a value
+/// computed without it.
+pub fn rebuild_evaluate(
+    expression: &tidb_expr::expression::Expression,
+    statement: Option<&StmtContext>,
+    parameters: &crate::plan_cache_rebuild::CachedPlanRebuildContext<'_>,
+    needs_statement: &std::sync::atomic::AtomicBool,
+) -> Result<tidb_datatype::Datum, tidb_exprctx::EvalError> {
+    if let Some(statement) = statement {
+        return tidb_expr::eval_expression_once(expression, statement);
+    }
+    match expression {
+        tidb_expr::expression::Expression::Constant(constant)
+            if constant.deferred_expr.is_none() =>
+        {
+            tidb_expr::eval_expression_once(expression, parameters)
+        }
+        _ => {
+            needs_statement.store(true, std::sync::atomic::Ordering::Relaxed);
+            Err(tidb_exprctx::EvalError::Unsupported(
+                "the expression needs the executing statement",
+            ))
+        }
+    }
+}
+
+/// The context a cached plan's rebuild evaluates a deferred expression in:
+/// Go re-evaluates `NOW()` and its kin under the executing statement's own
+/// session context (clock, time zone, variables) with this execute's
+/// parameters. Without a statement there is no clock to read.
+pub fn deferred_rebuild_context(
+    ctx: Option<&StmtContext>,
+    values: &[tidb_datatype::Datum],
+) -> Option<StmtContext> {
+    ctx.map(|ctx| {
+        ctx.clone()
+            .with_prepared_params(std::sync::Arc::from(values))
+    })
 }

@@ -20,10 +20,11 @@
 //! and translates the aggregation property back to stable relation-qualified
 //! column identities understood by the executor's physical source builder.
 
-use std::cell::RefCell;
-use std::rc::Rc;
 pub(crate) use tidb_planner::dml_optimize::update_target_columns;
-use tidb_planner::physical_plan_cache::RebuildPlanForCache;
+pub(crate) use tidb_planner::plan_cache::{CachedSelectPlan, cached_query_plan};
+pub(crate) use tidb_planner::plan_cache_rebuild::{
+    CachedPlanBindFailure, deferred_rebuild_context, rebuild_evaluate,
+};
 pub(crate) use tidb_planner::statement_plan::*;
 use tidb_planner::stmt_ctx::PlannerStmtCtx as _;
 
@@ -31,14 +32,10 @@ use super::PlannerCatalogContext;
 use tidb_expr::expr_util::RealFunctionBuilder;
 use tidb_expr::expression::Expression;
 use tidb_hack::{GoCaseCompare, GoToLower};
-use tidb_infoschema::table_source::TableSource;
-pub(crate) use tidb_planner::optimizer::{optimize_built_logical, physical_plan_for_logical};
 use tidb_planner::plan_builder::PlanBuilder;
 use tidb_planner_core_base::ColumnIdAllocator;
 use tidb_planner_core_base::PlanIdAllocator;
-use tidb_planner_core_operator_logicalop::LogicalPlan;
 use tidb_planner_core_operator_physicalop::PhysicalPlan;
-use tidb_planner_core_rule::flags;
 
 use tidb_infoschema::SessionExtendedInfoSchema;
 
@@ -128,10 +125,7 @@ pub(super) fn materialize_physical_expression(expression: &mut Expression) {
     }
 }
 
-pub(crate) use tidb_planner::optimize::{
-    BuildVisits, QueryBuild, ScalarSubqueryEvalCtx, ScalarSubqueryRegistry,
-};
-use tidb_planner::optimize::{DiscardedSubquery, subquery_output_width};
+pub(crate) use tidb_planner::optimize::{BuildVisits, ScalarSubqueryEvalCtx};
 
 /// Go `optimizeForTest`'s build and optimize: the logical plan (whose
 /// output names Go's tests read) and the physical plan.
@@ -143,7 +137,13 @@ pub(crate) fn planner_optimized_query_with_allocators_for_test(
     ctx: &crate::StmtContext,
     plan_ids: &PlanIdAllocator,
     column_ids: &ColumnIdAllocator,
-) -> Result<(LogicalPlan, PhysicalPlan), tidb_planner_core_base::PlanError> {
+) -> Result<
+    (
+        tidb_planner_core_operator_logicalop::LogicalPlan,
+        PhysicalPlan,
+    ),
+    tidb_planner_core_base::PlanError,
+> {
     planner_optimized_query_with_allocators(
         &crate::driver::planner_bridge::driver_hooks(catalog),
         query,
@@ -153,9 +153,9 @@ pub(crate) fn planner_optimized_query_with_allocators_for_test(
         false,
         plan_ids,
         column_ids,
-        &ScalarSubqueryRegistry::default(),
+        &tidb_planner::optimize::ScalarSubqueryRegistry::default(),
         BuildVisits::Discard,
-        QueryBuild::Statement,
+        tidb_planner::optimize::QueryBuild::Statement,
     )
 }
 
@@ -274,284 +274,6 @@ impl tidb_planner::optimize::PlanningHooks for DriverHooks<'_> {
     }
 }
 
-/// The complete physical tree retained by the prepared-plan cache. A hit
-/// recursively rebuilds every parameter-dependent range in place and derives
-/// the executor receipt from that rebuilt tree. No access,
-/// aggregation, join, sort, or reader policy is re-run in the executor.
-#[derive(Debug)]
-pub(crate) struct CachedSelectPlan {
-    statement: tidb_ast::Stmt,
-    physical: PhysicalPlan,
-    generation: u64,
-    /// Go `PlanCacheStmt.NormalizedPlan` / `PlanDigest`, shared by every
-    /// execution of this entry.
-    digest: std::sync::Arc<std::sync::OnceLock<(String, String)>>,
-}
-
-impl CachedSelectPlan {
-    pub(super) fn clone_for_execution(&self) -> Self {
-        Self {
-            statement: self.statement.clone(),
-            physical: self.physical.deep_clone(),
-            generation: self.generation,
-            digest: std::sync::Arc::clone(&self.digest),
-        }
-    }
-
-    pub(super) fn memory_usage(&self) -> i64 {
-        tidb_planner::physical_plan_cache::cached_plan_memory_usage(&self.physical) as i64
-    }
-
-    pub(crate) fn bind(
-        &mut self,
-        values: &[tidb_datatype::Datum],
-        ctx: Option<&crate::StmtContext>,
-    ) -> Result<u64, CachedPlanBindFailure> {
-        super::bind_prepared_statement_in_place(&mut self.statement, values)
-            .map_err(|_| CachedPlanBindFailure::unbound())?;
-        // Rebuild through the current execute parameters, never the datum
-        // cached when the marker-bearing expression was first planned.
-        let needs_statement = std::sync::atomic::AtomicBool::new(false);
-        let statement = deferred_rebuild_context(ctx, values);
-        let parameters = tidb_planner::physical_plan_cache::CachedPlanRebuildContext::new(values);
-        let evaluator = |expression: &tidb_expr::expression::Expression| {
-            rebuild_evaluate(
-                expression,
-                statement.as_ref(),
-                &parameters,
-                &needs_statement,
-            )
-        };
-        let rebuilt = self.physical.rebuild_plan_for_cache_in_place(
-            &tidb_planner::physical_plan_cache::CachedPlanRebuildContext::new(values)
-                .with_deferred_evaluator(&evaluator),
-        );
-        if needs_statement.load(std::sync::atomic::Ordering::Relaxed) {
-            return Err(CachedPlanBindFailure::NeedsStatement);
-        }
-        rebuilt.map_err(CachedPlanBindFailure::rebuild_failed)?;
-        self.generation = self.generation.wrapping_add(1);
-        Ok(self.generation)
-    }
-
-    pub(crate) fn digest(&self) -> std::sync::Arc<std::sync::OnceLock<(String, String)>> {
-        std::sync::Arc::clone(&self.digest)
-    }
-
-    pub(crate) fn execution_mut(
-        &mut self,
-        generation: u64,
-    ) -> Option<(&tidb_ast::Stmt, &mut PhysicalPlan)> {
-        (self.generation == generation).then_some((&self.statement, &mut self.physical))
-    }
-}
-
-/// Why a cached plan could not be rebuilt for an execute.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum CachedPlanBindFailure {
-    /// The rebuild reached a deferred expression (`NOW()`) and was given no
-    /// statement to evaluate it in: the entry stays, and a bind with the
-    /// executing statement rebuilds it.
-    NeedsStatement,
-    /// Go rejects an entry whose in-place rebuild fails.
-    Rejected {
-        /// Go `RebuildPlan4CachedPlan`'s `rebuildRange` error, which it
-        /// reports as "skip plan-cache: plan rebuild failed, %s".
-        rebuild_error: Option<String>,
-        /// The reason Go's ranger passed to `SetSkipPlanCache` while
-        /// rebuilding: the hit is refused and the replanned statement is not
-        /// cached either.
-        skip_plan_cache: Option<String>,
-    },
-}
-
-impl CachedPlanBindFailure {
-    pub(crate) fn rebuild_failed(
-        error: tidb_planner::physical_plan_cache::PlanCacheRebuildError,
-    ) -> Self {
-        match error {
-            tidb_planner::physical_plan_cache::PlanCacheRebuildError::SkipPlanCache(reason) => {
-                Self::Rejected {
-                    rebuild_error: None,
-                    skip_plan_cache: Some(reason),
-                }
-            }
-            tidb_planner::physical_plan_cache::PlanCacheRebuildError::SkippedThenFailed {
-                reason,
-                error,
-            } => Self::Rejected {
-                rebuild_error: Some(error.to_string()),
-                skip_plan_cache: Some(reason),
-            },
-            error => Self::Rejected {
-                rebuild_error: Some(error.to_string()),
-                skip_plan_cache: None,
-            },
-        }
-    }
-
-    /// The statement-binding failure, which carries no rebuild reason.
-    pub(crate) const fn unbound() -> Self {
-        Self::Rejected {
-            rebuild_error: None,
-            skip_plan_cache: None,
-        }
-    }
-
-    /// Go `RebuildPlan4CachedPlan` warns and `generateNewPlan` replans. The
-    /// entry stays: a cacheable new plan replaces it under the same key, an
-    /// uncacheable one leaves it for the next execute. A context-free probe
-    /// answers `false`, so the bind that carries the statement replans.
-    pub(crate) fn replan(&self, ctx: Option<&crate::StmtContext>) -> bool {
-        let (
-            Self::Rejected {
-                rebuild_error,
-                skip_plan_cache,
-            },
-            Some(ctx),
-        ) = (self, ctx)
-        else {
-            return false;
-        };
-        if let Some(reason) = skip_plan_cache {
-            ctx.start_prepared_range_tracking();
-            ctx.set_skip_plan_cache(reason.as_str());
-        }
-        if let Some(error) = rebuild_error {
-            ctx.append_warning_parts(
-                1105,
-                &format!("skip plan-cache: plan rebuild failed, {error}"),
-            );
-        }
-        true
-    }
-}
-
-/// One evaluation during a cached plan's rebuild. A bound parameter or a
-/// literal is its own value, so a context-free probe rebuilds the same
-/// ranges the statement would. Anything else -- a deferred expression
-/// (`NOW()`) or a function of a parameter (`FROM_UNIXTIME(?)`, which reads
-/// the session time zone) -- is evaluated in the executing statement, and
-/// the probe reports `NeedsStatement` instead of building from a value
-/// computed without it.
-pub(super) fn rebuild_evaluate(
-    expression: &tidb_expr::expression::Expression,
-    statement: Option<&crate::StmtContext>,
-    parameters: &tidb_planner::physical_plan_cache::CachedPlanRebuildContext<'_>,
-    needs_statement: &std::sync::atomic::AtomicBool,
-) -> Result<tidb_datatype::Datum, tidb_exprctx::EvalError> {
-    if let Some(statement) = statement {
-        return tidb_expr::eval_expression_once(expression, statement);
-    }
-    match expression {
-        tidb_expr::expression::Expression::Constant(constant)
-            if constant.deferred_expr.is_none() =>
-        {
-            tidb_expr::eval_expression_once(expression, parameters)
-        }
-        _ => {
-            needs_statement.store(true, std::sync::atomic::Ordering::Relaxed);
-            Err(tidb_exprctx::EvalError::Unsupported(
-                "the expression needs the executing statement",
-            ))
-        }
-    }
-}
-
-/// The context a cached plan's rebuild evaluates a deferred expression in:
-/// Go re-evaluates `NOW()` and its kin under the executing statement's own
-/// session context (clock, time zone, variables) with this execute's
-/// parameters. Without a statement there is no clock to read.
-pub(super) fn deferred_rebuild_context(
-    ctx: Option<&crate::StmtContext>,
-    values: &[tidb_datatype::Datum],
-) -> Option<crate::StmtContext> {
-    ctx.map(|ctx| {
-        ctx.clone()
-            .with_prepared_params(std::sync::Arc::from(values))
-    })
-}
-
-/// Builds the same logical and physical plan as ordinary execution, with
-/// plan-cache-safe logical rewrites enabled so parameter markers are not
-/// folded into a value-specific shape.
-pub(crate) fn cached_query_plan(
-    query: &tidb_ast::QueryStmt,
-    catalog: &SessionExtendedInfoSchema,
-    current_database: &str,
-    ctx: &crate::StmtContext,
-    cacheability: tidb_planner::physical_plan_cache::PlanCacheabilityContext,
-) -> Result<Option<(CachedSelectPlan, bool)>, crate::DriverError> {
-    let Some((physical, cacheable)) =
-        cached_physical_query_plan(query, catalog, current_database, ctx, cacheability)?
-    else {
-        return Ok(None);
-    };
-    Ok(Some((
-        CachedSelectPlan {
-            statement: tidb_ast::Stmt::Query(tidb_ast::NodeBox::new(query.clone())),
-            physical,
-            generation: 0,
-            digest: std::sync::Arc::default(),
-        },
-        cacheable,
-    )))
-}
-
-/// Builds and admits the physical source tree shared by cached queries and
-/// cached DML roots.
-///
-/// # Errors
-/// The optimizer's error: Go `generateNewPlan` returns it as the statement's.
-pub(crate) fn cached_physical_query_plan(
-    query: &tidb_ast::QueryStmt,
-    catalog: &SessionExtendedInfoSchema,
-    current_database: &str,
-    ctx: &crate::StmtContext,
-    cacheability: tidb_planner::physical_plan_cache::PlanCacheabilityContext,
-) -> Result<Option<(PhysicalPlan, bool)>, crate::DriverError> {
-    if matches!(query, tidb_ast::QueryStmt::Select(select) if select.rollup) {
-        return Ok(None);
-    }
-    ctx.start_prepared_range_tracking();
-    // Go `optimize` tries `TryFastPlan` before the optimizer, for a cached
-    // statement too; the point plan keeps its parameter markers
-    // (`HandleConstant` / `IndexConstants`) so a hit rebuilds its keys.
-    let fast = match query {
-        tidb_ast::QueryStmt::Select(select) if ctx.isolation_read_contains_tikv() => {
-            super::point_get_plan::try_fast_plan(select, catalog, current_database, ctx)?
-        }
-        tidb_ast::QueryStmt::Select(_) | tidb_ast::QueryStmt::SetOpr(_) => None,
-    };
-    let physical = match fast {
-        Some(physical) => physical,
-        None => {
-            planner_physical_query(
-                &crate::driver::planner_bridge::driver_hooks(catalog),
-                query,
-                catalog,
-                current_database,
-                ctx,
-                true,
-            )
-            .map_err(super::planner_error_to_driver)?
-            .1
-        }
-    };
-    if ctx.skip_plan_cache() {
-        return Ok(Some((physical, false)));
-    }
-    // Go `generateNewPlan`: an uncacheable physical plan still executes, and
-    // `SetSkipPlanCache` says why.
-    if let Err(reason) =
-        tidb_planner::physical_plan_cache::is_plan_cacheable(&physical, cacheability)
-    {
-        ctx.set_skip_plan_cache(reason);
-        return Ok(Some((physical, false)));
-    }
-    Ok(Some((physical, true)))
-}
-
 #[cfg(test)]
 pub(crate) fn statistics_usage_before_and_after_logical_optimization(
     query: &tidb_ast::QueryStmt,
@@ -614,7 +336,7 @@ pub(crate) fn statistics_usage_before_and_after_logical_optimization(
             plan,
             ctx.opt_index_prune_threshold(),
         );
-    let optimized = optimize_built_logical(
+    let optimized = tidb_planner::optimizer::optimize_built_logical(
         plan,
         flags,
         catalog,

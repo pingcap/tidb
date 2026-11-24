@@ -526,7 +526,7 @@ pub trait PreparedAstCompile: super::CompilerSession {
                 return Ok(None);
             };
             if let Some(cached) = plan.bind_cached_for_statement(
-                self.physical_plan_cache(),
+                self.plan_cache_rebuild(),
                 values,
                 &catalog,
                 self.session_vars().current_db.as_str(),
@@ -539,7 +539,7 @@ pub trait PreparedAstCompile: super::CompilerSession {
                 // hits only, for the prepared and non-prepared paths alike.
                 tidb_planner_core_metrics::inc_plan_cache_hit(false);
                 tidb_planner_core_metrics::get_plan_cache_lookup_duration(
-                    self.physical_plan_cache().uses_instance(),
+                    self.plan_cache_rebuild().uses_instance(),
                 )
                 .observe(lookup_start.elapsed().as_secs_f64());
                 return Ok(Some(cached));
@@ -567,7 +567,7 @@ pub trait PreparedAstCompile: super::CompilerSession {
         // (plan_cache.go:366).
         tidb_planner_core_metrics::plan_cache_miss_counter(false).inc();
         plan.bind_for_statement(
-            self.physical_plan_cache(),
+            self.plan_cache_rebuild(),
             values,
             &catalog,
             self.session_vars().current_db.as_str(),
@@ -627,7 +627,7 @@ pub trait PreparedAstCompile: super::CompilerSession {
                 return Ok(None);
             };
             if let Some(execution) = plan.bind_cached_for_statement(
-                self.physical_plan_cache(),
+                self.plan_cache_rebuild(),
                 values,
                 &catalog,
                 self.session_vars().current_db.as_str(),
@@ -640,7 +640,7 @@ pub trait PreparedAstCompile: super::CompilerSession {
                 // observation is hits-only per `lookupPlanCache`'s defer.
                 tidb_planner_core_metrics::inc_plan_cache_hit(false);
                 tidb_planner_core_metrics::get_plan_cache_lookup_duration(
-                    self.physical_plan_cache().uses_instance(),
+                    self.plan_cache_rebuild().uses_instance(),
                 )
                 .observe(lookup_start.elapsed().as_secs_f64());
                 return Ok(Some(execution));
@@ -653,7 +653,7 @@ pub trait PreparedAstCompile: super::CompilerSession {
             return Ok(None);
         };
         plan.bind_for_statement(
-            self.physical_plan_cache(),
+            self.plan_cache_rebuild(),
             values,
             &catalog,
             self.session_vars().current_db.as_str(),

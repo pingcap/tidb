@@ -22,8 +22,8 @@ impl tidb_executor::compiler::CompilerSession for Session {
         &mut self.non_prepared_plan_cache
     }
 
-    fn physical_plan_cache(&self) -> &tidb_executor::SessionPlanCache {
-        &self.physical_plan_cache
+    fn plan_cache_rebuild(&self) -> &tidb_executor::SessionPlanCache {
+        &self.plan_cache_rebuild
     }
 
     fn defer_explain_analyze_render(&mut self, write: tidb_executor::AnalyzedWrite) {

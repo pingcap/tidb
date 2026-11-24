@@ -20,7 +20,7 @@
 
 use crate::WithStatementStore as _;
 pub(crate) use tidb_planner::dml_optimize::*;
-use tidb_planner::physical_plan_cache::RebuildPlanForCache;
+use tidb_planner::plan_cache_rebuild::RebuildPlanForCache;
 use crate::KvTableReader;
 use super::plan_cache::{CachedPhysicalPlan, PhysicalPlanCacheKey, SessionPlanCache};
 use super::*;
@@ -2834,7 +2834,7 @@ impl CachedDmlPlan {
     }
 
     pub(super) fn memory_usage(&self) -> i64 {
-        tidb_planner::physical_plan_cache::cached_plan_memory_usage(&self.physical) as i64
+        tidb_planner::plan_cache_rebuild::cached_plan_memory_usage(&self.physical) as i64
     }
 
     fn bind(
@@ -2847,7 +2847,7 @@ impl CachedDmlPlan {
             .map_err(|_| CachedPlanBindFailure::unbound())?;
         let needs_statement = std::sync::atomic::AtomicBool::new(false);
         let statement = super::planner_bridge::deferred_rebuild_context(ctx, values);
-        let parameters = tidb_planner::physical_plan_cache::CachedPlanRebuildContext::new(values);
+        let parameters = tidb_planner::plan_cache_rebuild::CachedPlanRebuildContext::new(values);
         let evaluator = |expression: &tidb_expr::expression::Expression| {
             super::planner_bridge::rebuild_evaluate(
                 expression,
@@ -2857,7 +2857,7 @@ impl CachedDmlPlan {
             )
         };
         let rebuilt = self.physical.rebuild_plan_for_cache_in_place(
-            &tidb_planner::physical_plan_cache::CachedPlanRebuildContext::new(values)
+            &tidb_planner::plan_cache_rebuild::CachedPlanRebuildContext::new(values)
                 .with_deferred_evaluator(&evaluator),
         );
         if needs_statement.load(std::sync::atomic::Ordering::Relaxed) {
@@ -3263,7 +3263,7 @@ fn cached_dml_physical_plan(
     catalog: &SessionExtendedInfoSchema,
     current_database: &str,
     ctx: &crate::StmtContext,
-    cacheability: tidb_planner::physical_plan_cache::PlanCacheabilityContext,
+    cacheability: tidb_planner::plan_cache_rebuild::PlanCacheabilityContext,
 ) -> Result<Option<(tidb_planner_core_operator_physicalop::PhysicalPlan, bool)>, DriverError> {
     let Stmt::Dml(dml) = statement else {
         return Ok(None);
@@ -3277,7 +3277,7 @@ fn cached_dml_physical_plan(
         if ctx.skip_plan_cache() {
             return Ok(Some((root, false)));
         }
-        if tidb_planner::physical_plan_cache::is_plan_cacheable(&root, cacheability).is_err() {
+        if tidb_planner::plan_cache_rebuild::is_plan_cacheable(&root, cacheability).is_err() {
             return Ok(None);
         }
         return Ok(Some((root, true)));
@@ -3325,7 +3325,7 @@ fn cached_dml_physical_plan(
     if ctx.skip_plan_cache() {
         return Ok(Some((root, false)));
     }
-    if tidb_planner::physical_plan_cache::is_plan_cacheable(&root, cacheability).is_err() {
+    if tidb_planner::plan_cache_rebuild::is_plan_cacheable(&root, cacheability).is_err() {
         return Ok(None);
     }
     Ok(Some((root, true)))

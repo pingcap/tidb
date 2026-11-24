@@ -361,8 +361,8 @@ impl PreparedPlanCacheEnvironment {
     pub const fn plan_cacheability(
         &self,
         parameter_count: usize,
-    ) -> crate::physical_plan_cache::PlanCacheabilityContext {
-        crate::physical_plan_cache::PlanCacheabilityContext {
+    ) -> crate::plan_cache_rebuild::PlanCacheabilityContext {
+        crate::plan_cache_rebuild::PlanCacheabilityContext {
             parameter_count,
             enable_generated_columns: self.enable_generated_columns,
             max_plan_size: self.plan_cache_max_plan_size,

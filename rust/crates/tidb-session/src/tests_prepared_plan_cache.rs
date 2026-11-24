@@ -1704,7 +1704,7 @@ fn session_plan_cache_recency_is_shared_and_capacity_is_captured_once() {
     assert_cache_hit(&mut session, "EXECUTE c USING @id", 0);
     assert_cache_hit(&mut session, "EXECUTE a USING @id", 1);
     assert_cache_hit(&mut session, "EXECUTE b USING @id", 0);
-    assert_eq!(session.physical_plan_cache.size(), 2);
+    assert_eq!(session.plan_cache_rebuild.size(), 2);
     assert_eq!(
         session
             .run("SELECT v FROM cache_lifecycle WHERE id=1")
@@ -1758,7 +1758,7 @@ fn session_plan_cache_session_and_instance_flush_have_distinct_lifetimes() {
         assert_cache_hit(session, "EXECUTE a USING @id", 0);
     }
     first.run("ADMIN FLUSH SESSION PLAN_CACHE").unwrap();
-    assert_eq!(first.physical_plan_cache.memory_usage(), 0);
+    assert_eq!(first.plan_cache_rebuild.memory_usage(), 0);
     assert_cache_hit(&mut first, "EXECUTE a USING @id", 0);
     assert_cache_hit(&mut peer, "EXECUTE a USING @id", 1);
     first.run("ADMIN FLUSH INSTANCE PLAN_CACHE").unwrap();
@@ -1838,7 +1838,7 @@ fn session_plan_cache_eviction_does_not_destroy_an_open_execution() {
     let execution = session
         .bind_cached_prepared_select(&prepared.select_plan().unwrap(), &[Datum::Int(2)])
         .unwrap();
-    assert!(session.physical_plan_cache.memory_usage() > 0);
+    assert!(session.plan_cache_rebuild.memory_usage() > 0);
     let other = session
         .prepare_ast("SELECT id FROM cache_lifecycle WHERE id=?")
         .unwrap();

@@ -16,7 +16,7 @@
 //! rebuild its ranges for new parameters -- Go's `PhysicalTableScan` /
 //! `PhysicalIndexScan` / `PointGetPlan` / index-join fields that
 //! `plan_cache_rebuild.go` reads. Rebuilding them is core's
-//! (`physical_plan_cache`, `index_join_path`).
+//! (`plan_cache_rebuild`, `index_join_path`).
 
 use tidb_datatype::{Datum, FieldType};
 use tidb_expr::column::Column;

@@ -38,14 +38,14 @@ impl Session {
         &mut self,
         owner: std::sync::Arc<tidb_executor::PlanCacheInvalidation>,
     ) {
-        self.physical_plan_cache.clear();
+        self.plan_cache_rebuild.clear();
         self.plan_cache_invalidation = owner;
     }
 
     /// Install the hosting cluster's persisted InfoSchema version on the
     /// shared instance key; locally rebuilt catalog image IDs remain local.
     pub fn set_plan_cache_schema_version(&self, version: u64) {
-        self.physical_plan_cache
+        self.plan_cache_rebuild
             .set_instance_schema_version(version);
     }
 
@@ -76,10 +76,10 @@ impl Session {
             return;
         };
         if let Some(plan) = select {
-            plan.discard_cached_plan(&self.physical_plan_cache, &catalog, &environment);
+            plan.discard_cached_plan(&self.plan_cache_rebuild, &catalog, &environment);
         }
         if let Some(plan) = dml {
-            plan.discard_cached_plan(&self.physical_plan_cache, &catalog, &environment);
+            plan.discard_cached_plan(&self.plan_cache_rebuild, &catalog, &environment);
         }
     }
 
@@ -93,7 +93,7 @@ impl Session {
             .vars
             .get_global("tidb_enable_instance_plan_cache")
             .is_ok_and(|value| value == "ON" || value == "1");
-        self.physical_plan_cache
+        self.plan_cache_rebuild
             .select_instance(&self.plan_cache_invalidation, enabled);
         let epoch = self.plan_cache_invalidation.epoch();
         let monitor = self.session_bool("tidb_enable_prepared_plan_cache_memory_monitor", true);
@@ -103,7 +103,7 @@ impl Session {
             .ok()
             .and_then(|value| value.parse().ok())
             .unwrap_or(tidb_vardef::defaults::DEF_TIDB_PREP_PLAN_CACHE_MEMORY_GUARD_RATIO);
-        self.physical_plan_cache.configure(
+        self.plan_cache_rebuild.configure(
             self.session_plan_cache_capacity(),
             monitor,
             epoch,
@@ -128,7 +128,7 @@ impl Session {
             return Ok(());
         }
         self.configure_session_plan_cache();
-        self.physical_plan_cache.clear();
+        self.plan_cache_rebuild.clear();
         if scope == AdminPlanCacheScope::Instance {
             self.plan_cache_invalidation.expire();
         }

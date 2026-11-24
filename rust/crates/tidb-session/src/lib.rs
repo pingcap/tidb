@@ -824,7 +824,7 @@ pub struct Session {
     row_id_shards: Arc<std::sync::Mutex<tidb_sessionctx::RowIdShardGenerator>>,
     /// Go's separate non-prepared statement metadata LRU.
     non_prepared_plan_cache: non_prepared_plan_cache::NonPreparedPlanCache,
-    physical_plan_cache: tidb_executor::SessionPlanCache,
+    plan_cache_rebuild: tidb_executor::SessionPlanCache,
     plan_cache_invalidation: Arc<tidb_executor::PlanCacheInvalidation>,
     /// Go `sessionctx.Context.GetStatsHandle()`.
     stats_handle: Arc<tidb_stats_handle::StatsHandle>,
@@ -1177,7 +1177,7 @@ impl Session {
             stmt_is_read_only: false,
             row_id_shards: Arc::default(),
             non_prepared_plan_cache: non_prepared_plan_cache::NonPreparedPlanCache::default(),
-            physical_plan_cache: tidb_executor::SessionPlanCache::default(),
+            plan_cache_rebuild: tidb_executor::SessionPlanCache::default(),
             plan_cache_invalidation,
             stats_handle,
             parse_warnings: None,

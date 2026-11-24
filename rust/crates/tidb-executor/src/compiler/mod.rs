@@ -42,7 +42,7 @@ pub trait CompilerSession: crate::admin::AdminExec {
     fn non_prepared_plan_cache_mut(&mut self) -> &mut crate::compiler::non_prepared_plan_cache::NonPreparedPlanCache;
 
     /// The session's physical plan cache (Go `GetSessionPlanCache`).
-    fn physical_plan_cache(&self) -> &crate::SessionPlanCache;
+    fn plan_cache_rebuild(&self) -> &crate::SessionPlanCache;
 
     /// Holds an autocommit `EXPLAIN ANALYZE` write's rendering until the
     /// statement committed (Go `runStmt`'s `IsExplainAnalyzeDML` commit

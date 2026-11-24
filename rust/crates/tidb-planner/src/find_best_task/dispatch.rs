@@ -737,7 +737,7 @@ impl<'a> DispatchContext<'a> {
         if tidb_expr::expr_util::predicates::maybe_over_optimized_4_plan_cache(
             self.use_plan_cache,
             access_conds,
-        ) && !crate::physical_plan_cache::is_safe_point_get_path_4_plan_cache(
+        ) && !crate::plan_cache_rebuild::is_safe_point_get_path_4_plan_cache(
             access_conds,
             range_width,
             range_count,

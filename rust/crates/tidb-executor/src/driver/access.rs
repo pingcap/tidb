@@ -386,8 +386,7 @@ impl PreparedSelectPlan {
                     return Ok(None);
                 };
                 let query = query.into_inner();
-                let Some((mut plan, cacheable)) = super::planner_bridge::cached_query_plan(
-                    &query,
+                let Some((mut plan, cacheable)) = super::planner_bridge::cached_query_plan(&crate::driver::planner_bridge::driver_hooks(catalog), &query,
                     catalog,
                     current_database,
                     &ctx,
