@@ -54,28 +54,48 @@ on error before persisting either a retry or a cancelled job. This also protects
 TRUNCATE TABLE when masking-policy SQL has already flushed the old table deletion;
 `sess.Reset()` alone only discards the current statement buffer.
 
+A full transaction rollback restores the job's schema state, binlog information
+and resume reason, and clears the last schema version before job persistence.
+This also applies when the job enters cancellation or rollback, preserving the
+sub-job states that record those decisions. For a retry after full transaction
+rollback or `sess.Reset()` statement rollback, the worker also restores the
+multi-schema sub-jobs and keeps the previous raw arguments. Error accounting
+and durable `ReorgMeta` choices survive restoration. Storage-class history
+staging failures use the same snapshot when restoring their transaction
+checkpoint.
+
+`ALTER SCHEMA ... READ ONLY` retains its schema state after a failed step.
+The rollback handler uses `StatePendingReadOnly` to distinguish a job that
+attempted a metadata change from a job cancelled while queued.
+
 If a partition-affinity table has gained partitions since job submission,
 TRUNCATE TABLE first reserves the missing replacement IDs and persists them
 with the job in one transaction, before any external group creation. Retries
 and cancellation reload these IDs from the committed job arguments.
 
 Rolling back the DDL transaction does not undo changes a step has made in PD.
-For TRUNCATE TABLE, affinity groups follow two rules:
+Affinity groups follow two rules:
 
 - Groups that the new metadata replaces stay until the job commits as done.
-  TRUNCATE TABLE deletes the old groups in the done-job branch of
-  `transitOneJobStep`.
-- When a TRUNCATE TABLE job ends cancelled,
-  `deleteAffinityGroupsOfCancelledJob` runs in the
-  cancellation branch of `transitOneJobStep`, before the cancellation commits.
-  It deletes the groups the job may have created, as identified by the job
-  arguments, that the metadata in that transaction does not use. This covers PD
-  committing only part of a creation request, groups left by an earlier attempt,
-  and cancellation by `ADMIN CANCEL DDL JOBS` or the error count limit.
-  PD deletion is best effort and uses a 10-second timeout. If deletion fails or
-  times out, the worker logs the failure and completes cancellation, so
-  replacement groups may remain in PD. The `kv.ErrEntryTooLarge` path while
-  writing the job row bypasses this hook.
+  TRUNCATE TABLE and ALTER TABLE ... AFFINITY delete the old groups in the
+  done-job branch of `transitOneJobStep`.
+- When a CREATE TABLE, materialized view shadow creation, batch create,
+  TRUNCATE TABLE, TRUNCATE PARTITION, or ALTER TABLE ... AFFINITY job ends
+  cancelled, `deleteAffinityGroupsOfCancelledJob` runs before cancellation commits. It
+  deletes groups identified by the job arguments that the metadata in that
+  transaction does not use. If the job-row write returns `kv.ErrEntryTooLarge`,
+  the worker rolls back the step and runs the same cleanup in the new
+  transaction that records the cancellation. For truncate jobs, cleanup reads
+  the arguments from before the job-row update so it can find the replacement
+  IDs even if encoding wrote finished arguments. The history entry still uses
+  the encoded job arguments. For partition truncation, cleanup preserves groups
+  for IDs already in committed definitions.
+  The helper covers PD committing only part of a creation request, groups left
+  by an earlier attempt, and cancellation by `ADMIN CANCEL DDL JOBS` or the
+  error count limit.
+  PD deletion is best effort and uses a 10-second timeout from the DDL owner's
+  context. If deletion fails or times out, the worker logs the failure and
+  continues cancellation, so unused groups may remain in PD.
 
 ## Schema version + diff and cluster-wide synchronization
 
