@@ -35,7 +35,6 @@ type PlanReplayerHandle =
     replayer::PlanReplayerHandle<tidb_domain_core::domain::plan_replayer_owner::PooledSql>;
 
 /// Go `planReplayerSessionFinishedTaskKeyLen`.
-const PLAN_REPLAYER_SESSION_FINISHED_TASK_KEY_LEN: usize = 128;
 
 /// The dumping session as Go's `sctx`: its `GetSQLExecutor()` and session
 /// variables.
@@ -401,102 +400,6 @@ impl Session {
         registry
     }
 
-    /// Go `ExecStmt.checkPlanReplayerCapture`, the first step of
-    /// `FinishExecuteStmt`: a matching capture task, or the continuous
-    /// capture, sends this statement to the dump workers.
-    pub(crate) fn check_plan_replayer_capture(
-        &mut self,
-        observation: &tidb_executor::exec_stmt_observation::StatementObservation,
-        plan: &tidb_stmtctx::ProcessPlanInfo,
-        txn_ts: u64,
-    ) {
-        // Go also skips the statistics request sources; this node's
-        // statistics statements all run on restricted sessions.
-        let continues = self.vars.enable_plan_replayed_continues_capture();
-        // Go `IsPlanReplayerCaptureEnabled`.
-        if self.vars.restricted_sql || !(self.vars.enable_plan_replayer_capture() || continues) {
-            return;
-        }
-        let Some(handle) = self.plan_replayer_handle() else {
-            return;
-        };
-        let key = tidb_replayer::PlanReplayerTaskKey {
-            sql_digest: observation.digest.as_str().to_owned(),
-            plan_digest: plan.plan_digest.clone(),
-        };
-        if continues {
-            // Go `checkPlanReplayerContinuesCapture`.
-            if !observation.plan_replayer_continues_capture_valid
-                || self.vars.plan_replayer_finished_task_key.contains(&key)
-            {
-                return;
-            }
-            self.send_plan_replayer_dump_task(&handle, key.clone(), observation, plan, txn_ts, true);
-            // Go `AddPlanReplayerFinishedTaskKey`.
-            if self.vars.plan_replayer_finished_task_key.len() >= PLAN_REPLAYER_SESSION_FINISHED_TASK_KEY_LEN {
-                self.vars.plan_replayer_finished_task_key.clear();
-            }
-            self.vars.plan_replayer_finished_task_key.insert(key);
-            return;
-        }
-        // Go `checkPlanReplayerCaptureTask`.
-        let tasks = handle.collector.get_tasks();
-        if tasks.is_empty() || key.sql_digest.is_empty() || key.plan_digest.is_empty() {
-            return;
-        }
-        if tasks
-            .iter()
-            .any(|task| task.sql_digest == key.sql_digest && (task.plan_digest == "*" || task.plan_digest == key.plan_digest))
-        {
-            self.send_plan_replayer_dump_task(&handle, key, observation, plan, txn_ts, false);
-        }
-    }
-
-    /// Go `sendPlanReplayerDumpTask`.
-    fn send_plan_replayer_dump_task(
-        &self,
-        handle: &PlanReplayerHandle,
-        key: tidb_replayer::PlanReplayerTaskKey,
-        observation: &tidb_executor::exec_stmt_observation::StatementObservation,
-        plan: &tidb_stmtctx::ProcessPlanInfo,
-        start_ts: u64,
-        is_continues_capture: bool,
-    ) {
-        let session_bindings = self
-            .session_bindings
-            .get_all_session_bindings()
-            .into_iter()
-            .map(|binding| {
-                vec![
-                    binding.original_sql.clone(),
-                    binding.bind_sql.clone(),
-                    binding.db.clone(),
-                    binding.status.to_owned(),
-                    binding.create_time.clone(),
-                    binding.update_time.clone(),
-                    binding.charset.clone(),
-                    binding.collation.clone(),
-                    binding.source.to_owned(),
-                ]
-            })
-            .collect();
-        handle.send_task(replayer::PlanReplayerDumpTask {
-            key,
-            start_ts,
-            session_bindings,
-            session_vars: self.plan_replayer_session_vars(),
-            // Go `[]ast.StmtNode{stmtNode}`, an EXECUTE's being the prepared
-            // statement: the statement's original text either way.
-            exec_stmts: vec![observation.text.clone()],
-            // Go `getEncodedPlan(stmtCtx, false)`.
-            encoded_plan: plan.plan_source.as_ref().map(tidb_stmtctx::PlanSource::render).unwrap_or_default().0,
-            analyze: false,
-            is_capture: true,
-            is_continues_capture,
-            ..replayer::PlanReplayerDumpTask::default()
-        });
-    }
-
     /// Go `domain.GetDomain(sctx).GetPlanReplayerHandle()`.
     fn plan_replayer_handle(&self) -> Option<std::sync::Arc<PlanReplayerHandle>> {
         self.domain_services()?.domain.upgrade()?.plan_replayer_handle()
@@ -678,5 +581,37 @@ impl tidb_executor::plan_replayer::PlanReplayerSession for Session {
 
     fn parse_plan_replayer_sql(&mut self, sql: &str) -> Result<(), String> {
         ResetContextOfStmt::parse_statement(self, sql).map(drop).map_err(|error| error.error_string())
+    }
+}
+
+impl tidb_executor::exec_stmt_observation::PlanReplayerCapture for Session {
+    fn plan_replayer_capture_tasks(&self) -> Option<Vec<tidb_replayer::PlanReplayerTaskKey>> {
+        self.plan_replayer_handle().map(|handle| handle.collector.get_tasks())
+    }
+
+    fn send_plan_replayer_task(&self, task: replayer::PlanReplayerDumpTask) {
+        if let Some(handle) = self.plan_replayer_handle() {
+            handle.send_task(task);
+        }
+    }
+
+    fn session_binding_records(&self) -> Vec<Vec<String>> {
+        self.session_bindings
+            .get_all_session_bindings()
+            .into_iter()
+            .map(|binding| {
+                vec![
+                    binding.original_sql.clone(),
+                    binding.bind_sql.clone(),
+                    binding.db.clone(),
+                    binding.status.to_owned(),
+                    binding.create_time.clone(),
+                    binding.update_time.clone(),
+                    binding.charset.clone(),
+                    binding.collation.clone(),
+                    binding.source.to_owned(),
+                ]
+            })
+            .collect()
     }
 }

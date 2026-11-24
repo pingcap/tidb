@@ -577,6 +577,70 @@ pub trait ExecStmtObservation: crate::sessionctx::SessionContext {
         });
     }
 
+    /// Go `FinishExecuteStmt`: the statement's commit and lock-keys details
+    /// attach to its plan's root operator in its `RuntimeStatsColl`
+    /// (`RuntimeStatsWithCommit`), which `EXPLAIN FOR CONNECTION` renders.
+    fn register_commit_runtime_stats(&self, exec_detail: &tidb_execdetails::exec_details::ExecDetails) {
+        if exec_detail.commit_detail.is_none()
+            && exec_detail.lock_keys_detail.is_none()
+            && exec_detail.shared_lock_keys_detail.is_none()
+        {
+            return;
+        }
+        let cell = self.process_plan_info_cell();
+        let cell = cell
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        // A statement whose own plan is nil (a binary EXECUTE) keeps the last
+        // valid plan, whose collector is not this statement's.
+        if cell.plan_retained {
+            return;
+        }
+        let plan = cell
+            .plan
+            .as_ref()
+            .and_then(|plan| plan.get::<tidb_planner_core_operator_physicalop::PhysicalPlan>());
+        let coll = cell.runtime_stats_coll.as_ref().and_then(|coll| {
+            coll.get::<Arc<dyn tidb_execdetails::runtime_stats::ExecutorRuntimeStatsSource>>()
+        });
+        if let (Some(plan), Some(coll)) = (plan, coll) {
+            coll.register_stats(
+                i64::from(plan.id()),
+                Box::new(tidb_execdetails::runtime_stats::RuntimeStatsWithCommit {
+                    commit: exec_detail.commit_detail.clone(),
+                    lock_keys: exec_detail.lock_keys_detail.clone(),
+                    shared_lock_keys: exec_detail.shared_lock_keys_detail.clone(),
+                    txn_cnt: 0,
+                }),
+            );
+        }
+    }
+
+    /// Go `ExecStmt.recordAffectedRows2Metrics`: the statement's affected
+    /// rows under its type's `AffectedRowsCounter` label.
+    fn record_affected_rows_2_metrics(&self, stmt_type: &str, affected_rows: u64) {
+        if affected_rows == 0 {
+            return;
+        }
+        // Go `shouldSkipAffectedRowsMetricForInternalMVMaintenance`: "Internal
+        // MV maintenance DMLs are already rolled up and reported by the outer
+        // REFRESH MATERIALIZED VIEW / PURGE MATERIALIZED VIEW LOG statement."
+        let dml = matches!(
+            stmt_type,
+            "Insert" | "Replace" | "Delete" | "Update" | "NTDML-Delete" | "NTDML-Update" | "NTDML-Insert" | "NTDML-Replace"
+        );
+        if dml && self.session_vars().restricted_sql && self.session_vars().in_mview_maintenance {
+            return;
+        }
+        let label = match stmt_type {
+            "Insert" | "Replace" | "Delete" | "Update" | "NTDML-Delete" | "NTDML-Update" | "NTDML-Insert" | "NTDML-Replace" => stmt_type,
+            "PurgeMaterializedViewLog" => "PurgeMLog",
+            "RefreshMaterializedView" => "RefreshMV",
+            _ => return,
+        };
+        tidb_metrics::executor::AFFECTED_ROWS.with_label_values(&[label]).inc_by(affected_rows as f64);
+    }
+
     /// Go `ExecStmt.updatePrevStmt`: the statement text a later slow
     /// `COMMIT` prints as `Prev_stmt` (`FormatSQL(GetTextToLog(false))`).
     fn update_prev_stmt(&mut self, observation: &StatementObservation) {
@@ -850,4 +914,98 @@ fn slow_log_sample_logger() -> tidb_logutil::SampledLogger {
             )()
         });
     LOGGER.clone()
+}
+
+/// Go `AddPlanReplayerFinishedTaskKey`'s bound: the session keeps at most
+/// this many continuous-capture keys before it starts over.
+const PLAN_REPLAYER_SESSION_FINISHED_TASK_KEY_LEN: usize = 128;
+
+/// What Go `ExecStmt.checkPlanReplayerCapture` reaches through `sctx` and
+/// its domain's `PlanReplayerHandle`.
+pub trait PlanReplayerCapture: crate::sessionctx::SessionContext + crate::plan_replayer::PlanReplayerSession {
+    /// Go `GetPlanReplayerHandle().GetTasks()`; `None` without a handle.
+    fn plan_replayer_capture_tasks(&self) -> Option<Vec<tidb_replayer::PlanReplayerTaskKey>>;
+    /// Go `GetPlanReplayerHandle().SendTask(dumpTask)`.
+    fn send_plan_replayer_task(&self, task: tidb_domain::plan_replayer::PlanReplayerDumpTask);
+    /// Go `sessionBindHandle.GetAllSessionBindings()` as the nine fields
+    /// `dumpSessionBindRecords` writes per binding.
+    fn session_binding_records(&self) -> Vec<Vec<String>>;
+
+    /// Go `ExecStmt.checkPlanReplayerCapture`, the first step of
+    /// `FinishExecuteStmt`: a matching capture task, or the continuous
+    /// capture, sends this statement to the dump workers.
+    fn check_plan_replayer_capture(
+        &mut self,
+        observation: &StatementObservation,
+        plan: &tidb_stmtctx::ProcessPlanInfo,
+        txn_ts: u64,
+    ) {
+        // Go also skips the statistics request sources; this node's
+        // statistics statements all run on restricted sessions.
+        let vars = self.session_vars();
+        let continues = vars.enable_plan_replayed_continues_capture();
+        // Go `IsPlanReplayerCaptureEnabled`.
+        if vars.restricted_sql || !(vars.enable_plan_replayer_capture() || continues) {
+            return;
+        }
+        let Some(tasks) = self.plan_replayer_capture_tasks() else {
+            return;
+        };
+        let key = tidb_replayer::PlanReplayerTaskKey {
+            sql_digest: observation.digest.as_str().to_owned(),
+            plan_digest: plan.plan_digest.clone(),
+        };
+        if continues {
+            // Go `checkPlanReplayerContinuesCapture`.
+            if !observation.plan_replayer_continues_capture_valid
+                || self.session_vars().plan_replayer_finished_task_key.contains(&key)
+            {
+                return;
+            }
+            self.send_plan_replayer_dump_task(key.clone(), observation, plan, txn_ts, true);
+            // Go `AddPlanReplayerFinishedTaskKey`.
+            let finished = &mut self.session_vars_mut().plan_replayer_finished_task_key;
+            if finished.len() >= PLAN_REPLAYER_SESSION_FINISHED_TASK_KEY_LEN {
+                finished.clear();
+            }
+            finished.insert(key);
+            return;
+        }
+        // Go `checkPlanReplayerCaptureTask`.
+        if tasks.is_empty() || key.sql_digest.is_empty() || key.plan_digest.is_empty() {
+            return;
+        }
+        if tasks
+            .iter()
+            .any(|task| task.sql_digest == key.sql_digest && (task.plan_digest == "*" || task.plan_digest == key.plan_digest))
+        {
+            self.send_plan_replayer_dump_task(key, observation, plan, txn_ts, false);
+        }
+    }
+
+    /// Go `sendPlanReplayerDumpTask`.
+    fn send_plan_replayer_dump_task(
+        &self,
+        key: tidb_replayer::PlanReplayerTaskKey,
+        observation: &StatementObservation,
+        plan: &tidb_stmtctx::ProcessPlanInfo,
+        start_ts: u64,
+        is_continues_capture: bool,
+    ) {
+        self.send_plan_replayer_task(tidb_domain::plan_replayer::PlanReplayerDumpTask {
+            key,
+            start_ts,
+            session_bindings: self.session_binding_records(),
+            session_vars: self.plan_replayer_session_vars(),
+            // Go `[]ast.StmtNode{stmtNode}`, an EXECUTE's being the prepared
+            // statement: the statement's original text either way.
+            exec_stmts: vec![observation.text.clone()],
+            // Go `getEncodedPlan(stmtCtx, false)`.
+            encoded_plan: plan.plan_source.as_ref().map(tidb_stmtctx::PlanSource::render).unwrap_or_default().0,
+            analyze: false,
+            is_capture: true,
+            is_continues_capture,
+            ..tidb_domain::plan_replayer::PlanReplayerDumpTask::default()
+        });
+    }
 }

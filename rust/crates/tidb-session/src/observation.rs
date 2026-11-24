@@ -922,44 +922,6 @@ impl Session {
         }
     }
 
-    /// Go `FinishExecuteStmt`: the statement's commit and lock-keys details
-    /// attach to its plan's root operator in its `RuntimeStatsColl`
-    /// (`RuntimeStatsWithCommit`), which `EXPLAIN FOR CONNECTION` renders.
-    fn register_commit_runtime_stats(&self, exec_detail: &tidb_execdetails::exec_details::ExecDetails) {
-        if exec_detail.commit_detail.is_none()
-            && exec_detail.lock_keys_detail.is_none()
-            && exec_detail.shared_lock_keys_detail.is_none()
-        {
-            return;
-        }
-        let cell = self
-            .process_plan_info
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        // A statement whose own plan is nil (a binary EXECUTE) keeps the last
-        // valid plan, whose collector is not this statement's.
-        if cell.plan_retained {
-            return;
-        }
-        let plan = cell
-            .plan
-            .as_ref()
-            .and_then(|plan| plan.get::<tidb_planner_core_operator_physicalop::PhysicalPlan>());
-        let coll = cell.runtime_stats_coll.as_ref().and_then(|coll| {
-            coll.get::<Arc<dyn tidb_execdetails::runtime_stats::ExecutorRuntimeStatsSource>>()
-        });
-        if let (Some(plan), Some(coll)) = (plan, coll) {
-            coll.register_stats(
-                i64::from(plan.id()),
-                Box::new(tidb_execdetails::runtime_stats::RuntimeStatsWithCommit {
-                    commit: exec_detail.commit_detail.clone(),
-                    lock_keys: exec_detail.lock_keys_detail.clone(),
-                    shared_lock_keys: exec_detail.shared_lock_keys_detail.clone(),
-                    txn_cnt: 0,
-                }),
-            );
-        }
-    }
 
     fn publish_statement_observation(
         &mut self,
@@ -996,7 +958,7 @@ impl Session {
                 Some(&commit_details),
             );
         }
-        self.register_commit_runtime_stats(&observation.cop_stats.exec_details());
+        tidb_executor::exec_stmt_observation::ExecStmtObservation::register_commit_runtime_stats(self, &observation.cop_stats.exec_details());
         // Go observes compiled statements, not a parser failure without an AST.
         if observation.label.is_empty() {
             return;
@@ -1065,7 +1027,12 @@ impl Session {
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
             // Go `FinishExecuteStmt`: `a.checkPlanReplayerCapture(txnTS)`.
             let (txn_ts, _) = self.txn_start_and_for_update_ts();
-            self.check_plan_replayer_capture(&observation, &plan, txn_ts);
+            tidb_executor::exec_stmt_observation::PlanReplayerCapture::check_plan_replayer_capture(
+                self,
+                &observation,
+                &plan,
+                txn_ts,
+            );
             self.log_slow_query(
                 &observation,
                 elapsed,
@@ -1077,7 +1044,7 @@ impl Session {
             drop(plan);
             self.update_prev_stmt(&observation);
             self.record_last_query_info(&observation, error);
-            self.record_affected_rows_2_metrics(&observation.label, affected_rows);
+            tidb_executor::exec_stmt_observation::ExecStmtObservation::record_affected_rows_2_metrics(self, &observation.label, affected_rows);
             self.log_stmt(&observation);
         }
         self.summary_stmt(
@@ -1095,30 +1062,6 @@ impl Session {
 /// `ExecStmt.FinishExecuteStmt` (`pkg/executor/adapter.go`) and of
 /// `session.logStmt` (`pkg/session/session.go`).
 impl Session {
-    /// Go `ExecStmt.recordAffectedRows2Metrics`: the statement's affected
-    /// rows under its type's `AffectedRowsCounter` label.
-    fn record_affected_rows_2_metrics(&self, stmt_type: &str, affected_rows: u64) {
-        if affected_rows == 0 {
-            return;
-        }
-        // Go `shouldSkipAffectedRowsMetricForInternalMVMaintenance`: "Internal
-        // MV maintenance DMLs are already rolled up and reported by the outer
-        // REFRESH MATERIALIZED VIEW / PURGE MATERIALIZED VIEW LOG statement."
-        let dml = matches!(
-            stmt_type,
-            "Insert" | "Replace" | "Delete" | "Update" | "NTDML-Delete" | "NTDML-Update" | "NTDML-Insert" | "NTDML-Replace"
-        );
-        if dml && self.vars.restricted_sql && self.vars.in_mview_maintenance {
-            return;
-        }
-        let label = match stmt_type {
-            "Insert" | "Replace" | "Delete" | "Update" | "NTDML-Delete" | "NTDML-Update" | "NTDML-Insert" | "NTDML-Replace" => stmt_type,
-            "PurgeMaterializedViewLog" => "PurgeMLog",
-            "RefreshMaterializedView" => "RefreshMV",
-            _ => return,
-        };
-        tidb_metrics::executor::AFFECTED_ROWS.with_label_values(&[label]).inc_by(affected_rows as f64);
-    }
 
 
     /// Go `parser.Normalize(sql, EnableRedactLog)` then
