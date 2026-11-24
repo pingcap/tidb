@@ -1009,3 +1009,87 @@ pub trait PlanReplayerCapture: crate::sessionctx::SessionContext + crate::plan_r
         });
     }
 }
+
+/// Go `hex.DecodeString` of a plan digest's text, the bytes Top SQL keys a
+/// plan by (an odd or non-hex tail is dropped).
+#[must_use]
+pub fn decode_hex_digest(hex: &str) -> Vec<u8> {
+    hex.as_bytes()
+        .chunks_exact(2)
+        .map_while(|pair| std::str::from_utf8(pair).ok().and_then(|pair| u8::from_str_radix(pair, 16).ok()))
+        .collect()
+}
+
+/// Go `ExecStmt.FinishExecuteStmt` over its session.
+pub trait FinishExecuteStmt: ExecStmtObservation + PlanReplayerCapture {
+    /// The session's Top SQL statement stats (`sctx.GetStmtStats()`).
+    fn statement_stats(&self) -> &Arc<tidb_topsql_stmtstats::StatementStats>;
+    /// Go's Top RU user of the session.
+    fn top_ru_user(&self) -> String;
+
+    /// Go `ExecStmt.FinishExecuteStmt` for the observed statement:
+    /// `observeStmtFinishedForTopProfiling`, the RU v2 metrics' finalization
+    /// and, for a statement that compiled, `checkPlanReplayerCapture`,
+    /// `LogSlowQuery`, `PrevStmt`, `recordLastQueryInfo` and
+    /// `recordAffectedRows2Metrics`; then `SummaryStmt`.
+    #[allow(clippy::too_many_arguments)]
+    fn finish_execute_stmt(
+        &mut self,
+        observation: &StatementObservation,
+        phases: &StatementPhases,
+        elapsed: Duration,
+        succeeded: bool,
+        affected_rows: u64,
+        result_rows: i64,
+        error: Option<String>,
+    ) {
+        use tidb_topsql_stmtstats::StatementObserver as _;
+        // Go `observeStmtFinishedForTopProfiling`: Top RU alone also records
+        // the finish, with the statement's `RUDetails` and user.
+        let top_ru = tidb_topsql_state::top_ru_enabled();
+        if phases.execution_started && (tidb_topsql_state::top_sql_enabled() || top_ru) {
+            // Go `GetPlanDigest(sc)`, as the begin observed it.
+            let plan_digest = decode_hex_digest(
+                &self
+                    .process_plan_info_cell()
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .plan_digest,
+            );
+            self.statement_stats().on_execution_finished(
+                observation.digest.as_bytes(),
+                &plan_digest,
+                Some(&tidb_topsql_stmtstats::ExecFinishInfo {
+                    exec_duration_ns: i64::try_from(elapsed.as_nanos()).unwrap_or(i64::MAX),
+                    top_ru_enabled: top_ru,
+                    ru_details: top_ru.then(|| Arc::clone(&observation.ru_details)),
+                    user: if top_ru { self.top_ru_user() } else { String::new() },
+                    ..tidb_topsql_stmtstats::ExecFinishInfo::default()
+                }),
+            );
+        } else {
+            self.statement_stats().clear_ru_exec_context();
+        }
+        // Go `finalizeStatementRUV2Metrics`, before the slow log and the
+        // summary read the metrics: the raw TiKV RU v2 counters the
+        // statement's RPCs left in its `RUDetails`.
+        tidb_execdetails::ruv2_metrics::sync_ruv_2_metrics_from_ru_details(
+            Some(&observation.ruv2_metrics),
+            Some(&observation.ru_details),
+        );
+        // Go runs these from `FinishExecuteStmt`, which only a compiled
+        // statement reaches.
+        if phases.compile_finished || phases.execution_started {
+            let plan_info = self.process_plan_info_cell();
+            let plan = plan_info.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            let (txn_ts, _) = self.txn_start_and_for_update_ts();
+            self.check_plan_replayer_capture(observation, &plan, txn_ts);
+            self.log_slow_query(observation, elapsed, succeeded, result_rows, &plan, phases);
+            drop(plan);
+            self.update_prev_stmt(observation);
+            self.record_last_query_info(observation, error);
+            self.record_affected_rows_2_metrics(&observation.label, affected_rows);
+        }
+        self.summary_stmt(observation, phases, elapsed, succeeded, affected_rows, result_rows);
+    }
+}

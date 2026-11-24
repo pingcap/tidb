@@ -139,6 +139,7 @@ tidb-stringutil = { path = "../tidb-stringutil" }
 tidb-tiflashcompute = { path = "../tidb-tiflashcompute" }
 tidb-tls = { path = "../tidb-tls" }
 tidb-topsql-stmtstats = { path = "../tidb-topsql-stmtstats" }
+tidb-topsql-state = { path = "../tidb-topsql-state" }
 tidb-traceevent = { path = "../tidb-traceevent" }
 tidb-tracing = { path = "../tidb-tracing" }
 tidb-ranger = { path = "../tidb-ranger" }

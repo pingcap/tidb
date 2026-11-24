@@ -22,7 +22,7 @@ use crate::*;
 use tidb_executor::exec_stmt_observation::{
     ExecStmtObservation as _, StatementObservation, StatementPhases,
 };
-use tidb_topsql_stmtstats::{ExecFinishInfo, StatementObserver};
+use tidb_topsql_stmtstats::StatementObserver;
 
 
 
@@ -981,80 +981,21 @@ impl Session {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         // Go GetTotalCostDuration includes parsing before ExecuteStmt.
         let elapsed = observation.started.elapsed() + phases.parse_before_start;
-        // Go `observeStmtFinishedForTopProfiling`: Top RU alone also records
-        // the finish, with the statement's `RUDetails` and user.
-        let top_ru = tidb_topsql_state::top_ru_enabled();
-        if phases.execution_started && (tidb_topsql_state::top_sql_enabled() || top_ru) {
-            // Go `GetPlanDigest(sc)`, as the begin observed it.
-            let plan_digest = decode_hex_digest(
-                &self
-                    .process_plan_info
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)
-                    .plan_digest,
-            );
-            self.statement_stats.on_execution_finished(
-                observation.digest.as_bytes(),
-                &plan_digest,
-                Some(&ExecFinishInfo {
-                    exec_duration_ns: i64::try_from(elapsed.as_nanos()).unwrap_or(i64::MAX),
-                    top_ru_enabled: top_ru,
-                    ru_details: top_ru.then(|| Arc::clone(&observation.ru_details)),
-                    user: if top_ru {
-                        self.top_ru_user()
-                    } else {
-                        String::new()
-                    },
-                    ..ExecFinishInfo::default()
-                }),
-            );
-        } else {
-            self.statement_stats.clear_ru_exec_context();
-        }
-        // Go `finalizeStatementRUV2Metrics`, before the slow log and the
-        // summary read the metrics: the raw TiKV RU v2 counters the
-        // statement's RPCs left in its `RUDetails`.
-        tidb_execdetails::ruv2_metrics::sync_ruv_2_metrics_from_ru_details(
-            Some(&observation.ruv2_metrics),
-            Some(&observation.ru_details),
-        );
-        // Go runs these from `FinishExecuteStmt` (and `logStmt` from
-        // `runStmt`), which only a compiled statement reaches.
-        if phases.compile_finished || phases.execution_started {
-            let plan_info = Arc::clone(&self.process_plan_info);
-            let plan = plan_info
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            // Go `FinishExecuteStmt`: `a.checkPlanReplayerCapture(txnTS)`.
-            let (txn_ts, _) = self.txn_start_and_for_update_ts();
-            tidb_executor::exec_stmt_observation::PlanReplayerCapture::check_plan_replayer_capture(
-                self,
-                &observation,
-                &plan,
-                txn_ts,
-            );
-            self.log_slow_query(
-                &observation,
-                elapsed,
-                succeeded,
-                result_rows,
-                &plan,
-                &phases,
-            );
-            drop(plan);
-            self.update_prev_stmt(&observation);
-            self.record_last_query_info(&observation, error);
-            tidb_executor::exec_stmt_observation::ExecStmtObservation::record_affected_rows_2_metrics(self, &observation.label, affected_rows);
-            self.log_stmt(&observation);
-        }
-        self.summary_stmt(
+        let compiled = phases.compile_finished || phases.execution_started;
+        tidb_executor::exec_stmt_observation::FinishExecuteStmt::finish_execute_stmt(
+            self,
             &observation,
             &phases,
             elapsed,
             succeeded,
             affected_rows,
             result_rows,
+            error,
         );
+        // Go `runStmt`'s `logStmt`, which only a compiled statement reaches.
+        if compiled {
+            self.log_stmt(&observation);
+        }
     }
 }
 
@@ -1347,16 +1288,7 @@ fn top_profiling_begin_info(
 
 /// The bytes of a digest held as its lowercase hex text (Go
 /// `parser.Digest.Bytes` of `Digest.String`); empty for no digest.
-fn decode_hex_digest(hex: &str) -> Vec<u8> {
-    hex.as_bytes()
-        .chunks_exact(2)
-        .map_while(|pair| {
-            std::str::from_utf8(pair)
-                .ok()
-                .and_then(|pair| u8::from_str_radix(pair, 16).ok())
-        })
-        .collect()
-}
+use tidb_executor::exec_stmt_observation::decode_hex_digest;
 
 /// Go `ast.SensitiveStmtNode.SecureText` for the statements that implement
 /// it; `None` for every other statement, whose text is safe to show.
@@ -1564,5 +1496,15 @@ mod plan_cell_lifetime_tests {
         let cell = std::sync::Arc::downgrade(&session.process_plan_info_cell());
         drop(session);
         assert!(cell.upgrade().is_none(), "the dropped session's plan cell is still referenced");
+    }
+}
+
+impl tidb_executor::exec_stmt_observation::FinishExecuteStmt for Session {
+    fn statement_stats(&self) -> &Arc<tidb_topsql_stmtstats::StatementStats> {
+        &self.statement_stats
+    }
+
+    fn top_ru_user(&self) -> String {
+        Session::top_ru_user(self)
     }
 }
