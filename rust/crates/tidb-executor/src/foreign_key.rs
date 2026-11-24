@@ -1302,7 +1302,7 @@ fn handle_foreign_key_cascade(
             };
             check_fk_cascade_table_lock(fkc, &stmt, catalog, ctx)?;
             ctx.set_plans_fk_cascade(true);
-            let planned = crate::driver::physical_fk_cascade_plan(&crate::driver::planner_bridge::driver_hooks(catalog), &stmt, catalog, ctx, plan_ids);
+            let planned = crate::driver::optimize_for_foreign_key_cascade(&crate::driver::planner_bridge::driver_hooks(catalog), &stmt, catalog, ctx, plan_ids);
             ctx.set_plans_fk_cascade(false);
             let mut plan = Box::new(planned?);
             let sub = crate::driver::run_fk_cascade(&stmt, &mut plan, catalog, ctx)?;

@@ -23,7 +23,7 @@
 use tidb_planner_core_operator_physicalop::{ExchangeType, PhysicalHashJoin, PhysicalPlan};
 use tidb_sessionctx::{TiFlashClusterInfo, TiFlashFineGrainedShuffleSession};
 
-use crate::optimize::OptimizeContext;
+use crate::optimizer::OptimizeContext;
 
 /// The step into a `PhysicalTableReader`'s `TablePlan`, beside child indexes.
 const TABLE_PLAN: usize = usize::MAX;

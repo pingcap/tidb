@@ -611,7 +611,7 @@ pub(crate) struct PlannedInsert {
     /// table's complete stored row, per table column.
     generated: Vec<Option<Expression>>,
     /// Go `SessionVars.MapScalarSubQ`, in this build's registration order.
-    pub(crate) scalar_subqueries: Vec<std::sync::Arc<super::planner_bridge::RegisteredScalarSubquery>>,
+    pub(crate) scalar_subqueries: Vec<std::sync::Arc<super::planner_bridge::ScalarSubqueryEvalCtx>>,
     /// Go `PlanBuilder.GetVisitInfo`, in the order this builder collected it.
     pub(crate) visits: Vec<tidb_planner::plan_builder::visit_info::VisitInfo>,
 }
@@ -622,7 +622,7 @@ impl PlannedInsert {
         expressions: tidb_planner_core_operator_physicalop::InsertExpressions,
         physical: &tidb_planner_core_operator_physicalop::PhysicalPlan,
         visits: Vec<tidb_planner::plan_builder::visit_info::VisitInfo>,
-        scalar_subqueries: Vec<std::sync::Arc<super::planner_bridge::RegisteredScalarSubquery>>,
+        scalar_subqueries: Vec<std::sync::Arc<super::planner_bridge::ScalarSubqueryEvalCtx>>,
     ) -> Self {
         let actual_col_len = match physical {
             tidb_planner_core_operator_physicalop::PhysicalPlan::Dml(root) =>

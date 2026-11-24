@@ -32,7 +32,7 @@ use tidb_expr::expr_util::RealFunctionBuilder;
 use tidb_expr::expression::Expression;
 use tidb_hack::{GoCaseCompare, GoToLower};
 use tidb_infoschema::table_source::TableSource;
-pub(crate) use tidb_planner::do_optimize::{optimize_built_logical, physical_plan_for_logical};
+pub(crate) use tidb_planner::optimizer::{optimize_built_logical, physical_plan_for_logical};
 use tidb_planner::plan_builder::PlanBuilder;
 use tidb_planner_core_base::ColumnIdAllocator;
 use tidb_planner_core_base::PlanIdAllocator;
@@ -128,10 +128,10 @@ pub(super) fn materialize_physical_expression(expression: &mut Expression) {
     }
 }
 
-pub(crate) use tidb_planner::statement_optimize::{
-    BuildVisits, QueryBuild, RegisteredScalarSubquery, ScalarSubqueryRegistry,
+pub(crate) use tidb_planner::optimize::{
+    BuildVisits, QueryBuild, ScalarSubqueryEvalCtx, ScalarSubqueryRegistry,
 };
-use tidb_planner::statement_optimize::{DiscardedSubquery, subquery_output_width};
+use tidb_planner::optimize::{DiscardedSubquery, subquery_output_width};
 
 /// Go `optimizeForTest`'s build and optimize: the logical plan (whose
 /// output names Go's tests read) and the physical plan.
@@ -226,20 +226,20 @@ fn default_evaluator_using<'a>(
 }
 
 /// The executor's half of one statement's planning
-/// ([`tidb_planner::statement_optimize::PlanningHooks`]): Go's function
+/// ([`tidb_planner::optimize::PlanningHooks`]): Go's function
 /// variable `EvalSubqueryFirstRow` and the column default evaluators.
 pub(crate) struct DriverHooks<'a> {
     catalog: &'a SessionExtendedInfoSchema,
 }
 
-/// The executor's [`tidb_planner::statement_optimize::PlanningHooks`] over
+/// The executor's [`tidb_planner::optimize::PlanningHooks`] over
 /// `catalog`.
 pub(crate) fn driver_hooks(catalog: &SessionExtendedInfoSchema) -> DriverHooks<'_> {
     DriverHooks { catalog }
 }
 
-impl tidb_planner::statement_optimize::PlanningHooks for DriverHooks<'_> {
-    fn eval_subquery_first_row(&self) -> tidb_planner::statement_optimize::EvalSubqueryFirstRow {
+impl tidb_planner::optimize::PlanningHooks for DriverHooks<'_> {
+    fn eval_subquery_first_row(&self) -> tidb_planner::optimize::EvalSubqueryFirstRow {
         crate::driver::physical_builder::eval_subquery_first_row
     }
 
@@ -575,7 +575,7 @@ pub(crate) fn statistics_usage_before_and_after_logical_optimization(
         .with_statement_related_tables_for_mdl(ctx);
     let session_zone = ctx.session_zone();
     let prune_fallback = |table_id: i64, table_name: &str| {
-        tidb_planner::statement_optimize::dynamic_prune_fallback(catalog, ctx, table_id, table_name)
+        tidb_planner::optimize::dynamic_prune_fallback(catalog, ctx, table_id, table_name)
     };
     let mut builder = PlanBuilder::new(&source, ctx, &plan_ids, &column_ids, session_zone.clone());
     builder.enable_pipelined_window_exec = ctx.enable_pipelined_window_exec();

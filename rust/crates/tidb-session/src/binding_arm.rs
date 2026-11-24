@@ -100,7 +100,7 @@ impl Session {
     /// nothing matched, so a session with no bindings pays one map-emptiness
     /// test and nothing else.
     pub(crate) fn bind_statement_hints_with_sql(&mut self, stmt: &Stmt) -> Option<(Stmt, String)> {
-        tidb_planner::binding_match::bind_sql_binding(self, stmt)
+        tidb_planner::optimize::bind_sql_binding(self, stmt)
     }
 
     pub(crate) fn bind_statement_hints(&mut self, stmt: &Stmt) -> Option<Stmt> {
@@ -373,7 +373,7 @@ impl binding::BindingMatchContext for Session {
     }
 }
 
-impl tidb_planner::binding_match::PlannerBindingContext for Session {
+impl tidb_planner::optimize::PlannerBindingContext for Session {
     fn use_plan_baselines(&self) -> bool {
         self.session_bool("tidb_use_plan_baselines", true)
     }

@@ -2366,7 +2366,7 @@ fn physical_explain_roots(
     catalog: &SessionExtendedInfoSchema,
     runtime: bool,
     ignore_explain_id_suffix: bool,
-    scalar_subqueries: &[std::sync::Arc<crate::driver::planner_bridge::RegisteredScalarSubquery>],
+    scalar_subqueries: &[std::sync::Arc<crate::driver::planner_bridge::ScalarSubqueryEvalCtx>],
 ) -> Vec<ExplainOperator> {
     let mut roots = vec![physical_explain_operator(
         costs,
@@ -2417,7 +2417,7 @@ fn scalar_subquery_root(
     eval_ctx: &dyn tidb_exprctx::Columns,
     statement_context: &crate::StmtContext,
     brief_binary: bool,
-    subquery: &crate::driver::planner_bridge::RegisteredScalarSubquery,
+    subquery: &crate::driver::planner_bridge::ScalarSubqueryEvalCtx,
     catalog: &SessionExtendedInfoSchema,
     runtime: bool,
     ignore_explain_id_suffix: bool,
@@ -3602,7 +3602,7 @@ fn render_physical_plan(
     format: ExplainFormat,
     analyze: bool,
     runtime: bool,
-    scalar_subqueries: &[std::sync::Arc<crate::driver::planner_bridge::RegisteredScalarSubquery>],
+    scalar_subqueries: &[std::sync::Arc<crate::driver::planner_bridge::ScalarSubqueryEvalCtx>],
 ) -> Result<SelectMeta, DriverError> {
     if matches!(format, ExplainFormat::Dot) {
         return Ok(explain_dot_rows(physical));
@@ -3911,7 +3911,7 @@ fn render_built_plan(
     physical: &PhysicalPlan,
     catalog: &SessionExtendedInfoSchema,
     format: ExplainFormat,
-    scalar_subqueries: &[std::sync::Arc<crate::driver::planner_bridge::RegisteredScalarSubquery>],
+    scalar_subqueries: &[std::sync::Arc<crate::driver::planner_bridge::ScalarSubqueryEvalCtx>],
 ) -> Result<SelectMeta, DriverError> {
     // Go `ExecStmt.Exec` over the `Explain` plan: its target's plan digest
     // is published (and runaway-checked) before the executor is built.
@@ -4335,7 +4335,7 @@ pub struct AnalyzedWrite {
     catalog: SessionExtendedInfoSchema,
     format: ExplainFormat,
     /// Go `SessionVars.MapScalarSubQ`: what the write's read evaluated.
-    scalar_subqueries: Vec<std::sync::Arc<crate::driver::planner_bridge::RegisteredScalarSubquery>>,
+    scalar_subqueries: Vec<std::sync::Arc<crate::driver::planner_bridge::ScalarSubqueryEvalCtx>>,
 }
 
 impl AnalyzedWrite {

@@ -17,7 +17,7 @@
 //! plans of `point_get_plan.go`), `OptimizeForForeignKeyCascade` and the
 //! foreign-key trigger plans (`foreign_key.go`).
 
-use crate::do_optimize::{optimize_built_logical, physical_plan_for_logical_with_update_refs};
+use crate::optimizer::{optimize_built_logical, physical_plan_for_logical_with_update_refs};
 use std::collections::BTreeMap;
 use tidb_driver_error::DriverError;
 use tidb_expr::expression::Expression;
@@ -29,11 +29,11 @@ use tidb_sessionctx::StmtContext;
 
 use crate::catalog_ctx::PlannerCatalogContext as _;
 use crate::from_scope::single_table_name;
+use crate::optimize::{
+    BuildVisits, BuilderParts, QueryBuild, ScalarSubqueryEvalCtx, ScalarSubqueryRegistry,
+};
 use crate::plan_builder::PlanBuilder;
 use crate::point_get_plan::{PointPlanKind, handed_point_plan};
-use crate::statement_optimize::{
-    BuildVisits, BuilderParts, QueryBuild, RegisteredScalarSubquery, ScalarSubqueryRegistry,
-};
 use crate::stmt_ctx::PlannerStmtCtx as _;
 use tidb_infoschema::TableEntry;
 use tidb_planner_core_base::PlanIdAllocator;
@@ -148,8 +148,8 @@ pub fn build_fk_triggers(
 /// `OptimizeForForeignKeyCascade` of the cascade statement, which build the
 /// plan with the statement's plan-id counter and without the fast point
 /// plans `planner.Optimize` alone tries.
-pub fn physical_fk_cascade_plan(
-    hooks: &dyn crate::statement_optimize::PlanningHooks,
+pub fn optimize_for_foreign_key_cascade(
+    hooks: &dyn crate::optimize::PlanningHooks,
     stmt: &FKCascadeStmt,
     catalog: &SessionExtendedInfoSchema,
     ctx: &StmtContext,
@@ -207,7 +207,7 @@ pub fn cascade_database(table: &Option<&tidb_ast::TableRef>) -> Result<String, D
 /// EXPLAIN, checking the statement's privileges once it is built.
 #[allow(clippy::too_many_arguments)]
 pub fn physical_dml_plan(
-    hooks: &dyn crate::statement_optimize::PlanningHooks,
+    hooks: &dyn crate::optimize::PlanningHooks,
     operator: &str,
     source: Option<&tidb_ast::QueryStmt>,
     write: MultiDmlRef<'_>,
@@ -236,7 +236,7 @@ pub fn physical_dml_plan(
 /// EXPLAIN.
 #[allow(clippy::too_many_arguments)]
 pub fn physical_dml_plan_and_scalar_subqueries(
-    hooks: &dyn crate::statement_optimize::PlanningHooks,
+    hooks: &dyn crate::optimize::PlanningHooks,
     operator: &str,
     source: Option<&tidb_ast::QueryStmt>,
     write: MultiDmlRef<'_>,
@@ -247,7 +247,7 @@ pub fn physical_dml_plan_and_scalar_subqueries(
 ) -> Result<
     (
         tidb_planner_core_operator_physicalop::PhysicalPlan,
-        Vec<std::sync::Arc<RegisteredScalarSubquery>>,
+        Vec<std::sync::Arc<ScalarSubqueryEvalCtx>>,
     ),
     DriverError,
 > {
@@ -271,7 +271,7 @@ pub fn physical_dml_plan_and_scalar_subqueries(
 /// allocator and source builder used by single-table writes.
 #[allow(clippy::too_many_arguments)]
 pub fn physical_multi_dml_plan(
-    hooks: &dyn crate::statement_optimize::PlanningHooks,
+    hooks: &dyn crate::optimize::PlanningHooks,
     operator: &str,
     source: &tidb_ast::QueryStmt,
     write: MultiDmlRef<'_>,
@@ -284,7 +284,7 @@ pub fn physical_multi_dml_plan(
 ) -> Result<
     (
         tidb_planner_core_operator_physicalop::PhysicalPlan,
-        Vec<std::sync::Arc<RegisteredScalarSubquery>>,
+        Vec<std::sync::Arc<ScalarSubqueryEvalCtx>>,
     ),
     DriverError,
 > {
@@ -327,7 +327,7 @@ pub fn physical_multi_dml_plan(
 /// and a denied one leaves the statement to the ordinary build.
 #[allow(clippy::too_many_arguments)]
 pub fn physical_dml_plan_with_cache_mode(
-    hooks: &dyn crate::statement_optimize::PlanningHooks,
+    hooks: &dyn crate::optimize::PlanningHooks,
     operator: &str,
     source: Option<&tidb_ast::QueryStmt>,
     write: Option<MultiDmlRef<'_>>,
@@ -361,7 +361,7 @@ pub fn physical_dml_plan_with_cache_mode(
 /// evaluated (Go `SessionVars.MapScalarSubQ`), which EXPLAIN renders.
 #[allow(clippy::too_many_arguments)]
 pub fn physical_dml_plan_and_scalar_subqueries_with_cache_mode(
-    hooks: &dyn crate::statement_optimize::PlanningHooks,
+    hooks: &dyn crate::optimize::PlanningHooks,
     operator: &str,
     source: Option<&tidb_ast::QueryStmt>,
     write: Option<MultiDmlRef<'_>>,
@@ -376,7 +376,7 @@ pub fn physical_dml_plan_and_scalar_subqueries_with_cache_mode(
 ) -> Result<
     (
         tidb_planner_core_operator_physicalop::PhysicalPlan,
-        Vec<std::sync::Arc<RegisteredScalarSubquery>>,
+        Vec<std::sync::Arc<ScalarSubqueryEvalCtx>>,
     ),
     DriverError,
 > {
@@ -534,7 +534,7 @@ pub fn physical_dml_plan_and_scalar_subqueries_with_cache_mode(
                 Some(fast)
             } else {
                 // Go `optimize` past `TryFastPlan`: `PlanBuilder.Build`.
-                crate::statement_optimize::record_plan_builder_metric(ctx);
+                crate::optimize::record_plan_builder_metric(ctx);
                 // Go `buildDelete` prunes the read to what removing a record
                 // needs (the planner's `pruneAndBuildColPositionInfoForDelete`);
                 // a point plan above keeps every column. Foreign keys other
@@ -565,7 +565,7 @@ pub fn physical_dml_plan_and_scalar_subqueries_with_cache_mode(
                     Some(&build_delete_fk_triggers),
                     write.filter(|_| collecting),
                 )
-                .map_err(crate::statement_optimize::planner_error_to_driver)?;
+                .map_err(crate::optimize::planner_error_to_driver)?;
                 scalar_subqueries = built.scalar_subqueries;
                 statement_visits.extend(built.visit_info);
                 update_expressions = built.update_expressions;
@@ -598,7 +598,7 @@ pub fn physical_dml_plan_and_scalar_subqueries_with_cache_mode(
                     BuildVisits::Discard
                 },
             )
-            .map_err(crate::statement_optimize::planner_error_to_driver)?,
+            .map_err(crate::optimize::planner_error_to_driver)?,
         ),
     };
 
@@ -720,7 +720,7 @@ pub fn try_update_point_plan(update: &tidb_ast::UpdateStmt) -> bool {
 /// Go `tryUpdatePointPlan`'s `buildOrderedList`: the assignments of a point
 /// UPDATE as expressions over the point plan's row.
 pub fn fast_update_ordered_list(
-    hooks: &dyn crate::statement_optimize::PlanningHooks,
+    hooks: &dyn crate::optimize::PlanningHooks,
     update: &tidb_ast::UpdateStmt,
     assignments: &[crate::plan_builder::single_update::SingleUpdateAssignment],
     fast: &tidb_planner_core_operator_physicalop::PhysicalPlan,
@@ -749,7 +749,7 @@ pub fn fast_update_ordered_list(
     point_update_ordered_list(
         hooks, table_ref, schema, &targets, catalog, current_db, ctx, plan_ids, column_ids,
     )
-    .map_err(crate::statement_optimize::planner_error_to_driver)
+    .map_err(crate::optimize::planner_error_to_driver)
 }
 
 /// Go `buildOrderedList`'s resolution for a fast point UPDATE: every SET item
@@ -761,7 +761,7 @@ pub fn update_assignments_for_plan(
     ctx: &StmtContext,
 ) -> Result<Vec<crate::plan_builder::single_update::SingleUpdateAssignment>, DriverError> {
     single_update_assignments(update, catalog, current_db, ctx)
-        .map_err(crate::statement_optimize::planner_error_to_driver)
+        .map_err(crate::optimize::planner_error_to_driver)
 }
 
 /// The Update root's assignments of a single-table UPDATE: each SET item with
@@ -854,7 +854,7 @@ pub fn multi_dml_select(
 /// physical table contribute to one FK policy, as Go's tblID2UpdateColumns
 /// and per-table FK maps do.
 pub fn multi_dml_physical_plan(
-    hooks: &dyn crate::statement_optimize::PlanningHooks,
+    hooks: &dyn crate::optimize::PlanningHooks,
     dml: MultiDmlRef<'_>,
     catalog: &SessionExtendedInfoSchema,
     current_db: &str,
@@ -863,7 +863,7 @@ pub fn multi_dml_physical_plan(
 ) -> Result<
     (
         tidb_planner_core_operator_physicalop::PhysicalPlan,
-        Vec<std::sync::Arc<RegisteredScalarSubquery>>,
+        Vec<std::sync::Arc<ScalarSubqueryEvalCtx>>,
     ),
     DriverError,
 > {
@@ -931,7 +931,7 @@ pub fn multi_dml_physical_plan(
             );
             crate::preprocess::validate_query_usage(&select, ctx)?;
             for target in delete_targets(delete, catalog, current_db, ctx)
-                .map_err(crate::statement_optimize::planner_error_to_driver)?
+                .map_err(crate::optimize::planner_error_to_driver)?
             {
                 add_target(target.database, target.table, None);
             }
@@ -961,7 +961,7 @@ pub fn delete_multi_input(
 ) -> Result<crate::plan_builder::delete_pruning::DeleteMultiInput, DriverError> {
     use crate::plan_builder::delete_pruning::DeleteMultiInput;
     let targets = delete_targets(delete, catalog, current_db, ctx)
-        .map_err(crate::statement_optimize::planner_error_to_driver)?;
+        .map_err(crate::optimize::planner_error_to_driver)?;
     let has_fk = ctx.foreign_key_checks()
         && targets
             .iter()
@@ -973,7 +973,7 @@ pub fn delete_multi_input(
 /// `Delete` root over the optimized join `SelectPlan`. `None` for a
 /// single-table statement, which keeps its own builder.
 pub fn multi_dml_explain_plan(
-    hooks: &dyn crate::statement_optimize::PlanningHooks,
+    hooks: &dyn crate::optimize::PlanningHooks,
     dml: MultiDmlRef<'_>,
     catalog: &SessionExtendedInfoSchema,
     current_db: &str,
@@ -981,7 +981,7 @@ pub fn multi_dml_explain_plan(
 ) -> Result<
     Option<(
         tidb_planner_core_operator_physicalop::PhysicalPlan,
-        Vec<std::sync::Arc<RegisteredScalarSubquery>>,
+        Vec<std::sync::Arc<ScalarSubqueryEvalCtx>>,
     )>,
     DriverError,
 > {
@@ -1047,7 +1047,7 @@ pub fn update_target_columns(
     let column_ids = ColumnIdAllocator::new();
     let targets = PlanBuilder::new(&source, ctx, &plan_ids, &column_ids, ctx.session_zone())
         .resolve_update_targets(update)
-        .map_err(crate::statement_optimize::planner_error_to_driver)?;
+        .map_err(crate::optimize::planner_error_to_driver)?;
     Ok(targets
         .into_iter()
         .map(|target| (target.database, target.table, target.column))
@@ -1060,7 +1060,7 @@ pub fn update_target_columns(
 /// shared preserves both tree ownership and explain identities.
 #[allow(clippy::too_many_arguments)]
 pub fn physical_query_plan_with_allocators(
-    hooks: &dyn crate::statement_optimize::PlanningHooks,
+    hooks: &dyn crate::optimize::PlanningHooks,
     query: &tidb_ast::QueryStmt,
     catalog: &SessionExtendedInfoSchema,
     current_database: &str,
@@ -1083,7 +1083,7 @@ pub fn physical_query_plan_with_allocators(
         hooks,
         on_delete_root: None,
     };
-    crate::statement_optimize::optimize_query(&parts, query, visits, QueryBuild::DmlRead)
+    crate::optimize::optimize_query(&parts, query, visits, QueryBuild::DmlRead)
         .map(|(_, physical)| physical)
 }
 
@@ -1123,7 +1123,7 @@ pub fn single_update_assignments(
 /// kept.
 #[allow(clippy::too_many_arguments)]
 pub fn physical_dml_source_plan_with_allocators(
-    hooks: &dyn crate::statement_optimize::PlanningHooks,
+    hooks: &dyn crate::optimize::PlanningHooks,
     select: &tidb_ast::SelectStmt,
     single_update: Option<&tidb_ast::UpdateStmt>,
     multi_update: Option<&tidb_ast::UpdateStmt>,
@@ -1328,14 +1328,14 @@ pub struct DmlSourcePlan {
     pub single_assignments: Option<Vec<crate::plan_builder::single_update::SingleUpdateAssignment>>,
     /// The scalar subqueries the read evaluated while it was built (Go
     /// `SessionVars.MapScalarSubQ`), which EXPLAIN renders after the plan.
-    pub scalar_subqueries: Vec<std::sync::Arc<RegisteredScalarSubquery>>,
+    pub scalar_subqueries: Vec<std::sync::Arc<ScalarSubqueryEvalCtx>>,
 }
 
 /// Go `buildOrderedList` for the fast point UPDATE (`tryUpdatePointPlan`): the
 /// assignments rewritten over the point plan's schema and cast to their
 /// target columns, resolved to that schema's row.
 pub fn point_update_ordered_list(
-    hooks: &dyn crate::statement_optimize::PlanningHooks,
+    hooks: &dyn crate::optimize::PlanningHooks,
     table_ref: &tidb_ast::TableRef,
     schema: &tidb_expr::schema::Schema,
     assignments: &[(Vec<String>, Option<tidb_ast::Expr>)],

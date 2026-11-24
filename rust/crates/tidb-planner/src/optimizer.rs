@@ -12,28 +12,711 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+//! Go `pkg/planner/core/optimizer.go`.
+//!
+//! Go `pkg/planner/core/optimizer.go`'s `DoOptimize`: the logical half
+//! (`adjustOptimizationFlags`, the statistics initialization, `RecheckCTE`,
+//! `logicalOptimize`, `RecursiveDeriveStats`) and the physical half
+//! (`physicalOptimize` and `postOptimize`).
+//!
+//! The planner owns the drive. What it needs from below -- the statement's
+//! session settings, the statistics the domain loads, a partitioned table's
+//! pruning, a CTE's lazy optimization -- reaches it through
+//! [`OptimizeContext`] and [`OptimizeServices`], as Go's `base.PlanContext`
+//! and the statistics handle reach `pkg/planner/core`.
+//!
 //! Go `DoOptimize` (`pkg/planner/core/optimizer.go`) over one statement:
 //! `logicalOptimize` with the statistics its rules load (`initStats`,
 //! `CollectPredicateColumnsPoint` / `SyncWaitStatsLoadPoint`), a CTE's lazy
 //! optimization from `LogicalCTE.DeriveStats`, and `physicalOptimize` with
 //! `recordUsedItemStatsStatus`.
 
-use crate::rule::logical_optimize;
-use crate::stmt_ctx::PlannerStmtCtx as _;
+use crate::resolve_indices::ResolveIndices;
+use std::collections::BTreeSet;
+use std::time::{Duration, Instant};
+use tidb_planner_core_base::PlanCacheMarker;
+
+use crate::find_best_task::coster::{CostEnv, Ver2Coster};
+use crate::find_best_task::dispatch::{DispatchContext, find_best_task};
+use crate::rule::{logical_optimize, normalize_optimize};
+use tidb_fixcontrol::OptimizerFixControl;
+use tidb_planner_core_base::ColumnIdAllocator;
+use tidb_planner_core_base::{PlanError, PlanIdAllocator};
+use tidb_planner_core_operator_logicalop::plan_context::StatisticsLoadRequester;
+use tidb_planner_core_operator_logicalop::plan_context::{
+    CteOptimizer, DeriveStatsSink, DisabledLogicalRules, HintWarningSink, RuleContext,
+    UsedStatsRecorder,
+};
+use tidb_planner_core_operator_logicalop::{LogicalPlan, prepare_possible_properties};
+use tidb_planner_core_operator_physicalop::PhysicalPlan;
+use tidb_planner_core_operator_physicalop::enforce::MppWarningSink;
+use tidb_planner_core_rule::flags;
+use tidb_planner_property::PhysicalProperty;
+
+/// Go `base.PlanContext` as the optimizer reads it: the statement's session
+/// settings (`SessionVars`), its warnings and phase clocks (`StmtCtx`).
+pub trait OptimizeContext:
+    tidb_exprctx::Columns + PlanCacheMarker + HintWarningSink + MppWarningSink + DeriveStatsSink
+{
+    /// Go `SessionVars.Location()` as the expression resolver reads it.
+    fn session_zone(&self) -> tidb_datatype::SessionTimeZone;
+    /// Go `SessionVars.RUV2Metrics` of the statement being planned.
+    fn ruv2_metrics(&self) -> Option<std::sync::Arc<tidb_execdetails::ruv2_metrics::RUV2Metrics>> {
+        None
+    }
+    /// Go `!SessionVars.UseDynamicPartitionPrune()`.
+    fn static_partition_prune(&self) -> bool;
+    /// Go `SessionVars.EnableStableResultMode`.
+    fn stable_result_mode(&self) -> bool;
+    /// The cost model's session inputs.
+    fn optimizer_cost_env(&self) -> &CostEnv;
+    /// Go `SessionVars.AllowDeriveTopN`.
+    fn allow_derive_topn(&self) -> bool;
+    /// Go `optRuleBlacklist`: whether a logical rule is disabled.
+    fn logical_rule_disabled(&self, name: &str) -> bool;
+    /// Go `SessionVars.OptIndexPruneThreshold`.
+    fn opt_index_prune_threshold(&self) -> i32;
+    /// Go `SessionVars.OptPrefixIndexSingleScan`.
+    fn opt_prefix_index_single_scan(&self) -> bool;
+    /// Go `SessionVars.GetAllowPreferRangeScan()`.
+    fn allow_prefer_range_scan(&self) -> bool;
+    /// Go `SessionVars`' inputs to the index-lookup-pushdown support check.
+    fn index_lookup_push_down_session(&self) -> tidb_sessionctx::IndexLookupPushDownSession;
+    /// Go `SessionVars.IsolationReadEngines`.
+    fn isolation_read_engines(&self) -> &str;
+    /// Go `StmtCtx.TiFlashEngineRemovedDueToStrictSQLMode`.
+    fn tiflash_engine_removed_due_to_strict_sql_mode(&self) -> bool;
+    /// Go `SessionVars`' inputs to `handleFineGrainedShuffle`.
+    fn tiflash_fine_grained_shuffle(&self) -> tidb_sessionctx::TiFlashFineGrainedShuffleSession;
+    /// Go `GetMPPClient().GetMPPStoreCount()`.
+    fn get_mpp_store_count(&self) -> Result<usize, String>;
+    /// The TiFlash cluster `handleFineGrainedShuffle` sizes streams from.
+    fn tiflash_cluster_info(
+        &self,
+    ) -> Option<&std::sync::Arc<dyn tidb_sessionctx::TiFlashClusterInfo>>;
+    /// Go `SessionVars.GetEnableIndexMerge()`.
+    fn get_enable_index_merge(&self) -> bool;
+    /// Go `StmtCtx.NoIndexMergeHint`.
+    fn no_index_merge_hint(&self) -> bool;
+    /// Go `StmtCtx.InExplainStmt`.
+    fn in_explain_stmt(&self) -> bool;
+    /// Go `SessionVars.RangeMaxSize`.
+    fn range_max_size(&self) -> i64;
+    /// Go `SessionVars.SelectivityFactor`.
+    fn selectivity_factor(&self) -> f64;
+    /// Go's range-fallback warning hook (`StmtCtx.RecordRangeFallback`).
+    fn range_fallback_handler(&self) -> &tidb_context::RangeFallbackHandler;
+    /// Go `StmtCtx.MemTracker`: the statement tracker the planner charges
+    /// (`indexJoinPathBuildTmpRange`).
+    fn stmt_mem_tracker(&self) -> std::sync::Arc<tidb_memory::Tracker>;
+    /// Go `SessionVars.AlwaysKeepJoinKey`.
+    fn always_keep_join_key(&self) -> bool;
+    /// Go `SessionVars.EnableUnsafeSubstitute`.
+    fn enable_unsafe_substitute(&self) -> bool;
+    /// Go `SessionVars.EnableSemiJoinRewrite`.
+    fn enable_semi_join_rewrite(&self) -> bool;
+    /// Go `SessionVars.OptimizerEnableNAAJ`.
+    fn optimizer_enable_naaj(&self) -> bool;
+    /// Go `SessionVars.EnableNoDecorrelateInSelect`.
+    fn enable_no_decorrelate_in_select(&self) -> bool;
+    /// Go `SessionVars.OptimizerFixControl`.
+    fn optimizer_fix_control(&self) -> &OptimizerFixControl;
+    /// Go `SessionVars.TiDBOptJoinReorderThreshold`.
+    fn tidb_opt_join_reorder_threshold(&self) -> i32;
+    /// Go `SessionVars.AllowAggPushDown`.
+    fn allow_agg_push_down(&self) -> bool;
+    /// Go `SessionVars.TiDBOptEnableAdvancedJoinReorder`.
+    fn tidb_opt_enable_advanced_join_reorder(&self) -> bool;
+    /// Go `SessionVars.CartesianJoinOrderThreshold`.
+    fn cartesian_join_order_threshold(&self) -> f64;
+    /// Go `SessionVars.TiDBOptJoinReorderThroughProj`.
+    fn tidb_opt_join_reorder_through_proj(&self) -> bool;
+    /// Go `SessionVars.TiDBOptJoinReorderThroughSel`.
+    fn tidb_opt_join_reorder_through_sel(&self) -> bool;
+    /// Go `SessionVars.EnableOuterJoinReorder`.
+    fn enable_outer_join_reorder(&self) -> bool;
+    /// Go `SessionVars.EnableAdvancedJoinHint`.
+    fn enable_advanced_join_hint(&self) -> bool;
+    /// Go `StmtCtx.GetIndexForce()`.
+    fn get_index_force(&self) -> bool;
+    /// Go `SessionVars.EnableSkewDistinctAgg`.
+    fn enable_skew_distinct_agg(&self) -> bool;
+    /// Go `SessionVars.Enable3StageDistinctAgg`.
+    fn enable_3_stage_distinct_agg(&self) -> bool;
+    /// Go `SessionVars.Enable3StageMultiDistinctAgg`.
+    fn enable_3_stage_multi_distinct_agg(&self) -> bool;
+    /// Go `SessionVars.TiFlashPreAggMode`.
+    fn tiflash_pre_agg_mode(&self) -> &str;
+    /// Go `SessionVars.OptPartialOrderedIndexForTopN`.
+    fn is_partial_ordered_index_for_top_n_enabled(&self) -> bool;
+    /// Go `SessionVars.OptOrderingIdxSelRatio`.
+    fn opt_ordering_idx_sel_ratio(&self) -> f64;
+    /// Go `SessionVars.IndexJoinMaxScanRowsRatio`.
+    fn index_join_max_scan_rows_ratio(&self) -> f64;
+    /// Go `SessionVars.OptOrderingIdxSelThresh`.
+    fn opt_ordering_idx_sel_thresh(&self) -> f64;
+    /// Go `SessionVars.AllowProjectionPushDown`.
+    fn allow_projection_push_down(&self) -> bool;
+    /// Go `SessionVars.AllowDistinctAggPushDown`.
+    fn allow_distinct_agg_push_down(&self) -> bool;
+    /// Go `SessionVars.EnableCascadesPlanner`: `doOptimize` takes
+    /// `CascadesOptimize` instead of `VolcanoOptimize`.
+    fn enable_cascades_planner(&self) -> bool;
+    /// Go `SessionVars.EnableINLJoinInnerMultiPattern`.
+    fn enable_inl_join_inner_multi_pattern(&self) -> bool;
+    /// Go `SessionVars.LimitPushDownThreshold`.
+    fn limit_push_down_threshold(&self) -> u64;
+    /// Go `!SessionVars.DisableHashJoin`.
+    fn enable_hash_join(&self) -> bool;
+    /// Go `SessionVars.ApplyCacheCapacity`.
+    fn apply_cache_capacity(&self) -> i64;
+    /// Go `SessionVars.EnableParallelApply`.
+    fn enable_parallel_apply(&self) -> bool;
+    /// Go `SessionVars.ExecutorConcurrency`.
+    fn executor_concurrency(&self) -> usize;
+    /// Go `SessionVars.TxnCtx.IsPessimistic || ...`: whether a transaction
+    /// is active (the UnionScan elimination reads it).
+    fn in_transaction(&self) -> bool;
+    /// Go `SessionVars.IsAllocValid()`.
+    fn is_alloc_valid(&self) -> bool;
+    /// Go `SessionVars.SetAlloc(nil)` / `ClearAlloc`.
+    fn set_alloc(&self, valid: bool);
+    /// Go `SessionVars.MaxChunkSize`.
+    fn max_chunk_size(&self) -> usize;
+    /// Go `StmtCtx.AppendWarning` / `AppendNote` for a task warning.
+    fn append_task_warning(&self, note: bool, code: u16, message: &str);
+    /// Go `DurationOptimizer.LogicalOpt`.
+    fn set_logical_opt(&self, duration: Duration);
+    /// Go `DurationOptimizer.StatsDerive`, from `begin`.
+    fn finish_stats_derive(&self, begin: Instant);
+    /// The clock `physicalOptimize` starts before `RecursiveDeriveStats`, if
+    /// the logical half started it.
+    fn take_begin_physical_opt(&self) -> Option<Instant>;
+    /// Go `DurationOptimizer.PhysicalOpt`.
+    fn set_physical_opt(&self, duration: Duration);
+}
+
+/// What the optimizer reaches below the planner: the statistics handle's
+/// loading, a partitioned table's pruning, and a CTE's lazy `DoOptimize`.
+pub struct OptimizeServices<'a> {
+    /// Go's statistics loading (`CollectPredicateColumnsPoint`,
+    /// `SyncWaitStatsLoadPoint`) and `DataSource.InitStats`.
+    pub statistics_load: &'a dyn StatisticsLoadRequester,
+    /// The statistics initialization `DoOptimize` runs before the rule
+    /// list, with used-item recording suspended for its walk.
+    pub initialize_statistics:
+        &'a dyn Fn(LogicalPlan) -> Result<LogicalPlan, (LogicalPlan, PlanError)>,
+    /// Go `recordUsedItemStatsStatus`.
+    pub used_stats_recorder: &'a dyn UsedStatsRecorder,
+    /// Go `LogicalCTE.DeriveStats`'s `DoOptimize`.
+    pub cte_optimizer: &'a dyn CteOptimizer,
+}
+
+/// Go `adjustOptimizationFlags` (`VolcanoOptimize`, run for the statement
+/// and for each CTE part): stable result mode adds `ResultReorder`, an
+/// `FTS_MATCH_WORD()` under the starter deployment adds the four full-text
+/// index resolvers, the statistics points are on, and `FlagPruneColumnsAgain`
+/// follows.
+#[must_use]
+pub fn adjust_optimization_flags<C: OptimizeContext>(mut flags: u64, ctx: &C) -> u64 {
+    if ctx.stable_result_mode() {
+        flags |= flags::STABILIZE_RESULTS;
+    }
+    if ctx.fts_function_is_used() && tidb_config_deploymode::is_starter() {
+        flags |= flags::FULL_TEXT_INDEX_RESOLVE_WHERE
+            | flags::FULL_TEXT_INDEX_RESOLVE_TOPN
+            | flags::FULL_TEXT_INDEX_RESOLVE_PROJECTION
+            | flags::FULL_TEXT_INDEX_RESOLVE_REJECT;
+    }
+    // Go enables both statistics rules for every ordinary (non-restricted)
+    // statement; the builder never owns these flags because they are
+    // session/execution policy, not AST shape.
+    flags |= flags::COLLECT_PREDICATE_COLUMNS_POINT | flags::SYNC_WAIT_STATS_LOAD_POINT;
+    // A second column-prune pass whenever a rule after column pruning runs.
+    crate::rule::add_second_column_prune(flags)
+}
+
+/// Go `DoOptimize`'s logical half over a built plan.
+///
+/// # Errors
+///
+/// A rule's or the statistics derivation's error.
+#[allow(clippy::too_many_arguments)]
+pub fn optimize_logical<C: OptimizeContext>(
+    plan: LogicalPlan,
+    flags: u64,
+    ctx: &C,
+    services: &OptimizeServices<'_>,
+    use_plan_cache: bool,
+    plan_ids: &PlanIdAllocator,
+    column_ids: &ColumnIdAllocator,
+) -> Result<LogicalPlan, PlanError> {
+    let flags = if ctx.static_partition_prune() {
+        flags
+    } else {
+        flags & !flags::PARTITION_PROCESSOR
+    };
+    let flags = adjust_optimization_flags(flags, ctx);
+    let function_builder = tidb_expr::expr_util::RealFunctionBuilder::new(ctx);
+    let optimizer_cost_env = ctx.optimizer_cost_env();
+    let rule_context = RuleContext {
+        estimator_options: optimizer_cost_env.session.estimator_options.clone(),
+        allocator: plan_ids,
+        column_allocator: column_ids,
+        builder: &function_builder,
+        use_plan_cache,
+        eval_context: ctx,
+        plan_cache_marker: Some(ctx),
+        allow_derive_topn: ctx.allow_derive_topn(),
+        expr_pushdown_blacklist: ctx.expr_pushdown_blacklist().clone(),
+        disabled_rules: DisabledLogicalRules::from_names(
+            crate::rule::OPT_RULE_LIST
+                .iter()
+                .map(|rule| rule.name())
+                .filter(|name| ctx.logical_rule_disabled(name)),
+        ),
+        statistics_load: Some(services.statistics_load),
+        opt_index_prune_threshold: ctx.opt_index_prune_threshold(),
+        opt_prefix_index_single_scan: ctx.opt_prefix_index_single_scan(),
+        index_merge_enabled: ctx.get_enable_index_merge(),
+        no_index_merge_hint: ctx.no_index_merge_hint(),
+        in_explain_stmt: ctx.in_explain_stmt(),
+        range_max_size: ctx.range_max_size(),
+        selectivity_factor: ctx.selectivity_factor(),
+        range_fallback_handler: Some(ctx.range_fallback_handler()),
+        always_keep_join_key: ctx.always_keep_join_key(),
+        enable_unsafe_substitute: ctx.enable_unsafe_substitute(),
+        enable_semi_join_rewrite: ctx.enable_semi_join_rewrite(),
+        enable_null_aware_anti_join: ctx.optimizer_enable_naaj(),
+        enable_no_decorrelate_in_select: ctx.enable_no_decorrelate_in_select(),
+        allow_eliminate_apply: ctx
+            .optimizer_fix_control()
+            .get_bool_with_default(tidb_fixcontrol::FIX_45822, true),
+        prefer_index_merge_by_fix_control: ctx
+            .optimizer_fix_control()
+            .get_bool_with_default(tidb_fixcontrol::FIX_52869, false),
+        index_merge_skip_range_scan_check: ctx
+            .optimizer_fix_control()
+            .get_bool_with_default(tidb_fixcontrol::FIX_52869, true),
+        index_lookup_push_down_session: ctx.index_lookup_push_down_session(),
+        isolation_read_engines: ctx.isolation_read_engines(),
+        tiflash_engine_removed_due_to_strict_sql_mode: ctx
+            .tiflash_engine_removed_due_to_strict_sql_mode(),
+        join_reorder_threshold: ctx.tidb_opt_join_reorder_threshold(),
+        group_ndv_skew_ratio: optimizer_cost_env.session.group_ndv_skew_ratio,
+        scale_ndv_skew_ratio: optimizer_cost_env.session.scale_ndv_skew_ratio,
+        allow_agg_push_down: ctx.allow_agg_push_down(),
+        advanced_join_reorder: ctx.tidb_opt_enable_advanced_join_reorder(),
+        cartesian_join_order_threshold: ctx.cartesian_join_order_threshold(),
+        join_reorder_through_proj: ctx.tidb_opt_join_reorder_through_proj(),
+        join_reorder_through_sel: ctx.tidb_opt_join_reorder_through_sel(),
+        outer_join_reorder: ctx.enable_outer_join_reorder(),
+        advanced_join_hint: ctx.enable_advanced_join_hint(),
+        hint_warning_sink: Some(ctx),
+        used_stats_recorder: Some(services.used_stats_recorder),
+        ruv2_metrics: ctx.ruv2_metrics(),
+        derive_stats_sink: Some(ctx),
+        mpp_enforced: optimizer_cost_env.session.mpp_enforced,
+        cte_optimizer: Some(services.cte_optimizer),
+        data_source_stats: &crate::stats::CoreDataSourceStats,
+        predicate_simplifier:
+            &tidb_planner_core_rule::rule_predicate_simplification::RulePredicateSimplifier,
+        access_path_resolver: &crate::access_path::CoreAccessPathResolver,
+    };
+    // Go DataSource.InitStats is available to logical rules themselves;
+    // join reorder derives candidate statistics while logical optimization
+    // is still running. Attach real-or-pseudo base statistics before entering
+    // that rule list, rather than delaying them until physical optimization.
+    let mut plan = (services.initialize_statistics)(plan).map_err(|(_, error)| error)?;
+    // Go `core.RecheckCTE(logic)` (`optimize.go:553`): fill
+    // `IsOuterMostCTE` on every CTE class before ANY optimization runs --
+    // `LogicalCTE.PredicatePushDown` refuses to record predicates for a
+    // non-outermost CTE.
+    tidb_planner_core_operator_logicalop::cte::recheck_cte(&mut plan);
+    // Go `planner/optimize.go:525`: the result's field names are the logical
+    // plan's `OutputNames()` captured BEFORE optimization. A rule may replace
+    // the root (an always-false filter makes a TableDual) with a node that
+    // names nothing.
+    let built_names = plan.output_names().to_vec();
+    // No CTE class is optimized here: Go's `LogicalCTE.DeriveStats` runs
+    // `DoOptimize` the first time a reference's statistics are derived, which
+    // `rule_context.cte_optimizer` does from inside the stats walk.
+    // Go `doOptimize`: `CascadesOptimize` normalizes with
+    // `normalizeOptimize` (which keeps no optimizer clock) where
+    // `VolcanoOptimize` runs `logicalOptimize`.
+    let cascades = ctx.enable_cascades_planner();
+    let mut optimized = if cascades {
+        normalize_optimize(&rule_context, flags, plan)
+            .map_err(|(_, error)| error)?
+            .plan
+    } else {
+        let begin_logical_opt = Instant::now();
+        let logical_result = logical_optimize(&rule_context, flags, plan);
+        // Go `logicalOptimize`'s deferred `DurationOptimizer.LogicalOpt`.
+        ctx.set_logical_opt(begin_logical_opt.elapsed());
+        logical_result.map_err(|(_, error)| error)?.plan
+    };
+    // SyncWaitStatsLoadPoint has initialized ordinary and statically pruned
+    // sources from the loaded snapshot before join reorder.
+    optimized = check_partial_index_paths(optimized, ctx, use_plan_cache);
+    if !ctx.static_partition_prune() {
+        attach_dynamic_partition_access(&mut optimized, &rule_context)?;
+    }
+    if optimized.output_names().is_empty()
+        && optimized
+            .schema()
+            .is_some_and(|schema| schema.columns.len() == built_names.len())
+    {
+        optimized.set_output_names(built_names);
+    }
+    if cascades {
+        // Go `cascades.NewOptimizer` -> `Memo.CopyIn`: each new group
+        // expression derives its group's logical property
+        // (`DeriveLogicalProp`: the operator's `DeriveStats` with nil
+        // reloads, then `PreparePossibleProperties`), bottom-up.
+        optimized.memo_derive_stats_with_context(&rule_context)?;
+        return Ok(prepare_possible_properties_for(ctx, optimized));
+    }
+    // Go `physicalOptimize` starts its clock before `RecursiveDeriveStats`
+    // and records `StatsDerive` after it; the physical search that follows
+    // this function takes the start over.
+    let begin_physical_opt = Instant::now();
+    optimized.recursive_derive_stats_with_context(&[], &rule_context)?;
+    ctx.finish_stats_derive(begin_physical_opt);
+    let logical = prepare_possible_properties_for(ctx, optimized);
+    Ok(logical)
+}
+
+/// Go `preparePossibleProperties` with the session's reads: TiFlash in
+/// `IsolationReadEngines`, and `IsMPPAllowed()`.
+pub fn prepare_possible_properties_for<C: OptimizeContext>(
+    ctx: &C,
+    plan: LogicalPlan,
+) -> LogicalPlan {
+    let tiflash_in_isolation_read = crate::access_path::IsolationRead::new(
+        ctx.isolation_read_engines(),
+        ctx.tiflash_engine_removed_due_to_strict_sql_mode(),
+    )
+    .tiflash;
+    prepare_possible_properties(
+        plan,
+        tiflash_in_isolation_read,
+        ctx.optimizer_cost_env().session.mpp_allowed,
+    )
+    .0
+}
+
+/// Go `DataSource.CheckPartialIndexes` over every source, which Go's
+/// `DataSource.DeriveStats` runs with the statement's resolver.
+pub fn check_partial_index_paths<C: OptimizeContext>(
+    plan: LogicalPlan,
+    ctx: &C,
+    use_plan_cache: bool,
+) -> LogicalPlan {
+    use tidb_planner_core_operator_logicalop::fold::{Descend, OwnedRewrite, fold_owned};
+
+    struct PartialIndexChecker<'a> {
+        resolver: &'a tidb_expr::column_resolver::ZonedNoResolver,
+        use_plan_cache: bool,
+        opt_prefix_index_single_scan: bool,
+    }
+
+    impl OwnedRewrite for PartialIndexChecker<'_> {
+        type Down = ();
+        type Up = ();
+
+        fn descend(&mut self, node: &mut LogicalPlan, (): ()) -> Descend<(), ()> {
+            if let LogicalPlan::DataSource(source) = node {
+                source.check_partial_indexes(
+                    self.resolver,
+                    self.use_plan_cache,
+                    self.opt_prefix_index_single_scan,
+                );
+            }
+            Descend::Children(vec![(); node.children().len()])
+        }
+
+        fn ascend(&mut self, node: LogicalPlan, _child_ups: Vec<()>) -> (LogicalPlan, ()) {
+            (node, ())
+        }
+    }
+
+    let resolver = tidb_expr::column_resolver::ZonedNoResolver::with_like_default_escape(
+        ctx.session_zone(),
+        tidb_exprctx::Columns::like_default_escape(ctx),
+    );
+    fold_owned(
+        &mut PartialIndexChecker {
+            resolver: &resolver,
+            use_plan_cache,
+            opt_prefix_index_single_scan: ctx.opt_prefix_index_single_scan(),
+        },
+        plan,
+        (),
+    )
+    .0
+}
+
+/// Go's dynamic-prune access object: under dynamic pruning, each
+/// partitioned source names the partitions it reads (for EXPLAIN's access
+/// object), computed by the partition processor's pruning.
+fn attach_dynamic_partition_access(
+    plan: &mut LogicalPlan,
+    rule_context: &RuleContext<'_>,
+) -> Result<(), PlanError> {
+    if let LogicalPlan::DataSource(source) = plan {
+        if !source.partition_definition_ids().is_empty() {
+            let indices =
+                tidb_planner_core_rule::rule_partition_processor::prune::partition_indices(
+                    rule_context,
+                    source,
+                )?;
+            let all_partitions = source.partition_names.is_empty()
+                && indices.len() == source.partition_definition_ids().len();
+            let partitions = if all_partitions {
+                Vec::new()
+            } else {
+                indices
+                    .into_iter()
+                    .filter_map(|index| source.partition_definition_names().get(index).cloned())
+                    .collect()
+            };
+            source.dynamic_partition_access =
+                Some(tidb_planner_core_access::DynamicPartitionAccessObject {
+                    database: source.db_name.clone(),
+                    table: source
+                        .table_as_name
+                        .clone()
+                        .unwrap_or_else(|| source.table_name()),
+                    all_partitions,
+                    partitions,
+                    error: String::new(),
+                });
+        }
+        return Ok(());
+    }
+    for child in plan.base_mut().children_mut() {
+        attach_dynamic_partition_access(child, rule_context)?;
+    }
+    Ok(())
+}
+
+/// Go `physicalOptimize` and `postOptimize`: the cheapest physical plan for
+/// the optimized logical plan with its cost (`getPlanCost` of the best task's
+/// plan), then the post-optimization rewrites.
+/// `col_ref_from_update_plan` is Go's `StmtCtx.ColRefFromUpdatePlan` for an
+/// UPDATE's read plan (empty otherwise).
+///
+/// # Errors
+///
+/// No physical plan found, or a resolution error.
+pub fn physical_optimize<C: OptimizeContext>(
+    logical: &LogicalPlan,
+    plan_ids: &PlanIdAllocator,
+    column_ids: &ColumnIdAllocator,
+    ctx: &C,
+    col_ref_from_update_plan: &BTreeSet<i64>,
+    used_stats_recorder: &dyn UsedStatsRecorder,
+) -> Result<(PhysicalPlan, f64), PlanError> {
+    let begin_physical_opt = ctx.take_begin_physical_opt().unwrap_or_else(Instant::now);
+    let optimizer_cost_env = ctx.optimizer_cost_env();
+    let coster = Ver2Coster::from_env(optimizer_cost_env)
+        .with_scan_penalty_vars(ctx.allow_prefer_range_scan(), ctx.get_index_force());
+    let evaluate = tidb_ranger::points::StatementRangerEvaluator(ctx);
+    let get_mpp_store_count = || ctx.get_mpp_store_count();
+    let mut dispatch = DispatchContext::new(
+        plan_ids,
+        &coster,
+        optimizer_cost_env.session.scale_ndv_skew_ratio,
+    )
+    .with_mpp_store_count(&get_mpp_store_count)
+    .with_used_stats_recorder(used_stats_recorder)
+    .with_estimator_options(optimizer_cost_env.session.estimator_options.clone())
+    .with_group_ndv_skew_ratio(optimizer_cost_env.session.group_ndv_skew_ratio)
+    .with_correlation_options(optimizer_cost_env.session.correlation_options)
+    .with_expression_evaluator(&evaluate)
+    .with_mpp_allowed(optimizer_cost_env.session.mpp_allowed)
+    .with_tiflash_switches(
+        optimizer_cost_env.session.tiflash_cop_banned,
+        optimizer_cost_env.session.tiflash_fast_scan,
+        optimizer_cost_env.session.allow_batch_cop,
+        optimizer_cost_env.session.disaggregated_tiflash,
+    )
+    .with_enable_late_materialization(optimizer_cost_env.session.enable_late_materialization)
+    .with_mpp_join_inputs(
+        optimizer_cost_env.session.mpp_join,
+        crate::access_path::IsolationRead::new(
+            ctx.isolation_read_engines(),
+            ctx.tiflash_engine_removed_due_to_strict_sql_mode(),
+        )
+        .tiflash,
+        ctx.tiflash_engine_removed_due_to_strict_sql_mode(),
+        optimizer_cost_env.session.enable_chunk_rpc,
+    )
+    .with_enable_skew_distinct_agg(ctx.enable_skew_distinct_agg())
+    .with_enable_3_stage_distinct_agg(ctx.enable_3_stage_distinct_agg())
+    .with_enable_3_stage_multi_distinct_agg(ctx.enable_3_stage_multi_distinct_agg())
+    .with_tiflash_pre_agg_mode(ctx.tiflash_pre_agg_mode())
+    .with_partial_ordered_index_for_topn(ctx.is_partial_ordered_index_for_top_n_enabled())
+    .with_opt_prefix_index_single_scan(ctx.opt_prefix_index_single_scan())
+    .with_allow_prefer_range_scan(ctx.allow_prefer_range_scan())
+    .with_prefer_index_merge_by_fix_control(
+        ctx.optimizer_fix_control()
+            .get_bool_with_default(tidb_fixcontrol::FIX_52869, false),
+    )
+    .with_explore_enforced_plan(
+        ctx.optimizer_fix_control()
+            .get_bool_with_default(tidb_fixcontrol::FIX_46177, true),
+    )
+    .with_mpp_warning_sink(ctx)
+    .with_for_update_read_session(
+        tidb_exprctx::Columns::txn_is_explicit(ctx),
+        crate::access_path::IsolationRead::new(
+            ctx.isolation_read_engines(),
+            ctx.tiflash_engine_removed_due_to_strict_sql_mode(),
+        ),
+    )
+    .with_plan_cache(
+        tidb_exprctx::Columns::use_plan_cache(ctx),
+        ctx,
+        ctx.optimizer_fix_control()
+            .get_bool_with_default(tidb_fixcontrol::FIX_44830, false),
+    )
+    .with_range_quota(ctx.range_max_size(), ctx.range_fallback_handler())
+    .with_stmt_mem_tracker(ctx.stmt_mem_tracker())
+    .with_selectivity_factor(ctx.selectivity_factor())
+    .with_ordering_index_selectivity_ratio(ctx.opt_ordering_idx_sel_ratio())
+    .with_index_join_max_scan_rows_ratio(ctx.index_join_max_scan_rows_ratio())
+    .with_ordering_index_selectivity_threshold(ctx.opt_ordering_idx_sel_thresh())
+    .with_projection_push_down(ctx.allow_projection_push_down())
+    .with_distinct_agg_push_down(ctx.allow_distinct_agg_push_down())
+    .with_heavy_function_optimize(
+        ctx.optimizer_fix_control()
+            .get_bool_with_default(tidb_fixcontrol::FIX_56318, true),
+    )
+    .with_inl_join_inner_multi_pattern(ctx.enable_inl_join_inner_multi_pattern())
+    .with_limit_push_down_threshold(ctx.limit_push_down_threshold())
+    .with_paging(optimizer_cost_env.session.enable_paging)
+    .with_hash_join_concurrency(optimizer_cost_env.session.hash_join_concurrency.max(1.0) as usize)
+    .with_use_hash_join_v2(optimizer_cost_env.session.use_hash_join_v2)
+    .with_disable_hash_join(!ctx.enable_hash_join())
+    .with_apply_cache_capacity(ctx.apply_cache_capacity())
+    .with_point_get_conversion(
+        !ctx.optimizer_fix_control()
+            .get_bool_with_default(tidb_fixcontrol::FIX_52592, false),
+    )
+    .with_index_join_row_count_upper_bound(
+        ctx.optimizer_fix_control()
+            .get_bool_with_default(tidb_fixcontrol::FIX_44855, false),
+    )
+    .with_column_ids(column_ids);
+    dispatch.expr_pushdown_blacklist = ctx.expr_pushdown_blacklist().clone();
+    dispatch.shuffle_options = optimizer_cost_env.session.shuffle_options;
+    let cascades = ctx.enable_cascades_planner();
+    let task = if cascades {
+        // Go `CascadesOptimize`: `cascades.NewOptimizer(logic)`, `Execute()`,
+        // then `impl.ImplementMemoAndCost(rootGroup)`, which keeps no
+        // optimizer clock.
+        let mut cas = crate::cascades::Optimizer::new(logical, plan_ids)?;
+        cas.execute()?;
+        let root_group = cas
+            .get_memo()
+            .get_root_group()
+            .expect("an initialized memo has a root group");
+        crate::cascades::impl_and_cost::implement_memo_and_cost(
+            cas.get_memo(),
+            root_group,
+            &mut dispatch,
+        )?
+    } else {
+        // Go `physicalOptimize` records `DurationOptimizer.PhysicalOpt` on
+        // every return, an error one included.
+        find_best_task(logical, &PhysicalProperty::default(), &mut dispatch)
+            .inspect_err(|_| ctx.set_physical_opt(begin_physical_opt.elapsed()))?
+    };
+    let mut physical =
+        task.plan().cloned().ok_or_else(|| {
+            PlanError::from(tidb_plannererrors::ERR_INTERNAL.gen_with_stack_by_args(&[
+                "Can't find a proper physical plan for this query".into(),
+            ]))
+        })?;
+    // Go physicalOptimize: "cost, err = getPlanCost(t.Plan(), ...)". Each
+    // operator keeps the cost it was first priced with (`PlanCostInit`), while
+    // `findBestTask` compared tasks or here, and EXPLAIN shows that cost even
+    // where `postOptimize` later puts an operator between a parent and its
+    // child.
+    let cost = coster
+        .plan_cost(
+            &physical,
+            tidb_planner_property::task_type::TaskType::Root,
+            false,
+        )
+        .value();
+    // Go physicalOptimize: "collect the warnings from task". Every task
+    // warning is a planner `ErrInternal` (hint warnings), code 1815.
+    for warning in task.warnings().get_warnings() {
+        let note = matches!(warning.level, tidb_context::WarningLevel::Note);
+        ctx.append_task_warning(note, 1815, &warning.message);
+    }
+    // Go physicalOptimize binds positions before postOptimize removes aliases.
+    let resolved = physical.resolve_indices();
+    if !cascades {
+        ctx.set_physical_opt(begin_physical_opt.elapsed());
+    }
+    resolved?;
+    let physical = crate::post_optimize::eliminate_physical_projection_for_update(
+        physical,
+        col_ref_from_update_plan,
+    );
+    // Go postOptimize: eliminatePhysicalProjection -> InjectExtraProjection.
+    // The projection re-injection restores the purposeful projections
+    // (scalar aggregate arguments, scalar order-by items, expression
+    // nominal sorts) that the elimination pass removed.
+    let mut physical = crate::inject_extra_projection::inject_extra_projection(
+        ctx, physical, plan_ids, column_ids,
+    );
+    // Go postOptimize: mergeContinuousSelections.
+    crate::post_optimize::merge_continuous_selections(&mut physical);
+    // Go postOptimize: eliminateUnionScanAndLock (the UnionScan half).
+    let mut physical =
+        crate::post_optimize::eliminate_union_scan_and_lock(physical, ctx.in_transaction());
+    // Go postOptimize: avoidColumnEvaluatorForProjBelowUnion.
+    crate::post_optimize::avoid_column_evaluator_for_proj_below_union(&mut physical);
+    tidb_planner_core_operator_physicalop::shuffle::install_receivers(&mut physical, plan_ids)?;
+    if ctx.enable_parallel_apply() {
+        crate::post_optimize::enable_parallel_apply(ctx, &mut physical);
+    }
+    // Go postOptimize: handleFineGrainedShuffle.
+    crate::fine_grained_shuffle::handle_fine_grained_shuffle(ctx, &mut physical);
+    // Go postOptimize: countStarRewrite.
+    crate::post_optimize::count_star_rewrite(&mut physical, column_ids);
+    // Go postOptimize: disableReuseChunkIfNeeded.
+    if ctx.is_alloc_valid()
+        && crate::chunk_reuse::should_disable_reuse_chunk(
+            &physical,
+            ctx.max_chunk_size(),
+            tidb_memory::mem_total().ok(),
+        )
+    {
+        ctx.set_alloc(false);
+    }
+    physical
+        .base_mut()
+        .base
+        .set_output_names(logical.output_names().to_vec());
+    Ok((physical, cost))
+}
+
 use std::cell::RefCell;
-use std::collections::{BTreeSet, HashSet};
+use std::collections::HashSet;
 use std::sync::Arc;
 use tidb_expr::expr_util::RealFunctionBuilder;
 use tidb_expr::expr_util::normal_form::extract_filters_from_dn_fs;
 use tidb_expr::simple_expr::compose_dnf_condition;
 use tidb_infoschema::SessionExtendedInfoSchema;
-use tidb_planner_core_base::ColumnIdAllocator;
-use tidb_planner_core_base::PlanIdAllocator;
 use tidb_planner_core_operator_logicalop::cte::CteClass;
 use tidb_planner_core_operator_logicalop::fold::{Descend, OwnedRewrite, fold_owned};
-use tidb_planner_core_operator_logicalop::plan_context::RuleContext;
-use tidb_planner_core_operator_logicalop::{BaseLogicalPlan, LogicalPlan, LogicalSelection};
-use tidb_planner_core_operator_physicalop::PhysicalPlan;
+use tidb_planner_core_operator_logicalop::{BaseLogicalPlan, LogicalSelection};
 use tidb_planner_property::stats_info::StatsInfo;
 use tidb_sessionctx::StmtContext;
 use tidb_stats_handle::catalog_statistics::CatalogStatistics;
@@ -244,7 +927,9 @@ impl InitStats<'_> {
         // Go `buildDataSource`: a table with an available TiFlash replica
         // marks the statement as reading TiFlash whenever MPP is allowed.
         if source.has_available_tiflash_replica()
-            && self.context.optimizer_cost_env().session.mpp_allowed
+            && crate::stmt_ctx::PlannerStmtCtx::optimizer_cost_env(self.context)
+                .session
+                .mpp_allowed
         {
             self.context.mark_is_tiflash();
         }
@@ -280,8 +965,7 @@ impl InitStats<'_> {
         );
         tidb_planner_core_rule::rule_collect_plan_stats::refresh_source_group_ndvs_with_scale_ratio(
             source,
-            self.context
-                .optimizer_cost_env()
+            crate::stmt_ctx::PlannerStmtCtx::optimizer_cost_env(self.context)
                 .session
                 .scale_ndv_skew_ratio,
         );
@@ -404,7 +1088,7 @@ pub fn physical_plan_for_logical_with_update_refs(
     ctx: &StmtContext,
     col_ref_from_update_plan: &std::collections::BTreeSet<i64>,
 ) -> Result<PhysicalPlan, tidb_planner_core_base::PlanError> {
-    crate::optimize::physical_optimize(
+    crate::optimizer::physical_optimize(
         logical,
         plan_ids,
         column_ids,
@@ -553,13 +1237,13 @@ impl StatementCteOptimizer<'_> {
         if let Some(error) = initializer.error {
             return Err(error);
         }
-        let opt_flag = crate::optimize::adjust_optimization_flags(opt_flag, ctx);
+        let opt_flag = crate::optimizer::adjust_optimization_flags(opt_flag, ctx);
         // Go's CTE `DoOptimize` is `doOptimize`: `CascadesOptimize`
         // (`normalizeOptimize`, then the memo's derivation, no optimizer
         // clock) under `tidb_enable_cascades_planner`, else
         // `logicalOptimize` and `physicalOptimize`, which set the session's
         // optimizer clocks like any other pass.
-        let cascades = crate::optimize::OptimizeContext::enable_cascades_planner(ctx);
+        let cascades = crate::optimizer::OptimizeContext::enable_cascades_planner(ctx);
         let optimized = if cascades {
             crate::rule::normalize_optimize(rule_context, opt_flag, plan)
                 .map_err(|(_, error)| error)?
@@ -571,8 +1255,11 @@ impl StatementCteOptimizer<'_> {
                 .set_logical_opt(begin_logical_opt.elapsed());
             logical_result.map_err(|(_, error)| error)?.plan
         };
-        let mut optimized =
-            crate::optimize::check_partial_index_paths(optimized, ctx, rule_context.use_plan_cache);
+        let mut optimized = crate::optimizer::check_partial_index_paths(
+            optimized,
+            ctx,
+            rule_context.use_plan_cache,
+        );
         if cascades {
             optimized.memo_derive_stats_with_context(rule_context)?;
         } else {
@@ -581,7 +1268,7 @@ impl StatementCteOptimizer<'_> {
             ctx.phase_durations()
                 .finish_stats_derive(begin_physical_opt);
         }
-        let logical = crate::optimize::prepare_possible_properties_for(ctx, optimized);
+        let logical = crate::optimizer::prepare_possible_properties_for(ctx, optimized);
         let physical =
             physical_plan_for_logical(&logical, self.plan_ids, self.column_ids, self.catalog, ctx)?;
         Ok((logical, physical))
@@ -738,13 +1425,13 @@ pub fn optimize_built_logical(
         statistics_load.record_used_stats.set(true);
         initialized
     };
-    let services = crate::optimize::OptimizeServices {
+    let services = crate::optimizer::OptimizeServices {
         statistics_load: &statistics_load,
         initialize_statistics: &initialize_statistics,
         used_stats_recorder: &statistics_load,
         cte_optimizer: &cte_optimizer,
     };
-    crate::optimize::optimize_logical(
+    crate::optimizer::optimize_logical(
         plan,
         flags,
         ctx,
@@ -813,6 +1500,7 @@ mod predicate_column_tests {
 #[cfg(test)]
 mod statistics_initialization_tests {
     use super::*;
+    use crate::stmt_ctx::PlannerStmtCtx as _;
     use tidb_datatype::{Datum, FieldType, FieldTypeCode};
     use tidb_expr::column::Column;
     use tidb_expr::constant::{Constant, ParamMarker};
@@ -1367,7 +2055,7 @@ mod statistics_initialization_tests {
                         if error.equal(&tidb_plannererrors::ERR_UNSUPPORTED_TYPE) {
                             let expected_message = error.to_string();
                             let tidb_driver_error::DriverError::Mysql(mysql) =
-                                crate::statement_optimize::planner_error_to_driver(error)
+                                crate::optimize::planner_error_to_driver(error)
                             else {
                                 panic!("lost unsupported-type error identity");
                             };

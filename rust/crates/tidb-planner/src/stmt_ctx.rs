@@ -159,7 +159,7 @@ impl PlannerStmtCtxData for StmtContextData {
 }
 
 /// Go `base.PlanContext` as `pkg/planner/core`'s optimizer reads it.
-impl crate::optimize::OptimizeContext for StmtContext {
+impl crate::optimizer::OptimizeContext for StmtContext {
     fn session_zone(&self) -> tidb_datatype::SessionTimeZone {
         StmtContext::session_zone(self)
     }

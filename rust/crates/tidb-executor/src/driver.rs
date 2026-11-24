@@ -178,15 +178,15 @@ pub(crate) fn build_create_view(
 
 /// Go `tryFillViewColumnType`: the static type of each of the view's
 /// `columns`, from `BuildDataSourceFromView` over `database`.`view_name`; see
-/// [`planner_bridge::view_column_types`].
-pub(crate) fn view_column_types(
+/// [`planner_bridge::try_fill_view_column_type`].
+pub(crate) fn try_fill_view_column_type(
     database: &str,
     view_name: &str,
     columns: &[String],
     catalog: &SessionExtendedInfoSchema,
     ctx: &crate::StmtContext,
 ) -> Result<Vec<Option<FieldType>>, DriverError> {
-    planner_bridge::view_column_types(&crate::driver::planner_bridge::driver_hooks(catalog), database, view_name, columns, catalog, ctx)
+    planner_bridge::try_fill_view_column_type(&crate::driver::planner_bridge::driver_hooks(catalog), database, view_name, columns, catalog, ctx)
         .map_err(planner_error_to_driver)
 }
 
@@ -339,7 +339,7 @@ pub(crate) fn begin_dml_execution(executor: &'static str) -> DmlExecutionRegions
     }
 }
 
-pub(crate) use tidb_planner::statement_optimize::record_plan_builder_metric;
+pub(crate) use tidb_planner::optimize::record_plan_builder_metric;
 
 /// Go `planner.Optimize` for a query statement: `TryFastPlan`, else the
 /// statement's one build and optimization.
@@ -365,7 +365,7 @@ pub(crate) fn optimize_query_stmt_with_scalar_subqueries(
 ) -> Result<
     (
         tidb_planner_core_operator_physicalop::PhysicalPlan,
-        Vec<std::sync::Arc<planner_bridge::RegisteredScalarSubquery>>,
+        Vec<std::sync::Arc<planner_bridge::ScalarSubqueryEvalCtx>>,
     ),
     DriverError,
 > {
@@ -386,7 +386,7 @@ pub(super) fn run_physical_set_opr_stmt(
     )
 }
 
-pub use tidb_planner::statement_optimize::planner_error_to_driver;
+pub use tidb_planner::optimize::planner_error_to_driver;
 
 /// Runs one parsed `SELECT` against the catalog, for a caller that has
 /// already rewritten the statement (session-variable binding, for instance)

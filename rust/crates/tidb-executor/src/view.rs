@@ -246,7 +246,7 @@ pub fn view_column_list(
     let names: Vec<String> = view.columns.iter().map(|(name, _)| name.clone()).collect();
     let system_session = ctx.for_system_session();
     let types =
-        crate::driver::view_column_types(database, &view.name, &names, catalog, &system_session)?;
+        crate::driver::try_fill_view_column_type(database, &view.name, &names, catalog, &system_session)?;
     Ok(view
         .columns
         .iter()

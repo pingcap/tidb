@@ -12,660 +12,1135 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Go `pkg/planner/core/optimizer.go`'s `DoOptimize`: the logical half
-//! (`adjustOptimizationFlags`, the statistics initialization, `RecheckCTE`,
-//! `logicalOptimize`, `RecursiveDeriveStats`) and the physical half
-//! (`physicalOptimize` and `postOptimize`).
+//! Go `pkg/planner/optimize.go`.
 //!
-//! The planner owns the drive. What it needs from below -- the statement's
-//! session settings, the statistics the domain loads, a partitioned table's
-//! pruning, a CTE's lazy optimization -- reaches it through
-//! [`OptimizeContext`] and [`OptimizeServices`], as Go's `base.PlanContext`
-//! and the statistics handle reach `pkg/planner/core`.
+//! Go `pkg/planner/optimize.go`'s `optimize`: the statement's first
+//! logical-plan round and, under `tidb_opt_enable_alternative_logical_plans`,
+//! the alternative rounds (`alternativeRounds`) the first round's signals
+//! ask for; the cheapest round's plan is the statement's
+//! (`buildAndOptimizeLogicalPlanRound`).
+//!
+//! One round -- Go's `buildLogicalPlan`, `CheckPrivilege` /
+//! `CheckTableLock` and `core.DoOptimize` with the plan's cost -- is the
+//! caller's [`LogicalPlanRounds::build_and_optimize`], over the statement's
+//! catalog and its subquery evaluation.
+//!
+//! Go `pkg/planner/optimize.go`'s statement planning over a query:
+//! `NewPlanBuilder().Init` ([`BuilderParts::build`]), `buildLogicalPlan`
+//! ([`build_logical_plan`]), `buildAndOptimizeLogicalPlanRound`
+//! ([`build_and_optimize_logical_plan_round`]) and `optimize`'s rounds
+//! ([`optimize_query`]). What Go's executor hands the planner through
+//! function variables -- evaluating an uncorrelated subquery, a column's
+//! default, the statistics `DoOptimize` loads, `CheckPrivilege` -- is
+//! [`PlanningHooks`].
+//!
+//! Go `planner.Optimize`'s binding step (`pkg/planner/optimize.go`): the
+//! statement's matched binding (`bindinfo.MatchSQLBinding`) replaces its own
+//! hints, and the session records the match.
 
-use crate::resolve_indices::ResolveIndices;
-use tidb_planner_core_base::PlanCacheMarker;
-use std::collections::BTreeSet;
-use std::time::{Duration, Instant};
+use std::sync::atomic::{AtomicBool, Ordering};
 
-use tidb_planner_core_base::ColumnIdAllocator;
-use crate::find_best_task::coster::{CostEnv, Ver2Coster};
-use tidb_planner_core_operator_physicalop::enforce::MppWarningSink;
-use crate::find_best_task::dispatch::{find_best_task, DispatchContext};
-use tidb_fixcontrol::OptimizerFixControl;
-use crate::rule::{logical_optimize, normalize_optimize};
-use tidb_planner_core_rule::flags;
-use tidb_planner_core_operator_logicalop::plan_context::{CteOptimizer, DeriveStatsSink, DisabledLogicalRules, HintWarningSink, RuleContext, UsedStatsRecorder};
-use tidb_planner_core_operator_logicalop::plan_context::StatisticsLoadRequester;
-use tidb_planner_core_operator_logicalop::{prepare_possible_properties, LogicalPlan};
+use tidb_planner_core_base::PlanError;
+use tidb_planner_core_operator_logicalop::LogicalPlan;
 use tidb_planner_core_operator_physicalop::PhysicalPlan;
-use tidb_planner_property::PhysicalProperty;
-use tidb_planner_core_base::{PlanError, PlanIdAllocator};
+use tidb_sessionctx::StmtContext;
 
-/// Go `base.PlanContext` as the optimizer reads it: the statement's session
-/// settings (`SessionVars`), its warnings and phase clocks (`StmtCtx`).
-pub trait OptimizeContext:
-    tidb_exprctx::Columns + PlanCacheMarker + HintWarningSink + MppWarningSink + DeriveStatsSink
-{
-    /// Go `SessionVars.Location()` as the expression resolver reads it.
-    fn session_zone(&self) -> tidb_datatype::SessionTimeZone;
-    /// Go `SessionVars.RUV2Metrics` of the statement being planned.
-    fn ruv2_metrics(&self) -> Option<std::sync::Arc<tidb_execdetails::ruv2_metrics::RUV2Metrics>> {
-        None
-    }
-    /// Go `!SessionVars.UseDynamicPartitionPrune()`.
-    fn static_partition_prune(&self) -> bool;
-    /// Go `SessionVars.EnableStableResultMode`.
-    fn stable_result_mode(&self) -> bool;
-    /// The cost model's session inputs.
-    fn optimizer_cost_env(&self) -> &CostEnv;
-    /// Go `SessionVars.AllowDeriveTopN`.
-    fn allow_derive_topn(&self) -> bool;
-    /// Go `optRuleBlacklist`: whether a logical rule is disabled.
-    fn logical_rule_disabled(&self, name: &str) -> bool;
-    /// Go `SessionVars.OptIndexPruneThreshold`.
-    fn opt_index_prune_threshold(&self) -> i32;
-    /// Go `SessionVars.OptPrefixIndexSingleScan`.
-    fn opt_prefix_index_single_scan(&self) -> bool;
-    /// Go `SessionVars.GetAllowPreferRangeScan()`.
-    fn allow_prefer_range_scan(&self) -> bool;
-    /// Go `SessionVars`' inputs to the index-lookup-pushdown support check.
-    fn index_lookup_push_down_session(&self) -> tidb_sessionctx::IndexLookupPushDownSession;
-    /// Go `SessionVars.IsolationReadEngines`.
-    fn isolation_read_engines(&self) -> &str;
-    /// Go `StmtCtx.TiFlashEngineRemovedDueToStrictSQLMode`.
-    fn tiflash_engine_removed_due_to_strict_sql_mode(&self) -> bool;
-    /// Go `SessionVars`' inputs to `handleFineGrainedShuffle`.
-    fn tiflash_fine_grained_shuffle(&self) -> tidb_sessionctx::TiFlashFineGrainedShuffleSession;
-    /// Go `GetMPPClient().GetMPPStoreCount()`.
-    fn get_mpp_store_count(&self) -> Result<usize, String>;
-    /// The TiFlash cluster `handleFineGrainedShuffle` sizes streams from.
-    fn tiflash_cluster_info(&self) -> Option<&std::sync::Arc<dyn tidb_sessionctx::TiFlashClusterInfo>>;
-    /// Go `SessionVars.GetEnableIndexMerge()`.
-    fn get_enable_index_merge(&self) -> bool;
-    /// Go `StmtCtx.NoIndexMergeHint`.
-    fn no_index_merge_hint(&self) -> bool;
-    /// Go `StmtCtx.InExplainStmt`.
-    fn in_explain_stmt(&self) -> bool;
-    /// Go `SessionVars.RangeMaxSize`.
-    fn range_max_size(&self) -> i64;
-    /// Go `SessionVars.SelectivityFactor`.
-    fn selectivity_factor(&self) -> f64;
-    /// Go's range-fallback warning hook (`StmtCtx.RecordRangeFallback`).
-    fn range_fallback_handler(&self) -> &tidb_context::RangeFallbackHandler;
-    /// Go `StmtCtx.MemTracker`: the statement tracker the planner charges
-    /// (`indexJoinPathBuildTmpRange`).
-    fn stmt_mem_tracker(&self) -> std::sync::Arc<tidb_memory::Tracker>;
-    /// Go `SessionVars.AlwaysKeepJoinKey`.
-    fn always_keep_join_key(&self) -> bool;
-    /// Go `SessionVars.EnableUnsafeSubstitute`.
-    fn enable_unsafe_substitute(&self) -> bool;
-    /// Go `SessionVars.EnableSemiJoinRewrite`.
-    fn enable_semi_join_rewrite(&self) -> bool;
-    /// Go `SessionVars.OptimizerEnableNAAJ`.
-    fn optimizer_enable_naaj(&self) -> bool;
-    /// Go `SessionVars.EnableNoDecorrelateInSelect`.
-    fn enable_no_decorrelate_in_select(&self) -> bool;
-    /// Go `SessionVars.OptimizerFixControl`.
-    fn optimizer_fix_control(&self) -> &OptimizerFixControl;
-    /// Go `SessionVars.TiDBOptJoinReorderThreshold`.
-    fn tidb_opt_join_reorder_threshold(&self) -> i32;
-    /// Go `SessionVars.AllowAggPushDown`.
-    fn allow_agg_push_down(&self) -> bool;
-    /// Go `SessionVars.TiDBOptEnableAdvancedJoinReorder`.
-    fn tidb_opt_enable_advanced_join_reorder(&self) -> bool;
-    /// Go `SessionVars.CartesianJoinOrderThreshold`.
-    fn cartesian_join_order_threshold(&self) -> f64;
-    /// Go `SessionVars.TiDBOptJoinReorderThroughProj`.
-    fn tidb_opt_join_reorder_through_proj(&self) -> bool;
-    /// Go `SessionVars.TiDBOptJoinReorderThroughSel`.
-    fn tidb_opt_join_reorder_through_sel(&self) -> bool;
-    /// Go `SessionVars.EnableOuterJoinReorder`.
-    fn enable_outer_join_reorder(&self) -> bool;
-    /// Go `SessionVars.EnableAdvancedJoinHint`.
-    fn enable_advanced_join_hint(&self) -> bool;
-    /// Go `StmtCtx.GetIndexForce()`.
-    fn get_index_force(&self) -> bool;
-    /// Go `SessionVars.EnableSkewDistinctAgg`.
-    fn enable_skew_distinct_agg(&self) -> bool;
-    /// Go `SessionVars.Enable3StageDistinctAgg`.
-    fn enable_3_stage_distinct_agg(&self) -> bool;
-    /// Go `SessionVars.Enable3StageMultiDistinctAgg`.
-    fn enable_3_stage_multi_distinct_agg(&self) -> bool;
-    /// Go `SessionVars.TiFlashPreAggMode`.
-    fn tiflash_pre_agg_mode(&self) -> &str;
-    /// Go `SessionVars.OptPartialOrderedIndexForTopN`.
-    fn is_partial_ordered_index_for_top_n_enabled(&self) -> bool;
-    /// Go `SessionVars.OptOrderingIdxSelRatio`.
-    fn opt_ordering_idx_sel_ratio(&self) -> f64;
-    /// Go `SessionVars.IndexJoinMaxScanRowsRatio`.
-    fn index_join_max_scan_rows_ratio(&self) -> f64;
-    /// Go `SessionVars.OptOrderingIdxSelThresh`.
-    fn opt_ordering_idx_sel_thresh(&self) -> f64;
-    /// Go `SessionVars.AllowProjectionPushDown`.
-    fn allow_projection_push_down(&self) -> bool;
-    /// Go `SessionVars.AllowDistinctAggPushDown`.
-    fn allow_distinct_agg_push_down(&self) -> bool;
-    /// Go `SessionVars.EnableCascadesPlanner`: `doOptimize` takes
-    /// `CascadesOptimize` instead of `VolcanoOptimize`.
-    fn enable_cascades_planner(&self) -> bool;
-    /// Go `SessionVars.EnableINLJoinInnerMultiPattern`.
-    fn enable_inl_join_inner_multi_pattern(&self) -> bool;
-    /// Go `SessionVars.LimitPushDownThreshold`.
-    fn limit_push_down_threshold(&self) -> u64;
-    /// Go `!SessionVars.DisableHashJoin`.
-    fn enable_hash_join(&self) -> bool;
-    /// Go `SessionVars.ApplyCacheCapacity`.
-    fn apply_cache_capacity(&self) -> i64;
-    /// Go `SessionVars.EnableParallelApply`.
-    fn enable_parallel_apply(&self) -> bool;
-    /// Go `SessionVars.ExecutorConcurrency`.
-    fn executor_concurrency(&self) -> usize;
-    /// Go `SessionVars.TxnCtx.IsPessimistic || ...`: whether a transaction
-    /// is active (the UnionScan elimination reads it).
-    fn in_transaction(&self) -> bool;
-    /// Go `SessionVars.IsAllocValid()`.
-    fn is_alloc_valid(&self) -> bool;
-    /// Go `SessionVars.SetAlloc(nil)` / `ClearAlloc`.
-    fn set_alloc(&self, valid: bool);
-    /// Go `SessionVars.MaxChunkSize`.
-    fn max_chunk_size(&self) -> usize;
-    /// Go `StmtCtx.AppendWarning` / `AppendNote` for a task warning.
-    fn append_task_warning(&self, note: bool, code: u16, message: &str);
-    /// Go `DurationOptimizer.LogicalOpt`.
-    fn set_logical_opt(&self, duration: Duration);
-    /// Go `DurationOptimizer.StatsDerive`, from `begin`.
-    fn finish_stats_derive(&self, begin: Instant);
-    /// The clock `physicalOptimize` starts before `RecursiveDeriveStats`, if
-    /// the logical half started it.
-    fn take_begin_physical_opt(&self) -> Option<Instant>;
-    /// Go `DurationOptimizer.PhysicalOpt`.
-    fn set_physical_opt(&self, duration: Duration);
+/// The statement's rounds as Go's `optimize` runs them.
+pub trait LogicalPlanRounds {
+    /// One build of the statement's plan under `ctx` with Go `adjustFlag`
+    /// applied to the builder's optimization flag: Go `buildLogicalPlan`,
+    /// the statement's privilege check (once), and `core.DoOptimize`, with
+    /// the physical plan's cost.
+    fn build_and_optimize(
+        &mut self,
+        ctx: &StmtContext,
+        opt_flag_adjust: fn(u64) -> u64,
+    ) -> Result<(LogicalPlan, PhysicalPlan, f64), PlanError>;
+
+    /// Go `buildLogicalPlan` starts every round's `PlanID`, `PlanColumnID`
+    /// and `MapScalarSubQ` where the first round started: remembers them.
+    fn save_round_start(&mut self);
+
+    /// Puts the plan and column ids and the scalar subqueries back where the
+    /// first round started.
+    fn restore_round_start(&mut self);
 }
 
-/// What the optimizer reaches below the planner: the statistics handle's
-/// loading, a partitioned table's pruning, and a CTE's lazy `DoOptimize`.
-pub struct OptimizeServices<'a> {
-    /// Go's statistics loading (`CollectPredicateColumnsPoint`,
-    /// `SyncWaitStatsLoadPoint`) and `DataSource.InitStats`.
-    pub statistics_load: &'a dyn StatisticsLoadRequester,
-    /// The statistics initialization `DoOptimize` runs before the rule
-    /// list, with used-item recording suspended for its walk.
-    pub initialize_statistics:
-        &'a dyn Fn(LogicalPlan) -> Result<LogicalPlan, (LogicalPlan, PlanError)>,
-    /// Go `recordUsedItemStatsStatus`.
-    pub used_stats_recorder: &'a dyn UsedStatsRecorder,
-    /// Go `LogicalCTE.DeriveStats`'s `DoOptimize`.
-    pub cte_optimizer: &'a dyn CteOptimizer,
+/// Go `alternativeRound`: one more build of the statement's plan that
+/// `optimize` costs against the first.
+pub struct AlternativeRound {
+    /// Go `name`.
+    pub name: &'static str,
+    /// Go `adjustFlag`.
+    pub adjust_flag: fn(u64) -> u64,
+    /// Go `enabled`, read off the signals the first round left.
+    pub enabled: fn(&StmtContext) -> bool,
+    /// Go `setup` and the cleanup it returns: the context the round builds
+    /// under, which shares the statement's state, and what to undo on the
+    /// statement once the round is over.
+    #[allow(clippy::type_complexity)]
+    pub setup: for<'a> fn(&'a StmtContext) -> (StmtContext, Option<Box<dyn FnOnce() + 'a>>),
 }
 
-/// Go `adjustOptimizationFlags` (`VolcanoOptimize`, run for the statement
-/// and for each CTE part): stable result mode adds `ResultReorder`, an
-/// `FTS_MATCH_WORD()` under the starter deployment adds the four full-text
-/// index resolvers, the statistics points are on, and `FlagPruneColumnsAgain`
-/// follows.
+fn signal(signal: &AtomicBool) -> bool {
+    signal.load(Ordering::Acquire)
+}
+
+/// Go `shouldTryEngineRestrictedRounds`.
 #[must_use]
-pub fn adjust_optimization_flags<C: OptimizeContext>(mut flags: u64, ctx: &C) -> u64 {
-    if ctx.stable_result_mode() {
-        flags |= flags::STABILIZE_RESULTS;
-    }
-    if ctx.fts_function_is_used() && tidb_config_deploymode::is_starter() {
-        flags |= flags::FULL_TEXT_INDEX_RESOLVE_WHERE
-            | flags::FULL_TEXT_INDEX_RESOLVE_TOPN
-            | flags::FULL_TEXT_INDEX_RESOLVE_PROJECTION
-            | flags::FULL_TEXT_INDEX_RESOLVE_REJECT;
-    }
-    // Go enables both statistics rules for every ordinary (non-restricted)
-    // statement; the builder never owns these flags because they are
-    // session/execution policy, not AST shape.
-    flags |= flags::COLLECT_PREDICATE_COLUMNS_POINT | flags::SYNC_WAIT_STATS_LOAD_POINT;
-    // A second column-prune pass whenever a rule after column pruning runs.
-    crate::rule::add_second_column_prune(flags)
+pub fn should_try_engine_restricted_rounds(ctx: &StmtContext) -> bool {
+    let signals = ctx.alternative_logical_plan_signals();
+    signal(&signals.mixed_storage_engines)
+        && !signal(&signals.has_store_type_hint)
+        && !crate::optimizer::OptimizeContext::optimizer_cost_env(ctx)
+            .session
+            .mpp_enforced
 }
 
-/// Go `DoOptimize`'s logical half over a built plan.
-///
-/// # Errors
-///
-/// A rule's or the statistics derivation's error.
-#[allow(clippy::too_many_arguments)]
-pub fn optimize_logical<C: OptimizeContext>(
-    plan: LogicalPlan,
-    flags: u64,
-    ctx: &C,
-    services: &OptimizeServices<'_>,
-    use_plan_cache: bool,
-    plan_ids: &PlanIdAllocator,
-    column_ids: &ColumnIdAllocator,
-) -> Result<LogicalPlan, PlanError> {
-    let flags = if ctx.static_partition_prune() {
-        flags
-    } else {
-        flags & !flags::PARTITION_PROCESSOR
-    };
-    let flags = adjust_optimization_flags(flags, ctx);
-    let function_builder = tidb_expr::expr_util::RealFunctionBuilder::new(ctx);
-    let optimizer_cost_env = ctx.optimizer_cost_env();
-    let rule_context = RuleContext {
-        estimator_options: optimizer_cost_env.session.estimator_options.clone(),
-        allocator: plan_ids,
-        column_allocator: column_ids,
-        builder: &function_builder,
-        use_plan_cache,
-        eval_context: ctx,
-        plan_cache_marker: Some(ctx),
-        allow_derive_topn: ctx.allow_derive_topn(),
-        expr_pushdown_blacklist: ctx.expr_pushdown_blacklist().clone(),
-        disabled_rules: DisabledLogicalRules::from_names(
-            crate::rule::OPT_RULE_LIST
-                .iter()
-                .map(|rule| rule.name())
-                .filter(|name| ctx.logical_rule_disabled(name)),
-        ),
-        statistics_load: Some(services.statistics_load),
-        opt_index_prune_threshold: ctx.opt_index_prune_threshold(),
-        opt_prefix_index_single_scan: ctx.opt_prefix_index_single_scan(),
-        index_merge_enabled: ctx.get_enable_index_merge(),
-        no_index_merge_hint: ctx.no_index_merge_hint(),
-        in_explain_stmt: ctx.in_explain_stmt(),
-        range_max_size: ctx.range_max_size(),
-        selectivity_factor: ctx.selectivity_factor(),
-        range_fallback_handler: Some(ctx.range_fallback_handler()),
-        always_keep_join_key: ctx.always_keep_join_key(),
-        enable_unsafe_substitute: ctx.enable_unsafe_substitute(),
-        enable_semi_join_rewrite: ctx.enable_semi_join_rewrite(),
-        enable_null_aware_anti_join: ctx.optimizer_enable_naaj(),
-        enable_no_decorrelate_in_select: ctx.enable_no_decorrelate_in_select(),
-        allow_eliminate_apply: ctx
-            .optimizer_fix_control()
-            .get_bool_with_default(tidb_fixcontrol::FIX_45822, true),
-        prefer_index_merge_by_fix_control: ctx
-            .optimizer_fix_control()
-            .get_bool_with_default(tidb_fixcontrol::FIX_52869, false),
-        index_merge_skip_range_scan_check: ctx
-            .optimizer_fix_control()
-            .get_bool_with_default(tidb_fixcontrol::FIX_52869, true),
-        index_lookup_push_down_session: ctx.index_lookup_push_down_session(),
-        isolation_read_engines: ctx.isolation_read_engines(),
-        tiflash_engine_removed_due_to_strict_sql_mode: ctx.tiflash_engine_removed_due_to_strict_sql_mode(),
-        join_reorder_threshold: ctx.tidb_opt_join_reorder_threshold(),
-        group_ndv_skew_ratio: optimizer_cost_env.session.group_ndv_skew_ratio,
-        scale_ndv_skew_ratio: optimizer_cost_env.session.scale_ndv_skew_ratio,
-        allow_agg_push_down: ctx.allow_agg_push_down(),
-        advanced_join_reorder: ctx.tidb_opt_enable_advanced_join_reorder(),
-        cartesian_join_order_threshold: ctx.cartesian_join_order_threshold(),
-        join_reorder_through_proj: ctx.tidb_opt_join_reorder_through_proj(),
-        join_reorder_through_sel: ctx.tidb_opt_join_reorder_through_sel(),
-        outer_join_reorder: ctx.enable_outer_join_reorder(),
-        advanced_join_hint: ctx.enable_advanced_join_hint(),
-        hint_warning_sink: Some(ctx),
-        used_stats_recorder: Some(services.used_stats_recorder),
-        ruv2_metrics: ctx.ruv2_metrics(),
-        derive_stats_sink: Some(ctx),
-        mpp_enforced: optimizer_cost_env.session.mpp_enforced,
-        cte_optimizer: Some(services.cte_optimizer),
-        data_source_stats: &crate::stats::CoreDataSourceStats,
-        predicate_simplifier: &tidb_planner_core_rule::rule_predicate_simplification::RulePredicateSimplifier,
-        access_path_resolver: &crate::access_path::CoreAccessPathResolver,
-    };
-    // Go DataSource.InitStats is available to logical rules themselves;
-    // join reorder derives candidate statistics while logical optimization
-    // is still running. Attach real-or-pseudo base statistics before entering
-    // that rule list, rather than delaying them until physical optimization.
-    let mut plan = (services.initialize_statistics)(plan).map_err(|(_, error)| error)?;
-    // Go `core.RecheckCTE(logic)` (`optimize.go:553`): fill
-    // `IsOuterMostCTE` on every CTE class before ANY optimization runs --
-    // `LogicalCTE.PredicatePushDown` refuses to record predicates for a
-    // non-outermost CTE.
-    tidb_planner_core_operator_logicalop::cte::recheck_cte(&mut plan);
-    // Go `planner/optimize.go:525`: the result's field names are the logical
-    // plan's `OutputNames()` captured BEFORE optimization. A rule may replace
-    // the root (an always-false filter makes a TableDual) with a node that
-    // names nothing.
-    let built_names = plan.output_names().to_vec();
-    // No CTE class is optimized here: Go's `LogicalCTE.DeriveStats` runs
-    // `DoOptimize` the first time a reference's statistics are derived, which
-    // `rule_context.cte_optimizer` does from inside the stats walk.
-    // Go `doOptimize`: `CascadesOptimize` normalizes with
-    // `normalizeOptimize` (which keeps no optimizer clock) where
-    // `VolcanoOptimize` runs `logicalOptimize`.
-    let cascades = ctx.enable_cascades_planner();
-    let mut optimized = if cascades {
-        normalize_optimize(&rule_context, flags, plan)
-            .map_err(|(_, error)| error)?
-            .plan
-    } else {
-        let begin_logical_opt = Instant::now();
-        let logical_result = logical_optimize(&rule_context, flags, plan);
-        // Go `logicalOptimize`'s deferred `DurationOptimizer.LogicalOpt`.
-        ctx.set_logical_opt(begin_logical_opt.elapsed());
-        logical_result.map_err(|(_, error)| error)?.plan
-    };
-    // SyncWaitStatsLoadPoint has initialized ordinary and statically pruned
-    // sources from the loaded snapshot before join reorder.
-    optimized = check_partial_index_paths(optimized, ctx, use_plan_cache);
-    if !ctx.static_partition_prune() {
-        attach_dynamic_partition_access(&mut optimized, &rule_context)?;
-    }
-    if optimized.output_names().is_empty()
-        && optimized
-            .schema()
-            .is_some_and(|schema| schema.columns.len() == built_names.len())
-    {
-        optimized.set_output_names(built_names);
-    }
-    if cascades {
-        // Go `cascades.NewOptimizer` -> `Memo.CopyIn`: each new group
-        // expression derives its group's logical property
-        // (`DeriveLogicalProp`: the operator's `DeriveStats` with nil
-        // reloads, then `PreparePossibleProperties`), bottom-up.
-        optimized.memo_derive_stats_with_context(&rule_context)?;
-        return Ok(prepare_possible_properties_for(ctx, optimized));
-    }
-    // Go `physicalOptimize` starts its clock before `RecursiveDeriveStats`
-    // and records `StatsDerive` after it; the physical search that follows
-    // this function takes the start over.
-    let begin_physical_opt = Instant::now();
-    optimized.recursive_derive_stats_with_context(&[], &rule_context)?;
-    ctx.finish_stats_derive(begin_physical_opt);
-    let logical = prepare_possible_properties_for(ctx, optimized);
-    Ok(logical)
-}
-
-/// Go `preparePossibleProperties` with the session's reads: TiFlash in
-/// `IsolationReadEngines`, and `IsMPPAllowed()`.
-pub fn prepare_possible_properties_for<C: OptimizeContext>(ctx: &C, plan: LogicalPlan) -> LogicalPlan {
-    let tiflash_in_isolation_read = crate::access_path::IsolationRead::new(
-        ctx.isolation_read_engines(),
-        ctx.tiflash_engine_removed_due_to_strict_sql_mode(),
-    )
-    .tiflash;
-    prepare_possible_properties(plan, tiflash_in_isolation_read, ctx.optimizer_cost_env().session.mpp_allowed).0
-}
-
-/// Go `DataSource.CheckPartialIndexes` over every source, which Go's
-/// `DataSource.DeriveStats` runs with the statement's resolver.
-pub fn check_partial_index_paths<C: OptimizeContext>(
-    plan: LogicalPlan,
-    ctx: &C,
-    use_plan_cache: bool,
-) -> LogicalPlan {
-    use tidb_planner_core_operator_logicalop::fold::{fold_owned, Descend, OwnedRewrite};
-
-    struct PartialIndexChecker<'a> {
-        resolver: &'a tidb_expr::column_resolver::ZonedNoResolver,
-        use_plan_cache: bool,
-        opt_prefix_index_single_scan: bool,
-    }
-
-    impl OwnedRewrite for PartialIndexChecker<'_> {
-        type Down = ();
-        type Up = ();
-
-        fn descend(&mut self, node: &mut LogicalPlan, (): ()) -> Descend<(), ()> {
-            if let LogicalPlan::DataSource(source) = node {
-                source.check_partial_indexes(
-                    self.resolver,
-                    self.use_plan_cache,
-                    self.opt_prefix_index_single_scan,
-                );
-            }
-            Descend::Children(vec![(); node.children().len()])
-        }
-
-        fn ascend(&mut self, node: LogicalPlan, _child_ups: Vec<()>) -> (LogicalPlan, ()) {
-            (node, ())
-        }
-    }
-
-    let resolver = tidb_expr::column_resolver::ZonedNoResolver::with_like_default_escape(
-        ctx.session_zone(),
-        tidb_exprctx::Columns::like_default_escape(ctx),
-    );
-    fold_owned(
-        &mut PartialIndexChecker {
-            resolver: &resolver,
-            use_plan_cache,
-            opt_prefix_index_single_scan: ctx.opt_prefix_index_single_scan(),
+/// Go `alternativeRounds`, in the order `optimize` runs them.
+pub const ALTERNATIVE_ROUNDS: [AlternativeRound; 7] = [
+    AlternativeRound {
+        name: "non-decorrelate",
+        adjust_flag: |flag| flag & !tidb_planner_core_rule::flags::DECORRELATE,
+        // Go `shouldTryNonDecorrelationRound`.
+        enabled: |ctx| {
+            let signals = ctx.alternative_logical_plan_signals();
+            signal(&signals.decorrelated_apply) && !signal(&signals.same_order_index_join)
         },
-        plan,
-        (),
-    )
-    .0
+        setup: |ctx| (ctx.clone(), None),
+    },
+    AlternativeRound {
+        name: "order-aware-reorder",
+        adjust_flag: |flag| flag | tidb_planner_core_rule::flags::ORDER_AWARE_JOIN_REORDER,
+        // Go `shouldTryOrderAwareReorderRound`.
+        enabled: |ctx| {
+            signal(
+                &ctx.alternative_logical_plan_signals()
+                    .order_aware_join_reorder,
+            )
+        },
+        setup: |ctx| (ctx.clone(), None),
+    },
+    AlternativeRound {
+        name: "correlate",
+        adjust_flag: |flag| flag | tidb_planner_core_rule::flags::CORRELATE,
+        // Go `shouldTryCorrelateRound`.
+        enabled: |ctx| signal(&ctx.alternative_logical_plan_signals().prefer_correlate),
+        setup: |ctx| (ctx.clone().with_enable_correlate_subquery(true), None),
+    },
+    AlternativeRound {
+        name: "semi-join-rewrite",
+        adjust_flag: |flag| flag,
+        // Go `shouldTrySemiJoinRewriteRound`.
+        enabled: |ctx| {
+            signal(&ctx.alternative_logical_plan_signals().semi_join_rewrite)
+                && !ctx.enable_semi_join_rewrite()
+        },
+        setup: |ctx| (ctx.clone().with_enable_semi_join_rewrite(true), None),
+    },
+    AlternativeRound {
+        name: "fts-like-fallback",
+        adjust_flag: |flag| flag,
+        enabled: |ctx| {
+            let signals = ctx.alternative_logical_plan_signals();
+            signal(&signals.fts_like_fallback) || signal(&signals.has_predicate_context_match)
+        },
+        setup: |ctx| {
+            let fts_like_fallback = &ctx.alternative_logical_plan_signals().fts_like_fallback;
+            let saved = fts_like_fallback.swap(true, Ordering::AcqRel);
+            (
+                ctx.clone(),
+                Some(Box::new(move || {
+                    fts_like_fallback.store(saved, Ordering::Release)
+                })),
+            )
+        },
+    },
+    AlternativeRound {
+        name: "tikv-only",
+        adjust_flag: |flag| flag,
+        // Go `shouldTryTiKVOnlyRound`.
+        enabled: should_try_engine_restricted_rounds,
+        setup: |ctx| {
+            (
+                ctx.clone()
+                    .with_isolation_read_engines("tikv,tidb".to_owned()),
+                None,
+            )
+        },
+    },
+    AlternativeRound {
+        name: "tiflash-only",
+        adjust_flag: |flag| flag,
+        // Go `shouldTryTiFlashOnlyRound`.
+        enabled: |ctx| {
+            should_try_engine_restricted_rounds(ctx)
+                && !signal(&ctx.alternative_logical_plan_signals().missing_tiflash_path)
+                && crate::optimizer::OptimizeContext::optimizer_cost_env(ctx)
+                    .session
+                    .mpp_allowed
+        },
+        setup: |ctx| {
+            (
+                ctx.clone()
+                    .with_isolation_read_engines("tiflash,tidb".to_owned()),
+                None,
+            )
+        },
+    },
+];
+
+/// Go `optimize`'s `bestPlan`, `bestCost` and `bestLogicalPlanCtx`.
+struct BestPlan {
+    logical: LogicalPlan,
+    physical: PhysicalPlan,
+    cost: f64,
+    logical_plan_ctx: tidb_sessionctx::LogicalPlanBuildState,
 }
 
-/// Go's dynamic-prune access object: under dynamic pruning, each
-/// partitioned source names the partitions it reads (for EXPLAIN's access
-/// object), computed by the partition processor's pruning.
-fn attach_dynamic_partition_access(
-    plan: &mut LogicalPlan,
-    rule_context: &RuleContext<'_>,
+/// Go `buildAndOptimizeLogicalPlanRound`: one build of the statement's plan,
+/// kept in `best_plan` when it is the first or the cheapest so far.
+fn keep_cheapest_round(
+    ctx: &StmtContext,
+    rounds: &mut dyn LogicalPlanRounds,
+    best_plan: &mut Option<BestPlan>,
+    opt_flag_adjust: fn(u64) -> u64,
 ) -> Result<(), PlanError> {
-    if let LogicalPlan::DataSource(source) = plan {
-        if !source.partition_definition_ids().is_empty() {
-            let indices = tidb_planner_core_rule::rule_partition_processor::prune::partition_indices(rule_context, source)?;
-            let all_partitions = source.partition_names.is_empty()
-                && indices.len() == source.partition_definition_ids().len();
-            let partitions = if all_partitions {
-                Vec::new()
-            } else {
-                indices
-                    .into_iter()
-                    .filter_map(|index| source.partition_definition_names().get(index).cloned())
-                    .collect()
-            };
-            source.dynamic_partition_access = Some(tidb_planner_core_access::DynamicPartitionAccessObject {
-                database: source.db_name.clone(),
-                table: source
-                    .table_as_name
-                    .clone()
-                    .unwrap_or_else(|| source.table_name()),
-                all_partitions,
-                partitions,
-                error: String::new(),
-            });
-        }
+    let (logical, physical, cost) = rounds.build_and_optimize(ctx, opt_flag_adjust)?;
+    let signals = ctx.alternative_logical_plan_signals();
+    if signals.predicate_match.load(Ordering::Acquire) {
+        signals
+            .has_predicate_context_match
+            .store(true, Ordering::Release);
+    }
+    // A predicate-context MATCH whose native form cannot run: the plan is no
+    // candidate, and every round that follows rewrites it to ILIKE.
+    if signals.non_viable_fts_match.load(Ordering::Acquire) {
+        signals.fts_like_fallback.store(true, Ordering::Release);
         return Ok(());
     }
-    for child in plan.base_mut().children_mut() {
-        attach_dynamic_partition_access(child, rule_context)?;
+    if best_plan.as_ref().is_none_or(|best| cost < best.cost) {
+        *best_plan = Some(BestPlan {
+            logical,
+            physical,
+            cost,
+            logical_plan_ctx: ctx.save_logical_plan_build_ctx(),
+        });
     }
     Ok(())
 }
 
-/// Go `physicalOptimize` and `postOptimize`: the cheapest physical plan for
-/// the optimized logical plan with its cost (`getPlanCost` of the best task's
-/// plan), then the post-optimization rewrites.
-/// `col_ref_from_update_plan` is Go's `StmtCtx.ColRefFromUpdatePlan` for an
-/// UPDATE's read plan (empty otherwise).
+/// Go `optimize`'s logical-plan rounds: the first round, then each enabled
+/// alternative round, the cheapest plan winning. Every alternative round is
+/// off without `tidb_opt_enable_alternative_logical_plans`.
+pub fn optimize(
+    ctx: &StmtContext,
+    rounds: &mut dyn LogicalPlanRounds,
+) -> Result<(LogicalPlan, PhysicalPlan), PlanError> {
+    if !ctx.enable_alternative_logical_plans() {
+        return rounds
+            .build_and_optimize(ctx, |flag| flag)
+            .map(|(logical, physical, _)| (logical, physical));
+    }
+    let initial_logical_plan_ctx = ctx.save_logical_plan_build_ctx();
+    rounds.save_round_start();
+    ctx.reset_alternative_logical_plan_signals();
+    let signals = ctx.alternative_logical_plan_signals();
+    let mut best_plan = None;
+    keep_cheapest_round(ctx, rounds, &mut best_plan, |flag| flag)?;
+    // The engine-restricted rounds arm on the shape of the first round's
+    // chosen plan: only a plan that mixes TiKV and TiFlash reads leaves a
+    // homogeneous alternative uncosted, and a single-scan index join is left
+    // as the first round built it.
+    if let Some(best) = &best_plan {
+        let (has_tikv, has_tiflash) =
+            tidb_planner_core_operator_physicalop::storage_engine_usage::storage_engine_usage(
+                &best.physical,
+            );
+        if has_tikv
+            && has_tiflash
+            && !tidb_planner_core_operator_physicalop::single_scan_index_join::has_single_scan_index_join(
+                &best.physical,
+            )
+        {
+            signals.mixed_storage_engines.store(true, Ordering::Release);
+        }
+    }
+    // Which rounds run is decided by the first round's signals alone: a later
+    // round's build sets signals too.
+    let enabled_rounds: Vec<&AlternativeRound> = ALTERNATIVE_ROUNDS
+        .iter()
+        .filter(|round| (round.enabled)(ctx))
+        .collect();
+    let mut last_alt_round_err = None;
+    for alternative in enabled_rounds {
+        ctx.restore_logical_plan_build_ctx(&initial_logical_plan_ctx);
+        ctx.reset_alternative_logical_plan_marks();
+        rounds.restore_round_start();
+        let (round_ctx, cleanup) = (alternative.setup)(ctx);
+        let result =
+            keep_cheapest_round(&round_ctx, rounds, &mut best_plan, alternative.adjust_flag);
+        if let Some(cleanup) = cleanup {
+            cleanup();
+        }
+        if let Err(error) = result {
+            // The session answers this one by retrieving the rows and
+            // planning the statement again; it is no failure of the round.
+            if matches!(
+                error.kind(),
+                tidb_planner_core_base::PlanErrorKind::MemTableRetrievalNeeded
+            ) {
+                return Err(error);
+            }
+            // An alternative round is optional: the first round's plan
+            // stands. The fts-like-fallback round's error is the statement's
+            // when the first round's plan was discarded as non-executable.
+            tracing::warn!(round = alternative.name, %error, "alternative logical plan round failed");
+            last_alt_round_err = Some(error);
+        }
+    }
+    let Some(best) = best_plan else {
+        return Err(last_alt_round_err
+            .unwrap_or_else(|| PlanError::internal("failed to build logical plan")));
+    };
+    ctx.restore_logical_plan_build_ctx(&best.logical_plan_ctx);
+    Ok((best.logical, best.physical))
+}
+
+use std::cell::RefCell;
+use std::rc::Rc;
+
+use tidb_expr::expression::Expression;
+use tidb_planner_core_base::{ColumnIdAllocator, PlanIdAllocator};
+
+use crate::catalog_ctx::PlannerCatalogContext as _;
+use crate::plan_builder::visit_info::VisitInfo;
+use crate::plan_builder::{EvaluatedSubquery, PlanBuilder, SubqueryKind};
+use crate::stmt_ctx::PlannerStmtCtx as _;
+
+/// What Go's executor gives the planner for one statement's planning.
+pub trait PlanningHooks {
+    /// Go's `EvalSubqueryFirstRow` function variable, which the executor
+    /// sets: run a subquery's physical plan for its first row.
+    fn eval_subquery_first_row(&self) -> EvalSubqueryFirstRow;
+    /// The executor's preparation of a built DML plan before it runs or is
+    /// explained (the virtual tables it reads requested for retrieval).
+    ///
+    /// # Errors
+    ///
+    /// The preparation's failure.
+    fn prepare_plan(
+        &self,
+        plan: &mut PhysicalPlan,
+        ctx: &StmtContext,
+    ) -> Result<(), tidb_driver_error::DriverError>;
+    /// Go `evalFieldDefaultValue`: `DEFAULT(column)` as a constant.
+    ///
+    /// # Errors
+    ///
+    /// The default's failure (1364 for a column with none).
+    fn field_default(
+        &self,
+        ctx: &StmtContext,
+        database: &str,
+        table: &str,
+        column: &str,
+    ) -> Result<Expression, tidb_exprctx::EvalError>;
+    /// Go `getDefaultValueForInsert`: an INSERT's own `DEFAULT`.
+    ///
+    /// # Errors
+    ///
+    /// The default's failure.
+    fn insert_default(
+        &self,
+        ctx: &StmtContext,
+        database: &str,
+        table: &str,
+        column: &str,
+    ) -> Result<Expression, tidb_exprctx::EvalError>;
+}
+
+/// What Go `NewPlanBuilder().Init(sctx, is, ...)` configures a builder from.
+#[derive(Clone, Copy)]
+pub struct BuilderParts<'a> {
+    /// The statement's infoschema.
+    pub catalog: &'a tidb_infoschema::SessionExtendedInfoSchema,
+    /// Go `SessionVars.CurrentDB`.
+    pub current_database: &'a str,
+    /// The statement's context (a round's, under an alternative round).
+    pub ctx: &'a StmtContext,
+    /// Whether the plan may be cached.
+    pub use_plan_cache: bool,
+    /// The statement's plan ids.
+    pub plan_ids: &'a PlanIdAllocator,
+    /// The statement's column ids.
+    pub column_ids: &'a ColumnIdAllocator,
+    /// Go `PlanContext`'s session-side reach for the statement builders.
+    pub session_ctx: Option<&'a dyn crate::plan_builder::stmt_build::SessionPlanContext>,
+    /// The statement's registered scalar subqueries.
+    pub registry: &'a ScalarSubqueryRegistry,
+    /// The executor's half.
+    pub hooks: &'a dyn PlanningHooks,
+    /// Called when an UPDATE/DELETE build allocates its root (see
+    /// [`PlanBuilder::on_delete_root`]).
+    pub on_delete_root: Option<&'a dyn Fn()>,
+}
+
+impl BuilderParts<'_> {
+    /// Go `NewPlanBuilder().Init(sctx, is, ...)` for a query: a builder over
+    /// this catalog with the session's planner variables, handed to `build`.
+    /// `query` is the statement the build is for, when there is one, which
+    /// decides static pruning's global-index exception.
+    ///
+    /// # Errors
+    ///
+    /// `build`'s.
+    pub fn build<R>(
+        &self,
+        query: Option<&tidb_ast::QueryStmt>,
+        building_view: Option<(&str, &str)>,
+        build: impl FnOnce(
+            &mut PlanBuilder<'_, tidb_infoschema::PlannerCatalog, StmtContext>,
+        ) -> Result<R, PlanError>,
+    ) -> Result<R, PlanError> {
+        let (catalog, current_database, ctx) = (self.catalog, self.current_database, self.ctx);
+        let source = catalog
+            .planner_catalog(current_database, ctx.latest_index_schema())
+            .with_statement_hypo_state(ctx)
+            .with_statement_dirty_tables(ctx)
+            .with_statement_privilege_verifier(ctx)
+            .with_statement_related_tables_for_mdl(ctx);
+        let session_zone = ctx.session_zone();
+        let hooks = self.hooks;
+        let evaluator = |inner: &LogicalPlan, kind: SubqueryKind, opt_flag: u64, evaluate: bool| {
+            evaluate_subquery(self, inner, kind, opt_flag, evaluate)
+        };
+        let prune_fallback = |table_id: i64, table_name: &str| {
+            dynamic_prune_fallback(catalog, ctx, table_id, table_name)
+        };
+        let defaults = |database: &str, table: &str, column: &str| {
+            hooks.field_default(ctx, database, table, column)
+        };
+        let insert_defaults = |database: &str, table: &str, column: &str| {
+            hooks.insert_default(ctx, database, table, column)
+        };
+        let mut builder =
+            PlanBuilder::new(&source, ctx, self.plan_ids, self.column_ids, session_zone)
+                .with_subquery_evaluator(&evaluator)
+                .with_default_evaluator(&defaults)
+                .with_insert_default_evaluator(&insert_defaults)
+                .with_mpp_warning_sink(ctx);
+        if let Some(session_ctx) = self.session_ctx {
+            builder = builder.with_session_ctx(session_ctx);
+        }
+        // Go `PlanBuilder.Init(sctx, ...)`: the session variables the build reads.
+        builder.init_session_vars();
+        builder.set_partition_processor_enabled(
+            ctx.static_partition_prune()
+                && !query.is_some_and(|query| {
+                    crate::point_get_plan::static_global_index_point_lookup(query, &source, ctx)
+                }),
+        );
+        builder.set_dynamic_prune_fallback(&prune_fallback);
+        builder.on_delete_root = self.on_delete_root;
+        // Go `PlanBuilder.Build`: `b.optFlag |= FlagPruneColumns` for every
+        // statement, which each evaluated subquery's `DoOptimize` reads.
+        builder.add_opt_flag(tidb_planner_core_rule::flags::PRUNE_COLUMNS);
+        if let Some((database, view)) = building_view {
+            builder.building_view_stack.insert((
+                tidb_mysql::to_lowercase(database),
+                tidb_mysql::to_lowercase(view),
+            ));
+        }
+        build(&mut builder)
+    }
+}
+
+/// Go `buildDataSource`'s dynamic-mode check for a partitioned table
+/// (`logical_plan_builder.go:4997`): a table whose global statistics were
+/// never analyzed (`Table.IsAnalyzed`) turns this statement's pruning static
+/// -- `UseDynamicPruneMode = false` and the 1105 warning -- unless missing
+/// partition statistics may be skipped (`tidb_skip_missing_partition_stats`,
+/// which fix control 44262 overrides).
+pub fn dynamic_prune_fallback(
+    catalog: &tidb_infoschema::SessionExtendedInfoSchema,
+    ctx: &StmtContext,
+    table_id: i64,
+    table_name: &str,
+) -> bool {
+    let global_stats_ready = crate::stats::stats_table::table_statistics(ctx, catalog, table_id)
+        .is_some_and(|statistics| statistics.last_analyze_version > 0);
+    let allow_dynamic_without_stats = ctx.optimizer_fix_control().get_bool_with_default(
+        tidb_fixcontrol::FIX_44262,
+        ctx.skip_missing_partition_stats(),
+    );
+    let mut use_partition_processor = !global_stats_ready && !allow_dynamic_without_stats;
+    tidb_failpoint::inject(
+        "github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune",
+        |val| {
+            if val.bool() {
+                use_partition_processor = false;
+            }
+        },
+    );
+    if !use_partition_processor {
+        return false;
+    }
+    ctx.disable_dynamic_prune();
+    tidb_exprctx::Columns::append_warning(
+        ctx,
+        1105,
+        &format!("disable dynamic pruning due to {table_name} has no global stats"),
+    );
+    true
+}
+
+/// Go `handleScalarSubquery` / `handleExistSubquery` over an uncorrelated
+/// subquery: `DoOptimize` the child, allocate its output column ids,
+/// register it for EXPLAIN, then (`evaluate`) run it through
+/// `EvalSubqueryFirstRow` and report the first row.
+fn evaluate_subquery(
+    parts: &BuilderParts<'_>,
+    inner: &LogicalPlan,
+    kind: SubqueryKind,
+    opt_flag: u64,
+    evaluate: bool,
+) -> Result<EvaluatedSubquery, PlanError> {
+    let (catalog, ctx, plan_ids, column_ids) =
+        (parts.catalog, parts.ctx, parts.plan_ids, parts.column_ids);
+    let run = parts.hooks.eval_subquery_first_row();
+    // Go `DoOptimize(ctx, planCtx.builder.ctx, planCtx.builder.optFlag, np)`.
+    let logical = crate::optimizer::optimize_built_logical(
+        inner.clone(),
+        opt_flag,
+        catalog,
+        ctx,
+        parts.use_plan_cache,
+        plan_ids,
+        column_ids,
+        &ctx.session_zone(),
+    )?;
+    let mut physical =
+        crate::optimizer::physical_plan_for_logical(&logical, plan_ids, column_ids, catalog, ctx)?;
+    // Go allocates `outputColIDs` from `np.Schema()` before it runs the
+    // child, so the ids precede any execution-time allocation.
+    let width = subquery_output_width(
+        logical.schema().map_or(0, |schema| schema.len()),
+        kind,
+        evaluate,
+    );
+    let output_col_ids = (0..width).map(|_| column_ids.alloc()).collect::<Vec<_>>();
+    let plan_id = plan_ids.alloc();
+    let register = |physical: PhysicalPlan| {
+        let registered = std::sync::Arc::new(ScalarSubqueryEvalCtx {
+            output_col_ids: output_col_ids.clone(),
+            physical,
+            plan_id,
+            catalog: catalog.clone(),
+            ctx: ctx.clone(),
+            run,
+            evaluated: std::sync::OnceLock::new(),
+        });
+        parts
+            .registry
+            .borrow_mut()
+            .push(std::sync::Arc::clone(&registered));
+        registered
+    };
+    if !evaluate {
+        // Go's non-eval branch registers the child and stops there.
+        return Ok(EvaluatedSubquery {
+            column_ids: output_col_ids.clone(),
+            row: Vec::new(),
+            has_row: false,
+            eval_ctx: register(physical),
+        });
+    }
+    // Go executor.EvalSubqueryFirstRow prevents evaluated constants from
+    // surviving into a later EXECUTE with a different snapshot.
+    if parts.use_plan_cache {
+        ctx.set_skip_plan_cache("query has uncorrelated sub-queries is un-cacheable");
+    }
+    // Go `EvalSubqueryFirstRow`'s deferred `PreprocessSubQueries++` and
+    // `DurationPreprocessSubQuery += time.Since(begin)`, error or not.
+    let begin_evaluation = std::time::Instant::now();
+    // Go `EvalSubqueryFirstRow`'s region: the subquery's executors run
+    // under it.
+    let region = tidb_tracing::start_thread_region_ex("executor.EvalSubQuery");
+    let evaluated = run(&mut physical, catalog, ctx);
+    region.end();
+    ctx.phase_durations()
+        .add_preprocess_sub_query(begin_evaluation.elapsed());
+    let (row, has_row) = evaluated.map_err(driver_error_to_plan)?;
+    let eval_ctx = register(physical);
+    Ok(EvaluatedSubquery {
+        column_ids: output_col_ids,
+        row,
+        has_row,
+        eval_ctx,
+    })
+}
+
+/// Go's `EvalSubqueryFirstRow` function variable
+/// (`pkg/planner/core/expression_rewriter.go:55`), which the executor sets.
+pub type EvalSubqueryFirstRow =
+    fn(
+        &mut PhysicalPlan,
+        &tidb_infoschema::SessionExtendedInfoSchema,
+        &StmtContext,
+    ) -> Result<(Vec<tidb_datatype::Datum>, bool), tidb_driver_error::DriverError>;
+
+/// One uncorrelated subquery Go registers in the statement context while
+/// `handleScalarSubquery` / `handleExistSubquery` evaluates it.
+///
+/// Go's `ScalarSubqueryEvalCtx` (`pkg/planner/core/scalar_subq_expression.go`)
+/// keeps the OPTIMIZED child plan and the output column ids its placeholder
+/// expressions carry; `FlatPhysicalPlan.flatten` appends the plan as an extra
+/// EXPLAIN root whose `ExplainInfo` names those ids.
+///
+/// The non-eval `ScalarSubQueryExpr` placeholders hold the same object and
+/// evaluate through it (Go `selfEval`), so it keeps the statement's catalog
+/// and context the way Go's keeps `is` and `ctx`.
+pub struct ScalarSubqueryEvalCtx {
+    /// Go `ScalarSubqueryEvalCtx.outputColIDs`.
+    pub output_col_ids: Vec<i64>,
+    /// Go `ScalarSubqueryEvalCtx.scalarSubQuery`, the optimized child.
+    pub physical: PhysicalPlan,
+    /// Go `ScalarSubqueryEvalCtx.ID()`: `Init` allocates it from the plan id
+    /// counter once the child has been optimized, and EXPLAIN prints it.
+    pub plan_id: i32,
+    /// Go `ScalarSubqueryEvalCtx.is`.
+    catalog: tidb_infoschema::SessionExtendedInfoSchema,
+    /// Go `ScalarSubqueryEvalCtx.SCtx()`.
+    ctx: StmtContext,
+    /// Go's `EvalSubqueryFirstRow`, which `selfEval` calls.
+    run: EvalSubqueryFirstRow,
+    /// Go `evaled` / `evalErr` / `colsData`.
+    evaluated: std::sync::OnceLock<Result<Vec<tidb_datatype::Datum>, tidb_exprctx::EvalError>>,
+}
+
+impl std::fmt::Debug for ScalarSubqueryEvalCtx {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ScalarSubqueryEvalCtx")
+            .field("output_col_ids", &self.output_col_ids)
+            .field("plan_id", &self.plan_id)
+            .finish_non_exhaustive()
+    }
+}
+
+impl tidb_expr::expression::ScalarSubqueryEval for ScalarSubqueryEvalCtx {
+    /// Go `ScalarSubqueryEvalCtx.getColVal`, running `selfEval` once.
+    fn get_col_val(&self, col_id: i64) -> Result<tidb_datatype::Datum, tidb_exprctx::EvalError> {
+        let row = self
+            .evaluated
+            .get_or_init(|| {
+                let mut physical = self.physical.clone();
+                (self.run)(&mut physical, &self.catalog, &self.ctx)
+                    .map(|(row, _)| row)
+                    .map_err(driver_error_to_eval)
+            })
+            .as_ref()
+            .map_err(Clone::clone)?;
+        self.output_col_ids
+            .iter()
+            .position(|id| *id == col_id)
+            .and_then(|index| row.get(index).cloned())
+            .ok_or_else(|| {
+                tidb_exprctx::EvalError::Conversion(tidb_terror::TerrorError::compatible(
+                    tidb_terror::TerrorCode::new(1105),
+                    format!(
+                        "Could not found the ScalarSubQueryExpr#{col_id} in the ScalarSubquery_{}",
+                        self.plan_id
+                    ),
+                ))
+            })
+    }
+}
+
+/// The per-statement list of [`ScalarSubqueryEvalCtx`]s, Go's
+/// `SessionVars.MapScalarSubQ` narrowed to one statement.
+pub type ScalarSubqueryRegistry = Rc<RefCell<Vec<std::sync::Arc<ScalarSubqueryEvalCtx>>>>;
+
+/// The subquery hook of a build whose plan is discarded (the privilege
+/// passes): nothing is run, and a placeholder reads NULL.
+#[derive(Debug)]
+pub struct DiscardedSubquery;
+
+impl tidb_expr::expression::ScalarSubqueryEval for DiscardedSubquery {
+    fn get_col_val(&self, _col_id: i64) -> Result<tidb_datatype::Datum, tidb_exprctx::EvalError> {
+        Ok(tidb_datatype::Datum::Null)
+    }
+}
+
+/// Go's output-id count for one subquery: a single id for a non-eval
+/// `EXISTS` (`handleExistSubquery` reads only its first column), one per
+/// output column otherwise.
+#[must_use]
+pub fn subquery_output_width(
+    inner_width: usize,
+    kind: crate::plan_builder::SubqueryKind,
+    evaluate: bool,
+) -> usize {
+    if !evaluate && kind == crate::plan_builder::SubqueryKind::Exists {
+        1
+    } else {
+        inner_width
+    }
+}
+
+/// [`driver_error_to_plan`]'s counterpart for a placeholder evaluated as an
+/// expression: Go's `getColVal` hands `EvalSubqueryFirstRow`'s error back as
+/// it is.
+#[must_use]
+pub fn driver_error_to_eval(error: tidb_driver_error::DriverError) -> tidb_exprctx::EvalError {
+    match error {
+        tidb_driver_error::DriverError::Exec(tidb_driver_error::ExecError::Eval(eval)) => eval,
+        other => {
+            let error = other.to_mysql_error();
+            tidb_exprctx::EvalError::Conversion(tidb_terror::TerrorError::compatible(
+                tidb_terror::TerrorCode::new(error.code as isize),
+                error.message,
+            ))
+        }
+    }
+}
+
+/// Go `buildLogicalPlan` for a query: the logical plan, its optimizer
+/// flags and its visit infos. `building_view` is a view's body built from
+/// `BuildDataSourceFromView` with the view on its building stack.
 ///
 /// # Errors
 ///
-/// No physical plan found, or a resolution error.
-pub fn physical_optimize<C: OptimizeContext>(
-    logical: &LogicalPlan,
-    plan_ids: &PlanIdAllocator,
-    column_ids: &ColumnIdAllocator,
-    ctx: &C,
-    col_ref_from_update_plan: &BTreeSet<i64>,
-    used_stats_recorder: &dyn UsedStatsRecorder,
-) -> Result<(PhysicalPlan, f64), PlanError> {
-    let begin_physical_opt = ctx.take_begin_physical_opt().unwrap_or_else(Instant::now);
-    let optimizer_cost_env = ctx.optimizer_cost_env();
-    let coster = Ver2Coster::from_env(optimizer_cost_env)
-        .with_scan_penalty_vars(ctx.allow_prefer_range_scan(), ctx.get_index_force());
-    let evaluate = tidb_ranger::points::StatementRangerEvaluator(ctx);
-    let get_mpp_store_count = || ctx.get_mpp_store_count();
-    let mut dispatch = DispatchContext::new(
-        plan_ids,
-        &coster,
-        optimizer_cost_env.session.scale_ndv_skew_ratio,
-    )
-    .with_mpp_store_count(&get_mpp_store_count)
-    .with_used_stats_recorder(used_stats_recorder)
-    .with_estimator_options(optimizer_cost_env.session.estimator_options.clone())
-    .with_group_ndv_skew_ratio(optimizer_cost_env.session.group_ndv_skew_ratio)
-    .with_correlation_options(optimizer_cost_env.session.correlation_options)
-    .with_expression_evaluator(&evaluate)
-    .with_mpp_allowed(optimizer_cost_env.session.mpp_allowed)
-    .with_tiflash_switches(
-        optimizer_cost_env.session.tiflash_cop_banned,
-        optimizer_cost_env.session.tiflash_fast_scan,
-        optimizer_cost_env.session.allow_batch_cop,
-        optimizer_cost_env.session.disaggregated_tiflash,
-    )
-    .with_enable_late_materialization(optimizer_cost_env.session.enable_late_materialization)
-    .with_mpp_join_inputs(
-        optimizer_cost_env.session.mpp_join,
-        crate::access_path::IsolationRead::new(
-            ctx.isolation_read_engines(),
-            ctx.tiflash_engine_removed_due_to_strict_sql_mode(),
-        )
-        .tiflash,
-        ctx.tiflash_engine_removed_due_to_strict_sql_mode(),
-        optimizer_cost_env.session.enable_chunk_rpc,
-    )
-    .with_enable_skew_distinct_agg(ctx.enable_skew_distinct_agg())
-    .with_enable_3_stage_distinct_agg(ctx.enable_3_stage_distinct_agg())
-    .with_enable_3_stage_multi_distinct_agg(ctx.enable_3_stage_multi_distinct_agg())
-    .with_tiflash_pre_agg_mode(ctx.tiflash_pre_agg_mode())
-    .with_partial_ordered_index_for_topn(ctx.is_partial_ordered_index_for_top_n_enabled())
-    .with_opt_prefix_index_single_scan(ctx.opt_prefix_index_single_scan())
-    .with_allow_prefer_range_scan(ctx.allow_prefer_range_scan())
-    .with_prefer_index_merge_by_fix_control(
-        ctx.optimizer_fix_control()
-            .get_bool_with_default(tidb_fixcontrol::FIX_52869, false),
-    )
-    .with_explore_enforced_plan(
-        ctx.optimizer_fix_control()
-            .get_bool_with_default(tidb_fixcontrol::FIX_46177, true),
-    )
-    .with_mpp_warning_sink(ctx)
-    .with_for_update_read_session(
-        tidb_exprctx::Columns::txn_is_explicit(ctx),
-        crate::access_path::IsolationRead::new(
-            ctx.isolation_read_engines(),
-            ctx.tiflash_engine_removed_due_to_strict_sql_mode(),
-        ),
-    )
-    .with_plan_cache(
-        tidb_exprctx::Columns::use_plan_cache(ctx),
-        ctx,
-        ctx.optimizer_fix_control()
-            .get_bool_with_default(tidb_fixcontrol::FIX_44830, false),
-    )
-    .with_range_quota(ctx.range_max_size(), ctx.range_fallback_handler())
-    .with_stmt_mem_tracker(ctx.stmt_mem_tracker())
-    .with_selectivity_factor(ctx.selectivity_factor())
-    .with_ordering_index_selectivity_ratio(ctx.opt_ordering_idx_sel_ratio())
-    .with_index_join_max_scan_rows_ratio(ctx.index_join_max_scan_rows_ratio())
-    .with_ordering_index_selectivity_threshold(ctx.opt_ordering_idx_sel_thresh())
-    .with_projection_push_down(ctx.allow_projection_push_down())
-    .with_distinct_agg_push_down(ctx.allow_distinct_agg_push_down())
-    .with_heavy_function_optimize(
-        ctx.optimizer_fix_control()
-            .get_bool_with_default(tidb_fixcontrol::FIX_56318, true),
-    )
-    .with_inl_join_inner_multi_pattern(ctx.enable_inl_join_inner_multi_pattern())
-    .with_limit_push_down_threshold(ctx.limit_push_down_threshold())
-    .with_paging(optimizer_cost_env.session.enable_paging)
-    .with_hash_join_concurrency(optimizer_cost_env.session.hash_join_concurrency.max(1.0) as usize)
-    .with_use_hash_join_v2(optimizer_cost_env.session.use_hash_join_v2)
-    .with_disable_hash_join(!ctx.enable_hash_join())
-    .with_apply_cache_capacity(ctx.apply_cache_capacity())
-    .with_point_get_conversion(
-        !ctx.optimizer_fix_control()
-            .get_bool_with_default(tidb_fixcontrol::FIX_52592, false),
-    )
-    .with_index_join_row_count_upper_bound(
-        ctx.optimizer_fix_control()
-            .get_bool_with_default(tidb_fixcontrol::FIX_44855, false),
-    )
-    .with_column_ids(column_ids);
-    dispatch.expr_pushdown_blacklist = ctx.expr_pushdown_blacklist().clone();
-    dispatch.shuffle_options = optimizer_cost_env.session.shuffle_options;
-    let cascades = ctx.enable_cascades_planner();
-    let task = if cascades {
-        // Go `CascadesOptimize`: `cascades.NewOptimizer(logic)`, `Execute()`,
-        // then `impl.ImplementMemoAndCost(rootGroup)`, which keeps no
-        // optimizer clock.
-        let mut cas = crate::cascades::Optimizer::new(logical, plan_ids)?;
-        cas.execute()?;
-        let root_group = cas
-            .get_memo()
-            .get_root_group()
-            .expect("an initialized memo has a root group");
-        crate::cascades::impl_and_cost::implement_memo_and_cost(cas.get_memo(), root_group, &mut dispatch)?
-    } else {
-        // Go `physicalOptimize` records `DurationOptimizer.PhysicalOpt` on
-        // every return, an error one included.
-        find_best_task(logical, &PhysicalProperty::default(), &mut dispatch)
-            .inspect_err(|_| ctx.set_physical_opt(begin_physical_opt.elapsed()))?
-    };
-    let mut physical = task.plan().cloned().ok_or_else(|| {
-        PlanError::from(
-            tidb_plannererrors::ERR_INTERNAL.gen_with_stack_by_args(&[
-                "Can't find a proper physical plan for this query".into(),
-            ]),
-        )
-    })?;
-    // Go physicalOptimize: "cost, err = getPlanCost(t.Plan(), ...)". Each
-    // operator keeps the cost it was first priced with (`PlanCostInit`), while
-    // `findBestTask` compared tasks or here, and EXPLAIN shows that cost even
-    // where `postOptimize` later puts an operator between a parent and its
-    // child.
-    let cost = coster
-        .plan_cost(&physical, tidb_planner_property::task_type::TaskType::Root, false)
-        .value();
-    // Go physicalOptimize: "collect the warnings from task". Every task
-    // warning is a planner `ErrInternal` (hint warnings), code 1815.
-    for warning in task.warnings().get_warnings() {
-        let note = matches!(warning.level, tidb_context::WarningLevel::Note);
-        ctx.append_task_warning(note, 1815, &warning.message);
+/// The build's failure.
+pub fn build_logical_plan(
+    parts: &BuilderParts<'_>,
+    query: &tidb_ast::QueryStmt,
+    building_view: Option<(&str, &str)>,
+) -> Result<(LogicalPlan, u64, Vec<VisitInfo>), PlanError> {
+    let ctx = parts.ctx;
+    parts.build(Some(query), building_view, |builder| {
+        let node = tidb_resolve::NodeW::new(query.clone());
+        let plan = builder.build_query_node(&node, false)?;
+        ctx.set_block_as_names(builder.statement_block_as_names());
+        Ok((
+            plan,
+            builder.get_opt_flag(),
+            std::mem::take(&mut builder.visit_info),
+        ))
+    })
+}
+
+/// Whose build a query's is.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum QueryBuild {
+    /// Go `planner.optimize` of a statement that is a query, with the
+    /// alternative rounds only a logical plan gets.
+    Statement,
+    /// The read of a DML, which Go builds inside the DML's `PlanBuilder`:
+    /// the DML's plan is no logical plan, so its one round is the only one.
+    DmlRead,
+}
+
+/// What one query build does with its `PlanBuilder`'s visit infos (Go
+/// `builder.GetVisitInfo()`).
+pub enum BuildVisits<'a> {
+    /// The statement's own build: Go `planner.optimize` checks them
+    /// (`CheckPrivilege`, `CheckTableLock`) between `buildLogicalPlan` and
+    /// `DoOptimize`.
+    Check,
+    /// The read of a DML, which Go builds inside the same `PlanBuilder` as
+    /// the write: its visits join the DML's, checked once the DML is built.
+    Collect(&'a mut Vec<VisitInfo>),
+    /// A build that is no statement's: a cached plan's (whose statement
+    /// checks the visit infos PREPARE kept, Go `checkPreparedPriv`) or an
+    /// inspection's.
+    Discard,
+}
+
+/// The part of Go `buildAndOptimizeLogicalPlanRound` every query build runs,
+/// a DML's read included: `buildLogicalPlan`, the statement's privilege
+/// check (once: `checked`), and `core.DoOptimize` with the plan's cost.
+///
+/// # Errors
+///
+/// The build's, the check's or the optimization's failure.
+pub fn build_and_optimize_logical_plan_round(
+    parts: &BuilderParts<'_>,
+    query: &tidb_ast::QueryStmt,
+    visits: &mut BuildVisits<'_>,
+    checked: &mut bool,
+    opt_flag_adjust: fn(u64) -> u64,
+) -> Result<(LogicalPlan, PhysicalPlan, f64), PlanError> {
+    use std::sync::atomic::Ordering;
+    let ctx = parts.ctx;
+    // Go `buildLogicalPlan`: `RewritePhaseInfo.Reset()`, then
+    // `DurationRewrite` is the time `builder.Build` took.
+    ctx.phase_durations().reset_rewrite_phase_info();
+    let begin_rewrite = std::time::Instant::now();
+    let (plan, opt_flag, built_visits) = build_logical_plan(parts, query, None)?;
+    ctx.phase_durations()
+        .set_duration_rewrite(begin_rewrite.elapsed());
+    // Go `buildAndOptimizeLogicalPlanRound`: `CheckPrivilege` and
+    // `CheckTableLock` over `builder.GetVisitInfo()`, once for the statement,
+    // after the build (whose errors, and whose evaluated subqueries', come
+    // first) and before `DoOptimize` (whose errors come after).
+    if !*checked {
+        match visits {
+            BuildVisits::Check => {
+                crate::privilege_check::check_plan_privilege(ctx, parts.catalog, &built_visits)
+                    .map_err(driver_error_to_plan)?
+            }
+            BuildVisits::Collect(collected) => collected.extend(built_visits),
+            BuildVisits::Discard => {}
+        }
+        *checked = true;
     }
-    // Go physicalOptimize binds positions before postOptimize removes aliases.
-    let resolved = physical.resolve_indices();
-    if !cascades {
-        ctx.set_physical_opt(begin_physical_opt.elapsed());
-    }
-    resolved?;
-    let physical = crate::post_optimize::eliminate_physical_projection_for_update(
-        physical,
-        col_ref_from_update_plan,
-    );
-    // Go postOptimize: eliminatePhysicalProjection -> InjectExtraProjection.
-    // The projection re-injection restores the purposeful projections
-    // (scalar aggregate arguments, scalar order-by items, expression
-    // nominal sorts) that the elimination pass removed.
-    let mut physical = crate::inject_extra_projection::inject_extra_projection(ctx, physical, plan_ids, column_ids);
-    // Go postOptimize: mergeContinuousSelections.
-    crate::post_optimize::merge_continuous_selections(&mut physical);
-    // Go postOptimize: eliminateUnionScanAndLock (the UnionScan half).
-    let mut physical =
-        crate::post_optimize::eliminate_union_scan_and_lock(physical, ctx.in_transaction());
-    // Go postOptimize: avoidColumnEvaluatorForProjBelowUnion.
-    crate::post_optimize::avoid_column_evaluator_for_proj_below_union(&mut physical);
-    tidb_planner_core_operator_physicalop::shuffle::install_receivers(&mut physical, plan_ids)?;
-    if ctx.enable_parallel_apply() {
-        crate::post_optimize::enable_parallel_apply(ctx, &mut physical);
-    }
-    // Go postOptimize: handleFineGrainedShuffle.
-    crate::fine_grained_shuffle::handle_fine_grained_shuffle(ctx, &mut physical);
-    // Go postOptimize: countStarRewrite.
-    crate::post_optimize::count_star_rewrite(&mut physical, column_ids);
-    // Go postOptimize: disableReuseChunkIfNeeded.
-    if ctx.is_alloc_valid()
-        && crate::chunk_reuse::should_disable_reuse_chunk(
-            &physical,
-            ctx.max_chunk_size(),
-            tidb_memory::mem_total().ok(),
-        )
+    // Go `buildAndOptimizeLogicalPlanRound`: the optimization clock starts
+    // before the first `DoOptimize` of a logical plan.
+    ctx.phase_durations().begin_optimize();
+    let signals = ctx.alternative_logical_plan_signals();
+    if ctx.enable_alternative_logical_plans()
+        && opt_flag & tidb_planner_core_rule::flags::PUSH_DOWN_TOPN > 0
+        && opt_flag & tidb_planner_core_rule::flags::JOIN_REORDER > 0
     {
-        ctx.set_alloc(false);
+        signals
+            .order_aware_join_reorder
+            .store(true, Ordering::Release);
     }
-    physical
-        .base_mut()
-        .base
-        .set_output_names(logical.output_names().to_vec());
-    Ok((physical, cost))
+    // Go `core.DoOptimize`: `logicalOptimize`, then `physicalOptimize` and
+    // `postOptimize`.
+    let logical = crate::optimizer::optimize_built_logical(
+        plan,
+        opt_flag_adjust(opt_flag),
+        parts.catalog,
+        ctx,
+        parts.use_plan_cache,
+        parts.plan_ids,
+        parts.column_ids,
+        &ctx.session_zone(),
+    )?;
+    let (physical, cost) = crate::optimizer::physical_optimize(
+        &logical,
+        parts.plan_ids,
+        parts.column_ids,
+        ctx,
+        &std::collections::BTreeSet::new(),
+        &crate::optimizer::StatementUsedStats {
+            catalog: parts.catalog,
+            context: ctx,
+        },
+    )?;
+    Ok((logical, physical, cost))
+}
+
+/// One statement's planning rounds over its builder parts (Go
+/// `buildAndOptimizeLogicalPlanRound`, which
+/// [`crate::optimize::optimize`] runs once per round).
+struct QueryRounds<'q, 'v> {
+    parts: &'q BuilderParts<'q>,
+    query: &'q tidb_ast::QueryStmt,
+    visits: BuildVisits<'v>,
+    /// The statement's visit infos are checked once, after its first build.
+    checked: bool,
+    /// The plan id, column id and scalar-subquery count the first round
+    /// started from.
+    round_start: (i32, i64, usize),
+}
+
+impl crate::optimize::LogicalPlanRounds for QueryRounds<'_, '_> {
+    fn build_and_optimize(
+        &mut self,
+        ctx: &StmtContext,
+        opt_flag_adjust: fn(u64) -> u64,
+    ) -> Result<(LogicalPlan, PhysicalPlan, f64), PlanError> {
+        // An alternative round plans under its own context.
+        let parts = BuilderParts { ctx, ..*self.parts };
+        build_and_optimize_logical_plan_round(
+            &parts,
+            self.query,
+            &mut self.visits,
+            &mut self.checked,
+            opt_flag_adjust,
+        )
+    }
+
+    fn save_round_start(&mut self) {
+        self.round_start = (
+            self.parts.plan_ids.current(),
+            self.parts.column_ids.current(),
+            self.parts.registry.borrow().len(),
+        );
+    }
+
+    fn restore_round_start(&mut self) {
+        let (plan_id, column_id, scalar_subqueries) = self.round_start;
+        self.parts.plan_ids.store(plan_id);
+        self.parts.column_ids.store(column_id);
+        self.parts.registry.borrow_mut().truncate(scalar_subqueries);
+    }
+}
+
+/// Go `planner.optimize` over a query: its rounds
+/// ([`crate::optimize::optimize`]), or the one build of a DML's
+/// read.
+///
+/// # Errors
+///
+/// The planning's failure.
+pub fn optimize_query(
+    parts: &BuilderParts<'_>,
+    query: &tidb_ast::QueryStmt,
+    visits: BuildVisits<'_>,
+    build: QueryBuild,
+) -> Result<(LogicalPlan, PhysicalPlan), PlanError> {
+    use crate::optimize::LogicalPlanRounds as _;
+    let mut rounds = QueryRounds {
+        parts,
+        query,
+        visits,
+        checked: false,
+        round_start: (0, 0, 0),
+    };
+    if build == QueryBuild::DmlRead {
+        return rounds
+            .build_and_optimize(parts.ctx, |flag| flag)
+            .map(|(logical, physical, _)| (logical, physical));
+    }
+    crate::optimize::optimize(parts.ctx, &mut rounds)
+}
+
+/// Go `planner.Optimize` for a query statement past binding and the plan
+/// cache: `TryFastPlan` (or the point plan a multi-statement query's
+/// prefetch already tried, `PointPlanKey`), else `optimize`, then
+/// `buildSelectInto`'s FILE privilege.
+///
+/// # Errors
+///
+/// The planning's or a privilege check's failure.
+pub fn optimize_query_stmt(
+    parts: &BuilderParts<'_>,
+    query: &tidb_ast::QueryStmt,
+) -> Result<PhysicalPlan, tidb_driver_error::DriverError> {
+    let (catalog, current_db, ctx) = (parts.catalog, parts.current_database, parts.ctx);
+    if let (tidb_ast::QueryStmt::Select(select), true) = (query, ctx.isolation_read_contains_tikv())
+    {
+        // Go `TryFastPlan`'s `checkFastPlanPrivilege(..., mysql.SelectPriv)`.
+        let fast_plan_privilege = |database: &str, table: &str| {
+            crate::privilege_check::check_fast_plan_privilege(
+                ctx,
+                catalog,
+                database,
+                table,
+                &[tidb_mysql::SelectPriv],
+            )
+        };
+        let fast = match crate::point_get_plan::handed_point_plan(
+            ctx,
+            crate::point_get_plan::PointPlanKind::Select,
+        ) {
+            // Go `Optimize`: the point plan a multi-statement query's
+            // prefetch already tried (`PointPlanKey`), not `TryFastPlan`
+            // again.
+            Some(handed) => handed.plan.clone(),
+            None => crate::point_get_plan::try_fast_plan_checked(
+                select,
+                catalog,
+                current_db,
+                ctx,
+                &fast_plan_privilege,
+            )?,
+        };
+        if let Some(plan) = fast {
+            return Ok(plan);
+        }
+    }
+    // Go `optimize` -> `buildLogicalPlan` -> `PlanBuilder.Build`, past
+    // `TryFastPlan`: the statement's one build, whose visit infos
+    // `CheckPrivilege` reads before the optimizer runs.
+    record_plan_builder_metric(ctx);
+    let (_, physical) = optimize_query(parts, query, BuildVisits::Check, QueryBuild::Statement)
+        .map_err(planner_error_to_driver)?;
+    // Go `buildSelectInto` optimizes the target query (whose own
+    // `CheckPrivilege` ran above) and only then appends FILE, which the
+    // statement's `CheckPrivilege` checks.
+    if matches!(query, tidb_ast::QueryStmt::Select(select) if select.into_outfile.is_some()) {
+        crate::privilege_check::check_plan_privilege_requests(
+            ctx,
+            catalog,
+            &[crate::privilege_check::select_into_file_request()],
+        )?;
+    }
+    Ok(physical)
+}
+
+/// Go `PlanBuilder.Build`'s `planBuilderCnt` (RU v2's plan count).
+pub fn record_plan_builder_metric(ctx: &StmtContext) {
+    if let Some(metrics) = ctx.ruv2_metrics() {
+        metrics.add_plan_cnt(1);
+    }
+}
+
+/// The statement layer's error for a planner failure.
+#[must_use]
+pub fn planner_error_to_driver(error: PlanError) -> tidb_driver_error::DriverError {
+    use tidb_driver_error::{DriverError, ExecError};
+    use tidb_planner_core_base::PlanErrorKind;
+    match error.kind() {
+        PlanErrorKind::Mysql(error) => DriverError::Mysql(error.clone()),
+        PlanErrorKind::Eval(tidb_exprctx::EvalError::InvalidGroupFuncUse) => DriverError::from(
+            tidb_plannererrors::ERR_INVALID_GROUP_FUNC_USE.gen_with_stack_by_args(&[]),
+        ),
+        PlanErrorKind::Eval(tidb_exprctx::EvalError::FieldInGroupingNotGroupBy(index)) => {
+            DriverError::from(
+                tidb_plannererrors::ERR_FIELD_IN_GROUPING_NOT_GROUP_BY
+                    .gen_with_stack_by_args(&[format!("#{}", *index).into()]),
+            )
+        }
+        PlanErrorKind::Eval(eval) => DriverError::Exec(ExecError::Eval(eval.clone())),
+        PlanErrorKind::Internal => DriverError::unsupported(error.to_string()),
+        PlanErrorKind::MemTableRetrievalNeeded => DriverError::MemTableRetrievalNeeded,
+    }
+}
+
+/// The planner's error for a statement-layer failure inside planning (an
+/// evaluated subquery's, a privilege check's).
+#[must_use]
+pub fn driver_error_to_plan(error: tidb_driver_error::DriverError) -> PlanError {
+    use tidb_driver_error::{DriverError, ExecError};
+    match error {
+        // Go's `EvalSubqueryFirstRow` returns the executor's error as it is.
+        DriverError::Mysql(error) => PlanError::from(error),
+        DriverError::MemTableRetrievalNeeded => PlanError::mem_table_retrieval_needed(),
+        DriverError::Exec(ExecError::Eval(eval)) => PlanError::eval(eval),
+        other => PlanError::internal(other.to_string()),
+    }
+}
+
+#[cfg(test)]
+mod subquery_error_identity_tests {
+    use super::driver_error_to_plan;
+
+    /// Go's `EvalSubqueryFirstRow` returns the executor's error as it is, so
+    /// any Go error a planning-time subquery raises -- here a recursive CTE
+    /// that never stops -- reaches the client with its own code, not 1105.
+    #[test]
+    fn a_planning_time_subquery_keeps_the_go_error_it_raised() {
+        let raised =
+            tidb_exeerrors::ERR_CTE_MAX_RECURSION_DEPTH.gen_with_stack_by_args(&[1000_i64.into()]);
+        let planned = driver_error_to_plan(tidb_driver_error::DriverError::from(raised.clone()));
+        assert!(planned.equal(&tidb_exeerrors::ERR_CTE_MAX_RECURSION_DEPTH));
+        let tidb_driver_error::DriverError::Mysql(back) = super::planner_error_to_driver(planned)
+        else {
+            panic!("the Go error was flattened");
+        };
+        assert_eq!(back.code, 3636);
+        assert_eq!(
+            back.message,
+            tidb_terror::MysqlError::from_terror(&raised).message
+        );
+    }
+}
+
+use tidb_ast::Stmt;
+use tidb_bindinfo::binding::{self, BindingMatchContext};
+
+/// What Go `Optimize`'s binding step reads and writes on `sctx` beyond the
+/// match itself.
+pub trait PlannerBindingContext: BindingMatchContext {
+    /// Go `SessionVars.UsePlanBaselines`.
+    fn use_plan_baselines(&self) -> bool;
+    /// Go `matchSQLBindingCore`'s deferred `DurationOptimizer.BindingMatch`.
+    fn set_binding_match_duration(&mut self, elapsed: std::time::Duration);
+    /// Go `StmtCtx.AppendWarning` of a 1105 warning.
+    fn append_binding_warning(&mut self, message: String);
+    /// Go `SessionVars.FoundInBinding = true`.
+    fn set_found_in_binding(&mut self);
+}
+
+/// Go `Optimize`'s binding step: the statement with its matched binding's
+/// hints and the binding's `BindSQL`, `None` when no binding matched (the
+/// caller keeps the original, so a session with no bindings pays one
+/// map-emptiness test and nothing else).
+pub fn bind_sql_binding<C: PlannerBindingContext + ?Sized>(
+    ctx: &mut C,
+    stmt: &Stmt,
+) -> Option<(Stmt, String)> {
+    if !binding::may_have_sql_binding(stmt) {
+        return None;
+    }
+    // Go gates the whole step on `SessionVars.UsePlanBaselines`.
+    if !ctx.use_plan_baselines() {
+        return None;
+    }
+    let begin_binding_match = std::time::Instant::now();
+    let matched = binding::match_sql_binding_core(ctx, stmt);
+    ctx.set_binding_match_duration(begin_binding_match.elapsed());
+    let (hints, bind_sql) = matched?;
+    let mut bound = stmt.clone();
+    binding::bind_hints(&mut bound, &hints);
+    for warning in filter_sem_restricted_hints(&mut bound) {
+        ctx.append_binding_warning(warning);
+    }
+    ctx.set_found_in_binding();
+    // Go `optimize`: `originStmtHints.QueryHasHints` -- the statement wrote
+    // hints of its own, which the binding's replace.
+    if !tidb_hint::extract_table_hints_from_stmt_node(stmt)
+        .0
+        .is_empty()
+    {
+        ctx.append_binding_warning(format!(
+            "The system ignores the hints in the current query and uses the hints \
+             specified in the bindSQL: {bind_sql}"
+        ));
+    }
+    Some((bound, bind_sql))
+}
+
+/// Go `hint.RegisterRestrictedHintChecker(semv2.IsRestrictedHint)`
+/// (`planner/core/core_init.go`): a hint SEM restricts is dropped from
+/// the statement with its warning.
+#[must_use]
+pub fn filter_sem_restricted_hints(stmt: &mut Stmt) -> Vec<String> {
+    struct Filter {
+        warnings: Vec<String>,
+    }
+
+    impl Filter {
+        fn retain(&mut self, hints: &mut Vec<tidb_ast::Hint>) {
+            hints.retain(
+                |hint| match tidb_sem_v2::is_restricted_hint(&hint.lower_name()) {
+                    Ok(()) => true,
+                    Err(warning) => {
+                        self.warnings.push(warning);
+                        false
+                    }
+                },
+            );
+        }
+    }
+
+    impl tidb_ast::Visitor for Filter {
+        fn enter(&mut self, node: &mut dyn std::any::Any) -> bool {
+            if let Some(select) = node.downcast_mut::<tidb_ast::SelectStmt>() {
+                self.retain(&mut select.hints);
+            } else if let Some(insert) = node.downcast_mut::<tidb_ast::InsertStmt>() {
+                self.retain(&mut insert.hints);
+            } else if let Some(update) = node.downcast_mut::<tidb_ast::UpdateStmt>() {
+                self.retain(&mut update.hints);
+            } else if let Some(delete) = node.downcast_mut::<tidb_ast::DeleteStmt>() {
+                self.retain(&mut delete.hints);
+            }
+            false
+        }
+
+        fn leave(&mut self, _node: &mut dyn std::any::Any) -> bool {
+            true
+        }
+    }
+
+    let mut filter = Filter {
+        warnings: Vec::new(),
+    };
+    tidb_ast::Visitable::accept(stmt, &mut filter);
+    filter.warnings
 }

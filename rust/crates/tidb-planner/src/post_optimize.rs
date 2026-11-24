@@ -313,7 +313,7 @@ pub(crate) fn eliminate_projection_preserving_shuffle(
 /// Go postOptimize `enableParallelApply`: an Apply whose inner child clones
 /// runs with the executor concurrency (keeping the outer order when its outer
 /// child requires one), else it warns; inner Apply descendants remain serial.
-pub fn enable_parallel_apply<C: crate::optimize::OptimizeContext>(ctx: &C, plan: &mut PhysicalPlan) {
+pub fn enable_parallel_apply<C: crate::optimizer::OptimizeContext>(ctx: &C, plan: &mut PhysicalPlan) {
     if let PhysicalPlan::Apply(apply) = plan {
         let outer = 1 - apply.hash_join.inner_child_idx;
         let has_order = apply

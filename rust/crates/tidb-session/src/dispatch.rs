@@ -1732,7 +1732,7 @@ impl Session {
         // Go `ResetContextOfStmt`'s new `StmtCtx`: no related tables yet.
         self.stmt_related_table_ids.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clear();
         self.check_sem_stmt(sql, &stmt)?;
-        for warning in tidb_planner::binding_match::filter_sem_restricted_hints(&mut stmt) {
+        for warning in tidb_planner::optimize::filter_sem_restricted_hints(&mut stmt) {
             self.append_warning(WarningLevel::Warning, 1105, warning);
         }
         // Go's `Preprocess` walks the AST once per statement and answers

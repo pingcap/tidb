@@ -106,15 +106,12 @@ pub mod rule;
 pub mod memtable_infoschema_extractor;
 pub mod memtable_predicate_extractor;
 pub mod optimize;
+pub mod optimizer;
 pub mod privilege_check;
 pub mod plan_cache_utils;
 pub mod pb_to_plan;
-pub mod binding_match;
 pub mod catalog_ctx;
 pub mod dml_optimize;
-pub mod do_optimize;
-pub mod planner_optimize;
-pub mod statement_optimize;
 pub mod statement_plan;
 #[cfg(test)]
 mod partidx_tests;

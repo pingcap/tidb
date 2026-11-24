@@ -29,18 +29,18 @@ use tidb_planner_core_operator_physicalop::PhysicalPlan;
 use tidb_sessionctx::StmtContext;
 
 use crate::catalog_ctx::PlannerCatalogContext as _;
-use crate::do_optimize::{optimize_built_logical, physical_plan_for_logical};
-use crate::plan_builder::PlanBuilder;
-use crate::statement_optimize::{
-    BuildVisits, BuilderParts, DiscardedSubquery, QueryBuild, RegisteredScalarSubquery,
+use crate::optimize::{
+    BuildVisits, BuilderParts, DiscardedSubquery, QueryBuild, ScalarSubqueryEvalCtx,
     ScalarSubqueryRegistry, driver_error_to_plan, subquery_output_width,
 };
+use crate::optimizer::{optimize_built_logical, physical_plan_for_logical};
+use crate::plan_builder::PlanBuilder;
 use crate::stmt_ctx::PlannerStmtCtx as _;
 use tidb_infoschema::table_source::TableSource as _;
 use tidb_planner_core_rule::flags;
 
-pub fn planner_physical_select(
-    hooks: &dyn crate::statement_optimize::PlanningHooks,
+fn planner_physical_select(
+    hooks: &dyn crate::optimize::PlanningHooks,
     select: &tidb_ast::SelectStmt,
     catalog: &SessionExtendedInfoSchema,
     current_database: &str,
@@ -63,8 +63,13 @@ pub fn planner_physical_select(
     )
 }
 
+/// Go `planner.optimize` over a query with fresh allocators.
+///
+/// # Errors
+///
+/// The planning's failure.
 pub fn planner_physical_query(
-    hooks: &dyn crate::statement_optimize::PlanningHooks,
+    hooks: &dyn crate::optimize::PlanningHooks,
     query: &tidb_ast::QueryStmt,
     catalog: &SessionExtendedInfoSchema,
     current_database: &str,
@@ -88,8 +93,8 @@ pub fn planner_physical_query(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub fn planner_physical_query_with_allocators(
-    hooks: &dyn crate::statement_optimize::PlanningHooks,
+fn planner_physical_query_with_allocators(
+    hooks: &dyn crate::optimize::PlanningHooks,
     query: &tidb_ast::QueryStmt,
     catalog: &SessionExtendedInfoSchema,
     current_database: &str,
@@ -120,7 +125,7 @@ pub fn planner_physical_query_with_allocators(
 /// registered roots.
 #[allow(clippy::too_many_arguments)]
 pub fn planner_physical_query_with_registry(
-    hooks: &dyn crate::statement_optimize::PlanningHooks,
+    hooks: &dyn crate::optimize::PlanningHooks,
     query: &tidb_ast::QueryStmt,
     catalog: &SessionExtendedInfoSchema,
     current_database: &str,
@@ -134,7 +139,7 @@ pub fn planner_physical_query_with_registry(
     (
         LogicalPlan,
         PhysicalPlan,
-        Vec<std::sync::Arc<RegisteredScalarSubquery>>,
+        Vec<std::sync::Arc<ScalarSubqueryEvalCtx>>,
     ),
     tidb_planner_core_base::PlanError,
 > {
@@ -163,7 +168,7 @@ pub fn planner_physical_query_with_registry(
 /// `executorBuilder.build`; keeping the full tree here prevents ordinary
 /// execution from rediscovering its operators from the SQL AST.
 pub fn physical_select_plan(
-    hooks: &dyn crate::statement_optimize::PlanningHooks,
+    hooks: &dyn crate::optimize::PlanningHooks,
     select: &tidb_ast::SelectStmt,
     catalog: &SessionExtendedInfoSchema,
     current_database: &str,
@@ -177,7 +182,7 @@ pub fn physical_select_plan(
 /// allocators, as Go's session-wide `PlanID` / `PlanColumnID` counters do
 /// for several selects optimized under one statement.
 pub fn physical_select_plan_with_allocators(
-    hooks: &dyn crate::statement_optimize::PlanningHooks,
+    hooks: &dyn crate::optimize::PlanningHooks,
     select: &tidb_ast::SelectStmt,
     catalog: &SessionExtendedInfoSchema,
     current_database: &str,
@@ -206,7 +211,7 @@ pub fn physical_select_plan_with_allocators(
 /// Set operations, their CTEs, and plain SELECTs therefore all enter the same
 /// logical optimizer, physical search, and executor-builder switch.
 pub fn physical_query_plan(
-    hooks: &dyn crate::statement_optimize::PlanningHooks,
+    hooks: &dyn crate::optimize::PlanningHooks,
     query: &tidb_ast::QueryStmt,
     catalog: &SessionExtendedInfoSchema,
     current_database: &str,
@@ -220,14 +225,14 @@ pub fn physical_query_plan(
 /// subqueries the build evaluated. Go keeps them in `StmtCtx` and EXPLAIN
 /// appends each one's optimized child as an extra root.
 pub fn physical_query_plan_with_scalar_subqueries(
-    hooks: &dyn crate::statement_optimize::PlanningHooks,
+    hooks: &dyn crate::optimize::PlanningHooks,
     query: &tidb_ast::QueryStmt,
     catalog: &SessionExtendedInfoSchema,
     current_database: &str,
     ctx: &StmtContext,
     visits: BuildVisits<'_>,
 ) -> Result<
-    (PhysicalPlan, Vec<std::sync::Arc<RegisteredScalarSubquery>>),
+    (PhysicalPlan, Vec<std::sync::Arc<ScalarSubqueryEvalCtx>>),
     tidb_planner_core_base::PlanError,
 > {
     let plan_ids = PlanIdAllocator::new();
@@ -248,16 +253,16 @@ pub fn physical_query_plan_with_scalar_subqueries(
 }
 
 /// Go `planner.Optimize` for a query statement
-/// ([`crate::statement_optimize::optimize_query_stmt`]), handing back
+/// ([`crate::optimize::optimize_query_stmt`]), handing back
 /// the uncorrelated subqueries the build evaluated: plain EXPLAIN appends
 /// each registered child as its own `ScalarSubQuery` root.
 pub fn optimize_query_stmt(
-    hooks: &dyn crate::statement_optimize::PlanningHooks,
+    hooks: &dyn crate::optimize::PlanningHooks,
     query: &tidb_ast::QueryStmt,
     catalog: &SessionExtendedInfoSchema,
     current_database: &str,
     ctx: &StmtContext,
-) -> Result<(PhysicalPlan, Vec<std::sync::Arc<RegisteredScalarSubquery>>), DriverError> {
+) -> Result<(PhysicalPlan, Vec<std::sync::Arc<ScalarSubqueryEvalCtx>>), DriverError> {
     let (plan_ids, column_ids) = (PlanIdAllocator::new(), ColumnIdAllocator::new());
     let registry = ScalarSubqueryRegistry::default();
     let parts = BuilderParts {
@@ -272,7 +277,7 @@ pub fn optimize_query_stmt(
         registry: &registry,
         session_ctx: None,
     };
-    let physical = crate::statement_optimize::optimize_query_stmt(&parts, query)?;
+    let physical = crate::optimize::optimize_query_stmt(&parts, query)?;
     let registered = Rc::try_unwrap(registry)
         .map(RefCell::into_inner)
         .unwrap_or_default();
@@ -280,11 +285,11 @@ pub fn optimize_query_stmt(
 }
 
 /// Go `planner.optimize` over a query
-/// ([`crate::statement_optimize::optimize_query`]) with this
+/// ([`crate::optimize::optimize_query`]) with this
 /// statement's hooks.
 #[allow(clippy::too_many_arguments)]
 pub fn planner_optimized_query_with_allocators(
-    hooks: &dyn crate::statement_optimize::PlanningHooks,
+    hooks: &dyn crate::optimize::PlanningHooks,
     query: &tidb_ast::QueryStmt,
     catalog: &SessionExtendedInfoSchema,
     current_database: &str,
@@ -308,14 +313,14 @@ pub fn planner_optimized_query_with_allocators(
         registry,
         session_ctx: None,
     };
-    crate::statement_optimize::optimize_query(&parts, query, visits, build)
+    crate::optimize::optimize_query(&parts, query, visits, build)
 }
 
 /// Go `planner.Optimize` for a `ShowStmt`: `PlanBuilder.Build`'s
 /// `buildShow` over the preprocessed statement, then the logical and
 /// physical optimization every plan goes through.
 pub fn physical_show_plan(
-    hooks: &dyn crate::statement_optimize::PlanningHooks,
+    hooks: &dyn crate::optimize::PlanningHooks,
     show: &tidb_ast::ShowStmt,
     catalog: &SessionExtendedInfoSchema,
     current_database: &str,
@@ -365,7 +370,7 @@ pub fn physical_show_plan(
 
 /// Go `buildSet` for a `SET` statement: the plan and its visit infos.
 pub fn set_plan(
-    hooks: &dyn crate::statement_optimize::PlanningHooks,
+    hooks: &dyn crate::optimize::PlanningHooks,
     set: &tidb_ast::SetStmt,
     catalog: &SessionExtendedInfoSchema,
     current_database: &str,
@@ -403,7 +408,7 @@ pub fn set_plan(
 /// Go `PlanBuilder.Build` for a statement that is not a query or DML: the
 /// common plan and its visit infos.
 pub fn statement_plan(
-    hooks: &dyn crate::statement_optimize::PlanningHooks,
+    hooks: &dyn crate::optimize::PlanningHooks,
     stmt: &tidb_ast::Stmt,
     catalog: &SessionExtendedInfoSchema,
     current_database: &str,
@@ -462,7 +467,7 @@ pub fn statement_plan(
 /// (`buildImportQueryExecutor`): the query built as `buildImportInto` builds
 /// its source, then optimized into a physical plan.
 pub fn import_query_plan(
-    hooks: &dyn crate::statement_optimize::PlanningHooks,
+    hooks: &dyn crate::optimize::PlanningHooks,
     query: &tidb_ast::QueryStmt,
     catalog: &SessionExtendedInfoSchema,
     current_database: &str,
@@ -505,7 +510,7 @@ pub fn import_query_plan(
 /// Go `planner.Optimize` for `ADMIN SHOW DDL JOBS [n] [WHERE ...]`:
 /// `buildAdmin`'s `LogicalShowDDLJobs` under its selection, optimized.
 pub fn physical_admin_show_ddl_jobs_plan(
-    hooks: &dyn crate::statement_optimize::PlanningHooks,
+    hooks: &dyn crate::optimize::PlanningHooks,
     job_number: i64,
     where_clause: Option<&tidb_ast::Expr>,
     catalog: &SessionExtendedInfoSchema,
@@ -549,7 +554,7 @@ pub fn physical_admin_show_ddl_jobs_plan(
 /// `ddl.BuildViewInfo` restores and `create.columns` the view's column names.
 /// Returns the types of the body's output columns.
 pub fn build_create_view(
-    hooks: &dyn crate::statement_optimize::PlanningHooks,
+    hooks: &dyn crate::optimize::PlanningHooks,
     create: &mut tidb_ast::CreateViewStmt,
     view_schema: &str,
     catalog: &SessionExtendedInfoSchema,
@@ -584,8 +589,8 @@ pub fn build_create_view(
 /// mapping. Each of `columns` takes the static type of the output column of
 /// its name (`expression.FindFieldNameIdxByColName`), `None` when there is
 /// none.
-pub fn view_column_types(
-    hooks: &dyn crate::statement_optimize::PlanningHooks,
+pub fn try_fill_view_column_type(
+    hooks: &dyn crate::optimize::PlanningHooks,
     database: &str,
     view_name: &str,
     columns: &[String],
@@ -656,7 +661,7 @@ pub fn logical_column_types(plan: &LogicalPlan) -> Vec<tidb_datatype::FieldType>
 ///
 /// The query is only planned logically; nothing runs.
 pub fn query_visit_info(
-    hooks: &dyn crate::statement_optimize::PlanningHooks,
+    hooks: &dyn crate::optimize::PlanningHooks,
     query: &tidb_ast::QueryStmt,
     catalog: &SessionExtendedInfoSchema,
     current_database: &str,
@@ -671,8 +676,8 @@ pub fn query_visit_info(
     planned
 }
 
-pub fn query_visit_info_inner(
-    hooks: &dyn crate::statement_optimize::PlanningHooks,
+fn query_visit_info_inner(
+    hooks: &dyn crate::optimize::PlanningHooks,
     query: &tidb_ast::QueryStmt,
     catalog: &SessionExtendedInfoSchema,
     current_database: &str,
@@ -727,14 +732,14 @@ pub fn query_visit_info_inner(
     let node = tidb_resolve::NodeW::new(query.clone());
     builder
         .build_query_node(&node, false)
-        .map_err(crate::statement_optimize::planner_error_to_driver)?;
+        .map_err(crate::optimize::planner_error_to_driver)?;
     Ok(std::mem::take(&mut builder.visit_info))
 }
 
 /// Go `PlanBuilder.buildInsert`, using one configured builder and one scalar
 /// subquery registry for the target, SELECT, VALUES and ON DUPLICATE.
 pub fn insert_plan(
-    hooks: &dyn crate::statement_optimize::PlanningHooks,
+    hooks: &dyn crate::optimize::PlanningHooks,
     insert: &tidb_ast::InsertStmt,
     catalog: &SessionExtendedInfoSchema,
     current_database: &str,
@@ -744,7 +749,7 @@ pub fn insert_plan(
     (
         PhysicalPlan,
         Vec<crate::plan_builder::visit_info::VisitInfo>,
-        Vec<std::sync::Arc<RegisteredScalarSubquery>>,
+        Vec<std::sync::Arc<ScalarSubqueryEvalCtx>>,
     ),
     tidb_planner_core_base::PlanError,
 > {
@@ -763,9 +768,9 @@ pub fn insert_plan(
         registry: &registry,
         session_ctx: None,
     };
-    crate::statement_optimize::record_plan_builder_metric(ctx);
+    crate::optimize::record_plan_builder_metric(ctx);
     if insert.source.is_some() {
-        crate::statement_optimize::record_plan_builder_metric(ctx);
+        crate::optimize::record_plan_builder_metric(ctx);
     }
     if insert.source.is_some() {
         ctx.phase_durations().reset_rewrite_phase_info();
@@ -821,7 +826,7 @@ pub fn insert_plan(
 /// Go `buildInsert`'s expression phase over a SELECT supplied by the prepared
 /// plan cache. A cache hit does not build or optimize the source again.
 pub fn cached_insert_expressions(
-    hooks: &dyn crate::statement_optimize::PlanningHooks,
+    hooks: &dyn crate::optimize::PlanningHooks,
     insert: &tidb_ast::InsertStmt,
     physical: &PhysicalPlan,
     catalog: &SessionExtendedInfoSchema,
@@ -880,7 +885,7 @@ pub fn insert_target(
 ///
 /// The planning's failure, or a plan that evaluated a subquery.
 pub fn query_plan_cost(
-    hooks: &dyn crate::statement_optimize::PlanningHooks,
+    hooks: &dyn crate::optimize::PlanningHooks,
     query: &tidb_ast::QueryStmt,
     catalog: &SessionExtendedInfoSchema,
     current_db: &str,
