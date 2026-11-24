@@ -344,5 +344,6 @@ func getPseudoRowCountWithPartialStats(sctx planctx.PlanContext, coll *statistic
 		maxCount += corrSelectivity * tableRowCount
 	}
 	totalCount = mathutil.Clamp(totalCount, 1, tableRowCount)
-	return totalCount, maxCount, nil
+	// Disjoint ranges can share a histogram bucket's skew allowance.
+	return totalCount, min(maxCount, tableRowCount), nil
 }

@@ -881,7 +881,7 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, prop *
 	lhsPseudo, rhsPseudo, tablePseudo := false, false, false
 	if statsTbl != nil {
 		tablePseudo = statsTbl.HistColl.Pseudo
-		lhsPseudo, rhsPseudo = isCandidatesPseudo(sctx, lhs, rhs, statsTbl)
+		lhsPseudo, rhsPseudo = isCandidatesPseudo(lhs, rhs, statsTbl)
 	}
 	// matchResult: comparison result of whether LHS vs RHS matches the required properties (1=LHS better, -1=RHS better, 0=equal)
 	// globalResult: comparison result of global index vs local index preference (1=LHS better, -1=RHS better, 0=equal)
@@ -983,14 +983,14 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, prop *
 	return 0, false // No winner (0). Do not return the pseudo result
 }
 
-func isCandidatesPseudo(sctx base.PlanContext, lhs, rhs *candidatePath, statsTbl *statistics.Table) (lhsPseudo, rhsPseudo bool) {
+func isCandidatesPseudo(lhs, rhs *candidatePath, statsTbl *statistics.Table) (lhsPseudo, rhsPseudo bool) {
 	lhsPseudo, rhsPseudo = statsTbl.HistColl.Pseudo, statsTbl.HistColl.Pseudo
 	if len(lhs.path.PartialIndexPaths) == 0 && len(rhs.path.PartialIndexPaths) == 0 {
 		if !lhs.path.IsTablePath() && lhs.path.Index != nil {
-			lhsPseudo = !hasStatsForEstimation(sctx, lhs, statsTbl)
+			lhsPseudo = !hasStatsForEstimation(lhs, statsTbl)
 		}
 		if !rhs.path.IsTablePath() && rhs.path.Index != nil {
-			rhsPseudo = !hasStatsForEstimation(sctx, rhs, statsTbl)
+			rhsPseudo = !hasStatsForEstimation(rhs, statsTbl)
 		}
 	}
 	return lhsPseudo, rhsPseudo
@@ -1000,11 +1000,11 @@ func isCandidatesPseudo(sctx base.PlanContext, lhs, rhs *candidatePath, statsTbl
 // referenced by its access conditions has statistics. In the latter case, the row count of the index
 // is estimated from the column statistics (using exponential backoff for multiple columns), so the
 // candidate can be compared on its estimates rather than on the missing-statistics heuristics.
-func hasStatsForEstimation(sctx base.PlanContext, c *candidatePath, statsTbl *statistics.Table) bool {
+func hasStatsForEstimation(c *candidatePath, statsTbl *statistics.Table) bool {
 	if statsTbl.ColAndIdxExistenceMap.HasAnalyzed(c.path.Index.ID, true) {
 		return true
 	}
-	if len(c.accessCondsColMap) == 0 || sctx.GetSessionVars().InRestrictedSQL {
+	if len(c.accessCondsColMap) == 0 {
 		return false
 	}
 	found := 0
@@ -1012,8 +1012,7 @@ func hasStatsForEstimation(sctx base.PlanContext, c *candidatePath, statsTbl *st
 		if _, ok := c.accessCondsColMap[col.UniqueID]; !ok {
 			continue
 		}
-		// Estimation already handles requesting a stats load. Only check availability here.
-		if statistics.ColumnStatsIsInvalid(statsTbl.GetCol(col.ID), nil, &statsTbl.HistColl, col.ID) {
+		if !statsTbl.ColAndIdxExistenceMap.HasAnalyzed(col.ID, false) {
 			return false
 		}
 		found++
