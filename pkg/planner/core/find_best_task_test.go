@@ -193,4 +193,27 @@ func TestMissingStatsIndexVsFullScan(t *testing.T) {
 		result, _ = compareCandidates(ctx.GetPlanCtx(), stats, prop, tbl, idx)
 		require.Equal(t, -1, result, "reversed: preferRange=%v", preferRange)
 	}
+
+	// An unanalyzed index can use loaded column statistics even when expression IDs
+	// differ from the column IDs in the table statistics.
+	stats.HistColl = *statistics.NewHistColl(1, 1000, 0, 2, 0)
+	idx.path.IdxCols = []*expression.Column{{ID: 10, UniqueID: 1}, {ID: 20, UniqueID: 2}}
+	for _, col := range idx.path.IdxCols {
+		stats.ColAndIdxExistenceMap.InsertCol(col.ID, true)
+		stats.SetCol(col.ID, &statistics.Column{
+			Histogram:         statistics.Histogram{NDV: 1},
+			TopN:              &statistics.TopN{TopN: []statistics.TopNMeta{{Count: 1000}}},
+			StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
+			StatsVer:          statistics.Version2,
+		})
+	}
+	result, missingStats := compareCandidates(ctx.GetPlanCtx(), stats, prop, idx, tbl)
+	require.Zero(t, result)
+	require.False(t, missingStats)
+
+	// The analysis flag survives eviction, but estimation falls back to pseudo.
+	stats.GetCol(20).DropUnnecessaryData()
+	result, missingStats = compareCandidates(ctx.GetPlanCtx(), stats, prop, idx, tbl)
+	require.Equal(t, 1, result)
+	require.True(t, missingStats)
 }
