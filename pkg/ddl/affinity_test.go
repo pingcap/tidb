@@ -68,6 +68,7 @@ type truncateAffinityPDClient struct {
 	createCalls       atomic.Int64
 	createFailures    atomic.Int64
 	nilDeleteContext  atomic.Bool
+	deleteHasDeadline atomic.Bool
 	afterCreate       func(context.Context) error
 	// labelRules maps a group ID to its key ranges. PD stores them in a label
 	// rule that is created and force-deleted together with the group.
@@ -172,6 +173,8 @@ func (c *truncateAffinityPDClient) BatchDeleteAffinityGroups(ctx context.Context
 		c.nilDeleteContext.Store(ctx == nil)
 		return err
 	}
+	_, hasDeadline := ctx.Deadline()
+	c.deleteHasDeadline.Store(hasDeadline)
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -1518,6 +1521,9 @@ func checkAffinityGroupsInPD(t *testing.T, do *domain.Domain, dbName, tbName str
 
 func TestAffinityPDInteraction(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
+	cli := &truncateAffinityPDClient{manager: affinity.NewMockManager()}
+	affinity.InitManager(cli)
+	t.Cleanup(func() { affinity.InitManager(nil) })
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	dropTable := func() {
@@ -1536,6 +1542,9 @@ func TestAffinityPDInteraction(t *testing.T) {
 
 	// Test 3: Alter table to remove affinity
 	tk.MustExec("alter table t1 affinity = ''")
+	if !cli.deleteHasDeadline.Load() {
+		t.Error("post-commit ALTER cleanup must have a deadline")
+	}
 	checkAffinityGroupsInPD(t, dom, "test", "t1", false)
 
 	// Test 4: Alter table to add affinity back
@@ -1563,7 +1572,11 @@ func TestAffinityPDInteraction(t *testing.T) {
 	require.NoError(t, err)
 	oldTableID := t2Info.Meta().ID
 
+	cli.deleteHasDeadline.Store(false)
 	tk.MustExec("truncate table t2")
+	if !cli.deleteHasDeadline.Load() {
+		t.Error("post-commit TRUNCATE cleanup must have a deadline")
+	}
 	checkAffinityGroupsInPD(t, dom, "test", "t2", true)
 	// Old table ID's affinity group should be deleted
 	groups, err = affinity.GetGroups(ctx, []string{ddl.GetTableAffinityGroupID(dom.Store().GetCodec(), oldTableID)})

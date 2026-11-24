@@ -21,7 +21,6 @@ import (
 	"fmt"
 	"math/rand"
 	"os"
-	"slices"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -906,7 +905,7 @@ func (w *worker) transitOneJobStep(
 	}
 	var rawArgsBeforeUpdate []byte
 	if job.Type == model.ActionTruncateTable || job.Type == model.ActionTruncateTablePartition {
-		rawArgsBeforeUpdate = slices.Clone(job.RawArgs)
+		rawArgsBeforeUpdate = job.RawArgs
 	}
 	err = w.updateDDLJob(jobCtx, job, updateRawArgs)
 	failpoint.InjectCall("afterUpdateJobToTable", job, &err)

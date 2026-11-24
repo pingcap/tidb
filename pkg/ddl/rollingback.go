@@ -368,7 +368,7 @@ func convertTruncateTablePartitionJob2RollbackJob(jobCtx *jobContext, job *model
 		// PD may have created groups before the replacement IDs reached table metadata.
 		args, deleteErr := model.GetTruncateTableArgs(job)
 		if deleteErr == nil && len(args.NewPartitionIDs) != 0 {
-			deleteErr = deleteTableAffinityGroupsOnRollback(jobCtx, tblInfo, partitionDefinitionsFromIDs(args.NewPartitionIDs))
+			deleteErr = deleteTableAffinityGroupsWithTimeout(jobCtx, tblInfo, partitionDefinitionsFromIDs(args.NewPartitionIDs))
 		}
 		if deleteErr != nil {
 			logutil.DDLLogger().Warn("failed to delete replacement partition affinity groups during rollback", zap.Error(deleteErr), zap.Int64("tableID", tblInfo.ID))
@@ -722,7 +722,7 @@ func deleteAlterTableAffinityNewGroups(jobCtx *jobContext, job *model.Job) error
 		return nil
 	}
 	newTblInfo := &model.TableInfo{ID: tblInfo.ID, Name: tblInfo.Name, Affinity: args.Affinity, Partition: tblInfo.Partition}
-	return deleteTableAffinityGroupsOnRollback(jobCtx, newTblInfo, nil)
+	return deleteTableAffinityGroupsWithTimeout(jobCtx, newTblInfo, nil)
 }
 
 // deleteTruncateTableReplacementAffinityGroups deletes the groups of the
@@ -739,7 +739,7 @@ func deleteTruncateTableReplacementAffinityGroups(jobCtx *jobContext, job *model
 		return errors.Trace(err)
 	}
 	replacement := &model.TableInfo{ID: args.NewTableID, Name: tblInfo.Name, Affinity: tblInfo.Affinity}
-	return deleteTableAffinityGroupsOnRollback(jobCtx, replacement, partitionDefinitionsFromIDs(args.NewPartitionIDs))
+	return deleteTableAffinityGroupsWithTimeout(jobCtx, replacement, partitionDefinitionsFromIDs(args.NewPartitionIDs))
 }
 
 func deleteTruncatePartitionReplacementAffinityGroups(jobCtx *jobContext, job *model.Job) error {
@@ -766,7 +766,7 @@ func deleteTruncatePartitionReplacementAffinityGroups(jobCtx *jobContext, job *m
 	if len(unused) == 0 {
 		return nil
 	}
-	return deleteTableAffinityGroupsOnRollback(jobCtx, tblInfo, unused)
+	return deleteTableAffinityGroupsWithTimeout(jobCtx, tblInfo, unused)
 }
 
 func convertJob2RollbackJob(w *worker, jobCtx *jobContext, job *model.Job) (ver int64, err error) {

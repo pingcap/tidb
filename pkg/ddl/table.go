@@ -973,7 +973,7 @@ func cleanupTruncateTableAffinityGroupsAfterCommit(jobCtx *jobContext, job *mode
 	// TRUNCATE TABLE keeps the affinity level, and job.TableID is the old table ID.
 	oldTblInfo := &model.TableInfo{ID: job.TableID, Name: newTblInfo.Name, Affinity: newTblInfo.Affinity}
 	oldDefs := partitionDefinitionsFromIDs(args.OldPartitionIDs)
-	if err := deleteTableAffinityGroupsInPD(jobCtx, oldTblInfo, oldDefs); err != nil {
+	if err := deleteTableAffinityGroupsWithTimeout(jobCtx, oldTblInfo, oldDefs); err != nil {
 		logutil.DDLLogger().Warn("failed to delete old affinity groups from PD", zap.Error(err), zap.Int64("tableID", oldTblInfo.ID))
 	}
 }
@@ -2277,7 +2277,7 @@ func onAlterTableAffinity(jobCtx *jobContext, job *model.Job) (ver int64, err er
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-	oldTblInfo := tblInfo.Clone()
+	oldAffinity := tblInfo.Affinity
 
 	if err = validateTableAffinity(tblInfo, args.Affinity); err != nil {
 		job.State = model.JobStateCancelled
@@ -2304,7 +2304,7 @@ func onAlterTableAffinity(jobCtx *jobContext, job *model.Job) (ver int64, err er
 	// The groups of the old level stay until the job commits, because a later
 	// failure in this step can still cancel the job and keep the old affinity.
 	// cleanupAlterTableAffinityGroupsAfterCommit deletes them afterwards.
-	args.OldAffinity = oldTblInfo.Affinity
+	args.OldAffinity = oldAffinity
 	job.FillArgs(args)
 	return ver, nil
 }
@@ -2327,7 +2327,7 @@ func cleanupAlterTableAffinityGroupsAfterCommit(jobCtx *jobContext, job *model.J
 	}
 	// ALTER TABLE ... AFFINITY keeps the table ID and partitions.
 	oldTblInfo := &model.TableInfo{ID: newTblInfo.ID, Name: newTblInfo.Name, Affinity: oldAffinity, Partition: newTblInfo.Partition}
-	if err := deleteTableAffinityGroupsInPD(jobCtx, oldTblInfo, nil); err != nil {
+	if err := deleteTableAffinityGroupsWithTimeout(jobCtx, oldTblInfo, nil); err != nil {
 		logutil.DDLLogger().Warn("failed to delete old affinity groups from PD", zap.Error(err), zap.Int64("tableID", oldTblInfo.ID))
 	}
 }
