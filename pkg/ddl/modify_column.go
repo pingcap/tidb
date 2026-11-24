@@ -83,14 +83,6 @@ func clearModifyColumnTempFlags(col *model.ColumnInfo) {
 	col.ChangingFieldType = nil
 }
 
-func isIntegerChange(from, to *model.ColumnInfo) bool {
-	return mysql.IsIntegerType(from.GetType()) && mysql.IsIntegerType(to.GetType())
-}
-
-func isCharChange(from, to *model.ColumnInfo) bool {
-	return types.IsTypeChar(from.GetType()) && types.IsTypeChar(to.GetType())
-}
-
 // getModifyColumnType gets the modify column type.
 //  1. ModifyTypeNoReorg: The range of new type is a superset of the old type
 //  2. ModifyTypeNoReorgWithCheck: The range of new type is a subset of the old type, but we are running in strict SQL mode.
@@ -2519,20 +2511,6 @@ func validateMaterializedViewBaseModifyColumn(
 // TODO: it is used for plugins. so change plugin's using and remove it.
 func ConvertBetweenCharAndVarchar(oldCol, newCol byte) bool {
 	return types.ConvertBetweenCharAndVarchar(oldCol, newCol)
-}
-
-// IsElemsChangedToModifyColumn check elems changed
-func IsElemsChangedToModifyColumn(oldElems, newElems []string) bool {
-	if len(newElems) < len(oldElems) {
-		return true
-	}
-	for index, oldElem := range oldElems {
-		newElem := newElems[index]
-		if oldElem != newElem {
-			return true
-		}
-	}
-	return false
 }
 
 // ProcessColumnCharsetAndCollation process column charset and collation

@@ -42,11 +42,12 @@ validation-only, index rewrite, or row rewrite. `noReorgDataStrict` uses the sam
 classification for dependent-object checks. Nullability remains a separate check.
 Charset conversions requiring validation/conversion cannot take the metadata or
 length-only paths; safe UTF8/Latin1 widening and ENUM/SET ordinal rules are retained.
-Value/storage rules are grouped by type family in `preservesColumnValues`:
+Value/storage rules are grouped by type family in `classifyColumnValues`:
 integer ranges ignore display width; DECIMAL requires identical precision/scale;
 ENUM/SET preserve member ordinals; BINARY length changes require padding changes;
 vector dimensions must match unless the target is unconstrained. String range
-and padding checks live in `preservesStringValues`. The classifier handles the
+and padding rules live in `classifyStringValues`. Each family returns metadata-only,
+validation-only, or row rewrite directly. The classifier handles the
 indexed CHAR-to-VARCHAR exception separately, then checks index key/restored-data
 encoding through `needIndexReorg`. These are conservative storage rules, not a
 complete SQL conversion support matrix; `checkModifyTypes` still validates support.

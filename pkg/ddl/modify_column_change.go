@@ -48,30 +48,23 @@ func analyzeModifyColumn(tbl *model.TableInfo, oldCol, newCol *model.ColumnInfo)
 }
 
 func classifyColumnChange(tbl *model.TableInfo, oldCol, newCol *model.ColumnInfo) columnChange {
-	// ENUM/SET store ordinals, not encoded strings. Their member compatibility is
-	// handled by preservesColumnValues; charset changes must not reparse SET names.
-	if oldCol.GetCharset() != newCol.GetCharset() &&
-		oldCol.GetType() != mysql.TypeEnum && oldCol.GetType() != mysql.TypeSet &&
-		!(newCol.GetCharset() == charset.CharsetUTF8MB4 &&
-			(oldCol.GetCharset() == charset.CharsetUTF8 || oldCol.GetCharset() == charset.CharsetLatin1)) {
-		return columnChangeRow
+	change := classifyColumnValues(oldCol, newCol)
+	if change == columnChangeRow {
+		return change
 	}
 	hasIndex := len(getRelatedIndexIDs(tbl, oldCol.ID, false)) != 0
-	// CHAR -> VARCHAR can change restored index values. Preserve the existing
-	// validation path for indexed columns even when row values fit unchanged.
-	checkCharIndex := hasIndex && oldCol.GetType() == mysql.TypeString && types.IsTypeVarchar(newCol.GetType())
-	if preservesColumnValues(oldCol, newCol) && !checkCharIndex {
-		return columnChangeMetadata
-	}
-	if !isIntegerChange(oldCol, newCol) {
+	// Indexed CHAR -> VARCHAR retains the existing validation path because
+	// restored index values can change even when row values fit unchanged.
+	if hasIndex && oldCol.GetType() == mysql.TypeString && types.IsTypeVarchar(newCol.GetType()) {
 		if !isCharChange(oldCol, newCol) || types.IsBinaryStr(&oldCol.FieldType) || types.IsBinaryStr(&newCol.FieldType) {
 			return columnChangeRow
 		}
+		change = columnChangeCheck
 	}
-	if hasIndex && needIndexReorg(oldCol, newCol) {
+	if change == columnChangeCheck && hasIndex && needIndexReorg(oldCol, newCol) {
 		return columnChangeIndex
 	}
-	return columnChangeCheck
+	return change
 }
 
 // noReorgDataStrict is the data-independent predicate used by dependent objects
@@ -80,33 +73,50 @@ func noReorgDataStrict(tbl *model.TableInfo, oldCol, newCol *model.ColumnInfo) b
 	return classifyColumnChange(tbl, oldCol, newCol) == columnChangeMetadata
 }
 
-// preservesColumnValues applies storage rules by type family. It assumes charset
-// compatibility; index encoding is considered separately by classifyColumnChange.
-func preservesColumnValues(oldCol, newCol *model.ColumnInfo) bool {
+// classifyColumnValues decides whether row values can be reused, need validation,
+// or must be rewritten. Index requirements and job restrictions are applied later.
+func classifyColumnValues(oldCol, newCol *model.ColumnInfo) columnChange {
+	// ENUM/SET store ordinals rather than encoded strings. Safe UTF8/Latin1
+	// widening also preserves the existing representation.
+	if oldCol.GetCharset() != newCol.GetCharset() &&
+		oldCol.GetType() != mysql.TypeEnum && oldCol.GetType() != mysql.TypeSet &&
+		!(newCol.GetCharset() == charset.CharsetUTF8MB4 &&
+			(oldCol.GetCharset() == charset.CharsetUTF8 || oldCol.GetCharset() == charset.CharsetLatin1)) {
+		return columnChangeRow
+	}
 	sameType := oldCol.GetType() == newCol.GetType()
 	sameSign := mysql.HasUnsignedFlag(oldCol.GetFlag()) == mysql.HasUnsignedFlag(newCol.GetFlag())
 	switch {
 	case isIntegerChange(oldCol, newCol):
-		// Integer display widths do not describe the stored value range.
+		// Display widths do not describe the stored integer range.
 		oldWidth, _ := mysql.GetDefaultFieldLengthAndDecimal(oldCol.GetType())
 		newWidth, _ := mysql.GetDefaultFieldLengthAndDecimal(newCol.GetType())
-		return sameSign && newWidth >= oldWidth
+		if sameSign && newWidth >= oldWidth {
+			return columnChangeMetadata
+		}
+		return columnChangeCheck
 	case sameType && oldCol.GetType() == mysql.TypeNewDecimal:
 		// DECIMAL stores precision and scale alongside its value, even on widening.
-		return sameSign && oldCol.GetFlen() == newCol.GetFlen() && oldCol.GetDecimal() == newCol.GetDecimal()
+		if sameSign && oldCol.GetFlen() == newCol.GetFlen() && oldCol.GetDecimal() == newCol.GetDecimal() {
+			return columnChangeMetadata
+		}
 	case sameType && (oldCol.GetType() == mysql.TypeEnum || oldCol.GetType() == mysql.TypeSet):
-		// Existing ordinals must retain their meaning; appending members is safe.
-		return !IsElemsChangedToModifyColumn(oldCol.GetElems(), newCol.GetElems())
+		if !IsElemsChangedToModifyColumn(oldCol.GetElems(), newCol.GetElems()) {
+			return columnChangeMetadata
+		}
 	case sameType && oldCol.GetType() == mysql.TypeTiDBVectorFloat32:
-		return newCol.GetFlen() == types.UnspecifiedLength || oldCol.GetFlen() == newCol.GetFlen()
+		if newCol.GetFlen() == types.UnspecifiedLength || oldCol.GetFlen() == newCol.GetFlen() {
+			return columnChangeMetadata
+		}
 	case isStringStorageType(oldCol.GetType()) && isStringStorageType(newCol.GetType()):
-		return preservesStringValues(oldCol, newCol)
+		return classifyStringValues(oldCol, newCol)
 	case sameType:
-		return preservesColumnRange(oldCol, newCol)
-	default:
-		// Cross-family conversions (including FLOAT -> DOUBLE) rewrite rows.
-		return false
+		if preservesColumnRange(oldCol, newCol) {
+			return columnChangeMetadata
+		}
 	}
+	// Cross-family conversions and unsupported validation paths rewrite rows.
+	return columnChangeRow
 }
 
 func isStringStorageType(tp byte) bool {
@@ -119,17 +129,25 @@ func isStringStorageType(tp byte) bool {
 	}
 }
 
-func preservesStringValues(oldCol, newCol *model.ColumnInfo) bool {
+func classifyStringValues(oldCol, newCol *model.ColumnInfo) columnChange {
 	if oldCol.GetType() == mysql.TypeString && newCol.GetType() == mysql.TypeString &&
 		types.IsBinaryStr(&oldCol.FieldType) {
 		// BINARY pads with zero bytes; widening changes existing values too.
-		return oldCol.GetFlen() == newCol.GetFlen()
+		if oldCol.GetFlen() == newCol.GetFlen() {
+			return columnChangeMetadata
+		}
+		return columnChangeRow
 	}
-	if types.IsTypeVarchar(oldCol.GetType()) && newCol.GetType() == mysql.TypeString {
-		// VARCHAR -> CHAR may change trailing spaces.
-		return false
+	varcharToChar := types.IsTypeVarchar(oldCol.GetType()) && newCol.GetType() == mysql.TypeString
+	if !varcharToChar && preservesColumnRange(oldCol, newCol) {
+		return columnChangeMetadata
 	}
-	return preservesColumnRange(oldCol, newCol)
+	// Only nonbinary CHAR/VARCHAR conversions have a length/trailing-space
+	// validation path. Binary padding and other string conversions require rewriting.
+	if isCharChange(oldCol, newCol) && !types.IsBinaryStr(&oldCol.FieldType) && !types.IsBinaryStr(&newCol.FieldType) {
+		return columnChangeCheck
+	}
+	return columnChangeRow
 }
 
 // preservesColumnRange is the default rule for unchanged storage formats:
@@ -192,4 +210,26 @@ func checkModifyTypes(from, to *model.ColumnInfo, needRewriteCollationData bool)
 		}
 	}
 	return errors.Trace(err)
+}
+
+func isIntegerChange(from, to *model.ColumnInfo) bool {
+	return mysql.IsIntegerType(from.GetType()) && mysql.IsIntegerType(to.GetType())
+}
+
+func isCharChange(from, to *model.ColumnInfo) bool {
+	return types.IsTypeChar(from.GetType()) && types.IsTypeChar(to.GetType())
+}
+
+// IsElemsChangedToModifyColumn check elems changed
+func IsElemsChangedToModifyColumn(oldElems, newElems []string) bool {
+	if len(newElems) < len(oldElems) {
+		return true
+	}
+	for index, oldElem := range oldElems {
+		newElem := newElems[index]
+		if oldElem != newElem {
+			return true
+		}
+	}
+	return false
 }
