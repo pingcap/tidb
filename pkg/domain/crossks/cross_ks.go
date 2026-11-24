@@ -67,29 +67,33 @@ type runtimeState uint8
 const (
 	runtimeReady runtimeState = iota
 	runtimeInitializing
+	// Workers may still reenter GetOrCreate while they drain.
+	runtimeDraining
+	// Workers have stopped; the runtime is hidden until resource cleanup ends.
 	runtimeClosing
 )
 
 // runtimeEntry is the runtime of one keyspace. Its fields are guarded by
 // Manager.mu. sessMgr is immutable after publication because handles retain it.
 type runtimeEntry struct {
-	sessMgr        *SessionManager
-	state          runtimeState
-	done           chan struct{}
-	workersStopped bool
-	activeHolders  map[string]struct{}
-	lastReleaseAt  time.Time
+	sessMgr       *SessionManager
+	state         runtimeState
+	done          chan struct{}
+	activeHolders map[string]struct{}
+	lastReleaseAt time.Time
 }
 
 // visible must be called with Manager.mu held. Session factories can use a
 // published runtime until its workers have stopped, including during teardown.
 func (e *runtimeEntry) visible() bool {
-	return e.sessMgr != nil && !e.workersStopped
+	return e.sessMgr != nil && e.state != runtimeClosing
 }
 
 // startClosing must be called with Manager.mu held and the entry ready.
 func (e *runtimeEntry) startClosing() {
-	e.state = runtimeClosing
+	e.state = runtimeDraining
+	// Draining workers and closing resources share one completion signal:
+	// a replacement runtime must wait for both phases to finish.
 	e.done = make(chan struct{})
 }
 
@@ -524,11 +528,11 @@ func (m *Manager) closeRuntime(ks string) {
 	}
 }
 
-// closeEntry must be called outside mu by the owner of the closing transition.
+// closeEntry must be called outside mu by the owner of the teardown transition.
 func (m *Manager) closeEntry(ks string, entry *runtimeEntry) {
 	entry.sessMgr.close(func() {
 		m.mu.Lock()
-		entry.workersStopped = true
+		entry.state = runtimeClosing
 		m.mu.Unlock()
 	})
 	m.mu.Lock()
