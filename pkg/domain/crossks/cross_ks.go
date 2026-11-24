@@ -76,8 +76,11 @@ const (
 // runtimeEntry is the runtime of one keyspace. Its fields are guarded by
 // Manager.mu. sessMgr is immutable after publication because handles retain it.
 type runtimeEntry struct {
-	sessMgr       *SessionManager
-	state         runtimeState
+	sessMgr *SessionManager
+	state   runtimeState
+	// done is the completion signal for the phase tracked by state. It is
+	// closed when initialization or teardown finishes. It is nil while ready
+	// and reassigned when teardown starts, so waiters must recheck state.
 	done          chan struct{}
 	activeHolders map[string]struct{}
 	lastReleaseAt time.Time
