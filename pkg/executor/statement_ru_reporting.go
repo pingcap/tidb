@@ -266,6 +266,27 @@ var currentStatementRUUnitCounters atomic.Pointer[statementRUUnitCounters]
 
 const statementRUUnitCount = 11
 
+type statementRUUnitValue struct {
+	name  string
+	value float64
+}
+
+func statementRUUnitValues(units *ruv2.StmtUnits) [statementRUUnitCount]statementRUUnitValue {
+	return [...]statementRUUnitValue{
+		{metrics.LblRUV2UnitCPUWork, units.CPUWork},
+		{metrics.LblRUV2UnitScanBytes, units.ScanBytes},
+		{metrics.LblRUV2UnitNetBytes, units.NetBytes},
+		{metrics.LblRUV2UnitCrossAZNetBytes, units.CrossAZNetBytes},
+		{metrics.LblRUV2UnitFrontendCompileBytes, units.FrontendCompileBytes},
+		{metrics.LblRUV2UnitHashStateRows, units.HashStateRows},
+		{metrics.LblRUV2UnitJoinOutputRows, units.JoinOutputRows},
+		{metrics.LblRUV2UnitWriteStatement, units.WriteStatement},
+		{metrics.LblRUV2UnitOperatorNum, units.OperatorNum},
+		{metrics.LblRUV2UnitWriteKeys, units.WriteKeys},
+		{metrics.LblRUV2UnitWriteBytes, units.WriteBytes},
+	}
+}
+
 func publishStatementRUFullMetrics(finalized statementRUFinalizedSnapshot) {
 	vector := metrics.RUV2Unit
 	cache := currentStatementRUUnitCounters.Load()
@@ -275,26 +296,7 @@ func publishStatementRUFullMetrics(finalized statementRUFinalizedSnapshot) {
 	}
 	for i := range finalized.report.count {
 		entry := finalized.report.at(i)
-		units := &entry.units
-		// The inferred literal length must match the cache's unit dimension.
-		type unitValue struct {
-			name  string
-			value float64
-		}
-		var values [statementRUUnitCount]unitValue = [...]unitValue{
-			{metrics.LblRUV2UnitCPUWork, units.CPUWork},
-			{metrics.LblRUV2UnitScanBytes, units.ScanBytes},
-			{metrics.LblRUV2UnitNetBytes, units.NetBytes},
-			{metrics.LblRUV2UnitCrossAZNetBytes, units.CrossAZNetBytes},
-			{metrics.LblRUV2UnitFrontendCompileBytes, units.FrontendCompileBytes},
-			{metrics.LblRUV2UnitHashStateRows, units.HashStateRows},
-			{metrics.LblRUV2UnitJoinOutputRows, units.JoinOutputRows},
-			{metrics.LblRUV2UnitWriteStatement, units.WriteStatement},
-			{metrics.LblRUV2UnitOperatorNum, units.OperatorNum},
-			{metrics.LblRUV2UnitWriteKeys, units.WriteKeys},
-			{metrics.LblRUV2UnitWriteBytes, units.WriteBytes},
-		}
-		for unitID, unit := range values {
+		for unitID, unit := range statementRUUnitValues(&entry.units) {
 			if unit.value == 0 {
 				continue
 			}
