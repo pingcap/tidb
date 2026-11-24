@@ -779,7 +779,6 @@ pub trait TemporaryTableDdlExec:
                     &info_schema,
                     source_schema,
                     source_table,
-                    create.temporary,
                 )
                 .map_err(|error| temporary_table_ddl_error(&error))?;
                 Some((source_schema, source))

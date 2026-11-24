@@ -122,13 +122,17 @@ pub trait PreprocessContext {
     ///
     /// The lookup's refusal.
     fn table_by_name(&self, path: &[String], verb: &'static str) -> Result<(), PlanError>;
-    /// Go `checkCreateTableGrammar`'s LIKE source: 1046 without a schema,
-    /// 1146 when the table is missing.
+    /// Go `checkCreateTableGrammar`'s `TableByName` of a LIKE source: its
+    /// `TableInfo` (`None` for a view or sequence, which
+    /// `CreateTableWithLike` refuses later).
     ///
     /// # Errors
     ///
-    /// The lookup's refusal.
-    fn require_table_exists(&self, path: &[String]) -> Result<(), PlanError>;
+    /// 1046 without a schema, 1146 when the source is missing.
+    fn like_source_info(
+        &self,
+        path: &[String],
+    ) -> Result<Option<tidb_model::GoShared<tidb_model::TableInfo>>, PlanError>;
 }
 
 /// Go `PreprocessorReturn` and what the walk learns for its callers.
@@ -242,7 +246,13 @@ impl Preprocessor<'_> {
             DdlStmt::DropIndex(drop) => self.ctx.table_by_name(&drop.table, "SELECT"),
             DdlStmt::TruncateTable(path) => self.ctx.table_by_name(path, "SELECT"),
             DdlStmt::CreateTable(create) => match &create.like_table {
-                Some(like) => self.ctx.require_table_exists(like),
+                Some(like) => match self.ctx.like_source_info(like)? {
+                    Some(source) => {
+                        check_create_table_like_source(&source.read(), create.temporary)
+                            .map_err(PlanError::from)
+                    }
+                    None => Ok(()),
+                },
                 None => Ok(()),
             },
             _ => Ok(()),
@@ -1971,8 +1981,11 @@ mod preprocessor_tests {
         fn table_by_name(&self, _path: &[String], _verb: &'static str) -> Result<(), PlanError> {
             Ok(())
         }
-        fn require_table_exists(&self, _path: &[String]) -> Result<(), PlanError> {
-            Ok(())
+        fn like_source_info(
+            &self,
+            _path: &[String],
+        ) -> Result<Option<tidb_model::GoShared<tidb_model::TableInfo>>, PlanError> {
+            Ok(None)
         }
     }
 
@@ -2221,4 +2234,53 @@ pub fn check_create_view_with_select(
         tidb_ast::QueryStmt::SetOpr(set_opr) => check_set_opr(set_opr, &mut locked)?,
     }
     Ok(locked)
+}
+
+/// Go `preprocessor.checkCreateTableGrammar`'s `CREATE TABLE ... LIKE` arm
+/// (`preprocess.go:933`): a temporary source is refused, and a temporary
+/// copy may not inherit what a temporary table cannot carry
+/// (`checkReferInfoForTemporaryTable`).
+pub fn check_create_table_like_source(
+    source: &tidb_model::TableInfo,
+    temporary: tidb_ast::CreateTableTemporary,
+) -> Result<(), tidb_terror::MysqlError> {
+    if source.temp_table_type != tidb_model::TempTableType::NONE {
+        return Err(tidb_terror::MysqlError::from_terror(
+            &tidb_plannererrors::ERR_OPT_ON_TEMPORARY_TABLE
+                .gen_with_stack_by_args(&["create table like".into()]),
+        ));
+    }
+    if temporary == tidb_ast::CreateTableTemporary::None {
+        return Ok(());
+    }
+    if source.auto_random_bits != 0 {
+        return Err(tidb_terror::MysqlError::from_terror(
+            &tidb_plannererrors::ERR_OPT_ON_TEMPORARY_TABLE
+                .gen_with_stack_by_args(&["auto_random".into()]),
+        ));
+    }
+    if source.pre_split_regions != 0 {
+        return Err(tidb_terror::MysqlError::from_terror(
+            &tidb_plannererrors::ERR_OPT_ON_TEMPORARY_TABLE
+                .gen_with_stack_by_args(&["pre split regions".into()]),
+        ));
+    }
+    if source.partition.is_some() {
+        return Err(tidb_terror::MysqlError::from_terror(
+            &tidb_plannererrors::ERR_PARTITION_NO_TEMPORARY,
+        ));
+    }
+    if source.shard_row_id_bits != 0 {
+        return Err(tidb_terror::MysqlError::from_terror(
+            &tidb_plannererrors::ERR_OPT_ON_TEMPORARY_TABLE
+                .gen_with_stack_by_args(&["shard_row_id_bits".into()]),
+        ));
+    }
+    if source.placement_policy_ref.is_some() {
+        return Err(tidb_terror::MysqlError::from_terror(
+            &tidb_plannererrors::ERR_OPT_ON_TEMPORARY_TABLE
+                .gen_with_stack_by_args(&["placement".into()]),
+        ));
+    }
+    Ok(())
 }

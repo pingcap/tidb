@@ -494,7 +494,7 @@ fn build_create_table_like_info(
     // Go's preprocessor resolves and validates the LIKE source before the
     // DDL executor checks the target database. A missing source database is
     // consequently reported as a missing table.
-    let source = resolve_like_source(catalog, source_schema, source_table, temporary)?;
+    let source = resolve_like_source(catalog, source_schema, source_table)?;
     let source = source.read();
     let Some(database) = find_database(catalog, schema) else {
         return Err(DdlPlanError::from(
@@ -546,15 +546,13 @@ fn build_create_table_like_info(
     Ok(Ok(info))
 }
 
-/// Go's preprocessor resolution of a `CREATE TABLE ... LIKE` source
-/// (`checkCreateTableGrammar`, `checkReferInfoForTemporaryTable`): the source
-/// must exist, a temporary source is refused, and a temporary copy may not
-/// inherit what a temporary table cannot carry.
+/// Go `is.TableByName` of a `CREATE TABLE ... LIKE` source (its temporary
+/// checks, `checkCreateTableGrammar` and `checkReferInfoForTemporaryTable`,
+/// are the preprocess walk's).
 pub fn resolve_like_source<'catalog>(
     catalog: &'catalog SessionExtendedInfoSchema,
     source_schema: &str,
     source_table: &str,
-    temporary: tidb_ast::CreateTableTemporary,
 ) -> Result<GoShared<TableInfo>, DdlPlanError> {
     // Go `is.TableByName`: a missing source database is reported as a
     // missing table.
@@ -566,8 +564,6 @@ pub fn resolve_like_source<'catalog>(
             ]),
         ));
     };
-    tidb_ddl_build::check_create_table_like_source(&source.read(), temporary)
-        .map_err(|error| DdlPlanError::Admission(DdlAdmissionError::from_mysql_error(error)))?;
     Ok(source)
 }
 

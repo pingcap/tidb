@@ -338,7 +338,7 @@ fn build_table_info_with_column_types(
             "CREATE TABLE {what} is not supported by this node"
         )))
     };
-    let temporary = crate::validate_temporary_table_create(create)
+    let temporary = crate::set_temporary_type(create.temporary, create.on_commit_delete)
         .map_err(default_admission_error)?;
     if create.like_table.is_some() {
         return refuse("... LIKE");

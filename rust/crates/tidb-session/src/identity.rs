@@ -1780,19 +1780,22 @@ impl tidb_planner::preprocess::PreprocessContext for Session {
         ))
     }
 
-    fn require_table_exists(&self, path: &[String]) -> Result<(), tidb_planner_core_base::PlanError> {
+    fn like_source_info(
+        &self,
+        path: &[String],
+    ) -> Result<Option<tidb_model::GoShared<tidb_model::TableInfo>>, tidb_planner_core_base::PlanError> {
         use tidb_planner_core_base::PlanError;
         let (database, name) = tidb_infoschema::split_table_path_pub(path, &self.vars.current_db)
             .map_err(|_| PlanError::from(tidb_plannererrors::ERR_NO_DB.gen_with_stack_by_args(&[])))?;
         let shared = self.lock_catalog().map_err(|error| PlanError::internal(error.to_string()))?;
         let catalog = self.txn_ctx_stale_catalog().unwrap_or(&*shared);
-        if catalog.table_in(database, name).is_some() {
-            Ok(())
-        } else {
-            Err(PlanError::from(
+        match catalog.table_in(database, name) {
+            Some(tidb_infoschema::TableEntry::Kv(table)) => Ok(Some(table.meta())),
+            Some(_) => Ok(None),
+            None => Err(PlanError::from(
                 tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS
                     .gen_with_stack_by_args(&[database.into(), name.into()]),
-            ))
+            )),
         }
     }
 }

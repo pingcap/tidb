@@ -114,8 +114,6 @@ pub fn create_table_in_catalog(
                 None => return Err(not_exists()),
             };
             let refer = refer.read();
-            tidb_ddl_build::check_create_table_like_source(&refer, create.temporary)
-                .map_err(DriverError::Mysql)?;
             tidb_ddl_build::table_info_build::build_table_info_with_like(
                 &database,
                 &name,
