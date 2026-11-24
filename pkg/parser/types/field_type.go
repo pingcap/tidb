@@ -280,7 +280,7 @@ func (ft *FieldType) UpdateFlenAndDecimalUnderLimit(old *FieldType, deltaDecimal
 		deltaFlen += mysql.MaxDecimalScale
 		ft.decimal = mysql.MaxDecimalScale
 	} else {
-		ft.SetDecimal(old.decimal + deltaDecimal)
+		ft.SetDecimalUnderLimit(old.decimal + deltaDecimal)
 	}
 	if old.flen < 0 {
 		ft.flen = mysql.MaxDecimalWidth

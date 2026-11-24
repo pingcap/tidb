@@ -212,3 +212,78 @@ func TestTypeInfer4AvgSum(t *testing.T) {
 		require.Equal(t, partialSumFunc.RetTp.GetDecimal(), 8)
 	}
 }
+<<<<<<< HEAD
+=======
+
+func TestTypeInfer4AvgScale(t *testing.T) {
+	tests := []struct {
+		name                                     string
+		scale, increment, wantFlen, wantAvgScale int
+	}{
+		{"normal", 2, 4, 44, 6},
+		{"at_limit", 26, 4, 44, 30},
+		{"above_limit", 27, 4, 44, 30},
+		{"max_input_scale", 30, 4, 44, 30},
+		{"zero_increment", 30, 0, 40, 30},
+		{"max_increment", 30, 30, 65, 30},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := mock.NewContext()
+			ctx.GetSessionVars().DivPrecisionIncrement = tt.increment
+			argCol := &expression.Column{RetType: types.NewFieldType(mysql.TypeNewDecimal)}
+			argCol.RetType.SetFlen(40)
+			argCol.RetType.SetDecimal(tt.scale)
+
+			avgFunc, err := newBaseFuncDesc(ctx, ast.AggFuncAvg, []expression.Expression{argCol})
+			require.NoError(t, err)
+			require.Equal(t, mysql.TypeNewDecimal, avgFunc.RetTp.GetType())
+			require.Equal(t, tt.wantFlen, avgFunc.RetTp.GetFlen())
+			require.Equal(t, tt.wantAvgScale, avgFunc.RetTp.GetDecimal())
+
+			sumFunc, err := newBaseFuncDesc(ctx, ast.AggFuncSum, []expression.Expression{argCol})
+			require.NoError(t, err)
+			require.Equal(t, 62, sumFunc.RetTp.GetFlen())
+			require.Equal(t, tt.scale, sumFunc.RetTp.GetDecimal())
+
+			avgRetType := avgFunc.RetTp.Clone()
+			avgFunc.Name = ast.AggFuncSum
+			require.NoError(t, avgFunc.TypeInfer4AvgSum(ctx.GetEvalCtx(), avgRetType))
+			require.Equal(t, 62, avgFunc.RetTp.GetFlen())
+			require.Equal(t, tt.scale, avgFunc.RetTp.GetDecimal())
+		})
+	}
+}
+
+func TestBaseFunc_InferMaxMinCountRetType(t *testing.T) {
+	ctx := mock.NewContext()
+	retType := types.NewFieldType(mysql.TypeLonglong)
+	retType.SetFlen(21)
+	retType.SetDecimal(0)
+	retType.AddFlag(mysql.NotNullFlag)
+	types.SetBinChsClnFlag(retType)
+
+	inputTypes := []*types.FieldType{
+		types.NewFieldType(mysql.TypeDouble),
+		types.NewFieldType(mysql.TypeBit),
+	}
+	funcNames := []string{
+		ast.AggFuncMaxCount,
+		ast.AggFuncMinCount,
+	}
+
+	for _, inputType := range inputTypes {
+		col := &expression.Column{
+			UniqueID: 0,
+			RetType:  inputType,
+		}
+		for _, name := range funcNames {
+			desc, err := newBaseFuncDesc(ctx, name, []expression.Expression{col})
+			require.NoError(t, err)
+			err = desc.TypeInfer(ctx)
+			require.NoError(t, err)
+			require.Equal(t, retType, desc.RetTp)
+		}
+	}
+}
+>>>>>>> bcc879cc839 (types: cap the DECIMAL result scale of AVG at 30 (#73633))
