@@ -42,6 +42,7 @@ use crate::txn_manager::SessionTxnContext;
 use tidb_store_driver_error::pessimistic_lock_error::LockSqlError;
 use crate::txn_manager::{CommitHooks, TxnManager};
 use crate::Session;
+use tidb_executor::adapter::PessimisticDmlSession as _;
 
 /// Go `kv.ErrWriteConflict`'s MySQL code.
 const ERR_WRITE_CONFLICT: u16 = tidb_store_driver_error::pessimistic_lock_error::ERR_WRITE_CONFLICT;
@@ -139,16 +140,7 @@ pub struct StatementScope {
     pub autocommit: bool,
 }
 
-/// The session layer's next move after a pessimistic statement's lock step.
-pub enum PessimisticStep {
-    /// The statement stands; its keys are locked.
-    Done,
-    /// Re-execute the statement reading at this advanced `for_update_ts`.
-    Retry {
-        /// Go's `lockErr`, for the provider's decision.
-        lock_error: LockSqlError,
-    },
-}
+pub use tidb_executor::adapter::PessimisticStep;
 
 pub struct ReadStatement {
     _pin: Box<dyn Send>,
@@ -690,167 +682,6 @@ impl StatementLifecycle<'_> {
         self.session.set_selected_lock_keys(selected);
     }
 
-    /// Go `handlePessimisticDML`'s lock step for the statement that just ran:
-    /// what the transaction says about the keys it staged.
-    ///
-    /// It locks in the statement's transaction: the explicit one, or a
-    /// pessimistic autocommit statement's implicit one (Go's one `LazyTxn`,
-    /// which `handlePessimisticDML` locks the same way).
-    pub fn lock_pessimistic_statement_keys(
-        &mut self,
-        savepoint: &BufferCheckpoint,
-    ) -> Result<PessimisticStep, SqlQueryError> {
-        let Some(transaction) = self.txn.current() else {
-            return Ok(PessimisticStep::Done);
-        };
-        if !transaction.is_pessimistic() {
-            self.lock_optimistic_statement_keys();
-            return Ok(PessimisticStep::Done);
-        }
-        // Go `handlePessimisticDML`: `KeysNeedToLock` plus
-        // `CollectUnchangedKeysForXLock` lock in ONE `LockKeys`. The rows a
-        // plan's `SelectLockExec` read were locked inside execution, and a
-        // key the transaction already holds takes no second request, so what
-        // is left here is what the plan did not lock: a statement whose lock
-        // operator never saw its child drained, and the keys it wrote.
-        let taken = self.session.take_selected_locks();
-        let mut requests = taken.reads;
-        let mut keys = self.txn.buffer().pessimistic_keys_since(*savepoint);
-        keys.extend(taken.unchanged);
-        // With `tidb_foreign_key_check_in_shared_lock` off, Go locks the
-        // foreign-key checks' keys exclusively with the others; on, it takes
-        // them in share mode after the exclusive locks, except a key this
-        // transaction wrote (`moveWrittenSharedLockKeysToExclusive`).
-        let mut shared_keys = Vec::new();
-        if self.session.foreign_key_check_in_shared_lock() {
-            let exclusive: std::collections::BTreeSet<Vec<u8>> = keys.iter().cloned().collect();
-            for key in taken.unchanged_shared {
-                if exclusive.contains(&key) {
-                    continue;
-                }
-                // A key written by this transaction must not be protected
-                // only by a shared lock: prewrite would put over it.
-                if self.txn.buffer().get(&tidb_txnkv::Key::from(key.clone())).is_some() {
-                    keys.push(key);
-                } else {
-                    shared_keys.push(key);
-                }
-            }
-        } else {
-            keys.extend(taken.unchanged_shared);
-        }
-        keys.sort();
-        keys.dedup();
-        let wait = tidb_txnkv::transaction::LockWaitTime::Timeout(self.session.lock_wait_timeout());
-        if !keys.is_empty() {
-            requests.push((wait, keys));
-        }
-        for (wait, keys) in requests {
-            match self.lock_pessimistic_keys(savepoint, keys, wait, false)? {
-                PessimisticStep::Done => {}
-                retry => return Ok(retry),
-            }
-        }
-        if !shared_keys.is_empty() {
-            return self.lock_pessimistic_keys(savepoint, shared_keys, wait, true);
-        }
-        Ok(PessimisticStep::Done)
-    }
-
-    /// Go `SelectLockExec.Next` -> `doLockKeys` in an optimistic
-    /// transaction: `LockKeys` takes no lock and only flags the keys the
-    /// statement's lock operators published (see
-    /// `MutationBuffer::lock_keys_optimistically`).
-    fn lock_optimistic_statement_keys(&mut self) {
-        if self
-            .txn
-            .explicit()
-            .is_none_or(|transaction| transaction.is_pessimistic())
-        {
-            return;
-        }
-        let taken = self.session.take_selected_locks();
-        let keys: Vec<Vec<u8>> = taken.reads.into_iter().flat_map(|(_, keys)| keys).collect();
-        self.txn.buffer().lock_keys_optimistically(&keys);
-    }
-
-    pub fn lock_pessimistic_keys(
-        &mut self,
-        savepoint: &BufferCheckpoint,
-        keys: Vec<Vec<u8>>,
-        wait: tidb_txnkv::transaction::LockWaitTime,
-        shared: bool,
-    ) -> Result<PessimisticStep, SqlQueryError> {
-        // Go `tryLockKeys`' `filterTemporaryTableKeys`: a temporary table's
-        // rows are never locked in the store.
-        let keys = tidb_tblctx::temporary_table::filter_temporary_table_keys(&self.session.txn_temporary_tables, keys);
-        let Some(transaction) = self.txn.current() else {
-            return Ok(PessimisticStep::Done);
-        };
-        // Table-selected native flags decide which keys need locking. A
-        // live session switch cannot override an earlier key's selected policy.
-        let key_set: std::collections::BTreeSet<Vec<u8>> = keys.iter().cloned().collect();
-        let presume_not_exists = self
-            .txn
-            .buffer()
-            .presume_not_exists_since(*savepoint)
-            .into_iter()
-            .filter(|key| key_set.contains(key))
-            .collect::<std::collections::BTreeSet<_>>();
-        // Ownership removes a repeated acquisition, not a NEW absence check.
-        // Go KVTxn.LockKeys verifies NeedCheckExists even on a held key.
-        if keys.is_empty() {
-            return Ok(PessimisticStep::Done);
-        }
-        // Go `ExtractKeyExistsErrFromHandle` also decodes keys staged by earlier statements.
-        let duplicate_hints = keys
-            .iter()
-            .filter_map(|key| {
-                self.txn
-                    .buffer()
-                    .duplicate_key_hint_for(key)
-                    .map(|hint| (key.clone(), hint))
-            })
-            .collect();
-        // Every error exit rolls the STATEMENT back -- Go's `StmtRollback`
-        // runs on any statement error, transport failures included.
-        self.session.publish_transaction_lock_waiting(true);
-        let lock_result = if shared {
-            transaction.lock_staged_keys_in_share_mode(keys, wait)
-        } else {
-            transaction.lock_staged_keys_with_assertions(keys, presume_not_exists, duplicate_hints, wait)
-        };
-        self.session.publish_transaction_lock_waiting(false);
-        let outcome = match lock_result {
-            Ok(outcome) => outcome,
-            Err(error) => {
-                self.txn.buffer().restore(savepoint.clone());
-                return Err(SqlQueryError::unknown(error));
-            }
-        };
-        match outcome {
-            LockKeysOutcome::Locked { .. } => Ok(PessimisticStep::Done),
-            LockKeysOutcome::RetryStatement { lock_error, .. } => {
-                self.session.record_pessimistic_lock_error(tidb_errno::errcode::ErrWriteConflict);
-                Ok(PessimisticStep::Retry { lock_error })
-            }
-            LockKeysOutcome::StatementError(error) => {
-                self.session.record_pessimistic_lock_error(error.code);
-                // Statement-scoped, Go's 1205/1213 family: this statement's
-                // writes go, the transaction stays open.
-                self.txn.buffer().restore(savepoint.clone());
-                Err(transactions::sql_error(error))
-            }
-            LockKeysOutcome::TransactionError(error) => {
-                self.session.record_pessimistic_lock_error(error.code);
-                // The transaction is no longer usable; later statements and
-                // `ROLLBACK` report that state on their own.
-                self.txn.buffer().restore(savepoint.clone());
-                Err(transactions::sql_error(error))
-            }
-        }
-    }
-
     /// Go `doCommitWithRetry` (`session.go:806`) after an autocommit
     /// statement's commit failed: replay it when the error is retryable (Go
     /// `kv.IsTxnRetryableError`, narrowed to the write conflict that reaches
@@ -1323,4 +1154,58 @@ fn pessimistic_retry_failpoint(is_dml: bool) {
     } else {
         "github.com/pingcap/tidb/pkg/executor/pessimisticSelectForUpdateRetry"
     });
+}
+
+impl tidb_executor::adapter::PessimisticDmlSession for StatementLifecycle<'_> {
+    fn statement_txn_pessimistic(&self) -> Option<bool> {
+        self.txn.current().map(|transaction| transaction.is_pessimistic())
+    }
+
+    fn explicit_txn_optimistic(&self) -> bool {
+        self.txn.explicit().is_some_and(|transaction| !transaction.is_pessimistic())
+    }
+
+    fn statement_buffer(&self) -> &tidb_store_driver_txn::cluster_storage::MutationBuffer {
+        self.txn.buffer()
+    }
+
+    fn take_statement_selected_locks(&mut self) -> tidb_sessionctx::select_lock::TakenLocks {
+        self.session.take_selected_locks()
+    }
+
+    fn foreign_key_check_in_shared_lock(&self) -> bool {
+        self.session.foreign_key_check_in_shared_lock()
+    }
+
+    fn statement_lock_wait(&self) -> tidb_txnkv::transaction::LockWaitTime {
+        tidb_txnkv::transaction::LockWaitTime::Timeout(self.session.lock_wait_timeout())
+    }
+
+    fn statement_temporary_tables(&self) -> &tidb_tblctx::temporary_table::TemporaryTables {
+        &self.session.txn_temporary_tables
+    }
+
+    fn publish_lock_waiting(&self, waiting: bool) {
+        self.session.publish_transaction_lock_waiting(waiting);
+    }
+
+    fn record_lock_error(&mut self, code: u16) {
+        self.session.record_pessimistic_lock_error(code);
+    }
+
+    fn lock_txn_keys(
+        &self,
+        keys: Vec<Vec<u8>>,
+        presume_not_exists: std::collections::BTreeSet<Vec<u8>>,
+        duplicate_hints: std::collections::BTreeMap<Vec<u8>, tidb_kv::cluster_storage::DuplicateKeyHint>,
+        wait: tidb_txnkv::transaction::LockWaitTime,
+        shared: bool,
+    ) -> Option<Result<LockKeysOutcome, String>> {
+        let transaction = self.txn.current()?;
+        Some(if shared {
+            transaction.lock_staged_keys_in_share_mode(keys, wait)
+        } else {
+            transaction.lock_staged_keys_with_assertions(keys, presume_not_exists, duplicate_hints, wait)
+        })
+    }
 }

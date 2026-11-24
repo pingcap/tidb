@@ -318,3 +318,210 @@ pub fn check_no_delay_snapshot_writes(
     }
     Ok(())
 }
+
+/// Go `handlePessimisticDML`'s step after one execution of the statement.
+#[derive(Debug)]
+pub enum PessimisticStep {
+    /// The statement stands; its keys are locked.
+    Done,
+    /// Re-execute the statement reading at this advanced `for_update_ts`.
+    Retry {
+        /// Go's `lockErr`, for the provider's decision.
+        lock_error: tidb_store_driver_error::pessimistic_lock_error::LockSqlError,
+    },
+}
+
+/// What Go's `handlePessimisticDML` lock step reaches through `a.Ctx`: the
+/// statement's transaction, its staged writes and the session's lock state.
+pub trait PessimisticDmlSession {
+    /// Whether the statement's transaction (the explicit one, or a
+    /// pessimistic autocommit statement's implicit one) is pessimistic;
+    /// `None` without one.
+    fn statement_txn_pessimistic(&self) -> Option<bool>;
+    /// Whether an explicit transaction is open and optimistic.
+    fn explicit_txn_optimistic(&self) -> bool;
+    /// The transaction's staged writes (`txn.GetMemBuffer()`).
+    fn statement_buffer(&self) -> &tidb_store_driver_txn::cluster_storage::MutationBuffer;
+    /// The rows the statement's lock operators read, which the lock step
+    /// takes (`StmtCtx`'s selected lock keys).
+    fn take_statement_selected_locks(&mut self) -> tidb_sessionctx::select_lock::TakenLocks;
+    /// Go `SessionVars.ForeignKeyCheckInSharedLock`.
+    fn foreign_key_check_in_shared_lock(&self) -> bool;
+    /// Go `getLockWaitTime`: the session's `innodb_lock_wait_timeout`.
+    fn statement_lock_wait(&self) -> tidb_txnkv::transaction::LockWaitTime;
+    /// Go `TxnCtx.TemporaryTables`.
+    fn statement_temporary_tables(&self) -> &tidb_tblctx::temporary_table::TemporaryTables;
+    /// Go `TxnCtx` lock-waiting state, published while a lock waits.
+    fn publish_lock_waiting(&self, waiting: bool);
+    /// Go `handlePessimisticLockError` / `AddAssertEntranceForLockError`.
+    fn record_lock_error(&mut self, code: u16);
+    /// Go `txn.LockKeys` of the statement's transaction (`shared`:
+    /// `LockKeysInShareMode`); `None` without one.
+    fn lock_txn_keys(
+        &self,
+        keys: Vec<Vec<u8>>,
+        presume_not_exists: std::collections::BTreeSet<Vec<u8>>,
+        duplicate_hints: std::collections::BTreeMap<Vec<u8>, tidb_kv::cluster_storage::DuplicateKeyHint>,
+        wait: tidb_txnkv::transaction::LockWaitTime,
+        shared: bool,
+    ) -> Option<Result<tidb_store_driver_txn::cluster_table_storage::LockKeysOutcome, String>>;
+
+    /// Go `handlePessimisticDML`'s lock step for the statement that just
+    /// ran: `KeysNeedToLock` plus `CollectUnchangedKeysForXLock` in one
+    /// `LockKeys`, the foreign-key checks' shared keys after them.
+    ///
+    /// # Errors
+    ///
+    /// The lock's statement or transaction error.
+    fn lock_pessimistic_statement_keys(
+        &mut self,
+        savepoint: &tidb_store_driver_txn::cluster_storage::BufferCheckpoint,
+    ) -> Result<PessimisticStep, tidb_store_driver_error::sql_query_error::SqlQueryError> {
+        let Some(pessimistic) = self.statement_txn_pessimistic() else {
+            return Ok(PessimisticStep::Done);
+        };
+        if !pessimistic {
+            self.lock_optimistic_statement_keys();
+            return Ok(PessimisticStep::Done);
+        }
+        // The rows a plan's `SelectLockExec` read were locked inside
+        // execution, and a key the transaction already holds takes no second
+        // request, so what is left here is what the plan did not lock: a
+        // statement whose lock operator never saw its child drained, and the
+        // keys it wrote.
+        let taken = self.take_statement_selected_locks();
+        let mut requests = taken.reads;
+        let mut keys = self.statement_buffer().pessimistic_keys_since(*savepoint);
+        keys.extend(taken.unchanged);
+        // With `tidb_foreign_key_check_in_shared_lock` off, Go locks the
+        // foreign-key checks' keys exclusively with the others; on, it takes
+        // them in share mode after the exclusive locks, except a key this
+        // transaction wrote (`moveWrittenSharedLockKeysToExclusive`).
+        let mut shared_keys = Vec::new();
+        if self.foreign_key_check_in_shared_lock() {
+            let exclusive: std::collections::BTreeSet<Vec<u8>> = keys.iter().cloned().collect();
+            for key in taken.unchanged_shared {
+                if exclusive.contains(&key) {
+                    continue;
+                }
+                // A key written by this transaction must not be protected
+                // only by a shared lock: prewrite would put over it.
+                if self.statement_buffer().get(&tidb_txnkv::Key::from(key.clone())).is_some() {
+                    keys.push(key);
+                } else {
+                    shared_keys.push(key);
+                }
+            }
+        } else {
+            keys.extend(taken.unchanged_shared);
+        }
+        keys.sort();
+        keys.dedup();
+        let wait = self.statement_lock_wait();
+        if !keys.is_empty() {
+            requests.push((wait, keys));
+        }
+        for (wait, keys) in requests {
+            match self.lock_pessimistic_keys(savepoint, keys, wait, false)? {
+                PessimisticStep::Done => {}
+                retry => return Ok(retry),
+            }
+        }
+        if !shared_keys.is_empty() {
+            return self.lock_pessimistic_keys(savepoint, shared_keys, wait, true);
+        }
+        Ok(PessimisticStep::Done)
+    }
+
+    /// Go `SelectLockExec.Next` -> `doLockKeys` in an optimistic
+    /// transaction: `LockKeys` takes no lock and only flags the keys the
+    /// statement's lock operators published (see
+    /// `MutationBuffer::lock_keys_optimistically`).
+    fn lock_optimistic_statement_keys(&mut self) {
+        if !self.explicit_txn_optimistic() {
+            return;
+        }
+        let taken = self.take_statement_selected_locks();
+        let keys: Vec<Vec<u8>> = taken.reads.into_iter().flat_map(|(_, keys)| keys).collect();
+        self.statement_buffer().lock_keys_optimistically(&keys);
+    }
+
+    /// Go `doLockKeys` -> `txn.LockKeys` of `keys` and what
+    /// `handlePessimisticLockError` makes of the outcome.
+    ///
+    /// # Errors
+    ///
+    /// The lock's statement or transaction error; the statement's writes go.
+    fn lock_pessimistic_keys(
+        &mut self,
+        savepoint: &tidb_store_driver_txn::cluster_storage::BufferCheckpoint,
+        keys: Vec<Vec<u8>>,
+        wait: tidb_txnkv::transaction::LockWaitTime,
+        shared: bool,
+    ) -> Result<PessimisticStep, tidb_store_driver_error::sql_query_error::SqlQueryError> {
+        use tidb_store_driver_txn::cluster_table_storage::LockKeysOutcome;
+        // Go `tryLockKeys`' `filterTemporaryTableKeys`: a temporary table's
+        // rows are never locked in the store.
+        let keys = tidb_tblctx::temporary_table::filter_temporary_table_keys(self.statement_temporary_tables(), keys);
+        if self.statement_txn_pessimistic().is_none() {
+            return Ok(PessimisticStep::Done);
+        }
+        // Table-selected native flags decide which keys need locking. A
+        // live session switch cannot override an earlier key's selected policy.
+        let key_set: std::collections::BTreeSet<Vec<u8>> = keys.iter().cloned().collect();
+        let presume_not_exists = self
+            .statement_buffer()
+            .presume_not_exists_since(*savepoint)
+            .into_iter()
+            .filter(|key| key_set.contains(key))
+            .collect::<std::collections::BTreeSet<_>>();
+        // Ownership removes a repeated acquisition, not a NEW absence check.
+        // Go KVTxn.LockKeys verifies NeedCheckExists even on a held key.
+        if keys.is_empty() {
+            return Ok(PessimisticStep::Done);
+        }
+        // Go `ExtractKeyExistsErrFromHandle` also decodes keys staged by earlier statements.
+        let duplicate_hints = keys
+            .iter()
+            .filter_map(|key| {
+                self.statement_buffer()
+                    .duplicate_key_hint_for(key)
+                    .map(|hint| (key.clone(), hint))
+            })
+            .collect();
+        // Every error exit rolls the STATEMENT back -- Go's `StmtRollback`
+        // runs on any statement error, transport failures included.
+        self.publish_lock_waiting(true);
+        let lock_result = self.lock_txn_keys(keys, presume_not_exists, duplicate_hints, wait, shared);
+        self.publish_lock_waiting(false);
+        let outcome = match lock_result {
+            None => return Ok(PessimisticStep::Done),
+            Some(Ok(outcome)) => outcome,
+            Some(Err(error)) => {
+                self.statement_buffer().restore(*savepoint);
+                return Err(tidb_store_driver_error::sql_query_error::SqlQueryError::unknown(error));
+            }
+        };
+        match outcome {
+            LockKeysOutcome::Locked { .. } => Ok(PessimisticStep::Done),
+            LockKeysOutcome::RetryStatement { lock_error, .. } => {
+                self.record_lock_error(tidb_errno::errcode::ErrWriteConflict);
+                Ok(PessimisticStep::Retry { lock_error })
+            }
+            LockKeysOutcome::StatementError(error) => {
+                self.record_lock_error(error.code);
+                // Statement-scoped, Go's 1205/1213 family: this statement's
+                // writes go, the transaction stays open.
+                self.statement_buffer().restore(*savepoint);
+                Err(tidb_store_driver_error::sql_query_error::lock_sql_error(&error))
+            }
+            LockKeysOutcome::TransactionError(error) => {
+                self.record_lock_error(error.code);
+                // The transaction is no longer usable; later statements and
+                // `ROLLBACK` report that state on their own.
+                self.statement_buffer().restore(*savepoint);
+                Err(tidb_store_driver_error::sql_query_error::lock_sql_error(&error))
+            }
+        }
+    }
+}
