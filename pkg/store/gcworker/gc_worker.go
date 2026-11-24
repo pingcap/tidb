@@ -371,6 +371,11 @@ func (w *GCWorker) runKeyspaceDeleteRange(ctx context.Context, concurrency gcCon
 		return nil
 	}
 
+	ok, err := w.saveUnifiedGCSafePoint(ctx, safePoint)
+	if err != nil || !ok {
+		return errors.Trace(err)
+	}
+
 	keyspaceID := w.store.GetCodec().GetKeyspaceID()
 	logutil.Logger(ctx).Info("start keyspace delete range", zap.String("category", "gc worker"),
 		zap.String("uuid", w.uuid),
@@ -399,6 +404,63 @@ func (w *GCWorker) runKeyspaceDeleteRange(ctx context.Context, concurrency gcCon
 	}
 
 	return nil
+}
+
+// saveUnifiedGCSafePoint saves the safe point the keyspace deletes ranges with as tikv_gc_safe_point,
+// unless GC is disabled. Like prepare, it keeps the gcEnable row locked until the safe point is saved,
+// so FLASHBACK and RECOVER, which disable GC and then check tikv_gc_safe_point, either stop the delete
+// ranges or see the safe point they use.
+func (w *GCWorker) saveUnifiedGCSafePoint(ctx context.Context, safePoint uint64) (bool, error) {
+	se := createSession(w.store)
+	defer se.Close()
+	_, err := se.ExecuteInternal(ctx, "BEGIN PESSIMISTIC")
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	ok, err := checkUnifiedGCSafePoint(ctx, se, safePoint)
+	if ok {
+		err = se.CommitTxn(ctx)
+		if err != nil {
+			return false, errors.Trace(err)
+		}
+	} else {
+		se.RollbackTxn(ctx)
+	}
+	return ok, errors.Trace(err)
+}
+
+func checkUnifiedGCSafePoint(ctx context.Context, se sessionapi.Session, safePoint uint64) (bool, error) {
+	enable, err := loadBooleanWithDefaultWithSession(ctx, se, gcEnableKey, gcDefaultEnableValue)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	failpoint.InjectCall("afterCheckGCEnableInUnifiedGC")
+	if !enable {
+		logutil.Logger(ctx).Warn("gc status is disabled, skip keyspace delete range", zap.String("category", "gc worker"))
+		return false, nil
+	}
+	newSafePoint := oracle.GetTimeFromTS(safePoint)
+	if oracle.ExtractLogical(safePoint) > 0 {
+		newSafePoint = newSafePoint.Add(time.Millisecond)
+	}
+	str, err := loadValueFromSysTableWithSession(ctx, se, gcSafePointKey)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	if str != "" {
+		oldSafePoint, parseErr := tikvutil.CompatibleParseGCTime(str)
+		if parseErr != nil {
+			return false, errors.Trace(parseErr)
+		}
+		if !oldSafePoint.Before(newSafePoint) {
+			return true, nil
+		}
+	}
+	err = saveValueToSysTableWithSession(ctx, se, gcSafePointKey, newSafePoint.Format(tikvutil.GCTimeFormat))
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	return true, nil
 }
 
 // leaderTick of GC worker checks if it should start a GC job every tick.

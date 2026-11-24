@@ -653,6 +653,78 @@ func TestPrepareGCWithCancelledContextDoesNotRunGC(t *testing.T) {
 	require.Equal(t, safePointBefore, safePointAfter)
 }
 
+func TestUnifiedGCSafePointBlocksConcurrentGCDisable(t *testing.T) {
+	s := createGCWorkerSuite(t, withStoreType(mockstore.EmbedUnistore))
+	close(s.gcWorker.done)
+	safePoint := oracle.ComposeTS(oracle.GetPhysical(time.Now().Add(-time.Minute)), 5)
+
+	type disableResult struct {
+		safePoint *time.Time
+		err       error
+	}
+	disabled := make(chan disableResult, 1)
+	var lockErr error
+	require.NoError(t, failpoint.EnableCall("github.com/pingcap/tidb/pkg/store/gcworker/afterCheckGCEnableInUnifiedGC", func() {
+		ctx := gcContext()
+		se := createSession(s.gcWorker.store)
+		defer se.Close()
+		_, err := se.ExecuteInternal(ctx, "BEGIN PESSIMISTIC")
+		require.NoError(t, err)
+		_, lockErr = se.ExecuteInternal(ctx, "SELECT variable_value FROM mysql.tidb WHERE variable_name = %? FOR UPDATE NOWAIT", gcEnableKey)
+		se.RollbackTxn(ctx)
+
+		go func() {
+			err := s.gcWorker.saveValueToSysTable(gcEnableKey, booleanFalse)
+			if err != nil {
+				disabled <- disableResult{err: err}
+				return
+			}
+			sp, err := s.gcWorker.loadTime(gcSafePointKey)
+			disabled <- disableResult{safePoint: sp, err: err}
+		}()
+	}))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/gcworker/afterCheckGCEnableInUnifiedGC"))
+	}()
+
+	ok, err := s.gcWorker.saveUnifiedGCSafePoint(gcContext(), safePoint)
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.ErrorContains(t, lockErr, "NOWAIT")
+	res := <-disabled
+	require.NoError(t, res.err)
+	expected := oracle.GetTimeFromTS(safePoint).Add(time.Millisecond)
+	require.True(t, res.safePoint.Equal(expected), "%v != %v", *res.safePoint, expected)
+
+	ok, err = s.gcWorker.saveUnifiedGCSafePoint(gcContext(), oracle.ComposeTS(oracle.GetPhysical(time.Now()), 0))
+	require.NoError(t, err)
+	require.False(t, ok)
+	sp, err := s.gcWorker.loadTime(gcSafePointKey)
+	require.NoError(t, err)
+	require.True(t, sp.Equal(expected))
+}
+
+func TestUnifiedGCSafePointDoesNotMoveBack(t *testing.T) {
+	s := createGCWorkerSuite(t, withStoreType(mockstore.EmbedUnistore))
+	close(s.gcWorker.done)
+	later := time.Now().Truncate(time.Millisecond)
+	require.NoError(t, s.gcWorker.saveTime(gcSafePointKey, later))
+
+	ok, err := s.gcWorker.saveUnifiedGCSafePoint(gcContext(), oracle.GoTimeToTS(later.Add(-time.Minute)))
+	require.NoError(t, err)
+	require.True(t, ok)
+	sp, err := s.gcWorker.loadTime(gcSafePointKey)
+	require.NoError(t, err)
+	require.True(t, sp.Equal(later))
+
+	ok, err = s.gcWorker.saveUnifiedGCSafePoint(gcContext(), oracle.GoTimeToTS(later.Add(time.Minute)))
+	require.NoError(t, err)
+	require.True(t, ok)
+	sp, err = s.gcWorker.loadTime(gcSafePointKey)
+	require.NoError(t, err)
+	require.True(t, sp.Equal(later.Add(time.Minute)))
+}
+
 func TestStatusVars(t *testing.T) {
 	s := createGCWorkerSuite(t)
 
