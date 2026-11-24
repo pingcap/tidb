@@ -363,6 +363,13 @@ func TestAlterMaterializedViewLogAddColumnPausedRejectsOutOfPlaceRefresh(t *test
 				} else if job.SchemaState != tc.state {
 					return
 				}
+				// Multi-column DDL first publishes the analyze-state change. Let that
+				// schema version synchronize before pausing, so resume reaches the
+				// advisory lock instead of waiting on the refresh's implicit MLog MDL.
+				if job.MultiSchemaInfo != nil && !tc.betweenSubJobs &&
+					job.ReorgMeta.AnalyzeState == model.AnalyzeStateNone {
+					return
+				}
 				if !pauseRequested.CompareAndSwap(false, true) {
 					return
 				}

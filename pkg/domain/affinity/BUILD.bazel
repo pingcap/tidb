@@ -20,13 +20,17 @@ go_library(
 go_test(
     name = "affinity_test",
     timeout = "short",
-    srcs = ["manager_test.go"],
+    srcs = [
+        "interface_test.go",
+        "manager_test.go",
+    ],
     embed = [":affinity"],
     flaky = True,
-    shard_count = 11,
+    shard_count = 17,
     deps = [
         "//pkg/errno",
         "//pkg/parser/terror",
+        "@com_github_pingcap_errors//:errors",
         "@com_github_stretchr_testify//mock",
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_pd_client//http",

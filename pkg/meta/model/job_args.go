@@ -184,11 +184,16 @@ type ModifySchemaArgs struct {
 	// used for modify schema placement policy.
 	// might be nil, means set it to default.
 	PolicyRef *PolicyRefInfo `json:"policy_ref,omitempty"`
+	// used for modify schema read only state.
+	ReadOnly   bool   `json:"read_only,omitempty"`
+	DDLStartTS uint64 `json:"ddl_start_ts,omitempty"`
 }
 
 func (a *ModifySchemaArgs) getArgsV1(job *Job) []any {
 	if job.Type == ActionModifySchemaCharsetAndCollate {
 		return []any{a.ToCharset, a.ToCollate}
+	} else if job.Type == ActionModifySchemaReadOnly {
+		return []any{a.ReadOnly, a.DDLStartTS}
 	}
 	return []any{a.PolicyRef}
 }
@@ -196,6 +201,8 @@ func (a *ModifySchemaArgs) getArgsV1(job *Job) []any {
 func (a *ModifySchemaArgs) decodeV1(job *Job) error {
 	if job.Type == ActionModifySchemaCharsetAndCollate {
 		return errors.Trace(job.decodeArgs(&a.ToCharset, &a.ToCollate))
+	} else if job.Type == ActionModifySchemaReadOnly {
+		return errors.Trace(job.decodeArgs(&a.ReadOnly, &a.DDLStartTS))
 	}
 	return errors.Trace(job.decodeArgs(&a.PolicyRef))
 }
@@ -2034,6 +2041,10 @@ func GetModifyTableEngineAttributeArgs(job *Job) (*ModifyTableEngineAttributeArg
 // AlterTableAffinityArgs is the argument for AlterTableAffinity
 type AlterTableAffinityArgs struct {
 	Affinity *TableAffinityInfo `json:"affinity,omitempty"`
+	// OldAffinity is the affinity the table had before the job. It is set when
+	// the job finishes, so the groups of the old level can be deleted after the
+	// job commits.
+	OldAffinity *TableAffinityInfo `json:"old_affinity,omitempty"`
 }
 
 func (a *AlterTableAffinityArgs) getArgsV1(*Job) []any {

@@ -132,6 +132,18 @@ func TestModifySchemaArgs(t *testing.T) {
 			require.EqualValues(t, inArgs.PolicyRef, args.PolicyRef)
 		}
 	}
+	inArgs = &ModifySchemaArgs{
+		ReadOnly:   true,
+		DDLStartTS: 123,
+	}
+	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+		j2 := &Job{}
+		require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionModifySchemaReadOnly)))
+		args, err := GetModifySchemaArgs(j2)
+		require.NoError(t, err)
+		require.True(t, args.ReadOnly)
+		require.Equal(t, uint64(123), args.DDLStartTS)
+	}
 }
 
 func TestCreateTableArgs(t *testing.T) {
@@ -1449,4 +1461,19 @@ func TestModifyColumnsArgs(t *testing.T) {
 	var rawArgs []json.RawMessage
 	require.NoError(t, json.Unmarshal(j2.RawArgs, &rawArgs))
 	require.Len(t, rawArgs, 5)
+}
+
+func TestAlterTableAffinityArgs(t *testing.T) {
+	for _, version := range []JobVersion{JobVersion1, JobVersion2} {
+		for _, newAffinity := range []*TableAffinityInfo{nil, {Level: ast.TableAffinityLevelPartition}} {
+			for _, oldAffinity := range []*TableAffinityInfo{nil, {Level: ast.TableAffinityLevelTable}, {Level: ast.TableAffinityLevelPartition}} {
+				args := &AlterTableAffinityArgs{Affinity: newAffinity, OldAffinity: oldAffinity}
+				job := &Job{}
+				require.NoError(t, job.Decode(getJobBytes(t, args, version, ActionAlterTableAffinity)))
+				decoded, err := GetAlterTableAffinityArgs(job)
+				require.NoError(t, err)
+				require.Equal(t, args, decoded)
+			}
+		}
+	}
 }

@@ -216,31 +216,12 @@ func checkpointStorageClassTransitionStep(se *sess.Session, txn kv.Transaction, 
 	checkpoint := txn.GetMemDBCheckpoint()
 	txnCtx := se.GetSessionVars().TxnCtx
 	txnCtxSavepoint := txnCtx.GetCurrentSavepoint()
-	binlogInfo := job.BinlogInfo
-	if binlogInfo != nil {
-		saved := *binlogInfo
-		binlogInfo = &saved
-	}
-	resumeReason := job.ResumeReason
-	var subJobs []model.SubJob
-	if job.MultiSchemaInfo != nil {
-		subJobs = make([]model.SubJob, len(job.MultiSchemaInfo.SubJobs))
-		for i, sub := range job.MultiSchemaInfo.SubJobs {
-			subJobs[i] = *sub.Clone()
-		}
-	}
+	restoreAll, _ := snapshotJobStepState(job)
 
 	return func() {
 		txnCtx.RestoreBySavepoint(txnCtxSavepoint)
 		txn.RollbackMemDBToCheckpoint(checkpoint)
-		job.BinlogInfo = binlogInfo
-		job.ResumeReason = resumeReason
-		job.LastSchemaVersion = 0
-		for i := range subJobs {
-			job.MultiSchemaInfo.SubJobs[i] = &subJobs[i]
-		}
-		// Keep error accounting, the cancellation decision, and durable choices
-		// such as ReorgMeta.UseCloudStorage made while executing the step.
+		restoreAll(nil)
 	}
 }
 

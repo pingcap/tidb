@@ -16,6 +16,7 @@ package expression
 
 import (
 	"context"
+	"maps"
 
 	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/errors"
@@ -127,6 +128,21 @@ func (b *BuiltinGroupingImplSig) Clone() builtinFunc {
 	// if grouping function missed cloning this field, the ToPB check will errors.
 	newSig.isMetaInited = b.isMetaInited
 	return newSig
+}
+
+// equal implements the builtinFunc interface. Besides the args, the grouping mode and marks must be
+// the same, since grouping(a) and grouping(b) share the same arg (the gid column) but differ in marks.
+func (b *BuiltinGroupingImplSig) equal(ctx EvalContext, fun builtinFunc) bool {
+	other, ok := fun.(*BuiltinGroupingImplSig)
+	if !ok || b.mode != other.mode || len(b.groupingMarks) != len(other.groupingMarks) {
+		return false
+	}
+	for i, mark := range b.groupingMarks {
+		if !maps.Equal(mark, other.groupingMarks[i]) {
+			return false
+		}
+	}
+	return b.baseBuiltinFunc.equal(ctx, fun)
 }
 
 // GetMetaGroupingMarks returns the grouping marks of the grouping function.

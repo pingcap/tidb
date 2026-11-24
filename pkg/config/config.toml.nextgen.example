@@ -39,6 +39,12 @@ split-table = true
 # The limit of concurrent executed sessions.
 token-limit = 1000
 
+# Reject new user persistent DDL jobs and IMPORT INTO submissions on this TiDB instance.
+# Internal SQL, local temporary-table DDL, ordinary DML, and IMPORT INTO management
+# statements remain available. Already submitted jobs are unaffected.
+# Only available with the NextGen kernel.
+maintenance-mode = false
+
 # The temporary directory to store the intermediate compute results.
 temp-dir = "/tmp/tidb"
 

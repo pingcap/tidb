@@ -338,6 +338,9 @@ type Config struct {
 	InitializeSQLFile string `toml:"initialize-sql-file" json:"initialize-sql-file"`
 	// KeyspaceActivateMode indicates whether TiDB should exit after activating the keyspace.
 	KeyspaceActivateMode bool `toml:"keyspace-activate" json:"keyspace-activate"`
+	// MaintenanceMode rejects new user DDL jobs and IMPORT INTO submissions in NextGen.
+	// Internal SQL and local temporary-table DDL remain allowed.
+	MaintenanceMode bool `toml:"maintenance-mode" json:"maintenance-mode"`
 	// Standby is the config for standby mode.
 	Standby Standby `toml:"standby" json:"standby"`
 	// StarterParams contains Starter-only extension parameters.
@@ -887,7 +890,8 @@ type Performance struct {
 	// Deprecated: this config has been deprecated. It has no effect.
 	AnalyzePartitionConcurrencyQuota  uint `toml:"analyze-partition-concurrency-quota" json:"analyze-partition-concurrency-quota"`
 	PlanReplayerDumpWorkerConcurrency uint `toml:"plan-replayer-dump-worker-concurrency" json:"plan-replayer-dump-worker-concurrency"`
-	EnableStatsCacheMemQuota          bool `toml:"enable-stats-cache-mem-quota" json:"enable-stats-cache-mem-quota"`
+	// Deprecated: this config has no effect. The stats cache always uses its memory quota.
+	EnableStatsCacheMemQuota bool `toml:"enable-stats-cache-mem-quota" json:"enable-stats-cache-mem-quota"`
 	// The following items are deprecated. We need to keep them here temporarily
 	// to support the upgrade process. They can be removed in future.
 
@@ -1605,6 +1609,9 @@ func (c *Config) Load(confFile string) error {
 	if !kerneltype.IsNextGen() && metaData.IsDefined("deploy-mode") {
 		return fmt.Errorf("deploy-mode can only be configured for nextgen TiDB")
 	}
+	if !kerneltype.IsNextGen() && metaData.IsDefined("maintenance-mode") {
+		return fmt.Errorf("maintenance-mode can only be configured for nextgen TiDB")
+	}
 	dxfResourceLimitDefined := metaData.IsDefined("dxf-resource-limit")
 	if !dxfResourceLimitDefined && c.DXFResourceLimit == 0 {
 		c.DXFResourceLimit = DefDXFResourceLimit
@@ -1766,6 +1773,9 @@ func (c *Config) Valid() error {
 	}
 	if !kerneltype.IsNextGen() && c.DeployMode != deploymode.Premium {
 		return fmt.Errorf("deploy-mode can only be configured for nextgen TiDB")
+	}
+	if c.MaintenanceMode && !kerneltype.IsNextGen() {
+		return fmt.Errorf("maintenance-mode can only be configured for nextgen TiDB")
 	}
 	if c.Standby.StandByMode && c.KeyspaceActivateMode {
 		return fmt.Errorf("can't set standby and keyspace-activate mode at the same time")

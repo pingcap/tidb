@@ -87,6 +87,7 @@ const (
 	DatabaseOptionCollate
 	DatabaseOptionEncryption
 	DatabaseSetTiFlashReplica
+	DatabaseOptionReadOnly
 	DatabaseOptionPlacementPolicy = DatabaseOptionType(PlacementOptionPolicy)
 )
 
@@ -133,6 +134,10 @@ func (n *DatabaseOption) Restore(ctx *format.RestoreCtx) error {
 			}
 			ctx.WriteString(v)
 		}
+	case DatabaseOptionReadOnly:
+		ctx.WriteKeyWord("READ ONLY")
+		ctx.WritePlain(" = ")
+		ctx.WritePlain(n.Value)
 	default:
 		return errors.Errorf("invalid DatabaseOptionType: %d", n.Tp)
 	}
@@ -535,6 +540,8 @@ const (
 	// MariaDB period markers for restore only; no engine semantics.
 	ColumnOptionMariaDBRowStart
 	ColumnOptionMariaDBRowEnd
+	// ColumnOptionSRID is the SRID attribute of a geometry column.
+	ColumnOptionSRID
 )
 
 var (
@@ -572,6 +579,8 @@ type ColumnOption struct {
 	ConstraintName      string
 	PrimaryKeyTp        PrimaryKeyType
 	SecondaryEngineAttr string
+	// SRID is only for ColumnOptionSRID.
+	SRID uint32
 }
 
 // Restore implements Node interface.
@@ -698,6 +707,9 @@ func (n *ColumnOption) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord("GENERATED ALWAYS AS ROW START")
 	case ColumnOptionMariaDBRowEnd:
 		ctx.WriteKeyWord("GENERATED ALWAYS AS ROW END")
+	case ColumnOptionSRID:
+		ctx.WriteKeyWord("SRID ")
+		ctx.WritePlainf("%d", n.SRID)
 	default:
 		return errors.New("An error occurred while splicing ColumnOption")
 	}
@@ -965,6 +977,8 @@ const (
 	// It will be rewritten into ConstraintColumnar after preprocessor phase.
 	ConstraintVector
 	ConstraintColumnar
+	// ConstraintSpatial is only used in AST. The preprocessor rejects it.
+	ConstraintSpatial
 )
 
 // Constraint is constraint for table definition.
@@ -1019,6 +1033,8 @@ func (n *Constraint) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord("UNIQUE INDEX")
 	case ConstraintFulltext:
 		ctx.WriteKeyWord("FULLTEXT")
+	case ConstraintSpatial:
+		ctx.WriteKeyWord("SPATIAL")
 	case ConstraintCheck:
 		if n.Name != "" {
 			ctx.WriteKeyWord("CONSTRAINT ")

@@ -200,6 +200,8 @@ func (b *executorBuilder) build(p base.Plan) exec.Executor {
 	switch v := p.(type) {
 	case nil:
 		return nil
+	case *physicalop.PhysicalCalcFoundRows:
+		return b.buildCalcFoundRows(v)
 	case *plannercore.CheckTable:
 		return b.buildCheckTable(v)
 	case *plannercore.RecoverIndex:
@@ -861,6 +863,20 @@ func (b *executorBuilder) buildSelectLock(v *physicalop.PhysicalLock) exec.Execu
 	return e
 }
 
+func (b *executorBuilder) buildCalcFoundRows(v *physicalop.PhysicalCalcFoundRows) exec.Executor {
+	data := b.build(v.Children()[0])
+	if b.err != nil {
+		return nil
+	}
+	count := b.build(v.Children()[1])
+	if b.err != nil {
+		return nil
+	}
+	return &CalcFoundRowsExec{
+		BaseExecutor: exec.NewBaseExecutor(b.sctx, v.Schema(), v.ID(), data, count),
+	}
+}
+
 func (b *executorBuilder) buildLimit(v *physicalop.PhysicalLimit) exec.Executor {
 	childExec := b.build(v.Children()[0])
 	if b.err != nil {
@@ -933,10 +949,16 @@ func (b *executorBuilder) attachAdaptiveLimitController(
 	if indexLookup == nil {
 		return
 	}
-	controller := exec.NewAdaptiveLimitLookupController(b.buildAdaptiveLimitConfig(
-		limitPlan.Offset+limitPlan.Count,
-		indexLookup,
-	))
+	config := b.buildAdaptiveLimitConfig(limitPlan.Offset+limitPlan.Count, indexLookup)
+	if indexLookup.indexPaging {
+		vars := b.sctx.GetSessionVars()
+		batchFloor := min(uint64(vars.InitChunkSize), config.MaxLookupBatchSize)
+		if config.InitialLookupBatchSize < batchFloor {
+			config.NoOutputLookupBatchSize = batchFloor
+			config.NoOutputLookupWindow = batchFloor * uint64(vars.IndexLookupConcurrency())
+		}
+	}
+	controller := exec.NewAdaptiveLimitLookupController(config)
 	indexLookup.adaptiveLimitController = controller
 	indexLookup.reportAdaptiveLimitStats = true
 	limitExec.adaptiveLimitController = controller
@@ -1127,6 +1149,7 @@ func (b *executorBuilder) buildShow(v *physicalop.PhysicalShow) exec.Executor {
 		Extended:              v.Extended,
 		Extractor:             v.Extractor,
 		ImportJobID:           v.ImportJobID,
+		RawImportJob:          v.RawImportJob,
 		DistributionJobID:     v.DistributionJobID,
 		ImportGroupKey:        v.ImportGroupKey,
 	}
@@ -2888,7 +2911,8 @@ func (b *executorBuilder) buildMemTable(v *physicalop.PhysicalMemTable) exec.Exe
 			strings.ToLower(infoschema.TableTiDBPlanCache),
 			strings.ToLower(infoschema.ClusterTableTiDBPlanCache),
 			strings.ToLower(infoschema.ClusterTableTiDBIndexUsage),
-			strings.ToLower(infoschema.TableKeyspaceMeta):
+			strings.ToLower(infoschema.TableKeyspaceMeta),
+			strings.ToLower(infoschema.TableSchemataExtensions):
 			memTracker := memory.NewTracker(v.ID(), -1)
 			memTracker.AttachTo(b.sctx.GetSessionVars().StmtCtx.MemTracker)
 			return &MemTableReaderExec{
