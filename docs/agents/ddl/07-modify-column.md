@@ -32,7 +32,7 @@ Job execution (owner worker):
 
 Modify-column behavior is driven by `args.ModifyColumnType`:
 
-- Selection logic: `pkg/ddl/modify_column.go:getModifyColumnType`
+- Selection logic: `pkg/ddl/modify_column.go:adjustModifyColumnType`
 - Fast-path predicate: `pkg/ddl/modify_column_change.go:noReorgDataStrict` (strong check: “no reorg no matter what data is”)
 
 Submission and initial execution both call `analyzeModifyColumn` in
@@ -47,7 +47,7 @@ integer ranges ignore display width; DECIMAL requires identical precision/scale;
 ENUM/SET preserve member ordinals; BINARY length changes require padding changes;
 vector dimensions must match unless the target is unconstrained. String range
 and padding rules live in `classifyStringValues`. Each family returns metadata-only,
-validation-only, or row rewrite directly. The classifier handles the
+validation-only, or row rewrite directly using the existing `model.ModifyType*` constants. The classifier handles the
 indexed CHAR-to-VARCHAR exception separately, then checks index key/restored-data
 encoding through `needIndexReorg`. These are conservative storage rules, not a
 complete SQL conversion support matrix; `checkModifyTypes` still validates support.
@@ -65,20 +65,20 @@ jobs without this marker retain their existing behavior; the legacy V1 positiona
 encoding is unchanged.
 
 Job compatibility, SQL mode, partition/TiFlash and statistics restrictions remain
-in `getModifyColumnType` and can force a more conservative execution path.
+in `adjustModifyColumnType` and can force a more conservative execution path.
 
-High-level rules (read `getModifyColumnType` for the exact gates):
+High-level rules (read `adjustModifyColumnType` for the exact gates):
 
 - If `noReorgDataStrict(...)` is true:
   - Not NULL → NULL? / type range superset, etc. → `ModifyTypeNoReorg`
   - NULL → NOT NULL → `ModifyTypeNoReorgWithCheck` (requires validating existing rows)
 - Otherwise:
-  - Partitioned tables / TiFlash replica → force `ModifyTypeReorg` (see the `FIXME` gate in `getModifyColumnType`)
+  - Partitioned tables / TiFlash replica → force `ModifyTypeReorg` (see the `FIXME` gate in `adjustModifyColumnType`)
   - Non-strict SQL mode → `ModifyTypeReorg`
-  - If row rewrite is required → `ModifyTypeReorg` (`columnChangeRow`)
+  - If row rewrite is required → `ModifyTypeReorg`
   - Else:
     - No related indexes or index rewrite not needed → `ModifyTypeNoReorgWithCheck`
-    - Index rewrite needed → `ModifyTypeIndexReorg` (`columnChangeIndex`)
+    - Index rewrite needed → `ModifyTypeIndexReorg`
 
 Special-case: `VARCHAR` → `CHAR` may start as `ModifyTypePrecheck` and then “downgrade” to a no-reorg type if data is safe:
 
@@ -129,7 +129,7 @@ doc-level rule simple and use the code as the source of truth:
 
 This gate decides whether the modify is allowed at all. If it is allowed,
 partitioned tables still follow the normal modify-column flow, and
-`getModifyColumnType` still conservatively routes partitioned tables to
+`adjustModifyColumnType` still conservatively routes partitioned tables to
 `ModifyTypeReorg`.
 
 ## No-reorg paths (metadata-only / metadata+check)
@@ -248,8 +248,8 @@ nullability, default/comment, and pruning regressions)
 
 ## Common pitfalls checklist
 
-- Partitioned table / TiFlash replica paths are conservatively forced into full reorg (`getModifyColumnType`); don’t assume “fast path” applies.
+- Partitioned table / TiFlash replica paths are conservatively forced into full reorg (`adjustModifyColumnType`); don’t assume “fast path” applies.
 - Partition-column modify has an extra allowlist plus partition-definition revalidation; if you change allowed cases, update `checkPartitionColumnModifiable` and the partition regression matrix together.
 - Forgetting to persist mid-flight identifiers (changing column/index IDs) → job can’t resume after retry/owner transfer.
 - Missing schema-sync boundary between state transitions → other nodes may apply incompatible DML rules.
-- Job args compatibility: `ModifyColumnType` and args decoding must remain backward compatible (`getModifyColumnType`’s compat comments).
+- Job args compatibility: `ModifyColumnType` and args decoding must remain backward compatible (`adjustModifyColumnType`’s compat comments).

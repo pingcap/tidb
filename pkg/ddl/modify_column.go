@@ -83,24 +83,17 @@ func clearModifyColumnTempFlags(col *model.ColumnInfo) {
 	col.ChangingFieldType = nil
 }
 
-// getModifyColumnType gets the modify column type.
-//  1. ModifyTypeNoReorg: The range of new type is a superset of the old type
-//  2. ModifyTypeNoReorgWithCheck: The range of new type is a subset of the old type, but we are running in strict SQL mode.
-//     And there is no index on this column.
-//     The difference between ModifyTypeNoReorgWithCheck and ModifyTypeNoReorg is that we need some additional checks.
-//  3. ModifyTypeIndexReorg: The range of new type is a subset of the old type, and there are indexes on this column.
-//  4. ModifyTypeReorg: other
-//
-// We need to ensure it's compatible with job submitted from older version of TiDB.
-func getModifyColumnType(
+// adjustModifyColumnType applies nullability checks and execution restrictions to
+// the conversion classification. Restrictions may require a more conservative path.
+func adjustModifyColumnType(
 	args *model.ModifyColumnArgs,
 	tblInfo *model.TableInfo,
 	oldCol *model.ColumnInfo,
 	sqlMode mysql.SQLMode,
-	change columnChange,
+	modifyType byte,
 ) byte {
 	newCol := args.Column
-	if change == columnChangeMetadata {
+	if modifyType == model.ModifyTypeNoReorg {
 		// It's not NULL->NOTNULL change
 		if !isNullToNotNullChange(oldCol, newCol) {
 			return model.ModifyTypeNoReorg
@@ -138,14 +131,7 @@ func getModifyColumnType(
 		return model.ModifyTypeReorg
 	}
 
-	if change == columnChangeRow {
-		return model.ModifyTypeReorg
-	}
-
-	if change != columnChangeIndex {
-		return model.ModifyTypeNoReorgWithCheck
-	}
-	return model.ModifyTypeIndexReorg
+	return modifyType
 }
 
 func getChangingCol(
@@ -292,7 +278,7 @@ func (w *worker) onModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, 
 			return ver, errors.Trace(analyzeErr)
 		}
 
-		args.ModifyColumnType = getModifyColumnType(args, tblInfo, oldCol, job.SQLMode, change)
+		args.ModifyColumnType = adjustModifyColumnType(args, tblInfo, oldCol, job.SQLMode, change)
 		logutil.DDLLogger().Info("get type for modify column",
 			zap.String("query", job.Query),
 			zap.String("oldColumnName", args.OldColumnName.L),
@@ -980,7 +966,8 @@ func (w *worker) precheckForVarcharToChar(
 	// If existing data is in range, we continue running without row reorg.
 	// The flag is retained, so string with trailing spaces still can't be inserted.
 	if err == nil {
-		args.ModifyColumnType = getModifyColumnType(args, tblInfo, oldCol, job.SQLMode, classifyColumnChange(tblInfo, oldCol, newCol))
+		modifyType := classifyColumnChange(tblInfo, oldCol, newCol)
+		args.ModifyColumnType = adjustModifyColumnType(args, tblInfo, oldCol, job.SQLMode, modifyType)
 		logutil.DDLLogger().Info("precheck done, change modify type",
 			zap.String("query", job.Query),
 			zap.String("oldColumnName", args.OldColumnName.L),
@@ -2273,7 +2260,7 @@ func GetModifiableColumnJob(
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	mayNeedChangeColData := change != columnChangeMetadata
+	mayNeedChangeColData := change != model.ModifyTypeNoReorg
 	if err := validateMaterializedViewBaseModifyColumn(ctx, is, t, col.ColumnInfo, newCol.ColumnInfo, spec, mayNeedChangeColData); err != nil {
 		return nil, errors.Trace(err)
 	}
