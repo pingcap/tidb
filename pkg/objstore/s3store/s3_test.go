@@ -1216,89 +1216,6 @@ func (r *closeCountingReader) Close() error {
 	return r.ReadCloser.Close()
 }
 
-type delayedCloseReader struct {
-	io.ReadCloser
-	closeStarted chan struct{}
-	closeRelease chan struct{}
-}
-
-func (r *delayedCloseReader) Close() error {
-	close(r.closeStarted)
-	<-r.closeRelease
-	return r.ReadCloser.Close()
-}
-
-func TestS3ReaderReadDuringClose(t *testing.T) {
-	for _, prefetchSize := range []int{0, 16} {
-		t.Run(fmt.Sprintf("prefetch=%d", prefetchSize), func(t *testing.T) {
-			s := CreateS3Suite(t)
-			body := &delayedCloseReader{
-				ReadCloser:   io.NopCloser(strings.NewReader("test")),
-				closeStarted: make(chan struct{}),
-				closeRelease: make(chan struct{}),
-			}
-			s.MockS3.EXPECT().GetObject(gomock.Any(), gomock.Any(), gomock.Any()).
-				Return(&s3.GetObjectOutput{Body: body, ContentLength: aws.Int64(4)}, nil)
-			reader, err := s.Storage.Open(context.Background(), "test", &storeapi.ReaderOption{PrefetchSize: prefetchSize})
-			require.NoError(t, err)
-			closeDone := make(chan error, 1)
-			readDone := make(chan struct{})
-			go func() { closeDone <- reader.Close() }()
-			defer func() {
-				close(body.closeRelease)
-				require.NoError(t, <-closeDone)
-				<-readDone
-				require.NoError(t, reader.Close())
-				_, err := reader.Read(make([]byte, 1))
-				require.ErrorIs(t, err, io.ErrClosedPipe)
-			}()
-			<-body.closeStarted
-
-			var n int
-			var readErr error
-			go func() {
-				n, readErr = reader.Read(make([]byte, 1))
-				close(readDone)
-			}()
-			select {
-			case <-readDone:
-				require.Zero(t, n)
-				require.ErrorIs(t, readErr, io.ErrClosedPipe)
-			case <-time.After(5 * time.Second):
-				t.Fatal("Read waited for the underlying reader's Close to finish")
-			}
-		})
-	}
-}
-
-func BenchmarkS3ReaderRead(b *testing.B) {
-	for _, size := range []int{1, 32, 4096} {
-		b.Run(fmt.Sprintf("bytes=%d", size), func(b *testing.B) {
-			mockS3 := mock.NewMockS3API(gomock.NewController(b))
-			data := make([]byte, size)
-			body := bytes.NewReader(data)
-			mockS3.EXPECT().GetObject(gomock.Any(), gomock.Any(), gomock.Any()).
-				Return(&s3.GetObjectOutput{Body: io.NopCloser(body), ContentLength: aws.Int64(int64(b.N) * int64(size))}, nil)
-			storage := NewS3StorageForTest(mockS3, &backuppb.S3{Bucket: "bucket"}, nil)
-			reader, err := storage.Open(context.Background(), "test", nil)
-			require.NoError(b, err)
-			defer reader.Close()
-			buf := make([]byte, size)
-			b.SetBytes(int64(size))
-			b.ReportAllocs()
-			b.ResetTimer()
-			for range b.N {
-				// Reuse the source buffer to measure read overhead without network I/O or reopening.
-				body.Reset(data)
-				n, err := reader.Read(buf)
-				if err != nil || n != len(buf) {
-					b.Fatalf("Read returned (%d, %v)", n, err)
-				}
-			}
-		})
-	}
-}
-
 func TestS3CompressedReaderCloseDuringRetry(t *testing.T) {
 	for _, prefetchSize := range []int{0, 16} {
 		t.Run(fmt.Sprintf("prefetch=%d", prefetchSize), func(t *testing.T) {
@@ -1359,116 +1276,134 @@ func TestS3CompressedReaderCloseDuringRetry(t *testing.T) {
 	}
 }
 
-func TestS3ReaderCloseDuringRetry(t *testing.T) {
-	for _, prefetchSize := range []int{0, 16} {
-		for _, timing := range []string{"before retry", "during open", "after replacement", "retry success"} {
-			t.Run(fmt.Sprintf("prefetch=%d/%s", prefetchSize, timing), func(t *testing.T) {
-				synctest.Test(t, func(t *testing.T) {
-					s := CreateS3Suite(t)
-					ctx := context.Background()
-					pipeReader, pipeWriter := io.Pipe()
-					defer pipeReader.Close()
-					defer pipeWriter.Close()
-					initial := &closeCountingReader{ReadCloser: io.NopCloser(alwaysFailReader{})}
-					replacement := &closeCountingReader{ReadCloser: io.NopCloser(strings.NewReader("replacement data"))}
-					if timing == "before retry" {
-						initial.ReadCloser = pipeReader
-					} else if timing == "after replacement" {
-						replacement.ReadCloser = pipeReader
-					}
-					defer initial.ReadCloser.Close()
-					defer replacement.ReadCloser.Close()
-					resumeOpen := make(chan struct{})
-					openCount := 0
-					s.MockS3.EXPECT().GetObject(gomock.Any(), gomock.Any(), gomock.Any()).
-						DoAndReturn(func(context.Context, *s3.GetObjectInput, ...func(*s3.Options)) (*s3.GetObjectOutput, error) {
-							openCount++
-							var body io.ReadCloser = io.NopCloser(strings.NewReader("unexpected retry"))
-							switch openCount {
-							case 1:
-								body = initial
-							case 2:
-								if timing == "during open" {
-									<-resumeOpen
-								}
-								body = replacement
-							}
-							return &s3.GetObjectOutput{Body: body, ContentLength: aws.Int64(16)}, nil
-						}).AnyTimes()
-					reader, err := s.Storage.Open(ctx, "test", &storeapi.ReaderOption{PrefetchSize: prefetchSize})
-					require.NoError(t, err)
-					defer reader.Close()
-					resume := sync.OnceFunc(func() { close(resumeOpen) })
-					defer resume()
-					readDone := make(chan error, 1)
-					go func() {
-						_, err := reader.Read(make([]byte, 1))
-						readDone <- err
-					}()
-					// Wait for Read to block on the source or on the retry's GetObject.
-					synctest.Wait()
-					if timing != "retry success" {
-						require.NoError(t, reader.Close())
-					}
-					resume()
-					synctest.Wait()
-					if timing == "retry success" {
-						require.NoError(t, <-readDone)
-						require.NoError(t, reader.Close())
-					} else {
-						require.ErrorIs(t, <-readDone, io.ErrClosedPipe)
-					}
-					require.NoError(t, ctx.Err())
-					require.EqualValues(t, 1, initial.closeCount.Load())
-					if timing == "before retry" {
-						require.Equal(t, 1, openCount)
-						require.Zero(t, replacement.closeCount.Load())
-					} else {
-						require.Equal(t, 2, openCount)
-						require.EqualValues(t, 1, replacement.closeCount.Load())
-					}
-				})
-			})
-		}
-	}
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
 }
 
-func TestS3ReaderCloseDuringSeek(t *testing.T) {
+type observedHTTPBody struct {
+	io.ReadCloser
+	readStarted func()
+	readDone    chan<- error
+}
+
+func (r *observedHTTPBody) Read(p []byte) (int, error) {
+	r.readStarted()
+	n, err := r.ReadCloser.Read(p)
+	select {
+	case r.readDone <- err:
+	default:
+	}
+	return n, err
+}
+
+func TestS3CompressedReaderCloseDuringRead(t *testing.T) {
 	for _, prefetchSize := range []int{0, 16} {
 		t.Run(fmt.Sprintf("prefetch=%d", prefetchSize), func(t *testing.T) {
-			synctest.Test(t, func(t *testing.T) {
-				s := CreateS3Suite(t)
-				ctx := context.Background()
-				initial := &closeCountingReader{ReadCloser: io.NopCloser(strings.NewReader("initial data"))}
-				replacement := &closeCountingReader{ReadCloser: io.NopCloser(strings.NewReader("replacement data"))}
-				resumeOpen := make(chan struct{})
-				first := s.MockS3.EXPECT().GetObject(gomock.Any(), gomock.Any(), gomock.Any()).
-					Return(&s3.GetObjectOutput{Body: initial, ContentLength: aws.Int64(12)}, nil)
-				s.MockS3.EXPECT().GetObject(gomock.Any(), gomock.Any(), gomock.Any()).After(first).
-					DoAndReturn(func(context.Context, *s3.GetObjectInput, ...func(*s3.Options)) (*s3.GetObjectOutput, error) {
-						<-resumeOpen
-						return &s3.GetObjectOutput{Body: replacement, ContentLength: aws.Int64(16)}, nil
-					})
-				reader, err := s.Storage.Open(ctx, "test", &storeapi.ReaderOption{PrefetchSize: prefetchSize})
-				require.NoError(t, err)
-				defer reader.Close()
-				resume := sync.OnceFunc(func() { close(resumeOpen) })
-				defer resume()
-				_, err = reader.Read(make([]byte, 1))
-				require.NoError(t, err)
-				seekDone := make(chan error, 1)
-				go func() {
-					_, err := reader.Seek(0, io.SeekStart)
-					seekDone <- err
-				}()
-				synctest.Wait()
-				require.NoError(t, reader.Close())
-				resume()
-				synctest.Wait()
-				require.ErrorIs(t, <-seekDone, io.ErrClosedPipe)
-				require.EqualValues(t, 1, initial.closeCount.Load())
-				require.EqualValues(t, 1, replacement.closeCount.Load())
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			requestDone := make(chan error, 1)
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				// Open must receive the headers, but every body Read must wait for cancellation.
+				w.Header().Set("Content-Length", "16")
+				w.WriteHeader(http.StatusOK)
+				if err := http.NewResponseController(w).Flush(); err != nil {
+					t.Errorf("flush response headers: %v", err)
+					return
+				}
+				<-r.Context().Done()
+				select {
+				case requestDone <- r.Context().Err():
+				default:
+				}
+			}))
+			defer func() {
+				cancel()
+				server.CloseClientConnections()
+				server.Close()
+			}()
+
+			readStarted := make(chan struct{})
+			readDone := make(chan error, 1)
+			notifyReadStarted := sync.OnceFunc(func() { close(readStarted) })
+			httpClient := server.Client()
+			transport := httpClient.Transport
+			httpClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+				response, err := transport.RoundTrip(req)
+				if err == nil {
+					response.Body = &observedHTTPBody{
+						ReadCloser:  response.Body,
+						readStarted: notifyReadStarted,
+						readDone:    readDone,
+					}
+				}
+				return response, err
 			})
+			storage, err := NewS3Storage(ctx, &backuppb.S3{
+				Endpoint:        server.URL,
+				Region:          "us-west-2",
+				Bucket:          "bucket",
+				AccessKey:       "none",
+				SecretAccessKey: "none",
+				Provider:        "minio",
+				ForcePathStyle:  true,
+			}, &storeapi.Options{HTTPClient: httpClient})
+			require.NoError(t, err)
+			compressedStorage := WithCompression(storage, compressedio.Zstd, compressedio.DecompressConfig{ZStdDecodeConcurrency: 2})
+			reader, err := compressedStorage.Open(ctx, "test.zst", &storeapi.ReaderOption{PrefetchSize: prefetchSize})
+			require.NoError(t, err)
+			closeDone := make(chan struct{})
+			var closeErr error
+			startClose := sync.OnceFunc(func() {
+				go func() {
+					closeErr = reader.Close()
+					close(closeDone)
+				}()
+			})
+			defer func() {
+				// Force the HTTP read to finish even if Close failed to cancel it.
+				cancel()
+				server.CloseClientConnections()
+				startClose()
+				select {
+				case <-closeDone:
+				case <-time.After(5 * time.Second):
+					t.Error("compressed reader Close did not finish during cleanup")
+				}
+			}()
+
+			select {
+			case <-readStarted:
+			case <-time.After(5 * time.Second):
+				t.Fatal("compressed reader did not start reading the HTTP response body")
+			}
+			select {
+			case err := <-readDone:
+				t.Fatalf("HTTP response body Read finished before cancellation: %v", err)
+			default:
+			}
+			require.NoError(t, ctx.Err())
+			startClose()
+			select {
+			case <-closeDone:
+				require.NoError(t, closeErr)
+			case <-time.After(5 * time.Second):
+				t.Fatal("compressed reader Close is blocked on the HTTP response body")
+			}
+			select {
+			case err := <-readDone:
+				require.ErrorIs(t, err, context.Canceled)
+			default:
+				t.Fatal("compressed reader Close returned before the HTTP response body Read finished")
+			}
+			select {
+			case err := <-requestDone:
+				require.ErrorIs(t, err, context.Canceled)
+			case <-time.After(5 * time.Second):
+				t.Fatal("compressed reader Close did not cancel the HTTP request")
+			}
+			require.NoError(t, ctx.Err())
 		})
 	}
 }

@@ -36,7 +36,10 @@ type withCompression struct {
 	decompressCfg compressedio.DecompressConfig
 }
 
-// WithCompression returns an Storage with compress option
+// WithCompression returns a Storage with compression enabled. Closing a compressed
+// reader cancels its context, stops the decoder, and then closes the source.
+// With asynchronous decoding, inner must unblock pending reads when the context
+// passed to Open is canceled.
 func WithCompression(inner storeapi.Storage, compressionType compressedio.CompressType, cfg compressedio.DecompressConfig) storeapi.Storage {
 	if compressionType == compressedio.NoCompression {
 		return inner
@@ -115,7 +118,7 @@ type readerWithCancel struct {
 }
 
 func (r *readerWithCancel) Close() error {
-	// Interrupt backend retries before waiting for the source and decoder to close.
+	// Interrupt source reads and retries before waiting for the decoder to stop.
 	r.cancel()
 	return r.Reader.Close()
 }
@@ -134,7 +137,9 @@ type compressReader struct {
 // equals total bytes Read() if the decompress reader is used.
 // On success, closing the returned reader closes both the decoder and fileReader.
 // On failure, fileReader remains the caller's responsibility.
-// With asynchronous decoding, fileReader.Close must interrupt pending Read calls.
+// With asynchronous decoding, the caller must interrupt pending source reads
+// (for example, by canceling their context) before closing the returned reader.
+// Close waits for the decoder to stop before closing fileReader.
 func InterceptDecompressReader(
 	fileReader objectio.Reader,
 	compressType compressedio.CompressType,
@@ -156,8 +161,8 @@ func InterceptDecompressReader(
 }
 
 // NewLimitedInterceptReader creates a decompress reader with limit n.
-// With asynchronous decoding, fileReader.Close must interrupt pending Read calls,
-// as required by InterceptDecompressReader.
+// With asynchronous decoding, the caller must interrupt pending source reads
+// before Close, as required by InterceptDecompressReader.
 func NewLimitedInterceptReader(
 	fileReader objectio.Reader,
 	compressType compressedio.CompressType,
@@ -186,12 +191,12 @@ func (c *compressReader) Seek(offset int64, whence int) (int64, error) {
 }
 
 func (c *compressReader) Close() error {
-	// Unblock pending source reads before waiting for decoder workers to stop.
-	err := c.Closer.Close()
+	// The decoder exclusively owns source reads until its workers have stopped.
+	var err error
 	if c.decoder != nil {
-		err = multierr.Append(err, c.decoder.Close())
+		err = c.decoder.Close()
 	}
-	return err
+	return multierr.Append(err, c.Closer.Close())
 }
 
 func (c *compressReader) GetFileSize() (int64, error) {

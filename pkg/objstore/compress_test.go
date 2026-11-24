@@ -69,7 +69,15 @@ type compressionTestReader struct {
 	*bytes.Reader
 	closeCount int
 	closeErr   error
+	onRead     func([]byte) (int, error)
 	onClose    func()
+}
+
+func (r *compressionTestReader) Read(p []byte) (int, error) {
+	if r.onRead != nil {
+		return r.onRead(p)
+	}
+	return r.Reader.Read(p)
 }
 
 func (r *compressionTestReader) Close() error {
@@ -123,6 +131,34 @@ func TestWithCompressionOpenCleanup(t *testing.T) {
 }
 
 func TestWithCompressionOpenCancellation(t *testing.T) {
+	t.Run("close waits for canceled read", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			releaseRead := make(chan struct{})
+			source := &compressionTestReader{}
+			inner := &compressionTestStorage{reader: source}
+			source.onRead = func([]byte) (int, error) {
+				<-inner.openCtx.Done()
+				<-releaseRead
+				return 0, inner.openCtx.Err()
+			}
+			storage := WithCompression(inner, compressedio.Zstd, compressedio.DecompressConfig{ZStdDecodeConcurrency: 2})
+			reader, err := storage.Open(context.Background(), "test.zst", nil)
+			require.NoError(t, err)
+			// Let the decoder block in the source Read before initiating shutdown.
+			synctest.Wait()
+			closeDone := make(chan error, 1)
+			go func() { closeDone <- reader.Close() }()
+			defer func() {
+				close(releaseRead)
+				require.NoError(t, <-closeDone)
+				require.Equal(t, 1, source.closeCount)
+			}()
+			synctest.Wait()
+			require.ErrorIs(t, inner.openCtx.Err(), context.Canceled)
+			require.Zero(t, source.closeCount, "source closed before the canceled decoder read returned")
+		})
+	})
+
 	t.Run("open failure", func(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
@@ -256,6 +292,9 @@ func TestInterceptDecompressReaderClose(t *testing.T) {
 				require.NoError(t, err)
 				// Wait until the decoder worker is blocked reading from the open pipe.
 				synctest.Wait()
+				// Direct wrapping does not own a cancellation function. Interrupt the
+				// source before Close waits for the decoder to finish reading it.
+				require.NoError(t, pipeWriter.CloseWithError(context.Canceled))
 				require.NoError(t, reader.Close())
 				_, err = reader.Read(make([]byte, 1))
 				require.ErrorIs(t, err, zstd.ErrDecoderClosed)
