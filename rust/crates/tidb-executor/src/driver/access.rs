@@ -28,10 +28,9 @@
 //! and the cap is offered last, after the residual `WHERE` is known, because
 //! a residual filter above the source forbids one.
 //!
-use super::plan_cache::{PhysicalPlanCacheKey, SessionPlanCache};
+use super::plan_cache::SessionPlanCache;
 use super::*;
 pub use tidb_planner::plan_cache_utils::{PlanCacheStmtInfo, PreparedPlanCacheEnvironment};
-pub(crate) use tidb_planner::plan_cache_utils::{PreparedParameterType, prepared_parameter_types_compatible};
 use std::sync::Arc;
 
 
@@ -39,20 +38,10 @@ use std::sync::Arc;
 /// complete physical operator tree and rebuilds its ranges on a cache hit.
 #[derive(Debug)]
 pub struct PreparedSelectPlan {
-    current_database: String,
+    /// Go `PlanCacheStmt`.
+    stmt: tidb_planner::plan_cache::PlanCacheStmt,
+    /// The qualified tables the statement reads, for MDL.
     table_names: Vec<(String, String)>,
-    // Retain folded keys alongside the original names exposed for MDL.
-    table_keys: Vec<CatalogTableKey>,
-    /// The tables whose statistics versions key a cache entry (Go
-    /// `PlanCacheStmt.tables`), when `tidb_plan_cache_invalidation_on_fresh_stats`
-    /// is on.
-    stats_table_keys: Vec<CatalogTableKey>,
-    parameter_count: usize,
-    limit_parameter_orders: Vec<usize>,
-    stmt_info: PlanCacheStmtInfo,
-    statement: tidb_ast::Stmt,
-    cache_key: String,
-    last_limit_values: std::sync::Mutex<Vec<u64>>,
     contains_sequence_functions: bool,
 }
 
@@ -81,10 +70,10 @@ impl PreparedSelectPlan {
     #[must_use]
     pub fn with_non_prepared_stats_tables(mut self) -> Self {
         let mut names = Vec::new();
-        if let tidb_ast::Stmt::Query(query) = &self.statement {
+        if let tidb_ast::Stmt::Query(query) = &self.stmt.statement {
             collect_prepared_table_names(query, "", &mut names);
         }
-        self.stats_table_keys = names
+        self.stmt.stats_table_keys = names
             .iter()
             .map(|(database, table)| CatalogTableKey::new(database, table))
             .collect();
@@ -94,7 +83,7 @@ impl PreparedSelectPlan {
     /// Retain Go's original/parameterized SQL identity alongside PREPARE input.
     #[must_use]
     pub fn with_sql(mut self, sql: &str) -> Self {
-        self.cache_key = super::plan_cache::statement_key(&self.current_database, sql);
+        self.stmt.set_sql(sql);
         self
     }
 
@@ -106,25 +95,13 @@ impl PreparedSelectPlan {
         catalog: &SessionExtendedInfoSchema,
         environment: &PreparedPlanCacheEnvironment,
     ) {
-        cache.delete(&PhysicalPlanCacheKey {
-            statement: self.cache_key.clone(),
-            schema_version: catalog.schema_version(),
-            stats_version_hash: self.stats_version_hash(catalog, environment),
-            environment: environment.clone(),
-            limit_values: self
-                .last_limit_values
-                .lock()
-                .expect("prepared limits poisoned")
-                .clone(),
-            dirty_tables: Vec::new(),
-            relate_version: super::plan_cache::relate_versions(catalog, &self.table_keys),
-        });
+        self.stmt.discard_cached_plan(cache, catalog, environment);
     }
 
     /// The immutable statement retained at PREPARE time.
     #[must_use]
     pub const fn statement(&self) -> &tidb_ast::Stmt {
-        &self.statement
+        &self.stmt.statement
     }
 
     /// Qualified table names read by this plan, for transaction MDL tracking.
@@ -162,7 +139,7 @@ impl PreparedSelectPlan {
             ctx,
             &ctx.staged_writes().dirty_table_ids(),
             environment,
-            &self.statement,
+            &self.stmt.statement,
         )
         .ok()
         .flatten()
@@ -217,7 +194,7 @@ impl PreparedSelectPlan {
             current_database,
             dirty_ids,
             environment,
-            &self.statement,
+            &self.stmt.statement,
         )
     }
 
@@ -259,150 +236,53 @@ impl PreparedSelectPlan {
         environment: &PreparedPlanCacheEnvironment,
         statement: &tidb_ast::Stmt,
     ) -> Result<Option<PreparedSelectExecution>, DriverError> {
-        if !super::plan_cache::tables_cacheable(catalog, &self.table_keys) {
-            return Ok(None);
-        }
         // Go keys the entry by `PlanCacheStmt.StmtDB`, the PREPARE-time
-        // database its table names were pinned to (`self.cache_key`), so a
-        // `USE` between EXECUTEs keeps it; a non-prepared key names the
-        // current database itself.
+        // database its table names were pinned to, so a `USE` between
+        // EXECUTEs keeps it; a non-prepared key names the current database.
         if !matches!(statement, tidb_ast::Stmt::Query(_)) {
             return Ok(None);
         }
-        let parameter_types: Arc<[PreparedParameterType]> =
-            values.iter().map(PreparedParameterType::of).collect();
-        let limit_values = self
-            .limit_parameter_orders
-            .iter()
-            .map(|order| match values.get(*order) {
-                Some(Datum::Int(value)) if (0..=10_000).contains(value) => Some(*value as u64),
-                Some(Datum::UInt(value)) if *value <= 10_000 => Some(*value),
-                _ => None,
-            })
-            .collect::<Option<Vec<_>>>();
-        let Some(limit_values) = limit_values else {
-            return Ok(None);
-        };
-        let Ok(mut last_limit_values) = self.last_limit_values.lock() else {
-            return Ok(None);
-        };
-        last_limit_values.clone_from(&limit_values);
-        drop(last_limit_values);
-        let schema_version = catalog.schema_version();
-        let stats_version_hash = self.stats_version_hash(catalog, environment);
-        let cache_key = PhysicalPlanCacheKey {
-            statement: self.cache_key.clone(),
-            schema_version,
-            stats_version_hash,
-            environment: environment.clone(),
-            limit_values,
-            dirty_tables: super::plan_cache::dirty_statement_tables(catalog, &self.table_keys, dirty_ids),
-            relate_version: super::plan_cache::relate_versions(catalog, &self.table_keys),
-        };
-        let refusal = environment.refusal(self.stmt_info);
-        let admitted = refusal.is_none();
-        let cached = admitted.then(|| cache.get(&cache_key, &parameter_types)).flatten();
-        // Go `GetPlanFromPlanCache` refuses with `SetSkipPlanCache`, which
-        // warns why.
-        if let (Some(reason), Some(ctx)) = (refusal, ctx) {
-            ctx.start_prepared_range_tracking();
-            ctx.set_skip_plan_cache(reason);
-        }
-        if cached.is_none() && ctx.is_none() {
-            return Ok(None);
-        }
-        let parameters: Arc<[Datum]> = Arc::from(values);
-        let rebound = match cached {
-            Some(plan) => {
-                let Ok(mut guard) = plan.lock() else {
-                    return Ok(None);
-                };
-                let generation = guard.bind(values, ctx);
-                drop(guard);
-                match generation {
-                    Ok(generation) => Some((plan, generation)),
-                    // Every hit rebuilds each range from its access
-                    // conditions, so a partially rebuilt entry is safe to
-                    // keep, as Go keeps it.
-                    Err(failure) if failure.replan(ctx) => None,
-                    // A context-free lookup leaves the entry for the bind
-                    // that carries the statement.
-                    Err(_) => return Ok(None),
-                }
-            }
-            None => None,
-        };
-        let (cached_plan, generation, cache_hit) = match rebound {
-            Some((plan, generation)) => (plan, generation, true),
-            None => {
-                let Some(ctx) = ctx else {
-                    return Ok(None);
-                };
-                let ctx = ctx.clone().with_prepared_params(Arc::clone(&parameters));
-                let Ok(statement) = crate::bind_prepared_statement(statement, values) else {
-                    return Ok(None);
-                };
+        let parameter_count = self.stmt.parameter_count;
+        let Some(found) = self.stmt.get_plan_from_plan_cache(
+            cache,
+            values,
+            catalog,
+            ctx,
+            dirty_ids,
+            environment,
+            statement,
+            |bound, ctx| {
                 // Go `GetPlanFromPlanCache` enables the cache before
                 // `generateNewPlan` optimizes, so the LIKE fallback's
                 // `SetSkipPlanCache` over a parameter warns on this statement.
                 ctx.start_prepared_range_tracking();
-                let tidb_ast::Stmt::Query(query) = statement else {
+                let tidb_ast::Stmt::Query(query) = bound else {
                     return Ok(None);
                 };
-                let query = query.into_inner();
-                let Some((mut plan, cacheable)) = super::planner_bridge::cached_query_plan(&crate::driver::planner_bridge::driver_hooks(catalog), &query,
+                super::planner_bridge::cached_query_plan(
+                    &super::planner_bridge::driver_hooks(catalog),
+                    &query.into_inner(),
                     catalog,
                     current_database,
-                    &ctx,
-                    environment.plan_cacheability(self.parameter_count),
-                )?
-                else {
-                    return Ok(None);
-                };
-                // A rejected cache candidate still executes its already-bound plan.
-                let cacheable = cacheable && admitted;
-                // Go `generateNewPlan` caches the tree it just optimized
-                // without rebuilding it; a rebuild this tree cannot pass
-                // (a prefix column keeps its filter) fails on the next hit
-                // instead, which then replans.
-                let generation = if cacheable {
-                    plan.bind(values, Some(&ctx)).unwrap_or(0)
-                } else {
-                    0
-                };
-                let plan = Arc::new(std::sync::Mutex::new(plan));
-                if cacheable {
-                    cache.put(
-                        cache_key,
-                        parameter_types,
-                        Arc::clone(&plan),
-                    );
-                }
-                (plan, generation, false)
-            }
+                    ctx,
+                    environment.plan_cacheability(parameter_count),
+                )
+            },
+        )?
+        else {
+            return Ok(None);
         };
         Ok(Some(PreparedSelectExecution {
-            parameters,
+            parameters: found.parameters,
             plan: Arc::clone(self),
-            schema_version,
-            cache_hit,
-            cached_plan,
-            generation,
-            planning_warnings: std::sync::Mutex::new(if cache_hit {
-                Vec::new()
-            } else {
-                ctx.map_or_else(Vec::new, crate::StmtContext::take_warnings)
-            }),
+            schema_version: found.schema_version,
+            cache_hit: found.cache_hit,
+            cached_plan: found.cached_plan,
+            generation: found.generation,
+            planning_warnings: std::sync::Mutex::new(found.planning_warnings),
         }))
     }
 
-    fn stats_version_hash(
-        &self,
-        catalog: &SessionExtendedInfoSchema,
-        environment: &PreparedPlanCacheEnvironment,
-    ) -> u64 {
-        environment.stats_version_hash(catalog, &self.stats_table_keys)
-    }
 }
 
 
@@ -477,6 +357,7 @@ pub(crate) fn run_prepared_select_for_test(
     if execution.schema_version() != catalog.schema_version()
         || !execution
             .plan()
+            .stmt
             .current_database
             .eq_ignore_ascii_case(current_database)
     {
@@ -528,16 +409,18 @@ pub fn build_prepared_select_plan(
         .map(|(database, table)| CatalogTableKey::new(database, table))
         .collect();
     Some(PreparedSelectPlan {
-        current_database: current_database.to_owned(),
-        stats_table_keys: table_keys.clone(),
-        table_keys,
+        stmt: tidb_planner::plan_cache::PlanCacheStmt {
+            current_database: current_database.to_owned(),
+            stats_table_keys: table_keys.clone(),
+            table_keys,
+            parameter_count,
+            limit_parameter_orders,
+            stmt_info: PlanCacheStmtInfo::of(stmt),
+            statement: stmt.clone(),
+            last_limit_values: std::sync::Mutex::default(),
+            cache_key: super::plan_cache::statement_key(current_database, &stmt.restore()),
+        },
         table_names,
-        parameter_count,
-        limit_parameter_orders,
-        stmt_info: PlanCacheStmtInfo::of(stmt),
-        statement: stmt.clone(),
-        last_limit_values: std::sync::Mutex::default(),
-        cache_key: super::plan_cache::statement_key(current_database, &stmt.restore()),
         contains_sequence_functions: statement_contains_sequence_functions(stmt),
     })
 }

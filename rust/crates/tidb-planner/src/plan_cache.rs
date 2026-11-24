@@ -1014,3 +1014,231 @@ pub fn tables_cacheable(
 ) -> bool {
     keys.iter().all(|key| !matches!(catalog.get_by_key(key), Some(tidb_infoschema::TableEntry::Kv(table)) if table.temp_table_type() != tidb_model::TempTableType::NONE))
 }
+
+/// Go `PlanCacheStmt`: what PREPARE (or a non-prepared cache entry) keeps of
+/// a statement for the plan cache, whatever the statement is.
+#[derive(Debug)]
+pub struct PlanCacheStmt {
+    /// Go `PlanCacheStmt.StmtDB`: the database the statement's names were
+    /// pinned to.
+    pub current_database: String,
+    /// The tables the statement reads, folded.
+    pub table_keys: Vec<tidb_infoschema::CatalogTableKey>,
+    /// The tables whose statistics versions key a cache entry (Go
+    /// `PlanCacheStmt.tables`), when `tidb_plan_cache_invalidation_on_fresh_stats`
+    /// is on.
+    pub stats_table_keys: Vec<tidb_infoschema::CatalogTableKey>,
+    /// Go `len(PlanCacheStmt.Params)`.
+    pub parameter_count: usize,
+    /// The parameters a `LIMIT` reads (Go `PlanCacheStmt.limits`).
+    pub limit_parameter_orders: Vec<usize>,
+    /// What `planCacheStmtProcessor` recorded.
+    pub stmt_info: crate::plan_cache_utils::PlanCacheStmtInfo,
+    /// Go `PlanCacheStmt.PreparedAst`.
+    pub statement: Stmt,
+    /// The statement half of the entry's key (Go `StmtText` under `StmtDB`).
+    pub cache_key: String,
+    /// The `LIMIT` values of the last execution, which `DEALLOCATE` deletes
+    /// the entry under.
+    pub last_limit_values: std::sync::Mutex<Vec<u64>>,
+}
+
+/// What [`PlanCacheStmt::get_plan_from_plan_cache`] hands an execution: the
+/// entry it rebuilt or the plan `generateNewPlan` made.
+#[derive(Debug)]
+pub struct PlanFromCache {
+    /// This execution's parameter values.
+    pub parameters: std::sync::Arc<[Datum]>,
+    /// The plan, shared with the cache when it was admitted.
+    pub cached_plan: std::sync::Arc<std::sync::Mutex<CachedPlan>>,
+    /// The rebuild generation the execution may run.
+    pub generation: u64,
+    /// Go `SessionVars.FoundInPlanCache`.
+    pub cache_hit: bool,
+    /// The schema version the entry is keyed by.
+    pub schema_version: u64,
+    /// The warnings a cache miss's planning raised.
+    pub planning_warnings: Vec<tidb_context::SqlWarn>,
+}
+
+impl PlanCacheStmt {
+    /// Retains Go's original or parameterized SQL identity.
+    pub fn set_sql(&mut self, sql: &str) {
+        self.cache_key = statement_key(&self.current_database, sql);
+    }
+
+    /// The statistics version hash an entry of this statement is keyed by.
+    #[must_use]
+    pub fn stats_version_hash(
+        &self,
+        catalog: &SessionExtendedInfoSchema,
+        environment: &crate::plan_cache_utils::PreparedPlanCacheEnvironment,
+    ) -> u64 {
+        environment.stats_version_hash(catalog, &self.stats_table_keys)
+    }
+
+    /// Go `DEALLOCATE` / `COM_STMT_CLOSE`: the current environment's entry,
+    /// every parameter-type variant of it, is deleted.
+    pub fn discard_cached_plan(
+        &self,
+        cache: &SessionPlanCache,
+        catalog: &SessionExtendedInfoSchema,
+        environment: &crate::plan_cache_utils::PreparedPlanCacheEnvironment,
+    ) {
+        cache.delete(&PhysicalPlanCacheKey {
+            statement: self.cache_key.clone(),
+            schema_version: catalog.schema_version(),
+            stats_version_hash: self.stats_version_hash(catalog, environment),
+            environment: environment.clone(),
+            limit_values: self
+                .last_limit_values
+                .lock()
+                .expect("prepared limits poisoned")
+                .clone(),
+            dirty_tables: Vec::new(),
+            relate_version: relate_versions(catalog, &self.table_keys),
+        });
+    }
+
+    /// Go `GetPlanFromPlanCache` over `statement` (this one, or the one a
+    /// matched binding rewrote) with `values`: the cached entry rebuilt in
+    /// place (`RebuildPlan4CachedPlan`), else, given a statement context,
+    /// `generate_new_plan`'s plan over the bound statement, admitted to the
+    /// cache when it is cacheable. `None` when the statement cannot be served
+    /// from the cache (or, without a context, on a miss).
+    ///
+    /// # Errors
+    ///
+    /// `generate_new_plan`'s (Go `generateNewPlan`'s optimizer error).
+    #[allow(clippy::too_many_arguments)]
+    pub fn get_plan_from_plan_cache(
+        &self,
+        cache: &SessionPlanCache,
+        values: &[Datum],
+        catalog: &SessionExtendedInfoSchema,
+        ctx: Option<&StmtContext>,
+        dirty_ids: &[i64],
+        environment: &crate::plan_cache_utils::PreparedPlanCacheEnvironment,
+        statement: &Stmt,
+        generate_new_plan: impl FnOnce(
+            Stmt,
+            &StmtContext,
+        ) -> Result<Option<(CachedPlan, bool)>, DriverError>,
+    ) -> Result<Option<PlanFromCache>, DriverError> {
+        use std::sync::{Arc, Mutex};
+        if !tables_cacheable(catalog, &self.table_keys) {
+            return Ok(None);
+        }
+        let parameter_types: Arc<[PreparedParameterType]> =
+            values.iter().map(PreparedParameterType::of).collect();
+        let limit_values = self
+            .limit_parameter_orders
+            .iter()
+            .map(|order| match values.get(*order) {
+                Some(Datum::Int(value)) if (0..=10_000).contains(value) => Some(*value as u64),
+                Some(Datum::UInt(value)) if *value <= 10_000 => Some(*value),
+                _ => None,
+            })
+            .collect::<Option<Vec<_>>>();
+        let Some(limit_values) = limit_values else {
+            return Ok(None);
+        };
+        let Ok(mut last_limit_values) = self.last_limit_values.lock() else {
+            return Ok(None);
+        };
+        last_limit_values.clone_from(&limit_values);
+        drop(last_limit_values);
+        let schema_version = catalog.schema_version();
+        let cache_key = PhysicalPlanCacheKey {
+            statement: self.cache_key.clone(),
+            schema_version,
+            stats_version_hash: self.stats_version_hash(catalog, environment),
+            environment: environment.clone(),
+            limit_values,
+            dirty_tables: dirty_statement_tables(catalog, &self.table_keys, dirty_ids),
+            relate_version: relate_versions(catalog, &self.table_keys),
+        };
+        let refusal = environment.refusal(self.stmt_info);
+        let admitted = refusal.is_none();
+        let cached = admitted
+            .then(|| cache.get(&cache_key, &parameter_types))
+            .flatten();
+        // Go `GetPlanFromPlanCache` refuses with `SetSkipPlanCache`, which
+        // warns why.
+        if let (Some(reason), Some(ctx)) = (refusal, ctx) {
+            ctx.start_prepared_range_tracking();
+            ctx.set_skip_plan_cache(reason);
+        }
+        if cached.is_none() && ctx.is_none() {
+            return Ok(None);
+        }
+        let parameters: Arc<[Datum]> = Arc::from(values);
+        let rebound = match cached {
+            Some(plan) => {
+                let Ok(mut guard) = plan.lock() else {
+                    return Ok(None);
+                };
+                // An INSERT's expressions are the statement's, not the entry's.
+                if let PhysicalPlan::Dml(root) = guard.physical_mut() {
+                    root.insert_expressions = None;
+                }
+                let generation = guard.bind(values, ctx);
+                drop(guard);
+                match generation {
+                    Ok(generation) => Some((plan, generation)),
+                    // Every hit rebuilds each range from its access
+                    // conditions, so a partially rebuilt entry is safe to
+                    // keep, as Go keeps it.
+                    Err(failure) if failure.replan(ctx) => None,
+                    // A context-free lookup leaves the entry for the bind
+                    // that carries the statement.
+                    Err(_) => return Ok(None),
+                }
+            }
+            None => None,
+        };
+        let (cached_plan, generation, cache_hit) = match rebound {
+            Some((plan, generation)) => (plan, generation, true),
+            None => {
+                let Some(ctx) = ctx else {
+                    return Ok(None);
+                };
+                let ctx = ctx.clone().with_prepared_params(Arc::clone(&parameters));
+                let Ok(bound) = bind_prepared_statement(statement, values) else {
+                    return Ok(None);
+                };
+                let Some((mut plan, cacheable)) = generate_new_plan(bound, &ctx)? else {
+                    return Ok(None);
+                };
+                // A rejected cache candidate still executes its plan once.
+                let cacheable = cacheable && admitted;
+                // Go `generateNewPlan` caches the tree it just optimized
+                // without rebuilding it; a rebuild this tree cannot pass
+                // (a prefix column keeps its filter) fails on the next hit
+                // instead, which then replans.
+                let generation = if cacheable {
+                    plan.bind(values, Some(&ctx)).unwrap_or(0)
+                } else {
+                    0
+                };
+                let plan = Arc::new(Mutex::new(plan));
+                if cacheable {
+                    cache.put(cache_key, parameter_types, Arc::clone(&plan));
+                }
+                (plan, generation, false)
+            }
+        };
+        Ok(Some(PlanFromCache {
+            parameters,
+            cached_plan,
+            generation,
+            cache_hit,
+            schema_version,
+            planning_warnings: if cache_hit {
+                Vec::new()
+            } else {
+                ctx.map_or_else(Vec::new, StmtContext::take_warnings)
+            },
+        }))
+    }
+}
