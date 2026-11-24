@@ -1609,3 +1609,73 @@ func TestModifyColumnLoadTableRangeError(t *testing.T) {
 	tk.MustExec("alter table t change column b b varchar(16);")
 	tk.MustExec("admin check table t;")
 }
+
+func TestModifyColumnReorgScheduling(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	fastReorgEnabled := vardef.EnableFastReorg.Load()
+	tk.MustExec("set global tidb_ddl_enable_fast_reorg = on")
+	defer vardef.EnableFastReorg.Store(fastReorgEnabled)
+	for _, tc := range []struct {
+		name  string
+		drift bool
+		sql   string
+	}{
+		{"metadata", false, "alter table t modify column a decimal(10,2)"},
+		{"schemaDrift", true, "alter table t modify column a decimal(10,2)"},
+		{"rename", false, "alter table t rename column a to b"},
+		{"renameSchemaDrift", true, "alter table t rename column a to b"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tk.MustExec("drop table if exists t")
+			tk.MustExec("create table t (a decimal(10,2), key(a))")
+			tk.MustExec("insert into t values (1.23)")
+			// The target initially needs only a metadata change. Complete another
+			// DDL after that classification but before this job is submitted.
+			initialized := false
+			var fastReorg bool
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeInitReorgMeta", func(m *model.DDLReorgMeta) {
+				if initialized {
+					return
+				}
+				initialized = true
+				fastReorg = m.IsFastReorg
+				if tc.drift {
+					other := testkit.NewTestKit(t, store)
+					other.MustExec("alter table test.t modify column a decimal(12,3)")
+					other.MustExec("update test.t set a = 1.234")
+				}
+			})
+			var scheduledForReorg bool
+			var gotType byte
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
+				if job.Type == model.ActionModifyColumn && job.SchemaState == model.StateNone {
+					// NeedReorg is submission-only; scheduling reads the persisted SQL column.
+					other := testkit.NewTestKit(t, store)
+					rows := other.MustQuery(fmt.Sprintf("select reorg from mysql.tidb_ddl_job where job_id = %d", job.ID)).Rows()
+					scheduledForReorg = rows[0][0] == "1"
+				}
+			})
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/getModifyColumnType", func(tp byte) {
+				gotType = tp
+			})
+			tk.MustExec(tc.sql)
+			rename := strings.HasPrefix(tc.name, "rename")
+			require.Equal(t, !rename, scheduledForReorg)
+			require.Equal(t, !rename, fastReorg)
+			if tc.drift && !rename {
+				require.Equal(t, byte(model.ModifyTypeReorg), gotType)
+			} else {
+				require.Equal(t, byte(model.ModifyTypeNoReorg), gotType)
+			}
+			if tc.drift && rename {
+				tk.MustQuery("select b from t").Check(testkit.Rows("1.234"))
+				tk.MustQuery("select column_type from information_schema.columns where table_schema = 'test' and table_name = 't' and column_name = 'b'").Check(testkit.Rows("decimal(12,3)"))
+			} else {
+				tk.MustQuery("select * from t").Check(testkit.Rows("1.23"))
+			}
+			tk.MustExec("admin check table t")
+		})
+	}
+}

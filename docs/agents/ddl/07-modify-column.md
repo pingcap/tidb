@@ -52,6 +52,18 @@ indexed CHAR-to-VARCHAR exception separately, then checks index key/restored-dat
 encoding through `needIndexReorg`. These are conservative storage rules, not a
 complete SQL conversion support matrix; `checkModifyTypes` still validates support.
 
+New MODIFY/CHANGE COLUMN jobs set `NeedReorg=true`, including metadata-only changes,
+so scheduling and reorg settings do not rely on the submission snapshot. This also
+applies to MODIFY COLUMN sub-jobs in multi-schema changes. Initial execution still
+selects the actual conversion from current metadata; the flag does not force data
+rewriting. Lightweight modifications can therefore wait behind reorg jobs. Already
+queued jobs retain their stored scheduling flags.
+Pure RENAME COLUMN jobs retain general-pool scheduling. New V2 jobs carry a `RenameOnly` argument that
+causes execution to clone the current column definition and change only its name,
+so preceding DDL changes are not overwritten by the submission snapshot. Older
+jobs without this marker retain their existing behavior; the legacy V1 positional
+encoding is unchanged.
+
 Job compatibility, SQL mode, partition/TiFlash and statistics restrictions remain
 in `getModifyColumnType` and can force a more conservative execution path.
 

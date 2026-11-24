@@ -1920,6 +1920,9 @@ func GetFinishedModifyIndexArgs(job *Job) (*ModifyIndexArgs, error) {
 
 // ModifyColumnArgs is the argument for modify column.
 type ModifyColumnArgs struct {
+	// RenameOnly preserves the current column definition and changes only its name.
+	// It is persisted in V2 jobs; keep the legacy V1 positional encoding unchanged.
+	RenameOnly       bool                `json:"rename_only,omitempty"`
 	Column           *ColumnInfo         `json:"column,omitempty"`
 	OldColumnID      int64               `json:"old_column_id,omitempty"`
 	OldColumnName    ast.CIStr           `json:"old_column_name,omitempty"`

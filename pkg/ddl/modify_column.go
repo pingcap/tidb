@@ -255,6 +255,13 @@ func (w *worker) onModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, 
 		return ver, errors.Trace(err)
 	}
 
+	if args.RenameOnly {
+		// A preceding DDL may have changed the column since this rename was submitted.
+		newName := args.Column.Name
+		args.Column = oldCol.Clone()
+		args.Column.Name = newName
+	}
+
 	// Check index prefix length for the first time
 	if job.SchemaState == model.StateNone {
 		columns := getReplacedColumns(tblInfo, oldCol, args.Column)
@@ -2352,6 +2359,8 @@ func GetModifiableColumnJob(
 		return nil, dbterror.ErrBDRRestrictedDDL.FastGenByArgs(bdrRole)
 	}
 
+	// Earlier DDLs can change the source type before this job runs. Reserve
+	// reorg scheduling and settings; execution selects the actual conversion.
 	job := &model.Job{
 		Version:        model.GetJobVerInUse(),
 		SchemaID:       schema.ID,
@@ -2360,7 +2369,7 @@ func GetModifiableColumnJob(
 		TableName:      t.Meta().Name.L,
 		Type:           model.ActionModifyColumn,
 		BinlogInfo:     &model.HistoryInfo{},
-		NeedReorg:      mayNeedChangeColData,
+		NeedReorg:      true,
 		CDCWriteSource: sctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        sctx.GetSessionVars().SQLMode,
 		SessionVars:    make(map[string]string),
