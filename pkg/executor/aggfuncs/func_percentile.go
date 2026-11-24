@@ -62,6 +62,11 @@ func (*basePercentile) UpdatePartialResult(AggFuncUpdateContext, []chunk.Row, Pa
 	return
 }
 
+// MergePartialResult is a no-op because unsupported input types have no partial state.
+func (*basePercentile) MergePartialResult(AggFuncUpdateContext, PartialResult, PartialResult) (memDelta int64, err error) {
+	return
+}
+
 func (e *basePercentile) AppendFinalResult2Chunk(_ AggFuncUpdateContext, _ PartialResult, chk *chunk.Chunk) error {
 	chk.AppendNull(e.ordinal)
 	return nil
