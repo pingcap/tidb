@@ -17,6 +17,7 @@ package simplesst
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	goerrors "errors"
 	"fmt"
 	"io"
@@ -27,6 +28,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unsafe"
 
 	"github.com/docker/go-units"
 	"github.com/jfcg/sorty/v2"
@@ -219,6 +221,272 @@ func TestWriter(t *testing.T) {
 	}
 	require.Equal(t, uint64(kvCnt), keyCnt)
 	require.NoError(t, statReader.Close())
+}
+
+func TestWriterKeyHints(t *testing.T) {
+	require.Equal(t, uintptr(16), unsafe.Sizeof(condenseLocation{}))
+	require.Equal(t, uintptr(8), unsafe.Alignof(condenseLocation{}))
+
+	const autoRandomPrefix = "x\x00\x00\x01t\x80\x00\x00\x00\x00\x00\x00\x17_r"
+	makeAutoRandomKey := func(handle uint64) string {
+		var buf [len(autoRandomPrefix) + 8]byte
+		copy(buf[:], autoRandomPrefix)
+		binary.BigEndian.PutUint64(buf[len(autoRandomPrefix):], handle)
+		return string(buf[:])
+	}
+
+	for _, tc := range []struct {
+		name       string
+		keys       []string
+		prefix     string
+		exactHints bool
+		onDup      engineapi.OnDuplicateKey
+	}{
+		{
+			name:       "no-common-prefix",
+			keys:       []string{"z", "a", "m"},
+			exactHints: true,
+			onDup:      engineapi.OnDuplicateKeyError,
+		},
+		{
+			name:       "empty-key",
+			keys:       []string{"b", "", "a"},
+			exactHints: false,
+			onDup:      engineapi.OnDuplicateKeyError,
+		},
+		{
+			name: "short-suffixes-trailing-zero",
+			keys: []string{
+				"prefix/x\x00",
+				"prefix/x",
+				"prefix/x\x00\x00",
+				"prefix/x\x00\x00\x00\x00\x00\x00\x00\x00a",
+			},
+			prefix:     "prefix/x",
+			exactHints: false,
+			// Zero-padded hints for "x", "x\x00", and "x\x00\x00" collide at 0,
+			// so OnDuplicateKeyError verifies they still fall back to full key comparison.
+			onDup: engineapi.OnDuplicateKeyError,
+		},
+		{
+			name: "eight-byte-hint-collisions",
+			keys: []string{
+				"prefix/01234567z",
+				"prefix/01234567a",
+				"prefix/z",
+				"prefix/01234567m",
+			},
+			prefix:     "prefix/",
+			exactHints: false,
+			onDup:      engineapi.OnDuplicateKeyError,
+		},
+		{
+			name: "auto-random-int-handles",
+			keys: []string{
+				makeAutoRandomKey(0x80400000_05f5e0e4),
+				makeAutoRandomKey(0xffc00000_00000001),
+				makeAutoRandomKey(0x80400000_00000002),
+				makeAutoRandomKey(0xc0000000_00000010),
+				makeAutoRandomKey(0x80400000_000001d5),
+			},
+			prefix:     autoRandomPrefix,
+			exactHints: true,
+			onDup:      engineapi.OnDuplicateKeyError,
+		},
+		{
+			name: "exact-hint-duplicates-ignore",
+			keys: []string{
+				makeAutoRandomKey(0x80400000_00000003),
+				makeAutoRandomKey(0x80400000_00000001),
+				makeAutoRandomKey(0x80400000_00000001),
+				makeAutoRandomKey(0xffc00000_00000002),
+			},
+			prefix:     autoRandomPrefix,
+			exactHints: true,
+			onDup:      engineapi.OnDuplicateKeyIgnore,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			store := objstore.NewMemStorage()
+			var summary *WriterSummary
+			writer := NewWriterBuilder().
+				SetBlockSize(4096).
+				SetMemorySizeLimit(4096).
+				SetOnDup(tc.onDup).
+				SetOnCloseFunc(func(s *WriterSummary) { summary = s }).
+				Build(store, "/key-hints", "0")
+			var expectedSize uint64
+			for range 2 {
+				for _, key := range tc.keys {
+					require.NoError(t, writer.WriteRow(ctx, []byte(key), []byte("value:"+key), nil))
+					expectedSize += uint64(len(key)*2 + len("value:"))
+				}
+				require.Equal(t, tc.prefix, string(writer.commonPrefix))
+				// A failed flush may be followed by another flush during cleanup.
+				require.Equal(t, tc.exactHints, writer.updateKeyHints())
+				require.Equal(t, tc.exactHints, writer.updateKeyHints())
+				require.NoError(t, writer.flushKVs(ctx, false))
+				require.Empty(t, writer.commonPrefix)
+			}
+			require.NoError(t, writer.Close(ctx))
+			require.Equal(t, expectedSize, summary.TotalSize)
+			require.EqualValues(t, expectedSize, writer.WrittenBytes())
+			expectedKeys := slices.Clone(tc.keys)
+			slices.Sort(expectedKeys)
+			for _, files := range summary.MultipleFilesStats[0].Filenames {
+				reader, err := NewKVReader(ctx, files[0], store, 0, 1024)
+				require.NoError(t, err)
+				for _, expected := range expectedKeys {
+					key, value, err := reader.NextKV()
+					require.NoError(t, err)
+					require.Equal(t, expected, string(key))
+					require.Equal(t, "value:"+expected, string(value))
+				}
+				_, _, err = reader.NextKV()
+				require.ErrorIs(t, err, io.EOF)
+				require.NoError(t, reader.Close())
+			}
+		})
+	}
+
+	t.Run("exact-hint-duplicate-modes", func(t *testing.T) {
+		ctx := context.Background()
+		dupKeys := []string{
+			makeAutoRandomKey(0xffc00000_00000009),
+			makeAutoRandomKey(0x80400000_00000005),
+			makeAutoRandomKey(0x80400000_00000005),
+		}
+
+		errWriter := NewWriterBuilder().
+			SetBlockSize(4096).
+			SetMemorySizeLimit(4096).
+			SetOnDup(engineapi.OnDuplicateKeyError).
+			Build(objstore.NewMemStorage(), "/dup-err", "0")
+		defer errWriter.kvBuffer.Destroy()
+		for _, key := range dupKeys {
+			require.NoError(t, errWriter.WriteRow(ctx, []byte(key), []byte("v"), nil))
+		}
+		err := errWriter.flushKVs(ctx, false)
+		require.ErrorIs(t, err, common.ErrFoundDuplicateKeys)
+
+		var summary *WriterSummary
+		rmWriter := NewWriterBuilder().
+			SetBlockSize(4096).
+			SetMemorySizeLimit(4096).
+			SetOnDup(engineapi.OnDuplicateKeyRemove).
+			SetOnCloseFunc(func(s *WriterSummary) { summary = s }).
+			Build(objstore.NewMemStorage(), "/dup-rm", "0")
+		for _, key := range dupKeys {
+			require.NoError(t, rmWriter.WriteRow(ctx, []byte(key), []byte("v"), nil))
+		}
+		require.NoError(t, rmWriter.Close(ctx))
+		require.EqualValues(t, 1, summary.TotalCnt)
+		require.EqualValues(t, []byte(dupKeys[0]), summary.Min)
+		require.EqualValues(t, []byte(dupKeys[0]), summary.Max)
+
+		recStore := objstore.NewMemStorage()
+		recWriter := NewWriterBuilder().
+			SetBlockSize(4096).
+			SetMemorySizeLimit(4096).
+			SetOnDup(engineapi.OnDuplicateKeyRecord).
+			SetOnCloseFunc(func(s *WriterSummary) { summary = s }).
+			Build(recStore, "/dup-rec", "0")
+		for _, key := range append(slices.Clone(dupKeys), makeAutoRandomKey(0x80400000_00000005)) {
+			require.NoError(t, recWriter.WriteRow(ctx, []byte(key), []byte("v"), nil))
+		}
+		require.NoError(t, recWriter.Close(ctx))
+		require.EqualValues(t, 3, summary.TotalCnt)
+		require.EqualValues(t, 1, summary.ConflictInfo.Count)
+	})
+}
+
+func BenchmarkWriterSortAutoRandom(b *testing.B) {
+	const (
+		rowCount   = 65536
+		prefixStr  = "x\x00\x00\x01t\x80\x00\x00\x00\x00\x00\x00\x17_r"
+		shardCount = 32 // AUTO_RANDOM(5)
+	)
+	keys := make([][]byte, rowCount)
+	rng := rand.New(rand.NewSource(42))
+	for i := range rowCount {
+		shard := uint64(rng.Intn(shardCount))
+		handle := uint64(0x80000000_00000000) | (shard << 58) | uint64(i+1)
+		k := make([]byte, len(prefixStr)+8)
+		copy(k, prefixStr)
+		binary.BigEndian.PutUint64(k[len(prefixStr):], handle)
+		keys[i] = k
+	}
+	val := bytes.Repeat([]byte("v"), 64)
+
+	ctx := context.Background()
+	writer := NewWriterBuilder().
+		SetBlockSize(16*units.MiB).
+		SetMemorySizeLimit(64*units.MiB).
+		Build(objstore.NewMemStorage(), "/bench", "0")
+	defer func() {
+		writer.kvBuffer.Destroy()
+	}()
+	for _, k := range keys {
+		if err := writer.WriteRow(ctx, k, val, nil); err != nil {
+			b.Fatal(err)
+		}
+	}
+	origLocations := slices.Clone(writer.kvLocations)
+
+	b.Run("BaselineBytesCompare", func(b *testing.B) {
+		b.ReportAllocs()
+		b.ResetTimer()
+		for range b.N {
+			copy(writer.kvLocations, origLocations)
+			slices.SortFunc(writer.kvLocations, func(i, j condenseLocation) int {
+				return bytes.Compare(writer.getKeyByLoc(&i), writer.getKeyByLoc(&j))
+			})
+		}
+	})
+
+	b.Run("Uint32KeyHint", func(b *testing.B) {
+		prefixLen := len(writer.commonPrefix)
+		b.ReportAllocs()
+		b.ResetTimer()
+		for range b.N {
+			copy(writer.kvLocations, origLocations)
+			for idx, loc := range writer.kvLocations {
+				key := writer.getKeyByLoc(&loc)
+				writer.kvLocations[idx].keyHint = uint64(binary.BigEndian.Uint32(key[prefixLen:]))
+			}
+			slices.SortFunc(writer.kvLocations, func(i, j condenseLocation) int {
+				if i.keyHint != j.keyHint {
+					if i.keyHint < j.keyHint {
+						return -1
+					}
+					return 1
+				}
+				return bytes.Compare(writer.getKeyByLoc(&i)[prefixLen:], writer.getKeyByLoc(&j)[prefixLen:])
+			})
+		}
+	})
+
+	b.Run("Uint64ExactKeyHint", func(b *testing.B) {
+		b.ReportAllocs()
+		b.ResetTimer()
+		for range b.N {
+			copy(writer.kvLocations, origLocations)
+			exact := writer.updateKeyHints()
+			if !exact {
+				b.Fatal("expected exactHints for fixed-width AUTO_RANDOM keys")
+			}
+			slices.SortFunc(writer.kvLocations, func(i, j condenseLocation) int {
+				if i.keyHint < j.keyHint {
+					return -1
+				}
+				if i.keyHint > j.keyHint {
+					return 1
+				}
+				return 0
+			})
+		}
+	})
 }
 
 func TestWriterFlushMultiFileNames(t *testing.T) {
