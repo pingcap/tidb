@@ -90,10 +90,10 @@ pub struct PreparedStatement {
     pub cacheable: Result<(), String>,
     /// SELECT syntax and cache-key metadata. Physical entries belong to the
     /// session cache; hits rebuild its tree in place before execution.
-    pub select_plan: Option<std::sync::Arc<crate::PreparedSelectPlan>>,
+    pub select_plan: Option<std::sync::Arc<crate::PlanCacheStmt>>,
     /// INSERT/UPDATE/DELETE syntax and cache-key metadata. The ordinary DML
     /// executor consumes the physical root from the same session cache.
-    pub dml_plan: Option<std::sync::Arc<crate::PreparedDmlPlan>>,
+    pub dml_plan: Option<std::sync::Arc<crate::PlanCacheStmt>>,
     /// The marker orders that stand in a `LIMIT`, whose bound values Go admits
     /// only as a non-negative `int64` or a `uint64`
     /// (`CheckParamTypeInt64orUint64` / `getUintFromNode`). Captured: with

@@ -87,7 +87,7 @@ impl tidb_executor::compiler::CompilerSession for Session {
         Session::retrieving_memory_tables(self, ctx, run)
     }
 
-    fn release_prepared_plans(&self, select: Option<&tidb_executor::PreparedSelectPlan>, dml: Option<&tidb_executor::PreparedDmlPlan>) {
+    fn release_prepared_plans(&self, select: Option<&tidb_executor::PlanCacheStmt>, dml: Option<&tidb_executor::PlanCacheStmt>) {
         Session::release_prepared_plans(self, select, dml)
     }
 

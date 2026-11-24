@@ -769,7 +769,7 @@ pub fn generate_plan_cache_stmt_with_ast(
     stmt: &tidb_ast::Stmt,
     parameter_count: usize,
     current_database: &str,
-    table_names: &[(String, String)],
+    table_names: Vec<(String, String)>,
 ) -> crate::plan_cache::PlanCacheStmt {
     let table_keys: Vec<tidb_infoschema::CatalogTableKey> = table_names
         .iter()
@@ -785,5 +785,7 @@ pub fn generate_plan_cache_stmt_with_ast(
         statement: stmt.clone(),
         last_limit_values: std::sync::Mutex::default(),
         cache_key: crate::plan_cache::statement_key(current_database, &stmt.restore()),
+        table_names,
+        contains_sequence_functions: statement_contains_sequence_functions(stmt),
     }
 }

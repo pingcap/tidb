@@ -389,7 +389,7 @@ impl PreparedGeneral {
 
     /// The immutable prepared SELECT cache descriptor.
     #[must_use]
-    pub fn select_plan(&self) -> Option<std::sync::Arc<tidb_executor::PreparedSelectPlan>> {
+    pub fn select_plan(&self) -> Option<std::sync::Arc<tidb_executor::PlanCacheStmt>> {
         self.prepared_ast
             .as_ref()
             .and_then(crate::PreparedAst::select_plan)
@@ -397,7 +397,7 @@ impl PreparedGeneral {
 
     /// The immutable prepared DML plan.
     #[must_use]
-    pub fn dml_plan(&self) -> Option<std::sync::Arc<tidb_executor::PreparedDmlPlan>> {
+    pub fn dml_plan(&self) -> Option<std::sync::Arc<tidb_executor::PlanCacheStmt>> {
         self.prepared_ast
             .as_ref()
             .and_then(crate::PreparedAst::dml_plan)

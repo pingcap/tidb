@@ -19,7 +19,7 @@
 //! the `executor` package's `InsertExec` / `UpdateExec` / `DeleteExec`.
 
 use crate::WithStatementStore as _;
-pub use tidb_planner::plan_cache::{PreparedDmlExecution, PreparedDmlPlan, build_prepared_dml_plan};
+pub use tidb_planner::plan_cache::{PlanCacheExecution, PlanCacheStmt, build_prepared_dml_plan};
 pub(crate) use tidb_planner::dml_optimize::*;
 use crate::KvTableReader;
 use super::*;

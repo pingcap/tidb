@@ -205,8 +205,8 @@ pub(crate) use driver::access::run_prepared_select_for_test;
 pub use driver::plan_cache::{PlanCacheInvalidation, SessionPlanCache};
 pub use driver::{
     access::{
-        build_prepared_select_plan, PreparedPlanCacheEnvironment, PreparedSelectExecution,
-        PreparedSelectPlan,
+        build_prepared_select_plan, PreparedPlanCacheEnvironment, PlanCacheExecution,
+        PlanCacheStmt,
     },
     bind_parameters, bind_prepared_statement, bind_statement, bound_parameter_values,
     build_prepared_dml_plan, parameter_count, parsed_parameter_count,
@@ -216,7 +216,7 @@ pub use driver::{
     run_query_meta_stmt_with_physical, run_select, run_select_meta_in, run_select_meta_on,
     run_select_meta_stmt, run_select_meta_stmt_with_physical, run_select_on, run_set_opr_stmt,
     run_update_in, run_update_on, run_update_stmt, run_update_stmt_with_physical,
-    ImportSelectSource, PreparedDmlExecution, PreparedDmlPlan, SelectMeta,
+    ImportSelectSource, SelectMeta,
 };
 use tidb_infoschema::{SessionExtendedInfoSchema, TableEntry, ViewDef, DEFAULT_DATABASE};
 use tidb_executor_internal_exec::predicate_pushdown::PushedScanFilter;

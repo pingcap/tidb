@@ -28,7 +28,7 @@
 //! and the cap is offered last, after the residual `WHERE` is known, because
 //! a residual filter above the source forbids one.
 //!
-pub use tidb_planner::plan_cache::{PreparedSelectExecution, PreparedSelectPlan, build_prepared_select_plan};
+pub use tidb_planner::plan_cache::{PlanCacheExecution, PlanCacheStmt, build_prepared_select_plan};
 pub use tidb_planner::plan_cache_utils::{PlanCacheStmtInfo, PreparedPlanCacheEnvironment};
 #[cfg(test)]
 use super::*;
@@ -44,7 +44,7 @@ use super::*;
 
 #[cfg(test)]
 pub(crate) fn run_prepared_select_for_test(
-    execution: &PreparedSelectExecution,
+    execution: &PlanCacheExecution,
     catalog: &SessionExtendedInfoSchema,
     current_database: &str,
     ctx: &crate::StmtContext,

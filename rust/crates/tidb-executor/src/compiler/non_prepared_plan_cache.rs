@@ -18,7 +18,7 @@
 //! (`NonPreparedPlanCacheableWithCtx`, `isSelectStmtNonPrepCacheableFastCheck`,
 //! `extractTableNames`, and the `nonPreparedPlanCacheableChecker` visitor)
 //! plus Go `getPlanFromNonPreparedPlanCache`: literal parameterization creates
-//! one retained marker-bearing statement, and the same `PreparedSelectPlan`
+//! one retained marker-bearing statement, and the same `PlanCacheStmt`
 //! used by SQL/binary PREPARE uses the shared session physical-entry owner. Parameter types,
 //! schema/statistics versions, matched binding SQL, admission, recursive range
 //! rebuild, and executor construction therefore have one implementation.
@@ -27,7 +27,7 @@
 use super::*;
 use tidb_ast::Stmt;
 use tidb_charset::Collation;
-use crate::{PreparedDmlPlan, PreparedSelectPlan};
+use crate::PlanCacheStmt;
 use tidb_planner::plan_cacheable_checker::{get_param_sql_from_ast, parameterize_dml, ParameterizedSelect, Refusal, MAX_NUM_PARAM};
 use tidb_planner_core_metrics::get_non_prep_plan_cache_unsupported_counter;
 use tidb_kvcache::SimpleLruCache;
@@ -41,8 +41,8 @@ use tidb_kvcache::SimpleLruCache;
 /// use checks (`checkPreparedPriv`) before it binds a plan.
 #[derive(Clone)]
 pub enum NonPreparedPlan {
-    Select(std::sync::Arc<PreparedSelectPlan>, NonPreparedPrivileges),
-    Dml(std::sync::Arc<PreparedDmlPlan>, NonPreparedPrivileges),
+    Select(std::sync::Arc<PlanCacheStmt>, NonPreparedPrivileges),
+    Dml(std::sync::Arc<PlanCacheStmt>, NonPreparedPrivileges),
 }
 
 /// Go `PlanCacheStmt.VisitInfos` of a non-prepared plan-cache entry.
@@ -194,7 +194,7 @@ pub trait NonPreparedPlanCacheCompile: super::CompilerSession {
         parameterized: &ParameterizedSelect,
         effective_statement: &Stmt,
         binding_sql: Option<&str>,
-    ) -> Result<Option<(crate::PreparedDmlExecution, NonPreparedPrivileges)>, DriverError> {
+    ) -> Result<Option<(crate::PlanCacheExecution, NonPreparedPrivileges)>, DriverError> {
         if !self.non_prepared_plan_cache_allowed(effective_statement) {
             return Ok(None);
         }
@@ -248,12 +248,12 @@ pub trait NonPreparedPlanCacheCompile: super::CompilerSession {
     /// [`Self::bind_non_prepared_dml`]'s lookup or replan of the entry.
     fn bind_non_prepared_dml_plan(
         &mut self,
-        plan: &std::sync::Arc<PreparedDmlPlan>,
+        plan: &std::sync::Arc<PlanCacheStmt>,
         parameterized: &ParameterizedSelect,
         effective_statement: &Stmt,
         environment: &crate::PreparedPlanCacheEnvironment,
         lookup_start: std::time::Instant,
-    ) -> Option<crate::PreparedDmlExecution> {
+    ) -> Option<crate::PlanCacheExecution> {
         self.configure_session_plan_cache();
         {
             let catalog = self.lock_catalog().ok()?;
@@ -305,7 +305,7 @@ pub trait NonPreparedPlanCacheCompile: super::CompilerSession {
         parameterized: &ParameterizedSelect,
         effective_statement: &Stmt,
         binding_sql: Option<&str>,
-    ) -> Result<Option<crate::PreparedSelectExecution>, DriverError> {
+    ) -> Result<Option<crate::PlanCacheExecution>, DriverError> {
         self.bind_non_prepared_select_warning(parameterized, effective_statement, binding_sql, false)
     }
 
@@ -319,7 +319,7 @@ pub trait NonPreparedPlanCacheCompile: super::CompilerSession {
         effective_statement: &Stmt,
         binding_sql: Option<&str>,
         always_warn: bool,
-    ) -> Result<Option<crate::PreparedSelectExecution>, DriverError> {
+    ) -> Result<Option<crate::PlanCacheExecution>, DriverError> {
         if !self.non_prepared_plan_cache_allowed(effective_statement) {
             return Ok(None);
         }
@@ -381,13 +381,13 @@ pub trait NonPreparedPlanCacheCompile: super::CompilerSession {
     /// entry.
     fn bind_non_prepared_select_plan(
         &mut self,
-        plan: &std::sync::Arc<PreparedSelectPlan>,
+        plan: &std::sync::Arc<PlanCacheStmt>,
         parameterized: &ParameterizedSelect,
         effective_statement: &Stmt,
         environment: &crate::PreparedPlanCacheEnvironment,
         lookup_start: std::time::Instant,
         always_warn: bool,
-    ) -> Option<crate::PreparedSelectExecution> {
+    ) -> Option<crate::PlanCacheExecution> {
         self.configure_session_plan_cache();
         let observe = |start: std::time::Instant| {
             tidb_planner_core_metrics::get_plan_cache_lookup_duration(

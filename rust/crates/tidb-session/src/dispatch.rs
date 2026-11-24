@@ -950,7 +950,7 @@ impl Session {
     /// `checkPreparedPriv` on `PlanCacheStmt.VisitInfos`).
     pub fn execute_prepared_select_for(
         &mut self,
-        execution: &tidb_executor::PreparedSelectExecution,
+        execution: &tidb_executor::PlanCacheExecution,
         prepared: &crate::PreparedAst,
     ) -> Result<StmtOutput, DriverError> {
         self.execute_prepared_select(execution, prepared.sql(), prepared.privilege_requests())
@@ -958,7 +958,7 @@ impl Session {
 
     pub(crate) fn execute_prepared_select(
         &mut self,
-        execution: &tidb_executor::PreparedSelectExecution,
+        execution: &tidb_executor::PlanCacheExecution,
         sql: &str,
         privilege_requests: &[tidb_executor::table_privilege::TablePrivilegeRequest],
     ) -> Result<StmtOutput, DriverError> {
@@ -968,7 +968,7 @@ impl Session {
 
     pub(crate) fn execute_prepared_select_internal(
         &mut self,
-        execution: &tidb_executor::PreparedSelectExecution,
+        execution: &tidb_executor::PlanCacheExecution,
         sql: &str,
         privilege_requests: &[tidb_executor::table_privilege::TablePrivilegeRequest],
         capture_authority: bool,
@@ -983,7 +983,7 @@ impl Session {
     /// Opens the retained prepared plan without collecting its query results.
     pub fn execute_prepared_record_set_for<'a>(
         &'a mut self,
-        execution: &tidb_executor::PreparedSelectExecution,
+        execution: &tidb_executor::PlanCacheExecution,
         prepared: &crate::PreparedAst,
     ) -> Result<crate::StatementExecution<'a>, DriverError> {
         Ok(self
@@ -994,7 +994,7 @@ impl Session {
     /// Opens a cached SELECT for a front end that owns session teardown.
     pub fn open_prepared_record_set_for(
         &mut self,
-        execution: &tidb_executor::PreparedSelectExecution,
+        execution: &tidb_executor::PlanCacheExecution,
         prepared: &crate::PreparedAst,
     ) -> Result<crate::OpenedStatement, DriverError> {
         self.begin_statement_execution(prepared.sql())?;
@@ -1018,7 +1018,7 @@ impl Session {
     /// prepared SELECT pay the full compile cost again.
     fn open_cached_prepared_select(
         &mut self,
-        execution: &tidb_executor::PreparedSelectExecution,
+        execution: &tidb_executor::PlanCacheExecution,
         prepared: &crate::PreparedAst,
     ) -> Result<Option<PendingExecution>, DriverError> {
         let started = std::time::Instant::now();
@@ -1097,7 +1097,7 @@ impl Session {
 
     pub(crate) fn prepare_cached_select_execution(
         &mut self,
-        execution: &tidb_executor::PreparedSelectExecution,
+        execution: &tidb_executor::PlanCacheExecution,
         sql: &str,
         privilege_requests: &[tidb_executor::table_privilege::TablePrivilegeRequest],
     ) -> Result<PendingExecution, DriverError> {
@@ -1180,7 +1180,7 @@ impl Session {
     /// `ExecuteStmt`'s `ResetContextOfStmt`).
     pub fn execute_cached_prepared_dml_for(
         &mut self,
-        execution: &tidb_executor::PreparedDmlExecution,
+        execution: &tidb_executor::PlanCacheExecution,
         prepared: &crate::PreparedAst,
     ) -> Result<StmtOutput, DriverError> {
         self.run_with_columns_using(prepared.sql(), false, |session| {
@@ -1201,7 +1201,7 @@ impl Session {
     /// an EXECUTE's prepared statement under the EXECUTE's one `StmtCtx`.
     pub(crate) fn execute_cached_prepared_dml(
         &mut self,
-        execution: &tidb_executor::PreparedDmlExecution,
+        execution: &tidb_executor::PlanCacheExecution,
         sql: &str,
         privilege_requests: &[tidb_executor::table_privilege::TablePrivilegeRequest],
     ) -> Result<StmtOutput, DriverError> {

@@ -93,7 +93,7 @@ pub trait CompilerSession: crate::admin::AdminExec {
     /// statement, such as a staged catalog for a write.
     fn retrieving_memory_tables<T>(&mut self, ctx: &crate::StmtContext, run: impl FnMut(&mut Self) -> Result<T, DriverError>, ) -> Result<T, DriverError>;
     /// Session primitive.
-    fn release_prepared_plans(&self, select: Option<&crate::PreparedSelectPlan>, dml: Option<&crate::PreparedDmlPlan>);
+    fn release_prepared_plans(&self, select: Option<&crate::PlanCacheStmt>, dml: Option<&crate::PlanCacheStmt>);
     /// Resolves system-variable scope and visibility before shared planning.
     /// User-variable AST nodes remain intact so the rewriter can observe inline
     /// assignments' declared types in source order.

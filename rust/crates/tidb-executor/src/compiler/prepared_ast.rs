@@ -26,7 +26,7 @@ use std::sync::Arc;
 use tidb_ast::Stmt;
 use tidb_datatype::Datum;
 use crate::{
-    DriverError, PreparedDmlExecution, PreparedDmlPlan, PreparedSelectExecution, PreparedSelectPlan,
+    DriverError, PlanCacheExecution, PlanCacheStmt,
 };
 
 
@@ -42,8 +42,8 @@ pub struct PreparedAst {
     /// demands, derived once at PREPARE against the database current then
     /// and checked by every EXECUTE (`checkPreparedPriv`).
     privilege_requests: Arc<[crate::table_privilege::TablePrivilegeRequest]>,
-    dml_plan: Option<Arc<PreparedDmlPlan>>,
-    select_plan: Option<Arc<PreparedSelectPlan>>,
+    dml_plan: Option<Arc<PlanCacheStmt>>,
+    select_plan: Option<Arc<PlanCacheStmt>>,
     /// Go `PlanCacheStmt.StmtCacheable`: whether PREPARE found the statement
     /// cacheable; the cached plans above exist only while it holds.
     stmt_cacheable: bool,
@@ -65,8 +65,8 @@ impl PreparedAst {
         statement: Stmt,
         parameter_count: usize,
         privilege_requests: Vec<crate::table_privilege::TablePrivilegeRequest>,
-        dml_plan: Option<PreparedDmlPlan>,
-        select_plan: Option<PreparedSelectPlan>,
+        dml_plan: Option<PlanCacheStmt>,
+        select_plan: Option<PlanCacheStmt>,
         stmt_cacheable: bool,
     ) -> Self {
         Self {
@@ -146,14 +146,14 @@ impl PreparedAst {
 
     /// The immutable DML plan compiled while the statement was prepared.
     #[must_use]
-    pub fn dml_plan(&self) -> Option<Arc<PreparedDmlPlan>> {
+    pub fn dml_plan(&self) -> Option<Arc<PlanCacheStmt>> {
         self.dml_plan.clone()
     }
 
     /// The prepared SELECT descriptor whose full physical tree is generated
     /// on the first EXECUTE and rebuilt on later cache hits.
     #[must_use]
-    pub fn select_plan(&self) -> Option<Arc<PreparedSelectPlan>> {
+    pub fn select_plan(&self) -> Option<Arc<PlanCacheStmt>> {
         self.select_plan.clone()
     }
 
@@ -488,9 +488,9 @@ pub trait PreparedAstCompile: super::CompilerSession {
     /// cache, session-state, binding, fix-control, database, and schema gates.
     fn bind_cached_prepared_dml(
         &self,
-        plan: &Arc<PreparedDmlPlan>,
+        plan: &Arc<PlanCacheStmt>,
         values: &[Datum],
-    ) -> Option<PreparedDmlExecution> {
+    ) -> Option<PlanCacheExecution> {
         self.bind_cached_prepared_dml_for_statement(plan, values, plan.statement(), None)
             .ok()
             .flatten()
@@ -502,11 +502,11 @@ pub trait PreparedAstCompile: super::CompilerSession {
     /// A miss whose plan the optimizer refused (Go `generateNewPlan`).
     fn bind_cached_prepared_dml_for_statement(
         &self,
-        plan: &Arc<PreparedDmlPlan>,
+        plan: &Arc<PlanCacheStmt>,
         values: &[Datum],
         statement: &Stmt,
         binding_sql: Option<&str>,
-    ) -> Result<Option<PreparedDmlExecution>, GenerateNewPlanError> {
+    ) -> Result<Option<PlanCacheExecution>, GenerateNewPlanError> {
         if !self.session_vars().enable_prepared_plan_cache()
             || self
                 .session_vars()
@@ -589,9 +589,9 @@ pub trait PreparedAstCompile: super::CompilerSession {
     /// cache. A refusal returns the statement to ordinary planning.
     fn bind_cached_prepared_select(
         &self,
-        plan: &Arc<PreparedSelectPlan>,
+        plan: &Arc<PlanCacheStmt>,
         values: &[Datum],
-    ) -> Option<PreparedSelectExecution> {
+    ) -> Option<PlanCacheExecution> {
         self.bind_cached_prepared_select_for_statement(plan, values, plan.statement(), None)
             .ok()
             .flatten()
@@ -605,11 +605,11 @@ pub trait PreparedAstCompile: super::CompilerSession {
     /// A miss whose plan the optimizer refused (Go `generateNewPlan`).
     fn bind_cached_prepared_select_for_statement(
         &self,
-        plan: &Arc<PreparedSelectPlan>,
+        plan: &Arc<PlanCacheStmt>,
         values: &[Datum],
         statement: &Stmt,
         binding_sql: Option<&str>,
-    ) -> Result<Option<PreparedSelectExecution>, GenerateNewPlanError> {
+    ) -> Result<Option<PlanCacheExecution>, GenerateNewPlanError> {
         if !self.session_vars().enable_prepared_plan_cache()
             || self
                 .session_vars()

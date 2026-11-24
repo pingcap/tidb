@@ -60,8 +60,8 @@ impl Session {
 
     pub(crate) fn release_prepared_plans(
         &self,
-        select: Option<&tidb_executor::PreparedSelectPlan>,
-        dml: Option<&tidb_executor::PreparedDmlPlan>,
+        select: Option<&tidb_executor::PlanCacheStmt>,
+        dml: Option<&tidb_executor::PlanCacheStmt>,
     ) {
         if !self.vars.enable_prepared_plan_cache()
             || self.session_bool("tidb_ignore_prepared_cache_close_stmt", false)
