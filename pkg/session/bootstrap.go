@@ -805,6 +805,27 @@ const (
         status varchar(128),
         description text,
         primary key(module, name))`
+
+	// CreateMaskingPolicyTable stores column masking policy metadata.
+	CreateMaskingPolicyTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_masking_policy (
+		policy_id bigint(64) NOT NULL AUTO_INCREMENT,
+		policy_name varchar(64) NOT NULL,
+		db_name varchar(64) NOT NULL,
+		table_name varchar(64) NOT NULL,
+		table_id bigint(64) NOT NULL,
+		column_name varchar(64) NOT NULL,
+		column_id bigint(64) NOT NULL,
+		expression text NOT NULL,
+		status varchar(16) NOT NULL,
+		masking_type varchar(32) NOT NULL,
+		restrict_on varchar(256) NOT NULL DEFAULT 'NONE',
+		created_at datetime(6) NOT NULL,
+		updated_at datetime(6) NOT NULL,
+		created_by varchar(288) NOT NULL DEFAULT '',
+		PRIMARY KEY(policy_id),
+		UNIQUE KEY uk_table_policy(table_id, policy_name),
+		UNIQUE KEY uk_table_column(table_id, column_id)
+	)`
 )
 
 // CreateTimers is a table to store all timers for tidb
@@ -1327,10 +1348,13 @@ const (
 	// targets would collide).
 	version233 = 233
 
-	// version 234
+	// version234 creates the column masking policy system table.
+	version234 = 234
+
+	// version 235
 	// Add ndv_rate to mysql.analyze_options and keep sampled NDV off on
 	// upgraded clusters.
-	version234 = 234
+	version235 = 235
 
 	// ...
 	// [version231, version238] is the version range reserved for patches of 8.5.x
@@ -1341,7 +1365,7 @@ const (
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version234
+var currentBootstrapVersion int64 = version235
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1531,6 +1555,7 @@ var (
 		upgradeToVer232,
 		upgradeToVer233,
 		upgradeToVer234,
+		upgradeToVer235,
 	}
 )
 
@@ -3576,17 +3601,6 @@ func upgradeToVer233(s sessiontypes.Session, ver int64) {
 	initGlobalVariableIfNotExists(s, variable.TiDBEnableAdaptiveLimitScan, variable.Off)
 }
 
-func upgradeToVer234(s sessiontypes.Session, ver int64) {
-	if ver >= version234 {
-		return
-	}
-
-	doReentrantDDL(s, "ALTER TABLE mysql.analyze_options ADD COLUMN IF NOT EXISTS ndv_rate DOUBLE NOT NULL DEFAULT -1")
-	// Keep sampled NDV off on upgraded clusters: old TiDB cannot read sampled
-	// sketches, so it is turned on only after every node is upgraded.
-	initGlobalVariableIfNotExists(s, variable.TiDBAnalyzeSampledNDVThreshold, 0)
-}
-
 // initGlobalVariableIfNotExists initialize a global variable with specific val if it does not exist.
 func initGlobalVariableIfNotExists(s sessiontypes.Session, name string, val any) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
@@ -3743,6 +3757,8 @@ func doDDLWorks(s sessiontypes.Session) {
 	// by bg-cpu-throttle-threshold and fg-cpu-throttle-threshold.
 	mustExecute(s, "ALTER RESOURCE GROUP %n BACKGROUND=(TASK_TYPES=%?)",
 		resourcegroup.DefaultResourceGroupName, kv.InternalTxnStats)
+	// create mysql.tidb_masking_policy
+	mustExecute(s, CreateMaskingPolicyTable)
 }
 
 // doBootstrapSQLFile executes SQL commands in a file as the last stage of bootstrap.
@@ -3910,4 +3926,22 @@ func rebuildAllPartitionValueMapAndSorted(ctx context.Context, s *session) {
 			}
 		}
 	}
+}
+
+func upgradeToVer234(s sessiontypes.Session, ver int64) {
+	if ver >= version234 {
+		return
+	}
+	doReentrantDDL(s, CreateMaskingPolicyTable)
+}
+
+func upgradeToVer235(s sessiontypes.Session, ver int64) {
+	if ver >= version235 {
+		return
+	}
+
+	doReentrantDDL(s, "ALTER TABLE mysql.analyze_options ADD COLUMN IF NOT EXISTS ndv_rate DOUBLE NOT NULL DEFAULT -1")
+	// Keep sampled NDV off on upgraded clusters: old TiDB cannot read sampled
+	// sketches, so it is turned on only after every node is upgraded.
+	initGlobalVariableIfNotExists(s, variable.TiDBAnalyzeSampledNDVThreshold, 0)
 }

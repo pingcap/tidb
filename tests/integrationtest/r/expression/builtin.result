@@ -1582,7 +1582,7 @@ Error 1690 (22003): BIGINT UNSIGNED value is out of range in '(92233720368547758
 select 1 / '2007' div 1;
 1 / '2007' div 1
 0
-set sql_mode=default
+set sql_mode=default;
 DROP TABLE IF EXISTS table_string;
 CREATE TABLE table_string(a CHAR(20), b VARCHAR(20), c TINYTEXT, d TEXT(20), e MEDIUMTEXT, f LONGTEXT, g BIGINT);
 INSERT INTO table_string (a, b, c, d, e, f, g) VALUES ('a', 'b', 'c', 'd', 'e', 'f', 2);
@@ -3393,3 +3393,32 @@ SELECT UTC_TIMESTAMP(2147483647);
 Error 1426 (42000): Too-big precision 2147483647 specified for 'utc_timestamp'. Maximum is 6.
 SELECT UTC_TIMESTAMP(2147483648);
 Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use
+select mask_full('abc'), mask_full(cast('2012-01-02' as date)), mask_full(cast('2012-01-02 03:04:05' as datetime)), mask_full(cast('03:04:05' as time)), mask_full(cast('2012' as year));
+mask_full('abc')	mask_full(cast('2012-01-02' as date))	mask_full(cast('2012-01-02 03:04:05' as datetime))	mask_full(cast('03:04:05' as time))	mask_full(cast('2012' as year))
+XXX	1970-01-01	1970-01-01 00:00:00	00:00:00	0000
+select mask_null('abc'), mask_null(cast('2012-01-02' as date)), mask_null(cast('03:04:05' as time)), mask_null(cast('2012' as year));
+mask_null('abc')	mask_null(cast('2012-01-02' as date))	mask_null(cast('03:04:05' as time))	mask_null(cast('2012' as year))
+NULL	NULL	NULL	NULL
+drop table if exists t_mask_blob_clob;
+create table t_mask_blob_clob(c longtext, b longblob, b2 longblob);
+insert into t_mask_blob_clob values('secret', x'31323334', x'616263');
+select mask_full(c), hex(mask_full(b)), mask_null(b2) is null from t_mask_blob_clob;
+mask_full(c)	hex(mask_full(b))	mask_null(b2) is null
+XXXXXX	58585858	1
+drop table if exists t_mask_blob_clob;
+select mask_partial('abcdef',1,2,'*'), mask_partial('abcdef',10,0,'*'), mask_partial('abcdef',1,5,'*');
+mask_partial('abcdef',1,2,'*')	mask_partial('abcdef',10,0,'*')	mask_partial('abcdef',1,5,'*')
+a***ef	abcdef	abcdef
+select mask_partial('中文abcd',1,1,'*');
+mask_partial('中文abcd',1,1,'*')
+中****d
+select mask_partial('abc',1,2,'**');
+Error 1210 (HY000): Incorrect arguments to mask_partial
+select mask_partial('abc',-1,2,'*');
+Error 1210 (HY000): Incorrect arguments to mask_partial
+select mask_date(cast('2012-01-02' as date), '2020-12-31'), mask_date(cast('2012-01-02 03:04:05' as datetime), '2020-12-31');
+mask_date(cast('2012-01-02' as date), '2020-12-31')	mask_date(cast('2012-01-02 03:04:05' as datetime), '2020-12-31')
+2020-12-31	2020-12-31 00:00:00
+select mask_date(cast('2012-01-02' as date), '2020-1-2');
+mask_date(cast('2012-01-02' as date), '2020-1-2')
+2020-01-02

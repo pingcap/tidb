@@ -2635,10 +2635,11 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) exec.Ex
 				BaseExecutor: exec.NewBaseExecutor(b.sctx, v.Schema(), v.ID()),
 				table:        v.Table,
 				retriever: &memtableRetriever{
-					table:      v.Table,
-					columns:    v.Columns,
-					extractor:  v.Extractor,
-					memTracker: memTracker,
+					table:        v.Table,
+					columns:      v.Columns,
+					extractor:    v.Extractor,
+					memTracker:   memTracker,
+					historicalIS: historicalStmtInfoSchema(b.sctx, b.is),
 				},
 			}
 		case strings.ToLower(infoschema.TableTiDBTrx),
@@ -5832,6 +5833,7 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 		handles:            handles,
 		idxVals:            plan.IndexValues,
 		partitionNames:     plan.PartitionNames,
+		MaskingExprs:       plan.MaskingExprs,
 	}
 
 	e.snapshot, err = b.getSnapshot()

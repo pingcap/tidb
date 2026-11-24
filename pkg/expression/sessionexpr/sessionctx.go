@@ -217,12 +217,12 @@ func (ctx *EvalContext) Location() *time.Location {
 
 // AppendWarning append warnings to the context.
 func (ctx *EvalContext) AppendWarning(err error) {
-	ctx.sctx.GetSessionVars().StmtCtx.AppendWarning(err)
+	ctx.sctx.GetSessionVars().StmtCtx.EvalWarnAppender().AppendWarning(err)
 }
 
 // AppendNote appends notes to the context.
 func (ctx *EvalContext) AppendNote(err error) {
-	ctx.sctx.GetSessionVars().StmtCtx.AppendNote(err)
+	ctx.sctx.GetSessionVars().StmtCtx.EvalWarnAppender().AppendNote(err)
 }
 
 // WarningCount gets warning count.
@@ -257,7 +257,7 @@ func (ctx *EvalContext) GetMaxAllowedPacket() uint64 {
 
 // GetTiDBRedactLog returns the value of the 'tidb_redact_log' system variable.
 func (ctx *EvalContext) GetTiDBRedactLog() string {
-	return ctx.sctx.GetSessionVars().EnableRedactLog
+	return ctx.sctx.GetSessionVars().PlanRedactLog()
 }
 
 // GetDefaultWeekFormatMode returns the value of the 'default_week_format' system variable.

@@ -249,7 +249,26 @@ func disableStatsOwner(t *testing.T, se sessiontypes.Session) {
 	MustExec(t, se, "set global tidb_enable_stats_owner=off")
 }
 
+func TestDDLBootstrapPreservesStatsOwnerSetting(t *testing.T) {
+	for _, initial := range []bool{true, false} {
+		t.Run(fmt.Sprint(initial), func(t *testing.T) {
+			old := config.GetGlobalConfig().Instance.TiDBEnableStatsOwner.Swap(initial)
+			t.Cleanup(func() { config.GetGlobalConfig().Instance.TiDBEnableStatsOwner.Store(old) })
+			t.Run("backfill", TestDDLTableCreateBackfillTable)
+			require.Equal(t, initial, config.GetGlobalConfig().Instance.TiDBEnableStatsOwner.Load())
+			t.Run("notifier", TestDDLTableCreateDDLNotifierTable)
+			require.Equal(t, initial, config.GetGlobalConfig().Instance.TiDBEnableStatsOwner.Load())
+		})
+	}
+}
+
 func TestDDLTableCreateBackfillTable(t *testing.T) {
+	// The notifier must not poll its system table while this test recreates it.
+	enableStatsOwner := config.GetGlobalConfig().Instance.TiDBEnableStatsOwner.Swap(false)
+	// Registered before disableStatsOwner, so it runs after that helper's
+	// cleanup, which would otherwise leave the swapped value behind.
+	t.Cleanup(func() { config.GetGlobalConfig().Instance.TiDBEnableStatsOwner.Store(enableStatsOwner) })
+
 	store, dom := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
 	se := CreateSessionAndSetID(t, store)
@@ -283,6 +302,12 @@ func TestDDLTableCreateBackfillTable(t *testing.T) {
 }
 
 func TestDDLTableCreateDDLNotifierTable(t *testing.T) {
+	// The notifier must not poll its system table while this test recreates it.
+	enableStatsOwner := config.GetGlobalConfig().Instance.TiDBEnableStatsOwner.Swap(false)
+	// Registered before disableStatsOwner, so it runs after that helper's
+	// cleanup, which would otherwise leave the swapped value behind.
+	t.Cleanup(func() { config.GetGlobalConfig().Instance.TiDBEnableStatsOwner.Store(enableStatsOwner) })
+
 	store, dom := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
 	se := CreateSessionAndSetID(t, store)
@@ -3094,7 +3119,7 @@ func TestUpgradeToVer233AddsRestoreRouteIdentity(t *testing.T) {
 	require.Equal(t, upgradedSchema, restoreRegistrySchema(t, seAgain))
 }
 
-func TestUpgradeToVer234AddsNDVRate(t *testing.T) {
+func TestUpgradeToVer235AddsNDVRate(t *testing.T) {
 	ctx := context.Background()
 	store, dom := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
@@ -3113,10 +3138,10 @@ func TestUpgradeToVer234AddsNDVRate(t *testing.T) {
 	// Initial bootstrap uses the new-cluster policy, and the upgrade keeps an
 	// existing value.
 	require.Equal(t, "100000000", threshold(se))
-	upgradeToVer234(se, version233)
+	upgradeToVer235(se, version234)
 	require.Equal(t, "100000000", threshold(se))
 
-	// Simulate a cluster before version234. It has no ndv_rate column yet, and
+	// Simulate a cluster before version235. It has no ndv_rate column yet, and
 	// its saved options must not gain a rate.
 	MustExec(t, se, "alter table mysql.analyze_options drop column ndv_rate")
 	MustExec(t, se, "insert into mysql.analyze_options (table_id) values (1)")
@@ -3126,8 +3151,8 @@ func TestUpgradeToVer234AddsNDVRate(t *testing.T) {
 	))
 	txn, err := store.Begin()
 	require.NoError(t, err)
-	require.NoError(t, meta.NewMutator(txn).FinishBootstrap(int64(version233)))
-	revertVersionAndVariables(t, se, version233)
+	require.NoError(t, meta.NewMutator(txn).FinishBootstrap(int64(version234)))
+	revertVersionAndVariables(t, se, version234)
 	require.NoError(t, txn.Commit(ctx))
 	unsetStoreBootstrapped(store.UUID())
 	dom.Close()

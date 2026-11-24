@@ -2827,3 +2827,174 @@ from (
     group by t0.c1, t0.c0, t0.c2
 ) as s where ref3`).Check(testkit.Rows())
 }
+
+func TestIndexScanSeekCost(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	// Pruning needs fully loaded index stats; don't let a slow sync load fall back to partial stats.
+	tk.MustExec("set @@tidb_stats_load_sync_wait = 60000")
+	tk.MustExec("create table t (a int, b int, c int, d int, key idx_abcd(a, b, c, d))")
+	// Each value of `a` has only 25 rows, so most (a, b, c) point ranges are nearly empty and a
+	// seek per range costs more than scanning and filtering every row under `a`.
+	tk.MustExec("set @@cte_max_recursion_depth = 100000")
+	tk.MustExec(`insert into t with recursive cte(n) as (select 1 union all select n + 1 from cte where n < 50000)
+		select n % 2000, n % 7 + 1, n % 11 + 1, n from cte`)
+	// Resolve secondary locks before the mock ANALYZE scan, which skips locked rows.
+	tk.MustQuery("select count(*) from t ignore index(idx_abcd)").Check(testkit.Rows("50000"))
+	// Flush the insert deltas before analyze. Otherwise a late flush raises the modify count
+	// and the table falls back to pseudo stats, which disables pruning.
+	dom := domain.GetDomain(tk.Session())
+	h := dom.StatsHandle()
+	// LFU admission can retain an older entry after rejecting a newer version.
+	// Reset the cache and its version watermark so Update reloads persisted stats
+	// even when the watermark already includes the analyzed version.
+	syncStatsCache := func() {
+		h.WaitForAsyncUpdates()
+		// Keep the delta collectors intact for later inserts.
+		h.StatsCache.Clear()
+		require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
+		h.WaitForAsyncUpdates()
+	}
+	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	tk.MustExec("analyze table t")
+	syncStatsCache()
+	tk.MustExec("set @@tidb_cost_model_version = 2")
+
+	// The IN-lists cover only part of the values of `b` and `c`, so the residual filters on a
+	// pruned scan must reject rows.
+	const where = "a = 1 and b in (1,2,3,4,5,6) and c in (1,2,3,4,5,6,7,8,9,10)"
+
+	// Without an ordering requirement the seek cost of 60 (a, b, c) ranges outweighs scanning the
+	// extra rows, so `c` is pruned from the ranges and applied as a filter, leaving 6 (a, b) ranges.
+	tk.MustQuery("explain format='brief' select a, b, c, d from t where " + where).Check(testkit.Rows(
+		"IndexReader 278.05 root  index:Selection",
+		"└─Selection 278.05 cop[tikv]  in(test.t.c, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10)",
+		"  └─IndexRangeScan 278.05 cop[tikv] table:t, index:idx_abcd(a, b, c, d) range:[1 1,1 1], [1 2,1 2], [1 3,1 3], [1 4,1 4], [1 5,1 5], [1 6,1 6], keep order:false"))
+
+	// With ORDER BY d the full point ranges satisfy the order through a per-range merge sort,
+	// so pruning must not be chosen: it would force a Sort on top of the pruned scan.
+	fullRanges := make([]string, 0, 60)
+	for b := 1; b <= 6; b++ {
+		for c := 1; c <= 10; c++ {
+			fullRanges = append(fullRanges, fmt.Sprintf("[1 %d %d,1 %d %d]", b, c, b, c))
+		}
+	}
+	tk.MustQuery("explain format='brief' select a, b, c, d from t where " + where + " order by d limit 5").Check(testkit.Rows(
+		"Limit 5.00 root  offset:0, count:5",
+		"└─IndexReader 5.00 root  index:Limit",
+		"  └─Limit 5.00 cop[tikv]  offset:0, count:5",
+		"    └─IndexRangeScan 5.00 cop[tikv] table:t, index:idx_abcd(a, b, c, d) range:"+strings.Join(fullRanges, ", ")+", keep order:true"))
+
+	// Compare against a full table scan, which applies every predicate as a filter.
+	tk.MustQuery("select a, b, c, d from t where " + where).Sort().Check(
+		tk.MustQuery("select a, b, c, d from t ignore index(idx_abcd) where " + where).Sort().Rows())
+	// Check the ordered result without sorting it, so a misordered keep-order scan is caught.
+	tk.MustQuery("select a, b, c, d from t where " + where + " order by d limit 5").Check(
+		tk.MustQuery("select a, b, c, d from t ignore index(idx_abcd) where " + where + " order by d limit 5").Rows())
+
+	// Many IN-lists ahead of a selective equality: 12*4*3*9 = 1296 ranges for a lookup that
+	// returns nothing. Dropping columns also drops the equality on `e` from the ranges, but each
+	// shorter prefix scans only a few rows per seek it saves, so pruning is allowed.
+	tk.MustExec("create table t2 (a int, b int, c int, d int, e int, f int, key idx(a, b, c, d, e, f))")
+	tk.MustExec(`insert into t2 with recursive cte(n) as (select 1 union all select n + 1 from cte where n < 100000)
+		select n % 1000, n % 5, n % 4, n % 10, n, n from cte`)
+	tk.MustQuery("select count(*) from t2 ignore index(idx)").Check(testkit.Rows("100000"))
+	// The leading column has only 2 values, so a shorter prefix would scan far more rows per saved
+	// seek than the guard allows, and the full ranges must be kept.
+	tk.MustExec("create table t3 (a int, b int, c int, d int, e int, f int, key idx(a, b, c, d, e, f))")
+	tk.MustExec(`insert into t3 with recursive cte(n) as (select 1 union all select n + 1 from cte where n < 100000)
+		select n % 2, n % 10, n % 1000, n, n, n from cte`)
+	tk.MustQuery("select count(*) from t3 ignore index(idx)").Check(testkit.Rows("100000"))
+	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	tk.MustExec("analyze table t2")
+	tk.MustExec("analyze table t3")
+	syncStatsCache()
+
+	const where2 = "a in (1,2,3,4,5,6,7,8,9,10,11,12) and b in (1,2,3,4) and c in (1,2,3) and d in (1,2,3,4,5,6,7,8,9) and e = -1"
+	tk.MustQuery("explain format='brief' select * from t2 where " + where2).Check(testkit.Rows(
+		"IndexReader 1298.91 root  index:Selection",
+		"└─Selection 1298.91 cop[tikv]  eq(test.t2.e, -1), in(test.t2.b, 1, 2, 3, 4), in(test.t2.c, 1, 2, 3), in(test.t2.d, 1, 2, 3, 4, 5, 6, 7, 8, 9)",
+		"  └─IndexRangeScan 1298.91 cop[tikv] table:t2, index:idx(a, b, c, d, e, f) range:[1,1], [2,2], [3,3], [4,4], [5,5], [6,6], [7,7], [8,8], [9,9], [10,10], [11,11], [12,12], keep order:false"))
+	tk.MustQuery("select * from t2 where " + where2).Check(testkit.Rows())
+
+	const where3 = "a = 1 and b in (1,2,3,4,5,6,7,8,9) and c in (1,3,5,7,9,11,13,15,17,19,21)"
+	t3Ranges := make([]string, 0, 99)
+	for b := 1; b <= 9; b++ {
+		for c := 1; c <= 21; c += 2 {
+			t3Ranges = append(t3Ranges, fmt.Sprintf("[1 %d %d,1 %d %d]", b, c, b, c))
+		}
+	}
+	// Only the operators and ranges are checked: the row estimate for t3 depends on analyze
+	// sampling and varies between runs.
+	tk.MustQuery("explain format='brief' select * from t3 where "+where3).CheckAt([]int{0, 4}, [][]any{
+		{"IndexReader", "index:IndexRangeScan"},
+		{"└─IndexRangeScan", "range:" + strings.Join(t3Ranges, ", ") + ", keep order:false"},
+	})
+	tk.MustQuery("select * from t3 where " + where3).Sort().Check(
+		tk.MustQuery("select * from t3 ignore index(idx) where " + where3).Sort().Rows())
+
+	// For a non-unique index on a clustered composite handle, IdxCols has the handle columns
+	// appended, so a cutoff can extend past the index definition. Row estimation must still
+	// work for those ranges. The 1200 (a,b,c,d) ranges prune to 6 (a,b) ranges.
+	tk.MustExec("create table t4 (a int, b int, c int, d int, e int, primary key(c, d) clustered, key idx(a, b))")
+	tk.MustExec(`insert into t4 with recursive cte(n) as (select 1 union all select n + 1 from cte where n < 20000)
+		select n % 1000, n % 7, n % 13, n, n from cte`)
+	tk.MustQuery("select count(*) from t4 ignore index(idx)").Check(testkit.Rows("20000"))
+	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	tk.MustExec("analyze table t4")
+	syncStatsCache()
+	const where4 = "a = 1 and b in (1,2,3,4,5,6) and c in (1,2,3,4,5,6,7,8,9,10) and d in (1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20)"
+	tk.MustQuery("explain format='brief' select * from t4 use index(idx) where "+where4).CheckAt([]int{0, 4}, [][]any{
+		{"IndexLookUp", ""},
+		{"├─Selection(Build)", "in(test.t4.c, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10), in(test.t4.d, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20)"},
+		{"│ └─IndexRangeScan", "range:[1 1,1 1], [1 2,1 2], [1 3,1 3], [1 4,1 4], [1 5,1 5], [1 6,1 6], keep order:false"},
+		{"└─TableRowIDScan(Probe)", "keep order:false"},
+	})
+	tk.MustQuery("select * from t4 use index(idx) where " + where4).Sort().Check(
+		tk.MustQuery("select * from t4 ignore index(idx) where " + where4).Sort().Rows())
+
+	// An IndexJoin inner scan's seeks are charged once per build row by the join
+	// (indexJoinSeekingCostVer2), so the scan itself must not charge them again.
+	ijRows := tk.MustQuery("explain format='cost_trace' select /*+ inl_join(t3) */ * from t2 join t3 on t2.a = t3.a where t3.b in (1,2,3)").Rows()
+	foundInnerScan, foundJoin := false, false
+	for _, row := range ijRows {
+		op := row[0].(string)
+		if strings.Contains(op, "IndexRangeScan") {
+			foundInnerScan = true
+			require.Contains(t, row[5].(string), "table:t3")
+			require.NotContains(t, row[3].(string), "rangeSeek")
+		}
+		if strings.Contains(op, "IndexJoin") {
+			foundJoin = true
+			require.Contains(t, row[3].(string), "seeking(")
+		}
+	}
+	require.True(t, foundInnerScan)
+	require.True(t, foundJoin)
+	require.Contains(t, tk.MustQuery("explain format='cost_trace' select * from t3 where a = 1 and b in (1,2,3)").Rows()[1][3].(string), "rangeSeek")
+	// Multi-range table scans are charged the same way, so they don't look cheaper than an
+	// equivalent multi-range index scan.
+	tsRows := tk.MustQuery("explain format='cost_trace' select * from t4 where c in (1,2,3) and d > 5").Rows()
+	require.Contains(t, tsRows[len(tsRows)-1][0].(string), "TableRangeScan")
+	require.Contains(t, tsRows[len(tsRows)-1][3].(string), "rangeSeek")
+
+	// On a unique index, only full-key point ranges are exempt from pruning (they can become a
+	// [Batch]PointGet). Ranges that span every index column but end in an interval are not
+	// points, so the 12 (a, b, c > 100) ranges must still prune to 2 (a) ranges.
+	tk.MustExec("create table t5 (a int, b int, c int, d int, unique key uk(a, b, c))")
+	tk.MustExec(`insert into t5 with recursive cte(n) as (select 1 union all select n + 1 from cte where n < 50000)
+		select n % 2000, n % 7, n, n from cte`)
+	tk.MustQuery("select count(*) from t5 ignore index(uk)").Check(testkit.Rows("50000"))
+	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	tk.MustExec("analyze table t5")
+	syncStatsCache()
+	const where5 = "a in (1,3) and b in (0,1,2,3,4,5) and c > 100"
+	tk.MustQuery("explain format='brief' select a, b, c from t5 where "+where5).CheckAt([]int{0, 4}, [][]any{
+		{"IndexReader", "index:Selection"},
+		{"└─Selection", "gt(test.t5.c, 100), in(test.t5.b, 0, 1, 2, 3, 4, 5)"},
+		{"  └─IndexRangeScan", "range:[1,1], [3,3], keep order:false"},
+	})
+	tk.MustQuery("select a, b, c from t5 where " + where5).Sort().Check(
+		tk.MustQuery("select a, b, c from t5 ignore index(uk) where " + where5).Sort().Rows())
+}

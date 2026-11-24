@@ -246,6 +246,13 @@ type TxnCtxNoNeedToRestore struct {
 	// has occurred during execution of any statement).
 	FairLockingEffective bool
 
+	// RedactDiagnostics marks that a statement of the transaction reads a
+	// column that a masking policy masks for the session. The diagnostics of
+	// its later statements are redacted too: COMMIT and other statements may
+	// report an error about the rows it has read and written, such as that of
+	// a unique key check deferred to them.
+	RedactDiagnostics bool
+
 	// CurrentStmtPessimisticLockCache is the cache for pessimistic locked keys in the current statement.
 	// It is merged into `pessimisticLockCache` after a statement finishes.
 	// Read results cannot be directly written into pessimisticLockCache because failed statement need to rollback
@@ -802,6 +809,11 @@ type SessionVars struct {
 	// Parameter values for plan cache.
 	PlanCacheParams   *PlanCacheParamList
 	LastUpdateTime4PC types.Time
+
+	// maskingPolicyExprCache caches compiled masking policy expressions per schema version.
+	maskingPolicyExprCache any
+	// maskingPolicyExprCacheSchemaVersion is the schema version for maskingPolicyExprCache.
+	maskingPolicyExprCacheSchemaVersion int64
 
 	// ActiveRoles stores active roles for current user
 	ActiveRoles []*auth.RoleIdentity
@@ -3527,6 +3539,18 @@ func (s *SessionVars) GetNegateStrMatchDefaultSelectivity() float64 {
 		return DefTiDBDefaultStrMatchSelectivity
 	}
 	return 1 - s.GetStrMatchDefaultSelectivity()
+}
+
+// PlanRedactLog returns the tidb_redact_log mode to render the data values in
+// the plan of the current statement with. The plan of a statement that reads
+// a masked column holds original values, for example the result of a subquery
+// evaluated while planning and the ranges built from it, so it is rendered as
+// with tidb_redact_log = ON, whatever the session has set.
+func (s *SessionVars) PlanRedactLog() string {
+	if s.StmtCtx != nil && s.StmtCtx.ReadsMaskedColumn {
+		return errors.RedactLogEnable
+	}
+	return s.EnableRedactLog
 }
 
 // GetRelatedTableForMDL gets the related table for metadata lock.

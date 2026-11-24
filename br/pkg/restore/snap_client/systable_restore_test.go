@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"strings"
 	"testing"
 
 	"github.com/pingcap/errors"
@@ -33,6 +34,8 @@ import (
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/session"
+	"github.com/pingcap/tidb/pkg/testkit"
+	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"github.com/stretchr/testify/require"
 )
 
@@ -103,6 +106,30 @@ func TestCheckSysTableCompatibility(t *testing.T) {
 	}}, false)
 	require.NoError(t, err)
 	require.True(t, canLoadSysTablePhysical)
+
+	// mysql.user upgraded from an old TiDB has nullable privilege columns, which
+	// are NOT NULL in a new cluster. They can only be restored logically.
+	mockedUserTI = userTI.Clone()
+	tablespacePrivCol := model.FindColumnInfo(mockedUserTI.Columns, "create_tablespace_priv")
+	require.NotNil(t, tablespacePrivCol)
+	require.True(t, mysql.HasNotNullFlag(tablespacePrivCol.GetFlag()))
+	tablespacePrivCol.Name = pmodel.NewCIStr("Create_tablespace_priv")
+	tablespacePrivCol.DelFlag(mysql.NotNullFlag)
+	canLoadSysTablePhysical, err = snapclient.CheckSysTableCompatibility(cluster.Domain, []*metautil.Table{{
+		DB:   tmpSysDB,
+		Info: mockedUserTI,
+	}}, false)
+	require.NoError(t, err)
+	require.False(t, canLoadSysTablePhysical)
+
+	// other nullable columns are still incompatible with NOT NULL columns.
+	mockedUserTI = userTI.Clone()
+	mockedUserTI.Columns[0].DelFlag(mysql.NotNullFlag) // Columns[0] is `Host` char(255) NOT NULL
+	_, err = snapclient.CheckSysTableCompatibility(cluster.Domain, []*metautil.Table{{
+		DB:   tmpSysDB,
+		Info: mockedUserTI,
+	}}, false)
+	require.True(t, berrors.ErrRestoreIncompatibleSys.Equal(err))
 
 	// use the mysql.db table to test for column count mismatch.
 	dbTI, err := restore.GetTableSchema(cluster.Domain, sysDB, pmodel.NewCIStr("db"))
@@ -446,6 +473,142 @@ func TestCheckPrivilegeTableRowsCollateCompatibility(t *testing.T) {
 	}
 }
 
+func TestRestoreSystemSchemasRejectsNullInUpgradedNullableColumn(t *testing.T) {
+	cluster := mc
+	ctx := context.Background()
+	g := gluetidb.New()
+	client := snapclient.NewRestoreClient(cluster.PDClient, cluster.PDHTTPCli, nil, split.DefaultTestKeepaliveCfg)
+	require.NoError(t, client.InitConnections(g, cluster.Storage))
+	defer client.Close()
+	client.SetWithSysTable(true)
+
+	tk := testkit.NewTestKit(t, cluster.Storage)
+	const (
+		nullUserName = "br_restore_null_tablespace"
+		userName     = "br_restore_tablespace"
+	)
+	cleanup := func() {
+		tk.MustExec("DROP DATABASE IF EXISTS __TiDB_BR_Temporary_mysql")
+		tk.MustExec(fmt.Sprintf("DELETE FROM mysql.user WHERE User IN ('%s', '%s')", nullUserName, userName))
+	}
+	cleanup()
+	defer cleanup()
+
+	tk.MustExec("CREATE DATABASE __TiDB_BR_Temporary_mysql")
+	tk.MustExec("CREATE TABLE __TiDB_BR_Temporary_mysql.user LIKE mysql.user")
+	tk.MustExec("ALTER TABLE __TiDB_BR_Temporary_mysql.user MODIFY COLUMN Create_tablespace_priv ENUM('N','Y') DEFAULT 'N'")
+	tk.MustExec(fmt.Sprintf("INSERT INTO __TiDB_BR_Temporary_mysql.user (Host, User, authentication_string, plugin, Create_tablespace_priv) VALUES ('%%', '%s', '', 'mysql_native_password', NULL)", nullUserName))
+
+	restoreUserTable := func() error {
+		info, err := cluster.Domain.GetSnapshotInfoSchema(math.MaxUint64)
+		require.NoError(t, err)
+		tmpSysDB, ok := info.SchemaByName(utils.TemporaryDBName(mysql.SystemDB))
+		require.True(t, ok)
+		ti, err := restore.GetTableSchema(cluster.Domain, tmpSysDB.Name, pmodel.NewCIStr("user"))
+		require.NoError(t, err)
+		client.SetDatabases(map[string]*metautil.Database{
+			tmpSysDB.Name.O: {
+				Info:   tmpSysDB,
+				Tables: []*metautil.Table{{DB: tmpSysDB, Info: ti}},
+			},
+		})
+		return client.RestoreSystemSchemas(ctx, filter.CaseInsensitive(filter.NewSchemasFilter(mysql.SystemDB)), false)
+	}
+
+	err := restoreUserTable()
+	require.True(t, berrors.ErrRestoreIncompatibleSys.Equal(err), "%v", err)
+	require.Contains(t, strings.ToLower(err.Error()), "create_tablespace_priv")
+	tk.MustQuery(fmt.Sprintf("SELECT COUNT(*) FROM mysql.user WHERE User='%s'", nullUserName)).Check(testkit.Rows("0"))
+
+	tk.MustExec(fmt.Sprintf("UPDATE __TiDB_BR_Temporary_mysql.user SET User='%s', Create_tablespace_priv='Y' WHERE User='%s'", userName, nullUserName))
+	require.NoError(t, restoreUserTable())
+	tk.MustQuery(fmt.Sprintf("SELECT Create_tablespace_priv FROM mysql.user WHERE User='%s' AND Host='%%'", userName)).
+		Check(testkit.Rows("Y"))
+}
+
+// BR does not restore masking policies. A backup carries
+// mysql.tidb_masking_policy like the other system tables, so the rows staged in the temporary system database must never reach the target:
+// the policies of the target cluster stay as they are and none is created.
+func TestRestoreSystemSchemasSkipsMaskingPolicyTable(t *testing.T) {
+	cluster := mc
+	ctx := context.Background()
+	g := gluetidb.New()
+	client := snapclient.NewRestoreClient(cluster.PDClient, cluster.PDHTTPCli, nil, split.DefaultTestKeepaliveCfg)
+	require.NoError(t, client.InitConnections(g, cluster.Storage))
+	defer client.Close()
+	client.SetWithSysTable(true)
+
+	tk := testkit.NewTestKit(t, cluster.Storage)
+	const policyTable = "tidb_masking_policy"
+	cleanup := func() {
+		tk.MustExec("DROP DATABASE IF EXISTS __TiDB_BR_Temporary_mysql")
+		tk.MustExec("DROP DATABASE IF EXISTS br_masking_restore")
+	}
+	cleanup()
+	defer cleanup()
+
+	// The policy that already exists on the target cluster.
+	tk.MustExec("CREATE DATABASE br_masking_restore")
+	tk.MustExec("CREATE TABLE br_masking_restore.t (id INT PRIMARY KEY, c VARCHAR(32), d VARCHAR(32))")
+	tk.MustExec("CREATE MASKING POLICY p_target ON br_masking_restore.t(c) AS MASK_FULL(c) ENABLE")
+	policyRows := "SELECT policy_name, table_id, column_id, expression, status FROM mysql." + policyTable + " ORDER BY policy_id"
+	before := tk.MustQuery(policyRows).Rows()
+	require.Len(t, before, 1)
+	shownBefore := tk.MustQuery("SHOW MASKING POLICIES FOR br_masking_restore.t").Rows()
+
+	// stageBackupRows puts the rows a backup carries into the temporary system
+	// database, as the data restore does before the system tables are merged: one
+	// clashes with the target policy on its name and its column, the other would
+	// bind a policy to a column without one.
+	stageBackupRows := func(t *testing.T) (*model.DBInfo, *model.TableInfo) {
+		tk.MustExec("DROP DATABASE IF EXISTS __TiDB_BR_Temporary_mysql")
+		tk.MustExec("CREATE DATABASE __TiDB_BR_Temporary_mysql")
+		tk.MustExec("CREATE TABLE __TiDB_BR_Temporary_mysql." + policyTable + " LIKE mysql." + policyTable)
+		tk.MustExec("INSERT INTO __TiDB_BR_Temporary_mysql." + policyTable + " SELECT * FROM mysql." + policyTable)
+		tk.MustExec("UPDATE __TiDB_BR_Temporary_mysql." + policyTable + " SET expression = 'c', status = 'DISABLED'")
+		tk.MustExec("INSERT INTO __TiDB_BR_Temporary_mysql." + policyTable + `
+			(policy_name, db_name, table_name, table_id, column_name, column_id, expression, status, masking_type, restrict_on, created_at, updated_at, created_by)
+			SELECT 'p_backup', db_name, table_name, table_id, 'd', column_id + 1, 'MASK_FULL(d)', status, masking_type, restrict_on, created_at, updated_at, created_by
+			FROM mysql.` + policyTable)
+		tk.MustQuery("SELECT COUNT(*) FROM __TiDB_BR_Temporary_mysql." + policyTable).Check(testkit.Rows("2"))
+
+		info, err := cluster.Domain.GetSnapshotInfoSchema(math.MaxUint64)
+		require.NoError(t, err)
+		tmpSysDB, ok := info.SchemaByName(utils.TemporaryDBName(mysql.SystemDB))
+		require.True(t, ok)
+		ti, err := restore.GetTableSchema(cluster.Domain, tmpSysDB.Name, pmodel.NewCIStr(policyTable))
+		require.NoError(t, err)
+		return tmpSysDB, ti
+	}
+
+	for _, tc := range []struct {
+		name                 string
+		filter               filter.Filter
+		loadSysTablePhysical bool
+	}{
+		{name: "full restore", filter: filter.All()},
+		{name: "system database selected", filter: filter.CaseInsensitive(filter.NewSchemasFilter(mysql.SystemDB))},
+		{name: "system tables loaded physically", filter: filter.All(), loadSysTablePhysical: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tmpSysDB, ti := stageBackupRows(t)
+			client.SetDatabases(map[string]*metautil.Database{
+				tmpSysDB.Name.O: {
+					Info:   tmpSysDB,
+					Tables: []*metautil.Table{{DB: tmpSysDB, Info: ti}},
+				},
+			})
+			require.NoError(t, client.RestoreSystemSchemas(ctx, tc.filter, tc.loadSysTablePhysical))
+			require.Equal(t, before, tk.MustQuery(policyRows).Rows())
+			require.Equal(t, shownBefore, tk.MustQuery("SHOW MASKING POLICIES FOR br_masking_restore.t").Rows())
+		})
+	}
+
+	// The physical path renames only the tables it lists; the policy table is not one of them.
+	require.False(t, snapclient.IsRenameableSysTemporaryTable(utils.TemporaryDBName(mysql.SystemDB).O, policyTable))
+	require.False(t, snapclient.IsStatsTemporaryTable(utils.TemporaryDBName(mysql.SystemDB).O, policyTable))
+}
+
 // NOTICE: Once there is a new system table, BR needs to ensure that it is correctly classified:
 //
 // - IF it is an unrecoverable table, please add the table name into `unRecoverableTable`.
@@ -457,7 +620,7 @@ func TestCheckPrivilegeTableRowsCollateCompatibility(t *testing.T) {
 //
 // The above variables are in the file br/pkg/restore/systable_restore.go
 func TestMonitorTheSystemTableIncremental(t *testing.T) {
-	require.Equal(t, int64(234), session.CurrentBootstrapVersion)
+	require.Equal(t, int64(235), session.CurrentBootstrapVersion)
 }
 
 func TestIsStatsTemporaryTable(t *testing.T) {

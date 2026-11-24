@@ -466,8 +466,10 @@ func (r *selectResult) fetchRespWithIntermediateResults(ctx context.Context, int
 		if err = r.ctx.SQLKiller.HandleSignal(); err != nil {
 			return err
 		}
+		// The store evaluated the expressions of the request: its warnings are
+		// recorded as the error context records those of evaluating them here.
 		for _, warning := range r.selectResp.Warnings {
-			r.ctx.AppendWarning(dbterror.ClassTiKV.Synthesize(terror.ErrCode(warning.Code), warning.Msg))
+			r.ctx.ErrCtx.AppendWarning(dbterror.ClassTiKV.Synthesize(terror.ErrCode(warning.Code), warning.Msg))
 		}
 
 		r.partialCount++

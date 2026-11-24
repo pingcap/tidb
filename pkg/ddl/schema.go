@@ -223,6 +223,9 @@ func (w *worker) onDropSchema(jobCtx *jobContext, job *model.Job) (ver int64, _ 
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
+		if err := w.dropMaskingPoliciesByDBName(jobCtx, dbInfo.Name.L); err != nil {
+			return ver, err
+		}
 		// we only drop meta key of database, but not drop tables' meta keys.
 		if err = metaMut.DropDatabase(dbInfo.ID); err != nil {
 			break
@@ -345,7 +348,7 @@ func (w *worker) onRecoverSchema(jobCtx *jobContext, job *model.Job) (ver int64,
 				// force disable TTL job schedule for recovered table
 				recoverInfo.TableInfo.TTLInfo.Enable = false
 			}
-			ver, err = w.recoverTable(jobCtx.stepCtx, jobCtx.metaMut, job, recoverInfo)
+			ver, err = w.recoverTable(jobCtx, jobCtx.metaMut, job, recoverInfo)
 			if err != nil {
 				return ver, errors.Trace(err)
 			}

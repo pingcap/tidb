@@ -644,7 +644,7 @@ func init() {
 		err = exec.Open(ctx, executor)
 		defer func() { terror.Log(exec.Close(executor)) }()
 		if err != nil {
-			return nil, err
+			return nil, pctx.GetSessionVars().StmtCtx.RedactExecError(err)
 		}
 		if pi, ok := sctx.(processinfoSetter); ok {
 			// Before executing the sub-query, we need update the processinfo to make the progress bar more accurate.
@@ -654,7 +654,7 @@ func init() {
 		chk := exec.TryNewCacheChunk(executor)
 		err = exec.Next(ctx, executor, chk)
 		if err != nil {
-			return nil, err
+			return nil, pctx.GetSessionVars().StmtCtx.RedactExecError(err)
 		}
 		if chk.NumRows() == 0 {
 			return nil, nil

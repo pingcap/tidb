@@ -3004,7 +3004,7 @@ func (p *CTEDefinition) ExplainInfo() string {
 	}
 	if p.CTE.HasLimit {
 		offset, count := p.CTE.LimitBeg, p.CTE.LimitEnd-p.CTE.LimitBeg
-		switch p.SCtx().GetSessionVars().EnableRedactLog {
+		switch p.SCtx().GetSessionVars().PlanRedactLog() {
 		case errors.RedactLogMarker:
 			res += fmt.Sprintf(", limit(offset:‹%v›, count:‹%v›)", offset, count)
 		case errors.RedactLogDisable:

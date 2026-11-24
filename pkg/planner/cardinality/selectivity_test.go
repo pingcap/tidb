@@ -622,7 +622,13 @@ func TestIssue71999(t *testing.T) {
 	testKit.MustExec("set @@global.tidb_enable_auto_analyze='OFF'")
 	testKit.MustExec("set @@tidb_opt_prefer_range_scan=1")
 	testKit.MustExec("insert into t select a, 1, 1, 1 from (with recursive x as (select 1 as a union all select a + 1 AS a from x where a < 1000) select a from x) as subquery")
+	// INSERT can return before its secondary keys finish committing. Unistore's
+	// mock ANALYZE does not resolve those locks and can miss rows.
+	// Force a table scan through the normal read path to resolve any remaining
+	// row locks and verify that all 1,000 rows are visible before ANALYZE.
+	testKit.MustQuery("select count(*) from t ignore index(idx_id)").Check(testkit.Rows("1000"))
 	testKit.MustExec("analyze table t")
+	testKit.MustQuery("show stats_meta where db_name = 'test' and table_name = 't'").CheckAt([]int{5}, testkit.Rows("1000"))
 	testKit.MustExec("create index idx_abc on t(a, b, c)")
 	// idx_abc has no statistics and its access columns (a, b, c) do not cover idx_id's (id),
 	// so it must not prune idx_id, which has statistics and is far more selective.
@@ -1785,6 +1791,28 @@ func TestSubsetIdxCardinality(t *testing.T) {
 	)
 	integrationSuiteData := cardinality.GetCardinalitySuiteData()
 	integrationSuiteData.LoadTestCases(t, &input, &output)
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	require.NoError(t, err)
+	tblInfo := tbl.Meta()
+	hasAsyncLoadForTable := func() bool {
+		for _, item := range asyncload.AsyncLoadHistogramNeededItems.AllItems() {
+			if item.TableItemID.TableID == tblInfo.ID {
+				return true
+			}
+		}
+		return false
+	}
+	// Use a predicate query that queues async stats loads for this table before checking recorded plans.
+	testKit.MustExec("set @@session.tidb_stats_load_sync_wait = 0")
+	testKit.MustExec("explain format = 'brief' select a, b from t where a = 1 and b = 1 and c = 1")
+	require.True(t, hasAsyncLoadForTable())
+	require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
+	stat := h.GetPhysicalTableStats(tblInfo.ID, tblInfo)
+	require.True(t, stat.GetCol(tblInfo.Columns[0].ID).IsFullLoad())
+	require.True(t, stat.GetCol(tblInfo.Columns[1].ID).IsFullLoad())
+	require.True(t, stat.GetCol(tblInfo.Columns[2].ID).IsFullLoad())
+	require.True(t, stat.GetIdx(tblInfo.Indices[0].ID).IsFullLoad())
+	require.False(t, hasAsyncLoadForTable())
 	for i := 0; i < len(input); i++ {
 		testdata.OnRecord(func() {
 			output[i].Query = input[i]

@@ -46,6 +46,225 @@ type ScalarFunction struct {
 	Function          builtinFunc
 	hashcode          []byte
 	canonicalhashcode []byte
+	// source is set by SubstituteSources.Set.
+	source substituteSourceRef `plan-cache-clone:"shallow"`
+}
+
+// substituteSource records the arguments a function was built from, before
+// constant refinement and implicit casts adapted them to their types, and how
+// to build the function again from arguments of other types.
+type substituteSource struct {
+	args  []Expression
+	build func(ctx BuildContext, args []Expression) (Expression, error)
+	// deferred is set by SubstituteSources.Defer. It is shared by the sources
+	// that replace this one for the same function.
+	deferred *deferredError
+}
+
+// deferredError is an error of building a function for its original
+// arguments, which does not apply if the function is built again from others.
+type deferredError struct {
+	err     error
+	rebuilt bool
+}
+
+// SubstituteSources owns the sources recorded for the functions of one
+// statement while it is planned. Release drops them all, including those of
+// the clones of these functions, so that a finished plan does not keep them.
+type SubstituteSources struct {
+	entries []substituteSource
+	// deferred holds the errors recorded by Defer, by their key.
+	deferred map[any]*deferredError
+}
+
+// substituteSourceRef identifies the source of a function in its owner. It is
+// copied to the clones of the function.
+type substituteSourceRef struct {
+	owner *SubstituteSources
+	idx   int
+}
+
+func (r substituteSourceRef) get() *substituteSource {
+	if r.owner == nil || r.idx >= len(r.owner.entries) {
+		return nil
+	}
+	return &r.owner.entries[r.idx]
+}
+
+// Set makes ColumnSubstituteAllFromSource build sf again from args instead of
+// substituting into its current arguments. Building a function may change its
+// constant arguments, so args must hold copies taken with CloneConstants before
+// sf was built. build must only use the context it is given: it may run for
+// another expression context than the one sf was built with.
+func (s *SubstituteSources) Set(sf *ScalarFunction, args []Expression, build func(ctx BuildContext, args []Expression) (Expression, error)) {
+	s.set(sf, substituteSource{args: args, build: build})
+}
+
+func (s *SubstituteSources) set(sf *ScalarFunction, source substituteSource) {
+	s.entries = append(s.entries, source)
+	sf.source = substituteSourceRef{owner: s, idx: len(s.entries) - 1}
+}
+
+// Defer records err, which the arguments sf was built from raise, instead of
+// returning it at once: the caller built sf without what raises it. The error
+// does not apply once sf is built again from its source for other arguments,
+// which then validates them. PendingError returns it otherwise. A statement
+// may build the same part of it several times and use only one of the
+// results, as for a CTE: the functions built from one part share key, and
+// building any of them again is enough. It reports whether sf has a source,
+// without which the error cannot be deferred.
+func (s *SubstituteSources) Defer(sf *ScalarFunction, key any, err error) bool {
+	source := sf.source.get()
+	if source == nil || sf.source.owner != s {
+		return false
+	}
+	if s.deferred == nil {
+		s.deferred = make(map[any]*deferredError)
+	}
+	deferred := s.deferred[key]
+	if deferred == nil {
+		deferred = &deferredError{err: err}
+		s.deferred[key] = deferred
+	}
+	source.deferred = deferred
+	return true
+}
+
+// PendingError returns the first deferred error of a function that was not
+// built again from its source.
+func (s *SubstituteSources) PendingError() error {
+	if s == nil {
+		return nil
+	}
+	for i := range s.entries {
+		if deferred := s.entries[i].deferred; deferred != nil && !deferred.rebuilt {
+			return deferred.err
+		}
+	}
+	return nil
+}
+
+// Wrap makes the function built from the source of sf go through wrap, which
+// returns the expression to use instead. It reports whether sf has a source.
+// It is for what the caller applied to sf after it was built.
+func (s *SubstituteSources) Wrap(sf *ScalarFunction, wrap func(ctx BuildContext, built Expression) (Expression, error)) bool {
+	source := sf.source.get()
+	if source == nil || sf.source.owner != s {
+		return false
+	}
+	build := source.build
+	s.set(sf, substituteSource{args: source.args, deferred: source.deferred, build: func(ctx BuildContext, args []Expression) (Expression, error) {
+		built, err := build(ctx, args)
+		if err != nil {
+			return nil, err
+		}
+		return wrap(ctx, built)
+	}})
+	return true
+}
+
+// Release drops all the recorded sources. Functions that had one are then
+// substituted like any other function.
+func (s *SubstituteSources) Release() {
+	if s != nil {
+		s.deferred = nil
+		s.entries = nil
+	}
+}
+
+// transformSubstituteSource applies fn to the arguments recorded as the source
+// of sf. The recorded source is shared with the clones of sf, so sf gets a new
+// one when an argument changes.
+func (sf *ScalarFunction) transformSubstituteSource(fn func(Expression) Expression) {
+	source := sf.source.get()
+	if source == nil {
+		return
+	}
+	var args []Expression
+	for i, arg := range source.args {
+		newArg := fn(arg)
+		if newArg == arg {
+			continue
+		}
+		if args == nil {
+			args = slices.Clone(source.args)
+		}
+		args[i] = newArg
+	}
+	if args != nil {
+		sf.source.owner.set(sf, substituteSource{args: args, build: source.build, deferred: source.deferred})
+	}
+}
+
+// InPlaceTransformer replaces sub-expressions of built expressions in place,
+// as the planner does to refer to the grouping columns of WITH ROLLUP. The
+// source of a function is kept in step with its arguments. A function and its
+// source usually share their argument objects, and an expression may hold one
+// object several times: each object is transformed once per transformer.
+type InPlaceTransformer struct {
+	replace func(Expression) (Expression, bool)
+	done    map[Expression]Expression
+}
+
+// NewInPlaceTransformer returns a transformer for one round of replacement.
+// replace returns the expression to use instead of its argument, and whether
+// it is another one. The arguments of a function that is not replaced are
+// transformed in turn.
+func NewInPlaceTransformer(replace func(Expression) (Expression, bool)) *InPlaceTransformer {
+	return &InPlaceTransformer{replace: replace, done: make(map[Expression]Expression)}
+}
+
+// Transform returns the expression to use instead of expr.
+func (t *InPlaceTransformer) Transform(expr Expression) Expression {
+	if res, ok := t.done[expr]; ok {
+		return res
+	}
+	res, replaced := t.replace(expr)
+	if sf, ok := expr.(*ScalarFunction); ok && !replaced {
+		args := sf.GetArgs()
+		for i, arg := range args {
+			args[i] = t.Transform(arg)
+		}
+		sf.transformSubstituteSource(t.Transform)
+		res = sf
+	}
+	t.done[expr] = res
+	return res
+}
+
+// matches reports whether the source still describes sf: both must depend on
+// the same columns. They differ when the arguments of sf were replaced in place
+// without its source, or when folding removed a column from sf. Substituting
+// into the source would then leave a column of sf unsubstituted, or bring back
+// one it does not have.
+func (s *substituteSource) matches(sf *ScalarFunction) bool {
+	if s == nil {
+		return false
+	}
+	built := make(map[int64]struct{})
+	for _, col := range ExtractColumns(sf) {
+		built[col.UniqueID] = struct{}{}
+	}
+	recorded := make(map[int64]struct{}, len(built))
+	for _, col := range ExtractColumnsFromExpressions(nil, s.args, nil) {
+		if _, ok := built[col.UniqueID]; !ok {
+			return false
+		}
+		recorded[col.UniqueID] = struct{}{}
+	}
+	return len(recorded) == len(built)
+}
+
+// CloneConstants copies args, cloning the constants among them.
+func CloneConstants(args []Expression) []Expression {
+	cloned := make([]Expression, len(args))
+	for i, arg := range args {
+		if con, ok := arg.(*Constant); ok {
+			arg = con.Clone()
+		}
+		cloned[i] = arg
+	}
+	return cloned
 }
 
 // VecEvalInt evaluates this expression in a vectorized manner.
@@ -349,6 +568,7 @@ func (sf *ScalarFunction) Clone() Expression {
 		FuncName: sf.FuncName,
 		RetType:  sf.RetType,
 		Function: sf.Function.Clone(),
+		source:   sf.source,
 	}
 	// An implicit assumption: ScalarFunc.RetType == ScalarFunc.builtinFunc.RetType
 	if sf.hashcode != nil {

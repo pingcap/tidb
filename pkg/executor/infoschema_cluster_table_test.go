@@ -390,7 +390,7 @@ func TestTikvRegionStatus(t *testing.T) {
 	))
 	// Two distinct IDs exercise IN extraction rather than a single-value IN folded into equality.
 	nameFilteredRegions := tk.MustQuery("select DB_NAME, TABLE_NAME, IS_INDEX, INDEX_NAME, IS_PARTITION, PARTITION_NAME from information_schema.TIKV_REGION_STATUS where DB_NAME = 'test' and TABLE_NAME in ('test_t1', 'test_t2') order by TABLE_NAME, IS_INDEX, INDEX_NAME, PARTITION_NAME").Rows()
-	inPlan := tk.MustQuery(fmt.Sprintf("explain select DB_NAME, TABLE_NAME, IS_INDEX, INDEX_NAME, IS_PARTITION, PARTITION_NAME from information_schema.TIKV_REGION_STATUS where TABLE_ID in (%v, %v) order by TABLE_NAME, IS_INDEX, INDEX_NAME, PARTITION_NAME", tableID, partitionTableID)).String()
+	inPlan := tk.MustQueryWithContext(t.Context(), fmt.Sprintf("explain select DB_NAME, TABLE_NAME, IS_INDEX, INDEX_NAME, IS_PARTITION, PARTITION_NAME from information_schema.TIKV_REGION_STATUS where TABLE_ID in (%v, %v) order by TABLE_NAME, IS_INDEX, INDEX_NAME, PARTITION_NAME", tableID, partitionTableID)).String()
 	require.True(t, strings.Contains(inPlan, fmt.Sprintf("table_id in {%v,%v}", tableID, partitionTableID)) || strings.Contains(inPlan, fmt.Sprintf("table_id in {%v,%v}", partitionTableID, tableID)), inPlan)
 	tk.MustQuery(fmt.Sprintf("select DB_NAME, TABLE_NAME, IS_INDEX, INDEX_NAME, IS_PARTITION, PARTITION_NAME from information_schema.TIKV_REGION_STATUS where TABLE_ID in (%v, %v) order by TABLE_NAME, IS_INDEX, INDEX_NAME, PARTITION_NAME", tableID, partitionTableID)).Check(nameFilteredRegions)
 
@@ -450,9 +450,9 @@ func TestTableStorageStats(t *testing.T) {
 	tk.MustQuery("select TABLE_SCHEMA, sum(TABLE_SIZE) from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'test' group by TABLE_SCHEMA;").Check(testkit.Rows(
 		"test 2",
 	))
-	rows := tk.MustQuery("select TABLE_NAME from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'mysql';").Rows()
-	result := 59
-	require.Len(t, rows, result)
+	mysqlTables := tk.MustQuery("select TABLE_NAME from information_schema.TABLES where TABLE_SCHEMA = 'mysql'").Sort().Rows()
+	tk.MustQuery("select TABLE_NAME from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'mysql'").Sort().Check(mysqlTables)
+	result := len(mysqlTables)
 
 	// More tests about the privileges.
 	tk.MustExec("create user 'testuser'@'localhost'")

@@ -1442,6 +1442,7 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 		Command:               command,
 		Plan:                  p,
 		PlanExplainRows:       plannercore.GetExplainRowsForPlan(p),
+		RedactPlanValues:      p != nil && s.sessionVars.StmtCtx.ReadsMaskedColumn,
 		RuntimeStatsColl:      s.sessionVars.StmtCtx.RuntimeStatsColl,
 		Time:                  t,
 		State:                 s.Status(),
@@ -1471,6 +1472,7 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 		if oldPi != nil && oldPi.Plan != nil && len(oldPi.PlanExplainRows) > 0 {
 			pi.Plan = oldPi.Plan
 			pi.PlanExplainRows = oldPi.PlanExplainRows
+			pi.RedactPlanValues = oldPi.RedactPlanValues
 			pi.RuntimeStatsColl = oldPi.RuntimeStatsColl
 		}
 	}
@@ -2037,6 +2039,9 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	if err := executor.ResetContextOfStmt(s, stmtNode); err != nil {
 		return nil, err
 	}
+	if sessVars.TxnCtx.RedactDiagnostics {
+		sessVars.StmtCtx.SetRedactTxnDiagnostics()
+	}
 	s.rebindDroppedResourceGroup(ctx)
 	if execStmt, ok := stmtNode.(*ast.ExecuteStmt); ok {
 		if binParam, ok := execStmt.BinaryArgs.([]param.BinaryParam); ok {
@@ -2114,6 +2119,10 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	// Transform abstract syntax tree to a physical plan(stored in executor.ExecStmt).
 	compiler := executor.Compiler{Ctx: s}
 	stmt, err := compiler.Compile(ctx, stmtNode)
+	if sessVars.StmtCtx.RedactDiagnostics {
+		// Mark the transaction before the statement may end it.
+		sessVars.TxnCtx.RedactDiagnostics = true
+	}
 	// check if resource group hint is valid, can't do this in planner.Optimize because we can access
 	// infoschema there.
 	if sessVars.StmtCtx.ResourceGroupName != sessVars.ResourceGroupName {
@@ -2139,7 +2148,8 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 					zap.String("SQL", sql))
 			}
 		}
-		return nil, err
+		// Compiling evaluates the subqueries and constants of the statement.
+		return nil, sessVars.StmtCtx.RedactExecError(err)
 	}
 
 	durCompile := time.Since(s.sessionVars.StartTime)
@@ -2182,7 +2192,7 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 				zap.Error(err),
 				zap.String("session", s.String()))
 		}
-		return recordSet, err
+		return recordSet, sessVars.StmtCtx.RedactExecError(err)
 	}
 	if !s.isInternal() && config.GetGlobalConfig().EnableTelemetry {
 		telemetry.CurrentExecuteCount.Inc()
@@ -2441,6 +2451,10 @@ func (rs *execStmtResult) TryDetach() (sqlexec.RecordSet, bool, error) {
 		return nil, false, nil
 	}
 	if !plannercore.IsAutoCommitTxn(rs.se.GetSessionVars()) {
+		return nil, false, nil
+	}
+	// A detached record set leaves the statement that redacts its diagnostics.
+	if rs.se.GetSessionVars().StmtCtx.RedactDiagnostics {
 		return nil, false, nil
 	}
 
@@ -3498,6 +3512,40 @@ func InitDDLJobTables(store kv.Storage, targetVer meta.DDLTableVersion) error {
 	})
 }
 
+// initBootstrapDependentTables creates the masking policy table before upgrade
+// DDL can consult it. The caller holds the upgrade lock; retries preserve an
+// existing table and its policies, including customer branches that created it.
+func initBootstrapDependentTables(store kv.Storage, ver int64) error {
+	if ver <= notBootstrapped || ver >= version234 || currentBootstrapVersion < version234 {
+		return nil
+	}
+	failpoint.Inject("mockInitBootstrapDependentTablesError", func() {
+		failpoint.Return(errors.New("mock init bootstrap dependent tables error"))
+	})
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	return kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
+		m := meta.NewMutator(txn)
+		dbID, err := m.CreateMySQLDatabaseIfNotExists()
+		if err != nil {
+			return errors.Trace(err)
+		}
+		tables, err := m.ListTables(ctx, dbID)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		for _, tbl := range tables {
+			if tbl.Name.L == "tidb_masking_policy" {
+				return nil
+			}
+		}
+		tableID, err := m.GenGlobalID()
+		if err != nil {
+			return errors.Trace(err)
+		}
+		return createAndSplitTables(store, m, dbID, []tableBasicInfo{{SQL: CreateMaskingPolicyTable, id: tableID}})
+	})
+}
+
 func createAndSplitTables(store kv.Storage, t *meta.Mutator, dbID int64, tables []tableBasicInfo) error {
 	tableIDs := make([]int64, 0, len(tables))
 	for _, tbl := range tables {
@@ -3670,7 +3718,13 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 	}
 	ver := getStoreBootstrapVersionWithCache(store)
 	if ver < currentBootstrapVersion {
-		runInBootstrapSession(store, ver)
+		if err = runInBootstrapSession(store, ver); err != nil {
+			// Reading the version above cached the store as bootstrapped.
+			// Forget that, or a retry in this process would skip the upgrade
+			// that did not happen.
+			unsetStoreBootstrapped(store.UUID())
+			return nil, err
+		}
 		// Another node may have completed fresh bootstrap while this node waited.
 		if err = initLegacyECDSASessionToken(store, false); err != nil {
 			return nil, err
@@ -3954,7 +4008,7 @@ func initMDLForBootstrap(store kv.Storage, startMode ddl.StartMode) (legacyMDLMi
 // If no bootstrap and storage is remote, we must use a little lease time to
 // bootstrap quickly, after bootstrapped, we will reset the lease time.
 // TODO: Using a bootstrap tool for doing this may be better later.
-func runInBootstrapSession(store kv.Storage, ver int64) {
+func runInBootstrapSession(store kv.Storage, ver int64) error {
 	startMode := getStartMode(ver)
 
 	if startMode == ddl.Upgrade {
@@ -3975,6 +4029,8 @@ func runInBootstrapSession(store kv.Storage, ver int64) {
 			// TODO remove this after we can refactor below code out in this case.
 			logutil.BgLogger().Info("[upgrade] already upgraded by other nodes, switch to normal mode")
 			startMode = ddl.Normal
+		} else if err := initBootstrapDependentTables(store, currVer); err != nil {
+			return errors.Trace(err)
 		}
 	}
 	// The scheduler can run as soon as the domain starts. Initialize runtime
@@ -4018,6 +4074,7 @@ func runInBootstrapSession(store kv.Storage, ver int64) {
 		infosync.MockGlobalServerInfoManagerEntry.Close()
 	}
 	domap.Delete(store)
+	return nil
 }
 
 func createSessions(store kv.Storage, cnt int) ([]*session, error) {
@@ -4576,6 +4633,11 @@ func (s *session) GetInfoSchema() infoschemactx.MetaOnlyInfoSchema {
 
 func (s *session) GetDomainInfoSchema() infoschemactx.MetaOnlyInfoSchema {
 	is := domain.GetDomain(s).InfoSchema()
+	if is == nil {
+		// Internal queries can bind a candidate schema during Domain's initial
+		// load. Use it for transaction setup until the first schema is published.
+		is, _ = s.sessionVars.SnapshotInfoschema.(infoschema.InfoSchema)
+	}
 	extIs := &infoschema.SessionExtendedInfoSchema{InfoSchema: is}
 	return temptable.AttachLocalTemporaryTableInfoSchema(s, extIs)
 }

@@ -2190,6 +2190,16 @@ func tryLockMDLAndUpdateSchemaIfNecessary(ctx context.Context, sctx base.PlanCon
 		if err != nil {
 			return nil, err
 		}
+		if tbl.Meta().ID != tableInfo.ID || hasNewColumnID(tableInfo, tbl.Meta()) {
+			// The table was replaced under a new ID, for example by TRUNCATE
+			// TABLE or EXCHANGE PARTITION, or has a column under an ID the
+			// transaction's schema does not have, for example after a MODIFY
+			// COLUMN that rewrites the rows. The DDL moved the masking policies
+			// to the new IDs, which the transaction's schema has no policy for,
+			// so resolve the policies of the table in the schema it was taken
+			// from.
+			se.SetMaskingPolicySchema(tableInfo.ID, tbl.Meta().ID, domainSchema)
+		}
 		curTxn, err := sctx.Txn(false)
 		if err != nil {
 			return nil, err
@@ -2200,6 +2210,31 @@ func tryLockMDLAndUpdateSchemaIfNecessary(ctx context.Context, sctx base.PlanCon
 		return tbl, nil
 	}
 	return tbl, nil
+}
+
+// hasNewColumnID reports whether newInfo has a public column whose ID is not
+// a public column of oldInfo. During an online MODIFY COLUMN the new column
+// takes its ID before it becomes public, and the policy moves to that ID only
+// when it does, so only public columns are compared.
+func hasNewColumnID(oldInfo, newInfo *model.TableInfo) bool {
+	if oldInfo == newInfo || oldInfo.UpdateTS == newInfo.UpdateTS {
+		return false
+	}
+	public := make(map[int64]struct{}, len(oldInfo.Columns))
+	for _, col := range oldInfo.Columns {
+		if col.State == model.StatePublic {
+			public[col.ID] = struct{}{}
+		}
+	}
+	for _, col := range newInfo.Columns {
+		if col.State != model.StatePublic {
+			continue
+		}
+		if _, ok := public[col.ID]; !ok {
+			return true
+		}
+	}
+	return false
 }
 
 // skipLockMDL returns true if the preprocessor should skip the lock of MDL.
