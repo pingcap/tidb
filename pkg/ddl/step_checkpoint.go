@@ -317,6 +317,9 @@ func (w *worker) applyStepOutcome(
 		w.sess.Rollback()
 		return 0, outcome.err
 	case stepFinishFinalizeJob:
+		if job.IsCancelled() {
+			deleteAffinityGroupsOfCancelledJob(jobCtx, job)
+		}
 		return 0, w.handleJobDone(jobCtx, job)
 	case stepFinishUpdateJob:
 		return w.commitActiveJobStep(jobCtx, jobW, outcome.schemaVer, outcome.updateRawArgs, outcome.err)

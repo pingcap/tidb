@@ -70,15 +70,25 @@ func DeleteGroupsWithRetry(ctx context.Context, ids []string) error {
 	if len(ids) == 0 {
 		return nil
 	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
 
 	var err error
 	for i := 0; i <= maxRetryTimes; i++ {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
 		err = DeleteGroups(ctx, ids)
 		if err == nil {
 			return nil
 		}
 		if i != maxRetryTimes {
-			time.Sleep(retryInterval)
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(retryInterval):
+			}
 		} else {
 			// Only log error on final retry failure
 			logutil.BgLogger().Error("Failed to delete affinity groups after retries", zap.Error(err), zap.Strings("groupIDs", ids))

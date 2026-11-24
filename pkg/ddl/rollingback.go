@@ -19,7 +19,10 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/ddl/logutil"
+	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -359,6 +362,16 @@ func convertTruncateTablePartitionJob2RollbackJob(jobCtx *jobContext, job *model
 		return ver, nil
 	}
 	pi := tblInfo.Partition
+	if tblInfo.Affinity != nil && tblInfo.Affinity.Level == ast.TableAffinityLevelPartition {
+		// PD may have created groups before the replacement IDs reached table metadata.
+		args, deleteErr := model.GetTruncateTableArgs(job)
+		if deleteErr == nil && len(args.NewPartitionIDs) != 0 {
+			deleteErr = deleteTableAffinityGroupsOnRollback(jobCtx, tblInfo, partitionDefinitionsFromIDs(args.NewPartitionIDs))
+		}
+		if deleteErr != nil {
+			logutil.DDLLogger().Warn("failed to delete replacement partition affinity groups during rollback", zap.Error(deleteErr), zap.Int64("tableID", tblInfo.ID))
+		}
+	}
 	if len(pi.NewPartitionIDs) != 0 || pi.DDLAction != model.ActionNone || pi.DDLState != model.StateNone {
 		// Rollback the changes, note that no new partitions has been used yet!
 		// so only metadata rollback and we can cancel the DDL
@@ -607,6 +620,53 @@ func rollingbackTruncateTable(jobCtx *jobContext, job *model.Job) (ver int64, er
 		return ver, errors.Trace(err)
 	}
 	return cancelOnlyNotHandledJob(job, model.StateNone)
+}
+
+// deleteAffinityGroupsOfCancelledJob deletes the affinity groups that a
+// cancelled job may have created in PD. Rolling back the DDL transaction does
+// not undo PD changes, so groups created by an earlier attempt, or by the
+// current attempt before PD returned an error, remain after the cancellation.
+// It reads the metadata through the transaction that persists the cancellation
+// and only deletes groups that this metadata does not use. It is best effort.
+func deleteAffinityGroupsOfCancelledJob(jobCtx *jobContext, job *model.Job) {
+	var err error
+	switch job.Type {
+	case model.ActionTruncateTable:
+		err = deleteTruncateTableReplacementAffinityGroups(jobCtx, job)
+	default:
+		return
+	}
+	if err != nil {
+		logutil.DDLLogger().Warn("failed to delete affinity groups of the cancelled job",
+			zap.Int64("jobID", job.ID), zap.Stringer("type", job.Type), zap.Error(err))
+	}
+}
+
+// getTableOfCancelledJob returns the job's table as the cancellation persists
+// it, or nil if the table does not exist.
+func getTableOfCancelledJob(jobCtx *jobContext, job *model.Job) (*model.TableInfo, error) {
+	tblInfo, err := jobCtx.metaMut.GetTable(job.SchemaID, job.TableID)
+	if meta.ErrDBNotExists.Equal(err) {
+		return nil, nil
+	}
+	return tblInfo, errors.Trace(err)
+}
+
+// deleteTruncateTableReplacementAffinityGroups deletes the groups of the
+// replacement table of a cancelled TRUNCATE TABLE job. Only the job arguments
+// retain the replacement IDs.
+func deleteTruncateTableReplacementAffinityGroups(jobCtx *jobContext, job *model.Job) error {
+	// The original table is still in the metadata, so the replacement IDs are unused.
+	tblInfo, err := getTableOfCancelledJob(jobCtx, job)
+	if err != nil || tblInfo == nil || tblInfo.Affinity == nil {
+		return errors.Trace(err)
+	}
+	args, err := model.GetTruncateTableArgs(job)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	replacement := &model.TableInfo{ID: args.NewTableID, Name: tblInfo.Name, Affinity: tblInfo.Affinity}
+	return deleteTableAffinityGroupsOnRollback(jobCtx, replacement, partitionDefinitionsFromIDs(args.NewPartitionIDs))
 }
 
 func convertJob2RollbackJob(w *worker, jobCtx *jobContext, job *model.Job) (ver int64, err error) {

@@ -521,8 +521,15 @@ func (w *worker) deleteDDLJob(job *model.Job) error {
 }
 
 func finishRecoverTable(w *worker, job *model.Job) error {
+	var firstErr error
+	if err := deleteRecoverGCBarrier(w.workCtx, w, job.ID); err != nil {
+		firstErr = errors.Trace(err)
+	}
 	args, err := model.GetRecoverArgs(job)
 	if err != nil {
+		if firstErr != nil {
+			return firstErr
+		}
 		return errors.Trace(err)
 	}
 	if args.CheckFlag == recoverCheckFlagEnableGC {
@@ -531,21 +538,11 @@ func finishRecoverTable(w *worker, job *model.Job) error {
 			return errors.Trace(err)
 		}
 	}
-	return nil
+	return firstErr
 }
 
 func finishRecoverSchema(w *worker, job *model.Job) error {
-	args, err := model.GetRecoverArgs(job)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	if args.CheckFlag == recoverCheckFlagEnableGC {
-		err = enableGC(w)
-		if err != nil {
-			return errors.Trace(err)
-		}
-	}
-	return nil
+	return finishRecoverTable(w, job)
 }
 
 func (w *ReorgContext) attachTopProfilingInfo(jobQuery string) {
@@ -726,8 +723,11 @@ func (w *worker) transitOneJobStep(
 			if err := w.checkBeforeCommit(); err != nil {
 				return 0, err
 			}
-			if job.Type == model.ActionMViewRefreshOutOfPlaceCutover {
+			switch job.Type {
+			case model.ActionMViewRefreshOutOfPlaceCutover:
 				w.cleanupMViewOutOfPlaceCutoverAfterCommit(jobCtx, job)
+			case model.ActionTruncateTable:
+				cleanupTruncateTableAffinityGroupsAfterCommit(jobCtx, job)
 			}
 			job.State = model.JobStateSynced
 		}
@@ -774,17 +774,12 @@ func (w *worker) transitOneJobStep(
 		return w.applyStepOutcome(jobCtx, jobW, cp, outcome)
 	}
 
-	// Legacy fallback for actions not yet migrated to explicit stepOutcome.
-	// Internal SQL may release statement mutations before a terminal cancellation.
-	if job.IsCancelled() && !jobCtx.mustRollbackTxnOnError {
-		w.sess.Reset()
-		return 0, w.handleJobDone(jobCtx, job)
-	}
-
 	if err = w.checkBeforeCommit(); err != nil {
 		return 0, err
 	}
 
+	// countForError consumes errors for cancelled jobs, so cancellation must
+	// also trigger a full rollback when internal SQL has flushed step writes.
 	if runJobErr != nil || job.IsCancelled() {
 		if jobCtx.mustRollbackTxnOnError {
 			// Discard all mutations from this job step, including related-table
@@ -816,6 +811,9 @@ func (w *worker) transitOneJobStep(
 	}
 
 	if job.IsCancelled() {
+		// Delete PD groups before the cancellation commits. If the commit fails,
+		// the job runs again and repeats this idempotent cleanup.
+		deleteAffinityGroupsOfCancelledJob(jobCtx, job)
 		return 0, w.handleJobDone(jobCtx, job)
 	}
 
