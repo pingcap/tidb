@@ -34,7 +34,7 @@ use tidb_driver_error::DriverError;
 pub(crate) use tidb_executor::compiler::explain::variant_name;
 use crate::record_set::{PendingExecution, PendingQuery, QueryTransactionEnd};
 use crate::{
-    statement_kind_of, statement_priority_of, Session, StatementKind, StmtOutput, WarningLevel,
+    statement_kind_of, Session, StatementKind, StmtOutput, WarningLevel,
 };
 
 /// The `SELECT <exprs>` whose execution is Go `buildDo`'s Projection over a
@@ -2028,30 +2028,7 @@ impl Session {
                     DmlStmt::Insert(insert) => {
                         let mut physical_plan = cached_dml_plan(dml_plan, "Insert")?;
                         let current_db = self.vars.current_db.clone();
-                        let enable_strict_not_null_check = !matches!(
-                            self.vars
-                                .get_system(
-                                    tidb_vardef::tidb_vars::TIDB_ENABLE_STRICT_NOT_NULL_CHECK
-                                )
-                                .as_deref(),
-                            Ok("OFF" | "off" | "0")
-                        );
-                        // Go `ResetContextOfStmt`'s `*ast.InsertStmt` arm. The class
-                        // is what `StmtContext::push_down_flags` turns into the
-                        // statement-kind bit of any coprocessor request this
-                        // statement's read half issues, and `IgnoreErr` is the
-                        // `IGNORE` modifier Go reads off this same AST to downgrade
-                        // every value-level error to a warning.
-                        let ctx = self
-                            .statement_context_ignoring(true, insert.ignore)
-                            // Go's `*ast.InsertStmt` arm sets
-                            // `sc.Priority = stmt.Priority`.
-                            .with_statement_priority(statement_priority_of(&stmt))
-                            .with_statement_class(tidb_sessionctx::StatementClass::Insert)
-                            .with_single_insert_bad_null_policy(
-                                insert.rows.len() == 1,
-                                enable_strict_not_null_check,
-                            );
+                        let ctx = self.reset_insert_stmt_ctx(insert, &stmt);
                         let ctx = self.with_plan_privilege_check(ctx, &stmt)?;
                         if insert.source.is_some() {
                             self.write_sli.set_invalid();
@@ -2101,17 +2078,7 @@ impl Session {
                     DmlStmt::Update(update) => {
                         let mut physical_plan = cached_dml_plan(dml_plan, "Update")?;
                         let current_db = self.vars.current_db.clone();
-                        // Go `ResetUpdateStmtCtx`, which applies the same
-                        // `!strictSQLMode || stmt.IgnoreErr` rule the INSERT arm
-                        // does; the class is what `StmtContext::push_down_flags`
-                        // turns into the statement-kind bit of any coprocessor
-                        // request this statement's read half issues.
-                        let ctx = self
-                            .statement_context_for_update_read(update.ignore)
-                            // Go `ResetUpdateStmtCtx` sets
-                            // `sc.Priority = stmt.Priority`.
-                            .with_statement_priority(statement_priority_of(&stmt))
-                            .with_statement_class(tidb_sessionctx::StatementClass::Update);
+                        let ctx = self.reset_update_stmt_ctx(update, &stmt);
                         let ctx = self.with_plan_privilege_check(ctx, &stmt)?;
                         let output = match &update.kind {
                             tidb_ast::UpdateKind::Single(_) => {
@@ -2155,17 +2122,7 @@ impl Session {
                     DmlStmt::Delete(delete) => {
                         let mut physical_plan = cached_dml_plan(dml_plan, "Delete")?;
                         let current_db = self.vars.current_db.clone();
-                        // Go `ResetDeleteStmtCtx`, which applies the same
-                        // `!strictSQLMode || stmt.IgnoreErr` rule the INSERT arm
-                        // does; the class is what `StmtContext::push_down_flags`
-                        // turns into the statement-kind bit of any coprocessor
-                        // request this statement's read half issues.
-                        let ctx = self
-                            .statement_context_for_update_read(delete.ignore)
-                            // Go `ResetDeleteStmtCtx` sets
-                            // `sc.Priority = stmt.Priority`.
-                            .with_statement_priority(statement_priority_of(&stmt))
-                            .with_statement_class(tidb_sessionctx::StatementClass::Delete);
+                        let ctx = self.reset_delete_stmt_ctx(delete, &stmt);
                         let ctx = self.with_plan_privilege_check(ctx, &stmt)?;
                         let output = match &delete.kind {
                             tidb_ast::DeleteKind::Single(_) => {

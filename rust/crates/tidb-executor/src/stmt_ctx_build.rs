@@ -1165,6 +1165,54 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
         self.statement_context_of(is_dml, ignore_err, !is_dml)
     }
 
+    /// Go `ResetContextOfStmt`'s `*ast.InsertStmt` arm: `IgnoreErr` is the
+    /// `IGNORE` modifier that downgrades every value-level error to a
+    /// warning, a single-row INSERT keeps its bad-null error under
+    /// `tidb_enable_strict_not_null_check`, and the class is what
+    /// `StmtContext::push_down_flags` turns into the statement-kind bit of
+    /// any coprocessor request the statement's read half issues.
+    fn reset_insert_stmt_ctx(
+        &self,
+        insert: &tidb_ast::InsertStmt,
+        stmt: &tidb_ast::Stmt,
+    ) -> crate::StmtContext {
+        let enable_strict_not_null_check = !matches!(
+            self.session_vars()
+                .get_system(tidb_vardef::tidb_vars::TIDB_ENABLE_STRICT_NOT_NULL_CHECK)
+                .as_deref(),
+            Ok("OFF" | "off" | "0")
+        );
+        self.statement_context_ignoring(true, insert.ignore)
+            // `sc.Priority = stmt.Priority`.
+            .with_statement_priority(crate::sessionctx::statement_priority_of(stmt))
+            .with_statement_class(tidb_sessionctx::StatementClass::Insert)
+            .with_single_insert_bad_null_policy(insert.rows.len() == 1, enable_strict_not_null_check)
+    }
+
+    /// Go `ResetUpdateStmtCtx`: the `!strictSQLMode || stmt.IgnoreErr`
+    /// levels and `sc.Priority = stmt.Priority`.
+    fn reset_update_stmt_ctx(
+        &self,
+        update: &tidb_ast::UpdateStmt,
+        stmt: &tidb_ast::Stmt,
+    ) -> crate::StmtContext {
+        self.statement_context_for_update_read(update.ignore)
+            .with_statement_priority(crate::sessionctx::statement_priority_of(stmt))
+            .with_statement_class(tidb_sessionctx::StatementClass::Update)
+    }
+
+    /// Go `ResetDeleteStmtCtx`: the `!strictSQLMode || stmt.IgnoreErr`
+    /// levels and `sc.Priority = stmt.Priority`.
+    fn reset_delete_stmt_ctx(
+        &self,
+        delete: &tidb_ast::DeleteStmt,
+        stmt: &tidb_ast::Stmt,
+    ) -> crate::StmtContext {
+        self.statement_context_for_update_read(delete.ignore)
+            .with_statement_priority(crate::sessionctx::statement_priority_of(stmt))
+            .with_statement_class(tidb_sessionctx::StatementClass::Delete)
+    }
+
     /// [`Self::statement_context_ignoring`] for a statement whose Go
     /// `StmtCtx.IsReadOnly` is `read_only`.
     fn statement_context_of(
