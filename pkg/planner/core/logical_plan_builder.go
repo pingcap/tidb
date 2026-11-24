@@ -5658,11 +5658,9 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName ast.CI
 	}
 	if b.buildingFoundRows {
 		// View definitions are expanded after preprocessing. Check them as inner queries,
-		// preserving legacy modifiers as noops and rejecting non-repeatable expressions.
-		checker := &foundRowsChecker{inView: true}
-		ast.Walk(selectNode, checker)
-		if checker.err != nil {
-			return nil, checker.err
+		// preserving legacy modifiers as noops and rejecting or falling back on non-repeatable expressions.
+		if err := b.checkViewForFoundRows(selectNode); err != nil {
+			return nil, err
 		}
 	}
 	originalVisitInfo := b.visitInfo

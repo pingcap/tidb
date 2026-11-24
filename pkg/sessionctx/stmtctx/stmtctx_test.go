@@ -245,6 +245,7 @@ func TestLogicalPlanBuildStateRestore(t *testing.T) {
 	sc.ColRefFromUpdatePlan.Insert(7)
 	sc.SetCacheType(contextutil.SessionNonPrepared)
 	sc.EnablePlanCache()
+	sc.IgnoreCalcFoundRows = false
 
 	state := sc.SaveLogicalPlanBuildState()
 
@@ -258,6 +259,7 @@ func TestLogicalPlanBuildStateRestore(t *testing.T) {
 	sc.ViewDepth = 9
 	sc.ColRefFromUpdatePlan.Insert(9)
 	sc.SetSkipPlanCache("candidate reason")
+	sc.IgnoreCalcFoundRows = true
 
 	sc.RestoreLogicalPlanBuildState(state)
 
@@ -279,6 +281,7 @@ func TestLogicalPlanBuildStateRestore(t *testing.T) {
 	require.False(t, sc.ColRefFromUpdatePlan.Has(9))
 	require.True(t, sc.UseCache())
 	require.Empty(t, sc.PlanCacheUnqualified())
+	require.False(t, sc.IgnoreCalcFoundRows)
 }
 
 func TestQBHintHandlerBuildState(t *testing.T) {

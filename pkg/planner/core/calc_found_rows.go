@@ -22,8 +22,15 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 )
+
+// shouldCalcFoundRows reports whether this SELECT should build a count branch.
+func shouldCalcFoundRows(ctx base.PlanContext, opts *ast.SelectStmtOpts) bool {
+	return opts != nil && opts.CalcFoundRows && !ctx.GetSessionVars().StmtCtx.IgnoreCalcFoundRows
+}
 
 // GetFoundRowsPlan returns the logical count branch for SQL_CALC_FOUND_ROWS, or nil.
 func (b *PlanBuilder) GetFoundRowsPlan() base.LogicalPlan {
@@ -46,6 +53,21 @@ func (b *PlanBuilder) buildSelectWithFoundRows(ctx context.Context, sel *ast.Sel
 	fields := *sel.Fields
 	fields.Fields = slices.Clone(sel.Fields.Fields)
 	countSel.Fields = &fields
+	// Build the data branch first so view-triggered noop fallback skips the
+	// count branch altogether and never evaluates non-correlated subqueries twice.
+	plan, err := b.buildSelect(ctx, sel)
+	if err != nil {
+		return nil, err
+	}
+	if b.ctx.GetSessionVars().StmtCtx.IgnoreCalcFoundRows {
+		return plan, nil
+	}
+	// AST nodes are shared, but their column bindings must belong to each
+	// independent plan. In particular, do not reuse correlated aggregate columns
+	// extracted while building the data branch in the count branch.
+	clear(b.colMapper)
+	clear(b.correlatedAggMapper)
+	b.currentBlockExpand = nil
 	count, err := b.buildSelect(ctx, &countSel)
 	if err != nil {
 		return nil, err
@@ -65,17 +87,45 @@ func (b *PlanBuilder) buildSelectWithFoundRows(ctx context.Context, sel *ast.Sel
 	projection.SetSchema(expression.NewSchema(count.Schema().Columns[0]))
 	projection.SetOutputNames(count.OutputNames()[:1])
 	b.foundRowsPlan = projection
-	// AST nodes are shared, but their column bindings must belong to each
-	// independent plan. In particular, do not reuse correlated aggregate columns
-	// extracted while building the count branch in the data branch.
-	clear(b.colMapper)
-	clear(b.correlatedAggMapper)
-	return b.buildSelect(ctx, sel)
+	return plan, nil
 }
 
-// preprocessSQLCalcFoundRows checks modifier placement in the same traversal as
-// preprocessing, preserving its error order and skipped subtrees.
-func preprocessSQLCalcFoundRows(node ast.Node, p *preprocessor) {
+// checkViewForFoundRows validates an expanded view definition while building
+// a SQL_CALC_FOUND_ROWS plan.
+func (b *PlanBuilder) checkViewForFoundRows(selectNode ast.Node) error {
+	vars := b.ctx.GetSessionVars()
+	if vars.StmtCtx.IgnoreCalcFoundRows {
+		return nil
+	}
+	return checkFoundRowsView(vars, selectNode)
+}
+
+// handleUnsupportedCalcFoundRows applies tidb_enable_noop_functions when a
+// valid SQL_CALC_FOUND_ROWS placement has no native count plan.
+func handleUnsupportedCalcFoundRows(vars *variable.SessionVars, err error) error {
+	switch vars.NoopFuncsMode {
+	case variable.OnInt:
+		vars.StmtCtx.IgnoreCalcFoundRows = true
+		return nil
+	case variable.WarnInt:
+		vars.StmtCtx.IgnoreCalcFoundRows = true
+		// Planning can preprocess or revalidate the same statement more than
+		// once (for example, in the non-prepared plan cache), so record the
+		// noop warning at most once per statement.
+		warn := expression.ErrFunctionsNoopImpl.FastGenByArgs("SQL_CALC_FOUND_ROWS")
+		for _, existing := range vars.StmtCtx.GetWarnings() {
+			if existing.Err != nil && existing.Err.Error() == warn.Error() {
+				return nil
+			}
+		}
+		vars.StmtCtx.AppendWarning(warn)
+		return nil
+	default:
+		return err
+	}
+}
+
+func newFoundRowsPreprocessor(node ast.Node, p *preprocessor) foundRowsPreprocessor {
 	query := node
 	if explain, ok := query.(*ast.ExplainStmt); ok {
 		query = explain.Stmt
@@ -90,7 +140,26 @@ func preprocessSQLCalcFoundRows(node ast.Node, p *preprocessor) {
 			v.unsupportedReason = "SQL_CALC_FOUND_ROWS with set operations"
 		}
 	}
+	return v
+}
+
+// preprocessSQLCalcFoundRows checks modifier placement in the same traversal as
+// preprocessing, preserving its error order and skipped subtrees.
+func preprocessSQLCalcFoundRows(node ast.Node, p *preprocessor) {
+	v := newFoundRowsPreprocessor(node, p)
 	ast.Walk(node, &v)
+}
+
+// revalidateSQLCalcFoundRows re-applies tidb_enable_noop_functions for
+// prepared/cached statements whose AST was preprocessed in an earlier mode.
+func revalidateSQLCalcFoundRows(sctx sessionctx.Context, node ast.Node) error {
+	v := newFoundRowsPreprocessor(node, nil)
+	if v.allowedSelect == nil || v.allowedSelect.SelectStmtOpts == nil ||
+		!v.allowedSelect.SelectStmtOpts.CalcFoundRows {
+		return nil
+	}
+	v.preprocessor = &preprocessor{sctx: sctx}
+	return v.checkSelect(v.allowedSelect)
 }
 
 // foundRowsPreprocessor validates SELECT entry while retaining the preprocessor's
@@ -118,12 +187,12 @@ func (v *foundRowsPreprocessor) checkSelect(stmt *ast.SelectStmt) error {
 	if stmt != v.allowedSelect {
 		return plannererrors.ErrCantUseOptionHere.GenWithStackByArgs("SQL_CALC_FOUND_ROWS")
 	}
+	vars := v.sctx.GetSessionVars()
 	if v.unsupportedReason != "" {
-		return plannererrors.ErrNotSupportedYet.GenWithStackByArgs(v.unsupportedReason)
+		return handleUnsupportedCalcFoundRows(
+			vars, plannererrors.ErrNotSupportedYet.GenWithStackByArgs(v.unsupportedReason))
 	}
-	checker := &foundRowsChecker{root: stmt}
-	ast.Walk(stmt, checker)
-	return checker.err
+	return checkFoundRowsSelect(vars, stmt)
 }
 
 // findSQLCalcFoundRowsAllowedSelect returns the SELECT where the modifier is
@@ -157,16 +226,34 @@ func findSQLCalcFoundRowsAllowedSelect(node ast.Node) *ast.SelectStmt {
 	return nil
 }
 
+func checkFoundRowsSelect(vars *variable.SessionVars, stmt *ast.SelectStmt) error {
+	return checkFoundRowsAST(vars, stmt, stmt)
+}
+
+func checkFoundRowsView(vars *variable.SessionVars, selectNode ast.Node) error {
+	return checkFoundRowsAST(vars, selectNode, nil)
+}
+
+func checkFoundRowsAST(vars *variable.SessionVars, node ast.Node, outerSelect *ast.SelectStmt) error {
+	checker := &foundRowsChecker{outerSelect: outerSelect}
+	ast.Walk(node, checker)
+	if plannererrors.ErrNotSupportedYet.Equal(checker.err) {
+		return handleUnsupportedCalcFoundRows(vars, checker.err)
+	}
+	return checker.err
+}
+
 // foundRowsChecker rejects unsupported SELECT shapes and known non-repeatable
 // expressions.
 // ORDER BY RAND() is permitted only in the outer query: dropping that ordering
 // from the count does not change which rows are counted.
 type foundRowsChecker struct {
-	root       *ast.SelectStmt
-	depth      int
-	outerOrder bool
-	inView     bool
-	err        error
+	// outerSelect is the top-level SELECT carrying SQL_CALC_FOUND_ROWS, or nil
+	// when checking an expanded view body.
+	outerSelect *ast.SelectStmt
+	depth       int
+	outerOrder  bool
+	err         error
 }
 
 func (v *foundRowsChecker) Enter(node ast.Node) bool {
@@ -178,7 +265,7 @@ func (v *foundRowsChecker) Enter(node ast.Node) bool {
 	case *ast.SelectStmt:
 		v.depth++
 		switch {
-		case !v.inView && n != v.root && n.SelectStmtOpts != nil && n.SelectStmtOpts.CalcFoundRows:
+		case v.outerSelect != nil && n != v.outerSelect && n.SelectStmtOpts != nil && n.SelectStmtOpts.CalcFoundRows:
 			v.err = plannererrors.ErrCantUseOptionHere.GenWithStackByArgs("SQL_CALC_FOUND_ROWS")
 			return true
 		case n.LockInfo != nil && n.LockInfo.LockType != ast.SelectLockNone:
@@ -189,7 +276,7 @@ func (v *foundRowsChecker) Enter(node ast.Node) bool {
 	case *ast.WindowFuncExpr:
 		reason = "SQL_CALC_FOUND_ROWS with window functions"
 	case *ast.OrderByClause:
-		if !v.inView && n == v.root.OrderBy {
+		if v.outerSelect != nil && n == v.outerSelect.OrderBy {
 			v.outerOrder = true
 		}
 	case *ast.VariableExpr:
@@ -222,7 +309,7 @@ func (v *foundRowsChecker) Leave(node ast.Node) bool {
 	if _, ok := node.(*ast.SelectStmt); ok {
 		v.depth--
 	}
-	if !v.inView && node == v.root.OrderBy {
+	if v.outerSelect != nil && node == v.outerSelect.OrderBy {
 		v.outerOrder = false
 	}
 	return v.err == nil

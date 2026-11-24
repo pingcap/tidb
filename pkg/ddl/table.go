@@ -19,11 +19,13 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/label"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/ddl/notifier"
@@ -350,15 +352,32 @@ func (w *worker) onRecoverTable(jobCtx *jobContext, job *model.Job) (ver int64, 
 				return ver, errors.Errorf("disable gc failed, try again later. err: %v", err)
 			}
 		}
+		if err = setRecoverGCBarrier(jobCtx.stepCtx, w, job.ID, recoverInfo.SnapshotTS); err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
+		renewCtx, stopBarrierRenew, barrierRenewErr := startRecoverGCBarrierRenewer(jobCtx.stepCtx, w, job.ID, recoverInfo.SnapshotTS)
+		defer stopBarrierRenew()
+		origStepCtx := jobCtx.stepCtx
+		jobCtx.stepCtx = renewCtx
+		defer func() {
+			jobCtx.stepCtx = origStepCtx
+		}()
 		// check GC safe point
 		err = checkSafePoint(w, recoverInfo.SnapshotTS)
 		if err != nil {
 			job.State = model.JobStateCancelled
-			return ver, errors.Trace(err)
+			return ver, cancelOnRecoverBarrierRenewErr(job, barrierRenewErr, err)
 		}
-		ver, err = w.recoverTable(jobCtx.stepCtx, metaMut, job, recoverInfo)
+		if err = w.removeRecoverGCDeleteRange(jobCtx, recoverInfo.DropJobID); err != nil {
+			return ver, cancelOnRecoverBarrierRenewErr(job, barrierRenewErr, err)
+		}
+		ver, err = w.recoverTable(jobCtx, metaMut, job, recoverInfo)
 		if err != nil {
-			return ver, errors.Trace(err)
+			return ver, cancelOnRecoverBarrierRenewErr(job, barrierRenewErr, err)
+		}
+		if err = cancelOnRecoverBarrierRenewErr(job, barrierRenewErr, nil); err != nil {
+			return ver, err
 		}
 		tableInfo := tblInfo.Clone()
 		tableInfo.State = model.StatePublic
@@ -374,7 +393,7 @@ func (w *worker) onRecoverTable(jobCtx *jobContext, job *model.Job) (ver int64, 
 		args.AffectedPhysicalIDs = tids
 		ver, err = updateVersionAndTableInfo(jobCtx, job, tableInfo, true)
 		if err != nil {
-			return ver, errors.Trace(err)
+			return ver, cancelOnRecoverBarrierRenewErr(job, barrierRenewErr, err)
 		}
 		tblInfo.State = model.StatePublic
 		tblInfo.UpdateTS = metaMut.StartTS
@@ -386,21 +405,33 @@ func (w *worker) onRecoverTable(jobCtx *jobContext, job *model.Job) (ver int64, 
 	return ver, nil
 }
 
+func (w *worker) removeRecoverGCDeleteRange(jobCtx *jobContext, dropJobID int64) error {
+	if dropJobID == 0 {
+		return nil
+	}
+	// Remove dropped DDL job entries from gc_delete_range in the same metadata
+	// transaction so a rollback restores the delete-range entries.
+	var err error
+	if w.sess != nil {
+		jobCtx.mustRollbackTxnOnError = true
+		err = w.delRangeManager.removeFromGCDeleteRangeWithSession(jobCtx.stepCtx, w.sess.Session(), dropJobID)
+	} else {
+		err = w.delRangeManager.removeFromGCDeleteRange(jobCtx.stepCtx, dropJobID)
+	}
+	return errors.Trace(err)
+}
+
 func (w *worker) recoverTable(
-	ctx context.Context,
+	jobCtx *jobContext,
 	t *meta.Mutator,
 	job *model.Job,
 	recoverInfo *model.RecoverTableInfo,
 ) (ver int64, err error) {
+	ctx := jobCtx.stepCtx
 	tableRuleID, partRuleIDs, oldRuleIDs, oldRules, err := getOldLabelRules(w.store.GetCodec(), recoverInfo.TableInfo, recoverInfo.OldSchemaName, recoverInfo.OldTableName)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Wrapf(err, "failed to get old label rules from PD")
-	}
-	// Remove dropped table DDL job from gc_delete_range table.
-	err = w.delRangeManager.removeFromGCDeleteRange(ctx, recoverInfo.DropJobID)
-	if err != nil {
-		return ver, errors.Trace(err)
 	}
 	err = clearTablePlacementAndBundles(ctx, recoverInfo.TableInfo)
 	if err != nil {
@@ -504,6 +535,151 @@ func checkSafePoint(w *worker, snapshotTS uint64) error {
 	return gcutil.ValidateSnapshot(ctx, snapshotTS)
 }
 
+const recoverGCBarrierTTL = time.Hour
+
+var recoverGCBarrierRenewInterval = recoverGCBarrierTTL / 2
+
+func recoverGCBarrierID(keyspaceID uint32, jobID int64) string {
+	return fmt.Sprintf("ddl-recover-%d-%d", keyspaceID, jobID)
+}
+
+func isGCBarrierUnimplementedErr(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "Unimplemented")
+}
+
+// setRecoverGCBarrier pins PD's GC safe point at snapshotTS for the store's keyspace
+// so Unified GC (which ignores mysql.tidb tikv_gc_enable) cannot collect ranges
+// belonging to the table/schema being recovered.
+func setRecoverGCBarrier(ctx context.Context, w *worker, jobID int64, snapshotTS uint64) error {
+	pdStore, ok := w.store.(kv.StorageWithPD)
+	if !ok || pdStore.GetPDClient() == nil {
+		return nil
+	}
+	keyspaceID := uint32(w.store.GetCodec().GetKeyspaceID())
+	gcClient := pdStore.GetPDClient().GetGCStatesClient(keyspaceID)
+	if _, err := gcClient.SetGCBarrier(ctx, recoverGCBarrierID(keyspaceID, jobID), snapshotTS, recoverGCBarrierTTL); err != nil {
+		if !kerneltype.IsNextGen() && isGCBarrierUnimplementedErr(err) {
+			logutil.DDLLogger().Warn("PD does not support SetGCBarrier, skip setting recover GC barrier",
+				zap.Int64("jobID", jobID), zap.Error(err))
+			return nil
+		}
+		return errors.Trace(err)
+	}
+	return nil
+}
+
+// startRecoverGCBarrierRenewer periodically renews the recovery GC barrier in
+// the background so long-running preparation or metadata scans cannot outlive
+// recoverGCBarrierTTL. Callers must invoke stop before returning so renewal
+// cannot race with barrier deletion.
+func startRecoverGCBarrierRenewer(
+	parentCtx context.Context,
+	w *worker,
+	jobID int64,
+	snapshotTS uint64,
+) (context.Context, func(), func() error) {
+	if parentCtx == nil {
+		parentCtx = context.Background()
+	}
+	if w == nil || w.store == nil {
+		return parentCtx, func() {}, func() error { return nil }
+	}
+	pdStore, ok := w.store.(kv.StorageWithPD)
+	if !ok || pdStore.GetPDClient() == nil {
+		return parentCtx, func() {}, func() error { return nil }
+	}
+
+	interval := recoverGCBarrierRenewInterval
+	if interval <= 0 {
+		interval = recoverGCBarrierTTL / 2
+	}
+
+	workCtx, cancelWork := context.WithCancelCause(parentCtx)
+	callCtx, cancelCall := context.WithCancel(parentCtx)
+	stopCh := make(chan struct{})
+	var (
+		wg       sync.WaitGroup
+		stopOnce sync.Once
+		errMu    sync.Mutex
+		renewErr error
+	)
+	getErr := func() error {
+		errMu.Lock()
+		defer errMu.Unlock()
+		return renewErr
+	}
+	setErr := func(err error) {
+		errMu.Lock()
+		if renewErr == nil {
+			renewErr = err
+		}
+		errMu.Unlock()
+	}
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-stopCh:
+				return
+			case <-parentCtx.Done():
+				return
+			case <-ticker.C:
+				if err := setRecoverGCBarrier(callCtx, w, jobID, snapshotTS); err != nil {
+					select {
+					case <-stopCh:
+						return
+					default:
+					}
+					if parentCtx.Err() != nil {
+						return
+					}
+					setErr(err)
+					cancelWork(err)
+					return
+				}
+			}
+		}
+	}()
+
+	stop := func() {
+		stopOnce.Do(func() {
+			close(stopCh)
+			cancelCall()
+			wg.Wait()
+			cancelWork(nil)
+		})
+	}
+	return workCtx, stop, getErr
+}
+
+func cancelOnRecoverBarrierRenewErr(job *model.Job, barrierRenewErr func() error, fallbackErr error) error {
+	if renewErr := barrierRenewErr(); renewErr != nil {
+		job.State = model.JobStateCancelled
+		return errors.Trace(renewErr)
+	}
+	return errors.Trace(fallbackErr)
+}
+
+func deleteRecoverGCBarrier(ctx context.Context, w *worker, jobID int64) error {
+	pdStore, ok := w.store.(kv.StorageWithPD)
+	if !ok || pdStore.GetPDClient() == nil {
+		return nil
+	}
+	keyspaceID := uint32(w.store.GetCodec().GetKeyspaceID())
+	gcClient := pdStore.GetPDClient().GetGCStatesClient(keyspaceID)
+	if _, err := gcClient.DeleteGCBarrier(ctx, recoverGCBarrierID(keyspaceID, jobID)); err != nil {
+		if !kerneltype.IsNextGen() && isGCBarrierUnimplementedErr(err) {
+			return nil
+		}
+		return errors.Trace(err)
+	}
+	return nil
+}
+
 func getTable(r autoid.Requirement, schemaID int64, tblInfo *model.TableInfo) (table.Table, error) {
 	allocs := autoid.NewAllocatorsFromTblInfo(r, schemaID, tblInfo)
 	tbl, err := table.TableFromMeta(allocs, tblInfo)
@@ -603,6 +779,20 @@ func (w *worker) onTruncateTable(jobCtx *jobContext, job *model.Job) (ver int64,
 	err = checkTruncateTableHasForeignKeyReferredInOwner(jobCtx.infoCache, job, tblInfo, args.FKCheck)
 	if err != nil {
 		return ver, err
+	}
+	pi := tblInfo.GetPartitionInfo()
+	if tblInfo.Affinity != nil &&
+		tblInfo.Affinity.Level == ast.TableAffinityLevelPartition && pi != nil &&
+		len(args.NewPartitionIDs) < len(pi.Definitions) {
+		// Reserve additional IDs and persist them with the job before creating
+		// external groups. A failed truncate must not retain rolled-back IDs.
+		moreIDs, err := metaMut.GenGlobalIDs(len(pi.Definitions) - len(args.NewPartitionIDs))
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		args.NewPartitionIDs = append(args.NewPartitionIDs, moreIDs...)
+		job.FillArgs(args)
+		return 0, nil
 	}
 	if jobCtx.oldDDLCtx != nil {
 		if err := w.truncateTTLTableInExternalWorkload(jobCtx.ctx, job, oldTblInfo, args.NewTableID); err != nil {
@@ -735,21 +925,18 @@ func (w *worker) onTruncateTable(jobCtx *jobContext, job *model.Job) (ver int64,
 	}
 	preSplitAndScatterTable(w.sess.Context, jobCtx.store, tblInfo, scatterScope)
 
-	// Create new affinity groups first (critical operation - must succeed)
+	// Create new affinity groups first (critical operation - must succeed).
+	// If the job is cancelled, deleteAffinityGroupsOfCancelledJob deletes the
+	// replacement groups, including groups PD created before it failed.
 	if tblInfo.Affinity != nil {
 		if err = createTableAffinityGroupsInPD(jobCtx, tblInfo); err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
 	}
-
-	// Delete old affinity groups (best-effort cleanup - ignore errors)
-	// TRUNCATE TABLE: always try to delete old table's affinity groups
-	if oldTblInfo.Affinity != nil {
-		if err := deleteTableAffinityGroupsInPD(jobCtx, oldTblInfo, nil); err != nil {
-			logutil.DDLLogger().Error("failed to delete old affinity groups from PD", zap.Error(err), zap.Int64("tableID", oldTblInfo.ID))
-		}
-	}
+	// Keep the old table's affinity groups until this step commits. A later
+	// failure can still cancel the job and restore the old table metadata.
+	// cleanupTruncateTableAffinityGroupsAfterCommit deletes them afterwards.
 
 	ver, err = updateSchemaVersion(jobCtx, job)
 	if err != nil {
@@ -767,6 +954,28 @@ func (w *worker) onTruncateTable(jobCtx *jobContext, job *model.Job) (ver int64,
 	args.NewPartitionIDs = newPartitionIDs
 	job.FillFinishedArgs(args)
 	return ver, nil
+}
+
+// cleanupTruncateTableAffinityGroupsAfterCommit deletes the affinity groups of
+// the table replaced by a TRUNCATE TABLE job that has committed as done. It is
+// best effort: a failure leaves an unused group on the old table ID.
+func cleanupTruncateTableAffinityGroupsAfterCommit(jobCtx *jobContext, job *model.Job) {
+	newTblInfo := job.BinlogInfo.TableInfo
+	if newTblInfo == nil || newTblInfo.Affinity == nil {
+		return
+	}
+	args, err := model.GetFinishedTruncateTableArgs(job)
+	if err != nil {
+		logutil.DDLLogger().Warn("failed to decode truncate table args for post-commit affinity cleanup",
+			zap.Int64("jobID", job.ID), zap.Error(err))
+		return
+	}
+	// TRUNCATE TABLE keeps the affinity level, and job.TableID is the old table ID.
+	oldTblInfo := &model.TableInfo{ID: job.TableID, Name: newTblInfo.Name, Affinity: newTblInfo.Affinity}
+	oldDefs := partitionDefinitionsFromIDs(args.OldPartitionIDs)
+	if err := deleteTableAffinityGroupsWithTimeout(jobCtx, oldTblInfo, oldDefs); err != nil {
+		logutil.DDLLogger().Warn("failed to delete old affinity groups from PD", zap.Error(err), zap.Int64("tableID", oldTblInfo.ID))
+	}
 }
 
 func (w *worker) truncateTTLTableInExternalWorkload(
@@ -998,7 +1207,7 @@ func (w *worker) onRenameTable(jobCtx *jobContext, job *model.Job) (ver int64, _
 		job.State = model.JobStateCancelled
 		return ver, infoschema.ErrDatabaseNotExists.GenWithStackByArgs(fmt.Sprintf("schema-ID: %v", newSchemaID))
 	}
-	if err = w.updateMaskingPolicyNamesAfterRename(jobCtx.stepCtx, tblInfo.ID,
+	if err = w.updateMaskingPolicyNamesAfterRename(jobCtx, tblInfo.ID,
 		oldSchemaName, newDB.Name, oldTableName, tableName); err != nil {
 		return ver, errors.Wrapf(err, "failed to update masking policy names after table rename")
 	}
@@ -1050,7 +1259,7 @@ func (w *worker) onRenameTables(jobCtx *jobContext, job *model.Job) (ver int64, 
 			job.State = model.JobStateCancelled
 			return ver, infoschema.ErrDatabaseNotExists.GenWithStackByArgs(fmt.Sprintf("schema-ID: %v", info.NewSchemaID))
 		}
-		if err = w.updateMaskingPolicyNamesAfterRename(jobCtx.stepCtx, tblInfo.ID,
+		if err = w.updateMaskingPolicyNamesAfterRename(jobCtx, tblInfo.ID,
 			info.OldSchemaName, newDB.Name, info.OldTableName, info.NewTableName); err != nil {
 			return ver, errors.Wrapf(err, "failed to update masking policy names after table rename")
 		}
@@ -2068,7 +2277,7 @@ func onAlterTableAffinity(jobCtx *jobContext, job *model.Job) (ver int64, err er
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-	oldTblInfo := tblInfo.Clone()
+	oldAffinity := tblInfo.Affinity
 
 	if err = validateTableAffinity(tblInfo, args.Affinity); err != nil {
 		job.State = model.JobStateCancelled
@@ -2076,24 +2285,13 @@ func onAlterTableAffinity(jobCtx *jobContext, job *model.Job) (ver int64, err er
 	}
 	tblInfo.Affinity = args.Affinity
 
-	// Create new affinity groups first (critical operation - must succeed)
+	// Create new affinity groups first (critical operation - must succeed).
+	// If the job is cancelled, deleteAffinityGroupsOfCancelledJob deletes the
+	// groups of a new level, including groups PD created before it failed.
 	if tblInfo.Affinity != nil {
 		if err = createTableAffinityGroupsInPD(jobCtx, tblInfo); err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
-		}
-	}
-
-	// Delete old affinity groups (best-effort cleanup - ignore errors)
-	// ALTER TABLE AFFINITY: only delete when old table had affinity configuration
-	// This ensures 'ALTER TABLE AFFINITY = 'none'' correctly cleans up stale affinity groups
-	// Skip deletion if the affinity level remains the same to ensure idempotency
-	if oldTblInfo.Affinity != nil {
-		// Only delete if affinity is removed or level changed (same level means same group IDs)
-		if tblInfo.Affinity == nil || oldTblInfo.Affinity.Level != tblInfo.Affinity.Level {
-			if err := deleteTableAffinityGroupsInPD(jobCtx, oldTblInfo, nil); err != nil {
-				logutil.DDLLogger().Error("failed to delete old affinity groups from PD", zap.Error(err), zap.Int64("tableID", oldTblInfo.ID))
-			}
 		}
 	}
 
@@ -2103,7 +2301,35 @@ func onAlterTableAffinity(jobCtx *jobContext, job *model.Job) (ver int64, err er
 	}
 
 	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
+	// The groups of the old level stay until the job commits, because a later
+	// failure in this step can still cancel the job and keep the old affinity.
+	// cleanupAlterTableAffinityGroupsAfterCommit deletes them afterwards.
+	args.OldAffinity = oldAffinity
+	job.FillArgs(args)
 	return ver, nil
+}
+
+// cleanupAlterTableAffinityGroupsAfterCommit deletes the groups of the old
+// affinity level after an ALTER TABLE ... AFFINITY job has committed as done.
+// It is best effort: a failure leaves the old groups in PD.
+func cleanupAlterTableAffinityGroupsAfterCommit(jobCtx *jobContext, job *model.Job) {
+	newTblInfo := job.BinlogInfo.TableInfo
+	args, err := model.GetAlterTableAffinityArgs(job)
+	if err != nil || newTblInfo == nil {
+		logutil.DDLLogger().Warn("failed to get alter table affinity args for post-commit affinity cleanup",
+			zap.Int64("jobID", job.ID), zap.Error(err))
+		return
+	}
+	oldAffinity := args.OldAffinity
+	// Groups of an unchanged level are the table's current groups.
+	if oldAffinity == nil || (newTblInfo.Affinity != nil && newTblInfo.Affinity.Level == oldAffinity.Level) {
+		return
+	}
+	// ALTER TABLE ... AFFINITY keeps the table ID and partitions.
+	oldTblInfo := &model.TableInfo{ID: newTblInfo.ID, Name: newTblInfo.Name, Affinity: oldAffinity, Partition: newTblInfo.Partition}
+	if err := deleteTableAffinityGroupsWithTimeout(jobCtx, oldTblInfo, nil); err != nil {
+		logutil.DDLLogger().Warn("failed to delete old affinity groups from PD", zap.Error(err), zap.Int64("tableID", oldTblInfo.ID))
+	}
 }
 
 func (w *worker) onAlterTableSetRegionSplitPolicy(jobCtx *jobContext, job *model.Job) (ver int64, err error) {
