@@ -271,12 +271,12 @@ func (options *S3BackendOptions) SetForcePathStyle(rawURL string) {
 	// In some cases, we need to set ForcePathStyle to false.
 	// Refer to: https://rclone.org/s3/#s3-force-path-style
 	if options.Provider == "alibaba" || options.Provider == "netease" || options.Provider == "tencent" ||
-		options.UseAccelerateEndpoint || useVirtualHostStyleForAWSS3(options, rawURL) {
+		options.UseAccelerateEndpoint || useVirtualHostStyleByDefault(options, rawURL) {
 		options.ForcePathStyle = false
 	}
 }
 
-func useVirtualHostStyleForAWSS3(opts *S3BackendOptions, rawURL string) bool {
+func useVirtualHostStyleByDefault(opts *S3BackendOptions, rawURL string) bool {
 	// If user has explicitly specified ForcePathStyle, use the specified value
 	if rawURL == "" ||
 		strings.Contains(rawURL, "force-path-style") ||
@@ -284,7 +284,7 @@ func useVirtualHostStyleForAWSS3(opts *S3BackendOptions, rawURL string) bool {
 		return false
 	}
 
-	return opts.Provider == "aws" || strings.Contains(opts.Endpoint, domainAWS) || opts.RoleARN != ""
+	return opts.Provider == "aws" || opts.Provider == "volcengine" || strings.Contains(opts.Endpoint, domainAWS) || opts.RoleARN != ""
 }
 
 // DefineS3Flags defines the command line flags for S3BackendOptions.
@@ -619,6 +619,9 @@ func (rs *Storage) open(
 		// We must ensure the `ContentLengh` has data even if for empty objects,
 		// otherwise we have no places to get the object size
 		if result.ContentLength == nil {
+			if result.Body != nil {
+				_ = result.Body.Close()
+			}
 			return nil, RangeInfo{}, errors.Annotatef(berrors.ErrStorageUnknown, "open file '%s' failed. The S3 object has no content length", path)
 		}
 		objectSize := *(result.ContentLength)
@@ -639,11 +642,17 @@ func (rs *Storage) open(
 	} else {
 		r, err = ParseRangeInfo(result.ContentRange)
 		if err != nil {
+			if result.Body != nil {
+				_ = result.Body.Close()
+			}
 			return nil, RangeInfo{}, errors.Trace(err)
 		}
 	}
 
 	if startOffset != r.Start || (endOffset != 0 && endOffset != r.End+1) {
+		if result.Body != nil {
+			_ = result.Body.Close()
+		}
 		rangeStr := "<empty>"
 		if result.ContentRange != nil {
 			rangeStr = *result.ContentRange

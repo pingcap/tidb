@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/objstore/s3like"
 	"github.com/pingcap/tidb/pkg/objstore/s3store"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
+	"github.com/pingcap/tidb/pkg/objstore/tosstore"
 	"github.com/stretchr/testify/require"
 )
 
@@ -51,6 +52,7 @@ func TestMalformedEndpointDoesNotLeakCredentials(t *testing.T) {
 		{"s3", true},
 		{"ks3", true},
 		{"oss", true},
+		{"tos", true},
 	} {
 		for _, endpoint := range []string{
 			"https://FAKE_USER:FAKE_PASS@host/path%zz?sig=FAKE_SIGNATURE",
@@ -88,7 +90,7 @@ func TestMalformedEndpointDoesNotLeakCredentials(t *testing.T) {
 }
 
 func TestMalformedS3BackendDoesNotLeakCredentials(t *testing.T) {
-	for _, provider := range []string{"", "aws", "minio", s3like.KS3SDKProvider, s3like.OSSProvider} {
+	for _, provider := range []string{"", "aws", "minio", s3like.KS3SDKProvider, s3like.OSSProvider, s3like.TOSProvider} {
 		for _, entry := range []string{"dispatcher", "constructor"} {
 			for _, endpoint := range []string{
 				"https://FAKE_USER:FAKE_PASS@host/path%zz?sig=FAKE_SIGNATURE",
@@ -112,6 +114,8 @@ func TestMalformedS3BackendDoesNotLeakCredentials(t *testing.T) {
 						_, err = New(ctx, &backuppb.StorageBackend{Backend: &backuppb.StorageBackend_S3{S3: backend}}, opts)
 					} else if provider == s3like.KS3SDKProvider {
 						_, err = s3store.NewKS3Storage(ctx, backend, opts)
+					} else if provider == s3like.TOSProvider {
+						_, err = tosstore.NewTOSStorage(ctx, backend, opts)
 					} else if provider == s3like.OSSProvider {
 						_, err = ossstore.NewOSSStorage(ctx, backend, opts)
 					} else {
@@ -133,4 +137,21 @@ func TestMalformedS3BackendDoesNotLeakCredentials(t *testing.T) {
 			}
 		}
 	}
+}
+
+func TestParseTOSStorage(t *testing.T) {
+	for _, suffix := range []string{"", "&force-path-style=true", "&force_path_style=true"} {
+		backend, err := ParseBackend("s3://bucket/prefix?provider=volcengine&endpoint=https://tos-s3-cn-beijing.volces.com"+suffix, nil)
+		require.NoError(t, err)
+		require.Equal(t, suffix != "", backend.GetS3().ForcePathStyle)
+	}
+	backend, err := ParseBackend("tos://bucket/prefix?region=cn-beijing", &BackendOptions{
+		S3: s3like.S3BackendOptions{AccessKey: "test-id", SecretAccessKey: "sk"},
+	})
+	require.NoError(t, err)
+	s, err := New(context.Background(), backend, nil)
+	require.NoError(t, err)
+	defer s.Close()
+	require.IsType(t, (*tosstore.TOSStore)(nil), s)
+	require.Equal(t, "tos://bucket/prefix/", s.URI())
 }

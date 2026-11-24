@@ -285,6 +285,7 @@ func TestFormatBackendURL(t *testing.T) {
 		{name: "s3-compatible", provider: "aws", scheme: "s3"},
 		{name: "unknown-provider", provider: "unknown", scheme: "s3"},
 		{name: "oss", provider: s3like.OSSProvider, scheme: "oss", parsedProvider: s3like.OSSProvider},
+		{name: "tos", provider: s3like.TOSProvider, scheme: "tos", parsedProvider: s3like.TOSProvider},
 		{name: "ks3", provider: s3like.KS3SDKProvider, scheme: "ks3", parsedProvider: s3like.KS3SDKProvider},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -682,6 +683,11 @@ func TestParseBackend(t *testing.T) {
 }
 
 func TestS3DefaultForceStylePath(t *testing.T) {
+	for _, uri := range []string{"s3://bucket?provider=volcengine", "tos://bucket?provider=aws&force-path-style=true&sse-kms-context=%7B%7D"} {
+		backend, err := ParseBackend(uri, nil)
+		require.NoError(t, err)
+		require.False(t, backend.GetS3().ForcePathStyle)
+	}
 	s, err := ParseBackend(`s3://bucket3/prefix/path?endpoint=http://xxx.amazonaws.com`, nil)
 	require.NoError(t, err)
 	require.False(t, s.GetS3().ForcePathStyle)

@@ -453,6 +453,13 @@ def go_deps():
         version = "v2.2.1",
     )
     go_repository(
+        name = "com_github_avast_retry_go",
+        build_file_proto_mode = "disable_global",
+        importpath = "github.com/avast/retry-go",
+        sum = "h1:4SOWQ7Qs+oroOTQOYnAHqelpCO0biHSxpiH9JdtuBj0=",
+        version = "v3.0.0+incompatible",
+    )
+    go_repository(
         name = "com_github_aws_aws_sdk_go",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/aws/aws-sdk-go",
@@ -4113,8 +4120,8 @@ def go_deps():
         name = "com_github_pingcap_metering_sdk",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/pingcap/metering_sdk",
-        sum = "h1:8gzQg9J2ENtsZKgXpum7Set5Ga/crKGqap5nlGoqAZQ=",
-        version = "v0.0.0-20260814062708-9e3b68cd9adf",
+        sum = "h1:ZGvCoF2XvB5oxD5pQNl0jIH2E3lswpHtAP1NHNCi4ME=",
+        version = "v0.0.0-20261118092607-18aaee053664",
     )
     go_repository(
         name = "com_github_pingcap_sysutil",
@@ -5069,6 +5076,27 @@ def go_deps():
         importpath = "github.com/vmihailenco/tagparser/v2",
         sum = "h1:y09buUbR+b5aycVFQs/g70pqKVZNBmxwAhO7/IwNM9g=",
         version = "v2.0.0",
+    )
+    go_repository(
+        name = "com_github_volcengine_ve_tos_golang_sdk_v2",
+        build_file_proto_mode = "disable_global",
+        importpath = "github.com/volcengine/ve-tos-golang-sdk/v2",
+        sum = "h1:SgeT0P7CWZew0z5iKAZo4zmeyMocZcvYAwNezupwgxE=",
+        version = "v2.9.2",
+    )
+    go_repository(
+        name = "com_github_volcengine_volc_sdk_golang",
+        build_file_proto_mode = "disable_global",
+        importpath = "github.com/volcengine/volc-sdk-golang",
+        sum = "h1:anOslb2Qp6ywnsbyq9jqR0ljuO63kg9PY+4OehIk5R8=",
+        version = "v1.0.23",
+    )
+    go_repository(
+        name = "com_github_volcengine_volcengine_go_sdk",
+        build_file_proto_mode = "disable_global",
+        importpath = "github.com/volcengine/volcengine-go-sdk",
+        sum = "h1:TK5yfSmLgeWZ0ufO2tBzIS6KdSu1b/A8D/soTXAuRhg=",
+        version = "v1.2.24",
     )
     go_repository(
         name = "com_github_vultr_govultr_v3",

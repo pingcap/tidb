@@ -1305,6 +1305,7 @@ func TestProcessNextGenS3Path(t *testing.T) {
 		"s3://bucket?external_id=abc&access-key=ak&secret-access-key=sk",
 		"s3://bucket?external-id=aaa&external_id=abc&access-key=ak&secret-access-key=sk",
 		"oss://bucket?External-id=abc&role-arn=arn",
+		"tos://bucket?External-id=abc&role-arn=arn",
 		"oSS://bucket?External-id=abc&access-key=ak&secret-access-key=sk",
 	} {
 		u, err := url.Parse(str)
@@ -1321,7 +1322,9 @@ func TestProcessNextGenS3Path(t *testing.T) {
 		"s3://bucket?access-key=ak&secret-access-key=sk",
 		"s3://bucket?access_key=ak&secret_access_key=sk",
 		"oss://bucket?role-arn=arn",
+		"tos://bucket?role-arn=arn",
 		"oss://bucket?role_arn=arn",
+		"tos://bucket?role_arn=arn",
 	} {
 		u, err := url.Parse(str)
 		require.NoError(t, err)
@@ -1336,7 +1339,9 @@ func TestProcessNextGenS3Path(t *testing.T) {
 		"s3://bucket?secret-access-key=sk",
 		"s3://bucket?profile=dev",
 		"oss://bucket",
+		"tos://bucket",
 		"oss://bucket?role-arn=",
+		"tos://bucket?role-arn=",
 	} {
 		u, err := url.Parse(str)
 		require.NoError(t, err)
@@ -1354,6 +1359,7 @@ func TestProcessNextGenS3Path(t *testing.T) {
 		"s3://bucket?external_id=abc&access-key=ak&secret-access-key=sk",
 		"s3://bucket?external-id=aaa&external_id=abc&access-key=ak&secret-access-key=sk",
 		"oss://bucket?External-id=abc&role-arn=arn",
+		"tos://bucket?External-id=abc&role-arn=arn",
 	} {
 		u, err := url.Parse(str)
 		require.NoError(t, err)
@@ -1366,6 +1372,7 @@ func TestProcessNextGenS3Path(t *testing.T) {
 		"s3://bucket?external-id=&access-key=ak&secret-access-key=sk",
 		"s3://bucket?external-id=abc&external_id=&access-key=ak&secret-access-key=sk",
 		"oss://bucket?role-arn=arn",
+		"tos://bucket?role-arn=arn",
 	} {
 		u, err := url.Parse(str)
 		require.NoError(t, err)

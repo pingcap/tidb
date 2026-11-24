@@ -4279,7 +4279,7 @@ func RedactURL(str string) string {
 	// Unknown keys may be new secrets, misspellings, or parts of split secret values.
 	var queryKeys map[string]bool
 	switch strings.ToLower(scheme) {
-	case "s3", "ks3", "oss":
+	case "s3", "ks3", "oss", "tos":
 		queryKeys = map[string]bool{
 			// Endpoints can embed userinfo or signed query credentials.
 			"endpoint":                true,
