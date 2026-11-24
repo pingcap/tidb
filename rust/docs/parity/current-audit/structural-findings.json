@@ -2,8 +2,8 @@
   "date": "2026-11-23",
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports, from the 2026-11-23 symbol-level re-audit (method in structural-audit-2026-11-23.md).",
   "counts": {
-    "unresolved": 5,
-    "open": 3,
+    "unresolved": 4,
+    "open": 2,
     "partial": 2
   },
   "findings": [
@@ -38,17 +38,9 @@
       "finding": "Go's `preprocessor` (`pkg/planner/core/preprocess.go`, one AST visitor run by `Preprocess` before planning and at PREPARE) has one Rust walk, `tidb_planner::preprocess::preprocess` over a `PreprocessContext` (Go's `sctx` reads): stmtTp, VariableExpr, ColumnName, FuncCastExpr, FuncCallExpr and NAME_CONST arms, table names and AS OF, and the DDL arms (repair grammar and names, the DDL grammar checks, temporary-table refusals). Still separate code: `handleTableName` at PREPARE (`tidb_planner::preprocess::pin_current_database`, called by PREPARE and CREATE BINDING beside the walk instead of inside it), `tableByName` for DDL (`tidb-session/src/ddl_service.rs::ddl_preprocess_table_names`), `tidb-ddl-build`'s `checkCreateTableGrammar` / `checkAutoIncrementOp` remnants, `checkCreateViewWithSelect` (`tidb-executor/src/view.rs`), `checkSelectNoopFuncs` (`tidb-session/src/noop.rs`), `resolveShowStmt`, the table-mode names; and the session runs the walk from several points (`validate_ddl_preprocess` in privilege collection, EXPLAIN and compile) instead of once in `Compile`.",
       "rust_evidence": "`tidb-planner/src/preprocess.rs`, `tidb-session/src/ddl_service.rs`, `tidb-session/src/identity.rs`, `tidb-ddl-build/src/lib.rs`, `tidb-executor/src/view.rs`, `tidb-session/src/noop.rs`.",
       "go_owner": "`pkg/planner/core/preprocess.go`"
-    },
-    {
-      "id": "T22",
-      "group": "Planner",
-      "status": "open",
-      "finding": "Go's plan rendering (`pkg/planner/core` `explain.go`'s `ExplainInfo`s, `common_plans.go` `Explain.RenderResult`, `flat_plan.go` `FlattenPhysicalPlan`, `encode.go` `NormalizeFlatPlan`) lives in `tidb-executor/src/explain.rs`, interleaved with `ExplainExec`'s run (EXPLAIN ANALYZE's execution and runtime stats). With it stay Go `optimize.go`'s `calculatePlanDigestFunc` and `genBriefPlanWithSCtx` (bindinfo's hooks), which render the plan. (`planner.Optimize`'s statement entries, `DoOptimize`, the binding step and `queryPlanCost` are `tidb-planner/src/statement_optimize.rs`, `statement_plan.rs`, `dml_optimize.rs`, `do_optimize.rs`, `binding_match.rs`.)",
-      "rust_evidence": "`tidb-executor/src/explain.rs` (`normalize_flat_plan`, `physical_explain_roots`, `physical_operator_name`, `physical_normalized_info`, `gen_brief_plan`, `calculate_plan_digest`).",
-      "go_owner": "`pkg/planner/core/explain.go`, `common_plans.go`, `flat_plan.go`, `encode.go`; `pkg/planner/optimize.go`"
     }
   ],
-  "unresolved": 5,
-  "open": 3,
+  "unresolved": 4,
+  "open": 2,
   "partial": 2
 }

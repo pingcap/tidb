@@ -5,7 +5,7 @@ Re-audited against the tree on 2026-11-23; the [JSON register](structural-findin
 rows. A repaired finding is removed, not kept. The method and the live probes behind the rows
 are in [structural-audit-2026-11-23.md](structural-audit-2026-11-23.md).
 
-**5 unresolved: 3 open, 2 partial.**
+**4 unresolved: 2 open, 2 partial.**
 
 A row states the remaining gap only.
 
