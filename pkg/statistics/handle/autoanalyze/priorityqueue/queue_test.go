@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle"
+	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/exec"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/priorityqueue"
 	statstestutil "github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -243,8 +244,8 @@ func testProcessDMLChanges(t *testing.T, partitioned bool) {
 	require.True(t, valid)
 	valid, _ = job2.ValidateAndPrepare(tk.Session())
 	require.True(t, valid)
-	require.NoError(t, job1.Analyze(handle.Pool(), handle.ProcIDs(), dom.SysProcTracker()))
-	require.NoError(t, job2.Analyze(handle.Pool(), handle.ProcIDs(), dom.SysProcTracker()))
+	require.NoError(t, job1.Analyze(handle.Pool(), exec.NewRunner(handle.ProcIDs(), dom.SysProcTracker())))
+	require.NoError(t, job2.Analyze(handle.Pool(), exec.NewRunner(handle.ProcIDs(), dom.SysProcTracker())))
 	require.NoError(t, handle.Cache().Update(ctx, dom.InfoSchema()))
 
 	// Insert 9 rows into t1.
@@ -360,7 +361,7 @@ func TestProcessDMLChangesWithRunningJobs(t *testing.T) {
 	// Analyze the job.
 	valid, _ := job1.ValidateAndPrepare(tk.Session())
 	require.True(t, valid)
-	require.NoError(t, job1.Analyze(handle.Pool(), handle.ProcIDs(), dom.SysProcTracker()))
+	require.NoError(t, job1.Analyze(handle.Pool(), exec.NewRunner(handle.ProcIDs(), dom.SysProcTracker())))
 
 	// Add more rows to t1.
 	tk.MustExec("insert into t1 values (4), (5), (6), (7), (8), (9), (10), (11), (12), (13)")

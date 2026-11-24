@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/statistics"
+	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/exec"
 	statstestutil "github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
 	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
@@ -108,7 +109,7 @@ func TestHandleDDLEventsWithRunningJobs(t *testing.T) {
 	go func() {
 		defer close(down)
 		require.NoError(t, failpoint.Enable(fp, "return(1)"))
-		require.NoError(t, job1.Analyze(handle.Pool(), handle.ProcIDs(), dom.SysProcTracker()))
+		require.NoError(t, job1.Analyze(handle.Pool(), exec.NewRunner(handle.ProcIDs(), dom.SysProcTracker())))
 	}()
 
 	// Create a new index on t1.
@@ -967,7 +968,7 @@ func TestAddIndexTriggerAutoAnalyze(t *testing.T) {
 	require.Equal(t, tableInfo.ID, job.GetTableID())
 	valid, _ := job.ValidateAndPrepare(testKit.Session())
 	require.True(t, valid)
-	require.NoError(t, job.Analyze(h.Pool(), h.ProcIDs(), do.SysProcTracker()))
+	require.NoError(t, job.Analyze(h.Pool(), exec.NewRunner(h.ProcIDs(), do.SysProcTracker())))
 
 	// Check the stats of the indexes.
 	tableStats := h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
@@ -1036,12 +1037,12 @@ func TestAddIndexTriggerAutoAnalyzeWithStaticPartition(t *testing.T) {
 	require.NoError(t, err)
 	valid, _ := job.ValidateAndPrepare(testKit.Session())
 	require.True(t, valid)
-	require.NoError(t, job.Analyze(h.Pool(), h.ProcIDs(), do.SysProcTracker()))
+	require.NoError(t, job.Analyze(h.Pool(), exec.NewRunner(h.ProcIDs(), do.SysProcTracker())))
 	job, err = pq.Pop()
 	require.NoError(t, err)
 	valid, _ = job.ValidateAndPrepare(testKit.Session())
 	require.True(t, valid)
-	require.NoError(t, job.Analyze(h.Pool(), h.ProcIDs(), do.SysProcTracker()))
+	require.NoError(t, job.Analyze(h.Pool(), exec.NewRunner(h.ProcIDs(), do.SysProcTracker())))
 
 	// Check the stats of the indexes for each partition.
 	tableStats := h.GetPhysicalTableStats(p0ID, tableInfo)

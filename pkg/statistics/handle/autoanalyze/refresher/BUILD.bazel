@@ -11,7 +11,6 @@ go_library(
     deps = [
         "//pkg/ddl/notifier",
         "//pkg/sessionctx",
-        "//pkg/sessionctx/sysproctrack",
         "//pkg/sessionctx/vardef",
         "//pkg/sessionctx/variable",
         "//pkg/statistics/handle/autoanalyze/exec",
@@ -44,6 +43,7 @@ go_test(
         "//pkg/sessionctx/sysproctrack",
         "//pkg/statistics",
         "//pkg/statistics/handle",
+        "//pkg/statistics/handle/autoanalyze/exec",
         "//pkg/statistics/handle/autoanalyze/priorityqueue",
         "//pkg/statistics/handle/ddl/testutil",
         "//pkg/statistics/handle/types",

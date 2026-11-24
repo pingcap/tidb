@@ -54,18 +54,27 @@ func execOptionForAnalyzeVersion(statsVer int, needVersionRewriteWarn bool, sql 
 	return sqlexec.ExecOptionAnalyzeVer2
 }
 
-// AutoAnalyze executes the auto analyze task.
-func AutoAnalyze(
+// Runner runs the auto-analyze statements of this node.
+type Runner struct {
+	procIDs        statsutil.AutoAnalyzeProcIDGenerator
+	sysProcTracker sysproctrack.Tracker
+}
+
+// NewRunner creates a Runner that tracks each statement in sysProcTracker under an ID from procIDs.
+func NewRunner(procIDs statsutil.AutoAnalyzeProcIDGenerator, sysProcTracker sysproctrack.Tracker) *Runner {
+	return &Runner{procIDs: procIDs, sysProcTracker: sysProcTracker}
+}
+
+// AutoAnalyze runs one auto-analyze statement in sctx and reports whether it succeeded.
+func (r *Runner) AutoAnalyze(
 	sctx sessionctx.Context,
-	procIDs statsutil.AutoAnalyzeProcIDGenerator,
-	sysProcTracker sysproctrack.Tracker,
 	statsVer int,
 	needVersionRewriteWarn bool,
 	sql string,
 	params ...any,
 ) bool {
 	startTime := time.Now()
-	_, _, err := RunAnalyzeStmt(sctx, procIDs, sysProcTracker, statsVer, needVersionRewriteWarn, sql, params...)
+	_, _, err := RunAnalyzeStmt(sctx, r.procIDs, r.sysProcTracker, statsVer, needVersionRewriteWarn, sql, params...)
 	dur := time.Since(startTime)
 	metrics.AutoAnalyzeHistogram.Observe(dur.Seconds())
 	if err != nil {

@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/exec"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/priorityqueue"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
@@ -91,7 +92,7 @@ func TestAnalyzeStaticPartitionedTable(t *testing.T) {
 	valid, failReason := job.ValidateAndPrepare(tk.Session())
 	require.True(t, valid)
 	require.Equal(t, "", failReason)
-	job.Analyze(handle.Pool(), handle.ProcIDs(), dom.SysProcTracker())
+	job.Analyze(handle.Pool(), exec.NewRunner(handle.ProcIDs(), dom.SysProcTracker()))
 	// Check the result of analyze.
 	is = dom.InfoSchema()
 	tbl, err = is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
@@ -131,7 +132,7 @@ func TestAnalyzeStaticPartitionedTableIndexes(t *testing.T) {
 	require.True(t, valid)
 	require.Equal(t, "", failReason)
 
-	job.Analyze(handle.Pool(), handle.ProcIDs(), dom.SysProcTracker())
+	job.Analyze(handle.Pool(), exec.NewRunner(handle.ProcIDs(), dom.SysProcTracker()))
 	// Check the result of analyze.
 	is = dom.InfoSchema()
 	tbl, err = is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))

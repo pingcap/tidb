@@ -27,7 +27,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/sysproctrack"
+	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/exec"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/priorityqueue"
 	"github.com/pingcap/tidb/pkg/statistics/handle/types"
 	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
@@ -236,7 +236,7 @@ type TestJob struct {
 }
 
 // Analyze implements AnalysisJob.
-func (j *TestJob) Analyze(statsutil.SessionPool, statsutil.AutoAnalyzeProcIDGenerator, sysproctrack.Tracker) error {
+func (j *TestJob) Analyze(statsutil.SessionPool, *exec.Runner) error {
 	panic("unimplemented")
 }
 

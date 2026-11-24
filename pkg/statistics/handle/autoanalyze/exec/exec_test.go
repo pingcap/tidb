@@ -44,10 +44,8 @@ func TestExecAutoAnalyzes(t *testing.T) {
 	sctx := se.(sessionctx.Context)
 	handle := dom.StatsHandle()
 
-	exec.AutoAnalyze(
+	exec.NewRunner(handle.ProcIDs(), dom.SysProcTracker()).AutoAnalyze(
 		sctx,
-		handle.ProcIDs(),
-		dom.SysProcTracker(),
 		2, false, "analyze table %n", "t",
 	)
 
@@ -77,10 +75,8 @@ func TestExecAutoAnalyzeRewritesLegacyStatsVersionToV2(t *testing.T) {
 	handle := dom.StatsHandle()
 
 	require.NotPanics(t, func() {
-		ok := exec.AutoAnalyze(
+		ok := exec.NewRunner(handle.ProcIDs(), dom.SysProcTracker()).AutoAnalyze(
 			sctx,
-			handle.ProcIDs(),
-			dom.SysProcTracker(),
 			statistics.Version2,
 			true,
 			"analyze table %n",
@@ -125,10 +121,8 @@ partition by range (a) (
 	require.Equal(t, statistics.Version1, handle.GetPhysicalTableStats(pi.Definitions[1].ID, partitionedTbl.Meta()).StatsVer)
 
 	require.NotPanics(t, func() {
-		ok := exec.AutoAnalyze(
+		ok := exec.NewRunner(handle.ProcIDs(), dom.SysProcTracker()).AutoAnalyze(
 			sctx,
-			handle.ProcIDs(),
-			dom.SysProcTracker(),
 			statistics.Version2,
 			true,
 			"analyze table %n partition %n",

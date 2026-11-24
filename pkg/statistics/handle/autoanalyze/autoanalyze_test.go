@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze"
+	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/exec"
 	statstestutil "github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util/test"
@@ -593,9 +594,8 @@ func TestSkipAutoAnalyzeOutsideTheAvailableTime(t *testing.T) {
 	require.False(t,
 		autoanalyze.RandomPickOneTableAndTryAutoAnalyze(
 			se.(sessionctx.Context),
-			dom.StatsHandle().ProcIDs(),
+			exec.NewRunner(dom.StatsHandle().ProcIDs(), dom.SysProcTracker()),
 			dom.StatsHandle(),
-			dom.SysProcTracker(),
 			0.6,
 			variable.Dynamic,
 			ttStart,
