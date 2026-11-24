@@ -814,6 +814,20 @@ func onRenameTable(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
+<<<<<<< HEAD
+=======
+	// Update masking policy names after table rename.
+	is := jobCtx.infoCache.GetLatest()
+	newDB, ok := is.SchemaByID(newSchemaID)
+	if !ok {
+		job.State = model.JobStateCancelled
+		return ver, infoschema.ErrDatabaseNotExists.GenWithStackByArgs(fmt.Sprintf("schema-ID: %v", newSchemaID))
+	}
+	if err = w.updateMaskingPolicyNamesAfterRename(jobCtx, tblInfo.ID,
+		oldSchemaName, newDB.Name, oldTableName, tableName); err != nil {
+		return ver, errors.Wrapf(err, "failed to update masking policy names after table rename")
+	}
+>>>>>>> 9b984f056b2 (ddl: set mustRollbackTxnOnError for mutating masking_policy internal SQL (#73542))
 	ver, err = updateSchemaVersion(jobCtx, job, fkh.getLoadedTables()...)
 	if err != nil {
 		return ver, errors.Trace(err)
@@ -853,6 +867,26 @@ func onRenameTables(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
+<<<<<<< HEAD
+=======
+		finalRenameByTableID[info.TableID] = info
+		renamedTableByID[info.TableID] = schemaIDAndTableInfo{schemaID: info.NewSchemaID, tblInfo: tblInfo}
+		// Update masking policy names after table rename.
+		newDB, ok := is.SchemaByID(info.NewSchemaID)
+		if !ok {
+			job.State = model.JobStateCancelled
+			return ver, infoschema.ErrDatabaseNotExists.GenWithStackByArgs(fmt.Sprintf("schema-ID: %v", info.NewSchemaID))
+		}
+		if err = w.updateMaskingPolicyNamesAfterRename(jobCtx, tblInfo.ID,
+			info.OldSchemaName, newDB.Name, info.OldTableName, info.NewTableName); err != nil {
+			return ver, errors.Wrapf(err, "failed to update masking policy names after table rename")
+		}
+	}
+	err = adjustForeignKeyChildTableInfoAfterRenameTables(
+		is, metaMut, &fkh, firstRenameByTableID, finalRenameByTableID, renamedTableByID)
+	if err != nil {
+		return ver, errors.Trace(err)
+>>>>>>> 9b984f056b2 (ddl: set mustRollbackTxnOnError for mutating masking_policy internal SQL (#73542))
 	}
 
 	ver, err = updateSchemaVersion(jobCtx, job, fkh.getLoadedTables()...)
