@@ -97,6 +97,7 @@ go_library(
         "//pkg/util/context",
         "//pkg/util/cpu",
         "//pkg/util/dbterror",
+        "//pkg/util/diagnosticlog",
         "//pkg/util/disttask",
         "//pkg/util/engine",
         "//pkg/util/etcd",
@@ -164,7 +165,7 @@ go_test(
     ],
     embed = [":domain"],
     flaky = True,
-    shard_count = 38,
+    shard_count = 39,
     deps = [
         "//pkg/config",
         "//pkg/config/deploymode",

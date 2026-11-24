@@ -102,6 +102,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/cpu"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/diagnosticlog"
 	disttaskutil "github.com/pingcap/tidb/pkg/util/disttask"
 	"github.com/pingcap/tidb/pkg/util/engine"
 	"github.com/pingcap/tidb/pkg/util/etcd"
@@ -2038,6 +2039,13 @@ func (do *Domain) UpdateTableStatsLoop() error {
 	do.wg.Run(func() {
 		do.indexUsageWorker()
 	}, "indexUsageWorker")
+	if diagnosticlog.IndexUsageEnabled() {
+		do.wg.Run(func() {
+			runIndexUsageSnapshots(do.exit, time.Hour, 5*time.Second, func(ctx context.Context) error {
+				return diagnosticlog.PublishIndexUsage(ctx, statsHandle.WriteIndexUsageSnapshot)
+			})
+		}, "indexUsageSnapshotWorker")
+	}
 	if do.statsLease <= 0 {
 		// For statsLease > 0, `gcStatsWorker` handles the quit of stats owner.
 		do.wg.Run(func() { quitStatsOwner(do, do.statsOwner) }, "quitStatsOwner")
@@ -2212,6 +2220,7 @@ func (do *Domain) asyncLoadHistogram() {
 func (do *Domain) indexUsageWorker() {
 	defer util.Recover(metrics.LabelDomain, "indexUsageWorker", nil, false)
 	gcStatsTicker := time.NewTicker(indexUsageGCDuration)
+	defer gcStatsTicker.Stop()
 	handle := do.StatsHandle()
 	defer func() {
 		logutil.BgLogger().Info("indexUsageWorker exited.")
@@ -2225,6 +2234,49 @@ func (do *Domain) indexUsageWorker() {
 				statslogutil.StatsLogger().Error("gc index usage failed", zap.Error(err))
 			}
 		}
+	}
+}
+
+// runIndexUsageSnapshots keeps file I/O off the GC worker and bounds how long
+// the Domain waits for it. A stalled filesystem operation remains owned by
+// the snapshot goroutine, which checks cancellation before publishing.
+func runIndexUsageSnapshots(stop <-chan struct{}, interval, shutdownWait time.Duration, publish func(context.Context) error) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		defer util.Recover(metrics.LabelDomain, "indexUsageSnapshotWorker", nil, false)
+		timer := time.NewTimer(interval)
+		defer timer.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-timer.C:
+			}
+			if ctx.Err() != nil {
+				return
+			}
+			if err := publish(ctx); err != nil && ctx.Err() == nil {
+				statslogutil.StatsLogger().Warn("publish index usage snapshot failed", zap.Error(err))
+			}
+			// A slow attempt does not start overlapping or catch-up exports.
+			timer.Reset(interval)
+		}
+	}()
+	select {
+	case <-done:
+		return
+	case <-stop:
+		cancel()
+	}
+	timer := time.NewTimer(shutdownWait)
+	defer timer.Stop()
+	select {
+	case <-done:
+	case <-timer.C:
+		statslogutil.StatsLogger().Warn("timed out waiting for index usage snapshot worker")
 	}
 }
 

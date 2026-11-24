@@ -16,6 +16,7 @@ package types
 
 import (
 	"context"
+	"io"
 	"time"
 
 	"github.com/pingcap/tidb/pkg/ddl/notifier"
@@ -97,6 +98,9 @@ type IndexUsage interface {
 
 	// GetIndexUsage returns the index usage information
 	GetIndexUsage(tableID int64, indexID int64) indexusage.Sample
+
+	// WriteIndexUsageSnapshot exports a footer-terminated cumulative JSONL snapshot.
+	WriteIndexUsageSnapshot(io.Writer, time.Time) error
 }
 
 // PriorityQueueSnapshot is the snapshot of the stats priority queue.
