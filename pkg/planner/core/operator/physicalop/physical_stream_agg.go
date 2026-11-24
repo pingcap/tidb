@@ -188,11 +188,10 @@ func getStreamAggs(lp base.LogicalPlan, prop *property.PhysicalProperty) []base.
 // 4. MIN and MAX on the target cannot be combined.
 // 5. The type of column cannot be ENUM or SET
 // 6. The scan matcher verifies that the grouping columns form a full-length leftmost key prefix
-
-// For example,
-// SELECT a, MIN(b) FROM t GROUP BY a returns b and requires an ascending scan.
 //
-// Attention:
+// With an index on (a, b), SELECT a, MIN(b) FROM t GROUP BY a uses a as the
+// grouping prefix, returns b as the target column, and requires an ascending scan.
+//
 // Aggregates on grouping columns can use any representative row. For example,
 // SELECT a, MIN(a) FROM t GROUP BY a returns target == nil and ok == true. The scan
 // needs only the grouping prefix, and scanDesc retains the input desc.
