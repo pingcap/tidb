@@ -478,6 +478,7 @@ pub enum PreparedParameterType {
 
 impl PreparedParameterType {
     #[must_use]
+    /// The type of an execute-time parameter value.
     pub fn of(value: &tidb_datatype::Datum) -> Self {
         match value {
             tidb_datatype::Datum::Null => Self::Null,
@@ -543,4 +544,246 @@ pub fn prepared_parameter_types_compatible(
             .iter()
             .zip(actual)
             .all(|(expected, actual)| expected.compatible_with(*actual))
+}
+
+/// Whether the statement calls a sequence builtin, whose name the executor
+/// validates again when it opens.
+#[must_use]
+pub fn statement_contains_sequence_functions(stmt: &tidb_ast::Stmt) -> bool {
+    struct SequenceFunctionMarker {
+        found: bool,
+    }
+
+    impl tidb_ast::Visitor for SequenceFunctionMarker {
+        fn enter(&mut self, node: &mut dyn std::any::Any) -> bool {
+            let Some(expr) = node.downcast_mut::<tidb_ast::Expr>() else {
+                return self.found;
+            };
+            let (tidb_ast::Expr::Func { name, .. } | tidb_ast::Expr::GenericFuncCall { name, .. }) =
+                expr
+            else {
+                return self.found;
+            };
+            self.found = matches!(
+                name.to_ascii_lowercase().as_str(),
+                "nextval" | "lastval" | "setval"
+            );
+            self.found
+        }
+
+        fn leave(&mut self, _node: &mut dyn std::any::Any) -> bool {
+            true
+        }
+    }
+
+    let mut marker = SequenceFunctionMarker { found: false };
+    let mut statement = stmt.clone();
+    tidb_ast::Visitable::accept(&mut statement, &mut marker);
+    marker.found
+}
+
+/// The parameters a `LIMIT` reads (Go `PlanCacheStmt.limits`), in order.
+#[must_use]
+pub fn prepared_limit_parameter_orders(stmt: &tidb_ast::Stmt) -> Vec<usize> {
+    struct LimitMarkerCollector {
+        orders: Vec<usize>,
+    }
+
+    impl tidb_ast::Visitor for LimitMarkerCollector {
+        fn enter(&mut self, node: &mut dyn std::any::Any) -> bool {
+            let Some(limit) = node.downcast_ref::<tidb_ast::Limit>() else {
+                return false;
+            };
+            for expression in std::iter::once(&limit.count).chain(limit.offset.as_ref()) {
+                if let tidb_ast::Expr::ParamMarker { order, .. } = expression {
+                    self.orders.push(*order);
+                }
+            }
+            false
+        }
+
+        fn leave(&mut self, _node: &mut dyn std::any::Any) -> bool {
+            true
+        }
+    }
+
+    let mut statement = stmt.clone();
+    let mut collector = LimitMarkerCollector { orders: Vec::new() };
+    tidb_ast::Visitable::accept(&mut statement, &mut collector);
+    collector.orders.sort_unstable();
+    collector.orders.dedup();
+    collector.orders
+}
+
+/// Go `planCacheStmtProcessor`'s table names of a query, pinned to
+/// `current_database`.
+pub fn collect_prepared_table_names(
+    query: &tidb_ast::QueryStmt,
+    current_database: &str,
+    names: &mut Vec<(String, String)>,
+) {
+    fn collect_query(
+        query: &tidb_ast::QueryStmt,
+        current_database: &str,
+        names: &mut Vec<(String, String)>,
+    ) {
+        match query {
+            tidb_ast::QueryStmt::Select(select) => {
+                collect_join(&select.from, current_database, names);
+            }
+            tidb_ast::QueryStmt::SetOpr(set) => collect_set(set, current_database, names),
+        }
+    }
+
+    fn collect_set(
+        set: &tidb_ast::SetOprStmt,
+        current_database: &str,
+        names: &mut Vec<(String, String)>,
+    ) {
+        for term in &set.terms {
+            match &term.body {
+                tidb_ast::SetOprTermBody::Select(select) => {
+                    collect_join(&select.from, current_database, names);
+                }
+                tidb_ast::SetOprTermBody::Nested(set) => {
+                    collect_set(set, current_database, names);
+                }
+            }
+        }
+    }
+
+    fn collect(
+        node: &tidb_ast::JoinNode,
+        current_database: &str,
+        names: &mut Vec<(String, String)>,
+    ) {
+        match node {
+            tidb_ast::JoinNode::Table(table) => {
+                if let Ok((database, name)) =
+                    tidb_infoschema::split_table_path(&table.name, current_database)
+                {
+                    let item = (database.to_owned(), name.to_owned());
+                    if !names.iter().any(|present| present == &item) {
+                        names.push(item);
+                    }
+                }
+            }
+            tidb_ast::JoinNode::Join(join) => {
+                collect(&join.left, current_database, names);
+                if let Some(right) = &join.right {
+                    collect(right, current_database, names);
+                }
+            }
+            tidb_ast::JoinNode::Derived { subquery, .. } => {
+                collect_query(subquery, current_database, names);
+            }
+        }
+    }
+
+    fn collect_join(
+        from: &Option<tidb_ast::Join>,
+        current_database: &str,
+        names: &mut Vec<(String, String)>,
+    ) {
+        if let Some(from) = from {
+            collect(&from.left, current_database, names);
+            if let Some(right) = &from.right {
+                collect(right, current_database, names);
+            }
+        }
+    }
+
+    collect_query(query, current_database, names);
+}
+
+/// Whether a DML statement is one the plan cache serves (INSERT, UPDATE,
+/// DELETE).
+#[must_use]
+pub fn prepared_dml_kind(dml: &tidb_ast::DmlStmt) -> bool {
+    matches!(
+        dml,
+        tidb_ast::DmlStmt::Insert(_) | tidb_ast::DmlStmt::Update(_) | tidb_ast::DmlStmt::Delete(_)
+    )
+}
+
+/// Go `planCacheStmtProcessor`'s table names of a DML statement, its
+/// INSERT target included.
+#[must_use]
+pub fn prepared_dml_table_names(
+    statement: &tidb_ast::Stmt,
+    current_database: &str,
+) -> Vec<(String, String)> {
+    struct Collector<'a> {
+        current_database: &'a str,
+        names: Vec<(String, String)>,
+    }
+
+    impl tidb_ast::Visitor for Collector<'_> {
+        fn enter(&mut self, node: &mut dyn std::any::Any) -> bool {
+            let Some(table_ref) = node.downcast_ref::<tidb_ast::TableRef>() else {
+                return false;
+            };
+            if let Ok((database, table)) =
+                tidb_infoschema::split_table_path(&table_ref.name, self.current_database)
+            {
+                let name = (database.to_owned(), table.to_owned());
+                if !self.names.contains(&name) {
+                    self.names.push(name);
+                }
+            }
+            false
+        }
+
+        fn leave(&mut self, _node: &mut dyn std::any::Any) -> bool {
+            true
+        }
+    }
+
+    let mut statement = statement.clone();
+    let mut collector = Collector {
+        current_database,
+        names: Vec::new(),
+    };
+    use tidb_ast::Visitable as _;
+    statement.accept(&mut collector);
+    if let tidb_ast::Stmt::Dml(dml) = statement {
+        if let tidb_ast::DmlStmt::Insert(insert) = dml.as_ref() {
+            if let Ok((database, table)) =
+                tidb_infoschema::split_table_path(&insert.table, current_database)
+            {
+                let target = (database.to_owned(), table.to_owned());
+                if !collector.names.contains(&target) {
+                    collector.names.push(target);
+                }
+            }
+        }
+    }
+    collector.names
+}
+
+/// Go `GeneratePlanCacheStmtWithAST`'s `PlanCacheStmt` over a statement
+/// whose names `handleTableName` pinned to `current_database`, reading
+/// `table_names`.
+#[must_use]
+pub fn generate_plan_cache_stmt_with_ast(
+    stmt: &tidb_ast::Stmt,
+    parameter_count: usize,
+    current_database: &str,
+    table_names: &[(String, String)],
+) -> crate::plan_cache::PlanCacheStmt {
+    let table_keys: Vec<tidb_infoschema::CatalogTableKey> = table_names
+        .iter()
+        .map(|(database, table)| tidb_infoschema::CatalogTableKey::new(database, table))
+        .collect();
+    crate::plan_cache::PlanCacheStmt {
+        current_database: current_database.to_owned(),
+        stats_table_keys: table_keys.clone(),
+        table_keys,
+        parameter_count,
+        limit_parameter_orders: prepared_limit_parameter_orders(stmt),
+        stmt_info: PlanCacheStmtInfo::of(stmt),
+        statement: stmt.clone(),
+        last_limit_values: std::sync::Mutex::default(),
+        cache_key: crate::plan_cache::statement_key(current_database, &stmt.restore()),
+    }
 }

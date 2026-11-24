@@ -32,6 +32,7 @@ use super::plan_cache::SessionPlanCache;
 use super::*;
 pub use tidb_planner::plan_cache_utils::{PlanCacheStmtInfo, PreparedPlanCacheEnvironment};
 use std::sync::Arc;
+use tidb_planner::plan_cache_utils::{collect_prepared_table_names, statement_contains_sequence_functions};
 
 
 /// The retained SELECT syntax and key metadata. The session cache owns the
@@ -402,166 +403,17 @@ pub fn build_prepared_select_plan(
     }
     let mut table_names = Vec::new();
     collect_prepared_table_names(query, current_database, &mut table_names);
-    let limit_parameter_orders = prepared_limit_parameter_orders(stmt);
-
-    let table_keys: Vec<CatalogTableKey> = table_names
-        .iter()
-        .map(|(database, table)| CatalogTableKey::new(database, table))
-        .collect();
     Some(PreparedSelectPlan {
-        stmt: tidb_planner::plan_cache::PlanCacheStmt {
-            current_database: current_database.to_owned(),
-            stats_table_keys: table_keys.clone(),
-            table_keys,
+        stmt: tidb_planner::plan_cache_utils::generate_plan_cache_stmt_with_ast(
+            stmt,
             parameter_count,
-            limit_parameter_orders,
-            stmt_info: PlanCacheStmtInfo::of(stmt),
-            statement: stmt.clone(),
-            last_limit_values: std::sync::Mutex::default(),
-            cache_key: super::plan_cache::statement_key(current_database, &stmt.restore()),
-        },
+            current_database,
+            &table_names,
+        ),
         table_names,
         contains_sequence_functions: statement_contains_sequence_functions(stmt),
     })
 }
 
-fn statement_contains_sequence_functions(stmt: &tidb_ast::Stmt) -> bool {
-    struct SequenceFunctionMarker {
-        found: bool,
-    }
 
-    impl tidb_ast::Visitor for SequenceFunctionMarker {
-        fn enter(&mut self, node: &mut dyn std::any::Any) -> bool {
-            let Some(expr) = node.downcast_mut::<tidb_ast::Expr>() else {
-                return self.found;
-            };
-            let (tidb_ast::Expr::Func { name, .. }
-            | tidb_ast::Expr::GenericFuncCall { name, .. }) = expr
-            else {
-                return self.found;
-            };
-            self.found = matches!(
-                name.to_ascii_lowercase().as_str(),
-                "nextval" | "lastval" | "setval"
-            );
-            self.found
-        }
 
-        fn leave(&mut self, _node: &mut dyn std::any::Any) -> bool {
-            true
-        }
-    }
-
-    let mut marker = SequenceFunctionMarker { found: false };
-    let mut statement = stmt.clone();
-    tidb_ast::Visitable::accept(&mut statement, &mut marker);
-    marker.found
-}
-
-pub(super) fn prepared_limit_parameter_orders(stmt: &tidb_ast::Stmt) -> Vec<usize> {
-    struct LimitMarkerCollector {
-        orders: Vec<usize>,
-    }
-
-    impl tidb_ast::Visitor for LimitMarkerCollector {
-        fn enter(&mut self, node: &mut dyn std::any::Any) -> bool {
-            let Some(limit) = node.downcast_ref::<tidb_ast::Limit>() else {
-                return false;
-            };
-            for expression in std::iter::once(&limit.count).chain(limit.offset.as_ref()) {
-                if let tidb_ast::Expr::ParamMarker { order, .. } = expression {
-                    self.orders.push(*order);
-                }
-            }
-            false
-        }
-
-        fn leave(&mut self, _node: &mut dyn std::any::Any) -> bool {
-            true
-        }
-    }
-
-    let mut statement = stmt.clone();
-    let mut collector = LimitMarkerCollector { orders: Vec::new() };
-    tidb_ast::Visitable::accept(&mut statement, &mut collector);
-    collector.orders.sort_unstable();
-    collector.orders.dedup();
-    collector.orders
-}
-
-fn collect_prepared_table_names(
-    query: &tidb_ast::QueryStmt,
-    current_database: &str,
-    names: &mut Vec<(String, String)>,
-) {
-    fn collect_query(
-        query: &tidb_ast::QueryStmt,
-        current_database: &str,
-        names: &mut Vec<(String, String)>,
-    ) {
-        match query {
-            tidb_ast::QueryStmt::Select(select) => {
-                collect_join(&select.from, current_database, names);
-            }
-            tidb_ast::QueryStmt::SetOpr(set) => collect_set(set, current_database, names),
-        }
-    }
-
-    fn collect_set(
-        set: &tidb_ast::SetOprStmt,
-        current_database: &str,
-        names: &mut Vec<(String, String)>,
-    ) {
-        for term in &set.terms {
-            match &term.body {
-                tidb_ast::SetOprTermBody::Select(select) => {
-                    collect_join(&select.from, current_database, names);
-                }
-                tidb_ast::SetOprTermBody::Nested(set) => {
-                    collect_set(set, current_database, names);
-                }
-            }
-        }
-    }
-
-    fn collect(
-        node: &tidb_ast::JoinNode,
-        current_database: &str,
-        names: &mut Vec<(String, String)>,
-    ) {
-        match node {
-            tidb_ast::JoinNode::Table(table) => {
-                if let Ok((database, name)) = split_table_path(&table.name, current_database) {
-                    let item = (database.to_owned(), name.to_owned());
-                    if !names.iter().any(|present| present == &item) {
-                        names.push(item);
-                    }
-                }
-            }
-            tidb_ast::JoinNode::Join(join) => {
-                collect(&join.left, current_database, names);
-                if let Some(right) = &join.right {
-                    collect(right, current_database, names);
-                }
-            }
-            tidb_ast::JoinNode::Derived { subquery, .. } => {
-                collect_query(subquery, current_database, names);
-            }
-        }
-    }
-
-    fn collect_join(
-        from: &Option<tidb_ast::Join>,
-        current_database: &str,
-        names: &mut Vec<(String, String)>,
-    ) {
-        if let Some(from) = from {
-            collect(&from.left, current_database, names);
-            if let Some(right) = &from.right {
-                collect(right, current_database, names);
-            }
-        }
-    }
-
-    collect_query(query, current_database, names);
-}

@@ -20,6 +20,7 @@
 
 use crate::WithStatementStore as _;
 pub(crate) use tidb_planner::dml_optimize::*;
+use tidb_planner::plan_cache_utils::{prepared_dml_kind, prepared_dml_table_names};
 use crate::KvTableReader;
 use super::plan_cache::SessionPlanCache;
 use super::*;
@@ -2962,7 +2963,8 @@ impl PreparedDmlPlan {
             environment,
             statement,
             |bound, ctx| {
-                let planned = cached_dml_physical_plan(
+                let planned = tidb_planner::plan_cache::cached_dml_physical_plan(
+                    &super::planner_bridge::driver_hooks(catalog),
                     &bound,
                     catalog,
                     current_database,
@@ -3049,104 +3051,18 @@ pub fn build_prepared_dml_plan(
     {
         return Ok(None);
     }
-    let table_keys: Vec<CatalogTableKey> = prepared_dml_table_names(statement, current_db)
-        .iter()
-        .map(|(database, table)| CatalogTableKey::new(database, table))
-        .collect();
+    let table_names = prepared_dml_table_names(statement, current_db);
     Ok(Some(PreparedDmlPlan {
-        stmt: tidb_planner::plan_cache::PlanCacheStmt {
-            current_database: current_db.to_owned(),
-            stats_table_keys: table_keys.clone(),
-            table_keys,
+        stmt: tidb_planner::plan_cache_utils::generate_plan_cache_stmt_with_ast(
+            statement,
             parameter_count,
-            limit_parameter_orders: super::access::prepared_limit_parameter_orders(statement),
-            stmt_info: super::access::PlanCacheStmtInfo::of(statement),
-            statement: statement.clone(),
-            last_limit_values: std::sync::Mutex::default(),
-            cache_key: super::plan_cache::statement_key(current_db, &statement.restore()),
-        },
+            current_db,
+            &table_names,
+        ),
     }))
 }
 
-fn prepared_dml_kind(dml: &tidb_ast::DmlStmt) -> bool {
-    matches!(
-        dml,
-        tidb_ast::DmlStmt::Insert(_) | tidb_ast::DmlStmt::Update(_) | tidb_ast::DmlStmt::Delete(_)
-    )
-}
 
-fn cached_dml_physical_plan(
-    statement: &Stmt,
-    catalog: &SessionExtendedInfoSchema,
-    current_database: &str,
-    ctx: &crate::StmtContext,
-    cacheability: tidb_planner::plan_cache_rebuild::PlanCacheabilityContext,
-) -> Result<Option<(tidb_planner_core_operator_physicalop::PhysicalPlan, bool)>, DriverError> {
-    let Stmt::Dml(dml) = statement else {
-        return Ok(None);
-    };
-    if let tidb_ast::DmlStmt::Insert(insert) = dml.as_ref() {
-        ctx.start_prepared_range_tracking();
-        let (built, _, _) = super::planner_bridge::insert_plan(&crate::driver::planner_bridge::driver_hooks(catalog), insert, catalog, current_database, ctx, true,
-        ).map_err(super::planner_error_to_driver)?;
-        let mut root = built;
-        super::physical_builder::prepare_plan_for_explain(&mut root, catalog, ctx)?;
-        if ctx.skip_plan_cache() {
-            return Ok(Some((root, false)));
-        }
-        if tidb_planner::plan_cache_rebuild::is_plan_cacheable(&root, cacheability).is_err() {
-            return Ok(None);
-        }
-        return Ok(Some((root, true)));
-    }
-    let (operator, source, write) = match dml.as_ref() {
-        tidb_ast::DmlStmt::Update(update) => (
-            "Update",
-            Some(match update_source_query(update) {
-                Some(source) => source,
-                None => return Ok(None),
-            }),
-            Some(super::multi_dml::MultiDmlRef::Update(update.as_ref())),
-        ),
-        tidb_ast::DmlStmt::Delete(delete) => (
-            "Delete",
-            Some(match delete_source_query(delete) {
-                Some(source) => source,
-                None => return Ok(None),
-            }),
-            Some(super::multi_dml::MultiDmlRef::Delete(delete.as_ref())),
-        ),
-        _ => return Ok(None),
-    };
-    let fk_spec = match dml.as_ref() {
-        tidb_ast::DmlStmt::Update(update) => build_tbl_2_update_columns(update, current_database),
-        tidb_ast::DmlStmt::Delete(delete) => fk_spec_for_delete(delete, current_database),
-        _ => return Ok(None),
-    };
-    let Ok(fk_spec) = fk_spec else {
-        return Ok(None);
-    };
-    ctx.start_prepared_range_tracking();
-    let root = physical_dml_plan_with_cache_mode(&crate::driver::planner_bridge::driver_hooks(catalog), operator,
-        source.as_ref(),
-        write,
-        catalog,
-        current_database,
-        ctx,
-        true,
-        std::slice::from_ref(&fk_spec),
-        DmlKeep::Auto,
-        super::planner_bridge::BuildVisits::Discard,
-        None,
-    )?;
-    if ctx.skip_plan_cache() {
-        return Ok(Some((root, false)));
-    }
-    if tidb_planner::plan_cache_rebuild::is_plan_cacheable(&root, cacheability).is_err() {
-        return Ok(None);
-    }
-    Ok(Some((root, true)))
-}
 
 /// Go `tryUpdatePointPlan` / `tryDeletePointPlan`: an UPDATE's or DELETE's
 /// point source carries `Lock` in a pessimistic transaction, so its executor
@@ -3174,51 +3090,6 @@ fn mark_dml_point_source_lock(plan: &mut tidb_planner_core_operator_physicalop::
     }
 }
 
-fn prepared_dml_table_names(statement: &Stmt, current_database: &str) -> Vec<(String, String)> {
-    struct Collector<'a> {
-        current_database: &'a str,
-        names: Vec<(String, String)>,
-    }
-
-    impl tidb_ast::Visitor for Collector<'_> {
-        fn enter(&mut self, node: &mut dyn std::any::Any) -> bool {
-            let Some(table_ref) = node.downcast_ref::<tidb_ast::TableRef>() else {
-                return false;
-            };
-            if let Ok((database, table)) = split_table_path(&table_ref.name, self.current_database)
-            {
-                let name = (database.to_owned(), table.to_owned());
-                if !self.names.contains(&name) {
-                    self.names.push(name);
-                }
-            }
-            false
-        }
-
-        fn leave(&mut self, _node: &mut dyn std::any::Any) -> bool {
-            true
-        }
-    }
-
-    let mut statement = statement.clone();
-    let mut collector = Collector {
-        current_database,
-        names: Vec::new(),
-    };
-    use tidb_ast::Visitable as _;
-    statement.accept(&mut collector);
-    if let Stmt::Dml(dml) = statement {
-        if let tidb_ast::DmlStmt::Insert(insert) = dml.as_ref() {
-            if let Ok((database, table)) = split_table_path(&insert.table, current_database) {
-                let target = (database.to_owned(), table.to_owned());
-                if !collector.names.contains(&target) {
-                    collector.names.push(target);
-                }
-            }
-        }
-    }
-    collector.names
-}
 /// [`run_update_stmt`], recording the plan it builds into `trace`.
 ///
 /// The read plan is the one this function performs -- the `Point_Get`,

@@ -1242,3 +1242,90 @@ impl PlanCacheStmt {
         }))
     }
 }
+
+/// Go `generateNewPlan` for an INSERT, UPDATE or DELETE: its plan built
+/// with the plan cache on, and whether the cache may keep it.
+///
+/// # Errors
+///
+/// The optimizer's error.
+pub fn cached_dml_physical_plan(
+    hooks: &dyn crate::optimize::PlanningHooks,
+    statement: &Stmt,
+    catalog: &SessionExtendedInfoSchema,
+    current_database: &str,
+    ctx: &StmtContext,
+    cacheability: crate::plan_cache_rebuild::PlanCacheabilityContext,
+) -> Result<Option<(tidb_planner_core_operator_physicalop::PhysicalPlan, bool)>, DriverError> {
+    let Stmt::Dml(dml) = statement else {
+        return Ok(None);
+    };
+    if let tidb_ast::DmlStmt::Insert(insert) = dml.as_ref() {
+        ctx.start_prepared_range_tracking();
+        let (built, _, _) =
+            crate::statement_plan::insert_plan(hooks, insert, catalog, current_database, ctx, true)
+                .map_err(crate::optimize::planner_error_to_driver)?;
+        let mut root = built;
+        hooks.prepare_plan(&mut root, ctx)?;
+        if ctx.skip_plan_cache() {
+            return Ok(Some((root, false)));
+        }
+        if crate::plan_cache_rebuild::is_plan_cacheable(&root, cacheability).is_err() {
+            return Ok(None);
+        }
+        return Ok(Some((root, true)));
+    }
+    let (operator, source, write) = match dml.as_ref() {
+        tidb_ast::DmlStmt::Update(update) => (
+            "Update",
+            Some(match crate::dml_optimize::update_source_query(update) {
+                Some(source) => source,
+                None => return Ok(None),
+            }),
+            Some(crate::dml_optimize::MultiDmlRef::Update(update.as_ref())),
+        ),
+        tidb_ast::DmlStmt::Delete(delete) => (
+            "Delete",
+            Some(match crate::dml_optimize::delete_source_query(delete) {
+                Some(source) => source,
+                None => return Ok(None),
+            }),
+            Some(crate::dml_optimize::MultiDmlRef::Delete(delete.as_ref())),
+        ),
+        _ => return Ok(None),
+    };
+    let fk_spec = match dml.as_ref() {
+        tidb_ast::DmlStmt::Update(update) => {
+            crate::dml_optimize::build_tbl_2_update_columns(update, current_database)
+        }
+        tidb_ast::DmlStmt::Delete(delete) => {
+            crate::dml_optimize::fk_spec_for_delete(delete, current_database)
+        }
+        _ => return Ok(None),
+    };
+    let Ok(fk_spec) = fk_spec else {
+        return Ok(None);
+    };
+    ctx.start_prepared_range_tracking();
+    let root = crate::dml_optimize::physical_dml_plan_with_cache_mode(
+        hooks,
+        operator,
+        source.as_ref(),
+        write,
+        catalog,
+        current_database,
+        ctx,
+        true,
+        std::slice::from_ref(&fk_spec),
+        crate::dml_optimize::DmlKeep::Auto,
+        crate::optimize::BuildVisits::Discard,
+        None,
+    )?;
+    if ctx.skip_plan_cache() {
+        return Ok(Some((root, false)));
+    }
+    if crate::plan_cache_rebuild::is_plan_cacheable(&root, cacheability).is_err() {
+        return Ok(None);
+    }
+    Ok(Some((root, true)))
+}
