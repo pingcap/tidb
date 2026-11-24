@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -46,6 +47,9 @@ const mockCopCacheFP = "github.com/pingcap/tidb/pkg/store/mockstore/unistore/cop
 // newMaxKeysReadTestKit creates a unistore-backed session whose coprocessor
 // cache admits every response, so cache behavior is deterministic.
 func newMaxKeysReadTestKit(t *testing.T) (*testkit.TestKit, *domain.Domain, testutils.Cluster) {
+	if kerneltype.IsNextGen() {
+		t.Skip("tidb_max_keys_read is not supported in NextGen")
+	}
 	// Clone the current global config, so the settings TestMain applied
 	// (e.g. the async-commit safe window) are kept.
 	originConfig := config.GetGlobalConfig()
