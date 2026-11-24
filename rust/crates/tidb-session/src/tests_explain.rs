@@ -9604,12 +9604,16 @@ fn an_index_lookup_releases_its_drained_index_response_before_the_task_like_go()
 /// the connection's pool and the next statement's chunks reuse them. A Go
 /// testkit probe of each statement after the same `INSERT ... SELECT` (the
 /// connection's allocator with an unpooled result chunk) shows these charges.
+/// The aggregates run with one worker (`tidb_executor_concurrency = 1`, Go's
+/// unparallel HashAgg): a parallel HashAgg's peak depends on whether its
+/// partial worker releases its chunk before a final worker charges a group,
+/// in Go as here (1 in 256 runs under load).
 #[test]
 fn an_insert_select_returns_its_source_chunk_to_the_allocator_like_go() {
     for (query, operator, go_memory) in [
         ("SELECT /*+ stream_agg() */ b, count(*) FROM t GROUP BY b", "StreamAgg_14", "1.27 KB"),
-        ("SELECT b, count(*) FROM t GROUP BY b", "HashAgg_12", "14.6 KB"),
-        ("SELECT max(a), min(c) FROM t", "HashAgg_11", "13.9 KB"),
+        ("SELECT /*+ hash_agg() */ b, count(*) FROM t GROUP BY b", "HashAgg_10", "2.04 KB"),
+        ("SELECT /*+ hash_agg() */ max(a), min(c) FROM t", "HashAgg_9", "1.91 KB"),
     ] {
         let mut session = Session::new();
         session
@@ -9622,6 +9626,7 @@ fn an_insert_select_returns_its_source_chunk_to_the_allocator_like_go() {
         session.run(&format!("INSERT INTO t VALUES {values}")).unwrap();
         session.run("CREATE TABLE u (a INT, b INT, KEY(a))").unwrap();
         session.run("INSERT INTO u SELECT a, b FROM t WHERE a <= 50").unwrap();
+        session.run("SET tidb_executor_concurrency = 1").unwrap();
         let rows = row_text(session.run(&format!("EXPLAIN ANALYZE {query}")));
         let row = rows
             .iter()
