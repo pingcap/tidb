@@ -2261,12 +2261,6 @@ func (er *expressionRewriter) inDirectMatchBooleanContext() bool {
 	return true
 }
 
-// ErrLocalMatchDisabled identifies a row-wise Boolean MATCH request when both
-// TiDB and TiFlash local evaluation are disabled. Only this error may be
-// rescued by the explicitly enabled ILIKE alternative; unrelated build,
-// privilege, and lock errors must remain fatal.
-var ErrLocalMatchDisabled = expression.ErrNotSupportedYet.GenWithStackByArgs("MATCH ... AGAINST without tidb_enable_local_match_against")
-
 func (er *expressionRewriter) matchAgainstToExpression(v *ast.MatchAgainst) {
 	numCols := len(v.ColumnNames)
 	stackLen := len(er.ctxStack)
@@ -2280,15 +2274,8 @@ func (er *expressionRewriter) matchAgainstToExpression(v *ast.MatchAgainst) {
 		return
 	}
 	sessVars := er.planCtx.builder.ctx.GetSessionVars()
-	sessVars.StmtCtx.AlternativeLogicalPlanHasPredicateMatch = true
-	// ILIKE is exclusively an alternative-round override, never the default
-	// rewrite even when the local MATCH user switch is disabled.
-	if sessVars.StmtCtx.InFTSLikeFallbackRound {
-		er.matchAgainstToLike(v, numCols, stackLen)
-		return
-	}
 	if !sessVars.EnableLocalMatchAgainst {
-		er.err = ErrLocalMatchDisabled
+		er.err = expression.ErrNotSupportedYet.GenWithStackByArgs("MATCH ... AGAINST without tidb_enable_local_match_against")
 		return
 	}
 	if !expression.MatchAgainstModifierSupportedByLocalNoScore(v.Modifier) {
@@ -2551,76 +2538,6 @@ func localMatchAgainstTiFlashCollationSupported(collation string) bool {
 	default:
 		return false
 	}
-}
-
-// matchAgainstToLike converts MATCH...AGAINST to LIKE predicates as a
-// separately configured alternative when local Boolean MATCH is unavailable.
-func (er *expressionRewriter) matchAgainstToLike(v *ast.MatchAgainst, numCols, stackLen int) {
-	againstExpr := er.ctxStack[stackLen-1]
-
-	constExpr, ok := againstExpr.(*expression.Constant)
-	if !ok {
-		er.err = expression.ErrNotSupportedYet.GenWithStackByArgs("MATCH...AGAINST with non-constant search string")
-		return
-	}
-
-	// The LIKE fallback bakes the search value into the produced plan — either
-	// as ILIKE pattern constants (non-NULL case) or as a Constant(NULL)
-	// short-circuit. A cached plan would reuse the first execution's baked
-	// value for later executions, producing wrong results whenever the AGAINST
-	// argument is mutable: a `?` parameter marker, a user variable, or another
-	// deferred expression. In particular, a NULL first bind would bake a
-	// Constant(NULL) plan and reuse it for a later non-NULL bind. Mark the
-	// plan non-cacheable here, before the NULL fast-path and before Eval, so
-	// the skip applies uniformly across all branches below.
-	if expression.MaybeOverOptimized4PlanCache(er.sctx, []expression.Expression{constExpr}) {
-		er.sctx.SetSkipPlanCache("MATCH...AGAINST LIKE fallback bakes a mutable search string into plan constants")
-	}
-
-	// Validate columns before the NULL fast path so unsupported types are
-	// rejected consistently for literal and prepared searches.
-	columns := make([]expression.Expression, numCols)
-	for i := range numCols {
-		col := er.ctxStack[stackLen-numCols-1+i]
-		if col.GetType(er.sctx.GetEvalCtx()).EvalType() != types.ETString {
-			er.err = expression.ErrNotSupportedYet.GenWithStackByArgs("Doesn't support match search on a non-string column without fulltext index")
-			return
-		}
-		columns[i] = col
-	}
-
-	searchText, err := constExpr.Eval(er.sctx.GetEvalCtx(), chunk.Row{})
-	if err != nil {
-		er.err = err
-		return
-	}
-
-	if searchText.IsNull() {
-		// Preserve the legacy substring alternative's NULL result. This is
-		// not the row-wise Local MATCH path, which returns zero for NULL
-		// searches; the alternative does not promise equivalent FTS semantics.
-		er.ctxStackPop(numCols + 1)
-		er.ctxStackAppend(&expression.Constant{
-			Value:   types.Datum{},
-			RetType: types.NewFieldType(mysql.TypeTiny),
-		}, types.EmptyName)
-		return
-	}
-
-	if searchText.Kind() != types.KindString {
-		er.err = expression.ErrNotSupportedYet.GenWithStackByArgs("MATCH...AGAINST with non-string search expression")
-		return
-	}
-
-	er.ctxStackPop(numCols + 1)
-
-	result, err := expression.BuildFTSToILikeExpression(er.sctx, columns, searchText.GetString(), v.Modifier)
-	if err != nil {
-		er.err = err
-		return
-	}
-
-	er.ctxStackAppend(result, types.EmptyName)
 }
 
 func (er *expressionRewriter) regexpToScalarFunc(v *ast.PatternRegexpExpr) {

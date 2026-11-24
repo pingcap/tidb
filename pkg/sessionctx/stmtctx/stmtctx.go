@@ -486,17 +486,11 @@ type StatementContext struct {
 	// logical build round produced an order-aware join reorder candidate that is
 	// worth exploring in a dedicated alternative round.
 	AlternativeLogicalPlanOrderAwareJoinReorder bool
-	// AlternativeLogicalPlanHasPredicateMatch enables a separate ILIKE candidate.
-	AlternativeLogicalPlanHasPredicateMatch bool
 	// AlternativeLogicalPlanMissingTiFlashPath prevents a TiFlash-only rebuild
 	// when a data source cannot be read from TiFlash.
 	AlternativeLogicalPlanMissingTiFlashPath bool
 	// AlternativeLogicalPlanHasStoreTypeHint preserves explicit storage choices.
 	AlternativeLogicalPlanHasStoreTypeHint bool
-	// InFTSLikeFallbackRound overrides the default local MATCH rewrite only while
-	// building the ILIKE alternative. Its setup/cleanup owns this transient flag;
-	// it is deliberately not part of the saved winning plan state.
-	InFTSLikeFallbackRound bool
 
 	// IsExplainAnalyzeDML is true if the statement is "explain analyze DML executors", before responding the explain
 	// results to the client, the transaction should be committed first. See issue #37373 for more details.
@@ -661,14 +655,6 @@ func (sc *StatementContext) RestoreLogicalPlanBuildState(state LogicalPlanBuildS
 	sc.RangeFallbackHandler = contextutil.NewRangeFallbackHandler(&sc.PlanCacheTracker, sc)
 }
 
-// EnterFTSLikeFallbackRound overrides MATCH rewriting for one build and returns
-// its cleanup. Capturing the original value also supports nested metadata builds.
-func (sc *StatementContext) EnterFTSLikeFallbackRound() func() {
-	previous := sc.InFTSLikeFallbackRound
-	sc.InFTSLikeFallbackRound = true
-	return func() { sc.InFTSLikeFallbackRound = previous }
-}
-
 // ResetAlternativeLogicalPlanSignals clears the statement-local signals used by the
 // alternative logical plan feature.
 func (sc *StatementContext) ResetAlternativeLogicalPlanSignals() {
@@ -676,7 +662,6 @@ func (sc *StatementContext) ResetAlternativeLogicalPlanSignals() {
 	sc.AlternativeLogicalPlanSameOrderIndexJoin = false
 	sc.AlternativeLogicalPlanPreferCorrelate = false
 	sc.AlternativeLogicalPlanOrderAwareJoinReorder = false
-	sc.AlternativeLogicalPlanHasPredicateMatch = false
 	sc.AlternativeLogicalPlanMissingTiFlashPath = false
 	sc.AlternativeLogicalPlanHasStoreTypeHint = false
 }
