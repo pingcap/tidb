@@ -525,3 +525,301 @@ pub trait PessimisticDmlSession {
         }
     }
 }
+
+/// What Go `ExecStmt.handlePessimisticDML`'s statement loop reaches through
+/// `a.Ctx` and its transaction manager beyond the lock step: the statement's
+/// transaction entry, snapshot, provider events, the executor's run and
+/// `finishStmt`.
+pub trait HandlePessimisticDml: PessimisticDmlSession {
+    /// The session a run of the statement executes on (`a.Ctx`).
+    type Sctx;
+    /// The statement's read-timestamp record.
+    type ReadTs;
+    /// The start timestamp `read_ts` recorded, if the statement activated a
+    /// transaction.
+    fn read_ts_value(read_ts: &Self::ReadTs) -> Option<u64>;
+    /// Go `SetOptionsOnTxnActive`'s statement options on an explicit
+    /// transaction: the resource group and the assertion level.
+    ///
+    /// # Errors
+    ///
+    /// The transaction refused them.
+    fn set_explicit_txn_statement_options(
+        &mut self,
+        resource_group: &str,
+    ) -> Result<(), tidb_store_driver_error::sql_query_error::SqlQueryError>;
+    /// Go `OnStmtStart`, or `OnStmtRetry` when `retry`, on the transaction's
+    /// provider.
+    ///
+    /// # Errors
+    ///
+    /// The provider's.
+    fn provider_stmt_event(&mut self, retry: bool) -> Result<(), tidb_store_driver_error::sql_query_error::SqlQueryError>;
+    /// The attempt's fresh lock state: the selected rows and an explicit
+    /// transaction's statement lock failure belong to this attempt only.
+    fn begin_execution_attempt(&mut self);
+    /// Whether an explicit transaction is open (Go `InTxn()`).
+    fn explicit_txn_open(&self) -> bool;
+    /// Go `decideTxnMode` for an autocommit DML's implicit transaction.
+    fn decide_autocommit_pessimistic(&self, retrying: bool) -> bool;
+    /// An autocommit statement's pessimistic mode (Go `TxnCtx.IsPessimistic`)
+    /// and its locking reads' lock wait.
+    fn begin_autocommit_locks(&mut self, pessimistic: bool);
+    /// Go `PrepareTxnCtx` -> `EnterNewTxn(EnterNewTxnBeforeStmt)` for a
+    /// statement outside any transaction.
+    ///
+    /// # Errors
+    ///
+    /// The provider's start.
+    fn enter_statement_implicit_txn(
+        &mut self,
+        autocommit_write: bool,
+        pessimistic: bool,
+        resource_group: &str,
+        read_ts: &Self::ReadTs,
+    ) -> Result<(), tidb_store_driver_error::sql_query_error::SqlQueryError>;
+    /// The statement's snapshot (`GetSnapshotWithStmtReadTS` /
+    /// `GetSnapshotWithStmtForUpdateTS`), bound and prepared; a failed
+    /// preparation finishes it.
+    ///
+    /// # Errors
+    ///
+    /// The open or preparation failure.
+    fn bind_statement_snapshot(
+        &mut self,
+        shape: crate::access_path::StatementReadShape,
+        is_dml: bool,
+    ) -> Result<(), tidb_store_driver_error::sql_query_error::SqlQueryError>;
+    /// Unbinds the statement's snapshot.
+    ///
+    /// # Errors
+    ///
+    /// Finishing the snapshot's read side failed.
+    fn finish_statement_snapshot(&self) -> Result<(), tidb_store_driver_error::sql_query_error::SqlQueryError>;
+    /// Go `OnPessimisticStmtStart` on the transaction's provider.
+    ///
+    /// # Errors
+    ///
+    /// The provider's.
+    fn provider_pessimistic_stmt_start(&mut self) -> Result<(), tidb_store_driver_error::sql_query_error::SqlQueryError>;
+    /// Go `OnPessimisticStmtEnd` on the transaction's provider.
+    ///
+    /// # Errors
+    ///
+    /// The provider's.
+    fn provider_pessimistic_stmt_end(
+        &mut self,
+        is_successful: bool,
+    ) -> Result<(), tidb_store_driver_error::sql_query_error::SqlQueryError>;
+    /// Go `handleNoDelayExecutor`'s run of the statement's executor.
+    ///
+    /// # Errors
+    ///
+    /// The executor's.
+    fn run_execution<T>(
+        &mut self,
+        run: &mut impl FnMut(&mut Self::Sctx) -> Result<T, tidb_store_driver_error::sql_query_error::SqlQueryError>,
+    ) -> Result<T, tidb_store_driver_error::sql_query_error::SqlQueryError>;
+    /// What a run leaves the session: an autocommit statement's activated
+    /// transaction's start (`setLastTxnInfoBeforeTxnEnd`), an explicit one's
+    /// `TxnCtx.GetForUpdateTS`, and the end of an autocommit write's locking
+    /// reads.
+    fn end_execution_attempt(&mut self, read_ts: &Self::ReadTs, autocommit_write: bool);
+    /// Go `handlePessimisticLockError`'s `OnStmtErrorForNextAction(
+    /// StmtErrAfterPessimisticLock, lockErr)`: `Ok` when the provider is
+    /// ready to retry the statement.
+    ///
+    /// # Errors
+    ///
+    /// The error the statement fails with.
+    fn provider_retry_lock_error(
+        &mut self,
+        lock_error: tidb_store_driver_error::pessimistic_lock_error::LockSqlError,
+    ) -> Result<(), tidb_store_driver_error::sql_query_error::SqlQueryError>;
+    /// Go `a.retryCount++` / `retryStartTime`.
+    fn record_statement_retry(&mut self);
+    /// Go's `lockErrorAndThenOnStmtRetryCalled` breakpoint.
+    fn lock_error_retry_breakpoint(&self);
+    /// The outcome of a lock the run took inside execution (a locking point
+    /// read), which the statement owner consumes.
+    fn take_execution_lock_failure(&self) -> Option<tidb_store_driver_txn::cluster_table_storage::StatementLockFailure>;
+    /// Withdraws the storage error a lock raised: what the client sees is the
+    /// lock's outcome.
+    fn retract_statement_failure(&mut self, code: u16, message: &str);
+    /// Rewrites the statement's recorded last query error.
+    fn rerecord_last_query_error(&mut self, error: &str);
+    /// Go `finishStmt`: the statement's commit outside a transaction
+    /// (`autoCommitAfterStmt`), or a transaction the session left.
+    ///
+    /// # Errors
+    ///
+    /// The commit's.
+    fn finish_stmt(&mut self, read_ts: &Self::ReadTs) -> Result<(), tidb_store_driver_error::sql_query_error::SqlQueryError>;
+    /// Go `autoCommitAfterStmt` / `StmtRollback` after the statement failed
+    /// (`committing`: in its commit).
+    fn rollback_failed_statement(
+        &mut self,
+        committing: bool,
+        savepoint: tidb_store_driver_txn::cluster_storage::BufferCheckpoint,
+    );
+
+    /// Go `ExecStmt.handlePessimisticLockError` for a lock that asks the
+    /// statement to retry: the provider decides, the retry budget counts,
+    /// the statement's writes go back (its locks stay, and the replay reads at
+    /// the timestamp that sees the version that beat it) and the provider's
+    /// `OnStmtRetry` runs.
+    ///
+    /// # Errors
+    ///
+    /// The statement's failure when it is not retried.
+    fn handle_pessimistic_lock_error(
+        &mut self,
+        lock_error: tidb_store_driver_error::pessimistic_lock_error::LockSqlError,
+        retries: &mut tidb_store_driver_error::pessimistic_lock_error::PessimisticStatementRetry,
+        savepoint: tidb_store_driver_txn::cluster_storage::BufferCheckpoint,
+        is_dml: bool,
+    ) -> Result<(), tidb_store_driver_error::sql_query_error::SqlQueryError> {
+        self.provider_retry_lock_error(lock_error)?;
+        retries
+            .retry()
+            .map_err(|error| tidb_store_driver_error::sql_query_error::lock_sql_error(&error))?;
+        self.record_statement_retry();
+        self.statement_buffer().restore(savepoint);
+        self.provider_stmt_event(true)?;
+        self.lock_error_retry_breakpoint();
+        tidb_failpoint::eval(if is_dml {
+            "github.com/pingcap/tidb/pkg/executor/pessimisticDMLRetry"
+        } else {
+            "github.com/pingcap/tidb/pkg/executor/pessimisticSelectForUpdateRetry"
+        });
+        Ok(())
+    }
+
+    /// Go `ExecStmt.handlePessimisticDML`'s statement loop: run, lock the
+    /// staged keys, and on a lock conflict roll the STATEMENT back and
+    /// re-execute it reading at the advanced `for_update_ts` (the provider's
+    /// `OnStmtRetry`); then `finishStmt`. An implicit transaction's provider
+    /// is entered fresh inside the loop.
+    ///
+    /// # Errors
+    ///
+    /// The statement's error, its lock's, or its commit's.
+    #[allow(clippy::too_many_arguments)]
+    fn handle_pessimistic_dml<T>(
+        &mut self,
+        shape: crate::access_path::StatementReadShape,
+        savepoint: tidb_store_driver_txn::cluster_storage::BufferCheckpoint,
+        resource_group: &str,
+        retrying: bool,
+        is_dml: bool,
+        run: &mut impl FnMut(&mut Self::Sctx) -> Result<T, tidb_store_driver_error::sql_query_error::SqlQueryError>,
+        read_ts: &Self::ReadTs,
+    ) -> Result<T, tidb_store_driver_error::sql_query_error::SqlQueryError> {
+        use tidb_store_driver_txn::cluster_table_storage::StatementLockFailure;
+        if self.explicit_txn_open() {
+            self.set_explicit_txn_statement_options(resource_group)?;
+        }
+        self.provider_stmt_event(false)?;
+        let mut retries = tidb_store_driver_error::pessimistic_lock_error::PessimisticStatementRetry::default();
+        // Whether the statement reached `finishStmt`'s commit: a failure
+        // there is the commit's own, not one `autoCommitAfterStmt` rolls
+        // back.
+        let mut committing = false;
+        let result = loop {
+            self.begin_execution_attempt();
+            // Go `decideTxnMode`: under the default `pessimistic-auto-commit =
+            // false` an autocommit DML runs optimistically -- a read at its
+            // start timestamp and a one-phase prewrite -- and only the retry
+            // of a write conflict locks first. The answer is the implicit
+            // transaction's `TxnCtx.IsPessimistic`, so the statement plans its
+            // point source with `Lock` (`tryUpdatePointPlan`) and locks it
+            // inside execution with the session's `LockWaitTimeout`.
+            let autocommit_write =
+                !self.explicit_txn_open() && shape == crate::access_path::StatementReadShape::AutocommitWrite;
+            let autocommit_pessimistic = autocommit_write && self.decide_autocommit_pessimistic(retrying);
+            if autocommit_write {
+                self.begin_autocommit_locks(autocommit_pessimistic);
+            }
+            if let Err(error) =
+                self.enter_statement_implicit_txn(autocommit_write, autocommit_pessimistic, resource_group, read_ts)
+            {
+                break Err(error);
+            }
+            if let Err(error) = self.bind_statement_snapshot(shape, is_dml) {
+                break Err(error);
+            }
+            // Go `handlePessimisticDML` / `handlePessimisticSelectForUpdate`:
+            // `OnPessimisticStmtStart` before the statement executes (a no-op
+            // for an optimistic provider).
+            if let Err(error) = self.provider_pessimistic_stmt_start() {
+                let _ = self.finish_statement_snapshot();
+                break Err(error);
+            }
+            let outcome = self.run_execution(run);
+            self.end_execution_attempt(read_ts, autocommit_write);
+            let finished = self.finish_statement_snapshot();
+            match outcome {
+                Ok(value) => {
+                    if let Err(error) = finished {
+                        break Err(error);
+                    }
+                    match self.lock_pessimistic_statement_keys(&savepoint) {
+                        Ok(PessimisticStep::Done) => {
+                            if let Err(error) = self.provider_pessimistic_stmt_end(true) {
+                                break Err(error);
+                            }
+                        }
+                        Ok(PessimisticStep::Retry { lock_error }) => {
+                            match self.handle_pessimistic_lock_error(lock_error, &mut retries, savepoint, is_dml) {
+                                Ok(()) => continue,
+                                Err(error) => break Err(error),
+                            }
+                        }
+                        Err(error) => break Err(error),
+                    }
+                    committing = true;
+                    match self.finish_stmt(read_ts) {
+                        Ok(()) => break Ok(value),
+                        Err(error) => break Err(error),
+                    }
+                }
+                Err(error) => {
+                    // A locking point read locked during execution (Go
+                    // `PointGetExecutor.getAndLock`) and the statement failed
+                    // on that lock: act on the lock's outcome as
+                    // `handlePessimisticLockError` does. Inside an explicit
+                    // transaction the transaction keeps the outcome; an
+                    // autocommit statement's lock, taken after its read, left
+                    // it in `lock_failure`.
+                    let failure = self.take_execution_lock_failure();
+                    if failure.is_some() {
+                        // The storage error the lock raised is the statement
+                        // owner's to consume: what the client sees is the lock
+                        // outcome.
+                        self.retract_statement_failure(error.code, &error.message);
+                    }
+                    match failure {
+                        None => break Err(error),
+                        Some(StatementLockFailure::Retry { lock_error }) => {
+                            self.record_lock_error(tidb_errno::errcode::ErrWriteConflict);
+                            match self.handle_pessimistic_lock_error(lock_error, &mut retries, savepoint, is_dml) {
+                                Ok(()) => continue,
+                                Err(error) => break Err(error),
+                            }
+                        }
+                        Some(StatementLockFailure::Statement(error) | StatementLockFailure::Transaction(error)) => {
+                            self.record_lock_error(error.code);
+                            let error = tidb_store_driver_error::sql_query_error::lock_sql_error(&error);
+                            self.rerecord_last_query_error(&error.error_string());
+                            break Err(error);
+                        }
+                    }
+                }
+            }
+        };
+        if result.is_err() {
+            self.rollback_failed_statement(committing, savepoint);
+        }
+        result
+    }
+}
