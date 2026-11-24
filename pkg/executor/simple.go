@@ -1905,10 +1905,18 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 		// change and must go through the standard admin check. See the
 		// allowlist note on alterUserHasPrivilegedOptions.
 		hasOtherStmtOptions := alterUserHasPrivilegedOptions(s)
-		// Read the target row (inside this transaction) BEFORE the privilege
-		// gate: classifying an explicit IDENTIFIED WITH as "no plugin change"
-		// needs the account's current plugin. The "user does not exist" outcome
-		// is still handled only after the privilege checks below, so an
+		// Only a self-service dual-password change needs the target row to
+		// decide whether CREATE USER (or UPDATE on mysql.user) is required. For
+		// everything else, reject a caller without it before the locking read,
+		// so the denied statement neither waits on nor takes the target row lock.
+		selfServiceDualPwdCandidate := alterCurrentUser && specDualPwdRequested && !hasOtherStmtOptions
+		if !selfServiceDualPwdCandidate && !(alterCurrentUser && alterPassword) && !(hasCreateUserPriv || hasSystemSchemaPriv) {
+			return plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("CREATE USER")
+		}
+		// Read the target row (inside this transaction) BEFORE the remaining
+		// privilege gate: classifying an explicit IDENTIFIED WITH as "no plugin
+		// change" needs the account's current plugin. The "user does not exist"
+		// outcome is still handled only after the privilege checks below, so an
 		// unprivileged caller cannot probe account existence.
 		exists, currentAuthPlugin, currentAuthString, err := userExistsInternalWithRetryVariants(ctx, sqlExecutor, &spec.User.Username, spec.User.Hostname)
 		if err != nil {
@@ -1920,7 +1928,7 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 		// by APPLICATION_PASSWORD_ADMIN, not the CREATE USER admin check.
 		sameOrUnspecifiedPlugin := spec.AuthOpt == nil || spec.AuthOpt.AuthPlugin == "" ||
 			effectiveAuthPlugin(spec.AuthOpt.AuthPlugin, defaultAuthPlugin) == effectiveAuthPlugin(currentAuthPlugin, defaultAuthPlugin)
-		selfServiceDualPwd := alterCurrentUser && specDualPwdRequested && !hasOtherStmtOptions && sameOrUnspecifiedPlugin
+		selfServiceDualPwd := selfServiceDualPwdCandidate && sameOrUnspecifiedPlugin
 		needAdminPrivCheck := !(alterCurrentUser && alterPassword) && !selfServiceDualPwd
 		if needAdminPrivCheck {
 			// The user executing the query (user) does not match the user specified (spec.User)
@@ -1938,6 +1946,10 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			// any user with only CREATE USER can not modify the properties of users with SUPER privilege.
 			// We extend this in TiDB with SEM, where SUPER users can not modify users with RESTRICTED_USER_ADMIN.
 			// For simplicity: RESTRICTED_USER_ADMIN also counts for SYSTEM_USER here.
+			//
+			// Only a self-service dual-password candidate whose explicit plugin
+			// differs from the current one still reaches this check; the other
+			// cases were rejected before the read above.
 			if !(hasCreateUserPriv || hasSystemSchemaPriv) {
 				return plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("CREATE USER")
 			}

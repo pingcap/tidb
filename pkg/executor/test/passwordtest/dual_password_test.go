@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -296,6 +297,38 @@ func TestDualPasswordCrossUserRequiresCreateUser(t *testing.T) {
 	// The victim's password was not changed by the denied statements.
 	require.NoError(t, authAs(t, tk, "dpvictim_ap", "%", "v1"))
 	require.Error(t, authAs(t, tk, "dpvictim_ap", "%", "v2"))
+}
+
+// TestAlterUserDeniedWithoutLockingTargetRow guards that an ALTER USER rejected
+// for lacking CREATE USER fails before the locking read of the target row.
+func TestAlterUserDeniedWithoutLockingTargetRow(t *testing.T) {
+	tk := rootTK(t)
+
+	tk.MustExec("DROP USER IF EXISTS dplockvictim, dplockplain")
+	tk.MustExec("CREATE USER dplockvictim IDENTIFIED BY 'v1'")
+	tk.MustExec("CREATE USER dplockplain IDENTIFIED BY 'a1'")
+	plainTK := testkit.NewTestKit(t, tk.Session().GetStore())
+	require.NoError(t, plainTK.Session().Auth(&auth.UserIdentity{Username: "dplockplain", Hostname: "%"}, sha1Password("a1"), nil, nil))
+
+	tk.MustExec("BEGIN PESSIMISTIC")
+	tk.MustQuery("SELECT User FROM mysql.user WHERE User = 'dplockvictim' AND Host = '%' FOR UPDATE").Check(testkit.Rows("dplockvictim"))
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- plainTK.ExecToErr("ALTER USER dplockvictim IDENTIFIED BY 'v2'")
+	}()
+	var err error
+	blocked := false
+	select {
+	case err = <-errCh:
+	case <-time.After(10 * time.Second):
+		blocked = true
+	}
+	tk.MustExec("ROLLBACK")
+	if blocked {
+		err = <-errCh
+	}
+	require.False(t, blocked, "the denied ALTER USER waited for the target row lock: %v", err)
+	require.ErrorContains(t, err, "CREATE USER")
 }
 
 // TestDualPasswordRejectsEmptyPrimary guards the MySQL-compatible
