@@ -561,11 +561,11 @@ func TestDisableGCAcrossWorkerRestart(t *testing.T) {
 	keyspaceID := uint32(s.store.GetCodec().GetKeyspaceID())
 	client := s.pdClient
 	if kerneltype.IsNextGen() {
-		require.NotEqual(t, uint32(constants.NullKeyspaceID), keyspaceID)
+		require.NotEqual(t, constants.NullKeyspaceID, keyspaceID)
 		require.True(t, pd.IsKeyspaceUsingKeyspaceLevelGC(s.store.GetCodec().GetKeyspaceMeta()))
 		client = keyspaceGCWorkerTestClient{Client: client, t: t, keyspaceID: keyspaceID}
 	} else {
-		require.Equal(t, uint32(constants.NullKeyspaceID), keyspaceID)
+		require.Equal(t, constants.NullKeyspaceID, keyspaceID)
 	}
 
 	now, err := s.gcWorker.getOracleTime()
