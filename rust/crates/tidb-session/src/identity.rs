@@ -1021,7 +1021,7 @@ impl Session {
                 return None;
             }
             catalog.protected_table_mode(
-                &tidb_planner::preprocess::check_table_mode_names(stmt),
+                &tidb_planner::optimizer::check_table_mode_names(stmt),
                 &self.vars.current_db,
             )
         })

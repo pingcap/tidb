@@ -897,32 +897,6 @@ pub fn resolve_ctx_table_names(stmt: &Stmt) -> Vec<Vec<String>> {
     collector.names
 }
 
-/// The table names Go's `core.CheckTableMode`
-/// (`pkg/planner/core/optimizer.go:304`) checks for `stmt`: none for a SHOW
-/// and none for ADMIN CHECKSUM TABLE (which IMPORT INTO runs on its own
-/// table); an EXPLAIN is not checked itself, so its names are the ones the
-/// optimization of the statement it explains checks.
-#[must_use]
-pub fn check_table_mode_names(stmt: &Stmt) -> Vec<Vec<String>> {
-    use tidb_ast::{AdminStmt, ExplainTarget};
-    if let Stmt::Admin(admin) = stmt {
-        match &**admin {
-            AdminStmt::Show(_) | AdminStmt::AdminChecksum(_) => return Vec::new(),
-            AdminStmt::Explain(explain) => {
-                return match &explain.target {
-                    ExplainTarget::Statement(inner) | ExplainTarget::ExploreStatement(inner) => {
-                        check_table_mode_names(inner)
-                    }
-                    ExplainTarget::PlanDigest(_)
-                    | ExplainTarget::ExploreDigest(_)
-                    | ExplainTarget::ExploreReplayer(_) => Vec::new(),
-                };
-            }
-            _ => {}
-        }
-    }
-    resolve_ctx_table_names(stmt)
-}
 
 /// Go `preprocessor.resolveShowStmt` (`pkg/planner/core/preprocess.go:2028`)
 /// and the `handleTableName` the preprocessor then runs on `Table`: a SHOW
