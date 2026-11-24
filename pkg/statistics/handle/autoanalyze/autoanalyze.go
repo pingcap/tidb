@@ -52,12 +52,6 @@ import (
 	"go.uber.org/zap"
 )
 
-// TableStatsGetter gives auto-analyze the stats of tables.
-type TableStatsGetter interface {
-	statstypes.PhysicalTableStatsGetter
-	statstypes.NonPseudoPhysicalTableStatsGetter
-}
-
 // analyzeJobRecorder implements statstypes.AnalyzeJobRecorder in the sessions of a pool.
 type analyzeJobRecorder struct {
 	pool statsutil.SessionPool
@@ -75,7 +69,7 @@ type Analyzer struct {
 
 	pool       statsutil.SessionPool
 	procIDs    statsutil.AutoAnalyzeProcIDGenerator
-	tableStats TableStatsGetter
+	tableStats statstypes.NonPseudoPhysicalTableStatsGetter
 	// sysProcTracker is used to track sys process like analyze
 	sysProcTracker sysproctrack.Tracker
 	// refresher is used to refresh the analyze job queue and analyze the highest priority tables.
@@ -91,7 +85,7 @@ func NewAnalyzer(
 	procIDs statsutil.AutoAnalyzeProcIDGenerator,
 	tables statsutil.TableInfoGetter,
 	statsCache priorityqueue.StatsCache,
-	tableStats TableStatsGetter,
+	tableStats statstypes.NonPseudoPhysicalTableStatsGetter,
 	sysProcTracker sysproctrack.Tracker,
 	ddlNotifier *notifier.DDLNotifier,
 ) *Analyzer {
@@ -323,28 +317,6 @@ func (sa *Analyzer) HandleAutoAnalyze() (analyzed bool) {
 		statslogutil.StatsErrVerboseSampleLogger().Error("Failed to handle auto analyze", zap.Error(err))
 	}
 	return
-}
-
-// AnalyzeVersionMatchesForTable reports whether the table already matches the requested
-// session version. For partitioned tables it checks the global stats and every partition;
-// for non-partitioned tables it checks the table stats alone.
-func (sa *Analyzer) AnalyzeVersionMatchesForTable(tblInfo *model.TableInfo, requestedVersion int) bool {
-	globalStats := sa.tableStats.GetPhysicalTableStats(tblInfo.ID, tblInfo)
-	if !statistics.AnalyzeVersionMatchesForTableStats(globalStats, requestedVersion) {
-		return false
-	}
-
-	pi := tblInfo.GetPartitionInfo()
-	if pi == nil {
-		return true
-	}
-	for _, def := range pi.Definitions {
-		partitionStats := sa.tableStats.GetPhysicalTableStats(def.ID, tblInfo)
-		if !statistics.AnalyzeVersionMatchesForTableStats(partitionStats, requestedVersion) {
-			return false
-		}
-	}
-	return true
 }
 
 // GetPriorityQueueSnapshot returns the stats priority queue snapshot.

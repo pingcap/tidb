@@ -2745,7 +2745,7 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 		// Dynamic partition analyze later merges all partitions into table-level stats, so this
 		// rewrite decision must follow table-level/global stats compatibility rather than only the
 		// requested partition IDs.
-		tableVersionMatches := domain.GetDomain(b.ctx).StatsHandle().AutoAnalyze().AnalyzeVersionMatchesForTable(tbl.TableInfo, version)
+		tableVersionMatches := b.analyzeVersionMatchesForTable(tbl.TableInfo, version)
 		if !tableVersionMatches {
 			// Reanalyze all partitions so the global merge rewrites table-level stats with the
 			// session-selected version.
@@ -3082,6 +3082,29 @@ func (b *PlanBuilder) analyzeVersionMatchesForPhysicalIDs(tblInfo *model.TableIn
 	intest.Assert(statsHandle != nil, "statsHandle should not be nil")
 	for _, physicalID := range physicalIDs {
 		if !statistics.AnalyzeVersionMatchesForTableStats(statsHandle.GetPhysicalTableStats(physicalID, tblInfo), requestedVersion) {
+			return false
+		}
+	}
+	return true
+}
+
+// analyzeVersionMatchesForTable reports whether the table already matches the requested
+// session version. For partitioned tables it checks the global stats and every partition;
+// for non-partitioned tables it checks the table stats alone.
+func (b *PlanBuilder) analyzeVersionMatchesForTable(tblInfo *model.TableInfo, requestedVersion int) bool {
+	statsHandle := domain.GetAnalyzeStatsHandle(b.ctx)
+	globalStats := statsHandle.GetPhysicalTableStats(tblInfo.ID, tblInfo)
+	if !statistics.AnalyzeVersionMatchesForTableStats(globalStats, requestedVersion) {
+		return false
+	}
+
+	pi := tblInfo.GetPartitionInfo()
+	if pi == nil {
+		return true
+	}
+	for _, def := range pi.Definitions {
+		partitionStats := statsHandle.GetPhysicalTableStats(def.ID, tblInfo)
+		if !statistics.AnalyzeVersionMatchesForTableStats(partitionStats, requestedVersion) {
 			return false
 		}
 	}
