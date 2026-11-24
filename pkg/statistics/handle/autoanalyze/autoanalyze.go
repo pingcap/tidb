@@ -63,6 +63,12 @@ func newAnalyzeJobRecorder(pool statsutil.SessionPool) *analyzeJobRecorder {
 	return &analyzeJobRecorder{pool: pool}
 }
 
+// NewAnalyzeJobRecorder creates a statstypes.AnalyzeJobRecorder that records the jobs in the
+// sessions of pool. It needs no stats cache.
+func NewAnalyzeJobRecorder(pool statsutil.SessionPool) statstypes.AnalyzeJobRecorder {
+	return newAnalyzeJobRecorder(pool)
+}
+
 // Analyzer analyzes the outdated tables in the background, and manages the analyze jobs.
 type Analyzer struct {
 	*analyzeJobRecorder

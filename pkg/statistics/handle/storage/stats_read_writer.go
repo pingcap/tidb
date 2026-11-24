@@ -72,6 +72,24 @@ func newStatsMetaReader(pool util.SessionPool) *statsMetaReader {
 	return &statsMetaReader{pool: pool}
 }
 
+// NewStatsMetaReader creates a statstypes.StatsMetaReader that reads in the sessions of pool.
+// It needs no stats cache.
+func NewStatsMetaReader(pool util.SessionPool) statstypes.StatsMetaReader {
+	return newStatsMetaReader(pool)
+}
+
+// NewAnalyzeResultSaver creates a statstypes.AnalyzeResultSaver that saves in the sessions of pool.
+// It needs no stats cache.
+func NewAnalyzeResultSaver(pool util.SessionPool, lease util.LeaseGetter) statstypes.AnalyzeResultSaver {
+	return newStatsSaver(pool, lease)
+}
+
+// NewColOrIdxStatsSaver creates a statstypes.ColOrIdxStatsSaver that saves in the sessions of pool.
+// It needs no stats cache.
+func NewColOrIdxStatsSaver(pool util.SessionPool, lease util.LeaseGetter) statstypes.ColOrIdxStatsSaver {
+	return newStatsSaver(pool, lease)
+}
+
 // ReadWriter reads and writes the stats in the storage. It updates the stats cache only when it
 // loads stats from JSON or loads the needed histograms.
 type ReadWriter struct {

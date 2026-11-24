@@ -36,6 +36,12 @@ func newPredicateColumnsGetter(pool utilstats.SessionPool) *predicateColumnsGett
 	return &predicateColumnsGetter{pool: pool}
 }
 
+// NewPredicateColumnsGetter creates a statstypes.PredicateColumnsGetter that reads in the sessions
+// of pool. It needs no stats cache.
+func NewPredicateColumnsGetter(pool utilstats.SessionPool) statstypes.PredicateColumnsGetter {
+	return newPredicateColumnsGetter(pool)
+}
+
 // Tracker tracks the table deltas and the usage of column and index stats, and dumps them to KV.
 type Tracker struct {
 	*predicateColumnsGetter
