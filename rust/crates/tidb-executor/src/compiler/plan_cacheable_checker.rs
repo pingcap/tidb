@@ -16,7 +16,6 @@
 //! the planner's AST check (`tidb_planner::plan_cacheable_checker`).
 
 use tidb_infoschema::SessionExtendedInfoSchema;
-use tidb_planner::plan_cacheable_checker::{stmt_cacheable, CacheableContext, MAX_NUM_PARAM};
 
 /// Go `IsASTCacheable` with the session's variables.
 pub trait PlanCacheableChecker: super::CompilerSession {
@@ -28,52 +27,7 @@ pub trait PlanCacheableChecker: super::CompilerSession {
         stmt: &mut tidb_ast::Stmt,
         catalog: &SessionExtendedInfoSchema,
     ) -> Result<(), String> {
-        let configured_max = self
-            .session_vars()
-            .optimizer_fix_control()
-            .get_int_with_default(tidb_fixcontrol::FIX_44823, MAX_NUM_PARAM as i64);
-        let max_num_param = match configured_max {
-            0 => usize::MAX,
-            value if value > 0 => usize::try_from(value).unwrap_or(usize::MAX),
-            _ => MAX_NUM_PARAM,
-        };
-        let verdict = stmt_cacheable(
-            stmt,
-            CacheableContext {
-                catalog,
-                current_database: self.session_vars().current_db.as_str(),
-                enable_param_limit: self.session_vars().system_bool(
-                    tidb_vardef::tidb_vars::TIDB_ENABLE_PLAN_CACHE_FOR_PARAM_LIMIT,
-                    tidb_vardef::defaults::DEF_TIDB_ENABLE_PLAN_CACHE_FOR_PARAM_LIMIT,
-                ),
-                enable_subquery: self.session_vars().system_bool(
-                    tidb_vardef::tidb_vars::TIDB_ENABLE_PLAN_CACHE_FOR_SUBQUERY,
-                    tidb_vardef::defaults::DEF_TIDB_ENABLE_PLAN_CACHE_FOR_SUBQUERY,
-                ),
-                dynamic_partition_prune: self
-                    .session_vars()
-                    .partition_prune_mode().eq_ignore_ascii_case("dynamic"),
-                disable_partition_cache: self
-                    .session_vars()
-                    .optimizer_fix_control()
-                    .get_bool_with_default(tidb_fixcontrol::FIX_33031, false),
-                enable_generated_columns: self
-                    .session_vars()
-                    .optimizer_fix_control()
-                    .get_bool_with_default(tidb_fixcontrol::FIX_45798, true),
-                max_num_param,
-            },
-        );
-        if verdict.is_err()
-            && self
-                .session_vars()
-                .optimizer_fix_control()
-                .get_bool_with_default(tidb_fixcontrol::FIX_49736, false)
-        {
-            Ok(())
-        } else {
-            verdict
-        }
+        tidb_planner::plan_cacheable_checker::prepared_statement_cacheable(self, stmt, catalog)
     }
 }
 

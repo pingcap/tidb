@@ -1213,3 +1213,63 @@ fn is_unparameterizable_type(field_type: &tidb_datatype::FieldType) -> bool {
         FieldTypeCode::Json | FieldTypeCode::Enum | FieldTypeCode::Set | FieldTypeCode::Bit
     )
 }
+
+/// Go `IsASTCacheable` with the session's variables and current infoschema:
+/// the single PREPARE-time admission authority for SQL and binary-protocol
+/// prepared statements.
+///
+/// # Errors
+///
+/// Why the statement is not cacheable.
+pub fn prepared_statement_cacheable<S: crate::plan_cache_utils::PlanCacheSessionContext + ?Sized>(
+    session: &S,
+    stmt: &mut tidb_ast::Stmt,
+    catalog: &tidb_infoschema::SessionExtendedInfoSchema,
+) -> Result<(), String> {
+    let configured_max = session
+        .get_session_vars()
+        .optimizer_fix_control()
+        .get_int_with_default(tidb_fixcontrol::FIX_44823, MAX_NUM_PARAM as i64);
+    let max_num_param = match configured_max {
+        0 => usize::MAX,
+        value if value > 0 => usize::try_from(value).unwrap_or(usize::MAX),
+        _ => MAX_NUM_PARAM,
+    };
+    let verdict = stmt_cacheable(
+        stmt,
+        CacheableContext {
+            catalog,
+            current_database: session.get_session_vars().current_db.as_str(),
+            enable_param_limit: session.get_session_vars().system_bool(
+                tidb_vardef::tidb_vars::TIDB_ENABLE_PLAN_CACHE_FOR_PARAM_LIMIT,
+                tidb_vardef::defaults::DEF_TIDB_ENABLE_PLAN_CACHE_FOR_PARAM_LIMIT,
+            ),
+            enable_subquery: session.get_session_vars().system_bool(
+                tidb_vardef::tidb_vars::TIDB_ENABLE_PLAN_CACHE_FOR_SUBQUERY,
+                tidb_vardef::defaults::DEF_TIDB_ENABLE_PLAN_CACHE_FOR_SUBQUERY,
+            ),
+            dynamic_partition_prune: session
+                .get_session_vars()
+                .partition_prune_mode().eq_ignore_ascii_case("dynamic"),
+            disable_partition_cache: session
+                .get_session_vars()
+                .optimizer_fix_control()
+                .get_bool_with_default(tidb_fixcontrol::FIX_33031, false),
+            enable_generated_columns: session
+                .get_session_vars()
+                .optimizer_fix_control()
+                .get_bool_with_default(tidb_fixcontrol::FIX_45798, true),
+            max_num_param,
+        },
+    );
+    if verdict.is_err()
+        && session
+            .get_session_vars()
+            .optimizer_fix_control()
+            .get_bool_with_default(tidb_fixcontrol::FIX_49736, false)
+    {
+        Ok(())
+    } else {
+        verdict
+    }
+}
