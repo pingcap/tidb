@@ -49,14 +49,7 @@ pub struct PreparedAst {
     stmt_cacheable: bool,
 }
 
-pub struct PreparedPlanCacheEnvironmentCache {
-    vars_generation: u64,
-    blacklist_generation: u64,
-    in_transaction: bool,
-    pessimistic_transaction: bool,
-    autocommit: bool,
-    environment: Option<Arc<crate::PreparedPlanCacheEnvironment>>,
-}
+pub use tidb_planner::plan_cache_utils::PreparedPlanCacheEnvironmentCache;
 
 impl PreparedAst {
     pub fn from_parsed(
@@ -176,150 +169,25 @@ pub struct GenerateNewPlanError {
 
 /// Go `GetPlanFromPlanCache` over the session's prepared statements.
 pub trait PreparedAstCompile: super::CompilerSession {
-    /// Go `TblInfo2UnionScan`'s dirty tables, as the physical plan cache keys
-    /// them: what this transaction has staged, none inside a statement
-    /// snapshot.
+    /// Go `TblInfo2UnionScan`'s dirty tables
+    /// ([`tidb_planner::plan_cache_utils::plan_cache_dirty_tables`]).
     fn plan_cache_dirty_tables(&self) -> Vec<i64> {
-        // Nothing is dirty outside a transaction: the tracker keeps what the
-        // last autocommit statement staged until the next one opens.
-        if self.has_statement_snapshot() || !self.in_transaction() {
-            Vec::new()
-        } else {
-            self.staged_dirty_table_ids()
-        }
+        tidb_planner::plan_cache_utils::plan_cache_dirty_tables(self)
     }
 
-    fn prepared_plan_cache_environment(
-        &self,
-    ) -> Option<Arc<crate::PreparedPlanCacheEnvironment>> {
-        if self.historical_read_ts().is_some()
-            || self.session_vars().txn_read_ts() != 0
-            || self.external_timestamp_read_enabled()
-        {
-            return None;
-        }
-        let vars_generation = self.session_vars().generation();
-        let blacklist_generation = self.pushdown_blacklists().generation();
-        let in_transaction = self.in_transaction();
-        let autocommit = self.is_autocommit();
-        let pessimistic_transaction = self.statement_is_pessimistic();
-        if let Some(cached) = self.prepared_plan_cache_environment_cache().borrow().as_ref() {
-            if cached.vars_generation == vars_generation
-                && cached.blacklist_generation == blacklist_generation
-                && cached.in_transaction == in_transaction
-                && cached.autocommit == autocommit
-                && cached.pessimistic_transaction == pessimistic_transaction
-            {
-                return cached.environment.clone();
-            }
-        }
-        let sql_select_limit = self.session_vars().get_system("sql_select_limit");
-        let read_staleness = self
-            .session_vars()
-            .get_system(tidb_vardef::tidb_vars::TIDB_READ_STALENESS);
-        let environment = (sql_select_limit.as_deref() == Ok("18446744073709551615")
-            && self.session_vars().snapshot_ts() == 0
-            && !read_staleness
-                .is_ok_and(|value| value.trim().parse::<i64>().is_ok_and(|value| value != 0)))
-        .then(|| {
-            Arc::new(
-                crate::PreparedPlanCacheEnvironment::new(
-                    self.session_vars().sql_mode(),
-                    self.session_vars().get_system("time_zone").unwrap_or_default(),
-                    blacklist_generation,
-                )
-                .with_stats_handle(self.stats_handle())
-                .with_user_identity(self.session_vars().current_user.clone().unwrap_or_default())
-                .with_pessimistic_transaction(pessimistic_transaction)
-                .with_shared_lock_promotion(self.session_vars().shared_lock_promotion())
-                .with_foreign_key_checks(self.foreign_key_checks())
-                .with_session_state(
-                    self.session_vars()
-                        .get_system("character_set_connection")
-                        .unwrap_or_default(),
-                    self.session_vars()
-                        .get_system("collation_connection")
-                        .unwrap_or_default(),
-                    self.session_vars()
-                        .partition_prune_mode().to_owned(),
-                    self.session_vars()
-                        .get_system(tidb_vardef::tidb_vars::TIDB_ISOLATION_READ_ENGINES)
-                        .unwrap_or_default(),
-                    sql_select_limit.unwrap_or_default(),
-                    in_transaction,
-                    autocommit,
-                    self.session_vars()
-                        .get_system(
-                            tidb_vardef::tidb_vars::TIDB_PLAN_CACHE_INVALIDATION_ON_FRESH_STATS,
-                        )
-                        .as_deref()
-                        != Ok("OFF"),
-                )
-                .with_no_backslash_escapes_in_like(
-                    self.session_vars()
-                        .get_system(
-                            tidb_vardef::tidb_vars::TIDB_ENABLE_NO_BACKSLASH_ESCAPES_IN_LIKE,
-                        )
-                        .as_deref()
-                        != Ok("OFF"),
-                )
-                .with_cache_admission(
-                    self.session_vars()
-                        .get_system(tidb_vardef::tidb_vars::TIDB_PLAN_CACHE_MAX_PLAN_SIZE)
-                        .ok()
-                        .and_then(|value| value.parse::<u64>().ok())
-                        .unwrap_or(tidb_vardef::defaults::DEF_TIDB_PLAN_CACHE_MAX_PLAN_SIZE as u64),
-                    self.session_vars()
-                        .optimizer_fix_control()
-                        .get_bool_with_default(tidb_fixcontrol::FIX_45798, true),
-                )
-                .with_cache_switches(
-                    self.session_vars().system_bool(
-                        tidb_vardef::tidb_vars::TIDB_ENABLE_PLAN_CACHE_FOR_PARAM_LIMIT,
-                        tidb_vardef::defaults::DEF_TIDB_ENABLE_PLAN_CACHE_FOR_PARAM_LIMIT,
-                    ),
-                    self.session_vars().system_bool(
-                        tidb_vardef::tidb_vars::TIDB_ENABLE_PLAN_CACHE_FOR_SUBQUERY,
-                        tidb_vardef::defaults::DEF_TIDB_ENABLE_PLAN_CACHE_FOR_SUBQUERY,
-                    ),
-                )
-                .with_opt_objective_determinate(
-                    self.session_vars()
-                        .get_system(tidb_vardef::tidb_vars::TIDB_OPT_OBJECTIVE)
-                        .is_ok_and(|value| {
-                            value.eq_ignore_ascii_case(
-                                tidb_vardef::tidb_vars::OPT_OBJECTIVE_DETERMINATE,
-                            )
-                        }),
-                ),
-            )
-        });
-        *self.prepared_plan_cache_environment_cache().borrow_mut() =
-            Some(PreparedPlanCacheEnvironmentCache {
-                vars_generation,
-                blacklist_generation,
-                in_transaction,
-                pessimistic_transaction,
-                autocommit,
-                environment: environment.clone(),
-            });
-        environment
+    /// Go `NewPlanCacheKey`'s session facts
+    /// ([`tidb_planner::plan_cache_utils::prepared_plan_cache_environment`]).
+    fn prepared_plan_cache_environment(&self) -> Option<Arc<crate::PreparedPlanCacheEnvironment>> {
+        tidb_planner::plan_cache_utils::prepared_plan_cache_environment(self)
     }
 
+    /// [`Self::prepared_plan_cache_environment`] with the matched binding's
+    /// SQL in the key.
     fn prepared_plan_cache_environment_for_binding(
         &self,
         binding_sql: Option<&str>,
     ) -> Option<crate::PreparedPlanCacheEnvironment> {
-        let environment = self.prepared_plan_cache_environment()?;
-        Some(
-            environment.as_ref().clone().with_binding_sql(
-                binding_sql,
-                self.session_vars()
-                    .get_system(tidb_vardef::tidb_vars::TIDB_PLAN_CACHE_SKIP_STATS_ON_BINDING)
-                    .as_deref()
-                    != Ok("OFF"),
-            ),
-        )
+        tidb_planner::plan_cache_utils::prepared_plan_cache_environment_for_binding(self, binding_sql)
     }
 
     /// Go `GeneratePlanCacheStmtWithAST`'s refusal note for a protocol-level

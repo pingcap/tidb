@@ -151,3 +151,44 @@ impl tidb_executor::compiler::CompilerSession for Session {
     }
 
 }
+
+impl tidb_planner::plan_cache_utils::PlanCacheSessionContext for Session {
+    fn get_session_vars(&self) -> &tidb_variable::SessionVars {
+        tidb_executor::sessionctx::SessionContext::session_vars(self)
+    }
+    fn has_stmt_snapshot(&self) -> bool {
+        tidb_executor::stmt_ctx_build::StmtCtxSession::has_statement_snapshot(self)
+    }
+    fn txn_active(&self) -> bool {
+        tidb_executor::stmt_ctx_build::StmtCtxSession::in_transaction(self)
+    }
+    fn txn_dirty_table_ids(&self) -> Vec<i64> {
+        tidb_executor::compiler::CompilerSession::staged_dirty_table_ids(self)
+    }
+    fn effective_read_ts(&self) -> Option<u64> {
+        tidb_executor::compiler::CompilerSession::historical_read_ts(self)
+    }
+    fn enable_external_ts_read(&self) -> bool {
+        tidb_executor::compiler::CompilerSession::external_timestamp_read_enabled(self)
+    }
+    fn pushdown_blacklist_generation(&self) -> u64 {
+        tidb_executor::stmt_ctx_build::StmtCtxSession::pushdown_blacklists(self).generation()
+    }
+    fn is_autocommit_txn(&self) -> bool {
+        tidb_executor::stmt_ctx_build::StmtCtxSession::is_autocommit(self)
+    }
+    fn txn_is_pessimistic(&self) -> bool {
+        tidb_executor::stmt_ctx_build::StmtCtxSession::statement_is_pessimistic(self)
+    }
+    fn domain_stats_handle(&self) -> std::sync::Arc<tidb_stats_handle::StatsHandle> {
+        tidb_executor::stmt_ctx_build::StmtCtxSession::stats_handle(self)
+    }
+    fn fk_checks_enabled(&self) -> bool {
+        tidb_executor::stmt_ctx_build::ResetContextOfStmt::foreign_key_checks(self)
+    }
+    fn plan_cache_environment_memo(
+        &self,
+    ) -> &std::cell::RefCell<Option<tidb_planner::plan_cache_utils::PreparedPlanCacheEnvironmentCache>> {
+        tidb_executor::compiler::CompilerSession::prepared_plan_cache_environment_cache(self)
+    }
+}

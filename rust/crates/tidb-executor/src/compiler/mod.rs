@@ -37,7 +37,7 @@ pub mod plan_cacheable_checker;
 pub use plan_cacheable_checker::PlanCacheableChecker;
 
 /// The session primitives Go's compiler reads through `sctx`.
-pub trait CompilerSession: crate::admin::AdminExec {
+pub trait CompilerSession: crate::admin::AdminExec + tidb_planner::plan_cache_utils::PlanCacheSessionContext {
 /// Go `SessionVars`' non-prepared plan cache.
     fn non_prepared_plan_cache_mut(&mut self) -> &mut crate::compiler::non_prepared_plan_cache::NonPreparedPlanCache;
 

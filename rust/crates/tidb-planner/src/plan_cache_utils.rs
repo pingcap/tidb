@@ -789,3 +789,201 @@ pub fn generate_plan_cache_stmt_with_ast(
         contains_sequence_functions: statement_contains_sequence_functions(stmt),
     }
 }
+
+/// The memo of a session's last [`PreparedPlanCacheEnvironment`], keyed by
+/// what invalidates it.
+pub struct PreparedPlanCacheEnvironmentCache {
+    vars_generation: u64,
+    blacklist_generation: u64,
+    in_transaction: bool,
+    pessimistic_transaction: bool,
+    autocommit: bool,
+    environment: Option<std::sync::Arc<PreparedPlanCacheEnvironment>>,
+}
+
+/// What Go `NewPlanCacheKey` and `GetPlanFromPlanCache` read off `sctx`.
+pub trait PlanCacheSessionContext {
+    /// Go `sctx.GetSessionVars()`.
+    fn get_session_vars(&self) -> &tidb_variable::SessionVars;
+    /// Whether the statement reads a snapshot of its own.
+    fn has_stmt_snapshot(&self) -> bool;
+    /// Go `sctx.GetSessionVars().InTxn()`.
+    fn txn_active(&self) -> bool;
+    /// The tables this transaction staged writes for.
+    fn txn_dirty_table_ids(&self) -> Vec<i64>;
+    /// The effective historical read timestamp, if any.
+    fn effective_read_ts(&self) -> Option<u64>;
+    /// Go `EnableExternalTSRead`.
+    fn enable_external_ts_read(&self) -> bool;
+    /// The generation of the published expression-pushdown blacklist.
+    fn pushdown_blacklist_generation(&self) -> u64;
+    /// Go `IsAutocommit`.
+    fn is_autocommit_txn(&self) -> bool;
+    /// Whether the statement runs in a pessimistic transaction.
+    fn txn_is_pessimistic(&self) -> bool;
+    /// Go `domain.StatsHandle()`.
+    fn domain_stats_handle(&self) -> std::sync::Arc<tidb_stats_handle::StatsHandle>;
+    /// Go `ForeignKeyChecks`.
+    fn fk_checks_enabled(&self) -> bool;
+    /// The session's environment memo.
+    fn plan_cache_environment_memo(
+        &self,
+    ) -> &std::cell::RefCell<Option<PreparedPlanCacheEnvironmentCache>>;
+}
+
+/// Go `TblInfo2UnionScan`'s dirty tables, as the physical plan cache keys
+/// them: what this transaction has staged, none inside a statement
+/// snapshot.
+pub fn plan_cache_dirty_tables<S: PlanCacheSessionContext + ?Sized>(session: &S) -> Vec<i64> {
+    // Nothing is dirty outside a transaction: the tracker keeps what the
+    // last autocommit statement staged until the next one opens.
+    if session.has_stmt_snapshot() || !session.txn_active() {
+        Vec::new()
+    } else {
+        session.txn_dirty_table_ids()
+    }
+}
+
+pub fn prepared_plan_cache_environment<S: PlanCacheSessionContext + ?Sized>(
+    session: &S,
+) -> Option<std::sync::Arc<PreparedPlanCacheEnvironment>> {
+    if session.effective_read_ts().is_some()
+        || session.get_session_vars().txn_read_ts() != 0
+        || session.enable_external_ts_read()
+    {
+        return None;
+    }
+    let vars_generation = session.get_session_vars().generation();
+    let blacklist_generation = session.pushdown_blacklist_generation();
+    let in_transaction = session.txn_active();
+    let autocommit = session.is_autocommit_txn();
+    let pessimistic_transaction = session.txn_is_pessimistic();
+    if let Some(cached) = session.plan_cache_environment_memo().borrow().as_ref() {
+        if cached.vars_generation == vars_generation
+            && cached.blacklist_generation == blacklist_generation
+            && cached.in_transaction == in_transaction
+            && cached.autocommit == autocommit
+            && cached.pessimistic_transaction == pessimistic_transaction
+        {
+            return cached.environment.clone();
+        }
+    }
+    let sql_select_limit = session.get_session_vars().get_system("sql_select_limit");
+    let read_staleness = session
+        .get_session_vars()
+        .get_system(tidb_vardef::tidb_vars::TIDB_READ_STALENESS);
+    let environment = (sql_select_limit.as_deref() == Ok("18446744073709551615")
+        && session.get_session_vars().snapshot_ts() == 0
+        && !read_staleness
+            .is_ok_and(|value| value.trim().parse::<i64>().is_ok_and(|value| value != 0)))
+    .then(|| {
+        std::sync::Arc::new(
+            PreparedPlanCacheEnvironment::new(
+                session.get_session_vars().sql_mode(),
+                session
+                    .get_session_vars()
+                    .get_system("time_zone")
+                    .unwrap_or_default(),
+                blacklist_generation,
+            )
+            .with_stats_handle(session.domain_stats_handle())
+            .with_user_identity(
+                session
+                    .get_session_vars()
+                    .current_user
+                    .clone()
+                    .unwrap_or_default(),
+            )
+            .with_pessimistic_transaction(pessimistic_transaction)
+            .with_shared_lock_promotion(session.get_session_vars().shared_lock_promotion())
+            .with_foreign_key_checks(session.fk_checks_enabled())
+            .with_session_state(
+                session
+                    .get_session_vars()
+                    .get_system("character_set_connection")
+                    .unwrap_or_default(),
+                session
+                    .get_session_vars()
+                    .get_system("collation_connection")
+                    .unwrap_or_default(),
+                session.get_session_vars().partition_prune_mode().to_owned(),
+                session
+                    .get_session_vars()
+                    .get_system(tidb_vardef::tidb_vars::TIDB_ISOLATION_READ_ENGINES)
+                    .unwrap_or_default(),
+                sql_select_limit.unwrap_or_default(),
+                in_transaction,
+                autocommit,
+                session
+                    .get_session_vars()
+                    .get_system(tidb_vardef::tidb_vars::TIDB_PLAN_CACHE_INVALIDATION_ON_FRESH_STATS)
+                    .as_deref()
+                    != Ok("OFF"),
+            )
+            .with_no_backslash_escapes_in_like(
+                session
+                    .get_session_vars()
+                    .get_system(tidb_vardef::tidb_vars::TIDB_ENABLE_NO_BACKSLASH_ESCAPES_IN_LIKE)
+                    .as_deref()
+                    != Ok("OFF"),
+            )
+            .with_cache_admission(
+                session
+                    .get_session_vars()
+                    .get_system(tidb_vardef::tidb_vars::TIDB_PLAN_CACHE_MAX_PLAN_SIZE)
+                    .ok()
+                    .and_then(|value| value.parse::<u64>().ok())
+                    .unwrap_or(tidb_vardef::defaults::DEF_TIDB_PLAN_CACHE_MAX_PLAN_SIZE as u64),
+                session
+                    .get_session_vars()
+                    .optimizer_fix_control()
+                    .get_bool_with_default(tidb_fixcontrol::FIX_45798, true),
+            )
+            .with_cache_switches(
+                session.get_session_vars().system_bool(
+                    tidb_vardef::tidb_vars::TIDB_ENABLE_PLAN_CACHE_FOR_PARAM_LIMIT,
+                    tidb_vardef::defaults::DEF_TIDB_ENABLE_PLAN_CACHE_FOR_PARAM_LIMIT,
+                ),
+                session.get_session_vars().system_bool(
+                    tidb_vardef::tidb_vars::TIDB_ENABLE_PLAN_CACHE_FOR_SUBQUERY,
+                    tidb_vardef::defaults::DEF_TIDB_ENABLE_PLAN_CACHE_FOR_SUBQUERY,
+                ),
+            )
+            .with_opt_objective_determinate(
+                session
+                    .get_session_vars()
+                    .get_system(tidb_vardef::tidb_vars::TIDB_OPT_OBJECTIVE)
+                    .is_ok_and(|value| {
+                        value
+                            .eq_ignore_ascii_case(tidb_vardef::tidb_vars::OPT_OBJECTIVE_DETERMINATE)
+                    }),
+            ),
+        )
+    });
+    *session.plan_cache_environment_memo().borrow_mut() = Some(PreparedPlanCacheEnvironmentCache {
+        vars_generation,
+        blacklist_generation,
+        in_transaction,
+        pessimistic_transaction,
+        autocommit,
+        environment: environment.clone(),
+    });
+    environment
+}
+
+pub fn prepared_plan_cache_environment_for_binding<S: PlanCacheSessionContext + ?Sized>(
+    session: &S,
+    binding_sql: Option<&str>,
+) -> Option<PreparedPlanCacheEnvironment> {
+    let environment = prepared_plan_cache_environment(session)?;
+    Some(
+        environment.as_ref().clone().with_binding_sql(
+            binding_sql,
+            session
+                .get_session_vars()
+                .get_system(tidb_vardef::tidb_vars::TIDB_PLAN_CACHE_SKIP_STATS_ON_BINDING)
+                .as_deref()
+                != Ok("OFF"),
+        ),
+    )
+}
