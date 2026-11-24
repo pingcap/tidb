@@ -488,6 +488,11 @@ type StatementContext struct {
 	AlternativeLogicalPlanOrderAwareJoinReorder bool
 	// AlternativeLogicalPlanHasPredicateMatch enables a separate ILIKE candidate.
 	AlternativeLogicalPlanHasPredicateMatch bool
+	// AlternativeLogicalPlanMissingTiFlashPath prevents a TiFlash-only rebuild
+	// when a data source cannot be read from TiFlash.
+	AlternativeLogicalPlanMissingTiFlashPath bool
+	// AlternativeLogicalPlanHasStoreTypeHint preserves explicit storage choices.
+	AlternativeLogicalPlanHasStoreTypeHint bool
 	// InFTSLikeFallbackRound overrides the default local MATCH rewrite only while
 	// building the ILIKE alternative. Its setup/cleanup owns this transient flag;
 	// it is deliberately not part of the saved winning plan state.
@@ -672,6 +677,8 @@ func (sc *StatementContext) ResetAlternativeLogicalPlanSignals() {
 	sc.AlternativeLogicalPlanPreferCorrelate = false
 	sc.AlternativeLogicalPlanOrderAwareJoinReorder = false
 	sc.AlternativeLogicalPlanHasPredicateMatch = false
+	sc.AlternativeLogicalPlanMissingTiFlashPath = false
+	sc.AlternativeLogicalPlanHasStoreTypeHint = false
 }
 
 // MarkAlternativeLogicalPlanDecorrelatedApply records that at least one Apply has

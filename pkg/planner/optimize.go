@@ -646,6 +646,14 @@ func shouldTryFTSLikeRound(sv *variable.SessionVars) bool {
 		sv.StmtCtx.AlternativeLogicalPlanHasPredicateMatch && !sv.StmtCtx.InFTSLikeFallbackRound
 }
 
+func shouldTryTiFlashOnlyRound(sv *variable.SessionVars) bool {
+	_, allowed := sv.IsolationReadEngines[kv.TiFlash]
+	return sv.EnableAlternativeLogicalPlans && allowed && sv.IsMPPAllowed() &&
+		!sv.IsMPPEnforced() &&
+		!sv.StmtCtx.AlternativeLogicalPlanMissingTiFlashPath &&
+		!sv.StmtCtx.AlternativeLogicalPlanHasStoreTypeHint
+}
+
 var alternativeRounds = [...]alternativeRound{
 	{
 		name:       "non-decorrelate",
@@ -672,6 +680,18 @@ var alternativeRounds = [...]alternativeRound{
 		enabled: shouldTryFTSLikeRound,
 		setup: func(sv *variable.SessionVars) func() {
 			return sv.StmtCtx.EnterFTSLikeFallbackRound()
+		},
+	},
+	{
+		// Search the whole query with TiFlash reads, including when the
+		// default winner is a TiKV-only Apply. Keep ordinary MPP costs so
+		// the candidate remains comparable with all other rounds.
+		name:    "tiflash-only",
+		enabled: shouldTryTiFlashOnlyRound,
+		setup: func(sv *variable.SessionVars) func() {
+			saved := sv.IsolationReadEngines
+			sv.IsolationReadEngines = map[kv.StoreType]struct{}{kv.TiFlash: {}, kv.TiDB: {}}
+			return func() { sv.IsolationReadEngines = saved }
 		},
 	},
 }
@@ -786,6 +806,9 @@ func optimize(ctx context.Context, sctx planctx.PlanContext, node *resolve.NodeW
 		// iteration, not at function exit. This ensures session state (e.g.
 		// EnableCorrelateSubquery) is restored even if the round panics.
 		func() {
+			if sessVars.StmtCtx.EnableOptimizerDebugTrace {
+				debugtrace.RecordAnyValuesWithNames(sctx, "Alternative round", round.name)
+			}
 			if round.setup != nil {
 				if cleanup := round.setup(sessVars); cleanup != nil {
 					defer cleanup()

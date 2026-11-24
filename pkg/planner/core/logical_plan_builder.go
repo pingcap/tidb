@@ -602,6 +602,7 @@ func setPreferredStoreType(ds *logicalop.DataSource, hintInfo *h.PlanHints) {
 		alias = &h.HintedTable{DBName: ds.DBName, TblName: ds.TableInfo.Name, SelectOffset: ds.QueryBlockOffset()}
 	}
 	if hintTbl := hintInfo.IfPreferTiKV(alias); hintTbl != nil {
+		ds.SCtx().GetSessionVars().StmtCtx.AlternativeLogicalPlanHasStoreTypeHint = true
 		for _, path := range ds.AllPossibleAccessPaths {
 			if path.StoreType == kv.TiKV {
 				ds.PreferStoreType |= h.PreferTiKV
@@ -619,6 +620,7 @@ func setPreferredStoreType(ds *logicalop.DataSource, hintInfo *h.PlanHints) {
 		}
 	}
 	if hintTbl := hintInfo.IfPreferTiFlash(alias); hintTbl != nil {
+		ds.SCtx().GetSessionVars().StmtCtx.AlternativeLogicalPlanHasStoreTypeHint = true
 		// `ds.PreferStoreType != 0`, which means there's a hint hit the both TiKV value and TiFlash value for table.
 		// We can't support read a table from two different storages, even partition table.
 		if ds.PreferStoreType != 0 {
@@ -5231,6 +5233,19 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 			if err != nil {
 				return nil, err
 			}
+		}
+	}
+
+	if b.ctx.GetSessionVars().EnableAlternativeLogicalPlans {
+		hasTiFlashPath := false
+		for _, path := range possiblePaths {
+			if path.StoreType == kv.TiFlash {
+				hasTiFlashPath = true
+				break
+			}
+		}
+		if !hasTiFlashPath || (b.isForUpdateRead && b.ctx.GetSessionVars().TxnCtx.IsExplicit) {
+			b.ctx.GetSessionVars().StmtCtx.AlternativeLogicalPlanMissingTiFlashPath = true
 		}
 	}
 

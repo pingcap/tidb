@@ -44,13 +44,19 @@ go_library(
 go_test(
     name = "planner_test",
     timeout = "short",
-    srcs = ["optimize_test.go"],
+    srcs = [
+        "optimize_test.go",
+        "tiflash_only_alternative_test.go",
+    ],
     embed = [":planner"],
     flaky = True,
     shard_count = 3,
     deps = [
+        "//pkg/kv",
         "//pkg/sessionctx/stmtctx",
         "//pkg/sessionctx/variable",
+        "//pkg/store/mockstore",
+        "//pkg/testkit",
         "@com_github_stretchr_testify//require",
     ],
 )
