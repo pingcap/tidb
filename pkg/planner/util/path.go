@@ -72,8 +72,12 @@ type AccessPath struct {
 	AccessConds     []expression.Expression
 	EqCondCount     int
 	EqOrInCondCount int
-	IndexFilters    []expression.Expression
-	TableFilters    []expression.Expression
+	// CorrelatedAccessColCount is the number of access columns starting at EqOrInCondCount
+	// that were added after static range estimation and estimated from NDV.
+	CorrelatedAccessColCount int
+
+	IndexFilters []expression.Expression
+	TableFilters []expression.Expression
 	// PartialIndexPaths store all index access paths.
 	// If there are extra filters, store them in TableFilters.
 	PartialIndexPaths []*AccessPath
@@ -191,6 +195,7 @@ func (path *AccessPath) Clone() *AccessPath {
 		AccessConds:                  CloneExprs(path.AccessConds),
 		EqCondCount:                  path.EqCondCount,
 		EqOrInCondCount:              path.EqOrInCondCount,
+		CorrelatedAccessColCount:     path.CorrelatedAccessColCount,
 		IndexFilters:                 CloneExprs(path.IndexFilters),
 		TableFilters:                 CloneExprs(path.TableFilters),
 		IndexMergeIsIntersection:     path.IndexMergeIsIntersection,

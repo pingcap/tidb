@@ -793,6 +793,7 @@ type candidatePath struct {
 	// Length equals len(path.PartialIndexPaths). Only set for IndexMerge paths.
 	partialPathMatchResults      []indexMergePathMatch
 	indexJoinCols                int     // how many index columns are used in access conditions in this IndexJoin.
+	indexJoinRuntimeCols         []int64 // join keys without a static access condition, by column unique ID.
 	countAfterAccess4IndexJoin   float64 // adjusted CountAfterAccess used only by index join candidate comparison.
 	countAfterAccess4IndexJoinOK bool    // whether countAfterAccess4IndexJoin is stable enough for skyline pruning.
 	isFullRange                  bool    // cached result of whether this path covers the full scan range.
@@ -1023,16 +1024,24 @@ func hasStatsForEstimation(sctx base.PlanContext, c *candidatePath, statsTbl *st
 	if statsTbl.ColAndIdxExistenceMap.HasAnalyzed(c.path.Index.ID, true) {
 		return true
 	}
-	if len(c.accessCondsColMap) == 0 || sctx.GetSessionVars().InRestrictedSQL {
+	if len(c.accessCondsColMap) == 0 || statsTbl.Pseudo {
 		return false
 	}
+	firstCorrelatedCol := c.path.EqOrInCondCount
+	endCorrelatedCol := firstCorrelatedCol + c.path.CorrelatedAccessColCount
 	found := 0
-	for _, col := range c.path.IdxCols {
+	for i, col := range c.path.IdxCols {
 		if _, ok := c.accessCondsColMap[col.UniqueID]; !ok {
 			continue
 		}
-		// Estimation already handles requesting a stats load. Only check availability here.
-		if statistics.ColumnStatsIsInvalid(statsTbl.GetCol(col.ID), nil, &statsTbl.HistColl, col.ID) {
+		colStats := statsTbl.GetCol(col.ID)
+		indexJoinRuntimeCol := slices.Contains(c.indexJoinRuntimeCols, col.UniqueID)
+		if (i >= firstCorrelatedCol && i < endCorrelatedCol) || indexJoinRuntimeCol {
+			// Runtime access conditions use NDV, which can survive histogram eviction.
+			if colStats == nil || !colStats.IsStatsInitialized() || (indexJoinRuntimeCol && colStats.NDV <= 0) {
+				return false
+			}
+		} else if !statistics.ColumnStatsAreUsable(colStats, sctx, &statsTbl.HistColl) {
 			return false
 		}
 		found++
@@ -1990,7 +1999,14 @@ func indexHasAnalyzedStats(ds *logicalop.DataSource, path *util.AccessPath) bool
 	return idx != nil && idx.IsAnalyzed()
 }
 
-func getIndexCandidateForIndexJoin(sctx planctx.PlanContext, path *util.AccessPath, indexJoinCols int, countAfterAccess4IndexJoin float64, countAfterAccess4IndexJoinOK bool) *candidatePath {
+func getIndexCandidateForIndexJoin(
+	sctx planctx.PlanContext,
+	path *util.AccessPath,
+	indexJoinCols int,
+	idxOff2KeyOff []int,
+	countAfterAccess4IndexJoin float64,
+	countAfterAccess4IndexJoinOK bool,
+) *candidatePath {
 	candidate := &candidatePath{
 		path:                         path,
 		indexJoinCols:                indexJoinCols,
@@ -2004,8 +2020,12 @@ func getIndexCandidateForIndexJoin(sctx planctx.PlanContext, path *util.AccessPa
 	// For example, `where t1.a=t2.a and t2.b=1`, `t1=a=t2.a` is not pushed down to t2's accessConds since it's a join
 	// predicate. We need to set columns used as join keys to accessCondsColMap/indexCondsColMap manually.
 	for i := range indexJoinCols {
-		candidate.accessCondsColMap[path.IdxCols[i].UniqueID] = path.IdxColLens[i]
-		candidate.indexCondsColMap[path.IdxCols[i].UniqueID] = path.IdxColLens[i]
+		colID := path.IdxCols[i].UniqueID
+		if _, ok := candidate.accessCondsColMap[colID]; !ok && i < len(idxOff2KeyOff) && idxOff2KeyOff[i] >= 0 {
+			candidate.indexJoinRuntimeCols = append(candidate.indexJoinRuntimeCols, colID)
+		}
+		candidate.accessCondsColMap[colID] = path.IdxColLens[i]
+		candidate.indexCondsColMap[colID] = path.IdxColLens[i]
 	}
 	candidate.isFullRange = ranger.HasFullRange(path.Ranges, false)
 	candidate.eqOrInCount = candidate.equalPredicateCount()

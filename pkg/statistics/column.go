@@ -131,7 +131,17 @@ func (c *Column) MemoryUsage() CacheItemMemoryUsage {
 // ColumnStatsIsInvalid checks if this column is invalid.
 // If this column has histogram but not loaded yet,
 // then we mark it as need histogram.
-func ColumnStatsIsInvalid(colStats *Column, sctx planctx.PlanContext, histColl *HistColl, cid int64) (res bool) {
+func ColumnStatsIsInvalid(colStats *Column, sctx planctx.PlanContext, histColl *HistColl, cid int64) bool {
+	return columnStatsIsInvalid(colStats, sctx, histColl, cid, true)
+}
+
+// ColumnStatsAreUsable reports whether the estimator can use the column distribution
+// in this session and snapshot, without requesting asynchronous histogram loading.
+func ColumnStatsAreUsable(colStats *Column, sctx planctx.PlanContext, histColl *HistColl) bool {
+	return !columnStatsIsInvalid(colStats, sctx, histColl, 0, false)
+}
+
+func columnStatsIsInvalid(colStats *Column, sctx planctx.PlanContext, histColl *HistColl, cid int64, requestLoad bool) bool {
 	var totalCount float64
 	var ndv int64
 	var essentialLoaded bool
@@ -142,7 +152,7 @@ func ColumnStatsIsInvalid(colStats *Column, sctx planctx.PlanContext, histColl *
 		stmtctx := sctx.GetSessionVars().StmtCtx
 		// Internal pseudo columns (eg: _tidb_rowid with ID -1) don't have persisted column stats.
 		isNonInternalColumnID := cid > 0
-		if (colStats == nil || !colStats.IsStatsInitialized() || colStats.IsLoadNeeded()) &&
+		if requestLoad && (colStats == nil || !colStats.IsStatsInitialized() || colStats.IsLoadNeeded()) &&
 			stmtctx != nil &&
 			isNonInternalColumnID &&
 			!histColl.CanNotTriggerLoad {

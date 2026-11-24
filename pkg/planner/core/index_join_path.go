@@ -491,7 +491,7 @@ func indexJoinPathConstructResult(
 	countAfterAccess4IndexJoin, countAfterAccess4IndexJoinOK := indexJoinPathCountAfterAccess4Compare(indexJoinInfo, path, idxOff2KeyOff, usedColsLen)
 	return &indexJoinPathResult{
 		chosenPath:     path,
-		candidate:      getIndexCandidateForIndexJoin(sctx, path, usedColsLen, countAfterAccess4IndexJoin, countAfterAccess4IndexJoinOK),
+		candidate:      getIndexCandidateForIndexJoin(sctx, path, usedColsLen, idxOff2KeyOff, countAfterAccess4IndexJoin, countAfterAccess4IndexJoinOK),
 		usedColsLen:    len(ranges.Range()[0].LowVal),
 		eqUsedColsNDV:  innerNDV,
 		lastColIsRange: lastColIsRange,
