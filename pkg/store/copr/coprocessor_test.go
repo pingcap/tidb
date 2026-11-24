@@ -756,7 +756,12 @@ func TestBuildPagingTasks(t *testing.T) {
 	require.Equal(t, tasks[0].pagingSize, paging.MinPagingSize)
 }
 
-func TestBuildCopTaskDoesNotCancelBoCtx(t *testing.T) {
+func TestBuildCopTaskContext(t *testing.T) {
+	t.Run("does not cancel backoffer context", testBuildCopTaskDoesNotCancelBoCtx)
+	t.Run("statement timeout during PD region scan", testBuildCopTasksTimeoutDuringPDRegionScan)
+}
+
+func testBuildCopTaskDoesNotCancelBoCtx(t *testing.T) {
 	// nil --- 'g' --- 'n' --- 't' --- nil
 	// <-  0  -> <- 1 -> <- 2 -> <- 3 ->
 	mockClient, cluster, pdClient, err := testutils.NewMockTiKV("", nil)
@@ -807,7 +812,7 @@ func (c cancelRegionScanPDClient) BatchScanRegions(ctx context.Context, ranges [
 	return nil, ctx.Err()
 }
 
-func TestBuildCopTasksTimeoutDuringPDRegionScan(t *testing.T) {
+func testBuildCopTasksTimeoutDuringPDRegionScan(t *testing.T) {
 	mockClient, cluster, pdClient, err := testutils.NewMockTiKV("", nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, mockClient.Close()) })
