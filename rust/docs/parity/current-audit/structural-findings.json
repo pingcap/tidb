@@ -3,20 +3,20 @@
   "scope": "Where the Rust rewrite's structure still differs from the Go owner it ports, from the 2026-11-23 symbol-level re-audit (method in structural-audit-2026-11-23.md).",
   "counts": {
     "unresolved": 1,
-    "open": 0,
-    "partial": 1
+    "open": 1,
+    "partial": 0
   },
   "findings": [
     {
-      "id": "T10",
-      "group": "Executor, DML and expressions",
-      "status": "partial",
-      "finding": "Go `pkg/executor`'s `ExecStmt` (`adapter.go`: `Exec`, `FinishExecuteStmt`, `handlePessimisticLockError`, `handleNoDelayExecutor`, the observation's begin and publish, `isSelectForUpdate`) and `ResetContextOfStmt` / `executorBuilder.build`'s dispatch are implemented as `Session` methods in the session crate (`lib.rs`, `dispatch.rs`, `observation.rs`, `statement_lifecycle.rs`), as are `TraceExec` (the node) and `CoprocessorDAGHandler`. Moved to `tidb-executor` already: PlanReplayerExec and PlanReplayerLoadInfo, ImportIntoExec, DDLExec.Next's call, SimpleExec's transaction statements, ShowDDLExec, fetchShowWarnings / fetchShowStatus / fetchShowTableStatus, the account and variable memtable retrievers, and Go master's materialized-view executors (`tidb-executor/src/mview/`). The session's compile routes (queries in `dispatch.rs`'s compile phase, DDL through `identity.rs`'s `preprocess_and_build`, EXPLAIN, privilege collection, MDL table recording) each run Go's preprocess walk (`tidb_planner::preprocess`), where Go's `Compile` runs it once.",
-      "rust_evidence": "`tidb-session/src/lib.rs` (`ExecStmt.Exec`), `dispatch.rs` (`execute_plan`, `handle_cop_plan`, `is_select_for_update`), `observation.rs`, `statement_lifecycle.rs`, `domain/cluster_session_node/mod.rs` (`TraceExec`, `handleNoDelayExecutor`).",
-      "go_owner": "`pkg/executor` (`adapter.go`, `select.go`, `plan_replayer.go`, `simple.go`, `ddl.go`, `show.go`, `prepared.go`, ...)"
+      "id": "T23",
+      "group": "Structure: Go's shape before more ports",
+      "status": "open",
+      "finding": "Go splits a statement into `session.ExecuteStmt` (txn context, `ResetContextOfStmt`), `executor.Compile` (preprocess, `planner.Optimize` with its hints, binding and plan cache, `CheckPrivilege`) returning an `ExecStmt`, and `ExecStmt.Exec` (`SetProcessInfo`, `observeStmtBeginForTopProfiling`, `buildExecutor`, `handleNoDelay` or the record set). The session's funnel interleaves the three in one function per statement kind: only non-query, non-DML statements compile to a plan the executor builder runs; a query or DML applies its SET_VAR hints, binding and privilege check in the session and opens or runs through `tidb_executor::driver` / `run_*_stmt_with_physical`, with no `ExecStmt` value between compile and execution. The statement observation's begin (`begin_statement_observation`) is likewise the session's.",
+      "rust_evidence": "`tidb-session/src/dispatch.rs` (`execute_parsed_statement_inner`, `prepare_parsed_statement_compile_phase`), `observation.rs` (`begin_statement_observation`, `statement_phase_observer`).",
+      "go_owner": "`pkg/session/session.go` (`ExecuteStmt`, `runStmt`), `pkg/executor/compiler.go` (`Compile`), `pkg/executor/adapter.go` (`ExecStmt.Exec`)"
     }
   ],
   "unresolved": 1,
-  "open": 0,
-  "partial": 1
+  "open": 1,
+  "partial": 0
 }
