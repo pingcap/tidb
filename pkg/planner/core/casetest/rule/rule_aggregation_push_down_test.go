@@ -66,7 +66,12 @@ func TestAggPushDownJoinCollationMismatch(t *testing.T) {
 	// The cast join key is projected below the join as a binary column, so the pushed agg groups by it and is correct.
 	tk.MustQuery("select count(*) from t1 join t0 on cast(t0.c0 as binary) = t1.c0 group by t0.c0").Check(testkit.Rows("1"))
 	// The agg can still be pushed down when the join compares with the column's own collation.
-	tk.MustQuery("explain format = 'plan_tree' select count(*) from t0 a join t0 b on a.c0 = b.c0 group by b.c0").
-		CheckContain("funcs:count(1)")
+	belowJoin, pushed := false, false
+	for _, row := range tk.MustQuery("explain format = 'plan_tree' select count(*) from t0 a join t0 b on a.c0 = b.c0 group by b.c0").Rows() {
+		op := row[0].(string)
+		belowJoin = belowJoin || strings.Contains(op, "Join")
+		pushed = pushed || (belowJoin && strings.Contains(op, "Agg"))
+	}
+	require.True(t, pushed)
 	tk.MustQuery("select count(*) from t0 a join t0 b on a.c0 = b.c0 group by b.c0").Check(testkit.Rows("4"))
 }
