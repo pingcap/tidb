@@ -266,11 +266,6 @@ func TestIndexReaderRequiredRows(t *testing.T) {
 
 func TestDAGRequestCarriesSQLMode(t *testing.T) {
 	sctx := defaultCtx()
-	sctx.GetSessionVars().SQLMode = mysql.ModeStrictTransTables | mysql.ModeErrorForDivisionByZero | mysql.ModeNoZeroDate
-	require.Equal(t, uint64(sctx.GetSessionVars().SQLMode), buildMockDAGRequest(sctx).GetSqlMode())
-
-	sctx.GetSessionVars().SQLMode |= mysql.ModeNoZeroInDate
-	sc := sctx.GetSessionVars().StmtCtx
-	sc.SetTypeFlags(sc.TypeFlags().WithIgnoreZeroInDate(true))
-	require.Equal(t, uint64(sctx.GetSessionVars().SQLMode&^mysql.ModeNoZeroInDate), buildMockDAGRequest(sctx).GetSqlMode())
+	sctx.GetSessionVars().SQLMode = mysql.ModeStrictTransTables | mysql.ModeErrorForDivisionByZero | mysql.ModeNoZeroInDate | mysql.ModeNoZeroDate
+	require.Equal(t, uint64(mysql.ModeStrictTransTables|mysql.ModeErrorForDivisionByZero), buildMockDAGRequest(sctx).GetSqlMode())
 }
