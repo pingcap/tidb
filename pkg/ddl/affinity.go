@@ -17,21 +17,75 @@ package ddl
 import (
 	"context"
 	"fmt"
+	"slices"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl/label"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/domain/affinity"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	tikv "github.com/tikv/client-go/v2/tikv"
 	pdhttp "github.com/tikv/pd/client/http"
 	"go.uber.org/zap"
 )
 
-const affinityCleanupTimeout = 10 * time.Second
+const (
+	affinityCleanupTimeout = 10 * time.Second
+
+	// Bound OldAffinityGroupIDs persisted in a single DDL job row so large
+	// operations such as DROP DATABASE cannot exceed kv.TxnEntrySizeLimit
+	// (kv:8025). Any overflow groups are cleaned up by affinityReconciler once
+	// GC removes their mysql.gc_delete_range rows.
+	maxPersistedAffinityGroupIDs   = 1024
+	maxPersistedAffinityGroupBytes = 32 * 1024
+	ddlJobRowBaseOverheadBytes     = 1024
+	ddlJobEntrySafetyMarginBytes   = 1024
+	ddlJobAffinityJSONEnvelope     = 64
+)
+
+// affinityPDGate serializes PD affinity group mutations on the DDL owner
+// between affinity-changing DDL execution and the background affinityReconciler.
+type affinityPDGate struct {
+	sem chan struct{}
+}
+
+func newAffinityPDGate() *affinityPDGate {
+	return &affinityPDGate{sem: make(chan struct{}, 1)}
+}
+
+func (g *affinityPDGate) lock(ctx context.Context) error {
+	if g == nil {
+		return nil
+	}
+	if ctx != nil && ctx.Err() != nil {
+		return ctx.Err()
+	}
+	if ctx == nil {
+		g.sem <- struct{}{}
+		return nil
+	}
+	select {
+	case g.sem <- struct{}{}:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (g *affinityPDGate) unlock() {
+	if g == nil {
+		return
+	}
+	<-g.sem
+}
 
 // GetTableAffinityGroupID returns the affinity group ID for a table, including
 // the keyspace ID when the table uses a NextGen keyspace codec.
@@ -53,6 +107,44 @@ func GetPartitionAffinityGroupID(codec tikv.Codec, tableID, partitionID int64) s
 		return fmt.Sprintf("_tidb_ks%d_pt_%d_p%d", codec.GetKeyspaceID(), tableID, partitionID)
 	}
 	return fmt.Sprintf("_tidb_pt_%d_p%d", tableID, partitionID)
+}
+
+// ParseAffinityGroupID strictly parses an affinity group ID belonging to the
+// namespace of codec (Classic or the current NextGen keyspace).
+// It rejects IDs from other keyspaces, Classic IDs under NextGen, NextGen IDs
+// under Classic, non-_tidb_ IDs, non-positive IDs, leading zeros, and trailing data.
+func ParseAffinityGroupID(codec tikv.Codec, groupID string) (tableID, partitionID int64, isPartition, ok bool) {
+	prefix := "_tidb_"
+	if label.UseKeyspaceAwareRules(codec) {
+		prefix = fmt.Sprintf("_tidb_ks%d_", codec.GetKeyspaceID())
+	}
+	rest, hasPrefix := strings.CutPrefix(groupID, prefix)
+	if !hasPrefix {
+		return 0, 0, false, false
+	}
+
+	if rawTableID, isTable := strings.CutPrefix(rest, "t_"); isTable {
+		tid, err := strconv.ParseInt(rawTableID, 10, 64)
+		if err != nil || tid <= 0 || GetTableAffinityGroupID(codec, tid) != groupID {
+			return 0, 0, false, false
+		}
+		return tid, 0, false, true
+	}
+
+	if rawPart, isPart := strings.CutPrefix(rest, "pt_"); isPart {
+		rawTableID, rawPartID, found := strings.Cut(rawPart, "_p")
+		if !found {
+			return 0, 0, false, false
+		}
+		tid, err1 := strconv.ParseInt(rawTableID, 10, 64)
+		pid, err2 := strconv.ParseInt(rawPartID, 10, 64)
+		if err1 != nil || err2 != nil || tid <= 0 || pid <= 0 || GetPartitionAffinityGroupID(codec, tid, pid) != groupID {
+			return 0, 0, false, false
+		}
+		return tid, pid, true, true
+	}
+
+	return 0, 0, false, false
 }
 
 func buildAffinityGroupKeyRange(codec tikv.Codec, physicalID int64) pdhttp.AffinityGroupKeyRange {
@@ -142,6 +234,12 @@ func createTableAffinityGroupsInPD(jobCtx *jobContext, tblInfo *model.TableInfo,
 		return nil
 	}
 
+	failpoint.InjectCall("beforeAffinityDDLPDOp")
+	if err := jobCtx.affinityPDGate.lock(ctx); err != nil {
+		return errors.Trace(err)
+	}
+	defer jobCtx.affinityPDGate.unlock()
+
 	logutil.DDLLogger().Info("creating affinity groups in PD",
 		zap.Int64("tableID", tblInfo.ID),
 		zap.Strings("groupIDs", collectAffinityGroupIDs(groups)))
@@ -152,21 +250,30 @@ func createTableAffinityGroupsInPD(jobCtx *jobContext, tblInfo *model.TableInfo,
 	return nil
 }
 
-// deleteTableAffinityGroupsInPD deletes affinity groups for a table in PD.
-// This is a best-effort cleanup operation. Failures are logged but the operation continues.
-// TODO: add gc for unused affinity groups, which is similar to the placement rules.
-func deleteTableAffinityGroupsInPD(jobCtx *jobContext, tblInfo *model.TableInfo, partitionDefs []model.PartitionDefinition) error {
-	ctx := jobCtx.stepCtx
-	if ctx == nil {
-		ctx = jobCtx.ctx
+// collectAffinityGroupIDsForTable returns a sorted slice of affinity group IDs
+// for tblInfo (or nil if tblInfo has no affinity configured).
+func collectAffinityGroupIDsForTable(codec tikv.Codec, tblInfo *model.TableInfo, partitionDefs []model.PartitionDefinition) ([]string, error) {
+	if tblInfo == nil || tblInfo.Affinity == nil {
+		return nil, nil
 	}
-	return deleteTableAffinityGroups(ctx, jobCtx.store.GetCodec(), tblInfo, partitionDefs)
+	groups, err := buildAffinityGroupDefinitions(codec, tblInfo, partitionDefs)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	ids := collectAffinityGroupIDs(groups)
+	slices.Sort(ids)
+	return ids, nil
 }
 
 func deleteTableAffinityGroupsWithTimeout(jobCtx *jobContext, tblInfo *model.TableInfo, partitionDefs []model.PartitionDefinition) error {
 	// Rollback and post-commit cleanup can run after the step context is canceled.
 	ctx, cancel := context.WithTimeout(jobCtx.ctx, affinityCleanupTimeout)
 	defer cancel()
+	failpoint.InjectCall("beforeAffinityDDLPDOp")
+	if err := jobCtx.affinityPDGate.lock(ctx); err != nil {
+		return errors.Trace(err)
+	}
+	defer jobCtx.affinityPDGate.unlock()
 	return deleteTableAffinityGroups(ctx, jobCtx.store.GetCodec(), tblInfo, partitionDefs)
 }
 
@@ -188,41 +295,117 @@ func partitionDefinitionsFromIDs(ids []int64) []model.PartitionDefinition {
 	return definitions
 }
 
-// collectTableAffinityGroupIDs adds the affinity group IDs of a table to groupIDs.
-func collectTableAffinityGroupIDs(
+// collectTableAffinityGroupIDsCapped adds the affinity group IDs of a table to
+// groupIDs up to limit entries. It returns truncated=true when any group ID was
+// omitted due to limit.
+func collectTableAffinityGroupIDsCapped(
 	codec tikv.Codec,
 	tblInfo *model.TableInfo,
 	groupIDs map[string]struct{},
-) error {
+	limit int,
+) (bool, error) {
+	if tblInfo == nil || tblInfo.Affinity == nil {
+		return false, nil
+	}
+	if limit > 0 && len(groupIDs) >= limit {
+		return true, nil
+	}
 	groups, err := buildAffinityGroupDefinitions(codec, tblInfo, nil)
 	if err != nil {
-		return errors.Trace(err)
+		return false, errors.Trace(err)
 	}
-	for id := range groups {
+	if limit <= 0 || len(groupIDs)+len(groups) <= limit {
+		for id := range groups {
+			groupIDs[id] = struct{}{}
+		}
+		return false, nil
+	}
+	ids := collectAffinityGroupIDs(groups)
+	slices.Sort(ids)
+	truncated := false
+	for _, id := range ids {
+		if _, exists := groupIDs[id]; exists {
+			continue
+		}
+		if len(groupIDs) >= limit {
+			truncated = true
+			break
+		}
 		groupIDs[id] = struct{}{}
 	}
-	return nil
+	return truncated, nil
 }
 
-// batchDeleteTableAffinityGroups deletes affinity groups for multiple tables in PD.
-// This is used for DROP DATABASE to clean up all table affinity groups at once.
-// Returns error to let the caller decide whether to continue or fail.
-func batchDeleteTableAffinityGroups(jobCtx *jobContext, groupIDs map[string]struct{}) error {
+func effectiveTxnEntrySizeLimit() uint64 {
+	limit := kv.TxnEntrySizeLimit.Load()
+	if varLimit := vardef.TxnEntrySizeLimit.Load(); varLimit > 0 && (limit == 0 || varLimit < limit) {
+		limit = varLimit
+	}
+	return limit
+}
+
+func truncateAffinityGroupIDs(groupIDs []string, maxCount, maxBytes int) []string {
+	if len(groupIDs) == 0 || maxCount <= 0 || maxBytes <= 0 {
+		return nil
+	}
+	usedBytes := 0
+	keep := 0
+	for _, id := range groupIDs {
+		if keep >= maxCount {
+			break
+		}
+		// Each ASCII group ID encodes in JSON as `"id",` (len(id) + 3 bytes).
+		elemBytes := len(id) + 3
+		if usedBytes+elemBytes > maxBytes {
+			break
+		}
+		usedBytes += elemBytes
+		keep++
+	}
+	if keep == 0 {
+		return nil
+	}
+	return groupIDs[:keep]
+}
+
+// boundOldAffinityGroupIDsForJob returns a prefix of groupIDs that fits safely
+// within both the static cap and the remaining KV entry-size headroom for job.
+// Callers must pass job after populating its finished/base args with
+// OldAffinityGroupIDs left empty so the base encoded size is measured accurately.
+func boundOldAffinityGroupIDsForJob(job *model.Job, groupIDs []string) []string {
 	if len(groupIDs) == 0 {
 		return nil
 	}
+	entryLimit := effectiveTxnEntrySizeLimit()
+	if job == nil || entryLimit == 0 {
+		return truncateAffinityGroupIDs(groupIDs, maxPersistedAffinityGroupIDs, maxPersistedAffinityGroupBytes)
+	}
 
-	ctx := jobCtx.stepCtx
-	if ctx == nil {
-		ctx = jobCtx.ctx
+	origRawArgs := job.RawArgs
+	baseBytes, err := job.Encode(true)
+	job.RawArgs = origRawArgs
+	if err != nil {
+		return truncateAffinityGroupIDs(groupIDs, maxPersistedAffinityGroupIDs, maxPersistedAffinityGroupBytes)
+	}
+	rowOverhead := uint64(ddlJobRowBaseOverheadBytes + ddlJobAffinityJSONEnvelope + len(job.SchemaName) + len(job.TableName))
+	used := uint64(len(baseBytes)) + rowOverhead
+	if entryLimit <= used+ddlJobEntrySafetyMarginBytes {
+		return nil
+	}
+	budget := min(entryLimit-used-ddlJobEntrySafetyMarginBytes, uint64(maxPersistedAffinityGroupBytes))
+	return truncateAffinityGroupIDs(groupIDs, maxPersistedAffinityGroupIDs, int(budget))
+}
+
+func sortedAffinityGroupIDs(groupIDs map[string]struct{}) []string {
+	if len(groupIDs) == 0 {
+		return nil
 	}
 	ids := make([]string, 0, len(groupIDs))
 	for id := range groupIDs {
 		ids = append(ids, id)
 	}
-
-	logutil.DDLLogger().Info("deleting affinity groups for batch tables", zap.Strings("groupIDs", ids))
-	return affinity.DeleteGroupsWithRetry(ctx, ids)
+	slices.Sort(ids)
+	return ids
 }
 
 // BuildAffinityGroupDefinitionsForTest is exported for testing.
@@ -232,4 +415,9 @@ func BuildAffinityGroupDefinitionsForTest(
 	partitionDefs []model.PartitionDefinition,
 ) (map[string][]pdhttp.AffinityGroupKeyRange, error) {
 	return buildAffinityGroupDefinitions(codec, tblInfo, partitionDefs)
+}
+
+// BoundOldAffinityGroupIDsForJobForTest is exported for testing.
+func BoundOldAffinityGroupIDsForJobForTest(job *model.Job, groupIDs []string) []string {
+	return boundOldAffinityGroupIDsForJob(job, groupIDs)
 }

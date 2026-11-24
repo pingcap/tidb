@@ -1,0 +1,662 @@
+// Copyright 2026 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package gcworker
+
+import (
+	"context"
+	"fmt"
+	"net/http"
+	"slices"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/pingcap/failpoint"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/ddl/util"
+	"github.com/pingcap/tidb/pkg/domain/affinity"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/tikvrpc"
+	"github.com/tikv/pd/client/clients/gc"
+	pdhttp "github.com/tikv/pd/client/http"
+)
+
+type gcAffinityMockPDClient struct {
+	pdhttp.Client
+	mu             sync.Mutex
+	groups         map[string]*pdhttp.AffinityGroupState
+	deleteErr      error
+	deleteCalls    int
+	deletedBatches [][]string
+}
+
+func newGCAffinityMockPDClient() *gcAffinityMockPDClient {
+	return &gcAffinityMockPDClient{
+		groups: make(map[string]*pdhttp.AffinityGroupState),
+	}
+}
+
+func (c *gcAffinityMockPDClient) CreateAffinityGroups(_ context.Context, groups map[string][]pdhttp.AffinityGroupKeyRange, _ ...pdhttp.CreateAffinityGroupsOption) (map[string]*pdhttp.AffinityGroupState, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	res := make(map[string]*pdhttp.AffinityGroupState, len(groups))
+	for id, ranges := range groups {
+		st := &pdhttp.AffinityGroupState{
+			AffinityGroup: pdhttp.AffinityGroup{ID: id},
+			RangeCount:    len(ranges),
+		}
+		c.groups[id] = st
+		copied := *st
+		res[id] = &copied
+	}
+	return res, nil
+}
+
+func (c *gcAffinityMockPDClient) BatchDeleteAffinityGroups(_ context.Context, ids []string, _ bool) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.deleteCalls++
+	c.deletedBatches = append(c.deletedBatches, slices.Clone(ids))
+	if c.deleteErr != nil {
+		return c.deleteErr
+	}
+	for _, id := range ids {
+		delete(c.groups, id)
+	}
+	return nil
+}
+
+func (c *gcAffinityMockPDClient) GetAffinityGroups(_ context.Context, ids []string) (map[string]*pdhttp.AffinityGroupState, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	res := make(map[string]*pdhttp.AffinityGroupState, len(ids))
+	for _, id := range ids {
+		if st, ok := c.groups[id]; ok {
+			copied := *st
+			res[id] = &copied
+		}
+	}
+	return res, nil
+}
+
+func (c *gcAffinityMockPDClient) GetAllAffinityGroups(_ context.Context) (map[string]*pdhttp.AffinityGroupState, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	res := make(map[string]*pdhttp.AffinityGroupState, len(c.groups))
+	for id, st := range c.groups {
+		copied := *st
+		res[id] = &copied
+	}
+	return res, nil
+}
+
+func (c *gcAffinityMockPDClient) seed(ids ...string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, id := range ids {
+		c.groups[id] = &pdhttp.AffinityGroupState{AffinityGroup: pdhttp.AffinityGroup{ID: id}}
+	}
+}
+
+func (c *gcAffinityMockPDClient) has(id string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	_, ok := c.groups[id]
+	return ok
+}
+
+func encodeDecodeJob(t *testing.T, j *model.Job) *model.Job {
+	t.Helper()
+	b, err := j.Encode(true)
+	require.NoError(t, err)
+	out := &model.Job{}
+	require.NoError(t, out.Decode(b))
+	return out
+}
+
+func mustExecSQL(t *testing.T, se sessionapi.Session, sql string) {
+	t.Helper()
+	rs, err := se.Execute(gcContext(), sql)
+	require.NoError(t, err, "sql=%s", sql)
+	for _, r := range rs {
+		if r != nil {
+			require.NoError(t, r.Close())
+		}
+	}
+}
+
+func TestDoGCAffinityGroups(t *testing.T) {
+	s := createGCWorkerSuite(t)
+	cli := newGCAffinityMockPDClient()
+	affinity.InitManager(cli)
+	t.Cleanup(func() { affinity.InitManager(nil) })
+
+	se := createSession(s.store)
+	defer se.Close()
+
+	var currentJob *model.Job
+	require.NoError(t, failpoint.EnableCall("github.com/pingcap/tidb/pkg/store/gcworker/mockGCAffinityHistoryJob", func(_ int64, dst **model.Job) {
+		*dst = currentJob
+	}))
+	t.Cleanup(func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/gcworker/mockGCAffinityHistoryJob"))
+	})
+
+	t.Run("non-affinity table makes zero PD calls", func(t *testing.T) {
+		j := &model.Job{Version: model.JobVersion2, ID: 101, Type: model.ActionDropTable, TableID: 10}
+		j.FillFinishedArgs(&model.DropTableArgs{OldPartitionIDs: []int64{11}})
+		currentJob = encodeDecodeJob(t, j)
+
+		var cache sync.Map
+		require.NoError(t, s.gcWorker.doGCAffinityGroups(context.Background(), se, util.DelRangeTask{JobID: 101, ElementID: 1}, &cache))
+		require.Zero(t, cli.deleteCalls)
+		_, cached := cache.Load(int64(101))
+		require.True(t, cached)
+	})
+
+	t.Run("drop table and concurrent dedup by jobID", func(t *testing.T) {
+		cli.seed("_tidb_pt_20_p21", "_tidb_pt_20_p22")
+		j := &model.Job{Version: model.JobVersion2, ID: 102, Type: model.ActionDropTable, TableID: 20}
+		j.FillFinishedArgs(&model.DropTableArgs{
+			OldPartitionIDs:     []int64{21, 22},
+			OldAffinityGroupIDs: []string{"_tidb_pt_20_p21", "_tidb_pt_20_p22"},
+		})
+		currentJob = encodeDecodeJob(t, j)
+
+		var cache sync.Map
+		beforeCalls := cli.deleteCalls
+		const workers = 8
+		startCh := make(chan struct{})
+		var wg sync.WaitGroup
+		errs := make([]error, workers)
+		for i := range workers {
+			wg.Add(1)
+			go func(idx int) {
+				defer wg.Done()
+				<-startCh
+				errs[idx] = s.gcWorker.doGCAffinityGroups(context.Background(), se, util.DelRangeTask{JobID: 102, ElementID: int64(idx + 1)}, &cache)
+			}(i)
+		}
+		close(startCh)
+		wg.Wait()
+		for _, err := range errs {
+			require.NoError(t, err)
+		}
+		require.Equal(t, beforeCalls+1, cli.deleteCalls)
+		require.False(t, cli.has("_tidb_pt_20_p21"))
+		require.False(t, cli.has("_tidb_pt_20_p22"))
+	})
+
+	t.Run("drop schema batches over 100 groups", func(t *testing.T) {
+		ids := make([]string, 0, 125)
+		for i := 1; i <= 125; i++ {
+			id := fmt.Sprintf("_tidb_t_%d", 5000+i)
+			ids = append(ids, id)
+			cli.seed(id)
+		}
+		j := &model.Job{Version: model.JobVersion2, ID: 103, Type: model.ActionDropSchema}
+		j.FillFinishedArgs(&model.DropSchemaArgs{OldAffinityGroupIDs: ids})
+		currentJob = encodeDecodeJob(t, j)
+
+		beforeCalls := cli.deleteCalls
+		beforeBatches := len(cli.deletedBatches)
+		var cache sync.Map
+		require.NoError(t, s.gcWorker.doGCAffinityGroups(context.Background(), se, util.DelRangeTask{JobID: 103, ElementID: 1}, &cache))
+		require.Equal(t, beforeCalls+2, cli.deleteCalls)
+		require.Len(t, cli.deletedBatches[beforeBatches], maxGCAffinityGroupBatchSize)
+		require.Len(t, cli.deletedBatches[beforeBatches+1], 25)
+		for _, id := range ids {
+			require.False(t, cli.has(id))
+		}
+	})
+
+	t.Run("truncate table, truncate partition, and mview cutover", func(t *testing.T) {
+		cases := []struct {
+			jobID int64
+			job   *model.Job
+			id    string
+		}{
+			{
+				jobID: 104,
+				id:    "_tidb_t_30",
+				job: func() *model.Job {
+					j := &model.Job{Version: model.JobVersion2, ID: 104, Type: model.ActionTruncateTable, TableID: 30}
+					j.FillFinishedArgs(&model.TruncateTableArgs{OldAffinityGroupIDs: []string{"_tidb_t_30"}})
+					return j
+				}(),
+			},
+			{
+				jobID: 105,
+				id:    "_tidb_pt_31_p32",
+				job: func() *model.Job {
+					j := &model.Job{Version: model.JobVersion2, ID: 105, Type: model.ActionTruncateTablePartition, TableID: 31}
+					j.FillFinishedArgs(&model.TruncateTableArgs{OldPartitionIDs: []int64{32}, OldAffinityGroupIDs: []string{"_tidb_pt_31_p32"}})
+					return j
+				}(),
+			},
+			{
+				jobID: 106,
+				id:    "_tidb_t_33",
+				job: func() *model.Job {
+					j := &model.Job{Version: model.JobVersion2, ID: 106, Type: model.ActionMViewRefreshOutOfPlaceCutover, TableID: 33}
+					j.FillArgs(&model.RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs{
+						OldMViewID:          33,
+						ShadowTableID:       34,
+						BuildReadTSO:        1,
+						OldAffinityGroupIDs: []string{"_tidb_t_33"},
+					})
+					return j
+				}(),
+			},
+		}
+		for _, tc := range cases {
+			cli.seed(tc.id)
+			currentJob = encodeDecodeJob(t, tc.job)
+			var cache sync.Map
+			require.NoError(t, s.gcWorker.doGCAffinityGroups(context.Background(), se, util.DelRangeTask{JobID: tc.jobID, ElementID: 1}, &cache))
+			require.False(t, cli.has(tc.id))
+		}
+	})
+
+	t.Run("transient PD error deduplicates within round and retries next round", func(t *testing.T) {
+		cli.seed("_tidb_t_40")
+		j := &model.Job{Version: model.JobVersion2, ID: 107, Type: model.ActionDropTable, TableID: 40}
+		j.FillFinishedArgs(&model.DropTableArgs{OldAffinityGroupIDs: []string{"_tidb_t_40"}})
+		currentJob = encodeDecodeJob(t, j)
+
+		cli.mu.Lock()
+		cli.deleteErr = fmt.Errorf("request pd http api failed with status: '503 Service Unavailable', body: 'busy'")
+		beforeCalls := cli.deleteCalls
+		cli.mu.Unlock()
+		var sameRoundCache sync.Map
+		err := s.gcWorker.doGCAffinityGroups(context.Background(), se, util.DelRangeTask{JobID: 107, ElementID: 1}, &sameRoundCache)
+		require.Error(t, err)
+		v, loaded := sameRoundCache.Load(int64(107))
+		require.True(t, loaded)
+		require.True(t, v.(*gcAffinityJobState).tried)
+		require.Error(t, v.(*gcAffinityJobState).err)
+		require.True(t, cli.has("_tidb_t_40"))
+
+		// Second range of the same JobID in the same deleteRanges round must reuse
+		// the cached failure without issuing another PD call.
+		err2 := s.gcWorker.doGCAffinityGroups(context.Background(), se, util.DelRangeTask{JobID: 107, ElementID: 2}, &sameRoundCache)
+		require.Error(t, err2)
+		cli.mu.Lock()
+		require.Equal(t, beforeCalls+1, cli.deleteCalls)
+		cli.mu.Unlock()
+
+		// Next GC round uses a fresh per-round cache and succeeds after PD recovers.
+		cli.mu.Lock()
+		cli.deleteErr = nil
+		cli.mu.Unlock()
+		var nextRoundCache sync.Map
+		require.NoError(t, s.gcWorker.doGCAffinityGroups(context.Background(), se, util.DelRangeTask{JobID: 107, ElementID: 1}, &nextRoundCache))
+		v, loaded = nextRoundCache.Load(int64(107))
+		require.True(t, loaded)
+		require.True(t, v.(*gcAffinityJobState).tried)
+		require.NoError(t, v.(*gcAffinityJobState).err)
+		require.False(t, cli.has("_tidb_t_40"))
+	})
+
+	t.Run("unsupported old PD 404 returns nil and does not block GC", func(t *testing.T) {
+		cli.seed("_tidb_t_41")
+		j := &model.Job{Version: model.JobVersion2, ID: 108, Type: model.ActionDropTable, TableID: 41}
+		j.FillFinishedArgs(&model.DropTableArgs{OldAffinityGroupIDs: []string{"_tidb_t_41"}})
+		currentJob = encodeDecodeJob(t, j)
+
+		cli.mu.Lock()
+		cli.deleteErr = fmt.Errorf("request pd http api failed with status: '%d %s', body: '404 page not found'", http.StatusNotFound, http.StatusText(http.StatusNotFound))
+		cli.mu.Unlock()
+		t.Cleanup(func() {
+			cli.mu.Lock()
+			cli.deleteErr = nil
+			cli.mu.Unlock()
+		})
+		var cache sync.Map
+		require.NoError(t, s.gcWorker.doGCAffinityGroups(context.Background(), se, util.DelRangeTask{JobID: 108, ElementID: 1}, &cache))
+		v, cached := cache.Load(int64(108))
+		require.True(t, cached)
+		require.True(t, v.(*gcAffinityJobState).tried)
+		require.NoError(t, v.(*gcAffinityJobState).err)
+	})
+}
+
+func TestDeleteRangesGCAffinityEndToEnd(t *testing.T) {
+	util.EmulatorGCDisable()
+	t.Cleanup(util.EmulatorGCEnable)
+
+	s := createGCWorkerSuite(t, withSchemaLease(220*time.Minute))
+	cli := newGCAffinityMockPDClient()
+	affinity.InitManager(cli)
+	t.Cleanup(func() { affinity.InitManager(nil) })
+
+	se := createSession(s.store)
+	defer se.Close()
+	mustExecSQL(t, se, "use test")
+	mustExecSQL(t, se, "create table t_drop(a int) affinity='table'")
+	mustExecSQL(t, se, "create table tp_drop(a int) affinity='partition' partition by range(a) (partition p0 values less than (10), partition p1 values less than maxvalue)")
+	mustExecSQL(t, se, "create table t_trunc(a int) affinity='table'")
+	mustExecSQL(t, se, "create table tp_trunc(a int) affinity='partition' partition by range(a) (partition p0 values less than (10), partition p1 values less than maxvalue)")
+	mustExecSQL(t, se, "create database db_drop_aff")
+	mustExecSQL(t, se, "create table db_drop_aff.td1(a int) affinity='table'")
+
+	is := s.dom.InfoSchema()
+	tDrop, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t_drop"))
+	require.NoError(t, err)
+	tpDrop, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("tp_drop"))
+	require.NoError(t, err)
+	tTrunc, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t_trunc"))
+	require.NoError(t, err)
+	tpTrunc, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("tp_trunc"))
+	require.NoError(t, err)
+	td1, err := is.TableByName(context.Background(), ast.NewCIStr("db_drop_aff"), ast.NewCIStr("td1"))
+	require.NoError(t, err)
+
+	codec := s.store.GetCodec()
+	dropGroup := ddl.GetTableAffinityGroupID(codec, tDrop.Meta().ID)
+	tpDropGroups := make([]string, 0, len(tpDrop.Meta().Partition.Definitions))
+	for _, def := range tpDrop.Meta().Partition.Definitions {
+		tpDropGroups = append(tpDropGroups, ddl.GetPartitionAffinityGroupID(codec, tpDrop.Meta().ID, def.ID))
+	}
+	truncOldGroup := ddl.GetTableAffinityGroupID(codec, tTrunc.Meta().ID)
+	partOldGroup := ddl.GetPartitionAffinityGroupID(codec, tpTrunc.Meta().ID, tpTrunc.Meta().Partition.Definitions[0].ID)
+	dropDBGroup := ddl.GetTableAffinityGroupID(codec, td1.Meta().ID)
+
+	mustExecSQL(t, se, "drop table t_drop")
+	mustExecSQL(t, se, "drop table tp_drop")
+	mustExecSQL(t, se, "truncate table t_trunc")
+	mustExecSQL(t, se, "alter table tp_trunc truncate partition p0")
+	mustExecSQL(t, se, "drop database db_drop_aff")
+
+	// Before GC safe point passes, all old affinity groups remain in PD.
+	require.True(t, cli.has(dropGroup))
+	for _, g := range tpDropGroups {
+		require.True(t, cli.has(g))
+	}
+	require.True(t, cli.has(truncOldGroup))
+	require.True(t, cli.has(partOldGroup))
+	require.True(t, cli.has(dropDBGroup))
+
+	s.client.unsafeDestroyRangeHandler = func(_ string, _ *tikvrpc.Request) (*tikvrpc.Response, error) {
+		return &tikvrpc.Response{Resp: &kvrpcpb.UnsafeDestroyRangeResponse{}}, nil
+	}
+	t.Cleanup(func() { s.client.unsafeDestroyRangeHandler = nil })
+
+	ctx := gcContext()
+	futureSP := s.mustAllocTs(t) + 1000
+	cli.mu.Lock()
+	cli.deleteErr = fmt.Errorf("request pd http api failed with status: '503 Service Unavailable', body: 'temporary'")
+	cli.mu.Unlock()
+	require.NoError(t, s.gcWorker.deleteRanges(ctx, futureSP, gcConcurrency{v: 1}))
+	require.True(t, cli.has(dropGroup))
+	for _, g := range tpDropGroups {
+		require.True(t, cli.has(g))
+	}
+	require.True(t, cli.has(truncOldGroup))
+	require.True(t, cli.has(partOldGroup))
+	require.True(t, cli.has(dropDBGroup))
+	pendingRanges, err := util.LoadDeleteRanges(ctx, se, futureSP)
+	require.NoError(t, err)
+	require.NotEmpty(t, pendingRanges, "failed affinity GC must keep rows in mysql.gc_delete_range for retry")
+
+	// Clear error and rerun deleteRanges: old affinity groups are deleted and ranges completed.
+	cli.mu.Lock()
+	cli.deleteErr = nil
+	cli.mu.Unlock()
+	require.NoError(t, s.gcWorker.deleteRanges(ctx, futureSP, gcConcurrency{v: 1}))
+	require.False(t, cli.has(dropGroup))
+	for _, g := range tpDropGroups {
+		require.False(t, cli.has(g))
+	}
+	require.False(t, cli.has(truncOldGroup))
+	require.False(t, cli.has(partOldGroup))
+	require.False(t, cli.has(dropDBGroup))
+	pendingRanges, err = util.LoadDeleteRanges(ctx, se, futureSP)
+	require.NoError(t, err)
+	require.Empty(t, pendingRanges)
+
+	// Active replacement groups must still exist.
+	is = s.dom.InfoSchema()
+	tTruncNew, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t_trunc"))
+	require.NoError(t, err)
+	tpTruncNew, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("tp_trunc"))
+	require.NoError(t, err)
+	require.True(t, cli.has(ddl.GetTableAffinityGroupID(codec, tTruncNew.Meta().ID)))
+	for _, def := range tpTruncNew.Meta().Partition.Definitions {
+		require.True(t, cli.has(ddl.GetPartitionAffinityGroupID(codec, tpTruncNew.Meta().ID, def.ID)))
+	}
+}
+
+func TestCheckPrepareRetriesPendingAffinityCleanupUnderGCBarrier(t *testing.T) {
+	util.EmulatorGCDisable()
+	t.Cleanup(util.EmulatorGCEnable)
+
+	s := createGCWorkerSuite(t, withSchemaLease(220*time.Minute))
+	cli := newGCAffinityMockPDClient()
+	affinity.InitManager(cli)
+	t.Cleanup(func() { affinity.InitManager(nil) })
+
+	s.client.unsafeDestroyRangeHandler = func(_ string, _ *tikvrpc.Request) (*tikvrpc.Response, error) {
+		return &tikvrpc.Response{Resp: &kvrpcpb.UnsafeDestroyRangeResponse{}}, nil
+	}
+	t.Cleanup(func() { s.client.unsafeDestroyRangeHandler = nil })
+
+	se := createSession(s.store)
+	defer se.Close()
+	mustExecSQL(t, se, "use test")
+	mustExecSQL(t, se, "create table t_barrier_old(a int) affinity='table'")
+	mustExecSQL(t, se, "create table t_barrier_new(a int) affinity='table'")
+
+	is := s.dom.InfoSchema()
+	tOld, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t_barrier_old"))
+	require.NoError(t, err)
+	tNew, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t_barrier_new"))
+	require.NoError(t, err)
+	codec := s.store.GetCodec()
+	oldGroup := ddl.GetTableAffinityGroupID(codec, tOld.Meta().ID)
+	newGroup := ddl.GetTableAffinityGroupID(codec, tNew.Meta().ID)
+
+	// Drop t_barrier_old before advancing safePoint to SP1.
+	mustExecSQL(t, se, "drop table t_barrier_old")
+
+	// Advance oracle past GC lifetime + run interval and prepare SP1.
+	s.oracle.AddOffset(30 * time.Minute)
+	ok, sp1, err := s.gcWorker.prepare(gcContext())
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.NotZero(t, sp1)
+
+	// Run deleteRanges at SP1 while PD returns transient 503 on affinity delete.
+	cli.mu.Lock()
+	cli.deleteErr = fmt.Errorf("request pd http api failed with status: '503 Service Unavailable', body: 'temporary'")
+	cli.mu.Unlock()
+	require.NoError(t, s.gcWorker.deleteRanges(gcContext(), sp1, gcConcurrency{v: 1}))
+	require.True(t, cli.has(oldGroup))
+
+	// Place a GC barrier at SP1 so advanceTxnSafePoint holds steady (returns 0),
+	// and drop t_barrier_new AFTER SP1 (so its delete-range ts >= SP1).
+	gcStatesCli := s.pdClient.GetGCStatesClient(uint32(s.store.GetCodec().GetKeyspaceID()))
+	_, err = gcStatesCli.SetGCBarrier(context.Background(), "barrier-affinity-retry", sp1, gc.TTLNeverExpire)
+	require.NoError(t, err)
+	mustExecSQL(t, se, "drop table t_barrier_new")
+
+	// Simulate GC leader failover: a brand-new GCWorker instance with zero in-memory
+	// retry state takes over leadership while the GC barrier still holds safePoint at SP1.
+	failoverWorker := newTestGCWorker(t, s.store, s.pdClient)
+
+	// Advance oracle past gcRunInterval: even though txnSafePoint cannot advance
+	// due to the GC barrier, failoverWorker.prepare() must use the persisted safePoint
+	// SP1 and schedule a retry for pending ranges strictly below SP1 without touching
+	// newer ranges (t_barrier_new).
+	s.oracle.AddOffset(30 * time.Minute)
+	ok, retrySP, err := failoverWorker.prepare(gcContext())
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Equal(t, sp1, retrySP)
+
+	// Recover PD and run deleteRanges with retrySP: t_barrier_old is cleaned up,
+	// while t_barrier_new (ts >= sp1) remains untouched in PD and gc_delete_range.
+	cli.mu.Lock()
+	cli.deleteErr = nil
+	cli.mu.Unlock()
+	require.NoError(t, failoverWorker.deleteRanges(gcContext(), retrySP, gcConcurrency{v: 1}))
+	require.False(t, cli.has(oldGroup))
+	require.True(t, cli.has(newGroup), "newer range dropped after original cutoff must not be processed early")
+
+	// Next prepare under the same barrier must skip GC because no pending ranges remain < sp1.
+	s.oracle.AddOffset(30 * time.Minute)
+	ok, nextSP, err := failoverWorker.prepare(gcContext())
+	require.NoError(t, err)
+	require.False(t, ok)
+	require.Zero(t, nextSP)
+}
+
+func TestCheckPrepareRetriesAfterTransientTiKVErrorUnderStalledSafePoint(t *testing.T) {
+	util.EmulatorGCDisable()
+	t.Cleanup(util.EmulatorGCEnable)
+
+	s := createGCWorkerSuite(t, withSchemaLease(220*time.Minute))
+	cli := newGCAffinityMockPDClient()
+	affinity.InitManager(cli)
+	t.Cleanup(func() { affinity.InitManager(nil) })
+
+	se := createSession(s.store)
+	defer se.Close()
+	mustExecSQL(t, se, "use test")
+	mustExecSQL(t, se, "create table t_tikv_err(a int) affinity='table'")
+	tbl, err := s.dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t_tikv_err"))
+	require.NoError(t, err)
+	groupID := ddl.GetTableAffinityGroupID(s.store.GetCodec(), tbl.Meta().ID)
+	mustExecSQL(t, se, "drop table t_tikv_err")
+
+	s.oracle.AddOffset(30 * time.Minute)
+	ok, sp1, err := s.gcWorker.prepare(gcContext())
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.NotZero(t, sp1)
+
+	// Fail deleteRanges on the TiKV UnsafeDestroyRange step (before affinity cleanup).
+	s.client.unsafeDestroyRangeHandler = func(_ string, _ *tikvrpc.Request) (*tikvrpc.Response, error) {
+		return nil, fmt.Errorf("injected transient tikv error")
+	}
+	t.Cleanup(func() { s.client.unsafeDestroyRangeHandler = nil })
+	require.NoError(t, s.gcWorker.deleteRanges(gcContext(), sp1, gcConcurrency{v: 1}))
+	require.True(t, cli.has(groupID))
+	pending, err := util.LoadDeleteRanges(gcContext(), se, sp1)
+	require.NoError(t, err)
+	require.NotEmpty(t, pending)
+
+	// Hold safePoint at SP1 with a GC barrier.
+	gcStatesCli := s.pdClient.GetGCStatesClient(uint32(s.store.GetCodec().GetKeyspaceID()))
+	_, err = gcStatesCli.SetGCBarrier(context.Background(), "barrier-tikv-retry", sp1, gc.TTLNeverExpire)
+	require.NoError(t, err)
+
+	// Next prepare under stalled safePoint must still schedule a retry for pending ranges < SP1.
+	s.oracle.AddOffset(30 * time.Minute)
+	ok, retrySP, err := s.gcWorker.prepare(gcContext())
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Equal(t, sp1, retrySP)
+
+	// Once TiKV recovers, deleteRanges completes the pending range and deletes the affinity group.
+	s.client.unsafeDestroyRangeHandler = func(_ string, _ *tikvrpc.Request) (*tikvrpc.Response, error) {
+		return &tikvrpc.Response{Resp: &kvrpcpb.UnsafeDestroyRangeResponse{}}, nil
+	}
+	require.NoError(t, s.gcWorker.deleteRanges(gcContext(), retrySP, gcConcurrency{v: 1}))
+	require.False(t, cli.has(groupID))
+	pending, err = util.LoadDeleteRanges(gcContext(), se, sp1)
+	require.NoError(t, err)
+	require.Empty(t, pending)
+
+	// Next prepare skips GC because nothing remains pending below SP1.
+	s.oracle.AddOffset(30 * time.Minute)
+	ok, nextSP, err := s.gcWorker.prepare(gcContext())
+	require.NoError(t, err)
+	require.False(t, ok)
+	require.Zero(t, nextSP)
+}
+
+func TestDeleteRangesDedupsSameJobAffinityFailurePerRound(t *testing.T) {
+	util.EmulatorGCDisable()
+	t.Cleanup(util.EmulatorGCEnable)
+
+	s := createGCWorkerSuite(t, withSchemaLease(220*time.Minute))
+	cli := newGCAffinityMockPDClient()
+	affinity.InitManager(cli)
+	t.Cleanup(func() { affinity.InitManager(nil) })
+
+	s.client.unsafeDestroyRangeHandler = func(_ string, _ *tikvrpc.Request) (*tikvrpc.Response, error) {
+		return &tikvrpc.Response{Resp: &kvrpcpb.UnsafeDestroyRangeResponse{}}, nil
+	}
+	t.Cleanup(func() { s.client.unsafeDestroyRangeHandler = nil })
+
+	se := createSession(s.store)
+	defer se.Close()
+	mustExecSQL(t, se, "create database db_drop_12")
+	const tableCount = 12
+	codec := s.store.GetCodec()
+	groupIDs := make([]string, 0, tableCount)
+	for i := range tableCount {
+		tblName := fmt.Sprintf("t%d", i)
+		mustExecSQL(t, se, fmt.Sprintf("create table db_drop_12.%s(a int) affinity='table'", tblName))
+		tbl, err := s.dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("db_drop_12"), ast.NewCIStr(tblName))
+		require.NoError(t, err)
+		groupIDs = append(groupIDs, ddl.GetTableAffinityGroupID(codec, tbl.Meta().ID))
+	}
+	mustExecSQL(t, se, "drop database db_drop_12")
+
+	ctx := gcContext()
+	futureSP := s.mustAllocTs(t) + 1000
+	pendingBefore, err := util.LoadDeleteRanges(ctx, se, futureSP)
+	require.NoError(t, err)
+	require.Len(t, pendingBefore, tableCount)
+
+	// Persistent PD 503 during round 1: all 12 ranges share one JobID, so only 1 PD
+	// batch delete call may be issued in this round, and all 12 rows stay pending.
+	cli.mu.Lock()
+	cli.deleteErr = fmt.Errorf("request pd http api failed with status: '503 Service Unavailable', body: 'temporary'")
+	callsBefore := cli.deleteCalls
+	cli.mu.Unlock()
+	require.NoError(t, s.gcWorker.deleteRanges(ctx, futureSP, gcConcurrency{v: 4}))
+	cli.mu.Lock()
+	require.Equal(t, callsBefore+1, cli.deleteCalls, "12 ranges of same JobID must issue only 1 PD batch delete call per round on 503")
+	cli.mu.Unlock()
+	pendingAfterErr, err := util.LoadDeleteRanges(ctx, se, futureSP)
+	require.NoError(t, err)
+	require.Len(t, pendingAfterErr, tableCount)
+	for _, g := range groupIDs {
+		require.True(t, cli.has(g))
+	}
+
+	// Recover PD in round 2: 1 PD batch delete call completes all 12 ranges.
+	cli.mu.Lock()
+	cli.deleteErr = nil
+	callsBeforeRecover := cli.deleteCalls
+	cli.mu.Unlock()
+	require.NoError(t, s.gcWorker.deleteRanges(ctx, futureSP, gcConcurrency{v: 4}))
+	cli.mu.Lock()
+	require.Equal(t, callsBeforeRecover+1, cli.deleteCalls, "recovery round must issue only 1 PD batch delete call for all 12 ranges")
+	cli.mu.Unlock()
+	pendingAfterRecover, err := util.LoadDeleteRanges(ctx, se, futureSP)
+	require.NoError(t, err)
+	require.Empty(t, pendingAfterRecover)
+	for _, g := range groupIDs {
+		require.False(t, cli.has(g))
+	}
+}

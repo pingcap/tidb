@@ -2867,10 +2867,15 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, job *model.Job) (i
 			}
 		}
 
-		// Delete old affinity groups (best-effort cleanup - ignore errors)
-		if tblInfo.Affinity != nil && len(oldDefinitions) > 0 {
-			if err := deleteTableAffinityGroupsInPD(jobCtx, tblInfo, oldDefinitions); err != nil {
-				logutil.DDLLogger().Error("failed to delete old partition affinity groups from PD", zap.Error(err), zap.Int64("tableID", tblInfo.ID))
+		// Keep old partition affinity groups until delete-range GC removes them
+		// after the GC safe point, so flashback/recover can retain them.
+		var oldAffinityGroupIDs []string
+		if tblInfo.Affinity != nil && tblInfo.Affinity.Level == ast.TableAffinityLevelPartition && len(oldDefinitions) > 0 {
+			var affinityErr error
+			oldAffinityGroupIDs, affinityErr = collectAffinityGroupIDsForTable(jobCtx.store.GetCodec(), tblInfo, oldDefinitions)
+			if affinityErr != nil {
+				logutil.DDLLogger().Warn("failed to collect old partition affinity group IDs for truncate partition GC",
+					zap.Error(affinityErr), zap.Int64("tableID", tblInfo.ID))
 			}
 		}
 
@@ -2904,9 +2909,12 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, job *model.Job) (i
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
 		// A delete-range task will be enqueued when this DDL job finishes.
-		job.FillFinishedArgs(&model.TruncateTableArgs{
+		truncArgs := &model.TruncateTableArgs{
 			OldPartitionIDs: droppedIDs,
-		})
+		}
+		job.FillFinishedArgs(truncArgs)
+		truncArgs.OldAffinityGroupIDs = boundOldAffinityGroupIDsForJob(job, oldAffinityGroupIDs)
+		job.FillFinishedArgs(truncArgs)
 	default:
 		return ver, dbterror.ErrInvalidDDLState.GenWithStackByArgs("partition", job.SchemaState)
 	}

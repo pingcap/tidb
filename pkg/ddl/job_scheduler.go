@@ -112,6 +112,7 @@ func (l *ownerListener) OnBecomeOwner() {
 		eventPublishStore:             l.ddl.eventPublishStore,
 		storageClassTransitionManager: l.ddl.storageClassTransitionManager,
 		storageClassTransitionReadyCh: make(chan struct{}),
+		affinityReconciler:            l.ddl.affinityReconciler,
 
 		ddlCtx:         l.ddl.ddlCtx,
 		ddlJobNotifyCh: l.jobSubmitter.ddlJobNotifyCh,
@@ -150,6 +151,7 @@ type jobScheduler struct {
 	storageClassTransitionManager *storageClassTransitionManager
 	storageClassTransitionReady   atomic.Bool
 	storageClassTransitionReadyCh chan struct{}
+	affinityReconciler            *affinityReconciler
 
 	// those fields are created or initialized on start
 	reorgWorkerPool      *workerPool
@@ -201,6 +203,11 @@ func (s *jobScheduler) start() {
 				s.storageClassTransitionManager.run(s.schCtx, s.sessPool)
 			case <-s.schCtx.Done():
 			}
+		})
+	}
+	if s.affinityReconciler != nil {
+		s.wg.RunWithLog(func() {
+			s.affinityReconciler.run(s.schCtx, s.sessPool)
 		})
 	}
 }
@@ -594,6 +601,10 @@ func (s *jobScheduler) getJobRunCtx(trace *traceevent.Trace, jobID int64, traceI
 	if len(traceInfo.TraceID) > 0 {
 		newCtx = traceevent.ContextWithTraceID(newCtx, traceInfo.TraceID)
 	}
+	var pdGate *affinityPDGate
+	if s.affinityReconciler != nil {
+		pdGate = s.affinityReconciler.pdGate
+	}
 	return &jobContext{
 		ctx:                           newCtx,
 		unSyncedJobTracker:            s.unSyncedTracker,
@@ -605,6 +616,7 @@ func (s *jobScheduler) getJobRunCtx(trace *traceevent.Trace, jobID int64, traceI
 		eventPublishStore:             s.eventPublishStore,
 		sysTblMgr:                     s.sysTblMgr,
 		storageClassTransitionManager: s.storageClassTransitionManager,
+		affinityPDGate:                pdGate,
 
 		notifyCh: ch,
 		logger: tidblogutil.LoggerWithTraceInfo(

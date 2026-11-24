@@ -592,3 +592,91 @@ func TestCreateGroupsIfNotExistsNilContextForwardsNonNil(t *testing.T) {
 	require.NoError(t, CreateGroupsIfNotExists(nil, groups))
 	client.AssertExpectations(t)
 }
+
+func TestGetAllAffinityGroupsPDManager(t *testing.T) {
+	ctx := context.Background()
+	client := &mockPDClient{}
+	mgr := &pdManager{Client: client}
+
+	expected := map[string]*pdhttp.AffinityGroupState{
+		"g1": affinityGroupState("g1"),
+		"g2": affinityGroupState("g2"),
+	}
+	client.On("GetAllAffinityGroups", mock.Anything).Return(expected, nil).Once()
+
+	got, err := mgr.GetAllAffinityGroups(ctx)
+	require.NoError(t, err)
+	require.Equal(t, expected, got)
+	client.AssertExpectations(t)
+}
+
+func TestGetAllAffinityGroupsMockManager(t *testing.T) {
+	ctx := context.Background()
+	mgr := NewMockManager()
+
+	require.NoError(t, mgr.CreateAffinityGroupsIfNotExists(ctx, map[string][]pdhttp.AffinityGroupKeyRange{
+		"g1": {{StartKey: []byte("a"), EndKey: []byte("b")}},
+		"g2": {{StartKey: []byte("c"), EndKey: []byte("d")}},
+	}))
+
+	got, err := mgr.GetAllAffinityGroups(ctx)
+	require.NoError(t, err)
+	require.Len(t, got, 2)
+	require.NotZero(t, got["g1"].CreateTimestamp)
+	require.Equal(t, 1, got["g1"].RangeCount)
+
+	// Mutating the returned map or struct copy must not mutate internal mock state.
+	got["g1"].RangeCount = 99
+	delete(got, "g2")
+
+	gotAgain, err := mgr.GetAllAffinityGroups(ctx)
+	require.NoError(t, err)
+	require.Len(t, gotAgain, 2)
+	require.Equal(t, 1, gotAgain["g1"].RangeCount)
+	require.Contains(t, gotAgain, "g2")
+}
+
+func TestPDWithoutAffinityAPI(t *testing.T) {
+	ctx := context.Background()
+	client := &mockPDClient{}
+	mgr := &pdManager{Client: client}
+	notFound := pdStatusErr(http.StatusNotFound)
+
+	// Creation reports explicit upgrade-PD error.
+	groups := map[string][]pdhttp.AffinityGroupKeyRange{
+		"g1": {{StartKey: []byte("a"), EndKey: []byte("b")}},
+	}
+	client.On("CreateAffinityGroups", mock.Anything, groups, 1).Return(nil, notFound).Once()
+	err := mgr.CreateAffinityGroupsIfNotExists(ctx, groups)
+	require.ErrorIs(t, err, ErrPDNotSupportAffinity)
+	require.True(t, IsUnsupportedError(err))
+
+	// Point and multi-batch reads (used by SHOW AFFINITY) return empty map without error.
+	client.On("GetAffinityGroups", mock.Anything, []string{"g1"}).Return(nil, notFound).Once()
+	client.On("GetAllAffinityGroups", mock.Anything).Return(nil, notFound).Once()
+	got, err := mgr.GetAffinityGroups(ctx, []string{"g1"})
+	require.NoError(t, err)
+	require.Empty(t, got)
+
+	manyIDs := make([]string, maxAffinityGroupIDsCount+1)
+	for i := range manyIDs {
+		manyIDs[i] = fmt.Sprintf("g%03d", i)
+	}
+	client.On("GetAffinityGroups", mock.Anything, manyIDs[:maxAffinityGroupIDsCount]).Return(nil, notFound).Once()
+	client.On("GetAllAffinityGroups", mock.Anything).Return(nil, notFound).Once()
+	got, err = mgr.GetAffinityGroups(ctx, manyIDs)
+	require.NoError(t, err)
+	require.Empty(t, got)
+
+	// Forced delete on 404 is treated cleanly as idempotent no-op.
+	client.On("BatchDeleteAffinityGroups", mock.Anything, []string{"g1"}, true).Return(notFound).Once()
+	require.NoError(t, mgr.DeleteAffinityGroups(ctx, []string{"g1"}))
+
+	// GetAllAffinityGroups preserves 404 so reconciler recognizes unsupported PD and skips.
+	client.On("GetAllAffinityGroups", mock.Anything).Return(nil, notFound).Once()
+	_, err = mgr.GetAllAffinityGroups(ctx)
+	require.Error(t, err)
+	require.True(t, IsUnsupportedError(err))
+
+	client.AssertExpectations(t)
+}

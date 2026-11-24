@@ -23,6 +23,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/errno"
@@ -34,6 +35,7 @@ type Manager interface {
 	CreateAffinityGroupsIfNotExists(ctx context.Context, groups map[string][]pdhttp.AffinityGroupKeyRange) error
 	DeleteAffinityGroups(ctx context.Context, ids []string) error
 	GetAffinityGroups(ctx context.Context, ids []string) (map[string]*pdhttp.AffinityGroupState, error)
+	GetAllAffinityGroups(ctx context.Context) (map[string]*pdhttp.AffinityGroupState, error)
 }
 
 type pdManager struct {
@@ -53,6 +55,9 @@ func NewPDManager(client pdhttp.Client) Manager {
 	return &pdManager{client}
 }
 
+// ErrPDNotSupportAffinity is returned when PD does not serve the affinity API.
+var ErrPDNotSupportAffinity = stderrors.New("PD does not support affinity groups, please upgrade PD")
+
 // CreateAffinityGroupsIfNotExists creates affinity groups in PD.
 // It first uses skip_exist_check and validates the returned state for every group.
 // On conflict, it looks up existing groups and accepts them only if they have key ranges.
@@ -64,6 +69,9 @@ func (m *pdManager) CreateAffinityGroupsIfNotExists(ctx context.Context, groups 
 	states, err := m.Client.CreateAffinityGroups(ctx, groups, pdhttp.WithSkipExistCheck())
 	if err == nil {
 		return validateCreatedAffinityGroups(groups, states)
+	}
+	if isPDHTTPStatusError(err, http.StatusNotFound) {
+		return ErrPDNotSupportAffinity
 	}
 	if !isPDHTTPStatusError(err, http.StatusConflict) {
 		return err
@@ -141,6 +149,11 @@ func (m *pdManager) GetAffinityGroups(ctx context.Context, ids []string) (map[st
 	return result, nil
 }
 
+// GetAllAffinityGroups gets all affinity groups from PD.
+func (m *pdManager) GetAllAffinityGroups(ctx context.Context) (map[string]*pdhttp.AffinityGroupState, error) {
+	return m.Client.GetAllAffinityGroups(ctx)
+}
+
 func (m *pdManager) createAffinityGroupsIfNotExistsByFiltering(ctx context.Context, groups map[string][]pdhttp.AffinityGroupKeyRange) error {
 	groupIDs := make([]string, 0, len(groups))
 	for id := range groups {
@@ -178,6 +191,9 @@ func (m *pdManager) createAffinityGroupsIfNotExistsByFiltering(ctx context.Conte
 			}
 		}
 		return nil
+	}
+	if isPDHTTPStatusError(err, http.StatusNotFound) {
+		return ErrPDNotSupportAffinity
 	}
 	if err != nil {
 		return err
@@ -340,11 +356,13 @@ func (m *mockManager) CreateAffinityGroupsIfNotExists(_ context.Context, groups 
 	}
 
 	// Idempotent: only create groups that don't already exist
+	now := uint64(time.Now().Unix())
 	for id, ranges := range groups {
 		if _, exists := m.groups[id]; !exists {
 			m.groups[id] = &pdhttp.AffinityGroupState{
 				AffinityGroup: pdhttp.AffinityGroup{
-					ID: id,
+					ID:              id,
+					CreateTimestamp: now,
 				},
 				RangeCount: len(ranges),
 			}
@@ -374,6 +392,22 @@ func (m *mockManager) GetAffinityGroups(_ context.Context, ids []string) (map[st
 		if state, ok := m.groups[id]; ok {
 			result[id] = state
 		}
+	}
+	return result, nil
+}
+
+func (m *mockManager) GetAllAffinityGroups(_ context.Context) (map[string]*pdhttp.AffinityGroupState, error) {
+	m.RLock()
+	defer m.RUnlock()
+
+	result := make(map[string]*pdhttp.AffinityGroupState, len(m.groups))
+	for id, state := range m.groups {
+		if state == nil {
+			result[id] = nil
+			continue
+		}
+		copied := *state
+		result[id] = &copied
 	}
 	return result, nil
 }

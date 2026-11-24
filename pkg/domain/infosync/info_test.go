@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -561,4 +562,109 @@ func TestSetKeyspaceConfigPropagatesPDHTTPError(t *testing.T) {
 		Config: map[string]*string{"k": nil},
 	})
 	require.ErrorIs(t, err, expectedErr)
+}
+
+type mockAffinityStatusPDHTTPClient struct {
+	pdhttp.Client
+	callerID     string
+	respHandler  func(*http.Response, any) error
+	statusCode   *int
+	body         *string
+	lastCallerID *string
+}
+
+func (m *mockAffinityStatusPDHTTPClient) WithCallerID(callerID string) pdhttp.Client {
+	cp := *m
+	cp.callerID = callerID
+	return &cp
+}
+
+func (m *mockAffinityStatusPDHTTPClient) WithRespHandler(handler func(*http.Response, any) error) pdhttp.Client {
+	cp := *m
+	cp.respHandler = handler
+	return &cp
+}
+
+func (m *mockAffinityStatusPDHTTPClient) GetAllAffinityGroups(_ context.Context) (map[string]*pdhttp.AffinityGroupState, error) {
+	if m.lastCallerID != nil {
+		*m.lastCallerID = m.callerID
+	}
+	code := *m.statusCode
+	body := *m.body
+	if m.respHandler != nil {
+		req := httptest.NewRequest(http.MethodGet, "http://pd/pd/api/v1/affinity-groups", nil)
+		rec := httptest.NewRecorder()
+		rec.WriteHeader(code)
+		_, _ = rec.WriteString(body)
+		resp := rec.Result()
+		resp.Request = req
+		var res map[string]*pdhttp.AffinityGroupState
+		return res, m.respHandler(resp, &res)
+	}
+	return nil, fmt.Errorf("request pd http api failed with status: '%d %s', body: '%s'", code, http.StatusText(code), body)
+}
+
+func (m *mockAffinityStatusPDHTTPClient) GetAffinityGroups(ctx context.Context, _ []string) (map[string]*pdhttp.AffinityGroupState, error) {
+	return m.GetAllAffinityGroups(ctx)
+}
+
+func (m *mockAffinityStatusPDHTTPClient) CreateAffinityGroups(ctx context.Context, _ map[string][]pdhttp.AffinityGroupKeyRange, _ ...pdhttp.CreateAffinityGroupsOption) (map[string]*pdhttp.AffinityGroupState, error) {
+	return m.GetAllAffinityGroups(ctx)
+}
+
+func (m *mockAffinityStatusPDHTTPClient) BatchDeleteAffinityGroups(ctx context.Context, _ []string, _ bool) error {
+	_, err := m.GetAllAffinityGroups(ctx)
+	return err
+}
+
+func TestGlobalInfoSyncerInitPreservesPDHTTPStatusForAffinity(t *testing.T) {
+	statusCode := http.StatusNotFound
+	body := "404 page not found"
+	var lastCallerID string
+	cli := &mockAffinityStatusPDHTTPClient{
+		statusCode:   &statusCode,
+		body:         &body,
+		lastCallerID: &lastCallerID,
+	}
+	t.Cleanup(func() { affinity.InitManager(nil) })
+
+	is, err := GlobalInfoSyncerInit(context.Background(), "test", func() uint64 { return 1 }, nil, nil, nil, cli, keyspace.CodecV1, false, nil)
+	require.NoError(t, err)
+
+	// InfoSyncer keeps its own pdResponseHandler and caller ID.
+	isCli, ok := is.pdHTTPCli.(*mockAffinityStatusPDHTTPClient)
+	require.True(t, ok)
+	require.Equal(t, "tidb-info-syncer", isCli.callerID)
+	require.NotNil(t, isCli.respHandler)
+
+	// Affinity receives the raw client without pdResponseHandler, so 404 is preserved:
+	// - CreateGroupsIfNotExists reports ErrPDNotSupportAffinity.
+	// - GetGroups / GetGroupStates (SHOW AFFINITY) return empty map without error.
+	// - DeleteGroups (force) is an idempotent no-op.
+	// - GetAllGroups returns unsupported error so reconciler skips silently.
+	groups := map[string][]pdhttp.AffinityGroupKeyRange{
+		"_tidb_t_1": {{StartKey: []byte("a"), EndKey: []byte("b")}},
+	}
+	err = affinity.CreateGroupsIfNotExists(context.Background(), groups)
+	require.ErrorIs(t, err, affinity.ErrPDNotSupportAffinity)
+	require.Equal(t, "tidb-affinity", lastCallerID)
+
+	got, err := affinity.GetGroups(context.Background(), []string{"_tidb_t_1"})
+	require.NoError(t, err)
+	require.Empty(t, got)
+	gotStates, err := affinity.GetGroupStates(context.Background(), []string{"_tidb_t_1"})
+	require.NoError(t, err)
+	require.Empty(t, gotStates)
+	require.NoError(t, affinity.DeleteGroups(context.Background(), []string{"_tidb_t_1"}))
+
+	_, err = affinity.GetAllGroups(context.Background())
+	require.Error(t, err)
+	require.True(t, affinity.IsUnsupportedError(err))
+
+	// 500 with "unsupported" in the body preserves status 500 and is not misclassified.
+	statusCode = http.StatusInternalServerError
+	body = "unsupported internal state"
+	_, err = affinity.GetAllGroups(context.Background())
+	require.Error(t, err)
+	require.False(t, affinity.IsUnsupportedError(err))
 }

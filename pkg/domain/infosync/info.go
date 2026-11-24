@@ -162,6 +162,10 @@ func GlobalInfoSyncerInit(
 	infoCache infoschemaMinTS,
 	serverInfoOptions ...serverinfo.SyncerOption,
 ) (*InfoSyncer, error) {
+	rawPDHTTPCli := pdHTTPCli
+	if rawPDHTTPCli != nil {
+		rawPDHTTPCli = rawPDHTTPCli.WithCallerID("tidb-affinity")
+	}
 	if pdHTTPCli != nil {
 		pdHTTPCli = pdHTTPCli.
 			WithCallerID("tidb-info-syncer").
@@ -188,8 +192,9 @@ func GlobalInfoSyncerInit(
 	is.initResourceManagerClient(pdCli)
 	setGlobalInfoSyncer(is)
 
-	// Initialize affinity package
-	affinity.InitManager(is.pdHTTPCli)
+	// Initialize affinity package with the raw PD HTTP client so HTTP status codes
+	// (such as 404/405/501 on older PD vs 500/503 transient errors) are preserved.
+	affinity.InitManager(rawPDHTTPCli)
 
 	return is, nil
 }

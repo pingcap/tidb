@@ -26,7 +26,7 @@ go_test(
     ],
     embed = [":affinity"],
     flaky = True,
-    shard_count = 19,
+    shard_count = 23,
     deps = [
         "//pkg/errno",
         "//pkg/parser/terror",

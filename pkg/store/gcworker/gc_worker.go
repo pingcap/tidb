@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/label"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/ddl/util"
+	"github.com/pingcap/tidb/pkg/domain/affinity"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/extworkload"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -538,9 +539,26 @@ func (w *GCWorker) checkPrepare(ctx context.Context) (bool, uint64, error) {
 	if err != nil || !ok {
 		return false, 0, errors.Trace(err)
 	}
-	newSafePoint, newSafePointValue, err := w.calcNewTxnSafePoint(ctx, now)
-	if err != nil || newSafePoint == nil {
+	newSafePoint, newSafePointValue, persistedSafePoint, err := w.calcNewTxnSafePoint(ctx, now)
+	if err != nil {
 		return false, 0, errors.Trace(err)
+	}
+	if newSafePoint == nil {
+		if persistedSafePoint == 0 {
+			return false, 0, nil
+		}
+		hasPending, err := w.hasPendingDeleteRanges(ctx, persistedSafePoint)
+		if err != nil {
+			return false, 0, errors.Trace(err)
+		}
+		if !hasPending {
+			return false, 0, nil
+		}
+		err = w.saveTime(gcLastRunTimeKey, now)
+		if err != nil {
+			return false, 0, errors.Trace(err)
+		}
+		return true, persistedSafePoint, nil
 	}
 	err = w.saveTime(gcLastRunTimeKey, now)
 	if err != nil {
@@ -671,31 +689,35 @@ func (w *GCWorker) validateGCLifeTime(lifeTime time.Duration) (time.Duration, er
 	return gcMinLifeTime, err
 }
 
-func (w *GCWorker) calcNewTxnSafePoint(ctx context.Context, now time.Time) (*time.Time, uint64, error) {
+func (w *GCWorker) calcNewTxnSafePoint(ctx context.Context, now time.Time) (*time.Time, uint64, uint64, error) {
 	lifeTime, err := w.loadDurationWithDefault(gcLifeTimeKey, gcDefaultLifeTime)
 	if err != nil {
-		return nil, 0, errors.Trace(err)
+		return nil, 0, 0, errors.Trace(err)
 	}
 	*lifeTime, err = w.validateGCLifeTime(*lifeTime)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, 0, err
 	}
 	metrics.GCConfigGauge.WithLabelValues(gcLifeTimeKey).Set(lifeTime.Seconds())
 
 	// The target value we try to advance the txn safe point.
 	target := oracle.GoTimeToTS(now.Add(-*lifeTime))
 
-	newTxnSafePoint, err := w.advanceTxnSafePoint(ctx, target)
+	newTxnSafePoint, oldTxnSafePoint, err := w.advanceTxnSafePoint(ctx, target)
 	if err != nil {
 		// Temporary solution. This code should be refactored when errors returned by PD client can be typed.
 		if strings.Contains(err.Error(), "PD:gc:ErrDecreasingTxnSafePoint") {
 			logutil.BgLogger().Info("set gc worker service safe point is causing decreasing, the GC will be skipped", zap.Error(err))
-			return nil, 0, nil
+			persistedSP, spErr := w.currentPersistedTxnSafePoint(ctx)
+			if spErr != nil {
+				return nil, 0, 0, errors.Trace(spErr)
+			}
+			return nil, 0, persistedSP, nil
 		}
-		return nil, 0, errors.Trace(err)
+		return nil, 0, 0, errors.Trace(err)
 	}
 	if newTxnSafePoint == 0 {
-		return nil, 0, nil
+		return nil, 0, oldTxnSafePoint, nil
 	}
 
 	// safe point is recorded in time.Time format which strips the logical part of the timestamp.
@@ -703,13 +725,13 @@ func (w *GCWorker) calcNewTxnSafePoint(ctx context.Context, now time.Time) (*tim
 	// safe point isn't changed, we should compare them in time.Time format.
 	txnSafePointTime := oracle.GetTimeFromTS(newTxnSafePoint)
 	// We should never decrease safePoint.
-	return &txnSafePointTime, newTxnSafePoint, nil
+	return &txnSafePointTime, newTxnSafePoint, newTxnSafePoint, nil
 }
 
-func (w *GCWorker) advanceTxnSafePoint(ctx context.Context, target uint64) (newTxnSafePoint uint64, err error) {
+func (w *GCWorker) advanceTxnSafePoint(ctx context.Context, target uint64) (newTxnSafePoint, oldTxnSafePoint uint64, err error) {
 	result, err := w.pdGCControllerClient.AdvanceTxnSafePoint(ctx, target)
 	if err != nil {
-		return 0, errors.Trace(err)
+		return 0, 0, errors.Trace(err)
 	}
 
 	if result.NewTxnSafePoint <= result.OldTxnSafePoint {
@@ -720,7 +742,7 @@ func (w *GCWorker) advanceTxnSafePoint(ctx context.Context, target uint64) (newT
 			zap.Uint64("oldTxnSafePoint", result.OldTxnSafePoint),
 			zap.Uint64("newTxnSafePoint", result.NewTxnSafePoint),
 			zap.String("blockerDesc", result.BlockerDescription))
-		return 0, nil
+		return 0, result.OldTxnSafePoint, nil
 	} else if result.NewTxnSafePoint != target {
 		logutil.BgLogger().Info("txn safe point not advanced to the expected value",
 			zap.String("category", "gc worker"),
@@ -731,7 +753,7 @@ func (w *GCWorker) advanceTxnSafePoint(ctx context.Context, target uint64) (newT
 			zap.String("blockerDesc", result.BlockerDescription))
 	}
 
-	return result.NewTxnSafePoint, nil
+	return result.NewTxnSafePoint, result.OldTxnSafePoint, nil
 }
 
 // setGCWorkerServiceSafePoint sets the given safePoint as TiDB's service safePoint to PD, and returns the current minimal
@@ -906,6 +928,9 @@ func (w *GCWorker) deleteRanges(
 	}
 	// Cache table ids on which placement rules have been GC-ed, to avoid redundantly GC the same table id multiple times.
 	var gcPlacementRuleCache sync.Map
+	// Cache per-job affinity GC state so concurrent ranges of a multi-range job
+	// (such as DROP DATABASE) query and delete the job's affinity groups once.
+	var gcAffinityJobCache sync.Map
 
 	logutil.Logger(ctx).Info("start delete ranges", zap.String("category", "gc worker"),
 		zap.String("uuid", w.uuid),
@@ -956,6 +981,14 @@ func (w *GCWorker) deleteRanges(
 		// We only delete rules, so concurrently updating rules should not return errors.
 		if err := w.doGCLabelRules(r); err != nil {
 			logutil.Logger(ctx).Error("gc label rules failed on range", zap.String("category", "gc worker"),
+				zap.String("uuid", w.uuid),
+				zap.Int64("jobID", r.JobID),
+				zap.Int64("elementID", r.ElementID),
+				zap.Error(err))
+			return
+		}
+		if err := w.doGCAffinityGroups(ctx, se, r, &gcAffinityJobCache); err != nil {
+			logutil.Logger(ctx).Warn("gc affinity groups failed on range", zap.String("category", "gc worker"),
 				zap.String("uuid", w.uuid),
 				zap.Int64("jobID", r.JobID),
 				zap.Int64("elementID", r.ElementID),
@@ -1931,6 +1964,147 @@ func (w *GCWorker) doGCLabelRules(dr util.DelRangeTask) (err error) {
 	return
 }
 
+const maxGCAffinityGroupBatchSize = 100
+
+type gcAffinityJobState struct {
+	mu    sync.Mutex
+	tried bool
+	err   error
+}
+
+func (w *GCWorker) currentPersistedTxnSafePoint(ctx context.Context) (uint64, error) {
+	if w.pdClient != nil {
+		state, err := w.pdClient.GetGCStatesClient(w.keyspaceID).GetGCState(ctx)
+		if err == nil && state.TxnSafePoint > 0 {
+			return state.TxnSafePoint, nil
+		}
+	}
+	savedSP, err := w.loadTime(gcSafePointKey)
+	if err != nil || savedSP == nil {
+		return 0, errors.Trace(err)
+	}
+	return oracle.GoTimeToTS(*savedSP), nil
+}
+
+func (w *GCWorker) hasPendingDeleteRanges(ctx context.Context, safePoint uint64) (bool, error) {
+	se := createSession(w.store)
+	defer se.Close()
+	rs, err := se.ExecuteInternal(ctx, `SELECT HIGH_PRIORITY 1 FROM mysql.gc_delete_range WHERE ts < %? LIMIT 1`, safePoint)
+	if rs != nil {
+		defer terror.Call(rs.Close)
+	}
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	req := rs.NewChunk(nil)
+	if err := rs.Next(ctx, req); err != nil {
+		return false, errors.Trace(err)
+	}
+	return req.NumRows() > 0, nil
+}
+
+func (w *GCWorker) doGCAffinityGroups(ctx context.Context, se sessionapi.Session, dr util.DelRangeTask, gcAffinityJobCache *sync.Map) (retErr error) {
+	var state *gcAffinityJobState
+	if gcAffinityJobCache != nil {
+		v, _ := gcAffinityJobCache.LoadOrStore(dr.JobID, &gcAffinityJobState{})
+		state = v.(*gcAffinityJobState)
+		state.mu.Lock()
+		defer state.mu.Unlock()
+		if state.tried {
+			return state.err
+		}
+		defer func() {
+			state.tried = true
+			state.err = retErr
+		}()
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	var historyJob *model.Job
+	failpoint.InjectCall("mockGCAffinityHistoryJob", dr.JobID, &historyJob)
+	if historyJob == nil {
+		var skipForLegacyMock bool
+		failpoint.Inject("mockHistoryJobForGC", func() {
+			skipForLegacyMock = true
+		})
+		failpoint.Inject("mockHistoryJob", func() {
+			skipForLegacyMock = true
+		})
+		if skipForLegacyMock {
+			return nil
+		}
+		ownSession := false
+		if se == nil {
+			se = createSession(w.store)
+			ownSession = true
+		}
+		var err error
+		historyJob, err = ddl.GetHistoryJobByID(se, dr.JobID)
+		if ownSession {
+			se.Close()
+		}
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if historyJob == nil {
+			return dbterror.ErrDDLJobNotFound.GenWithStackByArgs(dr.JobID)
+		}
+	}
+
+	var groupIDs []string
+	switch historyJob.Type {
+	case model.ActionDropTable, model.ActionDropMaterializedView,
+		model.ActionDropMaterializedViewLog, model.ActionDropMaterializedViewShadow:
+		args, err := model.GetFinishedDropTableArgs(historyJob)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		groupIDs = args.OldAffinityGroupIDs
+	case model.ActionDropSchema:
+		args, err := model.GetFinishedDropSchemaArgs(historyJob)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		groupIDs = args.OldAffinityGroupIDs
+	case model.ActionTruncateTable, model.ActionTruncateTablePartition:
+		args, err := model.GetFinishedTruncateTableArgs(historyJob)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		groupIDs = args.OldAffinityGroupIDs
+	case model.ActionMViewRefreshOutOfPlaceCutover:
+		if !historyJob.IsCancelled() {
+			args, err := model.GetRefreshMaterializedViewCompleteOutOfPlaceCutoverArgs(historyJob)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			groupIDs = args.OldAffinityGroupIDs
+		}
+	}
+
+	if len(groupIDs) == 0 {
+		return nil
+	}
+
+	for i := 0; i < len(groupIDs); i += maxGCAffinityGroupBatchSize {
+		end := min(i+maxGCAffinityGroupBatchSize, len(groupIDs))
+		if err := affinity.DeleteGroups(ctx, groupIDs[i:end]); err != nil {
+			if affinity.IsUnsupportedError(err) {
+				logutil.Logger(ctx).Info("skip gc affinity groups because PD does not support affinity API",
+					zap.String("category", "gc worker"),
+					zap.Int64("jobID", dr.JobID),
+					zap.Error(err))
+				return nil
+			}
+			return errors.Trace(err)
+		}
+	}
+
+	return nil
+}
+
 func getGCRules(ids []int64, rules map[string]*label.Rule) []string {
 	oldRange := make(map[string]struct{})
 	for _, id := range ids {
@@ -1978,7 +2152,7 @@ func RunDistributedGCJob(ctx context.Context, regionLockResolver tikv.RegionLock
 		regionLockResolver:   regionLockResolver,
 	}
 
-	newTxnSafePoint, err := gcWorker.advanceTxnSafePoint(ctx, safePoint)
+	newTxnSafePoint, _, err := gcWorker.advanceTxnSafePoint(ctx, safePoint)
 	if err != nil {
 		return errors.Trace(err)
 	}

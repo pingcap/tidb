@@ -107,6 +107,254 @@ func TestDropSchemaArgs(t *testing.T) {
 	}
 }
 
+func TestOldAffinityGroupIDsArgsCompat(t *testing.T) {
+	t.Run("DropSchemaArgs", func(t *testing.T) {
+		inArgs := &DropSchemaArgs{
+			AllDroppedTableIDs:  []int64{10, 11},
+			OldAffinityGroupIDs: []string{"_tidb_t_10", "_tidb_t_11"},
+		}
+		for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+			j := &Job{}
+			require.NoError(t, j.Decode(getFinishedJobBytes(t, inArgs, v, ActionDropSchema)))
+			args, err := GetFinishedDropSchemaArgs(j)
+			require.NoError(t, err)
+			require.Equal(t, inArgs.AllDroppedTableIDs, args.AllDroppedTableIDs)
+			require.Equal(t, inArgs.OldAffinityGroupIDs, args.OldAffinityGroupIDs)
+		}
+
+		// Non-affinity V1 encoding must remain byte-identical to legacy 1-element raw args.
+		nonAff := &DropSchemaArgs{AllDroppedTableIDs: []int64{10, 11}}
+		jNonAff := &Job{}
+		require.NoError(t, jNonAff.Decode(getFinishedJobBytes(t, nonAff, JobVersion1, ActionDropSchema)))
+		require.JSONEq(t, `[[10,11]]`, string(jNonAff.RawArgs))
+		args, err := GetFinishedDropSchemaArgs(jNonAff)
+		require.NoError(t, err)
+		require.Equal(t, []int64{10, 11}, args.AllDroppedTableIDs)
+		require.Empty(t, args.OldAffinityGroupIDs)
+
+		legacyV2 := &Job{Version: JobVersion2, Type: ActionDropSchema, RawArgs: json.RawMessage(`{"all_dropped_table_ids":[10,11]}`)}
+		args, err = GetFinishedDropSchemaArgs(legacyV2)
+		require.NoError(t, err)
+		require.Equal(t, []int64{10, 11}, args.AllDroppedTableIDs)
+		require.Empty(t, args.OldAffinityGroupIDs)
+	})
+
+	t.Run("DropTableArgs", func(t *testing.T) {
+		inArgs := &DropTableArgs{
+			StartKey:            []byte("k"),
+			OldPartitionIDs:     []int64{21, 22},
+			OldRuleIDs:          []string{"r1"},
+			OldAffinityGroupIDs: []string{"_tidb_pt_20_p21", "_tidb_pt_20_p22"},
+		}
+		for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+			j := &Job{}
+			require.NoError(t, j.Decode(getFinishedJobBytes(t, inArgs, v, ActionDropTable)))
+			args, err := GetFinishedDropTableArgs(j)
+			require.NoError(t, err)
+			require.Equal(t, inArgs.StartKey, args.StartKey)
+			require.Equal(t, inArgs.OldPartitionIDs, args.OldPartitionIDs)
+			require.Equal(t, inArgs.OldRuleIDs, args.OldRuleIDs)
+			require.Equal(t, inArgs.OldAffinityGroupIDs, args.OldAffinityGroupIDs)
+		}
+
+		// Non-affinity V1 encoding must remain byte-identical to legacy 3-element raw args.
+		nonAff := &DropTableArgs{StartKey: []byte("k"), OldPartitionIDs: []int64{21, 22}, OldRuleIDs: []string{"r1"}}
+		jNonAff := &Job{}
+		require.NoError(t, jNonAff.Decode(getFinishedJobBytes(t, nonAff, JobVersion1, ActionDropTable)))
+		var rawSlots []json.RawMessage
+		require.NoError(t, json.Unmarshal(jNonAff.RawArgs, &rawSlots))
+		require.Len(t, rawSlots, 3)
+
+		legacyV2 := &Job{Version: JobVersion2, Type: ActionDropTable, RawArgs: json.RawMessage(`{"old_partition_ids":[21,22]}`)}
+		args, err := GetFinishedDropTableArgs(legacyV2)
+		require.NoError(t, err)
+		require.Equal(t, []int64{21, 22}, args.OldPartitionIDs)
+		require.Empty(t, args.OldAffinityGroupIDs)
+	})
+
+	t.Run("TruncateTableArgs", func(t *testing.T) {
+		for _, tp := range []ActionType{ActionTruncateTable, ActionTruncateTablePartition} {
+			inArgs := &TruncateTableArgs{
+				OldPartitionIDs:        []int64{31},
+				NewPartitionIDs:        []int64{32},
+				AffinityGroupsPrepared: true,
+				OldAffinityGroupIDs:    []string{"_tidb_pt_30_p31"},
+			}
+			for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+				j := &Job{}
+				require.NoError(t, j.Decode(getFinishedJobBytes(t, inArgs, v, tp)))
+				args, err := GetFinishedTruncateTableArgs(j)
+				require.NoError(t, err)
+				require.Equal(t, inArgs.OldPartitionIDs, args.OldPartitionIDs)
+				require.Equal(t, inArgs.OldAffinityGroupIDs, args.OldAffinityGroupIDs)
+				if tp == ActionTruncateTablePartition {
+					require.Equal(t, inArgs.NewPartitionIDs, args.NewPartitionIDs)
+					require.True(t, args.AffinityGroupsPrepared)
+				}
+
+				if v == JobVersion1 && tp == ActionTruncateTablePartition {
+					// V1 finished ActionTruncateTablePartition puts:
+					// slot 1 = OldPartitionIDs ([]int64), slot 2 = NewPartitionIDs ([]int64),
+					// slot 3 = AffinityGroupsPrepared (bool, matching #72677),
+					// slot 4 = OldAffinityGroupIDs ([]string).
+					jForDelRange := &Job{}
+					require.NoError(t, jForDelRange.Decode(getFinishedJobBytes(t, inArgs, JobVersion1, tp)))
+					var rawSlots []json.RawMessage
+					require.NoError(t, json.Unmarshal(jForDelRange.RawArgs, &rawSlots))
+					require.Len(t, rawSlots, 4)
+					var slot3 bool
+					require.NoError(t, json.Unmarshal(rawSlots[2], &slot3))
+					require.True(t, slot3)
+
+					// Current 4-slot GetTruncateTableArgs decoder succeeds.
+					drArgs, drErr := GetTruncateTableArgs(jForDelRange)
+					require.NoError(t, drErr)
+					require.Equal(t, []int64{31}, drArgs.OldPartitionIDs)
+					require.Equal(t, []int64{32}, drArgs.NewPartitionIDs)
+					require.True(t, drArgs.AffinityGroupsPrepared)
+					require.Equal(t, []string{"_tidb_pt_30_p31"}, drArgs.OldAffinityGroupIDs)
+
+					// Simulated #72677 3-slot decoder (&OldPartitionIDs, &NewPartitionIDs, &AffinityGroupsPrepared)
+					// must decode without error on slot 3.
+					jFor72677 := &Job{}
+					require.NoError(t, jFor72677.Decode(getFinishedJobBytes(t, inArgs, JobVersion1, tp)))
+					var (
+						oldPIDs  []int64
+						newPIDs  []int64
+						prepared bool
+					)
+					require.NoError(t, jFor72677.decodeArgs(&oldPIDs, &newPIDs, &prepared))
+					require.Equal(t, []int64{31}, oldPIDs)
+					require.Equal(t, []int64{32}, newPIDs)
+					require.True(t, prepared)
+				}
+			}
+
+			// #72677 V1 payload with AffinityGroupsPrepared=true and no OldAffinityGroupIDs
+			// uses 3 slots in both submission and finished encodings.
+			if tp == ActionTruncateTablePartition {
+				prepOnly := &TruncateTableArgs{
+					OldPartitionIDs:        []int64{31},
+					NewPartitionIDs:        []int64{32},
+					AffinityGroupsPrepared: true,
+				}
+				jSub := &Job{}
+				require.NoError(t, jSub.Decode(getJobBytes(t, prepOnly, JobVersion1, tp)))
+				var subSlots []json.RawMessage
+				require.NoError(t, json.Unmarshal(jSub.RawArgs, &subSlots))
+				require.Len(t, subSlots, 3)
+				subArgs, err := GetTruncateTableArgs(jSub)
+				require.NoError(t, err)
+				require.Equal(t, []int64{31}, subArgs.OldPartitionIDs)
+				require.Equal(t, []int64{32}, subArgs.NewPartitionIDs)
+				require.True(t, subArgs.AffinityGroupsPrepared)
+				require.Empty(t, subArgs.OldAffinityGroupIDs)
+
+				jFin := &Job{}
+				require.NoError(t, jFin.Decode(getFinishedJobBytes(t, prepOnly, JobVersion1, tp)))
+				var finSlots []json.RawMessage
+				require.NoError(t, json.Unmarshal(jFin.RawArgs, &finSlots))
+				require.Len(t, finSlots, 3)
+				finArgs, err := GetFinishedTruncateTableArgs(jFin)
+				require.NoError(t, err)
+				require.Equal(t, []int64{31}, finArgs.OldPartitionIDs)
+				require.Equal(t, []int64{32}, finArgs.NewPartitionIDs)
+				require.True(t, finArgs.AffinityGroupsPrepared)
+				require.Empty(t, finArgs.OldAffinityGroupIDs)
+			}
+
+			// Non-affinity V1 encoding must remain byte-identical to legacy slot counts.
+			nonAff := &TruncateTableArgs{OldPartitionIDs: []int64{31}}
+			jNonAff := &Job{}
+			require.NoError(t, jNonAff.Decode(getFinishedJobBytes(t, nonAff, JobVersion1, tp)))
+			var rawSlots []json.RawMessage
+			require.NoError(t, json.Unmarshal(jNonAff.RawArgs, &rawSlots))
+			if tp == ActionTruncateTable {
+				require.Len(t, rawSlots, 2)
+			} else {
+				require.Len(t, rawSlots, 1)
+			}
+
+			legacyV2 := &Job{Version: JobVersion2, Type: tp, RawArgs: json.RawMessage(`{"old_partition_ids":[31]}`)}
+			args, err := GetFinishedTruncateTableArgs(legacyV2)
+			require.NoError(t, err)
+			require.Equal(t, []int64{31}, args.OldPartitionIDs)
+			require.Empty(t, args.OldAffinityGroupIDs)
+		}
+	})
+
+	t.Run("RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs", func(t *testing.T) {
+		for _, oldHasAffinity := range []bool{false, true} {
+			inArgs := &RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs{
+				OldMViewID:          50,
+				ShadowTableID:       51,
+				BuildReadTSO:        100,
+				OldMViewHasAffinity: oldHasAffinity,
+				OldAffinityGroupIDs: []string{"_tidb_t_50"},
+			}
+			for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+				j := &Job{}
+				require.NoError(t, j.Decode(getJobBytes(t, inArgs, v, ActionMViewRefreshOutOfPlaceCutover)))
+				if v == JobVersion1 {
+					var rawSlots []json.RawMessage
+					require.NoError(t, json.Unmarshal(j.RawArgs, &rawSlots))
+					require.Len(t, rawSlots, 13)
+					var slot12 bool
+					require.NoError(t, json.Unmarshal(rawSlots[11], &slot12))
+					require.Equal(t, oldHasAffinity, slot12)
+				}
+				args, err := GetRefreshMaterializedViewCompleteOutOfPlaceCutoverArgs(j)
+				require.NoError(t, err)
+				require.Equal(t, inArgs.OldMViewID, args.OldMViewID)
+				require.Equal(t, oldHasAffinity, args.OldMViewHasAffinity)
+				require.Equal(t, inArgs.OldAffinityGroupIDs, args.OldAffinityGroupIDs)
+			}
+		}
+
+		// PR #73720 12-slot V1 payload (bool at slot 12, no OldAffinityGroupIDs at slot 13).
+		slot12Only := &RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs{
+			OldMViewID:          50,
+			ShadowTableID:       51,
+			BuildReadTSO:        100,
+			OldMViewHasAffinity: true,
+		}
+		jSlot12 := &Job{}
+		require.NoError(t, jSlot12.Decode(getJobBytes(t, slot12Only, JobVersion1, ActionMViewRefreshOutOfPlaceCutover)))
+		var rawSlots12 []json.RawMessage
+		require.NoError(t, json.Unmarshal(jSlot12.RawArgs, &rawSlots12))
+		require.Len(t, rawSlots12, 12)
+		args12, err := GetRefreshMaterializedViewCompleteOutOfPlaceCutoverArgs(jSlot12)
+		require.NoError(t, err)
+		require.Equal(t, int64(50), args12.OldMViewID)
+		require.True(t, args12.OldMViewHasAffinity)
+		require.Empty(t, args12.OldAffinityGroupIDs)
+
+		// Non-affinity V1 encoding must remain byte-identical (11 slots).
+		nonAff := &RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs{
+			OldMViewID:    50,
+			ShadowTableID: 51,
+			BuildReadTSO:  100,
+		}
+		jNonAff := &Job{}
+		require.NoError(t, jNonAff.Decode(getJobBytes(t, nonAff, JobVersion1, ActionMViewRefreshOutOfPlaceCutover)))
+		var rawSlots []json.RawMessage
+		require.NoError(t, json.Unmarshal(jNonAff.RawArgs, &rawSlots))
+		require.Len(t, rawSlots, 11)
+		args11, err := GetRefreshMaterializedViewCompleteOutOfPlaceCutoverArgs(jNonAff)
+		require.NoError(t, err)
+		require.Equal(t, int64(50), args11.OldMViewID)
+		require.False(t, args11.OldMViewHasAffinity)
+		require.Empty(t, args11.OldAffinityGroupIDs)
+
+		legacyV2 := &Job{Version: JobVersion2, Type: ActionMViewRefreshOutOfPlaceCutover, RawArgs: json.RawMessage(`{"old_mview_id":50,"shadow_table_id":51,"build_read_tso":100}`)}
+		args, err := GetRefreshMaterializedViewCompleteOutOfPlaceCutoverArgs(legacyV2)
+		require.NoError(t, err)
+		require.Equal(t, int64(50), args.OldMViewID)
+		require.False(t, args.OldMViewHasAffinity)
+		require.Empty(t, args.OldAffinityGroupIDs)
+	})
+}
+
 func TestModifySchemaArgs(t *testing.T) {
 	inArgs := &ModifySchemaArgs{
 		ToCharset: "aa",

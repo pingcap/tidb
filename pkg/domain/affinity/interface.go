@@ -16,7 +16,9 @@ package affinity
 
 import (
 	"context"
+	stderrors "errors"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -89,7 +91,7 @@ func retryTransientError(ctx context.Context, operation func(context.Context) er
 }
 
 func isRetryableError(err error) bool {
-	if err == nil {
+	if err == nil || stderrors.Is(err, ErrPDNotSupportAffinity) {
 		return false
 	}
 	if _, ok := err.(*affinityGroupCreateConflict); ok {
@@ -102,8 +104,11 @@ func isRetryableError(err error) bool {
 // DeleteGroups removes affinity groups in PD with force=true. It succeeds if
 // the groups are already absent or PD does not support affinity groups.
 func DeleteGroups(ctx context.Context, ids []string) error {
-	if len(ids) == 0 {
+	if len(ids) == 0 || manager == nil {
 		return nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
 	}
 	return manager.DeleteAffinityGroups(ctx, ids)
 }
@@ -143,10 +148,45 @@ func DeleteGroupsWithRetry(ctx context.Context, ids []string) error {
 
 // GetGroups gets affinity groups by their IDs.
 func GetGroups(ctx context.Context, ids []string) (map[string]*pdhttp.AffinityGroupState, error) {
-	if len(ids) == 0 {
+	if len(ids) == 0 || manager == nil {
 		return make(map[string]*pdhttp.AffinityGroupState), nil
 	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	return manager.GetAffinityGroups(ctx, ids)
+}
+
+// GetAllGroups gets all affinity groups from PD.
+func GetAllGroups(ctx context.Context) (map[string]*pdhttp.AffinityGroupState, error) {
+	if manager == nil {
+		return make(map[string]*pdhttp.AffinityGroupState), nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return manager.GetAllAffinityGroups(ctx)
+}
+
+// IsUnsupportedError reports whether err indicates that PD does not support
+// the affinity group HTTP API (for example HTTP 404/405/501 on an older PD).
+// Transient 5xx errors and network/timeout errors return false.
+func IsUnsupportedError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if stderrors.Is(err, ErrPDNotSupportAffinity) {
+		return true
+	}
+	if code, ok := extractPDHTTPStatusCode(err); ok {
+		return code == http.StatusNotFound ||
+			code == http.StatusMethodNotAllowed ||
+			code == http.StatusNotImplemented
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "404 page not found") ||
+		strings.Contains(msg, "method not allowed") ||
+		strings.Contains(msg, "not implemented")
 }
 
 // GetGroupStates gets the requested affinity group states from PD for SHOW AFFINITY.

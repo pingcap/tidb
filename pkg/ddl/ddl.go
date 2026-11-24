@@ -277,6 +277,7 @@ type ddl struct {
 	minJobIDRefresher             *systable.MinJobIDRefresher
 	eventPublishStore             notifier.Store
 	storageClassTransitionManager *storageClassTransitionManager
+	affinityReconciler            *affinityReconciler
 
 	executor     *executor
 	jobSubmitter *JobSubmitter
@@ -805,6 +806,7 @@ func newDDL(ctx context.Context, options ...Option) (*ddl, *executor) {
 		eventPublishStore: opt.EventPublishStore,
 	}
 	d.storageClassTransitionManager = newStorageClassTransitionManager(d)
+	d.affinityReconciler = newAffinityReconciler(d)
 
 	taskexecutor.RegisterTaskType(proto.Backfill,
 		func(ctx context.Context, task *proto.Task, param taskexecutor.Param) taskexecutor.TaskExecutor {

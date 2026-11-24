@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
-	"github.com/pingcap/tidb/pkg/domain/affinity"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -75,21 +74,6 @@ func (w *worker) cleanupMViewOutOfPlaceCutoverAfterCommit(jobCtx *jobContext, jo
 			zap.Int64("tableID", args.OldMViewID),
 			zap.Error(err),
 		)
-	}
-
-	if args.OldMViewHasAffinity {
-		// Stage-1 MVs are non-partitioned. Post-commit cleanup must not use
-		// the step context, which may already be canceled.
-		ctx, cancel := context.WithTimeout(jobCtx.ctx, affinityCleanupTimeout)
-		defer cancel()
-		groupID := GetTableAffinityGroupID(jobCtx.store.GetCodec(), args.OldMViewID)
-		if err := affinity.DeleteGroupsWithRetry(ctx, []string{groupID}); err != nil {
-			logutil.DDLLogger().Warn(
-				"failed to delete old materialized view affinity group after cutover",
-				zap.Int64("tableID", args.OldMViewID),
-				zap.Error(err),
-			)
-		}
 	}
 
 	// Stage-1 MVs and MLogs are non-partitioned. Retain their progress until
@@ -243,8 +227,16 @@ func (w *worker) onDropTableOrView(jobCtx *jobContext, job *model.Job) (ver int6
 			}
 		}
 
-		if err := deleteTableAffinityGroupsInPD(jobCtx, tblInfo, nil); err != nil {
-			logutil.DDLLogger().Error("failed to delete affinity groups from PD", zap.Error(err), zap.Int64("tableID", tblInfo.ID))
+		// Keep affinity groups until delete-range GC so flashback/recover can retain
+		// the dropped table's affinity groups. doGCAffinityGroups removes them later.
+		var oldAffinityGroupIDs []string
+		if tblInfo.Affinity != nil {
+			var affinityErr error
+			oldAffinityGroupIDs, affinityErr = collectAffinityGroupIDsForTable(jobCtx.store.GetCodec(), tblInfo, nil)
+			if affinityErr != nil {
+				logutil.DDLLogger().Warn("failed to collect affinity group IDs for drop table GC",
+					zap.Error(affinityErr), zap.Int64("tableID", tblInfo.ID))
+			}
 		}
 
 		// Clean up masking policies associated with the dropped table.
@@ -255,11 +247,14 @@ func (w *worker) onDropTableOrView(jobCtx *jobContext, job *model.Job) (ver int6
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
 		startKey := tablecodec.EncodeTablePrefix(job.TableID)
-		job.FillFinishedArgs(&model.DropTableArgs{
+		dropArgs := &model.DropTableArgs{
 			StartKey:        startKey,
 			OldPartitionIDs: oldIDs,
 			OldRuleIDs:      ruleIDs,
-		})
+		}
+		job.FillFinishedArgs(dropArgs)
+		dropArgs.OldAffinityGroupIDs = boundOldAffinityGroupIDsForJob(job, oldAffinityGroupIDs)
+		job.FillFinishedArgs(dropArgs)
 	default:
 		return ver, errors.Trace(dbterror.ErrInvalidDDLState.GenWithStackByArgs("table", tblInfo.State))
 	}
@@ -938,9 +933,8 @@ func (w *worker) onTruncateTable(jobCtx *jobContext, job *model.Job) (ver int64,
 			return ver, errors.Trace(err)
 		}
 	}
-	// Keep the old table's affinity groups until this step commits. A later
-	// failure can still cancel the job and restore the old table metadata.
-	// cleanupTruncateTableAffinityGroupsAfterCommit deletes them afterwards.
+	// Keep the old table's affinity groups until delete-range GC removes them
+	// after the GC safe point, so flashback/recover can retain them.
 
 	ver, err = updateSchemaVersion(jobCtx, job)
 	if err != nil {
@@ -952,34 +946,25 @@ func (w *worker) onTruncateTable(jobCtx *jobContext, job *model.Job) (ver int64,
 		return ver, errors.Trace(err)
 	}
 
+	var oldAffinityGroupIDs []string
+	if oldTblInfo.Affinity != nil {
+		var affinityErr error
+		oldAffinityGroupIDs, affinityErr = collectAffinityGroupIDsForTable(jobCtx.store.GetCodec(), oldTblInfo, nil)
+		if affinityErr != nil {
+			logutil.DDLLogger().Warn("failed to collect old affinity group IDs for truncate table GC",
+				zap.Error(affinityErr), zap.Int64("tableID", oldTblInfo.ID))
+		}
+	}
+
 	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 	// see truncateTableByReassignPartitionIDs for why they might change.
 	args.OldPartitionIDs = oldPartitionIDs
 	args.NewPartitionIDs = newPartitionIDs
+	args.OldAffinityGroupIDs = nil
+	job.FillFinishedArgs(args)
+	args.OldAffinityGroupIDs = boundOldAffinityGroupIDsForJob(job, oldAffinityGroupIDs)
 	job.FillFinishedArgs(args)
 	return ver, nil
-}
-
-// cleanupTruncateTableAffinityGroupsAfterCommit deletes the affinity groups of
-// the table replaced by a TRUNCATE TABLE job that has committed as done. It is
-// best effort: a failure leaves an unused group on the old table ID.
-func cleanupTruncateTableAffinityGroupsAfterCommit(jobCtx *jobContext, job *model.Job) {
-	newTblInfo := job.BinlogInfo.TableInfo
-	if newTblInfo == nil || newTblInfo.Affinity == nil {
-		return
-	}
-	args, err := model.GetFinishedTruncateTableArgs(job)
-	if err != nil {
-		logutil.DDLLogger().Warn("failed to decode truncate table args for post-commit affinity cleanup",
-			zap.Int64("jobID", job.ID), zap.Error(err))
-		return
-	}
-	// TRUNCATE TABLE keeps the affinity level, and job.TableID is the old table ID.
-	oldTblInfo := &model.TableInfo{ID: job.TableID, Name: newTblInfo.Name, Affinity: newTblInfo.Affinity}
-	oldDefs := partitionDefinitionsFromIDs(args.OldPartitionIDs)
-	if err := deleteTableAffinityGroupsWithTimeout(jobCtx, oldTblInfo, oldDefs); err != nil {
-		logutil.DDLLogger().Warn("failed to delete old affinity groups from PD", zap.Error(err), zap.Int64("tableID", oldTblInfo.ID))
-	}
 }
 
 func (w *worker) truncateTTLTableInExternalWorkload(
@@ -2612,9 +2597,26 @@ func (w *worker) onRefreshMaterializedViewCompleteOutOfPlaceCutover(jobCtx *jobC
 	if err := asyncNotifyEvent(jobCtx, notifier.NewMViewRefreshOutOfPlaceCutoverEvent(newMViewTblInfo, oldMViewTblInfo, newMLog, oldMLog), job, noSubJob, w.sess); err != nil {
 		return ver, errors.Trace(err)
 	}
-	args.OldMViewHasAffinity = oldMViewTblInfo.Affinity != nil
-	job.FillArgs(args)
+	oldAffinityGroupIDSet := make(map[string]struct{})
+	for _, retired := range []*model.TableInfo{oldMViewTblInfo, oldMLog} {
+		if retired == nil || retired.Affinity == nil {
+			continue
+		}
+		if _, affinityErr := collectTableAffinityGroupIDsCapped(jobCtx.store.GetCodec(), retired, oldAffinityGroupIDSet, maxPersistedAffinityGroupIDs); affinityErr != nil {
+			logutil.DDLLogger().Warn("failed to collect affinity group IDs for materialized view cutover GC",
+				zap.Error(affinityErr), zap.Int64("tableID", retired.ID))
+		}
+	}
+	args.OldMViewHasAffinity = oldMViewTblInfo != nil && oldMViewTblInfo.Affinity != nil
 	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, newMViewTblInfo)
+	if len(oldAffinityGroupIDSet) > 0 {
+		args.OldAffinityGroupIDs = nil
+		job.FillArgs(args)
+		args.OldAffinityGroupIDs = boundOldAffinityGroupIDsForJob(job, sortedAffinityGroupIDs(oldAffinityGroupIDSet))
+		job.FillArgs(args)
+	} else if args.OldMViewHasAffinity {
+		job.FillArgs(args)
+	}
 	return ver, nil
 }
 
