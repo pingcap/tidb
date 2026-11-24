@@ -26496,7 +26496,12 @@ fn a_pessimistic_retry_does_not_compile_the_statement_again() {
     other.node_conn().execute_write("USE test").expect("use").expect("use");
     rows(&mut session, "CREATE TABLE rwarn (id int primary key, v int, key iv(v))");
     rows(&mut session, "INSERT INTO rwarn VALUES (1, 10)");
-    for retry in [false, true] {
+    for (statement, retry) in [
+        ("UPDATE /*+ use_index(rwarn, nonexist) */ rwarn SET v = 12 WHERE id = 1", false),
+        ("UPDATE /*+ use_index(rwarn, nonexist) */ rwarn SET v = 12 WHERE id = 1", true),
+        ("SELECT /*+ use_index(rwarn, nonexist) */ * FROM rwarn WHERE id = 1 FOR UPDATE", false),
+        ("SELECT /*+ use_index(rwarn, nonexist) */ * FROM rwarn WHERE id = 1 FOR UPDATE", true),
+    ] {
         session
             .node_conn()
             .control_transaction("BEGIN PESSIMISTIC")
@@ -26508,17 +26513,21 @@ fn a_pessimistic_retry_does_not_compile_the_statement_again() {
                 .expect("conflicting write")
                 .expect("write result");
         }
-        session
-            .node_conn()
-            .execute_write("UPDATE /*+ use_index(rwarn, nonexist) */ rwarn SET v = 12 WHERE id = 1")
-            .expect("the update runs")
-            .expect("write result");
+        if statement.starts_with("SELECT") {
+            rows(&mut session, statement);
+        } else {
+            session
+                .node_conn()
+                .execute_write(statement)
+                .expect("the update runs")
+                .expect("write result");
+        }
         let expected: &[[&str; 3]] = if retry {
             &[]
         } else {
             &[["Warning", "1176", "Key 'nonexist' doesn't exist in table 'rwarn'"]]
         };
-        assert_eq!(displayed(rows(&mut session, "SHOW WARNINGS")), expected, "retry={retry}");
+        assert_eq!(displayed(rows(&mut session, "SHOW WARNINGS")), expected, "{statement} retry={retry}");
         session
             .node_conn()
             .control_transaction("ROLLBACK")

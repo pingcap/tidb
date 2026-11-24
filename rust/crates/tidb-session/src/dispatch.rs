@@ -262,6 +262,25 @@ pub(crate) struct CompiledDml {
     warnings_start: usize,
 }
 
+/// A locking SELECT the funnel compiled ([`Session::compile_locking_query`]):
+/// the statement, its database, its final plan, the statement's hints, and
+/// where its warnings began. Go `ExecStmt` for a `SELECT ... FOR UPDATE`,
+/// whose pessimistic retry opens the same plan again.
+pub(crate) struct CompiledQuery {
+    stmt: Stmt,
+    current_db: String,
+    physical: tidb_planner_core_operator_physicalop::PhysicalPlan,
+    stmt_hints: tidb_hint::StmtHints,
+    warnings_start: usize,
+}
+
+/// The statements whose compiled form outlives an execution for a
+/// pessimistic retry (Go `ExecStmt`).
+pub(crate) enum ExecStmt {
+    Dml(CompiledDml),
+    Query(CompiledQuery),
+}
+
 enum CompiledDmlPlan {
     Insert(tidb_executor::driver::CompiledInsert),
     Update(tidb_planner_core_operator_physicalop::PhysicalPlan),
@@ -1849,9 +1868,85 @@ impl Session {
             _ => unreachable!("a compiled DML statement and its plan agree"),
         };
         if CompileDepth::depth() <= 1 {
-            self.exec_stmt = Some(Box::new(compiled));
+            self.exec_stmt = Some(Box::new(ExecStmt::Dml(compiled)));
         }
         output
+    }
+
+    /// Go `Compiler.Compile` for a locking SELECT (Go
+    /// `ExecStmt.isSelectForUpdate`): its final plan over the statement's
+    /// context, which the first open runs under.
+    fn compile_locking_query(
+        &mut self,
+        stmt: Stmt,
+        warnings_start: usize,
+    ) -> Result<(CompiledQuery, tidb_sessionctx::StmtContext), DriverError> {
+        let current_db = self.vars.current_db.clone();
+        let ctx = self.with_plan_privilege_check(self.statement_context_for_stmt(&stmt, false), &stmt)?;
+        let Stmt::Query(query) = &stmt else {
+            unreachable!("a locking SELECT")
+        };
+        let physical = self.with_catalog_retrieving(&ctx, |catalog| {
+            tidb_executor::driver::compile_query_plan(query, catalog, &current_db, &ctx)
+        })?;
+        let stmt_hints = self.stmt_hints.clone();
+        Ok((
+            CompiledQuery {
+                stmt,
+                current_db,
+                physical,
+                stmt_hints,
+                warnings_start,
+            },
+            ctx,
+        ))
+    }
+
+    /// Go `ExecStmt.Exec` for a compiled locking SELECT: the executors over
+    /// the final plan and its opened record set, under the compile's context
+    /// the first time and a fresh one on a retry. A top-level statement keeps
+    /// its compiled form for a pessimistic retry.
+    fn open_compiled_locking_query(
+        &mut self,
+        mut compiled: CompiledQuery,
+        ctx: Option<tidb_sessionctx::StmtContext>,
+    ) -> Result<PendingQuery, DriverError> {
+        let ctx = match ctx {
+            Some(ctx) => ctx,
+            None => self.with_plan_privilege_check(
+                self.statement_context_for_stmt(&compiled.stmt, false),
+                &compiled.stmt,
+            )?,
+        };
+        let CompiledQuery { stmt, physical, .. } = &mut compiled;
+        let Stmt::Query(query) = &*stmt else {
+            unreachable!("a locking SELECT")
+        };
+        let opened = self.with_catalog_retrieving(&ctx, |catalog| {
+            tidb_executor::driver::open_compiled_query(query, physical, catalog, &ctx)
+        });
+        if CompileDepth::depth() <= 1 {
+            self.exec_stmt = Some(Box::new(ExecStmt::Query(compiled)));
+        }
+        Ok(PendingQuery::new(opened?, ctx))
+    }
+
+    /// Go `ExecStmt.handlePessimisticLockError`'s re-execution of a compiled
+    /// locking SELECT: `StmtCtx.ResetForRetry`, then the same plan opened
+    /// again, with no compile.
+    pub(crate) fn open_compiled_query_retry(
+        &mut self,
+        compiled: Box<CompiledQuery>,
+        sql: &str,
+    ) -> Result<crate::OpenedStatement, DriverError> {
+        let result = self.begin_statement_execution(sql).and_then(|()| {
+            self.warnings.truncate(compiled.warnings_start);
+            self.statement_kind = statement_kind_of(&compiled.stmt);
+            self.stmt_hints = compiled.stmt_hints.clone();
+            self.open_compiled_locking_query(*compiled, None)
+                .map(PendingExecution::Query)
+        });
+        self.return_opened_record_set(result)
     }
 
     /// The statement [`Self::exec_compiled_dml`] kept, when the statement is
@@ -1862,7 +1957,7 @@ impl Session {
         self.pessimistic_retry = false;
     }
 
-    pub(crate) fn take_retry_exec_stmt(&mut self) -> Option<Box<CompiledDml>> {
+    pub(crate) fn take_retry_exec_stmt(&mut self) -> Option<Box<ExecStmt>> {
         let retry = std::mem::take(&mut self.pessimistic_retry);
         self.exec_stmt.take().filter(|_| retry)
     }
@@ -1873,14 +1968,14 @@ impl Session {
     /// with no compile.
     pub(crate) fn exec_compiled_dml_retry(
         &mut self,
-        compiled: Box<CompiledDml>,
+        compiled: CompiledDml,
         sql: &str,
     ) -> Result<StmtOutput, DriverError> {
         self.run_with_columns_using(sql, false, move |session| {
             session.warnings.truncate(compiled.warnings_start);
             session.statement_kind = statement_kind_of(&compiled.stmt);
             session.stmt_hints = compiled.stmt_hints.clone();
-            let output = session.exec_compiled_dml(*compiled, None)?;
+            let output = session.exec_compiled_dml(compiled, None)?;
             // Go `handleNoDelayExecutor`'s `TryNewCacheChunk`.
             let _ = session.statement_pool_chunk(&[]);
             Ok(output)
@@ -2184,6 +2279,19 @@ impl Session {
             return self
                 .exec_compiled_dml(compiled, Some(ctx))
                 .map(PendingExecution::Complete);
+        }
+        // The same for a locking SELECT (Go `isSelectForUpdate`), the query a
+        // pessimistic retry re-opens.
+        if select_plan.is_none()
+            && non_prepared.is_none()
+            && self.statement_read_shape_bound(&stmt) == tidb_executor::access_path::StatementReadShape::LockingRead
+            && matches!(&stmt, Stmt::Query(query) if matches!(query.as_ref(),
+                tidb_ast::QueryStmt::Select(select) if select.into_outfile.is_none()))
+        {
+            let (compiled, ctx) = self.compile_locking_query(stmt, warnings_start)?;
+            return self
+                .open_compiled_locking_query(compiled, Some(ctx))
+                .map(PendingExecution::Query);
         }
         // Go raises ErrNoDB where an unqualified NAME is resolved, not for
         // every statement: `SELECT 1` and `SELECT DATABASE()` both run with

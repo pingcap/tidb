@@ -549,7 +549,7 @@ pub struct Session {
     stmt_hints: tidb_hint::StmtHints,
     /// Go `ExecStmt` of the running INSERT / UPDATE / DELETE, kept after its
     /// execution for a pessimistic retry ([`Session::take_retry_exec_stmt`]).
-    exec_stmt: Option<Box<crate::dispatch::CompiledDml>>,
+    exec_stmt: Option<Box<crate::dispatch::ExecStmt>>,
     /// The running statement is being retried after a pessimistic lock
     /// conflict (Go `handlePessimisticLockError`), not replayed by
     /// `session.retry`: its compiled plan executes again.

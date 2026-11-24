@@ -971,9 +971,11 @@ impl<'s> ClusterServerSession<'s> {
             shape,
             &resource_group,
             is_dml,
-            move |session| match match session.take_retry_exec_stmt() {
-                Some(compiled) => session.exec_compiled_dml_retry(compiled, &owned),
-                None => session.exec_statement_parsed(stmt.clone(), &owned),
+            move |session| match match session.take_retry_exec_stmt().map(|kept| *kept) {
+                Some(crate::dispatch::ExecStmt::Dml(compiled)) => {
+                    session.exec_compiled_dml_retry(compiled, &owned)
+                }
+                _ => session.exec_statement_parsed(stmt.clone(), &owned),
             }
             .map_err(sql_query_error)?
             {
@@ -2881,10 +2883,17 @@ impl<'s> ClusterServerSession<'s> {
         self.session.on_stmt_start(stmt);
         self.lifecycle().on_provider_stmt_start(stmt)?;
         let telemetry = self.session.statement_telemetry();
+        // Go `ExecuteStmt` compiles a locking SELECT once; its
+        // `handlePessimisticLockError` re-opens the compiled plan.
+        self.session.forget_exec_stmt();
         let result = self.open_statement_result(shape, &resource_group, |session| {
-            session
-                .open_record_set_parsed(stmt.clone(), sql)
-                .map_err(map_error)
+            match session.take_retry_exec_stmt().map(|kept| *kept) {
+                Some(crate::dispatch::ExecStmt::Query(compiled)) => {
+                    session.open_compiled_query_retry(Box::new(compiled), sql)
+                }
+                _ => session.open_record_set_parsed(stmt.clone(), sql),
+            }
+            .map_err(map_error)
         });
         // Go `runStmt`'s `updateTelemetryMetric` after `Exec` opened the
         // record set (once, whatever retries it took), and `ExecuteStmt`'s
