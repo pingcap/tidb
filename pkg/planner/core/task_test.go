@@ -272,7 +272,7 @@ func TestSkipScanCandidateProperties(t *testing.T) {
 		require.Equal(t, cost(normal), cost(skip))
 	})
 
-	t.Run("estimated skip rows do not trigger the low estimate penalty", func(t *testing.T) {
+	t.Run("skip scan uses the same low estimate penalty", func(t *testing.T) {
 		ctx := mock.NewContext()
 		ctx.GetSessionVars().SetAllowPreferRangeScan(true)
 		hists := statistics.NewHistColl(0, 5000, 10, 1, 0)
@@ -281,9 +281,10 @@ func TestSkipScanCandidateProperties(t *testing.T) {
 			StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
 		})
 		scan := physicalop.PhysicalTableScan{TblColHists: hists}.Init(ctx, 0)
-		require.Positive(t, getTableScanPenalty(scan, 5, 0))
+		penalty := getTableScanPenalty(scan, 5)
+		require.Positive(t, penalty)
 		scan.SkipScan = true
-		require.Zero(t, getTableScanPenalty(scan, 5, 0))
+		require.Equal(t, penalty, getTableScanPenalty(scan, 5))
 	})
 }
 

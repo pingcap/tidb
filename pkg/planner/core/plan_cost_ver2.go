@@ -211,7 +211,7 @@ func getPlanCostVer24PhysicalTableScan(pp base.PhysicalPlan, taskType property.T
 			p.PlanCostVer2 = costusage.SumCostVer2(p.PlanCostVer2, rangeSeekCostVer2(option, float64(len(p.Ranges)), scanFactor))
 		}
 		if ((len(isChildOfINL) > 0 && !isChildOfINL[0]) || len(isChildOfINL) <= 0) && hasFullRangeScan {
-			if newRowCount := getTableScanPenalty(p, rows, option.CostFlag); newRowCount > 0 {
+			if newRowCount := getTableScanPenalty(p, rows); newRowCount > 0 {
 				p.PlanCostVer2 = costusage.SumCostVer2(p.PlanCostVer2, scanCostVer2(option, newRowCount, rowSize, scanFactor))
 			}
 		}
@@ -1225,7 +1225,7 @@ func doubleReadCostVer2(option *costusage.PlanCostOption, numTasks float64, requ
 		func() string { return fmt.Sprintf("doubleRead(tasks(%v)*%v)", numTasks, requestFactor) })
 }
 
-func getTableScanPenalty(p *physicalop.PhysicalTableScan, rows float64, costFlag uint64) (rowPenalty float64) {
+func getTableScanPenalty(p *physicalop.PhysicalTableScan, rows float64) (rowPenalty float64) {
 	// Apply cost penalty for full scans that carry high risk of underestimation. Exclude those
 	// that are the child of an index scan or child is TableRangeScan
 	if len(p.RangeInfo) > 0 {
@@ -1240,10 +1240,7 @@ func getTableScanPenalty(p *physicalop.PhysicalTableScan, rows float64, costFlag
 	hasUnreliableStats := tblColHists.Pseudo || originalRows < 1
 	// hasHighModifyCount tracks the high risk of a tablescan where auto-analyze had not yet updated the table row count
 	hasHighModifyCount := tblColHists.ModifyCount > originalRows
-	// A skip scan estimates representative rows, so a low estimate alone
-	// does not indicate an underestimate of the rows in the full range.
-	isEstimatedSkipScan := p.SkipScan && !hasCostFlag(costFlag, costusage.CostFlagUseTrueCardinality)
-	hasLowEstimate := !isEstimatedSkipScan && rows > 1 && tblColHists.ModifyCount < originalRows && int64(rows) <= tblColHists.ModifyCount
+	hasLowEstimate := rows > 1 && tblColHists.ModifyCount < originalRows && int64(rows) <= tblColHists.ModifyCount
 	// preferRangeScan check here is same as in skylinePruning
 	preferRangeScanCondition := allowPreferRangeScan && (hasUnreliableStats || hasHighModifyCount || hasLowEstimate)
 

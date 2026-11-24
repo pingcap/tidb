@@ -2674,6 +2674,10 @@ func findBestTask4LogicalDataSource(super base.LogicalPlan, prop *property.Physi
 	return
 }
 
+// estimateSkipScanNDV estimates the number of distinct grouping prefixes across the table.
+// A prefix can span multiple Regions and produce a representative row in each one.
+// The global estimate can therefore undercount rows at both the DataSource scan
+// and partial aggregation stages.
 func estimateSkipScanNDV(ds *logicalop.DataSource, cols []*expression.Column) float64 {
 	stats := ds.TableStats
 	if len(cols) == 0 || stats == nil || ds.StatisticTable == nil || stats.StatsVersion == statistics.PseudoVersion {
