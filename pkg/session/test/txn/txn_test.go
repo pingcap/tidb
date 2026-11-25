@@ -534,15 +534,21 @@ func TestPanicOnRollbackKilledTxn(t *testing.T) {
 		tk.MustExec("use test")
 		tk.MustExec("create table t_mu(id int)")
 
-		tk.MustExec("begin optimistic")
-		tk.MustExec("insert into t_mu values (1)")
 		sv := tk.Session().GetSessionVars()
-		sv.MarkReadOnlySkippedMDL()
+		sv.InRestrictedSQL = true
+		sv.InternalMDLTracked.Store(true)
+		internalCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnTTL)
+		tk.MustExecWithContext(internalCtx, "begin optimistic")
+		tk.MustQueryWithContext(internalCtx, "select * from t_mu").Check(testkit.Rows())
+		require.True(t, sv.HasReadOnlySkippedMDL())
+		tk.MustExecWithContext(internalCtx, "insert into t_mu values (1)")
 		sv.TxnCtxMu.Lock()
-		err := tk.Session().CommitTxn(context.Background())
+		err := tk.Session().CommitTxn(internalCtx)
 		sv.TxnCtxMu.Unlock()
 		require.NoError(t, err)
 		require.False(t, sv.HasReadOnlySkippedMDL())
+		sv.InRestrictedSQL = false
+		sv.InternalMDLTracked.Store(false)
 
 		tk.MustExec("begin optimistic")
 		tk.MustExec("insert into t_mu values (2)")

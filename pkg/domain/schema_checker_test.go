@@ -85,9 +85,9 @@ func TestSchemaCheckerSimple(t *testing.T) {
 		// Table 20 changed between schemaVer 10 -> 12; table 10 (system-related) did not.
 		v.Update(vts, 10, 12, &transaction.RelatedSchemaChange{PhyTblIDS: []int64{20}, ActionTypes: []uint64{1}})
 
-		// Constructed while MDL is enabled: checks only deltaCheckTableIDs ({10}), ignoring MDL-locked {20}.
+		// Constructed while MDL is enabled: checks only skippedMDLTableIDs ({10}), ignoring MDL-locked {20}.
 		vardef.SetEnableMDL(true)
-		sc := NewSchemaCheckerWithDeltaCheckIDs(v, 10, []int64{10, 20}, []int64{10}, true)
+		sc := NewSchemaCheckerWithSkippedMDL(v, 10, []int64{10, 20}, []int64{10})
 		_, checkErr := sc.Check(vts)
 		require.NoError(t, checkErr)
 

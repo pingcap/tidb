@@ -135,6 +135,9 @@ func (msm *MockSessionManager) StoreInternalSession(s any) {
 		msm.internalSessions = make(map[any]struct{})
 	}
 	msm.internalSessions[s] = struct{}{}
+	if sv, ok := s.(interface{ GetSessionVars() *variable.SessionVars }); ok {
+		sv.GetSessionVars().InternalMDLTracked.Store(true)
+	}
 	msm.mu.Unlock()
 }
 
@@ -160,6 +163,9 @@ func (msm *MockSessionManager) InternalSessionCount() int {
 func (msm *MockSessionManager) DeleteInternalSession(s any) {
 	msm.mu.Lock()
 	delete(msm.internalSessions, s)
+	if sv, ok := s.(interface{ GetSessionVars() *variable.SessionVars }); ok {
+		sv.GetSessionVars().InternalMDLTracked.Store(false)
+	}
 	msm.mu.Unlock()
 	failpoint.InjectCall("afterDeleteInternalSession", s)
 }

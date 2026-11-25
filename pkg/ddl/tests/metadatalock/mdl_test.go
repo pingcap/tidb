@@ -1678,9 +1678,9 @@ func TestMDLUpdateEtcdFail(t *testing.T) {
 }
 
 // TestMDLInternalSessionBlocksDDL verifies that a transaction on an internal session
-// blocks DDL on the user table it accesses. Internal sessions used to be skipped by
-// the MDL census, which allowed DDL to change a table while such transactions were
-// still writing it (see issue #71055).
+// blocks DDL on both user tables and non-DDL system tables it writes. Internal sessions
+// used to be skipped by the MDL census, which allowed DDL to change a table while such
+// transactions were still writing it (see issue #71055).
 func TestMDLInternalSessionBlocksDDL(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	sv := server.CreateMockServer(t, store)
@@ -1694,8 +1694,10 @@ func TestMDLInternalSessionBlocksDDL(t *testing.T) {
 	if kerneltype.IsClassic() {
 		tkDDL.MustExec("set global tidb_enable_metadata_lock=1")
 	}
-	tkDDL.MustExec("create table t(a int)")
-	tkDDL.MustExec("insert into t values (1)")
+	tkDDL.MustExec("create table test.t(a int)")
+	tkDDL.MustExec("insert into test.t values (1)")
+	tkDDL.MustExec("create table mysql.mdl_internal_session_sys_t(a int)")
+	tkDDL.MustExec("insert into mysql.mdl_internal_session_sys_t values (1)")
 
 	pool := dom.AdvancedSysSessionPool()
 	se, err := pool.Get()
@@ -1718,50 +1720,55 @@ func TestMDLInternalSessionBlocksDDL(t *testing.T) {
 			require.NoError(t, rs.Close())
 		}
 	}
-	// Get() registers the session to the session manager, and the explicit transaction
-	// on a user table makes it hold the MDL lock.
-	execInternal("begin optimistic")
-	execInternal("insert into test.t values (2)")
 
-	mdlWaitCh := make(chan struct{})
-	var mdlWaitOnce sync.Once
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeWaitSchemaSynced", func(job *model.Job, schemaVer int64) {
-		if job.Type == model.ActionAddColumn && schemaVer != 0 {
-			mdlWaitOnce.Do(func() { close(mdlWaitCh) })
+	for _, tblName := range []string{"test.t", "mysql.mdl_internal_session_sys_t"} {
+		// Get() registers the session to the session manager, and the explicit write
+		// transaction makes it hold the MDL lock on both user and non-DDL mysql tables.
+		execInternal("begin optimistic")
+		execInternal(fmt.Sprintf("insert into %s values (2)", tblName))
+
+		mdlWaitCh := make(chan struct{})
+		var mdlWaitOnce sync.Once
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeWaitSchemaSynced", func(job *model.Job, schemaVer int64) {
+			if job.Type == model.ActionAddIndex && schemaVer != 0 {
+				mdlWaitOnce.Do(func() { close(mdlWaitCh) })
+			}
+		})
+		ddlDone := make(chan error, 1)
+		go func() {
+			ddlDone <- tkDDL.ExecToErr(fmt.Sprintf("alter table %s add index idx_a(a)", tblName))
+		}()
+
+		select {
+		case err := <-ddlDone:
+			require.FailNowf(t, "DDL should be blocked by the internal session transaction", "table=%s, err=%v", tblName, err)
+		case <-mdlWaitCh:
+		case <-time.After(10 * time.Second):
+			t.Fatalf("timeout waiting for ALTER TABLE %s to enter schema sync", tblName)
 		}
-	})
-	ddlDone := make(chan error, 1)
-	go func() {
-		ddlDone <- tkDDL.ExecToErr("alter table test.t add column b int")
-	}()
+		select {
+		case <-ddlDone:
+			t.Fatalf("DDL on %s should not finish while the internal session transaction is running", tblName)
+		case <-time.After(500 * time.Millisecond):
+		}
 
-	select {
-	case err := <-ddlDone:
-		require.FailNowf(t, "DDL should be blocked by the internal session transaction", "ddl finished before waiting for schema sync, err=%v", err)
-	case <-mdlWaitCh:
-	case <-time.After(10 * time.Second):
-		t.Fatal("timeout waiting for ALTER TABLE to enter schema sync")
+		execInternal("commit")
+		select {
+		case err := <-ddlDone:
+			require.NoError(t, err)
+		case <-time.After(10 * time.Second):
+			t.Fatalf("DDL on %s should finish after the internal session transaction commits", tblName)
+		}
+		testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/beforeWaitSchemaSynced")
+		tkDDL.MustExec(fmt.Sprintf("admin check table %s", tblName))
 	}
-	select {
-	case <-ddlDone:
-		t.Fatal("DDL should not finish while the internal session transaction is running")
-	case <-time.After(500 * time.Millisecond):
-	}
-
-	execInternal("commit")
-	select {
-	case err := <-ddlDone:
-		require.NoError(t, err)
-	case <-time.After(10 * time.Second):
-		t.Fatal("DDL should finish after the internal session transaction commits")
-	}
-	tkDDL.MustExec("admin check table test.t")
 }
 
-// TestMDLInternalSessionDoesNotBlockSystemTableDDL verifies that internal sessions
-// keep the former behavior on tables in the `mysql` schema: they do not take MDL
-// there, so upgrade/bootstrap related DDL is not blocked by e.g. the stats bootstrap.
-func TestMDLInternalSessionDoesNotBlockSystemTableDDL(t *testing.T) {
+// TestMDLInternalSessionDoesNotBlockDDLSystemTableDDL verifies that internal sessions
+// do not take MDL on DDL framework tables (`mysql.tidb_ddl_job`, `tidb_ddl_reorg`,
+// `tidb_ddl_history`, `tidb_mdl_info`, `tidb_ddl_notifier`), avoiding circular blocking
+// when upgrade DDL alters those tables.
+func TestMDLInternalSessionDoesNotBlockDDLSystemTableDDL(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	sv := server.CreateMockServer(t, store)
 	sv.SetDomain(dom)
@@ -1773,12 +1780,11 @@ func TestMDLInternalSessionDoesNotBlockSystemTableDDL(t *testing.T) {
 	if kerneltype.IsClassic() {
 		tkDDL.MustExec("set global tidb_enable_metadata_lock=1")
 	}
-	tkDDL.MustExec("create table mysql.mdl_internal_session_t(a int)")
 
 	pool := dom.AdvancedSysSessionPool()
 	se, err := pool.Get()
 	require.NoError(t, err)
-	internalCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnTTL)
+	internalCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	defer func() {
 		rs, _ := se.ExecuteInternal(internalCtx, "rollback")
 		if rs != nil {
@@ -1795,27 +1801,42 @@ func TestMDLInternalSessionDoesNotBlockSystemTableDDL(t *testing.T) {
 		}
 	}
 	execInternal("begin optimistic")
-	execInternal("insert into mysql.mdl_internal_session_t values (1)")
+	execInternal("delete from mysql.tidb_ddl_job where job_id = -1")
+	execInternal("delete from mysql.tidb_ddl_reorg where job_id = -1")
+	execInternal("delete from mysql.tidb_mdl_info where job_id = -1")
+	execInternal("delete from mysql.tidb_ddl_notifier where ddl_job_id = -1")
+	execInternal("insert into mysql.tidb_ddl_history(job_id, db_name, table_name) values (999991, 'test', 't')")
 
 	ddlDone := make(chan error, 1)
 	go func() {
-		ddlDone <- tkDDL.ExecToErr("alter table mysql.mdl_internal_session_t add column b int")
+		ddlDone <- tkDDL.ExecToErr("alter table mysql.tidb_ddl_history add column mdl_test_col int")
 	}()
 	select {
 	case err := <-ddlDone:
 		require.NoError(t, err)
 	case <-time.After(10 * time.Second):
-		t.Fatal("DDL on the mysql schema should not be blocked by an internal session transaction")
+		t.Fatal("DDL on a DDL framework system table should not be blocked by an internal session transaction")
 	}
-	// The DDL changed the table while the internal transaction was open, so commit may fail
+	// The DDL changed the table while the internal transaction was open, so commit would fail
 	// the schema delta check; rolling back keeps this test focused on the non-blocking check.
 	execInternal("rollback")
+
+	// Reading a DDL framework table in an optimistic internal transaction must not trigger
+	// the read-only MDL-skip retry suppression, so optimistic write conflicts still retry.
+	tkDDL.MustExec("insert into mysql.tidb_ddl_history(job_id, db_name, table_name) values (999994, 'test', 'init')")
+	execInternal("set @@tidb_retry_limit=2")
+	execInternal("begin optimistic")
+	execInternal("select db_name from mysql.tidb_ddl_history where job_id = 999994")
+	tkDDL.MustExec("update mysql.tidb_ddl_history set table_name = 'concurrent' where job_id = 999994")
+	execInternal("update mysql.tidb_ddl_history set db_name = 'retried' where job_id = 999994")
+	execInternal("commit")
+	tkDDL.MustQuery("select db_name, table_name from mysql.tidb_ddl_history where job_id = 999994").Check(testkit.Rows("retried concurrent"))
 }
 
-// TestMDLInternalSessionSystemTableWriteValidatedAtCommit verifies that internal sessions do
-// not take MDL on the `mysql` schema, but a concurrent DDL still makes their commit fail via
-// the schema delta check instead of letting a write with stale metadata commit.
-func TestMDLInternalSessionSystemTableWriteValidatedAtCommit(t *testing.T) {
+// TestMDLInternalSessionDDLSystemTableWriteValidatedAtCommit verifies that internal sessions
+// do not take MDL on DDL framework tables, while a concurrent DDL still makes their commit
+// fail via the schema delta check instead of letting a write with stale metadata commit.
+func TestMDLInternalSessionDDLSystemTableWriteValidatedAtCommit(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	sv := server.CreateMockServer(t, store)
 	sv.SetDomain(dom)
@@ -1827,12 +1848,11 @@ func TestMDLInternalSessionSystemTableWriteValidatedAtCommit(t *testing.T) {
 	if kerneltype.IsClassic() {
 		tkDDL.MustExec("set global tidb_enable_metadata_lock=1")
 	}
-	tkDDL.MustExec("create table mysql.mdl_internal_session_commit(a int)")
 
 	pool := dom.AdvancedSysSessionPool()
 	se, err := pool.Get()
 	require.NoError(t, err)
-	internalCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnTTL)
+	internalCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	defer func() {
 		rs, _ := se.ExecuteInternal(internalCtx, "rollback")
 		if rs != nil {
@@ -1849,21 +1869,53 @@ func TestMDLInternalSessionSystemTableWriteValidatedAtCommit(t *testing.T) {
 	}
 
 	require.NoError(t, execInternal("set @@tidb_retry_limit=0"))
+	require.NoError(t, execInternal("set @@tidb_enable_1pc=1"))
+	require.NoError(t, execInternal("set @@tidb_enable_async_commit=1"))
 	require.NoError(t, execInternal("begin optimistic"))
-	require.NoError(t, execInternal("insert into mysql.mdl_internal_session_commit(a) values (1)"))
+	require.NoError(t, execInternal("insert into mysql.tidb_ddl_history(job_id, db_name, table_name) values (999992, 'test', 't')"))
 
-	// No MDL is taken on the mysql schema, so this DDL is not blocked by the internal session.
-	tkDDL.MustExec("alter table mysql.mdl_internal_session_commit add column b int")
+	// No MDL is taken on DDL framework tables, so this DDL is not blocked by the internal session.
+	tkDDL.MustExec("alter table mysql.tidb_ddl_history add column mdl_commit_col int")
 
 	err = execInternal("commit")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "Information schema is changed")
+
+	// Also verify that an untracked internal session (for example in the temporary upgrade
+	// domain before SetSessionManager is installed) falls back to commit-time delta validation
+	// even on non-DDL system tables.
+	tkDDL.MustExec("create table mysql.mdl_untracked_sys(a int)")
+	dom.InfoSyncer().SetSessionManager(nil)
+	defer dom.InfoSyncer().SetSessionManager(sv)
+	seUntracked, err := pool.Get()
+	require.NoError(t, err)
+	defer func() {
+		rs, _ := seUntracked.ExecuteInternal(internalCtx, "rollback")
+		if rs != nil {
+			_ = rs.Close()
+		}
+		pool.Put(seUntracked)
+	}()
+	execUntracked := func(sql string) error {
+		rs, err := seUntracked.ExecuteInternal(internalCtx, sql)
+		if rs != nil {
+			require.NoError(t, rs.Close())
+		}
+		return err
+	}
+	require.NoError(t, execUntracked("set @@tidb_retry_limit=0"))
+	require.NoError(t, execUntracked("begin optimistic"))
+	require.NoError(t, execUntracked("insert into mysql.mdl_untracked_sys(a) values (1)"))
+	tkDDL.MustExec("alter table mysql.mdl_untracked_sys add column b int")
+	err = execUntracked("commit")
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "Information schema is changed")
 }
 
 // TestMDLInternalSessionReadOnlyDoesNotBlockDDLAndValidatesWrite verifies that
 // non-pessimistic read-only statements in internal explicit transactions do not take
-// MDL on user tables (so DDL is not stalled), while validating those read tables via
-// the schema delta check if the transaction later writes.
+// MDL on user or system tables (so DDL is not stalled), while validating those read
+// tables via the schema delta check if the transaction later writes.
 func TestMDLInternalSessionReadOnlyDoesNotBlockDDLAndValidatesWrite(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	sv := server.CreateMockServer(t, store)
@@ -1881,6 +1933,8 @@ func TestMDLInternalSessionReadOnlyDoesNotBlockDDLAndValidatesWrite(t *testing.T
 	tkDDL.MustExec("insert into t_ro values (1)")
 	tkDDL.MustExec("create table t_w(a int)")
 	tkDDL.MustExec("create table t_rw(a int)")
+	tkDDL.MustExec("create table mysql.mdl_sys_ro(a int)")
+	tkDDL.MustExec("insert into mysql.mdl_sys_ro values (1)")
 
 	pool := dom.AdvancedSysSessionPool()
 	se, err := pool.Get()
@@ -1901,22 +1955,29 @@ func TestMDLInternalSessionReadOnlyDoesNotBlockDDLAndValidatesWrite(t *testing.T
 		return err
 	}
 
-	// Reading t_ro in an optimistic internal transaction skips MDL, so DDL completes immediately,
-	// while a subsequent write in the same transaction is aborted at commit (even with retry_limit > 0,
-	// because transparent write-only retry must not replay with stale caller-observed read results).
+	// Reading t_ro and mysql.mdl_sys_ro in an optimistic internal transaction skips MDL,
+	// so DDL on both tables completes immediately, while a subsequent write in the same
+	// transaction is aborted at commit (even with retry_limit > 0, because transparent
+	// write-only retry must not replay with stale caller-observed read results).
 	require.NoError(t, execInternal("set @@tidb_retry_limit=2"))
 	require.NoError(t, execInternal("begin optimistic"))
 	require.NoError(t, execInternal("select * from test.t_ro"))
+	require.NoError(t, execInternal("select * from mysql.mdl_sys_ro"))
 
-	ddlDone := make(chan error, 1)
-	go func() {
-		ddlDone <- tkDDL.ExecToErr("alter table test.t_ro add column b int")
-	}()
-	select {
-	case err := <-ddlDone:
-		require.NoError(t, err)
-	case <-time.After(10 * time.Second):
-		t.Fatal("DDL should not be blocked by non-pessimistic internal read-only select")
+	for _, alterSQL := range []string{
+		"alter table mysql.mdl_sys_ro add column b int",
+		"alter table test.t_ro add column b int",
+	} {
+		ddlDone := make(chan error, 1)
+		go func() {
+			ddlDone <- tkDDL.ExecToErr(alterSQL)
+		}()
+		select {
+		case err := <-ddlDone:
+			require.NoError(t, err)
+		case <-time.After(10 * time.Second):
+			t.Fatalf("DDL (%s) should not be blocked by non-pessimistic internal read-only select", alterSQL)
+		}
 	}
 
 	require.NoError(t, execInternal("insert into test.t_w values (1)"))
@@ -1935,14 +1996,59 @@ func TestMDLInternalSessionReadOnlyDoesNotBlockDDLAndValidatesWrite(t *testing.T
 	require.NoError(t, execInternal("select * from test.t_rw"))
 	require.NoError(t, execInternal("commit"))
 	tkDDL.MustQuery("select a, b from test.t_rw").Check(testkit.Rows("1 <nil>"))
+
+	// Partitioned table read-only skip: TRUNCATE PARTITION is not blocked by an internal
+	// optimistic read-only scan, and a subsequent write in that transaction fails at commit.
+	tkDDL.MustExec("create table test.t_part(a int) partition by range (a) (partition p0 values less than (10), partition p1 values less than (20))")
+	tkDDL.MustExec("insert into test.t_part values (1), (15)")
+	require.NoError(t, execInternal("begin optimistic"))
+	require.NoError(t, execInternal("select * from test.t_part where a < 5"))
+	tkDDL.MustExec("alter table test.t_part truncate partition p0")
+	require.NoError(t, execInternal("insert into test.t_w values (2)"))
+	err = execInternal("commit")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "Information schema is changed")
+	_ = execInternal("rollback")
+
+	// Subquery FOR UPDATE must NOT skip MDL even though the outer SELECT has no LockInfo.
+	tkDDL.MustExec("create table test.t_sublock(a int primary key)")
+	tkDDL.MustExec("insert into test.t_sublock values (1)")
+	require.NoError(t, execInternal("begin optimistic"))
+	require.NoError(t, execInternal("select * from test.t_w where a in (select a from test.t_sublock for update)"))
+	mdlWaitCh := make(chan struct{})
+	var mdlWaitOnce sync.Once
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeWaitSchemaSynced", func(job *model.Job, schemaVer int64) {
+		if job.Type == model.ActionAddColumn && schemaVer != 0 {
+			mdlWaitOnce.Do(func() { close(mdlWaitCh) })
+		}
+	})
+	subDDLDone := make(chan error, 1)
+	go func() {
+		subDDLDone <- tkDDL.ExecToErr("alter table test.t_sublock add column b int")
+	}()
+	select {
+	case <-mdlWaitCh:
+	case err := <-subDDLDone:
+		require.FailNowf(t, "subquery FOR UPDATE must hold MDL", "err=%v", err)
+	case <-time.After(10 * time.Second):
+		t.Fatal("timeout waiting for ALTER TABLE t_sublock to enter schema sync")
+	}
+	select {
+	case <-subDDLDone:
+		t.Fatal("ALTER TABLE t_sublock should stay blocked while subquery FOR UPDATE txn is active")
+	case <-time.After(300 * time.Millisecond):
+	}
+	require.NoError(t, execInternal("rollback"))
+	require.NoError(t, <-subDDLDone)
 }
 
 // TestMDLInternalSessionPessimisticSystemWriteDoesNotFailOnUserTableSchemaUpgrade
-// verifies the Materialized View refresh pattern: an internal pessimistic transaction
-// writes a system table first (skipping MDL and registering it for delta check), a
-// concurrent DDL upgrades a user table before the transaction touches it, and then
-// locking and writing the user table still commits cleanly because MDL-locked user
-// tables are excluded from the commit-time schema delta check.
+// verifies both internal pessimistic transaction patterns:
+//  1. Writing an MDL-exempt DDL table (`mysql.tidb_ddl_history`) registers only that table
+//     for commit-time delta validation, so a user table upgraded before first access and
+//     then locked via MDL still commits cleanly.
+//  2. Locking a non-DDL `mysql` table (`mysql.mdl_sys_meta`, which takes MDL) and then
+//     writing a user table upgraded before first access also commits cleanly.
 func TestMDLInternalSessionPessimisticSystemWriteDoesNotFailOnUserTableSchemaUpgrade(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	sv := server.CreateMockServer(t, store)
@@ -1978,20 +2084,29 @@ func TestMDLInternalSessionPessimisticSystemWriteDoesNotFailOnUserTableSchemaUpg
 		return err
 	}
 
+	// Case 1: MDL-exempt DDL table write + MDL-locked user table write after user DDL.
 	require.NoError(t, execInternal("set @@tidb_retry_limit=0"))
 	require.NoError(t, execInternal("begin pessimistic"))
-	require.NoError(t, execInternal("select v from mysql.mdl_sys_meta where id = 1 for update"))
+	require.NoError(t, execInternal("insert into mysql.tidb_ddl_history(job_id, db_name, table_name) values (999993, 'test', 'mdl_mv_target')"))
 
-	// DDL on user table succeeds before the internal transaction accesses it.
 	tkDDL.MustExec("alter table test.mdl_mv_target add column extra int")
 
-	// Writing test.mdl_mv_target acquires MDL at the upgraded schema version, writes rows,
-	// updates mysql.mdl_sys_meta, and must succeed on commit despite the earlier user DDL.
 	require.NoError(t, execInternal("insert into test.mdl_mv_target(id, v) values (1, 10)"))
-	require.NoError(t, execInternal("update mysql.mdl_sys_meta set v = 1 where id = 1"))
 	require.NoError(t, execInternal("commit"))
 
 	tkDDL.MustQuery("select id, v, extra from test.mdl_mv_target").Check(testkit.Rows("1 10 <nil>"))
+
+	// Case 2: MDL-locked non-DDL mysql table + MDL-locked user table write after user DDL.
+	require.NoError(t, execInternal("begin pessimistic"))
+	require.NoError(t, execInternal("select v from mysql.mdl_sys_meta where id = 1 for update"))
+
+	tkDDL.MustExec("alter table test.mdl_mv_target add column extra2 int")
+
+	require.NoError(t, execInternal("insert into test.mdl_mv_target(id, v) values (2, 20)"))
+	require.NoError(t, execInternal("update mysql.mdl_sys_meta set v = 1 where id = 1"))
+	require.NoError(t, execInternal("commit"))
+
+	tkDDL.MustQuery("select id, v, extra, extra2 from test.mdl_mv_target order by id").Check(testkit.Rows("1 10 <nil> <nil>", "2 20 <nil> <nil>"))
 	tkDDL.MustQuery("select v from mysql.mdl_sys_meta where id = 1").Check(testkit.Rows("1"))
 }
 

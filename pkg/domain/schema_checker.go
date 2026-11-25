@@ -28,10 +28,14 @@ import (
 // SchemaChecker is used for checking schema-validity.
 type SchemaChecker struct {
 	validatorapi.Validator
-	schemaVer              int64
-	relatedTableIDs        []int64
-	deltaCheckTableIDs     []int64
-	hasDeltaCheckTableIDs  bool
+	schemaVer int64
+	// relatedTableIDs holds all non-temporary written and MDL-skipped physical IDs,
+	// used when MDL is off or toggled off before commit validation runs.
+	relatedTableIDs []int64
+	// skippedMDLTableIDs is the subset of physical IDs whose MDL lock was skipped and
+	// therefore still require commit-time schema-delta validation while MDL is enabled.
+	skippedMDLTableIDs     []int64
+	hasSkippedMDLTableIDs  bool
 	needCheckSchemaByDelta bool
 }
 
@@ -58,17 +62,18 @@ func NewSchemaChecker(validator validatorapi.Validator, schemaVer int64, related
 	}
 }
 
-// NewSchemaCheckerWithDeltaCheckIDs creates a schema checker that validates only
-// deltaCheckTableIDs while MDL is enabled, but retains relatedTableIDs in case MDL
-// is disabled before the commit check runs.
-func NewSchemaCheckerWithDeltaCheckIDs(validator validatorapi.Validator, schemaVer int64, relatedTableIDs, deltaCheckTableIDs []int64, needCheckSchemaByDelta bool) *SchemaChecker {
+// NewSchemaCheckerWithSkippedMDL creates a schema checker that validates only
+// skippedMDLTableIDs while MDL is enabled, while retaining relatedTableIDs as the
+// fallback set if MDL is disabled before the commit check runs.
+func NewSchemaCheckerWithSkippedMDL(validator validatorapi.Validator, schemaVer int64, relatedTableIDs, skippedMDLTableIDs []int64) *SchemaChecker {
+	hasSkipped := len(skippedMDLTableIDs) > 0
 	return &SchemaChecker{
 		Validator:              validator,
 		schemaVer:              schemaVer,
 		relatedTableIDs:        relatedTableIDs,
-		deltaCheckTableIDs:     deltaCheckTableIDs,
-		hasDeltaCheckTableIDs:  len(deltaCheckTableIDs) > 0,
-		needCheckSchemaByDelta: needCheckSchemaByDelta,
+		skippedMDLTableIDs:     skippedMDLTableIDs,
+		hasSkippedMDLTableIDs:  hasSkipped,
+		needCheckSchemaByDelta: hasSkipped,
 	}
 }
 
@@ -77,16 +82,32 @@ func (s *SchemaChecker) Check(txnTS uint64) (*transaction.RelatedSchemaChange, e
 	return s.CheckBySchemaVer(txnTS, intSchemaVer(s.schemaVer))
 }
 
+type skippedMDLValidator interface {
+	CheckWithSkippedMDLTableIDs(txnTS uint64, schemaVer int64, relatedPhysicalTableIDs, skippedMDLTableIDs []int64, needCheckSchemaByDelta bool) (*transaction.RelatedSchemaChange, validatorapi.Result)
+}
+
 // CheckBySchemaVer checks if the schema version valid or not at txnTS.
 func (s *SchemaChecker) CheckBySchemaVer(txnTS uint64, startSchemaVer tikv.SchemaVer) (*transaction.RelatedSchemaChange, error) {
 	schemaOutOfDateRetryInterval := SchemaOutOfDateRetryInterval.Load()
 	schemaOutOfDateRetryTimes := int(SchemaOutOfDateRetryTimes.Load())
 	for range schemaOutOfDateRetryTimes {
-		checkIDs := s.relatedTableIDs
-		if s.hasDeltaCheckTableIDs && vardef.IsMDLEnabled() {
-			checkIDs = s.deltaCheckTableIDs
+		var (
+			relatedChange *transaction.RelatedSchemaChange
+			checkResult   validatorapi.Result
+		)
+		if s.hasSkippedMDLTableIDs {
+			if dv, ok := s.Validator.(skippedMDLValidator); ok {
+				relatedChange, checkResult = dv.CheckWithSkippedMDLTableIDs(txnTS, startSchemaVer.SchemaMetaVersion(), s.relatedTableIDs, s.skippedMDLTableIDs, s.needCheckSchemaByDelta)
+			} else {
+				checkIDs := s.relatedTableIDs
+				if vardef.IsMDLEnabled() {
+					checkIDs = s.skippedMDLTableIDs
+				}
+				relatedChange, checkResult = s.Validator.Check(txnTS, startSchemaVer.SchemaMetaVersion(), checkIDs, s.needCheckSchemaByDelta)
+			}
+		} else {
+			relatedChange, checkResult = s.Validator.Check(txnTS, startSchemaVer.SchemaMetaVersion(), s.relatedTableIDs, s.needCheckSchemaByDelta)
 		}
-		relatedChange, checkResult := s.Validator.Check(txnTS, startSchemaVer.SchemaMetaVersion(), checkIDs, s.needCheckSchemaByDelta)
 		switch checkResult {
 		case validatorapi.ResultSucc:
 			return nil, nil

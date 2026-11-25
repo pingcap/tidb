@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/infoschema/issyncer/mdldef"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
@@ -339,7 +340,7 @@ func TestManager(t *testing.T) {
 		sysTK.MustQuery("select count(1) from mysql.tidb_import_jobs").Check(testkit.Rows("0"))
 	})
 
-	t.Run("check cross keyspace session are recorded in coordinator and skip mdl for system tables", func(t *testing.T) {
+	t.Run("check cross keyspace session are recorded in coordinator and take mdl for non-ddl system tables", func(t *testing.T) {
 		storeMap := make(map[string]kv.Storage, 2)
 		storeMap[keyspace.System] = sysKSStore
 		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/domain/crossks/beforeGetStore",
@@ -395,10 +396,36 @@ func TestManager(t *testing.T) {
 			exec := se.GetSQLExecutor()
 			_, err2 := sqlexec.ExecSQL(ctx, exec, "select count(1) from mysql.tidb_import_jobs")
 			require.NoError(t, err2)
-			// Internal sessions do not take MDL on tables in the `mysql` schema, so the
-			// related table set must not contain the system table.
-			_, ok := se.GetSessionVars().GetRelatedTableForMDL().Load(metadef.TiDBImportJobsTableID)
-			require.False(t, ok)
+			// Cross-keyspace sessions do not report minStartTS to GC yet, so even read-only
+			// statements in explicit transactions take MDL on non-DDL system tables.
+			verVal, ok := se.GetSessionVars().GetRelatedTableForMDL().Load(metadef.TiDBImportJobsTableID)
+			require.True(t, ok)
+
+			// Verify coordinator.CheckOldRunningTxn actually removes a newer DDL job targeting
+			// mysql.tidb_import_jobs while this cross-keyspace transaction is active.
+			jobs := map[int64]*mdldef.JobMDL{
+				1: {Ver: verVal.(int64) + 1, TableIDs: map[int64]struct{}{metadef.TiDBImportJobsTableID: {}}},
+			}
+			coordinator.CheckOldRunningTxn(jobs)
+			require.Empty(t, jobs)
+
+			// DDL framework system tables remain exempt from MDL on internal sessions.
+			for _, tc := range []struct {
+				sql string
+				id  int64
+			}{
+				{"delete from mysql.tidb_ddl_job where job_id = -1", metadef.TiDBDDLJobTableID},
+				{"delete from mysql.tidb_ddl_reorg where job_id = -1", metadef.TiDBDDLReorgTableID},
+				{"delete from mysql.tidb_ddl_history where job_id = -1", metadef.TiDBDDLHistoryTableID},
+				{"delete from mysql.tidb_mdl_info where job_id = -1", metadef.TiDBMDLInfoTableID},
+				{"delete from mysql.tidb_ddl_notifier where ddl_job_id = -1", metadef.TiDBDDLNotifierTableID},
+			} {
+				_, err2 = sqlexec.ExecSQL(ctx, exec, tc.sql)
+				require.NoError(t, err2)
+				_, ok = se.GetSessionVars().GetRelatedTableForMDL().Load(tc.id)
+				require.False(t, ok, "sql=%s", tc.sql)
+			}
+
 			require.True(t, coordinator.ContainsInternalSession(se))
 			// Other background tasks might also use a session, so >= 1.
 			require.GreaterOrEqual(t, coordinator.InternalSessionCount(), 1)

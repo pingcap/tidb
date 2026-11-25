@@ -876,8 +876,7 @@ func TestRemoveLockDDLJobsForInternalSession(t *testing.T) {
 	sv := NewSessionVars(nil)
 	sv.TxnCtx.StartTS = oracle.GoTimeToTS(time.Now())
 	sv.InRestrictedSQL = true
-	sv.TxnCtx.IsInternal = true
-	sv.TxnCtx.RequestSourceType = kv.InternalTxnTTL
+	sv.TxnCtx.SetRequestSource(true, kv.InternalTxnTTL)
 
 	newJobs := func() map[int64]*mdldef.JobMDL {
 		return map[int64]*mdldef.JobMDL{
@@ -917,9 +916,10 @@ func TestRemoveLockDDLJobsForInternalSession(t *testing.T) {
 
 func TestSchemaDeltaCheckTableIDs(t *testing.T) {
 	sv := NewSessionVars(nil)
-	require.Nil(t, sv.GetSchemaDeltaCheckTableIDs())
+	require.Nil(t, sv.GetSkippedMDLTableIDs())
 
-	sv.AddSchemaDeltaCheckTable(&model.TableInfo{
+	sv.TxnCtx.CouldRetry = true
+	sv.RecordSkippedMDL(&model.TableInfo{
 		ID: 10,
 		Partition: &model.PartitionInfo{
 			Enable: true,
@@ -928,21 +928,29 @@ func TestSchemaDeltaCheckTableIDs(t *testing.T) {
 				{ID: 12},
 			},
 		},
-	})
-	sv.AddSchemaDeltaCheckTable(&model.TableInfo{ID: 10})
-	require.ElementsMatch(t, []int64{10, 11, 12}, sv.GetSchemaDeltaCheckTableIDs())
+	}, false)
+	require.ElementsMatch(t, []int64{10, 11, 12}, sv.GetSkippedMDLTableIDs())
+	require.False(t, sv.HasReadOnlySkippedMDL())
+	require.True(t, sv.TxnCtx.CouldRetry)
+
+	sv.GetRelatedTableForMDL().Store(int64(20), int64(5))
+	sv.GetRelatedTableForReadOnly().Store(int64(30), "test")
+	collected := make(map[int64]struct{})
+	sv.CollectRelatedTableIDs(collected)
+	require.Equal(t, map[int64]struct{}{20: {}, 30: {}}, collected)
 
 	sv.TxnCtx.SetRequestSource(true, kv.InternalTxnTTL)
-	sv.TxnCtx.CouldRetry = true
-	sv.MarkReadOnlySkippedMDL()
+	sv.RecordSkippedMDL(&model.TableInfo{ID: 10}, true)
+	// A subsequent non-readonly record must keep the read-only marker sticky.
+	sv.RecordSkippedMDL(&model.TableInfo{ID: 10}, false)
 	require.True(t, sv.HasReadOnlySkippedMDL())
 	require.False(t, sv.TxnCtx.CouldRetry)
 
 	sv.TxnCtxMu.Lock()
 	sv.TxnCtx.Cleanup()
-	require.Nil(t, sv.GetSchemaDeltaCheckTableIDs())
+	require.Nil(t, sv.GetSkippedMDLTableIDs())
 	require.False(t, sv.HasReadOnlySkippedMDL())
 	sv.TxnCtxMu.Unlock()
-	require.False(t, sv.TxnCtx.IsInternal)
-	require.Empty(t, sv.TxnCtx.RequestSourceType)
+	require.False(t, sv.TxnCtx.mdlRequestSource.RequestSourceInternal)
+	require.Empty(t, sv.TxnCtx.mdlRequestSource.RequestSourceType)
 }

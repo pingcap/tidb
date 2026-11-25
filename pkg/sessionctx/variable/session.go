@@ -243,20 +243,14 @@ type TxnCtxNoNeedToRestore struct {
 	TemporaryTables map[int64]tableutil.TempTable
 	// EnableMDL indicates whether to enable the MDL lock for the transaction.
 	EnableMDL bool
-	// IsInternal indicates whether this transaction runs in a restricted/internal session.
-	// Protected by tdmLock for concurrent MDL census inspection.
-	IsInternal bool
-	// RequestSourceType records the internal request source type for MDL diagnostics.
-	// Protected by tdmLock for concurrent MDL census inspection.
-	RequestSourceType string
-	// schemaDeltaCheckTableIDs records physical table/partition IDs whose MDL lock was
-	// skipped in this transaction and must be validated via commit-time schema delta check.
+	// mdlRequestSource snapshots whether this transaction runs in an internal session and
+	// its request source type for concurrent MDL census logging. Protected by tdmLock.
+	mdlRequestSource kv.RequestSource
+	// skippedMDLTables maps physical table/partition IDs whose MDL lock was skipped in
+	// this transaction (requiring commit-time schema-delta validation) to whether a
+	// read-only access skipped MDL on them (disabling write-only auto-retry).
 	// Protected by tdmLock.
-	schemaDeltaCheckTableIDs map[int64]struct{}
-	// hasReadOnlySkippedMDL records whether an explicit internal transaction served a
-	// read-only statement without MDL and therefore cannot safely auto-retry write-only history.
-	// Protected by tdmLock.
-	hasReadOnlySkippedMDL bool
+	skippedMDLTables map[int64]bool
 	// relatedTableForMDL records the `lock` table for metadata lock. It maps from int64 to int64(version).
 	relatedTableForMDL *sync.Map
 	// relatedTableForReadOnly maps table IDs to database names for read-only
@@ -440,10 +434,8 @@ func (tc *TransactionContext) Cleanup() {
 	tc.TableDeltaMap = nil
 	tc.relatedTableForMDL = nil
 	tc.relatedTableForReadOnly = nil
-	tc.schemaDeltaCheckTableIDs = nil
-	tc.IsInternal = false
-	tc.RequestSourceType = ""
-	tc.hasReadOnlySkippedMDL = false
+	tc.skippedMDLTables = nil
+	tc.mdlRequestSource = kv.RequestSource{}
 	tc.tdmLock.Unlock()
 	tc.pessimisticLockCache = nil
 	tc.CurrentStmtPessimisticLockCache = nil
@@ -455,8 +447,10 @@ func (tc *TransactionContext) Cleanup() {
 // SetRequestSource updates the request source metadata for MDL diagnostics under tdmLock.
 func (tc *TransactionContext) SetRequestSource(isInternal bool, sourceType string) {
 	tc.tdmLock.Lock()
-	tc.IsInternal = isInternal
-	tc.RequestSourceType = sourceType
+	tc.mdlRequestSource = kv.RequestSource{
+		RequestSourceInternal: isInternal,
+		RequestSourceType:     sourceType,
+	}
 	tc.tdmLock.Unlock()
 }
 
@@ -934,6 +928,10 @@ type SessionVars struct {
 
 	// InRestrictedSQL indicates if the session is handling restricted SQL execution.
 	InRestrictedSQL bool
+
+	// InternalMDLTracked reports whether this internal session is currently registered
+	// in a SessionManager or cross-keyspace MDL coordinator.
+	InternalMDLTracked atomic.Bool
 
 	// InExplainExplore indicates if this statement is under EXPLAIN EXPLORE.
 	InExplainExplore bool
@@ -3799,22 +3797,28 @@ func (s *SessionVars) GetNegateStrMatchDefaultSelectivity() float64 {
 }
 
 // GetRelatedTableForMDL gets the related table for metadata lock.
+// Only called on the session's own goroutine; cross-goroutine readers must use
+// RemoveLockDDLJobs or CollectRelatedTableIDs (which synchronize via TxnCtxMu).
 func (s *SessionVars) GetRelatedTableForMDL() *sync.Map {
-	mu := &s.TxnCtx.tdmLock
-	mu.Lock()
-	defer mu.Unlock()
-	if s.TxnCtx.relatedTableForMDL == nil {
-		s.TxnCtx.relatedTableForMDL = new(sync.Map)
+	txnCtx := s.TxnCtx
+	if txnCtx == nil {
+		return new(sync.Map)
 	}
-	return s.TxnCtx.relatedTableForMDL
+	txnCtx.tdmLock.Lock()
+	defer txnCtx.tdmLock.Unlock()
+	if txnCtx.relatedTableForMDL == nil {
+		txnCtx.relatedTableForMDL = new(sync.Map)
+	}
+	return txnCtx.relatedTableForMDL
 }
 
 // GetRelatedTableForReadOnly gets the MDL-independent table-access set used to
 // drain transactions before a database read-only transition finishes.
 func (s *SessionVars) GetRelatedTableForReadOnly() *sync.Map {
-	s.TxnCtxMu.Lock()
 	txnCtx := s.TxnCtx
-	s.TxnCtxMu.Unlock()
+	if txnCtx == nil {
+		return new(sync.Map)
+	}
 	txnCtx.tdmLock.Lock()
 	defer txnCtx.tdmLock.Unlock()
 	if txnCtx.relatedTableForReadOnly == nil {
@@ -3823,19 +3827,52 @@ func (s *SessionVars) GetRelatedTableForReadOnly() *sync.Map {
 	return txnCtx.relatedTableForReadOnly
 }
 
+// CollectRelatedTableIDs copies table IDs from relatedTableForMDL and
+// relatedTableForReadOnly of the current transaction into dst without allocating maps.
+// Safe for concurrent background callers (such as TxnInfo) while TxnCtx is swapped.
+func (s *SessionVars) CollectRelatedTableIDs(dst map[int64]struct{}) {
+	s.TxnCtxMu.Lock()
+	txnCtx := s.TxnCtx
+	s.TxnCtxMu.Unlock()
+	if txnCtx == nil {
+		return
+	}
+	txnCtx.tdmLock.Lock()
+	mdlMap := txnCtx.relatedTableForMDL
+	roMap := txnCtx.relatedTableForReadOnly
+	txnCtx.tdmLock.Unlock()
+	if mdlMap != nil {
+		mdlMap.Range(func(key, _ any) bool {
+			dst[key.(int64)] = struct{}{}
+			return true
+		})
+	}
+	if roMap != nil {
+		roMap.Range(func(key, _ any) bool {
+			dst[key.(int64)] = struct{}{}
+			return true
+		})
+	}
+}
+
 // ClearRelatedTableForMDL clears the related table for MDL.
 // related tables for MDL is filled during build logical plan or Preprocess for all DataSources,
 // even for queries inside DDLs like `create view as select xxx` and `create table as select xxx`.
 // it should be cleared before we execute the DDL statement.
 func (s *SessionVars) ClearRelatedTableForMDL() {
-	s.TxnCtx.tdmLock.Lock()
-	defer s.TxnCtx.tdmLock.Unlock()
-	s.TxnCtx.relatedTableForMDL = nil
+	txnCtx := s.TxnCtx
+	if txnCtx == nil {
+		return
+	}
+	txnCtx.tdmLock.Lock()
+	defer txnCtx.tdmLock.Unlock()
+	txnCtx.relatedTableForMDL = nil
 }
 
-// AddSchemaDeltaCheckTable records tblInfo and any physical partition IDs so
-// commit-time schema delta validation checks them when MDL was skipped.
-func (s *SessionVars) AddSchemaDeltaCheckTable(tblInfo *model.TableInfo) {
+// RecordSkippedMDL records tblInfo and any physical partition IDs whose MDL lock was
+// skipped so commit-time schema-delta validation checks them. When readOnly is true,
+// the marker is sticky across subsequent writes and disables transparent write-only retry.
+func (s *SessionVars) RecordSkippedMDL(tblInfo *model.TableInfo, readOnly bool) {
 	if tblInfo == nil {
 		return
 	}
@@ -3844,52 +3881,44 @@ func (s *SessionVars) AddSchemaDeltaCheckTable(tblInfo *model.TableInfo) {
 		return
 	}
 	txnCtx.tdmLock.Lock()
-	defer txnCtx.tdmLock.Unlock()
-	if txnCtx.schemaDeltaCheckTableIDs == nil {
-		txnCtx.schemaDeltaCheckTableIDs = make(map[int64]struct{}, 1)
+	if txnCtx.skippedMDLTables == nil {
+		txnCtx.skippedMDLTables = make(map[int64]bool, 1)
 	}
-	txnCtx.schemaDeltaCheckTableIDs[tblInfo.ID] = struct{}{}
+	txnCtx.skippedMDLTables[tblInfo.ID] = txnCtx.skippedMDLTables[tblInfo.ID] || readOnly
 	if pi := tblInfo.GetPartitionInfo(); pi != nil {
 		for _, def := range pi.Definitions {
-			txnCtx.schemaDeltaCheckTableIDs[def.ID] = struct{}{}
+			txnCtx.skippedMDLTables[def.ID] = txnCtx.skippedMDLTables[def.ID] || readOnly
 		}
+	}
+	txnCtx.tdmLock.Unlock()
+	if readOnly {
+		txnCtx.CouldRetry = false
 	}
 }
 
-// GetSchemaDeltaCheckTableIDs returns the physical IDs of tables that skipped MDL
-// in the current transaction and require commit-time schema delta validation.
-func (s *SessionVars) GetSchemaDeltaCheckTableIDs() []int64 {
+// GetSkippedMDLTableIDs returns the physical IDs requiring commit-time schema-delta
+// validation because they skipped MDL in the current transaction.
+// Must not lock TxnCtxMu because CommitTxn may be invoked while TxnCtxMu is held.
+func (s *SessionVars) GetSkippedMDLTableIDs() []int64 {
 	txnCtx := s.TxnCtx
 	if txnCtx == nil {
 		return nil
 	}
 	txnCtx.tdmLock.Lock()
 	defer txnCtx.tdmLock.Unlock()
-	if len(txnCtx.schemaDeltaCheckTableIDs) == 0 {
+	if len(txnCtx.skippedMDLTables) == 0 {
 		return nil
 	}
-	ids := make([]int64, 0, len(txnCtx.schemaDeltaCheckTableIDs))
-	for id := range txnCtx.schemaDeltaCheckTableIDs {
+	ids := make([]int64, 0, len(txnCtx.skippedMDLTables))
+	for id := range txnCtx.skippedMDLTables {
 		ids = append(ids, id)
 	}
 	return ids
 }
 
-// MarkReadOnlySkippedMDL marks the current transaction as having served a read-only
-// statement without MDL and disables transparent write-only auto-retry.
-func (s *SessionVars) MarkReadOnlySkippedMDL() {
-	txnCtx := s.TxnCtx
-	if txnCtx == nil {
-		return
-	}
-	txnCtx.tdmLock.Lock()
-	txnCtx.hasReadOnlySkippedMDL = true
-	txnCtx.tdmLock.Unlock()
-	txnCtx.CouldRetry = false
-}
-
 // HasReadOnlySkippedMDL reports whether the current transaction skipped MDL on a
 // read-only statement and therefore must not transparently auto-retry.
+// Must not lock TxnCtxMu because CommitTxn may be invoked while TxnCtxMu is held.
 func (s *SessionVars) HasReadOnlySkippedMDL() bool {
 	txnCtx := s.TxnCtx
 	if txnCtx == nil {
@@ -3897,7 +3926,12 @@ func (s *SessionVars) HasReadOnlySkippedMDL() bool {
 	}
 	txnCtx.tdmLock.Lock()
 	defer txnCtx.tdmLock.Unlock()
-	return txnCtx.hasReadOnlySkippedMDL
+	for _, ro := range txnCtx.skippedMDLTables {
+		if ro {
+			return true
+		}
+	}
+	return false
 }
 
 // EnableForceInlineCTE returns the session variable enableForceInlineCTE
@@ -4119,9 +4153,9 @@ func (s *SessionVars) PessimisticLockEligible() bool {
 }
 
 // RemoveLockDDLJobs removes the DDL jobs which doesn't get the metadata lock from jobs.
-// Both user sessions and internal sessions are checked. Internal sessions only take MDL
-// for non-readonly / pessimistic user-table accesses (see tryLockMDLAndUpdateSchemaIfNecessary),
-// so system-related tables and non-pessimistic read-only scans never block a DDL through them.
+// Both user sessions and internal sessions are checked. Internal sessions skip MDL only
+// for DDL framework system tables and non-pessimistic read-only scans (see
+// tryLockMDLAndUpdateSchemaIfNecessary), while taking MDL on other system and user tables.
 func RemoveLockDDLJobs(sv *SessionVars, jobs map[int64]*mdldef.JobMDL, printLog bool) {
 	sv.TxnCtxMu.Lock()
 	defer sv.TxnCtxMu.Unlock()
@@ -4130,8 +4164,7 @@ func RemoveLockDDLJobs(sv *SessionVars, jobs map[int64]*mdldef.JobMDL, printLog 
 	}
 	sv.TxnCtx.tdmLock.Lock()
 	related := sv.TxnCtx.relatedTableForMDL
-	isInternal := sv.TxnCtx.IsInternal
-	requestSource := sv.TxnCtx.RequestSourceType
+	reqSource := sv.TxnCtx.mdlRequestSource
 	sv.TxnCtx.tdmLock.Unlock()
 	if related == nil {
 		return
@@ -4153,8 +4186,8 @@ func RemoveLockDDLJobs(sv *SessionVars, jobs map[int64]*mdldef.JobMDL, printLog 
 					zap.Int64("table ID", tblID.(int64)),
 					zap.Int64("jobID", jobID),
 					zap.Uint64("connection ID", sv.ConnectionID),
-					zap.Bool("internal", isInternal),
-					zap.String("requestSource", requestSource),
+					zap.Bool("internal", reqSource.RequestSourceInternal),
+					zap.String("requestSource", reqSource.RequestSourceType),
 					zap.Uint64("startTS", startTS),
 					zap.Duration("elapsed time", elapsedTime))
 			}

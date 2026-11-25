@@ -534,14 +534,7 @@ func (s *session) TxnInfo() *txninfo.TxnInfo {
 		CurrentDB:       processInfo.DB,
 		RelatedTableIDs: make(map[int64]struct{}),
 	}
-	s.GetSessionVars().GetRelatedTableForMDL().Range(func(key, _ any) bool {
-		txnInfo.ProcessInfo.RelatedTableIDs[key.(int64)] = struct{}{}
-		return true
-	})
-	s.GetSessionVars().GetRelatedTableForReadOnly().Range(func(key, _ any) bool {
-		txnInfo.ProcessInfo.RelatedTableIDs[key.(int64)] = struct{}{}
-		return true
-	})
+	s.GetSessionVars().CollectRelatedTableIDs(txnInfo.ProcessInfo.RelatedTableIDs)
 	return &txnInfo
 }
 

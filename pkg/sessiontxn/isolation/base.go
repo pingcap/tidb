@@ -122,13 +122,12 @@ func (p *baseTxnContextProvider) OnInitialize(ctx context.Context, tp sessiontxn
 	p.infoSchema = p.sctx.GetLatestInfoSchema().(infoschema.InfoSchema)
 	txnCtx := &variable.TransactionContext{
 		TxnCtxNoNeedToRestore: variable.TxnCtxNoNeedToRestore{
-			CreateTime:        time.Now(),
-			InfoSchema:        p.infoSchema,
-			TxnScope:          sessVars.CheckAndGetTxnScope(),
-			IsInternal:        sessVars.InRestrictedSQL,
-			RequestSourceType: sessVars.RequestSourceType,
+			CreateTime: time.Now(),
+			InfoSchema: p.infoSchema,
+			TxnScope:   sessVars.CheckAndGetTxnScope(),
 		},
 	}
+	txnCtx.SetRequestSource(sessVars.InRestrictedSQL, sessVars.RequestSourceType)
 	if p.onInitializeTxnCtx != nil {
 		p.onInitializeTxnCtx(txnCtx)
 	}
@@ -145,7 +144,18 @@ func (p *baseTxnContextProvider) OnInitialize(ctx context.Context, tp sessiontxn
 	}
 	p.isTxnPrepared = txn.Valid() || p.sctx.GetPreparedTxnFuture() != nil
 	if activeNow {
-		_, err = p.ActivateTxn()
+		txn, err = p.ActivateTxn()
+		if err != nil {
+			return err
+		}
+		if p.sctx.GetLatestInfoSchema().SchemaMetaVersion() != p.infoSchema.SchemaMetaVersion() {
+			if dom := domain.GetDomain(p.sctx); dom != nil {
+				if snapIS, snapErr := dom.GetSnapshotInfoSchema(txn.StartTS()); snapErr == nil {
+					p.infoSchema = snapIS
+					txnCtx.InfoSchema = snapIS
+				}
+			}
+		}
 	}
 
 	return err
@@ -619,15 +629,15 @@ func (p *baseTxnContextProvider) SetOptionsBeforeCommit(
 		physicalTableIDs = append(physicalTableIDs, id)
 		seen[id] = struct{}{}
 	}
-	var nonTempDeltaIDs []int64
+	var nonTempSkippedIDs []int64
 	if sessVars.TxnCtx != nil {
-		if deltaCheckIDs := sessVars.GetSchemaDeltaCheckTableIDs(); len(deltaCheckIDs) > 0 {
-			nonTempDeltaIDs = make([]int64, 0, len(deltaCheckIDs))
-			for _, id := range deltaCheckIDs {
+		if skippedIDs := sessVars.GetSkippedMDLTableIDs(); len(skippedIDs) > 0 {
+			nonTempSkippedIDs = make([]int64, 0, len(skippedIDs))
+			for _, id := range skippedIDs {
 				if _, ok := temporaryTables[id]; ok {
 					continue
 				}
-				nonTempDeltaIDs = append(nonTempDeltaIDs, id)
+				nonTempSkippedIDs = append(nonTempSkippedIDs, id)
 				if _, ok := seen[id]; !ok {
 					physicalTableIDs = append(physicalTableIDs, id)
 					seen[id] = struct{}{}
@@ -636,18 +646,18 @@ func (p *baseTxnContextProvider) SetOptionsBeforeCommit(
 		}
 	}
 	// Set this option for 2 phase commit to validate schema lease. When MDL is active,
-	// only tables that intentionally skipped MDL (system-related tables for internal sessions,
-	// or non-pessimistic internal read-only accesses in a transaction that later writes) are
-	// checked via schema delta so MDL-locked user tables are not falsely invalidated, while
-	// retaining all written/skipped IDs in case MDL is disabled before commit validation runs.
+	// only tables that intentionally skipped MDL (DDL system tables for internal sessions,
+	// untracked internal sessions, or non-pessimistic internal read-only accesses in a
+	// transaction that later writes) are checked via schema delta so MDL-locked tables are
+	// not falsely invalidated, while retaining all written/skipped IDs in case MDL is
+	// disabled before commit validation runs.
 	var checker *domain.SchemaChecker
 	if sessVars.TxnCtx != nil && sessVars.TxnCtx.EnableMDL && vardef.IsMDLEnabled() {
-		checker = domain.NewSchemaCheckerWithDeltaCheckIDs(
+		checker = domain.NewSchemaCheckerWithSkippedMDL(
 			p.sctx.GetSchemaValidator(),
 			p.GetTxnInfoSchema().SchemaMetaVersion(),
 			physicalTableIDs,
-			nonTempDeltaIDs,
-			len(nonTempDeltaIDs) > 0,
+			nonTempSkippedIDs,
 		)
 	} else {
 		checker = domain.NewSchemaChecker(
@@ -662,6 +672,13 @@ func (p *baseTxnContextProvider) SetOptionsBeforeCommit(
 	// The pipelined txn will may be flushed in background, not touch the options to avoid races.
 	// to avoid session set overlap the txn set.
 	txn.SetOption(kv.SchemaChecker, checker)
+	if len(nonTempSkippedIDs) > 0 {
+		// DDL skips delayForAsyncCommit while global MDL is enabled, so transactions that
+		// skipped MDL on any table must use standard 2PC to re-validate schema at commitTS
+		// after prewrite instead of finishing via 1PC or async commit.
+		txn.SetOption(kv.EnableAsyncCommit, false)
+		txn.SetOption(kv.Enable1PC, false)
+	}
 
 	if sessVars.StmtCtx.KvExecCounter != nil {
 		// Bind an interceptor for client-go to count the number of SQL executions of each TiKV.
