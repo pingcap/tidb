@@ -393,6 +393,12 @@ go_test(
         "//pkg/parser/mysql",
         "//pkg/parser/terror",
         "//pkg/parser/types",
+<<<<<<< HEAD
+=======
+        "//pkg/planner/core/resolve",
+        "//pkg/planner/util",
+        "//pkg/privilege",
+>>>>>>> d2d8d42b916 (ddl: set PD GC barrier and delete gc_delete_range inside txn during RECOVER (#73526))
         "//pkg/resourcegroup",
         "//pkg/resourcemanager/pool/workerpool",
         "//pkg/server",
@@ -451,6 +457,12 @@ go_test(
         "@com_github_tikv_client_go_v2//testutils",
         "@com_github_tikv_client_go_v2//tikv",
         "@com_github_tikv_client_go_v2//util",
+<<<<<<< HEAD
+=======
+        "@com_github_tikv_pd_client//:client",
+        "@com_github_tikv_pd_client//clients/gc",
+        "@com_github_tikv_pd_client//errs",
+>>>>>>> d2d8d42b916 (ddl: set PD GC barrier and delete gc_delete_range inside txn during RECOVER (#73526))
         "@com_github_tikv_pd_client//http",
         "@io_etcd_go_etcd_client_v3//:client",
         "@io_etcd_go_etcd_tests_v3//integration",
