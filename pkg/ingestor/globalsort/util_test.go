@@ -226,8 +226,7 @@ func TestCleanUpFilesBatched(t *testing.T) {
 				deleteFiles: func(ctx context.Context, names []string) error {
 					require.NotEmpty(t, names)
 					require.LessOrEqual(t, len(names), batchSize)
-					// Retain the slice, just like objstore.Batched does, to detect buffer reuse.
-					batches = append(batches, names)
+					batches = append(batches, slices.Clone(names))
 					return nil
 				},
 			}

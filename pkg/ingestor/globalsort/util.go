@@ -52,8 +52,7 @@ func CleanUpFiles(ctx context.Context, store storeapi.Storage, nonPartitionedDir
 		if err := store.DeleteFiles(ctx, names); err != nil {
 			return err
 		}
-		// Storage wrappers such as objstore.Batched may retain the slice.
-		names = make([]string, 0, storeapi.S3DeleteObjectsLimit)
+		names = names[:0]
 		return nil
 	}, nonPartitionedDirs...)
 	if err != nil {

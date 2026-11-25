@@ -182,7 +182,9 @@ type Storage interface {
 	// Open a Reader by file path. path is relative path to storage base path.
 	// Some implementation will use the given ctx as the inner context of the reader.
 	Open(ctx context.Context, path string, option *ReaderOption) (objectio.Reader, error)
-	// DeleteFiles delete the files in storage
+	// DeleteFiles deletes the named files from storage.
+	// Implementations must copy names if they retain it after returning,
+	// so callers can reuse the slice and its backing array after the call.
 	DeleteFiles(ctx context.Context, names []string) error
 	// WalkDir traverse all the files in a dir.
 	//
