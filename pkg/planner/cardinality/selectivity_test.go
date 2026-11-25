@@ -2115,10 +2115,23 @@ func TestDeriveTablePathStatsNoAccessConds(t *testing.T) {
 		Updated: []*statistics.Table{statsTbl},
 	})
 
-	// Create a DataSource by building a logical plan for a query with no WHERE conditions
+	// Build a logical plan for a query with no WHERE conditions; deriving its stats calls
+	// deriveTablePathStats internally.
+	tablePath := deriveTablePathForTest(t, testKit, "select * from t")
+
+	// Verify that CountAfterAccess equals RealtimeCount when there are no access conditions
+	// Since the query has no WHERE clause, there are no access conditions, so the optimization
+	// should set CountAfterAccess = RealtimeCount
+	require.Equal(t, float64(expectedRowCount), tablePath.CountAfterAccess,
+		"CountAfterAccess should equal RealtimeCount when there are no access conditions and table is not partitioned")
+}
+
+// deriveTablePathForTest builds and logically optimizes sql, derives the stats of its
+// DataSource, and returns the DataSource's table access path.
+func deriveTablePathForTest(t *testing.T, testKit *testkit.TestKit, sql string) *util.AccessPath {
 	ctx := context.Background()
 	p := parser.New()
-	stmt, err := p.ParseOneStmt("select * from t", "", "")
+	stmt, err := p.ParseOneStmt(sql, "", "")
 	require.NoError(t, err)
 
 	sctx := testKit.Session()
@@ -2132,8 +2145,8 @@ func TestDeriveTablePathStatsNoAccessConds(t *testing.T) {
 	plan, err := builder.Build(ctx, nodeW)
 	require.NoError(t, err)
 
-	// Logical optimize to get the DataSource
-	plan, err = plannercore.LogicalOptimizeTest(ctx, rule.FlagCollectPredicateColumnsPoint, plan.(base.LogicalPlan))
+	// Logical optimize to get the DataSource, pushing the WHERE conditions into it.
+	plan, err = plannercore.LogicalOptimizeTest(ctx, rule.FlagPredicatePushDown|rule.FlagCollectPredicateColumnsPoint, plan.(base.LogicalPlan))
 	require.NoError(t, err)
 
 	// Find the DataSource in the plan
@@ -2150,11 +2163,9 @@ func TestDeriveTablePathStatsNoAccessConds(t *testing.T) {
 	}
 	require.NotNil(t, ds, "DataSource should be found in the plan")
 
-	// Derive stats - this will call deriveTablePathStats internally
 	_, _, err = plannercore.RecursiveDeriveStats4Test(ds)
 	require.NoError(t, err)
 
-	// Find the table path
 	var tablePath *util.AccessPath
 	for _, path := range ds.AllPossibleAccessPaths {
 		if path.IsTablePath() {
@@ -2163,12 +2174,32 @@ func TestDeriveTablePathStatsNoAccessConds(t *testing.T) {
 		}
 	}
 	require.NotNil(t, tablePath, "Table path should exist")
+	return tablePath
+}
 
-	// Verify that CountAfterAccess equals RealtimeCount when there are no access conditions
-	// Since the query has no WHERE clause, there are no access conditions, so the optimization
-	// should set CountAfterAccess = RealtimeCount
-	require.Equal(t, float64(expectedRowCount), tablePath.CountAfterAccess,
-		"CountAfterAccess should equal RealtimeCount when there are no access conditions and table is not partitioned")
+// TestDeriveTablePathStatsKeepsMaxCount: a handle range is interpolated from the histogram,
+// so the table path must carry its worst case like an index path does, or it looks riskless
+// in skyline pruning's risk comparison.
+func TestDeriveTablePathStatsKeepsMaxCount(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+	testKit.MustExec("use test")
+	testKit.MustExec("create table t(a int primary key, b int)")
+	values := make([]string, 0, 1000)
+	for i := 1; i <= 1000; i++ {
+		values = append(values, fmt.Sprintf("(%d, %d)", i, i))
+	}
+	testKit.MustExec("insert into t values " + strings.Join(values, ","))
+	testKit.MustExec("analyze table t with 4 buckets, 0 topn")
+	require.NoError(t, dom.StatsHandle().Update(context.Background(), dom.InfoSchema()))
+
+	// Both ends fall strictly inside a bucket, so their shares are interpolated.
+	tablePath := deriveTablePathForTest(t, testKit, "select * from t where a between 150 and 850")
+	require.Greater(t, tablePath.MaxCountAfterAccess, tablePath.CountAfterAccess)
+
+	// Handle points are exact.
+	tablePath = deriveTablePathForTest(t, testKit, "select * from t where a in (5, 10)")
+	require.LessOrEqual(t, tablePath.MaxCountAfterAccess, tablePath.CountAfterAccess)
 }
 
 func TestIndexJoinInnerRowCountUpperBound(t *testing.T) {

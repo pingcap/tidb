@@ -544,6 +544,38 @@ func (hg *Histogram) LessRowCountWithBktIdx(sctx planctx.PlanContext, value type
 	return preCount + hg.calcFraction(bucketIdx, &value)*(curCount-curRepeat-preCount), bucketIdx
 }
 
+// lessRowCountBounds returns the smallest and largest counts of rows below value that are
+// consistent with the histogram. They differ only when value falls strictly inside a
+// bucket, where LessRowCountWithBktIdx interpolates: the bucket's rows below its upper
+// bound may lie anywhere relative to value.
+func (hg *Histogram) lessRowCountBounds(sctx planctx.PlanContext, value types.Datum) (lo, hi float64) {
+	if hg.Bounds.NumRows() == 0 {
+		return 0, 0
+	}
+	exceed, bucketIdx, inBucket, match := hg.LocateBucket(sctx, value)
+	if exceed {
+		return hg.NotNullCount(), hg.NotNullCount()
+	}
+	preCount := float64(0)
+	if bucketIdx > 0 {
+		preCount = float64(hg.Buckets[bucketIdx-1].Count)
+	}
+	if !inBucket {
+		return preCount, preCount
+	}
+	belowUpper := float64(hg.Buckets[bucketIdx].Count - hg.Buckets[bucketIdx].Repeat)
+	// A zero Repeat leaves the upper bound's frequency unrecorded: rows equal to value may be
+	// anywhere in the bucket's count, so only a positive Repeat makes a match exact.
+	if match && hg.Buckets[bucketIdx].Repeat > 0 {
+		return belowUpper, belowUpper
+	}
+	// The bucket's lower bound is an observed value, so no bucket row lies below it.
+	if chunk.Compare(hg.Bounds.GetRow(bucketIdx*2), 0, &value) == 0 {
+		return preCount, preCount
+	}
+	return preCount, belowUpper
+}
+
 // LessRowCount estimates the row count where the column less than value.
 // The input sctx is just for debug trace, you can pass nil safely if that's not needed.
 func (hg *Histogram) LessRowCount(sctx planctx.PlanContext, value types.Datum) float64 {
@@ -594,6 +626,13 @@ func (hg *Histogram) BetweenRowCount(sctx planctx.PlanContext, a, b types.Datum)
 			rangeEst.MaxEst = max(rangeEst.MaxEst, float64(skewEstimate))
 		}
 	}
+	// An end of the range that falls strictly inside a bucket takes an interpolated share of
+	// that bucket. In the worst case the range covers all of those bucket rows. For a range
+	// inside a single bucket this is the same bound as above; it also covers ranges that
+	// span several buckets, whose edge buckets are interpolated the same way.
+	loA, _ := hg.lessRowCountBounds(sctx, a)
+	_, hiB := hg.lessRowCountBounds(sctx, b)
+	rangeEst.MaxEst = max(rangeEst.MaxEst, hiB-loA)
 	return rangeEst
 }
 
@@ -632,11 +671,14 @@ func (r *RowEstimate) AddAll(f float64) {
 	r.MaxEst += f
 }
 
-// Subtract subtracts two RowEstimates together, storing result in the first RowEstimate.
+// Subtract subtracts r1 from r, storing the result in r. The bounds follow interval
+// arithmetic: the worst (max) case of r - r1 removes the fewest rows (r1.MinEst), and the
+// best (min) case removes the most rows (r1.MaxEst). Subtracting r1.MaxEst from r.MaxEst
+// would shrink the upper bound exactly when r1 is most uncertain.
 func (r *RowEstimate) Subtract(r1 RowEstimate) {
 	r.Est -= r1.Est
-	r.MinEst -= r1.MinEst
-	r.MaxEst -= r1.MaxEst
+	r.MinEst -= r1.MaxEst
+	r.MaxEst -= r1.MinEst
 }
 
 // MultiplyAll multiplies all three fields of the RowEstimate by a float64 value and stores the result.
