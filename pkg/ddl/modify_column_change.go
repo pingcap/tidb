@@ -16,9 +16,7 @@ package ddl
 
 import (
 	"fmt"
-	"strings"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/charset"
@@ -26,24 +24,24 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
-	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
 // =============================================================================
 // 1. Entry points
 // =============================================================================
 
-// analyzeModifyColumn validates conversion support and returns the base
-// ModifyColumnType (metadata-only, validation-only, index rewrite, or row
-// rewrite) without execution-time restrictions.
+// analyzeModifyColumn classifies the conversion and validates that it is
+// supported. Returns the base ModifyColumnType (metadata-only, validation-only,
+// index rewrite, or row rewrite) without execution-time restrictions.
 //
 // Shared by submission and execution. Execution must evaluate against current
 // metadata, since another DDL may have changed the column since submission.
 func analyzeModifyColumn(tbl *model.TableInfo, oldCol, newCol *model.ColumnInfo) (model.ModifyColumnType, error) {
-	if err := checkModifyTypes(oldCol, newCol, isColumnWithIndex(oldCol.Name.L, tbl.Indices)); err != nil {
+	change := classifyColumnChange(tbl, oldCol, newCol)
+	if err := checkModifyTypes(oldCol, newCol, change); err != nil {
 		return model.ModifyTypeReorg, err
 	}
-	return classifyColumnChange(tbl, oldCol, newCol), nil
+	return change, nil
 }
 
 // resolveModifyColumnType validates and determines the initial execution
@@ -93,47 +91,35 @@ func isNullToNotNullChange(oldCol, newCol *model.ColumnInfo) bool {
 // =============================================================================
 
 // checkModifyTypes validates whether modifying from -> to is supported at all
-// (either metadata-only or via reorganization). It checks cross-type support,
-// primary key restrictions, and charset/collation compatibility.
-func checkModifyTypes(from, to *model.ColumnInfo, hasIndex bool) error {
-	fromFt := &from.FieldType
-	toFt := &to.FieldType
+// (either metadata-only or via reorganization). Non-GBK charset and collation
+// changes are allowed and routed to the appropriate execution path by
+// classifyColumnChange.
+func checkModifyTypes(from, to *model.ColumnInfo, change model.ModifyColumnType) error {
+	fromFt, toFt := &from.FieldType, &to.FieldType
+	if !charset.ValidCharsetAndCollation(toFt.GetCharset(), toFt.GetCollate()) {
+		return dbterror.ErrUnknownCharacterSet.GenWithStack("Unknown character set: '%s', collation: '%s'", toFt.GetCharset(), toFt.GetCollate())
+	}
 
 	if from.GetType() != to.GetType() && !isTypeChangeSupported(fromFt.GetType(), toFt.GetType()) {
 		msg := fmt.Sprintf("change from original type %v to %v is currently unsupported yet", fromFt.CompactStr(), toFt.CompactStr())
 		return dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs(msg)
 	}
 
-	// Check whether the type/length/scale/signedness/member change itself
-	// (ignoring charset) requires data validation or reorganization rather than
-	// a metadata-only update. CHAR -> VARCHAR under new collation is included
-	// so primary-key rejection and reorg-assisted charset conversion stay consistent.
-	typeNeedsReorg := classifyColumnValueStorage(from, to) != model.ModifyTypeNoReorg ||
-		convertBetweenCharAndVarchar(from.GetType(), to.GetType())
-	if typeNeedsReorg && mysql.HasPriKeyFlag(fromFt.GetFlag()) {
+	// Modifying charset or collation to/from GBK is not supported yet.
+	fromChs, toChs := fromFt.GetCharset(), toFt.GetCharset()
+	if fromChs == charset.CharsetGBK || toChs == charset.CharsetGBK {
+		if fromChs != toChs {
+			return dbterror.ErrUnsupportedModifyCharset.GenWithStackByArgs(fmt.Sprintf("charset from %s to %s", fromChs, toChs))
+		}
+		if fromFt.GetCollate() != toFt.GetCollate() {
+			return dbterror.ErrUnsupportedModifyCharset.GenWithStackByArgs(fmt.Sprintf("change collate from %s to %s", fromFt.GetCollate(), toFt.GetCollate()))
+		}
+	}
+
+	if change != model.ModifyTypeNoReorg && mysql.HasPriKeyFlag(fromFt.GetFlag()) {
 		return dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("this column has primary key flag")
 	}
-
-	err := checkModifyCharsetAndCollation(toFt.GetCharset(), toFt.GetCollate(), fromFt.GetCharset(), fromFt.GetCollate(), hasIndex)
-	if err == nil {
-		return nil
-	}
-	if toFt.GetCharset() == charset.CharsetGBK || fromFt.GetCharset() == charset.CharsetGBK {
-		return errors.Trace(err)
-	}
-	if strings.Contains(err.Error(), "Unsupported modifying collation") {
-		colErrMsg := "Unsupported modifying collation of column '%s' from '%s' to '%s' when index is defined on it."
-		err = dbterror.ErrUnsupportedModifyCollation.GenWithStack(colErrMsg, from.Name.L, from.GetCollate(), to.GetCollate())
-	}
-
-	// When the type change already triggers reorganization, non-GBK charset and
-	// collation changes are handled during reorg rather than rejected up front.
-	// Note: ErrUnsupportedModifyCharset and ErrUnsupportedModifyCollation share
-	// ErrUnsupportedDDLOperation (code 8200).
-	if typeNeedsReorg && (dbterror.ErrUnsupportedModifyCharset.Equal(err) || dbterror.ErrUnsupportedModifyCollation.Equal(err)) {
-		return nil
-	}
-	return errors.Trace(err)
+	return nil
 }
 
 // isTypeChangeSupported reports whether cross-type reorganization from
@@ -203,8 +189,14 @@ func classifyColumnChange(tbl *model.TableInfo, oldCol, newCol *model.ColumnInfo
 		}
 		change = model.ModifyTypeNoReorgWithCheck
 	}
-	if change == model.ModifyTypeNoReorgWithCheck && needIndexReorg(oldCol, newCol) {
-		return model.ModifyTypeIndexReorg
+	if needIndexReorg(oldCol, newCol) {
+		// Index-only reorg only runs validation SQL for integers and non-binary
+		// CHAR/VARCHAR; other indexed string types (e.g. TEXT with a prefix
+		// index) fall back to full row+index reorg.
+		if isIntegerChange(oldCol, newCol) || isNonBinaryCharChange(oldCol, newCol) {
+			return model.ModifyTypeIndexReorg
+		}
+		return model.ModifyTypeReorg
 	}
 	return change
 }
@@ -215,27 +207,6 @@ func classifyColumnValues(oldCol, newCol *model.ColumnInfo) model.ModifyColumnTy
 	if !isCharsetMetadataCompatible(oldCol, newCol) {
 		return model.ModifyTypeReorg
 	}
-	return classifyColumnValueStorage(oldCol, newCol)
-}
-
-// isCharsetMetadataCompatible reports whether stored values remain valid
-// without row conversion when the column charset changes.
-// ENUM/SET store ordinals rather than encoded strings; UTF8/Latin1 -> UTF8MB4
-// widening also preserves existing byte representations.
-func isCharsetMetadataCompatible(oldCol, newCol *model.ColumnInfo) bool {
-	if oldCol.GetCharset() == newCol.GetCharset() {
-		return true
-	}
-	if oldCol.GetType() == mysql.TypeEnum || oldCol.GetType() == mysql.TypeSet {
-		return true
-	}
-	return newCol.GetCharset() == charset.CharsetUTF8MB4 &&
-		(oldCol.GetCharset() == charset.CharsetUTF8 || oldCol.GetCharset() == charset.CharsetLatin1)
-}
-
-// classifyColumnValueStorage classifies a column conversion by type family,
-// length, scale, signedness, and member list, independent of charset changes.
-func classifyColumnValueStorage(oldCol, newCol *model.ColumnInfo) model.ModifyColumnType {
 	sameType := oldCol.GetType() == newCol.GetType()
 	sameSign := mysql.HasUnsignedFlag(oldCol.GetFlag()) == mysql.HasUnsignedFlag(newCol.GetFlag())
 
@@ -272,6 +243,21 @@ func classifyColumnValueStorage(oldCol, newCol *model.ColumnInfo) model.ModifyCo
 	return model.ModifyTypeReorg
 }
 
+// isCharsetMetadataCompatible reports whether stored values remain valid
+// without row conversion when the column charset changes.
+// ENUM/SET store ordinals rather than encoded strings; UTF8/Latin1 -> UTF8MB4
+// widening also preserves existing byte representations.
+func isCharsetMetadataCompatible(oldCol, newCol *model.ColumnInfo) bool {
+	if oldCol.GetCharset() == newCol.GetCharset() {
+		return true
+	}
+	if oldCol.GetType() == mysql.TypeEnum || oldCol.GetType() == mysql.TypeSet {
+		return true
+	}
+	return newCol.GetCharset() == charset.CharsetUTF8MB4 &&
+		(oldCol.GetCharset() == charset.CharsetUTF8 || oldCol.GetCharset() == charset.CharsetLatin1)
+}
+
 func classifyStringValues(oldCol, newCol *model.ColumnInfo) model.ModifyColumnType {
 	if oldCol.GetType() == mysql.TypeString && newCol.GetType() == mysql.TypeString &&
 		types.IsBinaryStr(&oldCol.FieldType) && types.IsBinaryStr(&newCol.FieldType) {
@@ -305,11 +291,12 @@ func needIndexReorg(oldCol, changingCol *model.ColumnInfo) bool {
 	if isIntegerChange(oldCol, changingCol) {
 		return mysql.HasUnsignedFlag(oldCol.GetFlag()) != mysql.HasUnsignedFlag(changingCol.GetFlag())
 	}
-
-	intest.Assert(isCharChange(oldCol, changingCol))
+	if !isStringStorageType(oldCol.GetType()) || !isStringStorageType(changingCol.GetType()) {
+		return false
+	}
 
 	// Check index key part, ref tablecodec.GenIndexKey.
-	if !collate.CompatibleCollate(oldCol.GetCollate(), changingCol.GetCollate()) {
+	if collate.NewCollationEnabled() && !collate.CompatibleCollate(oldCol.GetCollate(), changingCol.GetCollate()) {
 		return true
 	}
 
@@ -320,6 +307,9 @@ func needIndexReorg(oldCol, changingCol *model.ColumnInfo) bool {
 }
 
 func hasRelatedIndex(tbl *model.TableInfo, colID int64) bool {
+	if tbl == nil {
+		return false
+	}
 	for _, idx := range tbl.Indices {
 		if idx.HasColumnInIndexColumns(tbl, colID) {
 			return true
@@ -435,15 +425,6 @@ func isStringStorageType(tp byte) bool {
 	default:
 		return false
 	}
-}
-
-// convertBetweenCharAndVarchar reports whether converting between VARCHAR and
-// CHAR requires reorganization for compatibility checks:
-//  1. VARCHAR -> CHAR strips trailing spaces.
-//  2. CHAR -> VARCHAR under new collation can change secondary index restored data.
-func convertBetweenCharAndVarchar(oldCol, newCol byte) bool {
-	return (types.IsTypeVarchar(oldCol) && newCol == mysql.TypeString) ||
-		(oldCol == mysql.TypeString && types.IsTypeVarchar(newCol) && collate.NewCollationEnabled())
 }
 
 // IsElemsChangedToModifyColumn reports whether modifying ENUM/SET elements

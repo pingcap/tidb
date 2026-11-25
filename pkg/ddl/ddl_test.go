@@ -352,7 +352,7 @@ func TestModifyColumn(t *testing.T) {
 		{"int", "int unsigned", nil},
 		{"varchar(10)", "text", nil},
 		{"varbinary(10)", "blob", nil},
-		{"text", "blob", dbterror.ErrUnsupportedModifyCharset.GenWithStackByArgs("charset from utf8mb4 to binary")},
+		{"text", "blob", nil},
 		{"varchar(10)", "varchar(8)", nil},
 		{"varchar(10)", "varchar(11)", nil},
 		{"varchar(10) character set utf8 collate utf8_bin", "varchar(10) character set utf8", nil},
@@ -368,9 +368,10 @@ func TestModifyColumn(t *testing.T) {
 		{"varchar(10) character set gbk", "char(10) character set utf8", dbterror.ErrUnsupportedModifyCharset.GenWithStackByArgs("charset from gbk to utf8")},
 		{"varchar(10) character set utf8", "char(10) character set gbk", dbterror.ErrUnsupportedModifyCharset.GenWithStackByArgs("charset from utf8 to gbk")},
 		{"varchar(10) character set utf8", "varchar(10) character set gbk", dbterror.ErrUnsupportedModifyCharset.GenWithStackByArgs("charset from utf8 to gbk")},
+		{"varchar(10) character set gbk collate gbk_bin", "varchar(10) character set gbk collate gbk_chinese_ci", dbterror.ErrUnsupportedModifyCharset.GenWithStackByArgs("change collate from gbk_bin to gbk_chinese_ci")},
 		{"varchar(10) character set gbk", "varchar(255) character set gbk", nil},
-		{"binary(4)", "char(10)", dbterror.ErrUnsupportedModifyCharset.GenWithStackByArgs("charset from binary to utf8mb4")},
-		{"varchar(10)", "varchar(10) character set ascii", dbterror.ErrUnsupportedModifyCharset.GenWithStackByArgs("charset from utf8mb4 to ascii")},
+		{"binary(4)", "char(10)", nil},
+		{"varchar(10)", "varchar(10) character set ascii", nil},
 		{"varchar(10)", "varchar(8) character set ascii", nil},
 		{"char(4) character set utf8mb4", "varchar(10) character set ascii", nil},
 		{"date", "bit(8)", dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("change from original type date to bit(8) is currently unsupported yet")},
@@ -378,7 +379,8 @@ func TestModifyColumn(t *testing.T) {
 	for _, tt := range tests {
 		colA := colDefStrToColInfo(t, tt.origin, ctx)
 		colB := colDefStrToColInfo(t, tt.to, ctx)
-		err := checkModifyTypes(colA, colB, false)
+		tbl := &model.TableInfo{Columns: []*model.ColumnInfo{colA}}
+		_, err := analyzeModifyColumn(tbl, colA, colB)
 		if err == nil {
 			require.NoErrorf(t, tt.err, "origin:%v, to:%v", tt.origin, tt.to)
 		} else {
@@ -387,22 +389,57 @@ func TestModifyColumn(t *testing.T) {
 	}
 
 	t.Run("primaryKeyAndIndexedCollation", func(t *testing.T) {
+		newIndexedTable := func(col *model.ColumnInfo) *model.TableInfo {
+			col.ID = 1
+			col.Offset = 0
+			return &model.TableInfo{
+				Columns: []*model.ColumnInfo{col},
+				Indices: []*model.IndexInfo{{
+					ID:      1,
+					Name:    ast.NewCIStr("idx_a"),
+					Columns: []*model.IndexColumn{{Name: col.Name, Offset: 0, Length: -1}},
+				}},
+			}
+		}
+
 		pkOld := colDefStrToColInfo(t, "int", ctx)
 		pkOld.AddFlag(mysql.PriKeyFlag)
 		pkNew := colDefStrToColInfo(t, "tinyint", ctx)
-		require.EqualError(t, checkModifyTypes(pkOld, pkNew, true), "[ddl:8200]Unsupported modify column: this column has primary key flag")
+		_, err := analyzeModifyColumn(newIndexedTable(pkOld), pkOld, pkNew)
+		require.EqualError(t, err, "[ddl:8200]Unsupported modify column: this column has primary key flag")
+
+		pkCharsetOld := colDefStrToColInfo(t, "varchar(10) character set utf8mb4", ctx)
+		pkCharsetOld.AddFlag(mysql.PriKeyFlag)
+		pkCharsetNew := colDefStrToColInfo(t, "varchar(10) character set ascii", ctx)
+		_, err = analyzeModifyColumn(newIndexedTable(pkCharsetOld), pkCharsetOld, pkCharsetNew)
+		require.EqualError(t, err, "[ddl:8200]Unsupported modify column: this column has primary key flag")
+
+		pkCollateOld := colDefStrToColInfo(t, "varchar(10) collate utf8_bin", ctx)
+		pkCollateOld.AddFlag(mysql.PriKeyFlag)
+		pkCollateNew := colDefStrToColInfo(t, "varchar(10) collate utf8_general_ci", ctx)
+		_, err = analyzeModifyColumn(newIndexedTable(pkCollateOld), pkCollateOld, pkCollateNew)
+		require.EqualError(t, err, "[ddl:8200]Unsupported modify column: this column has primary key flag")
 
 		idxOld := colDefStrToColInfo(t, "varchar(10) collate utf8_bin", ctx)
 		idxNew := colDefStrToColInfo(t, "varchar(10) collate utf8_general_ci", ctx)
-		require.EqualError(
-			t,
-			checkModifyTypes(idxOld, idxNew, true),
-			"[ddl:8200]Unsupported modifying collation of column 'a' from 'utf8_bin' to 'utf8_general_ci' when index is defined on it.",
-		)
+		idxTbl := newIndexedTable(idxOld)
+		change, err := analyzeModifyColumn(idxTbl, idxOld, idxNew)
+		require.NoError(t, err)
+		require.Equal(t, model.ModifyTypeIndexReorg, change)
+		resolved, err := resolveModifyColumnType(idxTbl, idxOld, idxNew, model.ModifyTypeNone, mysql.ModeStrictAllTables)
+		require.NoError(t, err)
+		require.Equal(t, model.ModifyTypeReorg, resolved)
+
+		textOld := colDefStrToColInfo(t, "text collate utf8_bin", ctx)
+		textNew := colDefStrToColInfo(t, "text collate utf8_general_ci", ctx)
+		change, err = analyzeModifyColumn(newIndexedTable(textOld), textOld, textNew)
+		require.NoError(t, err)
+		require.Equal(t, model.ModifyTypeReorg, change)
 
 		reorgOld := colDefStrToColInfo(t, "char(20) collate utf8mb4_bin", ctx)
 		reorgNew := colDefStrToColInfo(t, "varchar(10) collate utf8_unicode_ci", ctx)
-		require.NoError(t, checkModifyTypes(reorgOld, reorgNew, true))
+		_, err = analyzeModifyColumn(newIndexedTable(reorgOld), reorgOld, reorgNew)
+		require.NoError(t, err)
 	})
 
 	t.Run("resolveModifyColumnType", func(t *testing.T) {

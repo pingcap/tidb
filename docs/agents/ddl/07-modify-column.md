@@ -43,24 +43,25 @@ Submission calls `analyzeModifyColumn` and initial execution calls
 `resolveModifyColumnType`, each using its own metadata snapshot. Conversion
 analysis is structured into three layers:
 
-1. **Support validation (`checkModifyTypes`)**: validates cross-type support
-   (`isTypeChangeSupported`), primary-key restrictions, and charset/collation
-   compatibility (`checkModifyCharsetAndCollation`, shared with
-   `AlterTableCharset` in `pkg/ddl/executor.go`). It reuses
-   `classifyColumnValueStorage` (ignoring charset) plus
-   `convertBetweenCharAndVarchar` as the single source of truth for whether a
-   type change requires reorg.
-2. **Storage & index classification (`classifyColumnChange`)**: checks safe
+1. **Storage & index classification (`classifyColumnChange`)**: checks safe
    charset compatibility (`isCharsetMetadataCompatible`: ENUM/SET ordinals and
    UTF8/Latin1 -> UTF8MB4 widening), then classifies row storage by type family
-   in `classifyColumnValueStorage` / `classifyStringValues` (integer ranges
-   ignore display width; DECIMAL requires identical precision/scale/sign;
-   ENUM/SET preserve member ordinals; BINARY length changes require padding
-   changes; vector dimensions must match unless target is unconstrained). It
-   then applies the indexed `CHAR -> VARCHAR` rule and checks index
-   key/restored-data encoding via `needIndexReorg`. `noReorgDataStrict` uses the
-   same classification for dependent-object checks; nullability remains a
-   separate check.
+   in `classifyColumnValues` / `classifyStringValues` (integer ranges ignore
+   display width; DECIMAL requires identical precision/scale/sign; ENUM/SET
+   preserve member ordinals; BINARY length changes require padding changes;
+   vector dimensions must match unless target is unconstrained). For indexed
+   columns it applies the `CHAR -> VARCHAR` rule and checks index
+   key/restored-data encoding via `needIndexReorg` (including incompatible
+   collation changes under new collation, routing non-integer/non-char types
+   like `TEXT` with prefix indexes to `ModifyTypeReorg`). `noReorgDataStrict`
+   uses the same classification for dependent-object checks; nullability remains
+   a separate check.
+2. **Support validation (`checkModifyTypes`)**: validates the target
+   charset/collation pair, cross-type support (`isTypeChangeSupported`), the
+   GBK charset/collation change restriction, and primary-key restrictions
+   (`change != ModifyTypeNoReorg`). Non-GBK charset and collation changes are
+   allowed and routed by `classifyColumnChange` to the appropriate execution
+   path instead of being gated by type-only heuristics.
 3. **Execution-time restrictions & precheck (`applyExecutionRestrictions` +
    `needsVarcharToCharPrecheck`)**: promotes `ModifyTypeNoReorg` to
    `ModifyTypeNoReorgWithCheck` on `NULL -> NOT NULL`, applies legacy

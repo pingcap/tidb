@@ -255,7 +255,7 @@ func (w *worker) onModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, 
 	}
 
 	if !resolvedModifyType {
-		if err = checkModifyTypes(oldCol, args.Column, isColumnWithIndex(oldCol.Name.L, tblInfo.Indices)); err != nil {
+		if _, err = analyzeModifyColumn(tblInfo, oldCol, args.Column); err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
