@@ -1721,3 +1721,47 @@ fn test_import_into_planner_handoff() {
         assert_eq!(error.message, message, "{sql}");
     }
 }
+
+/// Go `buildJoin`'s ON clause is rewritten over the join itself
+/// (`b.rewrite(ctx, joinNode.On.Expr, joinPlan, ...)`): an uncorrelated
+/// scalar or EXISTS subquery is evaluated into a constant, for SELECT and for
+/// multi-table UPDATE/DELETE, while an IN subquery, which would replace the
+/// join with a semi-join, is refused (Go testkit probe on master).
+#[test]
+fn a_join_on_clause_evaluates_uncorrelated_subqueries_like_go() {
+    let mut session = Session::new();
+    for sql in [
+        "create table t1 (a int, b int)",
+        "create table t2 (a int, b int)",
+        "insert into t1 values (1,1),(2,2)",
+        "insert into t2 values (1,1),(3,3)",
+    ] {
+        session.run(sql).unwrap();
+    }
+    let rows = |session: &mut Session, sql: &str| -> Vec<String> {
+        row_text(session.run(sql)).into_iter().map(|row| row.join(" ")).collect()
+    };
+    let refused = |session: &mut Session, sql: &str| -> String {
+        session.run(sql).err().map(|error| error.to_mysql_error().message).unwrap_or_default()
+    };
+    assert!(rows(&mut session, "select * from t1 join t2 on t1.a = (select max(a) from t2) order by 1,2,3,4").is_empty());
+    assert_eq!(
+        rows(&mut session, "select * from t1 left join t2 on t1.a = t2.a and exists (select 1 from t2 where t2.a = 3) order by 1,2,3,4"),
+        ["1 1 1 1", "2 2 NULL NULL"]
+    );
+    assert_eq!(
+        rows(&mut session, "select * from t1 left join t2 on t1.a = t2.a and t2.b = (select min(b) from t1) order by 1,2,3,4"),
+        ["1 1 1 1", "2 2 NULL NULL"]
+    );
+    assert!(rows(&mut session, "select * from t1 join t2 on t1.a = t2.a and t1.b > (select count(*) from t2) order by 1,2,3,4").is_empty());
+    for sql in [
+        "select * from t1 join t2 on t1.a in (select a from t2) order by 1,2,3,4",
+        "select * from t1 right join t2 on t2.a in (select a from t1) order by 1,2,3,4",
+    ] {
+        assert_eq!(refused(&mut session, sql), "ON condition doesn't support subqueries yet", "{sql}");
+    }
+    session.run("update t1 join t2 on t1.a = (select max(a) from t2) set t1.b = 9").unwrap();
+    assert_eq!(rows(&mut session, "select * from t1 order by 1"), ["1 1", "2 2"]);
+    session.run("delete t1 from t1 join t2 on t1.a = (select min(a) from t2)").unwrap();
+    assert_eq!(rows(&mut session, "select * from t1 order by 1"), ["2 2"]);
+}

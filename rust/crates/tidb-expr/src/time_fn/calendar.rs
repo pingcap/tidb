@@ -69,6 +69,40 @@ pub(crate) fn date_part(
     Ok(component_date(vals)?.map_or(Datum::Null, |ymd| Datum::Int(f(ymd))))
 }
 
+/// The value Go `types.ParseTime` names when `text` fails to parse:
+/// `checkMonthDay` reports an invalid month or day by the parsed fields,
+/// `"%d-%d-%d"` (unpadded, a two-digit year adjusted as `adjustYear` does,
+/// any clock part dropped); every other failure names the input itself.
+pub(crate) fn go_parse_time_error_value(text: &str, cols: &dyn Columns) -> String {
+    let parsed = tidb_datatype::parse_time(
+        text,
+        tidb_datatype::TimeType::DateTime,
+        i64::from(tidb_datatype::get_fsp(text)),
+        false,
+        true,
+        false,
+        &cols.time_zone(),
+    );
+    if !matches!(
+        parsed,
+        Err(tidb_datatype::TimeError::InvalidDate | tidb_datatype::TimeError::OutOfRange("month" | "day"))
+    ) {
+        return text.to_owned();
+    }
+    let date = text.trim().split(|c: char| c.is_whitespace() || c == 'T').next().unwrap_or("");
+    let fields: Vec<&str> = date.split(|c: char| !c.is_ascii_digit()).filter(|f| !f.is_empty()).collect();
+    let [year, month, day] = fields.as_slice() else {
+        return text.to_owned();
+    };
+    let (Ok(mut y), Ok(m), Ok(d)) = (year.parse::<i64>(), month.parse::<i64>(), day.parse::<i64>()) else {
+        return text.to_owned();
+    };
+    if year.len() <= 2 {
+        y += if y < 70 { 2000 } else { 1900 };
+    }
+    format!("{y}-{m}-{d}")
+}
+
 /// Parses a date or datetime string's calendar date into `(year, month,
 /// day)`, calendar-validated (month 1-12, day valid for that specific
 /// month/year, including leap years) — `None` if it doesn't look like one.
@@ -716,9 +750,10 @@ pub(crate) fn date_add_with_result_fsp(
                 );
             }
             _ => {
+                let shown = go_parse_time_error_value(&s, ctx);
                 ctx.append_go_warning(
                     &tidb_datatype::types_errors::ERR_WRONG_VALUE,
-                    &format!("Incorrect datetime value: '{s}'"),
+                    &format!("Incorrect datetime value: '{shown}'"),
                 );
             }
         }
@@ -1306,9 +1341,10 @@ fn date_add_composite(
                 );
             }
             _ => {
+                let shown = go_parse_time_error_value(&s, ctx);
                 ctx.append_go_warning(
                     &tidb_datatype::types_errors::ERR_WRONG_VALUE,
-                    &format!("Incorrect datetime value: '{s}'"),
+                    &format!("Incorrect datetime value: '{shown}'"),
                 );
             }
         }

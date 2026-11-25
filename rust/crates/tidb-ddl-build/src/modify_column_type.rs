@@ -121,6 +121,16 @@ pub fn get_modify_column_type(
 /// the new one, so the change needs neither a rewrite nor a check.
 #[must_use]
 pub fn no_reorg_data_strict(old: &FieldType, new: &FieldType, column_indexed: bool) -> bool {
+    // Go: an incompatible index collation change was refused before; a
+    // charset/collation change outside the direct-convertible set rewrites.
+    if !can_modify_charset_and_collate_without_reorg(
+        old.charset_name(),
+        old.collation_name(),
+        new.charset_name(),
+        new.collation_name(),
+    ) {
+        return false;
+    }
     let to_unsigned = new.is_unsigned();
     let origin_unsigned = old.is_unsigned();
     let need_truncation_or_toggle_sign = || {
@@ -209,7 +219,16 @@ pub fn need_row_reorg(old: &FieldType, new: &FieldType) -> bool {
     if !is_char_change(old, new) {
         return true;
     }
-    // The charset was checked before; a binary string pads.
+    // A charset/collation change outside the direct-convertible set rewrites.
+    if !can_modify_charset_and_collate_without_reorg(
+        old.charset_name(),
+        old.collation_name(),
+        new.charset_name(),
+        new.collation_name(),
+    ) {
+        return true;
+    }
+    // A binary string pads.
     old.is_binary_string() || new.is_binary_string()
 }
 
@@ -303,7 +322,9 @@ fn is_integer_change(old: &FieldType, new: &FieldType) -> bool {
     old.code().is_integer_type() && new.code().is_integer_type()
 }
 
-fn is_char_change(old: &FieldType, new: &FieldType) -> bool {
+/// Go `isCharChange`.
+#[must_use]
+pub fn is_char_change(old: &FieldType, new: &FieldType) -> bool {
     old.code().is_type_char() && new.code().is_type_char()
 }
 
@@ -552,6 +573,28 @@ impl CharsetChangeRefusal {
 /// Go `checkModifyCharsetAndCollation`: a valid target pair; an indexed
 /// column may not move to an incompatible collation under the new collation
 /// framework; and only utf8/latin1 to utf8mb4, or a collation change within
+/// Go `isCharsetAllowingDirectCollationChange`: TiDB only allows utf8/latin1
+/// to utf8mb4, or a collation change within utf8/utf8mb4.
+#[must_use]
+pub fn is_charset_allowing_direct_collation_change(orig_charset: &str, to_charset: &str) -> bool {
+    matches!(
+        (orig_charset, to_charset),
+        ("utf8", "utf8mb4") | ("utf8", "utf8") | ("utf8mb4", "utf8mb4") | ("latin1", "utf8mb4")
+    )
+}
+
+/// Go `canModifyCharsetAndCollateWithoutReorg`.
+#[must_use]
+pub fn can_modify_charset_and_collate_without_reorg(
+    orig_charset: &str,
+    orig_collate: &str,
+    to_charset: &str,
+    to_collate: &str,
+) -> bool {
+    is_charset_allowing_direct_collation_change(orig_charset, to_charset)
+        || (to_charset == orig_charset && to_collate == orig_collate)
+}
+
 /// utf8/utf8mb4, is metadata-only.
 pub fn check_modify_charset_and_collation(
     to_charset: &str,
@@ -571,10 +614,7 @@ pub fn check_modify_charset_and_collation(
     {
         return Err(CharsetChangeRefusal::Collation);
     }
-    if matches!(
-        (from_charset, to_charset),
-        ("utf8", "utf8mb4") | ("utf8", "utf8") | ("utf8mb4", "utf8mb4") | ("latin1", "utf8mb4")
-    ) {
+    if is_charset_allowing_direct_collation_change(from_charset, to_charset) {
         return Ok(());
     }
     if to_charset != from_charset {

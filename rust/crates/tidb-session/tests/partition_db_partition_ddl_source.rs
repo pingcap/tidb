@@ -1284,3 +1284,252 @@ fn issue_57780_add_and_change_column_on_partitioned_table() {
     assert_eq!(column.read().field_type.flen(), 11);
     assert_eq!(column.read().field_type.decimal(), 2);
 }
+
+/// Each global-index check of a DDL hook: `(schema state, label, rows or
+/// error)`, asserted after the job finishes (a panic on the DDL worker would
+/// not reach the test).
+type Observed = std::sync::Arc<std::sync::Mutex<Vec<(tidb_model::SchemaState, &'static str, String)>>>;
+
+fn observe(tk: &mut TestKit, sql: &str) -> String {
+    match tk.exec_rs(sql) {
+        (_, Some(error)) => format!("ERR {}", error.error_string()),
+        (rs, None) => format!("{:?}", rs.sort().rows()),
+    }
+}
+
+fn plan_of(tk: &mut TestKit, sql: &str) -> String {
+    format!("{:?}", tk.must_query(&format!("explain format='brief' {sql}")).rows())
+}
+
+/// Go `TestTruncatePartitionWithGlobalIndex`: while TRUNCATE PARTITION p2
+/// runs, a batch point get over the global index answers like the point get
+/// (`b = 15` and `b in (15)` agree) and stops seeing p2's rows once the
+/// partition is invisible (Go #71015: `IDsInDDLToIgnore`). Go's
+/// `checkGlobalIndexCleanUpDone` (a raw scan of the index keys) has no
+/// counterpart here; the visible rows and plans are checked.
+#[test]
+fn truncate_partition_with_global_index() {
+    use tidb_model::{ActionType, SchemaState};
+    let mut tk = TestKit::new();
+    tk.must_exec("use test");
+    tk.must_exec("drop table if exists test_global");
+    tk.must_exec(
+        "create table test_global ( a int, b int, c int) partition by range( a ) (partition p1 values less than (10), partition p2 values less than (20))",
+    );
+    tk.must_exec("Alter Table test_global Add Unique Index idx_b (b) global");
+    tk.must_exec("Alter Table test_global Add Unique Index idx_c (c) global");
+    tk.must_exec("INSERT INTO test_global VALUES (1, 1, 1), (2, 2, 2), (11, 3, 3), (12, 4, 4), (15, 15, 15)");
+    let table_id = match tk.get_table_by_name("test", "test_global") {
+        TableEntry::Kv(table) => table.meta().read().id,
+        _ => unreachable!(),
+    };
+
+    let observed: Observed = Default::default();
+    let tk1 = std::sync::Mutex::new(tk.new_tk());
+    let seen = std::sync::Mutex::new(std::collections::HashSet::new());
+    let record = observed.clone();
+    let _hook = tidb_failpoint::enable_call_for_test("github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", move |arg| {
+        let job = arg.downcast_mut::<tidb_model::Job>().unwrap();
+        if job.type_ != ActionType::ACTION_TRUNCATE_TABLE_PARTITION || job.table_id != table_id {
+            return;
+        }
+        let state = job.schema_state;
+        if !matches!(state, SchemaState::WRITE_ONLY | SchemaState::DELETE_ONLY | SchemaState::DELETE_REORGANIZATION)
+            || !seen.lock().unwrap().insert(state)
+        {
+            return;
+        }
+        let mut tk1 = tk1.lock().unwrap();
+        tk1.must_exec("use test");
+        let mut push = |label, value| record.lock().unwrap().push((state, label, value));
+        push("batch plan", plan_of(&mut tk1, "select * from test_global where b in (1,15)"));
+        push("b = 15", observe(&mut tk1, "select * from test_global where b = 15"));
+        push("b in (15)", observe(&mut tk1, "select * from test_global where b in (15)"));
+        push("b in (1,15)", observe(&mut tk1, "select * from test_global where b in (1,15)"));
+        match state {
+            SchemaState::WRITE_ONLY => {
+                push("count", observe(&mut tk1, "select count(*) from test_global"));
+                push("insert 5", observe(&mut tk1, "insert into test_global values (5,5,5)"));
+            }
+            SchemaState::DELETE_ONLY => {
+                push("b point plan", plan_of(&mut tk1, "select b from test_global use index(idx_b) where b = 15"));
+                push("c point plan", plan_of(&mut tk1, "select c from test_global use index(idx_c) where c = 15"));
+                push("b via idx_b", observe(&mut tk1, "select b from test_global use index(idx_b) where b = 15"));
+                push("c via idx_c", observe(&mut tk1, "select c from test_global use index(idx_c) where c = 15"));
+                push("insert 15", observe(&mut tk1, "insert into test_global values (15,15,15)"));
+            }
+            _ => {
+                push("b via idx_b", observe(&mut tk1, "select b from test_global use index(idx_b) where b = 15"));
+                push("c via idx_c", observe(&mut tk1, "select c from test_global use index(idx_c) where c = 15"));
+                push("insert 15", observe(&mut tk1, "insert into test_global values (15,15,15)"));
+                push("b in (15) after", observe(&mut tk1, "select * from test_global where b in (15)"));
+            }
+        }
+    });
+    tk.must_exec("alter table test_global truncate partition p2");
+    drop(_hook);
+
+    let observed = observed.lock().unwrap();
+    let get = |state: SchemaState, label: &str| -> String {
+        observed
+            .iter()
+            .find(|(s, l, _)| *s == state && *l == label)
+            .unwrap_or_else(|| panic!("schema state {state:?} / {label} was not observed: {observed:?}"))
+            .2
+            .clone()
+    };
+    for state in [SchemaState::WRITE_ONLY, SchemaState::DELETE_ONLY, SchemaState::DELETE_REORGANIZATION] {
+        assert!(get(state, "batch plan").contains("Batch_Point_Get"), "{state:?}");
+        assert_eq!(get(state, "b = 15"), get(state, "b in (15)"), "{state:?}");
+        let expected = if state == SchemaState::WRITE_ONLY {
+            r#"[["1", "1", "1"], ["15", "15", "15"]]"#
+        } else {
+            r#"[["1", "1", "1"]]"#
+        };
+        assert_eq!(get(state, "b in (1,15)"), expected, "{state:?}");
+    }
+    assert_eq!(get(SchemaState::WRITE_ONLY, "count"), r#"[["5"]]"#);
+    assert_eq!(get(SchemaState::WRITE_ONLY, "insert 5"), "[]");
+    assert!(get(SchemaState::DELETE_ONLY, "b point plan").contains("Point_Get"));
+    assert!(get(SchemaState::DELETE_ONLY, "c point plan").contains("Point_Get"));
+    assert_eq!(get(SchemaState::DELETE_ONLY, "b via idx_b"), "[]");
+    assert_eq!(get(SchemaState::DELETE_ONLY, "c via idx_c"), "[]");
+    let duplicate = get(SchemaState::DELETE_ONLY, "insert 15");
+    assert!(duplicate.starts_with("ERR") && duplicate.contains("Duplicate entry '15'"), "{duplicate}");
+    assert_eq!(get(SchemaState::DELETE_REORGANIZATION, "b via idx_b"), "[]");
+    assert_eq!(get(SchemaState::DELETE_REORGANIZATION, "c via idx_c"), "[]");
+    assert_eq!(get(SchemaState::DELETE_REORGANIZATION, "insert 15"), "[]");
+    assert_eq!(get(SchemaState::DELETE_REORGANIZATION, "b in (15) after"), r#"[["15", "15", "15"]]"#);
+
+    tk.must_query("select * from test_global;").sort().check(["1 1 1", "15 15 15", "2 2 2", "5 5 5"]);
+    tk.must_query("select b from test_global use index(idx_b) where b = 15").check(["15"]);
+    tk.must_query("select c from test_global use index(idx_c) where c = 15").check(["15"]);
+    tk.must_query("explain format='brief' select b from test_global use index(idx_b) where b = 15").check_contain("Point_Get");
+    tk.must_query("explain format='brief' select c from test_global use index(idx_c) where c = 15").check_contain("Point_Get");
+}
+
+/// Go `TestGlobalIndexReaderInDropPartition`: in DROP PARTITION p1's
+/// delete-only state, a global index scan and a batch point get skip p1's
+/// rows (Go #71015).
+#[test]
+fn global_index_reader_in_drop_partition() {
+    use tidb_model::{ActionType, SchemaState};
+    let mut tk = TestKit::new();
+    tk.must_exec("use test");
+    tk.must_exec("drop table if exists test_global");
+    tk.must_exec(
+        "create table test_global ( a int, b int, c int) partition by range( a ) (partition p1 values less than (10), partition p2 values less than (20), partition p3 values less than (30))",
+    );
+    tk.must_exec("alter table test_global add unique index idx_b (b) global");
+    tk.must_exec("insert into test_global values (1, 1, 1), (8, 8, 8), (11, 11, 11), (12, 12, 12);");
+
+    let observed: Observed = Default::default();
+    let tk1 = std::sync::Mutex::new(tk.new_tk());
+    let record = observed.clone();
+    let _hook = tidb_failpoint::enable_call_for_test("github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", move |arg| {
+        let job = arg.downcast_mut::<tidb_model::Job>().unwrap();
+        if job.type_ != ActionType::ACTION_DROP_TABLE_PARTITION || job.schema_state != SchemaState::DELETE_ONLY {
+            return;
+        }
+        let mut tk1 = tk1.lock().unwrap();
+        tk1.must_exec("use test");
+        let mut push = |label, value| record.lock().unwrap().push((SchemaState::DELETE_ONLY, label, value));
+        push("index scan", observe(&mut tk1, "select b from test_global use index(idx_b)"));
+        push("batch plan", plan_of(&mut tk1, "select * from test_global where b in (1,11)"));
+        push("b in (1,11)", observe(&mut tk1, "select * from test_global where b in (1,11)"));
+    });
+    tk.must_exec("alter table test_global drop partition p1");
+    drop(_hook);
+
+    let observed = observed.lock().unwrap();
+    let get = |label: &str| -> String {
+        observed.iter().find(|(_, l, _)| *l == label).unwrap_or_else(|| panic!("{label} not observed")).2.clone()
+    };
+    assert_eq!(get("index scan"), r#"[["11"], ["12"]]"#);
+    assert!(get("batch plan").contains("Batch_Point_Get"), "{}", get("batch plan"));
+    assert_eq!(get("b in (1,11)"), r#"[["11", "11", "11"]]"#);
+}
+
+/// Go `TestExchangePartitionHookGeneratedAndAutoInc`: while EXCHANGE
+/// PARTITION is write-only, an insert into the standalone table is checked
+/// against the partition after its generated columns and auto-increment ids
+/// are filled (Go `checkRowsForExchangePartition`), so a row whose generated
+/// or allocated partition key falls outside the partition is refused.
+#[test]
+fn exchange_partition_hook_generated_and_auto_inc() {
+    use tidb_model::{ActionType, SchemaState};
+    const ERR_ROW_DOES_NOT_MATCH_GIVEN_PARTITION_SET: u16 = 1748;
+    let mut tk = TestKit::new();
+    tk.must_exec("set @@tidb_enable_exchange_partition=1");
+    tk.must_exec("use test");
+    tk.must_exec(
+        "create table pt_gen (a int, b int as (a + 10) stored) partition by range (b) (partition p0 values less than (15), partition p1 values less than (100))",
+    );
+    tk.must_exec("create table nt_gen (a int, b int as (a + 10) stored)");
+    tk.must_exec("insert into nt_gen (a) values (1)");
+
+    let observed: Observed = Default::default();
+    let tk_insert = std::sync::Arc::new(std::sync::Mutex::new(tk.new_tk()));
+    for (table, statements) in [
+        ("pt_gen", vec!["insert into nt_gen (a) values (10)", "insert into nt_gen (a) select 10"]),
+        ("pt_ai", vec!["insert into nt_ai () values ()"]),
+    ] {
+        if table == "pt_ai" {
+            tk.must_exec("create table pt_ai (id int primary key auto_increment) partition by range (id) (partition p0 values less than (5), partition p1 values less than MAXVALUE)");
+            tk.must_exec("create table nt_ai (id int primary key auto_increment)");
+            tk.must_exec("insert into nt_ai values (9)");
+            tk.must_exec("delete from nt_ai where id = 9");
+        }
+        let checked = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let (record, tk_insert, seen) = (observed.clone(), tk_insert.clone(), checked.clone());
+        let _hook = tidb_failpoint::enable_call_for_test("github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", move |arg| {
+            let job = arg.downcast_mut::<tidb_model::Job>().unwrap();
+            if job.type_ != ActionType::ACTION_EXCHANGE_TABLE_PARTITION
+                || job.schema_state != SchemaState::WRITE_ONLY
+                || seen.swap(true, std::sync::atomic::Ordering::SeqCst)
+            {
+                return;
+            }
+            let mut tk = tk_insert.lock().unwrap();
+            tk.must_exec("use test");
+            for sql in &statements {
+                let outcome = match tk.exec_to_err(sql) {
+                    Some(error) => format!("{}", error.code),
+                    None => "ok".to_owned(),
+                };
+                record.lock().unwrap().push((SchemaState::WRITE_ONLY, *sql, outcome));
+            }
+        });
+        tk.must_exec(&format!("alter table {table} exchange partition p0 with table {}", table.replace("pt_", "nt_")));
+        drop(_hook);
+        assert!(checked.load(std::sync::atomic::Ordering::SeqCst), "{table}: the write-only hook never ran");
+    }
+    let observed = observed.lock().unwrap();
+    assert_eq!(observed.len(), 3, "{observed:?}");
+    for (_, sql, outcome) in observed.iter() {
+        assert_eq!(outcome, &ERR_ROW_DOES_NOT_MATCH_GIVEN_PARTITION_SET.to_string(), "{sql}");
+    }
+    tk.must_query("select a, b from pt_gen partition(p0)").check(["1 11"]);
+    tk.must_query("select id from pt_ai partition(p0)").check_empty();
+}
+
+/// Go `checkPartitionFuncType`: CREATE TABLE hands it the written
+/// `*ast.ColumnNameExpr`, named by its folded name; ALTER TABLE ... PARTITION
+/// BY hands it the stored `PartitionInfo.Expr` text, whose column is named by
+/// its `OrigName`, `schema.table.col` (Go master testkit probe).
+#[test]
+fn a_non_integer_partition_column_is_named_like_go() {
+    let mut tk = TestKit::new();
+    tk.must_exec("use test");
+    tk.must_exec("create table tq (a varchar(10), b int)");
+    for sql in [
+        "alter table tq partition by hash(a) partitions 2",
+        "alter table tq partition by hash((a)) partitions 2",
+    ] {
+        tk.must_contain_err_msg(sql, "Field 'test.tq.a' is of a not allowed type for this type of partitioning");
+    }
+    tk.must_contain_err_msg(
+        "create table tq2 (a varchar(10)) partition by hash(a) partitions 2",
+        "Field 'a' is of a not allowed type for this type of partitioning",
+    );
+}

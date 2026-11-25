@@ -34,6 +34,20 @@ pub(crate) fn is_common_handle_read(table: &TableCommon, index_id: i64) -> bool 
         && table.plan_indexes().any(|index| index.read().id == index_id && index.clustered_primary)
 }
 
+/// Go `tblInfo.GetPartitionInfo().IDsInDDLToIgnore()`; empty for an
+/// unpartitioned table.
+pub(crate) fn ids_in_ddl_to_ignore(table: &TableCommon) -> Vec<i64> {
+    match table.meta().read().get_partition_info() {
+        Some(partition) => partition.read().ids_in_ddl_to_ignore().snapshot(),
+        None => Vec::new(),
+    }
+}
+
+/// Go `idxInfo.Global`.
+pub(crate) fn index_is_global(table: &TableCommon, index_id: i64) -> bool {
+    table.meta().read().find_index_by_id(index_id).is_some_and(|index| index.read().global)
+}
+
 /// Go `matchPartitionNames(pid, partitionNames, pi)` for a global index
 /// entry; a local entry carries no partition and is already confined.
 pub(crate) fn match_partition_names(allowed: Option<&[i64]>, partition: Option<i64>) -> bool {
@@ -225,6 +239,24 @@ impl PointGetExecutor {
             }
             Err(_) => None,
         };
+        let ignored = if index_is_global(&self.table, index_id) {
+            ids_in_ddl_to_ignore(&self.table)
+        } else {
+            Vec::new()
+        };
+        // Go: under repeatable read, a global-index key whose snapshot entry
+        // already belongs to a partition the running DDL hides
+        // (`IDsInDDLToIgnore`) is not locked; under read committed the
+        // locking read always runs.
+        if !ignored.is_empty() && self.lock.as_ref().is_some_and(|lock| !lock.read_committed) {
+            let snapshot = self
+                .table
+                .lookup_unique_with_partition(&mut *self.store, index_id, index_values, &zone)
+                .map_err(|error| ExecError::unsupported(format!("unique index lookup failed: {error:?}")))?;
+            if snapshot.is_some_and(|(_, partition)| partition.is_some_and(|pid| ignored.contains(&pid))) {
+                return Ok(None);
+            }
+        }
         // Go: repeatable read locks the index key whether or not it exists
         // (`lockKeyIfNeeded`) and reads it from the lock cache; read
         // committed locks it only if it exists (`lockKeyIfExists`).
@@ -236,8 +268,13 @@ impl PointGetExecutor {
             .table
             .lookup_unique_with_partition(&mut *self.store, index_id, index_values, &zone)
             .map_err(|error| ExecError::unsupported(format!("unique index lookup failed: {error:?}")))?;
+        // Go `checkGlobalIndexPartition`: the entry's partition must be one
+        // the statement names and one the running DDL does not hide.
         Ok(found
-            .filter(|(_, partition)| match_partition_names(self.partition_names.as_deref(), *partition))
+            .filter(|(_, partition)| {
+                match_partition_names(self.partition_names.as_deref(), *partition)
+                    && !partition.is_some_and(|pid| ignored.contains(&pid))
+            })
             .map(|(handle, _)| (handle, idx_key)))
     }
 
@@ -291,7 +328,20 @@ impl Executor for PointGetExecutor {
         }
         let mut idx_key = None;
         let handle = match self.idx.clone() {
-            None => self.handle.clone().ok_or_else(|| ExecError::unsupported("a point get lost its retained handle"))?,
+            None => {
+                // Go: a handle read of a partition the running DDL hides
+                // (`IDsInDDLToIgnore`) finds no row.
+                let ignored = ids_in_ddl_to_ignore(&self.table);
+                if !ignored.is_empty() {
+                    let kept: Vec<i64> =
+                        self.table.record_physical_ids().into_iter().filter(|id| !ignored.contains(id)).collect();
+                    if kept.is_empty() {
+                        return Ok(());
+                    }
+                    self.table.restrict_read_to_partitions(&kept);
+                }
+                self.handle.clone().ok_or_else(|| ExecError::unsupported("a point get lost its retained handle"))?
+            }
             Some((index_id, index_values)) => match self.handle_from_index(index_id, &index_values)? {
                 Some((handle, key)) => {
                     idx_key = key;

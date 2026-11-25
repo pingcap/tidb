@@ -10680,3 +10680,52 @@ fn cascades_planner_plans_like_volcano_as_go_tests() {
         assert_eq!(brief(&mut session, &sql), volcano, "{sql}");
     }
 }
+
+/// Go `TestIssues` (`planner/core/issuetest/planner_issue_test.go`,
+/// issue-72560): `ORDER BY NULL - c` / `c + NULL` is NULL for every row and
+/// must not take the index order; a non-NULL constant (`1 - c`) still serves
+/// the order from the index with no Sort (Go
+/// `GetPropByOrderByItemsContainScalarFunc` / `GetSingleColumn`); and a
+/// parameter that may become NULL keeps the Sort in the cached plan.
+#[test]
+fn order_by_null_constant_arithmetic_does_not_use_the_index_order() {
+    let mut session = Session::new();
+    for sql in [
+        "create table t (id int primary key, c int not null, key i(c))",
+        "insert into t values (1, 30), (2, 10), (3, 20)",
+        "analyze table t",
+    ] {
+        session.run(sql).unwrap();
+    }
+    let ids = |session: &mut Session, sql: &str| -> Vec<String> {
+        row_text(session.run(sql)).into_iter().map(|row| row[0].clone()).collect()
+    };
+    for order_by in ["null-c desc, id", "null-c, id", "c-null, id", "null+c desc, id", "c+null, id"] {
+        for hint in ["use index(i)", "ignore index(i)"] {
+            let sql = format!("select /* issue:72560 */ id from t {hint} order by {order_by}");
+            assert_eq!(ids(&mut session, &sql), ["1", "2", "3"], "{sql}");
+        }
+    }
+    let query = "select /* issue:72560 */ id from t use index(i) order by 1-c desc, id";
+    assert_eq!(ids(&mut session, query), ["2", "3", "1"]);
+    let plan = row_text(session.run(&format!("explain format = 'brief' {query}")))
+        .into_iter()
+        .map(|row| row.join("\t"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(plan.contains("index:i(c)"), "{plan}");
+    assert!(plan.contains("keep order:true"), "{plan}");
+    assert!(!plan.contains("Sort"), "{plan}");
+
+    session.run("set @@tidb_enable_prepared_plan_cache = 1").unwrap();
+    session
+        .run("prepare s from 'select /* issue:72560 */ id from t use index(i) order by nullif(?, 0) - c desc, id'")
+        .unwrap();
+    session.run("set @p = 1").unwrap();
+    assert_eq!(ids(&mut session, "execute s using @p"), ["2", "3", "1"]);
+    assert_eq!(ids(&mut session, "execute s using @p"), ["2", "3", "1"]);
+    assert_eq!(ids(&mut session, "select @@last_plan_from_cache"), ["1"]);
+    session.run("set @p = 0").unwrap();
+    assert_eq!(ids(&mut session, "execute s using @p"), ["1", "2", "3"]);
+    assert_eq!(ids(&mut session, "select @@last_plan_from_cache"), ["1"]);
+}

@@ -179,12 +179,20 @@ impl BatchPointGetExec {
             .table
             .lookup_unique_index_keys(&mut *self.store, &keys)
             .map_err(|error| ExecError::unsupported(format!("unique index batch lookup failed: {error:?}")))?;
+        // Go: a global index's entries for partitions the running DDL hides
+        // (`IDsInDDLToIgnore`) name no row.
+        let ignored_partition_ids = if crate::point_get::index_is_global(&self.table, index_id) {
+            crate::point_get::ids_in_ddl_to_ignore(&self.table)
+        } else {
+            Vec::new()
+        };
         let mut found = Vec::new();
         let mut index_keys = Vec::new();
         let mut missing_index_keys = Vec::new();
         for (key, entry) in keys.into_iter().zip(looked_up) {
             let key = key.map(|(key, _)| key);
             match entry {
+                Some((_, Some(partition))) if ignored_partition_ids.contains(&partition) => {}
                 Some((handle, partition)) if match_partition_names(self.partition_names.as_deref(), partition) => {
                     found.push((handle, partition));
                     index_keys.push(key);

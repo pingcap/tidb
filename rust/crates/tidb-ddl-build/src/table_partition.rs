@@ -139,6 +139,7 @@ pub fn build_table_partitioning(
             build_table_partition_info(
                 partitioning,
                 create.name.last().map(String::as_str),
+                None,
                 names,
                 types,
                 indexes,
@@ -162,6 +163,7 @@ pub fn build_table_partitioning(
 pub fn build_table_partition_info(
     partitioning: &tidb_ast::TablePartitioning,
     source_table: Option<&str>,
+    stored_names: Option<(&str, &str)>,
     names: &[String],
     types: &[FieldType],
     indexes: &[IndexInfo],
@@ -172,6 +174,7 @@ pub fn build_table_partition_info(
     let (spec, mut definitions, expr_text) = build_table_partitioning_inner(
         partitioning,
         source_table,
+        stored_names,
         names,
         types,
         indexes,
@@ -187,6 +190,10 @@ pub fn build_table_partition_info(
 fn build_table_partitioning_inner(
     partitioning: &tidb_ast::TablePartitioning,
     source_table: Option<&str>,
+    // The schema and table of an ALTER TABLE ... PARTITION BY, whose Go
+    // `checkPartitionFuncType` reads `PartitionInfo.Expr` (text) and so
+    // names a column by its `OrigName`, `schema.table.col`.
+    stored_names: Option<(&str, &str)>,
     names: &[String],
     types: &[FieldType],
     indexes: &[IndexInfo],
@@ -283,6 +290,7 @@ fn build_table_partitioning_inner(
         return build_table_partitioning_inner(
             &expanded,
             source_table,
+            stored_names,
             names,
             types,
             indexes,
@@ -516,7 +524,7 @@ fn build_table_partitioning_inner(
             ));
         }
     }
-    check_partition_expression_type(expr, &built)?;
+    check_partition_expression_type(expr, &built, stored_names)?;
     // Go's type-specific branch of `checkPartitionDefinitionConstraints`,
     // which runs AFTER 1517 and 1499: `checkPartitionByRange` is where 1493
     // lives, so a duplicate partition name beside a non-increasing bound
@@ -1004,6 +1012,7 @@ fn check_partition_expression_allowed(
 fn check_partition_expression_type(
     expr: &Expr,
     built: &tidb_expr::expression::Expression,
+    stored_names: Option<(&str, &str)>,
 ) -> Result<(), MysqlError> {
     let integral = built
         .static_type()
@@ -1015,21 +1024,28 @@ fn check_partition_expression_type(
     // `col2.Name.Name.L` -- the folded name -- so a `DOUBLE A` reports
     // `Field 'a'`. The assertion does not look through parentheses; that is
     // why `unwrap_parentheses` has no place here.
-    if let Expr::Column(path) = expr {
+    if let (Expr::Column(path), None) = (expr, stored_names) {
         let name = path.last().cloned().unwrap_or_else(|| "?".to_owned());
         return Err(tidb_terror::MysqlError::from_terror(
             &tidb_dbterror::ERR_NOT_ALLOWED_TYPE_IN_PARTITION
                 .gen_with_stack_by_args(&[(go_to_lower(&name)).to_string().into()]),
         ));
     }
-    // Go's remaining `expression.Column` arm quotes `col.OrigName`, the name
-    // as the source spelled it -- which is what a parenthesised column
-    // reaches.
+    // Go's remaining `expression.Column` arm quotes `col.OrigName`: the
+    // `FieldName.String()` the simple-expression build gave the column --
+    // `schema.table.col` lowercased when the expression is the stored text
+    // ALTER TABLE ... PARTITION BY rebuilds, the bare name otherwise.
     if let Expr::Column(path) = unwrap_parentheses(expr) {
-        let name = path.last().cloned().unwrap_or_else(|| "?".to_owned());
+        let column = path.last().cloned().unwrap_or_else(|| "?".to_owned());
+        let name = match stored_names {
+            Some((schema, table)) => {
+                format!("{}.{}.{}", go_to_lower(schema), go_to_lower(table), go_to_lower(&column))
+            }
+            None => column,
+        };
         return Err(tidb_terror::MysqlError::from_terror(
             &tidb_dbterror::ERR_NOT_ALLOWED_TYPE_IN_PARTITION
-                .gen_with_stack_by_args(&[name.to_string().into()]),
+                .gen_with_stack_by_args(&[name.into()]),
         ));
     }
     Err(tidb_terror::MysqlError::from_terror(

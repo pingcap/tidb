@@ -1324,11 +1324,6 @@ fn run_insert_rows(
                     }
                 }
             }
-            // Go `getRow`: an exchanged standalone table's row is checked before
-            // its generated columns are filled.
-            if let Some(check) = &exchange_check {
-                check.check_row_for_exchange_partition(&row, ctx)?;
-            }
             {
                 // The generated columns are computed from the finished row, so
                 // the conflict lookup and the foreign-key check below see the
@@ -1348,6 +1343,15 @@ fn run_insert_rows(
                 )?;
                 if let Some(handle) = extra_handle {
                     row.push(handle);
+                }
+            }
+            // Go `fillRow` (`d3a10d865e6`): an exchanged standalone table's
+            // row is checked against the partition once its generated columns
+            // are filled; a table whose auto-increment ids are allocated after
+            // the rows are built checks them then (`insertRows`).
+            if auto_increment_offset.is_none() {
+                if let Some(check) = &exchange_check {
+                    check.check_row_for_exchange_partition(&row, ctx)?;
                 }
             }
             // Go `partitionedTableAddRecord`: a row into the exchanged partition
@@ -1552,6 +1556,15 @@ fn run_insert_rows(
                         AutoIncrement::Absent
                         | AutoIncrement::Reused(_)
                         | AutoIncrement::Allocated(_) => {}
+                    }
+                }
+            }
+            // Go `insertRows`' `checkRowsForExchangePartition` after
+            // `lazyAdjustAutoIncrementDatum`.
+            if auto_increment_offset.is_some() {
+                if let Some(check) = &exchange_check {
+                    for row in &new_rows {
+                        check.check_row_for_exchange_partition(row, ctx)?;
                     }
                 }
             }

@@ -3595,8 +3595,17 @@ fn build_check_sql_from_modify_column(
         if old_tp.is_integer_type() && changing_tp.is_integer_type() {
             conditions.push(build_check_range_for_integer_types(old_col, changing_col));
         } else {
+            // Go: a char change to a non-binary type counts characters, so a
+            // multi-byte value is not refused for its byte length.
+            let len_fn = if tidb_ddl_build::modify_column_type::is_char_change(&old_col.field_type, &changing_col.field_type)
+                && !changing_col.field_type.is_binary_string()
+            {
+                "CHAR_LENGTH"
+            } else {
+                "LENGTH"
+            };
             conditions.push(format!(
-                "LENGTH({check_col_name}) > {}",
+                "{len_fn}({check_col_name}) > {}",
                 changing_col.field_type.flen()
             ));
             if old_tp == FieldTypeCode::Varchar && changing_tp == FieldTypeCode::String {

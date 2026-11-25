@@ -247,9 +247,10 @@ pub(crate) fn unix_timestamp(
     let Ok(parsed) = parsed else {
         // go's argument-cast layer warns `Incorrect datetime value: '<text>'`
         // before answering NULL (oracle-captured on g-fsp).
+        let shown = super::calendar::go_parse_time_error_value(&text, cols);
         cols.append_go_warning(
             &tidb_datatype::types_errors::ERR_WRONG_VALUE,
-            &format!("Incorrect datetime value: '{text}'"),
+            &format!("Incorrect datetime value: '{shown}'"),
         );
         return Ok(Datum::Null);
     };

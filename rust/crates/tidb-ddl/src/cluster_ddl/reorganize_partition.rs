@@ -150,6 +150,7 @@ pub(crate) fn reorganize_partitions_job<S: MetaSnapshot>(
         tidb_ast::AlterPartitionAction::Repartition(partitioning) => {
             tidb_ddl_build::partition_ddl::alter_table_partitioning(
                 &kv,
+                schema,
                 partitioning,
                 &ctx,
                 &mut host,

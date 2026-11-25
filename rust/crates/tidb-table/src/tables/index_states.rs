@@ -363,15 +363,17 @@ impl TableCommon {
                 (Some(temp_key), true) => self.get_key_in_txn(store, temp_key)?.unwrap_or_default(),
                 _ => Vec::new(),
             };
-            // Go: a global index's delete names the row's partition too.
+            // Go `fullHandle`: a global index's delete names the row's
+            // partition too.
             let global = kv_index.read().global;
+            let full_handle: tidb_txnkv::Handle = if global {
+                tidb_txnkv::PartitionHandle::new(physical_id, Some(deleted_handle.clone())).into()
+            } else {
+                deleted_handle.clone()
+            };
             let element = TempIndexValueElem {
                 value: Vec::new(),
-                handle: Some(if global {
-                    tidb_txnkv::PartitionHandle::new(physical_id, Some(deleted_handle.clone())).into()
-                } else {
-                    deleted_handle.clone()
-                }),
+                handle: Some(full_handle.clone()),
                 key_version,
                 delete: true,
                 distinct: entry.distinct,
@@ -384,7 +386,10 @@ impl TableCommon {
                     if let Some(origin) = self.get_key_in_txn(store, &key)? {
                         let origin_handle = decode_handle_in_index_value(&origin)
                             .map_err(|error| KvTableError::Encode(format!("{error:?}")))?;
-                        if origin_handle.as_ref().map(convert_handle).as_ref() != Some(handle) {
+                        // Go: a global index value always encodes the
+                        // partition, so the full handle is compared -- the
+                        // same handle in another partition is another row.
+                        if !origin_handle.as_ref().is_some_and(|origin| full_handle.equal(origin)) {
                             // The key now belongs to an ingested row.
                             ok_to_delete = false;
                         }

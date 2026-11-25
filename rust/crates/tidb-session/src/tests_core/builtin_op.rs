@@ -217,3 +217,54 @@ fn unary_minus_of_a_parameter_overflows_into_decimal_like_go() {
         assert_eq!(row_text(session.run("execute st using @x, @y")), [expected], "{x}/{y}");
     }
 }
+
+/// Go's rewriter refuses a row where one value is expected
+/// (`expression.CheckArgsNotMultiColumnRow` in `caseToExpression`,
+/// `betweenToExpression`, `regexpToScalarFunc`, `funcCallToExpression`,
+/// `Leave(*ast.FuncCastExpr)` and `rewriteExprNode`): every statement below
+/// is 1241 on Go master (testkit probe). `CASE (1,2) WHEN ...` is not in the
+/// list: Go checks only the WHEN/THEN/ELSE operands, not the CASE value.
+#[test]
+fn a_row_operand_where_one_value_is_expected_is_1241_like_go() {
+    let mut session = Session::new();
+    for (sql, columns) in [
+        ("select case when (1,2) then 1 end", 1),
+        ("select (1,2) like 'a'", 1),
+        ("select 'a' like (1,2)", 1),
+        ("select (1,2) regexp 'a'", 1),
+        ("select (1,2) between 1 and 2", 1),
+        ("select 1 between (1,2) and 3", 1),
+        ("select abs((1,2))", 1),
+        ("select concat((1,2), 'a')", 1),
+        ("select (1,2) + 1", 1),
+        ("select -(1,2)", 1),
+        ("select (1,2) is null", 1),
+        ("select (1,2) is true", 1),
+        ("select not (1,2)", 1),
+        ("select (1,2) in (1)", 2),
+        ("select ((1,2))", 1),
+        ("select (select (1,2))", 1),
+        ("select trim((1,2))", 1),
+        ("select extract(day from (1,2))", 1),
+        ("select position((1,2) in 'a')", 1),
+        ("select timestampadd(day, (1,2), '2020-01-01')", 1),
+        ("select timestampdiff(day, (1,2), '2020-01-01')", 1),
+        ("select weight_string((1,2))", 1),
+        ("select convert((1,2) using utf8mb4)", 1),
+        ("select date_add((1,2), interval 1 day)", 1),
+        ("select cast((1,2) as char)", 1),
+        ("select nullif((1,2), 1)", 1),
+        ("select coalesce((1,2), 1)", 1),
+        ("select if((1,2), 1, 2)", 1),
+        ("select ifnull((1,2), 1)", 1),
+        ("select get_format(date, (1,2))", 1),
+    ] {
+        let error = session.run(sql).err().map(|error| error.to_mysql_error());
+        let error = error.unwrap_or_else(|| panic!("{sql}: no error"));
+        assert_eq!(
+            (error.code, error.message.as_str()),
+            (1241, format!("Operand should contain {columns} column(s)").as_str()),
+            "{sql}"
+        );
+    }
+}

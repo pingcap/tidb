@@ -563,30 +563,35 @@ fn round_truncate() {
     assert_eq!(e("round(3.5e0)"), "FLOAT:4");
     assert_eq!(e("round(-2.5e0)"), "FLOAT:-2");
     // `builtinRoundIntSig.evalInt` is `return b.args[0].EvalInt(...)`: the
-    // one-argument integer form is the IDENTITY, while the two-argument form
-    // is `builtinRoundWithFracIntSig`, which really does go through `f64`.
-    // The two answers differ past `f64`'s 53-bit exact range -- CAPTURED from
-    // TiDB, both of the rows below.
+    // one-argument integer form is the identity, and Go master's
+    // two-argument `roundIntWithFrac` (06441e2a681) leaves an integer alone
+    // for a non-negative fraction -- the old `f64` round trip that answered
+    // `...807` here is gone.
     assert_eq!(e("round(9223372036854775806)"), "INT:9223372036854775806");
     assert_eq!(
         e("round(9223372036854775806, 0)"),
-        "INT:9223372036854775807"
+        "INT:9223372036854775806"
     );
     assert_eq!(
         e("round(cast(18446744073709551615 as unsigned))"),
         "UINT:18446744073709551615"
     );
-    // The two-argument UNSIGNED form reads the same 64 bits AS int64
-    // (`EvalInt`), so 18446744073709551610 is -6, rounds to -10, and reads
-    // back as 18446744073709551606. CAPTURED from TiDB.
+    // Go master `roundIntWithFrac` (06441e2a681) reads an UNSIGNED value as
+    // a magnitude: 18446744073709551610 is already a multiple of ten, and
+    // 18446744073709551605 rounds half up to ...610 (Go
+    // `TestRoundWithFracInt`). The old captured `...606` was the signed
+    // reading Go master removed.
     assert_eq!(
         e("round(cast(18446744073709551610 as unsigned), -1)"),
-        "UINT:18446744073709551606"
+        "UINT:18446744073709551610"
     );
     assert_eq!(
-        e("round(cast(18446744073709551615 as unsigned), -1)"),
-        "UINT:0"
+        e("round(cast(18446744073709551605 as unsigned), -1)"),
+        "UINT:18446744073709551610"
     );
+    // Rounding up past `u64::MAX` is Go master's 1690, not a wrap to 0.
+    assert!(e("round(cast(18446744073709551615 as unsigned), -1)")
+        .contains("BIGINT UNSIGNED value is out of range in 'round(18446744073709551615, -1)'"));
     // A negative `d` rounds/truncates into the integer part.
     assert_eq!(e("round(12345, -2)"), "INT:12300");
     assert_eq!(e("truncate(12345, 2)"), "INT:12345"); // d >= 0: no-op on Int

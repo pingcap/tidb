@@ -2927,6 +2927,62 @@ fn vec_eval_cast_int_as_decimal(
 }
 
 impl ScalarFunction {
+    /// Go `ScalarFunction.GetSingleColumn`: the single column whose order
+    /// this `+`, `-` or unary `-` chain follows, and whether that order is
+    /// reversed (`reverse` is the order asked of the function). The constant
+    /// operand of `+` and `-` must be strict and not NULL: `col + NULL` is
+    /// NULL for every row, and a parameter can become NULL in a later
+    /// execution of a cached plan.
+    #[must_use]
+    pub fn get_single_column(&self, reverse: bool) -> Option<(crate::column::Column, bool)> {
+        let args = self.get_args();
+        let name = self.func_name.lowercase();
+        match &*name {
+            name @ ("plus" | "minus") => {
+                let flip = name == "minus";
+                match &args[0] {
+                    Expression::Column(column) => {
+                        is_non_null_constant(&args[1]).then(|| (column.clone(), reverse))
+                    }
+                    Expression::ScalarFunction(function) => {
+                        if !is_non_null_constant(&args[1]) {
+                            return None;
+                        }
+                        function.get_single_column(reverse)
+                    }
+                    constant @ Expression::Constant(_) => {
+                        if !is_non_null_constant(constant) {
+                            return None;
+                        }
+                        let reverse = if flip { !reverse } else { reverse };
+                        match &args[1] {
+                            Expression::Column(column) => Some((column.clone(), reverse)),
+                            Expression::ScalarFunction(function) => function.get_single_column(reverse),
+                            _ => None,
+                        }
+                    }
+                    _ => None,
+                }
+            }
+            "unaryminus" => match &args[0] {
+                Expression::Column(column) => Some((column.clone(), !reverse)),
+                Expression::ScalarFunction(function) => function.get_single_column(!reverse),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+}
+
+/// Go `isNonNullConstant`: a strict constant whose value is not NULL.
+/// Parameter markers and deferred expressions are rejected: their value can
+/// change between executions of a cached plan.
+fn is_non_null_constant(expr: &Expression) -> bool {
+    matches!(expr, Expression::Constant(constant)
+        if constant.const_level() == crate::expression::ConstLevel::STRICT && constant.value != Datum::Null)
+}
+
+impl ScalarFunction {
     /// Go `builtinArithmetic{Plus,Minus,Multiply}DecimalSig.vecEvalDecimal`:
     /// appends this expression's value for every row of `input` to column
     /// `output_index` of `output`, column-wise. Returns `Ok(false)` with

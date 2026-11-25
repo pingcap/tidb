@@ -451,12 +451,8 @@ impl ResolveIndicesItself for PhysicalPlan {
                 }
             }
             Self::Sort(op) => bind_by_items(&mut op.by_items, child_schema(&op.base, 0)?)?,
-            Self::NominalSort(op) => {
-                let input = child_schema(&op.base, 0)?;
-                for item in &mut op.by_items {
-                    bind_column(&mut item.col, input)?;
-                }
-            }
+            // Go `resolveIndicesForSort`, shared by Sort and NominalSort.
+            Self::NominalSort(op) => bind_by_items(&mut op.by_items, child_schema(&op.base, 0)?)?,
             Self::HashAgg(op) => bind_aggregation(
                 &mut op.agg_funcs,
                 &mut op.group_by_items,

@@ -173,3 +173,56 @@ fn tiflash_replica_jobs_set_pd_rules_through_infosync() {
         ]
     );
 }
+
+/// Go `TestEnforceMPPWarning4` (`planner/core/casetest/enforcempp`): the
+/// warnings Go's `tryToGetMppHashJoin` raises under `tidb_enforce_mpp`, from
+/// `enforce_mpp_suite_out.json` (the plan rows are Go's `plan_tree` format and
+/// are not compared here). Case 9 is Go master's wording, which names `full
+/// outer join` beside `left outer join`.
+#[test]
+fn enforce_mpp_warning4() {
+    let mut tk = TestKit::new();
+    tk.must_exec("use test");
+    tk.must_exec("set tidb_hash_join_version=optimized");
+    tk.must_exec("drop table if exists t");
+    tk.must_exec("CREATE TABLE t(a int primary key)");
+    tk.must_exec("drop table if exists s");
+    tk.must_exec("CREATE TABLE s(a int primary key)");
+    crate::support::testkit::set_tiflash_replica(&tk, "test", "t");
+    crate::support::testkit::set_tiflash_replica(&tk, "test", "s");
+    let hint = "MPP mode may be blocked because you have used hint to specify a join algorithm which is not supported by mpp now.";
+    let cartesian_var = "MPP mode may be blocked because `Cartesian Product` is only supported by broadcast join, check value and documents of variable `tidb_opt_broadcast_cartesian_join`.";
+    let cartesian_size = "MPP mode may be blocked because `Cartesian Product` is only supported by broadcast join, check value and documents of variables `tidb_broadcast_join_threshold_size` and `tidb_broadcast_join_threshold_count`.";
+    let left = "MPP mode may be blocked because left conditions are only supported for `left outer join` and `full outer join` now.";
+    let cases: Vec<(&str, Vec<&str>)> = vec![
+        ("set @@tidb_allow_mpp=1;set @@tidb_enforce_mpp=1;", vec![]),
+        ("explain format = 'brief' SELECT /*+ MERGE_JOIN(t,s) */ * from t join s using(a)", vec![hint, hint]),
+        ("explain format = 'brief' SELECT /*+ INL_JOIN(t,s) */ * from t, s where t.a=s.a", vec![hint, hint]),
+        ("explain format = 'brief' SELECT /*+ INL_HASH_JOIN(t,s) */ * from t join s using(a)", vec![hint, hint]),
+        ("explain format = 'brief' SELECT /*+ HASH_JOIN(t,s) */ * from t join s using(a)", vec![]),
+        ("set @@tidb_opt_broadcast_cartesian_join = 0", vec![]),
+        ("explain format = 'brief' SELECT * from t join s", vec![cartesian_var, cartesian_var]),
+        ("set @@tidb_broadcast_join_threshold_size = 0; set @@tidb_opt_broadcast_cartesian_join = 1", vec![]),
+        ("explain format = 'brief' SELECT * from t join s", vec![cartesian_size, cartesian_size]),
+        ("set @@tidb_broadcast_join_threshold_size = 104857600; set @@tidb_opt_broadcast_cartesian_join = 1", vec![]),
+        ("explain format = 'brief' SELECT * from t join s", vec![]),
+        ("set @@tidb_broadcast_join_threshold_size = 0; set @@tidb_opt_broadcast_cartesian_join = 2", vec![]),
+        ("explain format = 'brief' SELECT * from t join s", vec![]),
+        ("set @@tidb_broadcast_join_threshold_size = 104857600; set @@tidb_opt_broadcast_cartesian_join = 1;", vec![]),
+        ("explain format = 'brief' select a from t where t.a>1 or t.a in (select a from t)", vec![]),
+        ("explain format = 'brief' select a from t where t.a>1 or t.a not in (select a from t)", vec![]),
+        ("explain format = 'brief' select a from t where t.a not in (select a from s where t.a<1)", vec![left, left]),
+    ];
+    for (sql, want) in cases {
+        if sql.starts_with("set") {
+            for statement in sql.split(';').map(str::trim).filter(|statement| !statement.is_empty()) {
+                tk.must_exec(statement);
+            }
+            continue;
+        }
+        tk.must_query(sql);
+        let warnings = tk.must_query("show warnings");
+        let got: Vec<String> = warnings.rows().iter().map(|row| row[2].clone()).collect();
+        assert_eq!(got, want, "{sql}");
+    }
+}

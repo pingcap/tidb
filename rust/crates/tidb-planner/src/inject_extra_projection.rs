@@ -487,10 +487,10 @@ fn turn_nominal_sort_into_proj(
             .expect("nominal sort projection conversion requires one child");
     }
 
-    // Non-column nominal sorts become two pass-through projections. The
-    // Rust NominalSort carries column-only SortItems, so Go's scalar
-    // expression loop adds nothing here — the pair exists to keep the
-    // overflow-checking evaluation points Go's executor relies on.
+    // A non-column nominal sort becomes two projections: the bottom one
+    // evaluates each scalar ORDER BY item into a new column (so it is checked
+    // for being out of bounds, issue #11653) and the top one restores the
+    // child schema.
     let block_offset = nominal.base.base.query_block_offset();
     let child_plan = nominal
         .base
@@ -505,23 +505,33 @@ fn turn_nominal_sort_into_proj(
         _ => None,
     };
 
-    let mut bottom_proj_exprs: Vec<Expression> = child_schema
+    let mut bottom_proj_schema_cols: Vec<Column> = child_schema
         .columns
         .iter()
         .enumerate()
         .map(|(offset, col)| {
             let mut new_col = col.clone();
             new_col.index = offset as i64;
-            Expression::Column(new_col)
+            new_col
         })
         .collect();
+    let mut bottom_proj_exprs: Vec<Expression> =
+        bottom_proj_schema_cols.iter().cloned().map(Expression::Column).collect();
+    for item in &nominal.by_items {
+        if !matches!(item.expr, Expression::ScalarFunction(_)) {
+            continue;
+        }
+        let Some(ret_type) = item.expr.static_type().cloned() else {
+            continue;
+        };
+        bottom_proj_exprs.push(item.expr.clone());
+        let mut new_arg = Column::new(ctx.column_ids.alloc(), ret_type);
+        new_arg.index = bottom_proj_schema_cols.len() as i64;
+        bottom_proj_schema_cols.push(new_arg);
+    }
     if let Some(orig_child_exprs) = &orig_child_exprs {
         refine_4_neighbour_proj_exprs(&mut bottom_proj_exprs, orig_child_exprs);
     }
-    let bottom_proj_schema_cols: Vec<Column> = bottom_proj_exprs
-        .iter()
-        .filter_map(|expr| expr.as_column().cloned())
-        .collect();
 
     let child_stats = child_plan.stats_info().cloned();
     let bottom_stats = child_stats
@@ -885,7 +895,7 @@ mod tests {
         )]);
         let plan = PhysicalPlan::NominalSort(tidb_planner_core_operator_physicalop::NominalSort {
             base,
-            by_items: vec![tidb_planner_property::SortItem::from_unique_id(1, false)],
+            by_items: vec![tidb_expression_aggregation::ByItems { expr: Expression::Column(column(1)), desc: false }],
             only_column: true,
         });
 
@@ -908,7 +918,7 @@ mod tests {
         )]);
         let plan = PhysicalPlan::NominalSort(tidb_planner_core_operator_physicalop::NominalSort {
             base,
-            by_items: vec![tidb_planner_property::SortItem::from_unique_id(1, false)],
+            by_items: vec![tidb_expression_aggregation::ByItems { expr: Expression::Column(column(1)), desc: false }],
             only_column: false,
         });
 

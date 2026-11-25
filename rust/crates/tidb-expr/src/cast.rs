@@ -2448,7 +2448,7 @@ fn invalid_time_warning(ctx: &dyn crate::Columns, input: &str, fsp: i64) -> Resu
         // Go `checkMonthDay` renders a month past 12 from the parsed parts,
         // unpadded, like an out-of-range day (`'2024-13-1'`).
         if month > 12 && head[2].bytes().all(|byte| byte.is_ascii_digit()) {
-            let rendered = format!("{year}-{month}-{day}");
+            let rendered = crate::time_fn::calendar::go_parse_time_error_value(input, ctx);
             return handle_invalid_time_error(
                 ctx,
                 1292,
@@ -2469,7 +2469,7 @@ fn invalid_time_warning(ctx: &dyn crate::Columns, input: &str, fsp: i64) -> Resu
                 }
             };
             if day > days_in_month && head[2].bytes().all(|byte| byte.is_ascii_digit()) {
-                let rendered = format!("{year}-{month}-{day}");
+                let rendered = crate::time_fn::calendar::go_parse_time_error_value(input, ctx);
                 return handle_invalid_time_error(
                     ctx,
                     1292,
@@ -2478,7 +2478,10 @@ fn invalid_time_warning(ctx: &dyn crate::Columns, input: &str, fsp: i64) -> Resu
             }
         }
     }
-    handle_invalid_time_error(ctx, 1292, &format!("Incorrect datetime value: '{input}'"))
+    // Go `types.ParseTime`'s error: an invalid month or day with a clock
+    // part (`'2020-02-30 10:00:00'`) still names the parsed date.
+    let shown = crate::time_fn::calendar::go_parse_time_error_value(input, ctx);
+    handle_invalid_time_error(ctx, 1292, &format!("Incorrect datetime value: '{shown}'"))
 }
 
 /// `CAST(... AS YEAR)`: the operand's calendar year if it parses as a

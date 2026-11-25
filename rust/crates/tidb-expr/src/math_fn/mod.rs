@@ -769,7 +769,7 @@ pub(crate) fn round_or_truncate_with_result_decimal(
                 Datum::Int(*i)
             } else {
                 Datum::Int(if round {
-                    go_round_float(*i as f64, d) as i64
+                    round_int_with_frac(*i, d, false)?
                 } else {
                     go_truncate_int(*i, d)
                 })
@@ -781,14 +781,11 @@ pub(crate) fn round_or_truncate_with_result_decimal(
             } else {
                 Datum::UInt(if round {
                     // `builtinRoundWithFracIntSig` reads the argument through
-                    // `EvalInt` -- the SAME 64 bits, read as `int64` -- and
-                    // only the result FieldType carries UNSIGNED. Reading the
-                    // u64 as a magnitude instead diverges past `i64::MAX`:
-                    // CAPTURED from TiDB,
-                    // `ROUND(CAST(18446744073709551610 AS UNSIGNED), -1)` is
-                    // `18446744073709551606`, which is `-6` rounded to `-10`
-                    // and re-read unsigned, not `...610` rounded up.
-                    go_round_float(*i as i64 as f64, d) as i64 as u64
+                    // `EvalInt` -- the same 64 bits as `int64` -- and the
+                    // result FieldType's UNSIGNED flag tells
+                    // `roundIntWithFrac` to read them as a magnitude (Go
+                    // master: `round(18446744073709551605, -1)` is `...610`).
+                    round_int_with_frac(*i as i64, d, true)? as u64
                 } else {
                     // `builtinTruncateUintSig` operates on the original
                     // uint64, not through `EvalReal`/f64.  The distinction is
@@ -877,6 +874,60 @@ fn go_pow10(n: i64) -> f64 {
     }
 }
 
+/// Go `uint64Pow10`: 10^i for every power of ten a `uint64` holds.
+const UINT64_POW10: [u64; 20] = [
+    1, 10, 100, 1_000, 10_000, 100_000, 1_000_000, 10_000_000, 100_000_000, 1_000_000_000,
+    10_000_000_000, 100_000_000_000, 1_000_000_000_000, 10_000_000_000_000,
+    100_000_000_000_000, 1_000_000_000_000_000, 10_000_000_000_000_000,
+    100_000_000_000_000_000, 1_000_000_000_000_000_000, 10_000_000_000_000_000_000,
+];
+
+/// Go `roundIntOverflowErr`.
+fn round_int_overflow_err(val: i64, frac: i64, unsigned: bool) -> EvalError {
+    let (type_name, shown) = if unsigned {
+        ("BIGINT UNSIGNED", format!("round({}, {frac})", val as u64))
+    } else {
+        ("BIGINT", format!("round({val}, {frac})"))
+    };
+    EvalError::Conversion(
+        tidb_datatype::types_errors::ERR_OVERFLOW.gen_with_stack_by_args(&[type_name.into(), shown.into()]),
+    )
+}
+
+/// Go `roundIntWithFrac`: `val` rounded at the `frac`-th digit (a negative
+/// `frac` counts digits left of the decimal point). Integers are exact-value
+/// numbers, so they round half away from zero, with integer arithmetic so
+/// magnitudes above 2^53 survive; a result outside the type is 1690.
+/// `unsigned` says whether `val`'s high bit is magnitude rather than sign.
+fn round_int_with_frac(val: i64, frac: i64, unsigned: bool) -> Result<i64, EvalError> {
+    if frac >= 0 {
+        return Ok(val);
+    }
+    let max_frac = UINT64_POW10.len() as i64 - 1;
+    if frac < -max_frac {
+        // Every digit of val lies right of the rounding position.
+        return Ok(0);
+    }
+    let unit = UINT64_POW10[(-frac) as usize];
+    let negative = !unsigned && val < 0;
+    let mut abs = val as u64;
+    if negative {
+        abs = abs.wrapping_neg();
+    }
+    let rem = abs % unit;
+    abs -= rem;
+    if rem >= unit / 2 {
+        if abs > u64::MAX - unit {
+            return Err(round_int_overflow_err(val, frac, unsigned));
+        }
+        abs += unit;
+    }
+    if !unsigned && abs > i64::MAX as u64 {
+        return Err(round_int_overflow_err(val, frac, unsigned));
+    }
+    Ok(if negative { (abs as i64).wrapping_neg() } else { abs as i64 })
+}
+
 /// Go's `types.Round(f, dec)` (`pkg/types/helper.go`) ported bit-for-bit:
 /// multiply by `10^dec` ([`go_pow10`]), round the intermediate to the
 /// nearest EVEN integer, divide back — deliberately simple and occasionally
@@ -884,9 +935,7 @@ fn go_pow10(n: i64) -> f64 {
 /// "more correct" decimal-aware approach. An infinite intermediate (e.g.
 /// huge `dec`) returns `f` unchanged; a `NaN` result (e.g. `f == 0.0` with
 /// `dec` large enough that `shift` is infinite, giving `0 * inf`) becomes
-/// `0.0` — both are Go's own explicit fallbacks, not invented here. Also
-/// used for `ROUND(int, d)`, which real TiDB implements as this same `f64`
-/// round-trip (`int64(types.Round(float64(val), d))`).
+/// `0.0` — both are Go's own explicit fallbacks, not invented here.
 fn go_round_float(f: f64, dec: i64) -> f64 {
     let shift = go_pow10(dec);
     let tmp = f * shift;
@@ -1048,5 +1097,37 @@ mod tests {
                 expression: "cot(0)".to_owned(),
             })
         );
+    }
+}
+
+#[cfg(test)]
+mod round_int_with_frac_tests {
+    use super::round_int_with_frac;
+
+    /// Go `TestRoundWithFracInt`'s integer rows (`06441e2a681`): half away
+    /// from zero, exact above 2^53, unsigned as a magnitude, and 1690 when
+    /// the result leaves the type.
+    #[test]
+    fn rounds_integers_exactly_half_away_from_zero() {
+        for (val, frac, unsigned, want) in [
+            (25, -1, false, 30),
+            (-25, -1, false, -30),
+            (24, -1, false, 20),
+            (-24, -1, false, -20),
+            (1_234_567_890_123_456_789, -1, false, 1_234_567_890_123_456_790),
+            (i64::MAX, 0, false, i64::MAX),
+            (9_223_372_036_854_775_815_u64 as i64, -1, true, 9_223_372_036_854_775_820_u64 as i64),
+            (18_446_744_073_709_551_605_u64 as i64, -1, true, 18_446_744_073_709_551_610_u64 as i64),
+        ] {
+            assert_eq!(round_int_with_frac(val, frac, unsigned).unwrap(), want, "{val} {frac}");
+        }
+        for (val, unsigned, message) in [
+            (i64::MAX, false, "BIGINT value is out of range in 'round(9223372036854775807, -1)'"),
+            (i64::MIN, false, "BIGINT value is out of range in 'round(-9223372036854775808, -1)'"),
+            (-1, true, "BIGINT UNSIGNED value is out of range in 'round(18446744073709551615, -1)'"),
+        ] {
+            let error = round_int_with_frac(val, -1, unsigned).unwrap_err();
+            assert!(format!("{error:?}").contains(message), "{error:?}");
+        }
     }
 }

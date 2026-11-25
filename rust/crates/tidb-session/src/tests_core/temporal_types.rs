@@ -332,3 +332,32 @@ fn from_unixtime_preserves_its_one_argument_datetime_signature() {
     assert!(matches!(rows[0][2], Datum::String(_)));
     assert_eq!(rows[0][2].sql_string().unwrap(), "2023");
 }
+
+/// Go `getDateFromString` (DATE_ADD family) and CONVERT_TZ report a text
+/// `types.ParseTime` rejects with ParseTime's own error: `checkMonthDay`
+/// names an invalid month or day by its parsed fields (`'2020-2-30'`, a
+/// two-digit year adjusted, the clock dropped); other text by itself (Go
+/// master testkit probe).
+#[test]
+fn an_invalid_date_operand_warns_with_go_parse_time_text() {
+    let mut session = Session::new();
+    for (sql, shown) in [
+        ("select adddate('2020-02-30', 1)", "2020-2-30"),
+        ("select date_add('2020-02-30', interval 1 day)", "2020-2-30"),
+        ("select date_sub('20-02-30 10:00:00', interval 1 hour)", "2020-2-30"),
+        ("select convert_tz('2020-02-30 00:00:00','+00:00','+08:00')", "2020-2-30"),
+        ("select adddate('2020-13-01', 1)", "2020-13-1"),
+        ("select adddate('abc', 1)", "abc"),
+        ("select cast('2020-02-30' as datetime)", "2020-2-30"),
+        ("select cast('2020-02-30 10:00:00' as datetime)", "2020-2-30"),
+        ("select cast('2020-02-30' as date)", "2020-2-30"),
+        ("select cast('20-13-01' as datetime)", "2020-13-1"),
+    ] {
+        assert_eq!(row_text(session.run(sql)), vec![vec!["NULL".to_owned()]], "{sql}");
+        assert_eq!(
+            row_text(session.run("show warnings")),
+            vec![vec!["Warning".to_owned(), "1292".to_owned(), format!("Incorrect datetime value: '{shown}'")]],
+            "{sql}"
+        );
+    }
+}

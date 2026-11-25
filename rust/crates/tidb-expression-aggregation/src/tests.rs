@@ -236,6 +236,53 @@ fn type_infer_4_avg_sum_widens_a_decimal_column() {
     assert_eq!(avg.ret_type.decimal(), 2);
 }
 
+// ---------------------------------------------------------------------
+// Go base_func_test.go::TestTypeInfer4AvgScale: AVG's DECIMAL scale is
+// capped at 30 (`UpdateFlenAndDecimalUnderLimit` uses
+// `SetDecimalUnderLimit`), and the partial SUM keeps the argument's scale.
+// ---------------------------------------------------------------------
+
+#[test]
+fn type_infer_4_avg_scale() {
+    struct Increment(u32);
+    impl tidb_exprctx::context::Columns for Increment {
+        fn get(&self, _: &[String]) -> Option<tidb_datatype::Datum> {
+            None
+        }
+        fn div_precision_increment(&self) -> u32 {
+            self.0
+        }
+    }
+    for (name, scale, increment, want_flen, want_avg_scale) in [
+        ("normal", 2, 4, 44, 6),
+        ("at_limit", 26, 4, 44, 30),
+        ("above_limit", 27, 4, 44, 30),
+        ("max_input_scale", 30, 4, 44, 30),
+        ("zero_increment", 30, 0, 40, 30),
+        ("max_increment", 30, 30, 65, 30),
+    ] {
+        let ctx = Increment(increment);
+        let mut arg_type = FieldType::new(FieldTypeCode::NewDecimal);
+        arg_type.set_flen(40);
+        arg_type.set_decimal(scale);
+
+        let mut avg = BaseFuncDesc::new(&ctx, names::AVG, vec![col_typed(0, arg_type.clone())]).unwrap();
+        assert_eq!(avg.ret_type.code(), FieldTypeCode::NewDecimal, "{name}");
+        assert_eq!(avg.ret_type.flen(), want_flen, "{name}");
+        assert_eq!(avg.ret_type.decimal(), want_avg_scale, "{name}");
+
+        let sum = BaseFuncDesc::new(&ctx, names::SUM, vec![col_typed(0, arg_type)]).unwrap();
+        assert_eq!(sum.ret_type.flen(), 62, "{name}");
+        assert_eq!(sum.ret_type.decimal(), scale, "{name}");
+
+        let avg_ret = avg.ret_type.clone();
+        avg.name = names::SUM.to_owned();
+        avg.type_infer_4_avg_sum(&avg_ret).unwrap();
+        assert_eq!(avg.ret_type.flen(), 62, "{name}");
+        assert_eq!(avg.ret_type.decimal(), scale, "{name}");
+    }
+}
+
 #[test]
 fn type_infer_4_avg_sum_rejects_a_non_sum_name() {
     let mut d =

@@ -1036,72 +1036,146 @@ pub fn exhaust_physical_plans_4_logical_sort(
     allocator: &PlanIdAllocator,
     skew_ratio: f64,
 ) -> Vec<PhysicalPlan> {
-    if prop.task_tp != TaskType::Root || !match_items(prop, &sort.by_items) {
-        return Vec::new();
+    match prop.task_tp {
+        TaskType::Root => {
+            if !match_items(prop, &sort.by_items) {
+                return Vec::new();
+            }
+            let mut plans = Vec::with_capacity(2);
+            plans.push(get_physical_sort(sort, prop, allocator, skew_ratio));
+            if let Some(nominal) = get_nominal_sort(sort, prop, allocator, skew_ratio) {
+                plans.push(nominal);
+            }
+            plans
+        }
+        // Go: "just enumerate mpp task type requirement for child".
+        TaskType::Mpp => get_nominal_sort_simple(sort, prop, allocator, skew_ratio)
+            .into_iter()
+            .collect(),
+        _ => Vec::new(),
     }
-    let sort_items = sort
-        .by_items
-        .iter()
-        .map(|item| {
-            let column = item.expr.as_column()?;
-            Some(tidb_planner_property::SortItem::new(column.clone(), item.desc))
-        })
-        .collect::<Option<Vec<_>>>();
+}
+
+/// The sort's base at `prop`'s expected count (Go `ls.StatsInfo().
+/// ScaleByExpectCnt(..., expectedCnt)` and `Init`'s query block).
+fn sort_base(
+    sort: &tidb_planner_core_operator_logicalop::LogicalSort,
+    expected_cnt: f64,
+    allocator: &PlanIdAllocator,
+    skew_ratio: f64,
+    child_prop: PhysicalProperty,
+) -> BasePhysicalPlan {
     let stats = sort
         .base
         .base
         .stats_info()
-        .map(|stats| stats.scale_by_expect_cnt(prop.expected_cnt, skew_ratio));
-    let mut plans = Vec::with_capacity(2);
-
+        .map(|stats| stats.scale_by_expect_cnt(expected_cnt, skew_ratio));
     let mut base = BasePhysicalPlan::new(
         allocator,
         tidb_planner_core_operator_logicalop::LogicalSort::TYPE,
         sort.base.base.query_block_offset(),
     );
-    base.base.set_stats(stats.clone());
+    base.base.set_stats(stats);
     base.base.set_schema(sort.base.schema_or_child_schema().cloned());
-    base.set_children_req_props(vec![Some(PhysicalProperty {
+    base.set_children_req_props(vec![Some(child_prop)]);
+    base
+}
+
+/// Go `getPhysicalSort`: requests an unordered child and sorts itself.
+fn get_physical_sort(
+    sort: &tidb_planner_core_operator_logicalop::LogicalSort,
+    prop: &PhysicalProperty,
+    allocator: &PlanIdAllocator,
+    skew_ratio: f64,
+) -> PhysicalPlan {
+    let child_prop = PhysicalProperty {
         task_tp: prop.task_tp,
         expected_cnt: f64::MAX,
         cte_producer_status: prop.cte_producer_status,
         no_cop_push_down: prop.no_cop_push_down,
         ..PhysicalProperty::default()
-    })]);
-    plans.push(PhysicalPlan::Sort(PhysicalSort {
-        base,
+    };
+    PhysicalPlan::Sort(PhysicalSort {
+        base: sort_base(sort, prop.expected_cnt, allocator, skew_ratio, child_prop),
         by_items: sort.by_items.clone(),
         is_partial_sort: false,
-    }));
+    })
+}
 
-    if let Some(items) = sort_items {
-        let mut base = BasePhysicalPlan::new(
-            allocator,
-            tidb_planner_core_operator_logicalop::LogicalSort::TYPE,
-            sort.base.base.query_block_offset(),
-        );
-        base.base.set_stats(stats);
-        base.base.set_schema(sort.base.schema_or_child_schema().cloned());
-        base.set_children_req_props(vec![Some(PhysicalProperty {
-            task_tp: TaskType::Root,
-            expected_cnt: prop.expected_cnt,
-            sort_items: items,
-            no_cop_push_down: prop.no_cop_push_down,
-            ..PhysicalProperty::default()
-        })]);
-        plans.push(PhysicalPlan::NominalSort(NominalSort {
-            base,
-            by_items: sort
-                .by_items
-                .iter()
-                .filter_map(|item| {
-                    Some(tidb_planner_property::SortItem::new(item.expr.as_column()?.clone(), item.desc))
-                })
-                .collect(),
-            only_column: true,
-        }));
+/// Go `getNominalSort`: requests the written order (a column, or the single
+/// column a `+`/`-` chain follows) from the child.
+fn get_nominal_sort(
+    sort: &tidb_planner_core_operator_logicalop::LogicalSort,
+    req_prop: &PhysicalProperty,
+    allocator: &PlanIdAllocator,
+    skew_ratio: f64,
+) -> Option<PhysicalPlan> {
+    let (sort_items, only_column) = get_prop_by_order_by_items_contain_scalar_func(&sort.by_items)?;
+    let child_prop = PhysicalProperty {
+        expected_cnt: req_prop.expected_cnt,
+        sort_items,
+        no_cop_push_down: req_prop.no_cop_push_down,
+        ..PhysicalProperty::default()
+    };
+    Some(PhysicalPlan::NominalSort(NominalSort {
+        base: sort_base(sort, child_prop.expected_cnt, allocator, skew_ratio, child_prop),
+        by_items: sort.by_items.clone(),
+        only_column,
+    }))
+}
+
+/// Go `getNominalSortSimple`: the MPP arm, columns only.
+fn get_nominal_sort_simple(
+    sort: &tidb_planner_core_operator_logicalop::LogicalSort,
+    req_prop: &PhysicalProperty,
+    allocator: &PlanIdAllocator,
+    skew_ratio: f64,
+) -> Option<PhysicalPlan> {
+    let (sort_items, only_column) = get_prop_by_order_by_items_contain_scalar_func(&sort.by_items)?;
+    if !only_column {
+        return None;
     }
-    plans
+    let mut child_prop = req_prop.clone_essential_fields();
+    child_prop.sort_items = sort_items;
+    Some(PhysicalPlan::NominalSort(NominalSort {
+        base: sort_base(sort, req_prop.expected_cnt, allocator, skew_ratio, child_prop),
+        by_items: sort.by_items.clone(),
+        only_column: true,
+    }))
+}
+
+/// Go `GetPropByOrderByItemsContainScalarFunc`: the sort property a column
+/// or a `+`/`-` chain over one column asks of the child (`None` when an item
+/// is neither), and whether every item was a bare column. Reversing the
+/// value order does not reverse the NULL order (`-NULL` is NULL), so a
+/// reversed nullable column cannot be served by an opposite scan.
+#[must_use]
+pub fn get_prop_by_order_by_items_contain_scalar_func(
+    items: &[tidb_expression_aggregation::ByItems],
+) -> Option<(Vec<tidb_planner_property::SortItem>, bool)> {
+    let mut prop_items = Vec::with_capacity(items.len());
+    let mut only_column = true;
+    for item in items {
+        match &item.expr {
+            tidb_expr::expression::Expression::Column(column) => {
+                prop_items.push(tidb_planner_property::SortItem::new(column.clone(), item.desc));
+            }
+            tidb_expr::expression::Expression::ScalarFunction(function) => {
+                let (column, desc) = function.get_single_column(item.desc)?;
+                let not_null = column
+                    .ret_type
+                    .as_ref()
+                    .is_some_and(|ft| ft.has_flag(tidb_datatype::FieldTypeFlags::NOT_NULL));
+                if desc != item.desc && !not_null {
+                    return None;
+                }
+                prop_items.push(tidb_planner_property::SortItem::new(column, desc));
+                only_column = false;
+            }
+            _ => return None,
+        }
+    }
+    Some((prop_items, only_column))
 }
 
 /// Go `physicalop.PhysicalLimit` (`physical_limit.go`, whole file).
@@ -1737,8 +1811,8 @@ pub struct NominalSort {
     pub base: BasePhysicalPlan,
     /// Go `ByItems`, kept (issue #11653) so the NominalSorts that convert to
     /// Projections can check whether their scalar functions are out of
-    /// bounds; carried as `SortItem`s like [`PhysicalSort::by_items`].
-    pub by_items: Vec<tidb_planner_property::SortItem>,
+    /// bounds.
+    pub by_items: Vec<tidb_expression_aggregation::ByItems>,
     /// Go `OnlyColumn`: every by-item is a bare column, and `Attach2Task`
     /// then drops the operator entirely.
     pub only_column: bool,

@@ -377,6 +377,24 @@ fn try_to_get_mpp_hash_join(
         );
         return Vec::new();
     }
+    if !matches!(
+        op.join_type,
+        LogicalJoinType::Inner
+            | LogicalJoinType::LeftOuter
+            | LogicalJoinType::RightOuter
+            | LogicalJoinType::FullOuter
+            | LogicalJoinType::Semi
+            | LogicalJoinType::AntiSemi
+            | LogicalJoinType::LeftOuterSemi
+            | LogicalJoinType::AntiLeftOuterSemi
+    ) {
+        raise(ctx, &format!("MPP mode may be blocked because join type `{join_type_name}` is not supported now."));
+        return Vec::new();
+    }
+    if op.join_type == LogicalJoinType::FullOuter && use_bcj {
+        raise(ctx, "MPP mode may be blocked because `full outer join` is only supported by shuffle join now.");
+        return Vec::new();
+    }
     if op.equal_conditions.is_empty() {
         if !use_bcj {
             raise(ctx, "MPP mode may be blocked because `Cartesian Product` is only supported by broadcast join, check value and documents of variables `tidb_broadcast_join_threshold_size` and `tidb_broadcast_join_threshold_count`.");
@@ -387,12 +405,16 @@ fn try_to_get_mpp_hash_join(
             return Vec::new();
         }
     }
-    if !op.left_conditions.is_empty() && op.join_type != LogicalJoinType::LeftOuter {
-        raise(ctx, "MPP mode may be blocked because there is a join that is not `left join` but has left conditions, which is not supported by mpp now, see github.com/pingcap/tidb/issues/26090 for more information.");
+    if !op.left_conditions.is_empty()
+        && !matches!(op.join_type, LogicalJoinType::LeftOuter | LogicalJoinType::FullOuter)
+    {
+        raise(ctx, "MPP mode may be blocked because left conditions are only supported for `left outer join` and `full outer join` now.");
         return Vec::new();
     }
-    if !op.right_conditions.is_empty() && op.join_type != LogicalJoinType::RightOuter {
-        raise(ctx, "MPP mode may be blocked because there is a join that is not `right join` but has right conditions, which is not supported by mpp now.");
+    if !op.right_conditions.is_empty()
+        && !matches!(op.join_type, LogicalJoinType::RightOuter | LogicalJoinType::FullOuter)
+    {
+        raise(ctx, "MPP mode may be blocked because right conditions are only supported for `right outer join` and `full outer join` now.");
         return Vec::new();
     }
     if prop.mpp_partition_tp == MppPartitionType::Broadcast {
@@ -446,7 +468,7 @@ fn try_to_get_mpp_hash_join(
             fixed_build_side = true;
         }
     }
-    if matches!(op.join_type, LogicalJoinType::LeftOuter | LogicalJoinType::RightOuter) {
+    if matches!(op.join_type, LogicalJoinType::LeftOuter | LogicalJoinType::RightOuter | LogicalJoinType::FullOuter) {
         if use_bcj || op.is_naaj() || op.equal_conditions.is_empty() || ctx.mpp_join.outer_join_fixed_build_side {
             if !ctx.mpp_join.outer_join_fixed_build_side {
                 fixed_build_side = true;
@@ -508,6 +530,11 @@ fn try_to_get_mpp_hash_join(
         });
     } else {
         if prop.mpp_partition_tp == MppPartitionType::Hash {
+            // Go: both sides of a full outer join are NULL-padded at random,
+            // so neither side's keys can serve a required hash partitioning.
+            if op.join_type == LogicalJoinType::FullOuter {
+                return Vec::new();
+            }
             let matches = match op.join_type {
                 LogicalJoinType::Inner => prop
                     .is_subset_of(&left_keys)

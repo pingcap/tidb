@@ -1285,6 +1285,8 @@ fn rewrite_leaf_compound(
             let value = rewrite_expr_resolved(expr, resolver)?;
             let low = rewrite_expr_resolved(low, resolver)?;
             let high = rewrite_expr_resolved(high, resolver)?;
+            // Go `betweenToExpression`.
+            ensure_single_column(&[&value, &low, &high])?;
             let [value, low, high] = wrap_between_arguments(
                 &tidb_expr::builtin::ResolverBuildContext(resolver),
                 [&value, &low, &high],
@@ -1379,6 +1381,8 @@ fn rewrite_leaf_compound(
                 rewrite_expr_resolved(expr, resolver)?,
                 rewrite_expr_resolved(pattern, resolver)?,
             ];
+            // Go `regexpToScalarFunc`.
+            ensure_single_column(&[&args[0], &args[1]])?;
             not_to_expression(*not, "regexp", args, resolver)
         }
         // Go `caseWhenFunctionClass`: the arguments are the flattened
@@ -1395,8 +1399,20 @@ fn rewrite_leaf_compound(
                 None => None,
             };
             let mut args = Vec::with_capacity(when_clauses.len() * 2 + 1);
+            // Go `caseToExpression` checks the WHEN, THEN and ELSE operands
+            // (not the CASE value) before building any comparison.
+            let mut raw = Vec::with_capacity(when_clauses.len() * 2 + 1);
             for (condition, result) in when_clauses {
-                let condition = rewrite_expr_resolved(condition, &child_resolver)?;
+                raw.push(rewrite_expr_resolved(condition, &child_resolver)?);
+                raw.push(rewrite_expr_resolved(result, &child_resolver)?);
+            }
+            if let Some(else_clause) = else_clause {
+                raw.push(rewrite_expr_resolved(else_clause, &child_resolver)?);
+            }
+            ensure_single_column(&raw.iter().collect::<Vec<_>>())?;
+            let mut raw = raw.into_iter();
+            for _ in when_clauses {
+                let condition = raw.next().expect("a WHEN operand per clause");
                 let condition = match &compare_value {
                     // Go `caseToExpression` builds each WHEN with
                     // `constructBinaryOpFunction(value, when, EQ)`: the
@@ -1408,11 +1424,9 @@ fn rewrite_leaf_compound(
                     None => condition,
                 };
                 args.push(condition);
-                args.push(rewrite_expr_resolved(result, &child_resolver)?);
+                args.push(raw.next().expect("a THEN operand per clause"));
             }
-            if let Some(else_clause) = else_clause {
-                args.push(rewrite_expr_resolved(else_clause, &child_resolver)?);
-            }
+            args.extend(raw);
             // Go `caseToExpression`: `er.newFunction(ast.Case, &v.Type, args...)`.
             class_function(&tidb_expr::builtin_control::CaseWhenFunctionClass, "case", args, resolver)
         }
@@ -1486,6 +1500,8 @@ fn finish_function_call(
     mut rewritten: Vec<Expression>,
     resolver: &impl ColumnResolver,
 ) -> Result<Expression, EvalError> {
+    // Go `funcCallToExpression`: every argument is one column.
+    ensure_single_column(&rewritten.iter().collect::<Vec<_>>())?;
     let lowered = lowered.to_owned();
     // Go's rewriter turns `NULLIF(a, b)` into `IF(a = b, NULL, a)` before any
     // function class sees it (`expression_rewriter.go`'s `ast.Nullif` arm):
@@ -1550,6 +1566,8 @@ fn rewrite_leaf_call(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expr
             let unit = keyword_constant(unit);
             let value = rewrite_expr_resolved(value, resolver)?;
             let class = tidb_expr::builtin::funcs("extract").expect("builtin_time.go registers EXTRACT");
+            // Go `funcCallToExpression`: every argument is one column.
+            ensure_single_column(&[&value])?;
             class_function(class, "extract", vec![unit, value], resolver)
         }
         // The first GET_FORMAT argument is grammar, not an expression. Go's
@@ -1567,6 +1585,8 @@ fn rewrite_leaf_call(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expr
             ];
             let class =
                 tidb_expr::builtin::funcs("get_format").expect("builtin_time.go registers GET_FORMAT");
+            // Go `funcCallToExpression`: every argument is one column.
+            ensure_single_column(&args.iter().collect::<Vec<_>>())?;
             class_function(class, "get_format", args, resolver)
         }
         // Go parses POSITION with its own `substr IN str` grammar into an
@@ -1604,6 +1624,8 @@ fn rewrite_leaf_call(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expr
             ];
             let class = tidb_expr::builtin::funcs("timestampadd")
                 .expect("builtin_time.go registers TIMESTAMPADD");
+            // Go `funcCallToExpression`: every argument is one column.
+            ensure_single_column(&args.iter().collect::<Vec<_>>())?;
             class_function(class, "timestampadd", args, resolver)
         }
         Expr::TimestampDiff { unit, expr1, expr2 } => {
@@ -1614,6 +1636,8 @@ fn rewrite_leaf_call(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expr
             ];
             let class = tidb_expr::builtin::funcs("timestampdiff")
                 .expect("builtin_time.go registers TIMESTAMPDIFF");
+            // Go `funcCallToExpression`: every argument is one column.
+            ensure_single_column(&args.iter().collect::<Vec<_>>())?;
             class_function(class, "timestampdiff", args, resolver)
         }
         // An ordinary builtin call: its function class builds the node.
@@ -1636,6 +1660,8 @@ fn rewrite_leaf_call(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expr
                     .iter()
                     .map(|arg| rewrite_expr_resolved(arg, resolver))
                     .collect::<Result<Vec<_>, _>>()?;
+                // Go `funcCallToExpression`: every argument is one column.
+                ensure_single_column(&args.iter().collect::<Vec<_>>())?;
                 // Go: the user arguments become the signature's metadata
                 // and the function reads only the Expand's grouping id.
                 let RollExpandGrouping {
@@ -1701,6 +1727,7 @@ fn rewrite_leaf_call(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expr
                         rewritten.push(rewrite_expr_resolved(arg, &child_resolver)?);
                     }
                     let class = tidb_expr::builtin::funcs(&lowered).expect("sequence function class");
+                    ensure_single_column(&rewritten.iter().collect::<Vec<_>>())?;
                     return class_function(class, &lowered, rewritten, resolver);
                 }
             }
@@ -1757,6 +1784,7 @@ fn rewrite_leaf_call(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expr
                     ];
                     let class = tidb_expr::builtin::funcs(&lowered)
                         .expect("builtin_time.go registers the DATE_ADD family");
+                    ensure_single_column(&args.iter().collect::<Vec<_>>())?;
                     return class_function(class, &lowered, args, resolver);
                 }
             }
@@ -1930,6 +1958,8 @@ fn rewrite_leaf_call(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expr
                 constant_string(charset),
             ];
             let class = tidb_expr::builtin::funcs("convert").expect("convert is registered");
+            // Go `funcCallToExpression`: every argument is one column.
+            ensure_single_column(&args.iter().collect::<Vec<_>>())?;
             class_function(class, "convert_using", args, resolver)
         }
         // Go `weightStringFunctionClass`: the `AS CHAR(n)`/`AS BINARY(n)`
@@ -1950,6 +1980,8 @@ fn rewrite_leaf_call(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expr
             }
             let class =
                 tidb_expr::builtin::funcs("weight_string").expect("weight_string is registered");
+            // Go `funcCallToExpression`: every argument is one column.
+            ensure_single_column(&args.iter().collect::<Vec<_>>())?;
             class_function(class, "weight_string", args, resolver)
         }
         // Go's parser builds `trim(str)`, `trim(str, remstr)` or

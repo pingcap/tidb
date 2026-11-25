@@ -914,17 +914,26 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             )?;
         } else if let Some(on) = join_node.on.as_ref() {
             self.cur_clause = ClauseCode::On;
-            // boundary: Go's `b.rewrite(...)` may REPLACE the plan with an
-            // apply when the ON clause holds a subquery, and rejects that with
-            // "ON condition doesn't support subqueries yet" (`:923`).
-            // [`PlanBuilder::rewrite_scalar`] is the subquery-free rewrite, so
-            // a subquery surfaces as an unresolved-column error instead.
+            // Go `b.rewrite(ctx, joinNode.On.Expr, joinPlan, nil, false)`:
+            // the ON clause is rewritten over the join, so an uncorrelated
+            // scalar or EXISTS subquery is planned and evaluated into a
+            // constant; one that would replace the join with an apply or a
+            // semi-join (`newPlan != joinPlan`) is refused.
             let on_plan = LogicalPlan::Join(join_plan.clone());
-            let on_expr = self.rewrite_scalar_with_plan(
-                &Self::clause_scratch(on),
-                &on_plan,
-                &BTreeMap::new(),
-            )?;
+            let on_plan_id = on_plan.id();
+            let mut scratch = Self::clause_scratch(on);
+            let (on_plan, lowered) = self.lower_scalar_subqueries(on_plan, &mut scratch)?;
+            if on_plan.id() != on_plan_id {
+                return Err(PlanError::from(tidb_terror::MysqlError::unknown(
+                    "ON condition doesn't support subqueries yet",
+                )));
+            }
+            let mut markers = BTreeMap::new();
+            if lowered {
+                let (schema, _) = snapshot_schema_and_names(&on_plan);
+                markers.insert(MarkerKind::Column, schema.columns.clone());
+            }
+            let on_expr = self.rewrite_scalar_with_plan(&scratch, &on_plan, &markers)?;
             let on_condition = into_cnf_items(on_expr);
             // `:930` "Keep these expressions as a LogicalSelection upon the
             // inner join, in order to apply possible decorrelate

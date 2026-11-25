@@ -779,8 +779,19 @@ impl PartitionInfo {
             ActionType::ACTION_DROP_TABLE_PARTITION if !self.dropping_definitions.is_empty() => {
                 ids_from_definitions(&self.dropping_definitions, self.dropping_definitions.len())
             }
+            // Reorganize-family DDLs fill DroppingDefinitions before the
+            // backfill while Definitions still holds them; they are ignored
+            // only once the backfill swaps Definitions.
+            ActionType::ACTION_REORGANIZE_PARTITION
+            | ActionType::ACTION_REMOVE_PARTITIONING
+            | ActionType::ACTION_ALTER_TABLE_PARTITIONING
+                if matches!(self.ddl_state, SchemaState::DELETE_REORGANIZATION | SchemaState::PUBLIC)
+                    && !self.dropping_definitions.is_empty() =>
+            {
+                ids_from_definitions(&self.dropping_definitions, self.dropping_definitions.len())
+            }
             ActionType::ACTION_ADD_TABLE_PARTITION if !self.adding_definitions.is_empty() => {
-                ids_from_definitions(&self.adding_definitions, self.dropping_definitions.len())
+                ids_from_definitions(&self.adding_definitions, self.adding_definitions.len())
             }
             _ => GoSharedSlice::default(),
         }
@@ -796,6 +807,37 @@ mod tests {
             id,
             name: CiString::new(name),
             ..Default::default()
+        }
+    }
+
+    /// Go `TestPartitionIDsInDDLToIgnore`.
+    #[test]
+    fn partition_ids_in_ddl_to_ignore() {
+        let dropping = || GoSharedSlice::from(vec![def(101, "p1"), def(102, "p2")]);
+        let drop_pi = PartitionInfo {
+            ddl_action: ActionType::ACTION_DROP_TABLE_PARTITION,
+            dropping_definitions: dropping(),
+            ..Default::default()
+        };
+        assert_eq!(drop_pi.ids_in_ddl_to_ignore().snapshot(), vec![101, 102]);
+        for action in [
+            ActionType::ACTION_REORGANIZE_PARTITION,
+            ActionType::ACTION_REMOVE_PARTITIONING,
+            ActionType::ACTION_ALTER_TABLE_PARTITIONING,
+        ] {
+            let mut pi = PartitionInfo {
+                ddl_action: action,
+                ddl_state: SchemaState::DELETE_ONLY,
+                dropping_definitions: dropping(),
+                ..Default::default()
+            };
+            assert!(pi.ids_in_ddl_to_ignore().snapshot().is_empty(), "{action:?}");
+            pi.ddl_state = SchemaState::WRITE_REORGANIZATION;
+            assert!(pi.ids_in_ddl_to_ignore().snapshot().is_empty(), "{action:?}");
+            pi.ddl_state = SchemaState::DELETE_REORGANIZATION;
+            assert_eq!(pi.ids_in_ddl_to_ignore().snapshot(), vec![101, 102], "{action:?}");
+            pi.ddl_state = SchemaState::PUBLIC;
+            assert_eq!(pi.ids_in_ddl_to_ignore().snapshot(), vec![101, 102], "{action:?}");
         }
     }
 

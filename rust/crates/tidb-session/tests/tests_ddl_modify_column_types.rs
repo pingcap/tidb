@@ -422,3 +422,57 @@ fn column_names(tk: &TestKit, table: &str) -> Vec<String> {
     };
     table.columns().iter().map(|column| column.read().name.original().to_owned()).collect()
 }
+
+/// Go `TestModifyColumnCrossCharsetRequiresReorg` (`pkg/ddl/column_modify_test.go`):
+/// a charset/collation change outside the direct-convertible set
+/// (`canModifyCharsetAndCollateWithoutReorg`) rewrites the rows, so invalid
+/// data is refused; a same-charset collation change checks the character
+/// length, not the byte length; utf8 -> utf8mb4 stays a metadata change.
+#[test]
+fn modify_column_cross_charset_requires_reorg() {
+    const ERR_TRUNCATED_WRONG_VALUE_FOR_FIELD: u16 = 1366;
+    const WARN_DATA_TRUNCATED: u16 = 1265;
+    const ERR_UNSUPPORTED_DDL_OPERATION: u16 = 8200;
+    let mut tk = TestKit::new();
+    tk.must_exec("use test");
+
+    tk.must_exec("create table t0 (id int primary key, c binary(2))");
+    tk.must_exec("insert into t0 values (1, x'FFFE')");
+    tk.must_get_err_code(
+        "alter table t0 modify column c varchar(10) character set utf8mb4 collate utf8mb4_general_ci",
+        ERR_TRUNCATED_WRONG_VALUE_FOR_FIELD,
+    );
+
+    tk.must_exec("create table t2 (id int primary key, c char(4) character set utf8mb4)");
+    tk.must_exec("insert into t2 values (1, 'é')");
+    tk.must_get_err_code("alter table t2 modify column c varchar(10) character set ascii", ERR_TRUNCATED_WRONG_VALUE_FOR_FIELD);
+
+    tk.must_exec("create table t3 (id int primary key, c char(4) character set utf8mb4)");
+    tk.must_exec("insert into t3 values (1, 'éééé')");
+    tk.must_get_err_code("alter table t3 modify column c varbinary(4)", WARN_DATA_TRUNCATED);
+
+    tk.must_exec("create table t4 (id int primary key, c varchar(4) character set utf8mb4 collate utf8mb4_bin)");
+    tk.must_exec("insert into t4 values (1, 'éééé')");
+    tk.must_exec("alter table t4 modify column c varchar(4) character set utf8mb4 collate utf8mb4_general_ci");
+
+    tk.must_exec("create table t5 (id int primary key, c varchar(10) character set utf8 collate utf8_bin, key idx_c(c))");
+    tk.must_exec("insert into t5 values (1, 'abc')");
+    tk.must_exec("alter table t5 modify column c varchar(10) character set utf8mb4 collate utf8mb4_bin");
+    tk.must_query("select row_count from information_schema.ddl_jobs where table_name = 't5' order by job_id desc limit 1")
+        .check(["0"]);
+    tk.must_exec("alter table t5 modify column c varchar(5) character set utf8mb4 collate utf8mb4_bin");
+    tk.must_query("select row_count from information_schema.ddl_jobs where table_name = 't5' order by job_id desc limit 1")
+        .check(["0"]);
+    tk.must_exec("admin check table t5");
+
+    tk.must_exec("create table t6 (id int primary key, c varchar(10) character set utf8mb4 collate utf8mb4_bin)");
+    tk.must_exec("insert into t6 values (1, '🐱')");
+    tk.must_get_err_code(
+        "alter table t6 modify column c varchar(10) character set utf8 collate utf8_bin",
+        ERR_UNSUPPORTED_DDL_OPERATION,
+    );
+    tk.must_get_err_code(
+        "alter table t6 modify column c varchar(5) character set utf8 collate utf8_bin",
+        ERR_TRUNCATED_WRONG_VALUE_FOR_FIELD,
+    );
+}

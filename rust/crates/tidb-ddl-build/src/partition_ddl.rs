@@ -1348,6 +1348,7 @@ pub fn reorganize_partitions(
         let (spec, mut info) = table_partition::build_table_partition_info(
             &clause,
             None,
+            None,
             &names,
             &types,
             &table.indexes(),
@@ -1479,6 +1480,7 @@ fn range_columns_bounds_equal(
 /// takes a new table id.
 pub fn alter_table_partitioning(
     table: &PartitionedTable<'_>,
+    schema: &str,
     partitioning: &TablePartitioning,
     ctx: &tidb_metabuild::Context,
     host: &mut dyn ReorgHost,
@@ -1487,9 +1489,11 @@ pub fn alter_table_partitioning(
         refuse_affinity(table, "ALTER TABLE PARTITIONING")?;
         let (names, types) = visible_names_and_types(table);
         let handle_offsets = handle_offsets(table);
+        let table_name = table.meta.name.lowercase().to_owned();
         let (spec, mut info) = table_partition::build_table_partition_info(
             partitioning,
             None,
+            Some((schema, &table_name)),
             &names,
             &types,
             &table.indexes(),

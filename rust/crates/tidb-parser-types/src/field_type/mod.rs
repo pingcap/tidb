@@ -1157,7 +1157,7 @@ impl FieldType {
         if old.decimal < 0 {
             self.decimal = MAX_DECIMAL_SCALE;
         } else {
-            self.decimal = old.decimal + decimal_delta;
+            self.set_decimal_under_limit(old.decimal + decimal_delta);
         }
         self.flen = if old.flen < 0 {
             MAX_DECIMAL_WIDTH

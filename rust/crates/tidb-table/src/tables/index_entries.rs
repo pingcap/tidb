@@ -861,6 +861,22 @@ impl TableCommon {
         // before any multi-valued expansion, which is why a duplicate element
         // reports the whole array (`'["y"]'`).
         let duplicate_value = duplicate_value_text(&self.index_values(index, row));
+        // Go `allowOverwriteOfOldGlobalIndex`: in TRUNCATE PARTITION's
+        // delete-reorganization state a global index key may still point at
+        // a truncated partition; such an entry is overwritten, not a
+        // duplicate.
+        let overwritable_partitions: Option<Vec<i64>> = {
+            let meta = self.meta.read();
+            match meta.get_partition_info() {
+                Some(partition) if index.read().global => {
+                    let partition = partition.read();
+                    (partition.ddl_state == tidb_model::SchemaState::DELETE_REORGANIZATION
+                        && partition.ddl_action == tidb_model::ActionType::ACTION_TRUNCATE_TABLE_PARTITION)
+                        .then(|| partition.ids_in_ddl_to_ignore().snapshot())
+                }
+                _ => None,
+            }
+        };
         for entry in self.index_entry_keys(index, row, handle, physical_id, zone)? {
             let value = self.gen_index_value(
                 index,
@@ -872,6 +888,41 @@ impl TableCommon {
                 zone,
             )?;
             let key = Key::from_bytes(entry.key);
+            if let (true, Some(ignored)) = (entry.distinct, overwritable_partitions.as_ref()) {
+                // Go: the mem buffer first (a tombstone counts as found),
+                // then a non-lazy snapshot read.
+                let existing = match store.get_local(&key) {
+                    Err(StorageError::NotFound) => store.get(&key),
+                    found => found,
+                };
+                let existing = match existing {
+                    Ok(existing) if !existing.is_empty() => Some(existing),
+                    Ok(_) | Err(StorageError::NotFound) => None,
+                    Err(error) => return Err(KvTableError::from(error)),
+                };
+                if let Some(existing) = existing {
+                    let old_partition = match decode_handle_in_index_value(&existing)
+                        .map_err(|error| KvTableError::Encode(format!("{error:?}")))?
+                    {
+                        Some(tidb_txnkv::Handle::Partition(partition)) => Some(partition.partition_id()),
+                        _ => None,
+                    };
+                    if !old_partition.is_some_and(|pid| ignored.contains(&pid)) {
+                        return Err(KvTableError::Mysql(tidb_terror::MysqlError::from_terror(
+                            &tidb_kv::kv_errors::ERR_KEY_EXISTS.fast_gen_by_args(&[
+                                duplicate_value.clone().into(),
+                                self.qualified_key(index.read().name.original()).into(),
+                            ]),
+                        )));
+                    }
+                    // "Simply overwrite it": the first assertion set wins.
+                    store
+                        .set_with_constraint_check(key, value, AssertionOp::AssertUnknown, false)
+                        .map_err(KvTableError::from)?;
+                    continue;
+                }
+                // Not found: Go's ordinary not-found path below.
+            }
             let lazy_check = if entry.distinct {
                 self.check_insert_key(store, 
                     &key,
