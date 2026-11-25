@@ -193,7 +193,7 @@ func TestMatchAgainstSubqueryClauseContext(t *testing.T) {
 	newTestKit := func(t *testing.T) *testkit.TestKit {
 		tk := testkit.NewTestKit(t, store)
 		tk.MustExec("use test")
-		tk.MustExec("set tidb_enable_local_match_against=ON,tidb_enable_fts_like_fallback=OFF,innodb_ft_enable_stopword=OFF,tidb_isolation_read_engines='tikv'")
+		tk.MustExec("set tidb_enable_local_match_against=ON,innodb_ft_enable_stopword=OFF,tidb_isolation_read_engines='tikv'")
 		return tk
 	}
 	tk := newTestKit(t)
