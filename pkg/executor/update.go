@@ -29,6 +29,7 @@ import (
 	mmodel "github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table"
@@ -522,6 +523,25 @@ func handleUpdateError(sctx sessionctx.Context, colName ast.CIStr, colInfo *mmod
 	return err
 }
 
+// isTargetColumnDecimalOverflow reports whether err is the DECIMAL out-of-range raised when the
+// point-update fast path's planner-built CAST converts the assigned value to a DECIMAL column.
+// Only this conversion should be rewritten to ErrWarnDataOutOfRange in composeNewRow; overflow
+// raised by an operand inside the expression (for example a BIGINT addition) must keep its own
+// error code, matching the non-point UPDATE path.
+func isTargetColumnDecimalOverflow(colInfo *mmodel.ColumnInfo, err error) bool {
+	if colInfo == nil || colInfo.GetType() != mysql.TypeNewDecimal || !types.ErrOverflow.Equal(err) {
+		return false
+	}
+	te, ok := errors.Cause(err).(*terror.Error)
+	if !ok {
+		return false
+	}
+	args := te.Args()
+	return len(args) == 2 &&
+		fmt.Sprint(args[0]) == "DECIMAL" &&
+		fmt.Sprint(args[1]) == fmt.Sprintf("(%d, %d)", colInfo.GetFlen(), colInfo.GetDecimal())
+}
+
 func (e *UpdateExec) fastComposeNewRow(rowIdx int, oldRow []types.Datum, cols []*table.Column) ([]types.Datum, error) {
 	newRowData := types.CloneRow(oldRow)
 	for _, assign := range e.OrderedList {
@@ -562,15 +582,27 @@ func (e *UpdateExec) composeNewRow(rowIdx int, oldRow []types.Datum, cols []*tab
 		if tblIdx >= 0 && !e.tableUpdatable[tblIdx] {
 			continue
 		}
+		// info of `_tidb_rowid` column is nil.
+		var colInfo *mmodel.ColumnInfo
+		if cols[assign.Col.Index] != nil {
+			colInfo = cols[assign.Col.Index].ColumnInfo
+		}
+
 		val, err := assign.Expr.Eval(e.Ctx().GetExprCtx().GetEvalCtx(), e.evalBuffer.ToRow())
+		// The point-update fast path folds a constant assignment into a CAST of the target
+		// column type, so the target-column conversion error is raised by the expression
+		// itself. Rewrite only the target-column DECIMAL overflow to ErrWarnDataOutOfRange so
+		// the error matches the non-point path; keep every other evaluation error (for
+		// example an operand overflow) unchanged.
 		if err != nil {
+			if isTargetColumnDecimalOverflow(colInfo, err) {
+				err = handleUpdateError(e.Ctx(), assign.ColName, colInfo, rowIdx, err)
+			}
 			return nil, err
 		}
 
-		// info of `_tidb_rowid` column is nil.
 		// No need to cast `_tidb_rowid` column value.
 		if cols[assign.Col.Index] != nil {
-			colInfo := cols[assign.Col.Index].ColumnInfo
 			val, err = table.CastValue(e.Ctx(), val, colInfo, false, false)
 			if err = handleUpdateError(e.Ctx(), assign.ColName, colInfo, rowIdx, err); err != nil {
 				return nil, err

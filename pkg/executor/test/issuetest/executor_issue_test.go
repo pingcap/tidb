@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/failpoint"
 	_ "github.com/pingcap/tidb/pkg/autoid_service"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/executor/join"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -792,4 +793,33 @@ func TestIssue60926(t *testing.T) {
 	join.IsChildCloseCalledForTest.Store(false)
 	tk.MustQuery("select * from t1 join (select col0, sum(col1) from t2 group by col0) as r on t1.col0 = r.col0;")
 	require.True(t, join.IsChildCloseCalledForTest.Load())
+}
+
+func TestIssue73529(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (id int primary key, c decimal(12,2), k int, unique key uk(k))")
+	tk.MustExec("insert into t values (1, 0, 10), (2, 0, 20), (3, 0, 30)")
+
+	// The point-update fast path builds the assignment as a CAST expression, so the
+	// conversion error is raised while evaluating the expression. It must still report
+	// the same error code as the non-point path and as MySQL.
+	for _, sql := range []string{
+		"update t set c = 10000000000.00 where id = 1",
+		"update t set c = 10000000000.00 where k = 10",
+		"update t set c = 10000000000.00 where id in (1)",
+		"update t set c = 10000000000.00 where id >= 2",
+	} {
+		tk.MustGetErrCode(sql, errno.ErrWarnDataOutOfRange)
+	}
+
+	// Operand overflow is not a target-column conversion, so it must keep its own error code
+	// instead of being rewritten to 1264.
+	tk.MustGetErrCode("update t set c = id + 9223372036854775807 where id = 1", errno.ErrDataOutOfRange)
+
+	// Valid assignments still work through both paths.
+	tk.MustExec("update t set c = 12.34 where id = 1")
+	tk.MustExec("update t set c = 56.78 where id >= 2")
+	tk.MustQuery("select c from t order by id").Check(testkit.Rows("12.34", "56.78", "56.78"))
 }
