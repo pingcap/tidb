@@ -396,10 +396,13 @@ func TestUpgrade(t *testing.T) {
 	ver, err = GetBootstrapVersion(se1)
 	require.NoError(t, err)
 	require.Equal(t, int64(0), ver)
+	// Recreate the schema from before upgradeToVer63 introduced the column.
+	MustExec(t, se1, "ALTER TABLE mysql.user DROP COLUMN Create_Tablespace_Priv")
 	dom.Close()
 	// Create a new session then upgrade() will run automatically.
 	dom, err = BootstrapSession(store)
 	require.NoError(t, err)
+	defer dom.Close()
 
 	se2 := CreateSessionAndSetID(t, store)
 	r = MustExecToRecodeSet(t, se2, `SELECT VARIABLE_VALUE from mysql.TiDB where VARIABLE_NAME="tidb_server_version"`)
@@ -415,6 +418,13 @@ func TestUpgrade(t *testing.T) {
 	ver, err = GetBootstrapVersion(se2)
 	require.NoError(t, err)
 	require.Equal(t, currentBootstrapVersion, ver)
+
+	userTable, err := dom.InfoSchema().TableInfoByName(ast.NewCIStr(mysql.SystemDB), ast.NewCIStr(mysql.UserTable))
+	require.NoError(t, err)
+	tablespacePriv := model.FindColumnInfo(userTable.Columns, "create_tablespace_priv")
+	require.NotNil(t, tablespacePriv)
+	require.Equal(t, "Create_Tablespace_Priv", tablespacePriv.Name.O)
+	require.True(t, mysql.HasNotNullFlag(tablespacePriv.GetFlag()))
 
 	// Verify that 'new_collation_enabled' is false.
 	r = MustExecToRecodeSet(t, se2, fmt.Sprintf(`SELECT VARIABLE_VALUE from mysql.TiDB where VARIABLE_NAME='%s'`, TidbNewCollationEnabled))
@@ -436,8 +446,6 @@ func TestUpgrade(t *testing.T) {
 		require.False(t, strings.Contains(jobType, "multi-schema"))
 	}
 	require.NoError(t, r.Close())
-
-	dom.Close()
 }
 
 func TestOldPasswordUpgrade(t *testing.T) {
