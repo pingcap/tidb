@@ -274,6 +274,35 @@ func TestSelectAppliesQueryCopStoreLimiter(t *testing.T) {
 	require.NoError(t, response.Close())
 }
 
+func TestSelectRequestHookIncludesInternalRequests(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		internal   bool
+		restricted bool
+	}{
+		{name: "user request"},
+		{name: "internal request", internal: true},
+		{name: "restricted SQL", internal: true, restricted: true},
+		{name: "restricted SQL without internal source", restricted: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dctx := newMockSessionContext().GetDistSQLCtx()
+			dctx.InRestrictedSQL = tc.restricted
+			dctx.Client = &analyzeTestClient{response: &analyzeTestResponse{}}
+			request := &kv.Request{}
+			request.RequestSource.RequestSourceInternal = tc.internal
+			limiter := kv.NewCoprRequestLimiter(1)
+			ctx := context.WithValue(context.Background(), "CheckSelectRequestHook", func(req *kv.Request) {
+				req.CoprRequestLimiter = limiter
+			})
+			response, err := Select(ctx, dctx, request, nil)
+			require.NoError(t, err)
+			require.NoError(t, response.Close())
+			require.Same(t, limiter, request.CoprRequestLimiter)
+		})
+	}
+}
+
 func TestSelectResultRuntimeStats(t *testing.T) {
 	stmtStats := execdetails.NewRuntimeStatsColl(nil)
 	basic := stmtStats.GetBasicRuntimeStats(1, true)

@@ -67,8 +67,8 @@ func Select(ctx context.Context, dctx *distsqlctx.DistSQLContext, kvReq *kv.Requ
 		kvReq.QueryCopStoreLimiter = dctx.QueryCopStoreLimiter
 	}
 
-	// For testing purpose.
-	if hook := ctx.Value("CheckSelectRequestHook"); hook != nil && !kvReq.RequestSource.RequestSourceInternal {
+	// For testing purpose. Masking policy loads isolate caller hooks in their own contexts.
+	if hook := ctx.Value("CheckSelectRequestHook"); hook != nil {
 		hook.(func(*kv.Request))(kvReq)
 	}
 

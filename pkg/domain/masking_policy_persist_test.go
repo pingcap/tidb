@@ -129,6 +129,7 @@ func TestMaskingPolicyColdSnapshot(t *testing.T) {
 			dom.InfoCache().Insert(latest, current.Ver)
 			historical, err := dom.GetSnapshotInfoSchema(snapshot.Ver)
 			require.NoError(t, err)
+			require.False(t, infoschema.MaskingPoliciesLoaded(historical))
 			var intercepted atomic.Int32
 			loadCtx := interceptor.WithRPCInterceptor(ctx, interceptor.NewRPCInterceptor("masking-policy-user-context", func(next interceptor.RPCInterceptorFunc) interceptor.RPCInterceptorFunc {
 				return func(target string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
@@ -136,8 +137,14 @@ func TestMaskingPolicyColdSnapshot(t *testing.T) {
 					return next(target, req)
 				}
 			}))
+			var requestHooks atomic.Int32
+			loadCtx = context.WithValue(loadCtx, "CheckSelectRequestHook", func(*kv.Request) {
+				requestHooks.Add(1)
+			})
 			policy, ok, err := historical.MaskingPolicyByTableColumn(loadCtx, tbl.Meta().ID, tbl.Meta().Columns[0].ID)
 			require.NoError(t, err)
+			require.True(t, infoschema.MaskingPoliciesLoaded(historical))
+			require.Zero(t, requestHooks.Load(), "policy SQL must not inherit the caller's request hook")
 			require.Zero(t, intercepted.Load(), "policy SQL must not inherit the user's RPC interceptor")
 			require.True(t, ok)
 			require.Equal(t, model.MaskingPolicyStatusEnable, policy.Status)

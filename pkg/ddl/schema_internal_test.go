@@ -331,6 +331,27 @@ func (c *mockSafePointContext) ExecRestrictedSQL(_ context.Context, _ []sqlexec.
 	return []chunk.Row{chk.GetRow(0)}, nil, nil
 }
 
+type mockRecoverSchemaContext struct {
+	*mock.Context
+	snapshotTS       uint64
+	tableID          int64
+	policyQueryCount int
+}
+
+func (c *mockRecoverSchemaContext) GetRestrictedSQLExecutor() sqlexec.RestrictedSQLExecutor {
+	return c
+}
+
+func (c *mockRecoverSchemaContext) ExecRestrictedSQL(_ context.Context, opts []sqlexec.OptionFuncAlias, sql string, args ...any) ([]chunk.Row, []*resolve.ResultField, error) {
+	if sql != queryMaskingPolicyByTableIDFromSysTable || len(args) != 1 || args[0] != c.tableID ||
+		sqlexec.GetExecOption(opts).SnapshotTS != c.snapshotTS {
+		return nil, nil, errors.New("unexpected masking policy snapshot query in recovery test")
+	}
+	c.policyQueryCount++
+	// This fixture recovers a table without masking policies in its snapshot.
+	return nil, nil, nil
+}
+
 type recordingGCBarrierPDClient struct {
 	pd.Client
 	onSetBarrier func(call int, barrierID string, barrierTS uint64, ttl time.Duration) error
@@ -458,9 +479,13 @@ func TestRecoverSchemaRenewsGCBarrierWhilePreparationBlocked(t *testing.T) {
 
 		delMgr := &recordingDelRangeManagerForTest{}
 		w := &worker{
-			ddlCtx:          &ddlCtx{store: wrappedStore},
-			sessPool:        sess.NewSessionPool(rs),
-			sess:            sess.NewSession(mock.NewContext()),
+			ddlCtx:   &ddlCtx{store: wrappedStore},
+			sessPool: sess.NewSessionPool(rs),
+			sess: sess.NewSession(&mockRecoverSchemaContext{
+				Context:    mock.NewContext(),
+				snapshotTS: snapTS,
+				tableID:    tblInfo.ID,
+			}),
 			delRangeManager: delMgr,
 		}
 		return w, wrappedStore, recPD, delMgr, snapTS
@@ -543,6 +568,7 @@ func TestRecoverSchemaRenewsGCBarrierWhilePreparationBlocked(t *testing.T) {
 		close(wrappedStore.releaseListCh)
 		res := <-doneCh
 		require.NoError(t, res.err)
+		require.Equal(t, 1, w.sess.Session().(*mockRecoverSchemaContext).policyQueryCount)
 		require.Equal(t, model.JobStateDone, job.State)
 		require.Equal(t, model.StatePublic, job.SchemaState)
 		require.Equal(t, []int64{777}, delMgr.jobIDs)
