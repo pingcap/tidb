@@ -554,8 +554,8 @@ func (ft *FieldType) String() string {
 	return ft.formatString(ft.hasBinaryAttribute())
 }
 
-// StringForExplain returns the type description used in diagnostic plan text.
-// It retains internal binary flags on numeric types for normalized plan stability.
+// StringForExplain returns the legacy type description used in diagnostic output.
+// It retains internal binary flags on numeric types for stable plan and error text.
 func (ft *FieldType) StringForExplain() string {
 	return ft.formatString(mysql.HasBinaryFlag(ft.flag) && ft.GetType() != mysql.TypeString)
 }

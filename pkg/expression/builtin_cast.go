@@ -627,7 +627,7 @@ func (c *castAsArrayFunctionClass) getFunction(ctx BuildContext, args []Expressi
 	arrayType := c.tp.ArrayType()
 	switch arrayType.GetType() {
 	case mysql.TypeYear, mysql.TypeJSON, mysql.TypeFloat, mysql.TypeNewDecimal:
-		return nil, ErrNotSupportedYet.GenWithStackByArgs(fmt.Sprintf("CAST-ing data to array of %s", arrayType.String()))
+		return nil, ErrNotSupportedYet.GenWithStackByArgs(fmt.Sprintf("CAST-ing data to array of %s", arrayType.StringForExplain()))
 	}
 	if arrayType.EvalType() == types.ETString && arrayType.GetCharset() != charset.CharsetUTF8MB4 && arrayType.GetCharset() != charset.CharsetBin {
 		return nil, ErrNotSupportedYet.GenWithStackByArgs("specifying charset for multi-valued index")
@@ -677,7 +677,7 @@ func (b *castJSONAsArrayFunctionSig) evalJSON(ctx EvalContext, row chunk.Row) (r
 	ft := b.tp.ArrayType()
 	f := convertJSON2Tp(ft.EvalType())
 	if f == nil {
-		return types.BinaryJSON{}, false, ErrNotSupportedYet.GenWithStackByArgs(fmt.Sprintf("CAS-ing data to array of %s", ft.String()))
+		return types.BinaryJSON{}, false, ErrNotSupportedYet.GenWithStackByArgs(fmt.Sprintf("CAS-ing data to array of %s", ft.StringForExplain()))
 	}
 	if val.TypeCode != types.JSONTypeCodeArray {
 		item, err := f(fakeSctx, val, ft)

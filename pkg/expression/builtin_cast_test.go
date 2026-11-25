@@ -1685,6 +1685,31 @@ func TestCastBinaryStringAsJSONSig(t *testing.T) {
 
 func TestCastArrayFunc(t *testing.T) {
 	ctx := createContext(t)
+	t.Run("UnsupportedElementType", func(t *testing.T) {
+		for _, tc := range []struct {
+			tp   byte
+			want string
+		}{
+			{mysql.TypeYear, "year(-1) BINARY"},
+			{mysql.TypeJSON, "json BINARY"},
+			{mysql.TypeFloat, "float BINARY"},
+			{mysql.TypeNewDecimal, "decimal(4,2) BINARY"},
+		} {
+			t.Run(tc.want, func(t *testing.T) {
+				tp := types.NewFieldType(tc.tp)
+				tp.SetFlen(types.UnspecifiedLength)
+				if tc.tp == mysql.TypeNewDecimal {
+					tp.SetFlen(4)
+					tp.SetDecimal(2)
+				}
+				types.SetBinChsClnFlag(tp)
+				tp.SetArray(true)
+				arg := datumsToConstants(types.MakeDatums(types.CreateBinaryJSON([]any{int64(1)})))[0]
+				_, err := BuildCastFunctionWithCheck(ctx, arg, tp, false, false)
+				require.EqualError(t, err, "[expression:1235]This version of TiDB doesn't yet support 'CAST-ing data to array of "+tc.want+"'")
+			})
+		}
+	})
 	tbl := []struct {
 		input            any
 		expected         any
