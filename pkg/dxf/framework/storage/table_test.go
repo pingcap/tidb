@@ -497,6 +497,51 @@ func TestSwitchTaskStepInBatch(t *testing.T) {
 	}
 	require.NoError(t, tm.SwitchTaskStepInBatch(ctx, task4, proto.TaskStateRunning, proto.StepOne, staleSubtasks))
 	checkAfterSwitchStep(t, startTime, task4After, subtasks4, proto.StepOne)
+
+	// Two overlapping SwitchTaskStepInBatch calls before the step switch must
+	// serialize on the task row so the losing scheduler cannot sneak a partial
+	// exec_id reassignment in before the winner commits.
+	task5, subtasks5 := prepare("key5")
+	for i, st := range subtasks5 {
+		execID := ":4000"
+		if i == 0 {
+			execID = ":4001"
+		}
+		_, err = sqlexec.ExecSQL(ctx, tk.Session(), `
+			insert into mysql.tidb_background_subtask(
+				step, task_key, exec_id, meta, state, type, concurrency, ordinal, create_time, checkpoint, summary)
+			values (%?, %?, %?, %?, %?, %?, %?, %?, CURRENT_TIMESTAMP(), '{}', '{}')`,
+			st.Step, st.TaskID, execID, st.Meta,
+			proto.SubtaskStatePending, proto.Type2Int(st.Type), st.Concurrency, st.Ordinal)
+		require.NoError(t, err)
+	}
+	altSubtasks5 := make([]*proto.Subtask, len(subtasks5))
+	for i, st := range subtasks5 {
+		cp := *st
+		cp.ExecID = ":4001"
+		altSubtasks5[i] = &cp
+	}
+	started := make(chan struct{})
+	loserErrCh := make(chan error, 1)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/dxf/framework/storage/beforeReconcilePendingSubtasks", func() {
+		close(started)
+		// Give the concurrent scheduler time to reach the task row lock and
+		// verify it cannot complete or mutate pending rows before we commit.
+		select {
+		case err := <-loserErrCh:
+			t.Errorf("concurrent SwitchTaskStepInBatch finished before winner committed: %v", err)
+		case <-time.After(100 * time.Millisecond):
+		}
+	})
+	go func() {
+		<-started
+		loserErrCh <- tm.SwitchTaskStepInBatch(ctx, task5, proto.TaskStateRunning, proto.StepOne, altSubtasks5)
+	}()
+	require.NoError(t, tm.SwitchTaskStepInBatch(ctx, task5, proto.TaskStateRunning, proto.StepOne, subtasks5))
+	require.NoError(t, <-loserErrCh)
+	task5After, err := tm.GetTaskByID(ctx, task5.ID)
+	require.NoError(t, err)
+	checkAfterSwitchStep(t, startTime, task5After, subtasks5, proto.StepOne)
 }
 
 func TestGetTopUnfinishedTasks(t *testing.T) {
