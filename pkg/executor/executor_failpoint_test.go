@@ -143,7 +143,9 @@ func TestPointGetRepeatableRead(t *testing.T) {
 	require.NoError(t, failpoint.Enable(step2, "pause"))
 
 	updateWaitCh := make(chan struct{})
+	done := make(chan struct{})
 	go func() {
+		defer close(done)
 		ctx := context.WithValue(context.Background(), "pointGetRepeatableReadTest", updateWaitCh)
 		ctx = failpoint.WithHook(ctx, func(ctx context.Context, fpname string) bool {
 			return fpname == step1 || fpname == step2
@@ -158,6 +160,7 @@ func TestPointGetRepeatableRead(t *testing.T) {
 	require.NoError(t, failpoint.Disable(step1))
 	tk2.MustExec("update point_get set b = 2, c = 2 where a = 1")
 	require.NoError(t, failpoint.Disable(step2))
+	<-done // Wait for the result check before the store is closed by cleanup.
 }
 
 func TestBatchPointGetRepeatableRead(t *testing.T) {
