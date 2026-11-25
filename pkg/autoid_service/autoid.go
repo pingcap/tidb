@@ -314,9 +314,6 @@ func New(selfAddr string, etcdAddr []string, store kv.Storage, tlsConfig *tls.Co
 // NewWithContext allows cancellation while initializing the AutoID service.
 // After it succeeds, ctx no longer controls the service; the caller must Close it.
 func NewWithContext(ctx context.Context, selfAddr string, etcdAddr []string, store kv.Storage, tlsConfig *tls.Config) (*Service, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
 	cfg := config.GetGlobalConfig()
 	etcdLogCfg := zap.NewProductionConfig()
 
