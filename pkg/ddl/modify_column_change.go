@@ -307,9 +307,6 @@ func needIndexReorg(oldCol, changingCol *model.ColumnInfo) bool {
 }
 
 func hasRelatedIndex(tbl *model.TableInfo, colID int64) bool {
-	if tbl == nil {
-		return false
-	}
 	for _, idx := range tbl.Indices {
 		if idx.HasColumnInIndexColumns(tbl, colID) {
 			return true
