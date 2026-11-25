@@ -273,14 +273,6 @@ func SaveAnalyzeResultToStorage(sctx sessionctx.Context,
 			if hg == nil {
 				continue
 			}
-			var cms *statistics.CMSketch
-			if results.StatsVer != statistics.Version2 {
-				cms = result.Cms[i]
-			}
-			cmSketch, err := statistics.EncodeCMSketchWithoutTopN(cms)
-			if err != nil {
-				return 0, err
-			}
 			fmSketch, err := statistics.EncodeFMSketch(result.Fms[i])
 			if err != nil {
 				return 0, err
@@ -300,8 +292,9 @@ func SaveAnalyzeResultToStorage(sctx sessionctx.Context,
 					return 0, err
 				}
 			}
-			if _, err = util.Exec(sctx, "replace into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch, tot_col_size, stats_ver, correlation) values (%?, %?, %?, %?, %?, %?, %?, GREATEST(%?, 0), %?, %?)",
-				tableID, result.IsIndex, hg.ID, hg.NDV, version, hg.NullCount, cmSketch, hg.TotColSize, results.StatsVer, hg.Correlation); err != nil {
+			// ANALYZE writes only version 2 stats, which have no CMSketch.
+			if _, err = util.Exec(sctx, "replace into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch, tot_col_size, stats_ver, correlation) values (%?, %?, %?, %?, %?, %?, NULL, GREATEST(%?, 0), %?, %?)",
+				tableID, result.IsIndex, hg.ID, hg.NDV, version, hg.NullCount, hg.TotColSize, results.StatsVer, hg.Correlation); err != nil {
 				return 0, err
 			}
 			if _, err = util.Exec(sctx, "delete from mysql.stats_buckets where table_id = %? and is_index = %? and hist_id = %?", tableID, result.IsIndex, hg.ID); err != nil {

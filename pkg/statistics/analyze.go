@@ -66,7 +66,6 @@ func (h *AnalyzeTableID) Equals(t *AnalyzeTableID) bool {
 // Also represents the list of analyze result for all indexes when idIndex is 1.
 type AnalyzeResult struct {
 	Hist    []*Histogram
-	Cms     []*CMSketch
 	TopNs   []*TopN
 	Fms     []*FMSketch
 	IsIndex int
