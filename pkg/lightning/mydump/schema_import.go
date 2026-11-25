@@ -256,7 +256,9 @@ func (si *SchemaImporter) importViews(ctx context.Context, dbMetas []*MDDatabase
 }
 
 func (si *SchemaImporter) runCreateTableJob(ctx context.Context, p *parser.Parser, job *schemaJob) error {
-	stmts, err := createIfNotExistsStmt(p, job.sqlStr, job.dbName, job.tblName)
+	// Table schema restore should preserve session directives but must not drop
+	// downstream objects from source schema files.
+	stmts, err := createIfNotExistsStmtWithMode(p, job.sqlStr, job.dbName, job.tblName, true)
 	if err != nil {
 		// if the schema supplied by the user is un-parsable by TiDB, we allow
 		// user to create the table by themselves, then import data.
@@ -375,6 +377,14 @@ func (si *SchemaImporter) getExistingSchemas(ctx context.Context, query string) 
 }
 
 func createIfNotExistsStmt(p *parser.Parser, createTable, dbName, tblName string) ([]string, error) {
+	return createIfNotExistsStmtWithMode(p, createTable, dbName, tblName, false)
+}
+
+func createIfNotExistsStmtWithMode(
+	p *parser.Parser,
+	createTable, dbName, tblName string,
+	ignoreDestructiveDDL bool,
+) ([]string, error) {
 	stmts, _, err := p.ParseSQL(createTable)
 	if err != nil {
 		return []string{}, common.ErrInvalidSchemaStmt.Wrap(err).GenWithStackByArgs(createTable)
@@ -390,6 +400,9 @@ func createIfNotExistsStmt(p *parser.Parser, createTable, dbName, tblName string
 			node.Name = ast.NewCIStr(dbName)
 			node.IfNotExists = true
 		case *ast.DropDatabaseStmt:
+			if ignoreDestructiveDDL {
+				continue
+			}
 			node.Name = ast.NewCIStr(dbName)
 			node.IfExists = true
 		case *ast.CreateTableStmt:
@@ -400,6 +413,9 @@ func createIfNotExistsStmt(p *parser.Parser, createTable, dbName, tblName string
 			node.ViewName.Schema = ast.NewCIStr(dbName)
 			node.ViewName.Name = ast.NewCIStr(tblName)
 		case *ast.DropTableStmt:
+			if ignoreDestructiveDDL {
+				continue
+			}
 			node.Tables[0].Schema = ast.NewCIStr(dbName)
 			node.Tables[0].Name = ast.NewCIStr(tblName)
 			node.IfExists = true
