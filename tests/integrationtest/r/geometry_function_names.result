@@ -224,6 +224,70 @@ select ST_AsEWKB(NULL);
 Error 1305 (42000): FUNCTION geometry_function_names.st_asewkb does not exist
 select ST_GeomFromEWKB(NULL);
 Error 1305 (42000): FUNCTION geometry_function_names.st_geomfromewkb does not exist
+select ST_AsEWKT(NULL);
+Error 1305 (42000): FUNCTION geometry_function_names.st_asewkt does not exist
+select ST_GeomFromEWKT(NULL);
+Error 1305 (42000): FUNCTION geometry_function_names.st_geomfromewkt does not exist
+select ST_Z(NULL);
+Error 1305 (42000): FUNCTION geometry_function_names.st_z does not exist
+select ST_M(NULL);
+Error 1305 (42000): FUNCTION geometry_function_names.st_m does not exist
+select ST_HasZ(NULL);
+Error 1305 (42000): FUNCTION geometry_function_names.st_hasz does not exist
+select ST_HasM(NULL);
+Error 1305 (42000): FUNCTION geometry_function_names.st_hasm does not exist
+select ST_Force2D(NULL);
+Error 1305 (42000): FUNCTION geometry_function_names.st_force2d does not exist
+select ST_LocateBetween(NULL, NULL, NULL);
+Error 1305 (42000): FUNCTION geometry_function_names.st_locatebetween does not exist
+select ST_LocateAlong(NULL, NULL);
+Error 1305 (42000): FUNCTION geometry_function_names.st_locatealong does not exist
+select ST_InterpolatePoint(NULL, NULL);
+Error 1305 (42000): FUNCTION geometry_function_names.st_interpolatepoint does not exist
+select ST_AddMeasure(NULL, NULL, NULL);
+Error 1305 (42000): FUNCTION geometry_function_names.st_addmeasure does not exist
+select ST_IsValidTrajectory(NULL);
+Error 1305 (42000): FUNCTION geometry_function_names.st_isvalidtrajectory does not exist
+select ST_ClosestPointOfApproach(NULL, NULL);
+Error 1305 (42000): FUNCTION geometry_function_names.st_closestpointofapproach does not exist
+select ST_DistanceCPA(NULL, NULL);
+Error 1305 (42000): FUNCTION geometry_function_names.st_distancecpa does not exist
+select ST_CPAWithin(NULL, NULL, NULL);
+Error 1305 (42000): FUNCTION geometry_function_names.st_cpawithin does not exist
+select ST_Covers(NULL, NULL);
+Error 1305 (42000): FUNCTION geometry_function_names.st_covers does not exist
+select ST_CoveredBy(NULL, NULL);
+Error 1305 (42000): FUNCTION geometry_function_names.st_coveredby does not exist
+select ST_DWithin(NULL, NULL, NULL);
+Error 1305 (42000): FUNCTION geometry_function_names.st_dwithin does not exist
+select ST_MakePoint(NULL, NULL);
+Error 1305 (42000): FUNCTION geometry_function_names.st_makepoint does not exist
+select ST_SetSRID(NULL, NULL);
+Error 1305 (42000): FUNCTION geometry_function_names.st_setsrid does not exist
+select ST_XMin(NULL);
+Error 1305 (42000): FUNCTION geometry_function_names.st_xmin does not exist
+select ST_XMax(NULL);
+Error 1305 (42000): FUNCTION geometry_function_names.st_xmax does not exist
+select ST_YMin(NULL);
+Error 1305 (42000): FUNCTION geometry_function_names.st_ymin does not exist
+select ST_YMax(NULL);
+Error 1305 (42000): FUNCTION geometry_function_names.st_ymax does not exist
+select ST_Relate(NULL, NULL);
+Error 1305 (42000): FUNCTION geometry_function_names.st_relate does not exist
+select ST_PointOnSurface(NULL);
+Error 1305 (42000): FUNCTION geometry_function_names.st_pointonsurface does not exist
+select ST_Boundary(NULL);
+Error 1305 (42000): FUNCTION geometry_function_names.st_boundary does not exist
+select ST_IsRing(NULL);
+Error 1305 (42000): FUNCTION geometry_function_names.st_isring does not exist
+select ST_Perimeter(NULL);
+Error 1305 (42000): FUNCTION geometry_function_names.st_perimeter does not exist
+select ST_ClosestPoint(NULL, NULL);
+Error 1305 (42000): FUNCTION geometry_function_names.st_closestpoint does not exist
+select ST_Azimuth(NULL, NULL);
+Error 1305 (42000): FUNCTION geometry_function_names.st_azimuth does not exist
+select ST_SimplifyPreserveTopology(NULL, NULL);
+Error 1305 (42000): FUNCTION geometry_function_names.st_simplifypreservetopology does not exist
 select tidb_spatial_key(NULL);
 Error 1305 (42000): FUNCTION geometry_function_names.tidb_spatial_key does not exist
 select tidb_spatial_keys(NULL);
