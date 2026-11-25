@@ -2,7 +2,10 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "planner",
-    srcs = ["optimize.go"],
+    srcs = [
+        "alternative_risk.go",
+        "optimize.go",
+    ],
     importpath = "github.com/pingcap/tidb/pkg/planner",
     visibility = ["//visibility:public"],
     deps = [
@@ -44,11 +47,22 @@ go_library(
 go_test(
     name = "planner_test",
     timeout = "short",
-    srcs = ["optimize_test.go"],
+    srcs = [
+        "alternative_risk_test.go",
+        "optimize_test.go",
+        "tiflash_only_alternative_test.go",
+    ],
     embed = [":planner"],
     flaky = True,
+    shard_count = 8,
     deps = [
+        "//pkg/kv",
+        "//pkg/parser",
+        "//pkg/planner/core",
         "//pkg/sessionctx/variable",
+        "//pkg/store/mockstore",
+        "//pkg/testkit",
+        "//pkg/util/tracing",
         "@com_github_stretchr_testify//require",
     ],
 )

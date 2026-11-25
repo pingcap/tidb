@@ -268,8 +268,11 @@ type StatementContext struct {
 	hint.StmtHints
 
 	// IsDDLJobInQueue is used to mark whether the DDL job is put into the queue.
-	// If IsDDLJobInQueue is true, it means the DDL job is in the queue of storage, and it can be handled by the DDL worker.
-	IsDDLJobInQueue        bool
+	// If IsDDLJobInQueue is true, it means the DDL job is in the queue of storage,
+	// and it can be handled by the DDL worker.
+	// we will use this field to skip connections which are doing DDL when reporting
+	// the min start TS to PD.
+	IsDDLJobInQueue        atomic.Bool
 	DDLJobID               int64
 	InInsertStmt           bool
 	InUpdateStmt           bool
@@ -486,6 +489,13 @@ type StatementContext struct {
 	// logical build round produced an order-aware join reorder candidate that is
 	// worth exploring in a dedicated alternative round.
 	AlternativeLogicalPlanOrderAwareJoinReorder bool
+	// AlternativeLogicalPlanMissingTiFlashPath prevents a TiFlash-only rebuild
+	// when a data source cannot be read from TiFlash.
+	AlternativeLogicalPlanMissingTiFlashPath bool
+	// AlternativeLogicalPlanNeedsTiFlashRound records a join/apply in the default physical plan.
+	AlternativeLogicalPlanNeedsTiFlashRound bool
+	// AlternativeLogicalPlanHasStoreTypeHint preserves explicit storage choices.
+	AlternativeLogicalPlanHasStoreTypeHint bool
 
 	// IsExplainAnalyzeDML is true if the statement is "explain analyze DML executors", before responding the explain
 	// results to the client, the transaction should be committed first. See issue #37373 for more details.
@@ -657,6 +667,9 @@ func (sc *StatementContext) ResetAlternativeLogicalPlanSignals() {
 	sc.AlternativeLogicalPlanSameOrderIndexJoin = false
 	sc.AlternativeLogicalPlanPreferCorrelate = false
 	sc.AlternativeLogicalPlanOrderAwareJoinReorder = false
+	sc.AlternativeLogicalPlanMissingTiFlashPath = false
+	sc.AlternativeLogicalPlanNeedsTiFlashRound = false
+	sc.AlternativeLogicalPlanHasStoreTypeHint = false
 }
 
 // MarkAlternativeLogicalPlanDecorrelatedApply records that at least one Apply has

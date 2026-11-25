@@ -326,13 +326,16 @@ func NewPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt) (key, binding
 	// If it changed, we should rebuild the plan. lastUpdatedSchemaVersion help us to decide whether we should rebuild
 	// the plan in rc or for update read.
 	hash = codec.EncodeInt(hash, latestSchemaVersion)
-	// MATCH semantic modes must not reuse each other's prepared plans.
+	// FTS and alternative-plan modes must not reuse each other's prepared plans.
 	var ftsMode int64
 	if vars.EnableLocalMatchAgainst {
 		ftsMode |= 1
 	}
 	if vars.EnableAlternativeLogicalPlans {
 		ftsMode |= 4
+	}
+	if vars.AlternativePlanRiskMode {
+		ftsMode |= 8
 	}
 	hash = codec.EncodeInt(hash, ftsMode)
 	hash = codec.EncodeInt(hash, int64(vars.SQLMode))

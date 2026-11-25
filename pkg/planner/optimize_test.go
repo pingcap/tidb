@@ -17,9 +17,52 @@ package planner
 import (
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/stretchr/testify/require"
 )
+
+func TestTiFlashOnlyAlternative(t *testing.T) {
+	var round alternativeRound
+	for _, r := range alternativeRounds {
+		if r.name == "tiflash-only" {
+			round = r
+		}
+	}
+	require.NotNil(t, round.setup)
+	sv := variable.NewSessionVars(nil)
+	sv.EnableAlternativeLogicalPlans = true
+	sv.IsolationReadEngines = map[kv.StoreType]struct{}{kv.TiKV: {}, kv.TiFlash: {}}
+	require.False(t, round.enabled(sv))
+	sv.StmtCtx.AlternativeLogicalPlanNeedsTiFlashRound = true
+	require.True(t, round.enabled(sv))
+	sv.StmtCtx.AlternativeLogicalPlanMissingTiFlashPath = true
+	require.False(t, round.enabled(sv))
+	sv.StmtCtx.ResetAlternativeLogicalPlanSignals()
+	sv.StmtCtx.AlternativeLogicalPlanNeedsTiFlashRound = true
+	sv.StmtCtx.AlternativeLogicalPlanHasStoreTypeHint = true
+	require.False(t, round.enabled(sv))
+	sv.StmtCtx.ResetAlternativeLogicalPlanSignals()
+	sv.StmtCtx.AlternativeLogicalPlanNeedsTiFlashRound = true
+	require.True(t, round.enabled(sv))
+	sv.EnableAlternativeLogicalPlans = false
+	require.False(t, round.enabled(sv))
+	sv.EnableAlternativeLogicalPlans = true
+
+	saved := sv.IsolationReadEngines
+	require.Panics(t, func() {
+		defer round.setup(sv)()
+		require.Equal(t, map[kv.StoreType]struct{}{kv.TiFlash: {}, kv.TiDB: {}}, sv.IsolationReadEngines)
+		panic("round failed")
+	})
+	require.Equal(t, saved, sv.IsolationReadEngines)
+	// Restoration must preserve the original map, not replace it with a copy.
+	saved[kv.TiDB] = struct{}{}
+	_, restored := sv.IsolationReadEngines[kv.TiDB]
+	require.True(t, restored)
+	delete(sv.IsolationReadEngines, kv.TiFlash)
+	require.False(t, round.enabled(sv))
+}
 
 func correlateRoundForTest(t *testing.T) alternativeRound {
 	t.Helper()
