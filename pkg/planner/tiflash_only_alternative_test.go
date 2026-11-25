@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/domain"
@@ -135,4 +136,14 @@ func TestMPPVirtualTextFilter(t *testing.T) {
 	projected := explain("select txt_lower from objects where txt_lower = 'fagor'")
 	require.Regexp(t, `Selection[^]]*root[^]]*txt_lower`, projected)
 	require.NotContains(t, projected, "cast(lower")
+
+	tk.MustExec("insert into mysql.opt_rule_blacklist values ('column_prune')")
+	tk.MustExec("admin reload opt_rule_blacklist")
+	t.Cleanup(func() {
+		tk.MustExec("delete from mysql.opt_rule_blacklist where name = 'column_prune'")
+		tk.MustExec("admin reload opt_rule_blacklist")
+	})
+	withoutPruning := explain(strings.Replace(query, "o.id, o.label", "o.txt_lower, o.label", 1))
+	require.Regexp(t, `Selection[^]]*root[^]]*txt_lower`, withoutPruning)
+	require.NotContains(t, withoutPruning, "cast(lower")
 }

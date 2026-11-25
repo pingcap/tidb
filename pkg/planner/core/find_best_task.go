@@ -3433,6 +3433,10 @@ func convertToBatchPointGet(ds *logicalop.DataSource, prop *property.PhysicalPro
 // on this physical candidate. The logical schema and other access paths still
 // use the original column, including indexes on the generated value.
 func (ts *PhysicalTableScan) expandMPPVirtualTextFilters(ds *logicalop.DataSource) {
+	// Without column pruning, we cannot tell whether a parent needs the virtual column.
+	if ds.ColsRequiringFullLen == nil {
+		return
+	}
 	var virtualCols []*expression.Column
 	var replacements []expression.Expression
 	exprCtx := ds.SCtx().GetExprCtx()

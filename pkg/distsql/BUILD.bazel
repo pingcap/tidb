@@ -75,6 +75,7 @@ go_test(
         "//pkg/meta/model",
         "//pkg/parser/charset",
         "//pkg/parser/mysql",
+        "//pkg/parser/terror",
         "//pkg/resourcegroup",
         "//pkg/sessionctx",
         "//pkg/sessionctx/stmtctx",
