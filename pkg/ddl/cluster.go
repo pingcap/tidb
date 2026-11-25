@@ -795,8 +795,12 @@ func (w *worker) onFlashbackCluster(jobCtx *jobContext, job *model.Job) (ver int
 	case model.StateWriteOnly:
 		// TODO: Support flashback in unistore.
 		if inFlashbackTest {
+			ver, err = updateSchemaVersion(jobCtx, job)
+			if err != nil {
+				return ver, errors.Trace(err)
+			}
 			job.SchemaState = model.StateWriteReorganization
-			return updateSchemaVersion(jobCtx, job)
+			return ver, nil
 		}
 		// Split region by keyRanges, make sure no unrelated key ranges be locked.
 		splitRegionsByKeyRanges(w.workCtx, jobCtx.store, args.FlashbackKeyRanges)
@@ -856,9 +860,13 @@ func (w *worker) onFlashbackCluster(jobCtx *jobContext, job *model.Job) (ver int
 			return ver, errors.Trace(err)
 		}
 
+		ver, err = updateSchemaVersion(jobCtx, job)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
 		job.State = model.JobStateDone
 		job.SchemaState = model.StatePublic
-		return updateSchemaVersion(jobCtx, job)
+		return ver, nil
 	}
 	return ver, nil
 }

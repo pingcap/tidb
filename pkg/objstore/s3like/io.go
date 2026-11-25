@@ -31,6 +31,7 @@ import (
 )
 
 // s3ObjectReader wrap GetObjectOutput.Body and add the `Seek` method.
+// Calls to Read, Seek, and Close must be serialized by the caller.
 type s3ObjectReader struct {
 	storage   *Storage
 	name      string
@@ -40,6 +41,9 @@ type s3ObjectReader struct {
 	// reader context used for implement `io.Seek`
 	ctx          context.Context
 	prefetchSize int
+
+	// readerClosed prevents closing the same response again after a failed reopen.
+	readerClosed bool
 }
 
 // Read implement the io.Reader interface.
@@ -69,17 +73,14 @@ func (r *s3ObjectReader) Read(p []byte) (n int, err error) {
 		if end == r.rangeInfo.Size {
 			end = 0
 		}
-		_ = r.reader.Close()
+		_ = r.Close()
 
 		newReader, rangeInfo, err1 := r.storage.open(r.ctx, r.name, r.pos, end)
 		if err1 != nil {
 			log.Warn("open new s3 reader failed", zap.String("file", r.name), zap.Error(err1))
 			return
 		}
-		r.reader = newReader
-		if r.prefetchSize > 0 {
-			r.reader = prefetch.NewReader(r.reader, rangeInfo.RangeSize(), r.prefetchSize)
-		}
+		r.setReader(newReader, rangeInfo)
 		retryCnt++
 		n, err = r.reader.Read(p[:maxCnt])
 	}
@@ -89,9 +90,22 @@ func (r *s3ObjectReader) Read(p []byte) (n int, err error) {
 	return
 }
 
-// Close implement the io.Closer interface.
+// Close implements io.Closer and closes the current source at most once.
 func (r *s3ObjectReader) Close() error {
+	if r.readerClosed {
+		return nil
+	}
+	// Retain the closed reader so a failed reopen can be retried by the next Read.
+	r.readerClosed = true
 	return r.reader.Close()
+}
+
+func (r *s3ObjectReader) setReader(reader io.ReadCloser, info RangeInfo) {
+	if r.prefetchSize > 0 {
+		reader = prefetch.NewReader(reader, info.RangeSize(), r.prefetchSize)
+	}
+	r.reader = reader
+	r.readerClosed = false
 }
 
 // Seek implement the io.Seeker interface.
@@ -121,11 +135,12 @@ func (r *s3ObjectReader) Seek(offset int64, whence int) (int64, error) {
 		// so if the position is out of range, we need to always return io.EOF after the seek operation.
 
 		// close current read and open a new one which target offset
-		if err := r.reader.Close(); err != nil {
+		if err := r.Close(); err != nil {
 			log.L().Warn("close s3 reader failed, will ignore this error", logutil.ShortError(err))
 		}
 
 		r.reader = io.NopCloser(bytes.NewReader(nil))
+		r.readerClosed = false
 		r.pos = r.rangeInfo.Size
 		return r.pos, nil
 	}
@@ -140,7 +155,7 @@ func (r *s3ObjectReader) Seek(offset int64, whence int) (int64, error) {
 	}
 
 	// close current read and open a new one which target offset
-	err := r.reader.Close()
+	err := r.Close()
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
@@ -149,10 +164,7 @@ func (r *s3ObjectReader) Seek(offset int64, whence int) (int64, error) {
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-	r.reader = newReader
-	if r.prefetchSize > 0 {
-		r.reader = prefetch.NewReader(r.reader, info.RangeSize(), r.prefetchSize)
-	}
+	r.setReader(newReader, info)
 	r.rangeInfo = info
 	r.pos = realOffset
 	return realOffset, nil

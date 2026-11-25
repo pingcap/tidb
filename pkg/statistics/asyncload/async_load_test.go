@@ -37,7 +37,7 @@ func TestLoadColumnStatisticsAfterTableDrop(t *testing.T) {
 	testKit.MustExec("INSERT INTO t1 VALUES (1,3,0), (2,2,0), (3,2,0);")
 	handle := dom.StatsHandle()
 	testKit.MustExec("flush stats_delta *.*")
-	require.NoError(t, handle.Update(context.Background(), dom.InfoSchema()))
+	require.NoError(t, handle.Cache().Update(context.Background(), dom.InfoSchema()))
 	testKit.MustExec("ANALYZE TABLE t1 ALL COLUMNS;")
 	// This will add the table to the AsyncLoadHistogramNeededItems.
 	testKit.MustExec("SELECT * FROM t1 WHERE b = 2;")
@@ -63,7 +63,7 @@ func TestLoadColumnStatisticsAfterTableDrop(t *testing.T) {
 
 	// Drop the table.
 	testKit.MustExec("DROP TABLE t1;")
-	err = handle.LoadNeededHistograms(dom.InfoSchema())
+	err = handle.Storage().LoadNeededHistograms(dom.InfoSchema())
 	require.NoError(t, err)
 
 	// Check the table is removed from the items.
@@ -85,7 +85,7 @@ func TestLoadStatisticsAfterColumnDrop(t *testing.T) {
 	testKit.MustExec("INSERT INTO t1 VALUES (1,3,0), (2,2,0), (3,2,0);")
 	handle := dom.StatsHandle()
 	testKit.MustExec("flush stats_delta *.*")
-	require.NoError(t, handle.Update(context.Background(), dom.InfoSchema()))
+	require.NoError(t, handle.Cache().Update(context.Background(), dom.InfoSchema()))
 	testKit.MustExec("ANALYZE TABLE t1 ALL COLUMNS;")
 	// This will add the table to the AsyncLoadHistogramNeededItems.
 	testKit.MustExec("SELECT * FROM t1 WHERE b = 2;")
@@ -111,7 +111,7 @@ func TestLoadStatisticsAfterColumnDrop(t *testing.T) {
 
 	// Drop the column.
 	testKit.MustExec("ALTER TABLE t1 DROP COLUMN b;")
-	err = handle.LoadNeededHistograms(dom.InfoSchema())
+	err = handle.Storage().LoadNeededHistograms(dom.InfoSchema())
 	require.NoError(t, err)
 
 	// Check the table is removed from the items.
@@ -133,7 +133,7 @@ func TestLoadIndexStatisticsAfterTableDrop(t *testing.T) {
 	testKit.MustExec("INSERT INTO t1 VALUES (1,3,0), (2,2,0), (3,2,0);")
 	handle := dom.StatsHandle()
 	testKit.MustExec("flush stats_delta *.*")
-	require.NoError(t, handle.Update(context.Background(), dom.InfoSchema()))
+	require.NoError(t, handle.Cache().Update(context.Background(), dom.InfoSchema()))
 	testKit.MustExec("ANALYZE TABLE t1 ALL COLUMNS;")
 	// This will add the table to the AsyncLoadHistogramNeededItems.
 	testKit.MustExec("SELECT * FROM t1 WHERE b = 2;")
@@ -159,7 +159,7 @@ func TestLoadIndexStatisticsAfterTableDrop(t *testing.T) {
 
 	// Drop the table.
 	testKit.MustExec("DROP TABLE t1;")
-	err = handle.LoadNeededHistograms(dom.InfoSchema())
+	err = handle.Storage().LoadNeededHistograms(dom.InfoSchema())
 	require.NoError(t, err)
 
 	// Check the table is removed from the items.
@@ -181,7 +181,7 @@ func TestLoadStatisticsAfterIndexDrop(t *testing.T) {
 	testKit.MustExec("INSERT INTO t1 VALUES (1,3,0), (2,2,0), (3,2,0);")
 	handle := dom.StatsHandle()
 	testKit.MustExec("flush stats_delta *.*")
-	require.NoError(t, handle.Update(context.Background(), dom.InfoSchema()))
+	require.NoError(t, handle.Cache().Update(context.Background(), dom.InfoSchema()))
 	testKit.MustExec("ANALYZE TABLE t1 ALL COLUMNS;")
 	// This will add the table to the AsyncLoadHistogramNeededItems.
 	testKit.MustExec("SELECT * FROM t1 WHERE b = 2;")
@@ -207,7 +207,7 @@ func TestLoadStatisticsAfterIndexDrop(t *testing.T) {
 
 	// Drop the index.
 	testKit.MustExec("ALTER TABLE t1 DROP INDEX idx_b;")
-	err = handle.LoadNeededHistograms(dom.InfoSchema())
+	err = handle.Storage().LoadNeededHistograms(dom.InfoSchema())
 	require.NoError(t, err)
 
 	// Check the table is removed from the items.
@@ -229,7 +229,7 @@ func TestLoadCorruptedStatistics(t *testing.T) {
 	testKit.MustExec("INSERT INTO t1 VALUES (1,3,0), (2,2,0), (3,2,0);")
 	handle := dom.StatsHandle()
 	testKit.MustExec("flush stats_delta *.*")
-	require.NoError(t, handle.Update(context.Background(), dom.InfoSchema()))
+	require.NoError(t, handle.Cache().Update(context.Background(), dom.InfoSchema()))
 	// Only collect the histogram buckets.
 	testKit.MustExec("ANALYZE TABLE t1 ALL COLUMNS WITH 0 TOPN;")
 	is := dom.InfoSchema()
@@ -257,7 +257,7 @@ func TestLoadCorruptedStatistics(t *testing.T) {
 		"table %d should be in the items", tableID,
 	)
 
-	err = handle.LoadNeededHistograms(dom.InfoSchema())
+	err = handle.Storage().LoadNeededHistograms(dom.InfoSchema())
 	require.NoError(t, err)
 	// Check the table is removed from the items.
 	items := asyncload.AsyncLoadHistogramNeededItems.AllItems()

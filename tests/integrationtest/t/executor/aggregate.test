@@ -1120,3 +1120,24 @@ WHERE `f` >= 1753632000
   AND `f` <= 1753718399
   AND `g` = 0
 GROUP BY `a`, left(FROM_UNIXTIME(e), 10);
+
+# HashAgg finalization errors must not depend on execution concurrency.
+create table t_json_objectagg(k mediumtext, v int);
+insert into t_json_objectagg values (repeat('a', 65535), 1), (repeat('b', 65536), 2);
+set tidb_hashagg_partial_concurrency = 1;
+set tidb_hashagg_final_concurrency = 1;
+select /*+ hash_agg() */ json_length(json_objectagg(k, v)) from t_json_objectagg where v = 1;
+--error 8129
+select /*+ hash_agg() */ json_objectagg(k, v) from t_json_objectagg where v = 2;
+set tidb_hashagg_partial_concurrency = 2;
+set tidb_hashagg_final_concurrency = 2;
+select /*+ hash_agg() */ json_length(json_objectagg(k, v)) from t_json_objectagg where v = 1;
+--error 8129
+select /*+ hash_agg() */ json_objectagg(k, v) from t_json_objectagg where v = 2;
+--error 8129
+select /*+ hash_agg() */ json_objectagg(k, v) from t_json_objectagg where v = 2 group by v;
+--error 8129
+select /*+ hash_agg() */ count(*), json_objectagg(k, v) from t_json_objectagg where v = 2 group by v;
+drop table t_json_objectagg;
+set tidb_hashagg_partial_concurrency = default;
+set tidb_hashagg_final_concurrency = default;

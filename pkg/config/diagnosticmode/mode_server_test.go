@@ -113,7 +113,7 @@ func assertDiagnosticGoroutineAllowlist(t *testing.T, dump []byte) {
 		"LoadSysVarCacheLoop",
 		"LoadBindingLoop",
 		"LoadStatsDiagnostic",
-		"(*statsSyncLoad).SubLoadWorker",
+		"syncload.(*Loader).SubLoadWorker",
 
 		// SQL listener and the diagnostic HTTP allowlist.
 		"server.(*Server).Run",

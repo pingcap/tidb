@@ -31,12 +31,11 @@ import (
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 )
 
-const (
-	metaName = "meta.json"
-)
+const metaName = "meta.json"
 
-// CleanUpFiles delete all data and stat files under the same non-partitioned dirs.
-// see randPartitionedPrefix for how we partition the files.
+// CleanUpFiles deletes files under the given non-partitioned dirs in bounded batches.
+// See simplesst.GetAllFileNames for the directory layout. An error can leave a
+// partial cleanup, which is safe to retry.
 func CleanUpFiles(ctx context.Context, store storeapi.Storage, nonPartitionedDirs ...string) error {
 	failpoint.Inject("skipCleanUpFiles", func() {
 		failpoint.Return(nil)
@@ -44,12 +43,23 @@ func CleanUpFiles(ctx context.Context, store storeapi.Storage, nonPartitionedDir
 	if len(nonPartitionedDirs) == 0 {
 		return nil
 	}
-	// TODO: GetAllFileNames accumulates every matching file name in memory before
-	// deletion. Large imports can therefore consume excessive memory or cause an
-	// OOM. List and delete files in bounded batches to keep memory usage bounded.
-	names, err := simplesst.GetAllFileNames(ctx, store, nonPartitionedDirs...)
+	names := make([]string, 0, storeapi.S3DeleteObjectsLimit)
+	err := simplesst.WalkFiles(ctx, store, func(path string) error {
+		names = append(names, path)
+		if len(names) < storeapi.S3DeleteObjectsLimit {
+			return nil
+		}
+		if err := store.DeleteFiles(ctx, names); err != nil {
+			return err
+		}
+		names = names[:0]
+		return nil
+	}, nonPartitionedDirs...)
 	if err != nil {
 		return err
+	}
+	if len(names) == 0 {
+		return nil
 	}
 	return store.DeleteFiles(ctx, names)
 }

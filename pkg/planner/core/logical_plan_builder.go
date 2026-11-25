@@ -5063,6 +5063,16 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		}
 	}
 	tableInfo := tbl.Meta()
+	if sessionVars.StmtCtx.InExplainStmt {
+		hypoTblInfo, _ := sessionVars.GetHypoIndexTableInfo(dbName.L, tableInfo)
+		if hypoTblInfo != tableInfo {
+			tbl, err = table.TableFromMeta(tbl.Allocators(nil), hypoTblInfo)
+			if err != nil {
+				return nil, err
+			}
+			tableInfo = hypoTblInfo
+		}
+	}
 
 	if b.isCreateView && tableInfo.TempTableType == model.TempTableLocal {
 		return nil, plannererrors.ErrViewSelectTemporaryTable.GenWithStackByArgs(tn.Name)
@@ -5227,8 +5237,9 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	}
 
 	// Try to substitute generate column only if there is an index on generate column.
-	for _, index := range tableInfo.Indices {
-		if index.State != model.StatePublic {
+	for _, path := range possiblePaths {
+		index := path.Index
+		if index == nil || index.State != model.StatePublic {
 			continue
 		}
 		for _, indexCol := range index.Columns {
@@ -5658,11 +5669,9 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName ast.CI
 	}
 	if b.buildingFoundRows {
 		// View definitions are expanded after preprocessing. Check them as inner queries,
-		// preserving legacy modifiers as noops and rejecting non-repeatable expressions.
-		checker := &foundRowsChecker{inView: true}
-		ast.Walk(selectNode, checker)
-		if checker.err != nil {
-			return nil, checker.err
+		// preserving legacy modifiers as noops and rejecting or falling back on non-repeatable expressions.
+		if err := b.checkViewForFoundRows(selectNode); err != nil {
+			return nil, err
 		}
 	}
 	originalVisitInfo := b.visitInfo

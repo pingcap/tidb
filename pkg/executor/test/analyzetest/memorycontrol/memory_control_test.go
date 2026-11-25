@@ -201,7 +201,7 @@ func TestGlobalMemoryControlForAutoAnalyze(t *testing.T) {
 
 	tk.MustExec("insert into t values(4),(5),(6)")
 	tk.MustExec("flush stats_delta *.*")
-	err := h.Update(context.Background(), dom.InfoSchema())
+	err := h.Cache().Update(context.Background(), dom.InfoSchema())
 	require.NoError(t, err)
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/memory/ReadMemStats", `return(536870912)`))
@@ -214,7 +214,7 @@ func TestGlobalMemoryControlForAutoAnalyze(t *testing.T) {
 	childTrackers = executor.GlobalAnalyzeMemoryTracker.GetChildrenForTest()
 	require.Len(t, childTrackers, 0)
 
-	h.HandleAutoAnalyze()
+	h.AutoAnalyze().HandleAutoAnalyze()
 	rs := tk.MustQuery("select fail_reason from mysql.analyze_jobs where table_name=? and state=? limit 1", "t", "failed")
 	failReason := rs.Rows()[0][0].(string)
 	require.True(t, strings.Contains(failReason, "Your query has been cancelled due to exceeding the allowed memory limit for the tidb-server instance and this query is currently using the most memory. Please try narrowing your query scope or increase the tidb_server_memory_limit and try again."))

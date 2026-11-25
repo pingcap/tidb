@@ -202,7 +202,8 @@ func InitStorage(keyspaceName string) (kv.Storage, error) {
 	return InitStorageWithContext(context.Background(), keyspaceName)
 }
 
-// InitStorageWithContext allows cancellation between attempts to open the keyspace store.
+// InitStorageWithContext observes cancellation before each attempt to open the
+// keyspace store and during retry backoff. An in-progress driver open runs to completion.
 func InitStorageWithContext(ctx context.Context, keyspaceName string) (kv.Storage, error) {
 	cfg := config.GetGlobalConfig()
 	var fullPath string
