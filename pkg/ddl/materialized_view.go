@@ -763,13 +763,23 @@ func (e *executor) CreateMaterializedView(ctx sessionctx.Context, s *ast.CreateM
 	colDefs := make([]*ast.ColumnDef, 0, len(resultFields))
 	for i, rf := range resultFields {
 		ft := rf.Column.FieldType
-		if integerDigits, ok := queryAnalysis.DecimalAvgIntegerDigits[i]; ok {
-			// Keep the defining query's AVG scale without narrowing the input range.
-			if precision := integerDigits + ft.GetDecimal(); precision > mysql.MaxDecimalWidth {
-				return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(fmt.Sprintf(
-					"CREATE MATERIALIZED VIEW AVG output column %s requires DECIMAL(%d,%d), exceeding the maximum precision %d; reduce div_precision_increment or use a narrower input column",
-					s.Cols[i].O, precision, ft.GetDecimal(), mysql.MaxDecimalWidth,
-				))
+		if agg, ok := sel.Fields.Fields[i].Expr.(*ast.AggregateFuncExpr); ok && strings.EqualFold(agg.F, ast.AggFuncAvg) {
+			// Query validation guarantees a single base column argument for AVG.
+			arg := agg.Args[0].(*ast.ColumnNameExpr)
+			baseCol := model.FindColumnInfo(baseTableInfo.Columns, arg.Name.Name.L)
+			if baseCol == nil {
+				return infoschema.ErrColumnNotExists.GenWithStackByArgs(arg.Name.Name.O, baseTableName.Name.O)
+			}
+			if baseCol.GetType() == mysql.TypeNewDecimal {
+				// Keep the defining query's AVG scale without narrowing the input range.
+				scale := ft.GetDecimal()
+				precision := baseCol.GetFlen() - baseCol.GetDecimal() + scale
+				if precision > mysql.MaxDecimalWidth {
+					return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(fmt.Sprintf(
+						"CREATE MATERIALIZED VIEW AVG output column %s requires DECIMAL(%d,%d), exceeding the maximum precision %d; reduce div_precision_increment or use a narrower input column",
+						s.Cols[i].O, precision, scale, mysql.MaxDecimalWidth,
+					))
+				}
 			}
 		}
 		ft.DelFlag(mysql.PriKeyFlag | mysql.UniqueKeyFlag | mysql.MultipleKeyFlag | mysql.AutoIncrementFlag | mysql.OnUpdateNowFlag)
@@ -1674,8 +1684,6 @@ type mviewQueryAnalysis struct {
 	GroupByInfos []mviewGroupByInfo
 	GroupByCols  []string
 	HasMinOrMax  bool
-	// DecimalAvgIntegerDigits holds the declared input integer width by SELECT field index.
-	DecimalAvgIntegerDigits map[int]int
 }
 
 func validateCreateMaterializedViewQuery(
@@ -1739,7 +1747,6 @@ func validateCreateMaterializedViewQuery(
 	countExprCols := make(map[string]struct{})
 	sumExprCols := make(map[string]struct{})
 	avgExprCols := make(map[string]struct{})
-	var decimalAvgIntegerDigits map[int]int
 	nullableSumCols := make(map[string]struct{})
 	usedCols := make(map[string]struct{}, 8)
 
@@ -1866,12 +1873,6 @@ func validateCreateMaterializedViewQuery(
 							fmt.Sprintf("CREATE MATERIALIZED VIEW AVG does not support column type %d", baseColType),
 						)
 					}
-					if baseColType == mysql.TypeNewDecimal {
-						if decimalAvgIntegerDigits == nil {
-							decimalAvgIntegerDigits = make(map[int]int)
-						}
-						decimalAvgIntegerDigits[i] = baseCol.GetFlen() - baseCol.GetDecimal()
-					}
 					avgExprCols[colName] = struct{}{}
 				}
 				if aggFunc == ast.AggFuncMin || aggFunc == ast.AggFuncMax {
@@ -1926,10 +1927,9 @@ func validateCreateMaterializedViewQuery(
 	}
 
 	return &mviewQueryAnalysis{
-		GroupByInfos:            groupByInfos,
-		GroupByCols:             groupByCols,
-		HasMinOrMax:             hasMinOrMax,
-		DecimalAvgIntegerDigits: decimalAvgIntegerDigits,
+		GroupByInfos: groupByInfos,
+		GroupByCols:  groupByCols,
+		HasMinOrMax:  hasMinOrMax,
 	}, nil
 }
 
