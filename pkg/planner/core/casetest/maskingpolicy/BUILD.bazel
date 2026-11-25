@@ -1,0 +1,23 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "maskingpolicy_test",
+    timeout = "short",
+    srcs = [
+        "main_test.go",
+        "restrict_test.go",
+    ],
+    flaky = True,
+    shard_count = 18,
+    deps = [
+        "//pkg/errno",
+        "//pkg/parser/auth",
+        "//pkg/planner/core",
+        "//pkg/planner/core/base",
+        "//pkg/testkit",
+        "//pkg/testkit/testmain",
+        "//pkg/testkit/testsetup",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

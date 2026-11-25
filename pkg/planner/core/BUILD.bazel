@@ -245,7 +245,6 @@ go_test(
         "masking_policy_diagnostics_test.go",
         "masking_policy_expr_cache_test.go",
         "masking_policy_projection_test.go",
-        "masking_policy_restrict_test.go",
         "optimizer_test.go",
         "panicrisk_regression_test.go",
         "physical_plan_test.go",
