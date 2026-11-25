@@ -2026,7 +2026,7 @@ func (do *Domain) UpdateTableStatsLoop() error {
 	do.ddl.RegisterStatsHandle(statsHandle)
 	// Negative stats lease indicates that it is in test or in br binary mode, it does not need update.
 	if do.statsLease >= 0 {
-		do.wg.Run(do.loadStatsWorker, "loadStatsWorker")
+		do.startStatsLoading()
 	}
 	variable.EnableStatsOwner = do.enableStatsOwner
 	variable.DisableStatsOwner = do.disableStatsOwner
@@ -2149,6 +2149,24 @@ func (do *Domain) initStats(ctx context.Context) {
 	}
 }
 
+func (do *Domain) startStatsLoading() {
+	value, err := failpoint.Eval("github.com/pingcap/tidb/pkg/domain/skipPeriodicStatsRefresh")
+	skipPeriodicRefresh, _ := value.(bool)
+	skipPeriodicRefresh = err == nil && skipPeriodicRefresh
+	if do.statsLease >= 0 && !skipPeriodicRefresh {
+		// loadStatsWorker calls initStats before entering its refresh loop.
+		do.wg.Run(do.loadStatsWorker, "loadStatsWorker")
+		return
+	}
+
+	do.wg.Run(func() {
+		do.initStats(do.ctx)
+		if skipPeriodicRefresh {
+			logutil.BgLogger().Info("periodic stats refresh disabled for SQL integration tests")
+		}
+	}, "initStats")
+}
+
 func (do *Domain) loadStatsWorker() {
 	defer util.Recover(metrics.LabelDomain, "loadStatsWorker", nil, false)
 	lease := do.statsLease
@@ -2167,14 +2185,6 @@ func (do *Domain) loadStatsWorker() {
 	do.cancelFns.mu.Unlock()
 
 	do.initStats(ctx)
-	value, evalErr := failpoint.Eval("github.com/pingcap/tidb/pkg/domain/skipPeriodicStatsRefresh")
-	skipPeriodicRefresh, _ := value.(bool)
-	if evalErr == nil && skipPeriodicRefresh {
-		// SQL integration tests load existing stats once and refresh analyzed tables explicitly.
-		logutil.BgLogger().Info("periodic stats refresh disabled for SQL integration tests")
-		return
-	}
-
 	statsHandle := do.StatsHandle()
 	var err error
 	for {
