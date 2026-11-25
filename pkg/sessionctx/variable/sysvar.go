@@ -173,7 +173,10 @@ func allowSetForeignKeyCheckInSharedLock() bool {
 }
 
 func getForeignKeyCheckInSharedLockSession(s *SessionVars) (string, error) {
-	if val, ok := s.systems[vardef.TiDBForeignKeyCheckInSharedLock]; ok {
+	s.systemsMu.RLock()
+	val, ok := s.systems[vardef.TiDBForeignKeyCheckInSharedLock]
+	s.systemsMu.RUnlock()
+	if ok {
 		return val, nil
 	}
 	if s.GlobalVarsAccessor != nil {
@@ -210,13 +213,18 @@ var defaultSysVars = []*SysVar{
 
 	/* The system variables below have SESSION scope  */
 	{Scope: vardef.ScopeSession, Name: vardef.Timestamp, Value: vardef.DefTimestamp, MinValue: 0, MaxValue: math.MaxInt32, Type: vardef.TypeFloat, GetSession: func(s *SessionVars) (string, error) {
-		if timestamp, ok := s.systems[vardef.Timestamp]; ok && timestamp != vardef.DefTimestamp {
-			return timestamp, nil
+		s.systemsMu.RLock()
+		tsVal, ok := s.systems[vardef.Timestamp]
+		s.systemsMu.RUnlock()
+		if ok && tsVal != vardef.DefTimestamp {
+			return tsVal, nil
 		}
 		timestamp := s.StmtCtx.GetOrStoreStmtCache(stmtctx.StmtNowTsCacheKey, time.Now()).(time.Time)
 		return types.ToString(float64(timestamp.UnixNano()) / float64(time.Second))
 	}, GetStateValue: func(s *SessionVars) (string, bool, error) {
+		s.systemsMu.RLock()
 		timestamp, ok := s.systems[vardef.Timestamp]
+		s.systemsMu.RUnlock()
 		return timestamp, ok && timestamp != vardef.DefTimestamp, nil
 	}, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope vardef.ScopeFlag) (string, error) {
 		val := tidbOptFloat64(originalValue, vardef.DefTimestampFloat)
@@ -2088,7 +2096,9 @@ var defaultSysVars = []*SysVar{
 		return checkCollation(vars, normalizedValue, originalValue, scope)
 	}, SetSession: func(s *SessionVars, val string) error {
 		if coll, err := collate.GetCollationByName(val); err == nil {
+			s.systemsMu.Lock()
 			s.systems[vardef.CharacterSetServer] = coll.CharsetName
+			s.systemsMu.Unlock()
 		}
 		return nil
 	}},
@@ -2161,7 +2171,9 @@ var defaultSysVars = []*SysVar{
 		return checkCollation(vars, normalizedValue, originalValue, scope)
 	}, SetSession: func(s *SessionVars, val string) error {
 		if coll, err := collate.GetCollationByName(val); err == nil {
+			s.systemsMu.Lock()
 			s.systems[vardef.CharsetDatabase] = coll.CharsetName
+			s.systemsMu.Unlock()
 		}
 		return nil
 	}},
@@ -2197,7 +2209,9 @@ var defaultSysVars = []*SysVar{
 		return checkCollation(vars, normalizedValue, originalValue, scope)
 	}, SetSession: func(s *SessionVars, val string) error {
 		if coll, err := collate.GetCollationByName(val); err == nil {
+			s.systemsMu.Lock()
 			s.systems[vardef.CharacterSetConnection] = coll.CharsetName
+			s.systemsMu.Unlock()
 		}
 		return nil
 	}},
@@ -2214,7 +2228,9 @@ var defaultSysVars = []*SysVar{
 		return checkCharacterSet(normalizedValue, vardef.CharsetDatabase)
 	}, SetSession: func(s *SessionVars, val string) error {
 		if cs, err := charset.GetCharsetInfo(val); err == nil {
+			s.systemsMu.Lock()
 			s.systems[vardef.CollationDatabase] = cs.DefaultCollation
+			s.systemsMu.Unlock()
 		}
 		return nil
 	}},
@@ -2265,7 +2281,9 @@ var defaultSysVars = []*SysVar{
 		return checkCharacterSet(normalizedValue, vardef.CharacterSetConnection)
 	}, SetSession: func(s *SessionVars, val string) error {
 		if cs, err := charset.GetCharsetInfo(val); err == nil {
+			s.systemsMu.Lock()
 			s.systems[vardef.CollationConnection] = cs.DefaultCollation
+			s.systemsMu.Unlock()
 		}
 		return nil
 	}},
@@ -2273,7 +2291,9 @@ var defaultSysVars = []*SysVar{
 		return checkCharacterSet(normalizedValue, vardef.CharacterSetServer)
 	}, SetSession: func(s *SessionVars, val string) error {
 		if cs, err := charset.GetCharsetInfo(val); err == nil {
+			s.systemsMu.Lock()
 			s.systems[vardef.CollationServer] = cs.DefaultCollation
+			s.systemsMu.Unlock()
 		}
 		return nil
 	}},

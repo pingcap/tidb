@@ -106,6 +106,7 @@ go_test(
         "main_test.go",
         "mock_globalaccessor_test.go",
         "removed_test.go",
+        "session_systems_concurrent_test.go",
         "statusvar_test.go",
         "sysvar_test.go",
         "varsutil_test.go",

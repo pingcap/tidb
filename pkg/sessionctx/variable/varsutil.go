@@ -116,7 +116,10 @@ func checkReadOnly(vars *SessionVars, normalizedValue string, originalValue stri
 func checkIsolationLevel(vars *SessionVars, normalizedValue string, originalValue string, scope vardef.ScopeFlag) (string, error) {
 	if normalizedValue == "SERIALIZABLE" || normalizedValue == "READ-UNCOMMITTED" {
 		returnErr := ErrUnsupportedIsolationLevel.FastGenByArgs(normalizedValue)
-		if !TiDBOptOn(vars.systems[vardef.TiDBSkipIsolationLevelCheck]) {
+		vars.systemsMu.RLock()
+		skipIsolationLevelCheck := vars.systems[vardef.TiDBSkipIsolationLevelCheck]
+		vars.systemsMu.RUnlock()
+		if !TiDBOptOn(skipIsolationLevelCheck) {
 			return normalizedValue, ErrUnsupportedIsolationLevel.GenWithStackByArgs(normalizedValue)
 		}
 		vars.StmtCtx.AppendWarning(returnErr)

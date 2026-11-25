@@ -408,7 +408,10 @@ func (sv *SysVar) GetSessionFromHook(s *SessionVars) (string, error) {
 		ok  bool
 		val string
 	)
-	if val, ok = s.systems[sv.Name]; !ok {
+	s.systemsMu.RLock()
+	val, ok = s.systems[sv.Name]
+	s.systemsMu.RUnlock()
+	if !ok {
 		return val, errors.New("sysvar has not yet loaded")
 	}
 	return val, nil
@@ -421,7 +424,9 @@ func (sv *SysVar) SetSessionFromHook(s *SessionVars, val string) error {
 			return err
 		}
 	}
+	s.systemsMu.Lock()
 	s.systems[sv.Name] = val
+	s.systemsMu.Unlock()
 
 	// Call the Set function on all the aliases for this sysVar
 	// Skipping the validation function, and not calling aliases of
@@ -436,7 +441,9 @@ func (sv *SysVar) SetSessionFromHook(s *SessionVars, val string) error {
 					return err
 				}
 			}
+			s.systemsMu.Lock()
 			s.systems[aliasSv.Name] = val
+			s.systemsMu.Unlock()
 		}
 	}
 	return nil
