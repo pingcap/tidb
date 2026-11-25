@@ -294,6 +294,7 @@ go_test(
         "reorg_util_test.go",
         "repair_table_test.go",
         "restart_test.go",
+        "rollingback_internal_test.go",
         "rollingback_test.go",
         "schema_internal_test.go",
         "schema_test.go",
