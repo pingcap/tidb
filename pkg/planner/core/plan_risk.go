@@ -120,15 +120,11 @@ func AssessPhysicalPlanRisk(plan base.PhysicalPlan) PhysicalPlanRisk {
 							CacheMissLowerBound: riskCacheMissLowerBound(apply, outer),
 						}
 						if (join != nil || nestedApply) && len(n.Children()) == 2 {
-							idx := 1
-							if join != nil {
-								idx = join.InnerChildIdx
-							} else {
-								idx = n.(*PhysicalApply).InnerChildIdx
-							}
-							no, ni := riskRows(n.Children()[1-idx]), riskRows(n.Children()[idx])
+							outerIdx, _ := riskProbeOuterIndex(n)
+							innerIdx := 1 - outerIdx
+							no, ni := riskRows(n.Children()[outerIdx]), riskRows(n.Children()[innerIdx])
 							signal.NestedOuterRows, signal.NestedInnerRows = &no, &ni
-							signal.InnerAccess = riskInnerAccess(n.Children()[idx])
+							signal.InnerAccess = riskInnerAccess(n.Children()[innerIdx])
 							signal.ProbeShape = "nested_probe"
 						} else if signal.InnerAccess == "index_lookup" || signal.InnerAccess == "index_merge_lookup" {
 							signal.ProbeShape = "double_read"

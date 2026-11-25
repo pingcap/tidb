@@ -8,7 +8,6 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"testing/synctest"
 	"time"
 
 	"github.com/pingcap/failpoint"
@@ -17,6 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"testing/synctest"
 )
 
 func installSubscribeSupport(c *fakeCluster) {
