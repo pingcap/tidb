@@ -1012,40 +1012,78 @@ func (mgr *TaskManager) SwitchTaskStepInBatch(
 		return err
 	}
 
-	// Serialize finalization on the task row so concurrent schedulers cannot
-	// interleave exec_id reassignments with the state/step transition.
-	return mgr.WithNewTxn(ctx, func(se sessionctx.Context) error {
-		if err := mgr.updateTaskStateStep(ctx, se, task, nextState, nextStep); err != nil {
-			return err
-		}
-		if se.GetSessionVars().StmtCtx.AffectedRows() == 0 {
-			return nil
-		}
-		failpoint.InjectCall("beforeReconcilePendingSubtasks")
-		rs, err := sqlexec.ExecSQL(ctx, se.GetSQLExecutor(), `
-			select ordinal, exec_id from mysql.tidb_background_subtask
-			where task_key = %? and step = %? and state = %?`,
-			TaskIDToKey(task.ID), nextStep, proto.SubtaskStatePending)
-		if err != nil {
-			return err
-		}
-		for _, row := range rs {
-			ordinal := int(row.GetInt64(0))
-			if ordinal < 1 || ordinal > len(subtasks) ||
-				subtasks[ordinal-1].Ordinal != ordinal ||
-				row.GetString(1) == subtasks[ordinal-1].ExecID {
-				continue
-			}
-			if _, err = sqlexec.ExecSQL(ctx, se.GetSQLExecutor(), `
-				update mysql.tidb_background_subtask
-				set exec_id = %?
-				where task_key = %? and step = %? and ordinal = %? and state = %?`,
-				subtasks[ordinal-1].ExecID, TaskIDToKey(task.ID), nextStep, ordinal, proto.SubtaskStatePending); err != nil {
+	// Serialize finalization on the task row and bound per-transaction rewrite
+	// size so large subtask metadata cannot hit TxnTotalSizeLimit during recovery.
+	maxSize := max(int(min(uint64(float64(kv.TxnTotalSizeLimit.Load())*0.8), uint64(maxSubtaskBatchSize))), 1)
+	for {
+		done := false
+		err = mgr.WithNewTxn(ctx, func(se sessionctx.Context) error {
+			rs, err := sqlexec.ExecSQL(ctx, se.GetSQLExecutor(), `
+				select 1 from mysql.tidb_global_task
+				where id = %? and state = %? and step = %? for update`,
+				task.ID, task.State, task.Step)
+			if err != nil {
 				return err
 			}
+			if len(rs) == 0 {
+				done = true
+				return nil
+			}
+			failpoint.InjectCall("beforeReconcilePendingSubtasks")
+			rs, err = sqlexec.ExecSQL(ctx, se.GetSQLExecutor(), `
+				select ordinal, exec_id from mysql.tidb_background_subtask
+				where task_key = %? and step = %? and state = %?`,
+				TaskIDToKey(task.ID), nextStep, proto.SubtaskStatePending)
+			if err != nil {
+				return err
+			}
+			var mismatched []*proto.Subtask
+			for _, row := range rs {
+				ordinal := int(row.GetInt64(0))
+				if ordinal < 1 || ordinal > len(subtasks) ||
+					subtasks[ordinal-1].Ordinal != ordinal ||
+					row.GetString(1) == subtasks[ordinal-1].ExecID {
+					continue
+				}
+				mismatched = append(mismatched, subtasks[ordinal-1])
+			}
+			if len(mismatched) == 0 {
+				if err := mgr.updateTaskStateStep(ctx, se, task, nextState, nextStep); err != nil {
+					return err
+				}
+				done = true
+				return nil
+			}
+			batch := make([]*proto.Subtask, 0, len(mismatched))
+			batchSize := 0
+			for _, st := range mismatched {
+				if len(batch) > 0 && batchSize+len(st.Meta) > maxSize {
+					break
+				}
+				batch = append(batch, st)
+				batchSize += len(st.Meta)
+			}
+			for _, st := range batch {
+				if _, err = sqlexec.ExecSQL(ctx, se.GetSQLExecutor(), `
+					update mysql.tidb_background_subtask
+					set exec_id = %?
+					where task_key = %? and step = %? and ordinal = %? and state = %?`,
+					st.ExecID, TaskIDToKey(task.ID), nextStep, st.Ordinal, proto.SubtaskStatePending); err != nil {
+					return err
+				}
+			}
+			if len(batch) == len(mismatched) && batchSize+len(task.Meta) <= maxSize {
+				if err := mgr.updateTaskStateStep(ctx, se, task, nextState, nextStep); err != nil {
+					return err
+				}
+				done = true
+			}
+			return nil
+		})
+		if err != nil || done {
+			return err
 		}
-		return nil
-	})
+	}
 }
 
 func (*TaskManager) splitSubtasks(subtasks []*proto.Subtask) [][]*proto.Subtask {

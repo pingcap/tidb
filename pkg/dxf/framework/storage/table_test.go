@@ -498,6 +498,38 @@ func TestSwitchTaskStepInBatch(t *testing.T) {
 	require.NoError(t, tm.SwitchTaskStepInBatch(ctx, task4, proto.TaskStateRunning, proto.StepOne, staleSubtasks))
 	checkAfterSwitchStep(t, startTime, task4After, subtasks4, proto.StepOne)
 
+	// Reconciling large-metadata pending subtasks across transactions must stay
+	// within TxnTotalSizeLimit when all individually valid rows move to a new node.
+	task6, _ := prepare("key6")
+	largeSubtasks := make([]*proto.Subtask, 3)
+	for i := range largeSubtasks {
+		meta := make([]byte, 70*1024)
+		meta[0] = byte(i + 1)
+		largeSubtasks[i] = proto.NewSubtask(proto.StepOne, task6.ID, proto.TaskTypeExample,
+			":4000", 11, meta, i+1)
+		_, err = sqlexec.ExecSQL(ctx, tk.Session(), `
+			insert into mysql.tidb_background_subtask(
+				step, task_key, exec_id, meta, state, type, concurrency, ordinal, create_time, checkpoint, summary)
+			values (%?, %?, %?, %?, %?, %?, %?, %?, CURRENT_TIMESTAMP(), '{}', '{}')`,
+			largeSubtasks[i].Step, largeSubtasks[i].TaskID, ":4001", largeSubtasks[i].Meta,
+			proto.SubtaskStatePending, proto.Type2Int(largeSubtasks[i].Type), largeSubtasks[i].Concurrency, largeSubtasks[i].Ordinal)
+		require.NoError(t, err)
+	}
+	oldTxnLimit := kv.TxnTotalSizeLimit.Swap(128 * 1024)
+	t.Cleanup(func() { kv.TxnTotalSizeLimit.Store(oldTxnLimit) })
+	require.NoError(t, tm.SwitchTaskStepInBatch(ctx, task6, proto.TaskStateRunning, proto.StepOne, largeSubtasks))
+	kv.TxnTotalSizeLimit.Store(oldTxnLimit)
+	task6After, err := tm.GetTaskByID(ctx, task6.ID)
+	require.NoError(t, err)
+	checkTaskStateStep(t, task6After, proto.TaskStateRunning, proto.StepOne)
+	gotLargeSubtasks, err := tm.GetAllSubtasksByStepAndState(ctx, task6.ID, proto.StepOne, proto.SubtaskStatePending)
+	require.NoError(t, err)
+	require.Len(t, gotLargeSubtasks, len(largeSubtasks))
+	for _, st := range gotLargeSubtasks {
+		require.Equal(t, ":4000", st.ExecID)
+		require.Len(t, st.Meta, 70*1024)
+	}
+
 	// Two overlapping SwitchTaskStepInBatch calls before the step switch must
 	// serialize on the task row so the losing scheduler cannot sneak a partial
 	// exec_id reassignment in before the winner commits.
