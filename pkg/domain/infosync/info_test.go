@@ -18,9 +18,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -28,6 +31,7 @@ import (
 	keyspacepb "github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
+	"github.com/pingcap/tidb/pkg/domain/affinity"
 	"github.com/pingcap/tidb/pkg/domain/serverinfo"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -35,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit/testsetup"
 	"github.com/stretchr/testify/require"
 	pdhttp "github.com/tikv/pd/client/http"
+	"github.com/tikv/pd/client/servicediscovery"
 	"go.uber.org/goleak"
 )
 
@@ -48,6 +53,110 @@ func TestMain(m *testing.M) {
 		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
 	}
 	goleak.VerifyTestMain(m, opts...)
+}
+
+func TestAffinityCreatePDHTTPStatus(t *testing.T) {
+	const body = "group already exists"
+	for _, tt := range []struct {
+		name      string
+		status    int
+		body      string
+		truncated bool
+	}{
+		{"bad request", http.StatusBadRequest, body, false},
+		{"conflict", http.StatusConflict, body, false},
+		{"misleading body", http.StatusBadRequest, "request pd http api failed with status: '409 Conflict'", false},
+		{"missing API", http.StatusNotFound, body, false},
+		{"failed precondition", http.StatusPreconditionFailed, body, false},
+		{"truncated conflict", http.StatusConflict, body, true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			var getCalls atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+				switch {
+				case req.URL.Path != pdhttp.AffinityGroups:
+					t.Errorf("unexpected PD request: %s %s", req.Method, req.URL)
+					w.WriteHeader(http.StatusInternalServerError)
+				case req.Method == http.MethodGet:
+					getCalls.Add(1)
+					_, _ = io.WriteString(w, `{"affinity_groups":{"g1":{"id":"g1","range_count":1}}}`)
+				case req.Method == http.MethodPost && req.URL.Query().Get("skip_exist_check") == "true":
+					if tt.truncated {
+						w.Header().Set("Content-Length", strconv.Itoa(len(tt.body)+1))
+					}
+					w.WriteHeader(tt.status)
+					_, _ = io.WriteString(w, tt.body)
+				default:
+					t.Errorf("unexpected PD request: %s %s", req.Method, req.URL)
+					w.WriteHeader(http.StatusInternalServerError)
+				}
+			}))
+			defer server.Close()
+
+			discovery := servicediscovery.NewMockServiceDiscovery([]string{server.URL}, nil)
+			require.NoError(t, discovery.Init())
+			client := pdhttp.NewClientWithServiceDiscovery("test", discovery).WithRespHandler(pdResponseHandler)
+			defer client.Close()
+			groups := map[string][]pdhttp.AffinityGroupKeyRange{
+				"g1": {{StartKey: []byte("a"), EndKey: []byte("b")}},
+			}
+			err := affinity.NewPDManager(client).CreateAffinityGroupsIfNotExists(context.Background(), groups)
+			if tt.status == http.StatusConflict {
+				require.NoError(t, err)
+				require.EqualValues(t, 1, getCalls.Load())
+				return
+			}
+			require.EqualError(t, err, "[domain:8243]"+tt.body)
+			require.True(t, ErrHTTPServiceError.Equal(err))
+			var statusError interface{ HTTPStatusCode() int }
+			require.ErrorAs(t, err, &statusError)
+			require.Equal(t, tt.status, statusError.HTTPStatusCode())
+			require.Zero(t, getCalls.Load())
+		})
+	}
+
+	t.Run("gateway paths", func(t *testing.T) {
+		for _, path := range []string{
+			"/gateway" + pdhttp.AffinityGroups,
+			"/gateway" + pdhttp.AffinityGroups + "/policies",
+		} {
+			for _, status := range []int{http.StatusNotFound, http.StatusPreconditionFailed} {
+				t.Run(path+"/"+strconv.Itoa(status), func(t *testing.T) {
+					recorder := httptest.NewRecorder()
+					recorder.WriteHeader(status)
+					_, err := io.WriteString(recorder, body)
+					require.NoError(t, err)
+					resp := recorder.Result()
+					resp.Request = httptest.NewRequest(http.MethodPost, path, nil)
+
+					err = pdResponseHandler(resp, nil)
+					require.EqualError(t, err, "[domain:8243]"+body)
+					var statusError interface{ HTTPStatusCode() int }
+					require.ErrorAs(t, err, &statusError)
+					require.Equal(t, status, statusError.HTTPStatusCode())
+				})
+			}
+		}
+	})
+}
+
+func TestPDResponseHandlerPlacementCompatibility(t *testing.T) {
+	for _, status := range []int{http.StatusNotFound, http.StatusPreconditionFailed, http.StatusBadRequest} {
+		recorder := httptest.NewRecorder()
+		recorder.WriteHeader(status)
+		_, err := io.WriteString(recorder, "placement rule error")
+		require.NoError(t, err)
+		resp := recorder.Result()
+		resp.Request = httptest.NewRequest(http.MethodGet, "/pd/api/v1/config/placement-rule", nil)
+		err = pdResponseHandler(resp, nil)
+		if status == http.StatusBadRequest {
+			require.EqualError(t, err, "[domain:8243]placement rule error")
+			require.True(t, ErrHTTPServiceError.Equal(err))
+			require.ErrorIs(t, err, ErrHTTPServiceError)
+		} else {
+			require.NoError(t, err)
+		}
+	}
 }
 
 func TestPutBundlesRetry(t *testing.T) {

@@ -16,6 +16,7 @@ package affinity
 
 import (
 	"context"
+	stderrors "errors"
 	"net/http"
 	"net/url"
 	"sort"
@@ -53,17 +54,17 @@ func NewPDManager(client pdhttp.Client) Manager {
 }
 
 // CreateAffinityGroupsIfNotExists creates affinity groups in PD.
-// It first uses the skip_exist_check API. If that behavior is rejected by an older
-// PD, it falls back to checking existing IDs and creating only missing groups.
-// This makes the operation safe for DDL job retries in mixed-version deployments.
+// It first uses skip_exist_check and validates the returned state for every group.
+// A conflict from older PD versions confirms a duplicate group ID and allows
+// falling back to a lookup before creating the remaining groups.
 func (m *pdManager) CreateAffinityGroupsIfNotExists(ctx context.Context, groups map[string][]pdhttp.AffinityGroupKeyRange) error {
 	if len(groups) == 0 {
 		return nil
 	}
 
-	_, err := m.Client.CreateAffinityGroups(ctx, groups, pdhttp.WithSkipExistCheck())
+	states, err := m.Client.CreateAffinityGroups(ctx, groups, pdhttp.WithSkipExistCheck())
 	if err == nil {
-		return nil
+		return validateCreatedAffinityGroups(groups, states)
 	}
 	if !shouldFallbackCreateAffinityGroups(err) {
 		return err
@@ -149,7 +150,7 @@ func (m *pdManager) createAffinityGroupsIfNotExistsByFiltering(ctx context.Conte
 
 	groupsToCreate := make(map[string][]pdhttp.AffinityGroupKeyRange, len(groups))
 	for id, ranges := range groups {
-		if _, exists := existingGroups[id]; !exists {
+		if state := existingGroups[id]; state == nil || state.ID != id || state.RangeCount <= 0 {
 			groupsToCreate[id] = ranges
 		}
 	}
@@ -157,8 +158,20 @@ func (m *pdManager) createAffinityGroupsIfNotExistsByFiltering(ctx context.Conte
 		return nil
 	}
 
-	_, err = m.Client.CreateAffinityGroups(ctx, groupsToCreate)
-	return err
+	states, err := m.Client.CreateAffinityGroups(ctx, groupsToCreate)
+	if err != nil {
+		return err
+	}
+	return validateCreatedAffinityGroups(groupsToCreate, states)
+}
+
+func validateCreatedAffinityGroups(groups map[string][]pdhttp.AffinityGroupKeyRange, states map[string]*pdhttp.AffinityGroupState) error {
+	for id := range groups {
+		if state := states[id]; state == nil || state.ID != id || state.RangeCount <= 0 {
+			return errors.Errorf("PD returned no valid affinity group state for group %q after creation", id)
+		}
+	}
+	return nil
 }
 
 func (m *pdManager) getAffinityGroupsByScanningAll(ctx context.Context, ids []string) (map[string]*pdhttp.AffinityGroupState, error) {
@@ -186,9 +199,8 @@ func affinityGroupIDsEscapedQueryLen(ids []string) int {
 }
 
 func shouldFallbackCreateAffinityGroups(err error) bool {
-	return isPDHTTPStatusError(err, http.StatusBadRequest) ||
-		isPDHTTPStatusError(err, http.StatusConflict) ||
-		isPDHTTPServiceErrorWithoutStatus(err)
+	// A range conflict returns 400, and a GET may see stale scheduling state.
+	return isPDHTTPStatusError(err, http.StatusConflict)
 }
 
 func shouldFallbackGetAffinityGroups(err error) bool {
@@ -208,23 +220,26 @@ func extractPDHTTPStatusCode(err error) (int, bool) {
 		return 0, false
 	}
 
-	const statusPrefix = "status: '"
-	msg := err.Error()
-	idx := strings.Index(msg, statusPrefix)
-	if idx < 0 {
+	var statusErr interface{ HTTPStatusCode() int }
+	if stderrors.As(err, &statusErr) {
+		return statusErr.HTTPStatusCode(), true
+	}
+
+	const statusPrefix = "request pd http api failed with status: '"
+	status, ok := strings.CutPrefix(errors.Cause(err).Error(), statusPrefix)
+	if !ok {
 		return 0, false
 	}
 
-	start := idx + len(statusPrefix)
-	end := start
-	for end < len(msg) && msg[end] >= '0' && msg[end] <= '9' {
+	end := 0
+	for end < len(status) && status[end] >= '0' && status[end] <= '9' {
 		end++
 	}
-	if end == start {
+	if end == 0 {
 		return 0, false
 	}
 
-	code, convErr := strconv.Atoi(msg[start:end])
+	code, convErr := strconv.Atoi(status[:end])
 	if convErr != nil {
 		return 0, false
 	}
@@ -243,8 +258,7 @@ func isPDHTTPServiceErrorWithoutStatus(err error) bool {
 	if !ok {
 		return false
 	}
-	// TiDB's injected PD response handler returns ErrHTTPServiceError without the
-	// original HTTP status code in the message, so treat it as compatibility case.
+	// Preserve lookup compatibility for clients returning a bare service error.
 	return rootErr.Code() == errors.ErrCode(errno.ErrHTTPServiceError)
 }
 
