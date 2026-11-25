@@ -3305,3 +3305,64 @@ func TestOutOfRangeNullOnlyRange(t *testing.T) {
 	// An inner join adds `not(isnull(t.k))` to t, which takes the same path.
 	require.Len(t, tk.MustQuery("select s.pad, t.pad from s join t on s.id = t.k limit 10").Rows(), 10)
 }
+
+// prepareAntiJoinLimitTables builds the shape from issue #73342: the outer
+// filter on t keeps only the newest ids, while every s.t_id is below them, so a
+// merge anti-semi join must read all of s before the first t row survives.
+func prepareAntiJoinLimitTables(t *testing.T, tk *testkit.TestKit, dom *domain.Domain) {
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t, s")
+	tk.MustExec("create table t (id bigint primary key, state varchar(20) not null, key idx_state (state))")
+	tk.MustExec("create table s (id bigint auto_increment primary key, t_id bigint not null, unique key uk_t_id (t_id))")
+	tk.MustExec("set @@session.cte_max_recursion_depth = 20000")
+	tk.MustExec(`insert into t with recursive c(x) as (select 1 union all select x + 1 from c where x < 20000)
+		select x, case when x > 19800 then 'pending' when x % 5 = 0 then 'cancelled' else 'done' end from c`)
+	tk.MustExec("insert into s (t_id) select id from t where state = 'cancelled'")
+	tk.MustExec("analyze table t, s")
+	require.NoError(t, dom.StatsHandle().Cache().Update(context.Background(), dom.InfoSchema()))
+}
+
+func TestOrderingIdxSelectivityRatioForSemiMergeJoin(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	prepareAntiJoinLimitTables(t, tk, dom)
+
+	planCost := func(query, ratio string) float64 {
+		tk.MustExec("set @@session.tidb_opt_ordering_index_selectivity_ratio = " + ratio)
+		rows := tk.MustQuery(query).Rows()
+		hasMergeJoin := false
+		for _, row := range rows {
+			if strings.Contains(row[0].(string), "MergeJoin") {
+				hasMergeJoin = true
+			}
+		}
+		require.True(t, hasMergeJoin, "expected MergeJoin with ratio=%s for %s", ratio, query)
+		cost, err := strconv.ParseFloat(rows[0][2].(string), 64)
+		require.NoError(t, err)
+		return cost
+	}
+	requireRatioRaisesCost := func(query string) {
+		costDisabled := planCost(query, "-1")
+		require.Equal(t, costDisabled, planCost(query, "0"))
+		costHalf := planCost(query, "0.5")
+		require.Less(t, costDisabled, costHalf)
+		require.Less(t, costHalf, planCost(query, "1"))
+	}
+
+	// No ORDER BY: the parent LIMIT requires no order, but the merge join
+	// itself reads both children in order, so the ratio must still apply.
+	// Anti semi join: no pending t row has a match in s.
+	requireRatioRaisesCost("explain format=verbose select /*+ merge_join(t, s@sel_2) */ 1 from t where t.state = 'pending' and not exists (select 1 from s where s.t_id = t.id) limit 1")
+	// Semi join: every cancelled t row has a match in s.
+	semiQuery := "select /*+ merge_join(t, s@sel_2) */ t.id from t where t.state = 'cancelled' and exists (select 1 from s where s.t_id = t.id) order by t.id limit 1"
+	requireRatioRaisesCost("explain format=verbose select /*+ merge_join(t, s@sel_2) */ 1 from t where t.state = 'cancelled' and exists (select 1 from s where s.t_id = t.id) limit 1")
+	tk.MustExec("set @@session.tidb_opt_ordering_index_selectivity_ratio = 0.5")
+	tk.MustQuery(semiQuery).Check(testkit.Rows("5"))
+
+	// Once the ratio is large enough for this table size, the anti-semi merge
+	// join is no longer the cheapest plan; the index join probing uk_t_id wins.
+	// The penalty grows with the size of s, so with the issue's data
+	// (198K rows in s) the default ratio is already enough.
+	tk.MustExec("set @@session.tidb_opt_ordering_index_selectivity_ratio = 0.1")
+	tk.MustHavePlan("select 1 from t where t.state = 'pending' and not exists (select 1 from s where s.t_id = t.id) limit 1", "IndexJoin")
+}

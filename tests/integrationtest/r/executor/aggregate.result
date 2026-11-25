@@ -2109,3 +2109,26 @@ AND `f` <= 1753718399
 AND `g` = 0
 GROUP BY `a`, left(FROM_UNIXTIME(e), 10);
 id	settle_time	a	total_amount	settlement_amount	total_fee
+create table t_json_objectagg(k mediumtext, v int);
+insert into t_json_objectagg values (repeat('a', 65535), 1), (repeat('b', 65536), 2);
+set tidb_hashagg_partial_concurrency = 1;
+set tidb_hashagg_final_concurrency = 1;
+select /*+ hash_agg() */ json_length(json_objectagg(k, v)) from t_json_objectagg where v = 1;
+json_length(json_objectagg(k, v))
+1
+select /*+ hash_agg() */ json_objectagg(k, v) from t_json_objectagg where v = 2;
+Error 8129 (HY000): TiDB does not yet support JSON objects with the key length >= 65536
+set tidb_hashagg_partial_concurrency = 2;
+set tidb_hashagg_final_concurrency = 2;
+select /*+ hash_agg() */ json_length(json_objectagg(k, v)) from t_json_objectagg where v = 1;
+json_length(json_objectagg(k, v))
+1
+select /*+ hash_agg() */ json_objectagg(k, v) from t_json_objectagg where v = 2;
+Error 8129 (HY000): TiDB does not yet support JSON objects with the key length >= 65536
+select /*+ hash_agg() */ json_objectagg(k, v) from t_json_objectagg where v = 2 group by v;
+Error 8129 (HY000): TiDB does not yet support JSON objects with the key length >= 65536
+select /*+ hash_agg() */ count(*), json_objectagg(k, v) from t_json_objectagg where v = 2 group by v;
+Error 8129 (HY000): TiDB does not yet support JSON objects with the key length >= 65536
+drop table t_json_objectagg;
+set tidb_hashagg_partial_concurrency = default;
+set tidb_hashagg_final_concurrency = default;

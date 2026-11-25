@@ -67,8 +67,16 @@ const (
 // backoff: When run f failed, it will sleep backoff * triedCount time.Millisecond.
 // Function f should have two return value. The first one is an bool which indicate if the err is retryable.
 // The second is if the f meet any error.
-func RunWithRetry(retryCnt int, backoff uint64, f func() (bool, error)) (err error) {
+func RunWithRetry(retryCnt int, backoff uint64, f func() (bool, error)) error {
+	return RunWithRetryContext(context.Background(), retryCnt, backoff, f)
+}
+
+// RunWithRetryContext allows cancellation before an attempt and during retry backoff.
+func RunWithRetryContext(ctx context.Context, retryCnt int, backoff uint64, f func() (bool, error)) (err error) {
 	for i := 1; i <= retryCnt; i++ {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		var retryAble bool
 		retryAble, err = f()
 		if err == nil || !retryAble {
@@ -76,7 +84,11 @@ func RunWithRetry(retryCnt int, backoff uint64, f func() (bool, error)) (err err
 		}
 		metrics.RetryableErrorCount.WithLabelValues(err.Error()).Inc()
 		sleepTime := time.Duration(backoff*uint64(i)) * time.Millisecond
-		time.Sleep(sleepTime)
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(sleepTime):
+		}
 	}
 	return errors.Trace(err)
 }

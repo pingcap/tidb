@@ -323,7 +323,12 @@ func (do *Domain) GetRuntime() sqlsvrapi.Runtime {
 
 // AcquireKSRuntime implements the sqlsvrapi.Server interface.
 func (do *Domain) AcquireKSRuntime(targetKS string, holderID string) (sqlsvrapi.KSRuntimeHandle, error) {
-	hdl, err := do.crossKSSessMgr.Acquire(targetKS, holderID, do.crossKSSessFactoryGetter)
+	return do.AcquireKSRuntimeWithContext(context.Background(), targetKS, holderID)
+}
+
+// AcquireKSRuntimeWithContext allows cancellation while waiting for a closing runtime.
+func (do *Domain) AcquireKSRuntimeWithContext(ctx context.Context, targetKS, holderID string) (sqlsvrapi.KSRuntimeHandle, error) {
+	hdl, err := do.crossKSSessMgr.AcquireWithContext(ctx, targetKS, holderID, do.crossKSSessFactoryGetter)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -859,7 +864,7 @@ func (do *Domain) Start(startMode ddl.StartMode) error {
 	}, "mdlCheckLoop")
 	do.wg.Run(do.topNSlowQueryLoop, "topNSlowQueryLoop")
 	do.wg.Run(func() {
-		do.info.ServerInfoSyncer().ServerInfoSyncLoop(do.store, do.exit)
+		do.info.ServerInfoSyncer().ServerInfoSyncLoop(do.ctx, do.store, do.exit)
 	}, "infoSyncerKeeper")
 	do.wg.Run(do.globalConfigSyncerKeeper, "globalConfigSyncerKeeper")
 	do.wg.Run(do.runawayManager.RunawayRecordFlushLoop, "runawayRecordFlushLoop")

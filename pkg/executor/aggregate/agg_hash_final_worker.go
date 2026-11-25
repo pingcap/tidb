@@ -25,8 +25,6 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
-	"github.com/pingcap/tidb/pkg/util/logutil"
-	"go.uber.org/zap"
 )
 
 // AfFinalResult indicates aggregation functions final result.
@@ -129,19 +127,13 @@ func (w *HashAggFinalWorker) consumeIntermData(sctx sessionctx.Context) error {
 	}
 }
 
-// generateResultAndSend returns false when the final worker must stop.
-func (w *HashAggFinalWorker) generateResultAndSend(sctx sessionctx.Context, result *chunk.Chunk) bool {
+func (w *HashAggFinalWorker) generateResultAndSend(sctx sessionctx.Context, result *chunk.Chunk) error {
 	var finished bool
 	exprCtx := sctx.GetExprCtx()
-	failOnFinalizationError := sctx.GetSessionVars().InMViewMaintenance
 	for _, results := range w.partialResultMap.M {
 		for j, af := range w.aggFuncs {
 			if err := af.AppendFinalResult2Chunk(exprCtx.GetEvalCtx(), results[j], result); err != nil {
-				if failOnFinalizationError {
-					w.outputCh <- &AfFinalResult{err: err}
-					return false
-				}
-				logutil.BgLogger().Error("HashAggFinalWorker failed to append final result to Chunk", zap.Error(err))
+				return err
 			}
 		}
 
@@ -153,11 +145,11 @@ func (w *HashAggFinalWorker) generateResultAndSend(sctx sessionctx.Context, resu
 			w.outputCh <- &AfFinalResult{chk: result, giveBackCh: w.finalResultHolderCh}
 			result, finished = w.receiveFinalResultHolder()
 			if finished {
-				return false
+				return nil
 			}
 		}
 	}
-	return true
+	return nil
 }
 
 func (w *HashAggFinalWorker) sendFinalResult(sctx sessionctx.Context) {
@@ -173,7 +165,8 @@ func (w *HashAggFinalWorker) sendFinalResult(sctx sessionctx.Context) {
 	execStart := time.Now()
 	updateExecTime(w.stats, execStart)
 	if w.spillHelper.isSpilledChunksIOEmpty() {
-		if !w.generateResultAndSend(sctx, result) {
+		if err := w.generateResultAndSend(sctx, result); err != nil {
+			w.outputCh <- &AfFinalResult{err: err}
 			return
 		}
 	} else {
@@ -189,7 +182,8 @@ func (w *HashAggFinalWorker) sendFinalResult(sctx sessionctx.Context) {
 			if eof {
 				break
 			}
-			if !w.generateResultAndSend(sctx, result) {
+			if err := w.generateResultAndSend(sctx, result); err != nil {
+				w.outputCh <- &AfFinalResult{err: err}
 				return
 			}
 		}
