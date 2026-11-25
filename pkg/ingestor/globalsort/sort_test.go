@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jfcg/sorty/v2"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
@@ -209,6 +210,8 @@ func TestGlobalSortLocalWithMerge(t *testing.T) {
 }
 
 func TestGlobalSortLocalWithMergeV2(t *testing.T) {
+	originalMaxGor := sorty.MaxGor
+	t.Cleanup(func() { sorty.MaxGor = originalMaxGor })
 	// 1. write data step
 	seed := time.Now().Unix()
 	rand.Seed(uint64(seed))
@@ -300,6 +303,7 @@ func TestGlobalSortLocalWithMergeV2(t *testing.T) {
 			closeFn1,
 			1,
 			true))
+		require.Equal(t, originalMaxGor, sorty.MaxGor, "merging must not change the process-wide sort budget")
 	}
 
 	// 3. read and sort step

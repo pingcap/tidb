@@ -20,7 +20,6 @@ import (
 	"math"
 	"testing"
 
-	"github.com/jfcg/sorty/v2"
 	"github.com/pingcap/tidb/pkg/ingestor/simplesst"
 	dbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
@@ -93,16 +92,9 @@ func testReadAndCompare(
 		loaded.build(ctx)
 
 		// check kvs sorted
-		sorty.MaxGor = uint64(8)
-		sorty.Sort(len(loaded.kvs), func(i, k, r, s int) bool {
-			if bytes.Compare(loaded.kvs[i].Key, loaded.kvs[k].Key) < 0 { // strict comparator like < or >
-				if r != s {
-					loaded.kvs[r], loaded.kvs[s] = loaded.kvs[s], loaded.kvs[r]
-				}
-				return true
-			}
-			return false
-		})
+		parallelSort(loaded.kvs, func(a, b simplesst.KVPair) int {
+			return bytes.Compare(a.Key, b.Key)
+		}, 8)
 		for _, kv := range loaded.kvs {
 			require.EqualValues(t, kvs[kvIdx].Key, kv.Key)
 			require.EqualValues(t, kvs[kvIdx].Val, kv.Value)

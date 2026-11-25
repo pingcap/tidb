@@ -25,7 +25,6 @@ import (
 	"time"
 
 	"github.com/docker/go-units"
-	"github.com/jfcg/sorty/v2"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
@@ -336,28 +335,17 @@ func (e *Engine) loadRangeBatchData(
 	readDurHist.Observe(readSecond)
 
 	sortStart := time.Now()
-	oldSortyGor := sorty.MaxGor
-	sorty.MaxGor = uint64(e.workerConcurrency.Load() * 2)
-	var dupKey, dupVal atomic.Pointer[[]byte]
-	sorty.Sort(len(e.memKVsAndBuffers.kvs), func(i, k, r, s int) bool {
-		cmp := bytes.Compare(e.memKVsAndBuffers.kvs[i].Key, e.memKVsAndBuffers.kvs[k].Key)
-		if cmp < 0 { // strict comparator like < or >
-			if r != s {
-				e.memKVsAndBuffers.kvs[r], e.memKVsAndBuffers.kvs[s] = e.memKVsAndBuffers.kvs[s], e.memKVsAndBuffers.kvs[r]
-			}
-			return true
+	failpoint.InjectCall("beforeSortKVs", e)
+	parallelSort(e.memKVsAndBuffers.kvs, func(a, b simplesst.KVPair) int {
+		return bytes.Compare(a.Key, b.Key)
+	}, int(e.workerConcurrency.Load())*2)
+	dupIdx := -1
+	for i := 1; i < len(e.memKVsAndBuffers.kvs); i++ {
+		if bytes.Equal(e.memKVsAndBuffers.kvs[i-1].Key, e.memKVsAndBuffers.kvs[i].Key) {
+			dupIdx = i
+			break
 		}
-		if cmp == 0 && i != k {
-			if dupKey.Load() == nil {
-				key := slices.Clone(e.memKVsAndBuffers.kvs[i].Key)
-				dupKey.Store(&key)
-				value := slices.Clone(e.memKVsAndBuffers.kvs[i].Value)
-				dupVal.Store(&value)
-			}
-		}
-		return false
-	})
-	sorty.MaxGor = oldSortyGor
+	}
 	sortDur := time.Since(sortStart)
 	sortSecond := sortDur.Seconds()
 	sortDurHist.Observe(sortSecond)
@@ -366,11 +354,13 @@ func (e *Engine) loadRangeBatchData(
 	// of OnDuplicateKeyError, but to make keep compatible with the old code, we
 	// keep this behavior.
 	// TODO: remove this when we have have fully integrated the OnDuplicateKey.
-	if k, v := dupKey.Load(), dupVal.Load(); k != nil {
+	if dupIdx >= 0 {
+		dup := &e.memKVsAndBuffers.kvs[dupIdx]
 		if e.onDup == engineapi.OnDuplicateKeyIgnore {
-			return errors.Errorf("duplicate key found: %s", hex.EncodeToString(*k))
+			return errors.Errorf("duplicate key found: %s", hex.EncodeToString(dup.Key))
 		} else if e.onDup == engineapi.OnDuplicateKeyError {
-			return common.ErrFoundDuplicateKeys.FastGenByArgs(*k, *v)
+			// The error can outlive the buffers holding the sorted KVs.
+			return common.ErrFoundDuplicateKeys.FastGenByArgs(slices.Clone(dup.Key), slices.Clone(dup.Value))
 		}
 	}
 	readAndSortSecond := time.Since(readStart).Seconds()
@@ -387,7 +377,7 @@ func (e *Engine) loadRangeBatchData(
 		deduplicateDur        time.Duration
 	)
 	deduplicatedKVs = e.memKVsAndBuffers.kvs
-	dupFound := dupKey.Load() != nil
+	dupFound := dupIdx >= 0
 	if dupFound {
 		start := time.Now()
 		if e.onDup == engineapi.OnDuplicateKeyRecord {
