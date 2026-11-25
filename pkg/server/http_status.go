@@ -680,6 +680,10 @@ func (s *Server) setupAutoIDService(ctx context.Context, grpcServer *grpc.Server
 		logutil.BgLogger().Error("tikv store not etcd background", zap.Error(err))
 		return nil
 	}
+	// Mock stores can implement EtcdBackend without supporting etcd.
+	if len(etcdAddr) == 0 {
+		return nil
+	}
 
 	selfAddr := net.JoinHostPort(s.cfg.AdvertiseAddress, strconv.Itoa(int(s.cfg.Status.StatusPort)))
 	service, err := autoid.NewWithContext(ctx, selfAddr, etcdAddr, store, ebd.TLSConfig())

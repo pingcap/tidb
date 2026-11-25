@@ -127,6 +127,26 @@ func (*blockingStatusLeaseServer) LeaseKeepAlive(stream etcdserverpb.Lease_Lease
 }
 
 func TestStatusServerClose(t *testing.T) {
+	t.Run("AutoID without etcd endpoints", func(t *testing.T) {
+		store := testkit.CreateMockStore(t)
+		cfg := util.NewTestConfig()
+		cfg.Store = config.StoreTypeTiKV
+		cfg.Path = "%"
+		s := NewTestServer(cfg)
+		s.driver = NewTiDBDriver(store)
+		defer s.Close()
+		grpcServer := grpc.NewServer()
+		defer grpcServer.Stop()
+		logger, props, err := log.InitLogger(new(log.Config), zap.WithFatalHook(zapcore.WriteThenPanic))
+		require.NoError(t, err)
+		defer log.ReplaceGlobals(logger, props)()
+
+		require.NotPanics(t, func() {
+			require.Nil(t, s.setupAutoIDService(context.Background(), grpcServer))
+		})
+		require.Empty(t, grpcServer.GetServiceInfo(), "stores without etcd endpoints must not register an AutoID service")
+	})
+
 	t.Run("AutoID initialization error", func(t *testing.T) {
 		store := testkit.CreateMockStore(t)
 		cfg := util.NewTestConfig()
@@ -134,7 +154,8 @@ func TestStatusServerClose(t *testing.T) {
 		// AutoID initialization must reuse the open store without reopening this path.
 		cfg.Path = "%"
 		s := NewTestServer(cfg)
-		s.driver = NewTiDBDriver(&statusAutoIDStore{Storage: store})
+		// A malformed URL escape fails client construction without dialing etcd.
+		s.driver = NewTiDBDriver(&statusAutoIDStore{Storage: store, etcdAddrs: []string{"%"}})
 		defer s.Close()
 		grpcServer := grpc.NewServer()
 		defer grpcServer.Stop()
