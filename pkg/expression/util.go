@@ -714,11 +714,12 @@ func ColumnSubstituteImpl(ctx BuildContext, expr Expression, schema *Schema, new
 
 // newFunctionPreserveExplicitCollation is like NewFunction, but if orig has an
 // explicit charset/collation (from a COLLATE clause), the rebuilt expression
-// keeps that metadata without mutating a shared input argument or its FieldType.
-// Folding IF/CASE to a column would otherwise change the original column's
-// collation, which can break independent references that still need the table
-// collation. Column results are wrapped with CAST, the same approach used by
-// SetCollationExpr. Column.Clone() alone is not enough because it shares RetType.
+// keeps that metadata without mutating a shared input argument or its FieldType,
+// and without changing a folded child function's comparison collation.
+// Folding IF/CASE to a column or to a scalar function such as GREATEST would
+// otherwise change that child's collation. Existing folded arguments are wrapped
+// with CAST, the same approach used by SetCollationExpr. Direct collation
+// restoration is kept only for a function freshly rebuilt by NewFunction.
 func newFunctionPreserveExplicitCollation(ctx BuildContext, orig *ScalarFunction, retType *types.FieldType, args ...Expression) (Expression, error) {
 	if !orig.Function.IsExplicitCharset() {
 		return NewFunction(ctx, orig.FuncName.L, retType, args...)
@@ -729,7 +730,7 @@ func newFunctionPreserveExplicitCollation(ctx BuildContext, orig *ScalarFunction
 	if err != nil {
 		return nil, err
 	}
-	return applyExplicitCollationIsolated(ctx, newFunc, orig), nil
+	return applyExplicitCollationIsolated(ctx, newFunc, orig, args), nil
 }
 
 type sharedExprCollationSnapshot struct {
@@ -851,35 +852,73 @@ func restoreSharedExprCollation(snaps []sharedExprCollationSnapshot) {
 }
 
 // applyExplicitCollationIsolated copies explicit charset/collation from orig onto
-// expr without mutating a shared input expression or FieldType.
-func applyExplicitCollationIsolated(ctx BuildContext, expr, orig Expression) Expression {
+// expr without mutating a shared input expression or FieldType, and without
+// changing a folded child function's comparison collation.
+func applyExplicitCollationIsolated(ctx BuildContext, expr, orig Expression, args []Expression) Expression {
 	chs, coll := orig.CharsetAndCollation()
 	evalCtx := ctx.GetEvalCtx()
-	switch expr.(type) {
-	case *Column, *CorrelatedColumn:
-		// Wrap a CAST so the original column's FieldType is left unchanged.
-		// Column.Clone() still shares RetType, so a wrapper is required.
-		exprType := expr.GetType(evalCtx).Clone()
-		if chs != "" {
-			exprType.SetCharset(chs)
-		}
-		exprType.SetCollate(coll)
-		casted := BuildCastFunction(ctx, expr, exprType)
-		casted.SetCoercibility(orig.Coercibility())
-		casted.SetCharsetAndCollation(chs, coll)
-		casted.SetExplicitCharset(true)
-		return casted
-	default:
-		expr = isolateExprRetType(expr)
-		expr.SetCoercibility(orig.Coercibility())
-		expr.SetCharsetAndCollation(chs, coll)
-		expr.SetExplicitCharset(true)
-		expr.GetType(evalCtx).SetCollate(coll)
-		if chs != "" {
-			expr.GetType(evalCtx).SetCharset(chs)
-		}
-		return expr
+	// Folding IF/CASE may return an existing argument, including a scalar
+	// function such as GREATEST. Changing that function's builtin collation
+	// would change its comparator. Wrap with CAST instead, as SetCollationExpr does.
+	// Direct restoration is only for a function freshly rebuilt by NewFunction.
+	if isExistingArgExpression(expr, args) {
+		return wrapExplicitCollationCast(ctx, expr, orig, chs, coll)
 	}
+	expr = isolateExprRetType(expr)
+	expr.SetCoercibility(orig.Coercibility())
+	expr.SetCharsetAndCollation(chs, coll)
+	expr.SetExplicitCharset(true)
+	expr.GetType(evalCtx).SetCollate(coll)
+	if chs != "" {
+		expr.GetType(evalCtx).SetCharset(chs)
+	}
+	return expr
+}
+
+func isExistingArgExpression(expr Expression, args []Expression) bool {
+	var found bool
+	var walk func(Expression)
+	walk = func(e Expression) {
+		if e == nil || found {
+			return
+		}
+		if e == expr {
+			found = true
+			return
+		}
+		switch x := e.(type) {
+		case *ScalarFunction:
+			for _, arg := range x.GetArgs() {
+				walk(arg)
+			}
+		case *Column:
+			if x.VirtualExpr != nil {
+				walk(x.VirtualExpr)
+			}
+		case *CorrelatedColumn:
+			if x.VirtualExpr != nil {
+				walk(x.VirtualExpr)
+			}
+		}
+	}
+	for _, arg := range args {
+		walk(arg)
+	}
+	return found
+}
+
+func wrapExplicitCollationCast(ctx BuildContext, expr, orig Expression, chs, coll string) Expression {
+	evalCtx := ctx.GetEvalCtx()
+	exprType := expr.GetType(evalCtx).Clone()
+	if chs != "" {
+		exprType.SetCharset(chs)
+	}
+	exprType.SetCollate(coll)
+	casted := BuildCastFunction(ctx, expr, exprType)
+	casted.SetCoercibility(orig.Coercibility())
+	casted.SetCharsetAndCollation(chs, coll)
+	casted.SetExplicitCharset(true)
+	return casted
 }
 
 func isolateExprRetType(expr Expression) Expression {

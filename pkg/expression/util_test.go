@@ -330,6 +330,65 @@ func newExplicitCollateIfFunc(t *testing.T, ctx BuildContext, flag, name, other 
 	return sf
 }
 
+func TestColumnSubstituteExplicitCollateDoesNotChangeFoldedGreatestComparator(t *testing.T) {
+	ctx := mock.NewContext()
+	flagCol := &Column{UniqueID: 4, Index: 3, RetType: types.NewFieldType(mysql.TypeLonglong), OrigName: "flag"}
+	greatest, ifFn, row := setupExplicitCollateIfGreatest(t, ctx, flagCol)
+
+	schema := NewSchema(flagCol)
+	changed, _, result := ColumnSubstituteImpl(ctx, ifFn, schema, []Expression{NewOne()}, false)
+	require.True(t, changed)
+	assertFoldedGreatestKeepsBinComparator(t, ctx, result, greatest, row)
+}
+
+func TestSubstituteCorCol2ConstantExplicitCollateDoesNotChangeFoldedGreatestComparator(t *testing.T) {
+	ctx := mock.NewContext()
+	flagCol := &CorrelatedColumn{Data: &NewOne().Value}
+	flagCol.RetType = types.NewFieldType(mysql.TypeLonglong)
+	flagCol.UniqueID = 4
+	greatest, ifFn, row := setupExplicitCollateIfGreatest(t, ctx, flagCol)
+
+	result, err := SubstituteCorCol2Constant(ctx, ifFn)
+	require.NoError(t, err)
+	assertFoldedGreatestKeepsBinComparator(t, ctx, result, greatest, row)
+}
+
+func setupExplicitCollateIfGreatest(t *testing.T, ctx BuildContext, flag Expression) (*ScalarFunction, *ScalarFunction, chunk.Row) {
+	t.Helper()
+	a := newUTF8MB4BinColumn(1, "a")
+	b := newUTF8MB4BinColumn(2, "b")
+	other := newUTF8MB4BinColumn(3, "other")
+	fn, err := NewFunctionBase(ctx, ast.Greatest, a.RetType.Clone(), a, b)
+	require.NoError(t, err)
+	greatest := fn.(*ScalarFunction)
+	ifFn := newExplicitCollateIfFunc(t, ctx, flag, greatest, other)
+	require.Equal(t, "utf8mb4_bin", greatest.GetType(ctx.GetEvalCtx()).GetCollate())
+	row := chunk.MutRowFromDatums([]types.Datum{
+		types.NewStringDatum("a"),
+		types.NewStringDatum("B"),
+		types.NewStringDatum("z"),
+	}).ToRow()
+	d, err := greatest.Eval(ctx.GetEvalCtx(), row)
+	require.NoError(t, err)
+	require.Equal(t, "a", d.GetString())
+	return greatest, ifFn, row
+}
+
+func assertFoldedGreatestKeepsBinComparator(t *testing.T, ctx BuildContext, result Expression, greatest *ScalarFunction, row chunk.Row) {
+	t.Helper()
+	require.Equal(t, "utf8mb4_general_ci", result.GetType(ctx.GetEvalCtx()).GetCollate())
+	d, err := result.Eval(ctx.GetEvalCtx(), row)
+	require.NoError(t, err)
+	require.Equal(t, "a", d.GetString(), "folded GREATEST('a','B') must keep utf8mb4_bin comparison and return 'a', not 'B'")
+	require.Equal(t, "utf8mb4_bin", greatest.GetType(ctx.GetEvalCtx()).GetCollate())
+	d2, err := greatest.Eval(ctx.GetEvalCtx(), row)
+	require.NoError(t, err)
+	require.Equal(t, "a", d2.GetString())
+	sf, ok := result.(*ScalarFunction)
+	require.True(t, ok)
+	require.Equal(t, ast.Cast, sf.FuncName.L, "outer COLLATE on a folded scalar function should be applied through a CAST")
+}
+
 func TestPushDownNot(t *testing.T) {
 	ctx := mock.NewContext()
 	col := &Column{Index: 1, RetType: types.NewFieldType(mysql.TypeLonglong)}
