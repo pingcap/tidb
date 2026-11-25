@@ -1233,6 +1233,12 @@ ORDER BY index_name, seq_in_index`).Check(testkit.Rows(
 }
 
 func TestUpgradeVersion280MaskingPolicy(t *testing.T) {
+	t.Run("system_table_recovery", testUpgradeVersion280MaskingPolicy)
+	t.Run("legacy_versions", testMaskingPolicyUpgrade)
+	t.Run("retry_after_init_failure", testBootstrapRetriesUpgradeAfterInitFailure)
+}
+
+func testUpgradeVersion280MaskingPolicy(t *testing.T) {
 	fromVersions := []int{251, 254}
 	if kerneltype.IsNextGen() {
 		originalMode := deploymode.Get()
@@ -1970,7 +1976,10 @@ func TestDefaultAnalyzeBackgroundOnlyAffectsFreshBootstrap(t *testing.T) {
 	require.Nil(t, defaultGroup.Background)
 }
 
-func TestMaskingPolicyUpgrade(t *testing.T) {
+func testMaskingPolicyUpgrade(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("This scenario uses a legacy classic-kernel bootstrap layout")
+	}
 	t.Cleanup(session.CaptureMockBootstrapStateForTest())
 	for _, tc := range []struct {
 		version  int
@@ -2033,7 +2042,10 @@ func TestMaskingPolicyUpgrade(t *testing.T) {
 	}
 }
 
-func TestBootstrapRetriesUpgradeAfterInitFailure(t *testing.T) {
+func testBootstrapRetriesUpgradeAfterInitFailure(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("This scenario uses a legacy classic-kernel bootstrap layout")
+	}
 	t.Cleanup(session.CaptureMockBootstrapStateForTest())
 	store, dom := session.CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
