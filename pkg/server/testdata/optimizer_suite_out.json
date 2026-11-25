@@ -233,7 +233,21 @@
                     },
                     {
                       "Candidate cost": 3605.5598,
+                      "Physical plan risk": {
+                        "risk": false,
+                        "signals": []
+                      },
                       "Selected": true
+                    },
+                    {
+                      "Risk selection": {
+                        "cbo_cost": 3605.5598,
+                        "cbo_read_rows": 250,
+                        "cbo_risk": false,
+                        "enabled": false,
+                        "policy": "experimental_v3",
+                        "reason": "mode_off"
+                      }
                     }
                   ]
                 }
@@ -433,7 +447,21 @@
                 },
                 {
                   "Candidate cost": 304643.238,
+                  "Physical plan risk": {
+                    "risk": false,
+                    "signals": []
+                  },
                   "Selected": true
+                },
+                {
+                  "Risk selection": {
+                    "cbo_cost": 304643.238,
+                    "cbo_read_rows": 10000,
+                    "cbo_risk": false,
+                    "enabled": false,
+                    "policy": "experimental_v3",
+                    "reason": "mode_off"
+                  }
                 }
               ]
             },
@@ -671,7 +699,21 @@
                     },
                     {
                       "Candidate cost": 455.31399999999996,
+                      "Physical plan risk": {
+                        "risk": false,
+                        "signals": []
+                      },
                       "Selected": true
+                    },
+                    {
+                      "Risk selection": {
+                        "cbo_cost": 455.31399999999996,
+                        "cbo_read_rows": 30,
+                        "cbo_risk": false,
+                        "enabled": false,
+                        "policy": "experimental_v3",
+                        "reason": "mode_off"
+                      }
                     }
                   ]
                 }

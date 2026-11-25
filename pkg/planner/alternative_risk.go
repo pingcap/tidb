@@ -60,7 +60,13 @@ func newAlternativeRiskSelection(sv *variable.SessionVars, node ast.Node) *alter
 	return s
 }
 
-func (s *alternativeRiskSelection) consider(p base.PhysicalPlan, names types.NameSlice, cost float64, profile core.PhysicalPlanRisk, sv *variable.SessionVars) {
+func (s *alternativeRiskSelection) consider(
+	p base.PhysicalPlan,
+	names types.NameSlice,
+	cost float64,
+	profile core.PhysicalPlanRisk,
+	sv *variable.SessionVars,
+) {
 	if !s.enabled || profile.Risk || !finiteRiskCost(cost) || !core.IsRiskModeMPPAlternative(p) {
 		return
 	}

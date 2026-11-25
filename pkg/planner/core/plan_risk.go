@@ -140,7 +140,8 @@ func AssessPhysicalPlanRisk(plan base.PhysicalPlan) PhysicalPlanRisk {
 						} else {
 							existing := &profile.Signals[signalIndex]
 							existing.RemoteOperators = append(existing.RemoteOperators, signal.RemoteOperators...)
-							if signal.ProbeShape == "nested_probe" || (signal.ProbeShape == "double_read" && existing.ProbeShape == "single_reader") {
+							if signal.ProbeShape == "nested_probe" ||
+								(signal.ProbeShape == "double_read" && existing.ProbeShape == "single_reader") {
 								existing.ProbeShape = signal.ProbeShape
 								existing.NestedOperator, existing.InnerAccess = signal.NestedOperator, signal.InnerAccess
 								existing.NestedOuterRows, existing.NestedInnerRows = signal.NestedOuterRows, signal.NestedInnerRows
@@ -210,7 +211,8 @@ func riskSignalDecision(s PlanRiskSignal) (bool, string) {
 		// Covering probes need no row-data fetch; double-read/table probes have
 		// a separate call-volume trigger. Either large fanout or many calls can fire.
 		callThreshold := float64(RiskCrossEngineMinInnerRows)
-		if s.InnerAccess == "index_lookup" || s.InnerAccess == "index_merge_lookup" || s.InnerAccess == "table_reader" || s.InnerAccess == "point_get" {
+		switch s.InnerAccess {
+		case "index_lookup", "index_merge_lookup", "table_reader", "point_get":
 			callThreshold = RiskCrossEngineMinOuterRows
 		}
 		if *calls >= callThreshold || (riskFiniteRows(rows) && *rows >= RiskCrossEngineMinInnerRows) {
@@ -511,7 +513,8 @@ func IsRiskModeMPPAlternative(plan base.PhysicalPlan) bool {
 				return false
 			}
 		case *PhysicalExchangeSender:
-			if !inMPP || (x.ExchangeType == tipb.ExchangeType_Broadcast && (len(p.Children()) != 1 || !riskSmallRootInput(p.Children()[0]))) {
+			if !inMPP || (x.ExchangeType == tipb.ExchangeType_Broadcast &&
+				(len(p.Children()) != 1 || !riskSmallRootInput(p.Children()[0]))) {
 				return false
 			}
 		}
