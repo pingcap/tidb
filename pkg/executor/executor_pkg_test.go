@@ -503,3 +503,268 @@ func TestErrLevelsForResetStmtContext(t *testing.T) {
 		}
 	}
 }
+<<<<<<< HEAD
+=======
+
+func TestAddUnchangedKeysForLockByRow_GlobalIndexNewTableID(t *testing.T) {
+	sctx := mock.NewContext()
+	sctx.GetSessionVars().TxnCtx.IsPessimistic = true
+	sctx.GetSessionVars().TxnCtx.ResetUnchangedKeysForLock()
+
+	const (
+		tableID    int64 = 1000
+		newTableID int64 = 2000
+		indexID    int64 = 10
+		part0ID    int64 = 1001
+		part1ID    int64 = 1002
+		handleID   int64 = 999
+	)
+
+	tblInfo := &model.TableInfo{
+		ID:   tableID,
+		Name: ast.NewCIStr("t"),
+		Columns: []*model.ColumnInfo{
+			{
+				ID:        1,
+				Name:      ast.NewCIStr("a"),
+				State:     model.StatePublic,
+				Offset:    0,
+				FieldType: *types.NewFieldType(mysql.TypeLonglong),
+			},
+			{
+				ID:        2,
+				Name:      ast.NewCIStr("b"),
+				State:     model.StatePublic,
+				Offset:    1,
+				FieldType: *types.NewFieldType(mysql.TypeLonglong),
+			},
+		},
+		Indices: []*model.IndexInfo{
+			{
+				ID:   indexID,
+				Name: ast.NewCIStr("uk_b"),
+				Columns: []*model.IndexColumn{
+					{
+						Name:   ast.NewCIStr("b"),
+						Offset: 1,
+						Length: types.UnspecifiedLength,
+					},
+				},
+				Unique:             true,
+				Global:             true,
+				GlobalIndexVersion: model.GlobalIndexVersionV1,
+				State:              model.StatePublic,
+			},
+		},
+		Partition: &model.PartitionInfo{
+			Enable: true,
+			Type:   ast.PartitionTypeHash,
+			Expr:   "a",
+			Num:    2,
+			Definitions: []model.PartitionDefinition{
+				{ID: part0ID, Name: ast.NewCIStr("p0")},
+				{ID: part1ID, Name: ast.NewCIStr("p1")},
+			},
+			NewTableID:      newTableID,
+			DDLChangedIndex: map[int64]bool{indexID: true},
+		},
+		// Non-clustered table.
+		PKIsHandle:     false,
+		IsCommonHandle: false,
+	}
+
+	tbl := tables.MockTableFromMeta(tblInfo)
+	require.NotNil(t, tbl)
+
+	pt, ok := tbl.(table.PartitionedTable)
+	require.True(t, ok)
+
+	// a=1 => 1%2=1 => partition index 1 => part1ID.
+	row := []types.Datum{
+		types.NewIntDatum(1),
+		types.NewDatum(nil), // NULL => distinct=false for UNIQUE index
+	}
+	h := kv.IntHandle(handleID)
+
+	physicalTbl, err := pt.GetPartitionByRow(sctx.GetExprCtx().GetEvalCtx(), row)
+	require.NoError(t, err)
+	physicalID := physicalTbl.GetPhysicalID()
+	require.Equal(t, part1ID, physicalID)
+
+	// Expected: same key as idx.GenIndexKey, which switches to pi.NewTableID when
+	// pi.DDLChangedIndex[idx.ID] is true.
+	idx := tbl.Indices()[0]
+	ukVals, err := idx.FetchValues(row, nil)
+	require.NoError(t, err)
+	fullHandle := kv.NewPartitionHandle(physicalID, h)
+	expectedKey, _, err := idx.GenIndexKey(
+		errctx.StrictNoWarningContext,
+		sctx.GetSessionVars().StmtCtx.TimeZone(),
+		ukVals,
+		fullHandle,
+		nil,
+	)
+	require.NoError(t, err)
+
+	count, err := addUnchangedKeysForLockByRow(sctx, tbl, h, row, lockUniqueKeys)
+	require.NoError(t, err)
+	require.Equal(t, 1, count)
+
+	gotKeys := sctx.GetSessionVars().TxnCtx.CollectUnchangedKeysForXLock(nil)
+	require.Len(t, gotKeys, 1)
+	require.Equal(t, expectedKey, []byte(gotKeys[0]))
+
+	// REPLACE passes the already selected physical partition to the lock helper.
+	for _, lockTable := range []table.Table{tbl, physicalTbl} {
+		sctx.GetSessionVars().TxnCtx.ResetUnchangedKeysForLock()
+		count, err = addUnchangedKeysForLockByRow(sctx, lockTable, h, row, lockRowKey)
+		require.NoError(t, err)
+		require.Equal(t, 1, count)
+		gotKeys = sctx.GetSessionVars().TxnCtx.CollectUnchangedKeysForXLock(nil)
+		require.Len(t, gotKeys, 1)
+		require.Equal(t, []byte(tablecodec.EncodeRowKeyWithHandle(physicalID, h)), []byte(gotKeys[0]))
+	}
+}
+
+func TestStrictNotNullCheckForInsert(t *testing.T) {
+	ctx := mock.NewContext()
+	ctx.BindDomainAndSchValidator(&domain.Domain{}, nil)
+
+	cases := []struct {
+		name                     string
+		sqlMode                  mysql.SQLMode
+		enableStrictNotNullCheck bool
+		isSingleInsert           bool
+		expectBadNullLevel       errctx.Level
+		expectNoDefaultLevel     errctx.Level
+	}{
+		{
+			name:                     "non-strict,single-row,disable",
+			sqlMode:                  mysql.ModeErrorForDivisionByZero,
+			enableStrictNotNullCheck: false,
+			isSingleInsert:           true,
+			expectBadNullLevel:       errctx.LevelWarn,
+			expectNoDefaultLevel:     errctx.LevelWarn,
+		},
+		{
+			name:                     "strict,single-row,disable",
+			sqlMode:                  mysql.ModeStrictAllTables | mysql.ModeErrorForDivisionByZero,
+			enableStrictNotNullCheck: false,
+			isSingleInsert:           true,
+			expectBadNullLevel:       errctx.LevelWarn,
+			expectNoDefaultLevel:     errctx.LevelError,
+		},
+		{
+			name:                     "non-strict,single-row,enable",
+			sqlMode:                  mysql.ModeErrorForDivisionByZero,
+			enableStrictNotNullCheck: true,
+			isSingleInsert:           true,
+			expectBadNullLevel:       errctx.LevelError,
+			expectNoDefaultLevel:     errctx.LevelWarn,
+		},
+		{
+			name:                     "strict,single-row,enable",
+			sqlMode:                  mysql.ModeStrictAllTables | mysql.ModeErrorForDivisionByZero,
+			enableStrictNotNullCheck: true,
+			isSingleInsert:           true,
+			expectBadNullLevel:       errctx.LevelError,
+			expectNoDefaultLevel:     errctx.LevelError,
+		},
+		{
+			name:                     "non-strict,multi-row,disable",
+			sqlMode:                  mysql.ModeErrorForDivisionByZero,
+			enableStrictNotNullCheck: false,
+			isSingleInsert:           false,
+			expectBadNullLevel:       errctx.LevelWarn,
+			expectNoDefaultLevel:     errctx.LevelWarn,
+		},
+		{
+			name:                     "strict,multi-row,disable",
+			sqlMode:                  mysql.ModeStrictAllTables | mysql.ModeErrorForDivisionByZero,
+			enableStrictNotNullCheck: false,
+			isSingleInsert:           false,
+			expectBadNullLevel:       errctx.LevelWarn,
+			expectNoDefaultLevel:     errctx.LevelError,
+		},
+		{
+			name:                     "non-strict,multi-row,enable",
+			sqlMode:                  mysql.ModeErrorForDivisionByZero,
+			enableStrictNotNullCheck: true,
+			isSingleInsert:           false,
+			expectBadNullLevel:       errctx.LevelWarn,
+			expectNoDefaultLevel:     errctx.LevelWarn,
+		},
+		{
+			name:                     "strict,multi-row,enable",
+			sqlMode:                  mysql.ModeStrictAllTables | mysql.ModeErrorForDivisionByZero,
+			enableStrictNotNullCheck: true,
+			isSingleInsert:           false,
+			expectBadNullLevel:       errctx.LevelError,
+			expectNoDefaultLevel:     errctx.LevelError,
+		},
+	}
+
+	for _, c := range cases {
+		ctx.GetSessionVars().EnableStrictNotNullCheck = true
+		ctx.GetSessionVars().SQLMode = c.sqlMode
+		ctx.GetSessionVars().EnableStrictNotNullCheck = c.enableStrictNotNullCheck
+		stmt := &ast.InsertStmt{Lists: [][]ast.ExprNode{{}}}
+		if c.isSingleInsert {
+			stmt.Lists = make([][]ast.ExprNode, 1)
+		} else {
+			stmt.Lists = make([][]ast.ExprNode, 2)
+		}
+		require.NoError(t, ResetContextOfStmt(ctx, stmt), c.name)
+		ec := ctx.GetSessionVars().StmtCtx.ErrCtx()
+		require.Equal(t, c.expectBadNullLevel, ec.LevelMap()[errctx.ErrGroupBadNull], "%s: BadNull level", c.name)
+		require.Equal(t, c.expectNoDefaultLevel, ec.LevelMap()[errctx.ErrGroupNoDefault], "%s: NoDefault level", c.name)
+	}
+}
+
+func TestGetMPPServerID(t *testing.T) {
+	// A session without a Domain, like one of a cross-keyspace runtime, takes
+	// the server ID from the server info of the process.
+	_, err := infosync.GlobalInfoSyncerInit(context.Background(), t.Name(), func() uint64 { return 7 }, nil, nil, nil, nil, keyspace.CodecV1, true, nil)
+	require.NoError(t, err)
+	sctx := mock.NewContext()
+	require.Nil(t, domain.GetDomain(sctx))
+	serverID, err := getMPPServerID(sctx)
+	require.NoError(t, err)
+	require.EqualValues(t, 7, serverID)
+}
+
+func TestBuildMViewCompleteDeltaWritableInputColIDsColumnOffsets(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		offsets [2]int
+		err     string
+	}{
+		{name: "dense", offsets: [2]int{0, 1}},
+		{name: "reordered", offsets: [2]int{1, 0}, err: "column `a` offset 1 != writable ordinal 0"},
+		{name: "gapped", offsets: [2]int{0, 2}, err: "column `b` offset 2 != writable ordinal 1"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tp := types.NewFieldType(mysql.TypeLonglong)
+			target := tables.MockTableFromMeta(&model.TableInfo{
+				ID:    1,
+				Name:  ast.NewCIStr("mv"),
+				State: model.StatePublic,
+				Columns: []*model.ColumnInfo{
+					{ID: 1, Name: ast.NewCIStr("a"), Offset: tc.offsets[0], FieldType: *tp, State: model.StatePublic},
+					{ID: 2, Name: ast.NewCIStr("b"), Offset: tc.offsets[1], FieldType: *tp, State: model.StatePublic},
+				},
+			})
+			require.Len(t, target.Cols(), 2)
+			require.Len(t, target.WritableCols(), 2)
+			mapping, err := buildMViewCompleteDeltaWritableInputColIDs(target, []int{4, 2})
+			if tc.err != "" {
+				require.ErrorContains(t, err, tc.err)
+				require.Nil(t, mapping)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, []int{4, 2}, mapping)
+		})
+	}
+}
+>>>>>>> 754bede38a0 (executor: lock unchanged replacements with physical partition IDs (#71238))
