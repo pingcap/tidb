@@ -389,15 +389,18 @@ func TestExplainExploreReplayer(t *testing.T) {
 	loadTK.MustExec("create user 'explore_replayer_user'@'%'")
 	userTK := testkit.NewTestKit(t, loadStore)
 	require.NoError(t, userTK.Session().Auth(&auth.UserIdentity{Username: "explore_replayer_user", Hostname: "%"}, nil, nil, nil))
-	err = userTK.QueryToErr(fmt.Sprintf("explain explore replayer '%s'", replayerPath))
+	err = userTK.ExecToErr(fmt.Sprintf("explain explore replayer '%s'", replayerPath))
 	require.ErrorContains(t, err, "FILE privilege")
 	loadTK.MustExec("grant file on *.* to 'explore_replayer_user'@'%'")
 	loadTK.MustExec("grant all on test.* to 'explore_replayer_user'@'%'")
-	require.NotEmpty(t, userTK.MustQuery(fmt.Sprintf("explain explore replayer '%s'", replayerPath)).Rows())
+	// Authenticate again so the session picks up the new grants.
+	grantedTK := testkit.NewTestKit(t, loadStore)
+	require.NoError(t, grantedTK.Session().Auth(&auth.UserIdentity{Username: "explore_replayer_user", Hostname: "%"}, nil, nil, nil))
+	require.NotEmpty(t, grantedTK.MustQuery(fmt.Sprintf("explain explore replayer '%s'", replayerPath)).Rows())
 
 	sem.Enable()
 	defer sem.Disable()
-	err = loadTK.QueryToErr(fmt.Sprintf("explain explore replayer '%s'", replayerPath))
+	err = loadTK.ExecToErr(fmt.Sprintf("explain explore replayer '%s'", replayerPath))
 	require.ErrorIs(t, err, plannererrors.ErrNotSupportedWithSem)
 }
 
