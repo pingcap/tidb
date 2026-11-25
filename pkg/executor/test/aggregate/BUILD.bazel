@@ -9,10 +9,15 @@ go_test(
     ],
     data = glob(["testdata/**"]),
     flaky = True,
+<<<<<<< HEAD
     shard_count = 7,
+=======
+    shard_count = 11,
+>>>>>>> 1de639d2b41 (executor: retain owned buffers in JSON aggregates (#73249))
     deps = [
         "//pkg/config",
         "//pkg/executor/aggregate",
+        "//pkg/parser/mysql",
         "//pkg/session",
         "//pkg/testkit",
         "//pkg/testkit/testsetup",
