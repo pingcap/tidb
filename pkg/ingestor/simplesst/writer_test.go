@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/log"
+	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/objectio"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
@@ -401,92 +402,210 @@ func TestWriterKeyHints(t *testing.T) {
 	})
 }
 
-func BenchmarkWriterSortAutoRandom(b *testing.B) {
+func BenchmarkWriterSort(b *testing.B) {
+	// 2,000,000 KVs * 128 encoded bytes/KV = ~244 MiB kvBuffer per batch,
+	// matching DefaultMemSizeLimit (256 MB) and exceeding CPU L2/L3 caches.
 	const (
-		rowCount   = 65536
-		prefixStr  = "x\x00\x00\x01t\x80\x00\x00\x00\x00\x00\x00\x17_r"
-		shardCount = 32 // AUTO_RANDOM(5)
+		rowCount      = 2_000_000
+		encodedKVSize = 128
+		recordPrefix  = "x\x00\x00\x01t\x80\x00\x00\x00\x00\x00\x00\x17_r"
+		indexPrefix   = "x\x00\x00\x01t\x80\x00\x00\x00\x00\x00\x00\x17_i"
+		shardCount    = 32 // AUTO_RANDOM(5)
 	)
-	keys := make([][]byte, rowCount)
-	rng := rand.New(rand.NewSource(42))
-	for i := range rowCount {
-		shard := uint64(rng.Intn(shardCount))
-		handle := uint64(0x80000000_00000000) | (shard << 58) | uint64(i+1)
-		k := make([]byte, len(prefixStr)+8)
-		copy(k, prefixStr)
-		binary.BigEndian.PutUint64(k[len(prefixStr):], handle)
-		keys[i] = k
+
+	lowCardValues := [16][16]byte{
+		{'S', 'T', 'A', 'T', 'U', 'S', '_', 'P', 'E', 'N', 'D', 'I', 'N', 'G', '_', '0'},
+		{'S', 'T', 'A', 'T', 'U', 'S', '_', 'P', 'E', 'N', 'D', 'I', 'N', 'G', '_', '1'},
+		{'S', 'T', 'A', 'T', 'U', 'S', '_', 'R', 'U', 'N', 'N', 'I', 'N', 'G', '_', '0'},
+		{'S', 'T', 'A', 'T', 'U', 'S', '_', 'R', 'U', 'N', 'N', 'I', 'N', 'G', '_', '1'},
+		{'S', 'T', 'A', 'T', 'U', 'S', '_', 'S', 'U', 'C', 'C', 'E', 'S', 'S', '_', '0'},
+		{'S', 'T', 'A', 'T', 'U', 'S', '_', 'S', 'U', 'C', 'C', 'E', 'S', 'S', '_', '1'},
+		{'S', 'T', 'A', 'T', 'U', 'S', '_', 'A', 'B', 'O', 'R', 'T', 'E', 'D', '_', '0'},
+		{'S', 'T', 'A', 'T', 'U', 'S', '_', 'A', 'B', 'O', 'R', 'T', 'E', 'D', '_', '1'},
+		{'O', 'R', 'D', 'E', 'R', '_', 'C', 'R', 'E', 'A', 'T', 'E', 'D', '_', '_', '0'},
+		{'O', 'R', 'D', 'E', 'R', '_', 'C', 'R', 'E', 'A', 'T', 'E', 'D', '_', '_', '1'},
+		{'O', 'R', 'D', 'E', 'R', '_', 'S', 'H', 'I', 'P', 'P', 'E', 'D', '_', '_', '0'},
+		{'O', 'R', 'D', 'E', 'R', '_', 'S', 'H', 'I', 'P', 'P', 'E', 'D', '_', '_', '1'},
+		{'O', 'R', 'D', 'E', 'R', '_', 'S', 'E', 'T', 'T', 'L', 'E', 'D', '_', '_', '0'},
+		{'O', 'R', 'D', 'E', 'R', '_', 'S', 'E', 'T', 'T', 'L', 'E', 'D', '_', '_', '1'},
+		{'O', 'R', 'D', 'E', 'R', '_', 'C', 'L', 'O', 'S', 'E', 'D', '_', '_', '_', '0'},
+		{'O', 'R', 'D', 'E', 'R', '_', 'C', 'L', 'O', 'S', 'E', 'D', '_', '_', '_', '1'},
 	}
-	val := bytes.Repeat([]byte("v"), 64)
 
-	ctx := context.Background()
-	writer := NewWriterBuilder().
-		SetBlockSize(16*units.MiB).
-		SetMemorySizeLimit(64*units.MiB).
-		Build(objstore.NewMemStorage(), "/bench", "0")
-	defer func() {
-		writer.kvBuffer.Destroy()
-	}()
-	for _, k := range keys {
-		if err := writer.WriteRow(ctx, k, val, nil); err != nil {
-			b.Fatal(err)
-		}
+	workloads := []struct {
+		name           string
+		wantExactHints bool
+		fillKey        func(rng *rand.Rand, rowIdx int, buf []byte) int
+	}{
+		{
+			name:           "AutoRandomPK_2M",
+			wantExactHints: true,
+			fillKey: func(rng *rand.Rand, rowIdx int, buf []byte) int {
+				shard := uint64(rng.Intn(shardCount))
+				handle := uint64(0x80000000_00000000) | (shard << 58) | uint64(rowIdx+1)
+				copy(buf, recordPrefix)
+				binary.BigEndian.PutUint64(buf[len(recordPrefix):], handle)
+				return len(recordPrefix) + 8
+			},
+		},
+		{
+			name:           "SecondaryIndexHighCard_2M",
+			wantExactHints: false,
+			fillKey: func(rng *rand.Rand, rowIdx int, buf []byte) int {
+				copy(buf, indexPrefix)
+				binary.BigEndian.PutUint64(buf[len(indexPrefix):], rng.Uint64())
+				binary.BigEndian.PutUint64(buf[len(indexPrefix)+8:], rng.Uint64())
+				handle := uint64(0x80000000_00000000) | uint64(rowIdx+1)
+				binary.BigEndian.PutUint64(buf[len(indexPrefix)+16:], handle)
+				return len(indexPrefix) + 24
+			},
+		},
+		{
+			name:           "SecondaryIndexLowCard_2M",
+			wantExactHints: false,
+			fillKey: func(rng *rand.Rand, rowIdx int, buf []byte) int {
+				copy(buf, indexPrefix)
+				col := lowCardValues[rng.Intn(len(lowCardValues))]
+				copy(buf[len(indexPrefix):], col[:])
+				shard := uint64(rng.Intn(shardCount))
+				handle := uint64(0x80000000_00000000) | (shard << 58) | uint64(rowIdx+1)
+				binary.BigEndian.PutUint64(buf[len(indexPrefix)+16:], handle)
+				return len(indexPrefix) + 24
+			},
+		},
 	}
-	origLocations := slices.Clone(writer.kvLocations)
 
-	b.Run("BaselineBytesCompare", func(b *testing.B) {
-		b.ReportAllocs()
-		b.ResetTimer()
-		for range b.N {
-			copy(writer.kvLocations, origLocations)
-			slices.SortFunc(writer.kvLocations, func(i, j condenseLocation) int {
-				return bytes.Compare(writer.getKeyByLoc(&i), writer.getKeyByLoc(&j))
-			})
-		}
-	})
+	for _, wl := range workloads {
+		b.Run(wl.name, func(b *testing.B) {
+			ctx := context.Background()
+			writer := NewWriterBuilder().
+				SetBlockSize(DefaultBlockSize).
+				SetMemorySizeLimit(280*units.MiB).
+				Build(objstore.NewMemStorage(), "/bench", "0")
+			defer writer.kvBuffer.Destroy()
 
-	b.Run("Uint32KeyHint", func(b *testing.B) {
-		prefixLen := len(writer.commonPrefix)
-		b.ReportAllocs()
-		b.ResetTimer()
-		for range b.N {
-			copy(writer.kvLocations, origLocations)
-			for idx, loc := range writer.kvLocations {
-				key := writer.getKeyByLoc(&loc)
-				writer.kvLocations[idx].keyHint = uint64(binary.BigEndian.Uint32(key[prefixLen:]))
+			rng := rand.New(rand.NewSource(42))
+			var (
+				keyBuf [64]byte
+				valBuf [encodedKVSize]byte
+			)
+			for i := range valBuf {
+				valBuf[i] = 'v'
 			}
-			slices.SortFunc(writer.kvLocations, func(i, j condenseLocation) int {
-				if i.keyHint != j.keyHint {
-					if i.keyHint < j.keyHint {
-						return -1
+			origSliceLocs := make([]membuf.SliceLocation, rowCount)
+			for i := range rowCount {
+				keyLen := wl.fillKey(rng, i, keyBuf[:])
+				valLen := encodedKVSize - 2*LengthBytes - keyLen
+				if err := writer.WriteRow(ctx, keyBuf[:keyLen], valBuf[:valLen], nil); err != nil {
+					b.Fatal(err)
+				}
+				loc := writer.kvLocations[i]
+				origSliceLocs[i] = membuf.SliceLocation{
+					BufIdx: loc.bufIndex,
+					Offset: loc.offset,
+					Length: int32(encodedKVSize),
+				}
+			}
+			if writer.currentSeq != 0 || len(writer.kvLocations) != rowCount {
+				b.Fatalf("unexpected mid-setup flush: seq=%d buffered=%d", writer.currentSeq, len(writer.kvLocations))
+			}
+			// Capture un-populated condenseLocations (keyHint == 0) so every
+			// timed iteration must execute updateKeyHints() from scratch.
+			origCondenseLocs := slices.Clone(writer.kvLocations)
+			if gotExact := writer.updateKeyHints(); gotExact != wl.wantExactHints {
+				b.Fatalf("exactHints = %v, want %v", gotExact, wl.wantExactHints)
+			}
+
+			b.Run("BaselineBytesCompare", func(b *testing.B) {
+				workSliceLocs := make([]membuf.SliceLocation, rowCount)
+				getBaselineKey := func(loc *membuf.SliceLocation) []byte {
+					s := writer.kvBuffer.GetSlice(loc)
+					keyLen := binary.BigEndian.Uint64(s)
+					return s[2*LengthBytes : 2*LengthBytes+keyLen]
+				}
+				b.SetBytes(int64(writer.batchSize))
+				b.ReportAllocs()
+				b.ResetTimer()
+				for range b.N {
+					b.StopTimer()
+					copy(workSliceLocs, origSliceLocs)
+					b.StartTimer()
+
+					var (
+						dupFound bool
+						dupLoc   membuf.SliceLocation
+					)
+					slices.SortFunc(workSliceLocs, func(i, j membuf.SliceLocation) int {
+						res := bytes.Compare(getBaselineKey(&i), getBaselineKey(&j))
+						if res == 0 && !dupFound {
+							dupFound = true
+							dupLoc = i
+						}
+						return res
+					})
+					if dupFound {
+						b.Fatalf("unexpected duplicate at %+v", dupLoc)
 					}
-					return 1
 				}
-				return bytes.Compare(writer.getKeyByLoc(&i)[prefixLen:], writer.getKeyByLoc(&j)[prefixLen:])
 			})
-		}
-	})
 
-	b.Run("Uint64ExactKeyHint", func(b *testing.B) {
-		b.ReportAllocs()
-		b.ResetTimer()
-		for range b.N {
-			copy(writer.kvLocations, origLocations)
-			exact := writer.updateKeyHints()
-			if !exact {
-				b.Fatal("expected exactHints for fixed-width AUTO_RANDOM keys")
-			}
-			slices.SortFunc(writer.kvLocations, func(i, j condenseLocation) int {
-				if i.keyHint < j.keyHint {
-					return -1
+			b.Run("Uint32KeyHint", func(b *testing.B) {
+				prefixLen := len(writer.commonPrefix)
+				b.SetBytes(int64(writer.batchSize))
+				b.ReportAllocs()
+				b.ResetTimer()
+				for range b.N {
+					b.StopTimer()
+					copy(writer.kvLocations, origCondenseLocs)
+					b.StartTimer()
+
+					var (
+						dupFound bool
+						dupLoc   condenseLocation
+					)
+					for idx, loc := range writer.kvLocations {
+						key := writer.getKeyByLoc(&loc)
+						writer.kvLocations[idx].keyHint = uint64(binary.BigEndian.Uint32(key[prefixLen:]))
+					}
+					slices.SortFunc(writer.kvLocations, func(i, j condenseLocation) int {
+						if i.keyHint != j.keyHint {
+							if i.keyHint < j.keyHint {
+								return -1
+							}
+							return 1
+						}
+						res := bytes.Compare(writer.getKeyByLoc(&i)[prefixLen:], writer.getKeyByLoc(&j)[prefixLen:])
+						if res == 0 && !dupFound {
+							dupFound = true
+							dupLoc = i
+						}
+						return res
+					})
+					if dupFound {
+						b.Fatalf("unexpected duplicate at %+v", dupLoc)
+					}
 				}
-				if i.keyHint > j.keyHint {
-					return 1
-				}
-				return 0
 			})
-		}
-	})
+
+			b.Run("Uint64KeyHint_sortKVs", func(b *testing.B) {
+				b.SetBytes(int64(writer.batchSize))
+				b.ReportAllocs()
+				b.ResetTimer()
+				for range b.N {
+					b.StopTimer()
+					copy(writer.kvLocations, origCondenseLocs)
+					b.StartTimer()
+
+					// Calls the production Writer.sortKVs() path directly,
+					// including Writer.updateKeyHints() + slices.SortFunc().
+					dupFound, dupLoc := writer.sortKVs()
+					if dupFound {
+						b.Fatalf("unexpected duplicate at %+v", dupLoc)
+					}
+				}
+			})
+		})
+	}
 }
 
 func TestWriterFlushMultiFileNames(t *testing.T) {

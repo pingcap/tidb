@@ -647,20 +647,7 @@ func (w *Writer) recordMinMax(newMin, newMax tidbkv.Key) {
 
 const flushKVsRetryTimes = 3
 
-func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
-	if len(w.kvLocations) == 0 {
-		return nil
-	}
-
-	logger := logutil.Logger(ctx).With(
-		zap.String("writer-id", w.writerID),
-		zap.Int("sequence-number", w.currentSeq),
-	)
-	sortStart := time.Now()
-	var (
-		dupFound bool
-		dupLoc   condenseLocation
-	)
+func (w *Writer) sortKVs() (dupFound bool, dupLoc condenseLocation) {
 	prefixLen := len(w.commonPrefix)
 	if w.updateKeyHints() {
 		slices.SortFunc(w.kvLocations, func(i, j condenseLocation) int {
@@ -673,21 +660,35 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 			}
 			return 0
 		})
-	} else {
-		slices.SortFunc(w.kvLocations, func(i, j condenseLocation) int {
-			if i.keyHint != j.keyHint {
-				return cmp.Compare(i.keyHint, j.keyHint)
-			}
-			res := bytes.Compare(
-				w.getKeyByLoc(&i)[prefixLen:],
-				w.getKeyByLoc(&j)[prefixLen:])
-			if res == 0 && !dupFound {
-				dupFound = true
-				dupLoc = i
-			}
-			return res
-		})
+		return dupFound, dupLoc
 	}
+	slices.SortFunc(w.kvLocations, func(i, j condenseLocation) int {
+		if i.keyHint != j.keyHint {
+			return cmp.Compare(i.keyHint, j.keyHint)
+		}
+		res := bytes.Compare(
+			w.getKeyByLoc(&i)[prefixLen:],
+			w.getKeyByLoc(&j)[prefixLen:])
+		if res == 0 && !dupFound {
+			dupFound = true
+			dupLoc = i
+		}
+		return res
+	})
+	return dupFound, dupLoc
+}
+
+func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
+	if len(w.kvLocations) == 0 {
+		return nil
+	}
+
+	logger := logutil.Logger(ctx).With(
+		zap.String("writer-id", w.writerID),
+		zap.Int("sequence-number", w.currentSeq),
+	)
+	sortStart := time.Now()
+	dupFound, dupLoc := w.sortKVs()
 	sortDuration := time.Since(sortStart)
 	metrics.GlobalSortWriteToCloudStorageDuration.WithLabelValues("sort").Observe(sortDuration.Seconds())
 	metrics.GlobalSortWriteToCloudStorageRate.WithLabelValues("sort").Observe(float64(w.batchSize) / 1024.0 / 1024.0 / sortDuration.Seconds())
