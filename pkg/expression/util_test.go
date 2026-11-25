@@ -389,6 +389,101 @@ func assertFoldedGreatestKeepsBinComparator(t *testing.T, ctx BuildContext, resu
 	require.Equal(t, ast.Cast, sf.FuncName.L, "outer COLLATE on a folded scalar function should be applied through a CAST")
 }
 
+func TestColumnSubstituteNestedExplicitCollateSurvivesTwoRebuilds(t *testing.T) {
+	ctx := mock.NewContext()
+	a, b, suffix, a2, outer := setupNestedExplicitCollateConcat(t, ctx, newUTF8MB4BinColumn(5, "suffix"))
+
+	schema := NewSchema(suffix)
+	changed, _, result := ColumnSubstituteImpl(ctx, outer, schema, []Expression{newUTF8MB4BinConst("x")}, false)
+	require.True(t, changed)
+	assertNestedGreatestKeepsExplicitCollate(t, ctx, result, 1)
+
+	changed, _, result = ColumnSubstituteImpl(ctx, result, NewSchema(a), []Expression{a2}, false)
+	require.True(t, changed)
+	assertNestedGreatestKeepsExplicitCollate(t, ctx, result, 2)
+	_ = b
+}
+
+func TestSubstituteCorCol2ConstantNestedExplicitCollateSurvivesTwoRebuilds(t *testing.T) {
+	ctx := mock.NewContext()
+	suffix := &CorrelatedColumn{Data: &newUTF8MB4BinConst("x").Value}
+	suffix.RetType = newUTF8MB4BinConst("x").RetType
+	suffix.UniqueID = 5
+	a, b, _, a2, outer := setupNestedExplicitCollateConcat(t, ctx, suffix)
+
+	result, err := SubstituteCorCol2Constant(ctx, outer)
+	require.NoError(t, err)
+	assertNestedGreatestKeepsExplicitCollate(t, ctx, result, 1)
+
+	changed, _, result := ColumnSubstituteImpl(ctx, result, NewSchema(a), []Expression{a2}, false)
+	require.True(t, changed)
+	assertNestedGreatestKeepsExplicitCollate(t, ctx, result, 2)
+	_ = b
+}
+
+func setupNestedExplicitCollateConcat(t *testing.T, ctx BuildContext, suffix Expression) (a, b, suffixCol *Column, a2 *Column, outer *ScalarFunction) {
+	t.Helper()
+	a = newUTF8MB4BinColumn(1, "a")
+	b = newUTF8MB4BinColumn(2, "b")
+	a2 = newUTF8MB4BinColumn(10, "a2")
+	if col, ok := suffix.(*Column); ok {
+		suffixCol = col
+	}
+	inner, err := NewFunctionBase(ctx, ast.Greatest, a.RetType.Clone(), a, b)
+	require.NoError(t, err)
+	innerSF := inner.(*ScalarFunction)
+	markExplicitCollate(innerSF, ctx, "utf8mb4_unicode_ci")
+
+	concatTp := a.RetType.Clone()
+	outerFn, err := NewFunctionBase(ctx, ast.Concat, concatTp, innerSF, suffix)
+	require.NoError(t, err)
+	outer = outerFn.(*ScalarFunction)
+	markExplicitCollate(outer, ctx, "utf8mb4_general_ci")
+	require.True(t, innerSF.IsExplicitCharset())
+	_, coll := innerSF.CharsetAndCollation()
+	require.Equal(t, "utf8mb4_unicode_ci", coll)
+	return a, b, suffixCol, a2, outer
+}
+
+func markExplicitCollate(sf *ScalarFunction, ctx BuildContext, coll string) {
+	sf.SetCoercibility(CoercibilityExplicit)
+	sf.SetCharsetAndCollation(charset.CharsetUTF8MB4, coll)
+	sf.SetExplicitCharset(true)
+	sf.GetType(ctx.GetEvalCtx()).SetCollate(coll)
+}
+
+func newUTF8MB4BinConst(s string) *Constant {
+	tp := types.NewFieldTypeBuilder().SetType(mysql.TypeVarString).
+		SetCharset(charset.CharsetUTF8MB4).SetCollate("utf8mb4_bin").SetFlen(20).BuildP()
+	return &Constant{Value: types.NewStringDatum(s), RetType: tp}
+}
+
+func findScalarFunc(expr Expression, name string) *ScalarFunction {
+	sf, ok := expr.(*ScalarFunction)
+	if !ok {
+		return nil
+	}
+	if sf.FuncName.L == name {
+		return sf
+	}
+	for _, arg := range sf.GetArgs() {
+		if found := findScalarFunc(arg, name); found != nil {
+			return found
+		}
+	}
+	return nil
+}
+
+func assertNestedGreatestKeepsExplicitCollate(t *testing.T, ctx BuildContext, expr Expression, rebuild int) {
+	t.Helper()
+	inner := findScalarFunc(expr, ast.Greatest)
+	require.NotNil(t, inner, "nested GREATEST missing after rebuild %d", rebuild)
+	require.True(t, inner.IsExplicitCharset(), "nested GREATEST lost explicit COLLATE flag after rebuild %d", rebuild)
+	_, coll := inner.CharsetAndCollation()
+	require.Equal(t, "utf8mb4_unicode_ci", coll, "nested GREATEST collation after rebuild %d", rebuild)
+	require.Equal(t, "utf8mb4_unicode_ci", inner.GetType(ctx.GetEvalCtx()).GetCollate(), "nested GREATEST FieldType collation after rebuild %d", rebuild)
+}
+
 func TestPushDownNot(t *testing.T) {
 	ctx := mock.NewContext()
 	col := &Column{Index: 1, RetType: types.NewFieldType(mysql.TypeLonglong)}
