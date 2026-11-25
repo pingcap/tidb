@@ -123,7 +123,8 @@ impl CampaignStop {
 
 struct MockCampaign {
     stop: Arc<CampaignStop>,
-    resign: Arc<AtomicBool>,
+    /// Go `resignDone`, unbuffered: a resign waits for the loop's next tick.
+    resign: std::sync::mpsc::SyncSender<()>,
     worker: JoinHandle<()>,
 }
 
@@ -207,15 +208,14 @@ impl Manager for MockManager {
             return Ok(());
         }
         let stop = Arc::new(CampaignStop::default());
-        let resign = Arc::new(AtomicBool::new(false));
+        let (resign, resign_done) = std::sync::mpsc::sync_channel(0);
         let worker_stop = Arc::clone(&stop);
-        let worker_resign = Arc::clone(&resign);
         let manager = self.clone();
         let worker = std::thread::Builder::new()
             .name("mock-owner".to_owned())
             .spawn(move || {
                 while !worker_stop.is_stopped() && !manager.inner.context.is_done() {
-                    if worker_resign.swap(false, Ordering::AcqRel) {
+                    if resign_done.try_recv().is_ok() {
                         manager.retire_owner();
                         // Give a chance to the other owner managers to get owner.
                         worker_stop.sleep(Duration::from_secs(1));
@@ -251,9 +251,13 @@ impl Manager for MockManager {
         self.close();
     }
 
+    /// Go `m.resignDone <- struct{}{}`: returns once the campaign loop has
+    /// taken the resign, at its next tick. A loop that stops first ends the
+    /// wait (Go's send would block forever).
     fn resign_owner(&self, _context: &Context) -> Result<(), String> {
-        if let Some(campaign) = lock(&self.inner.campaign).as_ref() {
-            campaign.resign.store(true, Ordering::Release);
+        let resign = lock(&self.inner.campaign).as_ref().map(|campaign| campaign.resign.clone());
+        if let Some(resign) = resign {
+            let _ = resign.send(());
         }
         Ok(())
     }
@@ -286,5 +290,31 @@ pub(crate) fn mock_owner_op_value() -> OpType {
     match MOCK_OWNER_OP_VALUE.load(Ordering::Acquire) {
         1 => OpType::SYNC_UPGRADING_STATE,
         value => OpType::from_byte(value),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Go `ResignOwner` sends on the unbuffered `resignDone`, so it returns
+    /// only once the campaign loop has taken it and retires: right after the
+    /// call the manager is no longer the owner.
+    #[test]
+    fn a_resign_returns_once_the_campaign_loop_takes_it() {
+        let manager = MockManager::new(Context::background(), "resigner", Some("resign_store"), "resign_key");
+        manager.campaign_owner(&[]).unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while !manager.is_owner() && std::time::Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(manager.is_owner());
+        manager.resign_owner(&Context::background()).unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_millis(100);
+        while manager.is_owner() && std::time::Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(!manager.is_owner(), "still the owner after the resign returned");
+        manager.close();
     }
 }
