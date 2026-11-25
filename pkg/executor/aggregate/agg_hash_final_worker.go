@@ -24,9 +24,13 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/aggfuncs"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+<<<<<<< HEAD
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
+=======
+	"github.com/pingcap/tidb/pkg/util/execdetails"
+>>>>>>> 65cf2f0a62d (executor: propagate parallel HashAgg finalization errors (#73675))
 )
 
 // AfFinalResult indicates aggregation functions final result.
@@ -135,13 +139,13 @@ func (w *HashAggFinalWorker) consumeIntermData(sctx sessionctx.Context) error {
 	}
 }
 
-func (w *HashAggFinalWorker) generateResultAndSend(sctx sessionctx.Context, result *chunk.Chunk) {
+func (w *HashAggFinalWorker) generateResultAndSend(sctx sessionctx.Context, result *chunk.Chunk) error {
 	var finished bool
 	exprCtx := sctx.GetExprCtx()
 	for _, results := range w.partialResultMap {
 		for j, af := range w.aggFuncs {
 			if err := af.AppendFinalResult2Chunk(exprCtx.GetEvalCtx(), results[j], result); err != nil {
-				logutil.BgLogger().Error("HashAggFinalWorker failed to append final result to Chunk", zap.Error(err))
+				return err
 			}
 		}
 
@@ -153,10 +157,11 @@ func (w *HashAggFinalWorker) generateResultAndSend(sctx sessionctx.Context, resu
 			w.outputCh <- &AfFinalResult{chk: result, giveBackCh: w.finalResultHolderCh}
 			result, finished = w.receiveFinalResultHolder()
 			if finished {
-				return
+				return nil
 			}
 		}
 	}
+	return nil
 }
 
 func (w *HashAggFinalWorker) sendFinalResult(sctx sessionctx.Context) {
@@ -172,7 +177,10 @@ func (w *HashAggFinalWorker) sendFinalResult(sctx sessionctx.Context) {
 	execStart := time.Now()
 	updateExecTime(w.stats, execStart)
 	if w.spillHelper.isSpilledChunksIOEmpty() {
-		w.generateResultAndSend(sctx, result)
+		if err := w.generateResultAndSend(sctx, result); err != nil {
+			w.outputCh <- &AfFinalResult{err: err}
+			return
+		}
 	} else {
 		for {
 			if w.checkFinishChClosed() {
@@ -186,7 +194,10 @@ func (w *HashAggFinalWorker) sendFinalResult(sctx sessionctx.Context) {
 			if eof {
 				break
 			}
-			w.generateResultAndSend(sctx, result)
+			if err := w.generateResultAndSend(sctx, result); err != nil {
+				w.outputCh <- &AfFinalResult{err: err}
+				return
+			}
 		}
 	}
 
