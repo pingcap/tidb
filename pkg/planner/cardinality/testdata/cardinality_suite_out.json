@@ -4342,8 +4342,7 @@
           "  │ └─Selection 2000.00 cop[tikv]  lt(test.t.a, 1), not(isnull(test.t.a))",
           "  │   └─TableFullScan 500000.00 cop[tikv] table:t keep order:false, stats:pseudo",
           "  └─IndexLookUp(Probe) 4000.00 root  ",
-          "    ├─Selection(Build) 2000000.00 cop[tikv]  lt(test.t.b, 1), not(isnull(test.t.b))",
-          "    │ └─IndexRangeScan 500000000.00 cop[tikv] table:t2, index:idx(b) range: decided by [eq(test.t.b, test.t.a)], keep order:false, stats:pseudo",
+          "    ├─IndexRangeScan(Build) 2000000.00 cop[tikv] table:t2, index:idx(b) range: decided by [eq(test.t.b, test.t.a)], keep order:false, stats:pseudo",
           "    └─Selection(Probe) 4000.00 cop[tikv]  eq(test.t.a, 0)",
           "      └─TableRowIDScan 2000000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
         ]
@@ -4361,8 +4360,7 @@
           "  │ └─Selection 2000.00 cop[tikv]  lt(test.t.a, 1), not(isnull(test.t.a))",
           "  │   └─TableFullScan 500000.00 cop[tikv] table:t keep order:false, stats:pseudo",
           "  └─IndexLookUp(Probe) 4000.00 root  ",
-          "    ├─Selection(Build) 2000000.00 cop[tikv]  lt(test.t.b, 1), not(isnull(test.t.b))",
-          "    │ └─IndexRangeScan 2000000.00 cop[tikv] table:t2, index:idx(b) range: decided by [eq(test.t.b, test.t.a)], keep order:false, stats:pseudo",
+          "    ├─IndexRangeScan(Build) 2000000.00 cop[tikv] table:t2, index:idx(b) range: decided by [eq(test.t.b, test.t.a)], keep order:false, stats:pseudo",
           "    └─Selection(Probe) 4000.00 cop[tikv]  eq(test.t.a, 0)",
           "      └─TableRowIDScan 2000000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
         ]

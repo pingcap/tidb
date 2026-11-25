@@ -309,8 +309,7 @@ IndexJoin	root		inner join, inner:IndexLookUp, outer key:planner__core__casetest
 │ └─Selection	cop[tikv]		not(isnull(planner__core__casetest__index__index.t.c))
 │   └─TableFullScan	cop[tikv]	table:t1	keep order:false
 └─IndexLookUp(Probe)	root		
-  ├─Selection(Build)	cop[tikv]		not(isnull(planner__core__casetest__index__index.t.c))
-  │ └─IndexRangeScan	cop[tikv]	table:t2, index:c(c)	range: decided by [eq(planner__core__casetest__index__index.t.c, planner__core__casetest__index__index.t.c)], keep order:false
+  ├─IndexRangeScan(Build)	cop[tikv]	table:t2, index:c(c)	range: decided by [eq(planner__core__casetest__index__index.t.c, planner__core__casetest__index__index.t.c)], keep order:false
   └─TableRowIDScan(Probe)	cop[tikv]	table:t2	keep order:false
 select /*+ inl_join(t1, t2) */ * from t t1 join t t2 on t1.c = t2.c;
 a	b	c	d	a	b	c	d
@@ -456,8 +455,7 @@ IndexJoin	root		inner join, inner:IndexLookUp, outer key:planner__core__casetest
 │ └─Selection	cop[tikv]		not(isnull(planner__core__casetest__index__index.t2.e)), not(isnull(planner__core__casetest__index__index.t2.g))
 │   └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
 └─IndexLookUp(Probe)	root		
-  ├─Selection(Build)	cop[tikv]		not(isnull(planner__core__casetest__index__index.t1.b)), not(isnull(planner__core__casetest__index__index.t1.d))
-  │ └─IndexRangeScan	cop[tikv]	table:t1, index:idx_a_b_c_d(a, b, c, d)	range: decided by [eq(planner__core__casetest__index__index.t1.b, planner__core__casetest__index__index.t2.e) eq(planner__core__casetest__index__index.t1.d, planner__core__casetest__index__index.t2.g) in(planner__core__casetest__index__index.t1.a, 1, 3) in(planner__core__casetest__index__index.t1.c, aaa, bbb)], keep order:false, stats:pseudo
+  ├─IndexRangeScan(Build)	cop[tikv]	table:t1, index:idx_a_b_c_d(a, b, c, d)	range: decided by [eq(planner__core__casetest__index__index.t1.b, planner__core__casetest__index__index.t2.e) eq(planner__core__casetest__index__index.t1.d, planner__core__casetest__index__index.t2.g) in(planner__core__casetest__index__index.t1.a, 1, 3) in(planner__core__casetest__index__index.t1.c, aaa, bbb)], keep order:false, stats:pseudo
   └─Selection(Probe)	cop[tikv]		in(planner__core__casetest__index__index.t1.c, "aaa", "bbb")
     └─TableRowIDScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 show warnings;
@@ -470,7 +468,7 @@ IndexJoin	root		inner join, inner:IndexLookUp, outer key:planner__core__casetest
 │ └─Selection	cop[tikv]		not(isnull(planner__core__casetest__index__index.t2.e)), not(isnull(planner__core__casetest__index__index.t2.g))
 │   └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
 └─IndexLookUp(Probe)	root		
-  ├─Selection(Build)	cop[tikv]		not(isnull(planner__core__casetest__index__index.t1.b)), not(isnull(planner__core__casetest__index__index.t1.d))
+  ├─Selection(Build)	cop[tikv]		not(isnull(planner__core__casetest__index__index.t1.d))
   │ └─IndexRangeScan	cop[tikv]	table:t1, index:idx_a_b_c_d(a, b, c, d)	range: decided by [eq(planner__core__casetest__index__index.t1.b, planner__core__casetest__index__index.t2.e) in(planner__core__casetest__index__index.t1.a, 1, 3) in(planner__core__casetest__index__index.t1.c, aaa, bbb)], keep order:false, stats:pseudo
   └─Selection(Probe)	cop[tikv]		in(planner__core__casetest__index__index.t1.c, "aaa", "bbb")
     └─TableRowIDScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
@@ -485,7 +483,7 @@ IndexJoin	root		inner join, inner:IndexLookUp, outer key:planner__core__casetest
 │ └─Selection	cop[tikv]		not(isnull(planner__core__casetest__index__index.t2.e)), not(isnull(planner__core__casetest__index__index.t2.g))
 │   └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
 └─IndexLookUp(Probe)	root		
-  ├─Selection(Build)	cop[tikv]		not(isnull(planner__core__casetest__index__index.t1.b)), not(isnull(planner__core__casetest__index__index.t1.d))
+  ├─Selection(Build)	cop[tikv]		not(isnull(planner__core__casetest__index__index.t1.d))
   │ └─IndexRangeScan	cop[tikv]	table:t1, index:idx_a_b_c_d(a, b, c, d)	range: decided by [eq(planner__core__casetest__index__index.t1.b, planner__core__casetest__index__index.t2.e) in(planner__core__casetest__index__index.t1.a, 1, 3)], keep order:false, stats:pseudo
   └─Selection(Probe)	cop[tikv]		in(planner__core__casetest__index__index.t1.c, "aaa", "bbb")
     └─TableRowIDScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
@@ -516,8 +514,7 @@ IndexJoin	root		inner join, inner:IndexLookUp, outer key:planner__core__casetest
 │ └─Selection	cop[tikv]		not(isnull(planner__core__casetest__index__index.t2.e))
 │   └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
 └─IndexLookUp(Probe)	root		
-  ├─Selection(Build)	cop[tikv]		not(isnull(planner__core__casetest__index__index.t1.a))
-  │ └─IndexRangeScan	cop[tikv]	table:t1, index:idx_a_b_c_d(a, b, c, d)	range: decided by [eq(planner__core__casetest__index__index.t1.a, planner__core__casetest__index__index.t2.e) gt(planner__core__casetest__index__index.t1.b, 1) lt(planner__core__casetest__index__index.t1.b, 10)], keep order:false, stats:pseudo
+  ├─IndexRangeScan(Build)	cop[tikv]	table:t1, index:idx_a_b_c_d(a, b, c, d)	range: decided by [eq(planner__core__casetest__index__index.t1.a, planner__core__casetest__index__index.t2.e) gt(planner__core__casetest__index__index.t1.b, 1) lt(planner__core__casetest__index__index.t1.b, 10)], keep order:false, stats:pseudo
   └─TableRowIDScan(Probe)	cop[tikv]	table:t1	keep order:false, stats:pseudo
 show warnings;
 Level	Code	Message
@@ -529,7 +526,7 @@ IndexJoin	root		inner join, inner:IndexLookUp, outer key:planner__core__casetest
 │ └─Selection	cop[tikv]		not(isnull(planner__core__casetest__index__index.t2.e))
 │   └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
 └─IndexLookUp(Probe)	root		
-  ├─Selection(Build)	cop[tikv]		gt(planner__core__casetest__index__index.t1.b, 1), lt(planner__core__casetest__index__index.t1.b, 10), not(isnull(planner__core__casetest__index__index.t1.a))
+  ├─Selection(Build)	cop[tikv]		gt(planner__core__casetest__index__index.t1.b, 1), lt(planner__core__casetest__index__index.t1.b, 10)
   │ └─IndexRangeScan	cop[tikv]	table:t1, index:idx_a_b_c_d(a, b, c, d)	range: decided by [eq(planner__core__casetest__index__index.t1.a, planner__core__casetest__index__index.t2.e)], keep order:false, stats:pseudo
   └─TableRowIDScan(Probe)	cop[tikv]	table:t1	keep order:false, stats:pseudo
 show warnings;
@@ -543,7 +540,7 @@ IndexJoin	root		inner join, inner:IndexLookUp, outer key:planner__core__casetest
 │ └─Selection	cop[tikv]		not(isnull(planner__core__casetest__index__index.t2.e)), not(isnull(planner__core__casetest__index__index.t2.f))
 │   └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
 └─IndexLookUp(Probe)	root		
-  ├─Selection(Build)	cop[tikv]		not(isnull(planner__core__casetest__index__index.t1.a)), not(isnull(planner__core__casetest__index__index.t1.b))
+  ├─Selection(Build)	cop[tikv]		not(isnull(planner__core__casetest__index__index.t1.b))
   │ └─IndexRangeScan	cop[tikv]	table:t1, index:idx_a_b_c_d(a, b, c, d)	range: decided by [eq(planner__core__casetest__index__index.t1.a, planner__core__casetest__index__index.t2.e) gt(planner__core__casetest__index__index.t1.b, planner__core__casetest__index__index.t2.f) lt(planner__core__casetest__index__index.t1.b, plus(planner__core__casetest__index__index.t2.f, 10))], keep order:false, stats:pseudo
   └─TableRowIDScan(Probe)	cop[tikv]	table:t1	keep order:false, stats:pseudo
 show warnings;
@@ -556,7 +553,7 @@ IndexJoin	root		inner join, inner:IndexLookUp, outer key:planner__core__casetest
 │ └─Selection	cop[tikv]		not(isnull(planner__core__casetest__index__index.t2.e)), not(isnull(planner__core__casetest__index__index.t2.f))
 │   └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
 └─IndexLookUp(Probe)	root		
-  ├─Selection(Build)	cop[tikv]		not(isnull(planner__core__casetest__index__index.t1.a)), not(isnull(planner__core__casetest__index__index.t1.b))
+  ├─Selection(Build)	cop[tikv]		not(isnull(planner__core__casetest__index__index.t1.b))
   │ └─IndexRangeScan	cop[tikv]	table:t1, index:idx_a_b_c_d(a, b, c, d)	range: decided by [eq(planner__core__casetest__index__index.t1.a, planner__core__casetest__index__index.t2.e)], keep order:false, stats:pseudo
   └─TableRowIDScan(Probe)	cop[tikv]	table:t1	keep order:false, stats:pseudo
 show warnings;

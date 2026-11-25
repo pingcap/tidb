@@ -178,8 +178,7 @@ func TestJoinSimplifyCondition(t *testing.T) {
 				"│ └─Selection cop[tikv]  eq(test.t1.b, 1), not(isnull(test.t1.a))",
 				"│   └─TableFullScan cop[tikv] table:t1 keep order:false, stats:pseudo",
 				"└─IndexLookUp(Probe) root  ",
-				"  ├─Selection(Build) cop[tikv]  not(isnull(test.t2.a))",
-				"  │ └─IndexRangeScan cop[tikv] table:t2, index:idx_a(a) range: decided by [eq(test.t2.a, test.t1.a)], keep order:false, stats:pseudo",
+				"  ├─IndexRangeScan(Build) cop[tikv] table:t2, index:idx_a(a) range: decided by [eq(test.t2.a, test.t1.a)], keep order:false, stats:pseudo",
 				"  └─TableRowIDScan(Probe) cop[tikv] table:t2 keep order:false, stats:pseudo"))
 
 		const largeInListThreshold = 10000

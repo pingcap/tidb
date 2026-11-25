@@ -249,13 +249,13 @@
                 "operator_info": "data:Selection_32"
               },
               {
-                "name": "TableReader_43",
+                "name": "TableReader_42",
                 "children": [
                   {
-                    "name": "Selection_42",
+                    "name": "Selection_41",
                     "children": [
                       {
-                        "name": "TableFullScan_41",
+                        "name": "TableFullScan_40",
                         "cost": 4546159.475587022,
                         "est_rows": 10000,
                         "act_rows": 4,
@@ -280,7 +280,7 @@
                 "act_rows": 4,
                 "task_type": 1,
                 "store_type": 1,
-                "operator_info": "data:Selection_42"
+                "operator_info": "data:Selection_41"
               }
             ],
             "cost": 2103314.3700782694,

@@ -3410,8 +3410,7 @@ Projection	root		planner__core__casetest__physicalplantest__physical_plan.ta.nam
           │ └─Selection(Probe)	cop[tikv]		not(isnull(planner__core__casetest__physicalplantest__physical_plan.tb.name))
           │   └─TableRowIDScan	cop[tikv]	table:tb	keep order:false, stats:pseudo
           └─IndexLookUp(Probe)	root		
-            ├─Selection(Build)	cop[tikv]		not(isnull(planner__core__casetest__physicalplantest__physical_plan.tc.name))
-            │ └─IndexRangeScan	cop[tikv]	table:tc, index:idx_tc_name(name)	range: decided by [eq(planner__core__casetest__physicalplantest__physical_plan.tc.name, planner__core__casetest__physicalplantest__physical_plan.tb.name)], keep order:false, stats:pseudo
+            ├─IndexRangeScan(Build)	cop[tikv]	table:tc, index:idx_tc_name(name)	range: decided by [eq(planner__core__casetest__physicalplantest__physical_plan.tc.name, planner__core__casetest__physicalplantest__physical_plan.tb.name)], keep order:false, stats:pseudo
             └─Selection(Probe)	cop[tikv]		like(cast(planner__core__casetest__physicalplantest__physical_plan.tc.code, var_string(20)), "999%", 92)
               └─TableRowIDScan	cop[tikv]	table:tc	keep order:false, stats:pseudo
 SELECT ta.NAME,(SELECT /*+ no_decorrelate() */ sum(tb.CODE) FROM tb WHERE ta.id = tb.id and exists (select 1 from tc where tb.name=tc.name and tc.`code` like '999%')) tb_sum_code FROM ta WHERE ta.NAME LIKE 'chad999%';
@@ -3478,8 +3477,7 @@ Projection	root		planner__core__casetest__physicalplantest__physical_plan.ta.id,
     └─StreamAgg	root		group by:planner__core__casetest__physicalplantest__physical_plan.tb.id, funcs:max(planner__core__casetest__physicalplantest__physical_plan.tb.code)->Column, funcs:firstrow(planner__core__casetest__physicalplantest__physical_plan.tb.id)->planner__core__casetest__physicalplantest__physical_plan.tb.id
       └─Projection	root		planner__core__casetest__physicalplantest__physical_plan.tb.id, planner__core__casetest__physicalplantest__physical_plan.tb.code
         └─IndexLookUp	root		
-          ├─Selection(Build)	cop[tikv]		not(isnull(planner__core__casetest__physicalplantest__physical_plan.tb.id))
-          │ └─IndexRangeScan	cop[tikv]	table:tb, index:idx_tb_id(id)	range: decided by [eq(planner__core__casetest__physicalplantest__physical_plan.tb.id, planner__core__casetest__physicalplantest__physical_plan.ta.id)], keep order:true, stats:pseudo
+          ├─IndexRangeScan(Build)	cop[tikv]	table:tb, index:idx_tb_id(id)	range: decided by [eq(planner__core__casetest__physicalplantest__physical_plan.tb.id, planner__core__casetest__physicalplantest__physical_plan.ta.id)], keep order:true, stats:pseudo
           └─TableRowIDScan(Probe)	cop[tikv]	table:tb	keep order:false, stats:pseudo
 SELECT ta.id, 'split' as flag FROM ta WHERE ta.NAME ='chad999' and (select max(tb.code) from tb where ta.id=tb.id ) > 900;
 id	flag

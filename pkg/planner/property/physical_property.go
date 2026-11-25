@@ -410,6 +410,10 @@ type IndexJoinRuntimeProp struct {
 	OuterJoinKeys []*expression.Column
 	// for inner ds/index to detect the range, cuz its runtime constant.
 	InnerJoinKeys []*expression.Column
+	// OuterKeyFilters are filters the outer child already enforces, each on exactly one outer join key.
+	// An inner filter on a join key the probe binds is redundant when it equals one of these with the
+	// outer key replaced by the inner key, so the inner side does not evaluate it again.
+	OuterKeyFilters []expression.Expression
 	// AvgInnerRowCnt is computed from join.EqualCondCount / outerChild.RowCount.
 	// since ds only can build empty range before seeing runtime data, the so inner
 	// ds can get an accurate countAfterAccess. Once index join prop pushed to the
@@ -663,6 +667,10 @@ func (p *PhysicalProperty) HashCode() []byte {
 		}
 		for _, col := range p.IndexJoinProp.InnerJoinKeys {
 			p.hashcode = append(p.hashcode, col.HashCode()...)
+		}
+		p.hashcode = codec.EncodeInt(p.hashcode, int64(len(p.IndexJoinProp.OuterKeyFilters)))
+		for _, expr := range p.IndexJoinProp.OuterKeyFilters {
+			p.hashcode = append(p.hashcode, expr.HashCode()...)
 		}
 		p.hashcode = codec.EncodeFloat(p.hashcode, p.IndexJoinProp.AvgInnerRowCnt)
 		if p.IndexJoinProp.TableRangeScan {

@@ -527,8 +527,7 @@ Delete	root		N/A
   │ └─Selection	cop[tikv]		not(isnull(bindinfo__bind.t2.b))
   │   └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
   └─IndexLookUp(Probe)	root		
-    ├─Selection(Build)	cop[tikv]		not(isnull(bindinfo__bind.t1.b))
-    │ └─IndexRangeScan	cop[tikv]	table:t1, index:idx_b(b)	range: decided by [eq(bindinfo__bind.t1.b, bindinfo__bind.t2.b)], keep order:false, stats:pseudo
+    ├─IndexRangeScan(Build)	cop[tikv]	table:t1, index:idx_b(b)	range: decided by [eq(bindinfo__bind.t1.b, bindinfo__bind.t2.b)], keep order:false, stats:pseudo
     └─TableRowIDScan(Probe)	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format='plan_tree' update t1 set a = 1 where b = 1 and c > 1;
 id	task	access object	operator info
@@ -562,8 +561,7 @@ Update	root		N/A
   ├─IndexReader(Build)	root		index:IndexFullScan
   │ └─IndexFullScan	cop[tikv]	table:t2, index:idx_b(b)	keep order:false, stats:pseudo
   └─IndexLookUp(Probe)	root		
-    ├─Selection(Build)	cop[tikv]		not(isnull(bindinfo__bind.t1.b))
-    │ └─IndexRangeScan	cop[tikv]	table:t1, index:idx_b(b)	range: decided by [eq(bindinfo__bind.t1.b, bindinfo__bind.t2.b)], keep order:false, stats:pseudo
+    ├─IndexRangeScan(Build)	cop[tikv]	table:t1, index:idx_b(b)	range: decided by [eq(bindinfo__bind.t1.b, bindinfo__bind.t2.b)], keep order:false, stats:pseudo
     └─TableRowIDScan(Probe)	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format='plan_tree' insert into t1 select * from t2 where t2.b = 2 and t2.c > 2;
 id	task	access object	operator info

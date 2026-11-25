@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"fmt"
 	"math"
+	"slices"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -932,4 +933,217 @@ var symmetricOp = map[string]string{
 	ast.GE: ast.LE,
 	ast.GT: ast.LT,
 	ast.LE: ast.GE,
+}
+
+// collectIndexJoinOuterKeyFilters returns the filters that the outer child of an index join enforces on
+// exactly one of outerKeys. It looks through Selection, Projection (plain column renames) and UnionScan
+// down to the DataSource, whose pushed-down conditions are all applied by any plan built for it, and stops
+// at any other operator. Only comparisons of the key with constants under the key's own collation are
+// returned (see keyComparisonFilterColumn), the same requirement the inner filter they justify dropping
+// must meet. The match is by hash code, which does not include a constant's collation, so without this
+// `o.s <> 'a' collate utf8mb4_bin` could stand in for `i.s <> 'a' collate utf8mb4_general_ci`.
+func collectIndexJoinOuterKeyFilters(ctx expression.EvalContext, outer base.LogicalPlan,
+	outerKeys []*expression.Column) []expression.Expression {
+	if len(outerKeys) == 0 {
+		return nil
+	}
+	var filters []expression.Expression
+	seen := make(map[string]struct{})
+	for _, cond := range collectEnforcedConds(outer) {
+		col := keyComparisonFilterColumn(ctx, cond)
+		if col == nil || !slices.ContainsFunc(outerKeys, func(key *expression.Column) bool { return key.EqualColumn(col) }) {
+			continue
+		}
+		key := string(cond.HashCode())
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		filters = append(filters, cond)
+	}
+	return filters
+}
+
+// collectEnforcedConds returns the conditions every row produced by p satisfies, expressed over p's schema.
+// It is conservative: it only descends through operators that pass rows and columns through unchanged.
+func collectEnforcedConds(p base.LogicalPlan) []expression.Expression {
+	switch x := p.(type) {
+	case *logicalop.DataSource:
+		return x.PushedDownConds
+	case *logicalop.LogicalSelection:
+		return append(slices.Clone(x.Conditions), collectEnforcedConds(x.Children()[0])...)
+	case *logicalop.LogicalUnionScan:
+		return collectEnforcedConds(x.Children()[0])
+	case *logicalop.LogicalProjection:
+		childConds := collectEnforcedConds(x.Children()[0])
+		if len(childConds) == 0 {
+			return nil
+		}
+		exprCtx := x.SCtx().GetExprCtx()
+		result := make([]expression.Expression, 0, len(childConds))
+		for _, cond := range childConds {
+			col := singleFilterColumn(cond)
+			if col == nil {
+				continue
+			}
+			for i, expr := range x.Exprs {
+				if projCol, ok := expr.(*expression.Column); ok && projCol.EqualColumn(col) {
+					hasFail, newCond := expression.ColumnSubstituteAll(exprCtx, cond,
+						expression.NewSchema(col), []expression.Expression{x.Schema().Columns[i]})
+					if !hasFail {
+						result = append(result, newCond)
+					}
+					break
+				}
+			}
+		}
+		return result
+	}
+	return nil
+}
+
+// singleFilterColumn returns the only column a deterministic, non-correlated filter references, or nil.
+func singleFilterColumn(cond expression.Expression) *expression.Column {
+	if _, ok := cond.(*expression.ScalarFunction); !ok {
+		return nil
+	}
+	if !expression.IsImmutableFunc(cond) || len(expression.ExtractCorColumns(cond)) > 0 {
+		return nil
+	}
+	cols := expression.ExtractColumns(cond)
+	if len(cols) == 0 {
+		return nil
+	}
+	for _, col := range cols[1:] {
+		if !col.EqualColumn(cols[0]) {
+			return nil
+		}
+	}
+	return cols[0]
+}
+
+// removeInnerFiltersImpliedByOuter drops the inner-side filters of an index join that the outer side
+// already guarantees. A filter is dropped when it compares only an inner join key that the probe binds
+// (keyBound reports it) with constants (see keyComparisonFilterColumn) and, with that key replaced by the
+// matching outer key, equals one of the filters in OuterKeyFilters. Every probed inner row has a key equal
+// to its outer row's, which already passed that filter, and such a comparison cannot tell equal keys
+// apart, so evaluating it again on the inner side cannot remove a row. Constant propagation derives such
+// filters, e.g. `t1.b in (1, 2)` with `t1.b = t2.b` derives `t2.b in (1, 2)`; hash and merge joins use
+// them to narrow the inner scan, but an index join probe has already narrowed it to one key value.
+func removeInnerFiltersImpliedByOuter(exprCtx expression.BuildContext, conds []expression.Expression,
+	prop *property.IndexJoinRuntimeProp, keyBound func(keyOff int) bool) []expression.Expression {
+	if prop == nil || len(prop.OuterKeyFilters) == 0 || len(conds) == 0 {
+		return conds
+	}
+	outerFilters := make(map[string]struct{}, len(prop.OuterKeyFilters))
+	for _, f := range prop.OuterKeyFilters {
+		outerFilters[string(f.HashCode())] = struct{}{}
+	}
+	var result []expression.Expression
+	for i, cond := range conds {
+		if !isInnerFilterImpliedByOuter(exprCtx, cond, prop, keyBound, outerFilters) {
+			if result != nil {
+				result = append(result, cond)
+			}
+			continue
+		}
+		if result == nil {
+			result = make([]expression.Expression, 0, len(conds)-1)
+			result = append(result, conds[:i]...)
+		}
+	}
+	if result == nil {
+		return conds
+	}
+	return result
+}
+
+func isInnerFilterImpliedByOuter(exprCtx expression.BuildContext, cond expression.Expression,
+	prop *property.IndexJoinRuntimeProp, keyBound func(keyOff int) bool, outerFilters map[string]struct{}) bool {
+	col := keyComparisonFilterColumn(exprCtx.GetEvalCtx(), cond)
+	if col == nil {
+		return false
+	}
+	for keyOff, innerKey := range prop.InnerJoinKeys {
+		if !innerKey.EqualColumn(col) || keyOff >= len(prop.OuterJoinKeys) || !keyBound(keyOff) {
+			continue
+		}
+		outerKey := prop.OuterJoinKeys[keyOff]
+		// The same requirement constant propagation applies before deriving a filter across `outer = inner`.
+		if innerKey.RetType.GetType() != outerKey.RetType.GetType() ||
+			innerKey.GetStaticType().GetCollate() != outerKey.GetStaticType().GetCollate() {
+			continue
+		}
+		hasFail, outerCond := expression.ColumnSubstituteAll(exprCtx, cond,
+			expression.NewSchema(innerKey), []expression.Expression{outerKey})
+		if hasFail {
+			continue
+		}
+		if _, ok := outerFilters[string(outerCond.HashCode())]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+// keyComparisonFilterColumn returns the column of a filter that compares that bare column with constants
+// under the column's own collation: =, <>, <, <=, >, >=, <=>, IN, IS NULL, or NOT of one of these. Such a
+// filter gives the same result for any two values the join key equality treats as equal ('a' and 'A' under
+// a _ci collation, 'a' and 'a ' under a PAD SPACE one), which is what makes an inner copy of an outer filter
+// redundant once the probe has bound the key. Any other filter, e.g. `length(col) = 1`, returns nil.
+func keyComparisonFilterColumn(ctx expression.EvalContext, cond expression.Expression) *expression.Column {
+	sf, ok := cond.(*expression.ScalarFunction)
+	if !ok {
+		return nil
+	}
+	if sf.FuncName.L == ast.UnaryNot {
+		if sf, ok = sf.GetArgs()[0].(*expression.ScalarFunction); !ok || sf.FuncName.L == ast.UnaryNot {
+			return nil
+		}
+	}
+	switch sf.FuncName.L {
+	case ast.EQ, ast.NE, ast.LT, ast.LE, ast.GT, ast.GE, ast.NullEQ, ast.In, ast.IsNull:
+	default:
+		return nil
+	}
+	if expression.IsMutableEffectsExpr(sf) || !expression.IsImmutableFunc(sf) {
+		return nil
+	}
+	var col *expression.Column
+	for i, arg := range sf.GetArgs() {
+		if c, ok := arg.(*expression.Column); ok {
+			// IN compares its first argument with the rest; the column must be that first argument.
+			if col != nil || (sf.FuncName.L == ast.In && i != 0) {
+				return nil
+			}
+			col = c
+		}
+	}
+	if col == nil || col.RetType.Hybrid() {
+		return nil
+	}
+	collation := col.GetStaticType().GetCollate()
+	for _, arg := range sf.GetArgs() {
+		if arg == col {
+			continue
+		}
+		con, ok := arg.(*expression.Constant)
+		if !ok || con.GetType(ctx).GetCollate() != collation {
+			return nil
+		}
+	}
+	return col
+}
+
+// indexJoinPathBoundKeys reports, for each inner join key offset, whether the chosen path builds its
+// probe ranges from that key.
+func indexJoinPathBoundKeys(result *indexJoinPathResult) func(keyOff int) bool {
+	return func(keyOff int) bool {
+		for idxOff, k := range result.idxOff2KeyOff {
+			if k == keyOff && idxOff < result.usedColsLen {
+				return true
+			}
+		}
+		return false
+	}
 }
