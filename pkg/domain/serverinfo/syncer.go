@@ -148,7 +148,7 @@ func (s *Syncer) NewSessionAndStoreServerInfo(ctx context.Context) error {
 	}
 	s.cleanupStaleServerAndOwnerInfo(ctx)
 	logPrefix := fmt.Sprintf("[Info-syncer] %s", s.serverInfoPath)
-	session, err := tidbutil.NewSessionWithMetricLabel(ctx, logPrefix, "info-syncer", s.etcdCli, tidbutil.NewSessionDefaultRetryCnt, util.SessionTTL)
+	session, err := tidbutil.NewSessionWithMetricLabel(ctx, logPrefix, "server-info-syncer", s.etcdCli, tidbutil.NewSessionDefaultRetryCnt, util.SessionTTL)
 	if err != nil {
 		return err
 	}
