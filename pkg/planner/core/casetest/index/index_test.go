@@ -693,3 +693,20 @@ func TestCorrelatedColumnPathNotPrunedByRisk(t *testing.T) {
 		"000000000000000000000000000000000005 000000000000000000000000000000000005",
 		"000000000000000000000000000000000007 <nil>"))
 }
+
+func TestPartialIndexInvalidTimestampRange(t *testing.T) {
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+		tk.MustExec("use test")
+		tk.MustExec("set time_zone = 'UTC'")
+		tk.MustExec("set sql_mode = 'ALLOW_INVALID_DATES'")
+		tk.MustExec("create table t_invalid_timestamp (k int, ts timestamp, index idx(k) where ts < '0000-00-00 12:00:00')")
+		tk.MustExec("insert into t_invalid_timestamp values (0, '0000-00-00 00:00:00'), (1, '2017-03-01 00:00:00')")
+		tk.MustQuery("select k from t_invalid_timestamp ignore index (idx) where ts >= '2017-03-01'").Check(testkit.Rows("1"))
+		tk.MustQuery("select k from t_invalid_timestamp force index (idx) where ts >= '2017-03-01'").Check(testkit.Rows("1"))
+		tk.MustQuery("explain select k from t_invalid_timestamp force index (idx) where ts >= '2017-03-01'").CheckNotContain("index:idx")
+
+		// Exact predicate matching remains valid even when its range is approximate.
+		tk.MustQuery("select k from t_invalid_timestamp force index (idx) where ts < '0000-00-00 12:00:00'").Check(testkit.Rows("0"))
+		tk.MustQuery("explain select k from t_invalid_timestamp force index (idx) where ts < '0000-00-00 12:00:00'").CheckContain("index:idx")
+	})
+}

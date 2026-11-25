@@ -251,6 +251,8 @@ func (path *AccessPath) SplitCorColAccessCondFromFilters(ctx planctx.PlanContext
 	access = make([]expression.Expression, len(path.IdxCols)-eqOrInCount)
 	used := make([]bool, len(path.TableFilters))
 	usedCnt := 0
+	reserved := make([]bool, len(path.TableFilters))
+	reserveSuffix := false
 	for i := eqOrInCount; i < len(path.IdxCols); i++ {
 		matched := false
 		for j, filter := range path.TableFilters {
@@ -275,6 +277,10 @@ func (path *AccessPath) SplitCorColAccessCondFromFilters(ctx planctx.PlanContext
 			ctx.GetExprCtx().SetSkipPlanCache("Correlated subquery is not cached currently")
 			matched = true
 			access[i-eqOrInCount] = filter
+			// A runtime TIMESTAMP bound may be calendar-invalid. Range fallback can
+			// discard this column and the remaining suffix, so keep their predicates.
+			reserveSuffix = reserveSuffix || path.IdxCols[i].RetType.GetType() == mysql.TypeTimestamp
+			reserved[j] = reserveSuffix
 			if path.IdxColLens[i] == types.UnspecifiedLength {
 				used[j] = true
 				usedCnt++
@@ -299,7 +305,7 @@ func (path *AccessPath) SplitCorColAccessCondFromFilters(ctx planctx.PlanContext
 					access = access[:i-eqOrInCount+1]
 					remained = make([]expression.Expression, 0, len(path.TableFilters)-usedCnt)
 					for k, ok := range used {
-						if !ok {
+						if !ok || reserved[k] {
 							remained = append(remained, path.TableFilters[k]) // nozero
 						}
 					}
@@ -312,7 +318,7 @@ func (path *AccessPath) SplitCorColAccessCondFromFilters(ctx planctx.PlanContext
 	}
 	remained = make([]expression.Expression, 0, len(used)-usedCnt)
 	for i, ok := range used {
-		if !ok {
+		if !ok || reserved[i] {
 			remained = append(remained, path.TableFilters[i]) // nozero
 		}
 	}
@@ -325,8 +331,9 @@ func (path *AccessPath) SplitCorColAccessCondFromFilters(ctx planctx.PlanContext
 // The ranger cannot build a range for `index_col = correlated_col` at plan time, so such a
 // column is neither point-ranged in path.Ranges nor marked in ConstCols by
 // DetachCondAndBuildRangeForIndex. The range is instead rebuilt per execution of the inner
-// subtree in ResolveCorrelatedColumns/rebuildIndexRanges, and because the condition is an
-// equality that rebuilt range is always a single point on this column. Hence the index columns
+// subtree in ResolveCorrelatedColumns/rebuildIndexRanges. The equality restricts surviving
+// rows to a single value on this column, even when range fallback requires a residual
+// filter. Hence the index columns
 // after it stay sorted, exactly as they would be for a literal equality, and an ORDER BY on
 // them can be satisfied by the scan order instead of a sort.
 //
