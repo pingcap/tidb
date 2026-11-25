@@ -53,9 +53,6 @@ func NewOnDemandStatsProvider(sessPool util.DestroyableSessionPool) *OnDemandSta
 // them on demand from mysql.stats_* on a miss and falling back to pseudo stats
 // when unavailable or on error.
 func (p *OnDemandStatsProvider) GetPhysicalTableStats(physicalTableID int64, tblInfo *model.TableInfo) *statistics.Table {
-	if tblInfo == nil {
-		return nil
-	}
 	// Never query mysql.stats_* for reserved/system tables to avoid recursive
 	// stats lookups when loading mysql.stats_* itself.
 	if metadef.IsReservedID(physicalTableID) {
@@ -87,20 +84,11 @@ func (p *OnDemandStatsProvider) GetPhysicalTableStats(physicalTableID int64, tbl
 }
 
 func (p *OnDemandStatsProvider) loadFromStorage(physicalTableID int64, tblInfo *model.TableInfo) (*statistics.Table, error) {
-	if p.sessPool == nil {
-		return nil, nil
-	}
-
 	res, err := p.sessPool.Get()
 	if err != nil {
 		return nil, err
 	}
-	auxSCtx, ok := res.(sessionctx.Context)
-	if !ok {
-		p.sessPool.Put(res)
-		return nil, nil
-	}
-
+	auxSCtx := res.(sessionctx.Context)
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 	defer func() {
 		auxSCtx.RollbackTxn(ctx)

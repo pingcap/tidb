@@ -112,10 +112,7 @@ func TestOnDemandStatsProviderLoadsAndCachesStats(t *testing.T) {
 	require.True(t, gotMissing.Pseudo)
 	require.Equal(t, missingTblInfo.ID, gotMissing.PhysicalID)
 
-	// Nil pool and failing pool also fall back cleanly without panicking.
-	nilPoolProvider := crossks.NewOnDemandStatsProvider(nil)
-	require.True(t, nilPoolProvider.GetPhysicalTableStats(tblT.Meta().ID, tblT.Meta()).Pseudo)
-
+	// Failing pool falls back cleanly to pseudo stats.
 	errPoolProvider := crossks.NewOnDemandStatsProvider(&countingSessionPool{getErr: errors.New("pool exhausted")})
 	require.True(t, errPoolProvider.GetPhysicalTableStats(tblT.Meta().ID, tblT.Meta()).Pseudo)
 

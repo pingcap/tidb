@@ -209,7 +209,6 @@ go_library(
         "//pkg/planner/core/operator/physicalop",
         "//pkg/planner/core/resolve",
         "//pkg/planner/core/rule",
-        "//pkg/planner/core/stats",
         "//pkg/planner/extstore",
         "//pkg/planner/indexadvisor",
         "//pkg/planner/mview",
