@@ -38,6 +38,8 @@ func TestUsingJoinNameScopeAfterSubqueryRewrite(t *testing.T) {
 	tk.MustExec("insert into b values (1)")
 	tk.MustExec("insert into c values ('A')")
 	tk.MustExec("insert into c2 values ('zz')")
+	tk.MustExec("create table d (x int, s varchar(8) collate utf8mb4_general_ci)")
+	tk.MustExec("insert into d values (1, 'A'), (2, 'zz')")
 
 	predicates := []string{
 		"a.s in (select s from c)",
@@ -68,5 +70,16 @@ func TestUsingJoinNameScopeAfterSubqueryRewrite(t *testing.T) {
   select b.x from a join b using (x)
   where a.s in (select z.s from a as z where z.x = a.x) and a.x in (select 1)
 ) from (select 42 as x) as b`).Check(testkit.Rows("1"))
+		// The IN subquery itself reads the right-hand USING column of the outer
+		// join. That column is not in the join's output schema, so it must still
+		// count as a correlated column; otherwise the IN becomes an inner join and
+		// aggregation that leaves the reference unbound and the rows vanish.
+		tk.MustQuery("select a.x from a join b using (x) where a.s in (select d.s from d where d.x = b.x)").Check(testkit.Rows("1"))
+		tk.MustQuery("select (select a.x from a join b using (x) where a.s in (select d.s from d where d.x = b.x)) from (select 99 as x) as b").Check(testkit.Rows("1"))
+		tk.MustQuery("select a.x from a join b using (x) where a.s in (select d.s from d where d.x = b.x + 1)").Check(testkit.Rows())
+		tk.MustQuery("select a.x from a join b on a.x = b.x where a.s in (select d.s from d where d.x = b.x)").Check(testkit.Rows("1"))
+		// The same reference when the subquery stays an apply instead of becoming a join.
+		tk.MustQuery("select /*+ NO_DECORRELATE() */ a.x from a join b using (x) where a.s in (select d.s from d where d.x = b.x)").Check(testkit.Rows("1"))
+		tk.MustQuery("select a.x from a join b using (x) where a.s in (select d.s from d where d.x = b.x limit 1)").Check(testkit.Rows("1"))
 	}
 }

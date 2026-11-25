@@ -1372,7 +1372,15 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, planCtx *exp
 		_, rhsCollation = er.sctx.GetCharsetInfo()
 	}
 	collFlag := collate.CompatibleCollate(lexpr.GetType(er.sctx.GetEvalCtx()).GetCollate(), rhsCollation)
-	corCols := coreusage.ExtractCorColumnsBySchema4LogicalPlan(np, planCtx.plan.Schema())
+	// The right-hand column of a USING or NATURAL join is not in the join's output
+	// schema but the subquery can still name it, so count it against the full schema.
+	// Otherwise the subquery looks uncorrelated and is rewritten to an inner join
+	// that leaves that reference unbound.
+	outerSchema := planCtx.plan.Schema()
+	if fullSchema, _ := findJoinFullSchema(planCtx.plan); fullSchema != nil {
+		outerSchema = fullSchema
+	}
+	corCols := coreusage.ExtractCorColumnsBySchema4LogicalPlan(np, outerSchema)
 	noDecorrelate := isNoDecorrelate(planCtx, corCols, hintFlags, handlingInSubquery)
 	// When EnableCorrelateSubquery is ON (set by the correlate alternative round),
 	// prevent decorrelation of correlated IN subqueries so they stay as Apply with index lookups.
