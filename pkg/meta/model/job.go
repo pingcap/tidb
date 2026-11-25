@@ -915,6 +915,11 @@ func (job *Job) IsRollbackable() bool {
 		if job.SchemaState == StatePublic {
 			return false
 		}
+	case ActionCreateTable:
+		// A table with foreign keys is persisted in StateDeleteOnly by the first step and made
+		// public by the second. Nothing removes it in between, so only a job that has not run
+		// yet can be cancelled.
+		return job.SchemaState == StateNone
 	case ActionCreateMaterializedView:
 		return job.SchemaState == StateNone || job.SchemaState == StateWriteReorganization
 	case ActionAddTablePartition:
