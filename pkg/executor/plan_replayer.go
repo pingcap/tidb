@@ -473,7 +473,11 @@ func createSchemaAndItems(ctx sessionctx.Context, f *zip.File) error {
 		if i == 0 {
 			// create database if not exists
 			_, err = ctx.GetSQLExecutor().Execute(c, sqlText)
-			logutil.BgLogger().Debug("plan replayer: skip error", zap.Error(err))
+			if err != nil && !infoschema.ErrDatabaseExists.Equal(err) {
+				// Do not swallow the error: the following `use` statement would
+				// otherwise fail with an "Unknown database" that hides the real cause.
+				return errors.Annotatef(err, "plan replayer: failed to create database with %q", sqlText)
+			}
 			continue
 		}
 		_, err = ctx.GetSQLExecutor().Execute(c, sqlText)
