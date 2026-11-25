@@ -344,6 +344,59 @@ func TestBRIECreateTable(t *testing.T) {
 	tk.MustExec("desc table_2")
 }
 
+func TestBRIEGlueSessionReadOnlySequence(t *testing.T) {
+	for _, cycle := range []bool{false, true} {
+		t.Run(fmt.Sprintf("cycle=%t", cycle), func(t *testing.T) {
+			store := testkit.CreateMockStore(t)
+			tk := testkit.NewTestKit(t, store)
+			testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockModifySchemaReadOnlyDDL", "return")
+			require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
+			require.False(t, privilege.HasExplicitReplicaWriterAdmin(tk.Session()))
+
+			ctx := context.Background()
+			gs, err := executor.NewBRIEGlueForTest(tk.Session()).CreateSession(store)
+			require.NoError(t, err)
+			defer gs.Close()
+			for _, name := range []string{"restore_ro", "other_ro"} {
+				require.NoError(t, gs.CreateDatabaseOnExistError(ctx, &model.DBInfo{
+					Name: ast.NewCIStr(name), ReadOnly: true,
+				}))
+				require.NoError(t, gs.CreateTable(ctx, ast.NewCIStr(name), &model.TableInfo{
+					Name: ast.NewCIStr("s"), State: model.StatePublic,
+					Sequence: &model.SequenceInfo{Start: 1, MinValue: 1, MaxValue: 1000, Increment: 1, Cycle: cycle},
+				}))
+			}
+
+			func() {
+				defer privilege.WithInternalSchemaReadOnlyBypass(gs.GetSessionCtx(), "restore_ro")()
+				if cycle {
+					// Match restoreSequence's cycle-round initialization before restoring the saved value.
+					require.NoError(t, gs.Execute(ctx, "do setval(restore_ro.s, 1000)"))
+					require.NoError(t, gs.Execute(ctx, "do nextval(restore_ro.s)"))
+				}
+				require.NoError(t, gs.Execute(ctx, "do setval(restore_ro.s, 41)"))
+				require.ErrorContains(t, gs.Execute(ctx, "do setval(other_ro.s, 99)"), "read only mode")
+				require.ErrorContains(t, gs.Execute(ctx, "do nextval(other_ro.s)"), "read only mode")
+				// An execution error must not discard the enclosing restore authorization.
+				require.NoError(t, gs.Execute(ctx, "do setval(restore_ro.s, 41)"))
+			}()
+
+			for _, name := range []string{"restore_ro", "other_ro"} {
+				require.False(t, privilege.CanWriteReadOnlySchema(gs.GetSessionCtx(), name))
+				require.ErrorContains(t, gs.Execute(ctx, "do setval("+name+".s, 99)"), "read only mode")
+				require.ErrorContains(t, tk.QueryToErr("select nextval("+name+".s)"), "read only mode")
+				require.ErrorContains(t, tk.QueryToErr("select setval("+name+".s, 99)"), "read only mode")
+			}
+			tk.MustQuery("select options from information_schema.schemata_extensions where schema_name = 'restore_ro'").Check(testkit.Rows("READ ONLY=1"))
+			require.Contains(t, tk.MustQuery("show create database restore_ro").Rows()[0][1], "READ ONLY = 1")
+			tk.MustExec("alter database restore_ro read only = 0")
+			next, err := strconv.ParseInt(tk.MustQuery("select nextval(restore_ro.s)").Rows()[0][0].(string), 10, 64)
+			require.NoError(t, err)
+			require.Greater(t, next, int64(41))
+		})
+	}
+}
+
 func TestBRIECreateTables(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
