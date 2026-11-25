@@ -43,7 +43,6 @@ go_test(
         "//pkg/parser/ast",
         "//pkg/parser/mysql",
         "//pkg/sessionctx",
-        "//pkg/sessionctx/vardef",
         "//pkg/statistics",
         "//pkg/statistics/handle/ddl/testutil",
         "//pkg/statistics/handle/util",

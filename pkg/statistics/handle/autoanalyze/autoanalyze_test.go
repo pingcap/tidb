@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze"
 	statstestutil "github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
@@ -60,9 +59,10 @@ func TestEnableAutoAnalyzePriorityQueue(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int)")
 	tk.MustExec("insert into t values (1)")
-	// Enable auto analyze priority queue.
-	tk.MustExec("SET GLOBAL tidb_enable_auto_analyze_priority_queue=ON")
-	require.True(t, vardef.EnableAutoAnalyzePriorityQueue.Load())
+	// An older version could save OFF. It must have no effect after an upgrade.
+	tk.MustExec("replace into mysql.global_variables (variable_name, variable_value) values ('tidb_enable_auto_analyze_priority_queue', 'OFF')")
+	dom.NotifyUpdateSysVarCache(true)
+	tk.MustQuery("select @@global.tidb_enable_auto_analyze_priority_queue").Check(testkit.Rows("1"))
 	h := dom.StatsHandle()
 	err := statstestutil.HandleNextDDLEventWithTxn(h)
 	require.NoError(t, err)

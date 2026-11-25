@@ -2223,47 +2223,29 @@ func TestTiDBAutoAnalyzeConcurrencyValidation(t *testing.T) {
 	require.Equal(t, "3", sysVar.Value)
 
 	tests := []struct {
-		name                string
-		autoAnalyze         bool
-		autoAnalyzePriority bool
-		input               string
-		expectError         bool
+		name        string
+		autoAnalyze bool
+		input       string
+		expectError bool
 	}{
 		{
-			name:                "Auto analyze disabled",
-			autoAnalyze:         false,
-			autoAnalyzePriority: true,
-			input:               "10",
-			expectError:         true,
-		},
-		{
-			name:                "Auto analyze priority queue disabled",
-			autoAnalyze:         true,
-			autoAnalyzePriority: false,
-			input:               "10",
-			expectError:         true,
-		},
-		{
-			name:                "Both disabled",
-			autoAnalyze:         false,
-			autoAnalyzePriority: false,
-			input:               "10",
-			expectError:         true,
+			name:        "Auto analyze disabled",
+			autoAnalyze: false,
+			input:       "10",
+			expectError: true,
 		},
 		// Last so it ends as its defaults
 		{
-			name:                "Both enabled, valid input",
-			autoAnalyze:         true,
-			autoAnalyzePriority: true,
-			input:               "10",
-			expectError:         false,
+			name:        "Auto analyze enabled, valid input",
+			autoAnalyze: true,
+			input:       "10",
+			expectError: false,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			vardef.RunAutoAnalyze.Store(tt.autoAnalyze)
-			vardef.EnableAutoAnalyzePriorityQueue.Store(tt.autoAnalyzePriority)
 
 			_, err := sysVar.Validate(vars, tt.input, vardef.ScopeGlobal)
 			if tt.expectError {

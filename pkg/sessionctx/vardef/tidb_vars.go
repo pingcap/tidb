@@ -2021,9 +2021,8 @@ const (
 
 // Process global variables.
 var (
-	ProcessGeneralLog              = atomic.NewBool(false)
-	RunAutoAnalyze                 = atomic.NewBool(DefTiDBEnableAutoAnalyze)
-	EnableAutoAnalyzePriorityQueue = atomic.NewBool(DefTiDBEnableAutoAnalyzePriorityQueue)
+	ProcessGeneralLog = atomic.NewBool(false)
+	RunAutoAnalyze    = atomic.NewBool(DefTiDBEnableAutoAnalyze)
 	// AnalyzeColumnOptions is a global variable that indicates the default column choice for ANALYZE.
 	// The value of this variable is a string that can be one of the following values:
 	// "PREDICATE", "ALL".
