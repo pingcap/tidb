@@ -565,10 +565,13 @@ func RecordFastPlanMaskingPolicyReads(ctx context.Context, sctx base.PlanContext
 		return true
 	}
 	var assignments []*expression.Assignment
+	isSelect := true
 	switch x := p.(type) {
 	case *Update:
+		isSelect = false
 		p, assignments = x.SelectPlan, x.OrderedList
 	case *Delete:
+		isSelect = false
 		p = x.SelectPlan
 	}
 	var tblInfo *model.TableInfo
@@ -582,8 +585,12 @@ func RecordFastPlanMaskingPolicyReads(ctx context.Context, sctx base.PlanContext
 		return true
 	}
 	is, ok := sctx.GetInfoSchema().(infoschema.InfoSchema)
-	if !ok || !infoschema.MaskingPoliciesLoaded(is) {
+	if !ok {
 		return false
+	}
+	if !infoschema.MaskingPoliciesLoaded(is) {
+		// A checksum-only SELECT has no output column to record as masked.
+		return isSelect && isChecksumOnlyPointGet(p.Schema(), p.OutputNames(), tblInfo)
 	}
 	if hasPolicies, err := is.HasMaskingPolicies(ctx); err != nil || !hasPolicies {
 		return err == nil

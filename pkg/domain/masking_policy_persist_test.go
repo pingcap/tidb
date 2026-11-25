@@ -151,6 +151,7 @@ func TestMaskingPolicyColdSnapshot(t *testing.T) {
 		tk.MustExec("use test")
 		tk.MustExec("set global tidb_enable_row_level_checksum = 1")
 		tk.Session().GetSessionVars().EnableRowLevelChecksum = true
+		tk.MustExec(`replace into mysql.tidb(variable_name, variable_value) values ('tikv_gc_safe_point', '20240131-00:00:00.000 +0800')`)
 		tk.MustExec("create table t_checksum (id int primary key nonclustered, c int)")
 		tk.MustExec("begin")
 		tk.MustExec("insert into t_checksum values (1, 1)")
