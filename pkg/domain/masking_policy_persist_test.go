@@ -144,6 +144,36 @@ func TestMaskingPolicyColdSnapshot(t *testing.T) {
 			require.Equal(t, tbl.Meta().ID, policy.TableID)
 		})
 	}
+
+	t.Run("row checksum", func(t *testing.T) {
+		store, dom := testkit.CreateMockStoreAndDomain(t)
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("set global tidb_enable_row_level_checksum = 1")
+		tk.Session().GetSessionVars().EnableRowLevelChecksum = true
+		tk.MustExec("create table t_checksum (id int primary key nonclustered, c int)")
+		tk.MustExec("begin")
+		tk.MustExec("insert into t_checksum values (1, 1)")
+		tk.MustExec("commit")
+		checksum := tk.MustQuery("select tidb_row_checksum() from t_checksum where id = 1").Rows()[0][0].(string)
+		snapshot, err := store.CurrentVersion(kv.GlobalTxnScope)
+		require.NoError(t, err)
+		tk.MustExec("alter table t_checksum add column d int")
+		latest := dom.InfoSchema()
+		current, err := store.CurrentVersion(kv.GlobalTxnScope)
+		require.NoError(t, err)
+		// Force the snapshot to load an independent schema with a cold policy cache.
+		dom.InfoCache().Reset(16)
+		dom.InfoCache().Insert(latest, current.Ver)
+
+		historical := testkit.NewTestKit(t, store)
+		historical.MustExec("use test")
+		historical.MustExec(fmt.Sprintf("set @@tidb_snapshot = '%d'", snapshot.Ver))
+		snapshotSchema := historical.Session().GetSessionVars().SnapshotInfoschema.(infoschema.InfoSchema)
+		require.Less(t, snapshotSchema.SchemaMetaVersion(), latest.SchemaMetaVersion())
+		require.False(t, infoschema.MaskingPoliciesLoaded(snapshotSchema))
+		historical.MustQuery("select tidb_row_checksum() from t_checksum where id = 1").Check(testkit.Rows(checksum))
+	})
 }
 
 func TestMaskingPolicyReloadWarmsCache(t *testing.T) {
