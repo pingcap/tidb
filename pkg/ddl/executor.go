@@ -3416,6 +3416,18 @@ func checkVisibleColumnCnt(t table.Table, addCnt, dropCnt int) error {
 	return dbterror.ErrCantRemoveAllFields
 }
 
+func isCharsetAllowingDirectCollationChange(origCharset, toCharset string) bool {
+	return (origCharset == charset.CharsetUTF8 && toCharset == charset.CharsetUTF8MB4) ||
+		(origCharset == charset.CharsetUTF8 && toCharset == charset.CharsetUTF8) ||
+		(origCharset == charset.CharsetUTF8MB4 && toCharset == charset.CharsetUTF8MB4) ||
+		(origCharset == charset.CharsetLatin1 && toCharset == charset.CharsetUTF8MB4)
+}
+
+func canModifyCharsetAndCollateWithoutReorg(origCharset, origCollate, toCharset, toCollate string) bool {
+	return isCharsetAllowingDirectCollationChange(origCharset, toCharset) ||
+		(toCharset == origCharset && toCollate == origCollate)
+}
+
 // checkModifyCharsetAndCollation returns error when the charset or collation is not modifiable.
 // needRewriteCollationData is used when trying to modify the collation of a column, it is true when the column is with
 // index because index of a string column is collation-aware.
@@ -3428,10 +3440,7 @@ func checkModifyCharsetAndCollation(toCharset, toCollate, origCharset, origColla
 		return dbterror.ErrUnsupportedModifyCollation.GenWithStackByArgs(origCollate, toCollate)
 	}
 
-	if (origCharset == charset.CharsetUTF8 && toCharset == charset.CharsetUTF8MB4) ||
-		(origCharset == charset.CharsetUTF8 && toCharset == charset.CharsetUTF8) ||
-		(origCharset == charset.CharsetUTF8MB4 && toCharset == charset.CharsetUTF8MB4) ||
-		(origCharset == charset.CharsetLatin1 && toCharset == charset.CharsetUTF8MB4) {
+	if isCharsetAllowingDirectCollationChange(origCharset, toCharset) {
 		// TiDB only allow utf8/latin1 to be changed to utf8mb4, or changing the collation when the charset is utf8/utf8mb4/latin1.
 		return nil
 	}
