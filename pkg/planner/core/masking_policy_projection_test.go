@@ -22,6 +22,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -2584,6 +2585,7 @@ func TestMaskingPolicyExplainRedactsValues(t *testing.T) {
 // shows the plan of a statement that reads a masked column only as its own
 // session rendered it, also after that session went on to other statements.
 func TestMaskingPolicyExplainForConnection(t *testing.T) {
+	defer config.RestoreFunc()()
 	store := testkit.CreateMockStore(t)
 	root := testkit.NewTestKit(t, store)
 	require.NoError(t, root.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
@@ -2672,9 +2674,19 @@ func TestMaskingPolicyExplainForConnection(t *testing.T) {
 	if israce.RaceEnabled {
 		return
 	}
+	// This stress test checks plan redaction, not execution statistics. Live
+	// runtime statistics traverse tracker maps that the target session mutates.
+	target.MustExec("set @@tidb_enable_collect_execution_info=0")
+	target.MustQuery(plain).Check(testkit.Rows("1"))
+	require.Nil(t, target.Session().ShowProcess().RuntimeStatsColl)
 	var wg sync.WaitGroup
 	stop := make(chan struct{})
 	wg.Add(1)
+	stopTarget := sync.OnceFunc(func() {
+		close(stop)
+		wg.Wait()
+	})
+	defer stopTarget()
 	go func() {
 		defer wg.Done()
 		for i := 0; ; i++ {
@@ -2702,8 +2714,7 @@ func TestMaskingPolicyExplainForConnection(t *testing.T) {
 			}
 		}
 	}
-	close(stop)
-	wg.Wait()
+	stopTarget()
 	require.Equal(t, "OFF", target.Session().GetSessionVars().EnableRedactLog)
 }
 

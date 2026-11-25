@@ -511,6 +511,7 @@ go_test(
         "//pkg/importinto/jobstats",
         "//pkg/inference",
         "//pkg/infoschema",
+        "//pkg/infoschema/context",
         "//pkg/keyspace",
         "//pkg/kv",
         "//pkg/lightning/log",
