@@ -450,7 +450,7 @@ func TestAvgFinalizesFromUpdatedSumAndCounts(t *testing.T) {
 		AggMappings: []Mapping{
 			{AggFunc: countStarDesc, ColID: []int{6}, DependencyColID: []int{0}},
 			{AggFunc: countDesc, ColID: []int{5}, DependencyColID: []int{2}},
-			{AggFunc: sumDesc, ColID: []int{4}, DependencyColID: []int{1, 5}, RequiredExactState: true},
+			{AggFunc: sumDesc, ColID: []int{4}, DependencyColID: []int{1, 5}},
 			{AggFunc: avgDesc, ColID: []int{7}, DependencyColID: []int{4, 5, 6}},
 		},
 		DeltaAggColCount: 3,

@@ -46,26 +46,6 @@ func validateSumValueTypes(outputTp, deltaTp *types.FieldType) error {
 	return nil
 }
 
-func normalizeDecimalStateExact(col *chunk.Column, tp *types.FieldType) error {
-	values := col.Decimals()
-	for i := range values {
-		if col.IsNull(i) {
-			continue
-		}
-		original := values[i]
-		candidate := original
-		normalized, err := types.ProduceDecWithSpecifiedTp(types.StrictContext, &candidate, tp)
-		if err != nil {
-			return errors.Annotatef(err, "exact SUM state cannot be represented as %s", tp)
-		}
-		if normalized.Compare(&original) != 0 {
-			return errors.Errorf("exact SUM state would change value %s to %s", original.String(), normalized.String())
-		}
-		values[i] = *normalized
-	}
-	return nil
-}
-
 func resolveSumMergeColumns(
 	input *chunk.Chunk,
 	computedByOrder []*chunk.Column,
@@ -123,9 +103,6 @@ func (e *Exec) buildSumMerger(
 	if err := validateSumValueTypes(retTp, deltaTp); err != nil {
 		return nil, err
 	}
-	if mapping.RequiredExactState && retTp.EvalType() == types.ETReal {
-		return nil, errors.New("exact SUM state does not support floating-point values")
-	}
 	hasCountRef := len(mapping.DependencyColID) == 2
 
 	var countRef depRef
@@ -175,12 +152,11 @@ func (e *Exec) buildSumMerger(
 		}, nil
 	case types.ETDecimal:
 		return &sumDecimalMerger{
-			outputCols:         []int{outputColID},
-			deltaRef:           deltaRef,
-			countRef:           countRef,
-			hasCountRef:        hasCountRef,
-			retTp:              retTp,
-			requiredExactState: mapping.RequiredExactState,
+			outputCols:  []int{outputColID},
+			deltaRef:    deltaRef,
+			countRef:    countRef,
+			hasCountRef: hasCountRef,
+			retTp:       retTp,
 		}, nil
 	default:
 		return nil, errors.Errorf("SUM merge does not support eval type %s", retTp.EvalType())
@@ -407,12 +383,11 @@ func (m *sumFloat64Merger) mergeChunk(input *chunk.Chunk, computedByOrder []*chu
 }
 
 type sumDecimalMerger struct {
-	outputCols         []int
-	deltaRef           depRef
-	countRef           depRef
-	hasCountRef        bool
-	retTp              *types.FieldType
-	requiredExactState bool
+	outputCols  []int
+	deltaRef    depRef
+	countRef    depRef
+	hasCountRef bool
+	retTp       *types.FieldType
 }
 
 func (m *sumDecimalMerger) outputColIDs() []int {
@@ -443,36 +418,32 @@ func (m *sumDecimalMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chu
 				return err
 			}
 		}
-	} else {
-		if err := validateCountColumn(countCol); err != nil {
-			return err
-		}
-		countVals := countCol.Int64s()
-		for rowIdx := range numRows {
-			if countVals[rowIdx] == 0 {
-				resultCol.SetNull(rowIdx, true)
-				continue
-			}
-			oldIsNull := oldCol.IsNull(rowIdx)
-			deltaIsNull := deltaCol.IsNull(rowIdx)
-			switch {
-			case oldIsNull && deltaIsNull:
-				resultCol.SetNull(rowIdx, true)
-			case oldIsNull:
-				resultVals[rowIdx] = deltaVals[rowIdx]
-			case deltaIsNull:
-				resultVals[rowIdx] = oldVals[rowIdx]
-			default:
-				if err := types.DecimalAdd(&oldVals[rowIdx], &deltaVals[rowIdx], &resultVals[rowIdx]); err != nil {
-					return err
-				}
-			}
-		}
+		outputCols[0] = resultCol
+		return nil
 	}
 
-	if m.requiredExactState {
-		if err := normalizeDecimalStateExact(resultCol, m.retTp); err != nil {
-			return err
+	if err := validateCountColumn(countCol); err != nil {
+		return err
+	}
+	countVals := countCol.Int64s()
+	for rowIdx := range numRows {
+		if countVals[rowIdx] == 0 {
+			resultCol.SetNull(rowIdx, true)
+			continue
+		}
+		oldIsNull := oldCol.IsNull(rowIdx)
+		deltaIsNull := deltaCol.IsNull(rowIdx)
+		switch {
+		case oldIsNull && deltaIsNull:
+			resultCol.SetNull(rowIdx, true)
+		case oldIsNull:
+			resultVals[rowIdx] = deltaVals[rowIdx]
+		case deltaIsNull:
+			resultVals[rowIdx] = oldVals[rowIdx]
+		default:
+			if err := types.DecimalAdd(&oldVals[rowIdx], &deltaVals[rowIdx], &resultVals[rowIdx]); err != nil {
+				return err
+			}
 		}
 	}
 	outputCols[0] = resultCol

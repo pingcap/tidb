@@ -337,9 +337,6 @@ type AggInfo struct {
 	ArgColName string
 	// ArgNotNull records whether the aggregate argument column is NOT NULL in the base table schema.
 	ArgNotNull bool
-	// RequiredExactState marks a SUM used by AVG. Such a SUM must be normalized
-	// without changing its numeric value before dependent outputs are published.
-	RequiredExactState bool
 
 	// Dependencies stores dependency offsets in merge-source output schema.
 	// The meaning depends on Kind:
@@ -675,7 +672,7 @@ func buildFromLocal(
 	if err != nil {
 		return nil, err
 	}
-	avgDependencies, requiredExactSum, err := mapAvgDependencies(local.aggCols, aggArgNotNullByOffset, local.baseTable)
+	avgDependencies, err := mapAvgDependencies(local.aggCols, aggArgNotNullByOffset)
 	if err != nil {
 		return nil, err
 	}
@@ -696,7 +693,6 @@ func buildFromLocal(
 	for i, ac := range local.aggCols {
 		di := ac.info
 		di.ArgNotNull = aggArgNotNullByOffset[di.MVOffset]
-		di.RequiredExactState = requiredExactSum[i]
 		deps := make([]int, 0, 5)
 		if ac.deltaName != "" {
 			off, ok := deltaOffsetByName[ac.deltaName]
@@ -707,7 +703,7 @@ func buildFromLocal(
 		}
 		switch di.Kind {
 		case AggSum:
-			// AVG also needs a count dependency for NOT NULL floating-point SUM,
+			// AVG also needs a count dependency for NOT NULL SUM,
 			// so SUM becomes NULL when the last row in a group is deleted.
 			if countIdx, ok := sumToCountExprIdx[i]; ok {
 				countAgg := local.aggCols[countIdx]
@@ -1128,16 +1124,11 @@ func mapSumToCountExprDependencies(aggCols []aggColInfo, sumArgNotNullByOffset m
 // mapAvgDependencies resolves each AVG to the first matching SUM, COUNT(expr),
 // and COUNT(*) in SELECT-list order. For a NOT NULL AVG argument, COUNT(*) can
 // replace COUNT(expr) because both counts are equivalent.
-//
-// Floating-point SUM already has approximate accumulation semantics. Do not
-// mark it as an exact state just because it is used by AVG.
 func mapAvgDependencies(
 	aggCols []aggColInfo,
 	argNotNullByOffset map[int]bool,
-	baseTableInfo *model.TableInfo,
-) (map[int][3]int, map[int]bool, error) {
+) (map[int][3]int, error) {
 	avgDeps := make(map[int][3]int)
-	requiredExactSum := make(map[int]bool)
 	countStarIdx := -1
 	for i, ac := range aggCols {
 		if ac.info.Kind == AggCountStar {
@@ -1146,14 +1137,14 @@ func mapAvgDependencies(
 		}
 	}
 	if countStarIdx < 0 {
-		return nil, nil, errors.New("AVG requires COUNT(*) dependency")
+		return nil, errors.New("AVG requires COUNT(*) dependency")
 	}
 	for i, ac := range aggCols {
 		if ac.info.Kind != AggAvg {
 			continue
 		}
 		if ac.argExpr == nil {
-			return nil, nil, errors.Errorf("AVG aggregate argument is nil at mv offset %d", ac.info.MVOffset)
+			return nil, errors.Errorf("AVG aggregate argument is nil at mv offset %d", ac.info.MVOffset)
 		}
 		sumIdx, countIdx := -1, -1
 		for j, candidate := range aggCols {
@@ -1171,31 +1162,22 @@ func mapAvgDependencies(
 			countIdx = countStarIdx
 		}
 		if sumIdx < 0 {
-			return nil, nil, errors.Errorf(
+			return nil, errors.Errorf(
 				"AVG expression %s at mv offset %d requires matching SUM(expr)",
 				restoreExpr(ac.argExpr),
 				ac.info.MVOffset,
 			)
 		}
 		if countIdx < 0 {
-			return nil, nil, errors.Errorf(
+			return nil, errors.Errorf(
 				"AVG expression %s at mv offset %d requires matching COUNT(expr)",
 				restoreExpr(ac.argExpr),
 				ac.info.MVOffset,
 			)
 		}
 		avgDeps[i] = [3]int{sumIdx, countIdx, countStarIdx}
-		sumCol := baseTableInfo.FindPublicColumnByName(aggCols[sumIdx].info.ArgColName)
-		if sumCol == nil {
-			requiredExactSum[sumIdx] = true
-			continue
-		}
-		sumColType := sumCol.GetType()
-		if sumColType != mysql.TypeFloat && sumColType != mysql.TypeDouble {
-			requiredExactSum[sumIdx] = true
-		}
 	}
-	return avgDeps, requiredExactSum, nil
+	return avgDeps, nil
 }
 
 // mapMinMaxToCountExprDependencies finds an optional first matching COUNT(expr) for nullable

@@ -188,10 +188,9 @@ func buildMViewDeltaMergeAggMappings(
 		}
 
 		mapping := MViewDeltaMergeAggMapping{
-			AggFunc:            aggDesc,
-			ColID:              []int{outputColID},
-			DependencyColID:    deps,
-			RequiredExactState: aggInfo.RequiredExactState,
+			AggFunc:         aggDesc,
+			ColID:           []int{outputColID},
+			DependencyColID: deps,
 		}
 		if countStarMappingIdx < 0 && aggInfo.Kind == mview.AggCountStar {
 			countStarMappingIdx = mappingIdx

@@ -288,7 +288,6 @@ func TestBuildAvgUsesCountStarForNotNullArg(t *testing.T) {
 				if ai.Kind == mview.AggSum {
 					// AVG needs the updated row count to make SUM NULL when the group is deleted.
 					requireDependencies(t, ai, []int{1, 3})
-					require.False(t, ai.RequiredExactState)
 				}
 			}
 		})

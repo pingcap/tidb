@@ -355,4 +355,27 @@ drop materialized view mv_avg_round;
 drop materialized view log on t_mv_avg_round;
 drop table t_mv_avg_round;
 set div_precision_increment = 4;
+set @saved_sql_mode = @@sql_mode;
+set sql_mode = '';
+create table t_mv_avg_overflow (id int primary key, a int not null, b decimal(65,30) not null);
+insert into t_mv_avg_overflow values (1, 1, 60000000000000000000000000000000000);
+create materialized view log on t_mv_avg_overflow (id, a, b);
+create materialized view mv_avg_overflow (a, av, s, n) refresh fast as
+select a, avg(b), sum(b), count(*) from t_mv_avg_overflow group by a;
+create materialized view mv_sum_overflow (a, s, n) refresh fast as
+select a, sum(b), count(*) from t_mv_avg_overflow group by a;
+insert into t_mv_avg_overflow values (2, 1, 80000000000000000000000000000000000);
+refresh materialized view mv_sum_overflow fast;
+refresh materialized view mv_avg_overflow fast;
+select av, s, n from mv_avg_overflow;
+av	s	n
+70000000000000000000000000000000000.000000000000000000000000000000	40000000000000000000000000000000000.000000000000000000000000000000	2
+select s, n from mv_sum_overflow;
+s	n
+40000000000000000000000000000000000.000000000000000000000000000000	2
+drop materialized view mv_avg_overflow;
+drop materialized view mv_sum_overflow;
+drop materialized view log on t_mv_avg_overflow;
+drop table t_mv_avg_overflow;
+set sql_mode = @saved_sql_mode;
 set tidb_mview_enable = off;

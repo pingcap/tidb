@@ -52,9 +52,6 @@ type Mapping struct {
 	// A dependency is either a delta-agg column (< DeltaAggColCount) or a
 	// previously computed output column.
 	DependencyColID []int
-	// RequiredExactState requests lossless normalization of a SUM state before
-	// it is made visible to dependent AVG computations.
-	RequiredExactState bool
 	// MinMaxRecompute is per-mapping MIN/MAX recompute metadata.
 	// It must be nil for non-MIN/MAX mappings.
 	MinMaxRecompute *MinMaxRecomputeSpec
