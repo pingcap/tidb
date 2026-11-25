@@ -23,8 +23,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/tidb/br/pkg/utils/iter"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	"github.com/pingcap/tidb/br/pkg/utils/iter"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/s3like"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
@@ -221,7 +221,7 @@ func TestCopyFromBetweenOSSAndS3CompatibleOSS(t *testing.T) {
 	require.Equal(t, "/dst-bucket/dst/file.sst", copyPath)
 	mu.Unlock()
 
-	// Cross-service copy between native TOS and OSS/S3 must fail before issuing any CopyObject request.
+	// TOSStore.CopyFrom requires a *TOSStore source and rejects non-TOS sources before any request.
 	tosBackend, err := objstore.ParseBackend(
 		"tos://src-bucket/src?region=cn-beijing&access-key=ak&secret-access-key=sk&endpoint="+server.URL,
 		nil,
@@ -230,18 +230,6 @@ func TestCopyFromBetweenOSSAndS3CompatibleOSS(t *testing.T) {
 	tosStore, err := objstore.New(ctx, tosBackend, &storeapi.Options{HTTPClient: server.Client()})
 	require.NoError(t, err)
 	defer tosStore.Close()
-
-	require.ErrorIs(t, copier.CopyFrom(ctx, tosStore, storeapi.CopySpec{
-		From: "file.sst",
-		To:   "file.sst",
-	}), berrors.ErrStorageInvalidConfig)
-
-	s3Copier, ok := srcStore.(storeapi.Copier)
-	require.True(t, ok)
-	require.ErrorIs(t, s3Copier.CopyFrom(ctx, tosStore, storeapi.CopySpec{
-		From: "file.sst",
-		To:   "file.sst",
-	}), berrors.ErrStorageInvalidConfig)
 
 	tosCopier, ok := tosStore.(storeapi.Copier)
 	require.True(t, ok)

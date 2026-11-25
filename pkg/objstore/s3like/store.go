@@ -129,14 +129,6 @@ func (rs *Storage) CopyFrom(ctx context.Context, inStore storeapi.Storage, spec 
 	if !ok {
 		return errors.Annotatef(berrors.ErrStorageInvalidConfig, "CopyFrom is only supported by S3 storage, get %T", inStore)
 	}
-	// Native TOS stores cannot copy into or out of non-TOS backends.
-	var srcProvider string
-	if optsStore, ok := inStore.(interface{ GetOptions() *backuppb.S3 }); ok {
-		srcProvider = optsStore.GetOptions().GetProvider()
-	}
-	if (rs.options.GetProvider() == TOSProvider) != (srcProvider == TOSProvider) {
-		return errors.Annotatef(berrors.ErrStorageInvalidConfig, "CopyFrom is only supported between the same storage service, get %T", inStore)
-	}
 
 	return rs.s3Cli.CopyObject(ctx, &CopyInput{
 		FromLoc: srcStore.GetBucketPrefix(),

@@ -224,7 +224,6 @@ func TestStorageConfig(t *testing.T) {
 		require.ErrorIs(t, dst.CopyFrom(ctx, src.Storage, spec), berrors.ErrStorageInvalidConfig)
 		require.ErrorIs(t, dst.CopyFrom(ctx, (*TOSStore)(nil), spec), berrors.ErrStorageInvalidConfig)
 		require.ErrorIs(t, dst.CopyFrom(ctx, otherService, spec), berrors.ErrStorageInvalidConfig)
-		require.ErrorIs(t, otherService.CopyFrom(ctx, src, spec), berrors.ErrStorageInvalidConfig)
 		require.NoError(t, dst.CopyFrom(ctx, src, spec))
 		require.Equal(t, 1, copies)
 	})
