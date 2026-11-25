@@ -80,6 +80,7 @@ type LogicalPlanBuildState struct {
 	tblInfo2UnionScan    map[*model.TableInfo]bool
 	useDynamicPruneMode  bool
 	viewDepth            int32
+	ignoreCalcFoundRows  bool
 	colRefFromUpdatePlan intset.FastIntSet
 	// plan cache related stuff
 	planCacheUseCache    bool
@@ -286,6 +287,8 @@ type StatementContext struct {
 	InCreateOrAlterStmt    bool
 	InSetSessionStatesStmt bool
 	InShowWarning          bool
+	// PreserveFoundRows prevents result consumption from replacing the preceding FOUND_ROWS() value.
+	PreserveFoundRows bool
 
 	contextutil.PlanCacheTracker
 	contextutil.RangeFallbackHandler
@@ -458,6 +461,8 @@ type StatementContext struct {
 
 	// SysdateIsNow indicates whether sysdate() is an alias of now() in this statement
 	SysdateIsNow bool
+	// EnableTiKVShortCircuitExpression indicates whether short-circuit expression evaluation is enabled in TiKV.
+	EnableTiKVShortCircuitExpression bool
 
 	// RCCheckTS indicates the current read-consistency read select statement will use `RCCheckTS` path.
 	RCCheckTS bool
@@ -575,6 +580,11 @@ type StatementContext struct {
 	// acquired in this case.
 	ForShareLockEnabledByNoop bool
 
+	// IgnoreCalcFoundRows indicates that SQL_CALC_FOUND_ROWS is ignored for this
+	// statement because its shape has no native count plan and
+	// tidb_enable_noop_functions is ON or WARN.
+	IgnoreCalcFoundRows bool
+
 	// OperatorNum is used to record the number of operators in the current logical plan.
 	OperatorNum uint64
 }
@@ -678,6 +688,7 @@ func (sc *StatementContext) SaveLogicalPlanBuildState() LogicalPlanBuildState {
 		tblInfo2UnionScan:    maps.Clone(sc.TblInfo2UnionScan),
 		useDynamicPruneMode:  sc.UseDynamicPruneMode,
 		viewDepth:            sc.ViewDepth,
+		ignoreCalcFoundRows:  sc.IgnoreCalcFoundRows,
 		colRefFromUpdatePlan: sc.ColRefFromUpdatePlan.Copy(),
 		planCacheUseCache:    planCacheUseCache,
 		planCacheType:        planCacheType,
@@ -698,6 +709,7 @@ func (sc *StatementContext) RestoreLogicalPlanBuildState(state LogicalPlanBuildS
 	sc.TblInfo2UnionScan = maps.Clone(state.tblInfo2UnionScan)
 	sc.UseDynamicPruneMode = state.useDynamicPruneMode
 	sc.ViewDepth = state.viewDepth
+	sc.IgnoreCalcFoundRows = state.ignoreCalcFoundRows
 	sc.ColRefFromUpdatePlan.CopyFrom(state.colRefFromUpdatePlan)
 	sc.PlanCacheTracker.Restore(state.planCacheUseCache, state.planCacheType, state.planCacheUnqualified, state.planCacheForce, state.planCacheAlwaysWarn)
 	sc.RangeFallbackHandler = contextutil.NewRangeFallbackHandler(&sc.PlanCacheTracker, sc)
@@ -1086,11 +1098,11 @@ func (sc *StatementContext) FoundRows() uint64 {
 	return sc.mu.foundRows
 }
 
-// AddFoundRows adds found rows.
-func (sc *StatementContext) AddFoundRows(rows uint64) {
+// SetFoundRows sets the final row count after successful result consumption.
+func (sc *StatementContext) SetFoundRows(rows uint64) {
 	sc.mu.Lock()
 	defer sc.mu.Unlock()
-	sc.mu.foundRows += rows
+	sc.mu.foundRows = rows
 }
 
 // RecordRows is used to generate info message
@@ -1296,6 +1308,9 @@ func (sc *StatementContext) GetExecDetails() execdetails.ExecDetails {
 func (sc *StatementContext) PushDownFlags() uint64 {
 	ec := sc.ErrCtx()
 	flags := PushDownFlagsWithTypeFlagsAndErrLevels(sc.TypeFlags(), ec.LevelMap())
+	if sc.EnableTiKVShortCircuitExpression {
+		flags |= model.FlagEnableTiKVShortCircuitExpression
+	}
 	if sc.InInsertStmt {
 		flags |= model.FlagInInsertStmt
 	} else if sc.InUpdateStmt || sc.InDeleteStmt {
@@ -1337,6 +1352,7 @@ func (sc *StatementContext) InitFromPBFlagAndTz(flags uint64, tz *time.Location)
 	sc.InInsertStmt = (flags & model.FlagInInsertStmt) > 0
 	sc.InSelectStmt = (flags & model.FlagInSelectStmt) > 0
 	sc.InDeleteStmt = (flags & model.FlagInUpdateOrDeleteStmt) > 0
+	sc.EnableTiKVShortCircuitExpression = (flags & model.FlagEnableTiKVShortCircuitExpression) > 0
 	levels := sc.ErrLevels()
 	levels[errctx.ErrGroupDividedByZero] = errctx.ResolveErrLevel(false,
 		(flags&model.FlagDividedByZeroAsWarning) > 0,

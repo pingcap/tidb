@@ -23,6 +23,8 @@ import (
 )
 
 var (
+	// ErrSchemaInReadOnlyMode rejects writes to a read-only database.
+	ErrSchemaInReadOnlyMode = ClassSchema.NewStd(mysql.ErrSchemaInReadOnlyMode)
 	// ErrInvalidWorker means the worker is invalid.
 	ErrInvalidWorker = ClassDDL.NewStd(mysql.ErrInvalidDDLWorker)
 	// ErrNotOwner means we are not owner and can't handle DDL jobs.
@@ -467,6 +469,11 @@ var (
 	ErrUnsupportedTTLReferencedByFK = ClassDDL.NewStd(mysql.ErrUnsupportedTTLReferencedByFK)
 	// ErrUnsupportedPrimaryKeyTypeWithTTL returns when create or alter a table with TTL options but the primary key is not supported
 	ErrUnsupportedPrimaryKeyTypeWithTTL = ClassDDL.NewStd(mysql.ErrUnsupportedPrimaryKeyTypeWithTTL)
+	// ErrUnsupportedTTLJobIntervalInStarter returns when a Starter TTL job interval is unsupported.
+	ErrUnsupportedTTLJobIntervalInStarter = ClassDDL.NewStdErr(
+		mysql.ErrUnsupportedDDLOperation,
+		parser_mysql.Message("TTL_JOB_INTERVAL other than '%s' is not supported in starter deployment mode", nil),
+	)
 
 	// ErrNotSupportedYet returns when tidb does not support this feature.
 	ErrNotSupportedYet = ClassDDL.NewStd(mysql.ErrNotSupportedYet)
@@ -530,6 +537,8 @@ var (
 	ErrInvalidTableAffinity = ClassDDL.NewStd(mysql.ErrInvalidAffinityOption)
 	// ErrForbiddenDDL is returned when a DDL operation is forbidden.
 	ErrForbiddenDDL = ClassDDL.NewStd(mysql.ErrForbiddenDDL)
+	// ErrAccessSystemDBRejected is returned when access system database is rejected.
+	ErrAccessSystemDBRejected = ClassDDL.NewStd(mysql.ErrAccessSysDBRejected)
 )
 
 // ReorgRetryableErrCodes are the error codes that are retryable for reorganization.

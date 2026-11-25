@@ -25,7 +25,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/pingcap/tidb/br/pkg/mock/mocklocal"
-	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
@@ -77,7 +76,9 @@ func TestEngineManager(t *testing.T) {
 	}
 
 	backendConfig := getBackendConfig(t)
-	em, err := newEngineManager(backendConfig, storeHelper, log.L())
+	pool := newBufferPool()
+	t.Cleanup(pool.Destroy)
+	em, err := newEngineManager(backendConfig, storeHelper, log.L(), pool)
 	require.NoError(t, err)
 	storeHelper.EXPECT().GetTS(gomock.Any()).Return(int64(0), int64(0), nil)
 	engine1ID := uuid.New()
@@ -110,16 +111,6 @@ func TestEngineManager(t *testing.T) {
 	em.close()
 }
 
-func TestGetExternalEngineKVStatistics(t *testing.T) {
-	em := &engineManager{
-		externalEngine: map[uuid.UUID]engineapi.Engine{},
-	}
-	// non existent uuid
-	size, count := em.getExternalEngineKVStatistics(uuid.New())
-	require.Zero(t, size)
-	require.Zero(t, count)
-}
-
 func TestCleanupAllLocalEnginesLogsErrorOnly(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
@@ -127,7 +118,9 @@ func TestCleanupAllLocalEnginesLogsErrorOnly(t *testing.T) {
 
 	observedCore, observedLogs := observer.New(zapcore.DebugLevel)
 	backendConfig := getBackendConfig(t)
-	em, err := newEngineManager(backendConfig, storeHelper, log.Wrap(zap.New(observedCore)))
+	pool := newBufferPool()
+	t.Cleanup(pool.Destroy)
+	em, err := newEngineManager(backendConfig, storeHelper, log.Wrap(zap.New(observedCore)), pool)
 	require.NoError(t, err)
 
 	ctx := context.Background()

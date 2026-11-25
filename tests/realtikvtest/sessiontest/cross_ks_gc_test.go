@@ -54,7 +54,7 @@ func TestCrossKSRuntimeGCLoopStartedBySystemDomain(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, systemDom.GetCrossKSMgr().GetAllKeyspace(), targetKS)
 
-	handle.Release()
+	handle.Release(false)
 
 	require.Eventually(t, func() bool {
 		return !slices.Contains(systemDom.GetCrossKSMgr().GetAllKeyspace(), targetKS)

@@ -124,6 +124,31 @@ func TestAccountDistTaskRU(t *testing.T) {
 	})
 }
 
+func TestDistTaskRU(t *testing.T) {
+	t.Cleanup(config.RestoreFunc())
+	const (
+		ingestWeight = 2
+		txnWeight    = 3
+	)
+	config.UpdateGlobal(func(cfg *config.Config) {
+		cfg.RUV2.DDLWeights.IngestKVBytes = ingestWeight
+		cfg.RUV2.DDLWeights.TxnKVBytes = txnWeight
+	})
+
+	// The global-sort ingest path accounts the ingested index KV size.
+	require.Equal(t,
+		float64(10*ingestWeight),
+		distTaskRU(&BackfillTaskMeta{Summary: &BackfillTaskSummary{IndexKVSize: 10}}),
+	)
+	// The temp-index merge path accounts its committed transaction bytes.
+	require.Equal(t,
+		float64(20*txnWeight),
+		distTaskRU(&BackfillTaskMeta{MergeTempIndex: true, Summary: &BackfillTaskSummary{MergeTempIndexTxnKVSize: 20}}),
+	)
+	// A task without recorded workload contributes no RU.
+	require.Zero(t, distTaskRU(&BackfillTaskMeta{}))
+}
+
 func TestResolveCloudStorageURI(t *testing.T) {
 	originalURI := vardef.CloudStorageURI.Load()
 	t.Cleanup(func() {

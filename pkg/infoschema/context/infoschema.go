@@ -154,7 +154,7 @@ func (d DBInfoAsInfoSchema) AllSchemas() []*model.DBInfo {
 	return []*model.DBInfo(d)
 }
 
-// SchemaTableInfos implement infoschema.SchemaAndTable interface.
+// SchemaTableInfos implements infoschema.SchemaAndTable interface.
 func (d DBInfoAsInfoSchema) SchemaTableInfos(ctx stdctx.Context, schema ast.CIStr) ([]*model.TableInfo, error) {
 	for _, db := range d {
 		if db.Name == schema {

@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/diagnosticmode"
 	"github.com/pingcap/tidb/pkg/ddl/util"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
@@ -68,6 +69,7 @@ func serverInfoKeyPath(id string) string {
 
 type syncerOptions struct {
 	skipStatusEndpointClaim bool
+	disableRPC              bool
 }
 
 // SyncerOption configures a Syncer during construction.
@@ -79,6 +81,14 @@ type SyncerOption func(*syncerOptions)
 func WithoutStatusEndpointClaim() SyncerOption {
 	return func(options *syncerOptions) {
 		options.skipStatusEndpointClaim = true
+	}
+}
+
+// WithDisableRPC marks the published server info as ineligible for TiDB RPC.
+// Domain passes it when the domain is started as standalone BR.
+func WithDisableRPC() SyncerOption {
+	return func(options *syncerOptions) {
+		options.disableRPC = true
 	}
 }
 
@@ -116,7 +126,7 @@ func newSyncer(
 	for _, option := range options {
 		option(args)
 	}
-	info := getServerInfo(uuid, serverIDGetter, assumedKS)
+	info := getServerInfo(uuid, serverIDGetter, assumedKS, args.disableRPC)
 	claimEnabled := config.GetGlobalConfig().Status.ReportStatus && !args.skipStatusEndpointClaim
 	is := &Syncer{
 		etcdCli:        etcdCli,
@@ -174,6 +184,9 @@ func (s *Syncer) cleanupFailedRegistration(session *concurrency.Session) {
 
 // StoreServerInfo stores self server static information to etcd.
 func (s *Syncer) StoreServerInfo(ctx context.Context) error {
+	if diagnosticmode.Enabled() {
+		return nil
+	}
 	if s.etcdCli == nil {
 		return nil
 	}
@@ -212,6 +225,9 @@ func (s *Syncer) GetServerInfoByID(ctx context.Context, id string) (*ServerInfo,
 
 // UpdateServerLabel updates the labels of the local server information in etcd.
 func (s *Syncer) UpdateServerLabel(ctx context.Context, labels map[string]string) error {
+	if diagnosticmode.Enabled() {
+		return nil
+	}
 	// when etcdCli is nil, the server infos are generated from the latest config, no need to update.
 	if s.etcdCli == nil {
 		return nil
@@ -268,7 +284,7 @@ func (s *Syncer) GetAllServerInfo(ctx context.Context) (map[string]*ServerInfo, 
 	allInfo := make(map[string]*ServerInfo)
 	if s.etcdCli == nil {
 		info := s.info.Load()
-		allInfo[info.ID] = getServerInfo(info.ID, info.ServerIDGetter, "")
+		allInfo[info.ID] = getServerInfo(info.ID, info.ServerIDGetter, "", info.DisableRPC)
 		return allInfo, nil
 	}
 	allInfo, err := getInfo(ctx, s.etcdCli, ServerInformationPath, KeyOpDefaultRetryCnt, KeyOpDefaultTimeout, clientv3.WithPrefix())
@@ -294,9 +310,14 @@ func (s *Syncer) Restart(ctx context.Context) error {
 // cleanupStaleServerAndOwnerInfo removes stale server info and corresponding
 // DDL owner election key left behind by a previous instance of this server
 // that shared the same IP+Port but exited without proper cleanup (e.g. OOM,
-// kill -9). This is best-effort: any error is logged and startup continues.
+// kill -9). Assumed participants do not represent process incarnations, so
+// matching their addresses does not establish that another member is stale.
+// This is best-effort: any error is logged and startup continues.
 func (s *Syncer) cleanupStaleServerAndOwnerInfo(ctx context.Context) {
 	info := s.info.Load()
+	if info.IsAssumed() {
+		return
+	}
 	allInfo, err := getInfo(ctx, s.etcdCli, ServerInformationPath, KeyOpDefaultRetryCnt, KeyOpDefaultTimeout, clientv3.WithPrefix())
 	if err != nil {
 		logutil.BgLogger().Warn("failed to get all server info for stale cleanup", zap.Error(err))
@@ -304,7 +325,7 @@ func (s *Syncer) cleanupStaleServerAndOwnerInfo(ctx context.Context) {
 	}
 
 	for id, si := range allInfo {
-		if id == info.ID {
+		if id == info.ID || si.IsAssumed() {
 			continue
 		}
 		if si.IP != info.IP || si.Port != info.Port {
@@ -341,6 +362,9 @@ func (s *Syncer) RemoveServerInfo() {
 		}
 		cancel()
 	}
+	if diagnosticmode.Enabled() {
+		return
+	}
 	err := etcd.DeleteKeyFromEtcd(s.serverInfoPath, s.etcdCli, KeyOpDefaultRetryCnt, KeyOpDefaultTimeout)
 	if err != nil {
 		logutil.BgLogger().Error("remove server info failed", zap.Error(err))
@@ -368,7 +392,7 @@ func (s *Syncer) RevokeSession() {
 }
 
 // ServerInfoSyncLoop syncs the server information periodically.
-func (s *Syncer) ServerInfoSyncLoop(store tidbkv.Storage, exitCh chan struct{}) {
+func (s *Syncer) ServerInfoSyncLoop(ctx context.Context, store tidbkv.Storage, exitCh chan struct{}) {
 	defer func() {
 		logutil.BgLogger().Info("server info sync loop exited.")
 	}()
@@ -387,7 +411,7 @@ func (s *Syncer) ServerInfoSyncLoop(store tidbkv.Storage, exitCh chan struct{}) 
 				return
 			}
 			logutil.BgLogger().Info("server info syncer need to restart")
-			if err := s.Restart(context.Background()); err != nil {
+			if err := s.Restart(ctx); err != nil {
 				logutil.BgLogger().Error("server info syncer restart failed", zap.Error(err))
 			} else {
 				logutil.BgLogger().Info("server info syncer restarted")
@@ -425,6 +449,9 @@ func (s *Syncer) NewTopologySessionAndStoreServerInfo(ctx context.Context) error
 
 // StoreTopologyInfo stores the topology of tidb to etcd.
 func (s *Syncer) StoreTopologyInfo(ctx context.Context) error {
+	if diagnosticmode.Enabled() {
+		return nil
+	}
 	if s.etcdCli == nil {
 		return nil
 	}
@@ -447,6 +474,9 @@ func (s *Syncer) StoreTopologyInfo(ctx context.Context) error {
 
 // refreshTopology refreshes etcd topology with ttl stored in "/topology/tidb/ip:port/ttl".
 func (s *Syncer) updateTopologyAliveness(ctx context.Context) error {
+	if diagnosticmode.Enabled() {
+		return nil
+	}
 	if s.etcdCli == nil {
 		return nil
 	}
@@ -483,6 +513,9 @@ func (s *Syncer) GetAllTiDBTopology(ctx context.Context) ([]*TopologyInfo, error
 
 // RemoveTopologyInfo remove self server topology information from etcd.
 func (s *Syncer) RemoveTopologyInfo() {
+	if diagnosticmode.Enabled() {
+		return
+	}
 	if s.etcdCli == nil {
 		return
 	}
@@ -576,7 +609,7 @@ func getInfo(ctx context.Context, etcdCli *clientv3.Client, key string, retryCnt
 }
 
 // getServerInfo gets self tidb server information.
-func getServerInfo(id string, serverIDGetter func() uint64, assumedKS string) *ServerInfo {
+func getServerInfo(id string, serverIDGetter func() uint64, assumedKS string, disableRPC bool) *ServerInfo {
 	cfg := config.GetGlobalConfig()
 	info := &ServerInfo{
 		StaticInfo: StaticInfo{
@@ -589,6 +622,8 @@ func getServerInfo(id string, serverIDGetter func() uint64, assumedKS string) *S
 			Keyspace:        config.GetGlobalKeyspaceName(),
 			AssumedKeyspace: assumedKS,
 			ServerIDGetter:  serverIDGetter,
+			DisableRPC:      disableRPC,
+			SchemaReadOnly:  true,
 		},
 		DynamicInfo: DynamicInfo{
 			Labels: maps.Clone(cfg.Labels),

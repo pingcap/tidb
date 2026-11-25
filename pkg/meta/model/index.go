@@ -297,6 +297,13 @@ type IndexInfo struct {
 	RegionSplitPolicy  *RegionSplitPolicy `json:"region_split_policy,omitempty"` // RegionSplitPolicy is the persistent split policy.
 }
 
+// HypoIndexInfo keeps a session-local index together with its expression columns.
+// Embedding IndexInfo preserves the session-state JSON format of ordinary hypothetical indexes.
+type HypoIndexInfo struct {
+	*IndexInfo
+	HiddenColumns []*ColumnInfo `json:"hidden_columns,omitempty"`
+}
+
 // Hash64 implement HashEquals interface.
 func (index *IndexInfo) Hash64(h base.Hasher) {
 	h.HashInt64(index.ID)
@@ -427,6 +434,13 @@ type RegionSplitPolicy struct {
 
 	// Number of regions to split into
 	Regions int64 `json:"regions"`
+
+	// TimeZone is the session time zone that defined this policy. Temporal
+	// bounds are interpreted in this zone when the policy is applied later, so
+	// a DDL worker in another zone reproduces the same split keys.
+	// Empty means the policy was stored before the zone was persisted; the
+	// applying session's zone is used.
+	TimeZone string `json:"time_zone,omitempty"`
 }
 
 // Clone clones RegionSplitPolicy

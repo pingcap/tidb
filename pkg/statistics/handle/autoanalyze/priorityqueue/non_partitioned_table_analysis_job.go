@@ -84,7 +84,8 @@ func (j *NonPartitionedTableAnalysisJob) GetTableID() int64 {
 
 // Analyze analyzes the table or indexes.
 func (j *NonPartitionedTableAnalysisJob) Analyze(
-	statsHandle statstypes.StatsHandle,
+	pool statsutil.SessionPool,
+	procIDs statsutil.AutoAnalyzeProcIDGenerator,
 	sysProcTracker sysproctrack.Tracker,
 ) error {
 	success := true
@@ -100,12 +101,12 @@ func (j *NonPartitionedTableAnalysisJob) Analyze(
 		}
 	}()
 
-	return statsutil.CallWithSCtx(statsHandle.SPool(), func(sctx sessionctx.Context) error {
+	return statsutil.CallWithSCtx(pool.SPool(), func(sctx sessionctx.Context) error {
 		switch j.getAnalyzeType() {
 		case analyzeTable:
-			success = j.analyzeTable(sctx, statsHandle, sysProcTracker)
+			success = j.analyzeTable(sctx, procIDs, sysProcTracker)
 		case analyzeIndex:
-			success = j.analyzeIndexes(sctx, statsHandle, sysProcTracker)
+			success = j.analyzeIndexes(sctx, procIDs, sysProcTracker)
 		}
 		return nil
 	})
@@ -150,6 +151,10 @@ func (j *NonPartitionedTableAnalysisJob) ValidateAndPrepare(
 	if !ok {
 		callFailureHook(false)
 		return false, schemaNotExist
+	}
+	if valid, failReason, needRetry := checkTableReadyForAnalyze(tableInfo); !valid {
+		callFailureHook(needRetry)
+		return false, failReason
 	}
 	tableName := tableInfo.Name.O
 	indexNames := make([]string, 0, len(j.IndexIDs))
@@ -223,11 +228,11 @@ func (j *NonPartitionedTableAnalysisJob) getAnalyzeType() analyzeType {
 
 func (j *NonPartitionedTableAnalysisJob) analyzeTable(
 	sctx sessionctx.Context,
-	statsHandle statstypes.StatsHandle,
+	procIDs statsutil.AutoAnalyzeProcIDGenerator,
 	sysProcTracker sysproctrack.Tracker,
 ) bool {
 	sql, params := j.GenSQLForAnalyzeTable()
-	return exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, j.TableStatsVer, j.NeedVersionRewriteWarn, sql, params...)
+	return exec.AutoAnalyze(sctx, procIDs, sysProcTracker, j.TableStatsVer, j.NeedVersionRewriteWarn, sql, params...)
 }
 
 // GenSQLForAnalyzeTable generates the SQL for analyzing the specified table.
@@ -240,7 +245,7 @@ func (j *NonPartitionedTableAnalysisJob) GenSQLForAnalyzeTable() (string, []any)
 
 func (j *NonPartitionedTableAnalysisJob) analyzeIndexes(
 	sctx sessionctx.Context,
-	statsHandle statstypes.StatsHandle,
+	procIDs statsutil.AutoAnalyzeProcIDGenerator,
 	sysProcTracker sysproctrack.Tracker,
 ) bool {
 	if len(j.IndexNames) == 0 {
@@ -250,7 +255,7 @@ func (j *NonPartitionedTableAnalysisJob) analyzeIndexes(
 	// Therefore, to avoid redundancy, only analyze the first index.
 	firstIndex := j.IndexNames[0]
 	sql, params := j.GenSQLForAnalyzeIndex(firstIndex)
-	return exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, j.TableStatsVer, j.NeedVersionRewriteWarn, sql, params...)
+	return exec.AutoAnalyze(sctx, procIDs, sysProcTracker, j.TableStatsVer, j.NeedVersionRewriteWarn, sql, params...)
 }
 
 // GenSQLForAnalyzeIndex generates the SQL for analyzing the specified index.

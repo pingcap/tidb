@@ -55,6 +55,87 @@ func withMockTiFlash(nodes int) mockstore.MockTiKVStoreOption {
 	)
 }
 
+// withMockTiFlashCluster is withMockTiFlash that also keeps the cluster handle.
+// Table splits after bootstrap only keep the TiKV peer, so callers can place
+// TiFlash peers on those regions before reading from TiFlash.
+func withMockTiFlashCluster(nodes int, cluster **unistore.Cluster) mockstore.MockTiKVStoreOption {
+	return mockstore.WithMultipleOptions(
+		mockstore.WithClusterInspector(func(c testutils.Cluster) {
+			mockCluster := c.(*unistore.Cluster)
+			if cluster != nil {
+				*cluster = mockCluster
+			}
+			_, _, regionID := mockstore.BootstrapWithSingleStore(c)
+			for i := range nodes {
+				storeID := c.AllocID()
+				peerID := c.AllocID()
+				mockCluster.AddStore(storeID, fmt.Sprintf("tiflash%d", i), &metapb.StoreLabel{Key: "engine", Value: "tiflash"})
+				mockCluster.AddPeer(regionID, storeID, peerID)
+			}
+		}),
+		mockstore.WithStoreType(mockstore.EmbedUnistore),
+	)
+}
+
+// addTiFlashPeersToAllRegions gives every region a peer on each TiFlash store.
+// Table splits keep only the TiKV peer on the new region. A later TiFlash read
+// then retries with no_tiflash_access_store until tikv:9012 TiFlash server timeout.
+// store is the kv store returned with cluster; its region cache is dropped so the
+// next read reloads the peers just added.
+func addTiFlashPeersToAllRegions(t *testing.T, cluster *unistore.Cluster, store any) {
+	t.Helper()
+	require.NotNil(t, cluster)
+	cacheStore, ok := store.(interface{ GetRegionCache() *tikv.RegionCache })
+	require.True(t, ok)
+	cache := cacheStore.GetRegionCache()
+	require.NotNil(t, cache)
+
+	var storeIDs []uint64
+	for _, st := range cluster.GetAllStores() {
+		for _, label := range st.Labels {
+			if label.Key == "engine" && label.Value == "tiflash" {
+				storeIDs = append(storeIDs, st.Id)
+				break
+			}
+		}
+	}
+	require.NotEmpty(t, storeIDs)
+
+	key := []byte{}
+	seen := make(map[uint64]struct{})
+	for range 10000 {
+		region, _, _, _ := cluster.GetRegionByKey(key)
+		if region == nil && len(key) == 0 {
+			region, _, _, _ = cluster.GetRegionByKey([]byte{0})
+		}
+		if region == nil {
+			break
+		}
+		if _, dup := seen[region.Id]; dup {
+			break
+		}
+		seen[region.Id] = struct{}{}
+		if region.RegionEpoch != nil {
+			cache.InvalidateCachedRegion(tikv.NewRegionVerID(region.Id, region.RegionEpoch.ConfVer, region.RegionEpoch.Version))
+		}
+		have := make(map[uint64]struct{}, len(region.Peers))
+		for _, peer := range region.Peers {
+			have[peer.StoreId] = struct{}{}
+		}
+		for _, storeID := range storeIDs {
+			if _, exists := have[storeID]; exists {
+				continue
+			}
+			cluster.AddPeer(region.Id, storeID, cluster.AllocID())
+		}
+		if len(region.EndKey) == 0 {
+			break
+		}
+		key = append([]byte(nil), region.EndKey...)
+	}
+	require.NotEmpty(t, seen)
+}
+
 func TestCompactTableTooBusy(t *testing.T) {
 	mocker := newCompactRequestMocker(t)
 	mocker.MockFrom(`tiflash0/#1`, func(req *kvrpcpb.CompactRequest) (*kvrpcpb.CompactResponse, error) {

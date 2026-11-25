@@ -583,17 +583,19 @@ func (b *PlanBuilder) buildResultSetNode(ctx context.Context, node ast.ResultSet
 	}
 }
 
+func getDataSourceHintTable(ds *logicalop.DataSource) *h.HintedTable {
+	if ds.TableAsName != nil && len(ds.TableAsName.L) != 0 {
+		return &h.HintedTable{DBName: ds.DBName, TblName: *ds.TableAsName, SelectOffset: ds.QueryBlockOffset()}
+	}
+	return &h.HintedTable{DBName: ds.DBName, TblName: ds.TableInfo.Name, SelectOffset: ds.QueryBlockOffset()}
+}
+
 func setPreferredStoreType(ds *logicalop.DataSource, hintInfo *h.PlanHints) {
 	if hintInfo == nil {
 		return
 	}
 
-	var alias *h.HintedTable
-	if len(ds.TableAsName.L) != 0 {
-		alias = &h.HintedTable{DBName: ds.DBName, TblName: *ds.TableAsName, SelectOffset: ds.QueryBlockOffset()}
-	} else {
-		alias = &h.HintedTable{DBName: ds.DBName, TblName: ds.TableInfo.Name, SelectOffset: ds.QueryBlockOffset()}
-	}
+	alias := getDataSourceHintTable(ds)
 	if hintTbl := hintInfo.IfPreferTiKV(alias); hintTbl != nil {
 		for _, path := range ds.AllPossibleAccessPaths {
 			if path.StoreType == kv.TiKV {
@@ -734,6 +736,58 @@ func isImmediateLateralTableSource(node ast.ResultSetNode) bool {
 	default:
 		return false
 	}
+}
+
+func setTiFlashLMFilterColumns(ds *logicalop.DataSource, hintInfo *h.PlanHints) {
+	if hintInfo == nil {
+		return
+	}
+
+	alias := getDataSourceHintTable(ds)
+	columnIDsByName := make(map[string]int64, len(ds.Columns))
+	for i, col := range ds.Columns {
+		columnIDsByName[col.Name.L] = ds.TblCols[i].UniqueID
+	}
+	columnIDSet := make(map[int64]struct{}, len(ds.TiFlashLMFilterColumnIDs))
+	for _, colID := range ds.TiFlashLMFilterColumnIDs {
+		columnIDSet[colID] = struct{}{}
+	}
+
+	for i, columnHint := range hintInfo.TiFlashLMFilters {
+		if !columnHint.Match(alias) {
+			continue
+		}
+		hintInfo.TiFlashLMFilters[i].Matched = true
+		columnIDs := make([]int64, 0, len(columnHint.Columns))
+		invalidColumnNames := make([]string, 0)
+		for _, columnName := range columnHint.Columns {
+			columnID, ok := columnIDsByName[columnName.L]
+			if !ok {
+				invalidColumnNames = append(invalidColumnNames, columnName.O)
+				continue
+			}
+			columnIDs = append(columnIDs, columnID)
+		}
+		if len(invalidColumnNames) > 0 {
+			errMsg := fmt.Sprintf("%s(%s) is inapplicable, check whether the columns (%s) exist in table %s.%s",
+				h.HintTiFlashLMFilter,
+				columnHint.ColumnString(),
+				strings.Join(invalidColumnNames, ", "),
+				alias.DBName.O,
+				alias.TblName.O,
+			)
+			ds.SCtx().GetSessionVars().StmtCtx.SetHintWarning(errMsg)
+			continue
+		}
+		for _, columnID := range columnIDs {
+			if _, ok := columnIDSet[columnID]; ok {
+				continue
+			}
+			columnIDSet[columnID] = struct{}{}
+			ds.TiFlashLMFilterColumnIDs = append(ds.TiFlashLMFilterColumnIDs, columnID)
+		}
+	}
+	slices.Sort(ds.TiFlashLMFilterColumnIDs)
 }
 
 func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (base.LogicalPlan, error) {
@@ -1647,6 +1701,11 @@ func (b *PlanBuilder) buildProjectionField(ctx context.Context, p base.LogicalPl
 		b.ctx.GetSessionVars().MapHashCode2UniqueID4ExtendedCol[string(expr.HashCode())] = int(newCol.UniqueID)
 	}
 	newCol.SetCoercibility(expr.Coercibility())
+	// Only string results refine the column's type-derived repertoire.
+	// In particular, JSON columns must retain their Unicode repertoire.
+	if newCol.RetType.EvalType() == types.ETString {
+		newCol.SetRepertoire(expr.Repertoire())
+	}
 	return newCol, name, nil
 }
 
@@ -1802,6 +1861,11 @@ func (b *PlanBuilder) implicitProjectGroupingSetCols(projSchema *expression.Sche
 }
 
 // buildProjection returns a Projection plan and non-aux columns length.
+// projNameIndexThreshold is the number of select fields and input columns from
+// which buildProjection indexes the input names. Below it, scanning the names
+// for each field is cheaper than building the index.
+const projNameIndexThreshold = 32
+
 func (b *PlanBuilder) buildProjection(ctx context.Context, p base.LogicalPlan, fields []*ast.SelectField, mapper map[*ast.AggregateFuncExpr]int,
 	windowMapper map[*ast.WindowFuncExpr]int, considerWindow bool, expandGenerateColumn bool) (base.LogicalPlan, []expression.Expression, int, error) {
 	err := b.preprocessUserVarTypes(ctx, p, fields, mapper)
@@ -1810,6 +1874,14 @@ func (b *PlanBuilder) buildProjection(ctx context.Context, p base.LogicalPlan, f
 	}
 	b.optFlag |= rule.FlagEliminateProjection
 	b.curClause = fieldList
+	// Index the names the field rewriters resolve against (see getExpressionRewriter)
+	// once, instead of scanning them for every column reference in the fields.
+	oldProjNameIndex := b.projNameIndex
+	defer func() { b.projNameIndex = oldProjNameIndex }()
+	b.projNameIndex = nil
+	if inputNames := rewriterNames(p); len(fields) >= projNameIndexThreshold && len(inputNames) >= projNameIndexThreshold {
+		b.projNameIndex = expression.NewFieldNameIndex(inputNames)
+	}
 	proj := logicalop.LogicalProjection{Exprs: make([]expression.Expression, 0, len(fields))}.Init(b.ctx, b.getSelectOffset())
 	schema := expression.NewSchema(make([]*expression.Column, 0, len(fields))...)
 	oldLen := 0
@@ -3615,7 +3687,7 @@ func checkColFuncDepend(
 	whereDependNames, joinDependNames map[*types.FieldName]*types.FieldName,
 ) bool {
 	for _, index := range tblInfo.Indices {
-		if !index.Unique {
+		if !index.Unique || index.HasCondition() {
 			continue
 		}
 		funcDepend := true
@@ -4984,11 +5056,23 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		return nil, err
 	}
 
-	tbl, err = tryLockMDLAndUpdateSchemaIfNecessary(ctx, b.ctx, dbName, tbl, b.is)
-	if err != nil {
-		return nil, err
+	if !b.useInfoSchemaAsIs {
+		tbl, err = tryLockMDLAndUpdateSchemaIfNecessary(ctx, b.ctx, dbName, tbl, b.is)
+		if err != nil {
+			return nil, err
+		}
 	}
 	tableInfo := tbl.Meta()
+	if sessionVars.StmtCtx.InExplainStmt {
+		hypoTblInfo, _ := sessionVars.GetHypoIndexTableInfo(dbName.L, tableInfo)
+		if hypoTblInfo != tableInfo {
+			tbl, err = table.TableFromMeta(tbl.Allocators(nil), hypoTblInfo)
+			if err != nil {
+				return nil, err
+			}
+			tableInfo = hypoTblInfo
+		}
+	}
 
 	if b.isCreateView && tableInfo.TempTableType == model.TempTableLocal {
 		return nil, plannererrors.ErrViewSelectTemporaryTable.GenWithStackByArgs(tn.Name)
@@ -5015,6 +5099,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		return nil, err
 	}
 
+	var samplePartitions []table.PartitionedTable
 	if tableInfo.GetPartitionInfo() != nil {
 		// If `UseDynamicPruneMode` already been false, then we don't need to check whether execute `flagPartitionProcessor`
 		// otherwise we need to check global stats initialized for each partition table
@@ -5067,6 +5152,11 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 			pt = tables.NewPartitionTableWithGivenSets(pt, pids)
 		}
 		b.partitionedTable = append(b.partitionedTable, pt)
+		// TABLESAMPLE on this data source may only sample the partitions of this
+		// data source. b.partitionedTable is shared with the whole statement (and
+		// with sibling expressions), so passing it here would let a datasource
+		// sample partitions registered by other tables.
+		samplePartitions = []table.PartitionedTable{pt}
 	} else if len(tn.PartitionNames) != 0 {
 		return nil, plannererrors.ErrPartitionClauseOnNonpartitioned
 	}
@@ -5147,8 +5237,9 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	}
 
 	// Try to substitute generate column only if there is an index on generate column.
-	for _, index := range tableInfo.Indices {
-		if index.State != model.StatePublic {
+	for _, path := range possiblePaths {
+		index := path.Index
+		if index == nil || index.State != model.StatePublic {
 			continue
 		}
 		for _, indexCol := range index.Columns {
@@ -5309,11 +5400,12 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	b.handleHelper.pushMap(handleMap)
 	ds.SetSchema(schema)
 	ds.SetOutputNames(names)
+	setTiFlashLMFilterColumns(ds, b.TableHints())
 	// setPreferredStoreType will mark user preferred path, which should be shared by all ds alternative. Here
 	// we only mark it for the AllPossibleAccessPaths(since the element inside is shared by PossibleAccessPaths),
 	// and the following ds alternative will clone/inherit this mark from DS copying.
 	setPreferredStoreType(ds, b.TableHints())
-	ds.SampleInfo = tablesampler.NewTableSampleInfo(tn.TableSample, schema, b.partitionedTable)
+	ds.SampleInfo = tablesampler.NewTableSampleInfo(tn.TableSample, schema, samplePartitions)
 	b.isSampling = ds.SampleInfo != nil
 
 	for i, colExpr := range ds.Schema().Columns {
@@ -5501,7 +5593,7 @@ func (b *PlanBuilder) buildMemTable(_ context.Context, dbName ast.CIStr, tableIn
 			p.Extractor = NewInfoSchemaPartitionsExtractor()
 		case infoschema.TableStatistics:
 			p.Extractor = NewInfoSchemaStatisticsExtractor()
-		case infoschema.TableSchemata:
+		case infoschema.TableSchemata, infoschema.TableSchemataExtensions:
 			p.Extractor = NewInfoSchemaSchemataExtractor()
 		case infoschema.TableSequences:
 			p.Extractor = NewInfoSchemaSequenceExtractor()
@@ -5517,6 +5609,12 @@ func (b *PlanBuilder) buildMemTable(_ context.Context, dbName ast.CIStr, tableIn
 			p.Extractor = NewInfoSchemaReferConstExtractor()
 		case infoschema.TableTiDBIndexes:
 			p.Extractor = NewInfoSchemaIndexesExtractor()
+		case infoschema.TableTiDBMViews:
+			p.Extractor = NewInfoSchemaTiDBMViewsExtractor()
+		case infoschema.TableTiDBMLogs:
+			p.Extractor = NewInfoSchemaTiDBMLogsExtractor()
+		case infoschema.TableTiDBTableMViewDependencies:
+			p.Extractor = NewInfoSchemaTiDBTableMViewDependenciesExtractor()
 		case infoschema.TableViews:
 			p.Extractor = NewInfoSchemaViewsExtractor()
 		case infoschema.TableKeyColumn:
@@ -5568,6 +5666,13 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName ast.CI
 	selectNode, err := viewParser.ParseOneStmt(tableInfo.View.SelectStmt, charset, collation)
 	if err != nil {
 		return nil, err
+	}
+	if b.buildingFoundRows {
+		// View definitions are expanded after preprocessing. Check them as inner queries,
+		// preserving legacy modifiers as noops and rejecting or falling back on non-repeatable expressions.
+		if err := b.checkViewForFoundRows(selectNode); err != nil {
+			return nil, err
+		}
 	}
 	originalVisitInfo := b.visitInfo
 	b.visitInfo = make([]visitInfo, 0)
@@ -6260,6 +6365,7 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 		AllAssignmentsAreConstant: allAssignmentsAreConstant,
 		VirtualAssignmentsOffset:  len(update.List),
 		IgnoreError:               update.IgnoreErr,
+		IsMultiTable:              update.TableRefs.TableRefs.Right != nil,
 	}.Init(b.ctx)
 	updt.SetOutputNames(p.OutputNames())
 	// We cannot apply projection elimination when building the subplan, because
@@ -6606,9 +6712,12 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (base
 		}
 	}
 
-	// If the delete is non-qualified it does not require Select Priv
+	// Only an unqualified single-table delete can omit SELECT privileges.
+	// Joined tables can be read by ON/USING even without a WHERE clause.
 	if ds.Where == nil && ds.Order == nil {
-		b.popVisitInfo()
+		if tableName, _ := getSingleTableNameAndAlias(ds.TableRefs); tableName != nil {
+			b.popVisitInfo()
+		}
 	}
 	var authErr error
 	sessionVars := b.ctx.GetSessionVars()
@@ -6623,23 +6732,15 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (base
 	if ds.Tables != nil {
 		// Delete a, b from a, b, c, d... add a and b.
 		updatableList := make(map[string]bool)
-		tbInfoList := make(map[string]*ast.TableName)
-		collectTableName(ds.TableRefs.TableRefs, &updatableList, &tbInfoList)
+		tableNameByKey := make(map[string]*ast.TableName)
+		collectTableName(ds.TableRefs.TableRefs, &updatableList, &tableNameByKey)
 		for _, tn := range ds.Tables.Tables {
-			var canUpdate, foundMatch = false, false
-			name := tn.Name.L
-			if tn.Schema.L == "" {
-				canUpdate, foundMatch = updatableList[name]
-			}
-
-			if !foundMatch {
-				if tn.Schema.L == "" {
-					name = ast.NewCIStr(b.ctx.GetSessionVars().CurrentDB).L + "." + tn.Name.L
-				} else {
-					name = tn.Schema.L + "." + tn.Name.L
-				}
-				canUpdate, foundMatch = updatableList[name]
-			}
+			tb, canUpdate, foundMatch := resolveMultiDeleteTarget(
+				tn,
+				b.ctx.GetSessionVars().CurrentDB,
+				updatableList,
+				tableNameByKey,
+			)
 			// check sql like: `delete b from (select * from t) as a, t`
 			if !foundMatch {
 				return nil, plannererrors.ErrUnknownTable.GenWithStackByArgs(tn.Name.O, "MULTI DELETE")
@@ -6648,7 +6749,6 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (base
 			if !canUpdate {
 				return nil, plannererrors.ErrNonUpdatableTable.GenWithStackByArgs(tn.Name.O, "DELETE")
 			}
-			tb := tbInfoList[name]
 			tnW := b.resolveCtx.GetTableName(tb)
 			localResolveCtx.AddTableName(&resolve.TableNameW{
 				TableName: tn,
@@ -7698,11 +7798,37 @@ func (*tableListExtractor) Leave(ast.Node) bool {
 	return true
 }
 
-func collectTableName(node ast.ResultSetNode, updatableName *map[string]bool, info *map[string]*ast.TableName) {
+// resolveMultiDeleteTarget matches an unqualified alias before currentDB.table,
+// which is the resolution order used by TiDB/MySQL multi-table DELETE.
+func resolveMultiDeleteTarget(
+	target *ast.TableName,
+	currentDB string,
+	updatableList map[string]bool,
+	tableNameByKey map[string]*ast.TableName,
+) (table *ast.TableName, canUpdate, foundMatch bool) {
+	key := target.Name.L
+	if target.Schema.L == "" {
+		canUpdate, foundMatch = updatableList[key]
+	}
+	if !foundMatch {
+		if target.Schema.L == "" {
+			key = ast.NewCIStr(currentDB).L + "." + target.Name.L
+		} else {
+			key = target.Schema.L + "." + target.Name.L
+		}
+		canUpdate, foundMatch = updatableList[key]
+	}
+	if !foundMatch {
+		return nil, false, false
+	}
+	return tableNameByKey[key], canUpdate, true
+}
+
+func collectTableName(node ast.ResultSetNode, updatableName *map[string]bool, tableNameByKey *map[string]*ast.TableName) {
 	switch x := node.(type) {
 	case *ast.Join:
-		collectTableName(x.Left, updatableName, info)
-		collectTableName(x.Right, updatableName, info)
+		collectTableName(x.Left, updatableName, tableNameByKey)
+		collectTableName(x.Right, updatableName, tableNameByKey)
 	case *ast.TableSource:
 		name := x.AsName.L
 		var canUpdate bool
@@ -7715,7 +7841,7 @@ func collectTableName(node ast.ResultSetNode, updatableName *map[string]bool, in
 					name = s.Name.L
 				}
 			}
-			(*info)[name] = s
+			(*tableNameByKey)[name] = s
 		}
 		(*updatableName)[name] = canUpdate && s.Schema.L != ""
 	}

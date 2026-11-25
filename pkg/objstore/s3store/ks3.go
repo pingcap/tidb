@@ -19,6 +19,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net/url"
 	"path"
 	"strings"
 	"sync"
@@ -69,6 +70,10 @@ func NewKS3Storage(
 	backend *backuppb.S3,
 	opts *storeapi.Options,
 ) (obj *KS3Storage, errRet error) {
+	if _, err := url.Parse(backend.Endpoint); err != nil {
+		// Discard the URL-bearing parser error before entering the SDK.
+		return nil, errors.Annotate(berrors.ErrStorageInvalidConfig, "invalid KS3 endpoint URL")
+	}
 	qs := *backend
 	awsConfig := aws.DefaultConfig
 	awsConfig.S3ForcePathStyle = qs.ForcePathStyle
@@ -328,11 +333,10 @@ func (rs *KS3Storage) DeleteFile(ctx context.Context, file string) error {
 
 // DeleteFiles delete the files in batch in s3 storage.
 func (rs *KS3Storage) DeleteFiles(ctx context.Context, files []string) error {
-	const s3DeleteObjectsLimit = 1000
 	for len(files) > 0 {
 		batch := files
-		if len(batch) > s3DeleteObjectsLimit {
-			batch = batch[:s3DeleteObjectsLimit]
+		if len(batch) > storeapi.S3DeleteObjectsLimit {
+			batch = batch[:storeapi.S3DeleteObjectsLimit]
 		}
 		objects := make([]*s3.ObjectIdentifier, 0, len(batch))
 		for _, file := range batch {
@@ -783,6 +787,11 @@ func (rs *KS3Storage) Rename(ctx context.Context, oldFileName, newFileName strin
 
 // Close implements Storage interface.
 func (*KS3Storage) Close() {}
+
+// Features implements FeatureProvider.
+func (*KS3Storage) Features() storeapi.Features {
+	return storeapi.FeatureStrongConsistency
+}
 
 func maybeObjectAlreadyExists(err awserr.Error) bool {
 	// Some versions of server did return the error code "ObjectAlreayExists"...

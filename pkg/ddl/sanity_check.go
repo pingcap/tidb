@@ -78,8 +78,8 @@ func queryDeleteRangeCnt(sessPool *sess.Pool, jobID int64) (int, error) {
 }
 
 func expectedDeleteRangeCnt(ctx delRangeCntCtx, job *model.Job) (int, error) {
-	if job.State == model.JobStateCancelled {
-		// Cancelled job should not have any delete range.
+	if job.IsCancelled() && job.Type != model.ActionMViewRefreshOutOfPlaceCutover {
+		// A cancelled cutover can still retire an unused replacement log.
 		return 0, nil
 	}
 	switch job.Type {
@@ -89,7 +89,7 @@ func expectedDeleteRangeCnt(ctx delRangeCntCtx, job *model.Job) (int, error) {
 			return 0, errors.Trace(err)
 		}
 		return len(args.AllDroppedTableIDs), nil
-	case model.ActionDropTable, model.ActionDropMaterializedView, model.ActionDropMaterializedViewLog:
+	case model.ActionDropTable, model.ActionDropMaterializedView, model.ActionDropMaterializedViewLog, model.ActionDropMaterializedViewShadow:
 		args, err := model.GetFinishedDropTableArgs(job)
 		if err != nil {
 			return 0, errors.Trace(err)
@@ -100,6 +100,21 @@ func expectedDeleteRangeCnt(ctx delRangeCntCtx, job *model.Job) (int, error) {
 			return 1, nil
 		}
 		return 0, nil
+	case model.ActionMViewRefreshOutOfPlaceCutover:
+		args, err := model.GetRefreshMaterializedViewCompleteOutOfPlaceCutoverArgs(job)
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		if job.IsCancelled() {
+			if args.NewMLogID != 0 {
+				return 1, nil
+			}
+			return 0, nil
+		}
+		if args.OldMLogID != 0 {
+			return 2, nil
+		}
+		return 1, nil
 	case model.ActionTruncateTable, model.ActionTruncateTablePartition:
 		args, err := model.GetFinishedTruncateTableArgs(job)
 		if err != nil {
@@ -236,46 +251,48 @@ func (e *executor) checkHistoryJobInTest(ctx sessionctx.Context, historyJob *mod
 		panic(fmt.Sprintf("job ID %d, parse ddl job failed, query %s", historyJob.ID, historyJob.Query))
 	}
 	for _, st := range stmt {
-		switch historyJob.Type {
-		case model.ActionCreatePlacementPolicy:
-			if _, ok := st.(*ast.CreatePlacementPolicyStmt); !ok {
-				panic(fmt.Sprintf("job ID %d, parse ddl job failed, query %s", historyJob.ID, historyJob.Query))
-			}
-		case model.ActionCreateTable:
-			if _, ok := st.(*ast.CreateTableStmt); !ok {
-				panic(fmt.Sprintf("job ID %d, parse ddl job failed, query %s", historyJob.ID, historyJob.Query))
-			}
-		case model.ActionCreateMaterializedView:
-			if _, ok := st.(*ast.CreateMaterializedViewStmt); !ok {
-				panic(fmt.Sprintf("job ID %d, parse ddl job failed, query %s", historyJob.ID, historyJob.Query))
-			}
-		case model.ActionCreateMaterializedViewLog:
-			if _, ok := st.(*ast.CreateMaterializedViewLogStmt); !ok {
-				panic(fmt.Sprintf("job ID %d, parse ddl job failed, query %s", historyJob.ID, historyJob.Query))
-			}
-		case model.ActionDropMaterializedView:
-			if _, ok := st.(*ast.DropMaterializedViewStmt); !ok {
-				panic(fmt.Sprintf("job ID %d, parse ddl job failed, query %s", historyJob.ID, historyJob.Query))
-			}
-		case model.ActionDropMaterializedViewLog:
-			if _, ok := st.(*ast.DropMaterializedViewLogStmt); !ok {
-				panic(fmt.Sprintf("job ID %d, parse ddl job failed, query %s", historyJob.ID, historyJob.Query))
-			}
-		case model.ActionCreateSchema:
-			if _, ok := st.(*ast.CreateDatabaseStmt); !ok {
-				panic(fmt.Sprintf("job ID %d, parse ddl job failed, query %s", historyJob.ID, historyJob.Query))
-			}
-		case model.ActionCreateTables:
-			_, isCreateTable := st.(*ast.CreateTableStmt)
-			_, isCreateSeq := st.(*ast.CreateSequenceStmt)
-			_, isCreateView := st.(*ast.CreateViewStmt)
-			if !isCreateTable && !isCreateSeq && !isCreateView {
-				panic(fmt.Sprintf("job ID %d, parse ddl job failed, query %s", historyJob.ID, historyJob.Query))
-			}
-		default:
-			if _, ok := st.(ast.DDLNode); !ok {
-				panic(fmt.Sprintf("job ID %d, parse ddl job failed, query %s", historyJob.ID, historyJob.Query))
-			}
+		if !checkHistoryJobStmtType(historyJob.Type, st) {
+			panic(fmt.Sprintf("job ID %d, parse ddl job failed, query %s", historyJob.ID, historyJob.Query))
 		}
+	}
+}
+
+func checkHistoryJobStmtType(jobType model.ActionType, st ast.StmtNode) bool {
+	switch jobType {
+	case model.ActionCreatePlacementPolicy:
+		_, ok := st.(*ast.CreatePlacementPolicyStmt)
+		return ok
+	case model.ActionCreateTable:
+		_, ok := st.(*ast.CreateTableStmt)
+		return ok
+	case model.ActionCreateMaterializedView:
+		_, ok := st.(*ast.CreateMaterializedViewStmt)
+		return ok
+	case model.ActionCreateMaterializedViewLog:
+		_, ok := st.(*ast.CreateMaterializedViewLogStmt)
+		return ok
+	case model.ActionCreateMaterializedViewShadow, model.ActionMViewRefreshOutOfPlaceCutover:
+		_, ok := st.(*ast.RefreshMaterializedViewStmt)
+		return ok
+	case model.ActionDropMaterializedView:
+		_, ok := st.(*ast.DropMaterializedViewStmt)
+		return ok
+	case model.ActionDropMaterializedViewLog:
+		_, ok := st.(*ast.DropMaterializedViewLogStmt)
+		return ok
+	case model.ActionDropMaterializedViewShadow:
+		_, ok := st.(*ast.DropTableStmt)
+		return ok
+	case model.ActionCreateSchema:
+		_, ok := st.(*ast.CreateDatabaseStmt)
+		return ok
+	case model.ActionCreateTables:
+		_, isCreateTable := st.(*ast.CreateTableStmt)
+		_, isCreateSeq := st.(*ast.CreateSequenceStmt)
+		_, isCreateView := st.(*ast.CreateViewStmt)
+		return isCreateTable || isCreateSeq || isCreateView
+	default:
+		_, ok := st.(ast.DDLNode)
+		return ok
 	}
 }

@@ -143,7 +143,9 @@ func TestTaskTable(t *testing.T) {
 	// succeed a pending task, no effect
 	id, err = gm.CreateTask(ctx, "key-success", "test", "", 4, "", 0, proto.ExtraParams{}, []byte("test"))
 	require.NoError(t, err)
-	require.NoError(t, gm.SucceedTask(ctx, id))
+	task, err = gm.GetTaskByID(ctx, id)
+	require.NoError(t, err)
+	require.NoError(t, gm.SucceedTask(ctx, task))
 	task, err = gm.GetTaskByID(ctx, id)
 	require.NoError(t, err)
 	checkTaskStateStep(t, task, proto.TaskStatePending, proto.StepInit)
@@ -153,7 +155,7 @@ func TestTaskTable(t *testing.T) {
 	require.NoError(t, err)
 	checkTaskStateStep(t, task, proto.TaskStateRunning, proto.StepOne)
 	startTime := time.Unix(time.Now().Unix(), 0)
-	require.NoError(t, gm.SucceedTask(ctx, id))
+	require.NoError(t, gm.SucceedTask(ctx, task))
 	task, err = gm.GetTaskByID(ctx, id)
 	require.NoError(t, err)
 	checkTaskStateStep(t, task, proto.TaskStateSucceed, proto.StepDone)
@@ -385,6 +387,17 @@ func TestGetSubtaskSummaries(t *testing.T) {
 		require.EqualValues(t, 100, summary.RowCnt.Load())
 		require.EqualValues(t, 200, summary.Processed.Load())
 	}
+	tasksByKey, err := tm.GetTasksByKeysWithHistory(ctx, []string{"test", "missing"})
+	require.NoError(t, err)
+	require.Len(t, tasksByKey, 1)
+	require.Equal(t, taskID, tasksByKey["test"].ID)
+	bulkSummaries, err := tm.GetSubtaskSummaries(ctx, map[int64]proto.Step{
+		taskID: proto.StepOne,
+		999999: proto.StepOne,
+	})
+	require.NoError(t, err)
+	require.Len(t, bulkSummaries[taskID], len(subtasks))
+	require.Empty(t, bulkSummaries[999999])
 
 	// If the JSON value is wrong, we still get an empty summary.
 	// This can only happen if the summary field is manually updated.
@@ -1120,7 +1133,7 @@ func TestGetTaskCleanupInfoByIDs(t *testing.T) {
 	succeedTask, err := tm.GetTaskByID(ctx, succeedTaskID)
 	require.NoError(t, err)
 	require.NoError(t, tm.SwitchTaskStep(ctx, succeedTask, proto.TaskStateRunning, proto.StepOne, nil))
-	require.NoError(t, tm.SucceedTask(ctx, succeedTaskID))
+	require.NoError(t, tm.SucceedTask(ctx, succeedTask))
 
 	failedTaskID := createTask("cleanup-info-failed")
 	require.NoError(t, tm.FailTask(ctx, failedTaskID, proto.TaskStatePending, errors.New("cleanup info test")))
@@ -1205,7 +1218,7 @@ func TestCleanupTasksAreBatchLimited(t *testing.T) {
 			require.NoError(t, gm.FailTask(ctx, task.ID, proto.TaskStatePending, errors.New("cleanup test")))
 		case 1:
 			require.NoError(t, gm.SwitchTaskStep(ctx, task, proto.TaskStateRunning, proto.StepOne, nil))
-			require.NoError(t, gm.SucceedTask(ctx, task.ID))
+			require.NoError(t, gm.SucceedTask(ctx, task))
 		case 2:
 			require.NoError(t, gm.SwitchTaskStep(ctx, task, proto.TaskStateRunning, proto.StepOne, nil))
 			require.NoError(t, gm.RevertTask(ctx, task.ID, proto.TaskStateRunning, nil))
@@ -1341,7 +1354,7 @@ func TestTaskHistoryTable(t *testing.T) {
 			if spec.taskErr != nil {
 				require.NoError(t, gm.FailTask(ctx, id, proto.TaskStateRunning, spec.taskErr))
 			} else {
-				require.NoError(t, gm.SucceedTask(ctx, id))
+				require.NoError(t, gm.SucceedTask(ctx, task))
 			}
 			task, err2 = gm.GetTaskByID(ctx, id)
 			require.NoError(t, err2)

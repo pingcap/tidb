@@ -3428,7 +3428,7 @@ func (e *SimpleExec) executeFlushStatsDeltaOnCurrentInstance(ctx context.Context
 			return nil
 		}
 	}
-	return domain.GetDomain(e.Ctx()).StatsHandle().DumpStatsDeltaToKV(true, targetIDs...)
+	return domain.GetDomain(e.Ctx()).StatsHandle().Usage().DumpStatsDeltaToKV(true, targetIDs...)
 }
 
 func broadcast(ctx context.Context, sctx sessionctx.Context, sql string) error {
@@ -3559,10 +3559,10 @@ func (e *SimpleExec) executeDropStats(ctx context.Context, s *ast.DropStatsStmt)
 			}
 		}
 	}
-	if err := h.DeleteTableStatsFromKV(statsIDs, true); err != nil {
+	if err := h.GC().DeleteTableStatsFromKV(statsIDs, true); err != nil {
 		return err
 	}
-	return h.Update(ctx, e.Ctx().GetInfoSchema().(infoschema.InfoSchema))
+	return h.Cache().Update(ctx, e.Ctx().GetInfoSchema().(infoschema.InfoSchema))
 }
 
 func (e *SimpleExec) autoNewTxn() bool {
@@ -3614,10 +3614,12 @@ func asyncDelayShutdown(p *os.Process, delay time.Duration) {
 	// Sending SIGKILL should not be needed as SIGTERM should cause a graceful shutdown after
 	// n seconds as configured by the GracefulWaitBeforeShutdown. This is here in case that doesn't
 	// work for some reason.
-	graceTime := config.GetGlobalConfig().GracefulWaitBeforeShutdown
+	cfg := config.GetGlobalConfig()
+	graceTime := cfg.GracefulWaitBeforeShutdown
 
-	// The shutdown is supposed to start at graceTime and is allowed to take up to 10s.
-	time.Sleep(time.Second * time.Duration(graceTime+10))
+	// The shutdown is supposed to start at graceTime, drain clients for up to GracefulCloseConnectionsTimeout,
+	// and is allowed to take up to 10s more for the rest of the cleanup.
+	time.Sleep(time.Second * time.Duration(graceTime+cfg.GracefulCloseConnectionsTimeout+10))
 	logutil.BgLogger().Info("Killing process as grace period is over", zap.Int("pid", p.Pid), zap.Int("graceTime", graceTime))
 	err = p.Kill()
 	if err != nil {

@@ -23,6 +23,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
+	"github.com/pingcap/tidb/pkg/dxf/importinto/conflictpath"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -123,7 +124,7 @@ func (stats *cleanupStats) mergeCompletedFlush(completed cleanupStats) {
 }
 
 func parseTaskID(name string) (int64, bool) {
-	relativeName, ok := strings.CutPrefix(name, storagePrefix)
+	relativeName, ok := strings.CutPrefix(name, conflictpath.StoragePrefix)
 	if !ok {
 		return 0, false
 	}
@@ -220,7 +221,7 @@ func cleanFiles(
 		return nil
 	}
 
-	err = store.WalkDir(ctx, &storeapi.WalkOption{SubDir: storagePrefix}, func(name string, _ int64) error {
+	err = store.WalkDir(ctx, &storeapi.WalkOption{SubDir: conflictpath.StoragePrefix}, func(name string, _ int64) error {
 		taskID, ok := parseTaskID(name)
 		if !ok {
 			// IMPORT INTO always writes a positive task ID in this path. Malformed

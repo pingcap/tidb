@@ -141,26 +141,32 @@ func TestModifyColumnAfterAddIndex(t *testing.T) {
 }
 
 func TestModifyColumnOldColumnIDNotFound(t *testing.T) {
-	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t (a int, b int);")
-	tk.MustExec("insert into t values (1, 1), (2, 2), (3, 3);")
-	model.SetJobVerInUse(model.JobVersion1)
-	mockOwnerChange := false
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterRunOneJobStep", func(job *model.Job) {
-		if job.Type == model.ActionModifyColumn &&
-			job.SchemaState == model.StateWriteReorganization &&
-			!mockOwnerChange {
-			// Mock the first few phases of this DDL job is executed in old version TiDB.
-			model.UpdateJobArgsForTest(job, func(args []any) []any {
-				return args[:len(args)-1]
-			})
-			mockOwnerChange = true
-		}
+	jobVersion := model.GetJobVerInUse()
+	// Scope the legacy job version so later tests retain their negotiated version.
+	t.Run("legacy_job_args", func(t *testing.T) {
+		t.Cleanup(func() { model.SetJobVerInUse(jobVersion) })
+		store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("create table t (a int, b int);")
+		tk.MustExec("insert into t values (1, 1), (2, 2), (3, 3);")
+		model.SetJobVerInUse(model.JobVersion1)
+		mockOwnerChange := false
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterRunOneJobStep", func(job *model.Job) {
+			if job.Type == model.ActionModifyColumn &&
+				job.SchemaState == model.StateWriteReorganization &&
+				!mockOwnerChange {
+				// Mock the first few phases of this DDL job is executed in old version TiDB.
+				model.UpdateJobArgsForTest(job, func(args []any) []any {
+					return args[:len(args)-1]
+				})
+				mockOwnerChange = true
+			}
+		})
+		tk.MustExec("alter table t modify column a varchar(16);")
+		require.True(t, mockOwnerChange)
 	})
-	tk.MustExec("alter table t modify column a varchar(16);")
-	require.True(t, mockOwnerChange)
+	require.Equal(t, jobVersion, model.GetJobVerInUse())
 }
 
 func TestIssue2293(t *testing.T) {
@@ -392,6 +398,41 @@ func TestTableDDLWithTimeType(t *testing.T) {
 	tk.MustGetErrCode("alter table t change column a aa datetime(7)", errno.ErrTooBigPrecision)
 	tk.MustGetErrCode("alter table t change column a aa timestamp(7)", errno.ErrTooBigPrecision)
 	tk.MustExec("alter table t change column a aa datetime(0)")
+	tk.MustExec("drop table t")
+}
+
+func TestGeometryColumnNotSupported(t *testing.T) {
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	for _, tp := range []string{"geometry", "point", "linestring", "polygon", "multipoint", "multilinestring", "multipolygon", "geometrycollection", "geomcollection"} {
+		tk.MustGetErrCode(fmt.Sprintf("create table t (a int, g %s)", tp), errno.ErrNotSupportedYet)
+	}
+	tk.MustGetErrMsg("create table t (g point not null srid 4326)", "[ddl:1235]This version of TiDB doesn't yet support 'geometry columns'")
+	tk.MustGetErrCode("create table t (g geometry as (null) stored srid 0)", errno.ErrNotSupportedYet)
+	for _, def := range []string{"1", "'abc'", "x'00'", "(1)"} {
+		tk.MustGetErrCode("create table t (g point default "+def+")", errno.ErrNotSupportedYet)
+	}
+	tk.MustGetErrMsg("create table t (a int srid 4326)", "[ddl:1221]Incorrect usage of SRID and non-geometry column")
+	tk.MustGetErrCode("create table t (a varchar(10) not null srid 0)", errno.ErrWrongUsage)
+	tk.MustGetErrMsg("create table t (g point not null srid 4326, spatial key sk (g))", "[ddl:8200]SPATIAL index is not supported")
+
+	tk.MustExec("create table t (a int, b int)")
+	tk.MustGetErrCode("alter table t add column g point", errno.ErrNotSupportedYet)
+	tk.MustGetErrCode("alter table t add column g geometry srid 4326", errno.ErrNotSupportedYet)
+	tk.MustGetErrCode("alter table t add column c int srid 0", errno.ErrWrongUsage)
+	tk.MustGetErrCode("alter table t modify column a point", errno.ErrNotSupportedYet)
+	tk.MustGetErrCode("alter table t change column a g geomcollection srid 0", errno.ErrNotSupportedYet)
+	tk.MustGetErrCode("alter table t modify column a int srid 4326", errno.ErrWrongUsage)
+	tk.MustGetErrCode("alter table t change column a c bigint srid 0", errno.ErrWrongUsage)
+	tk.MustGetErrCode("alter table t add column c int, modify column b int srid 0", errno.ErrWrongUsage)
+	tk.MustGetErrMsg("alter table t add spatial index sk (a)", "[ddl:8200]SPATIAL index is not supported")
+	tk.MustGetErrMsg("create spatial index sk on t (a)", "[ddl:8200]SPATIAL index is not supported")
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
+		"  `a` int(11) DEFAULT NULL,\n" +
+		"  `b` int(11) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 	tk.MustExec("drop table t")
 }
 
@@ -1649,6 +1690,21 @@ func TestDefaultValueAsExpressions(t *testing.T) {
 	store := testkit.CreateMockStoreWithSchemaLease(t, testLease)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	t.Run("binary expression defaults", func(t *testing.T) {
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("create table binary_defaults (id int primary key, u binary(50) default (uuid()), b binary(50) default (uuid_to_bin(uuid())), v varbinary(50) default (uuid()), literal binary(4) default 'a', nullable binary(4) default null)")
+		defer tk.MustExec("drop table binary_defaults")
+		tk.MustExec("insert into binary_defaults(id) values (1), (2)")
+		tk.MustQuery("select length(u), length(b), length(v), hex(literal), nullable is null, hex(substr(u,37)) = repeat('00',14), hex(substr(b,17)) = repeat('00',34) from binary_defaults order by id").Check(testkit.Rows("50 50 36 61000000 1 1 1", "50 50 36 61000000 1 1 1"))
+		tk.MustQuery("select count(distinct u), count(distinct b) from binary_defaults").Check(testkit.Rows("2 2"))
+		tk.MustExec("alter table binary_defaults alter column u set default (uuid())")
+		tk.MustExec("insert into binary_defaults(id) values (3)")
+		tk.MustQuery("select length(u), hex(substr(u,37)) = repeat('00',14) from binary_defaults where id = 3").Check(testkit.Rows("50 1"))
+		tk.MustExec("alter table binary_defaults modify column u binary(60) default (uuid())")
+		tk.MustExec("insert into binary_defaults(id) values (4)")
+		tk.MustQuery("select length(u), hex(substr(u,37)) = repeat('00',24) from binary_defaults where id = 4").Check(testkit.Rows("60 1"))
+	})
 	tk.MustExec("drop table if exists t, t1, t2")
 
 	// date_format
@@ -2210,6 +2266,104 @@ func TestAutoIncrementForce(t *testing.T) {
 	tk.MustExec("drop table t")
 }
 
+func TestAutoRandomAllocatorMigration(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	readIDs := func(t *testing.T, tk *testkit.TestKit) model.AutoIDGroup {
+		t.Helper()
+		tbl := external.GetTableByName(t, tk, "test", "t")
+		db, ok := domain.GetDomain(tk.Session()).InfoSchema().SchemaByName(ast.NewCIStr("test"))
+		require.True(t, ok)
+		txn, err := store.Begin()
+		require.NoError(t, err)
+		ids, err := meta.NewMutator(txn).GetAutoIDAccessors(db.ID, tbl.Meta().ID).Get()
+		require.NoError(t, err)
+		require.NoError(t, txn.Rollback())
+		return ids
+	}
+	const highID = 1 << 20
+	for _, cache := range []int{1, 10} {
+		for _, unsigned := range []bool{false, true} {
+			colType := "bigint"
+			incrementalBits := uint(58) // 63 signed bits minus AUTO_RANDOM(5).
+			if unsigned {
+				colType += " unsigned"
+				incrementalBits++
+			}
+			for _, populated := range []bool{false, true} {
+				t.Run(fmt.Sprintf("cache=%d/unsigned=%t/populated=%t", cache, unsigned, populated), func(t *testing.T) {
+					tk := testkit.NewTestKit(t, store)
+					tk.MustExec("use test")
+					tk.MustExec("set @@tidb_allow_remove_auto_inc = true")
+					tk.MustExec(fmt.Sprintf("create table t (id %s primary key clustered auto_increment, payload int) auto_id_cache=%d auto_increment=%d", colType, cache, highID))
+					t.Cleanup(func() { tk.MustExec("drop table t") })
+					if populated {
+						tk.MustExec(fmt.Sprintf("insert into t values (1,10),(2,20),(%d,30)", highID*2))
+						tk.MustExec(fmt.Sprintf("delete from t where id=%d", highID*2))
+					}
+					before := readIDs(t, tk)
+					base := before.RowID
+					if cache == 1 {
+						base = before.IncrementID
+					}
+					require.GreaterOrEqual(t, base, int64(highID-1))
+					if populated {
+						// The durable high-water mark must survive deleting the largest ID.
+						require.GreaterOrEqual(t, base, int64(highID*2))
+					}
+					tk.MustExec(fmt.Sprintf("alter table t modify column id %s auto_random(5)", colType))
+					after := readIDs(t, tk)
+					require.Equal(t, base+1, after.RandomID)
+					if cache == 1 {
+						require.Zero(t, after.IncrementID)
+						require.Equal(t, before.RowID, after.RowID)
+					} else {
+						require.Zero(t, after.RowID)
+						require.Equal(t, before.IncrementID, after.IncrementID)
+					}
+
+					other := testkit.NewTestKit(t, store)
+					other.MustExec("use test")
+					other.MustExec("insert into t(payload) values (30),(40)")
+					tk.MustExec("insert into t(payload) values (50)")
+					mask := (uint64(1) << incrementalBits) - 1
+					tk.MustQuery(fmt.Sprintf("select count(*),count(distinct id),min(id & %d)>%d from t where payload>=30", mask, base)).Check(testkit.Rows("3 3 1"))
+					if populated {
+						tk.MustQuery("select id,payload from t where payload<30 order by id").Check(testkit.Rows("1 10", "2 20"))
+						tk.MustQuery("select count(*) from t").Check(testkit.Rows("5"))
+					} else {
+						tk.MustQuery("select count(*) from t").Check(testkit.Rows("3"))
+					}
+					tk.MustExec("admin check table t")
+				})
+			}
+		}
+	}
+
+	for _, colType := range []string{"bigint", "bigint unsigned"} {
+		t.Run("overflow/"+colType, func(t *testing.T) {
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("use test")
+			tk.MustExec("set @@tidb_allow_remove_auto_inc = true")
+			tk.MustExec(fmt.Sprintf("create table t (id %s primary key clustered auto_increment, payload int) auto_id_cache=1", colType))
+			t.Cleanup(func() { tk.MustExec("drop table t") })
+			const overflowID = 1 << 60
+			tk.MustExec(fmt.Sprintf("insert into t values (%d,10)", overflowID))
+			before := readIDs(t, tk)
+			tk.MustGetErrCode(fmt.Sprintf("alter table t modify column id %s auto_random(5)", colType), errno.ErrInvalidAutoRandom)
+			after := readIDs(t, tk)
+			require.Zero(t, after.RandomID)
+			require.GreaterOrEqual(t, after.IncrementID, before.IncrementID)
+			tbl := external.GetTableByName(t, tk, "test", "t")
+			require.Zero(t, tbl.Meta().AutoRandomBits)
+			require.True(t, mysql.HasAutoIncrementFlag(tbl.Meta().Columns[0].GetFlag()))
+			tk.MustExec("insert into t(payload) values (20)")
+			tk.MustQuery(fmt.Sprintf("select id=%d from t where payload=10", overflowID)).Check(testkit.Rows("1"))
+			tk.MustQuery(fmt.Sprintf("select id>%d from t where payload=20", overflowID)).Check(testkit.Rows("1"))
+			tk.MustExec("admin check table t")
+		})
+	}
+}
+
 func TestAutoIncrementForceAutoIDCache(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -2275,6 +2429,37 @@ func TestAutoIncrementForceAutoIDCache(t *testing.T) {
 	tk.MustExec("insert into t values ();")
 	tk.MustQuery("select (a & 3) from t order by 1;").Check(testkit.Rows("1", "2"))
 	tk.MustExec("drop table if exists t;")
+
+	// Converting AUTO_INCREMENT to AUTO_RANDOM must migrate the separate
+	// auto-increment allocator used by AUTO_ID_CACHE=1.
+	tk.MustExec("set @@tidb_allow_remove_auto_inc = true")
+	tk.MustExec("create table t (id bigint primary key auto_increment, payload varchar(10)) auto_id_cache=1")
+	for range 64 {
+		tk.MustExec("insert into t(payload) values ('old')")
+	}
+	tbl := external.GetTableByName(t, tk, "auto_inc_force", "t")
+	db, ok := domain.GetDomain(tk.Session()).InfoSchema().SchemaByName(ast.NewCIStr("auto_inc_force"))
+	require.True(t, ok)
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	ids, err := meta.NewMutator(txn).GetAutoIDAccessors(db.ID, tbl.Meta().ID).Get()
+	require.NoError(t, err)
+	require.NoError(t, txn.Rollback())
+	require.Equal(t, int64(0), ids.RowID)
+	require.GreaterOrEqual(t, ids.IncrementID, int64(64))
+	oldAutoIncBase := ids.IncrementID
+	tk.MustExec("alter table t modify column id bigint auto_random(1)")
+	txn, err = store.Begin()
+	require.NoError(t, err)
+	ids, err = meta.NewMutator(txn).GetAutoIDAccessors(db.ID, tbl.Meta().ID).Get()
+	require.NoError(t, err)
+	require.NoError(t, txn.Rollback())
+	require.Equal(t, int64(0), ids.IncrementID)
+	require.Equal(t, oldAutoIncBase+1, ids.RandomID)
+	tk.MustExec("insert into t(payload) values ('new')")
+	tk.MustQuery("select count(*) from t where payload = 'old'").Check(testkit.Rows("64"))
+	tk.MustQuery(fmt.Sprintf("select (id & 4611686018427387903) > %d from t where payload = 'new'", oldAutoIncBase)).Check(testkit.Rows("1"))
+	tk.MustExec("drop table t")
 
 	// Change next global ID.
 	tk.MustExec("create table t (a bigint primary key auto_increment) AUTO_ID_CACHE 1")

@@ -22,11 +22,13 @@ import (
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	sqlsvrapimock "github.com/pingcap/tidb/pkg/domain/sqlsvrapi/mock"
 	"github.com/pingcap/tidb/pkg/dxf/framework/mock"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/scheduler"
+	"github.com/pingcap/tidb/pkg/dxf/importinto/taskinfo"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/kv"
 	drivererr "github.com/pingcap/tidb/pkg/store/driver/error"
@@ -35,6 +37,7 @@ import (
 	utilmock "github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
+	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/mock/gomock"
 )
 
@@ -102,7 +105,7 @@ func (s *importIntoSuite) TestSchedulerGetEligibleInstances() {
 }
 
 func (s *importIntoSuite) TestUpdateCurrentTask() {
-	taskMeta := TaskMeta{
+	taskMeta := taskinfo.TaskMeta{
 		Plan: importer.Plan{
 			DisableTiKVImportMode: true,
 		},
@@ -129,8 +132,58 @@ func (s *importIntoSuite) TestUpdateCurrentTask() {
 	require.True(s.T(), sch.disableTiKVImportMode.Load())
 }
 
+type closeTrackedTaskRegister struct {
+	utils.TaskRegister
+	closeCalled bool
+}
+
+func (r *closeTrackedTaskRegister) Close(context.Context) error {
+	r.closeCalled = true
+	return nil
+}
+
+func (s *importIntoSuite) TestSchedulerClose() {
+	ctx, cancel := context.WithCancel(context.Background())
+	s.T().Cleanup(cancel)
+	sch := NewImportScheduler(ctx, &proto.Task{
+		TaskBase: proto.TaskBase{ID: 1},
+	}, scheduler.Param{}).(*importScheduler)
+	clients := make([]*clientv3.Client, 0, 2)
+	registrations := make([]*closeTrackedTaskRegister, 0, 2)
+	for _, taskID := range []int64{1, 2} {
+		client := clientv3.NewCtxClient(context.Background())
+		s.T().Cleanup(func() { _ = client.Close() })
+		clients = append(clients, client)
+		registration := &closeTrackedTaskRegister{}
+		registrations = append(registrations, registration)
+		sch.taskInfoMap.Store(taskID, &taskInfo{
+			taskID:     taskID,
+			etcdClient: client,
+			// Closing the scheduler must not revoke a registration lease that
+			// the next owner may already have adopted.
+			taskRegister: registration,
+			logger:       sch.GetLogger(),
+		})
+	}
+
+	// Owner loss cancels scheduling before the active task reaches a terminal state.
+	cancel()
+	sch.Close()
+	for _, client := range clients {
+		s.ErrorIs(client.Ctx().Err(), context.Canceled)
+	}
+	for _, registration := range registrations {
+		s.False(registration.closeCalled, "scheduler shutdown must preserve the task registration lease")
+	}
+	sch.taskInfoMap.Range(func(_, _ any) bool {
+		s.Fail("closed scheduler must not retain task registrations")
+		return true
+	})
+	sch.Close()
+}
+
 func (s *importIntoSuite) TestSchedulerInit() {
-	meta := TaskMeta{
+	meta := taskinfo.TaskMeta{
 		Plan: importer.Plan{
 			CloudStorageURI: "",
 		},
@@ -149,6 +202,7 @@ func (s *importIntoSuite) TestSchedulerInit() {
 	}
 	s.NoError(sch.Init())
 	s.False(sch.Extension.(*importScheduler).GlobalSort)
+	s.Equal(proto.ImportStepImport, sch.sourceStep)
 
 	meta.Plan.CloudStorageURI = "s3://test"
 	bytes, err = json.Marshal(meta)
@@ -161,6 +215,18 @@ func (s *importIntoSuite) TestSchedulerInit() {
 	}
 	s.NoError(sch.Init())
 	s.True(sch.Extension.(*importScheduler).GlobalSort)
+	s.Equal(proto.ImportStepEncodeAndSort, sch.sourceStep)
+
+	meta.Plan.QuerySource = &importer.QuerySource{}
+	bytes, err = json.Marshal(meta)
+	s.NoError(err)
+	sch = importScheduler{
+		BaseScheduler: scheduler.NewBaseScheduler(context.Background(), &proto.Task{
+			TaskBase: proto.TaskBase{Keyspace: taskKS}, Meta: bytes,
+		}, newSchedulerParamForTest(s.T(), nil, &StoreWithKS{ks: taskKS}, nil)),
+	}
+	s.NoError(sch.Init())
+	s.Equal(proto.ImportStepQuery, sch.sourceStep)
 
 	if kerneltype.IsNextGen() {
 		sch = importScheduler{
@@ -202,25 +268,20 @@ func (s *importIntoSuite) TestGetTaskMgrForAccessingImportJobUsesTaskRuntime() {
 
 func (s *importIntoSuite) TestGetNextStep() {
 	task := &proto.TaskBase{Step: proto.StepInit}
-	ext := &importScheduler{}
+	ext := &importScheduler{sourceStep: proto.ImportStepImport}
 	for _, nextStep := range []proto.Step{proto.ImportStepImport, proto.ImportStepPostProcess, proto.StepDone} {
 		s.Equal(nextStep, ext.GetNextStep(task))
 		task.Step = nextStep
 	}
 
 	task.Step = proto.StepInit
-	ext = &importScheduler{GlobalSort: true}
+	ext = &importScheduler{GlobalSort: true, sourceStep: proto.ImportStepEncodeAndSort}
 	for _, nextStep := range []proto.Step{proto.ImportStepEncodeAndSort, proto.ImportStepMergeSort,
 		proto.ImportStepWriteAndIngest, proto.ImportStepCollectConflicts, proto.ImportStepConflictResolution,
 		proto.ImportStepPostProcess, proto.StepDone} {
 		s.Equal(nextStep, ext.GetNextStep(task))
 		task.Step = nextStep
 	}
-}
-
-func (s *importIntoSuite) TestGetStepOfEncode() {
-	s.Equal(proto.ImportStepImport, getStepOfEncode(false))
-	s.Equal(proto.ImportStepEncodeAndSort, getStepOfEncode(true))
 }
 
 func (s *importIntoSuite) TestIsRetryable() {

@@ -74,9 +74,15 @@ func getPlanFromNonPreparedPlanCache(ctx context.Context, sctx sessionctx.Contex
 		!isStmtNode ||
 		stmtCtx.InRestrictedSQL || // is internal SQL
 		isExplain || // explain external
-		!sctx.GetSessionVars().DisableTxnAutoRetry || // txn-auto-retry
-		sctx.GetSessionVars().InMultiStmts { // in multi-stmt
+		!sctx.GetSessionVars().DisableTxnAutoRetry { // txn-auto-retry
 		return nil, nil, false, nil
+	}
+	if sctx.GetSessionVars().InMultiStmts {
+		// Prebuilt plans contain literal values and must not be cached under a
+		// parameterized SQL key. A nil plan leaves normal planning available.
+		if fp, ok := sctx.Value(core.PointPlanKey).(core.PointPlanVal); ok && fp.Plan != nil {
+			return nil, nil, false, nil
+		}
 	}
 	if sctx.GetSessionVars().PlanCacheStrategy == vardef.TiDBPlanCacheStrategyHintOnly &&
 		!containUsePlanCacheHintInSQLOrBinding(sctx, stmt) {
@@ -429,7 +435,7 @@ func allowInReadOnlyMode(sctx planctx.PlanContext, node ast.Node) (bool, error) 
 	roles := sctx.GetSessionVars().ActiveRoles
 	// allow replication thread
 	// NOTE: it is required, whether SEM is enabled or not, only user with explicit RESTRICTED_REPLICA_WRITER_ADMIN granted can ignore the restriction, so we need to surpass the case that if SEM is not enabled, SUPER will has all privileges
-	if pm.HasExplicitlyGrantedDynamicPrivilege(roles, "RESTRICTED_REPLICA_WRITER_ADMIN", false) {
+	if pm.HasExplicitlyGrantedDynamicPrivilege(roles, privilege.ReplicaWriterAdminPriv, false) {
 		return true, nil
 	}
 
@@ -569,6 +575,14 @@ func buildAndOptimizeLogicalPlanRound(
 	finalPlan, cost, err := core.DoOptimize(ctx, sctx, optFlag, logic)
 	if err != nil {
 		return nil, nil, false, err
+	}
+	if countLogic := builder.GetFoundRowsPlan(); countLogic != nil {
+		countPlan, countCost, err := core.DoOptimize(ctx, sctx, optFlag, countLogic)
+		if err != nil {
+			return nil, nil, false, err
+		}
+		finalPlan = physicalop.NewPhysicalCalcFoundRows(sctx, finalPlan, countPlan)
+		cost += countCost
 	}
 
 	// Record predicate-context MATCH for cost competition. The fts-like-fallback

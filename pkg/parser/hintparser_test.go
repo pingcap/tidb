@@ -181,6 +181,37 @@ func TestParseHint(t *testing.T) {
 			},
 		},
 		{
+			input: "SKIP_SCAN(employee_salary, idx_dept_salary) NO_SKIP_SCAN(employee_salary, idx_dept_salary)",
+			output: []*ast.TableOptimizerHint{
+				{
+					HintName: ast.NewCIStr("SKIP_SCAN"),
+					Tables:   []ast.HintTable{{TableName: ast.NewCIStr("employee_salary")}},
+					Indexes:  []ast.CIStr{ast.NewCIStr("idx_dept_salary")},
+				},
+				{
+					HintName: ast.NewCIStr("NO_SKIP_SCAN"),
+					Tables:   []ast.HintTable{{TableName: ast.NewCIStr("employee_salary")}},
+					Indexes:  []ast.CIStr{ast.NewCIStr("idx_dept_salary")},
+				},
+			},
+		},
+		{
+			input: "TIFLASH_LM_FILTER(@qb1 tbl1 a, b) TIFLASH_LM_FILTER(tbl2@qb2 c)",
+			output: []*ast.TableOptimizerHint{
+				{
+					HintName: ast.NewCIStr("TIFLASH_LM_FILTER"),
+					Tables:   []ast.HintTable{{TableName: ast.NewCIStr("tbl1")}},
+					QBName:   ast.NewCIStr("qb1"),
+					Indexes:  []ast.CIStr{ast.NewCIStr("a"), ast.NewCIStr("b")},
+				},
+				{
+					HintName: ast.NewCIStr("TIFLASH_LM_FILTER"),
+					Tables:   []ast.HintTable{{TableName: ast.NewCIStr("tbl2"), QBName: ast.NewCIStr("qb2")}},
+					Indexes:  []ast.CIStr{ast.NewCIStr("c")},
+				},
+			},
+		},
+		{
 			input: "USE_INDEX(@qb1 tbl1 partition(p0) x) USE_INDEX_MERGE(@qb2 tbl2@qb2 partition(p0, p1) x, y, z)",
 			output: []*ast.TableOptimizerHint{
 				{

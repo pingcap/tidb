@@ -23,12 +23,7 @@ func (m *Manager) Get(ks string) (*SessionManager, bool) {
 
 // CloseKS closes the session manager for the specified keyspace in tests.
 func (m *Manager) CloseKS(targetKS string) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if entry, ok := m.runtimes[targetKS]; ok {
-		entry.sessMgr.close()
-		delete(m.runtimes, targetKS)
-	}
+	m.closeRuntime(targetKS)
 }
 
 // ServerStateSyncer returns the target server-state syncer in tests.
@@ -39,4 +34,15 @@ func (m *SessionManager) ServerStateSyncer() serverstate.Syncer {
 // ServerInfoID returns the virtual server ID in tests.
 func (m *SessionManager) ServerInfoID() string {
 	return m.svrInfoSyncer.GetLocalServerInfo().ID
+}
+
+// GlobalVarRefreshStarted returns whether the global variable cache started to
+// refresh in tests.
+func (m *SessionManager) GlobalVarRefreshStarted() bool {
+	select {
+	case <-m.globalVarCache.firstLoaded:
+		return true
+	default:
+		return false
+	}
 }

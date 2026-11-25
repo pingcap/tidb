@@ -601,3 +601,31 @@ drop table if exists t1;
 create table t1(a int, b int, c int, d int, e int, index iea(e,a), index ieb(e,b), index iec(e,c), index ied(e,d));
 explain format = 'plan_tree' select /*+ use_index_merge(t1) */ * from t1 where e = 1 and (a in (1,2,3) or b in (2,3,4) or c in (3,4,5));
 explain format = 'plan_tree' select /*+ use_index_merge(t1) */ * from t1 where e = 1 and (a in (1,2,3) or b in (2,3,4) or c in (3,4,5)) limit 3;
+
+# TestMVIndexRangeOnTrailingColumn
+# A comparison on the non-array column that follows the array column should be part of the index range, not a
+# Selection above the IndexRangeScan, so keyset pagination over one array value reads only the page it needs.
+drop table if exists t;
+create table t(
+id bigint primary key, a int, b int, c int, d int, s varchar(100), j json,
+index idx_j_id((cast(j as signed array)), id),
+index idx_j_c_d((cast(j as signed array)), c, d),
+index idx_a_j_c(a, (cast(j as signed array)), c),
+index idx_j_s((cast(j as signed array)), s(10)));
+explain format='plan_tree' select /*+ use_index_merge(t, idx_j_id) */ * from t where (1 member of (j)) and id > 100 order by id limit 10;
+explain format='plan_tree' select /*+ use_index_merge(t, idx_j_id) */ * from t where (1 member of (j)) and id >= 100 and id < 200;
+explain format='plan_tree' select /*+ use_index_merge(t, idx_j_id) */ id from t where (1 member of (j)) and 100 < id;
+explain format='plan_tree' select /*+ use_index_merge(t, idx_j_id) */ id from t where json_contains(j, '[1, 2]') and id > 100;
+explain format='plan_tree' select /*+ use_index_merge(t, idx_j_id) */ id from t where json_overlaps(j, '[1, 2]') and id > 100;
+explain format='plan_tree' select /*+ use_index_merge(t, idx_j_c_d) */ * from t where (1 member of (j)) and c > 5 and d = 1;
+explain format='plan_tree' select /*+ use_index_merge(t, idx_j_c_d) */ * from t where (1 member of (j)) and c = 5 and d > 1;
+explain format='plan_tree' select /*+ use_index_merge(t, idx_a_j_c) */ * from t where a = 1 and (1 member of (j)) and c <= 5;
+explain format='plan_tree' select /*+ use_index_merge(t, idx_a_j_c) */ * from t where a > 1 and (1 member of (j)) and c = 5;
+explain format='plan_tree' select /*+ use_index_merge(t, idx_j_s) */ * from t where (1 member of (j)) and s > 'abc';
+explain format='plan_tree' select /*+ use_index_merge(t, idx_j_id) */ id from t where (1 member of (j)) and id > a;
+# A range on a column before the array column is not an access filter, so a point predicate on the same column still
+# gives an MV index path whatever the predicate order, for both the single-value and the intersection collectors.
+explain format='plan_tree' select /*+ use_index_merge(t, idx_a_j_c) */ * from t where a > 1 and a in (2,3) and (1 member of (j));
+explain format='plan_tree' select /*+ use_index_merge(t, idx_a_j_c) */ * from t where a in (2,3) and a > 1 and (1 member of (j));
+explain format='plan_tree' select /*+ use_index_merge(t, idx_a_j_c) */ * from t where a > 1 and a in (2,3) and (1 member of (j)) and (2 member of (j));
+explain format='plan_tree' select /*+ use_index_merge(t, idx_a_j_c) */ * from t where a in (2,3) and a > 1 and (1 member of (j)) and (2 member of (j));

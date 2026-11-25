@@ -360,13 +360,13 @@ func NewPartitionIDAndName(name string, id int64) PartitionIDAndName {
 
 // GetPartitionStats gets the partition stats.
 func GetPartitionStats(
-	statsHandle statstypes.StatsHandle,
+	tableStats statstypes.NonPseudoPhysicalTableStatsGetter,
 	defs []model.PartitionDefinition,
 ) map[PartitionIDAndName]*statistics.Table {
 	partitionStats := make(map[PartitionIDAndName]*statistics.Table, len(defs))
 
 	for _, def := range defs {
-		stats, found := statsHandle.GetNonPseudoPhysicalTableStats(def.ID)
+		stats, found := tableStats.GetNonPseudoPhysicalTableStats(def.ID)
 		// Ignore the partition if it's not ready to analyze.
 		if !found || !stats.IsEligibleForAnalysis() {
 			continue
