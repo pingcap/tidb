@@ -44,6 +44,93 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+<<<<<<< HEAD
+=======
+func TestBinaryLiteralNumericAggregation(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table bit_agg(a int)")
+	tk.MustExec("insert into bit_agg values(1),(1),(2)")
+	tk.MustQuery("select a,sum(b'101010'),avg(b'101010') from bit_agg group by a order by a").Check(testkit.Rows("1 84 42", "2 42 42"))
+	tk.MustQuery("select a,sum(x'31'),avg(x'31') from bit_agg group by a order by a").Check(testkit.Rows("1 98 49", "2 49 49"))
+	tk.MustQuery("select a,sum('1'),avg('1') from bit_agg group by a order by a").Check(testkit.Rows("1 2 1", "2 1 1"))
+	tk.MustQuery("select hex(min(b'101010')),hex(max(b'101010')),count(b'101010') from bit_agg").Check(testkit.Rows("2A 2A 3"))
+	tk.MustQuery("select sum(b'101010'),avg(b'101010') from bit_agg where a=3").Check(testkit.Rows("<nil> <nil>"))
+}
+
+func TestReverseExpressionSortNullableColumn(t *testing.T) {
+	tk := testkit.NewTestKit(t, testkit.CreateMockStore(t))
+	tk.MustExec("use test")
+	tk.MustExec("create table reverse_sort (id int primary key, c double, key i(c))")
+	tk.MustExec("insert into reverse_sort values (1,null),(2,0.3),(3,0.7),(4,0.8)")
+	for _, expr := range []string{"-c", "0-c", "-(c+1)"} {
+		tk.MustQuery(fmt.Sprintf("select id from reverse_sort use index(i) order by %s desc,id", expr)).Check(testkit.Rows("2", "3", "4", "1"))
+		tk.MustQuery(fmt.Sprintf("select id from reverse_sort use index(i) order by %s,id", expr)).Check(testkit.Rows("1", "4", "3", "2"))
+	}
+	// An even number of reversals preserves both value order and NULL order.
+	tk.MustQuery("select id from reverse_sort order by -(-c) desc,id").Check(testkit.Rows("4", "3", "2", "1"))
+	tk.MustExec("delete from reverse_sort where c is null")
+	tk.MustExec("alter table reverse_sort modify c double not null")
+	tk.MustQuery("select id from reverse_sort order by -c desc,id").Check(testkit.Rows("2", "3", "4"))
+	plan := tk.MustQuery("explain format='brief' select id from reverse_sort use index(i) order by -c desc,id").Rows()
+	require.NotContains(t, fmt.Sprint(plan), "Sort")
+}
+
+func TestBinaryLiteralMinMaxHaving(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	for _, key := range []string{" primary key", ""} {
+		tk.MustExec("create table binary_having(a int" + key + ")")
+		tk.MustExec("insert into binary_having values(1),(2)")
+		tk.MustQuery("select abs(min(b'101010')) c2,1 c3 from binary_having group by a having any_value(c2)").Check(testkit.Rows())
+		tk.MustQuery("select a from binary_having group by a having max(x'31')=49").Check(testkit.Rows())
+		tk.MustQuery("select a from binary_having group by a having max(x'31')=1 order by a").Check(testkit.Rows("1", "2"))
+		tk.MustQuery("select a from binary_having group by a having min(49)=49 order by a").Check(testkit.Rows("1", "2"))
+		tk.MustQuery("select a from binary_having group by a having min('1')=1 order by a").Check(testkit.Rows("1", "2"))
+		tk.MustExec("drop table binary_having")
+	}
+}
+
+func TestUnionStringCastLength(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table union_text(v longtext)")
+	tk.MustQuery("select 2 in (select 5 union select null)").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("select 2 in (select null union select 5)").Check(testkit.Rows("<nil>"))
+	tk.MustExec("create view nullable_union as select 'a' c union all select null")
+	tk.MustQuery("show fields from nullable_union").Check(testkit.Rows("c varchar(1) YES  <nil> "))
+	tk.MustExec("drop view nullable_union")
+	tk.MustExec("create view nullable_union as select null c union select 'a'")
+	tk.MustQuery("show fields from nullable_union").Check(testkit.Rows("c varchar(1) YES  <nil> "))
+	tk.MustExec("drop view nullable_union")
+	tk.MustExec("insert into union_text values(repeat('z',1592)),(repeat('界',600)),(null)")
+	tk.MustQuery("select 2 in (select 5 union select null) from union_text").Check(testkit.Rows("<nil>", "<nil>", "<nil>"))
+	short := "select cast('q' as char(255)) as v where false"
+	text := "select v from union_text"
+	numeric := "select cast(10 as double)*cast(10 as double) as v where false"
+	for _, sql := range []string{
+		short + " union all " + text + " union all " + numeric,
+		numeric + " union all " + short + " union all " + text,
+		"(" + short + " union all " + text + ") union all " + numeric,
+	} {
+		rs, err := tk.Exec(sql)
+		require.NoError(t, err)
+		ft := rs.Fields()[0].Column.FieldType
+		flen := ft.GetFlen()
+		if flen < 0 {
+			flen, _ = mysql.GetDefaultFieldLengthAndDecimal(ft.GetType())
+		}
+		require.GreaterOrEqual(t, flen, 1592)
+		require.NoError(t, rs.Close())
+		tk.MustQuery(sql).Sort().Check(testkit.Rows("<nil>", strings.Repeat("z", 1592), strings.Repeat("界", 600)))
+	}
+	tk.MustQuery("select char_length(v) from (select cast('q' as char(255)) v where false union all select repeat('z',1592) union all select cast(10 as double)*cast(10 as double) where false)u").Check(testkit.Rows("1592"))
+}
+
+>>>>>>> 3a3d5ef359b (planner: isolate UNION branch cast target types (#71233))
 func TestNoneAccessPathsFoundByIsolationRead(t *testing.T) {
 	testkit.RunTestUnderCascades(t, func(t *testing.T, testKit *testkit.TestKit, cascades, caller string) {
 		testKit.MustExec("use test")
