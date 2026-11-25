@@ -27,7 +27,7 @@ import (
 
 var (
 	typeInt      = "int"
-	typeVarchar  = "varchar(255)"
+	typeVarchar  = "varchar(127)" // Keep even a six-column utf8mb4 index within 3072 bytes.
 	typeFloat    = "float"
 	typeDouble   = "double"
 	typeDecimal  = "decimal(10,2)"
