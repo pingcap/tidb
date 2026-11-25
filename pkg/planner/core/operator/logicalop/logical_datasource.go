@@ -756,6 +756,17 @@ func preferKeyColumnFromTable(dataSource *DataSource, originColumns []*expressio
 // evaluated when reading from it (see RemoveConditionsGuaranteedByIndex), so they don't need
 // to be covered. index can be nil.
 func (ds *DataSource) IsSingleScan(index *model.IndexInfo, indexColumns []*expression.Column, idxColLens []int) bool {
+	if !ds.isIndexCoveringNeededColumns(index, indexColumns, idxColLens) {
+		return false
+	}
+	// When every schema column is used only by guaranteed conditions, for example
+	// `select 1 ... where j is not null` on an index `where j is not null`, the index
+	// scan would output no column, but the operators above still reference one of them.
+	// Read the table instead.
+	return ds.SingleScanSchema(index, indexColumns, idxColLens).Len() > 0
+}
+
+func (ds *DataSource) isIndexCoveringNeededColumns(index *model.IndexInfo, indexColumns []*expression.Column, idxColLens []int) bool {
 	if ds.ColsRequiringFullLen == nil {
 		// ds.ColsRequiringFullLen is set at (*DataSource).PruneColumns. In some cases we don't reach (*DataSource).PruneColumns
 		// and ds.ColsRequiringFullLen is nil, so we fall back to ds.isIndexCoveringColumns(ds.schema.Columns, indexColumns, idxColLens).

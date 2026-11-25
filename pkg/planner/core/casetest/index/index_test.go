@@ -944,6 +944,11 @@ key idx_c (tenant_id, col_id) where c > 10)`)
 			// The filter only implies the index condition, it is not guaranteed by the index.
 			{"select /*+ use_index(t, idx_c) */ count(*) from t where tenant_id = 1 and col_id = 1 and c > 20", false, []string{"1"}},
 			{"select /*+ use_index(t, idx_c) */ count(*) from t where tenant_id = 1 and col_id = 1 and c > 10", true, []string{"2"}},
+			// No index column is needed: an index-only scan would output no column, so read
+			// the table rather than return no rows or fail to resolve the Limit's column.
+			{"select /*+ use_index(t, idx_json) */ 1 from t where value_json is not null", false, []string{"1", "1", "1", "1"}},
+			{"select /*+ use_index(t, idx_json) */ 1 from t where value_json is not null limit 2", false, []string{"1", "1"}},
+			{"select /*+ use_index(t, idx_json) */ count(*) from t where value_json is not null", false, []string{"4"}},
 		} {
 			plan := fmt.Sprintf("%v", tk.MustQuery("explain format = 'brief' "+tc.sql).Rows())
 			if tc.singleScan {
