@@ -86,6 +86,139 @@ func TestConsume(t *testing.T) {
 	require.Equal(t, int64(100), tracker.BytesConsumed())
 }
 
+func TestReplaceBytesUsedForCleanup(t *testing.T) {
+	previousTop := MemUsageTop1Tracker.Swap(nil)
+	previousMinSize := ServerMemoryLimitSessMinSize.Swap(1)
+	defer func() {
+		MemUsageTop1Tracker.Store(previousTop)
+		ServerMemoryLimitSessMinSize.Store(previousMinSize)
+	}()
+
+	ancestor := NewTracker(1, -1)
+	root := NewTracker(LabelForSession, 100)
+	root.IsRootTrackerOfSess = true
+	root.Killer = &sqlkiller.SQLKiller{}
+	root.AttachTo(ancestor)
+	leaf := NewTracker(LabelForMemDB, -1)
+	leaf.AttachTo(root)
+	hardAction, softAction := &mockAction{}, &mockAction{}
+	root.SetActionOnExceed(hardAction)
+	root.FallbackOldAndSetNewActionForSoftLimit(softAction)
+	root.Killer.SendKillSignal(sqlkiller.QueryInterrupted)
+
+	require.NotPanics(t, func() { leaf.ReplaceBytesUsedForCleanup(200) })
+	for _, tracker := range []*Tracker{leaf, root, ancestor} {
+		require.Equal(t, int64(200), tracker.BytesConsumed())
+		require.Equal(t, int64(200), tracker.MaxConsumed())
+	}
+	require.Equal(t, sqlkiller.QueryInterrupted, root.Killer.GetKillSignal())
+	require.False(t, hardAction.called)
+	require.False(t, softAction.called)
+	if !UsingGlobalMemArbitration() {
+		require.Same(t, root, MemUsageTop1Tracker.Load())
+	}
+
+	// Repeated and decreasing snapshots must not lose accounting or clear the kill.
+	require.NotPanics(t, func() {
+		leaf.ReplaceBytesUsedForCleanup(80)
+		leaf.ReplaceBytesUsedForCleanup(80)
+	})
+	for _, tracker := range []*Tracker{leaf, root, ancestor} {
+		require.Equal(t, int64(80), tracker.BytesConsumed())
+		require.Equal(t, int64(200), tracker.MaxConsumed())
+	}
+	require.PanicsWithError(t, root.Killer.HandleSignal().Error(), func() { leaf.Consume(1) })
+	require.Equal(t, sqlkiller.QueryInterrupted, root.Killer.GetKillSignal())
+
+	// Cleanup must not disable checks for subsequent ordinary accounting calls.
+	root.Killer.Reset()
+	leaf.ReplaceBytesUsed(201)
+	require.True(t, hardAction.called)
+	require.True(t, softAction.called)
+	root.Killer.SendKillSignal(sqlkiller.QueryInterrupted)
+	require.NotPanics(t, func() { leaf.ReplaceBytesUsedForCleanup(40) })
+	leaf.Detach()
+	require.Equal(t, int64(40), leaf.BytesConsumed())
+	require.Zero(t, root.BytesConsumed())
+	require.Zero(t, ancestor.BytesConsumed())
+	require.Equal(t, int64(201), root.MaxConsumed())
+	require.Equal(t, sqlkiller.QueryInterrupted, root.Killer.GetKillSignal())
+}
+
+func TestReplaceBytesUsedForCleanupWithMemArbitrator(t *testing.T) {
+	previousLimit := ServerMemoryLimit.Load()
+	previousLimitText := ServerMemoryLimitOriginText.Load()
+	defer func() {
+		ServerMemoryLimit.Store(previousLimit)
+		ServerMemoryLimitOriginText.Store(previousLimitText)
+	}()
+	SetupGlobalMemArbitratorForTest(t.TempDir())
+	defer CleanupGlobalMemArbitratorForTest()
+	ServerMemoryLimitOriginText.Store("10g")
+	ServerMemoryLimit.Store(10 << 30)
+	AjustGlobalMemArbitratorLimit()
+	require.True(t, SetGlobalMemArbitratorWorkMode(ArbitratorModeStandardName))
+
+	root := NewTracker(LabelForSession, -1)
+	root.IsRootTrackerOfSess = true
+	root.Killer = &sqlkiller.SQLKiller{}
+	root.SessionID.Store(12278)
+	leaf := NewTracker(LabelForMemDB, -1)
+	leaf.AttachTo(root)
+	g := GlobalMemArbitrator()
+	require.True(t, root.InitMemArbitrator(g, root.Killer, InvalidDigestID, ArbitrationPriorityMedium, false, 0, false))
+	defer func() {
+		leaf.ReplaceBytesUsedForCleanup(0)
+		leaf.Detach()
+		root.DetachMemArbitrator(true)
+		RemovePoolFromGlobalMemArbitrator(root.SessionID.Load())
+	}()
+	m := root.MemArbitrator
+	smallCapacity := m.smallBudget().approxCapacity()
+	root.Killer.SendKillSignal(sqlkiller.QueryInterrupted)
+	require.NotPanics(t, func() { leaf.ReplaceBytesUsedForCleanup(1) })
+	require.Equal(t, smallCapacity, m.smallBudget().approxCapacity())
+
+	// Accounting can cross a budget boundary during cleanup without attempting
+	// reservation or small-to-big conversion, both of which can interrupt cleanup.
+	used := m.budget.smallLimit + 1
+	lastUsedTime := g.approxUnixTimeSec()
+	require.NotPanics(t, func() { leaf.ReplaceBytesUsedForCleanup(used) })
+	require.False(t, m.useBigBudget())
+	require.Equal(t, memArbitratorStateSmallBudget, m.state.Load())
+	require.Equal(t, used, m.smallBudgetUsed())
+	require.Equal(t, used, leaf.BytesConsumed())
+	require.Equal(t, used, root.BytesConsumed())
+	require.Equal(t, smallCapacity, m.smallBudget().approxCapacity())
+	require.GreaterOrEqual(t, m.smallBudget().getLastUsedTimeSec(), lastUsedTime)
+	require.Equal(t, sqlkiller.QueryInterrupted, root.Killer.GetKillSignal())
+
+	root.Killer.Reset()
+	leaf.Consume(1)
+	require.True(t, m.useBigBudget())
+	require.Zero(t, m.smallBudgetUsed())
+	require.Equal(t, used+1, m.bigBudgetUsed())
+
+	bigCapacity := m.bigBudgetCap()
+	used = bigCapacity + 1
+	leaf.ReplaceBytesUsedForCleanup(used)
+	require.Equal(t, used, m.bigBudgetUsed())
+	require.Equal(t, used, root.BytesConsumed())
+	require.Equal(t, bigCapacity, m.bigBudgetCap())
+	leaf.Consume(1)
+	require.Greater(t, m.bigBudgetCap(), bigCapacity)
+	require.Equal(t, used+1, m.bigBudgetUsed())
+
+	leaf.ReplaceBytesUsedForCleanup(0)
+	require.Zero(t, m.bigBudgetUsed())
+	require.Zero(t, root.BytesConsumed())
+	require.True(t, root.DetachMemArbitrator(true))
+	leaf.ReplaceBytesUsedForCleanup(1)
+	require.Equal(t, memArbitratorStateDown, m.state.Load())
+	require.Zero(t, m.bigBudgetUsed())
+	require.Equal(t, int64(1), root.BytesConsumed())
+}
+
 func TestRelease(t *testing.T) {
 	debug.SetGCPercent(-1)
 	defer debug.SetGCPercent(100)
