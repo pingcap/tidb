@@ -50,3 +50,33 @@ fn the_staleness_check_reads_only_the_statement_node() {
         assert_eq!(check(sql), Ok(()), "{sql}");
     }
 }
+
+/// Go `IsReadOnlyInternal` answers an `EXECUTE` by its prepared statement,
+/// and `validateStatementReadOnlyInStaleness` asks only that question of it:
+/// a prepared write and a prepared locking SELECT are both refused as not
+/// read-only (the lock's own message is the directly written SELECT's), a
+/// prepared read runs (Go testkit probe).
+#[test]
+fn a_prepared_statement_meets_the_staleness_check_as_its_execute() {
+    let mut session = Session::new();
+    for sql in [
+        "use test",
+        "create table t(a int primary key, b int)",
+        "insert into t values (1,1)",
+        "prepare su from 'update t set b=2 where a=1'",
+        "prepare ss from 'select * from t where a=1 for update'",
+        "prepare sr from 'select * from t where a=1'",
+        "prepare sdo from 'do 1'",
+        "start transaction read only as of timestamp now(3)",
+    ] {
+        session.run(sql).unwrap();
+    }
+    let refused = "only support read-only statement during read-only staleness transactions";
+    for sql in ["execute su", "execute ss"] {
+        let error = session.run(sql).err().map(|error| error.to_mysql_error().message);
+        assert_eq!(error.as_deref(), Some(refused), "{sql}");
+    }
+    for sql in ["execute sr", "execute sdo"] {
+        session.run(sql).unwrap();
+    }
+}

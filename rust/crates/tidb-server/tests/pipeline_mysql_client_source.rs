@@ -4575,3 +4575,65 @@ fn test_extension_conn_event() {
     );
     assert!(events[5].1.session_alias.is_empty());
 }
+
+/// Go's COM_STMT_EXECUTE runs an `ExecuteStmt` through `ExecuteStmt`, whose
+/// `validateStatementReadOnlyInStaleness` asks it only `IsReadOnlyInternal`
+/// of the prepared statement: inside a read-only stale transaction a
+/// prepared write, a prepared locking SELECT and even a prepared COMMIT are
+/// refused alike as not read-only, before any snapshot is asked for (Go
+/// testkit probe over `ExecutePreparedStmt`).
+#[test]
+fn a_binary_execute_meets_the_staleness_check_as_its_execute() {
+    let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    let address = listener.local_addr().unwrap();
+    let tracker = Arc::new(ConnectionTracker::default());
+    let worker_tracker = Arc::clone(&tracker);
+    let worker = std::thread::spawn(move || {
+        let (stream, peer_addr) = listener.accept().unwrap();
+        let store = users();
+        serve_mysql_connection(
+            stream,
+            peer_addr,
+            ConnectionCancellation::default(),
+            node_over(&store).factory().as_ref(),
+            &store,
+            &worker_tracker,
+            DEFAULT_MAX_ALLOWED_PACKET,
+        )
+        .unwrap()
+    });
+
+    let mut client = TcpStream::connect(address).unwrap();
+    let read_side = client.try_clone().unwrap();
+    let mut reader = PacketReader::new(read_side);
+    authenticate(&mut client, &mut reader);
+    run_write(&mut client, &mut reader, "CREATE TABLE t (a INT PRIMARY KEY, b INT)");
+    run_write(&mut client, &mut reader, "INSERT INTO t VALUES (1, 1)");
+    let (update_id, _, _) =
+        prepare_statement(&mut client, &mut reader, "UPDATE t SET b = 2 WHERE a = 1");
+    let (locking_id, _, _) =
+        prepare_statement(&mut client, &mut reader, "SELECT * FROM t WHERE a = 1 FOR UPDATE");
+    let (commit_id, _, _) = prepare_statement(&mut client, &mut reader, "COMMIT");
+    run_write(
+        &mut client,
+        &mut reader,
+        "START TRANSACTION READ ONLY AS OF TIMESTAMP NOW(3)",
+    );
+    for statement_id in [update_id, locking_id, commit_id] {
+        let mut command = vec![COM_STMT_EXECUTE];
+        command.extend_from_slice(&statement_id.to_le_bytes());
+        command.push(0);
+        command.extend_from_slice(&1u32.to_le_bytes());
+        write_packet(&mut client, 0, &command);
+        reader.set_sequence(1);
+        assert_error_packet_exact(
+            &reader.read_packet().unwrap(),
+            1105,
+            b"HY000",
+            "only support read-only statement during read-only staleness transactions",
+        );
+    }
+    write_packet(&mut client, 0, &[0x01]);
+    drop(client);
+    worker.join().unwrap();
+}

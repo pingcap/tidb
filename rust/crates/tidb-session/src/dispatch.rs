@@ -2635,17 +2635,42 @@ impl Session {
         Ok(())
     }
 
+    /// The condition under which Go `validateStatementReadOnlyInStaleness`
+    /// checks a statement at all: a stale transaction, a pinned read ts or
+    /// external-ts reads, outside restricted SQL.
+    pub(crate) fn staleness_requires_read_only(&self) -> bool {
+        !self.vars.restricted_sql
+            && (self.is_staleness_txn()
+                || self.vars.txn_read_ts() != 0
+                || self.external_timestamp_read_enabled())
+    }
+
+    /// Go `validateStatementReadOnlyInStaleness`'s `ExecuteStmt` arm, for the
+    /// text `EXECUTE` and COM_STMT_EXECUTE alike: it asks only
+    /// `IsReadOnlyInternal`, which answers by the prepared statement (not
+    /// read-only when there is none), so a prepared locking SELECT is refused
+    /// as not read-only rather than for its lock.
+    pub(crate) fn validate_execute_read_only_in_staleness(
+        &self,
+        prepared: Option<&Stmt>,
+    ) -> Result<(), DriverError> {
+        if self.staleness_requires_read_only()
+            && !prepared.is_some_and(|stmt| stmt.is_read_only(true))
+        {
+            return Err(DriverError::unsupported(
+                "only support read-only statement during read-only staleness transactions",
+            ));
+        }
+        Ok(())
+    }
+
     /// Go `validateStatementReadOnlyInStaleness` (`session.go:2822`), which
     /// `ExecuteStmt` runs before `Compile`. It switches on the statement node
     /// itself: a top-level SELECT's lock, the read-only question for the
     /// statements it lists, and any DML; a lock inside a derived table or a
     /// view body, and every DDL, pass it.
     pub fn validate_statement_read_only_in_staleness(&self, stmt: &Stmt) -> Result<(), DriverError> {
-        if !self.vars.restricted_sql
-            && (self.is_staleness_txn()
-                || self.vars.txn_read_ts() != 0
-                || self.external_timestamp_read_enabled())
-        {
+        if self.staleness_requires_read_only() {
             // Go master: COMPARE reads its snapshots on its own; only its
             // OUTPUT table is a write.
             if let Stmt::Admin(admin) = stmt {
@@ -2656,6 +2681,13 @@ impl Session {
                         ));
                     }
                     return Ok(());
+                }
+            }
+            if let Stmt::Session(session) = stmt {
+                if let tidb_ast::SessionStmt::Execute { name, .. } = session.as_ref() {
+                    return self.validate_execute_read_only_in_staleness(
+                        self.prepared_statements.get(name).map(|prepared| &prepared.statement),
+                    );
                 }
             }
             let locked = matches!(stmt, Stmt::Query(query) if matches!(

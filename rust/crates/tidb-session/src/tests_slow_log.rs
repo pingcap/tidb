@@ -726,3 +726,36 @@ fn a_global_index_lookup_peaks_like_go() {
     }
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Go `ExecStmt.FinishExecuteStmt` logs an `EXECUTE` with the prepared
+/// statement's plan: its digest, and `Plan_from_cache` once the cached plan
+/// serves it (`SlowLogFormat` writes `FoundInPlanCache`).
+#[test]
+fn an_execute_logs_the_cached_plan_it_ran() {
+    let dir = log_dir("execute-plan");
+    let (slow, _) = install_loggers(&dir);
+    let mut session = Session::new();
+    for sql in [
+        "SET GLOBAL tidb_slow_log_threshold = 0",
+        "CREATE TABLE slow_e (a INT PRIMARY KEY, b INT, KEY (b))",
+        "INSERT INTO slow_e VALUES (1, 1), (2, 2)",
+        "PREPARE s FROM 'SELECT * FROM slow_e WHERE b = ?'",
+        "SET @x = 1",
+        "EXECUTE s USING @x",
+        "EXECUTE s USING @x",
+    ] {
+        session.run(sql).unwrap();
+    }
+    assert_eq!(one(&mut session, "SELECT @@last_plan_from_cache"), "1");
+    let log = read(&slow);
+    let start = log
+        .match_indices("# Time: ")
+        .map(|(at, _)| at)
+        .filter(|&at| log[at..].split("\n# Time: ").next().unwrap().contains("slow_e WHERE b"))
+        .last()
+        .unwrap_or_else(|| panic!("no EXECUTE entry: {log}"));
+    let entry = log[start..].split("\n# Time: ").next().unwrap();
+    assert_eq!(field(entry, "Plan_from_cache"), Some("true"), "{entry}");
+    assert!(field(entry, "Plan_digest").is_some_and(|digest| !digest.is_empty()), "{entry}");
+    let _ = std::fs::remove_dir_all(&dir);
+}

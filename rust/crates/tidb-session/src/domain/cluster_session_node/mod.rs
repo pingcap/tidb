@@ -2073,6 +2073,19 @@ impl<'s> ClusterServerSession<'s> {
         // Go `ExecutePreparedStmt` runs `ExecuteStmt`: `Compile`'s fresh
         // `TelemetryInfo` and `runStmt`'s `updateTelemetryMetric`.
         self.session.reset_telemetry_info();
+        // `ExecuteStmt`'s `validateStatementReadOnlyInStaleness` on the
+        // `ExecuteStmt` node (the prepared text is parsed only when the check
+        // applies; an unparsable one is not read-only, as Go's
+        // `GetPreparedStmt` error is).
+        if self.session.staleness_requires_read_only() {
+            let prepared = match statement.prepared_ast() {
+                Some(prepared) => Some(prepared.statement().clone()),
+                None => (*self.session).parse_statement(statement.sql()).ok(),
+            };
+            self.session
+                .validate_execute_read_only_in_staleness(prepared.as_ref())
+                .map_err(map_error)?;
+        }
         let process_statement = self
             .session
             .retain_process_statement_with_digest(statement.sql(), statement.digest());
