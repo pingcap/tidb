@@ -37,6 +37,18 @@ var tlsCrtStr []byte
 //go:embed test/ldap.key
 var tlsKeyStr []byte
 
+func TestSearchUserFilter(t *testing.T) {
+	impl := &ldapAuthImpl{
+		searchAttr: "cn",
+	}
+	require.Equal(t, "(cn=yka)", impl.searchUserFilter("yka"))
+	// a user name carrying filter metacharacters must be escaped so that it is
+	// matched as a literal value and cannot widen or restructure the filter.
+	require.Equal(t, `(cn=\2a)`, impl.searchUserFilter("*"))
+	require.Equal(t, `(cn=x\29\28uid=\2a)`, impl.searchUserFilter("x)(uid=*"))
+	require.Equal(t, `(cn=a\5cb)`, impl.searchUserFilter(`a\b`))
+}
+
 func TestCanonicalizeDN(t *testing.T) {
 	impl := &ldapAuthImpl{
 		searchAttr: "cn",

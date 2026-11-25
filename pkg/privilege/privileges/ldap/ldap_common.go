@@ -82,10 +82,7 @@ func (impl *ldapAuthImpl) searchUser(userName string) (dn string, err error) {
 	result, err := l.Search(&ldap.SearchRequest{
 		BaseDN: impl.bindBaseDN,
 		Scope:  ldap.ScopeWholeSubtree,
-		// userName comes from the login request, so escape it per RFC 4515 before
-		// embedding it in the filter, otherwise a name containing filter
-		// metacharacters (for example `*` or `)(`) changes which entries match.
-		Filter: fmt.Sprintf("(%s=%s)", impl.searchAttr, ldap.EscapeFilter(userName)),
+		Filter: impl.searchUserFilter(userName),
 	})
 	if err != nil {
 		return
@@ -97,6 +94,14 @@ func (impl *ldapAuthImpl) searchUser(userName string) (dn string, err error) {
 
 	dn = result.Entries[0].DN
 	return
+}
+
+// searchUserFilter builds the filter used to look up `userName`. The name comes from
+// the login request, so it is escaped per RFC 4515 and matched as a literal value: an
+// unescaped name holding filter metacharacters (for example `*` or `)(`) would change
+// the structure of the filter and therefore which entries match.
+func (impl *ldapAuthImpl) searchUserFilter(userName string) string {
+	return fmt.Sprintf("(%s=%s)", impl.searchAttr, ldap.EscapeFilter(userName))
 }
 
 // canonicalizeDN turns the `dn` provided in database to the `dn` recognized by LDAP server
