@@ -38,7 +38,7 @@ import (
 // metadata, since another DDL may have changed the column since submission.
 func analyzeModifyColumn(tbl *model.TableInfo, oldCol, newCol *model.ColumnInfo) (model.ModifyColumnType, error) {
 	change := classifyColumnChange(tbl, oldCol, newCol)
-	if err := checkModifyTypes(oldCol, newCol, change); err != nil {
+	if err := validateModifyColumn(oldCol, newCol, change); err != nil {
 		return model.ModifyTypeReorg, err
 	}
 	return change, nil
@@ -75,10 +75,10 @@ func resolveModifyColumnTypeAfterPrecheck(
 	return applyExecutionRestrictions(tbl, oldCol, newCol, storedType, sqlMode, baseType)
 }
 
-// noReorgDataStrict reports whether the column conversion is strictly
+// isMetaOnlyChange reports whether the column conversion is strictly
 // metadata-only regardless of existing row data. Nullability is checked
 // separately by callers.
-func noReorgDataStrict(tbl *model.TableInfo, oldCol, newCol *model.ColumnInfo) bool {
+func isMetaOnlyChange(tbl *model.TableInfo, oldCol, newCol *model.ColumnInfo) bool {
 	return classifyColumnChange(tbl, oldCol, newCol) == model.ModifyTypeNoReorg
 }
 
@@ -90,17 +90,17 @@ func isNullToNotNullChange(oldCol, newCol *model.ColumnInfo) bool {
 // 2. Conversion support validation
 // =============================================================================
 
-// checkModifyTypes validates whether modifying from -> to is supported at all
+// validateModifyColumn validates whether modifying from -> to is supported at all
 // (either metadata-only or via reorganization). Non-GBK charset and collation
 // changes are allowed and routed to the appropriate execution path by
 // classifyColumnChange.
-func checkModifyTypes(from, to *model.ColumnInfo, change model.ModifyColumnType) error {
+func validateModifyColumn(from, to *model.ColumnInfo, change model.ModifyColumnType) error {
 	fromFt, toFt := &from.FieldType, &to.FieldType
 	if !charset.ValidCharsetAndCollation(toFt.GetCharset(), toFt.GetCollate()) {
 		return dbterror.ErrUnknownCharacterSet.GenWithStack("Unknown character set: '%s', collation: '%s'", toFt.GetCharset(), toFt.GetCollate())
 	}
 
-	if from.GetType() != to.GetType() && !isTypeChangeSupported(fromFt.GetType(), toFt.GetType()) {
+	if from.GetType() != to.GetType() && !isCrossTypeChangeSupported(fromFt.GetType(), toFt.GetType()) {
 		msg := fmt.Sprintf("change from original type %v to %v is currently unsupported yet", fromFt.CompactStr(), toFt.CompactStr())
 		return dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs(msg)
 	}
@@ -122,9 +122,9 @@ func checkModifyTypes(from, to *model.ColumnInfo, change model.ModifyColumnType)
 	return nil
 }
 
-// isTypeChangeSupported reports whether cross-type reorganization from
+// isCrossTypeChangeSupported reports whether cross-type reorganization from
 // originTp to toTp is implemented. Callers handle originTp == toTp separately.
-func isTypeChangeSupported(originTp, toTp byte) bool {
+func isCrossTypeChangeSupported(originTp, toTp byte) bool {
 	if originTp == mysql.TypeTiDBVectorFloat32 || toTp == mysql.TypeTiDBVectorFloat32 {
 		// TODO: Cross-type conversion involving vector is not supported.
 		return false
@@ -174,7 +174,7 @@ func isTypeChangeSupported(originTp, toTp byte) bool {
 // index encoding requirements. Nullability and execution-time restrictions are
 // applied later in applyExecutionRestrictions.
 func classifyColumnChange(tbl *model.TableInfo, oldCol, newCol *model.ColumnInfo) model.ModifyColumnType {
-	change := classifyColumnValues(oldCol, newCol)
+	change := classifyByRowValue(oldCol, newCol)
 	if change == model.ModifyTypeReorg {
 		return change
 	}
@@ -189,7 +189,7 @@ func classifyColumnChange(tbl *model.TableInfo, oldCol, newCol *model.ColumnInfo
 		}
 		change = model.ModifyTypeNoReorgWithCheck
 	}
-	if needIndexReorg(oldCol, newCol) {
+	if needsIndexReorg(oldCol, newCol) {
 		// Index-only reorg only runs validation SQL for integers and non-binary
 		// CHAR/VARCHAR; other indexed string types (e.g. TEXT with a prefix
 		// index) fall back to full row+index reorg.
@@ -201,9 +201,9 @@ func classifyColumnChange(tbl *model.TableInfo, oldCol, newCol *model.ColumnInfo
 	return change
 }
 
-// classifyColumnValues decides whether existing row values can be reused as-is,
+// classifyByRowValue decides whether existing row values can be reused as-is,
 // need validation, or must be rewritten.
-func classifyColumnValues(oldCol, newCol *model.ColumnInfo) model.ModifyColumnType {
+func classifyByRowValue(oldCol, newCol *model.ColumnInfo) model.ModifyColumnType {
 	if !isCharsetMetadataCompatible(oldCol, newCol) {
 		return model.ModifyTypeReorg
 	}
@@ -233,7 +233,7 @@ func classifyColumnValues(oldCol, newCol *model.ColumnInfo) model.ModifyColumnTy
 			return model.ModifyTypeNoReorg
 		}
 	case isStringStorageType(oldCol.GetType()) && isStringStorageType(newCol.GetType()):
-		return classifyStringValues(oldCol, newCol)
+		return classifyByStringRowValue(oldCol, newCol)
 	case sameType:
 		if preservesColumnRange(oldCol, newCol) {
 			return model.ModifyTypeNoReorg
@@ -258,7 +258,7 @@ func isCharsetMetadataCompatible(oldCol, newCol *model.ColumnInfo) bool {
 		(oldCol.GetCharset() == charset.CharsetUTF8 || oldCol.GetCharset() == charset.CharsetLatin1)
 }
 
-func classifyStringValues(oldCol, newCol *model.ColumnInfo) model.ModifyColumnType {
+func classifyByStringRowValue(oldCol, newCol *model.ColumnInfo) model.ModifyColumnType {
 	if oldCol.GetType() == mysql.TypeString && newCol.GetType() == mysql.TypeString &&
 		types.IsBinaryStr(&oldCol.FieldType) && types.IsBinaryStr(&newCol.FieldType) {
 		// BINARY pads with zero bytes; widening changes existing values too.
@@ -287,23 +287,23 @@ func preservesColumnRange(oldCol, newCol *model.ColumnInfo) bool {
 			(newCol.GetFlen() >= oldCol.GetFlen() && newCol.GetDecimal() >= oldCol.GetDecimal()))
 }
 
-func needIndexReorg(oldCol, changingCol *model.ColumnInfo) bool {
-	if isIntegerChange(oldCol, changingCol) {
-		return mysql.HasUnsignedFlag(oldCol.GetFlag()) != mysql.HasUnsignedFlag(changingCol.GetFlag())
+func needsIndexReorg(oldCol, newCol *model.ColumnInfo) bool {
+	if isIntegerChange(oldCol, newCol) {
+		return mysql.HasUnsignedFlag(oldCol.GetFlag()) != mysql.HasUnsignedFlag(newCol.GetFlag())
 	}
-	if !isStringStorageType(oldCol.GetType()) || !isStringStorageType(changingCol.GetType()) {
+	if !isStringStorageType(oldCol.GetType()) || !isStringStorageType(newCol.GetType()) {
 		return false
 	}
 
 	// Check index key part, ref tablecodec.GenIndexKey.
-	if collate.NewCollationEnabled() && !collate.CompatibleCollate(oldCol.GetCollate(), changingCol.GetCollate()) {
+	if collate.NewCollationEnabled() && !collate.CompatibleCollate(oldCol.GetCollate(), newCol.GetCollate()) {
 		return true
 	}
 
 	// Check index value part, ref tablecodec.GenIndexValuePortal.
 	// TODO(joechenrh): It's better to check each index here, because not all indexes need
 	// reorg even if the below condition is true.
-	return types.NeedRestoredData(&oldCol.FieldType) != types.NeedRestoredData(&changingCol.FieldType)
+	return types.NeedRestoredData(&oldCol.FieldType) != types.NeedRestoredData(&newCol.FieldType)
 }
 
 func hasRelatedIndex(tbl *model.TableInfo, colID int64) bool {
@@ -373,7 +373,7 @@ func hasIncompatibleStatsEncoding(oldCol, newCol *model.ColumnInfo) bool {
 	if isIntegerChange(oldCol, newCol) {
 		return mysql.HasUnsignedFlag(oldCol.GetFlag()) != mysql.HasUnsignedFlag(newCol.GetFlag())
 	}
-	if isCharChange(oldCol, newCol) {
+	if isCharOrVarcharChange(oldCol, newCol) {
 		return !collate.CompatibleCollate(oldCol.GetCollate(), newCol.GetCollate())
 	}
 	return false
@@ -396,7 +396,7 @@ func isIntegerChange(from, to *model.ColumnInfo) bool {
 	return mysql.IsIntegerType(from.GetType()) && mysql.IsIntegerType(to.GetType())
 }
 
-func isCharChange(from, to *model.ColumnInfo) bool {
+func isCharOrVarcharChange(from, to *model.ColumnInfo) bool {
 	return types.IsTypeChar(from.GetType()) && types.IsTypeChar(to.GetType())
 }
 
@@ -409,7 +409,7 @@ func isVarcharToChar(oldCol, newCol *model.ColumnInfo) bool {
 }
 
 func isNonBinaryCharChange(oldCol, newCol *model.ColumnInfo) bool {
-	return isCharChange(oldCol, newCol) &&
+	return isCharOrVarcharChange(oldCol, newCol) &&
 		!types.IsBinaryStr(&oldCol.FieldType) &&
 		!types.IsBinaryStr(&newCol.FieldType)
 }

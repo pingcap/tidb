@@ -37,7 +37,7 @@ validation, storage/index classification, execution-time restrictions, and
 - Submission analysis: `pkg/ddl/modify_column_change.go:analyzeModifyColumn`
 - Initial execution resolution: `pkg/ddl/modify_column_change.go:resolveModifyColumnType`
 - Post-precheck resolution: `pkg/ddl/modify_column_change.go:resolveModifyColumnTypeAfterPrecheck`
-- Fast-path predicate: `pkg/ddl/modify_column_change.go:noReorgDataStrict` (strong check: “no reorg no matter what data is”)
+- Fast-path predicate: `pkg/ddl/modify_column_change.go:isMetaOnlyChange` (strong check: “no reorg no matter what data is”)
 
 Submission calls `analyzeModifyColumn` and initial execution calls
 `resolveModifyColumnType`, each using its own metadata snapshot. Conversion
@@ -46,18 +46,18 @@ analysis is structured into three layers:
 1. **Storage & index classification (`classifyColumnChange`)**: checks safe
    charset compatibility (`isCharsetMetadataCompatible`: ENUM/SET ordinals and
    UTF8/Latin1 -> UTF8MB4 widening), then classifies row storage by type family
-   in `classifyColumnValues` / `classifyStringValues` (integer ranges ignore
+   in `classifyByRowValue` / `classifyByStringRowValue` (integer ranges ignore
    display width; DECIMAL requires identical precision/scale/sign; ENUM/SET
    preserve member ordinals; BINARY length changes require padding changes;
    vector dimensions must match unless target is unconstrained). For indexed
    columns it applies the `CHAR -> VARCHAR` rule and checks index
-   key/restored-data encoding via `needIndexReorg` (including incompatible
+   key/restored-data encoding via `needsIndexReorg` (including incompatible
    collation changes under new collation, routing non-integer/non-char types
-   like `TEXT` with prefix indexes to `ModifyTypeReorg`). `noReorgDataStrict`
+   like `TEXT` with prefix indexes to `ModifyTypeReorg`). `isMetaOnlyChange`
    uses the same classification for dependent-object checks; nullability remains
    a separate check.
-2. **Support validation (`checkModifyTypes`)**: validates the target
-   charset/collation pair, cross-type support (`isTypeChangeSupported`), the
+2. **Support validation (`validateModifyColumn`)**: validates the target
+   charset/collation pair, cross-type support (`isCrossTypeChangeSupported`), the
    GBK charset/collation change restriction, and primary-key restrictions
    (`change != ModifyTypeNoReorg`). Non-GBK charset and collation changes are
    allowed and routed by `classifyColumnChange` to the appropriate execution

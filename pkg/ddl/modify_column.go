@@ -645,7 +645,7 @@ func validateMaterializedViewLogColumnTypeForModifyColumn(
 	newFieldType := fieldTypeForMVRelatedColumn(mlogCol, newCol)
 	mlogNewCol := mlogCol.Clone()
 	mlogNewCol.FieldType = newFieldType
-	if !noReorgDataStrict(mlogTableInfo, mlogCol, mlogNewCol) {
+	if !isMetaOnlyChange(mlogTableInfo, mlogCol, mlogNewCol) {
 		return newFieldType, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
 			fmt.Sprintf("%s on base table with materialized view log only supports no-reorg compatible type changes", op),
 		)
@@ -701,7 +701,7 @@ func validateDependentMaterializedViewModifyColumn(
 		mviewOldCol := mviewTableInfo.Columns[off]
 		mviewNewCol := mviewOldCol.Clone()
 		mviewNewCol.FieldType = fieldTypeForMVRelatedColumn(mviewOldCol, newCol)
-		if !noReorgDataStrict(mviewTableInfo, mviewOldCol, mviewNewCol) {
+		if !isMetaOnlyChange(mviewTableInfo, mviewOldCol, mviewNewCol) {
 			return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
 				fmt.Sprintf("%s on base table with materialized view dependencies only supports no-reorg compatible type changes for direct output columns", op),
 			)
@@ -893,7 +893,7 @@ func (w *worker) precheckForVarcharToChar(
 		if isNullToNotNullChange(oldCol, newCol) {
 			oldCol.AddFlag(mysql.PreventNullInsertFlag)
 		}
-		if !noReorgDataStrict(tblInfo, oldCol, newCol) {
+		if !isMetaOnlyChange(tblInfo, oldCol, newCol) {
 			oldCol.ChangingFieldType = &newCol.FieldType
 		}
 		return updateVersionAndTableInfoWithCheck(jobCtx, job, tblInfo, true)
@@ -960,7 +960,7 @@ func (w *worker) doModifyColumnWithCheck(
 		if isNullToNotNullChange(oldCol, newCol) {
 			oldCol.AddFlag(mysql.PreventNullInsertFlag)
 		}
-		if !noReorgDataStrict(tblInfo, oldCol, newCol) {
+		if !isMetaOnlyChange(tblInfo, oldCol, newCol) {
 			oldCol.ChangingFieldType = &newCol.FieldType
 		}
 		return updateVersionAndTableInfoWithCheck(jobCtx, job, tblInfo, true)
@@ -970,7 +970,7 @@ func (w *worker) doModifyColumnWithCheck(
 		jobCtx.stepCtx, w,
 		dbInfo.Name, tblInfo.Name,
 		oldCol, newCol,
-		!noReorgDataStrict(tblInfo, oldCol, newCol),
+		!isMetaOnlyChange(tblInfo, oldCol, newCol),
 	)
 	if err != nil {
 		// If checked is true, it means we have done the check and found invalid data.
