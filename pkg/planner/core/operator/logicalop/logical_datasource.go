@@ -776,6 +776,36 @@ func (ds *DataSource) IsSingleScan(index *model.IndexInfo, indexColumns []*expre
 	return true
 }
 
+// SingleScanSchema returns the schema that a scan reading only the index (no table lookup)
+// should output. The data source schema still has the columns that conditions use, but
+// IsSingleScan does not require the columns of conditions that a partial index guarantees
+// to be in the index. Nothing above the scan reads them, because those conditions are not
+// evaluated, so they are left out here. Otherwise the reader would output a column that
+// the index does not have.
+func (ds *DataSource) SingleScanSchema(index *model.IndexInfo, indexColumns []*expression.Column, idxColLens []int) *expression.Schema {
+	schema := ds.Schema()
+	if index == nil || index.ConditionExprString == "" {
+		return schema
+	}
+	var kept []*expression.Column
+	for i, col := range schema.Columns {
+		if ds.indexCoveringColumn(col, indexColumns, idxColLens, true) {
+			if kept != nil {
+				kept = append(kept, col)
+			}
+			continue
+		}
+		if kept == nil {
+			kept = make([]*expression.Column, 0, schema.Len()-1)
+			kept = append(kept, schema.Columns[:i]...)
+		}
+	}
+	if kept == nil {
+		return schema
+	}
+	return expression.NewSchema(kept...)
+}
+
 // IsIndexCoveringColumns checks whether all the needed columns can be covered by the index.
 func (ds *DataSource) IsIndexCoveringColumns(columns, indexColumns []*expression.Column, idxColLens []int) bool {
 	for _, col := range columns {

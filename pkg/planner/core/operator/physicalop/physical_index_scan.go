@@ -628,6 +628,10 @@ func (p *PhysicalIndexScan) GetPlanCostVer2(taskType property.TaskType,
 // GetPhysicalIndexScan4LogicalIndexScan returns PhysicalIndexScan for the logical IndexScan.
 func GetPhysicalIndexScan4LogicalIndexScan(s *logicalop.LogicalIndexScan, _ *expression.Schema, stats *property.StatsInfo) *PhysicalIndexScan {
 	ds := s.Source
+	dsSchema := ds.Schema()
+	if !s.IsDoubleRead {
+		dsSchema = ds.SingleScanSchema(s.Index, s.FullIdxCols, s.FullIdxColLens)
+	}
 	is := PhysicalIndexScan{
 		Table:            ds.TableInfo,
 		TableAsName:      ds.TableAsName,
@@ -638,7 +642,7 @@ func GetPhysicalIndexScan4LogicalIndexScan(s *logicalop.LogicalIndexScan, _ *exp
 		IdxColLens:       s.IdxColLens,
 		AccessCondition:  s.AccessConds,
 		Ranges:           s.Ranges,
-		DataSourceSchema: ds.Schema(),
+		DataSourceSchema: dsSchema,
 		IsPartition:      ds.PartitionDefIdx != nil,
 		PhysicalTableID:  ds.PhysicalTableID,
 		TblColHists:      ds.TblColHists,
@@ -652,6 +656,10 @@ func GetPhysicalIndexScan4LogicalIndexScan(s *logicalop.LogicalIndexScan, _ *exp
 // GetOriginalPhysicalIndexScan creates a new PhysicalIndexScan from the given DataSource and AccessPath.
 func GetOriginalPhysicalIndexScan(ds *logicalop.DataSource, prop *property.PhysicalProperty, path *util.AccessPath, isMatchProp bool, isSingleScan bool) *PhysicalIndexScan {
 	idx := path.Index
+	dsSchema := ds.Schema()
+	if isSingleScan {
+		dsSchema = ds.SingleScanSchema(idx, path.FullIdxCols, path.FullIdxColLens)
+	}
 	is := PhysicalIndexScan{
 		Table:            ds.TableInfo,
 		TableAsName:      ds.TableAsName,
@@ -662,7 +670,7 @@ func GetOriginalPhysicalIndexScan(ds *logicalop.DataSource, prop *property.Physi
 		IdxColLens:       path.IdxColLens,
 		AccessCondition:  path.AccessConds,
 		Ranges:           path.Ranges,
-		DataSourceSchema: ds.Schema(),
+		DataSourceSchema: dsSchema,
 		IsPartition:      ds.PartitionDefIdx != nil,
 		PhysicalTableID:  ds.PhysicalTableID,
 		TblColHists:      ds.TblColHists,

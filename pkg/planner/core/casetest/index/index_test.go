@@ -934,6 +934,11 @@ key idx_c (tenant_id, col_id) where c > 10)`)
 			// The filter is the index condition: index-only.
 			{"select /*+ use_index(t, idx_json) */ count(*) from t where tenant_id = 1 and sheet_id = 1 and col_id = 1 and value_json is not null", true, []string{"2"}},
 			{"select /*+ use_index(t, idx_json) */ row_id from t where tenant_id = 1 and sheet_id = 1 and col_id = 1 and value_json is not null order by row_id", true, []string{"1", "3"}},
+			// With a Limit or TopN the index scan is directly under the reader, so the reader
+			// must not output value_json, which the index does not have.
+			{"select /*+ use_index(t, idx_json) */ row_id from t where tenant_id = 1 and sheet_id = 1 and col_id = 1 and value_json is not null limit 5", true, []string{"1", "3"}},
+			{"select /*+ use_index(t, idx_json) */ row_id from t where tenant_id = 1 and sheet_id = 1 and col_id = 1 and value_json is not null order by row_id desc limit 1", true, []string{"3"}},
+			{"select /*+ use_index(t, idx_c) */ col_id from t where tenant_id = 1 and col_id = 1 and c > 10 order by col_id limit 5", true, []string{"1", "1"}},
 			// Other filters on non-index columns still need the table.
 			{"select /*+ use_index(t, idx_json) */ count(*) from t where tenant_id = 1 and sheet_id = 1 and col_id = 1 and value_json is not null and json_type(value_json) = 'OBJECT'", false, []string{"1"}},
 			// The filter only implies the index condition, it is not guaranteed by the index.
@@ -948,6 +953,15 @@ key idx_c (tenant_id, col_id) where c > 10)`)
 				require.Contains(t, plan, "IndexLookUp", tc.sql)
 			}
 			tk.MustQuery(tc.sql).Check(testkit.Rows(tc.result...))
+		}
+		// The partial index on the inner side of joins.
+		tk.MustExec("drop table if exists k")
+		tk.MustExec("create table k (row_id bigint primary key)")
+		tk.MustExec("insert into k values (1), (2), (3), (4)")
+		for _, hint := range []string{"inl_join(t)", "hash_join(t)", "merge_join(t)"} {
+			q := "select /*+ " + hint + " use_index(t, idx_json) */ k.row_id from k join t on t.row_id = k.row_id where t.tenant_id = 1 and t.sheet_id = 1 and t.col_id = 1 and t.value_json is not null order by k.row_id"
+			tk.MustQuery(q).Check(testkit.Rows("1", "3"))
+			tk.MustQuery(q + " limit 1").Check(testkit.Rows("1"))
 		}
 		// Without a hint, index pruning must also see that idx_json can be read in a single
 		// scan, otherwise it can be pruned before costing.
