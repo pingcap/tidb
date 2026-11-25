@@ -756,10 +756,15 @@ func preferKeyColumnFromTable(dataSource *DataSource, originColumns []*expressio
 // evaluated when reading from it (see RemoveConditionsGuaranteedByIndex), so they don't need
 // to be covered. index can be nil.
 func (ds *DataSource) IsSingleScan(index *model.IndexInfo, indexColumns []*expression.Column, idxColLens []int) bool {
-	if !ds.SCtx().GetSessionVars().OptPrefixIndexSingleScan || ds.ColsRequiringFullLen == nil {
+	if ds.ColsRequiringFullLen == nil {
 		// ds.ColsRequiringFullLen is set at (*DataSource).PruneColumns. In some cases we don't reach (*DataSource).PruneColumns
 		// and ds.ColsRequiringFullLen is nil, so we fall back to ds.isIndexCoveringColumns(ds.schema.Columns, indexColumns, idxColLens).
 		return ds.IsIndexCoveringColumns(ds.Schema().Columns, indexColumns, idxColLens)
+	}
+	if !ds.SCtx().GetSessionVars().OptPrefixIndexSingleScan {
+		// Every column in the schema must be fully covered, except the columns that only
+		// conditions guaranteed by the partial index use.
+		return ds.IsIndexCoveringColumns(ds.columnsExceptGuaranteedOnly(index), indexColumns, idxColLens)
 	}
 	if !ds.IsIndexCoveringColumns(ds.ColsRequiringFullLen, indexColumns, idxColLens) {
 		return false
@@ -774,6 +779,39 @@ func (ds *DataSource) IsSingleScan(index *model.IndexInfo, indexColumns []*expre
 		}
 	}
 	return true
+}
+
+// columnsExceptGuaranteedOnly returns the schema columns without the ones that only the
+// conditions guaranteed by the partial index use: columns that are not output and are not
+// used by any other condition.
+func (ds *DataSource) columnsExceptGuaranteedOnly(index *model.IndexInfo) []*expression.Column {
+	columns := ds.Schema().Columns
+	indexConds := ds.PartialIndexConds(index)
+	if len(indexConds) == 0 {
+		return columns
+	}
+	var guaranteedConds, otherConds []expression.Expression
+	for _, cond := range ds.AllConds {
+		if ds.isGuaranteedByIndexConds(indexConds, cond) {
+			guaranteedConds = append(guaranteedConds, cond)
+		} else {
+			otherConds = append(otherConds, cond)
+		}
+	}
+	if len(guaranteedConds) == 0 {
+		return columns
+	}
+	guaranteedCols := expression.NewSchema(expression.ExtractColumnsFromExpressions(guaranteedConds, nil)...)
+	otherCols := expression.NewSchema(expression.ExtractColumnsFromExpressions(otherConds, nil)...)
+	outputCols := expression.NewSchema(ds.ColsRequiringFullLen...)
+	needed := make([]*expression.Column, 0, len(columns))
+	for _, col := range columns {
+		if guaranteedCols.Contains(col) && !otherCols.Contains(col) && !outputCols.Contains(col) {
+			continue
+		}
+		needed = append(needed, col)
+	}
+	return needed
 }
 
 // SingleScanSchema returns the schema that a scan reading only the index (no table lookup)
@@ -927,12 +965,8 @@ func (ds *DataSource) PartialIndexConds(index *model.IndexInfo) []expression.Exp
 // constants that may change between executions of a cached plan is never guaranteed, since
 // the index condition only guarantees the values in its definition.
 func (ds *DataSource) isGuaranteedByIndexConds(indexConds []expression.Expression, cond expression.Expression) bool {
-	if len(indexConds) == 0 || expression.MaybeOverOptimized4PlanCache(ds.SCtx().GetExprCtx(), cond) {
-		return false
-	}
-	evalCtx := ds.SCtx().GetExprCtx().GetEvalCtx()
 	for _, indexCond := range indexConds {
-		if cond.Equal(evalCtx, indexCond) {
+		if partidx.IsSameCondition(ds.SCtx().GetExprCtx(), cond, indexCond) {
 			return true
 		}
 	}

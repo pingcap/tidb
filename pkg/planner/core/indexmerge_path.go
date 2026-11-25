@@ -710,6 +710,11 @@ func generateANDIndexMerge4ComposedIndex(ds *logicalop.DataSource, normalPathCnt
 			tableFilters = append(tableFilters, CNFItem)
 		}
 	}
+	// Every row of the intersection is a row of each partial path's index, so a filter that
+	// a partial index guarantees is true for all of them.
+	for _, path := range combinedPartialPaths {
+		tableFilters = ds.RemoveConditionsGuaranteedByIndex(path.Index, tableFilters)
+	}
 
 	mvp := buildPartialPathUp4MVIndex(combinedPartialPaths, true, tableFilters, ds.TableStats.HistColl)
 

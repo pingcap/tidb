@@ -146,6 +146,46 @@ func implIsNotNull(rangerctx *context.RangerContext, targetCol *expression.Colum
 	return true
 }
 
+// IsSameCondition reports whether filter is the same condition as the partial index condition
+// indexCond, so that it is true for every row of the index. Expression.Equal does not compare
+// collations: `v = 'a' COLLATE utf8mb4_bin` is Equal to `v = 'a'` on a utf8mb4_general_ci
+// column, but it rejects rows with 'A' that the index has. So the collation and coercibility
+// of every sub-expression must also match. A filter with constants that may change between
+// executions of a cached plan is never the same condition.
+func IsSameCondition(ctx expression.BuildContext, filter, indexCond expression.Expression) bool {
+	evalCtx := ctx.GetEvalCtx()
+	return filter.Equal(evalCtx, indexCond) &&
+		sameCollations(evalCtx, filter, indexCond) &&
+		!expression.MaybeOverOptimized4PlanCache(ctx, filter)
+}
+
+func sameCollations(evalCtx expression.EvalContext, a, b expression.Expression) bool {
+	charsetA, collationA := a.CharsetAndCollation()
+	charsetB, collationB := b.CharsetAndCollation()
+	if charsetA != charsetB || collationA != collationB || a.Coercibility() != b.Coercibility() ||
+		a.GetType(evalCtx).GetCollate() != b.GetType(evalCtx).GetCollate() {
+		return false
+	}
+	sfA, okA := a.(*expression.ScalarFunction)
+	sfB, okB := b.(*expression.ScalarFunction)
+	if okA != okB {
+		return false
+	}
+	if !okA {
+		return true
+	}
+	argsA, argsB := sfA.GetArgs(), sfB.GetArgs()
+	if len(argsA) != len(argsB) {
+		return false
+	}
+	for i := range argsA {
+		if !sameCollations(evalCtx, argsA[i], argsB[i]) {
+			return false
+		}
+	}
+	return true
+}
+
 // AlwaysMeetConstraints checks whether the filters always meet the constraints from the predefined predicates in index meta.
 // This check is only applied to the pre condition that is single IS NOT NULL.
 // e.g. for partial index idx(b) where a IS NOT NULL, if the filter is b = ? and a is not null/a > 10, then we can guarantee that a IS NOT NULL is always true.
@@ -159,8 +199,7 @@ func AlwaysMeetConstraints(sctx planctx.PlanContext, prePredicates, filters []ex
 	// between executions meets the condition for any parameters, e.g. `j IS NOT NULL` on a
 	// JSON column, which is `not(isnull(cast(j)))` and is not handled by the check below.
 	for _, filter := range filters {
-		if filter.Equal(sctx.GetExprCtx().GetEvalCtx(), prePredicates[0]) &&
-			!expression.MaybeOverOptimized4PlanCache(sctx.GetExprCtx(), filter) {
+		if IsSameCondition(sctx.GetExprCtx(), filter, prePredicates[0]) {
 			return true
 		}
 	}

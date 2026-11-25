@@ -963,6 +963,34 @@ key idx_c (tenant_id, col_id) where c > 10)`)
 			tk.MustQuery(q).Check(testkit.Rows("1", "3"))
 			tk.MustQuery(q + " limit 1").Check(testkit.Rows("1"))
 		}
+		// The partial index guarantees its condition only with the same collation: a filter
+		// with a different collation is Equal to it but still has to be evaluated.
+		tk.MustExec("drop table if exists tc")
+		tk.MustExec("create table tc (a int, v varchar(10) collate utf8mb4_general_ci, key idx_v(a) where v = 'a')")
+		tk.MustExec("insert into tc values (1, 'a'), (1, 'A'), (1, 'b')")
+		plan := fmt.Sprintf("%v", tk.MustQuery("explain format = 'brief' select /*+ use_index(tc, idx_v) */ count(*) from tc where a = 1 and v = 'a'").Rows())
+		require.NotContains(t, plan, "IndexLookUp")
+		tk.MustQuery("select /*+ use_index(tc, idx_v) */ count(*) from tc where a = 1 and v = 'a'").Check(testkit.Rows("2"))
+		plan = fmt.Sprintf("%v", tk.MustQuery("explain format = 'brief' select /*+ use_index(tc, idx_v) */ count(*) from tc where a = 1 and v = 'a' collate utf8mb4_bin").Rows())
+		require.Contains(t, plan, "IndexLookUp")
+		tk.MustQuery("select /*+ use_index(tc, idx_v) */ count(*) from tc where a = 1 and v = 'a' collate utf8mb4_bin").Check(testkit.Rows("1"))
+		// An AND index merge only returns rows of each partial index it reads, so the
+		// condition of a partial index used there is not evaluated on the table either.
+		tk.MustExec("drop table if exists tm")
+		tk.MustExec("create table tm (a int, b int, j json, v json, key ia(a) where v is not null, key mv((cast(j as signed array))))")
+		tk.MustExec(`insert into tm values (1, 1, '[1,2]', '1'), (1, 1, '[1]', null), (1, 2, '[3]', '2'), (2, 1, '[1]', '3')`)
+		mergeQuery := "select /*+ use_index_merge(tm, ia, mv) */ count(*) from tm where a = 1 and 1 member of (j) and v is not null"
+		plan = fmt.Sprintf("%v", tk.MustQuery("explain format = 'brief' "+mergeQuery).Rows())
+		require.Contains(t, plan, "intersection")
+		require.NotContains(t, plan, "Selection")
+		tk.MustQuery(mergeQuery).Check(testkit.Rows("1"))
+		// The guaranteed condition is also skipped when prefix index single scan is off.
+		tk.MustExec("set @@tidb_opt_prefix_index_single_scan = 0")
+		offQuery := "select /*+ use_index(t, idx_json) */ count(*) from t where tenant_id = 1 and sheet_id = 1 and col_id = 1 and value_json is not null"
+		plan = fmt.Sprintf("%v", tk.MustQuery("explain format = 'brief' "+offQuery).Rows())
+		require.NotContains(t, plan, "IndexLookUp")
+		tk.MustQuery(offQuery).Check(testkit.Rows("2"))
+		tk.MustExec("set @@tidb_opt_prefix_index_single_scan = default")
 		// Without a hint, index pruning must also see that idx_json can be read in a single
 		// scan, otherwise it can be pruned before costing.
 		noHint := "select count(*) from t where tenant_id = 1 and sheet_id = 1 and col_id = 1 and value_json is not null"
