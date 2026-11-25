@@ -138,8 +138,8 @@ func TestAddIndexAutoPreSplitLoadsLeadingColumnTopNFromStorage(t *testing.T) {
 
 	h := dom.StatsHandle()
 	originLease := h.Lease()
-	h.SetLease(time.Millisecond)
-	defer h.SetLease(originLease)
+	h.SetLeaseForTest(time.Millisecond)
+	defer h.SetLeaseForTest(originLease)
 
 	tk.MustExec("analyze table t_auto_presplit all columns with 2 topn, 2 buckets")
 

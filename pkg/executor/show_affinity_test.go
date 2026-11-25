@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain/affinity"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -324,4 +325,69 @@ func TestShowAffinityNullStatus(t *testing.T) {
 	require.Equal(t, "<nil>", rows[0][6]) // Region_count should be NULL
 	require.Equal(t, "<nil>", rows[0][7]) // Affinity_region_count should be NULL
 	mockCli.AssertExpectations(t)
+}
+
+func TestShowAffinityPrivilege(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
+	tk.MustExec("create database secret_db")
+	tk.MustExec("create database pub_db")
+	tk.MustExec("create table secret_db.secret_t (id int) affinity='table'")
+	tk.MustExec(`create table pub_db.part_t (id int) affinity='partition'
+		partition by range (id) (
+			partition p0 values less than (100),
+			partition p1 values less than maxvalue
+		)`)
+	tk.MustExec("create user nopriv")
+	user := testkit.NewTestKit(t, store)
+	require.NoError(t, user.Session().Auth(&auth.UserIdentity{Username: "nopriv", Hostname: "%"}, nil, nil, nil))
+
+	t.Run("no privileges", func(t *testing.T) {
+		mockCli := &mockPDCliForAffinity{}
+		// Check row visibility as well as the absence of PD requests.
+		mockCli.On("GetAffinityGroups", mock.Anything, mock.Anything).Return(
+			map[string]*pdhttp.AffinityGroupState{}, nil,
+		).Maybe()
+		restore := affinity.SetPDClientForTest(mockCli)
+		defer restore()
+
+		user.MustQuery("show placement").Check(testkit.Rows())
+		user.MustQuery("show databases like '%_db'").Check(testkit.Rows())
+		require.Empty(t, user.MustQuery("show affinity").Rows())
+		mockCli.AssertNotCalled(t, "GetAffinityGroups", mock.Anything, mock.Anything)
+		mockCli.AssertNotCalled(t, "GetAllAffinityGroups", mock.Anything)
+	})
+
+	tbl, err := tk.Session().GetLatestInfoSchema().TableInfoByName(ast.NewCIStr("pub_db"), ast.NewCIStr("part_t"))
+	require.NoError(t, err)
+	ids := make([]string, 0, len(tbl.Partition.Definitions))
+	for _, def := range tbl.Partition.Definitions {
+		ids = append(ids, ddl.GetPartitionAffinityGroupID(store.GetCodec(), tbl.ID, def.ID))
+	}
+	checkVisible := func(t *testing.T) {
+		mockCli := &mockPDCliForAffinity{}
+		mockCli.On("GetAffinityGroups", mock.Anything, ids).Return(
+			map[string]*pdhttp.AffinityGroupState{}, nil,
+		).Times(3)
+		restore := affinity.SetPDClientForTest(mockCli)
+		defer restore()
+		for _, sql := range []string{"show affinity", "show affinity like 'part%'", "show affinity where Table_name = 'part_t'"} {
+			user.MustQuery(sql).Sort().Check(testkit.Rows(
+				"pub_db part_t p0 <nil> <nil> <nil> <nil> <nil>",
+				"pub_db part_t p1 <nil> <nil> <nil> <nil> <nil>",
+			))
+		}
+		mockCli.AssertExpectations(t)
+		mockCli.AssertNotCalled(t, "GetAllAffinityGroups", mock.Anything)
+	}
+
+	tk.MustExec("grant select on pub_db.part_t to nopriv")
+	t.Run("table privilege", checkVisible)
+	tk.MustExec("revoke select on pub_db.part_t from nopriv")
+	tk.MustExec("create role affinity_reader")
+	tk.MustExec("grant select on pub_db.part_t to affinity_reader")
+	tk.MustExec("grant affinity_reader to nopriv")
+	user.MustExec("set role affinity_reader")
+	t.Run("active role", checkVisible)
 }

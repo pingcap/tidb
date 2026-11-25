@@ -3914,6 +3914,18 @@ func checkVisibleColumnCnt(t table.Table, addCnt, dropCnt int) error {
 	return dbterror.ErrCantRemoveAllFields
 }
 
+func isCharsetAllowingDirectCollationChange(origCharset, toCharset string) bool {
+	return (origCharset == charset.CharsetUTF8 && toCharset == charset.CharsetUTF8MB4) ||
+		(origCharset == charset.CharsetUTF8 && toCharset == charset.CharsetUTF8) ||
+		(origCharset == charset.CharsetUTF8MB4 && toCharset == charset.CharsetUTF8MB4) ||
+		(origCharset == charset.CharsetLatin1 && toCharset == charset.CharsetUTF8MB4)
+}
+
+func canModifyCharsetAndCollateWithoutReorg(origCharset, origCollate, toCharset, toCollate string) bool {
+	return isCharsetAllowingDirectCollationChange(origCharset, toCharset) ||
+		(toCharset == origCharset && toCollate == origCollate)
+}
+
 // checkModifyCharsetAndCollation returns error when the charset or collation is not modifiable.
 // needRewriteCollationData is used when trying to modify the collation of a column, it is true when the column is with
 // index because index of a string column is collation-aware.
@@ -3926,10 +3938,7 @@ func checkModifyCharsetAndCollation(toCharset, toCollate, origCharset, origColla
 		return dbterror.ErrUnsupportedModifyCollation.GenWithStackByArgs(origCollate, toCollate)
 	}
 
-	if (origCharset == charset.CharsetUTF8 && toCharset == charset.CharsetUTF8MB4) ||
-		(origCharset == charset.CharsetUTF8 && toCharset == charset.CharsetUTF8) ||
-		(origCharset == charset.CharsetUTF8MB4 && toCharset == charset.CharsetUTF8MB4) ||
-		(origCharset == charset.CharsetLatin1 && toCharset == charset.CharsetUTF8MB4) {
+	if isCharsetAllowingDirectCollationChange(origCharset, toCharset) {
 		// TiDB only allow utf8/latin1 to be changed to utf8mb4, or changing the collation when the charset is utf8/utf8mb4/latin1.
 		return nil
 	}
@@ -5918,24 +5927,27 @@ func (e *executor) CreateIndex(ctx sessionctx.Context, stmt *ast.CreateIndexStmt
 }
 
 // addHypoIndexIntoCtx adds this index as a hypo-index into this ctx.
-func (*executor) addHypoIndexIntoCtx(ctx sessionctx.Context, schemaName, tableName ast.CIStr, indexInfo *model.IndexInfo) error {
+func (*executor) addHypoIndexIntoCtx(ctx sessionctx.Context, schemaName, tableName ast.CIStr, indexInfo *model.IndexInfo, hiddenCols []*model.ColumnInfo) error {
 	sctx := ctx.GetSessionVars()
 	indexName := indexInfo.Name
 
 	if sctx.HypoIndexes == nil {
-		sctx.HypoIndexes = make(map[string]map[string]map[string]*model.IndexInfo)
+		sctx.HypoIndexes = make(map[string]map[string]map[string]*model.HypoIndexInfo)
 	}
 	if sctx.HypoIndexes[schemaName.L] == nil {
-		sctx.HypoIndexes[schemaName.L] = make(map[string]map[string]*model.IndexInfo)
+		sctx.HypoIndexes[schemaName.L] = make(map[string]map[string]*model.HypoIndexInfo)
 	}
 	if sctx.HypoIndexes[schemaName.L][tableName.L] == nil {
-		sctx.HypoIndexes[schemaName.L][tableName.L] = make(map[string]*model.IndexInfo)
+		sctx.HypoIndexes[schemaName.L][tableName.L] = make(map[string]*model.HypoIndexInfo)
 	}
 	if _, exist := sctx.HypoIndexes[schemaName.L][tableName.L][indexName.L]; exist {
 		return errors.Trace(errors.Errorf("conflict hypo index name %s", indexName.L))
 	}
 
-	sctx.HypoIndexes[schemaName.L][tableName.L][indexName.L] = indexInfo
+	sctx.HypoIndexes[schemaName.L][tableName.L][indexName.L] = &model.HypoIndexInfo{
+		IndexInfo:     indexInfo,
+		HiddenColumns: hiddenCols,
+	}
 	return nil
 }
 
@@ -6009,12 +6021,22 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 	}
 
 	if isHypo { // for hypo-index
-		indexInfo, err := BuildIndexInfo(metaBuildCtx, tblInfo, indexName, false, unique, model.ColumnarIndexTypeNA,
+		hypoTblInfo := tblInfo
+		if len(hiddenCols) > 0 {
+			hypoTblInfo = tblInfo.Clone()
+			hypoTblInfo.Columns = finalColumns
+			for i, col := range hiddenCols {
+				col.ID = tblInfo.MaxColumnID + int64(i) + 1
+				col.Offset = len(tblInfo.Columns) + i
+				col.State = model.StatePublic
+			}
+		}
+		indexInfo, err := BuildIndexInfo(metaBuildCtx, hypoTblInfo, indexName, false, unique, model.ColumnarIndexTypeNA,
 			indexPartSpecifications, indexOption, model.StatePublic)
 		if err != nil {
 			return err
 		}
-		return e.addHypoIndexIntoCtx(ctx, ti.Schema, ti.Name, indexInfo)
+		return e.addHypoIndexIntoCtx(ctx, ti.Schema, ti.Name, indexInfo, hiddenCols)
 	}
 
 	splitOpt, autoPreSplit, err := buildIndexPreSplitOpt(indexOption)

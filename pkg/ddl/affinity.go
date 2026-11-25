@@ -15,7 +15,9 @@
 package ddl
 
 import (
+	"context"
 	"fmt"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl/label"
@@ -28,6 +30,8 @@ import (
 	pdhttp "github.com/tikv/pd/client/http"
 	"go.uber.org/zap"
 )
+
+const affinityCleanupTimeout = 10 * time.Second
 
 // GetTableAffinityGroupID returns the affinity group ID for a table, including
 // the keyspace ID when the table uses a NextGen keyspace codec.
@@ -110,17 +114,24 @@ func collectAffinityGroupIDs(groups map[string][]pdhttp.AffinityGroupKeyRange) [
 }
 
 // createTableAffinityGroupsInPD creates affinity groups for a table in PD.
+// With no partition definitions, it uses all partitions of the table.
 // This is a critical operation. If it fails, the DDL should fail.
 // Used by: CREATE TABLE, ALTER TABLE AFFINITY = 'xxx', TRUNCATE TABLE, TRUNCATE PARTITION.
-func createTableAffinityGroupsInPD(jobCtx *jobContext, tblInfo *model.TableInfo) error {
+func createTableAffinityGroupsInPD(jobCtx *jobContext, tblInfo *model.TableInfo, partitionDefs ...model.PartitionDefinition) error {
 	if tblInfo == nil || tblInfo.Affinity == nil {
 		return nil
 	}
 
 	ctx := jobCtx.stepCtx
+	if ctx == nil {
+		ctx = jobCtx.ctx
+	}
 	codec := jobCtx.store.GetCodec()
 
-	groups, err := buildAffinityGroupDefinitions(codec, tblInfo, nil)
+	if len(partitionDefs) == 0 {
+		partitionDefs = nil
+	}
+	groups, err := buildAffinityGroupDefinitions(codec, tblInfo, partitionDefs)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -141,27 +152,38 @@ func createTableAffinityGroupsInPD(jobCtx *jobContext, tblInfo *model.TableInfo)
 
 // deleteTableAffinityGroupsInPD deletes affinity groups for a table in PD.
 // This is a best-effort cleanup operation. Failures are logged but the operation continues.
-// Used by: DROP TABLE, ALTER TABLE AFFINITY = ”, TRUNCATE TABLE, TRUNCATE PARTITION.
 // TODO: add gc for unused affinity groups, which is similar to the placement rules.
 func deleteTableAffinityGroupsInPD(jobCtx *jobContext, tblInfo *model.TableInfo, partitionDefs []model.PartitionDefinition) error {
-	if tblInfo == nil || tblInfo.Affinity == nil {
-		return nil
-	}
-
 	ctx := jobCtx.stepCtx
-	codec := jobCtx.store.GetCodec()
+	if ctx == nil {
+		ctx = jobCtx.ctx
+	}
+	return deleteTableAffinityGroups(ctx, jobCtx.store.GetCodec(), tblInfo, partitionDefs)
+}
 
+func deleteTableAffinityGroupsWithTimeout(jobCtx *jobContext, tblInfo *model.TableInfo, partitionDefs []model.PartitionDefinition) error {
+	// Rollback and post-commit cleanup can run after the step context is canceled.
+	ctx, cancel := context.WithTimeout(jobCtx.ctx, affinityCleanupTimeout)
+	defer cancel()
+	return deleteTableAffinityGroups(ctx, jobCtx.store.GetCodec(), tblInfo, partitionDefs)
+}
+
+func deleteTableAffinityGroups(ctx context.Context, codec tikv.Codec, tblInfo *model.TableInfo, partitionDefs []model.PartitionDefinition) error {
 	groups, err := buildAffinityGroupDefinitions(codec, tblInfo, partitionDefs)
 	if err != nil {
 		return errors.Trace(err)
 	}
+	return affinity.DeleteGroupsWithRetry(ctx, collectAffinityGroupIDs(groups))
+}
 
-	if len(groups) == 0 {
-		return nil
+// partitionDefinitionsFromIDs returns an explicit list even when ids is empty.
+// A nil list would select all of a table's partitions for affinity operations.
+func partitionDefinitionsFromIDs(ids []int64) []model.PartitionDefinition {
+	definitions := make([]model.PartitionDefinition, 0, len(ids))
+	for _, id := range ids {
+		definitions = append(definitions, model.PartitionDefinition{ID: id})
 	}
-
-	ids := collectAffinityGroupIDs(groups)
-	return affinity.DeleteGroupsWithRetry(ctx, ids)
+	return definitions
 }
 
 // collectTableAffinityGroupIDs adds the affinity group IDs of a table to groupIDs.
@@ -189,6 +211,9 @@ func batchDeleteTableAffinityGroups(jobCtx *jobContext, groupIDs map[string]stru
 	}
 
 	ctx := jobCtx.stepCtx
+	if ctx == nil {
+		ctx = jobCtx.ctx
+	}
 	ids := make([]string, 0, len(groupIDs))
 	for id := range groupIDs {
 		ids = append(ids, id)

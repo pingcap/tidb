@@ -741,6 +741,21 @@ func TestSessionCtx(t *testing.T) {
 			},
 		},
 		{
+			// Expression hypothetical indexes must retain their hidden columns after migration.
+			setFunc: func(tk *testkit.TestKit) any {
+				tk.MustExec("create index hypo_expr type hypo on test.t1 ((id + 1))")
+				return nil
+			},
+			checkFunc: func(tk *testkit.TestKit, param any) {
+				require.Contains(t, tk.MustQuery("show create table test.t1").Rows()[0][1], "KEY `hypo_expr` ((`id` + 1)) /* HYPO INDEX */")
+				plan := fmt.Sprint(tk.MustQuery("explain format = 'brief' select id + 1 from test.t1 where id + 1 = 42").Rows())
+				require.Contains(t, plan, "IndexRangeScan")
+				require.Contains(t, plan, "range:[42,42]")
+				tk.MustExec("drop hypo index hypo_expr on test.t1")
+				require.NotContains(t, tk.MustQuery("show create table test.t1").Rows()[0][1], "HYPO INDEX")
+			},
+		},
+		{
 			// check empty HypoIndexes
 			setFunc: func(tk *testkit.TestKit) any {
 				tk.MustExec(`create index hypo_id type hypo on test.t1(id)`)

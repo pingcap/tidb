@@ -164,7 +164,7 @@ func (pq *AnalysisPriorityQueue) recreateAndPushJobForTable(sctx sessionctx.Cont
 	// For static partitioned tables, we need to recreate the job for each partition.
 	if partitionInfo != nil && pruneMode == variable.Static {
 		for _, def := range partitionInfo.Definitions {
-			partitionStats, found := pq.statsHandle.GetNonPseudoPhysicalTableStats(def.ID)
+			partitionStats, found := pq.tableStats.GetNonPseudoPhysicalTableStats(def.ID)
 			if !found {
 				return nil
 			}
@@ -175,7 +175,7 @@ func (pq *AnalysisPriorityQueue) recreateAndPushJobForTable(sctx sessionctx.Cont
 		}
 		return nil
 	}
-	stats, found := pq.statsHandle.GetNonPseudoPhysicalTableStats(tableInfo.ID)
+	stats, found := pq.tableStats.GetNonPseudoPhysicalTableStats(tableInfo.ID)
 	if !found {
 		return nil
 	}
@@ -223,7 +223,7 @@ func (pq *AnalysisPriorityQueue) handleAddIndexEvent(
 		// For static partitioned tables, we need to recreate the job for each partition.
 		for _, def := range partitionInfo.Definitions {
 			partitionID := def.ID
-			partitionStats, found := pq.statsHandle.GetNonPseudoPhysicalTableStats(partitionID)
+			partitionStats, found := pq.tableStats.GetNonPseudoPhysicalTableStats(partitionID)
 			if !found {
 				return nil
 			}
@@ -236,7 +236,7 @@ func (pq *AnalysisPriorityQueue) handleAddIndexEvent(
 	}
 
 	// For normal tables and dynamic partitioned tables, we only need to recreate the job for the table.
-	stats, found := pq.statsHandle.GetNonPseudoPhysicalTableStats(tableInfo.ID)
+	stats, found := pq.tableStats.GetNonPseudoPhysicalTableStats(tableInfo.ID)
 	if !found {
 		return nil
 	}
@@ -376,7 +376,7 @@ func (pq *AnalysisPriorityQueue) handleExchangeTablePartitionEvent(
 	is := sctx.GetLatestInfoSchema().(infoschema.InfoSchema)
 	// Get the new table info after the exchange.
 	// Note: We should use the ID of the partitioned table to get the new table info after the exchange.
-	tblInfo, ok := pq.statsHandle.TableInfoByID(is, partInfo.Definitions[0].ID)
+	tblInfo, ok := pq.tables.TableInfoByID(is, partInfo.Definitions[0].ID)
 	if ok {
 		return pq.recreateAndPushJobForTable(sctx, tblInfo.Meta())
 	}

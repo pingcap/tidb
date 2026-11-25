@@ -1441,6 +1441,14 @@ func TestTruncatePartitionWithGlobalIndex(t *testing.T) {
 
 		tk1 := testkit.NewTestKit(t, store)
 		tk1.MustExec("use test")
+		tk1.MustQuery(`explain format='brief' select * from test_global where b in (1,15)`).CheckContain("Batch_Point_Get")
+		assert.Equal(t, tk1.MustQuery(`select * from test_global where b = 15`).Rows(),
+			tk1.MustQuery(`select * from test_global where b in (15)`).Rows())
+		expected := testkit.Rows("1 1 1")
+		if job.SchemaState == model.StateWriteOnly {
+			expected = testkit.Rows("1 1 1", "15 15 15")
+		}
+		assert.Equal(t, expected, tk1.MustQuery(`select * from test_global where b in (1,15)`).Sort().Rows())
 		switch job.SchemaState {
 		case model.StateWriteOnly:
 			tk1.MustQuery(`select count(*) from test_global`).Check(testkit.Rows("5"))
@@ -1458,6 +1466,7 @@ func TestTruncatePartitionWithGlobalIndex(t *testing.T) {
 			tk1.MustQuery(`select c from test_global use index(idx_c) where c = 15`).Check(testkit.Rows())
 			err := tk1.ExecToErr(`insert into test_global values (15,15,15)`)
 			assert.NoError(t, err)
+			assert.Equal(t, testkit.Rows("15 15 15"), tk1.MustQuery(`select * from test_global where b in (15)`).Rows())
 		}
 	})
 
@@ -1628,6 +1637,8 @@ func TestGlobalIndexReaderInDropPartition(t *testing.T) {
 			tk1.MustExec("use test")
 
 			indexScanResult = tk1.MustQuery("select b from test_global use index(idx_b)").Sort()
+			tk1.MustQuery(`explain format='brief' select * from test_global where b in (1,11)`).CheckContain("Batch_Point_Get")
+			assert.Equal(t, testkit.Rows("11 11 11"), tk1.MustQuery(`select * from test_global where b in (1,11)`).Rows())
 		}
 	})
 
@@ -3171,8 +3182,8 @@ func TestRemoveKeyPartitioning(t *testing.T) {
 	err = statstestutil.HandleNextDDLEventWithTxn(h)
 	require.NoError(t, err)
 	// And also cached and lazy loaded
-	h.Clear()
-	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
+	h.ClearForTest()
+	require.NoError(t, h.Cache().Update(context.Background(), dom.InfoSchema()))
 	tk.MustQuery(`show stats_meta where db_name = 'RemovePartitioning' and table_name = 't'`).Sort().CheckAt([]int{0, 1, 2, 4, 5}, [][]any{
 		{"RemovePartitioning", "t", "", "0", "95"}})
 	tk.MustExec(`analyze table t`)
@@ -3219,8 +3230,8 @@ func TestRemoveListPartitioning(t *testing.T) {
 	err = statstestutil.HandleNextDDLEventWithTxn(h)
 	require.NoError(t, err)
 	// And also cached and lazy loaded
-	h.Clear()
-	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
+	h.ClearForTest()
+	require.NoError(t, h.Cache().Update(context.Background(), dom.InfoSchema()))
 	tk.MustQuery(`show stats_meta where db_name = 'RemoveListPartitioning' and table_name = 't'`).Sort().CheckAt([]int{0, 1, 2, 4, 5}, [][]any{
 		{"RemoveListPartitioning", "t", "", "0", "95"}})
 	tk.MustExec(`analyze table t`)
@@ -3267,8 +3278,8 @@ func TestRemoveListColumnPartitioning(t *testing.T) {
 	err = statstestutil.HandleNextDDLEventWithTxn(h)
 	require.NoError(t, err)
 	// And also cached and lazy loaded
-	h.Clear()
-	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
+	h.ClearForTest()
+	require.NoError(t, h.Cache().Update(context.Background(), dom.InfoSchema()))
 	tk.MustQuery(`show stats_meta where db_name = 'RemoveListPartitioning' and table_name = 't'`).Sort().CheckAt([]int{0, 1, 2, 4, 5}, [][]any{
 		{"RemoveListPartitioning", "t", "", "0", "95"}})
 	tk.MustExec(`analyze table t`)
@@ -3315,8 +3326,8 @@ func TestRemoveListColumnsPartitioning(t *testing.T) {
 	err = statstestutil.HandleNextDDLEventWithTxn(h)
 	require.NoError(t, err)
 	// And also cached and lazy loaded
-	h.Clear()
-	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
+	h.ClearForTest()
+	require.NoError(t, h.Cache().Update(context.Background(), dom.InfoSchema()))
 	tk.MustQuery(`show stats_meta where db_name = 'RemoveListPartitioning' and table_name = 't'`).Sort().CheckAt([]int{0, 1, 2, 4, 5}, [][]any{
 		{"RemoveListPartitioning", "t", "", "0", "95"}})
 	tk.MustExec(`analyze table t`)

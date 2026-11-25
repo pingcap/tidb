@@ -172,7 +172,7 @@ func TestUserPrivileges(t *testing.T) {
 func TestDataForTableStatsField(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	h := dom.StatsHandle()
-	h.Clear()
+	h.ClearForTest()
 	is := dom.InfoSchema()
 	tk := testkit.NewTestKit(t, store)
 
@@ -185,22 +185,22 @@ func TestDataForTableStatsField(t *testing.T) {
 		testkit.Rows("0 0 0 0"))
 	tk.MustExec(`insert into t(c, d, e) values(1, 2, "c"), (2, 3, "d"), (3, 4, "e")`)
 	tk.MustExec("flush stats_delta *.*")
-	require.NoError(t, h.Update(context.Background(), is))
+	require.NoError(t, h.Cache().Update(context.Background(), is))
 	tk.MustQuery("select table_rows, avg_row_length, data_length, index_length from information_schema.tables where table_name='t'").Check(
 		testkit.Rows("3 16 48 0"))
 	tk.MustExec(`insert into t(c, d, e) values(4, 5, "f")`)
 	tk.MustExec("flush stats_delta *.*")
-	require.NoError(t, h.Update(context.Background(), is))
+	require.NoError(t, h.Cache().Update(context.Background(), is))
 	tk.MustQuery("select table_rows, avg_row_length, data_length, index_length from information_schema.tables where table_name='t'").Check(
 		testkit.Rows("4 16 64 0"))
 	tk.MustExec("delete from t where c >= 3")
 	tk.MustExec("flush stats_delta *.*")
-	require.NoError(t, h.Update(context.Background(), is))
+	require.NoError(t, h.Cache().Update(context.Background(), is))
 	tk.MustQuery("select table_rows, avg_row_length, data_length, index_length from information_schema.tables where table_name='t'").Check(
 		testkit.Rows("2 16 32 0"))
 	tk.MustExec("delete from t where c=3")
 	tk.MustExec("flush stats_delta *.*")
-	require.NoError(t, h.Update(context.Background(), is))
+	require.NoError(t, h.Cache().Update(context.Background(), is))
 	tk.MustQuery("select table_rows, avg_row_length, data_length, index_length from information_schema.tables where table_name='t'").Check(
 		testkit.Rows("2 16 32 0"))
 	tk.MustExec("analyze table t all columns")
@@ -214,7 +214,7 @@ func TestDataForTableStatsField(t *testing.T) {
 	require.NoError(t, err)
 	tk.MustExec(`insert into t(a, b, c) values(1, 2, "c"), (7, 3, "d"), (12, 4, "e")`)
 	tk.MustExec("flush stats_delta *.*")
-	require.NoError(t, h.Update(context.Background(), is))
+	require.NoError(t, h.Cache().Update(context.Background(), is))
 	tk.MustQuery("select table_rows, avg_row_length, data_length, index_length from information_schema.tables where table_name='t'").Check(
 		testkit.Rows("3 16 48 0"))
 	tk.MustExec("analyze table t all columns")
@@ -225,7 +225,7 @@ func TestDataForTableStatsField(t *testing.T) {
 func TestPartitionsTable(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	h := dom.StatsHandle()
-	h.Clear()
+	h.ClearForTest()
 	is := dom.InfoSchema()
 
 	tk := testkit.NewTestKit(t, store)
@@ -252,7 +252,7 @@ func TestPartitionsTable(t *testing.T) {
 			),
 		)
 		tk.MustExec("flush stats_delta *.*")
-		require.NoError(t, h.Update(context.Background(), is))
+		require.NoError(t, h.Cache().Update(context.Background(), is))
 		tk.MustQuery("select table_rows, avg_row_length, data_length, index_length from information_schema.PARTITIONS where table_name='test_partitions';").Check(
 			testkit.Rows(
 				"1 16 16 0",
@@ -269,7 +269,7 @@ func TestPartitionsTable(t *testing.T) {
 	require.NoError(t, err)
 	tk.MustExec(`insert into test_partitions_1(a, b, c) values(1, 2, "c"), (7, 3, "d"), (12, 4, "e");`)
 	tk.MustExec("flush stats_delta *.*")
-	require.NoError(t, h.Update(context.Background(), is))
+	require.NoError(t, h.Cache().Update(context.Background(), is))
 	tk.MustQuery("select PARTITION_NAME, TABLE_ROWS, AVG_ROW_LENGTH, DATA_LENGTH, INDEX_LENGTH from information_schema.PARTITIONS where table_name='test_partitions_1';").Check(
 		testkit.Rows("<nil> 3 16 48 0"))
 
@@ -408,7 +408,7 @@ func TestForAnalyzeStatus(t *testing.T) {
 	tk.MustExec("insert into t1 values (1,2),(3,4)")
 	tk.MustExec("analyze table t1 all columns")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t1, reason to use this rate is \"use min(1, 110000/10000) as the sample-rate=1\"")) // 1 note.
-	require.NoError(t, dom.StatsHandle().LoadNeededHistograms(dom.InfoSchema()))
+	require.NoError(t, dom.StatsHandle().Storage().LoadNeededHistograms(dom.InfoSchema()))
 	tk.MustExec("CREATE ROLE r_t1 ;")
 	tk.MustExec("GRANT ALL PRIVILEGES ON test.t1 TO r_t1;")
 	tk.MustExec("GRANT r_t1 TO analyze_tester;")

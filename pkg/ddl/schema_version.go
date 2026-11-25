@@ -312,9 +312,8 @@ func SetSchemaDiffForRecoverSchema(diff *model.SchemaDiff, job *model.Job) error
 // SetSchemaDiffForFlashbackCluster set SchemaDiff for ActionFlashbackCluster.
 func SetSchemaDiffForFlashbackCluster(diff *model.SchemaDiff, job *model.Job) {
 	diff.TableID = -1
-	if job.SchemaState == model.StatePublic {
-		diff.RegenerateSchemaMap = true
-	}
+	// The final flashback step writes its diff before moving to StatePublic.
+	diff.RegenerateSchemaMap = job.SchemaState == model.StateWriteReorganization
 }
 
 // SetSchemaDiffForMultiInfos set SchemaDiff for multiInfos.

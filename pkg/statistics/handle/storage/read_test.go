@@ -41,9 +41,9 @@ func TestLoadStats(t *testing.T) {
 	testKit.MustExec("insert into t values (1,1,1),(2,2,2),(3,3,3),(4,4,1),(5,5,1)")
 
 	oriLease := dom.StatsHandle().Lease()
-	dom.StatsHandle().SetLease(1)
+	dom.StatsHandle().SetLeaseForTest(1)
 	defer func() {
-		dom.StatsHandle().SetLease(oriLease)
+		dom.StatsHandle().SetLeaseForTest(oriLease)
 	}()
 	testKit.MustExec("analyze table t all columns with 2 topn, 2 buckets")
 
@@ -154,7 +154,7 @@ func TestLoadStats(t *testing.T) {
 	pctx := testKit.Session().GetPlanCtx()
 	statistics.ColumnStatsIsInvalid(stat.GetCol(colAID), pctx, &stat.HistColl, colAID)
 	statistics.ColumnStatsIsInvalid(stat.GetCol(colCID), pctx, &stat.HistColl, colCID)
-	require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
+	require.NoError(t, h.Storage().LoadNeededHistograms(dom.InfoSchema()))
 	stat = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	colA := stat.GetCol(colAID)
 	require.True(t, colA.IsFullLoad())
@@ -169,7 +169,7 @@ func TestLoadStats(t *testing.T) {
 	require.False(t, idx != nil && idx.IsEssentialStatsLoaded())
 	// IsInvalid adds the index to AsyncLoadHistogramNeededItems.
 	statistics.IndexStatsIsInvalid(testKit.Session().GetPlanCtx(), idx, &stat.HistColl, idxBID)
-	require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
+	require.NoError(t, h.Storage().LoadNeededHistograms(dom.InfoSchema()))
 	stat = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	idx = stat.GetIdx(tableInfo.Indices[0].ID)
 	hg := idx.Histogram
@@ -269,7 +269,7 @@ func TestLoadNonExistentIndexStats(t *testing.T) {
 	h := dom.StatsHandle()
 	tk.MustExec("flush stats_delta *.*")
 	ctx := context.Background()
-	require.NoError(t, h.Update(ctx, dom.InfoSchema()))
+	require.NoError(t, h.Cache().Update(ctx, dom.InfoSchema()))
 	// Trigger async load of index histogram by using the index in a query.
 	// Setting this variable to determinate marks the pseudo table stats as able to trigger loading (CanNotTriggerLoad=false), which enables statistics loading.
 	// See more at IndexStatsIsInvalid and GetStatsTable functions.
@@ -296,9 +296,9 @@ func TestLoadNonExistentIndexStats(t *testing.T) {
 
 	// Verify that LoadNeededHistograms doesn't panic when the pseudo index stats exists in the cache
 	// but doesn't have histogram data in mysql.stats_histograms yet.
-	err = util.CallWithSCtx(h.SPool(), func(sctx sessionctx.Context) error {
+	err = util.CallWithSCtx(h.Pool().SPool(), func(sctx sessionctx.Context) error {
 		require.NotPanics(t, func() {
-			err := storage.LoadNeededHistograms(sctx, dom.InfoSchema(), h)
+			err := storage.LoadNeededHistograms(sctx, dom.InfoSchema(), h.Cache(), h.Tables())
 			require.NoError(t, err)
 		})
 		return nil
@@ -339,7 +339,7 @@ func TestLoadNeededHistogramsSkipsInternalColumnID(t *testing.T) {
 	tk.MustExec("insert into t value(1,1), (2,2);")
 	h := dom.StatsHandle()
 	tk.MustExec("flush stats_delta *.*")
-	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
+	require.NoError(t, h.Cache().Update(context.Background(), dom.InfoSchema()))
 	tk.MustExec("analyze table t")
 	tk.MustQuery("select * from t where a = 2 and b = 2 and _tidb_rowid > 0;").Check(testkit.Rows("2 2"))
 
@@ -386,7 +386,7 @@ func TestLoadNeededHistogramsSkipsInternalColumnID(t *testing.T) {
 	asyncload.AsyncLoadHistogramNeededItems.Insert(internalColumnItem, true)
 
 	require.NotPanics(t, func() {
-		err = storage.LoadNeededHistograms(nil, dom.InfoSchema(), h)
+		err = storage.LoadNeededHistograms(nil, dom.InfoSchema(), h.Cache(), h.Tables())
 		require.NoError(t, err)
 	})
 	require.NotContains(t, asyncload.AsyncLoadHistogramNeededItems.AllItems(), model.StatsLoadItem{

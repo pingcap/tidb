@@ -4138,7 +4138,7 @@ func (e *memtableRetriever) setDataFromIndexUsage(ctx context.Context, sctx sess
 		idxs := ex.ListIndexes(tbl)
 		for _, idx := range idxs {
 			row := make([]types.Datum, 0, 14)
-			usage := dom.StatsHandle().GetIndexUsage(tbl.ID, idx.ID)
+			usage := dom.StatsHandle().Usage().GetIndexUsage(tbl.ID, idx.ID)
 			row = append(row, types.NewStringDatum(schema.O))
 			row = append(row, types.NewStringDatum(tbl.Name.O))
 			row = append(row, types.NewStringDatum(idx.Name))
