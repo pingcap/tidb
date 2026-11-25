@@ -322,8 +322,12 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 		}
 
 		e.handles = make([]kv.Handle, 0, len(toFetchIndexKeys))
+		var ignoredPartitionIDs []int64
 		if e.tblInfo.Partition != nil {
 			e.planPhysIDs = e.planPhysIDs[:0]
+			if e.idxInfo.Global {
+				ignoredPartitionIDs = e.tblInfo.Partition.IDsInDDLToIgnore()
+			}
 		}
 		for _, key := range toFetchIndexKeys {
 			handleVal := handleVals[string(key)]
@@ -342,6 +346,9 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 						return err
 					}
 					if e.singlePartID != 0 && e.singlePartID != pid {
+						continue
+					}
+					if slices.Contains(ignoredPartitionIDs, pid) {
 						continue
 					}
 					if !matchPartitionNames(pid, e.partitionNames, e.tblInfo.GetPartitionInfo()) {
