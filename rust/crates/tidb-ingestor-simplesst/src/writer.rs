@@ -643,16 +643,26 @@ impl Writer {
         let mut dup_found = false;
         let mut dup_loc = SliceLocation::default();
         {
-            let buffer = &self.kv_buffer;
-            tidb_goruntime::go_pdqsort::go_sort_func_by(&mut self.kv_locations, |i, j| {
-                let (a, b) = (buffer.get_slice(i), buffer.get_slice(j));
-                let res = key_of(&a.as_slice()).cmp(key_of(&b.as_slice()));
+            let mut compare = |location: &SliceLocation, a: &[u8], b: &[u8]| {
+                let res = key_of(a).cmp(key_of(b));
                 if res.is_eq() && !dup_found {
                     dup_found = true;
-                    dup_loc = *i;
+                    dup_loc = *location;
                 }
                 res
-            });
+            };
+            if let Some(slices) = self.kv_buffer.try_borrow_slices() {
+                tidb_goruntime::go_pdqsort::go_sort_func_by(&mut self.kv_locations, |i, j| {
+                    compare(i, slices.get_slice(i), slices.get_slice(j))
+                });
+            } else {
+                let buffer = &self.kv_buffer;
+                tidb_goruntime::go_pdqsort::go_sort_func_by(&mut self.kv_locations, |i, j| {
+                    let (a, b) = (buffer.get_slice(i), buffer.get_slice(j));
+                    let (a, b) = (a.as_slice(), b.as_slice());
+                    compare(i, &a, &b)
+                });
+            }
         }
         let sort_duration = sort_start.elapsed();
         observe_write("sort", sort_duration, self.batch_size);

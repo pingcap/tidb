@@ -110,44 +110,52 @@ fn parse_go_atoi(value: &[u8], traced: bool) -> Result<i64> {
         Some(b'+') => (false, &value[1..]),
         _ => (false, value),
     };
-    if digits.is_empty() || !digits.iter().all(u8::is_ascii_digit) {
-        return Err(MetaError::InvalidFieldInteger {
-            value: value.to_vec(),
-            partial: 0,
-            failure: IntegerParseFailure::Syntax,
-            traced,
-        });
-    }
-    let limit = if negative {
-        (i64::MAX as u128) + 1
-    } else {
-        i64::MAX as u128
+    let error = |failure, partial| MetaError::InvalidFieldInteger {
+        value: value.to_vec(),
+        partial,
+        failure,
+        traced,
     };
-    let mut magnitude = 0_u128;
-    let mut out_of_range = false;
-    for digit in digits {
-        magnitude = magnitude
-            .saturating_mul(10)
-            .saturating_add(u128::from(digit - b'0'));
-        out_of_range |= magnitude > limit;
+    let syntax_error = || error(IntegerParseFailure::Syntax, 0);
+    let range_error = || {
+        error(
+            IntegerParseFailure::Range,
+            if negative { i64::MIN } else { i64::MAX },
+        )
+    };
+    if digits.is_empty() {
+        return Err(syntax_error());
     }
-    if out_of_range {
-        return Err(MetaError::InvalidFieldInteger {
-            value: value.to_vec(),
-            partial: if negative { i64::MIN } else { i64::MAX },
-            failure: IntegerParseFailure::Range,
-            traced,
-        });
-    }
-    if negative {
-        if magnitude == limit {
-            Ok(i64::MIN)
-        } else {
-            Ok(-(magnitude as i64))
+
+    // Any 19 decimal digits fit in u64. Go's ParseInt checks the signed
+    // limit after parsing the unsigned magnitude, and stops at unsigned
+    // overflow even when there are more bytes after the overflowing digit.
+    let (initial, rest) = digits.split_at(digits.len().min(19));
+    let mut magnitude = 0_u64;
+    for &byte in initial {
+        let digit = byte.wrapping_sub(b'0');
+        if digit > 9 {
+            return Err(syntax_error());
         }
-    } else {
-        Ok(magnitude as i64)
+        magnitude = magnitude * 10 + u64::from(digit);
     }
+    for &byte in rest {
+        let digit = byte.wrapping_sub(b'0');
+        if digit > 9 {
+            return Err(syntax_error());
+        }
+        magnitude = magnitude
+            .checked_mul(10)
+            .and_then(|value| value.checked_add(u64::from(digit)))
+            .ok_or_else(range_error)?;
+    }
+
+    let limit = i64::MAX as u64 + u64::from(negative);
+    if magnitude > limit {
+        return Err(range_error());
+    }
+    let magnitude = magnitude as i64;
+    Ok(if negative { magnitude.wrapping_neg() } else { magnitude })
 }
 
 fn parse_source_key(
@@ -157,16 +165,14 @@ fn parse_source_key(
     table_uses_loose_prefix: bool,
     traced: bool,
 ) -> Result<i64> {
-    let prefix_matches = if table_uses_loose_prefix {
-        field.starts_with(prefix.as_bytes())
-    } else {
-        has_prefix(prefix, field)
-    };
-    if !prefix_matches {
+    let Some(suffix) = field.strip_prefix(prefix.as_bytes()) else {
         return Err(MetaError::InvalidFieldPrefix(prefix_message));
-    }
-    let full_prefix = format!("{prefix}:");
-    let suffix = field.strip_prefix(full_prefix.as_bytes()).unwrap_or(field);
+    };
+    let suffix = match suffix.strip_prefix(b":") {
+        Some(suffix) => suffix,
+        None if table_uses_loose_prefix => field,
+        None => return Err(MetaError::InvalidFieldPrefix(prefix_message)),
+    };
     parse_go_atoi(suffix, traced)
 }
 

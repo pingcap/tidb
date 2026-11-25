@@ -144,6 +144,7 @@ impl GoTime {
     }
 
     /// The UTC instant (Go `t.UTC()` without its location).
+    #[inline]
     pub fn instant(&self) -> DateTime<Utc> {
         self.instant
     }
@@ -183,16 +184,19 @@ impl GoTime {
     }
 
     /// Go `t.After(u)`.
+    #[inline]
     pub fn after(&self, other: &Self) -> bool {
         self.instant > other.instant
     }
 
     /// Go `t.Before(u)`.
+    #[inline]
     pub fn before(&self, other: &Self) -> bool {
         self.instant < other.instant
     }
 
     /// Go `t.Compare(u)`.
+    #[inline]
     pub fn compare(&self, other: &Self) -> std::cmp::Ordering {
         self.instant.cmp(&other.instant)
     }

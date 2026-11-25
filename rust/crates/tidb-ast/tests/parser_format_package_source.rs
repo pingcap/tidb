@@ -224,7 +224,7 @@ fn cte_scopes_restore_the_exact_visible_prefix() {
 
 #[test]
 fn keyword_and_name_case_use_go_simple_rune_mappings() {
-    assert_eq!(GO_SIMPLE_CASE_UNICODE_VERSION, "15.0.0");
+    assert_eq!(GO_SIMPLE_CASE_UNICODE_VERSION, "17.0.0");
     let input = "straße ß ﬃ İ ΐ ᾀ ὒ ǰ";
 
     let mut upper_keyword = RestoreCtx::new(RestoreFlags::KEYWORD_UPPERCASE, String::new());
@@ -278,7 +278,7 @@ fn restore_keyword_matches_every_non_identity_go_simple_case_mapping() {
         );
         mapped_rows += 1;
     }
-    assert_eq!(mapped_rows, 2_879, "oracle must not be truncated");
+    assert_eq!(mapped_rows, 2_989, "oracle must not be truncated");
     // Go strings.ToUpper/ToLower handles every ASCII byte directly, including
     // non-letters, and unicode.ToUpper/ToLower does the same in mixed strings.
     let ascii: String = (0..=127).map(char::from).collect();

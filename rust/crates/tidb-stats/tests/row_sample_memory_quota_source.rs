@@ -153,11 +153,24 @@ fn source_row_sample_proto_restores_weights_bytes_and_memory_accounting() {
         SamplePolicy::Reservoir { max_sample_size: 2 },
         &mem_tracker,
     );
-    // 2 * (2 Datum structs * 72 + empty item 48 + reference 8) + 7 payload bytes,
-    // consumed into the tracker as Go's `FromProto` does.
-    assert_eq!(collector.go_mem_size(), 407);
-    assert_eq!(mem_tracker.bytes_consumed(), 407);
+    // Go accounts for 400 mandatory bytes, 7 payload bytes, and 4 binary
+    // collation names of 6 bytes each.
+    assert_eq!(collector.go_mem_size(), 431);
+    assert_eq!(mem_tracker.bytes_consumed(), 431);
     assert_eq!(collector.to_proto(), proto);
+
+    let bytes = proto.samples[0].row[0].as_ptr();
+    let mem_tracker = tracker();
+    let owned = RowSampleCollector::from_owned_proto(
+        proto,
+        SamplePolicy::Reservoir { max_sample_size: 2 },
+        &mem_tracker,
+    );
+    assert_eq!(owned.go_mem_size(), 431);
+    assert_eq!(mem_tracker.bytes_consumed(), 431);
+    let roundtrip = owned.into_proto();
+    assert_eq!(roundtrip, collector.to_proto());
+    assert_eq!(roundtrip.samples[0].row[0].as_ptr(), bytes);
 }
 
 #[test]
@@ -339,6 +352,149 @@ fn source_destination_policy_controls_cross_policy_merge() {
 }
 
 #[test]
+fn reservoir_merge_fills_before_rejecting_ties() {
+    let policy = SamplePolicy::Reservoir { max_sample_size: 4 };
+    let restore = |rows: &[(u8, i64)]| {
+        RowSampleCollector::from_owned_proto(
+            RowSampleCollectorProto {
+                samples: rows
+                    .iter()
+                    .map(|&(value, weight)| RowSampleProto {
+                        row: vec![vec![value]],
+                        weight,
+                    })
+                    .collect(),
+                ..RowSampleCollectorProto::default()
+            },
+            policy,
+            &tracker(),
+        )
+    };
+
+    let mut collector = restore(&[(b'a', 5)]);
+    collector.merge(restore(&[(b'b', 2), (b'c', 5), (b'd', 2)]));
+    assert_eq!(
+        collector
+            .to_proto()
+            .samples
+            .iter()
+            .map(|sample| sample.row[0][0])
+            .collect::<Vec<_>>(),
+        b"bdca",
+    );
+
+    let incoming = [(b'e', 2), (b'f', 6), (b'g', 2)];
+    collector.merge(restore(&incoming));
+    let samples = collector.into_proto().samples;
+    assert_eq!(
+        samples
+            .iter()
+            .map(|sample| (sample.row[0][0], sample.weight))
+            .collect::<Vec<_>>(),
+        [(b'd', 2), (b'a', 5), (b'c', 5), (b'f', 6)],
+    );
+
+    let mut overflow = restore(&[(b'a', 5)]);
+    let input = [
+        (b'b', 2),
+        (b'c', 5),
+        (b'd', 2),
+        incoming[0],
+        incoming[1],
+        incoming[2],
+    ];
+    overflow.merge(restore(&input));
+    assert_eq!(overflow.into_proto().samples, samples);
+}
+
+#[test]
+fn full_reservoir_materializes_only_admitted_proto_rows() {
+    struct CellBytes<'a> {
+        bytes: Vec<u8>,
+        conversions: &'a std::cell::Cell<usize>,
+    }
+
+    impl AsRef<[u8]> for CellBytes<'_> {
+        fn as_ref(&self) -> &[u8] {
+            &self.bytes
+        }
+    }
+
+    impl From<CellBytes<'_>> for Vec<u8> {
+        fn from(cell: CellBytes<'_>) -> Self {
+            cell.conversions.set(cell.conversions.get() + 1);
+            cell.bytes
+        }
+    }
+
+    let policy = SamplePolicy::Reservoir { max_sample_size: 1 };
+    let initial = RowSampleCollectorProto {
+        samples: vec![RowSampleProto {
+            row: vec![vec![5]],
+            weight: 5,
+        }],
+        ..Default::default()
+    };
+    let incoming = RowSampleCollectorProto {
+        count: 3,
+        samples: vec![
+            RowSampleProto {
+                row: vec![vec![5; 16 * 1024]],
+                weight: 5,
+            },
+            RowSampleProto {
+                row: vec![vec![6]],
+                weight: 6,
+            },
+            RowSampleProto {
+                row: vec![vec![7; 16 * 1024]],
+                weight: 6,
+            },
+        ],
+        ..Default::default()
+    };
+
+    let eager_tracker = tracker();
+    let mut expected = RowSampleCollector::from_proto(&initial, policy, &eager_tracker);
+    let fragment = RowSampleCollector::from_proto(&incoming, policy, &eager_tracker);
+    let previous = expected.go_mem_size();
+    let fragment_size = fragment.go_mem_size();
+    expected.merge(fragment);
+    eager_tracker.consume(expected.go_mem_size() - previous - fragment_size);
+
+    let conversions = std::cell::Cell::new(0);
+    let lazy = RowSampleCollectorProto {
+        count: incoming.count,
+        null_counts: incoming.null_counts,
+        total_sizes: incoming.total_sizes,
+        fm_sketches: incoming.fm_sketches,
+        samples: incoming
+            .samples
+            .into_iter()
+            .map(|sample| RowSampleProto {
+                weight: sample.weight,
+                row: sample
+                    .row
+                    .into_iter()
+                    .map(|bytes| CellBytes {
+                        bytes,
+                        conversions: &conversions,
+                    })
+                    .collect(),
+            })
+            .collect(),
+    };
+    let lazy_tracker = tracker();
+    let mut actual = RowSampleCollector::from_owned_proto(initial, policy, &lazy_tracker);
+    actual.merge_owned_proto(lazy, &lazy_tracker);
+
+    assert_eq!(conversions.get(), 1);
+    assert_eq!(actual.go_mem_size(), expected.go_mem_size());
+    assert_eq!(lazy_tracker.bytes_consumed(), eager_tracker.bytes_consumed());
+    assert_eq!(actual.into_proto(), expected.into_proto());
+}
+
+#[test]
 fn source_merge_updates_base_collector_mem_size_by_destination_policy() {
     let make = |weight, payload: usize, policy| {
         RowSampleCollector::from_proto(
@@ -416,6 +572,51 @@ fn source_reservoir_consumes_one_int63_and_handle_order_sets_ordinals() {
     assert_eq!(rows[0].ordinal, 0);
     assert_eq!(rows[1].columns[0], Datum::Int(2));
     assert_eq!(rows[1].ordinal, 1);
+}
+
+#[test]
+fn owned_reservoir_transfers_selected_bytes_and_counts_rejected_rows() {
+    let mut collector = RowSampleCollector::new(1, SamplePolicy::Reservoir { max_sample_size: 1 });
+    let mut rng = WordRng::from([5, 5, 6]);
+    collector.collect_owned_with_rng(
+        vec![Datum::Bytes(vec![1, 2])],
+        &[SlotValue {
+            encoded_value: &[1, 2],
+            size: 1,
+            is_null: false,
+        }],
+        &mut rng,
+    );
+    collector.collect_owned_with_rng(
+        vec![Datum::Null],
+        &[SlotValue {
+            encoded_value: &[0],
+            size: 0,
+            is_null: true,
+        }],
+        &mut rng,
+    );
+    let payload = vec![7; 128];
+    let original = payload.as_ptr();
+    collector.collect_owned_with_rng(
+        vec![Datum::Bytes(payload)],
+        &[SlotValue {
+            encoded_value: &[3, 4],
+            size: 127,
+            is_null: false,
+        }],
+        &mut rng,
+    );
+    let proto = collector.into_proto();
+    assert_eq!(rng.consumed, 3);
+    assert_eq!(proto.count, 3);
+    assert_eq!(proto.null_counts, [1]);
+    assert_eq!(proto.total_sizes, [128]);
+    assert_eq!(proto.fm_sketches[0].as_ref().unwrap().hashset.len(), 2);
+    assert_eq!(proto.samples.len(), 1);
+    assert_eq!(proto.samples[0].weight, 6);
+    assert_eq!(proto.samples[0].row[0].as_ptr(), original);
+    assert_eq!(proto.samples[0].row[0], [7; 128]);
 }
 
 #[test]

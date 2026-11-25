@@ -50,12 +50,14 @@
 //! direct `GetString` surface returns [`GoString`] instead of Rust `str`.
 
 use crate::go_append::GoAppend;
-use tidb_datatype::{deserialize_vector_float32, Datum, EvalType, FieldType, FieldTypeCode, MyDecimal, MySqlDuration, MysqlEnum, MysqlSet, Time, VectorFloat32, MYDECIMAL_STRUCT_SIZE};
+use bytes::Buf;
+use tidb_datatype::{deserialize_vector_float32, BinaryJSON, Datum, EvalType, FieldType, FieldTypeCode, MyDecimal, MySqlDuration, MysqlEnum, MysqlSet, Time, VectorError, VectorFloat32, MYDECIMAL_STRUCT_SIZE};
 use tidb_goruntime::GoString;
 use tidb_goruntime::GoStringSource;
 
-use crate::column_view::{ColumnBytes, ColumnBytesStorage};
-use crate::shared_bytes::{SharedBytes, SharedBytesRead};
+use crate::column_buffer::{ColumnBuffer, ColumnOffsets, OffsetSlice};
+use crate::column_view::{ColumnBytes, INLINE_COPY_BYTES};
+use crate::shared_bytes::{RetainedBytes, SharedBytes, SharedBytesRead};
 
 /// Go `VarElemLen` (`= -1`): the sentinel element length of a variable-length
 /// column.
@@ -101,10 +103,10 @@ pub fn get_fixed_len(field_type: &FieldType) -> i64 {
 pub struct Column {
     pub(crate) length: usize,
     /// Bit `i` records row `i`: 0 = null, 1 = not-null (Go `nullBitmap`).
-    pub(crate) null_bitmap: Vec<u8>,
+    pub(crate) null_bitmap: ColumnBuffer<u8>,
     /// Row `i` of a variable-length column starts at `data[offsets[i]]`
     /// (Go `offsets`; empty for a fixed-length column).
-    pub(crate) offsets: Vec<i64>,
+    pub(crate) offsets: ColumnOffsets,
     /// The packed element bytes (Go `data`).
     pub(crate) data: SharedBytes,
     /// Scratch buffer sized to one fixed element. `None` identifies a
@@ -115,6 +117,20 @@ pub struct Column {
 }
 
 impl Column {
+    /// Minimum width for the explicit retained-cell API.
+    pub const MIN_RETAINED_CELL_BYTES: usize = 4096;
+    #[cfg(target_endian = "little")]
+    const MIN_RETAINED_VECTOR_BYTES: usize = 512;
+
+    // Promote the packed data once so ordinary GetString reads of medium
+    // cells can retain it instead of allocating and copying each value.
+    const MIN_STRING_BACKING_BYTES: usize = 64;
+
+    /// Whether a shallow row alias can update this column's packed bytes.
+    pub fn has_mutably_shared_bytes(&self) -> bool {
+        self.data.is_shared()
+    }
+
     /// Go `Chunk.MemoryUsage`'s per-column term:
     /// `unsafe.Sizeof(*col) + cap(nullBitmap) + cap(offsets)*8 + cap(data) +
     /// cap(elemBuf)`.
@@ -149,8 +165,8 @@ impl Column {
         Column {
             elem_buf: Some(vec![0; elem_len]),
             data: SharedBytes::with_capacity(elem_len * capacity),
-            null_bitmap: Vec::with_capacity((capacity + 7) >> 3),
-            offsets: Vec::new(),
+            null_bitmap: ColumnBuffer::with_capacity((capacity + 7) >> 3),
+            offsets: ColumnOffsets::default(),
             length: 0,
             avoid_reusing: false,
         }
@@ -184,7 +200,7 @@ impl Column {
     pub fn new_empty_column(field_type: &FieldType) -> Self {
         match get_fixed_len(field_type) {
             VAR_ELEM_LEN => Column {
-                offsets: vec![0],
+                offsets: vec![0].into(),
                 ..Column::default()
             },
             elem_len => Column {
@@ -206,8 +222,8 @@ impl Column {
         Column {
             elem_buf: None,
             data: SharedBytes::with_capacity(get_data_cap),
-            null_bitmap: Vec::with_capacity((capacity + 7) >> 3),
-            offsets,
+            null_bitmap: ColumnBuffer::with_capacity((capacity + 7) >> 3),
+            offsets: offsets.into(),
             length: 0,
             avoid_reusing: false,
         }
@@ -258,6 +274,7 @@ impl Column {
     }
 
     /// Go `IsNull`: whether row `row_idx` is null.
+    #[inline]
     pub fn is_null(&self, row_idx: usize) -> bool {
         let null_byte = self.null_bitmap[row_idx / 8];
         null_byte & (1 << (row_idx & 7)) == 0
@@ -265,6 +282,7 @@ impl Column {
 
     /// Go `appendNullBitmap`: extend the bitmap for the next row, marking it
     /// not-null when `not_null` is set (a null leaves the bit at 0).
+    #[inline]
     pub fn append_null_bitmap(&mut self, not_null: bool) {
         append_null_bit(&mut self.null_bitmap, self.length, not_null);
     }
@@ -272,9 +290,9 @@ impl Column {
     /// Go `Reserve`: preserve current content while reserving additional
     /// bitmap/data/offset capacity.
     pub fn reserve(&mut self, more_null_bitmap: usize, more_data: usize, more_offsets: usize) {
-        crate::go_append::go_slices_grow(&mut self.null_bitmap, more_null_bitmap);
+        self.null_bitmap.reserve(more_null_bitmap);
         self.data.reserve(more_data);
-        crate::go_append::go_slices_grow(&mut self.offsets, more_offsets);
+        self.offsets.reserve(more_offsets);
     }
 
     /// Go `CalculateLenDeltaForAppendCellNTimesForNullBitMap`.
@@ -289,7 +307,7 @@ impl Column {
 
     /// Go `CalculateLenDeltaForAppendCellNTimesForVarElem`.
     pub fn calculate_len_delta_for_append_cell_n_times_for_var_elem(src: &Column, row: usize, times: usize) -> usize {
-        let cell_len = usize::try_from(src.offsets[row + 1] - src.offsets[row])
+        let cell_len = usize::try_from(src.offsets.at(row + 1) - src.offsets.at(row))
             .expect("column offsets are non-decreasing");
         cell_len.saturating_mul(times)
     }
@@ -319,7 +337,7 @@ impl Column {
             let (start, end) = if fixed {
                 (row * width, (row + 1) * width)
             } else {
-                (src.offsets[row] as usize, src.offsets[row + 1] as usize)
+                (src.offsets.at(row) as usize, src.offsets.at(row + 1) as usize)
             };
             let cell = &source_data[start..end];
             if fixed {
@@ -365,8 +383,8 @@ impl Column {
                     .extend_from_range(&src.data, start..start + elem_len);
             }
         } else {
-            let start = usize::try_from(src.offsets[row]).expect("non-negative offset");
-            let end = usize::try_from(src.offsets[row + 1]).expect("non-negative offset");
+            let start = usize::try_from(src.offsets.at(row)).expect("non-negative offset");
+            let end = usize::try_from(src.offsets.at(row + 1)).expect("non-negative offset");
             for _ in 0..times {
                 self.data.extend_from_range(&src.data, start..end);
                 self.offsets.go_push(self.data.len() as i64);
@@ -405,7 +423,7 @@ impl Column {
                 let (start, end) = if fixed {
                     (row * width, (row + 1) * width)
                 } else {
-                    (src.offsets[row] as usize, src.offsets[row + 1] as usize)
+                    (src.offsets.at(row) as usize, src.offsets.at(row + 1) as usize)
                 };
                 let cell = &source_data[start..end];
                 if fixed {
@@ -481,6 +499,7 @@ impl Column {
 
     /// Go `reset` (lowercase): drop all rows but keep the element type. A
     /// var-length column keeps its leading `0` offset.
+    #[inline]
     pub fn reset(&mut self) {
         self.length = 0;
         self.null_bitmap.clear();
@@ -514,7 +533,7 @@ impl Column {
                 .as_deref()
                 .expect("fixed append requires a fixed column"),
         );
-        self.append_null_bitmap(true);
+        self.null_bitmap.append_set_bit(self.length);
         self.length += 1;
     }
 
@@ -528,21 +547,35 @@ impl Column {
     }
 
     /// Go `AppendInt64`.
+    #[inline]
     pub fn append_int64(&mut self, value: i64) {
-        self.write_elem_buf(&value.to_ne_bytes());
-        self.finish_append_fixed();
+        self.append_fixed(value.to_ne_bytes());
     }
 
     /// Go `AppendUint64`.
+    #[inline]
     pub fn append_uint64(&mut self, value: u64) {
-        self.write_elem_buf(&value.to_ne_bytes());
-        self.finish_append_fixed();
+        self.append_fixed(value.to_ne_bytes());
+    }
+
+    #[inline]
+    fn append_fixed<const N: usize>(&mut self, bytes: [u8; N]) {
+        if let Some(buffer) = self.elem_buf.as_deref_mut().filter(|buffer| buffer.len() == N) {
+            // Go keeps these bytes in the scratch element for the next NULL.
+            buffer.copy_from_slice(&bytes);
+            self.data.extend_from_array(&bytes);
+            self.null_bitmap.append_set_bit(self.length);
+            self.length += 1;
+        } else {
+            self.write_elem_buf(&bytes);
+            self.finish_append_fixed();
+        }
     }
 
     /// Go `AppendFloat32`.
+    #[inline]
     pub fn append_float32(&mut self, value: f32) {
-        self.write_elem_buf(&value.to_ne_bytes());
-        self.finish_append_fixed();
+        self.append_fixed(value.to_ne_bytes());
     }
 
     /// Go `AppendFloat64`.
@@ -571,8 +604,7 @@ impl Column {
     /// `types.MyDecimal` struct (Go writes it through `unsafe.Pointer`; the
     /// bytes are identical).
     pub fn append_my_decimal(&mut self, dec: &MyDecimal) {
-        self.write_elem_buf(&dec.to_raw_bytes());
-        self.finish_append_fixed();
+        self.append_fixed(dec.to_raw_bytes());
     }
 
     /// Go `GetDecimal`: the decimal in the specific row.
@@ -654,14 +686,14 @@ impl Column {
     #[must_use]
     pub fn get_name_value(&self, row_id: usize) -> (GoString, u64) {
         let cell = self.get_bytes(row_id);
-        if cell.is_empty() {
-            return (GoString::default(), 0);
-        }
-        let (value_bytes, name_bytes) = cell
-            .split_at_checked(8)
-            .expect("a name/value cell carries its 8-byte value prefix");
-        let value = u64::from_ne_bytes(value_bytes.try_into().expect("eight bytes"));
-        (GoString::from(name_bytes), value)
+        let (name, value) = name_value_parts(&cell);
+        (GoString::from(name), value)
+    }
+
+    #[inline]
+    pub(crate) fn get_name_value_number(&self, row_id: usize) -> u64 {
+        let data = self.data.read();
+        name_value_parts(&data[self.var_byte_range(row_id)]).1
     }
 
     /// Go `GetEnum`.
@@ -677,18 +709,19 @@ impl Column {
     }
 
     /// Go `AppendNull`: leave the null bit unset, then keep element positions
-    /// consistent -- a fixed column appends the (zeroed) scratch element; a
-    /// var-length column repeats the last offset (a zero-width element).
+    /// consistent. A fixed column appends the scratch element. A variable
+    /// column repeats the last offset.
+    #[inline]
     pub fn append_null(&mut self) {
         self.append_null_bitmap(false);
-        if self.is_fixed() {
-            self.data.go_extend_from_slice(
-                self.elem_buf
-                    .as_deref()
-                    .expect("fixed column has an element buffer"),
-            );
+        if let Some(bytes) = self.elem_buf.as_deref() {
+            if let Ok(bytes) = <&[u8; 8]>::try_from(bytes) {
+                self.data.extend_from_array(bytes);
+            } else {
+                self.data.go_extend_from_slice(bytes);
+            }
         } else {
-            self.offsets.go_push(self.offsets[self.length]);
+            self.offsets.go_push(self.offsets.at(self.length));
         }
         self.length += 1;
     }
@@ -708,18 +741,17 @@ impl Column {
                 );
             }
         } else {
-            let current = self.offsets[self.length];
-            for _ in 0..n {
-                self.offsets.go_push(current);
-            }
+            let current = self.offsets.at(self.length);
+            self.offsets.append_repeated_offset(current, n);
         }
         self.length += n;
     }
 
     /// Go `finishAppendVar`: commit the bytes appended to `data` as one not-null
     /// variable-length row (records the new end offset).
+    #[inline]
     fn finish_append_var(&mut self) {
-        self.append_null_bitmap(true);
+        self.null_bitmap.append_set_bit(self.length);
         self.offsets.go_push(self.data.len() as i64);
         self.length += 1;
     }
@@ -727,15 +759,286 @@ impl Column {
     /// Go `AppendString`: append a string's bytes as one row.
     pub fn append_string(&mut self, value: impl GoStringSource) {
         debug_assert!(!self.is_fixed(), "append_string on a fixed-length column");
-        self.data.go_extend_from_slice(value.as_go_bytes());
-        self.finish_append_var();
+        self.append_bytes(value.as_go_bytes());
     }
 
     /// Go `AppendBytes`: append raw bytes as one row.
+    #[inline]
     pub fn append_bytes(&mut self, bytes: &[u8]) {
         debug_assert!(!self.is_fixed(), "append_bytes on a fixed-length column");
         self.data.go_extend_from_slice(bytes);
+        self.finish_append_bytes(bytes.len());
+    }
+
+    #[inline]
+    pub(crate) fn append_byte_array<const N: usize>(&mut self, bytes: &[u8; N]) {
+        debug_assert!(!self.is_fixed(), "append_bytes on a fixed-length column");
+        if N != 0 {
+            self.data.extend_from_array(bytes);
+        }
+        self.finish_append_bytes(N);
+    }
+
+    #[inline]
+    pub(crate) fn try_append_prefixed_bytes<const N: usize>(
+        &mut self,
+        prefix: &[u8; N],
+        payload: &[u8],
+    ) -> bool {
+        debug_assert!(!self.is_fixed(), "append_bytes on a fixed-length column");
+        if !self.data.try_append_prefixed(prefix, payload) {
+            return false;
+        }
+        self.finish_append_bytes(N + payload.len());
+        true
+    }
+
+    #[inline]
+    fn finish_append_bytes(&mut self, len: usize) {
+        if len >= Self::MIN_STRING_BACKING_BYTES {
+            self.data.retain_for_slices();
+        }
         self.finish_append_var();
+    }
+
+    /// Appends nullable byte rows from fragments. The length hint reserves space
+    /// for one complete row before copying the fragments into the column.
+    pub fn append_byte_rows<'a, I>(
+        &mut self,
+        mut rows: impl ExactSizeIterator<Item = Option<(usize, I)>>,
+    ) where
+        I: IntoIterator<Item = &'a [u8]>,
+    {
+        let result: Result<(), std::convert::Infallible> =
+            self.try_append_byte_rows(rows.len(), |_, output| {
+                let Some((width, fragments)) = rows.next().expect("byte row") else {
+                    return Ok(false);
+                };
+                output.reserve(width);
+                for fragment in fragments {
+                    output.append(fragment);
+                }
+                Ok(true)
+            });
+        match result {
+            Ok(()) => {}
+            Err(never) => match never {},
+        }
+    }
+
+    /// Replaces the column with strings supplied in fixed-size byte arrays.
+    /// Each array's prefix defines the visible bytes of its row.
+    /// If reading a row fails, completed rows remain in the column.
+    pub fn try_write_short_string_rows<'a, const N: usize, E>(
+        &mut self,
+        rows: usize,
+        mut read: impl FnMut(usize) -> Result<Option<(&'a [u8; N], usize)>, E>,
+    ) -> Result<(), E> {
+        assert!(N < Self::MIN_STRING_BACKING_BYTES);
+        self.reserve_string_with_size_hint(rows, N);
+        if rows == 0 {
+            return Ok(());
+        }
+        let Self {
+            data,
+            null_bitmap,
+            offsets,
+            length,
+            ..
+        } = self;
+        let mut outcome = Ok(());
+        if data.append_owned(|data| {
+            data.resize(rows * N, 0);
+            extend_null_bitmap(null_bitmap, rows);
+            let offsets = offsets.make_owned();
+            offsets.resize(rows + 1, 0);
+            let mut end = 0;
+            for (row, offset) in offsets[1..].iter_mut().enumerate() {
+                match read(row) {
+                    Ok(Some((bytes, width))) => {
+                        assert!(width <= N);
+                        data[end..end + N].copy_from_slice(bytes);
+                        end += width;
+                        null_bitmap[row >> 3] |= 1 << (row & 7);
+                    }
+                    Ok(None) => {}
+                    Err(err) => {
+                        outcome = Err(err);
+                        *length = row;
+                        break;
+                    }
+                }
+                *offset = end as i64;
+            }
+            if outcome.is_ok() {
+                *length = rows;
+            }
+            data.truncate(end);
+            offsets.truncate(*length + 1);
+            null_bitmap.truncate((*length + 7) >> 3);
+        }) {
+            return outcome;
+        }
+        self.try_append_byte_rows(rows, |row, out| {
+            if let Some((bytes, width)) = read(row)? {
+                out.append(&bytes[..width]);
+                Ok(true)
+            } else {
+                Ok(false)
+            }
+        })
+    }
+
+    /// Writes each row directly into the column when its backing is writable.
+    /// A false return writes NULL. An error leaves completed rows in the column.
+    #[inline]
+    pub fn try_append_byte_rows<E>(
+        &mut self,
+        rows: usize,
+        mut write: impl FnMut(usize, &mut ByteRow<'_>) -> Result<bool, E>,
+    ) -> Result<(), E> {
+        debug_assert!(!self.is_fixed());
+        if rows == 0 {
+            return Ok(());
+        }
+        let Self {
+            data,
+            null_bitmap,
+            offsets,
+            length,
+            ..
+        } = self;
+        let mut retain = false;
+        let mut error = None;
+        if data.append_owned(|data| {
+            extend_null_bitmap(null_bitmap, *length + rows);
+            let offsets = offsets.make_owned();
+            for row in 0..rows {
+                let begin = data.len();
+                let present = match write(row, &mut ByteRow(data)) {
+                    Ok(present) => present,
+                    Err(err) => {
+                        data.truncate(begin);
+                        error = Some(err);
+                        break;
+                    }
+                };
+                if !present {
+                    data.truncate(begin);
+                }
+                null_bitmap[*length >> 3] |= u8::from(present) << (*length & 7);
+                retain |= data.len() - begin >= Self::MIN_STRING_BACKING_BYTES;
+                offsets.go_push(data.len() as i64);
+                *length += 1;
+            }
+            null_bitmap.truncate((*length + 7) >> 3);
+        }) {
+            if retain {
+                data.retain_for_slices();
+            }
+            return error.map_or(Ok(()), Err);
+        }
+
+        let mut value = Vec::new();
+        for row in 0..rows {
+            value.clear();
+            if write(row, &mut ByteRow(&mut value))? {
+                self.append_bytes(&value);
+            } else {
+                self.append_null();
+            }
+        }
+        Ok(())
+    }
+
+    pub(crate) fn retain_cell_bytes(
+        &self,
+        row: usize,
+        range: Option<std::ops::Range<usize>>,
+    ) -> Option<RetainedBytes> {
+        self.data.retained_slice(self.retained_cell_range(row, range)?)
+    }
+
+    pub(crate) fn try_snapshot_var_cell(&self, row: usize) -> Option<ColumnBytes<'static>> {
+        let range = self.present_var_cell_range(row)?;
+        if range.len() <= INLINE_COPY_BYTES {
+            return Some(ColumnBytes::copied(self.data.read().get(range)?));
+        }
+        self.data.retained_slice(range).map(ColumnBytes::retained)
+    }
+
+    #[inline]
+    pub(crate) fn snapshot_var_bytes(&self, row: usize) -> ColumnBytes<'static> {
+        let range = self.var_byte_range(row);
+        if range.len() > INLINE_COPY_BYTES && row < self.length && !self.is_null(row) {
+            if let Some(bytes) = self.data.retained_slice(range.clone()) {
+                return ColumnBytes::retained(bytes);
+            }
+        }
+        ColumnBytes::copied(&self.data.read()[range])
+    }
+
+    pub(crate) fn retain_data_for_alias(&mut self) {
+        if self.is_fixed() || self.data.len() <= INLINE_COPY_BYTES {
+            return;
+        }
+        // The aggregate size can prove a cell is too wide for an inline
+        // snapshot. Inspect small columns directly, without making alias
+        // creation scan every offset in a large column.
+        let has_wide_cell = self.data.len() > self.length.saturating_mul(INLINE_COPY_BYTES)
+            || self.length <= 8
+                && (0..self.length).any(|row| {
+                    self.offsets
+                        .get(row)
+                        .zip(self.offsets.get(row + 1))
+                        .is_some_and(|(start, end)| end.saturating_sub(start) > INLINE_COPY_BYTES as i64)
+                });
+        if has_wide_cell {
+            self.data.retain_for_slices();
+        }
+    }
+
+    fn retained_cell_range(
+        &self,
+        row: usize,
+        range: Option<std::ops::Range<usize>>,
+    ) -> Option<std::ops::Range<usize>> {
+        let std::ops::Range { start, end } = self.present_var_cell_range(row)?;
+        let len = end.checked_sub(start)?;
+        let range = range.unwrap_or(0..len);
+        if range.len() < Self::MIN_RETAINED_CELL_BYTES || range.end > len {
+            return None;
+        }
+        Some(start + range.start..start + range.end)
+    }
+
+    #[inline]
+    pub(crate) fn try_borrow_cell_bytes(&self, row: usize) -> Option<&[u8]> {
+        self.borrow_cell_with_range(row).map(|(cell, _)| cell)
+    }
+
+    #[inline]
+    pub(crate) fn borrow_cell_with_range(
+        &self,
+        row: usize,
+    ) -> Option<(&[u8], std::ops::Range<usize>)> {
+        let range = self.present_var_cell_range(row)?;
+        let bytes = self.data.try_borrow()?;
+        Some((bytes.get(range.clone())?, range))
+    }
+
+    /// Borrows variable-width bytes after the caller has checked the null bit.
+    #[inline]
+    pub(crate) fn borrow_nonnull_var_cell(&self, row: usize) -> Option<&[u8]> {
+        self.data.try_borrow()?.get(self.var_byte_range(row))
+    }
+
+    #[inline]
+    fn present_var_cell_range(&self, row: usize) -> Option<std::ops::Range<usize>> {
+        if self.is_fixed() || row >= self.length || self.is_null(row) {
+            return None;
+        }
+        self.offsets.as_slice().get_cell_range(row)
     }
 
     /// Go `AppendVectorFloat32`: append the vector's serialized little-endian
@@ -745,15 +1048,60 @@ impl Column {
             !self.is_fixed(),
             "append_vector_float32 on a fixed-length column"
         );
-        let mut encoded = Vec::new();
-        value.serialize_to(&mut encoded);
-        self.data.go_extend_from_slice(&encoded);
-        self.finish_append_var();
+        let width = value.serialized_size();
+        if !self.data.append_owned(|data| {
+            crate::go_append::go_grow(data, width);
+            value.serialize_to(data);
+        }) {
+            self.data.go_extend_from_slice(&value.serialize());
+        }
+        self.finish_append_bytes(width);
     }
 
     /// Go `Column.AppendJSON`.
     pub fn append_json(&mut self, value: &tidb_datatype::BinaryJSON) {
-        self.append_bytes(&value.encoded());
+        debug_assert!(!self.is_fixed(), "append_json on a fixed-length column");
+        let width = 1 + value.value().len();
+        self.data.append_json(value, width);
+        self.finish_append_bytes(width);
+    }
+
+    #[inline]
+    pub(crate) fn append_checked_json_bytes(
+        &mut self,
+        encoded: &[u8],
+        layout: tidb_datatype::EncodedJSONLayout,
+    ) {
+        let start = self.data.len();
+        self.append_bytes(encoded);
+        if encoded.len() >= Self::MIN_RETAINED_CELL_BYTES {
+            self.data.remember_json_layout(start..self.data.len(), layout);
+        }
+    }
+
+    /// Records a checked layout for a JSON value written through a byte row.
+    /// The layout must belong to the exact type tag and payload at `row`.
+    pub fn remember_json_layout(&mut self, row: usize, layout: tidb_datatype::EncodedJSONLayout) {
+        self.data.remember_json_layout(self.var_byte_range(row), layout);
+    }
+
+    #[inline]
+    pub(crate) fn known_json_layout(&self, row: usize) -> Option<tidb_datatype::EncodedJSONLayout> {
+        self.data.known_json_layout(&self.var_byte_range(row))
+    }
+
+    pub(crate) fn retain_json_slice(
+        &self,
+        row: usize,
+        range: std::ops::Range<usize>,
+    ) -> Option<(bytes::Bytes, Option<tidb_datatype::EncodedJSONLayout>)> {
+        let bytes = self.data.retained_json_slice(self.retained_cell_range(row, Some(range))?)?;
+        Some((bytes, self.known_json_layout(row)))
+    }
+
+    #[inline]
+    pub(crate) fn var_byte_range(&self, row_id: usize) -> std::ops::Range<usize> {
+        self.offsets.cell_range(row_id)
     }
 
     /// Go `GetBytes`: the raw bytes of a variable-length row.
@@ -761,48 +1109,116 @@ impl Column {
     /// TiDB strings are arbitrary byte sequences. The returned guard behaves
     /// like a byte slice while keeping shared storage stable for its borrow.
     pub fn get_bytes(&self, row_id: usize) -> ColumnBytes<'_> {
-        // Go's zero-value variable column represents an empty cell with an
-        // empty data slice. Treat an uninitialized offsets vector the same
-        // way so a reused zero-row column cannot panic while reading row 0.
-        let (start, end) = if self.offsets.is_empty() {
-            (0, 0)
-        } else {
-            (
-                self.offsets[row_id] as usize,
-                self.offsets[row_id + 1] as usize,
-            )
-        };
-        ColumnBytes {
-            storage: ColumnBytesStorage::Borrowed(self.data.read()),
-            start,
-            end,
-        }
+        ColumnBytes::borrowed(self.data.read(), self.var_byte_range(row_id))
     }
 
     /// Go `Column.GetString`, represented with [`GoString`] so arbitrary Go
     /// string bytes are not rejected as invalid UTF-8.
+    #[inline]
     pub fn get_string(&self, row_id: usize) -> GoString {
-        GoString::from_bytes(self.get_bytes(row_id).as_ref().to_vec())
+        self.data.get_string(self.var_byte_range(row_id))
+    }
+
+    #[inline]
+    pub(crate) fn write_string_datum(
+        &self,
+        row_id: usize,
+        collation: tidb_charset::Collation,
+        datum: &mut tidb_datatype::Datum,
+    ) {
+        self.data.write_string_datum(
+            self.var_byte_range(row_id),
+            collation,
+            Self::MIN_RETAINED_CELL_BYTES,
+            datum,
+        );
+    }
+
+    #[inline]
+    pub(crate) fn select_string_datum(
+        &self,
+        row: usize,
+        collation: tidb_charset::Collation,
+        select: impl FnOnce(&[u8]) -> std::ops::Range<usize>,
+    ) -> Option<tidb_datatype::Datum> {
+        if self.is_fixed() || row >= self.length {
+            return None;
+        }
+        let mut datum = tidb_datatype::Datum::Null;
+        if self.is_null(row) {
+            return Some(datum);
+        }
+        let cell = self.var_byte_range(row);
+        let bytes = self.data.read();
+        let selected = select(&bytes[cell.clone()]);
+        assert!(selected.start <= selected.end && selected.end <= cell.len());
+        let selected = cell.start + selected.start..cell.start + selected.end;
+        match bytes {
+            SharedBytesRead::Owned(_) => self.data.write_string_datum(
+                selected,
+                collation,
+                Self::MIN_RETAINED_CELL_BYTES,
+                &mut datum,
+            ),
+            SharedBytesRead::Shared { .. } => datum.set_copied_string(&bytes[selected], collation),
+        }
+        Some(datum)
     }
 
     /// Go `GetJSON`: the cell's first byte is the JSON type code and the rest
     /// is the value, which is exactly what a `BinaryJSON` carries.
-    pub fn get_json(&self, row_id: usize) -> tidb_datatype::BinaryJSON {
+    pub fn get_json(&self, row_id: usize) -> BinaryJSON {
+        self.json_cell(row_id, false)
+            .expect("a JSON cell always carries its type code")
+    }
+
+    pub(crate) fn json_cell(&self, row_id: usize, checked: bool) -> Option<BinaryJSON> {
+        let mut layout = None;
+        if let Some(range) = self.retained_cell_range(row_id, None) {
+            layout = if checked {
+                self.data.cached_json_layout(range.clone())
+            } else {
+                self.data.known_json_layout(&range)
+            };
+            if let Some(mut cell) = self.data.retained_json_slice(range) {
+                let type_code = cell[0];
+                cell.advance(1);
+                return Some(
+                    BinaryJSON::from_shared_parts(type_code, cell).with_known_layout(layout),
+                );
+            }
+        }
         let cell = self.get_bytes(row_id);
-        let (type_code, value) = cell
-            .split_first()
-            .expect("a JSON cell always carries its type code");
-        tidb_datatype::BinaryJSON::from_encoded_parts(*type_code, value)
+        let (&type_code, value) = cell.split_first()?;
+        Some(BinaryJSON::from_encoded_parts(type_code, value).with_known_layout(layout))
     }
 
     /// Go `GetVectorFloat32`: deserialize one vector cell. A malformed cell
     /// panics, matching Go's `panic(err)` path. A valid leading vector is
     /// accepted even when the cell has a suffix, matching the source decoder.
+    #[inline]
     pub fn get_vector_float32(&self, row_id: usize) -> VectorFloat32 {
-        let cell = self.get_bytes(row_id);
-        let (value, _) = deserialize_vector_float32(cell.as_ref())
-            .unwrap_or_else(|error| panic!("invalid VectorFloat32 chunk cell: {error}"));
-        value
+        self.try_vector_cell(row_id)
+            .unwrap_or_else(|error| panic!("invalid VectorFloat32 chunk cell: {error}"))
+    }
+
+    #[inline]
+    pub(crate) fn try_vector_cell(&self, row_id: usize) -> Result<VectorFloat32, VectorError> {
+        let range = self.var_byte_range(row_id);
+        if range.len() >= Self::MIN_RETAINED_CELL_BYTES {
+            if let Some(vector) = self.data.retained_vector(range.clone()) {
+                return vector;
+            }
+        } else {
+            #[cfg(target_endian = "little")]
+            if range.len() >= Self::MIN_RETAINED_VECTOR_BYTES {
+                if let Some(vector) = self.data.retained_small_vector(range.clone()) {
+                    return vector;
+                }
+            }
+        }
+        let bytes = self.data.read();
+        deserialize_vector_float32(&bytes[range]).map(|(value, _)| value)
     }
 
     /// Go `GetRaw`: the raw element bytes of a row, for either column kind.
@@ -810,18 +1226,14 @@ impl Column {
         if self.is_fixed() {
             let elem_len = self.elem_buffer_len();
             let start = row_id * elem_len;
-            ColumnBytes {
-                storage: ColumnBytesStorage::Borrowed(self.data.read()),
-                start,
-                end: start + elem_len,
-            }
+            ColumnBytes::borrowed(self.data.read(), start..start + elem_len)
         } else {
             self.get_bytes(row_id)
         }
     }
 
     /// The cells of this column for one whole pass. Go reads a cell as
-    /// `c.data[c.offsets[i]:c.offsets[i+1]]`; a row-wise consumer here
+    /// `c.data[c.offsets.at(i):c.offsets.at(i+1)]`; a row-wise consumer here
     /// (the join's row table builder) reads through this view so the shared
     /// data is borrowed once per pass instead of once per cell by
     /// [`Self::get_raw`].
@@ -833,12 +1245,27 @@ impl Column {
         }
     }
 
+    /// Borrows the offsets and payload of a variable-width column when
+    /// reading it needs no shared data lock.
+    pub fn try_variable_cells(&self) -> Option<VariableCells<'_>> {
+        if self.is_fixed() || self.data.is_shared() {
+            return None;
+        }
+        let SharedBytesRead::Owned(data) = self.data.read() else {
+            return None;
+        };
+        Some(VariableCells {
+            data,
+            offsets: self.offsets.as_slice(),
+        })
+    }
+
     /// Go `GetRawLength`.
     pub fn get_raw_length(&self, row_id: usize) -> usize {
         if self.is_fixed() {
             self.elem_buffer_len()
         } else {
-            usize::try_from(self.offsets[row_id + 1] - self.offsets[row_id])
+            usize::try_from(self.offsets.at(row_id + 1) - self.offsets.at(row_id))
                 .expect("column offsets are non-decreasing")
         }
     }
@@ -846,9 +1273,25 @@ impl Column {
     /// Go `SetRaw`: copy as many input bytes as fit in the existing cell.
     /// Short input preserves the old tail; long input is truncated.
     pub fn set_raw(&mut self, row_id: usize, bytes: &[u8]) {
-        let start = usize::try_from(self.offsets[row_id]).expect("non-negative offset");
-        let end = usize::try_from(self.offsets[row_id + 1]).expect("non-negative offset");
+        let start = usize::try_from(self.offsets.at(row_id)).expect("non-negative offset");
+        let end = usize::try_from(self.offsets.at(row_id + 1)).expect("non-negative offset");
         self.data.copy_from_slice(start..end, bytes);
+    }
+
+    /// Reverses the bytes of each non-null variable-length cell in place.
+    pub fn reverse_var_cells(&mut self, rows: usize) {
+        if rows == 0 {
+            return;
+        }
+        let offsets = self.offsets.slice(0..rows + 1);
+        let bitmap = &self.null_bitmap;
+        self.data.with_write(|data| {
+            for row in 0..rows {
+                if bitmap[row / 8] & (1 << (row % 8)) != 0 {
+                    data[offsets.at(row) as usize..offsets.at(row + 1) as usize].reverse();
+                }
+            }
+        });
     }
 
     /// Go `chunkRowColDatum` / `Row.DatumWithBuffer` for a standalone
@@ -858,21 +1301,25 @@ impl Column {
     }
 
     /// Go `GetInt64`.
+    #[inline]
     pub fn get_int64(&self, row_id: usize) -> i64 {
         i64::from_ne_bytes(self.fixed_elem::<8>(row_id))
     }
 
     /// Go `GetUint64`.
+    #[inline]
     pub fn get_uint64(&self, row_id: usize) -> u64 {
         u64::from_ne_bytes(self.fixed_elem::<8>(row_id))
     }
 
     /// Go `GetFloat32`.
+    #[inline]
     pub fn get_float32(&self, row_id: usize) -> f32 {
         f32::from_ne_bytes(self.fixed_elem::<4>(row_id))
     }
 
     /// Go `GetFloat64`.
+    #[inline]
     pub fn get_float64(&self, row_id: usize) -> f64 {
         f64::from_ne_bytes(self.fixed_elem::<8>(row_id))
     }
@@ -963,19 +1410,84 @@ impl Column {
         row_id: usize,
         mutate: impl FnOnce(&mut [u8]) -> R,
     ) -> R {
-        let (start, end) = if self.is_fixed() {
-            let width = self.elem_buffer_len();
-            (row_id * width, (row_id + 1) * width)
-        } else {
-            (
-                usize::try_from(self.offsets[row_id]).expect("non-negative offset"),
-                usize::try_from(self.offsets[row_id + 1]).expect("non-negative offset"),
-            )
-        };
-        let mut cell = self.data.read()[start..end].to_vec();
+        let range = self.cell_byte_range(row_id);
+        let mut cell = self.data.read()[range.clone()].to_vec();
         let result = mutate(&mut cell);
-        self.data.copy_from_slice(start..end, &cell);
+        self.data.copy_from_slice(range, &cell);
         result
+    }
+
+    /// Replaces the exact bytes of an existing cell without changing its null bit.
+    pub fn set_cell_bytes(&mut self, row_id: usize, bytes: &[u8]) {
+        let range = self.cell_byte_range(row_id);
+        assert_eq!(range.len(), bytes.len(), "cell byte width mismatch");
+        self.data.copy_from_slice(range, bytes);
+    }
+
+    /// Applies width-preserving ASCII case conversion to packed string bytes.
+    pub fn map_ascii_case<const UPPER: bool>(&mut self) {
+        assert!(!self.is_fixed());
+        self.data.with_write(|bytes| {
+            if UPPER {
+                bytes.make_ascii_uppercase();
+            } else {
+                bytes.make_ascii_lowercase();
+            }
+        });
+    }
+
+    fn cell_byte_range(&self, row_id: usize) -> std::ops::Range<usize> {
+        if self.is_fixed() {
+            let width = self.elem_buffer_len();
+            row_id * width..(row_id + 1) * width
+        } else {
+            usize::try_from(self.offsets.at(row_id)).expect("non-negative offset")
+                ..usize::try_from(self.offsets.at(row_id + 1)).expect("non-negative offset")
+        }
+    }
+
+    /// Transforms non-null fixed cells in row order. Returning `None` marks
+    /// the cell null. Results already written are retained if the mapper fails.
+    pub fn try_map_fixed_rows<const N: usize, E>(
+        &mut self,
+        mut map: impl FnMut([u8; N]) -> Result<Option<[u8; N]>, E>,
+    ) -> Result<(), E> {
+        self.with_fixed_cells_mut(|cells, bitmap| {
+            for (row, cell) in cells.iter_mut().enumerate() {
+                let bit = 1 << (row & 7);
+                if bitmap[row >> 3] & bit == 0 {
+                    continue;
+                }
+                if let Some(value) = map(*cell)? {
+                    *cell = value;
+                } else {
+                    bitmap[row >> 3] &= !bit;
+                }
+            }
+            Ok(())
+        })
+    }
+
+    /// Updates packed fixed-width cells and their null bitmap without resizing.
+    pub fn with_fixed_cells_mut<const N: usize, T>(
+        &mut self,
+        update: impl FnOnce(&mut [[u8; N]], &mut [u8]) -> T,
+    ) -> T {
+        assert!(self.is_fixed() && self.elem_buffer_len() == N && N != 0);
+        if self.length == 0 {
+            return update(&mut [], &mut []);
+        }
+        let bitmap = &mut self.null_bitmap;
+        self.data
+            .with_write(|bytes| update(bytes.as_chunks_mut::<N>().0, bitmap))
+    }
+
+    /// Maps the non-null Float64 cells in their existing packed allocation.
+    pub fn map_float64_rows(&mut self, mut map: impl FnMut(f64) -> Option<f64>) {
+        self.try_map_fixed_rows(|cell| {
+            Ok::<_, std::convert::Infallible>(map(f64::from_ne_bytes(cell)).map(f64::to_ne_bytes))
+        })
+        .unwrap();
     }
 
     fn with_typed_values_mut<T, R>(
@@ -1020,7 +1532,7 @@ impl Column {
         // `make([]byte, sizeNulls)`.
         let size_nulls = (n + 7) >> 3;
         if size_nulls > self.null_bitmap.capacity() {
-            self.null_bitmap = vec![0; size_nulls];
+            self.null_bitmap = vec![0; size_nulls].into();
         } else {
             self.null_bitmap.resize(size_nulls, 0);
         }
@@ -1059,13 +1571,13 @@ impl Column {
         }
         let bitmap_capacity = (n + 7) >> 3;
         if self.null_bitmap.capacity() < bitmap_capacity {
-            self.null_bitmap = Vec::with_capacity(bitmap_capacity);
+            self.null_bitmap = ColumnBuffer::with_capacity(bitmap_capacity);
         } else {
             self.null_bitmap.clear();
         }
         let get_offset_cap = n.checked_add(1).expect("offset capacity overflow");
         if self.offsets.capacity() < get_offset_cap {
-            self.offsets = Vec::with_capacity(get_offset_cap);
+            self.offsets = ColumnOffsets::with_capacity(get_offset_cap);
         }
         if self.offsets.is_empty() {
             self.offsets.go_push(0);
@@ -1081,6 +1593,27 @@ impl Column {
     /// Go `ResizeInt64`.
     pub fn resize_int64(&mut self, n: usize, is_null: bool) {
         self.resize_fixed(n, 8, is_null);
+    }
+
+    /// Replaces the column with nullable Int64 results, leaving the packed
+    /// bytes of null rows as `ResizeInt64` would.
+    pub fn write_int64_rows(&mut self, values: impl ExactSizeIterator<Item = Option<i64>>) {
+        let rows = values.len();
+        self.resize_int64(rows, false);
+        if rows == 0 {
+            return;
+        }
+        let bitmap = &mut self.null_bitmap;
+        self.data.with_write(|bytes| {
+            let (cells, _) = bytes.as_chunks_mut::<8>();
+            for (row, (cell, value)) in cells.iter_mut().zip(values).enumerate() {
+                if let Some(value) = value {
+                    *cell = value.to_ne_bytes();
+                } else {
+                    bitmap[row / 8] &= !(1 << (row % 8));
+                }
+            }
+        });
     }
 
     /// Go `ResizeUint64`.
@@ -1161,7 +1694,17 @@ impl Column {
     /// Go `SetNulls`: set the half-open row range `[begin, end)`.
     pub fn set_nulls(&mut self, begin: usize, end: usize, is_null: bool) {
         assert!(begin <= end && end <= self.length);
-        for row in begin..end {
+        let aligned_begin = end.min(begin.next_multiple_of(8));
+        let aligned_end = end & !7;
+
+        for row in begin..aligned_begin {
+            self.set_null(row, is_null);
+        }
+        if aligned_begin < aligned_end {
+            self.null_bitmap[aligned_begin / 8..aligned_end / 8]
+                .fill(if is_null { 0 } else { u8::MAX });
+        }
+        for row in aligned_begin.max(aligned_end)..end {
             self.set_null(row, is_null);
         }
     }
@@ -1179,11 +1722,26 @@ impl Column {
     /// `Clone` of a column, which stands in for Go sharing one `*Column` and
     /// is not Go's `CopyConstruct`.
     pub(crate) fn clone_exact(&self) -> Column {
+        self.clone_with_data(self.data.deep_copy())
+    }
+
+    /// Snapshots the metadata and retains the immutable backing of a wide column.
+    pub fn try_read_snapshot(&self) -> Option<Column> {
+        if self.data.len() < Self::MIN_RETAINED_CELL_BYTES {
+            return None;
+        }
+        let bytes = self.data.retained_slice(0..self.data.len())?.into_bytes();
+        let mut snapshot = self.clone_with_data(SharedBytes::from_bytes(bytes));
+        snapshot.avoid_reusing = true;
+        Some(snapshot)
+    }
+
+    fn clone_with_data(&self, data: SharedBytes) -> Column {
         Column {
             length: self.length,
             null_bitmap: self.null_bitmap.clone(),
             offsets: self.offsets.clone(),
-            data: self.data.deep_copy(),
+            data,
             elem_buf: self.elem_buf.clone(),
             avoid_reusing: false,
         }
@@ -1194,8 +1752,12 @@ impl Column {
     pub fn copy_construct(&self) -> Column {
         Column {
             length: self.length,
-            null_bitmap: crate::go_append::go_appended(&self.null_bitmap),
-            offsets: crate::go_append::go_appended(&self.offsets),
+            null_bitmap: crate::go_append::go_appended(&self.null_bitmap).into(),
+            offsets: {
+                let mut offsets = ColumnOffsets::default();
+                offsets.append_with_delta(self.offsets.as_slice(), 0);
+                offsets
+            },
             data: SharedBytes::from_vec(crate::go_append::go_appended(&self.data.read())),
             elem_buf: self.elem_buf.as_deref().map(crate::go_append::go_appended),
             // Go intentionally does not propagate `avoidReusing`: the copy
@@ -1208,37 +1770,37 @@ impl Column {
     /// Go `CopyConstruct(dst)` with a destination: each buffer is appended
     /// onto `dst`'s emptied one, so `dst` keeps its capacity or grows from it.
     pub fn copy_construct_to(&self, destination: &mut Column) {
-        let taken = std::mem::take(destination);
-        *destination = self.copy_construct_into(Some(taken));
-    }
-
-    fn copy_construct_into(&self, destination: Option<Column>) -> Column {
-        let Some(mut destination) = destination else {
-            return self.copy_construct();
-        };
         // Go's supplied-destination branch overwrites every data/shape field
         // but deliberately leaves `avoidReusing` untouched.
         destination.length = self.length;
         destination.null_bitmap.clear();
         destination.null_bitmap.go_extend_from_slice(&self.null_bitmap);
         destination.offsets.clear();
-        destination.offsets.go_extend_from_slice(&self.offsets);
-        let data = self.data.snapshot();
-        destination.data.reset();
-        destination.data.go_extend_from_slice(&data);
-        destination.elem_buf = self.elem_buf.clone();
+        destination.offsets.append_with_delta(self.offsets.as_slice(), 0);
+        destination.data.overwrite_from(&self.data);
+        if let Some(source) = &self.elem_buf {
+            let scratch = destination.elem_buf.get_or_insert_default();
+            scratch.clear();
+            scratch.go_extend_from_slice(source);
+        } else {
+            destination.elem_buf = None;
+        }
+    }
+
+    fn copy_construct_into(&self, destination: Option<Column>) -> Column {
+        let Some(mut destination) = destination else {
+            return self.copy_construct();
+        };
+        self.copy_construct_to(&mut destination);
         destination
     }
 
     /// Go `CopyReconstruct`: deep-copy only the selected rows, reusing `dst`
     /// storage when supplied. `None` selection is the ordinary deep-copy path.
     pub fn copy_reconstruct(&self, sel: Option<&[usize]>, dst: Option<Column>) -> Column {
-        let Some(sel) = sel else {
+        let Some(sel) = self.copy_reconstruct_selection(sel) else {
             return self.copy_construct_into(dst);
         };
-        if sel.len() == self.length && sel.windows(2).all(|pair| pair[0] <= pair[1]) {
-            return self.copy_construct_into(dst);
-        }
 
         let mut destination =
             dst.unwrap_or_else(|| Column::new_column_with_type_size(self.type_size(), sel.len()));
@@ -1253,10 +1815,14 @@ impl Column {
                 destination.offsets.go_push(0);
             }
         }
-        for &row in sel {
-            destination.append_cell_by_cell(self, row);
-        }
+        destination.copy_rows_from(self, sel);
         destination
+    }
+
+    /// Selection used by Go `CopyReconstruct`. A full ascending selection
+    /// copies the original column in physical order.
+    pub fn copy_reconstruct_selection<'a>(&self, sel: Option<&'a [usize]>) -> Option<&'a [usize]> {
+        sel.filter(|sel| sel.len() != self.length || sel.windows(2).any(|pair| pair[1] < pair[0]))
     }
 
     /// Go `appendCellByCell`: append `src`'s cell at `row_idx` (value and
@@ -1285,13 +1851,35 @@ impl Column {
                 _ => self.data.go_extend_from_slice(cell),
             }
         } else {
-            let start = src.offsets[row_idx] as usize;
-            let end = src.offsets[row_idx + 1] as usize;
+            let start = src.offsets.at(row_idx) as usize;
+            let end = src.offsets.at(row_idx + 1) as usize;
             let data = src.data.read();
             self.data.go_extend_from_slice(&data[start..end]);
             self.offsets.go_push(self.data.len() as i64);
         }
         self.length += 1;
+    }
+
+    /// Uses the range copy when a row batch can keep its original capacities.
+    pub(crate) fn append_range_if_fits(&mut self, src: &Column, begin: usize, end: usize) -> bool {
+        let rows = end - begin;
+        let bitmap_bytes = self.calculate_len_delta_for_append_cell_n_times_for_null_bit_map(rows);
+        if bitmap_bytes > self.null_bitmap.capacity() - self.null_bitmap.len() {
+            return false;
+        }
+        let data_bytes = if src.is_fixed() {
+            rows * src.elem_buffer_len()
+        } else {
+            if rows > self.offsets.capacity() - self.offsets.len() {
+                return false;
+            }
+            (src.offsets.at(end) - src.offsets.at(begin)) as usize
+        };
+        if data_bytes > self.data.capacity() - self.data.len() {
+            return false;
+        }
+        self.append_range_from(src, begin, end);
+        true
     }
 
     /// Appends a contiguous physical row range without re-entering the cell
@@ -1308,12 +1896,7 @@ impl Column {
         let destination_end_row = destination_start_row
             .checked_add(rows)
             .expect("column row count overflow");
-        let null_bitmap_len = (destination_end_row + 7) >> 3;
-        // Go appends the bitmap a byte at a time (`appendNullBitmap`).
-        let more = null_bitmap_len.saturating_sub(self.null_bitmap.len());
-        for _ in 0..more {
-            self.null_bitmap.go_push(0);
-        }
+        extend_null_bitmap(&mut self.null_bitmap, destination_end_row);
         self.append_null_bitmap_range(src, begin, rows, destination_start_row);
         if src.is_fixed() {
             let elem_len = src.elem_buffer_len();
@@ -1325,28 +1908,77 @@ impl Column {
                 .expect("fixed column offset overflow");
             self.data.go_extend_from_slice(&src.data.read()[start..finish]);
         } else {
-            let source_start = src.offsets[begin] as usize;
-            let source_end = src.offsets[end] as usize;
+            let source_start = src.offsets.at(begin) as usize;
+            let source_end = src.offsets.at(end) as usize;
             let destination_start = self.data.len();
             self.data
                 .extend_from_slice(&src.data.read()[source_start..source_end]);
-            for &offset in &src.offsets[begin + 1..=end] {
-                self.offsets.go_push(
-                    (destination_start + (offset as usize - source_start))
-                        .try_into()
-                        .expect("column offset overflow"),
-                );
+            if rows == 1 {
+                self.offsets.go_push(self.data.len() as i64);
+            } else {
+                let delta = destination_start as i64 - source_start as i64;
+                self.offsets
+                    .append_row_offsets(src.offsets.slice(begin + 1..end + 1), delta);
             }
         }
         self.length = destination_end_row;
     }
 
+    /// Appends physical rows from this column's existing prefix.
+    pub(crate) fn append_own_range(&mut self, begin: usize, end: usize) {
+        assert!(begin <= end && end <= self.length);
+        if begin == end {
+            return;
+        }
+        let rows = end - begin;
+        let destination_end = self
+            .length
+            .checked_add(rows)
+            .expect("column row count overflow");
+        if self.is_fixed() {
+            let width = self.elem_buffer_len();
+            self.data.extend_from_within(begin * width..end * width);
+        } else {
+            let start = self.offsets.at(begin) as usize;
+            let finish = self.offsets.at(end) as usize;
+            let destination = self.data.len();
+            self.data.extend_from_within(start..finish);
+            if rows == 1 {
+                self.offsets.go_push(self.data.len() as i64);
+            } else {
+                let delta = destination as i64 - start as i64;
+                self.offsets.append_row_offsets_within(begin + 1..end + 1, delta);
+            }
+        }
+
+        extend_null_bitmap(&mut self.null_bitmap, destination_end);
+        if rows < 8 {
+            copy_bitmap_bits_within(&mut self.null_bitmap, begin..end, self.length);
+            self.length = destination_end;
+            return;
+        }
+        let head = (8 - self.length % 8) % 8;
+        copy_bitmap_bits_within(&mut self.null_bitmap, begin..begin + head, self.length);
+        let full_bytes = (rows - head) / 8;
+        if full_bytes != 0 {
+            // Once the destination is byte-aligned, all the source bits
+            // come from bytes before this split, even for a shifted copy.
+            let (source, destination) = self.null_bitmap.split_at_mut((self.length + head) / 8);
+            copy_bitmap_bytes(source, &mut destination[..full_bytes], begin + head);
+        }
+        let copied = head + full_bytes * 8;
+        copy_bitmap_bits_within(
+            &mut self.null_bitmap,
+            begin + copied..end,
+            self.length + copied,
+        );
+        self.length = destination_end;
+    }
+
     /// Appends `rows` source null bits at `begin` to the destination bitmap.
     ///
-    /// The common case has the same bit alignment in both columns. After the
-    /// short leading fragment, complete bytes can be copied directly instead
-    /// of calling `is_null` once per row. A bit-by-bit fallback keeps arbitrary
-    /// range alignment and the append semantics exact.
+    /// Handle the leading and trailing partial bytes individually and copy
+    /// complete destination bytes together, shifting source bits if needed.
     fn append_null_bitmap_range(
         &mut self,
         src: &Column,
@@ -1355,34 +1987,28 @@ impl Column {
         destination_start: usize,
     ) {
         debug_assert!(rows > 0);
-        let source_bit = begin & 7;
-        let destination_bit = destination_start & 7;
-        if source_bit != destination_bit {
-            for offset in 0..rows {
-                self.copy_null_bit(src, begin + offset, destination_start + offset);
+        if rows < 8 {
+            for index in 0..rows {
+                self.copy_null_bit(src, begin + index, destination_start + index);
             }
             return;
         }
-
-        let mut offset = 0;
-        if destination_bit != 0 {
-            let head = (8 - destination_bit).min(rows);
-            for index in 0..head {
-                self.copy_null_bit(src, begin + index, destination_start + index);
-            }
-            offset = head;
+        let head = (8 - destination_start % 8) % 8;
+        for index in 0..head {
+            self.copy_null_bit(src, begin + index, destination_start + index);
         }
 
-        let full_bytes = (rows - offset) / 8;
+        let full_bytes = (rows - head) / 8;
         if full_bytes > 0 {
-            let source_start = (begin + offset) >> 3;
-            let destination_start = (destination_start + offset) >> 3;
-            self.null_bitmap[destination_start..destination_start + full_bytes]
-                .copy_from_slice(&src.null_bitmap[source_start..source_start + full_bytes]);
-            offset += full_bytes * 8;
+            let byte_start = (destination_start + head) >> 3;
+            copy_bitmap_bytes(
+                &src.null_bitmap,
+                &mut self.null_bitmap[byte_start..byte_start + full_bytes],
+                begin + head,
+            );
         }
 
-        for index in offset..rows {
+        for index in head + full_bytes * 8..rows {
             self.copy_null_bit(src, begin + index, destination_start + index);
         }
     }
@@ -1436,20 +2062,17 @@ impl Column {
     /// Go `nullCount`: the number of null rows currently stored.
     #[must_use]
     pub fn null_count(&self) -> usize {
-        let mut cnt = 0;
-        let mut i = 0;
-        while i + 8 <= self.length {
-            // 0 is null and 1 is not null.
-            cnt += 8 - self.null_bitmap[i >> 3].count_ones() as usize;
-            i += 8;
+        let complete = self.length / 8;
+        let remainder = self.length % 8;
+        let mut not_null = self.null_bitmap[..complete]
+            .iter()
+            .map(|byte| byte.count_ones() as usize)
+            .sum::<usize>();
+        if remainder != 0 {
+            let mask = (1 << remainder) - 1;
+            not_null += (self.null_bitmap[complete] & mask).count_ones() as usize;
         }
-        while i < self.length {
-            if self.is_null(i) {
-                cnt += 1;
-            }
-            i += 1;
-        }
-        cnt
+        self.length - not_null
     }
 
     /// Go `MergeNulls`: the result row is not-null only when every input row
@@ -1463,7 +2086,7 @@ impl Column {
             );
         }
         for column in columns {
-            for (left, right) in self.null_bitmap.iter_mut().zip(&column.null_bitmap) {
+            for (left, right) in self.null_bitmap.iter_mut().zip(column.null_bitmap.iter()) {
                 *left &= *right;
             }
         }
@@ -1483,12 +2106,11 @@ impl Column {
         if self.length == 0 || self.is_fixed() {
             return false;
         }
-        if self.offsets[self.length] <= i64::from(u32::MAX) {
+        if self.offsets.at(self.length) <= i64::from(u32::MAX) {
             return false;
         }
-        self.offsets[..=self.length]
-            .windows(2)
-            .any(|pair| pair[1] - pair[0] > i64::from(u32::MAX))
+        let offsets = self.offsets.slice(0..self.length + 1);
+        (0..self.length).any(|row| offsets.at(row + 1) - offsets.at(row) > i64::from(u32::MAX))
     }
 
     /// Go `reconstruct`: compact this column in place so that row `n` becomes
@@ -1496,39 +2118,28 @@ impl Column {
     /// every caller (`Chunk.sel` filtering) produces; the compaction copies
     /// backwards over itself and relies on `dst <= src`.
     pub fn reconstruct(&mut self, sel: &[usize]) {
-        if self.is_fixed() {
-            let elem_len = self.elem_buffer_len();
-            for (dst, &src) in sel.iter().enumerate() {
-                let idx = dst >> 3;
-                let pos = dst & 7;
-                if self.is_null(src) {
-                    self.null_bitmap[idx] &= !(1u8 << pos);
+        self.reconstruct_selection(sel, selection_order_for_bitmap(sel));
+    }
+
+    /// Uses the ordering already checked by the chunk for its shared selection.
+    pub(crate) fn reconstruct_selection(&mut self, sel: &[usize], increasing: Option<bool>) {
+        if let [row] = sel {
+            self.reconstruct_one(*row);
+            return;
+        }
+        let wire = self.data.can_gather_wire_bytes();
+        let increasing = increasing.unwrap_or_else(|| wire && selection_is_strictly_increasing(sel));
+        if increasing && !sel.is_empty() {
+            let prefix = sel.last() == Some(&(sel.len() - 1));
+            if !prefix || !self.reconstruct_prefix(sel.len(), wire) {
+                if wire {
+                    self.reconstruct_frozen(sel);
                 } else {
-                    self.data
-                        .copy_within(src * elem_len..src * elem_len + elem_len, dst * elem_len);
-                    self.null_bitmap[idx] |= 1u8 << pos;
+                    self.reconstruct_in_place::<true>(sel);
                 }
             }
-            self.data.truncate(sel.len() * elem_len);
         } else {
-            let mut tail = 0usize;
-            for (dst, &src) in sel.iter().enumerate() {
-                let idx = dst >> 3;
-                let pos = dst & 7;
-                if self.is_null(src) {
-                    self.null_bitmap[idx] &= !(1u8 << pos);
-                    self.offsets[dst + 1] = tail as i64;
-                } else {
-                    let start = self.offsets[src] as usize;
-                    let end = self.offsets[src + 1] as usize;
-                    self.data.copy_within(start..end, tail);
-                    tail += end - start;
-                    self.offsets[dst + 1] = tail as i64;
-                    self.null_bitmap[idx] |= 1u8 << pos;
-                }
-            }
-            self.data.truncate(tail);
-            self.offsets.truncate(sel.len() + 1);
+            self.reconstruct_in_place::<false>(sel);
         }
         self.length = sel.len();
 
@@ -1539,6 +2150,244 @@ impl Column {
             let pos = sel.len() & 7;
             self.null_bitmap[idx] &= ((1u16 << pos) - 1) as u8;
         }
+    }
+
+    pub(crate) fn reconstruct_one(&mut self, row: usize) {
+        let present = self.null_bitmap.bit_is_set(row);
+        let range = if self.is_fixed() {
+            let width = self.elem_buffer_len();
+            // Go leaves the old destination bytes in a fixed-width NULL.
+            let source = if present { row * width } else { 0 };
+            source..source + width
+        } else {
+            let range = if present { self.var_byte_range(row) } else { 0..0 };
+            self.offsets.reconstruct_one(range.len() as i64);
+            range
+        };
+        self.data.reconstruct_one(range);
+        self.length = 1;
+        self.null_bitmap.set_prefix_end(1, u8::from(present));
+    }
+
+    fn reconstruct_in_place<const SORTED: bool>(&mut self, sel: &[usize]) {
+        let fixed = self.is_fixed();
+        let width = self.elem_buffer_len();
+        let has_values = sel.iter().any(|&row| !self.is_null(row));
+        let bitmap = &mut self.null_bitmap;
+        if fixed {
+            if has_values {
+                self.data.with_write(|data| {
+                    if width == 8 {
+                        let cells = data.as_chunks_mut::<8>().0;
+                        reconstruct_bitmap::<SORTED>(bitmap, sel, |dst, src, present| {
+                            if present {
+                                cells[dst] = cells[src];
+                            }
+                        });
+                        return;
+                    }
+                    reconstruct_bitmap::<SORTED>(bitmap, sel, |dst, src, present| {
+                        if present {
+                            data.copy_within(src * width..(src + 1) * width, dst * width);
+                        }
+                    });
+                });
+            }
+            self.data.truncate(sel.len() * width);
+        } else {
+            let mut tail = 0;
+            if has_values {
+                let offsets = self.offsets.make_owned();
+                self.data.with_write(|data| {
+                    reconstruct_bitmap::<SORTED>(bitmap, sel, |dst, src, present| {
+                        if present {
+                            let start = offsets[src] as usize;
+                            let end = offsets[src + 1] as usize;
+                            match end - start {
+                                8..=15 => copy_cell_ends_within::<8>(data, start..end, tail),
+                                16..=31 => copy_cell_ends_within::<16>(data, start..end, tail),
+                                _ => data.copy_within(start..end, tail),
+                            }
+                            tail += end - start;
+                        }
+                        offsets[dst + 1] = tail as i64;
+                    });
+                });
+            } else if !sel.is_empty() {
+                self.offsets.make_owned()[1..=sel.len()].fill(0);
+            }
+            self.data.truncate(tail);
+            self.offsets.truncate(sel.len() + 1);
+        }
+        if !has_values {
+            bitmap[..sel.len().div_ceil(8)].fill(0);
+        }
+    }
+
+    fn reconstruct_frozen(&mut self, sel: &[usize]) {
+        let first = sel[0];
+        let last = *sel.last().unwrap();
+        if last - first == sel.len() - 1 && self.reconstruct_frozen_variable_range(first, last + 1) {
+            return;
+        }
+        if sel.iter().all(|&row| self.is_null(row)) {
+            let data_len = if self.is_fixed() {
+                sel.len() * self.elem_buffer_len()
+            } else {
+                self.offsets.reconstruct_nulls(sel.len());
+                0
+            };
+            self.null_bitmap[..sel.len().div_ceil(8)].fill(0);
+            if !self.data.truncate_frozen_prefix(data_len) {
+                self.data.truncate(data_len);
+            }
+            return;
+        }
+        let capacity = self.data.capacity();
+        // Small dense outputs can use one backing allocation and the ordinary
+        // compaction loop. A gathered output might need to grow again for the tail.
+        if self.length <= 2048
+            && capacity <= 32 * 1024
+            && sel.len() >= self.length.div_ceil(2)
+        {
+            self.reconstruct_in_place::<true>(sel);
+            return;
+        }
+        let input = self.data.read();
+        let mut output = None;
+        let final_len = if self.is_fixed() {
+            let width = self.elem_buffer_len();
+            let end = sel.len() * width;
+            if width == 8 {
+                let mut bytes = input[..end].to_vec();
+                let cells = input.as_chunks::<8>().0;
+                let destinations = bytes.as_chunks_mut::<8>().0;
+                reconstruct_bitmap::<true>(&mut self.null_bitmap, sel, |dst, src, present| {
+                    if present {
+                        destinations[dst] = cells[src];
+                    }
+                });
+                output = Some(bytes);
+            } else {
+                reconstruct_bitmap::<true>(
+                    &mut self.null_bitmap,
+                    sel,
+                    |destination, source, present| {
+                        if present {
+                            // A fixed-width NULL in Go leaves its destination bytes intact.
+                            let output = output.get_or_insert_with(|| input[..end].to_vec());
+                            let start = source * width;
+                            output[destination * width..(destination + 1) * width]
+                                .copy_from_slice(&input[start..start + width]);
+                        }
+                    },
+                );
+            }
+            end
+        } else {
+            let mut offsets = Vec::with_capacity(self.offsets.capacity());
+            let source_offsets = self.offsets.as_slice();
+            offsets.push(source_offsets.at(0));
+            let mut tail = 0;
+            let estimated_bytes = input.len() / self.length * sel.len();
+            reconstruct_bitmap::<true>(
+                &mut self.null_bitmap,
+                sel,
+                |destination, source, present| {
+                    if present {
+                        // Go has already written the start offset at an unchanged row index.
+                        let start = if source == destination {
+                            offsets[destination]
+                        } else {
+                            source_offsets.at(source)
+                        } as usize;
+                        let end = source_offsets.at(source + 1) as usize;
+                        let cell = &input[start..end];
+                        let output = output.get_or_insert_with(|| {
+                            Vec::with_capacity(estimated_bytes.max(cell.len()))
+                        });
+                        let needed = tail + cell.len();
+                        if needed > output.capacity() {
+                            let grown = output.capacity().saturating_mul(2).min(capacity);
+                            output.reserve_exact(grown.max(needed) - tail);
+                        }
+                        output.extend_from_slice(cell);
+                        tail = output.len();
+                    }
+                    offsets.push(tail as i64);
+                },
+            );
+            self.offsets = offsets.into();
+            tail
+        };
+        drop(input);
+        if let Some(output) = output {
+            self.data.replace_with_gathered(output);
+        } else if !self.data.truncate_frozen_prefix(final_len) {
+            self.data.truncate(final_len);
+        }
+    }
+
+    fn reconstruct_frozen_variable_range(&mut self, first: usize, end: usize) -> bool {
+        if self.is_fixed() || self.offsets.at(0) != 0 {
+            return false;
+        }
+        let offsets = self.offsets.as_slice();
+        let start_byte = offsets.at(first);
+        let end_byte = offsets.at(end);
+        for row in first..end {
+            if self.is_null(row) && offsets.at(row) != offsets.at(row + 1) {
+                return false;
+            }
+        }
+        let mut output = ColumnOffsets::with_capacity(self.offsets.capacity());
+        output.append_with_delta(self.offsets.slice(first..end + 1), -start_byte);
+        for (dst, src) in (first..end).enumerate() {
+            let present = !self.is_null(src);
+            set_bitmap_bit(&mut self.null_bitmap, dst, present);
+        }
+        self.data.select_frozen_range(start_byte as usize..end_byte as usize);
+        self.offsets = output;
+        true
+    }
+
+    fn reconstruct_prefix(&mut self, rows: usize, wire: bool) -> bool {
+        if self.is_fixed() {
+            let data_len = rows * self.elem_buffer_len();
+            if wire {
+                return self.data.truncate_frozen_prefix(data_len);
+            }
+            self.data.truncate(data_len);
+            return true;
+        }
+        if self.offsets.at(0) != 0 {
+            return false;
+        }
+        let mut contains_value = false;
+        let offsets = self.offsets.as_slice();
+        for (group, &byte) in self.null_bitmap[..rows.div_ceil(8)].iter().enumerate() {
+            let first = group * 8;
+            let mask = u8::MAX >> (8 - (rows - first).min(8));
+            contains_value |= byte & mask != 0;
+            let mut nulls = !byte & mask;
+            while nulls != 0 {
+                let row = first + nulls.trailing_zeros() as usize;
+                // The compaction loop removes payload left behind by a NULL.
+                if offsets.at(row) != offsets.at(row + 1) {
+                    return false;
+                }
+                nulls &= nulls - 1;
+            }
+        }
+        let data_len = offsets.at(rows) as usize;
+        if !wire || !self.data.truncate_frozen_prefix(data_len) {
+            if wire && contains_value {
+                return false;
+            }
+            self.data.truncate(data_len);
+        }
+        self.offsets.truncate(rows + 1);
+        true
     }
 
     /// Go `appendMultiSameNullBitmap`: extend the bitmap by `num` rows that all
@@ -1565,7 +2414,7 @@ impl Column {
                 row_ids.push(row_id_fn(i));
             }
         }
-        self.copy_row_ids_from(src, &row_ids);
+        self.copy_row_ids_from(src, row_ids.iter().copied());
     }
 
     /// Append arbitrary source rows in one column-wide pass.
@@ -1574,12 +2423,16 @@ impl Column {
     /// time, and so does this, growing as Go's appends do; it borrows the
     /// source byte buffer once for the whole batch, keeping the copy-on-write
     /// fallback for shallow columns.
-    fn copy_row_ids_from(&mut self, src: &Column, row_ids: &[usize]) {
-        if row_ids.is_empty() {
+    pub(crate) fn copy_row_ids_from(
+        &mut self,
+        src: &Column,
+        row_ids: impl ExactSizeIterator<Item = usize> + Clone,
+    ) {
+        if row_ids.len() == 0 {
             return;
         }
         if std::ptr::eq(self, src) {
-            for &row in row_ids {
+            for row in row_ids {
                 self.append_cell_by_cell(src, row);
             }
             return;
@@ -1597,12 +2450,12 @@ impl Column {
             ..
         } = self;
         let appended = data.append_owned(|data| {
-            for &row in row_ids {
+            for row in row_ids.clone() {
                 append_null_bit(null_bitmap, *length, !src.is_null(row));
                 let (start, end) = if fixed {
                     (row * width, (row + 1) * width)
                 } else {
-                    (src.offsets[row] as usize, src.offsets[row + 1] as usize)
+                    (src.offsets.at(row) as usize, src.offsets.at(row + 1) as usize)
                 };
                 data.go_extend_from_slice(&source_data[start..end]);
                 if !fixed {
@@ -1616,7 +2469,7 @@ impl Column {
         }
 
         drop(source_data);
-        for &row in row_ids {
+        for row in row_ids {
             self.append_cell_by_cell(src, row);
         }
     }
@@ -1656,7 +2509,7 @@ impl Column {
                 let (start, end) = if fixed {
                     (row * width, (row + 1) * width)
                 } else {
-                    (src.offsets[row] as usize, src.offsets[row + 1] as usize)
+                    (src.offsets.at(row) as usize, src.offsets.at(row + 1) as usize)
                 };
                 data.go_extend_from_slice(&source_data[start..end]);
                 if !fixed {
@@ -1678,7 +2531,20 @@ impl Column {
     }
 
     pub(crate) fn copy_rows_from(&mut self, src: &Column, selected: &[usize]) {
-        self.copy_row_ids_from(src, selected);
+        self.copy_row_ids_from(src, selected.iter().copied());
+    }
+
+    pub(crate) fn copy_selected_rows_within(&mut self, selected: &[bool]) {
+        let original_length = self.length;
+        let mut begin = 0;
+        for run in selected.chunk_by(|left, right| left == right) {
+            let end = begin + run.len();
+            if run[0] {
+                assert!(end <= original_length);
+                self.append_own_range(begin, end);
+            }
+            begin = end;
+        }
     }
 
     /// Go `copySameOuterRows`' per-column body: append `num_rows` copies of the
@@ -1687,21 +2553,40 @@ impl Column {
     /// rows in the source being identical, so the run reads as `num_rows`
     /// repeats of the same value.
     pub(crate) fn copy_same_rows_from(&mut self, src: &Column, row_idx: usize, num_rows: usize) {
-        self.append_multi_same_null_bitmap(!src.is_null(row_idx), num_rows);
-        self.length += num_rows;
-        if src.is_fixed() {
-            let elem_len = src.elem_buffer_len();
-            let start = row_idx * elem_len;
-            let end = start + num_rows * elem_len;
-            self.data.extend_from_range(&src.data, start..end);
+        let (range, width) = src.same_rows_copy_span(row_idx, num_rows);
+        self.data.extend_from_range(&src.data, range);
+        self.finish_copy_same_rows(!src.is_null(row_idx), num_rows, width);
+    }
+
+    pub(crate) fn copy_same_rows_within(&mut self, row_idx: usize, num_rows: usize) {
+        let (range, width) = self.same_rows_copy_span(row_idx, num_rows);
+        self.data.extend_from_within(range);
+        self.finish_copy_same_rows(!self.is_null(row_idx), num_rows, width);
+    }
+
+    fn same_rows_copy_span(
+        &self,
+        row_idx: usize,
+        num_rows: usize,
+    ) -> (std::ops::Range<usize>, Option<i64>) {
+        if self.is_fixed() {
+            let width = self.elem_buffer_len();
+            (row_idx * width..(row_idx + num_rows) * width, None)
         } else {
-            let start = src.offsets[row_idx] as usize;
-            let end = src.offsets[row_idx + num_rows] as usize;
-            self.data.extend_from_range(&src.data, start..end);
-            let elem_len = src.offsets[row_idx + 1] - src.offsets[row_idx];
+            let start = self.offsets.at(row_idx);
+            let end = self.offsets.at(row_idx + num_rows);
+            let width = self.offsets.at(row_idx + 1) - start;
+            (start as usize..end as usize, Some(width))
+        }
+    }
+
+    fn finish_copy_same_rows(&mut self, not_null: bool, num_rows: usize, width: Option<i64>) {
+        self.append_multi_same_null_bitmap(not_null, num_rows);
+        self.length += num_rows;
+        if let Some(width) = width {
             for _ in 0..num_rows {
-                let last = *self.offsets.last().expect("var-len column keeps offset 0");
-                self.offsets.go_push(last + elem_len);
+                let last = self.offsets.at(self.offsets.len() - 1);
+                self.offsets.go_push(last + width);
             }
         }
     }
@@ -1725,14 +2610,14 @@ fn append_fixed_copies<const N: usize>(data: &mut Vec<u8>, cell: &[u8], times: u
 
 /// Repeats one variable-width cell, as Go's `AppendCellNTimes` appends the
 /// cell and then its end offset for each copy.
-fn append_variable_copies(data: &mut Vec<u8>, offsets: &mut Vec<i64>, cell: &[u8], times: usize) {
+fn append_variable_copies(data: &mut Vec<u8>, offsets: &mut ColumnOffsets, cell: &[u8], times: usize) {
     for _ in 0..times {
         data.go_extend_from_slice(cell);
         offsets.go_push(i64::try_from(data.len()).expect("column offset overflow"));
     }
 }
 
-fn append_null_bit(bitmap: &mut Vec<u8>, length: usize, not_null: bool) {
+fn append_null_bit(bitmap: &mut ColumnBuffer<u8>, length: usize, not_null: bool) {
     let index = length >> 3;
     if index >= bitmap.len() {
         bitmap.go_push(0);
@@ -1742,7 +2627,97 @@ fn append_null_bit(bitmap: &mut Vec<u8>, length: usize, not_null: bool) {
     }
 }
 
-fn append_null_run(bitmap: &mut Vec<u8>, length: usize, not_null: bool, num: usize) {
+fn copy_bitmap_bits_within(bitmap: &mut [u8], source: std::ops::Range<usize>, destination: usize) {
+    for (source, destination) in source.zip(destination..) {
+        let bit = (bitmap[source >> 3] >> (source & 7)) & 1;
+        let byte = &mut bitmap[destination >> 3];
+        let shift = destination & 7;
+        *byte = (*byte & !(1 << shift)) | (bit << shift);
+    }
+}
+
+#[inline]
+fn copy_cell_ends_within<const N: usize>(
+    bytes: &mut [u8],
+    source: std::ops::Range<usize>,
+    destination: usize,
+) {
+    // Read both ends before writing. A selected cell can overlap itself.
+    let first: [u8; N] = bytes[source.start..source.start + N].try_into().unwrap();
+    let last: [u8; N] = bytes[source.end - N..source.end].try_into().unwrap();
+    let end = destination + source.len();
+    bytes[destination..destination + N].copy_from_slice(&first);
+    bytes[end - N..end].copy_from_slice(&last);
+}
+
+fn extend_null_bitmap(bitmap: &mut ColumnBuffer<u8>, rows: usize) {
+    let needed = rows.div_ceil(8);
+    let additional = needed.saturating_sub(bitmap.len());
+    if additional > 1 && needed <= bitmap.capacity() {
+        bitmap.resize(needed, 0);
+    } else {
+        // Keep Go's one-byte-at-a-time allocation sizes on growth.
+        for _ in 0..additional {
+            bitmap.go_push(0);
+        }
+    }
+}
+
+fn copy_bitmap_bytes(source: &[u8], destination: &mut [u8], start_bit: usize) {
+    let byte = start_bit / 8;
+    let shift = start_bit % 8;
+    if shift == 0 {
+        destination.copy_from_slice(&source[byte..byte + destination.len()]);
+    } else {
+        let source = &source[byte..byte + destination.len() + 1];
+        for (out, pair) in destination.iter_mut().zip(source.windows(2)) {
+            *out = (pair[0] >> shift) | (pair[1] << (8 - shift));
+        }
+    }
+}
+
+fn selection_is_strictly_increasing(selection: &[usize]) -> bool {
+    selection.windows(2).all(|pair| pair[0] < pair[1])
+}
+
+pub(crate) fn selection_order_for_bitmap(selection: &[usize]) -> Option<bool> {
+    (selection.len() >= 8).then(|| selection_is_strictly_increasing(selection))
+}
+
+fn set_bitmap_bit(bitmap: &mut [u8], row: usize, not_null: bool) {
+    let byte = &mut bitmap[row >> 3];
+    let shift = row & 7;
+    *byte = (*byte & !(1 << shift)) | (u8::from(not_null) << shift);
+}
+
+#[inline]
+fn reconstruct_bitmap<const SORTED: bool>(
+    bitmap: &mut [u8],
+    selection: &[usize],
+    mut copy: impl FnMut(usize, usize, bool),
+) {
+    if SORTED {
+        // An earlier destination cannot be a later source in a strictly
+        // increasing selection. Accumulate one destination bitmap byte.
+        for (group, rows) in selection.chunks(8).enumerate() {
+            let mut bits = 0;
+            for (index, &source) in rows.iter().enumerate() {
+                let present = (bitmap[source >> 3] >> (source & 7)) & 1;
+                copy(group * 8 + index, source, present != 0);
+                bits |= present << index;
+            }
+            bitmap[group] = bits;
+        }
+    } else {
+        for (destination, &source) in selection.iter().enumerate() {
+            let present = bitmap[source >> 3] & (1 << (source & 7)) != 0;
+            copy(destination, source, present);
+            set_bitmap_bit(bitmap, destination, present);
+        }
+    }
+}
+
+fn append_null_run(bitmap: &mut ColumnBuffer<u8>, length: usize, not_null: bool, num: usize) {
     let num_new_bytes = ((length + num + 7) >> 3) - bitmap.len();
     let b = if not_null { 0xffu8 } else { 0u8 };
     for _ in 0..num_new_bytes {
@@ -1758,6 +2733,17 @@ fn append_null_run(bitmap: &mut Vec<u8>, length: usize, not_null: bool, num: usi
     let bit_mask = ((1u16 << (8 - num_redundant_bits)) as u8).wrapping_sub(1);
     let last = bitmap.len() - 1;
     bitmap[last] &= bit_mask;
+}
+
+#[inline]
+pub(crate) fn name_value_parts(cell: &[u8]) -> (&[u8], u64) {
+    if cell.is_empty() {
+        return (&[], 0);
+    }
+    let (value, name) = cell
+        .split_first_chunk::<8>()
+        .expect("a name/value cell carries its 8-byte value prefix");
+    (name, u64::from_ne_bytes(*value))
 }
 
 /// Go `AppendCellFromRawData`: append one cell from a join row's packed raw
@@ -1817,6 +2803,54 @@ pub fn append_cell_from_raw_data(
 #[path = "column_tests.rs"]
 mod tests;
 
+/// Append-only access to the byte payload of one variable-length column row.
+pub struct ByteRow<'a>(&'a mut Vec<u8>);
+
+impl ByteRow<'_> {
+    /// Appends a zero-initialized region and lets the caller fill it in place.
+    #[inline]
+    pub fn append_sized(&mut self, size: usize, write: impl FnOnce(&mut [u8])) {
+        let start = self.0.len();
+        self.reserve(size);
+        self.0.resize(start + size, 0);
+        write(&mut self.0[start..]);
+    }
+
+    #[inline]
+    pub fn reserve(&mut self, additional: usize) {
+        crate::go_append::go_grow(self.0, additional);
+    }
+
+    #[inline]
+    pub fn append(&mut self, bytes: &[u8]) {
+        match bytes {
+            [byte] => self.0.push(*byte),
+            [_, _] => self.0.extend_from_slice(bytes.first_chunk::<2>().unwrap()),
+            [_, _, _, _] => self.0.extend_from_slice(bytes.first_chunk::<4>().unwrap()),
+            [_, _, _, _, _, _, _, _] => self.0.extend_from_slice(bytes.first_chunk::<8>().unwrap()),
+            _ => self.0.extend_from_slice(bytes),
+        }
+    }
+
+    /// Appends exactly `width` bytes of the repeated nonempty pattern.
+    #[inline]
+    pub fn append_pattern(&mut self, pattern: &[u8], width: usize) {
+        assert!(!pattern.is_empty());
+        let start = self.0.len();
+        if let [byte] = pattern {
+            self.0.resize(start + width, *byte);
+            return;
+        }
+        self.0
+            .extend_from_slice(&pattern[..width.min(pattern.len())]);
+        while self.0.len() - start < width {
+            let written = self.0.len() - start;
+            let copy = written.min(width - written);
+            self.0.extend_from_within(start..start + copy);
+        }
+    }
+}
+
 /// See [`Column::raw_cells`].
 pub struct RawCells<'a> {
     column: &'a Column,
@@ -1824,24 +2858,188 @@ pub struct RawCells<'a> {
     fixed_len: Option<usize>,
 }
 
+/// The physical payloads of a variable-width column.
+pub struct VariableCells<'a> {
+    data: &'a [u8],
+    offsets: OffsetSlice<'a>,
+}
+
+impl<'a> VariableCells<'a> {
+    /// Borrows the payload of one physical row, including any NULL payload.
+    #[inline]
+    pub fn get(&self, row: usize) -> &'a [u8] {
+        &self.data[self.offsets.cell_range(row)]
+    }
+}
+
 impl RawCells<'_> {
+    /// Packed row presence bits, with the first row in the low bit.
+    #[inline]
+    pub fn not_null_bitmap(&self) -> &[u8] {
+        &self.column.null_bitmap
+    }
+
+    /// Returns the total byte length of the packed cell payload.
+    #[inline]
+    pub fn data_len(&self) -> usize {
+        self.data.len()
+    }
+
+    /// Whether the packed payload contains only ASCII bytes.
+    #[inline]
+    pub fn is_ascii(&self) -> bool {
+        self.data.is_ascii()
+    }
+
+    /// Views all packed cells of a fixed-width column.
+    pub fn fixed_cells<const N: usize>(&self) -> &[[u8; N]] {
+        assert_eq!(self.fixed_len, Some(N));
+        self.data.as_chunks::<N>().0
+    }
+
+    /// Borrows the packed payload once for a loop over variable-width cells.
+    pub fn variable_cells<'a>(&'a self) -> impl Fn(usize) -> &'a [u8] + 'a {
+        assert!(self.fixed_len.is_none());
+        let cells = VariableCells {
+            data: &self.data,
+            offsets: self.column.offsets.as_slice(),
+        };
+        move |row| cells.get(row)
+    }
+
+    /// Writes storage sizes for an unfiltered variable-width column.
+    /// Null rows may still have bytes in the packed payload.
+    pub fn write_variable_lengths<const SCALE: i64>(&self, values: &mut [[u8; 8]], bitmap: &[u8]) {
+        assert!(self.fixed_len.is_none());
+        match self.column.offsets.as_slice() {
+            OffsetSlice::Words(offsets) => {
+                for (out, [start, end]) in values.iter_mut().zip(offsets.array_windows()) {
+                    *out = (end - start).wrapping_mul(SCALE).to_ne_bytes();
+                }
+            }
+            OffsetSlice::Wire(offsets) => {
+                for (out, [start, end]) in values.iter_mut().zip(offsets.array_windows()) {
+                    let len = i64::from_ne_bytes(*end) - i64::from_ne_bytes(*start);
+                    *out = len.wrapping_mul(SCALE).to_ne_bytes();
+                }
+            }
+        }
+        for (block, &present) in values.chunks_mut(8).zip(bitmap) {
+            if present != u8::MAX {
+                for (i, out) in block.iter_mut().enumerate() {
+                    if present & (1 << i) == 0 {
+                        *out = [0; 8];
+                    }
+                }
+            }
+        }
+    }
+
+    /// Borrows the payload when all variable-length rows have the given width.
+    pub fn packed_byte_rows(&self, width: usize) -> Option<&[u8]> {
+        if self.fixed_len.is_some() {
+            return None;
+        }
+        let mut offsets = self.column.offsets.iter();
+        let start = usize::try_from(offsets.next()?).ok()?;
+        let end = start.checked_add(width.checked_mul(self.column.rows())?)?;
+        let mut expected = start;
+        if offsets.len() != self.column.rows()
+            || !offsets.all(|offset| {
+                expected += width;
+                offset as usize == expected
+            })
+        {
+            return None;
+        }
+        self.data.get(start..end)
+    }
+
     /// Go `GetRaw` for one cell.
     #[inline]
     pub fn get(&self, row: usize) -> &[u8] {
-        let (start, end) = match self.fixed_len {
-            Some(len) => (row * len, row * len + len),
-            None if self.column.offsets.is_empty() => (0, 0),
-            None => (
-                self.column.offsets[row] as usize,
-                self.column.offsets[row + 1] as usize,
-            ),
+        let range = match self.fixed_len {
+            Some(len) => row * len..row * len + len,
+            None => self.column.var_byte_range(row),
         };
-        &self.data[start..end]
+        &self.data[range]
     }
 
     /// Go `IsNull` for one cell.
     #[inline]
     pub fn is_null(&self, row: usize) -> bool {
         self.column.is_null(row)
+    }
+
+    /// Go `GetJSON().GetElemDepth()` on a present JSON cell.
+    #[inline]
+    pub fn json_depth(&self, row: usize) -> Result<usize, tidb_datatype::BinaryJSONError> {
+        let range = self.column.var_byte_range(row);
+        let cell = &self.data[range.clone()];
+        assert!(!cell.is_empty(), "a JSON cell always carries its type code");
+        BinaryJSON::encoded_element_depth(cell, || self.json_layout(range))
+    }
+
+    /// Go `GetJSON().GetElemDepth()` for the SQL `JSON_DEPTH` expression.
+    #[doc(hidden)]
+    #[inline]
+    pub fn json_depth_for_sql(&self, row: usize) -> Result<usize, tidb_datatype::BinaryJSONError> {
+        let range = self.column.var_byte_range(row);
+        let cell = &self.data[range.clone()];
+        match cell.first() {
+            Some(&tidb_datatype::JSON_TYPE_CODE_ARRAY | &tidb_datatype::JSON_TYPE_CODE_OBJECT) => {
+                if cell.len() >= Column::MIN_RETAINED_CELL_BYTES {
+                    self.column.data.cached_json_depth(&self.data, range)
+                } else {
+                    BinaryJSON::get_encoded_elem_depth(cell, || None)
+                }
+            }
+            Some(_) => Ok(1),
+            None => Err(tidb_datatype::BinaryJSONError::InvalidBinary),
+        }
+    }
+
+    /// Go `GetJSON().GetKeys()` on a present JSON object. Other types
+    /// produce the SQL NULL result without reading their payload.
+    #[inline]
+    pub fn json_object_keys(
+        &self,
+        row: usize,
+    ) -> Result<Option<BinaryJSON>, tidb_datatype::BinaryJSONError> {
+        let range = self.column.var_byte_range(row);
+        let cell = &self.data[range.clone()];
+        let code = *cell
+            .first()
+            .expect("a JSON cell always carries its type code");
+        if code != tidb_datatype::JSON_TYPE_CODE_OBJECT {
+            return Ok(None);
+        }
+        BinaryJSON::encoded_keys(cell, self.json_layout(range)).map(Some)
+    }
+
+    /// Gets layout metadata recorded for the cell, without validating its payload.
+    #[inline]
+    pub fn known_json_cell_layout(&self, row: usize) -> Option<tidb_datatype::EncodedJSONLayout> {
+        self.column.known_json_layout(row)
+    }
+
+    /// Gets the checked layout of a present JSON cell, reusing a layout already
+    /// recorded for the same range in the column when available.
+    #[inline]
+    pub fn checked_json_cell_layout(
+        &self,
+        row: usize,
+    ) -> tidb_datatype::EncodedJSONLayout {
+        let range = self.column.var_byte_range(row);
+        self.json_layout(range.clone())
+            .unwrap_or_else(|| BinaryJSON::check_encoded_layout(&self.data[range]))
+    }
+
+    fn json_layout(&self, range: std::ops::Range<usize>) -> Option<tidb_datatype::EncodedJSONLayout> {
+        if range.len() < Column::MIN_RETAINED_CELL_BYTES {
+            self.column.data.known_json_layout(&range)
+        } else {
+            self.column.data.cached_json_layout(range)
+        }
     }
 }

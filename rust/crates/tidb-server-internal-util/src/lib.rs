@@ -90,9 +90,10 @@ pub fn parse_length_encoded_bytes(
 /// Ported from Go `ParseNullTermString` (`pkg/server/internal/util`). When no
 /// terminator is present, the prefix is empty and the remainder is the entire
 /// input, matching the Go helper's `(nil, input)` result.
+#[inline]
 #[must_use]
 pub fn parse_null_term_string(bytes: &[u8]) -> (&[u8], &[u8]) {
-    match bytes.iter().position(|byte| *byte == 0) {
+    match memchr::memchr(0, bytes) {
         Some(off) => (&bytes[..off], &bytes[off + 1..]),
         None => (&[], bytes),
     }

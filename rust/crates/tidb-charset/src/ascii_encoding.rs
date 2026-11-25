@@ -83,7 +83,7 @@ impl AsciiEncoding {
 
     /// Returns true only when every input octet is seven-bit ASCII.
     pub fn is_valid(self, src: &[u8]) -> bool {
-        src.iter().all(|byte| *byte <= 0x7f)
+        src.is_ascii()
     }
 
     /// Visits source groups using the exact ASCII/UTF-8 lead-byte grouping

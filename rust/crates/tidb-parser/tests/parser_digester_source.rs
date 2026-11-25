@@ -116,6 +116,48 @@ fn test_normalize_redact() {
 }
 
 #[test]
+fn normalization_uses_go_scanner_literals() {
+    let marker_rows = [
+        (
+            r"SELECT NULL, NuLl, `null`, 'null', x.null, \N",
+            r"select `‹null›` , `‹null›` , `null` , ‹null› , `x` . `‹null›` , ‹\n›",
+        ),
+        (
+            r"SELECT 'r\na\0bb\b\r\t\Z', '\%\_', 'Aa''Bb', '😀\É'",
+            "select ‹r\na\0bb\x08\r\t\x1a› , ‹\\%\\_› , ‹aa'bb› , ‹😀é›",
+        ),
+        (
+            "SELECT '‹Ä›Aa‹››‹', 'a‚b‣c', '‹', '›'",
+            "select ‹‹‹ä››aa‹‹››››‹‹› , ‹a‚b‣c› , ‹‹‹› , ‹›››",
+        ),
+        (
+            "SELECT '*', '?', count('*'), count('?'), 'INDEx', 'STRAIGHT_JOIN'",
+            "select * , ? , count ( * ) , count ( ? ) , ‹index› , ‹join›",
+        ),
+    ];
+    for (sql, expected) in marker_rows {
+        assert_eq!(normalize(sql, RedactMode::Marker), expected, "{sql}");
+    }
+    let enabled_rows = [
+        (
+            r#"SELECT @`a-b`, @"A-B", @'A-B', @`A``B`, @@GLOBAL.`SQL_MODE`, @@Local."Var""#,
+            "select @a-b , @a-b , @a-b , @a`b , @@global.sql_mode , @@local.var",
+        ),
+        (
+            "SELECT a, b FROM t ORDER BY 1, 2.5, 3e0, 0x32, b'10'",
+            "select `a` , `b` from `t` order by 1 , ...",
+        ),
+        (
+            "SELECT /*+ TEST(x) */ x FROM t USE INDEX(')')",
+            "select `x` from `t` )",
+        ),
+    ];
+    for (sql, expected) in enabled_rows {
+        assert_eq!(normalize(sql, RedactMode::Enabled), expected, "{sql}");
+    }
+}
+
+#[test]
 fn test_normalize_keep_hint() {
     let rows = [
         ("select _utf8mb4'123'", "select (_charset) ?"),

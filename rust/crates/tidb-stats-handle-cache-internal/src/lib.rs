@@ -24,6 +24,11 @@ pub trait StatsCacheInner: Send + Sync {
     /// Go `Get`.
     fn get(&self, table_id: i64) -> Option<Arc<Table>>;
 
+    /// Go `Get` when the caller only uses the presence flag.
+    fn contains_table(&self, table_id: i64) -> bool {
+        self.get(table_id).is_some()
+    }
+
     /// Go `Put`.
     fn put(&self, table_id: i64, table: Arc<Table>) -> bool;
 
@@ -41,6 +46,18 @@ pub trait StatsCacheInner: Send + Sync {
 
     /// Go `Copy`.
     fn copy(&self) -> Box<dyn StatsCacheInner>;
+
+    /// Copies the cache and applies a batch to the copy before publication.
+    fn copy_and_update(&self, tables: &[Arc<Table>], deleted_ids: &[i64]) -> Box<dyn StatsCacheInner> {
+        let copy = self.copy();
+        for table in tables {
+            copy.put(table.hist_coll.physical_id, Arc::clone(table));
+        }
+        for id in deleted_ids {
+            copy.del(*id);
+        }
+        copy
+    }
 
     /// Go `SetCapacity`.
     fn set_capacity(&self, capacity: i64);

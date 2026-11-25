@@ -24,10 +24,11 @@ use std::any::Any;
 
 use tidb_chunk::chunk::Chunk;
 use tidb_chunk::row::Row;
-use tidb_datatype::FieldType;
+use tidb_datatype::{FieldType, FieldTypeCode, MyDecimal, RoundMode, MAX_DECIMAL_SCALE};
 use tidb_driver_error::ExecError;
 use tidb_expr::expression::Expression;
 use tidb_exprctx::Columns;
+use tidb_serialization::Cursor;
 
 use crate::spill_deserialize_helper::DeserializeHelper;
 use crate::spill_serialize_helper::SerializeHelper;
@@ -57,6 +58,8 @@ pub const DEF_DURATION_SIZE: i64 = 16;
 /// only the function that allocated it reads (Go casts the
 /// `unsafe.Pointer` back to its own struct).
 pub type PartialResult = Box<dyn Any + Send>;
+
+pub(crate) type PartialResultString = smallvec::SmallVec<[u8; 64]>;
 
 /// Go's cast of a `PartialResult` to the struct its function allocated.
 pub(crate) fn partial<T: 'static>(pr: &mut PartialResult) -> &mut T {
@@ -165,6 +168,22 @@ pub struct BaseAggFunc {
     pub ret_tp: FieldType,
 }
 
+impl BaseAggFunc {
+    /// Returns the first argument's column index for a directly stored integer.
+    pub(crate) fn integer_column_index(&self) -> Option<usize> {
+        let Expression::Column(column) = self.args.first()? else {
+            return None;
+        };
+        match column.ret_type.as_ref()?.code() {
+            FieldTypeCode::Tiny | FieldTypeCode::Short | FieldTypeCode::Int24
+            | FieldTypeCode::Long | FieldTypeCode::LongLong | FieldTypeCode::Year => {
+                usize::try_from(column.index).ok()
+            }
+            _ => None,
+        }
+    }
+}
+
 /// Go `SlidingWindowAggFunc`: a window function that updates its partial
 /// result as the frame slides instead of recomputing it.
 pub trait SlidingWindowAggFunc {
@@ -190,16 +209,61 @@ pub(crate) fn deserialize_partial_result_common(
     deserialize_func_impl: impl Fn(&mut DeserializeHelper<'_>) -> Option<(PartialResult, i64)>,
 ) -> (Vec<PartialResult>, i64) {
     let mut total_mem_delta = 0;
-    let mut spill_helper = DeserializeHelper::new(src, ordinal, src.num_rows());
-    let mut partial_results = Vec::with_capacity(src.num_rows());
-    while let Some((pr, mem_delta)) = deserialize_func_impl(&mut spill_helper) {
-        partial_results.push(pr);
-        total_mem_delta += mem_delta;
+    let rows = src.num_rows();
+    if rows == 0 {
+        return (Vec::new(), 0);
     }
-    if partial_results.len() != src.num_rows() {
-        panic!("Fail to deserialize partial result");
-    }
+    let mut spill_helper = DeserializeHelper::new(src.column_ref(ordinal), rows);
+    let partial_results = (0..rows)
+        .map(|_| {
+            let (pr, mem_delta) =
+                deserialize_func_impl(&mut spill_helper).expect("Fail to deserialize partial result");
+            total_mem_delta += mem_delta;
+            pr
+        })
+        .collect();
     (partial_results, total_mem_delta)
+}
+
+/// Restores a column of typed states with a fixed charge per row.
+pub(crate) fn deserialize_typed_partial_results<T: Any + Send>(
+    src: &Chunk,
+    ordinal: usize,
+    row_charge: i64,
+    decode: impl Fn(&mut Cursor<'_>) -> T,
+) -> (Vec<PartialResult>, i64) {
+    let rows = src.num_rows();
+    if rows == 0 {
+        return (Vec::new(), 0);
+    }
+    let column = src.column_ref(ordinal);
+    let Some(cells) = column.try_borrow_stable().and_then(|column| column.try_variable_cells()) else {
+        return deserialize_partial_result_common(src, ordinal, |helper| {
+            Some((Box::new(helper.read_row(&decode)?), row_charge))
+        });
+    };
+    // As in Go, selections supply the logical count and cells stay in physical order.
+    let states = (0..rows)
+        .map(|row| Box::new(decode(&mut Cursor::new(cells.get(row)))) as PartialResult)
+        .collect();
+    (states, rows as i64 * row_charge)
+}
+
+/// Rounds the stored decimal in place and appends its native chunk value.
+pub(crate) fn append_rounded_decimal(
+    base: &BaseAggFunc,
+    value: &mut MyDecimal,
+    output: &mut Chunk,
+) -> Result<(), ExecError> {
+    let scale = match base.ret_tp.decimal() {
+        -1 => MAX_DECIMAL_SCALE as i32,
+        scale => scale as i32,
+    };
+    if let Some(error) = value.round_in_place(scale, RoundMode::HalfUp) {
+        return Err(ExecError::internal(format!("{error:?}")));
+    }
+    output.append_my_decimal(base.ordinal, value);
+    Ok(())
 }
 
 /// Go `expr.GetType(ctx)` of an aggregate argument.

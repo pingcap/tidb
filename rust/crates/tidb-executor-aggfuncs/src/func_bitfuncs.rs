@@ -70,14 +70,50 @@ impl BaseBitAggFunc {
     }
 
     /// Folds every non-NULL row of the group into `p` with `op`.
-    fn update(&self, sctx: &AggFuncUpdateContext, rows_in_group: &[Row<'_>], pr: &mut PartialResult, op: fn(u64, u64) -> u64) -> Result<i64, ExecError> {
+    fn update(&self, sctx: &AggFuncUpdateContext, rows_in_group: &[Row<'_>], pr: &mut PartialResult, op: impl Fn(u64, u64) -> u64) -> Result<i64, ExecError> {
         let p = partial::<PartialResult4BitFunc>(pr);
-        for row in rows_in_group {
+        if let Some(index) = self.base.integer_column_index() {
+            for rows in rows_in_group.chunk_by(|a, b| {
+                a.chunk().map(std::ptr::from_ref) == b.chunk().map(std::ptr::from_ref)
+            }) {
+                if !Self::fold_packed_column(rows, index, p, &op) {
+                    self.update_rows(sctx, rows, p, &op)?;
+                }
+            }
+        } else {
+            self.update_rows(sctx, rows_in_group, p, &op)?;
+        }
+        Ok(0)
+    }
+
+    fn fold_packed_column(rows: &[Row<'_>], index: usize, p: &mut u64, op: impl Fn(u64, u64) -> u64) -> bool {
+        let Some(chunk) = rows[0].chunk().filter(|chunk| index < chunk.num_cols()) else {
+            return false;
+        };
+        let column = chunk.column(index);
+        if column.type_size() != 8 {
+            return false;
+        }
+        // Eval on an integer column reads these same bits. Borrow its backing
+        // data once for these rows, including aliased chunks.
+        let cells = column.raw_cells();
+        let values = cells.fixed_cells::<8>();
+        for row in rows {
+            let i = row.idx();
+            if !cells.is_null(i) {
+                *p = op(*p, u64::from_ne_bytes(values[i]));
+            }
+        }
+        true
+    }
+
+    fn update_rows(&self, sctx: &AggFuncUpdateContext, rows: &[Row<'_>], p: &mut u64, op: impl Fn(u64, u64) -> u64) -> Result<(), ExecError> {
+        for row in rows {
             if let Some(input_value) = self.eval_int(sctx, *row)? {
                 *p = op(*p, input_value);
             }
         }
-        Ok(0)
+        Ok(())
     }
 }
 
@@ -147,8 +183,15 @@ impl SlidingWindowAggFunc for BitXorUint64 {
     fn slide<'a>(&self, sctx: &AggFuncUpdateContext, get_row: &dyn Fn(u64) -> Result<Row<'a>, ExecError>, last_start: u64, last_end: u64, shift_start: u64, shift_end: u64, pr: &mut PartialResult) -> Result<(), ExecError> {
         let rows = (0..shift_start).map(|i| last_start.wrapping_add(i)).chain((0..shift_end).map(|i| last_end.wrapping_add(i)));
         let p = partial::<PartialResult4BitFunc>(pr);
+        let column = self.0.base.integer_column_index();
         for row in rows {
-            if let Some(input_value) = self.0.eval_int(sctx, get_row(row)?)? {
+            let row = get_row(row)?;
+            if column.is_some_and(|index| {
+                BaseBitAggFunc::fold_packed_column(std::slice::from_ref(&row), index, p, Self::op)
+            }) {
+                continue;
+            }
+            if let Some(input_value) = self.0.eval_int(sctx, row)? {
                 *p ^= input_value;
             }
         }

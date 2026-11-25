@@ -40,8 +40,8 @@ const DAG_BYTES: &[u8] = &[0x18, 0, 0x20, 0, 0x40, 0, 0x5a, 0];
 fn range(low: Vec<Datum>, high: Vec<Datum>, low_exclude: bool, high_exclude: bool) -> Range {
     Range {
         collators: vec![tidb_charset::Collation::Binary; low.len()],
-        low_val: low,
-        high_val: high,
+        low_val: low.into(),
+        high_val: high.into(),
         low_exclude,
         high_exclude,
     }
@@ -656,11 +656,12 @@ fn go_partition_table_scan_keeps_partition_ids_next_to_ranges() {
     // `pkg/distsql/request_builder.go:311-314` keep TiFlash partition
     // ranges separate from ordinary `KeyRanges`.  Preserve source order and
     // bytes at the request boundary; region splitting is checked separately.
+    use std::sync::Arc;
     use tidb_distsql::KvRequestBuilder;
-    use tidb_txnkv::PartitionIdAndRanges;
+    use tidb_txnkv::{CancelHandle, PartitionIdAndRanges, TransportBinding};
 
     let mut builder = KvRequestBuilder::new();
-    builder.set_partition_id_and_ranges(vec![
+    let partitions = vec![
         PartitionIdAndRanges {
             id: 41,
             key_ranges: vec![KeyRange {
@@ -675,19 +676,42 @@ fn go_partition_table_scan_keeps_partition_ids_next_to_ranges() {
                 end_key: vec![5, 6].into(),
             }],
         },
-    ]);
+    ];
+    let partition_storage = partitions.as_ptr();
+    builder.set_partition_id_and_ranges(partitions);
 
-    let request = builder.build().expect("partition request build");
-    assert_eq!(request.partition_id_and_ranges.len(), 2);
-    assert_eq!(request.partition_id_and_ranges[0].id, 41);
+    let request = builder
+        .build_transport_request(Arc::new(CancelHandle::default()))
+        .expect("partition request build");
+    assert!(request.shared_metadata_for_send().is_err());
+    let bound = request.bind(TransportBinding::new()).expect("bind request");
+    let source_bound = request
+        .bind_with_request_source(
+            TransportBinding::new(),
+            RequestSource {
+                source_type: "stats".to_owned(),
+                ..RequestSource::default()
+            },
+        )
+        .expect("bind request with source");
+    assert!(std::ptr::eq(request.metadata(), bound.metadata()));
+    assert_eq!(bound.metadata().request_source.source_type, "");
+    assert_eq!(source_bound.metadata().request_source.source_type, "stats");
     assert_eq!(
-        request.partition_id_and_ranges[0].key_ranges[0].start_key,
-        vec![1, 2]
+        source_bound.metadata().partition_table_ranges().as_ptr(),
+        partition_storage
     );
-    assert_eq!(request.partition_id_and_ranges[1].id, 42);
-    assert_eq!(
-        request.partition_id_and_ranges[1].key_ranges[0].end_key,
-        vec![5, 6]
-    );
-    assert!(request.key_ranges.is_some());
+
+    let worker_metadata = bound.shared_metadata_for_send().expect("bound metadata");
+    assert!(std::ptr::eq(bound.metadata(), worker_metadata.as_ref()));
+    drop((request, bound, source_bound));
+
+    let partitions = worker_metadata.partition_table_ranges();
+    assert_eq!(partitions.as_ptr(), partition_storage);
+    assert_eq!(partitions.len(), 2);
+    assert_eq!(partitions[0].id, 41);
+    assert_eq!(partitions[0].key_ranges[0].start_key, vec![1, 2]);
+    assert_eq!(partitions[1].id, 42);
+    assert_eq!(partitions[1].key_ranges[0].end_key, vec![5, 6]);
+    assert!(worker_metadata.key_ranges.is_some());
 }

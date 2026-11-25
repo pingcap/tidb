@@ -278,39 +278,33 @@ impl<S: tikv_client::PdClient + 'static> tidb_txnkv::MppClient for MPPClient<S> 
     fn construct_mpp_tasks(
         &self,
         ctx: &Arc<dyn MppContext>,
-        request: &MppBuildTasksRequest,
+        request: MppBuildTasksRequest,
         kv_context: &tidb_txnkv::StatementKvContext,
         dispatch_policy: tidb_tiflashcompute::DispatchPolicy,
         replica_read: tidb_tiflash::ReplicaRead,
         append_warning: &mut dyn FnMut(String),
     ) -> Result<Vec<MppStoreTask>, MppError> {
         let refuse = |reason: String| MppError::Other(format!("tiflash mpp: {reason}"));
-        let to_pairs = |ranges: &[tidb_txnkv::KeyRange]| -> Vec<(tidb_txnkv::Key, tidb_txnkv::Key)> {
-            ranges
-                .iter()
-                .map(|range| (range.start_key.clone(), range.end_key.clone()))
-                .collect()
-        };
         // Go `ConstructMPPTasks`: a partitioned request builds a range set
         // per partition; otherwise its key ranges must be set.
         let (ranges_for_each_physical_table, partition_ids): (Vec<_>, Vec<_>) =
             if request.partition_id_and_ranges.is_empty() {
-                let Some(key_ranges) = request.key_ranges.as_ref() else {
+                let Some(key_ranges) = request.key_ranges else {
                     return Err(refuse("KeyRanges in MPPBuildTasksRequest is nil".to_owned()));
                 };
-                (vec![to_pairs(key_ranges)], Vec::new())
+                (vec![crate::batch_cop_tasks::Ranges::Logical(key_ranges)], Vec::new())
             } else {
                 request
                     .partition_id_and_ranges
-                    .iter()
-                    .map(|partition| (to_pairs(&partition.key_ranges), partition.id))
+                    .into_iter()
+                    .map(|partition| (crate::batch_cop_tasks::Ranges::Logical(partition.key_ranges), partition.id))
                     .unzip()
             };
         let (tasks, warnings) = self
             .store
             .block_on(crate::batch_cop_tasks::build_batch_cop_tasks(
                 &self.store,
-                &ranges_for_each_physical_table,
+                ranges_for_each_physical_table,
                 &partition_ids,
                 ctx,
                 true,
@@ -441,38 +435,359 @@ impl<S: tikv_client::PdClient + 'static> tidb_txnkv::MppClient for MPPClient<S> 
     }
 }
 
-fn mpp_region_infos(
-    ranges: &[(tidb_txnkv::Key, tidb_txnkv::Key)],
-    regions: &[tikv_client::RegionWithLeader],
-) -> Vec<tidb_proto::coprocessor::RegionInfo> {
-    regions
+fn mpp_ranges_are_monotonic(ranges: &[tidb_proto::CoprocessorKeyRange]) -> bool {
+    ranges.windows(2).all(|pair| {
+        let (range, next) = (&pair[0], &pair[1]);
+        range.start <= next.start
+            && (next.end.is_empty() || (!range.end.is_empty() && range.end <= next.end))
+    })
+}
+
+fn mpp_region_info(
+    ranges: &[tidb_proto::CoprocessorKeyRange],
+    region: &tikv_client::RegionWithLeader,
+    monotonic: bool,
+) -> Option<tidb_proto::coprocessor::RegionInfo> {
+    let region_start = region.region.start_key.as_slice();
+    let region_end = region.region.end_key.as_slice();
+    let candidates = if monotonic {
+        let first =
+            ranges.partition_point(|range| !range.end.is_empty() && range.end.as_ref() <= region_start);
+        let remaining = &ranges[first..];
+        if region_end.is_empty() {
+            remaining
+        } else {
+            &remaining[..remaining.partition_point(|range| range.start.as_ref() < region_end)]
+        }
+    } else {
+        ranges
+    };
+    let ranges: Vec<_> = candidates
         .iter()
-        .filter_map(|region| {
-            let ranges: Vec<_> = ranges
-                .iter()
-                .filter_map(|(start, end)| {
-                    let region_start = region.region.start_key.as_slice();
-                    let region_end = &region.region.end_key;
-                    let start = start.as_slice().max(region_start).to_vec();
-                    let end = match (end.is_empty(), region_end.is_empty()) {
-                        (true, _) => region_end.clone(),
-                        (_, true) => end.as_slice().to_vec(),
-                        _ => end.as_slice().min(region_end.as_slice()).to_vec(),
-                    };
-                    (end.is_empty() || start < end)
-                        .then_some(tidb_proto::coprocessor::KeyRange { start, end })
-                })
-                .collect();
-            let epoch = region.region.region_epoch.clone().unwrap_or_default();
-            (!ranges.is_empty()).then_some(tidb_proto::coprocessor::RegionInfo {
-                region_id: region.region.id,
-                region_epoch: Some(tidb_proto::coprocessor::RegionEpoch {
-                    conf_ver: epoch.conf_ver,
-                    version: epoch.version,
-                }),
-                ranges,
+        .filter_map(|range| {
+            let clip_start = range.start.as_ref() < region_start;
+            let clip_end = !region_end.is_empty()
+                && (range.end.is_empty() || range.end.as_ref() > region_end);
+            let start = if clip_start { region_start } else { range.start.as_ref() };
+            let end = if clip_end { region_end } else { range.end.as_ref() };
+            if !end.is_empty() && start >= end {
+                return None;
+            }
+            Some(tidb_proto::CoprocessorKeyRange {
+                start: if clip_start {
+                    prost::bytes::Bytes::copy_from_slice(start)
+                } else {
+                    range.start.clone()
+                },
+                end: if clip_end {
+                    prost::bytes::Bytes::copy_from_slice(end)
+                } else {
+                    range.end.clone()
+                },
             })
         })
+        .collect();
+    (!ranges.is_empty()).then(|| make_mpp_region_info(region, ranges))
+}
+
+fn make_mpp_region_info(
+    region: &tikv_client::RegionWithLeader,
+    ranges: Vec<tidb_proto::CoprocessorKeyRange>,
+) -> tidb_proto::coprocessor::RegionInfo {
+    let epoch = region.region.region_epoch.as_ref();
+    tidb_proto::coprocessor::RegionInfo {
+        region_id: region.region.id,
+        region_epoch: Some(tidb_proto::coprocessor::RegionEpoch {
+            conf_ver: epoch.map_or(0, |epoch| epoch.conf_ver),
+            version: epoch.map_or(0, |epoch| epoch.version),
+        }),
+        ranges,
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum RegionRangePlan {
+    Native(tidb_proto::coprocessor::RegionInfo),
+    Whole,
+    Window {
+        indices: std::ops::Range<usize>,
+        clip_start: bool,
+        clip_end: bool,
+    },
+}
+
+impl RegionRangePlan {
+    /// Go `ranges.RefAt(0).StartKey`, borrowed before range buffers are moved.
+    pub(crate) fn first_start<'a>(
+        &'a self,
+        region: &'a tikv_client::RegionWithLeader,
+        input: &'a crate::batch_cop_tasks::Ranges,
+    ) -> &'a [u8] {
+        match self {
+            Self::Native(info) => info.ranges.first().map_or(&[], |range| range.start.as_ref()),
+            Self::Whole => input.logical().iter().find(|range| valid_mpp_range(range))
+                .map_or(&[], |range| range.start_key.as_slice()),
+            Self::Window { indices, clip_start, .. } => {
+                if *clip_start {
+                    &region.region.start_key
+                } else {
+                    input.logical()[indices.start].start_key.as_slice()
+                }
+            }
+        }
+    }
+
+    /// Finish only after routing and balancing settle on a single output
+    /// task for each located region. Unclipped endpoints are each used once.
+    pub(crate) fn materialize(
+        self,
+        region: &mut tikv_client::RegionWithLeader,
+        input: &mut crate::batch_cop_tasks::Ranges,
+    ) -> tidb_proto::coprocessor::RegionInfo {
+        let (indices, clip_start, clip_end) = match self {
+            Self::Native(info) => return info,
+            Self::Whole => {
+                let input = std::mem::take(input.logical_mut());
+                let mut ranges = Vec::with_capacity(input.len());
+                ranges.extend(input.into_iter().filter(valid_mpp_range).map(move_mpp_range));
+                return make_mpp_region_info(region, ranges);
+            }
+            Self::Window { indices, clip_start, clip_end } => (indices, clip_start, clip_end),
+        };
+        if let crate::batch_cop_tasks::Ranges::Ordered { remaining, index } = input {
+            let skip = indices.start - *index;
+            if skip > 0 {
+                remaining.nth(skip - 1);
+            }
+            *index = indices.end - usize::from(clip_end);
+            let mut ranges = Vec::with_capacity(indices.len());
+            ranges.extend(remaining.by_ref().take(*index - indices.start).map(move_mpp_range));
+            if clip_end {
+                let start = std::mem::take(&mut remaining.as_mut_slice()[0].start_key);
+                ranges.push(tidb_proto::CoprocessorKeyRange {
+                    start: start.into_bytes().into(),
+                    end: std::mem::take(&mut region.region.end_key).into(),
+                });
+            }
+            if clip_start {
+                ranges[0].start = std::mem::take(&mut region.region.start_key).into();
+            }
+            return make_mpp_region_info(region, ranges);
+        }
+        let input = input.logical_mut();
+        if !clip_start && !clip_end && indices.start == 0 && indices.end == input.len() {
+            let ranges = std::mem::take(input)
+                .into_iter()
+                .map(move_mpp_range)
+                .collect();
+            return make_mpp_region_info(region, ranges);
+        }
+        let ranges = &mut input[indices];
+        let clipped_start = clip_start.then(|| std::mem::take(&mut region.region.start_key).into());
+        let clipped_end = clip_end.then(|| std::mem::take(&mut region.region.end_key).into());
+        let ranges = if !clip_start && !clip_end {
+            ranges.iter_mut().map(|range| move_mpp_range(std::mem::take(range))).collect()
+        } else {
+            let last = ranges.len() - 1;
+            let mut ranges: Vec<_> = ranges
+                .iter_mut()
+                .enumerate()
+                .map(|(index, range)| tidb_proto::CoprocessorKeyRange {
+                    start: if index == 0 && clip_start {
+                        prost::bytes::Bytes::new()
+                    } else {
+                        std::mem::take(&mut range.start_key).into_bytes().into()
+                    },
+                    end: if index == last && clip_end {
+                        prost::bytes::Bytes::new()
+                    } else {
+                        std::mem::take(&mut range.end_key).into_bytes().into()
+                    },
+                })
+                .collect();
+            if let Some(start) = clipped_start {
+                ranges[0].start = start;
+            }
+            if let Some(end) = clipped_end {
+                ranges[last].end = end;
+            }
+            ranges
+        };
+        make_mpp_region_info(region, ranges)
+    }
+
+}
+
+/// An in-order group can move its ranges from an owning iterator. A range
+/// crossing a region end remains at the head for subsequent fragments.
+pub(crate) fn mpp_windows_are_ordered<'a>(
+    plans: impl Iterator<Item = &'a RegionRangePlan>,
+) -> bool {
+    let mut next = 0;
+    for plan in plans {
+        let RegionRangePlan::Window { indices, clip_end, .. } = plan else {
+            return false;
+        };
+        if indices.start < next {
+            return false;
+        }
+        next = indices.end - usize::from(*clip_end);
+    }
+    next != 0
+}
+
+fn move_mpp_range(range: tidb_txnkv::KeyRange) -> tidb_proto::CoprocessorKeyRange {
+    tidb_proto::CoprocessorKeyRange {
+        start: range.start_key.into_bytes().into(),
+        end: range.end_key.into_bytes().into(),
+    }
+}
+
+fn valid_mpp_range(range: &tidb_txnkv::KeyRange) -> bool {
+    range.end_key.is_empty() || range.start_key < range.end_key
+}
+
+fn has_disjoint_mpp_regions(regions: &[tikv_client::RegionWithLeader]) -> bool {
+    let mut previous_end: Option<&[u8]> = None;
+    for region in regions {
+        let start = region.region.start_key.as_slice();
+        let end = region.region.end_key.as_slice();
+        if previous_end.is_some_and(|previous| previous.is_empty() || previous > start)
+            || (!end.is_empty() && start >= end)
+        {
+            return false;
+        }
+        previous_end = Some(end);
+    }
+    true
+}
+
+/// Consumes complete ranges in key order and validates each one as it passes
+/// the cursor. A clipped range stays at the cursor until its end is reached.
+fn advance_mpp_window(
+    ranges: &[tidb_txnkv::KeyRange],
+    cursor: &mut usize,
+    limit: Option<&[u8]>,
+) -> Option<()> {
+    while let Some(range) = ranges.get(*cursor) {
+        if limit.is_some_and(|key| range.end_key.is_empty() || range.end_key.as_slice() > key) {
+            break;
+        }
+        if !valid_mpp_range(range) {
+            return None;
+        }
+        if *cursor > 0 {
+            let previous_end = &ranges[*cursor - 1].end_key;
+            if previous_end.is_empty() || *previous_end > range.start_key {
+                return None;
+            }
+        }
+        *cursor += 1;
+    }
+    Some(())
+}
+
+fn plan_mpp_windows(
+    ranges: &[tidb_txnkv::KeyRange],
+    regions: &[tikv_client::RegionWithLeader],
+) -> Option<Vec<Option<RegionRangePlan>>> {
+    if !has_disjoint_mpp_regions(regions) {
+        return None;
+    }
+    let mut cursor = 0;
+    let mut plans = Vec::with_capacity(regions.len());
+    for region in regions {
+        let lower = region.region.start_key.as_slice();
+        let upper = region.region.end_key.as_slice();
+        if !lower.is_empty() {
+            advance_mpp_window(ranges, &mut cursor, Some(lower))?;
+        }
+        let first = cursor;
+        advance_mpp_window(ranges, &mut cursor, (!upper.is_empty()).then_some(upper))?;
+        let clip_end = ranges.get(cursor).is_some_and(|range| range.start_key.as_slice() < upper);
+        let end = cursor + usize::from(clip_end);
+        plans.push((first < end).then(|| RegionRangePlan::Window {
+            indices: first..end,
+            clip_start: ranges[first].start_key.as_slice() < lower,
+            clip_end,
+        }));
+    }
+    // An out-of-order range after the last region may intersect an earlier
+    // one. Validate the tail before any tentative plan can escape.
+    advance_mpp_window(ranges, &mut cursor, None)?;
+    Some(plans)
+}
+
+pub(crate) fn plan_mpp_regions(
+    input: &crate::batch_cop_tasks::Ranges,
+    mut regions: Vec<tikv_client::RegionWithLeader>,
+) -> Vec<crate::batch_cop_tasks::LocatedRegion> {
+    use crate::batch_cop_tasks::{LocatedRegion, Ranges};
+    let ranges = match input {
+        Ranges::Logical(ranges) => ranges,
+        Ranges::Native(ranges) => return plan_native_mpp_regions(ranges, regions),
+        Ranges::Ordered { .. } => unreachable!("materialization follows planning"),
+    };
+    if let [region] = regions.as_slice() {
+        if region.region.start_key.is_empty() && region.region.end_key.is_empty() {
+            return if ranges.iter().any(valid_mpp_range) {
+                vec![LocatedRegion {
+                    region: regions.pop().unwrap(),
+                    info: RegionRangePlan::Whole,
+                    partition_index: 0,
+                }]
+            } else {
+                Vec::new()
+            };
+        }
+    }
+    if let Some(plans) = plan_mpp_windows(ranges, &regions) {
+        let mut tasks = Vec::with_capacity(regions.len());
+        for (region, info) in regions.into_iter().zip(plans) {
+            if let Some(info) = info {
+                tasks.push(LocatedRegion { region, info, partition_index: 0 });
+            }
+        }
+        return tasks;
+    }
+    let native = crate::key_ranges::key_ranges_to_proto(ranges.iter().map(|range| {
+        (range.start_key.as_slice(), range.end_key.as_slice())
+    }));
+    plan_native_mpp_regions(&native, regions)
+}
+
+fn plan_native_mpp_regions(
+    ranges: &[tidb_proto::CoprocessorKeyRange],
+    regions: Vec<tikv_client::RegionWithLeader>,
+) -> Vec<crate::batch_cop_tasks::LocatedRegion> {
+    let monotonic = mpp_ranges_are_monotonic(ranges);
+    plan_in_order(regions, |region| {
+        mpp_region_info(ranges, region, monotonic).map(RegionRangePlan::Native)
+    })
+}
+
+fn plan_in_order(
+    regions: Vec<tikv_client::RegionWithLeader>,
+    mut plan: impl FnMut(&tikv_client::RegionWithLeader) -> Option<RegionRangePlan>,
+) -> Vec<crate::batch_cop_tasks::LocatedRegion> {
+    let mut tasks = Vec::with_capacity(regions.len());
+    for region in regions {
+        if let Some(info) = plan(&region) {
+            tasks.push(crate::batch_cop_tasks::LocatedRegion { region, info, partition_index: 0 });
+        }
+    }
+    tasks
+}
+
+#[cfg(test)]
+fn mpp_region_infos(
+    ranges: &[tidb_proto::CoprocessorKeyRange],
+    regions: &[tikv_client::RegionWithLeader],
+) -> Vec<tidb_proto::coprocessor::RegionInfo> {
+    let monotonic = mpp_ranges_are_monotonic(ranges);
+    regions
+        .iter()
+        .filter_map(|region| mpp_region_info(ranges, region, monotonic))
         .collect()
 }
 
@@ -481,36 +796,30 @@ fn mpp_region_infos(
 /// ctx `kv_context`.
 pub(crate) fn split_key_ranges_by_locations<S: tikv_client::PdClient>(
     store: &TikvStore<S>,
-    ranges: &[(tidb_txnkv::Key, tidb_txnkv::Key)],
+    ranges: &crate::batch_cop_tasks::Ranges,
     memory: &dyn MppContext,
     kv_context: &tidb_txnkv::StatementKvContext,
 ) -> Result<Vec<crate::batch_cop_tasks::LocatedRegion>, String> {
+    use crate::batch_cop_tasks::Ranges;
     use crate::cop_store::NativeCopStore;
     if ranges.is_empty() {
-        // No range lies in any region.
         return Ok(Vec::new());
     }
     mpp_memory_error(memory).map_err(|error| error.to_string())?;
-    let keys = ranges
-        .iter()
-        .map(|(start, end)| (start.as_slice().to_vec(), end.as_slice().to_vec()))
-        .collect::<Vec<_>>();
-    let regions = store
-        .locate(&keys, kv_context)
-        .map_err(|error| error.to_string())?;
-    Ok(regions
-        .into_iter()
-        .filter_map(|region| {
-            let info = mpp_region_infos(ranges, std::slice::from_ref(&region))
-                .into_iter()
-                .next()?;
-            Some(crate::batch_cop_tasks::LocatedRegion {
-                region,
-                info,
-                partition_index: 0,
-            })
-        })
-        .collect())
+    let regions = match ranges {
+        Ranges::Logical(ranges) => {
+            let mut keys = ranges.iter().map(|range| {
+                (range.start_key.as_slice(), range.end_key.as_slice())
+            });
+            store.locate(&mut keys, kv_context)
+        }
+        Ranges::Native(ranges) => {
+            let mut keys = ranges.iter().map(|range| (range.start.as_ref(), range.end.as_ref()));
+            store.locate(&mut keys, kv_context)
+        }
+        Ranges::Ordered { .. } => unreachable!("materialization follows region lookup"),
+    }.map_err(|error| error.to_string())?;
+    Ok(plan_mpp_regions(ranges, regions))
 }
 
 /// Go `filterAliveStoresHelper`: the stores the failed-store prober has not
@@ -1216,7 +1525,7 @@ mod dispatch_context_tests {
                 meta: Some(TaskMeta::default()),
                 regions: vec![tidb_proto::coprocessor::RegionInfo {
                     ranges: vec![tidb_proto::coprocessor::KeyRange {
-                        start: b"a".to_vec(), end: b"b".to_vec(),
+                        start: b"a".to_vec().into(), end: b"b".to_vec().into(),
                     }], ..Default::default()
                 }],
                 ..Default::default()
@@ -1225,8 +1534,8 @@ mod dispatch_context_tests {
         let meta = request.meta.unwrap();
         assert_eq!(meta.api_version(), tidb_proto::kvrpcpb::ApiVersion::V2);
         assert_eq!(meta.keyspace, Some(tidb_proto::mpp::task_meta::Keyspace::KeyspaceId(7)));
-        assert_eq!(request.regions[0].ranges[0].start, b"x\x00\x00\x07a");
-        assert_eq!(request.regions[0].ranges[0].end, b"x\x00\x00\x07b");
+        assert_eq!(request.regions[0].ranges[0].start.as_ref(), b"x\x00\x00\x07a");
+        assert_eq!(request.regions[0].ranges[0].end.as_ref(), b"x\x00\x00\x07b");
     }
 
     #[test]
@@ -1659,11 +1968,12 @@ mod mpp_read_batch_tests {
             ..Default::default()
         }
     }
-    fn ranges() -> Vec<(tidb_txnkv::Key, tidb_txnkv::Key)> {
-        vec![
-            (b"b".to_vec().into(), b"c".to_vec().into()),
-            (b"x".to_vec().into(), b"z".to_vec().into()),
-        ]
+    fn native_range(start: &'static [u8], end: &'static [u8]) -> tidb_proto::CoprocessorKeyRange {
+        tidb_proto::CoprocessorKeyRange { start: start.into(), end: end.into() }
+    }
+
+    fn ranges() -> Vec<tidb_proto::CoprocessorKeyRange> {
+        vec![native_range(b"b", b"c"), native_range(b"x", b"z")]
     }
 
     #[test]
@@ -1917,11 +2227,11 @@ mod mpp_read_batch_tests {
             infos[0]
                 .ranges
                 .iter()
-                .map(|r| (r.start.clone(), r.end.clone()))
+                .map(|r| (r.start.as_ref(), r.end.as_ref()))
                 .collect::<Vec<_>>(),
             vec![
-                (b"b".to_vec(), b"c".to_vec()),
-                (b"x".to_vec(), b"z".to_vec())
+                (b"b".as_slice(), b"c".as_slice()),
+                (b"x".as_slice(), b"z".as_slice())
             ]
         );
     }
@@ -2306,10 +2616,7 @@ mod mpp_read_batch_tests {
 
     #[test]
     fn exact_ranges_clip_each_region_and_preserve_infinite_end() {
-        let ranges = vec![
-            (b"b".to_vec().into(), b"c".to_vec().into()),
-            (b"x".to_vec().into(), Vec::<u8>::new().into()),
-        ];
+        let ranges = vec![native_range(b"b", b"c"), native_range(b"x", b"")];
         let infos = mpp_region_infos(
             &ranges,
             &[
@@ -2322,10 +2629,87 @@ mod mpp_read_batch_tests {
             infos.iter().map(|r| r.region_id).collect::<Vec<_>>(),
             vec![1, 2, 3]
         );
-        assert_eq!(infos[0].ranges[0].end, b"c");
-        assert_eq!(infos[1].ranges[0].start, b"x");
-        assert_eq!(infos[2].ranges[0].start, b"z");
+        assert_eq!(infos[0].ranges[0].end.as_ref(), b"c");
+        assert_eq!(infos[1].ranges[0].start.as_ref(), b"x");
+        assert_eq!(infos[2].ranges[0].start.as_ref(), b"z");
         assert!(infos[2].ranges[0].end.is_empty());
+    }
+
+    #[test]
+    fn range_assignment_preserves_order_when_ends_are_not_monotonic() {
+        let ranges = vec![native_range(b"a", b"z"), native_range(b"c", b"g"), native_range(b"p", b"q")];
+        let info = mpp_region_infos(&ranges, &[region(1, b"b", b"t")]);
+        let assigned: Vec<_> = info[0]
+            .ranges
+            .iter()
+            .map(|range| (range.start.as_ref(), range.end.as_ref()))
+            .collect();
+        assert_eq!(assigned, [(b"b".as_slice(), b"t".as_slice()), (b"c", b"g"), (b"p", b"q")]);
+    }
+
+    #[test]
+    fn owned_mpp_range_keeps_unchanged_keys_when_clipped() {
+        let start = b"a".to_vec();
+        let end = b"z".to_vec();
+        let (start_ptr, end_ptr) = (start.as_ptr(), end.as_ptr());
+        let mut ranges = crate::batch_cop_tasks::Ranges::Logical(vec![
+            tidb_txnkv::KeyRange::new(start.into(), end.into()),
+        ]);
+        let regions = vec![region(1, b"", b"m"), region(2, b"m", b"")];
+        let first_plan = plan_mpp_regions(&ranges, regions.clone());
+        drop(first_plan); // A routing retry can rebuild the plan without consuming keys.
+        let mut plan = plan_mpp_regions(&ranges, regions);
+        let mut right = plan.pop().unwrap();
+        let mut left = plan.pop().unwrap();
+        let right = right.info.materialize(&mut right.region, &mut ranges);
+        let left = left.info.materialize(&mut left.region, &mut ranges);
+        drop(ranges);
+        assert_eq!(left.ranges[0].start.as_ptr(), start_ptr);
+        assert_eq!(left.ranges[0].end.as_ref(), b"m");
+        assert_eq!(right.ranges[0].start.as_ref(), b"m");
+        assert_eq!(right.ranges[0].end.as_ptr(), end_ptr);
+    }
+
+    #[test]
+    fn out_of_order_range_after_the_last_window_is_still_assigned() {
+        let keys = [(b"a", b"b"), (b"x", b"y"), (b"c", b"d")];
+        let mut input = crate::batch_cop_tasks::Ranges::Logical(
+            keys.iter()
+                .map(|(start, end)| tidb_txnkv::KeyRange::new(start.as_slice().into(), end.as_slice().into()))
+                .collect(),
+        );
+        let region = region(1, b"", b"m");
+        let expected = mpp_region_infos(
+            &keys.map(|(start, end)| native_range(start, end)),
+            std::slice::from_ref(&region),
+        );
+        let actual: Vec<_> = plan_mpp_regions(&input, vec![region])
+            .into_iter()
+            .map(|mut plan| plan.info.materialize(&mut plan.region, &mut input))
+            .collect();
+        assert_eq!(actual, expected);
+        assert_eq!(actual[0].ranges.len(), 2);
+    }
+
+    #[test]
+    fn ordered_materialization_moves_a_range_crossing_multiple_regions() {
+        use crate::batch_cop_tasks::Ranges;
+
+        let start = b"a".to_vec();
+        let end = b"z".to_vec();
+        let (start_ptr, end_ptr) = (start.as_ptr(), end.as_ptr());
+        let mut input = Ranges::Logical(vec![tidb_txnkv::KeyRange::new(start.into(), end.into())]);
+        let plans = plan_mpp_regions(&input, vec![
+            region(1, b"", b"g"), region(2, b"g", b"p"), region(3, b"p", b""),
+        ]);
+        input.use_ordered_materialization(plans.iter().map(|plan| &plan.info));
+        assert!(matches!(&input, Ranges::Ordered { .. }));
+        let regions: Vec<_> = plans.into_iter()
+            .map(|mut plan| plan.info.materialize(&mut plan.region, &mut input))
+            .collect();
+        assert_eq!(regions[0].ranges[0].start.as_ptr(), start_ptr);
+        assert_eq!(regions[1].ranges[0], native_range(b"g", b"p"));
+        assert_eq!(regions[2].ranges[0].end.as_ptr(), end_ptr);
     }
 
     /// Go `buildBatchCopTasks`' `SplitKeyRangesByLocations`: every region the
@@ -2338,16 +2722,15 @@ mod mpp_read_batch_tests {
             cluster.region_manager(),
             &[b"m".to_vec(), b"t".to_vec()],
         );
-        let ranges = vec![
-            (b"b".to_vec().into(), b"c".to_vec().into()),
-            (b"p".to_vec().into(), b"x".to_vec().into()),
-        ];
+        let mut ranges = crate::batch_cop_tasks::Ranges::Native(vec![
+            native_range(b"b", b"c"), native_range(b"p", b"x"),
+        ]);
         let memory = tidb_variable::mem_quota::StatementMemory::default();
         let kv_context = tidb_txnkv::StatementKvContext::default();
         let infos = split_key_ranges_by_locations(&store, &ranges, &memory, &kv_context)
             .unwrap()
             .into_iter()
-            .map(|lo| lo.info)
+            .map(|mut lo| lo.info.materialize(&mut lo.region, &mut ranges))
             .collect::<Vec<_>>();
         assert_eq!(
             infos.iter().map(|info| info.region_id).collect::<Vec<_>>(),
@@ -2370,7 +2753,7 @@ mod mpp_read_batch_tests {
             split_key_ranges_by_locations(&store, &ranges, &memory, &kv_context)
             .unwrap()
             .into_iter()
-            .map(|lo| lo.info)
+            .map(|mut lo| lo.info.materialize(&mut lo.region, &mut ranges))
             .collect::<Vec<_>>(),
             infos
         );

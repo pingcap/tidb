@@ -221,6 +221,63 @@ fn test_cache_update() {
 }
 
 #[test]
+fn rescheduling_keeps_the_insertion_side_of_equal_trigger_times() {
+    let now = GoTime::from_unix(1_700_000_000, 0).in_location(&utc());
+    let mut timers = [
+        ("t1", "1m"),
+        ("t2", "2m"),
+        ("t3", "3m"),
+        ("t4", "3m"),
+        ("t5", "4m"),
+        ("t6", "5m"),
+    ]
+    .map(|(id, interval)| new_test_timer(id, interval, now.clone()));
+    let mut cache = TimersCache::new();
+    assert!(cache.partial_batch_update_timers(&timers));
+
+    timers[5].spec.sched_policy_expr = "3m".to_owned();
+    timers[5].version += 1;
+    assert!(cache.update_timer(&timers[5]));
+    assert_eq!(cache.sorted, ["t1", "t2", "t3", "t4", "t6", "t5"]);
+
+    cache.update_next_try_trigger_time("t1", now.add(3 * MINUTE));
+    assert_eq!(cache.sorted, ["t2", "t1", "t3", "t4", "t6", "t5"]);
+
+    timers[4].spec.sched_policy_expr = "2m".to_owned();
+    timers[4].version += 1;
+    assert!(cache.update_timer(&timers[4]));
+    assert_eq!(cache.sorted, ["t2", "t5", "t1", "t3", "t4", "t6"]);
+}
+
+#[test]
+fn reschedule_finds_an_equal_time_timer_after_its_index_shifts() {
+    let now = GoTime::from_unix(1_700_000_000, 0).in_location(&utc());
+    let mut timers = [
+        ("t1", "2m"),
+        ("t2", "3m"),
+        ("t3", "3m"),
+        ("t4", "3m"),
+        ("t5", "4m"),
+        ("t6", "5m"),
+        ("t7", "6m"),
+        ("t8", "7m"),
+    ]
+    .map(|(id, interval)| new_test_timer(id, interval, now.clone()));
+    let mut cache = TimersCache::new();
+    assert!(cache.partial_batch_update_timers(&timers));
+
+    for timer in &mut timers[5..] {
+        timer.spec.sched_policy_expr = "1m".to_owned();
+        timer.version += 1;
+        assert!(cache.update_timer(timer));
+    }
+    assert_eq!(cache.sorted, ["t6", "t7", "t8", "t1", "t2", "t3", "t4", "t5"]);
+
+    cache.update_next_try_trigger_time("t3", now.add(8 * MINUTE));
+    assert_eq!(cache.sorted, ["t6", "t7", "t8", "t1", "t2", "t4", "t5", "t3"]);
+}
+
+#[test]
 fn test_cache_sort() {
     let now = GoTime::now().in_location(&utc());
     let now_for_func = now.clone();

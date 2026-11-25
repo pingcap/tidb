@@ -22,59 +22,60 @@
 
 use std::sync::atomic::{AtomicU32, Ordering};
 
+use zerocopy::FromZeros;
+
 const SEGMENT_WIDTH: usize = 32;
 const SEGMENT_WIDTH_POWER: u32 = 5;
 const BIT_MASK: u32 = 0x8000_0000;
+const INLINE_SEGMENTS: usize = 8;
 
 fn segment_len(bit_len: isize) -> isize {
     bit_len.wrapping_add(SEGMENT_WIDTH as isize - 1) >> SEGMENT_WIDTH_POWER
 }
 
-fn new_segments(segment_len: isize) -> Vec<AtomicU32> {
-    let segment_len = usize::try_from(segment_len).expect("bitmap segment length is negative");
-    let mut segments = Vec::with_capacity(segment_len);
-    for _ in 0..segment_len {
-        segments.push(AtomicU32::new(0));
-    }
-    segments
-}
-
-/// A static-length bitmap which is thread-safe on setting.
-///
-/// It is implemented using CAS, as atomic bitwise operation is not supported by
-/// Go yet (see <https://github.com/golang/go/issues/24244>). CAS operation is
-/// narrowed down to `u32` instead of longer types like `u64`, to reduce
-/// probability of racing.
+/// A fixed-length bitmap that uses 32-bit compare-and-swap for concurrent sets.
 pub struct ConcurrentBitmap {
+    // The first eight segments stay inline. The vector holds any remaining
+    // segments. Reset retains the allocated counts even when the bitmap shrinks.
     segments: Vec<AtomicU32>,
     bit_len: isize,
+    inline: [AtomicU32; INLINE_SEGMENTS],
+    inline_len: usize,
 }
 
 impl ConcurrentBitmap {
     /// Initializes a `ConcurrentBitmap` which can store `bit_len` of bits.
     pub fn new(bit_len: isize) -> Self {
-        let segments = new_segments(segment_len(bit_len));
-        Self { segments, bit_len }
+        let count =
+            usize::try_from(segment_len(bit_len)).expect("bitmap segment length is negative");
+        Self {
+            segments: AtomicU32::new_vec_zeroed(count.saturating_sub(INLINE_SEGMENTS))
+                .expect("bitmap allocation failed"),
+            bit_len,
+            inline: [const { AtomicU32::new(0) }; INLINE_SEGMENTS],
+            inline_len: count.min(INLINE_SEGMENTS),
+        }
     }
 
     /// Cleans the bitmap if the length is suitable, otherwise renewing one.
     pub fn reset(&mut self, bit_len: isize) {
-        let segment_len = segment_len(bit_len);
-        if segment_len <= self.segments.len() as isize {
-            for seg in &self.segments {
-                seg.store(0, Ordering::Relaxed);
+        let retained = self.segments.len() + self.inline_len;
+        if segment_len(bit_len) <= retained as isize {
+            for seg in &mut self.segments {
+                *seg.get_mut() = 0;
             }
+            self.inline = [const { AtomicU32::new(0) }; INLINE_SEGMENTS];
             self.bit_len = bit_len;
         } else {
-            self.segments = new_segments(segment_len);
-            self.bit_len = bit_len;
+            *self = Self::new(bit_len);
         }
     }
 
-    /// Returns size of this bitmap in bytes.
+    /// Returns Go's memory accounting for the bitmap, including retained segments.
     pub fn bytes_consumed(&self) -> i64 {
-        std::mem::size_of::<ConcurrentBitmap>() as i64
-            + (SEGMENT_WIDTH / 8 * self.segments.capacity()) as i64
+        // Go's bitmap header consists of its three-word slice and the bit count.
+        (4 * size_of::<usize>() + (SEGMENT_WIDTH / 8) * (self.segments.len() + self.inline_len))
+            as i64
     }
 
     /// Sets the bit on `bit_index` to be 1 (`bit_index` starts from 0).
@@ -86,7 +87,12 @@ impl ConcurrentBitmap {
             return false;
         }
 
-        let segment = &self.segments[(bit_index >> SEGMENT_WIDTH_POWER) as usize];
+        let index = (bit_index >> SEGMENT_WIDTH_POWER) as usize;
+        let segment = if index < INLINE_SEGMENTS {
+            &self.inline[index]
+        } else {
+            &self.segments[index - INLINE_SEGMENTS]
+        };
         let mask = BIT_MASK >> (bit_index % SEGMENT_WIDTH as isize) as u32;
         // Repeatedly observe whether the bit is already set, and try to set it
         // based on that observation.
@@ -111,14 +117,14 @@ impl ConcurrentBitmap {
     /// A `bit_index` bigger than the initialized bit length is ignored. This
     /// version is concurrent-unsafe; the caller must ensure the write happens on
     /// a single thread, which `&mut self` enforces.
+    #[inline]
     pub fn unsafe_set(&mut self, bit_index: isize) {
         if bit_index < 0 || bit_index >= self.bit_len {
             return;
         }
 
         let mask = BIT_MASK >> (bit_index % SEGMENT_WIDTH as isize) as u32;
-        let seg = self.segments[(bit_index >> SEGMENT_WIDTH_POWER) as usize].get_mut();
-        *seg |= mask;
+        *self.segment_mut(bit_index) |= mask;
     }
 
     /// Returns whether the bit on `bit_index` is set (`bit_index` starts from 0).
@@ -126,24 +132,46 @@ impl ConcurrentBitmap {
     /// A `bit_index` bigger than the initialized bit length returns false. The
     /// exclusive receiver enforces the source method's non-concurrent access
     /// contract.
+    #[inline]
     pub fn unsafe_is_set(&mut self, bit_index: isize) -> bool {
         if bit_index < 0 || bit_index >= self.bit_len {
             return false;
         }
 
         let mask = BIT_MASK >> (bit_index % SEGMENT_WIDTH as isize) as u32;
-        *self.segments[(bit_index >> SEGMENT_WIDTH_POWER) as usize].get_mut() & mask != 0
+        *self.segment_mut(bit_index) & mask != 0
+    }
+
+    fn segment_mut(&mut self, bit_index: isize) -> &mut u32 {
+        let index = (bit_index >> SEGMENT_WIDTH_POWER) as usize;
+        if index < INLINE_SEGMENTS {
+            self.inline[index].get_mut()
+        } else {
+            self.segments[index - INLINE_SEGMENTS].get_mut()
+        }
     }
 }
 
 /// Clones a new bitmap with the old bits set.
 impl Clone for ConcurrentBitmap {
     fn clone(&self) -> Self {
-        let cp = Self::new(self.bit_len);
-        for (dst, src) in cp.segments.iter().zip(self.segments.iter()) {
-            dst.store(src.load(Ordering::Relaxed), Ordering::Relaxed);
+        let count =
+            usize::try_from(segment_len(self.bit_len)).expect("bitmap segment length is negative");
+        let segments = self.segments[..count.saturating_sub(INLINE_SEGMENTS)]
+            .iter()
+            .map(|segment| AtomicU32::new(segment.load(Ordering::Relaxed)))
+            .collect();
+        let inline_len = count.min(INLINE_SEGMENTS);
+        let mut inline = [const { AtomicU32::new(0) }; INLINE_SEGMENTS];
+        for (dst, src) in inline.iter_mut().zip(&self.inline[..inline_len]) {
+            *dst.get_mut() = src.load(Ordering::Relaxed);
         }
-        cp
+        Self {
+            segments,
+            bit_len: self.bit_len,
+            inline,
+            inline_len,
+        }
     }
 }
 
@@ -153,8 +181,8 @@ mod tests {
 
     use super::ConcurrentBitmap;
     use crossbeam_channel::bounded;
-    use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::thread;
 
     #[test]
@@ -222,7 +250,7 @@ mod tests {
 
         for _ in 0..LOOP_COUNT {
             // Clear bitmap to zero.
-            if bm.segments[0]
+            if bm.inline[0]
                 .compare_exchange(0x0000_0001, 0x0000_0000, Ordering::SeqCst, Ordering::SeqCst)
                 .is_ok()
             {
@@ -256,5 +284,31 @@ mod tests {
         assert!(!bm.unsafe_is_set(1));
         assert!(!bm.unsafe_is_set(3));
         assert!(!bm.unsafe_is_set(7));
+    }
+
+    #[test]
+    fn clone_copies_logical_segments_across_the_inline_boundary() {
+        let mut bitmap = ConcurrentBitmap::new(513);
+        let retained = bitmap.bytes_consumed();
+        assert!(bitmap.set(255));
+        assert!(bitmap.set(256));
+        let mut clone = bitmap.clone();
+        assert!(clone.unsafe_is_set(255));
+        assert!(clone.unsafe_is_set(256));
+        assert!(!clone.unsafe_is_set(257));
+
+        bitmap.reset(256);
+        assert_eq!(bitmap.bytes_consumed(), retained);
+        assert_eq!(
+            bitmap.clone().bytes_consumed(),
+            ConcurrentBitmap::new(256).bytes_consumed()
+        );
+        assert!(clone.unsafe_is_set(255));
+        assert!(clone.unsafe_is_set(256));
+
+        bitmap.reset(513);
+        assert_eq!(bitmap.bytes_consumed(), retained);
+        assert!(!bitmap.unsafe_is_set(255));
+        assert!(!bitmap.unsafe_is_set(256));
     }
 }

@@ -159,8 +159,8 @@ impl RangeSpec {
         self.has_not
     }
 
-    fn pattern_bytes(&self) -> Vec<u8> {
-        let mut ret = vec![RANGE_OPEN];
+    fn append_pattern(&self, ret: &mut Vec<u8>) {
+        ret.push(RANGE_OPEN);
         if self.has_not {
             ret.push(RANGE_NOT);
         }
@@ -174,7 +174,6 @@ impl RangeSpec {
             }
         }
         ret.push(RANGE_CLOSE);
-        ret
     }
 }
 
@@ -210,10 +209,29 @@ impl<R> Item<R> {
 /// An arena trie node.
 #[derive(Default)]
 struct Node {
-    characters: HashMap<u8, ItemId>,
+    // Sorted by byte so a literal step can bypass hashing.
+    characters: Vec<(u8, ItemId)>,
     asterisk: Option<ItemId>,
     question: Option<ItemId>,
     r_items: Vec<ItemId>,
+}
+
+impl Node {
+    fn literal(&self, byte: u8) -> Option<ItemId> {
+        if let [(label, item)] = self.characters.as_slice() {
+            return (*label == byte).then_some(*item);
+        }
+        let index = self
+            .characters
+            .binary_search_by_key(&byte, |&(label, _)| label)
+            .ok()?;
+        Some(self.characters[index].1)
+    }
+
+    fn insert_literal(&mut self, byte: u8, item: ItemId) {
+        let index = self.characters.partition_point(|&(label, _)| label < byte);
+        self.characters.insert(index, (byte, item));
+    }
 }
 
 /// Accumulates matched rules and the next-level nodes discovered while matching.
@@ -364,7 +382,7 @@ impl<R: Clone> TrieState<R> {
                     let (spec, ni) = get_range_item(&p[i..]);
                     next_i = ni;
                     if ni == -1 {
-                        entity = self.nodes[n].characters.get(&p[i]).copied();
+                        entity = self.nodes[n].literal(p[i]);
                     } else {
                         r_spec = spec;
                         entity = None;
@@ -380,7 +398,7 @@ impl<R: Clone> TrieState<R> {
                     }
                 }
                 _ => {
-                    entity = self.nodes[n].characters.get(&p[i]).copied();
+                    entity = self.nodes[n].literal(p[i]);
                 }
             }
 
@@ -391,14 +409,14 @@ impl<R: Clone> TrieState<R> {
                     QUESTION => self.nodes[n].question = Some(new_id),
                     RANGE_OPEN => {
                         if next_i == -1 {
-                            self.nodes[n].characters.insert(p[i], new_id);
+                            self.nodes[n].insert_literal(p[i], new_id);
                         } else {
                             self.items[new_id].kind = ItemKind::Range(r_spec.take().unwrap());
                             self.nodes[n].r_items.push(new_id);
                         }
                     }
                     _ => {
-                        self.nodes[n].characters.insert(p[i], new_id);
+                        self.nodes[n].insert_literal(p[i], new_id);
                     }
                 }
                 entity = Some(new_id);
@@ -442,16 +460,13 @@ impl<R: Clone> TrieState<R> {
 
         let mut i = 0;
         while i < input.len() {
-            let asterisk = self.nodes[n].asterisk;
-            let question = self.nodes[n].question;
-            let r_items = self.nodes[n].r_items.clone();
-            let next = self.nodes[n].characters.get(&input[i]).copied();
+            let node = &self.nodes[n];
 
-            if let Some(a) = asterisk {
+            if let Some(a) = node.asterisk {
                 self.append_matched_item(a, mr);
             }
 
-            if let Some(q) = question {
+            if let Some(q) = node.question {
                 if i == input.len() - 1 {
                     self.append_matched_item(q, mr);
                 }
@@ -460,7 +475,7 @@ impl<R: Clone> TrieState<R> {
                 }
             }
 
-            for ri in r_items {
+            for &ri in &node.r_items {
                 let matched = match &self.items[ri].kind {
                     ItemKind::Range(spec) => spec.match_char(input[i]),
                     ItemKind::Base => false,
@@ -475,7 +490,7 @@ impl<R: Clone> TrieState<R> {
                 }
             }
 
-            entity = next;
+            entity = node.literal(input[i]);
             match entity {
                 None => {
                     returned = true;
@@ -538,11 +553,7 @@ impl<R: Clone> TrieState<R> {
                 RANGE_OPEN => {
                     let (spec, next_i) = get_range_item(&p[i..]);
                     if next_i == -1 {
-                        let it = self.nodes[n]
-                            .characters
-                            .get(&p[i])
-                            .copied()
-                            .ok_or_else(not_found)?;
+                        let it = self.nodes[n].literal(p[i]).ok_or_else(not_found)?;
                         items.push(it);
                         n = self.items[it].child.expect("inserted item has a child");
                     } else {
@@ -563,11 +574,7 @@ impl<R: Clone> TrieState<R> {
                     }
                 }
                 _ => {
-                    let it = self.nodes[n]
-                        .characters
-                        .get(&p[i])
-                        .copied()
-                        .ok_or_else(not_found)?;
+                    let it = self.nodes[n].literal(p[i]).ok_or_else(not_found)?;
                     items.push(it);
                     n = self.items[it].child.expect("inserted item has a child");
                 }
@@ -578,56 +585,53 @@ impl<R: Clone> TrieState<R> {
         Ok(items)
     }
 
-    #[allow(clippy::type_complexity)]
     fn travel(
         &self,
         n: NodeId,
-        word: Vec<u8>,
-        rules: &mut HashMap<String, Vec<R>>,
+        word: &mut Vec<u8>,
+        rules: &mut SchemaRules<R>,
         mut nodes: Option<&mut HashMap<String, NodeId>>,
     ) {
-        let asterisk = self.nodes[n].asterisk;
-        let question = self.nodes[n].question;
-        let r_items = self.nodes[n].r_items.clone();
-        let chars: Vec<(u8, ItemId)> = self.nodes[n]
-            .characters
-            .iter()
-            .map(|(&k, &v)| (k, v))
-            .collect();
+        let node = &self.nodes[n];
+        let prefix_len = word.len();
 
-        if let Some(a) = asterisk {
-            let mut pattern = word.clone();
-            pattern.push(ASTERISK);
-            self.insert_matched_item_into_map(&pattern, a, rules, nodes.as_deref_mut());
+        if let Some(id) = node.asterisk {
+            word.push(ASTERISK);
+            self.insert_matched_item_into_map(word, id, rules, nodes.as_deref_mut());
+            word.truncate(prefix_len);
         }
 
-        if let Some(q) = question {
-            let mut pattern = word.clone();
-            pattern.push(QUESTION);
-            self.insert_matched_item_into_map(&pattern, q, rules, nodes.as_deref_mut());
-            if let Some(qc) = self.items[q].child {
-                self.travel(qc, pattern, rules, nodes.as_deref_mut());
-            }
+        if let Some(id) = node.question {
+            word.push(QUESTION);
+            self.travel_item(word, id, rules, nodes.as_deref_mut());
+            word.truncate(prefix_len);
         }
 
-        for ri in r_items {
-            let mut pattern = word.clone();
-            if let ItemKind::Range(spec) = &self.items[ri].kind {
-                pattern.extend_from_slice(&spec.pattern_bytes());
+        for &id in &node.r_items {
+            if let ItemKind::Range(spec) = &self.items[id].kind {
+                spec.append_pattern(word);
             }
-            self.insert_matched_item_into_map(&pattern, ri, rules, nodes.as_deref_mut());
-            if let Some(rc) = self.items[ri].child {
-                self.travel(rc, pattern, rules, nodes.as_deref_mut());
-            }
+            self.travel_item(word, id, rules, nodes.as_deref_mut());
+            word.truncate(prefix_len);
         }
 
-        for (ch, base) in chars {
-            let mut pattern = word.clone();
-            pattern.push(ch);
-            self.insert_matched_item_into_map(&pattern, base, rules, nodes.as_deref_mut());
-            if let Some(cc) = self.items[base].child {
-                self.travel(cc, pattern, rules, nodes.as_deref_mut());
-            }
+        for &(ch, id) in &node.characters {
+            word.push(ch);
+            self.travel_item(word, id, rules, nodes.as_deref_mut());
+            word.truncate(prefix_len);
+        }
+    }
+
+    fn travel_item(
+        &self,
+        word: &mut Vec<u8>,
+        id: ItemId,
+        rules: &mut SchemaRules<R>,
+        mut nodes: Option<&mut HashMap<String, NodeId>>,
+    ) {
+        self.insert_matched_item_into_map(word, id, rules, nodes.as_deref_mut());
+        if let Some(child) = self.items[id].child {
+            self.travel(child, word, rules, nodes);
         }
     }
 
@@ -635,18 +639,22 @@ impl<R: Clone> TrieState<R> {
         &self,
         pattern: &[u8],
         id: ItemId,
-        rules: &mut HashMap<String, Vec<R>>,
+        rules: &mut SchemaRules<R>,
         nodes: Option<&mut HashMap<String, NodeId>>,
     ) {
-        let it = &self.items[id];
-        let key = String::from_utf8(pattern.to_vec()).expect("patterns are valid UTF-8");
-        if !it.rule.is_empty() {
-            rules.insert(key.clone(), it.rule.clone());
+        let item = &self.items[id];
+        let next = nodes.zip(item.next_level);
+        if item.rule.is_empty() && next.is_none() {
+            return;
         }
-        if let Some(nodes) = nodes {
-            if let Some(nl) = it.next_level {
-                nodes.insert(key, nl);
-            }
+        // A byte-trie prefix may end inside a rune. Only materialize keys
+        // at complete patterns that carry a rule or a table subtree.
+        let key = std::str::from_utf8(pattern).expect("patterns are valid UTF-8");
+        if !item.rule.is_empty() {
+            rules.insert(key.to_owned(), item.rule.clone());
+        }
+        if let Some((nodes, next_level)) = next {
+            nodes.insert(key.to_owned(), next_level);
         }
     }
 
@@ -685,8 +693,7 @@ impl<R: Clone> TrieState<R> {
         }
     }
 
-    fn match_rules_cached(&mut self, schema: &str, table: &str) -> Option<Vec<R>> {
-        let cache_key = quote_schema_table(schema, table);
+    fn match_rules_cached(&mut self, schema: &str, table: &str, cache_key: String) -> Option<Vec<R>> {
         if let Some(rules) = self.cache.get(&cache_key) {
             return rules.clone();
         }
@@ -701,11 +708,11 @@ impl<R: Clone> TrieState<R> {
             return None;
         }
 
-        let mut rules: Vec<R> = matched_schema.rules.clone();
-        for &si in &matched_schema.nodes {
+        let mut rules = matched_schema.rules;
+        for si in matched_schema.nodes {
             let mut matched_table = MatchedResult::new();
             self.match_node(si, table.as_bytes(), &mut matched_table);
-            rules.extend(matched_table.rules.iter().cloned());
+            rules.extend(matched_table.rules);
         }
 
         let rules = (!rules.is_empty()).then_some(rules);
@@ -769,18 +776,19 @@ impl<R: Clone> TrieState<R> {
         let mut schema_nodes: HashMap<String, NodeId> = HashMap::new();
         let mut schema_rules: HashMap<String, Vec<R>> = HashMap::new();
 
+        let mut word = Vec::new();
         self.travel(
             self.root,
-            Vec::new(),
+            &mut word,
             &mut schema_rules,
             Some(&mut schema_nodes),
         );
 
-        for (schema, &n) in &schema_nodes {
-            let mut rules: HashMap<String, Vec<R>> = HashMap::new();
-            self.travel(n, Vec::new(), &mut rules, None);
+        for (schema, n) in schema_nodes {
+            let mut rules = HashMap::new();
+            self.travel(n, &mut word, &mut rules, None);
             if !rules.is_empty() {
-                table_rules.insert(schema.clone(), rules);
+                table_rules.insert(schema, rules);
             }
         }
 
@@ -804,7 +812,7 @@ impl<R: Clone> Selector<R> for TrieSelector<R> {
         if let Some(rules) = self.read().cache.get(&cache_key) {
             return rules.clone();
         }
-        self.write().match_rules_cached(schema, table)
+        self.write().match_rules_cached(schema, table, cache_key)
     }
 
     fn remove(&self, schema: &str, table: &str) -> Result<(), SelectorError> {
@@ -895,10 +903,17 @@ fn quote_schema_table(schema: &str, table: &str) -> String {
     if schema.is_empty() {
         return String::new();
     }
+    let table_len = if table.is_empty() { 0 } else { table.len() + 3 };
+    let mut key = String::with_capacity(schema.len() + 2 + table_len);
+    key.push('`');
+    key.push_str(schema);
+    key.push('`');
     if !table.is_empty() {
-        return format!("`{schema}`.`{table}`");
+        key.push_str(".`");
+        key.push_str(table);
+        key.push('`');
     }
-    format!("`{schema}`")
+    key
 }
 
 #[cfg(test)]
@@ -1119,6 +1134,20 @@ mod tests {
             sort_rules(entry);
         }
         assert_eq!(actual_cache, cache);
+    }
+
+    #[test]
+    fn snapshot_accepts_multibyte_schema_and_table_patterns() {
+        let selector = TrieSelector::new();
+        selector.insert("Café", "", Some(1), InsertType::Insert).unwrap();
+        selector.insert("Café", "表名", Some(2), InsertType::Insert).unwrap();
+        selector.insert("数据库", "sales*", Some(3), InsertType::Insert).unwrap();
+
+        let (schemas, tables) = selector.all_rules();
+        assert_eq!(schemas, HashMap::from([("Café".to_owned(), vec![1])]));
+        assert_eq!(tables.len(), 2);
+        assert_eq!(tables["Café"], HashMap::from([("表名".to_owned(), vec![2])]));
+        assert_eq!(tables["数据库"], HashMap::from([("sales*".to_owned(), vec![3])]));
     }
 
     #[test]

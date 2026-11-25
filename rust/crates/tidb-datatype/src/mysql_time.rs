@@ -280,6 +280,7 @@ impl Time {
     }
 
     /// Compares calendar fields and microseconds.
+    #[inline]
     pub fn compare(self, other: Self) -> Ordering {
         self.core.compare(other.core)
     }
@@ -539,6 +540,7 @@ impl Time {
 
     /// Subtracts two temporal values using instant semantics for TIMESTAMP and
     /// calendar-field semantics for DATE/DATETIME.
+    #[inline]
     pub fn sub<TZ: TimeZone>(self, other: Self, timezone: &TZ) -> Result<MySqlDuration, TimeError> {
         let nanoseconds = if self.kind == TimeType::Timestamp && other.kind == TimeType::Timestamp {
             let left = self.core.to_datetime(timezone)?;
@@ -548,22 +550,16 @@ impl Time {
                 .num_nanoseconds()
                 .unwrap_or(if nonnegative { i64::MAX } else { i64::MIN })
         } else {
-            let difference = self.core.time_diff(other.core, 1);
-            let magnitude = difference
-                .seconds
-                .saturating_mul(1_000_000_000)
-                .saturating_add(i64::from(difference.microseconds) * 1_000);
-            if difference.negative {
-                -magnitude
-            } else {
-                magnitude
-            }
+            // Go Time.Sub converts the civil difference to time.Duration
+            // before the caller applies the SQL TIME range limit.
+            (self.core.calendar_micros() - other.core.calendar_micros()).wrapping_mul(1_000)
         };
         MySqlDuration::from_nanoseconds(nanoseconds, i64::from(self.fsp.max(other.fsp)))
             .map_err(TimeError::InvalidFsp)
     }
 
     /// Adds a MySQL duration to the calendar fields.
+    #[inline]
     pub fn add_duration(self, duration: MySqlDuration) -> Result<Self, TimeError> {
         let mut core = self.core.add_duration(duration.nanoseconds());
         if self.kind == TimeType::Date {
@@ -575,24 +571,29 @@ impl Time {
     /// Formats this value with TiDB's MySQL `DATE_FORMAT` conversion rules.
     pub fn date_format(self, layout: &str) -> Result<String, TimeError> {
         let mut output = String::with_capacity(layout.len());
-        let mut pattern = false;
-        for character in layout.chars() {
-            if pattern {
-                self.push_date_format(character, &mut output)?;
-                pattern = false;
-            } else if character == '%' {
-                pattern = true;
-            } else {
-                output.push(character);
-            }
-        }
+        self.append_date_format(layout, &mut output)?;
         Ok(output)
     }
 
+    /// Appends MySQL `DATE_FORMAT` text to a reusable buffer.
+    pub fn append_date_format(self, mut layout: &str, output: &mut String) -> Result<(), TimeError> {
+        while let Some(percent) = layout.find('%') {
+            output.push_str(&layout[..percent]);
+            layout = &layout[percent + 1..];
+            let Some(conversion) = layout.chars().next() else {
+                break;
+            };
+            self.push_date_format(conversion, output)?;
+            layout = &layout[conversion.len_utf8()..];
+        }
+        output.push_str(layout);
+        Ok(())
+    }
+
     fn push_date_format(self, conversion: char, output: &mut String) -> Result<(), TimeError> {
-        let hour = self.core.hour();
-        let minute = self.core.minute();
-        let second = self.core.second();
+        let hour = i32::from(self.core.hour());
+        let minute = i32::from(self.core.minute());
+        let second = i32::from(self.core.second());
         match conversion {
             'b' | 'M' => {
                 let month = self.core.month();
@@ -602,31 +603,26 @@ impl Time {
                 let name = MONTH_NAMES[usize::from(month - 1)];
                 output.push_str(if conversion == 'b' { &name[..3] } else { name });
             }
-            'm' => output.push_str(&format!("{:02}", self.core.month())),
-            'c' => output.push_str(&self.core.month().to_string()),
+            'm' => push_time_number(output, i32::from(self.core.month()), 2),
+            'c' => push_time_number(output, i32::from(self.core.month()), 0),
             'D' => {
                 let day = self.core.day();
-                output.push_str(&day.to_string());
+                push_time_number(output, i32::from(day), 0);
                 output.push_str(day_suffix(day));
             }
-            'd' => output.push_str(&format!("{:02}", self.core.day())),
-            'e' => output.push_str(&self.core.day().to_string()),
-            'j' => output.push_str(&format!("{:03}", self.core.year_day())),
-            'H' => output.push_str(&format!("{hour:02}")),
-            'k' => output.push_str(&hour.to_string()),
-            'h' | 'I' => {
+            'd' => push_time_number(output, i32::from(self.core.day()), 2),
+            'e' => push_time_number(output, i32::from(self.core.day()), 0),
+            'j' => push_time_number(output, self.core.year_day(), 3),
+            'H' => push_time_number(output, hour, 2),
+            'k' => push_time_number(output, hour, 0),
+            'h' | 'I' | 'l' => {
                 let twelve_hour = hour % 12;
-                output.push_str(&format!(
-                    "{:02}",
-                    if twelve_hour == 0 { 12 } else { twelve_hour }
-                ));
+                let twelve_hour = if twelve_hour == 0 { 12 } else { twelve_hour };
+                let width = if conversion == 'l' { 0 } else { 2 };
+                push_time_number(output, twelve_hour, width);
             }
-            'l' => {
-                let twelve_hour = hour % 12;
-                output.push_str(&if twelve_hour == 0 { 12 } else { twelve_hour }.to_string());
-            }
-            'i' => output.push_str(&format!("{minute:02}")),
-            'p' => output.push_str(if (hour / 12).is_multiple_of(2) {
+            'i' => push_time_number(output, minute, 2),
+            'p' => output.push_str(if hour % 24 < 12 {
                 "AM"
             } else {
                 "PM"
@@ -638,37 +634,43 @@ impl Time {
                     1..=11 => normalized,
                     _ => normalized - 12,
                 };
-                let meridiem = if normalized < 12 { "AM" } else { "PM" };
-                output.push_str(&format!(
-                    "{twelve_hour:02}:{minute:02}:{second:02} {meridiem}"
-                ));
+                push_time_clock(output, twelve_hour, minute, second);
+                output.push_str(if normalized < 12 { " AM" } else { " PM" });
             }
-            'T' => output.push_str(&format!("{hour:02}:{minute:02}:{second:02}")),
-            'S' | 's' => output.push_str(&format!("{second:02}")),
-            'f' => output.push_str(&format!("{:06}", self.core.microsecond())),
+            'T' => push_time_clock(output, hour, minute, second),
+            'S' | 's' => push_time_number(output, second, 2),
+            'f' => push_time_number(output, self.core.microsecond() as i32, 6),
             'U' | 'u' | 'V' => {
                 let mode = match conversion {
                     'U' => 0,
                     'u' => 1,
                     _ => 2,
                 };
-                output.push_str(&format!("{:02}", self.core.week(mode)));
+                push_time_number(output, self.core.week(mode), 2);
             }
-            'v' => output.push_str(&format!("{:02}", self.core.year_week(3).1)),
+            'v' => push_time_number(output, self.core.year_week(3).1, 2),
             'a' => output.push_str(self.core.weekday().abbreviated_name()),
-            'W' => output.push_str(&self.core.weekday().to_string()),
-            'w' => output.push_str(&self.core.weekday().sunday_index().to_string()),
+            'W' => output.push_str(self.core.weekday().name()),
+            'w' => push_time_number(output, i32::from(self.core.weekday().sunday_index()), 0),
             'X' | 'x' => {
                 let mode = if conversion == 'X' { 2 } else { 3 };
                 let year = self.core.year_week(mode).0;
                 if year < 0 {
-                    output.push_str(&u32::MAX.to_string());
+                    output.push_str("4294967295");
                 } else {
-                    output.push_str(&format!("{year:04}"));
+                    push_time_number(output, year, 4);
                 }
             }
-            'Y' => output.push_str(&format!("{:04}", self.core.year())),
-            'y' => output.push_str(&format!("{:04}", self.core.year())[2..]),
+            'Y' => push_time_number(output, self.core.year(), 4),
+            'y' => {
+                let year = self.core.year();
+                if year < 10_000 {
+                    push_time_number(output, year % 100, 2);
+                } else {
+                    // Go drops the first two digits even for a five-digit year.
+                    output.push_str(&itoa::Buffer::new().format(year)[2..]);
+                }
+            }
             _ => output.push(conversion),
         }
         Ok(())
@@ -772,6 +774,28 @@ impl Time {
     }
 }
 
+pub(crate) fn push_time_number(output: &mut String, value: i32, width: usize) {
+    let mut buffer = itoa::Buffer::new();
+    let mut digits = buffer.format(value);
+    let padding = width.saturating_sub(digits.len());
+    if padding != 0 {
+        if let Some(unsigned) = digits.strip_prefix('-') {
+            output.push('-');
+            digits = unsigned;
+        }
+        output.push_str(&"000000"[..padding]);
+    }
+    output.push_str(digits);
+}
+
+pub(crate) fn push_time_clock(output: &mut String, hour: i32, minute: i32, second: i32) {
+    push_time_number(output, hour, 2);
+    output.push(':');
+    push_time_number(output, minute, 2);
+    output.push(':');
+    push_time_number(output, second, 2);
+}
+
 const fn day_suffix(day: u8) -> &'static str {
     match day {
         1 | 21 | 31 => "st",
@@ -821,7 +845,7 @@ pub fn get_fsp(value: &str) -> u8 {
 /// Returns the byte index of the fraction dot, or `-1`.
 pub fn get_frac_index(value: &str) -> isize {
     let bytes = value.as_bytes();
-    let end = get_timezone(value).map_or(bytes.len(), |timezone| timezone.index);
+    let end = get_timezone_parts(value).map_or(bytes.len(), |timezone| timezone.index);
     for index in (0..end).rev() {
         let byte = bytes[index];
         if byte != b'+' && byte != b'-' && is_ascii_punctuation(byte) {
@@ -833,9 +857,27 @@ pub fn get_frac_index(value: &str) -> isize {
 
 /// Parses TiDB's supported trailing `Z`, `+HH`, `+HHMM`, and `+HH:MM` forms.
 pub fn get_timezone(value: &str) -> Option<TimezoneSuffix> {
+    get_timezone_parts(value).map(|suffix| TimezoneSuffix {
+        index: suffix.index,
+        sign: suffix.sign,
+        hour: suffix.hour.map(str::to_owned),
+        has_colon: suffix.has_colon,
+        minute: suffix.minute.map(str::to_owned),
+    })
+}
+
+pub(crate) struct TimezoneParts<'a> {
+    pub(crate) index: usize,
+    pub(crate) sign: Option<char>,
+    pub(crate) hour: Option<&'a str>,
+    pub(crate) has_colon: bool,
+    pub(crate) minute: Option<&'a str>,
+}
+
+pub(crate) fn get_timezone_parts(value: &str) -> Option<TimezoneParts<'_>> {
     let bytes = value.as_bytes();
     if bytes.last() == Some(&b'Z') {
-        return Some(TimezoneSuffix {
+        return Some(TimezoneParts {
             index: bytes.len() - 1,
             sign: None,
             hour: None,
@@ -868,13 +910,12 @@ pub fn get_timezone(value: &str) -> Option<TimezoneSuffix> {
             }
             _ => continue,
         };
-        return Some(TimezoneSuffix {
+        return Some(TimezoneParts {
             index,
             sign: Some(sign),
-            hour: Some(String::from_utf8(hour.to_vec()).expect("ASCII digits")),
+            hour: Some(std::str::from_utf8(hour).expect("ASCII digits")),
             has_colon,
-            minute: minute
-                .map(|minute| String::from_utf8(minute.to_vec()).expect("ASCII timezone minute")),
+            minute: minute.map(|minute| std::str::from_utf8(minute).expect("ASCII digits")),
         });
     }
     None
@@ -1254,6 +1295,11 @@ mod tests {
                 CoreTime::from_date(0, 1, 0, 0, 0, 0, 123_456),
                 full_layout,
                 "Jan January 01 1 0th 00 0 000 0 12 00 AM 12:00:00 AM 00:00:00 00 123456 00 00 00 52 Fri Friday 5 4294967295 4294967295 0000 00 %",
+            ),
+            (
+                CoreTime::from_date(12034, 1, 1, 0, 0, 0, 0),
+                "年%Y/%y %雪%%%",
+                "年12034/034 雪%",
             ),
         ] {
             let time = Time::new(core, TimeType::DateTime, 6).unwrap();

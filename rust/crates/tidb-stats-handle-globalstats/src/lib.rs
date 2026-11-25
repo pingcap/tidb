@@ -16,26 +16,26 @@
 
 pub mod global_stats;
 
-use std::collections::HashMap;
 use std::fmt;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::channel;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use chrono::TimeZone;
+use hashbrown::{HashMap, hash_map::Entry};
 use tidb_datatype::{DatumValueError, FieldType};
 use tidb_charset::Collation;
 use tidb_mysql::errors::SqlError;
 use tidb_sqlkiller::SqlKiller;
 
 use tidb_stats::cmsketch::{get_merged_topn_from_sorted_slice, CmsSketch, MergeError, TopN, TopNEntry};
+use tidb_stats::datum_map_cache::top_n_meta_to_datum;
 use tidb_stats::histogram::{
     merge_partition_histograms, Histogram, HistogramMergeError, PartitionMergeOptions,
     TopNMergeEntry,
 };
 use tidb_stats::fm_sketch_ndv;
 use tidb_stats::merge_fm_sketch;
-use tidb_stats::DatumMapCache;
 use tidb_stats::FmSketch;
 
 /// Go `MaxPartitionMergeBatchSize`, the largest partition batch assigned to
@@ -145,8 +145,8 @@ pub fn merge_part_top_n_2_global_top_n<TZ: TimeZone>(
     is_index: bool,
     killer: &SqlKiller,
 ) -> Result<(Option<TopN>, Vec<TopNEntry>, Vec<Histogram>), GlobalStatsMergeError> {
-    let mut counts = HashMap::<Vec<u8>, f64>::new();
-    let mut datum_cache = DatumMapCache::new();
+    let mut counts = HashMap::<&[u8], f64>::new();
+    let mysql_type = field_type.code().mysql_type();
     for (partition_index, topn) in topns.iter().enumerate() {
         handle_kill_signal(killer)?;
         let Some(topn) = topn else {
@@ -156,12 +156,17 @@ pub fn merge_part_top_n_2_global_top_n<TZ: TimeZone>(
             continue;
         }
         for entry in topn.entries() {
-            let existed = counts.contains_key(&entry.encoded);
-            *counts.entry(entry.encoded.clone()).or_default() += entry.count as f64;
-            if existed {
-                continue;
-            }
+            let key = entry.encoded.as_slice();
+            let total = match counts.entry(key) {
+                Entry::Occupied(mut total) => {
+                    *total.get_mut() += entry.count as f64;
+                    continue;
+                }
+                Entry::Vacant(total) => total.insert(entry.count as f64),
+            };
 
+            // Only the first occurrence scans the partition histograms.
+            let mut datum = None;
             for other_index in 0..topns.len() {
                 handle_kill_signal(killer)?;
                 if (other_index == partition_index && analyze_version >= 2)
@@ -169,25 +174,19 @@ pub fn merge_part_top_n_2_global_top_n<TZ: TimeZone>(
                 {
                     continue;
                 }
-                let datum = match datum_cache.get(&entry.encoded) {
+                let datum = match &mut datum {
                     Some(datum) => datum,
-                    None => datum_cache.put_encoded(
-                        &entry.encoded,
-                        &entry.encoded,
-                        field_type.code().mysql_type(),
-                        is_index,
-                        timezone,
-                    )?,
+                    slot => slot.insert(top_n_meta_to_datum(key, mysql_type, is_index, timezone)?),
                 };
                 let (count, _) = histograms[other_index].equal_row_count(
-                    &datum,
+                    datum,
                     is_index,
                     field_type.collation(),
                 );
                 if count != 0.0 {
-                    *counts.entry(entry.encoded.clone()).or_default() += count;
+                    *total += count;
                     histograms[other_index].binary_search_remove_value(
-                        &datum,
+                        datum,
                         count as i64,
                         field_type.collation(),
                     )?;
@@ -202,7 +201,7 @@ pub fn merge_part_top_n_2_global_top_n<TZ: TimeZone>(
     let ranked = counts
         .into_iter()
         .map(|(encoded, count)| TopNEntry {
-            encoded,
+            encoded: encoded.to_vec(),
             count: count as u64,
         })
         .collect();
@@ -229,8 +228,10 @@ pub fn merge_global_stats_top_n_by_concurrency<TZ: TimeZone + Sync>(
     let worker_count = merge_concurrency.min(topns.len());
     let batch_size = merge_batch_size;
     let next_partition = AtomicUsize::new(0);
-    let counts = Mutex::new(HashMap::<Vec<u8>, f64>::new());
+    // A worker keeps the candidate's count while probing the histograms.
+    let counts = Mutex::new(HashMap::<&[u8], Arc<Mutex<f64>>>::new());
     let histograms = histograms.into_iter().map(Mutex::new).collect::<Vec<_>>();
+    let mysql_type = field_type.code().mysql_type();
 
     std::thread::scope(|scope| -> Result<(), GlobalStatsMergeError> {
         let mut workers = Vec::with_capacity(worker_count);
@@ -242,7 +243,6 @@ pub fn merge_global_stats_top_n_by_concurrency<TZ: TimeZone + Sync>(
             let histograms = &histograms;
             workers.push(scope.spawn(tidb_cpuprofile::labels::inherit(move || {
                 let response = (|| -> Result<(), GlobalStatsMergeError> {
-                    let mut datum_cache = DatumMapCache::new();
                     loop {
                         let start = next_partition.fetch_add(batch_size, Ordering::Relaxed);
                         if start >= topns.len() {
@@ -258,19 +258,29 @@ pub fn merge_global_stats_top_n_by_concurrency<TZ: TimeZone + Sync>(
                                 continue;
                             }
                             for entry in topn.entries() {
-                                let existed = {
+                                let key = entry.encoded.as_slice();
+                                let total = {
                                     let mut counts = counts
                                         .lock()
                                         .unwrap_or_else(std::sync::PoisonError::into_inner);
-                                    let existed = counts.contains_key(&entry.encoded);
-                                    *counts.entry(entry.encoded.clone()).or_default() +=
-                                        entry.count as f64;
-                                    existed
+                                    match counts.entry(key) {
+                                        Entry::Occupied(total) => {
+                                            let mut count = total
+                                                .get()
+                                                .lock()
+                                                .unwrap_or_else(std::sync::PoisonError::into_inner);
+                                            *count += entry.count as f64;
+                                            continue;
+                                        }
+                                        Entry::Vacant(candidate) => {
+                                            let total = Arc::new(Mutex::new(entry.count as f64));
+                                            candidate.insert(Arc::clone(&total));
+                                            total
+                                        }
+                                    }
                                 };
-                                if existed {
-                                    continue;
-                                }
 
+                                let mut datum = None;
                                 for other_index in 0..topns.len() {
                                     handle_kill_signal(killer)?;
                                     if (other_index == partition_index && analyze_version >= 2)
@@ -279,35 +289,33 @@ pub fn merge_global_stats_top_n_by_concurrency<TZ: TimeZone + Sync>(
                                     {
                                         continue;
                                     }
-                                    let datum = match datum_cache.get(&entry.encoded) {
+                                    let datum = match &mut datum {
                                         Some(datum) => datum,
-                                        None => datum_cache.put_encoded(
-                                            &entry.encoded,
-                                            &entry.encoded,
-                                            field_type.code().mysql_type(),
-                                            is_index,
-                                            timezone,
-                                        )?,
+                                        slot => slot.insert(top_n_meta_to_datum(
+                                            key, mysql_type, is_index, timezone,
+                                        )?),
                                     };
                                     let mut histogram = histograms[other_index]
                                         .lock()
                                         .unwrap_or_else(std::sync::PoisonError::into_inner);
                                     let (count, _) = histogram.equal_row_count(
-                                        &datum,
+                                        datum,
                                         is_index,
                                         field_type.collation(),
                                     );
-                                    if count != 0.0 {
-                                        histogram.binary_search_remove_value(
-                                            &datum,
-                                            count as i64,
-                                            field_type.collation(),
-                                        )?;
-                                        let mut counts = counts
-                                            .lock()
-                                            .unwrap_or_else(std::sync::PoisonError::into_inner);
-                                        *counts.entry(entry.encoded.clone()).or_default() += count;
+                                    if count == 0.0 {
+                                        continue;
                                     }
+                                    histogram.binary_search_remove_value(
+                                        datum,
+                                        count as i64,
+                                        field_type.collation(),
+                                    )?;
+                                    drop(histogram);
+                                    let mut total = total
+                                        .lock()
+                                        .unwrap_or_else(std::sync::PoisonError::into_inner);
+                                    *total += count;
                                 }
                             }
                         }
@@ -336,9 +344,14 @@ pub fn merge_global_stats_top_n_by_concurrency<TZ: TimeZone + Sync>(
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     let ranked = counts
         .into_iter()
-        .map(|(encoded, count)| TopNEntry {
-            encoded,
-            count: count as u64,
+        .map(|(encoded, count)| {
+            let total = count
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            TopNEntry {
+                encoded: encoded.to_vec(),
+                count: *total as u64,
+            }
         })
         .collect();
     let histograms = histograms
@@ -495,12 +508,10 @@ pub fn merge_partition_histogram_topn<TZ: TimeZone + Sync>(
             killer,
         )?
     };
-    let mut datum_cache = DatumMapCache::new();
     let popped_topn = remainder
         .iter()
         .map(|entry| {
-            let value = datum_cache.put_encoded(
-                &entry.encoded,
+            let value = top_n_meta_to_datum(
                 &entry.encoded,
                 field_type.code().mysql_type(),
                 is_index,

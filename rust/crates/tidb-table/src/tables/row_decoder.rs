@@ -15,15 +15,20 @@
 //! Stored-row decoding shared by scans, point reads, DDL reorg, and ADMIN.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::sync::Arc;
+use std::{borrow::Cow, sync::Arc};
 
+use smallvec::SmallVec;
+
+use tidb_chunk::chunk::Chunk;
+use tidb_rowcodec::RawRowValue;
 use tidb_tablecodec::table_key::RECORD_ROW_KEY_LEN;
-use tidb_datatype::{Datum, FieldType, SessionTimeZone};
+use tidb_datatype::{Datum, FieldType, FieldTypeCode, SessionTimeZone};
 use tidb_tablecodec::decode_table_row_to_map;
 use tidb_txnkv::CommonHandle;
 
 use tidb_datatype::UNSPECIFIED_LENGTH;
-use super::table_meta::NOT_NULL_FLAG;
+use super::raw_row::common_handle_columns;
+use super::table_meta::{NOT_NULL_FLAG, PreparedPointGetDecodeContext};
 use super::{KvTableError, RowDecodeContext, TableHandle};
 
 /// Which generated columns a decoder evaluates.
@@ -113,6 +118,590 @@ fn projection_columns(keep: &[usize]) -> Vec<ProjectedColumn> {
         .collect();
     columns.reverse();
     columns
+}
+
+#[derive(Clone, Debug)]
+struct PreparedPointGetColumn {
+    column: crate::column::Column,
+    from_handle: bool,
+    common_handle_part: Option<usize>,
+    take_stored: bool,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct SingleHandleProjection {
+    part: usize,
+    integer: bool,
+}
+
+#[derive(Clone, Copy)]
+enum PreparedHandleRef<'a> {
+    Int(i64),
+    Common(&'a [u8]),
+    Indexed(&'a CommonHandle),
+}
+
+impl<'a> From<&'a TableHandle> for PreparedHandleRef<'a> {
+    fn from(handle: &'a TableHandle) -> Self {
+        match handle {
+            TableHandle::Int(value) => Self::Int(*value),
+            TableHandle::Common(bytes) => Self::Common(bytes),
+        }
+    }
+}
+
+/// Immutable row-decoder metadata retained by a cached prepared PointGet.
+///
+/// It contains only the projected ordinary columns admitted by the point-plan
+/// gate. Building the general [`RowDecoder`] on every execute would clone the
+/// complete table schema and reconstruct its generated-column dependency
+/// maps even though this path reads one handle and no expressions.
+#[derive(Clone, Debug)]
+pub struct PreparedPointGetRowDecoder {
+    columns: Vec<PreparedPointGetColumn>,
+    stored_column_types: BTreeMap<i64, FieldType>,
+    common_handle_parts: Vec<usize>,
+    single_handle_projection: Option<SingleHandleProjection>,
+    /// Whether the projection contains a column supplied by the clustered
+    /// handle. Most YCSB projections do not select the key, so parsing the
+    /// common-handle bytes for every row would be needless work.
+    needs_handle: bool,
+    /// Whether any projected column can be absent from an older row and needs
+    /// an execute-time origin-default value.
+    has_origin_defaults: bool,
+    /// Row V2 metadata is immutable for the schema-versioned prepared plan.
+    /// Keeping it here avoids cloning ten `ColumnInfo`s and handle IDs on each
+    /// YCSB execute.
+    v2_columns: Vec<tidb_rowcodec::ColumnInfo>,
+    v2_handle_column_ids: Vec<i64>,
+    direct_projection: Option<DirectProjection>,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum DirectProjection {
+    Strings,
+    SignedInt,
+    UnsignedInt,
+}
+
+impl PreparedPointGetRowDecoder {
+    /// Compiles the schema-versioned projection stored on the point plan.
+    pub fn new(
+        columns: &[crate::column::Column],
+        pk_handle_offset: usize,
+        output_offsets: &[usize],
+    ) -> Result<Self, KvTableError> {
+        Self::new_with_handles(columns, Some(pk_handle_offset), &[], output_offsets)
+    }
+
+    /// Compiles a prepared point-get projection for either an integer or a
+    /// common clustered handle.
+    pub fn new_with_handles(
+        columns: &[crate::column::Column],
+        pk_handle_offset: Option<usize>,
+        common_handle_offsets: &[usize],
+        output_offsets: &[usize],
+    ) -> Result<Self, KvTableError> {
+        let prefix_lengths = vec![UNSPECIFIED_LENGTH; common_handle_offsets.len()];
+        Self::new_with_handle_prefixes(
+            columns,
+            pk_handle_offset,
+            common_handle_offsets,
+            &prefix_lengths,
+            output_offsets,
+        )
+    }
+
+    /// Compiles a point-get decoder that preserves primary-key prefix values
+    /// from row storage rather than replacing them with their truncated handle.
+    pub fn new_with_handle_prefixes(
+        columns: &[crate::column::Column],
+        pk_handle_offset: Option<usize>,
+        common_handle_offsets: &[usize],
+        common_handle_prefix_lengths: &[i64],
+        output_offsets: &[usize],
+    ) -> Result<Self, KvTableError> {
+        if common_handle_offsets.len() != common_handle_prefix_lengths.len() {
+            return Err(KvTableError::Decode(
+                "common-handle prefix metadata does not match its columns".to_owned(),
+            ));
+        }
+        let common_handle_parts: Vec<usize> = common_handle_prefix_lengths
+            .iter()
+            .enumerate()
+            .filter_map(|(part, length)| (*length == UNSPECIFIED_LENGTH).then_some(part))
+            .collect();
+        let common_handle_column_ids: Vec<i64> = common_handle_parts
+            .iter()
+            .filter_map(|part| columns.get(common_handle_offsets[*part]).map(|column| column.read().id))
+            .collect();
+        let mut projected = output_offsets
+            .iter()
+            .map(|offset| {
+                let column = columns.get(*offset).cloned().ok_or_else(|| {
+                    KvTableError::Decode(
+                        "prepared point-get projection is outside the table schema".to_owned(),
+                    )
+                })?;
+                if column.generated.is_some() {
+                    return Err(KvTableError::Decode(
+                        "prepared point-get projection contains a generated column".to_owned(),
+                    ));
+                }
+                Ok(PreparedPointGetColumn {
+                    column,
+                    from_handle: pk_handle_offset == Some(*offset),
+                    common_handle_part: common_handle_offsets
+                        .iter()
+                        .position(|handle_offset| *handle_offset == *offset),
+                    take_stored: false,
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut seen = BTreeSet::new();
+        for output in projected.iter_mut().rev() {
+            if output.common_handle_part.is_some_and(|part| {
+                common_handle_prefix_lengths[part] != UNSPECIFIED_LENGTH
+            }) {
+                output.common_handle_part = None;
+            }
+            if !output.from_handle && output.common_handle_part.is_none() {
+                output.take_stored = seen.insert(output.column.read().id);
+            }
+        }
+        let stored_column_types = projected
+            .iter()
+            .filter(|column| !column.from_handle)
+            .map(|column| (column.column.read().id, column.column.read().field_type.clone()))
+            .collect();
+        let v2_columns: Vec<_> = projected
+            .iter()
+            .map(|output| tidb_rowcodec::ColumnInfo {
+                id: output.column.read().id,
+                is_pk_handle: output.from_handle,
+                virtual_generated: false,
+                field_type: output.column.read().field_type.clone(),
+            })
+            .collect::<Vec<_>>();
+        let v2_handle_column_ids: Vec<_> = projected
+            .iter()
+            .find(|output| output.from_handle)
+            .map(|output| output.column.read().id)
+            .into_iter()
+            .chain(common_handle_column_ids.iter().copied())
+            .collect();
+        let needs_handle = projected
+            .iter()
+            .any(|output| output.from_handle || output.common_handle_part.is_some());
+        let has_origin_defaults = projected
+            .iter()
+            .any(|output| output.column.origin_default.is_some());
+        let single_handle_projection = match projected.as_slice() {
+            [output]
+                if !output.from_handle
+                    && common_handle_parts.len() == common_handle_offsets.len() =>
+            {
+                let field_type = &v2_columns[0].field_type;
+                let id = v2_columns[0].id;
+                output
+                    .common_handle_part
+                    .filter(|&part| {
+                        !field_type.need_restored_data()
+                            && v2_handle_column_ids.iter().position(|&column_id| column_id == id)
+                                == Some(part)
+                    })
+                    .map(|part| SingleHandleProjection {
+                        part,
+                        integer: field_type.code().is_integer_type(),
+                    })
+            }
+            _ => None,
+        };
+        let direct_projection = if needs_handle {
+            None
+        } else {
+            match v2_columns.as_slice() {
+                [column] if column.field_type.code() == FieldTypeCode::Year => {
+                    Some(DirectProjection::SignedInt)
+                }
+                [column] if column.field_type.code().is_integer_type() => {
+                    Some(if column.field_type.is_unsigned() {
+                        DirectProjection::UnsignedInt
+                    } else {
+                        DirectProjection::SignedInt
+                    })
+                }
+                columns if !columns.is_empty() && columns.iter().all(|column| {
+                    let code = column.field_type.code();
+                    code.is_string() && !code.is_type_unspecified()
+                }) => Some(DirectProjection::Strings),
+                _ => None,
+            }
+        };
+        Ok(Self {
+            columns: projected,
+            stored_column_types,
+            common_handle_parts,
+            single_handle_projection,
+            needs_handle,
+            has_origin_defaults,
+            v2_columns,
+            v2_handle_column_ids,
+            direct_projection,
+        })
+    }
+
+    pub fn decode(
+        &self,
+        handle: &TableHandle,
+        value: &[u8],
+        context: &PreparedPointGetDecodeContext,
+    ) -> Result<Vec<Datum>, KvTableError> {
+        self.decode_row(handle.into(), Cow::Borrowed(value), context)
+    }
+
+    /// Projects an owned storage row and retains the backing for wide strings.
+    pub fn decode_owned(
+        &self,
+        handle: &TableHandle,
+        value: Vec<u8>,
+        context: &PreparedPointGetDecodeContext,
+    ) -> Result<Vec<Datum>, KvTableError> {
+        self.decode_row(handle.into(), Cow::Owned(value), context)
+    }
+
+    pub(super) fn decode_storage_value(
+        &self,
+        handle: &TableHandle,
+        value: Cow<'_, [u8]>,
+        context: &PreparedPointGetDecodeContext,
+    ) -> Result<Vec<Datum>, KvTableError> {
+        self.decode_row(handle.into(), value, context)
+    }
+
+    pub(super) fn prefers_borrowed_storage(&self) -> bool {
+        // Multi-column decoding can share one owned buffer and runs outside
+        // the native storage read guard.
+        self.columns.len() == 1
+    }
+
+    /// Whether the projection can write stored values into the output chunk.
+    pub fn can_append_projected_row(&self) -> bool {
+        self.direct_projection.is_some()
+    }
+
+    /// Writes a complete Row V2 projection, or falls back before writing to the chunk.
+    pub fn try_append_v2_row(&self, value: &[u8], chunk: &mut Chunk) -> Result<bool, KvTableError> {
+        let Some(projection) = self.direct_projection else {
+            return Ok(false);
+        };
+        if !tidb_rowcodec::is_new_format(value) {
+            return Ok(false);
+        }
+        self.append_v2_projection(projection, value, chunk).map_err(|error| {
+            KvTableError::Decode(format!("{:?}", tidb_rowcodec::RowPackageError::from(error)))
+        })
+    }
+
+    pub(super) fn append_storage_value(
+        &self,
+        handle: &TableHandle,
+        value: Cow<'_, [u8]>,
+        context: &PreparedPointGetDecodeContext,
+        chunk: &mut Chunk,
+    ) -> Result<(), KvTableError> {
+        self.append_row(handle.into(), value, context, chunk)
+    }
+
+    pub(super) fn append_indexed_common(
+        &self,
+        handle: &CommonHandle,
+        value: Cow<'_, [u8]>,
+        context: &PreparedPointGetDecodeContext,
+        chunk: &mut Chunk,
+    ) -> Result<(), KvTableError> {
+        self.append_row(PreparedHandleRef::Indexed(handle), value, context, chunk)
+    }
+
+    fn append_row(
+        &self,
+        handle: PreparedHandleRef<'_>,
+        value: Cow<'_, [u8]>,
+        context: &PreparedPointGetDecodeContext,
+        chunk: &mut Chunk,
+    ) -> Result<(), KvTableError> {
+        if let Some(projection) = self.direct_projection {
+            if tidb_rowcodec::is_new_format(&value)
+                && self.append_v2_projection(projection, &value, chunk).map_err(|error| {
+                    KvTableError::Decode(format!("{:?}", tidb_rowcodec::RowPackageError::from(error)))
+                })?
+            {
+                return Ok(());
+            }
+        }
+        for (column, value) in self.decode_row(handle, value, context)?.iter().enumerate() {
+            chunk.append_datum(column, value);
+        }
+        Ok(())
+    }
+
+    fn append_v2_projection(
+        &self,
+        projection: DirectProjection,
+        value: &[u8],
+        chunk: &mut Chunk,
+    ) -> Result<bool, tidb_rowcodec::RowDecodeError> {
+        let (row, _) = tidb_rowcodec::RowDecoder::parse(value)?;
+        if let [column] = self.v2_columns.as_slice() {
+            match row.column(column.id)? {
+                RawRowValue::NotNull { bytes, .. } => match projection {
+                    DirectProjection::Strings => chunk.append_bytes(0, bytes),
+                    DirectProjection::SignedInt => chunk.append_int64(0, tidb_rowcodec::decode_raw_int(bytes)?),
+                    DirectProjection::UnsignedInt => chunk.append_uint64(0, tidb_rowcodec::decode_raw_uint(bytes)?),
+                },
+                RawRowValue::Missing if self.has_origin_defaults => return Ok(false),
+                RawRowValue::Null | RawRowValue::Missing => chunk.append_null(0),
+            }
+            return Ok(true);
+        }
+
+        // Resolve the entire projection before writing any column so a missing
+        // default or an invalid offset can leave the chunk untouched.
+        let mut projected = SmallVec::<[Option<&[u8]>; 16]>::new();
+        for column in &self.v2_columns {
+            match row.column(column.id)? {
+                RawRowValue::NotNull { bytes, .. } => projected.push(Some(bytes)),
+                RawRowValue::Missing if self.has_origin_defaults => return Ok(false),
+                RawRowValue::Null | RawRowValue::Missing => projected.push(None),
+            }
+        }
+        for (column, value) in projected.into_iter().enumerate() {
+            match value {
+                Some(bytes) => chunk.append_bytes(column, bytes),
+                None => chunk.append_null(column),
+            }
+        }
+        Ok(true)
+    }
+
+    /// Projects a row using the common handle's existing key-part offsets.
+    pub fn decode_indexed_common(
+        &self,
+        handle: &CommonHandle,
+        value: Cow<'_, [u8]>,
+        context: &PreparedPointGetDecodeContext,
+    ) -> Result<Vec<Datum>, KvTableError> {
+        self.decode_row(PreparedHandleRef::Indexed(handle), value, context)
+    }
+
+    fn decode_row(
+        &self,
+        handle: PreparedHandleRef<'_>,
+        value: Cow<'_, [u8]>,
+        context: &PreparedPointGetDecodeContext,
+    ) -> Result<Vec<Datum>, KvTableError> {
+        // A key-only v2 row has no stored columns to override the handle.
+        if let (
+            Some(SingleHandleProjection { part, integer }),
+            [tidb_rowcodec::ROW_CODEC_VERSION, 0, 0, 0, 0, 0],
+        ) = (self.single_handle_projection, value.as_ref())
+        {
+            let encoded_part = match handle {
+                PreparedHandleRef::Indexed(handle) => handle.encoded_column(part),
+                // Raw bytes require validation of every part, even when the
+                // projection only needs one. The indexed handle has done this.
+                PreparedHandleRef::Common(encoded) if encoded.len() <= usize::from(u16::MAX) => {
+                    if integer {
+                        if let Some(datum) = project_fixed_integer_handle(encoded, part) {
+                            return Ok(vec![datum]);
+                        }
+                    }
+                    find_common_handle_part(encoded, part)?
+                }
+                _ => None,
+            };
+            if let Some(encoded) = encoded_part {
+                if let Ok((_, datum)) = tidb_codec::decode_one_typed_in_timezone(
+                    encoded,
+                    &self.v2_columns[0].field_type,
+                    Some(context.zone()),
+                ) {
+                    return Ok(vec![datum]);
+                }
+            }
+        }
+        // Row V2 stores a column directory and can decode directly into the
+        // requested projection. This avoids the legacy BTreeMap allocation on
+        // every prepared point read (the YCSB hot path).
+        if tidb_rowcodec::is_new_format(&value) {
+            let mut int_handle = None;
+            let mut common_parts = None;
+            if self.needs_handle {
+                match handle {
+                    PreparedHandleRef::Int(value) => {
+                        int_handle = Some(tidb_rowcodec::Handle::Int(value));
+                    }
+                    PreparedHandleRef::Common(encoded) => {
+                        let parts = common_handle_columns(encoded)?;
+                        common_parts = Some(
+                            self.common_handle_parts
+                                .iter()
+                                .filter_map(|&part| parts.get(part).copied().flatten())
+                                .collect::<SmallVec<[_; 16]>>(),
+                        );
+                    }
+                    PreparedHandleRef::Indexed(handle) => {
+                        common_parts = Some(
+                            self.common_handle_parts
+                                .iter()
+                                .filter_map(|&part| handle.encoded_column(part))
+                                .collect::<SmallVec<[_; 16]>>(),
+                        );
+                    }
+                }
+            }
+            let default_datum = |index: usize| {
+                self.columns[index]
+                    .column
+                    .origin_default_value(context.origin_default_flags(), context.zone())
+                    .map_err(|error| error.to_string())
+            };
+            return tidb_rowcodec::decode_row_to_datums_with_refs(
+                value,
+                &self.v2_columns,
+                &tidb_rowcodec::DecodeRowOptions {
+                    handle_column_ids: &self.v2_handle_column_ids,
+                    handle: int_handle.as_ref(),
+                    default_datum: self.has_origin_defaults.then_some(
+                        &default_datum as &(dyn Fn(usize) -> Result<Datum, String> + '_),
+                    ),
+                    timezone: Some(context.zone()),
+                    ..tidb_rowcodec::DecodeRowOptions::default()
+                },
+                common_parts.as_deref(),
+            )
+            .map(|row| row.values)
+            .map_err(|error| KvTableError::Decode(format!("{error:?}")));
+        }
+        let mut decoded = match value {
+            Cow::Borrowed(bytes) => {
+                decode_table_row_to_map(bytes, &self.stored_column_types, Some(context.zone()))
+            }
+            Cow::Owned(bytes) => {
+                tidb_tablecodec::decode_owned_table_row_to_map(
+                    bytes,
+                    &self.stored_column_types,
+                    Some(context.zone()),
+                )
+            }
+        }
+        .map_err(|error| KvTableError::Decode(format!("{error:?}")))?;
+        let mut handle_columns = None;
+        self.columns
+            .iter()
+            .map(|output| {
+                if output.from_handle {
+                    let PreparedHandleRef::Int(value) = handle else {
+                        return Err(KvTableError::Decode(
+                            "prepared point-get plan requires an integer handle".to_owned(),
+                        ));
+                    };
+                    return tidb_tablecodec::unflatten_datum(
+                        Datum::Int(value),
+                        &output.column.read().field_type,
+                        Some(context.zone()),
+                    )
+                    .map_err(|error| KvTableError::Decode(format!("{error:?}")));
+                }
+                if let Some(part) = output.common_handle_part {
+                    let encoded = match handle {
+                        PreparedHandleRef::Common(encoded) => {
+                            let columns = match &handle_columns {
+                                Some(columns) => columns,
+                                None => handle_columns.insert(common_handle_columns(encoded)?),
+                            };
+                            columns.get(part).copied().flatten()
+                        }
+                        PreparedHandleRef::Indexed(handle) => handle.encoded_column(part),
+                        PreparedHandleRef::Int(_) => {
+                            return Err(KvTableError::Decode(
+                                "prepared point-get plan requires a common handle".to_owned(),
+                            ));
+                        }
+                    };
+                    let Some(encoded) = encoded else {
+                        return Err(KvTableError::Decode(
+                            "prepared point-get common handle is missing a column".to_owned(),
+                        ));
+                    };
+                    let (remainder, value) = tidb_codec::decode_one_typed_in_timezone(
+                        encoded,
+                        &output.column.read().field_type,
+                        Some(context.zone()),
+                    )
+                    .map_err(|error| KvTableError::Decode(format!("{error:?}")))?;
+                    if !remainder.is_empty() {
+                        return Err(KvTableError::Decode(
+                            "prepared point-get common handle has trailing bytes".to_owned(),
+                        ));
+                    }
+                    return Ok(value);
+                }
+                if let Some(value) = decoded.get_mut(&output.column.read().id) {
+                    return Ok(if output.take_stored {
+                        std::mem::replace(value, Datum::Null)
+                    } else {
+                        value.clone()
+                    });
+                }
+                if output.column.origin_default.is_none()
+                    && output.column.read().field_type.flags() & NOT_NULL_FLAG != 0
+                {
+                    return Err(KvTableError::Decode("Miss column".to_owned()));
+                }
+                output
+                    .column
+                    .origin_default_value(context.origin_default_flags(), context.zone())
+                    .map_err(|error| KvTableError::Decode(error.to_string()))
+            })
+            .collect()
+    }
+}
+
+fn find_common_handle_part(encoded: &[u8], part: usize) -> Result<Option<&[u8]>, KvTableError> {
+    let mut index = 0;
+    let mut selected = None;
+    CommonHandle::scan_encoded_columns(encoded, |column| {
+        if index == part {
+            selected = Some(column);
+        }
+        index += 1;
+    })
+    .map_err(|error| KvTableError::Decode(format!("{error:?}")))?;
+    Ok(selected)
+}
+
+fn project_fixed_integer_handle(encoded: &[u8], part: usize) -> Option<Datum> {
+    use tidb_codec::{INT_FLAG, UINT_FLAG, decode_cmp_uint_to_int};
+
+    // The general decoder uses wrapping 16-bit column endpoints.
+    let (columns, tail) = encoded.as_chunks::<9>();
+    if !tail.is_empty() || encoded.len() > usize::from(u16::MAX) {
+        return None;
+    }
+    let &[flag, payload @ ..] = columns.get(part)?;
+    if !columns
+        .iter()
+        .all(|column| matches!(column[0], INT_FLAG | UINT_FLAG))
+    {
+        return None;
+    }
+    let bits = u64::from_be_bytes(payload);
+    Some(if flag == INT_FLAG {
+        Datum::Int(decode_cmp_uint_to_int(bits))
+    } else {
+        Datum::UInt(bits)
+    })
 }
 
 impl RowDecoder {
@@ -863,5 +1452,319 @@ fn column_origin_default_for_checksum(
         context.expression(),
     )
     .map_err(KvTableError::from)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::column::Column;
+    use tidb_charset::Collation;
+    use tidb_datatype::FieldTypeCode;
+    use tidb_model::{go_runtime::GoShared, ColumnInfo};
+
+    #[test]
+    fn prepared_point_decode_projects_fixed_integer_handle_parts() {
+        let mut unsigned = FieldType::new(FieldTypeCode::LongLong);
+        unsigned.add_flags(tidb_datatype::FieldTypeFlags::UNSIGNED);
+        let columns = [FieldType::new(FieldTypeCode::LongLong), unsigned]
+            .into_iter()
+            .enumerate()
+            .map(|(index, field_type)| {
+                Column::new(GoShared::new(ColumnInfo {
+                    id: (index + 1) as i64,
+                    field_type,
+                    ..ColumnInfo::default()
+                }))
+            })
+            .collect::<Vec<_>>();
+        let zone = SessionTimeZone::utc();
+        let context = PreparedPointGetDecodeContext::for_query(false, zone.clone());
+        let empty_row =
+            tidb_tablecodec::encode_table_row(Some(&zone), &[], &[], true, None).unwrap();
+        let key = [Datum::Int(i64::MIN), Datum::UInt(u64::MAX)];
+        let encoded = tidb_codec::encode_key(&key).unwrap();
+        for (part, expected) in key.into_iter().enumerate() {
+            let decoder = PreparedPointGetRowDecoder::new_with_handles(
+                &columns, None, &[0, 1], &[part],
+            )
+            .unwrap();
+            let handle = TableHandle::Common(encoded.clone());
+            assert_eq!(
+                decoder.decode(&handle, &empty_row, &context).unwrap(),
+                [expected]
+            );
+
+            let mut invalid = encoded.clone();
+            invalid.extend([0xff; 9]);
+            assert!(decoder
+                .decode(&TableHandle::Common(invalid), &empty_row, &context)
+                .is_err());
+        }
+
+        let decoder =
+            PreparedPointGetRowDecoder::new_with_handles(&columns, None, &[0, 1], &[1]).unwrap();
+        let mixed =
+            tidb_codec::encode_key(&[Datum::Bytes(vec![0xfe; 8]), Datum::UInt(71)]).unwrap();
+        assert_eq!(
+            decoder
+                .decode(&TableHandle::Common(mixed), &empty_row, &context)
+                .unwrap(),
+            [Datum::UInt(71)]
+        );
+        assert_eq!(
+            decoder
+                .decode(&TableHandle::Common(encoded[..9].to_vec()), &empty_row, &context)
+                .unwrap(),
+            [Datum::Null]
+        );
+
+        let stored = tidb_tablecodec::encode_table_row(
+            Some(&zone),
+            &[Datum::UInt(10)],
+            &[2],
+            true,
+            None,
+        )
+        .unwrap();
+        assert_eq!(
+            decoder
+                .decode_owned(&TableHandle::Common(encoded), stored, &context)
+                .unwrap(),
+            [Datum::UInt(10)]
+        );
+    }
+
+    #[test]
+    fn prepared_point_decode_checks_unprojected_parts_of_string_handle() {
+        let columns = [FieldTypeCode::LongLong, FieldTypeCode::Varchar]
+            .into_iter()
+            .enumerate()
+            .map(|(index, code)| {
+                Column::new(GoShared::new(ColumnInfo {
+                    id: (index + 1) as i64,
+                    field_type: FieldType::new(code).with_collation(Collation::Binary),
+                    ..ColumnInfo::default()
+                }))
+            })
+            .collect::<Vec<_>>();
+        let decoder =
+            PreparedPointGetRowDecoder::new_with_handles(&columns, None, &[0, 1], &[1]).unwrap();
+        let zone = SessionTimeZone::utc();
+        let context = PreparedPointGetDecodeContext::for_query(false, zone.clone());
+        let empty_row =
+            tidb_tablecodec::encode_table_row(Some(&zone), &[], &[], true, None).unwrap();
+        let expected = Datum::Bytes(vec![0xe0; 129]);
+        let mut key = tidb_codec::encode_key(&[Datum::Int(1), expected.clone()]).unwrap();
+        let indexed = CommonHandle::new(key.clone()).unwrap();
+        assert_eq!(
+            decoder.decode_indexed_common(&indexed, Cow::Borrowed(&empty_row), &context).unwrap(),
+            [expected.clone()]
+        );
+        assert_eq!(
+            decoder
+                .decode(&TableHandle::Common(key.clone()), &empty_row, &context)
+                .unwrap(),
+            [expected]
+        );
+        key.push(0xff);
+        assert!(decoder
+            .decode(&TableHandle::Common(key), &empty_row, &context)
+            .is_err());
+    }
+
+    #[test]
+    fn prepared_point_read_uses_padded_indexed_common_handle() {
+        use tidb_kv::storage::{MemTableStorage, TableStorage};
+
+        let column = Column::new(GoShared::new(ColumnInfo {
+            id: 1,
+            field_type: FieldType::new(FieldTypeCode::NewDecimal),
+            ..ColumnInfo::default()
+        }));
+        let decoder = PreparedPointGetRowDecoder::new_with_handles(
+            std::slice::from_ref(&column), None, &[0], &[0],
+        )
+        .unwrap();
+        let table = super::super::TableCommon::with_collation(21, vec![column], false);
+        let expected = Datum::new_decimal(tidb_datatype::Decimal::from_signed_literal("5"));
+        let encoded = tidb_codec::encode_key(std::slice::from_ref(&expected)).unwrap();
+        assert!(encoded.len() < 9);
+        let handle = CommonHandle::new(encoded.clone()).unwrap();
+        let table_handle = TableHandle::Common(encoded);
+        let key = tidb_tablecodec::table_key::encode_row_key_with_handle(
+            21, &table_handle.record_handle(),
+        );
+        let zone = SessionTimeZone::utc();
+        let context = PreparedPointGetDecodeContext::for_query(false, zone.clone());
+        let row = tidb_tablecodec::encode_table_row(Some(&zone), &[], &[], true, None).unwrap();
+        let mut store = MemTableStorage::new();
+        store.set(tidb_txnkv::Key::from_bytes(key), row).unwrap();
+        let (_, value) = table.stored_record(&mut store, &table_handle).unwrap().unwrap();
+        assert_eq!(
+            decoder.decode_indexed_common(&handle, Cow::Owned(value), &context).unwrap(),
+            [expected]
+        );
+    }
+
+    #[test]
+    fn prepared_point_chunk_projection_preserves_defaults_and_decode_errors() {
+        let field = FieldType::new(FieldTypeCode::Varchar).with_collation(Collation::Binary);
+        let string = |bytes: &[u8]| Datum::new_collation_string_datum(bytes.to_vec(), Collation::Binary);
+        let mut columns: Vec<_> = (1..=3)
+            .map(|id| {
+                Column::new(GoShared::new(ColumnInfo {
+                    id,
+                    field_type: field.clone(),
+                    ..ColumnInfo::default()
+                }))
+            })
+            .collect();
+        columns[2].origin_default = Some(string(b"origin"));
+        let decoder =
+            PreparedPointGetRowDecoder::new_with_handles(&columns, None, &[], &[0, 1, 2]).unwrap();
+        assert!(decoder.can_append_projected_row());
+        let zone = SessionTimeZone::utc();
+        let context = PreparedPointGetDecodeContext::for_query(false, zone.clone());
+        let handle = TableHandle::Int(1);
+        let fields = [field.clone(), field.clone(), field];
+        let mut chunk = Chunk::new_chunk_with_capacity(&fields, 1);
+        let stored = [string(b"\0\xff"), Datum::Null, string(b"")];
+        for (count, v2) in [(3, true), (2, true), (3, false)] {
+            let encoded = tidb_tablecodec::encode_table_row(
+                Some(&zone), &stored[..count], &[1, 2, 3][..count], v2, None,
+            )
+            .unwrap();
+            chunk.reset();
+            decoder.append_storage_value(&handle, Cow::Borrowed(&encoded), &context, &mut chunk).unwrap();
+            assert_eq!(chunk.num_rows(), 1);
+            let mut expected = stored.clone();
+            if count == 2 {
+                expected[2] = string(b"origin");
+            }
+            assert_eq!(chunk.get_row(0).get_datum_row(&fields), expected);
+        }
+        let malformed = [
+            tidb_rowcodec::ROW_CODEC_VERSION,
+            tidb_rowcodec::ROW_FLAG_CHECKSUM,
+            0, 0, 0, 0, 7,
+        ];
+        let expected = decoder.decode(&handle, &malformed, &context).unwrap_err();
+        let error = decoder
+            .append_storage_value(&handle, Cow::Borrowed(&malformed), &context, &mut chunk)
+            .unwrap_err();
+        assert_eq!(format!("{error:?}"), format!("{expected:?}"));
+        assert_eq!(chunk.num_rows(), 1);
+    }
+
+    #[test]
+    fn prepared_point_chunk_projects_signed_and_unsigned_integers() {
+        let zone = SessionTimeZone::utc();
+        let context = PreparedPointGetDecodeContext::for_query(false, zone.clone());
+        for value in [Datum::Int(-129), Datum::UInt(u64::MAX)] {
+            let mut field = FieldType::new(FieldTypeCode::LongLong);
+            if matches!(&value, Datum::UInt(_)) {
+                field.add_flags(tidb_datatype::FieldTypeFlags::UNSIGNED);
+            }
+            let column = Column::new(GoShared::new(ColumnInfo {
+                id: 1, field_type: field.clone(), ..Default::default()
+            }));
+            let decoder =
+                PreparedPointGetRowDecoder::new_with_handles(&[column], None, &[], &[0]).unwrap();
+            assert!(decoder.can_append_projected_row());
+            let encoded = tidb_tablecodec::encode_table_row(
+                Some(&zone), std::slice::from_ref(&value), &[1], true, None,
+            )
+            .unwrap();
+            let mut chunk = Chunk::new_chunk_with_capacity(std::slice::from_ref(&field), 1);
+            decoder
+                .append_storage_value(&TableHandle::Int(1), Cow::Borrowed(&encoded), &context, &mut chunk)
+                .unwrap();
+            assert_eq!(chunk.get_row(0).get_datum(0, &field), value);
+        }
+    }
+
+    #[test]
+    fn prepared_point_decode_shares_bounded_storage_for_medium_strings() {
+        let columns = (1..=3)
+            .map(|id| {
+                Column::new(GoShared::new(ColumnInfo {
+                    id,
+                    field_type: FieldType::new(FieldTypeCode::Varchar)
+                        .with_collation(Collation::Binary),
+                    ..ColumnInfo::default()
+                }))
+            })
+            .collect::<Vec<_>>();
+        let decoder =
+            PreparedPointGetRowDecoder::new_with_handles(&columns, None, &[], &[0, 1, 2])
+                .unwrap();
+        let zone = SessionTimeZone::utc();
+        let context = PreparedPointGetDecodeContext::for_query(false, zone.clone());
+        let values = [64, 96, 16].map(|width| {
+            Datum::new_collation_string_datum(vec![0xf0; width], Collation::Binary)
+        });
+        let encoded =
+            tidb_tablecodec::encode_table_row(Some(&zone), &values, &[1, 2, 3], true, None)
+                .unwrap();
+        for oversized in [false, true] {
+            let mut entry = encoded.clone();
+            if oversized {
+                entry.reserve_exact(4096);
+            }
+            let backing = entry.as_ptr().addr()..entry.as_ptr().addr() + entry.len();
+            let row = decoder
+                .decode_owned(&TableHandle::Int(1), entry, &context)
+                .unwrap();
+            assert_eq!(row, values);
+            for (index, value) in row.iter().enumerate() {
+                let bytes = value.as_raw_bytes().unwrap();
+                assert_eq!(
+                    backing.contains(&bytes.as_ptr().addr()),
+                    !oversized && index < 2
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn prepared_point_decode_retains_wide_stored_values() {
+        let columns = [FieldTypeCode::LongLong, FieldTypeCode::LongBlob]
+            .into_iter()
+            .enumerate()
+            .map(|(i, code)| {
+                Column::new(GoShared::new(ColumnInfo {
+                    id: (i + 1) as i64,
+                    field_type: FieldType::new(code),
+                    ..ColumnInfo::default()
+                }))
+            })
+            .collect::<Vec<_>>();
+        let decoder = PreparedPointGetRowDecoder::new(&columns, 0, &[1, 0, 1]).unwrap();
+        let zone = SessionTimeZone::utc();
+        let context = PreparedPointGetDecodeContext::for_query(false, zone.clone());
+        let handle = TableHandle::Int(59);
+        let datum = Datum::Bytes(vec![0xf0; 8192]);
+        for v2 in [false, true] {
+            let encoded = tidb_tablecodec::encode_table_row(
+                Some(&zone),
+                std::slice::from_ref(&datum),
+                &[2],
+                v2,
+                None,
+            )
+            .unwrap();
+            let backing = encoded.as_ptr().addr()..encoded.as_ptr().addr() + encoded.len();
+            let expected = decoder.decode(&handle, &encoded, &context).unwrap();
+            let decoded = decoder.decode_owned(&handle, encoded, &context).unwrap();
+            assert_eq!(decoded, expected);
+            assert_eq!(decoded[1], Datum::Int(59));
+            for index in [0, 2] {
+                let bytes = decoded[index].as_raw_bytes().unwrap();
+                assert_eq!(bytes, datum.as_raw_bytes().unwrap());
+                assert!(backing.contains(&bytes.as_ptr().addr()));
+                assert!(bytes.as_ptr().addr() + bytes.len() <= backing.end);
+            }
+        }
+    }
 }
 

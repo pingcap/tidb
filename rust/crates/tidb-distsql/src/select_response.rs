@@ -22,13 +22,15 @@ use std::fmt;
 use std::sync::Arc;
 use std::time::Duration;
 
+use prost::bytes::{Buf, Bytes};
 use tidb_chunk::chunk::Chunk as DecodedChunk;
 use tidb_chunk::codec::Codec as ChunkCodec;
 use tidb_chunk::codec::Decoder as ChunkDecoder;
+use tidb_codec::ChunkValueDecoder;
 use tidb_datatype::{Datum, FieldType, SessionTimeZone};
 use tidb_proto::{Chunk as ResponseChunk, EncodeType, ExecutorExecutionSummary, SelectResponse};
 
-use crate::chunk_decode::{decode_chunk, decode_select_response, ChunkDecodeError};
+use crate::chunk_decode::{decode_chunk, decode_select_response, ChunkDecodeError, RawChunk};
 use crate::distsql_runtime::{SelectResultMetadata, SelectResultRuntimeStats};
 use tidb_txnkv::LimiterWaitStats;
 use crate::query_runtime::QueryResponse;
@@ -322,6 +324,11 @@ struct SelectResponseChannel {
 
 #[derive(Debug)]
 enum DecodedChannel {
+    /// Unread TypeDefault bytes, after checking the chunk's envelope.
+    DefaultRows {
+        bytes: Bytes,
+        decoder: ChunkValueDecoder,
+    },
     Rows(VecDeque<Vec<Datum>>),
     /// A TypeChunk image the channel's decoder holds. The row API takes the
     /// decoder's remaining rows once (Go `ReuseIntermChk`) and walks them.
@@ -336,8 +343,25 @@ impl DecodedChannel {
         decoder: &mut ChunkDecoder,
         channel_index: usize,
         field_types: &[FieldType],
+        time_zone: &SessionTimeZone,
     ) -> Result<Option<SelectResultRow<Vec<Datum>>>, ResponseChannelError> {
         match self {
+            Self::DefaultRows { bytes, .. } => {
+                let raw = RawChunk {
+                    encode_type: EncodeType::TypeDefault,
+                    rows_data: bytes,
+                    rows: Vec::new(),
+                };
+                let mut rows: VecDeque<_> = raw
+                    .decode_default_datums_in_timezone(field_types, time_zone)
+                    .map_err(map_chunk_error)?
+                    .into();
+                let first = rows
+                    .pop_front()
+                    .map(|row| SelectResultRow::new(channel_index, row));
+                *self = Self::Rows(rows);
+                Ok(first)
+            }
             Self::Rows(rows) => Ok(rows
                 .pop_front()
                 .map(|row| SelectResultRow::new(channel_index, row))),
@@ -368,9 +392,8 @@ impl DecodedChannel {
         }
     }
 
-    /// Go `selectResult.readFromChunk`: append small response chunks until the
-    /// caller's required row count is reached, but transfer a large typed
-    /// chunk directly when the output is still empty.
+    /// Go `selectResult.readRowsData` and `readFromChunk`: append to the
+    /// required row count or transfer a full typed chunk.
     ///
     /// `true` means `output` is ready to return. `false` means this decoded
     /// channel is exhausted and the caller may continue with the next chunk.
@@ -379,8 +402,41 @@ impl DecodedChannel {
         decoder: &mut ChunkDecoder,
         output: &mut DecodedChunk,
         required_rows: usize,
+        field_types: &[FieldType],
+        time_zone: &SessionTimeZone,
     ) -> Result<bool, ResponseChannelError> {
         match self {
+            Self::DefaultRows { bytes, decoder: value_decoder } => {
+                if field_types.is_empty() {
+                    return Err(map_chunk_error(ChunkDecodeError::DefaultCodec(
+                        tidb_codec::CodecError::InvalidEncoding(
+                            "nonempty default chunk has no fields",
+                        ),
+                    )));
+                }
+                let start_rows = output.num_rows();
+                let mut remaining = bytes.as_ref();
+                while output.num_rows() < required_rows && !remaining.is_empty() {
+                    for (column, field_type) in field_types.iter().enumerate() {
+                        match value_decoder.decode_one(
+                            remaining,
+                            output,
+                            column,
+                            field_type,
+                            Some(time_zone),
+                        ) {
+                            Ok(rest) => remaining = rest,
+                            Err(error) => {
+                                output.truncate_to(start_rows);
+                                return Err(map_chunk_error(ChunkDecodeError::DefaultCodec(error)));
+                            }
+                        }
+                    }
+                }
+                let consumed = bytes.len() - remaining.len();
+                bytes.advance(consumed);
+                Ok(output.num_rows() >= required_rows)
+            }
             Self::Rows(rows) => {
                 while output.num_rows() < required_rows {
                     let Some(row) = rows.pop_front() else {
@@ -424,13 +480,7 @@ impl SelectResponseChannel {
         let Some(chunk) = self.chunks.get(self.next_chunk_index) else {
             return Ok(());
         };
-        let decoded = decode_channel(
-            self.raw_encode_type,
-            chunk,
-            &self.field_types,
-            &self.time_zone,
-            &mut self.decoder,
-        )?;
+        let decoded = decode_channel(self.raw_encode_type, chunk, &mut self.decoder)?;
         self.next_chunk_index += 1;
         self.decoded = Some(decoded);
         Ok(())
@@ -443,7 +493,12 @@ impl SelectResponseChannel {
                     .decoded
                     .as_mut()
                     .expect("decoded channel is present")
-                    .next_row(&mut self.decoder, self.channel_index, &self.field_types)?
+                    .next_row(
+                        &mut self.decoder,
+                        self.channel_index,
+                        &self.field_types,
+                        &self.time_zone,
+                    )?
                 {
                     return Ok(Some(row));
                 }
@@ -474,7 +529,13 @@ impl SelectResponseChannel {
                     .decoded
                     .as_mut()
                     .expect("decoded channel is present")
-                    .fill_chunk(&mut self.decoder, output, required_rows)?
+                    .fill_chunk(
+                        &mut self.decoder,
+                        output,
+                        required_rows,
+                        &self.field_types,
+                        &self.time_zone,
+                    )?
                 {
                     return Ok(true);
                 }
@@ -668,8 +729,8 @@ impl SelectResponseIter {
 
     /// Returns the next decoded response batch while preserving the same
     /// reverse channel priority and response lifecycle as [`Self::next_row`].
-    /// TypeChunk responses transfer their decoded chunk directly; default-row
-    /// responses are collected into one chunk for compatibility.
+    /// TypeChunk responses can transfer their decoded chunk directly.
+    /// TypeDefault responses append values to the output chunk in row order.
     pub fn next_chunk_with_required_rows(
         &mut self,
         required_rows: usize,
@@ -1132,30 +1193,24 @@ fn response_decoder(reusable_chunk: Option<DecodedChunk>, field_types: Arc<[Fiel
 fn decode_channel(
     raw_encode_type: Option<i32>,
     chunk: &ResponseChunk,
-    field_types: &[FieldType],
-    time_zone: &SessionTimeZone,
     decoder: &mut ChunkDecoder,
 ) -> Result<DecodedChannel, ResponseChannelError> {
     let raw_encode_type = raw_encode_type.unwrap_or(EncodeType::TypeDefault as i32);
     let encode_type = EncodeType::try_from(raw_encode_type).map_err(|_| {
         ResponseChannelError::RowDecode(format!("invalid tipb encode type {raw_encode_type}"))
     })?;
-    if chunk.rows_data.as_deref().unwrap_or_default().is_empty() {
+    let Some(rows_data) = chunk.rows_data.as_ref().filter(|data| !data.is_empty()) else {
         return Ok(DecodedChannel::Rows(VecDeque::new()));
-    }
-    let raw = decode_chunk(chunk, encode_type).map_err(map_chunk_error)?;
+    };
+    decode_chunk(chunk, encode_type).map_err(map_chunk_error)?;
     match encode_type {
-        EncodeType::TypeDefault => {
-            let rows = raw
-                .decode_default_datums_in_timezone(field_types, time_zone)
-                .map_err(map_chunk_error)?;
-            Ok(DecodedChannel::Rows(rows.into()))
-        }
+        EncodeType::TypeDefault => Ok(DecodedChannel::DefaultRows {
+            bytes: rows_data.clone(),
+            decoder: ChunkValueDecoder::default(),
+        }),
         EncodeType::TypeChunk => {
             // Go `respChunkDecoder.Reset`: the columns share the response
             // payload (`decodeColumn`).
-            let empty = prost::bytes::Bytes::new();
-            let rows_data = chunk.rows_data.as_ref().unwrap_or(&empty);
             decoder
                 .try_reset_bytes(rows_data)
                 .map_err(|error| ResponseChannelError::RowDecode(error.to_string()))?;
@@ -1201,7 +1256,9 @@ mod tests {
         let mut decoded = DecodedChannel::TypeChunk { rows: None };
         let mut output = DecodedChunk::new_chunk_with_capacity(&fields, 1);
 
-        assert!(decoded.fill_chunk(&mut decoder, &mut output, 1).expect("fill chunk"));
+        assert!(decoded
+            .fill_chunk(&mut decoder, &mut output, 1, &fields, &SessionTimeZone::Local)
+            .expect("fill chunk"));
         assert_eq!(output.num_rows(), 2);
         assert_eq!(
             output.get_row(0).get_datum(0, &fields[0]),
@@ -1233,13 +1290,19 @@ mod tests {
         let mut output = DecodedChunk::new(&fields, 0, 10);
         let mut decoder = decoder_over(&fields, &response(8));
         let mut decoded = DecodedChannel::TypeChunk { rows: None };
-        assert!(!decoded.fill_chunk(&mut decoder, &mut output, 10).expect("fill chunk"));
+        assert!(!decoded
+            .fill_chunk(&mut decoder, &mut output, 10, &fields, &SessionTimeZone::Local)
+            .expect("fill chunk"));
         assert_eq!(output.num_rows(), 8);
-        assert!(!decoded.fill_chunk(&mut decoder, &mut output, 10).expect("fill chunk"));
+        assert!(!decoded
+            .fill_chunk(&mut decoder, &mut output, 10, &fields, &SessionTimeZone::Local)
+            .expect("fill chunk"));
 
         let image = prost::bytes::Bytes::from(ChunkCodec::new(fields.clone()).encode(&response(5)));
         decoder.try_reset_bytes(&image).expect("decode response image");
-        assert!(decoded.fill_chunk(&mut decoder, &mut output, 10).expect("fill chunk"));
+        assert!(decoded
+            .fill_chunk(&mut decoder, &mut output, 10, &fields, &SessionTimeZone::Local)
+            .expect("fill chunk"));
         assert_eq!(output.num_rows(), 13);
         assert!(decoder.is_finished());
     }
@@ -1265,7 +1328,9 @@ mod tests {
         let mut output = DecodedChunk::new(&fields, 0, 1024);
         assert_eq!(output.memory_usage(), 240);
 
-        assert!(!decoded.fill_chunk(&mut decoder, &mut output, 1024).expect("fill chunk"));
+        assert!(!decoded
+            .fill_chunk(&mut decoder, &mut output, 1024, &fields, &SessionTimeZone::Local)
+            .expect("fill chunk"));
         assert_eq!(output.num_rows(), 4);
         assert_eq!(output.memory_usage(), 336);
     }

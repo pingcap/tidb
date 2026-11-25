@@ -15,6 +15,7 @@
 //! TiDB trace categories, events, context propagation, and span regions.
 
 use std::cell::RefCell;
+use std::ops::{Deref, DerefMut};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant, SystemTime};
@@ -205,25 +206,65 @@ impl std::fmt::Display for Phase {
     }
 }
 
-/// Go `Event`: one traced event.
-///
-/// Go documents `Fields` as immutable once created because the slice may be
-/// shared across goroutines; Rust's ownership gives that invariant for free —
-/// a sink receives a shared reference and cannot mutate it.
+/// Go `Event`: one traced event. Cloning shares its payload across sinks and
+/// snapshots. An owned event can still mutate its own copy.
 #[derive(Clone, Debug)]
 pub struct Event {
     /// When the event occurred.
     pub timestamp: SystemTime,
-    /// Event name; for a region, the region type.
-    pub name: String,
     /// Interval position.
     pub phase: Phase,
+    /// The category gating this event.
+    pub category: TraceCategory,
+    payload: Arc<EventPayload>,
+}
+
+/// The data shared by clones of a trace event.
+#[derive(Clone, Debug)]
+pub struct EventPayload {
+    /// Event name; for a region, the region type.
+    pub name: String,
     /// Trace identifier of the owning statement, empty when untraced.
     pub trace_id: Vec<u8>,
     /// Structured fields.
     pub fields: Vec<Field>,
-    /// The category gating this event.
-    pub category: TraceCategory,
+}
+
+impl Event {
+    /// Builds one event, taking ownership of the trace identifier and fields.
+    pub fn new(
+        timestamp: SystemTime,
+        name: impl Into<String>,
+        phase: Phase,
+        trace_id: Vec<u8>,
+        fields: Vec<Field>,
+        category: TraceCategory,
+    ) -> Self {
+        Self {
+            timestamp,
+            phase,
+            category,
+            payload: Arc::new(EventPayload {
+                name: name.into(),
+                trace_id,
+                fields,
+            }),
+        }
+    }
+}
+
+impl Deref for Event {
+    type Target = EventPayload;
+
+    fn deref(&self) -> &EventPayload {
+        &self.payload
+    }
+}
+
+impl DerefMut for Event {
+    fn deref_mut(&mut self) -> &mut EventPayload {
+        Arc::make_mut(&mut self.payload)
+    }
 }
 
 /// Go `Sink`: the destination trace events are recorded to.
@@ -274,10 +315,13 @@ pub struct OptimizeTracer;
 /// Go `DedupCETrace`: keeps the first occurrence of each distinct record,
 /// preserving input order.
 pub fn dedup_ce_trace(records: &[Arc<CeTraceRecord>]) -> Vec<Arc<CeTraceRecord>> {
-    let mut seen = std::collections::HashSet::with_capacity(records.len());
+    let mut seen = std::collections::HashSet::with_capacity_and_hasher(
+        records.len(),
+        foldhash::fast::RandomState::default(),
+    );
     let mut deduped = Vec::with_capacity(records.len());
     for record in records {
-        if seen.insert(record.as_ref().clone()) {
+        if seen.insert(record.as_ref()) {
             deduped.push(Arc::clone(record));
         }
     }
@@ -787,14 +831,14 @@ pub fn start_region(context: &TraceContext, region_type: &str) -> Region {
     };
     if is_enabled(TraceCategory::GENERAL) {
         if let Some(sink) = context.sink() {
-            let event = Event {
-                timestamp: SystemTime::now(),
-                name: region_type.to_owned(),
-                phase: Phase::Begin,
-                trace_id: extract_trace_id(context).to_vec(),
-                fields: Vec::new(),
-                category: TraceCategory::GENERAL,
-            };
+            let event = Event::new(
+                SystemTime::now(),
+                region_type,
+                Phase::Begin,
+                extract_trace_id(context).to_vec(),
+                Vec::new(),
+                TraceCategory::GENERAL,
+            );
             sink.record(context, &event);
             region.recorded = Some((context.clone(), event, Arc::clone(sink)));
         }

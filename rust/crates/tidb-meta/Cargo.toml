@@ -18,6 +18,7 @@ workspace = true
 
 [dependencies]
 tidb-gocontext = { path = "../tidb-gocontext" }
+tidb-go-strconv = { path = "../tidb-go-strconv" }
 tidb-dbterror = { path = "../tidb-dbterror" }
 tidb-tablecodec = { path = "../tidb-tablecodec" }
 tidb-structure = { path = "../tidb-structure" }

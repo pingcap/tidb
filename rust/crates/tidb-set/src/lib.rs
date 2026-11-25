@@ -21,13 +21,16 @@
 
 pub mod keyset;
 
-use tidb_memory::Tracker;
+use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 use std::hash::Hash;
 use std::sync::Arc;
+
+use foldhash::fast::RandomState;
 use tidb_datatype::MyDecimal;
 use tidb_goruntime::GoString;
 use tidb_hack::{MapValueLayout, MemAwareMap};
+use tidb_memory::Tracker;
 use tidb_mysql::{to_lowercase, to_uppercase};
 
 /// A value whose set identity is an arbitrary-byte Go string.
@@ -38,7 +41,7 @@ pub trait SetKey {
 
 /// A set that keeps the latest value for each stable string key.
 pub struct KeyedSet<T> {
-    values: HashMap<GoString, T>,
+    values: HashMap<GoString, T, RandomState>,
 }
 
 impl<T> Clone for KeyedSet<T>
@@ -46,7 +49,9 @@ where
     T: Clone + SetKey,
 {
     fn clone(&self) -> Self {
-        list_to_set(self.to_list())
+        Self {
+            values: self.values.clone(),
+        }
     }
 }
 
@@ -66,7 +71,7 @@ where
     /// Creates an empty set.
     pub fn new() -> Self {
         Self {
-            values: HashMap::new(),
+            values: HashMap::default(),
         }
     }
 
@@ -89,9 +94,9 @@ where
 
     /// Returns cloned values in stable key order.
     pub fn to_list(&self) -> Vec<T> {
-        let mut values: Vec<_> = self.values.values().cloned().collect();
-        values.sort_by_key(SetKey::set_key);
-        values
+        let mut entries: Vec<_> = self.values.iter().collect();
+        entries.sort_unstable_by_key(|(key, _)| *key);
+        entries.into_iter().map(|(_, value)| value.clone()).collect()
     }
 
     /// Returns the number of distinct keys.
@@ -106,9 +111,11 @@ where
 
     /// Returns the source `String` representation without assuming UTF-8.
     pub fn string(&self) -> GoString {
-        let mut keys: Vec<_> = self.values.values().map(SetKey::set_key).collect();
-        keys.sort();
-        let mut out = vec![b'{'];
+        let mut keys: Vec<_> = self.values.keys().collect();
+        keys.sort_unstable();
+        let key_bytes: usize = keys.iter().map(|key| key.len()).sum();
+        let mut out = Vec::with_capacity(2 + key_bytes + 2 * keys.len().saturating_sub(1));
+        out.push(b'{');
         for (index, key) in keys.iter().enumerate() {
             if index != 0 {
                 out.extend_from_slice(b", ");
@@ -159,7 +166,11 @@ where
 {
     let mut result = KeyedSet::new();
     for set in sets {
-        result.add(set.to_list());
+        result.values.extend(
+            set.values
+                .iter()
+                .map(|(key, value)| (key.clone(), value.clone())),
+        );
     }
     result
 }
@@ -172,12 +183,11 @@ where
     let Some(first) = sets.first() else {
         return KeyedSet::new();
     };
-    let mut result = KeyedSet::new();
-    for value in first.to_list() {
-        if sets[1..].iter().all(|set| set.contains(&value)) {
-            result.add([value]);
-        }
-    }
+    // Filter the copied table without hashing its retained keys again.
+    let mut result = (*first).clone();
+    result
+        .values
+        .retain(|key, _| sets[1..].iter().all(|set| set.values.contains_key(key)));
     result
 }
 
@@ -186,12 +196,8 @@ pub fn difference<T>(left: &KeyedSet<T>, right: &KeyedSet<T>) -> KeyedSet<T>
 where
     T: Clone + SetKey,
 {
-    let mut result = KeyedSet::new();
-    for value in left.to_list() {
-        if !right.contains(&value) {
-            result.add([value]);
-        }
-    }
+    let mut result = left.clone();
+    result.values.retain(|key, _| !right.values.contains_key(key));
     result
 }
 
@@ -260,7 +266,7 @@ numeric_set!(Int64Set, i64, "Source `Int64Set`.");
 /// An arbitrary-byte string set.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct StringSet {
-    values: HashSet<GoString>,
+    values: HashSet<GoString, RandomState>,
 }
 
 impl StringSet {
@@ -287,23 +293,45 @@ impl StringSet {
 
     /// Returns the intersection with `right`.
     pub fn intersection(&self, right: &Self) -> Self {
-        Self {
-            values: self.values.intersection(&right.values).cloned().collect(),
-        }
+        let (smaller, larger) = if self.len() <= right.len() {
+            (self, right)
+        } else {
+            (right, self)
+        };
+        let mut result = smaller.clone();
+        result.values.retain(|key| larger.values.contains(key));
+        result
     }
 
     /// Returns original values from `right` whose lower/upper-case form is in
     /// this set.
     pub fn intersection_with_case(&self, right: &Self, to_lower: bool) -> Self {
         let mut result = Self::new([] as [GoString; 0]);
+        let mut ascii = Vec::new();
         for original in &right.values {
-            let text = original.to_utf8_lossy_go();
-            let folded = if to_lower {
-                to_lowercase(&text)
+            let bytes = original.as_bytes();
+            let matched = if bytes.is_ascii() {
+                ascii.clear();
+                ascii.extend_from_slice(bytes);
+                if to_lower {
+                    ascii.make_ascii_lowercase();
+                } else {
+                    ascii.make_ascii_uppercase();
+                }
+                self.values.contains(ascii.as_slice())
             } else {
-                to_uppercase(&text)
+                let text = match std::str::from_utf8(bytes) {
+                    Ok(text) => Cow::Borrowed(text),
+                    Err(_) => Cow::Owned(original.to_utf8_lossy_go()),
+                };
+                let folded = if to_lower {
+                    to_lowercase(&text)
+                } else {
+                    to_uppercase(&text)
+                };
+                self.values.contains(folded.as_bytes())
             };
-            if self.values.contains(&GoString::from(folded)) {
+            if matched {
                 result.values.insert(original.clone());
             }
         }
@@ -856,6 +884,44 @@ mod tests {
         assert_eq!(intersection(&[&left, &right]).string(), "{q2, q3}");
         assert_eq!(difference(&left, &right).string(), "{q1}");
         assert_eq!(difference(&right, &left).string(), "{q4}");
+    }
+
+    #[test]
+    fn keyed_operations_keep_the_source_representatives() {
+        #[derive(Clone, Debug, Eq, PartialEq)]
+        struct Tagged(&'static str, u8);
+
+        impl SetKey for Tagged {
+            fn set_key(&self) -> GoString {
+                self.0.into()
+            }
+        }
+
+        let left = list_to_set([Tagged("b", 0), Tagged("a", 1), Tagged("b", 2)]);
+        let right = list_to_set([Tagged("b", 3), Tagged("c", 4)]);
+        assert_eq!(left.clone().to_list(), [Tagged("a", 1), Tagged("b", 2)]);
+        assert_eq!(
+            union(&[&left, &right]).to_list(),
+            [Tagged("a", 1), Tagged("b", 3), Tagged("c", 4)]
+        );
+        assert_eq!(intersection(&[&left, &right]).to_list(), [Tagged("b", 2)]);
+        assert_eq!(difference(&left, &right).to_list(), [Tagged("a", 1)]);
+    }
+
+    #[test]
+    fn string_set_case_intersection_preserves_original_bytes() {
+        let malformed = GoString::from(&b"\xe2\x82"[..]);
+        let original = StringSet::new([
+            GoString::from("AbC"),
+            GoString::from("İ"),
+            malformed.clone(),
+        ]);
+        let lower = StringSet::new(["abc", "i", "��"]);
+        assert_eq!(lower.intersection_with_case(&original, true), original);
+
+        let original = StringSet::new([GoString::from("abC"), GoString::from("ſ"), malformed]);
+        let upper = StringSet::new(["ABC", "S", "��"]);
+        assert_eq!(upper.intersection_with_case(&original, false), original);
     }
 
     #[test]

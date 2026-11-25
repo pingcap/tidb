@@ -12,6 +12,5 @@ workspace = true
 
 [dependencies]
 tidb-filter = { path = "../tidb-filter" }
-tidb-go-regexp = { path = "../tidb-go-regexp" }
 tidb-table-filter = { path = "../tidb-table-filter" }
 tidb-table-router = { path = "../tidb-table-router" }

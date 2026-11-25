@@ -2,6 +2,7 @@
 //! Go `conflictedkv/handler.go`: the handlers of one KV group's conflicted
 //! KVs, which re-encode each conflicted row.
 
+use std::borrow::Cow;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -117,15 +118,21 @@ impl BaseHandler {
         ctx: &Context,
         row_key: &[u8],
         handle: &TableHandle,
-        val: &[u8],
+        val: Cow<'_, [u8]>,
         row_handler: &mut dyn EncodedRowHandler,
     ) -> Result<()> {
         let encoder = self.encoder.as_mut().ok_or_else(|| other("conflict KV handler has no encoder"))?;
         let offsets = self.target_table.visible_offsets();
-        let decoded = self
-            .target_table
-            .decode_raw_row_data(encoder.base().session().context(), handle, &offsets, val)
-            .map_err(|e| other(e.into_mysql_error().to_string()))?;
+        let context = encoder.base().session().context();
+        let decoded = match val {
+            Cow::Borrowed(value) => {
+                self.target_table.decode_raw_row_data(context, handle, &offsets, value)
+            }
+            Cow::Owned(value) => {
+                self.target_table.decode_owned_raw_row_data(context, handle, &offsets, value)
+            }
+        }
+        .map_err(|e| other(e.into_mysql_error().to_string()))?;
         let auto_row_id = if self.target_table.meta().read().has_clustered_index() {
             0
         } else {
@@ -219,7 +226,7 @@ impl<R: EncodedRowHandler> ConflictKVHandler<R> {
             if let Some(e) = ctx.err() {
                 return Err(other(e.to_string()));
             }
-            self.handle(ctx, &pair)?;
+            self.handle_pair(ctx, &pair.key, Cow::Owned(pair.value))?;
             self.base.collector.processed(1, 0);
         }
         Ok(())
@@ -230,9 +237,13 @@ impl<R: EncodedRowHandler> ConflictKVHandler<R> {
     /// # Errors
     /// The key does not decode, or the row could not be handled.
     pub fn handle(&mut self, ctx: &Context, kv: &KVPair) -> Result<()> {
+        self.handle_pair(ctx, &kv.key, Cow::Borrowed(&kv.value))
+    }
+
+    fn handle_pair(&mut self, ctx: &Context, key: &[u8], value: Cow<'_, [u8]>) -> Result<()> {
         // Go `h.codec.DecodeKey(kv.Key)`: the sorted files hold the store's
         // encoded keys.
-        let key = self.base.decode_key(&kv.key)?;
+        let key = self.base.decode_key(key)?;
         match &mut self.kind {
             KVHandlerKind::Data => {
                 let handle = match tidb_tablecodec::table_key::decode_row_key(&key).map_err(|e| other(e.to_string()))? {
@@ -242,7 +253,7 @@ impl<R: EncodedRowHandler> ConflictKVHandler<R> {
                         return Err(other("partition handle in a row key"));
                     }
                 };
-                self.base.encode_and_handle_row(ctx, &key, &handle, &kv.value, &mut self.row_handler)
+                self.base.encode_and_handle_row(ctx, &key, &handle, value, &mut self.row_handler)
             }
             KVHandlerKind::Index(h) => {
                 // The table ID of the key, for a partitioned table.
@@ -251,7 +262,7 @@ impl<R: EncodedRowHandler> ConflictKVHandler<R> {
                     // should not happen
                     return Err(other(format!("invalid table ID in key {}", tidb_redact::key(&key))));
                 }
-                let handle = tidb_tablecodec::decode_index_handle(&key, &kv.value, h.index_columns)
+                let handle = tidb_tablecodec::decode_index_handle(&key, &value, h.index_columns)
                     .map_err(|e| other(e.to_string()))?
                     .ok_or_else(|| other("no handle in index key or value"))?;
                 // The filter and the snapshot need the data row key.
@@ -286,7 +297,7 @@ impl<R: EncodedRowHandler> ConflictKVHandler<R> {
             }
             let Some(handle) = handles.get(&row_key) else { continue };
             // A failed row stays buffered, so `close` retries it.
-            self.base.encode_and_handle_row(ctx, &row_key, handle, &val, &mut self.row_handler)?;
+            self.base.encode_and_handle_row(ctx, &row_key, handle, Cow::Owned(val), &mut self.row_handler)?;
             // A row of the data KV group is always recorded; an index KV
             // group's rows may repeat, so only the first one counts. The set is
             // in memory: past its bound the checksum is skipped.

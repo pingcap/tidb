@@ -152,7 +152,7 @@ impl PrometheusState {
                 serde_json::from_slice(&values).map_err(|error| other(error.to_string()))?;
             res = format!(
                 "http://{}",
-                join_host_port(
+                join_host_port_number(
                     prometheus["ip"].as_str().unwrap_or_default(),
                     prometheus["port"].as_i64().unwrap_or_default()
                 )
@@ -174,7 +174,7 @@ fn compose_url(address: &str, path: &str, security: &ClusterSecurity) -> String 
     format!("{schema}://{address}{path}")
 }
 
-use tidb_go_net::join_host_port;
+use tidb_go_net::join_host_port_number;
 
 #[cfg(test)]
 mod tests {

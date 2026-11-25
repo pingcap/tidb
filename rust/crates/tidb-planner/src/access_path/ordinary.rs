@@ -438,8 +438,8 @@ pub(crate) fn prune_estimate_range(
         .map(|range| {
             let width = keep_columns.min(range.low_val.len());
             tidb_ranger::Range {
-                low_val: range.low_val[..width].to_vec(),
-                high_val: range.high_val[..width].to_vec(),
+                low_val: range.low_val[..width].to_vec().into(),
+                high_val: range.high_val[..width].to_vec().into(),
                 collators: range.collators[..width.min(range.collators.len())].to_vec(),
                 low_exclude: range.low_exclude,
                 high_exclude: range.high_exclude,

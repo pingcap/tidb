@@ -307,7 +307,7 @@ impl From<EvalError> for EvaluatorError {
 /// Immutable projection expressions and logical column mapping. Actual input
 /// column ownership is discovered separately by each execution's suite.
 pub struct EvaluatorProgram {
-    calculated_output_indexes: Vec<usize>,
+    calculated_outputs: Vec<(usize, bool)>,
     calculated: Vec<Expression>,
     vectorizable: bool,
     column_mapping: HashMap<usize, Vec<usize>>,
@@ -322,7 +322,7 @@ impl EvaluatorProgram {
     #[must_use]
     pub fn new(exprs: Vec<Expression>, avoid_column_evaluator: bool) -> Self {
         let mut calculated = Vec::with_capacity(exprs.len());
-        let mut calculated_output_indexes = Vec::with_capacity(exprs.len());
+        let mut calculated_outputs = Vec::with_capacity(exprs.len());
         let mut column_mapping = HashMap::<usize, Vec<usize>>::new();
 
         for (output_index, expression) in exprs.into_iter().enumerate() {
@@ -337,13 +337,13 @@ impl EvaluatorProgram {
                     continue;
                 }
             }
-            calculated_output_indexes.push(output_index);
+            calculated_outputs.push((output_index, crate::chunk_executor::vectorized(&expression)));
             calculated.push(expression);
         }
 
         let vectorizable = vectorizable(&calculated);
         Self {
-            calculated_output_indexes,
+            calculated_outputs,
             calculated,
             vectorizable,
             column_mapping,
@@ -497,39 +497,33 @@ impl EvaluatorSuite {
         let program = &self.program;
         if program.vectorizable {
             let vec_enabled = ctx.enable_vectorized_expression();
-            for (output_index, expression) in program
-                .calculated_output_indexes
-                .iter()
-                .zip(&program.calculated)
+            for (&(output_index, vectorized), expression) in
+                program.calculated_outputs.iter().zip(&program.calculated)
             {
                 // Go `defaultEvaluator.run`: each expression independently
                 // selects its signature's typed vector kernel or row evaluation.
-                let vectorized = vec_enabled && crate::chunk_executor::vectorized(expression);
-                if vectorized
-                    && crate::scalar_function::vec_eval::eval_one(
+                if vec_enabled && vectorized {
+                    crate::scalar_function::vec_eval::eval_one(
                         expression,
                         ctx,
                         input,
                         output,
-                        *output_index,
-                    )?
-                {
+                        output_index,
+                    )?;
                     continue;
                 }
                 for row_index in 0..rows {
                     let value = expression.eval(ctx, input.get_row(row_index))?;
-                    output.append_datum(*output_index, &value);
+                    output.append_datum(output_index, &value);
                 }
             }
         } else {
             for row_index in 0..rows {
-                for (output_index, expression) in program
-                    .calculated_output_indexes
-                    .iter()
-                    .zip(&program.calculated)
+                for (&(output_index, _), expression) in
+                    program.calculated_outputs.iter().zip(&program.calculated)
                 {
                     let value = expression.eval(ctx, input.get_row(row_index))?;
-                    output.append_datum(*output_index, &value);
+                    output.append_datum(output_index, &value);
                 }
             }
         }

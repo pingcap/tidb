@@ -114,3 +114,49 @@ fn serialize_keys_reads_shared_and_response_backed_columns() {
         }
     }
 }
+
+#[test]
+fn serialize_json_keys_preserves_nulls_and_rejects_malformed_cells() {
+    let field_type = FieldType::new(FieldTypeCode::Json);
+    let mut chunk = Chunk::new_chunk_with_capacity(std::slice::from_ref(&field_type), 3);
+    let value = create_string_json("é");
+    let payload = value.hash_value().unwrap();
+    chunk.append_json(0, &value);
+    chunk.append_null(0);
+    chunk.append_bytes(0, &[value.type_code(), 1, 0xff]);
+
+    let mut keys = crate::SerializedJoinKeys::default();
+    for mode in [
+        crate::SerializeMode::Normal,
+        crate::SerializeMode::KeepVarColumnLength,
+    ] {
+        let serializer = crate::JoinKeyColumns {
+            indices: vec![0],
+            types: vec![field_type.clone()],
+            modes: vec![mode],
+        };
+        let (mut expected, empty) = if mode == crate::SerializeMode::KeepVarColumnLength {
+            ((payload.len() as u32).to_le_bytes().to_vec(), vec![0; 4])
+        } else {
+            (vec![], vec![])
+        };
+        expected.extend_from_slice(&payload);
+        serializer
+            .serialize_without_nulls(&chunk, &[1, 0], None, &mut keys)
+            .unwrap();
+        assert_eq!(&keys[0], empty.as_slice());
+        assert_eq!(&keys[1], expected.as_slice());
+
+        let mut nulls = vec![];
+        serializer
+            .serialize(&chunk, &[1, 0], None, &mut nulls, &mut keys)
+            .unwrap();
+        assert!(nulls[1]);
+        assert!(keys[0].is_empty());
+        assert_eq!(&keys[1], expected.as_slice());
+        assert!(matches!(
+            serializer.serialize(&chunk, &[2], None, &mut nulls, &mut keys),
+            Err(crate::CodecError::InvalidEncoding("invalid native join key cell"))
+        ));
+    }
+}

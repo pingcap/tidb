@@ -18,10 +18,10 @@
 
 use std::cell::RefCell;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::mpsc::{sync_channel, Receiver, SyncSender, TrySendError};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use crossbeam_channel::{Receiver, Sender, TrySendError, bounded, select_biased, tick};
 use tidb_log::{Field, Value};
 use tidb_logutil::bg_logger;
 
@@ -31,7 +31,7 @@ use tidb_timer::hook::{Hook, PreSchedEventResult, TimerShedEvent};
 use tidb_timer::store::{Context, OptionalVal, TimerStore, TimerUpdate};
 use tidb_timer::timer::{EventExtra, SchedEventStatus, TimerRecord};
 
-use super::{with_recover_until, NowFunc, WaitGroup, CHANNEL_POLL_INTERVAL};
+use super::{with_recover_until, NowFunc, WaitGroup};
 
 /// Go `workerRecvChanCap`.
 pub const WORKER_RECV_CHAN_CAP: usize = 128;
@@ -84,7 +84,7 @@ pub struct TriggerEventRequest {
     /// Go `store`.
     pub store: TimerStore,
     /// Go `resp`; `None` is Go's nil response channel.
-    pub resp: Option<SyncSender<TriggerEventResponse>>,
+    pub resp: Option<Sender<TriggerEventResponse>>,
 }
 
 impl TriggerEventRequest {
@@ -209,7 +209,7 @@ pub struct HookWorker {
     hook_class: String,
     hook_fn: Option<HookFn>,
     /// Go `ch`, the request channel the runtime sends into.
-    pub ch: SyncSender<Option<TriggerEventRequest>>,
+    pub ch: Sender<Option<TriggerEventRequest>>,
     receiver: Mutex<Option<Receiver<Option<TriggerEventRequest>>>>,
     now_func: NowFunc,
     /// The counters Go keeps as six separate fields.
@@ -223,7 +223,7 @@ impl HookWorker {
     ///
     /// Go's `TestTryTriggerTimer` builds `&hookWorker{ch: ch}` directly, which
     /// Rust cannot do for a struct with private fields; this is that literal.
-    pub fn channel_only(ch: SyncSender<Option<TriggerEventRequest>>) -> Self {
+    pub fn channel_only(ch: Sender<Option<TriggerEventRequest>>) -> Self {
         Self {
             ctx: Context::background(),
             group_id: String::new(),
@@ -322,26 +322,22 @@ impl HookWorker {
             let Some(receiver) = receiver.as_ref() else {
                 return;
             };
+            let done = self.ctx.done();
             loop {
-                if self.ctx.is_done() {
-                    return;
-                }
-                // Go selects on `ctx.Done()` and `w.ch` at once; std's
-                // receiver has no such select, so cancellation is observed by
-                // polling at `CHANNEL_POLL_INTERVAL`.
-                match receiver.recv_timeout(CHANNEL_POLL_INTERVAL) {
-                    Ok(request) => {
-                        let pending = UnhandledRequest {
-                            req: request,
-                            retry: 0,
-                        };
-                        unhandled.replace(Some(pending.clone()));
-                        self.handle_request_once(hook.as_ref(), &pending);
-                        unhandled.replace(None);
-                    }
-                    Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
-                    Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return,
-                }
+                let request = select_biased! {
+                    recv(done) -> _ => return,
+                    recv(receiver) -> result => match result {
+                        Ok(request) => request,
+                        Err(_) => return,
+                    },
+                };
+                let pending = UnhandledRequest {
+                    req: request,
+                    retry: 0,
+                };
+                unhandled.replace(Some(pending.clone()));
+                self.handle_request_once(hook.as_ref(), &pending);
+                unhandled.replace(None);
             }
         });
     }
@@ -551,37 +547,35 @@ impl HookWorker {
     /// Go `(*hookWorker).responseChan`.
     pub fn response_chan(
         &self,
-        ch: &SyncSender<TriggerEventResponse>,
+        ch: &Sender<TriggerEventResponse>,
         resp: TriggerEventResponse,
     ) -> bool {
-        let mut resp = resp;
-        let start = std::time::Instant::now();
-        let mut last_warned = start;
-        loop {
-            if self.ctx.is_done() {
-                bg_logger().info(
-                    "sending resp to chan aborted for context cancelled",
-                    &self.logger_fields(),
-                );
-                return false;
-            }
-
-            match ch.try_send(resp) {
+        if !self.ctx.is_done() {
+            let resp = match ch.try_send(resp) {
                 Ok(()) => return true,
                 Err(TrySendError::Disconnected(_)) => return false,
-                Err(TrySendError::Full(returned)) => {
-                    resp = returned;
-                    if last_warned.elapsed() >= Duration::from_nanos(CHAN_BLOCK_INTERVAL as u64) {
-                        last_warned = std::time::Instant::now();
+                Err(TrySendError::Full(resp)) => resp,
+            };
+            let done = self.ctx.done();
+            let warning = tick(Duration::from_nanos(CHAN_BLOCK_INTERVAL as u64));
+            loop {
+                select_biased! {
+                    recv(done) -> _ => break,
+                    send(ch, resp) -> result => return result.is_ok(),
+                    recv(warning) -> _ => {
                         bg_logger().warn(
                             "sending resp to chan is blocked for a long time",
                             &self.logger_fields(),
                         );
-                    }
-                    std::thread::sleep(CHANNEL_POLL_INTERVAL);
+                    },
                 }
             }
         }
+        bg_logger().info(
+            "sending resp to chan aborted for context cancelled",
+            &self.logger_fields(),
+        );
+        false
     }
 }
 
@@ -628,7 +622,7 @@ pub fn new_hook_worker_with_retry(
     retry_loop_wait: i64,
     retry_request_wait: i64,
 ) -> Arc<HookWorker> {
-    let (sender, receiver) = sync_channel(WORKER_RECV_CHAN_CAP);
+    let (sender, receiver) = bounded(WORKER_RECV_CHAN_CAP);
     let worker = Arc::new(HookWorker {
         ctx: ctx.clone(),
         group_id: group_id.to_string(),
@@ -685,18 +679,18 @@ pub fn build_event_update(
 /// Re-exported so callers can build the response channel Go sizes at
 /// `workerRespChanCap`.
 pub fn new_worker_resp_channel() -> (
-    SyncSender<TriggerEventResponse>,
+    Sender<TriggerEventResponse>,
     Receiver<TriggerEventResponse>,
 ) {
-    sync_channel(WORKER_RESP_CHAN_CAP)
+    bounded(WORKER_RESP_CHAN_CAP)
 }
 
 /// The zero-capacity response channel the upstream worker tests use.
 pub fn new_rendezvous_resp_channel() -> (
-    SyncSender<TriggerEventResponse>,
+    Sender<TriggerEventResponse>,
     Receiver<TriggerEventResponse>,
 ) {
-    sync_channel(0)
+    bounded(0)
 }
 
 /// Helper mirroring Go's `time.Now()` default for a worker's `nowFunc`.

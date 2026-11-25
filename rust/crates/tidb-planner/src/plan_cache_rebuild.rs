@@ -1219,8 +1219,8 @@ fn rebuild_point_constants(
         .into_iter()
         .map(|values| tidb_ranger::types::Range {
             collators: vec![tidb_charset::Collation::Binary; values.len()],
-            low_val: values.clone(),
-            high_val: values,
+            low_val: values.clone().into(),
+            high_val: values.into(),
             low_exclude: false,
             high_exclude: false,
         })

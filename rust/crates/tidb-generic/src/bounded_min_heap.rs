@@ -140,20 +140,45 @@ impl<T, F: Fn(&T, &T) -> isize> BoundedMinHeap<T, F> {
     where
         T: Clone,
     {
-        if self.data.items.is_empty() {
-            return Vec::new();
-        }
-
         // Copy items to avoid modifying the heap, then sort best-to-worst.
         let mut result = self.data.items.clone();
-        result.sort_by(|a, b| (self.data.cmp)(a, b).wrapping_neg().cmp(&0));
+        Self::sort_best_first(&mut result, &self.data.cmp);
         result
+    }
+
+    /// Consumes the heap and returns its items in best-to-worst order.
+    pub fn into_sorted_slice(mut self) -> Vec<T> {
+        Self::sort_best_first(&mut self.data.items, &self.data.cmp);
+        self.data.items
+    }
+
+    fn sort_best_first(items: &mut [T], cmp: &F) {
+        items.sort_by(|a, b| cmp(a, b).wrapping_neg().cmp(&0));
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::BoundedMinHeap;
+
+    #[test]
+    fn into_sorted_slice_moves_items_and_preserves_ties() {
+        struct Item(i32, &'static str);
+
+        let mut heap = BoundedMinHeap::new(3, Some(|a: &Item, b: &Item| {
+            int_comparator(&a.0, &b.0)
+        }));
+        heap.add(Item(1, "first"));
+        heap.add(Item(1, "second"));
+        heap.add(Item(2, "highest"));
+
+        let names: Vec<_> = heap
+            .into_sorted_slice()
+            .into_iter()
+            .map(|item| item.1)
+            .collect();
+        assert_eq!(names, ["highest", "first", "second"]);
+    }
 
     // A simple test item with a value for comparison.
     #[derive(Clone)]

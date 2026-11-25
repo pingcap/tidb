@@ -7,5 +7,9 @@ license.workspace = true
 repository.workspace = true
 description = "Go strconv.IsPrint and strconv.Quote, for TiDB's %q compatibility formatting (Rust rewrite)."
 
+[dependencies]
+utf8_iter = "1"
+memchr = "2"
+
 [lints]
 workspace = true

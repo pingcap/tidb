@@ -15,6 +15,10 @@
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
 use std::fmt;
+use std::hash::{Hash, Hasher};
+use std::sync::{Arc, OnceLock};
+
+use bytes::Bytes;
 
 use serde_json::{Map, Number, Value};
 
@@ -55,16 +59,426 @@ pub const JSON_LITERAL_FALSE: u8 = 2;
 const HEADER_SIZE: usize = 8;
 const KEY_ENTRY_SIZE: usize = 6;
 const VALUE_ENTRY_SIZE: usize = 5;
-const MAX_JSON_DEPTH: usize = 100;
+pub(crate) const MAX_JSON_DEPTH: usize = 100;
+pub(crate) const EMPTY_JSON_CONTAINER: &[u8; HEADER_SIZE] = &[0, 0, 0, 0, 8, 0, 0, 0];
 /// Source `floatEpsilon`: the precision loss tolerated when a JSON double is
 /// compared against a JSON integer.
 const FLOAT_EPSILON: f64 = 1e-8;
 
 /// Source-compatible `type code + value bytes` BinaryJSON representation.
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone)]
 pub struct BinaryJSON {
     type_code: u8,
-    value: Vec<u8>,
+    value: Bytes,
+    layout: OnceLock<BinaryLayout>,
+}
+
+#[derive(Clone, Copy)]
+enum BinaryLayout {
+    // The writer produced a canonical layout without recording its depth.
+    Canonical,
+    Validated(ValidatedLayout),
+    Invalid,
+    TooDeep,
+}
+
+/// The layout result for one exact binary JSON value.
+#[doc(hidden)]
+#[derive(Clone, Copy)]
+pub struct EncodedJSONLayout(BinaryLayout);
+
+impl EncodedJSONLayout {
+    pub(crate) fn canonical() -> Self {
+        Self(BinaryLayout::Canonical)
+    }
+
+    /// Whether the payload passed the binary JSON layout checks.
+    #[inline]
+    pub fn is_valid(self) -> bool {
+        matches!(self.0, BinaryLayout::Canonical | BinaryLayout::Validated(_))
+    }
+
+    /// Whether the checked value has canonical key order throughout.
+    pub fn is_canonical(self) -> bool {
+        matches!(
+            self.0,
+            BinaryLayout::Canonical
+                | BinaryLayout::Validated(ValidatedLayout { canonical: true, .. })
+        )
+    }
+
+    fn from_validation(result: Result<ValidatedLayout, BinaryJSONError>) -> Self {
+        Self(match result {
+            Ok(layout) => BinaryLayout::Validated(layout),
+            Err(BinaryJSONError::TooDeep) => BinaryLayout::TooDeep,
+            Err(_) => BinaryLayout::Invalid,
+        })
+    }
+}
+
+/// A checked prefix containing a packed object's directories and keys.
+/// Values with validation that depends on their payload are checked on every read.
+#[doc(hidden)]
+pub struct CheckedJSONKeys {
+    prefix: Vec<u8>,
+    packed_keys: Option<PackedObjectKeys>,
+    value_checks: Option<Vec<PayloadCheck>>,
+}
+
+struct PackedObjectKeys {
+    data_start: usize,
+    last_start: usize,
+    previous_start: usize,
+    fixed_width: Option<usize>,
+}
+
+impl PackedObjectKeys {
+    fn new(entries: &[[u8; KEY_ENTRY_SIZE]], data_start: usize, end: usize) -> Option<Self> {
+        let mut next = data_start;
+        let mut fixed_width = None;
+        let mut last_start = next;
+        let mut previous_start = next;
+        for (index, &[a, b, c, d, e, f]) in entries.iter().enumerate() {
+            let start = 1 + u32::from_le_bytes([a, b, c, d]) as usize;
+            let width = usize::from(u16::from_le_bytes([e, f]));
+            if start != next || width == 0 {
+                return None;
+            }
+            if index == 0 {
+                fixed_width = Some(width);
+            } else if fixed_width != Some(width) {
+                fixed_width = None;
+            }
+            previous_start = last_start;
+            last_start = start;
+            next = start + width;
+        }
+        (next == end).then_some(Self { data_start, last_start, previous_start, fixed_width })
+    }
+
+    fn matches(&self, prefix: &[u8], cell: &[u8]) -> bool {
+        let Some(current) = cell.get(..prefix.len()) else {
+            return false;
+        };
+        if current.starts_with(&prefix[..self.last_start]) {
+            let key = &current[self.last_start..];
+            return key == &prefix[self.last_start..]
+                || (is_valid_json_text(key) && &current[self.previous_start..self.last_start] < key);
+        }
+        if !current.starts_with(&prefix[..self.data_start]) {
+            return false;
+        }
+
+        let current = &current[self.data_start..];
+        let previous = &prefix[self.data_start..];
+        let (chunks, _) = current.as_chunks::<32>();
+        let (old_chunks, _) = previous.as_chunks::<32>();
+        let matched = chunks.iter().zip(old_chunks).take_while(|(a, b)| a == b).count() * 32;
+        let Some(difference) = current[matched..].iter().zip(&previous[matched..])
+            .position(|(a, b)| a != b) else {
+            return true;
+        };
+        let difference = matched + difference;
+        let count = (self.data_start - 1 - HEADER_SIZE) / (KEY_ENTRY_SIZE + VALUE_ENTRY_SIZE);
+        let entries = prefix[1 + HEADER_SIZE..1 + HEADER_SIZE + count * KEY_ENTRY_SIZE]
+            .as_chunks::<KEY_ENTRY_SIZE>().0;
+        let offset = |&[a, b, c, d, ..]: &[u8; KEY_ENTRY_SIZE]| {
+            1 + u32::from_le_bytes([a, b, c, d]) as usize - self.data_start
+        };
+        let index = entries.partition_point(|entry| offset(entry) <= difference) - 1;
+        let start = offset(&entries[index]);
+        let end = entries.get(index + 1).map_or(current.len(), offset);
+        if current[end..] == previous[end..] {
+            let key = &current[start..end];
+            return is_valid_json_text(key)
+                && (index == 0 || &current[offset(&entries[index - 1])..start] < key)
+                && entries.get(index + 1).is_none_or(|_| {
+                    key < &current[end..entries.get(index + 2).map_or(current.len(), offset)]
+                });
+        }
+
+        if let Some(width @ 1..=16) = self.fixed_width {
+            let padding = 16 - width;
+            if let Some(words) = cell[self.data_start..].get(..current.len() + padding) {
+                // Each window starts at a key boundary. Ignore bytes past the key.
+                let mask = u128::MAX << (padding * 8);
+                return current.is_ascii()
+                    && words
+                        .array_windows::<16>()
+                        .step_by(width)
+                        .map(|word| u128::from_be_bytes(*word) & mask)
+                        .is_sorted_by(|a, b| a < b);
+            }
+            return check_short_ascii_keys(&cell[1..], entries, prefix.len() - 1).is_some();
+        }
+        // The directories prove the key boundaries. One ASCII check covers
+        // all the keys, so only their ordering remains to be verified.
+        if !current.is_ascii() {
+            return false;
+        }
+        if let Some(width) = self.fixed_width {
+            return current.chunks_exact(width).is_sorted_by(|a, b| a < b);
+        }
+        let mut remaining = current;
+        entries.iter().map(|&[_, _, _, _, low, high]| {
+            let (key, rest) = remaining.split_at(usize::from(u16::from_le_bytes([low, high])));
+            remaining = rest;
+            key
+        }).is_sorted_by(|a, b| a < b)
+    }
+}
+
+enum PayloadCheck {
+    Value(usize),
+    Strings(PackedStringRun),
+    Child(CheckedChildLayout),
+    ChildWithValues(Box<CheckedChildValues>),
+}
+
+struct CheckedChildLayout {
+    index: usize,
+    offset: usize,
+    prefix: Box<[u8]>,
+    depth: u8,
+}
+
+struct CheckedChildValues {
+    layout: CheckedChildLayout,
+    size: usize,
+    checks: Box<[ChildValueCheck]>,
+}
+
+enum ChildValueCheck {
+    Float(usize),
+    String(usize),
+}
+
+impl PayloadCheck {
+    fn for_child(
+        parent: JSONContainer<'_>,
+        index: usize,
+        entry: &[u8; VALUE_ENTRY_SIZE],
+        budget: usize,
+    ) -> Option<(Self, usize)> {
+        let child = parent.child_from_entry(entry).ok()?.container_payload(false).ok()?;
+        let end = child.value_entries + child.count * VALUE_ENTRY_SIZE;
+        let entries = child.value[child.value_entries..end].as_chunks::<VALUE_ENTRY_SIZE>().0;
+        let mut values = Vec::new();
+        for entry in entries {
+            let offset = value_entry_offset(entry);
+            match entry[0] {
+                JSON_TYPE_CODE_INT64 | JSON_TYPE_CODE_UINT64
+                | JSON_TYPE_CODE_DATE | JSON_TYPE_CODE_DATETIME | JSON_TYPE_CODE_TIMESTAMP
+                    if offset <= child.value.len() - 8 => {}
+                JSON_TYPE_CODE_LITERAL
+                    if matches!(entry[1], JSON_LITERAL_NULL | JSON_LITERAL_FALSE | JSON_LITERAL_TRUE) => {}
+                JSON_TYPE_CODE_FLOAT64 if offset <= child.value.len() - 8 => {
+                    values.push(ChildValueCheck::Float(offset));
+                }
+                JSON_TYPE_CODE_STRING if offset < child.value.len() => {
+                    values.push(ChildValueCheck::String(offset));
+                }
+                _ => return None,
+            }
+        }
+        let prefix_end = child.checked_key_prefix(budget.min(128))?;
+        let layout = CheckedChildLayout {
+            index,
+            offset: value_entry_offset(entry),
+            prefix: child.value[..prefix_end].into(),
+            depth: 1 + u8::from(child.count != 0),
+        };
+        let check = if values.is_empty() {
+            Self::Child(layout)
+        } else {
+            Self::ChildWithValues(Box::new(CheckedChildValues {
+                layout,
+                size: child.value.len(),
+                checks: values.into_boxed_slice(),
+            }))
+        };
+        Some((check, prefix_end))
+    }
+}
+
+impl CheckedChildValues {
+    #[inline]
+    fn validate_values(&self, value: &[u8]) -> Result<(), BinaryJSONError> {
+        // The matching parent directory and child header prove this range.
+        let value = &value[..self.size];
+        for check in &self.checks {
+            match *check {
+                ChildValueCheck::Float(offset) => {
+                    let word = value[offset..offset + 8].try_into().unwrap();
+                    if !f64::from_le_bytes(word).is_finite() {
+                        return Err(BinaryJSONError::InvalidBinary);
+                    }
+                }
+                ChildValueCheck::String(offset) => validate_string_payload(&value[offset..])?,
+            }
+        }
+        Ok(())
+    }
+}
+
+struct PackedStringRun {
+    start: usize,
+    end: usize,
+    lengths: PackedStringLengths,
+}
+
+enum PackedStringLengths {
+    Fixed(u8),
+    Varying(Box<[u8]>),
+}
+
+impl PackedStringRun {
+    fn find(value: &[u8], entries: &[[u8; VALUE_ENTRY_SIZE]]) -> Option<Self> {
+        let start = value_entry_offset(entries.first()?);
+        let mut end = start;
+        let mut count = 0;
+        let mut fixed_length = Some(*value.get(start)?);
+        for entry in entries {
+            if entry[0] != JSON_TYPE_CODE_STRING || value_entry_offset(entry) != end {
+                break;
+            }
+            let Some(&length @ 0..=127) = value.get(end) else {
+                break;
+            };
+            let next = end.checked_add(usize::from(length) + 1)?;
+            if next > value.len() {
+                break;
+            }
+            if fixed_length != Some(length) {
+                fixed_length = None;
+            }
+            end = next;
+            count += 1;
+        }
+        if count < 4 {
+            return None;
+        }
+        let lengths = match fixed_length {
+            Some(length) => PackedStringLengths::Fixed(length),
+            None => PackedStringLengths::Varying(
+                entries[..count].iter().map(|entry| value[value_entry_offset(entry)]).collect(),
+            ),
+        };
+        Some(Self { start, end, lengths })
+    }
+
+    #[inline]
+    fn count(&self) -> usize {
+        match &self.lengths {
+            PackedStringLengths::Fixed(length) => (self.end - self.start) / (usize::from(*length) + 1),
+            PackedStringLengths::Varying(lengths) => lengths.len(),
+        }
+    }
+
+    fn validate(&self, value: &[u8]) -> Result<bool, BinaryJSONError> {
+        let encoded = &value[self.start..self.end];
+        match &self.lengths {
+            PackedStringLengths::Fixed(length) => {
+                if !encoded.chunks_exact(usize::from(*length) + 1).all(|cell| cell[0] == *length) {
+                    return Ok(false);
+                }
+            }
+            PackedStringLengths::Varying(lengths) => {
+                let mut offset = 0;
+                for &length in lengths {
+                    if encoded.get(offset) != Some(&length) {
+                        return Ok(false);
+                    }
+                    offset += usize::from(length) + 1;
+                }
+            }
+        }
+        // The single-byte lengths are ASCII. They separate the strings, so
+        // an incomplete UTF-8 sequence cannot cross a field boundary.
+        simdutf8::basic::from_utf8(encoded).map_err(|_| BinaryJSONError::InvalidBinary)?;
+        Ok(true)
+    }
+}
+
+impl CheckedJSONKeys {
+    /// Saves a bounded prefix for an object with valid, sorted keys.
+    pub fn new(cell: &[u8]) -> Option<Self> {
+        let [JSON_TYPE_CODE_OBJECT, value @ ..] = cell else {
+            return None;
+        };
+        let object = BinaryJSONRef { type_code: JSON_TYPE_CODE_OBJECT, value }.container().ok()?;
+        if object.count < 16 {
+            return None;
+        }
+        let end = object.checked_key_prefix(8191)?;
+        let keys = value[HEADER_SIZE..object.value_entries].as_chunks::<KEY_ENTRY_SIZE>().0;
+        Some(Self {
+            packed_keys: PackedObjectKeys::new(
+                keys,
+                1 + object.value_entries + object.count * VALUE_ENTRY_SIZE,
+                1 + end,
+            ),
+            value_checks: object.payload_checks().ok()?,
+            prefix: cell[..1 + end].to_vec(),
+        })
+    }
+
+    /// Returns the validated prefix length.
+    pub fn prefix_len(&self) -> usize {
+        self.prefix.len()
+    }
+
+    /// Checks the values whose payload can affect layout validity when the
+    /// directories match and the keys are known to be valid and ordered.
+    /// A child whose layout changes uses general validation on later rows.
+    #[inline]
+    pub fn check_layout(&mut self, cell: &[u8]) -> Option<EncodedJSONLayout> {
+        let keys_valid = match &self.packed_keys {
+            Some(keys) => keys.matches(&self.prefix, cell),
+            None => cell.starts_with(&self.prefix),
+        };
+        if !keys_valid {
+            return None;
+        }
+        let view = BinaryJSONRef { type_code: JSON_TYPE_CODE_OBJECT, value: &cell[1..] };
+        Some(EncodedJSONLayout::from_validation(view.container().and_then(|container| {
+            match &mut self.value_checks {
+                Some(indices) => container.validate_payloads(indices),
+                None => view.validate_container_layout::<true>(container, 0, true),
+            }
+        })))
+    }
+}
+
+#[derive(Clone, Copy)]
+struct ValidatedLayout {
+    canonical: bool,
+    // The root counts as one in addition to MAX_JSON_DEPTH nested levels.
+    depth: u8,
+}
+
+impl PartialEq for BinaryJSON {
+    fn eq(&self, other: &Self) -> bool {
+        self.type_code == other.type_code && self.value == other.value
+    }
+}
+
+impl Eq for BinaryJSON {}
+
+impl Hash for BinaryJSON {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.type_code.hash(state);
+        self.value.as_ref().hash(state);
+    }
+}
+
+impl fmt::Debug for BinaryJSON {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.debug_struct("BinaryJSON")
+            .field("type_code", &self.type_code)
+            .field("value", &self.value.as_ref())
+            .finish()
+    }
 }
 
 /// Lossless logical tree used by binary JSON operations.
@@ -177,10 +591,22 @@ impl BinaryJSON {
     /// table, so this constructor deliberately preserves the bytes without
     /// reparsing or normalizing the document.
     pub fn from_encoded_parts(type_code: u8, value: impl Into<Vec<u8>>) -> Self {
+        Self::from_shared_parts(type_code, Bytes::from(value.into()))
+    }
+
+    /// Reconstructs an encoded value using immutable shared payload bytes.
+    pub fn from_shared_parts(type_code: u8, value: Bytes) -> Self {
         Self {
             type_code,
-            value: value.into(),
+            value,
+            layout: OnceLock::new(),
         }
+    }
+
+    /// Retains the encoded payload as a slice of the immutable backing vector.
+    pub fn from_shared_subslice(type_code: u8, owner: &Arc<Vec<u8>>, value: &[u8]) -> Self {
+        let value = tidb_goruntime::GoString::from_shared_subslice(owner, value);
+        Self::from_shared_parts(type_code, Bytes::from_owner(value))
     }
 
     /// Reconstructs the exact internal type-code/payload pair stored by
@@ -196,15 +622,14 @@ impl BinaryJSON {
     pub const fn zero() -> Self {
         Self {
             type_code: 0,
-            value: Vec::new(),
+            value: Bytes::new(),
+            layout: OnceLock::new(),
         }
     }
 
     /// Constructs from an exact source type code and value payload.
     pub fn from_raw(type_code: u8, value: Vec<u8>) -> Result<Self, BinaryJSONError> {
-        let json = Self { type_code, value };
-        json.to_node()?;
-        Ok(json)
+        Self::from_encoded_parts(type_code, value).validate_layout()
     }
 
     /// Builds a source-layout opaque JSON value.
@@ -215,7 +640,8 @@ impl BinaryJSON {
         bytes.extend_from_slice(&value.bytes);
         Self {
             type_code: JSON_TYPE_CODE_OPAQUE,
-            value: bytes,
+            value: Bytes::from(bytes),
+            layout: OnceLock::new(),
         }
     }
 
@@ -228,7 +654,8 @@ impl BinaryJSON {
         };
         Self {
             type_code,
-            value: value.core_time().raw().to_le_bytes().to_vec(),
+            value: Bytes::from(value.core_time().raw().to_le_bytes().to_vec()),
+            layout: OnceLock::new(),
         }
     }
 
@@ -242,7 +669,7 @@ impl BinaryJSON {
         };
         let raw = u64::from_le_bytes(
             self.value
-                .as_slice()
+                .as_ref()
                 .try_into()
                 .map_err(|_| BinaryJSONError::InvalidBinary)?,
         );
@@ -255,7 +682,8 @@ impl BinaryJSON {
         bytes.extend_from_slice(&(value.fsp() as u32).to_le_bytes());
         Self {
             type_code: JSON_TYPE_CODE_DURATION,
-            value: bytes,
+            value: Bytes::from(bytes),
+            layout: OnceLock::new(),
         }
     }
 
@@ -305,17 +733,23 @@ impl BinaryJSON {
 
     /// Builds a BinaryJSON value from a validated JSON tree.
     pub fn from_value(value: &Value) -> Result<Self, BinaryJSONError> {
-        encode_value(value, 0)
+        let mut depth = 1;
+        let mut encoded = encode_value(value, 0, &mut depth)?;
+        encoded.layout = OnceLock::from(BinaryLayout::Validated(ValidatedLayout {
+            canonical: true,
+            depth,
+        }));
+        Ok(encoded)
     }
 
     /// Builds a BinaryJSON value from every source-supported input type.
     pub fn from_typed_value(value: &BinaryJSONValue) -> Result<Self, BinaryJSONError> {
-        Self::from_node(&typed_value_to_node(value)?)
+        encode_typed_value(value)
     }
 
     /// Calculates the source binary payload size for a typed input.
     pub fn calculate_typed_size(value: &BinaryJSONValue) -> Result<usize, BinaryJSONError> {
-        Self::from_typed_value(value).map(|value| value.value.len())
+        typed_payload_size(value, 0, &mut Vec::new())
     }
 
     /// Returns the source type code.
@@ -331,9 +765,35 @@ impl BinaryJSON {
     /// Returns `type code + value` for the TiDB codec boundary.
     pub fn encoded(&self) -> Vec<u8> {
         let mut encoded = Vec::with_capacity(1 + self.value.len());
-        encoded.push(self.type_code);
-        encoded.extend_from_slice(&self.value);
+        self.append_encoded_to(&mut encoded);
         encoded
+    }
+
+    /// Appends the type code and original payload to an existing buffer.
+    pub fn append_encoded_to(&self, output: &mut Vec<u8>) {
+        output.push(self.type_code);
+        output.extend_from_slice(&self.value);
+    }
+
+    /// Appends JSON text from an encoded cell without copying its binary payload.
+    pub fn append_encoded_text(encoded: &[u8], output: &mut Vec<u8>) -> fmt::Result {
+        struct BytesWriter<'a>(&'a mut Vec<u8>);
+
+        impl fmt::Write for BytesWriter<'_> {
+            fn write_str(&mut self, text: &str) -> fmt::Result {
+                self.0.extend_from_slice(text.as_bytes());
+                Ok(())
+            }
+        }
+
+        let (&type_code, value) = encoded.split_first().ok_or(fmt::Error)?;
+        let view = BinaryJSONRef { type_code, value };
+        let mut output = BytesWriter(output);
+        if view.validate_layout_at::<true>(0, true).is_ok_and(|layout| layout.canonical) {
+            format_json_root(view, &mut output)
+        } else {
+            fmt::Write::write_fmt(&mut output, format_args!("{}", view.copy()))
+        }
     }
 
     /// Decodes into a JSON tree without losing signed/unsigned integer text.
@@ -342,11 +802,258 @@ impl BinaryJSON {
     }
 
     pub(crate) fn to_node(&self) -> Result<JSONNode, BinaryJSONError> {
-        decode_node(self, 0)
+        decode_node(self.view(), 0)
     }
 
     pub(crate) fn from_node(node: &JSONNode) -> Result<Self, BinaryJSONError> {
         encode_node(node, 0)
+    }
+
+    pub(crate) fn view(&self) -> BinaryJSONRef<'_> {
+        BinaryJSONRef {
+            type_code: self.type_code,
+            value: &self.value,
+        }
+    }
+
+    pub(crate) fn canonical_view(&self) -> Option<BinaryJSONRef<'_>> {
+        EncodedJSONLayout(self.layout())
+            .is_canonical()
+            .then(|| self.view())
+    }
+
+    fn layout(&self) -> BinaryLayout {
+        *self.layout.get_or_init(|| self.view().checked_layout())
+    }
+
+    /// Returns a layout result already known for these bytes without validating them.
+    #[doc(hidden)]
+    pub fn known_encoded_layout(&self) -> Option<bool> {
+        self.known_layout().map(EncodedJSONLayout::is_canonical)
+    }
+
+    /// Returns the existing layout check, including any validation failure.
+    #[doc(hidden)]
+    pub fn known_layout(&self) -> Option<EncodedJSONLayout> {
+        self.layout.get().copied().map(EncodedJSONLayout)
+    }
+
+    /// Checks a complete packed cell with a leading JSON type code.
+    #[doc(hidden)]
+    #[inline]
+    pub fn check_encoded_layout(cell: &[u8]) -> EncodedJSONLayout {
+        if let [JSON_TYPE_CODE_STRING, length @ 0..=127, text @ ..] = cell {
+            if text.len() != usize::from(*length) {
+                return EncodedJSONLayout(BinaryLayout::Invalid);
+            }
+            if text.is_ascii() {
+                return EncodedJSONLayout(BinaryLayout::Validated(ValidatedLayout {
+                    canonical: true,
+                    depth: 1,
+                }));
+            }
+        }
+        EncodedJSONLayout(match cell.split_first() {
+            Some((&type_code, value)) => BinaryJSONRef { type_code, value }.checked_layout(),
+            None => BinaryLayout::Invalid,
+        })
+    }
+
+    /// Validates a flat scalar object with short ASCII keys. Integer-only
+    /// objects also return the prefix needed to reuse the layout check.
+    #[doc(hidden)]
+    pub fn check_flat_object_layout(cell: &[u8]) -> Option<(EncodedJSONLayout, Option<usize>)> {
+        let [JSON_TYPE_CODE_OBJECT, value @ ..] = cell else {
+            return None;
+        };
+        let container = BinaryJSONRef { type_code: JSON_TYPE_CODE_OBJECT, value }.container().ok()?;
+        if container.count == 0 {
+            return None;
+        }
+        let value_end = container.value_entries + container.count * VALUE_ENTRY_SIZE;
+        let entries = value[container.value_entries..value_end]
+            .as_chunks::<VALUE_ENTRY_SIZE>().0;
+        let keys = value[HEADER_SIZE..container.value_entries].as_chunks::<KEY_ENTRY_SIZE>().0;
+        let first = keys.first()?;
+        let first_len = u16::from_le_bytes([first[4], first[5]]);
+        if !(1..=16).contains(&first_len)
+            || matches!(entries.last()?[0], JSON_TYPE_CODE_ARRAY | JSON_TYPE_CODE_OBJECT)
+        {
+            return None;
+        }
+        let prefix = if check_flat_values(value, entries)? && container.count >= 16 {
+            let prefix = value_entry_offset(entries.first()?);
+            if !(value_end..=value.len()).contains(&prefix) {
+                return None;
+            }
+            Some(prefix)
+        } else {
+            None
+        };
+        let key_end = prefix.unwrap_or(value.len());
+        check_short_ascii_keys(value, keys, key_end)?;
+        Some((
+            EncodedJSONLayout(BinaryLayout::Validated(ValidatedLayout {
+                canonical: true,
+                depth: 2,
+            })),
+            prefix.map(|end| 1 + end),
+        ))
+    }
+
+    /// Reuses a layout result from a storage range holding these exact bytes.
+    /// The result must belong to this value's type code and payload.
+    #[doc(hidden)]
+    pub fn with_known_layout(mut self, layout: Option<EncodedJSONLayout>) -> Self {
+        if let Some(layout) = layout {
+            self.layout = OnceLock::from(layout.0);
+        }
+        self
+    }
+
+    /// Returns the maximum document nesting depth, with every scalar at depth one.
+    pub fn element_depth(&self) -> Result<usize, BinaryJSONError> {
+        self.view().depth_for_layout(self.layout())
+    }
+
+    /// Go `BinaryJSON.GetElemDepth` for SQL `JSON_DEPTH`. Scalar types
+    /// have depth one. Container traversal checks the framing it reads.
+    #[inline]
+    pub fn get_elem_depth(&self) -> Result<usize, BinaryJSONError> {
+        match self.type_code {
+            JSON_TYPE_CODE_ARRAY | JSON_TYPE_CODE_OBJECT if self.value() == EMPTY_JSON_CONTAINER => Ok(1),
+            JSON_TYPE_CODE_ARRAY | JSON_TYPE_CODE_OBJECT => {
+                self.view().depth_from_framing(self.layout.get().copied())
+            }
+            _ => Ok(1),
+        }
+    }
+
+    /// Go `BinaryJSON.GetElemDepth` on a borrowed binary cell. An existing
+    /// layout may be reused if it was checked for these exact bytes.
+    #[doc(hidden)]
+    #[inline]
+    pub fn get_encoded_elem_depth(
+        cell: &[u8],
+        known_layout: impl FnOnce() -> Option<EncodedJSONLayout>,
+    ) -> Result<usize, BinaryJSONError> {
+        let (&type_code, value) = cell.split_first().ok_or(BinaryJSONError::InvalidBinary)?;
+        match type_code {
+            JSON_TYPE_CODE_ARRAY | JSON_TYPE_CODE_OBJECT if value == EMPTY_JSON_CONTAINER => Ok(1),
+            JSON_TYPE_CODE_ARRAY | JSON_TYPE_CODE_OBJECT => {
+                let layout = known_layout().map(|layout| layout.0);
+                BinaryJSONRef { type_code, value }.depth_from_framing(layout)
+            }
+            _ => Ok(1),
+        }
+    }
+
+    /// Whether the container has enough traversal work to amortize a cache lookup.
+    #[doc(hidden)]
+    pub fn should_cache_encoded_depth(cell: &[u8]) -> bool {
+        let Some(&[type_code @ (JSON_TYPE_CODE_OBJECT | JSON_TYPE_CODE_ARRAY), a, b, c, d]) = cell.first_chunk::<5>() else {
+            return false;
+        };
+        match u32::from_le_bytes([a, b, c, d]) {
+            0 => false,
+            1 => {
+                let entry = 1 + HEADER_SIZE + usize::from(type_code == JSON_TYPE_CODE_OBJECT) * KEY_ENTRY_SIZE;
+                matches!(cell.get(entry), Some(&JSON_TYPE_CODE_ARRAY | &JSON_TYPE_CODE_OBJECT))
+            }
+            _ => true,
+        }
+    }
+
+    /// Reads the depth of one packed cell. A supplied layout must describe
+    /// these exact bytes, including the type code.
+    #[doc(hidden)]
+    #[inline]
+    pub fn encoded_element_depth(
+        cell: &[u8],
+        layout: impl FnOnce() -> Option<EncodedJSONLayout>,
+    ) -> Result<usize, BinaryJSONError> {
+        let (&type_code, value) = cell.split_first().ok_or(BinaryJSONError::InvalidBinary)?;
+        match (type_code, value) {
+            (JSON_TYPE_CODE_INT64 | JSON_TYPE_CODE_UINT64, [_, _, _, _, _, _, _, _])
+            | (
+                JSON_TYPE_CODE_LITERAL,
+                [JSON_LITERAL_NULL | JSON_LITERAL_TRUE | JSON_LITERAL_FALSE],
+            ) => return Ok(1),
+            (JSON_TYPE_CODE_ARRAY | JSON_TYPE_CODE_OBJECT, value)
+                if value == EMPTY_JSON_CONTAINER =>
+            {
+                return Ok(1)
+            }
+            _ => {}
+        }
+        let view = BinaryJSONRef { type_code, value };
+        view.depth_for_layout(layout().map_or_else(|| view.checked_layout(), |layout| layout.0))
+    }
+
+    pub(crate) fn empty_array() -> Self {
+        Self {
+            type_code: JSON_TYPE_CODE_ARRAY,
+            value: Bytes::from_static(EMPTY_JSON_CONTAINER),
+            layout: OnceLock::from(BinaryLayout::Validated(ValidatedLayout {
+                canonical: true,
+                depth: 1,
+            })),
+        }
+    }
+
+    pub(crate) fn share_view(&self, view: BinaryJSONRef<'_>) -> Self {
+        Self {
+            type_code: view.type_code,
+            value: self.value.slice_ref(view.value),
+            layout: OnceLock::from(BinaryLayout::Canonical),
+        }
+    }
+
+    pub(crate) fn share_extracted_view(
+        &self,
+        view: BinaryJSONRef<'_>,
+        layout: Option<EncodedJSONLayout>,
+    ) -> Self {
+        Self::from_shared_parts(view.type_code, self.value.slice_ref(view.value))
+            .with_known_layout(layout)
+    }
+
+    /// Wraps already validated canonical values, preserving the depth check.
+    pub(crate) fn array_from_views(
+        values: &[BinaryJSONRef<'_>],
+    ) -> Result<Self, BinaryJSONError> {
+        encode_view_array(values.iter().copied())?.finish_edit(false)?.validate_layout()
+    }
+
+    /// Finalizes a wire edit assembled from previously validated values.
+    pub(crate) fn finish_edit(mut self, may_increase_depth: bool) -> Result<Self, BinaryJSONError> {
+        if may_increase_depth && self.view().container_depth()? - 1 > MAX_JSON_DEPTH {
+            return Err(BinaryJSONError::TooDeep);
+        }
+        self.layout = OnceLock::from(BinaryLayout::Canonical);
+        Ok(self)
+    }
+
+    /// Validates the complete binary layout and records whether object keys are sorted.
+    pub fn validate_layout(mut self) -> Result<Self, BinaryJSONError> {
+        match self.layout() {
+            BinaryLayout::Validated(_) => Ok(self),
+            BinaryLayout::Invalid => Err(BinaryJSONError::InvalidBinary),
+            BinaryLayout::TooDeep => Err(BinaryJSONError::TooDeep),
+            BinaryLayout::Canonical => {
+                // The writer established the layout. Supply the depth so
+                // future checked reads can reuse the full result.
+                let depth = self.view().container_depth()?;
+                if depth > MAX_JSON_DEPTH + 1 {
+                    return Err(BinaryJSONError::TooDeep);
+                }
+                self.layout = OnceLock::from(BinaryLayout::Validated(ValidatedLayout {
+                    canonical: true,
+                    depth: depth as u8,
+                }));
+                Ok(self)
+            }
+        }
     }
 
     /// Returns a signed integer payload.
@@ -354,7 +1061,7 @@ impl BinaryJSON {
         if self.type_code != JSON_TYPE_CODE_INT64 {
             return None;
         }
-        Some(i64::from_le_bytes(self.value.as_slice().try_into().ok()?))
+        Some(i64::from_le_bytes(self.value.as_ref().try_into().ok()?))
     }
 
     /// Returns an unsigned integer payload.
@@ -362,7 +1069,7 @@ impl BinaryJSON {
         if self.type_code != JSON_TYPE_CODE_UINT64 {
             return None;
         }
-        Some(u64::from_le_bytes(self.value.as_slice().try_into().ok()?))
+        Some(u64::from_le_bytes(self.value.as_ref().try_into().ok()?))
     }
 
     /// Returns a double payload.
@@ -371,17 +1078,86 @@ impl BinaryJSON {
             return None;
         }
         Some(f64::from_bits(u64::from_le_bytes(
-            self.value.as_slice().try_into().ok()?,
+            self.value.as_ref().try_into().ok()?,
         )))
     }
 
-    /// Returns string bytes.
-    pub fn as_string(&self) -> Option<&[u8]> {
-        if self.type_code != JSON_TYPE_CODE_STRING {
-            return None;
+    /// Returns whether this value compares equal to JSON numeric zero.
+    pub fn is_zero(&self) -> bool {
+        match self.type_code {
+            JSON_TYPE_CODE_INT64 | JSON_TYPE_CODE_UINT64 => self.value.as_ref() == [0; 8],
+            JSON_TYPE_CODE_FLOAT64 => self
+                .as_f64()
+                .is_some_and(|value| value.abs() < FLOAT_EPSILON),
+            _ => false,
         }
-        let (length, prefix) = decode_uvarint(&self.value).ok()?;
-        self.value.get(prefix..prefix + length)
+    }
+
+    /// Returns string bytes.
+    #[inline]
+    pub fn as_string(&self) -> Option<&[u8]> {
+        self.view().string_bytes()
+    }
+
+    /// Compares two BinaryJSON cells whose first bytes are their type codes.
+    /// An empty cell carries no JSON value and returns `None`.
+    pub fn compare_encoded(left: &[u8], right: &[u8]) -> Option<Ordering> {
+        Self::compare_encoded_with_validation(left, right, || None, || None)
+    }
+
+    /// Compares encoded cells using layout checks supplied by their storage.
+    /// A supplied result must equal `encoded_is_canonical` for its exact cell.
+    #[doc(hidden)]
+    pub fn compare_encoded_with_validation(
+        left: &[u8],
+        right: &[u8],
+        left_is_canonical: impl FnOnce() -> Option<bool>,
+        right_is_canonical: impl FnOnce() -> Option<bool>,
+    ) -> Option<Ordering> {
+        let (&left_type, left_value) = left.split_first()?;
+        let (&right_type, right_value) = right.split_first()?;
+        let left = BinaryJSONRef {
+            type_code: left_type,
+            value: left_value,
+        };
+        let right = BinaryJSONRef {
+            type_code: right_type,
+            value: right_value,
+        };
+        Some(compare_json_views(left, right, left_is_canonical, right_is_canonical).unwrap_or_else(
+            || {
+                let left = Self::from_encoded_parts(left.type_code, left.value);
+                let right = Self::from_encoded_parts(right.type_code, right.value);
+                compare_binary_json_fallback(&left, &right)
+            },
+        ))
+    }
+
+    /// Compares a packed left cell with this value using its exact layout result.
+    /// Returns `None` if the left cell has no type code.
+    #[doc(hidden)]
+    pub fn compare_encoded_left(
+        &self,
+        left: &[u8],
+        left_is_canonical: impl FnOnce() -> Option<bool>,
+    ) -> Option<Ordering> {
+        let (&type_code, value) = left.split_first()?;
+        let left = BinaryJSONRef { type_code, value };
+        let ordering = compare_json_views(left, self.view(), left_is_canonical, || {
+            Some(self.canonical_view().is_some())
+        });
+        Some(ordering.unwrap_or_else(|| {
+            let left = Self::from_encoded_parts(left.type_code, left.value);
+            compare_binary_json_fallback(&left, self)
+        }))
+    }
+
+    /// Checks the complete layout, including strings and object key order.
+    #[doc(hidden)]
+    pub fn encoded_is_canonical(cell: &[u8]) -> bool {
+        cell.split_first().is_some_and(|(&type_code, value)| {
+            BinaryJSONRef { type_code, value }.is_canonical_layout()
+        })
     }
 
     /// Decodes an opaque value without changing its bytes.
@@ -389,17 +1165,7 @@ impl BinaryJSON {
         if self.type_code != JSON_TYPE_CODE_OPAQUE {
             return Err(BinaryJSONError::InvalidBinary);
         }
-        let (&type_code, payload) = self
-            .value
-            .split_first()
-            .ok_or(BinaryJSONError::InvalidBinary)?;
-        let (length, prefix) = decode_uvarint(payload)?;
-        let bytes = payload
-            .get(prefix..prefix + length)
-            .ok_or(BinaryJSONError::InvalidBinary)?;
-        if prefix + length != payload.len() {
-            return Err(BinaryJSONError::InvalidBinary);
-        }
+        let (type_code, bytes) = read_opaque(&self.value)?;
         Ok(Opaque {
             type_code,
             bytes: bytes.to_vec(),
@@ -408,111 +1174,1316 @@ impl BinaryJSON {
 
     /// Returns MySQL's JSON_TYPE name.
     pub fn type_name(&self) -> Result<&'static str, BinaryJSONError> {
-        match self.type_code {
-            JSON_TYPE_CODE_OBJECT => Ok("OBJECT"),
-            JSON_TYPE_CODE_ARRAY => Ok("ARRAY"),
-            JSON_TYPE_CODE_LITERAL if self.value == [JSON_LITERAL_NULL] => Ok("NULL"),
-            JSON_TYPE_CODE_LITERAL => Ok("BOOLEAN"),
-            JSON_TYPE_CODE_INT64 => Ok("INTEGER"),
-            JSON_TYPE_CODE_UINT64 => Ok("UNSIGNED INTEGER"),
-            JSON_TYPE_CODE_FLOAT64 => Ok("DOUBLE"),
-            JSON_TYPE_CODE_STRING => Ok("STRING"),
-            JSON_TYPE_CODE_OPAQUE => match self.opaque()?.type_code {
-                0x0f | 0xf9..=0xfe => Ok("BLOB"),
-                0x10 => Ok("BIT"),
-                _ => Ok("OPAQUE"),
-            },
-            JSON_TYPE_CODE_DATE => Ok("DATE"),
-            JSON_TYPE_CODE_DATETIME | JSON_TYPE_CODE_TIMESTAMP => Ok("DATETIME"),
-            JSON_TYPE_CODE_DURATION => Ok("TIME"),
-            _ => Err(BinaryJSONError::InvalidBinary),
-        }
+        self.view().type_name().map(|name| name.text)
+    }
+
+    /// Reads the JSON_TYPE name directly from a chunk cell.
+    #[doc(hidden)]
+    #[inline]
+    pub fn encoded_type_name(cell: &[u8]) -> Result<(&'static [u8; 16], usize), BinaryJSONError> {
+        let (&type_code, value) = cell.split_first().ok_or(BinaryJSONError::InvalidBinary)?;
+        let name = BinaryJSONRef { type_code, value }.type_name()?;
+        Ok((&name.bytes, name.text.len()))
     }
 
     /// Implements JSON_UNQUOTE for one binary JSON value.
+    #[inline]
     pub fn unquote(&self) -> Result<String, BinaryJSONError> {
         match self.as_string() {
             Some(bytes) => {
-                let text =
-                    std::str::from_utf8(bytes).map_err(|_| BinaryJSONError::InvalidBinary)?;
-                unquote_string(text)
+                if matches!(bytes, [b'"', .., b'"']) {
+                    let text = simdutf8::basic::from_utf8(bytes)
+                        .map_err(|_| BinaryJSONError::InvalidBinary)?;
+                    return unquote_string(text);
+                }
+                if bytes.len() <= JSON_TEXT_COPY_BLOCK {
+                    return simdutf8::basic::from_utf8(bytes)
+                        .map(str::to_owned)
+                        .map_err(|_| BinaryJSONError::InvalidBinary);
+                }
+                copy_json_text(bytes)
             }
             None => Ok(self.to_string()),
         }
     }
 }
 
-fn typed_value_to_node(value: &BinaryJSONValue) -> Result<JSONNode, BinaryJSONError> {
-    let scalar = |value| Ok(JSONNode::Scalar(value));
-    match value {
-        BinaryJSONValue::Null => scalar(literal(JSON_LITERAL_NULL)),
-        BinaryJSONValue::Bool(true) => scalar(literal(JSON_LITERAL_TRUE)),
-        BinaryJSONValue::Bool(false) => scalar(literal(JSON_LITERAL_FALSE)),
-        BinaryJSONValue::Int64(value) => scalar(BinaryJSON {
-            type_code: JSON_TYPE_CODE_INT64,
-            value: value.to_le_bytes().to_vec(),
-        }),
-        BinaryJSONValue::Uint64(value) => scalar(BinaryJSON {
-            type_code: JSON_TYPE_CODE_UINT64,
-            value: value.to_le_bytes().to_vec(),
-        }),
-        BinaryJSONValue::Float64(value) => Number::from_f64(*value)
-            .ok_or(BinaryJSONError::InvalidText)
-            .and_then(|value| encode_number(&value))
-            .and_then(scalar),
-        BinaryJSONValue::Number(value) => {
-            if let Ok(value) = value.parse::<i64>() {
-                typed_value_to_node(&BinaryJSONValue::Int64(value))
-            } else if let Ok(value) = value.parse::<u64>() {
-                typed_value_to_node(&BinaryJSONValue::Uint64(value))
-            } else {
-                let value = value
-                    .parse::<f64>()
-                    .map_err(|_| BinaryJSONError::InvalidText)?;
-                typed_value_to_node(&BinaryJSONValue::Float64(value))
+fn check_short_ascii_keys(
+    value: &[u8],
+    entries: &[[u8; KEY_ENTRY_SIZE]],
+    key_end: usize,
+) -> Option<()> {
+    let first = entries.first()?;
+    match u16::from_le_bytes([first[4], first[5]]) {
+        1..=8 => check_flat_keys::<8>(value, entries, key_end)
+            .or_else(|| check_flat_keys::<16>(value, entries, key_end)),
+        9..=16 => check_flat_keys::<16>(value, entries, key_end),
+        _ => None,
+    }
+}
+
+#[inline]
+fn is_valid_json_text(text: &[u8]) -> bool {
+    (text.len() <= 16 && text.is_ascii()) || simdutf8::basic::from_utf8(text).is_ok()
+}
+
+fn check_flat_keys<const MAX_WIDTH: usize>(
+    value: &[u8],
+    entries: &[[u8; KEY_ENTRY_SIZE]],
+    key_end: usize,
+) -> Option<()> {
+    let mut previous = (0, 0, 0);
+    for &[a, b, c, d, e, f] in entries {
+        let offset = u32::from_le_bytes([a, b, c, d]) as usize;
+        let len = usize::from(u16::from_le_bytes([e, f]));
+        if !(1..=MAX_WIDTH).contains(&len) || offset > key_end || len > key_end - offset {
+            return None;
+        }
+        let (word, remaining) = value.get(offset..)?.split_first_chunk::<8>()?;
+        // Big-endian words preserve byte order. Length breaks ties for keys
+        // that differ only by trailing zero bytes.
+        let (head, tail) = if MAX_WIDTH == 8 || len <= 8 {
+            (u64::from_be_bytes(*word) & (u64::MAX << (8 * (8 - len))), 0)
+        } else {
+            let tail = u64::from_be_bytes(*remaining.first_chunk::<8>()?);
+            (u64::from_be_bytes(*word), tail & (u64::MAX << (8 * (16 - len))))
+        };
+        let key = (head, tail, len);
+        if (head | tail) & 0x8080_8080_8080_8080 != 0 || key <= previous {
+            return None;
+        }
+        previous = key;
+    }
+    Some(())
+}
+
+fn check_flat_values(value: &[u8], entries: &[[u8; VALUE_ENTRY_SIZE]]) -> Option<bool> {
+    let max_offset = value.len() - 8;
+    let mut integer_only = true;
+    for entry in entries {
+        integer_only &= matches!(entry[0], JSON_TYPE_CODE_INT64 | JSON_TYPE_CODE_UINT64);
+        match entry[0] {
+            JSON_TYPE_CODE_INT64 | JSON_TYPE_CODE_UINT64
+            | JSON_TYPE_CODE_DATE | JSON_TYPE_CODE_DATETIME | JSON_TYPE_CODE_TIMESTAMP => {
+                if value_entry_offset(entry) > max_offset {
+                    return None;
+                }
+            }
+            JSON_TYPE_CODE_LITERAL => {
+                if !matches!(entry[1], JSON_LITERAL_NULL | JSON_LITERAL_FALSE | JSON_LITERAL_TRUE) {
+                    return None;
+                }
+            }
+            JSON_TYPE_CODE_STRING => {
+                validate_string_payload(value.get(value_entry_offset(entry)..)?).ok()?;
+            }
+            JSON_TYPE_CODE_FLOAT64 => {
+                let word = value.get(value_entry_offset(entry)..)?.first_chunk::<8>()?;
+                if !f64::from_le_bytes(*word).is_finite() {
+                    return None;
+                }
+            }
+            _ => return None,
+        }
+    }
+    Some(integer_only)
+}
+
+#[inline]
+fn validate_string_payload(payload: &[u8]) -> Result<(), BinaryJSONError> {
+    if let [length @ 0..=127, text @ ..] = payload {
+        let text = text.get(..usize::from(*length)).ok_or(BinaryJSONError::InvalidBinary)?;
+        if !is_valid_json_text(text) {
+            return Err(BinaryJSONError::InvalidBinary);
+        }
+        Ok(())
+    } else {
+        BinaryJSONRef { type_code: JSON_TYPE_CODE_STRING, value: payload }.validate_scalar_payload::<true>(false)
+    }
+}
+
+fn read_opaque(value: &[u8]) -> Result<(u8, &[u8]), BinaryJSONError> {
+    let (&type_code, payload) = value.split_first().ok_or(BinaryJSONError::InvalidBinary)?;
+    let (length, prefix) = decode_uvarint(payload)?;
+    if prefix.checked_add(length) != Some(payload.len()) {
+        return Err(BinaryJSONError::InvalidBinary);
+    }
+    Ok((type_code, &payload[prefix..]))
+}
+
+struct JSONTypeName {
+    text: &'static str,
+    bytes: [u8; 16],
+}
+
+impl JSONTypeName {
+    const fn new(text: &'static str) -> Self {
+        let mut bytes = [0; 16];
+        let mut i = 0;
+        while i < text.len() {
+            bytes[i] = text.as_bytes()[i];
+            i += 1;
+        }
+        Self { text, bytes }
+    }
+}
+
+impl BinaryJSONRef<'_> {
+    #[inline]
+    fn type_name(self) -> Result<&'static JSONTypeName, BinaryJSONError> {
+        Ok(match self.type_code {
+            JSON_TYPE_CODE_OBJECT => &const { JSONTypeName::new("OBJECT") },
+            JSON_TYPE_CODE_ARRAY => &const { JSONTypeName::new("ARRAY") },
+            JSON_TYPE_CODE_LITERAL if self.value == [JSON_LITERAL_NULL] => {
+                &const { JSONTypeName::new("NULL") }
+            }
+            JSON_TYPE_CODE_LITERAL => &const { JSONTypeName::new("BOOLEAN") },
+            JSON_TYPE_CODE_INT64 => &const { JSONTypeName::new("INTEGER") },
+            JSON_TYPE_CODE_UINT64 => &const { JSONTypeName::new("UNSIGNED INTEGER") },
+            JSON_TYPE_CODE_FLOAT64 => &const { JSONTypeName::new("DOUBLE") },
+            JSON_TYPE_CODE_STRING => &const { JSONTypeName::new("STRING") },
+            JSON_TYPE_CODE_OPAQUE => match read_opaque(self.value)?.0 {
+                0x0f | 0xf9..=0xfe => &const { JSONTypeName::new("BLOB") },
+                0x10 => &const { JSONTypeName::new("BIT") },
+                _ => &const { JSONTypeName::new("OPAQUE") },
+            },
+            JSON_TYPE_CODE_DATE => &const { JSONTypeName::new("DATE") },
+            JSON_TYPE_CODE_DATETIME | JSON_TYPE_CODE_TIMESTAMP => &const { JSONTypeName::new("DATETIME") },
+            JSON_TYPE_CODE_DURATION => &const { JSONTypeName::new("TIME") },
+            _ => return Err(BinaryJSONError::InvalidBinary),
+        })
+    }
+}
+
+const JSON_TEXT_COPY_BLOCK: usize = 16 * 1024;
+
+fn copy_json_text(mut bytes: &[u8]) -> Result<String, BinaryJSONError> {
+    let mut output = String::with_capacity(bytes.len());
+    while bytes.len() > JSON_TEXT_COPY_BLOCK {
+        // Move at most three bytes past the proposed split to avoid
+        // separating a UTF-8 code point. Validation checks each part.
+        let mut end = JSON_TEXT_COPY_BLOCK;
+        while end < bytes.len().min(JSON_TEXT_COPY_BLOCK + 3) && bytes[end] & 0xc0 == 0x80 {
+            end += 1;
+        }
+        let (head, tail) = bytes.split_at(end);
+        output.push_str(simdutf8::basic::from_utf8(head).map_err(|_| BinaryJSONError::InvalidBinary)?);
+        bytes = tail;
+    }
+    output.push_str(simdutf8::basic::from_utf8(bytes).map_err(|_| BinaryJSONError::InvalidBinary)?);
+    Ok(output)
+}
+
+/// A borrowed value within a TiDB binary JSON document.
+#[derive(Clone, Copy)]
+pub(crate) struct BinaryJSONRef<'a> {
+    pub(crate) type_code: u8,
+    pub(crate) value: &'a [u8],
+}
+
+/// A validated binary JSON cell borrowed from packed storage.
+#[derive(Clone, Copy)]
+pub struct ValidatedBinaryJSONRef<'a> {
+    cell: &'a [u8],
+    layout: ValidatedLayout,
+}
+
+impl<'a> ValidatedBinaryJSONRef<'a> {
+    /// Validates a complete cell with a leading type code. Accepts unsorted object keys.
+    pub fn from_encoded(cell: &'a [u8]) -> Result<Self, BinaryJSONError> {
+        let (&type_code, value) = cell.split_first().ok_or(BinaryJSONError::InvalidBinary)?;
+        let value = BinaryJSONRef { type_code, value };
+        let layout = value.validate_layout_at::<true>(0, true)?;
+        Ok(Self { cell, layout })
+    }
+
+    fn view(self) -> BinaryJSONRef<'a> {
+        BinaryJSONRef {
+            type_code: self.cell[0],
+            value: &self.cell[1..],
+        }
+    }
+
+    /// Borrows the equality hash when the wire bytes already have that representation.
+    pub fn hash_value_as_encoded(self) -> Option<&'a [u8]> {
+        match self.cell[0] {
+            JSON_TYPE_CODE_OBJECT
+            | JSON_TYPE_CODE_ARRAY
+            | JSON_TYPE_CODE_INT64
+            | JSON_TYPE_CODE_UINT64 => None,
+            _ => Some(self.cell),
+        }
+    }
+
+    pub(crate) fn canonical_view(self) -> Option<BinaryJSONRef<'a>> {
+        self.layout.canonical.then(|| self.view())
+    }
+
+    pub(crate) fn to_owned(self) -> BinaryJSON {
+        let value = self.view();
+        BinaryJSON {
+            type_code: value.type_code,
+            value: Bytes::copy_from_slice(value.value),
+            layout: OnceLock::from(BinaryLayout::Validated(self.layout)),
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct JSONContainer<'a> {
+    value: &'a [u8],
+    pub(crate) count: usize,
+    value_entries: usize,
+}
+
+/// The checked key entries and output size for a packed JSON array of keys.
+#[doc(hidden)]
+pub struct JSONKeyArray<'a> {
+    object: JSONContainer<'a>,
+    size: usize,
+}
+
+impl JSONKeyArray<'_> {
+    /// Length of the packed array, including its type code.
+    #[inline]
+    pub fn encoded_len(&self) -> usize {
+        1 + self.size
+    }
+
+    /// Checked layout of the packed output array.
+    #[inline]
+    pub fn layout(&self) -> EncodedJSONLayout {
+        EncodedJSONLayout::canonical()
+    }
+
+    /// Writes the packed array into a cell of `encoded_len()` bytes.
+    #[inline]
+    pub fn write_cell(self, cell: &mut [u8]) {
+        cell[0] = JSON_TYPE_CODE_ARRAY;
+        if self.object.count == 0 {
+            cell[1..].copy_from_slice(EMPTY_JSON_CONTAINER);
+        } else {
+            self.write_value(&mut cell[1..]);
+        }
+    }
+
+    pub(crate) fn into_json(self) -> BinaryJSON {
+        if self.object.count == 0 {
+            return BinaryJSON::empty_array();
+        }
+        let mut output = vec![0; self.size];
+        self.write_value(&mut output);
+        BinaryJSON {
+            type_code: JSON_TYPE_CODE_ARRAY,
+            value: Bytes::from(output),
+            layout: OnceLock::from(BinaryLayout::Canonical),
+        }
+    }
+
+    fn write_value(self, output: &mut [u8]) {
+        let count = self.object.count;
+        write_header(output, count).expect("checked JSON key array size");
+        let data_start = HEADER_SIZE + count * VALUE_ENTRY_SIZE;
+        let (entries, data) = output.split_at_mut(data_start);
+        let keys = self.object.value[HEADER_SIZE..self.object.value_entries]
+            .as_chunks::<KEY_ENTRY_SIZE>().0;
+        let mut offset = 0;
+        for (entry, key_entry) in entries[HEADER_SIZE..].as_chunks_mut::<VALUE_ENTRY_SIZE>().0.iter_mut().zip(keys) {
+            let key = self.object.key_from_entry(key_entry).expect("checked JSON key entry");
+            entry[0] = JSON_TYPE_CODE_STRING;
+            entry[1..].copy_from_slice(&((data_start + offset) as u32).to_le_bytes());
+            let mut len = key.len();
+            while len >= 0x80 {
+                data[offset] = (len as u8) | 0x80;
+                offset += 1;
+                len >>= 7;
+            }
+            data[offset] = len as u8;
+            offset += 1;
+            data[offset..offset + key.len()].copy_from_slice(key);
+            offset += key.len();
+        }
+    }
+}
+
+impl<'a> BinaryJSONRef<'a> {
+    #[inline]
+    fn depth_from_framing(self, known_layout: Option<BinaryLayout>) -> Result<usize, BinaryJSONError> {
+        match known_layout {
+            Some(BinaryLayout::Canonical) => self.container_depth(),
+            Some(BinaryLayout::Validated(layout)) => Ok(usize::from(layout.depth)),
+            // A rejected layout may contain invalid text that depth ignores.
+            _ => self.validate_layout_at::<false>(0, true).map(|layout| usize::from(layout.depth)),
+        }
+    }
+
+    fn depth_for_layout(self, layout: BinaryLayout) -> Result<usize, BinaryJSONError> {
+        match layout {
+            BinaryLayout::Canonical => self.container_depth(),
+            BinaryLayout::Validated(layout) => Ok(usize::from(layout.depth)),
+            BinaryLayout::Invalid => Err(BinaryJSONError::InvalidBinary),
+            BinaryLayout::TooDeep => Err(BinaryJSONError::TooDeep),
+        }
+    }
+
+    // For a validated document, scalar payloads and object keys cannot affect
+    // depth. Only follow value entries that point to nested containers.
+    pub(crate) fn container_depth(self) -> Result<usize, BinaryJSONError> {
+        if !matches!(self.type_code, JSON_TYPE_CODE_ARRAY | JSON_TYPE_CODE_OBJECT) {
+            return Ok(1);
+        }
+        let container = self.container()?;
+        let mut deepest_child = usize::from(container.count != 0);
+        for (index, code) in container.child_type_codes().enumerate() {
+            if matches!(code, JSON_TYPE_CODE_ARRAY | JSON_TYPE_CODE_OBJECT) {
+                deepest_child = deepest_child.max(container.child(index)?.container_depth()?);
             }
         }
-        BinaryJSONValue::String(value) => {
-            encode_value(&Value::String(value.clone()), 0).and_then(scalar)
-        }
-        BinaryJSONValue::Binary(value) => value.to_node(),
-        BinaryJSONValue::Array(values) => values
-            .iter()
-            .map(typed_value_to_node)
-            .collect::<Result<Vec<_>, _>>()
-            .map(JSONNode::Array),
-        BinaryJSONValue::Object(values) => values
-            .iter()
-            .map(|(key, value)| Ok((key.clone(), typed_value_to_node(value)?)))
-            .collect::<Result<Vec<_>, _>>()
-            .map(JSONNode::Object),
-        BinaryJSONValue::Opaque(value) => scalar(BinaryJSON::from_opaque(value.clone())),
-        BinaryJSONValue::Time(value) => scalar(BinaryJSON::from_time(*value)),
-        BinaryJSONValue::Duration(value) => scalar(BinaryJSON::from_duration(*value)),
+        Ok(1 + deepest_child)
     }
+
+    #[inline]
+    pub(crate) fn string_bytes(self) -> Option<&'a [u8]> {
+        if self.type_code != JSON_TYPE_CODE_STRING {
+            return None;
+        }
+        let (length, prefix) = decode_uvarint(self.value).ok()?;
+        self.value.get(prefix..prefix.checked_add(length)?)
+    }
+
+    #[inline]
+    pub(crate) fn container(self) -> Result<JSONContainer<'a>, BinaryJSONError> {
+        self.container_payload(true)
+    }
+
+    #[inline]
+    fn container_payload(self, exact: bool) -> Result<JSONContainer<'a>, BinaryJSONError> {
+        let key_width = match self.type_code {
+            JSON_TYPE_CODE_ARRAY => 0,
+            JSON_TYPE_CODE_OBJECT => KEY_ENTRY_SIZE,
+            _ => return Err(BinaryJSONError::InvalidBinary),
+        };
+        let (count, size) = read_header(self.value)?;
+        let tables_size = count
+            .checked_mul(key_width + VALUE_ENTRY_SIZE)
+            .and_then(|size| size.checked_add(HEADER_SIZE))
+            .ok_or(BinaryJSONError::InvalidBinary)?;
+        if (exact && size != self.value.len()) || tables_size > size {
+            return Err(BinaryJSONError::InvalidBinary);
+        }
+        let value = self.value.get(..size).ok_or(BinaryJSONError::InvalidBinary)?;
+        Ok(JSONContainer {
+            value,
+            count,
+            value_entries: HEADER_SIZE + count * key_width,
+        })
+    }
+
+    fn validate_layout_at<const CHECK_TEXT: bool>(
+        self,
+        depth: usize,
+        exact: bool,
+    ) -> Result<ValidatedLayout, BinaryJSONError> {
+        if !matches!(self.type_code, JSON_TYPE_CODE_ARRAY | JSON_TYPE_CODE_OBJECT) {
+            self.validate_scalar_payload::<CHECK_TEXT>(exact)?;
+            return Ok(ValidatedLayout {
+                canonical: true,
+                depth: 1,
+            });
+        }
+        self.validate_container_layout::<CHECK_TEXT>(self.container_payload(exact)?, depth, false)
+    }
+
+    fn validate_container_layout<const CHECK_TEXT: bool>(
+        self,
+        container: JSONContainer<'a>,
+        depth: usize,
+        keys_checked: bool,
+    ) -> Result<ValidatedLayout, BinaryJSONError> {
+        let value_end = container.value_entries + container.count * VALUE_ENTRY_SIZE;
+        let keys = container.value[HEADER_SIZE..container.value_entries]
+            .as_chunks::<KEY_ENTRY_SIZE>().0;
+        // A successful scan proves that no key check can fail. On a miss,
+        // keep checking each key before its value to preserve error order.
+        let keys = if !CHECK_TEXT || keys_checked || (keys.len() >= 8
+            && container.check_short_keys(keys, container.value.len()).is_some())
+        {
+            &[]
+        } else {
+            keys
+        };
+        let mut keys = keys.iter();
+        let values = container.value[container.value_entries..value_end]
+            .as_chunks::<VALUE_ENTRY_SIZE>()
+            .0;
+        if depth < MAX_JSON_DEPTH
+            && self.type_code == JSON_TYPE_CODE_ARRAY
+            && values.len() >= 8
+            && matches!(values[0][0], JSON_TYPE_CODE_INT64 | JSON_TYPE_CODE_UINT64)
+            && values.iter().fold(true, |valid, entry| {
+                valid
+                    & matches!(entry[0], JSON_TYPE_CODE_INT64 | JSON_TYPE_CODE_UINT64)
+                    & (value_entry_offset(entry) <= container.value.len() - 8)
+            })
+        {
+            return Ok(ValidatedLayout {
+                canonical: true,
+                depth: 2,
+            });
+        }
+        let mut previous = None;
+        let mut previous_container: Option<(BinaryJSONRef<'_>, ValidatedLayout)> = None;
+        let mut compare_siblings = values.len() >= 8;
+        let mut canonical = true;
+        let mut deepest_child = u8::from(container.count != 0);
+        for (index, entry) in values.iter().enumerate() {
+            if let Some(key) = keys.next() {
+                let key = container.key_from_entry(key)?;
+                if !is_valid_json_text(key) {
+                    return Err(BinaryJSONError::InvalidBinary);
+                }
+                canonical &= previous.is_none_or(|prior| prior < key);
+                previous = Some(key);
+            }
+            if depth == MAX_JSON_DEPTH {
+                // Check the entry's bounds before rejecting its nesting level.
+                container.child(index)?;
+                return Err(BinaryJSONError::TooDeep);
+            }
+            match entry[0] {
+                JSON_TYPE_CODE_LITERAL => {
+                    if !matches!(
+                        entry[1],
+                        JSON_LITERAL_NULL | JSON_LITERAL_FALSE | JSON_LITERAL_TRUE
+                    ) {
+                        return Err(BinaryJSONError::InvalidBinary);
+                    }
+                }
+                JSON_TYPE_CODE_INT64
+                | JSON_TYPE_CODE_UINT64
+                | JSON_TYPE_CODE_DATE
+                | JSON_TYPE_CODE_DATETIME
+                | JSON_TYPE_CODE_TIMESTAMP => {
+                    // The validated container has at least its eight-byte header.
+                    if value_entry_offset(entry) > container.value.len() - 8 {
+                        return Err(BinaryJSONError::InvalidBinary);
+                    }
+                }
+                JSON_TYPE_CODE_ARRAY | JSON_TYPE_CODE_OBJECT => {
+                    let child = container.child_from_entry(entry)?;
+                    let layout = if compare_siblings {
+                        match previous_container {
+                            // The encoded header includes the child's size.
+                            Some((prior, layout))
+                                if prior.type_code == child.type_code
+                                    && child.value.starts_with(prior.value) =>
+                            {
+                                layout
+                            }
+                            _ => {
+                                let container = child.container_payload(false)?;
+                                let layout = child.validate_container_layout::<CHECK_TEXT>(container, depth + 1, false)?;
+                                // A miss after the first child ends the probe.
+                                compare_siblings = previous_container.is_none()
+                                    && (32..=4096).contains(&container.value.len());
+                                previous_container = compare_siblings.then_some((
+                                    BinaryJSONRef {
+                                        value: container.value,
+                                        ..child
+                                    },
+                                    layout,
+                                ));
+                                layout
+                            }
+                        }
+                    } else {
+                        child.validate_container_layout::<CHECK_TEXT>(
+                            child.container_payload(false)?,
+                            depth + 1,
+                            false,
+                        )?
+                    };
+                    canonical &= layout.canonical;
+                    deepest_child = deepest_child.max(layout.depth);
+                }
+                _ => container.child_from_entry(entry)?.validate_scalar_payload::<CHECK_TEXT>(false)?,
+            }
+        }
+        Ok(ValidatedLayout {
+            canonical,
+            depth: deepest_child + 1,
+        })
+    }
+
+    fn checked_layout(self) -> BinaryLayout {
+        EncodedJSONLayout::from_validation(self.validate_layout_at::<true>(0, true)).0
+    }
+
+    fn is_canonical_layout(self) -> bool {
+        self.validate_layout_at::<true>(0, true)
+            .is_ok_and(|layout| layout.canonical)
+    }
+
+    fn validate_scalar(self) -> Result<(), BinaryJSONError> {
+        self.validate_scalar_payload::<true>(true)
+    }
+
+    fn validate_scalar_payload<const CHECK_TEXT: bool>(self, exact: bool) -> Result<(), BinaryJSONError> {
+        let payload = |size: usize| {
+            if exact && size != self.value.len() {
+                return Err(BinaryJSONError::InvalidBinary);
+            }
+            self.value.get(..size).ok_or(BinaryJSONError::InvalidBinary)
+        };
+        match self.type_code {
+            JSON_TYPE_CODE_STRING => {
+                let (length, prefix) = decode_uvarint(self.value)?;
+                let size = prefix
+                    .checked_add(length)
+                    .ok_or(BinaryJSONError::InvalidBinary)?;
+                let bytes = &payload(size)?[prefix..];
+                if !CHECK_TEXT || (bytes.len() <= 16 && bytes.is_ascii()) {
+                    return Ok(());
+                }
+                simdutf8::basic::from_utf8(bytes)
+                    .map(|_| ())
+                    .map_err(|_| BinaryJSONError::InvalidBinary)
+            }
+            JSON_TYPE_CODE_LITERAL => match payload(1)?[0] {
+                JSON_LITERAL_NULL | JSON_LITERAL_FALSE | JSON_LITERAL_TRUE => Ok(()),
+                _ => Err(BinaryJSONError::InvalidBinary),
+            },
+            JSON_TYPE_CODE_FLOAT64 => {
+                let bytes = payload(8)?.try_into().unwrap();
+                f64::from_le_bytes(bytes)
+                    .is_finite()
+                    .then_some(())
+                    .ok_or(BinaryJSONError::InvalidBinary)
+            }
+            _ => payload(value_length(self.type_code, self.value)?).map(|_| ()),
+        }
+    }
+
+    pub(crate) fn copy(self) -> BinaryJSON {
+        BinaryJSON {
+            type_code: self.type_code,
+            value: Bytes::copy_from_slice(self.value),
+            layout: OnceLock::from(BinaryLayout::Canonical),
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+pub(crate) enum JSONContainerEdit<'a> {
+    Replace {
+        index: usize,
+        value: BinaryJSONRef<'a>,
+    },
+    Insert {
+        index: usize,
+        key: &'a [u8],
+        value: BinaryJSONRef<'a>,
+    },
+    Remove {
+        index: usize,
+    },
+}
+
+#[derive(Clone, Copy)]
+enum WireEdit<'a> {
+    Child(JSONContainerEdit<'a>),
+    Descendant { index: usize, type_code: u8 },
+}
+
+impl<'a> JSONContainer<'a> {
+    pub(crate) fn child_type_codes(self) -> impl Iterator<Item = u8> + 'a {
+        let end = self.value_entries + self.count * VALUE_ENTRY_SIZE;
+        self.value[self.value_entries..end]
+            .chunks_exact(VALUE_ENTRY_SIZE)
+            .map(|entry| entry[0])
+    }
+
+    pub(crate) fn encode_keys(self) -> Result<BinaryJSON, BinaryJSONError> {
+        self.checked_key_array::<false>().map(JSONKeyArray::into_json)
+    }
+
+    pub(crate) fn checked_key_array<const CHECK_KEYS: bool>(self) -> Result<JSONKeyArray<'a>, BinaryJSONError> {
+        let keys = self.value[HEADER_SIZE..self.value_entries].as_chunks::<KEY_ENTRY_SIZE>().0;
+        let values_end = self.value_entries + self.count * VALUE_ENTRY_SIZE;
+        let data_start = HEADER_SIZE + self.count * VALUE_ENTRY_SIZE;
+        let mut size = data_start;
+        for entry in keys {
+            let key = self.key_from_entry(entry)?;
+            if CHECK_KEYS {
+                let offset = u32::from_le_bytes(entry[..4].try_into().unwrap()) as usize;
+                if offset < values_end || !is_valid_json_text(key) {
+                    return Err(BinaryJSONError::InvalidBinary);
+                }
+            }
+            let len = key.len();
+            let prefix_len = uvarint_size(len);
+            size = size
+                .checked_add(prefix_len + len)
+                .ok_or(BinaryJSONError::InvalidBinary)?;
+        }
+        u32::try_from(size).map_err(|_| BinaryJSONError::InvalidBinary)?;
+        Ok(JSONKeyArray { object: self, size })
+    }
+
+    pub(crate) fn key(self, index: usize) -> Result<&'a [u8], BinaryJSONError> {
+        let entry = HEADER_SIZE + index * KEY_ENTRY_SIZE;
+        self.key_from_entry(self.value[entry..entry + KEY_ENTRY_SIZE].try_into().unwrap())
+    }
+
+    fn check_short_keys(self, keys: &[[u8; KEY_ENTRY_SIZE]], key_end: usize) -> Option<()> {
+        // Non-ASCII keys often sort after the ASCII keys. Inspect the last
+        // key before attempting the full short-key scan.
+        let last = self.key_from_entry(keys.last()?).ok()?;
+        if last.len() > 16 || !last.is_ascii() {
+            return None;
+        }
+        check_short_ascii_keys(self.value, keys, key_end)
+    }
+
+    fn checked_key_prefix(self, limit: usize) -> Option<usize> {
+        let keys = self.value[HEADER_SIZE..self.value_entries].as_chunks::<KEY_ENTRY_SIZE>().0;
+        let mut end = self.value_entries + self.count * VALUE_ENTRY_SIZE;
+        if let Some(&[a, b, c, d, e, f]) = keys.last() {
+            let offset = u32::from_le_bytes([a, b, c, d]) as usize;
+            end = end.max(offset.checked_add(usize::from(u16::from_le_bytes([e, f])))?);
+        }
+        if end > limit || end > self.value.len() {
+            return None;
+        }
+        if !keys.is_empty() && self.check_short_keys(keys, end).is_none() {
+            let prefix = Self { value: &self.value[..end], ..self };
+            let mut previous = None;
+            for entry in keys {
+                let key = prefix.key_from_entry(entry).ok()?;
+                if !is_valid_json_text(key) || previous.is_some_and(|prior| prior >= key) {
+                    return None;
+                }
+                previous = Some(key);
+            }
+        }
+        Some(end)
+    }
+
+    fn key_from_entry(
+        self,
+        &[a, b, c, d, e, f]: &[u8; KEY_ENTRY_SIZE],
+    ) -> Result<&'a [u8], BinaryJSONError> {
+        let offset = u32::from_le_bytes([a, b, c, d]) as usize;
+        let len = u16::from_le_bytes([e, f]) as usize;
+        self.value
+            .get(offset..)
+            .and_then(|key| key.get(..len))
+            .ok_or(BinaryJSONError::InvalidBinary)
+    }
+
+    pub(crate) fn child(self, index: usize) -> Result<BinaryJSONRef<'a>, BinaryJSONError> {
+        let child = self.child_payload(index)?;
+        if child.type_code == JSON_TYPE_CODE_LITERAL {
+            return Ok(child);
+        }
+        let len = value_length(child.type_code, child.value)?;
+        let value = child.value.get(..len).ok_or(BinaryJSONError::InvalidBinary)?;
+        Ok(BinaryJSONRef { value, ..child })
+    }
+
+    fn child_payload(self, index: usize) -> Result<BinaryJSONRef<'a>, BinaryJSONError> {
+        let entry = self.value_entries + index * VALUE_ENTRY_SIZE;
+        self.child_from_entry(self.value[entry..entry + VALUE_ENTRY_SIZE].try_into().unwrap())
+    }
+
+    fn payload_checks(self) -> Result<Option<Vec<PayloadCheck>>, BinaryJSONError> {
+        const MAX_PAYLOAD_CHECKS: usize = 32;
+        let end = self.value_entries + self.count * VALUE_ENTRY_SIZE;
+        let entries = self.value[self.value_entries..end].as_chunks::<VALUE_ENTRY_SIZE>().0;
+        let mut checks = Vec::new();
+        let mut child_budget = 8192;
+        let mut dynamic_checks = 0;
+        let mut index = 0;
+        while let Some(entry) = entries.get(index) {
+            let check = match entry[0] {
+                JSON_TYPE_CODE_INT64 | JSON_TYPE_CODE_UINT64
+                | JSON_TYPE_CODE_DATE | JSON_TYPE_CODE_DATETIME | JSON_TYPE_CODE_TIMESTAMP => {
+                    if value_entry_offset(entry) > self.value.len() - 8 {
+                        return Err(BinaryJSONError::InvalidBinary);
+                    }
+                    None
+                }
+                JSON_TYPE_CODE_LITERAL => {
+                    if !matches!(entry[1], JSON_LITERAL_NULL | JSON_LITERAL_FALSE | JSON_LITERAL_TRUE) {
+                        return Err(BinaryJSONError::InvalidBinary);
+                    }
+                    None
+                }
+                JSON_TYPE_CODE_ARRAY | JSON_TYPE_CODE_OBJECT => {
+                    if let Some((child, prefix_len)) =
+                        PayloadCheck::for_child(self, index, entry, child_budget)
+                    {
+                        child_budget -= prefix_len;
+                        checks.push(child);
+                        index += 1;
+                        continue;
+                    }
+                    Some(PayloadCheck::Value(index))
+                }
+                JSON_TYPE_CODE_STRING => {
+                    if let Some(run) = PackedStringRun::find(self.value, &entries[index..]) {
+                        index += run.count() - 1;
+                        Some(PayloadCheck::Strings(run))
+                    } else {
+                        Some(PayloadCheck::Value(index))
+                    }
+                }
+                _ => Some(PayloadCheck::Value(index)),
+            };
+            if let Some(check) = check {
+                if dynamic_checks == MAX_PAYLOAD_CHECKS {
+                    return Ok(None);
+                }
+                dynamic_checks += 1;
+                checks.push(check);
+            }
+            index += 1;
+        }
+        Ok(Some(checks))
+    }
+
+    fn validate_payloads(self, checks: &mut [PayloadCheck]) -> Result<ValidatedLayout, BinaryJSONError> {
+        let mut canonical = true;
+        let mut deepest = 1;
+        for check in checks {
+            let layout = match check {
+                PayloadCheck::Value(index) => self.child_payload(*index)?.validate_layout_at::<true>(1, false)?,
+                PayloadCheck::Child(child) => {
+                    // The root proof fixes the offset and the available length.
+                    // The child prefix fixes its bounds, entries, and keys.
+                    if self.value[child.offset..].starts_with(&child.prefix) {
+                        ValidatedLayout { canonical: true, depth: child.depth }
+                    } else {
+                        let index = child.index;
+                        *check = PayloadCheck::Value(index);
+                        self.child_payload(index)?.validate_layout_at::<true>(1, false)?
+                    }
+                }
+                PayloadCheck::ChildWithValues(child) => {
+                    let value = &self.value[child.layout.offset..];
+                    if value.starts_with(&child.layout.prefix) {
+                        child.validate_values(value)?;
+                        ValidatedLayout { canonical: true, depth: child.layout.depth }
+                    } else {
+                        let index = child.layout.index;
+                        *check = PayloadCheck::Value(index);
+                        self.child_payload(index)?.validate_layout_at::<true>(1, false)?
+                    }
+                }
+                PayloadCheck::Strings(run) => {
+                    if !run.validate(self.value)? {
+                        let view = BinaryJSONRef {
+                            type_code: JSON_TYPE_CODE_OBJECT,
+                            value: self.value,
+                        };
+                        return view.validate_container_layout::<true>(self, 0, true);
+                    }
+                    continue;
+                }
+            };
+            canonical &= layout.canonical;
+            deepest = deepest.max(layout.depth);
+        }
+        Ok(ValidatedLayout { canonical, depth: deepest + 1 })
+    }
+
+    fn child_from_entry(
+        self,
+        entry: &'a [u8; VALUE_ENTRY_SIZE],
+    ) -> Result<BinaryJSONRef<'a>, BinaryJSONError> {
+        let type_code = entry[0];
+        let value = if type_code == JSON_TYPE_CODE_LITERAL {
+            &entry[1..2]
+        } else {
+            let offset = value_entry_offset(entry);
+            self.value.get(offset..).ok_or(BinaryJSONError::InvalidBinary)?
+        };
+        Ok(BinaryJSONRef { type_code, value })
+    }
+
+    pub(crate) fn find(self, key: &[u8]) -> Result<Option<BinaryJSONRef<'a>>, BinaryJSONError> {
+        let (position, found) = self.key_position(key)?;
+        found.then(|| self.child(position)).transpose()
+    }
+
+    /// Returns the member index or the sorted insertion point.
+    pub(crate) fn key_position(self, key: &[u8]) -> Result<(usize, bool), BinaryJSONError> {
+        let (mut start, mut end) = (0, self.count);
+        while start < end {
+            let middle = start + (end - start) / 2;
+            match self.key(middle)?.cmp(key) {
+                Ordering::Less => start = middle + 1,
+                Ordering::Greater => end = middle,
+                Ordering::Equal => return Ok((middle, true)),
+            }
+        }
+        Ok((start, false))
+    }
+
+    /// Packs the changed container and its ancestors into one output buffer.
+    pub(crate) fn rewrite(
+        self,
+        type_code: u8,
+        edit: JSONContainerEdit<'_>,
+        ancestors: &[(BinaryJSONRef<'_>, usize)],
+    ) -> Result<BinaryJSON, BinaryJSONError> {
+        let (root_type, root_len) = ancestors
+            .first()
+            .map_or((type_code, self.value.len()), |(root, _)| {
+                (root.type_code, root.value.len())
+            });
+        let size = match edit {
+            JSONContainerEdit::Replace { index, value } => {
+                root_len.saturating_sub(stored_value_len(self.child(index)?))
+                    + stored_value_len(value)
+            }
+            JSONContainerEdit::Insert { key, value, .. } => {
+                root_len
+                    + VALUE_ENTRY_SIZE
+                    + stored_value_len(value)
+                    + if type_code == JSON_TYPE_CODE_OBJECT {
+                        KEY_ENTRY_SIZE + key.len()
+                    } else {
+                        0
+                    }
+            }
+            JSONContainerEdit::Remove { index } => {
+                let key = if type_code == JSON_TYPE_CODE_OBJECT {
+                    KEY_ENTRY_SIZE + self.key(index)?.len()
+                } else {
+                    0
+                };
+                root_len
+                    .saturating_sub(VALUE_ENTRY_SIZE + key + stored_value_len(self.child(index)?))
+            }
+        };
+        let mut output = Vec::with_capacity(size);
+        append_edited_path(&mut output, ancestors, type_code, &mut |output| {
+            self.append_edit(output, type_code, WireEdit::Child(edit), |_| unreachable!())
+        })?;
+        Ok(BinaryJSON {
+            type_code: root_type,
+            value: Bytes::from(output),
+            layout: OnceLock::new(),
+        })
+    }
+
+    fn append_edit(
+        self,
+        output: &mut Vec<u8>,
+        type_code: u8,
+        edit: WireEdit<'_>,
+        append_descendant: impl FnOnce(&mut Vec<u8>) -> Result<(), BinaryJSONError>,
+    ) -> Result<(), BinaryJSONError> {
+        let (count, index, replacement, inserted_key, removed) = match edit {
+            WireEdit::Child(JSONContainerEdit::Replace { index, value }) => {
+                (self.count, index, Some(value), None, false)
+            }
+            WireEdit::Child(JSONContainerEdit::Insert { index, key, value }) => {
+                (self.count + 1, index, Some(value), Some(key), false)
+            }
+            WireEdit::Child(JSONContainerEdit::Remove { index }) => {
+                (self.count - 1, index, None, None, true)
+            }
+            WireEdit::Descendant { index, .. } => (self.count, index, None, None, false),
+        };
+        let start = output.len();
+        let object = type_code == JSON_TYPE_CODE_OBJECT;
+        let value_entries = start + HEADER_SIZE + count * if object { KEY_ENTRY_SIZE } else { 0 };
+        output.resize(value_entries + count * VALUE_ENTRY_SIZE, 0);
+        let source_index = |i| {
+            if i >= index && removed {
+                i + 1
+            } else if i > index && inserted_key.is_some() {
+                i - 1
+            } else {
+                i
+            }
+        };
+        if object {
+            for i in 0..count {
+                let key = match inserted_key {
+                    Some(key) if i == index => key,
+                    _ => self.key(source_index(i))?,
+                };
+                write_key_entry(output, start, i, key)?;
+            }
+        }
+        let mut append_descendant = Some(append_descendant);
+        for i in 0..count {
+            let entry = value_entries + i * VALUE_ENTRY_SIZE;
+            if i == index {
+                if let WireEdit::Descendant { type_code, .. } = edit {
+                    write_value_offset(output, start, entry, type_code)?;
+                    append_descendant.take().expect("one edited descendant")(output)?;
+                    continue;
+                }
+                if let Some(value) = replacement {
+                    write_value_entry(output, start, entry, value)?;
+                    continue;
+                }
+            }
+            write_value_entry(output, start, entry, self.child(source_index(i))?)?;
+        }
+        write_header(&mut output[start..], count)
+    }
+}
+
+fn append_edited_path(
+    output: &mut Vec<u8>,
+    ancestors: &[(BinaryJSONRef<'_>, usize)],
+    leaf_type: u8,
+    append_leaf: &mut impl FnMut(&mut Vec<u8>) -> Result<(), BinaryJSONError>,
+) -> Result<(), BinaryJSONError> {
+    let Some(((ancestor, index), descendants)) = ancestors.split_first() else {
+        return append_leaf(output);
+    };
+    let type_code = descendants
+        .first()
+        .map_or(leaf_type, |(child, _)| child.type_code);
+    ancestor.container()?.append_edit(
+        output,
+        ancestor.type_code,
+        WireEdit::Descendant {
+            index: *index,
+            type_code,
+        },
+        |output| append_edited_path(output, descendants, leaf_type, append_leaf),
+    )
+}
+
+/// The size pass checks the same nesting and wire bounds as construction.
+fn typed_payload_size(
+    value: &BinaryJSONValue,
+    depth: usize,
+    normalized: &mut Vec<BinaryJSON>,
+) -> Result<usize, BinaryJSONError> {
+    if depth > MAX_JSON_DEPTH {
+        return Err(BinaryJSONError::TooDeep);
+    }
+    use BinaryJSONValue::*;
+    let bytes = match value {
+        Null | Bool(_) => 1,
+        Int64(_) | Uint64(_) | Time(_) => 8,
+        Float64(value) => {
+            typed_float(*value)?;
+            8
+        }
+        Number(value) => {
+            typed_number(value)?;
+            8
+        }
+        String(value) => value.len() + uvarint_size(value.len()),
+        Opaque(value) => 1 + uvarint_size(value.bytes.len()) + value.bytes.len(),
+        Duration(_) => 12,
+        Binary(value) => {
+            if reusable_typed_binary(value, depth)? {
+                value.value.len()
+            } else {
+                let value = encode_node(&value.to_node()?, depth)?;
+                let bytes = value.value.len();
+                normalized.push(value);
+                bytes
+            }
+        }
+        Array(values) => {
+            let entries = typed_container_entries(values.len(), VALUE_ENTRY_SIZE)?;
+            let size = typed_container_size(values.iter(), entries, depth, normalized)?;
+            u32::try_from(size).map_err(|_| BinaryJSONError::InvalidBinary)?;
+            size
+        }
+        Object(values) => {
+            let entries = typed_container_entries(values.len(), KEY_ENTRY_SIZE + VALUE_ENTRY_SIZE)?;
+            // The encoder evaluates all children before checking key lengths.
+            let size = typed_container_size(values.values(), entries, depth, normalized)?;
+            let size = values.keys().try_fold(size, |size, key| {
+                u16::try_from(key.len()).map_err(|_| BinaryJSONError::KeyTooLong)?;
+                size.checked_add(key.len()).ok_or(BinaryJSONError::InvalidBinary)
+            })?;
+            u32::try_from(size).map_err(|_| BinaryJSONError::InvalidBinary)?;
+            size
+        }
+    };
+    Ok(bytes)
+}
+
+fn typed_container_entries(count: usize, width: usize) -> Result<usize, BinaryJSONError> {
+    count.checked_mul(width)
+        .and_then(|bytes| bytes.checked_add(HEADER_SIZE))
+        .ok_or(BinaryJSONError::InvalidBinary)
+}
+
+fn typed_container_size<'a>(
+    mut values: impl Iterator<Item = &'a BinaryJSONValue>,
+    entries: usize,
+    depth: usize,
+    normalized: &mut Vec<BinaryJSON>,
+) -> Result<usize, BinaryJSONError> {
+    values.try_fold(entries, |size, value| {
+        let bytes = typed_payload_size(value, depth + 1, normalized)?;
+        if typed_literal(value).is_some() {
+            Ok(size)
+        } else {
+            size.checked_add(bytes).ok_or(BinaryJSONError::InvalidBinary)
+        }
+    })
+}
+
+fn reusable_typed_binary(value: &BinaryJSON, depth: usize) -> Result<bool, BinaryJSONError> {
+    let child_depth = match value.layout() {
+        BinaryLayout::Canonical => value.view().container_depth()?,
+        BinaryLayout::Validated(ValidatedLayout {
+            canonical: true,
+            depth,
+        }) => usize::from(depth),
+        _ => return Ok(false),
+    };
+    if depth + child_depth - 1 > MAX_JSON_DEPTH {
+        return Err(BinaryJSONError::TooDeep);
+    }
+    Ok(true)
+}
+
+fn typed_literal(value: &BinaryJSONValue) -> Option<u8> {
+    match value {
+        BinaryJSONValue::Null => Some(JSON_LITERAL_NULL),
+        BinaryJSONValue::Bool(true) => Some(JSON_LITERAL_TRUE),
+        BinaryJSONValue::Bool(false) => Some(JSON_LITERAL_FALSE),
+        BinaryJSONValue::Binary(value) if value.type_code == JSON_TYPE_CODE_LITERAL => {
+            value.value.first().copied()
+        }
+        _ => None,
+    }
+}
+
+fn typed_float(value: f64) -> Result<u64, BinaryJSONError> {
+    value
+        .is_finite()
+        .then_some(value.to_bits())
+        .ok_or(BinaryJSONError::InvalidText)
+}
+
+fn typed_number(value: &str) -> Result<(u8, u64), BinaryJSONError> {
+    if let Ok(value) = value.parse::<i64>() {
+        Ok((JSON_TYPE_CODE_INT64, value as u64))
+    } else if let Ok(value) = value.parse::<u64>() {
+        Ok((JSON_TYPE_CODE_UINT64, value))
+    } else {
+        let value = value.parse::<f64>().map_err(|_| BinaryJSONError::InvalidText)?;
+        Ok((JSON_TYPE_CODE_FLOAT64, typed_float(value)?))
+    }
+}
+
+fn encode_typed_value(value: &BinaryJSONValue) -> Result<BinaryJSON, BinaryJSONError> {
+    use BinaryJSONValue::*;
+    let (type_code, bits) = match value {
+        Int64(value) => (JSON_TYPE_CODE_INT64, *value as u64),
+        Uint64(value) => (JSON_TYPE_CODE_UINT64, *value),
+        Float64(value) => (JSON_TYPE_CODE_FLOAT64, typed_float(*value)?),
+        Number(value) => typed_number(value)?,
+        Null | Bool(_) => return Ok(literal(typed_literal(value).unwrap())),
+        Array(values) if values.is_empty() => {
+            return Ok(BinaryJSON::from_shared_parts(
+                JSON_TYPE_CODE_ARRAY,
+                Bytes::from_static(EMPTY_JSON_CONTAINER),
+            ));
+        }
+        Object(values) if values.is_empty() => {
+            return Ok(BinaryJSON::from_shared_parts(
+                JSON_TYPE_CODE_OBJECT,
+                Bytes::from_static(EMPTY_JSON_CONTAINER),
+            ));
+        }
+        Binary(value) => {
+            return if reusable_typed_binary(value, 0)? {
+                Ok(value.clone())
+            } else {
+                encode_node(&value.to_node()?, 0)
+            };
+        }
+        Time(value) => return Ok(BinaryJSON::from_time(*value)),
+        Duration(value) => return Ok(BinaryJSON::from_duration(*value)),
+        _ => return encode_sized_typed_value(value),
+    };
+    Ok(BinaryJSON::from_shared_parts(
+        type_code,
+        Bytes::from(bits.to_le_bytes().to_vec()),
+    ))
+}
+
+fn encode_sized_typed_value(value: &BinaryJSONValue) -> Result<BinaryJSON, BinaryJSONError> {
+    let mut normalized = Vec::new();
+    let size = typed_payload_size(value, 0, &mut normalized)?;
+    let mut output = Vec::with_capacity(size);
+    let type_code = append_sized_typed_value(value, &mut output, &mut normalized.into_iter())?;
+    Ok(BinaryJSON {
+        type_code,
+        value: Bytes::from(output),
+        layout: OnceLock::new(),
+    })
+}
+
+/// Writes the input checked by typed_payload_size, reusing any binary
+/// children that had to be normalized during sizing.
+fn append_sized_typed_value(
+    value: &BinaryJSONValue,
+    output: &mut Vec<u8>,
+    normalized: &mut std::vec::IntoIter<BinaryJSON>,
+) -> Result<u8, BinaryJSONError> {
+    use BinaryJSONValue::*;
+    match value {
+        Null | Bool(_) => {
+            output.push(typed_literal(value).unwrap());
+            Ok(JSON_TYPE_CODE_LITERAL)
+        }
+        Int64(value) => {
+            output.extend_from_slice(&value.to_le_bytes());
+            Ok(JSON_TYPE_CODE_INT64)
+        }
+        Uint64(value) => {
+            output.extend_from_slice(&value.to_le_bytes());
+            Ok(JSON_TYPE_CODE_UINT64)
+        }
+        Float64(value) => {
+            output.extend_from_slice(&value.to_le_bytes());
+            Ok(JSON_TYPE_CODE_FLOAT64)
+        }
+        Number(value) => {
+            let (type_code, bits) = typed_number(value)?;
+            output.extend_from_slice(&bits.to_le_bytes());
+            Ok(type_code)
+        }
+        String(value) => {
+            encode_uvarint(value.len(), output);
+            output.extend_from_slice(value.as_bytes());
+            Ok(JSON_TYPE_CODE_STRING)
+        }
+        Binary(value) => {
+            if EncodedJSONLayout(value.layout()).is_canonical() {
+                output.extend_from_slice(&value.value);
+                Ok(value.type_code)
+            } else {
+                let value = normalized
+                    .next()
+                    .expect("binary child normalized during sizing");
+                output.extend_from_slice(&value.value);
+                Ok(value.type_code)
+            }
+        }
+        Array(values) => {
+            let start = output.len();
+            let entries = start + HEADER_SIZE;
+            output.resize(entries + values.len() * VALUE_ENTRY_SIZE, 0);
+            append_typed_entries(values.iter(), output, start, entries, normalized)?;
+            write_header(&mut output[start..], values.len())?;
+            Ok(JSON_TYPE_CODE_ARRAY)
+        }
+        Object(values) => {
+            let start = output.len();
+            let entries = start + HEADER_SIZE + values.len() * KEY_ENTRY_SIZE;
+            output.resize(entries + values.len() * VALUE_ENTRY_SIZE, 0);
+            for (index, key) in values.keys().enumerate() {
+                write_key_entry(output, start, index, key.as_bytes())?;
+            }
+            append_typed_entries(values.values(), output, start, entries, normalized)?;
+            write_header(&mut output[start..], values.len())?;
+            Ok(JSON_TYPE_CODE_OBJECT)
+        }
+        Opaque(value) => {
+            output.push(value.type_code);
+            encode_uvarint(value.bytes.len(), output);
+            output.extend_from_slice(&value.bytes);
+            Ok(JSON_TYPE_CODE_OPAQUE)
+        }
+        Time(value) => {
+            output.extend_from_slice(&value.core_time().raw().to_le_bytes());
+            Ok(match value.kind() {
+                TimeType::Date => JSON_TYPE_CODE_DATE,
+                TimeType::DateTime => JSON_TYPE_CODE_DATETIME,
+                TimeType::Timestamp => JSON_TYPE_CODE_TIMESTAMP,
+            })
+        }
+        Duration(value) => {
+            output.extend_from_slice(&value.nanoseconds().to_le_bytes());
+            output.extend_from_slice(&(value.fsp() as u32).to_le_bytes());
+            Ok(JSON_TYPE_CODE_DURATION)
+        }
+    }
+}
+
+fn append_typed_entries<'a>(
+    values: impl Iterator<Item = &'a BinaryJSONValue>,
+    output: &mut Vec<u8>,
+    start: usize,
+    entries: usize,
+    normalized: &mut std::vec::IntoIter<BinaryJSON>,
+) -> Result<(), BinaryJSONError> {
+    for (index, value) in values.enumerate() {
+        let entry = entries + index * VALUE_ENTRY_SIZE;
+        if let Some(literal) = typed_literal(value) {
+            output[entry] = JSON_TYPE_CODE_LITERAL;
+            output[entry + 1] = literal;
+        } else {
+            let offset = output.len();
+            let type_code = append_sized_typed_value(value, output, normalized)?;
+            write_value_offset(&mut output[..offset], start, entry, type_code)?;
+        }
+    }
+    Ok(())
 }
 
 impl fmt::Display for BinaryJSON {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if let Some(view) = self.canonical_view() {
+            if view.type_code == JSON_TYPE_CODE_OBJECT && view.value.len() <= 16 * 1024 {
+                let mut text = String::with_capacity(view.value.len());
+                format_json_ref(view, &mut text, &mut Vec::new())?;
+                return formatter.write_str(&text);
+            }
+            return format_json_root(view, formatter);
+        }
+        self.format_unverified(formatter)
+    }
+}
+
+impl BinaryJSON {
+    fn to_special_string(&self) -> Result<String, fmt::Error> {
         if let Ok(opaque) = self.opaque() {
-            return write!(
-                formatter,
+            return Ok(format!(
                 "\"base64:type{}:{}\"",
                 opaque.type_code,
                 encode_base64(&opaque.bytes)
-            );
+            ));
         }
         if let Ok(mut time) = self.as_time(6) {
             let _ = time.set_fsp(6);
-            return formatter.write_str(&quote_json_string(&time.to_string()));
+            return Ok(quote_json_string(&time.to_string()));
         }
         if let Ok(duration) = self.as_duration() {
             let duration = MySqlDuration::from_nanoseconds(duration.nanoseconds(), 6)
                 .map_err(|_| fmt::Error)?;
-            return formatter.write_str(&quote_json_string(&duration.to_string()));
+            return Ok(quote_json_string(&duration.to_string()));
+        }
+        Ok(String::new())
+    }
+
+    fn format_unverified(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let special = self.to_special_string()?;
+        if !special.is_empty() {
+            return formatter.write_str(&special);
         }
         if let Some(value) = self.as_f64() {
-            return formatter.write_str(&format_float64(value).ok_or(fmt::Error)?);
+            return formatter.write_str(format_float64(value, &mut Vec::new()).ok_or(fmt::Error)?);
         }
         if matches!(self.type_code, JSON_TYPE_CODE_ARRAY | JSON_TYPE_CODE_OBJECT) {
             return match self.to_node() {
@@ -527,25 +2498,165 @@ impl fmt::Display for BinaryJSON {
     }
 }
 
+fn format_json_root(value: BinaryJSONRef<'_>, output: &mut impl fmt::Write) -> fmt::Result {
+    if let Some(bytes) = value.string_bytes().filter(|bytes| bytes.len() <= 96) {
+        let text = simdutf8::basic::from_utf8(bytes).map_err(|_| fmt::Error)?;
+        return write_short_json_string(text, output);
+    }
+    format_json_ref(value, output, &mut Vec::new())
+}
+
+fn format_json_ref(
+    value: BinaryJSONRef<'_>,
+    output: &mut impl fmt::Write,
+    float_buffer: &mut Vec<u8>,
+) -> fmt::Result {
+    match value.type_code {
+        JSON_TYPE_CODE_ARRAY | JSON_TYPE_CODE_OBJECT => {
+            let is_object = value.type_code == JSON_TYPE_CODE_OBJECT;
+            output.write_char(if is_object { '{' } else { '[' })?;
+            let container = value.container_payload(false).map_err(|_| fmt::Error)?;
+            let end = container.value_entries + container.count * VALUE_ENTRY_SIZE;
+            let entries = container.value[container.value_entries..end]
+                .as_chunks::<VALUE_ENTRY_SIZE>()
+                .0;
+            let mut keys = container.value[HEADER_SIZE..container.value_entries]
+                .as_chunks::<KEY_ENTRY_SIZE>()
+                .0
+                .iter();
+            for (index, entry) in entries.iter().enumerate() {
+                if index != 0 {
+                    output.write_str(", ")?;
+                }
+                if is_object {
+                    let key = container
+                        .key_from_entry(keys.next().ok_or(fmt::Error)?)
+                        .map_err(|_| fmt::Error)?;
+                    write_json_key(key, output)?;
+                }
+                let child = container.child_from_entry(entry).map_err(|_| fmt::Error)?;
+                format_json_ref(child, output, float_buffer)?;
+            }
+            output.write_char(if is_object { '}' } else { ']' })
+        }
+        JSON_TYPE_CODE_LITERAL => output.write_str(match value.value[0] {
+            JSON_LITERAL_NULL => "null",
+            JSON_LITERAL_TRUE => "true",
+            _ => "false",
+        }),
+        JSON_TYPE_CODE_INT64 => {
+            let number = i64::from_le_bytes(*value.value.first_chunk::<8>().ok_or(fmt::Error)?);
+            output.write_str(itoa::Buffer::new().format(number))
+        }
+        JSON_TYPE_CODE_UINT64 => {
+            let number = u64::from_le_bytes(*value.value.first_chunk::<8>().ok_or(fmt::Error)?);
+            output.write_str(itoa::Buffer::new().format(number))
+        }
+        JSON_TYPE_CODE_FLOAT64 => {
+            let number = f64::from_le_bytes(*value.value.first_chunk::<8>().ok_or(fmt::Error)?);
+            output.write_str(format_float64(number, float_buffer).ok_or(fmt::Error)?)
+        }
+        JSON_TYPE_CODE_STRING => {
+            let bytes = value.string_bytes().ok_or(fmt::Error)?;
+            let text = simdutf8::basic::from_utf8(bytes).map_err(|_| fmt::Error)?;
+            write_json_string(text, output)
+        }
+        JSON_TYPE_CODE_OPAQUE => {
+            let (&type_code, payload) = value.value.split_first().ok_or(fmt::Error)?;
+            let (length, prefix) = decode_uvarint(payload).map_err(|_| fmt::Error)?;
+            let bytes = payload.get(prefix..prefix + length).ok_or(fmt::Error)?;
+            let encoded = encode_base64(bytes);
+            write!(output, "\"base64:type{type_code}:{encoded}\"")
+        }
+        _ => {
+            let len = value_length(value.type_code, value.value).map_err(|_| fmt::Error)?;
+            let value = BinaryJSONRef {
+                value: &value.value[..len],
+                ..value
+            };
+            output.write_str(&value.copy().to_special_string()?)
+        }
+    }
+}
+
+fn write_json_key(key: &[u8], output: &mut impl fmt::Write) -> fmt::Result {
+    if key.len() <= 16
+        && key
+            .iter()
+            .all(|&b| matches!(b, 0x20..=0x7f) && !matches!(b, b'"' | b'\\'))
+    {
+        let mut buffer = [b'"'; 20];
+        let len = key.len();
+        buffer[1..len + 1].copy_from_slice(key);
+        buffer[len + 2..len + 4].copy_from_slice(b": ");
+        return output.write_str(std::str::from_utf8(&buffer[..len + 4]).map_err(|_| fmt::Error)?);
+    }
+    let text = simdutf8::basic::from_utf8(key).map_err(|_| fmt::Error)?;
+    write_json_string(text, output)?;
+    output.write_str(": ")
+}
+
 /// Formats a JSON double using TiDB's MySQL-compatible exponent boundary.
 ///
 /// This is the source `marshalFloat64To` rule: fixed notation is used in
 /// `[1e-15, 1e15)`, scientific notation outside it, and fixed integral doubles
 /// retain `.0`.
-fn format_float64(value: f64) -> Option<String> {
+fn format_float64(value: f64, buffer: &mut Vec<u8>) -> Option<&str> {
     if !value.is_finite() {
         return None;
     }
+    buffer.clear();
     let absolute = value.abs();
-    if absolute != 0.0 && !(1e-15..1e15).contains(&absolute) {
-        // The exponent loses its `+`.
-        return Some(crate::go_strconv::format_float(value, b'e', -1, 64).replacen('+', "", 1));
+    let scaled = absolute * 256.0;
+    if absolute < 16_777_216.0 && scaled.fract() == 0.0 {
+        // Multiplication by 2^8 is exact. Such values need at most eight
+        // decimal places, and the spacing below 2^24 is less than 10^-8.
+        // The shortest conversion therefore emits these exact decimal digits.
+        let units = scaled as u32;
+        if value.is_sign_negative() {
+            buffer.push(b'-');
+        }
+        buffer.extend_from_slice(itoa::Buffer::new().format(units >> 8).as_bytes());
+        buffer.push(b'.');
+        let (digits, len) = &SMALL_FLOAT_FRACTIONS[(units & 255) as usize];
+        buffer.extend_from_slice(&digits[..*len]);
+    } else if absolute != 0.0 && !(1e-15..1e15).contains(&absolute) {
+        crate::go_strconv::append_float(buffer, value, b'e', -1, 64);
+        if let Some(plus) = buffer.iter().position(|&byte| byte == b'+') {
+            buffer.remove(plus);
+        }
+    } else {
+        crate::go_strconv::append_float(buffer, value, b'f', -1, 64);
+        if !buffer.contains(&b'.') {
+            buffer.extend_from_slice(b".0");
+        }
     }
-    let mut output = crate::go_strconv::format_float(value, b'f', -1, 64);
-    if !output.contains('.') {
-        output.push_str(".0");
+    std::str::from_utf8(buffer).ok()
+}
+
+const SMALL_FLOAT_FRACTIONS: [([u8; 8], usize); 256] = small_float_fractions();
+
+const fn small_float_fractions() -> [([u8; 8], usize); 256] {
+    let mut table = [([b'0'; 8], 1); 256];
+    let mut index = 1;
+    while index < table.len() {
+        // index / 256 expressed in units of 10^-8.
+        let mut decimal = index * 390_625;
+        let mut len = 8;
+        while decimal % 10 == 0 {
+            decimal /= 10;
+            len -= 1;
+        }
+        let mut digit = len;
+        while digit != 0 {
+            digit -= 1;
+            table[index].0[digit] = b'0' + (decimal % 10) as u8;
+            decimal /= 10;
+        }
+        table[index].1 = len;
+        index += 1;
     }
-    Some(output)
+    table
 }
 
 /// Removes surrounding quotes and MySQL JSON escape sequences.
@@ -568,27 +2679,174 @@ pub fn quote_json_string(text: &str) -> String {
     }
 }
 
-/// Marshals a JSON string with Go's `jsonMarshalStringTo` safety escapes.
-/// `serde_json` deliberately emits U+2028 and U+2029 as raw UTF-8, while Go
-/// escapes both separators so a JSON document remains safe when embedded in
-/// JSONP/JavaScript. All other escaping stays delegated to `serde_json`.
+/// Marshals a JSON string using Go's escaping rules.
 pub fn json_marshal_string_to(text: &str) -> String {
-    let quoted = serde_json::to_string(text).expect("Rust string is valid JSON text");
-    if !quoted
-        .chars()
-        .any(|ch| matches!(ch, '\u{2028}' | '\u{2029}'))
-    {
-        return quoted;
+    let mut output = String::with_capacity(text.len() + 2);
+    write_json_string(text, &mut output).expect("writing to a String succeeds");
+    output
+}
+
+/// Marshals arbitrary Go string bytes with HTML escaping disabled.
+pub fn json_marshal_string_bytes_to(bytes: &[u8]) -> String {
+    if let Ok(text) = simdutf8::basic::from_utf8(bytes) {
+        return json_marshal_string_to(text);
     }
-    let mut escaped = String::with_capacity(quoted.len() + 5);
-    for ch in quoted.chars() {
-        match ch {
-            '\u{2028}' => escaped.push_str("\\u2028"),
-            '\u{2029}' => escaped.push_str("\\u2029"),
-            _ => escaped.push(ch),
+    let mut output = String::with_capacity(bytes.len() + 2);
+    output.push('"');
+    for chunk in bytes.utf8_chunks() {
+        write_json_string_content(chunk.valid(), &mut output).expect("writing to a String succeeds");
+        for _ in chunk.invalid() {
+            output.push('\u{fffd}');
         }
     }
-    escaped
+    output.push('"');
+    output
+}
+
+fn write_json_string(text: &str, output: &mut impl fmt::Write) -> fmt::Result {
+    output.write_char('"')?;
+    write_json_string_content(text, output)?;
+    output.write_char('"')
+}
+
+fn write_short_json_string(text: &str, output: &mut impl fmt::Write) -> fmt::Result {
+    let bytes = text.as_bytes();
+    let (blocks, tail) = bytes.as_chunks::<16>();
+    if blocks.iter().all(|&block| !may_contain_escape(block))
+        && tail.iter().all(|&byte| byte >= 0x20 && !matches!(byte, b'"' | b'\\' | 0xe2))
+    {
+        let mut quoted = [b'"'; 98];
+        quoted[1..1 + bytes.len()].copy_from_slice(bytes);
+        let quoted = simdutf8::basic::from_utf8(&quoted[..2 + bytes.len()]).map_err(|_| fmt::Error)?;
+        return output.write_str(quoted);
+    }
+
+    let mut quoted = [0; 96 * 6 + 6];
+    quoted[0] = b'"';
+    let mut len = 1;
+    let mut start = 0;
+    buffer_json_escapes(text, 0, bytes, output, &mut start, &mut quoted, &mut len)?;
+    let tail = &bytes[start..];
+    quoted[len..len + tail.len()].copy_from_slice(tail);
+    len += tail.len();
+    quoted[len] = b'"';
+    output.write_str(simdutf8::basic::from_utf8(&quoted[..len + 1]).map_err(|_| fmt::Error)?)
+}
+
+fn write_json_string_content(text: &str, output: &mut impl fmt::Write) -> fmt::Result {
+    let bytes = text.as_bytes();
+    let (blocks, tail) = bytes.as_chunks::<16>();
+    let mut start = 0;
+    for (i, block) in blocks.iter().enumerate() {
+        if may_contain_escape(*block) {
+            let offset = i * block.len();
+            write_json_escape_block(text, offset, block, output, &mut start)?;
+        }
+    }
+    write_json_escape_block(text, bytes.len() - tail.len(), tail, output, &mut start)?;
+    if start < text.len() {
+        output.write_str(&text[start..])?;
+    }
+    Ok(())
+}
+
+#[inline]
+fn may_contain_escape(block: [u8; 16]) -> bool {
+    // Check every byte lane at once. Borrow across lanes may flag an extra
+    // byte, which the exact byte scan below handles.
+    const ONES: u128 = u128::from_ne_bytes([1; 16]);
+    const HIGH: u128 = u128::from_ne_bytes([0x80; 16]);
+    let bytes = u128::from_ne_bytes(block);
+    let below_space = bytes.wrapping_sub(ONES * 0x20) & !bytes & HIGH;
+    let has = |byte: u128| {
+        let lanes = bytes ^ (ONES * byte);
+        lanes.wrapping_sub(ONES) & !lanes & HIGH != 0
+    };
+    below_space != 0 || has(u128::from(b'"')) || has(u128::from(b'\\')) || has(0xe2)
+}
+
+fn write_json_escape_block(
+    text: &str,
+    offset: usize,
+    block: &[u8],
+    output: &mut impl fmt::Write,
+    start: &mut usize,
+) -> fmt::Result {
+    // At most six output bytes per byte in a 16-byte block. Copy the
+    // prefix from earlier blocks directly before collecting local escapes.
+    // Leave enough room for a six-byte store at the last short escape.
+    let mut escaped = [0; 100];
+    let mut len = 0;
+    buffer_json_escapes(text, offset, block, output, start, &mut escaped, &mut len)?;
+    if len != 0 {
+        output.write_str(simdutf8::basic::from_utf8(&escaped[..len]).map_err(|_| fmt::Error)?)?;
+    }
+    Ok(())
+}
+
+fn buffer_json_escapes(
+    text: &str,
+    offset: usize,
+    block: &[u8],
+    output: &mut impl fmt::Write,
+    start: &mut usize,
+    escaped: &mut [u8],
+    len: &mut usize,
+) -> fmt::Result {
+    for (index, byte) in block.iter().copied().enumerate() {
+        let index = offset + index;
+        let (escape, size, width) = match byte {
+            0..=0x1f | b'"' | b'\\' => {
+                let (escape, len) = ASCII_JSON_ESCAPES[usize::from(byte)];
+                (escape, len, 1)
+            }
+            0xe2 => match text.as_bytes().get(index + 1..index + 3) {
+                Some([0x80, 0xa8]) => (*br"\u2028", 6, 3),
+                Some([0x80, 0xa9]) => (*br"\u2029", 6, 3),
+                _ => continue,
+            },
+            _ => continue,
+        };
+        if *start < offset {
+            output.write_str(&text[*start..index])?;
+        } else if *start < index {
+            let bytes = &text.as_bytes()[*start..index];
+            escaped[*len..*len + bytes.len()].copy_from_slice(bytes);
+            *len += bytes.len();
+        }
+        *escaped[*len..].first_chunk_mut::<6>().unwrap() = escape;
+        *len += size;
+        *start = index + width;
+    }
+    Ok(())
+}
+
+const ASCII_JSON_ESCAPES: [([u8; 6], usize); 128] = ascii_json_escapes();
+
+const fn ascii_json_escapes() -> [([u8; 6], usize); 128] {
+    let hex = b"0123456789abcdef";
+    let mut escapes = [([0; 6], 0); 128];
+    let mut byte = 0;
+    while byte < 32 {
+        escapes[byte] = ([b'\\', b'u', b'0', b'0', hex[byte / 16], hex[byte % 16]], 6);
+        byte += 1;
+    }
+    let short = [
+        (8, b'b'),
+        (9, b't'),
+        (10, b'n'),
+        (12, b'f'),
+        (13, b'r'),
+        (b'"', b'"'),
+        (b'\\', b'\\'),
+    ];
+    let mut i = 0;
+    while i < short.len() {
+        let (byte, suffix) = short[i];
+        escapes[byte as usize] = ([b'\\', suffix, 0, 0, 0, 0], 2);
+        i += 1;
+    }
+    escapes
 }
 
 /// Go `unquoteJSONString`: MySQL's JSON_UNQUOTE escapes over the string's
@@ -597,13 +2855,23 @@ pub fn json_marshal_string_to(text: &str) -> String {
 /// combines with an adjacent `\u` escape (`utf16.DecodeRune`, U+FFFD for a
 /// bad pair).
 pub fn unquote_json_string(text: &str) -> Result<String, BinaryJSONError> {
-    let s = text.as_bytes();
-    let mut ret = Vec::with_capacity(s.len());
+    let mut ret = Vec::with_capacity(text.len());
+    unquote_json_string_bytes_to(text.as_bytes(), &mut ret)?;
+    String::from_utf8(ret).map_err(|_| BinaryJSONError::InvalidText)
+}
+
+/// Appends the decoded contents of a MySQL JSON string without its quotes.
+/// Ordinary bytes, including malformed UTF-8, pass through unchanged.
+pub fn unquote_json_string_bytes_to(s: &[u8], ret: &mut Vec<u8>) -> Result<(), BinaryJSONError> {
     let mut i = 0;
     while i < s.len() {
         if s[i] != b'\\' {
-            ret.push(s[i]);
-            i += 1;
+            let end = s[i..]
+                .iter()
+                .position(|&byte| byte == b'\\')
+                .map_or(s.len(), |offset| i + offset);
+            ret.extend_from_slice(&s[i..end]);
+            i = end;
             continue;
         }
         i += 1;
@@ -642,7 +2910,9 @@ pub fn unquote_json_string(text: &str) -> Result<String, BinaryJSONError> {
                         {
                             return Err(error);
                         }
-                        let pair = [first, &s[i + 7..i + 11]].concat();
+                        let mut pair = [0; 8];
+                        pair[..4].copy_from_slice(first);
+                        pair[4..].copy_from_slice(&s[i + 7..i + 11]);
                         let ch = decode_one_escaped_unicode(&pair).map_err(|(error, _)| error)?;
                         let mut buffer = [0; 4];
                         ret.extend_from_slice(ch.encode_utf8(&mut buffer).as_bytes());
@@ -654,7 +2924,7 @@ pub fn unquote_json_string(text: &str) -> Result<String, BinaryJSONError> {
         }
         i += 1;
     }
-    String::from_utf8(ret).map_err(|_| BinaryJSONError::InvalidText)
+    Ok(())
 }
 
 /// Go `decodeOneEscapedUnicode` over four (or, for a surrogate pair, eight)
@@ -834,11 +3104,150 @@ fn encode_base64(bytes: &[u8]) -> String {
 
 /// Compares two binary JSON values using TiDB's JSON precedence and scalar rules.
 pub fn compare_binary_json(left: &BinaryJSON, right: &BinaryJSON) -> Ordering {
-    let left_rank = json_precedence(left);
-    let right_rank = json_precedence(right);
-    if left_rank != right_rank {
-        return left_rank.cmp(&right_rank);
+    if left.type_code == JSON_TYPE_CODE_STRING && right.type_code == JSON_TYPE_CODE_STRING {
+        return compare_string_payloads(&left.value, &right.value, |_, _| {
+            left.canonical_view().is_some() && right.canonical_view().is_some()
+        });
     }
+    let rank = json_precedence(left.view()).cmp(&json_precedence(right.view()));
+    if !rank.is_eq() {
+        return rank;
+    }
+    match (left.canonical_view(), right.canonical_view()) {
+        (Some(left), Some(right)) => compare_json_refs(left, right),
+        _ => compare_binary_json_fallback(left, right),
+    }
+}
+
+fn compare_json_views(
+    left: BinaryJSONRef<'_>,
+    right: BinaryJSONRef<'_>,
+    left_is_canonical: impl FnOnce() -> Option<bool>,
+    right_is_canonical: impl FnOnce() -> Option<bool>,
+) -> Option<Ordering> {
+    if left.type_code == JSON_TYPE_CODE_STRING && right.type_code == JSON_TYPE_CODE_STRING {
+        return Some(compare_string_payloads(left.value, right.value, |left, right| {
+            left_is_canonical().unwrap_or_else(|| simdutf8::basic::from_utf8(left).is_ok())
+                && right_is_canonical().unwrap_or_else(|| simdutf8::basic::from_utf8(right).is_ok())
+        }));
+    }
+    let rank = json_precedence(left).cmp(&json_precedence(right));
+    if !rank.is_eq() {
+        return Some(rank);
+    }
+    if left_is_canonical().unwrap_or_else(|| left.is_canonical_layout())
+        && right_is_canonical().unwrap_or_else(|| right.is_canonical_layout())
+    {
+        Some(compare_json_refs(left, right))
+    } else {
+        None
+    }
+}
+
+fn compare_string_payloads(
+    left: &[u8],
+    right: &[u8],
+    valid_utf8: impl FnOnce(&[u8], &[u8]) -> bool,
+) -> Ordering {
+    fn split(payload: &[u8]) -> Option<(&[u8], &[u8])> {
+        let (length, prefix) = decode_uvarint(payload).ok()?;
+        let (header, text) = payload.split_at(prefix);
+        (text.len() == length).then_some((header, text))
+    }
+
+    let (Some((left_header, left_text)), Some((right_header, right_text))) =
+        (split(left), split(right))
+    else {
+        return left.cmp(right);
+    };
+    let text_order = left_text.cmp(right_text);
+    let header_order = left_header.cmp(right_header);
+    // Malformed strings compare by their full encoded bytes. With equal
+    // headers, or when the headers and bodies order alike, validation
+    // cannot change the comparison result.
+    if header_order.is_eq() || header_order == text_order || valid_utf8(left_text, right_text) {
+        text_order
+    } else {
+        header_order
+    }
+}
+
+pub(crate) fn compare_json_refs(left: BinaryJSONRef<'_>, right: BinaryJSONRef<'_>) -> Ordering {
+    let rank = json_precedence(left).cmp(&json_precedence(right));
+    if !rank.is_eq() {
+        return rank;
+    }
+
+    match (left.type_code, right.type_code) {
+        (JSON_TYPE_CODE_ARRAY, JSON_TYPE_CODE_ARRAY)
+        | (JSON_TYPE_CODE_OBJECT, JSON_TYPE_CODE_OBJECT) => {
+            let is_object = left.type_code == JSON_TYPE_CODE_OBJECT;
+            let left = left.container().expect("validated JSON layout");
+            let right = right.container().expect("validated JSON layout");
+            let count = left.count.cmp(&right.count);
+            if is_object && !count.is_eq() {
+                return count;
+            }
+            for index in 0..left.count.min(right.count) {
+                if is_object {
+                    let key = left.key(index).expect("validated JSON key")
+                        .cmp(right.key(index).expect("validated JSON key"));
+                    if !key.is_eq() {
+                        return key;
+                    }
+                }
+                let value = compare_json_refs(
+                    left.child(index).expect("validated JSON entry"),
+                    right.child(index).expect("validated JSON entry"),
+                );
+                if !value.is_eq() {
+                    return value;
+                }
+            }
+            count
+        }
+        (JSON_TYPE_CODE_LITERAL, JSON_TYPE_CODE_LITERAL) => right.value.cmp(left.value),
+        (JSON_TYPE_CODE_INT64, JSON_TYPE_CODE_INT64) => {
+            let left = i64::from_le_bytes(left.value.try_into().unwrap());
+            let right = i64::from_le_bytes(right.value.try_into().unwrap());
+            left.cmp(&right)
+        }
+        (JSON_TYPE_CODE_UINT64, JSON_TYPE_CODE_UINT64) => {
+            let left = u64::from_le_bytes(left.value.try_into().unwrap());
+            let right = u64::from_le_bytes(right.value.try_into().unwrap());
+            left.cmp(&right)
+        }
+        (JSON_TYPE_CODE_STRING, JSON_TYPE_CODE_STRING) => {
+            let (_, left_prefix) = decode_uvarint(left.value).expect("validated JSON string");
+            let (_, right_prefix) = decode_uvarint(right.value).expect("validated JSON string");
+            left.value[left_prefix..].cmp(&right.value[right_prefix..])
+        }
+        (JSON_TYPE_CODE_OPAQUE, JSON_TYPE_CODE_OPAQUE) => {
+            let (_, left_prefix) = decode_uvarint(&left.value[1..]).expect("validated JSON opaque");
+            let (_, right_prefix) = decode_uvarint(&right.value[1..]).expect("validated JSON opaque");
+            left.value[1 + left_prefix..].cmp(&right.value[1 + right_prefix..])
+        }
+        (JSON_TYPE_CODE_DATE | JSON_TYPE_CODE_DATETIME | JSON_TYPE_CODE_TIMESTAMP, _) => {
+            let left = CoreTime::from_raw(u64::from_le_bytes(left.value.try_into().unwrap()));
+            let right = CoreTime::from_raw(u64::from_le_bytes(right.value.try_into().unwrap()));
+            left.compare(right)
+        }
+        (JSON_TYPE_CODE_DURATION, JSON_TYPE_CODE_DURATION) => {
+            let left = i64::from_le_bytes(left.value[..8].try_into().unwrap());
+            let right = i64::from_le_bytes(right.value[..8].try_into().unwrap());
+            left.cmp(&right)
+        }
+        _ => match (
+            decode_value(left.type_code, left.value, 0),
+            decode_value(right.type_code, right.value, 0),
+        ) {
+            (Ok(left), Ok(right)) => compare_json_value(&left, &right),
+            _ => left.value.cmp(right.value),
+        },
+    }
+}
+
+fn compare_binary_json_fallback(left: &BinaryJSON, right: &BinaryJSON) -> Ordering {
     if left.type_code == JSON_TYPE_CODE_OPAQUE && right.type_code == JSON_TYPE_CODE_OPAQUE {
         return match (left.opaque(), right.opaque()) {
             (Ok(left), Ok(right)) => left.bytes.cmp(&right.bytes),
@@ -919,18 +3328,23 @@ fn compare_nodes(left: &JSONNode, right: &JSONNode) -> Ordering {
         _ => {
             let left = BinaryJSON::from_node(left).expect("decoded JSON node must re-encode");
             let right = BinaryJSON::from_node(right).expect("decoded JSON node must re-encode");
-            json_precedence(&left).cmp(&json_precedence(&right))
+            json_precedence(left.view()).cmp(&json_precedence(right.view()))
         }
     }
 }
 
-fn json_precedence(value: &BinaryJSON) -> i8 {
+fn json_precedence(value: BinaryJSONRef<'_>) -> i8 {
     match value.type_code {
-        JSON_TYPE_CODE_OPAQUE => match value.type_name() {
-            Ok("BLOB") => 14,
-            Ok("BIT") => 13,
-            _ => 12,
-        },
+        JSON_TYPE_CODE_OPAQUE => {
+            if value_length(value.type_code, value.value) != Ok(value.value.len()) {
+                return 12;
+            }
+            match value.value[0] {
+                0x0f | 0xf9..=0xfe => 14,
+                0x10 => 13,
+                _ => 12,
+            }
+        }
         JSON_TYPE_CODE_DATETIME | JSON_TYPE_CODE_TIMESTAMP => 11,
         JSON_TYPE_CODE_DURATION => 10,
         JSON_TYPE_CODE_DATE => 9,
@@ -1058,195 +3472,169 @@ fn encode_node(node: &JSONNode, depth: usize) -> Result<BinaryJSON, BinaryJSONEr
     }
 }
 
-fn decode_node(value: &BinaryJSON, depth: usize) -> Result<JSONNode, BinaryJSONError> {
+pub(crate) fn decode_node(value: BinaryJSONRef<'_>, depth: usize) -> Result<JSONNode, BinaryJSONError> {
     if depth > MAX_JSON_DEPTH {
         return Err(BinaryJSONError::TooDeep);
     }
     match value.type_code {
         JSON_TYPE_CODE_ARRAY => {
-            let (count, size) = read_header(&value.value)?;
-            if size != value.value.len() || HEADER_SIZE + count * VALUE_ENTRY_SIZE > size {
-                return Err(BinaryJSONError::InvalidBinary);
-            }
-            let mut values = Vec::with_capacity(count);
-            for index in 0..count {
-                let entry = HEADER_SIZE + index * VALUE_ENTRY_SIZE;
-                values.push(decode_node(
-                    &decode_binary_entry(
-                        value.value[entry],
-                        &value.value[entry + 1..entry + 5],
-                        &value.value,
-                    )?,
-                    depth + 1,
-                )?);
+            let container = value.container()?;
+            let mut values = Vec::with_capacity(container.count);
+            for index in 0..container.count {
+                values.push(decode_node(container.child(index)?, depth + 1)?);
             }
             Ok(JSONNode::Array(values))
         }
         JSON_TYPE_CODE_OBJECT => {
-            let (count, size) = read_header(&value.value)?;
-            let value_entries = HEADER_SIZE + count * KEY_ENTRY_SIZE;
-            if size != value.value.len() || value_entries + count * VALUE_ENTRY_SIZE > size {
-                return Err(BinaryJSONError::InvalidBinary);
-            }
-            let mut values = Vec::with_capacity(count);
-            for index in 0..count {
-                let key_entry = HEADER_SIZE + index * KEY_ENTRY_SIZE;
-                let key_offset =
-                    u32::from_le_bytes(value.value[key_entry..key_entry + 4].try_into().unwrap())
-                        as usize;
-                let key_length = u16::from_le_bytes(
-                    value.value[key_entry + 4..key_entry + 6]
-                        .try_into()
-                        .unwrap(),
-                ) as usize;
-                let key = std::str::from_utf8(
-                    value
-                        .value
-                        .get(key_offset..key_offset + key_length)
-                        .ok_or(BinaryJSONError::InvalidBinary)?,
-                )
-                .map_err(|_| BinaryJSONError::InvalidBinary)?
-                .to_owned();
-                let entry = value_entries + index * VALUE_ENTRY_SIZE;
-                let child = decode_binary_entry(
-                    value.value[entry],
-                    &value.value[entry + 1..entry + 5],
-                    &value.value,
-                )?;
-                values.push((key, decode_node(&child, depth + 1)?));
+            let container = value.container()?;
+            let mut values = Vec::with_capacity(container.count);
+            for index in 0..container.count {
+                let key = std::str::from_utf8(container.key(index)?)
+                    .map_err(|_| BinaryJSONError::InvalidBinary)?;
+                values.push((
+                    key.to_owned(),
+                    decode_node(container.child(index)?, depth + 1)?,
+                ));
             }
             Ok(JSONNode::Object(values))
         }
         _ => {
-            validate_scalar(value)?;
-            Ok(JSONNode::Scalar(value.clone()))
+            value.validate_scalar()?;
+            Ok(JSONNode::Scalar(value.copy()))
         }
     }
-}
-
-fn validate_scalar(value: &BinaryJSON) -> Result<(), BinaryJSONError> {
-    match value.type_code {
-        JSON_TYPE_CODE_OPAQUE => {
-            value.opaque()?;
-            Ok(())
-        }
-        JSON_TYPE_CODE_DATE | JSON_TYPE_CODE_DATETIME | JSON_TYPE_CODE_TIMESTAMP
-            if value.value.len() == 8 =>
-        {
-            Ok(())
-        }
-        JSON_TYPE_CODE_DURATION if value.value.len() == 12 => Ok(()),
-        JSON_TYPE_CODE_OBJECT | JSON_TYPE_CODE_ARRAY => Err(BinaryJSONError::InvalidBinary),
-        _ => value.to_value().map(|_| ()),
-    }
-}
-
-/// Go `valEntryGet`: slices one element out of its container without
-/// validating it. Its only caller, [`decode_node`], validates the element by
-/// decoding it next; validating here too (through [`BinaryJSON::from_raw`])
-/// decoded every subtree twice per level, doubling the cost with each level
-/// of nesting.
-fn decode_binary_entry(
-    type_code: u8,
-    entry: &[u8],
-    container: &[u8],
-) -> Result<BinaryJSON, BinaryJSONError> {
-    if type_code == JSON_TYPE_CODE_LITERAL {
-        return Ok(BinaryJSON {
-            type_code,
-            value: vec![entry[0]],
-        });
-    }
-    let offset = u32::from_le_bytes(
-        entry
-            .try_into()
-            .map_err(|_| BinaryJSONError::InvalidBinary)?,
-    ) as usize;
-    let value = container
-        .get(offset..)
-        .ok_or(BinaryJSONError::InvalidBinary)?;
-    let length = value_length(type_code, value)?;
-    Ok(BinaryJSON {
-        type_code,
-        value: value
-            .get(..length)
-            .ok_or(BinaryJSONError::InvalidBinary)?
-            .to_vec(),
-    })
 }
 
 fn encode_binary_array(values: &[BinaryJSON]) -> Result<BinaryJSON, BinaryJSONError> {
-    let data_start = HEADER_SIZE + values.len() * VALUE_ENTRY_SIZE;
-    let mut output = vec![0; data_start];
-    let mut payload = Vec::new();
-    for (index, value) in values.iter().enumerate() {
-        let entry = HEADER_SIZE + index * VALUE_ENTRY_SIZE;
-        output[entry] = value.type_code;
-        if value.type_code == JSON_TYPE_CODE_LITERAL {
-            output[entry + 1] = *value.value.first().ok_or(BinaryJSONError::InvalidBinary)?;
-        } else {
-            let offset = u32::try_from(data_start + payload.len())
-                .map_err(|_| BinaryJSONError::InvalidBinary)?;
-            output[entry + 1..entry + 5].copy_from_slice(&offset.to_le_bytes());
-            payload.extend_from_slice(&value.value);
-        }
+    encode_view_array(values.iter().map(BinaryJSON::view))
+}
+
+pub(crate) fn encode_view_array<'a>(
+    values: impl ExactSizeIterator<Item = BinaryJSONRef<'a>> + Clone,
+) -> Result<BinaryJSON, BinaryJSONError> {
+    let count = values.len();
+    let data_start = HEADER_SIZE + count * VALUE_ENTRY_SIZE;
+    let total = values.clone().try_fold(data_start, |size, value| {
+        size.checked_add(stored_value_len(value))
+            .ok_or(BinaryJSONError::InvalidBinary)
+    })?;
+    let mut output = Vec::with_capacity(total);
+    output.resize(data_start, 0);
+    for (index, value) in values.enumerate() {
+        write_value_entry(
+            &mut output,
+            0,
+            HEADER_SIZE + index * VALUE_ENTRY_SIZE,
+            value,
+        )?;
     }
-    output.extend_from_slice(&payload);
-    write_header(&mut output, values.len())?;
+    write_header(&mut output, count)?;
     Ok(BinaryJSON {
         type_code: JSON_TYPE_CODE_ARRAY,
-        value: output,
+        value: Bytes::from(output),
+        layout: OnceLock::new(),
     })
 }
 
 fn encode_binary_object(values: &[(&str, BinaryJSON)]) -> Result<BinaryJSON, BinaryJSONError> {
     let mut values = values.to_vec();
     values.sort_unstable_by(|left, right| left.0.as_bytes().cmp(right.0.as_bytes()));
-    let key_entry_start = HEADER_SIZE;
-    let value_entry_start = key_entry_start + values.len() * KEY_ENTRY_SIZE;
-    let key_data_start = value_entry_start + values.len() * VALUE_ENTRY_SIZE;
-    let key_bytes = values.iter().try_fold(0_usize, |total, (key, _)| {
+    encode_sorted_object_views(values.iter().map(|(key, value)| (key.as_bytes(), value.view())))
+}
+
+pub(crate) fn encode_sorted_object_views<'a>(
+    values: impl ExactSizeIterator<Item = (&'a [u8], BinaryJSONRef<'a>)> + Clone,
+) -> Result<BinaryJSON, BinaryJSONError> {
+    let count = values.len();
+    let value_entry_start = HEADER_SIZE + count * KEY_ENTRY_SIZE;
+    let data_start = value_entry_start + count * VALUE_ENTRY_SIZE;
+    let total = values.clone().try_fold(data_start, |total, (key, value)| {
         if key.len() > u16::MAX as usize {
             Err(BinaryJSONError::KeyTooLong)
         } else {
             total
                 .checked_add(key.len())
+                .and_then(|total| total.checked_add(stored_value_len(value)))
                 .ok_or(BinaryJSONError::InvalidBinary)
         }
     })?;
-    let value_data_start = key_data_start + key_bytes;
-    let mut output = vec![0; key_data_start];
-    let mut keys = Vec::with_capacity(key_bytes);
-    let mut payload = Vec::new();
-    for (index, (key, value)) in values.iter().enumerate() {
-        let key_entry = key_entry_start + index * KEY_ENTRY_SIZE;
-        let key_offset = u32::try_from(key_data_start + keys.len())
-            .map_err(|_| BinaryJSONError::InvalidBinary)?;
-        output[key_entry..key_entry + 4].copy_from_slice(&key_offset.to_le_bytes());
-        output[key_entry + 4..key_entry + 6].copy_from_slice(&(key.len() as u16).to_le_bytes());
-        keys.extend_from_slice(key.as_bytes());
-
-        let value_entry = value_entry_start + index * VALUE_ENTRY_SIZE;
-        output[value_entry] = value.type_code;
-        if value.type_code == JSON_TYPE_CODE_LITERAL {
-            output[value_entry + 1] = *value.value.first().ok_or(BinaryJSONError::InvalidBinary)?;
-        } else {
-            let offset = u32::try_from(value_data_start + payload.len())
-                .map_err(|_| BinaryJSONError::InvalidBinary)?;
-            output[value_entry + 1..value_entry + 5].copy_from_slice(&offset.to_le_bytes());
-            payload.extend_from_slice(&value.value);
-        }
+    let mut output = Vec::with_capacity(total);
+    output.resize(data_start, 0);
+    for (index, (key, _)) in values.clone().enumerate() {
+        write_key_entry(&mut output, 0, index, key)?;
     }
-    output.extend_from_slice(&keys);
-    output.extend_from_slice(&payload);
-    write_header(&mut output, values.len())?;
+    for (index, (_, value)) in values.enumerate() {
+        write_value_entry(
+            &mut output,
+            0,
+            value_entry_start + index * VALUE_ENTRY_SIZE,
+            value,
+        )?;
+    }
+    write_header(&mut output, count)?;
     Ok(BinaryJSON {
         type_code: JSON_TYPE_CODE_OBJECT,
-        value: output,
+        value: Bytes::from(output),
+        layout: OnceLock::new(),
     })
 }
 
-fn encode_value(value: &Value, depth: usize) -> Result<BinaryJSON, BinaryJSONError> {
+fn stored_value_len(value: BinaryJSONRef<'_>) -> usize {
+    if value.type_code == JSON_TYPE_CODE_LITERAL {
+        0
+    } else {
+        value.value.len()
+    }
+}
+
+fn write_key_entry(
+    output: &mut Vec<u8>,
+    start: usize,
+    index: usize,
+    key: &[u8],
+) -> Result<(), BinaryJSONError> {
+    let entry = start + HEADER_SIZE + index * KEY_ENTRY_SIZE;
+    let offset = u32::try_from(output.len() - start).map_err(|_| BinaryJSONError::InvalidBinary)?;
+    let length = u16::try_from(key.len()).map_err(|_| BinaryJSONError::KeyTooLong)?;
+    output[entry..entry + 4].copy_from_slice(&offset.to_le_bytes());
+    output[entry + 4..entry + 6].copy_from_slice(&length.to_le_bytes());
+    output.extend_from_slice(key);
+    Ok(())
+}
+
+fn write_value_entry(
+    output: &mut Vec<u8>,
+    start: usize,
+    entry: usize,
+    value: BinaryJSONRef<'_>,
+) -> Result<(), BinaryJSONError> {
+    if value.type_code == JSON_TYPE_CODE_LITERAL {
+        output[entry] = value.type_code;
+        output[entry + 1] = *value.value.first().ok_or(BinaryJSONError::InvalidBinary)?;
+    } else {
+        write_value_offset(output, start, entry, value.type_code)?;
+        output.extend_from_slice(value.value);
+    }
+    Ok(())
+}
+
+fn write_value_offset(
+    output: &mut [u8],
+    start: usize,
+    entry: usize,
+    type_code: u8,
+) -> Result<(), BinaryJSONError> {
+    let offset = u32::try_from(output.len() - start).map_err(|_| BinaryJSONError::InvalidBinary)?;
+    output[entry] = type_code;
+    output[entry + 1..entry + VALUE_ENTRY_SIZE].copy_from_slice(&offset.to_le_bytes());
+    Ok(())
+}
+
+fn encode_value(
+    value: &Value,
+    depth: usize,
+    max_depth: &mut u8,
+) -> Result<BinaryJSON, BinaryJSONError> {
     if depth > MAX_JSON_DEPTH {
         return Err(BinaryJSONError::TooDeep);
     }
@@ -1255,24 +3643,40 @@ fn encode_value(value: &Value, depth: usize) -> Result<BinaryJSON, BinaryJSONErr
         Value::Bool(true) => Ok(literal(JSON_LITERAL_TRUE)),
         Value::Bool(false) => Ok(literal(JSON_LITERAL_FALSE)),
         Value::Number(number) => encode_number(number),
-        Value::String(text) => {
-            let mut bytes = Vec::new();
-            encode_uvarint(text.len(), &mut bytes);
-            bytes.extend_from_slice(text.as_bytes());
-            Ok(BinaryJSON {
-                type_code: JSON_TYPE_CODE_STRING,
-                value: bytes,
-            })
+        Value::String(text) => Ok(encode_string(text)),
+        Value::Array(values) => {
+            *max_depth = (*max_depth).max((depth + 1 + usize::from(!values.is_empty())) as u8);
+            encode_array(values, depth + 1, max_depth)
         }
-        Value::Array(values) => encode_array(values, depth + 1),
-        Value::Object(values) => encode_object(values, depth + 1),
+        Value::Object(values) => {
+            *max_depth = (*max_depth).max((depth + 1 + usize::from(!values.is_empty())) as u8);
+            encode_object(values, depth + 1, max_depth)
+        }
+    }
+}
+
+fn encode_string(text: &str) -> BinaryJSON {
+    let mut bytes = Vec::new();
+    encode_uvarint(text.len(), &mut bytes);
+    bytes.extend_from_slice(text.as_bytes());
+    BinaryJSON {
+        type_code: JSON_TYPE_CODE_STRING,
+        value: Bytes::from(bytes),
+        layout: OnceLock::new(),
     }
 }
 
 fn literal(value: u8) -> BinaryJSON {
+    let bytes = match value {
+        JSON_LITERAL_NULL => Bytes::from_static(&[JSON_LITERAL_NULL]),
+        JSON_LITERAL_TRUE => Bytes::from_static(&[JSON_LITERAL_TRUE]),
+        JSON_LITERAL_FALSE => Bytes::from_static(&[JSON_LITERAL_FALSE]),
+        _ => Bytes::from(vec![value]),
+    };
     BinaryJSON {
         type_code: JSON_TYPE_CODE_LITERAL,
-        value: vec![value],
+        value: bytes,
+        layout: OnceLock::new(),
     }
 }
 
@@ -1280,29 +3684,36 @@ fn encode_number(number: &Number) -> Result<BinaryJSON, BinaryJSONError> {
     if let Some(value) = number.as_i64() {
         Ok(BinaryJSON {
             type_code: JSON_TYPE_CODE_INT64,
-            value: value.to_le_bytes().to_vec(),
+            value: Bytes::from(value.to_le_bytes().to_vec()),
+            layout: OnceLock::new(),
         })
     } else if let Some(value) = number.as_u64() {
         Ok(BinaryJSON {
             type_code: JSON_TYPE_CODE_UINT64,
-            value: value.to_le_bytes().to_vec(),
+            value: Bytes::from(value.to_le_bytes().to_vec()),
+            layout: OnceLock::new(),
         })
     } else {
         let value = number.as_f64().ok_or(BinaryJSONError::InvalidText)?;
         Ok(BinaryJSON {
             type_code: JSON_TYPE_CODE_FLOAT64,
-            value: value.to_bits().to_le_bytes().to_vec(),
+            value: Bytes::from(value.to_bits().to_le_bytes().to_vec()),
+            layout: OnceLock::new(),
         })
     }
 }
 
-fn encode_array(values: &[Value], depth: usize) -> Result<BinaryJSON, BinaryJSONError> {
+fn encode_array(
+    values: &[Value],
+    depth: usize,
+    max_depth: &mut u8,
+) -> Result<BinaryJSON, BinaryJSONError> {
     let entry_start = HEADER_SIZE;
     let data_start = entry_start + values.len() * VALUE_ENTRY_SIZE;
     let mut output = vec![0; data_start];
     let mut payload = Vec::new();
     for (index, value) in values.iter().enumerate() {
-        let encoded = encode_value(value, depth)?;
+        let encoded = encode_value(value, depth, max_depth)?;
         let entry = entry_start + index * VALUE_ENTRY_SIZE;
         output[entry] = encoded.type_code;
         if encoded.type_code == JSON_TYPE_CODE_LITERAL {
@@ -1320,11 +3731,16 @@ fn encode_array(values: &[Value], depth: usize) -> Result<BinaryJSON, BinaryJSON
     write_header(&mut output, values.len())?;
     Ok(BinaryJSON {
         type_code: JSON_TYPE_CODE_ARRAY,
-        value: output,
+        value: Bytes::from(output),
+        layout: OnceLock::new(),
     })
 }
 
-fn encode_object(values: &Map<String, Value>, depth: usize) -> Result<BinaryJSON, BinaryJSONError> {
+fn encode_object(
+    values: &Map<String, Value>,
+    depth: usize,
+    max_depth: &mut u8,
+) -> Result<BinaryJSON, BinaryJSONError> {
     let mut entries: Vec<_> = values.iter().collect();
     entries.sort_unstable_by(|left, right| left.0.as_bytes().cmp(right.0.as_bytes()));
     let key_entry_start = HEADER_SIZE;
@@ -1352,7 +3768,7 @@ fn encode_object(values: &Map<String, Value>, depth: usize) -> Result<BinaryJSON
         output[key_entry + 4..key_entry + 6].copy_from_slice(&(key.len() as u16).to_le_bytes());
         keys.extend_from_slice(key.as_bytes());
 
-        let encoded = encode_value(value, depth)?;
+        let encoded = encode_value(value, depth, max_depth)?;
         let value_entry = value_entry_start + index * VALUE_ENTRY_SIZE;
         output[value_entry] = encoded.type_code;
         if encoded.type_code == JSON_TYPE_CODE_LITERAL {
@@ -1369,7 +3785,8 @@ fn encode_object(values: &Map<String, Value>, depth: usize) -> Result<BinaryJSON
     write_header(&mut output, values.len())?;
     Ok(BinaryJSON {
         type_code: JSON_TYPE_CODE_OBJECT,
-        value: output,
+        value: Bytes::from(output),
+        layout: OnceLock::new(),
     })
 }
 
@@ -1491,22 +3908,34 @@ fn value_length(type_code: u8, bytes: &[u8]) -> Result<usize, BinaryJSONError> {
             let (_, size) = read_header(bytes)?;
             Ok(size)
         }
-        JSON_TYPE_CODE_INT64 | JSON_TYPE_CODE_UINT64 | JSON_TYPE_CODE_FLOAT64 => Ok(8),
-        JSON_TYPE_CODE_DATE | JSON_TYPE_CODE_DATETIME | JSON_TYPE_CODE_TIMESTAMP => Ok(8),
-        JSON_TYPE_CODE_DURATION => Ok(12),
         JSON_TYPE_CODE_OPAQUE => {
             let payload = bytes.get(1..).ok_or(BinaryJSONError::InvalidBinary)?;
             let (length, prefix) = decode_uvarint(payload)?;
-            Ok(1 + prefix + length)
+            length.checked_add(prefix + 1).ok_or(BinaryJSONError::InvalidBinary)
         }
         JSON_TYPE_CODE_STRING => {
             let (length, prefix) = decode_uvarint(bytes)?;
-            Ok(prefix + length)
+            length.checked_add(prefix).ok_or(BinaryJSONError::InvalidBinary)
         }
-        _ => Err(BinaryJSONError::InvalidBinary),
+        _ => fixed_payload_len(type_code).ok_or(BinaryJSONError::InvalidBinary),
     }
 }
 
+fn value_entry_offset(&[_, a, b, c, d]: &[u8; VALUE_ENTRY_SIZE]) -> usize {
+    u32::from_le_bytes([a, b, c, d]) as usize
+}
+
+pub(crate) fn fixed_payload_len(type_code: u8) -> Option<usize> {
+    match type_code {
+        JSON_TYPE_CODE_LITERAL => Some(1),
+        JSON_TYPE_CODE_INT64 | JSON_TYPE_CODE_UINT64 | JSON_TYPE_CODE_FLOAT64
+        | JSON_TYPE_CODE_DATE | JSON_TYPE_CODE_DATETIME | JSON_TYPE_CODE_TIMESTAMP => Some(8),
+        JSON_TYPE_CODE_DURATION => Some(12),
+        _ => None,
+    }
+}
+
+#[inline]
 fn read_header(bytes: &[u8]) -> Result<(usize, usize), BinaryJSONError> {
     let header = bytes
         .get(..HEADER_SIZE)
@@ -1516,7 +3945,11 @@ fn read_header(bytes: &[u8]) -> Result<(usize, usize), BinaryJSONError> {
     Ok((count, size))
 }
 
-fn encode_uvarint(mut value: usize, output: &mut Vec<u8>) {
+pub(crate) fn uvarint_size(value: usize) -> usize {
+    (value.max(1).ilog2() / 7 + 1) as usize
+}
+
+pub(crate) fn encode_uvarint(mut value: usize, output: &mut Vec<u8>) {
     while value >= 0x80 {
         output.push((value as u8) | 0x80);
         value >>= 7;
@@ -1524,12 +3957,17 @@ fn encode_uvarint(mut value: usize, output: &mut Vec<u8>) {
     output.push(value as u8);
 }
 
+#[inline]
 fn decode_uvarint(bytes: &[u8]) -> Result<(usize, usize), BinaryJSONError> {
-    let mut value = 0_usize;
-    for (index, byte) in bytes.iter().copied().enumerate().take(10) {
-        value |= usize::from(byte & 0x7f) << (index * 7);
+    let (&first, rest) = bytes.split_first().ok_or(BinaryJSONError::InvalidBinary)?;
+    if first < 0x80 {
+        return Ok((usize::from(first), 1));
+    }
+    let mut value = usize::from(first & 0x7f);
+    for (index, byte) in rest.iter().copied().enumerate().take(9) {
+        value |= usize::from(byte & 0x7f) << ((index + 1) * 7);
         if byte < 0x80 {
-            return Ok((value, index + 1));
+            return Ok((value, index + 2));
         }
     }
     Err(BinaryJSONError::InvalidBinary)
@@ -1593,6 +4031,257 @@ fn format_node(value: &JSONNode) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn checked_object_keys_do_not_reuse_child_validation() {
+        let members = (0..16)
+            .map(|index| format!(r#""k{index:02}":{index}"#))
+            .collect::<Vec<_>>()
+            .join(",");
+        let cell = BinaryJSON::parse(&format!(r#"{{{members},"z":{{"v":"ok"}}}}"#))
+            .unwrap()
+            .encoded();
+        let mut keys = CheckedJSONKeys::new(&cell).unwrap();
+        assert!(keys.check_layout(&cell).unwrap().is_canonical());
+
+        let mut changed = cell.clone();
+        *changed.last_mut().unwrap() = 0xff;
+        assert!(!keys.check_layout(&changed).unwrap().is_valid());
+        assert!(!keys.check_layout(&cell[..cell.len() - 1]).unwrap().is_valid());
+
+        let first_key = 1 + u32::from_le_bytes(cell[1 + HEADER_SIZE..1 + HEADER_SIZE + 4].try_into().unwrap()) as usize;
+        changed = cell;
+        changed[first_key] = b'a';
+        assert!(keys.check_layout(&changed).unwrap().is_canonical());
+        changed[first_key] = b'z';
+        assert!(keys.check_layout(&changed).is_none());
+    }
+
+    #[test]
+    fn checked_packed_keys_recheck_only_when_order_is_proven() {
+        let object = |changed: &[usize]| {
+            let members = (0..32)
+                .map(|index| {
+                    let suffix = if changed.contains(&index) { 'b' } else { 'a' };
+                    format!(r#""long-key-{index:02}-{suffix}":{index}"#)
+                })
+                .collect::<Vec<_>>()
+                .join(",");
+            BinaryJSON::parse(&format!("{{{members}}}")).unwrap().encoded()
+        };
+        let original = object(&[]);
+        let mut keys = CheckedJSONKeys::new(&original).unwrap();
+        let PackedObjectKeys { last_start, data_start, .. } = *keys.packed_keys.as_ref().unwrap();
+        for changed in [&[0][..], &[15], &[31], &[0, 15, 31]] {
+            assert!(keys.check_layout(&object(changed)).unwrap().is_canonical());
+        }
+
+        let mut invalid = object(&[31]);
+        invalid[last_start] = 0xff;
+        assert!(keys.check_layout(&invalid).is_none());
+        assert!(!BinaryJSON::check_encoded_layout(&invalid).is_valid());
+
+        let mut unordered = object(&[0, 15]);
+        unordered[data_start] = b'z';
+        assert!(keys.check_layout(&unordered).is_none());
+        let layout = BinaryJSON::check_encoded_layout(&unordered);
+        assert!(layout.is_valid() && !layout.is_canonical());
+    }
+
+    #[test]
+    fn checked_child_prefix_covers_only_unchanged_layout() {
+        let record = |value| {
+            let members = (0..40)
+                .map(|index| format!(r#""k{index:02}":{{"a":{value},"b":true}}"#))
+                .collect::<Vec<_>>()
+                .join(",");
+            BinaryJSON::parse(&format!("{{{members}}}")).unwrap().encoded()
+        };
+        let mut keys = CheckedJSONKeys::new(&record(1)).unwrap();
+        let checks = keys.value_checks.as_ref().unwrap();
+        assert_eq!(checks.len(), 40);
+        let PayloadCheck::Child(child) = &checks[39] else {
+            panic!("expected a checked child object");
+        };
+
+        let offset = child.offset;
+        let prefix_len = child.prefix.len();
+        let updated = record(2);
+        assert!(keys.check_layout(&updated).unwrap().is_canonical());
+        let mut malformed = updated.clone();
+        malformed[1 + offset + HEADER_SIZE + 2 * KEY_ENTRY_SIZE + VALUE_ENTRY_SIZE + 1] = 0xff;
+        assert!(!keys.check_layout(&malformed).unwrap().is_valid());
+
+        let mut unordered = updated;
+        assert!(matches!(keys.value_checks.as_ref().unwrap()[39], PayloadCheck::Value(39)));
+
+        let key_offset = 1 + offset + prefix_len - 2;
+        unordered[key_offset] = b'z';
+        let layout = keys.check_layout(&unordered).unwrap();
+        assert!(layout.is_valid() && !layout.is_canonical());
+        assert_eq!(BinaryJSON::encoded_element_depth(&unordered, || Some(layout)), Ok(3));
+    }
+
+    #[test]
+    fn checked_child_revalidates_floats_and_bounds_strings_to_the_child() {
+        let record = |number, text| {
+            let members = (0..16)
+                .map(|index| format!(r#""k{index:02}":{index}"#))
+                .collect::<Vec<_>>()
+                .join(",");
+            BinaryJSON::parse(&format!(r#"{{"child":{{"number":{number},"text":"{text}"}},{members}}}"#))
+                .unwrap()
+                .encoded()
+        };
+        let mut keys = CheckedJSONKeys::new(&record(1.5, "abc")).unwrap();
+        let [PayloadCheck::ChildWithValues(child)] = keys.value_checks.as_deref().unwrap() else {
+            panic!("expected a cached child object");
+        };
+        let [ChildValueCheck::Float(number), ChildValueCheck::String(text)] = *child.checks else {
+            panic!("expected float and string checks");
+        };
+        let number = 1 + child.layout.offset + number;
+        let text = 1 + child.layout.offset + text;
+        let current = record(2.5, "雪");
+        assert!(keys.check_layout(&current).unwrap().is_canonical());
+
+        let mut nonfinite = current.clone();
+        nonfinite[number..number + 8].copy_from_slice(&f64::NAN.to_le_bytes());
+        let mut invalid_utf8 = current.clone();
+        invalid_utf8[text + 1] = 0xff;
+        let mut beyond_child = current;
+        beyond_child[text] += 1;
+        for broken in [&nonfinite, &invalid_utf8, &beyond_child] {
+            assert!(!keys.check_layout(broken).unwrap().is_valid());
+            assert!(!BinaryJSON::check_encoded_layout(broken).is_valid());
+        }
+    }
+
+    #[test]
+    fn checked_unicode_keys_preserve_bounds_and_value_validation() {
+        let record = |number| {
+            let members = (0..128)
+                .map(|index| format!(r#""long-attribute-name-雪{index:03}":{number}"#))
+                .collect::<Vec<_>>()
+                .join(",");
+            BinaryJSON::parse(&format!(r#"{{{members},"雪":{{"v":"ok"}}}}"#))
+                .unwrap()
+                .encoded()
+        };
+        let old = record(0);
+        let mut keys = CheckedJSONKeys::new(&old).unwrap();
+        assert!((4097..=8192).contains(&keys.prefix_len()));
+
+        let mut changed = record(129);
+        assert!(keys.check_layout(&changed).unwrap().is_canonical());
+        *changed.last_mut().unwrap() = 0xff;
+        assert!(!keys.check_layout(&changed).unwrap().is_valid());
+
+        let mut changed = record(32);
+        let first_entry = 1 + HEADER_SIZE + 129 * KEY_ENTRY_SIZE;
+        changed[first_entry + 1..first_entry + VALUE_ENTRY_SIZE].copy_from_slice(&u32::MAX.to_le_bytes());
+        assert!(keys.check_layout(&changed).is_none());
+        assert!(CheckedJSONKeys::new(&changed).is_none());
+    }
+
+    #[test]
+    fn checked_packed_string_run_revalidates_lengths_and_utf8() {
+        const FIRST: &str = "雪abc";
+        for varying in [false, true] {
+            let members = (0..40)
+                .map(|index| {
+                    let text = if varying && index % 2 != 0 { "x" } else { FIRST };
+                    format!(r#""k{index:02}":"{text}""#)
+                })
+                .collect::<Vec<_>>()
+                .join(",");
+            let cell = BinaryJSON::parse(&format!("{{{members}}}"))
+                .unwrap()
+                .encoded();
+            let mut keys = CheckedJSONKeys::new(&cell).unwrap();
+            let Some([PayloadCheck::Strings(run)]) = keys.value_checks.as_deref() else {
+                panic!("expected one packed string run");
+            };
+            assert_eq!(matches!(run.lengths, PackedStringLengths::Varying(_)), varying);
+            assert_eq!(run.count(), 40);
+            let start = 1 + run.start;
+            assert!(keys.check_layout(&cell).unwrap().is_canonical());
+
+            let mut shorter = cell.clone();
+            shorter[start] -= 1;
+            assert!(BinaryJSON::check_encoded_layout(&shorter).is_canonical());
+            assert!(keys.check_layout(&shorter).unwrap().is_canonical());
+
+            let mut split_character = cell;
+            split_character[start + FIRST.len()] = 0xc2;
+            assert!(!BinaryJSON::check_encoded_layout(&split_character).is_valid());
+            assert!(!keys.check_layout(&split_character).unwrap().is_valid());
+        }
+    }
+
+    #[test]
+    fn flat_object_validation_checks_mixed_scalars_and_key_order() {
+        let cell = BinaryJSON::parse(r#"{"a":0,"a\u0000":"ok","abcdef001":1.25,"z":false}"#)
+            .unwrap()
+            .encoded();
+        let (layout, prefix) = BinaryJSON::check_flat_object_layout(&cell).unwrap();
+        assert!(layout.is_valid() && layout.is_canonical());
+        assert_eq!(prefix, None);
+
+        let value_entries = 1 + HEADER_SIZE + 4 * KEY_ENTRY_SIZE;
+        let entry = |index: usize| value_entries + index * VALUE_ENTRY_SIZE;
+        let value_offset = |index| {
+            1 + value_entry_offset(cell[entry(index)..entry(index) + VALUE_ENTRY_SIZE].try_into().unwrap())
+        };
+        let mut invalid_text = cell.clone();
+        invalid_text[value_offset(1) + 1] = 0xff;
+        let mut invalid_float = cell.clone();
+        invalid_float[value_offset(2)..value_offset(2) + 8].copy_from_slice(&f64::INFINITY.to_le_bytes());
+        let mut invalid_literal = cell;
+        invalid_literal[entry(3) + 1] = 0xff;
+        for invalid in [invalid_text, invalid_float, invalid_literal] {
+            assert!(BinaryJSON::check_flat_object_layout(&invalid).is_none());
+            assert!(!BinaryJSON::check_encoded_layout(&invalid).is_valid());
+        }
+    }
+
+    #[test]
+    fn decimal_text_rounds_to_go_binary64_before_serializing() {
+        let binary = BinaryJSON::parse("-1.0080000000000001e-12").unwrap();
+        assert_eq!(binary.to_string(), "-0.0000000000010080000000000001");
+    }
+
+    #[test]
+    fn unicode_line_separators_can_cross_escape_scan_blocks() {
+        let text = "123456789012345\u{2028}€\u{2029}\"\n";
+        assert_eq!(
+            json_marshal_string_to(text),
+            r#""123456789012345\u2028€\u2029\"\n""#,
+        );
+        for width in [0, 15, 80, 96] {
+            let prefix = "x".repeat(width);
+            let value = BinaryJSON::from_typed_value(&BinaryJSONValue::String(format!(
+                "{prefix}\u{2028}€\u{2029}\"\n"
+            )))
+            .unwrap();
+            assert_eq!(
+                value.to_string(),
+                format!(r#""{prefix}\u2028€\u2029\"\n""#)
+            );
+        }
+    }
+
+    #[test]
+    fn owned_unquote_validates_and_copies_across_a_utf8_block_boundary() {
+        let text = format!("{}🦀tail", "a".repeat(JSON_TEXT_COPY_BLOCK - 1));
+        let value = BinaryJSON::from_typed_value(&BinaryJSONValue::String(text.clone())).unwrap();
+        assert_eq!(value.unquote().unwrap(), text);
+
+        let mut invalid = value.value().to_vec();
+        *invalid.last_mut().unwrap() = 0xff;
+        let value = BinaryJSON::from_encoded_parts(JSON_TYPE_CODE_STRING, invalid);
+        assert_eq!(value.unquote(), Err(BinaryJSONError::InvalidBinary));
+    }
 
     /// Go's zero `types.BinaryJSON{}` renders as the empty string
     /// (`String()` swallows its marshal error).
@@ -1694,6 +4383,8 @@ mod tests {
             (1e-20, "1e-20"),
             (1e15, "1e15"),
             (1e14, "100000000000000.0"),
+            (16_777_215.996_093_75, "16777215.99609375"),
+            (-1.003_906_25, "-1.00390625"),
             (9.0, "9.0"),
             (-0.0, "-0.0"),
         ] {
@@ -1763,6 +4454,126 @@ mod tests {
         // Go accepts `any`, so its source test can pass int8 and assert the
         // dynamic unknown-type panic. Rust accepts the closed BinaryJSONValue
         // enum instead; an unlisted dynamic input cannot reach this function.
+    }
+
+    #[test]
+    fn typed_binary_preserves_valid_wire_padding_like_go() {
+        // [4] with one padding byte between the value entry and the integer.
+        let payload = vec![
+            1, 0, 0, 0, 22, 0, 0, 0, 9, 14, 0, 0, 0, 0xfe, 4, 0, 0, 0, 0, 0, 0, 0,
+        ];
+        let input = BinaryJSON::from_encoded_parts(JSON_TYPE_CODE_ARRAY, payload.clone());
+        let input = BinaryJSONValue::Binary(input);
+        let direct = BinaryJSON::from_typed_value(&input).unwrap();
+        assert_eq!(direct.value(), payload);
+        let outer = BinaryJSON::from_typed_value(&BinaryJSONValue::Array(vec![input])).unwrap();
+        assert_eq!(outer.array_get(0).unwrap().unwrap().value(), payload);
+        assert_eq!(outer.to_string(), "[[4]]");
+    }
+
+    #[test]
+    fn checked_integer_array_rejects_invalid_last_entry() {
+        let value = BinaryJSON::parse("[0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]").unwrap();
+        let raw = BinaryJSON::from_encoded_parts(value.type_code(), value.value());
+        assert_eq!(raw.element_depth(), Ok(2));
+
+        let mut bytes = raw.value().to_vec();
+        let last = HEADER_SIZE + 15 * VALUE_ENTRY_SIZE;
+        bytes[last + 1..last + VALUE_ENTRY_SIZE].copy_from_slice(&u32::MAX.to_le_bytes());
+        let malformed = BinaryJSON::from_encoded_parts(JSON_TYPE_CODE_ARRAY, bytes);
+        assert_eq!(
+            malformed.element_depth(),
+            Err(BinaryJSONError::InvalidBinary)
+        );
+    }
+
+    #[test]
+    fn layout_checks_a_different_sibling_after_identical_containers() {
+        let text = "界".repeat(24);
+        let child = format!(r#"{{"text":"{text}"}}"#);
+        let document = BinaryJSON::parse(&format!("[{}]", vec![child; 9].join(","))).unwrap();
+        let valid = BinaryJSON::from_encoded_parts(document.type_code(), document.value());
+        assert_eq!(valid.element_depth(), Ok(3));
+
+        let mut bytes = document.value().to_vec();
+        let index = bytes
+            .windows(text.len())
+            .rposition(|bytes| bytes == text.as_bytes())
+            .unwrap();
+        bytes[index + text.len() / 2] = 0xff;
+        let invalid = BinaryJSON::from_encoded_parts(document.type_code(), bytes);
+        assert_eq!(invalid.element_depth(), Err(BinaryJSONError::InvalidBinary));
+    }
+
+    #[test]
+    fn typed_binary_checks_depth_and_invalid_payload_before_reuse() {
+        let invalid = BinaryJSONValue::Binary(BinaryJSON::from_encoded_parts(
+            JSON_TYPE_CODE_STRING,
+            vec![1, 0xff],
+        ));
+        let invalid = BinaryJSONValue::Array(vec![invalid]);
+        assert_eq!(
+            BinaryJSON::from_typed_value(&invalid),
+            Err(BinaryJSONError::InvalidBinary),
+        );
+        assert_eq!(
+            BinaryJSON::calculate_typed_size(&invalid),
+            Err(BinaryJSONError::InvalidBinary),
+        );
+
+        let text = format!(
+            "{}0{}",
+            "[".repeat(MAX_JSON_DEPTH),
+            "]".repeat(MAX_JSON_DEPTH)
+        );
+        let parsed = BinaryJSON::parse(&text).unwrap();
+        let raw = BinaryJSON::from_encoded_parts(parsed.type_code(), parsed.value());
+        for document in [parsed, raw] {
+            let input = BinaryJSONValue::Binary(document);
+            assert!(BinaryJSON::from_typed_value(&input).is_ok());
+            let input = BinaryJSONValue::Array(vec![input]);
+            assert_eq!(
+                BinaryJSON::from_typed_value(&input),
+                Err(BinaryJSONError::TooDeep),
+            );
+            assert_eq!(
+                BinaryJSON::calculate_typed_size(&input),
+                Err(BinaryJSONError::TooDeep),
+            );
+        }
+    }
+
+    #[test]
+    fn typed_wire_size_with_normalized_children() {
+        let unsorted = |text| {
+            let parsed = BinaryJSON::parse(text).unwrap();
+            let mut bytes = parsed.value().to_vec();
+            for (start, width) in [
+                (HEADER_SIZE, KEY_ENTRY_SIZE),
+                (HEADER_SIZE + 2 * KEY_ENTRY_SIZE, VALUE_ENTRY_SIZE),
+            ] {
+                bytes[start..start + 2 * width].rotate_left(width);
+            }
+            BinaryJSONValue::Binary(BinaryJSON::from_encoded_parts(parsed.type_code(), bytes))
+        };
+        let string = "é".repeat(64);
+        let input = BinaryJSONValue::Array(vec![
+            unsorted(r#"{"a":[1],"b":true}"#),
+            BinaryJSONValue::Binary(BinaryJSON::parse("false").unwrap()),
+            BinaryJSONValue::Object(BTreeMap::from([
+                ("str".to_owned(), BinaryJSONValue::String(string.clone())),
+                ("obj".to_owned(), unsorted(r#"{"c":[],"value":3}"#)),
+            ])),
+        ]);
+        let expected = BinaryJSON::parse(&format!(
+            r#"[{{"a":[1],"b":true}},false,{{"obj":{{"c":[],"value":3}},"str":"{string}"}}]"#,
+        ))
+        .unwrap();
+        assert_eq!(BinaryJSON::from_typed_value(&input).unwrap(), expected);
+        assert_eq!(
+            BinaryJSON::calculate_typed_size(&input).unwrap(),
+            expected.value().len(),
+        );
     }
 
     #[test]
@@ -1993,6 +4804,88 @@ mod tests {
                 "{left} < {right}"
             );
         }
+    }
+
+    #[test]
+    fn stored_depth_checks_entry_bounds_before_the_depth_limit() {
+        let wrap = |type_code, value: &[u8]| {
+            let offset = HEADER_SIZE + VALUE_ENTRY_SIZE;
+            let mut payload = vec![0; offset];
+            payload[HEADER_SIZE] = type_code;
+            payload[HEADER_SIZE + 1..offset].copy_from_slice(&(offset as u32).to_le_bytes());
+            payload.extend_from_slice(value);
+            write_header(&mut payload, 1).unwrap();
+            payload
+        };
+        let mut valid = vec![0; HEADER_SIZE];
+        write_header(&mut valid, 0).unwrap();
+        let mut invalid = wrap(0xff, &[]);
+        for _ in 0..MAX_JSON_DEPTH {
+            valid = wrap(JSON_TYPE_CODE_ARRAY, &valid);
+            invalid = wrap(JSON_TYPE_CODE_ARRAY, &invalid);
+        }
+
+        let too_deep = wrap(JSON_TYPE_CODE_ARRAY, &valid);
+        assert_eq!(
+            BinaryJSON::from_encoded_parts(JSON_TYPE_CODE_ARRAY, valid).element_depth(),
+            Ok(MAX_JSON_DEPTH + 1)
+        );
+        assert_eq!(
+            BinaryJSON::from_encoded_parts(JSON_TYPE_CODE_ARRAY, too_deep).element_depth(),
+            Err(BinaryJSONError::TooDeep)
+        );
+        assert_eq!(
+            BinaryJSON::from_encoded_parts(JSON_TYPE_CODE_ARRAY, invalid).element_depth(),
+            Err(BinaryJSONError::InvalidBinary)
+        );
+    }
+
+    #[test]
+    fn binary_json_numeric_zero_matches_go() {
+        for (value, expected) in [
+            (BinaryJSONValue::Int64(0), true),
+            (BinaryJSONValue::Uint64(0), true),
+            (BinaryJSONValue::Int64(-1), false),
+            (BinaryJSONValue::Float64(-0.0), true),
+            (BinaryJSONValue::Float64(-FLOAT_EPSILON / 2.0), true),
+            (BinaryJSONValue::Float64(FLOAT_EPSILON), false),
+            (BinaryJSONValue::Float64(-FLOAT_EPSILON), false),
+            (BinaryJSONValue::String("0".to_owned()), false),
+            (BinaryJSONValue::Null, false),
+        ] {
+            assert_eq!(
+                BinaryJSON::from_typed_value(&value).unwrap().is_zero(),
+                expected
+            );
+        }
+        assert!(!BinaryJSON::from_encoded_parts(JSON_TYPE_CODE_INT64, vec![0; 7]).is_zero());
+        assert!(!BinaryJSON::from_encoded_parts(JSON_TYPE_CODE_UINT64, vec![0; 9]).is_zero());
+        assert!(
+            !BinaryJSON::from_encoded_parts(JSON_TYPE_CODE_FLOAT64, f64::NAN.to_le_bytes().to_vec())
+                .is_zero()
+        );
+    }
+
+    #[test]
+    fn binary_json_temporal_array_comparison_uses_value_order() {
+        let core = Time::from_date_checked(2024, 2, 29, 0, 0, 0, 1, TimeType::DateTime, 6)
+            .unwrap()
+            .core_time();
+        let datetime = BinaryJSONValue::Time(Time::new(core, TimeType::DateTime, 6).unwrap());
+        let timestamp = BinaryJSONValue::Time(Time::new(core, TimeType::Timestamp, 6).unwrap());
+        let array = |time, nanoseconds, fsp| {
+            BinaryJSON::from_typed_value(&BinaryJSONValue::Array(vec![
+                time,
+                BinaryJSONValue::Duration(MySqlDuration::from_raw_parts(nanoseconds, fsp)),
+            ]))
+            .unwrap()
+        };
+
+        let left = array(datetime, -1000, 6);
+        let equal = array(timestamp.clone(), -1000, 3);
+        let greater = array(timestamp, 1000, 6);
+        assert_eq!(compare_binary_json(&left, &equal), Ordering::Equal);
+        assert_eq!(compare_binary_json(&left, &greater), Ordering::Less);
     }
 
     #[test]

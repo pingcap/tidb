@@ -17,11 +17,11 @@
 //! with Go so a Rust and Go timer store can watch one another's mutations.
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{sync_channel, SyncSender, TrySendError};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use crossbeam_channel::{Sender, TrySendError, bounded};
 use tidb_pd_client::{EtcdClient, EtcdWatcher};
 use tidb_logutil::bg_logger;
 
@@ -101,7 +101,7 @@ pub fn new_etcd_timer_watch_event_notifier(
 
 impl TimerWatchEventNotifier for EtcdNotifier {
     fn watch(&self, ctx: &Context) -> WatchTimerChan {
-        let (sender, receiver) = sync_channel(0);
+        let (sender, receiver) = bounded(0);
         if self.closed.load(Ordering::Acquire) || ctx.is_done() {
             return receiver;
         }
@@ -312,7 +312,7 @@ fn notify_loop(
 }
 
 fn deliver_response(
-    sender: &SyncSender<WatchTimerResponse>,
+    sender: &Sender<WatchTimerResponse>,
     mut response: WatchTimerResponse,
     cancel: &Arc<AtomicBool>,
     closed: &Arc<AtomicBool>,

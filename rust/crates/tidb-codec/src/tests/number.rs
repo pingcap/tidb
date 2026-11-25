@@ -16,6 +16,34 @@ use crate::*;
 use std::cmp::Ordering;
 
 #[test]
+fn go_varint_distinguishes_truncation_from_overflow() {
+    assert_eq!(decode_uvarint(&[0x80; 10]), Err(CodecError::InsufficientBytes));
+    assert_eq!(decode_varint(&[0x80; 10]), Err(CodecError::InsufficientBytes));
+    assert_eq!(
+        decode_uvarint(&[0x80; 11]),
+        Err(CodecError::InvalidEncoding("varint larger than 64 bits")),
+    );
+    let mut input = [0xff; 10];
+    input[9] = 2;
+    assert_eq!(
+        decode_uvarint(&input),
+        Err(CodecError::InvalidEncoding("varint larger than 64 bits")),
+    );
+    input[9] = 1;
+    assert_eq!(decode_uvarint(&input), Ok((&[][..], u64::MAX)));
+
+    let mut datums = vec![VARINT_FLAG];
+    datums.extend_from_slice(&[0x80; 10]);
+    // Go's peeker reports a zero-length payload for an incomplete varint.
+    assert_eq!(cut_one(&datums), Ok(datums.split_at(1)));
+    datums.push(0);
+    assert_eq!(
+        cut_one(&datums),
+        Err(CodecError::InvalidEncoding("varint larger than 64 bits")),
+    );
+}
+
+#[test]
 fn test_number_codec_source_rows() {
     let values = [
         i64::MIN,

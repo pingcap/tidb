@@ -276,31 +276,17 @@ fn stored_bytes(argument: &Datum) -> Option<&[u8]> {
 
 /// Counts runes with Go `unicode/utf8.RuneCountInString` semantics.
 ///
-/// Rust's lossy decoder may group malformed subsequences differently. Go's
-/// `DecodeRuneInString` instead returns one `RuneError` of width one for each
-/// invalid encoding and each byte of an incomplete suffix, so the loop must
-/// advance exactly one byte after every valid prefix.
-fn go_utf8_rune_count(mut bytes: &[u8]) -> usize {
+/// Each malformed byte contributes one rune, including an incomplete suffix.
+pub(crate) fn go_utf8_rune_count(bytes: &[u8]) -> usize {
+    if bytes.is_ascii() {
+        return bytes.len();
+    }
+    if let Ok(text) = simdutf8::basic::from_utf8(bytes) {
+        return text.chars().count();
+    }
     let mut count = 0;
-    while !bytes.is_empty() {
-        match std::str::from_utf8(bytes) {
-            Ok(_) => {
-                count += bytes
-                    .iter()
-                    .filter(|byte| **byte & 0b1100_0000 != 0b1000_0000)
-                    .count();
-                break;
-            }
-            Err(error) => {
-                let valid = error.valid_up_to();
-                count += bytes[..valid]
-                    .iter()
-                    .filter(|byte| **byte & 0b1100_0000 != 0b1000_0000)
-                    .count();
-                count += 1;
-                bytes = &bytes[valid + 1..];
-            }
-        }
+    for _ in tidb_goruntime::go_chars(bytes) {
+        count += 1;
     }
     count
 }

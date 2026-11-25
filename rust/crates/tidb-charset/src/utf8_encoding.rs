@@ -149,12 +149,10 @@ impl Utf8Mb3StrictEncoding {
 }
 
 fn all_valid(src: &[u8], strict_mb3: bool) -> bool {
-    let mut valid = true;
-    foreach_utf8(src, strict_mb3, &mut |_, _, ok| {
-        valid = ok;
-        ok
-    });
-    valid
+    if src.is_ascii() {
+        return true;
+    }
+    simdutf8::basic::from_utf8(src).is_ok() && (!strict_mb3 || !src.iter().any(|&b| b >= 0xf0))
 }
 
 fn foreach_utf8<F>(src: &[u8], strict_mb3: bool, f: &mut F)

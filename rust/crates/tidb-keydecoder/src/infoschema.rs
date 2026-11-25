@@ -15,80 +15,96 @@
 //! Go `keydecoder.DecodeKey`'s lookups over an `infoschema.InfoSchema`
 //! (`TIDB_DECODE_KEY`): the statement's catalog image.
 
-use tidb_infoschema::{SessionExtendedInfoSchema, TableEntry};
+use tidb_infoschema::SessionExtendedInfoSchema;
 use tidb_table::tables::TableCommon;
 
 use crate::{KeyInfoCatalog, KeyInfoIndex, KeyInfoTable, KeyInfoTableLookup};
 
 impl KeyInfoCatalog for SessionExtendedInfoSchema {
     fn resolve_physical_table(&self, physical_id: i64) -> Option<KeyInfoTableLookup> {
-        for (database, registered_name, entry) in self.table_entries() {
-            let TableEntry::Kv(table) = entry else {
-                continue;
-            };
-            if table.table_id() == physical_id {
-                return Some(KeyInfoTableLookup::Resolved(key_info_table(
-                    self,
-                    &database,
-                    registered_name,
-                    table,
-                    0,
-                    String::new(),
-                )));
-            }
-        }
-        for (database, registered_name, entry) in self.table_entries() {
-            let TableEntry::Kv(table) = entry else {
-                continue;
-            };
-            let Some(pi) = table.meta().read().get_partition_info() else {
-                continue;
-            };
-            let definitions = pi.read().definitions.snapshot();
-            if let Some(definition) = definitions
+        resolve_table(self, physical_id, |table| {
+            table
+                .indexes()
                 .iter()
-                .find(|definition| definition.id == physical_id)
-            {
-                return Some(KeyInfoTableLookup::Resolved(key_info_table(
-                    self,
-                    &database,
-                    registered_name,
-                    table,
-                    definition.id,
-                    definition.name.original().to_owned(),
-                )));
-            }
-        }
-        None
+                .map(|index| {
+                    let info = index.read();
+                    KeyInfoIndex {
+                        id: info.id,
+                        name: info.name.original().to_owned(),
+                    }
+                })
+                .collect()
+        })
+    }
+
+    fn resolve_physical_table_for_key(
+        &self,
+        physical_id: i64,
+        index_id: Option<i64>,
+    ) -> Option<KeyInfoTableLookup> {
+        resolve_table(self, physical_id, |table| {
+            let Some(index_id) = index_id else {
+                return Vec::new();
+            };
+            table
+                .indexes()
+                .iter()
+                .find_map(|index| {
+                    let info = index.read();
+                    (info.id == index_id).then(|| KeyInfoIndex {
+                        id: index_id,
+                        name: info.name.original().to_owned(),
+                    })
+                })
+                .into_iter()
+                .collect()
+        })
     }
 }
 
-fn key_info_table(
+fn resolve_table(
     catalog: &SessionExtendedInfoSchema,
-    database: &str,
-    registered_name: &str,
-    table: &TableCommon,
-    partition_id: i64,
-    partition_name: String,
-) -> KeyInfoTable {
-    KeyInfoTable {
-        db_name: database.to_owned(),
-        db_id: catalog.database_id(database).unwrap_or_default(),
-        table_name: if table.name().is_empty() {
-            registered_name.to_owned()
-        } else {
-            table.name().clone()
-        },
-        table_id: table.table_id(),
+    physical_id: i64,
+    indexes: impl FnOnce(&TableCommon) -> Vec<KeyInfoIndex>,
+) -> Option<KeyInfoTableLookup> {
+    let (database, table) = catalog.table_by_id(physical_id)?;
+    let table_id = table.table_id();
+    let table_name = table.name();
+    let (partition_id, partition_name) = if table_id == physical_id {
+        (0, String::new())
+    } else {
+        let partition = table.meta().read().get_partition_info()?;
+        let name = partition.read().definitions.with_visible(|definitions| {
+            definitions
+                .iter()
+                .find(|definition| definition.id == physical_id)
+                .map(|definition| definition.name.original().to_owned())
+        })?;
+        (physical_id, name)
+    };
+    let db = catalog
+        .schema_by_name(database)
+        .or_else(|| catalog.v2()?.schema_by_name(database));
+    let (db_id, db_name) = match db {
+        Some(db) => {
+            let info = db.read();
+            (info.id, info.name.original().to_owned())
+        }
+        None if partition_id == 0 => {
+            return Some(KeyInfoTableLookup::TableWithoutSchema {
+                table_name,
+                table_id,
+            });
+        }
+        None => (0, String::new()),
+    };
+    Some(KeyInfoTableLookup::Resolved(KeyInfoTable {
+        db_name,
+        db_id,
+        table_name,
+        table_id,
         partition_name,
         partition_id,
-        indexes: table
-            .indexes()
-            .iter()
-            .map(|index| KeyInfoIndex {
-                id: index.read().id,
-                name: index.read().name.original().to_owned(),
-            })
-            .collect(),
-    }
+        indexes: indexes(table),
+    }))
 }

@@ -29,6 +29,22 @@ const SECOND_OFFSET: u64 = 24;
 const MICROSECOND_OFFSET: u64 = 4;
 const SECONDS_IN_24_HOURS: i64 = 86_400;
 const DAYS_BY_MONTH: [u8; 12] = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+const MONTH_DAY_BY_ORDINAL: [u16; 366] = {
+    let mut dates = [0; 366];
+    dates[0] = 1 << 8;
+    let mut ordinal = 1;
+    let mut month = 0;
+    while month < DAYS_BY_MONTH.len() {
+        let mut day = 1;
+        while day <= DAYS_BY_MONTH[month] {
+            dates[ordinal] = ((month + 1) as u16) << 8 | day as u16;
+            ordinal += 1;
+            day += 1;
+        }
+        month += 1;
+    }
+    dates
+};
 
 /// TiDB's compact internal calendar representation.
 #[derive(Clone, Copy, Default, Eq, Hash, PartialEq)]
@@ -163,16 +179,50 @@ impl CoreTime {
     }
 
     /// Returns the signed comparison used by Go `compareTime`.
+    #[inline]
     pub fn compare(self, other: Self) -> Ordering {
-        datetime_to_u64(self)
-            .cmp(&datetime_to_u64(other))
-            .then_with(|| self.microsecond().cmp(&other.microsecond()))
+        // Go compares the calendar fields as base-100 digits and then the
+        // microseconds. The packed fields have that same order, even for
+        // out-of-range dates. The low bits carry no calendar information.
+        (self.0 >> MICROSECOND_OFFSET).cmp(&(other.0 >> MICROSECOND_OFFSET))
     }
 
     /// Returns the calendar day difference between two dates.
+    #[inline]
     pub const fn date_diff(self, other: Self) -> i32 {
-        (calc_daynr(self.year() as i64, self.month() as i64, self.day() as i64)
-            - calc_daynr(other.year() as i64, other.month() as i64, other.day() as i64)) as i32
+        self.day_number() - other.day_number()
+    }
+
+    /// Go's calcDaynr with the narrower bounds of packed calendar fields.
+    #[inline]
+    const fn day_number(self) -> i32 {
+        const MONTH_OFFSET: [i32; 16] = {
+            let mut result = [0; 16];
+            let mut month = 0;
+            while month < result.len() {
+                let month_number = month as i32;
+                result[month] = 31 * (month_number - 1);
+                if month > 2 {
+                    result[month] -= (month_number * 4 + 23) / 10;
+                }
+                month += 1;
+            }
+            result
+        };
+        let year = self.year();
+        let month = self.month() as usize;
+        if year == 0 && month == 0 {
+            return 0;
+        }
+        let adjusted_year = year - (month <= 2) as i32;
+        // Go's signed division truncates the year -1 to zero here.
+        let adjusted_year = if adjusted_year < 0 {
+            0
+        } else {
+            adjusted_year as u32
+        };
+        let leap_days = adjusted_year / 4 - adjusted_year / 100 + adjusted_year / 400;
+        365 * year + MONTH_OFFSET[month] + self.day() as i32 + leap_days as i32
     }
 
     /// Calculates the absolute temporal difference with Go's signed operand rule.
@@ -191,6 +241,7 @@ impl CoreTime {
     }
 
     /// Computes MySQL `TIMESTAMPDIFF`.
+    #[inline]
     pub fn timestamp_diff(self, other: Self, interval: TimestampInterval) -> i64 {
         timestamp_diff(interval, self, other)
     }
@@ -241,20 +292,18 @@ impl CoreTime {
     }
 
     /// Adds a signed duration while preserving the existing clock fields.
+    #[inline]
     pub fn add_duration(self, nanoseconds: i64) -> Self {
-        let own_micros = calc_daynr(
-            i64::from(self.year()),
-            i64::from(self.month()),
-            i64::from(self.day()),
-        ) * SECONDS_IN_24_HOURS
-            * 1_000_000
-            + i64::from(self.hour()) * 3_600_000_000
-            + i64::from(self.minute()) * 60_000_000
-            + i64::from(self.second()) * 1_000_000
-            + i64::from(self.microsecond());
-        let result = own_micros + nanoseconds / 1_000;
-        let daynr = result.div_euclid(SECONDS_IN_24_HOURS * 1_000_000);
-        let time = result.rem_euclid(SECONDS_IN_24_HOURS * 1_000_000);
+        // Go splitDuration negates the magnitude in int64, so MinInt64
+        // keeps its sign until calcTimeDurationDiff reapplies it.
+        let delta_micros = if nanoseconds == i64::MIN {
+            -(nanoseconds / 1_000)
+        } else {
+            nanoseconds / 1_000
+        };
+        let result = (self.calendar_micros() + delta_micros).abs();
+        let daynr = result / (SECONDS_IN_24_HOURS * 1_000_000);
+        let time = result % (SECONDS_IN_24_HOURS * 1_000_000);
         let (year, month, day) = get_date_from_daynr(daynr as u64);
         let seconds = time / 1_000_000;
         Self::from_date(
@@ -266,6 +315,21 @@ impl CoreTime {
             (seconds % 60) as u8,
             (time % 1_000_000) as u32,
         )
+    }
+
+    /// Microseconds in the civil calendar used by TiDB's temporal arithmetic.
+    #[inline]
+    pub fn calendar_micros(self) -> i64 {
+        calc_daynr(
+            i64::from(self.year()),
+            i64::from(self.month()),
+            i64::from(self.day()),
+        ) * SECONDS_IN_24_HOURS
+            * 1_000_000
+            + i64::from(self.hour()) * 3_600_000_000
+            + i64::from(self.minute()) * 60_000_000
+            + i64::from(self.second()) * 1_000_000
+            + i64::from(self.microsecond())
     }
 
     /// Adds a signed duration in nanoseconds using TiDB's date/time mixing.
@@ -412,11 +476,9 @@ impl Weekday {
             Self::Saturday => "Sat",
         }
     }
-}
 
-impl fmt::Display for Weekday {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(match self {
+    pub(crate) const fn name(self) -> &'static str {
+        match self {
             Self::Sunday => "Sunday",
             Self::Monday => "Monday",
             Self::Tuesday => "Tuesday",
@@ -424,7 +486,13 @@ impl fmt::Display for Weekday {
             Self::Thursday => "Thursday",
             Self::Friday => "Friday",
             Self::Saturday => "Saturday",
-        })
+        }
+    }
+}
+
+impl fmt::Display for Weekday {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.name())
     }
 }
 
@@ -643,18 +711,8 @@ pub const fn get_date_from_daynr(daynr: u64) -> (u64, u64, u64) {
             leap_day = 1;
         }
     }
-    let mut month = 1;
-    let mut index = 0;
-    while index < DAYS_BY_MONTH.len() {
-        let days = DAYS_BY_MONTH[index] as u64;
-        if day_of_year <= days {
-            break;
-        }
-        day_of_year -= days;
-        month += 1;
-        index += 1;
-    }
-    (year, month, day_of_year + leap_day)
+    let month_day = MONTH_DAY_BY_ORDINAL[day_of_year as usize];
+    (year, (month_day >> 8) as u64, (month_day & 255) as u64 + leap_day)
 }
 
 fn normalize_day(year: &mut i64, month: &mut i64, day: &mut i64) {
@@ -799,68 +857,76 @@ fn time_diff_internal(
     }
 }
 
+#[inline]
 fn timestamp_diff(interval: TimestampInterval, start: CoreTime, end: CoreTime) -> i64 {
-    let difference = end.time_diff(start, 1);
-    let mut months = 0_u32;
-    if matches!(
-        interval,
-        TimestampInterval::Year | TimestampInterval::Quarter | TimestampInterval::Month
-    ) {
-        let (begin, finish) = if difference.negative {
-            (end, start)
-        } else {
-            (start, end)
-        };
-        let mut years = (finish.year() - begin.year()) as u32;
-        if finish.month() < begin.month()
-            || (finish.month() == begin.month() && finish.day() < begin.day())
-        {
-            years -= 1;
-        }
-        months = 12 * years;
-        if finish.month() < begin.month()
-            || (finish.month() == begin.month() && finish.day() < begin.day())
-        {
-            months += 12 - u32::from(begin.month() - finish.month());
-        } else {
-            months += u32::from(finish.month() - begin.month());
-        }
-        let begin_seconds = u32::from(begin.hour()) * 3_600
-            + u32::from(begin.minute()) * 60
-            + u32::from(begin.second());
-        let finish_seconds = u32::from(finish.hour()) * 3_600
-            + u32::from(finish.minute()) * 60
-            + u32::from(finish.second());
-        if finish.day() < begin.day()
-            || (finish.day() == begin.day()
-                && (finish_seconds < begin_seconds
-                    || (finish_seconds == begin_seconds
-                        && finish.microsecond() < begin.microsecond())))
-        {
-            months -= 1;
-        }
-    }
-    let sign = if difference.negative { -1 } else { 1 };
-    let value = match interval {
-        TimestampInterval::Year => i64::from(months / 12),
-        TimestampInterval::Quarter => i64::from(months / 3),
-        TimestampInterval::Month => i64::from(months),
-        TimestampInterval::Week => difference.seconds / SECONDS_IN_24_HOURS / 7,
-        TimestampInterval::Day => difference.seconds / SECONDS_IN_24_HOURS,
-        TimestampInterval::Hour => difference.seconds / 3_600,
-        TimestampInterval::Minute => difference.seconds / 60,
-        TimestampInterval::Second => difference.seconds,
-        TimestampInterval::Microsecond => {
-            difference.seconds * 1_000_000 + i64::from(difference.microseconds)
-        }
+    use TimestampInterval::*;
+    let clock = |time: CoreTime| {
+        i32::from(time.hour()) * 3_600 + i32::from(time.minute()) * 60 + i32::from(time.second())
     };
-    value * sign
+    let start_clock = clock(start);
+    let end_clock = clock(end);
+    let seconds =
+        i64::from(end.date_diff(start)) * SECONDS_IN_24_HOURS + i64::from(end_clock - start_clock);
+    let micros = seconds * 1_000_000 + i64::from(end.microsecond()) - i64::from(start.microsecond());
+    match interval {
+        Year | Quarter | Month => {
+            let months = |begin: CoreTime, finish: CoreTime, begin_clock, finish_clock| {
+                let before_anniversary = (finish.day(), finish_clock, finish.microsecond())
+                    < (begin.day(), begin_clock, begin.microsecond());
+                12 * (finish.year() - begin.year()) + i32::from(finish.month())
+                    - i32::from(begin.month())
+                    - i32::from(before_anniversary)
+            };
+            let months = if micros < 0 {
+                -months(end, start, end_clock, start_clock)
+            } else {
+                months(start, end, start_clock, end_clock)
+            };
+            i64::from(match interval {
+                Year => months / 12,
+                Quarter => months / 3,
+                _ => months,
+            })
+        }
+        Week => micros / (7 * SECONDS_IN_24_HOURS * 1_000_000),
+        Day => micros / (SECONDS_IN_24_HOURS * 1_000_000),
+        Hour => micros / 3_600_000_000,
+        Minute => micros / 60_000_000,
+        Second => micros / 1_000_000,
+        Microsecond => micros,
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use chrono::{Datelike, Offset};
+
+    #[test]
+    fn test_compare_packed_fields_matches_go_order() {
+        let reference = |value: CoreTime| (datetime_to_u64(value), value.microsecond());
+        let mut state = 42_u64;
+        for offset in [
+            MICROSECOND_OFFSET,
+            SECOND_OFFSET,
+            MINUTE_OFFSET,
+            HOUR_OFFSET,
+            DAY_OFFSET,
+            MONTH_OFFSET,
+            YEAR_OFFSET,
+            64,
+        ] {
+            let tail_mask = u64::MAX >> (64 - offset);
+            for _ in 0..256 {
+                state = state.wrapping_mul(6364136223846793005).wrapping_add(1);
+                let left = CoreTime::from_raw(state);
+                let right = CoreTime::from_raw(state ^ tail_mask);
+                let same_calendar = CoreTime::from_raw(state ^ 15);
+                assert_eq!(left.compare(right), reference(left).cmp(&reference(right)));
+                assert_eq!(left.compare(same_calendar), Ordering::Equal);
+            }
+        }
+    }
 
     #[test]
     fn test_week_behaviour() {
@@ -952,6 +1018,30 @@ mod tests {
             assert_eq!(difference.seconds, expected_seconds);
             assert_eq!(difference.microseconds, 0);
         }
+    }
+
+    #[test]
+    fn packed_day_number_matches_calc_daynr_at_field_boundaries() {
+        for year in 0..=0x3fff {
+            for month in 0..=15 {
+                for day in [0, 1, 28, 29, 31] {
+                    let core = CoreTime::from_date(year, month, day, 23, 59, 59, 999_999);
+                    assert_eq!(
+                        i64::from(core.day_number()),
+                        calc_daynr(i64::from(year), i64::from(month), i64::from(day))
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn timestamp_diff_months_preserves_go_order_for_invalid_dates() {
+        // With ALLOW_INVALID_DATES, Feb 31 can follow Mar 1 in day-number order.
+        let feb = CoreTime::from_date(2020, 2, 31, 0, 0, 0, 0);
+        let mar = CoreTime::from_date(2020, 3, 1, 0, 0, 0, 0);
+        assert_eq!(feb.timestamp_diff(mar, TimestampInterval::Month), 1);
+        assert_eq!(mar.timestamp_diff(feb, TimestampInterval::Month), -1);
     }
 
     #[test]

@@ -10,6 +10,7 @@ autotests = false
 
 [dependencies]
 flate2.workspace = true
+zlib-rs = "0.6"
 zstd.workspace = true
 
 [[test]]

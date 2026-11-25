@@ -141,8 +141,8 @@ fn encoder_uses_go_column_count_and_multi_error_semantics() {
     let mut buffer = vec![0xaa];
     let error = encode_row(
         None,
-        &[1, 2],
-        &[Datum::MinNotNull, Datum::MaxValue],
+        &[3, 2, 1],
+        &[Datum::MinNotNull, Datum::MaxValue, Datum::Int(42)],
         &mut buffer,
     )
     .unwrap_err();
@@ -535,6 +535,28 @@ fn test_65535_bug() {
     assert_eq!(decoded[0].as_raw_bytes(), Some(value.as_slice()));
 }
 
+#[test]
+fn typed_row_promotes_offsets_after_encoding_without_reordering_ids() {
+    let bytes = vec![0x42; 65_530];
+    let mut buffer = vec![0xab, 0xcd];
+    encode_row(
+        None,
+        &[-2, -1, 1],
+        &[Datum::Int(i64::MAX), Datum::Null, Datum::Bytes(bytes.clone())],
+        &mut buffer,
+    )
+    .unwrap();
+    assert_eq!(&buffer[..2], &[0xab, 0xcd]);
+    let (row, tail) = RowLayout::parse(&buffer[2..]).unwrap();
+    assert!(tail.is_empty());
+    assert!(row.header().is_large());
+    assert_eq!(row.not_null_column_ids(), &[1, 254]);
+    assert_eq!(row.null_column_ids(), &[255]);
+    assert_eq!(row.offsets(), &[65_530, 65_538]);
+    assert_eq!(row.value(0).unwrap(), bytes);
+    assert_eq!(row.value(1).unwrap(), i64::MAX.to_le_bytes());
+}
+
 /// Source: `rowcodec_test.go::TestColumnEncode`.
 #[test]
 #[allow(clippy::approx_constant)]
@@ -791,6 +813,14 @@ fn test_column_encode() {
         vector_error.to_string(),
         "encode datum(KindInt64 1) as vector for checksum: bad VectorFloat32 value header (len=0)"
     );
+    let vector_bytes = [1, 0, 0, 0, 0x34, 0x12, 0xc0, 0x7f];
+    let mut vector_with_suffix = vector_bytes.to_vec();
+    vector_with_suffix.extend_from_slice(b"suffix");
+    assert_encoding(
+        FieldTypeCode::VectorFloat32,
+        Datum::new_bytes_datum(vector_with_suffix),
+        vector_bytes.to_vec(),
+    );
     for code in [
         FieldTypeCode::Unspecified,
         FieldTypeCode::Tiny,
@@ -985,6 +1015,40 @@ fn test_encode_decode_row_with_checksum() {
     expected.update(&[layout.checksum().unwrap().header()]);
     expected.update(&handle_bytes);
     assert_eq!(recalculated, expected.finalize());
+
+    let before = row.to_vec();
+    assert!(calculate_raw_checksum(
+        row,
+        None,
+        &[1, 2],
+        &[Datum::new_bytes_datum(b"c"), Datum::Null],
+        b"unused-key",
+        &Handle::Int(1),
+        &[],
+    )
+    .is_err());
+    assert_eq!(row, before.as_slice());
+
+    let common = Handle::Common(vec![b"first".to_vec(), vec![], b"last".to_vec()]);
+    let mut encoded = Vec::new();
+    encode_row_with_checksum(
+        None,
+        &[1],
+        &[Datum::Int(42)],
+        &RowChecksumPolicy::RawHandle(common.clone()),
+        &mut encoded,
+    )
+    .unwrap();
+    let body_end = encoded.len() - 4;
+    let mut expected = crc32fast::Hasher::new();
+    expected.update(&encoded[..body_end]);
+    expected.update(b"firstlast");
+    let expected = expected.finalize();
+    assert_eq!(&encoded[body_end..], &expected.to_le_bytes());
+    assert_eq!(
+        calculate_raw_checksum(&mut encoded, None, &[], &[], b"", &common, &[]).unwrap(),
+        expected
+    );
 }
 
 /// Source: `rowcodec_test.go::TestDecodeWithCommitTS`.

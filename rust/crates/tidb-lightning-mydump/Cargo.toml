@@ -13,6 +13,8 @@ workspace = true
 [dependencies]
 tidb-charset = { path = "../tidb-charset" }
 tidb-datatype = { path = "../tidb-datatype" }
+bytes.workspace = true
+memchr = "2"
 encoding_rs.workspace = true
 serde.workspace = true
 serde_json.workspace = true

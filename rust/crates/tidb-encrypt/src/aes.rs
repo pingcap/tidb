@@ -16,6 +16,7 @@
 
 use aes::cipher::{BlockCipherDecrypt, BlockCipherEncrypt, KeyInit};
 use aes::{Aes128, Aes192, Aes256};
+use std::borrow::Borrow;
 use std::fmt;
 
 pub(super) const AES_BLOCK_SIZE: usize = 16;
@@ -78,6 +79,14 @@ impl AesCipher {
             Self::Aes256(cipher) => cipher.encrypt_block(&mut value),
         }
         block.copy_from_slice(&value);
+    }
+
+    fn encrypt_blocks(&self, blocks: &mut [aes::Block]) {
+        match self {
+            Self::Aes128(cipher) => cipher.encrypt_blocks(blocks),
+            Self::Aes192(cipher) => cipher.encrypt_blocks(blocks),
+            Self::Aes256(cipher) => cipher.encrypt_blocks(blocks),
+        }
     }
 
     pub(super) fn decrypt_block(&self, block: &mut [u8; AES_BLOCK_SIZE]) {
@@ -237,12 +246,69 @@ pub fn aes_decrypt_with_cbc(data: &[u8], key: &[u8], iv: &[u8]) -> Result<Vec<u8
     pkcs7_unpad(&destination, AES_BLOCK_SIZE).map(<[u8]>::to_vec)
 }
 
-fn increment_counter(counter: &mut [u8; AES_BLOCK_SIZE]) {
-    for value in counter.iter_mut().rev() {
-        *value = value.wrapping_add(1);
-        if *value != 0 {
-            break;
+/// AES-CTR state shared by the SQL helpers and the buffered I/O layer.
+pub(super) struct CtrStream<C> {
+    cipher: C,
+    counter: u128,
+    mask: [u8; AES_BLOCK_SIZE],
+    used: usize,
+}
+
+impl<C: Borrow<AesCipher>> CtrStream<C> {
+    pub(super) const fn new(cipher: C, counter: u128) -> Self {
+        Self {
+            cipher,
+            counter,
+            mask: [0; AES_BLOCK_SIZE],
+            used: AES_BLOCK_SIZE,
         }
+    }
+
+    pub(super) fn xor_key_stream(&mut self, data: &mut [u8]) {
+        let prefix_len = (AES_BLOCK_SIZE - self.used).min(data.len());
+        let (prefix, rest) = data.split_at_mut(prefix_len);
+        xor_bytes(prefix, &self.mask[self.used..]);
+        self.used += prefix_len;
+
+        let cipher = self.cipher.borrow();
+        if rest.len() <= 2 * AES_BLOCK_SIZE {
+            // Short flushes can reuse the cached block directly.
+            for chunk in rest.chunks_mut(AES_BLOCK_SIZE) {
+                self.mask = self.counter.to_be_bytes();
+                cipher.encrypt_block(&mut self.mask);
+                self.counter = self.counter.wrapping_add(1);
+                xor_bytes(chunk, &self.mask);
+                self.used = chunk.len();
+            }
+            return;
+        }
+
+        // One KiB of independent counters lets the AES backend use its
+        // parallel block implementation with bounded scratch space.
+        const BATCH_BLOCKS: usize = 64;
+        let mut masks = [aes::Block::default(); BATCH_BLOCKS];
+        for chunk in rest.chunks_mut(BATCH_BLOCKS * AES_BLOCK_SIZE) {
+            let blocks = chunk.len().div_ceil(AES_BLOCK_SIZE);
+            let masks = &mut masks[..blocks];
+            for mask in &mut *masks {
+                *mask = self.counter.to_be_bytes().into();
+                self.counter = self.counter.wrapping_add(1);
+            }
+            cipher.encrypt_blocks(masks);
+            xor_bytes(chunk, aes::Block::slice_as_flattened(masks));
+
+            let partial = chunk.len() % AES_BLOCK_SIZE;
+            if partial != 0 {
+                self.mask.copy_from_slice(&masks[blocks - 1]);
+                self.used = partial;
+            }
+        }
+    }
+}
+
+fn xor_bytes(data: &mut [u8], mask: &[u8]) {
+    for (byte, mask) in data.iter_mut().zip(mask) {
+        *byte ^= mask;
     }
 }
 
@@ -269,14 +335,9 @@ pub fn aes_decrypt_with_ofb(data: &[u8], key: &[u8], iv: &[u8]) -> Result<Vec<u8
 
 fn aes_crypt_with_ctr(data: &[u8], key: &[u8], iv: &[u8]) -> Result<Vec<u8>, EncryptError> {
     let cipher = AesCipher::new(key)?;
-    let mut counter = validate_iv(iv, "bad IV length");
-    let mut destination = Vec::with_capacity(data.len());
-    for chunk in data.chunks(AES_BLOCK_SIZE) {
-        let mut mask = counter;
-        cipher.encrypt_block(&mut mask);
-        increment_counter(&mut counter);
-        destination.extend(chunk.iter().zip(mask).map(|(value, mask)| value ^ mask));
-    }
+    let counter = u128::from_be_bytes(validate_iv(iv, "bad IV length"));
+    let mut destination = data.to_vec();
+    CtrStream::new(&cipher, counter).xor_key_stream(&mut destination);
     Ok(destination)
 }
 
@@ -634,6 +695,24 @@ mod tests {
     #[test]
     fn TestAESDecryptWithCTR() {
         check_stream_decrypt(aes_decrypt_with_ctr);
+    }
+
+    #[test]
+    fn ctr_keeps_partial_masks_across_updates_and_counter_wrap() {
+        let cipher = AesCipher::new(&[0x42; 16]).unwrap();
+        let first_counter = u128::MAX - 1;
+        let plaintext = [0x35; 2_129];
+        let mut expected = plaintext;
+        CtrStream::new(&cipher, first_counter).xor_key_stream(&mut expected);
+
+        let mut actual = plaintext;
+        let mut stream = CtrStream::new(&cipher, first_counter);
+        let mut offset = 0;
+        for length in [3, 0, 14, 1_025, 1, 1_086] {
+            stream.xor_key_stream(&mut actual[offset..offset + length]);
+            offset += length;
+        }
+        assert_eq!(actual, expected);
     }
 
     #[test]

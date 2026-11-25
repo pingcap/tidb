@@ -21,6 +21,8 @@ use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
+use indexmap::IndexMap;
+
 use super::rustats::{default_ru_version, normalize_ru_version, RuIncrementMap, RuVersionProvider};
 use tidb_pd_client::rm_client::RuVersion;
 use super::stmtstats::{StatementStats, StatementStatsMap};
@@ -65,14 +67,13 @@ pub trait RuCollector: Send + Sync {
 /// Go `aggregator`: collects and aggregates data from all
 /// [`StatementStats`], uploads it, and regularly cleans up closed sessions.
 ///
-/// Go's `sync.Map` sets become plain `Mutex`-guarded vectors: registration is
-/// rare, iteration snapshots the set before touching any element (Go's
-/// `sync.Map.Range` likewise tolerates concurrent deletes), and identity is
-/// pointer identity either way.
+/// Sessions are keyed by pointer identity, as in Go's `sync.Map`. The
+/// registry keeps its values packed so a tick can snapshot the live
+/// sessions before calling into them.
 pub struct Aggregator {
     running: AtomicBool,
     ru_version_provider: Mutex<Option<Arc<dyn RuVersionProvider>>>,
-    stats_set: Mutex<Vec<Arc<StatementStats>>>,
+    stats_set: Mutex<IndexMap<usize, Arc<StatementStats>>>,
     collectors: Mutex<Vec<Arc<dyn Collector>>>,
     ru_collectors: Mutex<Vec<Arc<dyn RuCollector>>>,
     stats_len: AtomicU32,
@@ -97,7 +98,7 @@ impl Aggregator {
         Arc::new(Self {
             running: AtomicBool::new(false),
             ru_version_provider: Mutex::new(None),
-            stats_set: Mutex::new(Vec::new()),
+            stats_set: Mutex::new(IndexMap::new()),
             collectors: Mutex::new(Vec::new()),
             ru_collectors: Mutex::new(Vec::new()),
             stats_len: AtomicU32::new(0),
@@ -107,8 +108,12 @@ impl Aggregator {
         })
     }
 
-    fn lock_stats(&self) -> std::sync::MutexGuard<'_, Vec<Arc<StatementStats>>> {
+    fn lock_stats(&self) -> std::sync::MutexGuard<'_, IndexMap<usize, Arc<StatementStats>>> {
         self.stats_set.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    fn snapshot_stats(&self) -> Vec<Arc<StatementStats>> {
+        self.lock_stats().values().cloned().collect()
     }
 
     /// Go `aggregator.setRUVersionProvider`.
@@ -195,7 +200,7 @@ impl Aggregator {
     /// associated [`StatementStats`]. Finished sessions are unregistered here.
     pub fn drain_and_push_stmt_stats(&self) {
         let mut total = StatementStatsMap::new();
-        let snapshot: Vec<_> = self.lock_stats().clone();
+        let snapshot = self.snapshot_stats();
         for stats in &snapshot {
             if stats.finished() {
                 self.unregister(stats);
@@ -222,7 +227,7 @@ impl Aggregator {
     pub fn drain_and_push_ru(&self) {
         let current_ru_version = self.current_ru_version();
         if current_ru_version != self.last_ru_version() {
-            let snapshot: Vec<_> = self.lock_stats().clone();
+            let snapshot = self.snapshot_stats();
             for stats in &snapshot {
                 stats.reset_ru_state_on_version_change(current_ru_version);
             }
@@ -241,7 +246,7 @@ impl Aggregator {
         let mut total = RuIncrementMap::with_capacity(MAX_RU_KEYS_PER_AGGREGATE);
         let mut dropped_keys = 0i64;
         let mut dropped_ru = 0.0;
-        let snapshot: Vec<_> = self.lock_stats().clone();
+        let snapshot = self.snapshot_stats();
         for stats in &snapshot {
             let session_ru = stats.merge_ru_into();
             for (key, incr) in session_ru.iter() {
@@ -277,9 +282,8 @@ impl Aggregator {
 
     /// Go `aggregator.register`: binds a [`StatementStats`]. Thread-safe.
     pub fn register(&self, stats: &Arc<StatementStats>) {
-        // Reserve a slot with CAS before publishing the pointer. A load then
-        // increment admits max+1 sessions at the boundary and lets concurrent
-        // callers overshoot the cap, while Go's CompareAndSwap loop does not.
+        // Reserve a slot before publishing the pointer so concurrent
+        // registrations cannot overshoot the cap.
         loop {
             let current = self.stats_len.load(Ordering::SeqCst);
             if current >= MAX_STMT_STATS_SIZE {
@@ -293,7 +297,9 @@ impl Aggregator {
                 break;
             }
         }
-        self.lock_stats().push(Arc::clone(stats));
+        self.lock_stats()
+            .entry(Arc::as_ptr(stats) as usize)
+            .or_insert_with(|| Arc::clone(stats));
     }
 
     /// Go `aggregator.unregister`: removes a [`StatementStats`]. Thread-safe.
@@ -301,7 +307,7 @@ impl Aggregator {
     /// Go's `sync.Map.Delete` plus unconditional `statsLen.Dec()` is kept
     /// as-is, including the wrap that a surplus unregister would cause.
     pub fn unregister(&self, stats: &Arc<StatementStats>) {
-        self.lock_stats().retain(|s| !Arc::ptr_eq(s, stats));
+        self.lock_stats().swap_remove(&(Arc::as_ptr(stats) as usize));
         self.stats_len.fetch_sub(1, Ordering::SeqCst);
     }
 
@@ -309,7 +315,7 @@ impl Aggregator {
     /// `m.statsSet.Load(stats)`.
     #[must_use]
     pub fn contains_stats(&self, stats: &Arc<StatementStats>) -> bool {
-        self.lock_stats().iter().any(|s| Arc::ptr_eq(s, stats))
+        self.lock_stats().contains_key(&(Arc::as_ptr(stats) as usize))
     }
 
     /// Go `aggregator.registerCollector`. Thread-safe.
@@ -605,6 +611,24 @@ mod tests {
             aggregator.stats_len.load(Ordering::SeqCst)
         );
         assert_eq!(1, aggregator.lock_stats().len());
+    }
+
+    #[test]
+    fn duplicate_registration_drains_a_finished_session_once() {
+        let aggregator = Aggregator::new();
+        let finished = StatementStats::detached();
+        let live = StatementStats::detached();
+        aggregator.register(&finished);
+        aggregator.register(&finished);
+        aggregator.register(&live);
+        assert_eq!(aggregator.lock_stats().len(), 2);
+        assert_eq!(aggregator.stats_len.load(Ordering::SeqCst), 3);
+
+        finished.set_finished();
+        aggregator.drain_and_push_stmt_stats();
+        assert!(!aggregator.contains_stats(&finished));
+        assert!(aggregator.contains_stats(&live));
+        assert_eq!(aggregator.stats_len.load(Ordering::SeqCst), 2);
     }
 
     // Go `TestAggregatorRunClose`: start/close idempotence on a standalone

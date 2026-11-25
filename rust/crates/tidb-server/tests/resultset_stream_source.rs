@@ -85,6 +85,41 @@ fn owned_text_row_matches_borrowed_go_framing_and_encoding() {
 }
 
 #[test]
+fn unset_result_charset_uses_each_text_columns_encoding() {
+    let mut gbk = column();
+    gbk.charset = 28;
+    let mut ascii = column();
+    ascii.charset = 65;
+    let mut binary = column();
+    binary.charset = 63;
+    let mut stream = ResultSetStream::new(
+        vec![gbk, ascii, binary, column()],
+        ResultSetOptions::default(),
+    );
+    stream.metadata_packets().unwrap();
+
+    let bytes: [&[u8]; 3] = ["雪".as_bytes(), "é".as_bytes(), b"\xff"];
+    let expected: &[u8] = b"\x02\xd1\xa9\x01?\x01\xff\xfb";
+    let cells = [Some(bytes[0]), Some(bytes[1]), Some(bytes[2]), None];
+    let mut row = stream.text_row().unwrap();
+    for value in cells {
+        row.append(value.map_or(TextScalar::Null, TextScalar::Bytes))
+            .unwrap();
+    }
+    assert_eq!(row.finish().unwrap(), expected);
+
+    let owned = cells.map(|cell| cell.map(<[u8]>::to_vec));
+    assert_eq!(stream.row_packet(&owned).unwrap(), expected);
+    assert_eq!(stream.row_packet_owned(Vec::from(owned)).unwrap(), expected);
+    let datums = bytes
+        .into_iter()
+        .map(|bytes| Datum::Bytes(bytes.to_vec()))
+        .chain(std::iter::once(Datum::Null))
+        .collect();
+    assert_eq!(stream.row_packet_datums_owned(datums).unwrap(), expected);
+}
+
+#[test]
 fn owned_datum_row_matches_go_text_framing_without_cell_allocations() {
     let mut int = column();
     int.type_code = TYPE_LONG;

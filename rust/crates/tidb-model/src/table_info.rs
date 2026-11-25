@@ -24,6 +24,8 @@
 //! [`TableInfo::equals_id`] and [`TableInfo::hash64`]; Rust structural equality
 //! is deliberately not overloaded with that narrower planner identity.
 
+use std::ops::ControlFlow;
+
 use tidb_ast::CiString;
 use tidb_datatype::FieldTypeFlags;
 
@@ -470,8 +472,7 @@ impl TableInfo {
     /// Go `GetPkColInfo`: the primary-key column (by the PRI-KEY flag).
     pub fn get_pk_col_info(&self) -> Option<GoShared<ColumnInfo>> {
         self.columns
-            .iter_deref()
-            .find(|column| column.read().get_flag() & u64::from(FieldTypeFlags::PRI_KEY) != 0)
+            .find_deref(|column| column.get_flag() & u64::from(FieldTypeFlags::PRI_KEY) != 0)
     }
 
     /// Mutable handle form of Go `GetPkColInfo`.
@@ -508,25 +509,27 @@ impl TableInfo {
     /// gap is retained as `None`, exactly matching the nil element Go leaves
     /// in its returned slice.
     pub fn cols(&self) -> GoSharedPointerSlice<ColumnInfo> {
+        GoSharedPointerSlice::from_handles_with_capacity(
+            self.public_column_slots(),
+            self.columns.len(),
+        )
+    }
+
+    fn public_column_slots(&self) -> Vec<Option<GoShared<ColumnInfo>>> {
         let mut slots = vec![None; self.columns.len()];
-        let mut max_offset: i64 = -1;
-        for column in self.columns.iter_deref() {
-            let col = column.read();
-            if col.state != SchemaState::PUBLIC {
-                continue;
+        let mut visible_len = 0;
+        let result: ControlFlow<()> = self.columns.visit_deref(|handle, column| {
+            if column.state == SchemaState::PUBLIC {
+                let offset = column.offset as usize;
+                // Index directly as Go does, including its bounds check.
+                slots[offset] = Some(handle.clone());
+                visible_len = visible_len.max(offset + 1);
             }
-            let off = col.offset as usize;
-            // Go indexes `publicColumns[col.Offset]` directly. Invalid
-            // metadata is an invariant violation and panics rather than being
-            // silently dropped.
-            slots[off] = Some(column.clone());
-            if col.offset > max_offset {
-                max_offset = col.offset;
-            }
-        }
-        let visible_len = (max_offset + 1) as usize;
+            ControlFlow::Continue(())
+        });
+        debug_assert!(result.is_continue());
         slots.truncate(visible_len);
-        GoSharedPointerSlice::from_handles_with_capacity(slots, self.columns.len())
+        slots
     }
 
     /// Compatibility spelling for callers that already named the Go gap.
@@ -537,7 +540,7 @@ impl TableInfo {
     /// Present public columns, used by Rust callers that explicitly do not
     /// consume Go's nil-gap invariant.
     pub fn present_cols(&self) -> Vec<GoShared<ColumnInfo>> {
-        self.cols().handles().into_iter().flatten().collect()
+        self.public_column_slots().into_iter().flatten().collect()
     }
 
     /// Mutable handles for the exact Go `Cols` result.
@@ -548,8 +551,28 @@ impl TableInfo {
     /// Go `FindPublicColumnByName`: the public column named `col_name_l`
     /// (already lower-cased).
     pub fn find_public_column_by_name(&self, col_name_l: &str) -> Option<GoShared<ColumnInfo>> {
-        self.cols()
-            .iter_deref()
+        let mut next_offset = 0;
+        let mut found = None;
+        let order = self.columns.visit_deref(|handle, column| {
+            if column.state == SchemaState::PUBLIC {
+                if column.offset != next_offset {
+                    return ControlFlow::Break(());
+                }
+                next_offset += 1;
+                if found.is_none() && column.name.lowercase() == col_name_l {
+                    found = Some(handle.clone());
+                }
+            }
+            ControlFlow::Continue(())
+        });
+        if order.is_continue() {
+            return found;
+        }
+        // Go searches offset order. A gap is nil, and the last column at a
+        // duplicated offset supplies the value at that slot.
+        self.public_column_slots()
+            .into_iter()
+            .map(|column| column.expect("nil pointer in Go slice"))
             .find(|column| column.read().name.lowercase() == col_name_l)
     }
 
@@ -619,9 +642,7 @@ impl TableInfo {
 
     /// Go `FindColumnByID`: the column with `id` (any state).
     pub fn find_column_by_id(&self, id: i64) -> Option<GoShared<ColumnInfo>> {
-        self.columns
-            .iter_deref()
-            .find(|column| column.read().id == id)
+        self.columns.find_deref(|column| column.id == id)
     }
 
     /// Mutable handle form of Go `FindColumnByID`.
@@ -631,10 +652,8 @@ impl TableInfo {
 
     /// Go `GetColumnByID`: the public column with `id`.
     pub fn get_column_by_id(&self, id: i64) -> Option<GoShared<ColumnInfo>> {
-        self.columns.iter_deref().find(|column| {
-            let column = column.read();
-            column.state == SchemaState::PUBLIC && column.id == id
-        })
+        self.columns
+            .find_deref(|column| column.state == SchemaState::PUBLIC && column.id == id)
     }
 
     /// Mutable handle form of Go `GetColumnByID`.
@@ -645,8 +664,7 @@ impl TableInfo {
     /// Go `FindIndexByName`: the index named `idx_name` (already lower-cased).
     pub fn find_index_by_name(&self, idx_name: &str) -> Option<GoShared<IndexInfo>> {
         self.indices
-            .iter_deref()
-            .find(|index| index.read().name.lowercase() == idx_name)
+            .find_deref(|index| index.name.lowercase() == idx_name)
     }
 
     /// Mutable handle form of Go `FindIndexByName`.
@@ -656,9 +674,7 @@ impl TableInfo {
 
     /// Go `FindIndexByID`: the index with `id`.
     pub fn find_index_by_id(&self, id: i64) -> Option<GoShared<IndexInfo>> {
-        self.indices
-            .iter_deref()
-            .find(|index| index.read().id == id)
+        self.indices.find_deref(|index| index.id == id)
     }
 
     /// Mutable handle form of Go `FindIndexByID`.
@@ -688,9 +704,8 @@ impl TableInfo {
 
     /// Go `GetAutoIncrementColInfo`: the auto-increment column, if any.
     pub fn get_auto_increment_col_info(&self) -> Option<GoShared<ColumnInfo>> {
-        self.columns.iter_deref().find(|column| {
-            column.read().get_flag() & u64::from(FieldTypeFlags::AUTO_INCREMENT) != 0
-        })
+        self.columns
+            .find_deref(|column| column.get_flag() & u64::from(FieldTypeFlags::AUTO_INCREMENT) != 0)
     }
 
     /// Mutable handle form of Go `GetAutoIncrementColInfo`.
@@ -946,6 +961,8 @@ mod tests {
         assert!(slots.get(0).is_none());
         assert_eq!(slots.get(1).unwrap().read().name.original(), "public");
         assert!(slots.get(1).unwrap().ptr_eq(&table.columns.get(1).unwrap()));
+        assert!(table.present_cols()[0].ptr_eq(&slots.get(1).unwrap()));
+        assert!(std::panic::catch_unwind(|| table.find_public_column_by_name("public")).is_err());
 
         let no_public = TableInfo {
             columns: vec![ColumnInfo {
@@ -1276,6 +1293,23 @@ mod tests {
             SchemaState::WRITE_ONLY
         };
         c
+    }
+
+    #[test]
+    fn public_name_lookup_uses_offset_order_and_the_last_pointer_at_each_offset() {
+        let table = TableInfo {
+            columns: vec![
+                column("same", 1, true, false),
+                column("same", 0, true, false),
+            ]
+            .into(),
+            ..Default::default()
+        };
+        let last = table.columns.get(1).unwrap();
+        assert!(table.find_public_column_by_name("same").unwrap().ptr_eq(&last));
+
+        table.columns.get(0).unwrap().write().offset = 0;
+        assert!(table.find_public_column_by_name("same").unwrap().ptr_eq(&last));
     }
 
     #[test]

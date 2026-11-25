@@ -10,5 +10,5 @@ description = "TiDB util/vitess: Go pkg/util/vitess (Rust rewrite)."
 [lints]
 workspace = true
 
-[dependencies]
+[dev-dependencies]
 des.workspace = true

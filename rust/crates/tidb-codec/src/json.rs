@@ -173,6 +173,7 @@ impl<'a> RawJson<'a> {
 }
 
 /// Returns the complete BinaryJSON payload length, including its type byte.
+#[inline]
 pub fn peek_json_len(input: &[u8]) -> Result<usize, CodecError> {
     let &type_code = input.first().ok_or(CodecError::InsufficientBytes)?;
     let length = match type_code {
@@ -229,6 +230,9 @@ pub fn decode_json(input: &[u8]) -> Result<(&[u8], RawJson<'_>), CodecError> {
 }
 
 fn decode_json_uvarint(input: &[u8]) -> Result<(usize, usize), CodecError> {
+    if let Some(&first @ 0..=127) = input.first() {
+        return Ok((1, usize::from(first)));
+    }
     let mut value = 0_usize;
     for (index, byte) in input.iter().copied().enumerate() {
         if index >= std::mem::size_of::<usize>() || index >= 9 {

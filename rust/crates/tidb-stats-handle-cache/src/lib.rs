@@ -20,9 +20,10 @@ mod stats_table_row_cache;
 pub use stats_table_row_cache::{StatsTableRowCache, StatsTableRowSizeSource, TableHistId, TABLE_ROW_STATS_CACHE};
 
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
+use arc_swap::ArcSwap;
 use tidb_stats::{CopyIntent, Table};
 use tidb_stats_handle_cache_internal::StatsCacheInner;
 use tidb_stats_handle_cache_internal_lfu::Lfu;
@@ -109,7 +110,10 @@ pub struct StatsCache {
 
 /// Go `StatsCacheImpl`: an atomically replaceable full-table cache.
 pub struct StatsCacheImpl {
-    cache: RwLock<Arc<StatsCache>>,
+    // Build and update the cache without entering ArcSwap's reader registry.
+    // The first lock-free read moves the owned cache into published.
+    unpublished: Mutex<Option<Arc<StatsCache>>>,
+    published: OnceLock<ArcSwap<StatsCache>>,
 }
 
 /// Go `Update`'s deferred `tidbmetrics.StatsDeltaLoadHistogram.Observe`:
@@ -135,28 +139,63 @@ impl StatsCacheImpl {
 
     fn with_cache(cache: Arc<StatsCache>) -> Self {
         Self {
-            cache: RwLock::new(cache),
+            unpublished: Mutex::new(Some(cache)),
+            published: OnceLock::new(),
         }
     }
 
     fn load(&self) -> Arc<StatsCache> {
-        Arc::clone(
-            &self
-                .cache
-                .read()
-                .unwrap_or_else(std::sync::PoisonError::into_inner),
-        )
+        if let Some(published) = self.published.get() {
+            return published.load_full();
+        }
+        let unpublished = self
+            .unpublished
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        match unpublished.as_ref() {
+            Some(cache) => Arc::clone(cache),
+            None => self.published.get().expect("cache was published").load_full(),
+        }
+    }
+
+    #[inline]
+    fn read_published<R>(&self, read: impl FnOnce(&StatsCache) -> R) -> R {
+        let published = self
+            .published
+            .get()
+            .unwrap_or_else(|| self.publish_current());
+        read(&published.load())
+    }
+
+    #[cold]
+    fn publish_current(&self) -> &ArcSwap<StatsCache> {
+        let mut unpublished = self
+            .unpublished
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        self.published
+            .get_or_init(|| ArcSwap::new(unpublished.take().expect("unpublished cache")))
+    }
+
+    fn swap_cache(&self, cache: Arc<StatsCache>) -> Arc<StatsCache> {
+        if let Some(published) = self.published.get() {
+            return published.swap(cache);
+        }
+        let mut unpublished = self
+            .unpublished
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(current) = unpublished.as_mut() {
+            return std::mem::replace(current, cache);
+        }
+        self.published
+            .get()
+            .expect("cache was published")
+            .swap(cache)
     }
 
     fn replace_cache(&self, cache: Arc<StatsCache>) {
-        let old = std::mem::replace(
-            &mut *self
-                .cache
-                .write()
-                .unwrap_or_else(std::sync::PoisonError::into_inner),
-            cache,
-        );
-        old.close();
+        self.swap_cache(cache).close();
         metrics::cost_gauge().set(self.load().cost() as f64);
     }
 
@@ -292,12 +331,39 @@ impl StatsCacheImpl {
 
     /// Go `Get`.
     #[must_use]
+    #[inline]
     pub fn get(&self, table_id: i64) -> Option<Arc<Table>> {
-        #[cfg(feature = "failpoints")]
-        if tidb_failpoint::eval("github.com/pingcap/tidb/pkg/statistics/handle/cache/StatsCacheGetNil").is_some() {
+        if Self::get_returns_nil() {
             return None;
         }
-        self.load().get(table_id)
+        self.read_published(|cache| cache.get(table_id))
+    }
+
+    /// Go `Get` when only the presence of cached statistics is needed.
+    #[must_use]
+    #[inline]
+    pub fn contains_table(&self, table_id: i64) -> bool {
+        if Self::get_returns_nil() {
+            return false;
+        }
+        self.read_published(|cache| {
+            let found = cache.inner.contains_table(table_id);
+            metrics::record_lookup(found);
+            found
+        })
+    }
+
+    #[inline]
+    fn get_returns_nil() -> bool {
+        #[cfg(feature = "failpoints")]
+        {
+            tidb_failpoint::eval("github.com/pingcap/tidb/pkg/statistics/handle/cache/StatsCacheGetNil")
+                .is_some()
+        }
+        #[cfg(not(feature = "failpoints"))]
+        {
+            false
+        }
     }
 
     /// Go `Put`.
@@ -316,8 +382,9 @@ impl StatsCacheImpl {
     }
 
     /// Go `MaxTableStatsVersion`.
+    #[inline]
     pub fn max_table_stats_version(&self) -> u64 {
-        self.load().version()
+        self.read_published(StatsCache::version)
     }
 
     /// Go `Values`.
@@ -450,13 +517,10 @@ impl StatsCache {
 
     /// Go `Get`.
     #[must_use]
+    #[inline]
     pub fn get(&self, id: i64) -> Option<Arc<Table>> {
         let result = self.inner.get(id);
-        if result.is_some() {
-            metrics::hit_counter().inc();
-        } else {
-            metrics::miss_counter().inc();
-        }
+        metrics::record_lookup(result.is_some());
         result
     }
 
@@ -499,30 +563,21 @@ impl StatsCache {
     }
 
     /// Go `Version`.
+    #[inline]
     pub fn version(&self) -> u64 {
         self.max_table_stats_version.load(Ordering::Acquire)
     }
 
     /// Go `CopyAndUpdate`, used by copy-on-write mode.
     pub fn copy_and_update(&self, tables: &[Arc<Table>], deleted_ids: &[i64]) -> Self {
-        let result = Self::from_inner(self.inner.copy());
-        result
-            .max_table_stats_version
-            .store(self.version(), Ordering::Release);
-        for table in tables {
-            result
-                .inner
-                .put(table.hist_coll.physical_id, Arc::clone(table));
+        let inner = self.inner.copy_and_update(tables, deleted_ids);
+        let version = tables
+            .iter()
+            .fold(self.version(), |version, table| version.max(table.version));
+        Self {
+            inner,
+            max_table_stats_version: AtomicU64::new(version),
         }
-        for id in deleted_ids {
-            result.inner.del(*id);
-        }
-        for table in tables {
-            result
-                .max_table_stats_version
-                .fetch_max(table.version, Ordering::AcqRel);
-        }
-        result
     }
 
     /// Go `Update`, used by quota mode.
@@ -565,7 +620,7 @@ impl StatsCache {
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
-    use std::sync::Mutex;
+    use std::sync::{Mutex, RwLock};
 
     use tidb_stats::ColAndIdxExistenceMap;
     use tidb_stats_handle_cache_internal_testutil::new_mock_statistics_table;
@@ -599,23 +654,77 @@ mod tests {
             StatsCacheImpl::with_cache(Arc::new(StatsCache::from_inner(Box::new(MapCache::new()))));
         cache.put(1, table(1, 7));
         assert!(cache.get(1).is_some());
+        assert!(cache.contains_table(1));
+        assert!(!cache.contains_table(2));
 
         tidb_failpoint::enable("github.com/pingcap/tidb/pkg/statistics/handle/cache/StatsCacheGetNil", "return").expect("enable StatsCacheGetNil");
         assert!(cache.get(1).is_none());
+        assert!(!cache.contains_table(1));
         tidb_failpoint::disable("github.com/pingcap/tidb/pkg/statistics/handle/cache/StatsCacheGetNil");
         assert!(cache.get(1).is_some());
+        assert!(cache.contains_table(1));
     }
 
     #[test]
     fn source_copy_and_update_is_independent() {
         let cache = StatsCache::from_inner(Box::new(MapCache::new()));
         cache.put(1, table(1, 2));
-        let copied = cache.copy_and_update(&[table(2, 3)], &[1]);
+        let insert = table(2, 3);
+        let expected_cost = insert.memory_usage().total_mem_usage;
+        let copied = cache.copy_and_update(&[table(1, 9), insert], &[1]);
         assert!(cache.get(1).is_some());
         assert!(cache.get(2).is_none());
         assert!(copied.get(1).is_none());
         assert!(copied.get(2).is_some());
-        assert_eq!(copied.version(), 3);
+        assert_eq!(copied.version(), 9);
+        assert_eq!(copied.cost(), expected_cost);
+    }
+
+    #[test]
+    fn source_cache_replace_keeps_the_loaded_snapshot_alive() {
+        let cache =
+            StatsCacheImpl::with_cache(Arc::new(StatsCache::from_inner(Box::new(MapCache::new()))));
+        let replacement =
+            StatsCacheImpl::with_cache(Arc::new(StatsCache::from_inner(Box::new(MapCache::new()))));
+        cache.put(1, table(1, 2));
+        replacement.put(1, table(1, 3));
+
+        assert!(cache.published.get().is_none());
+        assert_eq!(cache.max_table_stats_version(), 2);
+        let loaded = cache.published.get().unwrap().load();
+        std::thread::scope(|scope| {
+            scope.spawn(|| cache.replace(&replacement));
+        });
+
+        assert_eq!(loaded.version(), 2);
+        assert_eq!(loaded.get(1).unwrap().version, 2);
+        assert_eq!(cache.max_table_stats_version(), 3);
+        assert_eq!(cache.get(1).unwrap().version, 3);
+    }
+
+    #[test]
+    fn first_read_racing_replacement_keeps_the_replacement() {
+        use std::sync::Barrier;
+
+        for _ in 0..32 {
+            let cache =
+                StatsCacheImpl::with_cache(Arc::new(StatsCache::from_inner(Box::new(MapCache::new()))));
+            let replacement =
+                StatsCacheImpl::with_cache(Arc::new(StatsCache::from_inner(Box::new(MapCache::new()))));
+            cache.put(1, table(1, 2));
+            replacement.put(1, table(1, 3));
+
+            let ready = Barrier::new(2);
+            std::thread::scope(|scope| {
+                scope.spawn(|| {
+                    ready.wait();
+                    cache.replace(&replacement);
+                });
+                ready.wait();
+                assert!(matches!(cache.get(1).unwrap().version, 2 | 3));
+            });
+            assert_eq!(cache.get(1).unwrap().version, 3);
+        }
     }
 
     #[test]

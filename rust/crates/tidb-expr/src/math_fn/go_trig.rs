@@ -24,8 +24,8 @@
 //! BSD licensed) so every input rounds exactly where Go rounds.
 //!
 //! Go's `haveArchSin/Cos/Tan` fast paths are assembly for other GOARCHes;
-//! on amd64 they are disabled and the pure-Go bodies below are what runs,
-//! which these ports follow line for line.
+//! amd64 and arm64 use the Go bodies. The arm64 path reproduces the
+//! multiply-add contraction that Go applies there.
 
 /// Pi/4 split into three parts (Go sin.go/tan.go `PI4A/B/C`).
 const PI4A: f64 = 7.853_981_256_484_985e-1;
@@ -96,20 +96,30 @@ const M_PI4: [u64; 20] = [
 /// so the reduction uses saturating helpers.
 #[inline]
 fn shl(a: u64, s: u32) -> u64 {
-    if s >= 64 {
-        0
-    } else {
-        a << s
-    }
+    if s >= 64 { 0 } else { a << s }
 }
 
 #[inline]
 fn shr(a: u64, s: u32) -> u64 {
-    if s >= 64 {
-        0
-    } else {
-        a >> s
+    if s >= 64 { 0 } else { a >> s }
+}
+
+use super::mul_add;
+
+#[inline(always)]
+fn reduce_near<const FUSED: bool>(x: f64, multiple: f64) -> f64 {
+    let first = mul_add::<FUSED>(multiple, -PI4A, x);
+    let second = mul_add::<FUSED>(multiple, -PI4B, first);
+    mul_add::<FUSED>(multiple, -PI4C, second)
+}
+
+#[inline(always)]
+fn horner<const FUSED: bool, const N: usize>(x: f64, coefficients: [f64; N]) -> f64 {
+    let mut value = coefficients[0];
+    for coefficient in &coefficients[1..] {
+        value = mul_add::<FUSED>(value, x, *coefficient);
     }
+    value
 }
 
 /// Go `trigReduce`: reduce x >= pi/4 to (octant j, reduced argument z).
@@ -164,60 +174,65 @@ fn trig_reduce(x: f64) -> (u64, f64) {
 }
 
 /// Go `math.Tan`, bit-exact.
+#[inline]
 pub(crate) fn go_tan(x: f64) -> f64 {
+    tan::<{ super::GO_MATH_FMA }>(x)
+}
+
+#[inline]
+pub(crate) fn tan<const FUSED: bool>(x: f64) -> f64 {
     // special cases
     if x == 0.0 || x.is_nan() {
         return x;
     }
     if x.is_infinite() {
-        return f64::NAN;
+        return super::GO_NAN;
     }
-    // make argument positive but save the sign
-    let mut sign = false;
-    let mut x = x;
-    if x < 0.0 {
-        x = -x;
-        sign = true;
-    }
+    let sign = x.to_bits() & (1 << 63);
+    let x = x.abs();
     let (j, z) = if x >= REDUCE_THRESHOLD {
         trig_reduce(x)
     } else {
-        // integer part of x/(Pi/4), as integer for tests on the phase angle
-        let mut j = (x * (4.0 / core::f64::consts::PI)) as u64;
-        let mut yf = j as f64;
-        // map zeros and singularities to origin
-        if j & 1 == 1 {
-            j += 1;
-            yf += 1.0;
-        }
-        let z = ((x - yf * PI4A) - yf * PI4B) - yf * PI4C;
-        (j, z)
+        // Map the adjacent odd octant to its even neighbor.
+        let j = ((x * (4.0 / core::f64::consts::PI)) as u64 + 1) & !1;
+        (j, reduce_near::<FUSED>(x, j as f64))
     };
     let zz = z * z;
     let mut y = if zz > 1e-14 {
-        z + z
-            * (zz * (((TAN_P[0] * zz) + TAN_P[1]) * zz + TAN_P[2])
-                / ((((zz + TAN_Q[1]) * zz + TAN_Q[2]) * zz + TAN_Q[3]) * zz + TAN_Q[4]))
+        let numerator = zz * horner::<FUSED, 3>(zz, TAN_P);
+        let denominator = horner::<FUSED, 4>(
+            zz,
+            [
+                mul_add::<FUSED>(z, z, TAN_Q[1]),
+                TAN_Q[2],
+                TAN_Q[3],
+                TAN_Q[4],
+            ],
+        );
+        mul_add::<FUSED>(z, numerator / denominator, z)
     } else {
         z
     };
     if j & 2 == 2 {
         y = -1.0 / y;
     }
-    if sign {
-        y = -y;
-    }
-    y
+    f64::from_bits(y.to_bits() ^ sign)
 }
 
 /// Go `math.Sin`, bit-exact.
+#[inline]
 pub(crate) fn go_sin(x: f64) -> f64 {
+    sin::<{ super::GO_MATH_FMA }>(x)
+}
+
+#[inline]
+pub(crate) fn sin<const FUSED: bool>(x: f64) -> f64 {
     // special cases
     if x == 0.0 || x.is_nan() {
         return x;
     }
     if x.is_infinite() {
-        return f64::NAN;
+        return super::GO_NAN;
     }
     // make argument positive but save the sign
     let mut sign = false;
@@ -237,7 +252,7 @@ pub(crate) fn go_sin(x: f64) -> f64 {
             yf += 1.0;
         }
         j &= 7;
-        let z = ((x - yf * PI4A) - yf * PI4B) - yf * PI4C;
+        let z = reduce_near::<FUSED>(x, yf);
         (j, z)
     };
     // reflect in x axis
@@ -247,15 +262,13 @@ pub(crate) fn go_sin(x: f64) -> f64 {
     }
     let zz = z * z;
     let mut y = if j == 1 || j == 2 {
-        1.0 - 0.5 * zz
-            + zz * zz
-                * ((((((COS[0] * zz) + COS[1]) * zz + COS[2]) * zz + COS[3]) * zz + COS[4]) * zz
-                    + COS[5])
+        mul_add::<FUSED>(
+            zz * zz,
+            horner::<FUSED, 6>(zz, COS),
+            mul_add::<FUSED>(-0.5, zz, 1.0),
+        )
     } else {
-        z + z
-            * zz
-            * ((((((SIN[0] * zz) + SIN[1]) * zz + SIN[2]) * zz + SIN[3]) * zz + SIN[4]) * zz
-                + SIN[5])
+        mul_add::<FUSED>(z * zz, horner::<FUSED, 6>(zz, SIN), z)
     };
     if sign {
         y = -y;
@@ -264,10 +277,16 @@ pub(crate) fn go_sin(x: f64) -> f64 {
 }
 
 /// Go `math.Cos`, bit-exact.
+#[inline]
 pub(crate) fn go_cos(x: f64) -> f64 {
+    cos::<{ super::GO_MATH_FMA }>(x)
+}
+
+#[inline]
+pub(crate) fn cos<const FUSED: bool>(x: f64) -> f64 {
     // special cases
     if x.is_nan() || x.is_infinite() {
-        return f64::NAN;
+        return super::GO_NAN;
     }
     // make argument positive
     let mut sign = false;
@@ -283,7 +302,7 @@ pub(crate) fn go_cos(x: f64) -> f64 {
             yf += 1.0;
         }
         j &= 7;
-        let z = ((x - yf * PI4A) - yf * PI4B) - yf * PI4C;
+        let z = reduce_near::<FUSED>(x, yf);
         (j, z)
     };
     if j > 3 {
@@ -295,15 +314,13 @@ pub(crate) fn go_cos(x: f64) -> f64 {
     }
     let zz = z * z;
     let mut y = if j == 1 || j == 2 {
-        z + z
-            * zz
-            * ((((((SIN[0] * zz) + SIN[1]) * zz + SIN[2]) * zz + SIN[3]) * zz + SIN[4]) * zz
-                + SIN[5])
+        mul_add::<FUSED>(z * zz, horner::<FUSED, 6>(zz, SIN), z)
     } else {
-        1.0 - 0.5 * zz
-            + zz * zz
-                * ((((((COS[0] * zz) + COS[1]) * zz + COS[2]) * zz + COS[3]) * zz + COS[4]) * zz
-                    + COS[5])
+        mul_add::<FUSED>(
+            zz * zz,
+            horner::<FUSED, 6>(zz, COS),
+            mul_add::<FUSED>(-0.5, zz, 1.0),
+        )
     };
     if sign {
         y = -y;
@@ -418,21 +435,21 @@ mod tests {
         ];
         for &(in_bits, sin_bits, cos_bits, tan_bits) in goldens {
             let x = f64::from_bits(in_bits);
-            assert_eq!(go_sin(x).to_bits(), sin_bits, "sin({x})");
-            assert_eq!(go_cos(x).to_bits(), cos_bits, "cos({x})");
-            assert_eq!(go_tan(x).to_bits(), tan_bits, "tan({x})");
+            assert_eq!(sin::<false>(x).to_bits(), sin_bits, "sin({x})");
+            assert_eq!(cos::<false>(x).to_bits(), cos_bits, "cos({x})");
+            assert_eq!(tan::<false>(x).to_bits(), tan_bits, "tan({x})");
         }
         // Special cases follow Go too.
-        assert!(go_sin(f64::INFINITY).is_nan());
-        assert!(go_cos(f64::NEG_INFINITY).is_nan());
-        assert_eq!(go_tan(-0.0f64).to_bits(), (-0.0f64).to_bits());
+        assert!(sin::<false>(f64::INFINITY).is_nan());
+        assert!(cos::<false>(f64::NEG_INFINITY).is_nan());
+        assert_eq!(tan::<false>(-0.0f64).to_bits(), (-0.0f64).to_bits());
     }
 
     /// The regression that motivated this module: `cot(1)` must produce
     /// Go's `0x3fe48e...` answer, not libm's one-ulp-different neighbor.
     #[test]
     fn cot_one_matches_go_engine_value() {
-        assert_eq!(1.0 / go_tan(1.0), 0.6420926159343308f64);
+        assert_eq!(1.0 / tan::<false>(1.0), 0.6420926159343308f64);
     }
 
     /// Large arguments exercise the Payne-Hanek path (`trig_reduce`).
@@ -448,7 +465,7 @@ mod tests {
 
 // Go `math.Xatan` (src/math/atan.go), bit-exact. The rational approximation
 // over |x| <= 0.66.
-fn go_xatan(x: f64) -> f64 {
+fn go_xatan<const FUSED: bool>(x: f64) -> f64 {
     const P0: f64 = -8.750_608_600_031_904_122_785e-1;
     const P1: f64 = -1.615_753_718_733_365_076_637e1;
     const P2: f64 = -7.500_855_792_314_704_667_340e1;
@@ -460,44 +477,60 @@ fn go_xatan(x: f64) -> f64 {
     const Q3: f64 = 4.853_903_996_359_136_964_868e2;
     const Q4: f64 = 1.945_506_571_482_613_964_425e2;
     let z = x * x;
-    let z = z * ((((P0 * z + P1) * z + P2) * z + P3) * z + P4)
-        / (((((z + Q0) * z + Q1) * z + Q2) * z + Q3) * z + Q4);
-    x * z + x
+    let p = horner::<FUSED, 5>(z, [P0, P1, P2, P3, P4]);
+    let q = horner::<FUSED, 5>(z, [mul_add::<FUSED>(x, x, Q0), Q1, Q2, Q3, Q4]);
+    mul_add::<FUSED>(x, z * p / q, x)
 }
 
 /// Go `math.Satan` (src/math/atan.go), bit-exact: the argument reduction
 /// over the three |x| regimes.
-fn go_satan(x: f64) -> f64 {
+fn go_satan<const FUSED: bool>(x: f64) -> f64 {
     const MOREBITS: f64 = 6.123_233_995_736_765_886_130e-17; // pi/2 = PIO2 + Morebits
     const TAN3PIO8: f64 = 2.414_213_562_373_095_048_80; // tan(3*pi/8)
     if x <= 0.66 {
-        return go_xatan(x);
+        return go_xatan::<FUSED>(x);
     }
     if x > TAN3PIO8 {
-        return core::f64::consts::FRAC_PI_2 - go_xatan(1.0 / x) + MOREBITS;
+        return core::f64::consts::FRAC_PI_2 - go_xatan::<FUSED>(1.0 / x) + MOREBITS;
     }
-    core::f64::consts::FRAC_PI_4 + go_xatan((x - 1.0) / (x + 1.0)) + 0.5 * MOREBITS
+    core::f64::consts::FRAC_PI_4 + go_xatan::<FUSED>((x - 1.0) / (x + 1.0)) + 0.5 * MOREBITS
 }
 
 /// Go `math.Atan` (src/math/atan.go), bit-exact. TiDB's `ATAN`/`ATAN2`
 /// evaluate through go's standard library, whose Cephes-derived arctangent
 /// rounds one ulp away from the system libm on ordinary inputs.
+#[inline]
 pub(crate) fn go_atan(x: f64) -> f64 {
+    atan::<{ super::GO_MATH_FMA }>(x)
+}
+
+#[inline]
+pub(crate) fn atan<const FUSED: bool>(x: f64) -> f64 {
     if x == 0.0 {
         return x;
     }
-    if x > 0.0 {
-        return go_satan(x);
+    if x.is_nan() {
+        // The Go polynomial quiets signaling NaNs and retains the payload.
+        return f64::from_bits(x.to_bits() | (1 << 51));
     }
-    -go_satan(-x)
+    if x > 0.0 {
+        return go_satan::<FUSED>(x);
+    }
+    -go_satan::<FUSED>(-x)
 }
 
 /// Go `math.Atan2` (src/math/atan2.go), bit-exact: the special-case table
 /// and the quadrant fix-up over [`go_atan`].
+#[inline]
 pub(crate) fn go_atan2(y: f64, x: f64) -> f64 {
+    atan2::<{ super::GO_MATH_FMA }>(y, x)
+}
+
+#[inline]
+pub(crate) fn atan2<const FUSED: bool>(y: f64, x: f64) -> f64 {
     // special cases
     if y.is_nan() || x.is_nan() {
-        return f64::NAN;
+        return super::GO_NAN;
     }
     if y == 0.0 {
         if x >= 0.0 && !x.is_sign_negative() {
@@ -524,7 +557,7 @@ pub(crate) fn go_atan2(y: f64, x: f64) -> f64 {
         return core::f64::consts::FRAC_PI_2.copysign(y);
     }
     // Call atan and determine the quadrant.
-    let q = go_atan(y / x);
+    let q = atan::<FUSED>(y / x);
     if x < 0.0 {
         if q <= 0.0 {
             return q + core::f64::consts::PI;
@@ -532,4 +565,23 @@ pub(crate) fn go_atan2(y: f64, x: f64) -> f64 {
         return q - core::f64::consts::PI;
     }
     q
+}
+
+/// Go math.Asin reduces the interval to the arctangent polynomial.
+#[inline]
+pub(crate) fn asin<const FUSED: bool>(input: f64) -> f64 {
+    if input == 0.0 {
+        return input;
+    }
+    if input.is_nan() {
+        return f64::from_bits(input.to_bits() | (1 << 51));
+    }
+    let x = input.abs();
+    let reduced = mul_add::<FUSED>(-x, x, 1.0).sqrt();
+    let result = if x > 0.7 {
+        core::f64::consts::FRAC_PI_2 - go_satan::<FUSED>(reduced / x)
+    } else {
+        go_satan::<FUSED>(x / reduced)
+    };
+    result.copysign(input)
 }

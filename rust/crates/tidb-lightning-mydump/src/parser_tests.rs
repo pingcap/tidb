@@ -131,3 +131,32 @@ fn test_more_syntax_error() {
 fn test_more_empty_files() {
     captured_cases("TestMoreEmptyFiles");
 }
+
+#[test]
+fn sql_dump_tokens_keep_their_values_and_offsets_across_refills() {
+    let payload = "a''b\\n".repeat(24);
+    let input = format!(
+        "/*{}*/\n--{}\nINSERT INTO t VALUES (1,'{payload}',x'{}',b'{}',{}),(2,'last');\n",
+        "comment".repeat(23),
+        "line".repeat(25),
+        "123abc".repeat(21),
+        "10110".repeat(19),
+        "unquoted".repeat(20),
+    );
+    let mut reference = ChunkParser::new(input.as_bytes().to_vec(), false);
+    let expected: Vec<_> = (0..2)
+        .map(|_| {
+            reference.read_row().unwrap();
+            (reference.pos(), reference.last_row().clone())
+        })
+        .collect();
+    for block_size in 1..=32 {
+        let mut parser = ChunkParser::with_block_size(input.as_bytes().to_vec(), false, block_size);
+        for (pos, row) in &expected {
+            parser.read_row().unwrap();
+            assert_eq!(parser.pos(), *pos, "block size {block_size}");
+            assert_eq!(parser.last_row(), row, "block size {block_size}");
+        }
+        assert_eq!(parser.read_row(), Err(CsvError::Eof), "block size {block_size}");
+    }
+}

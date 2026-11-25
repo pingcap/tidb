@@ -57,6 +57,19 @@ pub enum TokenKind {
     HintComment,
 }
 
+/// A token whose unchanged text borrows from the scanner's input.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BorrowedToken<'a> {
+    /// The lexical class.
+    pub kind: TokenKind,
+    /// Byte offset of the token start in the source.
+    pub offset: usize,
+    /// Byte offset just past the token end.
+    pub end_offset: usize,
+    /// The same text as the owned token, sharing raw spans when possible.
+    pub text: std::borrow::Cow<'a, str>,
+}
+
 /// A scanned token with its source span and text.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Token {

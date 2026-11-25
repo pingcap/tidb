@@ -181,6 +181,12 @@ impl KvError {
         )
     }
 
+    /// Takes the generated message, reusing its allocation.
+    #[must_use]
+    pub fn into_message(self) -> String {
+        self.message.into_owned()
+    }
+
     /// Returns the source MySQL message template before argument generation.
     #[must_use]
     pub const fn message_template(&self) -> &'static str {
@@ -356,20 +362,30 @@ pub fn is_err_not_found(error: Option<&(dyn Error + 'static)>) -> bool {
 /// runes, so this truncates by Rust `char`, not by UTF-8 byte.
 #[must_use]
 pub fn gen_key_exists_err<S: AsRef<str>>(key_columns: &[S], key_name: &str) -> KvError {
-    let mut joined = String::new();
-    for (index, column) in key_columns.iter().enumerate() {
-        if index != 0 {
-            joined.push('-');
-        }
-        joined.push_str(column.as_ref());
-    }
-
-    let entry = truncate_chars(&joined, 64);
     let key = truncate_chars(key_name, 192);
-    KvError::generated(
-        KEY_EXISTS_IDENTITY,
-        format!("Duplicate entry '{entry}' for key '{key}'"),
-    )
+    let mut message = String::with_capacity("Duplicate entry '' for key ''".len() + 64 + key.len());
+    message.push_str("Duplicate entry '");
+    let mut remaining = 64;
+    for (index, column) in key_columns.iter().enumerate() {
+        if remaining == 0 {
+            break;
+        }
+        if index != 0 {
+            message.push('-');
+            remaining -= 1;
+        }
+        let column = column.as_ref();
+        let prefix = truncate_chars(column, remaining);
+        message.push_str(prefix);
+        if prefix.len() < column.len() {
+            break;
+        }
+        remaining -= prefix.chars().count();
+    }
+    message.push_str("' for key '");
+    message.push_str(key);
+    message.push('\'');
+    KvError::generated(KEY_EXISTS_IDENTITY, message)
 }
 
 /// Generates `pkg/kv.ErrTxnTooLarge` with the source size argument.
@@ -420,12 +436,15 @@ pub fn gen_shared_lock_lost_err(start_ts: u64, key: impl AsRef<str>) -> KvError 
     )
 }
 
-fn truncate_chars(value: &str, maximum: usize) -> Cow<'_, str> {
-    let mut characters = value.char_indices();
-    let Some((end, _)) = characters.nth(maximum) else {
-        return Cow::Borrowed(value);
-    };
-    Cow::Owned(value[..end].to_owned())
+fn truncate_chars(value: &str, maximum: usize) -> &str {
+    let bytes = value.len().min(maximum);
+    if value.as_bytes()[..bytes].is_ascii() {
+        return &value[..bytes];
+    }
+    value
+        .char_indices()
+        .nth(maximum)
+        .map_or(value, |(end, _)| &value[..end])
 }
 
 #[cfg(test)]

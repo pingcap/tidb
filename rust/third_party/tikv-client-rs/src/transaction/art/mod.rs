@@ -189,7 +189,15 @@ impl Art {
 
     /// Go `ART.Get`.
     pub(crate) fn get(&self, key: &[u8]) -> Result<Vec<u8>, StaticError> {
-        self.read().get(key).map(<[u8]>::to_vec)
+        self.with_value(key, <[u8]>::to_vec)
+    }
+
+    pub(crate) fn with_value<T>(
+        &self,
+        key: &[u8],
+        consume: impl FnOnce(&[u8]) -> T,
+    ) -> Result<T, StaticError> {
+        self.read().get(key).map(consume)
     }
 
     /// Go `ART.GetFlags`.

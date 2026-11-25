@@ -16,13 +16,13 @@ use std::cmp::Ordering;
 use std::ops::Deref;
 
 use crate::MyDecimal;
+use num_bigint::BigUint;
+use num_integer::Integer;
 use smallvec::SmallVec;
 
-// TPC-H's DECIMAL(15,2) values need up to 17 coefficient bytes. Keeping the
-// common fixed-point widths inline avoids a heap allocation while decoding
-// every row and while folding SUM/AVG states. Wider DECIMAL values still use
-// SmallVec's spill path, so this does not change the supported precision.
-const INLINE_DECIMAL_DIGITS: usize = 24;
+// SmallVec's union feature leaves room for 32 inline digits without
+// increasing the size of Decimal. Wider coefficients still spill.
+pub(crate) const INLINE_DECIMAL_DIGITS: usize = 32;
 
 /// The unsigned coefficient behind [`Decimal`]. Go's `MyDecimal` keeps its
 /// base-1e9 words in the value itself, so ordinary chunk reads and datum
@@ -39,7 +39,15 @@ impl DecimalDigits {
     }
 
     fn as_str(&self) -> &str {
-        std::str::from_utf8(&self.0).expect("decimal coefficients are ASCII digits")
+        std::str::from_utf8(self.as_bytes()).expect("decimal coefficients are ASCII digits")
+    }
+
+    fn as_bytes(&self) -> &[u8] {
+        &self.0
+    }
+
+    fn len(&self) -> usize {
+        self.0.len()
     }
 
     fn insert(&mut self, index: usize, digit: char) {
@@ -60,18 +68,21 @@ impl DecimalDigits {
         self.0.pop().map(char::from)
     }
 
-    fn from_unsigned(mut value: u128) -> Self {
-        let mut digits = SmallVec::<[u8; INLINE_DECIMAL_DIGITS]>::new();
-        if value == 0 {
-            digits.push(b'0');
+    fn unsigned_coefficient(&self) -> Option<u128> {
+        if self.0.len() < 20 {
+            // Every 19-digit unsigned decimal fits in u64.
+            let value = self.0.iter().fold(0_u64, |value, &digit| {
+                value * 10 + u64::from(digit - b'0')
+            });
+            Some(u128::from(value))
         } else {
-            while value != 0 {
-                digits.push(b'0' + (value % 10) as u8);
-                value /= 10;
-            }
-            digits.reverse();
+            self.as_str().parse().ok()
         }
-        Self::from_ascii(digits)
+    }
+
+    fn from_unsigned(value: u128) -> Self {
+        let mut buffer = itoa::Buffer::new();
+        Self::from_ascii(SmallVec::from_slice(buffer.format(value).as_bytes()))
     }
 }
 
@@ -215,9 +226,10 @@ impl Decimal {
         while digits.len() > min_len && digits.as_bytes()[0] == b'0' {
             digits.remove(0);
         }
-        let is_zero = digits.bytes().all(|b| b == b'0');
+        let negative =
+            negative && (preserve_zero_sign || digits.as_bytes().iter().any(|&digit| digit != b'0'));
         Decimal {
-            negative: negative && (preserve_zero_sign || !is_zero),
+            negative,
             digits,
             scale,
             storage_scale,
@@ -243,16 +255,18 @@ impl Decimal {
             None => (false, text.strip_prefix('+').unwrap_or(text)),
         };
         let (int_part, frac_part) = magnitude.split_once('.').unwrap_or((magnitude, ""));
-        let int_stripped = int_part.trim_start_matches('0');
-        let int_norm = if int_stripped.is_empty() {
-            "0"
-        } else {
-            int_stripped
-        };
-        let scale = frac_part.len() as u32;
-        // `Decimal::new` normalizes a numerically zero magnitude back to
-        // non-negative, so `-0.00` needs no branch of its own here.
-        Decimal::new(negative, format!("{int_norm}{frac_part}"), scale)
+        Self::from_digit_parts(negative, int_part, frac_part)
+    }
+
+    fn from_digit_parts(negative: bool, integer: &str, fraction: &str) -> Self {
+        let integer = integer.trim_start_matches('0');
+        let mut digits = SmallVec::with_capacity(integer.len() + fraction.len());
+        digits.extend_from_slice(integer.as_bytes());
+        digits.extend_from_slice(fraction.as_bytes());
+        if digits.is_empty() {
+            digits.push(b'0');
+        }
+        Self::new(negative, DecimalDigits::from_ascii(digits), fraction.len() as u32)
     }
 
     /// Builds an exact decimal from a signed base-10 coefficient and scale.
@@ -290,11 +304,53 @@ impl Decimal {
     pub fn to_my_decimal(&self) -> Result<MyDecimal, crate::mydecimal::DecimalError> {
         MyDecimal::from_decimal_parts(
             self.negative,
-            &self.digits,
+            self.digits.as_bytes(),
             self.storage_scale,
             self.scale,
             false,
         )
+    }
+
+    /// Compares this datum to a decimal chunk cell after applying the target's
+    /// visible scale and MyDecimal storage limit.
+    #[inline]
+    pub fn compare_chunk_decimal(
+        &self,
+        cell: &[u8; crate::mydecimal::MYDECIMAL_STRUCT_SIZE],
+    ) -> Result<Ordering, &'static str> {
+        use crate::mydecimal::{MAX_WORD_BUF_LEN, parse_decimal_group};
+
+        if self.storage_scale == self.scale {
+            let digits = self.digits.as_bytes();
+            let scale = self.scale as usize;
+            let integer_len = digits.len() - scale;
+            if integer_len > 0
+                && integer_len == usize::from(cell[0])
+                && digits[0] != b'0'
+                && integer_len.div_ceil(9) + scale.div_ceil(9) <= MAX_WORD_BUF_LEN
+                && digits.iter().fold(true, |valid, digit| valid & digit.is_ascii_digit())
+            {
+                let leading = (integer_len - 1) % 9 + 1;
+                let word = parse_decimal_group(&digits[..leading]);
+                let order = word.cmp(&MyDecimal::packed_first_word(cell));
+                let negative = cell[3] == 1;
+                if self.negative != negative || order != Ordering::Equal {
+                    MyDecimal::validate_packed(cell)?;
+                    return Ok(if self.negative != negative {
+                        negative.cmp(&self.negative)
+                    } else if negative {
+                        order.reverse()
+                    } else {
+                        order
+                    });
+                }
+            }
+            if let Ok(target) = self.to_my_decimal() {
+                return Ok(target.compare(&MyDecimal::from_raw_bytes(*cell)?));
+            }
+        }
+        let target = MyDecimal::from_string(self.to_string().as_bytes()).0;
+        Ok(target.compare(&MyDecimal::from_raw_bytes(*cell)?))
     }
 
     /// Converts this value to the `MyDecimal` shape used by Go chunk datums.
@@ -303,7 +359,7 @@ impl Decimal {
     pub fn to_chunk_my_decimal(&self) -> Result<MyDecimal, crate::mydecimal::DecimalError> {
         MyDecimal::from_decimal_parts(
             self.negative,
-            &self.digits,
+            self.digits.as_bytes(),
             self.storage_scale,
             self.scale,
             true,
@@ -426,24 +482,7 @@ impl Decimal {
         let integer = &input[int_begin..integer_end];
         let fraction_end = (fraction_start + kept_fraction_digits).min(end);
         let fraction = &input[fraction_start..fraction_end];
-        let magnitude = if fraction.is_empty() {
-            if integer.is_empty() {
-                "0".to_owned()
-            } else {
-                integer.to_owned()
-            }
-        } else {
-            format!(
-                "{}.{fraction}",
-                if integer.is_empty() { "0" } else { integer }
-            )
-        };
-        let signed_magnitude = if negative {
-            format!("-{magnitude}")
-        } else {
-            magnitude
-        };
-        let mut value = Self::from_literal(&signed_magnitude);
+        let mut value = Self::from_digit_parts(negative, integer, fraction);
 
         if end < input.len() && matches!(bytes[end], b'e' | b'E') {
             let (exponent, exponent_error) = parse_mysql_exponent(&input[end + 1..]);
@@ -489,7 +528,7 @@ impl Decimal {
     /// Promotes an integer to a decimal of scale 0, for mixed `int op decimal`
     /// arithmetic/comparison (MySQL's implicit promotion rule).
     pub fn from_int(i: i64) -> Self {
-        Decimal::new(i < 0, i.unsigned_abs().to_string(), 0)
+        Decimal::new(i < 0, DecimalDigits::from_unsigned(u128::from(i.unsigned_abs())), 0)
     }
 
     /// Promotes an unsigned integer to a decimal of scale 0. This must not
@@ -497,7 +536,7 @@ impl Decimal {
     /// `UNSIGNED` values and retain their full magnitude in decimal
     /// arithmetic and comparison.
     pub fn from_uint(i: u64) -> Self {
-        Decimal::new(false, i.to_string(), 0)
+        Decimal::new(false, DecimalDigits::from_unsigned(u128::from(i)), 0)
     }
 
     /// Source `MyDecimal.FromFloat64`.
@@ -594,7 +633,7 @@ impl Decimal {
     }
 
     pub fn coefficient_i128(&self) -> Option<(i128, u32)> {
-        let magnitude = self.digits.as_str().parse::<i128>().ok()?;
+        let magnitude = i128::try_from(self.digits.unsigned_coefficient()?).ok()?;
         let value = if self.negative {
             magnitude.checked_neg()?
         } else {
@@ -680,12 +719,15 @@ impl Decimal {
     /// Source `MyDecimal.ToHashKey`: numerically equal decimals with different
     /// written scales produce the same key.
     pub fn to_hash_key(&self) -> Result<(Vec<u8>, Option<DecimalCodecWarning>), DecimalCodecError> {
-        let split = self.digits.len() - self.storage_scale as usize;
-        let integer_digits = self.digits[..split].trim_start_matches('0').len() as i32;
-        let significant_fraction = self.digits[split..].trim_end_matches('0').len() as i32;
-        let precision = (integer_digits + significant_fraction).max(1);
-        let (mut key, warning) = self.to_bin(precision, significant_fraction)?;
-        key.push(significant_fraction as u8);
+        let (precision, significant_fraction) = self.hash_shape();
+        let size = codec::checked_bin_size(precision, significant_fraction)?;
+        let mut key = vec![0; size + 1];
+        let warning = MyDecimalWords::from_decimal(self).write_bin(
+            precision,
+            significant_fraction,
+            &mut key[..size],
+        )?;
+        key[size] = significant_fraction as u8;
         Ok((
             key,
             if warning == Some(DecimalCodecWarning::Truncated) {
@@ -698,11 +740,23 @@ impl Decimal {
 
     /// Source `MyDecimal.HashKeySize`.
     pub fn hash_key_size(&self) -> Result<usize, DecimalCodecError> {
-        let split = self.digits.len() - self.storage_scale as usize;
-        let integer_digits = self.digits[..split].trim_start_matches('0').len() as i32;
-        let significant_fraction = self.digits[split..].trim_end_matches('0').len() as i32;
-        let precision = (integer_digits + significant_fraction).max(1);
+        let (precision, significant_fraction) = self.hash_shape();
         decimal_bin_size(precision, significant_fraction).map(|size| size + 1)
+    }
+
+    fn hash_shape(&self) -> (i32, i32) {
+        let split = self.digits.len() - self.storage_scale as usize;
+        let (integer, fraction) = self.digits.as_bytes().split_at(split);
+        let integer_digits = integer
+            .iter()
+            .position(|&digit| digit != b'0')
+            .map_or(0, |first| integer.len() - first) as i32;
+        let significant_fraction = fraction
+            .iter()
+            .rposition(|&digit| digit != b'0')
+            .map_or(0, |last| last + 1) as i32;
+        let precision = (integer_digits + significant_fraction).max(1);
+        (precision, significant_fraction)
     }
 
     /// Returns whether this value is numerically zero.
@@ -806,7 +860,7 @@ impl Decimal {
     /// The signed `i128` a coefficient holds after an exact scale-up by
     /// `shift` decimal places, or `None` when it does not fit.
     fn fast_operand(digits: &DecimalDigits, negative: bool, shift: u32) -> Option<i128> {
-        let value = digits.parse::<i128>().ok()?;
+        let value = i128::try_from(digits.unsigned_coefficient()?).ok()?;
         let value = if shift == 0 {
             value
         } else {
@@ -1037,8 +1091,8 @@ impl Decimal {
         if result_scale > CODEC_MAX_DECIMAL_SCALE as u32 {
             return None;
         }
-        let left = self.digits.parse::<i128>().ok()?;
-        let right = other.digits.parse::<i128>().ok()?;
+        let left = i128::try_from(self.digits.unsigned_coefficient()?).ok()?;
+        let right = i128::try_from(other.digits.unsigned_coefficient()?).ok()?;
         let product = left.checked_mul(right)?;
         let negative = (product < 0) || (self.negative != other.negative && product != 0);
         // Keep the fixed-scale fast path allocation-free for the coefficient
@@ -1160,9 +1214,7 @@ impl Decimal {
         }
         let storage_scale = self.storage_scale.max(other.storage_scale);
         let scale = self.scale.max(other.scale);
-        let a = pad_scale(&self.digits, self.storage_scale, storage_scale);
-        let b = pad_scale(&other.digits, other.storage_scale, storage_scale);
-        let (q_digits, r_digits) = digit_divmod(&a, &b);
+        let (q_digits, r_digits) = self.scaled_div_rem(other, storage_scale);
         let quotient = Decimal::new_with_storage(self.negative != other.negative, q_digits, 0, 0);
         let remainder = Decimal::new_with_storage(self.negative, r_digits, scale, storage_scale);
         Some((quotient, remainder))
@@ -1176,15 +1228,43 @@ impl Decimal {
         }
         let storage_scale = self.storage_scale.max(other.storage_scale);
         let scale = self.scale.max(other.scale);
-        let a = pad_scale(&self.digits, self.storage_scale, storage_scale);
-        let b = pad_scale(&other.digits, other.storage_scale, storage_scale);
-        let (_, remainder) = digit_divmod(&a, &b);
+        let left_shift = storage_scale - self.storage_scale;
+        let right_shift = storage_scale - other.storage_scale;
+        let remainder = match (
+            scaled_u128(&self.digits, left_shift),
+            scaled_u128(&other.digits, right_shift),
+        ) {
+            (Some(left), Some(right)) => DecimalDigits::from_unsigned(left % right),
+            _ => {
+                let left = scaled_big_uint(&self.digits, left_shift);
+                let right = scaled_big_uint(&other.digits, right_shift);
+                (left % right).to_str_radix(10).into()
+            }
+        };
         Some(Decimal::new_with_storage(
             self.negative,
             remainder,
             scale,
             storage_scale,
         ))
+    }
+
+    fn scaled_div_rem(&self, other: &Decimal, scale: u32) -> (DecimalDigits, DecimalDigits) {
+        let left_shift = scale - self.storage_scale;
+        let right_shift = scale - other.storage_scale;
+        if let (Some(left), Some(right)) = (
+            scaled_u128(&self.digits, left_shift),
+            scaled_u128(&other.digits, right_shift),
+        ) {
+            return (
+                DecimalDigits::from_unsigned(left / right),
+                DecimalDigits::from_unsigned(left % right),
+            );
+        }
+        let left = scaled_big_uint(&self.digits, left_shift);
+        let right = scaled_big_uint(&other.digits, right_shift);
+        let (quotient, remainder) = left.div_rem(&right);
+        (quotient.to_str_radix(10).into(), remainder.to_str_radix(10).into())
     }
 
     /// Source `DecimalDiv`: retain the whole base-1e9 fraction words produced
@@ -1221,57 +1301,10 @@ impl Decimal {
         let adjusted_increment = frac_increment.saturating_sub(padding);
         let storage_scale = word_scale(frac1 + frac2 + adjusted_increment);
 
-        // AVG over integer/decimal columns is the hottest DECIMAL division
-        // path in TPC-H q17. Go's MyDecimal implementation works on the
-        // already-packed integer words; the general Rust compatibility path
-        // below first pads and divides decimal strings. For the common
-        // scale-zero case, perform the same truncating long division with
-        // u128 and materialize only the result coefficient. The bounds checks
-        // keep arbitrary-precision and overflow behavior on the complete path.
-        let common_scale = self.storage_scale.max(other.storage_scale);
-        if other.storage_scale == 0
-            && self.scale <= self.storage_scale
-            && other.scale <= other.storage_scale
-        {
-            if let (Ok(dividend), Ok(divisor)) =
-                (self.digits.parse::<u128>(), other.digits.parse::<u128>())
-            {
-                let numerator_exponent = common_scale
-                    .checked_add(storage_scale)
-                    .and_then(|scale| scale.checked_sub(self.storage_scale));
-                let divisor_exponent = common_scale.checked_sub(other.storage_scale);
-                if let (Some(numerator_exponent), Some(divisor_exponent)) =
-                    (numerator_exponent, divisor_exponent)
-                {
-                    let numerator_factor = 10u128.checked_pow(numerator_exponent);
-                    let divisor_factor = 10u128.checked_pow(divisor_exponent);
-                    if let (Some(numerator_factor), Some(divisor_factor)) =
-                        (numerator_factor, divisor_factor)
-                    {
-                        if let (Some(numerator), Some(divisor)) = (
-                            dividend.checked_mul(numerator_factor),
-                            divisor.checked_mul(divisor_factor),
-                        ) {
-                            let quotient = numerator / divisor;
-                            return Some(Decimal::new_with_storage(
-                                self.negative != other.negative,
-                                quotient.to_string(),
-                                result_scale,
-                                storage_scale,
-                            ));
-                        }
-                    }
-                }
-            }
-        }
-
-        let numerator = pad_scale(
-            &pad_scale(&self.digits, self.storage_scale, common_scale),
-            common_scale,
-            common_scale + storage_scale,
-        );
-        let divisor = pad_scale(&other.digits, other.storage_scale, common_scale);
-        let (quotient, _) = digit_divmod(&numerator, &divisor);
+        // Divide the unsigned integer coefficients. Cancel the common
+        // denominator so only the dividend needs to scale up.
+        let shift = storage_scale - self.storage_scale + other.storage_scale;
+        let quotient = scaled_quotient(&self.digits, &other.digits, shift);
         Some(Decimal::new_with_storage(
             self.negative != other.negative,
             quotient,
@@ -1305,8 +1338,11 @@ impl Decimal {
     pub fn div_round(&self, divisor: i64, target_scale: u32) -> Decimal {
         let increment = target_scale - self.scale;
         let storage_scale = word_scale(self.storage_scale + increment);
-        let numerator = pad_scale(&self.digits, self.storage_scale, storage_scale);
-        let (quotient, _) = digit_divmod(&numerator, &divisor.to_string());
+        let quotient = scaled_quotient(
+            &self.digits,
+            &DecimalDigits::from_unsigned(u128::try_from(divisor).expect("positive divisor")),
+            storage_scale - self.storage_scale,
+        );
         Decimal::new_with_storage(self.negative, quotient, target_scale, storage_scale)
     }
 
@@ -1498,9 +1534,21 @@ impl Decimal {
     /// Converts to the nearest `f64` — MySQL's implicit `DECIMAL`-to-
     /// `FLOAT`/`DOUBLE` promotion rule when a `Decimal` operand meets a
     /// `Float` one. Lossy for precision beyond `f64`'s ~15-17 significant
-    /// digits, same as MySQL's own conversion; parses this value's own
-    /// canonical `Display` text, which is always valid decimal syntax.
+    /// digits, same as MySQL's own conversion.
     pub fn to_f64(&self) -> f64 {
+        const POWERS_OF_TEN: [f64; 13] = [
+            1.0, 1e1, 1e2, 1e3, 1e4, 1e5, 1e6, 1e7, 1e8, 1e9, 1e10, 1e11, 1e12,
+        ];
+        if self.storage_scale == self.scale && self.digits.0.len() <= 12 {
+            // For this width, both integers are exactly representable. Go's
+            // short conversion rounds back to the same integer coefficient
+            // before dividing it by the power of ten.
+            let coefficient = self.digits.0.iter().fold(0_u64, |value, &digit| {
+                value * 10 + u64::from(digit - b'0')
+            });
+            let magnitude = coefficient as f64 / POWERS_OF_TEN[self.scale as usize];
+            return if self.negative { -magnitude } else { magnitude };
+        }
         self.to_string()
             .parse()
             .expect("Decimal's own Display always produces valid float syntax")
@@ -1692,6 +1740,11 @@ impl Decimal {
 /// fit in nine words; preserving it is required for the source error/value
 /// pair at the fixed-word boundary.
 fn add_leading_word_overflow(left: &Decimal, right: &Decimal) -> bool {
+    let left_integer = left.digits.0.len() - left.storage_scale as usize;
+    let right_integer = right.digits.0.len() - right.storage_scale as usize;
+    if left_integer.max(right_integer) <= (CODEC_WORD_BUF_LEN - 1) * DIGITS_PER_WORD {
+        return false;
+    }
     let left = MyDecimalWords::from_decimal(left);
     let right = MyDecimalWords::from_decimal(right);
     let left_words = digits_to_words(left.digits_int.max(0) as usize);
@@ -1768,6 +1821,7 @@ impl Ord for Decimal {
     /// decimals once per row, where the previous pad-both-sides-into-`String`
     /// form cost four heap allocations Go's word-wise `MyDecimal.Compare`
     /// does not have.
+    #[inline]
     fn cmp(&self, other: &Self) -> Ordering {
         if self.negative != other.negative {
             return if self.negative {
@@ -1776,12 +1830,18 @@ impl Ord for Decimal {
                 Ordering::Greater
             };
         }
-        let mag_cmp = cmp_magnitude(
-            self.digits.as_str(),
-            self.storage_scale,
-            other.digits.as_str(),
-            other.storage_scale,
-        );
+        let digits = self.digits.as_bytes();
+        let other_digits = other.digits.as_bytes();
+        let mag_cmp = if self.storage_scale == other.storage_scale {
+            // Equal scales have the same padding floor. Normalization
+            // removes redundant leading digits above that floor.
+            digits
+                .len()
+                .cmp(&other_digits.len())
+                .then_with(|| digits.cmp(other_digits))
+        } else {
+            cmp_magnitude(digits, self.storage_scale, other_digits, other.storage_scale)
+        };
         if self.negative {
             mag_cmp.reverse()
         } else {
@@ -1795,39 +1855,36 @@ impl Ord for Decimal {
 /// fraction digits read as `0`. Equivalent to right-padding both sides to
 /// the common storage scale and comparing the digit strings.
 fn cmp_magnitude(
-    a_digits: &str,
+    a_digits: &[u8],
     a_storage_scale: u32,
-    b_digits: &str,
+    b_digits: &[u8],
     b_storage_scale: u32,
 ) -> Ordering {
-    let a_int_end = a_digits.len() - (a_storage_scale as usize).min(a_digits.len());
-    let b_int_end = b_digits.len() - (b_storage_scale as usize).min(b_digits.len());
-    let (a_int, a_frac) = (&a_digits[..a_int_end], &a_digits[a_int_end..]);
-    let (b_int, b_frac) = (&b_digits[..b_int_end], &b_digits[b_int_end..]);
-    // Leading zeros carry no magnitude; strip them so length decides first.
-    let a_int_tz = a_int.trim_start_matches('0');
-    let b_int_tz = b_int.trim_start_matches('0');
-    match a_int_tz
-        .len()
-        .cmp(&b_int_tz.len())
-        .then_with(|| a_int_tz.cmp(b_int_tz))
-    {
+    let a_int_end = a_digits.len() - a_storage_scale as usize;
+    let b_int_end = b_digits.len() - b_storage_scale as usize;
+    // Only a scale-zero zero can have a redundant integer digit after
+    // normalization. Other zero integer parts occupy no digits.
+    let a_start = usize::from(a_int_end == 1 && a_digits[0] == b'0');
+    let b_start = usize::from(b_int_end == 1 && b_digits[0] == b'0');
+    match (a_int_end - a_start).cmp(&(b_int_end - b_start)) {
         Ordering::Equal => {}
         non_eq => return non_eq,
     }
-    // Equal-length ASCII digit strings compare numerically byte-wise.
-    let common = a_frac.len().min(b_frac.len());
-    match a_frac[..common].cmp(&b_frac[..common]) {
+    let a_digits = &a_digits[a_start..];
+    let b_digits = &b_digits[b_start..];
+    // Equal integer widths align the two coefficients at the decimal point.
+    let common = a_digits.len().min(b_digits.len());
+    match a_digits[..common].cmp(&b_digits[..common]) {
         Ordering::Equal => {}
         non_eq => return non_eq,
     }
     // A longer fraction only wins when its extra digits are not all zero.
-    let (rest, sign) = if a_frac.len() > b_frac.len() {
-        (&a_frac[common..], Ordering::Greater)
+    let (rest, sign) = if a_digits.len() > b_digits.len() {
+        (&a_digits[common..], Ordering::Greater)
     } else {
-        (&b_frac[common..], Ordering::Less)
+        (&b_digits[common..], Ordering::Less)
     };
-    if rest.bytes().any(|digit| digit != b'0') {
+    if rest.iter().any(|&digit| digit != b'0') {
         sign
     } else {
         Ordering::Equal
@@ -1851,9 +1908,8 @@ fn word_scale(scale: u32) -> u32 {
 }
 
 /// Applies Go `DecimalDiv`'s nine-word result bound after the digit-string
-/// arithmetic has produced its exact value. The SQL-visible scale remains
-/// intact; only hidden fractional words are dropped when the source reports
-/// `ErrTruncated`.
+/// arithmetic has produced its exact value. The fraction words left in
+/// the source's fixed buffer also limit its rendered scale.
 fn bound_decimal_codec_result(value: Decimal) -> (Decimal, Option<DecimalCodecWarning>) {
     if value.is_zero() {
         return (value, None);
@@ -1878,7 +1934,7 @@ fn bound_decimal_codec_result(value: Decimal) -> (Decimal, Option<DecimalCodecWa
         ),
         Some(DecimalCodecWarning::Truncated) => {
             let target_storage = (fixed_frac * DIGITS_PER_WORD) as u32;
-            let target_storage = target_storage.max(value.scale);
+            let result_scale = value.scale.min(target_storage);
             let discarded = value.storage_scale.saturating_sub(target_storage) as usize;
             let digits = if discarded == 0 {
                 value.digits.clone()
@@ -1888,7 +1944,7 @@ fn bound_decimal_codec_result(value: Decimal) -> (Decimal, Option<DecimalCodecWa
                     .into()
             };
             (
-                Decimal::new_with_storage(value.negative, digits, value.scale, target_storage),
+                Decimal::new_with_storage(value.negative, digits, result_scale, target_storage),
                 warning,
             )
         }
@@ -2010,16 +2066,6 @@ fn digit_mul(a: &str, b: &str) -> String {
     }
 }
 
-/// Strips leading zero digits, collapsing an all-zero string to `"0"`.
-fn strip_leading_zeros(s: &str) -> String {
-    let trimmed = s.trim_start_matches('0');
-    if trimmed.is_empty() {
-        "0".to_string()
-    } else {
-        trimmed.to_string()
-    }
-}
-
 fn parse_mysql_exponent(text: &str) -> (i64, Option<DecimalParseError>) {
     let text = text.trim();
     if text.is_empty() {
@@ -2072,24 +2118,32 @@ fn parse_mysql_exponent(text: &str) -> (i64, Option<DecimalParseError>) {
     )
 }
 
-/// Unsigned schoolbook long division: `a` divided by `b` (`b` assumed
-/// nonzero), producing the truncated integer quotient and the remainder —
-/// one digit of `a` at a time, finding each quotient digit (0-9) by repeated
-/// subtraction (never more than 9 iterations per digit).
-fn digit_divmod(a: &str, b: &str) -> (String, String) {
-    let mut quotient = String::with_capacity(a.len());
-    let mut rem = "0".to_string();
-    for ch in a.bytes() {
-        rem = strip_leading_zeros(&format!("{rem}{}", ch as char));
-        let mut count = 0u8;
-        while digit_cmp(&rem, b) != Ordering::Less {
-            rem = strip_leading_zeros(&digit_sub(&rem, b));
-            count += 1;
-        }
-        quotient.push((b'0' + count) as char);
+fn scaled_u128(digits: &DecimalDigits, shift: u32) -> Option<u128> {
+    let magnitude = digits.unsigned_coefficient()?;
+    if shift == 0 {
+        Some(magnitude)
+    } else {
+        magnitude.checked_mul(10_u128.checked_pow(shift)?)
     }
-    (strip_leading_zeros(&quotient), rem)
 }
+
+fn scaled_big_uint(digits: &DecimalDigits, shift: u32) -> BigUint {
+    let value = BigUint::parse_bytes(&digits.0, 10).expect("unsigned decimal digits");
+    if shift == 0 {
+        value
+    } else {
+        value * BigUint::from(10_u8).pow(shift)
+    }
+}
+
+fn scaled_quotient(a: &DecimalDigits, b: &DecimalDigits, shift: u32) -> DecimalDigits {
+    if let (Some(left), Some(right)) = (scaled_u128(a, shift), b.unsigned_coefficient()) {
+        return DecimalDigits::from_unsigned(left / right);
+    }
+    let quotient = scaled_big_uint(a, shift) / scaled_big_uint(b, 0);
+    quotient.to_str_radix(10).into()
+}
+
 pub(crate) mod codec;
 
 use codec::{

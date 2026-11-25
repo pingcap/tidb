@@ -3806,13 +3806,13 @@ mod tests {
         let codec = ApiV2Codec::new(KeyMode::Txn, 7).unwrap();
         let request = crate::proto::coprocessor::Request {
             ranges: vec![crate::proto::coprocessor::KeyRange {
-                start: b"top-start".to_vec(),
-                end: b"top-end".to_vec(),
+                start: b"top-start".to_vec().into(),
+                end: b"top-end".to_vec().into(),
             }],
             tasks: vec![crate::proto::coprocessor::StoreBatchTask {
                 ranges: vec![crate::proto::coprocessor::KeyRange {
-                    start: b"task-start".to_vec(),
-                    end: b"task-end".to_vec(),
+                    start: b"task-start".to_vec().into(),
+                    end: b"task-end".to_vec().into(),
                 }],
                 ..Default::default()
             }],
@@ -3868,8 +3868,8 @@ mod tests {
             }),
             range: Some(
                 codec.encode_cop_range(&crate::proto::coprocessor::KeyRange {
-                    start: b"resume-start".to_vec(),
-                    end: b"resume-end".to_vec(),
+                    start: b"resume-start".to_vec().into(),
+                    end: b"resume-end".to_vec().into(),
                 }),
             ),
             ..Default::default()
@@ -3880,8 +3880,8 @@ mod tests {
         assert_eq!(response.locked.as_ref().unwrap().key, b"locked");
         assert_eq!(response.locked.as_ref().unwrap().primary_lock, b"primary");
         let range = response.range.unwrap();
-        assert_eq!(range.start, b"resume-start");
-        assert_eq!(range.end, b"resume-end");
+        assert_eq!(range.start.as_ref(), b"resume-start");
+        assert_eq!(range.end.as_ref(), b"resume-end");
         let batch_lock = response.batch_responses[0].locked.as_ref().unwrap();
         assert_eq!(batch_lock.key, b"batch-lock");
         assert_eq!(batch_lock.primary_lock, b"batch-primary");
@@ -3924,8 +3924,8 @@ mod tests {
         let codec = ApiV2Codec::new(KeyMode::Txn, 7).unwrap();
         let region = crate::proto::coprocessor::RegionInfo {
             ranges: vec![crate::proto::coprocessor::KeyRange {
-                start: b"region-start".to_vec(),
-                end: b"region-end".to_vec(),
+                start: b"region-start".to_vec().into(),
+                end: b"region-end".to_vec().into(),
             }],
             ..Default::default()
         };
@@ -3934,12 +3934,27 @@ mod tests {
             ..Default::default()
         };
 
-        let batch =
-            codec.encode_batch_coprocessor_request(&crate::proto::coprocessor::BatchRequest {
-                regions: vec![region.clone()],
-                table_regions: vec![table_region.clone()],
-                ..Default::default()
-            });
+        let source = crate::proto::coprocessor::BatchRequest {
+            data: vec![0xa5; 4096].into(),
+            regions: vec![region.clone()],
+            table_regions: vec![table_region.clone()],
+            ..Default::default()
+        };
+        let payload = source.data.as_ptr();
+        let regions = source.regions.as_ptr();
+        let partitions = source.table_regions.as_ptr();
+        let borrowed = codec.encode_batch_coprocessor_request(&source);
+        let (projected_regions, projected_tables) =
+            codec.encode_batch_coprocessor_regions(&source.regions, &source.table_regions);
+        assert_eq!(projected_regions, borrowed.regions);
+        assert_eq!(projected_tables, borrowed.table_regions);
+        assert_eq!(source.regions[0], region);
+        assert_eq!(source.table_regions[0], table_region);
+        let batch = codec.encode_owned_batch_coprocessor_request(source);
+        assert_eq!(batch, borrowed);
+        assert_eq!(batch.data.as_ptr(), payload);
+        assert_eq!(batch.regions.as_ptr(), regions);
+        assert_eq!(batch.table_regions.as_ptr(), partitions);
         assert_eq!(
             batch.regions[0].ranges[0].start,
             codec.encode_key(b"region-start")
@@ -3952,6 +3967,9 @@ mod tests {
             batch.table_regions[0].regions[0].ranges[0].start,
             codec.encode_key(b"region-start")
         );
+        let end = &batch.regions[0].ranges[0].end;
+        let next = &batch.table_regions[0].regions[0].ranges[0].start;
+        assert_eq!(end.as_ptr().addr() + end.len(), next.as_ptr().addr());
 
         let mpp = codec.encode_mpp_dispatch_task_request(&crate::proto::mpp::DispatchTaskRequest {
             meta: Some(crate::proto::mpp::TaskMeta::default()),

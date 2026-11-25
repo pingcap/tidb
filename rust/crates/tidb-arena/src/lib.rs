@@ -23,7 +23,7 @@ use std::rc::Rc;
 /// matching assignment of a Go byte slice.
 #[derive(Clone)]
 pub struct ArenaBytes {
-    storage: Rc<Vec<Cell<u8>>>,
+    storage: Option<Rc<[Cell<u8>]>>,
     start: usize,
     len: usize,
     capacity: usize,
@@ -31,7 +31,7 @@ pub struct ArenaBytes {
 
 impl ArenaBytes {
     fn fresh(length: usize, capacity: usize) -> Self {
-        let storage = Rc::new((0..capacity).map(|_| Cell::new(0)).collect());
+        let storage = (capacity != 0).then(|| new_storage(capacity));
         let mut bytes = Self {
             storage,
             start: 0,
@@ -42,13 +42,17 @@ impl ArenaBytes {
         bytes
     }
 
-    fn shared(storage: Rc<Vec<Cell<u8>>>, start: usize, capacity: usize) -> Self {
+    fn shared(storage: Rc<[Cell<u8>]>, start: usize, capacity: usize) -> Self {
         Self {
-            storage,
+            storage: Some(storage),
             start,
             len: 0,
             capacity,
         }
+    }
+
+    fn backing(&self) -> &[Cell<u8>] {
+        self.storage.as_deref().unwrap_or(&[])
     }
 
     /// Reslices to `length` without clearing bytes newly brought into view.
@@ -78,7 +82,7 @@ impl ArenaBytes {
 
     /// Reads a byte within the logical slice.
     pub fn get(&self, index: usize) -> Option<u8> {
-        (index < self.len).then(|| self.storage[self.start + index].get())
+        (index < self.len).then(|| self.backing()[self.start + index].get())
     }
 
     /// Replaces a byte within the logical slice.
@@ -88,15 +92,20 @@ impl ArenaBytes {
             "index {index} exceeds length {}",
             self.len
         );
-        self.storage[self.start + index].set(value);
+        self.backing()[self.start + index].set(value);
     }
 
     /// Copies the logical slice bytes into an owned vector.
     pub fn to_vec(&self) -> Vec<u8> {
-        (0..self.len)
-            .map(|index| self.storage[self.start + index].get())
+        self.backing()[self.start..self.start + self.len]
+            .iter()
+            .map(Cell::get)
             .collect()
     }
+}
+
+fn new_storage(capacity: usize) -> Rc<[Cell<u8>]> {
+    (0..capacity).map(|_| Cell::new(0)).collect()
 }
 
 /// Pre-allocates memory to reduce memory allocation cost. It is not
@@ -115,7 +124,7 @@ pub trait Allocator {
 
 /// A simple implementation of [`Allocator`].
 pub struct SimpleAllocator {
-    arena: Rc<Vec<Cell<u8>>>,
+    arena: Rc<[Cell<u8>]>,
     off: usize,
 }
 
@@ -123,13 +132,14 @@ impl SimpleAllocator {
     /// Creates a `SimpleAllocator` with a specified capacity.
     pub fn new(capacity: usize) -> Self {
         Self {
-            arena: Rc::new((0..capacity).map(|_| Cell::new(0)).collect()),
+            arena: new_storage(capacity),
             off: 0,
         }
     }
 }
 
 impl Allocator for SimpleAllocator {
+    #[inline]
     fn alloc(&mut self, capacity: usize) -> ArenaBytes {
         let end = self
             .off
@@ -149,6 +159,7 @@ impl Allocator for SimpleAllocator {
         bytes
     }
 
+    #[inline]
     fn reset(&mut self) {
         self.off = 0;
     }
@@ -159,6 +170,7 @@ impl Allocator for SimpleAllocator {
 pub struct StdAllocator;
 
 impl Allocator for StdAllocator {
+    #[inline]
     fn alloc(&mut self, capacity: usize) -> ArenaBytes {
         ArenaBytes::fresh(0, capacity)
     }
@@ -217,6 +229,10 @@ mod tests {
     #[test]
     fn TestStdAllocator() {
         let mut allocator = StdAllocator;
+        let empty = allocator.alloc(0);
+        assert_eq!(empty.capacity(), 0);
+        assert!(empty.clone().to_vec().is_empty());
+
         let slice = allocator.alloc(ALLOC_CAP_MEDIUM);
         assert_eq!(slice.len(), 0);
         assert_eq!(slice.capacity(), ALLOC_CAP_MEDIUM);
@@ -224,5 +240,26 @@ mod tests {
         let slice = allocator.alloc_with_len(ALLOC_CAP_SMALL, ALLOC_CAP_MEDIUM);
         assert_eq!(slice.len(), ALLOC_CAP_SMALL);
         assert_eq!(slice.capacity(), ALLOC_CAP_MEDIUM);
+    }
+
+    #[test]
+    fn copies_only_the_logical_slice_and_keeps_the_snapshot_independent() {
+        let mut arena = SimpleAllocator::new(32);
+        let prefix = arena.alloc_with_len(2, 2);
+        prefix.set(0, b'p');
+        let mut bytes = arena.alloc_with_len(3, 5);
+        bytes.set(0, b'a');
+        bytes.set(2, b'c');
+        let alias = bytes.clone();
+        alias.set(1, b'b');
+
+        let snapshot = bytes.to_vec();
+        bytes.set_len(1);
+        alias.set(0, b'z');
+
+        assert_eq!(snapshot, b"abc");
+        assert_eq!(bytes.to_vec(), b"z");
+        assert_eq!(alias.to_vec(), b"zbc");
+        assert_eq!(prefix.to_vec(), b"p\0");
     }
 }

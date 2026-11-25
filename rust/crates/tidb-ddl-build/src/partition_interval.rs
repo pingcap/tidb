@@ -141,10 +141,8 @@ pub fn generate_part_defs_from_interval(
     ctx: &tidb_metabuild::Context,
 ) -> Result<Vec<PartitionDefinition>, MysqlError> {
     let step_text = restore(interval.step);
-    let step_value = String::from_utf8_lossy(&tidb_datatype::unwrap_from_single_quotes(
-        step_text.as_bytes(),
-    ))
-    .into_owned();
+    let step_bytes = tidb_datatype::unwrap_from_single_quotes_ref(step_text.as_bytes());
+    let step_value = String::from_utf8_lossy(&step_bytes);
     if !step_value.starts_with(|first: char| ('1'..='9').contains(&first)) {
         return Err(MysqlError::from_terror(
             &tidb_dbterror::ERR_GENERAL_UNSUPPORTED_DDL

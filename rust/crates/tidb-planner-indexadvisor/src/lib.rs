@@ -325,7 +325,7 @@ fn prepare_recommendation(
         // The improvements.
         let (mut cost_before_total, mut cost_after_total) = (0.0_f64, 0.0_f64);
         let mut impacts: Vec<ImpactedQuery> = Vec::with_capacity(queries.size());
-        for query in queries.to_list() {
+        for query in queries.iter() {
             let mut cost_before = optimizer.query_plan_cost(&query.text, &[])?;
             let mut cost_after =
                 optimizer.query_plan_cost(&query.text, std::slice::from_ref(&index))?;

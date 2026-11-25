@@ -86,7 +86,7 @@ impl PeerService {
         if request.tp != tidb_executor::coprocessor::REQ_TYPE_DAG {
             return Err(format!("unsupported request type {}", request.tp));
         }
-        let dag = tipb::DagRequest::decode(request.data.as_slice()).map_err(|e| e.to_string())?;
+        let dag = tipb::DagRequest::decode(request.data.as_ref()).map_err(|e| e.to_string())?;
         // Go `rpcServer.handleCopRequest` serves every request on a fresh
         // session over the node's store (`createSession`).
         let mut session = (self.session_factory)()?;
@@ -428,7 +428,7 @@ mod tests {
     fn request(dag: tipb::DagRequest) -> coprocessor::Request {
         coprocessor::Request {
             tp: 103,
-            data: dag.encode_to_vec(),
+            data: dag.encode_to_vec().into(),
             ..Default::default()
         }
     }
@@ -1299,7 +1299,7 @@ mod tests {
                 &self,
                 request: tonic::Request<coprocessor::Request>,
             ) -> Result<tonic::Response<coprocessor::Response>, tonic::Status> {
-                let dag = tipb::DagRequest::decode(request.into_inner().data.as_slice()).unwrap();
+                let dag = tipb::DagRequest::decode(request.into_inner().data).unwrap();
                 let table = dag.executors[0].tbl_scan.as_ref().and_then(|scan| scan.table_id);
                 self.0.lock().unwrap().push(table.unwrap_or_default());
                 Ok(tonic::Response::new(coprocessor::Response {
@@ -1317,7 +1317,7 @@ mod tests {
                 request: tonic::Request<coprocessor::Request>,
             ) -> Result<tonic::Response<coprocessor::Response>, tonic::Status> {
                 let request = request.into_inner();
-                let dag = tipb::DagRequest::decode(request.data.as_slice()).unwrap();
+                let dag = tipb::DagRequest::decode(request.data.as_ref()).unwrap();
                 let table = dag.executors[0].tbl_scan.as_ref().and_then(|scan| scan.table_id);
                 self.1.lock().unwrap().push(table.unwrap_or_default());
                 Ok(tonic::Response::new(self.0.handle(request)))
@@ -2173,7 +2173,7 @@ mod tests {
                 .is_empty());
             let invalid = coprocessor::Request {
                 tp: 103,
-                data: vec![255],
+                data: vec![255].into(),
                 ..Default::default()
             };
             assert!(!client
@@ -2747,7 +2747,7 @@ mod tests {
                 .map(|(start, end)| (format!("{PREFIX}{start}"), format!("{PREFIX}{end}")))
                 .collect();
             assert_eq!(got_ranges, want_ranges, "{sql}");
-            let dag = tipb::DagRequest::decode(request.data.as_slice()).unwrap();
+            let dag = tipb::DagRequest::decode(request.data.as_ref()).unwrap();
             assert_eq!(
                 (dag.time_zone_name.as_deref(), dag.time_zone_offset),
                 (Some(""), Some(0)),

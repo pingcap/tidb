@@ -19,8 +19,11 @@
 //! `WithTimeout`, and `WithValue` / `Value` (a value chain every derived
 //! context inherits, keyed by a key type as Go keys are by their type).
 
-use std::sync::{Arc, Mutex, Weak};
-use std::time::Duration;
+mod timer;
+
+use std::collections::HashMap;
+use std::sync::{Arc, LazyLock, Mutex, Weak};
+use std::time::{Duration, Instant};
 
 use crossbeam_channel::{Receiver, Sender};
 
@@ -47,43 +50,105 @@ impl std::error::Error for CtxError {}
 /// The cause of a context's cancellation (Go's `context.Cause`).
 pub type Cause = Arc<dyn std::error::Error + Send + Sync>;
 
+static CANCELED: LazyLock<Cause> = LazyLock::new(|| Arc::new(CtxError::Canceled));
+static DEADLINE_EXCEEDED: LazyLock<Cause> = LazyLock::new(|| Arc::new(CtxError::DeadlineExceeded));
+static CLOSED: LazyLock<Receiver<()>> = LazyLock::new(|| crossbeam_channel::bounded(0).1);
+
+struct Done {
+    tx: Option<Sender<()>>,
+    rx: Receiver<()>,
+}
+
+#[derive(Default)]
+struct Cancellation {
+    // A missing custom cause has the same value as the reason.
+    err: Option<(CtxError, Option<Cause>)>,
+    done: Option<Done>,
+    children: HashMap<usize, Weak<Inner>>,
+    timer: Option<Instant>,
+}
+
 struct Inner {
-    /// Dropped on cancel, which disconnects every `done` receiver.
-    done_tx: Mutex<Option<Sender<()>>>,
-    done_rx: Receiver<()>,
-    /// The first cancellation's reason and cause; also guards `children`
-    /// registration.
-    err: Mutex<Option<(CtxError, Cause)>>,
-    children: Mutex<Vec<Weak<Inner>>>,
+    state: Mutex<Cancellation>,
+    parent: Option<Arc<Inner>>,
+    deadline: Option<Instant>,
 }
 
 impl Inner {
-    fn new() -> Arc<Self> {
-        let (done_tx, done_rx) = crossbeam_channel::bounded(0);
-        Arc::new(Self {
-            done_tx: Mutex::new(Some(done_tx)),
-            done_rx,
-            err: Mutex::new(None),
-            children: Mutex::new(Vec::new()),
-        })
+    fn id(&self) -> usize {
+        std::ptr::from_ref(self) as usize
+    }
+
+    fn detach(&self) {
+        if let Some(parent) = &self.parent {
+            parent
+                .state
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .children
+                .remove(&self.id());
+        }
     }
 
     /// Go `cancelCtx.cancel`: a `None` cause is the reason itself; the
     /// descendants get the same reason and cause.
     fn cancel(&self, reason: CtxError, cause: Option<Cause>) {
-        let cause = cause.unwrap_or_else(|| Arc::new(reason));
-        {
-            let mut err = self.err.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-            if err.is_some() {
+        let (children, deadline) = {
+            let mut state = self
+                .state
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if state.err.is_some() {
                 return;
             }
-            *err = Some((reason, Arc::clone(&cause)));
-            self.done_tx.lock().unwrap_or_else(std::sync::PoisonError::into_inner).take();
+            state.err = Some((reason, cause.clone()));
+            if let Some(done) = &mut state.done {
+                done.tx.take();
+            }
+            (std::mem::take(&mut state.children), state.timer.take())
+        };
+        self.detach();
+        if let Some(deadline) = deadline {
+            timer::remove(deadline, self.id());
         }
-        let children =
-            std::mem::take(&mut *self.children.lock().unwrap_or_else(std::sync::PoisonError::into_inner));
-        for child in children.iter().filter_map(Weak::upgrade) {
-            child.cancel(reason, Some(Arc::clone(&cause)));
+        for child in children.values().filter_map(Weak::upgrade) {
+            child.cancel(reason, cause.clone());
+        }
+    }
+
+    fn done(&self) -> Receiver<()> {
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(done) = &state.done {
+            return done.rx.clone();
+        }
+        if state.err.is_some() {
+            return CLOSED.clone();
+        }
+        let (tx, rx) = crossbeam_channel::bounded(0);
+        state.done = Some(Done {
+            tx: Some(tx),
+            rx: rx.clone(),
+        });
+        rx
+    }
+}
+
+impl Drop for Inner {
+    fn drop(&mut self) {
+        let state = self
+            .state
+            .get_mut()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let pending = state.err.is_none();
+        let deadline = state.timer.take();
+        if pending {
+            self.detach();
+        }
+        if let Some(deadline) = deadline {
+            timer::remove(deadline, self.id());
         }
     }
 }
@@ -141,17 +206,41 @@ impl Context {
         Self::default()
     }
 
-    fn child(parent: &Context) -> (Self, Arc<Inner>) {
-        let inner = Inner::new();
-        if let Some(parent) = &parent.inner {
-            let err = parent.err.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-            match &*err {
-                Some((reason, cause)) => inner.cancel(*reason, Some(Arc::clone(cause))),
-                None => parent
-                    .children
+    fn child(parent: &Context, requested_deadline: Option<Instant>) -> (Self, Arc<Inner>) {
+        let inherited = parent.inner.as_ref().and_then(|parent| parent.deadline);
+        let own_deadline =
+            requested_deadline.filter(|&deadline| inherited.is_none_or(|p| deadline < p));
+        let inner = Arc::new(Inner {
+            state: Mutex::new(Cancellation::default()),
+            parent: parent.inner.clone(),
+            deadline: own_deadline.or(inherited),
+        });
+        let cancellation = parent.inner.as_ref().and_then(|parent| {
+            let mut state = parent
+                .state
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if let Some(cancellation) = &state.err {
+                Some(cancellation.clone())
+            } else {
+                state.children.insert(inner.id(), Arc::downgrade(&inner));
+                None
+            }
+        });
+        if let Some((reason, cause)) = cancellation {
+            inner.cancel(reason, cause);
+        } else if let Some(deadline) = own_deadline {
+            if deadline <= Instant::now() {
+                inner.cancel(CtxError::DeadlineExceeded, None);
+            } else {
+                let mut state = inner
+                    .state
                     .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)
-                    .push(Arc::downgrade(&inner)),
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                if state.err.is_none() {
+                    timer::insert(deadline, &inner);
+                    state.timer = Some(deadline);
+                }
             }
         }
         (
@@ -192,36 +281,19 @@ impl Context {
 
     /// Go `context.WithCancel(parent)`.
     pub fn with_cancel(parent: &Context) -> (Self, CancelFunc) {
-        let (ctx, inner) = Self::child(parent);
+        let (ctx, inner) = Self::child(parent, None);
         (ctx, CancelFunc { inner })
     }
 
     /// Go `context.WithCancelCause(parent)`.
     pub fn with_cancel_cause(parent: &Context) -> (Self, CancelCauseFunc) {
-        let (ctx, inner) = Self::child(parent);
+        let (ctx, inner) = Self::child(parent, None);
         (ctx, CancelCauseFunc { inner })
     }
 
     /// Go `context.WithTimeout(parent, timeout)`.
     pub fn with_timeout(parent: &Context, timeout: Duration) -> (Self, CancelFunc) {
-        let (ctx, inner) = Self::child(parent);
-        if timeout.is_zero() {
-            // Go `WithDeadline`: the deadline has already passed.
-            inner.cancel(CtxError::DeadlineExceeded, None);
-            return (ctx, CancelFunc { inner });
-        }
-        let timer = Arc::downgrade(&inner);
-        let done = inner.done_rx.clone();
-        std::thread::Builder::new()
-            .name("context-timeout".to_owned())
-            .spawn(move || {
-                if let Err(crossbeam_channel::RecvTimeoutError::Timeout) = done.recv_timeout(timeout) {
-                    if let Some(inner) = timer.upgrade() {
-                        inner.cancel(CtxError::DeadlineExceeded, None);
-                    }
-                }
-            })
-            .expect("context timer thread spawns");
+        let (ctx, inner) = Self::child(parent, Instant::now().checked_add(timeout));
         (ctx, CancelFunc { inner })
     }
 
@@ -229,7 +301,7 @@ impl Context {
     /// `context.Background()`'s never does.
     pub fn done(&self) -> Receiver<()> {
         match &self.inner {
-            Some(inner) => inner.done_rx.clone(),
+            Some(inner) => inner.done(),
             None => crossbeam_channel::never(),
         }
     }
@@ -237,7 +309,13 @@ impl Context {
     /// Go `ctx.Err()`.
     pub fn err(&self) -> Option<CtxError> {
         self.inner.as_ref().and_then(|inner| {
-            inner.err.lock().unwrap_or_else(std::sync::PoisonError::into_inner).as_ref().map(|(reason, _)| *reason)
+            inner
+                .state
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .err
+                .as_ref()
+                .map(|(reason, _)| *reason)
         })
     }
 
@@ -245,7 +323,21 @@ impl Context {
     /// not.
     pub fn cause(&self) -> Option<Cause> {
         self.inner.as_ref().and_then(|inner| {
-            inner.err.lock().unwrap_or_else(std::sync::PoisonError::into_inner).as_ref().map(|(_, cause)| Arc::clone(cause))
+            inner
+                .state
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .err
+                .as_ref()
+                .map(|(reason, cause)| {
+                    cause.as_ref().map_or_else(
+                        || match reason {
+                            CtxError::Canceled => Arc::clone(&CANCELED),
+                            CtxError::DeadlineExceeded => Arc::clone(&DEADLINE_EXCEEDED),
+                        },
+                        Arc::clone,
+                    )
+                })
         })
     }
 
@@ -310,6 +402,76 @@ mod tests {
         cancel.cancel();
         assert_eq!(ctx.err(), Some(CtxError::Canceled));
         assert!(!Context::background().sleep(Duration::from_millis(1)));
+    }
+
+    #[test]
+    fn earlier_deadlines_wake_the_scheduler_and_reach_descendants() {
+        let background = Context::background();
+        let (later, cancel_later) = Context::with_timeout(&background, Duration::from_secs(60));
+        let (parent, cancel_parent) = Context::with_timeout(&background, Duration::from_millis(5));
+        let (child, _) = Context::with_timeout(&parent, Duration::from_secs(60));
+        let parent_deadline = parent.inner.as_ref().unwrap().deadline;
+        let child_inner = child.inner.as_ref().unwrap();
+        assert_eq!(child_inner.deadline, parent_deadline);
+        assert!(child_inner.state.lock().unwrap().timer.is_none());
+        drop((parent, cancel_parent));
+
+        let done = child.done();
+        assert_eq!(
+            done.recv_timeout(Duration::from_secs(2)),
+            Err(crossbeam_channel::RecvTimeoutError::Disconnected)
+        );
+        assert!(done.same_channel(&child.done()));
+        assert_eq!(child.err(), Some(CtxError::DeadlineExceeded));
+        assert_eq!(later.err(), None);
+        cancel_later.cancel();
+    }
+
+    #[test]
+    fn canceled_and_dropped_timeouts_remove_their_registrations() {
+        let (parent, _) = Context::with_cancel(&Context::background());
+        let parent_inner = parent.inner.as_ref().unwrap();
+        for cancel_now in [true, false] {
+            let (child, cancel) = Context::with_timeout(&parent, Duration::from_secs(60));
+            let inner = child.inner.as_ref().unwrap();
+            let id = inner.id();
+            let deadline = inner.deadline.unwrap();
+            assert!(timer::contains(deadline, id));
+            assert!(parent_inner
+                .state
+                .lock()
+                .unwrap()
+                .children
+                .contains_key(&id));
+            if cancel_now {
+                cancel.cancel();
+                assert!(!timer::contains(deadline, id));
+                assert!(child.done().same_channel(&child.done()));
+            }
+            drop((child, cancel));
+            assert!(!timer::contains(deadline, id));
+            assert!(!parent_inner
+                .state
+                .lock()
+                .unwrap()
+                .children
+                .contains_key(&id));
+        }
+    }
+
+    #[test]
+    fn deadline_registration_can_race_parent_cancellation() {
+        for _ in 0..32 {
+            let (parent, cancel_parent) = Context::with_cancel(&Context::background());
+            std::thread::scope(|scope| {
+                let canceling = scope.spawn(|| cancel_parent.cancel());
+                let (child, _) = Context::with_timeout(&parent, Duration::from_secs(60));
+                canceling.join().unwrap();
+                assert_eq!(child.err(), Some(CtxError::Canceled));
+                let inner = child.inner.as_ref().unwrap();
+                assert!(!timer::contains(inner.deadline.unwrap(), inner.id()));
+            });
+        }
     }
 
     /// Go `TestCause`, the rows of the constructors this port has.

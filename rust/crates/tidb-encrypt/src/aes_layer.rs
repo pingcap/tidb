@@ -14,10 +14,10 @@
 
 //! Random-access AES-CTR layer from `pkg/util/encrypt/aes_layer.go`.
 
-use super::aes::{AesCipher, AES_BLOCK_SIZE};
-use tidb_layered_io::{CloseWrite, ReadAt, ReadAtResult};
+use super::aes::{AesCipher, CtrStream, AES_BLOCK_SIZE};
 use std::io::{self, Write};
 use std::sync::Arc;
+use tidb_layered_io::{CloseWrite, ReadAt, ReadAtResult};
 
 const DEFAULT_ENCRYPT_BLOCK_SIZE: i64 = 1024;
 
@@ -86,43 +86,8 @@ impl CtrCipher {
         Self::new_with_material(key, nonce, DEFAULT_ENCRYPT_BLOCK_SIZE)
     }
 
-    fn stream(&self, counter: u64) -> CtrStream {
-        let mut counter_block = [0_u8; AES_BLOCK_SIZE];
-        counter_block[..8].copy_from_slice(&self.nonce.to_be_bytes());
-        counter_block[8..].copy_from_slice(&counter.to_be_bytes());
-        CtrStream {
-            block: Arc::clone(&self.block),
-            counter: counter_block,
-            mask: [0; AES_BLOCK_SIZE],
-            used: AES_BLOCK_SIZE,
-        }
-    }
-}
-
-struct CtrStream {
-    block: Arc<AesCipher>,
-    counter: [u8; AES_BLOCK_SIZE],
-    mask: [u8; AES_BLOCK_SIZE],
-    used: usize,
-}
-
-impl CtrStream {
-    fn xor_key_stream(&mut self, data: &mut [u8]) {
-        for value in data {
-            if self.used == AES_BLOCK_SIZE {
-                self.mask = self.counter;
-                self.block.encrypt_block(&mut self.mask);
-                for counter_byte in self.counter.iter_mut().rev() {
-                    *counter_byte = counter_byte.wrapping_add(1);
-                    if *counter_byte != 0 {
-                        break;
-                    }
-                }
-                self.used = 0;
-            }
-            *value ^= self.mask[self.used];
-            self.used += 1;
-        }
+    fn counter(&self, block_index: u64) -> u128 {
+        (u128::from(self.nonce) << 64) | u128::from(block_index)
     }
 }
 
@@ -152,7 +117,7 @@ where
 {
     error: Option<StickyError>,
     underlying: W,
-    cipher_stream: CtrStream,
+    cipher_stream: CtrStream<Arc<AesCipher>>,
     buffer: Vec<u8>,
     flushed_user_data_count: i64,
     used: usize,
@@ -169,7 +134,7 @@ where
         Self {
             error: None,
             underlying,
-            cipher_stream: cipher.stream(0),
+            cipher_stream: CtrStream::new(Arc::clone(&cipher.block), cipher.counter(0)),
             buffer: vec![0; buffer_size],
             flushed_user_data_count: 0,
             used: 0,
@@ -312,7 +277,10 @@ where
         let mut cursor = offset.wrapping_sub(offset_in_block);
         let mut block_offset = offset_in_block as usize;
         let mut buffer = vec![0; block_size as usize];
-        let mut stream = self.cipher.stream(counter as u64);
+        let mut stream = CtrStream::new(
+            self.cipher.block.as_ref(),
+            self.cipher.counter(counter as u64),
+        );
         let mut total = 0;
 
         while total < destination.len() {
@@ -342,9 +310,9 @@ mod tests {
     #![allow(non_snake_case)]
 
     use super::*;
+    use std::sync::{Arc, Mutex};
     use tidb_checksum as checksum;
     use tidb_layered_io::ReadAtError;
-    use std::sync::{Arc, Mutex};
 
     #[derive(Clone, Default)]
     struct MemoryFile(Arc<Mutex<Vec<u8>>>);

@@ -101,7 +101,7 @@ impl TableCommon {
 
     /// Installs the distinct random-ID allocator owned by the storage tier.
     pub fn set_auto_random_id(&mut self, shared: TableAutoId) {
-        self.auto_random_id = shared.0;
+        self.auto_random_id = shared.0.into();
         if let Some(spec) = self.auto_random {
             self.auto_random_id.set_unsigned(spec.unsigned);
         }

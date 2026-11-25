@@ -25,6 +25,33 @@ fn put_u32(output: &mut Vec<u8>, value: u32) {
 }
 
 #[test]
+fn duplicate_column_ids_return_the_go_search_midpoint() {
+    for (flags, id) in [(0, 1_u32), (ROW_FLAG_LARGE, 256)] {
+        let mut input = vec![ROW_CODEC_VERSION, flags, 9, 0, 0, 0];
+        for id in [id, id, id, id, id + 1, id + 2, id + 2, id + 2, id + 2] {
+            if flags == 0 {
+                input.push(id as u8);
+            } else {
+                put_u32(&mut input, id);
+            }
+        }
+        for offset in 1..=9 {
+            if flags == 0 {
+                put_u16(&mut input, offset as u16);
+            } else {
+                put_u32(&mut input, offset);
+            }
+        }
+        input.extend(11..=19);
+        let (row, _) = RowLayout::parse(&input).unwrap();
+        assert_eq!(row.find_column(i64::from(id)), ColumnLookup::NotNull(2));
+        assert_eq!(row.value(2), Ok(&[13][..]));
+        assert_eq!(row.find_column(i64::from(id + 2)), ColumnLookup::NotNull(7));
+        assert_eq!(row.value(7), Ok(&[18][..]));
+    }
+}
+
+#[test]
 fn row_header_metadata_offsets_and_column_lookup_follow_source_layout() {
     // Go row.go's format is: version, flags, not-null count, null count,
     // sorted IDs (not-null first), sorted end offsets, then opaque data.
@@ -38,6 +65,7 @@ fn row_header_metadata_offsets_and_column_lookup_follow_source_layout() {
     encoded.extend_from_slice(b"suffix");
 
     let (row, remainder) = RowLayout::parse(&encoded).expect("small row framing");
+    let unmaterialized = row.clone();
     assert_eq!(remainder, b"suffix");
     assert!(!row.header().is_large());
     assert_eq!(row.header().not_null_count(), 2);
@@ -56,6 +84,10 @@ fn row_header_metadata_offsets_and_column_lookup_follow_source_layout() {
     assert!(!row.column_is_null(7, false));
     assert_eq!(row.value(0), Ok(&b"ab"[..]));
     assert_eq!(row.value(1), Ok(&b"cd"[..]));
+    assert_eq!(
+        row, unmaterialized,
+        "reading metadata slices preserves equality"
+    );
 }
 
 #[test]

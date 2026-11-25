@@ -410,6 +410,50 @@ fn test_compressed_writer_short_and_threshold() {
 }
 
 #[test]
+fn zlib_reused_encoder_switches_between_stored_and_compressed_envelopes() {
+    let mut seed = 0x1a9dfb3_u32;
+    let random: Vec<_> = (0..65_536)
+        .map(|_| {
+            seed ^= seed << 13;
+            seed ^= seed >> 17;
+            seed ^= seed << 5;
+            seed as u8
+        })
+        .collect();
+    let repeated = random[..16_384].repeat(4);
+    let short = b"result packet ".repeat(9);
+    let mut writer = CompressedWriter::new(Vec::new(), CompressionAlgorithm::Zlib).unwrap();
+    let inputs = [
+        (random.as_slice(), false),
+        (short.as_slice(), true),
+        (repeated.as_slice(), true),
+        (&random[..512], false),
+        (&random[..513], false),
+        (short.as_slice(), true),
+        (random.as_slice(), false),
+    ];
+    for (sequence, (input, compressible)) in inputs.into_iter().enumerate() {
+        let at = writer.get_ref().len();
+        writer.write_bytes(input).unwrap();
+        writer.flush_envelope().unwrap();
+        let header = CompressedHeader::decode(writer.get_ref()[at..at + 7].try_into().unwrap());
+        assert_eq!(usize::from(header.sequence), sequence);
+        assert_eq!(header.uncompressed_len, input.len());
+        if compressible {
+            assert!(header.compressed_len < input.len() / 2);
+        } else {
+            assert!(header.compressed_len >= input.len());
+        }
+    }
+    let mut reader = CompressedReader::new(Cursor::new(writer.into_inner()), CompressionAlgorithm::Zlib).unwrap();
+    for (input, _) in inputs {
+        let mut decoded = vec![0; input.len()];
+        assert_eq!(reader.read_bytes(&mut decoded).unwrap(), input.len());
+        assert_eq!(decoded, input);
+    }
+}
+
+#[test]
 fn compressed_batch_flushes_only_when_input_crosses_one_mib() {
     let mut writer =
         CompressedWriter::new(Cursor::new(Vec::new()), CompressionAlgorithm::Zlib).unwrap();
@@ -420,6 +464,26 @@ fn compressed_batch_flushes_only_when_input_crosses_one_mib() {
     writer.write_bytes(b"y").unwrap();
     assert!(!writer.get_ref().get_ref().is_empty());
     assert_eq!(writer.compressed_sequence(), 1);
+}
+
+#[test]
+fn short_incompressible_zlib_envelope_keeps_its_checksum_and_sequence() {
+    let payload: Vec<u8> = (0u8..128).map(|byte| byte.wrapping_mul(149)).collect();
+    let mut writer = CompressedWriter::new(Vec::new(), CompressionAlgorithm::Zlib).unwrap();
+    writer.write_bytes(&payload).unwrap();
+    writer.flush_envelope().unwrap();
+    assert_eq!(writer.compressed_sequence(), 1);
+
+    let wire = writer.into_inner();
+    let header = CompressedHeader::decode(wire[..7].try_into().unwrap());
+    assert_eq!(header.sequence, 0);
+    assert_eq!(header.uncompressed_len, payload.len());
+    assert_eq!(header.compressed_len, payload.len() + 11);
+    assert_eq!(&wire[7..10], &[0x78, 0x01, 0x01]);
+    assert_eq!(
+        read_all_compressed(wire, CompressionAlgorithm::Zlib, payload.len()),
+        payload,
+    );
 }
 
 #[test]

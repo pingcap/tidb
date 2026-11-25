@@ -170,11 +170,15 @@ impl GoDateTime {
 /// Go `expression.isDuration`, whose `durationPattern` decides whether
 /// `ADDTIME`'s first STRING argument is read as a duration or as a datetime.
 pub(crate) fn is_duration(value: &str) -> bool {
-    static PATTERN: OnceLock<regex::Regex> = OnceLock::new();
+    is_duration_bytes(value.as_bytes())
+}
+
+pub(crate) fn is_duration_bytes(value: &[u8]) -> bool {
+    static PATTERN: OnceLock<regex::bytes::Regex> = OnceLock::new();
     PATTERN
         .get_or_init(|| {
-            regex::Regex::new(
-                r"^\s*[-]?(((\d{1,2}\s+)?0*\d{0,3}(:0*\d{1,2}){0,2})|(\d{1,7}))?(\.\d*)?\s*$",
+            regex::bytes::Regex::new(
+                r"(?-u:^[\t\n\f\r ]*-?(?:(?:\d{1,2}[\t\n\f\r ]+)?0*\d{0,3}(?::0*\d{1,2}){0,2}|\d{1,7})?(?:\.\d*)?[\t\n\f\r ]*$)",
             )
             .expect("the source durationPattern is a valid regex")
         })

@@ -14,10 +14,15 @@
 
 //! Temporal string parsing, ported from Go `pkg/types`.
 
-use chrono::{FixedOffset, TimeZone};
+use std::borrow::Cow;
+use std::ops::Range;
 
+use chrono::{FixedOffset, TimeZone};
+use smallvec::SmallVec;
+
+use crate::mysql_time::{get_timezone_parts, TimezoneParts};
 use crate::{
-    check_fsp, core_time_from_datetime, get_frac_index, get_timezone, parse_frac, Converted,
+    check_fsp, core_time_from_datetime, get_frac_index, parse_frac, Converted,
     CoreTime, FieldTypeCode, ScalarConversionError, ScalarConversionEvent, Time,
     TimeConversionError, TimeError, TimeType, TimestampInterval,
 };
@@ -114,101 +119,149 @@ const fn is_valid_separator(c: u8, prev_parts: usize) -> bool {
 #[must_use]
 pub fn parse_date_format(format: &str) -> Option<Vec<String>> {
     let format = format.trim();
-    let bytes = format.as_bytes();
-    if bytes.is_empty() {
+    if !format.as_bytes().first().is_some_and(u8::is_ascii_digit) {
         return None;
     }
-    // Date format must start with a number.
-    if !is_digit(bytes[0]) {
-        return None;
+    let mut parts = Vec::with_capacity(6);
+    visit_date_format_parts(format, |part| {
+        parts.push(date_format_part(format, part).into_owned());
+        true
+    })
+    .then_some(parts)
+}
+
+fn date_format_part(format: &str, part: Range<usize>) -> Cow<'_, str> {
+    if let Some(field) = format.get(part.clone()) {
+        Cow::Borrowed(field)
+    } else {
+        String::from_utf8_lossy(&format.as_bytes()[part])
+    }
+}
+
+fn visit_date_format_parts(format: &str, mut visit: impl FnMut(Range<usize>) -> bool) -> bool {
+    let bytes = format.as_bytes();
+    if !bytes.first().is_some_and(u8::is_ascii_digit) {
+        return false;
     }
 
-    let mut seps: Vec<String> = Vec::with_capacity(6);
-    let mut start = 0usize;
-    let mut i = 1usize;
+    let mut start = 0;
+    let mut i = 1;
+    let mut prev_parts = 0;
     // Go: `for i := 1; i < len(format)-1; i++` — the final byte is never
     // examined and always joins the trailing field.
     while i + 1 < bytes.len() {
-        if is_valid_separator(bytes[i], seps.len()) {
-            let prev_parts = seps.len();
-            seps.push(String::from_utf8_lossy(&bytes[start..i]).into_owned());
-            start = i + 1;
-            // Consume further consecutive separators.
-            let mut j = i + 1;
-            while j < bytes.len() {
-                if !is_valid_separator(bytes[j], prev_parts) {
-                    break;
-                }
-                start += 1;
-                i += 1;
-                j += 1;
-            }
+        if is_digit(bytes[i]) {
             i += 1;
             continue;
         }
-        if !is_digit(bytes[i]) {
-            return None;
+        if !is_valid_separator(bytes[i], prev_parts) || !visit(start..i) {
+            return false;
         }
         i += 1;
+        while i < bytes.len() && is_valid_separator(bytes[i], prev_parts) {
+            i += 1;
+        }
+        start = i;
+        prev_parts += 1;
     }
-    seps.push(String::from_utf8_lossy(&bytes[start..]).into_owned());
-    Some(seps)
+    visit(start..bytes.len())
+}
+
+fn with_uppercase_unit<T>(unit: &str, use_unit: impl FnOnce(&[u8]) -> T) -> T {
+    // MINUTE_MICROSECOND and SECOND_MICROSECOND are the longest unit names.
+    // Go uppercases one rune at a time. Each input rune takes up to four bytes.
+    const MAX_UNIT_LEN: usize = b"MINUTE_MICROSECOND".len();
+    if unit.len() > 4 * MAX_UNIT_LEN {
+        return use_unit(b"");
+    }
+    let bytes = unit.as_bytes();
+    // Short units often arrive in uppercase from the SQL parser.
+    if bytes.len() <= 7
+        && bytes
+            .iter()
+            .all(|byte| byte.is_ascii() && !byte.is_ascii_lowercase())
+    {
+        return use_unit(bytes);
+    }
+    if !bytes.is_ascii() {
+        return use_unit(tidb_mysql::to_uppercase(unit).as_bytes());
+    }
+    let mut buffer = [0; MAX_UNIT_LEN];
+    let Some(uppercase) = buffer.get_mut(..unit.len()) else {
+        return use_unit(b"");
+    };
+    uppercase.copy_from_slice(bytes);
+    uppercase.make_ascii_uppercase();
+    use_unit(uppercase)
 }
 
 /// Returns whether the interval unit contains a clock component.
 pub fn is_clock_unit(unit: &str) -> bool {
-    matches!(
-        unit.to_ascii_uppercase().as_str(),
-        "MICROSECOND"
-            | "SECOND"
-            | "MINUTE"
-            | "HOUR"
-            | "SECOND_MICROSECOND"
-            | "MINUTE_MICROSECOND"
-            | "HOUR_MICROSECOND"
-            | "DAY_MICROSECOND"
-            | "MINUTE_SECOND"
-            | "HOUR_SECOND"
-            | "DAY_SECOND"
-            | "HOUR_MINUTE"
-            | "DAY_MINUTE"
-            | "DAY_HOUR"
-    )
+    with_uppercase_unit(unit, |unit| {
+        matches!(
+            unit,
+            b"MICROSECOND"
+                | b"SECOND"
+                | b"MINUTE"
+                | b"HOUR"
+                | b"SECOND_MICROSECOND"
+                | b"MINUTE_MICROSECOND"
+                | b"HOUR_MICROSECOND"
+                | b"DAY_MICROSECOND"
+                | b"MINUTE_SECOND"
+                | b"HOUR_SECOND"
+                | b"DAY_SECOND"
+                | b"HOUR_MINUTE"
+                | b"DAY_MINUTE"
+                | b"DAY_HOUR"
+        )
+    })
 }
 
 /// Returns whether the interval unit contains a calendar component.
 pub fn is_date_unit(unit: &str) -> bool {
-    matches!(
-        unit.to_ascii_uppercase().as_str(),
-        "DAY"
-            | "WEEK"
-            | "MONTH"
-            | "QUARTER"
-            | "YEAR"
-            | "DAY_MICROSECOND"
-            | "DAY_SECOND"
-            | "DAY_MINUTE"
-            | "DAY_HOUR"
-            | "YEAR_MONTH"
-    )
+    with_uppercase_unit(unit, |unit| {
+        matches!(
+            unit,
+            b"DAY"
+                | b"WEEK"
+                | b"MONTH"
+                | b"QUARTER"
+                | b"YEAR"
+                | b"DAY_MICROSECOND"
+                | b"DAY_SECOND"
+                | b"DAY_MINUTE"
+                | b"DAY_HOUR"
+                | b"YEAR_MONTH"
+        )
+    })
 }
 
 /// Returns whether the interval unit contains microseconds.
 pub fn is_microsecond_unit(unit: &str) -> bool {
-    matches!(
-        unit.to_ascii_uppercase().as_str(),
-        "MICROSECOND"
-            | "SECOND_MICROSECOND"
-            | "MINUTE_MICROSECOND"
-            | "HOUR_MICROSECOND"
-            | "DAY_MICROSECOND"
-    )
+    with_uppercase_unit(unit, |unit| {
+        matches!(
+            unit,
+            b"MICROSECOND"
+                | b"SECOND_MICROSECOND"
+                | b"MINUTE_MICROSECOND"
+                | b"HOUR_MICROSECOND"
+                | b"DAY_MICROSECOND"
+        )
+    })
 }
 
 /// Returns whether the accepted literal shape can contain only a date.
 pub fn is_date_format(format: &str) -> bool {
     let format = format.trim();
-    match parse_date_format(format).map_or(0, |parts| parts.len()) {
+    let mut count = 0;
+    if !visit_date_format_parts(format, |_| {
+        count += 1;
+        count <= 3
+    }) {
+        return false;
+    }
+    match count {
         1 => matches!(format.len(), 5 | 6 | 8),
         3 => true,
         _ => false,
@@ -264,24 +317,8 @@ pub(crate) fn adjust_year_with_event(year: i64, adjust_zero: bool) -> Converted<
 /// Converts a MySQL day number to a DATE.
 #[must_use]
 pub fn time_from_days(day_number: i64) -> Time {
-    let core = if let Ok(day_number) = u32::try_from(day_number) {
-        let (year, month, day) = crate::get_date_from_daynr(u64::from(day_number));
-        Time::from_date_checked(
-            year as i32,
-            month as i32,
-            day as i32,
-            0,
-            0,
-            0,
-            0,
-            TimeType::Date,
-            0,
-        )
-        .map(Time::core_time)
-        .unwrap_or_default()
-    } else {
-        CoreTime::default()
-    };
+    let (year, month, day) = crate::get_date_from_daynr(day_number as u64);
+    let core = CoreTime::from_date(year as u16, month as u8, day as u8, 0, 0, 0, 0);
     Time::new(core, TimeType::Date, 0).expect("zero FSP is valid")
 }
 
@@ -321,33 +358,35 @@ pub fn extract_datetime_num(time: Time, unit: &str) -> Result<i64, TimeError> {
 }
 
 pub(crate) fn extract_datetime_num_with_error(time: Time, unit: &str) -> TemporalOutcome<i64> {
-    let core = time.core_time();
-    let hour = i64::from(core.hour());
-    let minute = i64::from(core.minute());
-    let second = i64::from(core.second());
-    let day = i64::from(core.day());
-    let value = match unit.to_ascii_uppercase().as_str() {
-        "DAY" => day,
-        "WEEK" => i64::from(core.week(0)),
-        "MONTH" => i64::from(core.month()),
-        "QUARTER" => (i64::from(core.month()) + 2) / 3,
-        "YEAR" => i64::from(core.year()),
-        "DAY_MICROSECOND" => {
-            (day * 1_000_000 + hour * 10_000 + minute * 100 + second) * 1_000_000
-                + i64::from(core.microsecond())
-        }
-        "DAY_SECOND" => day * 1_000_000 + hour * 10_000 + minute * 100 + second,
-        "DAY_MINUTE" => day * 10_000 + hour * 100 + minute,
-        "DAY_HOUR" => day * 100 + hour,
-        "YEAR_MONTH" => i64::from(core.year()) * 100 + i64::from(core.month()),
-        _ => {
-            return TemporalOutcome {
-                value: 0,
-                error: Some(TimeError::InvalidUnit(unit.to_owned())),
-            };
-        }
-    };
-    TemporalOutcome { value, error: None }
+    with_uppercase_unit(unit, |uppercase| {
+        let core = time.core_time();
+        let hour = i64::from(core.hour());
+        let minute = i64::from(core.minute());
+        let second = i64::from(core.second());
+        let day = i64::from(core.day());
+        let value = match uppercase {
+            b"DAY" => day,
+            b"WEEK" => i64::from(core.week(0)),
+            b"MONTH" => i64::from(core.month()),
+            b"QUARTER" => (i64::from(core.month()) + 2) / 3,
+            b"YEAR" => i64::from(core.year()),
+            b"DAY_MICROSECOND" => {
+                (day * 1_000_000 + hour * 10_000 + minute * 100 + second) * 1_000_000
+                    + i64::from(core.microsecond())
+            }
+            b"DAY_SECOND" => day * 1_000_000 + hour * 10_000 + minute * 100 + second,
+            b"DAY_MINUTE" => day * 10_000 + hour * 100 + minute,
+            b"DAY_HOUR" => day * 100 + hour,
+            b"YEAR_MONTH" => i64::from(core.year()) * 100 + i64::from(core.month()),
+            _ => {
+                return TemporalOutcome {
+                    value: 0,
+                    error: Some(TimeError::InvalidUnit(unit.to_owned())),
+                };
+            }
+        };
+        TemporalOutcome { value, error: None }
+    })
 }
 
 /// Extracts the integer representation for a duration interval unit.
@@ -359,63 +398,75 @@ pub(crate) fn extract_duration_num_with_error(
     duration: crate::MySqlDuration,
     unit: &str,
 ) -> TemporalOutcome<i64> {
-    let hour = duration.hour();
-    let minute = duration.minute();
-    let second = duration.second();
-    let microsecond = duration.microsecond();
-    let mut value = match unit.to_ascii_uppercase().as_str() {
-        "MICROSECOND" => microsecond,
-        "SECOND" => second,
-        "MINUTE" => minute,
-        "HOUR" => hour,
-        "SECOND_MICROSECOND" => second * 1_000_000 + microsecond,
-        "MINUTE_MICROSECOND" => minute * 100_000_000 + second * 1_000_000 + microsecond,
-        "MINUTE_SECOND" => minute * 100 + second,
-        "HOUR_MICROSECOND" => {
-            hour * 10_000_000_000 + minute * 100_000_000 + second * 1_000_000 + microsecond
+    with_uppercase_unit(unit, |uppercase| {
+        let hour = duration.hour();
+        let minute = duration.minute();
+        let second = duration.second();
+        let microsecond = duration.microsecond();
+        let mut value = match uppercase {
+            b"MICROSECOND" => microsecond,
+            b"SECOND" => second,
+            b"MINUTE" => minute,
+            b"HOUR" => hour,
+            b"SECOND_MICROSECOND" => second * 1_000_000 + microsecond,
+            b"MINUTE_MICROSECOND" => minute * 100_000_000 + second * 1_000_000 + microsecond,
+            b"MINUTE_SECOND" => minute * 100 + second,
+            b"HOUR_MICROSECOND" => {
+                hour * 10_000_000_000 + minute * 100_000_000 + second * 1_000_000 + microsecond
+            }
+            b"HOUR_SECOND" | b"DAY_SECOND" => hour * 10_000 + minute * 100 + second,
+            b"HOUR_MINUTE" | b"DAY_MINUTE" => hour * 100 + minute,
+            b"DAY_MICROSECOND" => (hour * 10_000 + minute * 100 + second) * 1_000_000 + microsecond,
+            b"DAY_HOUR" => hour,
+            _ => {
+                return TemporalOutcome {
+                    value: 0,
+                    error: Some(TimeError::InvalidUnit(unit.to_owned())),
+                };
+            }
+        };
+        if duration.nanoseconds() < 0 {
+            value = -value;
         }
-        "HOUR_SECOND" | "DAY_SECOND" => hour * 10_000 + minute * 100 + second,
-        "HOUR_MINUTE" | "DAY_MINUTE" => hour * 100 + minute,
-        "DAY_MICROSECOND" => (hour * 10_000 + minute * 100 + second) * 1_000_000 + microsecond,
-        "DAY_HOUR" => hour,
-        _ => {
-            return TemporalOutcome {
-                value: 0,
-                error: Some(TimeError::InvalidUnit(unit.to_owned())),
-            };
-        }
-    };
-    if duration.nanoseconds() < 0 {
-        value = -value;
-    }
-    TemporalOutcome { value, error: None }
+        TemporalOutcome { value, error: None }
+    })
 }
 
 /// Parses a MySQL interval literal into calendar and sub-day components.
 pub fn parse_duration_value(unit: &str, format: &str) -> Result<ParsedInterval, TimeError> {
-    let unit = unit.to_ascii_uppercase();
-    match unit.as_str() {
-        "MICROSECOND" | "SECOND" | "MINUTE" | "HOUR" | "DAY" | "WEEK" | "MONTH" | "QUARTER"
-        | "YEAR" => parse_single_interval(&unit, format),
-        "SECOND_MICROSECOND" => parse_composite_interval(format, 6, 2),
-        "MINUTE_MICROSECOND" => parse_composite_interval(format, 6, 3),
-        "MINUTE_SECOND" => parse_composite_interval(format, 5, 2),
-        "HOUR_MICROSECOND" => parse_composite_interval(format, 6, 4),
-        "HOUR_SECOND" => parse_composite_interval(format, 5, 3),
-        "HOUR_MINUTE" => parse_composite_interval(format, 4, 2),
-        "DAY_MICROSECOND" => parse_composite_interval(format, 6, 5),
-        "DAY_SECOND" => parse_composite_interval(format, 5, 4),
-        "DAY_MINUTE" => parse_composite_interval(format, 4, 3),
-        "DAY_HOUR" => parse_composite_interval(format, 3, 2),
-        "YEAR_MONTH" => parse_composite_interval(format, 1, 2),
-        _ => Err(TimeError::InvalidUnit(unit)),
-    }
+    parse_interval_value(unit, format, false)
+}
+
+fn parse_interval_value(
+    unit: &str,
+    format: &str,
+    normalize_second: bool,
+) -> Result<ParsedInterval, TimeError> {
+    with_uppercase_unit(unit, |uppercase| match uppercase {
+        b"MICROSECOND" | b"SECOND" | b"MINUTE" | b"HOUR" | b"DAY" | b"WEEK" | b"MONTH"
+        | b"QUARTER" | b"YEAR" => {
+            // Go's extractor uppercases the unit before checking for fractional SECOND.
+            let allows_fraction = uppercase == b"SECOND" && (normalize_second || unit == "SECOND");
+            parse_single_interval(uppercase, format, allows_fraction)
+        }
+        b"SECOND_MICROSECOND" => parse_composite_interval(format, 6, 2),
+        b"MINUTE_MICROSECOND" => parse_composite_interval(format, 6, 3),
+        b"MINUTE_SECOND" => parse_composite_interval(format, 5, 2),
+        b"HOUR_MICROSECOND" => parse_composite_interval(format, 6, 4),
+        b"HOUR_SECOND" => parse_composite_interval(format, 5, 3),
+        b"HOUR_MINUTE" => parse_composite_interval(format, 4, 2),
+        b"DAY_MICROSECOND" => parse_composite_interval(format, 6, 5),
+        b"DAY_SECOND" => parse_composite_interval(format, 5, 4),
+        b"DAY_MINUTE" => parse_composite_interval(format, 4, 3),
+        b"DAY_HOUR" => parse_composite_interval(format, 3, 2),
+        b"YEAR_MONTH" => parse_composite_interval(format, 1, 2),
+        _ => Err(TimeError::InvalidUnit(unit.to_ascii_uppercase())),
+    })
 }
 
 /// Parses a MySQL interval and validates that it fits the TIME domain.
 pub fn extract_duration_value(unit: &str, format: &str) -> Result<crate::MySqlDuration, TimeError> {
-    let parsed = parse_duration_value(unit, format)?;
-    let unit = unit.to_ascii_uppercase();
+    let parsed = parse_interval_value(unit, format, true)?;
     if parsed.truncated {
         return Err(TimeError::InvalidDate);
     }
@@ -430,38 +481,38 @@ pub fn extract_duration_value(unit: &str, format: &str) -> Result<crate::MySqlDu
         .checked_mul(86_400_000_000_000)
         .and_then(|days| days.checked_add(parsed.nanoseconds))
         .ok_or(TimeError::OutOfRange("time"))?;
-    if unit == "YEAR_MONTH" || total.unsigned_abs() > 3_020_399_999_999_999 {
+    if unit.eq_ignore_ascii_case("YEAR_MONTH") || total.unsigned_abs() > 3_020_399_999_999_999 {
         return Err(TimeError::OutOfRange("time"));
     }
     crate::MySqlDuration::from_nanoseconds(total, i64::from(parsed.fsp))
         .map_err(TimeError::InvalidFsp)
 }
 
-fn parse_single_interval(unit: &str, format: &str) -> Result<ParsedInterval, TimeError> {
+fn parse_single_interval(
+    unit: &[u8],
+    format: &str,
+    allows_fraction: bool,
+) -> Result<ParsedInterval, TimeError> {
     let format = format.trim();
     let (integer_text, fraction_text) = format.split_once('.').unwrap_or((format, ""));
     let integer = integer_text
         .parse::<i64>()
         .map_err(|_| TimeError::InvalidDate)?;
     let sign = if format.starts_with('-') { -1 } else { 1 };
-    let fraction_digits: String = fraction_text
-        .chars()
-        .take(6)
-        .take_while(char::is_ascii_digit)
-        .collect();
-    let fraction_len = fraction_digits.len();
-    let mut padded = fraction_digits;
-    while padded.len() < 6 {
-        padded.push('0');
+    let mut fraction = 0;
+    let mut fraction_len = 0;
+    for digit in fraction_text.bytes().take(6).take_while(u8::is_ascii_digit) {
+        fraction = fraction * 10 + i64::from(digit - b'0');
+        fraction_len += 1;
     }
-    let fraction = padded.parse::<i64>().unwrap_or(0) * sign;
+    fraction *= sign * [1_000_000, 100_000, 10_000, 1_000, 100, 10, 1][fraction_len];
     let rounded = integer
         + if fraction.unsigned_abs() >= 500_000 {
             sign
         } else {
             0
         };
-    let truncated = !fraction_text.is_empty() && unit != "SECOND";
+    let truncated = !fraction_text.is_empty() && !allows_fraction;
     let mut parsed = ParsedInterval {
         years: 0,
         months: 0,
@@ -471,29 +522,29 @@ fn parse_single_interval(unit: &str, format: &str) -> Result<ParsedInterval, Tim
         truncated,
     };
     match unit {
-        "MICROSECOND" => {
+        b"MICROSECOND" => {
             parsed.days = rounded / 86_400_000_000;
             parsed.nanoseconds = rounded % 86_400_000_000 * 1_000;
             parsed.fsp = 6;
         }
-        "SECOND" => {
+        b"SECOND" => {
             parsed.days = integer / 86_400;
             parsed.nanoseconds = integer % 86_400 * 1_000_000_000 + fraction * 1_000;
             parsed.fsp = fraction_len as u8;
         }
-        "MINUTE" => {
+        b"MINUTE" => {
             parsed.days = rounded / 1_440;
             parsed.nanoseconds = rounded % 1_440 * 60_000_000_000;
         }
-        "HOUR" => {
+        b"HOUR" => {
             parsed.days = rounded / 24;
             parsed.nanoseconds = rounded % 24 * 3_600_000_000_000;
         }
-        "DAY" => parsed.days = rounded,
-        "WEEK" => parsed.days = rounded * 7,
-        "MONTH" => parsed.months = rounded,
-        "QUARTER" => parsed.months = rounded * 3,
-        "YEAR" => parsed.years = rounded,
+        b"DAY" => parsed.days = rounded,
+        b"WEEK" => parsed.days = rounded * 7,
+        b"MONTH" => parsed.months = rounded,
+        b"QUARTER" => parsed.months = rounded * 3,
+        b"YEAR" => parsed.years = rounded,
         _ => unreachable!("single interval unit was matched by caller"),
     }
     Ok(parsed)
@@ -577,9 +628,9 @@ pub fn parse_time<TZ: TimeZone>(
     )
 }
 
-// Float-string parsing calls ParseDatetimeFromNum before applying the fraction.
-// Its zero-date policy is independent of the zero-in-date validation below.
-pub(crate) fn parse_time_with_flags<TZ: TimeZone>(
+/// Parses a temporal value with the caller's Go conversion flags.
+/// Float strings apply the numeric zero-date policy before applying the fraction.
+pub fn parse_time_with_flags<TZ: TimeZone>(
     input: &str,
     kind: TimeType,
     fsp: i64,
@@ -653,21 +704,22 @@ fn parse_datetime_core<TZ: TimeZone>(
     timezone: &TZ,
 ) -> Result<(CoreTime, bool), TimeError> {
     let (mut parts, mut fraction, mut timezone_suffix, mut truncated) = split_datetime(input);
-    let no_absorb = |parts: &[String]| parts.len() > 5 || (parts.len() == 1 && parts[0].len() > 4);
+    let no_absorb =
+        |parts: &[Cow<'_, str>]| parts.len() > 5 || (parts.len() == 1 && parts[0].len() > 4);
 
     if !fraction.is_empty() && !is_float && !no_absorb(&parts) {
-        parts.push(std::mem::take(&mut fraction));
+        parts.push(Cow::Borrowed(std::mem::take(&mut fraction)));
     }
     if let Some(suffix) = &timezone_suffix {
         if suffix.sign.is_some()
             && !no_absorb(&parts)
             && !(suffix.minute.is_some() && !suffix.has_colon)
         {
-            if let Some(hour) = &suffix.hour {
-                parts.push(hour.clone());
+            if let Some(hour) = suffix.hour {
+                parts.push(Cow::Borrowed(hour));
             }
-            if let Some(minute) = &suffix.minute {
-                parts.push(minute.clone());
+            if let Some(minute) = suffix.minute {
+                parts.push(Cow::Borrowed(minute));
             }
             timezone_suffix = None;
         }
@@ -708,9 +760,9 @@ fn parse_datetime_core<TZ: TimeZone>(
             let length = compact.len();
             hhmmss = matches!(length, 11 | 12 | 14);
             if matches!(length, 5 | 6 | 8) && !is_float {
-                parse_compact_clock(&fraction, &mut fields[3..]);
+                parse_compact_clock(fraction, &mut fields[3..]);
             } else if matches!(length, 9 | 10) {
-                fields[5] = parse_prefix(&fraction, 2).unwrap_or(0);
+                fields[5] = parse_prefix(fraction, 2).unwrap_or(0);
                 truncated |= fraction.len() > 2;
             }
         }
@@ -762,13 +814,11 @@ fn parse_datetime_core<TZ: TimeZone>(
         }
         let hour = suffix
             .hour
-            .as_deref()
             .unwrap_or("0")
             .parse::<i32>()
             .map_err(|_| TimeError::InvalidDate)?;
         let minute = suffix
             .minute
-            .as_deref()
             .unwrap_or("0")
             .parse::<i32>()
             .map_err(|_| TimeError::InvalidDate)?;
@@ -806,10 +856,12 @@ fn scan_time_arg(part: &str) -> Result<i32, TimeError> {
     i32::try_from(value).map_err(|_| TimeError::InvalidDate)
 }
 
-fn split_datetime(input: &str) -> (Vec<String>, String, Option<crate::TimezoneSuffix>, bool) {
+type DateParts<'a> = SmallVec<[Cow<'a, str>; 7]>;
+
+fn split_datetime(input: &str) -> (DateParts<'_>, &str, Option<TimezoneParts<'_>>, bool) {
     let mut value = input;
-    let mut suffix = get_timezone(value);
-    if let Some(timezone) = &mut suffix {
+    let mut suffix = get_timezone_parts(value);
+    if let Some(timezone) = &suffix {
         if timezone.index > 0 {
             let mut index = timezone.index;
             while index > 0 && is_punctuation(value.as_bytes()[index - 1]) {
@@ -821,7 +873,7 @@ fn split_datetime(input: &str) -> (Vec<String>, String, Option<crate::TimezoneSu
         }
     }
 
-    let mut fraction = String::new();
+    let mut fraction = "";
     let mut truncated = false;
     let fraction_index = get_frac_index(value);
     if fraction_index > 0 {
@@ -830,19 +882,25 @@ fn split_datetime(input: &str) -> (Vec<String>, String, Option<crate::TimezoneSu
             end += 1;
         }
         truncated = end != value.len();
-        fraction.push_str(&value[fraction_index as usize + 1..end]);
+        fraction = &value[fraction_index as usize + 1..end];
         let mut start = fraction_index as usize;
         while start > 0 && is_punctuation(value.as_bytes()[start - 1]) {
             start -= 1;
         }
         value = &value[..start];
     }
-    (
-        parse_date_format(value).unwrap_or_default(),
-        fraction,
-        suffix,
-        truncated,
-    )
+    let value = value.trim();
+    let mut parts = DateParts::new();
+    let complete = visit_date_format_parts(value, |part| {
+        parts.push(date_format_part(value, part));
+        // The seventh field is enough to report truncation. After five
+        // fields, any non-digit is accepted as a separator.
+        parts.len() <= 6
+    });
+    if !complete && parts.len() <= 6 {
+        parts.clear();
+    }
+    (parts, fraction, suffix, truncated)
 }
 
 fn parse_compact(input: &str, fields: &mut [i32; 6]) -> Result<(), TimeError> {
@@ -1384,6 +1442,26 @@ mod tests {
         }
     }
 
+    #[test]
+    fn interval_units_use_go_simple_uppercase() {
+        assert!(is_clock_unit("MıNUTE"));
+        assert!(is_date_unit("DAY_ſECOND"));
+        assert!(is_microsecond_unit("MıCROſECOND"));
+        assert!(!is_clock_unit("MİNUTE"));
+        assert!(!is_microsecond_unit("MICROﬆECOND"));
+        assert_eq!(
+            parse_duration_value("MıNUTE", "125").unwrap().nanoseconds,
+            7_500_000_000_000,
+        );
+        assert!(parse_duration_value("ſECOND", "1.2").unwrap().truncated);
+        assert!(parse_duration_value("second", "1.2").unwrap().truncated);
+        assert!(!parse_duration_value("SECOND", "1.2").unwrap().truncated);
+        assert_eq!(
+            extract_duration_value("ſECOND", "1.2").unwrap().nanoseconds(),
+            1_200_000_000,
+        );
+    }
+
     /// Complete translation of `pkg/types/time_test.go::TestIsDateFormat`.
     #[test]
     fn test_is_date_format() {
@@ -1391,6 +1469,10 @@ mod tests {
         assert!(is_date_format("2019-04-01"));
         assert!(is_date_format("2019-4-1"));
         assert!(is_date_format("20129"));
+        assert!(is_date_format("2019-04-01x"));
+        assert!(!is_date_format("2019-04-01xx"));
+        assert!(!is_date_format("2019-04-01 23:59:59"));
+        assert!(!is_date_format(&"1/".repeat(8192)));
     }
 
     #[test]
@@ -1724,6 +1806,10 @@ mod tests {
     fn test_date_time() {
         assert_date_time_source_rows();
         assert_date_time_fsp_source_rows();
+        let input = format!("2024-02-29 15:04:05{}", ":06".repeat(8192));
+        let parsed = datetime(&input).unwrap();
+        assert_eq!(parsed.time.to_string(), "2024-02-29 15:04:05");
+        assert!(parsed.truncated);
         assert_date_time_source_errors_or_warnings();
     }
 

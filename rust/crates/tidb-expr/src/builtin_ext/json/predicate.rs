@@ -130,17 +130,8 @@ pub(super) fn json_contains_path(
     let Some(document) = json_document(&vals[0], arg_type(arg_types, 0))? else {
         return Ok(Datum::Null);
     };
-    let Some(contain_type) = coerce_str(&vals[1])? else {
+    let Some(one) = contains_path_mode_value(&vals[1])? else {
         return Ok(Datum::Null);
-    };
-    let one = match contain_type.to_lowercase().as_str() {
-        "one" => true,
-        "all" => false,
-        _ => {
-            return Err(EvalError::Json(JsonError::BadOneOrAllArg {
-                function: "json_contains_path",
-            }))
-        }
     };
     let mut contains = 1;
     for path in &vals[2..] {
@@ -148,10 +139,7 @@ pub(super) fn json_contains_path(
             return Ok(Datum::Null);
         };
         let path = parse_json_path(&path)?;
-        let exists = document
-            .extract(std::slice::from_ref(&path))
-            .map_err(binary_json_error)?
-            .is_some();
+        let exists = document.path_exists_for_sql(&path).map_err(binary_json_error)?;
         match (exists, one) {
             (true, true) => return Ok(Datum::Int(1)),
             (false, true) => contains = 0,
@@ -160,4 +148,23 @@ pub(super) fn json_contains_path(
         }
     }
     Ok(Datum::Int(contains))
+}
+
+#[inline]
+pub(crate) fn contains_path_mode(bytes: &[u8]) -> Result<bool, EvalError> {
+    if bytes.eq_ignore_ascii_case(b"one") {
+        Ok(true)
+    } else if bytes.eq_ignore_ascii_case(b"all") {
+        Ok(false)
+    } else {
+        Err(EvalError::Json(JsonError::BadOneOrAllArg { function: "json_contains_path" }))
+    }
+}
+
+pub(super) fn contains_path_mode_value(value: &Datum) -> Result<Option<bool>, EvalError> {
+    match value {
+        Datum::String(value) => contains_path_mode(value.bytes()).map(Some),
+        Datum::Bytes(value) => contains_path_mode(value).map(Some),
+        value => coerce_str(value)?.map(|mode| contains_path_mode(mode.as_bytes())).transpose(),
+    }
 }

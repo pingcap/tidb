@@ -1,0 +1,20 @@
+[package]
+name = "tidb-stacktrace"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Bounded native stack capture for the TiDB error library."
+
+[lints.rust]
+unsafe_code = "deny"
+missing_docs = "warn"
+unconditional_recursion = "deny"
+
+[lints.clippy]
+all = "warn"
+
+[target.'cfg(all(target_os = "macos", target_arch = "aarch64"))'.dependencies]
+backtrace = "=0.3.77"
+libc = "0.2"

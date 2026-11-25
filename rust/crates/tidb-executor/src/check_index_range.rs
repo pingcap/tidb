@@ -19,15 +19,20 @@
 
 use std::sync::Arc;
 
+use prost::Message;
 use tidb_chunk::chunk::Chunk;
 use tidb_datatype::FieldType;
 use tidb_distsql::select_response::SelectResponseIter;
 use tidb_driver_error::ExecError;
 use tidb_executor_internal_exec::{Executor, ExecutorMeta};
 use tidb_expr::schema::Schema;
+use tidb_goruntime::{go_runtime::GoSharedSlice, GoString};
 use tidb_model::{ColumnInfo, GoShared, IndexInfo, TableInfo};
 use tidb_proto::tipb;
+use tidb_util::misc::{column_label_size, encode_projected_column, ColumnProjection};
 
+use crate::cop_reader::{PreparedTableReadDag, TableReadDag};
+use crate::dag_request::{begin_embedded_message, delimited_field_size, end_embedded_message};
 use crate::range_group_merge::SelectResult as _;
 
 /// Go `CheckIndexRangeExec`.
@@ -70,12 +75,12 @@ impl CheckIndexRangeExec {
     fn build_dag_pb(
         &self,
         statement: &tidb_distsql::remote_scan::PushdownStatementContext,
-    ) -> Result<tipb::DagRequest, ExecError> {
+    ) -> Result<PreparedTableReadDag, ExecError> {
         let (time_zone_name, time_zone_offset) = statement.time_zone.dag_zone();
         let output_offsets = (0..self.meta.schema().columns.len())
             .map(|i| u32::try_from(i).expect("an output offset fits u32"))
             .collect();
-        let mut exec_pb = self.construct_index_scan_pb();
+        let (mut exec_pb, labels) = self.construct_index_scan_pb();
         if let Some(idx_scan) = exec_pb.idx_scan.as_mut() {
             tidb_table::tables::scan_from_infos::set_pb_columns_default_value(
                 &statement.time_zone,
@@ -87,7 +92,7 @@ impl CheckIndexRangeExec {
         }
         // Go `distsql.SetEncodeType`.
         let (encode_type, chunk_memory_layout) = crate::dag_request::encode_type_pb(tidb_distsql::EncodeType::Chunk);
-        Ok(tipb::DagRequest {
+        let dag = tipb::DagRequest {
             time_zone_name: Some(time_zone_name),
             time_zone_offset: Some(time_zone_offset),
             flags: Some(statement.push_down_flags),
@@ -96,21 +101,111 @@ impl CheckIndexRangeExec {
             encode_type: Some(encode_type as i32),
             chunk_memory_layout,
             ..tipb::DagRequest::default()
-        })
+        };
+        PreparedTableReadDag::from_encoder(dag, |dag| encode_index_check_dag(dag, &labels))
+            .map_err(|error| ExecError::Internal(error.into()))
     }
 
     /// Go `constructIndexScanPB`.
-    fn construct_index_scan_pb(&self) -> tipb::Executor {
+    fn construct_index_scan_pb(&self) -> (tipb::Executor, Vec<GoSharedSlice<GoString>>) {
+        let (columns, labels) = tidb_util::misc::columns_to_proto_shared(
+            &self.cols,
+            self.table.pk_is_handle,
+            true,
+            false,
+        )
+        .into_iter()
+        .map(ColumnProjection::into_parts)
+        .unzip();
         let idx_exec = tipb::IndexScan {
             table_id: Some(self.table.id),
             index_id: Some(self.index.id),
-            columns: tidb_util::misc::columns_to_proto(&self.cols, self.table.pk_is_handle, true, false),
+            columns,
             ..tipb::IndexScan::default()
         };
-        tipb::Executor {
+        let executor = tipb::Executor {
             idx_scan: Some(idx_exec),
             ..crate::dag_request::go_executor(tipb::ExecType::TypeIndexScan)
-        }
+        };
+        (executor, labels)
+    }
+}
+
+fn encode_index_check_dag(mut dag: tipb::DagRequest, labels: &[GoSharedSlice<GoString>]) -> Vec<u8> {
+    if labels.iter().all(GoSharedSlice::is_empty) {
+        return dag.encode_to_vec();
+    }
+    let [mut executor] = <[_; 1]>::try_from(std::mem::take(&mut dag.executors))
+        .expect("index check has one executor");
+    let mut scan = executor.idx_scan.take().expect("index check has an index scan");
+    let columns = std::mem::take(&mut scan.columns);
+    assert_eq!(columns.len(), labels.len());
+    let sizes = columns.iter().zip(labels).map(|(fields, labels)| {
+        let (label_size, packed_size) = labels.with_visible(column_label_size);
+        (fields.encoded_len() + label_size, packed_size)
+    }).collect::<Vec<_>>();
+    let scan_size = scan.encoded_len() + sizes.iter().map(|(size, _)| delimited_field_size(*size)).sum::<usize>();
+    let executor_size = executor.encoded_len() + delimited_field_size(scan_size);
+    let mut output = Vec::with_capacity(dag.encoded_len() + delimited_field_size(executor_size));
+
+    tipb::DagRequest { start_ts_fallback: dag.start_ts_fallback.take(), ..Default::default() }
+        .encode_raw(&mut output);
+    let executor_length = begin_embedded_message(2, executor_size, &mut output); // DAGRequest.executors
+    tipb::Executor { tp: executor.tp.take(), tbl_scan: executor.tbl_scan.take(), ..Default::default() }
+        .encode_raw(&mut output);
+    let scan_length = begin_embedded_message(3, scan_size, &mut output); // Executor.idx_scan
+    tipb::IndexScan { table_id: scan.table_id.take(), index_id: scan.index_id.take(), ..Default::default() }
+        .encode_raw(&mut output);
+    for ((fields, labels), (size, packed_size)) in columns.iter().zip(labels).zip(sizes) {
+        let column_length = begin_embedded_message(3, size, &mut output); // IndexScan.columns
+        labels.with_visible(|labels| encode_projected_column(fields, labels, packed_size, &mut output));
+        end_embedded_message(column_length, &mut output);
+    }
+    scan.encode_raw(&mut output);
+    end_embedded_message(scan_length, &mut output);
+    executor.encode_raw(&mut output);
+    end_embedded_message(executor_length, &mut output);
+    dag.encode_raw(&mut output);
+    output
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tidb_datatype::FieldTypeCode;
+    use tidb_util::misc::{column_to_proto, column_to_proto_shared};
+
+    #[test]
+    fn shared_index_check_columns_match_owned_wire() {
+        let source = ColumnInfo {
+            id: 42,
+            field_type: FieldType::new(FieldTypeCode::Enum).with_elems([
+                b"blue".to_vec(),
+                vec![0xff; 44],
+                "雪\0".as_bytes().to_vec(),
+            ]),
+            ..Default::default()
+        };
+        let mut owned = column_to_proto(&source, true, false);
+        let (mut shared, labels) = column_to_proto_shared(&source, true, false).into_parts();
+        owned.default_val = Some(vec![0].into());
+        shared.default_val = owned.default_val.clone();
+        let dag = |column| tipb::DagRequest {
+            time_zone_offset: Some(3600),
+            flags: Some(64),
+            output_offsets: vec![0],
+            executors: vec![tipb::Executor {
+                idx_scan: Some(tipb::IndexScan {
+                    table_id: Some(9),
+                    index_id: Some(13),
+                    columns: vec![column],
+                    ..Default::default()
+                }),
+                ..crate::dag_request::go_executor(tipb::ExecType::TypeIndexScan)
+            }],
+            ..Default::default()
+        };
+        assert_eq!(encode_index_check_dag(dag(shared), &[labels]), dag(owned).encode_to_vec());
     }
 }
 
@@ -158,9 +253,8 @@ impl Executor for CheckIndexRangeExec {
             &statement,
             crate::cop_reader::TableRead {
                 store_type: tidb_kv::store_type::StoreType::TiKv,
-                dag,
-                key_ranges,
-                key_range_hints: Vec::new(),
+                dag: TableReadDag::Prepared(&dag),
+                key_ranges: tidb_txnkv::PartitionedKeyRanges::new_non_partitioned(key_ranges).into(),
                 partition_id_and_ranges: Vec::new(),
                 batch_cop: false,
                 schema_version: 0,

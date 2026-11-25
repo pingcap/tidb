@@ -16,6 +16,7 @@
 //! of the node's statistics cache, full or lite, on the statistics handle's
 //! sessions, under the cache's memory quota.
 
+use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, RwLock};
@@ -129,12 +130,16 @@ fn bytes(row: &[Datum], index: usize) -> &[u8] {
     row.get(index).and_then(Datum::as_raw_bytes).unwrap_or_default()
 }
 
-fn ids_in(table_ids: &[i64]) -> String {
-    table_ids
-        .iter()
-        .map(i64::to_string)
-        .collect::<Vec<_>>()
-        .join(",")
+fn select_table_ids(prefix: &str, table_ids: &[i64], suffix: &str) -> String {
+    const PREDICATE: &str = " where table_id in (";
+    let mut sql =
+        String::with_capacity(prefix.len() + PREDICATE.len() + table_ids.len() * 8 + 1 + suffix.len());
+    sql.push_str(prefix);
+    sql.push_str(PREDICATE);
+    tidb_slice::append_comma_separated_i64s(&mut sql, table_ids);
+    sql.push(')');
+    sql.push_str(suffix);
+    sql
 }
 
 /// Go `initStatsMeta4Chunk`.
@@ -169,12 +174,12 @@ fn init_stats_meta_4_chunk(is: &InfoSchema, cache: &StatsCacheImpl, rows: &[Vec<
 }
 
 /// Go `genInitStatsMetaSQL`.
-fn gen_init_stats_meta_sql(table_ids: &[i64]) -> String {
+fn gen_init_stats_meta_sql(table_ids: &[i64]) -> Cow<'static, str> {
     let select_prefix = "select HIGH_PRIORITY version, table_id, modify_count, count, snapshot, last_stats_histograms_version from mysql.stats_meta";
     if table_ids.is_empty() {
-        return select_prefix.to_owned();
+        return Cow::Borrowed(select_prefix);
     }
-    format!("{select_prefix} where table_id in ({})", ids_in(table_ids))
+    Cow::Owned(select_table_ids(select_prefix, table_ids, ""))
 }
 
 /// Go `initStatsMeta`.
@@ -409,9 +414,7 @@ fn gen_init_stats_histograms_sql(options: &GenHistSqlOptions<'_>) -> String {
         GenHistSqlOptions::Paging([start, end]) => {
             format!("{select_prefix} where table_id >= {start} and table_id < {end}{order_suffix}")
         }
-        GenHistSqlOptions::TableIds(ids) => {
-            format!("{select_prefix} where table_id in ({}){order_suffix}", ids_in(ids))
-        }
+        GenHistSqlOptions::TableIds(ids) => select_table_ids(select_prefix, ids, order_suffix),
     }
 }
 

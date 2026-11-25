@@ -19,9 +19,10 @@
 //! quoted identifiers, `@file` imports, and legacy MySQL-replication rules.
 //!
 //! Go's `Filter`/`matcher` interfaces become the [`Filter`] trait (as
-//! `Box<dyn Filter>`) and the internal `Matcher` enum. Wildcards compile to
-//! regexes via the `regex` crate. Source-supported matching is covered by the
-//! package vectors; regex/io library diagnostics retain library-owned wording.
+//! `Box<dyn Filter>`) and the internal `Matcher` enum. Simple globs match
+//! directly, while the `regex` crate handles other patterns. Source-supported
+//! matching is covered by package vectors; regex/io diagnostics retain
+//! library-owned wording.
 
 mod column_filter;
 mod compat;
@@ -39,7 +40,9 @@ pub use compat::{
 use matchers::TableRule;
 use parser::{MatcherParser, RuleParser, TableRulesParser};
 use std::fmt;
-use tidb_mysql::to_lowercase as go_simple_lowercase;
+use tidb_mysql::{to_lowercase as go_simple_lowercase, to_lowercase_cow as lowercase_name};
+
+const MIN_INDEXED_LITERAL_RULES: usize = 8;
 
 /// Error returned by filter parsing.
 #[derive(Debug)]
@@ -75,16 +78,65 @@ pub trait Filter: Send + Sync {
 /// The concrete rule-list implementation of [`Filter`].
 pub(crate) struct TableFilter {
     rules: Vec<TableRule>,
+    literals: Option<LiteralTableRules>,
+}
+
+struct LiteralTableRules {
+    tables: Vec<usize>,
+    positive_schemas: Vec<usize>,
+}
+
+impl LiteralTableRules {
+    fn new(rules: &[TableRule]) -> Option<Self> {
+        if rules.len() < MIN_INDEXED_LITERAL_RULES
+            || rules.iter().any(|r| r.schema.literal().is_none() || r.table.literal().is_none())
+        {
+            return None;
+        }
+
+        let pair = |index: usize| Self::names(&rules[index]);
+        let mut tables: Vec<_> = (0..rules.len()).collect();
+        tables.sort_unstable_by(|&left, &right| {
+            pair(left).cmp(&pair(right)).then(left.cmp(&right))
+        });
+        // A negative rule for one exact table does not reject an entire schema.
+        let mut positive_schemas = Vec::new();
+        for &i in &tables {
+            if rules[i].positive && positive_schemas.last().is_none_or(|&j| pair(j).0 != pair(i).0) {
+                positive_schemas.push(i);
+            }
+        }
+        // Rules are already in precedence order. Keep the first rule per key.
+        tables.dedup_by(|a, b| pair(*a) == pair(*b));
+        Some(Self { tables, positive_schemas })
+    }
+
+    fn names(rule: &TableRule) -> (&str, &str) {
+        (
+            rule.schema.literal().expect("indexed schema literal"),
+            rule.table.literal().expect("indexed table literal"),
+        )
+    }
 }
 
 impl TableFilter {
     pub(crate) fn new(rules: Vec<TableRule>) -> Self {
-        TableFilter { rules }
+        let literals = LiteralTableRules::new(&rules);
+        TableFilter { rules, literals }
     }
 }
 
 impl Filter for TableFilter {
     fn match_table(&self, schema: &str, table: &str) -> bool {
+        if let [rule] = self.rules.as_slice() {
+            return rule.positive && rule.schema.match_string(schema) && rule.table.match_string(table);
+        }
+        if let Some(index) = &self.literals {
+            return index
+                .tables
+                .binary_search_by(|&i| LiteralTableRules::names(&self.rules[i]).cmp(&(schema, table)))
+                .is_ok_and(|i| self.rules[index.tables[i]].positive);
+        }
         for rule in &self.rules {
             if rule.schema.match_string(schema) && rule.table.match_string(table) {
                 return rule.positive;
@@ -94,6 +146,12 @@ impl Filter for TableFilter {
     }
 
     fn match_schema(&self, schema: &str) -> bool {
+        if let Some(index) = &self.literals {
+            return index
+                .positive_schemas
+                .binary_search_by(|&i| LiteralTableRules::names(&self.rules[i]).0.cmp(schema))
+                .is_ok();
+        }
         for rule in &self.rules {
             if rule.schema.match_string(schema) && (rule.positive || rule.table.match_all_strings())
             {
@@ -113,7 +171,7 @@ impl Filter for TableFilter {
                 positive: r.positive,
             })
             .collect();
-        Box::new(TableFilter { rules })
+        Box::new(TableFilter::new(rules))
     }
 }
 
@@ -125,11 +183,11 @@ struct LoweredFilter {
 impl Filter for LoweredFilter {
     fn match_table(&self, schema: &str, table: &str) -> bool {
         self.wrapped
-            .match_table(&go_simple_lowercase(schema), &go_simple_lowercase(table))
+            .match_table(&lowercase_name(schema), &lowercase_name(table))
     }
 
     fn match_schema(&self, schema: &str) -> bool {
-        self.wrapped.match_schema(&go_simple_lowercase(schema))
+        self.wrapped.match_schema(&lowercase_name(schema))
     }
 
     fn to_lower(&self) -> Box<dyn Filter> {
@@ -173,7 +231,7 @@ pub fn parse(args: &[&str]) -> Result<Box<dyn Filter>, FilterError> {
 
     p.rules.reverse();
 
-    Ok(Box::new(TableFilter { rules: p.rules }))
+    Ok(Box::new(TableFilter::new(p.rules)))
 }
 
 /// Returns a case-insensitive version of the input filter.

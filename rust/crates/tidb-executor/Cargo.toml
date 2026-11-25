@@ -206,6 +206,7 @@ zstd.workspace = true
 snap.workspace = true
 hashbrown = { workspace = true }
 prost = { workspace = true }
+simdutf8 = { version = "0.1.5", features = ["aarch64_neon"] }
 smallvec = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

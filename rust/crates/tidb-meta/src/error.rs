@@ -136,7 +136,7 @@ impl fmt::Display for MetaError {
             Self::InvalidFieldInteger { value, failure, .. } => write!(
                 formatter,
                 "strconv.Atoi: parsing {}: {}",
-                GoQuotedString(value),
+                tidb_go_strconv::quote_bytes(value),
                 match failure {
                     IntegerParseFailure::Syntax => "invalid syntax",
                     IntegerParseFailure::Range => "value out of range",
@@ -256,48 +256,6 @@ impl MetaError {
     pub fn code(&self) -> Option<u16> {
         self.proto()
             .and_then(|proto| u16::try_from(proto.code().value()).ok())
-    }
-}
-
-struct GoQuotedString<'a>(&'a [u8]);
-
-impl fmt::Display for GoQuotedString<'_> {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("\"")?;
-        let mut rest = self.0;
-        while !rest.is_empty() {
-            match std::str::from_utf8(rest) {
-                Ok(valid) => {
-                    for character in valid.chars() {
-                        match character {
-                            '\\' => formatter.write_str("\\\\")?,
-                            '"' => formatter.write_str("\\\"")?,
-                            '\n' => formatter.write_str("\\n")?,
-                            '\r' => formatter.write_str("\\r")?,
-                            '\t' => formatter.write_str("\\t")?,
-                            character if character.is_control() => {
-                                write!(formatter, "\\u{:04x}", character as u32)?;
-                            }
-                            character => write!(formatter, "{character}")?,
-                        }
-                    }
-                    break;
-                }
-                Err(error) => {
-                    let valid = &rest[..error.valid_up_to()];
-                    for character in std::str::from_utf8(valid)
-                        .expect("valid_up_to is valid UTF-8")
-                        .chars()
-                    {
-                        write!(formatter, "{character}")?;
-                    }
-                    let invalid = rest[error.valid_up_to()];
-                    write!(formatter, "\\x{invalid:02x}")?;
-                    rest = &rest[error.valid_up_to() + 1..];
-                }
-            }
-        }
-        formatter.write_str("\"")
     }
 }
 

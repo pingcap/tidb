@@ -70,8 +70,8 @@ fn benchmark_spec(parts: usize) -> (PartitionExpr, PartitionInfo) {
 
 fn benchmark_range() -> Range {
     Range {
-        low_val: vec![Datum::UInt(11_000)],
-        high_val: vec![Datum::MaxValue],
+        low_val: vec![Datum::UInt(11_000)].into(),
+        high_val: vec![Datum::MaxValue].into(),
         collators: vec![Collation::Binary],
         low_exclude: true,
         high_exclude: false,

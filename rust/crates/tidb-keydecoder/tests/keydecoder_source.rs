@@ -21,7 +21,7 @@ use tidb_tablecodec::table_key::{
 use tidb_codec::encode_key;
 use tidb_datatype::Datum;
 use tidb_infoschema::SessionExtendedInfoSchema;
-use tidb_keydecoder::{decode_key, HandleType};
+use tidb_keydecoder::{decode_key, HandleType, KeyInfoCatalog, KeyInfoTableLookup};
 use tidb_model::db::DBInfo;
 use tidb_model::go_runtime::GoShared;
 use tidb_model::index::IndexInfo;
@@ -107,6 +107,87 @@ fn record_key(table_id: i64, handle: RecordHandle) -> Vec<u8> {
 
 fn index_key(table_id: i64, index_id: i64, values: &[Datum]) -> Vec<u8> {
     encode_index_seek_key(table_id, index_id, &encode_key(values).unwrap())
+}
+
+#[test]
+fn physical_lookup_selects_only_the_requested_index() {
+    let catalog = catalog();
+    let metadata = |index| {
+        let Some(KeyInfoTableLookup::Resolved(table)) =
+            catalog.resolve_physical_table_for_key(5, index)
+        else {
+            panic!("partition should resolve");
+        };
+        table
+    };
+    assert!(metadata(None).indexes.is_empty());
+    assert!(metadata(Some(99)).indexes.is_empty());
+    let table = metadata(Some(4));
+    assert_eq!(table.partition_id, 5);
+    assert_eq!(table.partition_name, "p0");
+    assert_eq!(table.indexes.len(), 1);
+    assert_eq!(table.indexes[0].name, "index4");
+}
+
+#[test]
+fn v2_key_lookup_loads_only_its_owning_table() {
+    use std::collections::BTreeMap;
+    use std::sync::Arc;
+    use tidb_infoschema::cluster_catalog::ClusterCatalogError;
+    use tidb_infoschema::infoschema_v2::{CachedTable, Data, TableLoader};
+    use tidb_infoschema::TableEntry;
+
+    struct Loader;
+    impl TableLoader for Loader {
+        fn load_table(
+            &self,
+            db_id: i64,
+            table_id: i64,
+            _: u64,
+        ) -> Result<CachedTable, ClusterCatalogError> {
+            assert_eq!((db_id, table_id), (1, 20));
+            let table = TableCommon::loaded(
+                TableInfo {
+                    db_id,
+                    id: table_id,
+                    name: CiString::new("A_Target"),
+                    state: SchemaState::PUBLIC,
+                    ..TableInfo::default()
+                },
+                Vec::new(),
+            );
+            Ok(CachedTable {
+                info: table.meta(),
+                table: Arc::new(TableEntry::Kv(Arc::new(table))),
+                size: 1024,
+            })
+        }
+
+        fn list_tables(
+            &self,
+            _: i64,
+            _: u64,
+        ) -> Result<Vec<GoShared<TableInfo>>, ClusterCatalogError> {
+            panic!("key decoding should not list the database");
+        }
+    }
+
+    let database = GoShared::new(DBInfo {
+        id: 1,
+        name: CiString::new("MiXeD"),
+        table_name2id: Some(GoShared::new(BTreeMap::from([
+            ("z_unused".to_owned(), 10),
+            ("a_target".to_owned(), 20),
+        ]))),
+        ..DBInfo::default()
+    });
+    let mut catalog =
+        SessionExtendedInfoSchema::init_with_db_infos(vec![database], Vec::new(), Vec::new(), 1);
+    catalog.init_with_db_infos_v2(Arc::new(Data::new()), Arc::new(Loader), 1 << 20);
+    let decoded = decode_key(&record_key(20, RecordHandle::Int(42)), &catalog).unwrap();
+    assert_eq!(decoded.db_name, "MiXeD");
+    assert_eq!(decoded.table_name, "A_Target");
+    assert_eq!(decoded.handle_value, "42");
 }
 
 #[test]

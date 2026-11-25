@@ -75,7 +75,7 @@ struct BatchCopWorker<S: tikv_client::PdClient> {
     /// Go `store`.
     store: TikvStore<S>,
     /// Go `req`.
-    req: KvRequestMetadata,
+    req: Arc<KvRequestMetadata>,
     /// Go `ctx`'s values.
     kv_context: tidb_txnkv::StatementKvContext,
     rpc_interceptor: tidb_txnkv::RpcInterceptorOption,
@@ -101,7 +101,7 @@ async fn build_batch_cop_tasks<S: tikv_client::PdClient>(
     req: &KvRequestMetadata,
     ctx: &Arc<dyn MppContext>,
     kv_context: &tidb_txnkv::StatementKvContext,
-    ranges_for_each_physical_table: &[Ranges],
+    ranges_for_each_physical_table: Vec<Ranges>,
     partition_ids: &[i64],
 ) -> Result<(Vec<MppStoreTask>, Vec<String>), String> {
     crate::batch_cop_tasks::build_batch_cop_tasks(
@@ -141,34 +141,34 @@ pub fn send_batch<S: tikv_client::PdClient + 'static>(
             .map_err(|error| format!("{error:?}"))?,
     );
     let req = request
-        .metadata_for_send()
+        .shared_metadata_for_send()
         .map_err(|error| format!("{error:?}"))?;
     if req.keep_order || req.desc {
         return Err("batch coprocessor cannot prove keep order or desc property".to_owned());
     }
     let kv_context = request.kv_context().with_txn_start_ts(req.start_ts);
     let ctx: Arc<dyn MppContext> = Arc::new(RequestContext(Arc::clone(&cancellation)));
-    let to_pairs = |ranges: &[tidb_txnkv::KeyRange]| -> Ranges {
-        ranges
-            .iter()
-            .map(|range| (range.start_key.clone(), range.end_key.clone()))
-            .collect()
+    let to_native = |ranges: &[tidb_txnkv::KeyRange]| -> Ranges {
+        Ranges::Native(crate::key_ranges::key_ranges_to_proto(
+            ranges.iter().map(|range| (range.start_key.as_slice(), range.end_key.as_slice())),
+        ))
     };
-    let (ranges, partition_ids): (Vec<Ranges>, Vec<i64>) = if req.partition_id_and_ranges.is_empty() {
+    let partition_ranges = req.partition_table_ranges();
+    let (ranges, partition_ids): (Vec<Ranges>, Vec<i64>) = if partition_ranges.is_empty() {
         // TODO: merge the if branch.
         let first = req
             .key_ranges
             .as_ref()
             .map_or(&[][..], |ranges| ranges.first_partition_ranges());
-        (vec![to_pairs(first)], Vec::new())
+        (vec![to_native(first)], Vec::new())
     } else {
         // For Partition Table Scan
-        req.partition_id_and_ranges
+        partition_ranges
             .iter()
-            .map(|pi| (to_pairs(&pi.key_ranges), pi.id))
+            .map(|pi| (to_native(&pi.key_ranges), pi.id))
             .unzip()
     };
-    let build = build_batch_cop_tasks(store, req, &ctx, &kv_context, &ranges, &partition_ids);
+    let build = build_batch_cop_tasks(store, &req, &ctx, &kv_context, ranges, &partition_ids);
     let tasks = store.block_on(async {
         if req.max_execution_time_ms == 0 {
             return build.await;
@@ -182,9 +182,10 @@ pub fn send_batch<S: tikv_client::PdClient + 'static>(
     let (tasks, warnings) = tasks;
     append_warnings(append_warning.as_ref(), warnings);
     let (resp_chan, receiver) = tokio::sync::mpsc::channel(RESP_CHAN_SIZE);
+    let start_ts = req.start_ts;
     let worker = Arc::new(BatchCopWorker {
         store: store.clone(),
-        req: req.clone(),
+        req,
         kv_context,
         rpc_interceptor: request.rpc_interceptor(),
         cancellation: Arc::clone(&cancellation),
@@ -207,7 +208,7 @@ pub fn send_batch<S: tikv_client::PdClient + 'static>(
         .collect();
     Ok(Box::new(BatchCopIterator {
         store: store.clone(),
-        start_ts: req.start_ts,
+        start_ts,
         cancellation,
         resp_chan: receiver,
         workers,
@@ -260,14 +261,14 @@ impl<S: tikv_client::PdClient> BatchCopWorker<S> {
         task: &MppStoreTask,
     ) -> Result<Vec<MppStoreTask>, QueryResponseError> {
         let sorted = |regions: &[coprocessor::RegionInfo]| -> Ranges {
-            let mut ranges: Ranges = regions
+            let mut ranges: Vec<_> = regions
                 .iter()
                 .flat_map(|region| &region.ranges)
-                .map(|range| (range.start.clone().into(), range.end.clone().into()))
+                .cloned()
                 .collect();
             // need to make sure the key ranges is sorted
-            ranges.sort_by(|a, b| a.0.cmp(&b.0));
-            ranges
+            ranges.sort_by(|a, b| a.start.cmp(&b.start));
+            Ranges::Native(ranges)
         };
         let (ranges, partition_ids): (Vec<Ranges>, Vec<i64>) = if task.partition_table_regions.is_empty() {
             (vec![sorted(&task.regions)], Vec::new())
@@ -282,7 +283,7 @@ impl<S: tikv_client::PdClient> BatchCopWorker<S> {
             &self.req,
             &self.ctx,
             &self.kv_context,
-            &ranges,
+            ranges,
             &partition_ids,
         )
         .await
@@ -304,19 +305,17 @@ impl<S: tikv_client::PdClient> BatchCopWorker<S> {
             .regions
             .first()
             .and_then(|region| region.ranges.first())
-            .map_or(&[][..], |range| range.start.as_slice());
+            .map_or(&[][..], |range| range.start.as_ref());
         let rg_name = if tidb_vardef::ENABLE_RESOURCE_CONTROL.load(std::sync::atomic::Ordering::Relaxed) {
             self.req.resource_group_name.clone()
         } else {
             String::new()
         };
-        let cop_req = coprocessor::BatchRequest {
+        let mut cop_req = coprocessor::BatchRequest {
             tp: self.req.request_type.raw(),
             start_ts: self.req.start_ts,
             data: self.req.data.clone().unwrap_or_default(),
             schema_ver: self.req.schema_version,
-            regions: task.regions.clone(),
-            table_regions: task.partition_table_regions.clone(),
             connection_id: self.req.connection_id,
             connection_alias: self.req.connection_alias.clone(),
             context: Some(tidb_proto::KvrpcContext {
@@ -342,16 +341,17 @@ impl<S: tikv_client::PdClient> BatchCopWorker<S> {
             }),
             ..Default::default()
         };
-        // Go `codecV2.EncodeRequest(CmdBatchCop)`; this direct transport bypasses PlanBuilder.
-        let mut cop_req = match self.store.store().keyspace() {
+        // Go `codecV2.EncodeRequest(CmdBatchCop)`. The task retains its
+        // original region ranges for retries.
+        let keyspace = self.store.store().keyspace();
+        (cop_req.regions, cop_req.table_regions) = match keyspace {
             tikv_client::request::Keyspace::Enable { keyspace_id } => {
                 tikv_client::request::ApiV2Codec::new(tikv_client::request::KeyMode::Txn, keyspace_id)
                     .map_err(|error| QueryResponseError::Source(error.to_string()))?
-                    .encode_batch_coprocessor_request(&cop_req)
+                    .encode_batch_coprocessor_regions(&task.regions, &task.partition_table_regions)
             }
-            _ => cop_req,
+            _ => (task.regions.clone(), task.partition_table_regions.clone()),
         };
-        let keyspace = self.store.store().keyspace();
         let context = cop_req.context.get_or_insert_with(Default::default);
         context.api_version = keyspace.api_version() as i32;
         context.keyspace = keyspace.context_keyspace_id()

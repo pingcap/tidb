@@ -147,8 +147,8 @@ fn materialize_open_bounds(range: &Range, unsigned: bool) -> Range {
         }
     };
     Range {
-        low_val: vec![datum(low)],
-        high_val: vec![datum(high)],
+        low_val: vec![datum(low)].into(),
+        high_val: vec![datum(high)].into(),
         collators: range.collators.clone(),
         low_exclude: low_exclusive,
         high_exclude: high_exclusive,

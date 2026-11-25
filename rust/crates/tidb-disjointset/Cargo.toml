@@ -11,3 +11,5 @@ description = "TiDB util/disjointset: Go pkg/util/disjointset (Rust rewrite)."
 workspace = true
 
 [dependencies]
+foldhash.workspace = true
+hashbrown.workspace = true

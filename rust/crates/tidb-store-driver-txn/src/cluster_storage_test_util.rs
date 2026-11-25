@@ -196,8 +196,8 @@ impl tidb_txnkv::Client for UnistoreCoprocessor {
                     .iter()
                     .flatten()
                     .map(|range| tidb_proto::coprocessor::KeyRange {
-                        start: range.start_key.as_bytes().to_vec(),
-                        end: range.end_key.as_bytes().to_vec(),
+                        start: range.start_key.as_bytes().to_vec().into(),
+                        end: range.end_key.as_bytes().to_vec().into(),
                     })
                     .collect()
             })

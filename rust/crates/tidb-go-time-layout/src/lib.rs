@@ -26,6 +26,12 @@
 //! It also renders `time.Time.String()`, the layout `%v` prints a time with
 //! (Go errors such as `ErrTxnAbortedByGC` and `ErrSnapshotTooOld` embed it).
 
+use std::fmt::Write as _;
+use std::sync::LazyLock;
+
+use chrono::{Datelike as _, Offset as _, TimeZone as _, Timelike as _};
+use chrono_tz::OffsetName as _;
+
 /// A clock Go parsed from a layout.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct ParsedClock {
@@ -52,77 +58,132 @@ enum Std {
 /// element and its layout text, and the rest of the layout.
 fn next_std_chunk(layout: &str) -> Result<(&str, Option<(Std, &str)>, &str), String> {
     let bytes = layout.as_bytes();
-    for index in 0..bytes.len() {
-        let rest = &layout[index..];
-        let found = if rest.starts_with("15") {
-            Some((Std::Hour, 2))
-        } else if rest.starts_with("04") {
-            Some((Std::ZeroMinute, 2))
-        } else if rest.starts_with("05") {
-            Some((Std::ZeroSecond, 2))
-        } else if rest.starts_with("-0700") {
-            Some((Std::NumTz, 5))
-        } else if bytes[index].is_ascii_digit()
-            || matches!(
-                bytes[index],
-                b'J' | b'M' | b'P' | b'p' | b'Z' | b'_' | b'.' | b','
-            )
-        {
-            return Err(format!("unsupported Go time layout element in {layout:?}"));
-        } else {
-            None
+    let start = if bytes.len() >= 16 {
+        literal_layout_prefix(bytes)
+    } else {
+        0
+    };
+    for (index, &byte) in bytes.iter().enumerate().skip(start) {
+        let rest = &bytes[index..];
+        let (std, width) = match byte {
+            b'1' if rest.get(1) == Some(&b'5') => (Std::Hour, 2),
+            b'0' if rest.get(1) == Some(&b'4') => (Std::ZeroMinute, 2),
+            b'0' if rest.get(1) == Some(&b'5') => (Std::ZeroSecond, 2),
+            b'-' if rest.starts_with(b"-0700") => (Std::NumTz, 5),
+            b'0'..=b'9' | b'J' | b'M' | b'P' | b'p' | b'Z' | b'_' | b'.' | b',' => {
+                return Err(format!("unsupported Go time layout element in {layout:?}"));
+            }
+            _ => continue,
         };
-        if let Some((std, width)) = found {
-            return Ok((
-                &layout[..index],
-                Some((std, &layout[index..index + width])),
-                &layout[index + width..],
-            ));
-        }
+        return Ok((
+            &layout[..index],
+            Some((std, &layout[index..index + width])),
+            &layout[index + width..],
+        ));
     }
     Ok((layout, None, ""))
+}
+
+#[inline(never)]
+fn literal_layout_prefix(layout: &[u8]) -> usize {
+    // These bytes either begin a supported directive or need a scalar
+    // check for an unsupported one. Other bytes are ordinary literals.
+    layout
+        .as_chunks::<16>()
+        .0
+        .iter()
+        .take_while(|block| {
+            block.map(|byte| {
+                u8::from(
+                    byte.is_ascii_digit()
+                        | (b','..=b'.').contains(&byte)
+                        | (byte == b'J')
+                        | (byte == b'M')
+                        | (byte == b'P')
+                        | (byte == b'p')
+                        | (byte == b'Z')
+                        | (byte == b'_'),
+                )
+            }) == [0; 16]
+        })
+        .count()
+        * 16
 }
 
 /// Go `time.quote`.
 #[must_use]
 pub fn go_time_quote(text: &str) -> String {
     let mut quoted = String::with_capacity(text.len() + 2);
-    quoted.push('"');
-    for (index, character) in text.char_indices() {
-        if !character.is_ascii() || character < ' ' {
-            for byte in &text.as_bytes()[index..index + character.len_utf8()] {
-                quoted.push_str(&format!("\\x{byte:02x}"));
-            }
-        } else {
-            if character == '"' || character == '\\' {
-                quoted.push('\\');
-            }
-            quoted.push(character);
-        }
-    }
-    quoted.push('"');
+    push_time_quote(&mut quoted, text.as_bytes());
     quoted
 }
 
-/// Go `ParseError.Error()`.
-fn parse_error(
-    layout: &str,
-    value: &str,
-    layout_elem: &str,
-    value_elem: &str,
-    message: &str,
-) -> String {
-    if message.is_empty() {
-        format!(
-            "parsing time {} as {}: cannot parse {} as {}",
-            go_time_quote(value),
-            go_time_quote(layout),
-            go_time_quote(value_elem),
-            go_time_quote(layout_elem)
-        )
-    } else {
-        format!("parsing time {}{message}", go_time_quote(value))
+fn push_time_quote(out: &mut String, text: &[u8]) {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    out.push('"');
+    let mut start = 0;
+    if text.len() >= 32 {
+        start = plain_quote_prefix(text);
+        if start != 0 {
+            out.push_str(std::str::from_utf8(&text[..start]).expect("plain quote prefix is ASCII"));
+        }
     }
+    for &byte in &text[start..] {
+        match byte {
+            b'"' | b'\\' => {
+                out.push('\\');
+                out.push(char::from(byte));
+            }
+            b' '..=0x7f => out.push(char::from(byte)),
+            _ => {
+                out.push_str("\\x");
+                out.push(char::from(HEX[usize::from(byte >> 4)]));
+                out.push(char::from(HEX[usize::from(byte & 15)]));
+            }
+        }
+    }
+    out.push('"');
+}
+
+fn plain_quote_prefix(text: &[u8]) -> usize {
+    // Go's quote passes DEL through as well as printable ASCII.
+    text.as_chunks::<16>()
+        .0
+        .iter()
+        .take_while(|block| {
+            block.map(|byte| {
+                u8::from((b' '..=0x7f).contains(&byte) & (byte != b'"') & (byte != b'\\'))
+            }) == [1; 16]
+        })
+        .count()
+        * 16
+}
+
+/// Go `ParseError.Error()`.
+#[cold]
+fn parse_error(layout: &str, value: &str, layout_elem: &str, value_elem: &[u8]) -> String {
+    const AS: &str = " as ";
+    const CANNOT_PARSE: &str = ": cannot parse ";
+    let suffix_len = 2 * AS.len() + CANNOT_PARSE.len() + 6;
+    let mut out = parse_error_prefix(
+        value,
+        suffix_len + layout.len() + layout_elem.len() + value_elem.len(),
+    );
+    out.push_str(AS);
+    push_time_quote(&mut out, layout.as_bytes());
+    out.push_str(CANNOT_PARSE);
+    push_time_quote(&mut out, value_elem);
+    out.push_str(AS);
+    push_time_quote(&mut out, layout_elem.as_bytes());
+    out
+}
+
+fn parse_error_prefix(value: &str, suffix_len: usize) -> String {
+    const PREFIX: &str = "parsing time ";
+    let mut out = String::with_capacity(PREFIX.len() + 2 + value.len() + suffix_len);
+    out.push_str(PREFIX);
+    push_time_quote(&mut out, value.as_bytes());
+    out
 }
 
 /// Go `getnum`: one or two leading digits; `fixed` demands two.
@@ -144,29 +205,45 @@ fn getnum(value: &str, fixed: bool) -> Option<(u32, &str)> {
 }
 
 /// Go `cutspace`.
-fn cutspace(text: &str) -> &str {
-    text.trim_start_matches(' ')
+fn cutspace(mut text: &[u8]) -> &[u8] {
+    while let Some(rest) = text.strip_prefix(&[b' '; 32]) {
+        text = rest;
+    }
+    while let [b' ', rest @ ..] = text {
+        text = rest;
+    }
+    text
 }
 
 /// Go `skip`: consumes `prefix` from `value`, a space matching any run of
 /// spaces. On a mismatch, answers the value where matching stopped.
-fn skip<'a>(mut value: &'a str, mut prefix: &str) -> Result<&'a str, &'a str> {
-    while let Some(first) = prefix.as_bytes().first() {
-        if *first == b' ' {
-            if value.as_bytes().first().is_some_and(|byte| *byte != b' ') {
-                return Err(value);
+fn skip<'a>(value: &'a str, prefix: &str) -> Result<&'a str, &'a [u8]> {
+    let mut rest = value.as_bytes();
+    let mut prefix = prefix.as_bytes();
+    while let Some((literal, rest_prefix)) = prefix.split_first_chunk::<16>() {
+        if !rest.starts_with(literal) || literal.contains(&b' ') {
+            break;
+        }
+        prefix = rest_prefix;
+        rest = &rest[16..];
+    }
+    while let Some(&first) = prefix.first() {
+        if first == b' ' {
+            if rest.first().is_some_and(|byte| *byte != b' ') {
+                return Err(rest);
             }
             prefix = cutspace(prefix);
-            value = cutspace(value);
+            rest = cutspace(rest);
             continue;
         }
-        if value.as_bytes().first() != Some(first) {
-            return Err(value);
+        if rest.first() != Some(&first) {
+            return Err(rest);
         }
         prefix = &prefix[1..];
-        value = &value[1..];
+        rest = &rest[1..];
     }
-    Ok(value)
+    // A complete UTF-8 prefix and ASCII spaces preserve the character boundary.
+    Ok(&value[value.len() - rest.len()..])
 }
 
 /// Go `time.Parse(layout, value)` for a clock layout, answering the parsed
@@ -178,13 +255,13 @@ pub fn parse_clock(layout: &str, value: &str) -> Result<ParsedClock, String> {
     let mut range_error: Option<&str> = None;
     loop {
         let (prefix, std, suffix) = next_std_chunk(remaining_layout)?;
-        rest = skip(rest, prefix).map_err(|at| parse_error(layout, value, prefix, at, ""))?;
+        rest = skip(rest, prefix).map_err(|at| parse_error(layout, value, prefix, at))?;
         let Some((std, layout_elem)) = std else {
             break;
         };
         remaining_layout = suffix;
         let hold = rest;
-        let bad = || parse_error(layout, value, layout_elem, hold, "");
+        let bad = || parse_error(layout, value, layout_elem, hold.as_bytes());
         match std {
             Std::Hour => {
                 let (hour, after) = getnum(rest, false).ok_or_else(bad)?;
@@ -209,50 +286,62 @@ pub fn parse_clock(layout: &str, value: &str) -> Result<ParsedClock, String> {
                 }
                 clock.second = second;
                 rest = after;
+                // Go consumes an optional fractional second even when the
+                // layout requests only seconds. ParsedClock stores whole seconds.
+                if let [b'.' | b',', b'0'..=b'9', tail @ ..] = rest.as_bytes() {
+                    let digits = tail.iter().take_while(|byte| byte.is_ascii_digit()).count();
+                    rest = &rest[2 + digits..];
+                }
             }
             Std::NumTz => {
-                if rest.len() < 5 || !rest.is_char_boundary(5) {
+                let &[sign, h1, h2, m1, m2, ..] = rest.as_bytes() else {
                     return Err(bad());
-                }
-                let (sign, hour, minute) = (&rest[..1], &rest[1..3], &rest[3..5]);
-                let (hours, _) = getnum(hour, true).ok_or_else(bad)?;
-                let (minutes, _) = getnum(minute, true).ok_or_else(bad)?;
-                // Go tests `>`, not `>=`, for offsets.
+                };
+                let hours = decimal_pair(h1, h2).ok_or_else(bad)?;
+                let minutes = decimal_pair(m1, m2);
+                // Go reports range errors before errors in the sign or minutes.
                 if hours > 24 {
                     range_error = Some("time zone offset hour");
                 }
-                if minutes > 60 {
+                if minutes.is_some_and(|minutes| minutes > 60) {
                     range_error = Some("time zone offset minute");
                 }
-                let offset = i32::try_from((hours * 60 + minutes) * 60).unwrap_or(i32::MAX);
-                clock.zone_offset = Some(match sign {
-                    "+" => offset,
-                    "-" => -offset,
-                    _ => return Err(bad()),
-                });
-                rest = &rest[5..];
+                if range_error.is_none() {
+                    let minutes = minutes.ok_or_else(bad)?;
+                    let offset = (hours * 60 + minutes) * 60;
+                    clock.zone_offset = Some(match sign {
+                        b'+' => offset,
+                        b'-' => -offset,
+                        _ => return Err(bad()),
+                    });
+                    rest = &rest[5..];
+                }
             }
         }
         if let Some(element) = range_error {
-            return Err(parse_error(
-                layout,
-                value,
-                layout_elem,
-                rest,
-                &format!(": {element} out of range"),
-            ));
+            const OUT_OF_RANGE: &str = " out of range";
+            let mut out = parse_error_prefix(value, 2 + element.len() + OUT_OF_RANGE.len());
+            out.push_str(": ");
+            out.push_str(element);
+            out.push_str(OUT_OF_RANGE);
+            return Err(out);
         }
     }
     if !rest.is_empty() {
-        return Err(parse_error(
-            layout,
-            value,
-            "",
-            rest,
-            &format!(": extra text: {}", go_time_quote(rest)),
-        ));
+        const EXTRA_TEXT: &str = ": extra text: ";
+        let mut out = parse_error_prefix(value, EXTRA_TEXT.len() + rest.len() + 2);
+        out.push_str(EXTRA_TEXT);
+        push_time_quote(&mut out, rest.as_bytes());
+        return Err(out);
     }
     Ok(clock)
+}
+
+#[inline]
+fn decimal_pair(tens: u8, ones: u8) -> Option<i32> {
+    let tens = tens.wrapping_sub(b'0');
+    let ones = ones.wrapping_sub(b'0');
+    (tens <= 9 && ones <= 9).then_some(i32::from(tens) * 10 + i32::from(ones))
 }
 
 /// Go `time.Time.String()` of a time in `location` without a monotonic
@@ -261,38 +350,49 @@ pub fn parse_clock(layout: &str, value: &str) -> Result<ParsedClock, String> {
 /// (`PST`, or a numeric `-03` for a zone the database names that way).
 #[must_use]
 pub fn go_time_string_in(time: chrono::DateTime<chrono_tz::Tz>) -> String {
-    format!(
-        "{}{} {}",
-        time.format("%Y-%m-%d %H:%M:%S"),
-        go_time_fraction(time.timestamp_subsec_nanos()),
-        time.format("%z %Z")
-    )
+    let offset = time.offset();
+    let mut out = format_time(time.naive_utc(), offset.fix());
+    out.push(' ');
+    if let Some(name) = offset.abbreviation() {
+        out.push_str(name);
+    } else {
+        // chrono-tz renders numeric names such as "-02" through Display.
+        write!(out, "{offset}").expect("writing to a String succeeds");
+    }
+    out
 }
+
+// Like Go's time.Local, resolve the process zone once, on first use.
+static LOCAL_ZONE: LazyLock<Option<chrono_tz::Tz>> =
+    LazyLock::new(|| tidb_timeutil::infer_system_tz().parse().ok());
 
 /// [`go_time_string_in`] in the process's local zone, which is what Go's
 /// `%v` of a `time.Local` value prints (`oracle.GetTimeFromTS`,
 /// `time.Now()`).
 #[must_use]
 pub fn go_time_string(time: chrono::DateTime<chrono::Local>) -> String {
-    match tidb_timeutil::infer_system_tz().parse::<chrono_tz::Tz>() {
-        Ok(zone) => go_time_string_in(time.with_timezone(&zone)),
-        // A zone the database cannot name keeps its numeric offset in the
-        // name position, as Go does for an unnamed zone.
-        Err(_) => format!(
-            "{}{} {} {}",
-            time.format("%Y-%m-%d %H:%M:%S"),
-            go_time_fraction(time.timestamp_subsec_nanos()),
-            time.format("%z"),
-            time.format("%z")
-        ),
+    if let Some(zone) = *LOCAL_ZONE {
+        return go_time_string_in(time.with_timezone(&zone));
     }
+    // Go repeats the numeric offset when the zone is unnamed.
+    let offset = *time.offset();
+    let mut out = format_time(time.naive_utc(), offset);
+    out.push(' ');
+    push_offset(&mut out, offset);
+    out
 }
 
 /// Go `time.UnixMilli(millis).String()`: a Unix millisecond instant as a
 /// `time.Local` value (`oracle.GetTimeFromTS`, `model.TSConvert2Time`).
 #[must_use]
 pub fn go_unix_milli_string(millis: i64) -> String {
-    use chrono::TimeZone as _;
+    if let Some(zone) = *LOCAL_ZONE {
+        let time = zone
+            .timestamp_millis_opt(millis)
+            .single()
+            .expect("Unix milliseconds fit Chrono");
+        return go_time_string_in(time);
+    }
     let time = chrono::Local
         .timestamp_millis_opt(millis)
         .single()
@@ -300,16 +400,62 @@ pub fn go_unix_milli_string(millis: i64) -> String {
     go_time_string(time)
 }
 
-/// Go's `.999999999` layout element: the nanoseconds with trailing zeros
-/// removed, nothing for a whole second.
-fn go_time_fraction(nanos: u32) -> String {
-    let fraction = format!("{nanos:09}");
-    let fraction = fraction.trim_end_matches('0');
-    if fraction.is_empty() {
-        String::new()
+fn format_time(utc: chrono::NaiveDateTime, offset: chrono::FixedOffset) -> String {
+    let mut out = String::with_capacity(40);
+    if let Some(local) = utc.checked_add_offset(offset) {
+        push_year(&mut out, local.year());
+        out.push('-');
+        push_two_digits(&mut out, local.month());
+        out.push('-');
+        push_two_digits(&mut out, local.day());
+        out.push(' ');
+        push_two_digits(&mut out, local.hour());
+        out.push(':');
+        push_two_digits(&mut out, local.minute());
+        out.push(':');
+        let second = local.second() + local.nanosecond() / 1_000_000_000;
+        push_two_digits(&mut out, second);
     } else {
-        format!(".{fraction}")
+        // Chrono can display a local date outside the NaiveDateTime range.
+        let time = chrono::DateTime::<chrono::FixedOffset>::from_naive_utc_and_offset(utc, offset);
+        push_year(&mut out, time.year());
+        write!(out, "{}", time.format("-%m-%d %H:%M:%S")).expect("writing to a String succeeds");
     }
+    let nanos = utc.nanosecond();
+    if nanos != 0 {
+        write!(out, ".{nanos:09}").expect("writing to a String succeeds");
+        out.truncate(out.trim_end_matches('0').len());
+    }
+    out.push(' ');
+    push_offset(&mut out, offset);
+    out
+}
+
+fn push_year(out: &mut String, year: i32) {
+    if year < 0 {
+        out.push('-');
+    }
+    let year = year.unsigned_abs();
+    if year < 10_000 {
+        push_two_digits(out, year / 100);
+        push_two_digits(out, year % 100);
+    } else {
+        write!(out, "{year}").expect("writing to a String succeeds");
+    }
+}
+
+fn push_offset(out: &mut String, offset: chrono::FixedOffset) {
+    // Go truncates historical offsets with a sub-minute component.
+    let minutes = offset.local_minus_utc() / 60;
+    out.push(if minutes < 0 { '-' } else { '+' });
+    let minutes = minutes.unsigned_abs();
+    push_two_digits(out, minutes / 60);
+    push_two_digits(out, minutes % 60);
+}
+
+fn push_two_digits(out: &mut String, value: u32) {
+    out.push(char::from(b'0' + (value / 10) as u8));
+    out.push(char::from(b'0' + (value % 10) as u8));
 }
 
 #[cfg(test)]
@@ -346,6 +492,32 @@ mod tests {
             ),
             "1999-12-31 22:00:00 -0200 -02"
         );
+    }
+
+    #[test]
+    fn time_string_uses_go_year_and_offset_formatting() {
+        use chrono::TimeZone as _;
+        let dates = [
+            (
+                chrono_tz::UTC,
+                253_402_300_800,
+                "10000-01-01 00:00:00.000000001 +0000 UTC",
+            ),
+            (
+                chrono_tz::UTC,
+                -62_198_755_200,
+                "-0001-01-01 00:00:00.000000001 +0000 UTC",
+            ),
+            (
+                chrono_tz::America::Los_Angeles,
+                -2_840_140_800,
+                "1879-12-31 16:07:02.000000001 -0752 LMT",
+            ),
+        ];
+        for (zone, seconds, expected) in dates {
+            let time = zone.timestamp_opt(seconds, 1).unwrap();
+            assert_eq!(go_time_string_in(time), expected);
+        }
     }
 
     /// Errors captured from Go on this branch through
@@ -388,6 +560,59 @@ mod tests {
         assert_eq!(
             parse_clock("15:04 -0700", "16:11 0800").unwrap_err(),
             r#"parsing time "16:11 0800" as "15:04 -0700": cannot parse "0800" as "-0700""#
+        );
+    }
+
+    #[test]
+    fn clock_layouts_handle_non_ascii_like_go() {
+        assert_eq!(
+            parse_clock("時15:04", "時1:05").unwrap(),
+            ParsedClock {
+                hour: 1,
+                minute: 5,
+                ..ParsedClock::default()
+            }
+        );
+        assert_eq!(
+            parse_clock("é15:04", "ê1:05").unwrap_err(),
+            r#"parsing time "\xc3\xaa1:05" as "\xc3\xa915:04": cannot parse "\xaa1:05" as "\xc3\xa9""#,
+        );
+        assert_eq!(
+            parse_clock("15:04 -0700", "12:30 é123").unwrap_err(),
+            r#"parsing time "12:30 \xc3\xa9123" as "15:04 -0700": cannot parse "\xc3\xa9123" as "-0700""#,
+        );
+    }
+
+    #[test]
+    fn clock_consumes_implicit_fractional_seconds() {
+        assert_eq!(
+            parse_clock("15:04:05 -0700", "1:05:09,123456789012 +0800").unwrap(),
+            ParsedClock {
+                hour: 1,
+                minute: 5,
+                second: 9,
+                zone_offset: Some(8 * 3600),
+            }
+        );
+        assert_eq!(
+            parse_clock("15h04m05s", "12h34m56.009s").unwrap().second,
+            56
+        );
+        assert_eq!(
+            parse_clock("15:04:05", "12:34:56.").unwrap_err(),
+            r#"parsing time "12:34:56.": extra text: ".""#,
+        );
+    }
+
+    #[test]
+    fn clock_zone_ranges_take_precedence_over_syntax_errors() {
+        assert_eq!(
+            parse_clock("15:04 -0700", "12:34 +25\t61").unwrap_err(),
+            r#"parsing time "12:34 +25\x0961": time zone offset hour out of range"#,
+        );
+        assert_eq!(
+            parse_clock("15:04 -0700", "12:34 ?2561").unwrap_err(),
+            r#"parsing time "12:34 ?2561": time zone offset minute out of range"#,
         );
     }
 }

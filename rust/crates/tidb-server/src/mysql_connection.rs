@@ -587,20 +587,25 @@ impl PreparedStatementRegistry {
         Ok(())
     }
 
-    fn bound_params(&self, statement_id: u32) -> &[Option<Vec<u8>>] {
-        self.statements
-            .get(&statement_id)
-            .map_or(&[], |statement| statement.bound_params.as_slice())
-    }
-
     /// Go's `stmt.Reset()` call inside `handleStmtExecute`, run right after
     /// `parseBinaryParams` has read the buffers
     /// (`pkg/server/conn_stmt.go:212-217`): long data is consumed by exactly
     /// one execute and never leaks into the next one.
-    fn clear_bound_params<S: QuerySession>(&mut self, statement_id: u32, session: &mut S) {
-        if let Some(statement) = self.statements.get_mut(&statement_id) {
-            statement.clear_bound_params(session);
-        }
+    fn take_bound_params<S: QuerySession>(
+        &mut self,
+        statement_id: u32,
+        session: &mut S,
+    ) -> Vec<Option<Vec<u8>>> {
+        let Some(statement) = self.statements.get_mut(&statement_id) else {
+            return Vec::new();
+        };
+        let bounds = if statement.bound_params.iter().any(Option::is_some) {
+            statement.bound_params.iter_mut().map(Option::take).collect()
+        } else {
+            Vec::new()
+        };
+        statement.clear_bound_params(session);
+        bounds
     }
 
     fn long_data_error(&self, statement_id: u32, connection_id: u64) -> Option<SqlQueryError> {
@@ -3139,8 +3144,7 @@ fn run_connection_commands<S: QuerySession>(
                     // rejected execute still consumes the long data.
                     let long_data_error =
                         prepared.long_data_error(statement_id, engine.connection_id());
-                    let bound_params = prepared.bound_params(statement_id).to_vec();
-                    prepared.clear_bound_params(statement_id, engine);
+                    let bound_params = prepared.take_bound_params(statement_id, engine);
                     // Go calls `stmt.Reset()` after parsing every execute packet,
                     // successful or not. The retained cursor therefore closes
                     // before a replacement execution starts, and a malformed
@@ -3183,7 +3187,8 @@ fn run_connection_commands<S: QuerySession>(
                         prepared.remember_parameter_types(statement_id, types);
                     }
                     let input_charset = engine.input_charset();
-                    let execute = match execute_packet.decode(&bound_params, input_charset.as_ref())
+                    let execute = match execute_packet
+                        .decode_with_owned_bound_params(bound_params, input_charset.as_ref())
                     {
                         Ok(execute) => execute,
                         Err(error) => {

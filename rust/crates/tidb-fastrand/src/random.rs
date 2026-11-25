@@ -38,19 +38,29 @@ const fn wymix(a: u64, b: u64) -> u64 {
     (product as u64) ^ ((product >> 64) as u64)
 }
 
-/// Generates source-shaped random ASCII bytes while excluding NUL and `$`.
-pub fn buf(size: usize) -> Vec<u8> {
-    let mut result = vec![0; size];
+fn random_ascii(size: usize) -> impl ExactSizeIterator<Item = u8> {
     let mut random = Wyrand::new(u64::from(uint32()));
-    for byte in &mut result {
+    (0..size).map(move |_| {
         let reduced = ((u64::from(random.next() as u32) * 127) >> 32) as u8;
-        *byte = if reduced == 0 || reduced == b'$' {
+        if reduced == 0 || reduced == b'$' {
             reduced + 1
         } else {
             reduced
-        };
+        }
+    })
+}
+
+/// Generates source-shaped random ASCII bytes while excluding NUL and `$`.
+pub fn buf(size: usize) -> Vec<u8> {
+    random_ascii(size).collect()
+}
+
+/// Fills caller-owned storage with the same random ASCII bytes as [`buf`].
+pub fn fill(output: &mut [u8]) {
+    let bytes = random_ascii(output.len());
+    for (slot, byte) in output.iter_mut().zip(bytes) {
+        *slot = byte;
     }
-    result
 }
 
 /// Returns a pseudo-random `u32` in `[0, n)`.
@@ -74,7 +84,7 @@ pub fn uint64_n(n: u64) -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{buf, uint32_n, uint64_n};
+    use super::{buf, fill, uint32_n, uint64_n};
 
     #[test]
     fn test_rand() {
@@ -87,5 +97,18 @@ mod tests {
             observed[uint32_n(256) as usize] = true;
         }
         assert!(observed.iter().filter(|seen| !**seen).count() < 24);
+    }
+
+    #[test]
+    fn fill_writes_only_the_requested_slice() {
+        let mut guarded = [0; 22];
+        guarded[0] = b'$';
+        guarded[21] = b'$';
+        fill(&mut guarded[1..21]);
+
+        assert_eq!((guarded[0], guarded[21]), (b'$', b'$'));
+        assert!(guarded[1..21]
+            .iter()
+            .all(|&byte| byte > 0 && byte < 127 && byte != b'$'));
     }
 }

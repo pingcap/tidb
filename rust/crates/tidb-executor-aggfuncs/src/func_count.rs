@@ -60,11 +60,10 @@ impl BaseCount {
         &self,
         partial_result: &mut PartialResult,
         chk: &mut Chunk,
-        spill_helper: &mut SerializeHelper,
+        _spill_helper: &mut SerializeHelper,
     ) {
         let pr = *partial::<PartialResult4Count>(partial_result);
-        let res_buf = spill_helper.serialize_partial_result_4_count(pr);
-        chk.append_bytes(self.base.ordinal, res_buf);
+        chk.append_byte_array(self.base.ordinal, &pr.to_ne_bytes());
     }
 
     fn deserialize_partial_result(&self, src: &Chunk) -> (Vec<PartialResult>, i64) {
@@ -75,15 +74,45 @@ impl BaseCount {
 
     /// Go `deserializeForSpill`.
     fn deserialize_for_spill(&self, helper: &mut DeserializeHelper<'_>) -> Option<(PartialResult, i64)> {
-        let (mut pr, mem_delta) = self.alloc_partial_result();
         let value = helper.deserialize_partial_result_4_count()?;
-        *partial::<PartialResult4Count>(&mut pr) = value;
-        Some((pr, mem_delta))
+        Some((Box::new(value), DEF_PARTIAL_RESULT_4_COUNT_SIZE))
     }
 
     /// Whether `args[0]` is NULL on `row` (Go's `_, isNull, err := EvalX`).
     fn arg_is_null(&self, sctx: &AggFuncUpdateContext, row: Row<'_>) -> Result<bool, ExecError> {
+        if let Some(index) = self.base.integer_column_index() {
+            if let Some(chunk) = row.chunk().filter(|chunk| index < chunk.num_cols()) {
+                let column = chunk.column(index);
+                if column.type_size() == 8 {
+                    return Ok(column.is_null(row.idx()));
+                }
+            }
+        }
         Ok(self.base.args[0].eval(sctx, row).map_err(ExecError::Eval)?.is_null())
+    }
+
+    fn count_rows(&self, sctx: &AggFuncUpdateContext, rows: &[Row<'_>], count: &mut i64) -> Result<i64, ExecError> {
+        if let Some(index) = self.base.integer_column_index().filter(|_| rows.len() > 1) {
+            for run in rows.chunk_by(|a, b| a.chunk().map(std::ptr::from_ref) == b.chunk().map(std::ptr::from_ref)) {
+                if let Some(chunk) = run[0].chunk().filter(|chunk| index < chunk.num_cols()) {
+                    let column = chunk.column(index);
+                    if column.type_size() == 8 {
+                        for row in run {
+                            *count += i64::from(!column.is_null(row.idx()));
+                        }
+                        continue;
+                    }
+                }
+                for row in run {
+                    *count += i64::from(!self.arg_is_null(sctx, *row)?);
+                }
+            }
+        } else {
+            for row in rows {
+                *count += i64::from(!self.arg_is_null(sctx, *row)?);
+            }
+        }
+        Ok(0)
     }
 }
 
@@ -140,14 +169,7 @@ macro_rules! count_original {
                 rows_in_group: &[Row<'_>],
                 pr: &mut PartialResult,
             ) -> Result<i64, ExecError> {
-                let p = partial::<PartialResult4Count>(pr);
-                for row in rows_in_group {
-                    if self.0.arg_is_null(sctx, *row)? {
-                        continue;
-                    }
-                    *p += 1;
-                }
-                Ok(0)
+                self.0.count_rows(sctx, rows_in_group, partial::<PartialResult4Count>(pr))
             }
 
             fn as_sliding_window(&self) -> Option<&dyn SlidingWindowAggFunc> {

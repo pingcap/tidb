@@ -22,8 +22,8 @@ use tidb_ranger::types::Range;
 fn counted(low: i64, high: i64, low_exclude: bool, high_exclude: bool, rows: f64) -> CountedRange {
     CountedRange::new(
         Range {
-            low_val: vec![Datum::Int(low)],
-            high_val: vec![Datum::Int(high)],
+            low_val: vec![Datum::Int(low)].into(),
+            high_val: vec![Datum::Int(high)].into(),
             low_exclude,
             high_exclude,
             collators: vec![Collation::Binary],

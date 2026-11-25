@@ -27,9 +27,11 @@
 //! Go marks some of these writes `SetNeedLocked`; the cluster tier locks
 //! every key a pessimistic statement staged, which covers them.
 
+use std::borrow::Cow;
+
 use tidb_datatype::{Datum, SessionTimeZone};
 use tidb_tablecodec::{
-    decode_handle_in_index_value, decode_temp_index_value, index_key_to_temp_index_key,
+    decode_current_temp_index_value, decode_handle_in_index_value, index_key_to_temp_index_key,
     temp_index_key_to_index_key, TempIndexValueElem,
 };
 use tidb_kv::storage::TableStorage;
@@ -37,7 +39,7 @@ use tidb_txnkv::{AssertionOp, Key};
 
 use tidb_kv::storage::StorageError;
 
-use super::index_entries::{convert_handle, duplicate_value_text};
+use super::index_entries::convert_handle;
 use super::{TableCommon, KvTableError, NonPublicIndex, TableHandle};
 
 /// Go `tablecodec.TempIndexKeyTypeNone`: not a temporary-index write.
@@ -154,7 +156,7 @@ impl TableCommon {
 
     /// Go `getKeyInTxn`: the value the transaction sees, `None` for absent
     /// (or deleted).
-    fn get_key_in_txn(&mut self, store: &mut dyn TableStorage, key: &[u8]) -> Result<Option<Vec<u8>>, KvTableError> {
+    fn get_key_in_txn(&self, store: &mut dyn TableStorage, key: &[u8]) -> Result<Option<Vec<u8>>, KvTableError> {
         match store.get(&Key::from_bytes(key.to_vec())) {
             Ok(value) if value.is_empty() => Ok(None),
             Ok(value) => Ok(Some(value)),
@@ -167,7 +169,7 @@ impl TableCommon {
     /// would duplicate, judged from the temporary index's latest history
     /// element and the original index, plus the temporary key's raw value.
     fn fetch_duplicated_handle_for_temp_index_key(
-        &mut self,
+        &self,
         store: &mut dyn TableStorage,
         temp_key: &[u8],
     ) -> Result<(Option<TableHandle>, Option<Vec<u8>>), KvTableError> {
@@ -182,8 +184,7 @@ impl TableCommon {
             let handle = decode_handle_in_index_value(&origin).map_err(decode_error)?;
             return Ok((handle.as_ref().map(convert_handle), None));
         };
-        let history = decode_temp_index_value(&temp_raw).map_err(decode_error)?;
-        let Some(current) = history.last() else {
+        let Some(current) = decode_current_temp_index_value(&temp_raw).map_err(decode_error)? else {
             return Ok((None, Some(temp_raw)));
         };
         if current.delete {
@@ -210,7 +211,7 @@ impl TableCommon {
             }
             return Ok((Some(convert_handle(&origin_handle)), Some(temp_raw)));
         }
-        let handle = decode_handle_in_index_value(&current.value).map_err(decode_error)?;
+        let handle = decode_handle_in_index_value(current.value).map_err(decode_error)?;
         Ok((handle.as_ref().map(convert_handle), Some(temp_raw)))
     }
 
@@ -233,14 +234,14 @@ impl TableCommon {
         // Go `index.create`'s region (the statement's writes pass their ctx).
         let _create = tidb_tracing::start_thread_region("index.Create");
         let kv_index = &index.index;
-        let duplicate_value = duplicate_value_text(&self.index_values(kv_index, row));
-        for entry in self.index_entry_keys(kv_index, row, handle, physical_id, zone)? {
-            let value = self.gen_index_value(
+        for entry in self.index_entries_for_write(kv_index, row, handle, physical_id, zone)? {
+            let value = self.index_entry_value_marked(
                 kv_index,
                 &entry.values,
                 row,
                 handle,
                 entry.distinct,
+                false,
                 physical_id,
                 zone,
             )?;
@@ -296,7 +297,7 @@ impl TableCommon {
                     return Err(KvTableError::Mysql(
                         tidb_terror::MysqlError::from_terror(
                             &tidb_kv::kv_errors::ERR_KEY_EXISTS.fast_gen_by_args(&[
-                                (duplicate_value.clone()).into(),
+                                self.index_duplicate_value_text(kv_index, row).into(),
                                 (self.qualified_key(kv_index.read().name.original())).into(),
                             ]),
                         ),
@@ -324,11 +325,16 @@ impl TableCommon {
             // `BackfillStateInapplicable`: the index key itself, checked like
             // a public unique entry but written without an assertion.
             let key = Key::from_bytes(key);
-            let lazy_check = self.check_insert_key(store, 
+            let lazy_check = self.check_insert_key_with_hint(
+                store,
                 &key,
-                &duplicate_value,
-                &self.qualified_key(kv_index.read().name.original()),
                 lazy_dup_check,
+                || {
+                    (
+                        Cow::Owned(self.index_duplicate_value_text(kv_index, row)),
+                        Cow::Owned(self.qualified_key(kv_index.read().name.original())),
+                    )
+                },
             )?;
             store
                 .set_with_constraint_check(
@@ -357,8 +363,8 @@ impl TableCommon {
     ) -> Result<(), KvTableError> {
         let kv_index = &index.index;
         let deleted_handle = txn_handle(handle)?;
-        for entry in self.index_entry_keys(kv_index, row, handle, physical_id, zone)? {
-            let (key, temp_key, key_version) = gen_temp_idx_key_by_state(index, entry.key)?;
+        for (key, distinct) in self.index_keys_for_row(kv_index, row, handle, physical_id, zone)? {
+            let (key, temp_key, key_version) = gen_temp_idx_key_by_state(index, key)?;
             let previous = match (&temp_key, kv_index.read().unique) {
                 (Some(temp_key), true) => self.get_key_in_txn(store, temp_key)?.unwrap_or_default(),
                 _ => Vec::new(),
@@ -376,12 +382,12 @@ impl TableCommon {
                 handle: Some(full_handle.clone()),
                 key_version,
                 delete: true,
-                distinct: entry.distinct,
+                distinct,
                 global,
             };
             if let Some(key) = key {
                 let mut ok_to_delete = true;
-                if entry.distinct && index.backfill_state != tidb_model::BackfillState::INAPPLICABLE
+                if distinct && index.backfill_state != tidb_model::BackfillState::INAPPLICABLE
                 {
                     if let Some(origin) = self.get_key_in_txn(store, &key)? {
                         let origin_handle = decode_handle_in_index_value(&origin)
@@ -402,7 +408,7 @@ impl TableCommon {
                 }
             }
             if let Some(temp_key) = temp_key {
-                let base: &[u8] = if entry.distinct { &previous } else { &[] };
+                let base: &[u8] = if distinct { &previous } else { &[] };
                 store
                     .set(
                         Key::from_bytes(temp_key),

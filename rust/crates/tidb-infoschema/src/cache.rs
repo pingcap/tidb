@@ -2,18 +2,18 @@
 //! Go `pkg/infoschema/cache.go`: known schema ranges, including empty diffs
 //! and unknown commit timestamps. Its owner serializes mutations.
 use crate::SessionExtendedInfoSchema;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeSet, VecDeque};
 use std::sync::Arc;
 
-fn count(action: &str, kind: &str) {
-    tidb_metrics::domain::INFOCACHE_COUNTERS
-        .with_label_values(&[action, kind])
-        .inc();
-}
+use tidb_metrics::domain::{
+    INFOCACHE_GET_LATEST, INFOCACHE_GET_TS, INFOCACHE_GET_VERSION, INFOCACHE_HIT_LATEST,
+    INFOCACHE_HIT_TS, INFOCACHE_HIT_VERSION,
+};
 
 /// Go `schemaAndTimestamp`.
 #[derive(Clone, Debug)]
 struct SchemaAndTimestamp {
+    version: i64,
     infoschema: Arc<SessionExtendedInfoSchema>,
     timestamp: u64,
 }
@@ -21,7 +21,9 @@ struct SchemaAndTimestamp {
 /// this index and the reload lock, schema builder, and shared V2 Data.
 #[derive(Debug)]
 pub struct InfoCache {
-    cache: BTreeMap<i64, SchemaAndTimestamp>,
+    // Keep retained images in ascending version order. Contiguous runs in the
+    // deque speed up timestamp scans and new versions can displace the oldest.
+    cache: VecDeque<SchemaAndTimestamp>,
     capacity: usize,
     empty_schema_versions: BTreeSet<i64>,
     first_known_schema_version: i64,
@@ -30,7 +32,7 @@ impl InfoCache {
     /// Go `NewCache`.
     pub fn new(capacity: usize) -> Self {
         Self {
-            cache: BTreeMap::new(),
+            cache: VecDeque::new(),
             capacity,
             empty_schema_versions: BTreeSet::new(),
             first_known_schema_version: 0,
@@ -38,10 +40,13 @@ impl InfoCache {
     }
     /// Go `InfoCache.ReSize`.
     pub fn resize(&mut self, capacity: usize) {
-        self.capacity = capacity;
-        while self.cache.len() > capacity {
-            self.cache.pop_first();
+        if self.cache.len() > capacity {
+            self.cache.drain(..self.cache.len() - capacity);
         }
+        if capacity < self.capacity {
+            self.cache.shrink_to(capacity);
+        }
+        self.capacity = capacity;
     }
     /// Go `InfoCache.Size` / `Len`.
     pub fn len(&self) -> usize {
@@ -52,94 +57,101 @@ impl InfoCache {
     }
     /// Go `InfoCache.Reset`.
     pub fn reset(&mut self, capacity: usize) {
-        self.cache.clear();
+        self.cache = VecDeque::new();
         self.capacity = capacity;
     }
     /// Go `InfoCache.GetLatest`.
     pub fn get_latest(&self) -> Option<Arc<SessionExtendedInfoSchema>> {
-        count("get", "latest");
-        self.cache.last_key_value().map(|(_, v)| {
-            count("hit", "latest");
-            v.infoschema.clone()
+        INFOCACHE_GET_LATEST.inc();
+        self.cache.back().map(|item| {
+            INFOCACHE_HIT_LATEST.inc();
+            item.infoschema.clone()
         })
     }
     /// Go `InfoCache.GetByVersion`.
     pub fn get_by_version(&self, version: i64) -> Option<Arc<SessionExtendedInfoSchema>> {
-        count("get", "version");
-        let latest = *self.cache.last_key_value()?.0;
-        let (found, item) = self.cache.range(..=version).next_back()?;
-        (*found == version || (*found != latest && *found >= self.first_known_schema_version)).then(
-            || {
-                count("hit", "version");
-                item.infoschema.clone()
-            },
-        )
+        INFOCACHE_GET_VERSION.inc();
+        let item = match self.position(version) {
+            Ok(index) => &self.cache[index],
+            Err(index) if index > 0 && index < self.cache.len() => {
+                let candidate = &self.cache[index - 1];
+                if candidate.version < self.first_known_schema_version {
+                    return None;
+                }
+                candidate
+            }
+            Err(_) => return None,
+        };
+        INFOCACHE_HIT_VERSION.inc();
+        Some(item.infoschema.clone())
     }
     /// Go `InfoCache.GetBySnapshotTS` / `getSchemaByTimestampNoLock`.
     pub fn get_by_snapshot_ts(&self, ts: u64) -> Option<Arc<SessionExtendedInfoSchema>> {
-        count("get", "ts");
-        let mut previous: Option<(i64, u64)> = None;
-        for (&version, item) in self.cache.iter().rev() {
-            if item.timestamp != 0 && ts >= item.timestamp {
-                let valid = match previous {
-                    None => true,
-                    Some((last_version, last_ts)) => {
-                        last_ts > ts
-                            && (version + 1..last_version)
-                                .all(|v| self.empty_schema_versions.contains(&v))
-                    }
-                };
-                return valid.then(|| {
-                    count("hit", "ts");
-                    item.infoschema.clone()
-                });
+        INFOCACHE_GET_TS.inc();
+        let index = self
+            .cache
+            .iter()
+            .rposition(|item| item.timestamp != 0 && ts >= item.timestamp)?;
+        let item = &self.cache[index];
+        if let Some(newer) = self.cache.get(index + 1) {
+            if newer.timestamp <= ts
+                || (item.version + 1..newer.version)
+                    .any(|version| !self.empty_schema_versions.contains(&version))
+            {
+                return None;
             }
-            previous = Some((version, item.timestamp));
         }
-        None
+        INFOCACHE_HIT_TS.inc();
+        Some(item.infoschema.clone())
     }
+
+    fn position(&self, version: i64) -> Result<usize, usize> {
+        self.cache
+            .binary_search_by_key(&version, |item| item.version)
+    }
+
     /// Go `InfoCache.Insert`.
     pub fn insert(&mut self, schema: Arc<SessionExtendedInfoSchema>, ts: u64) -> bool {
         let version = schema.schema_meta_version();
-        if let Some(item) = self.cache.get_mut(&version) {
-            if item.infoschema.is_v2() == schema.is_v2() {
-                if ts > 0 && item.timestamp == 0 {
-                    item.timestamp = ts;
-                } else if schema.is_v2() {
-                    item.infoschema = schema;
+        let mut position = match self.position(version) {
+            Ok(index) => {
+                let item = &mut self.cache[index];
+                if item.infoschema.is_v2() == schema.is_v2() {
+                    if ts > 0 && item.timestamp == 0 {
+                        item.timestamp = ts;
+                    } else if schema.is_v2() {
+                        item.infoschema = schema;
+                    }
+                } else {
+                    // V1/V2 changes replace the entry; mode switches normally use Upsert.
+                    *item = SchemaAndTimestamp {
+                        version,
+                        infoschema: schema,
+                        timestamp: ts,
+                    };
                 }
                 return true;
             }
-            // V1/V2 changes replace the entry; mode switches normally use Upsert.
-            *item = SchemaAndTimestamp {
-                infoschema: schema,
-                timestamp: ts,
-            };
-            return true;
-        }
-        if self.capacity == 0
-            || (self.cache.len() >= self.capacity
-                && self
-                    .cache
-                    .first_key_value()
-                    .is_some_and(|(v, _)| *v > version))
-        {
+            Err(index) => index,
+        };
+        if self.capacity == 0 || (self.cache.len() >= self.capacity && position == 0) {
             return false;
         }
-        let first = self.cache.is_empty();
+        if self.cache.is_empty() {
+            self.first_known_schema_version = version;
+        }
+        if self.cache.len() >= self.capacity {
+            self.cache.pop_front();
+            position -= 1;
+        }
         self.cache.insert(
-            version,
+            position,
             SchemaAndTimestamp {
+                version,
                 infoschema: schema,
                 timestamp: ts,
             },
         );
-        if first {
-            self.first_known_schema_version = version;
-        }
-        while self.cache.len() > self.capacity {
-            self.cache.pop_first();
-        }
         true
     }
     /// Go `InfoCache.Upsert`: reset known history on a V1/V2 switch. Existing
@@ -147,13 +159,11 @@ impl InfoCache {
     pub fn upsert(&mut self, schema: Arc<SessionExtendedInfoSchema>, ts: u64) {
         self.cache.clear();
         self.first_known_schema_version = schema.schema_meta_version();
-        self.cache.insert(
-            schema.schema_meta_version(),
-            SchemaAndTimestamp {
-                infoschema: schema,
-                timestamp: ts,
-            },
-        );
+        self.cache.push_back(SchemaAndTimestamp {
+            version: self.first_known_schema_version,
+            infoschema: schema,
+            timestamp: ts,
+        });
     }
     /// Go `InfoCache.InsertEmptySchemaVersion`.
     pub fn insert_empty_schema_version(&mut self, version: i64) {
@@ -168,16 +178,18 @@ impl InfoCache {
     }
     /// Rebuild retained images when the domain installs its table factory.
     pub fn values_mut(&mut self) -> impl Iterator<Item = &mut Arc<SessionExtendedInfoSchema>> {
-        self.cache.values_mut().map(|v| &mut v.infoschema)
+        self.cache.iter_mut().map(|v| &mut v.infoschema)
     }
     pub fn keys(&self) -> impl Iterator<Item = &i64> {
-        self.cache.keys()
+        self.cache.iter().map(|item| &item.version)
     }
     pub fn contains_key(&self, version: &i64) -> bool {
-        self.cache.contains_key(version)
+        self.position(*version).is_ok()
     }
     pub fn get(&self, version: &i64) -> Option<&Arc<SessionExtendedInfoSchema>> {
-        self.cache.get(version).map(|v| &v.infoschema)
+        self.position(*version)
+            .ok()
+            .map(|index| &self.cache[index].infoschema)
     }
 }
 

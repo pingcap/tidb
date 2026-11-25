@@ -157,6 +157,36 @@ fn bytes_codec_source_error_rows_and_descending_twins_fail() {
 }
 
 #[test]
+fn bulk_byte_decode_checks_the_first_terminal_group() {
+    for reverse in [false, true] {
+        let encode = if reverse { encode_bytes_desc } else { encode_bytes };
+        let decode = if reverse { decode_bytes_desc } else { decode_bytes };
+        for groups in 7..12 {
+            let data = vec![0xa5; groups * 8 + 3];
+            let mut encoded = Vec::new();
+            encode(&mut encoded, &data);
+            let end = encoded.len();
+            encoded.extend([0x60; 20]);
+            let (rest, decoded) = decode(&encoded).unwrap();
+            assert_eq!(rest, [0x60; 20]);
+            assert_eq!(decoded, data);
+
+            encoded[end - 2] ^= 1;
+            assert_eq!(
+                decode(&encoded),
+                Err(CodecError::InvalidEncoding("invalid bytes padding"))
+            );
+            encoded[end - 1] = if reverse { 9 } else { 246 };
+            assert_eq!(
+                decode(&encoded),
+                Err(CodecError::InvalidEncoding("invalid bytes marker"))
+            );
+            assert_eq!(decode(&encoded[..end - 1]), Err(CodecError::InsufficientBytes));
+        }
+    }
+}
+
+#[test]
 fn bytes_ext_source_rows_preserve_raw_and_comparable_modes() {
     let rows: &[(&[u8], &[u8])] = &[
         (&[], &[0, 0, 0, 0, 0, 0, 0, 0, 247]),
@@ -215,6 +245,10 @@ fn compact_bytes_close_source_round_trips_and_boundaries() {
     );
     assert_eq!(
         decode_compact_bytes(&[0x80; 10]),
+        Err(CodecError::InsufficientBytes)
+    );
+    assert_eq!(
+        decode_compact_bytes(&[0x80; 11]),
         Err(CodecError::InvalidEncoding("varint larger than 64 bits"))
     );
     assert_eq!(
@@ -254,5 +288,11 @@ fn compact_bytes_length_prefix_transitions_are_exact() {
         let (remain, decoded) = decode_compact_bytes(&encoded).unwrap();
         assert!(remain.is_empty());
         assert_eq!(decoded, input);
+
+        let mut reserved = Vec::with_capacity(encoded.len());
+        let capacity = reserved.capacity();
+        encode_compact_bytes(&mut reserved, &input);
+        assert_eq!(reserved, encoded);
+        assert_eq!(reserved.capacity(), capacity);
     }
 }

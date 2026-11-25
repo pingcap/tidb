@@ -3374,7 +3374,7 @@ mod cross_estimate_dispatch_tests {
                     ndv: 100,
                     lower_bound: Datum::Int(1),
                     upper_bound: Datum::Int(100),
-                }],
+                }].into(),
                 ..Histogram::default()
             },
             top_n: None,

@@ -18,6 +18,7 @@ use std::{cmp::Ordering, error::Error, fmt};
 
 use chrono::{DateTime, Datelike, Duration as ChronoDuration, TimeZone};
 
+use crate::mysql_time::{push_time_clock, push_time_number};
 use crate::time_parse::adjust_year_with_event;
 use crate::{
     check_fsp, core_time_from_datetime, parse_frac, Converted, Decimal, FspError, Time, TimeError,
@@ -144,55 +145,55 @@ impl MySqlDuration {
     /// Formats this duration with MySQL's `TIME_FORMAT` conversion rules.
     pub fn duration_format(self, layout: &str) -> String {
         let mut output = String::with_capacity(layout.len());
-        let mut pattern = false;
-        for character in layout.chars() {
-            if pattern {
-                self.push_duration_format(character, &mut output);
-                pattern = false;
-            } else if character == '%' {
-                pattern = true;
-            } else {
-                output.push(character);
-            }
-        }
+        self.append_duration_format(layout, &mut output);
         output
     }
 
+    /// Appends TiDB's formatted duration to a reusable output buffer.
+    pub fn append_duration_format(self, mut layout: &str, output: &mut String) {
+        while let Some(percent) = layout.find('%') {
+            output.push_str(&layout[..percent]);
+            layout = &layout[percent + 1..];
+            let Some(conversion) = layout.chars().next() else {
+                break;
+            };
+            self.push_duration_format(conversion, output);
+            layout = &layout[conversion.len_utf8()..];
+        }
+        output.push_str(layout);
+    }
+
     fn push_duration_format(self, conversion: char, output: &mut String) {
-        let hour = self.hour();
-        let minute = self.minute();
-        let second = self.second();
+        // Even an i64-wide nanosecond duration has fewer than 2^31 hours.
+        // Go's splitDuration negates the signed nanoseconds in place.
+        let nanos = self.nanoseconds.wrapping_abs();
+        let hour = (nanos / 3_600_000_000_000) as i32;
+        let minute = (nanos / 60_000_000_000 % 60) as i32;
+        let second = (nanos / 1_000_000_000 % 60) as i32;
         match conversion {
-            'H' => output.push_str(&format!("{hour:02}")),
-            'k' => output.push_str(&hour.to_string()),
-            'h' | 'I' => {
+            'H' => push_time_number(output, hour, 2),
+            'k' => push_time_number(output, hour, 0),
+            'h' | 'I' | 'l' => {
                 let twelve_hour = hour % 12;
-                output.push_str(&format!(
-                    "{:02}",
-                    if twelve_hour == 0 { 12 } else { twelve_hour }
-                ));
+                let twelve_hour = if twelve_hour == 0 { 12 } else { twelve_hour };
+                let width = if conversion == 'l' { 0 } else { 2 };
+                push_time_number(output, twelve_hour, width);
             }
-            'l' => {
-                let twelve_hour = hour % 12;
-                output.push_str(&(if twelve_hour == 0 { 12 } else { twelve_hour }).to_string());
-            }
-            'i' => output.push_str(&format!("{minute:02}")),
+            'i' => push_time_number(output, minute, 2),
             'p' => output.push_str(if hour / 12 % 2 == 0 { "AM" } else { "PM" }),
             'r' => {
                 let normalized = hour % 24;
                 let twelve_hour = match normalized {
                     0 | 12 => 12,
-                    1..=11 => normalized,
+                    h if h < 12 => h,
                     _ => normalized - 12,
                 };
-                output.push_str(&format!(
-                    "{twelve_hour:02}:{minute:02}:{second:02} {}",
-                    if normalized < 12 { "AM" } else { "PM" }
-                ));
+                push_time_clock(output, twelve_hour, minute, second);
+                output.push_str(if normalized < 12 { " AM" } else { " PM" });
             }
-            'T' => output.push_str(&format!("{hour:02}:{minute:02}:{second:02}")),
-            'S' | 's' => output.push_str(&format!("{second:02}")),
-            'f' => output.push_str(&format!("{:06}", self.microsecond())),
+            'T' => push_time_clock(output, hour, minute, second),
+            'S' | 's' => push_time_number(output, second, 2),
+            'f' => push_time_number(output, (nanos / 1_000 % 1_000_000) as i32, 6),
             _ => output.push(conversion),
         }
     }

@@ -24,16 +24,144 @@
 //! `find_best_task::index_join::path`. Quota accounting uses Go's 64-bit sizes
 //! because the fallback threshold affects access selection and cache admission.
 
-use tidb_datatype::Datum;
+use std::fmt::Write as _;
+use std::ops::{Deref, DerefMut};
+use std::sync::Arc;
+
 use tidb_charset::Collation;
+use tidb_datatype::Datum;
+
+/// A range endpoint tuple. Intersections share the selected source tuple;
+/// changing a shared bound gives the caller its own copy.
+#[derive(Clone)]
+pub struct RangeBound(BoundValues);
+
+#[derive(Clone)]
+enum BoundValues {
+    Owned(Vec<Datum>),
+    Shared(Arc<Vec<Datum>>),
+}
+
+impl Default for RangeBound {
+    fn default() -> Self {
+        Self(BoundValues::Owned(Vec::new()))
+    }
+}
+
+impl RangeBound {
+    fn share(&mut self) {
+        if let BoundValues::Owned(values) = &mut self.0 {
+            self.0 = BoundValues::Shared(Arc::new(std::mem::take(values)));
+        }
+    }
+
+    fn take_or_share(&mut self, last_use: usize, result: usize) -> Self {
+        if last_use == result {
+            std::mem::take(self)
+        } else {
+            self.share();
+            self.clone()
+        }
+    }
+}
+
+impl From<Vec<Datum>> for RangeBound {
+    fn from(values: Vec<Datum>) -> Self {
+        // Keep scalar bounds in their existing allocation. Wide byte and
+        // string bounds can repay the shared header on their first copy.
+        const MIN_SHARED_BYTES: usize = 256;
+        let share = values.iter().any(|datum| match datum {
+            Datum::Bytes(value) | Datum::Raw(value) => value.len() >= MIN_SHARED_BYTES,
+            Datum::String(value) => value.bytes().len() >= MIN_SHARED_BYTES,
+            _ => false,
+        });
+        let mut result = Self(BoundValues::Owned(values));
+        if share {
+            result.share();
+        }
+        result
+    }
+}
+
+impl FromIterator<Datum> for RangeBound {
+    fn from_iter<I: IntoIterator<Item = Datum>>(values: I) -> Self {
+        values.into_iter().collect::<Vec<_>>().into()
+    }
+}
+
+impl Deref for RangeBound {
+    type Target = Vec<Datum>;
+
+    fn deref(&self) -> &Self::Target {
+        match &self.0 {
+            BoundValues::Owned(values) => values,
+            BoundValues::Shared(values) => values,
+        }
+    }
+}
+
+impl DerefMut for RangeBound {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        match &mut self.0 {
+            BoundValues::Owned(values) => values,
+            BoundValues::Shared(values) => Arc::make_mut(values),
+        }
+    }
+}
+
+impl std::fmt::Debug for RangeBound {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.deref().fmt(f)
+    }
+}
+
+impl PartialEq for RangeBound {
+    fn eq(&self, other: &Self) -> bool {
+        self.deref() == other.deref()
+    }
+}
+
+impl PartialEq<Vec<Datum>> for RangeBound {
+    fn eq(&self, other: &Vec<Datum>) -> bool {
+        self.deref() == other
+    }
+}
+
+impl<const N: usize> PartialEq<[Datum; N]> for RangeBound {
+    fn eq(&self, other: &[Datum; N]) -> bool {
+        self.as_slice() == other.as_slice()
+    }
+}
+
+impl IntoIterator for RangeBound {
+    type Item = Datum;
+    type IntoIter = std::vec::IntoIter<Datum>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        let values = match self.0 {
+            BoundValues::Owned(values) => values,
+            BoundValues::Shared(values) => Arc::unwrap_or_clone(values),
+        };
+        values.into_iter()
+    }
+}
+
+impl<'a> IntoIterator for &'a RangeBound {
+    type Item = &'a Datum;
+    type IntoIter = std::slice::Iter<'a, Datum>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
+    }
+}
 
 /// Go `Range`.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Range {
     /// Go `LowVal`.
-    pub low_val: Vec<Datum>,
+    pub low_val: RangeBound,
     /// Go `HighVal`.
-    pub high_val: Vec<Datum>,
+    pub high_val: RangeBound,
     /// Go `Collators`, one per column.
     pub collators: Vec<Collation>,
     /// Go `LowExclude`.
@@ -59,7 +187,7 @@ impl Range {
         self.low_val.len()
     }
 
-    /// Go `Clone` (the derive is the same deep copy).
+    /// Go `Clone` (writes to cloned bounds remain independent).
     #[must_use]
     pub fn clone_like_go(&self) -> Self {
         self.clone()
@@ -166,24 +294,13 @@ impl Range {
     /// infinite bounds always print.
     #[must_use]
     pub fn redact(&self, redact: &str) -> String {
-        let deal_with_redact = |input: String| {
-            if input == "-inf" || input == "+inf" || redact == "OFF" {
-                input
-            } else if redact == "ON" {
-                "?".to_owned()
-            } else {
-                format!("‹{input}›")
-            }
-        };
-        let low: Vec<String> = self.low_val.iter().map(|d| deal_with_redact(format_datum(d, true))).collect();
-        let high: Vec<String> = self
-            .high_val
-            .iter()
-            .map(|d| deal_with_redact(format_datum(d, false)))
-            .collect();
-        let l = if self.low_exclude { "(" } else { "[" };
-        let r = if self.high_exclude { ")" } else { "]" };
-        format!("{l}{},{}{r}", low.join(" "), high.join(" "))
+        let mut output = String::with_capacity(3 + 5 * (self.low_val.len() + self.high_val.len()));
+        output.push(if self.low_exclude { '(' } else { '[' });
+        append_bound(&mut output, &self.low_val, true, redact);
+        output.push(',');
+        append_bound(&mut output, &self.high_val, false, redact);
+        output.push(if self.high_exclude { ')' } else { ']' });
+        output
     }
 
     /// Go `Encode`: the range's `[low, high)` key pair — an exclusive low
@@ -192,11 +309,11 @@ impl Range {
     pub fn encode(&self) -> Result<(Vec<u8>, Vec<u8>), tidb_codec::CodecError> {
         let mut low = tidb_codec::encode_key(&self.low_val)?;
         if self.low_exclude {
-            low = prefix_next(&low);
+            prefix_next(&mut low);
         }
         let mut high = tidb_codec::encode_key(&self.high_val)?;
         if !self.high_exclude {
-            high = prefix_next(&high);
+            prefix_next(&mut high);
         }
         Ok((low, high))
     }
@@ -274,18 +391,74 @@ impl Range {
         &self,
         other_range: &Range,
     ) -> Result<Option<Range>, tidb_datatype::DatumValueError> {
-        let mut result = Range::default();
+        self.intersection_with(
+            other_range,
+            |low_from_right, high_from_right, collators_from_right| {
+                let select = |from_right| if from_right { other_range } else { self };
+                let low = select(low_from_right);
+                let high = select(high_from_right);
+                Range {
+                    low_val: low.low_val.clone(),
+                    high_val: high.high_val.clone(),
+                    collators: select(collators_from_right).collators.clone(),
+                    low_exclude: low.low_exclude,
+                    high_exclude: high.high_exclude,
+                }
+            },
+        )
+    }
+
+    fn intersection_with<T>(
+        &self,
+        other_range: &Range,
+        build: impl FnOnce(bool, bool, bool) -> T,
+    ) -> Result<Option<T>, tidb_datatype::DatumValueError> {
+        if self.low_val.len() == 1 && !other_range.collators.is_empty() {
+            // Single-column integer bounds need no collation or prefix padding.
+            let bounds = match (
+                self.low_val.as_slice(),
+                self.high_val.as_slice(),
+                other_range.low_val.as_slice(),
+                other_range.high_val.as_slice(),
+            ) {
+                (
+                    [Datum::Int(lo)],
+                    [Datum::Int(hi)],
+                    [Datum::Int(other_lo)],
+                    [Datum::Int(other_hi)],
+                ) => Some(self.intersect_integer_bounds(
+                    other_range,
+                    [*lo, *hi],
+                    [*other_lo, *other_hi],
+                )),
+                (
+                    [Datum::UInt(lo)],
+                    [Datum::UInt(hi)],
+                    [Datum::UInt(other_lo)],
+                    [Datum::UInt(other_hi)],
+                ) => Some(self.intersect_integer_bounds(
+                    other_range,
+                    [*lo, *hi],
+                    [*other_lo, *other_hi],
+                )),
+                _ => None,
+            };
+            if let Some(bounds) = bounds {
+                return Ok(bounds.map(|(low, high)| build(low, high, true)));
+            }
+        }
+
         let other_range_more_granular = self.low_val.len() <= other_range.low_val.len();
-        result.collators = if other_range_more_granular {
-            other_range.collators.clone()
+        let collators = if other_range_more_granular {
+            &other_range.collators
         } else {
-            self.collators.clone()
+            &self.collators
         };
 
         let low_vs_high = compare_lexicographically(
             &self.low_val,
             &other_range.high_val,
-            &result.collators,
+            collators,
             self.low_exclude,
             other_range.high_exclude,
             true,
@@ -297,7 +470,7 @@ impl Range {
         let low_vs_high = compare_lexicographically(
             &other_range.low_val,
             &self.high_val,
-            &result.collators,
+            collators,
             other_range.low_exclude,
             self.high_exclude,
             true,
@@ -310,42 +483,58 @@ impl Range {
         let low_vs_low = compare_lexicographically(
             &self.low_val,
             &other_range.low_val,
-            &result.collators,
+            collators,
             self.low_exclude,
             other_range.low_exclude,
             true,
             true,
         )?;
-        if low_vs_low == std::cmp::Ordering::Less
-            || (low_vs_low == std::cmp::Ordering::Equal && other_range_more_granular)
-        {
-            result.low_val = other_range.low_val.clone();
-            result.low_exclude = other_range.low_exclude;
-        } else {
-            result.low_val = self.low_val.clone();
-            result.low_exclude = self.low_exclude;
-        }
+        let low_from_right = low_vs_low == std::cmp::Ordering::Less
+            || (low_vs_low == std::cmp::Ordering::Equal && other_range_more_granular);
 
         let high_vs_high = compare_lexicographically(
             &self.high_val,
             &other_range.high_val,
-            &result.collators,
+            collators,
             self.high_exclude,
             other_range.high_exclude,
             false,
             false,
         )?;
-        if high_vs_high == std::cmp::Ordering::Greater
-            || (high_vs_high == std::cmp::Ordering::Equal && other_range_more_granular)
-        {
-            result.high_val = other_range.high_val.clone();
-            result.high_exclude = other_range.high_exclude;
-        } else {
-            result.high_val = self.high_val.clone();
-            result.high_exclude = self.high_exclude;
-        }
-        Ok(Some(result))
+        let high_from_right = high_vs_high == std::cmp::Ordering::Greater
+            || (high_vs_high == std::cmp::Ordering::Equal && other_range_more_granular);
+        Ok(Some(build(
+            low_from_right,
+            high_from_right,
+            other_range_more_granular,
+        )))
     }
+
+    fn intersect_integer_bounds<N: Ord>(
+        &self,
+        other: &Range,
+        [lo, hi]: [N; 2],
+        [other_lo, other_hi]: [N; 2],
+    ) -> Option<(bool, bool)> {
+        // At equal values, an open lower endpoint sorts after a closed one,
+        // and an open upper endpoint sorts before it.
+        let lower = (lo, i8::from(self.low_exclude));
+        let upper = (hi, -i8::from(self.high_exclude));
+        let other_lower = (other_lo, i8::from(other.low_exclude));
+        let other_upper = (other_hi, -i8::from(other.high_exclude));
+        if lower > other_upper || other_lower > upper {
+            return None;
+        }
+        Some((lower <= other_lower, upper >= other_upper))
+    }
+
+}
+
+#[derive(Clone, Copy, Default)]
+struct IntersectionSources {
+    low: usize,
+    high: usize,
+    collators: usize,
 }
 
 /// Go `Ranges.Subset`: every range covered by SOME super range, and every
@@ -396,6 +585,105 @@ pub fn intersect_ranges(ranges: &Ranges, other_ranges: &Ranges) -> Option<Ranges
         }
     }
     Some(result)
+}
+
+/// Intersects range lists whose bounds can be moved into the result.
+///
+/// On success, either input may contain moved-out bounds. On comparison
+/// failure or mismatched collators, both inputs are left intact.
+#[must_use]
+pub fn intersect_owned_ranges(ranges: &mut [Range], other_ranges: &mut [Range]) -> Option<Ranges> {
+    let compare = |left: &Range, right: &Range, i, j| {
+        let width = left.low_val.len().min(right.low_val.len());
+        if !check_collators(left, right, width) {
+            return None;
+        }
+        left.intersection_with(right, |low, high, collators| {
+            let select = |from_right| if from_right { j } else { i };
+            IntersectionSources {
+                low: select(low),
+                high: select(high),
+                collators: select(collators),
+            }
+        })
+        .ok()
+    };
+
+    if let ([left], [right]) = (&mut *ranges, &mut *other_ranges) {
+        let Some(bounds) = compare(left, right, 0, 1)? else {
+            return Some(Ranges::new());
+        };
+        let mut inputs = [
+            (left, IntersectionSources::default()),
+            (right, IntersectionSources::default()),
+        ];
+        return Some(vec![move_intersection(&mut inputs, bounds, 0)]);
+    }
+
+    // Collect the pairs before moving anything so an error on a later pair
+    // leaves the original lists available for the planner's fallback.
+    let mut plans = Vec::new();
+    let first_right = ranges.len();
+    for (i, left) in ranges.iter().enumerate() {
+        for (j, right) in other_ranges.iter().enumerate() {
+            if let Some(bounds) = compare(left, right, i, first_right + j)? {
+                plans.push(bounds);
+            }
+        }
+    }
+    if plans.is_empty() {
+        return Some(Ranges::new());
+    }
+
+    let mut inputs: Vec<_> = ranges
+        .iter_mut()
+        .chain(other_ranges)
+        .map(|range| (range, IntersectionSources::default()))
+        .collect();
+    // One input can contribute a bound to several results. Keep the bound
+    // until all earlier results have a shared copy or their own buffer.
+    for (result, bounds) in plans.iter().enumerate() {
+        inputs[bounds.low].1.low = result;
+        inputs[bounds.high].1.high = result;
+        inputs[bounds.collators].1.collators = result;
+    }
+    Some(
+        plans
+            .into_iter()
+            .enumerate()
+            .map(|(result, bounds)| move_intersection(&mut inputs, bounds, result))
+            .collect(),
+    )
+}
+
+fn move_intersection(
+    inputs: &mut [(&mut Range, IntersectionSources)],
+    bounds: IntersectionSources,
+    result: usize,
+) -> Range {
+    fn take_or_clone<T: Clone>(value: &mut Vec<T>, last_use: usize, result: usize) -> Vec<T> {
+        if last_use == result {
+            std::mem::take(value)
+        } else {
+            value.clone()
+        }
+    }
+
+    let (low, last_use) = &mut inputs[bounds.low];
+    let low_val = low.low_val.take_or_share(last_use.low, result);
+    let low_exclude = low.low_exclude;
+    let (high, last_use) = &mut inputs[bounds.high];
+    let high_val = high.high_val.take_or_share(last_use.high, result);
+    let high_exclude = high.high_exclude;
+    let (range, last_use) = &mut inputs[bounds.collators];
+    let collators = take_or_clone(&mut range.collators, last_use.collators, result);
+    Range {
+        low_val: low_val.into(),
+        high_val: high_val.into(),
+        collators,
+        low_exclude,
+        high_exclude,
+    }
 }
 
 /// Go `HasFullRange`.
@@ -452,86 +740,81 @@ pub fn ranges_mem_usage(ranges: &Ranges) -> i64 {
     ranges.iter().map(Range::mem_usage).sum()
 }
 
-fn format_datum(d: &Datum, is_left_side: bool) -> String {
-    match d {
-        Datum::Null => "NULL".to_owned(),
-        Datum::MinNotNull => "-inf".to_owned(),
-        Datum::MaxValue => "+inf".to_owned(),
-        Datum::Int(v) => {
-            if *v == i64::MIN && is_left_side {
-                return "-inf".to_owned();
-            }
-            if *v == i64::MAX && !is_left_side {
-                return "+inf".to_owned();
-            }
-            v.to_string()
+fn append_bound(output: &mut String, bound: &[Datum], is_left_side: bool, redact: &str) {
+    for (i, datum) in bound.iter().enumerate() {
+        if i > 0 {
+            output.push(' ');
         }
-        Datum::UInt(v) => {
-            if *v == u64::MAX && !is_left_side {
-                return "+inf".to_owned();
+        let infinity = match datum {
+            Datum::MinNotNull => Some("-inf"),
+            Datum::MaxValue => Some("+inf"),
+            Datum::Int(v) if *v == i64::MIN && is_left_side => Some("-inf"),
+            Datum::Int(v) if *v == i64::MAX && !is_left_side => Some("+inf"),
+            Datum::UInt(v) if *v == u64::MAX && !is_left_side => Some("+inf"),
+            _ => None,
+        };
+        if let Some(infinity) = infinity {
+            output.push_str(infinity);
+        } else if redact == "ON" {
+            output.push('?');
+        } else {
+            if redact != "OFF" {
+                output.push('‹');
             }
-            v.to_string()
+            append_datum(output, datum);
+            if redact != "OFF" {
+                output.push('›');
+            }
         }
-        Datum::Bytes(bytes) => tidb_go_strconv::quote_bytes(bytes),
-        Datum::String(s) => tidb_go_strconv::quote_bytes(s.bytes()),
-        // Go's default arm is `fmt.Sprintf("%v", d.GetValue())`: floats
-        // print through `strconv.FormatFloat(v, 'g', -1, 64)` — and a
-        // KindFloat32 datum's GetValue is a float32, so its digits are the
-        // 32-bit shortest form ("111.111115", not the widened f64 tail).
-        Datum::Real(v) => go_g_float(*v),
-        // Go `%v` of a MyDecimal prints its decimal text.
-        Datum::Decimal(d) => d.to_string(),
-        Datum::Float32(v) => {
-            tidb_goruntime::go_strconv::format_float(f64::from(*v as f32), b'g', -1, 32)
-        }
-        // Go `"\"%v\""`: the value's String() between quotes, unescaped.
-        Datum::Enum(value, _) => format!("\"{}\"", value.name()),
-        Datum::Set(value, _) => format!("\"{value}\""),
-        Datum::Json(value) => format!("\"{value}\""),
-        Datum::BinaryLiteral(value) | Datum::Bit(value) => format!("\"{value}\""),
-        // Go's default `%v` of GetValue: the type's String().
-        Datum::Time(value) => value.to_string(),
-        Datum::Duration(value) => value.to_string(),
-        Datum::VectorFloat32(value) => value.to_string(),
-        // `%v` of a []byte prints its decimal octets as `[1 2 3]`.
-        Datum::Raw(bytes) => format!(
-            "[{}]",
-            bytes
-                .iter()
-                .map(u8::to_string)
-                .collect::<Vec<_>>()
-                .join(" ")
-        ),
     }
 }
 
-/// Go `extendBound`: pad a partial bound with the correct infinity for its
-/// side and openness (the multi-column prefix rule spelled out in Go's
-/// comment).
-fn extend_bound(
-    bound: &mut Vec<Datum>,
-    low_index: usize,
-    high_index: usize,
-    low: bool,
-    open: bool,
-) {
-    for _ in low_index..high_index {
-        let sentinel = if low {
-            if open {
-                // Open lower bound -> +inf (exclude the current value).
-                Datum::MaxValue
-            } else {
-                // Closed lower bound -> -inf (include all lower values).
-                Datum::MinNotNull
+fn append_datum(output: &mut String, datum: &Datum) {
+    match datum {
+        Datum::Null => output.push_str("NULL"),
+        Datum::MinNotNull | Datum::MaxValue => unreachable!("infinities rendered by append_bound"),
+        Datum::Int(v) => write!(output, "{v}").unwrap(),
+        Datum::UInt(v) => write!(output, "{v}").unwrap(),
+        Datum::Bytes(bytes) => output.push_str(&tidb_go_strconv::quote_bytes(bytes)),
+        Datum::String(s) => output.push_str(&tidb_go_strconv::quote_bytes(s.bytes())),
+        // Go's default arm is fmt.Sprintf("%v", d.GetValue()). A float32
+        // datum keeps 32-bit shortest form even though Rust stores it as f64.
+        Datum::Real(v) => output.push_str(&go_g_float(*v)),
+        Datum::Float32(v) => output.push_str(&tidb_goruntime::go_strconv::format_float(
+            f64::from(*v as f32),
+            b'g',
+            -1,
+            32,
+        )),
+        Datum::Decimal(d) => write!(output, "{d}").unwrap(),
+        // Go wraps these values in quotes without escaping their display text.
+        Datum::Enum(value, _) => write!(output, "\"{}\"", value.name()).unwrap(),
+        Datum::Set(value, _) => write!(output, "\"{value}\"").unwrap(),
+        Datum::Json(value) => write!(output, "\"{value}\"").unwrap(),
+        Datum::BinaryLiteral(value) | Datum::Bit(value) => write!(output, "\"{value}\"").unwrap(),
+        Datum::Time(value) => write!(output, "{value}").unwrap(),
+        Datum::Duration(value) => write!(output, "{value}").unwrap(),
+        Datum::VectorFloat32(value) => write!(output, "{value}").unwrap(),
+        Datum::Raw(bytes) => {
+            output.push('[');
+            for (i, byte) in bytes.iter().enumerate() {
+                if i > 0 {
+                    output.push(' ');
+                }
+                write!(output, "{byte}").unwrap();
             }
-        } else if open {
-            // Open upper bound -> -inf (exclude the current value).
-            Datum::MinNotNull
-        } else {
-            // Closed upper bound -> +inf (include all higher values).
-            Datum::MaxValue
-        };
-        bound.push(sentinel);
+            output.push(']');
+        }
+    }
+}
+
+/// The value filling a missing column under Go's prefix-bound extension.
+fn bound_padding(low: bool, open: bool) -> &'static Datum {
+    if low == open {
+        // Open lower or closed upper bound.
+        &Datum::MaxValue
+    } else {
+        &Datum::MinNotNull
     }
 }
 
@@ -550,16 +833,16 @@ fn compare_lexicographically(
     use std::cmp::Ordering;
     let n1 = bound1.len();
     let n2 = bound2.len();
-    let mut local_bound1 = bound1.to_vec();
-    let mut local_bound2 = bound2.to_vec();
-    if n1 < n2 {
-        extend_bound(&mut local_bound1, n1, n2, low1, open1);
-    } else if n2 < n1 {
-        extend_bound(&mut local_bound2, n2, n1, low2, open2);
+    for (i, (left, right)) in bound1.iter().zip(bound2).enumerate() {
+        let cmp = left.compare(right, collators[i])?;
+        if cmp != Ordering::Equal {
+            return Ok(cmp);
+        }
     }
-
-    for i in 0..n1.max(n2) {
-        let cmp = local_bound1[i].compare(&local_bound2[i], collators[i])?;
+    for i in n1.min(n2)..n1.max(n2) {
+        let left = bound1.get(i).unwrap_or_else(|| bound_padding(low1, open1));
+        let right = bound2.get(i).unwrap_or_else(|| bound_padding(low2, open2));
+        let cmp = left.compare(right, collators[i])?;
         if cmp != Ordering::Equal {
             return Ok(cmp);
         }
@@ -634,17 +917,13 @@ pub(super) fn go_g_float(value: f64) -> String {
 /// incremented until one does not wrap to zero; the length is kept (`01 ff`
 /// is `02 00`), and a key of only `0xff` bytes is itself with a zero byte
 /// appended.
-pub(crate) fn prefix_next(key: &[u8]) -> Vec<u8> {
-    let mut buf = key.to_vec();
-    for byte in buf.iter_mut().rev() {
-        *byte = byte.wrapping_add(1);
-        if *byte != 0 {
-            return buf;
-        }
+pub(crate) fn prefix_next(key: &mut Vec<u8>) {
+    if let Some(index) = key.iter().rposition(|&byte| byte != u8::MAX) {
+        key[index] += 1;
+        key[index + 1..].fill(0);
+    } else {
+        key.push(0);
     }
-    let mut buf = key.to_vec();
-    buf.push(0);
-    buf
 }
 
 #[cfg(test)]
@@ -655,11 +934,17 @@ mod tests {
     /// shapes): a carry keeps the key's length.
     #[test]
     fn prefix_next_carries_like_go() {
-        assert_eq!(prefix_next(&[0x01, 0x02]), [0x01, 0x03]);
-        assert_eq!(prefix_next(&[0x01, 0xff]), [0x02, 0x00]);
-        assert_eq!(prefix_next(&[0x01, 0xff, 0xff]), [0x02, 0x00, 0x00]);
-        assert_eq!(prefix_next(&[0xff, 0xff]), [0xff, 0xff, 0x00]);
-        assert_eq!(prefix_next(&[]), [0x00]);
+        for (input, expected) in [
+            (&[0x01, 0x02][..], &[0x01, 0x03][..]),
+            (&[0x01, 0xff], &[0x02, 0x00]),
+            (&[0x01, 0xff, 0xff], &[0x02, 0x00, 0x00]),
+            (&[0xff, 0xff], &[0xff, 0xff, 0x00]),
+            (&[], &[0x00]),
+        ] {
+            let mut key = input.to_vec();
+            prefix_next(&mut key);
+            assert_eq!(key, expected);
+        }
     }
 
     fn int(v: i64) -> Datum {
@@ -683,8 +968,8 @@ mod tests {
                 .collect()
         };
         Range {
-            low_val: datums(low),
-            high_val: datums(high),
+            low_val: datums(low).into(),
+            high_val: datums(high).into(),
             collators: collators(low.len()),
             low_exclude,
             high_exclude,
@@ -705,8 +990,8 @@ mod tests {
             (build_range(&[1], &[2], true, true), "(1,2)"),
             (
                 Range {
-                    low_val: vec![Datum::Real(1.1)],
-                    high_val: vec![Datum::Real(1.9)],
+                    low_val: vec![Datum::Real(1.1)].into(),
+                    high_val: vec![Datum::Real(1.9)].into(),
                     collators: collators(1),
                     low_exclude: false,
                     high_exclude: true,
@@ -715,8 +1000,8 @@ mod tests {
             ),
             (
                 Range {
-                    low_val: vec![Datum::MinNotNull],
-                    high_val: vec![int(1)],
+                    low_val: vec![Datum::MinNotNull].into(),
+                    high_val: vec![int(1)].into(),
                     collators: collators(1),
                     low_exclude: false,
                     high_exclude: true,
@@ -738,8 +1023,8 @@ mod tests {
             (build_range(&[1], &[1], false, false), true),
             (
                 Range {
-                    low_val: vec![string_datum("abc")],
-                    high_val: vec![string_datum("abc")],
+                    low_val: vec![string_datum("abc")].into(),
+                    high_val: vec![string_datum("abc")].into(),
                     collators: collators(1),
                     low_exclude: false,
                     high_exclude: false,
@@ -748,8 +1033,8 @@ mod tests {
             ),
             (
                 Range {
-                    low_val: vec![int(1)],
-                    high_val: vec![int(1), int(1)],
+                    low_val: vec![int(1)].into(),
+                    high_val: vec![int(1), int(1)].into(),
                     collators: collators(1),
                     low_exclude: false,
                     high_exclude: false,
@@ -777,8 +1062,8 @@ mod tests {
         let rows = [
             (
                 Range {
-                    low_val: vec![Datum::MinNotNull],
-                    high_val: vec![Datum::MaxValue],
+                    low_val: vec![Datum::MinNotNull].into(),
+                    high_val: vec![Datum::MaxValue].into(),
                     collators: collators(1),
                     ..Range::default()
                 },
@@ -787,8 +1072,8 @@ mod tests {
             ),
             (
                 Range {
-                    low_val: vec![Datum::MaxValue],
-                    high_val: vec![Datum::MinNotNull],
+                    low_val: vec![Datum::MaxValue].into(),
+                    high_val: vec![Datum::MinNotNull].into(),
                     collators: collators(1),
                     ..Range::default()
                 },
@@ -797,8 +1082,8 @@ mod tests {
             ),
             (
                 Range {
-                    low_val: vec![int(1)],
-                    high_val: vec![Datum::UInt(u64::MAX)],
+                    low_val: vec![int(1)].into(),
+                    high_val: vec![Datum::UInt(u64::MAX)].into(),
                     collators: collators(1),
                     ..Range::default()
                 },
@@ -808,8 +1093,8 @@ mod tests {
             // Go builds `nullDatum` by SetNull on a sentinel: a plain NULL.
             (
                 Range {
-                    low_val: vec![Datum::Null],
-                    high_val: vec![Datum::UInt(u64::MAX)],
+                    low_val: vec![Datum::Null].into(),
+                    high_val: vec![Datum::UInt(u64::MAX)].into(),
                     collators: collators(1),
                     ..Range::default()
                 },
@@ -818,8 +1103,8 @@ mod tests {
             ),
             (
                 Range {
-                    low_val: vec![Datum::Null],
-                    high_val: vec![Datum::Null],
+                    low_val: vec![Datum::Null].into(),
+                    high_val: vec![Datum::Null].into(),
                     collators: collators(1),
                     ..Range::default()
                 },
@@ -828,8 +1113,8 @@ mod tests {
             ),
             (
                 Range {
-                    low_val: vec![Datum::UInt(0)],
-                    high_val: vec![Datum::UInt(u64::MAX)],
+                    low_val: vec![Datum::UInt(0)].into(),
+                    high_val: vec![Datum::UInt(u64::MAX)].into(),
                     collators: collators(1),
                     ..Range::default()
                 },
@@ -865,6 +1150,80 @@ mod tests {
             actual.join(","),
             "(100 0,100 +inf],(100,101),[101 -inf,101 10)"
         );
+    }
+
+    #[test]
+    fn owned_intersection_moves_the_last_copy_of_a_shared_bound() {
+        let bytes_range = |low: &[u8], high: &[u8]| Range {
+            low_val: vec![Datum::Bytes(low.to_vec())].into(),
+            high_val: vec![Datum::Bytes(high.to_vec())].into(),
+            collators: collators(1),
+            ..Range::default()
+        };
+        let mut left = vec![bytes_range(b"lower", b"upper")];
+        let mut right = vec![
+            bytes_range(b"first", b"middle"),
+            bytes_range(b"first", b"other"),
+        ];
+        let Datum::Bytes(bytes) = &left[0].low_val[0] else {
+            unreachable!();
+        };
+        let original = bytes.as_ptr();
+        let expected = intersect_ranges(&left, &right).unwrap();
+        let mut actual = intersect_owned_ranges(&mut left, &mut right).unwrap();
+        assert_eq!(actual, expected);
+        assert!(left[0].low_val.is_empty());
+        let Datum::Bytes(last) = &actual[1].low_val[0] else {
+            unreachable!();
+        };
+        assert_eq!(last.as_ptr(), original);
+        let Datum::Bytes(first) = &actual[0].low_val[0] else {
+            unreachable!();
+        };
+        assert_eq!(first.as_ptr(), original);
+        let Datum::Bytes(first) = &mut actual[0].low_val[0] else {
+            unreachable!();
+        };
+        first[0] = b'L';
+        assert_ne!(first.as_ptr(), original);
+        assert_eq!(actual[1], expected[1]);
+    }
+
+    #[test]
+    fn borrowed_intersection_shares_wide_bounds_until_mutation() {
+        let range = |low, high| Range {
+            low_val: vec![Datum::Bytes(vec![low; 1024])].into(),
+            high_val: vec![Datum::Bytes(vec![high; 1024])].into(),
+            collators: collators(1),
+            ..Range::default()
+        };
+        let left = range(b'a', b'd');
+        let right = range(b'b', b'e');
+        let mut intersection = left.intersect_range(&right).unwrap().unwrap();
+        assert_eq!(intersection.low_val.as_ptr(), right.low_val.as_ptr());
+        assert_eq!(intersection.high_val.as_ptr(), left.high_val.as_ptr());
+        intersection.low_val[0] = Datum::Null;
+        assert_ne!(intersection.low_val.as_ptr(), right.low_val.as_ptr());
+        assert_eq!(right.low_val[0], Datum::Bytes(vec![b'b'; 1024]));
+    }
+
+    #[test]
+    fn late_owned_intersection_failure_leaves_both_inputs_intact() {
+        let left = vec![build_range(&[1], &[10], false, false)];
+        let right = vec![build_range(&[4], &[15], false, false)];
+        let mut mismatch = right[0].clone();
+        mismatch.collators[0] = Collation::Utf8Mb4GeneralCi;
+        let mut invalid = right[0].clone();
+        invalid.high_val[0] = Datum::VectorFloat32(tidb_datatype::VectorFloat32::init(1));
+
+        for bad in [mismatch, invalid] {
+            let right = vec![right[0].clone(), bad];
+            assert!(intersect_ranges(&left, &right).is_none());
+            let (mut owned_left, mut owned_right) = (left.clone(), right.clone());
+            assert!(intersect_owned_ranges(&mut owned_left, &mut owned_right).is_none());
+            assert_eq!(owned_left, left);
+            assert_eq!(owned_right, right);
+        }
     }
 
     /// Go `TestIntersectionEmpty` (`types_test.go:318`): the expected MAP is

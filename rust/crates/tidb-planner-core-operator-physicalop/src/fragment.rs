@@ -474,7 +474,7 @@ pub trait MppTaskGeneratorContext {
     ///
     /// # Errors
     /// The store could not place the tasks.
-    fn construct_mpp_tasks(&self, req: &MppBuildTasksRequest) -> Result<Vec<Arc<dyn MppTaskLocation>>, PlanError>;
+    fn construct_mpp_tasks(&self, req: MppBuildTasksRequest) -> Result<Vec<Arc<dyn MppTaskLocation>>, PlanError>;
     /// Go `PhysicalTableScan.ResolveCorrelatedColumns`: the scan's ranges
     /// rebuilt from its access conditions with the correlated columns'
     /// current values.
@@ -844,7 +844,7 @@ impl MppTaskGenerator<'_> {
             mock::table_reader_cache_hit();
             metas
         } else {
-            let metas = self.ctx.construct_mpp_tasks(&req)?;
+            let metas = self.ctx.construct_mpp_tasks(req)?;
             self.table_reader_cache.insert(val, metas.clone());
             #[cfg(any(test, feature = "test-util"))]
             mock::table_reader_cache_miss();
@@ -1000,7 +1000,7 @@ mod tests {
         }
         fn construct_mpp_tasks(
             &self,
-            _: &tidb_txnkv::MppBuildTasksRequest,
+            _: tidb_txnkv::MppBuildTasksRequest,
         ) -> Result<Vec<std::sync::Arc<dyn tidb_txnkv::MppTaskLocation>>, tidb_planner_core_base::PlanError> {
             Ok(self
                 .addrs

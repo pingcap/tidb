@@ -1284,7 +1284,7 @@ impl KvHandler {
         };
         let cop_req = coprocessor::Request {
             tp: tidb_unistore_cophandler::REQ_TYPE_DAG,
-            data: req.encoded_plan.clone(),
+            data: req.encoded_plan.clone().into(),
             start_ts: req.meta.as_ref().map_or(0, |meta| meta.start_ts),
             ranges: regions.iter().flat_map(|region| region.ranges.iter().cloned()).collect(),
             ..coprocessor::Request::default()

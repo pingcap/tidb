@@ -86,19 +86,21 @@ fn classify_pair(previous: &KeyRange, current: &KeyRange, stats: &mut RangeIssue
 /// Go `rangeIssuesForKeyRanges`.
 #[must_use]
 pub fn range_issues_for_key_ranges(ranges: &KeyRanges) -> RangeIssueStats {
+    range_issues(ranges.iter())
+}
+
+pub(crate) fn range_issues<'a>(mut ranges: impl Iterator<Item = &'a KeyRange>) -> RangeIssueStats {
     let mut stats = RangeIssueStats::default();
-    if ranges.is_empty() {
+    let Some(mut previous) = ranges.next() else {
         return stats;
-    }
+    };
     let validate = |range: &KeyRange, stats: &mut RangeIssueStats| {
         if !range.end_key.is_empty() && range.start_key > range.end_key {
             stats.invalid_bound += 1;
         }
     };
-    let mut previous = ranges.ref_at(0);
     validate(previous, &mut stats);
-    for index in 1..ranges.len() {
-        let current = ranges.ref_at(index);
+    for current in ranges {
         validate(current, &mut stats);
         if previous.end_key.is_empty() {
             stats.infinite_tail += 1;
@@ -113,17 +115,19 @@ pub fn range_issues_for_key_ranges(ranges: &KeyRanges) -> RangeIssueStats {
 /// Go `minStartAndMaxEndKeyOfKeyRanges`.
 #[must_use]
 pub fn min_start_and_max_end_key_of_key_ranges(ranges: &KeyRanges) -> Option<(Key, Key)> {
-    let first = ranges.get(0)?;
-    let mut min_start = first.start_key.clone();
-    let mut max_end = first.end_key.clone();
-    for index in 1..ranges.len() {
-        let range = ranges.ref_at(index);
-        min_start = min_start.min(range.start_key.clone());
-        if compare_range_end(&range.end_key, &max_end) == Ordering::Greater {
-            max_end = range.end_key.clone();
+    let mut ranges = ranges.iter();
+    let first = ranges.next()?;
+    let mut min_start = &first.start_key;
+    let mut max_end = &first.end_key;
+    for range in ranges {
+        if range.start_key < *min_start {
+            min_start = &range.start_key;
+        }
+        if compare_range_end(&range.end_key, max_end) == Ordering::Greater {
+            max_end = &range.end_key;
         }
     }
-    Some((min_start, max_end))
+    Some((min_start.clone(), max_end.clone()))
 }
 
 /// Exact source reasons returned by `firstOutOfBoundKeyRangeInLocation`.
@@ -177,13 +181,15 @@ pub fn ensure_monotonic_key_ranges(ranges: &mut KeyRanges) -> bool {
         return false;
     }
     let mut sorted = ranges.to_ranges();
-    sorted.sort_by(|left, right| {
-        left.start_key
-            .cmp(&right.start_key)
-            .then_with(|| left.end_key.cmp(&right.end_key))
-    });
+    sorted.sort_by(compare_range_order);
     ranges.reset(sorted);
     true
+}
+
+pub(crate) fn compare_range_order(left: &KeyRange, right: &KeyRange) -> Ordering {
+    left.start_key
+        .cmp(&right.start_key)
+        .then_with(|| left.end_key.cmp(&right.end_key))
 }
 
 #[cfg(test)]

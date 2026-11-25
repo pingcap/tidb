@@ -11,6 +11,7 @@ description = "TiDB pkg/parser/terror: TiDB's classified errors (Rust)."
 workspace = true
 
 [dependencies]
+tidb-stacktrace = { path = "../tidb-stacktrace" }
 tidb-mysql = { path = "../tidb-mysql" }
 tidb-terror-identity = { path = "../tidb-terror-identity" }
 serde = { version = "1", features = ["derive"] }

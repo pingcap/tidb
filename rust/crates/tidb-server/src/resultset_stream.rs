@@ -18,12 +18,15 @@
 //! rows. Metadata, each row, and the terminal EOF are emitted independently so
 //! a server can preserve `clientConn.writeChunks`' lazy pull/write ordering.
 
-use tidb_format_textrow::result_encoder::is_string_column_type;
+use std::borrow::Cow;
+
+use tidb_format_textrow::result_encoder::{
+    is_string_column_type, ResultEncoder, UTF8MB4_DEFAULT_COLLATION_ID,
+};
 use tidb_format_textrow::{append_datum_text_owned, OwnedDatumText, TextColumn, TextFormatError};
 use tidb_server_internal_dump::append_length_encoded_bytes;
 use tidb_server_internal_dump::append_length_encoded_int;
 use crate::resultset::encode_eof_packet;
-use tidb_server_internal_dump::encode_text_row;
 use tidb_server_internal_column::ColumnInfo;
 use crate::resultset::EofPacket;
 use crate::resultset::ResultSetOptions;
@@ -239,9 +242,15 @@ impl ResultSetStream {
         // reset per cell from that column's own charset (`UpdateDataEncoding`),
         // because `EncodeData` falls back to it for a binary column even when
         // the session asked for something else.
-        let encoded = self.encode_row_data(row);
-        let values = encoded.iter().map(Option::as_deref).collect::<Vec<_>>();
-        let payload = encode_text_row(&values);
+        let capacity = text_row_capacity(row);
+        let mut payload = Vec::with_capacity(capacity);
+        let encoder = self.options.result_encoder;
+        for (value, column) in row.iter().zip(&self.columns) {
+            let encoded = value
+                .as_deref()
+                .map(|bytes| encode_cell(column, bytes, encoder));
+            append_length_encoded_bytes(&mut payload, encoded.as_deref());
+        }
         self.rows += 1;
         Ok(payload)
     }
@@ -274,13 +283,7 @@ impl ResultSetStream {
         // The owned cells already know their final byte lengths. Reserve the
         // complete row payload up front so appending 51-column wide rows does
         // not repeatedly grow and copy the packet buffer.
-        let capacity = row
-            .iter()
-            .map(|value| match value {
-                None => 1,
-                Some(value) => value.len() + length_encoded_int_size(value.len()),
-            })
-            .sum();
+        let capacity = text_row_capacity(&row);
         let mut payload = Vec::with_capacity(capacity);
         self.append_row_data_owned(&mut payload, row);
         self.rows += 1;
@@ -359,38 +362,6 @@ impl ResultSetStream {
         Ok(payload)
     }
 
-    /// Applies `@@character_set_results` to the string cells of one row.
-    fn encode_row_data(&self, row: &[Option<Vec<u8>>]) -> Vec<Option<Vec<u8>>> {
-        let encoder = self.options.result_encoder;
-        if encoder.result_charset().is_none() {
-            // Go's `isNull` state: `EncodeData` returns the column charset's
-            // bytes, which for every charset this tier serves is the input.
-            return row.to_vec();
-        }
-        row.iter()
-            .zip(&self.columns)
-            .map(|(value, column)| {
-                let value = value.as_ref()?;
-                if !tidb_format_textrow::result_encoder::is_string_column_type(column.type_code) {
-                    return Some(value.clone());
-                }
-                let mut encoder = encoder;
-                // Go treats JSON and VECTOR as utf8mb4 regardless of the
-                // column's own (binary) collation.
-                let collation = match column.type_code {
-                    tidb_server_internal_column::TYPE_JSON | tidb_server_internal_column::TYPE_TIDB_VECTOR_FLOAT32 => {
-                        tidb_format_textrow::result_encoder::UTF8MB4_DEFAULT_COLLATION_ID
-                    }
-                    _ => column.charset,
-                };
-                if encoder.update_data_encoding(collation).is_err() {
-                    return Some(value.clone());
-                }
-                Some(encoder.encode_data(value).unwrap_or_else(|_| value.clone()))
-            })
-            .collect()
-    }
-
     /// Appends an owned row directly into its final text-protocol payload.
     ///
     /// This mirrors Go's `DumpTextRow` loop: `FormatValueText` produces one
@@ -400,43 +371,12 @@ impl ResultSetStream {
     /// on the common result path.
     fn append_row_data_owned(&self, payload: &mut Vec<u8>, row: Vec<Option<Vec<u8>>>) {
         let encoder = self.options.result_encoder;
-        if encoder.result_charset().is_none() {
-            // Go's `isNull` state leaves the column bytes untouched; retain
-            // the caller's allocation for the final length-encoded append.
-            for value in row {
-                append_length_encoded_bytes(payload, value.as_deref());
-            }
-            return;
-        }
         for (value, column) in row.into_iter().zip(&self.columns) {
             let Some(value) = value else {
                 append_length_encoded_bytes(payload, None);
                 continue;
             };
-            if !tidb_format_textrow::result_encoder::is_string_column_type(column.type_code) {
-                append_length_encoded_bytes(payload, Some(&value));
-                continue;
-            }
-            let mut encoder = encoder;
-            // Go treats JSON and VECTOR as utf8mb4 regardless of the
-            // column's own (binary) collation.
-            let collation = match column.type_code {
-                tidb_server_internal_column::TYPE_JSON | tidb_server_internal_column::TYPE_TIDB_VECTOR_FLOAT32 => {
-                    tidb_format_textrow::result_encoder::UTF8MB4_DEFAULT_COLLATION_ID
-                }
-                _ => column.charset,
-            };
-            if encoder.update_data_encoding(collation).is_err() {
-                append_length_encoded_bytes(payload, Some(&value));
-                continue;
-            }
-            // `update_data_encoding` initializes the encoder, and all
-            // registered conversions are infallible. This is the owned
-            // equivalent of Go's EncodeData fallback without cloning the
-            // source bytes on the successful path.
-            let value = encoder
-                .encode_data_owned(value)
-                .expect("data encoding was initialized above");
+            let value = encode_owned_cell(column, value, encoder);
             append_length_encoded_bytes(payload, Some(&value));
         }
     }
@@ -475,25 +415,49 @@ const fn length_encoded_int_size(value: usize) -> usize {
     }
 }
 
-fn encode_owned_cell(
-    column: &ColumnInfo,
-    value: Vec<u8>,
-    mut encoder: tidb_format_textrow::result_encoder::ResultEncoder,
-) -> Vec<u8> {
-    if encoder.result_charset().is_none() || !is_string_column_type(column.type_code) {
-        return value;
+fn text_row_capacity(row: &[Option<Vec<u8>>]) -> usize {
+    row.iter()
+        .map(|value| match value {
+            None => 1,
+            Some(bytes) => bytes.len() + length_encoded_int_size(bytes.len()),
+        })
+        .sum()
+}
+
+fn column_encoder(column: &ColumnInfo, mut encoder: ResultEncoder) -> Option<ResultEncoder> {
+    if !is_string_column_type(column.type_code) {
+        return None;
     }
     // Go treats JSON and VECTOR as utf8mb4 regardless of their binary column
     // collation; all other string columns use their declared charset.
     let collation = match column.type_code {
-        tidb_server_internal_column::TYPE_JSON | tidb_server_internal_column::TYPE_TIDB_VECTOR_FLOAT32 => tidb_format_textrow::result_encoder::UTF8MB4_DEFAULT_COLLATION_ID,
+        tidb_server_internal_column::TYPE_JSON
+        | tidb_server_internal_column::TYPE_TIDB_VECTOR_FLOAT32 => UTF8MB4_DEFAULT_COLLATION_ID,
         _ => column.charset,
     };
-    if encoder.update_data_encoding(collation).is_err() {
-        return value;
+    if encoder.can_skip_data_encoding(collation) {
+        return None;
     }
-    let fallback = value.clone();
-    encoder.encode_data_owned(value).unwrap_or(fallback)
+    encoder.update_data_encoding(collation).ok()?;
+    Some(encoder)
+}
+
+fn encode_cell<'a>(column: &ColumnInfo, value: &'a [u8], encoder: ResultEncoder) -> Cow<'a, [u8]> {
+    match column_encoder(column, encoder) {
+        Some(encoder) => encoder
+            .encode_data_cow(value)
+            .expect("data encoding was initialized above"),
+        None => Cow::Borrowed(value),
+    }
+}
+
+fn encode_owned_cell(column: &ColumnInfo, value: Vec<u8>, encoder: ResultEncoder) -> Vec<u8> {
+    let Some(encoder) = column_encoder(column, encoder) else {
+        return value;
+    };
+    encoder
+        .encode_data_owned(value)
+        .expect("data encoding was initialized above")
 }
 
 /// Conservative size estimate for one Go `DumpTextRow` cell, including its
@@ -519,7 +483,7 @@ fn datum_text_capacity(datum: &Datum) -> usize {
     value_len.saturating_add(length_encoded_int_size(value_len))
 }
 
-fn finish_cell_prefix(payload: &mut Vec<u8>, prefix_start: usize, value_start: usize) {
+pub(crate) fn finish_cell_prefix(payload: &mut Vec<u8>, prefix_start: usize, value_start: usize) {
     let value_len = payload.len() - value_start;
     let prefix = length_encoded_prefix(value_len);
     let reserved = value_start - prefix_start;
@@ -617,28 +581,14 @@ impl TextRowWriter<'_> {
             table_is_empty: column.table.is_empty(),
         };
 
-        // A result-charset conversion needs ownership of the source bytes.
-        // When no conversion is configured, append the known-length bytes
-        // directly with their final prefix; this is Go's
-        // `DumpTextRow`/`LengthEncodedString` fast path.
+        // Borrow byte-preserving values until the final length-encoded append.
         if let tidb_format_textrow::TextScalar::Bytes(bytes) = value {
             // Go's `FormatValueText` enters this branch only for its complete
             // string-like type family. Keep unsupported/typed columns on the
             // checked scalar matrix so a raw byte cannot hide `invalid type`.
             if is_string_column_type(column.type_code) {
-                if self
-                    .stream
-                    .options
-                    .result_encoder
-                    .result_charset()
-                    .is_none()
-                {
-                    append_length_encoded_bytes(&mut self.payload, Some(bytes));
-                    self.next_column += 1;
-                    return Ok(());
-                }
                 let encoded =
-                    encode_owned_cell(column, bytes.to_vec(), self.stream.options.result_encoder);
+                    encode_cell(column, bytes, self.stream.options.result_encoder);
                 append_length_encoded_bytes(&mut self.payload, Some(&encoded));
                 self.next_column += 1;
                 return Ok(());

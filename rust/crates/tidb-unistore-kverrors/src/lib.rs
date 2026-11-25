@@ -116,7 +116,9 @@ pub enum KvError {
 
 /// Go's `hex.EncodeToString`.
 fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+    let mut out = vec![0; bytes.len() * 2];
+    hex::encode_to_slice(bytes, &mut out).expect("two hex digits per byte");
+    String::from_utf8(out).expect("hex digits are ASCII")
 }
 
 /// Go `mvcc.Lock.String()` over the lock's kvrpcpb shape.

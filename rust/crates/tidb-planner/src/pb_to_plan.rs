@@ -445,8 +445,8 @@ mod tests {
 
     fn key_range(start: &str, end: &str) -> coprocessor::KeyRange {
         coprocessor::KeyRange {
-            start: hex(&format!("{PREFIX}{start}")),
-            end: hex(&format!("{PREFIX}{end}")),
+            start: hex(&format!("{PREFIX}{start}")).into(),
+            end: hex(&format!("{PREFIX}{end}")).into(),
         }
     }
 

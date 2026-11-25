@@ -15,133 +15,173 @@
 //! Go `pkg/statistics/handle/cache/internal/mapcache`.
 
 use std::collections::HashMap;
-use std::sync::{Arc, RwLock, RwLockReadGuard};
+use std::sync::{Arc, OnceLock, RwLock};
 
+use arc_swap::ArcSwapOption;
+use foldhash::fast::RandomState;
 use tidb_stats::Table;
 use tidb_stats_handle_cache_internal::StatsCacheInner;
 
 #[derive(Clone)]
 struct CacheItem {
     value: Arc<Table>,
-    key: i64,
     cost: i64,
 }
 
-impl CacheItem {
-    fn copy(&self) -> Self {
-        Self {
-            value: Arc::clone(&self.value),
-            key: self.key,
-            cost: self.cost,
+#[derive(Clone, Default)]
+struct State {
+    tables: HashMap<i64, CacheItem, RandomState>,
+    mem_usage: i64,
+}
+
+impl State {
+    fn insert(&mut self, table_id: i64, table: Arc<Table>, cost: i64) {
+        let old_cost = self
+            .tables
+            .insert(table_id, CacheItem { value: table, cost })
+            .map_or(0, |item| item.cost);
+        self.mem_usage = self.mem_usage.wrapping_add(cost.wrapping_sub(old_cost));
+    }
+
+    fn remove(&mut self, table_id: i64) {
+        if let Some(item) = self.tables.remove(&table_id) {
+            self.mem_usage = self.mem_usage.wrapping_sub(item.cost);
         }
     }
 }
 
-struct State {
-    tables: HashMap<i64, CacheItem>,
-    mem_usage: i64,
-}
-
 /// Go `MapCache`.
 pub struct MapCache {
-    state: RwLock<State>,
+    state: RwLock<Arc<State>>,
+    // A copy used only for writes never registers an ArcSwap snapshot.
+    published: OnceLock<ArcSwapOption<State>>,
 }
 
 impl MapCache {
     /// Go `NewMapCache`.
     #[allow(clippy::new_without_default)] // Pinned Go has NewMapCache, not a zero-value constructor.
     pub fn new() -> Self {
+        Self::from_state(Arc::new(State::default()))
+    }
+
+    fn from_state(state: Arc<State>) -> Self {
         Self {
-            state: RwLock::new(State {
-                tables: HashMap::new(),
-                mem_usage: 0,
-            }),
+            published: OnceLock::new(),
+            state: RwLock::new(state),
         }
     }
 
-    fn state(&self) -> RwLockReadGuard<'_, State> {
-        self.state
+    #[inline]
+    fn read<R>(&self, publish: bool, read: impl FnOnce(&Arc<State>) -> R) -> R {
+        if let Some(published) = self.published.get() {
+            let snapshot = published.load();
+            if let Some(state) = snapshot.as_ref() {
+                return read(state);
+            }
+        }
+        self.read_unpublished(publish, read)
+    }
+
+    #[inline(never)]
+    fn read_unpublished<R>(&self, publish: bool, read: impl FnOnce(&Arc<State>) -> R) -> R {
+        // Build a snapshot only when a lookup needs one. Bulk cache updates
+        // can keep editing the writable state until the first lookup.
+        let state = self
+            .state
             .read()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if publish {
+            self.published
+                .get_or_init(ArcSwapOption::empty)
+                .compare_and_swap(&None::<Arc<State>>, Some(Arc::clone(&state)));
+        }
+        read(&state)
+    }
+
+    fn write(&self, update: impl FnOnce(&mut State)) {
+        let mut state = self
+            .state
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        // With no old readers or copies, make_mut can edit the map in place.
+        // Readers already holding the snapshot keep seeing its stable state.
+        if let Some(published) = self.published.get() {
+            if published.load().is_some() {
+                published.store(None);
+            }
+        }
+        update(Arc::make_mut(&mut state));
     }
 
     /// Go `Keys`.
     pub fn keys(&self) -> Vec<i64> {
-        self.state().tables.keys().copied().collect()
+        self.read(false, |state| state.tables.keys().copied().collect())
     }
 }
 
 impl StatsCacheInner for MapCache {
     fn get(&self, table_id: i64) -> Option<Arc<Table>> {
-        self.state()
-            .tables
-            .get(&table_id)
-            .map(|item| Arc::clone(&item.value))
+        self.read(true, |state| {
+            state.tables.get(&table_id).map(|item| Arc::clone(&item.value))
+        })
+    }
+
+    fn contains_table(&self, table_id: i64) -> bool {
+        self.read(true, |state| state.tables.contains_key(&table_id))
     }
 
     fn put(&self, table_id: i64, table: Arc<Table>) -> bool {
         let cost = table.memory_usage().total_mem_usage;
-        let mut state = self
-            .state
-            .write()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if let Some(item) = state.tables.get_mut(&table_id) {
-            let old_cost = item.cost;
-            item.value = table;
-            item.cost = cost;
-            state.mem_usage = state.mem_usage.wrapping_add(cost.wrapping_sub(old_cost));
-            return true;
-        }
-        state.tables.insert(
-            table_id,
-            CacheItem {
-                value: table,
-                key: table_id,
-                cost,
-            },
-        );
-        state.mem_usage = state.mem_usage.wrapping_add(cost);
+        self.write(|state| state.insert(table_id, table, cost));
         true
     }
 
     fn del(&self, table_id: i64) {
-        let mut state = self
-            .state
-            .write()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if let Some(item) = state.tables.remove(&table_id) {
-            state.mem_usage = state.mem_usage.wrapping_sub(item.cost);
-        }
+        self.write(|state| state.remove(table_id));
     }
 
     fn cost(&self) -> i64 {
-        self.state().mem_usage
+        self.read(false, |state| state.mem_usage)
     }
 
     fn values(&self) -> Vec<Arc<Table>> {
-        self.state()
-            .tables
-            .values()
-            .map(|item| Arc::clone(&item.value))
-            .collect()
+        self.read(false, |state| {
+            state
+                .tables
+                .values()
+                .map(|item| Arc::clone(&item.value))
+                .collect()
+        })
     }
 
     fn len(&self) -> usize {
-        self.state().tables.len()
+        self.read(false, |state| state.tables.len())
     }
 
     fn copy(&self) -> Box<dyn StatsCacheInner> {
-        let state = self.state();
-        Box::new(Self {
-            state: RwLock::new(State {
-                tables: state
-                    .tables
-                    .iter()
-                    .map(|(&key, item)| (key, item.copy()))
-                    .collect(),
-                mem_usage: state.mem_usage,
-            }),
-        })
+        Box::new(Self::from_state(self.read(false, Arc::clone)))
+    }
+
+    fn copy_and_update(&self, tables: &[Arc<Table>], deleted_ids: &[i64]) -> Box<dyn StatsCacheInner> {
+        if tables.is_empty() && deleted_ids.is_empty() {
+            return self.copy();
+        }
+
+        // The copy is private until the caller publishes it, so the batch
+        // does not need to lock the copy or retire snapshots between edits.
+        let snapshot = self.read(false, Arc::clone);
+        let mut state = (*snapshot).clone();
+        for table in tables {
+            state.insert(
+                table.hist_coll.physical_id,
+                Arc::clone(table),
+                table.memory_usage().total_mem_usage,
+            );
+        }
+        for &id in deleted_ids {
+            state.remove(id);
+        }
+        Box::new(Self::from_state(Arc::new(state)))
     }
 
     fn set_capacity(&self, _capacity: i64) {}
@@ -177,6 +217,35 @@ mod tests {
         assert_eq!(cache.len(), 0);
         assert_eq!(copy.len(), 1);
         assert_eq!(copy.cost(), replacement_cost);
+    }
+
+    #[test]
+    fn published_state_survives_a_concurrent_write_and_copy() {
+        let cache = MapCache::new();
+        let old = new_mock_statistics_table(1, 1, true, false, false);
+        let new = new_mock_statistics_table(2, 1, true, false, false);
+        cache.put(1, Arc::clone(&old));
+        assert_eq!(cache.cost(), old.memory_usage().total_mem_usage);
+        assert!(cache.published.get().is_none());
+
+        assert!(Arc::ptr_eq(&cache.get(1).unwrap(), &old));
+        let snapshot = cache.published.get().unwrap().load();
+        let copy = cache.copy();
+        std::thread::scope(|scope| {
+            scope.spawn(|| {
+                cache.put(1, Arc::clone(&new));
+                cache.put(2, Arc::clone(&new));
+            });
+        });
+
+        let snapshot = snapshot.as_ref().unwrap();
+        assert!(Arc::ptr_eq(&snapshot.tables[&1].value, &old));
+        assert_eq!(snapshot.tables.len(), 1);
+        assert_eq!(copy.len(), 1);
+        assert!(Arc::ptr_eq(&copy.get(1).unwrap(), &old));
+        assert!(Arc::ptr_eq(&cache.get(1).unwrap(), &new));
+        assert_eq!(cache.len(), 2);
+        assert_eq!(cache.cost(), 2 * new.memory_usage().total_mem_usage);
     }
 
     #[test]

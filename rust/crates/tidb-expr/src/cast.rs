@@ -55,6 +55,16 @@ pub(crate) fn eval_string_cast_with_type(
         }
         (_, None) => datum_binary_bytes(&value)?,
     };
+    let pad_binary = !matches!(value, Datum::Json(_) | Datum::VectorFloat32(_));
+    finish_string_cast(bytes, target, pad_binary, ctx)
+}
+
+pub(crate) fn finish_string_cast(
+    bytes: Vec<u8>,
+    target: &FieldType,
+    pad_binary: bool,
+    ctx: &dyn crate::Columns,
+) -> Result<Datum, EvalError> {
     let warnings = crate::constant::ConversionWarnings(ctx);
     let zone = ctx.time_zone();
     let context = tidb_datatype::ConversionContext::new(
@@ -74,7 +84,7 @@ pub(crate) fn eval_string_cast_with_type(
         .ok_or(EvalError::Unsupported("produced string datum"))?;
     // JSON/vector signatures return after production; the other signatures
     // pad TypeString with binary collation and enforce the padding packet limit.
-    if !matches!(value, Datum::Json(_) | Datum::VectorFloat32(_))
+    if pad_binary
         && target.code() == FieldTypeCode::String
         && target.is_binary_string()
         && target.flen() > bytes.len() as i64
@@ -1000,7 +1010,11 @@ fn datum_binary_bytes(value: &Datum) -> Result<Vec<u8>, EvalError> {
 /// result above `i64::MAX`; true `u64` overflow returns `-1`. Negative
 /// overflow clamps to `i64::MIN`.
 pub(crate) fn to_i64_signed(v: &Datum) -> i64 {
-    to_i64_signed_in(v, &tidb_datatype::SessionTimeZone::utc())
+    match v {
+        Datum::Int(value) => *value,
+        Datum::UInt(value) => *value as i64,
+        _ => to_i64_signed_in(v, &tidb_datatype::SessionTimeZone::utc()),
+    }
 }
 
 /// [`to_i64_signed`] with the session's `time_zone`, which Go's
@@ -1049,6 +1063,11 @@ pub(crate) fn to_i64_signed_with_warnings(
     v: &Datum,
     ctx: &dyn crate::Columns,
 ) -> Result<i64, EvalError> {
+    match v {
+        Datum::Int(value) => return Ok(*value),
+        Datum::UInt(value) => return Ok(*value as i64),
+        _ => {}
+    }
     if matches!(v, Datum::Json(_)) {
         return match eval_numeric_cast_with_type(
             v.clone(),
@@ -2573,7 +2592,7 @@ pub(crate) fn eval_json_sum_crc32(
             }
         })?;
         // Go `sum += int64(crc32.ChecksumIEEE(fmt.Appendf(nil, "%v", item)))`.
-        sum = sum.wrapping_add(i64::from(crc32_ieee(&go_value_text(&converted))));
+        sum = sum.wrapping_add(i64::from(crc32fast::hash(&go_value_text(&converted))));
     }
     Ok(Datum::Int(sum))
 }
@@ -2589,19 +2608,6 @@ fn go_value_text(value: &Datum) -> Vec<u8> {
         Datum::Duration(duration) => duration.to_string().into_bytes(),
         other => format!("{other:?}").into_bytes(),
     }
-}
-
-/// Go `hash/crc32.ChecksumIEEE`.
-fn crc32_ieee(bytes: &[u8]) -> u32 {
-    let mut crc = 0xFFFF_FFFF_u32;
-    for &byte in bytes {
-        crc ^= u32::from(byte);
-        for _ in 0..8 {
-            let mask = (crc & 1).wrapping_neg();
-            crc = (crc >> 1) ^ (0xEDB8_8320 & mask);
-        }
-    }
-    !crc
 }
 
 /// Whether `error` is Go's `ErrInvalidJSONForFuncIndex` (3903).

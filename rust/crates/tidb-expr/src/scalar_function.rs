@@ -48,7 +48,7 @@ mod builtin_miscellaneous_vec;
 mod builtin_other_vec;
 mod pb_builtin;
 
-pub(crate) use pb_builtin::{greatest_method, least_method, Kernel, PbBuiltin};
+pub(crate) use pb_builtin::{borrow_string_argument, greatest_method, least_method, Kernel, PbBuiltin};
 
 use std::collections::BTreeSet;
 use std::hash::{Hash, Hasher};
@@ -338,10 +338,13 @@ pub struct ScalarFunction {
     in_string_non_const_args: Vec<usize>,
     in_string_has_null: bool,
     json_schema_cache: crate::builtin_ext::JsonSchemaCache,
-    json_modify_path_cache:
+    json_path_cache:
         crate::builtin_ext::BuiltinFuncCache<Option<Vec<tidb_datatype::JSONPathExpression>>>,
     find_in_set_cache: crate::builtin_ext::BuiltinFuncCache<crate::builtin_ext::FindInSetLookup>,
     regexp_cache: crate::builtin_ext::BuiltinFuncCache<crate::regexp::RegexpMemorizedSig>,
+    regexp_like_cache: crate::builtin_ext::BuiltinFuncCache<
+        crate::regexp::RegexpMemorizedSig<tidb_go_regexp::RegexpPredicate>,
+    >,
     regexp_replace_instruction_cache:
         crate::builtin_ext::BuiltinFuncCache<Vec<crate::builtin_ext::regexp::ReplacementPart>>,
     like_pattern_cache: crate::builtin_ext::BuiltinFuncCache<crate::like::CompiledLikePattern>,
@@ -666,9 +669,10 @@ impl ScalarFunction {
             in_string_non_const_args: Vec::new(),
             in_string_has_null: false,
             json_schema_cache: Default::default(),
-            json_modify_path_cache: Default::default(),
+            json_path_cache: Default::default(),
             find_in_set_cache: Default::default(),
             regexp_cache: Default::default(),
+            regexp_like_cache: Default::default(),
             regexp_replace_instruction_cache: Default::default(),
             like_pattern_cache: Default::default(),
             ilike_pattern_cache: Default::default(),
@@ -772,9 +776,10 @@ impl ScalarFunction {
         self.in_string_non_const_args.clear();
         self.in_string_has_null = false;
         self.json_schema_cache = Default::default();
-        self.json_modify_path_cache = Default::default();
+        self.json_path_cache = Default::default();
         self.find_in_set_cache = Default::default();
         self.regexp_cache = Default::default();
+        self.regexp_like_cache = Default::default();
         self.regexp_replace_instruction_cache = Default::default();
         self.like_pattern_cache = Default::default();
         self.ilike_pattern_cache = Default::default();
@@ -1257,8 +1262,56 @@ impl ScalarFunction {
     /// return a value in the eval-type family of the function's own result
     /// type -- see [`Self::coerce_to_ret_type`] for why that is the whole
     /// point of Go's `Eval` and not an afterthought.
+    #[inline]
     pub fn eval(&self, ctx: &dyn Columns, row: Row<'_>) -> Result<Datum, EvalError> {
+        use tidb_proto::tipb::ScalarFuncSig::{JsonContainsPathSig, JsonExtractSig, JsonLengthSig};
+        let signature = self.pb_code();
+        if signature == JsonExtractSig {
+            let Some(value) = crate::builtin_ext::json::json_extract_row(
+                &self.args, ctx, row, &self.json_path_cache,
+            )? else {
+                return Ok(Datum::Null);
+            };
+            let value = Datum::Json(value);
+            if self.get_static_type().is_none_or(|field| field.eval_type() == EvalType::Json) {
+                return Ok(value);
+            }
+            return self.coerce_to_ret_type(value);
+        }
+        if matches!(signature, JsonLengthSig | JsonContainsPathSig) {
+            let result = if signature == JsonLengthSig {
+                crate::builtin_ext::json::json_length_row(&self.args, ctx, row, &self.json_path_cache)?
+            } else {
+                crate::builtin_ext::json::json_contains_path_row(&self.args, ctx, row)?.map(usize::from)
+            };
+            let Some(count) = result else {
+                return Ok(Datum::Null);
+            };
+            let field = self.get_static_type();
+            let value = if field.is_some_and(FieldType::is_unsigned) {
+                Datum::UInt(count as u64)
+            } else {
+                Datum::Int(count as i64)
+            };
+            if field.is_none_or(|field| {
+                use tidb_datatype::FieldTypeCode;
+                field.code() == FieldTypeCode::LongLong
+                    || (field.eval_type() == EvalType::Int && field.code() != FieldTypeCode::Bit)
+            }) {
+                return Ok(value);
+            }
+            return self.coerce_to_ret_type(value);
+        }
         let value = self.pb_builtin.eval(self, ctx, row)?;
+        let domain = match value {
+            Datum::Null => return Ok(value),
+            Datum::String(_) | Datum::Bytes(_) => Some(EvalType::String),
+            Datum::Json(_) => Some(EvalType::Json),
+            _ => None,
+        };
+        if domain.is_some_and(|domain| self.get_static_type().is_none_or(|field| field.eval_type() == domain)) {
+            return Ok(value);
+        }
         // Go ScalarFunction.Eval interprets an evalInt carrier through
         // the wire result type, independently of the argument flags.
         let value = match (value, self.get_static_type()) {
@@ -1542,7 +1595,7 @@ impl ScalarFunction {
     pub(crate) fn eval_regexp_family(
         &self,
         upper: &str,
-        vals: &[Datum],
+        vals: &[impl std::borrow::Borrow<Datum>],
         ctx: &dyn Columns,
     ) -> Result<Datum, EvalError> {
         let cache_pattern = self
@@ -1628,14 +1681,14 @@ impl ScalarFunction {
         let cache_pattern = self.args[1].const_level() >= ConstLevel::ONLY_IN_CONTEXT;
         let cache_match_type =
             self.args.len() < 3 || self.args[2].const_level() >= ConstLevel::ONLY_IN_CONTEXT;
-        let regex = crate::regexp::get_cached_regexp(
-            &self.regexp_cache,
+        let matched = crate::regexp::regexp_like_with_cache(
+            &self.regexp_like_cache,
             ctx.context_id(),
             cache_pattern && cache_match_type,
+            &text,
             &pattern,
             &match_type,
         )?;
-        let matched = regex.is_match(&text);
         return Ok(Datum::Int(i64::from(matched)));
     }
 

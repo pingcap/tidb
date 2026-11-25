@@ -177,7 +177,7 @@ impl TableCommon {
     /// [`set_auto_increment_offset`](Self::set_auto_increment_offset) may run
     /// on either side of this call.
     pub fn set_auto_id(&mut self, shared: TableAutoId) {
-        self.auto_id = shared.0;
+        self.auto_id = shared.0.into();
         if let Some(offset) = self.auto_increment_offset {
             self.set_auto_increment_offset(offset);
         }
@@ -279,11 +279,11 @@ impl TableCommon {
         } else {
             cache
         };
-        self.auto_id = self.auto_id.with_step(step);
+        self.auto_id = self.auto_id.with_step(step).into();
         if cache == 1 && self.row_id.is_none() {
             self.row_id = Some(AutoIdAllocator::new());
         }
-        self.auto_random_id = self.auto_random_id.with_step(step);
+        self.auto_random_id = self.auto_random_id.with_step(step).into();
         self.update_meta(|meta| meta.auto_id_cache = i64::try_from(cache).unwrap_or(i64::MAX));
     }
 

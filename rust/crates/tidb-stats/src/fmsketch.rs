@@ -23,6 +23,8 @@
 
 use std::collections::HashSet;
 
+use hashbrown::DefaultHashBuilder;
+
 /// Go's fixed fallback used by `DecodeFMSketch` after protobuf restoration.
 pub const MAX_SKETCH_SIZE: usize = 10_000;
 
@@ -34,7 +36,7 @@ pub const MAX_SKETCH_SIZE: usize = 10_000;
 /// the exact level transition in Go, including wrapping `u64` arithmetic.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FmSketch {
-    hashes: HashSet<u64>,
+    hashes: HashSet<u64, DefaultHashBuilder>,
     mask: u64,
     max_size: usize,
 }
@@ -52,7 +54,7 @@ impl FmSketch {
     #[must_use]
     pub fn new(max_size: usize) -> Self {
         Self {
-            hashes: HashSet::with_capacity(max_size),
+            hashes: HashSet::with_capacity_and_hasher(max_size, DefaultHashBuilder::default()),
             mask: 0,
             max_size,
         }

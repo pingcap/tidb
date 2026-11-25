@@ -30,10 +30,13 @@
 //! and append TiDB's corruption warnings to the statement context.
 //!
 
+use std::borrow::Cow;
+
 use flate2::{Decompress, FlushDecompress, Status};
-use md5::{Digest, Md5};
-use sha1::Sha1;
+use md5::{Digest as Md5Digest, Md5};
+use sha1::{Digest, Sha1};
 use sha2::{Sha224, Sha256, Sha384, Sha512};
+use tidb_goruntime::go_hex;
 
 use crate::{BlockEncryptionMode, Columns, Datum, EvalError};
 
@@ -46,8 +49,8 @@ pub(crate) fn dispatch(
     ctx: &dyn Columns,
 ) -> Option<Result<Datum, EvalError>> {
     match (name, vals.len()) {
-        ("MD5", 1) => Some(hash_unary::<Md5>(&vals[0])),
-        ("SHA" | "SHA1", 1) => Some(hash_unary::<Sha1>(&vals[0])),
+        ("MD5", 1) => Some(hash_unary(&vals[0], md5_bytes)),
+        ("SHA" | "SHA1", 1) => Some(hash_unary(&vals[0], sha1_bytes)),
         ("SHA2", 2) => Some(sha2_hash(&vals[0], &vals[1])),
         ("SM3", 1) => Some(sm3_hash(&vals[0])),
         ("RANDOM_BYTES", 1) => Some(random_bytes(&vals[0])),
@@ -68,32 +71,34 @@ pub(crate) fn dispatch(
 /// a stream ending in ASCII space from being changed by SQL trailing-space
 /// handling, matching TiDB's public format.
 pub(crate) fn compress(arg: &Datum) -> Result<Datum, EvalError> {
-    let Some(payload) = sql_string_bytes(arg)? else {
+    let Some(payload) = compression_input(arg)? else {
         return Ok(Datum::Null);
     };
     if payload.is_empty() {
         return Ok(Datum::new_string_datum(Vec::new()));
     }
-
-    // go's `deflate()` helper: zlib.NewWriter (level 6) + Write + Close —
-    // transcribed bit-exactly in [`go_flate`]; a generic rust zlib backend
-    // makes different encoder choices and diverges on the wire.
-    let compressed = crate::go_flate::go_zlib_deflate(&payload);
-    Ok(Datum::new_string_datum(frame_compressed(
-        payload.len() as u32,
-        compressed,
-    )))
+    let mut encoder = crate::go_flate::ZlibEncoder::new();
+    compress_bytes(&payload, &mut encoder);
+    Ok(Datum::new_string_datum(encoder.into_output()))
 }
 
-fn frame_compressed(original_len: u32, compressed: Vec<u8>) -> Vec<u8> {
-    let append_suffix = compressed.last() == Some(&b' ');
-    let mut framed = Vec::with_capacity(4 + compressed.len() + usize::from(append_suffix));
-    framed.extend_from_slice(&original_len.to_le_bytes());
-    framed.extend_from_slice(&compressed);
-    if append_suffix {
+pub(crate) fn compress_bytes<'a>(
+    payload: &[u8],
+    encoder: &'a mut crate::go_flate::ZlibEncoder,
+) -> &'a [u8] {
+    let framed = encoder.encode(payload, &(payload.len() as u32).to_le_bytes());
+    if framed.last() == Some(&b' ') {
         framed.push(b'.');
     }
     framed
+}
+
+fn compression_input(value: &Datum) -> Result<Option<Cow<'_, [u8]>>, EvalError> {
+    match value {
+        Datum::String(value) => Ok(Some(Cow::Borrowed(value.bytes()))),
+        Datum::Bytes(value) => Ok(Some(Cow::Borrowed(value))),
+        _ => Ok(sql_string_bytes(value)?.map(Cow::Owned)),
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -109,44 +114,92 @@ enum InflateError {
 /// rejects the write that would cross the four-byte declared length, so the
 /// decoder must not materialize an attacker-controlled expansion before
 /// reporting `ZlibZBuf`. Trailing bytes past the stream end are ignored.
-fn inflate(data: &[u8], max_output: usize) -> Result<Vec<u8>, InflateError> {
-    let mut decoder = Decompress::new(true);
-    let mut out = Vec::new();
-    let mut input_offset = 0;
-    let mut chunk = [0; 8 * 1024];
-    loop {
-        let input_before = decoder.total_in();
-        let output_before = decoder.total_out();
-        let remaining = max_output.saturating_sub(out.len());
-        // Give zlib one byte beyond the remaining budget so an over-limit
-        // write is detected without ever appending bytes past the limit.
-        let output_len = chunk.len().min(remaining.saturating_add(1));
-        let status = decoder
-            .decompress(
-                &data[input_offset..],
-                &mut chunk[..output_len],
-                FlushDecompress::None,
-            )
-            .map_err(|_| InflateError::Decode)?;
-        input_offset = usize::try_from(decoder.total_in()).map_err(|_| InflateError::Decode)?;
-        let produced = usize::try_from(decoder.total_out() - output_before)
-            .map_err(|_| InflateError::Decode)?;
-        if produced > remaining {
-            return Err(InflateError::OutputLimit);
-        }
-        out.extend_from_slice(&chunk[..produced]);
-        if status == Status::StreamEnd {
-            return Ok(out);
-        }
-        // `compress/zlib.NewReader` refuses a stream that ends before the
-        // DEFLATE terminator and Adler-32 checksum.  The high-level flate2
-        // reader can instead report a successful zero-byte read for that
-        // truncated input, so require either stream completion or forward
-        // progress toward it here.
-        if decoder.total_in() == input_before && produced == 0 {
-            return Err(InflateError::Decode);
+pub(crate) struct ZlibInflater {
+    decoder: Option<Decompress>,
+    output: Vec<u8>,
+    chunk: [u8; 8 * 1024],
+}
+
+impl ZlibInflater {
+    pub(crate) fn new() -> Self {
+        Self {
+            decoder: None,
+            output: Vec::new(),
+            chunk: [0; 8 * 1024],
         }
     }
+
+    fn inflate(&mut self, data: &[u8], max_output: usize) -> Result<(), InflateError> {
+        let decoder = match &mut self.decoder {
+            Some(decoder) => {
+                decoder.reset(true);
+                decoder
+            }
+            slot @ None => slot.insert(Decompress::new(true)),
+        };
+        let mut input_offset = 0;
+        self.output.clear();
+        loop {
+            let input_before = decoder.total_in();
+            let output_before = decoder.total_out();
+            let remaining = max_output.saturating_sub(self.output.len());
+            // Use one byte beyond the remaining budget to detect an overlong write.
+            let output_len = self.chunk.len().min(remaining.saturating_add(1));
+            let status = decoder
+                .decompress(
+                    &data[input_offset..],
+                    &mut self.chunk[..output_len],
+                    FlushDecompress::None,
+                )
+                .map_err(|_| InflateError::Decode)?;
+            input_offset = usize::try_from(decoder.total_in()).map_err(|_| InflateError::Decode)?;
+            let produced = usize::try_from(decoder.total_out() - output_before)
+                .map_err(|_| InflateError::Decode)?;
+            if produced > remaining {
+                return Err(InflateError::OutputLimit);
+            }
+            self.output.extend_from_slice(&self.chunk[..produced]);
+            if status == Status::StreamEnd {
+                return Ok(());
+            }
+            // Require a complete DEFLATE terminator and Adler-32 checksum.
+            if decoder.total_in() == input_before && produced == 0 {
+                return Err(InflateError::Decode);
+            }
+        }
+    }
+
+    pub(crate) fn decode(&mut self, payload: &[u8], ctx: &dyn Columns) -> Option<&[u8]> {
+        if payload.is_empty() {
+            return Some(&[]);
+        }
+        if payload.len() <= 4 {
+            warn_corrupt_zlib(ctx);
+            return None;
+        }
+        let length = u32::from_le_bytes(payload[..4].try_into().unwrap()) as usize;
+        match self.inflate(&payload[4..], length) {
+            Ok(()) => Some(&self.output),
+            Err(InflateError::OutputLimit) => {
+                ctx.append_go_warning(
+                    &crate::expression_errors::ERR_ZLIB_Z_BUF,
+                    "ZLIB: Not enough room in the output buffer (probably, length of uncompressed data was corrupted)",
+                );
+                None
+            }
+            Err(InflateError::Decode) => {
+                warn_corrupt_zlib(ctx);
+                None
+            }
+        }
+    }
+}
+
+fn warn_corrupt_zlib(ctx: &dyn Columns) {
+    ctx.append_go_warning(
+        &crate::expression_errors::ERR_ZLIB_Z_DATA,
+        "ZLIB: Input data corrupted",
+    );
 }
 
 /// `UNCOMPRESS(payload)`. Port of `builtinUncompressSig.evalString`. The 4-byte
@@ -155,45 +208,14 @@ fn inflate(data: &[u8], max_output: usize) -> Result<Vec<u8>, InflateError> {
 /// payload, an undecodable stream, or a stored length below the decompressed
 /// length all yield NULL and append the same statement warning as Go.
 pub(crate) fn uncompress(arg: &Datum, ctx: &dyn Columns) -> Result<Datum, EvalError> {
-    let Some(payload) = sql_string_bytes(arg)? else {
+    let Some(payload) = compression_input(arg)? else {
         return Ok(Datum::Null);
     };
-    if payload.is_empty() {
-        return Ok(Datum::new_string_datum(Vec::new()));
-    }
-    if payload.len() <= 4 {
-        ctx.append_go_warning(
-            &crate::expression_errors::ERR_ZLIB_Z_DATA,
-            "ZLIB: Input data corrupted",
-        );
+    let mut inflater = ZlibInflater::new();
+    if inflater.decode(&payload, ctx).is_none() {
         return Ok(Datum::Null);
     }
-    let length = u32::from_le_bytes(payload[0..4].try_into().unwrap());
-    let bytes = match inflate(&payload[4..], length as usize) {
-        Ok(bytes) => bytes,
-        Err(InflateError::OutputLimit) => {
-            ctx.append_go_warning(
-                &crate::expression_errors::ERR_ZLIB_Z_BUF,
-                "ZLIB: Not enough room in the output buffer (probably, length of uncompressed data was corrupted)",
-            );
-            return Ok(Datum::Null);
-        }
-        Err(InflateError::Decode) => {
-            ctx.append_go_warning(
-                &crate::expression_errors::ERR_ZLIB_Z_DATA,
-                "ZLIB: Input data corrupted",
-            );
-            return Ok(Datum::Null);
-        }
-    };
-    if length < bytes.len() as u32 {
-        ctx.append_go_warning(
-            &crate::expression_errors::ERR_ZLIB_Z_BUF,
-            "ZLIB: Not enough room in the output buffer (probably, length of uncompressed data was corrupted)",
-        );
-        return Ok(Datum::Null);
-    }
-    Ok(Datum::new_string_datum(bytes))
+    Ok(Datum::new_string_datum(inflater.output))
 }
 
 /// `UNCOMPRESSED_LENGTH(payload)`. Port of
@@ -201,21 +223,20 @@ pub(crate) fn uncompress(arg: &Datum, ctx: &dyn Columns) -> Result<Datum, EvalEr
 /// prefix as the original length. NULL yields NULL; empty or too-short/corrupted
 /// input yields 0.
 pub(crate) fn uncompressed_length(arg: &Datum, ctx: &dyn Columns) -> Result<Datum, EvalError> {
-    let Some(payload) = sql_string_bytes(arg)? else {
+    let Some(payload) = compression_input(arg)? else {
         return Ok(Datum::Null);
     };
-    if payload.is_empty() {
-        return Ok(Datum::Int(0));
+    Ok(Datum::Int(uncompressed_length_bytes(&payload, ctx)))
+}
+
+pub(crate) fn uncompressed_length_bytes(payload: &[u8], ctx: &dyn Columns) -> i64 {
+    if payload.len() > 4 {
+        return i64::from(u32::from_le_bytes(payload[..4].try_into().unwrap()));
     }
-    if payload.len() <= 4 {
-        ctx.append_go_warning(
-            &crate::expression_errors::ERR_ZLIB_Z_DATA,
-            "ZLIB: Input data corrupted",
-        );
-        return Ok(Datum::Int(0));
+    if !payload.is_empty() {
+        warn_corrupt_zlib(ctx);
     }
-    let length = u32::from_le_bytes(payload[0..4].try_into().unwrap());
-    Ok(Datum::Int(i64::from(length)))
+    0
 }
 
 const AES_BLOCK_SIZE: usize = 16;
@@ -326,20 +347,6 @@ fn eval_aes_bytes(
         }
     };
     Ok(result.map_or(Datum::Null, Datum::new_string_datum))
-}
-
-/// Lowercase hex of `bytes` — the same "0123456789abcdef" alphabet Go's
-/// `encoding/hex.EncodeToString` (used by `builtinMD5Sig`) and
-/// `fmt.Sprintf("%x", ...)` (used by `builtinSHA1Sig`/`builtinSHA2Sig`)
-/// both produce.
-fn hex_lower(bytes: &[u8]) -> String {
-    const ALPHABET: &[u8; 16] = b"0123456789abcdef";
-    let mut out = String::with_capacity(bytes.len() * 2);
-    for &b in bytes {
-        out.push(ALPHABET[usize::from(b >> 4)] as char);
-        out.push(ALPHABET[usize::from(b & 0xf)] as char);
-    }
-    out
 }
 
 /// `PASSWORD(str)`: double-SHA1 the source `EvalString` bytes, prefix the
@@ -528,24 +535,28 @@ pub(crate) fn validate_password_strength_with_user(
 /// `builtinSHA1Sig.evalString` (`pkg/expression/builtin_encryption.go`),
 /// which differ only in the hash used — both eval the argument as a string
 /// (numbers arrive as their decimal text) and hex-encode the sum.
-pub(crate) fn hash_unary<D: Digest>(v: &Datum) -> Result<Datum, EvalError> {
+pub(crate) fn hash_unary<const N: usize>(
+    v: &Datum,
+    digest: impl FnOnce(&[u8]) -> [u8; N],
+) -> Result<Datum, EvalError> {
     match hash_input(v)? {
-        Some(bytes) => Ok(Datum::new_string_datum(hex_lower(
-            D::digest(bytes.as_slice()).as_slice(),
-        ))),
+        Some(bytes) => Ok(Datum::new_string_datum(go_hex::encode_to_string(&digest(&bytes)))),
         None => Ok(Datum::Null),
     }
+}
+
+pub(crate) fn md5_bytes(bytes: &[u8]) -> [u8; 16] {
+    Md5::digest(bytes).into()
+}
+
+pub(crate) fn sha1_bytes(bytes: &[u8]) -> [u8; 20] {
+    Sha1::digest(bytes).into()
 }
 
 /// `SM3(str)`: the parser-auth SM3 digest rendered as lowercase hex. TiDB's
 /// SQL builtin and password plugin deliberately share this digest owner.
 pub(crate) fn sm3_hash(value: &Datum) -> Result<Datum, EvalError> {
-    match hash_input(value)? {
-        Some(bytes) => Ok(Datum::new_string_datum(hex_lower(&tidb_parser::auth::sm3_hash(
-            &bytes,
-        )))),
-        None => Ok(Datum::Null),
-    }
+    hash_unary(value, tidb_parser::auth::sm3_hash)
 }
 
 /// `RANDOM_BYTES(len)`: one fresh OS-random binary string per evaluation.
@@ -574,23 +585,23 @@ pub(crate) fn random_bytes(length: &Datum) -> Result<Datum, EvalError> {
 /// decimal text representation. Keeping this boundary byte-oriented lets
 /// binary/GBK values reach the digest unchanged instead of rejecting them as
 /// invalid UTF-8 in the shared human-text coercion helper.
-fn hash_input(value: &Datum) -> Result<Option<Vec<u8>>, EvalError> {
+fn hash_input(value: &Datum) -> Result<Option<Cow<'_, [u8]>>, EvalError> {
     Ok(match value {
-        Datum::String(value) => Some(value.bytes().to_vec()),
-        Datum::Bytes(value) => Some(value.clone()),
-        Datum::Int(value) => Some(value.to_string().into_bytes()),
-        Datum::UInt(value) => Some(value.to_string().into_bytes()),
-        Datum::Decimal(value) => Some(value.to_string().into_bytes()),
-        Datum::Real(value) => Some(value.to_string().into_bytes()),
+        Datum::String(value) => Some(Cow::Borrowed(value.bytes())),
+        Datum::Bytes(value) => Some(Cow::Borrowed(value)),
+        Datum::Int(value) => Some(Cow::Owned(value.to_string().into_bytes())),
+        Datum::UInt(value) => Some(Cow::Owned(value.to_string().into_bytes())),
+        Datum::Decimal(value) => Some(Cow::Owned(value.to_string().into_bytes())),
+        Datum::Real(value) => Some(Cow::Owned(value.to_string().into_bytes())),
         Datum::Null => None,
         Datum::MinNotNull | Datum::MaxValue => {
             return Err(EvalError::Unsupported("range sentinel hash argument"));
         }
-        other => Some(
+        other => Some(Cow::Owned(
             other
                 .to_bytes()
                 .map_err(|_| EvalError::Unsupported("datum hash argument"))?,
-        ),
+        )),
     })
 }
 
@@ -609,14 +620,33 @@ pub(crate) fn sha2_hash(arg: &Datum, len: &Datum) -> Result<Datum, EvalError> {
     let Some(n) = encryption_int_argument(len)? else {
         return Ok(Datum::Null);
     };
-    let hex = match n {
-        0 | 256 => hex_lower(Sha256::digest(bytes.as_slice()).as_slice()),
-        224 => hex_lower(Sha224::digest(bytes.as_slice()).as_slice()),
-        384 => hex_lower(Sha384::digest(bytes.as_slice()).as_slice()),
-        512 => hex_lower(Sha512::digest(bytes.as_slice()).as_slice()),
-        _ => return Ok(Datum::Null),
-    };
-    Ok(Datum::new_string_datum(hex))
+    let mut output = [0; 128];
+    Ok(sha2_hex(&bytes, n, &mut output)
+        .map_or(Datum::Null, |len| Datum::new_string_datum(output[..len].to_vec())))
+}
+
+pub(crate) fn sha2_hex(bytes: &[u8], bits: i64, output: &mut [u8; 128]) -> Option<usize> {
+    #[cfg(target_arch = "aarch64")]
+    if bytes.len() >= 512 {
+        use aws_lc_rs::digest;
+        // AWS-LC pipelines SHA-224 and SHA-256 blocks on arm64. Keep
+        // the inline RustCrypto path for short inputs.
+        let algorithm = match bits {
+            0 | 256 => Some(&digest::SHA256),
+            224 => Some(&digest::SHA224),
+            _ => None,
+        };
+        if let Some(algorithm) = algorithm {
+            return Some(go_hex::encode(output, digest::digest(algorithm, bytes).as_ref()));
+        }
+    }
+    Some(match bits {
+        0 | 256 => go_hex::encode(output, &Sha256::digest(bytes)),
+        224 => go_hex::encode(output, &Sha224::digest(bytes)),
+        384 => go_hex::encode(output, &Sha384::digest(bytes)),
+        512 => go_hex::encode(output, &Sha512::digest(bytes)),
+        _ => return None,
+    })
 }
 
 /// Ports the `ETInt` coercion requested by the encryption function classes.
@@ -707,7 +737,7 @@ mod tests {
     use std::cell::RefCell;
     use std::collections::HashMap;
 
-    use super::{dispatch, frame_compressed, inflate};
+    use super::{ZlibInflater, dispatch};
     use crate::{Columns, Datum, Decimal, EvalError};
 
     fn call(name: &str, vals: &[Datum]) -> Datum {
@@ -967,12 +997,10 @@ mod tests {
             bytes_of(&large)
         );
 
-        // The suffix rule is part of the SQL framing, independent of which
-        // inputs a particular zlib implementation happens to encode that way.
-        assert_eq!(
-            frame_compressed(1, vec![0x78, b' ']),
-            vec![1, 0, 0, 0, 0x78, b' ', b'.']
-        );
+        // Adler-32 for this byte ends in a space, so SQL appends a dot.
+        let suffix = call("COMPRESS", &[Datum::new_bytes_datum([0x1f])]);
+        assert!(bytes_of(&suffix).ends_with(b" ."));
+        assert_eq!(bytes_of(&call("UNCOMPRESS", &[suffix])), &[0x1f]);
 
         // compress('hello') = LE(5) + zlib stream.
         let hello = hex_bytes("05000000789CCA48CDC9C907040000FFFF062C0215");
@@ -1029,8 +1057,10 @@ mod tests {
         encoder.write_all(&body).expect("zlib write");
         let stream = encoder.finish().expect("zlib finish");
 
-        assert!(inflate(&stream, 32).is_err());
-        assert_eq!(inflate(&stream, body.len()).expect("within limit"), body);
+        let mut inflater = ZlibInflater::new();
+        assert!(inflater.inflate(&stream, 32).is_err());
+        inflater.inflate(&stream, body.len()).expect("within limit");
+        assert_eq!(inflater.output, body);
     }
 
     /// Go's `zlib.NewReader` rejects a truncated stream even when it has not

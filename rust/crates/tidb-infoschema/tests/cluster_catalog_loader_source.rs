@@ -29,6 +29,138 @@ use tidb_infoschema::cluster_catalog::{
 use tidb_kv::key::prefix_scan_end;
 use tidb_meta::{key, value};
 
+#[test]
+fn batched_schema_uses_current_runtime_entries_and_keeps_stored_metadata() {
+    use std::sync::Arc;
+    use tidb_ast::CiString;
+    use tidb_infoschema::{SessionExtendedInfoSchema, TableEntry};
+    use tidb_model::{db::DBInfo, SchemaState, TableInfo};
+    use tidb_table::tables::TableCommon;
+
+    let stored = |id, name, state| TableInfo {
+        id,
+        name: CiString::new(name),
+        state,
+        ..Default::default()
+    };
+    let db = tidb_model::GoShared::new(DBInfo {
+        id: 501,
+        name: CiString::new("ApP"),
+        deprecated_tables: vec![
+            stored(71, "Mixed", SchemaState::PUBLIC),
+            stored(72, "MIXED", SchemaState::PUBLIC),
+            stored(73, "Changing", SchemaState::DELETE_ONLY),
+        ]
+        .into(),
+        ..Default::default()
+    });
+    let mut catalog = SessionExtendedInfoSchema::init_with_db_infos(
+        Vec::new(), Vec::new(), Vec::new(), 1,
+    );
+    catalog.load_stored_schema_tables(db, None, |table| {
+        (table.state == SchemaState::PUBLIC)
+            .then(|| TableEntry::Kv(Arc::new(TableCommon::new(table.id, Vec::new()))))
+    });
+    catalog.prepare_v1_table_id_lookup(None);
+
+    assert!(catalog.kv_table_by_id(71).is_none());
+    assert!(catalog.kv_table_by_id(73).is_none());
+    assert_eq!(catalog.kv_table_by_id(72).unwrap().name(), "MIXED");
+    for id in 71..=73 {
+        assert_eq!(catalog.table_info_by_id(id).unwrap().read().id, id);
+        assert_eq!(catalog.schema_name_by_table_id(id).as_deref(), Some("ApP"));
+    }
+
+    let mut overlay = catalog.clone();
+    overlay.adjust_table_row_count("app", "mixed", 5);
+    assert!(Arc::ptr_eq(&overlay.table_id_names, &catalog.table_id_names));
+    assert_eq!(overlay.kv_table_by_id(72).unwrap().storage_statistics().0, 5);
+    assert_eq!(catalog.kv_table_by_id(72).unwrap().storage_statistics().0, 0);
+}
+
+#[test]
+fn published_v1_runtime_ids_follow_schema_positions_after_a_reload() {
+    use tidb_ast::CiString;
+    use tidb_infoschema::SessionExtendedInfoSchema;
+    use tidb_model::{db::DBInfo, GoShared};
+    use tidb_table::tables::TableCommon;
+
+    let db = |id, name| GoShared::new(DBInfo {
+        id,
+        name: CiString::new(name),
+        ..Default::default()
+    });
+    let first = db(501, "First");
+    let second = db(502, "Second");
+    let mut previous = SessionExtendedInfoSchema::init_with_db_infos(
+        vec![first.clone(), second.clone()], Vec::new(), Vec::new(), 1,
+    );
+    previous.register_kv_in("first", "alpha", TableCommon::new(71, Vec::new())).unwrap();
+    previous.register_kv_in("second", "beta", TableCommon::new(72, Vec::new())).unwrap();
+    previous.prepare_v1_table_id_lookup(None);
+
+    let mut reloaded = SessionExtendedInfoSchema::init_with_db_infos(
+        Vec::new(), Vec::new(), Vec::new(), 2,
+    );
+    assert!(reloaded.adopt_built_database(&previous, &second));
+    assert!(reloaded.adopt_built_database(&previous, &first));
+    reloaded.prepare_v1_table_id_lookup(Some(&previous));
+
+    for catalog in [previous, reloaded] {
+        let (schema, table) = catalog.table_by_id(71).unwrap();
+        assert_eq!((schema, table.name().as_str()), ("first", "alpha"));
+        let (schema, table) = catalog.table_by_id(72).unwrap();
+        assert_eq!((schema, table.name().as_str()), ("second", "beta"));
+    }
+}
+
+#[test]
+fn published_v1_metadata_tracks_schema_replacement() {
+    use tidb_ast::CiString;
+    use tidb_infoschema::SessionExtendedInfoSchema;
+    use tidb_model::{GoShared, GoSharedPointerSlice, SchemaState, TableInfo, db::DBInfo};
+
+    // A metadata-only table in an intermediate DDL state has no runtime entry.
+    let old = GoShared::new(TableInfo {
+        id: 71,
+        name: CiString::new("Changing"),
+        state: SchemaState::DELETE_ONLY,
+        ..Default::default()
+    });
+    let db = GoShared::new(DBInfo {
+        id: 501,
+        name: CiString::new("ApP"),
+        deprecated_tables: GoSharedPointerSlice::from_handles(vec![Some(old.clone())]),
+        ..Default::default()
+    });
+    let mut catalog = SessionExtendedInfoSchema::init_with_db_infos(vec![db], Vec::new(), Vec::new(), 1);
+    catalog.prepare_v1_table_id_lookup(None);
+    let previous = catalog.clone();
+    assert!(previous.kv_table_by_id(71).is_none());
+    assert!(previous.table_info_by_id(71).unwrap().ptr_eq(&old));
+    assert_eq!(previous.schema_name_by_table_id(71).as_deref(), Some("ApP"));
+
+    let replacement = GoShared::new(TableInfo {
+        id: 72,
+        name: CiString::new("Changing"),
+        ..Default::default()
+    });
+    assert!(catalog.edit_schema_by_id(501, |db| {
+        db.deprecated_tables = GoSharedPointerSlice::from_handles(vec![Some(replacement.clone())]);
+    }));
+    for prepare in [false, true] {
+        if prepare {
+            catalog.prepare_v1_table_id_lookup(Some(&previous));
+        }
+        assert!(catalog.table_info_by_id(71).is_none());
+        assert!(catalog.schema_name_by_table_id(71).is_none());
+        assert!(catalog.table_info_by_id(72).unwrap().ptr_eq(&replacement));
+        assert_eq!(catalog.schema_name_by_table_id(72).as_deref(), Some("ApP"));
+    }
+    assert!(previous.table_info_by_id(71).unwrap().ptr_eq(&old));
+    assert!(previous.table_info_by_id(72).is_none());
+}
+
 /// One immutable snapshot of stored meta bytes.
 #[derive(Default)]
 struct RecordedSnapshot {

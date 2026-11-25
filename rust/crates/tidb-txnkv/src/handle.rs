@@ -15,10 +15,13 @@
 //! Safe, closed Handle representations translated from `pkg/kv/key.go`.
 
 use crate::Key;
+use hashbrown::HashMap;
+use hashbrown::hash_map::RawEntryMut;
+use std::borrow::{Borrow, Cow};
 use std::cmp::Ordering;
-use std::collections::{HashMap, HashSet};
 use std::fmt;
-use tidb_codec::{cut_one, decode_one, encode_int, CodecError};
+use std::hash::{BuildHasher, Hash};
+use tidb_codec::{CodecError, cut_one, decode_one, encode_int};
 use tidb_datatype::Datum;
 
 /// A complete TiDB row-handle value without open trait objects or layout aliases.
@@ -138,36 +141,48 @@ impl fmt::Display for IntHandle {
 }
 
 impl CommonHandle {
+    const MIN_ENCODED_LEN: usize = 9;
+
     /// Parses a complete comparable datum key and records exact column bounds.
     ///
     /// Inputs shorter than nine bytes are zero-padded only after parsing, as in
     /// Go. A padded handle can be parsed again because a leading zero is the
     /// padding/NULL terminator in this specific source contract.
     pub fn new(encoded: impl Into<Vec<u8>>) -> Result<Self, CodecError> {
-        let original = encoded.into();
-        let mut remain = original.as_slice();
+        let mut encoded = encoded.into();
         let mut column_ends = Vec::new();
         let mut end = 0_u16;
-        while !remain.is_empty() {
-            if remain[0] == 0 {
-                break;
-            }
-            let (column, next) = cut_one(remain)?;
+        Self::scan_encoded_columns(&encoded, |column| {
             end = end.wrapping_add(column.len() as u16);
             column_ends.push(end);
-            remain = next;
-        }
-        let encoded = if original.len() < 9 {
-            let mut padded = original;
-            padded.resize(9, 0);
-            padded
-        } else {
-            original
-        };
+        })?;
+        encoded.resize(encoded.len().max(Self::MIN_ENCODED_LEN), 0);
         Ok(Self {
             encoded: Key::from_bytes(encoded),
             column_ends,
         })
+    }
+
+    /// Validates and pads common-handle bytes for callers that only need the encoding.
+    pub fn normalize_encoding(mut encoded: Cow<'_, [u8]>) -> Result<Cow<'_, [u8]>, CodecError> {
+        Self::scan_encoded_columns(&encoded, |_| {})?;
+        if encoded.len() < Self::MIN_ENCODED_LEN {
+            encoded.to_mut().resize(Self::MIN_ENCODED_LEN, 0);
+        }
+        Ok(encoded)
+    }
+
+    /// Visits the encoded columns of a common handle, stopping at its padding.
+    pub fn scan_encoded_columns<'a>(
+        mut remain: &'a [u8],
+        mut visit_column: impl FnMut(&'a [u8]),
+    ) -> Result<(), CodecError> {
+        while remain.first().is_some_and(|&flag| flag != 0) {
+            let (column, next) = cut_one(remain)?;
+            visit_column(column);
+            remain = next;
+        }
+        Ok(())
     }
 
     /// Common handles never occupy the integer Handle domain.
@@ -238,16 +253,17 @@ impl CommonHandle {
 
     /// Compares source Handle equality, delegating through a partition wrapper.
     pub fn equal(&self, other: &Handle) -> bool {
-        !other.is_int() && self.encoded() == other.encoded()
+        other
+            .as_common_handle()
+            .is_some_and(|other| self.encoded() == other.encoded())
     }
 
     /// Compares another common-domain handle.
     pub fn compare_handle(&self, other: &Handle) -> Result<Ordering, HandleCompareError> {
-        if other.is_int() {
-            Err(HandleCompareError::KindMismatch)
-        } else {
-            Ok(self.encoded().cmp(other.encoded().as_slice()))
-        }
+        other
+            .as_common_handle()
+            .map(|other| self.compare(other))
+            .ok_or(HandleCompareError::KindMismatch)
     }
 
     /// Returns Go's source-shaped total memory usage.
@@ -392,6 +408,14 @@ impl fmt::Display for PartitionHandle {
 }
 
 impl Handle {
+    fn as_common_handle(&self) -> Option<&CommonHandle> {
+        match self {
+            Self::Int(_) => None,
+            Self::Common(handle) => Some(handle),
+            Self::Partition(partition) => partition.inner().as_common_handle(),
+        }
+    }
+
     /// Returns whether the underlying logical handle is an integer.
     pub fn is_int(&self) -> bool {
         match self {
@@ -468,13 +492,7 @@ impl Handle {
                 .int_value()
                 .map(|right| left.value().cmp(&right))
                 .ok_or(HandleCompareError::KindMismatch),
-            Self::Common(left) => {
-                if other.is_int() {
-                    Err(HandleCompareError::KindMismatch)
-                } else {
-                    Ok(left.encoded().cmp(other.encoded().as_slice()))
-                }
-            }
+            Self::Common(left) => left.compare_handle(other),
         }
     }
 
@@ -554,46 +572,54 @@ impl From<PartitionHandle> for Handle {
     }
 }
 
-#[derive(Debug, Clone, Eq, Hash, PartialEq)]
-enum MapKey {
+enum MapKey<'a> {
     Int(i64),
-    Common(Vec<u8>),
-    PartitionInt(i64, i64),
-    PartitionCommon(i64, Vec<u8>),
+    Common(&'a [u8]),
 }
 
-impl MapKey {
-    fn from_handle(handle: &Handle) -> Self {
-        match handle {
-            Handle::Partition(partition) if partition.inner().is_int() => Self::PartitionInt(
-                partition.partition_id,
-                partition
-                    .inner()
-                    .int_value()
-                    .expect("integer kind guarantees an integer value"),
-            ),
-            Handle::Partition(partition) => {
-                Self::PartitionCommon(partition.partition_id, partition.inner().encoded())
-            }
-            Handle::Int(handle) => Self::Int(handle.value()),
-            Handle::Common(handle) => Self::Common(handle.encoded().to_vec()),
+impl<'a> MapKey<'a> {
+    fn from_handle(handle: &'a Handle) -> (Option<i64>, Self) {
+        let partition_id = match handle {
+            Handle::Partition(partition) => Some(partition.partition_id()),
+            _ => None,
+        };
+        let mut inner = handle;
+        while let Handle::Partition(partition) = inner {
+            inner = partition.inner();
         }
+        let key = match inner {
+            Handle::Int(handle) => Self::Int(handle.value()),
+            Handle::Common(handle) => Self::Common(handle.encoded()),
+            Handle::Partition(_) => unreachable!("partition wrappers removed"),
+        };
+        (partition_id, key)
     }
 }
 
+type HandleValues<K, V> = HashMap<K, (Handle, V)>;
+type PartitionHandleValues<K, V> = HashMap<i64, HandleValues<K, V>>;
+
 /// A generic map keyed by source Handle identity.
 ///
-/// One closed key enum eliminates Go's four-map branching while preserving
-/// partition separation and encoded common-handle identity.
+/// As in Go, integer and common handles have separate maps, with one
+/// map per domain and physical partition for partition handles.
 #[derive(Debug, Clone)]
 pub struct HandleMap<V> {
-    entries: HashMap<MapKey, (Handle, V)>,
+    ints: HandleValues<i64, V>,
+    common: HandleValues<Vec<u8>, V>,
+    partition_ints: PartitionHandleValues<i64, V>,
+    partition_common: PartitionHandleValues<Vec<u8>, V>,
+    len: usize,
 }
 
 impl<V> Default for HandleMap<V> {
     fn default() -> Self {
         Self {
-            entries: HashMap::new(),
+            ints: HashMap::new(),
+            common: HashMap::new(),
+            partition_ints: HashMap::new(),
+            partition_common: HashMap::new(),
+            len: 0,
         }
     }
 }
@@ -606,39 +632,79 @@ impl<V> HandleMap<V> {
 
     /// Returns the value having the same source Handle identity.
     pub fn get(&self, handle: &Handle) -> Option<&V> {
-        self.entries
-            .get(&MapKey::from_handle(handle))
-            .map(|(_, value)| value)
+        let entry = match MapKey::from_handle(handle) {
+            (None, MapKey::Int(key)) => self.ints.get(&key),
+            (None, MapKey::Common(key)) => self.common.get(key),
+            (Some(id), MapKey::Int(key)) => self.partition_ints.get(&id)?.get(&key),
+            (Some(id), MapKey::Common(key)) => self.partition_common.get(&id)?.get(key),
+        };
+        entry.map(|(_, value)| value)
     }
 
     /// Inserts or overwrites a Handle value and returns the previous value.
     pub fn set(&mut self, handle: impl Into<Handle>, value: V) -> Option<V> {
         let handle = handle.into();
-        self.entries
-            .insert(MapKey::from_handle(&handle), (handle, value))
-            .map(|(_, value)| value)
+        let old = match MapKey::from_handle(&handle) {
+            (None, MapKey::Int(key)) => self.ints.insert(key, (handle, value)),
+            (Some(id), MapKey::Int(key)) => self
+                .partition_ints
+                .entry(id)
+                .or_default()
+                .insert(key, (handle, value)),
+            (partition, MapKey::Common(key)) => {
+                let map = match partition {
+                    Some(id) => self.partition_common.entry(id).or_default(),
+                    None => &mut self.common,
+                };
+                let hash = map.hasher().hash_one(key);
+                match map.raw_entry_mut().from_key_hashed_nocheck(hash, key) {
+                    RawEntryMut::Occupied(mut entry) => Some(entry.insert((handle, value))),
+                    RawEntryMut::Vacant(entry) => {
+                        entry.insert_hashed_nocheck(hash, key.to_vec(), (handle, value));
+                        None
+                    }
+                }
+            }
+        };
+        self.len += usize::from(old.is_none());
+        old.map(|(_, value)| value)
     }
 
     /// Deletes a Handle value and returns it when present.
     pub fn delete(&mut self, handle: &Handle) -> Option<V> {
-        self.entries
-            .remove(&MapKey::from_handle(handle))
-            .map(|(_, value)| value)
+        let (_, value) = match MapKey::from_handle(handle) {
+            (None, MapKey::Int(key)) => self.ints.remove(&key),
+            (None, MapKey::Common(key)) => self.common.remove(key),
+            (Some(id), MapKey::Int(key)) => {
+                remove_partition_entry(&mut self.partition_ints, id, &key)
+            }
+            (Some(id), MapKey::Common(key)) => {
+                remove_partition_entry(&mut self.partition_common, id, key)
+            }
+        }?;
+        self.len -= 1;
+        Some(value)
     }
 
     /// Returns the number of logical Handle entries.
     pub fn len(&self) -> usize {
-        self.entries.len()
+        self.len
     }
 
     /// Returns whether no Handle entries exist.
     pub fn is_empty(&self) -> bool {
-        self.entries.is_empty()
+        self.len == 0
     }
 
     /// Iterates entries until `visit` returns false.
     pub fn range(&self, mut visit: impl FnMut(&Handle, &V) -> bool) {
-        for (handle, value) in self.entries.values() {
+        let entries = self
+            .ints
+            .values()
+            .chain(self.common.values())
+            .chain(self.partition_ints.values().flat_map(HashMap::values))
+            .chain(self.partition_common.values().flat_map(HashMap::values));
+        for (handle, value) in entries {
             if !visit(handle, value) {
                 return;
             }
@@ -649,57 +715,61 @@ impl<V> HandleMap<V> {
     #[must_use]
     pub fn mem_usage(&self) -> i64 {
         const SIZEOF_HANDLE_MAP: usize = 32;
-        const SIZEOF_INT64: usize = 8;
-        const SIZEOF_INTERFACE: usize = 16;
-        const SIZEOF_STRING: usize = 16;
-        const SIZEOF_STR_HANDLE_VALUE: usize = 32;
-        const SIZEOF_MAP: usize = 8;
+        const INTEGER_ENTRY_SIZE: usize = 8 + 16;
+        const COMMON_ENTRY_SIZE: usize = 16 + 32;
+        const PARTITION_SIZE: usize = 8 + 8;
 
-        let mut bytes = SIZEOF_HANDLE_MAP;
-        let mut partition_ints = HashSet::new();
-        let mut partition_strings = HashSet::new();
-        for key in self.entries.keys() {
-            match key {
-                MapKey::Int(_) => {
-                    bytes = bytes.saturating_add(SIZEOF_INT64 + SIZEOF_INTERFACE);
-                }
-                MapKey::Common(encoded) => {
-                    bytes = bytes
-                        .saturating_add(SIZEOF_STRING)
-                        .saturating_add(encoded.len())
-                        .saturating_add(SIZEOF_STR_HANDLE_VALUE);
-                }
-                MapKey::PartitionInt(partition_id, _) => {
-                    partition_ints.insert(*partition_id);
-                    bytes = bytes.saturating_add(SIZEOF_INT64 + SIZEOF_INTERFACE);
-                }
-                MapKey::PartitionCommon(partition_id, encoded) => {
-                    partition_strings.insert(*partition_id);
-                    bytes = bytes
-                        .saturating_add(SIZEOF_STRING)
-                        .saturating_add(encoded.len())
-                        .saturating_add(SIZEOF_STR_HANDLE_VALUE);
-                }
-            }
-        }
-        bytes = bytes
-            .saturating_add(
-                partition_ints
-                    .len()
-                    .saturating_mul(SIZEOF_INT64 + SIZEOF_MAP),
-            )
-            .saturating_add(
-                partition_strings
-                    .len()
-                    .saturating_mul(SIZEOF_INT64 + SIZEOF_MAP),
-            );
+        let partitions = self.partition_ints.len() + self.partition_common.len();
+        let bytes = SIZEOF_HANDLE_MAP
+            .saturating_add(self.len.saturating_mul(INTEGER_ENTRY_SIZE))
+            .saturating_add(partitions.saturating_mul(PARTITION_SIZE));
+        let bytes = self
+            .common
+            .keys()
+            .chain(self.partition_common.values().flat_map(HashMap::keys))
+            .fold(bytes, |sum, key| {
+                sum.saturating_add(COMMON_ENTRY_SIZE - INTEGER_ENTRY_SIZE)
+                    .saturating_add(key.len())
+            });
         i64::try_from(bytes).unwrap_or(i64::MAX)
     }
+}
+
+fn remove_partition_entry<K, V, Q>(
+    partitions: &mut PartitionHandleValues<K, V>,
+    id: i64,
+    key: &Q,
+) -> Option<(Handle, V)>
+where
+    K: Eq + Hash + Borrow<Q>,
+    Q: Eq + Hash + ?Sized,
+{
+    let hashbrown::hash_map::Entry::Occupied(mut partition) = partitions.entry(id) else {
+        return None;
+    };
+    let removed = partition.get_mut().remove(key)?;
+    // The Rust map's shallow charge covers partitions with live handles.
+    if partition.get().is_empty() {
+        partition.remove();
+    }
+    Some(removed)
 }
 
 // Go uses arbitrary encoded bytes in a string key, not a []byte key.
 #[derive(Debug, Clone, Eq, Hash, PartialEq)]
 struct EncodedHandleKey(Vec<u8>);
+
+impl From<&[u8]> for EncodedHandleKey {
+    fn from(bytes: &[u8]) -> Self {
+        Self(bytes.to_vec())
+    }
+}
+
+impl Borrow<[u8]> for EncodedHandleKey {
+    fn borrow(&self) -> &[u8] {
+        &self.0
+    }
+}
 
 impl tidb_hack::MapValueLayout for EncodedHandleKey {
     const SOURCE_SIZE: usize = 16;
@@ -787,23 +857,15 @@ impl<V: tidb_hack::MapValueLayout> MemAwareHandleMap<V> {
     /// Returns a value by source handle identity.
     #[must_use]
     pub fn get(&self, handle: &Handle) -> Option<&V> {
-        let partition = match handle {
-            Handle::Partition(partition) => Some(partition.partition_id()),
-            _ => None,
-        };
-        if let Some(value) = handle.int_value() {
-            let map = match partition {
-                Some(id) => self.partition_ints.get(&id)?,
-                None => &self.ints,
-            };
-            map.get(&value)
-        } else {
-            let map = match partition {
-                Some(id) => self.partition_strs.get(&id)?,
-                None => &self.strs,
-            };
-            map.get(&EncodedHandleKey(handle.encoded()))
-                .map(|entry| &entry.value)
+        match MapKey::from_handle(handle) {
+            (None, MapKey::Int(key)) => self.ints.get(&key),
+            (Some(id), MapKey::Int(key)) => self.partition_ints.get(&id)?.get(&key),
+            (None, MapKey::Common(key)) => self.strs.get(key).map(|entry| &entry.value),
+            (Some(id), MapKey::Common(key)) => self
+                .partition_strs
+                .get(&id)?
+                .get(key)
+                .map(|entry| &entry.value),
         }
     }
 
@@ -832,10 +894,12 @@ impl<V: tidb_hack::MapValueLayout> MemAwareHandleMap<V> {
                     .or_insert_with(|| tidb_hack::MemAwareMap::new(0)),
                 None => &mut self.strs,
             };
-            map.set(
-                EncodedHandleKey(handle.encoded()),
-                StrHandleValue { handle, value },
-            )
+            map.set_with_borrowed_key(StrHandleValue { handle, value }, |entry| {
+                let (_, MapKey::Common(key)) = MapKey::from_handle(&entry.handle) else {
+                    unreachable!("integer handles use a separate map");
+                };
+                key
+            })
         };
         self.accounted_bytes = self.accounted_bytes.saturating_add(delta);
         delta
@@ -971,6 +1035,12 @@ mod tests {
         let partition_common = Handle::from(PartitionHandle::new(1, Some(common_handle.clone())));
         assert!(partition_common.equal(&common_handle));
         assert!(common_handle.equal(&partition_common));
+        assert!(common.equal(&partition_common));
+        assert_eq!(common_handle.compare(&partition_common), Ok(Ordering::Equal));
+        assert_eq!(
+            partition_common.compare(&common_handle),
+            Err(HandleCompareError::PartitionMismatch)
+        );
         assert_eq!(
             int.compare(&common_handle),
             Err(HandleCompareError::KindMismatch)

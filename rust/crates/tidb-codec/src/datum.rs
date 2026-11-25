@@ -22,6 +22,7 @@ use crate::number::{
 };
 use crate::CodecError;
 use chrono::{TimeZone, Utc};
+use std::borrow::{Borrow, Cow};
 use std::fmt;
 use tidb_datatype::{
     deserialize_vector_float32, peek_vector_float32, BinaryJSON, BinaryLiteralIntOutcome, Datum,
@@ -126,7 +127,17 @@ impl Encoder {
         output: &mut Vec<u8>,
         values: &[Datum],
     ) -> Result<(), CodecError> {
-        if let Some(size) = pre_realloc_size(values, true) {
+        self.append_key_refs_in_timezone(timezone, output, values.iter())
+    }
+
+    /// Appends a sequence of borrowed datums in key order.
+    pub fn append_key_refs_in_timezone<'a, TZ: TimeZone + 'static>(
+        self,
+        timezone: &TZ,
+        output: &mut Vec<u8>,
+        values: impl Clone + Iterator<Item = &'a Datum>,
+    ) -> Result<(), CodecError> {
+        if let Some(size) = pre_realloc_size_for_refs(values.clone(), true) {
             output.reserve(size);
         }
         for value in values {
@@ -184,7 +195,7 @@ impl Encoder {
                 }
                 Datum::Json(value) => {
                     output.push(JSON_FLAG);
-                    output.extend_from_slice(&value.encoded());
+                    value.append_encoded_to(output);
                 }
                 Datum::VectorFloat32(value) => {
                     output.push(VECTOR_FLOAT32_FLAG);
@@ -198,11 +209,11 @@ impl Encoder {
         Ok(())
     }
 
-    fn string_key(self, value: &StringDatum) -> Vec<u8> {
+    fn string_key(self, value: &StringDatum) -> Cow<'_, [u8]> {
         if self.use_new_collation {
-            value.collation().immutable_key(value.bytes()).into_owned()
+            value.collation().immutable_key(value.bytes())
         } else {
-            value.bytes().to_vec()
+            Cow::Borrowed(value.bytes())
         }
     }
 }
@@ -229,6 +240,14 @@ pub fn encode_key(values: &[Datum]) -> Result<Vec<u8>, CodecError> {
 /// serialized length, answers `None` here, as do the kinds Go's `default`
 /// arm leaves the buffer as it is for.
 pub fn pre_realloc_size(values: &[Datum], comparable: bool) -> Option<usize> {
+    pre_realloc_size_for_refs(values.iter(), comparable)
+}
+
+/// Computes the same allocation hint for a sequence of borrowed datums.
+pub fn pre_realloc_size_for_refs<'a>(
+    values: impl Iterator<Item = &'a Datum>,
+    comparable: bool,
+) -> Option<usize> {
     const ENC_GROUP_SIZE: usize = 8;
     const MAX_VARINT_LEN64: usize = 10;
     let size_int = if comparable { 9 } else { 1 + MAX_VARINT_LEN64 };
@@ -283,6 +302,26 @@ pub fn encode_value_in_timezone<TZ: TimeZone + 'static>(
     result.map(|()| output)
 }
 
+/// Encodes one value into immutable bytes for storage in a shared request.
+pub fn encode_value_as_bytes_in_timezone<TZ: TimeZone + 'static>(
+    timezone: &TZ,
+    value: &Datum,
+) -> Result<::bytes::Bytes, CodecError> {
+    let mut output = Vec::with_capacity(estimate_value_size(value).unwrap_or_default());
+    append_value_in_timezone(timezone, &mut output, value)?;
+    Ok(output.into())
+}
+
+/// Appends a single compact datum to a caller-owned buffer.
+#[inline]
+pub fn append_value_in_timezone<TZ: TimeZone + 'static>(
+    timezone: &TZ,
+    output: &mut Vec<u8>,
+    value: &Datum,
+) -> Result<(), CodecError> {
+    append_value_iter(timezone, output, std::iter::once(value))
+}
+
 /// Go `EncodeValue`'s `(b, err)`: a decimal that does not fit its shape
 /// still encodes (truncated) and the encoding goes on; the bytes come back
 /// beside the error for the caller's statement context to judge
@@ -291,15 +330,48 @@ pub fn encode_value_in_timezone_with_error<TZ: TimeZone + 'static>(
     timezone: &TZ,
     values: &[Datum],
 ) -> (Vec<u8>, Result<(), CodecError>) {
-    let mut output = Vec::with_capacity(pre_realloc_size(values, false).unwrap_or(0));
-    let mut err = Ok(());
-    macro_rules! try_encode {
-        ($result:expr) => {
-            if let Err(error) = $result {
-                return (output, Err(error));
-            }
-        };
+    encode_value_refs_with_error(timezone, values)
+}
+
+/// Encodes values held in separate storage through the same compact codec.
+pub fn encode_value_refs_in_timezone<TZ: TimeZone + 'static>(
+    timezone: &TZ,
+    values: &[impl Borrow<Datum>],
+) -> Result<Vec<u8>, CodecError> {
+    let (output, result) = encode_value_refs_with_error(timezone, values);
+    result.map(|()| output)
+}
+
+/// Appends compact values to a caller-owned buffer, preserving partial bytes on error.
+pub fn append_value_refs_in_timezone<TZ: TimeZone + 'static>(
+    timezone: &TZ,
+    output: &mut Vec<u8>,
+    values: &[impl Borrow<Datum>],
+) -> Result<(), CodecError> {
+    let values = values.iter().map(Borrow::borrow);
+    let size = pre_realloc_size_for_refs(values.clone(), false).unwrap_or(0);
+    if output.capacity() - output.len() < size {
+        output.reserve(size);
     }
+    append_value_iter(timezone, output, values)
+}
+
+fn encode_value_refs_with_error<TZ: TimeZone + 'static>(
+    timezone: &TZ,
+    values: &[impl Borrow<Datum>],
+) -> (Vec<u8>, Result<(), CodecError>) {
+    let values = values.iter().map(Borrow::borrow);
+    let mut output = Vec::with_capacity(pre_realloc_size_for_refs(values.clone(), false).unwrap_or(0));
+    let err = append_value_iter(timezone, &mut output, values);
+    (output, err)
+}
+
+fn append_value_iter<'a, TZ: TimeZone + 'static>(
+    timezone: &TZ,
+    output: &mut Vec<u8>,
+    values: impl Iterator<Item = &'a Datum>,
+) -> Result<(), CodecError> {
+    let mut err = Ok(());
     for value in values {
         match value {
             Datum::Null => output.push(NIL_FLAG),
@@ -307,66 +379,64 @@ pub fn encode_value_in_timezone_with_error<TZ: TimeZone + 'static>(
             Datum::MaxValue => output.push(MAX_FLAG),
             Datum::Int(value) => {
                 output.push(VARINT_FLAG);
-                encode_varint(&mut output, *value);
+                encode_varint(output, *value);
             }
             Datum::UInt(value) => {
                 output.push(UVARINT_FLAG);
-                encode_uvarint(&mut output, *value);
+                encode_uvarint(output, *value);
             }
             Datum::Decimal(value) => {
                 output.push(DECIMAL_FLAG);
-                err = encode_decimal(&mut output, value);
+                err = encode_decimal(output, value);
             }
             Datum::Real(value) | Datum::Float32(value) => {
                 output.push(FLOAT_FLAG);
-                encode_float(&mut output, *value);
+                encode_float(output, *value);
             }
             Datum::String(value) => {
                 output.push(COMPACT_BYTES_FLAG);
-                crate::encode_compact_bytes(&mut output, value.bytes());
+                crate::encode_compact_bytes(output, value.bytes());
             }
             Datum::Bytes(value) => {
                 output.push(COMPACT_BYTES_FLAG);
-                crate::encode_compact_bytes(&mut output, value);
+                crate::encode_compact_bytes(output, value);
             }
             Datum::BinaryLiteral(value) | Datum::Bit(value) => {
                 output.push(UVARINT_FLAG);
-                match binary_literal_uint(value) {
-                    Ok(value) => encode_uvarint(&mut output, value),
-                    Err(error) => return (output, Err(error)),
-                }
+                encode_uvarint(output, binary_literal_uint(value)?);
             }
             Datum::Duration(value) => {
                 output.push(DURATION_FLAG);
-                encode_int(&mut output, value.nanoseconds());
+                encode_int(output, value.nanoseconds());
             }
             Datum::Enum(value, _) => {
                 output.push(UVARINT_FLAG);
-                encode_uvarint(&mut output, value.value());
+                encode_uvarint(output, value.value());
             }
             Datum::Set(value, _) => {
                 output.push(UVARINT_FLAG);
-                encode_uvarint(&mut output, value.value());
+                encode_uvarint(output, value.value());
             }
             Datum::Time(value) => {
                 output.push(UINT_FLAG);
-                try_encode!(crate::package::encode_mysql_time(timezone, *value, None, &mut output));
+                crate::package::encode_mysql_time(timezone, *value, None, output)?;
             }
             Datum::Json(value) => {
                 output.push(JSON_FLAG);
-                output.extend_from_slice(&value.encoded());
+                value.append_encoded_to(output);
             }
             Datum::VectorFloat32(value) => {
                 output.push(VECTOR_FLOAT32_FLAG);
-                value.serialize_to(&mut output);
+                value.serialize_to(output);
             }
-            Datum::Raw(_) => return (output, Err(CodecError::UnsupportedDatum("raw"))),
+            Datum::Raw(_) => return Err(CodecError::UnsupportedDatum("raw")),
         }
     }
-    (output, err)
+    err
 }
 
 /// Returns the exact length of one `EncodeValue` datum.
+#[inline]
 pub fn estimate_value_size(value: &Datum) -> Result<usize, CodecError> {
     match value {
         Datum::Int(value) => Ok(crate::value_size_of_signed_int(*value)),
@@ -387,7 +457,7 @@ pub fn estimate_value_size(value: &Datum) -> Result<usize, CodecError> {
         Datum::BinaryLiteral(value) | Datum::Bit(value) => Ok(crate::value_size_of_unsigned_int(
             binary_literal_uint(value)?,
         )),
-        Datum::Json(value) => Ok(1 + value.encoded().len()),
+        Datum::Json(value) => Ok(2 + value.value().len()),
         Datum::VectorFloat32(value) => Ok(1 + value.serialized_size()),
         Datum::Null | Datum::MinNotNull | Datum::MaxValue => Ok(1),
         Datum::Raw(_) => Err(CodecError::UnsupportedDatum("raw")),
@@ -446,8 +516,9 @@ pub fn hash_code(value: &Datum) -> Vec<u8> {
             crate::encode_compact_bytes(&mut output, value.as_bytes());
         }
         Datum::Json(value) => {
+            output.reserve(2 + value.value().len());
             output.push(JSON_FLAG);
-            output.extend_from_slice(&value.encoded());
+            value.append_encoded_to(&mut output);
         }
         Datum::VectorFloat32(value) => {
             output.push(VECTOR_FLOAT32_FLAG);
@@ -655,7 +726,7 @@ fn peek_one_len(input: &[u8]) -> Result<usize, CodecError> {
 
 fn peek_varint_len(input: &[u8]) -> Result<usize, CodecError> {
     for (index, byte) in input.iter().copied().enumerate() {
-        if index == 10 || (index == 9 && byte > 1) {
+        if index == 10 || (index == 9 && (2..0x80).contains(&byte)) {
             return Err(CodecError::InvalidEncoding("varint larger than 64 bits"));
         }
         if byte < 0x80 {

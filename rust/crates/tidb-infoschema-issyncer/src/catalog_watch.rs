@@ -115,7 +115,8 @@ pub type SchemaBuilder = Box<
 pub struct InfoCache {
     /// Go `Loader.crossKS`: historical reads use the same isolated loader.
     cross_ks: bool,
-    published: RwLock<Arc<SessionExtendedInfoSchema>>,
+    // Publishers hold the historical cache lock across admission and publication.
+    published: arc_swap::ArcSwap<SessionExtendedInfoSchema>,
     historical: Mutex<tidb_infoschema::cache::InfoCache>,
     capacity: AtomicUsize,
     gc_store: RwLock<Option<Arc<dyn tidb_txnkv::kv_storage::Storage>>>,
@@ -154,7 +155,7 @@ impl InfoCache {
         historical.insert(built.clone(), built.schema_commit_ts());
         Self {
             cross_ks: false,
-            published: RwLock::new(Arc::clone(&built)),
+            published: arc_swap::ArcSwap::new(Arc::clone(&built)),
             historical: Mutex::new(historical),
             capacity: AtomicUsize::new(16),
             gc_store: RwLock::new(None),
@@ -205,7 +206,7 @@ impl InfoCache {
     /// when no DDL changed its schema version.
     pub fn refresh_snapshot_ts(&self, ts: u64) {
         let mut versions = self.historical.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        let mut published = self.published.write().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let published = self.published.load();
         if !published.is_v2() { return; }
         let size = tidb_vardef::SCHEMA_CACHE_SIZE.load(Ordering::Acquire);
         if size > 0 && self.data.cache_capacity() != size { self.data.set_cache_capacity(size); }
@@ -213,18 +214,23 @@ impl InfoCache {
         schema.set_schema_ts(ts);
         let schema = Arc::new(schema);
         versions.insert(schema.clone(), schema.schema_commit_ts());
-        *published = schema;
+        self.published.store(schema);
     }
 
     /// Go `InfoCache.GetBySnapshotTS`.
     pub fn get_by_snapshot_ts(&self, ts: u64) -> Option<Arc<SessionExtendedInfoSchema>> {
-        self.historical.lock().unwrap_or_else(std::sync::PoisonError::into_inner).get_by_snapshot_ts(ts).map(|schema| {
-            if schema.is_v2() {
-                let mut reader = (*schema).clone();
-                reader.set_schema_ts(ts);
-                Arc::new(reader)
-            } else { schema }
-        })
+        let schema = self
+            .historical
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get_by_snapshot_ts(ts)?;
+        if schema.is_v2() {
+            let mut reader = (*schema).clone();
+            reader.set_schema_ts(ts);
+            Some(Arc::new(reader))
+        } else {
+            Some(schema)
+        }
     }
 
     /// Go `InfoCache.InsertEmptySchemaVersion`.
@@ -281,15 +287,13 @@ impl InfoCache {
         for built in versions.values_mut() {
             *built = self.build(built.metadata_copy(), None);
         }
-        let mut published = self
-            .published
-            .write()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let published = self.published.load();
         let version = published.schema_meta_version();
-        *published = match versions.get(&version) {
+        let built = match versions.get(&version) {
             Some(built) => Arc::clone(built),
             None => self.build(published.metadata_copy(), None),
         };
+        self.published.store(built);
     }
 
     /// Serializes one reload (load, validator update, publication), as Go's
@@ -306,13 +310,15 @@ impl InfoCache {
         self.capacity.load(Ordering::Relaxed)
     }
 
-    /// Go `InfoCache.GetLatest`: the `InfoSchema` in force now. A poisoned
-    /// lock still yields the value: a panicking publisher cannot leave the
-    /// node unable to answer queries.
+    /// Go `InfoCache.GetLatest`: the `InfoSchema` in force now.
     #[must_use]
     pub fn get_latest(&self) -> Arc<SessionExtendedInfoSchema> {
-        let schema = self.published.read().unwrap_or_else(std::sync::PoisonError::into_inner);
-        if schema.is_v2() { Arc::new((**schema).clone()) } else { Arc::clone(&schema) }
+        let schema = self.published.load();
+        if schema.is_v2() {
+            Arc::new((**schema).clone())
+        } else {
+            arc_swap::Guard::into_inner(schema)
+        }
     }
 
     /// Go `Loader.LoadWithTS(ts, isSnapshot)`: the schema at the snapshot's
@@ -569,7 +575,7 @@ impl InfoCache {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         versions.upsert(Arc::clone(&schema), schema_ts);
-        *self.published.write().unwrap_or_else(std::sync::PoisonError::into_inner) = schema;
+        self.published.store(schema);
     }
 
     /// Go `InfoCache.Upsert`: admits `catalog` and publishes it unless a newer
@@ -596,9 +602,8 @@ impl InfoCache {
             .unwrap_or_else(|| self.build(catalog, Some(&self.get_latest())));
         let version = built.schema_meta_version();
         self.check_old_versions(version);
-        // Publication and retained-version admission share the same lock order
-        // as historical lookup, and holding the cache lock across the version
-        // comparison serializes concurrent publishers.
+        // Keep admission, the version check and publication under one lock
+        // so concurrent publishers preserve version order.
         let mut versions = self
             .historical
             .lock()
@@ -606,19 +611,16 @@ impl InfoCache {
         for &empty in built.empty_schema_versions() { versions.insert_empty_schema_version(empty); }
         versions.insert(Arc::clone(&built), built.schema_commit_ts());
         versions.resize(self.capacity.load(Ordering::Relaxed));
-        let mut guard = match self.published.write() {
-            Ok(guard) => guard,
-            Err(poisoned) => poisoned.into_inner(),
-        };
-        if version < guard.schema_meta_version() {
+        let current = self.published.load();
+        if version < current.schema_meta_version() {
             return false;
         }
-        if guard.is_v2() != built.is_v2() {
+        if current.is_v2() != built.is_v2() {
             versions.upsert(Arc::clone(&built), built.schema_commit_ts());
         } else {
             versions.insert(Arc::clone(&built), built.schema_commit_ts());
         }
-        *guard = built;
+        self.published.store(built);
         true
     }
 }

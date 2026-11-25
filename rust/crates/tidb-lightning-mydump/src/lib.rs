@@ -83,7 +83,11 @@ pub fn to_storage_compress_type(compression: Compression) -> Result<tidb_objstor
 }
 pub use parser::{read_chunks, read_until, Chunk, ChunkParser, Parser, Row};
 
-use tidb_datatype::Datum;
+use std::borrow::Cow;
+use std::ops::Range;
+
+use tidb_charset::Collation;
+use tidb_datatype::{Datum, StringDatum};
 
 /// Go `config.CSVConfig`, the fields `LOAD DATA` sets.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -311,19 +315,23 @@ fn unescape(input: &[u8], flavor: EscapeFlavor, esc_char: u8) -> Vec<u8> {
 /// Go `unescapeByChar`: rewrites every `esc_char`-prefixed pair; a trailing
 /// lone `esc_char` stays.
 fn unescape_by_char(input: &[u8], esc_char: u8) -> Vec<u8> {
-    let Some(first) = input.iter().position(|&c| c == esc_char) else {
+    let Some(first) = memchr::memchr(esc_char, input) else {
         return input.to_vec();
     };
     if first + 1 == input.len() {
         return input.to_vec();
     }
+    unescape_from(input, esc_char, first)
+}
+
+fn unescape_from(input: &[u8], esc_char: u8, first: usize) -> Vec<u8> {
     let mut result = Vec::with_capacity(input.len() - 1);
     result.extend_from_slice(&input[..first]);
     let mut remaining = &input[first..];
     while remaining.len() > 1 {
         result.push(escaped_char_to_byte(remaining[1]));
         remaining = &remaining[2..];
-        match remaining.iter().position(|&c| c == esc_char) {
+        match memchr::memchr(esc_char, remaining) {
             None => {
                 result.extend_from_slice(remaining);
                 return result;
@@ -358,13 +366,6 @@ const CSV_TOKEN_ESCAPED: CsvToken = 0x100;
 const CSV_TOKEN_COMMA: CsvToken = 0x200;
 const CSV_TOKEN_NEW_LINE: CsvToken = 0x400;
 const CSV_TOKEN_DELIMITER: CsvToken = 0x800;
-
-/// Go `field`.
-#[derive(Clone, Debug)]
-struct Field {
-    content: Vec<u8>,
-    quoted: bool,
-}
 
 /// Go `io.ReadSeekCloser`: what a parser reads its file from.
 pub trait ReadSeek: std::io::Read + std::io::Seek + Send {}
@@ -586,16 +587,16 @@ impl CsvParser {
     /// become the columns when the header must match the schema.
     pub fn read_columns(&mut self) -> Result<(), CsvError> {
         self.begin_row_len_check();
-        let columns = self.read_record();
+        let result = self.read_record();
         self.end_row_len_check();
-        let columns = columns?;
+        result?;
         if !self.header_schema_match {
             return Ok(());
         }
-        self.columns = columns
-            .iter()
-            .map(|c| {
-                let name = self.unescape_string(c).unwrap_or_default();
+        self.columns = self
+            .record_fields(self.field_indexes.len())
+            .map(|(range, quoted)| {
+                let name = self.decode_field(&self.record_buffer[range], quoted).unwrap_or_default();
                 String::from_utf8_lossy(&name).to_lowercase()
             })
             .collect();
@@ -616,14 +617,19 @@ impl CsvParser {
     fn read_block(&mut self) {
         // A read error ends the input here; Go returns it from `readBlock`.
         let (block, _) = self.reader.read_block().unwrap_or_default();
-        let mut block = &block[..];
-        if self.pos == 0 {
-            // Go `bom.Clean`.
-            if block.starts_with(&[0xEF, 0xBB, 0xBF]) {
-                block = &block[3..];
-                self.pos += 3;
-            }
+        // Go `bom.Clean`.
+        let prefix = if self.pos == 0 && block.starts_with(&[0xEF, 0xBB, 0xBF]) {
+            self.pos += 3;
+            3
+        } else {
+            0
+        };
+        if self.rest().is_empty() {
+            self.set_buf(block);
+            self.start = prefix;
+            return;
         }
+        let block = &block[prefix..];
         let mut next = Vec::with_capacity(self.rest().len() + block.len());
         next.extend_from_slice(self.rest());
         next.extend_from_slice(block);
@@ -652,39 +658,29 @@ impl CsvParser {
         Ok(byte)
     }
 
-    /// Go `peekBytes`.
-    fn peek_bytes(&mut self, count: usize) -> Result<&[u8], CsvError> {
-        if self.rest().len() < count {
-            self.read_block();
-        }
-        if self.rest().is_empty() {
-            return Err(CsvError::Eof);
-        }
-        let count = count.min(self.rest().len());
-        Ok(&self.rest()[..count])
-    }
-
     fn skip_bytes(&mut self, n: usize) {
         self.start += n;
         self.pos += n as i64;
     }
 
     /// Go `tryPeekExact`: (matched, eof).
-    fn try_peek_exact(&mut self, content: &[u8]) -> (bool, bool) {
-        if content.is_empty() {
+    fn try_peek_exact(&mut self, content: impl Fn(&Self) -> &[u8]) -> (bool, bool) {
+        let count = content(self).len();
+        if count == 0 {
             return (true, false);
         }
-        match self.peek_bytes(content.len()) {
-            Ok(bytes) => (bytes == content, false),
-            Err(_) => (false, true),
+        if self.rest().len() < count {
+            self.read_block();
         }
+        let bytes = self.rest();
+        (bytes.starts_with(content(self)), bytes.is_empty())
     }
 
     /// Go `tryReadExact`.
-    fn try_read_exact(&mut self, content: &[u8]) -> bool {
-        let (matched, _) = self.try_peek_exact(content);
+    fn try_read_exact(&mut self, content: impl Fn(&Self) -> &[u8]) -> bool {
+        let (matched, _) = self.try_peek_exact(&content);
         if matched {
-            self.skip_bytes(content.len());
+            self.skip_bytes(content(self).len());
         }
         matched
     }
@@ -696,32 +692,28 @@ impl CsvParser {
         if b != self.new_line[0] {
             return false;
         }
-        let rest = self.new_line[1..].to_vec();
-        self.try_read_exact(&rest)
+        self.try_read_exact(|p| &p.new_line[1..])
     }
 
     fn try_read_open_delimiter(&mut self, b: u8) -> bool {
         if self.quote.is_empty() || self.quote[0] != b {
             return false;
         }
-        let rest = self.quote[1..].to_vec();
-        self.try_read_exact(&rest)
+        self.try_read_exact(|p| &p.quote[1..])
     }
 
     fn try_read_close_delimiter(&mut self, b: u8) -> bool {
         if self.quote[0] != b {
             return false;
         }
-        let rest = self.quote[1..].to_vec();
-        self.try_read_exact(&rest)
+        self.try_read_exact(|p| &p.quote[1..])
     }
 
     fn try_read_comma(&mut self, b: u8) -> bool {
         if self.comma[0] != b {
             return false;
         }
-        let rest = self.comma[1..].to_vec();
-        self.try_read_exact(&rest)
+        self.try_read_exact(|p| &p.comma[1..])
     }
 
     /// Go `tryReadEscaped`.
@@ -767,52 +759,51 @@ impl CsvParser {
         Ok(CsvToken::from(b))
     }
 
-    fn append_csv_token_to_record_buffer(&mut self, token: CsvToken) {
+    fn append_csv_token(&self, token: CsvToken, output: &mut Vec<u8>) {
         if token & CSV_TOKEN_ESCAPED != 0 {
-            self.record_buffer.push(self.escaped_by[0]);
+            output.push(self.escaped_by[0]);
         }
-        self.record_buffer.push(token as u8);
+        output.push(token as u8);
     }
 
-    /// Go `readUntil`: the bytes before the first byte of `chars`, and that
-    /// byte (left unconsumed). At the end of the source the error is EOF and
-    /// the bytes are everything read.
-    fn read_until(&mut self, chars: ByteSet) -> (Vec<u8>, u8, Option<CsvError>) {
-        if let Some(index) = chars.index_any(self.rest()) {
-            let found = self.rest()[..index].to_vec();
-            self.start += index;
-            self.pos += index as i64;
-            return (found, self.rest()[0], None);
-        }
-        let mut found = Vec::new();
+    /// Appends the bytes before `chars` and leaves the stop byte unconsumed.
+    /// Like Go `readUntil`, append the remaining bytes when reporting EOF.
+    fn read_until(&mut self, chars: ByteSet, output: &mut Vec<u8>) -> (u8, Option<CsvError>) {
+        let begin = output.len();
         loop {
-            found.extend_from_slice(self.rest());
+            if let Some(index) = chars.index_any(self.rest()) {
+                output.extend_from_slice(&self.rest()[..index]);
+                self.start += index;
+                self.pos += (output.len() - begin) as i64;
+                return (self.rest()[0], None);
+            }
+            output.extend_from_slice(self.rest());
             if self.check_row_len
-                && self.pos - self.row_start_pos + found.len() as i64 > LARGEST_ENTRY_LIMIT
+                && self.pos - self.row_start_pos + (output.len() - begin) as i64 > LARGEST_ENTRY_LIMIT
             {
-                return (found, 0, Some(CsvError::RowTooLarge));
+                return (0, Some(CsvError::RowTooLarge));
             }
             self.set_buf(Vec::new());
             self.read_block();
             if self.rest().is_empty() {
-                self.pos += found.len() as i64;
-                return (found, 0, Some(CsvError::Eof));
-            }
-            if let Some(index) = chars.index_any(self.rest()) {
-                found.extend_from_slice(&self.rest()[..index]);
-                self.start += index;
-                self.pos += found.len() as i64;
-                return (found, self.rest()[0], None);
+                self.pos += (output.len() - begin) as i64;
+                return (0, Some(CsvError::Eof));
             }
         }
     }
 
     /// Go `readRecord`.
-    fn read_record(&mut self) -> Result<Vec<Field>, CsvError> {
-        self.record_buffer.clear();
+    fn read_record(&mut self) -> Result<(), CsvError> {
+        let mut record = std::mem::take(&mut self.record_buffer);
+        record.clear();
         self.field_indexes.clear();
         self.field_is_quoted.clear();
+        let result = self.read_record_into(&mut record);
+        self.record_buffer = record;
+        result
+    }
 
+    fn read_record_into(&mut self, record: &mut Vec<u8>) -> Result<(), CsvError> {
         let mut is_empty_line = true;
         let mut whitespace_line = true;
         let mut found_starting_by_this_line = false;
@@ -840,13 +831,13 @@ impl CsvParser {
                 self.pos = old_pos + skip as i64;
             }
 
-            let (content, first_byte, error) = self.read_until(self.unquote_byte_set);
-            if !content.is_empty() {
+            let previous_len = record.len();
+            let (first_byte, error) = self.read_until(self.unquote_byte_set, record);
+            if record.len() != previous_len {
                 is_empty_line = false;
                 if prev_token == CSV_TOKEN_DELIMITER {
                     return Err(CsvError::UnexpectedQuoteField);
                 }
-                self.record_buffer.extend_from_slice(&content);
                 prev_token = CSV_TOKEN_ANY_UNQUOTED;
             }
 
@@ -868,7 +859,7 @@ impl CsvParser {
             match first_token {
                 CSV_TOKEN_COMMA => {
                     whitespace_line = false;
-                    self.field_indexes.push(self.record_buffer.len());
+                    self.field_indexes.push(record.len());
                     self.field_is_quoted.push(field_is_quoted);
                     field_is_quoted = false;
                 }
@@ -876,13 +867,12 @@ impl CsvParser {
                     if prev_token != CSV_TOKEN_COMMA && prev_token != CSV_TOKEN_NEW_LINE {
                         if self.unescaped_quote {
                             whitespace_line = false;
-                            let quote = self.quote.clone();
-                            self.record_buffer.extend_from_slice(&quote);
+                            record.extend_from_slice(&self.quote);
                             continue;
                         }
                         return Err(CsvError::UnexpectedQuoteField);
                     }
-                    self.read_quoted_field()?;
+                    self.read_quoted_field(record)?;
                     field_is_quoted = true;
                     whitespace_line = false;
                 }
@@ -893,13 +883,13 @@ impl CsvParser {
                         if is_empty_line {
                             continue;
                         }
-                        if !at_eof && whitespace_line && self.record_buffer.trim_ascii().is_empty()
+                        if !at_eof && whitespace_line && record.trim_ascii().is_empty()
                         {
-                            self.record_buffer.clear();
+                            record.clear();
                             continue;
                         }
                     }
-                    self.field_indexes.push(self.record_buffer.len());
+                    self.field_indexes.push(record.len());
                     self.field_is_quoted.push(field_is_quoted);
                     break;
                 }
@@ -907,28 +897,19 @@ impl CsvParser {
                     if prev_token == CSV_TOKEN_DELIMITER {
                         return Err(CsvError::UnexpectedQuoteField);
                     }
-                    self.append_csv_token_to_record_buffer(first_token);
+                    self.append_csv_token(first_token, record);
                 }
             }
             prev_token = first_token;
             is_empty_line = false;
         }
-        let mut fields = Vec::with_capacity(self.field_indexes.len());
-        let mut previous = 0;
-        for (index, &end) in self.field_indexes.iter().enumerate() {
-            fields.push(Field {
-                content: self.record_buffer[previous..end].to_vec(),
-                quoted: self.field_is_quoted[index],
-            });
-            previous = end;
-        }
-        Ok(fields)
+        Ok(())
     }
 
     /// Go `readQuotedField`.
-    fn read_quoted_field(&mut self) -> Result<(), CsvError> {
+    fn read_quoted_field(&mut self, record: &mut Vec<u8>) -> Result<(), CsvError> {
         loop {
-            let (content, terminator, error) = self.read_until(self.quote_byte_set);
+            let (terminator, error) = self.read_until(self.quote_byte_set, record);
             if let Some(error) = error {
                 return Err(if error == CsvError::Eof {
                     CsvError::UnterminatedQuotedField
@@ -936,65 +917,77 @@ impl CsvParser {
                     error
                 });
             }
-            self.record_buffer.extend_from_slice(&content);
             self.skip_bytes(1);
             let token = self.read_quoted_token(terminator)?;
             if token == CSV_TOKEN_DELIMITER {
                 // `""` inside a quoted field is one quote.
-                let quote = self.quote.clone();
-                if self.try_read_exact(&quote) {
-                    self.record_buffer.extend_from_slice(&quote);
+                if self.try_read_exact(|p| &p.quote) {
+                    record.extend_from_slice(&self.quote);
                 } else if self.unescaped_quote {
                     // An unescaped quote ends the field only before a
                     // separator or a line end.
-                    let comma = self.comma.clone();
-                    let (is_comma, _) = self.try_peek_exact(&comma);
+                    let (is_comma, _) = self.try_peek_exact(|p| &p.comma);
                     if is_comma {
                         return Ok(());
                     }
-                    let new_line = self.new_line.clone();
-                    let (is_new_line, eof) = self.try_peek_exact(&new_line);
+                    let (is_new_line, eof) = self.try_peek_exact(|p| &p.new_line);
                     if eof || is_new_line {
                         return Ok(());
                     }
-                    self.record_buffer.extend_from_slice(&quote);
+                    record.extend_from_slice(&self.quote);
                 } else {
                     return Ok(());
                 }
             } else {
-                self.append_csv_token_to_record_buffer(token);
+                self.append_csv_token(token, record);
             }
         }
     }
 
-    /// Go `unescapeString`: the field's value, or `None` for NULL.
-    fn unescape_string(&self, input: &Field) -> Option<Vec<u8>> {
-        let mut unescaped = match &self.charset_convertor {
-            Some(convertor) => convertor.decode(&input.content),
-            None => input.content.clone(),
+    fn record_fields(&self, count: usize) -> impl Iterator<Item = (Range<usize>, bool)> + '_ {
+        self.field_indexes[..count]
+            .iter()
+            .copied()
+            .scan(0, |start, end| Some(std::mem::replace(start, end)..end))
+            .zip(self.field_is_quoted.iter().copied())
+    }
+
+    /// Go `unescapeString`: an unchanged field borrows the record buffer.
+    fn decode_field<'a>(&self, input: &'a [u8], quoted: bool) -> Option<Cow<'a, [u8]>> {
+        let mut decoded = match &self.charset_convertor {
+            Some(convertor) if convertor.converts(input) => Cow::Owned(convertor.decode(input)),
+            _ => Cow::Borrowed(input),
         };
-        let mut null_marker = self.escaped_by.clone();
-        null_marker.push(b'N');
-        if self.esc_flavor == EscapeFlavor::MySqlWithNull && unescaped == null_marker {
+        let escape_null = self.esc_flavor == EscapeFlavor::MySqlWithNull;
+        let is_escape_null = |value: &[u8]| value.strip_prefix(self.escaped_by.as_slice()) == Some(b"N");
+        if escape_null && is_escape_null(&decoded) {
             return None;
         }
-        if !self.escaped_by.is_empty() {
-            unescaped = unescape(&unescaped, self.esc_flavor, self.escaped_by[0]);
-        }
-        let mut is_null = false;
-        if !(!self.quote.is_empty() && self.quoted_null_is_text && input.quoted) {
-            is_null = !self.not_null && self.field_null_defined_by.contains(&unescaped);
-            // `\\N` must not become NULL.
-            if self.esc_flavor == EscapeFlavor::MySqlWithNull && unescaped == null_marker {
-                is_null = false;
+        if let Some(&escape) = self.escaped_by.first() {
+            if let Some(pos) = memchr::memchr(escape, &decoded).filter(|&pos| pos + 1 < decoded.len()) {
+                decoded = Cow::Owned(unescape_from(&decoded, escape, pos));
             }
         }
-        (!is_null).then_some(unescaped)
+        if !self.not_null
+            && (self.quote.is_empty() || !self.quoted_null_is_text || !quoted)
+            && self.field_null_defined_by.iter().any(|marker| marker.as_slice() == decoded.as_ref())
+            && !(escape_null && is_escape_null(&decoded))
+        {
+            return None;
+        }
+        Some(decoded)
     }
 
-    /// Go `ReadRow`: the next record's fields as string datums (NULL where
-    /// the field is a NULL marker). `Err(CsvError::Eof)` ends the source.
+    /// Reads the next record as byte datums for LOAD DATA, while filling the
+    /// typed last row used by the parser trait. A NULL marker yields
+    /// `Datum::Null`. `Err(CsvError::Eof)` ends the source.
     pub fn read_row(&mut self) -> Result<Vec<Datum>, CsvError> {
+        let mut raw = Vec::new();
+        self.read_next_row(Some(&mut raw))?;
+        Ok(raw)
+    }
+
+    fn read_next_row(&mut self, mut raw: Option<&mut Vec<Datum>>) -> Result<(), CsvError> {
         self.last_row.length = 0;
         self.last_row.row_id += 1;
         if self.should_parse_header {
@@ -1002,25 +995,49 @@ impl CsvParser {
             self.should_parse_header = false;
         }
         self.begin_row_len_check();
-        let fields = self.read_record();
+        let result = self.read_record();
         self.end_row_len_check();
-        let mut fields = fields?;
-        if self.trim_last_empty_field && fields.last().is_some_and(|f| f.content.is_empty()) {
-            fields.pop();
+        result?;
+
+        let mut count = self.field_indexes.len();
+        if self.trim_last_empty_field {
+            let previous = self.field_indexes.iter().rev().nth(1).copied().unwrap_or(0);
+            if self.field_indexes.last() == Some(&previous) {
+                count -= 1;
+            }
         }
-        self.last_row.length = fields.iter().map(|f| f.content.len()).sum();
-        let row: Vec<Datum> = fields
-            .iter()
-            .map(|field| match self.unescape_string(field) {
-                Some(value) => Datum::Bytes(value),
+        let len = self.field_indexes[..count].last().copied().unwrap_or(0);
+        self.last_row.length = len;
+
+        let mut row = std::mem::take(&mut self.last_row.row);
+        row.clear();
+        row.reserve(count);
+        if let Some(raw) = raw.as_deref_mut() {
+            raw.reserve(count);
+        }
+        // Borrowed fields share one owned copy of the completed record.
+        let mut record = None;
+        for (range, quoted) in self.record_fields(count) {
+            let value = self.decode_field(&self.record_buffer[range.clone()], quoted);
+            if let Some(raw) = raw.as_deref_mut() {
+                raw.push(value.as_ref().map_or(Datum::Null, |v| Datum::Bytes(v.to_vec())));
+            }
+            row.push(match value {
+                Some(Cow::Borrowed(_)) => {
+                    let backing = record.get_or_insert_with(|| {
+                        bytes::Bytes::copy_from_slice(&self.record_buffer[..len])
+                    });
+                    Datum::String(StringDatum::from_shared_bytes(
+                        backing.slice(range),
+                        Collation::DEFAULT,
+                    ))
+                }
+                Some(Cow::Owned(bytes)) => Datum::new_string_datum(bytes),
                 None => Datum::Null,
-            })
-            .collect();
-        self.last_row.row = row.iter().map(|v| match v {
-            Datum::Bytes(bytes) => Datum::new_string_datum(bytes.clone()),
-            other => other.clone(),
-        }).collect();
-        Ok(row)
+            });
+        }
+        self.last_row.row = row;
+        Ok(())
     }
 
     /// Go `ReadUntilTerminator`: skips past the next line terminator,
@@ -1035,8 +1052,7 @@ impl CsvParser {
     fn read_until_terminator_inner(&mut self) -> (Vec<u8>, Option<CsvError>) {
         let mut found = Vec::new();
         loop {
-            let (content, first_byte, error) = self.read_until(self.new_line_byte_set);
-            found.extend_from_slice(&content);
+            let (first_byte, error) = self.read_until(self.new_line_byte_set, &mut found);
             if error.is_some() {
                 return (found, error);
             }
@@ -1068,6 +1084,35 @@ fn contains_subslice(haystack: &[u8], needle: &[u8]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn csv_fields_survive_record_reuse_and_raw_rows_keep_their_own_bytes() {
+        let mut config = load_data_config(",", "\"");
+        config.lines_terminated_by = b"\r\n".to_vec();
+        let source = std::io::Cursor::new(b"alpha,beta\r\ngamma,delta\r\n".to_vec());
+        let mut parser = CsvParser::new(&config, Box::new(source), 2, false, None).unwrap();
+
+        Parser::read_row(&mut parser).unwrap();
+        let first = Parser::last_row(&parser).clone();
+        let [Datum::String(left), Datum::String(right)] = first.row.as_slice() else {
+            panic!("import should return string datums");
+        };
+        assert_eq!(left.bytes().as_ptr_range().end, right.bytes().as_ptr());
+
+        let mut raw = parser.read_row().unwrap();
+        let [Datum::Bytes(raw_left), Datum::Bytes(raw_right)] = raw.as_mut_slice() else {
+            panic!("LOAD DATA should return byte datums");
+        };
+        assert_eq!(raw_left, b"gamma");
+        assert_eq!(raw_right, b"delta");
+        raw_left[0] = b'x';
+        assert_eq!(
+            Parser::last_row(&parser).row[0],
+            Datum::new_string_datum(b"gamma".to_vec())
+        );
+        assert_eq!(left.bytes(), b"alpha");
+        assert_eq!(right.bytes(), b"beta");
+    }
 
     fn load_data_config(terminated: &str, enclosed: &str) -> CsvConfig {
         CsvConfig {

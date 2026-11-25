@@ -14,9 +14,10 @@
 
 //! Time-zone inference, loading, construction, and parsing.
 
+use std::collections::HashMap;
 use std::fmt;
 use std::str::FromStr;
-use std::sync::{Once, RwLock};
+use std::sync::{LazyLock, Once, RwLock};
 
 use chrono::{Local, Offset, TimeZone as _, Utc};
 use chrono_tz::Tz;
@@ -58,14 +59,6 @@ impl std::error::Error for TimeZoneError {}
 static SYSTEM_TZ: RwLock<Option<String>> = RwLock::new(None);
 static SET_SYS_TZ_ONCE: Once = Once::new();
 
-fn system_tz_load() -> String {
-    SYSTEM_TZ
-        .read()
-        .unwrap()
-        .clone()
-        .unwrap_or_else(|| "System".to_string())
-}
-
 /// Stores `systemTZ` directly, bypassing the once-guard — the equivalent of
 /// the Go tests' direct `systemTZ.Store` (crate-visible for tests).
 pub(crate) fn store_system_tz(name: &str) {
@@ -80,13 +73,12 @@ pub fn set_system_tz(name: &str) {
 
 /// Gets `systemTZ`; an error when it is not properly set (Go `GetSystemTZ`).
 pub fn get_system_tz() -> Result<String, TimeZoneError> {
-    let tz = system_tz_load();
-    if tz == "System" || tz.is_empty() {
-        return Err(TimeZoneError(
-            "variable `systemTZ` is not properly set".to_string(),
-        ));
+    match SYSTEM_TZ.read().unwrap().as_deref() {
+        None | Some("System" | "") => Err(TimeZoneError(
+            "variable `systemTZ` is not properly set".to_owned(),
+        )),
+        Some(name) => Ok(name.to_owned()),
     }
-    Ok(tz)
 }
 
 /// Reads one symlink step for the path — unlike full resolution, which chases
@@ -149,6 +141,11 @@ pub fn infer_system_tz() -> String {
     "UTC".to_string()
 }
 
+// Go's location cache remembers successful lookups. Canonical IANA names
+// already use chrono-tz's static lookup table.
+static FILE_ZONES: LazyLock<RwLock<HashMap<String, Tz>>> =
+    LazyLock::new(|| RwLock::new(HashMap::new()));
+
 /// Loads a [`TimeZone`] by IANA name (Go `LoadLocation`; `"System"` is the
 /// local zone).
 pub fn load_location(name: &str) -> Result<TimeZone, TimeZoneError> {
@@ -159,7 +156,14 @@ pub fn load_location(name: &str) -> Result<TimeZone, TimeZoneError> {
     }
     Tz::from_str(name)
         .ok()
-        .or_else(|| zoneinfo_file_zone(name))
+        .or_else(|| {
+            if let Some(zone) = FILE_ZONES.read().unwrap().get(name).copied() {
+                return Some(zone);
+            }
+            let zone = zoneinfo_file_zone(name)?;
+            let mut zones = FILE_ZONES.write().unwrap();
+            Some(*zones.entry(name.to_owned()).or_insert(zone))
+        })
         .map(TimeZone::Named)
         .ok_or_else(|| TimeZoneError(format!("invalid name for timezone {name}")))
 }
@@ -191,13 +195,43 @@ fn zoneinfo_file_zone(name: &str) -> Option<Tz> {
     env_source
         .into_iter()
         .chain(PLATFORM_ZONE_SOURCES.iter().copied())
-        .find_map(|source| {
-            let dir = std::path::Path::new(source);
-            if !dir.join(name).is_file() {
-                return None;
-            }
-            on_disk_zone_name(dir, name).and_then(|actual| Tz::from_str(&actual).ok())
-        })
+        .find_map(|source| file_zone_in(std::path::Path::new(source), name))
+}
+
+fn file_zone_in(dir: &std::path::Path, name: &str) -> Option<Tz> {
+    let path = dir.join(name);
+    let metadata = std::fs::symlink_metadata(&path).ok()?;
+    if metadata.is_file() {
+        if let Some(zone) = canonical_file_zone(dir, &path, name) {
+            return Some(zone);
+        }
+    } else if !metadata.is_symlink() || !path.is_file() {
+        return None;
+    }
+    on_disk_zone_name(dir, name).and_then(|actual| Tz::from_str(&actual).ok())
+}
+
+/// Recovers a regular file's spelling without crossing any symlink between
+/// it and the zone directory. A symlink can name a different IANA zone.
+fn canonical_file_zone(dir: &std::path::Path, path: &std::path::Path, name: &str) -> Option<Tz> {
+    let actual = std::fs::canonicalize(path).ok()?;
+    let mut prefix = actual.as_path();
+    for _ in name.split('/') {
+        prefix = prefix.parent()?;
+    }
+    let suffix = actual.strip_prefix(prefix).ok()?.to_str()?;
+    if !suffix.eq_ignore_ascii_case(name) {
+        return None;
+    }
+    let zone = Tz::from_str(suffix).ok()?;
+    // The zoneinfo directory itself can be a link. Only the spelling of
+    // its descendants matters, and their symlinks go through the fallback.
+    for parent in path.ancestors().skip(1).take_while(|&parent| parent != dir) {
+        if std::fs::symlink_metadata(parent).ok()?.is_symlink() {
+            return None;
+        }
+    }
+    Some(zone)
 }
 
 /// The on-disk spelling of `dir/name`, component by component: the entry
@@ -209,22 +243,24 @@ fn on_disk_zone_name(dir: &std::path::Path, name: &str) -> Option<String> {
     let mut parts = Vec::new();
     for component in name.split('/') {
         let opened = std::fs::metadata(current.join(component)).ok()?;
-        let entries: Vec<String> = std::fs::read_dir(&current)
+        let entries = std::fs::read_dir(&current)
             .ok()?
-            .filter_map(|entry| entry.ok()?.file_name().into_string().ok())
-            .collect();
-        let actual = entries
-            .iter()
-            .find(|entry| entry.as_str() == component)
-            .or_else(|| {
-                entries.iter().find(|entry| {
-                    entry.eq_ignore_ascii_case(component)
-                        && std::fs::metadata(current.join(entry.as_str())).is_ok_and(|meta| {
-                            meta.dev() == opened.dev() && meta.ino() == opened.ino()
-                        })
-                })
-            })?
-            .clone();
+            .filter_map(|entry| entry.ok()?.file_name().into_string().ok());
+        let mut actual = None;
+        for entry in entries {
+            if entry == component {
+                actual = Some(entry);
+                break;
+            }
+            if actual.is_none()
+                && entry.eq_ignore_ascii_case(component)
+                && std::fs::metadata(current.join(&entry))
+                    .is_ok_and(|meta| meta.dev() == opened.dev() && meta.ino() == opened.ino())
+            {
+                actual = Some(entry);
+            }
+        }
+        let actual = actual?;
         current.push(&actual);
         parts.push(actual);
     }
@@ -234,7 +270,8 @@ fn on_disk_zone_name(dir: &std::path::Path, name: &str) -> Option<String> {
 /// Returns TiDB's global timezone location (Go `SystemLocation`), the local
 /// zone if `systemTZ` doesn't resolve.
 pub fn system_location() -> TimeZone {
-    load_location(&system_tz_load()).unwrap_or(TimeZone::Local)
+    let name = SYSTEM_TZ.read().unwrap();
+    load_location(name.as_deref().unwrap_or("System")).unwrap_or(TimeZone::Local)
 }
 
 /// Returns the timezone name and its offset in seconds at the present moment
@@ -245,10 +282,10 @@ pub fn zone(loc: &TimeZone) -> (String, i64) {
             "System".to_string(),
             i64::from(Local::now().offset().fix().local_minus_utc()),
         ),
+        TimeZone::Named(Tz::UTC) => ("UTC".to_owned(), 0),
         TimeZone::Named(tz) => {
             let offset = tz
-                .from_utc_datetime(&Utc::now().naive_utc())
-                .offset()
+                .offset_from_utc_datetime(&Utc::now().naive_utc())
                 .fix()
                 .local_minus_utc();
             (tz.name().to_string(), i64::from(offset))
@@ -262,10 +299,12 @@ pub fn zone(loc: &TimeZone) -> (String, i64) {
 /// source, a *named* fixed zone returns its name directly, which may not be
 /// re-parsable by [`parse_time_zone`].
 pub fn zone_name(loc: &TimeZone) -> String {
-    let (name, offset) = zone(loc);
-    if !name.is_empty() {
-        return name;
-    }
+    let offset = match loc {
+        TimeZone::Local => return "System".to_owned(),
+        TimeZone::Named(tz) => return tz.name().to_owned(),
+        TimeZone::Fixed { name, .. } if !name.is_empty() => return name.clone(),
+        TimeZone::Fixed { offset_secs, .. } => i64::from(*offset_secs),
+    };
     let (sign, offset) = if offset < 0 {
         ('-', -offset)
     } else {
@@ -395,7 +434,7 @@ mod tests {
         // SAFETY-adjacent: env mutation is process-global; serialized above.
         std::env::set_var("TZ", "Asia/Shanghai");
         store_system_tz(&infer_system_tz());
-        assert_eq!(system_tz_load(), "Asia/Shanghai");
+        assert_eq!(get_system_tz().unwrap(), "Asia/Shanghai");
         assert_eq!(zone(&system_location()).0, "Asia/Shanghai");
 
         std::env::set_var("TZ", "UTC");
@@ -491,6 +530,20 @@ mod tests {
                 ERR_UNKNOWN_TIME_ZONE.code()
             );
         }
+    }
+
+    #[test]
+    fn zoneinfo_symlink_keeps_the_alias_name() {
+        let dir = std::env::temp_dir().join(format!("tidb-zoneinfo-alias-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("UTC"), b"").unwrap();
+        std::os::unix::fs::symlink("UTC", dir.join("GMT")).unwrap();
+        let zone = file_zone_in(&dir, "UTC");
+        let symlink_zone = file_zone_in(&dir, "GMT");
+        std::fs::remove_dir_all(&dir).unwrap();
+
+        assert_eq!(zone, Some(Tz::UTC));
+        assert_eq!(symlink_zone, Some(Tz::GMT));
     }
 
     /// Source: `pkg/util/timeutil/time_zone_test.go::TestZoneName`.

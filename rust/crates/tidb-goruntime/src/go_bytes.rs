@@ -17,22 +17,20 @@
 //!
 //! The executor charges a buffer by its capacity (`GROUP_CONCAT`'s
 //! `p.buffer.Cap()`), so the capacity follows Go's `grow`: a first small
-//! write allocates `smallBufferSize`, a write that does not fit slides the
-//! unread bytes down or doubles through `growSlice`, which rounds the
-//! allocation up to a size class.
+//! write allocates `smallBufferSize`. Growth doubles through `growSlice`,
+//! which rounds the allocation up to a size class.
 
 use crate::go_runtime::{go_64_next_slice_capacity_for_element, GoSliceElementLayout};
 
 /// Go `smallBufferSize`.
 const SMALL_BUFFER_SIZE: usize = 64;
 
-/// Go `bytes.Buffer`: the contents are `buf[off..]`, `cap` is Go's
+/// The write-only subset of Go `bytes.Buffer`. `cap` is Go's
 /// `cap(b.buf)`, and `allocated` tells a nil `b.buf` (a first small write
 /// takes `smallBufferSize`) from an empty non-nil one (it doubles).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Buffer {
     buf: Vec<u8>,
-    off: usize,
     cap: usize,
     allocated: bool,
 }
@@ -49,19 +47,21 @@ impl Buffer {
     #[must_use]
     pub fn new_buffer(buf: Vec<u8>) -> Self {
         let cap = buf.len();
-        Self { buf, off: 0, cap, allocated: true }
+        Self { buf, cap, allocated: true }
     }
 
     /// Go `Bytes`: the unread portion.
+    #[inline]
     #[must_use]
     pub fn bytes(&self) -> &[u8] {
-        &self.buf[self.off..]
+        &self.buf
     }
 
     /// Go `Len`.
+    #[inline]
     #[must_use]
     pub fn len(&self) -> usize {
-        self.buf.len() - self.off
+        self.buf.len()
     }
 
     /// Go `b.Len() == 0`.
@@ -71,15 +71,16 @@ impl Buffer {
     }
 
     /// Go `Cap`.
+    #[inline]
     #[must_use]
     pub fn cap(&self) -> usize {
         self.cap
     }
 
     /// Go `Reset`.
+    #[inline]
     pub fn reset(&mut self) {
         self.buf.clear();
-        self.off = 0;
     }
 
     /// Go `Truncate`: keeps the first `n` unread bytes.
@@ -87,73 +88,63 @@ impl Buffer {
     /// # Panics
     ///
     /// Go's "truncation out of range" past the unread length.
+    #[inline]
     pub fn truncate(&mut self, n: usize) {
-        if n == 0 {
-            self.reset();
-            return;
-        }
         assert!(n <= self.len(), "bytes.Buffer: truncation out of range");
-        self.buf.truncate(self.off + n);
+        self.buf.truncate(n);
     }
 
     /// Go `tryGrowByReslice`.
+    #[inline]
     fn try_grow_by_reslice(&self, n: usize) -> bool {
         n <= self.cap - self.buf.len()
     }
 
-    /// Go `grow`: room for `n` more bytes.
+    /// Go `grow` after checking that the existing capacity is insufficient.
+    #[cold]
     fn grow(&mut self, n: usize) {
-        let m = self.len();
-        if m == 0 && self.off != 0 {
-            self.reset();
+        let wanted = self
+            .len()
+            .checked_add(n)
+            .expect("bytes.Buffer: too large")
+            .max(2 * self.cap);
+        self.set_cap(go_64_next_slice_capacity_for_element(
+            wanted, 0, 1, GoSliceElementLayout::NoPointers,
+        ));
+    }
+
+    fn set_cap(&mut self, cap: usize) {
+        if cap > self.buf.capacity() {
+            self.buf.reserve_exact(cap - self.buf.len());
         }
+        self.cap = cap;
+        self.allocated = true;
+    }
+
+    /// Go `Grow`.
+    #[inline]
+    pub fn grow_by(&mut self, n: usize) {
         if self.try_grow_by_reslice(n) {
             return;
         }
         if !self.allocated && n <= SMALL_BUFFER_SIZE {
-            self.set_cap(SMALL_BUFFER_SIZE);
-            return;
-        }
-        let c = self.cap;
-        if (n as i64) <= (c / 2) as i64 - m as i64 {
-            // Slide the unread bytes down instead of allocating.
-            self.buf.drain(..self.off);
+            self.buf = Vec::with_capacity(SMALL_BUFFER_SIZE);
+            self.cap = SMALL_BUFFER_SIZE;
+            self.allocated = true;
         } else {
-            // Go `growSlice(b.buf[b.off:], b.off+n)`.
-            self.buf.drain(..self.off);
-            let mut wanted = m + self.off + n;
-            let sliced_cap = c - self.off;
-            if wanted < 2 * sliced_cap {
-                wanted = 2 * sliced_cap;
-            }
-            // `append([]byte(nil), make([]byte, c)...)`.
-            self.set_cap(go_64_next_slice_capacity_for_element(wanted, 0, 1, GoSliceElementLayout::NoPointers));
+            self.grow(n);
         }
-        self.off = 0;
-    }
-
-    fn set_cap(&mut self, cap: usize) {
-        self.cap = cap;
-        self.allocated = true;
-        if cap > self.buf.capacity() {
-            self.buf.reserve_exact(cap - self.buf.len());
-        }
-    }
-
-    /// Go `Grow`.
-    pub fn grow_by(&mut self, n: usize) {
-        self.grow(n);
     }
 
     /// Go `Write` / `WriteString`.
+    #[inline]
     pub fn write(&mut self, p: &[u8]) {
-        if !self.try_grow_by_reslice(p.len()) {
-            self.grow(p.len());
-        }
+        self.grow_by(p.len());
         self.buf.extend_from_slice(p);
     }
 
     /// Go `WriteByte`.
+    #[inline]
     pub fn write_byte(&mut self, c: u8) {
         self.write(&[c]);
     }
@@ -194,6 +185,20 @@ mod tests {
         let mut three = Buffer::new_buffer(b"abc".to_vec());
         three.write(b"d");
         assert_eq!(three.cap(), 8);
+    }
+
+    #[test]
+    fn failed_growth_preserves_buffer() {
+        let mut b = Buffer::new();
+        b.write(b"before");
+        let cap = b.cap();
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            b.grow_by(isize::MAX as usize);
+        }));
+        assert!(result.is_err());
+        b.write_byte(b'!');
+        assert_eq!(b.bytes(), b"before!");
+        assert_eq!(b.cap(), cap);
     }
 
     /// `GROUP_CONCAT`'s pattern -- the values 0..200 joined by "," -- leaves

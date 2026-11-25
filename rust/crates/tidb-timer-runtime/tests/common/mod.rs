@@ -444,7 +444,7 @@ impl TimerStoreCore for MockStoreCore {
             .lock()
             .unwrap()
             .pop_front()
-            .unwrap_or_else(|| std::sync::mpsc::sync_channel(1).1);
+            .unwrap_or_else(|| crossbeam_channel::bounded(1).1);
         if let Some(signal) = self.watch_signal.lock().unwrap().as_ref() {
             signal.signal();
         }

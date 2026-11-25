@@ -262,8 +262,8 @@ fn one_captured_mode_drives_both_kv_index_key_and_value() {
     assert_entry("unique_general_ci_A", &modern_written);
 
     let point = Range {
-        low_val: row.to_vec(),
-        high_val: row.to_vec(),
+        low_val: row.to_vec().into(),
+        high_val: row.to_vec().into(),
         collators: row
             .iter()
             .map(|value| value.collation().unwrap_or(tidb_charset::Collation::Binary))

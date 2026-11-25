@@ -1019,9 +1019,9 @@ impl Session {
         let mode = self.redact_log_mode();
         let mut text = tidb_parser::normalize(sql, self.redact_mode());
         if mode != "ON" {
-            text.push_str(&tidb_redact::string(
+            text.push_str(&tidb_redact::string_cow(
                 &mode,
-                &self.plan_cache_params_string(),
+                self.plan_cache_params_string(),
             ));
         }
         tidb_variable::slow_log::format_sql(&text, self.query_log_max_len())
@@ -1126,9 +1126,9 @@ impl Session {
         let mut query = tidb_variable::slow_log::query_replacer(&self.text_to_log(observation, false));
         let mode = self.redact_log_mode();
         if mode != "ON" {
-            query.push_str(&tidb_redact::string(
+            query.push_str(&tidb_redact::string_cow(
                 &mode,
-                &self.plan_cache_params_string(),
+                self.plan_cache_params_string(),
             ));
         }
         let (start_ts, for_update_ts) = self.txn_start_and_for_update_ts();

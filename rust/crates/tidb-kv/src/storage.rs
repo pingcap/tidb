@@ -30,6 +30,7 @@
 //! their behavior; callers must not infer an exact TiKV row count or a
 //! distributed TRUNCATE operation from the in-process implementation.
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::fmt;
 
@@ -226,6 +227,18 @@ pub trait TableStorage: fmt::Debug + Send + Sync {
     /// [`StorageError::NotFound`] when the key has no value, as Go returns
     /// `kv.ErrNotExist`.
     fn get(&mut self, key: &Key) -> Result<Vec<u8>, StorageError>;
+
+    /// Reads one value and passes it to `consume` exactly once on success.
+    /// The backend may lend its bytes under a read guard. The consumer must
+    /// finish using them within the callback and must not reenter the backend.
+    fn with_value(
+        &mut self,
+        key: Cow<'_, [u8]>,
+        consume: &mut dyn FnMut(Cow<'_, [u8]>),
+    ) -> Result<(), StorageError> {
+        consume(Cow::Owned(self.get(&Key::from_bytes(key.into_owned()))?));
+        Ok(())
+    }
 
     /// Reads one key from the statement's OWN staged writes only -- Go
     /// `txn.GetMemBuffer().GetLocal`, the lazy insert duplicate check's read.
@@ -703,8 +716,18 @@ impl TableStorage for MemTableStorage {
     fn get(&mut self, key: &Key) -> Result<Vec<u8>, StorageError> {
         note_storage_op(|ops| ops.gets += 1);
         Getter::get(&mut self.inner, key, GetOptions::default())
-            .map(|entry| entry.value.clone())
+            .map(|entry| entry.value)
             .map_err(StorageError::from)
+    }
+
+    fn with_value(
+        &mut self,
+        key: Cow<'_, [u8]>,
+        consume: &mut dyn FnMut(Cow<'_, [u8]>),
+    ) -> Result<(), StorageError> {
+        note_storage_op(|ops| ops.gets += 1);
+        consume(Cow::Borrowed(self.inner.get_ref(&key)?));
+        Ok(())
     }
 
     fn size_bytes(&self) -> u64 {
@@ -898,6 +921,31 @@ mod tests {
         assert_eq!(store.get(&key(b"a")), Err(StorageError::NotFound));
         // Deleting an absent key succeeds, as Go's `Delete` does.
         store.delete(key(b"a")).unwrap();
+    }
+
+    #[test]
+    fn with_value_lends_the_in_process_buffer_and_counts_one_read() {
+        let mut store = MemTableStorage::new();
+        let key = key(b"a");
+        let bytes = vec![1, 2, 3];
+        let address = bytes.as_ptr().addr();
+        store.set(key.clone(), bytes).unwrap();
+        let (result, ops) = capture_storage_ops(|| {
+            store.with_value(Cow::Borrowed(key.as_bytes()), &mut |value| {
+                assert!(matches!(value, Cow::Borrowed(_)));
+                assert_eq!(value.as_ptr().addr(), address);
+                assert_eq!(value.as_ref(), [1, 2, 3]);
+            })
+        });
+        result.unwrap();
+        assert_eq!(ops.gets, 1);
+        store.delete(key.clone()).unwrap();
+        assert_eq!(
+            store.with_value(Cow::Borrowed(key.as_bytes()), &mut |_| {
+                panic!("missing value reached the consumer")
+            }),
+            Err(StorageError::NotFound)
+        );
     }
 
     #[test]

@@ -25,21 +25,13 @@
 //! `intest`; the narrowings below name what each became here.
 //!
 //! Concurrency. Go's runtime is one goroutine per loop plus buffered channels
-//! and a `select` over six cases. This workspace has no async runtime and
-//! `tidb-timer` depends on no channel crate, so:
-//! - goroutines become `std::thread`s tracked by [`WaitGroup`], the stand-in
+//! and a `select` across channel and timer events:
+//! - goroutines run on native workers tracked by [`WaitGroup`], the stand-in
 //!   for `pkg/util.WaitGroupWrapper`;
-//! - channels are `std::sync::mpsc::sync_channel`, which gives Go's buffered
-//!   channel plus the non-blocking `try_send`/`try_recv` the `select ...
-//!   default` arms need;
-//! - `select` over a channel and `ctx.Done()` has no std equivalent, so both
-//!   loops poll at [`CHANNEL_POLL_INTERVAL`] and check
-//!   [`tidb_timer::store::Context::is_done`] each turn. The observable behavior —
-//!   a request is served as soon as it arrives, cancellation is honoured
-//!   promptly — is unchanged; the latency floor is the poll interval;
-//! - Go's `time.Timer`/`time.Ticker` cases become deadlines compared against
-//!   `Instant::now()` inside the same poll loop, so [`TimerGroupRuntime::timer_loop`]
-//!   is one step function that can also be driven directly.
+//! - hook workers select on their request or response channel and
+//!   [`tidb_timer::store::Context::done`];
+//! - the group loop selects on cancellation, worker responses and store
+//!   watches, using the nearest timer deadline as its timeout;
 //! - `util.WithRecovery`'s recover-and-continue becomes
 //!   [`with_recover_until`], built on `std::panic::catch_unwind`; a panic that
 //!   Go recovers is a caught unwind here, and a panic Go propagates is
@@ -59,14 +51,15 @@
 //! - Go's `idleWatchChan`, a channel that is never ready, is `None`.
 
 pub mod cache;
+mod callback_workers;
 pub mod worker;
 
 use std::collections::{HashMap, HashSet};
-use std::sync::atomic::{AtomicI64, Ordering};
-use std::sync::mpsc::Receiver;
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
+use crossbeam_channel::{Receiver, Sender, never, select};
 use tidb_log::{Field, Value};
 use tidb_logutil::bg_logger;
 
@@ -82,13 +75,9 @@ use tidb_timer::uuid::new_uuid_hex;
 
 use cache::{RuntimeProcStatus, TimersCache};
 use worker::{
-    new_hook_worker, HookFn, HookWorker, MetricsCounter, TriggerEventRequest, TriggerEventResponse,
-    WORKER_RESP_CHAN_CAP,
+    new_hook_worker, new_worker_resp_channel, HookFn, HookWorker, MetricsCounter,
+    TriggerEventRequest, TriggerEventResponse,
 };
-
-/// How often the two `select`-replacing loops wake to re-check their channels
-/// and their context. See the module header's concurrency note.
-pub const CHANNEL_POLL_INTERVAL: Duration = Duration::from_millis(1);
 
 /// Go `func() time.Time`, the injectable clock.
 pub type NowFunc = Arc<dyn Fn() -> GoTime + Send + Sync>;
@@ -175,7 +164,44 @@ pub fn set_in_test_intervals() {
 /// `boundary:` Go `pkg/util.WaitGroupWrapper`, restricted to `Run` and `Wait`.
 #[derive(Default)]
 pub struct WaitGroup {
-    handles: Mutex<Vec<std::thread::JoinHandle<()>>>,
+    state: Arc<WaitGroupState>,
+}
+
+#[derive(Default)]
+struct WaitGroupState {
+    // Keep callbacks in the high bits and parked waiters in the low bits.
+    // Completion and waiter registration must observe each other.
+    active: AtomicU64,
+    waited: AtomicBool,
+    dispatch_pending: AtomicBool,
+    park: Mutex<()>,
+    completed: Condvar,
+}
+
+const CALLBACK: u64 = 1 << 32;
+
+struct CallbackDone(Arc<WaitGroupState>);
+
+impl CallbackDone {
+    fn set_dispatch_pending(&self, pending: bool) {
+        // A group that previously parked already spins on subsequent waits.
+        // The dispatch flag only helps the initial wait of a fresh group.
+        if !self.0.waited.load(Ordering::Relaxed) {
+            self.0.dispatch_pending.store(pending, Ordering::Relaxed);
+        }
+    }
+}
+
+impl Drop for CallbackDone {
+    fn drop(&mut self) {
+        let previous = self.0.active.fetch_sub(CALLBACK, Ordering::AcqRel);
+        if previous > CALLBACK && previous < 2 * CALLBACK {
+            // A registered waiter either sees the zero count or has released
+            // this mutex in the condvar wait before we notify.
+            let _park = self.0.park.lock().unwrap_or_else(PoisonError::into_inner);
+            self.0.completed.notify_all();
+        }
+    }
 }
 
 impl WaitGroup {
@@ -186,22 +212,48 @@ impl WaitGroup {
 
     /// Go `wg.Run(fn)`.
     pub fn run(&self, body: impl FnOnce() + Send + 'static) {
-        let handle = std::thread::spawn(body);
-        self.handles
-            .lock()
-            .unwrap_or_else(|err| err.into_inner())
-            .push(handle);
+        let state = Arc::clone(&self.state);
+        state.active.fetch_add(CALLBACK, Ordering::Relaxed);
+        callback_workers::dispatch(body, CallbackDone(state));
     }
 
     /// Go `wg.Wait()`.
+    #[inline]
     pub fn wait(&self) {
-        let handles = {
-            let mut guard = self.handles.lock().unwrap_or_else(|err| err.into_inner());
-            std::mem::take(&mut *guard)
-        };
-        for handle in handles {
-            let _ = handle.join();
+        let pending = self.state.active.load(Ordering::Acquire);
+        if pending < CALLBACK {
+            return;
         }
+        // Reused groups and callbacks just sent to an idle worker can finish
+        // before a pair of wakeups. An already-running callback in a fresh
+        // group may be a long-lived timer loop, so park immediately for it.
+        if pending % CALLBACK == 0
+            && (self.state.waited.load(Ordering::Relaxed)
+                || self.state.dispatch_pending.load(Ordering::Relaxed))
+        {
+            let start = Instant::now();
+            while start.elapsed() < Duration::from_micros(4) {
+                if self.state.active.load(Ordering::Acquire) < CALLBACK {
+                    return;
+                }
+                std::hint::spin_loop();
+            }
+        }
+        self.wait_parked();
+    }
+
+    #[cold]
+    fn wait_parked(&self) {
+        let park = self.state.park.lock().unwrap_or_else(PoisonError::into_inner);
+        self.state.active.fetch_add(1, Ordering::Relaxed);
+        let park = self
+            .state
+            .completed
+            .wait_while(park, |_| self.state.active.load(Ordering::Acquire) >= CALLBACK)
+            .unwrap_or_else(PoisonError::into_inner);
+        self.state.active.fetch_sub(1, Ordering::Relaxed);
+        self.state.waited.store(true, Ordering::Relaxed);
+        drop(park);
     }
 }
 
@@ -279,8 +331,8 @@ struct RuntimeShared {
     factories: Mutex<HashMap<String, HookFactory>>,
     cache: Mutex<TimersCache>,
     workers: Mutex<HashMap<String, Arc<HookWorker>>>,
-    worker_resp_tx: std::sync::mpsc::SyncSender<TriggerEventResponse>,
-    worker_resp_rx: Mutex<Receiver<TriggerEventResponse>>,
+    worker_resp_tx: Sender<TriggerEventResponse>,
+    worker_resp_rx: Receiver<TriggerEventResponse>,
     now_func: Mutex<NowFunc>,
     full_refresh_timer_counter: MetricsCounter,
     partial_refresh_timer_counter: MetricsCounter,
@@ -303,7 +355,7 @@ pub struct TimerGroupRuntime {
 
 impl TimerGroupRuntime {
     fn new(group_id: &str, store: TimerStore) -> Self {
-        let (worker_resp_tx, worker_resp_rx) = std::sync::mpsc::sync_channel(WORKER_RESP_CHAN_CAP);
+        let (worker_resp_tx, worker_resp_rx) = new_worker_resp_channel();
         Self {
             shared: Arc::new(RuntimeShared {
                 group_id: group_id.to_string(),
@@ -314,7 +366,7 @@ impl TimerGroupRuntime {
                 cache: Mutex::new(TimersCache::new()),
                 workers: Mutex::new(HashMap::new()),
                 worker_resp_tx,
-                worker_resp_rx: Mutex::new(worker_resp_rx),
+                worker_resp_rx,
                 now_func: Mutex::new(default_now_func()),
                 full_refresh_timer_counter: MetricsCounter::new(),
                 partial_refresh_timer_counter: MetricsCounter::new(),
@@ -414,16 +466,13 @@ impl TimerGroupRuntime {
         // Go holds `rt.mu` across the running check, `initCtx` and `wg.Run`;
         // keeping check + ctx init under one lock acquisition preserves that
         // atomicity so two concurrent `start` calls cannot both spawn a loop.
-        let ctx = {
-            let mut state = self.shared.ctx_state.lock().unwrap();
-            if state.ctx.is_some() {
-                return;
-            }
-            let (ctx, cancel) = Context::with_cancel();
-            state.ctx = Some(ctx.clone());
-            state.cancel = Some(cancel);
-            ctx
-        };
+        let mut state = self.shared.ctx_state.lock().unwrap();
+        if state.ctx.is_some() {
+            return;
+        }
+        let (ctx, cancel) = Context::with_cancel();
+        state.ctx = Some(ctx.clone());
+        state.cancel = Some(cancel);
 
         let runtime = self.clone();
         self.shared.wait_group.run(move || {
@@ -462,7 +511,7 @@ impl TimerGroupRuntime {
                 return;
             }
         };
-        self.cache().full_update_timers(&timers);
+        self.cache().full_update_owned_timers(timers);
     }
 
     /// Go `(*TimerGroupRuntime).tryTriggerTimerEvents`.
@@ -648,7 +697,7 @@ impl TimerGroupRuntime {
             }
         }
 
-        self.cache().partial_batch_update_timers(&timers)
+        self.cache().partial_batch_update_owned_timers(timers)
     }
 
     /// Go `(*TimerGroupRuntime).createWatchTimerChan`.
@@ -753,8 +802,7 @@ impl TimerGroupRuntime {
         Arc::new(and(vec![self.cond(), Arc::new(or(children))]))
     }
 
-    /// Go `(*TimerGroupRuntime).loop`, restated as a single poll loop; see the
-    /// module header for how each `select` case maps onto a deadline.
+    /// Go `(*TimerGroupRuntime).loop`.
     pub fn timer_loop(&self, total_panic: u64) {
         let ctx = self.ctx();
         if total_panic > 0 {
@@ -776,6 +824,8 @@ impl TimerGroupRuntime {
         let mut re_watch_at: Option<Instant> = None;
         let mut batch_at: Option<Instant> = None;
 
+        let done = ctx.done();
+        let idle_watch = never();
         let mut watch_ch = self.create_watch_timer_chan(&watch_ctx);
         let mut batch_responses: Vec<WatchTimerResponse> = Vec::with_capacity(1);
         let mut last_try_trigger_time = GoTime::zero();
@@ -800,17 +850,6 @@ impl TimerGroupRuntime {
                 try_trigger_at = self.next_try_trigger_deadline(&last_try_trigger_time);
             }
 
-            loop {
-                let response = self.shared.worker_resp_rx.lock().unwrap().try_recv();
-                match response {
-                    Ok(response) => {
-                        self.handle_worker_response(&response);
-                        try_trigger_at = self.next_try_trigger_deadline(&last_try_trigger_time);
-                    }
-                    Err(_) => break,
-                }
-            }
-
             if now >= check_wait_close_at {
                 check_wait_close_at = now + nanos(check_wait_close_timer_interval());
                 if self.try_close_triggering_timers() {
@@ -826,8 +865,26 @@ impl TimerGroupRuntime {
                 batch_responses.clear();
             }
 
-            if let Some(receiver) = &watch_ch {
-                match receiver.try_recv() {
+            if re_watch_at.is_some_and(|deadline| now >= deadline) {
+                re_watch_at = None;
+                if watch_ch.is_none() {
+                    watch_ch = self.create_watch_timer_chan(&watch_ctx);
+                }
+            }
+
+            let mut deadline = full_refresh_at.min(check_wait_close_at).min(try_trigger_at);
+            for when in [batch_at, re_watch_at].into_iter().flatten() {
+                deadline = deadline.min(when);
+            }
+            let watch = watch_ch.as_ref().unwrap_or(&idle_watch);
+            select! {
+                recv(done) -> _ => return,
+                recv(self.shared.worker_resp_rx) -> response => {
+                    let response = response.expect("runtime owns the response sender");
+                    self.handle_worker_response(&response);
+                    try_trigger_at = self.next_try_trigger_deadline(&last_try_trigger_time);
+                },
+                recv(watch) -> response => match response {
                     Ok(response) => {
                         if batch_responses.is_empty() {
                             batch_at =
@@ -835,8 +892,7 @@ impl TimerGroupRuntime {
                         }
                         batch_responses.push(response);
                     }
-                    Err(std::sync::mpsc::TryRecvError::Empty) => {}
-                    Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    Err(_) => {
                         bg_logger().warn(
                             "WatchTimerChan closed, retry watch after a while",
                             &[Field::new(
@@ -847,17 +903,9 @@ impl TimerGroupRuntime {
                         watch_ch = None;
                         re_watch_at = Some(Instant::now() + nanos(re_watch_interval()));
                     }
-                }
+                },
+                default(deadline.saturating_duration_since(Instant::now())) => {},
             }
-
-            if re_watch_at.is_some_and(|deadline| Instant::now() >= deadline) {
-                re_watch_at = None;
-                if watch_ch.is_none() {
-                    watch_ch = self.create_watch_timer_chan(&watch_ctx);
-                }
-            }
-
-            std::thread::sleep(CHANNEL_POLL_INTERVAL);
         }
     }
 

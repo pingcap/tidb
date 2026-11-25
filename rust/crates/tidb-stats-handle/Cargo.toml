@@ -8,6 +8,7 @@ repository.workspace = true
 description = "TiDB statistics handle: Go pkg/statistics/handle as the planner reads it (Rust rewrite)."
 
 [dependencies]
+tidb-slice = { path = "../tidb-slice" }
 tidb-log = { path = "../tidb-log" }
 tidb-logutil = { path = "../tidb-logutil" }
 tidb-sqlexec = { path = "../tidb-sqlexec" }

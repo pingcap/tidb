@@ -820,7 +820,8 @@ mod tests {
                     lower_bound: Datum::Int(10),
                     upper_bound: Datum::Int(19),
                 },
-            ],
+            ]
+            .into(),
             ..Histogram::default()
         };
         let mut render = |value: &Datum, _: usize, _: &[FieldTypeCode]| {

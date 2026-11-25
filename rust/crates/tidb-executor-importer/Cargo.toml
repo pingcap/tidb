@@ -8,6 +8,7 @@ repository.workspace = true
 description = "Go pkg/executor/importer: IMPORT INTO's plan, controller, data-file discovery and table import (Rust rewrite)."
 
 [dependencies]
+utf8_iter = "1"
 tidb-ast = { path = "../tidb-ast" }
 tidb-br = { path = "../tidb-br" }
 tidb-cdcutil = { path = "../tidb-cdcutil" }

@@ -50,7 +50,9 @@
 
 use std::sync::Arc;
 
-use tidb_datatype::{FieldType, FieldTypeCode};
+use prost::{Message, bytes::Bytes};
+
+use tidb_datatype::{Datum, FieldType, FieldTypeCode};
 use tidb_distsql::DistSqlContext;
 use tidb_distsql::ExecutorKind;
 use tidb_distsql::ExecutorShape;
@@ -59,10 +61,9 @@ use tidb_distsql::RequestBuilder;
 use tidb_distsql::RequestEnvelope;
 use tidb_distsql::SelectInput;
 use tidb_distsql::select_response::SelectResponseIter;
-use tidb_txnkv::CancelHandle;
+use tidb_txnkv::{CancelHandle, PartitionedKeyRanges};
 use tidb_context::WarningCollector;
 use tidb_planner_core_operator_logicalop::tikv_scan_spec::ScanColumnInfo;
-use tidb_txnkv::KeyRange;
 
 use tidb_distsql::remote_scan::PushdownScanColumn;
 use tidb_kv::storage::StorageError;
@@ -115,12 +116,12 @@ const NOT_NULL_FLAG: i32 = 1;
 const PRI_KEY_FLAG: i32 = 2;
 /// The statement's side of a read's plan (what Go `SetFromSessionVars` and
 /// the reader's context give every request), around `dag`; the read's own
-/// ranges, order and result types are left empty.
-fn statement_scan_plan(
+/// order and result types are left empty.
+fn statement_scan_plan<'a>(
     statement: &tidb_distsql::remote_scan::PushdownStatementContext,
-    dag: tidb_proto::tipb::DagRequest,
-    envelope: RequestEnvelope,
-) -> RemoteScanPlan {
+    dag: TableReadDag<'a>,
+    key_ranges: Arc<PartitionedKeyRanges>,
+) -> RemoteScanPlan<'a> {
     RemoteScanPlan {
         cancellation: statement.memory.coprocessor_request_cancellation(),
         rpc_interceptor: statement.rpc_interceptor.clone(),
@@ -130,9 +131,7 @@ fn statement_scan_plan(
             .map(tidb_txnkv::StatementKvContextCell::get)
             .unwrap_or_default(),
         dag,
-        envelope,
-        key_ranges: Vec::new(),
-        key_range_hints: Vec::new(),
+        key_ranges,
         snapshot_ts: 0,
         keep_order: false,
         allow_unordered: false,
@@ -174,17 +173,13 @@ fn statement_scan_plan(
 
 /// What a `kv.TiFlash` table read adds to its request (Go
 /// `TableReaderExecutor.buildKVReq` / `buildKVReqForPartitionTableScan`).
-pub(crate) struct TableRead {
+pub(crate) struct TableRead<D = tidb_proto::tipb::DagRequest> {
     /// Go `kv.Request.StoreType`.
     pub store_type: tidb_kv::store_type::StoreType,
     /// Go `dagPB`.
-    pub dag: tidb_proto::tipb::DagRequest,
-    /// Go `SetHandleRanges` / `SetKeyRanges`' ranges; empty for a partition
-    /// table scan.
-    pub key_ranges: Vec<KeyRange>,
-    /// Go `SetTableHandles`' row-count hints, aligned with `key_ranges`;
-    /// empty for a request over ranges.
-    pub key_range_hints: Vec<usize>,
+    pub dag: D,
+    /// Go `kv.Request.KeyRanges`, including any aligned row-count hints.
+    pub key_ranges: Arc<PartitionedKeyRanges>,
     /// Go `SetPartitionIDAndRanges`.
     pub partition_id_and_ranges: Vec<tidb_txnkv::PartitionIdAndRanges>,
     /// Go `SetAllowBatchCop(e.batchCop)`.
@@ -214,18 +209,68 @@ pub(crate) struct TableRead {
     pub tidb_server_id: Option<u64>,
 }
 
+pub(crate) struct PreparedTableReadDag {
+    data: Bytes,
+    envelope: RequestEnvelope,
+}
+
+impl PreparedTableReadDag {
+    /// Encodes the plan shared by all key-range requests in one reader open.
+    pub(crate) fn new(dag: &tidb_proto::tipb::DagRequest) -> Result<Self, String> {
+        scan_result(|| {
+            Ok(Self {
+                data: dag.encode_to_vec().into(),
+                envelope: dag_envelope(dag),
+            })
+        })
+    }
+
+    /// Encodes a plan whose generated fields also describe its request envelope.
+    pub(crate) fn from_encoder(
+        dag: tidb_proto::tipb::DagRequest,
+        encode: impl FnOnce(tidb_proto::tipb::DagRequest) -> Vec<u8>,
+    ) -> Result<Self, String> {
+        scan_result(|| {
+            let envelope = dag_envelope(&dag);
+            let data = encode(dag).into();
+            Ok(Self { data, envelope })
+        })
+    }
+}
+
+pub(crate) enum TableReadDag<'a> {
+    Protobuf(tidb_proto::tipb::DagRequest),
+    Prepared(&'a PreparedTableReadDag),
+}
+
+impl From<tidb_proto::tipb::DagRequest> for TableReadDag<'_> {
+    fn from(dag: tidb_proto::tipb::DagRequest) -> Self {
+        Self::Protobuf(dag)
+    }
+}
+
+impl TableReadDag<'_> {
+    fn attach(self, builder: &mut RequestBuilder) {
+        match self {
+            Self::Protobuf(dag) => {
+                builder.set_dag_request(dag_envelope(&dag), dag.encode_to_vec());
+            }
+            Self::Prepared(dag) => {
+                builder.set_dag_request_bytes(&dag.envelope, dag.data.clone());
+            }
+        }
+    }
+}
+
 /// Go `TableReaderExecutor.SelectResult`: the request through `client` (a
 /// `kv.TiFlash` batch request goes to `CopClient.sendBatch`).
-pub(crate) fn open_table_read(
+pub(crate) fn open_table_read<'a>(
     client: &dyn tidb_txnkv::Client,
     statement: &tidb_distsql::remote_scan::PushdownStatementContext,
-    read: TableRead,
+    read: TableRead<impl Into<TableReadDag<'a>>>,
 ) -> Result<SelectResponseIter, String> {
     let memory_tracker = read.mem_tracker;
-    let envelope = dag_envelope(&read.dag);
     let plan = RemoteScanPlan {
-        key_ranges: read.key_ranges,
-        key_range_hints: read.key_range_hints,
         snapshot_ts: read.start_ts,
         paging: read.paging,
         keep_order: read.keep_order,
@@ -248,7 +293,7 @@ pub(crate) fn open_table_read(
             connection_id: read.connection_id,
             connection_alias: read.connection_alias,
         }),
-        ..statement_scan_plan(statement, read.dag, envelope)
+        ..statement_scan_plan(statement, read.dag.into(), read.key_ranges)
     };
     scan_result(|| open_scan(client, plan))
 }
@@ -291,25 +336,19 @@ struct TiFlashRequest {
 }
 
 /// Everything needed to open one response on the query worker.
-struct RemoteScanPlan {
+struct RemoteScanPlan<'a> {
     cancellation: Arc<CancelHandle>,
     rpc_interceptor: tidb_txnkv::RpcInterceptorOption,
     /// The issuing statement's ctx values: its `RUDetails` and its
     /// `StmtCtx.GetResourceGroupTagger`.
     kv_context: tidb_txnkv::StatementKvContext,
-    dag: tidb_proto::tipb::DagRequest,
-    /// The executor shapes the request builder reads for concurrency, which
-    /// must match the DAG's own executor list.
-    envelope: RequestEnvelope,
+    dag: TableReadDag<'a>,
     /// The record intervals to read, ascending by encoded key. A whole-table
     /// scan is one; a `TableRangeScan` over a clustered handle is one per
     /// handle range, and the coprocessor request carries them all. Go's
     /// `SetTableHandles` can intentionally supply equal point intervals for
     /// duplicate index entries, so this list is not universally disjoint.
-    key_ranges: Vec<KeyRange>,
-    /// Go `RequestBuilder.SetTableHandles` row-count hints, aligned with
-    /// `key_ranges`; empty for scans without grouped handle cardinalities.
-    key_range_hints: Vec<usize>,
+    key_ranges: Arc<PartitionedKeyRanges>,
     snapshot_ts: u64,
     /// Whether region tasks and the response stream must preserve key order.
     keep_order: bool,
@@ -427,10 +466,8 @@ fn closest_read_adjuster(
 
 fn open_scan(
     client: &dyn tidb_txnkv::Client,
-    plan: RemoteScanPlan,
+    plan: RemoteScanPlan<'_>,
 ) -> Result<SelectResponseIter, String> {
-    use prost::Message;
-
     let cancellation = plan.cancellation;
     let cop_response_sink = plan.cop_response_sink.clone();
     let memory_tracker = plan.memory_tracker.clone();
@@ -487,15 +524,7 @@ fn open_scan(
         plan.read_policy.closest_read_threshold,
         tidb_config::config_tree::config::get_txn_scope_from_config(),
     ));
-    // Go's `RequestBuilder.SetTableHandles` preserves one row-count hint per
-    // grouped range. Keep the ordinary no-hint path for full/table scans and
-    // refuse misaligned metadata rather than attaching a hint to the wrong
-    // region task.
-    if !plan.key_range_hints.is_empty() && plan.key_range_hints.len() == plan.key_ranges.len() {
-        builder.set_key_ranges_with_hints(plan.key_ranges, plan.key_range_hints);
-    } else {
-        builder.set_non_partitioned_key_ranges(plan.key_ranges);
-    }
+    builder.set_key_ranges(plan.key_ranges);
     if let Some(tidb) = plan.tidb {
         builder.set_store_type(tidb_txnkv::StoreType::TiDb);
         if let Some(server_id) = tidb.server_id {
@@ -516,8 +545,8 @@ fn open_scan(
         .set_keep_order(plan.keep_order)
         .set_allow_unordered_response(plan.allow_unordered)
         .set_desc(plan.desc)
-        .set_mem_tracker(memory_tracker.clone())
-        .set_dag_request(plan.envelope, plan.dag.encode_to_vec());
+        .set_mem_tracker(memory_tracker.clone());
+    plan.dag.attach(&mut builder);
     let request = builder
         .build_transport_request(Arc::clone(&cancellation))
         .map_err(|error| format!("{error:?}"))?
@@ -572,7 +601,61 @@ pub(crate) fn select_response_error(error: tidb_copr::response_channel::Response
 /// Go `util.ColumnToProto`: the coprocessor descriptor of one scanned column,
 /// or `None` for a type with no stable TiPB interpretation.
 pub fn column_to_proto(column: &PushdownScanColumn) -> Option<ScanColumnInfo> {
-    let code = column.field_type.code();
+    column_parts_to_proto(
+        column.id,
+        &column.field_type,
+        column.is_handle,
+        column.origin_default.as_ref(),
+    )
+}
+
+#[inline]
+pub(crate) fn column_parts_to_proto(
+    column_id: i64,
+    field_type: &FieldType,
+    is_handle: bool,
+    origin_default: Option<&Datum>,
+) -> Option<ScanColumnInfo> {
+    let fields = column_proto_scalars(column_id, field_type, is_handle)?;
+    // Go `util.ColumnToProto`: the origin default fills rows written
+    // before the column existed.
+    let default_val = match origin_default {
+        Some(datum) => Some(tidb_codec::encode_value_as_bytes_in_timezone(&chrono::Utc, datum).ok()?),
+        None => None,
+    };
+    Some(ScanColumnInfo {
+        column_id: fields.column_id,
+        tp: fields.tp,
+        collation: fields.collation,
+        column_len: fields.column_len,
+        decimal: fields.decimal,
+        flag: fields.flag,
+        elems: field_type.elems().into(),
+        pk_handle: fields.pk_handle,
+        default_val,
+        array: fields.array,
+    })
+}
+
+/// Validated metadata shared by both column descriptor encoders.
+pub(crate) struct ColumnProtoScalars {
+    pub(crate) column_id: i64,
+    pub(crate) tp: i32,
+    pub(crate) collation: i32,
+    pub(crate) column_len: i32,
+    pub(crate) decimal: i32,
+    pub(crate) flag: i32,
+    pub(crate) pk_handle: bool,
+    pub(crate) array: bool,
+}
+
+#[inline]
+pub(crate) fn column_proto_scalars(
+    column_id: i64,
+    field_type: &FieldType,
+    is_handle: bool,
+) -> Option<ColumnProtoScalars> {
+    let code = field_type.code();
     // `FieldTypeCode::Unknown` and `Unspecified` have no stable TiPB
     // interpretation. Every named code below is accepted by Go's
     // `ColumnToProto`, including the integer, temporal, floating-point,
@@ -586,10 +669,10 @@ pub fn column_to_proto(column: &PushdownScanColumn) -> Option<ScanColumnInfo> {
     // `GEOMETRY`) at `-1`, and very wide lengths such as JSON's max width also
     // narrow to `-1` in the protobuf field.  Preserve that metadata instead
     // of treating it as an unsupported column.
-    let column_len = column.field_type.flen() as i32;
-    let decimal = column.field_type.decimal() as i32;
-    let mut flag = i32::try_from(column.field_type.flags()).ok()?;
-    if column.is_handle {
+    let column_len = field_type.flen() as i32;
+    let decimal = field_type.decimal() as i32;
+    let mut flag = i32::try_from(field_type.flags()).ok()?;
+    if is_handle {
         flag |= NOT_NULL_FLAG | PRI_KEY_FLAG;
     }
     // Go `util.ColumnToProto`:
@@ -610,39 +693,118 @@ pub fn column_to_proto(column: &PushdownScanColumn) -> Option<ScanColumnInfo> {
             | FieldTypeCode::Enum
             | FieldTypeCode::Set
     ) {
-        tidb_datatype::collation_to_proto(column.field_type.collation_name())
+        let collation = field_type.collation();
+        let name = field_type.collation_name();
+        let canonical_name = collation.name();
+        if std::ptr::eq(name, canonical_name) || name == canonical_name {
+            tidb_datatype::rewrite_new_collation_id_if_needed(collation.id())
+        } else {
+            tidb_datatype::collation_to_proto(name)
+        }
     } else {
-        tidb_datatype::collation_to_proto("binary")
+        tidb_datatype::rewrite_new_collation_id_if_needed(tidb_charset::Collation::Binary.id())
     };
-    // Go `util.ColumnToProto` encodes the origin default into
-    // `ColumnInfo.default_val`; the region fills it in for a row written
-    // before the column existed, which is the only place that knows.
-    let default_val = match &column.origin_default {
-        Some(datum) => Some(tidb_codec::encode_value(std::slice::from_ref(datum)).ok()?),
-        None => None,
-    };
-    Some(ScanColumnInfo {
-        column_id: column.id,
+    Some(ColumnProtoScalars {
+        column_id,
         tp,
         collation,
         column_len,
         decimal,
         flag,
-        elems: column
-            .field_type
-            .elems_snapshot()
-            .into_iter()
-            .map(|elem| elem.to_string())
-            .collect(),
-        pk_handle: column.is_handle,
-        default_val,
-        array: column.field_type.is_array(),
+        pk_handle: is_handle,
+        array: field_type.is_array(),
     })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ordered_range_requests_share_dag_bytes_and_keep_separate_ranges() {
+        use tidb_proto::tipb::{ColumnInfo, DagRequest, ExecType, IndexScan};
+        use tidb_txnkv::{Key, KeyRange};
+
+        let dag = DagRequest {
+            executors: vec![
+                tidb_proto::tipb::Executor {
+                    idx_scan: Some(IndexScan {
+                        columns: vec![ColumnInfo {
+                            elems: vec!["enum label".repeat(512)],
+                            ..Default::default()
+                        }],
+                        ..Default::default()
+                    }),
+                    ..crate::dag_request::go_executor(ExecType::TypeIndexScan)
+                },
+                crate::dag_request::limit_to_pb(3),
+            ],
+            output_offsets: vec![0],
+            ..Default::default()
+        };
+        let prepared = PreparedTableReadDag::new(&dag).unwrap();
+        let build = |dag: TableReadDag<'_>, key| {
+            let mut builder = RequestBuilder::new();
+            builder
+                .set_start_ts(7)
+                .set_concurrency(15)
+                .set_keep_order(true)
+                .set_non_partitioned_key_ranges(vec![KeyRange {
+                    start_key: Key::from_bytes(vec![key]),
+                    end_key: Key::from_bytes(vec![key + 1]),
+                }]);
+            dag.attach(&mut builder);
+            builder.build().unwrap()
+        };
+        let first = build(TableReadDag::Prepared(&prepared), b'a');
+        let second = build(TableReadDag::Prepared(&prepared), b'b');
+        let fresh = build(dag.into(), b'b');
+        drop(prepared);
+
+        let data = first.data.as_ref().unwrap();
+        assert_eq!(data.as_ptr(), second.data.as_ref().unwrap().as_ptr());
+        assert_eq!(first.data, fresh.data);
+        for request in [&first, &second, &fresh] {
+            assert_eq!(request.limit_size, 3);
+            assert_eq!(request.concurrency, 1);
+            assert_eq!(request.start_ts, 7);
+            assert!(request.keep_order && request.cacheable);
+        }
+        for (request, key) in [(&first, b'a'), (&second, b'b'), (&fresh, b'b')] {
+            let range = &request.key_ranges.as_ref().unwrap().first_partition_ranges()[0];
+            assert_eq!(range.start_key.as_slice(), &[key]);
+            assert_eq!(range.end_key.as_slice(), &[key + 1]);
+        }
+    }
+
+    #[test]
+    fn scan_column_retains_source_labels_and_shares_default_bytes() {
+        let mut column = PushdownScanColumn {
+            id: 12,
+            field_type: FieldType::new(FieldTypeCode::Enum)
+                .with_elems(["界".as_bytes().to_vec(), vec![0xe2, 0x82]]),
+            is_handle: false,
+            origin_default: Some(Datum::new_bytes_datum(vec![0x80; 4096])),
+        };
+        let descriptor = column_to_proto(&column).unwrap();
+        let label = column.field_type.with_elems_visible(|labels| labels[0].as_bytes().as_ptr());
+        assert_eq!(
+            descriptor.elems.with_visible(|labels| labels[0].as_bytes().as_ptr()),
+            label
+        );
+        let default = descriptor.default_val.as_ref().unwrap().as_ptr();
+        let borrowed = crate::dag_request::column_to_pb(&descriptor);
+        let owned = crate::dag_request::column_into_pb(descriptor.clone());
+        assert_eq!(owned, borrowed);
+        assert_eq!(owned.elems, ["界", "\u{fffd}\u{fffd}"]);
+        assert_eq!(owned.default_val.as_ref().unwrap().as_ptr(), default);
+        assert_eq!(borrowed.default_val.as_ref().unwrap().as_ptr(), default);
+
+        column.field_type.set_elem(0, "updated");
+        column.field_type = column.field_type.with_elems(["replacement"]);
+        let retained = crate::dag_request::column_into_pb(descriptor);
+        assert_eq!(retained.elems, ["updated", "\u{fffd}\u{fffd}"]);
+    }
 
     #[test]
     fn adaptive_read_threshold_is_per_task_and_preserves_existing_labels() {

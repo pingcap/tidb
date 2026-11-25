@@ -750,7 +750,7 @@ mod tests {
             regions: vec![coprocessor::RegionInfo {
                 region_id: region.id,
                 region_epoch: region.region_epoch.clone(),
-                ranges: vec![coprocessor::KeyRange { start, end }],
+                ranges: vec![coprocessor::KeyRange { start: start.into(), end: end.into() }],
                 ..coprocessor::RegionInfo::default()
             }],
             ..mpp::DispatchTaskRequest::default()

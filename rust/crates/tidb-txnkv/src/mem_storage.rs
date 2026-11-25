@@ -69,6 +69,14 @@ impl MemStorage {
     pub fn is_empty(&self) -> bool {
         self.data.is_empty()
     }
+
+    /// Borrows the value in this read image.
+    pub fn get_ref(&self, key: &[u8]) -> Result<&[u8], MemStorageError> {
+        self.data
+            .get(key)
+            .map(Vec::as_slice)
+            .ok_or(MemStorageError::NotFound)
+    }
 }
 
 impl BatchGetError for MemStorageError {
@@ -81,10 +89,8 @@ impl Getter for MemStorage {
     type Error = MemStorageError;
 
     fn get(&mut self, key: &Key, _options: GetOptions) -> Result<ValueEntry, Self::Error> {
-        self.data
-            .get(key)
-            .map(|value| ValueEntry::new(value.clone(), 0))
-            .ok_or(MemStorageError::NotFound)
+        self.get_ref(key.as_bytes())
+            .map(|value| ValueEntry::new(value, 0))
     }
 }
 

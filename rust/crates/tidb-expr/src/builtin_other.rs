@@ -114,13 +114,38 @@ enum InKey {
 #[derive(Debug, Default)]
 pub(crate) struct InHashSet {
     values: std::collections::HashMap<InKey, bool>,
+    bytes: std::collections::HashSet<Vec<u8>>,
     pub(crate) non_const_args: Vec<usize>,
     pub(crate) has_null: bool,
 }
 
 impl InHashSet {
     /// Go `len(b.hashSet) != 0`.
-    pub(crate) fn is_empty(&self) -> bool { self.values.is_empty() }
+    pub(crate) fn is_empty(&self) -> bool {
+        self.values.is_empty() && self.bytes.is_empty()
+    }
+
+    pub(crate) fn contains_int(&self, bits: i64, unsigned: bool) -> bool {
+        self.values
+            .get(&InKey::Int(bits))
+            .is_some_and(|&candidate_unsigned| candidate_unsigned == unsigned || bits >= 0)
+    }
+
+    pub(crate) fn contains_real(&self, value: f64) -> bool {
+        // Go's float map never matches NaN, even with the same NaN bits.
+        !value.is_nan() && self.values.contains_key(&InKey::Real((value + 0.0).to_bits()))
+    }
+
+    pub(crate) fn contains_string(&self, value: &[u8], collator: tidb_datatype::Collator) -> bool {
+        self.bytes.contains(collator.immutable_key(value).as_ref())
+    }
+
+    pub(crate) fn contains_decimal(&self, value: &tidb_datatype::MyDecimal) -> Result<bool, EvalError> {
+        let key = value.to_hash_key().map_err(|tidb_datatype::DecimalCodecError::BadNumber| {
+            EvalError::Conversion(tidb_datatype::types_errors::ERR_BAD_NUMBER.clone())
+        })?;
+        Ok(self.bytes.contains(key.as_slice()))
+    }
 
     /// Go `builtinIn*Sig`'s hash lookup. `builtinInIntSig` matches an int64
     /// carrier when its sign flag agrees with the first argument's type
@@ -131,13 +156,18 @@ impl InHashSet {
         collator: tidb_datatype::Collator,
         is_unsigned0: bool,
     ) -> Result<bool, EvalError> {
-        let Some(key) = in_key(value, collator)? else { return Ok(false) };
-        // Go float map lookup never matches NaN, including the same NaN bits.
-        if matches!(value, Datum::Real(v) | Datum::Float32(v) if v.is_nan()) { return Ok(false); }
-        Ok(self.values.get(&key).is_some_and(|is_unsigned| match key {
-            InKey::Int(arg0) => *is_unsigned == is_unsigned0 || arg0 >= 0,
-            _ => true,
-        }))
+        Ok(match value {
+            Datum::Int(value) => self.contains_int(*value, is_unsigned0),
+            Datum::UInt(value) => self.contains_int(*value as i64, is_unsigned0),
+            Datum::Real(value) | Datum::Float32(value) => self.contains_real(*value),
+            Datum::String(value) => self.contains_string(value.bytes(), collator),
+            Datum::Bytes(value) => self.contains_string(value, collator),
+            value => match in_key(value, collator)? {
+                Some(InKey::Bytes(bytes)) => self.bytes.contains(bytes.as_slice()),
+                Some(key) => self.values.contains_key(&key),
+                None => false,
+            },
+        })
     }
 }
 
@@ -185,7 +215,11 @@ fn build_hash_map_for_const_args(
     }
     let collator = tidb_datatype::get_collator(bf.collation.charset_and_collation().1);
     let mut cache = InHashSet::default();
-    cache.values.reserve(bf.args.len() - 1);
+    if matches!(type_of(&bf.args[0]).eval_type(), EvalType::String | EvalType::Decimal) {
+        cache.bytes.reserve(bf.args.len() - 1);
+    } else {
+        cache.values.reserve(bf.args.len() - 1);
+    }
     let mut args = std::mem::take(&mut bf.args).into_iter();
     bf.args.extend(args.next());
     for arg in args {
@@ -205,6 +239,9 @@ fn build_hash_map_for_const_args(
             Datum::Null => !std::mem::replace(&mut cache.has_null, true),
             value => in_key(value, collator)?.is_none_or(|key| {
                 if matches!(value, Datum::Real(v) | Datum::Float32(v) if v.is_nan()) { return true; }
+                if let InKey::Bytes(key) = key {
+                    return cache.bytes.insert(key);
+                }
                 if let std::collections::hash_map::Entry::Vacant(entry) = cache.values.entry(key) {
                     entry.insert(type_of(&arg).is_unsigned());
                     true

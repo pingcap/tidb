@@ -49,7 +49,50 @@ const COP_BUILD_TASK_MAX_BACKOFF: Duration = Duration::from_millis(5_000);
 const FETCH_TOPO_MAX_BACKOFF: Duration = Duration::from_millis(20_000);
 
 /// One physical table's ranges as the task builder takes them.
-pub(crate) type Ranges = Vec<(tidb_txnkv::Key, tidb_txnkv::Key)>;
+pub(crate) enum Ranges {
+    Logical(Vec<tidb_txnkv::KeyRange>),
+    Native(Vec<tidb_proto::CoprocessorKeyRange>),
+    /// Final materialization after routing preserves window order.
+    Ordered {
+        remaining: std::vec::IntoIter<tidb_txnkv::KeyRange>,
+        index: usize,
+    },
+}
+
+impl Ranges {
+    pub(crate) fn is_empty(&self) -> bool {
+        match self {
+            Self::Logical(ranges) => ranges.is_empty(),
+            Self::Native(ranges) => ranges.is_empty(),
+            Self::Ordered { remaining, .. } => remaining.as_slice().is_empty(),
+        }
+    }
+
+    pub(crate) fn logical(&self) -> &[tidb_txnkv::KeyRange] {
+        match self {
+            Self::Logical(ranges) => ranges,
+            _ => unreachable!("region range window needs logical input"),
+        }
+    }
+
+    pub(crate) fn logical_mut(&mut self) -> &mut Vec<tidb_txnkv::KeyRange> {
+        match self {
+            Self::Logical(ranges) => ranges,
+            _ => unreachable!("region range window needs logical input"),
+        }
+    }
+
+    pub(crate) fn use_ordered_materialization<'a>(
+        &mut self,
+        plans: impl Iterator<Item = &'a crate::mpp_client::RegionRangePlan>,
+    ) {
+        if let Self::Logical(ranges) = self {
+            if crate::mpp_client::mpp_windows_are_ordered(plans) {
+                *self = Self::Ordered { remaining: std::mem::take(ranges).into_iter(), index: 0 };
+            }
+        }
+    }
+}
 
 /// Go `balanceContinuousRegionCount` as `ConstructMPPTasks` passes it.
 pub(crate) const BALANCE_CONTINUOUS_REGION_COUNT: usize = 20;
@@ -66,7 +109,7 @@ pub(crate) struct RegionInfo {
     /// Go `Region` and `Meta`: the region as located.
     pub(crate) region: tikv_client::RegionWithLeader,
     /// Go `Ranges`: the request ranges inside the region.
-    pub(crate) info: tidb_proto::coprocessor::RegionInfo,
+    pub(crate) info: crate::mpp_client::RegionRangePlan,
     /// Go `AllStores`: the stores that may serve it, the chosen one first.
     pub(crate) all_stores: Vec<u64>,
     /// Go `PartitionIndex`: the physical table, of the request's, it reads.
@@ -95,7 +138,7 @@ struct AliveStores {
 /// One located region and the requested ranges inside it.
 pub(crate) struct LocatedRegion {
     pub(crate) region: tikv_client::RegionWithLeader,
-    pub(crate) info: tidb_proto::coprocessor::RegionInfo,
+    pub(crate) info: crate::mpp_client::RegionRangePlan,
     /// Go `copTask.partitionIndex`.
     pub(crate) partition_index: i64,
 }
@@ -106,7 +149,7 @@ pub(crate) struct LocatedRegion {
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn build_batch_cop_tasks<S: tikv_client::PdClient>(
     store: &TikvStore<S>,
-    ranges_for_each_physical_table: &[Ranges],
+    mut ranges_for_each_physical_table: Vec<Ranges>,
     partition_ids: &[i64],
     memory: &Arc<dyn MppContext>,
     is_mpp: bool,
@@ -121,7 +164,7 @@ pub(crate) async fn build_batch_cop_tasks<S: tikv_client::PdClient>(
         if !config.disaggregated_tiflash {
             return Ok(build_batch_cop_tasks_core(
                 store,
-                ranges_for_each_physical_table,
+                &ranges_for_each_physical_table,
                 memory,
                 is_mpp,
                 balance_with_continuity,
@@ -134,7 +177,7 @@ pub(crate) async fn build_batch_cop_tasks<S: tikv_client::PdClient>(
         let tasks = if config.use_auto_scaler {
             build_batch_cop_tasks_consistent_hash(
                 store,
-                ranges_for_each_physical_table,
+                &ranges_for_each_physical_table,
                 memory,
                 kv_context,
                 dispatch_policy,
@@ -144,7 +187,7 @@ pub(crate) async fn build_batch_cop_tasks<S: tikv_client::PdClient>(
             // todo: remove this after AutoScaler is stable.
             build_batch_cop_tasks_consistent_hash_for_pd(
                 store,
-                ranges_for_each_physical_table,
+                &ranges_for_each_physical_table,
                 memory,
                 kv_context,
                 dispatch_policy,
@@ -154,7 +197,7 @@ pub(crate) async fn build_batch_cop_tasks<S: tikv_client::PdClient>(
         Ok::<_, TopologyError>((tasks, Vec::new()))
     };
     let (tasks, warnings) = crate::cop_store::with_statement_kv_context(kv_context, build).await?;
-    Ok((store_tasks(tasks, partition_ids), warnings))
+    Ok((store_tasks(tasks, partition_ids, &mut ranges_for_each_physical_table), warnings))
 }
 
 /// Go `bo.Backoff(tikv.BoTiFlashRPC(), err)`: `err` once the budget is spent
@@ -227,7 +270,7 @@ fn get_tiflash_compute_rpc_contexts(
     tasks: &[LocatedRegion],
     stores_str: &[String],
 ) -> Result<Vec<String>, TopologyError> {
-    let region_ids: Vec<u64> = tasks.iter().map(|task| task.info.region_id).collect();
+    let region_ids: Vec<u64> = tasks.iter().map(|task| task.region.region.id).collect();
     match dispatch_policy {
         DispatchPolicy::RoundRobin => Ok(get_tiflash_compute_rpc_context_by_round_robin(&region_ids, stores_str)),
         DispatchPolicy::ConsistentHash => {
@@ -365,7 +408,7 @@ fn failpoint_check_which_policy(act: DispatchPolicy) {
 #[allow(clippy::too_many_arguments)]
 async fn build_batch_cop_tasks_core<S: tikv_client::PdClient>(
     store: &TikvStore<S>,
-    ranges_for_each_physical_table: &[Vec<(tidb_txnkv::Key, tidb_txnkv::Key)>],
+    ranges_for_each_physical_table: &[Ranges],
     memory: &Arc<dyn MppContext>,
     is_mpp: bool,
     balance_with_continuity: bool,
@@ -400,7 +443,7 @@ async fn build_batch_cop_tasks_core<S: tikv_client::PdClient>(
             tasks_for_partitions.sort_by(|a, b| match (a.first(), b.first()) {
                 (None, _) => std::cmp::Ordering::Less,
                 (_, None) => std::cmp::Ordering::Greater,
-                (Some(a), Some(b)) => first_start_key(a).cmp(first_start_key(b)),
+                (Some(a), Some(b)) => first_start_key(a, ranges_for_each_physical_table).cmp(first_start_key(b, ranges_for_each_physical_table)),
             });
             // The ranges corresponding to each partiton do not intersect, so
             // we can merge tasks directly.
@@ -529,8 +572,8 @@ async fn build_batch_cop_tasks_core<S: tikv_client::PdClient>(
 }
 
 /// Go `ranges.RefAt(0).StartKey`: a located region's first range start.
-fn first_start_key(task: &LocatedRegion) -> &[u8] {
-    task.info.ranges.first().map_or(&[], |range| range.start.as_slice())
+fn first_start_key<'a>(task: &'a LocatedRegion, inputs: &'a [Ranges]) -> &'a [u8] {
+    task.info.first_start(&task.region, &inputs[task.partition_index as usize])
 }
 
 /// Go `convertRegionInfosToPartitionTableRegions`: each task's regions by
@@ -538,6 +581,7 @@ fn first_start_key(task: &LocatedRegion) -> &[u8] {
 pub(crate) fn convert_region_infos_to_partition_table_regions(
     batch_tasks: &mut [BatchCopTask],
     partition_ids: &[i64],
+    inputs: &mut [Ranges],
 ) -> Vec<Vec<tidb_proto::coprocessor::TableRegions>> {
     batch_tasks
         .iter_mut()
@@ -549,8 +593,10 @@ pub(crate) fn convert_region_infos_to_partition_table_regions(
                     ..Default::default()
                 })
                 .collect();
-            for ri in std::mem::take(&mut cop_task.region_infos) {
-                table_regions[ri.partition_index as usize].regions.push(ri.info);
+            for mut ri in std::mem::take(&mut cop_task.region_infos) {
+                let index = ri.partition_index as usize;
+                let info = ri.info.materialize(&mut ri.region, &mut inputs[index]);
+                table_regions[index].regions.push(info);
             }
             table_regions.retain(|table| !table.regions.is_empty());
             table_regions
@@ -565,11 +611,17 @@ pub(crate) fn convert_region_infos_to_partition_table_regions(
 pub(crate) fn store_tasks(
     mut tasks: Vec<BatchCopTask>,
     partition_ids: &[i64],
+    inputs: &mut [Ranges],
 ) -> Vec<tidb_txnkv::MppStoreTask> {
+    if let [input] = inputs {
+        input.use_ordered_materialization(
+            tasks.iter().flat_map(|task| task.region_infos.iter().map(|region| &region.info)),
+        );
+    }
     let mut partition_table_regions = if partition_ids.is_empty() {
         vec![Vec::new(); tasks.len()]
     } else {
-        convert_region_infos_to_partition_table_regions(&mut tasks, partition_ids)
+        convert_region_infos_to_partition_table_regions(&mut tasks, partition_ids, inputs)
     };
     tasks
         .into_iter()
@@ -585,7 +637,7 @@ pub(crate) fn store_tasks(
             regions: task
                 .region_infos
                 .into_iter()
-                .map(|region| region.info)
+                .map(|mut region| region.info.materialize(&mut region.region, &mut inputs[region.partition_index as usize]))
                 .collect(),
             partition_table_regions,
         })
@@ -821,109 +873,169 @@ fn is_balance(score: i64) -> bool {
 
 /// Go `checkBatchCopTaskBalance`.
 fn check_batch_cop_task_balance(
-    store_tasks: &BTreeMap<u64, BatchCopTask>,
+    placements: &BTreeMap<u64, Vec<usize>>,
     continuous: usize,
 ) -> i64 {
-    if store_tasks.is_empty() {
+    let mut counts = placements.values().map(Vec::len);
+    let Some(first) = counts.next() else {
         return 0;
-    }
-    let counts = store_tasks.values().map(|task| task.region_infos.len());
-    let max = counts.clone().max().unwrap_or(0);
-    let min = counts.min().unwrap_or(0);
+    };
+    let (min, max) = counts.fold((first, first), |(min, max), count| {
+        (min.min(count), max.max(count))
+    });
     balance_score(max, min, continuous)
 }
 
-/// Go `selectRegion`: up to `count` unselected candidates of `store_id`.
-fn select_region(
-    store_id: u64,
-    candidates: &[RegionInfo],
-    selected: &mut [bool],
-    store_to_region_index: &mut BTreeMap<u64, Vec<usize>>,
-    count: usize,
-) -> Vec<RegionInfo> {
-    let Some(indexes) = store_to_region_index.get_mut(&store_id) else {
-        return Vec::new();
-    };
-    let mut buffer = Vec::with_capacity(count);
-    let mut consumed = 0;
-    while consumed < indexes.len() && buffer.len() < count {
-        let index = indexes[consumed];
-        consumed += 1;
-        if selected[index] {
-            continue;
-        }
-        selected[index] = true;
-        buffer.push(candidates[index].clone());
-    }
-    indexes.drain(..consumed);
-    buffer
-}
-
-/// Go `balanceBatchCopTaskWithContinuity`: each store takes runs of
-/// `continuous` neighbouring candidates in key order, which TiFlash stores
-/// close together. `None` when it does not apply or fails.
+/// Go `balanceBatchCopTaskWithContinuity`, using indices into the original
+/// region list so a trial placement need not clone the region records.
 fn balance_batch_cop_task_with_continuity(
-    store_task_map: &BTreeMap<u64, BatchCopTask>,
-    candidates: &[RegionInfo],
+    placements: &BTreeMap<u64, Vec<usize>>,
+    regions: &[RegionInfo],
+    candidates: &[usize],
     continuous: usize,
-) -> Option<(Vec<BatchCopTask>, i64)> {
-    if candidates.len() < 500 {
+) -> Option<BTreeMap<u64, Vec<usize>>> {
+    if candidates.len() < 500 || continuous == 0 {
         return None;
     }
-    let region_count = candidates.len()
-        + store_task_map
-            .values()
-            .map(|t| t.region_infos.len())
-            .sum::<usize>();
-    let mut store_tasks = store_task_map.clone();
-    let mut store_to_region_index: BTreeMap<u64, Vec<usize>> = BTreeMap::new();
-    for (index, region) in candidates.iter().enumerate() {
-        for store_id in &region.all_stores {
-            store_to_region_index
-                .entry(*store_id)
-                .or_default()
-                .push(index);
+    let mut store_indexes = BTreeMap::<u64, Vec<usize>>::new();
+    for &index in candidates {
+        for id in &regions[index].all_stores {
+            if placements.contains_key(id) {
+                store_indexes.entry(*id).or_default().push(index);
+            }
         }
     }
-    let mut selected = vec![false; candidates.len()];
-    loop {
-        let mut total = 0;
-        let mut selected_this_round = 0;
-        for (store_id, task) in &mut store_tasks {
-            let picked = select_region(
-                *store_id,
-                candidates,
-                &mut selected,
-                &mut store_to_region_index,
-                continuous,
-            );
-            selected_this_round += picked.len();
-            task.region_infos.extend(picked);
-            total += task.region_infos.len();
+    let mut store_indexes: BTreeMap<_, _> = store_indexes
+        .into_iter()
+        .map(|(id, indexes)| (id, indexes.into_iter()))
+        .collect();
+    let mut placement = placements.clone();
+    let mut selected = vec![false; regions.len()];
+    let mut remaining = candidates.len();
+    while remaining > 0 {
+        let start = remaining;
+        for (id, indexes) in &mut store_indexes {
+            let selected = indexes.by_ref().filter(|&index| {
+                let was_selected = selected[index];
+                selected[index] = true;
+                !was_selected
+            });
+            let task = &mut placement.get_mut(id).expect("known store");
+            let before = task.len();
+            task.extend(selected.take(continuous));
+            remaining -= task.len() - before;
         }
-        if total >= region_count {
-            break;
-        }
-        if selected_this_round == 0 {
+        if remaining == start {
             return None;
         }
     }
-    let score = check_batch_cop_task_balance(&store_tasks, continuous);
-    let total: usize = store_tasks.values().map(|t| t.region_infos.len()).sum();
-    if total != region_count {
-        return None;
-    }
-    let tasks = store_tasks
-        .into_values()
-        .filter(|task| !task.region_infos.is_empty())
-        .collect();
-    Some((tasks, score))
+    Some(placement)
 }
 
-/// Go `balanceBatchCopTask`: regions with one alive store stay on it; the
-/// others are spread across the alive stores that hold them, by the
-/// continuity strategy when it balances and the greedy weighted one
-/// otherwise. Any inconsistency keeps `original_tasks`.
+struct CandidateQueue {
+    indexes: std::vec::IntoIter<usize>,
+    remaining: usize,
+}
+
+fn candidate_queues(
+    placements: &BTreeMap<u64, Vec<usize>>,
+    regions: &[RegionInfo],
+    candidates: &[usize],
+) -> Option<BTreeMap<u64, CandidateQueue>> {
+    // The weighted path has always selected its store's smallest region key
+    // first. Store only indexes and lazily skip choices made by other stores.
+    let mut ordered: Vec<_> = candidates.iter()
+        .map(|&index| (region_key(&regions[index]), index))
+        .collect();
+    ordered.sort_unstable();
+    let mut store_indexes = BTreeMap::<u64, ((u64, u64, u64), Vec<usize>)>::new();
+    for (key, index) in ordered {
+        for id in &regions[index].all_stores {
+            if !placements.contains_key(id) {
+                continue;
+            }
+            let (previous, indexes) = store_indexes.entry(*id).or_insert_with(|| (key, Vec::new()));
+            if !indexes.is_empty() && *previous == key {
+                // A duplicated region for the same store gives up balancing.
+                return None;
+            }
+            *previous = key;
+            indexes.push(index);
+        }
+    }
+    Some(store_indexes.into_iter().map(|(id, (_, indexes))| {
+        let remaining = indexes.len();
+        (id, CandidateQueue { indexes: indexes.into_iter(), remaining })
+    }).collect())
+}
+
+fn find_next_store(
+    preferred: Option<&[u64]>,
+    queues: &BTreeMap<u64, CandidateQueue>,
+    placements: &BTreeMap<u64, Vec<usize>>,
+    avg_store_per_region: f64,
+) -> Option<u64> {
+    let lightest = |ids: &mut dyn Iterator<Item = &u64>| {
+        let mut best: Option<(u64, f64)> = None;
+        for id in ids {
+            if let Some(queue) = queues.get(id) {
+                let weight = queue.remaining as f64 / avg_store_per_region
+                    + placements[id].len() as f64;
+                if best.is_none_or(|(_, current)| weight < current) {
+                    best = Some((*id, weight));
+                }
+            }
+        }
+        best.map(|(id, _)| id)
+    };
+    if let Some(id) = preferred.and_then(|ids| lightest(&mut ids.iter())) {
+        return Some(id);
+    }
+    // Rotate ties so retries do not consistently favor the first store.
+    let first = tidb_fastrand::uint64_n(placements.len() as u64) as usize;
+    lightest(&mut placements.keys().cycle().skip(first).take(placements.len()))
+}
+
+fn weighted_placement(
+    placements: &mut BTreeMap<u64, Vec<usize>>,
+    mut queues: BTreeMap<u64, CandidateQueue>,
+    regions: &[RegionInfo],
+    total: usize,
+) -> Option<()> {
+    if total == 0 {
+        return Some(());
+    }
+    let mut remaining = total;
+    let mut memberships: usize = queues.values().map(|queue| queue.remaining).sum();
+    let mut selected = vec![false; regions.len()];
+    let mut store = find_next_store(None, &queues, placements, memberships as f64 / remaining as f64);
+    while remaining > 0 {
+        let id = store?;
+        let index = queues.get_mut(&id)?.indexes.find(|&index| !selected[index])?;
+        selected[index] = true;
+        remaining -= 1;
+        let affected = &regions[index].all_stores;
+        for id in affected {
+            if let Some(queue) = queues.get_mut(id) {
+                queue.remaining -= 1;
+                memberships -= 1;
+                if queue.remaining == 0 {
+                    queues.remove(id);
+                }
+            }
+        }
+        placements.get_mut(&id)?.push(index);
+        if remaining > 0 {
+            // Go checks only stores affected by this assignment first.
+            store = find_next_store(Some(affected), &queues, placements, memberships as f64 / remaining as f64);
+        }
+    }
+    Some(())
+}
+
+/// Go `balanceBatchCopTask`: keep pinned regions, then try the continuity
+/// placement and the greedy weighted placement. Move the region records
+/// once the winning placement is known.
 pub(crate) fn balance_batch_cop_task(
     alive_stores: &[tidb_proto::metapb::Store],
     original_tasks: Vec<BatchCopTask>,
@@ -934,164 +1046,48 @@ pub(crate) fn balance_batch_cop_task(
     if original_tasks.is_empty() {
         return original_tasks;
     }
-    let mut store_task_map: BTreeMap<u64, BatchCopTask> = alive_stores
-        .iter()
-        .map(|store| {
-            (
-                store.id,
-                BatchCopTask {
-                    store_id: store.id,
-                    store_addr: store.address.clone(),
-                    region_infos: Vec::new(),
-                },
-            )
-        })
-        .collect();
-    // Store -> region key -> region: every store a candidate region may use.
-    let mut store_candidate_region_map: BTreeMap<u64, BTreeMap<(u64, u64, u64), RegionInfo>> =
-        BTreeMap::new();
-    let mut total_region_candidate_num = 0usize;
-    let mut total_remaining_region_num = 0usize;
-    let mut candidates = Vec::with_capacity(all_region_infos.len());
-    for region in all_region_infos {
-        let valid: Vec<u64> = region
-            .all_stores
-            .iter()
-            .copied()
-            .filter(|id| store_task_map.contains_key(id))
-            .collect();
-        match valid.as_slice() {
-            [] => return original_tasks,
-            [only] => store_task_map
-                .get_mut(only)
-                .expect("a valid store has a task")
-                .region_infos
-                .push(region),
-            _ => {
-                total_region_candidate_num += valid.len();
-                total_remaining_region_num += 1;
-                let key = region_key(&region);
-                for store_id in &valid {
-                    let map = store_candidate_region_map.entry(*store_id).or_default();
-                    if map.insert(key, region.clone()).is_some() {
-                        // A duplicated region: give up balancing, as Go does.
-                        return original_tasks;
-                    }
-                }
-                candidates.push(region);
-            }
-        }
-    }
-
-    let mut contiguous = None;
-    if balance_with_continuity {
-        contiguous =
-            balance_batch_cop_task_with_continuity(&store_task_map, &candidates, continuous);
-        if let Some((tasks, score)) = &contiguous {
-            if is_balance(*score) {
-                return tasks.clone();
-            }
-        }
-    }
-
-    if total_remaining_region_num > 0 {
-        let mut avg_store_per_region =
-            total_region_candidate_num as f64 / total_remaining_region_num as f64;
-        let find_next_store =
-            |candidate_stores: Option<&[u64]>,
-             store_candidate_region_map: &BTreeMap<u64, BTreeMap<(u64, u64, u64), RegionInfo>>,
-             store_task_map: &BTreeMap<u64, BatchCopTask>,
-             avg_store_per_region: f64|
-             -> Option<u64> {
-                let weight = |store_id: &u64| -> Option<f64> {
-                    let candidates = store_candidate_region_map.get(store_id)?;
-                    Some(
-                        candidates.len() as f64 / avg_store_per_region
-                            + store_task_map[store_id].region_infos.len() as f64,
-                    )
-                };
-                let lightest = |ids: &mut dyn Iterator<Item = &u64>| {
-                    let mut best: Option<(u64, f64)> = None;
-                    for id in ids {
-                        if let Some(weight) = weight(id) {
-                            if best.is_none_or(|(_, current)| weight < current) {
-                                best = Some((*id, weight));
-                            }
-                        }
-                    }
-                    best.map(|(id, _)| id)
-                };
-                if let Some(candidate_stores) = candidate_stores {
-                    if let Some(store) = lightest(&mut candidate_stores.iter()) {
-                        return Some(store);
-                    }
-                }
-                // Go ranges over `storeTaskMap`, a map: no store is always
-                // the first of the equally light ones, so a task rebuilt
-                // after its store failed does not keep landing on that store.
-                let stores: Vec<&u64> = store_task_map.keys().collect();
-                let first = tidb_fastrand::uint64_n(stores.len() as u64) as usize;
-                lightest(&mut stores.iter().cycle().skip(first).take(stores.len()).copied())
-            };
-        let mut store = find_next_store(
-            None,
-            &store_candidate_region_map,
-            &store_task_map,
-            avg_store_per_region,
-        );
-        while total_remaining_region_num > 0 {
-            let Some(store_id) = store else {
-                break;
-            };
-            let Some((key, region)) = store_candidate_region_map
-                .get(&store_id)
-                .and_then(|map| map.iter().next())
-                .map(|(key, region)| (*key, region.clone()))
-            else {
-                break;
-            };
-            total_remaining_region_num -= 1;
-            for id in &region.all_stores {
-                if let Some(map) = store_candidate_region_map.get_mut(id) {
-                    if map.remove(&key).is_some() {
-                        total_region_candidate_num -= 1;
-                    }
-                    if map.is_empty() {
-                        store_candidate_region_map.remove(id);
-                    }
-                }
-            }
-            let affected = region.all_stores.clone();
-            store_task_map
-                .get_mut(&store_id)
-                .expect("a candidate store has a task")
-                .region_infos
-                .push(region);
-            if total_remaining_region_num > 0 {
-                avg_store_per_region =
-                    total_region_candidate_num as f64 / total_remaining_region_num as f64;
-                // Go checks only the stores the region affected.
-                store = find_next_store(
-                    Some(&affected),
-                    &store_candidate_region_map,
-                    &store_task_map,
-                    avg_store_per_region,
-                );
-            }
-        }
-        if total_remaining_region_num > 0 {
+    let stores: BTreeMap<_, _> = alive_stores.iter().map(|store| (store.id, store)).collect();
+    let mut placements: BTreeMap<_, Vec<usize>> = stores.keys().map(|&id| (id, Vec::new())).collect();
+    let mut candidates = Vec::new();
+    for (index, region) in all_region_infos.iter().enumerate() {
+        let mut valid = region.all_stores.iter().filter(|id| stores.contains_key(id));
+        let Some(id) = valid.next() else {
             return original_tasks;
+        };
+        if valid.next().is_some() {
+            candidates.push(index);
+        } else {
+            placements.get_mut(id).expect("known store").push(index);
         }
     }
-
-    if let Some((tasks, _)) = contiguous {
-        if !is_balance(check_batch_cop_task_balance(&store_task_map, continuous)) {
-            return tasks;
+    let Some(queues) = candidate_queues(&placements, &all_region_infos, &candidates) else {
+        return original_tasks;
+    };
+    let continuity = balance_with_continuity.then(|| {
+        balance_batch_cop_task_with_continuity(&placements, &all_region_infos, &candidates, continuous)
+    }).flatten();
+    let placements = match continuity {
+        Some(plan) if is_balance(check_batch_cop_task_balance(&plan, continuous)) => plan,
+        alternate => {
+            if weighted_placement(&mut placements, queues, &all_region_infos, candidates.len()).is_none() {
+                return original_tasks;
+            }
+            match alternate {
+                Some(plan) if !is_balance(check_batch_cop_task_balance(&placements, continuous)) => plan,
+                _ => placements,
+            }
         }
-    }
-    store_task_map
-        .into_values()
-        .filter(|task| !task.region_infos.is_empty())
+    };
+    let mut regions: Vec<_> = all_region_infos.into_iter().map(Some).collect();
+    placements.into_iter()
+        .filter(|(_, indexes)| !indexes.is_empty())
+        .map(|(id, indexes)| BatchCopTask {
+            store_id: id,
+            store_addr: stores[&id].address.clone(),
+            region_infos: indexes.into_iter()
+                .map(|index| regions[index].take().expect("region assigned once"))
+                .collect(),
+        })
         .collect()
 }
 
@@ -1126,10 +1122,10 @@ mod tests {
                 },
                 ..Default::default()
             },
-            info: tidb_proto::coprocessor::RegionInfo {
+            info: crate::mpp_client::RegionRangePlan::Native(tidb_proto::coprocessor::RegionInfo {
                 region_id: id,
                 ..Default::default()
-            },
+            }),
             all_stores,
             partition_index: 0,
         }
@@ -1141,6 +1137,37 @@ mod tests {
             store_addr: format!("tiflash-{store_id}:3930"),
             region_infos: regions,
         }
+    }
+
+    #[test]
+    fn partitioned_store_tasks_move_keys_from_their_own_input_group() {
+        let start = b"a".to_vec();
+        let start_ptr = start.as_ptr();
+        let mut inputs = [
+            Ranges::Logical(vec![tidb_txnkv::KeyRange::new(start.into(), b"b".as_slice().into())]),
+            Ranges::Logical(vec![tidb_txnkv::KeyRange::new(b"x".as_slice().into(), b"y".as_slice().into())]),
+        ];
+        let mut infos = Vec::new();
+        for index in [1, 0] {
+            let located = crate::mpp_client::plan_mpp_regions(
+                &inputs[index],
+                vec![region(index as u64 + 1, vec![]).region],
+            )
+            .pop()
+            .unwrap();
+            infos.push(RegionInfo {
+                region: located.region,
+                info: located.info,
+                all_stores: Vec::new(),
+                partition_index: index as i64,
+            });
+        }
+        let tasks = store_tasks(vec![task(1, infos)], &[21, 35], &mut inputs);
+        let tables = &tasks[0].partition_table_regions;
+        assert_eq!(tables[0].physical_table_id, 21);
+        assert_eq!(tables[0].regions[0].ranges[0].start.as_ptr(), start_ptr);
+        assert_eq!(tables[1].physical_table_id, 35);
+        assert_eq!(tables[1].regions[0].ranges[0].start.as_ref(), b"x");
     }
 
     fn counts(tasks: &[BatchCopTask]) -> BTreeMap<String, usize> {
@@ -1304,6 +1331,20 @@ mod tests {
         assert_eq!(balance_score(150, 100, 20), 50);
         assert!(is_balance(85));
         assert!(!is_balance(84));
+    }
+
+    #[test]
+    fn duplicate_region_key_for_an_eligible_store_preserves_the_original_tasks() {
+        let regions = vec![region(1, vec![1, 2]), region(1, vec![2, 3])];
+        let original = vec![task(2, regions.clone())];
+        let balanced = balance_batch_cop_task(
+            &[store(1), store(2), store(3)],
+            original.clone(),
+            true,
+            20,
+            regions,
+        );
+        assert_eq!(balanced, original);
     }
 
     /// Go `filterAllStoresAccordingToTiFlashReplicaRead`.

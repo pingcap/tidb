@@ -12,18 +12,24 @@ mod spark_rebase;
 mod spark_rebase_micros_generated;
 mod type_converter;
 
-use std::sync::Arc;
+use std::io::{self, BufReader, Cursor, Read, Seek, SeekFrom};
+use std::ops::Range;
+use std::sync::{Arc, Mutex};
 
 use bytes::Bytes;
 use parquet::basic::{ConvertedType, LogicalType as PqLogicalType, TimeUnit as PqTimeUnit, Type as PhysicalType};
-use parquet::column::reader::{get_typed_column_reader, ColumnReader, ColumnReaderImpl};
+use parquet::column::reader::{get_column_reader, get_typed_column_reader, ColumnReader, ColumnReaderImpl};
 use parquet::data_type::{
     BoolType, ByteArrayType, DataType, DoubleType, FixedLenByteArrayType, FloatType, Int32Type, Int64Type, Int96Type,
 };
-use parquet::file::reader::{ChunkReader, FileReader, Length, SerializedFileReader};
+use parquet::file::metadata::{ParquetMetaData, ParquetMetaDataReader, RowGroupMetaData};
+use parquet::file::properties::ReaderProperties;
+use parquet::file::reader::{ChunkReader, Length, RowGroupReader};
+use parquet::file::serialized_reader::{SerializedPageReader, SerializedRowGroupReader};
 use tidb_datatype::{Datum, SessionTimeZone};
 use tidb_gocontext::Context;
-use tidb_objstore::storeapi::Storage;
+use tidb_objstore::objectio::Reader;
+use tidb_objstore::storeapi::{ReaderOption, Storage};
 
 use spark_rebase::{
     FileInfo, SparkRebaseMicrosLookup, SPARK_DATETIME_REBASE_CUTOFF, SPARK_INT96_REBASE_CUTOFF,
@@ -35,6 +41,11 @@ use type_converter::{LogicalType, ParquetColumnType, TimeUnit};
 const READ_BATCH_SIZE: usize = 128;
 /// Go `maxRowSize` (`config.MaxTxnEntrySizeLimit`).
 const MAX_ROW_SIZE: usize = 120 * 1024 * 1024;
+/// Go `rowGroupInMemoryThreshold`.
+const ROW_GROUP_BUFFER_LIMIT: u64 = 128 * 1024 * 1024;
+const PAGE_HEADER_READ_BUFFER: u64 = 8 * 1024;
+/// Go limits concurrent column reader construction in `buildRowGroupParser`.
+const COLUMN_OPEN_LIMIT: usize = 8;
 
 /// Go `FileMeta`: what a parser is opened with.
 #[derive(Clone, Debug, Default)]
@@ -52,8 +63,62 @@ pub const ERR_ROW_TOO_LARGE: &str = "size of row cannot exceed the max value of 
 struct StorageFile {
     ctx: Context,
     store: Arc<dyn Storage>,
-    path: String,
+    path: Arc<str>,
     size: u64,
+    buffered: Option<(u64, Bytes)>,
+}
+
+impl StorageFile {
+    fn with_row_group(&self, group: &RowGroupMetaData) -> Result<Self, String> {
+        let mut start = self.size;
+        let mut end = 0;
+        for col in group.columns() {
+            let offset = col.dictionary_page_offset().unwrap_or_else(|| col.data_page_offset());
+            let offset = u64::try_from(offset).map_err(|_| "negative Parquet column offset")?;
+            let length = u64::try_from(col.compressed_size()).map_err(|_| "negative Parquet column length")?;
+            let col_end = offset
+                .checked_add(length)
+                .filter(|&col_end| col_end <= self.size)
+                .ok_or("Parquet column range exceeds file size")?;
+            start = start.min(offset);
+            end = end.max(col_end);
+        }
+        let mut file = self.clone();
+        if let Some(length) = end.checked_sub(start).filter(|&length| length > 0 && length <= ROW_GROUP_BUFFER_LIMIT) {
+            file.buffered = Some((start, self.get_bytes(start, length as usize).map_err(pq_err)?));
+        }
+        Ok(file)
+    }
+
+    fn buffered_from(&self, start: u64) -> Option<Bytes> {
+        let (offset, bytes) = self.buffered.as_ref()?;
+        let within = usize::try_from(start.checked_sub(*offset)?).ok()?;
+        (within < bytes.len()).then(|| bytes.slice(within..))
+    }
+}
+
+/// A page header reader that reuses the active row group or fetches a
+/// bounded range on demand for larger groups.
+struct StorageRead {
+    file: StorageFile,
+    position: u64,
+    buffer: Cursor<Bytes>,
+}
+
+impl Read for StorageRead {
+    fn read(&mut self, out: &mut [u8]) -> io::Result<usize> {
+        if out.is_empty() || self.position >= self.file.size {
+            return Ok(0);
+        }
+        if self.buffer.position() >= self.buffer.get_ref().len() as u64 {
+            let length = (self.file.size - self.position).min(PAGE_HEADER_READ_BUFFER) as usize;
+            let bytes = self.file.get_bytes(self.position, length).map_err(io::Error::other)?;
+            self.buffer = Cursor::new(bytes);
+        }
+        let n = self.buffer.read(out)?;
+        self.position += n as u64;
+        Ok(n)
+    }
 }
 
 impl Length for StorageFile {
@@ -63,14 +128,23 @@ impl Length for StorageFile {
 }
 
 impl ChunkReader for StorageFile {
-    type T = std::io::Cursor<Bytes>;
+    type T = StorageRead;
 
     fn get_read(&self, start: u64) -> parquet::errors::Result<Self::T> {
-        let len = self.size.saturating_sub(start) as usize;
-        Ok(std::io::Cursor::new(self.get_bytes(start, len)?))
+        Ok(StorageRead {
+            file: self.clone(),
+            position: start,
+            buffer: Cursor::new(self.buffered_from(start).unwrap_or_default()),
+        })
     }
 
     fn get_bytes(&self, start: u64, length: usize) -> parquet::errors::Result<Bytes> {
+        if start.checked_add(length as u64).is_none_or(|end| end > self.size) {
+            return Err(parquet::errors::ParquetError::EOF("Parquet range exceeds file size".to_owned()));
+        }
+        if let Some(buffer) = self.buffered_from(start).filter(|buffer| length <= buffer.len()) {
+            return Ok(buffer.slice(..length));
+        }
         let mut buf = vec![0; length];
         if length > 0 {
             tidb_objstore::read_data_in_range(&self.ctx, self.store.as_ref(), &self.path, start as i64, &mut buf)
@@ -78,6 +152,159 @@ impl ChunkReader for StorageFile {
         }
         Ok(Bytes::from(buf))
     }
+}
+
+/// A bounded storage stream shared by reads of file metadata or one
+/// column chunk.
+#[derive(Clone)]
+struct StorageRange {
+    range: Range<u64>,
+    stream: Arc<Mutex<RangeStream>>,
+}
+
+struct RangeStream {
+    reader: BufReader<Box<dyn Reader>>,
+    position: u64,
+}
+
+impl Drop for RangeStream {
+    fn drop(&mut self) {
+        let _ = self.reader.get_mut().close();
+    }
+}
+
+impl StorageRange {
+    fn new(range: Range<u64>, reader: Box<dyn Reader>) -> Self {
+        let stream = Arc::new(Mutex::new(RangeStream {
+            reader: BufReader::new(reader),
+            position: range.start,
+        }));
+        Self { range, stream }
+    }
+
+    fn open(file: &StorageFile, range: Range<u64>) -> Result<Self, String> {
+        let reader = file
+            .store
+            .open(
+                &file.ctx,
+                &file.path,
+                Some(&ReaderOption {
+                    start_offset: Some(range.start as i64),
+                    end_offset: Some(range.end as i64),
+                    prefetch_size: 0,
+                }),
+            )
+            .map_err(|error| error.to_string())?;
+        Ok(Self::new(range, reader))
+    }
+}
+
+struct RangeRead {
+    file: StorageRange,
+    position: u64,
+}
+
+impl Read for RangeRead {
+    fn read(&mut self, out: &mut [u8]) -> io::Result<usize> {
+        let length = out.len().min(self.file.range.end.saturating_sub(self.position) as usize);
+        if length == 0 {
+            return Ok(0);
+        }
+        let mut stream = self
+            .file
+            .stream
+            .lock()
+            .map_err(|_| io::Error::other("Parquet range stream lock poisoned"))?;
+        if stream.position != self.position {
+            stream.reader.seek(SeekFrom::Start(self.position))?;
+            stream.position = self.position;
+        }
+        let n = stream.reader.read(&mut out[..length])?;
+        stream.position += n as u64;
+        self.position += n as u64;
+        Ok(n)
+    }
+}
+
+impl Length for StorageRange {
+    fn len(&self) -> u64 {
+        self.range.end
+    }
+}
+
+impl ChunkReader for StorageRange {
+    type T = RangeRead;
+
+    fn get_read(&self, start: u64) -> parquet::errors::Result<Self::T> {
+        if start < self.range.start || start > self.range.end {
+            return Err(parquet::errors::ParquetError::EOF(
+                "Parquet read starts outside storage range".to_owned(),
+            ));
+        }
+        Ok(RangeRead { file: self.clone(), position: start })
+    }
+
+    fn get_bytes(&self, start: u64, length: usize) -> parquet::errors::Result<Bytes> {
+        if start.checked_add(length as u64).is_none_or(|end| end > self.range.end) {
+            return Err(parquet::errors::ParquetError::EOF(
+                "Parquet read exceeds storage range".to_owned(),
+            ));
+        }
+        let mut reader = self.get_read(start)?;
+        let mut bytes = vec![0; length];
+        reader.read_exact(&mut bytes)?;
+        Ok(Bytes::from(bytes))
+    }
+}
+
+fn open_columns(file: &StorageFile, metadata: &RowGroupMetaData) -> Result<Vec<StorageRange>, String> {
+    let mut columns = Vec::with_capacity(metadata.num_columns());
+    for batch in metadata.columns().chunks(COLUMN_OPEN_LIMIT) {
+        let opened = std::thread::scope(|scope| {
+            let handles: Vec<_> = batch
+                .iter()
+                .map(|column| {
+                    // StorageFile already validated these bounds for the row group.
+                    let (start, length) = column.byte_range();
+                    scope.spawn(move || StorageRange::open(file, start..start + length))
+                })
+                .collect();
+            handles
+                .into_iter()
+                .map(|handle| {
+                    handle
+                        .join()
+                        .map_err(|_| "Parquet column open panicked".to_owned())?
+                })
+                .collect::<Vec<_>>()
+        });
+        for column in opened {
+            columns.push(column?);
+        }
+    }
+    Ok(columns)
+}
+
+fn read_metadata(ctx: &Context, store: &dyn Storage, path: &str, file_size: i64) -> Result<(u64, ParquetMetaData), String> {
+    let mut reader = store.open(ctx, path, None).map_err(|error| error.to_string())?;
+    let size = if file_size > 0 {
+        file_size as u64
+    } else {
+        match reader.get_file_size() {
+            Ok(size) if size >= 0 => size as u64,
+            Ok(_) => {
+                let _ = reader.close();
+                return Err("negative Parquet file size".to_owned());
+            }
+            Err(error) => {
+                let _ = reader.close();
+                return Err(error.to_string());
+            }
+        }
+    };
+    let file = StorageRange::new(0..size, reader);
+    let metadata = ParquetMetaDataReader::new().parse_and_finish(&file).map_err(pq_err)?;
+    Ok((size, metadata))
 }
 
 fn pq_err(e: parquet::errors::ParquetError) -> String {
@@ -312,7 +539,8 @@ pub struct Row {
 
 /// Go `Parser`.
 pub struct Parser {
-    reader: SerializedFileReader<StorageFile>,
+    file: StorageFile,
+    metadata: ParquetMetaData,
     col_types: Vec<ParquetColumnType>,
     col_names: Vec<String>,
     max_def_levels: Vec<i16>,
@@ -324,6 +552,7 @@ pub struct Parser {
     total_rows: i64,
     total_read_rows: i64,
     last_row: Row,
+    row_buffer: Vec<Datum>,
 }
 
 /// Go's `*time.Location` as the zone the datum layer reads.
@@ -336,31 +565,12 @@ pub fn session_zone(zone: tidb_timeutil::TimeZone) -> SessionTimeZone {
     }
 }
 
-/// Go `estimateRowSize`.
-fn estimate_row_size(row: &[Datum]) -> usize {
-    row.iter()
-        .map(|d| match d {
-            Datum::Null => 0,
-            Datum::String(s) => s.bytes().len(),
-            _ => 8,
-        })
-        .sum()
-}
-
 impl Parser {
     /// Go `NewParser`: opens the file's footer and the first row group.
     pub fn new(ctx: &Context, store: Arc<dyn Storage>, path: &str, file_size: i64, meta: FileMeta) -> Result<Self, String> {
-        let size = if file_size > 0 {
-            file_size as u64
-        } else {
-            let mut r = store.open(ctx, path, None).map_err(|e| e.to_string())?;
-            let size = r.get_file_size().map_err(|e| e.to_string())? as u64;
-            let _ = r.close();
-            size
-        };
-        let file = StorageFile { ctx: ctx.clone(), store, path: path.to_owned(), size };
-        let reader = SerializedFileReader::new(file).map_err(pq_err)?;
-        let file_meta = reader.metadata().file_metadata();
+        let (size, metadata) = read_metadata(ctx, store.as_ref(), path, file_size)?;
+        let file = StorageFile { ctx: ctx.clone(), store, path: Arc::from(path), size, buffered: None };
+        let file_meta = metadata.file_metadata();
         let schema = file_meta.schema_descr();
         if schema.columns().iter().any(|c| c.max_rep_level() > 0) {
             return Err("nested or repeated Parquet fields are unsupported".to_owned());
@@ -413,10 +623,11 @@ impl Parser {
             };
             col_types.push(ParquetColumnType { logical_type, spark_rebase_micros });
         }
-        let total_row_group = reader.metadata().num_row_groups();
+        let total_row_group = metadata.num_row_groups();
         let total_rows = file_meta.num_rows();
         let mut parser = Self {
-            reader,
+            file,
+            metadata,
             col_types,
             col_names,
             max_def_levels,
@@ -428,6 +639,7 @@ impl Parser {
             total_rows,
             total_read_rows: 0,
             last_row: Row::default(),
+            row_buffer: Vec::new(),
         };
         if total_row_group > 0 {
             parser.build_row_group_parser()?;
@@ -437,12 +649,27 @@ impl Parser {
 
     /// Go `buildRowGroupParser`.
     fn build_row_group_parser(&mut self) -> Result<(), String> {
-        let rg = self.reader.get_row_group(self.cur_row_group).map_err(pq_err)?;
+        let metadata = self.metadata.row_group(self.cur_row_group);
+        let file = self.file.with_row_group(metadata)?;
+        let props = Arc::new(ReaderProperties::builder().build());
+        let total_rows = metadata.num_rows();
         let mut iterators = Vec::with_capacity(self.col_types.len());
-        for (i, max_def) in self.max_def_levels.iter().enumerate() {
-            iterators.push(AnyIter::new(rg.get_column_reader(i).map_err(pq_err)?, *max_def));
+        if file.buffered.is_some() || total_rows == 0 {
+            let rg = SerializedRowGroupReader::new(Arc::new(file), metadata, None, props).map_err(pq_err)?;
+            for (i, max_def) in self.max_def_levels.iter().enumerate() {
+                iterators.push(AnyIter::new(rg.get_column_reader(i).map_err(pq_err)?, *max_def));
+            }
+        } else {
+            let rows = usize::try_from(total_rows).map_err(|_| "invalid Parquet row-group row count")?;
+            let streams = open_columns(&file, metadata)?;
+            for ((column, max_def), stream) in metadata.columns().iter().zip(&self.max_def_levels).zip(streams) {
+                let page_reader = SerializedPageReader::new_with_properties(
+                    Arc::new(stream), column, rows, None, Arc::clone(&props),
+                ).map_err(pq_err)?;
+                let reader = get_column_reader(column.column_descr_ptr(), Box::new(page_reader));
+                iterators.push(AnyIter::new(reader, *max_def));
+            }
         }
-        let total_rows = self.reader.metadata().row_group(self.cur_row_group).num_rows();
         self.row_group = Some(RowGroupParser { read_rows: 0, total_rows, iterators });
         Ok(())
     }
@@ -458,8 +685,9 @@ impl Parser {
         Ok(true)
     }
 
-    /// Go `readSingleRow`; `Ok(None)` at the end of the file.
-    fn read_single_row(&mut self) -> Result<Option<Vec<Datum>>, String> {
+    /// Go `readSingleRow`; decodes into the spare row buffer and returns its
+    /// estimated byte length. `Ok(None)` means end of file.
+    fn read_single_row(&mut self) -> Result<Option<usize>, String> {
         loop {
             match &self.row_group {
                 Some(rg) if rg.read_rows < rg.total_rows => break,
@@ -472,27 +700,40 @@ impl Parser {
             }
         }
         let rg = self.row_group.as_mut().expect("a row group");
-        let mut row = Vec::with_capacity(rg.iterators.len());
+        self.row_buffer.reserve(rg.iterators.len());
+        let mut size = 0;
         for (col, iter) in rg.iterators.iter_mut().enumerate() {
-            row.push(iter.next(&self.col_types[col], &self.loc).map_err(|e| format!("parquet read column failed: {e}"))?);
+            let datum = iter
+                .next(&self.col_types[col], &self.loc)
+                .map_err(|e| format!("parquet read column failed: {e}"))?;
+            size += match &datum {
+                Datum::Null => 0,
+                Datum::String(s) => s.bytes().len(),
+                _ => 8,
+            };
+            self.row_buffer.push(datum);
         }
         rg.read_rows += 1;
         self.total_read_rows += 1;
-        Ok(Some(row))
+        Ok(Some(size))
     }
 
     /// Go `ReadRow`; `Ok(false)` at the end of the file (Go's `io.EOF`).
     pub fn read_row(&mut self) -> Result<bool, String> {
         self.last_row.row_id += 1;
         self.last_row.length = 0;
-        let Some(row) = self.read_single_row()? else { return Ok(false) };
-        let size = estimate_row_size(&row);
-        if size > MAX_ROW_SIZE {
-            return Err(ERR_ROW_TOO_LARGE.to_owned());
-        }
-        self.last_row.row = row;
-        self.last_row.length = size;
-        Ok(true)
+        let result = match self.read_single_row() {
+            Ok(Some(size)) if size <= MAX_ROW_SIZE => {
+                std::mem::swap(&mut self.last_row.row, &mut self.row_buffer);
+                self.last_row.length = size;
+                Ok(true)
+            }
+            Ok(Some(_)) => Err(ERR_ROW_TOO_LARGE.to_owned()),
+            Ok(None) => Ok(false),
+            Err(error) => Err(error),
+        };
+        self.row_buffer.clear();
+        result
     }
 
     /// Go `LastRow`.
@@ -517,7 +758,9 @@ impl Parser {
     pub fn set_pos(&mut self, pos: i64, row_id: i64) -> Result<(), String> {
         let to_read = pos - self.last_row.row_id;
         for _ in 0..to_read.max(0) {
-            if self.read_single_row()?.is_none() {
+            let result = self.read_single_row();
+            self.row_buffer.clear();
+            if result?.is_none() {
                 return Err("EOF".to_owned());
             }
         }
@@ -542,19 +785,15 @@ impl Parser {
 
 /// Go `ReadRowCount`.
 pub fn read_row_count(ctx: &Context, store: Arc<dyn Storage>, path: &str) -> Result<i64, String> {
-    let mut r = store.open(ctx, path, None).map_err(|e| e.to_string())?;
-    let size = r.get_file_size().map_err(|e| e.to_string())? as u64;
-    let _ = r.close();
-    let file = StorageFile { ctx: ctx.clone(), store, path: path.to_owned(), size };
-    let reader = SerializedFileReader::new(file).map_err(pq_err)?;
-    Ok(reader.metadata().file_metadata().num_rows())
+    let (_, metadata) = read_metadata(ctx, store.as_ref(), path, 0)?;
+    Ok(metadata.file_metadata().num_rows())
 }
 
 /// Go `SampleStatisticsFromParquet`: the file's row count and the average
 /// size of its first (at most 1024) rows.
 pub fn sample_statistics_from_parquet(ctx: &Context, path: &str, store: Arc<dyn Storage>) -> Result<(i64, f64), String> {
     let mut parser = Parser::new(ctx, store, path, 0, FileMeta::default())?;
-    if parser.total_row_group == 0 || parser.reader.metadata().row_group(0).num_rows() == 0 {
+    if parser.total_row_group == 0 || parser.metadata.row_group(0).num_rows() == 0 {
         return Ok((0, 0.0));
     }
     let total_read_rows = parser.total_rows;

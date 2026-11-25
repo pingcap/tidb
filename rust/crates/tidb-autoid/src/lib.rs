@@ -459,17 +459,22 @@ pub fn advance(base: u64, step: u64, unsigned: bool) -> u64 {
 /// transaction allocates from is the same allocator the committed table has.
 #[derive(Clone, Debug)]
 pub struct CachedAutoIdAllocator {
-    /// Go `allocator.base`/`allocator.end`: the ids `(base, end]` reserved
-    /// for this allocator and not yet handed out.
-    cache: Arc<Mutex<AutoIdRange>>,
-    /// Where the counter really lives.
-    store: Arc<dyn AutoIdStore>,
+    state: Arc<CachedAutoIdState>,
     /// Initial reservation size. The default enables Go's dynamic `NextStep`;
     /// any explicitly different value remains a fixed custom step.
     initial_step: u64,
     dynamic_step: bool,
     /// Go `allocator.isUnsigned`: which domain the patterns are read in.
     pub unsigned: bool,
+}
+
+#[derive(Debug)]
+struct CachedAutoIdState {
+    /// The reserved range `(base, end]` and its reservation history.
+    cache: Mutex<AutoIdRange>,
+    /// The counter backing all ranges. An unused local allocator does not
+    /// allocate its counter, and its clones still initialize one together.
+    store: std::sync::OnceLock<Arc<dyn AutoIdStore>>,
 }
 
 /// AutoID request lifetime, sharing the SQL killer and transport cancellation.
@@ -755,7 +760,10 @@ pub struct AutoIdAllocator {
 }
 impl AutoIdAllocator {
     pub fn new() -> Self {
-        Self::over(Arc::new(LocalAutoIdStore::new()), DEFAULT_AUTO_ID_STEP)
+        Self {
+            backend: AllocatorBackend::Cached(CachedAutoIdAllocator::new()),
+            unsigned: false,
+        }
     }
     pub fn over(store: Arc<dyn AutoIdStore>, step: u64) -> Self {
         Self {
@@ -1084,31 +1092,41 @@ struct AutoIdRange {
 impl CachedAutoIdAllocator {
     /// A fresh in-process allocator, whose first id is 1.
     pub fn new() -> Self {
-        Self::over(Arc::new(LocalAutoIdStore::new()), DEFAULT_AUTO_ID_STEP)
+        Self::with_store(std::sync::OnceLock::new(), DEFAULT_AUTO_ID_STEP)
     }
 
     /// An allocator over `store`, reserving `step` ids at a time.
     pub fn over(store: Arc<dyn AutoIdStore>, step: u64) -> Self {
+        Self::with_store(std::sync::OnceLock::from(store), step)
+    }
+
+    fn with_store(store: std::sync::OnceLock<Arc<dyn AutoIdStore>>, step: u64) -> Self {
         let step = step.max(1);
-        CachedAutoIdAllocator {
-            // An empty range, so the first allocation reserves.
-            cache: Arc::new(Mutex::new(AutoIdRange {
-                base: 0,
-                end: 0,
-                step,
-                last_reserve_at: Instant::now(),
-            })),
-            store,
+        Self {
+            state: Arc::new(CachedAutoIdState {
+                // An empty range, so the first allocation reserves.
+                cache: Mutex::new(AutoIdRange {
+                    base: 0,
+                    end: 0,
+                    step,
+                    last_reserve_at: Instant::now(),
+                }),
+                store,
+            }),
             initial_step: step,
             dynamic_step: step == DEFAULT_AUTO_ID_STEP,
             unsigned: false,
         }
     }
 
+    fn store(&self) -> &Arc<dyn AutoIdStore> {
+        self.state.store.get_or_init(|| Arc::new(LocalAutoIdStore::new()))
+    }
+
     /// Whether `other` is a clone of this allocator rather than a second one
     /// over the same store: same cache, so the same reserved range.
     pub fn shares_cache_with(&self, other: &CachedAutoIdAllocator) -> bool {
-        Arc::ptr_eq(&self.cache, &other.cache)
+        Arc::ptr_eq(&self.state, &other.state)
     }
 
     /// Builds a fresh local range over the same global counter.
@@ -1117,7 +1135,7 @@ impl CachedAutoIdAllocator {
     /// global high-water mark remains, while the old table object's unused
     /// local range is abandoned.
     pub fn with_step(&self, step: u64) -> Self {
-        let mut allocator = Self::over(self.store.clone(), step);
+        let mut allocator = Self::over(self.store().clone(), step);
         allocator.unsigned = self.unsigned;
         allocator
     }
@@ -1178,7 +1196,7 @@ impl CachedAutoIdAllocator {
         if n == 0 {
             return Ok((0, 0));
         }
-        let mut cache = self.cache.lock().expect("auto id cache poisoned");
+        let mut cache = self.state.cache.lock().expect("auto id cache poisoned");
         // Go `alloc4Signed`/`alloc4Unsigned` first rebases to `offset - 1`
         // when the offset lies beyond the current base. The table caller
         // normally supplies an offset no greater than the increment, but the
@@ -1193,7 +1211,7 @@ impl CachedAutoIdAllocator {
                     stats.record_rebase();
                 }
                 let (_, end) = self
-                    .store
+                    .store()
                     .rebase_alloc(offset_base, cache.step, self.unsigned, stats)
                     .map_err(AutoIdError::Store)?;
                 cache.end = end;
@@ -1220,7 +1238,7 @@ impl CachedAutoIdAllocator {
                 stats.record_alloc();
             }
             let (base, end) = self
-                .store
+                .store()
                 .reserve_batch(next_reservation, n, increment, offset, self.unsigned, stats)
                 .map_err(AutoIdError::Store)?;
             // The shared store may have advanced since this allocator last
@@ -1262,7 +1280,7 @@ impl CachedAutoIdAllocator {
     /// 30000-wide reservation), not 101 (oracle-captured on g-view). The
     /// cached range keeps `end` INCLUSIVE, hence the +1.
     pub fn next(&self) -> u64 {
-        self.cache
+        self.state.cache
             .lock()
             .expect("auto id cache poisoned")
             .end
@@ -1279,7 +1297,7 @@ impl CachedAutoIdAllocator {
     /// 103). A table whose allocator never drew reports base(0)+1 == 1 -- go
     /// renders that shape as 0, which nothing pins.
     pub fn allocated_next(&self) -> u64 {
-        self.cache
+        self.state.cache
             .lock()
             .expect("auto id cache poisoned")
             .base
@@ -1288,7 +1306,7 @@ impl CachedAutoIdAllocator {
 
     /// The next id beyond all ranges reserved in the shared store.
     pub fn next_global(&self) -> Result<u64, AutoIdStoreError> {
-        self.store.next_global()
+        self.store().next_global()
     }
 
     /// Advances the shared counter by one for a DDL validation and discards
@@ -1297,13 +1315,13 @@ impl CachedAutoIdAllocator {
     /// therefore starts above the new shared high-water mark.
     pub fn advance_global_one(&self) -> Result<u64, AutoIdError> {
         let (base, end) = self
-            .store
+            .store()
             .reserve(1, self.unsigned)
             .map_err(AutoIdError::Store)?;
         if end == base {
             return Err(AutoIdError::Exhausted);
         }
-        *self.cache.lock().expect("auto id cache poisoned") = AutoIdRange {
+        *self.state.cache.lock().expect("auto id cache poisoned") = AutoIdRange {
             base: end,
             end: 0,
             step: self.initial_step,
@@ -1329,7 +1347,7 @@ impl CachedAutoIdAllocator {
         stats: Option<&AllocatorRuntimeStats>,
         value: u64,
     ) -> Result<(), AutoIdStoreError> {
-        let mut cache = self.cache.lock().expect("auto id cache poisoned");
+        let mut cache = self.state.cache.lock().expect("auto id cache poisoned");
         if !exceeds(value, cache.base, self.unsigned) {
             return Ok(());
         }
@@ -1342,7 +1360,7 @@ impl CachedAutoIdAllocator {
             if let Some(stats) = stats {
                 stats.record_rebase();
             }
-            let (base, end) = self.store.rebase_alloc(value, cache.step, self.unsigned, stats)?;
+            let (base, end) = self.store().rebase_alloc(value, cache.step, self.unsigned, stats)?;
             cache.end = end;
             cache.base = base;
         } else {
@@ -1364,12 +1382,12 @@ impl CachedAutoIdAllocator {
     /// makes the same cut (`rebase4Signed`: "satisfied by alloc.end, need to
     /// update alloc.base" and nothing more).
     pub fn rebase(&self, value: u64) -> Result<(), AutoIdStoreError> {
-        let mut cache = self.cache.lock().expect("auto id cache poisoned");
+        let mut cache = self.state.cache.lock().expect("auto id cache poisoned");
         if !exceeds(value, cache.base, self.unsigned) {
             return Ok(());
         }
         if exceeds(value, cache.end, self.unsigned) {
-            self.store.rebase(value, self.unsigned, None)?;
+            self.store().rebase(value, self.unsigned, None)?;
             cache.end = value;
         }
         cache.base = value;
@@ -1410,8 +1428,8 @@ impl CachedAutoIdAllocator {
     /// exactly `n`, even when that moves the counter backwards.
     pub fn force_rebase_to_next(&self, next: u64) -> Result<(), AutoIdError> {
         let base = self.checked_force_rebase_base(next)?;
-        let mut cache = self.cache.lock().expect("auto id cache poisoned");
-        self.store
+        let mut cache = self.state.cache.lock().expect("auto id cache poisoned");
+        self.store()
             .force_rebase(base, self.unsigned)
             .map_err(AutoIdError::Store)?;
         *cache = AutoIdRange {
@@ -1438,7 +1456,7 @@ impl CachedAutoIdAllocator {
     /// did nothing. The ids in the abandoned range are skipped, which is the
     /// same hole Go leaves.
     pub fn forget_reservation(&self) {
-        let mut cache = self.cache.lock().expect("auto id cache poisoned");
+        let mut cache = self.state.cache.lock().expect("auto id cache poisoned");
         *cache = AutoIdRange {
             base: 0,
             end: 0,
@@ -1452,8 +1470,8 @@ impl CachedAutoIdAllocator {
     /// Go reaches this by replacing the table (TRUNCATE builds a new table id
     /// with a fresh allocator), so unlike `rebase` it also moves DOWN.
     pub fn reset(&self) -> Result<(), AutoIdStoreError> {
-        let mut cache = self.cache.lock().expect("auto id cache poisoned");
-        self.store.reset()?;
+        let mut cache = self.state.cache.lock().expect("auto id cache poisoned");
+        self.store().reset()?;
         *cache = AutoIdRange {
             base: 0,
             end: 0,
@@ -1488,7 +1506,7 @@ mod tests {
     }
 
     fn cache_end(allocator: &CachedAutoIdAllocator) -> u64 {
-        allocator.cache.lock().expect("auto id cache").end
+        allocator.state.cache.lock().expect("auto id cache").end
     }
 
     /// Source: `pkg/meta/autoid/autoid_test.go::TestNextStep`.
@@ -1508,6 +1526,24 @@ mod tests {
 
         let allocator = allocator.with_step(100);
         assert_eq!(allocator.alloc(1, 1), Ok(DEFAULT_AUTO_ID_STEP + 1));
+        assert_eq!(allocator.next_global(), Ok(DEFAULT_AUTO_ID_STEP + 101));
+    }
+
+    #[test]
+    fn local_allocator_clones_share_the_counter_before_its_first_use() {
+        let allocator = CachedAutoIdAllocator::new();
+        let clone = allocator.clone();
+        let separate = CachedAutoIdAllocator::new();
+        assert!(allocator.shares_cache_with(&clone));
+        assert!(!allocator.shares_cache_with(&separate));
+
+        assert_eq!(clone.alloc(1, 1), Ok(1));
+        assert_eq!(allocator.alloc(1, 1), Ok(2));
+        assert_eq!(separate.alloc(1, 1), Ok(1));
+
+        let replaced = clone.with_step(100);
+        assert!(!allocator.shares_cache_with(&replaced));
+        assert_eq!(replaced.alloc(1, 1), Ok(DEFAULT_AUTO_ID_STEP + 1));
         assert_eq!(allocator.next_global(), Ok(DEFAULT_AUTO_ID_STEP + 101));
     }
 
@@ -1817,7 +1853,7 @@ mod tests {
             Err(AutoIdError::Store(AutoIdStoreError("injected".to_owned())))
         );
         {
-            let cache = allocator.cache.lock().unwrap();
+            let cache = allocator.state.cache.lock().unwrap();
             assert_eq!((cache.base, cache.end), (0, 0));
         }
 
@@ -1825,7 +1861,7 @@ mod tests {
             allocator.rebase(100),
             Err(AutoIdStoreError("injected".to_owned()))
         );
-        let cache = allocator.cache.lock().unwrap();
+        let cache = allocator.state.cache.lock().unwrap();
         assert_eq!((cache.base, cache.end), (0, 0));
     }
 
@@ -1894,7 +1930,7 @@ mod tests {
         let AllocatorBackend::Cached(cached) = &allocator.backend else {
             panic!("cached allocator")
         };
-        let cache = cached.cache.lock().unwrap();
+        let cache = cached.state.cache.lock().unwrap();
         assert_eq!((cache.base, cache.end), (0, 0));
     }
 

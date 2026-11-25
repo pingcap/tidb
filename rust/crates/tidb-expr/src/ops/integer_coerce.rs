@@ -254,7 +254,8 @@ pub(super) fn integer_add(a: Integer, b: Integer) -> Result<Datum, EvalError> {
 /// `true` when `a - b` overflows the result type. `a`/`b` are the operands
 /// reinterpreted as `i64` (Go passes the raw `int64` bits), and
 /// `force_signed` is `NO_UNSIGNED_SUBTRACTION`.
-pub(super) fn minus_overflows(
+#[inline]
+pub(crate) fn minus_overflows(
     lhs_unsigned: bool,
     rhs_unsigned: bool,
     force_signed: bool,
@@ -300,7 +301,7 @@ pub(super) fn minus_overflows(
 
 /// MySQL shifts operate on 64-bit unsigned values; a shift amount `>= 64`
 /// yields 0.
-pub(super) fn shift_left(a: u64, b: u64) -> u64 {
+pub(crate) fn shift_left(a: u64, b: u64) -> u64 {
     if b >= 64 {
         0
     } else {
@@ -308,7 +309,7 @@ pub(super) fn shift_left(a: u64, b: u64) -> u64 {
     }
 }
 
-pub(super) fn shift_right(a: u64, b: u64) -> u64 {
+pub(crate) fn shift_right(a: u64, b: u64) -> u64 {
     if b >= 64 {
         0
     } else {

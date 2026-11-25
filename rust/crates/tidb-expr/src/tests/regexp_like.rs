@@ -36,6 +36,70 @@ fn regexp_like_source_vectors_reach_the_rewritten_evaluator() {
     assert!(chunk_e("regexp_like('abc', 'abc', 'p')").contains("Invalid match type"));
 }
 
+#[test]
+fn regexp_like_with_column_patterns_matches_each_row() {
+    use crate::{
+        constant::Constant,
+        expression::{Column, Expression},
+        Datum, NoColumns,
+    };
+    use tidb_chunk::chunk::Chunk;
+    use tidb_datatype::{FieldType, FieldTypeCode};
+
+    let string_type = FieldType::new(FieldTypeCode::VarString);
+    let column = |index| {
+        let mut column = Column::new(index, string_type.clone());
+        column.index = index;
+        Expression::Column(column)
+    };
+    let function = crate::new_function::new_function_base(
+        &NoColumns,
+        "regexp_like",
+        FieldType::new(FieldTypeCode::LongLong),
+        vec![column(0), column(1)],
+    )
+    .unwrap();
+    let constant = crate::new_function::new_function_base(
+        &NoColumns,
+        "regexp_like",
+        FieldType::new(FieldTypeCode::LongLong),
+        vec![
+            column(0),
+            Expression::Constant(Constant::new(
+                Datum::new_string_datum(r"\p{Tai_Yo}+"),
+                string_type.clone(),
+            )),
+        ],
+    )
+    .unwrap();
+    let rows = [
+        ("prefixſKtail", "(?i)sk", 1),
+        ("prefixſKtail", "(?-i)sk", 0),
+        ("abc", r"\W+", 0),
+        ("abc-1", r"\W+", 1),
+        ("猫Σ", r"\p{Greek}+", 1),
+        ("\u{1e6c0}", r"\p{Tai_Yo}+", 1),
+    ];
+    let mut chunk = Chunk::new_chunk_with_capacity(
+        &[string_type.clone(), string_type],
+        rows.len(),
+    );
+    for (text, pattern, _) in rows {
+        chunk.append_string(0, text);
+        chunk.append_string(1, pattern);
+    }
+    for (index, (text, _, expected)) in rows.into_iter().enumerate() {
+        assert_eq!(
+            function.eval(&NoColumns, chunk.get_row(index)).unwrap(),
+            Datum::Int(expected)
+        );
+        assert_eq!(
+            constant.eval(&NoColumns, chunk.get_row(index)).unwrap(),
+            Datum::Int(i64::from(text == "\u{1e6c0}"))
+        );
+    }
+}
+
 /// Positional regexp functions from `pkg/expression/builtin_regexp_test.go`.
 /// Their scalar implementations already share the Go algorithms; this test
 /// proves the rewritten SQL path reaches them with the source argument casts.

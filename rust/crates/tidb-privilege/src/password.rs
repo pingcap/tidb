@@ -258,7 +258,8 @@ pub(super) fn hash_tidb_sm3(password: &str) -> String {
 }
 
 fn hash_password(password: &str, plugin: &str) -> String {
-    let salt = tidb_fastrand::buf(tidb_parser::auth::SALT_LENGTH);
+    let mut salt = [0; tidb_parser::auth::SALT_LENGTH];
+    tidb_fastrand::fill(&mut salt);
     let encoded =
         tidb_parser::auth::hash_password_with_salt_bytes(password.as_bytes(), &salt, plugin);
     String::from_utf8(encoded).expect("generated authentication strings are ASCII")

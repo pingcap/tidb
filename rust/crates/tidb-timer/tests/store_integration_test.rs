@@ -28,14 +28,14 @@
 //!   etcd transport, so two in-memory notifiers cannot stand in for it.
 
 use std::collections::HashMap;
-use std::sync::mpsc::TryRecvError;
 use std::time::Duration;
 
+use crossbeam_channel::RecvTimeoutError;
 use tidb_timer::go_time::{GoTime, MINUTE};
 use tidb_timer::mem_store::{new_mem_timer_watch_event_notifier, new_memory_timer_store};
 use tidb_timer::store::{
     and, not, or, Context, OptionalVal, TimerCond, TimerStore, TimerUpdate,
-    TimerWatchEventNotifier, WatchTimerEvent, WatchTimerEventType, WatchTimerResponse,
+    TimerWatchEventNotifier, WatchTimerChan, WatchTimerEvent, WatchTimerEventType,
 };
 use tidb_timer::timer::{
     EventExtra, ManualRequest, SchedEventStatus, SchedPolicyType, TimerRecord, TimerSpec,
@@ -67,6 +67,27 @@ fn test_mem_notifier() {
     run_notifier_test(notifier.clone());
     notifier.close();
 
+}
+
+#[test]
+fn test_mem_notifier_closes_with_pending_sends() {
+    let notifier = new_mem_timer_watch_event_notifier();
+    let watch = notifier.watch(&Context::background());
+    for i in 0..16 {
+        notifier.notify(WatchTimerEventType::Update, &i.to_string());
+    }
+
+    let (stopped_tx, stopped_rx) = crossbeam_channel::bounded(1);
+    let closer = std::thread::spawn(move || {
+        notifier.close();
+        stopped_tx.send(()).unwrap();
+    });
+    stopped_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+    closer.join().unwrap();
+    assert!(matches!(
+        watch.recv_timeout(Duration::from_secs(1)),
+        Err(RecvTimeoutError::Disconnected)
+    ));
 }
 
 fn run_timer_store_test(store: &TimerStore) {
@@ -679,9 +700,7 @@ fn run_timer_store_watch_test(store: &TimerStore) {
     };
 
     let ch = store.watch(&ctx);
-    let assert_watch_event = |ch: &std::sync::mpsc::Receiver<WatchTimerResponse>,
-                              tp: Option<WatchTimerEventType>,
-                              id: &str| {
+    let assert_watch_event = |ch: &WatchTimerChan, tp: Option<WatchTimerEventType>, id: &str| {
         let resp = ch.recv_timeout(ONE_MINUTE).expect("no response");
         match tp {
             None => panic!("expected channel close, got {resp:?}"),
@@ -713,32 +732,15 @@ fn run_timer_store_watch_test(store: &TimerStore) {
     assert_watch_event(&ch, Some(WatchTimerEventType::Delete), &id);
 
     cancel_fn.cancel();
-    // Go's per-watcher relay goroutine closes the channel as soon as the
-    // watcher context is done. The Rust notifier drops a cancelled watcher's
-    // sender on its next notification, so one more store mutation closes the
-    // channel without ever delivering an event to it.
-    let probe = TimerRecord {
-        spec: TimerSpec {
-            namespace: "probe".to_string(),
-            key: "/path/to/probe".to_string(),
-            sched_policy_type: SchedPolicyType::interval(),
-            sched_policy_expr: "1h".to_string(),
-            ..Default::default()
-        },
-        ..Default::default()
-    };
-    let probe_id = store.create(&Context::background(), &probe).unwrap();
-    match ch.try_recv() {
-        Err(TryRecvError::Disconnected) => {}
+    match ch.recv_timeout(Duration::from_secs(1)) {
+        Err(RecvTimeoutError::Disconnected) => {}
         other => panic!("expected closed channel after cancel, got {other:?}"),
     }
-    assert!(store.delete(&Context::background(), &probe_id).unwrap());
 }
 
 /// Go `runNotifierTest`.
 fn run_notifier_test(notifier: std::sync::Arc<dyn TimerWatchEventNotifier>) {
-    let check_watcher_events = |ch: &std::sync::mpsc::Receiver<WatchTimerResponse>,
-                                events: &[WatchTimerEvent]| {
+    let check_watcher_events = |ch: &WatchTimerChan, events: &[WatchTimerEvent]| {
         let mut got_events: Vec<WatchTimerEvent> = Vec::with_capacity(events.len());
         loop {
             match ch.recv_timeout(Duration::from_secs(60)) {
@@ -760,7 +762,7 @@ fn run_notifier_test(notifier: std::sync::Arc<dyn TimerWatchEventNotifier>) {
         assert_eq!(events, got_events);
     };
 
-    let check_watcher_closed = |ch: &std::sync::mpsc::Receiver<WatchTimerResponse>, expect_no_data: bool| {
+    let check_watcher_closed = |ch: &WatchTimerChan, expect_no_data: bool| {
         // Reads until the channel closes; any buffered data drains first and
         // fails only when `expect_no_data` forbids it (Go's `checkNoData`).
         loop {
@@ -768,10 +770,10 @@ fn run_notifier_test(notifier: std::sync::Arc<dyn TimerWatchEventNotifier>) {
                 Ok(resp) => {
                     assert!(!expect_no_data, "unexpected data: {resp:?}");
                 }
-                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                Err(RecvTimeoutError::Timeout) => {
                     panic!("wait closed timeout")
                 }
-                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return,
+                Err(RecvTimeoutError::Disconnected) => return,
             }
         }
     };

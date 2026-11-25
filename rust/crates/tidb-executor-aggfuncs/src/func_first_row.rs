@@ -15,18 +15,18 @@
 //! Go `pkg/executor/aggfuncs/func_first_row.go`: `FIRSTROW`, the value of a
 //! group's first row.
 //!
-//! Go keeps one struct per value type; here the first value is the `Datum`
+//! Go keeps one struct per value type; here the first value is generally the `Datum`
 //! the argument evaluated to, and each Go function keeps its own struct
 //! size, the bytes its stored value adds and its spill encoding.
 
 use tidb_chunk::chunk::Chunk;
 use tidb_chunk::row::Row;
-use tidb_datatype::{Datum, Decimal, MyDecimal, MAX_DECIMAL_SCALE};
+use tidb_datatype::{Datum, MyDecimal, MAX_DECIMAL_SCALE, MYDECIMAL_STRUCT_SIZE};
 use tidb_driver_error::ExecError;
-use tidb_goruntime::GoString;
 use tidb_serialization as util;
 
-use crate::agg_func::{deserialize_partial_result_common, partial, AggFunc, AggFuncUpdateContext, BaseAggFunc, PartialResult};
+use crate::agg_func::{append_rounded_decimal, deserialize_partial_result_common, deserialize_typed_partial_results, partial, AggFunc, AggFuncUpdateContext, BaseAggFunc, PartialResult, PartialResultString};
+use crate::func_sum::eval_my_decimal;
 use crate::spill_serialize_helper::SerializeHelper;
 
 /// Go `DefPartialResult4FirstRowIntSize`.
@@ -59,6 +59,14 @@ pub struct PartialResult4FirstRow {
     pub(crate) is_null: bool,
     pub(crate) got_first_row: bool,
     pub(crate) val: Option<Datum>,
+}
+
+/// Go's typed first-row states store the value directly.
+#[derive(Clone, Copy, Default)]
+struct FirstRowScalar<T> {
+    is_null: bool,
+    got_first_row: bool,
+    val: T,
 }
 
 /// The value type each Go `firstRow4X` holds.
@@ -103,8 +111,6 @@ impl FirstRowKind {
             return 0;
         };
         match (self, value) {
-            (Self::String, Datum::String(text)) => text.bytes().len() as i64,
-            (Self::String, Datum::Bytes(bytes)) => bytes.len() as i64,
             (Self::JSON, Datum::Json(json)) => json.value().len() as i64,
             (Self::VectorFloat32, Datum::VectorFloat32(vector)) => vector.estimated_mem_usage() as i64,
             (Self::Enum, Datum::Enum(value, _)) => value.name().len() as i64,
@@ -139,32 +145,21 @@ impl FirstRow {
         util::serialize_bool(p.is_null, buf);
         util::serialize_bool(p.got_first_row, buf);
         match (self.kind, p.val.as_ref()) {
-            (FirstRowKind::Int, Some(Datum::Int(value))) => util::serialize_i64(*value, buf),
-            (FirstRowKind::Int, Some(Datum::UInt(value))) => util::serialize_i64(*value as i64, buf),
-            (FirstRowKind::Int, _) => util::serialize_i64(0, buf),
+            (FirstRowKind::Int | FirstRowKind::Decimal, _) => {
+                unreachable!("integer and decimal first rows store their values directly")
+            }
             (FirstRowKind::Float32, Some(Datum::Float32(value) | Datum::Real(value))) => util::serialize_f32(*value as f32, buf),
             (FirstRowKind::Float32, _) => util::serialize_f32(0.0, buf),
             (FirstRowKind::Float64, Some(Datum::Real(value) | Datum::Float32(value))) => util::serialize_f64(*value, buf),
             (FirstRowKind::Float64, _) => util::serialize_f64(0.0, buf),
-            (FirstRowKind::Decimal, Some(Datum::Decimal(value))) => util::serialize_my_decimal(
-                &value.to_my_decimal().expect("a decimal has Go's MyDecimal form"),
-                buf,
-            ),
-            (FirstRowKind::Decimal, _) => util::serialize_my_decimal(&MyDecimal::default(), buf),
-            (FirstRowKind::String, Some(Datum::String(text))) => util::serialize_string(&GoString::from(text.bytes().to_vec()), buf),
-            (FirstRowKind::String, Some(Datum::Bytes(bytes))) => util::serialize_string(&GoString::from(bytes.clone()), buf),
-            (FirstRowKind::String, _) => util::serialize_string(&GoString::default(), buf),
+            (FirstRowKind::String | FirstRowKind::JSON, _) => {
+                unreachable!("string and JSON first rows write the payload directly")
+            }
             (FirstRowKind::Time, Some(Datum::Time(value))) => util::serialize_time(*value, buf),
             // Go's zero `types.Time` is the zero packed word.
             (FirstRowKind::Time, _) => util::serialize_u64(0, buf),
             (FirstRowKind::Duration, Some(Datum::Duration(value))) => util::serialize_duration(*value, buf),
             (FirstRowKind::Duration, _) => util::serialize_duration(Default::default(), buf),
-            (FirstRowKind::JSON, Some(Datum::Json(value))) => util::serialize_binary_json(value, buf),
-            // Go's zero `types.BinaryJSON`: type code 0 and no value bytes.
-            (FirstRowKind::JSON, _) => {
-                util::serialize_json_type_code(0, buf);
-                util::serialize_bytes_buffer(&[], buf);
-            }
             (FirstRowKind::Enum, Some(Datum::Enum(value, _))) => util::serialize_enum(value, buf),
             (FirstRowKind::Enum, _) => util::serialize_enum(&Default::default(), buf),
             (FirstRowKind::Set, Some(Datum::Set(value, _))) => util::serialize_set(value, buf),
@@ -180,11 +175,11 @@ impl FirstRow {
         let got_first_row = pab.read_bool();
         let collation = tidb_charset::Collation::DEFAULT;
         let value = match self.kind {
-            FirstRowKind::Int => Datum::Int(pab.read_i64()),
+            FirstRowKind::Int | FirstRowKind::Decimal | FirstRowKind::String => {
+                unreachable!("typed first rows store their values directly")
+            }
             FirstRowKind::Float32 => Datum::Float32(f64::from(pab.read_f32())),
             FirstRowKind::Float64 => Datum::Real(pab.read_f64()),
-            FirstRowKind::Decimal => Datum::Decimal(Decimal::from_my_decimal(&pab.read_my_decimal())),
-            FirstRowKind::String => Datum::new_string_datum(pab.read_string().as_bytes().to_vec()),
             FirstRowKind::Time => Datum::Time(pab.read_time()),
             FirstRowKind::Duration => Datum::Duration(pab.read_duration()),
             FirstRowKind::JSON => Datum::Json(pab.read_binary_json()),
@@ -202,14 +197,81 @@ impl FirstRow {
 
 impl AggFunc for FirstRow {
     fn alloc_partial_result(&self) -> (PartialResult, i64) {
-        (Box::new(PartialResult4FirstRow::default()), self.kind.size())
+        let state: PartialResult = match self.kind {
+            FirstRowKind::Int => Box::new(FirstRowScalar::<i64>::default()),
+            FirstRowKind::Decimal => Box::new(FirstRowScalar::<MyDecimal>::default()),
+            FirstRowKind::String => Box::new(FirstRowScalar::<PartialResultString>::default()),
+            _ => Box::new(PartialResult4FirstRow::default()),
+        };
+        (state, self.kind.size())
     }
 
     fn reset_partial_result(&self, pr: &mut PartialResult) {
-        *partial::<PartialResult4FirstRow>(pr) = PartialResult4FirstRow::default();
+        match self.kind {
+            FirstRowKind::Int => *partial::<FirstRowScalar<i64>>(pr) = FirstRowScalar::default(),
+            FirstRowKind::Decimal => {
+                let p = partial::<FirstRowScalar<MyDecimal>>(pr);
+                p.is_null = false;
+                p.got_first_row = false;
+            }
+            FirstRowKind::String => {
+                let p = partial::<FirstRowScalar<PartialResultString>>(pr);
+                p.is_null = false;
+                p.got_first_row = false;
+            }
+            _ => *partial::<PartialResult4FirstRow>(pr) = PartialResult4FirstRow::default(),
+        }
     }
 
     fn update_partial_result(&self, sctx: &AggFuncUpdateContext, rows_in_group: &[Row<'_>], pr: &mut PartialResult) -> Result<i64, ExecError> {
+        if self.kind == FirstRowKind::Int {
+            let p = partial::<FirstRowScalar<i64>>(pr);
+            if !p.got_first_row {
+                if let Some(&row) = rows_in_group.first() {
+                    let (value, is_null) = match self.base.args[0].eval(sctx, row).map_err(ExecError::Eval)? {
+                        Datum::Int(value) => (value, false),
+                        Datum::UInt(value) => (value as i64, false),
+                        Datum::Null => (0, true),
+                        _ => return Err(ExecError::internal("FIRST_ROW read a non-integer argument")),
+                    };
+                    *p = FirstRowScalar {
+                        is_null,
+                        got_first_row: true,
+                        val: value,
+                    };
+                }
+            }
+            return Ok(0);
+        }
+        if self.kind == FirstRowKind::Decimal {
+            let p = partial::<FirstRowScalar<MyDecimal>>(pr);
+            if p.got_first_row {
+                return Ok(0);
+            }
+            if let Some(&row) = rows_in_group.first() {
+                let input = eval_my_decimal(&self.base, sctx, row)?;
+                p.is_null = input.is_none();
+                p.got_first_row = true;
+                if let Some(input) = input {
+                    p.val = input;
+                }
+            }
+            return Ok(0);
+        }
+        if self.kind == FirstRowKind::String {
+            let p = partial::<FirstRowScalar<PartialResultString>>(pr);
+            if p.got_first_row {
+                return Ok(0);
+            }
+            let Some(&row) = rows_in_group.first() else {
+                return Ok(0);
+            };
+            let input = self.base.args[0].eval(sctx, row).map_err(ExecError::Eval)?;
+            p.val = PartialResultString::from_slice(input.go_bytes());
+            p.is_null = input.is_null();
+            p.got_first_row = true;
+            return Ok(p.val.len() as i64);
+        }
         let p = partial::<PartialResult4FirstRow>(pr);
         if p.got_first_row {
             return Ok(0);
@@ -225,6 +287,27 @@ impl AggFunc for FirstRow {
     }
 
     fn merge_partial_result(&self, _sctx: &AggFuncUpdateContext, src: &mut PartialResult, dst: &mut PartialResult) -> Result<i64, ExecError> {
+        if self.kind == FirstRowKind::Int {
+            let destination = partial::<FirstRowScalar<i64>>(dst);
+            if !destination.got_first_row {
+                *destination = *partial::<FirstRowScalar<i64>>(src);
+            }
+            return Ok(0);
+        }
+        if self.kind == FirstRowKind::Decimal {
+            let destination = partial::<FirstRowScalar<MyDecimal>>(dst);
+            if !destination.got_first_row {
+                *destination = *partial::<FirstRowScalar<MyDecimal>>(src);
+            }
+            return Ok(0);
+        }
+        if self.kind == FirstRowKind::String {
+            let destination = partial::<FirstRowScalar<PartialResultString>>(dst);
+            if !destination.got_first_row {
+                *destination = partial::<FirstRowScalar<PartialResultString>>(src).clone();
+            }
+            return Ok(0);
+        }
         let p1 = partial::<PartialResult4FirstRow>(src).clone();
         let p2 = partial::<PartialResult4FirstRow>(dst);
         if !p2.got_first_row {
@@ -234,6 +317,32 @@ impl AggFunc for FirstRow {
     }
 
     fn append_final_result_2_chunk(&self, _sctx: &AggFuncUpdateContext, pr: &mut PartialResult, chk: &mut Chunk) -> Result<(), ExecError> {
+        if self.kind == FirstRowKind::Int {
+            let p = partial::<FirstRowScalar<i64>>(pr);
+            if p.is_null || !p.got_first_row {
+                chk.append_null(self.base.ordinal);
+            } else {
+                chk.append_int64(self.base.ordinal, p.val);
+            }
+            return Ok(());
+        }
+        if self.kind == FirstRowKind::Decimal {
+            let p = partial::<FirstRowScalar<MyDecimal>>(pr);
+            if p.is_null || !p.got_first_row {
+                chk.append_null(self.base.ordinal);
+                return Ok(());
+            }
+            return append_rounded_decimal(&self.base, &mut p.val, chk);
+        }
+        if self.kind == FirstRowKind::String {
+            let p = partial::<FirstRowScalar<PartialResultString>>(pr);
+            if p.is_null || !p.got_first_row {
+                chk.append_null(self.base.ordinal);
+            } else {
+                chk.append_bytes(self.base.ordinal, &p.val);
+            }
+            return Ok(());
+        }
         let p = partial::<PartialResult4FirstRow>(pr);
         let Some(value) = p.val.as_mut().filter(|_| p.got_first_row && !p.is_null) else {
             chk.append_null(self.base.ordinal);
@@ -251,18 +360,95 @@ impl AggFunc for FirstRow {
         Ok(())
     }
 
-    fn serialize_partial_result(&self, partial_result: &mut PartialResult, chk: &mut Chunk, _spill_helper: &mut SerializeHelper) {
-        let p = partial::<PartialResult4FirstRow>(partial_result).clone();
-        let mut buf = Vec::with_capacity(64);
-        self.encode(&p, &mut buf);
-        chk.append_bytes(self.base.ordinal, &buf);
+    fn serialize_partial_result(
+        &self,
+        partial_result: &mut PartialResult,
+        chk: &mut Chunk,
+        spill_helper: &mut SerializeHelper,
+    ) {
+        if self.kind == FirstRowKind::Int {
+            let p = partial::<FirstRowScalar<i64>>(partial_result);
+            let mut bytes = [0; 10];
+            bytes[0] = u8::from(p.is_null);
+            bytes[1] = u8::from(p.got_first_row);
+            bytes[2..].copy_from_slice(&p.val.to_ne_bytes());
+            chk.append_byte_array(self.base.ordinal, &bytes);
+            return;
+        }
+        if self.kind == FirstRowKind::Decimal {
+            let p = partial::<FirstRowScalar<MyDecimal>>(partial_result);
+            let mut bytes = [0; 2 + MYDECIMAL_STRUCT_SIZE];
+            bytes[0] = u8::from(p.is_null);
+            bytes[1] = u8::from(p.got_first_row);
+            bytes[2..].copy_from_slice(&p.val.to_raw_bytes());
+            chk.append_byte_array(self.base.ordinal, &bytes);
+            return;
+        }
+        if self.kind == FirstRowKind::String {
+            let p = partial::<FirstRowScalar<PartialResultString>>(partial_result);
+            let mut header = [0; 2 + size_of::<isize>()];
+            header[0] = u8::from(p.is_null);
+            header[1] = u8::from(p.got_first_row);
+            spill_helper.append_string_partial(chk, self.base.ordinal, header, &p.val);
+            return;
+        }
+        let p = partial::<PartialResult4FirstRow>(partial_result);
+        if self.kind == FirstRowKind::JSON {
+            let (type_code, value) = match p.val.as_ref() {
+                Some(Datum::Json(value)) => (value.type_code(), value.value()),
+                _ => (0, &[][..]),
+            };
+            let mut header = [0; 3 + size_of::<isize>()];
+            header[0] = u8::from(p.is_null);
+            header[1] = u8::from(p.got_first_row);
+            header[2] = type_code;
+            spill_helper.append_buffer(chk, self.base.ordinal, header, value);
+            return;
+        }
+        let bytes = spill_helper.encode(|buf| self.encode(p, buf));
+        chk.append_bytes(self.base.ordinal, bytes);
     }
 
     fn deserialize_partial_result(&self, src: &Chunk) -> (Vec<PartialResult>, i64) {
+        if self.kind == FirstRowKind::Int {
+            return deserialize_partial_result_common(src, self.base.ordinal, |helper| {
+                let state = helper.read_row_bytes(|bytes| {
+                    let &[is_null, got_first_row, value @ ..] =
+                        bytes.first_chunk::<10>().expect("integer first-row spill cell");
+                    FirstRowScalar {
+                        is_null: is_null & 1 != 0,
+                        got_first_row: got_first_row & 1 != 0,
+                        val: i64::from_ne_bytes(value),
+                    }
+                })?;
+                Some((Box::new(state), self.kind.size()))
+            });
+        }
+        if self.kind == FirstRowKind::Decimal {
+            return deserialize_partial_result_common(src, self.base.ordinal, |helper| {
+                let state = helper.read_row(|pab| FirstRowScalar {
+                    is_null: pab.read_bool(),
+                    got_first_row: pab.read_bool(),
+                    val: pab.read_my_decimal(),
+                })?;
+                Some((Box::new(state), self.kind.size()))
+            });
+        }
+        if self.kind == FirstRowKind::String {
+            return deserialize_typed_partial_results(
+                src,
+                self.base.ordinal,
+                DEF_PARTIAL_RESULT_4_FIRST_ROW_STRING_SIZE,
+                |pab| FirstRowScalar {
+                    is_null: pab.read_bool(),
+                    got_first_row: pab.read_bool(),
+                    val: PartialResultString::from_slice(pab.read_buffer()),
+                },
+            );
+        }
         deserialize_partial_result_common(src, self.base.ordinal, |helper| {
-            let (mut pr, mem_delta) = self.alloc_partial_result();
-            *partial::<PartialResult4FirstRow>(&mut pr) = helper.read_row(|pab| self.decode(pab))?;
-            Some((pr, mem_delta))
+            let state = helper.read_row(|pab| self.decode(pab))?;
+            Some((Box::new(state), self.kind.size()))
         })
     }
 }

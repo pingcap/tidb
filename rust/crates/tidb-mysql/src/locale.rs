@@ -4,6 +4,7 @@
 //! Locale-aware `FORMAT()` number grouping and separators.
 
 use crate::charset::is_unicode_decimal_digit;
+use std::{collections::HashMap, sync::OnceLock};
 
 /// Separator/grouping rules for a MySQL locale.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -91,59 +92,63 @@ const NONE_COMMA_LOCALES: &[&str] = &[
 /// Returns a locale's rules and whether the case-insensitive locale was found.
 /// Unknown locales use the source `en_US` fallback while returning false.
 pub fn locale_format_style(locale: &str) -> (LocaleFormatStyle, bool) {
-    let locale = crate::to_lowercase(locale);
-    let key = locale.as_str();
-    if COMMA_DOT_LOCALES.contains(&key) {
-        (COMMA_DOT, true)
-    } else if DOT_COMMA_LOCALES.contains(&key) {
-        (DOT_COMMA, true)
-    } else if SPACE_COMMA_LOCALES.contains(&key) {
-        (SPACE_COMMA, true)
-    } else if NONE_COMMA_LOCALES.contains(&key) {
-        (NONE_COMMA, true)
+    static LOCALES: OnceLock<HashMap<&'static [u8], LocaleFormatStyle>> = OnceLock::new();
+    let styles = LOCALES.get_or_init(|| {
+        let mut styles = HashMap::new();
+        for (locales, style) in [
+            (COMMA_DOT_LOCALES, COMMA_DOT),
+            (DOT_COMMA_LOCALES, DOT_COMMA),
+            (SPACE_COMMA_LOCALES, SPACE_COMMA),
+            (NONE_COMMA_LOCALES, NONE_COMMA),
+            (&["de_ch"][..], APOS_DOT),
+            (&["it_ch"][..], APOS_COMMA),
+            (&["ar_sa", "sr_rs"][..], NONE_DOT),
+            (&["en_in", "ta_in", "te_in"][..], INDIAN),
+        ] {
+            for locale in locales {
+                styles.entry(locale.as_bytes()).or_insert(style);
+            }
+        }
+        styles
+    });
+    let mut ascii = [0; 5];
+    let lowered;
+    let key = if locale.len() == ascii.len() && locale.is_ascii() {
+        ascii.copy_from_slice(locale.as_bytes());
+        ascii.make_ascii_lowercase();
+        &ascii[..]
     } else {
-        match key {
-            "de_ch" => (APOS_DOT, true),
-            "it_ch" => (APOS_COMMA, true),
-            "ar_sa" | "sr_rs" => (NONE_DOT, true),
-            "en_in" | "ta_in" | "te_in" => (INDIAN, true),
-            _ => (COMMA_DOT, false),
+        lowered = crate::to_lowercase_cow(locale);
+        lowered.as_bytes()
+    };
+    styles.get(key).map_or((COMMA_DOT, false), |&style| (style, true))
+}
+
+impl LocaleFormatStyle {
+    /// Appends the grouped integer digits to a prepared output buffer.
+    /// Grouping counts bytes, as does Go's locale formatter.
+    pub fn append_grouped_integer(self, integer: &[u8], output: &mut Vec<u8>) {
+        let separator = self.thousands_separator.as_bytes();
+        if integer.len() <= 3 || separator.is_empty() {
+            output.extend_from_slice(integer);
+        } else if self.indian_grouping {
+            let (leading, last) = integer.split_at(integer.len() - 3);
+            append_groups(leading, 2, separator, output);
+            output.extend_from_slice(separator);
+            output.extend_from_slice(last);
+        } else {
+            append_groups(integer, 3, separator, output);
         }
     }
 }
 
-fn standard_grouping_bytes(integer: &[u8], separator: &[u8]) -> Vec<u8> {
-    let first = match integer.len() % 3 {
-        0 if !integer.is_empty() => 3,
-        value => value,
-    };
-    let mut result = Vec::with_capacity(integer.len() + integer.len() / 3 * separator.len());
-    result.extend_from_slice(&integer[..first]);
-    for position in (first..integer.len()).step_by(3) {
-        result.extend_from_slice(separator);
-        result.extend_from_slice(&integer[position..position + 3]);
+fn append_groups(integer: &[u8], width: usize, separator: &[u8], output: &mut Vec<u8>) {
+    let first = (integer.len() - 1) % width + 1;
+    output.extend_from_slice(&integer[..first]);
+    for digits in integer[first..].chunks_exact(width) {
+        output.extend_from_slice(separator);
+        output.extend_from_slice(digits);
     }
-    result
-}
-fn indian_grouping_bytes(integer: &[u8], separator: &[u8]) -> Vec<u8> {
-    if integer.len() <= 3 {
-        return integer.to_owned();
-    }
-    let split = integer.len() - 3;
-    let remaining = &integer[..split];
-    let mut first = remaining.len() % 2;
-    if first == 0 && !remaining.is_empty() {
-        first = 2
-    }
-    let mut result = Vec::with_capacity(integer.len() + integer.len() / 2 * separator.len());
-    result.extend_from_slice(&remaining[..first]);
-    for position in (first..remaining.len()).step_by(2) {
-        result.extend_from_slice(separator);
-        result.extend_from_slice(&remaining[position..position + 2]);
-    }
-    result.extend_from_slice(separator);
-    result.extend_from_slice(&integer[split..]);
-    result
 }
 
 /// Formats a decimal string using MySQL locale rules, returning the exact Go
@@ -217,15 +222,8 @@ fn format_with_style(number: &str, precision: &str, style: LocaleFormatStyle) ->
     let valid = &unsigned[..valid_end];
     let parts: Vec<_> = valid.split('.').collect();
     let integer = parts[0];
-    let grouped = if style.thousands_separator.is_empty() {
-        integer.as_bytes().to_owned()
-    } else if style.indian_grouping {
-        indian_grouping_bytes(integer.as_bytes(), style.thousands_separator.as_bytes())
-    } else {
-        standard_grouping_bytes(integer.as_bytes(), style.thousands_separator.as_bytes())
-    };
     let mut result = sign.as_bytes().to_vec();
-    result.extend_from_slice(&grouped);
+    style.append_grouped_integer(integer.as_bytes(), &mut result);
     if let Some(value) = places
         .filter(|v| *v > 0)
         .and_then(|v| usize::try_from(v).ok())

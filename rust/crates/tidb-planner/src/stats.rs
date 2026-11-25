@@ -621,7 +621,7 @@ mod analyzed_filter_selectivity_tests {
                 ndv: 10,
                 lower_bound: Datum::Int(1),
                 upper_bound: Datum::Int(10),
-            }],
+            }].into(),
             ..Histogram::default()
         };
         let column_stats = std::sync::Arc::new(tidb_stats::column::Column {
@@ -799,7 +799,7 @@ mod analyzed_filter_selectivity_tests {
                 ndv: 10,
                 lower_bound: Datum::Int(1),
                 upper_bound: Datum::Int(10),
-            }],
+            }].into(),
             ..Histogram::default()
         };
         let hist_coll = tidb_planner_property::stats_info::loaded_hist_coll_for_test(false, 1_000, 2_000, [(unique_id, tidb_stats::column::Column {
@@ -871,7 +871,7 @@ mod analyzed_filter_selectivity_tests {
                 ndv: 10,
                 lower_bound: Datum::Int(1),
                 upper_bound: Datum::Int(1),
-            }],
+            }].into(),
             ..Histogram::default()
         };
         let hist_coll = tidb_planner_property::stats_info::loaded_hist_coll_for_test(false, 300_000, 0, [(unique_id, tidb_stats::column::Column {
@@ -941,7 +941,7 @@ mod analyzed_filter_selectivity_tests {
                     lower_bound: Datum::Int(3),
                     upper_bound: Datum::Int(10),
                 },
-            ],
+            ].into(),
             ..Histogram::default()
         };
         let hist_coll = tidb_planner_property::stats_info::loaded_hist_coll_for_test(false, 1_000, 0, [(unique_id, tidb_stats::column::Column {
@@ -1037,7 +1037,7 @@ mod analyzed_filter_selectivity_tests {
                     lower_bound: date(1996, 4, 1),
                     upper_bound: date(1996, 4, 9),
                 },
-            ],
+            ].into(),
             ..Histogram::default()
         };
         // The TopN rows Q15's window crosses (real lineitem values), so the
@@ -1152,7 +1152,7 @@ mod analyzed_filter_selectivity_tests {
                     lower_bound: Datum::Int(3),
                     upper_bound: Datum::Int(10),
                 },
-            ],
+            ].into(),
             ..Histogram::default()
         };
         let hist_coll = tidb_planner_property::stats_info::loaded_hist_coll_for_test(false, 1_000, 0, [(unique_id, tidb_stats::column::Column {
@@ -1219,7 +1219,7 @@ mod analyzed_filter_selectivity_tests {
                     lower_bound: Datum::Bytes(b"red 002".to_vec()),
                     upper_bound: Datum::Bytes(b"red 101".to_vec()),
                 },
-            ],
+            ].into(),
             ..Histogram::default()
         };
         let hist_coll = tidb_planner_property::stats_info::loaded_hist_coll_for_test(false, 128, 0, [(unique_id, tidb_stats::column::Column {

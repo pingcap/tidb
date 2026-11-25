@@ -302,6 +302,97 @@ fn type_chunk_response_coalesces_small_chunks_to_required_rows() {
 }
 
 #[test]
+fn default_decimal_chunk_keeps_go_from_bin_layout() {
+    let decimal = FieldType::new(FieldTypeCode::NewDecimal).with_decimal(2);
+    let fields = vec![decimal, int_type()];
+    let mut data = vec![tidb_codec::VALUE_DECIMAL_FLAG];
+    tidb_codec::encode_decimal_fixed(
+        &mut data,
+        &tidb_datatype::Decimal::from_literal("0.05"),
+        10,
+        2,
+    )
+    .unwrap();
+    data.extend_from_slice(&[VALUE_VARINT_FLAG, 14, tidb_codec::VALUE_DECIMAL_FLAG]);
+    tidb_codec::encode_decimal_fixed(
+        &mut data,
+        &tidb_datatype::Decimal::from_literal("1.235"),
+        10,
+        3,
+    )
+    .unwrap();
+    data.extend_from_slice(&[
+        VALUE_VARINT_FLAG,
+        16,
+        tidb_codec::VALUE_NIL_FLAG,
+        VALUE_VARINT_FLAG,
+        18,
+    ]);
+    let response = SelectResponse {
+        chunks: vec![Chunk {
+            rows_data: Some(data.into()),
+            ..Default::default()
+        }],
+        ..Default::default()
+    };
+    let mut iter = response_source([response]).into_select_iter(
+        fields.clone(),
+        Vec::new(),
+        WarningCollector::new(),
+    );
+    let mut output = DecodedChunk::new(&fields, 1, 1);
+
+    assert!(iter.fill_chunk_with_required_rows(1, &mut output).unwrap());
+    let row = output.get_row(0);
+    // Go FromBin omits the all-zero integer word before appending to chunk.
+    let mut expected = [0_u8; tidb_datatype::MYDECIMAL_STRUCT_SIZE];
+    expected[..4].copy_from_slice(&[0, 2, 2, 0]);
+    expected[4..8].copy_from_slice(&50_000_000_i32.to_ne_bytes());
+    assert_eq!(row.get_my_decimal(0).to_raw_bytes(), expected);
+    assert_eq!(row.get_int64(1), 7);
+
+    assert!(iter.fill_chunk_with_required_rows(1, &mut output).unwrap());
+    let row = output.get_row(0);
+    assert_eq!(row.get_my_decimal(0).to_result_string_bytes(), b"1.24");
+    assert_eq!(row.get_int64(1), 8);
+
+    assert_eq!(
+        iter.next_row().unwrap().unwrap().row,
+        [Datum::Null, Datum::new_int(9)]
+    );
+    assert!(iter.next_row().unwrap().is_none());
+}
+
+#[test]
+fn default_chunk_decode_error_preserves_preceding_chunks() {
+    let fields = vec![int_type(), int_type()];
+    let response = SelectResponse {
+        chunks: vec![
+            default_chunk(&[vec![Cell::Int(3), Cell::Int(4)]]),
+            Chunk {
+                rows_data: Some(vec![VALUE_VARINT_FLAG, 10, VALUE_VARINT_FLAG].into()),
+                ..Default::default()
+            },
+        ],
+        ..Default::default()
+    };
+    let mut iter = response_source([response]).into_select_iter(
+        fields.clone(),
+        Vec::new(),
+        WarningCollector::new(),
+    );
+    let mut output = DecodedChunk::new(&fields, 2, 2);
+
+    assert!(matches!(
+        iter.fill_chunk_with_required_rows(2, &mut output),
+        Err(ResponseChannelError::RowDecode(_))
+    ));
+    assert_eq!(output.num_rows(), 1);
+    assert_eq!(output.get_row(0).get_int64(0), 3);
+    assert_eq!(output.get_row(0).get_int64(1), 4);
+}
+
+#[test]
 fn sel_resp_channel_iter_reads_default_and_type_chunk_rows_across_empty_chunks() {
     for encode_type in [EncodeType::TypeDefault, EncodeType::TypeChunk] {
         let rows = [
@@ -442,6 +533,39 @@ fn type_chunk_rows_use_the_complete_chunk_datum_domain() {
         vec![Datum::Null, Datum::Null]
     );
     assert_eq!(iter.next_row().unwrap(), None);
+}
+
+#[test]
+fn default_response_appends_json_and_vector_rows_to_reused_chunks() {
+    let fields = [
+        FieldType::new(FieldTypeCode::Json),
+        FieldType::new(FieldTypeCode::VectorFloat32),
+    ];
+    let expected = [
+        Datum::Json(BinaryJSON::parse(r#"{"n":[7,null,"é"]}"#).unwrap()),
+        Datum::VectorFloat32(VectorFloat32::must_create(vec![-1.25; 64])),
+    ];
+    let mut wire = tidb_codec::encode_value(&expected).unwrap();
+    wire.extend(tidb_codec::encode_value(&[Datum::Null, Datum::Null]).unwrap());
+    let response = SelectResponse {
+        encode_type: Some(EncodeType::TypeDefault as i32),
+        chunks: vec![Chunk {
+            rows_data: Some(wire.into()),
+            ..Default::default()
+        }],
+        ..Default::default()
+    };
+    let mut iter = response_source([response]).into_select_iter(
+        fields.to_vec(), Vec::new(), WarningCollector::new(),
+    );
+    let mut output = DecodedChunk::new(&fields, 1, 1);
+    iter.fill_chunk_with_required_rows(1, &mut output).unwrap();
+    assert_eq!(output.num_rows(), 1);
+    assert_eq!(output.get_row(0).get_datum_row(&fields), expected);
+    output.reset();
+    iter.fill_chunk_with_required_rows(1, &mut output).unwrap();
+    assert_eq!(output.num_rows(), 1);
+    assert_eq!(output.get_row(0).get_datum_row(&fields), [Datum::Null, Datum::Null]);
 }
 
 #[test]

@@ -564,9 +564,24 @@ impl PriorityCalculator {
 /// Go `pqHeapImpl`, a keyed max heap.
 #[derive(Debug, Default)]
 pub struct PqHeapImpl {
-    items: HashMap<i64, AnalysisJob>,
-    queue: Vec<i64>,
-    positions: HashMap<i64, usize>,
+    // A table ID points to a job slot for its entire stay in the heap.
+    index: hashbrown::HashMap<i64, usize>,
+    jobs: Vec<Option<HeapJob>>,
+    free: Vec<usize>,
+    // Sifts read weights directly and only move these small entries.
+    queue: Vec<HeapEntry>,
+}
+
+#[derive(Debug)]
+struct HeapJob {
+    job: AnalysisJob,
+    position: usize,
+}
+
+#[derive(Debug)]
+struct HeapEntry {
+    slot: usize,
+    weight: f64,
 }
 
 /// Errors exposed by Go's heap and queue initialization gates.
@@ -626,26 +641,43 @@ impl PqHeapImpl {
 
     /// Go `addOrUpdate`/`update`.
     pub fn add_or_update(&mut self, job: AnalysisJob) {
-        let key = job.table_id();
-        if let Some(position) = self.positions.get(&key).copied() {
-            self.items.insert(key, job);
-            self.fix(position);
-        } else {
-            self.items.insert(key, job);
-            let position = self.queue.len();
-            self.queue.push(key);
-            self.positions.insert(key, position);
-            self.sift_up(position);
+        use hashbrown::hash_map::Entry;
+
+        let weight = job.weight();
+        match self.index.entry(job.table_id()) {
+            Entry::Occupied(entry) => {
+                let item = self.jobs[*entry.get()]
+                    .as_mut()
+                    .expect("indexed job exists");
+                item.job = job;
+                let position = item.position;
+                self.queue[position].weight = weight;
+                self.fix(position);
+            }
+            Entry::Vacant(entry) => {
+                let position = self.queue.len();
+                let item = Some(HeapJob { job, position });
+                let slot = if let Some(slot) = self.free.pop() {
+                    self.jobs[slot] = item;
+                    slot
+                } else {
+                    self.jobs.push(item);
+                    self.jobs.len() - 1
+                };
+                entry.insert(slot);
+                self.queue.push(HeapEntry { slot, weight });
+                self.sift_up(position);
+            }
         }
     }
 
     /// Go `delete`.
     pub fn delete(&mut self, table_id: i64) -> Result<AnalysisJob, QueueError> {
-        let position = self
-            .positions
+        let slot = *self
+            .index
             .get(&table_id)
-            .copied()
             .ok_or(QueueError::ObjectNotFound)?;
+        let position = self.heap_job(slot).position;
         Ok(self.remove_at(position))
     }
 
@@ -653,7 +685,7 @@ impl PqHeapImpl {
     pub fn peek(&self) -> Result<&AnalysisJob, QueueError> {
         self.queue
             .first()
-            .and_then(|key| self.items.get(key))
+            .map(|entry| &self.heap_job(entry.slot).job)
             .ok_or(QueueError::HeapIsEmpty)
     }
 
@@ -668,17 +700,19 @@ impl PqHeapImpl {
     /// Go `getByKey`.
     #[must_use]
     pub fn get(&self, table_id: i64) -> Option<&AnalysisJob> {
-        self.items.get(&table_id)
+        self.index
+            .get(&table_id)
+            .map(|&slot| &self.heap_job(slot).job)
     }
 
     /// Go `list`.
     pub fn list(&self) -> impl Iterator<Item = &AnalysisJob> {
-        self.items.values()
+        self.index.values().map(|&slot| &self.heap_job(slot).job)
     }
 
     /// Go `ListKeys`.
     pub fn keys(&self) -> impl Iterator<Item = i64> + '_ {
-        self.items.keys().copied()
+        self.index.keys().copied()
     }
 
     /// Go `isEmpty`.
@@ -693,22 +727,26 @@ impl PqHeapImpl {
 
     fn remove_at(&mut self, position: usize) -> AnalysisJob {
         let last = self.queue.len() - 1;
-        self.swap(position, last);
-        let key = self.queue.pop().expect("heap position exists");
-        self.positions.remove(&key);
-        let job = self.items.remove(&key).expect("heap item exists");
-        if position < self.queue.len() {
+        if position != last {
+            self.swap(position, last);
+        }
+        let slot = self.queue.pop().expect("heap position exists").slot;
+        let item = self.jobs[slot].take().expect("indexed job exists");
+        self.index.remove(&item.job.table_id());
+        self.free.push(slot);
+        if position < last {
             self.fix(position);
         }
-        job
+        item.job
     }
 
     fn fix(&mut self, position: usize) {
-        let after_up = self.sift_up(position);
-        self.sift_down(after_up);
+        if !self.sift_down(position) {
+            self.sift_up(position);
+        }
     }
 
-    fn sift_up(&mut self, mut position: usize) -> usize {
+    fn sift_up(&mut self, mut position: usize) {
         while position > 0 {
             let parent = (position - 1) / 2;
             if !self.greater(position, parent) {
@@ -717,10 +755,10 @@ impl PqHeapImpl {
             self.swap(position, parent);
             position = parent;
         }
-        position
     }
 
-    fn sift_down(&mut self, mut position: usize) {
+    fn sift_down(&mut self, start: usize) -> bool {
+        let mut position = start;
         loop {
             let left = position * 2 + 1;
             if left >= self.queue.len() {
@@ -738,16 +776,26 @@ impl PqHeapImpl {
             self.swap(position, larger);
             position = larger;
         }
+        position != start
     }
 
     fn greater(&self, left: usize, right: usize) -> bool {
-        self.items[&self.queue[left]].weight() > self.items[&self.queue[right]].weight()
+        self.queue[left].weight > self.queue[right].weight
     }
 
     fn swap(&mut self, left: usize, right: usize) {
         self.queue.swap(left, right);
-        self.positions.insert(self.queue[left], left);
-        self.positions.insert(self.queue[right], right);
+        for position in [left, right] {
+            let slot = self.queue[position].slot;
+            self.jobs[slot]
+                .as_mut()
+                .expect("indexed job exists")
+                .position = position;
+        }
+    }
+
+    fn heap_job(&self, slot: usize) -> &HeapJob {
+        self.jobs[slot].as_ref().expect("indexed job exists")
     }
 }
 
@@ -2564,6 +2612,18 @@ mod tests {
         assert_eq!(heap.pop().unwrap().table_id(), 2);
         assert_eq!(heap.pop().unwrap_err(), QueueError::HeapIsEmpty);
         assert_eq!(heap.delete(99).unwrap_err(), QueueError::ObjectNotFound);
+    }
+
+    #[test]
+    fn source_heap_fixes_down_first_when_replacing_nan_weight() {
+        let mut heap = PqHeapImpl::new();
+        for item in [job(1, 10.0), job(2, f64::NAN), job(3, -1.0), job(4, 100.0)] {
+            heap.add_or_update(item);
+        }
+        heap.add_or_update(job(2, 20.0));
+        for table_id in [1, 4, 2, 3] {
+            assert_eq!(heap.pop().unwrap().table_id(), table_id);
+        }
     }
 
     #[test]

@@ -5,8 +5,9 @@
 //! As in Go, encoding and delivery run concurrently, joined by a bounded
 //! queue of `maxKVQueueSize` batches.
 
-use std::sync::mpsc;
+use std::sync::OnceLock;
 
+use crossbeam_channel::{Receiver, Sender, bounded, select_biased};
 use tidb_datatype::Datum;
 use tidb_gocontext::Context;
 use tidb_lightning_backend::EngineWriter;
@@ -165,41 +166,38 @@ pub struct QueryChunk {
 /// channel.
 pub struct QueryChunkEncodeReader {
     /// Go `chunkCh`.
-    pub chunk_ch: crossbeam_channel::Receiver<QueryChunk>,
-    curr: Option<QueryChunk>,
-    cursor: usize,
+    pub chunk_ch: Receiver<QueryChunk>,
+    rows: std::vec::IntoIter<Vec<Datum>>,
+    row_id: i64,
 }
 
 impl QueryChunkEncodeReader {
     /// Go `queryRowEncodeReader`.
     #[must_use]
-    pub fn new(chunk_ch: crossbeam_channel::Receiver<QueryChunk>) -> Self {
-        Self { chunk_ch, curr: None, cursor: 0 }
+    pub fn new(chunk_ch: Receiver<QueryChunk>) -> Self {
+        Self { chunk_ch, rows: std::vec::IntoIter::default(), row_id: 0 }
     }
 }
 
 impl EncodeReader for QueryChunkEncodeReader {
     fn read_row(&mut self, ctx: &Context) -> Result<Option<(Vec<Datum>, i64, i64, i64)>, ChunkError> {
-        while self.curr.as_ref().is_none_or(|c| self.cursor >= c.rows.len()) {
-            loop {
-                if let Some(e) = ctx.err() {
-                    return Err(e.to_string().into());
-                }
-                match self.chunk_ch.recv_timeout(std::time::Duration::from_millis(50)) {
+        loop {
+            if let Some(row) = self.rows.next() {
+                self.row_id += 1;
+                return Ok(Some((row, self.row_id, -1, -1)));
+            }
+            let done = ctx.done();
+            select_biased! {
+                recv(done) -> _ => return Err(context_error(ctx).into()),
+                recv(self.chunk_ch) -> chunk => match chunk {
                     Ok(chunk) => {
-                        self.curr = Some(chunk);
-                        self.cursor = 0;
-                        break;
+                        self.rows = chunk.rows.into_iter();
+                        self.row_id = chunk.row_id_offset;
                     }
-                    Err(crossbeam_channel::RecvTimeoutError::Timeout) => {}
-                    Err(crossbeam_channel::RecvTimeoutError::Disconnected) => return Ok(None),
-                }
+                    Err(_) => return Ok(None),
+                },
             }
         }
-        let chunk = self.curr.as_ref().expect("a chunk");
-        let row = chunk.rows[self.cursor].clone();
-        self.cursor += 1;
-        Ok(Some((row, chunk.row_id_offset + self.cursor as i64, -1, -1)))
     }
 }
 
@@ -295,20 +293,27 @@ impl<'a> ChunkProcessor<'a> {
     /// added to `group_checksum`.
     pub fn process(self, ctx: &Context, group_checksum: &mut KvGroupChecksum) -> Result<(), ChunkError> {
         let (eg_ctx, cancel) = Context::with_cancel(ctx);
-        let (tx, rx) = mpsc::sync_channel::<EncodedKvGroupBatch>(MAX_KV_QUEUE_SIZE);
+        let (tx, rx) = bounded(MAX_KV_QUEUE_SIZE);
         let Self { chunk_name, mut reader, mut offset, encoder, keyspace, data_writer, index_writer, collector, min_deliver_bytes, min_deliver_row_cnt } = self;
         let mut chunk_checksum = KvGroupChecksum::with_keyspace(keyspace);
-        let (enc_result, deliver_result) = std::thread::scope(|scope| {
-            let deliver_ctx = eg_ctx.clone();
-            let cancel_deliver = cancel.clone();
-            let deliver = scope.spawn(move || {
-                let result = deliver_loop(&deliver_ctx, rx, data_writer, index_writer);
-                if result.is_err() {
-                    cancel_deliver.cancel();
+        let first_error = OnceLock::new();
+        let record_error = |error| {
+            // Save the error before waking the other loop, as Go's errgroup does.
+            let _ = first_error.set(error);
+            cancel.cancel();
+        };
+        std::thread::scope(|scope| {
+            let deliver_ctx = &eg_ctx;
+            let record_error = &record_error;
+            scope.spawn(move || {
+                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    deliver_loop(deliver_ctx, &rx, data_writer, index_writer)
+                }));
+                if let Err(error) = result.unwrap_or_else(|_| Err("deliver loop panicked".to_owned().into())) {
+                    record_error(error);
                 }
-                result
             });
-            let enc = encode_loop(
+            if let Err(error) = encode_loop(
                 &eg_ctx,
                 &chunk_name,
                 reader.as_mut(),
@@ -320,21 +325,12 @@ impl<'a> ChunkProcessor<'a> {
                 min_deliver_bytes,
                 min_deliver_row_cnt,
                 &mut chunk_checksum,
-            );
-            if enc.is_err() {
-                cancel.cancel();
+            ) {
+                record_error(error);
             }
-            (enc, deliver.join().unwrap_or_else(|_| Err("deliver loop panicked".to_owned().into())))
         });
         group_checksum.add(&chunk_checksum);
-        // Go's errgroup returns the first failure; a cancellation the other
-        // loop caused is not the cause.
-        match (enc_result, deliver_result) {
-            (Err(e), Ok(())) => Err(e),
-            (Ok(()), Err(d)) => Err(d),
-            (Err(e), Err(d)) => Err(if e.to_string() == "context canceled" { d } else { e }),
-            (Ok(()), Ok(())) => Ok(()),
-        }
+        first_error.into_inner().map_or(Ok(()), Err)
     }
 }
 
@@ -347,7 +343,7 @@ fn encode_loop(
     offset: &mut i64,
     encoder: &mut TableKVEncoder,
     keyspace: &[u8],
-    tx: mpsc::SyncSender<EncodedKvGroupBatch>,
+    tx: Sender<EncodedKvGroupBatch>,
     collector: Option<&dyn tidb_dxf_execute::Collector>,
     min_deliver_bytes: u64,
     min_deliver_row_cnt: usize,
@@ -410,41 +406,35 @@ fn encode_loop(
 }
 
 /// Go `dataDeliver.sendEncodedData`.
-fn send(ctx: &Context, tx: &mpsc::SyncSender<EncodedKvGroupBatch>, mut batch: EncodedKvGroupBatch) -> Result<(), String> {
-    loop {
-        match tx.try_send(batch) {
-            Ok(()) => return Ok(()),
-            Err(mpsc::TrySendError::Full(b)) => {
-                if let Some(e) = ctx.err() {
-                    return Err(e.to_string());
-                }
-                batch = b;
-                std::thread::sleep(std::time::Duration::from_millis(1));
-            }
-            Err(mpsc::TrySendError::Disconnected(_)) => {
-                return Err(ctx.err().map_or_else(|| "deliver loop stopped".to_owned(), |e| e.to_string()));
-            }
-        }
+fn send(ctx: &Context, tx: &Sender<EncodedKvGroupBatch>, batch: EncodedKvGroupBatch) -> Result<(), String> {
+    let done = ctx.done();
+    select_biased! {
+        recv(done) -> _ => Err(context_error(ctx)),
+        send(tx, batch) -> result => result.map_err(|_| {
+            ctx.err().map_or_else(|| "deliver loop stopped".to_owned(), |e| e.to_string())
+        }),
     }
+}
+
+fn context_error(ctx: &Context) -> String {
+    ctx.err().expect("the context signalled cancellation").to_string()
 }
 
 /// Go `dataDeliver.deliverLoop`.
 fn deliver_loop(
     ctx: &Context,
-    rx: mpsc::Receiver<EncodedKvGroupBatch>,
+    rx: &Receiver<EncodedKvGroupBatch>,
     data_writer: &mut dyn EngineWriter,
     index_writer: &mut dyn EngineWriter,
 ) -> Result<(), ChunkError> {
+    let done = ctx.done();
     loop {
-        let batch = match rx.recv_timeout(std::time::Duration::from_millis(50)) {
-            Ok(batch) => batch,
-            Err(mpsc::RecvTimeoutError::Timeout) => {
-                if let Some(e) = ctx.err() {
-                    return Err(e.to_string().into());
-                }
-                continue;
-            }
-            Err(mpsc::RecvTimeoutError::Disconnected) => return Ok(()),
+        let batch = select_biased! {
+            recv(done) -> _ => return Err(context_error(ctx).into()),
+            recv(rx) -> batch => match batch {
+                Ok(batch) => batch,
+                Err(_) => return Ok(()),
+            },
         };
         data_writer
             .append_rows(ctx, &[], tidb_lightning_backend::Rows::Pairs(batch.data_kvs))

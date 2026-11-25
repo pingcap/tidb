@@ -125,6 +125,8 @@ pub struct PointGetExecutor {
     output_columns: Vec<HandleOutputColumn>,
     /// The statement's row-decode flags and time zone (Go `rowDecoder`'s).
     decode_context: tidb_table::tables::RowDecodeContext,
+    /// Compiled output slots for the direct Row V2 path.
+    projection: Option<tidb_table::tables::PreparedPointGetRowDecoder>,
     /// Go `done`.
     done: bool,
     produced: tidb_executor_internal_exec::RowCount,
@@ -167,6 +169,10 @@ impl PointGetExecutor {
         output_columns: Vec<HandleOutputColumn>,
         decode_context: tidb_table::tables::RowDecodeContext,
     ) -> Self {
+        let projection = output_columns.iter().map(|output| match output {
+            HandleOutputColumn::Stored(offset) => Some(*offset),
+            _ => None,
+        }).collect::<Option<Vec<_>>>().and_then(|offsets| table.point_row_projection(&offsets));
         Self {
             meta,
             table,
@@ -178,6 +184,7 @@ impl PointGetExecutor {
             consistency_report: None,
             output_columns,
             decode_context,
+            projection,
             done: false,
             produced: tidb_executor_internal_exec::RowCount::default(),
         }
@@ -377,6 +384,12 @@ impl Executor for PointGetExecutor {
             return Ok(());
         };
         self.table.note_keys_read(1).map_err(ExecError::from)?;
+        if let Some(projection) = &self.projection {
+            if projection.try_append_v2_row(&value, req).map_err(ExecError::from)? {
+                self.produced.set(self.produced.get() + 1);
+                return Ok(());
+            }
+        }
         let row = tidb_table::tables::PointRowDecoder::new(&self.table)
             .decode(&self.table, &handle, &value, &self.decode_context)
             .map_err(ExecError::from)?;

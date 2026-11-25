@@ -2,6 +2,7 @@
 
 use crate::{unescape, CsvError, EscapeFlavor};
 use tidb_datatype::{parse_bit_str, parse_hex_str, Datum};
+use std::ops::Range;
 
 /// Go `mydump.Parser`: the row, column and checkpoint contract used by import.
 pub trait Parser {
@@ -142,15 +143,18 @@ impl ChunkParser {
     }
 
     /// Go `ChunkParser.lex` and `blockParser.readBlock` at read boundaries.
-    fn lex(&mut self) -> Result<(Token, Vec<u8>), CsvError> {
+    fn lex(&mut self) -> Result<(Token, Range<usize>), CsvError> {
+        let mut scan = Scan::Start;
         loop {
-            match self.lex_buffer() {
+            match self.lex_buffer(scan) {
                 Ok(token) => return Ok(token),
                 Err(LexError::Parse(error)) => return Err(error),
-                Err(LexError::NeedMore(start)) => {
+                Err(LexError::NeedMore(start, resume)) => {
                     // Go `readBlock`: keep the unparsed remainder, append the
                     // next block; the block at position 0 loses its BOM.
-                    self.buf.drain(..start);
+                    if start != 0 {
+                        self.buf.drain(..start);
+                    }
                     self.base += start;
                     self.pos = self.base;
                     let (block, last) = self.reader.read_block()?;
@@ -159,52 +163,67 @@ impl ChunkParser {
                         self.buf.extend_from_slice(&block[3..]);
                         self.base = 3;
                         self.pos = 3;
+                    } else if self.buf.is_empty() {
+                        self.buf = block;
                     } else {
                         self.buf.extend_from_slice(&block);
                     }
+                    scan = resume;
                 }
             }
         }
     }
 
     /// Go `ChunkParser.lex`; token precedence and longest matches follow `parser.rl`.
-    fn lex_buffer(&mut self) -> Result<(Token, Vec<u8>), LexError> {
+    fn lex_buffer(&mut self, mut scan: Scan) -> Result<(Token, Range<usize>), LexError> {
         let s = &self.buf[..];
         let mut i = self.pos - self.base;
         loop {
             if i >= s.len() {
                 if !self.last_chunk {
-                    return Err(LexError::NeedMore(i));
+                    return Err(LexError::NeedMore(i, Scan::Start));
                 }
                 return Err(LexError::Parse(CsvError::Eof));
             }
             if is_space(s[i]) || matches!(s[i], b',' | b';') {
                 if i + 1 == s.len() && !self.last_chunk {
-                    return Err(LexError::NeedMore(i));
+                    return Err(LexError::NeedMore(i, Scan::Start));
                 }
                 i += 1;
                 continue;
             }
             if s[i..].starts_with(b"/*") {
-                let Some(end) = s[i + 2..].windows(2).position(|w| w == b"*/") else {
+                let cursor = match scan {
+                    Scan::BlockComment(next) => i + next,
+                    _ => i + 2,
+                };
+                let Some(end) = memchr::memmem::find(&s[cursor..], b"*/") else {
                     if !self.last_chunk {
-                        return Err(LexError::NeedMore(i));
+                        // Recheck the last byte in case it starts the terminator.
+                        let next = (s.len() - 1).max(i + 2) - i;
+                        return Err(LexError::NeedMore(i, Scan::BlockComment(next)));
                     }
                     return Err(LexError::Parse(CsvError::Other(
                         "syntax error: unexpected EOF".to_owned(),
                     )));
                 };
-                i += end + 4;
+                i = cursor + end + 2;
+                scan = Scan::Start;
                 continue;
             }
             if s[i..].starts_with(b"--") {
-                let comment_start = i;
-                while i < s.len() && !matches!(s[i], b'\r' | b'\n') {
-                    i += 1;
+                let cursor = match scan {
+                    Scan::LineComment(next) => i + next,
+                    _ => i + 2,
+                };
+                if let Some(end) = memchr::memchr2(b'\r', b'\n', &s[cursor..]) {
+                    i = cursor + end;
+                } else if !self.last_chunk {
+                    return Err(LexError::NeedMore(i, Scan::LineComment(s.len() - i)));
+                } else {
+                    i = s.len();
                 }
-                if i == s.len() && !self.last_chunk {
-                    return Err(LexError::NeedMore(comment_start));
-                }
+                scan = Scan::Start;
                 continue;
             }
             let mut skipped = false;
@@ -213,7 +232,7 @@ impl ChunkParser {
                     && s.len() - i < word.len()
                     && word[..s.len() - i].eq_ignore_ascii_case(&s[i..])
                 {
-                    return Err(LexError::NeedMore(i));
+                    return Err(LexError::NeedMore(i, Scan::Start));
                 }
                 if s.get(i..i + word.len())
                     .is_some_and(|v| v.eq_ignore_ascii_case(word))
@@ -240,49 +259,7 @@ impl ChunkParser {
             }
             b'\'' | b'"' | b'`' => {
                 let quote = s[i];
-                i += 1;
-                if i == s.len() && !self.last_chunk {
-                    return Err(LexError::NeedMore(start));
-                }
-                if i == s.len() && quote != b'`' {
-                    return Err(LexError::Parse(CsvError::Other(
-                        "syntax error: unexpected EOF".to_owned(),
-                    )));
-                }
-                let mut last_close = None;
-                loop {
-                    if i >= s.len() {
-                        if !self.last_chunk {
-                            return Err(LexError::NeedMore(start));
-                        }
-                        if let Some(end) = last_close {
-                            i = end;
-                            break;
-                        }
-                        return Err(LexError::Parse(CsvError::Other("syntax error".to_owned())));
-                    }
-                    if s[i] == b'\\'
-                        && quote != b'`'
-                        && !self.no_backslash_escapes
-                        && i + 1 < s.len()
-                    {
-                        i += 2;
-                        continue;
-                    }
-                    if s[i] == quote {
-                        i += 1;
-                        last_close = Some(i);
-                        if i == s.len() && !self.last_chunk {
-                            return Err(LexError::NeedMore(start));
-                        }
-                        if s.get(i) == Some(&quote) {
-                            i += 1;
-                            continue;
-                        }
-                        break;
-                    }
-                    i += 1;
-                }
+                i = self.quoted_end(start, quote, scan)?;
                 match quote {
                     b'\'' => Token::SingleQuoted,
                     b'"' => Token::DoubleQuoted,
@@ -291,7 +268,7 @@ impl ChunkParser {
             }
             b'/' | b'*' => {
                 if s[i] == b'/' && i + 1 == s.len() && !self.last_chunk {
-                    return Err(LexError::NeedMore(start));
+                    return Err(LexError::NeedMore(start, Scan::Start));
                 }
                 return Err(LexError::Parse(CsvError::Other(
                     if s[i] == b'/' && i + 1 == s.len() {
@@ -303,43 +280,22 @@ impl ChunkParser {
                 )));
             }
             _ => {
+                if let Scan::Unquoted(next) = scan {
+                    i = start + next;
+                }
                 while i < s.len() && !is_space(s[i]) && !b",;()'\"`/*".contains(&s[i]) {
                     i += 1;
                 }
                 if i == s.len() && !self.last_chunk {
-                    return Err(LexError::NeedMore(start));
+                    return Err(LexError::NeedMore(start, Scan::Unquoted(i - start)));
                 }
                 let text = &s[start..i];
                 if text.len() == 1
                     && matches!(text[0], b'x' | b'X' | b'b' | b'B')
                     && s.get(i) == Some(&b'\'')
                 {
-                    let end = s[i + 1..]
-                        .iter()
-                        .position(|&v| v == b'\'')
-                        .map(|n| i + 1 + n);
                     let hex = text[0].eq_ignore_ascii_case(&b'x');
-                    if end.is_none()
-                        && !self.last_chunk
-                        && s[i + 1..].iter().all(|v| {
-                            if hex {
-                                v.is_ascii_hexdigit()
-                            } else {
-                                matches!(v, b'0' | b'1')
-                            }
-                        })
-                    {
-                        return Err(LexError::NeedMore(start));
-                    }
-                    if let Some(end) = end.filter(|&end| {
-                        s[i + 1..end].iter().all(|v| {
-                            if hex {
-                                v.is_ascii_hexdigit()
-                            } else {
-                                matches!(v, b'0' | b'1')
-                            }
-                        })
-                    }) {
+                    if let Some(end) = self.quoted_base_end(start, i + 1, hex, scan)? {
                         i = end + 1;
                         if hex {
                             Token::HexString
@@ -381,31 +337,116 @@ impl ChunkParser {
             }
         };
         self.pos = self.base + i;
-        Ok((tok, s[start..i].to_vec()))
+        Ok((tok, start..i))
+    }
+
+    fn quoted_end(&self, start: usize, quote: u8, scan: Scan) -> Result<usize, LexError> {
+        let bytes = &self.buf;
+        let mut cursor = match scan {
+            Scan::Quoted { next, .. } => start + next,
+            _ => start + 1,
+        };
+        let mut last_close = match scan {
+            Scan::Quoted { last_close, .. } => last_close,
+            _ => None,
+        };
+        if self.last_chunk && quote != b'`' && start + 1 == bytes.len() {
+            return Err(LexError::Parse(CsvError::Other(
+                "syntax error: unexpected EOF".to_owned(),
+            )));
+        }
+        let escapes = quote != b'`' && !self.no_backslash_escapes;
+        let resume_at = |cursor, last_close| {
+            LexError::NeedMore(start, Scan::Quoted { next: cursor - start, last_close })
+        };
+        loop {
+            let tail = &bytes[cursor..];
+            let hit = if escapes {
+                memchr::memchr2(quote, b'\\', tail)
+            } else {
+                memchr::memchr(quote, tail)
+            };
+            let Some(offset) = hit else {
+                if !self.last_chunk {
+                    return Err(resume_at(bytes.len(), last_close));
+                }
+                return last_close
+                    .map(|end| start + end)
+                    .ok_or_else(|| LexError::Parse(CsvError::Other("syntax error".to_owned())));
+            };
+            let found = cursor + offset;
+            let next = found + 1;
+            // Leave an undecided quote or escape to be read with the next block.
+            if next == bytes.len() && !self.last_chunk {
+                return Err(resume_at(found, last_close));
+            }
+            if bytes[found] != quote {
+                cursor = (next + 1).min(bytes.len());
+            } else if bytes.get(next) == Some(&quote) {
+                last_close = Some(next - start);
+                cursor = next + 1;
+            } else {
+                return Ok(next);
+            }
+        }
+    }
+
+    fn quoted_base_end(
+        &self, start: usize, digits: usize, hex: bool, scan: Scan,
+    ) -> Result<Option<usize>, LexError> {
+        let cursor = match scan {
+            Scan::QuotedBase(next) => start + next,
+            _ => digits,
+        };
+        let invalid = |&byte: &u8| {
+            if hex { !byte.is_ascii_hexdigit() } else { !matches!(byte, b'0' | b'1') }
+        };
+        let end = self.buf[cursor..]
+            .iter()
+            .position(invalid)
+            .map_or(self.buf.len(), |offset| cursor + offset);
+        if self.buf.get(end) == Some(&b'\'') {
+            return Ok(Some(end));
+        }
+        if end == self.buf.len() && !self.last_chunk {
+            return Err(LexError::NeedMore(start, Scan::QuotedBase(end - start)));
+        }
+        Ok(None)
     }
 
     /// Go `ChunkParser.unescapeString`.
-    fn unescape_string(&self, input: &[u8]) -> Vec<u8> {
+    fn unescape_string(input: &[u8], no_backslash_escapes: bool) -> Vec<u8> {
         if input.len() < 2 || !matches!(input[0], b'\'' | b'"' | b'`') {
             return input.to_vec();
         }
         let quote = input[0];
         let content = &input[1..input.len() - 1];
-        let mut dedup = Vec::with_capacity(content.len());
-        let mut i = 0;
-        while i < content.len() {
-            dedup.push(content[i]);
-            if content[i] == quote && content.get(i + 1) == Some(&quote) {
-                i += 1;
-            }
-            i += 1;
-        }
-        let flavor = if quote == b'`' || self.no_backslash_escapes {
+        let flavor = if quote == b'`' || no_backslash_escapes {
             EscapeFlavor::None
         } else {
             EscapeFlavor::MySql
         };
-        unescape(&dedup, flavor, b'\\')
+        let doubled = [quote; 2];
+        let Some(mut pair) = memchr::memmem::find(content, &doubled) else {
+            return unescape(content, flavor, b'\\');
+        };
+        let mut dedup = Vec::with_capacity(content.len() - 1);
+        let mut remaining = content;
+        loop {
+            dedup.extend_from_slice(&remaining[..=pair]);
+            remaining = &remaining[pair + 2..];
+            let Some(next) = memchr::memmem::find(remaining, &doubled) else {
+                break;
+            };
+            pair = next;
+        }
+        dedup.extend_from_slice(remaining);
+        if flavor != EscapeFlavor::None {
+            if let Some(first) = memchr::memchr(b'\\', &dedup).filter(|&i| i + 1 < dedup.len()) {
+                return crate::unescape_from(&dedup, b'\\', first);
+            }
+        }
+        dedup
     }
 
     /// Go `ChunkParser.ReadRow`.
@@ -420,7 +461,7 @@ impl ChunkParser {
         let mut state = State::Values;
         self.last_row.length = 0;
         loop {
-            let (tok, content) = match self.lex() {
+            let (tok, range) = match self.lex() {
                 Err(CsvError::Eof) if state != State::Values => {
                     return Err(CsvError::Other(format!(
                         "syntax error: premature EOF at offset {}",
@@ -429,6 +470,7 @@ impl ChunkParser {
                 }
                 result => result?,
             };
+            let content = &self.buf[range];
             self.last_row.length += content.len();
             let expected = match state {
                 State::TableName => "table name",
@@ -444,7 +486,7 @@ impl ChunkParser {
                 (State::TableName, Token::Unquoted | Token::DoubleQuoted | Token::BackQuoted) => {}
                 (State::Columns, Token::Unquoted | Token::DoubleQuoted | Token::BackQuoted) => self
                     .columns
-                    .push(String::from_utf8_lossy(&self.unescape_string(&content)).to_lowercase()),
+                    .push(String::from_utf8_lossy(&Self::unescape_string(content, self.no_backslash_escapes)).to_lowercase()),
                 (State::Values, Token::RowBegin) => {
                     self.last_row.row_id += 1;
                     self.last_row.row.clear();
@@ -463,20 +505,22 @@ impl ChunkParser {
                     State::Row,
                     Token::Integer | Token::Unquoted | Token::SingleQuoted | Token::DoubleQuoted,
                 ) => {
-                    let text = String::from_utf8_lossy(&content);
-                    let int = if tok != Token::Integer {
-                        None
-                    } else if content[0] == b'-' {
-                        text.parse::<i64>().ok().map(Datum::Int)
+                    let int = if tok == Token::Integer {
+                        let text = std::str::from_utf8(content).expect("integer tokens are ASCII");
+                        if content[0] == b'-' {
+                            text.parse::<i64>().ok().map(Datum::Int)
+                        } else {
+                            text.parse::<u64>().ok().map(Datum::UInt)
+                        }
                     } else {
-                        text.parse::<u64>().ok().map(Datum::UInt)
+                        None
                     };
                     self.last_row.row.push(int.unwrap_or_else(|| {
-                        Datum::new_string_datum(self.unescape_string(&content))
+                        Datum::new_string_datum(Self::unescape_string(content, self.no_backslash_escapes))
                     }));
                 }
                 (State::Row, Token::HexString | Token::BinString) => {
-                    let text = String::from_utf8_lossy(&content);
+                    let text = String::from_utf8_lossy(content);
                     let value = if tok == Token::HexString {
                         parse_hex_str(&text)
                     } else {
@@ -488,7 +532,7 @@ impl ChunkParser {
                 _ => {
                     return Err(CsvError::Other(format!(
                         "syntax error: unexpected {tok:?} ({}) at offset {}, expecting {expected}",
-                        String::from_utf8_lossy(&content),
+                        String::from_utf8_lossy(content),
                         self.pos
                     )))
                 }
@@ -529,7 +573,7 @@ impl Parser for ChunkParser {
 
 impl Parser for crate::CsvParser {
     fn read_row(&mut self) -> Result<(), CsvError> {
-        Self::read_row(self).map(|_| ())
+        self.read_next_row(None)
     }
     fn last_row(&self) -> &Row {
         &self.last_row
@@ -611,7 +655,19 @@ fn is_space(byte: u8) -> bool {
     matches!(byte, b' ' | b'\t'..=b'\r')
 }
 
+// Relative to the start of the unfinished token, which becomes offset zero
+// when lex refills the buffer.
+#[derive(Clone, Copy)]
+enum Scan {
+    Start,
+    BlockComment(usize),
+    LineComment(usize),
+    Quoted { next: usize, last_close: Option<usize> },
+    Unquoted(usize),
+    QuotedBase(usize),
+}
+
 enum LexError {
-    NeedMore(usize),
+    NeedMore(usize, Scan),
     Parse(CsvError),
 }

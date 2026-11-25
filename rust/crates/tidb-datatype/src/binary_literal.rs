@@ -15,6 +15,7 @@
 use std::cmp::Ordering;
 use std::fmt;
 
+use tidb_goruntime::go_hex;
 use tidb_mysql::errors::{errcode, FormatArg, SqlError};
 use tidb_terror::{TerrorClass, TerrorCode, TerrorError};
 use tidb_errno::errname;
@@ -81,28 +82,40 @@ impl BinaryLiteral {
         self.as_bytes()
     }
 
+    /// Returns the hexadecimal form for callers that need owned bytes.
+    pub(crate) fn to_hex_bytes(&self) -> Vec<u8> {
+        if self.0.is_empty() {
+            return Vec::new();
+        }
+        let mut encoded = vec![0; 2 + self.0.len() * 2];
+        encoded[..2].copy_from_slice(b"0x");
+        go_hex::encode(&mut encoded[2..], self.as_bytes());
+        encoded
+    }
+
     /// Returns Go `ToBitLiteralString`'s SQL bit-literal representation.
     pub fn to_bit_literal_string(&self, trim_leading_zero: bool) -> String {
-        if self.0.is_empty() {
-            return "b''".to_owned();
-        }
-
-        let mut bits = String::with_capacity(self.0.len() * 8);
-        for byte in &self.0 {
-            use fmt::Write;
-            write!(bits, "{byte:08b}").expect("writing to String cannot fail");
-        }
-        let bits = if trim_leading_zero {
-            let trimmed = bits.trim_start_matches('0');
-            if trimmed.is_empty() {
-                "0"
-            } else {
-                trimmed
-            }
+        let bytes = if trim_leading_zero {
+            trim_leading_zero_bytes(&self.0)
         } else {
-            &bits
+            &self.0
         };
-        format!("b'{bits}'")
+        let Some((&first, rest)) = bytes.split_first() else {
+            return "b''".to_owned();
+        };
+        let skip = if trim_leading_zero {
+            first.leading_zeros().min(7) as usize
+        } else {
+            0
+        };
+        let mut output = String::with_capacity(3 + bytes.len() * 8 - skip);
+        output.push_str("b'");
+        output.push_str(&BIT_TEXT[usize::from(first)][skip..]);
+        for &byte in rest {
+            output.push_str(BIT_TEXT[usize::from(byte)]);
+        }
+        output.push('\'');
+        output
     }
 
     /// Converts the big-endian literal to an unsigned integer before any
@@ -112,13 +125,20 @@ impl BinaryLiteral {
     /// non-zero payload wider than eight bytes. The typed outcome preserves
     /// both pieces without inventing a warning sink in the datatype layer.
     pub fn to_int(&self) -> BinaryLiteralIntOutcome {
-        let bytes = trim_leading_zero_bytes(&self.0);
+        let bytes = if self.0.len() <= 8 {
+            self.as_bytes()
+        } else {
+            trim_leading_zero_bytes(&self.0)
+        };
         if bytes.len() > 8 {
             return BinaryLiteralIntOutcome::Truncated { value: u64::MAX };
         }
-        let value = bytes
-            .iter()
-            .fold(0_u64, |value, byte| (value << 8) | u64::from(*byte));
+        let value = match bytes.first_chunk::<8>() {
+            Some(word) => u64::from_be_bytes(*word),
+            None => bytes
+                .iter()
+                .fold(0_u64, |value, byte| (value << 8) | u64::from(*byte)),
+        };
         BinaryLiteralIntOutcome::Exact(value)
     }
 
@@ -166,12 +186,51 @@ impl BinaryLiteral {
 
     /// Compares two literals as unsigned big-endian integers after removing
     /// redundant leading zero bytes.
+    #[inline]
     pub fn compare(&self, other: &Self) -> Ordering {
-        let left = trim_leading_zero_bytes(&self.0);
-        let right = trim_leading_zero_bytes(&other.0);
+        Self::compare_bytes(&self.0, &other.0)
+    }
+
+    /// Compares borrowed binary literals with the same unsigned ordering.
+    pub fn compare_bytes(left: &[u8], right: &[u8]) -> Ordering {
+        if left.len() == right.len() {
+            if left.is_empty() {
+                return Ordering::Equal;
+            }
+            return left.cmp(right);
+        }
+        let left = trim_leading_zero_bytes(left);
+        let right = trim_leading_zero_bytes(right);
         left.len().cmp(&right.len()).then_with(|| left.cmp(right))
     }
 }
+
+static BIT_DIGITS: [[u8; 8]; 256] = {
+    let mut digits = [[b'0'; 8]; 256];
+    let mut byte = 0;
+    while byte < digits.len() {
+        let mut bit = 0;
+        while bit < 8 {
+            digits[byte][bit] += ((byte >> (7 - bit)) & 1) as u8;
+            bit += 1;
+        }
+        byte += 1;
+    }
+    digits
+};
+
+static BIT_TEXT: [&str; 256] = {
+    let mut text = [""; 256];
+    let mut byte = 0;
+    while byte < text.len() {
+        text[byte] = match std::str::from_utf8(&BIT_DIGITS[byte]) {
+            Ok(text) => text,
+            Err(_) => panic!("bit digits are ASCII"),
+        };
+        byte += 1;
+    }
+    text
+};
 
 impl From<Vec<u8>> for BinaryLiteral {
     fn from(bytes: Vec<u8>) -> Self {
@@ -197,17 +256,75 @@ impl AsRef<[u8]> for BinaryLiteral {
     }
 }
 
-impl fmt::Display for BinaryLiteral {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.0.is_empty() {
-            return Ok(());
-        }
-        formatter.write_str("0x")?;
-        for byte in &self.0 {
-            write!(formatter, "{byte:02x}")?;
-        }
-        Ok(())
+static HEX_BYTE: [[u8; 4]; 256] = {
+    let digits = b"0123456789abcdef";
+    let mut bytes = [[b'0', b'x', 0, 0]; 256];
+    let mut i = 0;
+    while i < bytes.len() {
+        bytes[i][2] = digits[i >> 4];
+        bytes[i][3] = digits[i & 15];
+        i += 1;
     }
+    bytes
+};
+
+static HEX_BYTE_TEXT: [&str; 256] = {
+    let mut values = [""; 256];
+    let mut i = 0;
+    while i < values.len() {
+        values[i] = match std::str::from_utf8(&HEX_BYTE[i]) {
+            Ok(text) => text,
+            Err(_) => panic!("hex digits are ASCII"),
+        };
+        i += 1;
+    }
+    values
+};
+
+impl fmt::Display for BinaryLiteral {
+    #[inline]
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.as_bytes() {
+            [] => Ok(()),
+            [byte] => formatter.write_str(HEX_BYTE_TEXT[*byte as usize]),
+            bytes if bytes.len() <= 32 => format_small_hex(bytes, formatter),
+            bytes => format_hex_chunks(bytes, formatter),
+        }
+    }
+}
+
+// Keep the empty and one-byte paths small enough to inline into callers.
+#[inline(never)]
+fn format_small_hex(bytes: &[u8], formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+    if let [_, _, _, _, _, _, _, _] = bytes {
+        let mut encoded = [0; 18];
+        encoded[..2].copy_from_slice(b"0x");
+        go_hex::encode(&mut encoded[2..], bytes);
+        return formatter.write_str(std::str::from_utf8(&encoded).expect("hex digits are ASCII"));
+    }
+
+    let mut encoded = [0; 66];
+    encoded[..2].copy_from_slice(b"0x");
+    let end = 2 + bytes.len() * 2;
+    for (out, &byte) in encoded[2..end].as_chunks_mut::<2>().0.iter_mut().zip(bytes) {
+        let [_, _, high, low] = HEX_BYTE[byte as usize];
+        *out = [high, low];
+    }
+    formatter.write_str(std::str::from_utf8(&encoded[..end]).expect("hex digits are ASCII"))
+}
+
+fn format_hex_chunks(bytes: &[u8], formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+    const CHUNK_SIZE: usize = 512;
+    let mut encoded = [0; 2 + CHUNK_SIZE * 2];
+    encoded[..2].copy_from_slice(b"0x");
+    let mut start = 0;
+    for chunk in bytes.chunks(CHUNK_SIZE) {
+        let end = 2 + go_hex::encode(&mut encoded[2..], chunk);
+        let text = std::str::from_utf8(&encoded[start..end]).expect("hex digits are ASCII");
+        formatter.write_str(text)?;
+        start = 2;
+    }
+    Ok(())
 }
 
 /// A bit literal parsed from `b'...'`, `B'...'`, or `0b...` syntax.
@@ -409,19 +526,37 @@ pub fn parse_bit_str(input: &str) -> Result<BinaryLiteral, BinaryLiteralParseErr
         return Ok(BinaryLiteral::ZERO);
     }
 
-    let aligned_len = (payload.len() + 7) & !7;
-    let padding = aligned_len - payload.len();
-    let mut output = vec![0_u8; aligned_len / 8];
-    for (index, byte) in payload.iter().copied().enumerate() {
-        let bit = match byte {
-            b'0' => 0,
-            b'1' => 1,
-            _ => return Err(BinaryLiteralParseError::InvalidBitDigit(byte)),
-        };
-        let aligned_index = padding + index;
-        output[aligned_index / 8] |= bit << (7 - aligned_index % 8);
+    let (prefix, aligned) = payload.split_at(payload.len() % 8);
+    let mut output = Vec::with_capacity(payload.len().div_ceil(8));
+    if !prefix.is_empty() {
+        output.push(parse_bit_digits(prefix)?);
+    }
+    const LOW_BITS: u64 = 0x0101_0101_0101_0101;
+    const ASCII_ZEROES: u64 = u64::from_le_bytes([b'0'; 8]);
+    for digits in aligned.as_chunks::<8>().0 {
+        let word = u64::from_le_bytes(*digits);
+        let invalid_bits = (word & !LOW_BITS) ^ ASCII_ZEROES;
+        if invalid_bits != 0 {
+            let first_invalid = invalid_bits.trailing_zeros() as usize / 8;
+            return Err(BinaryLiteralParseError::InvalidBitDigit(digits[first_invalid]));
+        }
+        // Multiplying gathers each byte's low bit into the high byte,
+        // with the first input digit becoming the most significant bit.
+        let byte = ((word & LOW_BITS).wrapping_mul(0x8040_2010_0804_0201) >> 56) as u8;
+        output.push(byte);
     }
     Ok(BinaryLiteral(output))
+}
+
+fn parse_bit_digits(digits: &[u8]) -> Result<u8, BinaryLiteralParseError> {
+    let mut output = 0;
+    for &digit in digits {
+        match digit {
+            b'0' | b'1' => output = (output << 1) | (digit - b'0'),
+            _ => return Err(BinaryLiteralParseError::InvalidBitDigit(digit)),
+        }
+    }
+    Ok(output)
 }
 
 /// Parses `x'...'`, `X'...'`, or lower-case-prefix `0x...` syntax.
@@ -445,26 +580,15 @@ pub fn parse_hex_str(input: &str) -> Result<BinaryLiteral, BinaryLiteralParseErr
         return Ok(BinaryLiteral::ZERO);
     }
 
-    let mut output = Vec::with_capacity(payload.len().div_ceil(2));
-    let mut index = 0;
-    if payload.len() % 2 != 0 {
-        output.push(hex_nibble(payload[0])?);
-        index = 1;
+    let (head, pairs) = payload.as_rchunks::<2>();
+    let mut output = vec![0; payload.len().div_ceil(2)];
+    if let [digit] = *head {
+        go_hex::decode_pairs(&mut output[..1], &[[b'0', digit]])
+            .map_err(BinaryLiteralParseError::InvalidHexDigit)?;
     }
-    while index < payload.len() {
-        output.push((hex_nibble(payload[index])? << 4) | hex_nibble(payload[index + 1])?);
-        index += 2;
-    }
+    go_hex::decode_pairs(&mut output[head.len()..], pairs)
+        .map_err(BinaryLiteralParseError::InvalidHexDigit)?;
     Ok(BinaryLiteral(output))
-}
-
-fn hex_nibble(byte: u8) -> Result<u8, BinaryLiteralParseError> {
-    match byte {
-        b'0'..=b'9' => Ok(byte - b'0'),
-        b'a'..=b'f' => Ok(byte - b'a' + 10),
-        b'A'..=b'F' => Ok(byte - b'A' + 10),
-        _ => Err(BinaryLiteralParseError::InvalidHexDigit(byte)),
-    }
 }
 
 fn trim_apostrophes(mut bytes: &[u8]) -> &[u8] {
@@ -478,14 +602,22 @@ fn trim_apostrophes(mut bytes: &[u8]) -> &[u8] {
 }
 
 fn trim_leading_zero_bytes(bytes: &[u8]) -> &[u8] {
-    if bytes.is_empty() {
+    if bytes.first().is_none_or(|&byte| byte != 0) {
         return bytes;
     }
-    let first_non_zero = bytes
-        .iter()
-        .position(|byte| *byte != 0)
-        .unwrap_or(bytes.len() - 1);
-    &bytes[first_non_zero..]
+
+    let mut remaining = bytes;
+    while let Some((word, tail)) = remaining.split_first_chunk::<8>() {
+        let word = u64::from_be_bytes(*word);
+        if word != 0 {
+            return &remaining[word.leading_zeros() as usize / 8..];
+        }
+        remaining = tail;
+    }
+    match remaining.iter().position(|&byte| byte != 0) {
+        Some(first) => &remaining[first..],
+        None => &bytes[bytes.len() - 1..],
+    }
 }
 
 #[cfg(test)]

@@ -26,7 +26,8 @@
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
 use tidb_charset::Collation;
 use tidb_tablecodec::{
-    cut_datum_by_prefix_len, reach_prefix_len, truncate_index_value, IndexColumn, TableColumn,
+    clone_datum_by_prefix_len, cut_datum_by_prefix_len, reach_prefix_len, truncate_index_value,
+    IndexColumn, TableColumn,
 };
 
 const FIXTURE: &str = include_str!(
@@ -148,7 +149,9 @@ fn ranger_cut_matches_the_go_truncation_vectors() {
             other => panic!("unknown datum tag {other}"),
         };
         let mut value = original.clone();
-        let cut = cut_datum_by_prefix_len(&mut value, length, &column_for(charset_tag).field_type);
+        let field = column_for(charset_tag).field_type;
+        let cut = cut_datum_by_prefix_len(&mut value, length, &field);
+        let copied = clone_datum_by_prefix_len(&original, length, &field);
         assert_eq!(kind_name(&value), want_kind, "{label}: datum kind");
         assert_eq!(
             hex(value.as_raw_bytes().unwrap_or(&[])),
@@ -156,6 +159,7 @@ fn ranger_cut_matches_the_go_truncation_vectors() {
             "{label}: cut bytes"
         );
         assert_eq!(cut, value != original, "{label}: reported cut");
+        assert_eq!(copied, value, "{label}: prefix copied from borrowed input");
     }
 }
 

@@ -258,10 +258,11 @@ pub trait ExecStmtObservation: crate::sessionctx::SessionContext {
         } else if let Some(secure_text) = &observation.secure_text {
             secure_text.clone()
         } else {
-            tidb_redact::string(
+            tidb_redact::string_cow(
                 &mode,
-                &format!("{}{}", observation.text, self.plan_cache_params_string()),
+                format!("{}{}", observation.text, self.plan_cache_params_string()),
             )
+            .into_owned()
         }
     }
 

@@ -12,19 +12,22 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::sync::{Mutex, MutexGuard};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const MAX_RAND_VALUE: u32 = 0x3fff_ffff;
 
-struct State {
-    seed1: u32,
-    seed2: u32,
+fn pack_seeds(seed1: u32, seed2: u32) -> u64 {
+    u64::from(seed1) | (u64::from(seed2) << 32)
 }
 
 /// MySQL's two-seed random number generator.
 pub struct MysqlRng {
-    state: Mutex<State>,
+    // Each draw and seed change acts on the whole pair. Relaxed ordering is
+    // sufficient because the state does not guard other data.
+    seeds: AtomicU64,
+    contention: Mutex<()>,
 }
 
 impl std::fmt::Debug for MysqlRng {
@@ -39,7 +42,8 @@ impl MysqlRng {
         let seed1 = seed.wrapping_mul(0x1_0001).wrapping_add(55_555_555) as u32 % MAX_RAND_VALUE;
         let seed2 = seed.wrapping_mul(0x1000_0001) as u32 % MAX_RAND_VALUE;
         Self {
-            state: Mutex::new(State { seed1, seed2 }),
+            seeds: AtomicU64::new(pack_seeds(seed1, seed2)),
+            contention: Mutex::new(()),
         }
     }
 
@@ -53,38 +57,65 @@ impl MysqlRng {
         Self::new_with_seed(seed)
     }
 
-    fn lock(&self) -> MutexGuard<'_, State> {
-        self.state
+    fn update_seeds(&self, update: impl Fn(u64) -> u64) -> u64 {
+        let previous = self.seeds.load(Ordering::Relaxed);
+        let next = update(previous);
+        if self
+            .seeds
+            .compare_exchange(previous, next, Ordering::Relaxed, Ordering::Relaxed)
+            .is_ok()
+        {
+            return next;
+        }
+        // Serialize retries so concurrent callers do not repeatedly
+        // invalidate one another's attempts under sustained contention.
+        let _guard = self
+            .contention
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        loop {
+            let previous = self.seeds.load(Ordering::Relaxed);
+            let next = update(previous);
+            if self
+                .seeds
+                .compare_exchange_weak(previous, next, Ordering::Relaxed, Ordering::Relaxed)
+                .is_ok()
+            {
+                return next;
+            }
+        }
     }
 
     /// Generates the next value in `[0, 1)`.
     pub fn gen(&self) -> f64 {
-        let mut state = self.lock();
-        state.seed1 = state.seed1.wrapping_mul(3).wrapping_add(state.seed2) % MAX_RAND_VALUE;
-        state.seed2 = state.seed1.wrapping_add(state.seed2).wrapping_add(33) % MAX_RAND_VALUE;
-        f64::from(state.seed1) / f64::from(MAX_RAND_VALUE)
+        let next = self.update_seeds(|seeds| {
+            let seed1 = seeds as u32;
+            let seed2 = (seeds >> 32) as u32;
+            let next_seed1 = seed1.wrapping_mul(3).wrapping_add(seed2) % MAX_RAND_VALUE;
+            let next_seed2 = next_seed1.wrapping_add(seed2).wrapping_add(33) % MAX_RAND_VALUE;
+            pack_seeds(next_seed1, next_seed2)
+        });
+        f64::from(next as u32) / f64::from(MAX_RAND_VALUE)
     }
 
     /// Replaces the first seed without normalization, matching the source.
     pub fn set_seed1(&self, seed: u32) {
-        self.lock().seed1 = seed;
+        self.update_seeds(|seeds| pack_seeds(seed, (seeds >> 32) as u32));
     }
 
     /// Replaces the second seed without normalization, matching the source.
     pub fn set_seed2(&self, seed: u32) {
-        self.lock().seed2 = seed;
+        self.update_seeds(|seeds| pack_seeds(seeds as u32, seed));
     }
 
     /// Returns the first seed.
     pub fn get_seed1(&self) -> u32 {
-        self.lock().seed1
+        self.seeds.load(Ordering::Relaxed) as u32
     }
 
     /// Returns the second seed.
     pub fn get_seed2(&self) -> u32 {
-        self.lock().seed2
+        (self.seeds.load(Ordering::Relaxed) >> 32) as u32
     }
 }
 
@@ -121,6 +152,41 @@ mod tests {
             assert_eq!(rng.gen(), once);
             assert_eq!(rng.gen(), twice);
         }
+    }
+
+    #[test]
+    fn concurrent_draws_advance_the_same_seed_stream() {
+        const WORKERS: usize = 8;
+        const DRAWS_PER_WORKER: usize = 2_048;
+        let serial = MysqlRng::new_with_seed(42);
+        let mut expected = (0..WORKERS * DRAWS_PER_WORKER)
+            .map(|_| serial.gen().to_bits())
+            .collect::<Vec<_>>();
+        expected.sort_unstable();
+
+        let shared = MysqlRng::new_with_seed(42);
+        let ready = std::sync::Barrier::new(WORKERS);
+        let mut actual = thread::scope(|scope| {
+            let workers = (0..WORKERS)
+                .map(|_| {
+                    scope.spawn(|| {
+                        ready.wait();
+                        (0..DRAWS_PER_WORKER)
+                            .map(|_| shared.gen().to_bits())
+                            .collect::<Vec<_>>()
+                    })
+                })
+                .collect::<Vec<_>>();
+            workers
+                .into_iter()
+                .flat_map(|worker| worker.join().unwrap())
+                .collect::<Vec<_>>()
+        });
+        actual.sort_unstable();
+
+        assert_eq!(actual, expected);
+        assert_eq!(shared.get_seed1(), serial.get_seed1());
+        assert_eq!(shared.get_seed2(), serial.get_seed2());
     }
 
     #[test]

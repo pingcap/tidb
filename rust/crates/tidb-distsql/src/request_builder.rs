@@ -23,6 +23,7 @@
 use tidb_ranger::points::{full_int_range, full_not_null_range, full_range};
 use tidb_ranger::types::Range;
 use std::sync::Arc;
+use prost::bytes::Bytes;
 use tidb_tablecodec::table_key::encode_index_seek_key;
 use tidb_codec::encode_key;
 use tidb_tablecodec::table_key::encode_row_key;
@@ -72,7 +73,7 @@ pub enum KvRequestBuildError {
 #[derive(Debug)]
 pub struct RequestBuilder {
     request: KvRequestMetadata,
-    dag: Option<RequestEnvelope>,
+    dag_single_scan: Option<bool>,
     error: Option<KvRequestBuildError>,
     used: bool,
 }
@@ -92,7 +93,7 @@ impl RequestBuilder {
     pub fn new() -> Self {
         Self {
             request: KvRequestMetadata::default(),
-            dag: None,
+            dag_single_scan: None,
             error: None,
             used: false,
         }
@@ -120,13 +121,16 @@ impl RequestBuilder {
 
     /// Stores opaque protobuf bytes unchanged.
     pub fn set_data(&mut self, data: impl Into<Vec<u8>>) -> &mut Self {
-        self.request.data = Some(data.into());
+        self.request.data = Some(data.into().into());
         self
     }
 
     /// Replaces ranges with a complete canonical envelope.
-    pub fn set_key_ranges(&mut self, key_ranges: PartitionedKeyRanges) -> &mut Self {
-        self.request.key_ranges = Some(Arc::new(key_ranges));
+    pub fn set_key_ranges(
+        &mut self,
+        key_ranges: impl Into<Arc<PartitionedKeyRanges>>,
+    ) -> &mut Self {
+        self.request.key_ranges = Some(key_ranges.into());
         self
     }
 
@@ -235,35 +239,49 @@ impl RequestBuilder {
         &mut self,
         partition_id_and_ranges: Vec<PartitionIdAndRanges>,
     ) -> &mut Self {
-        self.request.partition_id_and_ranges = partition_id_and_ranges;
+        self.request.partition_id_and_ranges =
+            (!partition_id_and_ranges.is_empty()).then(|| Arc::new(partition_id_and_ranges));
         self
     }
 
     /// Attaches a DAG shape and its already-marshalled source payload.
     pub fn set_dag_request(
         &mut self,
-        mut dag: RequestEnvelope,
+        dag: RequestEnvelope,
         data: impl Into<Vec<u8>>,
     ) -> &mut Self {
         if self.error.is_some() {
             return self;
         }
-        dag.keep_order = self.request.keep_order;
-        if dag.partition_count == 0 {
-            dag.partition_count = self
+        self.attach_dag_request(&dag, data.into().into())
+    }
+
+    /// Attaches an encoded DAG that can be shared by multiple requests.
+    pub fn set_dag_request_bytes(&mut self, dag: &RequestEnvelope, data: Bytes) -> &mut Self {
+        if self.error.is_some() {
+            return self;
+        }
+        self.attach_dag_request(dag, data)
+    }
+
+    fn attach_dag_request(&mut self, dag: &RequestEnvelope, data: Bytes) -> &mut Self {
+        let partition_count = if dag.partition_count == 0 {
+            self
                 .request
                 .key_ranges
                 .as_ref()
-                .map_or(0, |ranges| ranges.partition_count());
-        }
-        if let Some(concurrency) = dag.small_limit_concurrency() {
+                .map_or(0, |ranges| ranges.partition_count())
+        } else {
+            dag.partition_count
+        };
+        if let Some(concurrency) = dag.small_limit_concurrency_for(partition_count) {
             self.request.concurrency = concurrency as isize;
         }
         self.request.request_type = RequestType::Dag;
         self.request.cacheable = true;
-        self.request.data = Some(data.into());
+        self.request.data = Some(data);
         self.request.limit_size = dag.limit_size().unwrap_or(0);
-        self.dag = Some(dag);
+        self.dag_single_scan = Some(dag.is_single_scan());
         self
     }
 
@@ -273,7 +291,7 @@ impl RequestBuilder {
             return self;
         }
         let data = self.request.data.take().unwrap_or_default();
-        self.set_dag_request(dag, data)
+        self.attach_dag_request(&dag, data)
     }
 
     /// Applies Analyze's source request defaults to opaque encoded bytes.
@@ -286,7 +304,7 @@ impl RequestBuilder {
             return self;
         }
         self.request.request_type = RequestType::Analyze;
-        self.request.data = Some(data.into());
+        self.request.data = Some(data.into().into());
         self.request.not_fill_cache = true;
         self.request.isolation_level = isolation_level;
         self.request.priority = Priority::Low;
@@ -306,7 +324,7 @@ impl RequestBuilder {
             return self;
         }
         self.request.request_type = RequestType::Checksum;
-        self.request.data = Some(data.into());
+        self.request.data = Some(data.into().into());
         self.request.not_fill_cache = true;
         self
     }
@@ -331,12 +349,9 @@ impl RequestBuilder {
         self
     }
 
-    /// Sets response ordering and keeps the attached DAG shape synchronized.
+    /// Sets response ordering for the final DAG concurrency policy.
     pub fn set_keep_order(&mut self, keep_order: bool) -> &mut Self {
         self.request.keep_order = keep_order;
-        if let Some(dag) = self.dag.as_mut() {
-            dag.keep_order = keep_order;
-        }
         self
     }
 
@@ -489,7 +504,8 @@ impl RequestBuilder {
         self
     }
 
-    /// Builds immutable request metadata once.
+    /// Finalizes and transfers the request metadata out of the single-use builder.
+    #[inline]
     pub fn build(&mut self) -> Result<KvRequestMetadata, KvRequestBuildError> {
         if self.used {
             return Err(KvRequestBuildError::AlreadyBuilt);
@@ -499,7 +515,7 @@ impl RequestBuilder {
             return Err(error);
         }
 
-        let mut request = self.request.clone();
+        let request = &mut self.request;
         if request.read_replica_scope.is_empty() {
             request.read_replica_scope = GLOBAL_REPLICA_SCOPE.to_owned();
         }
@@ -515,16 +531,16 @@ impl RequestBuilder {
             request.key_ranges = Some(Arc::new(PartitionedKeyRanges::new_non_partitioned(Vec::new())));
         }
 
-        if let Some(dag) = &self.dag {
-            let mut shape = dag.clone();
-            shape.keep_order = request.keep_order;
-            request.concurrency = shape.build_concurrency(
+        if let Some(single_scan) = self.dag_single_scan.take() {
+            request.concurrency = crate::envelope::build_dag_concurrency(
+                single_scan,
+                request.keep_order,
                 u64::try_from(request.concurrency).unwrap_or(0),
                 DEFAULT_DIST_SQL_CONCURRENCY,
             ) as isize;
         }
 
-        Ok(request)
+        Ok(std::mem::take(request))
     }
 
     /// Builds and hands the immutable snapshot to the real pre-transport
@@ -892,7 +908,7 @@ pub fn split_ranges_across_int64_boundary(
     if !(unsigned(crossing.low_val.first()) == Some(boundary) && crossing.low_exclude) {
         signed.push(Range {
             low_val: crossing.low_val.clone(),
-            high_val: vec![Datum::UInt(boundary)],
+            high_val: vec![Datum::UInt(boundary)].into(),
             collators: crossing.collators.clone(),
             low_exclude: crossing.low_exclude,
             high_exclude: false,
@@ -903,7 +919,7 @@ pub fn split_ranges_across_int64_boundary(
     // `MaxInt64 + 1`, for the same reason.
     if !(unsigned(crossing.high_val.first()) == Some(boundary + 1) && crossing.high_exclude) {
         unsigned_half.push(Range {
-            low_val: vec![Datum::UInt(boundary + 1)],
+            low_val: vec![Datum::UInt(boundary + 1)].into(),
             high_val: crossing.high_val.clone(),
             collators: crossing.collators.clone(),
             low_exclude: false,
@@ -919,10 +935,50 @@ mod tests {
     use super::*;
 
     #[test]
+    fn transport_binding_retains_the_builder_payload_allocation() {
+        let data = vec![0x5a; 256 * 1024];
+        let address = data.as_ptr();
+        let mut builder = RequestBuilder::new();
+        builder.set_dag_request(RequestEnvelope::new(Vec::new()), data);
+
+        let request = builder
+            .build_transport_request(Arc::new(crate::CancelHandle::default()))
+            .unwrap();
+        let data = request.metadata().data.as_deref().unwrap();
+        assert_eq!(data.as_ptr(), address);
+        assert_eq!(data.len(), 256 * 1024);
+
+        let bound = request.bind(tidb_txnkv::TransportBinding::new()).unwrap();
+        let analyze = request
+            .bind_with_request_source(
+                tidb_txnkv::TransportBinding::new(),
+                RequestSource {
+                    source_type: "stats".into(),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        for bound in [&bound, &analyze] {
+            assert_eq!(
+                bound.metadata_for_send().unwrap().data.as_deref(),
+                Some(data)
+            );
+            assert_eq!(bound.metadata().data.as_deref().unwrap().as_ptr(), address);
+        }
+        assert!(request.metadata().request_source.source_type.is_empty());
+        assert_eq!(analyze.metadata().request_source.source_type, "stats");
+
+        assert!(matches!(
+            builder.build(),
+            Err(KvRequestBuildError::AlreadyBuilt)
+        ));
+    }
+
+    #[test]
     fn sticky_range_error_blocks_guarded_request_family_mutations() {
         let invalid = Range {
-            low_val: vec![Datum::new_string_datum("not an integer")],
-            high_val: vec![Datum::new_string_datum("not an integer")],
+            low_val: vec![Datum::new_string_datum("not an integer")].into(),
+            high_val: vec![Datum::new_string_datum("not an integer")].into(),
             collators: vec![tidb_charset::Collation::Binary],
             ..Range::default()
         };
@@ -957,8 +1013,8 @@ mod int64_boundary_split_tests {
 
     fn range(low: u64, high: u64) -> Range {
         Range {
-            low_val: vec![Datum::UInt(low)],
-            high_val: vec![Datum::UInt(high)],
+            low_val: vec![Datum::UInt(low)].into(),
+            high_val: vec![Datum::UInt(high)].into(),
             collators: vec![tidb_charset::Collation::Binary],
             low_exclude: false,
             high_exclude: false,
@@ -980,8 +1036,8 @@ mod int64_boundary_split_tests {
         // Go detects a non-unsigned handle by the leading bound's KIND and
         // returns the ranges untouched.
         let input = vec![Range {
-            low_val: vec![Datum::Int(1)],
-            high_val: vec![Datum::Int(9)],
+            low_val: vec![Datum::Int(1)].into(),
+            high_val: vec![Datum::Int(9)].into(),
             collators: vec![tidb_charset::Collation::Binary],
             low_exclude: false,
             high_exclude: false,

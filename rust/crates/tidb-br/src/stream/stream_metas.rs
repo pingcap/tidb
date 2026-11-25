@@ -21,6 +21,7 @@ use std::sync::Arc;
 
 use prost::Message as _;
 use tidb_gocontext::Context;
+use tidb_goruntime::go_crc64::update_iso;
 use tidb_objstore::locking::{lock_with_retry, try_lock_remote_read, try_lock_remote_write, RemoteLock};
 use tidb_objstore::storeapi::{Storage, WalkOption};
 use tidb_proto::backup::{MetaEdit, Migration, MigrationVersion};
@@ -119,67 +120,20 @@ fn mig_id_of(s: &str) -> Result<i64> {
     })
 }
 
-/// Go's `crc64.MakeTable(crc64.ISO)`.
-fn crc64_iso_table() -> &'static [u64; 256] {
-    static TABLE: std::sync::OnceLock<[u64; 256]> = std::sync::OnceLock::new();
-    TABLE.get_or_init(|| {
-        const ISO: u64 = 0xD800_0000_0000_0000;
-        let mut t = [0u64; 256];
-        for (i, slot) in t.iter_mut().enumerate() {
-            let mut crc = i as u64;
-            for _ in 0..8 {
-                crc = if crc & 1 == 1 { (crc >> 1) ^ ISO } else { crc >> 1 };
-            }
-            *slot = crc;
-        }
-        t
-    })
-}
-
-/// Go `crc64.New(crc64.MakeTable(crc64.ISO))`.
-#[derive(Default)]
-struct Crc64Iso(u64);
-
-impl Crc64Iso {
-    fn write(&mut self, p: &[u8]) {
-        let tab = crc64_iso_table();
-        let mut crc = !self.0;
-        for &v in p {
-            crc = tab[((crc as u8) ^ v) as usize] ^ (crc >> 8);
-        }
-        self.0 = !crc;
-    }
-
-    fn sum64(&self) -> u64 {
-        self.0
-    }
-}
-
-/// Go `crc64.Checksum(data, crc64.MakeTable(crc64.ISO))`.
-fn crc64_iso(data: &[u8]) -> u64 {
-    let mut c = Crc64Iso::default();
-    c.write(data);
-    c.sum64()
-}
-
 /// Go `hashMetaEdit`.
 fn hash_meta_edit(meta_edit: &MetaEdit) -> u64 {
     let mut res = 0u64;
     for df in &meta_edit.delete_physical_files {
-        res ^= crc64_iso(df.as_bytes());
+        res ^= update_iso(0, df.as_bytes());
     }
     for spans in &meta_edit.delete_logical_files {
         for span in &spans.spans {
-            let mut crc = Crc64Iso::default();
-            crc.write(spans.path.as_bytes());
-            crc.write(&span.offset.to_le_bytes());
-            crc.write(&span.length.to_le_bytes());
-            res ^= crc.sum64();
+            let crc = update_iso(0, spans.path.as_bytes());
+            let crc = update_iso(crc, &span.offset.to_le_bytes());
+            res ^= update_iso(crc, &span.length.to_le_bytes());
         }
     }
-    let mut crc = Crc64Iso::default();
-    crc.write(&[u8::from(meta_edit.destruct_self)]);
-    res ^ crc.sum64()
+    res ^ update_iso(0, &[u8::from(meta_edit.destruct_self)])
 }
 
 /// Go `hashMigration`.
@@ -192,7 +146,7 @@ fn hash_migration(m: &Migration) -> u64 {
         res ^= hash_meta_edit(meta_edit);
     }
     for ext_bkup in &m.ingested_sst_paths {
-        res ^= crc64_iso(ext_bkup.as_bytes());
+        res ^= update_iso(0, ext_bkup.as_bytes());
     }
     res ^ m.truncated_to
 }

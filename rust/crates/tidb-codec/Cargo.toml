@@ -11,12 +11,12 @@ autotests = false
 [dev-dependencies]
 tidb-tablecodec = { path = "../tidb-tablecodec" }
 tidb-rowcodec = { path = "../tidb-rowcodec" }
-bytes.workspace = true
 
 [lints]
 workspace = true
 
 [dependencies]
+bytes.workspace = true
 tidb-charset = { path = "../tidb-charset" }
 tidb-goruntime = { path = "../tidb-goruntime" }
 tidb-chunk = { path = "../tidb-chunk" }

@@ -15,7 +15,9 @@
 //! Go `strings.EqualFold` and `strings.ToLower` equality, the two identifier
 //! comparisons TiDB makes. The expected values are what Go answers.
 
-use tidb_mysql::{equal_fold, lowercase_equal, simple_fold};
+use std::borrow::Cow;
+
+use tidb_mysql::{equal_fold, lowercase_equal, simple_fold, to_lowercase_cow, to_uppercase_cow};
 
 /// The string a Go string holding `bytes` is carried in: valid UTF-8 as is,
 /// each other byte `b` as the raw-byte escape `U+10FF00 + b`.
@@ -83,6 +85,31 @@ fn equal_fold_and_lowercase_equal_match_go() {
 }
 
 #[test]
+fn identifier_comparisons_decode_escaped_utf8_before_casing() {
+    // The scanner can also carry each non-ASCII byte as an escape, even
+    // when the bytes form valid UTF-8. C3 89 is É and E2 82 is truncated.
+    let escaped = "\u{10ffc3}\u{10ff89}\u{10ffe2}\u{10ff82}";
+    assert!(equal_fold(escaped, "é��"));
+    assert!(lowercase_equal(escaped, "é��"));
+    assert!(!equal_fold(escaped, "é�"));
+    assert!(!lowercase_equal(escaped, "é�"));
+}
+
+#[test]
+fn simple_case_borrows_unchanged_text_and_transforms_raw_escape_runs() {
+    assert!(matches!(to_uppercase_cow("SELECT"), Cow::Borrowed("SELECT")));
+    assert!(matches!(
+        to_lowercase_cow("already_lower_σ中"),
+        Cow::Borrowed("already_lower_σ中")
+    ));
+    assert_eq!(to_lowercase_cow("prefix_İΣ"), "prefix_iσ");
+    assert_eq!(
+        to_uppercase_cow("PREFIX_\u{10ffc3}\u{10ff89}\u{10ffe2}\u{10ff82}"),
+        "PREFIX_\u{10ffc3}\u{10ff89}��"
+    );
+}
+
+#[test]
 fn simple_fold_walks_go_orbits() {
     // Go's `unicode.SimpleFold` examples.
     assert_eq!(simple_fold('A'), 'a');
@@ -92,7 +119,7 @@ fn simple_fold_walks_go_orbits() {
     assert_eq!(simple_fold('\u{212a}'), 'K');
     assert_eq!(simple_fold('1'), '1');
     assert_eq!(simple_fold('\u{130}'), '\u{130}');
-    // Unicode 15.0 (Go 1.25) has no `1FD3; S; 0390` fold; 15.1 added it.
-    assert_eq!(simple_fold('\u{390}'), '\u{390}');
-    assert!(!equal_fold("\u{390}", "\u{1fd3}"));
+    assert_eq!(simple_fold('\u{390}'), '\u{1fd3}');
+    assert_eq!(simple_fold('\u{1fd3}'), '\u{390}');
+    assert!(equal_fold("\u{390}", "\u{1fd3}"));
 }

@@ -128,6 +128,6 @@ impl SortedHistogramBuilder {
             .count
             .wrapping_add(1);
         self.histogram
-            .update_last_bucket(value, count, 1, self.need_bucket_ndv);
+            .update_last_bucket(std::borrow::Cow::Owned(value), count, 1, self.need_bucket_ndv);
     }
 }

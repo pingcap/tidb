@@ -12,38 +12,41 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Ristretto ring.go: reusable, lossy read stripes. A stripe is exclusively
-//! borrowed from the pool, so readers never hold its lock while publishing.
+//! Ristretto ring.go: reusable, lossy read stripes. A stripe is detached
+//! before publishing, so the consumer runs outside the stripe lock.
 use std::sync::Mutex;
 
+use tidb_zeropool::ThreadShards;
+
 pub(crate) struct Ring {
-    pool: Mutex<Vec<Vec<u64>>>,
+    stripes: ThreadShards<Mutex<Vec<u64>>>,
     capacity: usize,
 }
 impl Ring {
     pub fn new(capacity: usize) -> Self {
         Self {
-            pool: Mutex::new(Vec::new()),
+            stripes: ThreadShards::new(Mutex::default),
             capacity,
         }
     }
     pub fn push(&self, key: u64, consumer: impl FnOnce(Vec<u64>) -> Result<(), Vec<u64>>) {
-        let mut stripe = self
-            .pool
-            .lock()
-            .unwrap()
-            .pop()
-            .unwrap_or_else(|| Vec::with_capacity(self.capacity));
-        stripe.push(key);
-        if stripe.len() >= self.capacity {
-            stripe = match consumer(stripe) {
-                Ok(()) => Vec::with_capacity(self.capacity),
-                Err(mut stripe) => {
-                    stripe.clear();
-                    stripe
-                }
-            };
+        let local = self.stripes.local();
+        let mut stripe = local.lock().unwrap();
+        if stripe.capacity() == 0 {
+            stripe.reserve_exact(self.capacity);
         }
-        self.pool.lock().unwrap().push(stripe);
+        stripe.push(key);
+        if stripe.len() < self.capacity {
+            return;
+        }
+        let batch = std::mem::take(&mut *stripe);
+        drop(stripe);
+        if let Err(mut batch) = consumer(batch) {
+            batch.clear();
+            let mut stripe = local.lock().unwrap();
+            if stripe.capacity() == 0 {
+                *stripe = batch;
+            }
+        }
     }
 }

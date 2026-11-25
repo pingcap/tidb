@@ -13,6 +13,8 @@ workspace = true
 [dependencies]
 tidb-goruntime = { path = "../tidb-goruntime" }
 chrono.workspace = true
+itoa = "1"
+memchr = "2"
 
 [[bench]]
 name = "sqlescape"

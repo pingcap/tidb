@@ -209,14 +209,14 @@ pub fn trace_event(ctx: &TraceContext, category: TraceCategory, name: &str, fiel
         return;
     }
 
-    let event = Event {
-        category,
-        name: name.to_owned(),
-        phase: tracing::Phase::Instant,
-        timestamp: SystemTime::now(),
-        trace_id: trace_id_from_context(ctx).to_vec(),
+    let event = Event::new(
+        SystemTime::now(),
+        name,
+        tracing::Phase::Instant,
+        trace_id_from_context(ctx).to_vec(),
         fields,
-    };
+        category,
+    );
 
     // Record to flight recorder if enabled (base or full mode).
     if RECORDER_ENABLED.load(Ordering::SeqCst) {
@@ -290,7 +290,7 @@ pub fn log_event(ctx: Option<&TraceContext>, event: &Event) {
     if !event.trace_id.is_empty() {
         fields.push(Field::new(
             "trace_id",
-            Value::Str(hex_encode(&event.trace_id)),
+            Value::Str(tidb_goruntime::go_hex::encode_to_string(&event.trace_id)),
         ));
     }
 
@@ -453,7 +453,7 @@ pub fn dump_flight_recorder_to_logger(reason: &str) {
         if !event.trace_id.is_empty() {
             fields.push(Field::new(
                 "trace_id",
-                Value::Str(hex_encode(&event.trace_id)),
+                Value::Str(tidb_goruntime::go_hex::encode_to_string(&event.trace_id)),
             ));
         }
         fields.extend(event.fields.iter().cloned());
@@ -554,7 +554,7 @@ pub fn convert_events_for_rendering(events: &[Event]) -> Vec<RenderEvent> {
             if !event.trace_id.is_empty() {
                 fields.push(Field::new(
                     "trace_id",
-                    Value::Str(hex_encode(&event.trace_id)),
+                    Value::Str(tidb_goruntime::go_hex::encode_to_string(&event.trace_id)),
                 ));
             }
             rendered.args = Some(fields_to_json(&fields));
@@ -609,15 +609,6 @@ fn field_value_to_json(value: &Value) -> serde_json::Value {
         Value::Object(fields) => fields_to_json(fields),
         Value::Error { basic, .. } => Json::String(basic.clone()),
     }
-}
-
-/// Go `hex.EncodeToString`.
-fn hex_encode(bytes: &[u8]) -> String {
-    let mut out = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        out.push_str(&format!("{byte:02x}"));
-    }
-    out
 }
 
 /// Go `time.Time.UnixMicro`.

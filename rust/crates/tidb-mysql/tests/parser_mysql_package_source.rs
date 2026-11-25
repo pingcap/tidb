@@ -363,7 +363,7 @@ fn production_tables_and_locale_helpers_match_source() {
 
 #[test]
 fn range_graph_matches_unicode_is_one_of_union() {
-    for character in ['A', '_', '-', '١', 'Ⅷ', '½', '\u{0301}', '中', '🦀'] {
+    for character in ['A', '_', '-', '١', 'Ⅷ', '½', '\u{0301}', '中', '🦀', '\u{1e6c0}'] {
         assert!(is_range_graph(character), "U+{:04X}", character as u32);
     }
     for character in [' ', '\n', '\u{200D}', '\u{E000}', '\u{0378}'] {

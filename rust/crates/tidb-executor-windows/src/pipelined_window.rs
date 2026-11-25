@@ -15,10 +15,13 @@
 //! Go `pkg/executor/windows/pipelined_window.go`: `PipelinedWindowExec` and
 //! `OrderedWindowExec`.
 
+use std::cell::Cell;
 use std::collections::VecDeque;
+use std::ops::Range;
 use std::sync::Arc;
 
 use tidb_chunk::chunk::Chunk;
+use tidb_chunk::row::Row;
 use tidb_datatype::FieldType;
 use tidb_driver_error::ExecError;
 use tidb_executor_aggfuncs::agg_func::{AggFunc, PartialResult};
@@ -28,7 +31,46 @@ use tidb_expr::column::Column;
 use tidb_exprctx::Columns;
 use tidb_planner_core_operator_logicalop::window::{BoundType, FrameBound};
 
-use crate::window::{cmp_func, copy_chk, go_runtime_error, row, rows_of, RowRef};
+use crate::range_compare::RangeComparison;
+use crate::window::{copy_chk, go_runtime_error};
+
+/// Live row positions and the child chunks that own them. Chunk indexes are
+/// assigned in input order so dropping a prefix never renumbers the live rows.
+#[derive(Default)]
+pub(crate) struct RetainedRows {
+    positions: VecDeque<(usize, usize)>,
+    chunks: VecDeque<Arc<Chunk>>,
+    first_chunk: usize,
+}
+
+impl RetainedRows {
+    fn push(&mut self, chunk: &Arc<Chunk>, rows: Range<usize>) {
+        if rows.is_empty() {
+            return;
+        }
+        if self.chunks.back().is_none_or(|last| !Arc::ptr_eq(last, chunk)) {
+            self.chunks.push_back(Arc::clone(chunk));
+        }
+        let chunk_index = self.first_chunk + self.chunks.len() - 1;
+        self.positions.extend(rows.map(|row| (chunk_index, row)));
+    }
+
+    fn row(&self, (chunk, row): (usize, usize)) -> Row<'_> {
+        self.chunks[chunk - self.first_chunk].get_row(row)
+    }
+
+    fn drop_prefix(&mut self, count: usize) {
+        if count == 0 {
+            return;
+        }
+        self.positions.drain(..count);
+        let drop_chunks = self.positions.front().map_or(self.chunks.len(), |(chunk, _)| chunk - self.first_chunk);
+        if drop_chunks != 0 {
+            self.chunks.drain(..drop_chunks);
+            self.first_chunk += drop_chunks;
+        }
+    }
+}
 
 /// Go `dataInfo`.
 pub(crate) struct DataInfo {
@@ -47,6 +89,8 @@ pub struct PipelinedWindowExec<C: Columns> {
     pub(crate) partial_results: Vec<PartialResult>,
     pub(crate) start: FrameBound,
     pub(crate) end: FrameBound,
+    pub(crate) start_cmp: Vec<RangeComparison>,
+    pub(crate) end_cmp: Vec<RangeComparison>,
     pub(crate) group_checker: VecGroupChecker,
 
     /// Go `childResult`. Even if `remaining` is 0, `rows` might still
@@ -69,8 +113,8 @@ pub struct PipelinedWindowExec<C: Columns> {
     /// Go `lastStartRow` / `lastEndRow`: the current frame range.
     pub(crate) last_start_row: u64,
     pub(crate) last_end_row: u64,
-    pub(crate) staged_start_row: u64,
-    pub(crate) staged_end_row: u64,
+    pub(crate) staged_start_row: Cell<u64>,
+    pub(crate) staged_end_row: Cell<u64>,
     pub(crate) row_start: u64,
     pub(crate) order_by_cols: Vec<Column>,
     /// Go `expectedCmpResult`: decides if one value is included in the
@@ -78,10 +122,11 @@ pub struct PipelinedWindowExec<C: Columns> {
     pub(crate) expected_cmp_result: i64,
 
     /// Go `rows`: the rows starting from `row_start`.
-    pub(crate) rows: VecDeque<RowRef>,
+    pub(crate) rows: RetainedRows,
     pub(crate) row_cnt: u64,
     pub(crate) whole: bool,
     pub(crate) is_range_frame: bool,
+    pub(crate) reuse_peer_bounds: bool,
     pub(crate) empty_frame: bool,
     pub(crate) initialized_sliding_window: bool,
 }
@@ -92,9 +137,12 @@ impl<C: Columns + 'static> PipelinedWindowExec<C> {
     pub fn open_self(&mut self) {
         (self.done, self.new_partition, self.whole, self.initialized_sliding_window) = (false, false, false, false);
         (self.data_idx, self.cur_row_idx, self.dropped, self.row_to_consume, self.accumulated) = (0, 0, 0, 0, 0);
-        (self.last_start_row, self.last_end_row, self.staged_start_row, self.staged_end_row) = (0, 0, 0, 0);
+        (self.last_start_row, self.last_end_row) = (0, 0);
+        self.staged_start_row.set(0);
+        self.staged_end_row.set(0);
         (self.row_start, self.row_cnt) = (0, 0);
-        (self.rows, self.data) = (VecDeque::new(), VecDeque::new());
+        self.rows = RetainedRows::default();
+        self.data = VecDeque::new();
         // A reopened executor starts from a fresh partition.
         self.empty_frame = false;
         self.group_checker.reset();
@@ -116,7 +164,7 @@ impl<C: Columns + 'static> PipelinedWindowExec<C> {
 
     fn get_rows_in_partition(&mut self) -> Result<(), ExecError> {
         self.new_partition = true;
-        if self.rows.is_empty() {
+        if self.rows.positions.is_empty() {
             // The first call is not a new partition.
             self.new_partition = false;
         }
@@ -137,9 +185,7 @@ impl<C: Columns + 'static> PipelinedWindowExec<C> {
         }
         let (begin, end) = self.group_checker.get_next_group();
         self.row_to_consume += (end - begin) as u64;
-        for i in begin..end {
-            self.rows.push_back((Arc::clone(&self.child_result), i));
-        }
+        self.rows.push(&self.child_result, begin..end);
         Ok(())
     }
 
@@ -167,21 +213,29 @@ impl<C: Columns + 'static> PipelinedWindowExec<C> {
         self.whole = true;
     }
 
-    fn get_start(&mut self) -> Result<u64, ExecError> {
+    fn get_start(&self, native: &mut bool) -> Result<u64, ExecError> {
         if self.start.unbounded {
             return Ok(0);
         }
         if self.is_range_frame {
-            let mut start = self.last_start_row.max(self.staged_start_row);
+            if self.reuse_peer_bounds {
+                return Ok(if self.cur_row_idx < self.last_end_row {
+                    self.last_start_row
+                } else {
+                    self.cur_row_idx
+                });
+            }
+            let mut start = self.last_start_row.max(self.staged_start_row.get());
             while start < self.row_cnt {
                 let mut res = 0;
                 for i in 0..self.order_by_cols.len() {
-                    res = cmp_func(
+                    res = self.start_cmp[i].compare_tracked(
                         &self.ctx,
                         &self.start.compare_cols[i],
                         &self.start.calc_funcs[i],
                         self.get_row(start)?,
                         self.get_row(self.cur_row_idx)?,
+                        native,
                     )?;
                     if res != 0 {
                         break;
@@ -194,7 +248,7 @@ impl<C: Columns + 'static> PipelinedWindowExec<C> {
                 }
                 start += 1;
             }
-            self.staged_start_row = start;
+            self.staged_start_row.set(start);
             return Ok(start);
         }
         Ok(match self.start.bound_type {
@@ -210,21 +264,25 @@ impl<C: Columns + 'static> PipelinedWindowExec<C> {
         })
     }
 
-    fn get_end(&mut self) -> Result<u64, ExecError> {
+    fn get_end(&self, native: &mut bool) -> Result<u64, ExecError> {
         if self.end.unbounded {
             return Ok(self.row_cnt);
         }
         if self.is_range_frame {
-            let mut end = self.last_end_row.max(self.staged_end_row);
+            if self.reuse_peer_bounds && self.cur_row_idx < self.last_end_row {
+                return Ok(self.last_end_row);
+            }
+            let mut end = self.last_end_row.max(self.staged_end_row.get());
             while end < self.row_cnt {
                 let mut res = 0;
                 for i in 0..self.order_by_cols.len() {
-                    res = cmp_func(
+                    res = self.end_cmp[i].compare_tracked(
                         &self.ctx,
                         &self.end.calc_funcs[i],
                         &self.end.compare_cols[i],
                         self.get_row(self.cur_row_idx)?,
                         self.get_row(end)?,
+                        native,
                     )?;
                     if res != 0 {
                         break;
@@ -237,7 +295,7 @@ impl<C: Columns + 'static> PipelinedWindowExec<C> {
                 }
                 end += 1;
             }
-            self.staged_end_row = end;
+            self.staged_end_row.set(end);
             return Ok(end);
         }
         Ok(match self.end.bound_type {
@@ -253,19 +311,38 @@ impl<C: Columns + 'static> PipelinedWindowExec<C> {
         })
     }
 
-    fn get_row(&self, i: u64) -> Result<tidb_chunk::row::Row<'_>, ExecError> {
+    fn get_row(&self, i: u64) -> Result<Row<'_>, ExecError> {
         get_row(&self.rows, self.row_start, i)
+    }
+
+    fn bounds_for_output(&self) -> Result<Option<(u64, u64)>, ExecError> {
+        if self.cur_row_idx >= self.row_cnt {
+            return Ok(None);
+        }
+        let mut native = true;
+        let (start, end) = (self.get_start(&mut native)?, self.get_end(&mut native)?);
+        if self.whole {
+            return Ok(Some((start, end)));
+        }
+        if start >= self.row_cnt || end >= self.row_cnt {
+            return Ok(None);
+        }
+        // A fallback expression may produce a warning. Preserve Go's second
+        // evaluation whenever finding these bounds used the regular evaluator.
+        if !native {
+            return Ok(Some((self.get_start(&mut native)?, self.get_end(&mut native)?)));
+        }
+        Ok(Some((start, end)))
     }
 
     /// Go `produce`: appends rows to `chk`, answering how many it appended.
     fn produce(&mut self, chk: &mut Chunk, mut remained: u64) -> Result<u64, ExecError> {
         let mut produced = 0;
+        let mut row_cursors = None;
         while remained > 0 {
-            if !self.enough_to_produce()? {
+            let Some((mut start, mut end)) = self.bounds_for_output()? else {
                 break;
-            }
-            let mut start = self.get_start()?;
-            let mut end = self.get_end()?;
+            };
             if end > self.row_cnt {
                 end = self.row_cnt;
             }
@@ -311,8 +388,18 @@ impl<C: Columns + 'static> PipelinedWindowExec<C> {
                                     min_max.set_window_start(start);
                                 }
                                 wf.reset_partial_result(&mut self.partial_results[i]);
-                                let frame = get_rows(rows, row_start, start, end)?;
-                                wf.update_partial_result(&self.ctx, &frame, &mut self.partial_results[i])?;
+                                let range = frame_range(rows.positions.len(), row_start, start, end)?;
+                                let singleton;
+                                let frame = if range.len() == 1 {
+                                    singleton = [rows.row(rows.positions[range.start])];
+                                    &singleton[..]
+                                } else {
+                                    let cursors = row_cursors.get_or_insert_with(|| {
+                                        rows.positions.iter().map(|&position| rows.row(position)).collect::<Vec<_>>()
+                                    });
+                                    &cursors[range]
+                                };
+                                wf.update_partial_result(&self.ctx, frame, &mut self.partial_results[i])?;
                             }
                         }
                     }
@@ -330,21 +417,21 @@ impl<C: Columns + 'static> PipelinedWindowExec<C> {
         if extend > self.row_start {
             let num_drop = extend - self.row_start;
             self.dropped += num_drop;
-            self.rows.drain(..num_drop as usize);
+            self.rows.drop_prefix(num_drop as usize);
             self.row_start = extend;
         }
         Ok(produced)
     }
 
-    fn enough_to_produce(&mut self) -> Result<bool, ExecError> {
+    fn enough_to_produce(&self) -> Result<bool, ExecError> {
         if self.cur_row_idx >= self.row_cnt {
             return Ok(false);
         }
         if self.whole {
             return Ok(true);
         }
-        let start = self.get_start()?;
-        let end = self.get_end()?;
+        let start = self.get_start(&mut true)?;
+        let end = self.get_end(&mut true)?;
         Ok(end < self.row_cnt && start < self.row_cnt)
     }
 
@@ -352,14 +439,14 @@ impl<C: Columns + 'static> PipelinedWindowExec<C> {
     fn reset(&mut self) {
         self.last_start_row = 0;
         self.last_end_row = 0;
-        self.staged_start_row = 0;
-        self.staged_end_row = 0;
+        self.staged_start_row.set(0);
+        self.staged_end_row.set(0);
         self.empty_frame = false;
         self.cur_row_idx = 0;
         self.whole = false;
         let num_drop = self.row_cnt - self.row_start;
         self.dropped += num_drop;
-        self.rows.drain(..num_drop as usize);
+        self.rows.drop_prefix(num_drop as usize);
         self.row_start = 0;
         self.row_cnt = 0;
         self.initialized_sliding_window = false;
@@ -406,10 +493,15 @@ impl<C: Columns + Send + 'static> Executor for PipelinedWindowExec<C> {
                 self.row_to_consume = 0;
             }
 
+            // An unbounded ROWS end waits for the partition boundary. There
+            // is no result to write yet and no RANGE expression to evaluate.
+            if !self.whole && self.end.unbounded && !self.is_range_frame {
+                continue;
+            }
             // Ready to produce data.
             if self.data.len() > self.data_idx && self.data[self.data_idx].remaining != 0 {
                 let remaining = self.data[self.data_idx].remaining;
-                let mut out = std::mem::replace(&mut self.data[self.data_idx].chk, Chunk::new(&[], 0, 0));
+                let mut out = std::mem::take(&mut self.data[self.data_idx].chk);
                 let produced = self.produce(&mut out, remaining);
                 self.data[self.data_idx].chk = out;
                 let produced = produced?;
@@ -491,30 +583,68 @@ impl<C: Columns + Send + 'static> Executor for OrderedWindowExec<C> {
 
 /// Go `getRow`: `e.rows[i-e.rowStart]`, a `uint64` subtraction that wraps,
 /// whose out-of-range index is the runtime panic Go recovers.
-fn get_row(rows: &VecDeque<RowRef>, row_start: u64, i: u64) -> Result<tidb_chunk::row::Row<'_>, ExecError> {
+fn get_row(rows: &RetainedRows, row_start: u64, i: u64) -> Result<Row<'_>, ExecError> {
     let index = i.wrapping_sub(row_start);
     usize::try_from(index)
         .ok()
-        .and_then(|index| rows.get(index))
-        .map(row)
-        .ok_or_else(|| go_runtime_error(format!("index out of range [{index}] with length {}", rows.len())))
+        .and_then(|index| rows.positions.get(index).copied())
+        .map(|position| rows.row(position))
+        .ok_or_else(|| go_runtime_error(format!("index out of range [{index}] with length {}", rows.positions.len())))
 }
 
 /// Go `getRows`: `e.rows[start-e.rowStart : end-e.rowStart]`, whose bounds
 /// wrap as `uint64` and fail as Go's slice expression does.
-fn get_rows(
-    rows: &VecDeque<RowRef>,
+fn frame_range(
+    len: usize,
     row_start: u64,
     start: u64,
     end: u64,
-) -> Result<Vec<tidb_chunk::row::Row<'_>>, ExecError> {
+) -> Result<Range<usize>, ExecError> {
     let (low, high) = (start.wrapping_sub(row_start), end.wrapping_sub(row_start));
-    let len = rows.len() as u64;
+    let len = len as u64;
     if high > len {
         return Err(go_runtime_error(format!("slice bounds out of range [:{high}] with capacity {len}")));
     }
     if low > high {
         return Err(go_runtime_error(format!("slice bounds out of range [{low}:{high}]")));
     }
-    Ok(rows_of(rows.range(low as usize..high as usize)))
+    Ok(low as usize..high as usize)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tidb_datatype::FieldTypeCode;
+
+    #[test]
+    fn retains_each_input_chunk_until_its_last_live_row_is_dropped() {
+        let make_chunk = |first, second| {
+            let mut chunk = Chunk::new_chunk_with_capacity(&[FieldType::new(FieldTypeCode::LongLong)], 2);
+            chunk.append_int64(0, first);
+            chunk.append_int64(0, second);
+            Arc::new(chunk)
+        };
+        let first = make_chunk(1, 2);
+        let second = make_chunk(3, 4);
+        let mut rows = RetainedRows::default();
+        rows.push(&first, 0..2);
+        rows.push(&second, 0..1);
+        rows.push(&second, 1..2);
+        assert_eq!(Arc::strong_count(&first), 2);
+        assert_eq!(Arc::strong_count(&second), 2);
+
+        rows.drop_prefix(1);
+        assert_eq!(Arc::strong_count(&first), 2);
+        assert_eq!(get_row(&rows, 1, 1).unwrap().get_int64(0), 2);
+        rows.drop_prefix(2);
+        assert_eq!(Arc::strong_count(&first), 1);
+        assert_eq!(Arc::strong_count(&second), 2);
+        assert_eq!(get_row(&rows, 3, 3).unwrap().get_int64(0), 4);
+        rows.drop_prefix(1);
+        assert_eq!(Arc::strong_count(&second), 1);
+        assert!(rows.positions.is_empty());
+
+        rows.push(&second, 1..2);
+        assert_eq!(get_row(&rows, 0, 0).unwrap().get_int64(0), 4);
+    }
 }

@@ -13,11 +13,376 @@
 // limitations under the License.
 
 //! Schema projection for Go master buildAnalyzeSamplingPushdown.
-use tidb_datatype::CollationCollator;
+use prost::encoding::{encode_varint, WireType};
+use prost::Message;
+use tidb_datatype::{CollationCollator, Datum};
 use super::{AnalyzeError, AnalyzeOptions, AnalyzePlan};
 use tidb_distsql::remote_scan::PushdownScanColumn;
 use tidb_model::table_info::TableInfo;
-use tidb_proto::tipb;
+use tidb_proto::{analyze_input, tipb};
+use tidb_util::misc::{column_label_size, encode_column_labels};
+use crate::dag_request::{begin_embedded_message, delimited_field_size, end_embedded_message};
+
+pub(super) struct EncodedColumnRequest {
+    pub(super) data: Vec<u8>,
+    sample_rate: f64,
+}
+
+/// Encodes an ANALYZE request from its source columns and request builder.
+///
+/// Writes scalar metadata through a bounded buffer and streams borrowed labels
+/// into their length-delimited TiPB fields.
+/// The builder sets the supplied columns on `col_req.columns_info`. The
+/// remaining request fields do not depend on the supplied vector's length.
+#[inline]
+pub fn encode_columns_request(
+    columns: &[PushdownScanColumn],
+    build: impl FnOnce(Vec<tipb::ColumnInfo>) -> tipb::AnalyzeReq,
+) -> Result<Vec<u8>, AnalyzeError> {
+    const MIN_STREAMED_LABELS: usize = 8;
+    // The batch encoder amortizes the larger label sets.
+    const MAX_SINGLE_COLUMN_LABELS: usize = 256;
+
+    if let [column] = columns {
+        use tidb_datatype::FieldTypeCode::{Enum, Set};
+        if column.origin_default.is_none()
+            && matches!(column.field_type.code(), Enum | Set)
+            && column.field_type.with_elems_visible(|labels| {
+                (1..=MAX_SINGLE_COLUMN_LABELS).contains(&labels.len())
+            })
+        {
+            return encode_single_labeled_column(build(Vec::new()), column);
+        }
+    }
+
+    let mut label_count = 0;
+    let stream_labels = columns.iter().any(|column| {
+        use tidb_datatype::FieldTypeCode::{Enum, Set};
+        if matches!(column.field_type.code(), Enum | Set) {
+            label_count += column.field_type.with_elems_visible(<[_]>::len);
+        }
+        label_count >= MIN_STREAMED_LABELS
+    });
+    if stream_labels {
+        encode_columns_with_shared_labels(build(Vec::new()), columns)
+    } else if let Some(default_lengths) = small_column_default_lengths(columns) {
+        encode_small_columns(build(Vec::new()), columns, &default_lengths)
+    } else if columns.len() >= 32
+        || (!columns.is_empty() && columns.iter().all(is_scalar_column))
+    {
+        encode_columns_in_one_pass(build(Vec::new()), columns)
+    } else {
+        let mut fields = Vec::with_capacity(columns.len());
+        for column in columns {
+            let Some(descriptor) = crate::cop_reader::column_to_proto(column) else {
+                return Err(invalid_analyze_column(column.id));
+            };
+            fields.push(crate::dag_request::column_into_pb(descriptor));
+        }
+        Ok(build(fields).encode_to_vec())
+    }
+}
+
+#[inline]
+fn analyze_column_descriptor(
+    column: &PushdownScanColumn,
+) -> Result<tidb_planner_core_operator_logicalop::tikv_scan_spec::ScanColumnInfo, AnalyzeError> {
+    crate::cop_reader::column_to_proto(column).ok_or_else(|| invalid_analyze_column(column.id))
+}
+
+#[cold]
+fn invalid_analyze_column(id: i64) -> AnalyzeError {
+    AnalyzeError::unsupported(format!("ANALYZE cannot encode column {id}"))
+}
+
+fn missing_column_request() -> AnalyzeError {
+    AnalyzeError::unsupported("missing ANALYZE column request".to_owned())
+}
+
+fn split_column_request(
+    request: &mut tipb::AnalyzeReq,
+) -> Result<(tipb::AnalyzeColumnsReq, tipb::AnalyzeColumnsReq), AnalyzeError> {
+    let mut tail = request.col_req.take().ok_or_else(missing_column_request)?;
+    let prefix = tipb::AnalyzeColumnsReq {
+        bucket_size: tail.bucket_size.take(),
+        sample_size: tail.sample_size.take(),
+        sketch_size: tail.sketch_size.take(),
+        columns_info: std::mem::take(&mut tail.columns_info),
+        ..Default::default()
+    };
+    Ok((prefix, tail))
+}
+
+fn is_scalar_column(column: &PushdownScanColumn) -> bool {
+    column.origin_default.is_none() && column.field_type.with_elems_visible(<[_]>::is_empty)
+}
+
+#[inline]
+fn encode_columns_in_one_pass(
+    mut request: tipb::AnalyzeReq,
+    columns: &[PushdownScanColumn],
+) -> Result<Vec<u8>, AnalyzeError> {
+    let mut col_req = request.col_req.take().ok_or_else(missing_column_request)?;
+    // Most fixed column descriptors occupy about 32 bytes on the wire.
+    // Patch the enclosing length after writing the columns.
+    let columns_length = col_req.encoded_len() + 32 * columns.len();
+    let mut output = Vec::with_capacity(request.encoded_len() + delimited_field_size(columns_length));
+    request.encode_raw(&mut output);
+    let body = begin_embedded_message(6, columns_length, &mut output); // AnalyzeReq.col_req
+
+    encode_column_request_prefix(&mut col_req, &mut output);
+
+    let mut scratch = [0; SCALAR_COLUMN_WIRE_CAPACITY];
+    for column in columns {
+        if is_scalar_column(column) {
+            let fields = crate::cop_reader::column_proto_scalars(
+                column.id,
+                &column.field_type,
+                column.is_handle,
+            )
+            .ok_or_else(|| invalid_analyze_column(column.id))?;
+            output.extend_from_slice(scalar_column_wire(fields, &mut scratch));
+        } else {
+            let fields = crate::dag_request::column_into_pb(analyze_column_descriptor(column)?);
+            prost::encoding::message::encode(4, &fields, &mut output); // AnalyzeColumnsReq.columns_info
+        }
+    }
+    col_req.encode_raw(&mut output);
+    end_embedded_message(body, &mut output);
+    Ok(output)
+}
+
+const SMALL_REQUEST_MAX_COLUMNS: usize = 8;
+const MAX_INLINE_DEFAULT_BYTES: usize = 64;
+
+fn small_column_default_lengths(
+    columns: &[PushdownScanColumn],
+) -> Option<[u8; SMALL_REQUEST_MAX_COLUMNS]> {
+    if columns.is_empty() || columns.len() > SMALL_REQUEST_MAX_COLUMNS {
+        return None;
+    }
+    let mut lengths = [0; SMALL_REQUEST_MAX_COLUMNS];
+    for (column, length) in columns.iter().zip(&mut lengths) {
+        if !column.field_type.with_elems_visible(<[_]>::is_empty) {
+            return None;
+        }
+        if let Some(value) = &column.origin_default {
+            let size = tidb_codec::estimate_value_size(value).ok()?;
+            if size > MAX_INLINE_DEFAULT_BYTES {
+                return None;
+            }
+            *length = size as u8;
+        }
+    }
+    Some(lengths)
+}
+
+#[inline(never)]
+fn encode_small_columns(
+    mut request: tipb::AnalyzeReq,
+    columns: &[PushdownScanColumn],
+    default_lengths: &[u8; SMALL_REQUEST_MAX_COLUMNS],
+) -> Result<Vec<u8>, AnalyzeError> {
+    let mut col_req = request.col_req.take().ok_or_else(missing_column_request)?;
+    // The common short request fits within this capacity and uses an
+    // envelope length with the same varint width as the estimate.
+    let columns_length = 48 + 64 * columns.len();
+    let mut output = Vec::with_capacity(16 + delimited_field_size(columns_length));
+    request.encode_raw(&mut output);
+    let body = begin_embedded_message(6, columns_length, &mut output);
+    encode_column_request_prefix(&mut col_req, &mut output);
+
+    let mut scratch = [0; SCALAR_COLUMN_WIRE_CAPACITY];
+    for (column, &default_length) in columns.iter().zip(default_lengths) {
+        let fields = crate::cop_reader::column_proto_scalars(
+            column.id,
+            &column.field_type,
+            column.is_handle,
+        )
+        .ok_or_else(|| invalid_analyze_column(column.id))?;
+        let scalar = scalar_column_wire(fields, &mut scratch);
+        if let Some(default) = &column.origin_default {
+            encode_small_column_default(column.id, scalar, default, default_length, &mut output)?;
+        } else {
+            output.extend_from_slice(scalar);
+        }
+    }
+    col_req.encode_raw(&mut output);
+    end_embedded_message(body, &mut output);
+    Ok(output)
+}
+
+fn encode_small_column_default(
+    column_id: i64,
+    scalar: &[u8],
+    default: &Datum,
+    default_length: u8,
+    output: &mut Vec<u8>,
+) -> Result<(), AnalyzeError> {
+    // Exclude the scalar envelope and include the compact default's two-byte header.
+    let scalar_body_length = scalar.len() - 2;
+    let length = scalar_body_length + 2 + usize::from(default_length);
+    let column_body = begin_embedded_message(4, length, output);
+    let (head, tail) = scalar[2..].split_at(scalar_body_length - SCALAR_COLUMN_BOOL_FIELDS_SIZE);
+    output.extend_from_slice(head);
+    output.extend_from_slice(&[0x42, default_length]); // ColumnInfo.default_val
+    tidb_codec::append_value_in_timezone(&chrono::Utc, output, default)
+        .map_err(|_| invalid_analyze_column(column_id))?;
+    output.extend_from_slice(tail);
+    debug_assert_eq!(output.len() - column_body.1, length);
+    Ok(())
+}
+
+fn encode_column_request_prefix(col_req: &mut tipb::AnalyzeColumnsReq, output: &mut Vec<u8>) {
+    // Emit the fields that precede AnalyzeColumnsReq.columns_info first,
+    // including any descriptors already supplied by the request builder.
+    for (tag, field) in [
+        (1, col_req.bucket_size.take()),
+        (2, col_req.sample_size.take()),
+        (3, col_req.sketch_size.take()),
+    ] {
+        if let Some(value) = field {
+            prost::encoding::int64::encode(tag, &value, output);
+        }
+    }
+    for field in std::mem::take(&mut col_req.columns_info) {
+        prost::encoding::message::encode(4, &field, output);
+    }
+}
+
+#[inline(never)]
+fn encode_single_labeled_column(
+    mut request: tipb::AnalyzeReq,
+    column: &PushdownScanColumn,
+) -> Result<Vec<u8>, AnalyzeError> {
+    let mut col_req = request.col_req.take().ok_or_else(missing_column_request)?;
+    let fields =
+        crate::cop_reader::column_proto_scalars(column.id, &column.field_type, column.is_handle)
+            .ok_or_else(|| invalid_analyze_column(column.id))?;
+    let mut scratch = [0; SCALAR_COLUMN_WIRE_CAPACITY];
+    let scalar = scalar_column_wire(fields, &mut scratch);
+    let (head, tail) = scalar[2..].split_at(scalar.len() - 2 - SCALAR_COLUMN_BOOL_FIELDS_SIZE);
+
+    // Hold one read of the shared label slice through sizing and writing.
+    Ok(column.field_type.with_elems_visible(|labels| {
+        let (label_length, short_labels_length) = column_label_size(labels);
+        let length = head.len() + tail.len() + label_length;
+        let request_length = col_req.encoded_len() + delimited_field_size(length);
+        let mut output =
+            Vec::with_capacity(request.encoded_len() + delimited_field_size(request_length));
+        request.encode_raw(&mut output);
+        let body = begin_embedded_message(6, request_length, &mut output); // AnalyzeReq.col_req
+        encode_column_request_prefix(&mut col_req, &mut output);
+        let column_body = begin_embedded_message(4, length, &mut output); // AnalyzeColumnsReq.columns_info
+        output.extend_from_slice(head);
+        encode_column_labels(labels, short_labels_length, &mut output);
+        output.extend_from_slice(tail);
+        end_embedded_message(column_body, &mut output);
+        col_req.encode_raw(&mut output);
+        end_embedded_message(body, &mut output);
+        output
+    }))
+}
+
+// ColumnInfo has six signed varint fields and two bool fields. Its scalar
+// form always fits behind a one-byte message length.
+const SCALAR_COLUMN_BOOL_FIELDS_SIZE: usize = 2 * 3;
+const SCALAR_COLUMN_WIRE_CAPACITY: usize = 2 + 6 * (1 + 10) + SCALAR_COLUMN_BOOL_FIELDS_SIZE;
+
+#[inline]
+fn scalar_column_wire(
+    fields: crate::cop_reader::ColumnProtoScalars,
+    scratch: &mut [u8; SCALAR_COLUMN_WIRE_CAPACITY],
+) -> &[u8] {
+    let mut body = &mut scratch[2..];
+    body = write_column_varint(body, 8, fields.column_id as u64);
+    body = write_column_varint(body, 16, fields.tp as u64);
+    body = write_column_varint(body, 24, fields.collation as u64);
+    body = write_column_varint(body, 32, fields.column_len as u64);
+    body = write_column_varint(body, 40, fields.decimal as u64);
+    body = write_column_varint(body, 48, fields.flag as u64);
+    body[..SCALAR_COLUMN_BOOL_FIELDS_SIZE].copy_from_slice(&[
+        0xa8, 1, u8::from(fields.pk_handle), // ColumnInfo.pk_handle
+        0xb0, 1, u8::from(fields.array), // ColumnInfo.array
+    ]);
+    let length = SCALAR_COLUMN_WIRE_CAPACITY - 2 - body.len() + SCALAR_COLUMN_BOOL_FIELDS_SIZE;
+    scratch[0] = (4 << 3) | WireType::LengthDelimited as u8; // AnalyzeColumnsReq.columns_info
+    scratch[1] = length as u8;
+    &scratch[..2 + length]
+}
+
+#[inline]
+fn write_column_varint(output: &mut [u8], key: u8, value: u64) -> &mut [u8] {
+    if value < 128 {
+        output[..2].copy_from_slice(&[key, value as u8]);
+        &mut output[2..]
+    } else if value < 16_384 {
+        output[..3].copy_from_slice(&[key, value as u8 | 0x80, (value >> 7) as u8]);
+        &mut output[3..]
+    } else if value >= u64::MAX - 127 {
+        // Negative values in -128..=-1 have eight sign-extension groups.
+        output[..11].copy_from_slice(&[
+            key, value as u8, 0xff, 0xff, 0xff, 0xff,
+            0xff, 0xff, 0xff, 0xff, 1,
+        ]);
+        &mut output[11..]
+    } else {
+        output[0] = key;
+        let mut rest = &mut output[1..];
+        encode_varint(value, &mut rest);
+        rest
+    }
+}
+
+#[inline(never)]
+fn encode_columns_with_shared_labels(
+    mut request: tipb::AnalyzeReq,
+    columns: &[PushdownScanColumn],
+) -> Result<Vec<u8>, AnalyzeError> {
+    let (prefix, tail) = split_column_request(&mut request)?;
+    let columns = columns
+        .iter()
+        .map(|column| {
+            let mut descriptor = analyze_column_descriptor(column)?;
+            let labels = std::mem::take(&mut descriptor.elems);
+            let fields = crate::dag_request::column_pb_fields(descriptor, Vec::new());
+            let (label_length, short_labels_length) = labels.with_visible(column_label_size);
+            let length = fields.encoded_len() + label_length;
+            Ok((fields, labels, length, short_labels_length))
+        })
+        .collect::<Result<smallvec::SmallVec<[_; 1]>, AnalyzeError>>()?;
+
+    let columns_length = columns.iter().fold(
+        prefix.encoded_len() + tail.encoded_len(),
+        |length, (_, _, column, _)| length + delimited_field_size(*column),
+    );
+    let mut output = Vec::with_capacity(request.encoded_len() + delimited_field_size(columns_length));
+    request.encode_raw(&mut output);
+    let request_length = begin_embedded_message(6, columns_length, &mut output); // AnalyzeReq.col_req
+    prefix.encode_raw(&mut output);
+    for (mut fields, labels, length, short_labels_length) in columns {
+        let column_length = begin_embedded_message(4, length, &mut output); // AnalyzeColumnsReq.columns_info
+        labels.with_visible(|labels| {
+            if labels.is_empty() {
+                fields.encode_raw(&mut output);
+                return;
+            }
+            let trailer = tipb::ColumnInfo {
+                default_val: fields.default_val.take(),
+                pk_handle: fields.pk_handle.take(),
+                array: fields.array.take(),
+                ..Default::default()
+            };
+            fields.encode_raw(&mut output);
+            encode_column_labels(labels, short_labels_length, &mut output);
+            trailer.encode_raw(&mut output);
+        });
+        end_embedded_message(column_length, &mut output);
+    }
+    tail.encode_raw(&mut output);
+    end_embedded_message(request_length, &mut output);
+    Ok(output)
+}
 
 pub(super) struct SamplingSchema {
     pub columns: Vec<PushdownScanColumn>,
@@ -137,14 +502,17 @@ impl SamplingSchema {
             ));
         }
         for (datum, column) in row.iter_mut().zip(&self.columns) {
-            let Datum::Bytes(bytes) = datum else {
+            if !matches!(datum, Datum::Bytes(_)) {
                 return Err(Error::Unsupported(
                     "ANALYZE sample is not encoded".to_owned(),
                 ));
-            };
-            *datum =
-                tidb_tablecodec::decode_column_value(bytes, &column.field_type, Some(timezone))
-                    .map_err(|e| Error::Encode(e.to_string()))?;
+            }
+            tidb_tablecodec::decode_column_value_in_place(
+                datum,
+                &column.field_type,
+                Some(timezone),
+            )
+            .map_err(|e| Error::Encode(e.to_string()))?;
         }
         if !self.common_handle {
             return match row[self.handle_positions[0]] {
@@ -196,8 +564,11 @@ impl SamplingSchema {
     pub fn project_collector(
         &self,
         plan: &AnalyzePlan,
-        collector: tipb::RowSampleCollector,
-    ) -> Result<tidb_stats::row_sample_collector::RowSampleCollectorProto, AnalyzeError> {
+        collector: analyze_input::RowSampleCollector,
+    ) -> Result<
+        tidb_stats::row_sample_collector::RowSampleCollectorProto<prost::bytes::Bytes>,
+        AnalyzeError,
+    > {
         let expected = self.columns.len() + plan.indexes().len();
         if collector.null_counts.len() != expected
             || collector.total_size.len() != expected
@@ -244,22 +615,9 @@ impl SamplingSchema {
         rate: f64,
         flags: u64,
         offset: i64,
-    ) -> Result<tipb::AnalyzeReq, AnalyzeError> {
-        let columns_info = self
-            .columns
-            .iter()
-            .map(|column| {
-                crate::cop_reader::column_to_proto(column)
-                    .map(|column| crate::dag_request::column_to_pb(&column))
-                    .ok_or_else(|| {
-                        AnalyzeError::unsupported(format!(
-                            "ANALYZE cannot encode column {}",
-                            column.id
-                        ))
-                    })
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok(tipb::AnalyzeReq {
+    ) -> Result<EncodedColumnRequest, AnalyzeError> {
+        let sample_rate = if options.num_samples > 0 { 0.0 } else { rate };
+        let data = encode_columns_request(&self.columns, |columns_info| tipb::AnalyzeReq {
             tp: Some(tipb::AnalyzeType::TypeFullSampling as i32),
             flags: Some(flags),
             time_zone_offset: Some(offset),
@@ -267,7 +625,7 @@ impl SamplingSchema {
                 bucket_size: Some(options.num_buckets as i64),
                 sample_size: Some(options.num_samples as i64),
                 sketch_size: Some(tidb_stats::MAX_SKETCH_SIZE as i64),
-                sample_rate: Some(if options.num_samples > 0 { 0.0 } else { rate }),
+                sample_rate: Some(sample_rate),
                 columns_info,
                 primary_column_ids: if self.common_handle {
                     self.primary_ids.clone()
@@ -290,6 +648,10 @@ impl SamplingSchema {
                 ..Default::default()
             }),
             ..Default::default()
+        })?;
+        Ok(EncodedColumnRequest {
+            data,
+            sample_rate,
         })
     }
 }
@@ -722,7 +1084,7 @@ pub(super) fn collect_regions<S>(
     opener: &tidb_store_driver_txn::transaction::RealOptimisticTransactionOpener<S>,
     schema: &SamplingSchema,
     plan: &AnalyzePlan,
-    request: tipb::AnalyzeReq,
+    request: EncodedColumnRequest,
     physical_id: i64,
     snapshot: u64,
     snapshot_enabled: bool,
@@ -743,12 +1105,7 @@ where
     use prost::Message;
     use tidb_stats::row_sample_collector::SamplePolicy;
     let error = |e: String| AnalyzeError::unsupported(e);
-    let rate = request
-        .col_req
-        .as_ref()
-        .and_then(|r| r.sample_rate)
-        .unwrap_or_default();
-    let policy = SamplePolicy::new_row_sample_collector(options.num_samples, rate)
+    let policy = SamplePolicy::new_row_sample_collector(options.num_samples, request.sample_rate)
         .ok_or_else(|| error("invalid ANALYZE sample policy".to_owned()))?;
     let transport = native_transport(opener, timeout).map_err(error)?;
     let (read_ts, isolation) = read_policy(snapshot_enabled, snapshot);
@@ -757,7 +1114,7 @@ where
         // Go passes the session's `DistSQLContext`; ANALYZE's full handle
         // ranges hold no temporal bound, so its location cannot change them.
         .set_handle_ranges(None, physical_id, schema.common_handle, &schema.ranges)
-        .set_analyze_request(request.encode_to_vec(), isolation)
+        .set_analyze_request(request.data, isolation)
         .set_paging(false)
         .set_start_ts(read_ts)
         .set_concurrency(concurrency);
@@ -908,7 +1265,12 @@ fn sub_merge_worker(
     let mut ret_collector = RowSampleCollector::new(plan.slot_count(), policy);
     for data in merge_task_rx.iter() {
         let inflight_data_size = data.capacity() as i64;
-        let response = match tipb::AnalyzeColumnsResp::decode(data.as_slice()) {
+        let response = if ret_collector.reservoir_is_full() {
+            analyze_input::AnalyzeColumnsResp::decode(prost::bytes::Bytes::from(data))
+        } else {
+            analyze_input::AnalyzeColumnsResp::decode(data.as_slice())
+        };
+        let response = match response {
             Ok(response) => response,
             Err(e) => {
                 mem_tracker.release(inflight_data_size);
@@ -931,11 +1293,7 @@ fn sub_merge_worker(
             }
         };
         progress(projected.count);
-        let sub_collector = RowSampleCollector::from_proto(&projected, policy, mem_tracker);
-        let old_ret_collector_size = ret_collector.go_mem_size();
-        let sub_collector_size = sub_collector.go_mem_size();
-        ret_collector.merge(sub_collector);
-        mem_tracker.consume(ret_collector.go_mem_size() - old_ret_collector_size - sub_collector_size);
+        ret_collector.merge_owned_proto(projected, mem_tracker);
         release_inflight();
     }
     Ok(ret_collector)
@@ -945,6 +1303,157 @@ fn sub_merge_worker(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn column_request_wire_matches_owned_protobuf_with_malformed_labels() {
+        use tidb_datatype::{Datum, FieldType, FieldTypeCode};
+
+        let columns = [
+            PushdownScanColumn {
+                id: 12,
+                field_type: FieldType::new(FieldTypeCode::Enum).with_elems([
+                    "界".repeat(6000).into_bytes(),
+                    Vec::new(),
+                    b"embedded\0nul".to_vec(),
+                    vec![0xe2, 0x82],
+                    vec![0xac],
+                    b"first".to_vec(),
+                    b"second".to_vec(),
+                    b"third".to_vec(),
+                ]),
+                is_handle: false,
+                origin_default: Some(Datum::new_bytes_datum(vec![0xa4; 4096])),
+            },
+            PushdownScanColumn {
+                id: 13,
+                field_type: FieldType::new(FieldTypeCode::Enum).with_elems([vec![0xff; 70]]),
+                is_handle: false,
+                origin_default: None,
+            },
+            PushdownScanColumn {
+                id: 14,
+                field_type: FieldType::new(FieldTypeCode::Set).with_elems(
+                    [vec![0xe2, 0x82], vec![0xac]]
+                        .into_iter()
+                        .chain((0..14).map(|i| format!("label\0{i}").into_bytes())),
+                ),
+                is_handle: false,
+                origin_default: None,
+            },
+            PushdownScanColumn {
+                id: -1,
+                field_type: FieldType::new(FieldTypeCode::LongLong),
+                is_handle: true,
+                origin_default: None,
+            },
+        ];
+        assert_columns_request_matches_generated(&columns);
+        assert_columns_request_matches_generated(&columns[1..2]);
+        assert_columns_request_matches_generated(&columns[2..3]);
+    }
+
+    #[test]
+    fn wide_column_request_preserves_field_variants_and_repairs_the_envelope_length() {
+        use tidb_datatype::{Datum, FieldType, FieldTypeCode};
+
+        let boundaries = [i64::MIN, -16_385, -129, -128, -1, 0, 127, 128, 16_383, 16_384, i64::MAX];
+        let mut columns: Vec<_> = (0..64)
+            .map(|index| PushdownScanColumn {
+                id: boundaries[index % boundaries.len()],
+                field_type: FieldType::new(FieldTypeCode::Varchar)
+                    .with_flen(boundaries[(index + 3) % boundaries.len()])
+                    .with_decimal(boundaries[(index + 5) % boundaries.len()])
+                    .with_flags([0, 127, 128, 16_384][index % 4])
+                    .with_array(index % 2 == 0),
+                is_handle: false,
+                origin_default: None,
+            })
+            .collect();
+        columns[1].field_type = FieldType::new(FieldTypeCode::LongLong);
+        columns[1].id = -1;
+        columns[1].is_handle = true;
+        columns[62].field_type = FieldType::new(FieldTypeCode::Enum).with_elems([vec![0xff]]);
+        columns[63].origin_default = Some(Datum::new_bytes_datum(vec![0xa4; 20_000]));
+        assert_columns_request_matches_generated(&columns);
+    }
+
+    #[test]
+    fn short_column_request_preserves_default_values_and_presence() {
+        use tidb_datatype::{Datum, FieldType, FieldTypeCode};
+
+        let defaults = [
+            None,
+            Some(Datum::Null),
+            Some(Datum::Int(i64::MIN)),
+            Some(Datum::UInt(u64::MAX)),
+            Some(Datum::Real(-1.25)),
+            Some(Datum::new_bytes_datum(Vec::new())),
+            Some(Datum::new_bytes_datum(vec![0xa4; 62])),
+            Some(Datum::new_bytes_datum(vec![0xa4; 63])),
+        ];
+        let columns: Vec<_> = defaults
+            .into_iter()
+            .enumerate()
+            .map(|(index, default)| PushdownScanColumn {
+                id: i64::MIN + index as i64,
+                field_type: FieldType::new(FieldTypeCode::Blob)
+                    .with_flen(-9000)
+                    .with_decimal(-9000)
+                    .with_flags(268_435_456)
+                    .with_array(true),
+                is_handle: index % 2 == 0,
+                origin_default: default,
+            })
+            .collect();
+        assert_columns_request_matches_generated(&columns[..7]);
+        assert_columns_request_matches_generated(&columns);
+        for column in &columns {
+            assert_columns_request_matches_generated(std::slice::from_ref(column));
+        }
+    }
+
+    fn assert_columns_request_matches_generated(columns: &[PushdownScanColumn]) {
+        let template = tipb::AnalyzeReq {
+            flags: Some(0),
+            col_req: Some(tipb::AnalyzeColumnsReq {
+                bucket_size: Some(64),
+                columns_info: vec![tipb::ColumnInfo {
+                    column_id: Some(7),
+                    ..Default::default()
+                }],
+                primary_column_ids: vec![7, 12],
+                sample_rate: Some(0.125),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let mut expected = template.clone();
+        expected
+            .col_req
+            .as_mut()
+            .unwrap()
+            .columns_info
+            .extend(columns.iter().map(|column| {
+                crate::dag_request::column_into_pb(crate::cop_reader::column_to_proto(column).unwrap())
+            }));
+        let encoded = encode_columns_request(columns, |additional| {
+            let mut request = template;
+            request
+                .col_req
+                .as_mut()
+                .unwrap()
+                .columns_info
+                .extend(additional);
+            request
+        }).unwrap();
+        assert_eq!(encoded, expected.encode_to_vec());
+        assert_eq!(tipb::AnalyzeReq::decode(encoded.as_slice()).unwrap(), expected);
+    }
+
+    /// Go `EncodeIndexKey` over `FullNotNullRange`/`NullRange` (single
+    /// column) and `FullRange`: the high bound is `PrefixNext` of the
+    /// `maxFlag` byte, `prefix\xfb`, never `PrefixNext(prefix)`.
+
     /// Go `buildResp`'s `SetStoreBatchSize(AnalyzeStoreBatchSize)`,
     /// `SetAllowBatchTaskDataMerge` and `SetExecuteBatchTasksSerially`, both
     /// true exactly when the size is positive.
@@ -1056,13 +1565,13 @@ mod tests {
         )
         .unwrap();
         let schema = SamplingSchema::new(&TableInfo::default(), &plan).unwrap();
-        let raw = tipb::RowSampleCollector {
+        let raw = analyze_input::RowSampleCollector {
             count: Some(100),
             null_counts: vec![2, 0, 3],
             total_size: vec![800, 999, 700],
             fm_sketch: vec![tipb::FmSketch::default(); 3],
-            samples: vec![tipb::RowSample {
-                row: vec![vec![0], vec![8, 2]],
+            samples: vec![analyze_input::RowSample {
+                row: vec![vec![0].into(), vec![8, 2].into()],
                 weight: Some(91),
             }],
             ..Default::default()

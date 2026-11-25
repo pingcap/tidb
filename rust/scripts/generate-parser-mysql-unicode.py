@@ -24,15 +24,13 @@ import tempfile
 from pathlib import Path
 
 
-EXPECTED_GO_VERSION = "go1.26.0"
-EXPECTED_TABLES_SHA256 = "6a88d48746c4b2c471cc04ae40559694b734770212e6f5ea5f1962adb0c0bdb1"
+EXPECTED_GO_VERSION = "go1.27.4"
+EXPECTED_TABLES_SHA256 = "ac0e5d5d1b58ed4b02d7cb4a0085bdefbdb4f7aae6fadddbc9477f8463da8bd8"
 EXPECTED_DIGIT_SHA256 = "dfb14dbbcb918a6c7ee9be15293327d022f9d64a4c1a90f9c8049b682e799761"
-EXPECTED_ISPRINT_SHA256 = "24114557c2b3cad7b80c8e71683831bfbe1c72eb99e8fd28a3a48eaf77705fb4"
+EXPECTED_ISPRINT_SHA256 = "e6f4b35fbf38f9c9c8b251e5d3cf94daa880789cb89825f11f9734ba4a42e9ff"
 EXPECTED_RANGE_GRAPH_SHA256 = "7286d3b1ca2d1143c43775660ad2e08eba66f4a132cfa91c88dd583b54e490f6"
 BEGIN = "// BEGIN GENERATED PARSER MYSQL UNICODE RANGES"
 END = "// END GENERATED PARSER MYSQL UNICODE RANGES"
-PRINT_BEGIN = "// BEGIN GENERATED GO STRCONV ISPRINT RANGES"
-PRINT_END = "// END GENERATED GO STRCONV ISPRINT RANGES"
 
 
 def sha256(path: Path) -> str:
@@ -118,7 +116,7 @@ def read_module_source(root: Path, module_name: str) -> str:
 
 def rust_error_snapshot(rust_root: Path) -> dict[str, object]:
     """Parse the deliberately regular checked-in Rust catalog authorities."""
-    mysql_root = rust_root / "crates/tidb-error/src/mysql"
+    mysql_root = rust_root / "crates/tidb-mysql/src/errors"
     errcode = read_module_source(mysql_root, "errcode")
     codes = [
         {"name": name, "code": int(value.replace("_", ""))}
@@ -343,51 +341,14 @@ def generate_go_is_print() -> str:
         rows = [", ".join(values[index : index + 8]) for index in range(0, len(values), 8)]
         return f"const {rust_name}: &[{kind}] = &[\n    " + ",\n    ".join(rows) + ",\n];"
 
-    tables = "\n\n".join(
+    generated = "\n\n".join(
         (
-            rust_array("isPrint16", "GO_IS_PRINT16", "u16"),
-            rust_array("isNotPrint16", "GO_IS_NOT_PRINT16", "u16"),
-            rust_array("isPrint32", "GO_IS_PRINT32", "u32"),
-            rust_array("isNotPrint32", "GO_IS_NOT_PRINT32", "u16"),
+            rust_array("isPrint16", "IS_PRINT16", "u16"),
+            rust_array("isNotPrint16", "IS_NOT_PRINT16", "u16"),
+            rust_array("isPrint32", "IS_PRINT32", "u32"),
+            rust_array("isNotPrint32", "IS_NOT_PRINT32", "u16"),
         )
     )
-    generated = f'''{PRINT_BEGIN}
-// Generated from Go `strconv.IsPrint` for parser/mysql fmt parity.
-{tables}
-
-fn go_is_print(character: char) -> bool {{
-    let value = u32::from(character);
-    if value <= 0xff {{
-        return (0x20..=0x7e).contains(&value)
-            || ((0xa1..=0xff).contains(&value) && value != 0xad);
-    }}
-    if value < 1 << 16 {{
-        let value = value as u16;
-        let index = GO_IS_PRINT16.partition_point(|candidate| *candidate < value);
-        if index >= GO_IS_PRINT16.len()
-            || value < GO_IS_PRINT16[index & !1]
-            || GO_IS_PRINT16[index | 1] < value
-        {{
-            return false;
-        }}
-        return GO_IS_NOT_PRINT16.binary_search(&value).is_err();
-    }}
-    let index = GO_IS_PRINT32.partition_point(|candidate| *candidate < value);
-    if index >= GO_IS_PRINT32.len()
-        || value < GO_IS_PRINT32[index & !1]
-        || GO_IS_PRINT32[index | 1] < value
-    {{
-        return false;
-    }}
-    if value >= 0x20000 {{
-        return true;
-    }}
-    GO_IS_NOT_PRINT32
-        .binary_search(&((value - 0x10000) as u16))
-        .is_err()
-}}
-{PRINT_END}
-'''
     with tempfile.TemporaryDirectory(prefix="parser-mysql-rustfmt-") as directory:
         target = Path(directory) / "generated.rs"
         target.write_text(generated)
@@ -427,15 +388,17 @@ def main() -> None:
     else:
         category_target.write_text(category_generated)
 
-    print_target = rust_root / "crates/tidb-error/src/mysql/error.rs"
+    print_target = rust_root / "crates/tidb-go-strconv/src/lib.rs"
     print_generated = generate_go_is_print()
     print_current = print_target.read_text()
     print_pattern = re.compile(
-        re.escape(PRINT_BEGIN) + r".*?" + re.escape(PRINT_END), re.DOTALL
+        r"const IS_PRINT16: &\[u16\] = &\[.*?"
+        r"const IS_NOT_PRINT32: &\[u16\] = &\[.*?\n\];",
+        re.DOTALL,
     )
     print_match = print_pattern.search(print_current)
     if print_match is None:
-        raise SystemExit(f"generated Go IsPrint markers missing from {print_target}")
+        raise SystemExit(f"generated Go IsPrint arrays missing from {print_target}")
     if print_match.group(0) == print_generated.strip():
         return
     if args.check:

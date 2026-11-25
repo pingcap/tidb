@@ -55,12 +55,25 @@ pub const ERR_MSG_STRING_LIST_ELEM_MISMATCH: &str =
 
 /// Go `IncompatibleError`: the error type for incompatible schema.
 ///
-/// Go keeps the `Msg` template plus `Args` and renders through `fmt.Sprintf`;
-/// this transcreation renders eagerly at construction, byte-for-byte matching
-/// the Go output for every argument shape this package produces.
-#[derive(Debug)]
+/// Retain the arguments for nested errors until the caller renders them,
+/// as Go does with its `Msg` and `Args` fields.
 pub struct IncompatibleError {
-    message: String,
+    detail: Box<ErrorDetail>,
+}
+
+struct ErrorDetail {
+    message: ErrorMessage,
+    path: Vec<ErrorContext>,
+}
+
+enum ErrorMessage {
+    Text(String),
+    IncompatibleFieldType(u8, u8),
+}
+
+enum ErrorContext {
+    TupleIndex(usize),
+    MapKey(String),
 }
 
 impl IncompatibleError {
@@ -68,15 +81,44 @@ impl IncompatibleError {
     /// counterpart of Go's direct `IncompatibleError{Msg: ...}` literals with
     /// verb-free messages.
     pub(crate) fn raw(message: impl Into<String>) -> Self {
+        Self::new(ErrorMessage::Text(message.into()))
+    }
+
+    fn new(message: ErrorMessage) -> Self {
         Self {
-            message: message.into(),
+            detail: Box::new(ErrorDetail {
+                message,
+                path: Vec::new(),
+            }),
         }
     }
 }
 
 impl fmt::Display for IncompatibleError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(&self.message)
+        for context in self.detail.path.iter().rev() {
+            match context {
+                ErrorContext::TupleIndex(index) => write!(formatter, "at tuple index {index}: ")?,
+                ErrorContext::MapKey(key) => {
+                    write!(formatter, "at map key {}: ", tidb_mysql::errors::go_quote_string(key))?;
+                }
+            }
+        }
+        match &self.detail.message {
+            ErrorMessage::Text(message) => formatter.write_str(message),
+            ErrorMessage::IncompatibleFieldType(left, right) => {
+                write!(formatter, "incompatible mysql type ({left} vs {right})")
+            }
+        }
+    }
+}
+
+impl fmt::Debug for IncompatibleError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("IncompatibleError")
+            .field("message", &self.to_string())
+            .finish()
     }
 }
 
@@ -99,7 +141,7 @@ pub(crate) fn distinct_singletons_error(a: &str, b: &str) -> IncompatibleError {
 }
 
 pub(crate) fn incompatible_type_error(a: u8, b: u8) -> IncompatibleError {
-    IncompatibleError::raw(format!("incompatible mysql type ({a} vs {b})"))
+    IncompatibleError::new(ErrorMessage::IncompatibleFieldType(a, b))
 }
 
 pub(crate) fn incompatible_charset_error(a: &str, b: &str) -> IncompatibleError {
@@ -110,16 +152,14 @@ pub(crate) fn incompatible_collation_error(a: &str, b: &str) -> IncompatibleErro
     IncompatibleError::raw(format!("incompatible collation ({a} vs {b})"))
 }
 
-pub(crate) fn wrap_tuple_index_error(index: usize, inner: &IncompatibleError) -> IncompatibleError {
-    IncompatibleError::raw(format!("at tuple index {index}: {inner}"))
+pub(crate) fn wrap_tuple_index_error(index: usize, mut inner: IncompatibleError) -> IncompatibleError {
+    inner.detail.path.push(ErrorContext::TupleIndex(index));
+    inner
 }
 
-pub(crate) fn wrap_map_key_error(key: &str, inner: &IncompatibleError) -> IncompatibleError {
-    IncompatibleError::raw(format!(
-        "at map key {}: {}",
-        tidb_mysql::errors::go_quote_string(key),
-        inner
-    ))
+pub(crate) fn wrap_map_key_error(key: &str, mut inner: IncompatibleError) -> IncompatibleError {
+    inner.detail.path.push(ErrorContext::MapKey(key.to_owned()));
+    inner
 }
 
 /// Custom equality, mirroring Go's `Equality` interface.
@@ -282,7 +322,7 @@ fn cast<T: 'static>(other: &dyn Lattice) -> Option<&T> {
 
 /// One `iter` visit: the key plus each side's entry, `None` for the side
 /// lacking the key.
-type MapIterAction<'a> = &'a mut dyn FnMut(
+pub(crate) type MapIterAction<'a> = &'a mut dyn FnMut(
     &str,
     Option<&dyn Lattice>,
     Option<&dyn Lattice>,
@@ -603,6 +643,20 @@ fn is_type_blob(tp: u8) -> bool {
     tidb_datatype::FieldTypeCode::from_mysql_type(tp).is_type_blob()
 }
 
+pub(crate) fn compare_field_type_codes(left: u8, right: u8) -> Result<i32, IncompatibleError> {
+    if left == right {
+        return Ok(0);
+    }
+    // TODO(from Go): add more comparable type check here.
+    if tidb_mysql::util::is_integer_type(left) && tidb_mysql::util::is_integer_type(right) {
+        return Ok(crate::util::compare_mysql_integer_type(left, right));
+    }
+    if is_type_blob(left) && is_type_blob(right) {
+        return Ok(crate::util::compare_mysql_blob_type(left, right));
+    }
+    Err(incompatible_type_error(left, right))
+}
+
 impl Lattice for FieldTp {
     fn unwrap(&self) -> Value {
         Value::Byte(self.value)
@@ -613,24 +667,7 @@ impl Lattice for FieldTp {
             return Err(type_mismatch_error(self, other));
         };
 
-        if self.value == b.value {
-            return Ok(0);
-        }
-
-        // TODO(from Go): add more comparable type check here.
-        if tidb_mysql::util::is_integer_type(self.value)
-            && tidb_mysql::util::is_integer_type(b.value)
-        {
-            // special handle for integer type.
-            return Ok(crate::util::compare_mysql_integer_type(self.value, b.value));
-        }
-
-        if is_type_blob(self.value) && is_type_blob(b.value) {
-            // special handle for blob type.
-            return Ok(crate::util::compare_mysql_blob_type(self.value, b.value));
-        }
-
-        Err(incompatible_type_error(self.value, b.value))
+        compare_field_type_codes(self.value, b.value)
     }
 
     fn join(&self, other: &dyn Lattice) -> Result<Box<dyn Lattice>, IncompatibleError> {
@@ -638,29 +675,8 @@ impl Lattice for FieldTp {
             return Err(type_mismatch_error(self, other));
         };
 
-        if self.value == b.value {
-            return Ok(self.clone_lattice());
-        }
-
-        if tidb_mysql::util::is_integer_type(self.value)
-            && tidb_mysql::util::is_integer_type(b.value)
-        {
-            // special handle for integer type.
-            if crate::util::compare_mysql_integer_type(self.value, b.value) < 0 {
-                return Ok(Box::new(*b));
-            }
-            return Ok(self.clone_lattice());
-        }
-
-        if is_type_blob(self.value) && is_type_blob(b.value) {
-            // special handle for blob type.
-            if crate::util::compare_mysql_blob_type(self.value, b.value) < 0 {
-                return Ok(Box::new(*b));
-            }
-            return Ok(self.clone_lattice());
-        }
-
-        Err(incompatible_type_error(self.value, b.value))
+        let cmp = compare_field_type_codes(self.value, b.value)?;
+        Ok(Box::new(if cmp < 0 { *b } else { *self }))
     }
 
     fn go_type_name(&self) -> &'static str {
@@ -719,9 +735,9 @@ impl Lattice for Tuple {
         for (index, left) in self.0.iter().enumerate() {
             let res = left
                 .compare(b.0[index].as_ref())
-                .map_err(|error| wrap_tuple_index_error(index, &error))?;
+                .map_err(|error| wrap_tuple_index_error(index, error))?;
             result = combine_compare_result(result, res)
-                .map_err(|error| wrap_tuple_index_error(index, &error))?;
+                .map_err(|error| wrap_tuple_index_error(index, error))?;
         }
         Ok(result)
     }
@@ -738,7 +754,7 @@ impl Lattice for Tuple {
         for (index, left) in self.0.iter().enumerate() {
             let res = left
                 .join(b.0[index].as_ref())
-                .map_err(|error| wrap_tuple_index_error(index, &error))?;
+                .map_err(|error| wrap_tuple_index_error(index, error))?;
             result.push(res);
         }
         Ok(Box::new(Self(result)))
@@ -852,15 +868,8 @@ impl Lattice for Maybe {
 #[derive(Clone, Debug, Default)]
 pub struct StringList(pub Vec<GoString>);
 
-impl Lattice for StringList {
-    fn unwrap(&self) -> Value {
-        Value::StringList(self.0.clone())
-    }
-
-    fn compare(&self, other: &dyn Lattice) -> Result<i32, IncompatibleError> {
-        let Some(b) = cast::<Self>(other) else {
-            return Err(type_mismatch_error(self, other));
-        };
+impl StringList {
+    pub(crate) fn compare_items(&self, b: &Self) -> Result<i32, IncompatibleError> {
         let min_len = self.0.len().min(b.0.len());
         for index in 0..min_len {
             if self.0[index] != b.0[index] {
@@ -872,11 +881,20 @@ impl Lattice for StringList {
                 )));
             }
         }
-        match self.0.len().cmp(&b.0.len()) {
-            std::cmp::Ordering::Equal => Ok(0),
-            std::cmp::Ordering::Less => Ok(-1),
-            std::cmp::Ordering::Greater => Ok(1),
-        }
+        Ok(self.0.len().cmp(&b.0.len()) as i32)
+    }
+}
+
+impl Lattice for StringList {
+    fn unwrap(&self) -> Value {
+        Value::StringList(self.0.clone())
+    }
+
+    fn compare(&self, other: &dyn Lattice) -> Result<i32, IncompatibleError> {
+        let Some(b) = cast::<Self>(other) else {
+            return Err(type_mismatch_error(self, other));
+        };
+        self.compare_items(b)
     }
 
     fn join(&self, other: &dyn Lattice) -> Result<Box<dyn Lattice>, IncompatibleError> {
@@ -926,6 +944,17 @@ pub trait LatticeMap: fmt::Debug {
         &self,
         action: &mut dyn FnMut(&str, &dyn Lattice) -> Result<(), IncompatibleError>,
     ) -> Result<(), IncompatibleError>;
+
+    /// Optionally visits matched entries using the map's own representation.
+    /// Visits all left keys in iteration order, then the right-only keys.
+    /// Returns `None` without calling `action` if the pair is unsupported.
+    fn for_each_pair(
+        &self,
+        _other: &dyn LatticeMap,
+        _action: MapIterAction<'_>,
+    ) -> Option<Result<(), IncompatibleError>> {
+        None
+    }
 
     /// Returns the comparison result when the value is compared with a
     /// non-existing entry (Go `CompareWithNil`).
@@ -984,6 +1013,10 @@ impl MapLattice {
             return Err(type_mismatch_error(self, other));
         };
 
+        if let Some(result) = self.inner.for_each_pair(b.inner.as_ref(), &mut *action) {
+            return result;
+        }
+
         let mut visited_keys = std::collections::BTreeSet::new();
         self.inner.for_each(&mut |key, av| {
             visited_keys.insert(key.to_owned());
@@ -1023,9 +1056,9 @@ impl Lattice for MapLattice {
                     .map(|res| -res),
                 // Unreachable: `iter` always passes at least one side.
             }
-            .map_err(|error| wrap_map_key_error(key, &error))?;
+            .map_err(|error| wrap_map_key_error(key, error))?;
             result = combine_compare_result(result, cmp_res)
-                .map_err(|error| wrap_map_key_error(key, &error))?;
+                .map_err(|error| wrap_map_key_error(key, error))?;
             Ok(())
         })?;
         Ok(result)
@@ -1044,7 +1077,7 @@ impl Lattice for MapLattice {
             match join_res {
                 Err(error) => {
                     if !self.inner.should_delete_incompatible_join() {
-                        return Err(wrap_map_key_error(key, &error));
+                        return Err(wrap_map_key_error(key, error));
                     }
                 }
                 Ok(Some(joined)) => result.insert(key, joined),

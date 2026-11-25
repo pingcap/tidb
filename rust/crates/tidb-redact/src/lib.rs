@@ -26,6 +26,8 @@
 //!   S3/GCS/Azure credential fields changed by Go, and preserves gogo's
 //!   compact protobuf text without mutating the source task.
 
+use std::borrow::Cow;
+
 use tidb_proto::backup;
 
 mod compact_text;
@@ -36,9 +38,15 @@ mod compact_text;
 /// `OFF` returns the input unchanged; `ON` erases it. Any other mode is a
 /// programming error and yields the empty string (Go asserts in tests).
 pub fn string(mode: &str, input: &str) -> String {
+    string_cow(mode, input).into_owned()
+}
+
+/// Redacts a string, retaining its original storage in `OFF` mode.
+pub fn string_cow<'a>(mode: &str, input: impl Into<Cow<'a, str>>) -> Cow<'a, str> {
+    let input = input.into();
     match mode {
         "MARKER" => {
-            let mut b = String::with_capacity(input.len() + 2);
+            let mut b = String::with_capacity(input.len() + '‹'.len_utf8() + '›'.len_utf8());
             b.push('‹');
             for c in input.chars() {
                 if c == '‹' || c == '›' {
@@ -49,13 +57,13 @@ pub fn string(mode: &str, input: &str) -> String {
                 }
             }
             b.push('›');
-            b
+            Cow::Owned(b)
         }
-        "OFF" => input.to_owned(),
-        "ON" => String::new(),
+        "OFF" => input,
+        "ON" => Cow::Borrowed(""),
         _ => {
             tidb_intest::assert_with_message(false, "invalid redact mode");
-            String::new()
+            Cow::Borrowed("")
         }
     }
 }
@@ -77,7 +85,7 @@ pub fn stringer<'a>(
 
 impl std::fmt::Display for RedactStringer<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&string(self.mode, &self.inner.to_string()))
+        f.write_str(&string_cow(self.mode, self.inner.to_string()))
     }
 }
 
@@ -96,36 +104,50 @@ pub fn de_redact(
     output: impl std::io::Write,
     sep: &str,
 ) -> std::io::Result<()> {
-    use std::io::BufRead;
+    use std::io::{BufRead, Read, Write};
 
     const MAX_SCAN_TOKEN_SIZE: usize = 64 * 1024;
 
     let mut input = std::io::BufReader::new(input);
     let mut output = std::io::BufWriter::new(output);
     let mut line = Vec::new();
+    let mut span = String::new();
     loop {
         line.clear();
-        let read = match input.read_until(b'\n', &mut line) {
-            Ok(read) => read,
-            // Go deliberately does not inspect Scanner.Err().
-            Err(_) => break,
+        // Go's Scanner stops at the buffer limit before consuming a longer line.
+        let finished = match (&mut input)
+            .take(MAX_SCAN_TOKEN_SIZE as u64)
+            .read_until(b'\n', &mut line)
+        {
+            Ok(0) => break,
+            Ok(_) => false,
+            // ScanLines still returns any final bytes before a reader error.
+            Err(_) if line.is_empty() => break,
+            Err(_) => true,
         };
-        if read == 0 {
-            break;
-        }
         if line.last() == Some(&b'\n') {
             line.pop();
-            if line.last() == Some(&b'\r') {
-                line.pop();
-            }
-        }
-        if line.len() >= MAX_SCAN_TOKEN_SIZE {
+        } else if line.len() == MAX_SCAN_TOKEN_SIZE {
             break;
+        }
+        if line.last() == Some(&b'\r') {
+            line.pop();
+        }
+        let text = match std::str::from_utf8(&line) {
+            Ok(text) => Cow::Borrowed(text),
+            Err(_) => Cow::Owned(decode_go_utf8(&line)),
         };
-        de_redact_line(remove, &decode_go_utf8(&line), &mut output)?;
-        let _ = std::io::Write::write_all(&mut output, sep.as_bytes());
+        if text.contains('‹') {
+            de_redact_line(remove, &text, &mut span, &mut output)?;
+        } else {
+            let _ = output.write_all(text.as_bytes());
+        }
+        let _ = output.write_all(sep.as_bytes());
+        if finished {
+            break;
+        }
     }
-    let _ = std::io::Write::flush(&mut output);
+    let _ = output.flush();
     Ok(())
 }
 
@@ -153,26 +175,19 @@ fn decode_go_utf8(input: &[u8]) -> String {
 }
 
 /// The per-line core of [`de_redact`], appending to `out`.
-fn de_redact_line(remove: bool, line: &str, out: &mut impl std::io::Write) -> std::io::Result<()> {
-    let chars: Vec<char> = line.chars().collect();
-    let mut i = 0usize;
+fn de_redact_line(
+    remove: bool,
+    line: &str,
+    buf: &mut String,
+    out: &mut impl std::io::Write,
+) -> std::io::Result<()> {
+    let mut chars = line.chars().peekable();
     let mut start = false;
-    let mut buf = String::new();
-
-    // Reads the next rune, advancing the cursor; None at end of line (EOF).
-    let read = |i: &mut usize| -> Option<char> {
-        let c = chars.get(*i).copied();
-        if c.is_some() {
-            *i += 1;
-        }
-        c
-    };
-
-    while let Some(ch) = read(&mut i) {
+    while let Some(ch) = chars.next() {
         if ch == '‹' {
             if start {
                 // Must read the escaped rune; EOF here is Go's error path.
-                match read(&mut i) {
+                match chars.next() {
                     None => {
                         return Err(std::io::Error::new(
                             std::io::ErrorKind::UnexpectedEof,
@@ -191,16 +206,11 @@ fn de_redact_line(remove: bool, line: &str, out: &mut impl std::io::Write) -> st
             }
         } else if ch == '›' {
             if start {
-                // Peek the next rune; a doubled `››` stays inside the span,
-                // otherwise the span closes and the rune is un-read.
-                let pch = read(&mut i);
-                if pch == Some(ch) {
+                // A doubled `››` stays inside the span.
+                if chars.next_if_eq(&ch).is_some() {
                     buf.push(ch);
                 } else {
                     start = false;
-                    if pch.is_some() {
-                        i -= 1; // unread
-                    }
                     if remove {
                         let _ = std::io::Write::write_all(out, b"?");
                     } else {
@@ -278,12 +288,13 @@ pub fn key(key: &[u8]) -> String {
     if need_redact() {
         return "?".to_owned();
     }
-    let mut s = String::with_capacity(key.len() * 2);
-    for b in key {
-        // Upper-case hex, matching Go's ToUpper(EncodeToString(...)).
-        s.push_str(&format!("{b:02X}"));
+    const HEX: &[u8; 16] = b"0123456789ABCDEF";
+    let mut out = String::with_capacity(key.len() * 2);
+    for &byte in key {
+        out.push(char::from(HEX[usize::from(byte >> 4)]));
+        out.push(char::from(HEX[usize::from(byte & 15)]));
     }
-    s
+    out
 }
 
 /// Go `redact.WriteRedact`: appends `v` to `build`, redacted per `redact`.
@@ -363,8 +374,17 @@ mod tests {
             ("MARKER", "f›xcv", "‹f››xcv›"),
         ] {
             assert_eq!(string(mode, input), output);
+            assert_eq!(string_cow(mode, input), output);
             assert_eq!(stringer(mode, &input).to_string(), output);
         }
+    }
+
+    #[test]
+    fn off_mode_reuses_existing_storage() {
+        let input = "ordinary text".to_owned();
+        let original = input.as_ptr();
+        assert_eq!(string_cow("OFF", input.as_str()).as_ptr(), original);
+        assert_eq!(string_cow("OFF", input).into_owned().as_ptr(), original);
     }
 
     #[test]
@@ -391,6 +411,59 @@ mod tests {
             de_redact(remove, input.as_bytes(), &mut actual, "").unwrap();
             assert_eq!(String::from_utf8(actual).unwrap(), output);
         }
+    }
+
+    #[test]
+    fn scanner_counts_the_terminator_and_preserves_the_last_unterminated_line() {
+        for (len, suffix, scanned) in [
+            (65_534, "\r\n", true),
+            (65_535, "\n", true),
+            (65_535, "\r\n", false),
+            (65_535, "", true),
+            (65_536, "", false),
+            (1, "\r", true),
+        ] {
+            let input = "a".repeat(len) + suffix;
+            let mut got = Vec::new();
+            de_redact(false, input.as_bytes(), &mut got, "|").unwrap();
+            if scanned {
+                assert_eq!(got.len(), len + 1, "{len} {suffix:?}");
+                assert!(got[..len].iter().all(|&byte| byte == b'a'));
+                assert_eq!(got[len], b'|');
+            } else {
+                assert!(got.is_empty(), "{len} {suffix:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn oversized_lines_stop_at_the_scan_limit() {
+        let mut bytes = b"first\n".to_vec();
+        bytes.resize(4 * 1024 * 1024, b'a');
+        bytes.extend_from_slice(b"\nlast\n");
+        let mut input = std::io::Cursor::new(bytes);
+        let mut got = Vec::new();
+        de_redact(true, &mut input, &mut got, "\n").unwrap();
+        assert_eq!(got, b"first\n");
+        assert!(input.position() <= 72 * 1024);
+    }
+
+    #[test]
+    fn scanner_emits_buffered_bytes_before_a_reader_error() {
+        use std::io::{self, Read};
+
+        struct BrokenReader;
+
+        impl Read for BrokenReader {
+            fn read(&mut self, _: &mut [u8]) -> io::Result<usize> {
+                Err(io::Error::other("read failed"))
+            }
+        }
+
+        let input = b"line\r".as_slice().chain(BrokenReader);
+        let mut got = Vec::new();
+        de_redact(false, input, &mut got, "|").unwrap();
+        assert_eq!(got, b"line|");
     }
 
     #[test]

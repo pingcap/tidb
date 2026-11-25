@@ -2,10 +2,10 @@
 
 //! Go `builtin_vec_vec.go`: vector columns and vector datatype operations.
 
-use super::{vec_eval, ScalarFunction};
+use super::{ScalarFunction, vec_eval};
 use crate::{Columns, EvalError};
 use tidb_chunk::{chunk::Chunk, column::Column};
-use tidb_datatype::{EvalType, VectorFloat32};
+use tidb_datatype::{EvalType, VectorFloat32, VectorFloat32Ref, peek_vector_float32};
 use tidb_proto::tipb::ScalarFuncSig;
 
 /// Go vector builtin `vectorized` methods.
@@ -35,72 +35,134 @@ pub(super) fn eval(
     if function.func_name.lowercase() == "vec_from_text" {
         return from_text(function, ctx, input, result);
     }
-    let col1 = vec_eval::argument(&function.args[0], EvalType::VectorFloat32, ctx, input)?;
-    match function.pb_code() {
-        VecDimsSig => {
-            result.resize_int64(n, false);
-            result.merge_nulls(&[&col1]);
-            for i in 0..n {
-                if result.is_null(i) {
-                    continue;
+    if function.pb_code() == VecAsTextSig {
+        return vec_eval::with_argument_column(
+            &function.args[0],
+            EvalType::VectorFloat32,
+            ctx,
+            input,
+            |column, selection| {
+                let cells = column.raw_cells();
+                let mut text = String::new();
+                result.reserve_string(n);
+                for row in 0..n {
+                    let row = selection.map_or(row, |selection| selection[row]);
+                    if cells.is_null(row) {
+                        result.append_null();
+                    } else {
+                        text.clear();
+                        decoded(cells.get(row)).append_text(&mut text);
+                        result.append_bytes(text.as_bytes());
+                    }
                 }
-                let length = col1.get_vector_float32(i).len() as i64;
-                result.with_int64s_mut(|res| res[i] = length);
-            }
-        }
-        VecAsTextSig => {
-            result.reserve_string(n);
-            for i in 0..n {
-                if col1.is_null(i) {
-                    result.append_null();
-                    continue;
-                }
-                result.append_bytes(col1.get_vector_float32(i).to_string().as_bytes());
-            }
-        }
-        VecL2NormSig => {
-            result.resize_float64(n, false);
-            result.merge_nulls(&[&col1]);
-            for i in 0..n {
-                if result.is_null(i) {
-                    continue;
-                }
-                let d = col1.get_vector_float32(i).l2_norm();
-                put_distance(result, i, d);
-            }
-        }
-        sig => {
-            let operation = match sig {
-                VecL1DistanceSig => VectorFloat32::l1_distance,
-                VecL2DistanceSig => VectorFloat32::l2_distance,
-                VecNegativeInnerProductSig => VectorFloat32::negative_inner_product,
-                VecCosineDistanceSig => VectorFloat32::cosine_distance,
-                _ => unreachable!("not a vector kernel: {sig:?}"),
-            };
-            let col2 = vec_eval::argument(&function.args[1], EvalType::VectorFloat32, ctx, input)?;
-            result.resize_float64(n, false);
-            result.merge_nulls(&[&col1, &col2]);
-            for i in 0..n {
-                if result.is_null(i) {
-                    continue;
-                }
-                let x = col1.get_vector_float32(i);
-                let y = col2.get_vector_float32(i);
-                let d = operation(&x, &y).map_err(|error| EvalError::Vector(error.to_string()))?;
-                put_distance(result, i, d);
-            }
-        }
+            },
+        );
     }
-    Ok(())
+
+    if matches!(function.pb_code(), VecDimsSig | VecL2NormSig) {
+        return vec_eval::with_argument_column(
+            &function.args[0],
+            EvalType::VectorFloat32,
+            ctx,
+            input,
+            |column, selection| {
+                let cells = column.raw_cells();
+                let rows = (0..n).map(|row| selection.map_or(row, |selection| selection[row]));
+                match function.pb_code() {
+                    VecDimsSig => result.write_int64_rows(rows.map(|row| {
+                        if cells.is_null(row) {
+                            return None;
+                        }
+                        let length = peek_vector_float32(cells.get(row)).unwrap_or_else(|error| {
+                            panic!("invalid VectorFloat32 chunk cell: {error}")
+                        });
+                        Some((length / 4 - 1) as i64)
+                    })),
+                    VecL2NormSig => {
+                        result.resize_float64(n, false);
+                        result.with_fixed_cells_mut::<8, _>(|output, bitmap| {
+                            for (i, row) in rows.enumerate() {
+                                if cells.is_null(row) {
+                                    bitmap[i / 8] &= !(1 << (i % 8));
+                                } else {
+                                    write_distance(
+                                        &mut output[i],
+                                        &mut bitmap[i / 8],
+                                        1 << (i % 8),
+                                        decoded(cells.get(row)).l2_norm(),
+                                    );
+                                }
+                            }
+                        });
+                    }
+                    sig => unreachable!("not a unary vector kernel: {sig:?}"),
+                }
+            },
+        );
+    }
+
+    let left = vec_eval::read_argument(&function.args[0], EvalType::VectorFloat32, ctx, input)?;
+    let right = vec_eval::read_argument(&function.args[1], EvalType::VectorFloat32, ctx, input)?;
+    let (left, left_selection) = left.source();
+    let (right, right_selection) = right.source();
+    let selected = left_selection.is_some() || right_selection.is_some();
+    result.resize_float64(n, false);
+    if !selected {
+        result.merge_nulls(&[left, right]);
+    }
+    let left = left.raw_cells();
+    let right = right.raw_cells();
+    let rows = (0..n).map(|row| {
+        (
+            left_selection.map_or(row, |selection| selection[row]),
+            right_selection.map_or(row, |selection| selection[row]),
+        )
+    });
+    let sig = function.pb_code();
+    result.with_fixed_cells_mut::<8, _>(|output, bitmap| {
+        if selected {
+            for (i, (left_row, right_row)) in rows.clone().enumerate() {
+                if left.is_null(left_row) || right.is_null(right_row) {
+                    bitmap[i / 8] &= !(1 << (i % 8));
+                }
+            }
+        }
+        for (i, (cell, (left_row, right_row))) in output.iter_mut().zip(rows).enumerate() {
+            let present = &mut bitmap[i / 8];
+            let bit = 1 << (i % 8);
+            if *present & bit == 0 {
+                continue;
+            }
+            let x = decoded(left.get(left_row));
+            let y = decoded(right.get(right_row));
+            let distance = match sig {
+                VecL1DistanceSig => x.l1_distance(&y),
+                VecL2DistanceSig => x.l2_distance(&y),
+                VecNegativeInnerProductSig => x.negative_inner_product(&y),
+                VecCosineDistanceSig => x.cosine_distance(&y),
+                _ => unreachable!("not a binary vector kernel: {sig:?}"),
+            }
+            .map_err(|error| EvalError::Vector(error.to_string()))?;
+            write_distance(cell, present, bit, distance);
+        }
+        Ok(())
+    })
+}
+
+#[inline]
+fn decoded(bytes: &[u8]) -> VectorFloat32Ref<'_> {
+    VectorFloat32Ref::from_encoded(bytes)
+        .unwrap_or_else(|error| panic!("invalid VectorFloat32 chunk cell: {error}"))
 }
 
 /// Go: a NaN distance is NULL.
-fn put_distance(result: &mut Column, i: usize, d: f64) {
-    if d.is_nan() {
-        result.set_null(i, true);
-        return;
+#[inline]
+fn write_distance(cell: &mut [u8; 8], present: &mut u8, bit: u8, distance: f64) {
+    if distance.is_nan() {
+        *present &= !bit;
+    } else {
+        *cell = distance.to_ne_bytes();
     }
-    result.with_float64s_mut(|res| res[i] = d);
 }
 
 /// Go `builtinVecFromTextSig.vecEvalVectorFloat32`.

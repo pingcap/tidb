@@ -53,8 +53,8 @@ fn ranges(keys: &[&str]) -> KeyRanges {
 
 fn split(start: &str, end: &str) -> CoprocessorKeyRange {
     CoprocessorKeyRange {
-        start: start.as_bytes().to_vec(),
-        end: end.as_bytes().to_vec(),
+        start: start.as_bytes().to_vec().into(),
+        end: end.as_bytes().to_vec().into(),
     }
 }
 
@@ -276,7 +276,7 @@ fn successful_page_updates_ema_grows_size_and_feeds_response_channel() {
                 start_key: b"e".to_vec().into(),
                 end_key: b"g".to_vec().into(),
             },
-        ],
+        ].into(),
         paging: true,
         paging_size: 128,
         ..Default::default()
@@ -321,7 +321,7 @@ fn terminal_nil_range_cannot_resurrect_completed_paging_state() {
         ranges: vec![KeyRange {
             start_key: b"a".to_vec().into(),
             end_key: b"z".to_vec().into(),
-        }],
+        }].into(),
         paging: true,
         paging_size: 128,
         ..Default::default()
@@ -366,7 +366,7 @@ fn bounded_multi_page_channel_drains_then_emits_terminal_closed() {
         ranges: vec![KeyRange {
             start_key: b"a".to_vec().into(),
             end_key: b"z".to_vec().into(),
-        }],
+        }].into(),
         paging: true,
         paging_size: 128,
         response_channel_capacity: 2,
@@ -412,7 +412,7 @@ fn bounded_channel_applies_backpressure_before_continuation_mutation() {
         ranges: vec![KeyRange {
             start_key: b"a".to_vec().into(),
             end_key: b"z".to_vec().into(),
-        }],
+        }].into(),
         paging: true,
         paging_size: 128,
         response_channel_capacity: 1,

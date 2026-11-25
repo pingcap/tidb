@@ -2718,8 +2718,8 @@ mod tests {
     fn source_stream_wrappers_apply_the_v2_encode_and_decode_matrix() {
         let codec = ApiV2Codec::new(crate::request::KeyMode::Txn, 7).unwrap();
         let range = coprocessor::KeyRange {
-            start: b"a".to_vec(),
-            end: b"z".to_vec(),
+            start: b"a".to_vec().into(),
+            end: b"z".to_vec().into(),
         };
         let cop = CoprocessorStreamRequest::new(coprocessor::Request {
             ranges: vec![range.clone()],
@@ -2727,8 +2727,8 @@ mod tests {
         })
         .with_api_v2_codec(codec);
         let encoded = cop.wire_request();
-        assert_eq!(encoded.ranges[0].start, b"x\0\0\x07a");
-        assert_eq!(encoded.ranges[0].end, b"x\0\0\x07z");
+        assert_eq!(encoded.ranges[0].start.as_ref(), b"x\0\0\x07a");
+        assert_eq!(encoded.ranges[0].end.as_ref(), b"x\0\0\x07z");
         let context = encoded.context.unwrap();
         assert_eq!(context.api_version, kvrpcpb::ApiVersion::V2 as i32);
         assert_eq!(crate::request::context_keyspace_id(&context), Some(7));
@@ -2738,6 +2738,7 @@ mod tests {
         ));
 
         let batch = BatchCoprocessorStreamRequest::new(coprocessor::BatchRequest {
+            data: vec![0xa5; 4096].into(),
             regions: vec![coprocessor::RegionInfo {
                 ranges: vec![range],
                 ..Default::default()
@@ -2746,8 +2747,10 @@ mod tests {
         })
         .with_api_v2_codec(codec);
         let encoded = batch.wire_request();
-        assert_eq!(encoded.regions[0].ranges[0].start, b"x\0\0\x07a");
-        assert_eq!(encoded.regions[0].ranges[0].end, b"x\0\0\x07z");
+        assert_eq!(encoded.data.as_ptr(), batch.request().data.as_ptr());
+        assert_eq!(encoded.data, batch.request().data);
+        assert_eq!(encoded.regions[0].ranges[0].start.as_ref(), b"x\0\0\x07a");
+        assert_eq!(encoded.regions[0].ranges[0].end.as_ref(), b"x\0\0\x07z");
         let context = encoded.context.unwrap();
         assert_eq!(context.api_version, kvrpcpb::ApiVersion::V2 as i32);
         assert_eq!(crate::request::context_keyspace_id(&context), Some(7));

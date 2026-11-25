@@ -248,7 +248,7 @@ fn index_look_up(common: bool) -> tipb::Executor {
 
 fn index_range() -> coprocessor::KeyRange {
     let (start, end) = tidb_tablecodec::get_table_index_key_range(TABLE_ID, INDEX_ID);
-    coprocessor::KeyRange { start: physical_key(&start), end: physical_key(&end) }
+    coprocessor::KeyRange { start: physical_key(&start).into(), end: physical_key(&end).into() }
 }
 
 fn request(root: tipb::Executor) -> coprocessor::Request {
@@ -263,7 +263,7 @@ fn request(root: tipb::Executor) -> coprocessor::Request {
     };
     coprocessor::Request {
         tp: REQ_TYPE_DAG,
-        data: dag.encode_to_vec(),
+        data: dag.encode_to_vec().into(),
         ranges: vec![index_range()],
         start_ts: 20,
         ..coprocessor::Request::default()
@@ -307,7 +307,7 @@ fn index_rows(handles: &[i64]) -> Vec<Vec<Datum>> {
 fn range(start: Vec<u8>, last: &[u8]) -> coprocessor::KeyRange {
     let mut end = last.to_vec();
     end.push(0);
-    coprocessor::KeyRange { start: physical_key(&start), end: physical_key(&end) }
+    coprocessor::KeyRange { start: physical_key(&start).into(), end: physical_key(&end).into() }
 }
 
 /// Every handle is in the one local region: the response is the table rows,

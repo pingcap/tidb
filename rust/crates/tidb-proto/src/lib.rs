@@ -16,6 +16,11 @@ pub mod tipb {
     }
 }
 
+/// TiPB ANALYZE responses with sample cells that can share their input packet.
+pub mod analyze_input {
+    include!(concat!(env!("OUT_DIR"), "/analyze-input/tipb.rs"));
+}
+
 /// Go `github.com/google/pprof/profile`'s protobuf format.
 pub mod perftools {
     pub mod profiles {
@@ -186,6 +191,24 @@ mod tests {
         StreamResponse, TiFlashNetWorkSummary, TiFlashRegionNumOfInstance, TiFlashScanContext,
         TiFlashWaitSummary,
     };
+
+    #[test]
+    fn column_defaults_share_wire_bytes_and_preserve_presence() {
+        use super::tipb::ColumnInfo;
+        use prost::bytes::Bytes;
+
+        let wire = Bytes::from_static(&[0x42, 3, 1, 2, 3]);
+        let column = ColumnInfo::decode(wire.clone()).unwrap();
+        let default = column.default_val.as_ref().unwrap();
+        assert_eq!(default.as_ptr(), wire[2..].as_ptr());
+        assert_eq!(column.clone().default_val.unwrap().as_ptr(), default.as_ptr());
+        assert_eq!(column.encode_to_vec(), wire);
+
+        let empty = ColumnInfo::decode(&[0x42, 0][..]).unwrap();
+        assert_eq!(empty.default_val, Some(Bytes::new()));
+        assert_eq!(empty.encode_to_vec(), [0x42, 0]);
+        assert_eq!(ColumnInfo::decode(&[][..]).unwrap().default_val, None);
+    }
 
     #[test]
     fn resource_group_tag_round_trips_go_wire_vectors() {

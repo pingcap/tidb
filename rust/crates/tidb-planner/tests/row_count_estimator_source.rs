@@ -124,7 +124,7 @@ fn column_a() -> tidb_stats::column::Column {
                 int_bucket(34, 3, 16, 23),
                 int_bucket(52, 3, 24, 32),
                 int_bucket(65, 1, 33, 39),
-            ],
+            ].into(),
             ..Histogram::default()
         },
         top_n: Some(topn_of(&[
@@ -152,7 +152,7 @@ fn column_b() -> tidb_stats::column::Column {
                 int_bucket(34, 3, 32, 46),
                 int_bucket(52, 3, 48, 64),
                 int_bucket(65, 1, 66, 78),
-            ],
+            ].into(),
             ..Histogram::default()
         },
         top_n: Some(topn_of(&[
@@ -200,7 +200,7 @@ fn index_ab() -> tidb_stats::index::Index {
                     "038000000000000021038000000000000042",
                     "03800000000000002703800000000000004e",
                 ),
-            ],
+            ].into(),
             ..Histogram::default()
         },
         top_n: Some(topn_of(&[
@@ -611,8 +611,8 @@ fn index_range(
 ) -> Range {
     Range {
         collators: vec![tidb_charset::Collation::Binary; low.len()],
-        low_val: low.iter().map(|v| Datum::Int(*v)).collect(),
-        high_val: high.iter().map(|v| Datum::Int(*v)).collect(),
+        low_val: low.iter().map(|v| Datum::Int(*v)).collect::<Vec<_>>().into(),
+        high_val: high.iter().map(|v| Datum::Int(*v)).collect::<Vec<_>>().into(),
         low_exclude,
         high_exclude,
     }
@@ -778,7 +778,7 @@ fn source_composite_index_prefix_matching_the_first_bound_is_in_range() {
                 ndv: 0,
                 lower_bound: Datum::Bytes(key_of(&[Datum::Int(1), Datum::Int(1)])),
                 upper_bound: Datum::Bytes(key_of(&[Datum::Int(10), Datum::Int(10)])),
-            }],
+            }].into(),
             ..Histogram::default()
         },
         top_n: Some(index_topn),
@@ -802,7 +802,7 @@ fn source_composite_index_prefix_matching_the_first_bound_is_in_range() {
         histogram: Histogram {
             id: 1,
             ndv: 10,
-            buckets: vec![int_bucket(90, 9, 1, 10)],
+            buckets: vec![int_bucket(90, 9, 1, 10)].into(),
             ..Histogram::default()
         },
         top_n: Some(topn_of(&[(&[Datum::Int(1)], 10, "038000000000000001")])),

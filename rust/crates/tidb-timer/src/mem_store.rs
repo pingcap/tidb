@@ -16,16 +16,15 @@
 //! and the in-memory watch-event notifier.
 
 use std::collections::HashMap;
-use std::sync::atomic::AtomicBool;
-use std::sync::mpsc::{sync_channel, SyncSender};
 use std::sync::{Arc, Mutex, RwLock};
 use std::thread::JoinHandle;
 
+use crossbeam_channel::{Sender, TrySendError, bounded, select_biased};
 use tidb_timeutil::{parse_time_zone, system_location, TimeZone};
 
 use crate::error::{Result, TimerError};
 use crate::store::{
-    Cond, Context, TimerStore, TimerStoreCore, TimerUpdate, TimerWatchEventNotifier,
+    CancelFn, Cond, Context, TimerStore, TimerStoreCore, TimerUpdate, TimerWatchEventNotifier,
     WatchTimerChan, WatchTimerEvent, WatchTimerEventType, WatchTimerResponse,
 };
 use crate::timer::{SchedEventStatus, TimerRecord};
@@ -34,7 +33,7 @@ use crate::uuid::new_uuid_hex;
 /// Go `memStoreWatcher`.
 struct MemStoreWatcher {
     ctx: Context,
-    sender: SyncSender<WatchTimerResponse>,
+    sender: Sender<WatchTimerResponse>,
 }
 
 #[derive(Default)]
@@ -207,40 +206,31 @@ impl TimerStoreCore for MemoryStoreCore {
     }
 }
 
-#[derive(Default)]
 struct NotifierState {
-    /// `None` once `Close` has run, standing in for Go's nil'ed `cancel`.
-    open: bool,
+    cancel: Option<CancelFn>,
     watchers: Vec<MemStoreWatcher>,
     pending: Vec<JoinHandle<()>>,
-    /// Stands in for Go's notifier-level context cancellation: overflow
-    /// senders must observe `Close` even when their watcher context stays
-    /// alive, or `close` would block forever on the join below.
-    closed: Arc<AtomicBool>,
 }
 
 /// Go `memTimerWatchEventNotifier`.
 ///
-/// Go relays each watcher's 8-slot buffered channel into an unbuffered one
-/// through a goroutine so it can `select` on both the notifier's and the
-/// watcher's contexts. Rust's `mpsc` receiver already reports closure when the
-/// sender drops, so the relay hop is unnecessary and the watcher reads the
-/// 8-slot buffer directly; the only observable difference is that a consumer
-/// can now be up to eight responses behind without a producer blocking, where
-/// Go allowed nine.
+/// A relay forwards each watcher's buffered events and closes the public
+/// watch channel when the notifier or watcher context is cancelled.
 pub struct MemTimerWatchEventNotifier {
+    ctx: Context,
     state: Mutex<NotifierState>,
 }
 
 impl MemTimerWatchEventNotifier {
     /// Go `NewMemTimerWatchEventNotifier`'s concrete value.
     pub fn new() -> Self {
+        let (ctx, cancel) = Context::with_cancel();
         Self {
+            ctx,
             state: Mutex::new(NotifierState {
-                open: true,
+                cancel: Some(cancel),
                 watchers: Vec::with_capacity(8),
                 pending: Vec::new(),
-                closed: Arc::new(AtomicBool::new(false)),
             }),
         }
     }
@@ -260,22 +250,44 @@ pub fn new_mem_timer_watch_event_notifier() -> Arc<dyn TimerWatchEventNotifier> 
 impl TimerWatchEventNotifier for MemTimerWatchEventNotifier {
     fn watch(&self, ctx: &Context) -> WatchTimerChan {
         let mut state = self.state.lock().unwrap();
-        let (sender, receiver) = sync_channel(8);
-        if !state.open {
-            // Go closes the channel immediately; dropping the sender is the
-            // Rust spelling of a closed channel.
+        let (out, receiver) = bounded(0);
+        if state.cancel.is_none() || ctx.is_done() {
             return receiver;
         }
+        state.pending.retain(|handle| !handle.is_finished());
+        state.watchers.retain(|watcher| !watcher.ctx.is_done());
+        let (sender, events) = bounded(8);
         state.watchers.push(MemStoreWatcher {
             ctx: ctx.clone(),
             sender,
         });
+        let closed = self.ctx.done();
+        let done = ctx.done();
+        state.pending.push(std::thread::spawn(move || loop {
+            let response = select_biased! {
+                recv(closed) -> _ => return,
+                recv(done) -> _ => return,
+                recv(events) -> result => match result {
+                    Ok(response) => response,
+                    Err(_) => return,
+                },
+            };
+            select_biased! {
+                recv(closed) -> _ => return,
+                recv(done) -> _ => return,
+                send(out, response) -> result => {
+                    if result.is_err() {
+                        return;
+                    }
+                },
+            }
+        }));
         receiver
     }
 
     fn notify(&self, tp: WatchTimerEventType, timer_id: &str) {
         let mut state = self.state.lock().unwrap();
-        if !state.open {
+        if state.cancel.is_none() {
             return;
         }
 
@@ -287,47 +299,43 @@ impl TimerWatchEventNotifier for MemTimerWatchEventNotifier {
         };
 
         let mut spawned = Vec::new();
-        let closed_flag = Arc::clone(&state.closed);
         state.watchers.retain(|watcher| {
             if watcher.ctx.is_done() {
                 return false;
             }
             match watcher.sender.try_send(response.clone()) {
                 Ok(()) => true,
-                Err(std::sync::mpsc::TrySendError::Disconnected(_)) => false,
-                Err(std::sync::mpsc::TrySendError::Full(response)) => {
+                Err(TrySendError::Disconnected(_)) => false,
+                Err(TrySendError::Full(response)) => {
                     // Go spawns a goroutine that blocks until either the
                     // watcher accepts the response or one of the two contexts
                     // (the watcher's or the notifier's) is cancelled.
                     let sender = watcher.sender.clone();
-                    let ctx = watcher.ctx.clone();
-                    let closed = Arc::clone(&closed_flag);
+                    let done = watcher.ctx.done();
+                    let closed = self.ctx.done();
                     spawned.push(std::thread::spawn(move || {
-                        while !ctx.is_done() && !closed.load(std::sync::atomic::Ordering::Relaxed) {
-                            match sender.try_send(response.clone()) {
-                                Ok(()) | Err(std::sync::mpsc::TrySendError::Disconnected(_)) => {
-                                    return
-                                }
-                                Err(std::sync::mpsc::TrySendError::Full(_)) => {
-                                    std::thread::sleep(std::time::Duration::from_millis(1));
-                                }
-                            }
+                        select_biased! {
+                            recv(closed) -> _ => {},
+                            recv(done) -> _ => {},
+                            send(sender, response) -> _ => {},
                         }
                     }));
                     true
                 }
             }
         });
-        state.pending.append(&mut spawned);
+        if !spawned.is_empty() {
+            state.pending.retain(|handle| !handle.is_finished());
+            state.pending.append(&mut spawned);
+        }
     }
 
     fn close(&self) {
         let pending = {
             let mut state = self.state.lock().unwrap();
-            state.open = false;
-            state
-                .closed
-                .store(true, std::sync::atomic::Ordering::Relaxed);
+            if let Some(cancel) = state.cancel.take() {
+                cancel.cancel();
+            }
             state.watchers.clear();
             std::mem::take(&mut state.pending)
         };
@@ -335,6 +343,12 @@ impl TimerWatchEventNotifier for MemTimerWatchEventNotifier {
         for handle in pending {
             let _ = handle.join();
         }
+    }
+}
+
+impl Drop for MemTimerWatchEventNotifier {
+    fn drop(&mut self) {
+        self.close();
     }
 }
 

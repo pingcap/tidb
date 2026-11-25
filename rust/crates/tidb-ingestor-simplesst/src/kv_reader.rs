@@ -45,11 +45,21 @@ impl KVReader {
         Ok(self.byte_reader.storage_reader.get_file_size()?)
     }
 
-    /// Go `NextKV`: the key and value, valid until the next call.
+    /// Reads the next key and value into owned buffers.
     ///
     /// # Errors
     /// [`crate::Error::Eof`] at the end, or a truncated or unreadable file.
     pub fn next_kv(&mut self) -> Result<(Vec<u8>, Vec<u8>)> {
+        let (key, value) = self.next_kv_ref()?;
+        Ok((key.to_vec(), value.to_vec()))
+    }
+
+    /// Go `NextKV`. Borrows the next key and value until the reader advances.
+    ///
+    /// # Errors
+    /// [`crate::Error::Eof`] at the end, or a truncated or unreadable file.
+    #[inline]
+    pub fn next_kv_ref(&mut self) -> Result<(&[u8], &[u8])> {
         let key_len = u64::from_be_bytes(
             self.byte_reader
                 .read_n_bytes(8)?
@@ -67,7 +77,7 @@ impl KVReader {
             .byte_reader
             .read_n_bytes(key_len + val_len)
             .map_err(no_eof)?;
-        Ok((kv[..key_len].to_vec(), kv[key_len..].to_vec()))
+        Ok(kv.split_at(key_len))
     }
 
     /// Go `EnableConcurrentRead`.

@@ -96,7 +96,7 @@ fn chain(stored: bool) -> Vec<Slot> {
             TableColumnResolver::new(&names, &types, tidb_datatype::SessionTimeZone::utc());
         let expr = parse_generated_expr(text);
         let built = tidb_expr::column_resolver::rewrite_expr_resolved(&expr, &resolver).unwrap();
-        GeneratedColumn {
+        GeneratedColumnDefinition {
             expr_text: text.to_owned(),
             stored,
             expr: built,
@@ -106,7 +106,7 @@ fn chain(stored: bool) -> Vec<Slot> {
             build_like_default_escape: b'\\',
             zone_sensitive: resolver.zone_was_read(),
             like_default_escape_sensitive: resolver.like_default_escape_was_read(),
-        }
+        }.into()
     };
     vec![
         Slot {

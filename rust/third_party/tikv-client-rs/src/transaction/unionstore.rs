@@ -421,14 +421,24 @@ impl MemDb {
     }
 
     pub fn get_readonly(&self, key: &[u8]) -> Result<Vec<u8>, StaticError> {
-        match self.art.get(key) {
+        self.with_readonly_value(key, <[u8]>::to_vec)
+    }
+
+    /// Reads the mutable buffer and its in-flight tier without copying the value.
+    /// The callback runs under an ART read lock and must not reenter the buffer.
+    pub fn with_readonly_value<T>(
+        &self,
+        key: &[u8],
+        mut consume: impl FnMut(&[u8]) -> T,
+    ) -> Result<T, StaticError> {
+        match self.art.with_value(key, &mut consume) {
             Ok(value) => Ok(value),
             Err(StaticError::NotExist) => self
                 .managed_pipelined
                 .as_ref()
                 .and_then(|state| state.flushing.as_ref())
                 .ok_or(StaticError::NotExist)?
-                .get_readonly(key),
+                .with_readonly_value(key, consume),
             Err(error) => Err(error),
         }
     }

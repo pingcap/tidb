@@ -11,3 +11,4 @@ description = "TiDB pkg/server/internal/util (Rust)."
 workspace = true
 
 [dependencies]
+memchr = "2"

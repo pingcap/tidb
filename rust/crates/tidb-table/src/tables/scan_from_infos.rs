@@ -127,7 +127,7 @@ pub fn set_pb_columns_default_value(
         // For virtual columns, we set their default values to NULL so that TiKV will return NULL properly,
         // They real values will be computed later.
         if c.is_generated() && !c.generated_stored {
-            pb_columns[i].default_val = Some(vec![tidb_codec::NIL_FLAG]);
+            pb_columns[i].default_val = Some(vec![tidb_codec::NIL_FLAG].into());
         }
         if c.get_origin_default_value().is_nil() {
             continue;
@@ -157,7 +157,7 @@ pub fn set_pb_columns_default_value(
             }
         }
         pb_columns[i].default_val = Some(
-            tidb_codec::encode_value_in_timezone(zone, std::slice::from_ref(&d)).map_err(|err| err.to_string())?,
+            tidb_codec::encode_value_as_bytes_in_timezone(zone, &d).map_err(|err| err.to_string())?,
         );
     }
     Ok(())

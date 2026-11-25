@@ -76,19 +76,23 @@ use table_meta::NonPublicIndex;
 use tidb_kv::storage::{StorageError, StorageIterator, TableStorage};
 use tidb_autoid::AutoIdAllocator;
 use row_decoder::fill_handle_columns;
-pub use row_decoder::fill_row_checksum;
-use std::collections::HashSet;
+pub use row_decoder::{PreparedPointGetRowDecoder, fill_row_checksum};
+pub use table_meta::PreparedPointGetDecodeContext;
+use std::{borrow::Cow, collections::HashSet, sync::{Arc, LazyLock, OnceLock}};
+use smallvec::SmallVec;
 pub use table_meta::NOT_NULL_FLAG;
-use tidb_tablecodec::table_key::{encode_row_key_with_handle, get_table_handle_key_range};
+use tidb_tablecodec::table_key::{
+    encode_common_row_key_into, encode_int_row_key, encode_row_key_with_common_handle, encode_row_key_with_handle,
+    get_table_handle_key_range,
+};
 use tidb_datatype::{new_collation_enabled, Datum, FieldType, SessionTimeZone};
 use tidb_expr::expression::Expression;
 
-use index_entries::duplicate_value_text;
 pub use index_entries::index_entry_handle;
 pub use index_entries::IndexEntryForCheck;
 pub use index_entries::IndexExistence;
 use tidb_hack::GoToLower;
-use tidb_tablecodec::encode_table_row;
+use tidb_tablecodec::encode_table_row_with_values;
 use tidb_txnkv::{CommonHandle, Key};
 
 /// Deduplicates index columns by table-column offset, preserving the first
@@ -448,6 +452,38 @@ impl tidb_exprctx::Columns for IndexConditionContext<'_> {
     }
 }
 
+#[derive(Debug, Default)]
+struct TableAllocator(OnceLock<AutoIdAllocator>);
+
+impl Clone for TableAllocator {
+    fn clone(&self) -> Self {
+        // Both table handles must share one reservation even if neither
+        // has allocated an ID yet.
+        (**self).clone().into()
+    }
+}
+
+impl From<AutoIdAllocator> for TableAllocator {
+    fn from(allocator: AutoIdAllocator) -> Self {
+        Self(OnceLock::from(allocator))
+    }
+}
+
+impl std::ops::Deref for TableAllocator {
+    type Target = AutoIdAllocator;
+
+    fn deref(&self) -> &Self::Target {
+        self.0.get_or_init(AutoIdAllocator::new)
+    }
+}
+
+impl std::ops::DerefMut for TableAllocator {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.0.get_or_init(AutoIdAllocator::new);
+        self.0.get_mut().expect("table allocator initialized")
+    }
+}
+
 /// A table whose rows live as TiKV-format bytes in a sorted key/value map.
 #[derive(Clone, Debug)]
 pub struct TableCommon {
@@ -501,12 +537,12 @@ pub struct TableCommon {
     /// Go `visibleColumns`, the `VisibleCols()` cache: the offsets in
     /// [`Self::public_columns`] of the columns that are not hidden, rebuilt
     /// by [`Self::reset_columns_cache`].
-    visible_offsets: Vec<usize>,
+    visible_offsets: std::borrow::Cow<'static, [usize]>,
     /// Go `writableColumns`, the `WritableCols()` cache: the offsets in
     /// [`Self::columns`] of the columns DML writes (every state but
     /// delete-only and delete-reorganization), rebuilt by
     /// [`Self::reset_columns_cache`].
-    writable_offsets: Vec<usize>,
+    writable_offsets: std::borrow::Cow<'static, [usize]>,
     /// Go `model.IndexInfo.MVIndex`, carried as the SOURCE column each
     /// multi-valued index's single ARRAY key part was built over
     /// (`ColumnInfo.Dependences`, which DDL's `buildHiddenColumnInfoWithCheck`
@@ -548,11 +584,11 @@ pub struct TableCommon {
     auto_increment_offset: Option<usize>,
     /// Go's auto-id allocator, shared across the copies a transaction stages
     /// so that a consumed id is never returned (see [`AutoIdAllocator`]).
-    pub(crate) auto_id: AutoIdAllocator,
+    auto_id: TableAllocator,
     pub(crate) row_id: Option<AutoIdAllocator>,
     /// The `AUTO_RANDOM` handle layout and its distinct TARID allocator.
     auto_random: Option<AutoRandomSpec>,
-    pub(crate) auto_random_id: AutoIdAllocator,
+    auto_random_id: TableAllocator,
     /// Go `TableInfo.IsCommonHandle`: the clustered primary key's column
     /// offsets, whose encoding IS the row handle. Empty when the table has no
     /// clustered common handle.
@@ -766,6 +802,13 @@ fn read_stored_record_one(
         physical_id,
         &handle.record_handle(),
     ));
+    read_stored_record_key(store, key)
+}
+
+fn read_stored_record_key(
+    store: &mut dyn TableStorage,
+    key: Key,
+) -> Result<Option<(Key, Vec<u8>)>, KvTableError> {
     match store.get(&key) {
         Ok(entry) => Ok(Some((key, entry))),
         Err(StorageError::NotFound) => Ok(None),
@@ -780,10 +823,8 @@ fn read_stored_record(
 ) -> Result<Option<(Key, Vec<u8>)>, KvTableError> {
     for id in physical_ids {
         let key = Key::from_bytes(encode_row_key_with_handle(id, &handle.record_handle()));
-        match store.get(&key) {
-            Ok(entry) => return Ok(Some((key, entry))),
-            Err(StorageError::NotFound) => {}
-            Err(error) => return Err(KvTableError::from(error)),
+        if let Some(record) = read_stored_record_key(store, key)? {
+            return Ok(Some(record));
         }
     }
     Ok(None)
@@ -935,6 +976,29 @@ impl Drop for ColumnsMut<'_> {
     }
 }
 
+static DENSE_COLUMN_OFFSETS: [usize; 256] = {
+    let mut offsets = [0; 256];
+    let mut index = 0;
+    while index < offsets.len() {
+        offsets[index] = index;
+        index += 1;
+    }
+    offsets
+};
+
+fn reset_offsets<'a>(
+    offsets: &'a mut std::borrow::Cow<'static, [usize]>,
+    capacity: usize,
+) -> &'a mut Vec<usize> {
+    if matches!(offsets, std::borrow::Cow::Borrowed(_)) {
+        *offsets = std::borrow::Cow::Owned(Vec::with_capacity(capacity));
+    }
+    let offsets = offsets.to_mut();
+    offsets.clear();
+    offsets.reserve(capacity);
+    offsets
+}
+
 impl TableCommon {
     /// The mutable view a DDL takes of the shared column metadata
     /// ([`Self::columns`], Go `TableCommon.Columns`) -- Go's "build a new
@@ -948,24 +1012,37 @@ impl TableCommon {
     /// Go `ResetColumnsCache`: the column lists derived from
     /// [`Self::columns`].
     pub fn reset_columns_cache(&mut self) {
-        let public: Vec<crate::column::Column> = self
-            .columns
-            .iter()
-            .filter(|column| column.read().state == tidb_model::SchemaState::PUBLIC)
-            .cloned()
-            .collect();
-        self.public_columns = std::sync::Arc::new(public);
-        let (hidden, visible): (Vec<usize>, Vec<usize>) =
-            (0..self.public_columns.len()).partition(|offset| self.public_columns[*offset].read().hidden);
-        self.hidden_offsets = hidden;
-        self.visible_offsets = visible;
-        self.writable_offsets = self
-            .columns
-            .iter()
-            .enumerate()
-            .filter(|(_, column)| is_column_writable(column))
-            .map(|(offset, _)| offset)
-            .collect();
+        self.hidden_offsets.clear();
+        let visible_offsets = reset_offsets(&mut self.visible_offsets, self.columns.len());
+        let writable_offsets = reset_offsets(&mut self.writable_offsets, self.columns.len());
+        let mut public_count = 0;
+        for (offset, column) in self.columns.iter().enumerate() {
+            let info = column.read();
+            if info.state == tidb_model::SchemaState::PUBLIC {
+                if info.hidden {
+                    self.hidden_offsets.push(public_count);
+                } else {
+                    visible_offsets.push(public_count);
+                }
+                public_count += 1;
+            }
+            if info.state != tidb_model::SchemaState::DELETE_ONLY
+                && info.state != tidb_model::SchemaState::DELETE_REORGANIZATION
+            {
+                writable_offsets.push(offset);
+            }
+        }
+        self.public_columns = if public_count == self.columns.len() {
+            std::sync::Arc::clone(&self.columns)
+        } else {
+            std::sync::Arc::new(
+                self.columns
+                    .iter()
+                    .filter(|column| column.read().state == tidb_model::SchemaState::PUBLIC)
+                    .cloned()
+                    .collect(),
+            )
+        };
     }
 
     /// Go `Meta().ID`: the table's id.
@@ -1153,27 +1230,87 @@ impl TableCommon {
         Self::over_meta(meta, columns, new_collation_enabled())
     }
 
+    /// Constructs a loaded table whose columns were checked in metadata
+    /// order and are all public and visible.
+    pub(crate) fn loaded_public_columns(
+        meta: tidb_model::TableInfo,
+        columns: Vec<crate::column::Column>,
+        pk_handle_offset: Option<usize>,
+    ) -> Self {
+        let table_id = meta.id;
+        Self::loaded_public_columns_from_handle(
+            tidb_model::GoShared::new(meta), table_id, columns, pk_handle_offset,
+        )
+    }
+
+    pub(crate) fn loaded_public_columns_from_handle(
+        meta: tidb_model::GoShared<tidb_model::TableInfo>,
+        table_id: i64,
+        columns: Vec<crate::column::Column>,
+        pk_handle_offset: Option<usize>,
+    ) -> Self {
+        let count = columns.len();
+        let mut table = Self::new_over_meta(meta, table_id, columns, new_collation_enabled(), true);
+        let offsets = DENSE_COLUMN_OFFSETS.get(..count).map_or_else(
+            || std::borrow::Cow::Owned((0..count).collect()),
+            std::borrow::Cow::Borrowed,
+        );
+        table.visible_offsets = offsets.clone();
+        table.writable_offsets = offsets;
+        table.pk_handle_offset = pk_handle_offset;
+        table
+    }
+
     fn over_meta(
         meta: tidb_model::TableInfo,
         columns: Vec<crate::column::Column>,
         use_new_collation: bool,
     ) -> Self {
         let table_id = meta.id;
-        let mut table = TableCommon {
-            meta: tidb_model::GoShared::new(meta),
+        let mut table = Self::new_over_meta(
+            tidb_model::GoShared::new(meta), table_id, columns, use_new_collation, false,
+        );
+        table.refresh_from_meta();
+        table
+    }
+
+    fn new_over_meta(
+        meta: tidb_model::GoShared<tidb_model::TableInfo>,
+        table_id: i64,
+        columns: Vec<crate::column::Column>,
+        use_new_collation: bool,
+        all_columns_public: bool,
+    ) -> Self {
+        static EMPTY_COLUMNS: LazyLock<Arc<Vec<crate::column::Column>>> = LazyLock::new(Arc::default);
+        static EMPTY_INDEXES: LazyLock<Arc<Vec<Index>>> = LazyLock::new(Arc::default);
+        static EMPTY_NONPUBLIC_INDEXES: LazyLock<Arc<Vec<NonPublicIndex>>> = LazyLock::new(Arc::default);
+        static EMPTY_CHECKS: LazyLock<Arc<Vec<KvCheckConstraint>>> = LazyLock::new(Arc::default);
+        static EMPTY_CHECK_INFOS: LazyLock<Arc<Vec<tidb_model::table::ConstraintInfo>>> =
+            LazyLock::new(Arc::default);
+        let columns = Arc::new(columns);
+        let public_columns = Arc::clone(if all_columns_public { &columns } else { &EMPTY_COLUMNS });
+        let allocator = || {
+            if all_columns_public {
+                TableAllocator::default()
+            } else {
+                AutoIdAllocator::new().into()
+            }
+        };
+        TableCommon {
+            meta,
             table_id,
             storage_statistics: (0, 0, 0, 0),
             partition_storage_statistics: std::collections::BTreeMap::new(),
-            columns: std::sync::Arc::new(columns),
-            public_columns: std::sync::Arc::new(Vec::new()),
+            public_columns,
+            columns,
             hidden_offsets: Vec::new(),
-            visible_offsets: Vec::new(),
-            writable_offsets: Vec::new(),
+            visible_offsets: std::borrow::Cow::Borrowed(&[]),
+            writable_offsets: std::borrow::Cow::Borrowed(&[]),
             mv_key_part_sources: std::collections::BTreeMap::new(),
             keys_read: None,
             pk_handle_offset: None,
-            indexes: std::sync::Arc::new(Vec::new()),
-            nonpublic_indexes: std::sync::Arc::new(Vec::new()),
+            indexes: Arc::clone(&EMPTY_INDEXES),
+            nonpublic_indexes: Arc::clone(&EMPTY_NONPUBLIC_INDEXES),
             changing_field_types: std::collections::BTreeMap::new(),
             changing_index_parts: std::collections::BTreeMap::new(),
             partition_reorg: None,
@@ -1182,21 +1319,19 @@ impl TableCommon {
             common_handle_offsets: Vec::new(),
             common_handle_prefix_lengths: Vec::new(),
             auto_increment_offset: None,
-            auto_id: AutoIdAllocator::new(),
+            auto_id: allocator(),
             row_id: None,
             auto_random: None,
-            auto_random_id: AutoIdAllocator::new(),
+            auto_random_id: allocator(),
             new_table_global_indexes: None,
             use_new_collation,
             all_columns_public: true,
-            check_constraints: std::sync::Arc::new(Vec::new()),
-            check_constraint_infos: std::sync::Arc::new(Vec::new()),
+            check_constraints: Arc::clone(&EMPTY_CHECKS),
+            check_constraint_infos: Arc::clone(&EMPTY_CHECK_INFOS),
             partition: None,
             read_partitions: None,
             cached: None,
-        };
-        table.refresh_from_meta();
-        table
+        }
     }
 
     /// Publishes Go's four `information_schema.tables` statistics values.
@@ -1833,7 +1968,7 @@ impl TableCommon {
     }
 
     pub fn row_id_allocator(&self) -> &AutoIdAllocator {
-        self.row_id.as_ref().unwrap_or(&self.auto_id)
+        self.row_id.as_ref().unwrap_or_else(|| self.auto_id())
     }
 
     /// Go `t.Allocators(ctx).Get(autoid.AutoIncrementType)`: a GLOBAL
@@ -1877,7 +2012,7 @@ impl TableCommon {
     /// `temptable.CreateLocalTemporaryTable` builds for it from its
     /// `TableInfo`: in-memory and session-owned, one id at a time.
     pub fn use_local_temporary_auto_id(&mut self) {
-        self.auto_id = AutoIdAllocator::temporary(self.auto_id.unsigned, self.meta.read().auto_inc_id);
+        self.auto_id = AutoIdAllocator::temporary(self.auto_id.unsigned, self.meta.read().auto_inc_id).into();
         self.row_id = None;
     }
 
@@ -2291,7 +2426,9 @@ impl TableCommon {
         // not the largest ID still present.  In particular, dropping the
         // newest constraint must not make its ID reusable.
         let max_id = infos.iter().map(|info| info.id).max().unwrap_or(0);
-        self.update_meta(|meta| meta.max_constraint_id = meta.max_constraint_id.max(max_id));
+        if max_id > self.meta.read().max_constraint_id {
+            self.update_meta(|meta| meta.max_constraint_id = meta.max_constraint_id.max(max_id));
+        }
         self.check_constraint_infos = std::sync::Arc::new(infos);
         self.check_constraints = std::sync::Arc::new(compiled);
         Ok(())
@@ -2490,12 +2627,12 @@ impl TableCommon {
         ctx: Option<&dyn tidb_tblctx::MutateContext>,
     ) -> Result<TableHandle, KvTableError> {
         if !self.common_handle_offsets.is_empty() {
-            let values: Vec<Datum> = self
+            let null = Datum::Null;
+            let values = self
                 .common_handle_offsets
                 .iter()
-                .map(|offset| row.get(*offset).cloned().unwrap_or(Datum::Null))
-                .collect();
-            return self.common_handle_from_values(&values, zone);
+                .map(|offset| row.get(*offset).unwrap_or(&null));
+            return self.encode_common_handle(values, zone);
         }
         match self.pk_handle_offset {
             Some(offset) => match row.get(offset) {
@@ -2562,34 +2699,63 @@ impl TableCommon {
                 values.len()
             )));
         }
-        // Go `AddRecord` runs `tablecodec.TruncateIndexValues` over the
-        // primary key before `codec.EncodeKey`: a prefix key column stores
-        // only its leading part in the handle.
-        let mut stored_values = values.to_vec();
-        for (position, (value, offset)) in stored_values
-            .iter_mut()
-            .zip(self.common_handle_offsets.iter().copied())
-            .enumerate()
-        {
-            let Some(column) = self.public_columns.get(offset) else {
+        self.encode_common_handle(values.iter(), zone)
+    }
+
+    fn encode_common_handle<'a>(
+        &self,
+        values: impl Clone + Iterator<Item = &'a Datum>,
+        zone: &SessionTimeZone,
+    ) -> Result<TableHandle, KvTableError> {
+        for &offset in &self.common_handle_offsets {
+            if self.public_columns.get(offset).is_none() {
                 return Err(KvTableError::Encode(
                     "a common-handle column is outside the table schema".to_owned(),
                 ));
-            };
-            if let Some(length) = self.common_handle_prefix_lengths.get(position) {
-                tidb_tablecodec::cut_datum_by_prefix_len(value, *length, &column.read().field_type);
             }
         }
-        let encoded = tidb_codec::Encoder::new(self.use_new_collation)
-            .encode_key_in_timezone(zone, &stored_values)
-            .map_err(|e| KvTableError::Encode(format!("{e:?}")))?;
+        // Go `AddRecord` runs `tablecodec.TruncateIndexValues` over the
+        // primary key before `codec.EncodeKey`: a prefix key column stores
+        // only its leading part in the handle.
+        let lengths = self
+            .common_handle_prefix_lengths
+            .iter()
+            .copied()
+            .take(self.common_handle_offsets.len());
+        let encoder = tidb_codec::Encoder::new(self.use_new_collation);
+        let mut encoded = Vec::new();
+        let result = if lengths.clone().any(|length| length != tidb_datatype::UNSPECIFIED_LENGTH) {
+            let projected: SmallVec<[_; 4]> = values
+                .enumerate()
+                .map(|(position, value)| {
+                    let length = self
+                        .common_handle_prefix_lengths
+                        .get(position)
+                        .copied()
+                        .unwrap_or(tidb_datatype::UNSPECIFIED_LENGTH);
+                    if length == tidb_datatype::UNSPECIFIED_LENGTH {
+                        return Cow::Borrowed(value);
+                    }
+                    let column = self.public_columns[self.common_handle_offsets[position]].read();
+                    tidb_tablecodec::datum_with_prefix_len(value, length, &column.field_type)
+                })
+                .collect();
+            encoder.append_key_refs_in_timezone(
+                zone,
+                &mut encoded,
+                projected.iter().map(Cow::as_ref),
+            )
+        } else {
+            encoder.append_key_refs_in_timezone(zone, &mut encoded, values)
+        };
+        result.map_err(|e| KvTableError::Encode(format!("{e:?}")))?;
         // Go `kv.NewCommonHandle` pads a short encoding out to nine bytes,
         // and so does the record-key codec this handle is about to be written
         // through. A DECIMAL primary key is the short case: `5` encodes to
         // four bytes.
-        let padded = tidb_txnkv::CommonHandle::new(encoded)
+        let padded = CommonHandle::normalize_encoding(Cow::Owned(encoded))
             .map_err(|e| KvTableError::Encode(format!("{e:?}")))?;
-        Ok(TableHandle::Common(padded.encoded().to_vec()))
+        Ok(TableHandle::Common(padded.into_owned()))
     }
 
     /// The row value bytes, omitting lossless handle columns, in the format
@@ -2602,9 +2768,13 @@ impl TableCommon {
         config: tidb_tblctx::RowEncodingConfig,
         handle: &TableHandle,
     ) -> Result<Vec<u8>, KvTableError> {
-        let mut ids = Vec::with_capacity(self.public_columns.len());
-        let mut values = Vec::with_capacity(self.public_columns.len());
+        let null = Datum::Null;
+        let mut ids = SmallVec::<[_; 8]>::with_capacity(self.public_columns.len());
+        let mut values = SmallVec::<[_; 8]>::with_capacity(self.public_columns.len());
         for (offset, column) in self.public_columns.iter().enumerate() {
+            if self.pk_handle_offset == Some(offset) || crate::generated_column::is_virtual(column) {
+                continue;
+            }
             // A common-handle sort key is not the original value when its
             // collation loses information. Go keeps exactly those handle
             // columns in the row bytes and rebuilds only lossless handles
@@ -2617,19 +2787,17 @@ impl TableCommon {
                 self.common_handle_prefix_lengths.get(position).copied()
                     == Some(tidb_datatype::UNSPECIFIED_LENGTH)
             });
-            let lossless_handle = self.pk_handle_offset == Some(offset)
-                || (full_common_handle
-                    && !column
-                        .read().field_type
-                        .need_restored_data_with_collation(self.use_new_collation));
-            if lossless_handle || crate::generated_column::is_virtual(column) {
+            let info = column.read();
+            if full_common_handle
+                && !info.field_type.need_restored_data_with_collation(self.use_new_collation)
+            {
                 continue;
             }
-            let value = row.get(offset).cloned().unwrap_or(Datum::Null);
-            if skips_null_without_default(&column.read(), &value) {
+            let value = row.get(offset).unwrap_or(&null);
+            if skips_null_without_default(&info, value) {
                 continue;
             }
-            ids.push(column.read().id);
+            ids.push(info.id);
             values.push(value);
         }
         // Go `AddRecord` / `updateRecord`: a write row past the public
@@ -2637,13 +2805,14 @@ impl TableCommon {
         // offset.
         if row.len() > self.public_columns.len() {
             for (offset, column) in self.writable_columns() {
-                if column.read().state == tidb_model::SchemaState::PUBLIC {
+                let info = column.read();
+                if info.state == tidb_model::SchemaState::PUBLIC {
                     continue;
                 }
                 let Some(value) = row.get(offset) else { continue };
-                if !skips_null_without_default(&column.read(), value) {
-                    ids.push(column.read().id);
-                    values.push(value.clone());
+                if !skips_null_without_default(&info, value) {
+                    ids.push(info.id);
+                    values.push(value);
                 }
             }
         }
@@ -2654,8 +2823,14 @@ impl TableCommon {
                 TableHandle::Common(bytes) => tidb_rowcodec::Handle::Common(vec![bytes.clone()]),
             })
         });
-        encode_table_row(Some(zone), &values, &ids, config.row_format_v2, checksum.as_ref())
-            .map_err(|e| KvTableError::Encode(format!("{e:?}")))
+        encode_table_row_with_values(
+            Some(zone),
+            &values,
+            &ids,
+            config.row_format_v2,
+            checksum.as_ref(),
+        )
+        .map_err(|e| KvTableError::Encode(format!("{e:?}")))
     }
 
     /// Restores the handle columns into a decoded row, which Go does by
@@ -2690,18 +2865,40 @@ impl TableCommon {
         });
         self.table_id = table_id;
         self.use_local_temporary_auto_id();
-        self.auto_random_id = AutoIdAllocator::new();
+        self.auto_random_id = AutoIdAllocator::new().into();
     }
 
     /// Sets the table's name, used to qualify a duplicate-key error.
     pub fn set_name(&mut self, name: &str) {
-        self.update_meta(|meta| meta.name = tidb_ast::CiString::new(name));
+        let name = {
+            let meta = self.meta.read();
+            if meta.name.original() == name
+                && name.is_ascii()
+                && name
+                    .bytes()
+                    .map(|byte| byte.to_ascii_lowercase())
+                    .eq(meta.name.lowercase().bytes())
+            {
+                return;
+            }
+            let name = tidb_ast::CiString::new(name);
+            if meta.name.original() == name.original() && meta.name == name {
+                return;
+            }
+            name
+        };
+        self.update_meta(|meta| meta.name = name);
     }
 
     /// Go `table.Table.Meta()`: the pointer every reader shares.
     #[must_use]
     pub fn meta(&self) -> tidb_model::GoShared<tidb_model::TableInfo> {
         self.meta.clone()
+    }
+
+    /// Borrows the table metadata without retaining a separate shared handle.
+    pub fn read_meta(&self) -> std::sync::RwLockReadGuard<'_, tidb_model::TableInfo> {
+        self.meta.read()
     }
 
     /// [`Self::update_meta`] over Go `TableInfo.Clone`, for a change that
@@ -2876,10 +3073,19 @@ impl TableCommon {
     fn refresh_from_meta(&mut self) {
         let meta = self.meta.clone();
         let meta = meta.read();
-        let stale = self.columns.iter().any(|column| {
-            meta.find_column_by_id(column.read().id)
-                .is_some_and(|info| !info.ptr_eq(&column.info))
-        });
+        // Loaded columns already share the stored pointers in the same order.
+        // Look up columns by ID only when the metadata may have changed.
+        let columns_match = meta.columns.len() == self.columns.len()
+            && meta
+                .columns
+                .iter_handles()
+                .zip(self.columns.iter())
+                .all(|(info, column)| info.is_some_and(|info| info.ptr_eq(&column.info)));
+        let stale = !columns_match
+            && self.columns.iter().any(|column| {
+                meta.find_column_by_id(column.read().id)
+                    .is_some_and(|info| !info.ptr_eq(&column.info))
+            });
         if stale {
             for column in std::sync::Arc::make_mut(&mut self.columns) {
                 let id = column.read().id;
@@ -3131,15 +3337,15 @@ impl TableCommon {
             // candidate handle below is only a placeholder for the key build.
             // A multi-valued index checks every element key (Go
             // `getKeysNeedCheckOneRow` iterates `GenIndexKVIter`).
-            for entry in
-                self.index_entry_keys(&index, row, &TableHandle::Int(0), physical_id, &zone)?
+            for (key, distinct) in
+                self.index_keys_for_row(&index, row, &TableHandle::Int(0), physical_id, &zone)?
             {
-                if !entry.distinct {
+                if !distinct {
                     continue;
                 }
                 let key = match &nonpublic {
-                    Some(nonpublic) => nonpublic.check_key(entry.key)?,
-                    None => entry.key,
+                    Some(nonpublic) => nonpublic.check_key(key)?,
+                    None => key,
                 };
                 let Some(handle) = self.fetch_duplicated_handle(store, &key)? else {
                     continue;
@@ -3154,10 +3360,10 @@ impl TableCommon {
                                 // `GenIndexKVIter`'s `Next` cut them in place.
                                 match text {
                                     DuplicateText::BatchChecker => {
-                                        batch_check_key_text(self.index_values(&index, row).iter())
+                                        batch_check_key_text(self.projected_index_values(&index, row))
                                     }
                                     DuplicateText::TableLayer => {
-                                        duplicate_value_text(&self.index_values(&index, row))
+                                        self.index_duplicate_value_text(&index, row)
                                     }
                                 }
                                 .into(),
@@ -3204,13 +3410,13 @@ impl TableCommon {
             {
                 continue;
             }
-            for entry in
-                self.index_entry_keys(&index, row, &TableHandle::Int(0), physical_id, &zone)?
+            for (key, distinct) in
+                self.index_keys_for_row(&index, row, &TableHandle::Int(0), physical_id, &zone)?
             {
-                if entry.distinct {
+                if distinct {
                     unique_keys.push(Key::from_bytes(match &nonpublic {
-                        Some(nonpublic) => nonpublic.check_key(entry.key)?,
-                        None => entry.key,
+                        Some(nonpublic) => nonpublic.check_key(key)?,
+                        None => key,
                     }));
                 }
             }
@@ -4102,22 +4308,12 @@ impl TableCommon {
             tidb_tblctx::RowEncodingConfig::default,
             tidb_tblctx::MutateContext::row_encoding_config,
         );
-        let value = self.encode_row_value(row, &zone, row_encoding, &handle)?;
-        let clustered = self.pk_handle_offset.is_some() || !self.common_handle_offsets.is_empty();
         let physical_id = self.record_physical_id(row, ctx)?;
         let key = Key::from_bytes(encode_row_key_with_handle(
             physical_id,
             &handle.record_handle(),
         ));
-        let duplicate_value = if clustered {
-            clustered_key_text(self, row)
-        } else {
-            match &handle {
-                TableHandle::Int(value) => value.to_string(),
-                TableHandle::Common(_) => unreachable!("a heap table has an integer handle"),
-            }
-        };
-        let duplicate_key = self.qualified_key("PRIMARY");
+        let diagnostic = || primary_duplicate_hint(self, row, &handle);
         // Go `AddRecord`'s duplicate check, in both of its modes. In place it
         // reads the whole transaction (staged writes, then snapshot); lazily
         // it reads the STAGED WRITES ONLY (`GetLocal`) and a miss marks the
@@ -4129,10 +4325,17 @@ impl TableCommon {
             // Go addRecord checks t.RecordKey(recordID), not every partition
             // containing that handle. Hidden row IDs can repeat across physical
             // partitions, whose record keys are distinct.
-            self.check_insert_key(store, &key, &duplicate_value, &duplicate_key, lazy_dup_check)?
+            self.probe_insert_key(store, &key, lazy_dup_check, &diagnostic)?
         } else {
             false
         };
+        let value = self.encode_row_value(row, &zone, row_encoding, &handle)?;
+        // Go attaches the presumption with the encoded write. A failed
+        // encode must leave no deferred conflict hint behind.
+        if set_presume {
+            let (duplicate_value, duplicate_key) = diagnostic();
+            store.mark_presume_key_not_exists_with_hint(&key, &duplicate_value, &duplicate_key);
+        }
         let pessimistic = stats_ctx.is_some_and(|ctx| ctx.pessimistic_transaction());
         let check_in_prewrite =
             stats_ctx.is_some_and(|ctx| ctx.pessimistic_check_in_prewrite());
@@ -4198,18 +4401,14 @@ impl TableCommon {
     /// keys one row's values encode to under `index`, each with its
     /// `distinct` flag.
     pub fn index_keys_for_check(
-        &mut self,
+        &self,
         index: &Index,
         row: &[Datum],
         handle: &TableHandle,
         physical_id: i64,
         zone: &SessionTimeZone,
     ) -> Result<Vec<(Vec<u8>, bool)>, KvTableError> {
-        Ok(self
-            .index_entry_keys(index, row, handle, physical_id, zone)?
-            .into_iter()
-            .map(|entry| (entry.key, entry.distinct))
-            .collect())
+        self.index_keys_for_row(index, row, handle, physical_id, zone)
     }
 
     /// Removes one stored key without touching anything else -- the only way
@@ -4247,6 +4446,20 @@ impl TableCommon {
         self.read_row(store, handle, context)
     }
 
+    /// Compiles the projection used to write an ordinary point row directly to a chunk.
+    pub fn point_row_projection(&self, offsets: &[usize]) -> Option<PreparedPointGetRowDecoder> {
+        if self.has_nonpublic_columns() || self.columns().iter().any(|column| column.generated.is_some()) {
+            return None;
+        }
+        let projection = PreparedPointGetRowDecoder::new_with_handle_prefixes(
+            self.columns(),
+            self.pk_handle_offset,
+            &self.common_handle_offsets,
+            &self.common_handle_prefix_lengths,
+            offsets,
+        ).ok()?;
+        projection.can_append_projected_row().then_some(projection)
+    }
 
     /// The row stored under `handle`, decoded, or `None` when absent.
     pub fn read_row(
@@ -4478,20 +4691,9 @@ impl TableCommon {
         // eager; pessimistic writes use the selected lock/prewrite boundary.
         let lazy_dup_check = pessimistic && !ctx.ignore_err();
         let set_presume = if old_key.as_ref() != Some(&destination_key) {
-            let duplicate_value = if clustered {
-                clustered_key_text(self, row)
-            } else {
-                match &new_handle {
-                    TableHandle::Int(value) => value.to_string(),
-                    TableHandle::Common(_) => unreachable!("heap table has an integer handle"),
-                }
-            };
-            self.check_insert_key(store, 
-                &destination_key,
-                &duplicate_value,
-                &self.qualified_key("PRIMARY"),
-                lazy_dup_check,
-            )?
+            self.check_insert_key_with_hint(store, &destination_key, lazy_dup_check, || {
+                primary_duplicate_hint(self, row, &new_handle)
+            })?
         } else {
             false
         };
@@ -4731,9 +4933,10 @@ enum DuplicateText {
 /// joins it: a binary string, a BIT or a binary literal drops its trailing
 /// `0x00` bytes (keeping one, binary strings only) and shows each
 /// non-printable byte as `\xNN` (`util.FmtNonASCIIPrintableCharToHex`).
-fn batch_check_key_text<'a>(values: impl Iterator<Item = &'a Datum>) -> String {
+fn batch_check_key_text(values: impl Iterator<Item = impl std::borrow::Borrow<Datum>>) -> String {
     values
         .map(|value| {
+            let value = value.borrow();
             let bytes: Option<(&[u8], bool)> = match value {
                 Datum::Bytes(bytes) => Some((bytes, true)),
                 Datum::String(text) if text.collation() == tidb_charset::Collation::Binary => {
@@ -4797,15 +5000,34 @@ fn routing_error(error: crate::partition_routing::RoutingError) -> KvTableError 
     }
 }
 
+fn primary_duplicate_hint(
+    table: &TableCommon,
+    row: &[Datum],
+    handle: &TableHandle,
+) -> (Cow<'static, str>, Cow<'static, str>) {
+    let value = if table.clustered() {
+        clustered_key_text(table, row)
+    } else {
+        match handle {
+            TableHandle::Int(value) => value.to_string(),
+            TableHandle::Common(_) => unreachable!("a heap table has an integer handle"),
+        }
+    };
+    (Cow::Owned(value), Cow::Owned(table.qualified_key("PRIMARY")))
+}
+
 fn clustered_key_text(table: &TableCommon, row: &[Datum]) -> String {
     // Go reports the values the handle holds, so a prefix key column shows
     // only its leading part (`TruncateIndexValues`).
-    table
-        .handle_column_offsets()
-        .iter()
+    let offsets = if table.pk_handle_offset.is_some() {
+        table.pk_handle_offset.as_slice()
+    } else {
+        &table.common_handle_offsets
+    };
+    offsets.iter()
         .enumerate()
         .map(|(position, offset)| {
-            let Some(mut value) = row.get(*offset).cloned() else {
+            let Some(value) = row.get(*offset) else {
                 return String::new();
             };
             if table.pk_handle_offset.is_none() {
@@ -4813,10 +5035,15 @@ fn clustered_key_text(table: &TableCommon, row: &[Datum]) -> String {
                     table.common_handle_prefix_lengths.get(position),
                     table.public_columns.get(*offset),
                 ) {
-                    tidb_tablecodec::cut_datum_by_prefix_len(&mut value, *length, &column.read().field_type);
+                    let prefix = tidb_tablecodec::datum_with_prefix_len(
+                        value,
+                        *length,
+                        &column.read().field_type,
+                    );
+                    return datum_text(prefix.as_ref());
                 }
             }
-            datum_text(&value)
+            datum_text(value)
         })
         .collect::<Vec<_>>()
         .join("-")

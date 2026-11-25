@@ -25,11 +25,11 @@
 //! ownership transfer.
 
 use crate::chunk_util::MSG_ERR_SEL_NOT_NIL;
-use crate::column::Column;
-use crate::column_slot::{ColumnHandle, ColumnRead, ColumnRef, ColumnSlot, ColumnWrite};
-use crate::compare::{compare, search};
+use crate::column::{selection_order_for_bitmap, Column};
+use crate::column_slot::{ColumnHandle, ColumnRead, ColumnRef, ColumnSlot, ColumnWrite, SharedOwner};
+use crate::compare::search_column_datum;
 use crate::row::Row;
-use std::cmp::Ordering;
+use std::collections::HashSet;
 use tidb_datatype::{Datum, FieldType, MyDecimal, MySqlDuration, Time, VectorFloat32};
 use tidb_goruntime::GoString;
 use tidb_goruntime::GoStringSource;
@@ -75,6 +75,12 @@ pub struct Chunk {
     in_complete_chunk: bool,
 }
 
+impl Drop for Chunk {
+    fn drop(&mut self) {
+        crate::alloc::recycle_registered_columns(&mut self.columns);
+    }
+}
+
 impl Chunk {
     /// Go `New`: a chunk for `fields`, capped at `min(capacity, max_chunk_size)`
     /// rows, with `required_rows = max_chunk_size`.
@@ -103,20 +109,24 @@ impl Chunk {
     /// Go `NewEmptyChunk`: columns typed for `fields` with no preallocation.
     pub fn new_empty_chunk(fields: &[FieldType]) -> Self {
         Chunk {
+            sel: None,
             columns: fields
                 .iter()
                 .map(Column::new_empty_column)
                 .map(ColumnSlot::new)
                 .collect(),
             columns_initialized: true,
-            ..Chunk::default()
+            num_virtual_rows: 0,
+            capacity: 0,
+            required_rows: 0,
+            in_complete_chunk: false,
         }
     }
 
     /// Builds a source-shaped initialized chunk from columns transferred out
     /// of an allocator or pool.
     pub(crate) fn from_reusable_columns(
-        columns: Vec<Column>,
+        columns: impl IntoIterator<Item = Column>,
         capacity: usize,
         required_rows: usize,
     ) -> Self {
@@ -233,6 +243,17 @@ impl Chunk {
         self.columns[col_idx].read()
     }
 
+    /// Visits columns in schema order with one read borrow per column.
+    #[inline]
+    pub fn column_reads(&self) -> impl ExactSizeIterator<Item = ColumnRead<'_>> {
+        self.columns.iter().map(ColumnSlot::read)
+    }
+
+    /// Attempts to borrow a column without waiting for an aliased writer.
+    pub fn try_column(&self, col_idx: usize) -> Option<ColumnRead<'_>> {
+        self.columns[col_idx].try_read()
+    }
+
     /// Resolve a column once for a chunk-wide operation. The reference holds
     /// no lock and cannot outlive this chunk or survive a column swap.
     pub fn column_ref(&self, col_idx: usize) -> ColumnRef<'_> {
@@ -268,8 +289,11 @@ impl Chunk {
 
     /// Go `MakeRef`: make `destination` designate `source`'s column owner.
     pub fn make_ref(&mut self, source: usize, destination: usize) {
-        let alias = self.columns[source].alias();
-        self.columns[destination] = alias;
+        let column = &mut self.columns[source];
+        if source != destination {
+            let alias = column.alias();
+            self.columns[destination] = alias;
+        }
     }
 
     /// Obtain a transferable handle to a column owner. The first handle lazily
@@ -314,27 +338,51 @@ impl Chunk {
         self.columns[index].same_identity(&other.columns[other_index])
     }
 
+    pub(crate) fn shared_column_owner(&self, index: usize) -> Option<std::ptr::NonNull<SharedOwner>> {
+        self.columns.get(index).and_then(ColumnSlot::shared_owner)
+    }
+
     fn leftmost_alias(&self, index: usize) -> usize {
-        (0..index)
-            .find(|&candidate| self.columns[candidate].same_identity(&self.columns[index]))
+        let Some(owner) = self.columns[index].shared_owner() else {
+            return index;
+        };
+        self.columns[..index]
+            .iter()
+            .position(|slot| slot.shared_owner() == Some(owner))
             .unwrap_or(index)
     }
 
     fn alias_indexes(&self, owner_index: usize) -> Vec<usize> {
+        let Some(owner) = self.columns[owner_index].shared_owner() else {
+            return Vec::new();
+        };
         self.columns
             .iter()
             .enumerate()
-            .filter_map(|(index, slot)| {
-                slot.same_identity(&self.columns[owner_index])
-                    .then_some(index)
-            })
+            .skip(owner_index + 1)
+            .filter_map(|(index, slot)| (slot.shared_owner() == Some(owner)).then_some(index))
             .collect()
     }
 
     fn rebuild_aliases(&mut self, owner_index: usize, indexes: &[usize]) {
         for &index in indexes {
-            if index != owner_index {
-                self.make_ref(owner_index, index);
+            self.make_ref(owner_index, index);
+        }
+    }
+
+    fn replace_aliases_after_swap(
+        &mut self,
+        index: usize,
+        previous_owner: Option<std::ptr::NonNull<SharedOwner>>,
+    ) {
+        let Some(previous_owner) = previous_owner else {
+            return;
+        };
+        let (prefix, remaining) = self.columns.split_at_mut(index + 1);
+        let owner = &mut prefix[index];
+        for slot in remaining {
+            if slot.shared_owner() == Some(previous_owner) {
+                *slot = owner.alias();
             }
         }
     }
@@ -354,14 +402,14 @@ impl Chunk {
         if self.columns[owner_index].same_identity(&other.columns[other_owner_index]) {
             return Ok(());
         }
-        let indexes = self.alias_indexes(owner_index);
-        let other_indexes = other.alias_indexes(other_owner_index);
+        let previous = self.columns[owner_index].shared_owner();
+        let other_previous = other.columns[other_owner_index].shared_owner();
         std::mem::swap(
             &mut self.columns[owner_index],
             &mut other.columns[other_owner_index],
         );
-        self.rebuild_aliases(owner_index, &indexes);
-        other.rebuild_aliases(other_owner_index, &other_indexes);
+        self.replace_aliases_after_swap(owner_index, previous);
+        other.replace_aliases_after_swap(other_owner_index, other_previous);
         Ok(())
     }
 
@@ -396,29 +444,27 @@ impl Chunk {
     /// index whose value is not less than `d`, plus whether a probed row was
     /// equal to `d`.
     ///
-    /// Go reads the last row before searching, so this panics on an empty
-    /// chunk exactly as Go does.
+    /// Reading the last cell requires a nonempty chunk. Sentinels that
+    /// compare without reading cells also work on empty chunks.
     pub fn lower_bound(&self, col_idx: usize, d: &Datum) -> (usize, bool) {
-        if compare(self.get_row(self.num_rows() - 1), col_idx, d) == Ordering::Less {
-            return (self.num_rows(), false);
+        let rows = self.num_rows();
+        match d {
+            Datum::MaxValue => return (rows, false),
+            Datum::Raw(_) => return (0, rows != 0),
+            _ => {}
         }
-        let mut matched = false;
-        let index = search(self.num_rows(), |i| {
-            let ordering = compare(self.get_row(i), col_idx, d);
-            if ordering == Ordering::Equal {
-                matched = true;
-            }
-            ordering != Ordering::Less
-        });
-        (index, matched)
+        assert!(rows != 0, "lower bound requires a nonempty chunk");
+        search_column_datum::<false>(&self.column(col_idx), rows, self.sel.as_deref(), d)
     }
 
     /// Go `UpperBound`: on the non-decreasing column `col_idx`, the smallest
     /// index whose value is larger than `d`.
     pub fn upper_bound(&self, col_idx: usize, d: &Datum) -> usize {
-        search(self.num_rows(), |i| {
-            compare(self.get_row(i), col_idx, d) == Ordering::Greater
-        })
+        let rows = self.num_rows();
+        if rows == 0 || matches!(d, Datum::MaxValue | Datum::Raw(_)) {
+            return rows;
+        }
+        search_column_datum::<true>(&self.column(col_idx), rows, self.sel.as_deref(), d).0
     }
 
     /// Go `SetSel`: install (or, with `None`, drop) the selection vector.
@@ -469,10 +515,9 @@ impl Chunk {
     /// only `inCompleteChunk`; an empty `columns` vector reproduces it.
     pub fn renew_with_capacity(&self, capacity: usize, required_rows: usize) -> Chunk {
         if !self.columns_initialized {
-            return Chunk {
-                in_complete_chunk: self.in_complete_chunk,
-                ..Chunk::default()
-            };
+            let mut chunk = Chunk::default();
+            chunk.in_complete_chunk = self.in_complete_chunk;
+            return chunk;
         }
         Chunk {
             sel: None,
@@ -517,6 +562,7 @@ impl Chunk {
 
     /// Go `Reset`: clear all rows, keeping the columns' element types so the
     /// memory can be reused.
+    #[inline]
     pub fn reset(&mut self) {
         self.sel = None;
         // Go returns immediately for a literal nil `columns` slice, retaining
@@ -526,37 +572,34 @@ impl Chunk {
             return;
         }
         for col in &mut self.columns {
-            col.write().reset();
+            col.with_write(Column::reset);
         }
         self.num_virtual_rows = 0;
     }
 
     /// Go `resetForReuse`: decouple all column owners and restore the literal
-    /// zero-value chunk metadata while returning each UNIQUE column owner to
+    /// zero-value chunk metadata while returning each unique column owner to
     /// the caller. Aliased slots yield one owner; a cross-chunk live owner is
     /// not reusable yet.
-    pub(crate) fn reset_for_reuse(&mut self) -> Vec<Column> {
+    pub(crate) fn reset_for_reuse(&mut self, mut recycle: impl FnMut(Column)) {
         self.sel = None;
         self.num_virtual_rows = 0;
         self.capacity = 0;
         self.required_rows = 0;
         self.in_complete_chunk = false;
         self.columns_initialized = false;
-        let slots = std::mem::take(&mut self.columns);
-        let mut unique_slots: Vec<ColumnSlot> = Vec::with_capacity(slots.len());
+        let mut slots = std::mem::take(&mut self.columns);
+        let mut shared_owners = HashSet::new();
+        // Drop duplicate references before trying to recover sole owners.
+        slots.retain(|slot| match slot {
+            ColumnSlot::Owned(_) | ColumnSlot::Registered(_) => true,
+            ColumnSlot::Shared(owner) => shared_owners.insert(std::sync::Arc::as_ptr(owner)),
+        });
         for slot in slots {
-            if unique_slots
-                .iter()
-                .any(|existing| existing.same_identity(&slot))
-            {
-                continue;
+            if let Ok(column) = slot.into_unique_column() {
+                recycle(column);
             }
-            unique_slots.push(slot);
         }
-        unique_slots
-            .into_iter()
-            .filter_map(|slot| slot.into_unique_column().ok())
-            .collect()
     }
 
     /// Go allocator `resetForReuse`: drop column owners (which independently
@@ -580,27 +623,13 @@ impl Chunk {
         }
     }
 
-    pub(crate) fn attach_allocator_registrations(
+    /// Initialize a new or recycled shell before appending the column slots.
+    pub(crate) fn prepare_allocator_shell(
         &mut self,
-        registrations: impl IntoIterator<Item = Option<crate::alloc::ColumnRecycleRegistration>>,
-    ) {
-        for (column, registration) in self.columns.iter_mut().zip(registrations) {
-            if let Some(registration) = registration {
-                column.attach_registration(registration);
-            }
-        }
-    }
-
-    /// Populate a chunk shell recovered from the allocator's free list.
-    pub(crate) fn restore_reusable_columns(
-        &mut self,
-        columns: Vec<Column>,
         capacity: usize,
         required_rows: usize,
     ) {
         debug_assert!(self.columns.is_empty());
-        self.columns
-            .extend(columns.into_iter().map(ColumnSlot::new));
         self.columns_initialized = true;
         self.capacity = capacity;
         self.required_rows = required_rows;
@@ -645,6 +674,7 @@ impl Chunk {
     /// Column 0 is only consulted when a selection is present (Go's
     /// `colIdx == 0 && c.sel != nil`); a column-less chunk never carries a
     /// selection, so this must not touch `columns[0]` otherwise.
+    #[inline]
     fn append_sel(&mut self, col_idx: usize) {
         if col_idx == 0 {
             if let Some(sel) = &mut self.sel {
@@ -664,27 +694,31 @@ impl Chunk {
     }
 
     /// Go `AppendNull`.
+    #[inline]
     pub fn append_null(&mut self, col_idx: usize) {
         self.append_sel(col_idx);
-        self.columns[col_idx].write().append_null();
+        self.columns[col_idx].with_write(Column::append_null);
     }
 
     /// Go `AppendInt64`.
+    #[inline]
     pub fn append_int64(&mut self, col_idx: usize, value: i64) {
         self.append_sel(col_idx);
-        self.columns[col_idx].write().append_int64(value);
+        self.columns[col_idx].with_write(|column| column.append_int64(value));
     }
 
     /// Go `AppendUint64`.
+    #[inline]
     pub fn append_uint64(&mut self, col_idx: usize, value: u64) {
         self.append_sel(col_idx);
-        self.columns[col_idx].write().append_uint64(value);
+        self.columns[col_idx].with_write(|column| column.append_uint64(value));
     }
 
     /// Go `AppendFloat32`.
+    #[inline]
     pub fn append_float32(&mut self, col_idx: usize, value: f32) {
         self.append_sel(col_idx);
-        self.columns[col_idx].write().append_float32(value);
+        self.columns[col_idx].with_write(|column| column.append_float32(value));
     }
 
     /// Go `AppendFloat64`.
@@ -706,9 +740,10 @@ impl Chunk {
     }
 
     /// Go `AppendMyDecimal`.
+    #[inline]
     pub fn append_my_decimal(&mut self, col_idx: usize, value: &MyDecimal) {
         self.append_sel(col_idx);
-        self.columns[col_idx].write().append_my_decimal(value);
+        self.columns[col_idx].with_write(|column| column.append_my_decimal(value));
     }
 
     /// Go `AppendString`.
@@ -718,9 +753,37 @@ impl Chunk {
     }
 
     /// Go `AppendBytes`.
+    #[inline]
     pub fn append_bytes(&mut self, col_idx: usize, value: &[u8]) {
         self.append_sel(col_idx);
-        self.columns[col_idx].write().append_bytes(value);
+        self.columns[col_idx].with_write(|column| column.append_bytes(value));
+    }
+
+    /// Appends an array as one variable-length cell.
+    #[inline]
+    pub fn append_byte_array<const N: usize>(&mut self, col_idx: usize, value: &[u8; N]) {
+        self.append_sel(col_idx);
+        self.columns[col_idx].with_write(|column| column.append_byte_array(value));
+    }
+
+    /// Appends a prefixed variable-width cell into initialized, uniquely owned storage.
+    /// Returns false without changing the chunk if appending requires growth,
+    /// a change of backing, or adding a row to the selection vector.
+    #[inline]
+    pub fn try_append_prefixed_bytes<const N: usize>(
+        &mut self,
+        col_idx: usize,
+        prefix: &[u8; N],
+        payload: &[u8],
+    ) -> bool {
+        if col_idx == 0 && self.sel.is_some() {
+            return false;
+        }
+        let mut appended = false;
+        self.columns[col_idx].with_write(|column| {
+            appended = column.try_append_prefixed_bytes(prefix, payload);
+        });
+        appended
     }
 
     /// Go `AppendJSON`: a JSON cell is the var-length byte string
@@ -729,6 +792,33 @@ impl Chunk {
     pub fn append_json(&mut self, col_idx: usize, value: &tidb_datatype::BinaryJSON) {
         self.append_sel(col_idx);
         self.columns[col_idx].write().append_json(value);
+    }
+
+    /// Validates and appends the encoded JSON cell, including its leading type byte.
+    /// Invalid input leaves the chunk unchanged.
+    #[inline]
+    pub fn append_checked_json_bytes(&mut self, col_idx: usize, encoded: &[u8]) -> bool {
+        self.append_json_bytes_with_layout(
+            col_idx, encoded, tidb_datatype::BinaryJSON::check_encoded_layout(encoded),
+        )
+    }
+
+    /// Appends an encoded JSON cell using the layout check for those exact bytes.
+    /// A failed check leaves the chunk unchanged.
+    #[doc(hidden)]
+    #[inline]
+    pub fn append_json_bytes_with_layout(
+        &mut self,
+        col_idx: usize,
+        encoded: &[u8],
+        layout: tidb_datatype::EncodedJSONLayout,
+    ) -> bool {
+        if !layout.is_valid() {
+            return false;
+        }
+        self.append_sel(col_idx);
+        self.columns[col_idx].with_write(|column| column.append_checked_json_bytes(encoded, layout));
+        true
     }
 
     /// Go `AppendEnum`.
@@ -894,6 +984,29 @@ impl Chunk {
 
     /// Go `AppendPartialRows`.
     pub fn append_partial_rows(&mut self, col_off: usize, rows: &[Row<'_>]) {
+        if col_off >= self.columns.len() || rows.is_empty() {
+            return;
+        }
+        let first = rows[0];
+        let source = first.chunk().expect("cannot append the empty Row sentinel");
+        let begin = first.idx();
+        let mut contiguous = true;
+        let same_chunk = rows.iter().enumerate().all(|(offset, row)| {
+            contiguous &= row.idx() == begin + offset;
+            row.chunk().is_some_and(|chunk| std::ptr::eq(chunk, source))
+        });
+        if same_chunk {
+            self.append_sel_range(col_off, rows.len());
+            for (index, destination) in self.columns[col_off..].iter_mut().enumerate() {
+                destination.append_rows_from(
+                    &source.columns[index],
+                    rows.iter().map(Row::idx),
+                    contiguous.then_some(begin),
+                );
+            }
+            return;
+        }
+
         for dst_offset in 0..self.columns.len().saturating_sub(col_off) {
             for &row in rows {
                 if dst_offset == 0 {
@@ -965,12 +1078,20 @@ impl Chunk {
         self.columns[destination_col].append_range_from(&other.columns[source_col], begin, end);
     }
 
-    /// The self-overlap case Go permits (`c.Append(c, begin, end)`). Snapshot
-    /// the source range before mutating so reallocation cannot invalidate it.
+    /// Go `c.Append(c, begin, end)`: append a range of this chunk's physical rows.
     pub fn append_own_range(&mut self, begin: usize, end: usize) {
         assert!(begin <= end && end <= self.physical_num_rows());
-        let snapshot = self.copy_construct();
-        self.append_range_from(&snapshot, begin, end);
+        let rows = end - begin;
+        if rows == 0 {
+            return;
+        }
+        if !self.columns.is_empty() {
+            self.append_sel_range(0, rows);
+        }
+        for column in &mut self.columns {
+            column.write().append_own_range(begin, end);
+        }
+        self.num_virtual_rows += rows;
     }
 
     /// The row count before the selection applies.
@@ -985,8 +1106,15 @@ impl Chunk {
         let Some(selection) = self.sel.take() else {
             return;
         };
-        for column in &mut self.columns {
-            column.write().reconstruct(&selection);
+        if let [row] = selection.as_slice() {
+            for column in &mut self.columns {
+                column.with_write(|column| column.reconstruct_one(*row));
+            }
+        } else {
+            let increasing = selection_order_for_bitmap(&selection);
+            for column in &mut self.columns {
+                column.with_write(|column| column.reconstruct_selection(&selection, increasing));
+            }
         }
         self.num_virtual_rows = selection.len();
     }
@@ -1001,7 +1129,7 @@ impl Chunk {
                 let elem_buffer_len = column.elem_buffer_len();
                 column.data.truncate(num_rows * elem_buffer_len);
             } else {
-                let data_len = usize::try_from(column.offsets[num_rows])
+                let data_len = usize::try_from(column.offsets.at(num_rows))
                     .expect("column offset is non-negative");
                 column.data.truncate(data_len);
                 column.offsets.truncate(num_rows + 1);
@@ -1040,10 +1168,15 @@ impl Chunk {
             return self.copy_construct();
         };
         let mut copy = self.renew_with_capacity(self.capacity, self.required_rows);
-        for &row in selection {
-            for (dst, src) in copy.columns.iter_mut().zip(&self.columns) {
-                Self::append_cell_between(dst, src, row);
-            }
+        if selection.is_empty() {
+            return copy;
+        }
+        let rows = selection.iter().copied();
+        let contiguous_start = selection.first().copied().filter(|&begin| {
+            rows.clone().eq(begin..begin.saturating_add(selection.len()))
+        });
+        for (destination, source) in copy.columns.iter_mut().zip(&self.columns) {
+            destination.append_rows_from(source, rows.clone(), contiguous_start);
         }
         copy
     }
@@ -1078,19 +1211,26 @@ impl Chunk {
     pub fn to_string(&self, field_types: &[FieldType]) -> GoString {
         let mut output = Vec::with_capacity(self.num_rows().saturating_mul(2));
         for row_idx in 0..self.num_rows() {
-            output.extend_from_slice(self.get_row(row_idx).to_string(field_types).as_bytes());
+            self.get_row(row_idx).append_text(field_types, &mut output);
             output.push(b'\n');
         }
-        output.into()
+        crate::shared_bytes::finish_string(output)
     }
 
     /// The chunk's private ownership slots for dependency-closed helpers.
+    #[inline]
     pub(crate) fn column_slots(&self) -> &[ColumnSlot] {
         &self.columns
     }
 
-    pub(crate) fn column_is_shared(&self, index: usize) -> bool {
-        self.columns[index].is_shared()
+    pub(crate) fn copy_column_from(
+        &mut self,
+        source: &Self,
+        index: usize,
+        copy: impl FnOnce(&mut Column, &Column),
+        copy_within: impl FnOnce(&mut Column),
+    ) {
+        self.columns[index].copy_from(&source.columns[index], copy, copy_within);
     }
 
     /// Go `c.sel != nil`: whether a selection vector is installed.
@@ -1307,6 +1447,41 @@ mod tests {
     }
 
     #[test]
+    fn variable_cell_prefix_reads_selected_aliases_and_nulls() {
+        let mut fields = int_str_fields();
+        fields.push(fields[1].clone());
+        let mut chunk = Chunk::new_chunk_with_capacity(&fields, 3);
+        for i in 0..3 {
+            chunk.append_int64(0, i);
+            chunk.append_bytes(2, b"unused");
+        }
+        chunk.append_bytes(1, b"\xff\x80\x00a tail");
+        chunk.append_null(1);
+        chunk.append_bytes(1, b"");
+        chunk.make_ref(1, 2);
+        chunk.set_sel(Some(vec![2, 0, 1, 0]));
+
+        let mut prefix = [0; 4];
+        assert_eq!(
+            chunk.get_row(0).try_copy_var_bytes_prefix(2, &mut prefix),
+            Some(Some(0))
+        );
+        assert_eq!(
+            chunk.get_row(1).try_copy_var_bytes_prefix(2, &mut prefix),
+            Some(Some(4))
+        );
+        assert_eq!(prefix, *b"\xff\x80\x00a");
+        assert_eq!(
+            chunk.get_row(2).try_copy_var_bytes_prefix(2, &mut prefix),
+            Some(None)
+        );
+        assert_eq!(
+            chunk.get_row(3).try_copy_var_bytes_prefix(0, &mut prefix),
+            None
+        );
+    }
+
+    #[test]
     fn append_row_copies_between_chunks() {
         let fields = int_str_fields();
         let mut src = Chunk::new_chunk_with_capacity(&fields, 4);
@@ -1332,6 +1507,41 @@ mod tests {
         chk.append_int64(0, 2);
         chk.append_string(1, "y");
         assert_eq!(chk.get_row(0).get_int64(0), 2);
+    }
+
+    #[test]
+    fn prefixed_byte_append_reuses_storage_and_preserves_selection() {
+        let fields = [FieldType::new(FieldTypeCode::Blob)];
+        let mut chunk = Chunk::new_chunk_with_capacity(&fields, 2);
+        assert!(!chunk.try_append_prefixed_bytes(0, b"hd", b"123"));
+        assert_eq!(chunk.num_rows(), 0);
+
+        chunk.append_bytes(0, b"hd123");
+        let memory = chunk.memory_usage();
+        chunk.reset();
+        assert!(chunk.try_append_prefixed_bytes(0, b"hd", b"456"));
+        assert_eq!(chunk.get_row(0).get_bytes(0), b"hd456");
+        assert_eq!(chunk.memory_usage(), memory);
+
+        chunk.set_sel(Some(vec![0]));
+        assert!(!chunk.try_append_prefixed_bytes(0, b"hd", b"789"));
+        assert_eq!(chunk.physical_num_rows(), 1);
+        assert_eq!(chunk.sel(), Some(&[0][..]));
+        chunk.append_bytes(0, b"hd789");
+        assert_eq!(chunk.sel(), Some(&[0, 1][..]));
+        assert_eq!(chunk.get_row(1).get_bytes(0), b"hd789");
+
+        let mut retained = Chunk::new_chunk_with_capacity(&fields, 2);
+        retained.append_bytes(0, &[b'x'; 128]);
+        let snapshot = retained.get_row(0).get_string(0);
+        retained.reset();
+        assert!(!retained.try_append_prefixed_bytes(0, b"hd", &[b'y'; 126]));
+        assert_eq!(snapshot.as_bytes(), &[b'x'; 128]);
+        drop(snapshot);
+        assert!(retained.try_append_prefixed_bytes(0, b"hd", &[b'y'; 126]));
+        let row = retained.get_row(0).get_bytes(0);
+        assert_eq!(&row[..2], b"hd");
+        assert_eq!(&row[2..], &[b'y'; 126]);
     }
 
     #[test]
@@ -1795,6 +2005,121 @@ mod tests {
     }
 
     #[test]
+    fn reconstruct_prefix_preserves_initialized_tail_and_removes_null_payload() {
+        let fields = int_str_fields();
+        for stale in [false, true] {
+            let mut chunk = Chunk::new_chunk_with_capacity(&fields, 12);
+            for row in 0..12 {
+                chunk.append_int64(0, row + 100);
+                if row == 3 && !stale {
+                    chunk.append_null(1);
+                } else {
+                    chunk.append_string(1, format!("row{row}"));
+                }
+            }
+            chunk.column_mut(0).set_null(3, true);
+            chunk.column_mut(1).set_null(3, true);
+            chunk.set_sel(Some((0..9).collect()));
+            chunk.reconstruct();
+
+            assert!(chunk.sel().is_none());
+            assert_eq!(chunk.num_rows(), 9);
+            assert_eq!(chunk.column(0).null_bitmap, [0xf7, 1]);
+            assert_eq!(chunk.column(1).null_bitmap, [0xf7, 1]);
+            assert_eq!(chunk.column(0).get_int64(3), 103);
+            assert_eq!(chunk.column(1).get_raw(3), b"");
+            assert_eq!(chunk.column(1).get_bytes(8), b"row8");
+
+            chunk.column_mut(0).resize_int64(12, true);
+            assert_eq!(chunk.column(0).get_int64(11), 111);
+            chunk.column_mut(1).append_string("new");
+            assert_eq!(chunk.column(1).get_bytes(9), b"new");
+        }
+    }
+
+    #[test]
+    fn reconstruct_single_null_keeps_fixed_tail_and_clears_variable_cell() {
+        let fields = int_str_fields();
+        let codec = crate::codec::Codec::new(fields.clone());
+        for first_null in [false, true] {
+            let mut source = Chunk::new_chunk_with_capacity(&fields, 64);
+            for row in 0..64 {
+                source.append_int64(0, 100 + row);
+                if row == 0 && first_null {
+                    source.append_null(1);
+                } else {
+                    source.append_string(1, format!("row{row}"));
+                }
+            }
+            source.column_mut(0).set_null(1, true);
+            source.column_mut(1).set_null(1, true);
+            let bytes = bytes::Bytes::from(codec.encode(&source));
+            let mut wire = Chunk::new_empty_chunk(&fields);
+            assert!(codec.try_decode_bytes_to_chunk(&bytes, &mut wire).unwrap().is_empty());
+
+            for mut chunk in [source, wire] {
+                let data_capacity = chunk.column(1).get_data_cap();
+                let offset_capacity = chunk.column(1).get_offset_cap();
+                chunk.set_sel(Some(vec![1]));
+                chunk.reconstruct();
+
+                assert!(chunk.sel().is_none());
+                assert_eq!(chunk.num_rows(), 1);
+                assert!(chunk.get_row(0).is_null(0));
+                assert!(chunk.get_row(0).is_null(1));
+                assert_eq!(chunk.column(0).get_int64(0), 100);
+                assert_eq!(chunk.column(1).get_raw(0), b"");
+                assert_eq!(chunk.column(1).get_data_cap(), data_capacity);
+                assert_eq!(chunk.column(1).get_offset_cap(), offset_capacity);
+
+                chunk.column_mut(0).resize_int64(3, true);
+                assert_eq!(chunk.column(0).get_int64(2), 102);
+                chunk.column_mut(1).append_string("tail");
+                assert_eq!(chunk.column(1).get_bytes(1), b"tail");
+            }
+        }
+    }
+
+    #[test]
+    fn copy_construct_sel_preserves_reordered_shared_rows() {
+        let mut source = Chunk::new_chunk_with_capacity(&int_str_fields(), 8);
+        for index in 0..4 {
+            source.append_int64(0, index);
+            if index == 2 {
+                source.append_null(1);
+            } else {
+                source.append_string(1, format!("s{index}"));
+            }
+        }
+        let _integer_owner = source.column_handle(0);
+        let _string_owner = source.column_handle(1);
+        source.set_sel(Some(vec![3, 2, 0, 3]));
+
+        let copy = source.copy_construct_sel();
+        assert_eq!(copy.sel(), None);
+        assert_eq!(copy.num_rows(), 4);
+        assert_eq!(copy.num_virtual_rows(), 0);
+        assert_eq!(copy.get_row(0).get_raw(1).as_ref(), b"s3");
+        assert!(copy.get_row(1).is_null(1));
+        assert_eq!(copy.get_row(2).get_int64(0), 0);
+        assert_eq!(copy.get_row(3).get_raw(1).as_ref(), b"s3");
+
+        source.reset();
+        assert_eq!(copy.get_row(3).get_int64(0), 3);
+    }
+
+    #[test]
+    fn append_own_range_keeps_virtual_rows_and_selection() {
+        let mut chunk = Chunk::new_chunk_with_capacity(&[], 8);
+        chunk.set_num_virtual_rows(5);
+        chunk.set_sel(Some(vec![3, 1]));
+        chunk.append_own_range(1, 4);
+
+        assert_eq!(chunk.num_virtual_rows(), 8);
+        assert_eq!(chunk.sel(), Some(&[3, 1][..]));
+    }
+
+    #[test]
     fn append_ranges_rows_and_projection_preserve_width_and_order() {
         let fields = int_str_fields();
         let mut source = Chunk::new_chunk_with_capacity(&fields, 6);
@@ -1936,6 +2261,111 @@ mod tests {
         );
         assert_eq!(chunk.get_row(2).get_datum(0, &field), Datum::Null);
     }
+
+    #[test]
+    #[cfg(target_endian = "little")]
+    fn decoded_medium_aligned_vectors_share_immutable_cells() {
+        let fields = [FieldType::new(FieldTypeCode::VectorFloat32)];
+        let codec = crate::codec::Codec::new(fields.to_vec());
+        let mut source = Chunk::new_chunk_with_capacity(&fields, 2);
+        let value = VectorFloat32::must_create(vec![2.5; 384]);
+        source.append_vector_float32(0, &value);
+        source.append_vector_float32(0, &value);
+
+        let encoded = codec.encode(&source);
+        let alignment = align_of::<f32>();
+        let mut aligned = Vec::<u8>::with_capacity(encoded.len() + alignment);
+        let offset = aligned.as_ptr().align_offset(alignment);
+        aligned.resize(offset, 0);
+        aligned.extend_from_slice(&encoded);
+        let input = bytes::Bytes::from(aligned).slice(offset..);
+
+        let mut decoded = Chunk::new_chunk_with_capacity(&fields, 2);
+        codec.try_decode_bytes_to_chunk(&input, &mut decoded).unwrap();
+        let snapshot = decoded.get_row(0).get_vector_float32(0);
+        let mut second = decoded.get_row(0).get_vector_float32(0);
+        assert_eq!(snapshot.elements().as_ptr(), second.elements().as_ptr());
+
+        second.elements_mut()[0] = 3.0;
+        decoded.reset();
+        decoded.append_vector_float32(0, &second);
+        assert_eq!(snapshot, value);
+        assert_eq!(decoded.get_row(0).get_vector_float32(0).elements()[0], 3.0);
+    }
+
+    #[test]
+    fn wide_json_datum_keeps_bytes_through_alias_refill() {
+        use tidb_datatype::{BinaryJSON, JSON_TYPE_CODE_STRING};
+
+        let fields = [FieldType::new(FieldTypeCode::Json)];
+        let mut source = Chunk::new_chunk_with_capacity(&fields, 1);
+        let mut alias = Chunk::new_chunk_with_capacity(&fields, 1);
+        let json = BinaryJSON::parse(&format!(r#"{{"text":"{}"}}"#, "a".repeat(8192))).unwrap();
+        source.append_json(0, &json);
+        alias.make_ref_to(0, &mut source, 0).unwrap();
+
+        let row = alias.get_row(0);
+        let direct = row.get_json(0);
+        let checked = row.try_get_datum(0, &fields[0]).unwrap();
+        let checked = checked.as_json().unwrap();
+        let bytes = row.get_bytes(0);
+        assert_eq!(direct.value().as_ptr(), bytes[1..].as_ptr());
+        assert_eq!(checked.value().as_ptr(), direct.value().as_ptr());
+
+        source.reset();
+        let mut invalid = vec![0xff; bytes.len()];
+        invalid[0] = JSON_TYPE_CODE_STRING;
+        source.append_bytes(0, &invalid);
+        assert!(alias.get_row(0).try_get_datum(0, &fields[0]).is_err());
+        assert_eq!(direct, json);
+        assert_eq!(checked, &json);
+    }
+
+    #[test]
+    #[cfg(target_endian = "little")]
+    fn decoded_unaligned_vector_shares_one_aligned_copy() {
+        let fields = [FieldType::new(FieldTypeCode::VectorFloat32)];
+        let codec = crate::codec::Codec::new(fields.to_vec());
+        let mut source = Chunk::new_chunk_with_capacity(&fields, 1);
+        let mut value = VectorFloat32::init(1536);
+        value.elements_mut()[0] = f32::from_bits(0x7fc0_1234);
+        value.elements_mut()[1] = -0.0;
+        let expected = value.serialize();
+        let mut with_suffix = expected.clone();
+        with_suffix.push(0xfe);
+        source.append_bytes(0, &with_suffix);
+        source.append_bytes(0, &expected);
+
+        let encoded = codec.encode(&source);
+        let alignment = align_of::<f32>();
+        let mut shifted = Vec::<u8>::with_capacity(encoded.len() + alignment);
+        let offset = shifted.as_ptr().align_offset(alignment) + 1;
+        shifted.resize(offset, 0);
+        shifted.extend_from_slice(&encoded);
+        let input = bytes::Bytes::from(shifted).slice(offset..);
+        let mut decoded = Chunk::new_chunk_with_capacity(&fields, 1);
+        codec.try_decode_bytes_to_chunk(&input, &mut decoded).unwrap();
+        let row = decoded.get_row(0);
+        let raw = row.get_bytes(0);
+        assert_eq!(raw.as_ref(), &with_suffix);
+        assert_ne!(raw[4..].as_ptr().align_offset(alignment), 0);
+        drop(raw);
+        let read = row.get_vector_float32(0);
+        let Datum::VectorFloat32(mut checked) = row.try_get_datum(0, &fields[0]).unwrap() else {
+            panic!("expected a vector datum");
+        };
+        assert_eq!(read.elements().as_ptr(), checked.elements().as_ptr());
+        checked.elements_mut()[0] = 1.0;
+        assert_ne!(read.elements().as_ptr(), checked.elements().as_ptr());
+        assert_eq!(checked.elements()[0], 1.0);
+        // The suffix puts the second cell at a non-aligned offset even in
+        // the cached buffer. Its decoded float bytes still match.
+        assert_eq!(decoded.get_row(1).get_vector_float32(0).serialize(), expected);
+
+        decoded.reset();
+        decoded.append_vector_float32(0, &VectorFloat32::init(1536));
+        assert_eq!(read.serialize(), expected);
+    }
 }
 
 // ---- Go `pkg/util/chunk/chunk_test.go` ports ---------------------------
@@ -1949,16 +2379,13 @@ use tidb_datatype::FieldTypeCode;
 
 #[cfg(test)]
 fn new_chunk_with_elem_lens(elem_lens: &[i64]) -> Chunk {
-    let columns = elem_lens
-        .iter()
-        .map(|&l| {
-            if l > 0 {
-                Column::new_fixed_len_column(l as usize, 0)
-            } else {
-                Column::new_var_len_column(0)
-            }
-        })
-        .collect();
+    let columns = elem_lens.iter().map(|&l| {
+        if l > 0 {
+            Column::new_fixed_len_column(l as usize, 0)
+        } else {
+            Column::new_var_len_column(0)
+        }
+    });
     Chunk::from_reusable_columns(columns, 0, 0)
 }
 
@@ -2434,6 +2861,16 @@ fn go_test_chunk_memory_usage() {
     assert_eq!(chk.memory_usage(), allocated_memory);
 }
 
+#[test]
+fn make_ref_to_the_same_slot_keeps_its_column_borrowable() {
+    let fields = [FieldType::new(FieldTypeCode::Float)];
+    let mut chunk = Chunk::new_chunk_with_capacity(&fields, 1);
+    chunk.append_float32(0, 1.0);
+    chunk.make_ref(0, 0);
+    let column = chunk.column_ref(0).try_borrow_stable().unwrap();
+    assert_eq!(column.get_float32(0), 1.0);
+}
+
 /// Go `TestSwapColumn`: swapping columns between chunks (Go's unexported
 /// `swapColumn`, expressed here through the column-handle take/set pair)
 /// preserves every reference group.
@@ -2526,6 +2963,178 @@ fn go_test_make_ref_to() {
     assert!(chk1.columns_share_identity(0, &chk2, 1));
 }
 
+#[test]
+fn aliased_medium_cells_retain_the_old_bytes_after_refill() {
+    let fields = [FieldType::new(FieldTypeCode::VarString)];
+    let mut source = Chunk::new_chunk_with_capacity(&fields, 1);
+    let payload = [0xff; 256];
+    source.append_bytes(0, &payload);
+
+    let mut alias = Chunk::new_chunk_with_capacity(&fields, 1);
+    alias.make_ref_to(0, &mut source, 0).unwrap();
+    let pointer = source.column(0).get_bytes(0).as_ptr();
+    let row = alias.get_row(0);
+    let bytes = row.get_bytes(0);
+    let raw = row.get_raw(0);
+    let datum = row.get_datum(0, &fields[0]);
+    assert_eq!(bytes.as_ptr(), pointer);
+    assert_eq!(raw.as_ptr(), pointer);
+    assert_eq!(datum.go_bytes().as_ptr(), pointer);
+
+    source.reset();
+    source.append_bytes(0, &[b'x'; 256]);
+    assert_eq!(bytes.as_ref(), payload);
+    assert_eq!(raw.as_ref(), payload);
+    assert_eq!(datum.go_bytes(), payload);
+    assert_eq!(alias.get_row(0).get_bytes(0).as_ref(), [b'x'; 256]);
+}
+
+#[test]
+fn aliased_short_cells_keep_copied_bytes_across_refill() {
+    let fields = [FieldType::new(FieldTypeCode::VarString)];
+    let mut source = Chunk::new_chunk_with_capacity(&fields, 2);
+    source.append_bytes(0, b"a\xffb");
+    source.append_null(0);
+    let mut alias = Chunk::new_chunk_with_capacity(&fields, 2);
+    alias.make_ref_to(0, &mut source, 0).unwrap();
+
+    let row = alias.get_row(0);
+    let bytes = row.get_bytes(0);
+    let raw = row.get_raw(0);
+    let suffix = row.get_string(0).slice(1..);
+    assert!(alias.get_row(1).get_raw(0).is_empty());
+
+    source.reset();
+    source.append_bytes(0, b"new");
+    assert_eq!(bytes.as_ref(), b"a\xffb");
+    assert_eq!(raw.as_ref(), b"a\xffb");
+    assert_eq!(suffix.as_bytes(), b"\xffb");
+    assert_eq!(alias.get_row(0).get_string(0).as_bytes(), b"new");
+}
+
+#[test]
+fn medium_cell_datum_does_not_retain_a_packed_column() {
+    let fields = [FieldType::new(FieldTypeCode::VarString)];
+    let mut source = Chunk::new_chunk_with_capacity(&fields, 16);
+    let payload = [0xff; 256];
+    for _ in 0..16 {
+        source.append_bytes(0, &payload);
+    }
+
+    let mut datum = source.get_row(0).get_datum(0, &fields[0]);
+    let original = source.column(0).get_bytes(0).as_ptr();
+    let snapshot = datum.go_bytes().as_ptr();
+    assert_ne!(snapshot, original);
+    source.reset();
+    let replacement = [b'x'; 256];
+    for _ in 0..16 {
+        source.append_bytes(0, &replacement);
+    }
+    assert_eq!(source.column(0).get_bytes(0).as_ptr(), original);
+    assert_eq!(datum.go_bytes(), payload);
+
+    let mut field = fields[0].clone();
+    field.set_collation_name("utf8mb4_bin");
+    source.get_row(0).datum_with_buffer(0, &field, &mut datum);
+    assert_eq!(datum.go_bytes().as_ptr(), snapshot);
+    assert_eq!(datum.go_bytes(), replacement);
+    assert_eq!(datum.as_string().unwrap().collation().name(), "utf8mb4_bin");
+}
+
+#[test]
+fn reused_packed_string_datum_can_select_another_row() {
+    let fields = [FieldType::new(FieldTypeCode::VarString)];
+    let mut chunk = Chunk::new_chunk_with_capacity(&fields, 256);
+    let first = [0xfe; 4095];
+    let second = [0xff; 4094];
+    chunk.append_bytes(0, &first);
+    chunk.append_bytes(0, &second);
+    chunk.append_null(0);
+    for _ in 3..256 {
+        chunk.append_bytes(0, &first);
+    }
+
+    let mut datum = chunk.get_row(0).get_datum(0, &fields[0]);
+    let held = datum.clone();
+    let mut field = fields[0].clone();
+    field.set_collation_name("utf8mb4_bin");
+    chunk.get_row(1).datum_with_buffer(0, &field, &mut datum);
+    assert_eq!(datum.go_bytes().as_ptr(), chunk.column(0).get_bytes(1).as_ptr());
+    assert_eq!(datum.as_string().unwrap().collation().name(), "utf8mb4_bin");
+
+    chunk.reset();
+    chunk.append_bytes(0, &[b'x'; 4095]);
+    chunk.append_bytes(0, &[b'y'; 4094]);
+    assert_eq!(datum.go_bytes(), second);
+    assert_eq!(held.go_bytes(), first);
+    chunk.get_row(0).datum_with_buffer(0, &field, &mut datum);
+    assert_eq!(datum.go_bytes(), &[b'x'; 4095]);
+}
+
+#[test]
+fn wide_cell_snapshot_survives_reusing_an_aliased_column() {
+    let fields = [FieldType::new(FieldTypeCode::VarString)];
+    let mut source = Chunk::new_chunk_with_capacity(&fields, 2);
+    let payload = vec![0xff; Column::MIN_RETAINED_CELL_BYTES];
+    source.append_bytes(0, &payload);
+    source.append_null(0);
+    let short = b"a\xffb";
+    source.append_bytes(0, short);
+    let codec = crate::codec::Codec::new(fields.to_vec());
+    let input = bytes::Bytes::from(codec.encode(&source));
+    let mut decoded = Chunk::new_chunk_with_capacity(&fields, 2);
+    assert!(codec
+        .try_decode_bytes_to_chunk(&input, &mut decoded)
+        .unwrap()
+        .is_empty());
+
+    let replacement = vec![b'x'; payload.len()];
+    for mut source in [source, decoded] {
+        let mut alias = Chunk::new_chunk_with_capacity(&fields, 2);
+        alias.make_ref_to(0, &mut source, 0).unwrap();
+        assert!(alias.column_ref(0).try_borrow_stable().is_none());
+        let column_snapshot = alias.column(0).try_read_snapshot().unwrap();
+        let row = alias.get_row(0);
+        assert!(row.try_borrow_var_bytes(0).is_none());
+        let snapshot = row.try_retain_var_cell(0).unwrap();
+        let retained_string = row.try_snapshot_var_cell_view(0, None).unwrap()
+            .into_retained_string(1..payload.len(), fields[0].collation()).unwrap();
+        let bytes = row.get_bytes(0);
+        let raw = row.get_raw(0);
+        let string = row.get_string(0);
+        let datum = row.get_datum(0, &fields[0]);
+        let views = [&snapshot[..], &bytes, &raw, string.as_bytes(), datum.go_bytes()];
+        let source_ptr = alias.column(0).get_bytes(0).as_ptr();
+        assert_eq!(retained_string.bytes().as_ptr(), source_ptr.wrapping_add(1));
+        for view in views {
+            assert_eq!(view.as_ptr(), source_ptr);
+        }
+        assert_eq!(column_snapshot.get_bytes(0).as_ptr(), source_ptr);
+        assert!(alias.get_row(1).try_retain_var_cell(0).is_none());
+        assert!(alias.get_row(1).try_snapshot_var_cell_view(0, None).is_none());
+        assert!(alias.get_row(1).get_string(0).is_empty());
+        let short_string = alias.get_row(2).get_string(0);
+        let short_snapshot = alias.get_row(2).try_snapshot_var_cell_view(0, None).unwrap();
+        assert_eq!(
+            short_string.as_bytes().as_ptr(),
+            alias.column(0).get_bytes(2).as_ptr(),
+        );
+        assert!(string.backing_ptr_eq(&short_string));
+
+        source.reset();
+        source.append_bytes(0, &replacement);
+        assert_eq!(alias.get_row(0).get_bytes(0).as_ref(), replacement.as_slice());
+        assert_eq!(column_snapshot.get_bytes(0).as_ref(), payload.as_slice());
+        assert!(column_snapshot.is_null(1));
+        assert_eq!(short_string.as_bytes(), short);
+        assert_eq!(short_snapshot.as_ref(), short);
+        assert_eq!(retained_string.bytes(), &payload[1..]);
+        for view in views {
+            assert_eq!(view, payload.as_slice());
+        }
+    }
+}
+
 /// Go `TestAppendRows`: batch-appending collected rows reproduces every
 /// cell of the source chunk.
 #[test]
@@ -2543,6 +3152,48 @@ fn go_test_append_rows() {
     chk2.append_rows(&rows);
     for i in 0..num_rows {
         assert_format_row(&chk2.get_row(i), i);
+    }
+}
+
+#[test]
+fn batch_append_preserves_selection_and_incremental_column_capacity() {
+    let mut source = new_chunk_with_elem_lens(&[8, 0]);
+    for row in 0..25 {
+        source.append_int64(0, row as i64);
+        if row % 3 == 0 {
+            source.append_null(1);
+        } else {
+            source.append_bytes(1, &[row as u8; 7]);
+        }
+    }
+    let mut alias = new_chunk_with_elem_lens(&[8, 0]);
+    alias.make_ref_to(0, &mut source, 0).unwrap();
+    alias.make_ref_to(1, &mut source, 1).unwrap();
+
+    for selection in [(2..23).collect::<Vec<_>>(), vec![17, 2, 9, 17]] {
+        source.set_sel(Some(selection));
+        let rows: Vec<_> = (0..source.num_rows()).map(|i| source.get_row(i)).collect();
+        let mut actual = new_chunk_with_elem_lens(&[8, 0]);
+        let mut expected = new_chunk_with_elem_lens(&[8, 0]);
+        for chunk in [&mut actual, &mut expected] {
+            chunk.append_row(source.get_row(0));
+            chunk.set_sel(Some(vec![0]));
+        }
+        actual.append_rows(&rows);
+        for row in rows {
+            expected.append_row(row);
+        }
+
+        assert_eq!(actual.sel(), expected.sel());
+        assert_eq!(actual.num_virtual_rows(), expected.num_virtual_rows());
+        assert_eq!(actual.memory_usage(), expected.memory_usage());
+        for i in 0..actual.num_rows() {
+            let actual = actual.get_row(i);
+            let expected = expected.get_row(i);
+            assert_eq!(actual.get_int64(0), expected.get_int64(0));
+            assert_eq!(actual.is_null(1), expected.is_null(1));
+            assert_eq!(actual.get_bytes(1), expected.get_bytes(1));
+        }
     }
 }
 
@@ -2652,4 +3303,34 @@ fn go_test_to_string() {
         chk.to_string(&field_types).as_bytes(),
         &b"1, 1, 1, 0000-00-00, 1\n2, 2, 2, 0000-00-00 00:00:00, 2\n"[..]
     );
+}
+
+#[test]
+fn row_to_string_preserves_raw_bytes_before_vector_text() {
+    use crate::codec::Codec;
+
+    let fields = [
+        FieldType::new(FieldTypeCode::VarString),
+        FieldType::new(FieldTypeCode::VectorFloat32),
+    ];
+    let mut source = Chunk::new_chunk_with_capacity(&fields, 2);
+    let mut vector = VectorFloat32::must_create(vec![-0.0, 1.25, 0.0, 17.0, -2.5]);
+    vector.elements_mut()[2] = f32::INFINITY;
+    let mut encoded = vector.serialize();
+    encoded.extend_from_slice(b"suffix");
+    source.append_bytes(0, b"\xff");
+    source.append_bytes(1, &encoded);
+    source.append_bytes(0, b"\x80");
+    source.append_null(1);
+
+    let codec = Codec::new(fields.to_vec());
+    let mut frame = vec![0];
+    frame.extend(codec.encode(&source));
+    let frame = bytes::Bytes::from(frame).slice(1..);
+    let mut decoded = Chunk::new_empty_chunk(&fields);
+    codec.try_decode_bytes_to_chunk(&frame, &mut decoded).unwrap();
+
+    let expected = b"\xff, [-0,1.25,+Inf,17,-2.5]\n\x80, NULL\n";
+    assert_eq!(source.to_string(&fields).as_bytes(), expected);
+    assert_eq!(decoded.to_string(&fields).as_bytes(), expected);
 }

@@ -15,11 +15,12 @@
 //! Recent deadlock history from `pkg/util/deadlockhistory`.
 
 use std::collections::VecDeque;
-use std::fmt::Write as _;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, LazyLock, Mutex, MutexGuard};
 
 use tidb_datatype::{Datum, StringDatum, Time, TimeType, MAX_FSP};
 use tidb_charset::Collation;
+use tidb_goruntime::go_hex;
 use tidb_resourcegrouptag::decode_resource_group_tag;
 use tikv_client::DeadlockError;
 
@@ -78,7 +79,7 @@ pub fn err_deadlock_to_deadlock_record(detail: &DeadlockError) -> DeadlockRecord
         .iter()
         .map(|raw| {
             let digest = match decode_resource_group_tag(&raw.resource_group_tag) {
-                Ok(Some(digest)) => hex(&digest, false),
+                Ok(Some(digest)) => go_hex::encode_to_string(&digest),
                 Ok(None) => String::new(),
                 Err(error) => {
                     tracing::warn!(%error, "failed to decode deadlock resource-group tag");
@@ -130,10 +131,9 @@ impl DeadlockRecord {
                 if key.is_empty() {
                     Datum::Null
                 } else {
-                    Datum::String(StringDatum::new(
-                        hex(key, true).into_bytes(),
-                        Collation::DEFAULT,
-                    ))
+                    let mut encoded = Vec::new();
+                    go_hex::append_uppercase(&mut encoded, key);
+                    Datum::String(StringDatum::new(encoded, Collation::DEFAULT))
                 }
             }
             COL_TRX_HOLDING_LOCK => Datum::UInt(self.wait_chain[wait_chain_idx].txn_holding_lock),
@@ -144,7 +144,6 @@ impl DeadlockRecord {
 
 #[derive(Debug)]
 struct HistoryState {
-    capacity: usize,
     deadlocks: VecDeque<Arc<DeadlockRecord>>,
     next_id: u64,
 }
@@ -152,6 +151,8 @@ struct HistoryState {
 /// Thread-safe bounded history of recently detected deadlocks.
 #[derive(Debug)]
 pub struct DeadlockHistory {
+    // Resize publishes the new limit after updating the queue under the lock.
+    capacity: AtomicUsize,
     state: Mutex<HistoryState>,
 }
 
@@ -159,8 +160,8 @@ impl DeadlockHistory {
     /// Creates an empty history with `capacity` retained records.
     pub fn new(capacity: usize) -> Self {
         Self {
+            capacity: AtomicUsize::new(capacity),
             state: Mutex::new(HistoryState {
-                capacity,
                 deadlocks: VecDeque::with_capacity(capacity),
                 next_id: 1,
             }),
@@ -169,28 +170,53 @@ impl DeadlockHistory {
 
     /// Changes the retained-record limit, preserving the newest records.
     pub fn resize(&self, capacity: usize) {
-        let mut state = self.lock();
-        while state.deadlocks.len() > capacity {
-            state.deadlocks.pop_front();
+        if capacity == self.capacity.load(Ordering::Acquire) {
+            return;
         }
-        state.capacity = capacity;
-        state.deadlocks.shrink_to_fit();
-        let additional = capacity.saturating_sub(state.deadlocks.len());
-        state.deadlocks.reserve(additional);
+        let mut state = self.lock();
+        let previous = self.capacity.load(Ordering::Relaxed);
+        if capacity == previous {
+            return;
+        }
+        let len = state.deadlocks.len();
+        if capacity < previous {
+            let removed = len.saturating_sub(capacity);
+            if removed != 0 {
+                drop(state.deadlocks.drain(..removed));
+            }
+            state.deadlocks.shrink_to(capacity);
+        } else {
+            state.deadlocks.reserve_exact(capacity - len);
+        }
+        self.capacity.store(capacity, Ordering::Release);
     }
 
     /// Assigns an ID and appends `record`; capacity zero ignores it entirely.
     pub fn push(&self, mut record: DeadlockRecord) {
         let mut state = self.lock();
-        if state.capacity == 0 {
+        let capacity = self.capacity.load(Ordering::Relaxed);
+        if capacity == 0 {
             return;
         }
         record.id = state.next_id;
         state.next_id = state.next_id.wrapping_add(1);
-        if state.deadlocks.len() == state.capacity {
-            state.deadlocks.pop_front();
-        }
-        state.deadlocks.push_back(Arc::new(record));
+        let record = if state.deadlocks.len() == capacity {
+            let mut oldest = state
+                .deadlocks
+                .pop_front()
+                .expect("a full history has a record");
+            // A snapshot can outlive eviction. Reuse the slot only when
+            // this queue still owns the record exclusively.
+            if let Some(slot) = Arc::get_mut(&mut oldest) {
+                *slot = record;
+                oldest
+            } else {
+                Arc::new(record)
+            }
+        } else {
+            Arc::new(record)
+        };
+        state.deadlocks.push_back(record);
     }
 
     /// Returns an ordered snapshot from oldest to newest.
@@ -213,18 +239,6 @@ impl DeadlockHistory {
 /// Process-wide deadlock history used by the executor and information schema.
 pub static GLOBAL_DEADLOCK_HISTORY: LazyLock<DeadlockHistory> =
     LazyLock::new(|| DeadlockHistory::new(0));
-
-fn hex(bytes: &[u8], upper: bool) -> String {
-    let mut output = String::with_capacity(bytes.len().saturating_mul(2));
-    for byte in bytes {
-        if upper {
-            write!(output, "{byte:02X}").expect("writing to String cannot fail");
-        } else {
-            write!(output, "{byte:02x}").expect("writing to String cannot fail");
-        }
-    }
-    output
-}
 
 #[cfg(test)]
 mod tests {
@@ -275,6 +289,7 @@ use tidb_charset::Collation;
         assert_eq!(first[0].id, 1);
         assert!(Arc::ptr_eq(&first[0], &second[0]));
         history.push(record(timestamp(2021, 5, 14, 15, 28, 30, 123_456)));
+        assert_eq!(first[0].id, 1);
         assert_eq!(history.get_all()[0].id, 2);
         history.clear();
         assert!(history.get_all().is_empty());
@@ -508,6 +523,43 @@ use tidb_charset::Collation;
         history.resize(2);
         history.push(record(time));
         assert_eq!(history.get_all()[0].id, 5);
+    }
+
+    #[test]
+    fn resizing_during_push_keeps_order_and_existing_snapshots() {
+        let history = DeadlockHistory::new(8);
+        let time = timestamp(2021, 5, 14, 15, 28, 30, 123_456);
+        history.push(record(time));
+        let held = history.get_all();
+        std::thread::scope(|scope| {
+            scope.spawn(|| {
+                for capacity in [8, 1, 0, 0, 64, 8].into_iter().cycle().take(120) {
+                    history.resize(capacity);
+                }
+            });
+            scope.spawn(|| {
+                for capacity in [8, 2, 16, 1, 1, 8].into_iter().cycle().take(120) {
+                    history.resize(capacity);
+                }
+            });
+            for _ in 0..120 {
+                history.push(record(time));
+                assert!(
+                    history
+                        .get_all()
+                        .windows(2)
+                        .all(|pair| pair[0].id + 1 == pair[1].id)
+                );
+            }
+        });
+        assert_eq!(held[0].id, 1);
+        history.resize(2);
+        history.push(record(time));
+        history.push(record(time));
+        let saved = history.get_all();
+        assert_eq!(saved.len(), 2);
+        assert_eq!(saved[0].id + 1, saved[1].id);
+        assert!(saved[0].id > held[0].id);
     }
 }
 

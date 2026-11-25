@@ -1156,8 +1156,8 @@ mod tests {
 
     fn interval(low: Datum, low_exclusive: bool, high: Datum, high_exclusive: bool) -> Range {
         Range {
-            low_val: vec![low],
-            high_val: vec![high],
+            low_val: vec![low].into(),
+            high_val: vec![high].into(),
             // `pruned_ids` gives each test interval its columns' collators.
             collators: Vec::new(),
             low_exclude: low_exclusive,
@@ -1172,8 +1172,8 @@ mod tests {
         high_exclusive: bool,
     ) -> Range {
         Range {
-            low_val: low,
-            high_val: high,
+            low_val: low.into(),
+            high_val: high.into(),
             collators: Vec::new(),
             low_exclude: low_exclusive,
             high_exclude: high_exclusive,
@@ -1685,8 +1685,8 @@ use tidb_charset::Collation;
         };
         spec.truncate_definitions(2);
         let range = tidb_ranger::types::Range {
-            low_val: vec![Datum::new_string_datum("B")],
-            high_val: vec![Datum::new_string_datum("B")],
+            low_val: vec![Datum::new_string_datum("B")].into(),
+            high_val: vec![Datum::new_string_datum("B")].into(),
             collators: vec![Collation::Utf8Mb4Bin],
             low_exclude: false,
             high_exclude: false,

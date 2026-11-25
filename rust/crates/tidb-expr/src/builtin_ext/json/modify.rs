@@ -33,13 +33,13 @@ use tidb_datatype::{
 
 /// Go `types.ParseJSONPathExpr`: a malformed path is `ErrInvalidJSONPath`
 /// (3143) at Go's character position.
-pub(super) fn parse_json_path(text: &str) -> Result<JSONPathExpression, EvalError> {
+pub(crate) fn parse_json_path(text: &str) -> Result<JSONPathExpression, EvalError> {
     tidb_datatype::parse_json_path_expr(text)
         .map_err(|error| EvalError::Json(JsonError::InvalidPath(error.position)))
 }
 
 /// The Go error a `BinaryJSON` refusal stands for.
-pub(super) fn binary_json_error(error: BinaryJSONError) -> EvalError {
+pub(crate) fn binary_json_error(error: BinaryJSONError) -> EvalError {
     match error {
         BinaryJSONError::TooDeep => EvalError::Json(JsonError::DocumentTooDeep),
         BinaryJSONError::EmptyDocument => EvalError::Json(JsonError::EmptyText),

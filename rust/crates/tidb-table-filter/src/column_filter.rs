@@ -16,7 +16,7 @@
 
 use super::matchers::ColumnRule;
 use super::parser::{ColumnRulesParser, MatcherParser, RuleParser};
-use super::{go_simple_lowercase, FilterError};
+use super::{lowercase_name, FilterError, MIN_INDEXED_LITERAL_RULES};
 
 /// Checks if a column should be included for processing.
 ///
@@ -29,6 +29,7 @@ pub trait ColumnFilter: Send + Sync {
 /// A parsed column-filter rule list.
 pub struct ColumnFilterRules {
     rules: Vec<ColumnRule>,
+    sorted_literals: bool,
 }
 
 impl ColumnFilterRules {
@@ -41,7 +42,15 @@ impl ColumnFilterRules {
         // Column names and aliases are not case-sensitive on any platform, so
         // always match in lowercase.
         // See https://dev.mysql.com/doc/refman/5.7/en/identifier-case-sensitivity.html
-        let lowercase_column = go_simple_lowercase(column);
+        let lowercase_column = lowercase_name(column);
+        if self.sorted_literals {
+            return self
+                .rules
+                .binary_search_by(|rule| {
+                    rule.column.literal().expect("indexed column literal").cmp(&lowercase_column)
+                })
+                .is_ok_and(|i| self.rules[i].positive);
+        }
         for rule in &self.rules {
             if rule.column.match_string(&lowercase_column) {
                 return rule.positive;
@@ -76,13 +85,28 @@ pub fn parse_column_filter_rules(args: &[&str]) -> Result<ColumnFilterRules, Fil
 
     p.rules.reverse();
 
-    Ok(ColumnFilterRules { rules: p.rules })
+    let sorted_literals = p.rules.len() >= MIN_INDEXED_LITERAL_RULES
+        && p.rules.iter().all(|r| r.column.literal().is_some());
+    if sorted_literals {
+        // A stable sort leaves exact duplicates in their original precedence.
+        p.rules.sort_by(|a, b| a.column.literal().cmp(&b.column.literal()));
+        p.rules.dedup_by(|a, b| a.column.literal() == b.column.literal());
+    }
+    Ok(ColumnFilterRules { rules: p.rules, sorted_literals })
 }
 
 #[cfg(test)]
 mod tests {
     use super::{parse_column_filter, parse_column_filter_rules};
     use crate::testutil::TempDir;
+
+    #[test]
+    fn case_insensitive_regexp_retains_go_octal_escapes() {
+        let filter = parse_column_filter_rules(&[r"/^\141$/"]).unwrap();
+        assert!(filter.match_column("a"));
+        assert!(filter.match_column("A"));
+        assert!(!filter.match_column("b"));
+    }
 
     // Go `TestMatchColumns`.
     #[test]

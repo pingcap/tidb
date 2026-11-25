@@ -14,12 +14,17 @@
 
 //! Schema/table column mapping with prefix, suffix, and partition-ID rules.
 
+use std::borrow::Cow;
+use std::collections::hash_map::RandomState;
 use std::collections::HashMap;
 use std::fmt;
+use std::hash::BuildHasher;
+use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, RwLock};
 
 use tidb_table_rule_selector::{InsertType, Selector, TrieSelector};
 use serde::{Deserialize, Serialize};
+use smallvec::SmallVec;
 use tidb_mysql::to_lowercase as go_simple_lowercase;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -27,15 +32,16 @@ struct PartitionRule {
     instance_id_bits: isize,
     schema_id_bits: isize,
     table_id_bits: isize,
-    max_origin_id: i64,
 }
 
 static PARTITION_RULE: RwLock<PartitionRule> = RwLock::new(PartitionRule {
     instance_id_bits: 4,
     schema_id_bits: 7,
     table_id_bits: 8,
-    max_origin_id: 17_592_186_044_416,
 });
+// Cached mappings only need the current limit. The rule writer also
+// publishes it before releasing the lock for the bit sizes.
+static MAX_ORIGIN_ID: AtomicI64 = AtomicI64::new(17_592_186_044_416);
 
 fn partition_rule() -> PartitionRule {
     *PARTITION_RULE
@@ -52,14 +58,15 @@ pub fn set_partition_rule(instance_id_size: isize, schema_id_size: isize, table_
         .wrapping_sub(table_id_size)
         .wrapping_sub(1) as usize;
 
-    *PARTITION_RULE
+    let mut rule = PARTITION_RULE
         .write()
-        .unwrap_or_else(std::sync::PoisonError::into_inner) = PartitionRule {
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    *rule = PartitionRule {
         instance_id_bits: instance_id_size,
         schema_id_bits: schema_id_size,
         table_id_bits: table_id_size,
-        max_origin_id: go_shift_i64(1, shift),
     };
+    MAX_ORIGIN_ID.store(go_shift_i64(1, shift), Ordering::Release);
 }
 
 /// A column value flowing through the mapping. Variants preserve the runtime
@@ -255,14 +262,25 @@ impl MappingInfo {
     }
 }
 
-struct MappingState {
-    selector: TrieSelector<Arc<Rule>>,
-    cache: HashMap<String, MappingInfo>,
+const CACHE_SHARDS: usize = 16;
+type MappingCache = HashMap<Vec<u8>, MappingInfo>;
+
+#[derive(Default)]
+#[repr(align(128))]
+struct CacheShard(Mutex<MappingCache>);
+
+impl CacheShard {
+    fn lock(&self) -> MutexGuard<'_, MappingCache> {
+        self.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
 }
 
 /// Thread-safe column mapping built from schema/table rules.
 pub struct Mapping {
-    state: Mutex<MappingState>,
+    // Serialize rule updates with slow lookups that populate the cache.
+    selector: Mutex<TrieSelector<Arc<Rule>>>,
+    cache: Box<[CacheShard; CACHE_SHARDS]>,
+    cache_hasher: RandomState,
     case_sensitive: bool,
 }
 
@@ -274,10 +292,9 @@ impl Mapping {
     /// Returns an error if any rule is invalid or conflicts on insertion.
     pub fn new(case_sensitive: bool, rules: &[Rule]) -> Result<Self, ColumnMappingError> {
         let mapping = Mapping {
-            state: Mutex::new(MappingState {
-                selector: TrieSelector::new(),
-                cache: HashMap::new(),
-            }),
+            selector: Mutex::new(TrieSelector::new()),
+            cache: Box::new(std::array::from_fn(|_| CacheShard::default())),
+            cache_hasher: RandomState::new(),
             case_sensitive,
         };
         for rule in rules {
@@ -306,12 +323,10 @@ impl Mapping {
         };
         let (schema, table) = (rule.pattern_schema.clone(), rule.pattern_table.clone());
         let rule_debug = format!("{rule:?}");
-        let mut state = self.state();
-        state.cache.clear();
+        let selector = self.selector();
+        self.clear_cache();
         if let Err(error) =
-            state
-                .selector
-                .insert(&schema, &table, Some(Arc::new(rule)), insert_type)
+            selector.insert(&schema, &table, Some(Arc::new(rule)), insert_type)
         {
             let method = if is_update { "update" } else { "add" };
             return Err(ColumnMappingError::new(error.to_string())
@@ -347,10 +362,9 @@ impl Mapping {
         if !self.case_sensitive {
             rule.to_lower();
         }
-        let mut state = self.state();
-        state.cache.clear();
-        state
-            .selector
+        let selector = self.selector();
+        self.clear_cache();
+        selector
             .remove(&rule.pattern_schema, &rule.pattern_table)
             .map_err(|error| {
                 ColumnMappingError::new(error.to_string())
@@ -422,11 +436,11 @@ impl Mapping {
         )
     }
 
-    fn normalize(&self, schema: &str, table: &str) -> (String, String) {
+    fn normalize<'a>(&self, schema: &'a str, table: &'a str) -> (Cow<'a, str>, Cow<'a, str>) {
         if self.case_sensitive {
-            (schema.to_string(), table.to_string())
+            (Cow::Borrowed(schema), Cow::Borrowed(table))
         } else {
-            (go_simple_lowercase(schema), go_simple_lowercase(table))
+            (lowercase_name(schema), lowercase_name(table))
         }
     }
 
@@ -436,19 +450,25 @@ impl Mapping {
         table: &str,
         columns: &[&str],
     ) -> Result<MappingInfo, ColumnMappingError> {
-        let key = table_name(schema, table);
-        let mut state = self.state();
-        if let Some(info) = state.cache.get(&key) {
+        let key = table_key(schema, table);
+        let shard = self.cache_shard(key.as_slice());
+        if let Some(info) = shard.lock().get(key.as_slice()) {
             return Ok(info.clone());
         }
 
-        let rules = state
-            .selector
+        let selector = self.selector();
+        let mut cache = shard.lock();
+        // A concurrent lookup may have filled this key while we waited.
+        if let Some(info) = cache.get(key.as_slice()) {
+            return Ok(info.clone());
+        }
+
+        let rules = selector
             .match_rules(schema, table)
             .unwrap_or_default();
         if rules.is_empty() {
             let info = MappingInfo::ignored();
-            state.cache.insert(key, info.clone());
+            cache.insert(key.into_vec(), info.clone());
             return Ok(info);
         }
 
@@ -501,23 +521,36 @@ impl Mapping {
             info.table_id = table_id;
         }
 
-        state.cache.insert(key, info.clone());
+        cache.insert(key.into_vec(), info.clone());
         Ok(info)
     }
 
     fn reset_cache(&self) {
-        self.state().cache.clear();
+        let _selector = self.selector();
+        self.clear_cache();
     }
 
-    fn state(&self) -> MutexGuard<'_, MappingState> {
-        self.state
+    // Called with the selector lock held, so no old rule can populate a
+    // shard after it has been cleared.
+    fn clear_cache(&self) {
+        for shard in self.cache.iter() {
+            shard.lock().clear();
+        }
+    }
+
+    fn cache_shard(&self, key: &[u8]) -> &CacheShard {
+        &self.cache[self.cache_hasher.hash_one(key) as usize % CACHE_SHARDS]
+    }
+
+    fn selector(&self) -> MutexGuard<'_, TrieSelector<Arc<Rule>>> {
+        self.selector
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
     #[cfg(test)]
     fn cache_len(&self) -> usize {
-        self.state().cache.len()
+        self.cache.iter().map(|shard| shard.lock().len()).sum()
     }
 }
 
@@ -527,8 +560,23 @@ fn find_column_position(cols: &[&str], col: &str) -> isize {
         .map_or(-1, |i| i as isize)
 }
 
-fn table_name(schema: &str, table: &str) -> String {
-    format!("`{schema}`.`{table}`")
+fn lowercase_name(name: &str) -> Cow<'_, str> {
+    if name.is_ascii() && !name.bytes().any(|byte| byte.is_ascii_uppercase()) {
+        Cow::Borrowed(name)
+    } else {
+        Cow::Owned(go_simple_lowercase(name))
+    }
+}
+
+fn table_key(schema: &str, table: &str) -> SmallVec<[u8; 64]> {
+    // Match Go's formatted cache key, including names with punctuation.
+    let mut key = SmallVec::with_capacity(schema.len() + table.len() + 5);
+    key.push(b'`');
+    key.extend_from_slice(schema.as_bytes());
+    key.extend_from_slice(b"`.`");
+    key.extend_from_slice(table.as_bytes());
+    key.push(b'`');
+    key
 }
 
 fn add_prefix(rule: &Rule, target: isize, vals: &mut [Value]) -> Result<(), ColumnMappingError> {
@@ -579,7 +627,7 @@ fn partition_id(info: &MappingInfo, vals: &mut [Value]) -> Result<(), ColumnMapp
         }
     };
 
-    let max_origin_id = partition_rule().max_origin_id;
+    let max_origin_id = MAX_ORIGIN_ID.load(Ordering::Acquire);
     if origin_id >= max_origin_id || origin_id < 0 {
         return Err(not_valid(format!(
             "id must less than {max_origin_id}, greater than or equal to 0, but got {origin_id}, which"
@@ -728,6 +776,35 @@ mod tests {
     }
 
     #[test]
+    fn normalized_table_cache_reuses_positions_until_rule_update() {
+        let rule = rule("db_*", "tbl_*", "id", "id", ADD_PREFIX, &["old:"], "");
+        let schema = format!("DB_{}", "Ω".repeat(40));
+        let table = "TBL_1";
+        let mapping = Mapping::new(false, &[rule.clone()]).unwrap();
+        let row = || vec![Value::Str("a".into()), Value::Str("b".into())];
+
+        let (_, positions) = mapping
+            .handle_row_value(&schema, table, &["id", "other"], row())
+            .unwrap();
+        assert_eq!(positions, Some(vec![0, 0]));
+
+        let (values, positions) = mapping
+            .handle_row_value(&schema.to_lowercase(), "tbl_1", &["other", "id"], row())
+            .unwrap();
+        assert_eq!(positions, Some(vec![0, 0]));
+        assert_eq!(values, vec![Value::Str("old:a".into()), Value::Str("b".into())]);
+
+        let mut updated = rule;
+        updated.arguments[0] = "new:".into();
+        mapping.update_rule(updated).unwrap();
+        let (values, positions) = mapping
+            .handle_row_value(&schema, table, &["other", "id"], row())
+            .unwrap();
+        assert_eq!(positions, Some(vec![1, 1]));
+        assert_eq!(values, vec![Value::Str("a".into()), Value::Str("new:b".into())]);
+    }
+
+    #[test]
     fn handle() {
         let rules = [rule(
             "Test*",
@@ -839,9 +916,9 @@ mod tests {
                 instance_id_bits: 4,
                 schema_id_bits: 7,
                 table_id_bits: 8,
-                max_origin_id: 1 << 44,
             }
         );
+        assert_eq!(MAX_ORIGIN_ID.load(Ordering::Acquire), 1 << 44);
 
         set_partition_rule(0, 3, 4);
         assert_eq!(
@@ -850,20 +927,20 @@ mod tests {
                 instance_id_bits: 0,
                 schema_id_bits: 3,
                 table_id_bits: 4,
-                max_origin_id: 1 << 56,
             }
         );
+        assert_eq!(MAX_ORIGIN_ID.load(Ordering::Acquire), 1 << 56);
 
         set_partition_rule(-1, 0, 0);
         assert_eq!(partition_rule().instance_id_bits, -1);
-        assert_eq!(partition_rule().max_origin_id, 0);
+        assert_eq!(MAX_ORIGIN_ID.load(Ordering::Acquire), 0);
 
         set_partition_rule(0, 0, 0);
-        assert_eq!(partition_rule().max_origin_id, i64::MIN);
+        assert_eq!(MAX_ORIGIN_ID.load(Ordering::Acquire), i64::MIN);
 
         set_partition_rule(64, 0, 0);
         assert_eq!(partition_rule().instance_id_bits, 64);
-        assert_eq!(partition_rule().max_origin_id, 0);
+        assert_eq!(MAX_ORIGIN_ID.load(Ordering::Acquire), 0);
     }
 
     #[test]

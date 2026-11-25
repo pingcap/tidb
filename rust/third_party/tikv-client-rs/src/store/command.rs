@@ -732,9 +732,10 @@ impl BatchCommandRequest {
     /// Converts an already-contextualized physical request into precisely the
     /// subset client-go admits through `ToBatchCommandsRequest`.
     pub(crate) fn from_store_request(request: &dyn super::Request) -> Option<Self> {
+        let request = request.as_any();
         macro_rules! contextual_request_variant {
             ($($variant:ident($type:ty)),+ $(,)?) => {
-                $(if let Some(request) = request.as_any().downcast_ref::<$type>() {
+                $(if let Some(request) = request.downcast_ref::<$type>() {
                     let mut request = request.clone();
                     super::request::fill_context_default_request_origin(&mut request.context);
                     return Some(Self::$variant(request));
@@ -772,22 +773,13 @@ impl BatchCommandRequest {
             Flush(kvrpcpb::FlushRequest),
             BufferBatchGet(kvrpcpb::BufferBatchGetRequest)
         );
-        if let Some(request) = request
-            .as_any()
-            .downcast_ref::<tikvpb::BatchCommandsEmptyRequest>()
-        {
+        if let Some(request) = request.downcast_ref::<tikvpb::BatchCommandsEmptyRequest>() {
             return Some(Self::Empty(request.clone()));
         }
-        if let Some(request) = request
-            .as_any()
-            .downcast_ref::<kvrpcpb::GetHealthFeedbackRequest>()
-        {
+        if let Some(request) = request.downcast_ref::<kvrpcpb::GetHealthFeedbackRequest>() {
             return Some(Self::GetHealthFeedback(request.clone()));
         }
-        if let Some(request) = request
-            .as_any()
-            .downcast_ref::<kvrpcpb::BroadcastTxnStatusRequest>()
-        {
+        if let Some(request) = request.downcast_ref::<kvrpcpb::BroadcastTxnStatusRequest>() {
             return Some(Self::BroadcastTxnStatus(request.clone()));
         }
         None

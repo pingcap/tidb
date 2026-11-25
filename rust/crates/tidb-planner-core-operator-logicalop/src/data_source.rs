@@ -1590,7 +1590,7 @@ mod tests {
                             ndv: 900,
                             lower_bound: Datum::Int(1),
                             upper_bound: Datum::Int(1000),
-                        }],
+                        }].into(),
                         ..Default::default()
                     },
                     top_n: None,

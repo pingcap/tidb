@@ -23,7 +23,7 @@ pub const MAX_UINT: usize = usize::MAX;
 /// Architecture-specific integer width.
 pub const INT_BITS: u32 = usize::BITS;
 
-const UINT_SIZE_TABLE: [u64; 21] = [
+const UINT_SIZE_TABLE: [u64; 20] = [
     0,
     9,
     99,
@@ -44,7 +44,6 @@ const UINT_SIZE_TABLE: [u64; 21] = [
     99_999_999_999_999_999,
     999_999_999_999_999_999,
     9_999_999_999_999_999_999,
-    u64::MAX,
 ];
 
 /// Returns the source two's-complement absolute value, including the wrapped
@@ -55,18 +54,22 @@ pub fn abs(value: i64) -> i64 {
 }
 
 /// Efficiently returns the decimal character length of a `u64`.
+#[inline]
 pub fn str_len_of_uint64_fast(value: u64) -> usize {
-    for (index, limit) in UINT_SIZE_TABLE.iter().enumerate().skip(1) {
-        if value <= *limit {
-            return index;
-        }
+    if value < 10 {
+        return 1;
     }
-    unreachable!("u64::MAX terminates the source lookup table")
+    // 1233 / 4096 approximates log10(2). For a u64 the estimate is either
+    // the digit count or one less, so one comparison gives the exact count.
+    let bits = u64::BITS - value.leading_zeros();
+    let digits = (bits * 1233 >> 12) as usize;
+    digits + usize::from(value > UINT_SIZE_TABLE[digits])
 }
 
 /// Efficiently returns the decimal character length of an `i64`.
+#[inline]
 pub fn str_len_of_int64_fast(value: i64) -> usize {
-    usize::from(value < 0) + str_len_of_uint64_fast(abs(value) as u64)
+    usize::from(value < 0) + str_len_of_uint64_fast(value.unsigned_abs())
 }
 
 /// Reports whether a value is neither NaN nor infinity.
@@ -92,15 +95,14 @@ pub fn clamp<T: PartialOrd>(value: T, minimum: T, maximum: T) -> T {
 ///
 /// The caller retains the Go precondition that `value` is positive and the
 /// result does not overflow.
-pub fn next_power_of_two(mut value: i64) -> i64 {
+#[inline]
+pub fn next_power_of_two(value: i64) -> i64 {
     if value & value.wrapping_sub(1) == 0 {
         return value;
     }
-    value = value.wrapping_mul(2);
-    while value & value.wrapping_sub(1) != 0 {
-        value &= value.wrapping_sub(1);
-    }
-    value
+    // The preceding check returns both values whose doubled value wraps to zero.
+    let doubled = value.wrapping_mul(2) as u64;
+    (1_u64 << (u64::BITS - 1 - doubled.leading_zeros())) as i64
 }
 
 /// Divides `total` into at most `batches` positive, near-equal parts.
@@ -109,7 +111,7 @@ pub fn next_power_of_two(mut value: i64) -> i64 {
 ///
 /// Like the source, panics for a zero divisor or a batch count that cannot be
 /// represented as an allocation capacity.
-pub fn divide_2_batches<T>(mut total: T, batches: T) -> Vec<T>
+pub fn divide_2_batches<T>(total: T, batches: T) -> Vec<T>
 where
     T: PrimInt + ToPrimitive,
 {
@@ -118,16 +120,21 @@ where
         .expect("batch count cannot be represented as a capacity");
     let mut result = Vec::with_capacity(capacity);
     let quotient = total / batches;
-    let mut remainder = total % batches;
-    while total > T::zero() {
-        let mut size = quotient;
-        if remainder > T::zero() {
-            size = size + T::one();
-            remainder = remainder - T::one();
-        }
+    if total <= T::zero() {
+        return result;
+    }
+    let remainder = (total % batches)
+        .to_usize()
+        .expect("remainder fits within the batch capacity");
+    // The larger parts come first. A zero quotient leaves only those parts.
+    if remainder != 0 {
+        let size = quotient + T::one();
         tidb_intest::assert_with_message(size > T::zero(), "size should be positive");
-        result.push(size);
-        total = total - size;
+        result.resize(remainder, size);
+    }
+    if quotient != T::zero() {
+        tidb_intest::assert_with_message(quotient > T::zero(), "size should be positive");
+        result.resize(capacity, quotient);
     }
     result
 }
@@ -173,6 +180,13 @@ mod tests {
         for value in values {
             assert_eq!(str_len_of_uint64_fast(value), value.to_string().len());
         }
+        for power in 0..20 {
+            let boundary = 10_u64.pow(power);
+            for value in [boundary - 1, boundary, boundary + 1] {
+                assert_eq!(str_len_of_uint64_fast(value), value.to_string().len());
+            }
+        }
+        assert_eq!(str_len_of_int64_fast(i64::MIN), 20);
     }
 
     #[test]
@@ -194,6 +208,9 @@ mod tests {
         assert_eq!(next_power_of_two(255), 256);
         assert_eq!(next_power_of_two(1024), 1024);
         assert_eq!(next_power_of_two(0xabcd_1234), 0x1_0000_0000);
+        assert_eq!(next_power_of_two(0), 0);
+        assert_eq!(next_power_of_two(i64::MAX), i64::MIN);
+        assert_eq!(next_power_of_two(i64::MIN), i64::MIN);
     }
 
     #[test]
@@ -208,5 +225,9 @@ mod tests {
         assert_eq!(divide_2_batches(10, 3), vec![4, 3, 3]);
         assert_eq!(divide_2_batches(10, 4), vec![3, 3, 2, 2]);
         assert_eq!(divide_2_batches(10, 5), vec![2, 2, 2, 2, 2]);
+        assert_eq!(divide_2_batches(u128::MAX, 1), vec![u128::MAX]);
+        let empty = divide_2_batches(-3, 4);
+        assert!(empty.is_empty());
+        assert_eq!(empty.capacity(), 4);
     }
 }

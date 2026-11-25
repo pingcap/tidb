@@ -61,34 +61,6 @@ pub struct MysqlError {
 }
 
 impl MysqlError {
-    /// A Go `*terror.Error` raise: the identity, the wire code and the
-    /// SQLSTATE all come from the Go definition `proto` names, and `message`
-    /// is what the raise site rendered (`GenWithStackByArgs` /
-    /// `FastGenByArgs`).
-    ///
-    /// Go never writes a code and its state down together: `NewErr` looks the
-    /// code up in `MySQLState` and falls back to `HY000`
-    /// (`pkg/parser/mysql/error.go:40-57`). Spelling the state out at the
-    /// raise site is what lets a code and its state disagree -- `1365` was
-    /// reaching clients as `HY000` where TiDB sends `22012` -- so raise sites
-    /// name the Go error and nothing else; [`TerrorError::to_sql_error`] is
-    /// the only `state` source. Naming the Go error rather than a number is
-    /// also what keeps the class: `1146` is `infoschema.ErrTableNotExists`
-    /// (`schema`) and `plannererrors.ErrNoSuchTable` (`planner`).
-    fn terror(proto: &TerrorError, message: impl Into<String>) -> Self {
-        let sql = proto.to_sql_error();
-        let mut state = [0u8; 5];
-        state.copy_from_slice(sql.state.as_bytes());
-        Self {
-            code: sql.code,
-            state,
-            message: message.into(),
-            identity: Some(proto.identity()),
-            from_evaluation: false,
-            annotation: None,
-        }
-    }
-
     /// Go `ErrX.Equal(err)` / `terror.ErrorEqual(err, ErrX)`: whether this
     /// failure was raised as Go's `proto` (same class and code).
     #[must_use]
@@ -96,10 +68,15 @@ impl MysqlError {
         self.identity == Some(proto.identity())
     }
 
-    /// [`Self::terror`] with the prototype's own message, for an error Go
-    /// raises with no arguments (`return ErrFoo`).
+    /// Converts a Go terror error using its registered wire code, SQLSTATE,
+    /// message, and class identity.
     pub fn from_terror(error: &TerrorError) -> Self {
-        Self::terror(error, error.message())
+        Self::from_sql_error(error.to_sql_error())
+    }
+
+    /// Converts a generated terror error, reusing its owned message.
+    pub fn from_owned_terror(error: TerrorError) -> Self {
+        Self::from_sql_error(error.into_sql_error())
     }
 
     /// A coded failure that has no Go `terror` definition at all -- Go either
@@ -107,7 +84,7 @@ impl MysqlError {
     /// never raises it and the Rust tier invented the path. The SQLSTATE is
     /// still the code's own (`NewErr`'s `MySQLState` lookup). Everything Go
     /// raises through a `terror.Error` must name its definition with
-    /// [`Self::terror`] instead.
+    /// [`Self::from_terror`] instead.
     pub fn sql_error(code: u16, message: impl Into<String>) -> Self {
         let mut state = [0u8; 5];
         state.copy_from_slice(tidb_mysql::errors::mysql_state(code).as_bytes());
@@ -282,5 +259,16 @@ mod annotate_tests {
         assert_eq!(error.code, 1105);
         assert_eq!(error.error_string(), "outer: inner: mlog purge lock conflict");
         assert_eq!(MysqlError::unknown("plain").error_string(), "plain");
+    }
+
+    #[test]
+    fn owned_terror_conversion_reuses_the_message() {
+        let message = "数据".repeat(8192);
+        let allocation = message.as_ptr();
+        let error = crate::ERR_CRITICAL.generate(message);
+        let borrowed = MysqlError::from_terror(&error);
+        let owned = MysqlError::from_owned_terror(error);
+        assert_eq!(owned, borrowed);
+        assert_eq!(owned.message.as_ptr(), allocation);
     }
 }

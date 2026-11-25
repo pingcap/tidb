@@ -50,7 +50,7 @@ pub fn redaction_mode() -> RedactionMode {
 /// Typed forms preserve Go's success and `%!verb(type=value)` mismatch paths;
 /// the source catalog vocabulary itself is string, decimal, display, and
 /// fixed/dynamic string precision.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Eq, PartialEq)]
 pub struct FormatArg {
     display: String,
     debug: String,
@@ -100,12 +100,30 @@ impl FormatArg {
     }
 }
 
+impl fmt::Debug for FormatArg {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let string_debug;
+        let debug = if self.kind == FormatKind::String {
+            string_debug = format!("{:?}", self.display);
+            &string_debug
+        } else {
+            &self.debug
+        };
+        formatter
+            .debug_struct("FormatArg")
+            .field("display", &self.display)
+            .field("debug", debug)
+            .field("type_name", &self.type_name)
+            .field("precision", &self.precision)
+            .field("kind", &self.kind)
+            .field("character", &self.character)
+            .finish()
+    }
+}
+
 impl From<&str> for FormatArg {
     fn from(value: &str) -> Self {
-        Self {
-            kind: FormatKind::String,
-            ..Self::new(value, format!("{value:?}"), "string")
-        }
+        Self::from(value.to_owned())
     }
 }
 
@@ -131,7 +149,9 @@ impl From<String> for FormatArg {
     fn from(value: String) -> Self {
         Self {
             kind: FormatKind::String,
-            ..Self::new(value.clone(), format!("{value:?}"), "string")
+            // Go verbs quote the display string when required. Rust's Debug
+            // representation also constructs its escaped form only on demand.
+            ..Self::new(value, String::new(), "string")
         }
     }
 }
@@ -424,10 +444,17 @@ fn integer_character(argument: &FormatArg) -> char {
 }
 
 fn truncate(value: &str, precision: Option<usize>) -> String {
-    precision.map_or_else(
-        || value.to_owned(),
-        |maximum| value.chars().take(maximum).collect(),
-    )
+    truncate_str(value, precision).to_owned()
+}
+
+fn truncate_str(value: &str, precision: Option<usize>) -> &str {
+    let Some(maximum) = precision.filter(|maximum| *maximum < value.len()) else {
+        return value;
+    };
+    value
+        .char_indices()
+        .nth(maximum)
+        .map_or(value, |(end, _)| &value[..end])
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -1142,19 +1169,19 @@ fn render_argument(verb: u8, spec: FormatSpec, argument: &FormatArg) -> String {
             } else {
                 ""
             };
-            let mut rendered = bytes
-                .iter()
-                .map(|byte| {
-                    if upper {
-                        format!("{}{byte:02X}", if spec.space { prefix } else { "" })
-                    } else {
-                        format!("{}{byte:02x}", if spec.space { prefix } else { "" })
+            let digits = if upper { b"0123456789ABCDEF" } else { b"0123456789abcdef" };
+            let separators = if spec.space { bytes.len().saturating_sub(1) } else { 0 };
+            let prefixes = if spec.space { bytes.len() } else { usize::from(!bytes.is_empty()) };
+            let mut rendered = String::with_capacity(2 * bytes.len() + separators + prefixes * prefix.len());
+            for (i, &byte) in bytes.iter().enumerate() {
+                if i == 0 || spec.space {
+                    if i != 0 {
+                        rendered.push(' ');
                     }
-                })
-                .collect::<Vec<_>>()
-                .join(if spec.space { " " } else { "" });
-            if spec.alternate && !spec.space && !bytes.is_empty() {
-                rendered.insert_str(0, prefix);
+                    rendered.push_str(prefix);
+                }
+                rendered.push(char::from(digits[usize::from(byte >> 4)]));
+                rendered.push(char::from(digits[usize::from(byte & 15)]));
             }
             pad_width(rendered, spec, false)
         }
@@ -1165,7 +1192,8 @@ fn render_argument(verb: u8, spec: FormatSpec, argument: &FormatArg) -> String {
     }
 }
 
-fn format_template(template: &str, redact_positions: &[usize], args: &[FormatArg]) -> String {
+/// Formats the Go error message template and applies its argument redaction.
+pub fn format_template(template: &str, redact_positions: &[usize], args: &[FormatArg]) -> String {
     let bytes = template.as_bytes();
     let mut output = String::with_capacity(template.len());
     let mut cursor = 0;
@@ -1256,7 +1284,16 @@ fn format_template(template: &str, redact_positions: &[usize], args: &[FormatArg
         } else {
             argument
         };
-        let rendered = render_argument(verb, spec, argument);
+        let owned;
+        let rendered = if argument.kind == FormatKind::String
+            && spec.width.is_none()
+            && (verb == b's' || (verb == b'v' && !spec.alternate))
+        {
+            truncate_str(&argument.display, spec.precision)
+        } else {
+            owned = render_argument(verb, spec, argument);
+            &owned
+        };
         match (sensitive, redaction_mode()) {
             (true, RedactionMode::Marker) => {
                 output.push('‹');
@@ -1268,7 +1305,7 @@ fn format_template(template: &str, redact_positions: &[usize], args: &[FormatArg
                 }
                 output.push('›');
             }
-            _ => output.push_str(&rendered),
+            _ => output.push_str(rendered),
         }
     }
 
@@ -1306,6 +1343,21 @@ mod tests {
         assert_eq!(go_quote_bytes("日本".as_bytes()), r#""日本""#);
         assert_eq!(go_quote_bytes(&[0xe6, 0x97]), r#""\xe6\x97""#);
         assert_eq!(go_quote_string("\u{200b}"), r#""\u200b""#);
+    }
+
+    #[test]
+    fn string_format_argument_preserves_rust_debug_and_go_quoting() {
+        let text = "é\n";
+        let argument = FormatArg::from(text);
+        assert_eq!(argument, FormatArg::from(text.to_owned()));
+        assert_eq!(
+            format!("{argument:?}"),
+            r#"FormatArg { display: "é\n", debug: "\"é\\n\"", type_name: "string", precision: None, kind: String, character: None }"#,
+        );
+        assert_eq!(
+            format_template("%.1s %q %#v", &[], &[argument.clone(), argument.clone(), argument]),
+            r#"é "é\n" "é\n""#,
+        );
     }
 
     #[test]

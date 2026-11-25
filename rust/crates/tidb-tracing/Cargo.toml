@@ -15,6 +15,7 @@ enableassert = ["tidb-intest/enableassert"]
 intest = ["tidb-intest/intest"]
 
 [dependencies]
+foldhash.workspace = true
 tidb-config-kerneltype = { path = "../tidb-config-kerneltype" }
 tidb-intest = { path = "../tidb-intest" }
 tidb-log = { path = "../tidb-log" }

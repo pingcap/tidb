@@ -90,33 +90,30 @@ impl TableCommon {
     /// column's changing type casts the value with strict flags. The rows
     /// reaching an index were already admitted by
     /// [`Self::check_data_for_modify_column`] under the same cast, so a
-    /// failure leaves the value as it was rather than inventing an error Go
-    /// cannot reach.
+    /// failure leaves the original value available to the caller.
     pub(crate) fn cast_index_values_to_changing_types(
         &self,
         index_id: i64,
         position: usize,
         offset: usize,
-        value: Datum,
-    ) -> Datum {
+        value: &Datum,
+    ) -> Option<Datum> {
         if !self
             .changing_index_parts
             .get(&index_id)
             .is_some_and(|parts| parts.contains(&position))
         {
-            return value;
+            return None;
         }
-        let Some(changing) = self.changing_field_types.get(&offset) else {
-            return value;
-        };
+        let changing = self.changing_field_types.get(&offset)?;
         // Go `CastColumnValueWithStrictMode`: `strictCtx`.
         match value.convert_to_in_context(
             changing,
             &tidb_datatype::ConversionContext::strict(),
             &SessionTimeZone::utc(),
         ) {
-            Ok(converted) if converted.error.is_none() => converted.value,
-            _ => value,
+            Ok(converted) if converted.error.is_none() => Some(converted.value),
+            _ => None,
         }
     }
 
@@ -273,7 +270,7 @@ impl TableCommon {
             .collect();
         let stored = match self.stored_record(store, handle)? {
             Some((_, entry)) => {
-                tidb_tablecodec::decode_table_row_to_map(&entry, &types, Some(zone))
+                tidb_tablecodec::decode_owned_table_row_to_map(entry, &types, Some(zone))
                     .map_err(|error| KvTableError::Decode(format!("{error:?}")))?
             }
             None => BTreeMap::new(),

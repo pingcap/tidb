@@ -16,6 +16,7 @@
 
 use std::collections::HashMap;
 
+use tidb_goruntime::go_crc64::update_ecma;
 use tidb_log::{Field, Value};
 
 /// Native representation of the Go `common.KvPair` dependency.
@@ -27,26 +28,6 @@ pub struct KvPair {
     pub val: Vec<u8>,
     /// Go `KvPair.RowID`.
     pub row_id: Vec<u8>,
-}
-
-/// Go `crc64.ECMA` (the ECMA-182 reflected polynomial).
-const CRC64_ECMA: u64 = 0xC96C_5795_D787_0F42;
-
-/// Go `crc64.Update(crc, ecmaTable, data)`. Passing `0` gives
-/// `crc64.Checksum(data, ecmaTable)`.
-fn crc64_ecma_update(crc: u64, data: &[u8]) -> u64 {
-    let mut crc = !crc;
-    for &byte in data {
-        crc ^= u64::from(byte);
-        for _ in 0..8 {
-            crc = if crc & 1 == 1 {
-                (crc >> 1) ^ CRC64_ECMA
-            } else {
-                crc >> 1
-            };
-        }
-    }
-    !crc
 }
 
 /// Go `KVChecksum`: the checksum of a collection of key-value pairs. The
@@ -69,7 +50,7 @@ impl KvChecksum {
     /// Go `NewKVChecksumWithKeyspace`.
     pub fn with_keyspace(keyspace: &[u8]) -> Self {
         Self {
-            base: crc64_ecma_update(0, keyspace),
+            base: update_ecma(0, keyspace),
             prefix_len: keyspace.len() as isize,
             ..Self::default()
         }
@@ -88,7 +69,7 @@ impl KvChecksum {
     /// Go `MakeKVChecksumWithKeyspace`.
     pub fn make_kv_checksum_with_keyspace(keyspace: &[u8], bytes: u64, kvs: u64, checksum: u64) -> Self {
         Self {
-            base: crc64_ecma_update(0, keyspace),
+            base: update_ecma(0, keyspace),
             prefix_len: keyspace.len() as isize,
             bytes,
             kvs,
@@ -98,8 +79,8 @@ impl KvChecksum {
 
     /// Go `KVChecksum.UpdateOne`.
     pub fn update_one(&mut self, kv: &KvPair) {
-        let mut sum = crc64_ecma_update(self.base, &kv.key);
-        sum = crc64_ecma_update(sum, &kv.val);
+        let mut sum = update_ecma(self.base, &kv.key);
+        sum = update_ecma(sum, &kv.val);
 
         let bytes = self
             .prefix_len
@@ -117,8 +98,8 @@ impl KvChecksum {
         let mut bytes = 0_isize;
 
         for pair in kvs {
-            let mut sum = crc64_ecma_update(self.base, &pair.key);
-            sum = crc64_ecma_update(sum, &pair.val);
+            let mut sum = update_ecma(self.base, &pair.key);
+            sum = update_ecma(sum, &pair.val);
             checksum ^= sum;
             kv_num = kv_num.wrapping_add(1);
             bytes = bytes.wrapping_add(self.prefix_len);

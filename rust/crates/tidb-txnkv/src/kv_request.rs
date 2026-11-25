@@ -153,7 +153,7 @@ impl std::fmt::Debug for SessionMemTracker {
 /// accidentally mutate the metadata while claiming transport ownership.
 #[derive(Clone)]
 pub struct TransportRequest {
-    metadata: KvRequestMetadata,
+    metadata: Arc<KvRequestMetadata>,
     rpc_interceptor: crate::option::RpcInterceptorOption,
     /// Go's statement ctx values (`util.RUDetailsCtxKey`,
     /// `util.ExecDetailsKey`) the copr worker's `bo.GetCtx()` carries to
@@ -213,7 +213,7 @@ impl TransportRequest {
     #[must_use]
     pub fn new(metadata: KvRequestMetadata, execution_cancellation: Arc<CancelHandle>) -> Self {
         Self {
-            metadata,
+            metadata: Arc::new(metadata),
             rpc_interceptor: Default::default(),
             kv_context: StatementKvContext::default(),
             variables: None,
@@ -334,7 +334,7 @@ impl TransportRequest {
 
     /// Returns the immutable request metadata snapshot.
     #[must_use]
-    pub const fn metadata(&self) -> &KvRequestMetadata {
+    pub fn metadata(&self) -> &KvRequestMetadata {
         &self.metadata
     }
 
@@ -375,13 +375,22 @@ impl TransportRequest {
         }
     }
 
+    /// Retains the immutable metadata for a worker that outlives this bound request.
+    ///
+    /// # Errors
+    /// Returns [`TransportRequestError::Unbound`] before the transport claims the request.
+    pub fn shared_metadata_for_send(&self) -> Result<Arc<KvRequestMetadata>, TransportRequestError> {
+        self.metadata_for_send()?;
+        Ok(Arc::clone(&self.metadata))
+    }
+
     /// Attaches an opaque transport owner without mutating this snapshot.
     pub fn bind(&self, binding: TransportBinding) -> Result<Self, TransportRequestError> {
         if self.binding.is_some() {
             return Err(TransportRequestError::AlreadyBound);
         }
         Ok(Self {
-            metadata: self.metadata.clone(),
+            metadata: Arc::clone(&self.metadata),
             rpc_interceptor: self.rpc_interceptor.clone(),
             kv_context: self.kv_context.clone(),
             variables: self.variables.clone(),
@@ -410,10 +419,10 @@ impl TransportRequest {
         if self.binding.is_some() {
             return Err(TransportRequestError::AlreadyBound);
         }
-        let mut metadata = self.metadata.clone();
+        let mut metadata = self.metadata.as_ref().clone();
         metadata.request_source = request_source;
         Ok(Self {
-            metadata,
+            metadata: Arc::new(metadata),
             rpc_interceptor: self.rpc_interceptor.clone(),
             kv_context: self.kv_context.clone(),
             variables: self.variables.clone(),

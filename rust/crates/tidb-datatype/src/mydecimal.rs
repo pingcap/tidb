@@ -40,7 +40,7 @@
 use smallvec::SmallVec;
 
 use crate::decimal::codec::{self, MyDecimalWords};
-use crate::decimal::DecimalCodecError;
+use crate::decimal::{DecimalCodecError, INLINE_DECIMAL_DIGITS};
 
 /// Go `maxWordBufLen`: a `MyDecimal` holds 9 words.
 pub const MAX_WORD_BUF_LEN: usize = 9;
@@ -147,17 +147,35 @@ pub enum DecimalError {
     BadNumber,
 }
 
-/// Go `pow10off81[exp+pow10off]`: the exactly-rounded `float64` nearest to
-/// `10^exp`.
-///
-/// Go stores the decimal powers as source literals rather than computing them,
-/// so the value is the correctly-rounded parse of `1e<exp>`; parsing the same
-/// spelling reproduces it exactly, while `powi` on a negative exponent does
-/// not.
+/// Go's pow10off81 literals preserve the nearest binary64 value of each
+/// decimal power, including the negative exponents used by ToFloat64.
+const DECIMAL_POWERS_OF_TEN: [f64; 163] = [
+    1e-81, 1e-80, 1e-79, 1e-78, 1e-77, 1e-76, 1e-75, 1e-74, 1e-73, 1e-72, 1e-71,
+    1e-70, 1e-69, 1e-68, 1e-67, 1e-66, 1e-65, 1e-64, 1e-63, 1e-62, 1e-61, 1e-60,
+    1e-59, 1e-58, 1e-57, 1e-56, 1e-55, 1e-54, 1e-53, 1e-52, 1e-51, 1e-50, 1e-49,
+    1e-48, 1e-47, 1e-46, 1e-45, 1e-44, 1e-43, 1e-42, 1e-41, 1e-40, 1e-39, 1e-38,
+    1e-37, 1e-36, 1e-35, 1e-34, 1e-33, 1e-32, 1e-31, 1e-30, 1e-29, 1e-28, 1e-27,
+    1e-26, 1e-25, 1e-24, 1e-23, 1e-22, 1e-21, 1e-20, 1e-19, 1e-18, 1e-17, 1e-16,
+    1e-15, 1e-14, 1e-13, 1e-12, 1e-11, 1e-10, 1e-9, 1e-8, 1e-7, 1e-6, 1e-5,
+    1e-4, 1e-3, 1e-2, 1e-1, 1e0, 1e1, 1e2, 1e3, 1e4, 1e5, 1e6,
+    1e7, 1e8, 1e9, 1e10, 1e11, 1e12, 1e13, 1e14, 1e15, 1e16, 1e17,
+    1e18, 1e19, 1e20, 1e21, 1e22, 1e23, 1e24, 1e25, 1e26, 1e27, 1e28,
+    1e29, 1e30, 1e31, 1e32, 1e33, 1e34, 1e35, 1e36, 1e37, 1e38, 1e39,
+    1e40, 1e41, 1e42, 1e43, 1e44, 1e45, 1e46, 1e47, 1e48, 1e49, 1e50,
+    1e51, 1e52, 1e53, 1e54, 1e55, 1e56, 1e57, 1e58, 1e59, 1e60, 1e61,
+    1e62, 1e63, 1e64, 1e65, 1e66, 1e67, 1e68, 1e69, 1e70, 1e71, 1e72,
+    1e73, 1e74, 1e75, 1e76, 1e77, 1e78, 1e79, 1e80, 1e81,
+];
+
 fn pow10(exp: i32) -> f64 {
-    format!("1e{exp}")
-        .parse::<f64>()
-        .expect("decimal power literal is parsable")
+    DECIMAL_POWERS_OF_TEN
+        .get((exp + 81) as usize)
+        .copied()
+        .unwrap_or_else(|| {
+            format!("1e{exp}")
+                .parse::<f64>()
+                .expect("decimal power literal is parsable")
+        })
 }
 
 /// Go `strconv.FormatFloat(f, 'g', -1, 64)`, which is also what `%v` prints
@@ -367,6 +385,24 @@ fn utf8_char_width(first: u8) -> Option<usize> {
 }
 
 impl MyDecimal {
+    #[inline]
+    pub(crate) fn from_bin_words(
+        words: crate::decimal::codec::MyDecimalWords,
+        result_frac: i32,
+    ) -> Self {
+        let mut value = Self {
+            digits_int: words.digits_int as i8,
+            digits_frac: words.digits_frac as i8,
+            result_frac: result_frac as i8,
+            negative: words.negative,
+            word_buf: words.word_buf,
+        };
+        if value.digits_int == 0 && value.digits_frac == 0 {
+            value.negative = false;
+        }
+        value
+    }
+
     /// Builds the Go `MyDecimal` layout from an already normalized decimal
     /// coefficient. This is the allocation-free counterpart of parsing the
     /// canonical text form: `coefficient` is an unsigned digit string whose
@@ -374,12 +410,11 @@ impl MyDecimal {
     /// the integer and fraction groups in Go's base-1e9 order.
     pub(crate) fn from_decimal_parts(
         negative: bool,
-        coefficient: &str,
+        bytes: &[u8],
         storage_scale: u32,
         result_frac: u32,
         minimum_integer_digit: bool,
     ) -> Result<MyDecimal, DecimalError> {
-        let bytes = coefficient.as_bytes();
         if bytes.is_empty() || bytes.iter().any(|byte| !byte.is_ascii_digit()) {
             return Err(DecimalError::BadNumber);
         }
@@ -651,7 +686,17 @@ impl MyDecimal {
     }
 
     /// Go `d.Round(d, frac, mode)`: the aliasing (in-place) call.
+    #[inline]
     pub fn round_in_place(&mut self, frac: i32, round_mode: RoundMode) -> Option<DecimalError> {
+        let digits_int = i32::from(self.digits_int);
+        if frac == i32::from(self.digits_frac)
+            && frac >= 0
+            && digits_int >= 0
+            && digits_to_words(digits_int) + digits_to_words(frac) <= MAX_WORD_BUF_LEN as i32
+        {
+            self.result_frac = self.digits_frac;
+            return None;
+        }
         let source = *self;
         self.round_from_aliased(&source, frac, round_mode, true)
     }
@@ -1310,8 +1355,8 @@ impl MyDecimal {
         let digits_int = i32::from(self.digits_int);
         let digits_frac = i32::from(self.digits_frac);
         if digits_int + digits_frac > 12 {
-            let text = String::from_utf8(self.to_string_bytes())
-                .expect("MyDecimal::to_string_bytes is ASCII");
+            let text = String::from_utf8(self.to_result_string_bytes())
+                .expect("MyDecimal::to_result_string_bytes is ASCII");
             return match text.parse::<f64>() {
                 Ok(value) if value.is_finite() => (value, None),
                 _ => (0.0, Some(DecimalError::Overflow)),
@@ -1434,6 +1479,12 @@ impl MyDecimal {
         self.digits_frac
     }
 
+    /// Integer digit count with leading zeros discarded.
+    #[must_use]
+    pub fn significant_integer_digits(&self) -> i32 {
+        self.remove_leading_zeros().1
+    }
+
     /// The value as `(signed coefficient, fraction scale)` when the whole
     /// number fits an `i128` -- the shape [`crate::decimal::Decimal`]
     /// accumulates in. The digits reuse [`Self::to_decimal_parts`]'s buffer;
@@ -1546,6 +1597,26 @@ impl MyDecimal {
         words.write_bin(prec, digits_frac, &mut key[..size])?;
         key[size] = digits_frac as u8;
         Ok(key)
+    }
+
+    /// Go `MyDecimal.WriteBin`, using the existing packed words directly.
+    /// Appends the fixed-size payload even on a soft truncation or overflow warning.
+    pub fn write_bin(
+        &self,
+        precision: i32,
+        scale: i32,
+        buffer: &mut Vec<u8>,
+    ) -> Result<Option<codec::DecimalCodecWarning>, DecimalCodecError> {
+        let size = codec::checked_bin_size(precision, scale)?;
+        let start = buffer.len();
+        buffer.resize(start + size, 0);
+        let words = MyDecimalWords {
+            negative: self.negative,
+            digits_int: i32::from(self.digits_int),
+            digits_frac: i32::from(self.digits_frac),
+            word_buf: self.word_buf,
+        };
+        words.write_bin(precision, scale, &mut buffer[start..])
     }
 
     /// Go `ToString`: the decimal's plain text form (no exponent), a
@@ -1671,27 +1742,25 @@ impl MyDecimal {
     /// decimal string. This is the hot `chunk.Row::datum_with_buffer` path:
     /// Go already has the base-1e9 words, so rebuilding a string only to parse
     /// it back loses the representation's main advantage.
-    pub(crate) fn to_decimal_parts(self) -> (bool, SmallVec<[u8; 24]>, u32, u32) {
+    pub(crate) fn to_decimal_parts(self) -> (bool, SmallVec<[u8; INLINE_DECIMAL_DIGITS]>, u32, u32) {
         let (word_start_idx, digits_int) = self.remove_leading_zeros();
         let integer_len = digits_int.max(1) as usize;
         let fraction_len = i32::from(self.digits_frac).max(0) as usize;
-        let mut coefficient = SmallVec::<[u8; 24]>::new();
+        let mut coefficient = SmallVec::<[u8; INLINE_DECIMAL_DIGITS]>::new();
         coefficient.resize(integer_len + fraction_len, b'0');
 
+        let mut formatted = itoa::Buffer::new();
+        let mut word_idx = word_start_idx + digits_to_words(digits_int) as usize;
         if digits_int > 0 {
             let mut pos = integer_len;
-            let mut word_idx = word_start_idx + digits_to_words(digits_int) as usize;
             let mut remaining = digits_int;
             while remaining > 0 {
                 word_idx -= 1;
-                let mut word = self.word_buf[word_idx];
-                let take = remaining.min(DIGITS_PER_WORD);
-                for _ in 0..take {
-                    let next = word / 10;
-                    pos -= 1;
-                    coefficient[pos] = b'0' + (word - next * 10) as u8;
-                    word = next;
-                }
+                let take = remaining.min(DIGITS_PER_WORD) as usize;
+                let digits = formatted.format(self.word_buf[word_idx]).as_bytes();
+                let len = digits.len().min(take);
+                coefficient[pos - len..pos].copy_from_slice(&digits[digits.len() - len..]);
+                pos -= take;
                 remaining -= DIGITS_PER_WORD;
             }
         }
@@ -1699,18 +1768,19 @@ impl MyDecimal {
         if fraction_len > 0 {
             let mut offset = integer_len;
             let mut word_idx = word_start_idx + digits_to_words(digits_int) as usize;
-            let mut remaining = fraction_len as i32;
+            let mut remaining = fraction_len;
             while remaining > 0 {
-                let mut word = self.word_buf[word_idx];
-                word_idx += 1;
-                let take = remaining.min(DIGITS_PER_WORD);
-                for _ in 0..take {
-                    let next = word / DIG_MASK;
-                    coefficient[offset] = b'0' + next as u8;
-                    offset += 1;
-                    word = (word - next * DIG_MASK) * 10;
+                let digits = formatted.format(self.word_buf[word_idx]).as_bytes();
+                let take = remaining.min(DIGITS_PER_WORD as usize);
+                // Fraction words occupy nine places, with leading zeroes
+                // and a possible right-padded final word.
+                let pad = DIGITS_PER_WORD as usize - digits.len();
+                if let Some(count) = take.checked_sub(pad) {
+                    coefficient[offset + pad..offset + take].copy_from_slice(&digits[..count]);
                 }
-                remaining -= DIGITS_PER_WORD;
+                word_idx += 1;
+                offset += take;
+                remaining -= take;
             }
         }
 
@@ -1754,6 +1824,41 @@ impl MyDecimal {
             magnitude
         };
         Some((signed, self.digits_frac as u32))
+    }
+
+    /// Adds a whole-number offset directly to the stored decimal words.
+    /// Returns `None` when the caller needs the full SQL overflow or
+    /// truncation path. The numeric result retains all fractional digits.
+    pub fn checked_add_integer(self, offset: i32) -> Option<Self> {
+        let integer_words = digits_to_words(i32::from(self.digits_int)) as usize;
+        let fraction_words = digits_to_words(i32::from(self.digits_frac.max(self.result_frac))) as usize;
+        if integer_words + fraction_words >= MAX_WORD_BUF_LEN || offset.unsigned_abs() >= WORD_BASE as u32 {
+            return None;
+        }
+
+        let mut value = self;
+        let mut carry = if self.negative { -i64::from(offset) } else { i64::from(offset) };
+        for word in value.word_buf[..integer_words].iter_mut().rev() {
+            let sum = i64::from(*word) + carry;
+            *word = sum.rem_euclid(WORD_BASE as i64) as i32;
+            carry = sum.div_euclid(WORD_BASE as i64);
+            if carry == 0 {
+                break;
+            }
+        }
+        if carry != 0 || integer_words == 0 || (integer_words > 1 && value.word_buf[0] == 0) {
+            let (coefficient, scale) = self.to_i128_scaled()?;
+            let delta = i128::from(offset).checked_mul(10i128.checked_pow(scale)?)?;
+            return Self::from_scaled_i128(coefficient.checked_add(delta)?, scale, self.result_frac as u32);
+        }
+        let leading = value.word_buf[0] as u32;
+        value.digits_int = ((integer_words - 1) * DIGITS_PER_WORD as usize
+            + leading.checked_ilog10().unwrap_or(0) as usize + 1) as i8;
+        let stored_fraction_words = digits_to_words(i32::from(value.digits_frac)) as usize;
+        if value.negative && leading == 0 && value.word_buf[..integer_words + stored_fraction_words].iter().all(|&word| word == 0) {
+            value.negative = false;
+        }
+        Some(value)
     }
 
     /// Reads the signed base-10 coefficient and scale directly from the
@@ -1829,43 +1934,117 @@ impl MyDecimal {
         bytes
     }
 
+    /// Go `IsZero` on a packed cell. All nine words participate,
+    /// including words outside the declared digit counts.
+    #[inline]
+    pub fn packed_is_zero(cell: &[u8; MYDECIMAL_STRUCT_SIZE]) -> bool {
+        cell[4..] == [0; MYDECIMAL_STRUCT_SIZE - 4]
+    }
+
+    /// Go `DecimalNeg` for a packed cell, preserving its digit counts,
+    /// result scale, stored words and the sign of any zero.
+    #[inline]
+    pub fn negate_packed(cell: &mut [u8; MYDECIMAL_STRUCT_SIZE]) {
+        if !Self::packed_is_zero(cell) {
+            cell[3] ^= 1;
+        }
+    }
+
     /// Rebuilds a decimal from a chunk cell's raw 40 bytes.
     ///
     /// # Safety contract (checked)
     /// The `negative` byte must be 0/1 (any other value would be undefined for
     /// `bool`), so this validates and errors rather than transmuting blindly.
+    #[inline]
     pub fn from_raw_bytes(bytes: [u8; MYDECIMAL_STRUCT_SIZE]) -> Result<MyDecimal, &'static str> {
-        if bytes[3] > 1 {
-            return Err("invalid MyDecimal negative flag byte");
-        }
-        let digits_int = bytes[0] as i8;
-        let digits_frac = bytes[1] as i8;
-        let result_frac = bytes[2] as i8;
-        if digits_int < 0 || digits_frac < 0 || result_frac < 0 {
-            return Err("invalid negative MyDecimal digit count");
-        }
-        let used_words =
-            digits_to_words(i32::from(digits_int)) + digits_to_words(i32::from(digits_frac));
-        if used_words > MAX_WORD_BUF_LEN as i32 {
-            return Err("MyDecimal digit counts exceed the word buffer");
-        }
+        let used_words = Self::raw_word_count(&bytes)?;
         let mut d = MyDecimal {
-            digits_int,
-            digits_frac,
-            result_frac,
+            digits_int: bytes[0] as i8,
+            digits_frac: bytes[1] as i8,
+            result_frac: bytes[2] as i8,
             negative: bytes[3] == 1,
             word_buf: [0; MAX_WORD_BUF_LEN],
         };
         for (w, chunk) in d.word_buf.iter_mut().zip(bytes[4..].as_chunks::<4>().0) {
             *w = i32::from_ne_bytes(*chunk);
         }
-        if d.word_buf[..used_words as usize]
+        if d.word_buf[..used_words]
             .iter()
             .any(|word| !(0..WORD_BASE as i32).contains(word))
         {
             return Err("MyDecimal word is outside base-1e9 storage");
         }
         Ok(d)
+    }
+
+    #[inline]
+    fn raw_word_count(bytes: &[u8; MYDECIMAL_STRUCT_SIZE]) -> Result<usize, &'static str> {
+        if bytes[3] > 1 {
+            return Err("invalid MyDecimal negative flag byte");
+        }
+        let [digits_int, digits_frac, result_frac] = [bytes[0], bytes[1], bytes[2]];
+        if (digits_int | digits_frac | result_frac) & 0x80 != 0 {
+            return Err("invalid negative MyDecimal digit count");
+        }
+        let words = digits_to_words(i32::from(digits_int)) + digits_to_words(i32::from(digits_frac));
+        if words > MAX_WORD_BUF_LEN as i32 {
+            return Err("MyDecimal digit counts exceed the word buffer");
+        }
+        Ok(words as usize)
+    }
+
+    #[inline]
+    pub(crate) fn validate_packed(bytes: &[u8; MYDECIMAL_STRUCT_SIZE]) -> Result<(), &'static str> {
+        let words = Self::raw_word_count(bytes)?;
+        let words = &bytes[4..].as_chunks::<4>().0[..words];
+        if words.iter().fold(false, |invalid, word| {
+            invalid | (u32::from_ne_bytes(*word) >= WORD_BASE as u32)
+        }) {
+            return Err("MyDecimal word is outside base-1e9 storage");
+        }
+        Ok(())
+    }
+
+    #[inline]
+    pub(crate) fn packed_first_word(bytes: &[u8; MYDECIMAL_STRUCT_SIZE]) -> i32 {
+        i32::from_ne_bytes(bytes[4..8].try_into().expect("first decimal word"))
+    }
+
+    /// Compares two checked decimal chunk cells in Go order.
+    #[inline]
+    pub fn compare_packed(
+        left: &[u8; MYDECIMAL_STRUCT_SIZE],
+        right: &[u8; MYDECIMAL_STRUCT_SIZE],
+    ) -> Result<std::cmp::Ordering, &'static str> {
+        if left[0] != 0 && left[0] == right[0] && left[3] == right[3] {
+            let order = Self::packed_first_word(left).cmp(&Self::packed_first_word(right));
+            if order != std::cmp::Ordering::Equal {
+                Self::validate_packed(left)?;
+                Self::validate_packed(right)?;
+                return Ok(if left[3] == 1 { order.reverse() } else { order });
+            }
+        }
+        Ok(Self::from_raw_bytes(*left)?.compare(&Self::from_raw_bytes(*right)?))
+    }
+
+    /// Compares a prepared target with a checked decimal chunk cell.
+    #[inline]
+    pub fn compare_with_packed(
+        &self,
+        cell: &[u8; MYDECIMAL_STRUCT_SIZE],
+    ) -> Result<std::cmp::Ordering, &'static str> {
+        if self.digits_int > 0
+            && self.digits_int as u8 == cell[0]
+            && u8::from(self.negative) == cell[3]
+            && self.word_buf[0] >= 0
+        {
+            let order = self.word_buf[0].cmp(&Self::packed_first_word(cell));
+            if order != std::cmp::Ordering::Equal {
+                Self::validate_packed(cell)?;
+                return Ok(if self.negative { order.reverse() } else { order });
+            }
+        }
+        Ok(self.compare(&Self::from_raw_bytes(*cell)?))
     }
 
     /// Rebuilds the exact field values produced by Go's unchecked
@@ -1888,7 +2067,19 @@ impl MyDecimal {
 }
 
 /// Parses one non-empty decimal group with at most nine digits.
-fn parse_decimal_group(group: &[u8]) -> i32 {
+pub(crate) fn parse_decimal_group(group: &[u8]) -> i32 {
+    if let [first, tail @ ..] = group {
+        if let Ok(tail) = <[u8; 8]>::try_from(tail) {
+            // The low nibble of each ASCII digit gives its value. Combine
+            // adjacent digits, pairs, then four-digit groups in parallel.
+            let digits = u64::from_le_bytes(tail) & 0x0f0f_0f0f_0f0f_0f0f;
+            let pairs = (digits * 10 + (digits >> 8)) & 0x00ff_00ff_00ff_00ff;
+            let groups = (pairs * 100 + (pairs >> 16)) & 0x0000_ffff_0000_ffff;
+            return i32::from(first - b'0') * 100_000_000
+                + (groups as i32) * 10_000
+                + (groups >> 32) as i32;
+        }
+    }
     group
         .iter()
         .fold(0i32, |value, byte| value * 10 + i32::from(byte - b'0'))
@@ -1896,6 +2087,35 @@ fn parse_decimal_group(group: &[u8]) -> i32 {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn whole_number_offset_preserves_fraction_sign_and_carry() {
+        use crate::Decimal;
+
+        for text in [
+            "0.0",
+            "-0.125",
+            "0.125000",
+            "-6.5",
+            "999999999.5",
+            "1000000000.005",
+            "500000000000000000000000000000000000000000.0001",
+            "-500000000000000000000000000000000000000000.0001",
+        ] {
+            let (value, error) = super::MyDecimal::from_string(text.as_bytes());
+            assert!(error.is_none());
+            for offset in [-10, 0, 10] {
+                let (expected, warning) = Decimal::from_my_decimal(&value)
+                    .add_mysql(&Decimal::from_int(i64::from(offset)));
+                assert!(warning.is_none());
+                let actual = value.checked_add_integer(offset).expect("exact packed result");
+                assert_eq!(Decimal::from_my_decimal(&actual), expected, "{text} + {offset}");
+            }
+        }
+        let (full, error) = super::MyDecimal::from_string(&[b'9'; 81]);
+        assert!(error.is_none());
+        assert!(full.checked_add_integer(1).is_none());
+    }
+
     #[test]
     fn from_scaled_i128_matches_from_decimal_parts() {
         let mut seed = 0x9e37_79b9_7f4a_7c15_u64;
@@ -1958,7 +2178,7 @@ mod tests {
             );
             let expected = super::MyDecimal::from_decimal_parts(
                 value < 0,
-                &coefficient,
+                coefficient.as_bytes(),
                 storage_scale,
                 result_frac,
                 true,
@@ -2420,6 +2640,21 @@ mod tests {
     }
 
     #[test]
+    fn to_float64_uses_go_result_fraction_for_long_decimals() {
+        for (text, bits) in [
+            (b"123456789.1235".as_slice(), 0x419d_6f34_547a_e148),
+            (b"-123456789.1250".as_slice(), 0xc19d_6f34_5485_1eb8),
+        ] {
+            let (mut decimal, error) = MyDecimal::from_string(text);
+            assert_eq!(error, None);
+            decimal.set_result_frac(2);
+            let (float, error) = decimal.to_float64();
+            assert_eq!(error, None);
+            assert_eq!(float.to_bits(), bits);
+        }
+    }
+
+    #[test]
     fn from_uint_to_string() {
         let d = MyDecimal::from_uint(u64::MAX);
         assert_eq!(
@@ -2453,6 +2688,25 @@ mod tests {
         let mut bytes = MyDecimal::from_int(1).to_raw_bytes();
         bytes[4..8].copy_from_slice(&1_000_000_000_i32.to_ne_bytes());
         assert!(MyDecimal::from_raw_bytes(bytes).is_err());
+    }
+
+    #[test]
+    fn packed_comparison_checks_all_used_words_before_returning() {
+        let left = MyDecimal::from_string(b"-2.25").0;
+        let right = MyDecimal::from_string(b"-1.125").0;
+        let mut cell = right.to_raw_bytes();
+        assert_eq!(
+            MyDecimal::compare_packed(&left.to_raw_bytes(), &cell),
+            Ok(std::cmp::Ordering::Less),
+        );
+        assert_eq!(left.compare_with_packed(&cell), Ok(std::cmp::Ordering::Less));
+
+        cell[8..12].copy_from_slice(&1_000_000_000_u32.to_ne_bytes());
+        let error = MyDecimal::from_raw_bytes(cell).unwrap_err();
+        assert_eq!(MyDecimal::compare_packed(&left.to_raw_bytes(), &cell), Err(error));
+        assert_eq!(left.compare_with_packed(&cell), Err(error));
+        let target = crate::Decimal::from_literal("-2.25");
+        assert_eq!(target.compare_chunk_decimal(&cell), Err(error));
     }
 
     #[test]

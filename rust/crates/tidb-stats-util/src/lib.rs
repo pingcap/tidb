@@ -284,13 +284,11 @@ impl JsonFmSketch {
     }
 }
 
-fn varint_len(mut value: u64) -> usize {
-    let mut len = 1;
-    while value >= 0x80 {
-        value >>= 7;
-        len += 1;
-    }
-    len
+fn varint_len(value: u64) -> usize {
+    let highest_bit = u64::BITS - 1 - (value | 1).leading_zeros();
+    // As in Prost's encoded_len_varint, this gives 1 + highest_bit / 7
+    // for all 64 possible positions of the highest set bit.
+    ((highest_bit * 9 + 73) / 64) as usize
 }
 
 fn tag_len(field: u64, wire: u64) -> usize {
@@ -304,7 +302,8 @@ fn scalar_len(field: u64, value: u64, present: bool) -> usize {
 }
 
 fn message_len(field: u64, len: usize) -> usize {
-    tag_len(field, 2) + varint_len(len as u64) + len
+    let length_width = if len < 128 { 1 } else { varint_len(len as u64) };
+    tag_len(field, 2) + length_width + len
 }
 
 fn optional_bytes_len(field: u64, value: Option<&str>) -> usize {
@@ -314,13 +313,12 @@ fn optional_bytes_len(field: u64, value: Option<&str>) -> usize {
 }
 
 fn base64_decoded_len(value: &str) -> usize {
-    let padding = value
-        .as_bytes()
-        .iter()
-        .rev()
-        .take_while(|byte| **byte == b'=')
-        .count();
-    (value.len().saturating_mul(3) / 4).saturating_sub(padding.min(2))
+    let padding = match value.as_bytes() {
+        [.., b'=', b'='] => 2,
+        [.., b'='] => 1,
+        _ => 0,
+    };
+    (value.len().saturating_mul(3) / 4).saturating_sub(padding)
 }
 
 fn option_vec_is_none_or_empty<T>(value: &Option<Vec<T>>) -> bool {
@@ -343,5 +341,28 @@ where
         serializer.serialize_i64(*value as i64)
     } else {
         serializer.serialize_f64(*value)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{base64_decoded_len, varint_len};
+
+    #[test]
+    fn protobuf_varint_lengths_cover_every_width() {
+        assert_eq!(varint_len(0), 1);
+        for width in 1..=9 {
+            let boundary = 1_u64 << (width * 7);
+            assert_eq!(varint_len(boundary - 1), width);
+            assert_eq!(varint_len(boundary), width + 1);
+        }
+        assert_eq!(varint_len(u64::MAX), 10);
+    }
+
+    #[test]
+    fn base64_lengths_count_the_final_two_padding_bytes() {
+        for (text, len) in [("", 0), ("YQ==", 1), ("YWI=", 2), ("YWJj", 3), ("AAAA====", 4)] {
+            assert_eq!(base64_decoded_len(text), len);
+        }
     }
 }

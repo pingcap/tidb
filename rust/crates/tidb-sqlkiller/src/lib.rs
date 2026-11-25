@@ -78,10 +78,8 @@ impl KillSignal {
 struct KillEventState {
     triggered: bool,
     desc: String,
-    /// The one kill-event channel every statement of this connection shares
-    /// until it is triggered or reset, like Go's `killer.killEvent.ch`: a
-    /// caller receives a clone of it, never a channel of its own.
-    channel: Option<(Sender<()>, Receiver<()>)>,
+    /// The connection's current kill-event channel, shared until reset.
+    channel: Option<(Option<Sender<()>>, Receiver<()>)>,
 }
 
 #[derive(Default)]
@@ -116,6 +114,7 @@ pub struct SqlKiller {
     pub in_write_result_set: AtomicBool,
     kill_event: Arc<KillEventShared>,
     finish: Mutex<Option<FinishFn>>,
+    has_alive_probe: AtomicBool,
     is_connection_alive: Mutex<Option<AliveProbe>>,
     next_alive_registration: AtomicU64,
     last_check_time: Mutex<Option<Instant>>,
@@ -147,23 +146,15 @@ impl SqlKiller {
         });
     }
 
-    /// Returns a receiver released when the current statement is killed or
-    /// reset (Go `GetKillEventChan`).
+    /// Returns the current statement's kill-event receiver (Go
+    /// `GetKillEventChan`). A kill or reset disconnects the receiver.
     pub fn get_kill_event_chan(&self) -> Receiver<()> {
         let mut state = lock_unpoison(&self.kill_event.state);
-        if state.triggered {
-            // Go returns the already-closed channel: a receive completes at
-            // once. The token is delivered and the sender dropped, so every
-            // receive on this receiver is ready.
-            let (tx, rx) = bounded(1);
-            let _ = tx.send(());
-            return rx;
-        }
         if let Some((_, rx)) = &state.channel {
             return rx.clone();
         }
-        let (tx, rx) = bounded(1);
-        state.channel = Some((tx, rx.clone()));
+        let (tx, rx) = bounded(0);
+        state.channel = Some(((!state.triggered).then_some(tx), rx.clone()));
         rx
     }
 
@@ -172,19 +163,17 @@ impl SqlKiller {
             return;
         }
         state.triggered = true;
-        // Go `close(ch)`: every receiver clone becomes ready. The one token
-        // serves the first receive and dropping the sender serves the rest.
-        if let Some((tx, _)) = state.channel.take() {
-            let _ = tx.try_send(());
+        // Go `close(ch)`: keep the receiver so late subscribers observe
+        // the same, now-disconnected channel.
+        if let Some((tx, _)) = &mut state.channel {
+            tx.take();
         }
     }
 
     fn reset_kill_event_locked(state: &mut KillEventState) {
         state.triggered = false;
         state.desc.clear();
-        // Dropping the sender closes an untriggered Go channel. Receivers
-        // created before Reset therefore remain permanently ready, just as a
-        // closed Go channel does, instead of receiving a one-shot token.
+        // Dropping the sender leaves older receivers permanently ready.
         state.channel = None;
     }
 
@@ -221,7 +210,7 @@ impl SqlKiller {
 
     fn log_kill_signal(&self, reason: KillSignal, desc: &str) {
         let err = self
-            .kill_error(reason.raw(), desc)
+            .kill_error(reason.raw(), desc, false)
             .expect("a newly installed kill signal must map to an error");
         tracing::warn!(
             connection_id = self.conn_id.load(SeqCst),
@@ -252,33 +241,32 @@ impl SqlKiller {
 
     /// The error for a kill status (Go `getKillError`); `None` when no kill
     /// is pending.
-    fn kill_error(&self, status: u32, desc: &str) -> Option<TerrorError> {
-        let conn_id = self.conn_id.load(SeqCst);
+    fn kill_error(&self, status: u32, desc: &str, with_stack: bool) -> Option<TerrorError> {
+        let conn_id = || FormatArg::from(self.conn_id.load(SeqCst));
         let by_args = |proto: &TerrorError, args: &[FormatArg]| {
-            let template = proto.message().to_string();
-            let formatted = proto.fast_gen(&template, args);
-            proto.gen_with_stack(formatted.message().to_string())
+            if with_stack {
+                proto.gen_with_stack_by_args(args)
+            } else {
+                proto.fast_gen_by_args(args)
+            }
         };
         Some(match KillSignal(status) {
             KillSignal::UnspecifiedKillSignal => return None,
             KillSignal::QueryInterrupted => by_args(&exeerrors::ERR_QUERY_INTERRUPTED, &[]),
             KillSignal::MaxExecTimeExceeded => by_args(&exeerrors::ERR_MAX_EXEC_TIME_EXCEEDED, &[]),
-            KillSignal::QueryMemoryExceeded => by_args(
-                &exeerrors::ERR_MEMORY_EXCEED_FOR_QUERY,
-                &[FormatArg::from(conn_id)],
-            ),
-            KillSignal::ServerMemoryExceeded => by_args(
-                &exeerrors::ERR_MEMORY_EXCEED_FOR_INSTANCE,
-                &[FormatArg::from(conn_id)],
-            ),
+            KillSignal::QueryMemoryExceeded => {
+                by_args(&exeerrors::ERR_MEMORY_EXCEED_FOR_QUERY, &[conn_id()])
+            }
+            KillSignal::ServerMemoryExceeded => {
+                by_args(&exeerrors::ERR_MEMORY_EXCEED_FOR_INSTANCE, &[conn_id()])
+            }
             KillSignal::RunawayQueryExceeded => {
-                let proto = &exeerrors::ERR_RESOURCE_GROUP_QUERY_RUNAWAY_INTERRUPTED;
-                let template = proto.message().to_string();
-                proto.fast_gen(&template, &[FormatArg::from("runaway exceed tidb side")])
+                exeerrors::ERR_RESOURCE_GROUP_QUERY_RUNAWAY_INTERRUPTED
+                    .fast_gen_by_args(&[FormatArg::from("runaway exceed tidb side")])
             }
             KillSignal::KilledByMemArbitrator => by_args(
                 &exeerrors::ERR_QUERY_EXEC_STOPPED,
-                &[FormatArg::from(desc), FormatArg::from(conn_id)],
+                &[FormatArg::from(desc), conn_id()],
             ),
             _ => return None,
         })
@@ -312,10 +300,12 @@ impl SqlKiller {
             .next_alive_registration
             .fetch_add(1, SeqCst)
             .wrapping_add(1);
-        *lock_unpoison(&self.is_connection_alive) = Some(AliveProbe {
+        let mut probe = lock_unpoison(&self.is_connection_alive);
+        *probe = Some(AliveProbe {
             registration,
             callback: Arc::from(f),
         });
+        self.has_alive_probe.store(true, SeqCst);
         ConnectionAliveRegistration(registration)
     }
 
@@ -326,7 +316,18 @@ impl SqlKiller {
             return false;
         }
         *probe = None;
+        self.has_alive_probe.store(false, SeqCst);
         true
+    }
+
+    fn alive_probe(&self) -> Option<AliveFn> {
+        // Install and clear the flag under the callback slot's lock.
+        if !self.has_alive_probe.load(SeqCst) {
+            return None;
+        }
+        lock_unpoison(&self.is_connection_alive)
+            .as_ref()
+            .map(|probe| Arc::clone(&probe.callback))
     }
 
     /// Handles the kill signal, returning the pending kill error (Go
@@ -336,10 +337,7 @@ impl SqlKiller {
         #[cfg(feature = "failpoints")]
         self.inject_random_panic();
 
-        let alive = lock_unpoison(&self.is_connection_alive)
-            .as_ref()
-            .map(|probe| Arc::clone(&probe.callback));
-        if let Some(fn_alive) = alive {
+        if let Some(fn_alive) = self.alive_probe() {
             let check_dur = if intest::IN_TEST {
                 Duration::from_millis(1)
             } else {
@@ -374,7 +372,7 @@ impl SqlKiller {
         } else {
             (status, String::new())
         };
-        let err = self.kill_error(status, &desc);
+        let err = self.kill_error(status, &desc, true);
         if status == KillSignal::ServerMemoryExceeded.raw() {
             tracing::warn!(
                 conn = self.conn_id.load(SeqCst),
@@ -386,10 +384,7 @@ impl SqlKiller {
 
     /// Checks connection liveness immediately (Go `CheckConnectionAlive`).
     pub fn check_connection_alive(&self) {
-        let alive = lock_unpoison(&self.is_connection_alive)
-            .as_ref()
-            .map(|probe| Arc::clone(&probe.callback));
-        if let Some(fn_alive) = alive {
+        if let Some(fn_alive) = self.alive_probe() {
             if !fn_alive() {
                 self.send_kill_signal(KillSignal::QueryInterrupted);
             }
@@ -522,7 +517,7 @@ mod kill_event_channel_tests {
     use super::*;
 
     #[test]
-    fn statements_share_one_kill_event_channel_until_it_is_triggered() {
+    fn statements_share_one_kill_event_channel_until_reset() {
         let killer = SqlKiller::default();
         // Go's `GetKillEventChan` hands every caller the same channel; the
         // second statement of a connection allocates nothing new.
@@ -534,18 +529,24 @@ mod kill_event_channel_tests {
             Err(crossbeam_channel::TryRecvError::Empty)
         ));
 
-        // `close(ch)`: every receiver becomes ready, whichever drains first.
+        // `close(ch)`: every receiver becomes permanently ready.
         killer.send_kill_signal_with_reason(KillSignal::QueryInterrupted, "killed");
-        assert!(first
-            .recv_timeout(std::time::Duration::from_secs(1))
-            .is_ok());
+        assert_eq!(
+            first.recv_timeout(std::time::Duration::from_secs(1)),
+            Err(crossbeam_channel::RecvTimeoutError::Disconnected)
+        );
         assert!(matches!(
             second.try_recv(),
             Err(crossbeam_channel::TryRecvError::Disconnected)
         ));
         // A receiver taken after the trigger is ready at once, and reset
         // starts a fresh, untriggered channel for the next statement.
-        assert!(matches!(killer.get_kill_event_chan().try_recv(), Ok(())));
+        let late = killer.get_kill_event_chan();
+        assert!(late.same_channel(&first));
+        assert_eq!(
+            late.try_recv(),
+            Err(crossbeam_channel::TryRecvError::Disconnected)
+        );
         killer.reset();
         let fresh = killer.get_kill_event_chan();
         assert!(!fresh.same_channel(&first));
@@ -553,6 +554,54 @@ mod kill_event_channel_tests {
             fresh.try_recv(),
             Err(crossbeam_channel::TryRecvError::Empty)
         ));
+    }
+
+    #[test]
+    fn late_subscribers_share_a_closed_channel_even_without_an_early_subscriber() {
+        let killer = SqlKiller::default();
+        killer.send_kill_signal(KillSignal::QueryInterrupted);
+        let first = killer.get_kill_event_chan();
+        let second = killer.get_kill_event_chan();
+        assert!(first.same_channel(&second));
+        assert_eq!(
+            first.try_recv(),
+            Err(crossbeam_channel::TryRecvError::Disconnected)
+        );
+        assert_eq!(
+            second.try_recv(),
+            Err(crossbeam_channel::TryRecvError::Disconnected)
+        );
+    }
+
+    #[test]
+    fn stale_liveness_registration_cannot_clear_the_active_probe() {
+        let killer = SqlKiller::default();
+        let replaced = killer.set_is_connection_alive(Box::new(|| true));
+        let active = killer.set_is_connection_alive(Box::new(|| false));
+        assert!(!killer.clear_is_connection_alive(replaced));
+        killer.check_connection_alive();
+        assert_eq!(killer.get_kill_signal(), KillSignal::QueryInterrupted);
+
+        assert!(killer.clear_is_connection_alive(active));
+        killer.reset();
+        killer.check_connection_alive();
+        assert_eq!(killer.get_kill_signal(), KillSignal::UnspecifiedKillSignal);
+    }
+
+    #[test]
+    fn logging_uses_the_same_error_text_without_a_stack() {
+        let killer = SqlKiller::default();
+        killer.conn_id.store(123, SeqCst);
+        for reason in 1..=6 {
+            let logged = killer.kill_error(reason, "quota", false).unwrap();
+            let returned = killer.kill_error(reason, "quota", true).unwrap();
+            assert_eq!(logged.to_string(), returned.to_string());
+            assert!(logged.stack().is_none());
+            assert_eq!(
+                returned.stack().is_some(),
+                KillSignal(reason) != KillSignal::RunawayQueryExceeded
+            );
+        }
     }
 }
 
@@ -615,11 +664,15 @@ mod tests {
         assert_eq!(killer.get_kill_signal(), KillSignal::KilledByMemArbitrator);
         let error = killer.handle_signal().unwrap();
         assert!(error.to_string().contains(reason));
+        assert!(error.stack().is_some());
         let state = lock_unpoison(&killer.kill_event.state);
         assert!(state.triggered);
         assert_eq!(state.desc, reason);
         drop(state);
         let receiver = killer.get_kill_event_chan();
-        assert!(matches!(receiver.try_recv(), Ok(())));
+        assert_eq!(
+            receiver.try_recv(),
+            Err(crossbeam_channel::TryRecvError::Disconnected)
+        );
     }
 }

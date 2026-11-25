@@ -960,8 +960,8 @@ use tidb_charset::Collation;
     fn range(low: Vec<Datum>, high: Vec<Datum>) -> Range {
         Range {
             collators: vec![Collation::Binary; low.len()],
-            low_val: low,
-            high_val: high,
+            low_val: low.into(),
+            high_val: high.into(),
             low_exclude: false,
             high_exclude: false,
         }
@@ -986,7 +986,7 @@ use tidb_charset::Collation;
                     upper_bound: Datum::Bytes(
                         tidb_codec::encode_key(&[Datum::Int(first_high), Datum::Int(100)]).unwrap(),
                     ),
-                }],
+                }].into(),
                 ..Histogram::default()
             },
             top_n: None,
@@ -1133,7 +1133,7 @@ use tidb_charset::Collation;
                     ndv: 50,
                     lower_bound: Datum::Bytes(tidb_codec::encode_key(&[Datum::Int(1)]).unwrap()),
                     upper_bound: Datum::Bytes(tidb_codec::encode_key(&[Datum::Int(50)]).unwrap()),
-                }],
+                }].into(),
                 ..Default::default()
             },
             top_n: None,

@@ -238,3 +238,24 @@ fn duplicate_match() {
         assert!(error.to_string().contains("matches more than one rule"));
     }
 }
+
+#[test]
+fn added_rules_refresh_cached_selection_for_routing_and_extraction() {
+    let mut rules = vec![rule("warehouse", "", "archive", "")];
+    for index in 0..8 {
+        rules.push(rule(&format!("other{index}"), "", "backup", ""));
+    }
+    let mut router = RouteTable::new(false, &mut rules).unwrap();
+    assert_eq!(router.route("WAREHOUSE", "Orders").unwrap(), ("archive".into(), "Orders".into()));
+    assert_eq!(router.fetch_extend_column("WAREHOUSE", "Orders", ""), (vec![], vec![]));
+
+    let mut specific = rule("warehouse", "orders", "archive", "new_orders");
+    specific.table_extractor = Some(table_extractor("original", "(.*)"));
+    router.add_rule(&mut specific).unwrap();
+    assert_eq!(router.route("WAREHOUSE", "Orders").unwrap(), ("archive".into(), "new_orders".into()));
+    assert_eq!(router.fetch_extend_column("WAREHOUSE", "Orders", ""), (vec!["original".into()], vec!["Orders".into()]));
+
+    router.add_rule(&mut rule("warehouse", "ord*", "conflict", "")).unwrap();
+    assert!(router.route("WAREHOUSE", "Orders").is_err());
+    assert_eq!(router.fetch_extend_column("WAREHOUSE", "Orders", ""), (vec!["original".into()], vec!["Orders".into()]));
+}

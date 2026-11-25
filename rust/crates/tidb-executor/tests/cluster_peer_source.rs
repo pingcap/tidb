@@ -34,7 +34,7 @@ impl Tikv for Service {
         request: tonic::Request<coprocessor::Request>,
     ) -> Result<tonic::Response<coprocessor::Response>, tonic::Status> {
         let request = request.into_inner();
-        let dag = tipb::DagRequest::decode(request.data.as_slice()).unwrap();
+        let dag = tipb::DagRequest::decode(request.data.as_ref()).unwrap();
         self.0.lock().unwrap().push((request, dag.clone()));
         if dag.executors[0].kill.is_some() {
             return Ok(tonic::Response::new(coprocessor::Response::default()));
@@ -149,9 +149,11 @@ fn cluster_peer_batch_kill_and_memory_scan_share_protocol_and_fleet() {
         ("INSTANCE".into(), FieldType::new(FieldTypeCode::Varchar)),
         ("ID".into(), FieldType::new(FieldTypeCode::LongLong)),
     ];
+    let mut second_peer = server.clone();
+    second_peer.static_info.json_server_id = 18;
     let result = client
         .scan(
-            &[server.clone()],
+            &[server.clone(), second_peer],
             123,
             &columns,
             Some(("alice", "localhost")),
@@ -160,11 +162,14 @@ fn cluster_peer_batch_kill_and_memory_scan_share_protocol_and_fleet() {
             2,
         )
         .unwrap();
-    assert_eq!(result.rows.len(), 1);
-    assert_eq!(result.rows[0][0], Datum::Bytes(b"peer:10080".to_vec()));
-    assert_eq!(result.warnings, vec![(1234, "peer warning".into())]);
+    assert_eq!(result.rows.len(), 2);
+    for row in &result.rows {
+        assert_eq!(row[0], Datum::Bytes(b"peer:10080".to_vec()));
+    }
+    assert_eq!(result.warnings, vec![(1234, "peer warning".into()); 2]);
     let requests = captured.lock().unwrap();
-    assert_eq!(requests.len(), 2);
+    assert_eq!(requests.len(), 3);
+    assert_eq!(requests[1].0.data, requests[2].0.data);
     for (request, dag) in requests.iter() {
         assert_eq!(request.tp, 103);
         assert_eq!(request.start_ts, u64::MAX);

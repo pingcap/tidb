@@ -15,6 +15,7 @@ enableassert = ["tidb-intest/enableassert", "tidb-logutil/enableassert", "tidb-t
 intest = ["tidb-intest/intest", "tidb-logutil/intest", "tidb-tracing/intest"]
 
 [dependencies]
+tidb-goruntime = { path = "../tidb-goruntime" }
 tidb-config-kerneltype = { path = "../tidb-config-kerneltype" }
 tidb-fastrand = { path = "../tidb-fastrand" }
 tidb-intest = { path = "../tidb-intest" }

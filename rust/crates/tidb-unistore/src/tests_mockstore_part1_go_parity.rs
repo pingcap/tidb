@@ -119,8 +119,8 @@ fn cop_point_range(table_id: i64, handle: i64) -> coprocessor::KeyRange {
     let start = encode_row_key_with_handle(table_id, &RecordHandle::Int(handle));
     let end = convert_to_prefix_next(start.clone());
     coprocessor::KeyRange {
-        start,
-        end,
+        start: start.into(),
+        end: end.into(),
         ..coprocessor::KeyRange::default()
     }
 }
@@ -174,7 +174,7 @@ fn run_dag(
         store,
         &coprocessor::Request {
             tp: REQ_TYPE_DAG,
-            data,
+            data: data.into(),
             ranges,
             start_ts: DAG_REQUEST_START_TS,
             ..coprocessor::Request::default()

@@ -186,7 +186,7 @@ mod tests {
             };
             let request = tidb_proto::coprocessor::Request {
                 tp: super::super::REQ_TYPE_DAG,
-                data: dag.encode_to_vec(),
+                data: dag.encode_to_vec().into(),
                 ranges: vec![Default::default()],
                 ..Default::default()
             };

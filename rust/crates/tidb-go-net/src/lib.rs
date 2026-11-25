@@ -14,16 +14,93 @@
 
 //! Go `net`'s host:port helpers (`net/ipsock.go`).
 
+/// Joins a host and a preformatted port using Go's `net.JoinHostPort` rules.
+#[inline]
+#[must_use]
+pub fn join_host_port_str(host: &str, port: &str) -> String {
+    join_text(host, port, port.len())
+}
+
+/// Formats a decimal port and joins it with the host.
+#[inline]
+#[must_use]
+pub fn join_host_port_number(host: &str, port: impl itoa::Integer) -> String {
+    join_host_port_str(host, itoa::Buffer::new().format(port))
+}
+
 /// Go `net.JoinHostPort`: combines host and port into a network address of
 /// the form "host:port". If host contains a colon, as found in literal IPv6
 /// addresses, it returns "[host]:port".
 #[must_use]
 pub fn join_host_port(host: &str, port: impl std::fmt::Display) -> String {
-    // We assume that host is a literal IPv6 address if host has colons.
-    if host.contains(':') {
-        format!("[{host}]:{port}")
+    use std::fmt::Write;
+
+    let mut writer = HostPortWriter {
+        host,
+        address: String::new(),
+    };
+    write!(writer, "{port}").expect("port formatter failed");
+    if writer.address.is_empty() {
+        join_text(host, "", 8)
     } else {
-        format!("{host}:{port}")
+        writer.address
+    }
+}
+
+struct HostPortWriter<'a> {
+    host: &'a str,
+    address: String,
+}
+
+impl std::fmt::Write for HostPortWriter<'_> {
+    #[inline]
+    fn write_str(&mut self, port: &str) -> std::fmt::Result {
+        // A joined address always has at least its colon separator.
+        if self.address.is_empty() {
+            // Negative integers write their sign separately from the digits.
+            let port_capacity = if port == "-" { 20 } else { port.len().max(8) };
+            self.address = join_text(self.host, port, port_capacity);
+        } else {
+            self.address.push_str(port);
+        }
+        Ok(())
+    }
+}
+
+#[inline]
+fn join_text(host: &str, port: &str, port_capacity: usize) -> String {
+    let bracketed = has_colon(host.as_bytes());
+    let mut address = String::with_capacity(host.len() + port_capacity + if bracketed { 3 } else { 1 });
+    if bracketed {
+        address.push('[');
+        address.push_str(host);
+        address.push(']');
+    } else {
+        address.push_str(host);
+    }
+    address.push(':');
+    address.push_str(port);
+    address
+}
+
+#[inline]
+fn has_colon(host_bytes: &[u8]) -> bool {
+    if let (Some(head), Some(tail)) =
+        (host_bytes.first_chunk::<8>(), host_bytes.last_chunk::<8>())
+    {
+        if host_bytes.len() <= 16 {
+            // Two overlapping words cover the short host. XOR turns colons
+            // into zero bytes, which the subtraction detects in either word.
+            let has_colon = |half: &[u8; 8]| {
+                let word = u64::from_ne_bytes(*half) ^ u64::from_ne_bytes([b':'; 8]);
+                word.wrapping_sub(0x0101_0101_0101_0101) & !word & 0x8080_8080_8080_8080 != 0
+            };
+            has_colon(head) || has_colon(tail)
+        } else {
+            memchr::memchr(b':', host_bytes).is_some()
+        }
+    } else {
+        host_bytes.contains(&b':')
     }
 }
 
@@ -33,20 +110,28 @@ pub fn join_host_port(host: &str, port: impl std::fmt::Display) -> String {
 /// port, too many colons, a misplaced bracket).
 #[must_use]
 pub fn split_host_port(hostport: &str) -> Option<(&str, &str)> {
-    let colon = hostport.rfind(':')?;
+    let colon = memchr::memrchr(b':', hostport.as_bytes())?;
     let (host, port) = (&hostport[..colon], &hostport[colon + 1..]);
     if let Some(inner) = host.strip_prefix('[') {
         let inner = inner.strip_suffix(']')?;
-        if inner.contains(['[', ']']) {
+        if has_bracket(inner) {
             return None;
         }
-        return (!port.contains(['[', ']'])).then_some((inner, port));
+        return (!has_bracket(port)).then_some((inner, port));
     }
-    // An unbracketed host has no colon and no bracket of its own.
-    if host.contains([':', '[', ']']) || port.contains(['[', ']']) {
+    // An unbracketed host has no colon and neither part can contain a
+    // bracket. For short addresses the two parts fit in one bracket scan.
+    if hostport.len() <= 32 {
+        return (!has_colon(host.as_bytes()) && !has_bracket(hostport)).then_some((host, port));
+    }
+    if memchr::memchr3(b':', b'[', b']', host.as_bytes()).is_some() || has_bracket(port) {
         return None;
     }
     Some((host, port))
+}
+
+fn has_bracket(s: &str) -> bool {
+    memchr::memchr2(b'[', b']', s.as_bytes()).is_some()
 }
 
 #[cfg(test)]
@@ -58,6 +143,53 @@ mod tests {
         assert_eq!(join_host_port("127.0.0.1", 4000), "127.0.0.1:4000");
         assert_eq!(join_host_port("::1", "4000"), "[::1]:4000");
         assert_eq!(join_host_port("", 0_u16), ":0");
+        assert_eq!(join_host_port("node", "named-service"), "node:named-service");
+    }
+
+    #[test]
+    fn short_host_scan_finds_a_colon_at_every_byte() {
+        for length in 1..=20 {
+            let host = "a".repeat(length);
+            assert_eq!(join_host_port_str(&host, "svc"), format!("{host}:svc"));
+            for position in 0..length {
+                let mut host = host.clone();
+                host.replace_range(position..position + 1, ":");
+                assert_eq!(join_host_port_str(&host, "svc"), format!("[{host}]:svc"));
+            }
+        }
+        assert_eq!(
+            join_host_port_number("::1", i64::MIN),
+            "[::1]:-9223372036854775808"
+        );
+        assert_eq!(
+            join_host_port_number("", u128::MAX),
+            format!(":{}", u128::MAX)
+        );
+    }
+
+    #[test]
+    fn join_host_port_accepts_multiple_or_zero_port_writes() {
+        struct Port<'a>(&'a [&'a str]);
+
+        impl std::fmt::Display for Port<'_> {
+            fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                for part in self.0 {
+                    formatter.write_str(part)?;
+                }
+                Ok(())
+            }
+        }
+
+        assert_eq!(
+            join_host_port("fe80::1%lo0", Port(&["", "named", "-service"])),
+            "[fe80::1%lo0]:named-service"
+        );
+        assert_eq!(join_host_port("::1", Port(&[])), "[::1]:");
+        assert_eq!(join_host_port("", Port(&[])), ":");
+        assert_eq!(
+            join_host_port("::1", i64::MIN),
+            "[::1]:-9223372036854775808"
+        );
     }
 
     // Go `TestSplitHostPort` / `TestSplitHostPortError` rows.
@@ -71,5 +203,20 @@ mod tests {
         for bad in ["golang.org", "127.0.0.1", "[::1]", "[fe80::1%lo0]", "::1", "golang.org:80:443", "[::1", "::1]:80", "[go]lang.org:80"] {
             assert_eq!(split_host_port(bad), None, "{bad}");
         }
+    }
+
+    #[test]
+    fn split_host_port_checks_brackets_on_both_sides_of_short_addresses() {
+        for len in 30..=34 {
+            let host = "a".repeat(len - 2);
+            assert_eq!(
+                split_host_port(&format!("{host}:7")),
+                Some((host.as_str(), "7"))
+            );
+            assert_eq!(split_host_port(&format!("{host}:]")), None);
+            assert_eq!(split_host_port(&format!("{host}[:7")), None);
+            assert_eq!(split_host_port(&format!("{host}::7")), None);
+        }
+        assert_eq!(split_host_port("数据库:服务"), Some(("数据库", "服务")));
     }
 }

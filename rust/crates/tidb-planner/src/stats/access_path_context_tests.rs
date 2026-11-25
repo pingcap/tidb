@@ -133,7 +133,7 @@ fn analyzed_derivation_evaluates_parameters_like_literal_predicates() {
                 ndv: 10,
                 lower_bound: Datum::Int(1),
                 upper_bound: Datum::Int(10),
-            }],
+            }].into(),
             ..Default::default()
         },
         top_n: None,

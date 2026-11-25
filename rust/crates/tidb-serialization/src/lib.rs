@@ -160,7 +160,9 @@ pub fn serialize_duration(value: MySqlDuration, output: &mut Vec<u8>) {
 
 /// Appends a length-prefixed Go `VectorFloat32` spill value.
 pub fn serialize_vector_float32(value: &VectorFloat32, output: &mut Vec<u8>) {
-    serialize_buffer(&value.serialize(), output);
+    let length = isize::try_from(value.serialized_size()).expect("a vector fits in isize");
+    serialize_int(length, output);
+    value.serialize_to(output);
 }
 
 /// Appends one BinaryJSON type code.
@@ -332,7 +334,9 @@ impl<'a> Cursor<'a> {
         f64::from_ne_bytes(self.read_array())
     }
 
-    fn read_buffer(&mut self) -> &'a [u8] {
+    /// Borrows one length-prefixed byte buffer from the input.
+    #[inline]
+    pub fn read_buffer(&mut self) -> &'a [u8] {
         let length = self.read_int() as usize;
         let end = self.position + length;
         let value = &self.bytes[self.position..end];
@@ -385,14 +389,14 @@ impl<'a> Cursor<'a> {
     /// Reads one SET value and byte-preserving name.
     pub fn read_set(&mut self) -> MysqlSet {
         let value = self.read_u64();
-        let name = GoString::from(self.read_buffer().to_vec());
+        let name = self.read_string();
         MysqlSet::new(name, value)
     }
 
     /// Reads one ENUM value and byte-preserving name.
     pub fn read_enum(&mut self) -> MysqlEnum {
         let value = self.read_u64();
-        let name = GoString::from(self.read_buffer().to_vec());
+        let name = self.read_string();
         MysqlEnum::new(name, value)
     }
 
@@ -406,7 +410,7 @@ impl<'a> Cursor<'a> {
 
     /// Reads one arbitrary Go string and deep-copies its bytes.
     pub fn read_string(&mut self) -> GoString {
-        GoString::from(self.read_buffer().to_vec())
+        GoString::from(self.read_buffer())
     }
 
     /// Reads one byte buffer and deep-copies its contents.
@@ -448,5 +452,29 @@ mod tests {
             assert_eq!(actual, expected);
             assert_eq!(cursor.position(), encoded.len());
         }
+    }
+
+    #[test]
+    fn spill_names_and_strings_own_their_raw_bytes() {
+        let raw = b"a\xff\0";
+        let name = GoString::from(raw);
+        let mut encoded = Vec::new();
+        serialize_string(&name, &mut encoded);
+        serialize_set(&MysqlSet::new(name.clone(), 3), &mut encoded);
+        serialize_enum(&MysqlEnum::new(name, 2), &mut encoded);
+
+        let mut cursor = Cursor::new(&encoded);
+        let string = cursor.read_string();
+        let set = cursor.read_set();
+        let enumeration = cursor.read_enum();
+        assert_eq!(cursor.position(), encoded.len());
+        encoded.fill(0);
+
+        assert_eq!(string.as_bytes(), raw);
+        assert_eq!((set.value(), set.name_bytes()), (3, raw.as_slice()));
+        assert_eq!(
+            (enumeration.value(), enumeration.name_bytes()),
+            (2, raw.as_slice())
+        );
     }
 }

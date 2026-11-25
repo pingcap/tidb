@@ -16,40 +16,56 @@
 //!
 //! Go's global map is keyed by the histogram bucket's initial capacity and
 //! each [`Pool`] has one `sync.Pool` for every physical column width used by a
-//! chunk. Rust transfers ownership of a [`Column`] into the matching mutex
-//! protected bucket and transfers it back on `get_chunk`; no unsafe lifetime
-//! extension or duplicate owner is needed.
+//! chunk. Rust transfers ownership of a [`Column`] into the matching sharded
+//! pool and transfers it back on `get_chunk`.
 
 use crate::chunk::Chunk;
 use crate::column::{get_fixed_len, Column, VAR_ELEM_LEN};
+use std::cell::Cell;
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError, RwLock};
+use std::fmt;
+use std::sync::{OnceLock, PoisonError, RwLock};
 use tidb_datatype::FieldType;
+use tidb_zeropool::Pool as ReusePool;
 
-#[derive(Debug, Default)]
+#[derive(Default)]
 struct ColumnBucket {
-    columns: Mutex<Vec<Column>>,
+    columns: OnceLock<ReusePool<Option<Column>>>,
+    #[cfg(test)]
+    len: std::sync::atomic::AtomicUsize,
 }
 
 impl ColumnBucket {
-    fn lock(&self) -> MutexGuard<'_, Vec<Column>> {
-        self.columns.lock().unwrap_or_else(PoisonError::into_inner)
+    fn columns(&self) -> &ReusePool<Option<Column>> {
+        self.columns.get_or_init(ReusePool::default)
     }
 
     fn get_or_create(&self, type_size: i64, capacity: usize) -> Column {
-        self.lock()
-            .pop()
-            .unwrap_or_else(|| Column::new_column_with_type_size(type_size, capacity))
+        if let Some(column) = self.columns().get() {
+            #[cfg(test)]
+            self.len.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+            column
+        } else {
+            Column::new_column_with_type_size(type_size, capacity)
+        }
     }
 
     fn put(&self, mut column: Column) {
         column.reset();
-        self.lock().push(column);
+        #[cfg(test)]
+        self.len.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.columns().put(Some(column));
     }
 
     #[cfg(test)]
     fn len(&self) -> usize {
-        self.lock().len()
+        self.len.load(std::sync::atomic::Ordering::Relaxed)
+    }
+}
+
+impl fmt::Debug for ColumnBucket {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.debug_struct("ColumnBucket").finish_non_exhaustive()
     }
 }
 
@@ -103,14 +119,11 @@ impl Pool {
     /// Go `Pool.GetChunk`.
     #[must_use]
     pub fn get_chunk(&self, fields: &[FieldType]) -> Chunk {
-        let columns = fields
-            .iter()
-            .map(|field| {
-                let type_size = get_fixed_len(field);
-                self.bucket(type_size)
-                    .get_or_create(type_size, self.init_capacity)
-            })
-            .collect();
+        let columns = fields.iter().map(|field| {
+            let type_size = get_fixed_len(field);
+            self.bucket(type_size)
+                .get_or_create(type_size, self.init_capacity)
+        });
         Chunk::from_reusable_columns(columns, self.init_capacity, self.init_capacity)
     }
 
@@ -125,28 +138,46 @@ impl Pool {
             chunk.num_cols(),
             "Pool.PutChunk field/column width mismatch"
         );
-        let columns = chunk.reset_for_reuse();
-        for column in columns {
+        chunk.reset_for_reuse(|column| {
             let type_size = column.type_size();
             self.bucket(type_size).put(column);
-        }
+        });
     }
 }
 
-type GlobalPools = RwLock<HashMap<usize, Arc<Pool>>>;
+type GlobalPools = RwLock<HashMap<usize, &'static Pool>>;
 
 static GLOBAL_CHUNK_POOL: OnceLock<GlobalPools> = OnceLock::new();
+
+thread_local! {
+    static LAST_GLOBAL_POOL: Cell<Option<(usize, &'static Pool)>> = const { Cell::new(None) };
+}
 
 fn global_pools() -> &'static GlobalPools {
     GLOBAL_CHUNK_POOL.get_or_init(|| RwLock::new(HashMap::new()))
 }
 
-fn pool_for(init_capacity: usize) -> Arc<Pool> {
+fn pool_for(init_capacity: usize) -> &'static Pool {
+    LAST_GLOBAL_POOL
+        .try_with(|last| {
+            if let Some((capacity, pool)) = last.get() {
+                if capacity == init_capacity {
+                    return pool;
+                }
+            }
+            let pool = lookup_pool(init_capacity);
+            last.set(Some((init_capacity, pool)));
+            pool
+        })
+        .unwrap_or_else(|_| lookup_pool(init_capacity))
+}
+
+fn lookup_pool(init_capacity: usize) -> &'static Pool {
     if let Some(pool) = global_pools()
         .read()
         .unwrap_or_else(PoisonError::into_inner)
         .get(&init_capacity)
-        .cloned()
+        .copied()
     {
         return pool;
     }
@@ -154,11 +185,10 @@ fn pool_for(init_capacity: usize) -> Arc<Pool> {
     let mut pools = global_pools()
         .write()
         .unwrap_or_else(PoisonError::into_inner);
-    Arc::clone(
-        pools
-            .entry(init_capacity)
-            .or_insert_with(|| Arc::new(Pool::new(init_capacity))),
-    )
+    // Global capacity buckets already live for the process's lifetime.
+    *pools
+        .entry(init_capacity)
+        .or_insert_with(|| Box::leak(Box::new(Pool::new(init_capacity))))
 }
 
 /// Go `NewChunkFromPoolWithCapacity` / `getChunkFromPool`.
@@ -175,6 +205,7 @@ pub(crate) fn put_chunk_from_pool(init_capacity: usize, fields: &[FieldType], ch
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
     use tidb_datatype::FieldTypeCode;
 
     fn fields() -> Vec<FieldType> {
@@ -259,6 +290,37 @@ mod tests {
         assert!(!reused.columns_share_identity(0, &reused, 1));
         assert_eq!(pool.fixed8.len(), 0);
         assert_eq!(pool.fixed40.len(), 0);
+    }
+
+    #[test]
+    fn concurrent_pool_reuse_keeps_a_cross_chunk_alias_live() {
+        let fields = vec![FieldType::new(FieldTypeCode::LongLong); 3];
+        let pool = Pool::new(8);
+        let mut chunk = pool.get_chunk(&fields);
+        for (column, value) in [17, 19, 23].into_iter().enumerate() {
+            chunk.append_int64(column, value);
+        }
+        let mut alias = Chunk::new_chunk_with_capacity(&fields[..1], 8);
+        alias.make_ref_to(0, &mut chunk, 0).unwrap();
+        chunk.make_ref(0, 1);
+        pool.put_chunk(&fields, &mut chunk);
+        assert_eq!(pool.fixed8.len(), 1);
+
+        std::thread::scope(|scope| {
+            scope
+                .spawn(|| {
+                    let mut reused = pool.get_chunk(&fields);
+                    assert_eq!(pool.fixed8.len(), 0);
+                    for column in 0..fields.len() {
+                        reused.append_int64(column, 29);
+                    }
+                    pool.put_chunk(&fields, &mut reused);
+                })
+                .join()
+                .unwrap();
+        });
+        assert_eq!(alias.get_row(0).get_int64(0), 17);
+        assert_eq!(pool.fixed8.len(), 3);
     }
 
     #[test]

@@ -19,8 +19,9 @@
 //! malformed SQL and must preserve the Go scanner's exact spacing and token
 //! reduction rules.
 
-use sha2::{Digest as _, Sha256};
-use tidb_lexer::{Lexer, Token, TokenKind};
+use crate::auth::sha256_hash;
+use std::borrow::Cow;
+use tidb_lexer::{BorrowedToken, Lexer, TokenKind, decode_quoted_string};
 
 /// Literal-redaction behavior accepted by [`normalize`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -44,11 +45,7 @@ impl Digest {
     /// Creates a digest from caller-supplied bytes.
     pub fn new(bytes: impl Into<Vec<u8>>) -> Self {
         let bytes = bytes.into();
-        let mut hex = String::with_capacity(bytes.len() * 2);
-        for byte in &bytes {
-            use std::fmt::Write as _;
-            write!(&mut hex, "{byte:02x}").expect("writing to String cannot fail");
-        }
+        let hex = tidb_goruntime::go_hex::encode_to_string(&bytes);
         Self { bytes, hex }
     }
 
@@ -77,7 +74,7 @@ pub fn digest_hash(sql: &str) -> Digest {
 
 /// Generates a digest from SQL that is already normalized.
 pub fn digest_normalized(normalized: &str) -> Digest {
-    Digest::new(Sha256::digest(normalized.as_bytes()).to_vec())
+    Digest::new(sha256_hash(normalized.as_bytes()).to_vec())
 }
 
 /// Normalizes SQL according to the requested redaction mode.
@@ -120,8 +117,10 @@ enum Kind {
     QuotedIdent,
     Charset,
     String,
+    Integer,
     Number,
     Bit,
+    NullLiteral,
     Param,
     UserVar,
     Keyword,
@@ -130,23 +129,31 @@ enum Kind {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct NormalToken {
+struct NormalToken<'a> {
     kind: Kind,
-    literal: String,
+    literal: Cow<'a, str>,
 }
 
-impl NormalToken {
+impl NormalToken<'_> {
     fn generic() -> Self {
         Self {
             kind: Kind::Generic,
-            literal: "?".to_owned(),
+            literal: Cow::Borrowed("?"),
         }
     }
 
     fn generic_list() -> Self {
         Self {
             kind: Kind::GenericList,
-            literal: "...".to_owned(),
+            literal: Cow::Borrowed("..."),
+        }
+    }
+
+    fn rendered_len(&self) -> usize {
+        match self.kind {
+            Kind::Charset => "(_charset)".len(),
+            Kind::Ident | Kind::QuotedIdent => self.literal.len() + 2,
+            _ => self.literal.len(),
         }
     }
 }
@@ -155,7 +162,7 @@ struct Normalizer<'a> {
     sql: &'a str,
     lexer: Lexer<'a>,
     keep_hint: bool,
-    tokens: Vec<NormalToken>,
+    tokens: Vec<NormalToken<'a>>,
 }
 
 impl<'a> Normalizer<'a> {
@@ -172,7 +179,7 @@ impl<'a> Normalizer<'a> {
             sql,
             lexer,
             keep_hint,
-            tokens: Vec::new(),
+            tokens: Vec::with_capacity((sql.len() / 3).min(32)),
         }
     }
 
@@ -183,12 +190,12 @@ impl<'a> Normalizer<'a> {
         for_plan_replayer: bool,
     ) -> String {
         loop {
-            let source = self.lexer.next_token();
+            let source = self.lexer.next_token_borrowed();
             if source.kind == TokenKind::Invalid {
                 if self.sql[source.offset..].starts_with("/*+") {
                     self.tokens.push(NormalToken {
                         kind: Kind::Other,
-                        literal: String::new(),
+                        literal: Cow::Borrowed(""),
                     });
                 }
                 break;
@@ -203,7 +210,7 @@ impl<'a> Normalizer<'a> {
                 break;
             }
 
-            let mut current = self.normal_token(&source);
+            let mut current = self.normal_token(source);
             if !self.keep_hint && self.reduce_optimizer_hint(&mut current) {
                 continue;
             }
@@ -217,42 +224,62 @@ impl<'a> Normalizer<'a> {
             self.tokens.push(current);
         }
 
-        self.tokens
-            .iter()
-            .map(|token| match token.kind {
-                Kind::UserVar if token.literal.starts_with('@') => token.literal.clone(),
-                Kind::Charset => "(_charset)".to_owned(),
-                Kind::Ident | Kind::QuotedIdent => format!("`{}`", token.literal),
-                _ => token.literal.clone(),
-            })
-            .collect::<Vec<_>>()
-            .join(" ")
+        let mut output = String::with_capacity(
+            self.tokens
+                .iter()
+                .map(NormalToken::rendered_len)
+                .sum::<usize>()
+                + self.tokens.len().saturating_sub(1),
+        );
+        for (index, token) in self.tokens.into_iter().enumerate() {
+            if index != 0 {
+                output.push(' ');
+            }
+            match token.kind {
+                Kind::Charset => output.push_str("(_charset)"),
+                Kind::Ident | Kind::QuotedIdent => {
+                    output.push('`');
+                    output.push_str(&token.literal);
+                    output.push('`');
+                }
+                _ => output.push_str(&token.literal),
+            }
+        }
+        output
     }
 
-    fn normal_token(&self, token: &Token) -> NormalToken {
+    fn normal_token(&self, token: BorrowedToken<'a>) -> NormalToken<'a> {
         let raw = &self.sql[token.offset..token.end_offset];
         let kind = match token.kind {
             TokenKind::Ident if raw.starts_with('`') || raw.starts_with('"') => Kind::QuotedIdent,
             TokenKind::Ident => Kind::Ident,
             TokenKind::CharsetIntroducer => Kind::Charset,
             TokenKind::Str => Kind::String,
-            TokenKind::IntLit | TokenKind::FloatLit | TokenKind::DecLit | TokenKind::HexLit => {
-                Kind::Number
-            }
+            TokenKind::IntLit => Kind::Integer,
+            TokenKind::FloatLit | TokenKind::DecLit | TokenKind::HexLit => Kind::Number,
             TokenKind::BitLit => Kind::Bit,
             TokenKind::UserVar => Kind::UserVar,
+            // Go identifies bare NULL as a keyword after the marker reducer.
+            TokenKind::Keyword if raw.eq_ignore_ascii_case("null") => Kind::Ident,
+            TokenKind::Keyword if raw == r"\N" => Kind::NullLiteral,
             TokenKind::Keyword => Kind::Keyword,
             TokenKind::HintComment => Kind::Hint,
             TokenKind::Op if token.text == "?" => Kind::Param,
             _ => Kind::Other,
         };
+        let literal = match kind {
+            Kind::String => string_literal(raw),
+            Kind::UserVar => variable_literal(raw),
+            Kind::NullLiteral => Cow::Borrowed(raw),
+            _ => token.text,
+        };
         NormalToken {
             kind,
-            literal: tidb_mysql::to_lowercase(&token.text),
+            literal: lowercase(literal),
         }
     }
 
-    fn reduce_optimizer_hint(&mut self, token: &mut NormalToken) -> bool {
+    fn reduce_optimizer_hint(&mut self, token: &mut NormalToken<'a>) -> bool {
         if token.kind == Kind::Hint {
             return true;
         }
@@ -260,14 +287,19 @@ impl<'a> Normalizer<'a> {
             && self
                 .tokens
                 .last()
-                .is_some_and(|last| matches!(last.literal.as_str(), "force" | "use" | "ignore"))
+                .is_some_and(|last| matches!(last.literal.as_ref(), "force" | "use" | "ignore"))
         {
             loop {
-                let next = self.lexer.next_token();
+                let next = self.lexer.next_token_borrowed();
                 if matches!(next.kind, TokenKind::Invalid | TokenKind::Eof) {
                     break;
                 }
-                if next.text == ")" {
+                let ends_hint = if next.kind == TokenKind::Str {
+                    string_literal(&next.text) == ")"
+                } else {
+                    next.text == ")"
+                };
+                if ends_hint {
                     self.tokens.pop();
                     return true;
                 }
@@ -275,14 +307,14 @@ impl<'a> Normalizer<'a> {
             return false;
         }
         if token.literal == "straight_join" {
-            token.literal = "join".to_owned();
+            token.literal = Cow::Borrowed("join");
         }
         false
     }
 
     fn reduce_literal(
         &mut self,
-        token: &mut NormalToken,
+        token: &mut NormalToken<'a>,
         redact: RedactMode,
         for_binding: bool,
         for_plan_replayer: bool,
@@ -291,10 +323,10 @@ impl<'a> Normalizer<'a> {
             return;
         }
         if redact == RedactMode::Marker && !for_binding && !for_plan_replayer {
-            if matches!(token.literal.as_str(), "?" | "*") {
+            if matches!(token.literal.as_ref(), "?" | "*") {
                 return;
             }
-            token.literal = format!("‹{}›", token.literal.replace('‹', "‹‹").replace('›', "››"));
+            token.literal = Cow::Owned(mark_literal(&token.literal));
             return;
         }
         if token.literal == "*" {
@@ -303,7 +335,7 @@ impl<'a> Normalizer<'a> {
             }
             return;
         }
-        if token.kind == Kind::Number && self.is_prefixed_by_unary() {
+        if matches!(token.kind, Kind::Number | Kind::Integer) && self.is_prefixed_by_unary() {
             self.tokens.pop();
         }
         if self.is_generic_list() {
@@ -326,18 +358,22 @@ impl<'a> Normalizer<'a> {
             *token = NormalToken::generic_list();
             return;
         }
-        if token.kind == Kind::Number && self.is_order_or_group_by() {
+        if token.kind == Kind::Integer && self.is_order_or_group_by() {
             return;
         }
         *token = NormalToken::generic();
     }
 
-    fn is_literal(&self, token: &NormalToken) -> bool {
+    fn is_literal(&self, token: &NormalToken<'_>) -> bool {
         matches!(
             token.kind,
-            Kind::Number | Kind::String | Kind::Bit | Kind::Param
+            Kind::Number
+                | Kind::Integer
+                | Kind::String
+                | Kind::Bit
+                | Kind::Param
+                | Kind::NullLiteral
         ) || token.literal == "*"
-            || (token.kind == Kind::Keyword && token.literal == "null")
             || (token.kind == Kind::Ident && token.literal == "null")
     }
 
@@ -345,14 +381,14 @@ impl<'a> Normalizer<'a> {
         let Some(last) = self.tokens.last() else {
             return false;
         };
-        if !matches!(last.literal.as_str(), "-" | "+") {
+        if !matches!(last.literal.as_ref(), "-" | "+") {
             return false;
         }
         let Some(before) = self.tokens.iter().rev().nth(1) else {
             return true;
         };
         matches!(
-            before.literal.as_str(),
+            before.literal.as_ref(),
             "(" | "," | "+" | "-" | ">=" | "is" | "<=" | "=" | "<" | ">" | "select"
         )
     }
@@ -406,7 +442,7 @@ impl<'a> Normalizer<'a> {
             && last[8].literal == "("
     }
 
-    fn replace_single_literal_with_in_list(&mut self, current: &NormalToken) {
+    fn replace_single_literal_with_in_list(&mut self, current: &NormalToken<'_>) {
         let Some(last) = self.tokens.get(self.tokens.len().saturating_sub(5)..) else {
             return;
         };
@@ -421,7 +457,7 @@ impl<'a> Normalizer<'a> {
         }
     }
 
-    fn reduce_in_list_with_single_literal(&mut self, current: &NormalToken) {
+    fn reduce_in_list_with_single_literal(&mut self, current: &NormalToken<'_>) {
         let Some(last) = self.tokens.get(self.tokens.len().saturating_sub(3)..) else {
             return;
         };
@@ -436,7 +472,7 @@ impl<'a> Normalizer<'a> {
         }
     }
 
-    fn reduce_in_row_list_with_single_literal(&mut self, current: &NormalToken) {
+    fn reduce_in_row_list_with_single_literal(&mut self, current: &NormalToken<'_>) {
         let Some(last) = self.tokens.get(self.tokens.len().saturating_sub(6)..) else {
             return;
         };
@@ -471,10 +507,70 @@ impl<'a> Normalizer<'a> {
                 } else {
                     (&last[0], &last[1])
                 };
-                return matches!(first.literal.as_str(), "order" | "group")
+                return matches!(first.literal.as_ref(), "order" | "group")
                     && second.literal == "by";
             }
             n += 2;
         }
     }
+}
+
+fn lowercase(text: Cow<'_, str>) -> Cow<'_, str> {
+    if !text.is_ascii() {
+        return Cow::Owned(tidb_mysql::to_lowercase(&text));
+    }
+    if text.bytes().any(|byte| byte.is_ascii_uppercase()) {
+        let mut text = text;
+        text.to_mut().make_ascii_lowercase();
+        return text;
+    }
+    text
+}
+
+/// Go scanString passes the unescaped value to the digester.
+fn string_literal(raw: &str) -> Cow<'_, str> {
+    let inner = &raw[1..raw.len() - 1];
+    if !inner.as_bytes().contains(&raw.as_bytes()[0]) && !inner.as_bytes().contains(&b'\\') {
+        return Cow::Borrowed(inner);
+    }
+    Cow::Owned(
+        String::from_utf8(decode_quoted_string(
+            raw,
+            false,
+            tidb_charset::Encoding::Utf8,
+        ))
+        .expect("decoding a UTF-8 SQL literal preserves UTF-8"),
+    )
+}
+
+/// Go startWithAt drops quotes around the variable's name.
+fn variable_literal(raw: &str) -> Cow<'_, str> {
+    let Some(start) = raw.find(['`', '"', '\'']) else {
+        return Cow::Borrowed(raw);
+    };
+    let suffix = &raw[start..];
+    let name = if suffix.starts_with('`') {
+        Cow::Owned(suffix[1..suffix.len() - 1].replace("``", "`"))
+    } else {
+        string_literal(suffix)
+    };
+    let mut decoded = String::with_capacity(start + name.len());
+    decoded.push_str(&raw[..start]);
+    decoded.push_str(&name);
+    Cow::Owned(decoded)
+}
+
+fn mark_literal(value: &str) -> String {
+    let mut marked = String::with_capacity(value.len() + "‹›".len());
+    marked.push('‹');
+    let mut start = 0;
+    for (index, marker) in value.match_indices(['‹', '›']) {
+        let end = index + marker.len();
+        marked.push_str(&value[start..end]);
+        marked.push_str(marker);
+        start = end;
+    }
+    marked.push_str(&value[start..]);
+    marked.push('›');
+    marked
 }

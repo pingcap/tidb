@@ -36,7 +36,7 @@ fn column(id: i64, count: i64, status: StatsLoadedStatus) -> Column {
                 ndv: 1,
                 lower_bound: Datum::Int(id),
                 upper_bound: Datum::Int(id),
-            }],
+            }].into(),
             ..Histogram::default()
         },
         stats_loaded_status: status,
@@ -69,7 +69,7 @@ fn index(id: i64, count: i64, mv_index: bool, status: StatsLoadedStatus) -> Inde
                 ndv: 1,
                 lower_bound: Datum::Bytes(vec![id as u8]),
                 upper_bound: Datum::Bytes(vec![id as u8]),
-            }],
+            }].into(),
             ..Histogram::default()
         },
         stats_loaded_status: status,

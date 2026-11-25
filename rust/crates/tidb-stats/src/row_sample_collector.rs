@@ -65,6 +65,8 @@
 //! facts. This type owns the slots; deciding what a slot means is the
 //! caller's, exactly as it is `analyze_col_sampling.go`'s.
 
+use std::borrow::Cow;
+
 use tidb_datatype::Datum;
 use tidb_txnkv::Handle;
 use tidb_fastrand as fastrand;
@@ -78,6 +80,7 @@ use crate::{fm_sketch_from_proto, fm_sketch_to_proto, FmSketchProto};
 pub const DEF_ROWS_FOR_SAMPLE_RATE: f64 = 110_000.0;
 
 /// One scanned row's contribution to one collector slot.
+#[derive(Clone, Copy)]
 pub struct SlotValue<'a> {
     /// The `codec.EncodeValue` bytes the FM sketch hashes: one value's for a
     /// column slot, the whole group's concatenation for a group slot.
@@ -91,6 +94,32 @@ pub struct SlotValue<'a> {
     /// Go hashes a group's datums whatever they are, and does not maintain a
     /// null count for one.
     pub is_null: bool,
+}
+
+/// A slot contribution whose encoded bytes have already been hashed.
+#[derive(Clone, Copy)]
+pub struct HashedSlotValue {
+    /// The first Murmur3 lane of the slot's compact-encoded values.
+    pub hash: u64,
+    /// The original payload size in bytes, as in [`SlotValue::size`].
+    pub size: i64,
+    /// Whether this slot contributes only to its null count.
+    pub is_null: bool,
+}
+
+impl SlotValue<'_> {
+    pub fn into_hashed(self) -> HashedSlotValue {
+        // Go's `FMSketch.InsertValue` takes the first lane of the Murmur3 sum.
+        HashedSlotValue {
+            hash: if self.is_null {
+                0
+            } else {
+                hash_bytes(self.encoded_value).h1
+            },
+            size: self.size,
+            is_null: self.is_null,
+        }
+    }
 }
 
 /// One scanned row, as the collector consumes it.
@@ -229,14 +258,14 @@ pub struct SampledRow {
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct RowSampleProto {
-    pub row: Vec<Vec<u8>>,
+pub struct RowSampleProto<B = Vec<u8>> {
+    pub row: Vec<B>,
     pub weight: i64,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct RowSampleCollectorProto {
-    pub samples: Vec<RowSampleProto>,
+pub struct RowSampleCollectorProto<B = Vec<u8>> {
+    pub samples: Vec<RowSampleProto<B>>,
     pub null_counts: Vec<i64>,
     pub count: i64,
     /// Go protobuf uses `[]*tipb.FMSketch`, so an individual repeated entry
@@ -334,47 +363,79 @@ impl RowSampleCollector {
         row: &ScannedRow<'_>,
         rng: &mut impl RowSampleRng,
     ) {
+        self.collect_row(row.slots, || row.columns.to_vec(), rng);
+    }
+
+    /// Offers a prepared row that the caller can transfer to the collector.
+    pub fn collect_owned(&mut self, columns: Vec<Datum>, slots: &[SlotValue<'_>]) {
+        let mut rng = GlobalRowSampleRng;
+        self.collect_owned_with_rng(columns, slots, &mut rng);
+    }
+
+    /// Offers an owned row with the caller's Go-compatible random stream.
+    pub fn collect_owned_with_rng(
+        &mut self,
+        columns: Vec<Datum>,
+        slots: &[SlotValue<'_>],
+        rng: &mut impl RowSampleRng,
+    ) {
+        self.collect_row(slots, || columns, rng);
+    }
+
+    fn collect_row(
+        &mut self,
+        slots: &[SlotValue<'_>],
+        into_columns: impl FnOnce() -> Vec<Datum>,
+        rng: &mut impl RowSampleRng,
+    ) {
+        let slots = slots.iter().copied().map(SlotValue::into_hashed);
+        self.collect_hashed_with_rng(slots, into_columns, rng);
+    }
+
+    /// Records prehashed slot contributions and builds the row only when retained.
+    pub fn collect_hashed(
+        &mut self,
+        slots: &[HashedSlotValue],
+        into_columns: impl FnOnce() -> Vec<Datum>,
+    ) {
+        self.collect_hashed_with_rng(slots.iter().copied(), into_columns, &mut GlobalRowSampleRng);
+    }
+
+    fn collect_hashed_with_rng(
+        &mut self,
+        slots: impl ExactSizeIterator<Item = HashedSlotValue>,
+        into_columns: impl FnOnce() -> Vec<Datum>,
+        rng: &mut impl RowSampleRng,
+    ) {
         assert_eq!(
-            row.slots.len(),
+            slots.len(),
             self.null_counts.len(),
             "a scanned row must carry one value per collector slot"
         );
         self.count = self.count.wrapping_add(1);
-        for (position, value) in row.slots.iter().enumerate() {
+        for (position, value) in slots.enumerate() {
             if value.is_null {
                 self.null_counts[position] = self.null_counts[position].wrapping_add(1);
                 continue;
             }
             self.total_sizes[position] = self.total_sizes[position].wrapping_add(value.size);
-            // Go's `FMSketch.InsertValue` hashes `codec.EncodeValue` with
-            // murmur3's 64-bit sum, which is the first lane of its 128-bit
-            // one.
             self.sketches[position]
                 .as_mut()
                 .expect("RowSampleBuilder installs one FM sketch per slot")
-                .insert_hash(hash_bytes(value.encoded_value).h1);
+                .insert_hash(value.hash);
         }
-        self.sample_row(row.columns, rng)
+        self.sample_row(into_columns, rng);
     }
 
     /// Go `MergeCollector` for both reservoir and Bernoulli collectors.
     /// Whole-scan facts merge independently of which rows survive sampling.
     pub fn merge(&mut self, mut other: Self) {
-        self.count = self.count.wrapping_add(other.count);
-        for (position, other_sketch) in other.sketches.iter().enumerate() {
-            // Go indexes the destination with every source position: shorter
-            // source arrays are valid prefixes; a longer source panics.
-            if let (Some(sketch), Some(other_sketch)) = (&mut self.sketches[position], other_sketch)
-            {
-                sketch.merge(other_sketch);
-            }
-        }
-        for (position, other_null_count) in other.null_counts.iter().enumerate() {
-            self.null_counts[position] = self.null_counts[position].wrapping_add(*other_null_count);
-        }
-        for (position, other_total_size) in other.total_sizes.iter().enumerate() {
-            self.total_sizes[position] = self.total_sizes[position].wrapping_add(*other_total_size);
-        }
+        self.merge_facts(
+            other.count,
+            &other.sketches,
+            &other.null_counts,
+            &other.total_sizes,
+        );
 
         // The dynamic Go interface dispatches on the destination receiver.
         // The source collector's policy/rate/capacity is never inspected.
@@ -382,33 +443,85 @@ impl RowSampleCollector {
             SamplePolicy::Reservoir { max_sample_size } => {
                 let old_sample_count = self.samples.len() as i64;
                 let source_sample_count = other.samples.len() as i64;
-                for (weight, columns) in other.samples.drain(..) {
-                    if self.samples.len() < max_sample_size {
-                        self.samples.push((weight, columns));
-                        if self.samples.len() == max_sample_size {
-                            self.heapify();
-                        }
-                    } else if self.samples[0].0 < weight {
-                        self.samples[0] = (weight, columns);
-                        self.sift_down(0);
+                let room = max_sample_size.saturating_sub(self.samples.len());
+                if other.samples.len() <= room {
+                    let fills_reservoir = room != 0 && other.samples.len() == room;
+                    self.append_samples(&mut other.samples);
+                    if fills_reservoir {
+                        self.heapify();
                     }
-                }
-                let total_sample_count = old_sample_count.wrapping_add(source_sample_count);
-                self.go_mem_size = if total_sample_count == 0 {
-                    0
                 } else {
-                    self.go_mem_size
-                        .wrapping_add(other.go_mem_size)
-                        .wrapping_mul(self.samples.len() as i64)
-                        / total_sample_count
-                };
+                    let mut incoming = other.samples.into_iter();
+                    if room != 0 {
+                        // Build the heap at the same point as Go's per-row
+                        // merge, before testing any weight against its root.
+                        self.samples.extend(incoming.by_ref().take(room));
+                        self.heapify();
+                    }
+                    self.merge_reservoir_samples(incoming, std::convert::identity);
+                }
+                self.merge_reservoir_memory(old_sample_count, source_sample_count, other.go_mem_size);
             }
             SamplePolicy::Bernoulli { .. } => {
-                for (weight, columns) in other.samples.drain(..) {
-                    self.samples.push((weight, columns));
-                }
+                self.append_samples(&mut other.samples);
                 self.go_mem_size = self.go_mem_size.wrapping_add(other.go_mem_size);
             }
+        }
+    }
+
+    fn merge_facts(
+        &mut self,
+        count: i64,
+        sketches: &[Option<FmSketch>],
+        null_counts: &[i64],
+        total_sizes: &[i64],
+    ) {
+        self.count = self.count.wrapping_add(count);
+        for (position, other_sketch) in sketches.iter().enumerate() {
+            // Go indexes each destination field at every source position.
+            if let (Some(sketch), Some(other_sketch)) = (&mut self.sketches[position], other_sketch)
+            {
+                sketch.merge(other_sketch);
+            }
+        }
+        for (position, count) in null_counts.iter().enumerate() {
+            self.null_counts[position] = self.null_counts[position].wrapping_add(*count);
+        }
+        for (position, size) in total_sizes.iter().enumerate() {
+            self.total_sizes[position] = self.total_sizes[position].wrapping_add(*size);
+        }
+    }
+
+    fn merge_reservoir_samples<R>(
+        &mut self,
+        incoming: impl Iterator<Item = (i64, R)>,
+        into_columns: impl Fn(R) -> Vec<Datum>,
+    ) {
+        for (weight, row) in incoming {
+            if self.samples[0].0 < weight {
+                self.samples[0] = (weight, into_columns(row));
+                self.sift_down(0);
+            }
+        }
+    }
+
+    fn merge_reservoir_memory(&mut self, old_count: i64, source_count: i64, source_size: i64) {
+        let total = old_count.wrapping_add(source_count);
+        self.go_mem_size = if total == 0 {
+            0
+        } else {
+            self.go_mem_size
+                .wrapping_add(source_size)
+                .wrapping_mul(self.samples.len() as i64)
+                / total
+        };
+    }
+
+    fn append_samples(&mut self, incoming: &mut Vec<(i64, Vec<Datum>)>) {
+        if self.samples.is_empty() {
+            std::mem::swap(&mut self.samples, incoming);
+        } else {
+            self.samples.append(incoming);
         }
     }
 
@@ -433,13 +546,32 @@ impl RowSampleCollector {
                 .collect(),
             null_counts: self.null_counts.clone(),
             count: self.count,
-            fm_sketches: self
-                .sketches
-                .iter()
-                // `FMSketchToProto(nil)` returns a non-nil empty message.
-                .map(|sketch| Some(fm_sketch_to_proto(sketch.as_ref())))
-                .collect(),
+            fm_sketches: encode_sketches(&self.sketches),
             total_sizes: self.total_sizes.clone(),
+        }
+    }
+
+    /// Serializes a finished collector, transferring its encoded sample bytes.
+    pub fn into_proto(self) -> RowSampleCollectorProto {
+        RowSampleCollectorProto {
+            samples: self
+                .samples
+                .into_iter()
+                .map(|(weight, columns)| RowSampleProto {
+                    row: columns
+                        .into_iter()
+                        .map(|column| match column {
+                            Datum::Bytes(bytes) => bytes,
+                            other => sample_column_bytes(&other),
+                        })
+                        .collect(),
+                    weight,
+                })
+                .collect(),
+            null_counts: self.null_counts,
+            count: self.count,
+            fm_sketches: encode_sketches(&self.sketches),
+            total_sizes: self.total_sizes,
         }
     }
 
@@ -452,40 +584,109 @@ impl RowSampleCollector {
         policy: SamplePolicy,
         mem_tracker: &std::sync::Arc<tidb_memory::Tracker>,
     ) -> Self {
-        let sketches: Vec<_> = proto
-            .fm_sketches
-            .iter()
-            .map(|sketch| fm_sketch_from_proto(sketch.as_ref()))
-            .collect();
-        if !proto.samples.is_empty() {
-            mem_tracker.consume(proto_mandatory_memory(proto));
-        }
-        let mut buffered_mem_size = 0;
-        let samples = proto
+        Self::restore_proto(Cow::Borrowed(proto), policy, mem_tracker)
+    }
+
+    /// Restores an owned protobuf collector, transferring its sample buffers.
+    pub fn from_owned_proto(
+        proto: RowSampleCollectorProto,
+        policy: SamplePolicy,
+        mem_tracker: &std::sync::Arc<tidb_memory::Tracker>,
+    ) -> Self {
+        Self::restore_proto(Cow::Owned(proto), policy, mem_tracker)
+    }
+
+    /// Whether every incoming sample must compete with the current minimum.
+    #[must_use]
+    pub fn reservoir_is_full(&self) -> bool {
+        matches!(self.policy, SamplePolicy::Reservoir { max_sample_size }
+            if max_sample_size != 0 && self.samples.len() >= max_sample_size)
+    }
+
+    /// Restores and merges one response while materializing only admitted rows
+    /// when the receiver is a full reservoir.
+    pub fn merge_owned_proto<B>(
+        &mut self,
+        proto: RowSampleCollectorProto<B>,
+        mem_tracker: &std::sync::Arc<tidb_memory::Tracker>,
+    )
+    where
+        B: AsRef<[u8]> + Into<Vec<u8>>,
+    {
+        let (sketches, source_size) = restore_proto_facts(&proto, mem_tracker);
+        let original_size = self.go_mem_size;
+        let into_columns = |row: Vec<B>| {
+            row.into_iter()
+                .map(|value| Datum::Bytes(value.into()))
+                .collect()
+        };
+        let source_count = proto.samples.len() as i64;
+        let incoming = proto
             .samples
-            .iter()
-            .map(|sample| {
-                let payload: i64 = sample.row.iter().map(|column| column.len() as i64).sum();
-                mem_tracker.buffered_consume(&mut buffered_mem_size, payload);
-                (
-                    sample.weight,
-                    sample
-                        .row
-                        .iter()
-                        .map(|column| Datum::Bytes(column.clone()))
-                        .collect(),
-                )
-            })
-            .collect();
-        mem_tracker.consume(buffered_mem_size);
+            .into_iter()
+            .map(|sample| (sample.weight, sample.row));
+        if self.reservoir_is_full() {
+            let old_count = self.samples.len() as i64;
+            self.merge_facts(
+                proto.count,
+                &sketches,
+                &proto.null_counts,
+                &proto.total_sizes,
+            );
+            self.merge_reservoir_samples(incoming, into_columns);
+            self.merge_reservoir_memory(old_count, source_count, source_size);
+        } else {
+            self.merge(Self {
+                policy: self.policy,
+                count: proto.count,
+                null_counts: proto.null_counts,
+                total_sizes: proto.total_sizes,
+                sketches,
+                samples: incoming.map(|(weight, row)| (weight, into_columns(row))).collect(),
+                go_mem_size: source_size,
+            });
+        }
+        mem_tracker.consume(self.go_mem_size - original_size - source_size);
+    }
+
+    fn restore_proto(
+        proto: Cow<'_, RowSampleCollectorProto>,
+        policy: SamplePolicy,
+        mem_tracker: &std::sync::Arc<tidb_memory::Tracker>,
+    ) -> Self {
+        let (sketches, go_mem_size) = restore_proto_facts(&proto, mem_tracker);
+        let count = proto.count;
+        let (samples, null_counts, total_sizes) = match proto {
+            Cow::Borrowed(proto) => {
+                let samples = proto
+                    .samples
+                    .iter()
+                    .map(|sample| {
+                        (
+                            sample.weight,
+                            sample.row.iter().cloned().map(Datum::Bytes).collect(),
+                        )
+                    })
+                    .collect();
+                (samples, proto.null_counts.clone(), proto.total_sizes.clone())
+            }
+            Cow::Owned(proto) => {
+                let samples = proto
+                    .samples
+                    .into_iter()
+                    .map(|sample| (sample.weight, sample.row.into_iter().map(Datum::Bytes).collect()))
+                    .collect();
+                (samples, proto.null_counts, proto.total_sizes)
+            }
+        };
         Self {
             policy,
-            count: proto.count,
-            null_counts: proto.null_counts.clone(),
-            total_sizes: proto.total_sizes.clone(),
+            count,
+            null_counts,
+            total_sizes,
             sketches,
             samples,
-            go_mem_size: proto_memory_usage(proto),
+            go_mem_size,
         }
     }
 
@@ -495,13 +696,13 @@ impl RowSampleCollector {
         self.go_mem_size
     }
 
-    fn sample_row(&mut self, columns: &[Datum], rng: &mut impl RowSampleRng) {
+    fn sample_row(&mut self, into_columns: impl FnOnce() -> Vec<Datum>, rng: &mut impl RowSampleRng) {
         match self.policy {
             SamplePolicy::Bernoulli { sample_rate } => {
                 if rng.float64() > sample_rate {
                     return;
                 }
-                self.samples.push((0, columns.to_vec()));
+                self.samples.push((0, into_columns()));
             }
             SamplePolicy::Reservoir { max_sample_size } => {
                 // Go draws the weight before checking capacity. A direct
@@ -510,7 +711,7 @@ impl RowSampleCollector {
                 // that state unreachable by selecting no reservoir policy.
                 let weight = rng.int63();
                 if self.samples.len() < max_sample_size {
-                    self.samples.push((weight, columns.to_vec()));
+                    self.samples.push((weight, into_columns()));
                     if self.samples.len() == max_sample_size {
                         self.heapify();
                     }
@@ -520,7 +721,7 @@ impl RowSampleCollector {
                 // weights is a uniform sample of the rows. An eviction leaves
                 // the sample's size where it was.
                 if self.samples[0].0 < weight {
-                    self.samples[0] = (weight, columns.to_vec());
+                    self.samples[0] = (weight, into_columns());
                     self.sift_down(0);
                 }
             }
@@ -632,9 +833,17 @@ fn sample_column_bytes(column: &Datum) -> Vec<u8> {
     }
 }
 
+fn encode_sketches(sketches: &[Option<FmSketch>]) -> Vec<Option<FmSketchProto>> {
+    sketches
+        .iter()
+        // `FMSketchToProto(nil)` returns a non-nil empty message.
+        .map(|sketch| Some(fm_sketch_to_proto(sketch.as_ref())))
+        .collect()
+}
+
 /// Go `FromProto`'s `initMemSize`: every empty sample item, its reference
 /// and its empty datums, sized from the first row's width.
-fn proto_mandatory_memory(proto: &RowSampleCollectorProto) -> i64 {
+fn proto_mandatory_memory<B>(proto: &RowSampleCollectorProto<B>) -> i64 {
     const EMPTY_RESERVOIR_SAMPLE_ITEM_SIZE: i64 = 48;
     const REFERENCE_SIZE: i64 = 8;
     let Some(first) = proto.samples.first() else {
@@ -648,13 +857,37 @@ fn proto_mandatory_memory(proto: &RowSampleCollectorProto) -> i64 {
     )
 }
 
-fn proto_memory_usage(proto: &RowSampleCollectorProto) -> i64 {
-    let mandatory = proto_mandatory_memory(proto);
-    proto.samples.iter().fold(mandatory, |total, sample| {
-        sample.row.iter().fold(total, |total, column| {
-            total.wrapping_add(column.len() as i64)
-        })
-    })
+fn proto_row_payload<B: AsRef<[u8]>>(row: &[B]) -> i64 {
+    // NewBytesDatum sets binary collation and Go's Unmarshal allocates
+    // each byte slice with capacity equal to its wire length.
+    let collation_bytes = tidb_charset::Collation::Binary.name().len() as i64;
+    row.iter().fold(
+        (row.len() as i64).wrapping_mul(collation_bytes),
+        |sum, column| sum.wrapping_add(column.as_ref().len() as i64),
+    )
+}
+
+fn restore_proto_facts<B: AsRef<[u8]>>(
+    proto: &RowSampleCollectorProto<B>,
+    mem_tracker: &std::sync::Arc<tidb_memory::Tracker>,
+) -> (Vec<Option<FmSketch>>, i64) {
+    let sketches = proto
+        .fm_sketches
+        .iter()
+        .map(|sketch| fm_sketch_from_proto(sketch.as_ref()))
+        .collect();
+    let mut size = proto_mandatory_memory(proto);
+    let mut buffered = 0;
+    if !proto.samples.is_empty() {
+        mem_tracker.consume(size);
+    }
+    for sample in &proto.samples {
+        let payload = proto_row_payload(&sample.row);
+        mem_tracker.buffered_consume(&mut buffered, payload);
+        size = size.wrapping_add(payload);
+    }
+    mem_tracker.consume(buffered);
+    (sketches, size)
 }
 
 #[cfg(test)]

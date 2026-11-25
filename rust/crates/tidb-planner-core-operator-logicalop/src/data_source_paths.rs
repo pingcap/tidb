@@ -247,8 +247,8 @@ mod tests {
     fn range(low: Datum, high: Datum) -> Range {
         Range {
             collators: vec![tidb_charset::Collation::Binary; 1],
-            low_val: vec![low],
-            high_val: vec![high],
+            low_val: vec![low].into(),
+            high_val: vec![high].into(),
             low_exclude: false,
             high_exclude: false,
         }

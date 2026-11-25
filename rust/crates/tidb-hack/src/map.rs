@@ -15,10 +15,12 @@
 use foldhash::fast::SeedableRandomState;
 use foldhash::SharedSeed;
 use hashbrown::HashMap;
+use hashbrown::hash_map::RawEntryMut;
 use std::alloc::Layout;
+use std::borrow::Borrow;
 use std::cell::Cell;
 use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
+use std::hash::{BuildHasher, Hash, Hasher};
 
 /// Maximum Go Swiss-map table capacity before a directory split.
 const MAX_TABLE_CAPACITY: usize = 1024;
@@ -478,7 +480,11 @@ where
     }
 
     /// Gets a value.
-    pub fn get(&self, key: &K) -> Option<&V> {
+    pub fn get<Q>(&self, key: &Q) -> Option<&V>
+    where
+        K: Borrow<Q>,
+        Q: Hash + Eq + ?Sized,
+    {
         self.map.get(key)
     }
 
@@ -519,6 +525,30 @@ where
     /// Inserts or replaces a value and returns Go's checkpointed memory delta.
     pub fn set(&mut self, key: K, value: V) -> i64 {
         self.map.insert(key, value);
+        self.account_after_insert()
+    }
+
+    /// Inserts using a key borrowed from the value and owns that key only on a miss.
+    pub fn set_with_borrowed_key<Q>(&mut self, value: V, key_of: impl FnOnce(&V) -> &Q) -> i64
+    where
+        K: Borrow<Q> + for<'a> From<&'a Q>,
+        Q: Hash + Eq + ?Sized,
+    {
+        let key = key_of(&value);
+        let hash = self.map.hasher().hash_one(key);
+        match self.map.raw_entry_mut().from_key_hashed_nocheck(hash, key) {
+            RawEntryMut::Occupied(mut entry) => {
+                *entry.get_mut() = value;
+                0
+            }
+            RawEntryMut::Vacant(entry) => {
+                entry.insert_hashed_nocheck(hash, K::from(key), value);
+                self.account_after_insert()
+            }
+        }
+    }
+
+    fn account_after_insert(&mut self) -> i64 {
         let used = self.map.len();
         if used < self.next_checkpoint {
             return 0;

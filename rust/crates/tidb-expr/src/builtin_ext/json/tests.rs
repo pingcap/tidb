@@ -99,7 +99,19 @@ fn json_scalar_source_wave_boundaries() {
 
     assert_eq!(call("JSON_UNQUOTE", &[Datum::Null]), Datum::Null);
     assert!(call_result("JSON_UNQUOTE", &[Datum::Int(3)]).is_err());
-    assert!(call_result("JSON_UNQUOTE", &[Datum::new_bytes_datum([0xff])]).is_err());
+    let bytes = Datum::new_bytes_datum([0xff]);
+    assert_eq!(
+        call("JSON_UNQUOTE", std::slice::from_ref(&bytes)).as_raw_bytes(),
+        Some(&[0xff][..])
+    );
+    let binary = tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::VarString)
+        .with_collation(tidb_charset::Collation::Binary);
+    let argument =
+        crate::expression::Expression::Constant(crate::constant::Constant::new(bytes, binary));
+    assert!(matches!(
+        crate::tests::eval_builtin_func_over("json_unquote", vec![argument], &crate::NoColumns),
+        Some(Err(crate::EvalError::Json(crate::JsonError::InvalidCharset)))
+    ));
 
     assert_eq!(
         call("JSON_VALID", &[Datum::new_bytes_datum([0xff])]),

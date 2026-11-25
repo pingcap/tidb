@@ -14,8 +14,7 @@
 
 //! MySQL-replication-style table filter.
 //!
-//! A rule whose value begins with `~` is a regular expression (compiled with
-//! the `regex` crate, matching Go's `regexp`); any other value is a glob-like
+//! A rule whose value begins with `~` is a Go regular expression. Any other value is a glob-like
 //! pattern handled by the trie [`Selector`](tidb_table_rule_selector).
 //! Regex look-around (`(?!...)`, `(?=...)`) is rejected. The selector and
 //! result cache are internally synchronized for concurrent callers.
@@ -23,10 +22,11 @@
 mod schema;
 pub use schema::{is_system_schema, DM_HEARTBEAT_SCHEMA, INSPECTION_SCHEMA_NAME};
 
+use std::borrow::Cow;
 use std::collections::HashMap;
-use std::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
+use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
-use regex::Regex;
+use tidb_go_regexp::RegexpPredicate;
 use tidb_mysql::to_lowercase as go_simple_lowercase;
 
 use tidb_table_filter::{MySQLReplicationRules, Table};
@@ -67,18 +67,22 @@ enum RuleKind {
 #[derive(Clone)]
 struct NodeEndRule {
     // The compiled table regex, set only for `TblOnlyDbPart`.
-    r: Option<Regex>,
+    r: Option<Arc<RegexpPredicate>>,
     kind: RuleKind,
     is_allow_list: bool,
 }
 
+type Patterns = HashMap<String, Arc<RegexpPredicate>>;
+
 /// A table filter in the style of MySQL replication rules (Go `Filter`).
 pub struct Filter {
     selector: TrieSelector<NodeEndRule>,
-    pattern_map: HashMap<String, Regex>,
+    pattern_map: Patterns,
     rules: Option<Rules>,
     cache: RwLock<HashMap<String, ActionType>>,
     case_sensitive: bool,
+    single_table_allow: bool,
+    literal_schema_allow: bool,
 }
 
 impl Filter {
@@ -91,14 +95,28 @@ impl Filter {
             }
         }
         let selector: TrieSelector<NodeEndRule> = TrieSelector::new();
-        let mut pattern_map: HashMap<String, Regex> = HashMap::new();
+        let mut pattern_map = Patterns::new();
         init_rules(&selector, &mut pattern_map, rules.as_ref(), case_sensitive)?;
+        let single_table_allow = rules.as_ref().is_some_and(|rules| {
+            let ([schema], [table]) = (rules.do_dbs.as_slice(), rules.do_tables.as_slice()) else {
+                return false;
+            };
+            !schema.starts_with('~') && *schema == table.schema
+                && rules.ignore_dbs.is_empty() && rules.ignore_tables.is_empty()
+        });
+        let literal_schema_allow = rules.as_ref().is_some_and(|rules| {
+            let [schema] = rules.do_dbs.as_slice() else { return false };
+            schema.is_ascii() && !schema.starts_with('~')
+                && !schema.contains(['*', '?', '[', '`'])
+        });
         Ok(Filter {
             selector,
             pattern_map,
             rules,
             cache: RwLock::new(HashMap::new()),
             case_sensitive,
+            single_table_allow,
+            literal_schema_allow,
         })
     }
 
@@ -120,13 +138,13 @@ impl Filter {
         }
         let mut tbs = Vec::new();
         for tb in stbs {
-            let mut new_tb = tb.clone();
-            if !self.case_sensitive {
-                new_tb.schema = go_simple_lowercase(&new_tb.schema);
-                new_tb.name = go_simple_lowercase(&new_tb.name);
-            }
-            if self.matches(&new_tb) {
-                tbs.push(new_tb);
+            let schema = self.normalize_name(&tb.schema);
+            let table = self.normalize_name(&tb.name);
+            if self.matches_normalized(&schema, &table) {
+                tbs.push(Table {
+                    schema: schema.into_owned(),
+                    name: table.into_owned(),
+                });
             }
         }
         tbs
@@ -139,15 +157,7 @@ impl Filter {
         }
         let mut tbs = Vec::new();
         for tb in stbs {
-            let probe = if self.case_sensitive {
-                tb.clone()
-            } else {
-                Table {
-                    schema: go_simple_lowercase(&tb.schema),
-                    name: go_simple_lowercase(&tb.name),
-                }
-            };
-            if self.matches(&probe) {
+            if self.matches(tb) {
                 tbs.push(tb.clone());
             }
         }
@@ -159,44 +169,72 @@ impl Filter {
         let Some(_rules) = self.rules.as_ref() else {
             return true;
         };
-        let mut new_tb = tb.clone();
-        if !self.case_sensitive {
-            new_tb.schema = go_simple_lowercase(&new_tb.schema);
-            new_tb.name = go_simple_lowercase(&new_tb.name);
+        let schema = self.normalize_name(&tb.schema);
+        let table = self.normalize_name(&tb.name);
+        self.matches_normalized(&schema, &table)
+    }
+
+    fn matches_normalized(&self, schema: &str, table: &str) -> bool {
+        let literal_schema = self.literal_schema_allow && !schema.contains('`');
+        if literal_schema && self.rules.as_ref().expect("literal schema rule").do_dbs[0] != schema {
+            // This quoted name cannot start with the allowed schema's key.
+            return false;
         }
-        let name = new_tb.to_string();
+        let table_len = if table.is_empty() { 0 } else { table.len() + 3 };
+        let mut name = String::with_capacity(schema.len() + 2 + table_len);
+        name.push('`');
+        name.push_str(schema);
+        name.push('`');
+        if !table.is_empty() {
+            name.push_str(".`");
+            name.push_str(table);
+            name.push('`');
+        }
         if let Some(&cached) = self.read_cache().get(&name) {
             return cached == DO;
         }
-        let do_ = self.filter_on_schemas(&new_tb) && self.filter_on_tables(&new_tb);
-        self.write_cache().insert(new_tb.to_string(), do_);
-        do_ == DO
+        let keep = (literal_schema || self.filter_on_schemas(schema))
+            && self.filter_on_tables(schema, table);
+        self.write_cache().insert(name, keep);
+        keep == DO
     }
 
-    fn filter_on_schemas(&self, tb: &Table) -> bool {
+    fn normalize_name<'a>(&self, name: &'a str) -> Cow<'a, str> {
+        if self.case_sensitive
+            || name.bytes().all(|byte| byte.is_ascii() && !byte.is_ascii_uppercase())
+        {
+            Cow::Borrowed(name)
+        } else {
+            Cow::Owned(go_simple_lowercase(name))
+        }
+    }
+
+    fn filter_on_schemas(&self, schema: &str) -> bool {
         let rules = self.rules.as_ref().expect("rules present");
         if !rules.do_dbs.is_empty() {
-            if !self.match_db(&rules.do_dbs, &tb.schema, true) {
+            if !self.match_db(&rules.do_dbs, schema, true) {
                 return false;
             }
         } else if !rules.ignore_dbs.is_empty()
-            && self.match_db(&rules.ignore_dbs, &tb.schema, false)
+            && self.match_db(&rules.ignore_dbs, schema, false)
         {
             return false;
         }
         true
     }
 
-    fn filter_on_tables(&self, tb: &Table) -> bool {
+    fn filter_on_tables(&self, schema: &str, table: &str) -> bool {
         // Schema-level statements (create/drop/alter database) carry no table.
-        if tb.name.is_empty() {
+        if table.is_empty() {
             return true;
         }
         let rules = self.rules.as_ref().expect("rules present");
-        if !rules.do_tables.is_empty() && self.match_table(&rules.do_tables, tb, true) {
+        if !rules.do_tables.is_empty() && self.match_table(&rules.do_tables, schema, table, true) {
             return true;
         }
-        if !rules.ignore_tables.is_empty() && self.match_table(&rules.ignore_tables, tb, false) {
+        if !rules.ignore_tables.is_empty()
+            && self.match_table(&rules.ignore_tables, schema, table, false)
+        {
             return false;
         }
         rules.do_tables.is_empty()
@@ -216,21 +254,38 @@ impl Filter {
             .any(|r| r.kind == RuleKind::Db && r.is_allow_list == is_allow_check)
     }
 
-    fn match_table(&self, pattern_tbs: &[Table], tb: &Table, is_allow_check: bool) -> bool {
+    fn match_table(
+        &self,
+        pattern_tbs: &[Table],
+        schema: &str,
+        table: &str,
+        is_allow_check: bool,
+    ) -> bool {
+        // The schema phase already matched the single allow rule. A quoted
+        // schema can alias a compound selector key, so preserve the normal
+        // trie reads for that case.
+        if self.single_table_allow && !schema.contains('`') {
+            if let Some(pattern) = pattern_tbs[0].name.strip_prefix('~') {
+                if self.match_string(pattern, table) {
+                    return true;
+                }
+            }
+            return self.match_table_in_trie(schema, table, is_allow_check);
+        }
         for ptb in pattern_tbs {
             let db_is_regex = ptb.schema.starts_with('~');
             let tbl_is_regex = ptb.name.starts_with('~');
             if db_is_regex && tbl_is_regex {
-                if self.match_string(&ptb.schema[1..], &tb.schema)
-                    && self.match_string(&ptb.name[1..], &tb.name)
+                if self.match_string(&ptb.schema[1..], schema)
+                    && self.match_string(&ptb.name[1..], table)
                 {
                     return true;
                 }
             } else if db_is_regex && !tbl_is_regex {
-                if !self.match_string(&ptb.schema[1..], &tb.schema) {
+                if !self.match_string(&ptb.schema[1..], schema) {
                     continue;
                 }
-                let rule_set = self.selector.match_rules(&tb.name, "").unwrap_or_default();
+                let rule_set = self.selector.match_rules(table, "").unwrap_or_default();
                 if rule_set.iter().any(|r| {
                     r.kind == RuleKind::TblOnlyTblPart && r.is_allow_list == is_allow_check
                 }) {
@@ -239,28 +294,29 @@ impl Filter {
             }
             let rule_set = self
                 .selector
-                .match_rules(&tb.schema, "")
+                .match_rules(schema, "")
                 .unwrap_or_default();
             for r in &rule_set {
                 if r.kind == RuleKind::TblOnlyDbPart
                     && r.is_allow_list == is_allow_check
-                    && r.r.as_ref().is_some_and(|re| re.is_match(&tb.name))
+                    && r.r.as_ref().is_some_and(|re| re.is_match(table))
                 {
                     return true;
                 }
             }
-            let rule_set = self
-                .selector
-                .match_rules(&tb.schema, &tb.name)
-                .unwrap_or_default();
-            if rule_set
-                .iter()
-                .any(|r| r.kind == RuleKind::TblFull && r.is_allow_list == is_allow_check)
-            {
+            if self.match_table_in_trie(schema, table, is_allow_check) {
                 return true;
             }
         }
         false
+    }
+
+    fn match_table_in_trie(&self, schema: &str, table: &str, is_allow_check: bool) -> bool {
+        self.selector
+            .match_rules(schema, table)
+            .unwrap_or_default()
+            .iter()
+            .any(|r| r.kind == RuleKind::TblFull && r.is_allow_list == is_allow_check)
     }
 
     fn match_string(&self, pattern: &str, t: &str) -> bool {
@@ -274,7 +330,7 @@ impl Filter {
 // Go `initRules`: compiles regexes and inserts trie rules.
 fn init_rules(
     selector: &TrieSelector<NodeEndRule>,
-    pattern_map: &mut HashMap<String, Regex>,
+    pattern_map: &mut Patterns,
     rules: Option<&Rules>,
     case_sensitive: bool,
 ) -> Result<(), FilterError> {
@@ -333,13 +389,14 @@ fn init_rules(
 // Go `initOneRegex`: compiles `origin` (case-insensitively when the filter
 // is), caching it under its original string key.
 fn init_one_regex(
-    pattern_map: &mut HashMap<String, Regex>,
+    pattern_map: &mut Patterns,
     origin: &str,
     case_sensitive: bool,
 ) -> Result<(), FilterError> {
     if !pattern_map.contains_key(origin) {
-        let re = tidb_go_regexp::compile(origin, case_sensitive).map_err(FilterError)?;
-        pattern_map.insert(origin.to_owned(), re);
+        let predicate = tidb_go_regexp::compile_predicate(origin, !case_sensitive, false, false)
+            .map_err(FilterError)?;
+        pattern_map.insert(origin.to_owned(), Arc::new(predicate));
     }
     Ok(())
 }
@@ -347,7 +404,7 @@ fn init_one_regex(
 // Go `initSchemaRule`.
 fn init_schema_rule(
     selector: &TrieSelector<NodeEndRule>,
-    pattern_map: &mut HashMap<String, Regex>,
+    pattern_map: &mut Patterns,
     db_str: &str,
     is_allow_list: bool,
     case_sensitive: bool,
@@ -372,7 +429,7 @@ fn init_schema_rule(
 // Go `initTableRule`.
 fn init_table_rule(
     selector: &TrieSelector<NodeEndRule>,
-    pattern_map: &mut HashMap<String, Regex>,
+    pattern_map: &mut Patterns,
     db_str: &str,
     table_str: &str,
     is_allow_list: bool,

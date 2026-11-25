@@ -2575,8 +2575,7 @@ impl PartialIndexWorker {
             crate::cop_reader::TableRead {
                 store_type: tidb_kv::store_type::StoreType::TiKv,
                 dag,
-                key_ranges,
-                key_range_hints: Vec::new(),
+                key_ranges: tidb_txnkv::PartitionedKeyRanges::new_non_partitioned(key_ranges).into(),
                 partition_id_and_ranges: Vec::new(),
                 batch_cop: false,
                 schema_version: 0,

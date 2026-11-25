@@ -79,7 +79,7 @@ fn expression_string_text(
 /// Go `SessionVars.EnableRedactLog` as the operators pass it to
 /// `StringWithCtx`.
 fn redact_mode(eval_ctx: &dyn tidb_exprctx::Columns) -> tidb_expr::explain::RedactionMode {
-    tidb_expr::explain::redaction_mode(&eval_ctx.tidb_redact_log())
+    tidb_expr::explain::redaction_mode(&eval_ctx.tidb_redact_log_ref())
 }
 
 /// Go appends `stats:pseudo` only when a scan's `StatsInfo.StatsVersion` is
@@ -138,11 +138,21 @@ fn expressions_text(
     eval_ctx: &dyn tidb_exprctx::Columns,
     expressions: &[tidb_expr::expression::Expression],
 ) -> String {
-    expressions
-        .iter()
-        .map(|expression| expression_text(eval_ctx, expression))
-        .collect::<Vec<_>>()
-        .join(", ")
+    use tidb_expr::explain::{ExpressionTextStyle, append_physical_expression_text};
+
+    let mut output = String::new();
+    for (index, expression) in expressions.iter().enumerate() {
+        if index != 0 {
+            output.push_str(", ");
+        }
+        let _ = append_physical_expression_text(
+            eval_ctx,
+            expression,
+            ExpressionTextStyle::Explain,
+            &mut output,
+        );
+    }
+    output
 }
 
 /// Go `expression.ExplainExpressionList` (`explain.go:188`), the Projection's
@@ -154,32 +164,38 @@ fn projection_text(
     expressions: &[tidb_expr::expression::Expression],
     schema: Option<&tidb_expr::schema::Schema>,
 ) -> String {
-    expressions
-        .iter()
-        .enumerate()
-        .map(|(index, expression)| {
-            let rendered = expression_string_text(eval_ctx, expression);
-            let Some(output) = schema.and_then(|schema| schema.columns.get(index)) else {
-                return rendered;
-            };
-            let output = expression_string_text(
-                eval_ctx,
-                &tidb_expr::expression::Expression::Column(output.clone()),
-            );
-            match expression {
-                // A column projected under the SAME identity prints once;
-                // a re-projected column with a different UniqueID prints both.
-                tidb_expr::expression::Expression::Column(_)
-                | tidb_expr::expression::Expression::CorrelatedColumn(_)
-                    if rendered == output =>
-                {
-                    rendered
-                }
-                _ => format!("{rendered}->{output}"),
-            }
-        })
-        .collect::<Vec<_>>()
-        .join(", ")
+    use tidb_expr::explain::{
+        ExpressionTextStyle, append_physical_column_text, append_physical_expression_text,
+    };
+    use tidb_expr::expression::Expression;
+
+    let mut result = String::with_capacity(16 * expressions.len());
+    for (index, expression) in expressions.iter().enumerate() {
+        if index != 0 {
+            result.push_str(", ");
+        }
+        let start = result.len();
+        let _ = append_physical_expression_text(
+            eval_ctx,
+            expression,
+            ExpressionTextStyle::StringWithCtx(redact_mode(eval_ctx)),
+            &mut result,
+        );
+        let Some(output) = schema.and_then(|schema| schema.columns.get(index)) else {
+            continue;
+        };
+        let expression_end = result.len();
+        result.push_str("->");
+        let output_start = result.len();
+        let _ = append_physical_column_text(eval_ctx, output, &mut result);
+        // A direct column with the same identity is displayed once.
+        if matches!(expression, Expression::Column(_) | Expression::CorrelatedColumn(_))
+            && result[start..expression_end] == result[output_start..]
+        {
+            result.truncate(expression_end);
+        }
+    }
+    result
 }
 
 fn by_items_text(
@@ -3951,5 +3967,35 @@ mod tests {
             !super::brief_binary_plan(&ctx, &plan, &tidb_infoschema_perfschema::mock_catalog())
                 .is_empty()
         );
+    }
+}
+
+#[cfg(test)]
+mod expression_list_tests {
+    use super::*;
+
+    #[test]
+    fn explain_expression_lists_preserve_output_columns_and_empty_cells() {
+        use tidb_datatype::{Datum, FieldType, FieldTypeCode};
+        use tidb_expr::{column::Column, constant::Constant, expression::Expression, schema::Schema};
+        use tidb_exprctx::NoColumns;
+
+        let column = |name: &str| {
+            let mut column = Column::default();
+            column.orig_name = name.to_owned();
+            column
+        };
+        let value = Expression::Constant(Constant::new(
+            Datum::new_bytes_datum([0xff]),
+            FieldType::new(FieldTypeCode::VarString),
+        ));
+        let expressions = [
+            Expression::Column(column("a")),
+            value,
+            Expression::Column(column("a")),
+        ];
+        let schema = Schema::new(vec![column("a"), column("b"), column("c")]);
+        assert_eq!(projection_text(&NoColumns, &expressions, Some(&schema)), "a, ->b, a->c");
+        assert_eq!(expressions_text(&NoColumns, &expressions), "a, , a");
     }
 }

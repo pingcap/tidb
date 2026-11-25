@@ -13,8 +13,10 @@ workspace = true
 [dependencies]
 tidb-goruntime = { path = "../tidb-goruntime" }
 tidb-mysql = { path = "../tidb-mysql" }
+memchr = "2"
 serde.workspace = true
 serde_json = { workspace = true, features = ["raw_value"] }
+simdutf8 = { version = "0.1.5", features = ["aarch64_neon"] }
 
 [[bench]]
 name = "stringutil"

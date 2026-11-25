@@ -29391,7 +29391,7 @@ fn a_statements_requests_carry_its_label_as_their_source() {
         let (kind, key, context): (&str, Vec<u8>, _) = if let Some(request) = any.downcast_ref::<kvrpcpb::PrewriteRequest>() {
             ("prewrite", request.mutations.first().map(|m| m.key.clone()).unwrap_or_default(), request.context.as_ref())
         } else if let Some(request) = any.downcast_ref::<coprocessor::Request>() {
-            ("cop", request.ranges.first().map(|r| r.start.clone()).unwrap_or_default(), request.context.as_ref())
+            ("cop", request.ranges.first().map(|r| r.start.to_vec()).unwrap_or_default(), request.context.as_ref())
         } else {
             return;
         };

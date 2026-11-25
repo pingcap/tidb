@@ -20,8 +20,7 @@
 //! integration remain outside this leaf. Keeping those boundaries explicit is
 //! important: a row byte layout is not a substitute for a typed row codec.
 
-use crate::ROW_CODEC_VERSION;
-use crate::ROW_FLAG_LARGE;
+use crate::{ROW_CODEC_VERSION, ROW_FLAG_LARGE, ROW_HEADER_LEN};
 
 /// One source-owned row column entry for [`encode_raw_row`].
 ///
@@ -76,11 +75,7 @@ pub fn encode_raw_row(columns: &[RawRowColumn<'_>], buffer: &mut Vec<u8>) {
         null.sort_unstable_by_key(|id| *id as u8);
     }
 
-    let flags = if large { ROW_FLAG_LARGE } else { 0 };
-    buffer.push(ROW_CODEC_VERSION);
-    buffer.push(flags);
-    buffer.extend_from_slice(&(not_null.len() as u16).to_le_bytes());
-    buffer.extend_from_slice(&(null.len() as u16).to_le_bytes());
+    buffer.extend_from_slice(&row_header(large, not_null.len(), null.len()));
 
     if large {
         for (id, _) in &not_null {
@@ -122,6 +117,24 @@ pub fn encode_raw_row(columns: &[RawRowColumn<'_>], buffer: &mut Vec<u8>) {
     for (_, value) in not_null {
         buffer.extend_from_slice(value);
     }
+}
+
+pub(crate) fn row_header(
+    large: bool,
+    not_null_count: usize,
+    null_count: usize,
+) -> [u8; ROW_HEADER_LEN] {
+    let flags = if large { ROW_FLAG_LARGE } else { 0 };
+    let [not_null_lo, not_null_hi] = (not_null_count as u16).to_le_bytes();
+    let [null_lo, null_hi] = (null_count as u16).to_le_bytes();
+    [
+        ROW_CODEC_VERSION,
+        flags,
+        not_null_lo,
+        not_null_hi,
+        null_lo,
+        null_hi,
+    ]
 }
 
 /// Appends the compact little-endian signed payload used by rowcodec.

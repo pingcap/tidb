@@ -15,11 +15,9 @@
 //! Sorted table handles to half-open KV ranges, translated from
 //! `pkg/distsql/request_builder.go::TableHandlesToKVRanges`.
 
-use tidb_codec::encode_int;
+use tidb_codec::encode_int_to_cmp_uint;
 use tidb_tablecodec::table_key::encode_row_key;
-use tidb_txnkv::{Handle, Key};
-
-use tidb_txnkv::KeyRange;
+use tidb_txnkv::{Handle, KeyRange};
 
 /// Converts sorted handles into canonical row-key ranges and row-count hints.
 ///
@@ -40,10 +38,13 @@ pub fn table_handles_to_kv_ranges(
         let logical = logical_handle(&handles[index], &mut table_id);
         if let Handle::Common(common) = logical {
             let start_key = encode_row_key(table_id, common.encoded());
-            let end_handle = Key::from_bytes(common.encoded()).next();
+            // Key.Next appends a zero byte to the common handle's encoding.
+            let mut end_key = Vec::with_capacity(start_key.len() + 1);
+            end_key.extend_from_slice(&start_key);
+            end_key.push(0);
             ranges.push(KeyRange {
                 start_key: start_key.into(),
-                end_key: encode_row_key(table_id, end_handle.as_bytes()).into(),
+                end_key: end_key.into(),
             });
             hints.push(1);
             index += 1;
@@ -76,14 +77,18 @@ pub fn table_handles_to_kv_ranges(
         let high = handles[end - 1]
             .int_value()
             .expect("integer range ends with integer handle");
-        let mut low_encoded = Vec::with_capacity(8);
-        encode_int(&mut low_encoded, low);
-        let mut high_encoded = Vec::with_capacity(8);
-        encode_int(&mut high_encoded, high);
-        let high_exclusive = Key::from_bytes(high_encoded).prefix_next();
+        let low_encoded = encode_int_to_cmp_uint(low).to_be_bytes();
+        let end_key = if let Some(next) = high.checked_add(1) {
+            encode_row_key(table_id, &encode_int_to_cmp_uint(next).to_be_bytes())
+        } else {
+            // Key.PrefixNext appends a zero byte when the handle is all 0xff.
+            let mut high_exclusive = [0xff; 9];
+            high_exclusive[8] = 0;
+            encode_row_key(table_id, &high_exclusive)
+        };
         ranges.push(KeyRange {
             start_key: encode_row_key(table_id, &low_encoded).into(),
-            end_key: encode_row_key(table_id, high_exclusive.as_bytes()).into(),
+            end_key: end_key.into(),
         });
         hints.push(end - index);
         index = end;
@@ -113,6 +118,20 @@ mod tests {
         assert_eq!(ranges.len(), 3);
         assert_eq!(hints, vec![1, 1, 2]);
         assert_eq!(ranges[0], ranges[1]);
+    }
+
+    #[test]
+    fn max_integer_handle_keeps_the_zero_suffix_at_the_exclusive_end() {
+        let handles = [
+            Handle::from(IntHandle::new(i64::MAX - 1)),
+            Handle::from(IntHandle::new(i64::MAX)),
+        ];
+        let (ranges, hints) = table_handles_to_kv_ranges(91, &handles);
+        assert_eq!(hints, [2]);
+        assert_eq!(
+            ranges[0].end_key.as_bytes(),
+            encode_row_key(91, &[0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0])
+        );
     }
 }
 

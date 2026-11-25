@@ -1,11 +1,14 @@
 // Copyright 2026 PingCAP, Inc. Licensed under Apache-2.0.
 
-//! Go `builtin_like_vec.go`: complete argument columns and a private pattern.
+//! Go `builtin_like_vec.go`: complete argument evaluation and batch-local patterns.
 
-use super::{vec_eval, ScalarFunction};
-use crate::{Columns, EvalError};
-use tidb_chunk::{chunk::Chunk, column::Column};
-use tidb_datatype::Datum;
+use super::{ScalarFunction, vec_eval};
+use crate::{
+    Columns, Datum, EvalError,
+    expression::{ConstLevel, Expression},
+};
+use tidb_chunk::{chunk::Chunk, column::Column, row::Row};
+use tidb_datatype::EvalType;
 use tidb_proto::tipb::ScalarFuncSig;
 
 /// Go `builtinLikeSig.vectorized`.
@@ -16,8 +19,7 @@ pub(super) fn supported(function: &ScalarFunction) -> bool {
     )
 }
 
-/// Go `builtinLikeSig.vecEvalInt`: compile each row's pattern locally,
-/// without mutating the scalar signature's shared cached pattern.
+/// Go `builtinLikeSig.vecEvalInt`: use a private pattern for each batch.
 pub(super) fn eval(
     function: &ScalarFunction,
     ctx: &dyn Columns,
@@ -27,26 +29,31 @@ pub(super) fn eval(
     if function.pb_code() == ScalarFuncSig::IlikeSig {
         return ilike(function, ctx, input, result);
     }
-    use tidb_datatype::EvalType;
-    let n = input.num_rows();
-    let buf_val = vec_eval::argument(&function.args[0], EvalType::String, ctx, input)?;
-    let buf_pattern = vec_eval::argument(&function.args[1], EvalType::String, ctx, input)?;
-    let buf_escape = vec_eval::argument(&function.args[2], EvalType::Int, ctx, input)?;
-    result.resize_int64(n, false);
-    result.merge_nulls(&[&buf_val, &buf_pattern, &buf_escape]);
-    for i in 0..n {
-        if result.is_null(i) {
-            continue;
+    let values = vec_eval::read_argument(&function.args[0], EvalType::String, ctx, input)?;
+    let patterns = vec_eval::read_argument(&function.args[1], EvalType::String, ctx, input)?;
+    let escapes = vec_eval::read_argument(&function.args[2], EvalType::Int, ctx, input)?;
+    let values = values.cells();
+    let patterns = patterns.cells();
+    let escapes = escapes.cells();
+    let collation = function.derived_collation();
+    let mut cache: Option<((_, _), crate::like::CompiledLikePattern)> = None;
+    result.write_int64_rows((0..input.num_rows()).map(|row| {
+        let value = values.bytes(row)?;
+        let pattern = patterns.bytes(row)?;
+        let escape = escapes.int64(row)? as u8;
+        let key = (pattern, escape);
+        let (last, compiled) = cache.get_or_insert_with(|| {
+            (
+                key,
+                crate::like::CompiledLikePattern::new(pattern, escape, collation),
+            )
+        });
+        if *last != key {
+            compiled.recompile(pattern, escape);
+            *last = key;
         }
-        // Go compiles into its own `collator().Pattern()`, never `b.pattern`.
-        let pattern = crate::like::CompiledLikePattern::new(
-            &buf_pattern.get_bytes(i),
-            buf_escape.get_int64(i) as u8,
-            function.derived_collation(),
-        );
-        let matched = i64::from(pattern.is_match(&buf_val.get_bytes(i)));
-        result.with_int64s_mut(|i64s| i64s[i] = matched);
-    }
+        Some(i64::from(compiled.is_match(value)))
+    }));
     Ok(())
 }
 
@@ -58,65 +65,97 @@ fn ilike(
     input: &Chunk,
     result: &mut Column,
 ) -> Result<(), EvalError> {
-    use crate::expression::ConstLevel;
-    use tidb_chunk::row::Row;
-    use tidb_datatype::EvalType;
-    let mut buffers = Vec::with_capacity(2);
-    for arg in &function.args[..2] {
-        if arg.const_level() >= ConstLevel::ONLY_IN_CONTEXT {
-            let value = {
-                super::eval_numeric_row(arg, ctx, Row::empty(), EvalType::String)
-            }
-            .map_err(crate::regexp::err_regexp_wrapping)?;
-            if value.is_null() {
-                result.reserve_string(input.num_rows());
-                for _ in 0..input.num_rows() {
-                    result.append_null();
-                }
-                return Ok(());
-            }
-            let mut buffer = Column::default();
-            buffer.reserve_string(input.num_rows());
-            for row in 0..input.num_rows() {
-                vec_eval::put(&mut buffer, row, EvalType::String, &value)?;
-            }
-            buffers.push(buffer);
-        } else {
-            buffers.push(
-                vec_eval::argument(arg, EvalType::String, ctx, input)
-                    .map_err(crate::regexp::err_regexp_wrapping)?,
-            );
-        }
-    }
+    let rows = input.num_rows();
+    let Some(values) = ilike_argument(&function.args[0], ctx, input)? else {
+        fill_nulls(result, rows);
+        return Ok(());
+    };
+    let Some(patterns) = ilike_argument(&function.args[1], ctx, input)? else {
+        fill_nulls(result, rows);
+        return Ok(());
+    };
     if function.args[2].const_level() != ConstLevel::STRICT {
         return Err(EvalError::Raw("escape should be const".into()));
     }
-    let escape = {
-        super::eval_numeric_row(&function.args[2], ctx, Row::empty(), EvalType::Int)?
-    };
-    if escape.is_null() {
-        result.reserve_string(input.num_rows());
-        for _ in 0..input.num_rows() {
-            result.append_null();
-        }
+    let escape = super::eval_numeric_row(&function.args[2], ctx, Row::empty(), EvalType::Int)?;
+    let Some(escape) = crate::arg_eval_type::eval_int(&escape)? else {
+        fill_nulls(result, rows);
         return Ok(());
-    }
-    let escape = crate::arg_eval_type::eval_int(&escape)?.expect("not NULL") as u8;
-    result.resize_int64(input.num_rows(), false);
-    result.merge_nulls(&[&buffers[0], &buffers[1]]);
-    for row in 0..input.num_rows() {
-        if result.is_null(row) {
-            continue;
+    };
+    let escape = escape as u8;
+    let values = values.values()?;
+    let patterns = patterns.values()?;
+    let collation = function.derived_collation();
+    let mut cache: Option<(_, crate::like::CompiledIlikePattern)> = None;
+    let mut scratch = Vec::new();
+    result.write_int64_rows((0..rows).map(|row| {
+        let value = values.get(row)?;
+        let pattern = patterns.get(row)?;
+        let (last, compiled) = cache.get_or_insert_with(|| {
+            (
+                pattern,
+                crate::like::CompiledIlikePattern::new(pattern, escape, collation),
+            )
+        });
+        if *last != pattern {
+            compiled.recompile(pattern, escape, &mut scratch);
+            *last = pattern;
         }
-        let bytes = buffers[1].get_bytes(row);
-        let pattern =
-            crate::like::CompiledIlikePattern::new(&bytes, escape, function.derived_collation());
-        vec_eval::put(
-            result,
-            row,
-            EvalType::Int,
-            &Datum::Int(i64::from(pattern.is_match(&buffers[0].get_bytes(row)))),
-        )?;
-    }
+        Some(i64::from(
+            compiled.is_match_with_buffer(value, &mut scratch),
+        ))
+    }));
     Ok(())
+}
+
+enum IlikeArgument<'a> {
+    Constant(Datum),
+    Column(vec_eval::ReadArgument<'a>),
+}
+
+impl IlikeArgument<'_> {
+    fn values(&self) -> Result<IlikeCells<'_>, EvalError> {
+        match self {
+            Self::Constant(value) => {
+                crate::arg_eval_type::eval_string_bytes(value).map(IlikeCells::Constant)
+            }
+            Self::Column(argument) => Ok(IlikeCells::Column(argument.cells())),
+        }
+    }
+}
+
+enum IlikeCells<'a> {
+    Constant(Option<&'a [u8]>),
+    Column(vec_eval::ReadArgumentCells<'a>),
+}
+
+impl IlikeCells<'_> {
+    fn get(&self, row: usize) -> Option<&[u8]> {
+        match self {
+            Self::Constant(value) => *value,
+            Self::Column(cells) => cells.bytes(row),
+        }
+    }
+}
+
+fn ilike_argument<'a>(
+    expression: &Expression,
+    ctx: &dyn Columns,
+    input: &'a Chunk,
+) -> Result<Option<IlikeArgument<'a>>, EvalError> {
+    if expression.const_level() >= ConstLevel::ONLY_IN_CONTEXT {
+        let value = super::eval_numeric_row(expression, ctx, Row::empty(), EvalType::String)
+            .map_err(crate::regexp::err_regexp_wrapping)?;
+        return Ok((!value.is_null()).then_some(IlikeArgument::Constant(value)));
+    }
+    vec_eval::read_argument(expression, EvalType::String, ctx, input)
+        .map(|argument| Some(IlikeArgument::Column(argument)))
+        .map_err(crate::regexp::err_regexp_wrapping)
+}
+
+fn fill_nulls(result: &mut Column, rows: usize) {
+    result.reserve_string(rows);
+    for _ in 0..rows {
+        result.append_null();
+    }
 }

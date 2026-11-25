@@ -72,6 +72,7 @@ fn test_append_format_float() {
         (f64::NEG_INFINITY, "0", -1, 64),
         (1e14, "100000000000000", -1, 64),
         (1e308, "1e308", -1, 64),
+        (1.2345e120, "1.235e120", 3, 64),
     ];
 
     for (value, expected, precision, bit_size) in cases {
@@ -83,6 +84,10 @@ fn test_append_format_float() {
             "value={value} precision={precision} bit_size={bit_size}"
         );
     }
+
+    let mut prefixed = b"-0.00e+04:".to_vec();
+    append_format_float(&mut prefixed, 1e20, 5, 64);
+    assert_eq!(prefixed, b"-0.00e+04:1e20");
 }
 
 #[test]

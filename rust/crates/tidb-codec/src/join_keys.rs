@@ -19,7 +19,7 @@ use crate::{encode_hash_datum, CodecError, SerializeMode, INT_FLAG, UINT_FLAG};
 use std::ops::{Index, Range};
 use tidb_chunk::chunk::Chunk;
 use tidb_chunk::column::{Column, RawCells};
-use tidb_datatype::{Datum, FieldType, FieldTypeCode, FieldTypeFlags};
+use tidb_datatype::{Datum, FieldType, FieldTypeCode, FieldTypeFlags, ValidatedBinaryJSONRef};
 
 /// One physical column of `source`, borrowed for a whole column pass.
 fn with_column<R>(source: &Chunk, column: usize, f: impl FnOnce(&Column) -> R) -> R {
@@ -31,11 +31,22 @@ fn with_raw<R>(column: &Column, f: impl FnOnce(RawCells<'_>) -> R) -> R {
     f(column.raw_cells())
 }
 
-/// Typed access for decimal, temporal, enum/set, bit and JSON encoding.
-/// Integer, real and string columns use raw storage directly.
+/// Typed access for the encoders that do not consume packed cells directly.
 fn datum(column: &Column, row: usize, field_type: &FieldType) -> Result<Datum, CodecError> {
     column
         .try_datum(row, field_type)
+        .map_err(|_| CodecError::InvalidEncoding("invalid native join key cell"))
+}
+
+fn json_cell<'a>(
+    raw: &'a RawCells<'_>,
+    row: usize,
+) -> Result<Option<ValidatedBinaryJSONRef<'a>>, CodecError> {
+    if raw.is_null(row) {
+        return Ok(None);
+    }
+    ValidatedBinaryJSONRef::from_encoded(raw.get(row))
+        .map(Some)
         .map_err(|_| CodecError::InvalidEncoding("invalid native join key cell"))
 }
 
@@ -372,11 +383,29 @@ impl JoinKeyColumns {
                             |row| Ok(collator.max_key_len(raw.get(row)) + prefix),
                         )
                     }),
+                    FieldTypeCode::Json => with_raw(column, |raw| {
+                        let prefix = prefix_size(field_type, mode);
+                        reserve_column_keys::<TRACK_NULLS>(
+                            column,
+                            used_rows,
+                            filter,
+                            nulls.as_mut().map(|nulls| nulls.as_mut_slice()),
+                            keys,
+                            |row| {
+                                let size = match json_cell(&raw, row)? {
+                                    Some(value) => value.hash_value_size().map_err(|_| {
+                                        CodecError::InvalidEncoding("invalid binary JSON")
+                                    })?,
+                                    None => 0,
+                                };
+                                Ok(size + prefix)
+                            },
+                        )
+                    }),
                     FieldTypeCode::NewDecimal
                     | FieldTypeCode::Enum
                     | FieldTypeCode::Set
-                    | FieldTypeCode::Bit
-                    | FieldTypeCode::Json => reserve_column_keys::<TRACK_NULLS>(
+                    | FieldTypeCode::Bit => reserve_column_keys::<TRACK_NULLS>(
                         column,
                         used_rows,
                         filter,
@@ -503,6 +532,37 @@ impl JoinKeyColumns {
                                 )?;
                             } else {
                                 keys.append::<COLLECT_HASHES>(logical, &bytes)?;
+                            }
+                        }
+                        Ok::<(), CodecError>(())
+                    })?,
+                    FieldTypeCode::Json => with_raw(column, |raw| {
+                        let mut buffer = Vec::new();
+                        for active in 0..keys.active_rows.len() {
+                            let (logical, physical) = keys.active_rows[active];
+                            let bytes = match json_cell(&raw, physical)? {
+                                Some(value) => match value.hash_value_as_encoded() {
+                                    Some(bytes) => bytes,
+                                    None => {
+                                        buffer.clear();
+                                        value.append_hash_value(&mut buffer).map_err(|_| {
+                                            CodecError::InvalidEncoding("invalid binary JSON")
+                                        })?;
+                                        &buffer
+                                    }
+                                },
+                                None => &[],
+                            };
+                            if mode == SerializeMode::KeepVarColumnLength {
+                                append_length_and::<COLLECT_HASHES>(
+                                    keys,
+                                    logical,
+                                    bytes.len(),
+                                    false,
+                                    bytes,
+                                )?;
+                            } else {
+                                keys.append::<COLLECT_HASHES>(logical, bytes)?;
                             }
                         }
                         Ok::<(), CodecError>(())

@@ -19,26 +19,28 @@
 //! policy, and old-datum conversion so consumers never need an "almost
 //! rowcodec" adapter.
 
-use std::borrow::Cow;
+use std::borrow::{Borrow, Cow};
 use std::collections::BTreeMap;
 use std::fmt;
+use std::sync::Arc;
 
 use chrono::Utc;
 use crc32fast::Hasher;
+use smallvec::SmallVec;
 use tidb_datatype::{
-    deserialize_vector_float32, parse_enum_value, parse_set_value, BinaryJSON, BinaryLiteral,
-    BinaryLiteralWidth, CoreTime, Datum, FieldType, FieldTypeCode, MySqlDuration, SessionTimeZone,
-    Time, TimeType, TruncationPolicy,
+    deserialize_vector_float32, parse_enum_value, parse_set_value, peek_vector_float32, BinaryJSON,
+    BinaryLiteral, BinaryLiteralWidth, CoreTime, Datum, FieldType, FieldTypeCode, MySqlDuration,
+    SessionTimeZone, StringDatum, Time, TimeType, TruncationPolicy, VectorFloat32,
 };
 
 use crate::decode_raw_int;
 use crate::decode_raw_uint;
 use crate::encode_raw_int;
-use crate::encode_raw_row;
 use crate::encode_raw_uint;
-use crate::RawRowColumn;
+use crate::row_encoder::row_header;
 use crate::RawRowValue;
 use crate::RowDecoder;
+use crate::ROW_HEADER_LEN;
 use tidb_codec::decode_decimal;
 use tidb_codec::decode_float;
 use tidb_codec::encode_compact_bytes;
@@ -90,14 +92,16 @@ pub enum Handle {
 }
 
 impl Handle {
-    fn checksum_bytes(&self) -> Vec<u8> {
+    fn update_checksum(&self, hasher: &mut Hasher) {
         match self {
             Self::Int(value) => {
-                let mut bytes = Vec::with_capacity(8);
-                tidb_codec::encode_int(&mut bytes, *value);
-                bytes
+                hasher.update(&tidb_codec::encode_int_to_cmp_uint(*value).to_be_bytes());
             }
-            Self::Common(parts) => parts.concat(),
+            Self::Common(parts) => {
+                for part in parts {
+                    hasher.update(part);
+                }
+            }
         }
     }
 }
@@ -327,35 +331,122 @@ pub fn encode_row_with_checksum(
     checksum: &RowChecksumPolicy,
     buffer: &mut Vec<u8>,
 ) -> Result<(), RowPackageError> {
-    let mut payloads = Vec::with_capacity(column_ids.len());
-    let mut errors = Vec::new();
+    encode_row_with_values(timezone, column_ids, values, checksum, buffer)
+}
+
+/// Encodes a row whose datums may borrow their payloads.
+pub fn encode_row_with_values(
+    timezone: Option<&SessionTimeZone>,
+    column_ids: &[i64],
+    values: &[impl Borrow<Datum>],
+    checksum: &RowChecksumPolicy,
+    buffer: &mut Vec<u8>,
+) -> Result<(), RowPackageError> {
+    assert!(
+        column_ids.len() <= usize::from(u16::MAX),
+        "row column count overflows Go's uint16 metadata"
+    );
+    let large_ids = column_ids.iter().any(|&id| id > i64::from(u8::MAX));
+    let mut not_null = SmallVec::<[(u32, usize); 16]>::new();
+    let mut null = SmallVec::<[u32; 8]>::new();
+    let mut bytes_len = 0;
     for (index, &id) in column_ids.iter().enumerate() {
-        match encode_value_datum(timezone, &values[index]) {
-            Ok(value) => payloads.push((id, value)),
-            Err(error) => errors.push(error),
+        // Go truncates IDs before sorting and widens the already-truncated
+        // IDs if the data later exceeds the small offset limit.
+        let id = if large_ids {
+            id as u32
+        } else {
+            u32::from(id as u8)
+        };
+        match values[index].borrow() {
+            Datum::Null => null.push(id),
+            value => {
+                bytes_len += match value {
+                    Datum::String(value) => value.bytes().len(),
+                    Datum::Bytes(value) => value.len(),
+                    _ => 0,
+                };
+                not_null.push((id, index));
+            }
         }
     }
-    match errors.len() {
-        0 => {}
-        1 => return Err(errors.pop().expect("one encoding error")),
-        _ => return Err(RowPackageError::EncodeErrors(errors)),
-    }
-    let entries = payloads
-        .iter()
-        .map(|(id, value)| RawRowColumn {
-            id: *id,
-            value: value.as_deref(),
-        })
-        .collect::<Vec<_>>();
+    not_null.sort_unstable_by_key(|&(id, _)| id);
+    null.sort_unstable();
 
     let start = buffer.len();
-    encode_raw_row(&entries, buffer);
+    // Reserve large metadata up front when the byte columns alone require it.
+    let mut large = large_ids || bytes_len > usize::from(u16::MAX);
+    let small_metadata_len = column_ids.len() + 2 * not_null.len();
+    let large_metadata_len = 4 * (column_ids.len() + not_null.len());
+    let metadata_len = if large {
+        large_metadata_len
+    } else {
+        small_metadata_len
+    };
+    let mut data_start = start + ROW_HEADER_LEN + metadata_len;
+    if !not_null.is_empty() {
+        // Leave room for fixed-width values alongside the known byte payloads.
+        buffer.reserve(ROW_HEADER_LEN + metadata_len + bytes_len + 8 * not_null.len());
+    }
+    buffer.resize(data_start, 0);
+
+    let mut errors = Vec::new();
+    for (_, index_or_offset) in &mut not_null {
+        let index = *index_or_offset;
+        if let Err(error) = encode_value_datum(timezone, values[index].borrow(), buffer) {
+            errors.push((index, error));
+        }
+        *index_or_offset = buffer.len() - data_start;
+    }
+    if !errors.is_empty() {
+        buffer.truncate(start);
+        if errors.len() == 1 {
+            return Err(errors.pop().expect("one encoding error").1);
+        }
+        // The typed encoder reports errors in input column order.
+        errors.sort_unstable_by_key(|(index, _)| *index);
+        return Err(RowPackageError::EncodeErrors(
+            errors.into_iter().map(|(_, error)| error).collect(),
+        ));
+    }
+
+    if !large && buffer.len() - data_start > usize::from(u16::MAX) {
+        let end = buffer.len();
+        let extra = large_metadata_len - small_metadata_len;
+        buffer.resize(end + extra, 0);
+        buffer.copy_within(data_start..end, data_start + extra);
+        data_start += extra;
+        large = true;
+    }
+    let (header, metadata) = buffer[start..data_start].split_at_mut(ROW_HEADER_LEN);
+    header.copy_from_slice(&row_header(large, not_null.len(), null.len()));
+    let ids = not_null
+        .iter()
+        .map(|&(id, _)| id)
+        .chain(null.iter().copied());
+    if large {
+        let (id_bytes, offset_bytes) = metadata.split_at_mut(4 * column_ids.len());
+        for (bytes, id) in id_bytes.chunks_exact_mut(4).zip(ids) {
+            bytes.copy_from_slice(&id.to_le_bytes());
+        }
+        for (bytes, &(_, end)) in offset_bytes.chunks_exact_mut(4).zip(&not_null) {
+            bytes.copy_from_slice(&(end as u32).to_le_bytes());
+        }
+    } else {
+        let (id_bytes, offset_bytes) = metadata.split_at_mut(column_ids.len());
+        for (byte, id) in id_bytes.iter_mut().zip(ids) {
+            *byte = id as u8;
+        }
+        for (bytes, &(_, end)) in offset_bytes.chunks_exact_mut(2).zip(&not_null) {
+            bytes.copy_from_slice(&(end as u16).to_le_bytes());
+        }
+    }
     if let RowChecksumPolicy::RawHandle(handle) = checksum {
         buffer[start + 1] |= crate::ROW_FLAG_CHECKSUM;
         buffer.push(CHECKSUM_VERSION_RAW_HANDLE);
         let mut hasher = Hasher::new();
         hasher.update(buffer);
-        hasher.update(&handle.checksum_bytes());
+        handle.update_checksum(&mut hasher);
         buffer.extend_from_slice(&hasher.finalize().to_le_bytes());
     }
     Ok(())
@@ -364,12 +455,12 @@ pub fn encode_row_with_checksum(
 fn encode_value_datum(
     timezone: Option<&SessionTimeZone>,
     datum: &Datum,
-) -> Result<Option<Vec<u8>>, RowPackageError> {
-    let mut output = Vec::new();
+    output: &mut Vec<u8>,
+) -> Result<(), RowPackageError> {
     match datum {
-        Datum::Null => return Ok(None),
-        Datum::Int(value) => encode_raw_int(&mut output, *value),
-        Datum::UInt(value) => encode_raw_uint(&mut output, *value),
+        Datum::Null => {}
+        Datum::Int(value) => encode_raw_int(output, *value),
+        Datum::UInt(value) => encode_raw_uint(output, *value),
         Datum::String(value) => output.extend_from_slice(value.bytes()),
         Datum::Bytes(value) => output.extend_from_slice(value),
         Datum::Time(value) => {
@@ -382,39 +473,42 @@ fn encode_value_datum(
                 }
             }
             encode_raw_uint(
-                &mut output,
+                output,
                 value
                     .to_packed_uint()
                     .map_err(|error| RowPackageError::Datatype(error.to_string()))?,
             );
         }
-        Datum::Duration(value) => encode_raw_int(&mut output, value.nanoseconds()),
-        Datum::Enum(value, _) => encode_raw_uint(&mut output, value.value()),
-        Datum::Set(value, _) => encode_raw_uint(&mut output, value.value()),
+        Datum::Duration(value) => encode_raw_int(output, value.nanoseconds()),
+        Datum::Enum(value, _) => encode_raw_uint(output, value.value()),
+        Datum::Set(value, _) => encode_raw_uint(output, value.value()),
         Datum::BinaryLiteral(value) | Datum::Bit(value) => {
             let (encoded, error) =
                 value.to_int_with_policy(TruncationPolicy::STRICT, |_| unreachable!());
             if let Some(error) = error {
                 return Err(RowPackageError::Datatype(error.to_string()));
             }
-            encode_raw_uint(&mut output, encoded)
+            encode_raw_uint(output, encoded)
         }
-        Datum::Real(value) | Datum::Float32(value) => encode_float(&mut output, *value),
+        Datum::Real(value) | Datum::Float32(value) => encode_float(output, *value),
         Datum::Decimal(value) => {
             // Go: `codec.EncodeDecimal(buffer, d.GetMysqlDecimal(), d.Length(),
             // d.Frac())` — the DECLARED column shape, not the value's natural
             // one. `(0, 0)` (no column involved) is Go's unset `Datum.length`,
             // which `EncodeDecimal` itself resolves to `PrecisionAndFrac`.
             let (precision, scale) = value.storage_shape();
-            encode_decimal_fixed(&mut output, value, precision, scale)?;
+            encode_decimal_fixed(output, value, precision, scale)?;
         }
-        Datum::Json(value) => output.extend_from_slice(&value.encoded()),
-        Datum::VectorFloat32(value) => value.serialize_to(&mut output),
+        Datum::Json(value) => {
+            output.push(value.type_code());
+            output.extend_from_slice(value.value());
+        }
+        Datum::VectorFloat32(value) => value.serialize_to(output),
         Datum::MinNotNull => return Err(RowPackageError::UnsupportedEncodeType(15)),
         Datum::MaxValue => return Err(RowPackageError::UnsupportedEncodeType(16)),
         Datum::Raw(_) => return Err(RowPackageError::UnsupportedEncodeType(17)),
     }
-    Ok(Some(output))
+    Ok(())
 }
 
 /// Decodes present and explicit-NULL columns into a map. Missing columns are
@@ -425,17 +519,58 @@ pub fn decode_row_to_map(
     timezone: Option<&SessionTimeZone>,
     output: &mut BTreeMap<i64, Datum>,
 ) -> Result<(), RowPackageError> {
+    decode_row_to_map_with_fields(
+        row_data,
+        columns.iter().map(|column| (column.id, &column.field_type)),
+        timezone,
+        output,
+    )
+}
+
+/// Decodes a row into an existing map using borrowed field metadata.
+pub fn decode_row_to_map_with_fields<'a>(
+    row_data: &[u8],
+    fields: impl IntoIterator<Item = (i64, &'a FieldType)>,
+    timezone: Option<&SessionTimeZone>,
+    output: &mut BTreeMap<i64, Datum>,
+) -> Result<(), RowPackageError> {
+    decode_row_to_map_with_backing(row_data, fields, timezone, output, None)
+}
+
+/// Minimum payload size at which a typed table row retains its backing
+/// buffer for a string, JSON value or vector.
+pub const MIN_SHARED_ROW_VALUE_BYTES: usize = 1024;
+
+/// Decodes a shared row into an existing map, retaining large payloads as
+/// views of the original row buffer.
+pub fn decode_shared_row_to_map_with_fields<'a>(
+    row_data: &Arc<Vec<u8>>,
+    fields: impl IntoIterator<Item = (i64, &'a FieldType)>,
+    timezone: Option<&SessionTimeZone>,
+    output: &mut BTreeMap<i64, Datum>,
+) -> Result<(), RowPackageError> {
+    decode_row_to_map_with_backing(row_data, fields, timezone, output, Some(row_data))
+}
+
+#[inline]
+fn decode_row_to_map_with_backing<'a>(
+    row_data: &[u8],
+    fields: impl IntoIterator<Item = (i64, &'a FieldType)>,
+    timezone: Option<&SessionTimeZone>,
+    output: &mut BTreeMap<i64, Datum>,
+    backing: Option<&Arc<Vec<u8>>>,
+) -> Result<(), RowPackageError> {
     let (decoder, _) = RowDecoder::parse(row_data)?;
-    for column in columns {
-        match decoder.column(column.id)? {
+    for (id, field_type) in fields {
+        match decoder.column(id)? {
             RawRowValue::NotNull { bytes, .. } => {
-                output.insert(
-                    column.id,
-                    decode_column_datum(bytes, &column.field_type, timezone, DecodeTarget::Map)?,
-                );
+                let datum = decode_column_with_backing(
+                    bytes, field_type, timezone, DecodeTarget::Map, backing,
+                )?;
+                output.insert(id, datum);
             }
             RawRowValue::Null => {
-                output.insert(column.id, Datum::Null);
+                output.insert(id, Datum::Null);
             }
             RawRowValue::Missing => {}
         }
@@ -450,6 +585,99 @@ pub fn decode_row_to_datums(
     row_data: &[u8],
     columns: &[ColumnInfo],
     options: &DecodeRowOptions<'_>,
+) -> Result<DecodedRow, RowPackageError> {
+    decode_row_to_datums_impl(row_data, columns, options, None, None)
+}
+
+/// Decodes projected datums, retaining payloads when sharing the owned row
+/// saves individual copies. Borrowed handle parts can replace the options handle.
+pub fn decode_row_to_datums_with_refs(
+    row_data: Cow<'_, [u8]>,
+    columns: &[ColumnInfo],
+    options: &DecodeRowOptions<'_>,
+    common_handle_parts: Option<&[&[u8]]>,
+) -> Result<DecodedRow, RowPackageError> {
+    let row_data = match (row_data, columns) {
+        (Cow::Owned(bytes), [column])
+            if column.field_type.code().is_string()
+                && !column.field_type.code().is_type_unspecified()
+                && !column.virtual_generated
+                && Some(column.id) != options.commit_ts_column_id
+                && Some(column.id) != options.row_checksum_column_id =>
+        {
+            return decode_owned_projected_string(bytes, column, options, common_handle_parts);
+        }
+        (bytes, _) => bytes,
+    };
+    // A small row with several projected strings can share one allocation.
+    // Keep the backing bounded and leave strings that fit in a datum inline.
+    match row_data {
+        Cow::Owned(bytes)
+            if bytes.len() >= MIN_SHARED_ROW_VALUE_BYTES
+                || (bytes.capacity() <= MIN_SHARED_ROW_VALUE_BYTES
+                    && bytes.len()
+                        > columns.len() * (StringDatum::INLINE_CAPACITY + 3) + ROW_HEADER_LEN
+                    && columns.len() >= 3
+                    && columns
+                        .iter()
+                        .filter(|column| column.field_type.code().is_string())
+                        .nth(2)
+                        .is_some()) =>
+        {
+            let backing = Arc::new(bytes);
+            decode_row_to_datums_impl(
+                &backing, columns, options, common_handle_parts, Some(&backing),
+            )
+        }
+        bytes => decode_row_to_datums_impl(&bytes, columns, options, common_handle_parts, None),
+    }
+}
+
+fn decode_owned_projected_string(
+    mut row_data: Vec<u8>,
+    column: &ColumnInfo,
+    options: &DecodeRowOptions<'_>,
+    common_handle_parts: Option<&[&[u8]]>,
+) -> Result<DecodedRow, RowPackageError> {
+    let (decoder, _) = RowDecoder::parse(&row_data)?;
+    let checksum = decoder.layout().checksum();
+    let datum = match decoder.column(column.id)? {
+        RawRowValue::NotNull { bytes, .. } => {
+            let collation = column.field_type.collation();
+            let len = bytes.len();
+            Datum::String(if len >= MIN_SHARED_ROW_VALUE_BYTES {
+                let start = bytes.as_ptr().addr() - row_data.as_ptr().addr();
+                let owner = Arc::new(row_data);
+                StringDatum::from_shared_subslice(&owner, &owner[start..start + len], collation)
+            } else if len > StringDatum::INLINE_CAPACITY
+                && row_data.capacity() <= (8 * len).min(4096)
+            {
+                // Reuse a bounded, exclusive buffer for the only output.
+                let start = bytes.as_ptr().addr() - row_data.as_ptr().addr();
+                row_data.copy_within(start..start + len, 0);
+                row_data.truncate(len);
+                StringDatum::new(row_data, collation)
+            } else {
+                StringDatum::from_slice(bytes, collation)
+            })
+        }
+        RawRowValue::Null => Datum::Null,
+        RawRowValue::Missing => missing_datum(0, column, options, common_handle_parts)?,
+    };
+    Ok(DecodedRow {
+        values: vec![datum],
+        checksum: checksum.map(|checksum| checksum.checksum()),
+        checksum_version: checksum.map_or(0, |checksum| checksum.version()),
+    })
+}
+
+#[inline]
+fn decode_row_to_datums_impl(
+    row_data: &[u8],
+    columns: &[ColumnInfo],
+    options: &DecodeRowOptions<'_>,
+    common_handle_parts: Option<&[&[u8]]>,
+    backing: Option<&Arc<Vec<u8>>>,
 ) -> Result<DecodedRow, RowPackageError> {
     let (decoder, _) = RowDecoder::parse(row_data)?;
     let layout = decoder.layout();
@@ -469,29 +697,17 @@ pub fn decode_row_to_datums(
         }
         match decoder.column(column.id)? {
             RawRowValue::NotNull { bytes, .. } => {
-                values.push(decode_column_datum(
+                values.push(decode_column_with_backing(
                     bytes,
                     &column.field_type,
                     options.timezone,
                     DecodeTarget::Chunk,
+                    backing,
                 )?);
             }
             RawRowValue::Null => values.push(Datum::Null),
             RawRowValue::Missing => {
-                if let Some(value) = decode_handle_column(
-                    column,
-                    options.handle_column_ids,
-                    options.handle,
-                    options.timezone,
-                )? {
-                    values.push(value);
-                } else {
-                    values.push(if let Some(default_datum) = options.default_datum {
-                        default_datum(index).map_err(RowPackageError::DefaultValue)?
-                    } else {
-                        Datum::Null
-                    });
-                }
+                values.push(missing_datum(index, column, options, common_handle_parts)?);
             }
         }
     }
@@ -500,6 +716,28 @@ pub fn decode_row_to_datums(
         checksum: layout.checksum().map(|checksum| checksum.checksum()),
         checksum_version: layout.checksum().map_or(0, |checksum| checksum.version()),
     })
+}
+
+#[inline]
+fn missing_datum(
+    index: usize,
+    column: &ColumnInfo,
+    options: &DecodeRowOptions<'_>,
+    common_handle_parts: Option<&[&[u8]]>,
+) -> Result<Datum, RowPackageError> {
+    if let Some(value) = decode_handle_column(
+        column,
+        options.handle_column_ids,
+        options.handle,
+        common_handle_parts,
+        options.timezone,
+    )? {
+        Ok(value)
+    } else if let Some(default_datum) = options.default_datum {
+        default_datum(index).map_err(RowPackageError::DefaultValue)
+    } else {
+        Ok(Datum::Null)
+    }
 }
 
 /// Recalculates a row's bytes-level checksum after replacing the persisted
@@ -516,6 +754,8 @@ pub fn calculate_raw_checksum(
     handle: &Handle,
     buffer: &[u8],
 ) -> Result<u32, RowPackageError> {
+    // Collect every encoded replacement before mutating the caller's row.
+    let mut encoded = Vec::new();
     let (body_end, checksum_header, checksum_version, replacements) = {
         let (decoder, _) = RowDecoder::parse(row_data)?;
         let layout = decoder.layout();
@@ -525,21 +765,24 @@ pub fn calculate_raw_checksum(
             + header.column_count() * header.column_id_width()
             + usize::from(header.not_null_count()) * header.offset_width();
         let body_end = data_start + layout.data().len();
-        let mut replacements = Vec::new();
+        let mut replacements = SmallVec::<[_; 8]>::new();
         for (input_index, &column_id) in column_ids.iter().enumerate() {
             let value = &values[input_index];
             if value.is_null() {
                 return Err(RowPackageError::UnsupportedEncodeType(0));
             }
-            let encoded =
-                encode_value_datum(timezone, value)?.expect("non-NULL datum has encoded row bytes");
-            let RawRowValue::NotNull { index, .. } = decoder.column(column_id)? else {
+            let encoded_start = encoded.len();
+            encode_value_datum(timezone, value, &mut encoded)?;
+            let RawRowValue::NotNull { index, bytes } = decoder.column(column_id)? else {
+                encoded.truncate(encoded_start);
                 continue;
             };
             let range = layout
                 .value_range(index)
                 .map_err(crate::RowDecodeError::from)?;
-            replacements.push((data_start + range.start..data_start + range.end, encoded));
+            let copied = bytes.len().min(encoded.len() - encoded_start);
+            encoded.truncate(encoded_start + copied);
+            replacements.push((data_start + range.start, encoded_start..encoded.len()));
         }
         (
             body_end,
@@ -548,10 +791,8 @@ pub fn calculate_raw_checksum(
             replacements,
         )
     };
-    for (range, encoded) in replacements {
-        let destination = &mut row_data[range];
-        let copied = destination.len().min(encoded.len());
-        destination[..copied].copy_from_slice(&encoded[..copied]);
+    for (start, range) in replacements {
+        row_data[start..start + range.len()].copy_from_slice(&encoded[range]);
     }
     let mut hasher = Hasher::new();
     hasher.update(buffer);
@@ -560,7 +801,7 @@ pub fn calculate_raw_checksum(
     if checksum_version == 1 {
         hasher.update(key);
     } else {
-        hasher.update(&handle.checksum_bytes());
+        handle.update_checksum(&mut hasher);
     }
     Ok(hasher.finalize())
 }
@@ -602,9 +843,25 @@ pub fn decode_row_to_old_bytes(
     Ok(values)
 }
 
+/// Converts the requested columns in order, using NULL for missing values.
+pub fn decode_row_to_old_bytes_in_order(
+    row_data: &[u8],
+    columns: &[ColumnInfo],
+) -> Result<Vec<Vec<u8>>, RowPackageError> {
+    let (decoder, _) = RowDecoder::parse(row_data)?;
+    columns
+        .iter()
+        .map(|column| match decoder.column(column.id)? {
+            RawRowValue::NotNull { bytes, .. } => encode_old_raw(column, bytes),
+            RawRowValue::Null | RawRowValue::Missing => Ok(vec![NIL_FLAG]),
+        })
+        .collect()
+}
+
 fn encode_old_raw(column: &ColumnInfo, bytes: &[u8]) -> Result<Vec<u8>, RowPackageError> {
     let flag = field_type_to_flag(&column.field_type);
-    let mut output = Vec::with_capacity(bytes.len() + 10);
+    let prefix_capacity = 10 + usize::from(flag == tidb_codec::BYTES_FLAG);
+    let mut output = Vec::with_capacity(bytes.len() + prefix_capacity);
     match flag {
         tidb_codec::BYTES_FLAG => {
             output.push(COMPACT_BYTES_FLAG);
@@ -661,8 +918,12 @@ fn decode_handle_column(
     column: &ColumnInfo,
     handle_column_ids: &[i64],
     handle: Option<&Handle>,
+    common_handle_parts: Option<&[&[u8]]>,
     timezone: Option<&SessionTimeZone>,
 ) -> Result<Option<Datum>, RowPackageError> {
+    if let Some(parts) = common_handle_parts {
+        return decode_common_handle_column(column, handle_column_ids, parts, timezone);
+    }
     let Some(handle) = handle else {
         return Ok(None);
     };
@@ -682,24 +943,70 @@ fn decode_handle_column(
                 Datum::Int(*value)
             }))
         }
-        Handle::Common(parts) => {
-            if column.field_type.need_restored_data() {
-                return Ok(None);
-            }
-            let Some(index) = handle_column_ids.iter().position(|id| *id == column.id) else {
-                return Ok(None);
-            };
-            let Some(encoded) = parts.get(index) else {
-                return Ok(None);
-            };
-            Ok(
-                tidb_codec::decode_one_typed_in_timezone(encoded, &column.field_type, timezone)
-                    .ok()
-                    .map(|(_, datum)| datum),
-            )
-        }
+        Handle::Common(parts) => decode_common_handle_column(column, handle_column_ids, parts, timezone),
         Handle::Int(_) => Ok(None),
     }
+}
+
+fn decode_common_handle_column(
+    column: &ColumnInfo,
+    handle_column_ids: &[i64],
+    parts: &[impl AsRef<[u8]>],
+    timezone: Option<&SessionTimeZone>,
+) -> Result<Option<Datum>, RowPackageError> {
+    if column.field_type.need_restored_data() {
+        return Ok(None);
+    }
+    let Some(index) = handle_column_ids.iter().position(|id| *id == column.id) else {
+        return Ok(None);
+    };
+    let Some(encoded) = parts.get(index) else {
+        return Ok(None);
+    };
+    Ok(tidb_codec::decode_one_typed_in_timezone(encoded.as_ref(), &column.field_type, timezone)
+        .ok()
+        .map(|(_, datum)| datum))
+}
+
+#[inline]
+fn decode_column_with_backing(
+    bytes: &[u8],
+    field_type: &FieldType,
+    timezone: Option<&SessionTimeZone>,
+    target: DecodeTarget,
+    backing: Option<&Arc<Vec<u8>>>,
+) -> Result<Datum, RowPackageError> {
+    if let Some(owner) = backing {
+        let code = field_type.code();
+        let large = bytes.len() >= MIN_SHARED_ROW_VALUE_BYTES;
+        if code.is_string()
+            && !code.is_type_unspecified()
+            && (large
+                || (target == DecodeTarget::Chunk
+                    && bytes.len() > StringDatum::INLINE_CAPACITY
+                    && owner.capacity() <= MIN_SHARED_ROW_VALUE_BYTES))
+        {
+            return Ok(Datum::String(StringDatum::from_shared_subslice(
+                owner,
+                bytes,
+                field_type.collation(),
+            )));
+        }
+        match code {
+            FieldTypeCode::Json if large => {
+                return Ok(Datum::Json(BinaryJSON::from_shared_subslice(
+                    bytes[0], owner, &bytes[1..],
+                )));
+            }
+            FieldTypeCode::VectorFloat32 if large => {
+                return VectorFloat32::from_shared_subslice(owner, bytes)
+                    .map(Datum::VectorFloat32)
+                    .map_err(|error| RowPackageError::Datatype(error.to_string()));
+            }
+            _ => {}
+        }
+    }
+    decode_column_datum(bytes, field_type, timezone, target)
 }
 
 fn decode_column_datum(
@@ -737,7 +1044,7 @@ fn decode_column_datum(
         | FieldTypeCode::TinyBlob
         | FieldTypeCode::MediumBlob
         | FieldTypeCode::LongBlob => {
-            Datum::new_collation_string_datum(bytes.to_vec(), field_type.collation())
+            Datum::String(StringDatum::from_slice(bytes, field_type.collation()))
         }
         FieldTypeCode::NewDecimal => {
             let (_, mut value, encoded_precision, encoded_scale) = decode_decimal(bytes)?;
@@ -991,23 +1298,34 @@ fn append_datum_for_checksum(
             );
         }
         FieldTypeCode::Json => {
-            let value = BinaryJSON::from_encoded_parts(
-                datum_go_i64_bits(datum) as u8,
-                datum_go_bytes(datum).into_owned(),
-            );
+            let temporary;
+            let value = if let Datum::Json(value) = datum {
+                value
+            } else {
+                temporary = BinaryJSON::from_encoded_parts(
+                    datum_go_i64_bits(datum) as u8,
+                    datum_go_bytes(datum).into_owned(),
+                );
+                &temporary
+            };
             append_length_value(buffer, value.to_string().as_bytes());
         }
-        FieldTypeCode::VectorFloat32 => {
-            let bytes = datum_go_bytes(datum);
-            let (value, _) = deserialize_vector_float32(&bytes).map_err(|error| {
-                RowPackageError::ChecksumDatumValue {
-                    datum: datum.string(),
-                    field_type: "vector",
-                    cause: error.to_string(),
-                }
-            })?;
-            value.serialize_to(buffer);
-        }
+        FieldTypeCode::VectorFloat32 => match datum {
+            Datum::VectorFloat32(value) if u32::try_from(value.serialized_size()).is_ok() => {
+                value.serialize_to(buffer);
+            }
+            _ => {
+                let bytes = datum_go_bytes(datum);
+                let length = peek_vector_float32(&bytes).map_err(|error| {
+                    RowPackageError::ChecksumDatumValue {
+                        datum: datum.string(),
+                        field_type: "vector",
+                        cause: error.to_string(),
+                    }
+                })?;
+                buffer.extend_from_slice(&bytes[..length]);
+            }
+        },
         FieldTypeCode::Null | FieldTypeCode::Geometry => {}
         _ => return Err(RowPackageError::InvalidChecksumType),
     }
@@ -1067,5 +1385,51 @@ pub fn remove_keyspace_prefix(
         key
     } else {
         &key[KEYSPACE_PREFIX_LEN..]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn owned_string_projection_reuses_bounded_storage_and_keeps_checksum() {
+        let column = ColumnInfo {
+            id: 256,
+            is_pk_handle: false,
+            virtual_generated: false,
+            field_type: FieldType::new(FieldTypeCode::Varchar).with_collation_name("binary"),
+        };
+        let value = Datum::new_collation_string_datum(vec![0xf0; 128], column.field_type.collation());
+        let mut encoded = Vec::new();
+        encode_row_with_checksum(
+            None,
+            &[1, column.id],
+            &[Datum::Int(7), value],
+            &RowChecksumPolicy::RawHandle(Handle::Int(1)),
+            &mut encoded,
+        )
+        .unwrap();
+
+        let columns = [column];
+        let options = DecodeRowOptions::default();
+        let expected = decode_row_to_datums(&encoded, &columns, &options).unwrap();
+        assert_eq!(expected.checksum_version, 2);
+        assert!(expected.checksum.is_some());
+        for oversized in [false, true] {
+            let mut input = encoded.clone();
+            if oversized {
+                input.reserve_exact(4096);
+            }
+            let address = input.as_ptr().addr();
+            let decoded =
+                decode_row_to_datums_with_refs(Cow::Owned(input), &columns, &options, None)
+                    .unwrap();
+            assert_eq!(decoded, expected);
+            assert_eq!(
+                decoded.values[0].as_raw_bytes().unwrap().as_ptr().addr() == address,
+                !oversized
+            );
+        }
     }
 }

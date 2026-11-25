@@ -21,6 +21,12 @@ use std::borrow::Cow;
 use std::cmp::Ordering;
 use std::fmt;
 
+use tidb_goruntime::go_chars;
+use tidb_stringutil::{
+    compile_pattern, compile_pattern_binary, compile_pattern_binary_into, compile_pattern_into,
+    do_match_binary, do_match_customized, PatternType,
+};
+
 use crate::charset::{
     get_collation_by_id as charset_collation_by_id,
     get_collation_by_name as charset_collation_by_name,
@@ -29,7 +35,7 @@ use crate::charset::{
 pub use tidb_charset::charset::{
     exact_new_collation, is_bin_collation, new_collation_enabled, set_new_collation_enabled_for_test,
 };
-use crate::{CharsetError, Collation, CollationInfo, Encoding, TransformOp};
+use crate::{CharsetError, Collation, CollationInfo, Encoding};
 
 /// Source `DefaultLen`, used when a string datum has no known length.
 pub const DEFAULT_LEN: usize = 0;
@@ -79,6 +85,23 @@ impl From<Collation> for Collator {
     }
 }
 
+#[inline]
+fn compare_binary_strings(left: &[u8], right: &[u8]) -> Ordering {
+    if let (Some((left, left_tail)), Some((right, right_tail))) =
+        (left.split_first_chunk::<8>(), right.split_first_chunk::<8>())
+    {
+        // Big-endian words have the same order as their bytes.
+        let prefix_order = u64::from_be_bytes(*left).cmp(&u64::from_be_bytes(*right));
+        if prefix_order == Ordering::Equal && !(left_tail.is_empty() && right_tail.is_empty()) {
+            left_tail.cmp(right_tail)
+        } else {
+            prefix_order
+        }
+    } else {
+        left.cmp(right)
+    }
+}
+
 impl Collator {
     /// Returns the concrete new-collation implementation, if enabled.
     pub const fn new_collation(self) -> Option<Collation> {
@@ -89,10 +112,16 @@ impl Collator {
     }
 
     /// Compares source Go-string bytes.
+    #[inline]
     pub fn compare(self, left: &[u8], right: &[u8]) -> Ordering {
         match self {
+            Self::DerivedBinary | Self::New(Collation::Binary | Collation::Utf8Mb40900Bin) => {
+                compare_binary_strings(left, right)
+            }
+            Self::New(
+                Collation::AsciiBin | Collation::Latin1Bin | Collation::Utf8Bin | Collation::Utf8Mb4Bin,
+            ) => compare_binary_strings(trim_trailing_spaces(left), trim_trailing_spaces(right)),
             Self::New(collation) => collation.compare(left, right),
-            Self::DerivedBinary => left.cmp(right),
         }
     }
 
@@ -224,7 +253,7 @@ pub fn collation_id_to_name(id: i32) -> String {
 
 /// Resolves a name to its ID, with TiDB's default fallback.
 pub fn collation_name_to_id(name: &str) -> i32 {
-    charset_collation_by_name(name).map_or(46, |row| row.id)
+    tidb_charset::charset::get_collation_id_by_name(name).unwrap_or(46)
 }
 
 /// Checks both registry existence and new-collation implementation support.
@@ -331,13 +360,6 @@ pub fn proto_to_collation(id: i32) -> String {
     collation_id_to_name(restore_collation_id_if_needed(id))
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum PatternType {
-    Match,
-    One,
-    Any,
-}
-
 #[derive(Debug, Clone, Copy)]
 enum PatternMatcher {
     Exact,
@@ -348,48 +370,58 @@ enum PatternMatcher {
     Gb18030ChineseCi,
 }
 
+#[derive(Debug, Clone)]
+enum PatternWeights {
+    Binary(Vec<u8>),
+    Unicode(Vec<char>, PatternMatcher),
+}
+
 /// A compiled collation-aware SQL LIKE wildcard pattern.
 #[derive(Debug, Clone)]
 pub struct WildcardPattern {
-    pattern: Vec<u32>,
+    weights: PatternWeights,
     types: Vec<PatternType>,
-    binary: bool,
-    matcher: PatternMatcher,
 }
 
 impl WildcardPattern {
     fn binary(pattern: &[u8], escape: u8) -> Self {
-        let units: Vec<_> = pattern.iter().copied().map(u32::from).collect();
-        let (pattern, types) = compile_pattern(units, u32::from(escape));
+        let (weights, types) = compile_pattern_binary(pattern, escape);
         Self {
-            pattern,
+            weights: PatternWeights::Binary(weights),
             types,
-            binary: true,
-            matcher: PatternMatcher::Exact,
         }
     }
 
     fn unicode(pattern: &[u8], escape: u8, matcher: PatternMatcher) -> Self {
-        let units = go_runes(pattern);
-        let (pattern, types) = compile_pattern(units, u32::from(escape));
+        let (weights, types) = compile_pattern(pattern, escape);
         Self {
-            pattern,
+            weights: PatternWeights::Unicode(weights, matcher),
             types,
-            binary: false,
-            matcher,
+        }
+    }
+
+    /// Recompiles for the same collator, reusing the existing token buffers.
+    pub fn recompile(&mut self, pattern: &[u8], escape: u8) {
+        match &mut self.weights {
+            PatternWeights::Binary(weights) => {
+                compile_pattern_binary_into(pattern, escape, weights, &mut self.types);
+            }
+            PatternWeights::Unicode(weights, _) => {
+                compile_pattern_into(pattern, escape, weights, &mut self.types);
+            }
         }
     }
 
     /// Matches arbitrary Go-string bytes against the compiled pattern.
     pub fn is_match(&self, value: &[u8]) -> bool {
-        let chars = if self.binary {
-            value.iter().copied().map(u32::from).collect()
-        } else {
-            go_runes(value)
-        };
-        wildcard_match(&chars, &self.pattern, &self.types, |left, right| {
-            self.matcher.matches(left, right)
-        })
+        match &self.weights {
+            PatternWeights::Binary(weights) => do_match_binary(value, weights, &self.types),
+            PatternWeights::Unicode(weights, matcher) => {
+                do_match_customized(value, weights, &self.types, |left, right| {
+                    matcher.matches(left as u32, right as u32)
+                })
+            }
+        }
     }
 }
 
@@ -413,107 +445,6 @@ impl PatternMatcher {
             }
         }
     }
-}
-
-fn compile_pattern(units: Vec<u32>, escape: u32) -> (Vec<u32>, Vec<PatternType>) {
-    let mut pattern = Vec::with_capacity(units.len());
-    let mut types = Vec::with_capacity(units.len());
-    let mut index = 0;
-    while index < units.len() {
-        let mut unit = units[index];
-        let pattern_type = match unit {
-            value if value == escape => {
-                if index + 1 < units.len() {
-                    index += 1;
-                    unit = units[index];
-                }
-                PatternType::Match
-            }
-            value if value == u32::from(b'_') => {
-                if types.last() == Some(&PatternType::Any) {
-                    *pattern.last_mut().expect("Any has a pattern unit") = u32::from(b'_');
-                    *types.last_mut().expect("Any has a pattern type") = PatternType::One;
-                    unit = u32::from(b'%');
-                    PatternType::Any
-                } else {
-                    PatternType::One
-                }
-            }
-            value if value == u32::from(b'%') => {
-                if types.last() == Some(&PatternType::Any) {
-                    index += 1;
-                    continue;
-                }
-                PatternType::Any
-            }
-            _ => PatternType::Match,
-        };
-        pattern.push(unit);
-        types.push(pattern_type);
-        index += 1;
-    }
-    (pattern, types)
-}
-
-fn wildcard_match(
-    chars: &[u32],
-    pattern: &[u32],
-    types: &[PatternType],
-    matcher: impl Fn(u32, u32) -> bool,
-) -> bool {
-    let (mut char_index, mut pattern_index) = (0, 0);
-    let (mut next_char_index, mut next_pattern_index) = (0, 0);
-    while pattern_index < pattern.len() || char_index < chars.len() {
-        if pattern_index < pattern.len() {
-            match types[pattern_index] {
-                PatternType::Match
-                    if char_index < chars.len()
-                        && matcher(chars[char_index], pattern[pattern_index]) =>
-                {
-                    pattern_index += 1;
-                    char_index += 1;
-                    continue;
-                }
-                PatternType::One if char_index < chars.len() => {
-                    pattern_index += 1;
-                    char_index += 1;
-                    continue;
-                }
-                PatternType::Any => {
-                    next_pattern_index = pattern_index;
-                    next_char_index = char_index + 1;
-                    pattern_index += 1;
-                    continue;
-                }
-                PatternType::Match | PatternType::One => {}
-            }
-        }
-        if next_char_index > 0 && next_char_index <= chars.len() {
-            pattern_index = next_pattern_index;
-            char_index = next_char_index;
-            continue;
-        }
-        return false;
-    }
-    true
-}
-
-fn go_runes(value: &[u8]) -> Vec<u32> {
-    let mut result = Vec::with_capacity(value.len());
-    let mut index = 0;
-    while index < value.len() {
-        match decode_rune(&value[index..]) {
-            Ok((codepoint, width)) => {
-                result.push(codepoint);
-                index += width;
-            }
-            Err(()) => {
-                result.push(0xFFFD);
-                index += 1;
-            }
-        }
-    }
-    result
 }
 
 const GENERAL_CI: &[u8; 65_536 * 2] = include_bytes!("collation_data/general_ci_u16_le.bin");
@@ -614,12 +545,12 @@ impl CollationCollator for Collation {
                 trim_trailing_spaces(value).to_vec()
             }
             Self::GbkBin => encoded_binary_key(Encoding::Gbk, value, true),
-            Self::Gb18030Bin => gb18030_bin_key(value, true),
+            Self::Gb18030Bin => encoded_binary_key(Encoding::Gb18030, value, true),
             Self::Utf8GeneralCi | Self::Utf8Mb4GeneralCi => general_ci_key(value, true),
             Self::Utf8UnicodeCi | Self::Utf8Mb4UnicodeCi => unicode_0400_key(value, true),
             Self::Utf8Mb40900AiCi => unicode_0900_key(value),
-            Self::GbkChineseCi => chinese_ci_key(value, true, gbk_chinese_ci_weight),
-            Self::Gb18030ChineseCi => chinese_ci_key(value, true, gb18030_chinese_ci_weight),
+            Self::GbkChineseCi => gbk_chinese_ci_key(trim_trailing_spaces(value)),
+            Self::Gb18030ChineseCi => gb18030_chinese_ci_key(trim_trailing_spaces(value)),
             Self::Utf8Mb4ZhPinyinTiDbAsCs => {
                 panic!("implement me")
             }
@@ -647,12 +578,12 @@ impl CollationCollator for Collation {
             | Self::Utf8Mb4Bin
             | Self::Utf8Mb40900Bin => value.to_vec(),
             Self::GbkBin => encoded_binary_key(Encoding::Gbk, value, false),
-            Self::Gb18030Bin => gb18030_bin_key(value, false),
+            Self::Gb18030Bin => encoded_binary_key(Encoding::Gb18030, value, false),
             Self::Utf8GeneralCi | Self::Utf8Mb4GeneralCi => general_ci_key(value, false),
             Self::Utf8UnicodeCi | Self::Utf8Mb4UnicodeCi => unicode_0400_key(value, false),
             Self::Utf8Mb40900AiCi => unicode_0900_key(value),
-            Self::GbkChineseCi => chinese_ci_key(value, false, gbk_chinese_ci_weight),
-            Self::Gb18030ChineseCi => chinese_ci_key(value, false, gb18030_chinese_ci_weight),
+            Self::GbkChineseCi => gbk_chinese_ci_key(value),
+            Self::Gb18030ChineseCi => gb18030_chinese_ci_key(value),
             Self::Utf8Mb4ZhPinyinTiDbAsCs => {
                 panic!("implement me")
             }
@@ -704,58 +635,96 @@ fn go_rune_len(first: u8) -> usize {
     }
 }
 
-/// Mirrors Go's `gb18030BinCollator.KeyWithoutTrimRightSpace`: walks rune-wise,
-/// feeds four-byte PUA runes an extra trailing NUL through the encoder, and
-/// emits one `'?'` per errored group. The `Compare` path deliberately keeps
-/// using the unpadded [`encoded_binary_key`], because Go's `Compare` also
-/// compares unpadded per-rune encodings.
-fn gb18030_bin_key(value: &[u8], trim: bool) -> Vec<u8> {
-    let value = if trim {
-        trim_trailing_spaces(value)
-    } else {
-        value
-    };
-    let mut buf = Vec::with_capacity(value.len() + value.len() / 3);
-    let mut rest = value;
-    while !rest.is_empty() {
-        let l = go_rune_len(rest[0]).min(rest.len());
-        let rune = std::str::from_utf8(&rest[..l])
-            .ok()
-            .and_then(|s| s.chars().next());
-        let mut chunk = rest[..l].to_vec();
-        if matches!(rune, Some(r) if GB18030_FOUR_BYTES_RUNES.contains(&(r as u32))) {
-            chunk.push(0x00);
+/// An input group has at most four bytes. Go's encoder can emit four
+/// replacement bytes for each invalid input byte in the group.
+fn encode_binary_group<'a>(
+    encoding: Encoding,
+    group: &[u8],
+    pad_four_byte_runes: bool,
+    output: &'a mut [u8; 16],
+) -> &'a [u8] {
+    let mut len = 0;
+    for character in go_chars(group) {
+        let mut encoded = [0; 4];
+        let Some(width) = encoding.encode_gb_character(character, &mut encoded) else {
+            return b"?";
+        };
+        output[len..len + width].copy_from_slice(&encoded[..width]);
+        len += width;
+
+        // The GB18030 key function passes a trailing NUL with these runes.
+        if pad_four_byte_runes
+            && (0xE78D..=0xE864).contains(&(character as u32))
+            && GB18030_FOUR_BYTES_RUNES.contains(&(character as u32))
+        {
+            output[len] = 0;
+            len += 1;
         }
-        let (bytes, error) = Encoding::Gb18030
-            .transform(&chunk, TransformOp::ENCODE_REPLACE)
-            .into_parts();
-        if error.is_some() {
-            buf.push(b'?');
-        } else {
-            buf.extend_from_slice(&bytes);
-        }
-        rest = &rest[l..];
     }
-    buf
+    &output[..len]
 }
 
 fn encoded_binary_key(encoding: Encoding, value: &[u8], trim: bool) -> Vec<u8> {
-    let value = if trim {
+    let mut rest = if trim {
         trim_trailing_spaces(value)
     } else {
         value
     };
-    encoding
-        .transform(value, TransformOp::ENCODE_REPLACE)
-        .into_parts()
-        .0
+    if rest.is_ascii() {
+        return rest.to_vec();
+    }
+    let mut key = Vec::with_capacity(rest.len());
+    let mut output = [0; 16];
+    while let Some(&first) = rest.first() {
+        let (group, tail) = rest.split_at(go_rune_len(first).min(rest.len()));
+        if first.is_ascii() {
+            key.push(first);
+        } else {
+            let pad = encoding == Encoding::Gb18030;
+            key.extend_from_slice(encode_binary_group(encoding, group, pad, &mut output));
+        }
+        rest = tail;
+    }
+    key
 }
 
 fn encoded_binary_compare(encoding: Encoding, left: &[u8], right: &[u8]) -> Ordering {
-    encoded_binary_key(encoding, left, true).cmp(&encoded_binary_key(encoding, right, true))
+    let (mut left, mut right) = (trim_trailing_spaces(left), trim_trailing_spaces(right));
+    let (mut left_output, mut right_output) = ([0; 16], [0; 16]);
+    while let (Some((&a, a_tail)), Some((&b, b_tail))) = (left.split_first(), right.split_first()) {
+        if (a | b).is_ascii() {
+            let result = a.cmp(&b);
+            if !result.is_eq() {
+                return result;
+            }
+            (left, right) = (a_tail, b_tail);
+            continue;
+        }
+        let (a, a_tail) = left.split_at(go_rune_len(a).min(left.len()));
+        let (b, b_tail) = right.split_at(go_rune_len(b).min(right.len()));
+        if a != b {
+            let a = encode_binary_group(encoding, a, false, &mut left_output);
+            let b = encode_binary_group(encoding, b, false, &mut right_output);
+            let result = a.cmp(b);
+            if !result.is_eq() {
+                return result;
+            }
+        }
+        (left, right) = (a_tail, b_tail);
+    }
+    left.len().cmp(&right.len())
 }
 
 fn trim_trailing_spaces(mut value: &[u8]) -> &[u8] {
+    if value.last() != Some(&b' ') {
+        return value;
+    }
+    while let Some((head, tail)) = value.split_last_chunk::<16>() {
+        if *tail != [b' '; 16] {
+            break;
+        }
+        value = head;
+    }
     while value.last() == Some(&b' ') {
         value = &value[..value.len() - 1];
     }
@@ -767,19 +736,32 @@ pub(crate) fn decode_rune(value: &[u8]) -> Result<(u32, usize), ()> {
     if first < 0x80 {
         return Ok((u32::from(first), 1));
     }
-    let width = match first {
-        0xC2..=0xDF => 2,
-        0xE0..=0xEF => 3,
-        0xF0..=0xF4 => 4,
-        _ => return Err(()),
+    let continuation = |index| match value.get(index).copied() {
+        Some(byte @ 0x80..=0xbf) => Ok(u32::from(byte & 0x3f)),
+        _ => Err(()),
     };
-    let bytes = value.get(..width).ok_or(())?;
-    let character = std::str::from_utf8(bytes)
-        .map_err(|_| ())?
-        .chars()
-        .next()
-        .ok_or(())?;
-    Ok((character as u32, width))
+    let second = continuation(1)?;
+    match first {
+        0xc2..=0xdf => Ok(((u32::from(first & 0x1f) << 6) | second, 2)),
+        0xe0..=0xef => {
+            if (first == 0xe0 && second < 0x20) || (first == 0xed && second >= 0x20) {
+                return Err(());
+            }
+            let codepoint = (u32::from(first & 0x0f) << 12) | (second << 6) | continuation(2)?;
+            Ok((codepoint, 3))
+        }
+        0xf0..=0xf4 => {
+            if (first == 0xf0 && second < 0x10) || (first == 0xf4 && second >= 0x10) {
+                return Err(());
+            }
+            let codepoint = (u32::from(first & 7) << 18)
+                | (second << 12)
+                | (continuation(2)? << 6)
+                | continuation(3)?;
+            Ok((codepoint, 4))
+        }
+        _ => Err(()),
+    }
 }
 
 pub(crate) fn go_rune_count(value: &[u8]) -> usize {
@@ -837,14 +819,8 @@ fn general_ci_key(value: &[u8], trim: bool) -> Vec<u8> {
         value
     };
     let mut key = Vec::with_capacity(value.len());
-    let mut index = 0;
-    while index < value.len() {
-        let (codepoint, width) = match decode_rune(&value[index..]) {
-            Ok(decoded) => decoded,
-            Err(()) => break,
-        };
-        index += width;
-        key.extend_from_slice(&general_weight(codepoint).to_be_bytes());
+    for rune in valid_utf8_prefix(value).chars() {
+        key.extend_from_slice(&general_weight(rune as u32).to_be_bytes());
     }
     key
 }
@@ -871,23 +847,56 @@ fn chinese_ci_compare(left: &[u8], right: &[u8], weight: fn(u32) -> u32) -> Orde
     (left.len() - left_index).cmp(&(right.len() - right_index))
 }
 
-fn chinese_ci_key(value: &[u8], trim: bool, weight: fn(u32) -> u32) -> Vec<u8> {
-    let value = if trim {
-        trim_trailing_spaces(value)
-    } else {
-        value
-    };
+fn gb18030_chinese_ci_key(value: &[u8]) -> Vec<u8> {
+    if value.is_ascii() {
+        // The GB18030 table leaves non-letter ASCII weights unchanged.
+        return value.to_ascii_uppercase();
+    }
+
     let mut key = Vec::with_capacity(value.len() * 2);
-    let mut index = 0;
-    while index < value.len() {
-        let (codepoint, width) = match decode_rune(&value[index..]) {
-            Ok(decoded) => decoded,
-            Err(()) => break,
-        };
-        index += width;
-        let bytes = weight(codepoint).to_be_bytes();
-        let first = bytes.iter().position(|byte| *byte != 0).unwrap_or(3);
-        key.extend_from_slice(&bytes[first..]);
+    for rune in valid_utf8_prefix(value).chars() {
+        let weight = gb18030_chinese_ci_weight(rune as u32);
+        let packed = weight.to_be_bytes();
+        if weight <= 0xff {
+            key.push(packed[3]);
+        } else if weight <= 0xffff {
+            key.extend_from_slice(&packed[2..]);
+        } else if weight <= 0xff_ffff {
+            key.extend_from_slice(&packed[1..]);
+        } else {
+            key.extend_from_slice(&packed);
+        }
+    }
+    key
+}
+
+fn gbk_chinese_ci_key(value: &[u8]) -> Vec<u8> {
+    const ASCII_WEIGHTS: [u8; 128] = {
+        let mut weights = [0; 128];
+        let mut index = 0;
+        while index < weights.len() {
+            assert!(GBK_CHINESE_CI[index * 2 + 1] == 0);
+            weights[index] = GBK_CHINESE_CI[index * 2];
+            index += 1;
+        }
+        weights
+    };
+    if value.is_ascii() {
+        return value
+            .iter()
+            .map(|&byte| ASCII_WEIGHTS[usize::from(byte & 0x7f)])
+            .collect();
+    }
+
+    // ASCII contributes one byte per rune. All other runes occupy at least
+    // two UTF-8 bytes and contribute at most two key bytes.
+    let mut key = Vec::with_capacity(value.len());
+    for rune in valid_utf8_prefix(value).chars() {
+        let [high, low] = (gbk_chinese_ci_weight(rune as u32) as u16).to_be_bytes();
+        if high != 0 {
+            key.push(high);
+        }
+        key.push(low);
     }
     key
 }
@@ -1010,51 +1019,33 @@ fn long_weight(table: &[u8], row_count: usize, codepoint: u32) -> Option<(u64, u
 
 struct UcaCursor<'a> {
     bytes: &'a [u8],
-    byte_index: usize,
-    pending: [u16; 8],
-    pending_index: usize,
-    pending_len: usize,
-    weight: fn(u32) -> (u64, u64),
+    packed: u64,
+    remaining: u64,
 }
 
 impl<'a> UcaCursor<'a> {
-    fn new(bytes: &'a [u8], weight: fn(u32) -> (u64, u64)) -> Self {
+    fn new(bytes: &'a [u8]) -> Self {
         Self {
             bytes,
-            byte_index: 0,
-            pending: [0; 8],
-            pending_index: 0,
-            pending_len: 0,
-            weight,
+            packed: 0,
+            remaining: 0,
         }
     }
 
-    fn next_weight(&mut self) -> Result<Option<u16>, ()> {
-        loop {
-            if self.pending_index < self.pending_len {
-                let weight = self.pending[self.pending_index];
-                self.pending_index += 1;
-                return Ok(Some(weight));
-            }
-            if self.byte_index == self.bytes.len() {
-                return Ok(None);
-            }
-            let (codepoint, width) = decode_rune(&self.bytes[self.byte_index..])?;
-            self.byte_index += width;
-            self.pending_index = 0;
-            self.pending_len = 0;
-            let (first, second) = (self.weight)(codepoint);
-            self.append_packed(first);
-            self.append_packed(second);
+    fn refill(&mut self, weight: &impl Fn(u32) -> (u64, u64)) -> Result<(), ()> {
+        if self.packed != 0 {
+            return Ok(());
         }
-    }
-
-    fn append_packed(&mut self, mut packed: u64) {
-        while packed != 0 {
-            self.pending[self.pending_len] = packed as u16;
-            self.pending_len += 1;
-            packed >>= 16;
+        self.packed = std::mem::take(&mut self.remaining);
+        while self.packed == 0 && !self.bytes.is_empty() {
+            let (codepoint, width) = decode_rune(self.bytes)?;
+            self.bytes = &self.bytes[width..];
+            (self.packed, self.remaining) = weight(codepoint);
+            if self.packed == 0 {
+                self.packed = std::mem::take(&mut self.remaining);
+            }
         }
+        Ok(())
     }
 }
 
@@ -1063,35 +1054,74 @@ fn unicode_0400_compare(left: &[u8], right: &[u8]) -> Ordering {
         trim_trailing_spaces(left),
         trim_trailing_spaces(right),
         uca_weight,
+        &UCA_0400_ASCII,
     )
 }
 
 fn unicode_0900_compare(left: &[u8], right: &[u8]) -> Ordering {
-    weighted_compare(left, right, uca_0900_weight)
+    weighted_compare(left, right, uca_0900_weight, &UCA_0900_ASCII)
 }
 
-fn weighted_compare(left: &[u8], right: &[u8], weight: fn(u32) -> (u64, u64)) -> Ordering {
-    let mut left = UcaCursor::new(left, weight);
-    let mut right = UcaCursor::new(right, weight);
+const UCA_0400_ASCII: [u16; 128] = ascii_uca_weights(UNICODE_0400.as_chunks::<8>().0);
+const UCA_0900_ASCII: [u16; 128] = ascii_uca_weights(UNICODE_0900.as_chunks::<8>().0);
+
+const fn ascii_uca_weights(table: &[[u8; 8]]) -> [u16; 128] {
+    let mut result = [0; 128];
+    let mut index = 0;
+    while index < result.len() {
+        let packed = u64::from_le_bytes(table[index]);
+        // A zero entry sends ignorable or expanding runes to the cursor.
+        if packed <= u16::MAX as u64 && packed != 0xfffd {
+            result[index] = packed as u16;
+        }
+        index += 1;
+    }
+    result
+}
+
+fn weighted_compare(
+    left: &[u8],
+    right: &[u8],
+    weight: impl Fn(u32) -> (u64, u64),
+    ascii_weights: &[u16; 128],
+) -> Ordering {
+    let mut matched = 0;
+    for (&a, &b) in left.iter().zip(right) {
+        if !(a | b).is_ascii() {
+            break;
+        }
+        let a = ascii_weights[usize::from(a)];
+        let b = ascii_weights[usize::from(b)];
+        if a == 0 || b == 0 {
+            break;
+        }
+        let ordering = a.cmp(&b);
+        if !ordering.is_eq() {
+            return ordering;
+        }
+        matched += 1;
+    }
+    let mut left = UcaCursor::new(&left[matched..]);
+    let mut right = UcaCursor::new(&right[matched..]);
     loop {
-        let left_weight = match left.next_weight() {
-            Ok(weight) => weight,
-            Err(()) => return Ordering::Equal,
-        };
-        let right_weight = match right.next_weight() {
-            Ok(weight) => weight,
-            Err(()) => return Ordering::Equal,
-        };
-        match (left_weight, right_weight) {
-            (Some(left), Some(right)) => {
-                let ordering = left.cmp(&right);
-                if !ordering.is_eq() {
-                    return ordering;
-                }
+        if left.refill(&weight).is_err() || right.refill(&weight).is_err() {
+            return Ordering::Equal;
+        }
+        if left.packed == 0 || right.packed == 0 {
+            return left.packed.cmp(&right.packed);
+        }
+        if left.packed == right.packed {
+            left.packed = 0;
+            right.packed = 0;
+            continue;
+        }
+        while left.packed != 0 && right.packed != 0 {
+            let ordering = (left.packed as u16).cmp(&(right.packed as u16));
+            if !ordering.is_eq() {
+                return ordering;
             }
-            (None, None) => return Ordering::Equal,
-            (None, Some(_)) => return Ordering::Less,
-            (Some(_), None) => return Ordering::Greater,
+            left.packed >>= 16;
+            right.packed >>= 16;
         }
     }
 }
@@ -1109,13 +1139,28 @@ fn unicode_0900_key(value: &[u8]) -> Vec<u8> {
     weighted_key(value, uca_0900_weight)
 }
 
-fn weighted_key(value: &[u8], weight: fn(u32) -> (u64, u64)) -> Vec<u8> {
+fn weighted_key(value: &[u8], weight: impl Fn(u32) -> (u64, u64)) -> Vec<u8> {
     let mut key = Vec::with_capacity(value.len() * 2);
-    let mut cursor = UcaCursor::new(value, weight);
-    while let Ok(Some(weight)) = cursor.next_weight() {
-        key.extend_from_slice(&weight.to_be_bytes());
+    for rune in valid_utf8_prefix(value).chars() {
+        let (first, second) = weight(rune as u32);
+        for mut packed in [first, second] {
+            while packed != 0 {
+                key.extend_from_slice(&(packed as u16).to_be_bytes());
+                packed >>= 16;
+            }
+        }
     }
     key
+}
+
+// The Go key builders retain weights up to the first malformed UTF-8 byte.
+fn valid_utf8_prefix(value: &[u8]) -> &str {
+    match simdutf8::compat::from_utf8(value) {
+        Ok(text) => text,
+        Err(error) => {
+            std::str::from_utf8(&value[..error.valid_up_to()]).expect("validated UTF-8 prefix")
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1129,6 +1174,53 @@ mod tests {
         Collation, GB18030_CHINESE_CI, GBK_CHINESE_CI, GENERAL_CI, UNICODE_0400, UNICODE_0400_LONG,
         UNICODE_0900, UNICODE_0900_LONG,
     };
+
+    #[test]
+    fn chinese_ci_ascii_keys_follow_weight_tables() {
+        use super::{gb18030_chinese_ci_weight, gbk_chinese_ci_weight};
+
+        let mut ascii: Vec<u8> = (0..=127).collect();
+        ascii.extend_from_slice(b"  ");
+        for (collation, weight) in [
+            (
+                Collation::GbkChineseCi,
+                gbk_chinese_ci_weight as fn(u32) -> u32,
+            ),
+            (Collation::Gb18030ChineseCi, gb18030_chinese_ci_weight),
+        ] {
+            let expected: Vec<_> = ascii
+                .iter()
+                .map(|&byte| u8::try_from(weight(u32::from(byte))).unwrap())
+                .collect();
+            assert_eq!(collation.key_without_trim_right_space(&ascii), expected);
+            assert_eq!(collation.key(&ascii), expected[..128]);
+
+            // A malformed suffix stops key generation after all valid bytes.
+            let mut malformed = ascii.clone();
+            malformed.extend_from_slice(b"\xffz");
+            assert_eq!(collation.key(&malformed), expected);
+        }
+    }
+
+    #[test]
+    fn uca_expansions_and_malformed_prefixes_keep_go_order() {
+        use super::{get_collator_with_mode, Ordering};
+
+        for name in ["utf8mb4_unicode_ci", "utf8mb4_0900_ai_ci"] {
+            let collation = get_collator_with_mode(true, name);
+            assert_eq!(
+                collation.compare("ßs".as_bytes(), "sß".as_bytes()),
+                Ordering::Equal
+            );
+            assert_eq!(
+                collation.key("ßs".as_bytes()),
+                collation.key("sß".as_bytes())
+            );
+            assert_eq!(collation.compare(b"a\xffz", b"az"), Ordering::Equal);
+            assert_eq!(collation.compare(b"b\xffz", b"a"), Ordering::Greater);
+            assert_eq!(collation.key(b"a\xffz"), collation.key(b"a"));
+        }
+    }
 
     fn digest(bytes: &[u8]) -> String {
         format!("{:x}", Sha256::digest(bytes))

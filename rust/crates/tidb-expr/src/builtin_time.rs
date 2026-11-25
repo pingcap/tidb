@@ -30,7 +30,7 @@ use crate::wrap_cast::{
 };
 use crate::EvalError;
 use tidb_datatype::{
-    date_fsp, get_format_type, get_fsp, is_clock_unit, is_date_unit, is_microsecond_unit, Datum,
+    date_fsp, get_format_type_bytes, get_fsp, is_clock_unit, is_date_unit, is_microsecond_unit, Datum,
     EvalType, FieldType, FieldTypeCode, FieldTypeFlags, MAX_DECIMAL_WIDTH, UNSPECIFIED_LENGTH,
 };
 use tidb_chunk::row::Row;
@@ -420,16 +420,20 @@ fn str_to_date_ret_tp(ctx: &dyn BuildContext, arg: &Expression) -> (FieldTypeCod
         return (tp, MAX_FSP);
     }
     let format = wrap_with_cast_as_string(ctx, arg.clone())
-        .and_then(|str_arg| eval_string(ctx, &str_arg));
-    let Ok(Some(format)) = format else {
+        .and_then(|str_arg| ctx.eval_constant(&str_arg));
+    let Ok(format) = format else {
         return (tp, 0);
     };
-    let tp = match get_format_type(&format) {
+    if format.is_null() {
+        return (tp, 0);
+    }
+    let format = format.go_bytes();
+    let tp = match get_format_type_bytes(format) {
         (true, false) => FieldTypeCode::Duration,
         (false, true) => FieldTypeCode::Date,
         _ => tp,
     };
-    let fsp = if format.contains("%f") { MAX_FSP } else { 0 };
+    let fsp = if format.windows(2).any(|pair| pair == b"%f") { MAX_FSP } else { 0 };
     (tp, fsp)
 }
 

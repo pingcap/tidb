@@ -14,31 +14,31 @@
 
 //! Complete transcreation of Go `pkg/util/queue` (`queue.go`).
 //!
-//! A generic circular-buffer queue. Go pre-allocates the backing array with
-//! `make([]T, capacity)` (zero-valued slots); Rust cannot zero-fill an
-//! arbitrary `T`, so the backing store is `Vec<Option<T>>` with unused slots
-//! held as `None`. `backing_allocated` preserves Go's observable distinction
-//! between a nil zero-value slice and the allocated empty slice created by
-//! `NewQueue(0)`. `Cap` reports the slot count, exactly as `len(elements)` does
-//! in Go.
+//! A generic circular-buffer queue. Capacity-one queues for small elements
+//! hold their first two slots inline. Heap slots are initialized on first use.
+//! `backing_allocated` preserves the distinction between a Go zero-value
+//! queue and an explicit `NewQueue(0)`. `Cap` reports the configured slot count.
+
+enum Elements<T> {
+    Inline([Option<T>; 2]),
+    Heap(Vec<Option<T>>),
+}
 
 /// A circular-buffer implementation of a queue.
 pub struct Queue<T> {
-    elements: Vec<Option<T>>,
+    elements: Elements<T>,
+    capacity: usize,
     head: usize,
-    tail: usize,
     size: usize,
+    tail: usize,
     backing_allocated: bool,
 }
 
 impl<T> Default for Queue<T> {
     fn default() -> Self {
-        Queue {
-            elements: Vec::new(),
-            head: 0,
-            tail: 0,
-            size: 0,
+        Self {
             backing_allocated: false,
+            ..Self::new(0)
         }
     }
 }
@@ -46,36 +46,89 @@ impl<T> Default for Queue<T> {
 impl<T> Queue<T> {
     /// Creates a new queue with the given capacity.
     pub fn new(capacity: usize) -> Self {
-        Queue {
-            elements: none_vec(capacity),
+        // Reserve room for the first doubling of a small queue, with a
+        // fixed limit on extra storage for large element types.
+        let reserved =
+            if capacity <= 4 && capacity.saturating_mul(std::mem::size_of::<Option<T>>()) <= 64 {
+                capacity * 2
+            } else {
+                capacity
+            };
+        Self {
+            elements: if capacity <= 1 && std::mem::size_of::<Option<T>>() <= 32 {
+                Elements::Inline([None, None])
+            } else {
+                Elements::Heap(Vec::with_capacity(reserved))
+            },
+            capacity,
+            head: 0,
+            size: 0,
+            tail: 0,
             backing_allocated: true,
-            ..Default::default()
         }
     }
 
     /// Pushes an element onto the queue.
+    #[inline]
     pub fn push(&mut self, element: T) {
-        if !self.backing_allocated {
-            self.elements = none_vec(1);
-            self.backing_allocated = true;
+        if self.size == self.capacity {
+            self.grow();
         }
 
-        if self.size == self.elements.len() {
-            // Double capacity when full.
-            let old_len = self.elements.len();
-            let mut new_elements = none_vec(old_len * 2);
-            for (i, slot) in new_elements.iter_mut().enumerate().take(self.size) {
-                *slot = self.elements[(self.head + i) % old_len].take();
+        match &mut self.elements {
+            Elements::Inline(slots) => {
+                // The first two capacities are powers of two.
+                let tail = (self.head + self.size) & (self.capacity - 1);
+                slots[tail] = Some(element);
             }
-            self.elements = new_elements;
-            self.head = 0;
-            self.tail = self.size;
+            Elements::Heap(slots) => {
+                if let Some(slot) = slots.get_mut(self.tail) {
+                    *slot = Some(element);
+                } else {
+                    debug_assert_eq!(self.tail, slots.len());
+                    slots.push(Some(element));
+                }
+                self.tail += 1;
+                if self.tail == self.capacity {
+                    self.tail = 0;
+                }
+            }
         }
-
-        let len = self.elements.len();
-        self.elements[self.tail] = Some(element);
-        self.tail = (self.tail + 1) % len;
         self.size += 1;
+    }
+
+    #[cold]
+    fn grow(&mut self) {
+        if self.capacity == 0 {
+            assert!(
+                !self.backing_allocated,
+                "Cannot push into a zero-capacity queue"
+            );
+            self.backing_allocated = true;
+            self.capacity = 1;
+            return;
+        }
+        match &mut self.elements {
+            Elements::Inline(slots) if self.capacity == 2 => {
+                let mut expanded = Vec::with_capacity(4);
+                expanded.extend(slots.iter_mut().map(Option::take));
+                if self.head != 0 {
+                    expanded.swap(0, 1);
+                }
+                self.elements = Elements::Heap(expanded);
+                self.tail = self.size;
+            }
+            Elements::Inline(_) => {}
+            Elements::Heap(slots) => {
+                slots.reserve_exact(self.capacity);
+                if self.head != 0 {
+                    slots.rotate_left(self.head);
+                }
+                self.tail = self.size;
+            }
+        }
+        self.capacity *= 2;
+        self.head = 0;
     }
 
     /// Pops an element from the queue.
@@ -83,12 +136,18 @@ impl<T> Queue<T> {
     /// # Panics
     ///
     /// Panics if the queue is empty.
+    #[inline]
     pub fn pop(&mut self) -> T {
         assert!(self.size != 0, "Queue is empty");
-        let element = self.elements[self.head]
-            .take()
-            .expect("occupied slot holds a value");
-        self.head = (self.head + 1) % self.elements.len();
+        let slot = match &mut self.elements {
+            Elements::Inline(slots) => &mut slots[self.head],
+            Elements::Heap(slots) => &mut slots[self.head],
+        };
+        let element = slot.take().expect("occupied slot holds a value");
+        self.head += 1;
+        if self.head == self.capacity {
+            self.head = 0;
+        }
         self.size -= 1;
         element
     }
@@ -106,37 +165,30 @@ impl<T> Queue<T> {
     /// Clears the queue.
     pub fn clear(&mut self) {
         self.head = 0;
-        self.tail = 0;
         self.size = 0;
+        self.tail = 0;
     }
 
     /// Clears the queue and expands the backing store if needed.
     pub fn clear_and_expand_if_need(&mut self, size: usize) {
         self.clear();
-        if self.elements.len() < size {
-            self.elements = none_vec(size);
-            self.backing_allocated = true;
+        if self.capacity < size {
+            *self = Self::new(size);
         }
     }
 
     /// Returns the capacity of the queue.
     pub fn cap(&self) -> usize {
-        self.elements.len()
+        self.capacity
     }
-}
-
-fn none_vec<T>(n: usize) -> Vec<Option<T>> {
-    let mut v = Vec::with_capacity(n);
-    v.resize_with(n, || None);
-    v
 }
 
 #[cfg(test)]
 mod tests {
-    use super::Queue;
+    use super::{Elements, Queue};
     use std::sync::{
-        atomic::{AtomicUsize, Ordering},
         Arc,
+        atomic::{AtomicUsize, Ordering},
     };
 
     struct DropProbe(Arc<AtomicUsize>);
@@ -215,9 +267,51 @@ mod tests {
         q.push(5);
         assert_eq!(q.cap(), 6);
         assert_eq!(q.head, 0);
-        assert_eq!(q.tail, 4);
         assert_eq!([q.pop(), q.pop(), q.pop(), q.pop()], [2, 3, 4, 5]);
         assert!(q.is_empty());
+    }
+
+    #[test]
+    fn small_queue_first_growth_reuses_reserved_slots() {
+        for capacity in 2..=4 {
+            let mut queue = Queue::new(capacity);
+            let Elements::Heap(slots) = &queue.elements else {
+                panic!("queue should reserve heap storage");
+            };
+            assert!(slots.capacity() >= capacity * 2);
+            let backing = slots.as_ptr();
+            assert_eq!(queue.cap(), capacity);
+            for value in 0..=capacity {
+                queue.push(value);
+            }
+            assert_eq!(queue.cap(), capacity * 2);
+            let Elements::Heap(slots) = &queue.elements else {
+                panic!("queue should retain heap storage");
+            };
+            assert_eq!(slots.as_ptr(), backing);
+            assert!((0..=capacity).all(|value| queue.pop() == value));
+        }
+        let mut large = Queue::<[u8; 128]>::new(1);
+        assert!(matches!(&large.elements, Elements::Heap(slots) if slots.capacity() == 1));
+        large.push([1; 128]);
+        large.push([2; 128]);
+        assert_eq!(large.pop(), [1; 128]);
+        assert_eq!(large.pop(), [2; 128]);
+    }
+
+    #[test]
+    fn inline_queue_grows_in_fifo_order() {
+        let mut queue = Queue::new(1);
+        queue.push(1);
+        queue.push(2);
+        assert_eq!(queue.cap(), 2);
+        assert!(matches!(queue.elements, Elements::Inline(_)));
+        assert_eq!(queue.pop(), 1);
+        queue.push(3);
+        queue.push(4);
+        assert_eq!(queue.cap(), 4);
+        assert!(matches!(queue.elements, Elements::Heap(_)));
+        assert_eq!([queue.pop(), queue.pop(), queue.pop()], [2, 3, 4]);
     }
 
     #[test]
@@ -256,22 +350,24 @@ mod tests {
 
     #[test]
     fn source_clear_retains_slots_until_overwrite_or_expand() {
-        let drops = Arc::new(AtomicUsize::new(0));
-        let mut q = Queue::new(2);
-        q.push(DropProbe(Arc::clone(&drops)));
-        q.push(DropProbe(Arc::clone(&drops)));
+        for initial_capacity in [1, 2] {
+            let drops = Arc::new(AtomicUsize::new(0));
+            let mut q = Queue::new(initial_capacity);
+            q.push(DropProbe(Arc::clone(&drops)));
+            q.push(DropProbe(Arc::clone(&drops)));
 
-        q.clear();
-        assert_eq!(drops.load(Ordering::SeqCst), 0);
-        q.clear_and_expand_if_need(2);
-        assert_eq!(drops.load(Ordering::SeqCst), 0);
-        q.push(DropProbe(Arc::clone(&drops)));
-        assert_eq!(drops.load(Ordering::SeqCst), 1);
+            q.clear();
+            assert_eq!(drops.load(Ordering::SeqCst), 0);
+            q.clear_and_expand_if_need(2);
+            assert_eq!(drops.load(Ordering::SeqCst), 0);
+            q.push(DropProbe(Arc::clone(&drops)));
+            assert_eq!(drops.load(Ordering::SeqCst), 1);
 
-        q.clear_and_expand_if_need(3);
-        assert_eq!(drops.load(Ordering::SeqCst), 3);
-        assert_eq!(q.cap(), 3);
-        assert!(q.is_empty());
+            q.clear_and_expand_if_need(3);
+            assert_eq!(drops.load(Ordering::SeqCst), 3);
+            assert_eq!(q.cap(), 3);
+            assert!(q.is_empty());
+        }
     }
 
     // Go `TestQueue` / "clear operation".

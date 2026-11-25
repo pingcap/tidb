@@ -8,6 +8,9 @@ use tidb_chunk::{chunk::Chunk, column::Column};
 use tidb_datatype::{Datum, EvalType};
 use tidb_proto::tipb::ScalarFuncSig;
 
+mod address;
+mod uuid;
+
 /// Go miscellaneous signatures' `vectorized` methods.
 pub(super) fn supported(function: &ScalarFunction) -> bool {
     use ScalarFuncSig::*;
@@ -48,6 +51,20 @@ pub(super) fn eval(
     input: &Chunk,
     result: &mut Column,
 ) -> Result<(), EvalError> {
+    use ScalarFuncSig::*;
+    let sig = function.pb_code();
+    if sig == InetAton {
+        return inet_aton(function, ctx, input, result);
+    }
+    match sig {
+        UuidVersion => return uuid::version(function, ctx, input, result),
+        UuidTimestamp => return uuid::timestamp(function, ctx, input, result),
+        VitessHash => return vitess_hash(function, ctx, input, result),
+        _ => {}
+    }
+    if let Some(result) = address::eval(sig, function, ctx, input, result) {
+        return result;
+    }
     let name = function.func_name.lowercase();
     let domain = function
         .get_static_type()
@@ -105,19 +122,8 @@ pub(super) fn eval(
         }
         return Ok(());
     }
-    use ScalarFuncSig::*;
     let n = input.num_rows();
-    if function.pb_code() == InetAton {
-        return inet_aton(function, ctx, input, result);
-    }
-    if function.pb_code() == Inet6Aton {
-        return inet6_aton(function, ctx, input, result);
-    }
-    let arg_type = |index: usize| match (function.pb_code(), index) {
-        (InetNtoa | VitessHash, 0) => EvalType::Int,
-        (_, 1) => EvalType::Int,
-        _ => EvalType::String,
-    };
+    let arg_type = |index: usize| if index == 1 { EvalType::Int } else { EvalType::String };
     let mut bufs = Vec::with_capacity(function.args.len());
     for (index, arg) in function.args.iter().enumerate() {
         bufs.push(vec_eval::argument(arg, arg_type(index), ctx, input)?);
@@ -165,82 +171,54 @@ fn inet_aton(
     input: &Chunk,
     result: &mut Column,
 ) -> Result<(), EvalError> {
-    let n = input.num_rows();
-    let buf = vec_eval::argument(&function.args[0], EvalType::String, ctx, input)?;
-    result.resize_int64(n, false);
-    result.merge_nulls(&[&buf]);
-    for i in 0..n {
-        if result.is_null(i) {
-            continue;
-        }
-        let ip_addr = buf.get_bytes(i);
-        let ip_addr = ip_addr.as_ref();
-        if ip_addr.is_empty() || ip_addr[ip_addr.len() - 1] == b'.' {
-            result.set_null(i, true);
-            continue;
-        }
-        let mut byte_result: u64 = 0;
-        let mut res: u64 = 0;
-        let mut dot_count = 0;
-        // Go ranges over the string's runes; every byte of a multi-byte rune
-        // is an illegal character either way.
-        for c in String::from_utf8_lossy(ip_addr).chars() {
-            if c.is_ascii_digit() {
-                byte_result = byte_result * 10 + u64::from(c as u8 - b'0');
-                if byte_result > 255 {
-                    result.set_null(i, true);
-                    break;
+    vec_eval::with_argument_column(
+        &function.args[0],
+        EvalType::String,
+        ctx,
+        input,
+        |column, selection| {
+            let cells = column.raw_cells();
+            let get = cells.variable_cells();
+            let parse = |row| {
+                if cells.is_null(row) {
+                    return None;
                 }
-            } else if c == '.' {
-                dot_count += 1;
-                if dot_count > 3 {
-                    result.set_null(i, true);
-                    break;
-                }
-                res = (res << 8) + byte_result;
-                byte_result = 0;
+                crate::builtin_ext::compare2::inet_aton_bytes(get(row)).map(|value| value as i64)
+            };
+            if let Some(selection) = selection {
+                result.write_int64_rows(selection.iter().copied().map(parse));
             } else {
-                result.set_null(i, true);
-                break;
+                result.write_int64_rows((0..input.num_rows()).map(parse));
             }
-        }
-        if !result.is_null(i) {
-            if dot_count == 1 {
-                res <<= 16;
-            }
-            if dot_count == 2 {
-                res <<= 8;
-            }
-            let value = ((res << 8) + byte_result) as i64;
-            result.with_int64s_mut(|i64s| i64s[i] = value);
-        }
-    }
-    Ok(())
+        },
+    )
 }
 
-/// Go `builtinInet6AtonSig.vecEvalString`: unlike its row form, an empty or
-/// unparseable address is NULL without an error.
-fn inet6_aton(
+/// Go `builtinVitessHashSig.vecEvalInt`.
+fn vitess_hash(
     function: &ScalarFunction,
     ctx: &dyn Columns,
     input: &Chunk,
     result: &mut Column,
 ) -> Result<(), EvalError> {
-    let n = input.num_rows();
-    let buf = vec_eval::argument(&function.args[0], EvalType::String, ctx, input)?;
-    result.reserve_string(n);
-    for i in 0..n {
-        if buf.is_null(i) {
-            result.append_null();
-            continue;
-        }
-        let bytes = buf.get_bytes(i);
-        // IP syntax is ASCII: an invalid UTF-8 byte is the same parse failure.
-        let text = String::from_utf8_lossy(bytes.as_ref());
-        match crate::builtin_ext::compare2::inet6_aton_text(&text) {
-            Some(address) => vec_eval::put(result, i, EvalType::String, &address)?,
-            None => result.append_null(),
-        }
-    }
-    Ok(())
+    vec_eval::with_argument_column(
+        &function.args[0],
+        EvalType::Int,
+        ctx,
+        input,
+        |column, selection| {
+            let cells = column.raw_cells();
+            let values = cells.fixed_cells::<8>();
+            let hash = |row| {
+                (!cells.is_null(row)).then(|| {
+                    tidb_vitess::hash_uint64(u64::from_ne_bytes(values[row])) as i64
+                })
+            };
+            if let Some(selection) = selection {
+                result.write_int64_rows(selection.iter().copied().map(hash));
+            } else {
+                result.write_int64_rows((0..column.rows()).map(hash));
+            }
+        },
+    )
 }

@@ -20,9 +20,9 @@
 //! store's `analyzeIndexProcessor`; TiDB only merges what it sends back.
 
 use tidb_charset::Collation;
-use tidb_datatype::{Datum, DatumValueError};
+use tidb_datatype::DatumValueError;
 
-use crate::histogram::{merge_histograms, TopNMergeEntry};
+use crate::histogram::merge_histograms;
 use crate::{merge_topn_and_update_cmsketch, CmsSketch, FmSketch, Histogram, MergeError, TopN, MAX_SKETCH_SIZE};
 
 /// Go's default `AnalyzeOptCMSketchDepth` / `AnalyzeOptCMSketchWidth`.
@@ -58,10 +58,7 @@ impl std::error::Error for AnalyzeIndexMergeError {}
 
 /// The state `buildStatsFromResult` threads through `updateIndexResult`.
 pub struct AnalyzeIndexResult {
-    histogram: Histogram,
-    cms: Option<CmsSketch>,
-    topn: Option<TopN>,
-    fm_sketch: FmSketch,
+    statistics: AnalyzeIndexStatistics,
     num_buckets: usize,
     num_topn: u32,
 }
@@ -73,10 +70,12 @@ impl AnalyzeIndexResult {
     #[must_use]
     pub fn new(need_cms: bool, cms_depth: u32, cms_width: u32, num_buckets: usize, num_topn: u32) -> Self {
         Self {
-            histogram: Histogram::default(),
-            cms: need_cms.then(|| CmsSketch::new(cms_depth, cms_width)),
-            topn: need_cms.then(|| TopN::new(num_topn as usize)),
-            fm_sketch: FmSketch::new(MAX_SKETCH_SIZE),
+            statistics: AnalyzeIndexStatistics {
+                histogram: Histogram::default(),
+                cms: need_cms.then(|| CmsSketch::new(cms_depth, cms_width)),
+                topn: need_cms.then(|| TopN::new(num_topn as usize)),
+                fm_sketch: FmSketch::new(MAX_SKETCH_SIZE),
+            },
             num_buckets,
             num_topn,
         }
@@ -93,11 +92,12 @@ impl AnalyzeIndexResult {
         cms_and_topn: Option<(Option<CmsSketch>, Option<TopN>)>,
         fm_sketch: Option<FmSketch>,
     ) -> Result<(), AnalyzeIndexMergeError> {
-        let current = std::mem::take(&mut self.histogram);
-        self.histogram = merge_histograms(current, histogram, self.num_buckets, 2, Collation::Binary)
+        let statistics = &mut self.statistics;
+        let current = std::mem::take(&mut statistics.histogram);
+        statistics.histogram = merge_histograms(current, histogram, self.num_buckets, 2, Collation::Binary)
             .map_err(AnalyzeIndexMergeError::Histogram)?;
         if let (Some(cms), Some(topn), Some((response_cms, response_topn))) =
-            (self.cms.as_mut(), self.topn.as_mut(), cms_and_topn)
+            (statistics.cms.as_mut(), statistics.topn.as_mut(), cms_and_topn)
         {
             if let Some(response_cms) = response_cms {
                 cms.merge(&response_cms).map_err(AnalyzeIndexMergeError::Cms)?;
@@ -106,7 +106,7 @@ impl AnalyzeIndexResult {
             merge_topn_and_update_cmsketch(topn, &response_topn, cms, self.num_topn);
         }
         if let Some(fm_sketch) = fm_sketch {
-            self.fm_sketch.merge(&fm_sketch);
+            statistics.fm_sketch.merge(&fm_sketch);
         }
         Ok(())
     }
@@ -114,38 +114,27 @@ impl AnalyzeIndexResult {
     /// Go `buildStatsFromResult`'s end for stats version 2: the TopN values
     /// leave the histogram, which is then standardized, and the CMSketch's
     /// default value is derived from the histogram's NDV.
+    #[inline]
     pub fn finish(mut self) -> Result<AnalyzeIndexStatistics, AnalyzeIndexMergeError> {
-        if let Some(topn) = self.topn.as_ref().filter(|topn| topn.total_count() > 0) {
-            let mut remove = topn
-                .entries()
-                .iter()
-                .map(|entry| TopNMergeEntry { value: Datum::Bytes(entry.encoded.clone()), count: entry.count })
-                .collect::<Vec<_>>();
-            remove.sort_by(|left, right| match (&left.value, &right.value) {
-                (Datum::Bytes(left), Datum::Bytes(right)) => left.cmp(right),
-                _ => unreachable!("index TopN values are encoded bytes"),
-            });
-            self.histogram
-                .remove_values(&remove, Collation::Binary)
+        let statistics = &mut self.statistics;
+        if let Some(topn) = statistics.topn.as_ref().filter(|topn| topn.total_count() > 0) {
+            // The accumulator's merge keeps its owned TopN in byte order.
+            statistics.histogram
+                .remove_index_topn(topn.entries())
                 .map_err(AnalyzeIndexMergeError::Histogram)?;
         }
-        self.histogram.standardize_for_v2_analyze_index();
-        if let Some(cms) = self.cms.as_mut() {
-            cms.calc_default_value_for_analyze(self.histogram.ndv.max(0) as u64);
+        statistics.histogram.standardize_for_v2_analyze_index();
+        if let Some(cms) = statistics.cms.as_mut() {
+            cms.calc_default_value_for_analyze(statistics.histogram.ndv.max(0) as u64);
         }
-        Ok(AnalyzeIndexStatistics {
-            histogram: self.histogram,
-            cms: self.cms,
-            topn: self.topn,
-            fm_sketch: self.fm_sketch,
-        })
+        Ok(self.statistics)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use tidb_codec::Encoder;
-    use tidb_datatype::{FieldType, FieldTypeCode};
+    use tidb_datatype::{Datum, FieldType, FieldTypeCode};
 
     use super::*;
     use crate::{hash_bytes, sort_topn_meta, SortedHistogramBuilder, TopNEntry};

@@ -41,6 +41,12 @@ fn shared_lane_pool(name: &'static str, workers: usize) -> Arc<SharedLanePool> {
     }) {
         return Arc::clone(pool);
     }
+    let pool = create_lane_pool(name, workers);
+    pools.push(Arc::clone(&pool));
+    pool
+}
+
+fn create_lane_pool(name: &'static str, workers: usize) -> Arc<SharedLanePool> {
     let (sender, receiver) = std::sync::mpsc::sync_channel::<LaneTask>(workers);
     let receiver = Arc::new(Mutex::new(receiver));
     for _ in 0..workers {
@@ -57,12 +63,10 @@ fn shared_lane_pool(name: &'static str, workers: usize) -> Arc<SharedLanePool> {
             })
             .expect("spawn persistent exec lane");
     }
-    let pool = Arc::new(SharedLanePool {
+    Arc::new(SharedLanePool {
         sender,
         in_use: AtomicBool::new(true),
-    });
-    pools.push(Arc::clone(&pool));
-    pool
+    })
 }
 
 struct LaneActivity {
@@ -92,7 +96,17 @@ impl LanePool {
     /// and reused by later executors.
     pub fn new(name: &'static str, concurrency: usize) -> Self {
         let workers = concurrency.max(1);
-        let shared = shared_lane_pool(name, workers);
+        Self::with_lanes(shared_lane_pool(name, workers), workers)
+    }
+
+    /// Creates reader-owned workers that are released when the pool is dropped.
+    /// Use for jobs whose changing width would otherwise keep idle workers in the registry.
+    pub fn new_dedicated(name: &'static str, concurrency: usize) -> Self {
+        let workers = concurrency.max(1);
+        Self::with_lanes(create_lane_pool(name, workers), workers)
+    }
+
+    fn with_lanes(shared: Arc<SharedLanePool>, width: usize) -> Self {
         Self {
             shared,
             activity: Arc::new(LaneActivity {
@@ -102,7 +116,7 @@ impl LanePool {
                 }),
                 done: Condvar::new(),
             }),
-            width: workers,
+            width,
         }
     }
 

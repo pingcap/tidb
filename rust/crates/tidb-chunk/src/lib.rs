@@ -42,6 +42,7 @@ pub mod chunk_in_disk;
 pub mod chunk_util;
 pub mod codec;
 pub mod column;
+mod column_buffer;
 mod column_slot;
 mod go_append;
 mod column_view;

@@ -143,25 +143,6 @@ const BYTE_SIZE_MB: i64 = 1 << 20;
 const BYTE_SIZE_KB: i64 = 1 << 10;
 const BYTE_SIZE: i64 = 1;
 
-#[derive(Clone, Copy)]
-struct BytesLimits {
-    hard: i64,
-    soft: i64,
-}
-
-const UNLIMITED: BytesLimits = BytesLimits { hard: -1, soft: -1 };
-
-fn limits_for(bytes_limit: i64) -> BytesLimits {
-    if bytes_limit <= 0 {
-        UNLIMITED
-    } else {
-        BytesLimits {
-            hard: bytes_limit,
-            soft: (bytes_limit as f64 * SOFT_SCALE) as i64,
-        }
-    }
-}
-
 #[derive(Default)]
 struct ActionSlot {
     action: Mutex<Option<ArcAction>>,
@@ -457,10 +438,12 @@ impl TrackerArbitration {
 /// [`Arc`], mirroring Go's `*Tracker`.
 pub struct Tracker {
     parent: Mutex<Weak<Tracker>>,
+    // Published under the parent lock so unattached trackers can skip it.
+    has_parent: AtomicBool,
     children: Mutex<HashMap<i64, Vec<Arc<Tracker>>>>,
     action_for_hard_limit: ActionSlot,
     action_for_soft_limit: ActionSlot,
-    limits: Mutex<BytesLimits>,
+    bytes_limit: AtomicI64,
     label: Mutex<i64>,
     bytes_consumed: AtomicI64,
     bytes_released: AtomicI64,
@@ -473,6 +456,8 @@ pub struct Tracker {
     /// The query killer polled during consumption (Go `Killer`).
     pub killer: Arc<SqlKiller>,
     kill_signal_transport: AtomicU8,
+    // Updated under the arbitration lock at registration and removal.
+    has_arbitration: AtomicBool,
     arbitration: Mutex<Option<Arc<TrackerArbitration>>>,
     /// Go `t.MemArbitrator.AwaitAlloc` of the last `InitMemArbitrator`.
     await_alloc: Mutex<Option<Arc<AwaitAlloc>>>,
@@ -503,17 +488,14 @@ impl Tracker {
     fn new_inner(label: i64, bytes_limit: i64, is_global: bool) -> Arc<Tracker> {
         Arc::new(Tracker {
             parent: Mutex::new(Weak::new()),
+            has_parent: AtomicBool::new(false),
             children: Mutex::new(HashMap::new()),
             action_for_hard_limit: ActionSlot {
                 action: Mutex::new(Some(Arc::new(super::LogOnExceed::default()))),
             },
             action_for_soft_limit: ActionSlot::default(),
-            // Go NewTracker stores hard/soft directly even for <=0; SetBytesLimit
-            // normalizes. Keep the same: only explicit setters normalize.
-            limits: Mutex::new(BytesLimits {
-                hard: bytes_limit,
-                soft: (bytes_limit as f64 * SOFT_SCALE) as i64,
-            }),
+            // Go NewTracker retains the initial limit even when it is disabled.
+            bytes_limit: AtomicI64::new(bytes_limit),
             label: Mutex::new(label),
             bytes_consumed: AtomicI64::new(0),
             bytes_released: AtomicI64::new(0),
@@ -523,6 +505,7 @@ impl Tracker {
             is_global,
             killer: Arc::new(SqlKiller::default()),
             kill_signal_transport: AtomicU8::new(KillSignalTransport::Panic as u8),
+            has_arbitration: AtomicBool::new(false),
             arbitration: Mutex::new(None),
             await_alloc: Mutex::new(None),
         })
@@ -596,7 +579,12 @@ impl Tracker {
         });
         *lock_unpoison(&self.await_alloc) = Some(Arc::clone(&registration.await_alloc));
 
-        let previous = lock_unpoison(&self.arbitration).replace(Arc::clone(&registration));
+        let previous = {
+            let mut active = lock_unpoison(&self.arbitration);
+            let previous = active.replace(Arc::clone(&registration));
+            self.has_arbitration.store(true, SeqCst);
+            previous
+        };
         if let Some(previous) = previous {
             previous.finish(true, 0);
         }
@@ -616,7 +604,12 @@ impl Tracker {
     /// Releases this statement's arbitrator budget before the tracker leaves
     /// the session tree.
     pub fn detach_mem_arbitrator(&self, exception: bool) -> bool {
-        let registration = lock_unpoison(&self.arbitration).take();
+        let registration = {
+            let mut active = lock_unpoison(&self.arbitration);
+            let registration = active.take();
+            self.has_arbitration.store(false, SeqCst);
+            registration
+        };
         let Some(registration) = registration else {
             return false;
         };
@@ -643,22 +636,23 @@ impl Tracker {
 
     /// Go `CheckBytesLimit` (test helper).
     pub fn check_bytes_limit(&self, val: i64) -> bool {
-        self.limits.lock().unwrap().hard == val
+        self.get_bytes_limit() == val
     }
 
     /// Sets the byte limit; `<= 0` means no limit (Go `SetBytesLimit`).
     pub fn set_bytes_limit(&self, bytes_limit: i64) {
-        *self.limits.lock().unwrap() = limits_for(bytes_limit);
+        self.bytes_limit
+            .store(if bytes_limit > 0 { bytes_limit } else { -1 }, SeqCst);
     }
 
     /// The hard byte limit; `<= 0` means no limit (Go `GetBytesLimit`).
     pub fn get_bytes_limit(&self) -> i64 {
-        self.limits.lock().unwrap().hard
+        self.bytes_limit.load(SeqCst)
     }
 
     /// Whether consumption reached the hard limit (Go `CheckExceed`).
     pub fn check_exceed(&self) -> bool {
-        let hard = self.limits.lock().unwrap().hard;
+        let hard = self.get_bytes_limit();
         self.bytes_consumed.load(SeqCst) >= hard && hard > 0
     }
 
@@ -848,23 +842,29 @@ impl Tracker {
         let mut session_root: Option<Arc<Tracker>> = None;
         let mut hard_limit_reached = false;
 
-        let mut cursor = Some(Arc::clone(self));
-        while let Some(tracker) = cursor {
-            if let Some(arbitration) = lock_unpoison(&tracker.arbitration).clone() {
-                arbitration.consume(bs);
+        let mut parent;
+        let mut tracker = self;
+        loop {
+            if tracker.has_arbitration.load(SeqCst) {
+                if let Some(arbitration) = lock_unpoison(&tracker.arbitration).as_ref() {
+                    arbitration.consume(bs);
+                }
             }
             if tracker.is_root_tracker_of_sess.load(SeqCst) {
-                session_root = Some(Arc::clone(&tracker));
+                session_root = Some(Arc::clone(tracker));
             }
             let consumed = tracker.bytes_consumed.fetch_add(bs, SeqCst) + bs;
-            let released = tracker.bytes_released.load(SeqCst);
-            let limits = *tracker.limits.lock().unwrap();
-            if consumed + released >= limits.hard && limits.hard > 0 {
-                hard_limit_reached = true;
-                root_exceed = Some(Arc::clone(&tracker));
-            }
-            if consumed + released >= limits.soft && limits.soft > 0 {
-                root_exceed_soft = Some(Arc::clone(&tracker));
+            let hard = tracker.get_bytes_limit();
+            if hard > 0 {
+                let used = consumed + tracker.bytes_released.load(SeqCst);
+                let soft = (hard as f64 * SOFT_SCALE) as i64;
+                if used >= hard {
+                    hard_limit_reached = true;
+                    root_exceed = Some(Arc::clone(tracker));
+                }
+                if soft > 0 && used >= soft {
+                    root_exceed_soft = Some(Arc::clone(tracker));
+                }
             }
             // maxConsumed CAS loop.
             loop {
@@ -880,7 +880,11 @@ impl Tracker {
                 }
                 break;
             }
-            cursor = tracker.get_parent();
+            let Some(next) = tracker.get_parent() else {
+                break;
+            };
+            parent = next;
+            tracker = &parent;
         }
 
         if bs > 0 {
@@ -1090,14 +1094,17 @@ impl Tracker {
     }
 
     fn get_parent(&self) -> Option<Arc<Tracker>> {
-        self.parent.lock().unwrap().upgrade()
+        if self.has_parent.load(SeqCst) {
+            self.parent.lock().unwrap().upgrade()
+        } else {
+            None
+        }
     }
 
     fn set_parent(&self, parent: Option<&Arc<Tracker>>) {
-        *self.parent.lock().unwrap() = match parent {
-            Some(p) => Arc::downgrade(p),
-            None => Weak::new(),
-        };
+        let mut current = self.parent.lock().unwrap();
+        *current = parent.map(Arc::downgrade).unwrap_or_default();
+        self.has_parent.store(parent.is_some(), SeqCst);
     }
 
     /// The session ID (Go reads `SessionID` directly).
@@ -1353,6 +1360,49 @@ mod tests {
             h.join().unwrap();
         }
         assert_eq!(tracker.bytes_consumed(), 100);
+    }
+
+    #[test]
+    fn updated_byte_limit_sets_both_action_thresholds() {
+        let tracker = Tracker::new(1, -9);
+        assert_eq!(tracker.get_bytes_limit(), -9);
+        let hard = MockAction::with_priority(0);
+        let soft = MockAction::with_priority(0);
+        tracker.set_action_on_exceed(Some(hard.clone()));
+        tracker.fallback_old_and_set_new_action_for_soft_limit(soft.clone());
+
+        tracker.set_bytes_limit(100);
+        assert!(!tracker.consume_and_check_exceed(79));
+        assert!(!soft.called());
+        assert!(!tracker.consume_and_check_exceed(1));
+        assert!(soft.called());
+        assert!(!hard.called());
+        assert!(tracker.consume_and_check_exceed(20));
+        assert!(hard.called());
+
+        tracker.set_bytes_limit(0);
+        assert_eq!(tracker.get_bytes_limit(), -1);
+        assert!(!tracker.consume_and_check_exceed(1));
+        assert_eq!(tracker.max_consumed(), 101);
+    }
+
+    #[test]
+    fn child_can_outlive_and_replace_a_dropped_parent() {
+        let child = Tracker::new(2, -1);
+        {
+            let parent = Tracker::new(1, -1);
+            child.attach_to(&parent);
+            child.consume(8);
+            assert_eq!(parent.bytes_consumed(), 8);
+        }
+        assert!(child.get_parent().is_none());
+        child.consume(4);
+        let new_parent = Tracker::new(1, -1);
+        child.attach_to(&new_parent);
+        assert_eq!(new_parent.bytes_consumed(), 12);
+        child.detach();
+        assert!(child.get_parent().is_none());
+        assert_eq!(new_parent.bytes_consumed(), 0);
     }
 
     #[test]

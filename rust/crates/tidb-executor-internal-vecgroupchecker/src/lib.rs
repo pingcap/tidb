@@ -18,23 +18,32 @@
 //! `pkg/executor/internal/vecgroupchecker`: evaluate each grouping expression,
 //! split a non-empty chunk into equal adjacent runs, remember whether the next
 //! chunk starts with the previous chunk's last key, and expose those runs in
-//! order. Rust evaluates rows directly; Go's vectorized temporary-column pool
-//! is an implementation detail rather than part of that contract.
+//! order. Bare columns can compare chunk cells directly, and other grouping
+//! expressions use the expression evaluator.
 
 use tidb_datatype::RuntimeCollator;
 use tidb_datatype::CollationCollator;
 use tidb_chunk::chunk::Chunk;
-use tidb_datatype::{Datum, StringDatum};
+use tidb_chunk::column::RawCells;
+use tidb_datatype::{BinaryJSON, Datum, FieldTypeCode, MyDecimal, StringDatum, MYDECIMAL_STRUCT_SIZE};
 use tidb_charset::Collation;
 use tidb_expr::{collation_derive::collation_of_node, expression::Expression};
 use tidb_exprctx::Columns;
 use tidb_exprctx::EvalError;
 
+mod boundary;
+use boundary::BoundaryColumn;
+
 /// Splits sorted chunks into adjacent equal-key groups.
 #[derive(Clone, Debug)]
 pub struct VecGroupChecker {
     group_by_items: Vec<Expression>,
+    boundary_columns: Option<Vec<BoundaryColumn>>,
     collations: Vec<Collation>,
+    first_row_datums: Vec<Datum>,
+    last_row_datums: Vec<Datum>,
+    first_group_key: Vec<u8>,
+    last_group_key: Vec<u8>,
     previous_last_key: Option<Vec<u8>>,
     group_offsets: Vec<usize>,
     same_group: Vec<bool>,
@@ -61,9 +70,15 @@ impl VecGroupChecker {
                 )
             })
             .collect();
+        let boundary_columns = group_by_items.iter().map(BoundaryColumn::prepare).collect();
         Self {
             group_by_items,
+            boundary_columns,
             collations,
+            first_row_datums: Vec::new(),
+            last_row_datums: Vec::new(),
+            first_group_key: Vec::new(),
+            last_group_key: Vec::new(),
             previous_last_key: None,
             group_offsets: Vec::new(),
             same_group: Vec::new(),
@@ -107,26 +122,7 @@ impl VecGroupChecker {
 
         // Go evaluates each item's first and last row before considering
         // any interior row. Equal encoded boundaries skip the vector pass.
-        let mut first = Vec::with_capacity(self.group_by_items.len());
-        let mut last = Vec::with_capacity(self.group_by_items.len());
-        for (item, collation) in self.group_by_items.iter().zip(&self.collations) {
-            first.push(eval_group_item(item, ctx, chunk.get_row(0), *collation)?);
-            last.push(eval_group_item(
-                item,
-                ctx,
-                chunk.get_row(rows - 1),
-                *collation,
-            )?);
-        }
-        let first_encoded = encode_boundary_key(ctx, &first, &self.collations)?;
-        let last_encoded = encode_boundary_key(ctx, &last, &self.collations)?;
-        let continues_previous = self
-            .previous_last_key
-            .as_ref()
-            .filter(|key| !key.is_empty())
-            == Some(&first_encoded);
-        let one_group = first_encoded == last_encoded;
-        self.previous_last_key = Some(last_encoded);
+        let (continues_previous, one_group) = self.check_boundaries(ctx, chunk)?;
         if one_group {
             self.group_offsets.push(rows);
             return Ok(continues_previous);
@@ -180,8 +176,9 @@ impl VecGroupChecker {
                     continue;
                 }
             }
-            if resolve_integer_column(item, chunk, &mut self.same_group)
+            if resolve_fixed_column(item, chunk, &mut self.same_group)
                 || resolve_string_column(item, chunk, *collation, &mut self.same_group)
+                || resolve_json_column(item, chunk, &mut self.same_group)
             {
                 continue;
             }
@@ -203,6 +200,75 @@ impl VecGroupChecker {
         );
         self.group_offsets.push(rows);
         Ok(continues_previous)
+    }
+
+    fn check_boundaries(
+        &mut self,
+        ctx: &impl Columns,
+        chunk: &Chunk,
+    ) -> Result<(bool, bool), EvalError> {
+        let first = chunk.get_row(0);
+        let last = chunk.get_row(chunk.num_rows() - 1);
+        if self.try_native_boundaries(chunk, first.idx(), last.idx()) {
+            return Ok(self.record_boundary_keys());
+        }
+        let result = (|| {
+            for (item, collation) in self.group_by_items.iter().zip(&self.collations) {
+                self.first_row_datums
+                    .push(eval_group_item(item, ctx, first, *collation)?);
+                self.last_row_datums
+                    .push(eval_group_item(item, ctx, last, *collation)?);
+            }
+            append_boundary_key(
+                ctx,
+                &mut self.first_group_key,
+                &mut self.first_row_datums,
+                &self.collations,
+            )?;
+            append_boundary_key(
+                ctx,
+                &mut self.last_group_key,
+                &mut self.last_row_datums,
+                &self.collations,
+            )?;
+            Ok(self.record_boundary_keys())
+        })();
+        // Datums can share chunk storage. Keep the vector capacity without
+        // retaining a reference to the chunk between calls, including errors.
+        self.first_row_datums.clear();
+        self.last_row_datums.clear();
+        result
+    }
+
+    fn try_native_boundaries(&mut self, chunk: &Chunk, first: usize, last: usize) -> bool {
+        let Some(columns) = &self.boundary_columns else {
+            return false;
+        };
+        self.first_group_key.clear();
+        self.last_group_key.clear();
+        let new_collation = tidb_datatype::new_collation_enabled();
+        columns
+            .iter()
+            .zip(&self.collations)
+            .all(|(&column, &collation)| {
+                column.append_pair(
+                    chunk,
+                    first,
+                    last,
+                    &mut self.first_group_key,
+                    &mut self.last_group_key,
+                    collation,
+                    new_collation,
+                )
+            })
+    }
+
+    fn record_boundary_keys(&mut self) -> (bool, bool) {
+        let previous = self.previous_last_key.get_or_insert_with(Vec::new);
+        let continues_previous = !previous.is_empty() && *previous == self.first_group_key;
+        let one_group = self.first_group_key == self.last_group_key;
+        std::mem::swap(previous, &mut self.last_group_key);
+        (continues_previous, one_group)
     }
 
     /// Splits already-evaluated adjacent keys for source-contract fixtures.
@@ -243,18 +309,23 @@ impl VecGroupChecker {
             .clone()
             .next_back()
             .expect("the non-empty iterator has a last key");
-        let first_encoded = encode_boundary_key(&tidb_exprctx::NoColumns, first, collations)?;
-        let last_encoded = encode_boundary_key(&tidb_exprctx::NoColumns, last, collations)?;
-        let continues_previous = self
-            .previous_last_key
-            .as_ref()
-            .filter(|key| !key.is_empty())
-            == Some(&first_encoded);
-        self.previous_last_key = Some(last_encoded.clone());
+        append_boundary_key(
+            &tidb_exprctx::NoColumns,
+            &mut self.first_group_key,
+            &mut first.to_vec(),
+            collations,
+        )?;
+        append_boundary_key(
+            &tidb_exprctx::NoColumns,
+            &mut self.last_group_key,
+            &mut last.to_vec(),
+            collations,
+        )?;
+        let (continues_previous, one_group) = self.record_boundary_keys();
 
         // Upstream has this fast path and its callers guarantee sorted input.
         // Besides avoiding work, preserving it keeps that precondition exact.
-        if first_encoded == last_encoded {
+        if one_group {
             self.group_offsets.push(keys.len());
             return Ok(continues_previous);
         }
@@ -309,47 +380,94 @@ impl VecGroupChecker {
     }
 }
 
-/// Bare integer columns already have Go's ETInt representation. Compare their
-/// cells directly without allocating temporary datums; respect chunk selection.
-fn resolve_integer_column(expr: &Expression, chunk: &Chunk, same_group: &mut [bool]) -> bool {
-    if let Expression::Column(column) = expr {
-        let is_int = column.get_static_type().is_some_and(|field_type| {
-            matches!(
-                field_type.code(),
-                tidb_datatype::FieldTypeCode::Tiny
-                    | tidb_datatype::FieldTypeCode::Short
-                    | tidb_datatype::FieldTypeCode::Int24
-                    | tidb_datatype::FieldTypeCode::Long
-                    | tidb_datatype::FieldTypeCode::LongLong
-                    | tidb_datatype::FieldTypeCode::Year
-            )
-        });
-        if let Some(index) = is_int
-            .then(|| usize::try_from(column.index).ok())
-            .flatten()
-            .filter(|index| *index < chunk.num_cols())
-        {
-            let cells = chunk.column(index);
-            if cells.type_size() == 8 {
-                let mut previous = chunk.get_row(0).idx();
-                for (row, same) in same_group.iter_mut().enumerate().skip(1) {
-                    let physical = chunk.get_row(row).idx();
-                    if *same {
-                        let (previous_null, null) =
-                            (cells.is_null(previous), cells.is_null(physical));
-                        if previous_null != null
-                            || (!null && cells.get_int64(previous) != cells.get_int64(physical))
-                        {
-                            *same = false;
-                        }
-                    }
-                    previous = physical;
-                }
-                return true;
-            }
-        }
+/// Compare bare fixed-width columns in their evaluation domain without
+/// constructing a datum or borrowing the column buffer for every row.
+fn resolve_fixed_column(expr: &Expression, chunk: &Chunk, same_group: &mut [bool]) -> bool {
+    let Expression::Column(column) = expr else {
+        return false;
+    };
+    let Some(field) = column.get_static_type() else {
+        return false;
+    };
+    let Ok(index) = usize::try_from(column.index) else {
+        return false;
+    };
+    if index >= chunk.num_cols() {
+        return false;
     }
-    false
+    let cells = chunk.column(index);
+    let selection = chunk.sel();
+    match (field.code(), cells.type_size()) {
+        (
+            FieldTypeCode::Tiny
+            | FieldTypeCode::Short
+            | FieldTypeCode::Int24
+            | FieldTypeCode::Long
+            | FieldTypeCode::LongLong
+            | FieldTypeCode::Year
+            | FieldTypeCode::Duration,
+            8,
+        ) => compare_fixed_cells(
+            &cells.raw_cells(),
+            selection,
+            same_group,
+            |bytes: [u8; 8]| bytes,
+            PartialEq::eq,
+        ),
+        (FieldTypeCode::Float, 4) => compare_fixed_cells(
+            &cells.raw_cells(),
+            selection,
+            same_group,
+            f32::from_ne_bytes,
+            PartialEq::eq,
+        ),
+        (FieldTypeCode::Double, 8) => compare_fixed_cells(
+            &cells.raw_cells(),
+            selection,
+            same_group,
+            f64::from_ne_bytes,
+            PartialEq::eq,
+        ),
+        (FieldTypeCode::NewDecimal, size) if size == MYDECIMAL_STRUCT_SIZE as i64 => {
+            compare_fixed_cells(
+                &cells.raw_cells(),
+                selection,
+                same_group,
+                |bytes| {
+                    MyDecimal::from_raw_bytes(bytes).expect("chunk decimal cell holds a valid MyDecimal")
+                },
+                |left, right| left.compare(right).is_eq(),
+            );
+        }
+        _ => return false,
+    }
+    true
+}
+
+fn compare_fixed_cells<const N: usize, T>(
+    view: &RawCells<'_>,
+    selection: Option<&[usize]>,
+    same_group: &mut [bool],
+    decode: impl Fn([u8; N]) -> T,
+    equal: impl Fn(&T, &T) -> bool,
+) {
+    let cells = view.fixed_cells::<N>();
+    let value = |row| {
+        let physical = selection.map_or(row, |rows| rows[row]);
+        (!view.is_null(physical)).then(|| decode(cells[physical]))
+    };
+    let mut previous = value(0);
+    for (row, same) in same_group.iter_mut().enumerate().skip(1) {
+        let current = value(row);
+        if *same {
+            *same = match (&previous, &current) {
+                (Some(left), Some(right)) => equal(left, right),
+                (None, None) => true,
+                _ => false,
+            };
+        }
+        previous = current;
+    }
 }
 
 /// Constant.VecEvalXxx delegates directly through deferred wrappers. Constant
@@ -433,6 +551,65 @@ fn resolve_string_column(
         }
         previous_row = physical;
         previous_key = current_key;
+    }
+    true
+}
+
+/// Compares adjacent JSON cells without constructing owned JSON values.
+fn resolve_json_column(expr: &Expression, chunk: &Chunk, same_group: &mut [bool]) -> bool {
+    let Expression::Column(column) = expr else {
+        return false;
+    };
+    if !column
+        .get_static_type()
+        .is_some_and(|field| field.code() == FieldTypeCode::Json)
+    {
+        return false;
+    }
+    let Some(index) = usize::try_from(column.index)
+        .ok()
+        .filter(|&index| index < chunk.num_cols())
+    else {
+        return false;
+    };
+    let cells = chunk.column(index);
+    if cells.is_fixed() {
+        return false;
+    }
+    let view = cells.raw_cells();
+    let payload = view.variable_cells();
+    let value = |row| {
+        (!view.is_null(row)).then(|| {
+            let bytes = payload(row);
+            assert!(!bytes.is_empty(), "a JSON cell always carries its type code");
+            bytes
+        })
+    };
+    let selection = chunk.sel();
+    let physical = |row| selection.map_or(row, |indices| indices[row]);
+    let mut previous_row = physical(0);
+    let mut previous = value(previous_row);
+    for (row, same) in same_group.iter_mut().enumerate().skip(1) {
+        let current_row = physical(row);
+        let current = value(current_row);
+        if *same {
+            *same = match (previous, current) {
+                (Some(left), Some(right)) => {
+                    left == right
+                        || BinaryJSON::compare_encoded_with_validation(
+                            left,
+                            right,
+                            || Some(view.checked_json_cell_layout(previous_row).is_canonical()),
+                            || Some(view.checked_json_cell_layout(current_row).is_canonical()),
+                        )
+                        .is_some_and(std::cmp::Ordering::is_eq)
+                }
+                (None, None) => true,
+                _ => false,
+            };
+        }
+        previous = current;
+        previous_row = current_row;
     }
     true
 }
@@ -530,15 +707,14 @@ fn same_group_value(left: &Datum, right: &Datum, collation: Collation) -> Result
     })
 }
 
-fn encode_boundary_key(
+fn append_boundary_key(
     ctx: &impl Columns,
-    values: &[Datum],
+    output: &mut Vec<u8>,
+    values: &mut [Datum],
     collations: &[Collation],
-) -> Result<Vec<u8>, EvalError> {
-    let values = values
-        .iter()
-        .zip(collations)
-        .map(|(value, collation)| match value {
+) -> Result<(), EvalError> {
+    for (value, collation) in values.iter_mut().zip(collations) {
+        *value = match value {
             Datum::String(_) | Datum::Bytes(_) | Datum::Enum(_, _) | Datum::Set(_, _) => {
                 Datum::String(StringDatum::new(value.go_bytes(), *collation))
             }
@@ -547,18 +723,20 @@ fn encode_boundary_key(
             Datum::Decimal(value) => {
                 Datum::Decimal(tidb_datatype::Decimal::from_literal(&value.to_string()))
             }
-            value => value.clone(),
-        })
-        .collect::<Vec<_>>();
+            _ => continue,
+        };
+    }
+    output.clear();
     match tidb_codec::Encoder::new(tidb_datatype::new_collation_enabled())
-        .encode_key_in_timezone(&ctx.time_zone(), &values)
+        .append_key_in_timezone(&ctx.time_zone(), output, values)
     {
-        Ok(encoded) => Ok(encoded),
+        Ok(()) => Ok(()),
         Err(tidb_codec::CodecError::InvalidMysqlTimestamp(value)) => {
             tidb_expr::expression_errors::handle_truncate(ctx, &format!("Incorrect time value: '{}'", value.core_time()))?;
             // EncodeMySQLTime returns nil on conversion failure, discarding
             // even an already encoded prefix. ErrCtx may keep the statement.
-            Ok(Vec::new())
+            output.clear();
+            Ok(())
         }
         Err(_) => Err(EvalError::Unsupported(
             "group boundary key cannot be encoded",
@@ -2116,6 +2294,101 @@ use tidb_exprctx::ErrorLevel;
             .split_into_groups(&NoColumns, &chunk(&[-0.0, 0.0, nan, nan]))
             .unwrap();
         assert_eq!(ranges(&mut checker), [(0, 2), (2, 3), (3, 4)]);
+    }
+
+    #[test]
+    fn selected_float_column_grouping_handles_nulls_signed_zero_and_nan() {
+        for code in [FieldTypeCode::Float, FieldTypeCode::Double] {
+            let field = FieldType::new(code);
+            let mut chunk = Chunk::new_chunk_with_capacity(std::slice::from_ref(&field), 6);
+            for value in [
+                Some(f64::NAN),
+                None,
+                Some(0.0),
+                Some(f64::NAN),
+                Some(-0.0),
+                None,
+            ] {
+                match value {
+                    None => chunk.append_null(0),
+                    Some(value) if code == FieldTypeCode::Float => {
+                        chunk.append_float32(0, value as f32);
+                    }
+                    Some(value) => chunk.append_float64(0, value),
+                }
+            }
+            chunk.set_sel(Some(vec![5, 1, 4, 2, 0, 3]));
+            let mut checker = VecGroupChecker::new(vec![column(0, field)]);
+            assert!(!checker.split_into_groups(&NoColumns, &chunk).unwrap());
+            assert_eq!(ranges(&mut checker), [(0, 2), (2, 4), (4, 5), (5, 6)]);
+        }
+    }
+
+    #[test]
+    fn native_boundaries_match_datum_keys_for_selected_composite_rows() {
+        use tidb_datatype::FieldTypeFlags;
+
+        let mut unsigned = FieldType::new(FieldTypeCode::LongLong);
+        unsigned.add_flags(FieldTypeFlags::UNSIGNED);
+        let fields = [
+            unsigned,
+            FieldType::new(FieldTypeCode::Varchar).with_collation(Collation::Utf8Mb4GeneralCi),
+            FieldType::new(FieldTypeCode::NewDecimal),
+            FieldType::new(FieldTypeCode::Json),
+        ];
+        let mut chunk = Chunk::new_chunk_with_capacity(&fields, 4);
+        for (integer, string, decimal, json) in [
+            (u64::MAX, "a ", "-1234567890123456789.000100", "[1.0]"),
+            (u64::MAX, "A", "-1234567890123456789.000100", "[1]"),
+            (0, "z", "0.000000000", "null"),
+        ] {
+            chunk.append_uint64(0, integer);
+            chunk.append_string(1, string);
+            let decimal = Decimal::from_literal(decimal).to_my_decimal().unwrap();
+            chunk.append_my_decimal(2, &decimal);
+            chunk.append_json(3, &BinaryJSON::parse(json).unwrap());
+        }
+        for index in 0..fields.len() {
+            chunk.append_null(index);
+        }
+
+        let items: Vec<_> = fields
+            .into_iter()
+            .enumerate()
+            .map(|(i, field)| column(i, field))
+            .collect();
+        let mut native = VecGroupChecker::new(items.clone());
+        let mut generic = VecGroupChecker::new(items);
+        generic.boundary_columns = None;
+        for indices in [vec![3, 2, 0, 1], vec![1, 0, 2, 3], vec![3, 3], vec![0]] {
+            chunk.set_sel(Some(indices));
+            let first = chunk.get_row(0).idx();
+            let last = chunk.get_row(chunk.num_rows() - 1).idx();
+            assert!(native.try_native_boundaries(&chunk, first, last));
+            assert_eq!(
+                native.split_into_groups(&NoColumns, &chunk).unwrap(),
+                generic.split_into_groups(&NoColumns, &chunk).unwrap(),
+            );
+            assert_eq!(native.first_group_key, generic.first_group_key);
+            assert_eq!(native.previous_last_key, generic.previous_last_key);
+            assert_eq!(ranges(&mut native), ranges(&mut generic));
+        }
+    }
+
+    #[test]
+    fn selected_json_rows_group_by_value_across_numeric_encodings() {
+        let field = FieldType::new(FieldTypeCode::Json);
+        let mut chunk = Chunk::new_chunk_with_capacity(std::slice::from_ref(&field), 6);
+        for value in [Some("[2]"), None, Some("[1.0]"), Some("[1]"), None, Some("[3]")] {
+            match value {
+                Some(value) => chunk.append_json(0, &BinaryJSON::parse(value).unwrap()),
+                None => chunk.append_null(0),
+            }
+        }
+        chunk.set_sel(Some(vec![0, 2, 3, 1, 4, 5]));
+        let mut checker = VecGroupChecker::new(vec![column(0, field)]);
+        assert!(!checker.split_into_groups(&NoColumns, &chunk).unwrap());
+        assert_eq!(ranges(&mut checker), [(0, 1), (1, 3), (3, 5), (5, 6)]);
     }
 
     #[test]

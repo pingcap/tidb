@@ -16,8 +16,8 @@
 
 use prost::Message;
 use tidb_proto::{
-    CoprocessorResponse, KvrpcContext, KvrpcPeer, KvrpcRegionEpoch, KvrpcRequestOrigin,
-    KvrpcResourceControlContext,
+    CoprocessorRequest, CoprocessorResponse, KvrpcContext, KvrpcPeer, KvrpcRegionEpoch,
+    KvrpcRequestOrigin, KvrpcResourceControlContext,
 };
 use tidb_txnkv::{
     endpoint_type, inject_source_stmt, map_replica_read_type, ClientReplicaReadType, EndpointType,
@@ -28,7 +28,7 @@ use super::{CopReadTaskResponse, PreparedCopReadTask};
 use tidb_txnkv::KvRequestMetadata;
 use tidb_txnkv::RequestSource;
 
-/// Fully encoded unary coprocessor request plus wrapper-owned send metadata.
+/// Native unary coprocessor request plus wrapper-owned send metadata.
 #[derive(Clone, Debug, PartialEq)]
 pub struct TikvUnaryRequest {
     /// Endpoint selected by TiDB's store-type mapping.
@@ -49,10 +49,10 @@ pub struct TikvUnaryRequest {
     pub txn_scope: String,
     /// Task-local timeout override; `None` means the process-global default.
     pub timeout_override_ms: Option<u64>,
-    /// Exact protobuf context encoded into the request body.
+    /// Protobuf context the sender attaches before dispatch.
     pub context: KvrpcContext,
-    /// Exact encoded `coprocessor.Request` bytes.
-    pub encoded_request: Vec<u8>,
+    /// Native request body before the sender attaches its context.
+    pub request: CoprocessorRequest,
 }
 
 /// Constructs the complete unary request owned before network dispatch.
@@ -68,23 +68,52 @@ pub fn build_tikv_unary_request(
     trace: Option<&TraceInfo>,
     cluster_id: u64,
 ) -> TikvUnaryRequest {
+    let context = build_tikv_unary_context(prepared, metadata, trace, cluster_id);
     let task = prepared.task();
-    let mut replica_read_type = map_replica_read_type(metadata.replica_read.raw());
-    let mut replica_read = replica_read_type != ClientReplicaReadType::Leader;
-    let stale_read = metadata.is_staleness;
-    if stale_read {
-        replica_read_type = ClientReplicaReadType::Mixed;
-        replica_read = false;
+    let replica_read_type = if context.stale_read {
+        ClientReplicaReadType::Mixed
+    } else {
+        map_replica_read_type(metadata.replica_read.raw())
+    };
+    // RegionRequestSender/client-go keeps Context on the request wrapper and
+    // RPCClient attaches it to the command body immediately before the send.
+    TikvUnaryRequest {
+        // PreparedCopReadTask is produced only after the coordinator rejects
+        // every non-TiKV store. TiFlash resource-group clearing and
+        // disaggregated endpoint selection therefore remain outside this API.
+        endpoint: endpoint_type(metadata.store_type.raw(), false),
+        replica_read_type,
+        replica_read: context.replica_read,
+        stale_read: context.stale_read,
+        input_request_source: context.request_source.clone(),
+        predicted_read_bytes,
+        read_replica_scope: metadata.read_replica_scope.clone(),
+        txn_scope: metadata.txn_scope.clone(),
+        timeout_override_ms: (task.tikv_client_read_timeout_ms > 0)
+            .then_some(task.tikv_client_read_timeout_ms),
+        context,
+        request: prepared.request().to_proto(),
     }
+}
 
-    let input_request_source = request_source(&metadata.request_source);
+pub(super) fn build_tikv_unary_context(
+    prepared: &PreparedCopReadTask,
+    metadata: &KvRequestMetadata,
+    trace: Option<&TraceInfo>,
+    cluster_id: u64,
+) -> KvrpcContext {
+    let task = prepared.task();
+    let stale_read = metadata.is_staleness;
+    let replica_read = !stale_read
+        && map_replica_read_type(metadata.replica_read.raw()) != ClientReplicaReadType::Leader;
+
     let resource_group_tag = metadata
         .resource_group_tagger
         .as_ref()
         .map(|tagger| {
             let key = task
                 .ranges
-                .first()
+                .get(0)
                 .map_or(&[][..], |range| range.start_key.as_slice());
             tagger.encode_tag_with_key(key)
         })
@@ -120,7 +149,7 @@ pub fn build_tikv_unary_request(
         task_id: metadata.task_id,
         stale_read,
         resource_group_tag,
-        request_source: input_request_source.clone(),
+        request_source: request_source(&metadata.request_source),
         busy_threshold_ms: task.store_busy_threshold_ms as u32,
         resource_control_context: Some(KvrpcResourceControlContext {
             resource_group_name: rg_name,
@@ -137,28 +166,7 @@ pub fn build_tikv_unary_request(
         ..KvrpcContext::default()
     };
     inject_source_stmt(&mut context, trace);
-
-    // RegionRequestSender/client-go keeps Context on the request wrapper and
-    // RPCClient attaches it to the command body immediately before the send.
-    // Preserve that single authority so a real transport cannot observe two
-    // independently mutable context copies.
-    TikvUnaryRequest {
-        // PreparedCopReadTask is produced only after the coordinator rejects
-        // every non-TiKV store. TiFlash resource-group clearing and
-        // disaggregated endpoint selection therefore remain outside this API.
-        endpoint: endpoint_type(metadata.store_type.raw(), false),
-        replica_read_type,
-        replica_read,
-        stale_read,
-        input_request_source,
-        predicted_read_bytes,
-        read_replica_scope: metadata.read_replica_scope.clone(),
-        txn_scope: metadata.txn_scope.clone(),
-        timeout_override_ms: (task.tikv_client_read_timeout_ms > 0)
-            .then_some(task.tikv_client_read_timeout_ms),
-        context,
-        encoded_request: prepared.encoded_request().clone(),
-    }
+    context
 }
 
 /// Decodes all response bytes before returning a coordinator envelope.
@@ -171,20 +179,23 @@ pub fn decode_tikv_unary_response(
 ) -> Result<CopReadTaskResponse, prost::DecodeError> {
     // Decoded from the transport's own buffer: the response `data` is a
     // slice of it (`bytes` field), not a copy.
-    let response = CoprocessorResponse::decode(raw_response)?;
+    Ok(classify_tikv_unary_response(CoprocessorResponse::decode(raw_response)?))
+}
+
+pub(crate) fn classify_tikv_unary_response(response: CoprocessorResponse) -> CopReadTaskResponse {
     if response.region_error.is_some() {
-        return Ok(CopReadTaskResponse::region_error(response));
+        return CopReadTaskResponse::region_error(response);
     }
     if response.locked.is_some() {
-        return Ok(CopReadTaskResponse::lock_error(response));
+        return CopReadTaskResponse::lock_error(response);
     }
     if !response.other_error.is_empty() {
         let message = response.other_error.clone();
-        return Ok(CopReadTaskResponse::other_error(response, message));
+        return CopReadTaskResponse::other_error(response, message);
     }
     // Batched children ride a successful parent; the coordinator serves them
     // (Go `handleBatchCopResponse`).
-    Ok(CopReadTaskResponse::success(response))
+    CopReadTaskResponse::success(response)
 }
 
 /// Go `RequestSource.GetRequestSource`: the request source a request's

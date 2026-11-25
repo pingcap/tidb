@@ -17,10 +17,12 @@ tidb-plancodec = { path = "../tidb-plancodec" }
 tidb-ppcpuusage = { path = "../tidb-ppcpuusage" }
 chrono.workspace = true
 chrono-tz.workspace = true
+crossbeam-channel = "0.5"
 serde.workspace = true
 serde_json.workspace = true
 tidb-config = { path = "../tidb-config" }
 tidb-datatype = { path = "../tidb-datatype" }
+tidb-gocontext = { path = "../tidb-gocontext" }
 tidb-hack = { path = "../tidb-hack" }
 tidb-kvcache = { path = "../tidb-kvcache" }
 tidb-model = { path = "../tidb-model" }

@@ -18,11 +18,8 @@
 //!
 //! Go drives the pipeline with goroutines, an unbuffered file channel (so the
 //! manager can never accumulate open file handles) and `select`s over
-//! contexts. The Rust port keeps the same roles and channel capacities, with
-//! `std::sync::mpsc` channels behind shared receivers, unbuffered
-//! (`sync_channel(0)`) file dispatch, and a cooperative [`CancelToken`] in
-//! place of `context.Context`; the supervisor polls the inner error channel
-//! the way Go's monitor `select`s on it.
+//! contexts. The Rust port keeps the same roles and channel capacities and
+//! selects over channels and the [`CancelToken`] completion signal.
 //!
 //! Log lines are the JSON documents [`crate::v2::record`] writes, so the
 //! parser maps the same key names back. Like Go's `encoding/json`, unknown
@@ -33,14 +30,13 @@ use std::collections::{HashMap, HashSet};
 use std::io::{BufRead, BufReader};
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{self, Receiver, RecvTimeoutError, SyncSender, TryRecvError};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
 
 use chrono::{DateTime, NaiveDateTime, TimeZone, Utc};
+use crossbeam_channel::{Receiver, Sender, bounded, never, select_biased};
 use tidb_datatype::Datum;
 use tidb_datatype::SessionTimeZone;
+use tidb_gocontext::{CancelFunc, Context};
 use tidb_model::ColumnInfo;
 use tidb_parser::auth::UserIdentity;
 
@@ -55,10 +51,6 @@ const MAX_LINE_SIZE: usize = 1_073_741_824;
 /// Go `batchScanSize`.
 const BATCH_SCAN_SIZE: usize = 64;
 
-/// How often the blocking-side loops re-check the cancel token, standing in
-/// for Go's `select` over `ctx.Done()`.
-const CANCEL_POLL_INTERVAL: Duration = Duration::from_millis(20);
-
 /// Go `StmtTimeRange`: the time range type used in the stmtsummary package.
 /// `[Begin, End)`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -70,24 +62,60 @@ pub struct StmtTimeRange {
     pub end: i64,
 }
 
-/// A minimal stand-in for Go's `context.WithCancel`: a flag workers poll.
-#[derive(Clone, Debug, Default)]
-pub struct CancelToken(Arc<AtomicBool>);
+/// A cancellable Go context for the history reader and its workers.
+#[derive(Clone)]
+pub struct CancelToken {
+    context: Context,
+    cancel_func: CancelFunc,
+    done: Receiver<()>,
+}
+
+impl std::fmt::Debug for CancelToken {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("CancelToken")
+            .field("context", &self.context)
+            .finish()
+    }
+}
+
+impl Default for CancelToken {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl CancelToken {
     /// Creates an active cancellation token.
     pub fn new() -> Self {
-        Self(Arc::new(AtomicBool::new(false)))
+        Self::with_context(&Context::background())
+    }
+
+    fn with_context(parent: &Context) -> Self {
+        let (context, cancel_func) = Context::with_cancel(parent);
+        let done = context.done();
+        Self {
+            context,
+            cancel_func,
+            done,
+        }
+    }
+
+    fn child(&self) -> Self {
+        Self::with_context(&self.context)
     }
 
     /// Go `ctx.Done()` being closed.
     pub fn is_done(&self) -> bool {
-        self.0.load(Ordering::Acquire)
+        matches!(
+            self.done.try_recv(),
+            Err(crossbeam_channel::TryRecvError::Disconnected)
+        )
     }
 
     /// Go `cancel()`.
     pub fn cancel(&self) {
-        self.0.store(true, Ordering::Release);
+        self.cancel_func.cancel();
     }
 }
 
@@ -161,22 +189,11 @@ pub(crate) fn time_range_overlap(
     a_begin <= b_end && a_end >= b_begin
 }
 
-/// Go's `select { case ch <- v: case <-ctx.Done(): }` for a bounded channel:
-/// poll `try_send` until it fits or the token cancels.
-fn send_with_cancel<T>(sender: &SyncSender<T>, value: T, token: &CancelToken) {
-    let mut value = value;
-    loop {
-        if token.is_done() {
-            return;
-        }
-        match sender.try_send(value) {
-            Ok(()) => return,
-            Err(mpsc::TrySendError::Full(v)) => {
-                std::thread::sleep(CANCEL_POLL_INTERVAL);
-                value = v;
-            }
-            Err(mpsc::TrySendError::Disconnected(_)) => return,
-        }
+/// Go's `select { case ch <- v: case <-ctx.Done(): }`.
+fn send_with_cancel<T>(sender: &Sender<T>, value: T, token: &CancelToken) {
+    select_biased! {
+        recv(token.done) -> _ => {},
+        send(sender, value) -> _ => {},
     }
 }
 
@@ -917,17 +934,14 @@ struct StmtScanWorker {
 impl StmtScanWorker {
     fn run(
         &self,
-        file_rx: &Mutex<Receiver<StmtFile>>,
-        lines_tx: &SyncSender<Vec<Vec<u8>>>,
-        err_tx: &SyncSender<String>,
+        file_rx: &Receiver<StmtFile>,
+        lines_tx: &Sender<Vec<Vec<u8>>>,
+        err_tx: &Sender<String>,
     ) {
         loop {
-            let file = {
-                // Holding the mutex while blocking is Go's channel semantics:
-                // only one worker holds a file at a time, and a close wakes
-                // everyone sequentially.
-                let receiver = file_rx.lock().expect("files lock poisoned");
-                match receiver.recv() {
+            let file = select_biased! {
+                recv(self.token.done) -> _ => return,
+                recv(file_rx) -> file => match file {
                     Ok(file) => file,
                     Err(_) => return,
                 }
@@ -939,8 +953,8 @@ impl StmtScanWorker {
     fn handle_file(
         &self,
         mut file: StmtFile,
-        lines_tx: &SyncSender<Vec<Vec<u8>>>,
-        err_tx: &SyncSender<String>,
+        lines_tx: &Sender<Vec<Vec<u8>>>,
+        err_tx: &Sender<String>,
     ) {
         if file.file.is_none() {
             return;
@@ -963,11 +977,11 @@ impl StmtScanWorker {
         self.close_and_log_error(&mut file);
     }
 
-    fn put_err(&self, error: String, err_tx: &SyncSender<String>) {
+    fn put_err(&self, error: String, err_tx: &Sender<String>) {
         let _ = err_tx.try_send(error);
     }
 
-    fn put_lines(&self, lines: Vec<Vec<u8>>, lines_tx: &SyncSender<Vec<Vec<u8>>>) {
+    fn put_lines(&self, lines: Vec<Vec<u8>>, lines_tx: &Sender<Vec<Vec<u8>>>) {
         // Go: `select { case linesCh <- lines: case <-ctx.Done(): }`.
         send_with_cancel(lines_tx, lines, &self.token);
     }
@@ -1041,33 +1055,20 @@ impl ColumnInfoSource for StmtParseWorker {
 }
 
 impl StmtParseWorker {
-    fn run(
-        &self,
-        lines_rx: &Mutex<Receiver<Vec<Vec<u8>>>>,
-        rows_tx: &SyncSender<Vec<Vec<Datum>>>,
-        err_tx: &SyncSender<String>,
-    ) {
+    fn run(&self, lines_rx: &Receiver<Vec<Vec<u8>>>, rows_tx: &Sender<Vec<Vec<Datum>>>) {
         loop {
-            let lines = {
-                let receiver = lines_rx.lock().expect("lines lock poisoned");
-                match receiver.recv() {
+            let lines = select_biased! {
+                recv(self.token.done) -> _ => return,
+                recv(lines_rx) -> lines => match lines {
                     Ok(lines) => lines,
                     Err(_) => return,
                 }
             };
-            if self.token.is_done() {
-                return;
-            }
-            self.handle_lines(lines, rows_tx, err_tx);
+            self.handle_lines(lines, rows_tx);
         }
     }
 
-    fn handle_lines(
-        &self,
-        lines: Vec<Vec<u8>>,
-        rows_tx: &SyncSender<Vec<Vec<Datum>>>,
-        _err_tx: &SyncSender<String>,
-    ) {
+    fn handle_lines(&self, lines: Vec<Vec<u8>>, rows_tx: &Sender<Vec<Vec<Datum>>>) {
         if lines.is_empty() {
             return;
         }
@@ -1099,7 +1100,7 @@ impl StmtParseWorker {
         }
     }
 
-    fn put_rows(&self, rows: Vec<Vec<Datum>>, rows_tx: &SyncSender<Vec<Vec<Datum>>>) {
+    fn put_rows(&self, rows: Vec<Vec<Datum>>, rows_tx: &Sender<Vec<Vec<Datum>>>) {
         send_with_cancel(rows_tx, rows, &self.token);
     }
 
@@ -1259,45 +1260,24 @@ impl HistoryReader {
         time_ranges: Vec<StmtTimeRange>,
         concurrent: usize,
     ) -> Result<HistoryReader, String> {
-        let token = CancelToken::new();
+        let token = parent.map_or_else(CancelToken::new, CancelToken::child);
         let files = new_stmt_files(&token)?;
 
-        let concurrent = concurrent.max(2);
-        let (rows_tx, rows_rx) = mpsc::sync_channel(concurrent);
-        let (err_tx, err_rx) = mpsc::sync_channel(concurrent);
-
-        let checker = Arc::new(StmtChecker {
+        let checker = StmtChecker {
             user,
             has_process_priv,
             digests,
             time_ranges,
-        });
-
-        let column_factories = make_column_factories(columns);
-        let supervisor_parent = parent.map_or_else(CancelToken::new, |parent| parent.clone());
-        let supervisor = std::thread::Builder::new()
-            .name("stmt-history-reader".to_owned())
-            .spawn(move || {
-                schedule_tasks(
-                    supervisor_parent,
-                    files,
-                    checker,
-                    instance_addr,
-                    time_location,
-                    column_factories,
-                    concurrent,
-                    rows_tx,
-                    err_tx,
-                );
-            })
-            .map_err(|error| error.to_string())?;
-
-        Ok(HistoryReader {
+        };
+        Self::start(
             token,
-            supervisor: Some(supervisor),
-            rows_rx,
-            err_rx,
-        })
+            files,
+            instance_addr,
+            time_location,
+            checker,
+            make_column_factories(columns),
+            concurrent,
+        )
     }
 
     /// Go's tests build a `HistoryReader` by struct literal over a caller
@@ -1312,34 +1292,58 @@ impl HistoryReader {
         column_factories: Vec<ColumnFactory>,
         concurrent: usize,
     ) -> HistoryReader {
-        let token = CancelToken::new();
+        Self::start(
+            parent.map_or_else(CancelToken::new, CancelToken::child),
+            files,
+            instance_addr,
+            time_location,
+            checker,
+            column_factories,
+            concurrent,
+        )
+        .expect("spawn history reader")
+    }
+
+    fn start(
+        token: CancelToken,
+        files: StmtFiles,
+        instance_addr: String,
+        time_location: SessionTimeZone,
+        checker: StmtChecker,
+        column_factories: Vec<ColumnFactory>,
+        concurrent: usize,
+    ) -> Result<Self, String> {
         let concurrent = concurrent.max(2);
-        let (rows_tx, rows_rx) = mpsc::sync_channel(concurrent);
-        let (err_tx, err_rx) = mpsc::sync_channel(concurrent);
-        let checker = Arc::new(checker);
-        let supervisor_parent = parent.map_or_else(CancelToken::new, |parent| parent.clone());
-        let supervisor = std::thread::Builder::new()
-            .name("stmt-history-reader".to_owned())
-            .spawn(move || {
-                schedule_tasks(
-                    supervisor_parent,
-                    files,
-                    checker,
-                    instance_addr,
-                    time_location,
-                    column_factories,
-                    concurrent,
-                    rows_tx,
-                    err_tx,
-                );
-            })
-            .expect("spawn history reader");
-        HistoryReader {
+        let (rows_tx, rows_rx) = bounded(concurrent);
+        let (err_tx, err_rx) = bounded(concurrent);
+        let supervisor = if files.files.is_empty() {
+            None
+        } else {
+            let supervisor_parent = token.clone();
+            let handle = std::thread::Builder::new()
+                .name("stmt-history-reader".to_owned())
+                .spawn(move || {
+                    schedule_tasks(
+                        supervisor_parent,
+                        files,
+                        Arc::new(checker),
+                        instance_addr,
+                        time_location,
+                        column_factories,
+                        concurrent,
+                        rows_tx,
+                        err_tx,
+                    );
+                })
+                .map_err(|error| error.to_string())?;
+            Some(handle)
+        };
+        Ok(HistoryReader {
             token,
-            supervisor: Some(supervisor),
+            supervisor,
             rows_rx,
             err_rx,
-        }
+        })
     }
 
     /// Go `(*HistoryReader).Rows`: rows from records in files. Reading and
@@ -1349,32 +1353,21 @@ impl HistoryReader {
     ///
     /// Returns the first pipeline error, as Go does.
     pub fn rows(&self) -> Result<Option<Vec<Vec<Datum>>>, String> {
+        let mut errors = &self.err_rx;
+        let no_errors = never();
         loop {
-            match self.err_rx.try_recv() {
-                Ok(error) => return Err(error),
-                Err(TryRecvError::Disconnected) => {}
-                Err(TryRecvError::Empty) => {}
-            }
-            match self.rows_rx.recv_timeout(CANCEL_POLL_INTERVAL) {
-                Ok(rows) => {
-                    if rows.is_empty() {
-                        continue;
-                    }
-                    return Ok(Some(rows));
-                }
-                Err(RecvTimeoutError::Timeout) => {
-                    if self.token.is_done() {
-                        // Go selects on ctx.Done(); Close() canceled us.
-                        return Err("context canceled".to_owned());
-                    }
-                }
-                Err(RecvTimeoutError::Disconnected) => {
-                    // rowsCh closed: surface a queued error or report done.
-                    if let Ok(error) = self.err_rx.try_recv() {
-                        return Err(error);
-                    }
-                    return Ok(None);
-                }
+            select_biased! {
+                recv(errors) -> error => match error {
+                    Ok(error) => return Err(error),
+                    Err(_) => errors = &no_errors,
+                },
+                recv(self.token.done) -> _ => return Err("context canceled".to_owned()),
+                recv(self.rows_rx) -> rows => match rows {
+                    Ok(rows) if !rows.is_empty() => return Ok(Some(rows)),
+                    Ok(_) => {},
+                    // An error may have arrived since the select checked errors.
+                    Err(_) => return self.err_rx.try_recv().map_or(Ok(None), Err),
+                },
             }
         }
     }
@@ -1408,8 +1401,8 @@ impl HistoryReader {
 /// - Scan workers (concurrent/2): scan files (I/O) first, then help parse
 ///   workers to parse lines (CPU).
 /// - Parse workers (concurrent - concurrent/2): parse lines (CPU) to rows.
-/// - Manager (1): drives the whole process and notifies scan workers to
-///   switch role.
+/// - Manager: dispatches files and notifies scan workers to switch role.
+///   The monitor handles dispatch when there is only one open file.
 /// - Monitor (this thread): covers failures and notifies workers to exit.
 #[allow(clippy::too_many_lines)]
 fn schedule_tasks(
@@ -1420,15 +1413,10 @@ fn schedule_tasks(
     time_location: SessionTimeZone,
     column_factories: Vec<ColumnFactory>,
     concurrent: usize,
-    rows_tx: SyncSender<Vec<Vec<Datum>>>,
-    err_tx: SyncSender<String>,
+    rows_tx: Sender<Vec<Vec<Datum>>>,
+    err_tx: Sender<String>,
 ) {
-    if files.files.is_empty() {
-        return;
-    }
-
-    let child = CancelToken::new();
-    let monitor_token = child.clone();
+    let child = parent.child();
     let scan_worker = Arc::new(StmtScanWorker {
         token: child.clone(),
         batch_size: BATCH_SCAN_SIZE,
@@ -1444,150 +1432,123 @@ fn schedule_tasks(
 
     // Keep the file channel unbuffered so the manager cannot accumulate open
     // file handles.
-    let (files_tx, files_rx) = mpsc::sync_channel::<StmtFile>(0);
-    let (lines_tx, lines_rx) = mpsc::sync_channel::<Vec<Vec<u8>>>(concurrent);
-    let (inner_err_tx, inner_err_rx) = mpsc::sync_channel::<String>(concurrent);
-    let files_rx = Arc::new(Mutex::new(files_rx));
-    let lines_rx = Arc::new(Mutex::new(lines_rx));
+    let (files_tx, files_rx) = bounded::<StmtFile>(0);
+    let (lines_tx, lines_rx) = bounded::<Vec<Vec<u8>>>(concurrent);
+    let (inner_err_tx, inner_err_rx) = bounded::<String>(concurrent);
 
     // Half of the workers are scheduled to scan files and then parse lines;
     // finally ALL workers parse.
-    let mut scan_handles = Vec::new();
-    let mut parse_handles = Vec::new();
+    let mut workers = Vec::with_capacity(concurrent);
     for _ in 0..concurrent / 2 {
-        let files_rx = Arc::clone(&files_rx);
-        let lines_rx = Arc::clone(&lines_rx);
+        let files_rx = files_rx.clone();
+        let lines_rx = lines_rx.clone();
         let lines_tx = lines_tx.clone();
         let inner_err_tx = inner_err_tx.clone();
         let rows_tx = rows_tx.clone();
         let scan_worker = Arc::clone(&scan_worker);
         let parse_worker = Arc::clone(&parse_worker);
-        scan_handles.push(std::thread::spawn(move || {
+        workers.push(std::thread::spawn(move || {
             scan_worker.run(&files_rx, &lines_tx, &inner_err_tx);
             // Rust closes a channel by dropping its senders (Go just calls
             // `close(linesCh)`); the worker must release its send side before
             // becoming a parse worker, or the lines channel can never close.
             drop(lines_tx);
-            parse_worker.run(&lines_rx, &rows_tx, &inner_err_tx);
+            parse_worker.run(&lines_rx, &rows_tx);
+            drop(inner_err_tx);
         }));
     }
     for _ in concurrent / 2..concurrent {
-        let lines_rx = Arc::clone(&lines_rx);
+        let lines_rx = lines_rx.clone();
         let inner_err_tx = inner_err_tx.clone();
         let rows_tx = rows_tx.clone();
         let parse_worker = Arc::clone(&parse_worker);
-        parse_handles.push(std::thread::spawn(move || {
-            parse_worker.run(&lines_rx, &rows_tx, &inner_err_tx);
+        workers.push(std::thread::spawn(move || {
+            parse_worker.run(&lines_rx, &rows_tx);
+            drop(inner_err_tx);
         }));
     }
     drop(lines_tx);
+    drop(lines_rx);
+    drop(files_rx);
+    // Each worker holds an error sender until it has finished parsing, so
+    // disconnection signals normal completion to the monitor.
     drop(inner_err_tx);
 
-    // Manager drives the whole process.
+    // With a single open file, dispatch can finish in the monitor before any
+    // worker needs it to receive an error, saving a thread launch.
+    let inline_dispatch = matches!(files.files.as_slice(), [file] if file.file.is_some());
     let manager_token = child.clone();
-    let manager = std::thread::Builder::new()
-        .name("stmt-history-manager".to_owned())
-        .spawn(move || {
-            let pinned = files.current_file_info;
-            for mut file in std::mem::take(&mut files.files) {
-                if manager_token.is_done() {
-                    break;
-                }
-                if file.file.is_none() {
-                    let opened = match open_stmt_file(file.path()) {
-                        Ok(opened) => opened,
-                        Err(error) => {
-                            log_file_failure(
-                                "failed to open or parse statements file",
-                                error,
-                                file.path(),
-                            );
-                            continue;
-                        }
-                    };
-                    // Dedup the pinned active inode (Go `os.SameFile`).
-                    if let Some(identity) = pinned {
-                        match opened.file.as_ref().map(std::fs::File::metadata) {
-                            Some(Ok(meta)) if (meta.dev(), meta.ino()) == identity => {
-                                let mut opened = opened;
-                                opened.close_and_log_error();
-                                continue;
-                            }
-                            // If the metadata lookup fails, keep the file and
-                            // let the time-range check decide.
-                            _ => {}
-                        }
-                    }
-                    file = opened;
-                }
-                if !checker.is_time_valid(file.begin, file.end) {
-                    file.close_and_log_error();
-                    continue;
-                }
-                // Go: `select { case filesCh <- file: case <-ctx.Done():
-                // file.closeAndLogError(); return }`.
-                dispatch_file(file, &files_tx, &manager_token);
-            }
-            // No scan tasks to be generated. Notify idle scan workers to
-            // become parse workers.
-            drop(files_tx);
-            drop(files_rx);
-            for handle in scan_handles {
-                let _ = handle.join();
-            }
-            // No parse tasks to be generated once all scan tasks are done.
-            // Notify idle parse workers to exit by closing linesCh.
-            drop(lines_rx);
-            for handle in parse_handles {
-                let _ = handle.join();
-            }
-            // No rows to be generated once all parse tasks are done. Notify
-            // the monitor to close rowsCh.
-            child.cancel();
-        });
-
-    // Monitor to cover failures and notify workers to exit.
-    loop {
-        if monitor_token.is_done() || parent.is_done() {
-            // notified by manager or the parent context is canceled
-            break;
-        }
-        match inner_err_rx.try_recv() {
-            Ok(error) => {
-                let _ = err_tx.try_send(error);
-                monitor_token.cancel(); // notify workers to exit
+    let dispatch = move || {
+        let pinned = files.current_file_info;
+        for mut file in std::mem::take(&mut files.files) {
+            if manager_token.is_done() {
                 break;
             }
-            Err(TryRecvError::Empty) | Err(TryRecvError::Disconnected) => {
-                std::thread::sleep(CANCEL_POLL_INTERVAL);
+            if file.file.is_none() {
+                let opened = match open_stmt_file(file.path()) {
+                    Ok(opened) => opened,
+                    Err(error) => {
+                        log_file_failure(
+                            "failed to open or parse statements file",
+                            error,
+                            file.path(),
+                        );
+                        continue;
+                    }
+                };
+                // Dedup the pinned active inode (Go `os.SameFile`).
+                if let Some(identity) = pinned {
+                    match opened.file.as_ref().map(std::fs::File::metadata) {
+                        Some(Ok(meta)) if (meta.dev(), meta.ino()) == identity => {
+                            let mut opened = opened;
+                            opened.close_and_log_error();
+                            continue;
+                        }
+                        // If the metadata lookup fails, keep the file and
+                        // let the time-range check decide.
+                        _ => {}
+                    }
+                }
+                file = opened;
             }
+            if !checker.is_time_valid(file.begin, file.end) {
+                file.close_and_log_error();
+                continue;
+            }
+            // Go: `select { case filesCh <- file: case <-ctx.Done():
+            // file.closeAndLogError(); return }`.
+            send_with_cancel(&files_tx, file, &manager_token);
         }
+        // Disconnect the file channel so idle scan workers can help parse.
+        drop(files_tx);
+    };
+    let manager = if inline_dispatch {
+        dispatch();
+        None
+    } else {
+        std::thread::Builder::new()
+            .name("stmt-history-manager".to_owned())
+            .spawn(dispatch)
+            .ok()
+    };
+
+    // Monitor to cover failures and notify workers to exit.
+    select_biased! {
+        recv(inner_err_rx) -> error => {
+            if let Ok(error) = error {
+                let _ = err_tx.try_send(error);
+            }
+        },
+        recv(child.done) -> _ => {},
     }
-    if let Ok(handle) = manager {
+    child.cancel();
+    if let Some(handle) = manager {
+        let _ = handle.join();
+    }
+    for handle in workers {
         let _ = handle.join();
     }
     drop(rows_tx); // task done: close rowsCh
-}
-
-fn dispatch_file(mut file: StmtFile, files_tx: &SyncSender<StmtFile>, token: &CancelToken) {
-    loop {
-        if token.is_done() {
-            file.close_and_log_error();
-            return;
-        }
-        match files_tx.try_send(file) {
-            Ok(()) => return,
-            Err(mpsc::TrySendError::Full(returned)) => {
-                std::thread::sleep(CANCEL_POLL_INTERVAL);
-                file = returned;
-            }
-            Err(mpsc::TrySendError::Disconnected(returned)) => {
-                file = returned;
-                file.close_and_log_error();
-                return;
-            }
-        }
-    }
 }
 
 /// Go `util.ReadLine`: one line up to `maxLineSize`; `Err("EOF")` mirrors
@@ -1663,6 +1624,7 @@ pub(crate) mod tests {
     use crate::reader::{DIGEST_STR, EXEC_COUNT_STR, IA_EXEC_COUNT_STR};
     use chrono::NaiveDate;
     use std::sync::Mutex;
+    use std::time::Duration;
     use tidb_ast::CiString;
     use tidb_model::ColumnInfo;
 
@@ -2173,6 +2135,87 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn history_reader_close_with_unread_rows() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("tidb-statements.log");
+        let line = "{\"begin\":1,\"end\":2,\"digest\":\"unread\",\"exec_count\":1}\n";
+        std::fs::write(&path, line.repeat(BATCH_SCAN_SIZE * 32)).unwrap();
+        let files = StmtFiles {
+            files: vec![open_stmt_file(&path).unwrap()],
+            current_file_info: None,
+        };
+        let parent = CancelToken::new();
+        let mut reader = HistoryReader::from_parts(
+            Some(&parent),
+            files,
+            String::new(),
+            SessionTimeZone::utc(),
+            StmtChecker::default(),
+            make_column_factories(&columns_for_test()),
+            2,
+        );
+        assert_eq!(reader.rows().unwrap().unwrap().len(), BATCH_SCAN_SIZE);
+
+        let (finished, result) = bounded(1);
+        let closer = std::thread::spawn(move || finished.send(reader.close()).unwrap());
+        let closed = result.recv_timeout(Duration::from_secs(2));
+        // Release the workers before reporting a regression if close stalls.
+        assert!(!parent.is_done());
+        parent.cancel();
+        assert_eq!(closed, Ok(Ok(())));
+        closer.join().unwrap();
+    }
+
+    #[test]
+    fn history_reader_reports_parent_cancellation() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("tidb-statements.log");
+        std::fs::write(&path, "{\"begin\":1,\"end\":2}\n").unwrap();
+        let parent = CancelToken::new();
+        let mut reader = HistoryReader::from_parts(
+            Some(&parent),
+            StmtFiles {
+                files: vec![open_stmt_file(&path).unwrap()],
+                current_file_info: None,
+            },
+            String::new(),
+            SessionTimeZone::utc(),
+            StmtChecker::default(),
+            make_column_factories(&columns_for_test()),
+            2,
+        );
+        parent.cancel();
+        assert_eq!(reader.rows(), Err("context canceled".to_owned()));
+        reader.close().unwrap();
+    }
+
+    #[test]
+    fn history_reader_reports_scan_failure() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = std::fs::File::open(dir.path()).unwrap();
+        let error = read_line(&mut BufReader::new(file.try_clone().unwrap())).unwrap_err();
+        let mut reader = HistoryReader::from_parts(
+            None,
+            StmtFiles {
+                files: vec![StmtFile {
+                    path: dir.path().to_owned(),
+                    file: Some(file),
+                    begin: 1,
+                    end: 2,
+                }],
+                current_file_info: None,
+            },
+            String::new(),
+            SessionTimeZone::utc(),
+            StmtChecker::default(),
+            make_column_factories(&columns_for_test()),
+            2,
+        );
+        assert_eq!(reader.rows(), Err(error));
+        reader.close().unwrap();
+    }
+
+    #[test]
     fn go_v2_alignment_reader_send_retry_has_bounded_stack() {
         const CHILD_ENV: &str = "TIDB_STMTSUMMARY_BOUNDED_SEND_CHILD";
         const PAYLOAD_SIZE: usize = 12 * 1024;
@@ -2195,7 +2238,7 @@ pub(crate) mod tests {
             return;
         }
 
-        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+        let (sender, receiver) = bounded(1);
         sender.send([0_u8; PAYLOAD_SIZE]).unwrap();
         let token = CancelToken::new();
         let handle = std::thread::Builder::new()

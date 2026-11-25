@@ -14,6 +14,8 @@
 
 include!("generated/mod.rs");
 
+mod key_range;
+
 /// Pinned descriptor set generated from the same inputs as the Rust modules.
 pub const FILE_DESCRIPTOR_SET: &[u8] = include_bytes!("generated/file_descriptor_set.bin");
 
@@ -26,6 +28,25 @@ mod tests {
         apipb, autoid, cdcpb, db9_coprocessor, externalworkloadpb, keyspace_encryptionpb,
         resource_manager, tsopb, FILE_DESCRIPTOR_SET,
     };
+
+    #[test]
+    fn coprocessor_range_boundaries_retain_received_bytes() {
+        let wire = prost::bytes::Bytes::from_static(b"\x0a\x01a\x12\x01z");
+        let range = super::coprocessor::KeyRange::decode(wire.clone()).unwrap();
+        assert_eq!(range.encode_to_vec(), wire);
+        assert_eq!(range.start.as_ptr(), wire[2..].as_ptr());
+        assert_eq!(range.end.as_ptr(), wire[5..].as_ptr());
+    }
+
+    #[test]
+    fn coprocessor_request_clones_retain_the_encoded_dag() {
+        let wire = prost::bytes::Bytes::from_static(b"\x1a\x04data");
+        let request = super::coprocessor::Request::decode(wire.clone()).unwrap();
+        let clone = request.clone();
+        assert_eq!(request.encode_to_vec(), wire);
+        assert_eq!(request.data.as_ptr(), wire[2..].as_ptr());
+        assert_eq!(clone.data.as_ptr(), request.data.as_ptr());
+    }
 
     #[test]
     fn go_sharedbytes_fields_retain_the_received_buffer() {

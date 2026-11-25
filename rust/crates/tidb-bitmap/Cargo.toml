@@ -12,3 +12,4 @@ workspace = true
 
 [dependencies]
 crossbeam-channel = "0.5"
+zerocopy = { version = "0.8", features = ["alloc"] }

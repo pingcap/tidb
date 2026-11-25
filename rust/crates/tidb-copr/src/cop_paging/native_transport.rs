@@ -42,7 +42,6 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use prost::Message as _;
 
 use crate::query_transport::{QueryOperation, QueryTransport};
 use tidb_txnkv::QueryResponseError;
@@ -58,9 +57,10 @@ use crate::cop_store::{CopBackoffer, NativeCopSend, NativeCopStore};
 use tidb_txnkv::lock::SnapshotLockSet;
 use tidb_txnkv::UnaryCallContext;
 
+use super::tikv_rpc_contract::{build_tikv_unary_context, classify_tikv_unary_response};
 use super::{
-    build_tikv_unary_request, decode_tikv_unary_response, BatchedRemain, BatchedRemainCause,
-    CopPagingState, CopReadTaskError, CopReadTaskResponse, CopReadTaskRuntime, CopRuntimeConfig,
+    BatchedRemain, BatchedRemainCause, CopPagingState, CopReadTaskError, CopReadTaskResponse,
+    CopReadTaskRuntime, CopRuntimeConfig,
 };
 
 /// Why a read stopped: the task state machine's own errors keep their type,
@@ -179,13 +179,14 @@ const MAX_EXCEEDS_BOUND_RETRIES: u32 = 3;
 
 /// Go `buildCopTasks`' locations: the regions covering `ranges`, as task
 /// topology.
-fn locate<S: NativeCopStore + ?Sized>(
+fn locate<'a, S: NativeCopStore + ?Sized>(
     store: &S,
-    ranges: &[(Vec<u8>, Vec<u8>)],
+    ranges: impl Iterator<Item = &'a tidb_txnkv::KeyRange> + Send,
     kv_context: &tidb_txnkv::StatementKvContext,
 ) -> Result<Vec<RegionTaskTopology>, tikv_client::Error> {
+    let mut bounds = ranges.map(|range| (range.start_key.as_slice(), range.end_key.as_slice()));
     Ok(store
-        .locate(ranges, kv_context)?
+        .locate(&mut bounds, kv_context)?
         .iter()
         .map(region_topology)
         .collect())
@@ -318,7 +319,7 @@ impl<S: NativeCopStore + ?Sized> QueryTransport for NativeCopTransport<S> {
         let build_cop_tasks = tidb_tracing::start_thread_region("copr.buildCopTasks");
         let build_started = std::time::Instant::now();
         let topology =
-            locate(self.store.as_ref(), &ranges, &kv_context).map_err(|error| error.to_string())?;
+            locate(self.store.as_ref(), ranges.iter(), &kv_context).map_err(|error| error.to_string())?;
         let cache = match self.config.shared_cache.clone() {
             Some(cache) => Some(cache),
             None => CoprCache::from_optional_config(self.config.cache.as_ref())
@@ -396,7 +397,7 @@ impl<S: NativeCopStore + ?Sized> QueryTransport for NativeCopTransport<S> {
 
 /// The request's key ranges, one partition (Go's coprocessor does not
 /// accept partitioned ranges on this path either).
-fn request_ranges(metadata: &tidb_txnkv::KvRequestMetadata) -> Result<Vec<(Vec<u8>, Vec<u8>)>, String> {
+fn request_ranges(metadata: &tidb_txnkv::KvRequestMetadata) -> Result<&[tidb_txnkv::KeyRange], String> {
     let ranges = metadata
         .key_ranges
         .as_ref()
@@ -404,19 +405,7 @@ fn request_ranges(metadata: &tidb_txnkv::KvRequestMetadata) -> Result<Vec<(Vec<u
     if !ranges.is_non_partitioned() || ranges.partitions().len() != 1 {
         return Err("partitioned_ranges".to_owned());
     }
-    let ranges = ranges
-        .partitions()
-        .first()
-        .ok_or_else(|| "missing_ranges".to_owned())?;
-    Ok(ranges
-        .iter()
-        .map(|range| {
-            (
-                Vec::from(range.start_key.clone()),
-                Vec::from(range.end_key.clone()),
-            )
-        })
-        .collect())
+    Ok(ranges.first_partition_ranges())
 }
 
 /// One coprocessor read's response owner (Go `copIterator`).
@@ -538,37 +527,35 @@ impl<S: NativeCopStore + ?Sized> NativeCopResponse<S> {
             .region_epoch
             .ok_or_else(|| "prepared task has no region epoch".to_owned())?;
         let region = (task.region_id, epoch.conf_ver, epoch.version);
-        let predicted_read_bytes = self
-            .runtime
+        self.runtime
             .task_predicted_read_bytes(logical_task_id)
             .ok_or_else(|| "active task has no read-byte prediction".to_owned())?;
-        let mut request = build_tikv_unary_request(
+        let mut context = build_tikv_unary_context(
             &prepared,
             &self.metadata,
-            predicted_read_bytes,
             self.trace.as_ref(),
             self.cluster_id,
         );
         // Go `handleTaskOnce`: `RunawayChecker.BeforeCopRequest(req)`.
         if let Some(checker) = &self.metadata.runaway_checker {
-            checker.before_cop_request(&mut request.context).map_err(NativeCopError::Terror)?;
+            checker
+                .before_cop_request(&mut context)
+                .map_err(NativeCopError::Terror)?;
         }
         // Go `ClientHelper.SendReqCtx` stamps both lock sets on every send.
         self.snapshot_locks
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .stamp(&mut request.context);
-        let mut wire = tidb_proto::CoprocessorRequest::decode(request.encoded_request.as_slice())
-            .map_err(|error| error.to_string())?;
-        wire.context = Some(request.context.clone());
+            .stamp(&mut context);
         let backoffer = self.backoffer(logical_task_id);
         // Go `handleTaskOnce`: `worker.kvclient.Stats` collects the task's
         // physical RPCs and `costTime` is the send's wall time.
         let req_stats = Arc::new(tikv_client::RegionRequestRuntimeStats::new());
         let send_started = std::time::Instant::now();
-        let sent = self.store.send(
+        let sent = self.store.send_prepared(
             &backoffer,
-            &wire.encode_to_vec(),
+            prepared.request(),
+            &context,
             region,
             self.timeout.min(self.call.timeout()),
             &self.kv_context,
@@ -583,8 +570,8 @@ impl<S: NativeCopStore + ?Sized> NativeCopResponse<S> {
             (sent, _) => sent?,
         };
         let cost_time = send_started.elapsed();
-        let (encoded, address) = match sent {
-            NativeCopSend::Response(encoded, address) => (encoded, address.unwrap_or_default()),
+        let (response, address) = match sent {
+            NativeCopSend::Response(response, address) => (response, address.unwrap_or_default()),
             NativeCopSend::RegionError(error) => {
                 // No response reached the store: every batched child remains
                 // (Go `handleBatchRemainsOnErr` with an empty response).
@@ -597,13 +584,12 @@ impl<S: NativeCopStore + ?Sized> NativeCopResponse<S> {
                 return self.schedule_batched_remains(
                     logical_task_id,
                     &backoffer,
-                    &request.context,
+                    &context,
                     remains,
                 );
             }
         };
-        let response =
-            decode_tikv_unary_response(encoded.as_slice()).map_err(|error| error.to_string())?;
+        let response = classify_tikv_unary_response(response);
         // Go `copStats.ScanDetail.ProcessedKeys` of this response.
         let processed_keys = response
             .response_ref()
@@ -620,7 +606,7 @@ impl<S: NativeCopStore + ?Sized> NativeCopResponse<S> {
             logical_task_id,
             attempt_id,
             &backoffer,
-            &request.context,
+            &context,
             region,
             address,
             response,
@@ -635,7 +621,7 @@ impl<S: NativeCopStore + ?Sized> NativeCopResponse<S> {
                 return Err(NativeCopError::Terror(runaway));
             }
         }
-        self.schedule_batched_remains(logical_task_id, &backoffer, &request.context, remains)
+        self.schedule_batched_remains(logical_task_id, &backoffer, &context, remains)
     }
 
     /// Go `handleCopResponse` for the task's own response.
@@ -725,13 +711,8 @@ impl<S: NativeCopStore + ?Sized> NativeCopResponse<S> {
         let failed = self.runtime.consume_region_error(attempt_id)?;
         self.store.backoff_region_miss(backoffer, error)?;
         self.check_active()?;
-        let ranges: Vec<_> = self
-            .runtime
-            .retry_ranges_from(&failed)?
-            .into_iter()
-            .map(|range| (Vec::from(range.start_key), Vec::from(range.end_key)))
-            .collect();
-        let topology = locate(self.store.as_ref(), &ranges, &self.kv_context)?;
+        let ranges = self.runtime.retry_ranges_from(&failed)?;
+        let topology = locate(self.store.as_ref(), ranges.iter(), &self.kv_context)?;
         let replacement = self.runtime.rebuild_region_attempts(failed, &topology)?;
         if replacement.logical_task_ids.len() != replacement.active_attempt_ids.len()
             || replacement.logical_task_ids.first() != Some(&logical_task_id)
@@ -796,14 +777,9 @@ impl<S: NativeCopStore + ?Sized> NativeCopResponse<S> {
             ),
         )?;
         self.check_active()?;
-        let ranges: Vec<_> = self
-            .runtime
-            .retry_ranges_from(&failed)?
-            .into_iter()
-            .map(|range| (Vec::from(range.start_key), Vec::from(range.end_key)))
-            .collect();
+        let ranges = self.runtime.retry_ranges_from(&failed)?;
         // Go `buildCopTasks` with `skipBuckets`: split by region only.
-        let topology: Vec<_> = locate(self.store.as_ref(), &ranges, &self.kv_context)?
+        let topology: Vec<_> = locate(self.store.as_ref(), ranges.iter(), &self.kv_context)?
             .into_iter()
             .map(|mut region| {
                 region.bucket_keys.clear();
@@ -921,18 +897,7 @@ impl<S: NativeCopStore + ?Sized> NativeCopResponse<S> {
             match remain.cause {
                 BatchedRemainCause::RegionError(error) => {
                     self.store.backoff_region_miss(backoffer, error)?;
-                    let ranges: Vec<_> = remain
-                        .task
-                        .ranges
-                        .iter()
-                        .map(|range| {
-                            (
-                                Vec::from(range.start_key.clone()),
-                                Vec::from(range.end_key.clone()),
-                            )
-                        })
-                        .collect();
-                    let topology = locate(self.store.as_ref(), &ranges, &self.kv_context)?;
+                    let topology = locate(self.store.as_ref(), remain.task.ranges.iter(), &self.kv_context)?;
                     tasks.extend(self.runtime.child_retry_tasks(&remain.task, &topology)?);
                 }
                 BatchedRemainCause::Locked(lock) => {

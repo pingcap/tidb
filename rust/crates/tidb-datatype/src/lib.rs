@@ -82,8 +82,10 @@ mod overflow_tests;
 mod type_name_tests;
 
 pub use binary_json::{
-    compare_binary_json, decode_escaped_unicode, json_marshal_string_to, quote_json_string,
-    unquote_json_string, unquote_string, BinaryJSON, BinaryJSONError, BinaryJSONValue, Opaque,
+    compare_binary_json, decode_escaped_unicode, json_marshal_string_bytes_to, json_marshal_string_to,
+    quote_json_string, unquote_json_string, unquote_json_string_bytes_to, unquote_string,
+    BinaryJSON, BinaryJSONError,
+    BinaryJSONValue, CheckedJSONKeys, EncodedJSONLayout, JSONKeyArray, Opaque, ValidatedBinaryJSONRef,
     JSON_LITERAL_FALSE, JSON_LITERAL_NULL, JSON_LITERAL_TRUE, JSON_TYPE_CODE_ARRAY,
     JSON_TYPE_CODE_DATE, JSON_TYPE_CODE_DATETIME, JSON_TYPE_CODE_DURATION, JSON_TYPE_CODE_FLOAT64,
     JSON_TYPE_CODE_INT64, JSON_TYPE_CODE_LITERAL, JSON_TYPE_CODE_OBJECT, JSON_TYPE_CODE_OPAQUE,
@@ -91,7 +93,7 @@ pub use binary_json::{
 };
 pub use binary_json_ops::{
     contains_binary_json, like_matches, merge_binary_json, merge_patch_binary_json,
-    overlaps_binary_json, peek_binary_json_len, JSONModifyType, JSONSearchMode,
+    overlaps_binary_json, peek_binary_json_len, EncodedJSONSelection, JSONModifyType, JSONSearchMode,
 };
 pub use binary_literal::{
     parse_bit_str, parse_hex_str, BinaryLiteral, BinaryLiteralIntOutcome, BinaryLiteralParseError,
@@ -138,8 +140,8 @@ pub use core_time::{
 pub use datum::{
     clone_row, datums_contain_null, datums_to_bytes, datums_to_string, datums_to_str_no_err,
     datums_to_str_no_err_smart, estimated_mem_usage, is_printable, sort_datums,
-    unwrap_from_single_quotes, wrap_in_single_quotes, Datum, DatumKind, DatumStringError,
-    DatumValueError, StringDatum, EMPTY_DATUM_SIZE,
+    unwrap_from_single_quotes, unwrap_from_single_quotes_ref, wrap_in_single_quotes, Datum,
+    DatumKind, DatumStringError, DatumValueError, StringDatum, EMPTY_DATUM_SIZE,
 };
 pub use datum_convert::{
     change_reverse_result_by_upper_lower_bound, get_max_value, get_min_value,
@@ -215,16 +217,17 @@ pub use overflow::{
 pub use packed_time::{PackedTime, PackedTimeError, PackedTimeParts};
 pub use session_time_zone::{SessionTimeZone, SessionTimeZoneOffset};
 pub use source_string::{HackedStr, PlainStr, SourceString};
-pub use str_to_date::{get_format_type, is_go_punctuation};
+pub use str_to_date::{get_format_type, get_format_type_bytes, is_go_punctuation};
 pub use time_parse::{
     adjust_year, extract_datetime_num, extract_duration_num, extract_duration_value, is_clock_unit,
     is_date_format, is_date_unit, is_microsecond_unit, parse_date_format, parse_datetime,
     parse_duration_value, parse_time, parse_time_from_decimal, parse_time_from_float64,
-    parse_time_from_int64, parse_time_from_num, parse_time_from_year, parse_year, time_from_days,
+    parse_time_from_int64, parse_time_from_num, parse_time_from_year, parse_time_with_flags,
+    parse_year, time_from_days,
     timestamp_diff, ParsedInterval, ParsedTime,
 };
 pub use truncate::{is_truncation_error_code, TruncationPolicy};
 pub use vector::{
     check_vector_dim_valid, deserialize_vector_float32, peek_vector_float32, VectorError,
-    VectorFloat32, MAX_VECTOR_DIMENSION,
+    SharedVectorBytes, VectorFloat32, VectorFloat32Ref, MAX_VECTOR_DIMENSION,
 };

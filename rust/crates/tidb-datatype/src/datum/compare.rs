@@ -259,7 +259,7 @@ impl Datum {
 
     fn compare_decimal(&self, value: &Decimal) -> Result<Ordering, DatumValueError> {
         let left = match self {
-            Self::Decimal(left) => left.clone(),
+            Self::Decimal(left) => return Ok(left.cmp(value)),
             Self::String(left) => decimal_from_bytes(left.bytes())?.value,
             Self::Bytes(left) => decimal_from_bytes(left)?.value,
             _ => self.to_decimal()?.value,

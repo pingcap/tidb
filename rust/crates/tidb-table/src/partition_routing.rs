@@ -45,7 +45,7 @@ pub type StorageClass = (String, Vec<tidb_model::StorageClassTransitRule>);
 use std::cmp::Ordering;
 use std::collections::HashMap;
 
-use tidb_datatype::{Datum, FieldType};
+use tidb_datatype::{CollationCollator, Datum, FieldType, FieldTypeCode};
 use tidb_expr::expression::Expression;
 use tidb_hack::GoCaseCompare;
 
@@ -278,21 +278,27 @@ impl PartitionExpr {
             // (`tables/partition.go:1453`); there is none to touch.
             PartitionKind::None => Ok(0),
             kind => {
-                let value = crate::generated_column::eval_over_dependencies(
-                    &self.expr,
-                    &self.dependencies,
-                    columns,
-                    row,
-                    ctx,
-                )
-                .map_err(RoutingError::Eval)?;
+                let evaluated;
+                let value = if let Some(value) = self.integer_column_value(row, columns)? {
+                    value
+                } else {
+                    evaluated = crate::generated_column::eval_over_dependencies(
+                        &self.expr,
+                        &self.dependencies,
+                        columns,
+                        row,
+                        ctx,
+                    )
+                    .map_err(RoutingError::Eval)?;
+                    &evaluated
+                };
                 match kind {
-                    PartitionKind::Hash => locate_hash_partition(&value, num),
+                    PartitionKind::Hash => locate_hash_partition(value, num),
                     PartitionKind::Key => unreachable!("matched above"),
                     PartitionKind::Range {
                         less_than,
                         unsigned,
-                    } => range_partition_index(&value, less_than, *unsigned),
+                    } => range_partition_index(value, less_than, *unsigned),
                     PartitionKind::RangeColumns { .. } => unreachable!("matched above"),
                     PartitionKind::List {
                         values,
@@ -300,7 +306,7 @@ impl PartitionExpr {
                         default_partition,
                         unsigned,
                     } => list_partition_index(
-                        &value,
+                        value,
                         values,
                         *null_partition,
                         *default_partition,
@@ -312,6 +318,40 @@ impl PartitionExpr {
                 }
             }
         }
+    }
+
+    /// Go's bare integer-column path reads the stored word directly.
+    fn integer_column_value<'a, S: crate::generated_column::GeneratedColumnSlot>(
+        &self,
+        row: &'a [Datum],
+        columns: &[S],
+    ) -> Result<Option<&'a Datum>, RoutingError> {
+        let (Expression::Column(column), [name]) = (&self.expr, self.dependencies.as_slice())
+        else {
+            return Ok(None);
+        };
+        if column.index != 0
+            || !column.ret_type.as_ref().is_some_and(|field_type| {
+                matches!(
+                    field_type.code(),
+                    FieldTypeCode::Tiny
+                        | FieldTypeCode::Short
+                        | FieldTypeCode::Int24
+                        | FieldTypeCode::Long
+                        | FieldTypeCode::LongLong
+                        | FieldTypeCode::Year
+                )
+            })
+        {
+            return Ok(None);
+        }
+        let offset = crate::generated_column::offset_of(columns, name).ok_or(
+            RoutingError::Eval(tidb_exprctx::EvalError::Unsupported(
+                "a generated or partition expression names a column the table no longer defines",
+            )),
+        )?;
+        let value = row.get(offset).unwrap_or(&Datum::Null);
+        Ok(matches!(value, Datum::Int(_) | Datum::UInt(_) | Datum::Null).then_some(value))
     }
 }
 
@@ -346,14 +386,15 @@ fn key_partition_index<S: crate::generated_column::GeneratedColumnSlot>(
     names: &[String],
     num: u64,
 ) -> Result<usize, RoutingError> {
-    let mut tuple = Vec::with_capacity(names.len());
+    debug_assert!(num > 0, "DDL rejects PARTITIONS 0 before routing");
+    let mut hash = crc32fast::Hasher::new();
     for name in names {
         let offset = crate::generated_column::offset_of(columns, name).ok_or_else(|| {
             RoutingError::Conversion(format!("partition column '{name}' no longer exists"))
         })?;
-        tuple.push(row.get(offset).cloned().unwrap_or(Datum::Null));
+        update_key_partition_hash(&mut hash, row.get(offset).unwrap_or(&Datum::Null))?;
     }
-    key_partition_index_for_tuple(&tuple, num)
+    Ok((hash.finalize() as u64 % num) as usize)
 }
 
 /// The pure KEY router is shared by write routing and exact point pruning.
@@ -364,16 +405,29 @@ pub fn key_partition_index_for_tuple(
     debug_assert!(num > 0, "DDL rejects PARTITIONS 0 before routing");
     let mut hash = crc32fast::Hasher::new();
     for value in tuple {
-        if value.is_null() {
-            hash.update(&[0]);
-        } else {
+        update_key_partition_hash(&mut hash, value)?;
+    }
+    Ok((hash.finalize() as u64 % num) as usize)
+}
+
+fn update_key_partition_hash(
+    hash: &mut crc32fast::Hasher,
+    value: &Datum,
+) -> Result<(), RoutingError> {
+    match value {
+        Datum::Null => hash.update(&[0]),
+        Datum::Int(value) => hash.update(value.to_string().as_bytes()),
+        Datum::UInt(value) => hash.update(value.to_string().as_bytes()),
+        Datum::Bytes(bytes) => hash.update(bytes),
+        Datum::String(text) => hash.update(&text.collation().immutable_key(text.bytes())),
+        _ => {
             let key = value
                 .to_hash_key()
                 .map_err(|error| RoutingError::Conversion(error.to_string()))?;
             hash.update(&key);
         }
     }
-    Ok((hash.finalize() as u64 % num) as usize)
+    Ok(())
 }
 
 fn range_columns_partition_index<S: crate::generated_column::GeneratedColumnSlot>(
@@ -433,14 +487,23 @@ pub(crate) fn range_columns_partition_index_for_tuple(
     less_than: &[Vec<RangeColumnBound>],
     field_types: &[FieldType],
 ) -> Result<usize, RoutingError> {
-    for (ordinal, bound) in less_than.iter().enumerate() {
-        if range_columns_tuple_cmp(tuple, bound, field_types)? == Ordering::Less {
-            return Ok(ordinal);
+    let mut lo = 0;
+    let mut hi = less_than.len();
+    while lo < hi {
+        let mid = lo + (hi - lo) / 2;
+        if range_columns_tuple_cmp(tuple, &less_than[mid], field_types)? == Ordering::Less {
+            hi = mid;
+        } else {
+            lo = mid + 1;
         }
     }
-    Err(RoutingError::NoPartitionForValue(
-        "from column_list".to_owned(),
-    ))
+    if lo == less_than.len() {
+        Err(RoutingError::NoPartitionForValue(
+            "from column_list".to_owned(),
+        ))
+    } else {
+        Ok(lo)
+    }
 }
 
 pub(crate) fn range_columns_tuple_cmp(
@@ -579,16 +642,16 @@ fn range_partition_index(
         // kinds that can arrive are the ones Go also reads as 0.
         _ => 0,
     };
-    let found = less_than
-        .iter()
-        .position(|bound| range_bound_exceeds(*bound, bits, unsigned));
-    found.ok_or_else(|| {
-        RoutingError::NoPartitionForValue(if unsigned {
+    let found = less_than.partition_point(|bound| !range_bound_exceeds(*bound, bits, unsigned));
+    if found == less_than.len() {
+        Err(RoutingError::NoPartitionForValue(if unsigned {
             format!("{}", bits as u64)
         } else {
             format!("{bits}")
-        })
-    })
+        }))
+    } else {
+        Ok(found)
+    }
 }
 
 /// Whether a partition's exclusive upper bound admits `value`, which is Go's
@@ -768,6 +831,32 @@ mod tests {
         }
         fn column_name(&self) -> String {
             self.0.to_owned()
+        }
+    }
+
+    #[test]
+    fn key_routing_hashes_current_columns_in_dependency_order() {
+        let field_type = FieldType::new(FieldTypeCode::VarString);
+        let columns = [Slot("a", field_type.clone()), Slot("b", field_type.clone())];
+        let spec = PartitionExpr {
+            kind: PartitionKind::Key,
+            expr: Expression::Column(tidb_expr::column::Column::new(1, field_type)),
+            dependencies: vec!["b".into(), "a".into()],
+        };
+        let a = Datum::Bytes(b"first".to_vec());
+        let b = Datum::new_collation_string_datum(
+            b"Second".to_vec(),
+            tidb_charset::Collation::Utf8Mb4GeneralCi,
+        );
+        for (row, tuple) in [
+            (vec![a.clone(), b.clone()], vec![b, a.clone()]),
+            (vec![a.clone()], vec![Datum::Null, a]),
+        ] {
+            let expected = key_partition_index_for_tuple(&tuple, 1019).unwrap();
+            let routed = spec
+                .locate_partition_common(1019, &row, &columns, &tidb_exprctx::NoColumns)
+                .unwrap();
+            assert_eq!(routed, expected);
         }
     }
 

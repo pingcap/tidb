@@ -265,11 +265,12 @@ pub fn parse_response_body_into(
         let tail = data
             .get(offset..)
             .ok_or_else(|| HandshakeError::Malformed("auth plugin is truncated".to_owned()))?;
-        if let Some(plugin_len) = tail.iter().position(|byte| *byte == 0) {
-            if plugin_len > 0 {
-                response.auth_plugin = WireString::from_bytes(&tail[..plugin_len]);
+        let (plugin, remaining) = tidb_server_internal_util::parse_null_term_string(tail);
+        if remaining.len() < tail.len() {
+            if !plugin.is_empty() {
+                response.auth_plugin = WireString::from_bytes(plugin);
             }
-            offset += plugin_len + 1;
+            offset += plugin.len() + 1;
         }
     }
 
@@ -523,11 +524,11 @@ fn read_nul_bytes<'a>(
     let tail = data
         .get(offset..)
         .ok_or_else(|| HandshakeError::Malformed(format!("{field} is truncated")))?;
-    let end = tail
-        .iter()
-        .position(|byte| *byte == 0)
-        .ok_or_else(|| HandshakeError::Malformed(format!("{field} is not NUL terminated")))?;
-    Ok((&tail[..end], offset + end + 1))
+    let (value, remaining) = tidb_server_internal_util::parse_null_term_string(tail);
+    if remaining.len() == tail.len() {
+        return Err(HandshakeError::Malformed(format!("{field} is not NUL terminated")));
+    }
+    Ok((value, offset + value.len() + 1))
 }
 
 fn checked_end(

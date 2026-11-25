@@ -5,7 +5,10 @@
 use super::{vec_eval, ScalarFunction};
 use crate::{Columns, EvalError};
 use tidb_chunk::{chunk::Chunk, column::Column};
+use tidb_datatype::{DecimalError, EvalType, FieldType};
 use tidb_proto::tipb::ScalarFuncSig;
+
+mod real;
 
 /// Go math `vectorized` methods, keyed by the signature selected at build.
 pub(super) fn supported(sig: ScalarFuncSig) -> bool {
@@ -70,6 +73,27 @@ pub(super) fn eval(
 ) -> Result<(), EvalError> {
     use ScalarFuncSig::*;
     let sig = function.pb_code();
+    if real::supported(sig) {
+        return real::eval(function, ctx, input, result);
+    }
+    if sig == Crc32 {
+        return vec_eval::with_argument_column(
+            &function.args[0],
+            EvalType::String,
+            ctx,
+            input,
+            |column, selection| {
+                let cells = column.raw_cells();
+                let get = cells.variable_cells();
+                let hash = |row| (!cells.is_null(row)).then(|| i64::from(crc32fast::hash(get(row))));
+                if let Some(selection) = selection {
+                    result.write_int64_rows(selection.iter().copied().map(hash));
+                } else {
+                    result.write_int64_rows((0..column.rows()).map(hash));
+                }
+            },
+        );
+    }
     if sig == Rand {
         result.resize_float64(input.num_rows(), false);
         for row in 0..input.num_rows() {
@@ -85,9 +109,52 @@ pub(super) fn eval(
     if matches!(sig, CeilDecToInt | FloorDecToInt) {
         return dec_to_int(function, sig == CeilDecToInt, ctx, input, result);
     }
+    if let [arg] = function.args.as_slice() {
+        let domain = arg.static_type().map(FieldType::eval_type);
+        match (sig, domain) {
+            (AbsUInt | RoundInt | CeilIntToInt | FloorIntToInt, Some(EvalType::Int)) => {
+                return vec_eval::eval_into(arg, EvalType::Int, ctx, input, result);
+            }
+            (AbsInt, Some(EvalType::Int)) => {
+                vec_eval::eval_into(arg, EvalType::Int, ctx, input, result)?;
+                return result.try_map_fixed_rows(|cell| {
+                    let value = i64::from_ne_bytes(cell);
+                    let abs = value
+                        .checked_abs()
+                        .ok_or_else(|| EvalError::DataOutOfRange {
+                            value: "BIGINT",
+                            expression: format!("abs({value})"),
+                        })?;
+                    Ok(Some(abs.to_ne_bytes()))
+                });
+            }
+            (AbsReal | CeilReal | FloorReal | RoundReal | Sqrt, Some(EvalType::Real)) => {
+                vec_eval::eval_into(arg, EvalType::Real, ctx, input, result)?;
+                match sig {
+                    AbsReal => result.map_float64_rows(|value| Some(value.abs())),
+                    CeilReal => result.map_float64_rows(|value| Some(value.ceil())),
+                    FloorReal => result.map_float64_rows(|value| Some(value.floor())),
+                    RoundReal => result.map_float64_rows(|value| {
+                        Some(crate::math_fn::go_round_float(value, 0))
+                    }),
+                    Sqrt => result.map_float64_rows(|value| {
+                        if value < 0.0 {
+                            None
+                        } else {
+                            Some(value.sqrt())
+                        }
+                    }),
+                    _ => unreachable!("real unary math signature"),
+                }
+                return Ok(());
+            }
+            (Sign, Some(EvalType::Real)) => return sign(function, ctx, input, result),
+            _ => {}
+        }
+    }
     let reuse = match sig {
         Pow => Some(1),
-        Sign | CeilIntToDec | CeilDecToInt | FloorIntToDec | FloorDecToInt | Pi | Conv | Crc32
+        Sign | CeilIntToDec | CeilDecToInt | FloorIntToDec | FloorDecToInt | Pi | Conv
         | Rand | RandWithSeedFirstGen => None,
         _ => Some(0),
     };
@@ -106,9 +173,8 @@ pub(super) fn eval(
     })
 }
 
-/// Go `builtin{Ceil,Floor}DecToIntSig.vecEvalInt`: `ToInt`'s truncation moves
-/// the value one step away from zero, and unlike the row form an overflow
-/// keeps `ToInt`'s border value without an error.
+/// Go `builtin{Ceil,Floor}DecToIntSig.vecEvalInt` adjusts a truncated result
+/// one step away from zero when required by its rounding direction.
 fn dec_to_int(
     function: &ScalarFunction,
     ceiling: bool,
@@ -116,25 +182,56 @@ fn dec_to_int(
     input: &Chunk,
     result: &mut Column,
 ) -> Result<(), EvalError> {
-    use tidb_datatype::EvalType;
     let n = input.num_rows();
-    let buf = vec_eval::argument(&function.args[0], EvalType::Decimal, ctx, input)?;
-    result.resize_int64(n, false);
-    result.merge_nulls(&[&buf]);
-    for i in 0..n {
-        if result.is_null(i) {
-            continue;
-        }
-        let d = buf.get_my_decimal(i);
-        let (mut value, error) = d.to_int();
-        if error == Some(tidb_datatype::DecimalError::Truncated) {
-            if ceiling && !d.is_negative() {
-                value += 1;
-            } else if !ceiling && d.is_negative() {
-                value -= 1;
+    let mut overflow = false;
+    vec_eval::with_argument_column(&function.args[0], EvalType::Decimal, ctx, input, |column, sel| {
+        result.write_int64_rows((0..n).map(|row| {
+            let row = sel.map_or(row, |sel| sel[row]);
+            if column.is_null(row) {
+                return None;
             }
-        }
-        result.with_int64s_mut(|i64s| i64s[i] = value);
+            if overflow {
+                // Go initialized the untouched result rows to zero and merged
+                // the source null bitmap before attempting any conversions.
+                return Some(0);
+            }
+            let decimal = column.get_my_decimal(row);
+            let (mut value, error) = decimal.to_int();
+            match error {
+                Some(DecimalError::Overflow) => overflow = true,
+                Some(DecimalError::Truncated) if ceiling && !decimal.is_negative() => {
+                    value = value.wrapping_add(1);
+                }
+                Some(DecimalError::Truncated) if !ceiling && decimal.is_negative() => {
+                    value = value.wrapping_sub(1);
+                }
+                _ => {}
+            }
+            Some(value)
+        }));
+    })?;
+    if overflow {
+        return Err(EvalError::Conversion(tidb_datatype::types_errors::ERR_OVERFLOW.clone()));
     }
     Ok(())
+}
+
+fn sign(
+    function: &ScalarFunction,
+    ctx: &dyn Columns,
+    input: &Chunk,
+    result: &mut Column,
+) -> Result<(), EvalError> {
+    vec_eval::with_argument_column(&function.args[0], EvalType::Real, ctx, input, |column, sel| {
+        let cells = column.raw_cells();
+        result.write_int64_rows((0..input.num_rows()).map(|row| {
+            let row = sel.map_or(row, |sel| sel[row]);
+            (!cells.is_null(row)).then(|| {
+                let value = f64::from_ne_bytes(
+                    cells.get(row).try_into().expect("Float64 cell width"),
+                );
+                crate::math_fn::sign_of_real(value)
+            })
+        }));
+    })
 }

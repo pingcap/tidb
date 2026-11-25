@@ -256,11 +256,30 @@ pub const MYSQL_STATES: &[(u16, &str)] = &[
     (errcode::ErrInvalidJSONType, "22032"),
 ];
 
+const fn sort_states() -> [(u16, &'static str); MYSQL_STATES.len()] {
+    let mut sorted = [(0, ""); MYSQL_STATES.len()];
+    let mut index = 0;
+    while index < MYSQL_STATES.len() {
+        let entry = MYSQL_STATES[index];
+        let mut position = index;
+        while position > 0 && sorted[position - 1].0 > entry.0 {
+            sorted[position] = sorted[position - 1];
+            position -= 1;
+        }
+        sorted[position] = entry;
+        index += 1;
+    }
+    sorted
+}
+
+static SORTED_STATES: [(u16, &str); MYSQL_STATES.len()] = sort_states();
+
 /// Returns the explicit SQLSTATE or `HY000`, matching `NewErr`/`NewErrf`.
 #[must_use]
 pub fn mysql_state(code: u16) -> &'static str {
-    MYSQL_STATES
-        .iter()
-        .find_map(|(entry_code, state)| (*entry_code == code).then_some(*state))
-        .unwrap_or(DEFAULT_MYSQL_STATE)
+    let index = SORTED_STATES.partition_point(|&(entry_code, _)| entry_code < code);
+    match SORTED_STATES.get(index) {
+        Some(&(entry_code, state)) if entry_code == code => state,
+        _ => DEFAULT_MYSQL_STATE,
+    }
 }

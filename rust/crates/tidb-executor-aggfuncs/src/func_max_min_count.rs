@@ -249,13 +249,19 @@ impl AggFunc for MaxMinCount {
         Ok(())
     }
 
-    fn serialize_partial_result(&self, partial_result: &mut PartialResult, chk: &mut Chunk, _spill_helper: &mut SerializeHelper) {
-        let p = partial::<PartialResult4MaxMinCount>(partial_result).clone();
-        let mut buf = Vec::with_capacity(64);
-        util::serialize_bool(p.val.is_none(), &mut buf);
-        util::serialize_i64(p.count, &mut buf);
-        self.inner.encode_value(p.val.as_ref(), &mut buf);
-        chk.append_bytes(self.inner.base.ordinal, &buf);
+    fn serialize_partial_result(
+        &self,
+        partial_result: &mut PartialResult,
+        chk: &mut Chunk,
+        spill_helper: &mut SerializeHelper,
+    ) {
+        let p = partial::<PartialResult4MaxMinCount>(partial_result);
+        let bytes = spill_helper.encode(|buf| {
+            util::serialize_bool(p.val.is_none(), buf);
+            util::serialize_i64(p.count, buf);
+            self.inner.encode_value(p.val.as_ref(), buf);
+        });
+        chk.append_bytes(self.inner.base.ordinal, bytes);
     }
 
     fn deserialize_partial_result(&self, src: &Chunk) -> (Vec<PartialResult>, i64) {

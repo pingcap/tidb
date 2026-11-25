@@ -15,23 +15,25 @@
 //! Go `pkg/executor/aggfuncs/spill_deserialize_helper.go`: reads spilled
 //! partial results back, one row of the spill column at a time.
 
-use tidb_chunk::chunk::Chunk;
+use tidb_chunk::{column::VariableCells, ColumnRef};
 use tidb_serialization::Cursor;
 
 /// Go `deserializeHelper`.
 pub struct DeserializeHelper<'a> {
-    column: &'a Chunk,
-    ordinal: usize,
+    column: ColumnRef<'a>,
+    cells: Option<VariableCells<'a>>,
     read_row_index: usize,
     total_row_cnt: usize,
 }
 
 impl<'a> DeserializeHelper<'a> {
-    /// Go `newDeserializeHelper` over the spill column `ordinal` of `src`.
-    pub(crate) fn new(src: &'a Chunk, ordinal: usize, row_num: usize) -> Self {
+    /// Go `newDeserializeHelper` over the spill column.
+    pub(crate) fn new(column: ColumnRef<'a>, row_num: usize) -> Self {
         Self {
-            column: src,
-            ordinal,
+            cells: column
+                .try_borrow_stable()
+                .and_then(|column| column.try_variable_cells()),
+            column,
             read_row_index: 0,
             total_row_cnt: row_num,
         }
@@ -44,20 +46,33 @@ impl<'a> DeserializeHelper<'a> {
     }
 
     fn next_row<T>(&mut self, read: impl FnOnce(&mut Cursor<'_>) -> T) -> Option<T> {
+        self.read_row_bytes(|bytes| read(&mut Cursor::new(bytes)))
+    }
+
+    /// Reads one cell with a fixed layout without using a cursor.
+    pub(crate) fn read_row_bytes<T>(&mut self, read: impl FnOnce(&[u8]) -> T) -> Option<T> {
         if self.read_row_index >= self.total_row_cnt {
             return None;
         }
-        let row = self.column.get_row(self.read_row_index);
-        let bytes = row.get_bytes(self.ordinal);
-        let mut pab = Cursor::new(&bytes);
-        let value = read(&mut pab);
+        // Go reads directly from the spill column. The logical row count
+        // bounds the read, and a selection vector does not reorder the cells.
+        let row = self.read_row_index;
+        let value = if let Some(cells) = &self.cells {
+            read(cells.get(row))
+        } else {
+            let column = self.column.read();
+            let bytes = column.get_bytes(row);
+            read(&bytes)
+        };
         self.read_row_index += 1;
         Some(value)
     }
 
     /// Go `deserializePartialResult4Count`.
     pub(crate) fn deserialize_partial_result_4_count(&mut self) -> Option<i64> {
-        self.next_row(|pab| pab.read_i64())
+        self.read_row_bytes(|bytes| {
+            i64::from_ne_bytes(*bytes.first_chunk::<8>().expect("COUNT spill cell"))
+        })
     }
 
     /// Go `deserializePartialResult4SumFloat64`.
@@ -134,5 +149,29 @@ impl<'a> DeserializeHelper<'a> {
             }
             mem_delta
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tidb_chunk::chunk::Chunk;
+    use tidb_datatype::{FieldType, FieldTypeCode};
+
+    #[test]
+    fn spill_reads_physical_cells_up_to_the_logical_row_count() {
+        let fields = [FieldType::new(FieldTypeCode::Blob)];
+        let mut chunk = Chunk::new_chunk_with_capacity(&fields, 3);
+        for value in [7_i64, 99, 11] {
+            chunk.append_bytes(0, &value.to_ne_bytes());
+        }
+        chunk.set_sel(Some(vec![2, 0]));
+        for shared in [false, true] {
+            let _alias = shared.then(|| chunk.alias());
+            let mut helper = DeserializeHelper::new(chunk.column_ref(0), chunk.num_rows());
+            assert_eq!(helper.deserialize_partial_result_4_count(), Some(7));
+            assert_eq!(helper.deserialize_partial_result_4_count(), Some(99));
+            assert_eq!(helper.deserialize_partial_result_4_count(), None);
+        }
     }
 }

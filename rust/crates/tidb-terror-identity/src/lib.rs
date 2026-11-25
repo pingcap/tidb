@@ -26,7 +26,7 @@ mod go_error_codes;
 use std::backtrace::Backtrace;
 use std::collections::{HashMap, HashSet};
 use std::fmt;
-use std::sync::{LazyLock, RwLock, RwLockReadGuard, RwLockWriteGuard};
+use std::sync::{LazyLock, OnceLock, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 const FIXED_CLASSES: [(isize, &str); 27] = [
     (1, "autoid"),
@@ -61,9 +61,13 @@ const FIXED_CLASSES: [(isize, &str); 27] = [
 #[derive(Debug)]
 struct Registry {
     descriptions: HashMap<TerrorClass, String>,
+    lookup: ErrorCodeLookup,
+}
+
+#[derive(Debug, Default)]
+struct ErrorCodeLookup {
     classes_by_description: HashMap<String, TerrorClass>,
     codes: HashMap<TerrorClass, HashSet<TerrorCode>>,
-    frozen: bool,
 }
 
 impl Registry {
@@ -85,15 +89,17 @@ impl Registry {
         }
         Self {
             descriptions,
-            classes_by_description,
-            codes,
-            frozen: false,
+            lookup: ErrorCodeLookup {
+                classes_by_description,
+                codes,
+            },
         }
     }
 }
 
 static REGISTRY: LazyLock<RwLock<Registry>> =
     LazyLock::new(|| RwLock::new(Registry::source_defaults()));
+static FROZEN_LOOKUP: OnceLock<ErrorCodeLookup> = OnceLock::new();
 
 fn registry_read() -> RwLockReadGuard<'static, Registry> {
     REGISTRY
@@ -105,6 +111,15 @@ fn registry_write() -> RwLockWriteGuard<'static, Registry> {
     REGISTRY
         .write()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+fn with_lookup<T>(read: impl FnOnce(&ErrorCodeLookup) -> T) -> T {
+    if let Some(lookup) = FROZEN_LOOKUP.get() {
+        return read(lookup);
+    }
+    let registry = registry_read();
+    // Freezing can move the lookup while this reader is acquiring the lock.
+    read(FROZEN_LOOKUP.get().unwrap_or(&registry.lookup))
 }
 
 /// Registers a new error class and panics on a duplicate class code.
@@ -123,13 +138,13 @@ pub fn register_error_class(class_code: isize, description: impl Into<String>) -
 
 /// Reports whether error-code registration is frozen.
 pub fn registration_frozen() -> bool {
-    registry_read().frozen
+    FROZEN_LOOKUP.get().is_some()
 }
 
 /// Records `code` under `class` (Go `ErrClass.NewStdErr`'s registration).
 pub fn register_error_code(class: TerrorClass, code: TerrorCode) {
     let mut registry = registry_write();
-    if registry.frozen {
+    if registration_frozen() {
         drop(registry);
         eprintln!("{}", Backtrace::force_capture());
         panic!("register error after initialized is prohibited");
@@ -139,8 +154,8 @@ pub fn register_error_code(class: TerrorClass, code: TerrorCode) {
         .get(&class)
         .cloned()
         .unwrap_or_default();
-    registry.classes_by_description.insert(description, class);
-    registry.codes.entry(class).or_default().insert(code);
+    registry.lookup.classes_by_description.insert(description, class);
+    registry.lookup.codes.entry(class).or_default().insert(code);
 }
 
 /// The class an RFC code text (`description:code`) names.
@@ -149,24 +164,19 @@ pub fn class_for_rfc_code(rfc_code: &str) -> Option<TerrorClass> {
     if description.is_empty() {
         return None;
     }
-    registry_read()
-        .classes_by_description
-        .get(description)
-        .copied()
+    with_lookup(|lookup| lookup.classes_by_description.get(description).copied())
 }
 
 
 /// Freezes registration (the tail of Go's `RegisterFinish`).
 pub fn freeze_registration() {
-    registry_write().frozen = true;
+    let mut registry = registry_write();
+    FROZEN_LOOKUP.get_or_init(|| std::mem::take(&mut registry.lookup));
 }
 
 /// Whether `code` was registered under `class`.
 pub fn is_registered_code(class: TerrorClass, code: TerrorCode) -> bool {
-    registry_read()
-        .codes
-        .get(&class)
-        .is_some_and(|codes| codes.contains(&code))
+    with_lookup(|lookup| lookup.codes.get(&class).is_some_and(|codes| codes.contains(&code)))
 }
 
 /// A code within one [`TerrorClass`].
@@ -341,6 +351,41 @@ impl TerrorIdentity {
 impl fmt::Display for TerrorIdentity {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(&self.rfc_code())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Barrier;
+
+    #[test]
+    fn class_and_code_lookups_survive_publication() {
+        let class = register_error_class(600, "test-published");
+        let code = TerrorCode::new(60_001);
+        register_error_code(class, code);
+        assert_eq!(class_for_rfc_code("test-published:60001"), Some(class));
+        assert!(is_registered_code(class, code));
+        assert!(!registration_frozen());
+
+        let start = Barrier::new(2);
+        std::thread::scope(|scope| {
+            scope.spawn(|| {
+                start.wait();
+                for _ in 0..1024 {
+                    assert_eq!(class_for_rfc_code("test-published:60001"), Some(class));
+                    assert!(is_registered_code(class, code));
+                }
+            });
+            start.wait();
+            freeze_registration();
+        });
+
+        freeze_registration();
+        assert!(registration_frozen());
+        assert_eq!(class_for_rfc_code("test-published:60001"), Some(class));
+        assert!(is_registered_code(class, code));
+        assert!(!is_registered_code(class, TerrorCode::new(60_002)));
     }
 }
 

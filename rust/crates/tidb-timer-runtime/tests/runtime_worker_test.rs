@@ -16,16 +16,16 @@
 //!
 //! Go's `sendWorkerRequestAndCheckResp` uses a non-blocking send into the
 //! worker's buffered channel and then waits one second on an unbuffered
-//! response channel; both spellings survive verbatim on
-//! `std::sync::mpsc::sync_channel`.
+//! response channel.
 
 #[path = "common/mod.rs"]
 mod common;
 
 use std::collections::VecDeque;
-use std::sync::mpsc::Receiver;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+
+use crossbeam_channel::{Receiver, bounded};
 
 use tidb_timer::client::{new_default_timer_client, with_set_summary_data, with_set_watermark};
 use tidb_timer::go_time::{GoTime, MINUTE, SECOND};
@@ -255,6 +255,34 @@ fn test_worker_start_stop() {
     hook.stopped.wait_done(ONE_SECOND);
     wait_group.wait();
     assert_eq!(hook.on_stop.call_count(), 1);
+}
+
+#[test]
+fn test_worker_cancel_blocked_response() {
+    let wait_group = Arc::new(WaitGroup::new());
+    let (ctx, cancel) = Context::with_cancel();
+    let worker = new_hook_worker(&ctx, &wait_group, "g1", "h1", None, None);
+    let (response_tx, response_rx) = new_rendezvous_resp_channel();
+    let (finished_tx, finished_rx) = bounded(1);
+    let sender = std::thread::spawn(move || {
+        let response = TriggerEventResponse {
+            success: true,
+            timer_id: "timer1".to_owned(),
+            event_id: "event1".to_owned(),
+            new_timer_record: OptionalVal::default(),
+            retry_after: OptionalVal::default(),
+        };
+        let sent = worker.response_chan(&response_tx, response);
+        finished_tx.send(sent).unwrap();
+    });
+
+    let pending = finished_rx.recv_timeout(Duration::from_millis(20));
+    cancel.cancel();
+    assert_eq!(pending, Err(crossbeam_channel::RecvTimeoutError::Timeout));
+    assert_eq!(finished_rx.recv_timeout(ONE_SECOND), Ok(false));
+    sender.join().unwrap();
+    wait_group.wait();
+    assert!(response_rx.try_recv().is_err());
 }
 
 #[test]

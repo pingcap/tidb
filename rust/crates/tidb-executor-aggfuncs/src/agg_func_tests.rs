@@ -27,6 +27,194 @@ use tidb_goruntime::GoString;
 use crate::agg_builder::build;
 use crate::agg_func::AggFunc;
 
+#[test]
+fn null_decimal_spill_preserves_go_partial_result_payload() {
+    use crate::agg_func::BaseAggFunc;
+    use crate::func_first_row::{FirstRow, FirstRowKind};
+    use crate::func_max_min::{MaxMin, MaxMinKind};
+    use crate::spill_serialize_helper::SerializeHelper;
+
+    let base = BaseAggFunc {
+        args: Vec::new(),
+        ordinal: 0,
+        ret_tp: FieldType::new(FieldTypeCode::NewDecimal),
+    };
+    let cases: [(Box<dyn AggFunc>, &[u8]); 2] = [
+        (Box::new(FirstRow { base: base.clone(), kind: FirstRowKind::Decimal }), &[1, 1]),
+        (Box::new(MaxMin {
+            base,
+            is_max: true,
+            kind: MaxMinKind::Decimal,
+            collation: tidb_charset::Collation::DEFAULT,
+        }), &[1]),
+    ];
+    let (value, error) = tidb_datatype::MyDecimal::from_string(b"17.25");
+    assert!(error.is_none());
+    let fields = [FieldType::new(FieldTypeCode::Blob)];
+    for (function, flags) in cases {
+        // Go can retain the previous value when a partial result is reset.
+        let mut wire = flags.to_vec();
+        tidb_serialization::serialize_my_decimal(&value, &mut wire);
+        let mut spill = Chunk::new_chunk_with_capacity(&fields, 1);
+        spill.append_bytes(0, &wire);
+        let (mut results, _) = function.deserialize_partial_result(&spill);
+        let mut encoded = Chunk::new_chunk_with_capacity(&fields, 1);
+        function.serialize_partial_result(&mut results[0], &mut encoded, &mut SerializeHelper::new());
+        assert_eq!(encoded.get_row(0).get_bytes(0).as_ref(), wire);
+    }
+}
+
+#[test]
+fn string_spill_preserves_payload_when_null_or_reset() {
+    use crate::spill_serialize_helper::SerializeHelper;
+
+    let field = FieldType::new(FieldTypeCode::String);
+    let fields = [FieldType::new(FieldTypeCode::Blob)];
+    let value = [0xff; 64];
+    for (name, null_flags, value_flags, reset_flags) in [
+        ("firstrow", &[1, 1][..], &[0, 1][..], &[0, 0][..]),
+        ("max", &[1][..], &[0][..], &[1][..]),
+        ("min", &[1][..], &[0][..], &[1][..]),
+    ] {
+        let fixture = AggTest::with_field_type(name, field.clone(), 1, Vec::new());
+        let function = build(&NoColumns, &fixture.desc(false), 0).unwrap();
+        let wire = |flags: &[u8]| {
+            let mut cell = flags.to_vec();
+            tidb_serialization::serialize_bytes_buffer(&value, &mut cell);
+            cell
+        };
+        let mut spill = Chunk::new_chunk_with_capacity(&fields, 2);
+        spill.append_bytes(0, &wire(null_flags));
+        spill.append_bytes(0, &wire(value_flags));
+        // Like Go, restores use the logical count and physical cell order.
+        spill.set_sel(Some(vec![1, 0]));
+        let (mut restored, _) = function.deserialize_partial_result(&spill);
+        let alias = spill.column_handle(0);
+        let (mut from_alias, _) = function.deserialize_partial_result(&spill);
+        drop(alias);
+        drop(spill);
+
+        assert!(final_datum(function.as_ref(), &mut restored[0], &field).is_null());
+        assert_eq!(final_datum(function.as_ref(), &mut restored[1], &field).as_raw_bytes(), Some(value.as_slice()));
+        function.reset_partial_result(&mut restored[1]);
+        assert!(final_datum(function.as_ref(), &mut restored[1], &field).is_null());
+
+        let mut encoded = Chunk::new_chunk_with_capacity(&fields, 2);
+        let mut helper = SerializeHelper::new();
+        for state in &mut restored {
+            function.serialize_partial_result(state, &mut encoded, &mut helper);
+        }
+        assert_eq!(encoded.get_row(0).get_bytes(0).as_ref(), wire(null_flags), "{name}");
+        assert_eq!(encoded.get_row(1).get_bytes(0).as_ref(), wire(reset_flags), "{name}");
+        function.reset_partial_result(&mut from_alias[1]);
+        encoded.reset();
+        for state in &mut from_alias {
+            function.serialize_partial_result(state, &mut encoded, &mut helper);
+        }
+        assert_eq!(encoded.get_row(0).get_bytes(0).as_ref(), wire(null_flags), "{name} alias");
+        assert_eq!(encoded.get_row(1).get_bytes(0).as_ref(), wire(reset_flags), "{name} alias");
+    }
+}
+
+#[test]
+fn first_row_integer_spill_preserves_null_payload() {
+    use crate::agg_func::BaseAggFunc;
+    use crate::func_first_row::{FirstRow, FirstRowKind};
+    use crate::spill_serialize_helper::SerializeHelper;
+
+    let function = FirstRow {
+        base: BaseAggFunc {
+            args: Vec::new(),
+            ordinal: 0,
+            ret_tp: FieldType::new(FieldTypeCode::LongLong),
+        },
+        kind: FirstRowKind::Int,
+    };
+    let fields = [FieldType::new(FieldTypeCode::Blob)];
+    let mut spill = Chunk::new_chunk_with_capacity(&fields, 1);
+    let mut cell = vec![1, 1];
+    cell.extend_from_slice(&i64::MIN.to_ne_bytes());
+    spill.append_bytes(0, &cell);
+
+    let (mut restored, _) = function.deserialize_partial_result(&spill);
+    let mut encoded = Chunk::new_chunk_with_capacity(&fields, 1);
+    function.serialize_partial_result(&mut restored[0], &mut encoded, &mut SerializeHelper::new());
+    assert_eq!(encoded.get_row(0).get_bytes(0).as_ref(), cell);
+    assert!(final_datum(&function, &mut restored[0], &function.base.ret_tp).is_null());
+}
+
+#[test]
+fn first_row_unsigned_integer_spill_keeps_the_full_value() {
+    let field = unsigned_longlong();
+    let fixture = AggTest::with_field_type("firstrow", field.clone(), 1, Vec::new());
+    let function = build(&NoColumns, &fixture.desc(false), 0).expect("FIRST_ROW is implemented");
+    let (mut state, _) = function.alloc_partial_result();
+    let mut input = Chunk::new_chunk_with_capacity(std::slice::from_ref(&field), 1);
+    input.append_uint64(0, u64::MAX);
+    update_each_row(function.as_ref(), &input, &mut state);
+
+    let fields = [FieldType::new(FieldTypeCode::Blob)];
+    let mut spill = Chunk::new_chunk_with_capacity(&fields, 1);
+    function.serialize_partial_result(
+        &mut state,
+        &mut spill,
+        &mut crate::spill_serialize_helper::SerializeHelper::new(),
+    );
+    let (mut restored, _) = function.deserialize_partial_result(&spill);
+    assert_datum_eq(
+        &final_datum(function.as_ref(), &mut restored[0], &field),
+        &Datum::UInt(u64::MAX),
+        "FIRST_ROW unsigned spill",
+    );
+}
+
+#[test]
+fn integer_max_min_spill_preserves_null_payload_until_reset() {
+    let fields = [FieldType::new(FieldTypeCode::Blob)];
+    for (name, field, value) in [
+        ("min", FieldType::new(FieldTypeCode::LongLong), i64::MIN.to_ne_bytes()),
+        ("max", unsigned_longlong(), u64::MAX.to_ne_bytes()),
+    ] {
+        let fixture = AggTest::with_field_type(name, field.clone(), 1, Vec::new());
+        let function = build(&NoColumns, &fixture.desc(false), 0).expect("MAX and MIN are implemented");
+        let mut spill = Chunk::new_chunk_with_capacity(&fields, 1);
+        let mut cell = [0; 9];
+        cell[0] = 1;
+        cell[1..].copy_from_slice(&value);
+        spill.append_bytes(0, &cell);
+        let (mut restored, _) = function.deserialize_partial_result(&spill);
+
+        let mut encoded = Chunk::new_chunk_with_capacity(&fields, 2);
+        let mut helper = crate::spill_serialize_helper::SerializeHelper::new();
+        function.serialize_partial_result(&mut restored[0], &mut encoded, &mut helper);
+        assert_eq!(encoded.get_row(0).get_bytes(0).as_ref(), cell);
+        assert!(final_datum(function.as_ref(), &mut restored[0], &field).is_null());
+
+        function.reset_partial_result(&mut restored[0]);
+        function.serialize_partial_result(&mut restored[0], &mut encoded, &mut helper);
+        assert_eq!(encoded.get_row(1).get_bytes(0).as_ref(), [1, 0, 0, 0, 0, 0, 0, 0, 0]);
+    }
+}
+
+#[test]
+fn unsigned_max_min_compares_across_the_signed_boundary() {
+    let field = unsigned_longlong();
+    let mut input = Chunk::new_chunk_with_capacity(std::slice::from_ref(&field), 2);
+    input.append_uint64(0, 1);
+    input.append_uint64(0, u64::MAX);
+    for (name, expected) in [("max", u64::MAX), ("min", 1)] {
+        let fixture = AggTest::with_field_type(name, field.clone(), 2, Vec::new());
+        let function = build(&NoColumns, &fixture.desc(false), 0).expect("MAX and MIN are implemented");
+        let (mut state, _) = function.alloc_partial_result();
+        update_each_row(function.as_ref(), &input, &mut state);
+        assert_datum_eq(
+            &final_datum(function.as_ref(), &mut state, &field),
+            &Datum::UInt(expected),
+            "unsigned MAX or MIN",
+        );
+    }
+}
+
 /// Go `aggTest`.
 struct AggTest {
     key_type: FieldType,
@@ -974,6 +1162,44 @@ fn bit_funcs_over_no_rows_answer_their_starting_values() {
         let ret_type = unsigned_longlong();
         assert_datum_eq(&final_datum(func.as_ref(), &mut pr, &ret_type), &Datum::UInt(expected), name);
     }
+}
+
+#[test]
+fn bit_funcs_fold_selected_rows_across_chunk_boundaries() {
+    let field = FieldType::new(FieldTypeCode::LongLong);
+    let mut first = Chunk::new_chunk_with_capacity(std::slice::from_ref(&field), 3);
+    first.append_int64(0, 1);
+    first.append_int64(0, -8);
+    first.append_int64(0, 4);
+    let alias = first.column_handle(0);
+
+    let mut second = Chunk::new_chunk_with_capacity(std::slice::from_ref(&field), 2);
+    second.append_null(0);
+    second.append_int64(0, 2);
+    let rows = [
+        first.get_row(2),
+        first.get_row(0),
+        first.get_row(2),
+        second.get_row(0),
+        second.get_row(1),
+        first.get_row(1),
+    ];
+
+    for (name, expected) in [("bit_and", 0), ("bit_or", u64::MAX), ("bit_xor", (-5_i64) as u64)] {
+        let fixture = AggTest::with_field_type(name, field.clone(), rows.len(), Vec::new());
+        let func = build(&NoColumns, &fixture.desc(false), 0).unwrap();
+        let (mut partial, _) = func.alloc_partial_result();
+        func.update_partial_result(&NoColumns, &rows, &mut partial).unwrap();
+        assert_eq!(final_datum(func.as_ref(), &mut partial, &unsigned_longlong()), Datum::UInt(expected), "{name}");
+        if let Some(sliding) = func.as_sliding_window() {
+            func.reset_partial_result(&mut partial);
+            func.update_partial_result(&NoColumns, &rows[..5], &mut partial).unwrap();
+            let get_row = |index| Ok(rows[index as usize]);
+            sliding.slide(&NoColumns, &get_row, 0, 5, 2, 1, &mut partial).unwrap();
+            assert_eq!(final_datum(func.as_ref(), &mut partial, &unsigned_longlong()), Datum::UInt((-2_i64) as u64));
+        }
+    }
+    drop(alias);
 }
 
 /// Go `TestMergePartialResult4Varpop`, `...4Varsamp`, `...4Stddevpop` and

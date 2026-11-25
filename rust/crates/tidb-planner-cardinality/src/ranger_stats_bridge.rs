@@ -218,8 +218,8 @@ mod tests {
             (Datum::UInt(u64::MAX - 1), Datum::UInt(u64::MAX), 250.0),
         ] {
             let ranges = vec![tidb_ranger::types::Range {
-                low_val: vec![low],
-                high_val: vec![high],
+                low_val: vec![low].into(),
+                high_val: vec![high].into(),
                 collators: vec![tidb_charset::Collation::Binary],
                 low_exclude: false,
                 high_exclude: false,

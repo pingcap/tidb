@@ -35,19 +35,6 @@ pub struct Version {
     pub metadata: String,
 }
 
-/// Go `splitOff`: the part after the first `delim`, leaving the part
-/// before it in `input`.
-fn split_off(input: &mut String, delim: char) -> String {
-    match input.split_once(delim) {
-        Some((head, tail)) => {
-            let tail = tail.to_owned();
-            *input = head.to_owned();
-            tail
-        }
-        None => String::new(),
-    }
-}
-
 /// Go `New`: panics on an invalid version.
 #[must_use]
 pub fn new(version: &str) -> Version {
@@ -80,24 +67,23 @@ impl Version {
     /// Go's error texts: not dotted-tri, an invalid pre-release or metadata
     /// identifier, or `strconv.ParseInt`'s error for a field.
     pub fn set(&mut self, version: &str) -> Result<(), String> {
-        let mut version = version.to_owned();
-        let metadata = split_off(&mut version, '+');
-        let pre_release = split_off(&mut version, '-');
-        let dot_parts: Vec<&str> = version.splitn(3, '.').collect();
-        if dot_parts.len() != 3 {
+        let (version, metadata) = version.split_once('+').unwrap_or((version, ""));
+        let (version, pre_release) = version.split_once('-').unwrap_or((version, ""));
+        let mut parts = version.splitn(3, '.');
+        let (Some(major), Some(minor), Some(patch)) = (parts.next(), parts.next(), parts.next()) else {
             return Err(format!("{version} is not in dotted-tri format"));
-        }
-        validate_identifier(&pre_release).map_err(|e| format!("failed to validate pre-release: {e}"))?;
-        validate_identifier(&metadata).map_err(|e| format!("failed to validate metadata: {e}"))?;
+        };
+        validate_identifier(pre_release).map_err(|e| format!("failed to validate pre-release: {e}"))?;
+        validate_identifier(metadata).map_err(|e| format!("failed to validate metadata: {e}"))?;
         let mut parsed = [0_i64; 3];
-        for (i, part) in dot_parts.iter().enumerate() {
+        for (i, part) in [major, minor, patch].into_iter().enumerate() {
             match tidb_go_strconv::parse_int(part, 10, 64) {
                 Ok(val) => parsed[i] = val,
-                Err((_, err)) => return Err(err.to_string()),
+                Err((_, err)) => return Err(err.error()),
             }
         }
-        self.metadata = metadata;
-        self.pre_release = pre_release;
+        metadata.clone_into(&mut self.metadata);
+        pre_release.clone_into(&mut self.pre_release);
         self.major = parsed[0];
         self.minor = parsed[1];
         self.patch = parsed[2];
@@ -200,9 +186,29 @@ fn pre_release_compare(a: &Version, b: &Version) -> i32 {
     } else if b.is_empty() && !a.is_empty() {
         return -1;
     }
-    let a: Vec<&str> = a.split('.').collect();
-    let b: Vec<&str> = b.split('.').collect();
-    recursive_pre_release_compare(&a, &b)
+    if a == b {
+        return 0;
+    }
+    let mut a = a.split('.');
+    let mut b = b.split('.');
+    loop {
+        match (a.next(), b.next()) {
+            (Some(x), Some(y)) if x == y => continue,
+            (Some(x), Some(y)) => {
+                // Go compares equal numeric values by their original spelling.
+                let order = match (x.parse::<i64>(), y.parse::<i64>()) {
+                    (Ok(xi), Ok(yi)) => xi.cmp(&yi).then_with(|| x.cmp(y)),
+                    (Ok(_), Err(_)) => Ordering::Less,
+                    (Err(_), Ok(_)) => Ordering::Greater,
+                    (Err(_), Err(_)) => x.cmp(y),
+                };
+                return order as i32;
+            }
+            (Some(_), None) => return 1,
+            (None, Some(_)) => return -1,
+            (None, None) => return 0,
+        }
+    }
 }
 
 /// Go `recursiveCompare`.
@@ -215,38 +221,6 @@ fn recursive_compare(a: &[i64], b: &[i64]) -> i32 {
         }
     }
     0
-}
-
-/// Go `strconv.Atoi` on a 64-bit platform.
-fn atoi(s: &str) -> Option<i64> {
-    tidb_go_strconv::parse_int(s, 10, 64).ok()
-}
-
-/// Go `recursivePreReleaseCompare`.
-fn recursive_pre_release_compare(a: &[&str], b: &[&str]) -> i32 {
-    match (a.first(), b.first()) {
-        (None, None) => 0,
-        (None, Some(_)) => -1,
-        (Some(_), None) => 1,
-        (Some(x), Some(y)) => {
-            let (xi, yi) = (atoi(x), atoi(y));
-            match (xi, yi) {
-                (Some(_), None) => return -1,
-                (None, Some(_)) => return 1,
-                (Some(xi), Some(yi)) => match xi.cmp(&yi) {
-                    Ordering::Greater => return 1,
-                    Ordering::Less => return -1,
-                    Ordering::Equal => {}
-                },
-                (None, None) => {}
-            }
-            match x.cmp(y) {
-                Ordering::Greater => 1,
-                Ordering::Less => -1,
-                Ordering::Equal => recursive_pre_release_compare(&a[1..], &b[1..]),
-            }
-        }
-    }
 }
 
 /// Go `validateIdentifier`: `^[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*$` or empty.

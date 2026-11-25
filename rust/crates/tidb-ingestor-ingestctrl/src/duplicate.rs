@@ -273,7 +273,7 @@ pub fn convert_to_err_found_conflict_records(
     tbl: &tidb_table::tables::TableCommon,
 ) -> Option<Error> {
     let (key, value) = retrieve_key_and_value_from_err_found_duplicate_keys(error)?;
-    Some(new_err_found_conflict_records(&key, &value, tbl))
+    Some(new_err_found_conflict_records(&key, value, tbl))
 }
 
 /// Go `kv.NewTableKVDecoder`'s session: `SQLMode: mysql.ModeStrictAllTables`.
@@ -295,7 +295,7 @@ fn handle_string(handle: &tidb_table::tables::TableHandle) -> String {
 
 /// Go `newErrFoundConflictRecords`: the error for a duplicated data or
 /// index KV.
-fn new_err_found_conflict_records(key: &[u8], value: &[u8], tbl: &tidb_table::tables::TableCommon) -> Error {
+fn new_err_found_conflict_records(key: &[u8], value: Vec<u8>, tbl: &tidb_table::tables::TableCommon) -> Error {
     let table_name = tbl.meta().read().name.original().to_owned();
     if tidb_tablecodec::is_record_key(key) {
         // For a data KV.
@@ -311,7 +311,7 @@ fn new_err_found_conflict_records(key: &[u8], value: &[u8], tbl: &tidb_table::ta
         let session = decoder_session();
         let offsets: Vec<usize> = (0..tbl.columns().len()).collect();
         let row_data = tbl
-            .decode_raw_row_data(session.context(), &handle, &offsets, value)
+            .decode_owned_raw_row_data(session.context(), &handle, &offsets, value)
             .map_err(|error| error.into_mysql_error().to_string())
             .and_then(|row: Vec<tidb_datatype::Datum>| {
                 tidb_datatype::datums_to_string(&row, true, false).map_err(|error| error.to_string())
@@ -332,7 +332,7 @@ fn new_err_found_conflict_records(key: &[u8], value: &[u8], tbl: &tidb_table::ta
         // Go dereferences the missing index; report it instead.
         return Error::Other(format!("index {index_id} of table {table_name} not found"));
     };
-    new_err_found_index_conflict_records(key, value, tbl, index)
+    new_err_found_index_conflict_records(key, &value, tbl, index)
 }
 
 /// Go `newErrFoundIndexConflictRecords`.

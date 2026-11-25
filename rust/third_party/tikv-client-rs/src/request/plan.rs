@@ -1,5 +1,7 @@
 // Copyright 2021 TiKV Project Authors. Licensed under Apache-2.0.
 
+use std::any::TypeId;
+use std::borrow::Cow;
 use std::marker::PhantomData;
 use std::ops::ControlFlow;
 use std::sync::atomic::AtomicI64;
@@ -74,6 +76,12 @@ pub trait Plan: Sized + Clone + Sync + Send + 'static {
 
     /// Execute the plan.
     async fn execute(&self) -> Result<Self::Result>;
+
+    /// Send one physical attempt on a plan owned by the retry runner.
+    #[doc(hidden)]
+    fn execute_attempt(&mut self) -> futures::future::BoxFuture<'_, Result<Self::Result>> {
+        self.execute()
+    }
 
     /// Attach the source snapshot's lock-resolution hints to an imminent
     /// physical read. Plans that do not end in a TiKV context request retain
@@ -394,6 +402,58 @@ impl<Req: KvRequest> Plan for Dispatch<Req> {
     type Result = Req::Response;
 
     async fn execute(&self) -> Result<Self::Result> {
+        let _store_token = self.acquire_dispatch_token().await?;
+        let mut request = self.request.clone();
+        if let Some(prepare) = &self.request_preparer {
+            prepare(&mut request)?;
+        }
+        let context = self.dispatch_context(&request);
+        request.attach_context(context);
+        self.send_physical(Cow::Owned(request)).await
+    }
+
+    fn execute_attempt(&mut self) -> futures::future::BoxFuture<'_, Result<Self::Result>> {
+        if TypeId::of::<Req>() != TypeId::of::<crate::proto::coprocessor::Request>()
+            || self.request_preparer.is_some()
+        {
+            return self.execute();
+        }
+        Box::pin(async move {
+            let _store_token = self.acquire_dispatch_token().await?;
+            let context = self.dispatch_context(&self.request);
+            let original = self.coprocessor_context_mut().take();
+            let attempt = CoprocessorAttempt {
+                dispatch: self,
+                original,
+            };
+            attempt.dispatch.request.attach_context(context);
+            attempt
+                .dispatch
+                .send_physical(Cow::Borrowed(&attempt.dispatch.request))
+                .await
+        })
+    }
+
+    fn set_read_lock_context(&mut self, resolved_locks: Vec<u64>, committed_locks: Vec<u64>) {
+        self.request.set_resolved_locks(resolved_locks);
+        self.request.set_committed_locks(committed_locks);
+    }
+}
+
+/// Restores the logical context after each attempt, including cancellation.
+struct CoprocessorAttempt<'a, Req: KvRequest> {
+    dispatch: &'a mut Dispatch<Req>,
+    original: Option<kvrpcpb::Context>,
+}
+
+impl<Req: KvRequest> Drop for CoprocessorAttempt<'_, Req> {
+    fn drop(&mut self) {
+        *self.dispatch.coprocessor_context_mut() = self.original.take();
+    }
+}
+
+impl<Req: KvRequest> Dispatch<Req> {
+    async fn acquire_dispatch_token(&self) -> Result<Option<crate::store::StoreToken>> {
         if let Some(validation) = &self.read_timestamp_validation {
             validation
                 .validator
@@ -411,7 +471,7 @@ impl<Req: KvRequest> Plan for Dispatch<Req> {
         } else {
             self.forwarded_host.as_str()
         };
-        let _store_token = (store_token_limit > 0)
+        (store_token_limit > 0)
             .then(|| {
                 crate::store::StoreToken::acquire(
                     self.store_token_count.clone(),
@@ -420,19 +480,28 @@ impl<Req: KvRequest> Plan for Dispatch<Req> {
                     store_token_limit,
                 )
             })
-            .transpose()?;
-        let mut request = self.request.clone();
-        if let Some(prepare) = &self.request_preparer {
-            prepare(&mut request)?;
+            .transpose()
+    }
+
+    fn dispatch_context(&self, request: &Req) -> kvrpcpb::Context {
+        let mut context = request.tikv_context().cloned().unwrap_or_default();
+        if let Some(trace_id) = self.trace_context.trace_id().filter(|id| !id.is_empty()) {
+            context.trace_id = trace_id.to_vec();
         }
-        let mut tikv_context = request.tikv_context().cloned().unwrap_or_default();
-        if let Some(trace_id) = self.trace_context.trace_id() {
-            if !trace_id.is_empty() {
-                tikv_context.trace_id = trace_id.to_vec();
-            }
-        }
-        tikv_context.trace_control_flags = crate::trace::trace_control_flags(&self.trace_context).0;
-        request.attach_context(tikv_context);
+        context.trace_control_flags = crate::trace::trace_control_flags(&self.trace_context).0;
+        context
+    }
+
+    fn coprocessor_context_mut(&mut self) -> &mut Option<kvrpcpb::Context> {
+        &mut self
+            .request
+            .as_any_mut()
+            .downcast_mut::<crate::proto::coprocessor::Request>()
+            .expect("coprocessor dispatch request")
+            .context
+    }
+
+    async fn send_physical(&self, mut request: Cow<'_, Req>) -> Result<Req::Response> {
         let resource_control = self
             .resource_control
             .clone()
@@ -440,7 +509,7 @@ impl<Req: KvRequest> Plan for Dispatch<Req> {
         let selected_resource_control = resource_control.as_ref().and_then(|controller| {
             crate::resource_control::select(
                 controller,
-                &request,
+                request.as_ref(),
                 self.resource_control_replica_number,
                 self.resource_control_access_location,
                 self.predicted_read_bytes,
@@ -468,7 +537,7 @@ impl<Req: KvRequest> Plan for Dispatch<Req> {
                 &self.trace_context,
                 crate::trace::Category::KvRequest,
                 "kv.request.send",
-                &request_trace_fields(self, &request),
+                &request_trace_fields(self, request.as_ref()),
             );
         }
         let started_at = Instant::now();
@@ -482,6 +551,7 @@ impl<Req: KvRequest> Plan for Dispatch<Req> {
                     if let Some(ru_details) = self.ru_details() {
                         ru_details.update(&result.consumption, result.wait_duration);
                     }
+                    let request = request.to_mut();
                     request.set_resource_control_penalty(result.penalty);
                     request.set_resource_control_priority_if_unset(result.priority);
                 }),
@@ -501,7 +571,7 @@ impl<Req: KvRequest> Plan for Dispatch<Req> {
                 let dispatch = crate::trace::with_rpc_send_async(
                     async_first_send,
                     client.dispatch_with_timeout_and_forwarded_host(
-                        &request,
+                        request.as_ref(),
                         self.request_timeout,
                         &self.forwarded_host,
                     ),
@@ -528,7 +598,7 @@ impl<Req: KvRequest> Plan for Dispatch<Req> {
         };
         let result = match admission_result {
             Ok(()) => match &interceptor {
-                Some(interceptor) => interceptor.dispatch(&self.target, &request, next).await,
+                Some(interceptor) => interceptor.dispatch(&self.target, request.as_ref(), next).await,
                 None => next().await,
             },
             Err(error) => Err(error),
@@ -572,9 +642,9 @@ impl<Req: KvRequest> Plan for Dispatch<Req> {
                 .clone()
                 .or_else(crate::traffic::current_network_traffic_details),
         };
-        network_collector.on_request(&request);
+        let request_size = network_collector.on_request(request.as_ref());
         if let Ok(response) = &result {
-            network_collector.on_response(&request, response.as_ref());
+            network_collector.on_response(request.as_ref(), response.as_ref(), request_size);
         }
         let result = match result {
             Ok(response) => match selected_resource_control {
@@ -678,18 +748,18 @@ impl<Req: KvRequest> Plan for Dispatch<Req> {
             let mut response = *r
                 .downcast()
                 .expect("Downcast failed: request and response type mismatch");
-            let request_info =
-                crate::resource_control::RequestInfo::from_store_request(&self.request);
-            if !request_info.bypass
-                && self.physical_endpoint_type == crate::store::EndpointType::TiKv
-            {
-                let (read_rpc_count, write_rpc_count) = if request_info.is_write() {
+            let exec_details = crate::store::exec_details_v2_mut(&mut response);
+            if let Some(details) = exec_details.filter(|_| {
+                self.physical_endpoint_type == crate::store::EndpointType::TiKv
+                    && !crate::resource_control::should_bypass(&self.request)
+            }) {
+                let (read_rpc_count, write_rpc_count) = if self.request.is_resource_control_write() {
                     (0, 1)
                 } else {
                     (1, 0)
                 };
                 crate::config::update_tikv_ru_v2_from_exec_details_v2(
-                    crate::store::exec_details_v2_mut(&mut response),
+                    Some(details),
                     read_rpc_count,
                     write_rpc_count,
                     self.ru_details().map(Arc::as_ref),
@@ -701,11 +771,6 @@ impl<Req: KvRequest> Plan for Dispatch<Req> {
                 .decode_v1_response(&mut response, self.v1_response_codec.as_ref())?;
             Ok(response)
         })
-    }
-
-    fn set_read_lock_context(&mut self, resolved_locks: Vec<u64>, committed_locks: Vec<u64>) {
-        self.request.set_resolved_locks(resolved_locks);
-        self.request.set_committed_locks(committed_locks);
     }
 }
 
@@ -1881,7 +1946,7 @@ where
         // limit concurrent requests
         let permit = permits.acquire().await.unwrap();
         let rpc_started_at = Instant::now();
-        let res = plan.execute().await;
+        let res = plan.execute_attempt().await;
         let rpc_duration = rpc_started_at.elapsed();
         drop(permit);
 
@@ -4288,6 +4353,40 @@ mod test {
     }
 
     struct ResetTraceHandlers;
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn cancelled_coprocessor_attempt_restores_the_logical_context() {
+        let mut interceptor = RpcInterceptorChain::default();
+        interceptor.link(crate::interceptor::new_rpc_interceptor(
+            "pause coprocessor send",
+            |_, request, _| {
+                assert_eq!(
+                    request.tikv_context().unwrap().trace_control_flags,
+                    crate::trace::TraceControlFlags::TIKV_CATEGORY_REQUEST.0
+                );
+                Box::pin(std::future::poll_fn(|_| std::task::Poll::Pending))
+            },
+        ));
+        let mut plan = PlanBuilder::new(
+            Arc::new(MockPdClient::default()),
+            Keyspace::Disable,
+            crate::proto::coprocessor::Request::default(),
+        )
+        .rpc_interceptor(interceptor)
+        .single_region_with_store(RegionStore::new(
+            MockPdClient::region1(),
+            Arc::new(MockKvClient::default()),
+        ))
+        .await
+        .unwrap()
+        .plan();
+        let original = plan.request.context.clone();
+        let mut attempt = plan.execute_attempt();
+        assert!(futures::poll!(&mut attempt).is_pending());
+        drop(attempt);
+        assert_eq!(plan.request.context, original);
+    }
 
     impl Drop for ResetTraceHandlers {
         fn drop(&mut self) {

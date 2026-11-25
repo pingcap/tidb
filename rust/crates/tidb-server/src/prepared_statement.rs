@@ -18,6 +18,8 @@
 //! authority. Typed values are derived only after that split, matching Go's
 //! `parseBinaryParams` -> `expression.ExecBinaryParam` boundary.
 
+use std::borrow::Cow;
+
 use tidb_param::PreparedValue;
 use tidb_server_internal_dump::append_length_encoded_bytes;
 use tidb_server_internal_dump::append_length_encoded_int;
@@ -25,6 +27,7 @@ use crate::resultset::encode_eof_packet;
 use tidb_server_internal_column::ColumnInfo;
 use crate::resultset::EofPacket;
 use crate::resultset::ResultSetOptions;
+use crate::resultset_stream::finish_cell_prefix;
 use tidb_server_internal_column::DEFAULT_COLLATION_ID;
 use tidb_server_internal_column::TYPE_BIT;
 use tidb_server_internal_column::TYPE_BLOB;
@@ -53,7 +56,7 @@ use crate::binary_params::TYPE_UNSPECIFIED;
 use tidb_server_internal_column::TYPE_VARCHAR;
 use tidb_server_internal_column::TYPE_VAR_STRING;
 use tidb_format_textrow::TYPE_YEAR;
-use tidb_datatype::{Decimal, PackedTime};
+use tidb_datatype::{BinaryJSON, Decimal, PackedTime};
 
 /// MySQL binary-protocol type tag for a signed or unsigned 64-bit integer.
 pub const MYSQL_TYPE_LONGLONG: u8 = 0x08;
@@ -289,11 +292,11 @@ pub struct PreparedStatementExecutePacket<'a> {
     cursor_flags: u8,
     parameter_types: PreparedParameterTypes,
     types: Vec<PreparedParameterType>,
-    null_bitmap: Vec<u8>,
+    null_bitmap: &'a [u8],
     parameter_values: &'a [u8],
 }
 
-impl PreparedStatementExecutePacket<'_> {
+impl<'a> PreparedStatementExecutePacket<'a> {
     /// Returns the statement handle carried by the packet.
     #[must_use]
     pub const fn statement_id(&self) -> u32 {
@@ -312,20 +315,44 @@ impl PreparedStatementExecutePacket<'_> {
         bound_params: &[Option<Vec<u8>>],
         input_charset: &str,
     ) -> Result<PreparedStatementExecute, PreparedStatementError> {
+        self.decode_with_bound_params(
+            bound_params.iter().map(|bound| bound.as_deref().map(Cow::Borrowed)),
+            input_charset,
+        )
+    }
+
+    pub(crate) fn decode_with_owned_bound_params(
+        self,
+        bound_params: Vec<Option<Vec<u8>>>,
+        input_charset: &str,
+    ) -> Result<PreparedStatementExecute, PreparedStatementError> {
+        self.decode_with_bound_params(
+            bound_params.into_iter().map(|bound| bound.map(Cow::Owned)),
+            input_charset,
+        )
+    }
+
+    fn decode_with_bound_params<'b>(
+        self,
+        bound_params: impl Iterator<Item = Option<Cow<'b, [u8]>>>,
+        input_charset: &str,
+    ) -> Result<PreparedStatementExecute, PreparedStatementError>
+    where
+        'a: 'b,
+    {
         let mut encoded_types = Vec::with_capacity(self.types.len() * 2);
         for parameter_type in &self.types {
             encoded_types.push(parameter_type.type_code());
             encoded_types.push(parameter_type.wire_flags());
         }
-        let bound_params: Vec<Option<&[u8]>> =
-            bound_params.iter().map(|bound| bound.as_deref()).collect();
-        let values = crate::binary_params::parse_binary_params(
+        let values = crate::binary_params::split_binary_params(
             self.types.len(),
-            &bound_params,
-            &self.null_bitmap,
+            bound_params,
+            self.null_bitmap,
             &encoded_types,
             self.parameter_values,
             input_charset,
+            std::convert::identity,
         )?
         .into_iter()
         .map(prepared_value_from_binary_param)
@@ -365,9 +392,7 @@ pub fn split_prepared_statement_execute<'a>(
         return Err(PreparedStatementError::UnsupportedCursorFlag(cursor_flags));
     }
     let _iteration_count = cursor.read_u32("iteration count")?;
-    let null_bitmap = cursor
-        .read_exact(parameter_count.div_ceil(8), "null bitmap")?
-        .to_vec();
+    let null_bitmap = cursor.read_exact(parameter_count.div_ceil(8), "null bitmap")?;
 
     if parameter_count == 0 {
         return Ok(PreparedStatementExecutePacket {
@@ -435,7 +460,7 @@ pub fn decode_prepared_statement_execute_with_bound_params(
 }
 
 fn prepared_value_from_binary_param(
-    parameter: tidb_param::BinaryParam,
+    parameter: tidb_param::BinaryParam<Cow<'_, [u8]>>,
 ) -> Result<PreparedValue, PreparedStatementError> {
     if parameter.tp == crate::binary_params::TYPE_NULL {
         return Ok(PreparedValue::Null);
@@ -492,12 +517,12 @@ fn prepared_value_from_binary_param(
             PreparedValue::Temporal(render_binary_datetime(&parameter.val)?)
         }
         TYPE_DURATION => PreparedValue::Temporal(render_binary_duration(&parameter.val)?),
-        TYPE_NEW_DECIMAL => PreparedValue::Decimal(parameter.val),
+        TYPE_NEW_DECIMAL => PreparedValue::Decimal(parameter.val.into_owned()),
         TYPE_BLOB | TYPE_TINY_BLOB | TYPE_MEDIUM_BLOB | TYPE_LONG_BLOB => {
-            PreparedValue::Bytes(parameter.val)
+            PreparedValue::Bytes(parameter.val.into_owned())
         }
         TYPE_UNSPECIFIED | TYPE_VARCHAR | TYPE_VAR_STRING | TYPE_STRING | TYPE_ENUM | TYPE_SET
-        | TYPE_GEOMETRY | TYPE_BIT => PreparedValue::String(parameter.val),
+        | TYPE_GEOMETRY | TYPE_BIT => PreparedValue::String(parameter.val.into_owned()),
         type_code => {
             return Err(crate::binary_params::BinaryParamError::UnknownFieldType { type_code }.into());
         }
@@ -654,6 +679,12 @@ pub fn encode_binary_signed_longlong_row(values: &[i64]) -> Vec<u8> {
 /// when there is no fractional part).
 #[must_use]
 pub fn encode_binary_time(nanoseconds: i64) -> Vec<u8> {
+    let mut data = Vec::new();
+    append_binary_time(&mut data, nanoseconds);
+    data
+}
+
+fn append_binary_time(output: &mut Vec<u8>, nanoseconds: i64) {
     const NS_PER_MICRO: i64 = 1_000;
     const NS_PER_SECOND: i64 = 1_000_000_000;
     const NS_PER_MINUTE: i64 = 60 * NS_PER_SECOND;
@@ -661,9 +692,10 @@ pub fn encode_binary_time(nanoseconds: i64) -> Vec<u8> {
     const NS_PER_DAY: i64 = 24 * NS_PER_HOUR;
 
     if nanoseconds == 0 {
-        return vec![0];
+        output.push(0);
+        return;
     }
-    let mut data = vec![0u8; 13];
+    let mut data = [0u8; 13];
     data[0] = 12;
     let mut remaining = nanoseconds;
     if remaining < 0 {
@@ -684,12 +716,12 @@ pub fn encode_binary_time(nanoseconds: i64) -> Vec<u8> {
     data[8] = seconds as u8;
     if remaining == 0 {
         data[0] = 8;
-        data.truncate(9);
-        return data;
+        output.extend_from_slice(&data[..9]);
+        return;
     }
     let micros = (remaining / NS_PER_MICRO) as u32;
     data[9..13].copy_from_slice(&micros.to_le_bytes());
-    data
+    output.extend_from_slice(&data);
 }
 
 /// The temporal field type that selects `dump.BinaryDateTime`'s output shape.
@@ -721,53 +753,43 @@ pub enum BinaryDateTimeType {
 /// body otherwise, ignoring every time field exactly as Go does.
 #[must_use]
 pub fn encode_binary_datetime(time: PackedTime, kind: BinaryDateTimeType) -> Vec<u8> {
-    // Date renders date-only regardless of any time bits, so the two field-type
-    // groups collapse to "may the time be emitted?" — the zero and date-only
-    // shapes are shared, matching Go's two switch arms.
-    let parts = time.parts();
+    let mut data = Vec::new();
+    append_binary_datetime(&mut data, time, kind);
+    data
+}
+
+fn append_binary_datetime(output: &mut Vec<u8>, time: PackedTime, kind: BinaryDateTimeType) {
     if time.is_zero() {
-        return vec![0];
+        output.push(0);
+        return;
     }
-    let date_only = |length: u8| {
-        let mut data = Vec::with_capacity(5);
-        data.push(length);
-        data.extend_from_slice(&parts.year.to_le_bytes());
-        data.extend_from_slice(&[parts.month, parts.day]);
-        data
+    let parts = time.parts();
+    let length = if kind == BinaryDateTimeType::Date {
+        4
+    } else if parts.microsecond != 0 {
+        11
+    } else if parts.hour != 0 || parts.minute != 0 || parts.second != 0 {
+        7
+    } else {
+        4
     };
-    match kind {
-        BinaryDateTimeType::Date => date_only(4),
-        BinaryDateTimeType::Datetime | BinaryDateTimeType::Timestamp => {
-            if parts.microsecond != 0 {
-                let mut data = Vec::with_capacity(12);
-                data.push(11);
-                data.extend_from_slice(&parts.year.to_le_bytes());
-                data.extend_from_slice(&[
-                    parts.month,
-                    parts.day,
-                    parts.hour,
-                    parts.minute,
-                    parts.second,
-                ]);
-                data.extend_from_slice(&parts.microsecond.to_le_bytes());
-                data
-            } else if parts.hour != 0 || parts.minute != 0 || parts.second != 0 {
-                let mut data = Vec::with_capacity(8);
-                data.push(7);
-                data.extend_from_slice(&parts.year.to_le_bytes());
-                data.extend_from_slice(&[
-                    parts.month,
-                    parts.day,
-                    parts.hour,
-                    parts.minute,
-                    parts.second,
-                ]);
-                data
-            } else {
-                date_only(4)
-            }
-        }
-    }
+    let [year_lo, year_hi] = parts.year.to_le_bytes();
+    let [us0, us1, us2, us3] = parts.microsecond.to_le_bytes();
+    let cell = [
+        length as u8,
+        year_lo,
+        year_hi,
+        parts.month,
+        parts.day,
+        parts.hour,
+        parts.minute,
+        parts.second,
+        us0,
+        us1,
+        us2,
+        us3,
+    ];
+    output.extend_from_slice(&cell[..length + 1]);
 }
 
 /// One non-null cell of a binary result row.
@@ -885,7 +907,7 @@ fn encode_binary_result_row_inner(
                             metadata.charset
                         };
                     if encoder.update_data_encoding(collation).is_ok() {
-                        if let Ok(bytes) = encoder.encode_data(bytes) {
+                        if let Ok(bytes) = encoder.encode_data_cow(bytes) {
                             append_length_encoded_bytes(&mut encoded, Some(&bytes));
                             continue;
                         }
@@ -898,10 +920,10 @@ fn encode_binary_result_row_inner(
             // both write a length-prefixed body of their own, not a
             // length-encoded string, so the bytes append verbatim.
             BinaryResultCell::Datetime(packed, kind) => {
-                encoded.extend_from_slice(&encode_binary_datetime(*packed, *kind));
+                append_binary_datetime(&mut encoded, *packed, *kind);
             }
             BinaryResultCell::Duration(nanoseconds) => {
-                encoded.extend_from_slice(&encode_binary_time(*nanoseconds));
+                append_binary_time(&mut encoded, *nanoseconds);
             }
         }
     }
@@ -953,10 +975,10 @@ fn encode_binary_result_row_owned_inner(
                 append_length_encoded_bytes(encoded, Some(&bytes));
             }
             BinaryResultCell::Datetime(packed, kind) => {
-                encoded.extend_from_slice(&encode_binary_datetime(packed, kind));
+                append_binary_datetime(encoded, packed, kind);
             }
             BinaryResultCell::Duration(nanoseconds) => {
-                encoded.extend_from_slice(&encode_binary_time(nanoseconds));
+                append_binary_time(encoded, nanoseconds);
             }
         }
     }
@@ -1062,6 +1084,7 @@ pub struct BinaryResultSetStream {
     /// Prepared executions reuse the same column metadata shape, so looking up
     /// a collation for every row would only repeat immutable work.
     data_encodings: Vec<Option<tidb_format_textrow::result_encoder::ResultEncoder>>,
+    bulk_bigints: bool,
     state: BinaryResultSetState,
 }
 
@@ -1118,10 +1141,13 @@ impl BinaryResultSetStream {
                 }
             })
             .collect();
+        let bulk_bigints = columns.len() >= 16
+            && columns.iter().all(|column| column.type_code == TYPE_LONGLONG);
         Ok(Self {
             columns,
             options,
             data_encodings,
+            bulk_bigints,
             state: BinaryResultSetState::Initial,
         })
     }
@@ -1278,34 +1304,58 @@ impl BinaryResultSetStream {
             });
         }
         encoded.clear();
-        encoded.resize(1 + (row.len() + 7 + 2) / 8, 0);
-        for (index, column) in self.columns.iter().enumerate() {
-            if row.is_null(index) {
+        let header_len = 1 + (row.len() + 7 + 2) / 8;
+        encoded.resize(header_len, 0);
+        let Some(chunk) = row.chunk() else {
+            return Ok(());
+        };
+        let row_index = row.idx();
+        if self.bulk_bigints {
+            encoded.resize(header_len + self.columns.len() * 8, 0);
+            let (header, body) = encoded.split_at_mut(header_len);
+            let mut cells = body.as_chunks_mut::<8>().0.iter_mut();
+            for (index, values) in chunk.column_reads().enumerate() {
+                if values.is_null(row_index) {
+                    let bit = index + 2;
+                    header[1 + bit / 8] |= 1 << (bit % 8);
+                } else {
+                    *cells.next().expect("space for one value per column") =
+                        values.get_uint64(row_index).to_le_bytes();
+                }
+            }
+            let body_len = (self.columns.len() - cells.len()) * 8;
+            encoded.truncate(header_len + body_len);
+            return Ok(());
+        }
+        for (index, (column, values)) in self.columns.iter().zip(chunk.column_reads()).enumerate() {
+            if values.is_null(row_index) {
                 let bit = index + 2;
                 encoded[1 + bit / 8] |= 1 << (bit % 8);
                 continue;
             }
             match column.type_code {
-                TYPE_TINY => encoded.push(row.get_int64(index) as u8),
+                TYPE_TINY => encoded.push(values.get_int64(row_index) as u8),
                 TYPE_SHORT | TYPE_YEAR => {
-                    encoded.extend_from_slice(&(row.get_int64(index) as u16).to_le_bytes())
+                    encoded.extend_from_slice(&(values.get_int64(row_index) as u16).to_le_bytes())
                 }
                 TYPE_INT24 | TYPE_LONG => {
-                    encoded.extend_from_slice(&(row.get_int64(index) as u32).to_le_bytes())
+                    encoded.extend_from_slice(&(values.get_int64(row_index) as u32).to_le_bytes())
                 }
-                TYPE_LONGLONG => encoded.extend_from_slice(&row.get_uint64(index).to_le_bytes()),
+                TYPE_LONGLONG => encoded.extend_from_slice(&values.get_uint64(row_index).to_le_bytes()),
                 TYPE_FLOAT => {
-                    encoded.extend_from_slice(&row.get_float32(index).to_bits().to_le_bytes())
+                    encoded.extend_from_slice(&values.get_float32(row_index).to_bits().to_le_bytes())
                 }
                 TYPE_DOUBLE => {
-                    encoded.extend_from_slice(&row.get_float64(index).to_bits().to_le_bytes())
+                    encoded.extend_from_slice(&values.get_float64(row_index).to_bits().to_le_bytes())
                 }
-                TYPE_NEW_DECIMAL => append_length_encoded_bytes(
-                    encoded,
-                    Some(&row.get_my_decimal(index).to_result_string_bytes()),
-                ),
+                TYPE_NEW_DECIMAL => {
+                    let start = encoded.len();
+                    encoded.push(0);
+                    values.get_my_decimal(row_index).append_result_string_bytes(encoded);
+                    finish_cell_prefix(encoded, start, start + 1);
+                }
                 TYPE_DATE | TYPE_DATETIME | TYPE_TIMESTAMP => {
-                    let time = row.get_time(index);
+                    let time = values.get_time(row_index);
                     let kind = match time.kind() {
                         tidb_datatype::TimeType::Date => BinaryDateTimeType::Date,
                         tidb_datatype::TimeType::DateTime => BinaryDateTimeType::Datetime,
@@ -1317,18 +1367,20 @@ impl BinaryResultSetStream {
                             type_code: column.type_code,
                         }
                     })?;
-                    encoded.extend_from_slice(&encode_binary_datetime(
-                        PackedTime::from_raw(packed),
-                        kind,
-                    ));
+                    append_binary_datetime(encoded, PackedTime::from_raw(packed), kind);
                 }
-                TYPE_DURATION => encoded.extend_from_slice(&encode_binary_time(
-                    row.get_duration(index, 0).nanoseconds(),
-                )),
+                TYPE_DURATION => append_binary_time(encoded, values.get_duration(row_index, 0).nanoseconds()),
+                TYPE_JSON if self.options.result_encoder.can_skip_data_encoding(DEFAULT_COLLATION_ID) => {
+                    let start = encoded.len();
+                    encoded.push(0);
+                    BinaryJSON::append_encoded_text(values.get_bytes(row_index).as_ref(), encoded)
+                        .expect("chunk JSON can be formatted as text");
+                    finish_cell_prefix(encoded, start, start + 1);
+                }
                 _ => {
                     let append = |bytes: &[u8], encoded: &mut Vec<u8>| {
                         if let Some(encoder) = &self.data_encodings[index] {
-                            if let Ok(bytes) = encoder.encode_data(bytes) {
+                            if let Ok(bytes) = encoder.encode_data_cow(bytes) {
                                 append_length_encoded_bytes(encoded, Some(&bytes));
                                 return;
                             }
@@ -1336,14 +1388,14 @@ impl BinaryResultSetStream {
                         append_length_encoded_bytes(encoded, Some(bytes));
                     };
                     match column.type_code {
-                        TYPE_ENUM => append(row.get_enum(index).name_bytes(), encoded),
-                        TYPE_SET => append(row.get_set(index).name_bytes(), encoded),
-                        TYPE_JSON => append(row.get_json(index).to_string().as_bytes(), encoded),
+                        TYPE_ENUM => append(values.get_enum(row_index).name_bytes(), encoded),
+                        TYPE_SET => append(values.get_set(row_index).name_bytes(), encoded),
+                        TYPE_JSON => append(values.get_json(row_index).to_string().as_bytes(), encoded),
                         TYPE_TIDB_VECTOR_FLOAT32 => append(
-                            row.get_vector_float32(index).to_string().as_bytes(),
+                            values.get_vector_float32(row_index).to_string().as_bytes(),
                             encoded,
                         ),
-                        _ => append(row.get_bytes(index).as_ref(), encoded),
+                        _ => append(values.get_bytes(row_index).as_ref(), encoded),
                     }
                 }
             }

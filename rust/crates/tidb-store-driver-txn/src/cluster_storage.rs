@@ -59,6 +59,7 @@
 //!   TiKV has no exact count, and the seam's own doc already says so.
 
 use tidb_kv::mem_buffer::MemBufferSnapshot;
+use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::{Arc, Mutex};
 
@@ -155,9 +156,6 @@ impl NativeMemBuffer {
         }
         f.take().unwrap()(&mut self.local)
     }
-    fn get_readonly(&self, key: &[u8]) -> Result<Vec<u8>, tikv_client::error::StaticError> {
-        self.read(|b| b.get_readonly(key))
-    }
     fn iter(
         &self,
         start: Option<&[u8]>,
@@ -241,10 +239,17 @@ impl std::fmt::Debug for MutationBuffer {
 }
 impl BufferState {
     fn get(&self, key: &Key) -> Option<Option<Vec<u8>>> {
+        self.with_value(key.as_bytes(), |value| value.map(<[u8]>::to_vec))
+    }
+
+    fn with_value<T>(&self, key: &[u8], mut consume: impl FnMut(Option<&[u8]>) -> T) -> Option<T> {
         self.memdb
-            .get_readonly(key.as_bytes())
+            .read(|buffer| {
+                buffer.with_readonly_value(key, |value| {
+                    consume((!value.is_empty()).then_some(value))
+                })
+            })
             .ok()
-            .map(|value| (!value.is_empty()).then_some(value))
     }
     fn stage(&mut self, key: Key, value: Option<Vec<u8>>) -> Result<(), StorageError> {
         self.stage_batch(std::iter::once((
@@ -365,9 +370,9 @@ pub fn key_needs_pessimistic_lock(
         if tidb_config_kerneltype::is_next_gen() {
             return true;
         }
-        return match tidb_tablecodec::decode_temp_index_value(value) {
-            Ok(history) => history.last().is_some_and(|current| {
-                current.handle.is_some() || index_kv_is_unique(&current.value)
+        return match tidb_tablecodec::decode_current_temp_index_value(value) {
+            Ok(current) => current.is_some_and(|current| {
+                current.handle.is_some() || index_kv_is_unique(current.value)
             }),
             Err(error) => {
                 tracing::warn!(?error, "decode temp index value failed");
@@ -916,6 +921,21 @@ impl TableStorage for MemBufferStorage {
             Some(value) if !value.is_empty() => Ok(value),
             _ => Err(StorageError::NotFound),
         }
+    }
+
+    fn with_value(
+        &mut self,
+        key: Cow<'_, [u8]>,
+        consume: &mut dyn FnMut(Cow<'_, [u8]>),
+    ) -> Result<(), StorageError> {
+        let value = self
+            .0
+            .entries
+            .get(key.as_ref())
+            .filter(|value| !value.is_empty())
+            .ok_or(StorageError::NotFound)?;
+        consume(Cow::Borrowed(value));
+        Ok(())
     }
 
     fn set(&mut self, _key: Key, _value: Vec<u8>) -> Result<(), StorageError> {
@@ -1588,6 +1608,27 @@ impl TableStorage for ClusterTableStorage {
                 None => Err(StorageError::NotFound),
             },
         }
+    }
+
+    fn with_value(
+        &mut self,
+        key: Cow<'_, [u8]>,
+        consume: &mut dyn FnMut(Cow<'_, [u8]>),
+    ) -> Result<(), StorageError> {
+        self.check_usable()?;
+        tidb_kv::storage::note_storage_op(|ops| ops.gets += 1);
+        let staged = self.buffer.state().with_value(&key, |value| {
+            let value = value.ok_or(StorageError::NotFound)?;
+            consume(Cow::Borrowed(value));
+            Ok(())
+        });
+        if let Some(result) = staged {
+            return result;
+        }
+        let key = Key::from_bytes(key.into_owned());
+        let value = self.snapshot_get(&key)?.ok_or(StorageError::NotFound)?;
+        consume(Cow::Owned(value));
+        Ok(())
     }
 
     fn get_local(&mut self, key: &Key) -> Result<Vec<u8>, StorageError> {
@@ -2365,6 +2406,37 @@ mod tests {
         // A key in neither is missing, and nothing was committed.
         assert_eq!(store.get(&key(b"zz")), Err(StorageError::NotFound));
         assert!(snapshot.lock().unwrap().data.contains_key(b"a".as_slice()));
+    }
+
+    #[test]
+    fn with_value_borrows_staged_bytes_and_preserves_snapshot_fallback() {
+        use tidb_kv::storage::capture_storage_ops;
+
+        let (mut store, snapshot, _) = storage(&[(b"a", b"snap")]);
+        let key = key(b"a");
+        store
+            .with_value(Cow::Borrowed(key.as_bytes()), &mut |value| {
+                assert!(matches!(&value, Cow::Owned(_)));
+                assert_eq!(value.as_ref(), b"snap");
+            })
+            .unwrap();
+        store.set(key.clone(), b"mine".to_vec()).unwrap();
+        let (result, ops) = capture_storage_ops(|| {
+            store.with_value(Cow::Borrowed(key.as_bytes()), &mut |value| {
+                assert!(matches!(&value, Cow::Borrowed(_)));
+                assert_eq!(value.as_ref(), b"mine");
+            })
+        });
+        result.unwrap();
+        assert_eq!(ops.gets, 1);
+        store.delete(key.clone()).unwrap();
+        assert_eq!(
+            store.with_value(Cow::Borrowed(key.as_bytes()), &mut |_| {
+                panic!("tombstone reached the consumer")
+            }),
+            Err(StorageError::NotFound)
+        );
+        assert_eq!(snapshot.lock().unwrap().gets, [b"a".to_vec()]);
     }
 
     #[test]

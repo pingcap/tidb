@@ -1176,8 +1176,6 @@ where
     Req: crate::request::KvRequest + crate::request::Shardable<Shard = ()>,
     Req::Response: crate::store::HasRegionError,
 {
-    use crate::request::Plan;
-
     #[cfg(any(test, feature = "failpoints"))]
     if let Some(injected) = failpoint_send_req_result(crate::store::Request::label(&request)) {
         return injected.map(|response| (response, None));
@@ -1210,7 +1208,7 @@ where
                 as futures::future::BoxFuture<'_, crate::interceptor::RpcDispatchResult>
         },
     ));
-    let mut responses = crate::request::PlanBuilder::new(pd_client, keyspace, request)
+    let plan = crate::request::PlanBuilder::new(pd_client, keyspace, request)
         .rpc_interceptor(interceptors)
         .request_timeout(timeout)
         .region_request_runtime_stats(stats)
@@ -1218,9 +1216,9 @@ where
             backoffer,
             cancellation,
         ))
-        .plan()
-        .execute()
-        .await?;
+        .plan();
+    // This sender owns the plan and backoffer for the lifetime of the call.
+    let mut responses = Box::pin(plan.execute_once()).await?;
     let response = match (responses.pop(), responses.is_empty()) {
         (Some(response), true) => response?,
         _ => {
@@ -1266,6 +1264,7 @@ mod send_req_tests {
     use std::any::Any;
     use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
     use std::sync::Arc;
+    use std::time::Duration;
 
     use super::send_req;
     use crate::mock::{MockKvClient, MockPdClient};
@@ -1306,6 +1305,48 @@ mod send_req_tests {
         coprocessor::Response {
             region_error: Some(Box::new(error)),
             ..Default::default()
+        }
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn coprocessor_sender_borrows_the_body_when_stamping_trace_context() {
+        for trace_id in [None, Some(b"cop-trace".as_slice())] {
+            let mut request = request_to_region1(0);
+            request.context.as_mut().unwrap().request_origin = kvrpcpb::RequestOrigin::TiDb as i32;
+            request.ranges = vec![coprocessor::KeyRange::default(); 64];
+            let ranges_address = request.ranges.as_ptr().addr();
+            let pd = Arc::new(MockPdClient::new(MockKvClient::with_dispatch_hook(
+                move |request: &dyn Any| {
+                    let request = request.downcast_ref::<coprocessor::Request>().unwrap();
+                    assert_eq!(request.ranges.len(), 64);
+                    assert_eq!(
+                        request.context.as_ref().unwrap().trace_id,
+                        trace_id.unwrap_or_default()
+                    );
+                    assert_eq!(request.ranges.as_ptr().addr(), ranges_address);
+                    assert_eq!(
+                        request.context.as_ref().unwrap().trace_control_flags,
+                        crate::trace::TraceControlFlags::TIKV_CATEGORY_REQUEST.0,
+                    );
+                    Ok(Box::new(coprocessor::Response::default()))
+                },
+            )));
+            let trace = crate::trace::TraceContext::new();
+            let trace = match trace_id {
+                Some(id) => trace.with_trace_id(id.to_vec()),
+                None => trace,
+            };
+            crate::trace::with_trace_context(trace, async {
+                let backoffer = Arc::new(tokio::sync::Mutex::new(crate::retry::RetryBackoffer::new(
+                    crate::async_util::Cancellation::default(),
+                    1000,
+                )));
+                send_req(pd, Keyspace::Disable, request, backoffer, Duration::from_secs(1))
+                    .await
+                    .unwrap();
+            })
+            .await;
         }
     }
 

@@ -314,7 +314,7 @@ pub fn build_generated_columns_with_like_default_escape(
             return Err(GeneratedDdlError::UnknownDependency(name));
         }
         dependencies_at.push((position, resolver.dependencies()));
-        built.push(Some(GeneratedColumn {
+        built.push(Some(GeneratedColumnDefinition {
             expr_text: expression.restore_with_flags_and_string_charset(
                 generated_restore_flags(),
                 connection_charset,
@@ -327,7 +327,7 @@ pub fn build_generated_columns_with_like_default_escape(
             build_like_default_escape: like_default_escape,
             zone_sensitive: resolver.zone_was_read(),
             like_default_escape_sensitive: resolver.like_default_escape_was_read(),
-        }));
+        }.into()));
     }
     // Go `checkGeneratedColumn`: once every column is read, a generated
     // column may not read the AUTO_INCREMENT column unless

@@ -526,7 +526,7 @@ impl Syncer {
         let info = self.get_local_server_info();
         format!(
             "{TOPOLOGY_INFORMATION_PATH}/{}",
-            join_host_port(&info.static_info.ip, info.static_info.port)
+            tidb_go_net::join_host_port_number(&info.static_info.ip, info.static_info.port)
         )
     }
 

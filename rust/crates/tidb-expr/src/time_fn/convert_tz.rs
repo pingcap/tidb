@@ -18,8 +18,8 @@
 //! data — the same tzdata Go's `time.LoadLocation` reads.
 //!
 //! Behavior pinned against goeval (TiDB's production engine), not assumed:
-//! - the fractional-seconds text passes through verbatim (offsets are whole
-//!   minutes, so the fraction is timezone-invariant);
+//! - the fractional seconds pass through a normal conversion. A clock in a
+//!   gap snaps to the exact transition and uses its fractional seconds;
 //! - a wall clock the DST fall-back REPEATS names two instants, and Go
 //!   picks neither "the earlier" nor "the later" as a rule — it runs
 //!   `time.Date`, whose answer is the earlier instant in `US/Eastern` and
@@ -41,6 +41,7 @@ use chrono::{
 };
 use chrono_tz::Tz;
 use regex::Regex;
+use tidb_datatype::{Time, TimeType, core_time_from_datetime};
 
 use super::calendar::{parse_date_ymd, parse_time_with_fraction};
 use crate::coerce::coerce_str;
@@ -48,9 +49,9 @@ use crate::{Datum, EvalError};
 
 /// Go `convertTzFunctionClass`'s `tzRegex`.
 static TZ_OFFSET_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(^[-+](0?[0-9]|1[0-3]):[0-5]?\d$)|(^\+14:00?$)").unwrap());
+    LazyLock::new(|| Regex::new(r"(^[-+](0?[0-9]|1[0-3]):[0-5]?[0-9]$)|(^\+14:00?$)").unwrap());
 
-enum ConvTz {
+pub(crate) enum ConvTz {
     Fixed(i32),
     Named(Tz),
     System,
@@ -58,9 +59,9 @@ enum ConvTz {
 
 /// Resolves a CONVERT_TZ zone argument; `None` means the Go evaluator would
 /// return NULL.
-fn parse_conv_tz(s: &str) -> Result<Option<ConvTz>, EvalError> {
+pub(crate) fn parse_conv_tz(s: &str) -> Option<ConvTz> {
     if s.is_empty() {
-        return Ok(None);
+        return None;
     }
     if TZ_OFFSET_RE.is_match(s) {
         // Go `timeZone2int`.
@@ -69,12 +70,31 @@ fn parse_conv_tz(s: &str) -> Result<Option<ConvTz>, EvalError> {
         let (h, m) = body.split_once(':').expect("regex guarantees a colon");
         let h: i32 = h.parse().expect("regex guarantees digits");
         let m: i32 = m.parse().expect("regex guarantees digits");
-        return Ok(Some(ConvTz::Fixed(sign * (h * 3600 + m * 60))));
+        return Some(ConvTz::Fixed(sign * (h * 3600 + m * 60)));
     }
-    if s.eq_ignore_ascii_case("SYSTEM") {
-        return Ok(Some(ConvTz::System));
+    if s == "Local" || s.eq_ignore_ascii_case("SYSTEM") {
+        return Some(ConvTz::System);
     }
-    Ok(Tz::from_str(s).ok().map(ConvTz::Named))
+    Tz::from_str(s).ok().map(ConvTz::Named)
+}
+
+pub(crate) fn convert_packed(time: Time, from: &ConvTz, to: &ConvTz, fsp: i64) -> Option<Time> {
+    let wall = time.core_time().to_datetime(&Utc).ok()?.naive_utc();
+    let instant = match from {
+        ConvTz::Fixed(offset) => (wall - chrono::Duration::seconds(i64::from(*offset))).and_utc(),
+        ConvTz::Named(tz) => super::session_tz::named_wall_clock(tz, wall, true)?,
+        ConvTz::System => local_to_instant(wall, from)?,
+    };
+    let core = match to {
+        ConvTz::Fixed(offset) => {
+            core_time_from_datetime(instant + chrono::Duration::seconds(i64::from(*offset)))
+        }
+        ConvTz::Named(tz) => {
+            core_time_from_datetime(super::session_tz::named_to_local(tz, instant).and_utc())
+        }
+        ConvTz::System => core_time_from_datetime(instant.with_timezone(&Local)),
+    };
+    Time::new(core, TimeType::DateTime, fsp).ok()
 }
 
 /// Interprets `naive` as a local time in `tz`; `None` is NULL.
@@ -94,7 +114,7 @@ fn local_to_instant(naive: NaiveDateTime, tz: &ConvTz) -> Option<DateTime<Utc>> 
                     .with_timezone(&Utc),
             )
         }
-        ConvTz::Named(tz) => super::session_tz::local_to_instant(tz, &naive),
+        ConvTz::Named(tz) => super::session_tz::named_wall_clock(tz, naive, true),
         ConvTz::System => match Local.from_local_datetime(&naive) {
             LocalResult::Single(value) => Some(value.with_timezone(&Utc)),
             // Go's `time.Date` selects the post-transition occurrence for
@@ -144,7 +164,7 @@ pub(crate) fn convert_tz(vals: &[Datum]) -> Result<Datum, EvalError> {
     let Some((naive, frac)) = parse_datetime(&dt) else {
         return Ok(Datum::Null);
     };
-    let (Some(from_tz), Some(to_tz)) = (parse_conv_tz(&from_s)?, parse_conv_tz(&to_s)?) else {
+    let (Some(from_tz), Some(to_tz)) = (parse_conv_tz(&from_s), parse_conv_tz(&to_s)) else {
         return Ok(Datum::Null);
     };
 
@@ -159,7 +179,7 @@ pub(crate) fn convert_tz(vals: &[Datum]) -> Result<Datum, EvalError> {
             };
             instant.with_timezone(&offset).naive_local()
         }
-        ConvTz::Named(tz) => instant.with_timezone(tz).naive_local(),
+        ConvTz::Named(tz) => super::session_tz::named_to_local(tz, instant),
         ConvTz::System => instant.with_timezone(&Local).naive_local(),
     };
 
@@ -175,7 +195,11 @@ pub(crate) fn convert_tz(vals: &[Datum]) -> Result<Datum, EvalError> {
     );
     if !frac.is_empty() {
         out.push('.');
-        out.push_str(&frac);
+        if local.nanosecond() == 0 && naive.nanosecond() != 0 {
+            out.push_str(&"000000"[..frac.len().min(6)]);
+        } else {
+            out.push_str(&frac);
+        }
     }
     Ok(Datum::new_string_datum(out))
 }
@@ -522,6 +546,12 @@ mod tests {
                 "Europe/Paris",
                 "UTC",
                 "2025-03-30 01:00:00",
+            ),
+            (
+                "2025-03-30 02:30:00.987654",
+                "Europe/Paris",
+                "UTC",
+                "2025-03-30 01:00:00.000000",
             ),
             (
                 "2021-10-03 02:30:00",

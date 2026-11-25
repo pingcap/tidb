@@ -929,7 +929,7 @@ use tidb_charset::Collation;
             ("Sakila", -100, ""),
         ] {
             assert_eq!(
-                substring(&[string(input), Datum::Int(pos)], &crate::NoColumns).unwrap(),
+                substring(&[string(input), Datum::Int(pos)], &crate::NoColumns, false).unwrap(),
                 string(want),
                 "SUBSTRING({input:?}, {pos})"
             );
@@ -944,7 +944,8 @@ use tidb_charset::Collation;
             assert_eq!(
                 substring(
                     &[string(input), Datum::Int(pos), Datum::Int(length),],
-                    &crate::NoColumns
+                    &crate::NoColumns,
+                    false,
                 )
                 .unwrap(),
                 string(want),
@@ -956,7 +957,7 @@ use tidb_charset::Collation;
             vec![string("Sakila"), Datum::Null, Datum::Int(3)],
             vec![string("Sakila"), Datum::Int(2), Datum::Null],
         ] {
-            assert_eq!(substring(&args, &crate::NoColumns).unwrap(), Datum::Null);
+            assert_eq!(substring(&args, &crate::NoColumns, false).unwrap(), Datum::Null);
         }
 
         // LOCATE(substr, str) is the two-argument form.  The source's
@@ -1044,7 +1045,8 @@ use tidb_charset::Collation;
         assert_eq!(
             substring(
                 &[string("Sakila"), Datum::Int(2), Datum::Int(i64::MAX),],
-                &crate::NoColumns
+                &crate::NoColumns,
+                false,
             )
             .unwrap(),
             string("")
@@ -1054,7 +1056,8 @@ use tidb_charset::Collation;
         assert_eq!(
             substring(
                 &[string("Sakila"), Datum::Int(1), Datum::Int(i64::MAX),],
-                &crate::NoColumns
+                &crate::NoColumns,
+                false,
             )
             .unwrap(),
             string("Sakila")

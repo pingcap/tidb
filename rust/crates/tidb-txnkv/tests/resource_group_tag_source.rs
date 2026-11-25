@@ -137,7 +137,7 @@ fn TestGetFirstKeyFromRequest() {
     assert_eq!(
         get_first_key_from_request(Some(&CoprocessorRequest {
             ranges: vec![CoprocessorKeyRange {
-                start: first.clone(),
+                start: first.clone().into(),
                 ..CoprocessorKeyRange::default()
             }],
             ..CoprocessorRequest::default()
@@ -148,7 +148,7 @@ fn TestGetFirstKeyFromRequest() {
         get_first_key_from_request(Some(&CoprocessorBatchRequest {
             regions: vec![CoprocessorRegionInfo {
                 ranges: vec![CoprocessorKeyRange {
-                    start: second.clone(),
+                    start: second.clone().into(),
                     ..CoprocessorKeyRange::default()
                 }],
                 ..CoprocessorRegionInfo::default()

@@ -109,9 +109,9 @@ impl std::error::Error for NativePasswordHashError {}
 /// Generates the source server's 20-byte, NUL- and `$`-free handshake salt.
 #[must_use]
 pub fn generate_handshake_salt() -> [u8; HANDSHAKE_SALT_LEN] {
-    tidb_fastrand::buf(HANDSHAKE_SALT_LEN)
-        .try_into()
-        .expect("fastrand returned the requested handshake salt width")
+    let mut salt = [0; HANDSHAKE_SALT_LEN];
+    tidb_fastrand::fill(&mut salt);
+    salt
 }
 
 /// Verifies a candidate account without revealing whether it existed.

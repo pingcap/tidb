@@ -42,7 +42,7 @@ fn store_batch_task_preserves_region_epoch_peer_ranges_and_bucket_version() {
         ranges: vec![KeyRange {
             start_key: b"a".to_vec().into(),
             end_key: b"b".to_vec().into(),
-        }],
+        }].into(),
         task_id: 42,
         versioned_ranges: vec![VersionedRegionKeyRange {
             range: KeyRange {
@@ -73,12 +73,12 @@ fn store_batch_task_preserves_region_epoch_peer_ranges_and_bucket_version() {
         decoded.peer.as_ref().map(|peer| peer.is_witness),
         Some(true)
     );
-    assert_eq!(decoded.ranges[0].start, b"a");
-    assert_eq!(decoded.ranges[0].end, b"b");
+    assert_eq!(decoded.ranges[0].start.as_ref(), b"a");
+    assert_eq!(decoded.ranges[0].end.as_ref(), b"b");
     assert_eq!(decoded.task_id, 42);
     assert_eq!(decoded.versioned_ranges[0].read_ts, 99);
     assert_eq!(
-        decoded.versioned_ranges[0].range.as_ref().unwrap().start,
+        decoded.versioned_ranges[0].range.as_ref().unwrap().start.as_ref(),
         b"p"
     );
     assert_eq!(decoded.buckets_version, 202);
@@ -107,7 +107,7 @@ fn absent_region_metadata_stays_absent_and_ranges_keep_order() {
                 start_key: vec![0].into(),
                 end_key: vec![1].into(),
             },
-        ],
+        ].into(),
         ..Default::default()
     };
     let decoded = StoreBatchTask::decode(envelope.encode_to_vec().as_slice()).unwrap();

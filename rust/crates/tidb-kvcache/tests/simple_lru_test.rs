@@ -23,7 +23,63 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use tidb_kvcache::{CacheKey, MemoryProbeError, SimpleLruCache, PROFILE_NAME};
+use tidb_kvcache::{CacheKey, MemoryProbeError, PROFILE_NAME, SimpleLruCache};
+
+#[test]
+fn wide_keys_with_the_same_sample_survive_removal_and_slot_reuse() {
+    let key = |byte| {
+        let mut bytes = vec![0; 1024];
+        bytes[17] = byte;
+        bytes
+    };
+    let first = key(1);
+    let second = key(2);
+    let third = key(3);
+    let mut cache = SimpleLruCache::new(12);
+    for byte in 0..10 {
+        cache.put(vec![byte], 0);
+    }
+    assert_eq!(cache.peek(&first), None);
+
+    cache.put(first.clone(), 1);
+    cache.put(second.clone(), 2);
+    assert_eq!(cache.peek(&first), Some(&1));
+    assert_eq!(cache.peek(&second), Some(&2));
+    assert_eq!(cache.peek(&third), None);
+
+    cache.delete(&first);
+    assert_eq!(cache.peek(&second), Some(&2));
+    assert_eq!(cache.peek(&first), None);
+    cache.put(third.clone(), 3);
+    assert_eq!(cache.get(&second), Some(&2));
+    cache.set_capacity(1).unwrap();
+    assert_eq!(cache.keys(), vec![&second]);
+    assert_eq!(cache.peek(&third), None);
+
+    cache.delete_all();
+    cache.put(first.clone(), 4);
+    assert_eq!(cache.peek(&first), Some(&4));
+    assert_eq!(cache.peek(&second), None);
+}
+
+#[test]
+fn a_single_wide_candidate_requires_an_exact_match() {
+    for width in [1024, 8191, 8192, 65536] {
+        let mut cache = SimpleLruCache::new(16);
+        for byte in 0..9 {
+            cache.put(vec![byte], 0);
+        }
+        let mut query = vec![0; width];
+        cache.put(query.clone(), 1);
+        for offset in [0, 17, width / 2 + 128, width - 65, width - 63, width - 1] {
+            query[offset] = 1;
+            assert_eq!(cache.peek(&query), None, "{width} bytes, mismatch at {offset}");
+            query[offset] = 0;
+            assert_eq!(cache.peek(&query), Some(&1));
+        }
+        assert_eq!(cache.size(), 10);
+    }
+}
 
 /// Go `mockCacheKey`.
 #[derive(Clone, Debug)]
@@ -196,6 +252,21 @@ fn test_get() {
 
 /// Go `TestDelete`.
 #[test]
+fn long_mru_lookup_matches_the_entire_key() {
+    let mut cache = SimpleLruCache::new(2);
+    let first = vec![b'a'; 512];
+    let mut second = first.clone();
+    second[256] = b'b';
+    cache.put(first.clone(), 1);
+    cache.put(second.clone(), 2);
+
+    assert_eq!(cache.get(second.as_slice()), Some(&2));
+    assert_eq!(cache.values(), vec![&2, &1]);
+    assert_eq!(cache.get(first.as_slice()), Some(&1));
+    assert_eq!(cache.values(), vec![&1, &2]);
+}
+
+#[test]
 fn test_delete() {
     let max_mem = TEST_MEM_TOTAL;
 
@@ -256,6 +327,30 @@ fn test_values() {
     for (i, value) in values.iter().enumerate() {
         assert_eq!(4 - i as i64, **value);
     }
+}
+
+#[test]
+fn long_key_lookup_checks_the_payload_and_preserves_recency() {
+    let mut cache = SimpleLruCache::new(4);
+    let first = vec![b'a'; 1024];
+    let mut second = first.clone();
+    second[512] = b'b';
+    let mut missing = first.clone();
+    missing[512] = b'c';
+    cache.put(first.clone(), 1);
+    cache.put(second.clone(), 2);
+
+    assert_eq!(cache.peek(&first), Some(&1));
+    assert_eq!(cache.keys(), vec![&second, &first]);
+    assert_eq!(cache.get(&missing), None);
+    assert_eq!(cache.get(&first), Some(&1));
+    assert_eq!(cache.keys(), vec![&first, &second]);
+
+    cache.delete(&first);
+    assert_eq!(cache.peek(&missing), None);
+    cache.put(second.clone(), 3);
+    assert_eq!(cache.size(), 1);
+    assert_eq!(cache.remove_oldest(), Some((second, 3)));
 }
 
 /// Go `TestPutProfileName`: the heap-profile name stays bound to the source

@@ -172,7 +172,7 @@ use tidb_terror::MysqlError;
 
 use crate::generated_column::is_disallowed_generated_function;
 use tidb_table::generated_column::TableColumnResolver;
-use tidb_table::generated_column::GeneratedColumn;
+use tidb_table::generated_column::{GeneratedColumn, GeneratedColumnDefinition};
 use tidb_hack::GoCaseCompare;
 use tidb_hack::GoToLower;
 use tidb_expr::EvalErrorSql;
@@ -776,7 +776,7 @@ pub fn build_hidden_columns_with_like_default_escape(
             HiddenIndexColumn {
                 name,
                 field_type,
-                generated: GeneratedColumn {
+                generated: GeneratedColumnDefinition {
                     expr_text,
                     // Go sets `GeneratedStored: false`: the value is
                     // recomputed on every read, and only the INDEX stores it.
@@ -791,7 +791,7 @@ pub fn build_hidden_columns_with_like_default_escape(
                     // temporal literal folds in that session's zone.
                     zone_sensitive: resolver.zone_was_read(),
                     like_default_escape_sensitive: resolver.like_default_escape_was_read(),
-                },
+                }.into(),
             },
         ));
     }

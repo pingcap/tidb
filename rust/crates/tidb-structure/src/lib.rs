@@ -36,7 +36,9 @@ pub mod error;
 pub mod structure_errors;
 pub mod transaction;
 
-use tidb_codec::{decode_bytes, decode_int, decode_uint, encode_bytes, encode_int, encode_uint};
+use tidb_codec::{
+    decode_bytes, decode_int, decode_uint, encode_bytes, encode_int, encode_uint, encoded_bytes_len,
+};
 
 pub use crate::error::StructureError;
 use crate::transaction::{RawKvIterator, RawRangeVisitor, RawTransaction};
@@ -57,7 +59,12 @@ pub const LIST_DATA: u8 = b'l';
 /// Encodes `prefix` + `EncodeBytes(key)` + `EncodeUint(flag)`, the shared
 /// head of every structure key.
 fn encode_head_with(prefix: &[u8], key: &[u8], flag: u8) -> Vec<u8> {
-    let mut encoded = Vec::with_capacity(prefix.len() + key.len() + 24);
+    encode_head_with_tail_capacity(prefix, key, flag, 0)
+}
+
+fn encode_head_with_tail_capacity(prefix: &[u8], key: &[u8], flag: u8, tail_len: usize) -> Vec<u8> {
+    let mut encoded =
+        Vec::with_capacity(prefix.len() + encoded_bytes_len(key.len()) + size_of::<u64>() + tail_len);
     encoded.extend_from_slice(prefix);
     encode_bytes(&mut encoded, key);
     encode_uint(&mut encoded, u64::from(flag));
@@ -119,7 +126,7 @@ pub fn encode_list_meta_key(prefix: &[u8], key: &[u8]) -> Vec<u8> {
 /// Go `TxStructure.encodeListDataKey` under `prefix`.
 #[must_use]
 pub fn encode_list_data_key(prefix: &[u8], key: &[u8], index: i64) -> Vec<u8> {
-    let mut encoded = encode_head_with(prefix, key, LIST_DATA);
+    let mut encoded = encode_head_with_tail_capacity(prefix, key, LIST_DATA, size_of::<i64>());
     encode_int(&mut encoded, index);
     encoded
 }
@@ -251,7 +258,12 @@ impl<'a, T: RawTransaction> TxStructure<'a, T> {
     }
 
     fn hash_data_key(&self, key: &[u8], field: &[u8]) -> Vec<u8> {
-        let mut encoded = encode_head_with(&self.prefix, key, HASH_DATA);
+        let mut encoded = encode_head_with_tail_capacity(
+            &self.prefix,
+            key,
+            HASH_DATA,
+            encoded_bytes_len(field.len()),
+        );
         encode_bytes(&mut encoded, field);
         encoded
     }
@@ -265,9 +277,7 @@ impl<'a, T: RawTransaction> TxStructure<'a, T> {
     }
 
     fn list_data_key(&self, key: &[u8], index: i64) -> Vec<u8> {
-        let mut encoded = encode_head_with(&self.prefix, key, LIST_DATA);
-        encode_int(&mut encoded, index);
-        encoded
+        encode_list_data_key(&self.prefix, key, index)
     }
 
     /// Go `TxStructure.EncodeStringDataKey` under this structure's prefix.

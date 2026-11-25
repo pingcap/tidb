@@ -35,6 +35,7 @@ use crate::copr_cache::CoprCacheRequestContext;
 use crate::copr_cache::CoprCacheResponseContext;
 use crate::copr_cache::CoprCacheResponseOutcome;
 use crate::coprocessor_request::CoprocessorRequestEnvelope;
+use crate::key_ranges::KeyRanges;
 use tidb_txnkv::KvRequestMetadata;
 use crate::read_bytes_ema::ReadBytesEma;
 use crate::region_task::RegionTaskEnvelope;
@@ -55,12 +56,6 @@ pub struct PreparedCopReadTask {
     page_index: u32,
     task: RegionTaskEnvelope,
     request: CoprocessorRequestEnvelope,
-    /// The request's protobuf encoding, built once. A task re-sends the same
-    /// immutable envelope on every retry and every limiter-wake re-poll, and
-    /// a perf capture of the SF50 q10 index-join probe showed those repeated
-    /// encodes running inline on the waking worker (17.6% encode + 7% varint
-    /// of the whole query); caching the bytes turns a re-send into a clone.
-    encoded_request: std::sync::OnceLock<Vec<u8>>,
     cache_key: Option<Vec<u8>>,
 }
 
@@ -96,13 +91,6 @@ impl PreparedCopReadTask {
     #[must_use]
     pub const fn request(&self) -> &CoprocessorRequestEnvelope {
         &self.request
-    }
-
-    /// The request's protobuf bytes, encoded once and reused by every send.
-    #[must_use]
-    pub fn encoded_request(&self) -> &Vec<u8> {
-        self.encoded_request
-            .get_or_init(|| self.request.encode_to_vec())
     }
 
     /// Exact cache key retained with the matching in-flight lookup.
@@ -332,7 +320,7 @@ pub struct FailedCopReadAttempt {
     attempt_id: u64,
     logical_task_id: u64,
     logical_task_index: usize,
-    ranges: Vec<KeyRange>,
+    ranges: KeyRanges,
     paging_size: u64,
 }
 
@@ -351,7 +339,7 @@ impl FailedCopReadAttempt {
 
     /// Exact ranges which the failed request had not consumed.
     #[must_use]
-    pub fn ranges(&self) -> &[KeyRange] {
+    pub fn ranges(&self) -> &KeyRanges {
         &self.ranges
     }
 
@@ -462,7 +450,6 @@ impl From<CopPagingError> for CopReadTaskError {
 /// Deterministic coordinator that stops immediately before RPC transport.
 pub struct CopReadTaskRuntime {
     // Go cop requests alias worker.req.Data, including across retries.
-    data: prost::bytes::Bytes,
     metadata: Arc<KvRequestMetadata>,
     tasks: Vec<LogicalCopReadTask>,
     in_flight: BTreeMap<u64, InFlightCopReadTask>,
@@ -584,7 +571,6 @@ impl CopReadTaskRuntime {
             .unwrap_or(u64::MAX)
             .saturating_add(1);
         let mut runtime = Self {
-            data: metadata.data.clone().unwrap_or_default().into(),
             metadata: Arc::new(metadata),
             tasks,
             in_flight: BTreeMap::new(),
@@ -689,7 +675,6 @@ impl CopReadTaskRuntime {
                 (
                     id,
                     Self {
-                        data: self.data.clone(),
                         metadata: Arc::clone(&self.metadata),
                         tasks: vec![task],
                         in_flight,
@@ -950,10 +935,10 @@ impl CopReadTaskRuntime {
     ///
     /// Pinned TiDB rebuilds only `task.ranges`; later logical tasks retain
     /// their independently prepared attempts and recover only if they fail.
-    pub fn retry_ranges_from(
+    pub fn retry_ranges_from<'a>(
         &self,
-        failed: &FailedCopReadAttempt,
-    ) -> Result<Vec<KeyRange>, CopReadTaskError> {
+        failed: &'a FailedCopReadAttempt,
+    ) -> Result<&'a KeyRanges, CopReadTaskError> {
         let current = self
             .tasks
             .get(failed.logical_task_index)
@@ -961,7 +946,7 @@ impl CopReadTaskRuntime {
         if current.task.task_id != failed.logical_task_id {
             return Err(CopReadTaskError::UnmatchedResponse);
         }
-        Ok(failed.ranges.clone())
+        Ok(failed.ranges())
     }
 
     /// Rebinds a failed attempt to one refreshed region topology.
@@ -974,7 +959,7 @@ impl CopReadTaskRuntime {
         failed: FailedCopReadAttempt,
         topology: &[RegionTaskTopology],
     ) -> Result<CopReadTaskReplacement, CopReadTaskError> {
-        let mut rebuilt = self.build_retry_tasks(failed.ranges.clone(), topology)?;
+        let mut rebuilt = self.build_retry_tasks(failed.ranges.to_ranges(), topology)?;
         if rebuilt.len() != 1 {
             return Err(CopReadTaskError::InvalidTopology);
         }
@@ -1022,7 +1007,7 @@ impl CopReadTaskRuntime {
         }
 
         let ranges = self.retry_ranges_from(&failed)?;
-        let mut rebuilt = self.build_retry_tasks(ranges, topology)?;
+        let mut rebuilt = self.build_retry_tasks(ranges.to_ranges(), topology)?;
         if rebuilt.is_empty() {
             return Err(CopReadTaskError::InvalidTopology);
         }
@@ -1233,7 +1218,7 @@ impl CopReadTaskRuntime {
         child: &RegionTaskEnvelope,
         topology: &[RegionTaskTopology],
     ) -> Result<Vec<RegionTaskEnvelope>, CopReadTaskError> {
-        self.build_retry_tasks(child.ranges.clone(), topology)
+        self.build_retry_tasks(child.ranges.to_ranges(), topology)
     }
 
     /// Runs `tasks` -- a batched parent's remains -- as logical tasks of
@@ -1313,7 +1298,7 @@ impl CopReadTaskRuntime {
     fn prepare_attempt(
         &mut self,
         logical_task_index: usize,
-        ranges: Vec<KeyRange>,
+        ranges: KeyRanges,
         paging_size: u64,
     ) -> Result<u64, CopReadTaskError> {
         let attempt_id = self.next_attempt_id;
@@ -1324,17 +1309,12 @@ impl CopReadTaskRuntime {
     fn prepare_attempt_with_id(
         &mut self,
         logical_task_index: usize,
-        ranges: Vec<KeyRange>,
+        ranges: KeyRanges,
         paging_size: u64,
         attempt_id: u64,
     ) -> Result<u64, CopReadTaskError> {
-        // The attempt carries its own ranges; the base task's are not copied
-        // along with the rest of the envelope.
-        let base_task = &mut self.tasks[logical_task_index].task;
-        let base_ranges = std::mem::take(&mut base_task.ranges);
-        let mut task = base_task.clone();
-        base_task.ranges = base_ranges;
-        task.ranges.clone_from(&ranges);
+        let mut task = self.tasks[logical_task_index].task.clone();
+        task.ranges = ranges.clone();
         task.paging_size = paging_size;
         let page_index = allocate_paging_task_index(
             &self.next_paging_task_index,
@@ -1356,14 +1336,16 @@ impl CopReadTaskRuntime {
             }
             _ => 0,
         };
-        let mut request = CoprocessorRequestEnvelope::from_metadata_with_data(
-            &self.metadata,
-            ranges,
-            self.data.clone(),
-        )
-        .with_paging_size(paging_size)
-        .with_max_keys_read(max_keys_read)
-        .with_batch_tasks(task.encode_batch_tasks());
+        let mut request =
+            CoprocessorRequestEnvelope::from_metadata_with_ranges(&self.metadata, ranges)
+                .with_paging_size(paging_size)
+                .with_max_keys_read(max_keys_read)
+                .with_batch_tasks(
+                    task.batch_task_list
+                        .iter()
+                        .map(RegionTaskEnvelope::to_proto)
+                        .collect(),
+                );
         let lookup = self.cache.as_ref().and_then(|cache| {
             cache.prepare_request(
                 &mut request,
@@ -1381,7 +1363,6 @@ impl CopReadTaskRuntime {
             page_index,
             task,
             request,
-            encoded_request: std::sync::OnceLock::new(),
             cache_key: lookup.as_ref().map(|lookup| lookup.key().to_vec()),
         });
         self.prepared.push(prepared.clone());
@@ -1452,7 +1433,7 @@ pub(super) fn validate_request(metadata: &KvRequestMetadata) -> Result<(), CopRe
     if !metadata.keep_order && !metadata.allow_unordered_response {
         return Err(CopReadTaskError::UnorderedResponse);
     }
-    if !metadata.partition_id_and_ranges.is_empty() {
+    if !metadata.partition_table_ranges().is_empty() {
         return Err(CopReadTaskError::PartitionedRanges);
     }
     let ranges = metadata
@@ -1535,7 +1516,7 @@ mod tests {
         let mut metadata = KvRequestMetadata::default();
         metadata.request_type = RequestType::Dag;
         metadata.store_type = StoreType::TiKv;
-        metadata.data = Some(vec![42; 4096]);
+        metadata.data = Some(vec![42; 4096].into());
         metadata.keep_order = true;
         metadata.start_ts = 100;
         metadata.key_ranges = Some(
@@ -1606,7 +1587,7 @@ mod tests {
         let mut metadata = KvRequestMetadata::default();
         metadata.request_type = RequestType::Dag;
         metadata.store_type = StoreType::TiKv;
-        metadata.data = Some(vec![42; 4096]);
+        metadata.data = Some(vec![42; 4096].into());
         metadata.keep_order = true;
         metadata.start_ts = 100;
         metadata.key_ranges = Some(
@@ -1626,7 +1607,9 @@ mod tests {
         .unwrap();
         let data = &runtime.prepared[0].request.data;
         let ptr = data.as_ptr();
-        assert_eq!(&data[..], metadata.data.as_ref().unwrap().as_slice());
+        let original = metadata.data.as_deref().unwrap();
+        assert_eq!(&data[..], original);
+        assert_eq!(ptr, original.as_ptr());
         for attempt in &runtime.prepared {
             assert_eq!(
                 attempt.request.data.as_ptr(),
@@ -1646,7 +1629,7 @@ mod tests {
             let decoded =
                 tidb_proto::CoprocessorRequest::decode(retry.request.encode_to_vec().as_slice())
                     .unwrap();
-            assert_eq!(decoded.data, metadata.data.as_ref().unwrap().as_slice());
+            assert_eq!(decoded.data, original);
         }
     }
 
@@ -1667,7 +1650,7 @@ mod tests {
             let mut metadata = KvRequestMetadata::default();
             metadata.request_type = RequestType::Dag;
             metadata.store_type = StoreType::TiKv;
-            metadata.data = Some(b"dag".to_vec());
+            metadata.data = Some((&b"dag"[..]).into());
             metadata.keep_order = true;
             metadata.start_ts = 100;
             metadata.key_ranges = Some(

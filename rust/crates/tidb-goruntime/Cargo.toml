@@ -8,9 +8,11 @@ repository.workspace = true
 description = "The Go runtime and standard-library semantics the TiDB Rust rewrite reproduces."
 
 [dependencies]
-ryu.workspace = true
+bytes.workspace = true
+itoa = "1"
 serde.workspace = true
 serde_json = { workspace = true, features = ["raw_value"] }
+simdutf8 = { version = "0.1.5", features = ["aarch64_neon"] }
 tidb-hack = { path = "../tidb-hack" }
 
 [lints]

@@ -21,7 +21,7 @@
 
 use std::borrow::Cow;
 
-use tidb_datatype::{CoreTime, Datum, Time, TimeType, DEFAULT_FSP};
+use tidb_datatype::{CoreTime, Datum, Time, TimeType, calc_daynr};
 
 /// Calculates the fraction of `[lower, upper]` covered through `value`.
 ///
@@ -46,6 +46,28 @@ pub fn calc_fraction(lower: f64, upper: f64, value: f64) -> f64 {
 
 /// Returns the common prefix length of all byte strings.
 pub fn common_prefix_length(strings: &[&[u8]]) -> usize {
+    if let [left, right] = strings {
+        let len = left.len().min(right.len());
+        let (left_chunks, left_tail) = left[..len].as_chunks::<32>();
+        let (right_chunks, right_tail) = right[..len].as_chunks::<32>();
+        for (index, (left, right)) in left_chunks.iter().zip(right_chunks).enumerate() {
+            if left != right {
+                let first_difference = left
+                    .iter()
+                    .zip(right)
+                    .position(|(left, right)| left != right)
+                    .expect("different chunks must contain different bytes");
+                return index * 32 + first_difference;
+            }
+        }
+        return left_chunks.len() * 32
+            + left_tail
+                .iter()
+                .zip(right_tail)
+                .position(|(left, right)| left != right)
+                .unwrap_or(left_tail.len());
+    }
+
     let Some(first) = strings.first() else {
         return 0;
     };
@@ -65,57 +87,40 @@ pub fn common_prefix_length(strings: &[&[u8]]) -> usize {
 /// the high bits, while eight-or-more-byte values use the first eight bytes as
 /// a big-endian `u64`, exactly as the Go helper does.
 pub fn convert_bytes_to_scalar(bytes: &[u8]) -> f64 {
-    if bytes.is_empty() {
+    if let Some(first) = bytes.first_chunk::<8>() {
+        return u64::from_be_bytes(*first) as f64;
+    }
+    let len = bytes.len();
+    if len == 0 {
         return 0.0;
     }
-    let used = bytes.len().min(8);
     let mut value = 0_u64;
-    for &byte in &bytes[..used] {
+    for &byte in bytes {
         value = (value << 8) | u64::from(byte);
     }
-    if used < 8 {
-        value <<= (8 - used) * 8;
-    }
-    value as f64
+    (value << ((8 - len) * 8)) as f64
 }
 
 const fn min_datetime_core() -> CoreTime {
     CoreTime::from_date(1, 1, 1, 0, 0, 0, 0)
 }
 
-const fn min_timestamp_core() -> CoreTime {
-    CoreTime::from_date(1970, 1, 1, 0, 0, 1, 0)
+fn seconds_of_day(core: CoreTime) -> i64 {
+    i64::from(core.hour()) * 3_600 + i64::from(core.minute()) * 60 + i64::from(core.second())
 }
 
 fn time_to_scalar(value: Time) -> f64 {
-    // Go subtracts a per-kind minimum time to get a `time.Duration` and
-    // takes its nanosecond count. For DATE/DATETIME, Go's `Time.Sub` builds
-    // that duration as `seconds*1e9 + microseconds*1e3` using plain `int64`
-    // arithmetic, which silently wraps on overflow. `Time::sub` saturates,
-    // so reproduce the source arithmetic directly for those two kinds.
-    let kind = value.kind();
-    if kind == TimeType::Timestamp {
-        let minimum = Time::new(min_timestamp_core(), kind, DEFAULT_FSP)
-            .expect("fixed minimum timestamp is valid");
-        return match value.sub(minimum, &chrono_tz::UTC) {
-            Ok(duration) => duration.nanoseconds() as f64,
-            // CoreTime.GoTime returns Go time.Date's normalized instant and
-            // an error. Time.Sub logs that error, then still subtracts the
-            // normalized instant. The typed Rust conversion rejects first,
-            // so derive the same fallback instant explicitly.
-            Err(_) => normalized_timestamp_nanoseconds(value.core_time()) as f64,
-        };
+    let core = value.core_time();
+    if value.kind() == TimeType::Timestamp {
+        return timestamp_nanoseconds(core) as f64;
     }
-    let difference = value.core_time().time_diff(min_datetime_core(), 1);
-    let magnitude = difference
-        .seconds
+
+    // Go's DATE/DATETIME subtraction wraps in the signed nanosecond
+    // duration. Compute that same result directly from the civil fields.
+    let seconds = i64::from(core.date_diff(min_datetime_core())) * 86_400 + seconds_of_day(core);
+    seconds
         .wrapping_mul(1_000_000_000)
-        .wrapping_add(i64::from(difference.microseconds).wrapping_mul(1_000));
-    (if difference.negative {
-        -magnitude
-    } else {
-        magnitude
-    }) as f64
+        .wrapping_add(i64::from(core.microsecond()) * 1_000) as f64
 }
 
 /// `pkg/statistics/scalar.go`'s `convertDatumToScalar` over an already-decoded
@@ -139,47 +144,25 @@ pub fn convert_datum_to_scalar(value: &Datum, common_prefix_length: usize) -> f6
     }
 }
 
-fn normalized_timestamp_nanoseconds(core: CoreTime) -> i64 {
-    // Go time.Date first normalizes the month into the year, then treats day
-    // one as the anchor and adds the remaining day and clock fields.
-    let month_zero = i64::from(core.month()) - 1;
-    let year = i64::from(core.year()) + month_zero.div_euclid(12);
-    let month = month_zero.rem_euclid(12) as u32 + 1;
-    let date = chrono::NaiveDate::from_ymd_opt(
-        i32::try_from(year).expect("CoreTime year fits chrono"),
-        month,
-        1,
-    )
-    .expect("normalized CoreTime month is valid");
-    let normalized = date
-        .and_hms_opt(0, 0, 0)
-        .expect("midnight is valid")
-        .checked_add_signed(chrono::Duration::days(i64::from(core.day()) - 1))
-        .and_then(|value| value.checked_add_signed(chrono::Duration::hours(i64::from(core.hour()))))
-        .and_then(|value| {
-            value.checked_add_signed(chrono::Duration::minutes(i64::from(core.minute())))
-        })
-        .and_then(|value| {
-            value.checked_add_signed(chrono::Duration::seconds(i64::from(core.second())))
-        })
-        .and_then(|value| {
-            value.checked_add_signed(chrono::Duration::microseconds(i64::from(
-                core.microsecond(),
-            )))
-        })
-        .expect("CoreTime normalization stays in chrono range");
-    let minimum = chrono::NaiveDate::from_ymd_opt(1970, 1, 1)
-        .unwrap()
-        .and_hms_opt(0, 0, 1)
-        .unwrap();
-    let difference = normalized.signed_duration_since(minimum);
-    difference.num_nanoseconds().unwrap_or_else(|| {
-        if normalized < minimum {
-            i64::MIN
-        } else {
-            i64::MAX
-        }
-    })
+fn timestamp_nanoseconds(core: CoreTime) -> i64 {
+    // Shift both years by a Gregorian cycle so Go's day-number formula
+    // stays in positive years even when month zero carries into year -1.
+    const YEAR_SHIFT: i64 = 400;
+    const EPOCH_DAY: i64 = calc_daynr(1970 + YEAR_SHIFT, 1, 1);
+
+    // Go time.Date carries out-of-range months into the year. Once the
+    // month is normalized, day and clock overflow are just UTC offsets.
+    let mut year = i64::from(core.year()) + YEAR_SHIFT;
+    let mut month = i64::from(core.month());
+    if !(1..=12).contains(&month) {
+        year += (month - 1).div_euclid(12);
+        month = (month - 1).rem_euclid(12) + 1;
+    }
+
+    let days = calc_daynr(year, month, i64::from(core.day())) - EPOCH_DAY;
+    let seconds = days * 86_400 + seconds_of_day(core) - 1;
+    let nanos = i128::from(seconds) * 1_000_000_000 + i128::from(core.microsecond()) * 1_000;
+    nanos.clamp(i128::from(i64::MIN), i128::from(i64::MAX)) as i64
 }
 
 /// Numeric getters on Go Datum read its shared raw `i` payload without first
@@ -213,7 +196,13 @@ fn datum_go_bytes(value: &Datum) -> Cow<'_, [u8]> {
     }
 }
 
-fn bytes_to_scalar(bytes: &[u8], common_prefix_length: usize) -> f64 {
+pub(crate) fn datum_common_prefix_length(lower: &Datum, upper: &Datum) -> usize {
+    let lower = datum_go_bytes(lower);
+    let upper = datum_go_bytes(upper);
+    common_prefix_length(&[&lower, &upper])
+}
+
+pub(crate) fn bytes_to_scalar(bytes: &[u8], common_prefix_length: usize) -> f64 {
     if bytes.len() <= common_prefix_length {
         0.0
     } else {
@@ -257,10 +246,7 @@ pub fn calc_fraction_from_datums(lower: &Datum, upper: &Datum, value: &Datum) ->
             convert_datum_to_scalar(value, 0),
         ),
         Datum::String(_) | Datum::Bytes(_) => {
-            let lower_bytes = datum_go_bytes(lower);
-            let upper_bytes = datum_go_bytes(upper);
-            let common_prefix_length =
-                common_prefix_length(&[lower_bytes.as_ref(), upper_bytes.as_ref()]);
+            let common_prefix_length = datum_common_prefix_length(lower, upper);
             calc_fraction(
                 convert_datum_to_scalar(lower, common_prefix_length),
                 convert_datum_to_scalar(upper, common_prefix_length),
@@ -268,5 +254,35 @@ pub fn calc_fraction_from_datums(lower: &Datum, upper: &Datum, value: &Datum) ->
             )
         }
         _ => 0.5,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{CoreTime, timestamp_nanoseconds};
+
+    #[test]
+    fn timestamp_scalar_saturates_after_adding_microseconds() {
+        for (timestamp, expected) in [
+            (
+                CoreTime::from_date(1677, 9, 21, 0, 12, 44, 145_224),
+                i64::MIN,
+            ),
+            (
+                CoreTime::from_date(1677, 9, 21, 0, 12, 44, 145_225),
+                i64::MIN + 808,
+            ),
+            (
+                CoreTime::from_date(2262, 4, 11, 23, 47, 17, 854_775),
+                i64::MAX - 807,
+            ),
+            (
+                CoreTime::from_date(2262, 4, 11, 23, 47, 17, 854_776),
+                i64::MAX,
+            ),
+            (CoreTime::from_date(1970, 1, 1, 0, 0, 0, 999_999), -1_000),
+        ] {
+            assert_eq!(timestamp_nanoseconds(timestamp), expected, "{timestamp:?}");
+        }
     }
 }

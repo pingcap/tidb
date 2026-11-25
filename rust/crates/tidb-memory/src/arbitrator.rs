@@ -267,9 +267,8 @@ pub fn cancel_channel() -> (CancelHandle, CancelChannel) {
 }
 
 impl CancelChannel {
-    /// Adapts a statement killer's one-shot subscription to the allocator's
-    /// `select` receiver. The producer sends on both kill and reset, exactly
-    /// as Go closes the statement's kill-event channel in either case.
+    /// Adapts a statement killer's subscription to the allocator's
+    /// `select` receiver. Kill and reset both disconnect the receiver.
     pub fn from_kill_event(rx: Receiver<()>) -> CancelChannel {
         CancelChannel { rx }
     }

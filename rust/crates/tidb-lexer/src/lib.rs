@@ -32,7 +32,7 @@ mod reserved;
 mod token;
 
 /// Canonicalizes a recognized charset name from the generated TiDB charset table.
-use tidb_parser_util::unescape_char;
+use tidb_parser_util::append_unescaped_char;
 pub use keyword_catalog::{Keyword, KEYWORDS};
 
 /// Canonicalizes the legacy charset-introducer subset accepted by Go's
@@ -49,7 +49,7 @@ pub fn canonical_legacy_charset(name: &str) -> Option<&'static str> {
     }
 }
 pub use reserved::is_reserved;
-pub use token::{Token, TokenKind};
+pub use token::{BorrowedToken, Token, TokenKind};
 
 /// The converted value returned by [`Lexer::next_literal`], preserving the
 /// dynamic value classes exposed by Go's `Scanner.LexLiteral`.
@@ -87,6 +87,7 @@ pub fn is_builtin_function_keyword(word: &str) -> bool {
 }
 
 use reader::Reader;
+use std::borrow::Cow;
 use tidb_charset::Encoding;
 use tidb_hack::raw_bytes;
 
@@ -278,6 +279,17 @@ impl<'a> Lexer<'a> {
     /// Returns the next token, applying keyword recognition and the scanner's
     /// two-word keyword merges (`AS OF`, `MEMBER OF`).
     pub fn next_token(&mut self) -> Token {
+        let token = self.next_token_borrowed();
+        Token {
+            kind: token.kind,
+            offset: token.offset,
+            end_offset: token.end_offset,
+            text: token.text.into_owned(),
+        }
+    }
+
+    /// Scans the next token without allocating for unchanged source text.
+    pub fn next_token_borrowed(&mut self) -> BorrowedToken<'a> {
         let (kind, mut start, mut end, mut text) = self.scan_token();
 
         // `AS`/`MEMBER` followed by `OF` merges into a single keyword token
@@ -292,7 +304,7 @@ impl<'a> Lexer<'a> {
                     if k2 == TokenKind::Keyword
                         && uppercased_into(&t2, &mut of_buffer) == Some("OF")
                     {
-                        text = format!("{text} {t2}");
+                        text = Cow::Owned(format!("{text} {t2}"));
                         start = s2;
                         end = e2;
                     } else {
@@ -314,7 +326,7 @@ impl<'a> Lexer<'a> {
         };
         self.kw_hist = [interned, self.kw_hist[0], self.kw_hist[1]];
 
-        Token {
+        BorrowedToken {
             kind,
             offset: start,
             end_offset: end,
@@ -365,7 +377,7 @@ impl<'a> Lexer<'a> {
     /// Scans one token with keyword recognition, ANSI-quote handling, and the
     /// unquoting of quoted identifiers, but without the two-word merges or the
     /// keyword-history shift (those live in `next_token`).
-    fn scan_token(&mut self) -> (TokenKind, usize, usize, String) {
+    fn scan_token(&mut self) -> (TokenKind, usize, usize, Cow<'a, str>) {
         let (kind, start, end) = self.scan();
         let raw = &self.r.src()[start..end];
 
@@ -425,7 +437,7 @@ impl<'a> Lexer<'a> {
         // name; quoted identifiers are unquoted so their label matches the Go
         // scanner's `Lit` (delimiters stripped, doubled delimiters collapsed).
         let text = match introducer {
-            Some(canon) => canon.to_string(),
+            Some(canon) => Cow::Borrowed(canon),
             None => match kind {
                 TokenKind::Ident if raw.starts_with('`') => unquote_backticks(raw, self.client),
                 // ANSI_QUOTES flipped a double-quoted string into an
@@ -434,11 +446,15 @@ impl<'a> Lexer<'a> {
                 // text resolves backslash escapes AND doubled quotes — not
                 // just the raw-span doubled-delimiter collapse
                 // (divergence item 9).
-                TokenKind::Ident if raw.starts_with('"') => String::from_utf8_lossy(
-                    &decode_quoted_string(raw, self.sql_mode.no_backslash_escapes, self.client),
-                )
-                .into_owned(),
-                _ => raw.to_string(),
+                TokenKind::Ident if raw.starts_with('"') => Cow::Owned(
+                    String::from_utf8_lossy(&decode_quoted_string(
+                        raw,
+                        self.sql_mode.no_backslash_escapes,
+                        self.client,
+                    ))
+                    .into_owned(),
+                ),
+                _ => Cow::Borrowed(raw),
             },
         };
 
@@ -563,6 +579,19 @@ impl<'a> Lexer<'a> {
 
     fn scan_quoted_ident(&mut self, start: usize) -> (TokenKind, usize, usize) {
         self.r.inc(); // opening backtick
+        if ascii_delimiters_are_single_bytes(self.client) {
+            let bytes = self.r.src().as_bytes();
+            while let Some(quote) = memchr::memchr(b'`', &bytes[self.r.offset()..]) {
+                let end = self.r.offset() + quote + 1;
+                self.r.set_offset(end);
+                if self.r.peek() != b'`' {
+                    return (TokenKind::Ident, start, end);
+                }
+                self.r.inc(); // doubled delimiter
+            }
+            self.r.set_offset(bytes.len());
+            return (TokenKind::Invalid, start, self.r.offset());
+        }
         loop {
             if self.r.eof() {
                 return (TokenKind::Invalid, start, self.r.offset());
@@ -583,6 +612,23 @@ impl<'a> Lexer<'a> {
 
     fn scan_string(&mut self, start: usize) -> (TokenKind, usize, usize) {
         let ending = self.r.read_byte();
+        if ascii_delimiters_are_single_bytes(self.client) {
+            let bytes = self.r.src().as_bytes();
+            while let Some(special) = find_string_special(
+                &bytes[self.r.offset()..],
+                ending,
+                self.sql_mode.no_backslash_escapes,
+            ) {
+                let offset = self.r.offset() + special;
+                self.r.set_offset(offset + 1);
+                if bytes[offset] == ending && self.r.peek() != ending {
+                    return (TokenKind::Str, start, self.r.offset());
+                }
+                self.r.inc(); // doubled delimiter or the byte after a backslash
+            }
+            self.r.set_offset(bytes.len());
+            return (TokenKind::Invalid, start, self.r.offset());
+        }
         loop {
             if self.r.eof() {
                 return (TokenKind::Invalid, start, self.r.offset());
@@ -1182,11 +1228,14 @@ fn intern_hint_keyword(upper: &str) -> Option<&'static str> {
 
 /// Go `scanQuotedIdent`'s buffer: the surrounding backticks stripped, a
 /// doubled backtick collapsed, and a client multibyte character copied whole.
-fn unquote_backticks(raw: &str, client: Encoding) -> String {
+fn unquote_backticks(raw: &str, client: Encoding) -> Cow<'_, str> {
     let inner = raw
         .strip_prefix('`')
         .and_then(|s| s.strip_suffix('`'))
         .unwrap_or(raw);
+    if !inner.as_bytes().contains(&b'`') {
+        return Cow::Borrowed(inner);
+    }
     let mut out = String::with_capacity(inner.len());
     let mut index = 0;
     while index < inner.len() {
@@ -1203,10 +1252,12 @@ fn unquote_backticks(raw: &str, client: Encoding) -> String {
             index += 1;
         }
     }
-    out
+    Cow::Owned(out)
 }
 
-fn decode_quoted_string(raw: &str, no_backslash_escapes: bool, client: Encoding) -> Vec<u8> {
+/// Decodes a quoted SQL token, including its delimiters, into literal bytes.
+/// The client encoding determines whether a byte belongs to a multibyte character.
+pub fn decode_quoted_string(raw: &str, no_backslash_escapes: bool, client: Encoding) -> Vec<u8> {
     let text = raw;
     let raw = raw.as_bytes();
     if raw.len() < 2 {
@@ -1214,6 +1265,27 @@ fn decode_quoted_string(raw: &str, no_backslash_escapes: bool, client: Encoding)
     }
     let quote = raw[0];
     let mut out = Vec::with_capacity(raw.len() - 2);
+    if ascii_delimiters_are_single_bytes(client) {
+        let mut input = &raw[1..raw.len() - 1];
+        while let Some(special) = find_string_special(input, quote, no_backslash_escapes) {
+            out.extend_from_slice(&input[..special]);
+            let byte = input[special];
+            input = &input[special + 1..];
+            if byte == b'\\' && !no_backslash_escapes {
+                if let Some((&escaped, rest)) = input.split_first() {
+                    append_unescaped_char(&mut out, escaped);
+                    input = rest;
+                }
+            } else {
+                out.push(quote);
+                if input.first() == Some(&quote) {
+                    input = &input[1..];
+                }
+            }
+        }
+        out.extend_from_slice(input);
+        return out;
+    }
     let mut index = 1;
     while index + 1 < raw.len() {
         // Go `scanString` copies a client multibyte character whole.
@@ -1231,10 +1303,10 @@ fn decode_quoted_string(raw: &str, no_backslash_escapes: bool, client: Encoding)
             index += 2;
         } else if byte == b'\\' && !no_backslash_escapes {
             index += 1;
-            if index + 1 > raw.len() {
+            if index == raw.len() - 1 {
                 break;
             }
-            out.extend(unescape_char(raw[index]));
+            append_unescaped_char(&mut out, raw[index]);
             index += 1;
         } else {
             out.push(byte);
@@ -1242,6 +1314,19 @@ fn decode_quoted_string(raw: &str, no_backslash_escapes: bool, client: Encoding)
         }
     }
     out
+}
+
+fn ascii_delimiters_are_single_bytes(client: Encoding) -> bool {
+    // GBK and GB18030 may use an ASCII backslash as a trail byte.
+    !matches!(client, Encoding::Gbk | Encoding::Gb18030)
+}
+
+fn find_string_special(input: &[u8], quote: u8, no_backslash_escapes: bool) -> Option<usize> {
+    if no_backslash_escapes {
+        memchr::memchr(quote, input)
+    } else {
+        memchr::memchr2(quote, b'\\', input)
+    }
 }
 
 fn decode_hex_literal(raw: &[u8]) -> Vec<u8> {

@@ -77,7 +77,7 @@ impl RegionTaskRequest for TransportRequest {
         if limit > 0 {
             tasks.truncate(usize::try_from(limit).expect("positive limit fits usize"));
         }
-        Ok(tasks.into_iter().map(|task| task.ranges).collect())
+        Ok(tasks.into_iter().map(|task| task.ranges.to_ranges()).collect())
     }
 
     fn split_region_ranges(

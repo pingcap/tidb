@@ -442,6 +442,159 @@ fn test_decode_one_to_chunk() {
 }
 
 #[test]
+fn decode_byte_cells_preserves_selection_suffix_and_errors() {
+    let field = varchar(Collation::Utf8Mb4Bin);
+    let mut chunk = tidb_chunk::chunk::Chunk::new_chunk_with_capacity(
+        std::slice::from_ref(&field),
+        16,
+    );
+    chunk.set_sel(Some(Vec::new()));
+    for flag in [BYTES_FLAG, COMPACT_BYTES_FLAG] {
+        let encode = if flag == BYTES_FLAG { encode_bytes } else { encode_compact_bytes };
+        for length in [0, 1, 7, 8, 31, 32, 33, 4096] {
+            let expected: Vec<_> = (0..length).map(|index| (0xff - index) as u8).collect();
+            let mut input = vec![flag];
+            encode(&mut input, &expected);
+            input.push(NIL_FLAG);
+            let row = chunk.num_rows();
+            assert_eq!(
+                decode_one_to_chunk(&input, &mut chunk, 0, &field, Some(&Utc)).unwrap(),
+                &[NIL_FLAG],
+            );
+            assert_eq!(chunk.get_row(row).get_bytes(0).as_ref(), expected);
+        }
+    }
+
+    let bad_padding = [BYTES_FLAG, 0, 0, 0, 0, 0, 0, 0, 1, 247];
+    assert_eq!(
+        decode_one_to_chunk(&bad_padding, &mut chunk, 0, &field, Some(&Utc)),
+        Err(CodecError::InvalidEncoding("invalid bytes padding")),
+    );
+    assert_eq!(
+        decode_one_to_chunk(&[COMPACT_BYTES_FLAG, 4, 0xff], &mut chunk, 0, &field, Some(&Utc)),
+        Err(CodecError::InsufficientBytes),
+    );
+    let selection: Vec<_> = (0..16).collect();
+    assert_eq!(chunk.sel(), Some(selection.as_slice()));
+}
+
+#[test]
+fn decode_packed_json_and_vectors_preserves_payload_and_validates_before_append() {
+    let json = FieldType::new(FieldTypeCode::Json);
+    let vector = FieldType::new(FieldTypeCode::VectorFloat32);
+    let cases = [
+        (
+            json,
+            &[JSON_FLAG, 0x0c, 2, 0xc3, 0xa9][..],
+            &[JSON_FLAG, 0x0c, 1, 0xff][..],
+            "invalid binary JSON",
+        ),
+        (
+            vector,
+            &[VECTOR_FLOAT32_FLAG, 1, 0, 0, 0, 1, 0, 0xc0, 0x7f][..],
+            &[VECTOR_FLOAT32_FLAG, 2, 0, 0, 0, 1, 0, 0xc0, 0x7f][..],
+            "invalid vector float32",
+        ),
+    ];
+    for (field, valid, invalid, message) in cases {
+        let mut chunk = tidb_chunk::chunk::Chunk::new_chunk_with_capacity(
+            std::slice::from_ref(&field), 2,
+        );
+        chunk.set_sel(Some(Vec::new()));
+        let mut input = valid.to_vec();
+        input.push(NIL_FLAG);
+        let rest = decode_one_to_chunk(&input, &mut chunk, 0, &field, Some(&Utc)).unwrap();
+        assert_eq!(rest, &[NIL_FLAG]);
+        assert_eq!(chunk.get_row(0).get_raw(0).as_ref(), &valid[1..]);
+        assert_eq!(
+            decode_one_to_chunk(invalid, &mut chunk, 0, &field, Some(&Utc)),
+            Err(CodecError::InvalidEncoding(message)),
+        );
+        assert_eq!(chunk.num_rows(), 1);
+        assert_eq!(chunk.sel(), Some(&[0][..]));
+    }
+}
+
+#[test]
+fn default_json_decoder_reuses_only_checked_object_metadata() {
+    let field = FieldType::new(FieldTypeCode::Json);
+    let mut chunk = tidb_chunk::chunk::Chunk::new_chunk_with_capacity(
+        std::slice::from_ref(&field), 2,
+    );
+    let mut decoder = ChunkValueDecoder::default();
+    let object = |offset| {
+        let members = (0..32)
+            .map(|index| format!(r#""key{index:02}":{}"#, index + offset))
+            .collect::<Vec<_>>()
+            .join(",");
+        BinaryJSON::parse(&format!("{{{members}}}")).unwrap()
+    };
+    let encode = |value: BinaryJSON| encode_value(&[Datum::Json(value)]).unwrap();
+    for value in [object(0), object(9)] {
+        let mut input = encode(value.clone());
+        input.push(NIL_FLAG);
+        let rest = decoder.decode_one(&input, &mut chunk, 0, &field, Some(&Utc)).unwrap();
+        assert_eq!(rest, &[NIL_FLAG]);
+        assert_eq!(chunk.get_row(chunk.num_rows() - 1).get_json(0), value);
+    }
+
+    let input = encode(object(18));
+    let key_offset = 2 + u32::from_le_bytes(input[10..14].try_into().unwrap()) as usize;
+    let mut invalid = input.clone();
+    invalid[key_offset] = 0xff;
+    let mut invalid_offset = input.clone();
+    let last_entry = 2 + 8 + 32 * 6 + 31 * 5;
+    invalid_offset[last_entry + 1..last_entry + 5].copy_from_slice(&u32::MAX.to_le_bytes());
+    let mut invalid_float = input.clone();
+    let float_offset = u32::from_le_bytes(input[last_entry + 1..last_entry + 5].try_into().unwrap()) as usize;
+    invalid_float[last_entry] = tidb_datatype::JSON_TYPE_CODE_FLOAT64;
+    invalid_float[2 + float_offset..2 + float_offset + 8]
+        .copy_from_slice(&f64::NAN.to_le_bytes());
+    for broken in [invalid, invalid_offset, invalid_float] {
+        assert_eq!(
+            decoder.decode_one(&broken, &mut chunk, 0, &field, Some(&Utc)),
+            Err(CodecError::InvalidEncoding("invalid binary JSON")),
+        );
+        assert_eq!(chunk.num_rows(), 2);
+    }
+
+    // A permissive wire layout may point a key into the integer payloads.
+    // Reusing the preceding prefix for that layout would miss later damage.
+    let first_entry = 2 + 8 + 32 * 6;
+    let first_value = u32::from_le_bytes(input[first_entry + 1..first_entry + 5].try_into().unwrap());
+    let mut overlapping = input;
+    overlapping[10..14].copy_from_slice(&first_value.to_le_bytes());
+    overlapping[14..16].copy_from_slice(&1_u16.to_le_bytes());
+    overlapping.push(NIL_FLAG);
+    let mut decoder = ChunkValueDecoder::default();
+    assert_eq!(
+        decoder.decode_one(&overlapping, &mut chunk, 0, &field, Some(&Utc)),
+        Ok(&[NIL_FLAG][..]),
+    );
+    overlapping[2 + first_value as usize] = 0xff;
+    assert_eq!(
+        decoder.decode_one(&overlapping, &mut chunk, 0, &field, Some(&Utc)),
+        Err(CodecError::InvalidEncoding("invalid binary JSON")),
+    );
+    assert_eq!(chunk.num_rows(), 3);
+}
+
+#[test]
+fn decode_duration_cells_retains_fractional_precision_errors() {
+    let field = FieldType::new(FieldTypeCode::Duration).with_decimal(-2);
+    let mut chunk = tidb_chunk::chunk::Chunk::new_chunk_with_capacity(
+        std::slice::from_ref(&field), 1,
+    );
+    let mut encoded = vec![DURATION_FLAG];
+    encode_int(&mut encoded, -123_456_789);
+    assert_eq!(
+        decode_one_to_chunk(&encoded, &mut chunk, 0, &field, Some(&Utc)),
+        Err(CodecError::InvalidEncoding("invalid duration")),
+    );
+    assert_eq!(chunk.num_rows(), 0);
+}
+
+#[test]
 fn test_decode_one_typed_bit_width_panics_like_go() {
     let mut bit = FieldType::new(FieldTypeCode::Bit);
     bit.set_flen(0);

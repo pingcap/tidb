@@ -18,56 +18,55 @@
 //! carries up to 1,020 payload bytes. Readers verify each complete or trailing
 //! partial block before exposing payload bytes.
 
-use tidb_layered_io::{CloseWrite, ReadAt, ReadAtResult};
-use tidb_zeropool::Pool;
+use std::fmt;
 use std::io::{self, Write};
-use std::sync::LazyLock;
+use std::sync::Arc;
+use tidb_layered_io::{CloseWrite, ReadAt, ReadAtResult};
 
 const CHECKSUM_BLOCK_SIZE: usize = 1024;
 const CHECKSUM_SIZE: usize = 4;
 const CHECKSUM_PAYLOAD_SIZE: usize = CHECKSUM_BLOCK_SIZE - CHECKSUM_SIZE;
 
-static CHECKSUM_READER_BUFFER_POOL: LazyLock<Pool<Vec<u8>>> =
-    LazyLock::new(|| Pool::new(|| vec![0; CHECKSUM_BLOCK_SIZE]));
-
-struct PooledReadBuffer(Option<Vec<u8>>);
-
-impl PooledReadBuffer {
-    fn get() -> Self {
-        Self(Some(CHECKSUM_READER_BUFFER_POOL.get()))
-    }
-
-    fn bytes_mut(&mut self) -> &mut [u8] {
-        self.0.as_mut().expect("pooled buffer is present")
-    }
-}
-
-impl Drop for PooledReadBuffer {
-    fn drop(&mut self) {
-        if let Some(buffer) = self.0.take() {
-            CHECKSUM_READER_BUFFER_POOL.put(buffer);
-        }
-    }
-}
-
-#[derive(Clone)]
-struct StickyError {
-    kind: io::ErrorKind,
-    message: String,
+enum StickyError {
+    Os(i32),
+    Kind(io::ErrorKind),
+    Message(io::ErrorKind, Arc<str>),
 }
 
 impl StickyError {
     fn from_error(error: &io::Error) -> Self {
-        Self {
-            kind: error.kind(),
-            message: error.to_string(),
+        if let Some(code) = error.raw_os_error() {
+            return Self::Os(code);
         }
+        let kind = error.kind();
+        let message = error.to_string();
+        if error.get_ref().is_none() && message == io::Error::from(kind).to_string() {
+            return Self::Kind(kind);
+        }
+        Self::Message(kind, message.into())
     }
 
     fn to_error(&self) -> io::Error {
-        io::Error::new(self.kind, self.message.clone())
+        match self {
+            Self::Os(code) => io::Error::from_raw_os_error(*code),
+            Self::Kind(kind) => io::Error::from(*kind),
+            Self::Message(kind, message) => {
+                io::Error::new(*kind, ErrorMessage(Arc::clone(message)))
+            }
+        }
     }
 }
+
+#[derive(Debug)]
+struct ErrorMessage(Arc<str>);
+
+impl fmt::Display for ErrorMessage {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for ErrorMessage {}
 
 /// CRC-32 framing writer.
 pub struct Writer<W>
@@ -216,8 +215,20 @@ where
     }
 }
 
+#[derive(Debug)]
+struct ChecksumMismatch;
+
+impl fmt::Display for ChecksumMismatch {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("error checksum")
+    }
+}
+
+impl std::error::Error for ChecksumMismatch {}
+
+#[cold]
 fn checksum_failure(n: usize) -> ReadAtResult {
-    ReadAtResult::io(n, io::Error::other("error checksum"))
+    ReadAtResult::io(n, io::Error::other(ChecksumMismatch))
 }
 
 impl<R> ReadAt for Reader<R>
@@ -231,12 +242,11 @@ where
         let mut offset_in_payload = offset % CHECKSUM_PAYLOAD_SIZE as i64;
         let mut cursor =
             (offset / CHECKSUM_PAYLOAD_SIZE as i64).wrapping_mul(CHECKSUM_BLOCK_SIZE as i64);
-        let mut pooled = PooledReadBuffer::get();
-        let buffer = pooled.bytes_mut();
+        let mut buffer = [0; CHECKSUM_BLOCK_SIZE];
         let mut total = 0;
 
         while total < destination.len() {
-            let result = self.underlying.read_at(buffer, cursor);
+            let result = self.underlying.read_at(&mut buffer, cursor);
             if let Some(error) = result.error {
                 if result.n == 0 || !error.is_eof() {
                     return ReadAtResult {
@@ -271,9 +281,9 @@ mod tests {
     #![allow(non_snake_case)]
 
     use super::*;
+    use std::sync::{Arc, Mutex};
     use tidb_encrypt as encrypt;
     use tidb_layered_io::ReadAtError;
-    use std::sync::{Arc, Mutex};
 
     #[derive(Clone, Default)]
     struct MemoryFile(Arc<Mutex<Vec<u8>>>);
@@ -371,10 +381,58 @@ mod tests {
     }
 
     fn is_checksum_failure(result: &ReadAtResult) -> bool {
-        result
-            .error
-            .as_ref()
-            .is_some_and(|error| error.to_string() == "error checksum")
+        matches!(
+            result.error.as_ref(),
+            Some(ReadAtError::Io(error))
+                if error.kind() == io::ErrorKind::Other && error.to_string() == "error checksum"
+        )
+    }
+
+    #[test]
+    fn writer_replays_first_error_without_touching_the_underlying_writer() {
+        struct FailingWriter(Option<io::Error>);
+
+        impl Write for FailingWriter {
+            fn write(&mut self, _: &[u8]) -> io::Result<usize> {
+                Err(self
+                    .0
+                    .take()
+                    .expect("only the first flush attempts a write"))
+            }
+
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+
+        impl CloseWrite for FailingWriter {
+            fn close(self) -> io::Result<()> {
+                panic!("failed writer must not close the underlying writer")
+            }
+        }
+
+        for error in [
+            io::Error::from_raw_os_error(32),
+            io::Error::from(io::ErrorKind::BrokenPipe),
+            io::Error::new(io::ErrorKind::PermissionDenied, "write denied"),
+        ] {
+            let expected_kind = error.kind();
+            let expected_code = error.raw_os_error();
+            let expected_message = error.to_string();
+            let mut writer = Writer::new(FailingWriter(Some(error)));
+            writer.write_all(b"pending").unwrap();
+            let initial = writer.flush().unwrap_err();
+            let repeated = writer.flush().unwrap_err();
+            let write = writer.write(b"new bytes").unwrap_err();
+            assert_eq!(writer.get_cache(), b"pending");
+            assert_eq!(writer.get_cache_data_offset(), 0);
+            let close = writer.close().unwrap_err();
+            for observed in [initial, repeated, write, close] {
+                assert_eq!(observed.kind(), expected_kind);
+                assert_eq!(observed.raw_os_error(), expected_code);
+                assert_eq!(observed.to_string(), expected_message);
+            }
+        }
     }
 
     fn read_layered(

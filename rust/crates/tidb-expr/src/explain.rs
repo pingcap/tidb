@@ -16,6 +16,9 @@
 //! `StringWithCtx` text, which physical-plan EXPLAIN and the plan cache's
 //! skip reasons print.
 
+use std::borrow::Cow;
+use std::fmt::Write;
+
 use tidb_datatype::Datum;
 use crate::expression::Expression;
 
@@ -60,202 +63,299 @@ pub fn redaction_mode(enable_redact_log: &str) -> RedactionMode {
 pub fn physical_expression_text_with_columns(
     ctx: &dyn crate::Columns,
     expression: &Expression,
-    column_names: &[Option<String>],
+    _column_names: &[Option<String>],
     style: ExpressionTextStyle,
 ) -> Option<String> {
+    let mut output = String::new();
+    append_expression_text(ctx, expression, style, &mut output)?;
+    Some(output)
+}
+
+/// Appends the text of a physical expression. A rendering error leaves the
+/// existing output intact.
+pub fn append_physical_expression_text(
+    ctx: &dyn crate::Columns,
+    expression: &Expression,
+    style: ExpressionTextStyle,
+    output: &mut String,
+) -> Option<()> {
+    let start = output.len();
+    let result = append_expression_text(ctx, expression, style, output);
+    if result.is_none() {
+        output.truncate(start);
+    }
+    result
+}
+
+fn append_expression_text(
+    ctx: &dyn crate::Columns,
+    expression: &Expression,
+    style: ExpressionTextStyle,
+    output: &mut String,
+) -> Option<()> {
     match expression {
-        Expression::Column(column) => {
-            // Go `Column.string`: a hidden virtual column (an expression
-            // index's) prints its expression, without parameter values.
-            if column.is_hidden {
-                if let Some(virtual_expr) = column.virtual_expr.as_deref() {
-                    return physical_expression_text_with_columns(
-                        ctx,
-                        virtual_expr,
-                        column_names,
-                        ExpressionTextStyle::StringWithCtx(RedactionMode::Disabled),
-                    );
-                }
-            }
-            // Go `Column.StringWithCtx` renders `OrigName` (the
-            // table-qualified physical name) when non-empty, falling back to
-            // `Column#<UniqueID>` — the output names (aliases) are not part
-            // of the explain rendering.
-            Some(column_text(ctx, column))
-        }
+        Expression::Column(column) => append_physical_column_text(ctx, column, output)?,
         Expression::ScalarFunction(function) => {
-            let arguments = function
-                .args
-                .iter()
-                .map(|argument| {
-                    physical_expression_text_with_columns(ctx, argument, column_names, style)
-                })
-                .collect::<Option<Vec<_>>>()?;
-            // Go `ScalarFunction.explainInfo`: `in(_tidb_tid, -1)`, the
-            // impossible partition a global index filter uses when pruning
-            // left nothing, prints as `in(_tidb_tid, dual)`.
-            if function.func_name.lowercase() == "in"
-                && arguments.len() == 2
-                && arguments[0].ends_with("_tidb_tid")
-                && matches!(
-                    function.args.get(1),
-                    Some(Expression::Constant(constant))
-                        if matches!(constant.value, tidb_datatype::Datum::Int(-1))
-                )
-            {
-                return Some(format!("in({}, dual)", arguments[0]));
-            }
-            match function.func_name.lowercase() {
-                // Go renders a cast as `cast(arg, RetType.String())`.
-                "cast" if arguments.len() == 1 => {
-                    let result_type = function.ret_type.as_ref()?;
-                    Some(format!("cast({}, {})", arguments[0], result_type.source_string()))
+            let name = function.func_name.lowercase();
+            let args = &function.args;
+            output.reserve(name.len() + 2 + 16 * args.len());
+            output.push_str(name);
+            output.push('(');
+            let mut dual_argument = None;
+            for (index, argument) in args.iter().enumerate() {
+                if index != 0 {
+                    output.push_str(", ");
                 }
-                name => Some(format!("{name}({})", arguments.join(", "))),
+                let start = output.len();
+                append_expression_text(ctx, argument, style, output)?;
+                // Go prints an impossible physical-table ID as in(..., dual).
+                if index == 0
+                    && name == "in"
+                    && output[start..].ends_with("_tidb_tid")
+                    && matches!(&args[..], [_, Expression::Constant(constant)]
+                        if matches!(constant.value, Datum::Int(-1)))
+                {
+                    dual_argument = Some(output.len());
+                }
             }
+            if let Some(end) = dual_argument {
+                output.truncate(end);
+                output.push_str(", dual");
+            } else if name == "cast" && args.len() == 1 {
+                let result_type = function.ret_type.as_ref()?;
+                output.push_str(", ");
+                output.push_str(&result_type.source_string());
+            }
+            output.push(')');
         }
         Expression::Constant(constant) => match style {
-            ExpressionTextStyle::Explain => explain_constant(constant, ctx),
+            ExpressionTextStyle::Explain => append_explain_constant(ctx, constant, output)?,
             ExpressionTextStyle::StringWithCtx(redact) => {
-                string_with_ctx_constant(constant, ctx, column_names, redact)
+                append_string_constant(ctx, constant, redact, output)?;
             }
         },
         Expression::CorrelatedColumn(correlated) => {
-            // Go `CorrelatedColumn.StringWithCtx` renders through the embedded
-            // `Column` (expression/column.go): a correlated reference prints
-            // like its outer column, keeping the whole condition text visible.
-            Some(column_text(ctx, &correlated.column))
+            append_column_text(ctx, &correlated.column, output);
         }
-        // Go `ScalarSubQueryExpr.ExplainInfo` is `ScalarQueryCol#N`; it has no
-        // `StringWithCtx` of its own, so a Projection prints the embedded
-        // `Constant` -- NULL until the subquery is evaluated.
+        // A Projection renders the embedded constant until the scalar
+        // subquery is evaluated.
         Expression::ScalarSubQuery(subquery) => match style {
-            ExpressionTextStyle::Explain => Some(subquery.explain_info()),
+            ExpressionTextStyle::Explain => output.push_str(&subquery.explain_info()),
             ExpressionTextStyle::StringWithCtx(redact) => {
-                string_with_ctx_constant(&subquery.embedded_constant(), ctx, column_names, redact)
+                append_string_constant(ctx, &subquery.embedded_constant(), redact, output)?;
             }
         },
     }
+    Some(())
 }
 
-/// Go `Column.string`: `OrigName`, else `Column#<UniqueID>`, or bare
-/// `Column` when the statement removes column numbers (plan_tree).
-fn column_text(ctx: &dyn crate::Columns, column: &crate::column::Column) -> String {
+/// Appends a column's plan text from an existing schema or expression.
+pub fn append_physical_column_text(
+    ctx: &dyn crate::Columns,
+    column: &crate::column::Column,
+    output: &mut String,
+) -> Option<()> {
+    if column.is_hidden {
+        if let Some(virtual_expr) = column.virtual_expr.as_deref() {
+            return append_physical_expression_text(
+                ctx,
+                virtual_expr,
+                ExpressionTextStyle::StringWithCtx(RedactionMode::Disabled),
+                output,
+            );
+        }
+    }
+    append_column_text(ctx, column, output);
+    Some(())
+}
+
+/// Go `Column.string`: use `OrigName`, or the requested numeric identifier.
+/// A projection alias does not replace the original name.
+fn append_column_text(
+    ctx: &dyn crate::Columns,
+    column: &crate::column::Column,
+    output: &mut String,
+) {
     if !column.orig_name.is_empty() {
-        column.orig_name.clone()
+        output.push_str(&column.orig_name);
     } else if ctx.remove_column_numbers() {
-        "Column".to_owned()
+        output.push_str("Column");
     } else {
-        format!("Column#{}", column.unique_id)
+        write!(output, "Column#{}", column.unique_id).expect("String writes are infallible");
     }
 }
 
-/// Go `Constant.StringWithCtx` (`constant.go:181`): the Projection
-/// renderer, which prints a string constant WITHOUT quotes.
-fn string_with_ctx_constant(
-    constant: &crate::constant::Constant,
+/// Go `Constant.StringWithCtx`, with unquoted constants and the `<nil>`
+/// spelling of a NULL datum.
+fn append_string_constant(
     ctx: &dyn crate::Columns,
-    column_names: &[Option<String>],
+    constant: &crate::constant::Constant,
     redact: RedactionMode,
-) -> Option<String> {
+    output: &mut String,
+) -> Option<()> {
     let parameter;
     let value = if let Some(marker) = constant.param_marker {
         let Some(value) = usize::try_from(marker.order)
             .ok()
             .and_then(|order| ctx.param_value(order).ok())
         else {
-            return Some("?".to_owned());
+            output.push('?');
+            return Some(());
         };
         parameter = value;
         &parameter
     } else if let Some(deferred) = &constant.deferred_expr {
-        // Go returns the expression's text before applying SubqueryRefID.
-        return physical_expression_text_with_columns(
+        return append_expression_text(
             ctx,
             deferred,
-            column_names,
             ExpressionTextStyle::StringWithCtx(redact),
+            output,
         );
     } else {
         &constant.value
     };
-    // Go `Constant.StringWithCtx` renders through `Datum.TruncatedStringify`,
-    // which prints a NULL value as `<nil>` (q43's case-else:
-    // `case(eq(...), val, <nil>)`). The quoted "NULL" spelling belongs to
-    // `Constant.Format`/`ExplainInfo` (Selection conditions), not here.
-    let value = match redact {
-        RedactionMode::Disabled => constant_value_text(value)?,
-        RedactionMode::Marker => format!("‹{}›", constant_value_text(value)?),
-        RedactionMode::Enabled => "?".to_owned(),
-    };
-    // The reference wraps a NULL result too: `ScalarQueryCol#14(<nil>)`.
-    if constant.subquery_ref_id > 0 {
-        Some(format!(
-            "ScalarQueryCol#{}({value})",
-            constant.subquery_ref_id
-        ))
-    } else {
-        Some(value)
-    }
+    append_constant_value(value, redact, false, constant.subquery_ref_id, output)
 }
 
-/// Go `Datum.TruncatedStringify` as text.
-fn constant_value_text(value: &Datum) -> Option<String> {
-    value
-        .truncated_stringify()
-        .ok()
-        .and_then(|bytes| String::from_utf8(bytes).ok())
-}
-
-/// Go `Constant.ExplainInfo` (`explain.go:141`), redacted as the context's
-/// `tidb_redact_log` says.
-fn explain_constant(
-    constant: &crate::constant::Constant,
+fn append_explain_constant(
     ctx: &dyn crate::Columns,
-) -> Option<String> {
-    let redact = redaction_mode(&ctx.tidb_redact_log());
-    if redact == RedactionMode::Enabled {
-        return Some(if constant.subquery_ref_id > 0 {
-            format!("ScalarQueryCol#{}(?)", constant.subquery_ref_id)
-        } else {
-            "?".to_owned()
-        });
-    }
-    // Literal datums are immutable; borrowing keeps large strings/JSON from
-    // being cloned merely to render a plan. Only lazy constants need evaluation.
+    constant: &crate::constant::Constant,
+    output: &mut String,
+) -> Option<()> {
+    let redact = redaction_mode(&ctx.tidb_redact_log_ref());
     let evaluated;
-    let datum = if constant.param_marker.is_some() || constant.deferred_expr.is_some() {
+    let datum = if redact != RedactionMode::Enabled
+        && (constant.param_marker.is_some() || constant.deferred_expr.is_some())
+    {
         evaluated = match constant.eval_in(ctx) {
             Ok(value) => value,
-            Err(_) => return Some("not recognized const value".to_owned()),
+            Err(_) => {
+                output.push_str("not recognized const value");
+                return Some(());
+            }
         };
         &evaluated
     } else {
         &constant.value
     };
-    // Go `Constant.format`: a NULL constant prints `NULL`.
-    let value = if datum.is_null() {
-        "NULL".to_owned()
+    append_constant_value(datum, redact, true, constant.subquery_ref_id, output)
+}
+
+fn append_constant_value(
+    datum: &Datum,
+    redact: RedactionMode,
+    explain: bool,
+    subquery_ref_id: i64,
+    output: &mut String,
+) -> Option<()> {
+    if redact == RedactionMode::Enabled && subquery_ref_id <= 0 {
+        if output.capacity() == 0 {
+            *output = "?".to_owned();
+        } else {
+            output.push('?');
+        }
+        return Some(());
+    }
+    let value = if redact == RedactionMode::Enabled {
+        Cow::Borrowed("?")
+    } else if explain && datum.is_null() {
+        Cow::Borrowed("NULL")
     } else {
-        let value = constant_value_text(datum)?;
-        match datum {
-        Datum::String(_)
-        | Datum::Bytes(_)
-        | Datum::Enum(_, _)
-        | Datum::Set(_, _)
-        | Datum::Json(_)
-        | Datum::BinaryLiteral(_)
-        | Datum::Bit(_) => format!("\"{value}\""),
-        _ => value,
+        match datum.truncated_stringify_ref().ok()? {
+            Cow::Borrowed(bytes) => Cow::Borrowed(simdutf8::basic::from_utf8(bytes).ok()?),
+            Cow::Owned(bytes) => Cow::Owned(String::from_utf8(bytes).ok()?),
         }
     };
-    let value = if redact == RedactionMode::Marker { format!("‹{value}›") } else { value };
-    if constant.subquery_ref_id > 0 {
-        Some(format!(
-            "ScalarQueryCol#{}({value})",
-            constant.subquery_ref_id
-        ))
-    } else {
-        Some(value)
+    let quoted = explain
+        && redact != RedactionMode::Enabled
+        && matches!(
+            datum,
+            Datum::String(_)
+                | Datum::Bytes(_)
+                | Datum::Enum(_, _)
+                | Datum::Set(_, _)
+                | Datum::Json(_)
+                | Datum::BinaryLiteral(_)
+                | Datum::Bit(_)
+        );
+    let marked = redact == RedactionMode::Marker;
+    if !quoted && !marked && subquery_ref_id <= 0 && output.capacity() == 0 {
+        *output = value.into_owned();
+        return Some(());
+    }
+    output.reserve(
+        value.len()
+            + usize::from(quoted) * 2
+            + usize::from(marked) * "‹›".len()
+            + usize::from(subquery_ref_id > 0) * ("ScalarQueryCol#()".len() + 19),
+    );
+    if subquery_ref_id > 0 {
+        write!(output, "ScalarQueryCol#{subquery_ref_id}(").expect("String writes are infallible");
+    }
+    if marked {
+        output.push('‹');
+    }
+    if quoted {
+        output.push('"');
+    }
+    output.push_str(&value);
+    if quoted {
+        output.push('"');
+    }
+    if marked {
+        output.push('›');
+    }
+    if subquery_ref_id > 0 {
+        output.push(')');
+    }
+    Some(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::constant::Constant;
+    use tidb_datatype::{FieldType, FieldTypeCode};
+    use tidb_exprctx::NoColumns;
+
+    #[test]
+    fn nested_explain_rejects_a_constant_cut_mid_codepoint() {
+        let context = NoColumns;
+        let field = FieldType::new(FieldTypeCode::VarString);
+        let expression = |text: String| {
+            Expression::Constant(Constant::new(Datum::new_string_datum(text), field.clone()))
+        };
+        let concat = crate::new_function_base(
+            &context,
+            "concat",
+            field.clone(),
+            vec![expression("first".to_owned()), expression(format!("{}é", "x".repeat(63)))],
+        )
+        .unwrap();
+        assert_eq!(
+            physical_expression_text_with_columns(&context, &concat, &[], ExpressionTextStyle::Explain),
+            None,
+        );
+        let mut output = "existing: ".to_owned();
+        assert_eq!(
+            append_physical_expression_text(&context, &concat, ExpressionTextStyle::Explain, &mut output),
+            None,
+        );
+        assert_eq!(output, "existing: ");
+        let masked = ExpressionTextStyle::StringWithCtx(RedactionMode::Enabled);
+        assert_eq!(
+            physical_expression_text_with_columns(&context, &concat, &[], masked).as_deref(),
+            Some("concat(?, ?)"),
+        );
+
+        let literal = expression("first".to_owned());
+        let mut output = String::with_capacity(16);
+        let original = output.as_ptr();
+        assert_eq!(
+            append_physical_expression_text(&context, &literal, masked, &mut output),
+            Some(()),
+        );
+        assert_eq!(output, "?");
+        assert_eq!(output.as_ptr(), original);
     }
 }

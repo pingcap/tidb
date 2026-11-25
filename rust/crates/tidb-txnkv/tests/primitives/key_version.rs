@@ -211,6 +211,12 @@ fn test_gen_key_exists_err() {
             "索".repeat(192)
         )
     );
+    let value = "好".repeat(63);
+    let error = gen_key_exists_err(&[value.as_str(), "should be discarded"], "index");
+    assert_eq!(
+        error.to_string(),
+        format!("Duplicate entry '{value}-' for key 'index'")
+    );
     assert_eq!(TXN_RETRYABLE_MARK, "[try again later]");
 }
 

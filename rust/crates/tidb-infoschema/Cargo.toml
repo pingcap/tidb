@@ -40,6 +40,8 @@ tidb-kv = { path = "../tidb-kv" }
 tidb-table = { path = "../tidb-table" }
 tidb-driver-error = { path = "../tidb-driver-error" }
 crossbeam-channel = "0.5"
+foldhash.workspace = true
+indexmap = "2"
 serde_json = { workspace = true }
 tidb-hack = { path = "../tidb-hack" }
 tidb-util = { path = "../tidb-util" }

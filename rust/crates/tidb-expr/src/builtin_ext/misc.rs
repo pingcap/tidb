@@ -18,6 +18,8 @@ use std::sync::{Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::coerce::coerce_str;
+use std::borrow::Cow;
+
 use crate::{Datum, Decimal, EvalError};
 use tidb_infoschema_context::MetaOnlyInfoSchema;
 use tidb_vitess::hash_uint64;
@@ -592,132 +594,149 @@ pub(crate) fn is_uuid(value: &Datum) -> Result<Datum, EvalError> {
     let Some(value) = eval_string_bytes(value)? else {
         return Ok(Datum::Null);
     };
-    // Go strings are byte strings. `strings.TrimSpace` decodes malformed
-    // bytes as RuneError (which is not whitespace), while still trimming
-    // valid whitespace around them. Lossy decoding has exactly that property;
-    // the original bytes remain authoritative for `uuid.Parse` below.
-    let trim_view = String::from_utf8_lossy(&value);
-    if trim_view.trim() != trim_view.as_ref() {
-        return Ok(Datum::Int(0));
+    Ok(Datum::Int(i64::from(is_uuid_bytes(&value))))
+}
+
+pub(crate) fn is_uuid_bytes(value: &[u8]) -> bool {
+    // The parser requires ASCII in every accepted spelling, except for the
+    // two ignored bytes around its 38-byte form. Go checks those for space.
+    if value.len() == 38
+        && [value[0], value[37]].into_iter().any(|byte| matches!(byte, b' ' | b'\t'..=b'\r'))
+    {
+        return false;
     }
-    Ok(Datum::Int(i64::from(parse_uuid(&value).is_some())))
+    uuid_body(value).is_some_and(uuid_body_is_hex)
+}
+
+fn uuid_body_is_hex(body: &[u8]) -> bool {
+    if body.len() == 32 {
+        return uuid_hex(body.as_array::<32>().unwrap());
+    }
+    uuid_has_separators(body)
+        && uuid_hex(body[..8].as_array::<8>().unwrap())
+        && uuid_hex(body[9..13].as_array::<4>().unwrap())
+        && uuid_hex(body[14..18].as_array::<4>().unwrap())
+        && uuid_hex(body[19..23].as_array::<4>().unwrap())
+        && uuid_hex(body[24..].as_array::<12>().unwrap())
+}
+
+#[inline]
+fn uuid_hex<const N: usize>(bytes: &[u8; N]) -> bool {
+    // A fixed-size reduction lets the compiler check the bytes in parallel.
+    bytes.iter().fold(true, |valid, byte| valid & byte.is_ascii_hexdigit())
 }
 
 /// `UUID_VERSION(value)`, ported from `builtinUUIDVersionSig.evalInt` in
 /// `pkg/expression/builtin_miscellaneous.go`.
 ///
-/// TiDB invokes `github.com/google/uuid.Parse` over an `ETString` argument,
-/// then returns the high nibble of UUID byte 6. The scalar domain retains the
-/// string coercion and all parser-accepted UUID spellings. It deliberately
-/// does not reproduce TiDB's diagnostic payload for malformed UUIDs (error
-/// 1411 and its value/type text): [`EvalError`] has no SQL error-code carrier
-/// yet, so malformed input is an evaluator error instead. The current
-/// [`Datum::String`] domain is UTF-8 text rather than TiDB's raw `BINARY` byte
-/// strings, so invalid-UTF-8 arguments and their charset/binary metadata are
-/// not representable; every successful UUID spelling is ASCII. No collation
-/// or warning behavior is omitted for successful scalar values.
+/// Reads the version nibble after validating Go's accepted UUID forms.
 pub(crate) fn uuid_version(value: &Datum) -> Result<Datum, EvalError> {
-    let Some(value) = coerce_str(value)? else {
+    let Some(value) = uuid_input(value)? else {
         return Ok(Datum::Null);
     };
-    let Some(bytes) = parse_uuid(value.as_bytes()) else {
-        // Go `errWrongValueForType("string", val, "uuid_version")` (1411).
-        return Err(EvalError::WrongValueForType {
-            value_class: "string",
-            value,
-            function: "uuid_version",
-        });
-    };
-    Ok(Datum::Int(i64::from(bytes[6] >> 4)))
+    uuid_version_bytes(&value).map(Datum::Int)
 }
 
-/// `UUID_TIMESTAMP(value)`, ported from `builtinUUIDTimestampSig.evalDecimal`
-/// in `pkg/expression/builtin_miscellaneous.go`.
-///
-/// TiDB accepts the UUID spellings parsed by `google/uuid.Parse`, returns
-/// `NULL` for a valid UUID that does not carry a timestamp, and renders the
-/// Version 1, 6, and 7 time as an exact `DECIMAL(18,6)`. The timestamp
-/// decoding below is a direct port of `google/uuid.UUID.Time` and
-/// `Time.UnixTime` from TiDB's pinned module: the 1582 UUID epoch is converted
-/// to Unix microseconds before making a fixed six-place decimal. Invalid text
-/// is Go's 1411.
+pub(crate) fn uuid_version_bytes(value: &[u8]) -> Result<i64, EvalError> {
+    let body = valid_uuid_body(value, "uuid_version")?;
+    Ok(i64::from(uuid_version_nibble(body)))
+}
+
+/// `UUID_TIMESTAMP(value)`, ported from `builtinUUIDTimestampSig`.
+/// Versions 1, 6 and 7 carry a time represented as DECIMAL(18,6).
 pub(crate) fn uuid_timestamp(value: &Datum) -> Result<Datum, EvalError> {
-    let Some(value) = coerce_str(value)? else {
+    let Some(value) = uuid_input(value)? else {
         return Ok(Datum::Null);
     };
-    let Some(uuid) = parse_uuid(value.as_bytes()) else {
-        // Go `errWrongValueForType("string", val, "uuid_timestamp")` (1411).
-        return Err(EvalError::WrongValueForType {
-            value_class: "string",
-            value,
-            function: "uuid_timestamp",
-        });
-    };
+    Ok(uuid_timestamp_micros(&value)?.map_or(Datum::Null, |micros| {
+        Datum::Decimal(Decimal::from_scaled_i128(i128::from(micros), 6))
+    }))
+}
 
-    let timestamp_100ns = match uuid[6] >> 4 {
-        1 => uuid_v1_timestamp_100ns(&uuid),
-        6 => uuid_v6_timestamp_100ns(&uuid),
-        7 => uuid_v7_timestamp_100ns(&uuid),
-        _ => return Ok(Datum::Null),
+pub(crate) fn uuid_timestamp_micros(value: &[u8]) -> Result<Option<i64>, EvalError> {
+    let body = valid_uuid_body(value, "uuid_timestamp")?;
+    let version = uuid_version_nibble(body);
+    if !matches!(version, 1 | 6 | 7) {
+        return Ok(None);
+    }
+    let mut prefix = [0; 8];
+    if body.len() == 32 {
+        decode_uuid_prefix(&body[..16], &mut prefix);
+    } else {
+        decode_uuid_prefix(&body[..8], &mut prefix[..4]);
+        decode_uuid_prefix(&body[9..13], &mut prefix[4..6]);
+        decode_uuid_prefix(&body[14..18], &mut prefix[6..]);
+    }
+
+    let timestamp_100ns = match version {
+        1 => uuid_v1_timestamp_100ns(&prefix),
+        6 => uuid_v6_timestamp_100ns(&prefix),
+        _ => uuid_v7_timestamp_100ns(&prefix),
     };
-    // `google/uuid.Time.UnixTime` subtracts the UUID epoch in 100ns ticks,
-    // then TiDB divides its nanoseconds by 1000 and rounds at six decimal
-    // places. The result is precisely truncation toward zero to microseconds.
-    let unix_micros = (timestamp_100ns - UUID_EPOCH_100NS) / 10;
-    Ok(Datum::Decimal(decimal_micros(unix_micros)))
+    // Go splits 100ns ticks into seconds and nanoseconds, and divides the
+    // nanoseconds by 1,000. Both steps truncate toward zero.
+    Ok(Some((timestamp_100ns - UUID_EPOCH_100NS) / 10))
+}
+
+fn uuid_input(value: &Datum) -> Result<Option<Cow<'_, [u8]>>, EvalError> {
+    match value {
+        Datum::String(value) => Ok(Some(Cow::Borrowed(value.bytes()))),
+        Datum::Bytes(value) => Ok(Some(Cow::Borrowed(value))),
+        _ => Ok(coerce_str(value)?.map(|text| Cow::Owned(text.into_bytes()))),
+    }
+}
+
+fn valid_uuid_body<'a>(value: &'a [u8], function: &'static str) -> Result<&'a [u8], EvalError> {
+    uuid_body(value).filter(|body| uuid_body_is_hex(body)).ok_or_else(|| {
+        EvalError::WrongValueForType {
+            value_class: "string",
+            value: String::from_utf8_lossy(value).into_owned(),
+            function,
+        }
+    })
+}
+
+fn uuid_version_nibble(body: &[u8]) -> u8 {
+    uuid_hex_nibble(body[if body.len() == 32 { 12 } else { 14 }])
+}
+
+fn decode_uuid_prefix(hex: &[u8], output: &mut [u8]) {
+    for (byte, &[high, low]) in output.iter_mut().zip(hex.as_chunks::<2>().0) {
+        *byte = uuid_hex_nibble(high) << 4 | uuid_hex_nibble(low);
+    }
+}
+
+fn uuid_hex_nibble(digit: u8) -> u8 {
+    // For a validated hex digit, bit 6 distinguishes letters from numbers.
+    (digit & 15) + ((digit >> 6) * 9)
 }
 
 const UUID_EPOCH_100NS: i64 = 122_192_928_000_000_000;
 
-fn uuid_v1_timestamp_100ns(uuid: &[u8; 16]) -> i64 {
+fn uuid_v1_timestamp_100ns(uuid: &[u8; 8]) -> i64 {
     i64::from(u32::from_be_bytes([uuid[0], uuid[1], uuid[2], uuid[3]]))
         | (i64::from(u16::from_be_bytes([uuid[4], uuid[5]])) << 32)
         | (i64::from(u16::from_be_bytes([uuid[6], uuid[7]]) & 0x0fff) << 48)
 }
 
-fn uuid_v6_timestamp_100ns(uuid: &[u8; 16]) -> i64 {
+fn uuid_v6_timestamp_100ns(uuid: &[u8; 8]) -> i64 {
     (i64::from(u32::from_be_bytes([uuid[0], uuid[1], uuid[2], uuid[3]])) << 28)
         | (i64::from(u16::from_be_bytes([uuid[4], uuid[5]])) << 12)
         | i64::from(u16::from_be_bytes([uuid[6], uuid[7]]) & 0x0fff)
 }
 
-fn uuid_v7_timestamp_100ns(uuid: &[u8; 16]) -> i64 {
+fn uuid_v7_timestamp_100ns(uuid: &[u8; 8]) -> i64 {
     let first_eight = u64::from_be_bytes([
         uuid[0], uuid[1], uuid[2], uuid[3], uuid[4], uuid[5], uuid[6], uuid[7],
     ]);
     ((first_eight >> 16) * 10_000) as i64 + UUID_EPOCH_100NS
 }
 
-fn decimal_micros(micros: i64) -> Decimal {
-    let (negative, magnitude) = if micros < 0 {
-        (true, micros.unsigned_abs())
-    } else {
-        (false, micros as u64)
-    };
-    let value = format!("{}.{:06}", magnitude / 1_000_000, magnitude % 1_000_000);
-    // `Decimal::from_literal` intentionally accepts a sign-free AST literal,
-    // so construct and negate only after parsing the magnitude.
-    let value = Decimal::from_literal(&value);
-    if negative {
-        value.negate()
-    } else {
-        value
-    }
-}
-
 /// Exact parse shape of the `google/uuid.Parse` implementation TiDB calls,
 /// decoded to its 16 bytes. Parsing works on bytes because Go selects forms
 /// by byte length and must retain its intentionally permissive 38-byte form.
 fn parse_uuid(value: &[u8]) -> Option<[u8; 16]> {
-    let canonical = match value.len() {
-        36 => value,
-        45 if value[..9].eq_ignore_ascii_case(b"urn:uuid:") => &value[9..],
-        // `google/uuid.Parse` deliberately inspects only the inner 36 bytes
-        // of a 38-byte value; retain its ignored final byte exactly.
-        38 => &value[1..37],
-        32 => value,
-        _ => return None,
-    };
+    let canonical = uuid_body(value)?;
 
     let mut bytes = [0_u8; 16];
     if canonical.len() == 32 {
@@ -727,12 +746,7 @@ fn parse_uuid(value: &[u8]) -> Option<[u8; 16]> {
         return Some(bytes);
     }
 
-    if canonical.len() != 36
-        || canonical[8] != b'-'
-        || canonical[13] != b'-'
-        || canonical[18] != b'-'
-        || canonical[23] != b'-'
-    {
+    if !uuid_has_separators(canonical) {
         return None;
     }
 
@@ -744,6 +758,20 @@ fn parse_uuid(value: &[u8]) -> Option<[u8; 16]> {
         return None;
     }
     Some(bytes)
+}
+
+fn uuid_body(value: &[u8]) -> Option<&[u8]> {
+    match value.len() {
+        32 | 36 => Some(value),
+        45 if value[..9].eq_ignore_ascii_case(b"urn:uuid:") => Some(&value[9..]),
+        // Go's parser inspects only the inner 36 bytes of this form.
+        38 => Some(&value[1..37]),
+        _ => None,
+    }
+}
+
+fn uuid_has_separators(body: &[u8]) -> bool {
+    body[8] == b'-' && body[13] == b'-' && body[18] == b'-' && body[23] == b'-'
 }
 
 fn hex_pair(high: u8, low: u8) -> Option<u8> {
@@ -1020,6 +1048,19 @@ use tidb_charset::Collation;
                 .expect("IS_UUID must dispatch")
                 .expect("Go checks surrounding whitespace before its UUID parse"),
             Datum::Int(0)
+        );
+    }
+
+    #[test]
+    fn uuid_metadata_accepts_go_non_utf8_wrappers() {
+        let value = Datum::new_string_datum(b"\xff00000000-0000-7000-8000-000000000000\xfe".as_slice());
+        assert_eq!(
+            eval_builtin_func("UUID_VERSION", std::slice::from_ref(&value)).unwrap().unwrap(),
+            Datum::Int(7)
+        );
+        assert_eq!(
+            eval_builtin_func("UUID_TIMESTAMP", &[value]).unwrap().unwrap(),
+            Datum::Decimal(crate::Decimal::from_literal("0.000000"))
         );
     }
 

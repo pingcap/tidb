@@ -152,7 +152,7 @@ impl RequestInfo {
     }
 }
 
-fn should_bypass(request: &dyn Request) -> bool {
+pub(crate) fn should_bypass(request: &dyn Request) -> bool {
     let request_source = request
         .tikv_context()
         .map_or("", |context| context.request_source.as_str());

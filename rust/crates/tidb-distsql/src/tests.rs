@@ -387,6 +387,21 @@ fn test_kv_request_build_closest_scope_and_range_metadata() {
 }
 
 #[test]
+fn test_kv_request_reuses_shared_range_envelope_and_hints() {
+    let ranges = Arc::new(PartitionedKeyRanges::new_non_partitioned_with_hints(
+        vec![KeyRange::new(vec![1].into(), vec![2].into())],
+        vec![3],
+    ));
+    let mut builder = KvRequestBuilder::new();
+    builder.set_key_ranges(Arc::clone(&ranges));
+
+    let request = builder.build().expect("request with shared ranges");
+    let request_ranges = request.key_ranges.as_ref().unwrap();
+    assert!(Arc::ptr_eq(&ranges, request_ranges));
+    assert_eq!(request_ranges.row_count_hints(), &[vec![3]]);
+}
+
+#[test]
 fn test_kv_request_build_projects_dag_limit_and_partition_concurrency() {
     let mut builder = KvRequestBuilder::new();
     let mut envelope = RequestEnvelope::new(vec![

@@ -14,7 +14,7 @@
 
 //! Direct source tests for `pkg/parser/util/escape.go`.
 
-use tidb_parser_util::unescape_char;
+use tidb_parser_util::{append_unescaped_char, unescape_char};
 
 #[test]
 fn unescape_char_matches_every_go_vector() {
@@ -55,5 +55,9 @@ fn every_byte_has_the_exact_go_result() {
             _ => vec![byte],
         };
         assert_eq!(actual, expected, "input {byte:#04x}");
+        let mut prefixed = b"prefix".to_vec();
+        append_unescaped_char(&mut prefixed, byte);
+        assert_eq!(&prefixed[..6], b"prefix");
+        assert_eq!(&prefixed[6..], expected, "input {byte:#04x}");
     }
 }

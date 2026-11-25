@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use crate::CodecError;
-use tidb_datatype::{decimal_bin_size, Decimal, DecimalCodecWarning};
+use tidb_datatype::{decimal_bin_size, Decimal, DecimalCodecWarning, MyDecimal};
 
 const MAX_DECIMAL_SCALE: i64 = 30;
 
@@ -65,13 +65,13 @@ pub fn encode_decimal_fixed(
     // byte-verified once in `tidb-datatype`; this codec only frames it with the
     // precision/scale header and maps the soft truncation/overflow signal to a
     // typed error for the caller's statement context.
-    let (payload, warning) = decimal
-        .to_bin(
+    let warning = decimal
+        .write_bin(
             i32::try_from(precision).map_err(|_| CodecError::DecimalOutOfRange)?,
             i32::try_from(scale).map_err(|_| CodecError::DecimalOutOfRange)?,
+            buffer,
         )
         .map_err(|_| CodecError::DecimalOutOfRange)?;
-    buffer.extend_from_slice(&payload);
     match warning {
         None => Ok(()),
         Some(DecimalCodecWarning::Truncated) => Err(CodecError::DecimalTruncated),
@@ -101,23 +101,43 @@ pub(crate) fn decimal_encoded_len(
 }
 
 /// Decodes one TiDB/MySQL decimal, returning its precision and scale metadata.
+#[inline]
 pub fn decode_decimal(input: &[u8]) -> Result<(&[u8], Decimal, u8, u8), CodecError> {
+    let (payload, precision, scale) = decimal_header(input)?;
+    // The datum API keeps the value when the decoder reports a soft warning.
+    let (value, consumed, _) = Decimal::from_bin(payload, i32::from(precision), i32::from(scale))
+        .map_err(|_| CodecError::InvalidEncoding("invalid decimal payload"))?;
+    Ok((&payload[consumed..], value, precision, scale))
+}
+
+/// Decodes a framed decimal in the same representation Go appends to chunks.
+#[inline]
+pub(crate) fn decode_packed_decimal(input: &[u8]) -> Result<(&[u8], MyDecimal, u8), CodecError> {
+    let (payload, precision, scale) = decimal_header(input)?;
+    let (value, consumed, warning) =
+        MyDecimal::from_bin(payload, i32::from(precision), i32::from(scale))
+            .map_err(|_| CodecError::InvalidEncoding("invalid decimal payload"))?;
+    let remain = payload.get(consumed..).ok_or(CodecError::InsufficientBytes)?;
+    match warning {
+        None => Ok((remain, value, scale)),
+        Some(DecimalCodecWarning::Truncated) => Err(CodecError::DecimalTruncated),
+        Some(DecimalCodecWarning::Overflow) => Err(CodecError::DecimalOverflow),
+    }
+}
+
+#[inline]
+fn decimal_header(input: &[u8]) -> Result<(&[u8], u8, u8), CodecError> {
     if input.len() < 3 {
         return Err(CodecError::InsufficientBytes);
     }
     let precision = input[0];
     let scale = input[1];
-    let binary_len = decimal_binary_len(usize::from(precision), usize::from(scale))?;
-    if binary_len == 0 {
+    if (precision == 0 || precision < scale)
+        && decimal_binary_len(usize::from(precision), usize::from(scale))? == 0
+    {
         panic!("Go MyDecimal.FromBin indexes an empty decimal payload");
     }
-    // The payload is Go `MyDecimal.FromBin`, ported and round-trip-verified in
-    // `tidb-datatype`. A soft truncation warning is not an error here, matching
-    // Go `FromBin` returning the value alongside it.
-    let (value, _consumed, _warning) =
-        Decimal::from_bin(&input[2..], i32::from(precision), i32::from(scale))
-            .map_err(|_| CodecError::InvalidEncoding("invalid decimal payload"))?;
-    Ok((&input[2 + binary_len..], value, precision, scale))
+    Ok((&input[2..], precision, scale))
 }
 
 /// Returns the payload length including precision/scale bytes.

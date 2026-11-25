@@ -602,7 +602,7 @@ where
     I: ServerInfoSource + ?Sized,
 {
     let instance = match info.get_server_info() {
-        Ok(server_info) => join_host_port(&server_info.ip, server_info.port),
+        Ok(server_info) => tidb_go_net::join_host_port_number(&server_info.ip, server_info.port),
         // boundary: Go logs "failed to get server info".
         Err(_) => UNKNOWN_INSTANCE.to_owned(),
     };

@@ -984,8 +984,7 @@ impl IndexWorker {
             crate::cop_reader::TableRead {
                 store_type: tidb_kv::store_type::StoreType::TiKv,
                 dag,
-                key_ranges: kv_range,
-                key_range_hints: Vec::new(),
+                key_ranges: tidb_txnkv::PartitionedKeyRanges::new_non_partitioned(kv_range).into(),
                 partition_id_and_ranges: Vec::new(),
                 batch_cop: false,
                 schema_version: 0,

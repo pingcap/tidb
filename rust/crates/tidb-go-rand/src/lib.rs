@@ -10,21 +10,29 @@ use cooked::RNG_COOKED;
 const RNG_LEN: usize = 607;
 const RNG_TAP: usize = 273;
 const RNG_MASK: u64 = (1 << 63) - 1;
-const INT32_MAX: i64 = (1 << 31) - 1;
+const SEED_MODULUS: u64 = (1 << 31) - 1;
+const SEED_MULTIPLIER: u64 = 48_271;
 
-/// Go `seedrand`: x[n+1] = 48271 * x[n] mod (2**31 - 1).
-fn seedrand(x: i32) -> i32 {
-    const A: i32 = 48271;
-    const Q: i32 = 44488;
-    const R: i32 = 3399;
-    let hi = x / Q;
-    let lo = x % Q;
-    let x = A * lo - R * hi;
-    if x < 0 {
-        x + INT32_MAX as i32
+/// Multiplication modulo Go's `seedrand` modulus for two reduced operands.
+const fn multiply_seed(left: u64, right: u64) -> u64 {
+    let product = left * right;
+    // 2^31 is congruent to 1. This fold leaves less than twice the modulus.
+    let reduced = (product & SEED_MODULUS) + (product >> 31);
+    if reduced >= SEED_MODULUS {
+        reduced - SEED_MODULUS
     } else {
-        x
+        reduced
     }
+}
+
+const fn seed_multiplier(steps: usize) -> u64 {
+    let mut result = 1;
+    let mut step = 0;
+    while step < steps {
+        result = multiply_seed(result, SEED_MULTIPLIER);
+        step += 1;
+    }
+    result
 }
 
 /// Go `rand.New(rand.NewSource(seed))`.
@@ -47,25 +55,19 @@ impl Rand {
     pub fn seed(&mut self, seed: i64) {
         self.tap = 0;
         self.feed = RNG_LEN - RNG_TAP;
-        let mut seed = seed % INT32_MAX;
-        if seed < 0 {
-            seed += INT32_MAX;
-        }
-        if seed == 0 {
-            seed = 89_482_311;
-        }
-        let mut x = seed as i32;
-        for i in -20..RNG_LEN as i64 {
-            x = seedrand(x);
-            if i >= 0 {
-                let mut u = i64::from(x) << 40;
-                x = seedrand(x);
-                u ^= i64::from(x) << 20;
-                x = seedrand(x);
-                u ^= i64::from(x);
-                u ^= RNG_COOKED[i as usize];
-                self.vec[i as usize] = u;
-            }
+        let seed = seed.rem_euclid(SEED_MODULUS as i64) as u64;
+        let seed = if seed == 0 { 89_482_311 } else { seed };
+        // Go discards 20 draws, then packs three successive draws into each
+        // register entry. Advance all three positions by that stride.
+        let mut high = multiply_seed(seed, seed_multiplier(21));
+        let mut middle = multiply_seed(seed, seed_multiplier(22));
+        let mut low = multiply_seed(seed, seed_multiplier(23));
+        const STRIDE: u64 = seed_multiplier(3);
+        for (value, &cooked) in self.vec.iter_mut().zip(RNG_COOKED.iter()) {
+            *value = ((high << 40) ^ (middle << 20) ^ low) as i64 ^ cooked;
+            high = multiply_seed(high, STRIDE);
+            middle = multiply_seed(middle, STRIDE);
+            low = multiply_seed(low, STRIDE);
         }
     }
 
@@ -115,16 +117,7 @@ impl Rand {
     /// # Panics
     /// `n` is not positive, as Go panics.
     pub fn int31n(&mut self, n: i32) -> i32 {
-        assert!(n > 0, "invalid argument to Int31n");
-        if n & (n - 1) == 0 {
-            return self.int31() & (n - 1);
-        }
-        let max = ((1u32 << 31) - 1 - (1u32 << 31) % n as u32) as i32;
-        let mut v = self.int31();
-        while v > max {
-            v = self.int31();
-        }
-        v % n
+        int31n_from(n, || self.int31())
     }
 
     /// Go `Rand.Intn`.
@@ -138,6 +131,19 @@ impl Rand {
         }
         self.int63n(n)
     }
+}
+
+fn int31n_from(n: i32, mut draw: impl FnMut() -> i32) -> i32 {
+    assert!(n > 0, "invalid argument to Int31n");
+    if n & (n - 1) == 0 {
+        return draw() & (n - 1);
+    }
+    let max = ((1u32 << 31) - 1 - (1u32 << 31) % n as u32) as i32;
+    let mut v = draw();
+    while v > max {
+        v = draw();
+    }
+    v % n
 }
 
 #[cfg(test)]
@@ -169,27 +175,22 @@ mod tests {
             }
         }
     }
+
+    #[test]
+    fn int31n_resamples_outside_the_equal_size_buckets() {
+        let bound = (1 << 30) + 1;
+        let mut samples = [i32::MAX, bound, bound - 1].into_iter();
+        assert_eq!(int31n_from(bound, || samples.next().unwrap()), bound - 1);
+        assert_eq!(samples.next(), None);
+    }
 }
 
-/// Go's top-level source: since Go 1.20 it is randomly seeded at start-up
-/// and shared by the package functions under a lock.
-fn global() -> std::sync::MutexGuard<'static, Rand> {
-    static GLOBAL: std::sync::OnceLock<std::sync::Mutex<Rand>> = std::sync::OnceLock::new();
-    GLOBAL
-        .get_or_init(|| {
-            let seed = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map_or(1, |elapsed| elapsed.as_nanos() as i64);
-            std::sync::Mutex::new(Rand::new(seed))
-        })
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-}
-
-/// Go `rand.Int31n`, the package function over the global source.
+/// Go `rand.Int31n`, the package function over the default random source.
 ///
 /// # Panics
 /// `n` is not positive, as Go panics.
 pub fn int31n(n: i32) -> i32 {
-    global().int31n(n)
+    // Go's default package source uses the runtime's lock-free random state.
+    // The separately seeded Rand type keeps its deterministic source above.
+    int31n_from(n, || (tidb_fastrand::uint32() >> 1) as i32)
 }

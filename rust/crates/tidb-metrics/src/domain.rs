@@ -25,7 +25,7 @@
 //! Copyright note: metric names, help strings, and label schemas are
 //! transcribed from the Apache-2.0-licensed pingcap/tidb source tree.
 
-use prometheus::{CounterVec, Gauge, HistogramOpts, HistogramVec, Opts};
+use prometheus::{CounterVec, Gauge, HistogramOpts, HistogramVec, IntCounter, IntCounterVec, Opts};
 use std::sync::LazyLock;
 
 fn register<C: prometheus::core::Collector + Clone + 'static>(
@@ -39,8 +39,8 @@ fn register<C: prometheus::core::Collector + Clone + 'static>(
 }
 
 /// Go `InfoCacheCounters` (`pkg/metrics`).
-pub static INFOCACHE_COUNTERS: LazyLock<CounterVec> = LazyLock::new(|| {
-    register(CounterVec::new(
+pub static INFOCACHE_COUNTERS: LazyLock<IntCounterVec> = LazyLock::new(|| {
+    register(IntCounterVec::new(
         Opts::new(
             "tidb_domain_infocache_counters",
             "Counters of infoCache: get/hit.",
@@ -48,6 +48,30 @@ pub static INFOCACHE_COUNTERS: LazyLock<CounterVec> = LazyLock::new(|| {
         &["action", "type"],
     ))
 });
+
+/// Counts latest-schema cache lookup attempts.
+pub static INFOCACHE_GET_LATEST: LazyLock<IntCounter> =
+    LazyLock::new(|| INFOCACHE_COUNTERS.with_label_values(&["get", "latest"]));
+
+/// Counts schema-version cache lookup attempts.
+pub static INFOCACHE_GET_VERSION: LazyLock<IntCounter> =
+    LazyLock::new(|| INFOCACHE_COUNTERS.with_label_values(&["get", "version"]));
+
+/// Counts snapshot-timestamp cache lookup attempts.
+pub static INFOCACHE_GET_TS: LazyLock<IntCounter> =
+    LazyLock::new(|| INFOCACHE_COUNTERS.with_label_values(&["get", "ts"]));
+
+/// Counts latest-schema cache lookup hits.
+pub static INFOCACHE_HIT_LATEST: LazyLock<IntCounter> =
+    LazyLock::new(|| INFOCACHE_COUNTERS.with_label_values(&["hit", "latest"]));
+
+/// Counts schema-version cache lookup hits.
+pub static INFOCACHE_HIT_VERSION: LazyLock<IntCounter> =
+    LazyLock::new(|| INFOCACHE_COUNTERS.with_label_values(&["hit", "version"]));
+
+/// Counts snapshot-timestamp cache lookup hits.
+pub static INFOCACHE_HIT_TS: LazyLock<IntCounter> =
+    LazyLock::new(|| INFOCACHE_COUNTERS.with_label_values(&["hit", "ts"]));
 
 /// Go `InfoSchemaV2CacheCounter` (`pkg/metrics`).
 pub static INFOSCHEMA_V2_CACHE_COUNTER: LazyLock<CounterVec> = LazyLock::new(|| {
@@ -103,7 +127,12 @@ pub static LOAD_SCHEMA_COUNTER: LazyLock<CounterVec> = LazyLock::new(|| {
 /// Materializes the series Go's subsystem startup writes, mirroring the
 /// exported label combinations exactly.
 pub fn init_dashboard_series() {
-    let _ = INFOCACHE_COUNTERS.with_label_values(&["get", "latest"]);
+    LazyLock::force(&INFOCACHE_GET_LATEST);
+    LazyLock::force(&INFOCACHE_GET_VERSION);
+    LazyLock::force(&INFOCACHE_GET_TS);
+    LazyLock::force(&INFOCACHE_HIT_LATEST);
+    LazyLock::force(&INFOCACHE_HIT_VERSION);
+    LazyLock::force(&INFOCACHE_HIT_TS);
     let _ = INFOSCHEMA_V2_CACHE_COUNTER.with_label_values(&["evict"]);
     LazyLock::force(&INFOSCHEMA_V2_CACHE_COUNT);
     LazyLock::force(&INFOSCHEMA_V2_CACHE_LIMIT);

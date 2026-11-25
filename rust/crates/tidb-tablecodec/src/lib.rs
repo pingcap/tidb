@@ -18,6 +18,13 @@
 //! handles, preserving Go's real `util/codec -> kv -> tablecodec` direction.
 
 pub mod table_key;
+pub use table_index::{
+    clone_datum_by_prefix_len, cut_index_key_refs, datum_with_prefix_len, decode_index_kv_refs,
+    encode_truncated_index_key, encode_truncated_index_key_refs,
+    generate_index_value_with_columns, skip_index_key_columns, IndexValueHandle,
+    decode_current_temp_index_value, decode_index_values_from_columns, decode_temp_index_value_refs,
+    render_index_values_from_columns, TempIndexValueElemRef,
+};
 pub mod tablecodec_errors;
 mod table_index;
 mod table_row;
@@ -45,7 +52,8 @@ pub fn init() {
 }
 
 pub use table_row::{
-    cut_table_row, decode_column_value, decode_column_value_into, decode_handle_to_datum_map,
+    cut_table_row, cut_table_row_refs, decode_column_value, decode_column_value_in_place,
+    decode_column_value_into, decode_handle_to_datum_map, decode_owned_table_row_to_map,
     decode_table_row_into_map, decode_table_row_to_map, encode_old_table_row, encode_table_row,
-    encode_table_value, unflatten_datum, unflatten_datums, TableRowError,
+    encode_table_row_with_values, encode_table_value, unflatten_datum, unflatten_datums, TableRowError,
 };

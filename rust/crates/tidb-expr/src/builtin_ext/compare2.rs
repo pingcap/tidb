@@ -723,7 +723,7 @@ pub(crate) fn inet_aton(value: &Datum) -> Result<Datum, EvalError> {
     let Some(text) = coerce_str(value)? else {
         return Ok(Datum::Null);
     };
-    match inet_aton_text(&text) {
+    match inet_aton_bytes(text.as_bytes()) {
         Some(address) => Ok(Datum::UInt(address)),
         // Go `evalInt`: `errWrongValueForType("string", val, "inet_aton")`
         // (1411); its `vecEvalInt` is `builtin_miscellaneous_vec.rs`'s.
@@ -735,15 +735,15 @@ pub(crate) fn inet_aton(value: &Datum) -> Result<Datum, EvalError> {
     }
 }
 
-/// The address, or `None` where Go answers `errWrongValueForType`.
-fn inet_aton_text(text: &str) -> Option<u64> {
-    if text.is_empty() || text.ends_with('.') {
+/// Parses the address shared by the scalar and vectorized INET_ATON signatures.
+pub(crate) fn inet_aton_bytes(text: &[u8]) -> Option<u64> {
+    if text.is_empty() || text.last() == Some(&b'.') {
         return None;
     }
     let mut result = 0_u64;
     let mut byte_result = 0_u64;
     let mut dots = 0_u8;
-    for byte in text.bytes() {
+    for &byte in text {
         match byte {
             b'0'..=b'9' => {
                 byte_result = byte_result * 10 + u64::from(byte - b'0');
@@ -885,22 +885,21 @@ pub(crate) fn is_ipv4_value(value: &Datum) -> Result<Datum, EvalError> {
     let Some(value) = coerce_str(value)? else {
         return Ok(Datum::Null);
     };
-    Ok(Datum::Int(i64::from(is_ipv4(&value))))
+    Ok(Datum::Int(i64::from(is_ipv4_bytes(value.as_bytes()))))
 }
 
-fn is_ipv4(value: &str) -> bool {
+pub(crate) fn is_ipv4_bytes(value: &[u8]) -> bool {
     let mut dots = 0;
-    let mut component = 0_u16;
+    let mut component = 0_isize;
     let mut previous_dot = true;
-    for byte in value.bytes() {
+    for &byte in value {
         match byte {
             b'0'..=b'9' => {
-                // Only whether the component exceeds 255 matters. Saturate
-                // rather than letting an arbitrarily long invalid component
-                // overflow Rust's debug arithmetic before we reject it.
+                // Go accumulates in a signed machine word before it tests
+                // the completed component.
                 component = component
-                    .saturating_mul(10)
-                    .saturating_add(u16::from(byte - b'0'));
+                    .wrapping_mul(10)
+                    .wrapping_add(isize::from(byte - b'0'));
                 previous_dot = false;
             }
             b'.' => {
@@ -927,8 +926,12 @@ pub(crate) fn is_ipv4_mapped_value(value: &Datum) -> Result<Datum, EvalError> {
     let Some(bytes) = eval_string_bytes(value)? else {
         return Ok(Datum::Null);
     };
-    let mapped = bytes.len() == 16 && bytes[..12] == [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff];
+    let mapped = is_ipv4_mapped_bytes(&bytes);
     Ok(Datum::Int(i64::from(mapped)))
+}
+
+pub(crate) fn is_ipv4_mapped_bytes(bytes: &[u8]) -> bool {
+    bytes.len() == 16 && bytes[..12] == [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff]
 }
 
 /// `IS_IPV4_COMPAT(expr)`: true only for a sixteen-byte binary payload whose
@@ -939,8 +942,12 @@ pub(crate) fn is_ipv4_compat_value(value: &Datum) -> Result<Datum, EvalError> {
     let Some(bytes) = eval_string_bytes(value)? else {
         return Ok(Datum::Null);
     };
-    let compat = bytes.len() == 16 && bytes[..12] == [0; 12];
+    let compat = is_ipv4_compat_bytes(&bytes);
     Ok(Datum::Int(i64::from(compat)))
+}
+
+pub(crate) fn is_ipv4_compat_bytes(bytes: &[u8]) -> bool {
+    bytes.len() == 16 && bytes[..12] == [0; 12]
 }
 
 /// Evaluates the ETString argument used by the Go IPv4 binary predicates
@@ -963,7 +970,7 @@ pub(crate) fn is_ipv6_value(value: &Datum) -> Result<Datum, EvalError> {
         return Ok(Datum::Null);
     };
     Ok(Datum::Int(i64::from(
-        Ipv6Addr::from_str(&value).is_ok() && !is_ipv4(&value),
+        Ipv6Addr::from_str(&value).is_ok(),
     )))
 }
 
@@ -1259,6 +1266,19 @@ mod tests {
             assert_eq!(call("IS_IPV6", &[s(ip)]), Datum::Int(want));
         }
         assert_eq!(call("IS_IPV6", &[Datum::Null]), Datum::Null);
+    }
+
+    #[test]
+    fn is_ipv4_wraps_components_at_go_int_width() {
+        let overflow = 1_u128 << usize::BITS;
+        assert_eq!(
+            call("IS_IPV4", &[s(&format!("{overflow}.0.0.0"))]),
+            Datum::Int(1)
+        );
+        assert_eq!(
+            call("IS_IPV4", &[s(&format!("{}.0.0.0", overflow + 256))]),
+            Datum::Int(0)
+        );
     }
 
     /// `TestIsIPv4Mapped` and `TestIsIPv4Compat` operate on raw ETString

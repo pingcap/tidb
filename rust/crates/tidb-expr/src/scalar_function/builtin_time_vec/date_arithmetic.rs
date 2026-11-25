@@ -2,10 +2,11 @@
 
 //! Go `baseDateArithmetical.vecGetInterval*` / `vecGetDate*` and ADD/SUB kernels.
 
-use super::{vec_eval, ScalarFunction};
+use super::{ScalarFunction, vec_eval};
 use crate::{Columns, EvalError};
+use std::fmt::Write;
 use tidb_chunk::{chunk::Chunk, column::Column, row::Row};
-use tidb_datatype::{Datum, EvalType, Time, TimeType};
+use tidb_datatype::{Datum, EvalType, FieldType, Time, TimeType};
 
 /// Go `builtinAddSubDate{AsString,DatetimeAny,DurationAny}Sig.vecEval*`.
 pub(super) fn eval(
@@ -15,9 +16,8 @@ pub(super) fn eval(
     input: &Chunk,
     result: &mut Column,
 ) -> Result<(), EvalError> {
-    let unit = {
-        super::super::eval_numeric_row(&function.args[2], ctx, Row::empty(), EvalType::String)?
-    };
+    let unit =
+        { super::super::eval_numeric_row(&function.args[2], ctx, Row::empty(), EvalType::String)? };
     let target = function
         .get_static_type()
         .expect("date arithmetic type")
@@ -31,6 +31,23 @@ pub(super) fn eval(
     };
     let unit = tidb_goruntime::GoString::from_bytes(unit).to_utf8_lossy_go();
     let amount_field = function.args[1].static_type().expect("interval type");
+    let date_field = function.args[0].static_type().expect("date input type");
+    let domain = date_field.eval_type();
+    if amount_field.eval_type() == EvalType::Int
+        && matches!(domain, EvalType::Datetime | EvalType::Timestamp)
+        && matches!(target, EvalType::Datetime | EvalType::Timestamp)
+    {
+        return datetime_integer(
+            function,
+            subtract,
+            &unit,
+            domain,
+            amount_field,
+            ctx,
+            input,
+            result,
+        );
+    }
     let amounts = vec_eval::argument(&function.args[1], amount_field.eval_type(), ctx, input)?;
     let mut intervals = Column::default();
     intervals.reserve_string(input.num_rows());
@@ -53,8 +70,6 @@ pub(super) fn eval(
         let interval = interval(&unit, amount, amount_field.decimal(), ctx)?;
         vec_eval::put(&mut intervals, row, EvalType::String, &interval)?;
     }
-    let date_field = function.args[0].static_type().expect("date input type");
-    let domain = date_field.eval_type();
     let reuse = matches!(domain, EvalType::Datetime | EvalType::Timestamp)
         || (domain == EvalType::Duration && target == EvalType::Duration);
     let mut dates = Column::default();
@@ -90,6 +105,60 @@ pub(super) fn eval(
         vec_eval::put(result, row, target, &value)?;
     }
     Ok(())
+}
+
+/// Go reads the interval argument before writing the date argument into result.
+fn datetime_integer(
+    function: &ScalarFunction,
+    subtract: bool,
+    unit: &str,
+    domain: EvalType,
+    amount_field: &FieldType,
+    ctx: &dyn Columns,
+    input: &Chunk,
+    result: &mut Column,
+) -> Result<(), EvalError> {
+    let amounts = vec_eval::read_argument(&function.args[1], EvalType::Int, ctx, input)?;
+    crate::chunk_executor::allocate(domain, input.num_rows(), result);
+    vec_eval::eval_into(&function.args[0], domain, ctx, input, result)?;
+    let amounts = amounts.cells();
+    let clock = tidb_datatype::is_clock_unit(unit);
+    let unsigned = amount_field.is_unsigned();
+    let fsp = function
+        .get_static_type()
+        .expect("date result type")
+        .decimal();
+    let mut interval = String::with_capacity(20);
+    result.with_fixed_cells_mut::<8, _>(|cells, bitmap| {
+        for (row, cell) in cells.iter_mut().enumerate() {
+            let present = &mut bitmap[row / 8];
+            let bit = 1 << (row % 8);
+            if *present & bit == 0 {
+                continue;
+            }
+            let Some(amount) = amounts.int64(row) else {
+                *present &= !bit;
+                continue;
+            };
+            interval.clear();
+            if unsigned {
+                write!(&mut interval, "{}", amount as u64).expect("format interval into String");
+            } else {
+                write!(&mut interval, "{amount}").expect("format interval into String");
+            }
+            let mut time = Time::from_go_raw(u64::from_ne_bytes(*cell))
+                .expect("chunk Time cell holds a valid packed types.Time");
+            if clock || time.kind() == TimeType::Timestamp {
+                time.set_kind(TimeType::DateTime);
+            }
+            if let Some(time) = shift_time(time, unit, subtract, &interval, fsp, ctx)? {
+                *cell = time.go_raw().to_ne_bytes();
+            } else {
+                *present &= !bit;
+            }
+        }
+        Ok(())
+    })
 }
 
 /// Go `intervalReformatString`, `intervalDecimalToString`, and numeric formatting.
@@ -286,22 +355,46 @@ fn operation(
     if matches!(date, Datum::Duration(_)) {
         date = crate::cast::cast_arg_as_datetime(&date, function.args[0].static_type(), ctx)?;
     }
-    let Datum::Time(mut time) = date else {
+    let Datum::Time(time) = date else {
         return Ok(Datum::Null);
     };
-    let parts = match tidb_datatype::parse_duration_value(unit, &interval) {
+    let Some(mut time) = shift_time(time, unit, subtract, &interval, field.decimal(), ctx)? else {
+        return Ok(Datum::Null);
+    };
+    if field.eval_type() == EvalType::String {
+        time.set_fsp(if time.core_time().microsecond() == 0 {
+            0
+        } else {
+            6
+        })
+        .expect("valid fsp");
+        Ok(Datum::new_string_datum(time.to_string()))
+    } else {
+        Ok(Datum::Time(time))
+    }
+}
+
+fn shift_time(
+    mut time: Time,
+    unit: &str,
+    subtract: bool,
+    interval: &str,
+    fsp: i64,
+    ctx: &dyn Columns,
+) -> Result<Option<Time>, EvalError> {
+    let parts = match tidb_datatype::parse_duration_value(unit, interval) {
         Ok(parts) => parts,
         Err(_) => {
             crate::expression_errors::handle_truncate(
                 ctx,
                 &format!("Incorrect datetime value: '{interval}'"),
             )?;
-            return Ok(Datum::Null);
+            return Ok(None);
         }
     };
     if parts.truncated {
         let error = tidb_datatype::types_errors::ERR_TRUNCATED_WRONG_VAL
-            .gen_with_stack_by_args(&[tidb_mysql::errors::FormatArg::from(interval.as_str())]);
+            .gen_with_stack_by_args(&[tidb_mysql::errors::FormatArg::from(interval)]);
         crate::expression_errors::handle_truncate(ctx, error.message())?;
     }
     let base = match time.go_time(&chrono::Utc) {
@@ -311,7 +404,7 @@ fn operation(
                 ctx,
                 &format!("Incorrect time value: '{}'", time),
             )?;
-            return Ok(Datum::Null);
+            return Ok(None);
         }
     };
     let sign: i64 = if subtract { -1 } else { 1 };
@@ -342,22 +435,12 @@ fn operation(
         core
     };
     time.set_core_time(core);
-    time.set_fsp(field.decimal())
+    time.set_fsp(fsp)
         .map_err(|error| EvalError::Raw(error.to_string()))?;
-    if field.eval_type() == EvalType::String {
-        time.set_fsp(if time.core_time().microsecond() == 0 {
-            0
-        } else {
-            6
-        })
-        .expect("valid fsp");
-        Ok(Datum::new_string_datum(time.to_string()))
-    } else {
-        Ok(Datum::Time(time))
-    }
+    Ok(Some(time))
 }
 
 /// Go `handleInvalidTimeError(ErrDatetimeFunctionOverflow("datetime"))`.
-fn overflow(ctx: &dyn Columns) -> Result<Datum, EvalError> {
-    crate::time_fn::calendar::date_arithmetic_overflow(ctx)
+fn overflow(ctx: &dyn Columns) -> Result<Option<Time>, EvalError> {
+    crate::time_fn::calendar::date_arithmetic_overflow(ctx).map(|_| None)
 }

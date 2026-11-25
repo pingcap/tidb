@@ -15,8 +15,8 @@
 //! Row-for-row translations of `pkg/types/parser_driver/value_expr_test.go`.
 
 use tidb_datatype::{
-    unwrap_from_single_quotes, wrap_in_single_quotes, BinaryLiteral, CoreTime, Datum, Decimal,
-    MySqlDuration, Time, TimeType,
+    unwrap_from_single_quotes, unwrap_from_single_quotes_ref, wrap_in_single_quotes, BinaryLiteral,
+    CoreTime, Datum, Decimal, MySqlDuration, Time, TimeType,
 };
 
 fn binary_literal() -> Datum {
@@ -105,8 +105,14 @@ fn single_quote_helpers_are_byte_preserving_inverses() {
     for value in rows {
         let wrapped = wrap_in_single_quotes(value);
         assert_eq!(unwrap_from_single_quotes(&wrapped), *value);
+        assert_eq!(unwrap_from_single_quotes_ref(&wrapped).as_ref(), *value);
     }
 
+    let quoted = b"'plain'";
+    let std::borrow::Cow::Borrowed(plain) = unwrap_from_single_quotes_ref(quoted) else {
+        panic!("plain quoted values must be borrowed");
+    };
+    assert!(std::ptr::eq(plain, &quoted[1..quoted.len() - 1]));
     assert_eq!(wrap_in_single_quotes(br"a\'b"), br"'a\\''b'");
     assert_eq!(unwrap_from_single_quotes(b"not quoted"), b"not quoted");
     assert_eq!(unwrap_from_single_quotes(b"'unterminated"), b"'unterminated");

@@ -455,8 +455,8 @@ fn risk_eq_skew_ratio_raises_index_equal_estimates_for_unseen_value() {
     let columns: IndexColumnStats<'_> = vec![None];
     let range_for = |value: i64| Range {
         collators: vec![tidb_charset::Collation::Binary; 1],
-        low_val: vec![Datum::Int(value)],
-        high_val: vec![Datum::Int(value)],
+        low_val: vec![Datum::Int(value)].into(),
+        high_val: vec![Datum::Int(value)].into(),
         low_exclude: false,
         high_exclude: false,
     };
@@ -523,8 +523,8 @@ fn index_estimation_survives_empty_idx_to_col_mapping() {
         &[],
         &[Range {
             collators: vec![tidb_charset::Collation::Binary; 1],
-            low_val: vec![Datum::Int(1000)],
-            high_val: vec![Datum::Int(2000)],
+            low_val: vec![Datum::Int(1000)].into(),
+            high_val: vec![Datum::Int(2000)].into(),
             low_exclude: false,
             high_exclude: false,
         }],
@@ -641,8 +641,8 @@ fn unique_key_equal_conds_return_exact_counts() {
             &[],
             &[Range {
                 collators: vec![tidb_charset::Collation::Binary; 1],
-                low_val: vec![Datum::Int(value)],
-                high_val: vec![Datum::Int(value)],
+                low_val: vec![Datum::Int(value)].into(),
+                high_val: vec![Datum::Int(value)].into(),
                 low_exclude: false,
                 high_exclude: false,
             }],
@@ -720,8 +720,8 @@ fn issue_39593_composite_prefix_point_ranges_match_estimates() {
     let ranges = (1..=20)
         .map(|value| Range {
             collators: vec![tidb_charset::Collation::Binary; 1],
-            low_val: vec![Datum::Int(value)],
-            high_val: vec![Datum::Int(value)],
+            low_val: vec![Datum::Int(value)].into(),
+            high_val: vec![Datum::Int(value)].into(),
             low_exclude: false,
             high_exclude: false,
         })
@@ -799,8 +799,8 @@ fn risk_range_skew_ratio_widens_within_bucket_estimates() {
     };
     let range = Range {
         collators: vec![tidb_charset::Collation::Binary; 1],
-        low_val: vec![Datum::Int(2)],
-        high_val: vec![Datum::Int(3)],
+        low_val: vec![Datum::Int(2)].into(),
+        high_val: vec![Datum::Int(3)].into(),
         low_exclude: false,
         high_exclude: false,
     };
@@ -922,8 +922,8 @@ fn last_bucket_end_value_heuristic_lifts_underrepresented_counts() {
             &[],
             &[Range {
                 collators: vec![tidb_charset::Collation::Binary; 1],
-                low_val: vec![Datum::Int(value)],
-                high_val: vec![Datum::Int(value)],
+                low_val: vec![Datum::Int(value)].into(),
+                high_val: vec![Datum::Int(value)].into(),
                 low_exclude: false,
                 high_exclude: false,
             }],

@@ -201,7 +201,7 @@ use tidb_charset::Collation;
                         ndv: 100,
                         lower_bound: Datum::Int(1),
                         upper_bound: Datum::Int(100),
-                    }],
+                    }].into(),
                     ..Histogram::default()
                 },
                 top_n: None,
@@ -228,7 +228,7 @@ use tidb_charset::Collation;
                         upper_bound: Datum::Bytes(
                             tidb_codec::encode_key(&[Datum::Int(100)]).unwrap(),
                         ),
-                    }],
+                    }].into(),
                     ..Histogram::default()
                 },
                 top_n: Some(topn.clone()),
@@ -360,8 +360,8 @@ use tidb_charset::Collation;
                 .expect("initStats attaches the collection");
             let range = Range {
                 collators: vec![Collation::Binary],
-                low_val: vec![low],
-                high_val: vec![high],
+                low_val: vec![low].into(),
+                high_val: vec![high].into(),
                 low_exclude: false,
                 high_exclude: false,
             };

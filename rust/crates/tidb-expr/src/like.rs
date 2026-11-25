@@ -33,6 +33,10 @@ impl CompiledLikePattern {
             pattern: collation.pattern(pattern, escape),
         }
     }
+    pub(crate) fn recompile(&mut self, bytes: &[u8], escape: u8) {
+        self.pattern.recompile(bytes, escape);
+    }
+
     pub(crate) fn is_match(&self, text: &[u8]) -> bool {
         self.pattern.is_match(text)
     }
@@ -62,10 +66,27 @@ impl CompiledIlikePattern {
         }
     }
 
+    pub(crate) fn recompile(&mut self, pattern: &[u8], escape: u8, scratch: &mut Vec<u8>) {
+        scratch.clear();
+        scratch.extend_from_slice(pattern);
+        let escape = if escape.is_ascii_alphabetic() {
+            lower_one_string_excluding_escape_char(scratch, escape)
+        } else {
+            lower_one_string(scratch);
+            escape
+        };
+        self.pattern.recompile(scratch, escape);
+    }
+
     pub(crate) fn is_match(&self, text: &[u8]) -> bool {
-        let mut text = text.to_vec();
-        lower_one_string(&mut text);
-        self.pattern.is_match(&text)
+        self.is_match_with_buffer(text, &mut Vec::new())
+    }
+
+    pub(crate) fn is_match_with_buffer(&self, text: &[u8], scratch: &mut Vec<u8>) -> bool {
+        scratch.clear();
+        scratch.extend_from_slice(text);
+        lower_one_string(scratch);
+        self.pattern.is_match(scratch)
     }
 }
 

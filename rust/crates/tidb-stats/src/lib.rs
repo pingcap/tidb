@@ -75,7 +75,7 @@ pub use builder::{
     HistogramAndTopN, HistogramBuildError, SampleCollector, SampleItem, SequentialRangeChecker,
 };
 pub use cmsketch::{
-    check_empty_topns, cm_sketch_and_top_n_from_proto, decode_cmsketch,
+    check_empty_topns, cm_sketch_and_top_n_from_proto, cmsketch_and_topn_from_decoded, decode_cmsketch,
     decode_cmsketch_and_embedded_topn, decode_cmsketch_and_topn, decode_topn_rows,
     encode_cmsketch_and_topn, encode_cmsketch_without_topn, find_top_n,
     get_merged_topn_from_sorted_slice, merge_topn, merge_topn_and_update_cmsketch,

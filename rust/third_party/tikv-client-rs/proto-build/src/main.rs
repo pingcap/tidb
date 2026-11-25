@@ -22,9 +22,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut prost = prost_build::Config::new();
     prost.enable_type_names();
+    prost.type_attribute(".", "#[allow(clippy::all)]");
     // Go's SharedBytes custom fields borrow the received message body. Bytes
     // retains that ownership across native and TiDB consumers without a copy.
     prost.bytes([
+        // Go coprocessor workers share the encoded DAG across requests.
+        ".coprocessor.Request.data",
+        ".coprocessor.BatchRequest.data",
+        // ToPBRanges shares task boundaries, including across request clones.
+        ".coprocessor.KeyRange.start",
+        ".coprocessor.KeyRange.end",
         ".coprocessor.Response.data",
         ".coprocessor.BatchResponse.data",
         ".coprocessor.StoreBatchTaskResponse.data",
@@ -66,8 +73,35 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .file_descriptor_set_path(staging.path().join(DESCRIPTOR_FILE))
         .compile_with_config(prost, &protos, &["proto/include".into(), "proto".into()])?;
 
+    use_borrowed_key_range_encoder(staging.path())?;
     install_generated_output(staging.path(), Path::new(GENERATED_DIR))?;
     Ok(())
+}
+
+fn use_borrowed_key_range_encoder(staging: &Path) -> io::Result<()> {
+    // The custom Message implementation matches this exact two-field wire
+    // contract. A schema or generator change must be reconciled explicitly.
+    const DERIVED: &str = r#"#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct KeyRange {
+    #[prost(bytes = "bytes", tag = "1")]
+    pub start: ::prost::bytes::Bytes,
+    #[prost(bytes = "bytes", tag = "2")]
+    pub end: ::prost::bytes::Bytes,
+}"#;
+    const FIELDS: &str = r#"#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
+pub struct KeyRange {
+    pub start: ::prost::bytes::Bytes,
+    pub end: ::prost::bytes::Bytes,
+}"#;
+    let path = staging.join("coprocessor.rs");
+    let generated = fs::read_to_string(&path)?;
+    if generated.matches(DERIVED).count() != 1 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "expected the generated coprocessor KeyRange wire fields",
+        ));
+    }
+    fs::write(path, generated.replacen(DERIVED, FIELDS, 1))
 }
 
 fn verify_protoc_version() -> io::Result<()> {

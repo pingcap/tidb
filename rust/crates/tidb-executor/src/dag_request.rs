@@ -22,6 +22,8 @@
 
 use std::{error::Error, fmt};
 
+use prost::encoding::{encode_key, encode_varint, encoded_len_varint, WireType};
+
 use tidb_distsql::{system_endian, EncodeType as DistSqlEncodeType, SystemEndian};
 use tidb_planner_core_operator_physicalop::{PhysicalIndexScan, PhysicalTableScan};
 use tidb_planner_core_operator_logicalop::tikv_scan_spec::{
@@ -612,6 +614,18 @@ fn index_payload_to_pb(spec: &TiKvIndexScanSpec, plan: &PhysicalIndexScan) -> In
 
 /// Go `util.ColumnToProto`'s `tipb.ColumnInfo` for one scan descriptor.
 pub fn column_to_pb(column: &ScanColumnInfo) -> ColumnInfo {
+    column_into_pb(column.clone())
+}
+
+/// Converts an owned scan descriptor, copying its labels into TiPB strings.
+#[inline]
+pub fn column_into_pb(column: ScanColumnInfo) -> ColumnInfo {
+    let elems = column.elems.with_visible(tidb_util::misc::column_elements_to_proto);
+    column_pb_fields(column, elems)
+}
+
+#[inline]
+pub(crate) fn column_pb_fields(column: ScanColumnInfo, elems: Vec<String>) -> ColumnInfo {
     ColumnInfo {
         column_id: Some(column.column_id),
         tp: Some(column.tp),
@@ -619,9 +633,49 @@ pub fn column_to_pb(column: &ScanColumnInfo) -> ColumnInfo {
         column_len: Some(column.column_len),
         decimal: Some(column.decimal),
         flag: Some(column.flag),
-        elems: column.elems.clone(),
-        default_val: column.default_val.clone(),
+        elems,
+        default_val: column.default_val,
         pk_handle: Some(column.pk_handle),
         array: Some(column.array),
     }
+}
+
+// These length-delimited fields all have one-byte keys.
+pub(crate) fn delimited_field_size(length: usize) -> usize {
+    1 + encoded_len_varint(length as u64) + length
+}
+
+pub(crate) fn begin_embedded_message(tag: u32, length: usize, output: &mut Vec<u8>) -> (usize, usize, usize) {
+    encode_key(tag, WireType::LengthDelimited, output);
+    let length_offset = output.len();
+    encode_varint(length as u64, output);
+    (length_offset, output.len(), length)
+}
+
+pub(crate) fn end_embedded_message(
+    (length_offset, body_offset, estimated_length): (usize, usize, usize),
+    output: &mut Vec<u8>,
+) {
+    let end = output.len();
+    let body_length = end - body_offset;
+    if body_length == estimated_length {
+        return;
+    }
+
+    if body_offset == length_offset + 1 && body_length < 128 {
+        output[length_offset] = body_length as u8;
+        return;
+    }
+
+    // Malformed bytes expand during replacement, and a shared label could
+    // change between sizing and encoding.
+    let new_body_offset = length_offset + encoded_len_varint(body_length as u64);
+    if new_body_offset > body_offset {
+        output.resize(new_body_offset + body_length, 0);
+    }
+    if new_body_offset != body_offset {
+        output.copy_within(body_offset..end, new_body_offset);
+        output.truncate(new_body_offset + body_length);
+    }
+    encode_varint(body_length as u64, &mut &mut output[length_offset..new_body_offset]);
 }

@@ -11,7 +11,6 @@ description = "TiDB util/chunk: the columnar row container for execution (Rust r
 tidb-charset = { path = "../tidb-charset" }
 tidb-goruntime = { path = "../tidb-goruntime" }
 tidb-checksum = { path = "../tidb-checksum" }
-tidb-disjointset = { path = "../tidb-disjointset" }
 tidb-disk = { path = "../tidb-disk" }
 tidb-encrypt = { path = "../tidb-encrypt" }
 tidb-layered-io = { path = "../tidb-layered-io" }
@@ -20,7 +19,10 @@ tidb-spill-storage = { path = "../tidb-spill-storage" }
 tidb-sqlkiller = { path = "../tidb-sqlkiller" }
 tidb-failpoint = { path = "../tidb-failpoint" }
 tidb-go-rand = { path = "../tidb-go-rand" }
+tidb-zeropool = { path = "../tidb-zeropool" }
 bytes.workspace = true
+itoa = "1"
+parking_lot = "0.12"
 tidb-datatype = { path = "../tidb-datatype" }
 tracing = "0.1"
 

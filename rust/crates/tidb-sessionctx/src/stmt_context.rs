@@ -7760,6 +7760,10 @@ impl Columns for StmtContext {
         self.enable_redact_log.clone()
     }
 
+    fn tidb_redact_log_ref(&self) -> std::borrow::Cow<'_, str> {
+        std::borrow::Cow::Borrowed(&self.enable_redact_log)
+    }
+
     fn fts_function_is_used(&self) -> bool {
         self.fts_function_is_used.load(Ordering::Relaxed)
     }

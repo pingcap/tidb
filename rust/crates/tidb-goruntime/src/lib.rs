@@ -18,6 +18,7 @@
 //! number formatting (`go_strconv`).
 
 pub mod go_bytes;
+pub mod go_crc64;
 pub mod go_heap;
 pub mod go_hex;
 pub mod go_pdqsort;

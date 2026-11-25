@@ -33,7 +33,6 @@ use std::fs::File;
 use std::io::{self, Write};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
-use tidb_disjointset::Set;
 use tidb_layered_io::{CloseWrite, ReadAt};
 use tidb_spill_storage::{SpillEncryptionMethod, SpillStorage};
 use tidb_checksum as checksum;
@@ -79,22 +78,13 @@ pub fn copy_rows(dst: &mut Column, src: &Column, selected: &[usize]) {
     dst.copy_rows_from(src, selected);
 }
 
-fn copy_selected_chunk_column(
-    dst: &mut Chunk,
-    dst_index: usize,
-    src: &Chunk,
-    src_index: usize,
-    selected: &[bool],
-) {
-    if dst.column_is_shared(dst_index) || src.column_is_shared(src_index) {
-        let source = src.column(src_index).copy_construct();
-        let mut destination = dst.column_mut(dst_index);
-        copy_selected_rows(&mut destination, &source, selected);
-    } else {
-        let source = src.column(src_index);
-        let mut destination = dst.column_mut(dst_index);
-        copy_selected_rows(&mut destination, &source, selected);
-    }
+fn copy_selected_chunk_column(dst: &mut Chunk, src: &Chunk, index: usize, selected: &[bool]) {
+    dst.copy_column_from(
+        src,
+        index,
+        |destination, source| copy_selected_rows(destination, source, selected),
+        |column| column.copy_selected_rows_within(selected),
+    );
 }
 
 /// Go `CopySelectedJoinRowsDirect`: copy the selected joined rows of `src`
@@ -121,7 +111,7 @@ pub fn copy_selected_join_rows_direct(
 
     let old_len = dst.column(0).length();
     for j in 0..src.num_cols() {
-        copy_selected_chunk_column(dst, j, src, j, selected);
+        copy_selected_chunk_column(dst, src, j, selected);
     }
     let num_selected = dst.column(0).length() - old_len;
     dst.add_virtual_rows(num_selected);
@@ -170,13 +160,7 @@ fn copy_selected_inner_rows(
     }
     let old_len = dst.column(inner_col_offset).length();
     for j in 0..inner_col_len {
-        copy_selected_chunk_column(
-            dst,
-            inner_col_offset + j,
-            src,
-            inner_col_offset + j,
-            selected,
-        );
+        copy_selected_chunk_column(dst, src, inner_col_offset + j, selected);
     }
     dst.column(inner_col_offset).length() - old_len
 }
@@ -196,16 +180,12 @@ fn copy_same_outer_rows(
     // the logical and physical index of row 0 coincide.
     let row_idx = 0;
     for i in 0..outer_col_len {
-        let index = outer_col_offset + i;
-        if dst.column_is_shared(index) || src.column_is_shared(index) {
-            let source = src.column(index).copy_construct();
-            dst.column_mut(index)
-                .copy_same_rows_from(&source, row_idx, num_rows);
-        } else {
-            let source = src.column(index);
-            dst.column_mut(index)
-                .copy_same_rows_from(&source, row_idx, num_rows);
-        }
+        dst.copy_column_from(
+            src,
+            outer_col_offset + i,
+            |destination, source| destination.copy_same_rows_from(source, row_idx, num_rows),
+            |column| column.copy_same_rows_within(row_idx, num_rows),
+        );
     }
 }
 
@@ -245,28 +225,25 @@ impl ColumnSwapHelper {
     }
 
     fn merge_input_indexes(&self, input: &Chunk) -> HashMap<usize, Vec<usize>> {
-        let mut owners = Set::new(4);
-        let mut referenced = vec![false; input.num_cols()];
-        for input_index in 0..input.num_cols() {
-            if referenced[input_index] {
-                continue;
-            }
-            for (candidate, is_referenced) in
-                referenced.iter_mut().enumerate().skip(input_index + 1)
-            {
-                if input.columns_share_identity(input_index, input, candidate) {
-                    *is_referenced = true;
-                    owners.union(input_index, candidate);
-                }
+        // The first input slot for a shared owner represents its entire
+        // group, even if that slot was not selected by the projection.
+        let mut owners = HashMap::new();
+        for index in 0..input.num_cols() {
+            if let Some(owner) = input.shared_column_owner(index) {
+                owners.entry(owner).or_insert(index);
             }
         }
+        if owners.is_empty() {
+            return self.input_idx_to_output_idxes.clone();
+        }
 
-        let mut merged = HashMap::<usize, Vec<usize>>::new();
+        let mut merged =
+            HashMap::<usize, Vec<usize>>::with_capacity(self.input_idx_to_output_idxes.len());
         for (&input_index, output_indexes) in &self.input_idx_to_output_idxes {
-            let root = owners.find_root(input_index);
-            let owner_index = owners
-                .find_val(root)
-                .expect("every disjoint-set root has an input index");
+            let owner_index = input
+                .shared_column_owner(input_index)
+                .and_then(|owner| owners.get(&owner).copied())
+                .unwrap_or(input_index);
             merged
                 .entry(owner_index)
                 .or_default()
@@ -294,7 +271,9 @@ impl ColumnSwapHelper {
             };
             output.swap_column_with(first, input, input_index)?;
             for &output_index in rest {
-                output.make_ref(first, output_index);
+                if !output.columns_share_identity(first, output, output_index) {
+                    output.make_ref(first, output_index);
+                }
             }
         }
         Ok(())
@@ -354,6 +333,34 @@ mod tests {
         let mut indexes = merged.get(&0).cloned().expect("owner 0 holds every slot");
         indexes.sort_unstable();
         assert_eq!(indexes, vec![0, 1, 2, 3]);
+    }
+
+    #[test]
+    fn swap_moves_unprojected_owner_and_preserves_external_alias() {
+        let fields = vec![FieldType::new(FieldTypeCode::LongLong); 4];
+        let mut input = Chunk::new_chunk_with_capacity(&fields, 1);
+        input.append_int64(0, 7);
+        input.append_int64(3, 19);
+        input.make_ref(0, 1);
+        input.make_ref(0, 2);
+        let mut observer = Chunk::new_chunk_with_capacity(&fields[..1], 1);
+        observer.make_ref_to(0, &mut input, 2).unwrap();
+
+        let mut output = Chunk::new_chunk_with_capacity(&fields[..3], 1);
+        for index in 0..3 {
+            output.append_int64(index, 500);
+        }
+        ColumnSwapHelper::new(&[2, 1, 2])
+            .swap_columns(&mut input, &mut output)
+            .unwrap();
+
+        for index in 0..3 {
+            assert_eq!(output.get_row(0).get_int64(index), 7);
+            assert_eq!(input.get_row(0).get_int64(index), 500);
+            assert!(output.columns_share_identity(index, &observer, 0));
+            assert!(input.columns_share_identity(index, &input, 0));
+        }
+        assert_eq!(input.get_row(0).get_int64(3), 19);
     }
 
     /// Go `getChk`'s chunk shape: `newChunkWithInitCap(numRows, 0, 0, 8, 8,
@@ -509,6 +516,83 @@ mod tests {
         let num_selected = selected.iter().filter(|s| **s).count();
         assert_eq!(num_selected, dst_chk2.num_virtual_rows());
         assert_eq!(num_selected, dst_chk2.num_rows());
+    }
+
+    #[test]
+    fn copy_selected_join_rows_accepts_shared_column_owners() {
+        let fields = [
+            FieldType::new(FieldTypeCode::LongLong),
+            FieldType::new(FieldTypeCode::VarString),
+        ];
+        let mut source = Chunk::new_chunk_with_capacity(&fields, 4);
+        let mut destination = Chunk::new_chunk_with_capacity(&fields, 4);
+        for (key, value) in [(7, "outer"), (8, "outer"), (9, "outer")] {
+            source.append_int64(0, key);
+            source.append_string(1, value);
+        }
+        source.append_null(0);
+        source.append_string(1, "outer");
+
+        // The inner slots alias one owner. The outer slots have separate
+        // owners, each of which is visible through a second chunk.
+        let _source_outer = source.column_handle(1);
+        let _destination_outer = destination.column_handle(1);
+        destination.make_ref_to(0, &mut source, 0).unwrap();
+        assert!(copy_selected_join_rows_with_same_outer_rows(
+            &source,
+            0,
+            1,
+            1,
+            1,
+            &[true, false, false, true],
+            &mut destination,
+        )
+        .unwrap());
+
+        assert_eq!(source.column(0).rows(), 6);
+        assert_eq!(source.column(0).get_int64(4), 7);
+        assert!(source.column(0).is_null(5));
+        assert_eq!(source.column(1).rows(), 4);
+        assert_eq!(destination.column(1).rows(), 2);
+        assert_eq!(destination.column(1).get_bytes(0).as_ref(), b"outer");
+        assert_eq!(destination.column(1).get_bytes(1).as_ref(), b"outer");
+        assert_eq!(destination.num_virtual_rows(), 2);
+    }
+
+    #[test]
+    fn copy_selected_join_rows_appends_aliased_outer_cells() {
+        let fields = [
+            FieldType::new(FieldTypeCode::LongLong),
+            FieldType::new(FieldTypeCode::VarString),
+        ];
+        let mut source = Chunk::new_chunk_with_capacity(&fields, 4);
+        let mut destination = Chunk::new_chunk_with_capacity(&fields, 4);
+        for key in [7, 8, 9, 10] {
+            source.append_int64(0, key);
+            source.append_string(1, "outer");
+        }
+        for index in 0..2 {
+            destination.make_ref_to(index, &mut source, index).unwrap();
+        }
+
+        let selected = [false, true, true, false];
+        assert!(
+            copy_selected_join_rows_with_same_outer_rows(
+                &source,
+                0,
+                1,
+                1,
+                1,
+                &selected,
+                &mut destination,
+            )
+            .unwrap()
+        );
+        assert_eq!(destination.num_rows(), 6);
+        assert_eq!(source.get_row(4).get_int64(0), 8);
+        assert_eq!(source.get_row(5).get_int64(0), 9);
+        assert_eq!(source.get_row(4).get_raw(1).as_ref(), b"outer");
+        assert_eq!(source.get_row(5).get_raw(1).as_ref(), b"outer");
     }
 
     /// Go `TestCopySelectedVirtualNum` (`chunk_util_test.go:136`), the
@@ -749,7 +833,7 @@ impl DiskFileReaderWriter {
         let (checksum_cache, checksum_cache_offset) = writer.checksum_cache();
         match writer {
             DiskWriter::Plaintext(_) => {
-                let reader = crate::row_in_disk::ReaderWithCache::new(
+                let reader = crate::row_in_disk::ReaderWithCache::borrowing(
                     checksum::Reader::new(file),
                     checksum_cache,
                     checksum_cache_offset,
@@ -766,13 +850,13 @@ impl DiskFileReaderWriter {
                     .as_ref()
                     .ok_or_else(|| io::Error::other("encrypted spill writer is closed"))?;
                 let decrypted = encrypt::Reader::new(file, cipher);
-                let decrypted_with_cache = crate::row_in_disk::ReaderWithCache::new(
+                let decrypted_with_cache = crate::row_in_disk::ReaderWithCache::borrowing(
                     decrypted,
                     encrypting.get_cache(),
                     encrypting.get_cache_data_offset(),
                 );
                 let checksummed = checksum::Reader::new(decrypted_with_cache);
-                let reader = crate::row_in_disk::ReaderWithCache::new(
+                let reader = crate::row_in_disk::ReaderWithCache::borrowing(
                     checksummed,
                     checksum_cache,
                     checksum_cache_offset,

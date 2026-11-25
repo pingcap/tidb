@@ -595,15 +595,10 @@ pub(crate) fn evaluate_index_set_cost(
     optimizer: &mut dyn Optimizer,
     index_set: &IndexSet,
 ) -> Result<IndexSetCost> {
-    let queries = query_set.to_list();
     let indexes = index_set.to_list();
-    let mut costs = Vec::with_capacity(queries.len());
-    for query in &queries {
-        costs.push(optimizer.query_plan_cost(&query.text, &indexes)?);
-    }
-
     let mut workload_cost = 0.0_f64;
-    for (cost, query) in costs.iter().zip(&queries) {
+    for query in query_set.iter() {
+        let cost = optimizer.query_plan_cost(&query.text, &indexes)?;
         workload_cost += cost * query.frequency as f64;
     }
     let mut total_columns = 0;

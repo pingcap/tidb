@@ -11,3 +11,4 @@ description = "TiDB util/slice: Go pkg/util/slice (Rust rewrite)."
 workspace = true
 
 [dependencies]
+itoa = "1"

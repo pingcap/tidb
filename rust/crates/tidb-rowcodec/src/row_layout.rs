@@ -23,6 +23,7 @@
 
 use std::fmt;
 use std::ops::Range;
+use std::sync::OnceLock;
 
 /// Version byte of TiDB's new row format (`rowcodec.CodecVer`).
 pub const ROW_CODEC_VERSION: u8 = 128;
@@ -161,12 +162,120 @@ pub enum ColumnLookup {
     Missing,
 }
 
+/// Borrowed, little-endian metadata with an optional decoded slice view.
+#[derive(Clone)]
+struct EncodedNumbers<'a> {
+    bytes: &'a [u8],
+    width: usize,
+    decoded: OnceLock<Box<[u32]>>,
+}
+
+impl<'a> EncodedNumbers<'a> {
+    fn new(bytes: &'a [u8], width: usize) -> Self {
+        Self {
+            bytes,
+            width,
+            decoded: OnceLock::new(),
+        }
+    }
+
+    fn get(&self, index: usize) -> u32 {
+        match self.width {
+            1 => u32::from(self.bytes[index]),
+            2 => u32::from(u16::from_le_bytes(self.bytes.as_chunks::<2>().0[index])),
+            _ => u32::from_le_bytes(self.bytes.as_chunks::<4>().0[index]),
+        }
+    }
+
+    fn as_slice(&self) -> &[u32] {
+        self.decoded.get_or_init(|| match self.width {
+            1 => self.bytes.iter().copied().map(u32::from).collect(),
+            2 => self
+                .bytes
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .copied()
+                .map(|bytes| u32::from(u16::from_le_bytes(bytes)))
+                .collect(),
+            _ => self
+                .bytes
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .copied()
+                .map(u32::from_le_bytes)
+                .collect(),
+        })
+    }
+
+    fn binary_search(&self, range: Range<usize>, id: u32) -> Option<usize> {
+        let start = range.start;
+        let index = if self.width == 1 {
+            u8::try_from(id).ok()?;
+            search_ids(&self.bytes[range], id, |byte| u32::from(*byte))
+        } else {
+            let ids = &self.bytes.as_chunks::<4>().0[range];
+            search_ids(ids, id, |bytes| u32::from_le_bytes(*bytes))
+        };
+        index.map(|index| start + index)
+    }
+}
+
+fn search_ids<T>(ids: &[T], id: u32, decode: impl Fn(&T) -> u32) -> Option<usize> {
+    if ids.len() <= 8 {
+        return search_ids_by_midpoint(ids, id, &decode);
+    }
+    let middle = ids.len() / 2;
+    let (ids, start) = match decode(ids.get(middle)?).cmp(&id) {
+        std::cmp::Ordering::Equal => return Some(middle),
+        std::cmp::Ordering::Less => (&ids[middle + 1..], middle + 1),
+        std::cmp::Ordering::Greater => (&ids[..middle], 0),
+    };
+
+    let index = ids.binary_search_by_key(&id, &decode).ok()?;
+    let previous_matches = index > 0 && decode(&ids[index - 1]) == id;
+    let next_matches = ids.get(index + 1).is_some_and(|next| decode(next) == id);
+    if !previous_matches && !next_matches {
+        return Some(start + index);
+    }
+    // With duplicates, Go selects the first matching midpoint.
+    search_ids_by_midpoint(ids, id, &decode).map(|index| start + index)
+}
+
+fn search_ids_by_midpoint<T>(ids: &[T], id: u32, decode: impl Fn(&T) -> u32) -> Option<usize> {
+    let (mut low, mut high) = (0, ids.len());
+    while low < high {
+        let middle = low + (high - low) / 2;
+        match decode(&ids[middle]).cmp(&id) {
+            std::cmp::Ordering::Equal => return Some(middle),
+            std::cmp::Ordering::Less => low = middle + 1,
+            std::cmp::Ordering::Greater => high = middle,
+        }
+    }
+    None
+}
+
+impl PartialEq for EncodedNumbers<'_> {
+    fn eq(&self, other: &Self) -> bool {
+        self.width == other.width && self.bytes == other.bytes
+    }
+}
+
+impl Eq for EncodedNumbers<'_> {}
+
+impl fmt::Debug for EncodedNumbers<'_> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.as_slice().fmt(formatter)
+    }
+}
+
 /// Safe, typed framing view over one new-format row.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RowLayout<'a> {
     header: RowHeader,
-    column_ids: Vec<u32>,
-    offsets: Vec<u32>,
+    column_ids: EncodedNumbers<'a>,
+    offsets: EncodedNumbers<'a>,
     data: &'a [u8],
     checksum: Option<RowChecksum>,
 }
@@ -174,34 +283,23 @@ pub struct RowLayout<'a> {
 impl<'a> RowLayout<'a> {
     /// Parses row metadata, offsets, opaque value bytes, and an optional
     /// checksum trailer. The returned suffix is not part of this row.
+    #[inline]
     pub fn parse(input: &'a [u8]) -> Result<(Self, &'a [u8]), RowCodecError> {
         let (header, mut cursor) = RowHeader::parse(input)?;
         let id_width = header.column_id_width();
         let offset_width = header.offset_width();
-        let id_bytes = header.column_count() * id_width;
-        let ids_raw = take(&mut cursor, id_bytes);
-        let mut column_ids = Vec::with_capacity(header.column_count());
-        for bytes in ids_raw.chunks_exact(id_width) {
-            column_ids.push(if id_width == 1 {
-                bytes[0] as u32
-            } else {
-                u32::from_le_bytes(bytes.try_into().expect("four-byte column ID"))
-            });
-        }
-
-        let offset_bytes = header.not_null_count() as usize * offset_width;
-        let offsets_raw = take(&mut cursor, offset_bytes);
-        let mut offsets = Vec::with_capacity(header.not_null_count() as usize);
-        for bytes in offsets_raw.chunks_exact(offset_width) {
-            let offset = if offset_width == 2 {
-                u16::from_le_bytes(bytes.try_into().expect("two-byte offset")) as u32
-            } else {
-                u32::from_le_bytes(bytes.try_into().expect("four-byte offset"))
-            };
-            offsets.push(offset);
-        }
-
-        let data_len = offsets.last().copied().unwrap_or(0) as usize;
+        let not_null_count = usize::from(header.not_null_count());
+        let column_ids = EncodedNumbers::new(
+            take(&mut cursor, header.column_count() * id_width),
+            id_width,
+        );
+        let offsets = EncodedNumbers::new(
+            take(&mut cursor, not_null_count * offset_width),
+            offset_width,
+        );
+        let data_len = not_null_count
+            .checked_sub(1)
+            .map_or(0, |index| offsets.get(index) as usize);
         let data = take(&mut cursor, data_len);
         let checksum = if header.has_checksum() {
             Some(parse_checksum(&mut cursor)?)
@@ -227,22 +325,22 @@ impl<'a> RowLayout<'a> {
 
     /// Returns all IDs in source order: not-null IDs, then null IDs.
     pub fn column_ids(&self) -> &[u32] {
-        &self.column_ids
+        self.column_ids.as_slice()
     }
 
     /// Returns the not-null ID partition.
     pub fn not_null_column_ids(&self) -> &[u32] {
-        &self.column_ids[..self.header.not_null_count as usize]
+        &self.column_ids()[..self.header.not_null_count as usize]
     }
 
     /// Returns the null ID partition.
     pub fn null_column_ids(&self) -> &[u32] {
-        &self.column_ids[self.header.not_null_count as usize..]
+        &self.column_ids()[self.header.not_null_count as usize..]
     }
 
     /// Returns the end offset for each not-null value.
     pub fn offsets(&self) -> &[u32] {
-        &self.offsets
+        self.offsets.as_slice()
     }
 
     /// Returns the opaque data region, excluding checksum bytes.
@@ -256,22 +354,30 @@ impl<'a> RowLayout<'a> {
     }
 
     /// Finds a column using the source's two sorted ID partitions.
+    #[inline]
     pub fn find_column(&self, column_id: i64) -> ColumnLookup {
         let id = match u32::try_from(column_id) {
             Ok(id) => id,
             Err(_) => return ColumnLookup::Missing,
         };
-        match self.not_null_column_ids().binary_search(&id) {
-            Ok(index) => ColumnLookup::NotNull(index),
-            Err(_) => match self.null_column_ids().binary_search(&id) {
-                Ok(_) => ColumnLookup::Null,
-                Err(_) => ColumnLookup::Missing,
-            },
+        let not_null_count = usize::from(self.header.not_null_count());
+        let column_count = self.header.column_count();
+        if let Some(index) = self.column_ids.binary_search(0..not_null_count, id) {
+            ColumnLookup::NotNull(index)
+        } else if self
+            .column_ids
+            .binary_search(not_null_count..column_count, id)
+            .is_some()
+        {
+            ColumnLookup::Null
+        } else {
+            ColumnLookup::Missing
         }
     }
 
     /// Mirrors Go `ColumnIsNull`: an absent column is null iff its default is
     /// absent. This method does not inspect default bytes or schema metadata.
+    #[inline]
     pub fn column_is_null(&self, column_id: i64, default_is_null: bool) -> bool {
         match self.find_column(column_id) {
             ColumnLookup::NotNull(_) => false,
@@ -282,11 +388,11 @@ impl<'a> RowLayout<'a> {
 
     /// Returns one not-null value's byte range.
     pub fn value_range(&self, index: usize) -> Result<Range<usize>, RowCodecError> {
-        let end = self.offsets[index] as usize;
+        let end = self.offsets.get(index) as usize;
         let start = if index == 0 {
             0
         } else {
-            self.offsets[index - 1] as usize
+            self.offsets.get(index - 1) as usize
         };
         Ok(start..end)
     }
@@ -348,6 +454,7 @@ fn take<'a>(input: &mut &'a [u8], needed: usize) -> &'a [u8] {
     taken
 }
 
+#[inline]
 fn parse_checksum(input: &mut &[u8]) -> Result<RowChecksum, RowCodecError> {
     let header = take(input, 1)[0];
     let version = header & CHECKSUM_VERSION_MASK;

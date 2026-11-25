@@ -11,5 +11,8 @@ description = "TiDB util/regexp: Go pkg/util/regexp (Rust rewrite)."
 workspace = true
 
 [dependencies]
+memchr = "2"
 regex.workspace = true
+regex-automata = { version = "0.4", default-features = false, features = ["std", "syntax", "nfa-backtrack"] }
+regex-lite = "0.1"
 regex-syntax.workspace = true

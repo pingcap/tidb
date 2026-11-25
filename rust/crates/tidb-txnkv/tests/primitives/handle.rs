@@ -232,11 +232,19 @@ fn test_handle_map_with_partition_handle() {
     assert_eq!(map.get(&common), Some(&4));
     assert_eq!(map.len(), 5);
 
+    let usage = map.mem_usage();
     assert_eq!(map.delete(&partition_one), Some(1));
     assert_eq!(map.get(&partition_one), None);
     assert_eq!(map.len(), 4);
+    assert_eq!(map.mem_usage(), usage - 24);
 
     let missing = Handle::from(PartitionHandle::new(3, Some(Handle::from(IntHandle::new(1)))));
     assert_eq!(map.delete(&missing), None);
     assert_eq!(map.len(), 4);
+
+    let mut copy = map.clone();
+    assert_eq!(copy.delete(&partition_two), Some(2));
+    assert_eq!(copy.len(), 3);
+    assert_eq!(copy.mem_usage(), map.mem_usage() - 40);
+    assert_eq!(map.get(&partition_two), Some(&2));
 }

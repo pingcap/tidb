@@ -23,10 +23,13 @@
 //! decimal parser. Typed interpretation remains a downstream step, matching
 //! Go's `expression.ExecBinaryParam` boundary.
 
+use std::borrow::Cow;
+
 use tidb_server_internal_util::parse_length_encoded_int;
 use tidb_param::BinaryParam;
 
 use tidb_charset::find_encoding_take_utf8_as_noop;
+use tidb_charset::Encoding;
 use tidb_charset::TransformOp;
 use tidb_errno::errcode;
 
@@ -154,22 +157,62 @@ pub fn parse_binary_params(
     param_values: &[u8],
     input_charset: &str,
 ) -> Result<Vec<BinaryParam>, BinaryParamError> {
+    split_binary_params(
+        param_count,
+        bound_params.iter().map(|bound| bound.map(Cow::Borrowed)),
+        null_bitmap,
+        param_types,
+        param_values,
+        input_charset,
+        Cow::into_owned,
+    )
+}
+
+/// Splits parameters while borrowing values that need no charset conversion.
+pub fn parse_binary_params_refs<'a>(
+    param_count: usize,
+    bound_params: &[Option<&'a [u8]>],
+    null_bitmap: &[u8],
+    param_types: &[u8],
+    param_values: &'a [u8],
+    input_charset: &str,
+) -> Result<Vec<BinaryParam<Cow<'a, [u8]>>>, BinaryParamError> {
+    split_binary_params(
+        param_count,
+        bound_params.iter().map(|bound| bound.map(Cow::Borrowed)),
+        null_bitmap,
+        param_types,
+        param_values,
+        input_charset,
+        std::convert::identity,
+    )
+}
+
+pub(crate) fn split_binary_params<'a, B>(
+    param_count: usize,
+    mut bound_params: impl Iterator<Item = Option<Cow<'a, [u8]>>>,
+    null_bitmap: &[u8],
+    param_types: &[u8],
+    param_values: &'a [u8],
+    input_charset: &str,
+    materialize: impl Fn(Cow<'a, [u8]>) -> B,
+) -> Result<Vec<BinaryParam<B>>, BinaryParamError> {
     let mut params = Vec::with_capacity(param_count);
     let mut pos = 0usize;
+    let encoding = find_encoding_take_utf8_as_noop(input_charset);
 
     for i in 0..param_count {
         // 1. A value already delivered via COM_STMT_SEND_LONG_DATA is used
         //    directly. It defaults to BLOB, refined to the declared TEXT/BLOB
         //    type when the paramTypes vector carries one.
-        if let Some(Some(bound)) = bound_params.get(i).copied() {
+        if let Some(mut val) = bound_params.next().flatten() {
             let mut tp = TYPE_BLOB;
-            let mut val = bound.to_vec();
             if (i << 1) + 1 < param_types.len() {
                 let declared = param_types[i << 1];
                 match declared {
                     TYPE_VARCHAR | TYPE_VAR_STRING | TYPE_STRING | TYPE_BIT => {
                         tp = declared;
-                        val = decode_string_input(val, input_charset);
+                        val = decode_string_input(val, encoding);
                     }
                     TYPE_BLOB | TYPE_TINY_BLOB | TYPE_MEDIUM_BLOB | TYPE_LONG_BLOB => {
                         tp = declared;
@@ -181,7 +224,7 @@ pub fn parse_binary_params(
                 tp,
                 is_unsigned: false,
                 is_null: false,
-                val,
+                val: materialize(val),
             });
             continue;
         }
@@ -197,7 +240,7 @@ pub fn parse_binary_params(
                 tp: TYPE_NULL,
                 is_unsigned: false,
                 is_null: false,
-                val: Vec::new(),
+                val: materialize(Cow::Borrowed(&[])),
             });
             continue;
         }
@@ -254,15 +297,13 @@ pub fn parse_binary_params(
         };
 
         let (raw, next_pos) = take_binary_param_value(param_values, pos, length)?;
-        let mut val = raw.to_vec();
-        if decode_with_decoder {
-            val = decode_string_input(val, input_charset);
-        }
+        let raw = Cow::Borrowed(raw);
+        let val = if decode_with_decoder { decode_string_input(raw, encoding) } else { raw };
         params.push(BinaryParam {
             tp,
             is_unsigned,
             is_null,
-            val,
+            val: materialize(val),
         });
         pos = next_pos;
     }
@@ -275,19 +316,11 @@ pub fn parse_binary_params(
 /// `FindEncodingTakeUTF8AsNoop(chs)` transformed with `OpDecode`, keeping the
 /// original bytes when the transform reports an error.
 ///
-/// "Take UTF-8 as no-op" is why a utf8mb4 connection copies its bytes
-/// through: only a legacy client charset (`gbk`, `gb18030`) has a decode step
-/// at all. Skipping it stores a gbk client's bytes as if they were UTF-8.
-fn decode_string_input(val: Vec<u8>, input_charset: &str) -> Vec<u8> {
-    let (decoded, error) = find_encoding_take_utf8_as_noop(input_charset)
-        .transform(&val, TransformOp::DECODE)
-        .into_parts();
-    // Go returns the source unchanged when the transform fails, so an
-    // undecodable parameter reaches the expression layer as its raw bytes
-    // rather than as a connection error.
-    if error.is_some() {
-        val
-    } else {
-        decoded
+/// UTF-8 preserves the original buffer. Legacy charsets such as GBK may need
+/// to allocate converted bytes. Decode errors retain the source bytes.
+fn decode_string_input(val: Cow<'_, [u8]>, encoding: Encoding) -> Cow<'_, [u8]> {
+    match encoding.transform_cow(&val, TransformOp::DECODE) {
+        (Cow::Owned(bytes), None) => Cow::Owned(bytes),
+        _ => val,
     }
 }

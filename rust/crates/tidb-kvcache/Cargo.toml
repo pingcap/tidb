@@ -11,4 +11,6 @@ description = "O(1) byte-keyed LRU cache for TiDB package consumers."
 workspace = true
 
 [dependencies]
+foldhash = "0.2"
+hashbrown.workspace = true
 tidb-memory = { path = "../tidb-memory" }

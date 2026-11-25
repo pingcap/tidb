@@ -15,13 +15,14 @@
 //! Resource-group tag decoding and request-key extraction from
 //! `pkg/util/resourcegrouptag`.
 
+use prost::encoding::{decode_key, decode_varint, skip_field, DecodeContext, WireType};
 use prost::Message;
-use tidb_tablecodec_rowindexcodec::{get_key_kind, KeyKind};
 use tidb_proto::{
     CoprocessorBatchRequest, CoprocessorRequest, KvrpcBatchGetRequest, KvrpcBatchRollbackRequest,
     KvrpcCommitRequest, KvrpcGetRequest, KvrpcPessimisticLockRequest, KvrpcPrewriteRequest,
     KvrpcScanRequest, ResourceGroupTag, ResourceGroupTagLabel,
 };
+use tidb_tablecodec_rowindexcodec::{get_key_kind, KeyKind};
 
 /// A malformed protobuf resource-group tag.
 #[derive(Debug)]
@@ -41,8 +42,10 @@ impl ResourceGroupTagDecodeError {
 impl std::fmt::Display for ResourceGroupTagDecodeError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter.write_str("invalid resource group tag data ")?;
-        for byte in &self.data {
-            write!(formatter, "{byte:02x}")?;
+        let mut hex = [0_u8; 256];
+        for bytes in self.data.chunks(hex.len() / 2) {
+            let len = tidb_goruntime::go_hex::encode(&mut hex, bytes);
+            formatter.write_str(std::str::from_utf8(&hex[..len]).expect("hex is ASCII"))?;
         }
         Ok(())
     }
@@ -58,15 +61,47 @@ impl std::error::Error for ResourceGroupTagDecodeError {
 pub fn decode_resource_group_tag(
     data: &[u8],
 ) -> Result<Option<Vec<u8>>, ResourceGroupTagDecodeError> {
-    if data.is_empty() {
-        return Ok(None);
+    if let Some(digest) = project_sql_digest(data) {
+        return Ok(digest.map(<[u8]>::to_vec));
     }
+    // Use the generated decoder for errors, including the protobuf field path.
     ResourceGroupTag::decode(data)
         .map(|tag| tag.sql_digest)
         .map_err(|source| ResourceGroupTagDecodeError {
             data: data.to_vec(),
             source,
         })
+}
+
+// The outer Option reports whether the projection could validate the message.
+fn project_sql_digest(mut data: &[u8]) -> Option<Option<&[u8]>> {
+    let mut digest = None;
+    while !data.is_empty() {
+        let (tag, wire_type) = decode_key(&mut data).ok()?;
+        match tag {
+            // sql_digest, plan_digest, and keyspace_name are all bytes.
+            1 | 2 | 5 => {
+                if wire_type != WireType::LengthDelimited {
+                    return None;
+                }
+                let len = usize::try_from(decode_varint(&mut data).ok()?).ok()?;
+                let (value, rest) = data.split_at_checked(len)?;
+                if tag == 1 {
+                    digest = Some(value);
+                }
+                data = rest;
+            }
+            // label and table_id are scalar varints.
+            3 | 4 => {
+                if wire_type != WireType::Varint {
+                    return None;
+                }
+                decode_varint(&mut data).ok()?;
+            }
+            _ => skip_field(wire_type, tag, &mut data, DecodeContext::default()).ok()?,
+        }
+    }
+    Some(digest)
 }
 
 /// Classifies a key for resource-group attribution.
@@ -145,5 +180,32 @@ impl FirstKeyRequest for CoprocessorBatchRequest {
 impl FirstKeyRequest for KvrpcPessimisticLockRequest {
     fn first_key(&self) -> &[u8] {
         self.mutations.first().map_or(&[], |mutation| &mutation.key)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn projected_digest_matches_generated_tag_decoder() {
+        // Non-SQL fields, duplicate SQL digest, and an unknown group.
+        let payload = [
+            0x2a, 2, 9, 8, 0x0a, 1, 7, 0x18, 2, 0x20, 3, 0x12, 1, 6, 0x0a, 0, 0x33, 0x08, 0, 0x34,
+        ];
+        let compare = |data: &[u8]| {
+            let slow = ResourceGroupTag::decode(data).map(|tag| tag.sql_digest);
+            let fast = decode_resource_group_tag(data).map_err(|error| error.source);
+            assert_eq!(fast, slow, "{data:02x?}");
+        };
+        compare(&payload);
+        for i in 0..payload.len() {
+            compare(&payload[..i]);
+            let mut mutated = payload;
+            for byte in [0, 1, 7, 0x0a, 0x12, 0x7f, 0x80, 0xff] {
+                mutated[i] = byte;
+                compare(&mutated);
+            }
+        }
     }
 }

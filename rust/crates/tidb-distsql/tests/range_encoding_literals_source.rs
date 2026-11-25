@@ -47,8 +47,8 @@ fn range(
 ) -> Range {
     Range {
         collators: vec![tidb_charset::Collation::Binary; low.len()],
-        low_val: low,
-        high_val: high,
+        low_val: low.into(),
+        high_val: high.into(),
         low_exclude,
         high_exclude,
     }
@@ -165,15 +165,15 @@ fn index_ranges_to_kv_ranges_charges_go_key_capacities() {
     let strings = [
         Range {
             collators: vec![tidb_charset::Collation::Utf8Mb4GeneralCi, tidb_charset::Collation::Binary],
-            low_val: vec![text.clone(), datum(7)],
-            high_val: vec![text.clone(), datum(7)],
+            low_val: vec![text.clone(), datum(7)].into(),
+            high_val: vec![text.clone(), datum(7)].into(),
             low_exclude: false,
             high_exclude: false,
         },
         Range {
             collators: vec![tidb_charset::Collation::Utf8Mb4GeneralCi, tidb_charset::Collation::Binary],
-            low_val: vec![text.clone(), datum(8)],
-            high_val: vec![text, datum(9)],
+            low_val: vec![text.clone(), datum(8)].into(),
+            high_val: vec![text, datum(9)].into(),
             low_exclude: false,
             high_exclude: false,
         },
@@ -184,8 +184,8 @@ fn index_ranges_to_kv_ranges_charges_go_key_capacities() {
     let text = Datum::new_collation_string_datum("abcdefghij", tidb_charset::Collation::Utf8Mb4GeneralCi);
     let lone = Range {
         collators: vec![tidb_charset::Collation::Utf8Mb4GeneralCi],
-        low_val: vec![text.clone()],
-        high_val: vec![text],
+        low_val: vec![text.clone()].into(),
+        high_val: vec![text].into(),
         low_exclude: false,
         high_exclude: true,
     };

@@ -12,6 +12,8 @@ workspace = true
 
 [dependencies]
 tidb-table = { path = "../tidb-table" }
+bytes.workspace = true
+tidb-goruntime = { path = "../tidb-goruntime" }
 tidb-stmtctx = { path = "../tidb-stmtctx" }
 tidb-plancodec = { path = "../tidb-plancodec" }
 tidb-execdetails = { path = "../tidb-execdetails" }

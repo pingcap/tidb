@@ -1526,6 +1526,11 @@ fn test_vectorized_builtin_string_eval_one_vec() {
         e(r"substring_index('aaa.bbb.ccc.ddd.eee', '.', 4)"),
         "STR:aaa.bbb.ccc.ddd"
     );
+    assert_eq!(chunk_e("substring_index('aaaaa', 'aa', -2)"), "STR:aaa");
+    assert_eq!(
+        chunk_e("substring_index('aaaaa', 'aa', 18446744073709551615)"),
+        "STR:aaaaa"
+    );
 }
 
 /// Go `pkg/expression/builtin_string_vec_test.go:583
@@ -2736,4 +2741,32 @@ fn locate_with_position_matches_go_three_args_signature() {
         &NoColumns,
     );
     assert_eq!(exact.unwrap(), Datum::Int(2));
+}
+
+#[test]
+fn locate_with_position_uses_go_keys_and_rune_boundaries() {
+    use tidb_charset::Collation;
+
+    // The UCA key for 'ß' expands to the key for "ss", so the result
+    // starts at the second rune even though the needle has two runes.
+    let values = [
+        Datum::new_string_datum("ss"),
+        Datum::new_string_datum("xßy"),
+        Datum::Int(2),
+    ];
+    assert_eq!(
+        crate::string_fn::locate_with_position(&values, Collation::Utf8Mb4UnicodeCi).unwrap(),
+        Datum::Int(2)
+    );
+
+    // Go's conversion of the haystack to []rune replaces each invalid byte.
+    let values = [
+        Datum::new_string_datum("\u{fffd}\u{fffd}"),
+        Datum::new_string_datum(b"x\xe2\x82y".to_vec()),
+        Datum::Int(2),
+    ];
+    assert_eq!(
+        crate::string_fn::locate_with_position(&values, Collation::Utf8Mb4Bin).unwrap(),
+        Datum::Int(2)
+    );
 }

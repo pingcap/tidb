@@ -332,3 +332,17 @@ fn partial_index_topn_eliminates_identity_projection() {
     assert!(names.first().is_some_and(|name| name.starts_with("TopN")), "{names:?}");
     assert!(names.iter().all(|name| !name.starts_with("Projection")), "{names:?}");
 }
+
+#[test]
+fn ordered_covering_index_merges_separate_prefix_ranges() {
+    let (stack, _users) = cop_backed_stack();
+    let mut tk = session(&stack, 748);
+    exec_all(&mut tk, &[
+        "CREATE TABLE group_scan (id INT PRIMARY KEY, a INT NOT NULL, b INT NOT NULL, KEY ab (a, b))",
+        "INSERT INTO group_scan VALUES (1,1,10),(2,1,50),(3,2,20),(4,2,40),(5,4,30),(6,4,60),(7,3,70)",
+    ]);
+    let sql = "SELECT b FROM group_scan FORCE INDEX (ab) WHERE a IN (1,2,4) ORDER BY b DESC LIMIT 5";
+    let (result, ops) = tidb_kv::storage::capture_storage_ops(|| q(&mut tk, sql));
+    assert_eq!(result, [["60"], ["50"], ["40"], ["30"], ["20"]]);
+    assert_eq!(ops.cop_scans, 3, "{:#?}", explain_brief(&mut tk, sql));
+}

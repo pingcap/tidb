@@ -206,6 +206,26 @@ impl<S: StoreClient> AnalyzeIndexExec<'_, S> {
     }
 }
 
+/// Go `CMSketchAndTopNFromProto` over the decoded index response.
+fn decode_index_cmsketch(
+    cms: Option<tipb::CmSketch>,
+) -> Result<Option<(Option<tidb_stats::CmsSketch>, Option<tidb_stats::TopN>)>, tidb_stats::CodecError> {
+    cms.map(|cms| {
+        if cms.rows.is_empty() && cms.top_n.is_empty() {
+            return Ok((None, None));
+        }
+        tidb_stats::cmsketch_and_topn_from_decoded(
+            cms.rows.iter().map(|row| row.counters.as_slice()),
+            cms.top_n.into_iter().map(|entry| tidb_stats::TopNEntry {
+                encoded: entry.data.unwrap_or_default(),
+                count: entry.count.unwrap_or_default(),
+            }),
+            cms.default_value.unwrap_or_default(),
+        )
+    })
+    .transpose()
+}
+
 /// Go `updateIndexResult`: merges one region's histogram, CM sketch with
 /// its TopN, and FM sketch, and reports the region's rows as progress.
 fn update_index_result(
@@ -216,10 +236,7 @@ fn update_index_result(
     let error = |e: String| AnalyzeError::unsupported(e);
     let histogram = histogram_from_proto(response.hist.as_ref());
     progress(histogram.buckets.last().map_or(0, |bucket| bucket.count));
-    let cms_and_topn = response
-        .cms
-        .map(|cms| tidb_stats::decode_cmsketch_and_embedded_topn(&cms.encode_to_vec()))
-        .transpose()
+    let cms_and_topn = decode_index_cmsketch(response.cms)
         .map_err(|e| error(format!("{e:?}")))?;
     let fm_sketch = response.collector.and_then(|collector| collector.fm_sketch).map(|fm| {
         tidb_stats::FmSketch::from_raw_parts(fm.mask.unwrap_or_default(), tidb_stats::MAX_SKETCH_SIZE, fm.hashset)
@@ -333,6 +350,45 @@ fn histogram_from_proto(proto: Option<&tipb::Histogram>) -> tidb_stats::Histogra
 
 #[cfg(test)]
 mod tests {
+    use super::{decode_index_cmsketch, tipb};
+
+    #[test]
+    fn index_cmsketch_uses_decoded_rows_and_moves_topn_keys() {
+        assert!(decode_index_cmsketch(None).unwrap().is_none());
+        assert_eq!(
+            decode_index_cmsketch(Some(tipb::CmSketch::default())).unwrap(),
+            Some((None, None))
+        );
+
+        let key = vec![b'x'; 1024];
+        let key_ptr = key.as_ptr();
+        let cms = tipb::CmSketch {
+            rows: vec![
+                tipb::CmSketchRow { counters: vec![4, 5] },
+                tipb::CmSketchRow { counters: vec![7] },
+            ],
+            top_n: vec![
+                tipb::CmSketchTopN {
+                    data: Some(key),
+                    count: Some(2),
+                },
+                tipb::CmSketchTopN::default(),
+            ],
+            default_value: None,
+        };
+        let (sketch, topn) = decode_index_cmsketch(Some(cms)).unwrap().unwrap();
+        let sketch = sketch.unwrap();
+        assert_eq!(sketch.counter_at(0, 1), Some(5));
+        assert_eq!(sketch.counter_at(1, 1), Some(0));
+        assert_eq!(sketch.total_count(), 7);
+        assert_eq!(sketch.default_value(), 0);
+        let topn = topn.unwrap();
+        assert!(topn.entries()[0].encoded.is_empty());
+        assert_eq!(topn.entries()[0].count, 0);
+        assert_eq!(topn.entries()[1].encoded.as_ptr(), key_ptr);
+        assert_eq!(topn.entries()[1].count, 2);
+    }
+
     /// Go `EncodeIndexKey` over `FullNotNullRange`/`NullRange` (single
     /// column) and `FullRange`: the high bound is `PrefixNext` of the
     /// `maxFlag` byte, `prefix\xfb`, never `PrefixNext(prefix)`.

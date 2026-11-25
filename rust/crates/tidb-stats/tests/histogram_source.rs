@@ -83,7 +83,7 @@ fn int_histogram() -> Histogram {
             int_bucket(10, 19, 20, 3, 9),
             int_bucket(20, 29, 35, 1, 10),
             int_bucket(40, 49, 45, 5, 5),
-        ],
+        ].into(),
         ..Default::default()
     }
 }
@@ -332,14 +332,97 @@ fn string_histogram() -> Histogram {
             str_bucket("apple", "cherry", 8, 2, 6),
             str_bucket("date", "kiwi", 18, 3, 7),
             str_bucket("lemon", "orange", 26, 4, 5),
-        ],
+        ].into(),
         ..Default::default()
     }
 }
 
 #[test]
+fn locate_bucket_with_shared_bounds_and_pad_space_collation() {
+    let histogram = Histogram {
+        buckets: vec![
+            str_bucket("a", "b", 4, 2, 2),
+            str_bucket("b", "b", 6, 2, 1),
+            str_bucket("b", "d", 10, 2, 2),
+            str_bucket("f", "f", 12, 2, 1),
+        ]
+        .into(),
+        ..Default::default()
+    };
+    for (probe, expected) in [
+        ("b ", (false, 0, true, true)),
+        ("c", (false, 2, true, false)),
+        ("e", (false, 3, false, false)),
+        ("f ", (false, 3, true, true)),
+        ("g", (true, 3, false, false)),
+    ] {
+        let value = Datum::new_string_datum(probe.as_bytes().to_vec());
+        let location = histogram.locate_bucket(&value, Collation::Utf8Mb4Bin);
+        assert_eq!(
+            (
+                location.exceed,
+                location.bucket_idx,
+                location.in_bucket,
+                location.match_last_value,
+            ),
+            expected,
+            "probe {probe:?}",
+        );
+    }
+    let value = Datum::new_string_datum(b"f ".to_vec());
+    assert!(histogram.locate_bucket(&value, Collation::Binary).exceed);
+}
+
+#[test]
+fn locate_binary_bucket_with_different_key_lengths() {
+    let bounds: &[(&[u8], &[u8])] = &[
+        (b"a", b"prefix00"),
+        (b"prefix00\x01", b"prefix00\xff"),
+        (b"\x80", b"\xff1234567"),
+    ];
+    let histogram = Histogram {
+        buckets: bounds
+            .iter()
+            .enumerate()
+            .map(|(index, &(lower, upper))| Bucket {
+                lower_bound: Datum::Bytes(lower.to_vec()),
+                upper_bound: Datum::Bytes(upper.to_vec()),
+                count: (index as i64 + 1) * 2,
+                repeat: 1,
+                ndv: 2,
+            })
+            .collect(),
+        ..Default::default()
+    };
+    let probes: &[(&[u8], (bool, usize, bool, bool))] = &[
+        (b"p", (false, 0, true, false)),
+        (b"prefix00", (false, 0, true, true)),
+        (b"prefix00\x00", (false, 1, false, false)),
+        (b"prefix00\x02", (false, 1, true, false)),
+        (b"prefix00\xff\x00", (false, 2, false, false)),
+        (b"\x811234567", (false, 2, true, false)),
+        (b"\xff1234567\x00", (true, 2, false, false)),
+    ];
+    for &(probe, expected) in probes {
+        let value = Datum::Bytes(probe.to_vec());
+        let location = histogram.locate_bucket(&value, Collation::Binary);
+        assert_eq!(
+            (
+                location.exceed,
+                location.bucket_idx,
+                location.in_bucket,
+                location.match_last_value,
+            ),
+            expected,
+            "probe {probe:?}",
+        );
+    }
+}
+
+#[test]
 fn source_string_histogram_probes() {
-    let hist = string_histogram();
+    let mut hist = string_histogram();
+    hist.pre_calculate_scalar();
     // (probe, equal, matched, less, greater)
     let cases: &[(&str, f64, bool, f64, f64)] = &[
         ("aaa", 0.0, false, 0.0, 26.0),
@@ -400,14 +483,15 @@ fn decimal_histogram() -> Histogram {
         buckets: vec![
             decimal_bucket("1.50", "10.25", 12, 2, 8),
             decimal_bucket("10.25", "99.99", 22, 3, 6),
-        ],
+        ].into(),
         ..Default::default()
     }
 }
 
 #[test]
 fn source_decimal_histogram_probes() {
-    let hist = decimal_histogram();
+    let mut hist = decimal_histogram();
+    hist.pre_calculate_scalar();
     // (probe, equal, matched, less, greater)
     let cases: &[(&str, f64, bool, f64, f64)] = &[
         ("0.00", 0.0, false, 0.0, 22.0),
@@ -463,14 +547,15 @@ fn time_histogram() -> Histogram {
         buckets: vec![
             time_bucket("2020-01-01 00:00:00", "2020-06-01 00:00:00", 15, 2, 9),
             time_bucket("2020-06-01 00:00:00", "2021-01-01 00:00:00", 28, 3, 8),
-        ],
+        ].into(),
         ..Default::default()
     }
 }
 
 #[test]
 fn source_time_histogram_probes() {
-    let hist = time_histogram();
+    let mut hist = time_histogram();
+    hist.pre_calculate_scalar();
     // (probe, equal, matched, less, greater)
     let cases: &[(&str, f64, bool, f64, f64)] = &[
         ("2019-01-01 00:00:00", 0.0, false, 0.0, 28.0),
@@ -836,8 +921,42 @@ fn source_merge_histograms_matches_go_cases() {
 #[test]
 fn source_truncate_histogram_keeps_metadata_and_prefix() {
     let histogram = source_merge_histogram(&[(0, 1, 0, 1, 0)], 0);
-    assert_eq!(histogram.truncate(1), histogram);
+    let mut full = histogram.truncate(1);
+    assert_eq!(full, histogram);
+    full.buckets[0].lower_bound = Datum::new_int(-1);
+    assert_eq!(histogram.get_lower(0), &Datum::new_int(0));
     assert!(histogram.truncate(0).buckets.is_empty());
+
+    let histogram = source_merge_histogram(&[(0, 1, 2, 1, 0), (2, 3, 4, 1, 0)], 0);
+    let mut prefix = histogram.truncate(1);
+    assert_eq!(&prefix.buckets[..], &histogram.buckets[..1]);
+    prefix.buckets[0].upper_bound = Datum::new_int(2);
+    assert_eq!(histogram.get_upper(0), &Datum::new_int(1));
+    assert_eq!(histogram.len(), 2);
+}
+
+#[test]
+fn truncated_bucket_views_detach_on_write_and_consume_only_the_prefix() {
+    let mut original = source_merge_histogram(
+        &[(0, 1, 2, 1, 0), (2, 3, 4, 1, 0), (4, 5, 6, 1, 0), (6, 7, 8, 1, 0)],
+        0,
+    );
+    let mut prefix = original.truncate(3);
+    let nested = prefix.truncate(2);
+    assert!(std::ptr::eq(&original.buckets[0], &prefix.buckets[0]));
+    assert_eq!(prefix.buckets.capacity(), 4);
+    assert_eq!(nested.buckets.capacity(), 3);
+
+    original.buckets[0].count = 10;
+    prefix.buckets[1].count = 11;
+    assert_eq!(prefix.buckets[0].count, 2);
+    assert_eq!(original.buckets[1].count, 4);
+    assert_eq!(nested.buckets[1].count, 4);
+
+    let buckets: Vec<_> = nested.buckets.into();
+    assert_eq!(buckets.len(), 2);
+    assert_eq!(buckets.capacity(), 3);
+    assert_eq!(buckets[0].count, 2);
 }
 
 #[test]

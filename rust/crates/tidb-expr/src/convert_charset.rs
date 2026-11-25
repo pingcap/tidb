@@ -274,7 +274,7 @@ pub(crate) fn handle_binary_literal(
 pub fn to_binary(value: &Datum, arg_charset: &str) -> Result<Datum, EvalError> {
     let bytes = crate::arg_eval_type::eval_string(value)?.unwrap_or_default();
     let (encoded, error) = find_encoding(arg_charset)
-        .transform(&bytes, TransformOp::ENCODE)
+        .transform_owned(bytes, TransformOp::ENCODE)
         .into_parts();
     if error.is_some() {
         return Err(EvalError::Unsupported("invalid character string"));
@@ -392,7 +392,7 @@ pub fn convert_using(
     if arg_is_binary && !result_is_binary {
         // Binary -> character set: DECODE. A failure is NULL, not an error.
         let (decoded, error) = find_encoding(result_charset)
-            .transform(&bytes, TransformOp::DECODE_REPLACE)
+            .transform_owned(bytes, TransformOp::DECODE_REPLACE)
             .into_parts();
         // The decoded text carries the target charset, as Go's result type
         // does, so a later SUBSTRING or LEFT counts its characters rather

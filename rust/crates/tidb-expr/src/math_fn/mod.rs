@@ -18,14 +18,28 @@
 //! ABS, SIGN, CEIL/FLOOR, ROUND/TRUNCATE, CONV, CRC32, and the
 //! transcendental functions, over already-evaluated argument values.
 
-mod go_exp_log;
-mod go_trig;
+pub(crate) mod go_exp_log;
+pub(crate) mod go_trig;
 
+/// Go on arm64 contracts these operations into fused multiply-adds.
+#[inline(always)]
+fn mul_add<const FUSED: bool>(left: f64, right: f64, add: f64) -> f64 {
+    if FUSED {
+        left.mul_add(right, add)
+    } else {
+        left * right + add
+    }
+}
+
+pub(crate) const GO_MATH_FMA: bool = cfg!(target_arch = "aarch64");
+pub(crate) const GO_NAN: f64 = f64::from_bits(0x7ff8_0000_0000_0001);
+
+use std::borrow::Cow;
 use std::cmp::Ordering;
 
 
 use crate::coerce::{coerce_str, coerce_str_bytes};
-use crate::ops::{finite_float, to_f64, to_f64_with_mysql_string};
+use crate::ops::{to_f64, to_f64_with_mysql_string};
 use crate::{Columns, Datum, EvalError, MysqlRng};
 
 
@@ -193,18 +207,14 @@ pub(crate) fn crc32(vals: &[Datum]) -> Result<Datum, EvalError> {
     // observable for a non-legacy connection charset: the rewriter's
     // `to_binary` wrapper hands CRC32 GBK bytes such as `D2 BB`, which must be
     // hashed directly rather than rejected by a UTF-8 conversion.
-    let Some(bytes) = coerce_str_bytes(&vals[0])? else {
-        return Ok(Datum::Null);
+    let bytes = match vals[0].as_raw_bytes() {
+        Some(bytes) => Cow::Borrowed(bytes),
+        None => match coerce_str_bytes(&vals[0])? {
+            Some(bytes) => Cow::Owned(bytes),
+            None => return Ok(Datum::Null),
+        },
     };
-    let mut crc: u32 = 0xFFFF_FFFF;
-    for byte in bytes {
-        crc ^= u32::from(byte);
-        for _ in 0..8 {
-            let mask = (crc & 1).wrapping_neg();
-            crc = (crc >> 1) ^ (0xEDB8_8320 & mask);
-        }
-    }
-    Ok(Datum::UInt(u64::from(!crc)))
+    Ok(Datum::UInt(u64::from(crc32fast::hash(&bytes))))
 }
 
 /// `ABS(x)`. `absFunctionClass.getFunction` picks the signature from the
@@ -285,12 +295,12 @@ pub(crate) fn numeric_arg(v: &Datum, ctx: &dyn Columns) -> Result<Option<f64>, E
 }
 
 /// `NULL` if `x <= 0` (MySQL's own domain check for `LN`/`LOG`/`LOG2`/
-/// `LOG10`), else `Ok(x.ln())`.
+/// `LOG10`), else Go's logarithm.
 fn checked_ln(x: f64) -> Datum {
     if x <= 0.0 {
         Datum::Null
     } else {
-        Datum::Real(x.ln())
+        Datum::Real(go_exp_log::go_log(x))
     }
 }
 
@@ -345,7 +355,7 @@ pub(crate) fn log(vals: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError>
                 );
                 return Ok(Datum::Null);
             }
-            Ok(Datum::Real(x.log(base)))
+            Ok(Datum::Real(go_exp_log::go_log(x) / go_exp_log::go_log(base)))
         }
         _ => Err(EvalError::Unsupported("bad function arity")),
     }
@@ -367,7 +377,7 @@ pub(crate) fn log2(vals: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError
             );
             Datum::Null
         }
-        Some(x) => Datum::Real(x.log2()),
+        Some(x) => Datum::Real(go_exp_log::log2::<GO_MATH_FMA>(x)),
         None => Datum::Null,
     })
 }
@@ -444,8 +454,8 @@ pub(crate) fn pi(vals: &[Datum]) -> Result<Datum, EvalError> {
 
 /// The shape shared by every unary trig/`RADIANS`/`DEGREES` function with
 /// NO explicit MySQL domain check (unlike `ASIN`/`ACOS` below): `NULL` if
-/// the argument is `NULL`, else `f(x)` wrapped through `finite_float`.
-fn unary_finite(
+/// the argument is `NULL`, else Go's floating-point result.
+fn unary_real(
     vals: &[Datum],
     ctx: &dyn Columns,
     f: impl FnOnce(f64) -> f64,
@@ -454,21 +464,21 @@ fn unary_finite(
         return Err(EvalError::Unsupported("bad function arity"));
     };
     match numeric_arg(v, ctx)? {
-        Some(x) => finite_float(f(x)),
+        Some(x) => Ok(Datum::Real(f(x))),
         None => Ok(Datum::Null),
     }
 }
 
 pub(crate) fn sin(vals: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
-    unary_finite(vals, ctx, go_trig::go_sin)
+    unary_real(vals, ctx, go_trig::go_sin)
 }
 
 pub(crate) fn cos(vals: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
-    unary_finite(vals, ctx, go_trig::go_cos)
+    unary_real(vals, ctx, go_trig::go_cos)
 }
 
 pub(crate) fn tan(vals: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
-    unary_finite(vals, ctx, go_trig::go_tan)
+    unary_real(vals, ctx, go_trig::go_tan)
 }
 
 /// Go `builtinCotSig.evalReal`: a zero tangent or a non-finite cotangent is
@@ -523,10 +533,10 @@ pub(crate) fn degrees(vals: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalEr
 /// `NULL` if `x` isn't in `[-1, 1]` (MySQL's own domain check for
 /// `ASIN`/`ACOS`, mirroring `SQRT`'s), else `Ok(f(x))`.
 fn asin_acos_domain(x: f64, f: impl FnOnce(f64) -> f64) -> Datum {
-    if (-1.0..=1.0).contains(&x) {
-        Datum::Real(f(x))
-    } else {
+    if x < -1.0 || x > 1.0 {
         Datum::Null
+    } else {
+        Datum::Real(f(x))
     }
 }
 
@@ -535,7 +545,7 @@ pub(crate) fn asin(vals: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError
         return Err(EvalError::Unsupported("bad function arity"));
     };
     Ok(match numeric_arg(v, ctx)? {
-        Some(x) => asin_acos_domain(x, f64::asin),
+        Some(x) => asin_acos_domain(x, go_trig::asin::<GO_MATH_FMA>),
         None => Datum::Null,
     })
 }
@@ -545,7 +555,7 @@ pub(crate) fn acos(vals: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError
         return Err(EvalError::Unsupported("bad function arity"));
     };
     Ok(match numeric_arg(v, ctx)? {
-        Some(x) => asin_acos_domain(x, f64::acos),
+        Some(x) => asin_acos_domain(x, |x| std::f64::consts::FRAC_PI_2 - go_trig::asin::<GO_MATH_FMA>(x)),
         None => Datum::Null,
     })
 }
@@ -554,7 +564,7 @@ pub(crate) fn acos(vals: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError
 /// x)` — same argument order, confirmed via `goeval`, not assumed).
 pub(crate) fn atan(vals: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
     match vals {
-        [_] => unary_finite(vals, ctx, go_trig::go_atan),
+        [_] => unary_real(vals, ctx, go_trig::go_atan),
         [_, _] => atan2(vals, ctx),
         _ => Err(EvalError::Unsupported("bad function arity")),
     }
@@ -567,7 +577,7 @@ pub(crate) fn atan2(vals: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalErro
     let (Some(y), Some(x)) = (numeric_arg(y, ctx)?, numeric_arg(x, ctx)?) else {
         return Ok(Datum::Null);
     };
-    finite_float(go_trig::go_atan2(y, x))
+    Ok(Datum::Real(go_trig::go_atan2(y, x)))
 }
 
 /// The value-level half of [`eval_rand`], shared with the chunk-row bridge
@@ -709,7 +719,7 @@ pub(crate) fn ceil_floor_with_result_domain(
     })
 }
 
-fn sign_of_real(value: f64) -> i64 {
+pub(crate) fn sign_of_real(value: f64) -> i64 {
     match value.partial_cmp(&0.0) {
         Some(Ordering::Greater) => 1,
         Some(Ordering::Less) => -1,
@@ -935,8 +945,10 @@ fn round_int_with_frac(val: i64, frac: i64, unsigned: bool) -> Result<i64, EvalE
 /// "more correct" decimal-aware approach. An infinite intermediate (e.g.
 /// huge `dec`) returns `f` unchanged; a `NaN` result (e.g. `f == 0.0` with
 /// `dec` large enough that `shift` is infinite, giving `0 * inf`) becomes
-/// `0.0` — both are Go's own explicit fallbacks, not invented here.
-fn go_round_float(f: f64, dec: i64) -> f64 {
+/// `0.0` — both are Go's own explicit fallbacks, not invented here. Also
+/// used for `ROUND(int, d)`, which real TiDB implements as this same `f64`
+/// round-trip (`int64(types.Round(float64(val), d))`).
+pub(crate) fn go_round_float(f: f64, dec: i64) -> f64 {
     let shift = go_pow10(dec);
     let tmp = f * shift;
     if tmp.is_infinite() {

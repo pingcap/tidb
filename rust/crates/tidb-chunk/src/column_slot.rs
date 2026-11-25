@@ -20,39 +20,39 @@
 
 use std::fmt;
 use std::ops::{Deref, DerefMut};
-use std::sync::{Arc, Mutex, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard};
+use std::sync::{
+    Arc, Mutex, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard, TryLockError,
+};
 
 use crate::alloc::ColumnRecycleRegistration;
 use crate::column::Column;
 use crate::column_view::ColumnBytes;
 
-pub(crate) struct OwnedColumn {
-    column: Column,
+/// A cache-admitted column whose address can be reused across leases.
+pub(crate) struct RegisteredColumn {
+    column: Option<Box<Column>>,
     recycle: Option<ColumnRecycleRegistration>,
 }
 
-impl OwnedColumn {
-    fn new(column: Column) -> Self {
-        Self {
-            column,
-            recycle: None,
-        }
+impl RegisteredColumn {
+    fn get(&self) -> &Column {
+        self.column.as_deref().expect("registered column is present")
     }
 
-    fn take_parts(&mut self) -> (Column, Option<ColumnRecycleRegistration>) {
-        (std::mem::take(&mut self.column), self.recycle.take())
+    fn get_mut(&mut self) -> &mut Column {
+        self.column.as_deref_mut().expect("registered column is present")
     }
 
-    fn take_unregistered_column(&mut self) -> Column {
-        self.recycle = None;
-        std::mem::take(&mut self.column)
+    fn take_parts(&mut self) -> (Box<Column>, Option<ColumnRecycleRegistration>) {
+        let column = self.column.take().expect("registered column is present");
+        (column, self.recycle.take())
     }
 }
 
-impl Drop for OwnedColumn {
+impl Drop for RegisteredColumn {
     fn drop(&mut self) {
-        if let Some(recycle) = self.recycle.take() {
-            recycle.recycle(std::mem::take(&mut self.column));
+        if let (Some(column), Some(recycle)) = (self.column.take(), self.recycle.take()) {
+            recycle.recycle(column);
         }
     }
 }
@@ -95,29 +95,74 @@ impl Drop for SharedOwner {
             .unwrap_or_else(PoisonError::into_inner)
             .take();
         if let Some(recycle) = recycle {
-            recycle.recycle(std::mem::take(
+            recycle.recycle(Box::new(std::mem::take(
                 self.column
                     .get_mut()
                     .unwrap_or_else(PoisonError::into_inner),
-            ));
+            )));
         }
     }
 }
 
 /// One whole-column slot in a chunk.
 pub(crate) enum ColumnSlot {
-    Owned(OwnedColumn),
+    Owned(Column),
+    Registered(RegisteredColumn),
     Shared(Arc<SharedOwner>),
 }
 
 impl ColumnSlot {
     pub(crate) fn new(column: Column) -> Self {
-        Self::Owned(OwnedColumn::new(column))
+        Self::Owned(column)
     }
 
+    pub(crate) fn with_registration(
+        column: Box<Column>,
+        recycle: ColumnRecycleRegistration,
+    ) -> Self {
+        Self::Registered(RegisteredColumn {
+            column: Some(column),
+            recycle: Some(recycle),
+        })
+    }
+
+    pub(crate) fn owned_mut(&mut self) -> Option<&mut Column> {
+        match self {
+            Self::Owned(column) => Some(column),
+            Self::Registered(owner) => Some(owner.get_mut()),
+            Self::Shared(_) => None,
+        }
+    }
+
+    pub(crate) fn take_owned_registration(
+        &mut self,
+        matches: impl FnOnce(&ColumnRecycleRegistration) -> bool,
+    ) -> Option<(Box<Column>, ColumnRecycleRegistration)> {
+        let Self::Registered(owner) = self else {
+            return None;
+        };
+        if !owner.recycle.as_ref().is_some_and(matches) {
+            return None;
+        }
+        let registration = owner.recycle.take().expect("matched registration");
+        Some((
+            owner.column.take().expect("registered column is present"),
+            registration,
+        ))
+    }
+
+    pub(crate) fn recycle_registration(&self) -> Option<&ColumnRecycleRegistration> {
+        match self {
+            Self::Registered(owner) => owner.recycle.as_ref(),
+            _ => None,
+        }
+    }
+
+    #[inline]
     pub(crate) fn read(&self) -> ColumnRead<'_> {
         let inner = match self {
-            Self::Owned(owner) => ColumnReadInner::Owned(&owner.column),
+            Self::Owned(column) => ColumnReadInner::Owned(column),
+            Self::Registered(owner) => ColumnReadInner::Owned(owner.get()),
             Self::Shared(owner) => {
                 ColumnReadInner::Shared(owner.column.read().unwrap_or_else(PoisonError::into_inner))
             }
@@ -125,9 +170,24 @@ impl ColumnSlot {
         ColumnRead { inner }
     }
 
+    pub(crate) fn try_read(&self) -> Option<ColumnRead<'_>> {
+        let Self::Shared(owner) = self else {
+            return Some(self.read());
+        };
+        let column = match owner.column.try_read() {
+            Ok(column) => column,
+            Err(TryLockError::Poisoned(error)) => error.into_inner(),
+            Err(TryLockError::WouldBlock) => return None,
+        };
+        Some(ColumnRead {
+            inner: ColumnReadInner::Shared(column),
+        })
+    }
+
     pub(crate) fn write(&mut self) -> ColumnWrite<'_> {
         let inner = match self {
-            Self::Owned(owner) => ColumnWriteInner::Owned(&mut owner.column),
+            Self::Owned(column) => ColumnWriteInner::Owned(column),
+            Self::Registered(owner) => ColumnWriteInner::Owned(owner.get_mut()),
             Self::Shared(owner) => ColumnWriteInner::Shared(
                 owner.column.write().unwrap_or_else(PoisonError::into_inner),
             ),
@@ -135,16 +195,36 @@ impl ColumnSlot {
         ColumnWrite { inner }
     }
 
+    #[inline]
+    pub(crate) fn with_write(&mut self, write: impl FnOnce(&mut Column)) {
+        let column = match self {
+            Self::Owned(column) => column,
+            Self::Registered(owner) => owner.get_mut(),
+            Self::Shared(owner) => return Self::write_shared(owner, write),
+        };
+        write(column);
+    }
+
+    #[cold]
+    fn write_shared(owner: &SharedOwner, write: impl FnOnce(&mut Column)) {
+        let mut column = owner.column.write().unwrap_or_else(PoisonError::into_inner);
+        write(&mut column);
+    }
+
     pub(crate) fn alias(&mut self) -> Self {
         if let Self::Shared(owner) = self {
             return Self::Shared(Arc::clone(owner));
         }
 
-        let mut owned = match std::mem::take(self) {
-            Self::Owned(owned) => owned,
+        let (mut column, recycle) = match std::mem::take(self) {
+            Self::Owned(column) => (column, None),
+            Self::Registered(mut owner) => {
+                let (column, recycle) = owner.take_parts();
+                (*column, recycle)
+            }
             Self::Shared(_) => unreachable!("shared case returned above"),
         };
-        let (column, recycle) = owned.take_parts();
+        column.retain_data_for_alias();
         let owner = Arc::new(SharedOwner::new(column, recycle));
         *self = Self::Shared(Arc::clone(&owner));
         Self::Shared(owner)
@@ -157,9 +237,49 @@ impl ColumnSlot {
         matches!((self, other), (Self::Shared(left), Self::Shared(right)) if Arc::ptr_eq(left, right))
     }
 
+    pub(crate) fn copy_from(
+        &mut self,
+        source: &Self,
+        copy: impl FnOnce(&mut Column, &Column),
+        copy_within: impl FnOnce(&mut Column),
+    ) {
+        let copy = |destination: &mut Column, source: &Column| {
+            // Shallow row views in separate columns may still share a
+            // mutable byte buffer. Do not read and write that buffer at once.
+            if destination.has_mutably_shared_bytes() && source.has_mutably_shared_bytes() {
+                copy(destination, &source.copy_construct());
+            } else {
+                copy(destination, source);
+            }
+        };
+        let (Self::Shared(destination), Self::Shared(source)) = (&mut *self, source) else {
+            copy(&mut self.write(), &source.read());
+            return;
+        };
+        if Arc::ptr_eq(destination, source) {
+            let mut column = destination.column.write().unwrap_or_else(PoisonError::into_inner);
+            copy_within(&mut column);
+            return;
+        }
+
+        let source = source.column.read().unwrap_or_else(PoisonError::into_inner);
+        // Trying the second lock lets distinct owners copy without a snapshot
+        // and avoids waiting with the source locked during a reverse copy.
+        match destination.column.try_write() {
+            Ok(mut destination) => copy(&mut destination, &source),
+            Err(TryLockError::Poisoned(error)) => copy(&mut error.into_inner(), &source),
+            Err(TryLockError::WouldBlock) => {
+                let snapshot = source.copy_construct();
+                drop(source);
+                let mut destination = destination.column.write().unwrap_or_else(PoisonError::into_inner);
+                copy(&mut destination, &snapshot);
+            }
+        }
+    }
+
     pub(crate) fn append_cell_from(&mut self, source: &Self, row: usize) {
-        if let (Self::Owned(destination), Self::Owned(source)) = (&mut *self, source) {
-            destination.column.append_cell_by_cell(&source.column, row);
+        if let (Some(destination), Some(source)) = (self.owned_mut(), source.owned_column()) {
+            destination.append_cell_by_cell(source, row);
             return;
         }
 
@@ -185,19 +305,13 @@ impl ColumnSlot {
     }
 
     pub(crate) fn append_range_from(&mut self, source: &Self, begin: usize, end: usize) {
-        if let (Self::Owned(destination), Self::Owned(source)) = (&mut *self, source) {
-            destination
-                .column
-                .append_range_from(&source.column, begin, end);
+        if let (Some(destination), Some(source)) = (self.owned_mut(), source.owned_column()) {
+            destination.append_range_from(source, begin, end);
             return;
         }
-        // Preserve the alias-safe row path when both slots designate one
-        // owner. Distinct shared owners can hold their read/write guards for
-        // the complete range and use the same column-wide batch copy as the
-        // ordinary owned fast path.
         if self.same_identity(source) {
-            for row in begin..end {
-                self.append_cell_from(source, row);
+            if begin != end {
+                self.write().append_own_range(begin, end);
             }
             return;
         }
@@ -206,62 +320,100 @@ impl ColumnSlot {
         destination.append_range_from(&source, begin, end);
     }
 
-    pub(crate) fn is_shared(&self) -> bool {
-        matches!(self, Self::Shared(_))
+    pub(crate) fn append_rows_from(
+        &mut self,
+        source: &Self,
+        rows: impl ExactSizeIterator<Item = usize> + Clone,
+        contiguous_start: Option<usize>,
+    ) {
+        if self.same_identity(source) {
+            for row in rows {
+                self.append_cell_from(source, row);
+            }
+            return;
+        }
+        let source = source.read();
+        let mut destination = self.write();
+        if let Some(begin) = contiguous_start {
+            if destination.append_range_if_fits(&source, begin, begin + rows.len()) {
+                return;
+            }
+        }
+        if destination.is_fixed() == source.is_fixed() {
+            destination.copy_row_ids_from(&source, rows);
+        } else {
+            let source: &Column = &source;
+            let destination: &mut Column = &mut destination;
+            for row in rows {
+                destination.append_cell_by_cell(source, row);
+            }
+        }
+    }
+
+    /// Identity of a shared owner for comparisons while the column slots live.
+    pub(crate) fn shared_owner(&self) -> Option<std::ptr::NonNull<SharedOwner>> {
+        match self {
+            Self::Shared(owner) => Some(std::ptr::NonNull::from(owner.as_ref())),
+            Self::Owned(_) | Self::Registered(_) => None,
+        }
     }
 
     pub(crate) fn deep_copy(&self) -> Self {
         Self::new(self.read().clone_exact())
     }
 
+    #[inline]
+    pub(crate) fn try_borrow_cell_bytes(&self, row: usize) -> Option<&[u8]> {
+        self.owned_column()?.try_borrow_cell_bytes(row)
+    }
+
+    #[inline]
+    pub(crate) fn owned_column(&self) -> Option<&Column> {
+        match self {
+            Self::Owned(column) => Some(column),
+            Self::Registered(owner) => Some(owner.get()),
+            Self::Shared(_) => None,
+        }
+    }
+
     pub(crate) fn get_bytes(&self, row: usize) -> ColumnBytes<'_> {
         match self {
-            Self::Owned(owner) => owner.column.get_bytes(row),
+            Self::Owned(column) => column.get_bytes(row),
+            Self::Registered(owner) => owner.get().get_bytes(row),
             Self::Shared(owner) => {
                 let column = owner.column.read().unwrap_or_else(PoisonError::into_inner);
-                let bytes = column.get_bytes(row).to_vec();
-                drop(column);
-                ColumnBytes::owned(bytes)
+                column.snapshot_var_bytes(row)
             }
         }
     }
 
     pub(crate) fn get_raw(&self, row: usize) -> ColumnBytes<'_> {
         match self {
-            Self::Owned(owner) => owner.column.get_raw(row),
+            Self::Owned(column) => column.get_raw(row),
+            Self::Registered(owner) => owner.get().get_raw(row),
             Self::Shared(owner) => {
                 let column = owner.column.read().unwrap_or_else(PoisonError::into_inner);
-                let bytes = column.get_raw(row).to_vec();
-                drop(column);
-                ColumnBytes::owned(bytes)
-            }
-        }
-    }
-
-    pub(crate) fn attach_registration(&mut self, registration: ColumnRecycleRegistration) {
-        match self {
-            Self::Owned(owner) => {
-                debug_assert!(owner.recycle.is_none());
-                owner.recycle = Some(registration);
-            }
-            Self::Shared(owner) => {
-                let mut recycle = owner.recycle.lock().unwrap_or_else(PoisonError::into_inner);
-                debug_assert!(recycle.is_none());
-                *recycle = Some(registration);
+                if column.is_fixed() {
+                    ColumnBytes::copied(&column.get_raw(row))
+                } else {
+                    column.snapshot_var_bytes(row)
+                }
             }
         }
     }
 
     pub(crate) fn detach_registration(&mut self) {
         match self {
-            Self::Owned(owner) => owner.recycle = None,
+            Self::Owned(_) => {}
+            Self::Registered(owner) => *self = Self::Owned(*owner.take_parts().0),
             Self::Shared(owner) => owner.detach_registration(),
         }
     }
 
     pub(crate) fn into_unique_column(self) -> Result<Column, Box<Self>> {
         match self {
-            Self::Owned(mut owner) => Ok(owner.take_unregistered_column()),
+            Self::Owned(column) => Ok(column),
+            Self::Registered(mut owner) => Ok(*owner.take_parts().0),
             Self::Shared(owner) => match Arc::try_unwrap(owner) {
                 Ok(mut owner) => Ok(owner.take_unregistered_column()),
                 Err(owner) => Err(Box::new(Self::Shared(owner))),
@@ -313,7 +465,14 @@ pub struct ColumnRef<'a> {
     pub(crate) slot: &'a ColumnSlot,
 }
 
-impl ColumnRef<'_> {
+impl<'a> ColumnRef<'a> {
+    /// Borrows a stable column without holding a lock during argument evaluation.
+    pub fn try_borrow_stable(&self) -> Option<&'a Column> {
+        self.slot
+            .owned_column()
+            .filter(|column| !column.data.is_shared())
+    }
+
     /// Borrow the column for one operation. Shared aliases retain the same
     /// synchronization and visibility as `Chunk::column`.
     pub fn read(&self) -> ColumnRead<'_> {
@@ -330,6 +489,7 @@ pub struct ColumnRead<'a> {
 impl Deref for ColumnRead<'_> {
     type Target = Column;
 
+    #[inline]
     fn deref(&self) -> &Self::Target {
         match &self.inner {
             ColumnReadInner::Owned(column) => column,

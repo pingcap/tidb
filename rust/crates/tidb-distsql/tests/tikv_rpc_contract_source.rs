@@ -34,7 +34,7 @@ use tidb_txnkv::RequestType;
 use tidb_txnkv::RequestSource;
 use tidb_txnkv::ReplicaReadType;
 use tidb_proto::{
-    CoprocessorRequest, CoprocessorResponse, KvrpcLockInfo, KvrpcRequestOrigin, RegionError,
+    CoprocessorResponse, KvrpcLockInfo, KvrpcRequestOrigin, RegionError,
     StoreBatchTaskResponse,
 };
 use tidb_txnkv::{ClientReplicaReadType, EndpointType, TraceInfo};
@@ -49,7 +49,7 @@ fn range(start: &str, end: &str) -> KeyRange {
 fn metadata() -> KvRequestMetadata {
     let mut metadata = KvRequestMetadata::default();
     metadata.request_type = RequestType::Dag;
-    metadata.data = Some(b"dag".to_vec());
+    metadata.data = Some((&b"dag"[..]).into());
     metadata.key_ranges = Some(PartitionedKeyRanges::new_non_partitioned(vec![range("a", "z")]).into());
     metadata.keep_order = true;
     metadata.cacheable = true;
@@ -136,9 +136,11 @@ fn checked_task_becomes_wire_ready_request_with_exact_context_and_wrapper_metada
     assert_eq!(request.txn_scope, "global");
     assert_eq!(request.timeout_override_ms, Some(777));
 
-    let wire = CoprocessorRequest::decode(request.encoded_request.as_slice()).unwrap();
+    let wire = request.request;
+    assert_eq!(wire.encode_to_vec(), prepared.request().encode_to_vec());
+    assert_eq!(wire.data.as_ptr(), prepared.request().data.as_ptr());
     assert_eq!(wire.tp, RequestType::Dag.raw());
-    assert_eq!(wire.data, b"dag");
+    assert_eq!(wire.data.as_ref(), b"dag");
     assert_eq!(wire.start_ts, 100);
     assert_eq!(wire.schema_ver, 7);
     assert_eq!(wire.paging_size, 2);

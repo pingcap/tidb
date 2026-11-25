@@ -32,12 +32,15 @@ mod value;
 
 pub use bytes::{
     decode_bytes, decode_bytes_desc, decode_compact_bytes, encode_bytes, encode_bytes_desc,
-    encode_bytes_ext, encode_compact_bytes, encoded_bytes_len,
+    encode_bytes_ext, encode_compact_bytes, encoded_bytes_len, skip_bytes, split_cut_bytes,
 };
 pub use datum::{
-    cut_one, decode, decode_one, decode_range, encode_key, encode_key_in_timezone, encode_value,
-    encode_value_in_timezone, encode_value_in_timezone_with_error, estimate_value_size, hash_code,
-    pre_realloc_size, DecodeRangeError,
+    append_value_in_timezone, append_value_refs_in_timezone, cut_one, decode, decode_one,
+    decode_range, encode_key, encode_key_in_timezone, encode_value,
+    encode_value_as_bytes_in_timezone, encode_value_in_timezone, encode_value_in_timezone_with_error,
+    encode_value_refs_in_timezone,
+    estimate_value_size, hash_code,
+    pre_realloc_size, pre_realloc_size_for_refs, DecodeRangeError,
     Encoder,
     BYTES_FLAG, COMPACT_BYTES_FLAG, DECIMAL_FLAG, DURATION_FLAG, FLOAT_FLAG, INT_FLAG, JSON_FLAG,
     MAX_FLAG, NIL_FLAG, UINT_FLAG, UVARINT_FLAG, VARINT_FLAG, VECTOR_FLOAT32_FLAG,
@@ -64,7 +67,7 @@ pub use number::{
 };
 pub use package::{
     append_hash_group_key_in_timezone, convert_by_collation, convert_by_collation_string,
-    cut_column_id, decode_as_date_time, decode_as_float32, decode_one_typed,
+    cut_column_id, decode_as_date_time, decode_as_float32, decode_one_to_chunk, decode_one_typed, ChunkValueDecoder,
     decode_one_typed_in_timezone, encode_hash_datum, encode_mysql_time, equal_chunk_row, hash_column,
     hash_group_key, hash_group_key_in_timezone, hash_row, serialize_keys, set_raw_values,
     HashColumnOutput, SerializeMode,

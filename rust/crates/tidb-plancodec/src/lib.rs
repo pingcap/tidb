@@ -14,9 +14,10 @@
 
 //! Encoding and display of TiDB's textual and protobuf execution plans.
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::error::Error;
-use std::fmt;
+use std::fmt::{self, Write as _};
 use std::num::IntErrorKind;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::LazyLock;
@@ -122,6 +123,17 @@ macro_rules! plan_types {
             pub const $constant: &str = $name;
         )+
 
+        /// Converts a plan type string to its stable physical ID, or zero if unknown.
+        pub fn type_string_to_physical_id(plan_type: &str) -> isize {
+            // Both directions derive their numbering from the same ordered list.
+            #[allow(non_camel_case_types)]
+            enum Index { $($constant),+ }
+            match plan_type {
+                $($name => Index::$constant as isize + 1,)+
+                _ => 0,
+            }
+        }
+
         const PLAN_TYPES: [&str; 64] = [$($constant),+];
     };
 }
@@ -199,30 +211,27 @@ pub const TYPE_SEQUENCE: &str = "Sequence";
 /// Stable physical ID of [`TYPE_SCALAR_SUBQUERY`].
 pub const TYPE_SCALAR_SUBQUERY_ID: isize = 60;
 
-/// Converts a plan type string to its stable physical ID, or zero if unknown.
-pub fn type_string_to_physical_id(plan_type: &str) -> isize {
-    PLAN_TYPES
-        .iter()
-        .position(|candidate| *candidate == plan_type)
-        .map_or(0, |index| {
-            isize::try_from(index + 1).expect("63 plan types fit isize")
-        })
-}
-
 /// Converts a physical ID to its plan type string.
 pub fn physical_id_to_type_string(id: isize) -> String {
+    physical_id_to_type_name(id).into_owned()
+}
+
+fn physical_id_to_type_name(id: isize) -> Cow<'static, str> {
     id.checked_sub(1)
         .and_then(|index| usize::try_from(index).ok())
         .and_then(|index| PLAN_TYPES.get(index))
-        .map_or_else(|| format!("UnknownPlanID{id}"), |value| (*value).to_owned())
+        .map_or_else(
+            || Cow::Owned(format!("UnknownPlanID{id}")),
+            |value| Cow::Borrowed(*value),
+        )
 }
 
-const fn store_type_name(code: isize) -> &'static str {
+const fn cop_task_type(code: isize) -> &'static [u8] {
     match code as u8 {
-        0 => "tikv",
-        1 => "tiflash",
-        2 => "tidb",
-        _ => "unspecified",
+        0 => b"cop[tikv]",
+        1 => b"cop[tiflash]",
+        2 => b"cop[tidb]",
+        _ => b"cop[unspecified]",
     }
 }
 
@@ -298,9 +307,9 @@ pub fn decode_normalized_plan(
 }
 
 #[derive(Debug)]
-struct PlanInfo {
+struct PlanInfo<'a> {
     depth: isize,
-    fields: Vec<Vec<u8>>,
+    fields: Vec<Cow<'a, [u8]>>,
 }
 
 fn build_plan_tree(plan: &[u8], add_header: bool) -> std::result::Result<Vec<u8>, PlanCodecError> {
@@ -328,7 +337,7 @@ fn build_plan_tree(plan: &[u8], add_header: bool) -> std::result::Result<Vec<u8>
                 depth: 0,
                 fields: fields
                     .into_iter()
-                    .map(|field| field.as_bytes().to_vec())
+                    .map(|field| Cow::Borrowed(field.as_bytes()))
                     .collect(),
             },
         );
@@ -354,7 +363,7 @@ fn build_plan_tree(plan: &[u8], add_header: bool) -> std::result::Result<Vec<u8>
         fill_indent(&mut indents, &depths, parent, child);
     }
 
-    align_fields(&mut infos, &indents);
+    let widths = field_widths(&infos, &indents);
     let mut output = Vec::new();
     for (row, info) in infos.iter().enumerate() {
         if row > 0 {
@@ -365,11 +374,20 @@ fn build_plan_tree(plan: &[u8], add_header: bool) -> std::result::Result<Vec<u8>
             let mut encoded = [0; 4];
             output.extend_from_slice(character.encode_utf8(&mut encoded).as_bytes());
         }
-        for (field, value) in info.fields.iter().enumerate() {
-            if field > 0 {
+        for (column, width) in widths.iter().enumerate() {
+            if column > 0 {
                 output.push(b'\t');
             }
+            let value = info
+                .fields
+                .get(column)
+                .map_or(&[][..], |value| value.as_ref());
             output.extend_from_slice(value);
+            if column + 1 < widths.len() {
+                let indent_width = if column == 0 { indents[row].len() } else { 0 };
+                let padding = width - value.len() - indent_width;
+                output.resize(output.len() + padding, b' ');
+            }
         }
     }
     Ok(output)
@@ -406,99 +424,107 @@ fn fill_indent(indents: &mut [Vec<char>], depths: &[isize], parent: usize, child
     }
 }
 
-fn align_fields(infos: &mut [PlanInfo], indents: &[Vec<char>]) {
-    let Some(max_fields) = infos.iter().map(|info| info.fields.len()).max() else {
-        return;
-    };
-    for info in infos.iter_mut() {
-        info.fields.resize(max_fields, Vec::new());
-    }
-    for column in 0..max_fields.saturating_sub(1) {
-        let max_len = infos
-            .iter()
-            .enumerate()
-            .map(|(row, info)| field_len(row, column, info, indents))
-            .max()
-            .unwrap_or(0);
-        for (row, info) in infos.iter_mut().enumerate() {
-            let fill = max_len - field_len(row, column, info, indents);
-            info.fields[column].extend(std::iter::repeat_n(b' ', fill));
+fn field_widths(infos: &[PlanInfo<'_>], indents: &[Vec<char>]) -> Vec<usize> {
+    let max_fields = infos
+        .iter()
+        .map(|info| info.fields.len())
+        .max()
+        .unwrap_or(0);
+    let mut widths = vec![0; max_fields];
+    for (info, indent) in infos.iter().zip(indents) {
+        for (column, (width, field)) in widths.iter_mut().zip(&info.fields).enumerate() {
+            let indent_width = if column == 0 { indent.len() } else { 0 };
+            *width = (*width).max(field.len() + indent_width);
         }
     }
+    widths
 }
 
-fn field_len(row: usize, column: usize, info: &PlanInfo, indents: &[Vec<char>]) -> usize {
-    if column == 0 {
-        info.fields[0].len() + indents[row].len()
-    } else {
-        info.fields[column].len()
-    }
-}
-
-fn decode_plan_info(value: &[u8]) -> std::result::Result<Option<PlanInfo>, PlanCodecError> {
-    let values: Vec<&[u8]> = value.split(|byte| *byte == b'\t').collect();
-    if values.len() < 2 {
+fn decode_plan_info(value: &[u8]) -> std::result::Result<Option<PlanInfo<'_>>, PlanCodecError> {
+    let mut values = value.split(|byte| *byte == b'\t');
+    let depth = values.next().expect("split includes the first field");
+    let Some(id_field) = values.next() else {
         return Ok(None);
-    }
-    let node = String::from_utf8_lossy(value);
-    let depth = parse_go_int(values[0]).map_err(|error| {
+    };
+    let depth = parse_go_int(depth).map_err(|error| {
         PlanCodecError::InvalidPlan(format!(
-            "decode plan: {node}, depth: {}, error: {error}",
-            String::from_utf8_lossy(values[0])
+            "decode plan: {}, depth: {}, error: {error}",
+            String::from_utf8_lossy(value),
+            String::from_utf8_lossy(depth)
         ))
     })?;
-    let ids: Vec<&[u8]> = values[1].split(|byte| *byte == b'_').collect();
-    if !matches!(ids.len(), 1 | 2) {
+    let mut ids = id_field.splitn(3, |byte| *byte == b'_');
+    let id = ids.next().expect("split includes the first field");
+    let suffix = ids.next();
+    if ids.next().is_some() {
         return Err(PlanCodecError::InvalidPlan(format!(
-            "decode plan: {node} error, invalid plan id: {}",
-            String::from_utf8_lossy(values[1])
+            "decode plan: {} error, invalid plan id: {}",
+            String::from_utf8_lossy(value),
+            String::from_utf8_lossy(id_field)
         )));
     }
-    let id = parse_go_int(ids[0]).map_err(|error| {
+    let id = parse_go_int(id).map_err(|error| {
         PlanCodecError::InvalidPlan(format!(
-            "decode plan: {node}, plan id: {}, error: {error}",
-            String::from_utf8_lossy(values[1])
+            "decode plan: {}, plan id: {}, error: {error}",
+            String::from_utf8_lossy(value),
+            String::from_utf8_lossy(id_field)
         ))
     })?;
-    let mut fields = vec![physical_id_to_type_string(id).into_bytes()];
-    if ids.len() == 2 {
-        fields[0].push(b'_');
-        fields[0].extend_from_slice(ids[1]);
-    }
-    if let Some(task) = values.get(2) {
-        fields.push(decode_task_type_bytes(task).map_err(|error| {
+    let name = physical_id_to_type_name(id);
+    let name = if let Some(suffix) = suffix {
+        let mut label = Vec::with_capacity(name.len() + 1 + suffix.len());
+        label.extend_from_slice(name.as_bytes());
+        label.push(b'_');
+        label.extend_from_slice(suffix);
+        Cow::Owned(label)
+    } else {
+        match name {
+            Cow::Borrowed(name) => Cow::Borrowed(name.as_bytes()),
+            Cow::Owned(name) => Cow::Owned(name.into_bytes()),
+        }
+    };
+    let mut fields = Vec::with_capacity(8);
+    fields.push(name);
+    if let Some(task) = values.next() {
+        let task = decode_task_type_bytes(task).map_err(|error| {
             PlanCodecError::InvalidPlan(format!(
-                "decode plan: {node}, task type: {}, error: {error}",
+                "decode plan: {}, task type: {}, error: {error}",
+                String::from_utf8_lossy(value),
                 String::from_utf8_lossy(task)
             ))
-        })?);
+        })?;
+        fields.push(Cow::Borrowed(task));
     }
-    fields.extend(values.iter().skip(3).map(|field| field.to_vec()));
+    fields.extend(values.map(Cow::Borrowed));
     Ok(Some(PlanInfo { depth, fields }))
 }
 
-fn decode_task_type_bytes(value: &[u8]) -> std::result::Result<Vec<u8>, PlanCodecError> {
-    let segments: Vec<&[u8]> = value.split(|byte| *byte == b'_').collect();
-    if segments.first() == Some(&b"0".as_slice()) {
-        return Ok(b"root".to_vec());
+fn decode_task_type_bytes(value: &[u8]) -> std::result::Result<&'static [u8], PlanCodecError> {
+    let mut segments = value.split(|byte| *byte == b'_');
+    if segments.next() == Some(b"0") {
+        return Ok(b"root");
     }
-    if segments.len() == 1 {
-        return Ok(b"cop".to_vec());
-    }
-    let store = parse_go_int(segments[1]).map_err(PlanCodecError::InvalidPlan)?;
-    Ok(format!("cop[{}]", store_type_name(store)).into_bytes())
+    let Some(store) = segments.next() else {
+        return Ok(b"cop");
+    };
+    let store = parse_go_int(store).map_err(PlanCodecError::InvalidPlan)?;
+    Ok(cop_task_type(store))
 }
 
 fn parse_go_int(value: &[u8]) -> std::result::Result<isize, String> {
-    let quoted = format!("{:?}", String::from_utf8_lossy(value));
-    let text = std::str::from_utf8(value)
-        .map_err(|_| format!("strconv.Atoi: parsing {quoted}: invalid syntax"))?;
+    let diagnostic = |message| {
+        format!(
+            "strconv.Atoi: parsing {:?}: {message}",
+            String::from_utf8_lossy(value)
+        )
+    };
+    let text = std::str::from_utf8(value).map_err(|_| diagnostic("invalid syntax"))?;
     text.parse::<isize>().map_err(|error| {
         let message = match error.kind() {
             IntErrorKind::PosOverflow | IntErrorKind::NegOverflow => "value out of range",
             _ => "invalid syntax",
         };
-        format!("strconv.Atoi: parsing {quoted}: {message}")
+        diagnostic(message)
     })
 }
 
@@ -517,20 +543,11 @@ pub fn encode_plan_node(
     disk_info: &str,
     output: &mut String,
 ) {
-    output.push_str(&depth.to_string());
+    let plan_id = type_string_to_physical_id(plan_type);
+    write!(output, "{depth}\t{plan_id}_{id}\t{task_type}\t").expect("writing to a String");
+    write_plan_float(output, row_count, row_count.round() == row_count);
     output.push('\t');
-    output.push_str(&type_string_to_physical_id(plan_type).to_string());
-    output.push('_');
-    output.push_str(id);
-    output.push('\t');
-    output.push_str(task_type);
-    output.push('\t');
-    output.push_str(&format_plan_float(
-        row_count,
-        row_count.round() == row_count,
-    ));
-    output.push('\t');
-    output.push_str(&escape_string(explain_info));
+    append_escaped_info(output, explain_info);
     if !act_rows.is_empty()
         || !analyze_info.is_empty()
         || !memory_info.is_empty()
@@ -552,34 +569,38 @@ pub fn normalize_plan_node(
     explain_info: &str,
     output: &mut String,
 ) {
-    output.push_str(&depth.to_string());
-    output.push('\t');
-    output.push_str(&type_string_to_physical_id(plan_type).to_string());
-    output.push('\t');
-    output.push_str(task_type);
-    output.push('\t');
-    output.push_str(explain_info);
-    output.push('\n');
+    let plan_id = type_string_to_physical_id(plan_type);
+    writeln!(output, "{depth}\t{plan_id}\t{task_type}\t{explain_info}")
+        .expect("writing to a String");
 }
 
-fn escape_string(value: &str) -> String {
-    value.replace('\t', "\\t").replace('\n', "\\n")
+fn append_escaped_info(output: &mut String, value: &str) {
+    let mut start = 0;
+    for (index, control) in value.match_indices(['\t', '\n']) {
+        output.push_str(&value[start..index]);
+        output.push_str(if control == "\t" { "\\t" } else { "\\n" });
+        start = index + 1;
+    }
+    output.push_str(&value[start..]);
 }
 
 fn format_plan_float(value: f64, integral: bool) -> String {
+    let mut output = String::new();
+    write_plan_float(&mut output, value, integral);
+    output
+}
+
+fn write_plan_float(output: &mut String, value: f64, integral: bool) {
     if value.is_nan() {
-        return "NaN".to_owned();
-    }
-    if value == f64::INFINITY {
-        return "+Inf".to_owned();
-    }
-    if value == f64::NEG_INFINITY {
-        return "-Inf".to_owned();
-    }
-    if integral {
-        format!("{value:.0}")
+        output.push_str("NaN");
+    } else if value == f64::INFINITY {
+        output.push_str("+Inf");
+    } else if value == f64::NEG_INFINITY {
+        output.push_str("-Inf");
+    } else if integral {
+        write!(output, "{value:.0}").expect("writing to a String");
     } else {
-        format!("{value:.2}")
+        write!(output, "{value:.2}").expect("writing to a String");
     }
 }
 
@@ -1042,6 +1063,24 @@ mod tests {
 
         assert_eq!(decode_task_type_bytes(b"1").unwrap(), b"cop");
         assert!(decode_task_type_bytes(b"1_x").is_err());
+    }
+
+    #[test]
+    fn decode_plan_aligns_missing_columns_and_preserves_bytes() {
+        let raw = b"0\t31\t0\troot\n1\t1_\t1_1\t\xff\tlast\tstill\n1\t43\t1\tleaf\n";
+        assert_eq!(
+            decode_normalized_plan(raw).unwrap(),
+            b"\tTableReader    \troot        \troot\t    \t\n\
+              \t\xe2\x94\x9c\xe2\x94\x80Selection_   \tcop[tiflash]\t\xff   \tlast\tstill\n\
+              \t\xe2\x94\x94\xe2\x94\x80TableFullScan\tcop         \tleaf\t    \t"
+        );
+        assert_eq!(
+            decode_plan(compress(raw)).unwrap(),
+            b"\tid             \ttask        \testRows\t    \t\n\
+              \tTableReader    \troot        \troot   \t    \t\n\
+              \t\xe2\x94\x9c\xe2\x94\x80Selection_   \tcop[tiflash]\t\xff      \tlast\tstill\n\
+              \t\xe2\x94\x94\xe2\x94\x80TableFullScan\tcop         \tleaf   \t    \t"
+        );
     }
 
     #[test]

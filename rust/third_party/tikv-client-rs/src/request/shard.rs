@@ -1201,11 +1201,12 @@ macro_rules! region_pinned {
                 pd_client: &Arc<impl $crate::pd::PdClient>,
             ) -> BoxStream<'static, $crate::Result<(Self::Shard, $crate::region::RegionWithLeader)>>
             {
-                let context = self.context.clone().unwrap_or_default();
+                let region_id = self.context.as_ref().map_or(0, |context| context.region_id);
+                let region_epoch = self.context.as_ref().and_then(|context| context.region_epoch);
                 let pd_client = pd_client.clone();
                 futures::stream::once(async move {
-                    let region = pd_client.region_for_id(context.region_id).await?;
-                    if region.region.region_epoch != context.region_epoch {
+                    let region = pd_client.region_for_id(region_id).await?;
+                    if region.region.region_epoch != region_epoch {
                         return Err($crate::Error::RegionError(Box::new(
                             $crate::proto::errorpb::Error {
                                 message: "region missing in cache".to_owned(),

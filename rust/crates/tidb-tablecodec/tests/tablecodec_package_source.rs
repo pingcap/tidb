@@ -35,7 +35,7 @@ use tidb_tablecodec::table_key::gen_table_prefix;
 use tidb_tablecodec::table_key::gen_table_index_prefix;
 use tidb_tablecodec::table_key::encode_table_prefix;
 use tidb_tablecodec::table_key::encode_table_index_prefix;
-use tidb_tablecodec::table_key::encode_row_key_with_handle;
+use tidb_tablecodec::table_key::{encode_common_row_key_into, encode_row_key_with_handle};
 use tidb_tablecodec::table_key::encode_record_key;
 use tidb_tablecodec::table_key::encode_meta_key_prefix;
 use tidb_tablecodec::table_key::encode_index_seek_key;
@@ -250,6 +250,79 @@ fn test_unflatten_datums() {
     assert_eq!(values[0].collation(), Some(Collation::Utf8Mb4UnicodeCi));
 }
 
+#[test]
+fn unflatten_moves_payloads_and_leaves_the_failing_datum_unchanged() {
+    let field = field(FieldTypeCode::Blob).with_collation(Collation::Utf8Mb4Bin);
+    let shared = tidb_goruntime::GoString::from_bytes(vec![0xfe; 4096]);
+    let mut values = [
+        Datum::Bytes(vec![0xff; 4096]),
+        Datum::String(tidb_datatype::StringDatum::from_go_string(
+            shared,
+            Collation::Binary,
+        )),
+        Datum::Int(12),
+        Datum::Bytes(vec![b'z']),
+    ];
+    let first = values[0].go_bytes().as_ptr();
+    let second = values[1].go_bytes().as_ptr();
+    let fields = [field.clone(), field.clone(), field.clone(), field];
+    assert!(matches!(
+        unflatten_datums(&mut values, &fields, Some(&UTC)),
+        Err(tidb_tablecodec::TableRowError::InvalidDatum("string"))
+    ));
+    assert_eq!(values[0].go_bytes().as_ptr(), first);
+    assert_eq!(values[1].go_bytes().as_ptr(), second);
+    assert_eq!(values[0].collation(), Some(Collation::Utf8Mb4Bin));
+    assert_eq!(values[1].collation(), Some(Collation::Utf8Mb4Bin));
+    assert_eq!(values[2], Datum::Int(12));
+    assert_eq!(values[3], Datum::Bytes(vec![b'z']));
+}
+
+#[test]
+fn decode_compact_column_reuses_a_same_width_string_buffer() {
+    let field = field(FieldTypeCode::Blob).with_collation(Collation::Utf8Mb4Bin);
+    let next = Datum::Bytes(vec![0xfa; 4096]);
+    let encoded = encode_table_value(Some(&UTC), &next).unwrap();
+    let mut output = Datum::new_collation_string_datum(vec![0xff; 4096], Collation::Binary);
+    let pointer = output.go_bytes().as_ptr();
+
+    tidb_tablecodec::decode_column_value_into(&encoded, &field, Some(&UTC), &mut output).unwrap();
+    assert_eq!(output.go_bytes().as_ptr(), pointer);
+    assert_eq!(output.go_bytes(), next.go_bytes());
+    assert_eq!(output.collation(), Some(Collation::Utf8Mb4Bin));
+    assert!(tidb_tablecodec::decode_column_value_into(
+        &encoded[..encoded.len() - 1],
+        &field,
+        Some(&UTC),
+        &mut output,
+    )
+    .is_err());
+    assert_eq!(output.go_bytes().as_ptr(), pointer);
+    assert_eq!(output.go_bytes(), next.go_bytes());
+}
+
+#[test]
+fn decode_compact_column_in_place_retains_the_encoded_payload() {
+    let field = field(FieldTypeCode::Blob).with_collation(Collation::Utf8Mb4Bin);
+    let original = Datum::Bytes(vec![0xfa; 4096]);
+    let encoded = encode_table_value(Some(&UTC), &original).unwrap();
+    let (_, bytes) = tidb_codec::decode_compact_bytes(&encoded[1..]).unwrap();
+    let pointer = bytes.as_ptr();
+    let mut value = Datum::Bytes(encoded);
+
+    tidb_tablecodec::decode_column_value_in_place(&mut value, &field, Some(&UTC)).unwrap();
+    assert_eq!(value.go_bytes().as_ptr(), pointer);
+    assert_eq!(value.go_bytes(), original.go_bytes());
+    assert_eq!(value.collation(), Some(Collation::Utf8Mb4Bin));
+
+    let mut invalid = Datum::Bytes(vec![tidb_codec::COMPACT_BYTES_FLAG, 2]);
+    let before = invalid.clone();
+    assert!(
+        tidb_tablecodec::decode_column_value_in_place(&mut invalid, &field, Some(&UTC)).is_err()
+    );
+    assert_eq!(invalid, before);
+}
+
 /// Go `Unflatten`'s duration arm reads `datum.GetInt64()`, the `d.i` slot
 /// that holds the nanoseconds of the KindMysqlDuration datum an index key
 /// decodes into, so a TIME column read back from an index entry restores.
@@ -314,6 +387,22 @@ fn test_cut_row() {
         .unwrap()
         .is_empty());
     assert!(cut_table_row(&[], &BTreeMap::new()).unwrap().is_empty());
+}
+
+#[test]
+fn cut_legacy_row_counts_repeated_ids_toward_the_projection_limit() {
+    let row = encode_old_table_row(
+        Some(&UTC),
+        &[Datum::Int(1), Datum::Int(2), Datum::Int(3)],
+        &[4, 4, 5],
+    )
+    .unwrap();
+    let offsets = BTreeMap::from([(4, 0), (5, 1)]);
+    let expected = tidb_codec::encode_value(&[Datum::Int(2)]).unwrap();
+    assert_eq!(cut_table_row(&row, &offsets).unwrap(), [Some(expected.clone()), None]);
+    let borrowed = tidb_tablecodec::cut_table_row_refs(&row, &offsets).unwrap();
+    assert_eq!(borrowed, [Some(expected.as_slice()), None]);
+    assert_eq!(borrowed[0].unwrap().as_ptr(), row[6..].as_ptr());
 }
 
 fn encoded_index_key() -> (Vec<Datum>, Vec<u8>) {
@@ -729,6 +818,57 @@ fn test_decode_index_handle_with_partition_id_in_key_and_value() {
     assert!(matches!(partition.inner(), Handle::Int(_)));
 }
 
+#[test]
+fn index_key_decode_borrows_common_handle_fields_and_validates_the_first_field() {
+    use std::borrow::Cow;
+    use tidb_tablecodec::{decode_index_kv_refs, TableIndexError};
+
+    let index_field = encode_key(&[Datum::Int(11)]).unwrap();
+    let handle = encode_key(&[Datum::Bytes(vec![b'k'; 25]), Datum::Int(-7)]).unwrap();
+    let index_key = encode_index_seek_key(100, 1, &index_field);
+    let mut key_with_handle = index_key.clone();
+    key_with_handle.extend_from_slice(&handle);
+    let mut value_with_handle = vec![0, COMMON_HANDLE_FLAG];
+    value_with_handle.extend_from_slice(&u16::try_from(handle.len()).unwrap().to_be_bytes());
+    value_with_handle.extend_from_slice(&handle);
+
+    for (key, value, source) in [
+        (
+            &key_with_handle[..],
+            &[0][..],
+            &key_with_handle[index_key.len()..],
+        ),
+        (
+            &index_key[..],
+            &value_with_handle[..],
+            &value_with_handle[4..],
+        ),
+    ] {
+        let (first, second) = cut_one(source).unwrap();
+        let decoded =
+            decode_index_kv_refs(true, key, value, 1, HandleStatus::Default, &[]).unwrap();
+        assert_eq!(
+            decoded,
+            [
+                Cow::Borrowed(&index_field[..]),
+                Cow::Borrowed(first),
+                Cow::Borrowed(second)
+            ]
+        );
+        assert!(matches!(&decoded[1], Cow::Borrowed(bytes) if bytes.as_ptr() == first.as_ptr()));
+        assert!(matches!(&decoded[2], Cow::Borrowed(bytes) if bytes.as_ptr() == second.as_ptr()));
+    }
+
+    let first_len = cut_one(&handle).unwrap().0.len();
+    key_with_handle[index_key.len() + first_len - 2] = b'x';
+    assert!(matches!(
+        decode_index_kv_refs(true, &key_with_handle, &[0], 1, HandleStatus::Default, &[]),
+        Err(TableIndexError::Codec(
+            tidb_codec::CodecError::InvalidEncoding("invalid bytes padding")
+        ))
+    ));
+}
+
 fn global_index_metadata(version: u8) -> (TableInfo, IndexInfo) {
     let table = TableInfo {
         columns: vec![
@@ -1053,6 +1193,46 @@ fn clustered_v1_bin_padding_restores_memcomparable_bytes() {
     assert_eq!(decoded, [expected]);
 }
 
+#[test]
+fn clustered_v1_zero_bin_padding_still_validates_the_terminal_group() {
+    use tidb_codec::CodecError;
+    use tidb_tablecodec::{decode_index_kv_refs, TableIndexError, TableRowError};
+
+    let columns = [ColumnInfo {
+        id: 1,
+        is_pk_handle: false,
+        virtual_generated: false,
+        field_type: field(FieldTypeCode::Varchar).with_collation(Collation::Utf8Mb4Bin),
+    }];
+    let mut encoded = vec![BYTES_FLAG];
+    encode_bytes(&mut encoded, b"more than one group");
+    let mut restored = Vec::new();
+    encode_row(None, &[1], &[Datum::UInt(0)], &mut restored).unwrap();
+    let mut value = vec![0, INDEX_VERSION_FLAG, 1];
+    value.extend_from_slice(&restored);
+
+    let key = encode_index_seek_key(1, 1, &encoded);
+    let values =
+        decode_index_kv_refs(true, &key, &value, 1, HandleStatus::NotNeeded, &columns).unwrap();
+    assert_eq!(values[0].as_ref(), encoded);
+    assert_eq!(values[0].as_ptr(), key[key.len() - encoded.len()..].as_ptr());
+
+    let marker = encoded.len() - 1;
+    for (offset, byte, message) in [
+        (marker - 1, 1, "invalid bytes padding"),
+        (marker, 0, "invalid bytes marker"),
+    ] {
+        let mut malformed = encoded.clone();
+        malformed[offset] = byte;
+        let key = encode_index_seek_key(1, 1, &malformed);
+        assert!(matches!(
+            decode_index_kv_refs(true, &key, &value, 1, HandleStatus::NotNeeded, &columns),
+            Err(TableIndexError::Row(TableRowError::Codec(CodecError::InvalidEncoding(error))))
+                if error == message
+        ));
+    }
+}
+
 /// Source: `decodeIndexKvGeneral` decodes a V0 common-handle segment through
 /// `decodeHandleInIndexKey`, so a single integer datum becomes an IntHandle
 /// before old-value re-encoding.
@@ -1237,6 +1417,122 @@ fn new_row_portal_is_rowcodec_compatible() {
     );
 }
 
+#[test]
+fn owned_table_row_retains_large_string_payloads() {
+    use tidb_tablecodec::decode_owned_table_row_to_map;
+
+    let columns = BTreeMap::from([
+        (1, field(FieldTypeCode::Blob).with_collation(Collation::Utf8Mb4Bin)),
+        (2, field(FieldTypeCode::Varchar).with_collation(Collation::Utf8Mb4Bin)),
+        (3, field(FieldTypeCode::Varchar)),
+        (4, field(FieldTypeCode::LongLong)),
+        (5, field(FieldTypeCode::LongLong)),
+        (6, field(FieldTypeCode::LongLong)),
+    ]);
+    let values = [
+        Datum::Bytes(vec![0xff; 65_536]),
+        Datum::Bytes(vec![0x82; 8192]),
+        Datum::Bytes(b"abc".to_vec()),
+        Datum::Int(-42),
+        Datum::Null,
+    ];
+    for new_format in [false, true] {
+        let row = encode_table_row(Some(&UTC), &values, &[1, 2, 3, 4, 5], new_format, None)
+            .unwrap();
+        let backing = row.as_ptr().addr()..row.as_ptr().addr() + row.len();
+        let expected = decode_table_row_to_map(&row, &columns, Some(&UTC)).unwrap();
+        let decoded = decode_owned_table_row_to_map(row, &columns, Some(&UTC)).unwrap();
+
+        assert_eq!(decoded, expected);
+        assert_eq!(decoded[&5], Datum::Null);
+        assert!(!decoded.contains_key(&6));
+        for id in [1, 2] {
+            let bytes = decoded[&id].as_raw_bytes().unwrap();
+            assert!(backing.contains(&bytes.as_ptr().addr()));
+            assert!(bytes.as_ptr().addr() + bytes.len() <= backing.end);
+            assert_eq!(decoded[&id].collation(), Some(Collation::Utf8Mb4Bin));
+        }
+        let short = decoded[&3].as_raw_bytes().unwrap();
+        assert!(!backing.contains(&short.as_ptr().addr()));
+    }
+}
+
+#[test]
+fn owned_table_row_retains_large_json_and_vector_payloads() {
+    use tidb_datatype::{BinaryJSON, VectorFloat32};
+    use tidb_tablecodec::decode_owned_table_row_to_map;
+
+    let columns = BTreeMap::from([
+        (1, field(FieldTypeCode::Json)),
+        (2, field(FieldTypeCode::VectorFloat32)),
+    ]);
+    let json = BinaryJSON::parse(&format!(r#"{{"a":["{}"]}}"#, "中α".repeat(2048))).unwrap();
+    let vector = VectorFloat32::must_create((0..4096).map(|i| i as f32 * 0.25).collect::<Vec<_>>());
+    let values = [Datum::Json(json), Datum::VectorFloat32(vector)];
+
+    for new_format in [false, true] {
+        let row = encode_table_row(Some(&UTC), &values, &[1, 2], new_format, None).unwrap();
+        let backing = row.as_ptr().addr()..row.as_ptr().addr() + row.len();
+        let expected = decode_table_row_to_map(&row, &columns, Some(&UTC)).unwrap();
+        let decoded = decode_owned_table_row_to_map(row, &columns, Some(&UTC)).unwrap();
+
+        assert_eq!(decoded, expected);
+        let Datum::Json(json) = &decoded[&1] else {
+            panic!("expected JSON column");
+        };
+        assert!(backing.contains(&json.value().as_ptr().addr()));
+        assert!(json.value().as_ptr().addr() + json.value().len() <= backing.end);
+        assert_eq!(json.element_depth().unwrap(), 3);
+        let Datum::VectorFloat32(vector) = &decoded[&2] else {
+            panic!("expected vector column");
+        };
+        let mut copy = vector.clone();
+        copy.elements_mut()[0] = 42.0;
+        assert_eq!(vector.elements()[0], 0.0);
+        assert_eq!(copy.elements()[0], 42.0);
+    }
+}
+
+#[test]
+fn owned_table_row_preserves_validation_for_large_values() {
+    use tidb_datatype::{BinaryJSON, VectorFloat32, JSON_TYPE_CODE_STRING};
+    use tidb_tablecodec::decode_owned_table_row_to_map;
+
+    let json_column = BTreeMap::from([(1, field(FieldTypeCode::Json))]);
+    // The varint encodes 2048. The declared length is valid, but the UTF-8 is not.
+    let mut value = vec![0x80, 0x10];
+    value.resize(2050, 0xff);
+    let json = Datum::Json(BinaryJSON::from_encoded_parts(JSON_TYPE_CODE_STRING, value));
+    let vector_column = BTreeMap::from([(1, field(FieldTypeCode::VectorFloat32))]);
+    let vector = VectorFloat32::must_create(vec![0.0; 1024]);
+    let vector_len = vector.serialized_size();
+    let vector = Datum::VectorFloat32(vector);
+
+    for new_format in [false, true] {
+        let row = encode_table_row(Some(&UTC), &[json.clone()], &[1], new_format, None).unwrap();
+        let expected = decode_table_row_to_map(&row, &json_column, Some(&UTC));
+        let decoded = decode_owned_table_row_to_map(row, &json_column, Some(&UTC));
+        if new_format {
+            let decoded = decoded.unwrap();
+            assert_eq!(decoded, expected.unwrap());
+            let Datum::Json(value) = &decoded[&1] else {
+                panic!("expected JSON column");
+            };
+            assert!(value.element_depth().is_err());
+        } else {
+            assert_eq!(decoded.unwrap_err().to_string(), expected.unwrap_err().to_string());
+        }
+
+        let mut row = encode_table_row(Some(&UTC), &[vector.clone()], &[1], new_format, None)
+            .unwrap();
+        let header = row.len() - vector_len;
+        row[header..header + 4].copy_from_slice(&u32::MAX.to_le_bytes());
+        let expected = decode_table_row_to_map(&row, &vector_column, Some(&UTC)).unwrap_err();
+        let decoded = decode_owned_table_row_to_map(row, &vector_column, Some(&UTC)).unwrap_err();
+        assert_eq!(decoded.to_string(), expected.to_string());
+    }
+}
+
 /// Source support: both `DecodeRowWithMap` variants preserve caller-owned
 /// entries and overwrite decoded requested columns.
 #[test]
@@ -1257,6 +1553,33 @@ fn row_portals_decode_into_existing_maps() {
         existing,
         BTreeMap::from([(1, Datum::Int(8)), (99, Datum::Int(99))])
     );
+}
+
+#[test]
+fn legacy_row_update_reuses_a_wide_string_after_validation() {
+    let field_type = field(FieldTypeCode::Varchar);
+    let mut columns = BTreeMap::from([(1, field_type.clone())]);
+    let mut output = BTreeMap::from([(99, Datum::Int(99))]);
+    let first = encode_old_table_row(None, &[Datum::Bytes(vec![0xff; 4096])], &[1]).unwrap();
+    decode_table_row_into_map(&first, &columns, None, &mut output).unwrap();
+    let payload_ptr = output[&1].as_raw_bytes().unwrap().as_ptr();
+
+    columns.insert(1, field_type.with_collation(Collation::Utf8Mb4Bin));
+    let mut second = vec![tidb_codec::INT_FLAG];
+    tidb_codec::encode_int(&mut second, 1);
+    second.push(tidb_codec::COMPACT_BYTES_FLAG);
+    let bytes = vec![0x80; 4096];
+    tidb_codec::encode_compact_bytes(&mut second, &bytes);
+    decode_table_row_into_map(&second, &columns, None, &mut output).unwrap();
+    assert_eq!(output[&1].as_raw_bytes().unwrap().as_ptr(), payload_ptr);
+    assert_eq!(output[&1].as_raw_bytes().unwrap(), bytes);
+    assert_eq!(output[&1].collation(), Some(Collation::Utf8Mb4Bin));
+    assert_eq!(output[&99], Datum::Int(99));
+
+    second.pop();
+    assert!(decode_table_row_into_map(&second, &columns, None, &mut output).is_err());
+    assert_eq!(output[&1].as_raw_bytes().unwrap().as_ptr(), payload_ptr);
+    assert_eq!(output[&1].as_raw_bytes().unwrap(), bytes);
 }
 
 /// Source: `DecodeRowToDatumMap` calls `rowcodec.IsNewFormat` before either
@@ -1347,6 +1670,26 @@ fn flatten_rejects_truncated_binary_literals() {
             .to_string(),
         "invalid binary literal exceeds uint64 datum"
     );
+    let row = [Datum::Raw(vec![1]), too_wide];
+    assert_eq!(
+        encode_old_table_row(Some(&UTC), &row, &[1, 2])
+            .unwrap_err()
+            .to_string(),
+        "invalid binary literal exceeds uint64 datum"
+    );
+}
+
+#[test]
+fn encode_flat_byte_values_preserves_non_utf8_payload() {
+    let raw = [0xff, 0, b'a'];
+    let expected = [tidb_codec::COMPACT_BYTES_FLAG, 6, 0xff, 0, b'a'];
+    for value in [
+        Datum::Bytes(raw.to_vec()),
+        Datum::new_collation_string_datum(raw, Collation::Binary),
+    ] {
+        assert_eq!(encode_table_value(None, &value).unwrap(), expected);
+        assert_eq!(encode_table_value(Some(&UTC), &value).unwrap(), expected);
+    }
 }
 
 #[test]
@@ -1403,4 +1746,21 @@ fn non_unique_int_index_key_matches_go_gen_index_key() {
     // integer-handle index with no restored data — confirmed against real
     // GenIndexValuePortal for several (k, handle) pairs, all yielding 0x30.
     assert_eq!(non_unique_index_value(), vec![0x30]);
+}
+
+#[test]
+fn common_row_key_in_caller_buffer_matches_owned_encoding() {
+    let mut scratch = [0xcc; 384];
+    for length in [0, 1, 8, 9, 96, 373] {
+        let handle = vec![0xff; length];
+        let expected = encode_row_key_with_handle(-42, &RecordHandle::Common(handle.clone()));
+        let key = encode_common_row_key_into(-42, &handle, &mut scratch).unwrap();
+        assert_eq!(key, expected);
+        assert_eq!(gen_table_record_prefix(-42), expected[..11]);
+        assert_eq!(&expected[11..11 + length], handle);
+        assert!(expected[11 + length..].iter().all(|byte| *byte == 0));
+    }
+    let before = scratch;
+    assert!(encode_common_row_key_into(-42, &[0xff; 374], &mut scratch).is_none());
+    assert_eq!(scratch, before);
 }

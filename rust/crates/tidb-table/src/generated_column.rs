@@ -27,8 +27,13 @@ use tidb_hack::GoCaseCompare;
 
 /// What makes a column generated: Go `ColumnInfo.GeneratedExprString` /
 /// `GeneratedStored`, plus the built expression Go keeps as `GeneratedExpr`.
+/// Ordinary runtime columns carry only the optional pointer.
 #[derive(Clone, Debug)]
-pub struct GeneratedColumn {
+pub struct GeneratedColumn(Box<GeneratedColumnDefinition>);
+
+/// The stored definition and statement-context rewrite cache for one column.
+#[derive(Clone, Debug)]
+pub struct GeneratedColumnDefinition {
     /// Go `ColumnInfo.GeneratedExprString`: the expression as `SHOW CREATE
     /// TABLE` prints it back, in Go's own restored spelling (`` `a` + 1 ``).
     pub expr_text: String,
@@ -80,7 +85,32 @@ pub struct GeneratedColumn {
     pub like_default_escape_sensitive: bool,
 }
 
+impl From<GeneratedColumnDefinition> for GeneratedColumn {
+    fn from(definition: GeneratedColumnDefinition) -> Self {
+        Self(Box::new(definition))
+    }
+}
+
+impl std::ops::Deref for GeneratedColumn {
+    type Target = GeneratedColumnDefinition;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl std::ops::DerefMut for GeneratedColumn {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
 impl GeneratedColumn {
+    /// Takes ownership of the stored definition.
+    pub fn into_definition(self) -> GeneratedColumnDefinition {
+        *self.0
+    }
+
     /// The evaluable expression for a statement running in `zone`.
     ///
     /// Borrows the cached build when it is the right one, which is every
@@ -497,7 +527,7 @@ pub fn resolve_generated_expr(
     if let Some(name) = resolver.missing_name() {
         return Err(GeneratedDdlError::UnknownDependency(name));
     }
-    Ok(GeneratedColumn {
+    Ok(GeneratedColumnDefinition {
         expr_text: expression.restore_with_flags(generated_restore_flags()),
         stored,
         expr,
@@ -507,7 +537,7 @@ pub fn resolve_generated_expr(
         build_like_default_escape: like_default_escape,
         zone_sensitive: resolver.zone_was_read(),
         like_default_escape_sensitive: resolver.like_default_escape_was_read(),
-    })
+    }.into())
 }
 
 /// The flag set Go restores `GeneratedExprString` with

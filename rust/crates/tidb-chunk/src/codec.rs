@@ -32,14 +32,23 @@
 
 use crate::chunk::Chunk;
 use crate::column::Column;
+use crate::column_buffer::OffsetSlice;
 use crate::go_append::GoAppend;
 use crate::shared_bytes::SharedBytes;
+use std::cell::OnceCell;
 use std::error::Error;
 use std::fmt;
 use std::sync::Arc;
-use tidb_datatype::FieldType;
+use tidb_datatype::{EvalType, FieldType, FieldTypeCode};
 
 pub use crate::column::{get_fixed_len, VAR_ELEM_LEN};
+
+struct SharedDecode<'a> {
+    input: &'a bytes::Bytes,
+    // String columns share one owner for the frame. Reading a string can
+    // retain its byte range without allocating another owner.
+    strings: OnceCell<Arc<bytes::Bytes>>,
+}
 
 /// Go `EstimateTypeWidth`: estimate one field's average value width from its
 /// exact chunk representation and declared length.
@@ -273,18 +282,22 @@ impl Codec {
     }
 
     /// [`Self::try_decode_to_chunk`] over a shared buffer: each column's
-    /// data is a slice of `buffer` rather than a copy, as Go's `decodeColumn`
-    /// points `col.data` at the gRPC response (`avoidReusing`). Returns the
-    /// unconsumed suffix.
+    /// data and large variable offset tables are slices of `buffer`, as in
+    /// Go's `decodeColumn`. The offsets are checked before retaining the slice.
+    /// Returns the unconsumed suffix.
     pub fn try_decode_bytes_to_chunk(
         &self,
         buffer: &bytes::Bytes,
         chunk: &mut Chunk,
     ) -> Result<bytes::Bytes, CodecDecodeError> {
+        let shared = SharedDecode {
+            input: buffer,
+            strings: OnceCell::new(),
+        };
         let mut remained: &[u8] = buffer;
         for ordinal in 0..chunk.columns.len() {
             let mut column = chunk.columns[ordinal].write();
-            remained = self.try_decode_column(remained, &mut column, ordinal, Some(buffer))?;
+            remained = self.try_decode_column(remained, &mut column, ordinal, Some(&shared))?;
         }
         Ok(buffer.slice_ref(remained))
     }
@@ -302,7 +315,7 @@ impl Codec {
         buffer: &'a [u8],
         column: &mut Column,
         ordinal: usize,
-        shared: Option<&bytes::Bytes>,
+        shared: Option<&SharedDecode<'_>>,
     ) -> Result<&'a [u8], CodecDecodeError> {
         let field_type = self
             .col_types
@@ -326,8 +339,8 @@ impl Codec {
 
         if null_count > 0 {
             let num_null_bitmap_bytes = length.div_ceil(8);
-            column.null_bitmap =
-                take_prefix(&mut buffer, num_null_bitmap_bytes, ordinal, "null bitmap")?.to_vec();
+            let bitmap = take_prefix(&mut buffer, num_null_bitmap_bytes, ordinal, "null bitmap")?;
+            column.null_bitmap.replace(bitmap.iter().copied());
         } else {
             set_all_not_null(column);
         }
@@ -337,33 +350,24 @@ impl Codec {
         if num_fixed_bytes == VAR_ELEM_LEN {
             let num_offset_bytes = (length + 1) * 8;
             let offset_bytes = take_prefix(&mut buffer, num_offset_bytes, ordinal, "offset table")?;
-            column.offsets = offset_bytes
-                .as_chunks::<8>()
-                .0
-                .iter()
-                .map(|word| i64::from_ne_bytes(*word))
-                .collect();
-            let mut previous = 0_i64;
-            for (offset_index, &value) in column.offsets.iter().enumerate() {
-                if value < 0
-                    || (offset_index == 0 && value != 0)
-                    || (offset_index > 0 && value < previous)
-                {
-                    return Err(CodecDecodeError::InvalidOffset {
-                        ordinal,
-                        offset_index,
-                        value,
-                    });
+            let offsets = offset_bytes.as_chunks::<8>().0;
+            // Small tables are cheap to copy into the decoder's existing
+            // allocation and avoid another reference into the response.
+            if let Some(shared) = shared.filter(|_| length >= 32) {
+                if column.offsets.matches_wire(offset_bytes) && offsets[0] == [0; 8] {
+                    // The same owned byte range was already validated. Check
+                    // the leading zero because a clipped view can start later.
+                    num_data_bytes = offset_data_len(offsets, ordinal)?;
+                } else {
+                    num_data_bytes = validate_offsets(offsets, ordinal)?;
+                    column
+                        .offsets
+                        .replace_wire(shared.input.slice_ref(offset_bytes));
                 }
-                previous = value;
+            } else {
+                num_data_bytes = validate_offsets(offsets, ordinal)?;
+                column.offsets.replace_owned(offsets);
             }
-            let final_offset = column.offsets[length];
-            num_data_bytes = usize::try_from(final_offset).map_err(|_| {
-                CodecDecodeError::DataLengthOutOfRange {
-                    ordinal,
-                    length: final_offset,
-                }
-            })?;
         } else {
             let num_fixed_bytes = num_fixed_bytes as usize;
             num_data_bytes = num_fixed_bytes.checked_mul(length).ok_or(
@@ -384,13 +388,88 @@ impl Codec {
         // Go points the column at the gRPC response's own memory and sets
         // `avoidReusing` so the allocator will not retain it; a shared buffer
         // gets the same treatment here, the slice path copies.
-        column.data = match shared {
-            Some(shared) => SharedBytes::from_bytes(shared.slice_ref(data)),
-            None => SharedBytes::from_vec(data.to_vec()),
-        };
+        let wide = num_data_bytes >= Column::MIN_RETAINED_CELL_BYTES;
+        match shared {
+            Some(shared) if wide && field_type.code() == FieldTypeCode::VectorFloat32 => {
+                column
+                    .data
+                    .replace_vector_bytes(shared.input.slice_ref(data));
+            }
+            Some(shared)
+                if num_fixed_bytes == VAR_ELEM_LEN
+                    && length > 1
+                    && !data.is_empty()
+                    && field_type.eval_type() == EvalType::String =>
+            {
+                let owner = shared
+                    .strings
+                    .get_or_init(|| Arc::new(shared.input.clone()));
+                let end = shared.input.len() - buffer.len();
+                column.data =
+                    SharedBytes::from_string_bytes(Arc::clone(owner), end - data.len()..end);
+            }
+            Some(shared) => {
+                column.data = SharedBytes::from_bytes(shared.input.slice_ref(data));
+            }
+            None => {
+                let mut data = SharedBytes::from_vec(data.to_vec());
+                if wide
+                    && matches!(
+                        field_type.code(),
+                        FieldTypeCode::Json | FieldTypeCode::VectorFloat32
+                    )
+                {
+                    data.retain_for_slices();
+                }
+                column.data = data;
+            }
+        }
         column.avoid_reusing = true;
         Ok(buffer)
     }
+}
+
+fn validate_offsets(offsets: &[[u8; 8]], ordinal: usize) -> Result<usize, CodecDecodeError> {
+    let read = |value| i64::from_ne_bytes(value);
+    let first = read(offsets[0]);
+    if first != 0 {
+        return Err(CodecDecodeError::InvalidOffset {
+            ordinal,
+            offset_index: 0,
+            value: first,
+        });
+    }
+    // Accumulate violations so the compiler can compare several adjacent
+    // pairs at a time even if the table starts at an unaligned byte.
+    let out_of_order = match offsets {
+        [_] => false,
+        [_, last] => read(*last) < 0,
+        _ => offsets[1..]
+            .iter()
+            .zip(offsets)
+            .fold(false, |invalid, (&next, &previous)| {
+                invalid | (read(next) < read(previous))
+            }),
+    };
+    if out_of_order {
+        let index = offsets
+            .windows(2)
+            .position(|pair| read(pair[1]) < read(pair[0]))
+            .unwrap()
+            + 1;
+        return Err(CodecDecodeError::InvalidOffset {
+            ordinal,
+            offset_index: index,
+            value: read(offsets[index]),
+        });
+    }
+    offset_data_len(offsets, ordinal)
+}
+
+#[inline]
+fn offset_data_len(offsets: &[[u8; 8]], ordinal: usize) -> Result<usize, CodecDecodeError> {
+    let length = i64::from_ne_bytes(offsets[offsets.len() - 1]);
+    usize::try_from(length).map_err(|_| CodecDecodeError::DataLengthOutOfRange { ordinal, length })
 }
 
 fn take_prefix<'a>(
@@ -512,66 +591,50 @@ impl Decoder {
     fn decode_column(&mut self, target: &mut Chunk, ordinal: usize, rows: usize) {
         let type_size = get_fixed_len(&self.codec.col_types[ordinal]);
         let bitmap_bytes = rows.div_ceil(8);
+        let variable = type_size == VAR_ELEM_LEN;
+        if let (Some(source), Some(destination)) = (
+            self.intermediate.columns[ordinal].owned_mut(),
+            target.columns[ordinal].owned_mut(),
+        ) {
+            if !source.has_mutably_shared_bytes() || !destination.has_mutably_shared_bytes() {
+                let data_bytes = if variable {
+                    let start = source.offsets.at(0);
+                    let data_bytes = variable_prefix_len(source, start, rows);
+                    append_decoded_offsets(destination, start, source.offsets.slice(1..rows + 1));
+                    source.offsets.advance(rows);
+                    data_bytes
+                } else {
+                    fixed_prefix_len(type_size, rows)
+                };
+                append_decoded_bitmap(destination, rows, &source.null_bitmap[..bitmap_bytes]);
+                destination.data.extend_from_range(&source.data, 0..data_bytes);
+                source.null_bitmap.advance(bitmap_bytes);
+                source.data.advance(data_bytes);
+                return;
+            }
+        }
+
+        // Snapshot aliased columns before taking the destination's write lock.
         let (start, offsets, bitmap, data) = {
             let mut source = self.intermediate.column_mut(ordinal);
-            let (start, offsets, data_bytes) = if type_size == VAR_ELEM_LEN {
-                let start = source.offsets[0];
-                let end = source.offsets[rows];
-                let offsets = source.offsets[1..rows + 1].to_vec();
-                source.offsets.drain(..rows);
-                (
-                    start,
-                    offsets,
-                    usize::try_from(end - start).expect("non-negative decoder data length"),
-                )
+            let (start, offsets, data_bytes) = if variable {
+                let start = source.offsets.at(0);
+                let data_bytes = variable_prefix_len(&source, start, rows);
+                let offsets = source.offsets.slice(1..rows + 1).to_vec();
+                source.offsets.advance(rows);
+                (start, offsets, data_bytes)
             } else {
-                (
-                    0,
-                    Vec::new(),
-                    usize::try_from(type_size)
-                        .expect("fixed width is positive")
-                        .checked_mul(rows)
-                        .expect("decoder data size overflow"),
-                )
+                (0, Vec::new(), fixed_prefix_len(type_size, rows))
             };
             let bitmap = source.null_bitmap[..bitmap_bytes].to_vec();
-            source.null_bitmap.drain(..bitmap_bytes);
-            let data = source.data.read()[..data_bytes].to_vec();
-            source.data.advance(data_bytes);
+            source.null_bitmap.advance(bitmap_bytes);
+            let data = source.data.take_prefix(data_bytes);
             (start, offsets, bitmap, data)
         };
 
         let mut destination = target.column_mut(ordinal);
-        if type_size == VAR_ELEM_LEN && rows > 0 {
-            let delta = destination.offsets[destination.length] - start;
-            let first_new_offset = destination.length + 1;
-            let last_new_offset = destination.length + rows;
-            destination.offsets.go_extend_from_slice(&offsets);
-            for offset in &mut destination.offsets[first_new_offset..=last_new_offset] {
-                *offset += delta;
-            }
-        }
-        if destination.length.is_multiple_of(8) {
-            destination.null_bitmap.go_extend_from_slice(&bitmap);
-        } else {
-            destination.append_multi_same_null_bitmap(false, rows);
-            let bitmap_len = destination.null_bitmap.len();
-            let bit_offset = destination.length % 8;
-            let start_index = (destination.length - 1) >> 3;
-            for (index, source_byte) in bitmap.iter().enumerate() {
-                destination.null_bitmap[start_index + index] |= *source_byte << bit_offset;
-                if start_index + index + 1 < bitmap_len {
-                    destination.null_bitmap[start_index + index + 1] |=
-                        *source_byte >> (8 - bit_offset);
-                }
-            }
-        }
-        let redundant_bits = destination.null_bitmap.len() * 8 - destination.length - rows;
-        let bit_mask = ((1u16 << (8 - redundant_bits)) as u8).wrapping_sub(1);
-        let last = destination.null_bitmap.len() - 1;
-        destination.null_bitmap[last] &= bit_mask;
-
-        destination.length += rows;
+        append_decoded_offsets(&mut destination, start, OffsetSlice::Words(&offsets));
+        append_decoded_bitmap(&mut destination, rows, &bitmap);
         destination.data.extend_from_slice(&data);
     }
 
@@ -582,9 +645,9 @@ impl Decoder {
             let mut column = column.write();
             column.length = self.remained_rows;
             if get_fixed_len(&self.codec.col_types[ordinal]) == VAR_ELEM_LEN {
-                let delta = column.offsets[0];
+                let delta = column.offsets.at(0);
                 if delta != 0 {
-                    for offset in &mut column.offsets {
+                    for offset in column.offsets.make_owned().iter_mut() {
                         *offset -= delta;
                     }
                 }
@@ -610,6 +673,48 @@ impl Decoder {
     }
 }
 
+fn variable_prefix_len(source: &Column, start: i64, rows: usize) -> usize {
+    usize::try_from(source.offsets.at(rows) - start).expect("non-negative decoder data length")
+}
+
+fn fixed_prefix_len(type_size: i64, rows: usize) -> usize {
+    usize::try_from(type_size)
+        .expect("fixed width is positive")
+        .checked_mul(rows)
+        .expect("decoder data size overflow")
+}
+
+fn append_decoded_offsets(destination: &mut Column, start: i64, offsets: OffsetSlice<'_>) {
+    if offsets.len() != 0 {
+        let delta = destination.offsets.at(destination.length) - start;
+        destination.offsets.append_with_delta(offsets, delta);
+    }
+}
+
+fn append_decoded_bitmap(destination: &mut Column, rows: usize, bitmap: &[u8]) {
+    if destination.length.is_multiple_of(8) {
+        destination.null_bitmap.go_extend_from_slice(bitmap);
+    } else {
+        destination.append_multi_same_null_bitmap(false, rows);
+        let bitmap_len = destination.null_bitmap.len();
+        let bit_offset = destination.length % 8;
+        let start_index = (destination.length - 1) >> 3;
+        for (index, source_byte) in bitmap.iter().enumerate() {
+            destination.null_bitmap[start_index + index] |= *source_byte << bit_offset;
+            if start_index + index + 1 < bitmap_len {
+                destination.null_bitmap[start_index + index + 1] |=
+                    *source_byte >> (8 - bit_offset);
+            }
+        }
+    }
+    let redundant_bits = destination.null_bitmap.len() * 8 - destination.length - rows;
+    let bit_mask = ((1u16 << (8 - redundant_bits)) as u8).wrapping_sub(1);
+    let last = destination.null_bitmap.len() - 1;
+    destination.null_bitmap[last] &= bit_mask;
+
+    destination.length += rows;
+}
+
 /// Go `encodeColumn`.
 fn encode_column(buffer: &mut Vec<u8>, column: &Column) {
     let length = column.length();
@@ -625,9 +730,7 @@ fn encode_column(buffer: &mut Vec<u8>, column: &Column) {
     if !column.is_fixed() {
         // Go reinterprets the `[]int64` as bytes and takes the first
         // `(length+1)*8` of them: the offsets that are actually in use.
-        for offset in &column.offsets[..length + 1] {
-            buffer.extend_from_slice(&offset.to_ne_bytes());
-        }
+        column.offsets.slice(0..length + 1).encode(buffer);
     }
 
     let data = column.data.read();
@@ -1029,14 +1132,14 @@ mod tests {
             assert_eq!(batch.num_rows(), 8);
         }
         assert_eq!(decoder.remained_rows(), 3);
-        assert!(decoder.intermediate_chunk().column(1).offsets[0] > 0);
+        assert!(decoder.intermediate_chunk().column(1).offsets.at(0) > 0);
 
         let mut target = Chunk::new(&fields, 0, 64);
         decoder.reuse_interm_chk(&mut target);
         assert!(decoder.is_finished());
         assert_eq!(target.required_rows(), 64);
         assert_eq!(target.num_rows(), 3);
-        assert_eq!(target.column(1).offsets[0], 0);
+        assert_eq!(target.column(1).offsets.at(0), 0);
         for row in 0..3 {
             for (column, field) in fields.iter().enumerate().take(2) {
                 assert_eq!(
@@ -1047,6 +1150,104 @@ mod tests {
         }
         assert!(target.column(0).avoid_reusing);
         assert!(target.column(1).avoid_reusing);
+    }
+
+    #[test]
+    fn decoded_strings_share_one_frame_owner_across_columns() {
+        let fields = vec![FieldType::new(FieldTypeCode::VarString); 2];
+        let codec = Codec::new(fields.clone());
+        let mut source = Chunk::new_chunk_with_capacity(&fields, 2);
+        source.append_bytes(0, b"a\xff");
+        source.append_bytes(0, b"longer-left");
+        source.append_bytes(1, b"right");
+        source.append_bytes(1, b"");
+
+        let input = bytes::Bytes::from(codec.encode(&source));
+        let mut decoded = Chunk::new_chunk_with_capacity(&fields, 2);
+        codec.try_decode_bytes_to_chunk(&input, &mut decoded).unwrap();
+        drop(input);
+
+        let left = decoded.get_row(0).get_string(0);
+        let right = decoded.get_row(0).get_string(1);
+        assert!(left.backing_ptr_eq(&right));
+        assert!(decoded.get_row(1).get_string(1).is_empty());
+        decoded.reset();
+        assert_eq!(left.as_bytes(), b"a\xff");
+        assert_eq!(right.as_bytes(), b"right");
+    }
+
+    #[test]
+    fn shared_decoder_retains_unaligned_offsets_through_reuse_and_mutation() {
+        let (fields, source) = decoder_source(67);
+        let codec = Codec::new(fields.clone());
+        let image = bytes::Bytes::from(codec.encode(&source));
+        let mut decoder = Decoder::with_codec(Chunk::new_empty_chunk(&fields), codec.clone());
+        decoder.try_reset_bytes(&image).unwrap();
+        // Both columns have nine bitmap bytes, so the variable offset table
+        // starts at a non-word boundary.
+        let table_start = 8 + 9 + 67 * 8 + 8 + 9;
+        {
+            let column = decoder.intermediate_chunk().column(1);
+            let OffsetSlice::Wire(words) = column.offsets.as_slice() else {
+                panic!("shared decoding copied the offset table");
+            };
+            assert_eq!(words.as_flattened().as_ptr(), image[table_start..].as_ptr());
+        }
+
+        let mut target = Chunk::new_empty_chunk(&fields);
+        decoder.reuse_interm_chk(&mut target);
+        assert_eq!(codec.encode(&target), image.as_ref());
+        assert_eq!(target.get_row(65).get_bytes(1), source.get_row(65).get_bytes(1));
+        target.append_int64(0, 670);
+        target.append_string(1, "appended");
+        assert_eq!(target.get_row(67).get_bytes(1), b"appended");
+        assert_eq!(image.as_ref(), codec.encode(&source));
+        drop(image);
+        assert_eq!(target.get_row(65).get_bytes(1), b"value-65");
+    }
+
+    #[test]
+    fn shared_decoder_reports_the_first_decreasing_offset() {
+        let fields = vec![ft(C::Varchar)];
+        let mut image = vec![4, 0, 0, 0, 1, 0, 0, 0, 0b1101];
+        for offset in [0_i64, 3, 3, 1, 2] {
+            image.extend_from_slice(&offset.to_ne_bytes());
+        }
+        let mut decoder = Decoder::new(Chunk::new_empty_chunk(&fields), fields);
+        assert_eq!(
+            decoder.try_reset_bytes(&bytes::Bytes::from(image)),
+            Err(CodecDecodeError::InvalidOffset {
+                ordinal: 0,
+                offset_index: 3,
+                value: 1,
+            })
+        );
+    }
+
+    #[test]
+    fn shared_decoder_rechecks_replaced_large_offsets() {
+        let fields = vec![ft(C::Varchar)];
+        let codec = Codec::new(fields.clone());
+        let mut source = Chunk::new_chunk_with_capacity(&fields, 32);
+        for _ in 0..32 {
+            source.append_bytes(0, b"value");
+        }
+        let image = bytes::Bytes::from(codec.encode(&source));
+        let mut target = Chunk::new_empty_chunk(&fields);
+        codec.try_decode_bytes_to_chunk(&image, &mut target).unwrap();
+        codec.try_decode_bytes_to_chunk(&image, &mut target).unwrap();
+        assert_eq!(codec.encode(&target), image.as_ref());
+
+        let mut corrupted = image.to_vec();
+        corrupted[24..32].copy_from_slice(&1_i64.to_ne_bytes());
+        assert_eq!(
+            codec.try_decode_bytes_to_chunk(&bytes::Bytes::from(corrupted), &mut target),
+            Err(CodecDecodeError::InvalidOffset {
+                ordinal: 0,
+                offset_index: 2,
+                value: 1,
+            })
+        );
     }
 
     #[test]

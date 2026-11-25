@@ -12,6 +12,8 @@ autotests = false
 workspace = true
 
 [dependencies]
+smallvec.workspace = true
+tidb-goruntime = { path = "../tidb-goruntime" }
 tidb-dbterror = { path = "../tidb-dbterror" }
 tidb-charset = { path = "../tidb-charset" }
 tidb-errno = { path = "../tidb-errno" }

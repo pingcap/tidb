@@ -170,7 +170,7 @@ struct ValidatorState {
     latest_schema_expire: i64,
     /// Go `deltaSchemaInfos`: the history of changes, ordered by ascending
     /// schema version.
-    delta_schema_infos: Vec<DeltaSchemaInfo>,
+    delta_schema_infos: std::collections::VecDeque<DeltaSchemaInfo>,
     /// boundary: Go `vardef.IsMDLEnabled()`.
     mdl_enabled: bool,
 }
@@ -179,7 +179,7 @@ impl ValidatorState {
     /// Go `findNewerDeltas`: the suffix of the queue strictly newer than
     /// `curr_ver`. The queue is version-ordered, so this is a scan back from
     /// the tail.
-    fn find_newer_deltas(&self, curr_ver: i64) -> &[DeltaSchemaInfo] {
+    fn find_newer_deltas(&self, curr_ver: i64) -> impl ExactSizeIterator<Item = &DeltaSchemaInfo> {
         let queue = &self.delta_schema_infos;
         let mut pos = queue.len();
         for index in (0..queue.len()).rev() {
@@ -188,7 +188,7 @@ impl ValidatorState {
             }
             pos = index;
         }
-        &queue[pos..]
+        queue.range(pos..)
     }
 
     /// Go `isRelatedTablesChanged`: whether any of `table_ids` changed
@@ -240,7 +240,7 @@ impl ValidatorState {
             related_actions: change.map(|c| c.action_types.clone()).unwrap_or_default(),
         };
         if self.delta_schema_infos.is_empty() {
-            self.delta_schema_infos.push(delta);
+            self.delta_schema_infos.push_back(delta);
             return;
         }
 
@@ -248,11 +248,11 @@ impl ValidatorState {
         if last_offset != 0 && contain_in(&self.delta_schema_infos[last_offset], &delta) {
             self.delta_schema_infos[last_offset] = delta;
         } else {
-            self.delta_schema_infos.push(delta);
+            self.delta_schema_infos.push_back(delta);
         }
 
         if self.delta_schema_infos.len() > usize::try_from(max_cnt).unwrap_or(usize::MAX) {
-            self.delta_schema_infos.remove(0);
+            self.delta_schema_infos.pop_front();
         }
     }
 }
@@ -275,7 +275,7 @@ impl SchemaValidator {
                 latest_schema_ver: 0,
                 restart_schema_ver: 0,
                 latest_schema_expire: 0,
-                delta_schema_infos: Vec::with_capacity(
+                delta_schema_infos: std::collections::VecDeque::with_capacity(
                     usize::try_from(DEF_TIDB_MAX_DELTA_SCHEMA_COUNT).unwrap_or_default(),
                 ),
                 mdl_enabled: false,
@@ -481,7 +481,7 @@ mod tests {
     // access by living in the module.
     impl SchemaValidator {
         fn delta_schema_infos(&self) -> Vec<DeltaSchemaInfo> {
-            self.read().delta_schema_infos.clone()
+            self.read().delta_schema_infos.iter().cloned().collect()
         }
 
         fn latest_schema_ver(&self) -> i64 {

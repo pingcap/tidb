@@ -16,6 +16,8 @@
 //! meta service reads it and the store driver reads the meta service, while
 //! `tidb-util` sits above the driver. `tidb_util::service_url` is this crate.
 
+use std::borrow::Cow;
+
 use tidb_go_net::split_host_port;
 
 /// Go `URLSchemeHTTP`: the http scheme.
@@ -30,7 +32,7 @@ pub const URL_SCHEME_UNIXS: &str = "unixs";
 /// Go `ServiceURL`: a supported service endpoint URL.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ServiceUrl {
-    scheme: String,
+    scheme: &'static str,
     address: String,
 }
 
@@ -40,43 +42,62 @@ pub struct ServiceUrl {
 ///
 /// Go's message for an empty, unsupported or malformed URL.
 pub fn parse_service_url(raw: &str) -> Result<ServiceUrl, String> {
-    parse_service_url_with(raw, "")
+    let (scheme, address) = parse_service_url_with(raw, "")?;
+    Ok(ServiceUrl {
+        scheme,
+        address: address.into_owned(),
+    })
 }
 
-fn parse_service_url_with(raw: &str, default_scheme: &str) -> Result<ServiceUrl, String> {
+fn parse_service_url_with<'a>(
+    raw: &'a str,
+    default_scheme: &str,
+) -> Result<(&'static str, Cow<'a, str>), String> {
     let raw = raw.trim();
     if raw.is_empty() {
         return Err("URL must not be empty".to_owned());
     }
+    let unix = if let Some(address) = raw.strip_prefix("unix://") {
+        Some((URL_SCHEME_UNIX, address))
+    } else {
+        raw.strip_prefix("unixs://")
+            .map(|address| (URL_SCHEME_UNIXS, address))
+    };
+    if let Some((scheme, address)) = unix {
+        if address.is_empty() {
+            return Err(format!("URL address must not be empty: {raw}"));
+        }
+        return Ok((scheme, Cow::Borrowed(address)));
+    }
 
-    if !raw.contains("://") {
-        if !is_supported_service_url_scheme(default_scheme) {
+    let Some((scheme, address)) = raw.split_once("://") else {
+        let Some(scheme) = supported_service_url_scheme(default_scheme) else {
             if default_scheme.is_empty() {
                 return Err(format!("URL scheme must be http, https, unix, or unixs: {raw}"));
             }
             return Err(format!("URL scheme must be http, https, unix, or unixs: {default_scheme}"));
-        }
+        };
         if split_host_port(raw).is_none() {
             return Err(format!("URL address does not have the form \"host:port\": {raw}"));
         }
-        return Ok(ServiceUrl { scheme: default_scheme.to_owned(), address: raw.to_owned() });
-    }
+        return Ok((scheme, Cow::Borrowed(raw)));
+    };
 
-    for scheme in [URL_SCHEME_UNIX, URL_SCHEME_UNIXS] {
-        if let Some(address) = raw.strip_prefix(scheme).and_then(|rest| rest.strip_prefix("://")) {
-            if address.is_empty() {
-                return Err(format!("URL address must not be empty: {raw}"));
-            }
-            return Ok(ServiceUrl { scheme: scheme.to_owned(), address: address.to_owned() });
+    if let Some(scheme @ (URL_SCHEME_HTTP | URL_SCHEME_HTTPS)) = supported_service_url_scheme(scheme) {
+        if let Some(authority) = plain_http_authority(address) {
+            return Ok((scheme, Cow::Borrowed(authority)));
         }
     }
 
     let u = tidb_go_url::parse(raw).map_err(|err| format!("parse url {raw} failed {err}"))?;
-    let scheme = String::from_utf8_lossy(&u.scheme).into_owned();
-    if !is_supported_service_url_scheme(&scheme) {
+    let Some(scheme) = std::str::from_utf8(&u.scheme)
+        .ok()
+        .and_then(supported_service_url_scheme)
+    else {
         return Err(format!("URL scheme must be http, https, unix, or unixs: {raw}"));
-    }
-    let host = String::from_utf8_lossy(&u.host).into_owned();
+    };
+    let host = String::from_utf8(u.host)
+        .unwrap_or_else(|error| String::from_utf8_lossy(error.as_bytes()).into_owned());
     let bad_address = || format!("URL address does not have the form \"host:port\": {raw}");
     let (host_part, port) = split_host_port(&host).ok_or_else(bad_address)?;
     if host_part.is_empty() || port.is_empty() {
@@ -85,9 +106,35 @@ fn parse_service_url_with(raw: &str, default_scheme: &str) -> Result<ServiceUrl,
     if !u.path.is_empty() {
         return Err(format!("URL must not contain a path: {raw}"));
     }
-    Ok(ServiceUrl { scheme, address: host })
+    Ok((scheme, Cow::Owned(host)))
 }
 
+/// Ordinary DNS names and IPv4 literals need no URL decoding. The caller
+/// retains only the authority, but escapes and control bytes still need the
+/// full parser for validation.
+fn plain_http_authority(address: &str) -> Option<&str> {
+    let (host, port) = address.split_once(':')?;
+    if host.is_empty()
+        || !host.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b'_'))
+    {
+        return None;
+    }
+    let port_end = port
+        .bytes()
+        .position(|b| !b.is_ascii_digit())
+        .unwrap_or(port.len());
+    if port_end == 0 {
+        return None;
+    }
+    let suffix = &port[port_end..];
+    if !suffix.is_empty()
+        && (!suffix.starts_with(['?', '#'])
+            || suffix.bytes().any(|b| b == b'%' || b.is_ascii_control()))
+    {
+        return None;
+    }
+    Some(&address[..host.len() + 1 + port_end])
+}
 
 /// Go `NormalizeServiceURL`: normalizes host:port or supported URL input to
 /// scheme://address.
@@ -96,7 +143,16 @@ fn parse_service_url_with(raw: &str, default_scheme: &str) -> Result<ServiceUrl,
 ///
 /// [`parse_service_url`]'s.
 pub fn normalize_service_url(raw: &str, default_scheme: &str) -> Result<String, String> {
-    parse_service_url_with(raw, default_scheme).map(|parsed| parsed.to_string())
+    let (scheme, address) = parse_service_url_with(raw, default_scheme)?;
+    Ok(format_service_url(scheme, &address))
+}
+
+fn format_service_url(scheme: &str, address: &str) -> String {
+    let mut output = String::with_capacity(scheme.len() + 3 + address.len());
+    output.push_str(scheme);
+    output.push_str("://");
+    output.push_str(address);
+    output
 }
 
 impl ServiceUrl {
@@ -116,7 +172,7 @@ impl ServiceUrl {
     #[must_use]
     pub fn endpoint(&self, with_scheme: bool) -> String {
         if with_scheme || self.is_unix_family() {
-            return self.to_string();
+            return format_service_url(self.scheme, &self.address);
         }
         self.address.clone()
     }
@@ -131,12 +187,18 @@ impl ServiceUrl {
 
 impl std::fmt::Display for ServiceUrl {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(formatter, "{}{}", self.scheme_prefix(), self.address)
+        write!(formatter, "{}://{}", self.scheme, self.address)
     }
 }
 
-fn is_supported_service_url_scheme(scheme: &str) -> bool {
-    matches!(scheme, URL_SCHEME_HTTP | URL_SCHEME_HTTPS | URL_SCHEME_UNIX | URL_SCHEME_UNIXS)
+fn supported_service_url_scheme(scheme: &str) -> Option<&'static str> {
+    match scheme {
+        URL_SCHEME_HTTP => Some(URL_SCHEME_HTTP),
+        URL_SCHEME_HTTPS => Some(URL_SCHEME_HTTPS),
+        URL_SCHEME_UNIX => Some(URL_SCHEME_UNIX),
+        URL_SCHEME_UNIXS => Some(URL_SCHEME_UNIXS),
+        _ => None,
+    }
 }
 
 #[cfg(test)]
@@ -188,6 +250,26 @@ mod tests {
         }
         for (raw, default_scheme) in [("invalid_pd_address", URL_SCHEME_HTTP), ("127.0.0.1:2379", "ftp")] {
             assert!(normalize_service_url(raw, default_scheme).is_err());
+        }
+    }
+
+    #[test]
+    fn only_normalizes_valid_http_authorities() {
+        for (input, expected) in [
+            ("HTTPS://peer_0.test:00443", "https://peer_0.test:00443"),
+            ("https://peer_0.test:00443?source=/test#row", "https://peer_0.test:00443"),
+            ("http://[fe80::1%25en0]:80", "http://[fe80::1%en0]:80"),
+        ] {
+            assert_eq!(normalize_service_url(input, "").unwrap(), expected);
+        }
+        for input in [
+            "https://peer_0.test",
+            "https://peer_0.test:443/path",
+            "https://peer_0.test:443#%zz",
+            "https://peer_0.test:443?query=\u{7f}",
+            "https://peer_0.test:status",
+        ] {
+            assert!(normalize_service_url(input, "").is_err(), "{input}");
         }
     }
 }

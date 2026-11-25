@@ -114,7 +114,7 @@ async fn pd_routed_requests_share_the_mock_coprocessor_handler() {
             peer: region.leader.clone(),
             ..Default::default()
         }),
-        data: b"same handler".to_vec(),
+        data: b"same handler".to_vec().into(),
         ..Default::default()
     };
     let direct = client.dispatch(&request).await.unwrap();

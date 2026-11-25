@@ -215,8 +215,7 @@ mod tests {
 /// Verified per rune: U+0130 is the only code point whose full
 /// lowercase mapping is multi-character, so first-character + the `İ`
 /// entry reproduces Go's table exactly. Delegates to the generated
-/// `tidb-mysql::simple_case` table (Go `unicode.CaseRanges`, Unicode
-/// 15.0.0), which is the authoritative implementation.
+/// `tidb-mysql::simple_case` table generated from Go `unicode.CaseRanges`.
 pub fn go_to_lower(input: impl AsRef<str>) -> String {
     tidb_mysql::to_lowercase(input.as_ref())
 }
@@ -227,9 +226,7 @@ pub fn go_to_lower(input: impl AsRef<str>) -> String {
 /// ligatures, the Greek iota-subscript vowels); Go's simple table
 /// leaves the ligatures and `ß` unchanged and folds the 27 Greek
 /// iota-subscript forms to their dropped-subscript vowel. Delegates to
-/// the generated `tidb-mysql::simple_case` table (Go
-/// `unicode.CaseRanges`, Unicode 15.0.0), the authoritative
-/// implementation.
+/// the `tidb-mysql::simple_case` table generated from Go `unicode.CaseRanges`.
 /// Method-form of [`go_to_lower`] for in-place call-site migration: a
 /// blanket impl over `AsRef<str>` so `.to_lowercase()` call sites can
 /// switch to `.go_to_lower()` without restructuring the receiver.
@@ -283,8 +280,7 @@ impl<T: AsRef<str> + ?Sized> GoCaseCompare for T {
 
 /// Go `strings.ToUpper`: the per-rune SIMPLE uppercase mapping
 /// (`unicode.ToUpper`). Delegates to the generated
-/// `tidb-mysql::simple_case` table (Go `unicode.CaseRanges`, Unicode
-/// 15.0.0), which is the authoritative implementation.
+/// `tidb-mysql::simple_case` table generated from Go `unicode.CaseRanges`.
 pub fn go_to_upper(input: impl AsRef<str>) -> String {
     tidb_mysql::to_uppercase(input.as_ref())
 }

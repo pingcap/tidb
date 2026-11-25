@@ -462,6 +462,36 @@ fn an_int_only_binary_result_row_matches_the_signed_longlong_encoder() {
 }
 
 #[test]
+fn wide_bigint_chunk_binary_rows_reuse_the_buffer_across_null_patterns() {
+    use tidb_chunk::chunk::Chunk;
+    use tidb_datatype::{FieldType, FieldTypeCode};
+
+    const COLUMNS: usize = 17;
+    let field = FieldType::new(FieldTypeCode::LongLong);
+    let mut chunk = Chunk::new_chunk_with_capacity(&vec![field; COLUMNS], 4);
+    let columns = vec![ColumnInfo { type_code: TYPE_LONGLONG, ..ColumnInfo::default() }; COLUMNS];
+    let mut stream = BinaryResultSetStream::new(columns, ResultSetOptions::default()).unwrap();
+    stream.metadata_packets().unwrap();
+
+    let mut encoded = Vec::new();
+    for row_index in 0..4 {
+        let mut cells = Vec::with_capacity(COLUMNS);
+        for index in 0..COLUMNS {
+            if row_index == 1 || (row_index == 2 && index % 3 == 0) {
+                chunk.append_null(index);
+                cells.push(BinaryResultCell::Null);
+            } else {
+                let value = i64::MIN + index as i64;
+                chunk.append_int64(index, value);
+                cells.push(BinaryResultCell::LongLong(value));
+            }
+        }
+        stream.row_packet_chunk_into(chunk.get_row(row_index), &mut encoded).unwrap();
+        assert_eq!(encoded, encode_binary_result_row(&cells));
+    }
+}
+
+#[test]
 fn an_empty_string_cell_is_a_zero_length_length_encoded_string() {
     let row = encode_binary_result_row(&[BinaryResultCell::String(Vec::new())]);
     // header, one null-bitmap byte (ceil((1+2)/8)=1), then lenenc length 0.

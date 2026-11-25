@@ -12,3 +12,4 @@ workspace = true
 
 [dependencies]
 prometheus = { version = "0.14", default-features = false }
+tidb-zeropool = { path = "../tidb-zeropool" }

@@ -201,3 +201,57 @@ fn test_reject_control_characters() {
     }
     assert!(parse(b"http://foo.com/ctl\x80").is_ok());
 }
+
+#[test]
+fn url_escaped_path_borrows_only_matching_hints() {
+    let mut url = crate::parse("https://example.invalid/a%2f%66").unwrap();
+    assert!(matches!(url.escaped_path_cow(), std::borrow::Cow::Borrowed(bytes)
+        if std::ptr::eq(bytes, url.raw_path.as_slice())));
+
+    url.path = b"/new path".to_vec();
+    assert_eq!(url.escaped_path_cow().as_ref(), b"/new%20path");
+    url.raw_path = b"/%0G".to_vec();
+    assert_eq!(url.string(), "https://example.invalid/new%20path");
+}
+
+#[test]
+fn redacted_url_keeps_escaped_components_and_masks_empty_password() {
+    let url = parse("https://user%40name:@example.invalid/a%2fb?x=y#f%20g").unwrap();
+    assert_eq!(
+        url.redacted(),
+        "https://user%40name:xxxxx@example.invalid/a%2fb?x=y#f%20g"
+    );
+    assert!(matches!(url.user.as_ref().unwrap().password(), ([], true)));
+
+    let url = parse("https://user%40name@example.invalid/a%2fb?x=y#f%20g").unwrap();
+    assert_eq!(url.redacted(), url.string());
+}
+
+#[test]
+fn parse_query_groups_decoded_keys_and_keeps_the_parameter_limit() {
+    let (values, error) = parse_query("name=first&%6Eame=with+space&name=third%2B");
+    assert_eq!(error, None);
+    assert_eq!(
+        values.0.get(b"name".as_slice()).unwrap(),
+        &[
+            b"first".to_vec(),
+            b"with space".to_vec(),
+            b"third+".to_vec()
+        ]
+    );
+
+    let mut query = format!("name=value{}", "&".repeat(9999));
+    let (values, error) = parse_query(&query);
+    assert_eq!(error, None);
+    assert_eq!(values.get("name"), b"value");
+
+    query.push('&');
+    let (values, error) = parse_query(&query);
+    assert!(values.0.is_empty());
+    assert_eq!(
+        error,
+        Some(Error::Other(
+            "number of URL query parameters exceeded limit".into()
+        ))
+    );
+}

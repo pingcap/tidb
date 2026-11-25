@@ -91,6 +91,189 @@ fn test_vectorized_builtin_arithmetic_func() {
     }
 }
 
+#[test]
+fn vectorized_arithmetic_overflow_leaves_go_partial_results() {
+    use crate::EvalErrorSql;
+
+    struct SubtractionMode(bool);
+    impl Columns for SubtractionMode {
+        fn get(&self, _: &[String]) -> Option<Datum> {
+            None
+        }
+
+        fn no_unsigned_subtraction(&self) -> bool {
+            self.0
+        }
+    }
+
+    let min = 1_u64 << 63;
+    let max = min - 1;
+    let integer = FieldTypeCode::LongLong;
+    let real = FieldTypeCode::Double;
+    let unsigned = [true, false];
+    let signed = [false, false];
+    let bits = f64::to_bits;
+    let nan = 0x7ff8_0000_0000_1234;
+    // Go's VecEvalInt/VecEvalReal results, including the failing row and the
+    // unevaluated operand cells after it.
+    let cases: [(_, _, _, bool, &[[u64; 2]], Option<usize>, _, &[(u64, bool)]); 8] = [
+        (
+            "plus",
+            integer,
+            signed,
+            false,
+            &[[5, 3], [max, 2], [4, 1], [max, 2], [8, 2]],
+            Some(1),
+            "BIGINT value is out of range in '(Column#1 + Column#2)'",
+            &[(8, false), (2, true), (5, false), (2, false), (2, false)],
+        ),
+        (
+            "minus",
+            integer,
+            signed,
+            false,
+            &[[5, 3], [0, min], [4, 1], [max, min], [8, 2]],
+            None,
+            "BIGINT value is out of range in '(Column#1 - Column#2)'",
+            &[
+                (2, false),
+                (min, false),
+                (3, false),
+                (min, false),
+                (2, false),
+            ],
+        ),
+        (
+            "minus",
+            integer,
+            unsigned,
+            true,
+            &[[5, 3], [min, 0], [8, 2]],
+            None,
+            "BIGINT value is out of range in '(Column#1 - Column#2)'",
+            &[(2, false), (0, false), (2, false)],
+        ),
+        (
+            "mul",
+            integer,
+            signed,
+            false,
+            &[[5, 3], [min, u64::MAX], [8, 2]],
+            None,
+            "BIGINT value is out of range in '(Column#1 * Column#2)'",
+            &[(15, false), (min, true), (8, false)],
+        ),
+        (
+            "mul",
+            integer,
+            [true, true],
+            false,
+            &[[5, 3], [min, 2], [8, 2]],
+            None,
+            "BIGINT UNSIGNED value is out of range in '(Column#1 * Column#2)'",
+            &[(15, false), (min, false), (8, false)],
+        ),
+        (
+            "unaryminus",
+            integer,
+            unsigned,
+            false,
+            &[[5, 0], [min, 0], [min + 1, 0], [8, 0]],
+            None,
+            "BIGINT value is out of range in '-9223372036854775809'",
+            &[
+                (u64::MAX - 4, false),
+                (min, false),
+                (min + 1, false),
+                (8, false),
+            ],
+        ),
+        (
+            "plus",
+            real,
+            signed,
+            false,
+            &[
+                [bits(5.0), bits(3.0)],
+                [nan, bits(2.0)],
+                [bits(1.0), bits(2.0)],
+                [nan, bits(2.0)],
+                [bits(8.0), bits(2.0)],
+            ],
+            Some(1),
+            "DOUBLE value is out of range in '(Column#1 + Column#2)'",
+            &[
+                (bits(8.0), false),
+                (nan, true),
+                (bits(3.0), false),
+                (nan, false),
+                (bits(8.0), false),
+            ],
+        ),
+        (
+            "mul",
+            real,
+            signed,
+            false,
+            &[
+                [bits(5.0), bits(3.0)],
+                [nan, bits(2.0)],
+                [bits(f64::MAX), bits(2.0)],
+                [bits(8.0), bits(2.0)],
+            ],
+            None,
+            "DOUBLE value is out of range in '(Column#1 * Column#2)'",
+            &[
+                (bits(15.0), false),
+                (nan, false),
+                (bits(f64::INFINITY), false),
+                (bits(8.0), false),
+            ],
+        ),
+    ];
+    for (name, code, unsigned, force_signed, rows, null_row, message, expected) in cases {
+        let fields = unsigned.map(|flag| FieldType::new(code).with_unsigned(flag));
+        let ctx = &SubtractionMode(force_signed);
+        let mut args = vec![column(0, &fields[0])];
+        if name != "unaryminus" {
+            args.push(column(1, &fields[1]));
+        }
+        let expression =
+            crate::new_function::new_function_base(ctx, name, FieldType::new(code), args).unwrap();
+        let mut input = Chunk::new_chunk_with_capacity(&fields, rows.len());
+        for &[left, right] in rows {
+            input.append_uint64(0, left);
+            input.append_uint64(1, right);
+        }
+        if let Some(row) = null_row {
+            input.column_mut(1).set_null(row, true);
+        }
+        let mut result = Column::default();
+        let domain = fields[0].eval_type();
+        let error = eval_into(&expression, domain, ctx, &input, &mut result)
+            .unwrap_err()
+            .to_sql_error();
+        assert_eq!(error.code, 1690, "{name}");
+        assert_eq!(error.message, message, "{name}");
+        for (row, &(bits, is_null)) in expected.iter().enumerate() {
+            assert_eq!(result.get_uint64(row), bits, "{name} row {row}");
+            assert_eq!(result.is_null(row), is_null, "{name} row {row}");
+        }
+        if name == "unaryminus" {
+            input.set_sel(Some(vec![0, 2, 3, 1]));
+            let error = eval_into(&expression, domain, ctx, &input, &mut result)
+                .unwrap_err()
+                .to_sql_error();
+            assert_eq!(error.code, 1690);
+            assert_eq!(error.message, message);
+            for (row, bits) in [u64::MAX - 4, min + 1, 8, min].into_iter().enumerate() {
+                assert_eq!(result.get_uint64(row), bits, "selected unaryminus row {row}");
+                assert!(!result.is_null(row));
+            }
+        }
+    }
+}
+
 /// Go `TestVectorizedDecimalErrOverflow`: the native 81-digit decimal range
 /// is independent of the SQL result type's maximum declared precision.
 #[test]
@@ -271,6 +454,83 @@ fn test_vectorized_generated_builtin_compare_func() {
     }
 }
 
+#[test]
+fn vectorized_real_comparisons_match_go_nan_and_null_rules() {
+    let real = FieldType::new(FieldTypeCode::Double);
+    let integer = FieldType::new(FieldTypeCode::LongLong);
+    let nan_a = f64::from_bits(0x7ff8_0000_0000_1234);
+    let nan_b = f64::from_bits(0xfff8_0000_0000_5678);
+    let mut input = Chunk::new_chunk_with_capacity(&[real.clone(), real.clone()], 8);
+    for [left, right] in [
+        [Some(nan_a), Some(nan_b)],
+        [Some(nan_a), Some(3.0)],
+        [Some(3.0), Some(nan_b)],
+        [Some(-0.0), Some(0.0)],
+        [Some(f64::NEG_INFINITY), Some(f64::INFINITY)],
+        [Some(8.0), None],
+        [None, Some(8.0)],
+        [None, None],
+    ] {
+        for (index, value) in [left, right].into_iter().enumerate() {
+            if let Some(value) = value {
+                input.append_float64(index, value);
+            } else {
+                input.append_null(index);
+            }
+        }
+    }
+    for (name, expected) in [
+        ("eq", [1, 0, 0, 1, 0, -1, -1, -1]),
+        ("ne", [0, 1, 1, 0, 1, -1, -1, -1]),
+        ("lt", [0, 1, 0, 0, 1, -1, -1, -1]),
+        ("le", [1, 1, 0, 1, 1, -1, -1, -1]),
+        ("gt", [0, 0, 1, 0, 0, -1, -1, -1]),
+        ("ge", [1, 0, 1, 1, 0, -1, -1, -1]),
+        ("nulleq", [1, 0, 0, 1, 0, 0, 0, 1]),
+        ("in", [1, 0, 0, 1, 0, -1, -1, -1]),
+        ("in_constant", [0, 0, 0, 1, 0, 0, -1, -1]),
+    ] {
+        let (function, arguments) = if name == "in_constant" {
+            let mut arguments = vec![column(0, &real)];
+            for value in [nan_a, 0.0] {
+                arguments.push(Expression::Constant(crate::constant::Constant::new(
+                    Datum::Real(value),
+                    real.clone(),
+                )));
+            }
+            ("in", arguments)
+        } else {
+            (name, vec![column(0, &real), column(1, &real)])
+        };
+        let expression =
+            crate::new_function::new_function_base(&NoColumns, function, integer.clone(), arguments)
+                .unwrap();
+        let mut result = Column::default();
+        eval_into(&expression, EvalType::Int, &NoColumns, &input, &mut result).unwrap();
+        for (row, want) in expected.into_iter().enumerate() {
+            assert_eq!(result.is_null(row), want == -1, "{name} row {row}");
+            if want != -1 {
+                assert_eq!(result.get_int64(row), want, "{name} row {row}");
+            }
+        }
+    }
+    for (name, infinity) in [("greatest", f64::INFINITY), ("least", f64::NEG_INFINITY)] {
+        let expression = crate::new_function::new_function_base(
+            &NoColumns,
+            name,
+            real.clone(),
+            vec![column(0, &real), column(1, &real)],
+        )
+        .unwrap();
+        let mut result = Column::default();
+        eval_into(&expression, EvalType::Real, &NoColumns, &input, &mut result).unwrap();
+        for (row, want) in [nan_a, nan_a, 3.0, -0.0, infinity].into_iter().enumerate() {
+            assert_eq!(result.get_uint64(row), want.to_bits(), "{name} row {row}");
+        }
+        assert!((5..8).all(|row| result.is_null(row)));
+    }
+}
+
 /// Go `TestVectorizedBuiltinOtherFuncGenerated`: IN over typed columns.
 #[test]
 fn test_vectorized_builtin_other_func_generated() {
@@ -294,6 +554,142 @@ fn test_vectorized_builtin_control_func_generated() {
                 fields.push(field.clone());
             }
             agreement("case", &fields);
+        }
+    }
+}
+
+#[test]
+fn vectorized_control_fallback_preserves_go_warnings_and_partial_rows() {
+    use crate::{EvalErrorSql, builtin::ColumnsBuildContext};
+    use std::cell::RefCell;
+
+    #[derive(Default)]
+    struct Warnings(RefCell<Vec<(u16, String)>>);
+    impl Columns for Warnings {
+        fn get(&self, _: &[String]) -> Option<Datum> {
+            None
+        }
+
+        fn append_warning(&self, code: u16, message: &str) {
+            self.0.borrow_mut().push((code, message.to_owned()));
+        }
+
+        fn warning_count(&self) -> usize {
+            self.0.borrow().len()
+        }
+
+        fn truncate_warnings(&self, bookmark: usize) {
+            self.0.borrow_mut().truncate(bookmark);
+        }
+    }
+
+    let integer = FieldType::new(FieldTypeCode::LongLong);
+    let text = text_field();
+    let fields = [
+        integer.clone(),
+        integer.clone(),
+        text.clone(),
+        integer.clone(),
+    ];
+    for name in ["if", "ifnull", "case", "coalesce"] {
+        for (mode, selected_error) in [
+            ("warning", false),
+            ("hidden-error", false),
+            ("selected-error", true),
+        ] {
+            let ctx = Warnings::default();
+            let mut input = Chunk::new_chunk_with_capacity(&fields, 4);
+            for (first, value, text, negated) in [
+                (Some(1), 10, "ignored", i64::MIN),
+                (None, 11, "22tail", 11),
+                (
+                    None,
+                    12,
+                    "32tail",
+                    if selected_error { i64::MIN } else { 4 },
+                ),
+                (Some(-1), 13, "ignored-again", i64::MIN),
+            ] {
+                if let Some(first) = first {
+                    input.append_int64(0, first);
+                } else {
+                    input.append_null(0);
+                }
+                input.append_int64(1, value);
+                input.append_string(2, text);
+                input.append_int64(3, negated);
+            }
+            let branch = if mode == "warning" {
+                crate::wrap_cast::build_cast_to(
+                    &ColumnsBuildContext(&ctx),
+                    column(2, &text),
+                    integer.clone(),
+                )
+                .unwrap()
+            } else {
+                crate::new_function::new_function_base(
+                    &ctx,
+                    "unaryminus",
+                    integer.clone(),
+                    vec![column(3, &integer)],
+                )
+                .unwrap()
+            };
+            let mut args = vec![column(0, &integer)];
+            let predicate = matches!(name, "if" | "case");
+            if predicate {
+                args.push(column(1, &integer));
+            }
+            args.push(branch);
+            let expression =
+                crate::new_function::new_function_base(&ctx, name, integer.clone(), args).unwrap();
+            let mut result = Column::default();
+            let status = eval_into(&expression, EvalType::Int, &ctx, &input, &mut result);
+            let (first, last) = if predicate { (10, 13) } else { (1, -1) };
+            let expected = match mode {
+                "warning" => {
+                    status.unwrap();
+                    assert_eq!(
+                        *ctx.0.borrow(),
+                        [
+                            (
+                                1292,
+                                "Truncated incorrect INTEGER value: '22tail'".to_owned()
+                            ),
+                            (
+                                1292,
+                                "Truncated incorrect INTEGER value: '32tail'".to_owned()
+                            ),
+                        ],
+                        "{name}"
+                    );
+                    [(first, false), (22, false), (32, false), (last, false)]
+                }
+                "hidden-error" => {
+                    status.unwrap();
+                    [(first, false), (-11, false), (-4, false), (last, false)]
+                }
+                _ => {
+                    let error = status.unwrap_err().to_sql_error();
+                    assert_eq!(error.code, 1690, "{name}");
+                    assert_eq!(
+                        error.message, "BIGINT value is out of range in '--9223372036854775808'",
+                        "{name}",
+                    );
+                    if name == "coalesce" {
+                        [(first, false), (-11, false), (0, true), (last, false)]
+                    } else {
+                        [(first, false), (-11, false), (0, false), (0, false)]
+                    }
+                }
+            };
+            if mode != "warning" {
+                assert!(ctx.0.borrow().is_empty(), "{name} {mode}");
+            }
+            for (row, (bits, is_null)) in expected.into_iter().enumerate() {
+                assert_eq!(result.get_int64(row), bits, "{name} {mode} row {row}");
+                assert_eq!(result.is_null(row), is_null, "{name} {mode} row {row}");
+            }
         }
     }
 }
@@ -323,6 +719,113 @@ fn test_vectorized_builtin_op_func() {
         ) {
             for name in ["not", "istrue", "isfalse", "istrue_with_null", "unaryminus"] {
                 agreement(name, &[field.clone()]);
+            }
+        }
+    }
+}
+
+#[test]
+fn vectorized_integer_cast_overflow_preserves_go_result_cells() {
+    use crate::{ErrorLevel, EvalErrorSql, builtin::ColumnsBuildContext};
+    use std::cell::RefCell;
+
+    struct CastContext {
+        level: ErrorLevel,
+        warnings: RefCell<Vec<(u16, String)>>,
+    }
+    impl Columns for CastContext {
+        fn get(&self, _: &[String]) -> Option<Datum> {
+            None
+        }
+
+        fn truncate_level(&self) -> ErrorLevel {
+            self.level
+        }
+
+        fn append_warning(&self, code: u16, message: &str) {
+            self.warnings.borrow_mut().push((code, message.to_owned()));
+        }
+    }
+
+    let integer = FieldType::new(FieldTypeCode::LongLong);
+    let real = FieldType::new(FieldTypeCode::Double);
+    let mut decimal = FieldType::new(FieldTypeCode::NewDecimal);
+    decimal.set_flen(31);
+    decimal.set_decimal(3);
+    let literal = ["1.500", "-2.500", "9223372036854775807.500", "0", "9.5"];
+    let float = [1.5, -2.5, f64::INFINITY, 0.0, 8.5];
+    for source in [real, decimal] {
+        let is_decimal = source.eval_type() == EvalType::Decimal;
+        let mut input = Chunk::new_chunk_with_capacity(&[source.clone()], 5);
+        for row in 0..5 {
+            if row == 3 {
+                input.append_null(0);
+            } else if is_decimal {
+                let decimal = tidb_datatype::MyDecimal::from_string(literal[row].as_bytes()).0;
+                input.append_my_decimal(0, &decimal);
+            } else {
+                input.append_float64(0, float[row]);
+            }
+        }
+        let error_message = if is_decimal {
+            "%s value is out of range in '%s'"
+        } else {
+            "constant +Inf overflows bigint"
+        };
+        for level in [ErrorLevel::Error, ErrorLevel::Warn] {
+            let ctx = CastContext {
+                level,
+                warnings: RefCell::default(),
+            };
+            let expression = crate::wrap_cast::build_cast_to(
+                &ColumnsBuildContext(&ctx),
+                column(0, &source),
+                integer.clone(),
+            )
+            .unwrap();
+            let mut result = Column::default();
+            let status = eval_into(&expression, EvalType::Int, &ctx, &input, &mut result);
+            let last = if level == ErrorLevel::Error {
+                let error = status.unwrap_err().to_sql_error();
+                assert_eq!(error.code, 1690);
+                assert_eq!(error.message, error_message);
+                assert!(ctx.warnings.borrow().is_empty());
+                0
+            } else {
+                status.unwrap();
+                let warnings = ctx.warnings.borrow();
+                if is_decimal {
+                    let field = |kind, value| format!("%!s({kind}={value:0128})");
+                    let words = [9, 223_372_036, 854_775_807, 500_000_000, 0, 0, 0, 0, 0]
+                        .map(|word| field("int32", word))
+                        .join(" ");
+                    let want = format!(
+                        "Truncated incorrect DECIMAL value: '{{{} {} {} %!s(bool=false) [{words}]}}'",
+                        field("int8", 19),
+                        field("int8", 3),
+                        field("int8", 3),
+                    );
+                    assert_eq!(*warnings, [(1292, want)]);
+                    10
+                } else {
+                    assert_eq!(*warnings, [(1690, error_message.to_owned())]);
+                    8
+                }
+            };
+            for (row, expected) in [2, if is_decimal { -3 } else { -2 }, i64::MAX, 0, last]
+                .into_iter()
+                .enumerate()
+            {
+                assert_eq!(
+                    result.get_int64(row),
+                    expected,
+                    "{source:?} {level:?} row {row}"
+                );
+                assert_eq!(
+                    result.is_null(row),
+                    row == 3,
+                    "{source:?} {level:?} row {row}"
+                );
             }
         }
     }
@@ -362,6 +865,67 @@ fn test_vectorized_cast_string_as_decimal_with_unsigned_flag_in_union() {
             value(&result, i, EvalType::Decimal, Some(&target)),
             expression.eval(&NoColumns, input.get_row(i)).unwrap()
         );
+    }
+}
+
+#[test]
+fn vectorized_math_overflow_leaves_go_partial_results() {
+    use crate::EvalErrorSql;
+
+    let integer = FieldType::new(FieldTypeCode::LongLong);
+    let abs = crate::new_function::new_function_base(
+        &NoColumns,
+        "abs",
+        integer.clone(),
+        vec![column(0, &integer)],
+    )
+    .unwrap();
+    let mut input = Chunk::new_chunk_with_capacity(&[integer.clone()], 4);
+    for value in [-3, i64::MIN, -9] {
+        input.append_int64(0, value);
+    }
+    input.append_null(0);
+    let mut result = Column::default();
+    let error = eval_into(&abs, EvalType::Int, &NoColumns, &input, &mut result)
+        .unwrap_err()
+        .to_sql_error();
+    assert_eq!(error.code, 1690);
+    assert_eq!(
+        error.message,
+        "BIGINT value is out of range in 'abs(-9223372036854775808)'"
+    );
+    assert_eq!(
+        [result.get_int64(0), result.get_int64(1), result.get_int64(2)],
+        [3, i64::MIN, -9]
+    );
+    assert!(result.is_null(3));
+
+    let mut decimal = FieldType::new(FieldTypeCode::NewDecimal);
+    decimal.set_flen(12);
+    decimal.set_decimal(3);
+    let mut input = Chunk::new_chunk_with_capacity(&[decimal.clone()], 4);
+    for literal in ["-1.200", "9223372036854775808.200", "9.200"] {
+        input.append_my_decimal(0, &Decimal::from_literal(literal).to_chunk_my_decimal_lossy());
+    }
+    input.append_null(0);
+    for (name, first) in [("ceil", -1), ("floor", -2)] {
+        let expression = crate::new_function::new_function_base(
+            &NoColumns,
+            name,
+            integer.clone(),
+            vec![column(0, &decimal)],
+        )
+        .unwrap();
+        let error = eval_into(&expression, EvalType::Int, &NoColumns, &input, &mut result)
+            .unwrap_err()
+            .to_sql_error();
+        assert_eq!(error.code, 1690);
+        assert_eq!(error.message, "%s value is out of range in '%s'");
+        assert_eq!(
+            [result.get_int64(0), result.get_int64(1), result.get_int64(2)],
+            [first, i64::MAX, 0]
+        );
+        assert!(result.is_null(3));
     }
 }
 
@@ -450,6 +1014,405 @@ fn test_vectorized_builtin_string_func() {
     }
 }
 
+#[test]
+fn vectorized_format_matches_go_signs_rounding_and_locale_warnings() {
+    #[derive(Default)]
+    struct Warnings(std::cell::RefCell<Vec<(u16, String)>>);
+    impl Columns for Warnings {
+        fn get(&self, _: &[String]) -> Option<Datum> {
+            None
+        }
+
+        fn append_warning(&self, code: u16, message: &str) {
+            self.0.borrow_mut().push((code, message.to_owned()));
+        }
+    }
+
+    let real = FieldType::new(FieldTypeCode::Double);
+    let integer = FieldType::new(FieldTypeCode::LongLong);
+    let text = FieldType::new(FieldTypeCode::VarString)
+        .with_collation(tidb_charset::Collation::Utf8Mb4Bin);
+    let expression = crate::new_function::new_function_base(
+        &NoColumns,
+        "format",
+        text.clone(),
+        vec![column(0, &real), column(1, &integer), column(2, &text)],
+    )
+    .unwrap();
+    let mut input = Chunk::new_chunk_with_capacity(&[real, integer, text], 5);
+    for (value, locale) in [
+        (Some(f64::NEG_INFINITY), Some("en_US")),
+        (Some(-0.0), Some("dE_dE")),
+        (Some(999.995), Some("de_DE")),
+        (Some(1.005), None),
+        (None, Some("unrecognized")),
+    ] {
+        if let Some(value) = value {
+            input.append_float64(0, value);
+        } else {
+            input.append_null(0);
+        }
+        input.append_int64(1, 2);
+        if let Some(locale) = locale {
+            input.append_bytes(2, locale.as_bytes());
+        } else {
+            input.append_null(2);
+        }
+    }
+    input.set_sel(Some(vec![4, 0, 2, 1, 3, 0]));
+    let context = Warnings::default();
+    let mut result = Column::default();
+    eval_into(&expression, EvalType::String, &context, &input, &mut result).unwrap();
+    assert!(result.is_null(0));
+    for (row, expected) in ["0.00", "1.000,00", "-0,00", "1.01", "0.00"]
+        .into_iter()
+        .enumerate()
+    {
+        assert_eq!(result.get_raw(row + 1).as_ref(), expected.as_bytes());
+    }
+    assert_eq!(*context.0.borrow(), [(1649, "Unknown locale: 'NULL'".to_owned())]);
+}
+
+#[test]
+fn vectorized_json_contains_path_short_circuits_in_source_order() {
+    let json = FieldType::new(FieldTypeCode::Json);
+    let text = FieldType::new(FieldTypeCode::VarString)
+        .with_collation(tidb_charset::Collation::Utf8Mb4Bin);
+    let fields = [json, text.clone(), text.clone(), text];
+    let expression = crate::new_function::new_function_base(
+        &NoColumns,
+        "json_contains_path",
+        FieldType::new(FieldTypeCode::LongLong),
+        fields
+            .iter()
+            .enumerate()
+            .map(|(i, field)| column(i as i64, field))
+            .collect(),
+    )
+    .unwrap();
+    let mut input = Chunk::new_chunk_with_capacity(&fields, 5);
+    let json = tidb_datatype::BinaryJSON::parse(r#"{"a":[1,2],"z":"unrelated"}"#).unwrap();
+    let mut payload = json.value().to_vec();
+    *payload.last_mut().unwrap() = 0xff;
+    let value = tidb_datatype::BinaryJSON::from_encoded_parts(json.type_code(), payload);
+    for args in [
+        [Some("OnE"), Some("$.a"), None],
+        [Some("ALL"), Some("$.missing"), Some("$[")],
+        [Some("one"), Some("$.missing"), None],
+        [Some("bad"), Some("$"), Some("$")],
+        [None, Some("$"), Some("$")],
+    ] {
+        input.append_json(0, &value);
+        for (i, arg) in args.into_iter().enumerate() {
+            if let Some(arg) = arg {
+                input.append_bytes(i + 1, arg.as_bytes());
+            } else {
+                input.append_null(i + 1);
+            }
+        }
+    }
+    for (row, want) in [Datum::Int(1), Datum::Int(0), Datum::Null].into_iter().enumerate() {
+        assert_eq!(expression.eval(&NoColumns, input.get_row(row)).unwrap(), want);
+    }
+    let mut result = Column::default();
+    let err = eval_into(&expression, EvalType::Int, &NoColumns, &input, &mut result).unwrap_err();
+    assert!(matches!(
+        err,
+        EvalError::Json(crate::JsonError::BadOneOrAllArg { .. })
+    ));
+    assert_eq!(result.rows(), 5);
+    assert_eq!(result.get_int64(0), 1);
+    assert_eq!(result.get_int64(1), 0);
+    assert!(result.is_null(2));
+    assert!(result.is_null(4));
+
+    let mut input = Chunk::new_chunk_with_capacity(&fields, 1);
+    let deep = format!("{}0{}", r#"{"child":"#.repeat(100), "}".repeat(100));
+    input.append_json(0, &tidb_datatype::BinaryJSON::parse(&deep).unwrap());
+    input.append_bytes(1, b"One");
+    input.append_bytes(2, b"$[0 to 0]");
+    input.append_null(3);
+    eval_into(&expression, EvalType::Int, &NoColumns, &input, &mut result).unwrap();
+    assert_eq!(result.get_int64(0), 1);
+}
+
+#[test]
+fn literal_json_contains_path_reports_only_reached_path_errors() {
+    let json = FieldType::new(FieldTypeCode::Json);
+    let text = FieldType::new(FieldTypeCode::VarString);
+    let literal = |value: &str| {
+        Expression::Constant(crate::constant::Constant::new(
+            Datum::new_string_datum(value),
+            text.clone(),
+        ))
+    };
+    let mut input = Chunk::new_chunk_with_capacity(&[json.clone()], 2);
+    input.append_null(0);
+    input.append_json(0, &tidb_datatype::BinaryJSON::parse(r#"{"n":1}"#).unwrap());
+    for (mode, first, expected) in [
+        ("ONE", "$.n", Some(1)),
+        ("ALL", "$.missing", Some(0)),
+        ("ALL", "$.n", None),
+    ] {
+        let expr = crate::new_function::new_function_base(
+            &NoColumns,
+            "json_contains_path",
+            FieldType::new(FieldTypeCode::LongLong),
+            vec![column(0, &json), literal(mode), literal(first), literal("$[")],
+        ).unwrap();
+        assert_eq!(expr.eval(&NoColumns, input.get_row(0)).unwrap(), Datum::Null);
+        let scalar = expr.eval(&NoColumns, input.get_row(1));
+        let mut result = Column::default();
+        let vector = eval_into(&expr, EvalType::Int, &NoColumns, &input, &mut result);
+        assert!(result.is_null(0));
+        if let Some(expected) = expected {
+            assert_eq!(scalar.unwrap(), Datum::Int(expected));
+            vector.unwrap();
+            assert_eq!(result.get_int64(1), expected);
+        } else {
+            assert!(matches!(scalar, Err(EvalError::Json(crate::JsonError::InvalidPath(_)))));
+            assert!(matches!(vector, Err(EvalError::Json(crate::JsonError::InvalidPath(_)))));
+        }
+    }
+}
+
+#[test]
+fn vectorized_json_extract_remembers_the_layout_of_a_wide_match() {
+    let json = FieldType::new(FieldTypeCode::Json);
+    let text = FieldType::new(FieldTypeCode::VarString)
+        .with_collation(tidb_charset::Collation::Utf8Mb4Bin);
+    let expression = crate::new_function::new_function_base(
+        &NoColumns,
+        "json_extract",
+        json.clone(),
+        vec![column(0, &json), column(1, &text)],
+    )
+    .unwrap();
+    let mut input = Chunk::new_chunk_with_capacity(&[json, text], 1);
+    let payload = "界".repeat(Column::MIN_RETAINED_CELL_BYTES);
+    let document = tidb_datatype::BinaryJSON::parse(&format!(r#"{{"a":"{payload}"}}"#)).unwrap();
+    input.append_json(0, &document);
+    input.append_bytes(1, b"$.a");
+
+    let mut result = Column::default();
+    eval_into(&expression, EvalType::Json, &NoColumns, &input, &mut result).unwrap();
+    let extracted = result.get_json(0);
+    assert!(extracted.known_layout().is_some_and(|layout| layout.is_canonical()));
+    assert_eq!(extracted.as_string(), Some(payload.as_bytes()));
+
+    let Datum::Json(scalar) = expression.eval(&NoColumns, input.get_row(0)).unwrap() else {
+        panic!("expected the selected JSON string");
+    };
+    assert!(scalar.known_layout().is_some_and(|layout| layout.is_canonical()));
+    {
+        let raw = input.get_row(0).get_raw(0);
+        let start = raw.windows(3).position(|bytes| bytes == "界".as_bytes()).unwrap();
+        assert_eq!(scalar.as_string().unwrap().as_ptr(), raw.as_ptr().wrapping_add(start));
+    }
+    input.reset();
+    assert_eq!(scalar.as_string(), Some(payload.as_bytes()));
+}
+
+#[test]
+fn vectorized_json_length_merges_nulls_before_a_path_error() {
+    let doc = FieldType::new(FieldTypeCode::Json);
+    let text = FieldType::new(FieldTypeCode::VarString)
+        .with_collation(tidb_charset::Collation::Utf8Mb4Bin);
+    let expression = crate::new_function::new_function_base(
+        &NoColumns,
+        "json_length",
+        FieldType::new(FieldTypeCode::LongLong),
+        vec![column(0, &doc), column(1, &text)],
+    )
+    .unwrap();
+    let mut input = Chunk::new_chunk_with_capacity(&[doc, text], 5);
+    let value = tidb_datatype::BinaryJSON::parse(r#"{"a":[1,2],"z":"unrelated"}"#).unwrap();
+    let mut payload = value.value().to_vec();
+    *payload.last_mut().unwrap() = 0xff;
+    let value = tidb_datatype::BinaryJSON::from_encoded_parts(value.type_code(), payload);
+    for (row, path) in [Some("$.a"), Some("$"), Some("$.a[*]"), None, Some("$")]
+        .into_iter()
+        .enumerate()
+    {
+        if row == 1 {
+            input.append_null(0);
+        } else {
+            input.append_datum(0, &Datum::Json(value.clone()));
+        }
+        if let Some(path) = path {
+            input.append_bytes(1, path.as_bytes());
+        } else {
+            input.append_null(1);
+        }
+    }
+    let mut result = Column::default();
+    assert_eq!(expression.eval(&NoColumns, input.get_row(0)).unwrap(), Datum::Int(2));
+    let error = eval_into(&expression, EvalType::Int, &NoColumns, &input, &mut result)
+        .unwrap_err();
+    assert!(matches!(
+        error,
+        EvalError::Json(crate::JsonError::InvalidPathMultipleSelection)
+    ));
+    assert_eq!(result.rows(), 5);
+    assert_eq!(result.get_int64(0), 2);
+    assert!(result.is_null(1));
+    assert!(result.is_null(3));
+}
+
+#[test]
+fn vectorized_json_unquote_preserves_bytes_and_keeps_rows_before_an_error() {
+    let text = FieldType::new(FieldTypeCode::VarString)
+        .with_collation(tidb_charset::Collation::Utf8Mb4Bin);
+    let expression = crate::new_function::new_function_base(
+        &NoColumns,
+        "json_unquote",
+        text.clone(),
+        vec![column(0, &text)],
+    )
+    .unwrap();
+    let mut input = Chunk::new_chunk_with_capacity(std::slice::from_ref(&text), 5);
+    input.append_bytes(0, b"\xffplain");
+    input.append_bytes(0, b"\"\xe2\x82\\n\"");
+    input.append_null(0);
+    input.append_bytes(0, b"\"invalid\\q\"");
+    input.append_bytes(0, b"after");
+    input.set_sel(Some(vec![2, 1, 0, 1, 3, 4]));
+    let mut result = Column::default();
+    let error = eval_into(&expression, EvalType::String, &NoColumns, &input, &mut result)
+        .unwrap_err();
+    assert!(matches!(error, EvalError::Json(crate::JsonError::InvalidText)));
+    assert_eq!(result.rows(), 4);
+    assert!(result.is_null(0));
+    assert_eq!(result.get_raw(1).as_ref(), b"\xe2\x82\n");
+    assert_eq!(result.get_raw(2).as_ref(), b"\xffplain");
+    assert_eq!(result.get_raw(3).as_ref(), b"\xe2\x82\n");
+    for (row, bytes) in [(1, &b"\xe2\x82\n"[..]), (2, &b"\xffplain"[..])] {
+        let scalar = expression.eval(&NoColumns, input.get_row(row)).unwrap();
+        assert_eq!(scalar.as_raw_bytes(), Some(bytes));
+    }
+}
+
+#[test]
+fn vectorized_search_uses_go_lowercase_and_rune_offsets() {
+    let integer = FieldType::new(FieldTypeCode::LongLong);
+    use tidb_charset::Collation::{Binary, Utf8Mb4Bin, Utf8Mb4UnicodeCi};
+    for (collation, unpositioned, positioned) in [
+        (Binary, [0, 1, 0, 3, 2, 1, 7], [0, 1, 0, 3, 2, 2, 7]),
+        (Utf8Mb4Bin, [0, 1, 0, 2, 2, 1, 7], [0, 0, 1, 2, 2, 2, 7]),
+        (
+            Utf8Mb4UnicodeCi,
+            [0, 1, 1, 2, 0, 1, 7],
+            [0, 1, 1, 2, 0, 2, 7],
+        ),
+    ] {
+        let text = FieldType::new(FieldTypeCode::VarString).with_collation(collation);
+        let fields = [text.clone(), text.clone(), integer.clone()];
+        let mut input = Chunk::new_chunk_with_capacity(&fields, 8);
+        for (needle, hay, start) in [
+            ("ß".as_bytes(), &b"aSSb"[..], 1),
+            (&b"\xff"[..], &b"\xffx"[..], 1),
+            ("�".as_bytes(), &b"\xffx"[..], 1),
+            (&b"x"[..], "éx".as_bytes(), 2),
+            (&b"\xa9"[..], "éx".as_bytes(), 1),
+            (&b""[..], "é".as_bytes(), 2),
+            (&b"aaab"[..], &b"aaaaaaaaab"[..], 2),
+        ] {
+            input.append_bytes(0, needle);
+            input.append_bytes(1, hay);
+            input.append_int64(2, start);
+        }
+        input.append_null(0);
+        input.append_bytes(1, b"x");
+        input.append_int64(2, 1);
+        let mut result = Column::default();
+        for (name, args, expected) in [
+            (
+                "locate",
+                vec![column(0, &text), column(1, &text)],
+                unpositioned,
+            ),
+            (
+                "instr",
+                vec![column(1, &text), column(0, &text)],
+                unpositioned,
+            ),
+            (
+                "locate",
+                vec![column(0, &text), column(1, &text), column(2, &integer)],
+                positioned,
+            ),
+        ] {
+            let expression =
+                crate::new_function::new_function_base(&NoColumns, name, integer.clone(), args)
+                    .unwrap();
+            input.set_sel(Some(vec![7, 2, 4, 0, 1, 3, 5, 6, 4]));
+            eval_into(&expression, EvalType::Int, &NoColumns, &input, &mut result).unwrap();
+            assert!(result.is_null(0));
+            for (row, index) in [2, 4, 0, 1, 3, 5, 6, 4].into_iter().enumerate() {
+                assert!(!result.is_null(row + 1));
+                assert_eq!(
+                    result.get_int64(row + 1),
+                    expected[index],
+                    "{name} {collation:?} row {index}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn vectorized_field_uses_int64_carriers_for_signed_and_unsigned_arguments() {
+    let signed = FieldType::new(FieldTypeCode::LongLong);
+    let mut unsigned = signed.clone();
+    unsigned.add_flags(FieldTypeFlags::UNSIGNED);
+    let fields = [signed.clone(), unsigned, signed.clone()];
+    let expression = crate::new_function::new_function_base(
+        &NoColumns,
+        "field",
+        signed,
+        fields
+            .iter()
+            .enumerate()
+            .map(|(i, field)| column(i as i64, field))
+            .collect(),
+    )
+    .unwrap();
+    let mut input = Chunk::new_chunk_with_capacity(&fields, 4);
+    for (row, first) in [Some(u64::MAX), None, Some(7), Some(u64::MAX)]
+        .into_iter()
+        .enumerate()
+    {
+        if row == 3 {
+            input.append_null(0);
+        } else {
+            input.append_int64(0, -1);
+        }
+        if let Some(first) = first {
+            input.append_uint64(1, first);
+        } else {
+            input.append_null(1);
+        }
+        input.append_int64(2, if row == 2 { 1 } else { -1 });
+    }
+    let mut result = Column::default();
+    for (selection, expected) in [
+        (None, [1, 2, 0, 0]),
+        (Some(vec![3, 0, 1, 0]), [0, 1, 2, 1]),
+    ] {
+        input.set_sel(selection);
+        eval_into(&expression, EvalType::Int, &NoColumns, &input, &mut result).unwrap();
+        for (row, index) in expected.into_iter().enumerate() {
+            assert!(!result.is_null(row));
+            assert_eq!(result.get_int64(row), index, "row {row}");
+            assert_eq!(
+                expression.eval(&NoColumns, input.get_row(row)).unwrap(),
+                Datum::Int(index),
+                "scalar row {row}"
+            );
+        }
+    }
+}
+
 /// Go `TestVectorizedBuiltinCompareFunc`: extrema and INTERVAL typed columns.
 #[test]
 fn test_vectorized_builtin_compare_func() {
@@ -499,6 +1462,76 @@ fn test_vectorized_builtin_json_func() {
     }
     agreement("json_quote", &[string]);
     agreement("json_array", &[json.clone(), json]);
+}
+
+#[test]
+fn vectorized_json_depth_reads_structure_without_validating_text() {
+    use tidb_datatype::{BinaryJSON, JSON_TYPE_CODE_STRING};
+
+    let field = FieldType::new(FieldTypeCode::Json);
+    let expression = crate::new_function::new_function_base(
+        &NoColumns,
+        "json_depth",
+        FieldType::new(FieldTypeCode::LongLong),
+        vec![column(0, &field)],
+    ).unwrap();
+    let string = BinaryJSON::from_encoded_parts(JSON_TYPE_CODE_STRING, [1, 0xff]);
+    let array = BinaryJSON::parse(r#"[["a"]]"#).unwrap();
+    let mut bytes = array.value().to_vec();
+    *bytes.last_mut().unwrap() = 0xff;
+    let array = BinaryJSON::from_encoded_parts(array.type_code(), bytes);
+
+    let mut input = Chunk::new_chunk_with_capacity(&[field], 3);
+    input.append_json(0, &string);
+    input.append_json(0, &array);
+    input.append_null(0);
+    input.set_sel(Some(vec![1, 2, 0, 1]));
+    let mut result = Column::default();
+    eval_into(&expression, EvalType::Int, &NoColumns, &input, &mut result).unwrap();
+    assert_eq!(result.get_int64(0), 3);
+    assert!(result.is_null(1));
+    assert_eq!(result.get_int64(2), 1);
+    assert_eq!(result.get_int64(3), 3);
+}
+
+#[test]
+fn json_keys_uses_selected_key_entries_on_both_sql_paths() {
+    use tidb_datatype::BinaryJSON;
+
+    let field = FieldType::new(FieldTypeCode::Json);
+    let document = BinaryJSON::parse(r#"{"a":{"key":"value"},"z":"unrelated"}"#).unwrap();
+    let mut bytes = document.value().to_vec();
+    *bytes.last_mut().unwrap() = 0xff;
+    let raw = BinaryJSON::from_encoded_parts(document.type_code(), bytes);
+    let mut input = Chunk::new_chunk_with_capacity(&[field.clone()], 3);
+    input.append_json(0, &raw);
+    input.append_json(0, &BinaryJSON::parse("[1]").unwrap());
+    input.append_null(0);
+    input.set_sel(Some(vec![2, 0, 1, 0]));
+
+    for (path, keys) in [(None, r#"["a","z"]"#), (Some("$.a"), r#"["key"]"#)] {
+        let mut args = vec![column(0, &field)];
+        if let Some(path) = path {
+            args.push(Expression::Constant(crate::constant::Constant::new(
+                Datum::new_string_datum(path),
+                FieldType::new(FieldTypeCode::VarString),
+            )));
+        }
+        let expression = crate::new_function::new_function_base(
+            &NoColumns, "json_keys", field.clone(), args,
+        ).unwrap();
+        let keys = BinaryJSON::parse(keys).unwrap();
+        let mut result = Column::default();
+        eval_into(&expression, EvalType::Json, &NoColumns, &input, &mut result).unwrap();
+        for row in [0, 2] {
+            assert_eq!(expression.eval(&NoColumns, input.get_row(row)).unwrap(), Datum::Null);
+            assert!(result.is_null(row));
+        }
+        for row in [1, 3] {
+            assert_eq!(expression.eval(&NoColumns, input.get_row(row)).unwrap(), Datum::Json(keys.clone()));
+            assert_eq!(result.get_json(row), keys);
+        }
+    }
 }
 
 #[derive(Default)]
@@ -614,6 +1647,216 @@ fn test_vectorized_builtin_encryption_func() {
         agreement(name, &[string.clone(), string.clone()]);
     }
     agreement("sha2", &[string, int]);
+}
+
+#[test]
+fn vectorized_calendar_parts_match_go_zero_date_rules() {
+    use crate::{ErrorLevel, EvalErrorSql};
+    use std::cell::RefCell;
+    use tidb_datatype::{CoreTime, DateModes, Time, TimeType};
+
+    #[derive(Default)]
+    struct CalendarContext {
+        no_zero_dates: bool,
+        strict: bool,
+        warnings: RefCell<Vec<(u16, String)>>,
+    }
+    impl Columns for CalendarContext {
+        fn get(&self, _: &[String]) -> Option<Datum> {
+            None
+        }
+        fn date_modes(&self) -> DateModes {
+            DateModes {
+                no_zero_date: self.no_zero_dates,
+                no_zero_in_date: self.no_zero_dates,
+                ..DateModes::default()
+            }
+        }
+        fn truncate_level(&self) -> ErrorLevel {
+            if self.strict {
+                ErrorLevel::Error
+            } else {
+                ErrorLevel::Warn
+            }
+        }
+        fn append_warning(&self, code: u16, message: &str) {
+            self.warnings.borrow_mut().push((code, message.to_owned()));
+        }
+    }
+
+    let mut field = FieldType::new(FieldTypeCode::Datetime);
+    field.set_decimal(6);
+    let mut input = Chunk::new_chunk_with_capacity(&[field.clone()], 7);
+    for (row, core) in [
+        CoreTime::from_date(2024, 2, 29, 23, 59, 59, 123_456),
+        CoreTime::from_date(2019, 2, 0, 0, 0, 0, 0),
+        CoreTime::from_date(0, 1, 1, 0, 0, 0, 0),
+        CoreTime::from_date(2006, 0, 20, 1, 2, 3, 4),
+        CoreTime::default(),
+        CoreTime::default(),
+        CoreTime::from_date(2019, 2, 31, 23, 0, 0, 0),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        if row == 5 {
+            input.append_null(0);
+        } else {
+            input.append_time(0, Time::new(core, TimeType::DateTime, 6).unwrap());
+        }
+    }
+    let cases: [(&str, [i64; 7], &[usize]); 11] = [
+        ("year", [2024, 2019, 0, 2006, 0, -1, 2019], &[]),
+        ("month", [2, 2, 1, 0, 0, -1, 2], &[]),
+        ("dayofmonth", [29, 0, 1, 20, 0, -1, 31], &[]),
+        ("quarter", [1, 1, 1, 0, 0, -1, 1], &[]),
+        ("dayofweek", [5, -1, 7, -1, -1, -1, 1], &[1, 3, 4]),
+        ("dayofyear", [60, -1, 1, -1, -1, -1, 62], &[1, 3, 4]),
+        ("weekday", [3, 3, 5, 1, -1, -1, 6], &[4]),
+        ("week", [8, 0, 1, 0, -1, -1, 9], &[4]),
+        ("yearweek", [202408, -1, 1, -1, -1, -1, 201909], &[1, 3, 4]),
+        ("to_days", [739310, 737455, 1, 732665, -1, -1, 737486], &[4]),
+        (
+            "to_seconds",
+            [
+                63876470399,
+                63716112000,
+                86400,
+                63302259723,
+                -1,
+                -1,
+                63718873200,
+            ],
+            &[4],
+        ),
+    ];
+    let warning = |row| {
+        let time = match row {
+            1 => "2019-02-00 00:00:00.000000",
+            3 => "2006-00-20 01:02:03.000004",
+            4 => "0000-00-00 00:00:00.000000",
+            _ => unreachable!(),
+        };
+        (1292, format!("Incorrect datetime value: '{time}'"))
+    };
+    for (name, expected, warned) in cases {
+        let ctx = CalendarContext::default();
+        let expression = crate::new_function::new_function_base(
+            &ctx,
+            name,
+            FieldType::new(FieldTypeCode::LongLong),
+            vec![column(0, &field)],
+        )
+        .unwrap();
+        let mut result = Column::default();
+        eval_into(&expression, EvalType::Int, &ctx, &input, &mut result).unwrap();
+        for (row, want) in expected.into_iter().enumerate() {
+            assert_eq!(result.is_null(row), want == -1, "{name} row {row}");
+            if want != -1 {
+                assert_eq!(result.get_int64(row), want, "{name} row {row}");
+            }
+        }
+        assert_eq!(
+            *ctx.warnings.borrow(),
+            warned.iter().copied().map(warning).collect::<Vec<_>>(),
+            "{name}"
+        );
+    }
+
+    for (name, expected) in [
+        (
+            "date",
+            ["2024-02-29", "", "0000-01-01", "", "", "", "2019-02-31"],
+        ),
+        (
+            "last_day",
+            ["2024-02-29", "", "0000-01-31", "", "", "", "2019-02-28"],
+        ),
+    ] {
+        let ctx = CalendarContext {
+            no_zero_dates: true,
+            ..CalendarContext::default()
+        };
+        let expression = crate::new_function::new_function_base(
+            &ctx,
+            name,
+            FieldType::new(FieldTypeCode::Date),
+            vec![column(0, &field)],
+        )
+        .unwrap();
+        let mut result = Column::default();
+        eval_into(&expression, EvalType::Datetime, &ctx, &input, &mut result).unwrap();
+        for (row, want) in expected.into_iter().enumerate() {
+            assert_eq!(result.is_null(row), want.is_empty(), "{name} row {row}");
+            if !want.is_empty() {
+                assert_eq!(result.get_time(row).to_string(), want, "{name} row {row}");
+            }
+        }
+        assert_eq!(
+            *ctx.warnings.borrow(),
+            [warning(1), warning(3), warning(4)],
+            "{name}"
+        );
+    }
+
+    let ctx = CalendarContext {
+        no_zero_dates: true,
+        strict: true,
+        ..CalendarContext::default()
+    };
+    let expression = crate::new_function::new_function_base(
+        &ctx,
+        "dayofweek",
+        FieldType::new(FieldTypeCode::LongLong),
+        vec![column(0, &field)],
+    )
+    .unwrap();
+    let mut result = Column::default();
+    let error = eval_into(&expression, EvalType::Int, &ctx, &input, &mut result)
+        .unwrap_err()
+        .to_sql_error();
+    assert_eq!((error.code, error.message), warning(1));
+    for (row, expected) in [5, 0, 0, 0, 0, 0, 0].into_iter().enumerate() {
+        assert_eq!(result.get_int64(row), expected, "strict row {row}");
+        assert_eq!(result.is_null(row), row == 5, "strict row {row}");
+    }
+}
+
+#[test]
+fn vectorized_duration_parts_keep_go_microseconds_at_time_boundary() {
+    let mut field = FieldType::new(FieldTypeCode::Duration);
+    field.set_decimal(6);
+    let mut input = Chunk::new_chunk_with_capacity(&[field.clone()], 4);
+    for value in [
+        -3_020_399_999_999_000,
+        -1_234_567_000,
+        3_020_399_999_999_000,
+    ] {
+        input.append_int64(0, value);
+    }
+    input.append_null(0);
+    for (name, values) in [
+        ("hour", [838, 0, 838]),
+        ("minute", [59, 0, 59]),
+        ("second", [59, 1, 59]),
+        ("microsecond", [999_999, 234_567, 999_999]),
+        ("time_to_sec", [-3_020_399, -1, 3_020_399]),
+    ] {
+        let expression = crate::new_function::new_function_base(
+            &NoColumns,
+            name,
+            FieldType::new(FieldTypeCode::LongLong),
+            vec![column(0, &field)],
+        )
+        .unwrap();
+        let mut result = Column::default();
+        eval_into(&expression, EvalType::Int, &NoColumns, &input, &mut result).unwrap();
+        for (row, want) in values.into_iter().enumerate() {
+            assert!(!result.is_null(row), "{name} row {row}");
+            assert_eq!(result.get_int64(row), want, "{name} row {row}");
+        }
+        assert!(result.is_null(3), "{name}");
+    }
 }
 
 /// Go `TestVectorizedBuiltinTimeFunc`: date and duration extraction kernels.
@@ -929,6 +2172,515 @@ fn test_vectorized_builtin_ilike_func() {
         assert_eq!(
             Datum::Int(result.get_int64(row)),
             expression.eval(&NoColumns, input.get_row(row)).unwrap()
+        );
+    }
+}
+
+#[test]
+fn vectorized_string_integer_reads_mutably_shared_cells() {
+    let mut string = FieldType::new(FieldTypeCode::VarString);
+    string.set_charset_name("utf8mb4");
+    string.set_collation_name("utf8mb4_bin");
+    let fields = [string.clone()];
+    let mut input = Chunk::new_chunk_with_capacity(&fields, 2);
+    input.append_bytes(0, "🌿".repeat(2048).as_bytes());
+    input.append_null(0);
+    let mut alias = tidb_chunk::mutrow::MutRow::mut_row_from_types(&fields);
+    alias.shallow_copy_partial_row(0, &mut input, 0);
+    assert!(input.column(0).has_mutably_shared_bytes());
+
+    let mut result = Column::default();
+    for (name, expected) in [
+        ("length", 8192),
+        ("bit_length", 65536),
+        ("char_length", 2048),
+        ("ascii", 0xf0),
+        ("ord", 0xf09f8cbf),
+    ] {
+        let expression = crate::new_function::new_function_base(
+            &NoColumns,
+            name,
+            FieldType::new(FieldTypeCode::LongLong),
+            vec![column(0, &string)],
+        )
+        .unwrap();
+        eval_into(&expression, EvalType::Int, &NoColumns, &input, &mut result).unwrap();
+        assert_eq!(result.get_int64(0), expected, "{name}");
+        assert!(result.is_null(1), "{name}");
+    }
+}
+
+#[test]
+fn vectorized_quote_replaces_each_invalid_utf8_byte() {
+    let string = FieldType::new(FieldTypeCode::VarString);
+    let expression = crate::new_function::new_function_base(
+        &NoColumns,
+        "quote",
+        string.clone(),
+        vec![column(0, &string)],
+    )
+    .unwrap();
+    let mut input = Chunk::new_chunk_with_capacity(std::slice::from_ref(&string), 3);
+    input.append_bytes(0, b"\xf0\x9f\x92'\x00");
+    input.append_null(0);
+    input.append_bytes(0, b"");
+    input.set_sel(Some(vec![1, 0, 2, 0]));
+
+    let mut result = Column::default();
+    eval_into(&expression, EvalType::String, &NoColumns, &input, &mut result).unwrap();
+    for (row, expected) in ["NULL", "'���\\'\\0'", "''", "'���\\'\\0'"]
+        .into_iter()
+        .enumerate()
+    {
+        assert!(!result.is_null(row));
+        assert_eq!(result.get_bytes(row).as_ref(), expected.as_bytes());
+    }
+}
+
+#[test]
+fn vectorized_make_set_uses_only_the_64_bit_mask_and_keeps_raw_bytes() {
+    let text = types().remove(3);
+    let mut fields = vec![text.clone(); 67];
+    fields[0] = FieldType::new(FieldTypeCode::LongLong);
+    let mut input = Chunk::new_chunk_with_capacity(&fields, 1);
+    let mask = i64::MIN | 1;
+    input.append_int64(0, mask);
+    let mut values = vec![Datum::Int(mask)];
+    for col in 1..fields.len() {
+        let bytes: &[u8] = match col {
+            1 => b"\xff",
+            64 => b"\xe2\x82",
+            _ => b"ignored",
+        };
+        input.append_bytes(col, bytes);
+        values.push(Datum::new_string_datum(bytes));
+    }
+    let expression = crate::new_function::new_function_base(
+        &NoColumns,
+        "make_set",
+        text,
+        fields
+            .iter()
+            .enumerate()
+            .map(|(i, f)| column(i as i64, f))
+            .collect(),
+    )
+    .unwrap();
+    let mut result = Column::default();
+    eval_into(
+        &expression,
+        EvalType::String,
+        &NoColumns,
+        &input,
+        &mut result,
+    )
+    .unwrap();
+    assert_eq!(result.get_raw(0), b"\xff,\xe2\x82");
+    assert_eq!(
+        crate::string_fn::make_set(&values).unwrap().go_bytes(),
+        b"\xff,\xe2\x82"
+    );
+}
+
+#[test]
+fn vectorized_export_set_keeps_raw_bytes_and_the_signed_bit_test() {
+    let text = types().remove(3);
+    let integer = FieldType::new(FieldTypeCode::LongLong);
+    let fields = [
+        integer.clone(),
+        text.clone(),
+        text.clone(),
+        text.clone(),
+        integer,
+    ];
+    let mut input = Chunk::new_chunk_with_capacity(&fields, 3);
+    for (mask, on, off, separator, count) in [
+        (5, Some(&b"\xff"[..]), &b"\xe2\x82"[..], &b";"[..], 3),
+        (i64::MIN, Some(&b"1"[..]), &b"0"[..], &b""[..], 64),
+        (0, None, &b"0"[..], &b""[..], 0),
+    ] {
+        input.append_int64(0, mask);
+        match on {
+            Some(value) => input.append_bytes(1, value),
+            None => input.append_null(1),
+        }
+        input.append_bytes(2, off);
+        input.append_bytes(3, separator);
+        input.append_int64(4, count);
+    }
+    let expression = crate::new_function::new_function_base(
+        &NoColumns,
+        "export_set",
+        text,
+        fields
+            .iter()
+            .enumerate()
+            .map(|(i, f)| column(i as i64, f))
+            .collect(),
+    )
+    .unwrap();
+    let mut result = Column::default();
+    eval_into(
+        &expression,
+        EvalType::String,
+        &NoColumns,
+        &input,
+        &mut result,
+    )
+    .unwrap();
+    assert_eq!(result.get_raw(0), b"\xff;\xe2\x82;\xff");
+    assert_eq!(result.get_raw(1), &[b'0'; 64]);
+    assert!(result.is_null(2));
+    let scalar = crate::string_fn::export_set(&[
+        Datum::Int(5),
+        Datum::new_string_datum(b"\xff".as_slice()),
+        Datum::new_string_datum(b"\xe2\x82".as_slice()),
+        Datum::new_string_datum(";"),
+        Datum::Int(3),
+    ])
+    .unwrap();
+    assert_eq!(scalar.go_bytes(), b"\xff;\xe2\x82;\xff");
+}
+
+#[test]
+fn vectorized_translate_maps_literal_and_row_runes_in_selection_order() {
+    let text = types().remove(3);
+    let fields = [text.clone(), text.clone(), text.clone()];
+    let mut input = Chunk::new_chunk_with_capacity(&fields, 4);
+    let from = "a好a�🦀X";
+    let to = "🦀éqZ";
+    input.append_bytes(0, &["a好🦀X".as_bytes(), b"\xe2\x82"].concat());
+    input.append_bytes(1, from.as_bytes());
+    input.append_bytes(2, to.as_bytes());
+    input.append_bytes(0, "a好🦀X".as_bytes());
+    input.append_bytes(1, "好".as_bytes());
+    input.append_bytes(2, b"");
+    input.append_bytes(0, b"aX");
+    input.append_bytes(1, b"");
+    input.append_bytes(2, b"");
+    input.append_null(0);
+    input.append_bytes(1, b"a");
+    input.append_bytes(2, b"b");
+    input.set_sel(Some(vec![3, 0, 1, 2, 0]));
+
+    let literal = |s: &str| {
+        Expression::Constant(crate::constant::Constant::new(
+            Datum::new_string_datum(s),
+            text.clone(),
+        ))
+    };
+    for (mapping, expected) in [
+        ([column(1, &text), column(2, &text)], ["a🦀X", "aX"]),
+        ([literal(from), column(2, &text)], ["", ""]),
+        ([literal(from), literal(to)], ["🦀é", "🦀"]),
+    ] {
+        let [from, to] = mapping;
+        let expression = crate::new_function::new_function_base(
+            &NoColumns,
+            "translate",
+            text.clone(),
+            vec![column(0, &text), from, to],
+        )
+        .unwrap();
+        let mut result = Column::default();
+        eval_into(
+            &expression,
+            EvalType::String,
+            &NoColumns,
+            &input,
+            &mut result,
+        )
+        .unwrap();
+        assert!(result.is_null(0));
+        for (row, expected) in ["🦀éZZ", expected[0], expected[1], "🦀éZZ"]
+            .into_iter()
+            .enumerate()
+        {
+            assert!(!result.is_null(row + 1));
+            assert_eq!(result.get_raw(row + 1), expected.as_bytes());
+        }
+    }
+}
+
+#[test]
+fn vectorized_insert_preserves_noops_and_checks_only_edited_bytes() {
+    #[derive(Default)]
+    struct Warnings(std::cell::RefCell<Vec<u16>>);
+    impl Columns for Warnings {
+        fn get(&self, _: &[String]) -> Option<Datum> {
+            None
+        }
+
+        fn max_allowed_packet(&self) -> u64 {
+            8
+        }
+
+        fn append_warning(&self, code: u16, _: &str) {
+            self.0.borrow_mut().push(code);
+        }
+    }
+
+    let ctx = Warnings::default();
+    let text = types().remove(3);
+    let integer = FieldType::new(FieldTypeCode::LongLong);
+    let fields = [text.clone(), integer.clone(), integer, text.clone()];
+    let mut input = Chunk::new_chunk_with_capacity(&fields, 5);
+    for (source, position, length, replacement) in [
+        (&b"abcdefghi"[..], 0, 1, Some(&b"xyz"[..])),
+        (&b"abcdefghi"[..], 1, 1, Some(&b"xyz"[..])),
+        (&b"a\xe2\x82z"[..], 4, 1, Some(&b"\xff"[..])),
+        (&b"\xc3\xa9\xe2\x82"[..], 4, 1, Some(&b"xyz"[..])),
+        (&b"abcdefghi"[..], 0, 1, None),
+    ] {
+        input.append_bytes(0, source);
+        input.append_int64(1, position);
+        input.append_int64(2, length);
+        match replacement {
+            Some(bytes) => input.append_bytes(3, bytes),
+            None => input.append_null(3),
+        }
+    }
+    input.set_sel(Some(vec![4, 3, 2, 0, 1, 2]));
+    let expression = crate::new_function::new_function_base(
+        &ctx,
+        "insert_func",
+        text,
+        fields
+            .iter()
+            .enumerate()
+            .map(|(i, f)| column(i as i64, f))
+            .collect(),
+    )
+    .unwrap();
+    let mut result = Column::default();
+    eval_into(&expression, EvalType::String, &ctx, &input, &mut result).unwrap();
+    assert_eq!(ctx.0.into_inner(), [1301]);
+    assert!(result.is_null(0));
+    assert_eq!(result.get_raw(1), b"\xc3\xa9\xe2\x82");
+    assert_eq!(result.get_raw(2), b"a\xef\xbf\xbd\xef\xbf\xbd\xff");
+    assert_eq!(result.get_raw(3), b"abcdefghi");
+    assert!(result.is_null(4));
+    assert_eq!(result.get_raw(5), result.get_raw(2));
+}
+
+#[test]
+fn vectorized_pad_matches_go_packet_order_and_malformed_utf8() {
+    #[derive(Default)]
+    struct Warnings(std::cell::RefCell<Vec<u16>>);
+    impl Columns for Warnings {
+        fn get(&self, _: &[String]) -> Option<Datum> {
+            None
+        }
+
+        fn max_allowed_packet(&self) -> u64 {
+            1 << 26
+        }
+
+        fn append_warning(&self, code: u16, _: &str) {
+            self.0.borrow_mut().push(code);
+        }
+    }
+
+    let string = types().remove(3);
+    let mut binary = string.clone();
+    binary.set_charset_name("binary");
+    binary.set_collation_name("binary");
+    binary.add_flags(FieldTypeFlags::BINARY);
+    for pad in [string.clone(), binary] {
+        let fields = [
+            string.clone(),
+            FieldType::new(FieldTypeCode::LongLong),
+            pad.clone(),
+        ];
+        let mut input = Chunk::new_chunk_with_capacity(&fields, 7);
+        for (source, target, pad) in [
+            (Some(&b"\xc2"[..]), 3, Some(&b"\x80\xc2"[..])),
+            (None, -1, Some(&b"."[..])),
+            (Some(&b"x"[..]), -1, None),
+            (Some(&b"x"[..]), (1 << 62) + 1, None),
+            (Some(&b"x"[..]), 4_194_305, Some(&b""[..])),
+            (Some(&b"x"[..]), 2, Some(&b""[..])),
+            (Some(&b"\xc2"[..]), 9, Some(&b"\x80\xc2"[..])),
+        ] {
+            for (col, bytes) in [(0, source), (2, pad)] {
+                match bytes {
+                    Some(bytes) => input.append_bytes(col, bytes),
+                    None => input.append_null(col),
+                }
+            }
+            input.append_int64(1, target);
+        }
+        input.set_sel(Some(vec![4, 2, 1, 0, 5, 3, 0, 6]));
+        for op in ["lpad", "rpad"] {
+            let ctx = Warnings::default();
+            let expression = crate::new_function::new_function_base(
+                &ctx,
+                op,
+                string.clone(),
+                fields
+                    .iter()
+                    .enumerate()
+                    .map(|(i, f)| column(i as i64, f))
+                    .collect(),
+            )
+            .unwrap();
+            let mut result = Column::default();
+            eval_into(&expression, EvalType::String, &ctx, &input, &mut result).unwrap();
+            let binary = pad.is_binary_string();
+            assert_eq!(
+                ctx.0.into_inner(),
+                if binary { vec![1301, 1301] } else { vec![1301] }
+            );
+            assert_eq!(result.is_null(0), !binary);
+            for row in [1, 2, 5] {
+                assert!(result.is_null(row));
+            }
+            let expected: &[u8] = match (binary, op) {
+                (true, "lpad") => b"\x80\xc2\xc2",
+                (true, _) => b"\xc2\x80\xc2",
+                (false, "lpad") => "�\u{80}�".as_bytes(),
+                (false, _) => "\u{80}\u{80}�".as_bytes(),
+            };
+            for row in [3, 6] {
+                assert_eq!(result.get_raw(row), expected);
+            }
+            assert!(!result.is_null(4));
+            assert!(result.get_raw(4).is_empty());
+            let extended: &[u8] = match (binary, op) {
+                (true, "lpad") => b"\x80\xc2\x80\xc2\x80\xc2\x80\xc2\xc2",
+                (true, _) => b"\xc2\x80\xc2\x80\xc2\x80\xc2\x80\xc2",
+                (false, "lpad") => "�\u{80}\u{80}\u{80}\u{80}�\0\0�".as_bytes(),
+                (false, _) => "\u{80}\u{80}\u{80}\u{80}\u{80}�\0\0\0".as_bytes(),
+            };
+            assert_eq!(result.get_raw(7), extended);
+        }
+    }
+}
+
+#[test]
+fn vectorized_space_checks_packet_limit_for_each_selected_row() {
+    #[derive(Default)]
+    struct PacketLimit(std::cell::RefCell<Vec<u16>>);
+    impl Columns for PacketLimit {
+        fn get(&self, _: &[String]) -> Option<Datum> {
+            None
+        }
+
+        fn max_allowed_packet(&self) -> u64 {
+            6
+        }
+
+        fn truncate_level(&self) -> crate::ErrorLevel {
+            crate::ErrorLevel::Warn
+        }
+
+        fn append_warning(&self, code: u16, _: &str) {
+            self.0.borrow_mut().push(code);
+        }
+    }
+
+    let ctx = PacketLimit::default();
+    let integer = FieldType::new(FieldTypeCode::LongLong);
+    let mut input = Chunk::new_chunk_with_capacity(std::slice::from_ref(&integer), 4);
+    input.append_int64(0, -1);
+    input.append_int64(0, 6);
+    input.append_int64(0, 7);
+    input.append_null(0);
+    input.set_sel(Some(vec![2, 1, 0, 3, 2]));
+    let expression = crate::new_function::new_function_base(
+        &ctx,
+        "space",
+        FieldType::new(FieldTypeCode::VarString),
+        vec![column(0, &integer)],
+    )
+    .unwrap();
+    let mut result = Column::default();
+    eval_into(&expression, EvalType::String, &ctx, &input, &mut result).unwrap();
+    for row in [0, 3, 4] {
+        assert!(result.is_null(row));
+    }
+    for (row, expected) in [(1, "      "), (2, "")] {
+        assert!(!result.is_null(row));
+        assert_eq!(result.get_bytes(row).as_ref(), expected.as_bytes());
+    }
+    assert_eq!(ctx.0.into_inner(), [1301, 1301]);
+}
+
+#[test]
+fn vectorized_concat_checks_packets_in_argument_order() {
+    #[derive(Default)]
+    struct PacketLimit(std::cell::RefCell<Vec<(u16, String)>>);
+    impl Columns for PacketLimit {
+        fn get(&self, _: &[String]) -> Option<Datum> {
+            None
+        }
+
+        fn max_allowed_packet(&self) -> u64 {
+            3
+        }
+
+        fn truncate_level(&self) -> crate::ErrorLevel {
+            crate::ErrorLevel::Warn
+        }
+
+        fn append_warning(&self, code: u16, message: &str) {
+            self.0.borrow_mut().push((code, message.to_owned()));
+        }
+    }
+
+    let ctx = PacketLimit::default();
+    let mut string = types().remove(3);
+    string.set_flen(32);
+    let repeat = crate::new_function::new_function_base(
+        &ctx,
+        "repeat",
+        string.clone(),
+        vec![
+            column(1, &string),
+            Expression::Constant(crate::constant::Constant::new(
+                Datum::Int(2),
+                FieldType::new(FieldTypeCode::LongLong),
+            )),
+        ],
+    )
+    .unwrap();
+    let concat = crate::new_function::new_function_base(
+        &ctx,
+        "concat",
+        string.clone(),
+        vec![column(0, &string), repeat, column(2, &string)],
+    )
+    .unwrap();
+    let mut input = Chunk::new_chunk_with_capacity(&[string.clone(), string.clone(), string], 6);
+    for (first, second, third) in [
+        (Some("xxxx"), "b", ""),
+        (Some("a"), "zz", ""),
+        (None, "zz", ""),
+        (Some("a"), "b", ""),
+        (Some("aa"), "b", ""),
+        (Some(""), "b", "c"),
+    ] {
+        match first {
+            Some(text) => input.append_bytes(0, text.as_bytes()),
+            None => input.append_null(0),
+        }
+        input.append_bytes(1, second.as_bytes());
+        input.append_bytes(2, third.as_bytes());
+    }
+    let mut result = Column::default();
+    eval_into(&concat, EvalType::String, &ctx, &input, &mut result).unwrap();
+    for row in [0, 1, 2, 4] {
+        assert!(result.is_null(row));
+    }
+    assert_eq!(result.get_bytes(3).as_ref(), b"abb");
+    assert_eq!(result.get_bytes(5).as_ref(), b"bbc");
+    let warnings = ctx.0.into_inner();
+    assert_eq!(warnings.len(), 4);
+    for ((code, message), op) in warnings.iter().zip(["concat", "repeat", "repeat", "concat"]) {
+        assert_eq!(*code, 1301);
+        assert_eq!(
+            message,
+            &format!("Result of {op}() was larger than max_allowed_packet (3) - truncated")
         );
     }
 }
@@ -1382,13 +3134,19 @@ fn test_vectorized_builtin_string_func2() {
                 &[
                     vec![text("a中😀z"), Datum::Int(2)],
                     vec![text("abc"), Datum::Int(-1)],
+                    vec![text("abc"), Datum::Null],
                 ],
             );
         }
         agreement_rows(
             "substring",
             &[field.clone(), int.clone(), int.clone()],
-            &[vec![text("a中😀z"), Datum::Int(2), Datum::Int(2)]],
+            &[
+                vec![text("a中😀z"), Datum::Int(2), Datum::Int(2)],
+                vec![text("abc"), Datum::Int(2), Datum::Int(i64::MAX)],
+                vec![text("abc"), Datum::Null, Datum::Int(2)],
+                vec![text("abc"), Datum::Int(2), Datum::Null],
+            ],
         );
         // Go `ast.InsertFunc`.
         agreement_rows(
@@ -1459,6 +3217,22 @@ fn test_vectorized_builtin_string_func2() {
     for field in [int, FieldType::new(FieldTypeCode::Double), string] {
         agreement("field", &vec![field; 4]);
     }
+}
+
+#[test]
+fn substring_index_large_counts_find_the_requested_delimiter() {
+    use crate::string_fn::substring_index_byte_slice;
+
+    let dense = b"x|".repeat(1024);
+    for count in [511, 512, 700, 1024] {
+        let bytes = count as usize * 2;
+        assert_eq!(substring_index_byte_slice(&dense, b"|", count, false), &dense[..bytes - 1]);
+        assert_eq!(substring_index_byte_slice(&dense, b"|", -count, false), &dense[dense.len() - bytes + 2..]);
+    }
+
+    let sparse = b"abcdefg|".repeat(64);
+    assert_eq!(substring_index_byte_slice(&sparse, b"|", 200, false), sparse);
+    assert_eq!(substring_index_byte_slice(&sparse, b"|", -200, false), sparse);
 }
 
 /// Go `vecBuiltinTimeCases` and generated add/sub/time-diff cases: typed

@@ -346,7 +346,7 @@ impl IndexReaderExecutor {
     fn select_result(
         &self,
         statement: &tidb_distsql::remote_scan::PushdownStatementContext,
-        dag: tidb_proto::tipb::DagRequest,
+        dag: crate::cop_reader::TableReadDag<'_>,
         kv_ranges: Vec<tidb_txnkv::KeyRange>,
     ) -> Result<SelectResponseIter, ExecError> {
         crate::cop_reader::open_table_read(
@@ -355,8 +355,7 @@ impl IndexReaderExecutor {
             crate::cop_reader::TableRead {
                 store_type: tidb_kv::store_type::StoreType::TiKv,
                 dag,
-                key_ranges: kv_ranges,
-                key_range_hints: Vec::new(),
+                key_ranges: tidb_txnkv::PartitionedKeyRanges::new_non_partitioned(kv_ranges).into(),
                 partition_id_and_ranges: Vec::new(),
                 batch_cop: false,
                 schema_version: 0,
@@ -444,9 +443,17 @@ impl Executor for IndexReaderExecutor {
         // Go `needMergeSort(e.byItems, len(kvRanges))`: one request a key
         // range, merged by `byItems`.
         if !self.by_items.is_empty() && kv_ranges.len() > 1 {
+            let dag = crate::cop_reader::PreparedTableReadDag::new(&dag)
+                .map_err(|error| ExecError::Internal(error.into()))?;
             let results = kv_ranges
                 .into_iter()
-                .map(|kv_range| self.select_result(&statement, dag.clone(), vec![kv_range]))
+                .map(|kv_range| {
+                    self.select_result(
+                        &statement,
+                        crate::cop_reader::TableReadDag::Prepared(&dag),
+                        vec![kv_range],
+                    )
+                })
                 .collect::<Result<Vec<_>, _>>()?;
             let merged = crate::range_group_merge::SortedSelectResults::new(
                 self.meta.clone(),
@@ -458,7 +465,7 @@ impl Executor for IndexReaderExecutor {
             self.result = Some(ReaderResult::Sorted(merged));
             return Ok(());
         }
-        self.result = Some(ReaderResult::One(self.select_result(&statement, dag, kv_ranges)?));
+        self.result = Some(ReaderResult::One(self.select_result(&statement, dag.into(), kv_ranges)?));
         Ok(())
     }
 

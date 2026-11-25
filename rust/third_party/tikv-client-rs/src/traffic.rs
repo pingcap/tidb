@@ -110,10 +110,17 @@ pub(crate) struct NetworkCollector {
 }
 
 impl NetworkCollector {
-    pub(crate) fn on_request(&self, request: &dyn crate::store::Request) {
+    fn observes_traffic(&self) -> bool {
+        self.stale_read || self.exec_details.is_some() || self.details.is_some()
+    }
+
+    pub(crate) fn on_request(&self, request: &dyn crate::store::Request) -> Option<u64> {
+        if !self.observes_traffic() {
+            return None;
+        }
         let size = request.network_request_size();
         if size == 0 {
-            return;
+            return Some(size);
         }
         let cross_zone = self.access_location == crate::kv::AccessLocationType::CrossZone;
         let size_i64 = i64::try_from(size).unwrap_or(i64::MAX);
@@ -126,13 +133,22 @@ impl NetworkCollector {
         if self.stale_read {
             crate::stats::observe_stale_read_request(size, cross_zone);
         }
+        Some(size)
     }
 
     pub(crate) fn on_response(
         &self,
         request: &dyn crate::store::Request,
         response: &dyn std::any::Any,
+        request_size: Option<u64>,
     ) {
+        let observe_replica_read = matches!(
+            self.access_location,
+            crate::kv::AccessLocationType::LocalZone | crate::kv::AccessLocationType::CrossZone
+        ) && request.is_network_read_request();
+        if !self.observes_traffic() && !observe_replica_read {
+            return;
+        }
         let size = crate::store::network_response_size(response);
         if size == 0 {
             return;
@@ -148,12 +164,14 @@ impl NetworkCollector {
         if self.stale_read {
             crate::stats::observe_stale_read_response(size, cross_zone);
         }
-        if request.is_network_read_request() {
+        if observe_replica_read {
             let follower = request
                 .tikv_context()
                 .is_some_and(|context| context.replica_read);
             crate::stats::observe_read_request_bytes(
-                request.network_request_size().saturating_add(size),
+                request_size
+                    .unwrap_or_else(|| request.network_request_size())
+                    .saturating_add(size),
                 follower,
                 self.access_location,
             );
@@ -269,7 +287,7 @@ mod tests {
             AccessLocationType::LocalZone,
             EndpointType::TiKv,
         )
-        .on_response(&ordinary, &ordinary_response);
+        .on_response(&ordinary, &ordinary_response, None);
         let stale_in_before = crate::stats::stale_read_bytes("local", "in");
         collector(
             details.clone(),
@@ -277,7 +295,7 @@ mod tests {
             AccessLocationType::LocalZone,
             EndpointType::TiKv,
         )
-        .on_response(&stale, &stale_response);
+        .on_response(&stale, &stale_response, None);
         assert_eq!(details.snapshot().received_kv_total, 20);
         assert_eq!(details.snapshot().received_kv_cross_zone, 0);
         assert_eq!(
@@ -308,8 +326,8 @@ mod tests {
             AccessLocationType::CrossZone,
             EndpointType::TiFlash,
         );
-        mpp.on_request(&mpp_request);
-        mpp.on_response(&mpp_request, &mpp_response);
+        let request_size = mpp.on_request(&mpp_request);
+        mpp.on_response(&mpp_request, &mpp_response, request_size);
         let snapshot = details.snapshot();
         assert_eq!(
             snapshot.sent_mpp_total,
@@ -338,13 +356,14 @@ mod tests {
             ..Default::default()
         };
         let before = crate::stats::read_request_bytes_samples("follower", "cross-zone");
-        collector(
+        let follower_traffic = collector(
             details,
             false,
             AccessLocationType::CrossZone,
             EndpointType::TiKv,
-        )
-        .on_response(&follower, &response);
+        );
+        let request_size = follower_traffic.on_request(&follower);
+        follower_traffic.on_response(&follower, &response, request_size);
         let after = crate::stats::read_request_bytes_samples("follower", "cross-zone");
         assert_eq!(after.0 - before.0, 1);
         assert_eq!(

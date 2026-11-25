@@ -38,14 +38,19 @@ use crate::{Datum, EvalError};
 /// captured, `hex(elt(1,v))` and `hex(ltrim(v))` over a `varbinary` holding
 /// `0xFF` are `FF`, and `hex(quote(v))` is `27EFBFBD27`.
 pub(crate) fn eval_string(v: &Datum) -> Result<Option<Vec<u8>>, EvalError> {
+    Ok(eval_string_bytes(v)?.map(<[u8]>::to_vec))
+}
+
+/// Borrows the unchanged bytes of an already-cast `EvalString` argument.
+pub(crate) fn eval_string_bytes(v: &Datum) -> Result<Option<&[u8]>, EvalError> {
     match v {
         Datum::Null => Ok(None),
-        Datum::String(value) => Ok(Some(value.bytes().to_vec())),
-        Datum::Bytes(value) => Ok(Some(value.clone())),
+        Datum::String(value) => Ok(Some(value.bytes())),
+        Datum::Bytes(value) => Ok(Some(value)),
         // A BIT column's string is its bytes (Go `Column.EvalString`).
-        Datum::BinaryLiteral(value) | Datum::Bit(value) => Ok(Some(value.as_bytes().to_vec())),
-        Datum::Enum(value, _) => Ok(Some(value.name_bytes().to_vec())),
-        Datum::Set(value, _) => Ok(Some(value.name_bytes().to_vec())),
+        Datum::BinaryLiteral(value) | Datum::Bit(value) => Ok(Some(value.as_bytes())),
+        Datum::Enum(value, _) => Ok(Some(value.name_bytes())),
+        Datum::Set(value, _) => Ok(Some(value.name_bytes())),
         // Same contract as [`eval_int`]: the build declared this position
         // `types.ETString`, so an un-cast datum here means the signature was
         // reached without its build. Refuse loudly rather than re-deriving.

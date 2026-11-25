@@ -15,6 +15,7 @@ workspace = true
 tidb-keyspace = { path = "../tidb-keyspace" }
 tidb-metaservice = { path = "../tidb-metaservice" }
 tidb-gocontext = { path = "../tidb-gocontext" }
+tidb-goruntime = { path = "../tidb-goruntime" }
 tidb-dbterror = { path = "../tidb-dbterror" }
 tidb-errno = { path = "../tidb-errno" }
 tidb-terror = { path = "../tidb-terror" }
@@ -35,6 +36,7 @@ bytes.workspace = true
 chrono.workspace = true
 futures.workspace = true
 futures-timer.workspace = true
+hashbrown.workspace = true
 hyper.workspace = true
 prost.workspace = true
 serde_json.workspace = true

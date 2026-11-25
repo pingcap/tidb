@@ -12,8 +12,64 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use std::{cmp::Ordering, fmt::Write as _};
+
 use super::*;
-use std::cmp::Ordering;
+
+#[test]
+fn bit_literal_conversion_covers_every_byte_and_reports_first_error() {
+    let bytes: Vec<u8> = (u8::MIN..=u8::MAX).collect();
+    let mut quoted = String::from("b'");
+    for byte in &bytes {
+        write!(quoted, "{byte:08b}").unwrap();
+    }
+    quoted.push('\'');
+    assert_eq!(parse_bit_str(&quoted).unwrap().as_bytes(), bytes);
+    assert_eq!(
+        BinaryLiteral::from(bytes.clone()).to_bit_literal_string(false),
+        quoted,
+    );
+    assert_eq!(
+        BinaryLiteral::from(bytes).to_bit_literal_string(true),
+        format!("b'{}", quoted[2..].trim_start_matches('0')),
+    );
+
+    for prefix_len in 0..8 {
+        let payload = format!("{}00000000#000000?10000000", "1".repeat(prefix_len));
+        assert_eq!(
+            parse_bit_str(&format!("0b{payload}")),
+            Err(BinaryLiteralParseError::InvalidBitDigit(b'#')),
+        );
+    }
+    assert_eq!(
+        parse_bit_str("0b#01010101"),
+        Err(BinaryLiteralParseError::InvalidBitDigit(b'#')),
+    );
+}
+
+#[test]
+fn formats_and_parses_hex_across_encoder_blocks() {
+    let expected = format!("0x{}01Ab00", "fE".repeat(256));
+    let mut bytes = vec![0xfe; 256];
+    bytes.extend_from_slice(&[1, 0xab, 0]);
+    let literal = BinaryLiteral::from(bytes);
+    assert_eq!(parse_hex_str(&expected).unwrap(), literal);
+    assert_eq!(literal.to_string(), expected.to_ascii_lowercase());
+
+    let even_invalid = format!("x'{}gZ'", "00".repeat(256));
+    assert_eq!(
+        parse_hex_str(&even_invalid),
+        Err(BinaryLiteralParseError::InvalidHexDigit(b'g'))
+    );
+    assert_eq!(
+        parse_hex_str("0xg00Zf"),
+        Err(BinaryLiteralParseError::InvalidHexDigit(b'g'))
+    );
+    assert_eq!(
+        parse_hex_str("0x1zG"),
+        Err(BinaryLiteralParseError::InvalidHexDigit(b'z'))
+    );
+}
 
 /// Complete translation of `pkg/types/binary_literal_test.go::TestBinaryLiteral`.
 #[test]
@@ -165,6 +221,9 @@ fn test_binary_literal() {
     for &(input, expected) in string_rows {
         assert_eq!(BinaryLiteral::from(input).to_string(), expected);
     }
+    for byte in 0..=u8::MAX {
+        assert_eq!(BinaryLiteral::from(&[byte]).to_string(), format!("0x{byte:02x}"));
+    }
 
     let bit_string_rows: &[(&[u8], bool, &str)] = &[
         (&[], true, "b''"),
@@ -251,6 +310,7 @@ fn test_binary_literal() {
         (&[0, 1], &[0, 0, 2], Ordering::Less),
         (&[0, 1], &[1], Ordering::Equal),
         (&[0, 2, 1], &[1, 2], Ordering::Greater),
+        (&[0, 0, 1], &[0, 1, 0], Ordering::Less),
     ];
     for &(left, right, expected) in compare_rows {
         assert_eq!(
@@ -263,6 +323,43 @@ fn test_binary_literal() {
     assert_eq!(hex.to_raw_bytes(), b":;");
     let bit = BitLiteral::parse("b'00101011'").unwrap();
     assert_eq!(bit.to_raw_bytes(), b"+");
+}
+
+#[test]
+fn zero_prefixes_preserve_unsigned_values_at_word_boundaries() {
+    let significant = 0x8102_0304_0506_0708_u64.to_be_bytes();
+    let unpadded = BinaryLiteral::from(&significant);
+    for leading in 0..=24 {
+        let mut bytes = vec![0; leading + significant.len()];
+        let zero = BinaryLiteral::from(bytes.as_slice());
+        assert_eq!(zero.get_binary_literal4_cmp(), &[0]);
+        bytes[leading..].copy_from_slice(&significant);
+        let exact = BinaryLiteral::from(bytes.as_slice());
+        assert_eq!(exact.get_binary_literal4_cmp(), significant);
+        assert_eq!(exact.compare(&unpadded), Ordering::Equal);
+        assert_eq!(
+            exact.to_int(),
+            BinaryLiteralIntOutcome::Exact(u64::from_be_bytes(significant)),
+        );
+        bytes.push(1);
+        let overflowing = BinaryLiteral::from(bytes);
+        assert!(overflowing.to_int().is_truncated());
+        assert_eq!(overflowing.compare(&unpadded), Ordering::Greater);
+    }
+}
+
+#[test]
+fn hexadecimal_display_keeps_one_prefix_across_buffer_boundaries() {
+    for length in [2, 3, 8, 9, 31, 32, 33, 511, 512, 513, 1025] {
+        let bytes: Vec<_> = (0..length).map(|index| (index * 37) as u8).collect();
+        let mut expected = String::from("0x");
+        for byte in &bytes {
+            write!(&mut expected, "{byte:02x}").unwrap();
+        }
+
+        let literal = BinaryLiteral::from(bytes);
+        assert_eq!(literal.to_string(), expected, "{length} input bytes");
+    }
 }
 
 /// Production boundaries visible in `binary_literal.go` but not separately

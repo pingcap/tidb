@@ -14,26 +14,19 @@
 
 //! Go `pkg/util/vitess`: vitess shard-key hashing.
 
-use des::cipher::{Block, BlockCipherEncrypt, KeyInit};
-use des::Des;
-use std::sync::LazyLock;
-
-static NULL_KEY_BLOCK: LazyLock<Des> = LazyLock::new(|| {
-    Des::new_from_slice(&[0; 8]).expect("DES accepts the fixed-width all-zero Vitess key")
-});
+mod null_des;
 
 /// Implements Vitess' method of calculating a hash used for determining a shard
 /// key range: a DES encryption with a 64-bit null key over a 64-bit block.
 pub fn hash_uint64(shard_key: u64) -> u64 {
-    let mut block = Block::<Des>::default();
-    block.copy_from_slice(&shard_key.to_be_bytes());
-    NULL_KEY_BLOCK.encrypt_block(&mut block);
-    u64::from_be_bytes(block.into())
+    null_des::encrypt_null_key(shard_key)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use des::cipher::{Block, BlockCipherEncrypt, KeyInit};
+    use des::Des;
 
     fn to_hex(value: u64) -> String {
         format!("{value:016X}")
@@ -46,5 +39,16 @@ mod tests {
         assert_eq!(to_hex(hash_uint64(30573721600)), "1EFD6439F2050FFD");
         assert_eq!(to_hex(hash_uint64(116)), "1E1788FF0FDE093C");
         assert_eq!(to_hex(hash_uint64(u64::MAX)), "355550B2150E2451");
+    }
+
+    #[test]
+    fn null_key_specialization_matches_general_des() {
+        let cipher = Des::new_from_slice(&[0; 8]).unwrap();
+        for index in 0..4096_u64 {
+            let input = index.wrapping_mul(0x9e37_79b9_7f4a_7c15);
+            let mut block = Block::<Des>::from(input.to_be_bytes());
+            cipher.encrypt_block(&mut block);
+            assert_eq!(hash_uint64(input), u64::from_be_bytes(block.into()));
+        }
     }
 }

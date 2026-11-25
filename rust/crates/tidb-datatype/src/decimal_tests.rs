@@ -760,6 +760,31 @@ fn chunk_bridge_lossy_zero_clamp_renders_like_go_to_string() {
 
 use crate::decimal::{decimal_bin_size, DecimalCodecError, DecimalCodecWarning};
 
+#[test]
+fn decimal_write_bin_preserves_prefix_and_warning() {
+    let value = Decimal::from_signed_literal("-123456789.000000001");
+    let mut actual = b"prefix".to_vec();
+    let (payload, expected_warning) = value.to_bin(14, 5).unwrap();
+    assert_eq!(expected_warning, Some(DecimalCodecWarning::Truncated));
+    let warning = value.write_bin(14, 5, &mut actual).unwrap();
+    assert_eq!(warning, expected_warning);
+    assert_eq!(&actual[..6], b"prefix");
+    assert_eq!(&actual[6..], payload);
+    assert_eq!(
+        value.write_bin(14, -1, &mut actual),
+        Err(DecimalCodecError::BadNumber)
+    );
+    assert_eq!(&actual[6..], payload);
+}
+
+#[test]
+fn decimal_from_bin_retains_low_digits_of_an_overwide_partial_word() {
+    let (value, consumed, warning) = Decimal::from_bin(&[0x8a], 1, 0).unwrap();
+    assert_eq!(consumed, 1);
+    assert_eq!(warning, None);
+    assert_eq!(value.to_string(), "0");
+}
+
 /// Parses a signed decimal literal for the codec tests: `from_literal` takes
 /// sign-free text (the AST carries negation separately), so strip a leading `-`
 /// and negate.
@@ -1678,6 +1703,19 @@ fn decimal_division_clamps_fractional_words_at_the_codec_boundary() {
 }
 
 #[test]
+fn decimal_division_caps_display_scale_when_fraction_words_run_out() {
+    let left = parse_signed("94988407983821399442082961701976516120036455.8229349506262");
+    let right = parse_signed("-0.0000000000000000000000000074");
+    let (value, warning) = left.div_mysql_with_warning(&right, 4).unwrap();
+    assert_eq!(warning, Some(DecimalCodecWarning::Truncated));
+    assert_eq!(
+        value.to_string(),
+        "-12836271349165053978659859689456285962167088624720939273810810810810810.810810810"
+    );
+    assert_eq!(value.storage_scale(), 9);
+}
+
+#[test]
 fn integer_division_fast_path_matches_decimal_long_division() {
     for (left, right, increment, expected) in [
         ("7", "3", 4, "2.3333"),
@@ -2095,6 +2133,31 @@ fn from_bin_corrupt_word_keeps_go_zero_and_consumed_size() {
     assert_eq!(malformed.error, DecimalCodecError::BadNumber);
     assert_eq!(malformed.consumed, 0);
     assert_eq!(malformed.value.to_string(), "0");
+}
+
+#[test]
+fn from_bin_partial_fraction_matches_go_overflow() {
+    // Go performs the partial-word multiplication in int32, including for
+    // an out-of-range mantissa accepted after wrapping.
+    let (packed, consumed, warning) = MyDecimal::from_bin(&[0xab], 1, 1).unwrap();
+    let mut expected = [0; crate::MYDECIMAL_STRUCT_SIZE];
+    expected[..4].copy_from_slice(&[0, 1, 1, 0]);
+    expected[4..8].copy_from_slice(&5_032_704_i32.to_ne_bytes());
+    assert_eq!(packed.to_raw_bytes(), expected);
+    assert_eq!((consumed, warning), (1, None));
+    assert_eq!(
+        Decimal::from_bin(&[0xab], 1, 1).unwrap().0.to_string(),
+        "0.0"
+    );
+
+    let failure = Decimal::from_bin_with_failure(&[0xfe], 1, 1).unwrap_err();
+    assert_eq!(failure.error, DecimalCodecError::BadNumber);
+    assert_eq!(failure.consumed, 1);
+    assert!(failure.value.is_zero());
+    assert_eq!(
+        MyDecimal::from_bin(&[0xfe], 1, 1),
+        Err(DecimalCodecError::BadNumber)
+    );
 }
 
 /// The previous pad-both-sides comparison, kept as the differential

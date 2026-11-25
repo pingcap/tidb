@@ -122,12 +122,12 @@ fn coprocessor_request_encoding_matches_the_derived_message_for_every_range_shap
             ..KvrpcContext::default()
         }),
         tp: RequestType::Dag.raw(),
-        data: vec![9; 40],
+        data: vec![9; 40].into(),
         ranges: ranges
             .iter()
             .map(|range| tidb_proto::CoprocessorKeyRange {
-                start: range.start_key.to_vec(),
-                end: range.end_key.to_vec(),
+                start: range.start_key.to_vec().into(),
+                end: range.end_key.to_vec().into(),
             })
             .collect(),
         start_ts: 7,

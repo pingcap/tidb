@@ -33,6 +33,33 @@ const GO_64_SIZE_CLASSES: &[usize] = &[
     32768,
 ];
 
+const SMALL_SIZE_MAX: usize = 1_024;
+const MAX_SMALL_SIZE: usize = 32_768;
+const SMALL_SIZE_DIV: usize = 8;
+const LARGE_SIZE_DIV: usize = 128;
+
+const SIZE_CLASSES_BY_8: [u16; SMALL_SIZE_MAX / SMALL_SIZE_DIV + 1] =
+    size_class_table(0, SMALL_SIZE_DIV);
+const SIZE_CLASSES_BY_128: [u16; (MAX_SMALL_SIZE - SMALL_SIZE_MAX) / LARGE_SIZE_DIV + 1] =
+    size_class_table(SMALL_SIZE_MAX, LARGE_SIZE_DIV);
+
+/// Within each table's range the classes are aligned to its step, so a rounded
+/// request selects the first class that fits.
+const fn size_class_table<const N: usize>(start: usize, step: usize) -> [u16; N] {
+    let mut result = [0; N];
+    let mut bucket = 0;
+    let mut class = 0;
+    while bucket < N {
+        let bytes = start + bucket * step;
+        while GO_64_SIZE_CLASSES[class] < bytes {
+            class += 1;
+        }
+        result[bucket] = GO_64_SIZE_CLASSES[class] as u16;
+        bucket += 1;
+    }
+    result
+}
+
 /// Whether a Go slice's element type contains pointers and therefore uses a
 /// scanned allocation. Above the malloc-header threshold, scanned and noscan
 /// slices with the same element width can have different observable caps.
@@ -44,10 +71,10 @@ pub enum GoSliceElementLayout {
     PointerBearing,
 }
 
+#[inline]
 fn go_64_round_allocation(bytes: usize, layout: GoSliceElementLayout) -> usize {
     const MALLOC_HEADER: usize = 8;
     const MIN_HEADER_SIZE: usize = 8 * 64;
-    const MAX_SMALL_SIZE: usize = 32_768;
     const PAGE_SIZE: usize = 8_192;
 
     if bytes <= MAX_SMALL_SIZE - MALLOC_HEADER {
@@ -55,12 +82,12 @@ fn go_64_round_allocation(bytes: usize, layout: GoSliceElementLayout) -> usize {
             usize::from(layout == GoSliceElementLayout::PointerBearing && bytes > MIN_HEADER_SIZE)
                 * MALLOC_HEADER;
         let requested = bytes + header;
-        return GO_64_SIZE_CLASSES
-            .iter()
-            .copied()
-            .find(|class| *class >= requested)
-            .expect("small Go allocation has a size class")
-            - header;
+        let class = if requested <= SMALL_SIZE_MAX {
+            SIZE_CLASSES_BY_8[requested.div_ceil(SMALL_SIZE_DIV)]
+        } else {
+            SIZE_CLASSES_BY_128[(requested - SMALL_SIZE_MAX).div_ceil(LARGE_SIZE_DIV)]
+        };
+        return usize::from(class) - header;
     }
     bytes
         .checked_add(PAGE_SIZE - 1)
@@ -68,10 +95,40 @@ fn go_64_round_allocation(bytes: usize, layout: GoSliceElementLayout) -> usize {
         & !(PAGE_SIZE - 1)
 }
 
+#[cfg(test)]
+mod tests {
+    use super::{go_64_round_allocation, GoSliceElementLayout, GO_64_SIZE_CLASSES, MAX_SMALL_SIZE};
+
+    #[test]
+    fn size_class_lookup_matches_search() {
+        for bytes in 0..=2 * MAX_SMALL_SIZE {
+            for layout in [GoSliceElementLayout::NoPointers, GoSliceElementLayout::PointerBearing] {
+                let expected = if bytes <= MAX_SMALL_SIZE - 8 {
+                    let header = if layout == GoSliceElementLayout::PointerBearing && bytes > 512 {
+                        8
+                    } else {
+                        0
+                    };
+                    GO_64_SIZE_CLASSES
+                        .iter()
+                        .copied()
+                        .find(|&class| class >= bytes + header)
+                        .unwrap()
+                        - header
+                } else {
+                    bytes.div_ceil(8192) * 8192
+                };
+                assert_eq!(go_64_round_allocation(bytes, layout), expected);
+            }
+        }
+    }
+}
+
 /// Computes Go 1.25's next 64-bit slice capacity for a concrete element
 /// width/layout. This is public so higher-level source-shaped codecs can use
 /// the same allocator rule rather than duplicating it.
 #[doc(hidden)]
+#[inline]
 pub fn go_64_next_slice_capacity_for_element(
     new_len: usize,
     old_capacity: usize,

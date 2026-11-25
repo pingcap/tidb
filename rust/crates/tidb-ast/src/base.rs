@@ -25,7 +25,7 @@ use std::ops::{Deref, DerefMut};
 use std::sync::OnceLock;
 
 use tidb_charset::{Encoding, TransformOp};
-use tidb_parser_util::unescape_char;
+use tidb_parser_util::append_unescaped_char;
 
 const HEX_DIGITS: &[u8; 16] = b"0123456789abcdef";
 
@@ -311,7 +311,7 @@ fn convert_binary_string_literals(
                 }
             } else if byte == b'\\' && !no_backslash_escapes && source_index + 1 < source_end {
                 source_index += 1;
-                content.extend(unescape_char(source[source_index]));
+                append_unescaped_char(&mut content, source[source_index]);
                 source_index += 1;
             } else {
                 content.push(byte);

@@ -2015,10 +2015,10 @@ impl KvRpcClient {
             );
             return result;
         }
-        if let (Some(worker), Some(batch_request)) = (
-            self.batch_worker.as_ref(),
-            BatchCommandRequest::from_store_request(request),
-        ) {
+        if let Some((worker, batch_request)) = self.batch_worker.as_ref().and_then(|worker| {
+            BatchCommandRequest::from_store_request(request)
+                .map(|batch_request| (worker, batch_request))
+        }) {
             let timeout = timeout.unwrap_or(self.timeout);
             let deadline = tokio::time::Instant::now() + timeout;
             let mut submission = match worker

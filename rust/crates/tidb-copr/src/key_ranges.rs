@@ -24,19 +24,37 @@
 //! those references immutable and owns or shares every represented range.
 
 use std::fmt;
+use std::ops::{Index, Range};
 use std::sync::Arc;
 
+use prost::bytes::Bytes;
 use tidb_proto::CoprocessorKeyRange;
 
 use tidb_txnkv::Key;
 use tidb_txnkv::KeyRange;
+use tidb_txnkv::PartitionedKeyRanges;
+
+#[derive(Clone, Debug)]
+enum RangeStorage {
+    Owned(Arc<[KeyRange]>),
+    Request(Arc<PartitionedKeyRanges>),
+}
+
+impl RangeStorage {
+    fn as_slice(&self) -> &[KeyRange] {
+        match self {
+            Self::Owned(ranges) => ranges,
+            Self::Request(ranges) => ranges.first_partition_ranges(),
+        }
+    }
+}
 
 /// A key-range sequence with optional split ranges before and after a shared
 /// middle span.
 #[derive(Clone, Debug)]
 pub struct KeyRanges {
     first: Option<KeyRange>,
-    mid: Arc<[KeyRange]>,
+    mid: RangeStorage,
     mid_start: usize,
     mid_end: usize,
     last: Option<KeyRange>,
@@ -48,11 +66,30 @@ impl KeyRanges {
         let mid_end = ranges.len();
         Self {
             first: None,
-            mid: ranges.into(),
+            mid: RangeStorage::Owned(ranges.into()),
             mid_start: 0,
             mid_end,
             last: None,
         }
+    }
+
+    pub(crate) fn from_request(
+        ranges: Arc<PartitionedKeyRanges>,
+        span: Range<usize>,
+        first: Option<KeyRange>,
+        last: Option<KeyRange>,
+    ) -> Self {
+        Self {
+            first,
+            mid: RangeStorage::Request(ranges),
+            mid_start: span.start,
+            mid_end: span.end,
+            last,
+        }
+    }
+
+    fn middle(&self) -> &[KeyRange] {
+        &self.mid.as_slice()[self.mid_start..self.mid_end]
     }
 
     /// Returns the number of ranges in the sequence.
@@ -83,7 +120,7 @@ impl KeyRanges {
 
         let mid_len = self.mid_end - self.mid_start;
         if index < mid_len {
-            return Some(&self.mid[self.mid_start + index]);
+            return Some(&self.mid.as_slice()[self.mid_start + index]);
         }
         if index == mid_len {
             return self.last.as_ref();
@@ -111,31 +148,35 @@ impl KeyRanges {
         assert!(from <= to, "key range slice starts after its end");
         assert!(to <= self.len(), "key range slice end out of bounds");
 
-        let mut ranges = Self::default();
-        if let Some(first) = self.first.as_ref() {
-            if from == 0 && to > 0 {
-                ranges.first = Some(first.clone());
-            }
+        let first = self.first.as_ref().and_then(|first| {
+            let include_first = from == 0 && to > 0;
             from = from.saturating_sub(1);
             to = to.saturating_sub(1);
-        }
+            include_first.then(|| first.clone())
+        });
 
         let mid_len = self.mid_end - self.mid_start;
-        if to <= mid_len {
-            ranges.mid = Arc::clone(&self.mid);
-            ranges.mid_start = self.mid_start + from;
-            ranges.mid_end = self.mid_start + to;
+        let (mid, mid_start, mid_end) = if from <= mid_len {
+            (
+                self.mid.clone(),
+                self.mid_start + from,
+                self.mid_start + to.min(mid_len),
+            )
         } else {
-            if from <= mid_len {
-                ranges.mid = Arc::clone(&self.mid);
-                ranges.mid_start = self.mid_start + from;
-                ranges.mid_end = self.mid_end;
-            }
-            if from < to {
-                ranges.last = self.last.clone();
-            }
+            (RangeStorage::Owned(Arc::default()), 0, 0)
+        };
+        let last = if to > mid_len && from < to {
+            self.last.clone()
+        } else {
+            None
+        };
+        Self {
+            first,
+            mid,
+            mid_start,
+            mid_end,
+            last,
         }
-        ranges
     }
 
     /// Applies `function` to every range in first/middle/last order.
@@ -143,7 +184,7 @@ impl KeyRanges {
         if let Some(first) = self.first.as_ref() {
             function(first);
         }
-        for range in &self.mid[self.mid_start..self.mid_end] {
+        for range in self.middle() {
             function(range);
         }
         if let Some(last) = self.last.as_ref() {
@@ -156,35 +197,63 @@ impl KeyRanges {
     /// If `key` is strictly inside one range, that range is split into two
     /// boundary ranges.  Otherwise the existing range boundaries are kept.
     pub fn split(&self, key: &Key) -> (Self, Self) {
+        let key = key.as_bytes();
+        let (index, range) = self.split_position(key);
+        (self.split_left(index, range, key), self.split_right(index, range, key))
+    }
+
+    pub(crate) fn split_for_paging(&self, key: &[u8], descending: bool) -> Self {
+        let (index, range) = self.split_position(key);
+        if descending {
+            self.split_left(index, range, key)
+        } else {
+            self.split_right(index, range, key)
+        }
+    }
+
+    #[inline]
+    fn split_position(&self, key: &[u8]) -> (usize, Option<&KeyRange>) {
+        let ends_before = |range: &KeyRange| {
+            let end = range.end_key.as_bytes();
+            !end.is_empty() && end <= key
+        };
+        let index = if self.first.is_none() && self.last.is_none() {
+            self.middle().partition_point(ends_before)
+        } else {
+            self.split_with_boundaries(ends_before)
+        };
+        let range = self.get(index).filter(|range| key > range.start_key.as_bytes());
+        (index, range)
+    }
+
+    fn split_with_boundaries(&self, ends_before: impl Fn(&KeyRange) -> bool) -> usize {
         let mut left_index = 0;
         let mut right_index = self.len();
         while left_index < right_index {
             let middle = left_index + (right_index - left_index) / 2;
-            let range = self.ref_at(middle);
-            if range.end_key.as_bytes().is_empty() || range.end_key > *key {
-                right_index = middle;
-            } else {
+            if ends_before(self.ref_at(middle)) {
                 left_index = middle + 1;
+            } else {
+                right_index = middle;
             }
         }
-        let split_index = left_index;
+        left_index
+    }
 
-        if split_index < self.len() {
-            let range = self.ref_at(split_index);
-            if key > &range.start_key {
-                let mut left = self.slice(0, split_index);
-                left.last = Some(KeyRange::new(range.start_key.clone(), key.clone()));
-
-                let mut right = self.slice(split_index + 1, self.len());
-                right.first = Some(KeyRange::new(key.clone(), range.end_key.clone()));
-                return (left, right);
-            }
+    fn split_left(&self, index: usize, range: Option<&KeyRange>, key: &[u8]) -> Self {
+        let mut left = self.slice(0, index);
+        if let Some(range) = range {
+            left.last = Some(KeyRange::new(range.start_key.clone(), Key::from(key)));
         }
+        left
+    }
 
-        (
-            self.slice(0, split_index),
-            self.slice(split_index, self.len()),
-        )
+    fn split_right(&self, index: usize, range: Option<&KeyRange>, key: &[u8]) -> Self {
+        let mut right = self.slice(index + usize::from(range.is_some()), self.len());
+        if let Some(range) = range {
+            right.first = Some(KeyRange::new(Key::from(key), range.end_key.clone()));
+        }
+        right
     }
 
     /// Copies the represented sequence into a contiguous range vector.
@@ -201,31 +270,124 @@ impl KeyRanges {
 
     /// Converts every range to the generated coprocessor protobuf type.
     ///
-    /// Go aliases the identically laid-out structs through `unsafe.Pointer`.
-    /// Rust keeps the same values while explicitly cloning both byte fields,
-    /// so no layout or lifetime assumption crosses the protobuf boundary.
+    /// Native boundaries share packed storage when more than one is present.
     pub fn to_pb_ranges(&self) -> Vec<CoprocessorKeyRange> {
-        let mut ranges = Vec::with_capacity(self.len());
-        self.for_each(|range| {
-            ranges.push(CoprocessorKeyRange {
-                start: range.start_key.as_bytes().to_vec(),
-                end: range.end_key.as_bytes().to_vec(),
-            });
-        });
-        ranges
+        if self.first.is_none() && self.last.is_none() {
+            key_ranges_to_proto(self.middle().iter().map(range_boundaries))
+        } else {
+            key_ranges_to_proto(self.iter().map(range_boundaries))
+        }
     }
+
+    pub(crate) fn to_api_v2_pb_ranges(
+        &self,
+        codec: &tikv_client::request::ApiV2Codec,
+    ) -> Vec<CoprocessorKeyRange> {
+        if self.first.is_none() && self.last.is_none() {
+            codec.encode_cop_range_bounds(self.middle().iter().map(range_boundaries))
+        } else {
+            codec.encode_cop_range_bounds(self.iter().map(range_boundaries))
+        }
+    }
+
+    /// Iterates over the logical ranges in order.
+    pub fn iter(&self) -> impl Iterator<Item = &KeyRange> + Clone {
+        self.first
+            .iter()
+            .chain(self.middle())
+            .chain(self.last.iter())
+    }
+}
+
+fn range_boundaries(range: &KeyRange) -> (&[u8], &[u8]) {
+    (range.start_key.as_slice(), range.end_key.as_slice())
+}
+
+/// Projects ordered ranges, sharing the byte allocation across a batch.
+pub(crate) fn key_ranges_to_proto<'a>(
+    mut ranges: impl Iterator<Item = (&'a [u8], &'a [u8])> + Clone,
+) -> Vec<CoprocessorKeyRange> {
+    if ranges.size_hint() == (1, Some(1)) {
+        let (start, end) = ranges.next().expect("one range");
+        let range = if start.is_empty() || end.is_empty() {
+            CoprocessorKeyRange {
+                start: Bytes::copy_from_slice(start),
+                end: Bytes::copy_from_slice(end),
+            }
+        } else {
+            let mut packed = Vec::with_capacity(start.len() + end.len());
+            packed.extend_from_slice(start);
+            packed.extend_from_slice(end);
+            // Pre-share the owner so cloning the outgoing request does not
+            // promote each boundary into a separate ref-counted allocation.
+            let mut packed = Bytes::from_owner(packed);
+            CoprocessorKeyRange {
+                start: packed.split_to(start.len()),
+                end: packed,
+            }
+        };
+        return vec![range];
+    }
+    let byte_len = ranges
+        .clone()
+        .map(|(start, end)| start.len() + end.len())
+        .sum();
+    let mut packed = Vec::with_capacity(byte_len);
+    for (start, end) in ranges.clone() {
+        packed.extend_from_slice(start);
+        packed.extend_from_slice(end);
+    }
+    // The packed bytes will back many slices. Establish their shared owner
+    // before slicing instead of promoting an exclusive Bytes on its first clone.
+    let packed = if packed.is_empty() {
+        Bytes::new()
+    } else {
+        Bytes::from_owner(packed)
+    };
+    let mut offset = 0;
+    ranges
+        .map(|(start, end)| {
+            let middle = offset + start.len();
+            let limit = middle + end.len();
+            let range = CoprocessorKeyRange {
+                start: packed.slice(offset..middle),
+                end: packed.slice(middle..limit),
+            };
+            offset = limit;
+            range
+        })
+        .collect()
 }
 
 impl Default for KeyRanges {
     fn default() -> Self {
-        Self::new(Vec::new())
+        Self {
+            first: None,
+            mid: RangeStorage::Owned(Arc::default()),
+            mid_start: 0,
+            mid_end: 0,
+            last: None,
+        }
+    }
+}
+
+impl From<Vec<KeyRange>> for KeyRanges {
+    fn from(ranges: Vec<KeyRange>) -> Self {
+        Self::new(ranges)
+    }
+}
+
+impl Index<usize> for KeyRanges {
+    type Output = KeyRange;
+
+    fn index(&self, index: usize) -> &Self::Output {
+        self.ref_at(index)
     }
 }
 
 impl PartialEq for KeyRanges {
     fn eq(&self, other: &Self) -> bool {
-        self.len() == other.len()
-            && (0..self.len()).all(|index| self.ref_at(index) == other.ref_at(index))
+        self.len() == other.len() && self.iter().eq(other.iter())
     }
 }
 
@@ -315,7 +477,53 @@ mod tests {
         ]);
         let slice = ranges.slice(1, 2);
 
-        assert!(Arc::ptr_eq(&ranges.mid, &slice.mid));
+        assert!(std::ptr::eq(ranges.ref_at(1), slice.ref_at(0)));
         assert_eq!((slice.mid_start, slice.mid_end), (1, 2));
+    }
+
+    #[test]
+    fn cloned_native_singleton_shares_both_boundary_bytes() {
+        let native = KeyRanges::new(vec![KeyRange::new(
+            b"a\0".as_slice().into(),
+            b"a\xff".as_slice().into(),
+        )])
+        .to_pb_ranges();
+        let range = &native[0];
+        assert_eq!(
+            range.start.as_ptr().addr() + range.start.len(),
+            range.end.as_ptr().addr(),
+        );
+        let cloned = range.clone();
+        assert_eq!(cloned.start.as_ptr(), range.start.as_ptr());
+        assert_eq!(cloned.end.as_ptr(), range.end.as_ptr());
+        drop(native);
+        assert_eq!(cloned.start.as_ref(), b"a\0");
+        assert_eq!(cloned.end.as_ref(), b"a\xff");
+    }
+
+    #[test]
+    fn native_projection_keeps_split_edges_alive_in_order() {
+        let native = {
+            let ranges = KeyRanges::new(vec![
+                KeyRange::new(b"a".as_slice().into(), b"d".as_slice().into()),
+                KeyRange::new(b"f".as_slice().into(), b"k".as_slice().into()),
+                KeyRange::new(b"p".as_slice().into(), b"z".as_slice().into()),
+            ]);
+            let (_, tail) = ranges.split(&b"b".as_slice().into());
+            let (bounded, _) = tail.split(&b"w".as_slice().into());
+            bounded.to_pb_ranges()
+        };
+        let actual: Vec<_> = native
+            .iter()
+            .map(|range| (range.start.as_ref(), range.end.as_ref()))
+            .collect();
+        assert_eq!(
+            actual,
+            [
+                (b"b".as_slice(), b"d".as_slice()),
+                (b"f".as_slice(), b"k".as_slice()),
+                (b"p".as_slice(), b"w".as_slice()),
+            ],
+        );
     }
 }

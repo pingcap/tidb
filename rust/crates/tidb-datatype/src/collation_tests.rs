@@ -378,7 +378,13 @@ fn test_campare_invalid_utf8_rune() {
             assert!(!invalid_after_prefix.is_empty());
             assert_eq!(suffix_after_invalid, invalid_after_prefix);
         } else {
-            assert_eq!(invalid_at_start, b"?");
+            // Go's GB18030 encoder can represent the decoded RuneError.
+            let replacement: &[u8] = if collation == Collation::Gb18030Bin {
+                b"\x84\x31\xA4\x37"
+            } else {
+                b"?"
+            };
+            assert_eq!(invalid_at_start, replacement);
             assert!(!invalid_after_prefix.is_empty());
             assert!(!suffix_after_invalid.is_empty());
         }
@@ -570,5 +576,22 @@ fn gb18030_bin_key_pads_four_byte_pua_runes_like_go() {
     assert_eq!(
         Collation::Gb18030Bin.compare("\u{E78D}".as_bytes(), "\u{E78D}".as_bytes()),
         Ordering::Equal
+    );
+}
+
+#[test]
+fn gb_binary_collations_follow_go_on_invalid_groups() {
+    let private_use = "\u{E78D}".as_bytes();
+    assert_eq!(Collation::GbkBin.key(private_use), b"?");
+    assert_eq!(Collation::GbkBin.key("\u{9FB9}".as_bytes()), b"?");
+    assert_eq!(Collation::GbkBin.compare(private_use, b"?"), Ordering::Equal);
+
+    // The UTF-8 lead byte tells Go to pass two bytes to the GB18030 encoder.
+    // This emits a RuneError followed by the ASCII 'a' as one group.
+    let malformed = b"\x80a";
+    assert_eq!(Collation::Gb18030Bin.key(malformed), b"\x84\x31\xA4\x37a");
+    assert_eq!(
+        Collation::Gb18030Bin.compare(malformed, "\u{FFFD}a".as_bytes()),
+        Ordering::Greater
     );
 }

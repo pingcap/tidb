@@ -21,6 +21,7 @@
 //! plans against the table's indexes and handle, which a metadata-only
 //! stand-in does not carry.
 
+use std::ops::ControlFlow;
 use std::sync::{Arc, Mutex};
 use tidb_datatype::FieldTypeFlags;
 use crate::sequence::SequenceDef;
@@ -305,10 +306,105 @@ pub fn cluster_table(
     table: &TableInfo,
     auto: &AutoIdSource<'_>,
 ) -> Result<TableCommon, String> {
+    cluster_table_impl(table, auto, None)
+}
+
+/// Loads a stored catalog table, retaining its metadata pointer when the
+/// runtime layout needs only the public columns and allocators.
+pub fn cluster_table_from_shared_meta(
+    table: &GoShared<TableInfo>,
+    auto: &AutoIdSource<'_>,
+) -> Result<TableCommon, String> {
+    cluster_table_impl(&table.read(), auto, Some(table))
+}
+
+fn cluster_table_impl(
+    table: &TableInfo,
+    auto: &AutoIdSource<'_>,
+    source: Option<&GoShared<TableInfo>>,
+) -> Result<TableCommon, String> {
     if table.state != SchemaState::PUBLIC {
         return Err(format!("its schema state is {} rather than public", table.state.0));
     }
-    table_from_meta(table, auto)
+    table_from_meta_impl(table, auto, source)
+}
+
+struct PlainColumns {
+    columns: Vec<crate::column::Column>,
+    pk_handle_offset: Option<usize>,
+    auto_increment_offset: Option<usize>,
+}
+
+/// Build the public column layout from the same metadata reads that create
+/// the runtime columns. Other layouts use the general metadata loader.
+fn load_plain_columns(table: &TableInfo) -> Option<PlainColumns> {
+    if table.is_common_handle {
+        return None;
+    }
+    let mut columns: Vec<crate::column::Column> = Vec::with_capacity(table.columns.len());
+    let mut pk_handle = None;
+    let mut auto_increment_offset = None;
+    let loaded = table.columns.visit_deref(|shared, column| {
+        let offset = columns.len();
+        if column.state != SchemaState::PUBLIC
+            || column.offset != offset as i64
+            || column.hidden
+            || column.is_generated()
+            || !column.default_value.is_nil()
+            || !column.origin_default_value.is_nil()
+            || (column.get_type() == tidb_datatype::FieldTypeCode::Bit
+                && column.origin_default_value_bit.is_allocated())
+            || column.changing_field_type.is_some()
+        {
+            return ControlFlow::Break(());
+        }
+        if pk_handle.is_none()
+            && table.pk_is_handle
+            && column.field_type.flags() & PRI_KEY_FLAG != 0
+        {
+            pk_handle = Some((offset, column.id));
+        }
+        if auto_increment_offset.is_none()
+            && column.field_type.has_flag(FieldTypeFlags::AUTO_INCREMENT)
+        {
+            auto_increment_offset = Some(offset);
+        }
+        columns.push(crate::column::Column::new(shared.clone()));
+        ControlFlow::Continue(())
+    });
+    if loaded.is_break() || (table.pk_is_handle && pk_handle.is_none()) {
+        return None;
+    }
+    let pk_handle_offset = pk_handle.map(|(offset, id)| {
+        columns[..offset]
+            .iter()
+            .position(|prior| prior.read().id == id)
+            .unwrap_or(offset)
+    });
+    Some(PlainColumns {
+        columns,
+        pk_handle_offset,
+        auto_increment_offset,
+    })
+}
+
+fn install_auto_ids(
+    runtime: &mut TableCommon,
+    table: &TableInfo,
+    auto: &AutoIdSource<'_>,
+    increment_offset: Option<usize>,
+) {
+    // A table using the hidden row ID needs the allocator even without an
+    // explicit AUTO_INCREMENT column.
+    if increment_offset.is_some() || (!table.pk_is_handle && !table.is_common_handle) {
+        runtime.set_auto_id(auto.allocator_for(table));
+    }
+    if let Some(offset) = increment_offset {
+        runtime.set_auto_increment_offset(offset);
+    }
+    if table.sep_auto_inc() {
+        runtime.set_row_id(auto.row_allocator_for(table));
+    }
 }
 
 /// Go `tables.TableFromMeta`: build intermediate DDL states as well as public
@@ -316,6 +412,25 @@ pub fn cluster_table(
 pub fn table_from_meta(
     table: &TableInfo,
     auto: &AutoIdSource<'_>,
+) -> Result<TableCommon, String> {
+    table_from_meta_impl(table, auto, None)
+}
+
+/// Builds a runtime table from newly read metadata, including intermediate
+/// DDL states. A plain table can retain this record without cloning it.
+pub fn table_from_owned_meta(
+    table: TableInfo,
+    auto: &AutoIdSource<'_>,
+) -> Result<TableCommon, String> {
+    let table = GoShared::new(table);
+    let info = table.read();
+    table_from_meta_impl(&info, auto, Some(&table))
+}
+
+fn table_from_meta_impl(
+    table: &TableInfo,
+    auto: &AutoIdSource<'_>,
+    source: Option<&GoShared<TableInfo>>,
 ) -> Result<TableCommon, String> {
     if table.state == SchemaState::NONE {
         return Err(crate::table_errors::ERR_TABLE_STATE_CANT_NONE
@@ -329,7 +444,38 @@ pub fn table_from_meta(
     }
     // Go `TableFromMeta` keeps `TableInfo.Cols()` in their stored order,
     // hidden expression-index columns included.
-    let columns: Vec<_> = table.cols().iter_deref().collect();
+    let mut plain_columns = load_plain_columns(table);
+    if let Some(plain) = plain_columns.take_if(|_| {
+        table.partition.is_none()
+            && table.indices.is_empty()
+            && table.constraints.is_empty()
+            && table.max_constraint_id >= 0
+            && !table.contains_auto_random_bits()
+            && table.table_cache_status_type == tidb_model::TableCacheStatusType::DISABLE
+            && table.name.original().is_ascii()
+            && table
+                .name
+                .original()
+                .bytes()
+                .map(|b| b.to_ascii_lowercase())
+                .eq(table.name.lowercase().bytes())
+    }) {
+        let meta = source.cloned().unwrap_or_else(|| GoShared::new(table.clone()));
+        let mut runtime = TableCommon::loaded_public_columns_from_handle(
+            meta, table.id, plain.columns, plain.pk_handle_offset,
+        );
+        install_auto_ids(&mut runtime, table, auto, plain.auto_increment_offset);
+        return Ok(runtime);
+    }
+    let columns: Vec<_> = match &plain_columns {
+        Some(plain) if table.partition.is_some() || !table.indices.is_empty() => plain
+            .columns
+            .iter()
+            .map(|column| column.info.clone())
+            .collect(),
+        Some(_) => Vec::new(),
+        None => table.cols().iter_deref().collect(),
+    };
     // A partitioned table is loadable when its partitioning is one this node
     // can rebuild from METADATA. `partition_spec_from_metadata` reads Go's
     // stored `PartitionInfo` -- the restored expression text, the columns,
@@ -361,10 +507,11 @@ pub fn table_from_meta(
     // an `ADD COLUMN ... AS (...)` or a generated column's `DROP COLUMN`
     // publishes mid-job holds a non-public generated column (built by the
     // non-public loop below) while no public column is generated.
-    let generated_schema = table
-        .columns
-        .iter_deref()
-        .any(|column| column.read().is_generated())
+    let generated_schema = (plain_columns.is_none()
+        && table
+            .columns
+            .iter_deref()
+            .any(|column| column.read().is_generated()))
         .then(|| {
             let names: Vec<String> = columns
                 .iter()
@@ -390,22 +537,21 @@ pub fn table_from_meta(
     // that cannot be carried across verbatim (an expression, or
     // `CURRENT_TIMESTAMP`, whose instant is per-INSERT and not per-load)
     // refuses the whole table by name.
-    let mut kv_columns: Vec<crate::column::Column> = Vec::with_capacity(columns.len());
     // One `crate::column::Column` per stored column, public or not (the write path
     // carries the non-public ones).
     // Each column shares the `ColumnInfo` pointer `TableInfo.Columns` holds,
     // as Go's `table.Column` embeds it.
-    let build_column = |shared: &tidb_model::GoShared<tidb_model::ColumnInfo>| -> Result<crate::column::Column, String> {
-        let guard = shared.read();
-        let column: &tidb_model::ColumnInfo = &guard;
-        let name = column.name.original().to_owned();
+    let build_column = |shared: &tidb_model::GoShared<tidb_model::ColumnInfo>,
+                        column: &tidb_model::ColumnInfo|
+     -> Result<crate::column::Column, String> {
+        let name = column.name.original();
         // A nil Go interface is "no DEFAULT was written", which is not the
         // same fact as a `DEFAULT NULL`, so it must become `None` here rather
         // than `Some(Null)`: only the first makes an omitted NOT NULL column
         // the 1364 it is in Go.
         let default_value = if column.default_value.is_nil() {
             None
-        } else if let Some(fsp) = stored_clock_marker(&column) {
+        } else if let Some(fsp) = stored_clock_marker(column) {
             // Go stores the WORD (`CURRENT_TIMESTAMP`, with the column's fsp
             // when it has one) and every INSERT evaluates it fresh. The
             // executor models exactly that as a computed default, so the
@@ -414,7 +560,7 @@ pub fn table_from_meta(
             // unservable here.
             Some(
                 crate::column_default::stored_clock_marker_default(
-                    &name,
+                    name,
                     &column.field_type,
                     fsp.as_deref(),
                 )
@@ -445,7 +591,7 @@ pub fn table_from_meta(
                 origin_position: 0,
             };
             Some(
-                crate::column_default::build(&marker, &name, &column.field_type, |_| {
+                crate::column_default::build(&marker, name, &column.field_type, |_| {
                     Err(tidb_terror::MysqlError::unknown(
                         "a clock marker never folds",
                     ))
@@ -501,7 +647,7 @@ pub fn table_from_meta(
             // The loader refuses a computed default above, so what survives
             // is always a settled value.
             Some(crate::column_default::ColumnDefault::Value(
-                crate::origin_default::literal_default(&column, table.name.original())
+                crate::origin_default::literal_default(column, table.name.original())
                     .map_err(|error| format!("its column {name} has a default {error}"))?,
             ))
         };
@@ -510,7 +656,7 @@ pub fn table_from_meta(
             None
         } else {
             Some(
-                crate::origin_default::origin_default(&column, table.name.original()).map_err(
+                crate::origin_default::origin_default(column, table.name.original()).map_err(
                     |error| format!("its column {name} has an original default {error}"),
                 )?,
             )
@@ -552,45 +698,50 @@ pub fn table_from_meta(
     // Go `TableFromMeta` keeps every column of `TableInfo.Columns` in its
     // order, one a DDL is adding, dropping or changing included; a column in
     // `StateNone` refuses the table.
-    for (i, shared) in table.columns.iter_deref().enumerate() {
-        let column = shared.read();
-        if column.state == SchemaState::NONE {
-            return Err(crate::table_errors::ERR_COLUMN_STATE_CANT_NONE
-                .gen_with_stack_by_args(&[column.name.original().into()])
-                .to_string());
+    let plain_auto_increment = plain_columns.as_ref().map(|plain| plain.auto_increment_offset);
+    let mut kv_table = if let Some(plain) = plain_columns {
+        TableCommon::loaded_public_columns(table.clone(), plain.columns, plain.pk_handle_offset)
+    } else {
+        let mut kv_columns = Vec::with_capacity(table.columns.len());
+        for (i, shared) in table.columns.iter_deref().enumerate() {
+            let column = shared.read();
+            if column.state == SchemaState::NONE {
+                return Err(crate::table_errors::ERR_COLUMN_STATE_CANT_NONE
+                    .gen_with_stack_by_args(&[column.name.original().into()])
+                    .to_string());
+            }
+            if column.offset != i as i64 {
+                tracing::error!(
+                    table = table.name.original(),
+                    column = column.name.original(),
+                    index = i,
+                    offset = column.offset,
+                    column_number = table.columns.len(),
+                    "wrong table schema"
+                );
+            }
+            kv_columns.push(build_column(&shared, &column)?);
         }
-        if column.offset != i as i64 {
-            tracing::error!(
-                table = table.name.original(),
-                column = column.name.original(),
-                index = i,
-                offset = column.offset,
-                column_number = table.columns.len(),
-                "wrong table schema"
-            );
+        let mut loaded = TableCommon::loaded(table.clone(), kv_columns);
+        loaded.set_all_columns_public(!loaded.has_nonpublic_columns());
+        // A public column a MODIFY COLUMN is checking carries its changing type.
+        let changing: Vec<_> = loaded
+            .columns()
+            .iter()
+            .enumerate()
+            .filter_map(|(offset, column)| {
+                column
+                    .read()
+                    .changing_field_type
+                    .as_ref()
+                    .map(|changing| (offset, changing.read().clone()))
+            })
+            .collect();
+        for (offset, changing) in changing {
+            loaded.set_changing_field_type(offset, changing);
         }
-        drop(column);
-        kv_columns.push(build_column(&shared)?);
-    }
-    let mut kv_table = TableCommon::loaded(table.clone(), kv_columns);
-    kv_table.set_all_columns_public(
-        table
-            .columns
-            .iter_deref()
-            .all(|column| column.read().state == SchemaState::PUBLIC),
-    );
-    // A public column a MODIFY COLUMN is checking carries its changing type.
-    let changing: Vec<(usize, tidb_datatype::FieldType)> = kv_table
-        .columns()
-        .iter()
-        .enumerate()
-        .filter_map(|(offset, column)| {
-            column.read().changing_field_type.as_ref().map(|changing| (offset, changing.read().clone()))
-        })
-        .collect();
-    for (offset, changing) in changing {
-        kv_table.set_changing_field_type(offset, changing);
-    }
+        loaded
+    };
     kv_table.set_name(table.name.original());
     // Go `LoadCheckConstraint` -> `removeInvalidCheckConstraintsInfo`: a
     // CHECK naming a column that is no longer public (DROP COLUMN leaves it
@@ -609,37 +760,28 @@ pub fn table_from_meta(
             })
         })
         .collect::<Vec<_>>();
-    kv_table
-        .set_check_constraint_infos(constraints, &tidb_datatype::SessionTimeZone::utc(), b'\\')
-        .map_err(|error| format!("its check constraints cannot be built: {error:?}"))?;
+    if !constraints.is_empty() || table.max_constraint_id < 0 {
+        kv_table
+            .set_check_constraint_infos(constraints, &tidb_datatype::SessionTimeZone::utc(), b'\\')
+            .map_err(|error| format!("its check constraints cannot be built: {error:?}"))?;
+    }
     // The AUTO_INCREMENT column and the counter that feeds it. Both halves
     // have to be here: marking the column without giving the counter a
     // cluster-wide home would allocate from a fresh in-process cell and
     // re-issue ids the table already holds, which is why this loader used to
     // refuse such a table outright rather than serve it half-wired.
-    let auto_increment_offset = columns.iter().position(|column| {
-        column
-            .read()
-            .field_type
-            .has_flag(FieldTypeFlags::AUTO_INCREMENT)
+    let auto_increment_offset = plain_auto_increment.unwrap_or_else(|| {
+        columns.iter().position(|column| {
+            column
+                .read()
+                .field_type
+                .has_flag(FieldTypeFlags::AUTO_INCREMENT)
+        })
     });
-    if let Some(offset) = auto_increment_offset {
-        kv_table.set_auto_increment_offset(offset);
-    }
-    // Go uses one row-id allocator for every table without a clustered
-    // handle. This includes tables without an explicit AUTO_INCREMENT column:
-    // their hidden `_tidb_rowid` must be allocated from the same
-    // cluster-wide counter on every SQL node, or concurrent inserts can
-    // overwrite one another's record keys.
-    if auto_increment_offset.is_some() || (!table.pk_is_handle && !table.is_common_handle) {
-        kv_table.set_auto_id(auto.allocator_for(table));
-    }
-    if table.sep_auto_inc() {
-        kv_table.set_row_id(auto.row_allocator_for(table));
-    }
+    install_auto_ids(&mut kv_table, table, auto, auto_increment_offset);
     // The table reads its handle off the `TableInfo`; one whose handle
     // names no public column cannot be loaded.
-    if table.pk_is_handle {
+    if table.pk_is_handle && plain_auto_increment.is_none() {
         columns
             .iter()
             .position(|column| column.read().field_type.flags() & PRI_KEY_FLAG != 0)
@@ -1084,4 +1226,97 @@ pub fn stored_clock_marker(column: &tidb_model::ColumnInfo) -> Option<Option<Str
         .to_owned();
     fsp.chars().all(|c| c.is_ascii_digit()).then_some(())?;
     Some(Some(fsp))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tidb_datatype::{FieldType, FieldTypeCode};
+    use tidb_model::ColumnInfo;
+
+    #[test]
+    fn cloning_a_loaded_table_preserves_unused_allocator_identity() {
+        let mut column = ColumnInfo::new(1, "id", FieldType::new(FieldTypeCode::LongLong));
+        column.state = SchemaState::PUBLIC;
+        column.field_type.add_flags(PRI_KEY_FLAG);
+        let meta = GoShared::new(TableInfo {
+            id: 7,
+            columns: vec![column].into(),
+            pk_is_handle: true,
+            state: SchemaState::PUBLIC,
+            ..TableInfo::default()
+        });
+        let table = cluster_table_from_shared_meta(&meta, &AutoIdSource::Unavailable).unwrap();
+        let clone = table.clone();
+        assert_eq!(table.auto_id().alloc(1, 1).unwrap(), 1);
+        assert_eq!(clone.auto_id().alloc(1, 1).unwrap(), 2);
+        assert_eq!(clone.auto_random_id().alloc(1, 1).unwrap(), 1);
+        assert_eq!(table.auto_random_id().alloc(1, 1).unwrap(), 2);
+    }
+
+    #[test]
+    fn loaded_public_columns_keep_offsets_and_stored_handles() {
+        for width in [3, 257] {
+            let columns: Vec<_> = (0..width)
+                .map(|offset| {
+                    let mut column = ColumnInfo::new(
+                        offset as i64 + 1,
+                        &format!("c{offset}"),
+                        FieldType::new(FieldTypeCode::LongLong),
+                    );
+                    column.offset = offset as i64;
+                    column.state = SchemaState::PUBLIC;
+                    if offset == 1 {
+                        column.field_type.add_flags(PRI_KEY_FLAG | FieldTypeFlags::AUTO_INCREMENT);
+                    }
+                    column
+                })
+                .collect();
+            let meta = TableInfo {
+                id: 7,
+                columns: columns.into(),
+                pk_is_handle: true,
+                state: SchemaState::PUBLIC,
+                ..TableInfo::default()
+            };
+            let table = table_from_meta(&meta, &AutoIdSource::Unavailable).unwrap();
+            assert_eq!(table.pk_handle_offset(), Some(1));
+            assert_eq!(table.auto_increment_column_offset(), Some(1));
+            assert!(table.visible_offsets().iter().copied().eq(0..width));
+            assert!(table.writable_columns().map(|(offset, _)| offset).eq(0..width));
+            for (runtime, stored) in table.columns().iter().zip(meta.columns.iter_deref()) {
+                assert!(runtime.info.ptr_eq(&stored));
+            }
+
+            let mut copy = table.clone();
+            copy.columns_mut().pop();
+            assert!(copy.visible_offsets().iter().copied().eq(0..width - 1));
+            assert_eq!(table.visible_offsets().len(), width);
+        }
+    }
+
+    #[test]
+    fn owned_metadata_keeps_intermediate_column_layout_and_names() {
+        let mut id = ColumnInfo::new(1, "id", FieldType::new(FieldTypeCode::LongLong));
+        id.state = SchemaState::PUBLIC;
+        id.field_type.add_flags(PRI_KEY_FLAG);
+        let mut adding = ColumnInfo::new(2, "adding", FieldType::new(FieldTypeCode::LongLong));
+        adding.state = SchemaState::WRITE_ONLY;
+        adding.offset = 1;
+        let meta = TableInfo {
+            id: 7,
+            name: serde_json::from_str(r#"{"O":"ÉTé","L":""}"#).unwrap(),
+            columns: vec![id, adding].into(),
+            pk_is_handle: true,
+            state: SchemaState::WRITE_ONLY,
+            ..TableInfo::default()
+        };
+        let stored_column = meta.columns.iter_deref().nth(1).unwrap();
+        let table = table_from_owned_meta(meta, &AutoIdSource::Unavailable).unwrap();
+        assert_eq!(table.meta().read().state, SchemaState::WRITE_ONLY);
+        assert_eq!(table.meta().read().name.lowercase(), "été");
+        assert_eq!(table.columns().len(), 1);
+        assert_eq!(table.writable_columns().count(), 2);
+        assert!(table.deletable_columns()[1].info.ptr_eq(&stored_column));
+    }
 }

@@ -25,5 +25,5 @@
 mod random;
 mod runtime;
 
-pub use random::{buf, uint32_n, uint64_n};
+pub use random::{buf, fill, uint32_n, uint64_n};
 pub use runtime::uint32;

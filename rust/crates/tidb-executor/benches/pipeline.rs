@@ -766,7 +766,7 @@ fn bench_read_task_setup() {
         let key = |index: u32| index.to_be_bytes().to_vec();
         let mut metadata = KvRequestMetadata::default();
         metadata.request_type = RequestType::Dag;
-        metadata.data = Some(b"dag".to_vec());
+        metadata.data = Some((&b"dag"[..]).into());
         metadata.keep_order = true;
         metadata.start_ts = 100;
         metadata.key_ranges = Some(

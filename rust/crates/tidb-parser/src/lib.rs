@@ -97,7 +97,6 @@ use tidb_lexer::SqlMode;
 use tidb_lexer::{
     is_builtin_function_keyword, is_reserved, Lexer, Token, TokenKind,
 };
-use tidb_parser_util::unescape_char;
 
 /// A parse failure with a human-readable reason and the byte offset at which it
 /// occurred.
@@ -2360,41 +2359,10 @@ fn is_ident_like_name(t: &Token) -> bool {
 /// the function is private precisely so a caller cannot decode with the wrong
 /// one.
 fn decode_string_with_mode(raw: &str, no_backslash_escapes: bool, client: Encoding) -> String {
-    let bytes = raw.as_bytes();
-    if bytes.len() < 2 {
+    if raw.len() < 2 {
         return raw.to_string();
     }
-    let quote = bytes[0];
-    let inner = &bytes[1..bytes.len() - 1];
-    let mut out = Vec::with_capacity(inner.len());
-    let mut offset = 0;
-    while offset < inner.len() {
-        // Go `scanString` copies a client multibyte character whole.
-        let rune_len = raw
-            .get(1 + offset..raw.len() - 1)
-            .map_or(0, |rest| tidb_lexer::skip_rune_len(client, rest));
-        if rune_len > 0 {
-            out.extend_from_slice(&inner[offset..offset + rune_len]);
-            offset += rune_len;
-            continue;
-        }
-        let byte = inner[offset];
-        if byte == quote {
-            // A doubled delimiter collapses to one.
-            if inner.get(offset + 1) == Some(&quote) {
-                offset += 1;
-            }
-            out.push(byte);
-        } else if byte == b'\\' && !no_backslash_escapes {
-            if let Some(&escaped) = inner.get(offset + 1) {
-                out.extend(unescape_char(escaped));
-                offset += 1;
-            }
-        } else {
-            out.push(byte);
-        }
-        offset += 1;
-    }
+    let out = tidb_lexer::decode_quoted_string(raw, no_backslash_escapes, client);
     String::from_utf8(out).expect("unescaping valid UTF-8 SQL preserves valid UTF-8")
 }
 

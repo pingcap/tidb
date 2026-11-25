@@ -11,6 +11,7 @@ description = "TiDB pkg/executor/aggfuncs (Rust)."
 workspace = true
 
 [dependencies]
+smallvec.workspace = true
 tidb-hack = { path = "../tidb-hack" }
 tidb-chunk = { path = "../tidb-chunk" }
 tidb-codec = { path = "../tidb-codec" }

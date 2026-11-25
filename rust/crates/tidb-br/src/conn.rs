@@ -202,7 +202,10 @@ pub fn handle_tikv_address(store: &metapb::Store, http_prefix: &str) -> Result<S
     let mut status_url = parse(&status_addr)?;
     let node_url = parse(&node_addr)?;
     if status_url.hostname() != node_url.hostname() {
-        let host = join_host_port(&String::from_utf8_lossy(node_url.hostname()), &String::from_utf8_lossy(status_url.port()));
+        let host = join_host_port_str(
+            &String::from_utf8_lossy(node_url.hostname()),
+            &String::from_utf8_lossy(status_url.port()),
+        );
         status_url.host = host.into_bytes();
         tidb_log::warn(
             "store address and status address mismatch the host, we will use the store address as hostname",
@@ -216,7 +219,7 @@ pub fn handle_tikv_address(store: &metapb::Store, http_prefix: &str) -> Result<S
     Ok(String::from_utf8_lossy(&status_url.to_bytes()).into_owned())
 }
 
-use tidb_go_net::join_host_port;
+use tidb_go_net::join_host_port_str;
 
 /// Go `httputil.NewClient(tlsConf)`: a client for TiKV's status ports.
 ///

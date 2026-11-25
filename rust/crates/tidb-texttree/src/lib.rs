@@ -14,7 +14,8 @@
 
 //! Native Rust mapping of the Go `pkg/util/texttree` package.
 
-use tidb_goruntime::go_chars;
+use std::borrow::Cow;
+use tidb_goruntime::decode_go_utf8_lossy;
 use tidb_goruntime::GoString;
 use tidb_goruntime::GoStringSource;
 
@@ -32,28 +33,68 @@ pub const TREE_GAP: char = ' ';
 /// Replaces the [`TREE_GAP`] once we need to attach a node to a sub-tree.
 pub const TREE_NODE_IDENTIFIER: char = '─';
 
+// Go converts the indentation through []rune, replacing each invalid byte.
+fn indent_text(indent: &[u8]) -> Cow<'_, str> {
+    match std::str::from_utf8(indent) {
+        Ok(text) => Cow::Borrowed(text),
+        Err(_) => Cow::Owned(decode_go_utf8_lossy(indent)),
+    }
+}
+
+fn branch_parts<'a>(indent: &'a str, replacement: &'a [u8]) -> [&'a [u8]; 3] {
+    if let Some((prefix, suffix)) = indent.rsplit_once(TREE_BODY) {
+        [prefix.as_bytes(), replacement, suffix.as_bytes()]
+    } else {
+        [indent.as_bytes(), b"", b""]
+    }
+}
+
+fn join_parts(parts: &[&[u8]]) -> GoString {
+    const INLINE_BYTES: usize = 64;
+    let len = parts.iter().map(|part| part.len()).sum();
+    if len <= INLINE_BYTES {
+        let mut inline = [0; INLINE_BYTES];
+        let mut destination = &mut inline[..len];
+        for part in parts {
+            let (prefix, rest) = destination.split_at_mut(part.len());
+            prefix.copy_from_slice(part);
+            destination = rest;
+        }
+        let bytes = &inline[..len];
+        return GoString::try_inline_snapshot(bytes).unwrap_or_else(|| GoString::from(bytes));
+    }
+    let mut bytes = Vec::with_capacity(len);
+    for part in parts {
+        bytes.extend_from_slice(part);
+    }
+    GoString::from(bytes)
+}
+
 /// Appends more blank to the `indent` string.
 pub fn indent_4_child<T>(indent: &T, is_last_child: bool) -> GoString
 where
     T: GoStringSource + ?Sized,
 {
-    let mut indent_chars: Vec<char> = go_chars(indent).collect();
-
-    if is_last_child {
-        // If the current node is the last node of the current operator tree, we
-        // need to end this sub-tree by changing the closest tree body to a tree
-        // gap.
-        for c in indent_chars.iter_mut().rev() {
-            if *c == TREE_BODY {
-                *c = TREE_GAP;
-                break;
-            }
-        }
+    let indent = indent.as_go_bytes();
+    if indent.is_empty() {
+        return GoString::try_inline_snapshot("│ ".as_bytes()).expect("a single branch fits inline");
     }
-
-    indent_chars.push(TREE_BODY);
-    indent_chars.push(TREE_GAP);
-    GoString::from(indent_chars.into_iter().collect::<String>())
+    let indent = indent_text(indent);
+    let mut body = [0; 4];
+    let mut gap = [0; 4];
+    let gap = TREE_GAP.encode_utf8(&mut gap).as_bytes();
+    let [prefix, branch, suffix] = if is_last_child {
+        branch_parts(&indent, gap)
+    } else {
+        [indent.as_bytes(), b"", b""]
+    };
+    join_parts(&[
+        prefix,
+        branch,
+        suffix,
+        TREE_BODY.encode_utf8(&mut body).as_bytes(),
+        gap,
+    ])
 }
 
 /// Returns a pretty identifier which contains indent and tree node hierarchy
@@ -63,35 +104,37 @@ where
     I: GoStringSource + ?Sized,
     D: GoStringSource + ?Sized,
 {
-    if indent.as_go_bytes().is_empty() {
+    let indent = indent.as_go_bytes();
+    if indent.is_empty() {
         return id.to_go_string();
     }
 
-    let mut indent_chars: Vec<char> = go_chars(indent).collect();
-    for c in indent_chars.iter_mut().rev() {
-        if *c != TREE_BODY {
-            continue;
-        }
-
-        // Here we attach a new node to the current sub-tree by changing the
-        // closest tree body to a:
-        // 1. tree last node, if this operator is the last child.
-        // 2. tree middle node, if this operator is not the last child.
-        *c = if is_last_child {
+    let indent = indent_text(indent);
+    let mut prefix = indent.chars();
+    let last = prefix.next_back();
+    let mut branch = [0; 4];
+    let [prefix, branch, suffix] = if last == Some(TREE_BODY) {
+        // Go overwrites this branch again when it replaces the final rune.
+        [prefix.as_str().as_bytes(), b"", b""]
+    } else {
+        let replacement = if is_last_child {
             TREE_LAST_NODE
         } else {
             TREE_MIDDLE_NODE
         };
-        break;
-    }
-
-    // Replace the tree gap between the tree body and the node with a tree node
-    // identifier.
-    let last = indent_chars.len() - 1;
-    indent_chars[last] = TREE_NODE_IDENTIFIER;
-    let mut value = indent_chars.into_iter().collect::<String>().into_bytes();
-    value.extend_from_slice(id.as_go_bytes());
-    GoString::from(value)
+        branch_parts(
+            prefix.as_str(),
+            replacement.encode_utf8(&mut branch).as_bytes(),
+        )
+    };
+    let mut node = [0; 4];
+    join_parts(&[
+        prefix,
+        branch,
+        suffix,
+        TREE_NODE_IDENTIFIER.encode_utf8(&mut node).as_bytes(),
+        id.as_go_bytes(),
+    ])
 }
 
 #[cfg(test)]
@@ -131,6 +174,18 @@ mod tests {
         assert_eq!(
             pretty_identifier("test", "\t\t│\t\t", true).as_bytes(),
             "\t\t└\t─test".as_bytes()
+        );
+    }
+
+    #[test]
+    fn malformed_indent_is_decoded_one_invalid_byte_at_a_time() {
+        let indent = b" \xf0\x9f\xe2\x94\x82\x80 ";
+        assert_eq!(indent_4_child(indent, true).as_bytes(), " �� � │ ".as_bytes());
+        let mut expected = " ��├�─".as_bytes().to_vec();
+        expected.extend_from_slice(b"\xffID");
+        assert_eq!(
+            pretty_identifier(b"\xffID", indent, false).as_bytes(),
+            expected
         );
     }
 }

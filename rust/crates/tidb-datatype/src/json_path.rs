@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use std::fmt;
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use tidb_kvcache::SimpleLruCache;
 
@@ -49,8 +49,29 @@ pub enum JSONPathLeg {
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 /// Parsed TiDB/MySQL JSON path expression.
 pub struct JSONPathExpression {
-    legs: Vec<JSONPathLeg>,
+    // Cache hits share immutable legs; edits copy the original path.
+    legs: Arc<Vec<JSONPathLeg>>,
     flags: u8,
+}
+
+/// A location emitted by Go's path callback, borrowing object keys.
+#[derive(Clone, Copy)]
+pub(crate) enum JSONPathLocation<'a> {
+    Key(&'a str),
+    Index(i64),
+}
+
+pub(crate) fn format_concrete_path(components: &[JSONPathLocation<'_>]) -> String {
+    let mut output = String::with_capacity(8 + components.len() * 4);
+    output.push('$');
+    for component in components {
+        match *component {
+            JSONPathLocation::Index(index) => write_index_leg(&mut output, index),
+            JSONPathLocation::Key(key) => write_key_leg(&mut output, key),
+        }
+        .expect("writing JSON path to String");
+    }
+    output
 }
 
 const CONTAINS_ASTERISK: u8 = 0x01;
@@ -58,6 +79,24 @@ const CONTAINS_DOUBLE_ASTERISK: u8 = 0x02;
 const CONTAINS_RANGE: u8 = 0x04;
 
 impl JSONPathExpression {
+    pub(crate) fn from_locations(components: &[JSONPathLocation<'_>]) -> Self {
+        let legs = components
+            .iter()
+            .map(|component| match *component {
+                JSONPathLocation::Index(index) => {
+                    JSONPathLeg::Array(JSONPathArraySelection::Index(index))
+                }
+                JSONPathLocation::Key(key) => JSONPathLeg::Key(key.to_owned()),
+            })
+            .collect();
+        let mut result = Self {
+            legs: Arc::new(legs),
+            flags: 0,
+        };
+        result.recompute_flags();
+        result
+    }
+
     /// Returns the path legs after the root `$`.
     pub fn legs(&self) -> &[JSONPathLeg] {
         &self.legs
@@ -91,7 +130,7 @@ impl JSONPathExpression {
             JSONPathArraySelection::Range { .. } => result.flags |= CONTAINS_RANGE,
             JSONPathArraySelection::Index(_) => {}
         }
-        result.legs.push(JSONPathLeg::Array(selection));
+        Arc::make_mut(&mut result.legs).push(JSONPathLeg::Array(selection));
         result
     }
 
@@ -102,21 +141,21 @@ impl JSONPathExpression {
         if key == "*" {
             result.flags |= CONTAINS_ASTERISK;
         }
-        result.legs.push(JSONPathLeg::Key(key));
+        Arc::make_mut(&mut result.legs).push(JSONPathLeg::Key(key));
         result
     }
 
     /// Removes and returns the final leg while preserving flags on the parent.
     pub fn pop_last(&self) -> Option<(Self, JSONPathLeg)> {
         let mut parent = self.clone();
-        let leg = parent.legs.pop()?;
+        let leg = Arc::make_mut(&mut parent.legs).pop()?;
         parent.recompute_flags();
         Some((parent, leg))
     }
 
     fn recompute_flags(&mut self) {
         self.flags = 0;
-        for leg in &self.legs {
+        for leg in self.legs.iter() {
             match leg {
                 JSONPathLeg::Key(key) if key == "*" => self.flags |= CONTAINS_ASTERISK,
                 JSONPathLeg::Array(JSONPathArraySelection::Asterisk) => {
@@ -135,22 +174,19 @@ impl JSONPathExpression {
 impl fmt::Display for JSONPathExpression {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("$")?;
-        for leg in &self.legs {
+        for leg in self.legs() {
             match leg {
-                JSONPathLeg::Key(key) => {
-                    f.write_str(".")?;
-                    if key == "*" {
-                        f.write_str("*")?;
-                    } else {
-                        f.write_str(&quote_json_path_key(key))?;
-                    }
-                }
+                JSONPathLeg::Key(key) => write_key_leg(f, key)?,
                 JSONPathLeg::Array(JSONPathArraySelection::Asterisk) => f.write_str("[*]")?,
                 JSONPathLeg::Array(JSONPathArraySelection::Index(index)) => {
-                    write!(f, "[{}]", format_index(*index))?;
+                    write_index_leg(f, *index)?;
                 }
                 JSONPathLeg::Array(JSONPathArraySelection::Range { start, end }) => {
-                    write!(f, "[{} to {}]", format_index(*start), format_index(*end))?;
+                    f.write_str("[")?;
+                    write_path_index(f, *start)?;
+                    f.write_str(" to ")?;
+                    write_path_index(f, *end)?;
+                    f.write_str("]")?;
                 }
                 JSONPathLeg::DoubleAsterisk => f.write_str("**")?,
             }
@@ -203,6 +239,12 @@ pub fn parse_json_path_expr(path: &str) -> Result<JSONPathExpression, JSONPathEr
     Ok(expression)
 }
 
+#[derive(Default)]
+struct PathBuilder {
+    legs: Vec<JSONPathLeg>,
+    flags: u8,
+}
+
 /// Go `jsonPathStream` and the `parseJSONPath*` functions
 /// (`pkg/types/json_path_expr.go`), step for step: the position an error
 /// reports is where Go's stream stands when it gives up, including its
@@ -232,7 +274,7 @@ impl Parser {
         }
         self.skip_whitespace();
 
-        let mut expression = JSONPathExpression::default();
+        let mut expression = PathBuilder::default();
         while !self.exhausted() {
             let ok = match self.peek() {
                 Some('.') => self.parse_member(&mut expression),
@@ -248,11 +290,14 @@ impl Parser {
         if matches!(expression.legs.last(), Some(JSONPathLeg::DoubleAsterisk)) {
             return self.invalid();
         }
-        Ok(expression)
+        Ok(JSONPathExpression {
+            legs: Arc::new(expression.legs),
+            flags: expression.flags,
+        })
     }
 
     /// Go `parseJSONPathWildcard`.
-    fn parse_wildcard(&mut self, expression: &mut JSONPathExpression) -> bool {
+    fn parse_wildcard(&mut self, expression: &mut PathBuilder) -> bool {
         self.position += 1;
         if self.exhausted() || self.read() != '*' {
             return false;
@@ -266,7 +311,7 @@ impl Parser {
     }
 
     /// Go `parseJSONPathArray`.
-    fn parse_array(&mut self, expression: &mut JSONPathExpression) -> bool {
+    fn parse_array(&mut self, expression: &mut PathBuilder) -> bool {
         self.position += 1;
         self.skip_whitespace();
         if self.exhausted() {
@@ -308,7 +353,7 @@ impl Parser {
     }
 
     /// Go `parseJSONPathMember`.
-    fn parse_member(&mut self, expression: &mut JSONPathExpression) -> bool {
+    fn parse_member(&mut self, expression: &mut PathBuilder) -> bool {
         self.position += 1;
         self.skip_whitespace();
         if self.exhausted() {
@@ -464,11 +509,17 @@ impl Parser {
     }
 }
 
-fn format_index(index: i64) -> String {
+fn write_index_leg(output: &mut impl fmt::Write, index: i64) -> fmt::Result {
+    output.write_char('[')?;
+    write_path_index(output, index)?;
+    output.write_char(']')
+}
+
+fn write_path_index(output: &mut impl fmt::Write, index: i64) -> fmt::Result {
     if index < 0 {
-        format!("last-{}", index.saturating_add(1).unsigned_abs())
+        write!(output, "last-{}", index.saturating_add(1).unsigned_abs())
     } else {
-        index.to_string()
+        write!(output, "{index}")
     }
 }
 
@@ -493,18 +544,32 @@ fn is_latin1_letter(byte: u8) -> bool {
         )
 }
 
-fn quote_json_path_key(key: &str) -> String {
-    if is_ecmascript_identifier(key) && !key.bytes().any(is_json_escape_byte) {
-        return key.to_owned();
+// Go quoteJSONString escapes the named JSON control characters, quotes,
+// and backslashes. Other characters are written as they occur in the key.
+fn write_key_leg(output: &mut impl fmt::Write, key: &str) -> fmt::Result {
+    output.write_char('.')?;
+    if key == "*" || is_ecmascript_identifier(key) {
+        return output.write_str(key);
     }
-    serde_json::to_string(key).expect("a Rust string is always valid JSON string input")
-}
-
-fn is_json_escape_byte(byte: u8) -> bool {
-    matches!(
-        byte,
-        b'\\' | b'"' | b'\x08' | b'\x0c' | b'\n' | b'\r' | b'\t'
-    )
+    output.write_char('"')?;
+    let mut start = 0;
+    for (index, byte) in key.bytes().enumerate() {
+        let escaped = match byte {
+            b'\\' => r"\\",
+            b'"' => r#"\""#,
+            b'\x08' => r"\b",
+            b'\x0c' => r"\f",
+            b'\n' => r"\n",
+            b'\r' => r"\r",
+            b'\t' => r"\t",
+            _ => continue,
+        };
+        output.write_str(&key[start..index])?;
+        output.write_str(escaped)?;
+        start = index + 1;
+    }
+    output.write_str(&key[start..])?;
+    output.write_char('"')
 }
 
 #[cfg(test)]

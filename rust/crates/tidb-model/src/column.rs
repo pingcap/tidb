@@ -31,10 +31,12 @@
 //! null type.
 
 use std::{
-    collections::{BTreeSet, HashSet},
+    collections::HashSet,
     fmt,
+    sync::{Arc, OnceLock},
 };
 
+use foldhash::fast::RandomState;
 use serde::de::{DeserializeSeed, MapAccess, Visitor};
 use serde::{Deserialize, Serialize};
 use tidb_ast::CiString;
@@ -99,12 +101,42 @@ pub fn gen_unique_changing_column_name(table: &TableInfo, old_column: &ColumnInf
     }
 }
 
+#[derive(Clone, Default)]
+struct DependenceKeys {
+    keys: HashSet<GoString, RandomState>,
+    sorted: OnceLock<Arc<Vec<GoString>>>,
+}
+
+impl fmt::Debug for DependenceKeys {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.debug_set().entries(self.sorted().iter()).finish()
+    }
+}
+
+impl DependenceKeys {
+    fn insert(&mut self, key: GoString) -> bool {
+        let inserted = self.keys.insert(key);
+        if inserted {
+            self.sorted.take();
+        }
+        inserted
+    }
+
+    fn sorted(&self) -> Arc<Vec<GoString>> {
+        Arc::clone(self.sorted.get_or_init(|| {
+            let mut keys: Vec<_> = self.keys.iter().map(|key| (key.as_bytes(), key)).collect();
+            keys.sort_unstable_by(|(a, _), (b, _)| a.cmp(b));
+            Arc::new(keys.into_iter().map(|(_, key)| key.clone()).collect())
+        }))
+    }
+}
+
 /// Go `map[string]struct{}` with nil/allocation identity preserved.
 ///
 /// A nil map serializes as `null`, an allocated empty map as `{}`, and keys in
-/// an allocated map sort lexically through the underlying [`BTreeSet`].
+/// an allocated map serialize in byte order.
 #[derive(Clone, Debug, Default)]
-pub struct GoStringSet(Option<GoShared<BTreeSet<GoString>>>);
+pub struct GoStringSet(Option<GoShared<DependenceKeys>>);
 
 impl GoStringSet {
     /// Returns whether the source map has an allocation, independently of its
@@ -119,7 +151,7 @@ impl GoStringSet {
     pub fn is_empty(&self) -> bool {
         self.0
             .as_ref()
-            .is_none_or(|values| values.read().is_empty())
+            .is_none_or(|values| values.read().keys.is_empty())
     }
 
     /// Copies keys in their source byte order. The immutable string backing
@@ -128,25 +160,23 @@ impl GoStringSet {
     pub fn snapshot(&self) -> Vec<GoString> {
         self.0
             .as_ref()
-            .map_or_else(Vec::new, |values| values.read().iter().cloned().collect())
+            .map_or_else(Vec::new, |values| (*values.read().sorted()).clone())
     }
 
     /// Reports whether a dependency is present.
+    #[inline]
     #[must_use]
     pub fn contains(&self, value: &str) -> bool {
-        self.0.as_ref().is_some_and(|values| {
-            values
-                .read()
-                .iter()
-                .any(|key| key.as_bytes() == value.as_bytes())
-        })
+        self.0
+            .as_ref()
+            .is_some_and(|values| values.read().keys.contains(value.as_bytes()))
     }
 
     /// Inserts a dependency, allocating the map just as a Go map assignment
     /// requires.
     pub fn insert(&mut self, value: impl Into<GoString>) -> bool {
         self.0
-            .get_or_insert_with(|| GoShared::new(BTreeSet::new()))
+            .get_or_insert_with(|| GoShared::new(DependenceKeys::default()))
             .write()
             .insert(value.into())
     }
@@ -154,7 +184,9 @@ impl GoStringSet {
     /// Clears keys without changing nil versus allocated-empty identity.
     pub fn clear(&mut self) {
         if let Some(values) = &self.0 {
-            values.write().clear();
+            let mut values = values.write();
+            values.keys.clear();
+            values.sorted.take();
         }
     }
 
@@ -163,9 +195,10 @@ impl GoStringSet {
     where
         T: Into<GoString>,
     {
-        Self(Some(GoShared::new(
-            values.into_iter().map(Into::into).collect(),
-        )))
+        Self(Some(GoShared::new(DependenceKeys {
+            keys: values.into_iter().map(Into::into).collect(),
+            sorted: OnceLock::new(),
+        })))
     }
 
     /// Reports source map identity. Two structural `ColumnInfo` clones share
@@ -190,9 +223,10 @@ impl Serialize for GoStringSet {
             Some(values) => {
                 use serde::ser::SerializeMap;
 
-                let values = values.read().iter().cloned().collect::<Vec<_>>();
+                // Release the shared read lock before calling the serializer.
+                let values = values.read().sorted();
                 let mut object = serializer.serialize_map(Some(values.len()))?;
-                for key in values {
+                for key in values.iter() {
                     object.serialize_entry(&key.to_utf8_lossy_go(), &EmptyObject {})?;
                 }
                 object.end()
@@ -252,7 +286,7 @@ impl<'de> DeserializeSeed<'de> for GoStringSetSeed<'_> {
                         let values = self
                             .0
                              .0
-                            .get_or_insert_with(|| GoShared::new(BTreeSet::new()));
+                            .get_or_insert_with(|| GoShared::new(DependenceKeys::default()));
                         let mut first_error = None;
                         while let Some(key) = map.next_key::<String>()? {
                             let mut empty = EmptyObject::default();
@@ -1024,6 +1058,27 @@ pub fn check_once(
 mod tests {
     use super::*;
     use crate::go_any::{GoAnyPointer, GoAnySlice, GoAnyView, GoTypeIdentity, GoTypeKind};
+
+    #[test]
+    fn dependence_snapshot_follows_changes_through_shared_aliases() {
+        let set = GoStringSet::allocated(["b", "z"]);
+        let original_snapshot = set.snapshot();
+        assert_eq!(serde_json::to_string(&set).unwrap(), r#"{"b":{},"z":{}}"#);
+        let mut alias = set.clone();
+        assert!(alias.insert("a"));
+        let mut json = serde_json::Deserializer::from_str(r#"{"c":{},"z":{}}"#);
+        GoStringSetSeed(&mut alias).deserialize(&mut json).unwrap();
+        assert!(set.contains("c"));
+        assert_eq!(
+            serde_json::to_string(&set).unwrap(),
+            r#"{"a":{},"b":{},"c":{},"z":{}}"#,
+        );
+        alias.clear();
+        assert!(set.is_allocated());
+        assert!(set.is_empty());
+        assert_eq!(serde_json::to_string(&set).unwrap(), "{}");
+        assert_eq!(original_snapshot, [GoString::from("b"), GoString::from("z")]);
+    }
 
     #[test]
     fn versions_and_change_state() {

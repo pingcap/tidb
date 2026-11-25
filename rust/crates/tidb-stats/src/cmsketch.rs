@@ -23,10 +23,11 @@ use std::{
     cmp::Ordering,
     collections::HashMap,
     fmt,
+    hash::BuildHasher,
     sync::{Arc, OnceLock, RwLock},
 };
 
-use crate::estimate::calculate_estimate_ndv;
+use crate::{estimate::calculate_estimate_ndv, scalar_geometry::common_prefix_length};
 use tidb_goruntime::go_pdqsort::go_sort_func_by;
 use tidb_datatype::Datum;
 
@@ -49,42 +50,49 @@ impl Hash128 {
     /// algorithm used by `github.com/twmb/murmur3.Sum128`.
     #[must_use]
     pub fn from_bytes(bytes: &[u8]) -> Self {
-        let mut h1 = 0_u64;
-        let mut h2 = 0_u64;
+        let (blocks, tail) = bytes.as_chunks::<16>();
+        Self::default().mix_blocks(blocks).finish(tail, bytes.len() as u64)
+    }
 
-        for block in bytes.chunks_exact(16) {
+    #[inline]
+    fn mix_blocks(self, blocks: &[[u8; 16]]) -> Self {
+        const FIRST_LANE_ADD: u64 = 0x52dc_e729;
+        const SECOND_LANE_ADD: u64 = 0x3849_5ab5;
+        let Self { mut h1, mut h2 } = self;
+
+        for block in blocks {
             let k1 = u64::from_le_bytes(block[..8].try_into().expect("eight-byte block"));
             let k2 = u64::from_le_bytes(block[8..].try_into().expect("eight-byte block"));
             let k1 = mix_k1(k1);
             h1 ^= k1;
             h1 = h1.rotate_left(27).wrapping_add(h2);
-            h1 = h1.wrapping_mul(5).wrapping_add(0x52dc_e729);
+            h1 = h1.wrapping_mul(5);
 
             let k2 = mix_k2(k2);
             h2 ^= k2;
             h2 = h2.rotate_left(31).wrapping_add(h1);
-            h2 = h2.wrapping_mul(5).wrapping_add(0x3849_5ab5);
+            // Fold the first lane's addition into the second lane's bias.
+            // Both lanes have the same values at the end of each block.
+            h2 = h2.wrapping_mul(5).wrapping_add(SECOND_LANE_ADD + 5 * FIRST_LANE_ADD);
+            h1 = h1.wrapping_add(FIRST_LANE_ADD);
         }
+        Self { h1, h2 }
+    }
 
-        let tail = &bytes[bytes.len() / 16 * 16..];
-        let mut k1 = 0_u64;
-        let mut k2 = 0_u64;
-        for (index, byte) in tail.iter().copied().enumerate() {
-            if index < 8 {
-                k1 ^= u64::from(byte) << (index * 8);
-            } else {
-                k2 ^= u64::from(byte) << ((index - 8) * 8);
+    #[inline]
+    fn finish(self, tail: &[u8], byte_count: u64) -> Self {
+        let Self { mut h1, mut h2 } = self;
+        if !tail.is_empty() {
+            let mut padded = [0; 16];
+            padded[..tail.len()].copy_from_slice(tail);
+            h1 ^= mix_k1(u64::from_le_bytes(padded[..8].try_into().unwrap()));
+            if tail.len() > 8 {
+                h2 ^= mix_k2(u64::from_le_bytes(padded[8..].try_into().unwrap()));
             }
         }
-        if tail.len() > 8 {
-            h2 ^= mix_k2(k2);
-        }
-        if !tail.is_empty() {
-            h1 ^= mix_k1(k1);
-        }
 
-        h1 ^= bytes.len() as u64;
-        h2 ^= bytes.len() as u64;
+        h1 ^= byte_count;
+        h2 ^= byte_count;
         h1 = h1.wrapping_add(h2);
         h2 = h2.wrapping_add(h1);
         h1 = fmix64(h1);
@@ -92,6 +100,42 @@ impl Hash128 {
         h1 = h1.wrapping_add(h2);
         h2 = h2.wrapping_add(h1);
         Self { h1, h2 }
+    }
+}
+
+/// Incremental zero-seed Murmur3 x64-128, as in Go's `murmur3.New128`.
+#[derive(Default)]
+pub struct Murmur3Hasher128 {
+    lanes: Hash128,
+    pending: [u8; 16],
+    byte_count: u64,
+}
+
+impl Murmur3Hasher128 {
+    /// Adds bytes to the same stream without padding this fragment.
+    #[inline]
+    pub fn write(&mut self, mut bytes: &[u8]) {
+        let filled = (self.byte_count & 15) as usize;
+        self.byte_count = self.byte_count.wrapping_add(bytes.len() as u64);
+        if filled != 0 {
+            let copied = bytes.len().min(16 - filled);
+            self.pending[filled..filled + copied].copy_from_slice(&bytes[..copied]);
+            if filled + copied < 16 {
+                return;
+            }
+            self.lanes = self.lanes.mix_blocks(std::slice::from_ref(&self.pending));
+            bytes = &bytes[copied..];
+        }
+        let (blocks, tail) = bytes.as_chunks::<16>();
+        self.lanes = self.lanes.mix_blocks(blocks);
+        self.pending[..tail.len()].copy_from_slice(tail);
+    }
+
+    /// Produces the same two lanes as hashing the concatenation.
+    #[must_use]
+    #[inline]
+    pub fn finish(self) -> Hash128 {
+        self.lanes.finish(&self.pending[..(self.byte_count & 15) as usize], self.byte_count)
     }
 }
 
@@ -254,6 +298,15 @@ impl CmsSketch {
         self.width
     }
 
+    /// Returns the counter rows in their protobuf order.
+    pub fn counter_rows(&self) -> impl ExactSizeIterator<Item = &[u32]> {
+        let width = self.width as usize;
+        (0..self.depth).map(move |row| {
+            let start = row as usize * width;
+            &self.counters[start..start + width]
+        })
+    }
+
     /// Returns the total inserted count, excluding any TopN owned by a caller.
     pub const fn total_count(&self) -> u64 {
         self.count
@@ -271,6 +324,7 @@ impl CmsSketch {
     }
 
     /// Calculates the source analyze fallback as `count / max(1, ndv)`.
+    #[inline]
     pub fn calc_default_value_for_analyze(&mut self, ndv: u64) {
         self.default_value = self.count / ndv.max(1);
     }
@@ -367,26 +421,33 @@ impl CmsSketch {
     /// boundary.  Datum encoding and TopN lookup are deliberately separate.
     #[must_use]
     pub fn query_hashed(&self, hash: Hash128) -> u64 {
-        let mut values = Vec::with_capacity(self.depth as usize);
+        let depth = self.depth as usize;
+        let mut inline_values = [0; 8];
+        let mut heap_values;
+        let values = if depth <= inline_values.len() {
+            &mut inline_values[..depth]
+        } else {
+            heap_values = vec![0; depth];
+            heap_values.as_mut_slice()
+        };
         let mut minimum = u32::MAX;
-        for row in 0..self.depth {
+        for (row, normalized) in (0..self.depth).zip(values.iter_mut()) {
             let value = self
                 .counter_at(row, self.bucket_index(row, hash))
                 .expect("valid row");
             minimum = minimum.min(value);
             let noise = self.count.wrapping_sub(u64::from(value)) / (u64::from(self.width) - 1);
-            let normalized = if value == 0 {
+            *normalized = if value == 0 {
                 0
             } else if u64::from(value) < noise {
                 1
             } else {
                 value.wrapping_sub(noise as u32).wrapping_add(1)
             };
-            values.push(normalized);
         }
         values.sort_unstable();
-        let lower_index = (self.depth as usize - 1) / 2;
-        let upper_index = self.depth as usize / 2;
+        let lower_index = (depth - 1) / 2;
+        let upper_index = depth / 2;
         let median = values[lower_index]
             .wrapping_add(values[upper_index].wrapping_sub(values[lower_index]) / 2);
         let result = median.min(minimum.wrapping_add(1));
@@ -695,10 +756,11 @@ impl TopN {
 
     /// Adds an entry, copying its encoded bytes.
     pub fn append(&mut self, encoded: &[u8], count: u64) {
-        self.entries.push(TopNEntry {
-            encoded: encoded.to_vec(),
-            count,
-        });
+        self.append_owned(encoded.to_vec(), count);
+    }
+
+    pub(crate) fn append_owned(&mut self, encoded: Vec<u8>, count: u64) {
+        self.entries.push(TopNEntry { encoded, count });
         self.shared_encoded.push(None);
     }
 
@@ -929,11 +991,9 @@ impl TopN {
         )
     }
 
-    /// Runs a comparison against one source-encoded entry without copying its
-    /// bytes. Go's `TopN.FindTopN` compares the stored `[]byte` directly; the
-    /// copy-returning [`Self::resolved_bytes`] accessor is intentionally kept
-    /// for ownership-returning callers such as `entry_bytes` and cloning.
-    fn with_resolved_bytes<R>(&self, index: usize, f: impl FnOnce(&[u8]) -> R) -> R {
+    /// Borrows the live encoded bytes of an existing entry for the callback.
+    /// If the entry shares its bytes, the read lock is held during the callback.
+    pub fn with_resolved_bytes<R>(&self, index: usize, f: impl FnOnce(&[u8]) -> R) -> R {
         if let Some(shared) = self.shared_encoded[index].as_ref() {
             let bytes = shared.read().expect("shared TopN bytes lock poisoned");
             f(&bytes)
@@ -1114,12 +1174,13 @@ pub fn get_merged_topn_from_sorted_slice(
     sort_topn_meta(&mut sorted);
     let split = (n as usize).min(sorted.len());
     let remainder = sorted.split_off(split);
-    let selected = sorted;
-    let mut top_n = TopN::new(selected.len());
-    for entry in selected {
-        top_n.append(&entry.encoded, entry.count);
-    }
-    top_n.sort();
+    sorted.shrink_to_fit();
+    go_sort_func_by(&mut sorted, |left, right| left.encoded.cmp(&right.encoded));
+    let top_n = TopN {
+        shared_encoded: vec![None; sorted.len()],
+        entries: sorted,
+        cached_counts: OnceLock::new(),
+    };
     // Go returns a non-nil empty TopN when `n == 0`; callers rely on that to
     // clear the destination before spilling all entries into CMSketch.
     (Some(top_n), remainder)
@@ -1134,33 +1195,204 @@ pub fn check_empty_topns(topns: &[Option<&TopN>]) -> bool {
 
 /// Merges equal encoded values from multiple TopN lists and keeps the top `n`.
 pub fn merge_topn(topns: &[Option<&TopN>], n: u32) -> (Option<TopN>, Vec<TopNEntry>) {
-    if check_empty_topns(topns) {
+    let nonempty = || topns.iter().copied().flatten().filter(|topn| topn.total_count() != 0);
+    let Some(first) = nonempty().next() else {
         return (None, Vec::new());
+    };
+    let mut prefix = merge_key_prefix(first);
+    if prefix.is_empty() {
+        if first.entries[0].encoded.len() >= 256 && nonempty().nth(1).is_some() {
+            if let Some(entries) = disjoint_merge_entries(nonempty()) {
+                return get_merged_topn_from_sorted_slice(entries, n);
+            }
+            return merge_topn_with_hash_hints(nonempty(), first.num(), n);
+        }
+        return merge_topn_by_full_key(topns, n);
     }
-    let mut counts: HashMap<Vec<u8>, u64> = HashMap::new();
+    if let Some(last) = nonempty().next_back() {
+        // A trailing partition can widen the range of suffixes.
+        let common = common_prefix_length(&[prefix, &last.entries[last.num() - 1].encoded]);
+        if common >= 64.max(prefix.len() / 2) {
+            prefix = &prefix[..common];
+        }
+    }
+    merge_topn_by_suffix(nonempty(), first.num(), prefix, n)
+}
+
+fn disjoint_merge_entries<'a>(
+    topns: impl Iterator<Item = &'a TopN> + Clone,
+) -> Option<Vec<TopNEntry>> {
+    let mut previous_last: Option<&[u8]> = None;
+    let mut len = 0;
+    for topn in topns.clone() {
+        let entries = &topn.entries;
+        if previous_last.is_some_and(|last| last >= entries[0].encoded.as_slice())
+            || topn.shared_encoded.iter().any(Option::is_some)
+        {
+            return None;
+        }
+        previous_last = Some(&entries[entries.len() - 1].encoded);
+        len += entries.len();
+    }
+    // The endpoint check is conclusive only for strictly ordered inputs.
+    // Equal or unsorted keys still need the hash merge.
+    if topns.clone().any(|topn| {
+        !topn
+            .entries
+            .is_sorted_by(|left, right| left.encoded < right.encoded)
+    }) {
+        return None;
+    }
+    let mut entries = Vec::with_capacity(len);
+    for topn in topns {
+        entries.extend_from_slice(&topn.entries);
+    }
+    Some(entries)
+}
+
+type MergeCounts = hashbrown::HashMap<Vec<u8>, u64>;
+
+fn merge_entries(counts: MergeCounts) -> impl ExactSizeIterator<Item = TopNEntry> {
+    counts
+        .into_iter()
+        .map(|(encoded, count)| TopNEntry { encoded, count })
+}
+
+fn merge_topn_by_full_key(topns: &[Option<&TopN>], n: u32) -> (Option<TopN>, Vec<TopNEntry>) {
+    let mut counts = MergeCounts::new();
     for topn in topns.iter().flatten() {
         if topn.total_count() == 0 {
             continue;
         }
-        for entry in topn.resolved_entries() {
-            let count = counts.entry(entry.encoded.clone()).or_default();
-            *count = count.wrapping_add(entry.count);
+        if counts.is_empty() {
+            counts.reserve(topn.num());
+        }
+        for (index, entry) in topn.entries.iter().enumerate() {
+            topn.with_resolved_bytes(index, |encoded| {
+                let count = counts.entry_ref(encoded).or_insert(0);
+                *count = count.wrapping_add(entry.count);
+            });
         }
     }
-    let ranked = counts
-        .into_iter()
-        .map(|(encoded, count)| TopNEntry { encoded, count })
-        .collect();
+    get_merged_topn_from_sorted_slice(merge_entries(counts).collect(), n)
+}
+
+fn merge_topn_with_hash_hints<'a>(
+    topns: impl Iterator<Item = &'a TopN>,
+    capacity: usize,
+    n: u32,
+) -> (Option<TopN>, Vec<TopNEntry>) {
+    use hashbrown::hash_map::RawEntryMut::{Occupied, Vacant};
+
+    let mut counts = MergeCounts::with_capacity(capacity);
+    // Repeated wide keys can reuse a full hash. A short sample selects a
+    // single candidate and every hit still checks full byte equality.
+    let cache_size = (capacity.clamp(16, 4096).next_power_of_two() * 16).min(32_768);
+    let mut recent_hashes = vec![None; cache_size];
+    for topn in topns {
+        for (index, entry) in topn.entries.iter().enumerate() {
+            topn.with_resolved_bytes(index, |encoded| {
+                if encoded.len() < 256 {
+                    let count = counts.entry_ref(encoded).or_insert(0);
+                    *count = count.wrapping_add(entry.count);
+                    return;
+                }
+                let first = u64::from_ne_bytes(*encoded.first_chunk().unwrap());
+                let last = u64::from_ne_bytes(*encoded.last_chunk().unwrap());
+                let sample = counts.hasher().hash_one((first, last, encoded.len()));
+                let hint = &mut recent_hashes[sample as usize & (cache_size - 1)];
+                let matches = |key: &Vec<u8>| key.as_slice() == encoded;
+                if let Some(hash) = *hint {
+                    if let Occupied(mut slot) = counts.raw_entry_mut().from_hash(hash, matches) {
+                        *slot.get_mut() = slot.get().wrapping_add(entry.count);
+                        return;
+                    }
+                }
+                let hash = counts.hasher().hash_one(encoded);
+                *hint = Some(hash);
+                match counts.raw_entry_mut().from_hash(hash, matches) {
+                    Occupied(mut slot) => *slot.get_mut() = slot.get().wrapping_add(entry.count),
+                    Vacant(slot) => {
+                        slot.insert_hashed_nocheck(hash, encoded.to_vec(), entry.count);
+                    }
+                }
+            });
+        }
+    }
+    get_merged_topn_from_sorted_slice(merge_entries(counts).collect(), n)
+}
+
+fn merge_topn_by_suffix<'a>(
+    topns: impl Iterator<Item = &'a TopN>,
+    capacity: usize,
+    prefix: &[u8],
+    n: u32,
+) -> (Option<TopN>, Vec<TopNEntry>) {
+    let mut matching = MergeCounts::with_capacity(capacity);
+    let mut other = MergeCounts::new();
+    for topn in topns {
+        for (index, entry) in topn.entries.iter().enumerate() {
+            topn.with_resolved_bytes(index, |encoded| {
+                let (counts, key) = if let Some(suffix) = encoded.strip_prefix(prefix) {
+                    (&mut matching, suffix)
+                } else {
+                    (&mut other, encoded)
+                };
+                let count = counts.entry_ref(key).or_insert(0);
+                *count = count.wrapping_add(entry.count);
+            });
+        }
+    }
+    if other.is_empty() {
+        // A shared prefix cannot change the relative order of any two keys.
+        let (mut selected, mut remainder) =
+            get_merged_topn_from_sorted_slice(merge_entries(matching).collect(), n);
+        for entry in selected
+            .iter_mut()
+            .flat_map(|topn| &mut topn.entries)
+            .chain(&mut remainder)
+        {
+            entry.encoded = [prefix, &entry.encoded].concat();
+        }
+        return (selected, remainder);
+    }
+    let mut ranked = Vec::with_capacity(matching.len() + other.len());
+    ranked.extend(merge_entries(matching).map(|mut entry| {
+        entry.encoded = [prefix, &entry.encoded].concat();
+        entry
+    }));
+    ranked.extend(merge_entries(other));
     get_merged_topn_from_sorted_slice(ranked, n)
 }
 
+fn merge_key_prefix(topn: &TopN) -> &[u8] {
+    // Sorted entries make the endpoints a useful sample. The candidate can
+    // also come from unsorted or previously shared bytes because every live
+    // key must match it in full before entering the suffix map.
+    let first = &topn.entries[0].encoded;
+    let last = &topn.entries[topn.entries.len() - 1].encoded;
+    let min_len = first.len().min(last.len());
+    if min_len < 64 {
+        return &[];
+    }
+    let common = common_prefix_length(&[first, last]);
+    if common < 64.max(min_len / 2) {
+        return &[];
+    }
+    &first[..common]
+}
+
 /// Merges TopN values and spills entries beyond `n` into the sketch.
+#[inline]
 pub fn merge_topn_and_update_cmsketch(
     destination: &mut TopN,
     source: &TopN,
     sketch: &mut CmsSketch,
     n: u32,
 ) -> Vec<TopNEntry> {
+    if source.entries.is_empty() && destination.entries.is_empty() {
+        return Vec::new();
+    }
     let (merged, remainder) = merge_topn(&[Some(source), Some(destination)], n);
     if let Some(merged) = merged {
         *destination = merged;
@@ -1218,10 +1450,7 @@ fn encode_message_field(field: u8, message: &[u8], output: &mut Vec<u8>) {
 pub fn encode_cmsketch_without_topn(
     sketch: Option<&CmsSketch>,
 ) -> Result<Option<Vec<u8>>, CodecError> {
-    let Some(sketch) = sketch else {
-        return Ok(None);
-    };
-    Ok(Some(encode_cmsketch_proto(sketch, None)))
+    Ok(sketch.map(|sketch| encode_cmsketch_proto(Some(sketch), None)))
 }
 
 /// Encodes a CMSketch and its embedded TopN entries using the full tipb wire
@@ -1235,59 +1464,58 @@ pub fn encode_cmsketch_and_topn(
     sketch: Option<&CmsSketch>,
     topn: Option<&TopN>,
 ) -> Option<Vec<u8>> {
-    match sketch {
-        Some(sketch) => Some(encode_cmsketch_proto(sketch, topn)),
-        // CMSketchToProto always returns a non-nil message, even when both
-        // source pointers are nil. The generated gogoprotobuf marshaler still
-        // emits its non-nullable default_value field as `[0x18, 0x00]`.
-        None => Some(encode_cmsketch_proto_without_sketch(topn)),
-    }
+    // CMSketchToProto still emits default_value when both inputs are nil.
+    Some(encode_cmsketch_proto(sketch, topn))
 }
 
-fn encode_cmsketch_proto(sketch: &CmsSketch, topn: Option<&TopN>) -> Vec<u8> {
+fn varint_len(value: u64) -> usize {
+    (64 - value.leading_zeros()).max(1).div_ceil(7) as usize
+}
+
+fn topn_entry_len(data_len: usize, count: u64) -> usize {
+    2 + varint_len(data_len as u64) + data_len + varint_len(count)
+}
+
+fn encode_cmsketch_proto(sketch: Option<&CmsSketch>, topn: Option<&TopN>) -> Vec<u8> {
     let mut output = Vec::new();
-    for row in 0..sketch.depth {
-        let mut encoded_row = Vec::with_capacity(sketch.width as usize * 6);
-        for column in 0..sketch.width {
-            encoded_row.push(0x08); // CMSketchRow.counters = 1, varint.
-            encode_varint(
-                u64::from(sketch.counters[row as usize * sketch.width as usize + column as usize]),
-                &mut encoded_row,
-            );
+    let default_value = sketch.map_or(0, CmsSketch::default_value);
+    if let Some(sketch) = sketch {
+        for row in sketch.counter_rows() {
+            let mut encoded_row = Vec::with_capacity(row.len() * 6);
+            for &counter in row {
+                encoded_row.push(0x08); // CMSketchRow.counters = 1, varint.
+                encode_varint(u64::from(counter), &mut encoded_row);
+            }
+            encode_message_field(1, &encoded_row, &mut output);
         }
-        encode_message_field(1, &encoded_row, &mut output);
     }
     if let Some(topn) = topn {
-        for entry in topn.resolved_entries() {
-            let mut encoded_entry = Vec::new();
-            encoded_entry.push(0x0a); // CMSketchTopN.data = 1, bytes.
-            encode_varint(entry.encoded.len() as u64, &mut encoded_entry);
-            encoded_entry.extend_from_slice(&entry.encoded);
-            encoded_entry.push(0x10); // CMSketchTopN.count = 2, varint.
-            encode_varint(entry.count, &mut encoded_entry);
-            encode_message_field(2, &encoded_entry, &mut output);
+        // Reserve using the stored lengths as a hint. A shared key may have
+        // changed length since AppendTopN, so encode its live bytes and length
+        // under the same read lock.
+        let topn_len = topn
+            .entries
+            .iter()
+            .map(|entry| {
+                let len = topn_entry_len(entry.encoded.len(), entry.count);
+                1 + varint_len(len as u64) + len
+            })
+            .sum::<usize>();
+        output.reserve(topn_len + 1 + varint_len(default_value));
+        for (index, entry) in topn.entries.iter().enumerate() {
+            topn.with_resolved_bytes(index, |encoded| {
+                output.push(0x12); // CMSketch.top_n = 2, message.
+                encode_varint(topn_entry_len(encoded.len(), entry.count) as u64, &mut output);
+                output.push(0x0a); // CMSketchTopN.data = 1, bytes.
+                encode_varint(encoded.len() as u64, &mut output);
+                output.extend_from_slice(encoded);
+                output.push(0x10); // CMSketchTopN.count = 2, varint.
+                encode_varint(entry.count, &mut output);
+            });
         }
     }
     output.push(0x18); // CMSketch.default_value = 3, varint.
-    encode_varint(sketch.default_value, &mut output);
-    output
-}
-
-fn encode_cmsketch_proto_without_sketch(topn: Option<&TopN>) -> Vec<u8> {
-    let mut output = Vec::new();
-    if let Some(topn) = topn {
-        for entry in topn.resolved_entries() {
-            let mut encoded_entry = Vec::new();
-            encoded_entry.push(0x0a);
-            encode_varint(entry.encoded.len() as u64, &mut encoded_entry);
-            encoded_entry.extend_from_slice(&entry.encoded);
-            encoded_entry.push(0x10);
-            encode_varint(entry.count, &mut encoded_entry);
-            encode_message_field(2, &encoded_entry, &mut output);
-        }
-    }
-    output.push(0x18);
-    output.push(0);
+    encode_varint(default_value, &mut output);
     output
 }
 
@@ -1436,32 +1664,54 @@ fn decode_proto(input: &[u8]) -> Result<DecodedSketch, CodecError> {
     Ok((rows, topn, default_value))
 }
 
-fn sketch_from_rows(
-    rows: Vec<Vec<u32>>,
+fn sketch_from_rows<'a>(
+    mut rows: impl ExactSizeIterator<Item = &'a [u32]>,
     default_value: u64,
 ) -> Result<Option<CmsSketch>, CodecError> {
-    let Some(first) = rows.first() else {
+    let depth = rows.len() as u32;
+    let Some(first) = rows.next() else {
         return Ok(None);
     };
-    let depth = rows.len() as u32;
-    let width = first.len() as u32;
+    let width = first.len();
     let mut sketch =
-        CmsSketch::try_new(depth, width).map_err(|_| CodecError::InconsistentRowShape)?;
-    for (row_index, row) in rows.iter().enumerate() {
-        let start = row_index * first.len();
-        for (column_index, counter) in row.iter().enumerate() {
-            // The generated Go converter allocates every row to the first
-            // row's width, then indexes it with every later counter. A longer
-            // later row therefore panics; a shorter one leaves zeroes.
-            sketch.counters[start + column_index] = *counter;
-        }
-        // Go resets count once per row and leaves the sum of the final row.
-        sketch.count = row
-            .iter()
-            .fold(0_u64, |sum, &counter| sum.wrapping_add(u64::from(counter)));
+        CmsSketch::try_new(depth, width as u32).map_err(|_| CodecError::InconsistentRowShape)?;
+    let mut last = first;
+    for (index, row) in std::iter::once(first).chain(rows).enumerate() {
+        let start = index * width;
+        let counters = &mut sketch.counters[start..start + width];
+        // A short row leaves trailing zeroes. A long row panics at its own
+        // boundary, as it does when Go indexes that row's separate slice.
+        counters[..row.len()].copy_from_slice(row);
+        last = row;
     }
+    // Go resets the count for each row and returns the final row's count.
+    sketch.count = last
+        .iter()
+        .fold(0_u64, |sum, &counter| sum.wrapping_add(u64::from(counter)));
     sketch.default_value = default_value;
     Ok(Some(sketch))
+}
+
+/// Reconstructs statistics from a decoded TiPB CMSketch and moves its TopN
+/// bytes into the result.
+pub fn cmsketch_and_topn_from_decoded<'a>(
+    rows: impl ExactSizeIterator<Item = &'a [u32]>,
+    topn: impl Iterator<Item = TopNEntry>,
+    default_value: u64,
+) -> Result<(Option<CmsSketch>, Option<TopN>), CodecError> {
+    let sketch = sketch_from_rows(rows, default_value)?;
+    let mut entries: Vec<_> = topn.collect();
+    let topn = if entries.is_empty() {
+        None
+    } else {
+        go_sort_func_by(&mut entries, |left, right| left.encoded.cmp(&right.encoded));
+        Some(TopN {
+            shared_encoded: vec![None; entries.len()],
+            entries,
+            cached_counts: OnceLock::new(),
+        })
+    };
+    Ok((sketch, topn))
 }
 
 /// Go `CMSketchAndTopNFromProto` at its nullable in-memory message boundary.
@@ -1491,30 +1741,16 @@ pub fn cm_sketch_and_top_n_from_proto(
         Some(topn)
     };
 
-    let proto_rows = proto.rows.as_deref().unwrap_or_default();
-    if proto_rows.is_empty() {
-        return (None, topn);
-    }
-    let first = proto_rows[0].as_ref().expect("nil CMSketchRow message");
-    let width = first.counters.as_deref().unwrap_or_default().len() as u32;
-    let mut sketch = CmsSketch::try_new(proto_rows.len() as u32, width)
-        .expect("CMSketch protobuf dimensions exceed addressable memory");
-    for (row_index, row) in proto_rows.iter().enumerate() {
-        sketch.count = 0;
-        let row = row.as_ref().expect("nil CMSketchRow message");
-        for (column_index, &counter) in row
+    let rows = proto.rows.as_deref().unwrap_or_default().iter().map(|row| {
+        row.as_ref()
+            .expect("nil CMSketchRow message")
             .counters
             .as_deref()
             .unwrap_or_default()
-            .iter()
-            .enumerate()
-        {
-            sketch.counters[row_index * width as usize + column_index] = counter;
-            sketch.count = sketch.count.wrapping_add(u64::from(counter));
-        }
-    }
-    sketch.default_value = proto.default_value;
-    (Some(sketch), topn)
+    });
+    let sketch = sketch_from_rows(rows, proto.default_value)
+        .expect("CMSketch protobuf dimensions exceed addressable memory");
+    (sketch, topn)
 }
 
 /// Decodes a CMSketch snapshot. Empty input is the Go `nil` result.
@@ -1523,7 +1759,7 @@ pub fn decode_cmsketch(data: &[u8]) -> Result<Option<CmsSketch>, CodecError> {
         return Ok(None);
     }
     let (rows, _, default_value) = decode_proto(data)?;
-    sketch_from_rows(rows, default_value)
+    sketch_from_rows(rows.iter().map(Vec::as_slice), default_value)
 }
 
 /// Decodes the complete tipb CMSketch message, including embedded TopN.
@@ -1539,18 +1775,7 @@ pub fn decode_cmsketch_and_embedded_topn(
         return Ok((None, None));
     }
     let (rows, entries, default_value) = decode_proto(data)?;
-    let sketch = sketch_from_rows(rows, default_value)?;
-    let topn = if entries.is_empty() {
-        None
-    } else {
-        let mut topn = TopN::new(entries.len());
-        for entry in entries {
-            topn.append(&entry.encoded, entry.count);
-        }
-        topn.sort();
-        Some(topn)
-    };
-    Ok((sketch, topn))
+    cmsketch_and_topn_from_decoded(rows.iter().map(Vec::as_slice), entries.into_iter(), default_value)
 }
 
 /// Decodes TopN rows supplied by the caller's storage layer.

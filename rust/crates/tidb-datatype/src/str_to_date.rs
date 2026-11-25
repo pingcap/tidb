@@ -17,6 +17,8 @@ use unicode_general_category::{get_general_category, GeneralCategory};
 
 use crate::{CoreTime, Time, TimeError, TimeType};
 
+mod unicode_delta;
+
 const MONTH_NAMES: [&str; 12] = [
     "January",
     "February",
@@ -43,7 +45,13 @@ struct ParsedTime {
     microsecond: u32,
     hour12: bool,
     hour24: bool,
-    meridiem: Option<bool>,
+    meridiem: Option<Meridiem>,
+}
+
+enum Meridiem {
+    Am,
+    Pm,
+    Missing,
 }
 
 impl Time {
@@ -58,9 +66,30 @@ impl Time {
         allow_invalid_date: bool,
         timezone: &TZ,
     ) -> Result<(Self, bool), TimeError> {
+        Self::str_to_date_bytes(
+            date.as_bytes(),
+            format.as_bytes(),
+            allow_zero_in_date,
+            allow_invalid_date,
+            timezone,
+        )
+        .map_err(|(_, error)| error)
+    }
+
+    /// Parses the original string bytes and returns the value Go retains on failure.
+    /// The boolean reports trailing input that should produce a warning.
+    #[inline]
+    pub fn str_to_date_bytes<TZ: TimeZone>(
+        date: &[u8],
+        format: &[u8],
+        allow_zero_in_date: bool,
+        allow_invalid_date: bool,
+        timezone: &TZ,
+    ) -> Result<(Self, bool), (Self, TimeError)> {
         let mut parsed = ParsedTime::default();
-        let warning = parse_format(&mut parsed, date, format)?;
-        fix_meridiem(&mut parsed)?;
+        let warning = parse_format(&mut parsed, date, format)
+            .and_then(|warning| fix_meridiem(&mut parsed).map(|()| warning))
+            .map_err(|error| (Self::from_go_raw_like_go(0), error))?;
         let result = Self::new(
             CoreTime::from_date(
                 parsed.year as u16,
@@ -73,37 +102,39 @@ impl Time {
             ),
             TimeType::DateTime,
             0,
-        )?;
-        result.validate(allow_zero_in_date, allow_invalid_date, timezone)?;
+        )
+        .expect("zero precision");
+        result
+            .validate(allow_zero_in_date, allow_invalid_date, timezone)
+            .map_err(|error| (result, error))?;
         Ok((result, warning))
     }
 }
 
 /// Classifies whether a MySQL date format contains time and date fields.
 #[must_use]
-pub fn get_format_type(mut format: &str) -> (bool, bool) {
+pub fn get_format_type(format: &str) -> (bool, bool) {
+    get_format_type_bytes(format.as_bytes())
+}
+
+/// Classifies a format using the original MySQL string bytes.
+#[must_use]
+pub fn get_format_type_bytes(format: &[u8]) -> (bool, bool) {
+    let mut format = skip_whitespace(format);
     let mut is_duration = false;
     let mut is_date = false;
-    loop {
-        format = format.trim_start_matches(char::is_whitespace);
-        if format.is_empty() {
-            break;
-        }
+    while !format.is_empty() {
         let Ok((token, remaining)) = next_token(format) else {
-            return (false, false);
+            break;
         };
         format = remaining;
-        if let Some(conversion) = token
-            .strip_prefix('%')
-            .and_then(|value| value.chars().next())
-        {
-            match conversion {
-                'h' | 'H' | 'i' | 'I' | 's' | 'S' | 'k' | 'l' | 'f' | 'r' | 'T' => {
-                    is_duration = true;
-                }
-                'y' | 'Y' | 'm' | 'M' | 'c' | 'b' | 'D' | 'd' | 'e' => is_date = true,
-                _ => {}
+        match token {
+            b"%h" | b"%H" | b"%i" | b"%I" | b"%s" | b"%S" | b"%k" | b"%l" | b"%f" | b"%r"
+            | b"%T" => is_duration = true,
+            b"%y" | b"%Y" | b"%m" | b"%M" | b"%c" | b"%b" | b"%D" | b"%d" | b"%e" => {
+                is_date = true;
             }
+            _ => {}
         }
         if is_duration && is_date {
             break;
@@ -114,59 +145,45 @@ pub fn get_format_type(mut format: &str) -> (bool, bool) {
 
 fn parse_format(
     parsed: &mut ParsedTime,
-    mut date: &str,
-    mut format: &str,
+    mut date: &[u8],
+    mut format: &[u8],
 ) -> Result<bool, TimeError> {
     loop {
-        date = date.trim_start_matches(char::is_whitespace);
-        format = format.trim_start_matches(char::is_whitespace);
+        date = skip_whitespace(date);
+        format = skip_whitespace(format);
         if format.is_empty() {
             return Ok(!date.is_empty());
         }
+        let (token, remaining) = next_token(format)?;
         if date.is_empty() {
-            // Go's `strToDate` records the current token with a zero value
-            // when the input is exhausted. `mysqlTimeFix` then uses token
-            // presence (not just a parsed value) to reject `%p` paired with
-            // `%H`, and to reject an empty `%p`/zero-hour combination.
-            let (token, _) = next_token(format)?;
+            // Go records the exact, unparsed token with a zero value.
             match token {
-                "%p" => parsed.meridiem = Some(false),
-                "%H" => parsed.hour24 = true,
-                "%h" | "%I" | "%l" => parsed.hour12 = true,
+                b"%p" => parsed.meridiem = Some(Meridiem::Missing),
+                b"%H" => parsed.hour24 = true,
+                b"%h" => parsed.hour12 = true,
                 _ => {}
             }
             return Ok(false);
         }
-
-        let (token, remaining_format) = next_token(format)?;
-        format = remaining_format;
+        format = remaining;
         date = parse_token(parsed, date, token)?;
     }
 }
 
-fn next_token(format: &str) -> Result<(&str, &str), TimeError> {
-    if let Some(remaining) = format.strip_prefix('%') {
-        let Some(character) = remaining.chars().next() else {
-            return Err(TimeError::InvalidDate);
-        };
-        let end = 1 + character.len_utf8();
-        Ok((&format[..end], &format[end..]))
-    } else {
-        let character = format.chars().next().expect("nonempty format");
-        let end = character.len_utf8();
-        Ok((&format[..end], &format[end..]))
-    }
+fn next_token(format: &[u8]) -> Result<(&[u8], &[u8]), TimeError> {
+    let width = if format[0] == b'%' { 2 } else { 1 };
+    format.split_at_checked(width).ok_or(TimeError::InvalidDate)
 }
 
 fn parse_token<'a>(
     parsed: &mut ParsedTime,
-    input: &'a str,
-    token: &str,
-) -> Result<&'a str, TimeError> {
+    input: &'a [u8],
+    token: &[u8],
+) -> Result<&'a [u8], TimeError> {
     match token {
-        "%b" => parse_month_name(parsed, input, true),
-        "%M" => parse_month_name(parsed, input, false),
-        "%c" | "%m" => {
+        b"%b" => parse_month_name(parsed, input, true),
+        b"%M" => parse_month_name(parsed, input, false),
+        b"%c" | b"%m" => {
             let (value, remaining) = parse_digits(input, 2)?;
             if value > 12 {
                 return Err(TimeError::InvalidDate);
@@ -174,7 +191,7 @@ fn parse_token<'a>(
             parsed.month = value as u8;
             Ok(remaining)
         }
-        "%d" | "%e" => {
+        b"%d" | b"%e" => {
             let (value, remaining) = parse_digits(input, 2)?;
             if value > 31 {
                 return Err(TimeError::InvalidDate);
@@ -182,12 +199,12 @@ fn parse_token<'a>(
             parsed.day = value as u8;
             Ok(remaining)
         }
-        "%f" => {
+        b"%f" => {
             let (value, digits, remaining) = parse_optional_digits(input, 6);
             parsed.microsecond = value * 10_u32.pow(6 - digits as u32);
             Ok(remaining)
         }
-        "%h" | "%I" | "%l" => {
+        b"%h" | b"%I" | b"%l" => {
             let (value, remaining) = parse_digits(input, 2)?;
             if !(1..=12).contains(&value) {
                 return Err(TimeError::InvalidClock);
@@ -196,7 +213,7 @@ fn parse_token<'a>(
             parsed.hour12 = true;
             Ok(remaining)
         }
-        "%H" | "%k" => {
+        b"%H" | b"%k" => {
             let (value, remaining) = parse_digits(input, 2)?;
             if value > 23 {
                 return Err(TimeError::InvalidClock);
@@ -205,7 +222,7 @@ fn parse_token<'a>(
             parsed.hour24 = true;
             Ok(remaining)
         }
-        "%i" => {
+        b"%i" => {
             let (value, remaining) = parse_digits(input, 2)?;
             if value > 59 {
                 return Err(TimeError::InvalidClock);
@@ -213,7 +230,7 @@ fn parse_token<'a>(
             parsed.minute = value as u8;
             Ok(remaining)
         }
-        "%s" | "%S" => {
+        b"%s" | b"%S" => {
             let (value, remaining) = parse_digits(input, 2)?;
             if value > 59 {
                 return Err(TimeError::InvalidClock);
@@ -221,22 +238,22 @@ fn parse_token<'a>(
             parsed.second = value as u8;
             Ok(remaining)
         }
-        "%p" => {
-            if has_prefix(input, "AM") {
-                parsed.meridiem = Some(false);
+        b"%p" => {
+            if has_prefix(input, b"AM") {
+                parsed.meridiem = Some(Meridiem::Am);
                 Ok(&input[2..])
-            } else if has_prefix(input, "PM") {
-                parsed.meridiem = Some(true);
+            } else if has_prefix(input, b"PM") {
+                parsed.meridiem = Some(Meridiem::Pm);
                 Ok(&input[2..])
             } else {
                 Err(TimeError::InvalidClock)
             }
         }
-        "%r" => parse_compound_time(parsed, input, true),
-        "%T" => parse_compound_time(parsed, input, false),
-        "%Y" => parse_year(parsed, input, 4),
-        "%y" => parse_year(parsed, input, 2),
-        "%j" => {
+        b"%r" => parse_compound_time(parsed, input, true),
+        b"%T" => parse_compound_time(parsed, input, false),
+        b"%Y" => parse_year(parsed, input, 4),
+        b"%y" => parse_year(parsed, input, 2),
+        b"%j" => {
             let (value, remaining) = parse_digits(input, 3)?;
             if value == 0 {
                 Err(TimeError::InvalidDate)
@@ -244,9 +261,9 @@ fn parse_token<'a>(
                 Ok(remaining)
             }
         }
-        "%#" => Ok(skip_while(input, char::is_numeric)),
-        "%." => Ok(skip_while(input, is_go_punctuation)),
-        "%@" => Ok(skip_while(input, char::is_alphabetic)),
+        b"%#" => Ok(skip_class(input, is_go_number)),
+        b"%." => Ok(skip_class(input, is_go_punctuation)),
+        b"%@" => Ok(skip_class(input, is_go_letter)),
         _ if input.starts_with(token) => Ok(&input[token.len()..]),
         _ => Err(TimeError::InvalidDate),
     }
@@ -254,12 +271,12 @@ fn parse_token<'a>(
 
 fn parse_month_name<'a>(
     parsed: &mut ParsedTime,
-    input: &'a str,
+    input: &'a [u8],
     abbreviated: bool,
-) -> Result<&'a str, TimeError> {
+) -> Result<&'a [u8], TimeError> {
     for (index, name) in MONTH_NAMES.iter().enumerate() {
         let candidate = if abbreviated { &name[..3] } else { name };
-        if has_prefix(input, candidate) {
+        if has_prefix(input, candidate.as_bytes()) {
             parsed.month = index as u8 + 1;
             return Ok(&input[candidate.len()..]);
         }
@@ -269,9 +286,9 @@ fn parse_month_name<'a>(
 
 fn parse_year<'a>(
     parsed: &mut ParsedTime,
-    input: &'a str,
+    input: &'a [u8],
     limit: usize,
-) -> Result<&'a str, TimeError> {
+) -> Result<&'a [u8], TimeError> {
     let (year, digits, remaining) = parse_digits_with_len(input, limit)?;
     parsed.year = if digits <= 2 { adjust_year(year) } else { year } as i32;
     Ok(remaining)
@@ -287,9 +304,9 @@ fn adjust_year(year: u32) -> u32 {
 
 fn parse_compound_time<'a>(
     parsed: &mut ParsedTime,
-    input: &'a str,
+    input: &'a [u8],
     twelve_hour: bool,
-) -> Result<&'a str, TimeError> {
+) -> Result<&'a [u8], TimeError> {
     let (hour, _, mut remaining) = parse_digits_with_len(input, 2)?;
     if (twelve_hour && !(1..=12).contains(&hour)) || (!twelve_hour && hour > 23) {
         return Err(TimeError::InvalidClock);
@@ -324,13 +341,13 @@ fn parse_compound_time<'a>(
         return Err(TimeError::InvalidClock);
     }
     parsed.second = second as u8;
-    remaining = next.trim_start_matches(char::is_whitespace);
+    remaining = skip_whitespace(next);
     if !twelve_hour || remaining.is_empty() {
         return Ok(remaining);
     }
-    if has_prefix(remaining, "AM") {
+    if has_prefix(remaining, b"AM") {
         Ok(&remaining[2..])
-    } else if has_prefix(remaining, "PM") {
+    } else if has_prefix(remaining, b"PM") {
         parsed.hour += 12;
         Ok(&remaining[2..])
     } else {
@@ -338,16 +355,16 @@ fn parse_compound_time<'a>(
     }
 }
 
-fn parse_separator(input: &str) -> Result<&str, TimeError> {
-    let input = input.trim_start_matches(char::is_whitespace);
-    let Some(input) = input.strip_prefix(':') else {
+fn parse_separator(input: &[u8]) -> Result<&[u8], TimeError> {
+    let input = skip_whitespace(input);
+    let Some(input) = input.strip_prefix(b":") else {
         return Err(TimeError::InvalidClock);
     };
-    Ok(input.trim_start_matches(char::is_whitespace))
+    Ok(skip_whitespace(input))
 }
 
 fn fix_meridiem(parsed: &mut ParsedTime) -> Result<(), TimeError> {
-    let Some(pm) = parsed.meridiem else {
+    let Some(ref meridiem) = parsed.meridiem else {
         if parsed.hour12 && parsed.hour == 12 {
             parsed.hour = 0;
         }
@@ -357,19 +374,21 @@ fn fix_meridiem(parsed: &mut ParsedTime) -> Result<(), TimeError> {
         return Err(TimeError::InvalidClock);
     }
     if parsed.hour == 12 {
-        parsed.hour = if pm { 12 } else { 0 };
-    } else if pm {
+        if matches!(meridiem, Meridiem::Am) {
+            parsed.hour = 0;
+        }
+    } else if matches!(meridiem, Meridiem::Pm) {
         parsed.hour += 12;
     }
     Ok(())
 }
 
-fn parse_digits(input: &str, limit: usize) -> Result<(u32, &str), TimeError> {
+fn parse_digits(input: &[u8], limit: usize) -> Result<(u32, &[u8]), TimeError> {
     let (value, _, remaining) = parse_digits_with_len(input, limit)?;
     Ok((value, remaining))
 }
 
-fn parse_digits_with_len(input: &str, limit: usize) -> Result<(u32, usize, &str), TimeError> {
+fn parse_digits_with_len(input: &[u8], limit: usize) -> Result<(u32, usize, &[u8]), TimeError> {
     let (value, digits, remaining) = parse_optional_digits(input, limit);
     if digits == 0 {
         Err(TimeError::InvalidDate)
@@ -378,31 +397,91 @@ fn parse_digits_with_len(input: &str, limit: usize) -> Result<(u32, usize, &str)
     }
 }
 
-fn parse_optional_digits(input: &str, limit: usize) -> (u32, usize, &str) {
-    let digits = input
-        .as_bytes()
-        .iter()
-        .take(limit)
-        .take_while(|byte| byte.is_ascii_digit())
-        .count();
-    let value = input[..digits].parse().unwrap_or(0);
+fn parse_optional_digits(input: &[u8], limit: usize) -> (u32, usize, &[u8]) {
+    let mut value = 0;
+    let mut digits = 0;
+    for &byte in input.iter().take(limit) {
+        if !byte.is_ascii_digit() {
+            break;
+        }
+        value = value * 10 + u32::from(byte - b'0');
+        digits += 1;
+    }
     (value, digits, &input[digits..])
 }
 
-fn has_prefix(input: &str, prefix: &str) -> bool {
+fn has_prefix(input: &[u8], prefix: &[u8]) -> bool {
     input
         .get(..prefix.len())
         .is_some_and(|candidate| candidate.eq_ignore_ascii_case(prefix))
 }
 
-fn skip_while(input: &str, predicate: impl Fn(char) -> bool) -> &str {
-    let consumed = input
-        .char_indices()
-        .take_while(|(_, character)| predicate(*character))
-        .map(|(index, character)| index + character.len_utf8())
-        .last()
-        .unwrap_or(0);
-    &input[consumed..]
+#[inline]
+fn skip_whitespace(mut input: &[u8]) -> &[u8] {
+    while let Some(&first) = input.first() {
+        match first {
+            b'\t'..=b'\r' | b' ' => input = &input[1..],
+            0x80.. => return skip_unicode_whitespace(input),
+            _ => break,
+        }
+    }
+    input
+}
+
+#[cold]
+fn skip_unicode_whitespace(mut input: &[u8]) -> &[u8] {
+    while let Some((character, width)) = first_character(input) {
+        if !character.is_whitespace() {
+            break;
+        }
+        input = &input[width..];
+    }
+    input
+}
+
+fn first_character(input: &[u8]) -> Option<(char, usize)> {
+    let (codepoint, width) = crate::collation::decode_rune(input).ok()?;
+    Some((char::from_u32(codepoint)?, width))
+}
+
+fn skip_class(input: &[u8], predicate: fn(char) -> bool) -> &[u8] {
+    let mut index = 0;
+    let mut end = 0;
+    while let Some((character, width)) = first_character(&input[index..]) {
+        if !predicate(character) {
+            break;
+        }
+        // Go's skipAll functions keep the last rune's start byte plus one.
+        end = index + 1;
+        index += width;
+    }
+    &input[end..]
+}
+
+fn is_go_letter(character: char) -> bool {
+    if character.is_ascii() {
+        return character.is_ascii_alphabetic();
+    }
+    matches!(
+        get_general_category(character),
+        GeneralCategory::UppercaseLetter
+            | GeneralCategory::LowercaseLetter
+            | GeneralCategory::TitlecaseLetter
+            | GeneralCategory::ModifierLetter
+            | GeneralCategory::OtherLetter
+    ) || unicode_delta::added_letters(character)
+}
+
+fn is_go_number(character: char) -> bool {
+    if character.is_ascii() {
+        return character.is_ascii_digit();
+    }
+    matches!(
+        get_general_category(character),
+        GeneralCategory::DecimalNumber
+            | GeneralCategory::LetterNumber
+            | GeneralCategory::OtherNumber
+    ) || unicode_delta::added_numbers(character)
 }
 
 /// Returns whether a character belongs to Go's `unicode.IsPunct` set.
@@ -410,27 +489,6 @@ fn skip_while(input: &str, predicate: impl Fn(char) -> bool) -> &str {
 /// The expression-level `STR_TO_DATE` implementation shares this classifier
 /// so both Rust owners consume exactly the same source-version table.
 pub fn is_go_punctuation(character: char) -> bool {
-    // Go 1.25's unicode tables are Unicode 15.0. The dependency is generated
-    // from Unicode 16.0, so exclude the 13 punctuation code points introduced
-    // by that newer table until the Go source advances its Unicode edition.
-    if matches!(
-        character,
-        '\u{1b4e}'
-            | '\u{1b4f}'
-            | '\u{1b7f}'
-            | '\u{10d6e}'
-            | '\u{113d4}'
-            | '\u{113d5}'
-            | '\u{113d7}'
-            | '\u{113d8}'
-            | '\u{11be1}'
-            | '\u{16d6d}'
-            | '\u{16d6e}'
-            | '\u{16d6f}'
-            | '\u{1e5ff}'
-    ) {
-        return false;
-    }
     matches!(
         get_general_category(character),
         GeneralCategory::ClosePunctuation
@@ -440,7 +498,7 @@ pub fn is_go_punctuation(character: char) -> bool {
             | GeneralCategory::InitialPunctuation
             | GeneralCategory::OpenPunctuation
             | GeneralCategory::OtherPunctuation
-    )
+    ) || unicode_delta::added_punctuation(character)
 }
 
 #[cfg(test)]
@@ -731,12 +789,22 @@ mod tests {
 
     #[test]
     fn punctuation_token_matches_go_unicode_punctuation() {
-        assert_eq!(
-            parse("2013¿5", "%Y%.%c", true),
-            Ok(CoreTime::from_date(2013, 5, 0, 0, 0, 0, 0))
-        );
+        assert!(parse("2013¿5", "%Y%.%c", true).is_err());
         assert!(parse("2013+5", "%Y%.%c", true).is_err());
         assert!(parse("2013\u{1b4e}5", "%Y%.%c", true).is_err());
+    }
+
+    #[test]
+    fn skip_tokens_use_go_unicode_17_classes() {
+        // A final ASCII member of the class advances past the Unicode rune.
+        let expected = CoreTime::from_date(2024, 2, 29, 0, 0, 0, 0);
+        for (input, format) in [
+            ("\u{088f}foo2024-02-29", "%@%Y-%m-%d"),
+            ("\u{11de0}123 2024-02-29", "%#%Y-%m-%d"),
+            ("2024\u{10ed0}-02-29", "%Y%.%m-%d"),
+        ] {
+            assert_eq!(parse(input, format, false), Ok(expected));
+        }
     }
 
     #[test]

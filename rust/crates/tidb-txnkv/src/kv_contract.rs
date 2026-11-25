@@ -22,6 +22,7 @@ use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering as AtomicOrdering};
 use std::sync::{Arc, Condvar, Mutex, RwLock};
 use std::time::Duration;
 
+use bytes::Bytes;
 use tokio::sync::Notify;
 
 use crate::{Key, KeyRange, ReplicaReadType, RequestSource, ResourceGroupTagBuilder};
@@ -657,15 +658,15 @@ pub struct Request {
     pub request_type: RequestType,
     /// Read timestamp.
     pub start_ts: u64,
-    /// Serialized request body.
-    pub data: Option<Vec<u8>>,
+    /// Immutable serialized request body shared by sends, tasks, and retries.
+    pub data: Option<Bytes>,
     /// Partition-aware key ranges.
     /// Go `KeyRanges *KeyRanges`: one range list shared by every copy of
     /// the request (the transport binding, each response's metadata, each
     /// attempt), not cloned per copy.
     pub key_ranges: Option<Arc<PartitionedKeyRanges>>,
-    /// TiFlash partition-table ranges.
-    pub partition_id_and_ranges: Vec<PartitionIdAndRanges>,
+    /// TiFlash partition-table ranges shared by all snapshots of this request.
+    pub partition_id_and_ranges: Option<Arc<Vec<PartitionIdAndRanges>>>,
     /// Request concurrency.
     pub concurrency: isize,
     /// Shared in-flight coprocessor request limiter used when no query-level
@@ -747,6 +748,15 @@ pub struct Request {
     pub connection_id: u64,
     /// Connection alias.
     pub connection_alias: String,
+}
+
+impl Request {
+    /// Returns the TiFlash partitions and their key ranges in request order.
+    #[must_use]
+    #[inline]
+    pub fn partition_table_ranges(&self) -> &[PartitionIdAndRanges] {
+        self.partition_id_and_ranges.as_deref().map_or(&[], Vec::as_slice)
+    }
 }
 
 /// Adjusts a coprocessor request for the current store count.

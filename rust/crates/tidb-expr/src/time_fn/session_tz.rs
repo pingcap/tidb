@@ -43,10 +43,10 @@ use crate::coerce::coerce_str;
 use tidb_datatype::SessionTimeZone;
 use crate::scalar_function::ScalarFunction;
 use crate::{Columns, Datum, Decimal, EvalError};
-use tidb_datatype::{Time, TimeType};
+use tidb_datatype::{CoreTime, Time, TimeType};
 
 /// MySQL 8.0.28's maximum unix timestamp: '3001-01-18 23:59:59' UTC.
-const MAX_UNIX_SECS: i64 = 32_536_771_199;
+pub(crate) const MAX_UNIX_SECS: i64 = 32_536_771_199;
 const MAX_UNIX_MICROS: i64 = 32_536_771_199_999_999;
 
 /// Renders the instant `secs`+`micros` (unix epoch) as a local wall clock in
@@ -58,8 +58,33 @@ fn instant_to_local(secs: i64, micros: u32, tz: &SessionTimeZone) -> Option<Naiv
         SessionTimeZone::Fixed { offset_secs, .. } => {
             (utc + chrono::Duration::seconds(i64::from(*offset_secs))).naive_utc()
         }
-        SessionTimeZone::Named(tz) => utc.with_timezone(tz).naive_local(),
+        SessionTimeZone::Named(tz) => named_to_local(tz, utc),
     })
+}
+
+/// Builds the packed result of Go `evalFromUnixTime` after decimal conversion.
+pub(crate) fn time_from_epoch(
+    secs: i64,
+    nanos: i64,
+    fsp: i64,
+    zone: &SessionTimeZone,
+) -> Option<Time> {
+    if !(0..=MAX_UNIX_SECS).contains(&secs) {
+        return None;
+    }
+    let factor = 10_i64.pow((9 - fsp) as u32);
+    let nanos = (nanos + factor / 2) / factor * factor;
+    let local = instant_to_local(
+        secs + nanos / 1_000_000_000,
+        (nanos % 1_000_000_000 / 1000) as u32,
+        zone,
+    )?;
+    Time::new(
+        tidb_datatype::core_time_from_datetime(local.and_utc()),
+        TimeType::DateTime,
+        fsp,
+    )
+    .ok()
 }
 
 fn format_local(local: NaiveDateTime, fsp: usize) -> String {
@@ -295,7 +320,7 @@ pub(crate) fn unix_timestamp(
         SessionTimeZone::Fixed { offset_secs, .. } => {
             Some(naive.and_utc() - chrono::Duration::seconds(i64::from(*offset_secs)))
         }
-        SessionTimeZone::Named(tz) => local_to_instant(tz, &naive),
+        SessionTimeZone::Named(tz) => named_wall_clock(tz, naive, fsp == 0),
     };
     let Some(instant) = instant else {
         return Ok(unix_result(0, fsp));
@@ -333,6 +358,103 @@ pub(super) fn local_to_instant<TZ: chrono::TimeZone>(
         }
     }
     dst_gap_bound(tz, naive)
+}
+
+fn go_wall_clock_guess(tz: &chrono_tz::Tz, naive: NaiveDateTime) -> chrono::DateTime<Utc> {
+    let first = naive - chrono::Duration::seconds(i64::from(offset_at(tz, &naive)));
+    (naive - chrono::Duration::seconds(i64::from(offset_at(tz, &first)))).and_utc()
+}
+
+/// Resolves a local clock with Go Date's overlap choice. AdjustedGoTime is
+/// the variant that snaps a nonexistent clock to a nearby transition.
+pub(super) fn named_wall_clock(
+    tz: &chrono_tz::Tz,
+    naive: NaiveDateTime,
+    adjust_gap: bool,
+) -> Option<chrono::DateTime<Utc>> {
+    use chrono::{LocalResult, TimeZone as _};
+    if let Some(rules) = extended_zone(tz, naive.year()) {
+        return extended_wall_clock(&rules, naive, adjust_gap);
+    }
+    match tz.from_local_datetime(&naive) {
+        LocalResult::Single(value) => Some(value.with_timezone(&Utc)),
+        LocalResult::Ambiguous(_, _) => Some(go_wall_clock_guess(tz, naive)),
+        LocalResult::None if adjust_gap => {
+            let bound = chrono_tz::GapInfo::new(&naive, tz)?
+                .end?
+                .with_timezone(&Utc);
+            let normalized = go_wall_clock_guess(tz, naive);
+            ((bound - normalized).abs() <= chrono::Duration::hours(4)).then_some(bound)
+        }
+        LocalResult::None => None,
+    }
+}
+
+/// chrono-tz's generated recurring transitions stop after 2099. TZif's
+/// POSIX footer continues those rules and is also used by Go's time package.
+fn extended_zone(tz: &chrono_tz::Tz, year: i32) -> Option<jiff::tz::TimeZone> {
+    if year < 2100 {
+        return None;
+    }
+    jiff::tz::TimeZone::get(tz.name()).ok()
+}
+
+pub(super) fn named_to_local(tz: &chrono_tz::Tz, instant: chrono::DateTime<Utc>) -> NaiveDateTime {
+    if let Some(rules) = extended_zone(tz, instant.year()) {
+        if let Ok(stamp) =
+            jiff::Timestamp::new(instant.timestamp(), instant.timestamp_subsec_nanos() as i32)
+        {
+            let offset = rules.to_offset(stamp).seconds();
+            return (instant + chrono::Duration::seconds(i64::from(offset))).naive_utc();
+        }
+    }
+    instant.with_timezone(tz).naive_local()
+}
+
+fn extended_wall_clock(
+    tz: &jiff::tz::TimeZone,
+    wall: NaiveDateTime,
+    adjust_gap: bool,
+) -> Option<chrono::DateTime<Utc>> {
+    let wall = wall.and_utc();
+    let nanos = wall.timestamp_subsec_nanos();
+    let stamp = |second| jiff::Timestamp::new(second, nanos as i32).ok();
+    let secs = wall.timestamp();
+    let offset = |stamp| i64::from(tz.to_offset(stamp).seconds());
+    let first = stamp(secs - offset(stamp(secs)?))?;
+    let second = stamp(secs - offset(first))?;
+    if second.as_second() + offset(second) == secs {
+        return chrono::DateTime::from_timestamp(second.as_second(), nanos);
+    }
+    if !adjust_gap {
+        return None;
+    }
+    // AdjustedGoTime chooses the nearest end of the active zone period and
+    // rejects values farther than four hours away. Ties choose its start.
+    let before = tz.preceding(second).next().map(|t| t.timestamp());
+    let after = tz.following(second).next().map(|t| t.timestamp());
+    let bound = before
+        .into_iter()
+        .chain(after)
+        .min_by_key(|bound| (bound.as_nanosecond() - second.as_nanosecond()).abs())?;
+    if (bound.as_nanosecond() - second.as_nanosecond()).abs() > 14_400_000_000_000 {
+        return None;
+    }
+    chrono::DateTime::from_timestamp(bound.as_second(), bound.subsec_nanosecond() as u32)
+}
+
+/// The UNIX_TIMESTAMP vector signatures differ in their gap policy.
+pub(crate) fn named_unix_micros(core: CoreTime, tz: &chrono_tz::Tz, adjust_gap: bool) -> i64 {
+    let micros = core
+        .to_datetime(&Utc)
+        .ok()
+        .and_then(|wall| named_wall_clock(tz, wall.naive_utc(), adjust_gap))
+        .map_or(0, |instant| instant.timestamp_micros());
+    if (1_000_000..=MAX_UNIX_MICROS).contains(&micros) {
+        micros
+    } else {
+        0
+    }
 }
 
 /// The zone's offset east of UTC at a UTC instant (Go's `Location.lookup`).
@@ -390,8 +512,40 @@ fn dst_gap_bound<TZ: chrono::TimeZone>(
     Some(after.and_utc())
 }
 
-/// Builds `UNIX_TIMESTAMP`'s result from epoch microseconds: TRUNCATED at
-/// fsp, integer when fsp is 0, out-of-range as 0.
+/// Go's strict packed datetime conversion in a zone with a fixed offset.
+pub(crate) fn fixed_unix_micros(core: tidb_datatype::CoreTime, offset_secs: i32) -> i64 {
+    let year = core.year();
+    let month = core.month();
+    let day = core.day();
+    let hour = core.hour();
+    let minute = core.minute();
+    let second = core.second();
+    let micros = core.microsecond();
+    if !(1..=12).contains(&month)
+        || day == 0
+        || day > tidb_datatype::get_last_day(year, month)
+        || hour > 23
+        || minute > 59
+        || second > 59
+        || micros > 999_999
+    {
+        return 0;
+    }
+    const UNIX_DAY_NUMBER: i64 = tidb_datatype::calc_daynr(1970, 1, 1);
+    let days = tidb_datatype::calc_daynr(i64::from(year), i64::from(month), i64::from(day))
+        - UNIX_DAY_NUMBER;
+    let seconds = days * 86_400 + i64::from(hour) * 3600 + i64::from(minute) * 60
+        + i64::from(second)
+        - i64::from(offset_secs);
+    let micros = seconds * 1_000_000 + i64::from(micros);
+    if (1_000_000..=MAX_UNIX_MICROS).contains(&micros) {
+        micros
+    } else {
+        0
+    }
+}
+
+/// Builds `UNIX_TIMESTAMP`'s result from epoch microseconds, truncating at fsp.
 fn unix_result(micros: i64, fsp: usize) -> Datum {
     let micros = if (1_000_000..=MAX_UNIX_MICROS).contains(&micros) {
         micros

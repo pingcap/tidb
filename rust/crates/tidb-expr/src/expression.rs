@@ -820,6 +820,9 @@ impl Expression {
     }
 
     fn apply_enum_set_as_int(&self, value: tidb_datatype::Datum) -> tidb_datatype::Datum {
+        if !matches!(value, tidb_datatype::Datum::Enum(..) | tidb_datatype::Datum::Set(..)) {
+            return value;
+        }
         // `WrapWithCastAsInt` follows Go's hybrid ENUM path by setting
         // `EnumSetAsIntFlag` on the source expression and returning it without
         // building another cast node. The row/constant seam still materializes
@@ -1019,7 +1022,7 @@ mod tests {
         assert!(!names.is_empty());
         let joined = names.iter().cloned().collect::<Vec<_>>().join("\n");
         assert_eq!(
-            format!("{:x}", Sha256::digest(joined.as_bytes())),
+            tidb_goruntime::go_hex::encode_to_string(&Sha256::digest(joined.as_bytes())),
             "729f5252bcd91efe1a4bbf0c383a36c5a2e52ed2d90d7aab0a3e0b450322294c"
         );
         for name in NULL_REJECT_NULL_PRESERVING_FUNCTIONS {

@@ -16,4 +16,3 @@ tidb-table-filter = { path = "../tidb-table-filter" }
 tidb-table-rule-selector = { path = "../tidb-table-rule-selector" }
 tidb-metadef = { path = "../tidb-metadef" }
 tidb-mysql = { path = "../tidb-mysql" }
-regex.workspace = true

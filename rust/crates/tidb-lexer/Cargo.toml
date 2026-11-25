@@ -20,6 +20,7 @@ path = "src/generate_keyword.rs"
 workspace = true
 
 [dependencies]
+memchr = "2"
 tidb-parser-util = { path = "../tidb-parser-util" }
 tidb-charset = { path = "../tidb-charset" }
 tidb-parser-tidb = { path = "../tidb-parser-tidb" }

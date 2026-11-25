@@ -20,7 +20,7 @@ use tidb_datatype::Datum;
 
 use tidb_codec::decode_bytes;
 use tidb_codec::{decode_one, encode_key, INT_FLAG};
-use tidb_codec::{decode_int, decode_uint, encode_int};
+use tidb_codec::{decode_int, decode_uint, encode_int, encode_int_to_cmp_uint};
 use tidb_codec::CodecError;
 
 
@@ -287,11 +287,16 @@ pub fn decode_table_id(key: &[u8]) -> i64 {
 
 /// Go `GenTableRecordPrefix`: the `t[table_id]_r` table-record prefix.
 pub fn gen_table_record_prefix(table_id: i64) -> Vec<u8> {
-    let mut key = Vec::with_capacity(PREFIX_LEN);
-    key.extend_from_slice(TABLE_PREFIX);
-    encode_int(&mut key, table_id);
-    key.extend_from_slice(RECORD_PREFIX);
-    key
+    record_key_prefix(table_id).to_vec()
+}
+
+#[inline]
+fn record_key_prefix(table_id: i64) -> [u8; PREFIX_LEN] {
+    let mut prefix = [0; PREFIX_LEN];
+    prefix[0] = TABLE_PREFIX[0];
+    prefix[1..1 + ID_LEN].copy_from_slice(&encode_int_to_cmp_uint(table_id).to_be_bytes());
+    prefix[1 + ID_LEN..].copy_from_slice(RECORD_PREFIX);
+    prefix
 }
 
 /// Go `EncodeRowKey`: one table row key from an already encoded handle.
@@ -300,9 +305,7 @@ pub fn encode_row_key(table_id: i64, encoded_handle: &[u8]) -> Vec<u8> {
     // growing the 11-byte prefix for the handle would be a second allocation
     // per key.
     let mut key = Vec::with_capacity(PREFIX_LEN + encoded_handle.len());
-    key.extend_from_slice(TABLE_PREFIX);
-    encode_int(&mut key, table_id);
-    key.extend_from_slice(RECORD_PREFIX);
+    key.extend_from_slice(&record_key_prefix(table_id));
     key.extend_from_slice(encoded_handle);
     key
 }
@@ -314,14 +317,59 @@ pub fn gen_table_prefix(table_id: i64) -> Vec<u8> {
 
 /// Generates the `t{table_id}_i` prefix shared by every index of a table.
 pub fn gen_table_index_prefix(table_id: i64) -> Vec<u8> {
-    let mut key = encode_table_prefix(table_id);
-    key.extend_from_slice(INDEX_PREFIX);
+    let mut key = Vec::with_capacity(PREFIX_LEN);
+    append_table_index_prefix(&mut key, table_id);
     key
+}
+
+fn append_table_index_prefix(key: &mut Vec<u8>, table_id: i64) {
+    key.extend_from_slice(TABLE_PREFIX);
+    key.extend_from_slice(&encode_int_to_cmp_uint(table_id).to_be_bytes());
+    key.extend_from_slice(INDEX_PREFIX);
 }
 
 /// Encodes a row key from a decoded source handle.
 pub fn encode_row_key_with_handle(table_id: i64, handle: &RecordHandle) -> Vec<u8> {
-    encode_row_key(table_id, &encode_handle(handle))
+    match handle {
+        RecordHandle::Int(value) => encode_int_row_key(table_id, *value).to_vec(),
+        RecordHandle::Common(encoded) => encode_row_key_with_common_handle(table_id, encoded),
+        RecordHandle::Partition { handle, .. } => encode_row_key_with_handle(table_id, handle),
+    }
+}
+
+/// Encodes the fixed-width record key for an integer handle.
+pub fn encode_int_row_key(table_id: i64, handle: i64) -> [u8; RECORD_ROW_KEY_LEN] {
+    let mut key = [0; RECORD_ROW_KEY_LEN];
+    key[..PREFIX_LEN].copy_from_slice(&record_key_prefix(table_id));
+    key[PREFIX_LEN..].copy_from_slice(&encode_int_to_cmp_uint(handle).to_be_bytes());
+    key
+}
+
+/// Writes a common-handle row key into a caller-provided buffer.
+/// Returns `None` if the buffer cannot hold the key.
+#[inline]
+pub fn encode_common_row_key_into<'a>(
+    table_id: i64,
+    handle: &[u8],
+    buffer: &'a mut [u8],
+) -> Option<&'a [u8]> {
+    let key = buffer.get_mut(..PREFIX_LEN + handle.len().max(MIN_COMMON_HANDLE_LEN))?;
+    let (prefix, encoded) = key.split_at_mut(PREFIX_LEN);
+    prefix.copy_from_slice(&record_key_prefix(table_id));
+    let (value, padding) = encoded.split_at_mut(handle.len());
+    value.copy_from_slice(handle);
+    padding.fill(0);
+    Some(key)
+}
+
+/// Encodes a row key from common-handle bytes, padding a short handle.
+pub fn encode_row_key_with_common_handle(table_id: i64, encoded: &[u8]) -> Vec<u8> {
+    if encoded.len() >= MIN_COMMON_HANDLE_LEN {
+        return encode_row_key(table_id, encoded);
+    }
+    let mut padded = [0; MIN_COMMON_HANDLE_LEN];
+    padded[..encoded.len()].copy_from_slice(encoded);
+    encode_row_key(table_id, &padded)
 }
 
 /// Returns the exact integer-handle key range for one physical table.
@@ -353,16 +401,20 @@ pub fn encode_record_key(record_prefix: &[u8], handle: &RecordHandle) -> Vec<u8>
 
 /// Encodes the complete prefix identifying one table index.
 pub fn encode_table_index_prefix(table_id: i64, index_id: i64) -> Vec<u8> {
-    let mut key = gen_table_index_prefix(table_id);
-    encode_int(&mut key, index_id);
-    key
+    encode_index_seek_key(table_id, index_id, &[])
 }
 
 /// Encodes an index seek key by appending canonical encoded index values.
 pub fn encode_index_seek_key(table_id: i64, index_id: i64, encoded_values: &[u8]) -> Vec<u8> {
-    let mut key = encode_table_index_prefix(table_id, index_id);
+    let mut key = Vec::with_capacity(PREFIX_LEN + ID_LEN + encoded_values.len());
+    append_index_key_prefix(&mut key, table_id, index_id);
     key.extend_from_slice(encoded_values);
     key
+}
+
+pub(crate) fn append_index_key_prefix(key: &mut Vec<u8>, table_id: i64, index_id: i64) {
+    append_table_index_prefix(key, table_id);
+    key.extend_from_slice(&encode_int_to_cmp_uint(index_id).to_be_bytes());
 }
 
 /// Extracts the index ID without validating the rest of the index key.

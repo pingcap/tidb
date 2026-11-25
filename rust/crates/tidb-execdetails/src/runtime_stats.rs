@@ -55,12 +55,14 @@
 use tidb_kv::store_type::StoreType;
 use std::any::Any;
 use std::collections::HashMap;
+use std::fmt::Write as _;
 use std::sync::atomic::{AtomicI32, AtomicI64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration as StdDuration;
 
 use tidb_proto::tipb::executor_execution_summary::DetailInfo as ExecutionSummaryDetailInfo;
 use tidb_proto::ExecutorExecutionSummary;
+use tidb_model::go_duration::append_explain_duration;
 
 use crate::exec_details::{
     format_go_duration, format_seconds_3, CommitDetails, LockKeysDetails, ScanDetail, TimeDetail,
@@ -256,11 +258,6 @@ impl TDigest {
         self.cumulative[self.processed.len()] = previous;
     }
 
-    fn centroids(&mut self) -> Vec<Centroid> {
-        self.process();
-        self.processed.clone()
-    }
-
     fn add_centroid_list(&mut self, centroids: &[Centroid]) {
         for centroid in centroids {
             self.add_centroid(*centroid);
@@ -328,75 +325,21 @@ fn weighted_average_sorted(x1: f64, w1: f64, x2: f64, w2: f64) -> f64 {
     x1.max(value.min(x2))
 }
 
-/// Go `execdetails.Percentile`: percentile calculation over a series of
-/// values, exact up to [`MAX_DETAILS_NUMS_FOR_ONE_QUERY`] values and
-/// digest-backed beyond.
 #[derive(Clone, Debug)]
-pub struct Percentile<T> {
+struct PercentileSamples<T> {
     values: Vec<T>,
-    size: usize,
     is_sorted: bool,
-    min_val: T,
-    max_val: T,
-    sum_val: f64,
     dt: Option<TDigest>,
 }
 
-impl<T: Default> Default for Percentile<T> {
-    fn default() -> Self {
-        Percentile {
-            values: Vec::new(),
-            size: 0,
-            is_sorted: false,
-            min_val: T::default(),
-            max_val: T::default(),
-            sum_val: 0.0,
-            dt: None,
-        }
-    }
-}
-
-impl<T: CanGetFloat64 + Clone + Default> Percentile<T> {
-    /// Go `Percentile.Add`: adds a value to calculate the percentile.
-    pub fn add(&mut self, value: T) {
-        self.is_sorted = false;
-        self.sum_val += value.get_float64();
-        self.size += 1;
-        if self.dt.is_none() && self.values.is_empty() {
-            self.min_val = value.clone();
-            self.max_val = value.clone();
-        } else {
-            if value.get_float64() < self.min_val.get_float64() {
-                self.min_val = value.clone();
-            }
-            if value.get_float64() > self.max_val.get_float64() {
-                self.max_val = value.clone();
-            }
-        }
-        match &mut self.dt {
-            None => {
-                self.values.push(value);
-                if self.values.len() >= MAX_DETAILS_NUMS_FOR_ONE_QUERY {
-                    let mut dt = TDigest::default();
-                    for v in &self.values {
-                        dt.add(v.get_float64(), 1.0);
-                    }
-                    self.values = Vec::new();
-                    self.dt = Some(dt);
-                }
-            }
-            Some(dt) => dt.add(value.get_float64(), 1.0),
-        }
-    }
-
-    /// Go `Percentile.GetPercentile`: the percentile `f` of the values.
+impl<T: CanGetFloat64> PercentileSamples<T> {
     #[expect(
         clippy::cast_precision_loss,
         clippy::cast_possible_truncation,
         clippy::cast_sign_loss,
         reason = "Go int(float64(len(p.values)) * f) index arithmetic"
     )]
-    pub fn get_percentile(&mut self, f: f64) -> f64 {
+    fn get_percentile(&mut self, f: f64) -> f64 {
         match &mut self.dt {
             None => {
                 if !self.is_sorted {
@@ -408,6 +351,97 @@ impl<T: CanGetFloat64 + Clone + Default> Percentile<T> {
             }
             Some(dt) => dt.quantile(f),
         }
+    }
+}
+
+/// Go `execdetails.Percentile`: percentile calculation over a series of
+/// values, exact up to [`MAX_DETAILS_NUMS_FOR_ONE_QUERY`] values and
+/// digest-backed beyond.
+#[derive(Debug)]
+pub struct Percentile<T> {
+    // Rendering and merging through shared references can prepare these
+    // samples. Recording has exclusive access and does not take the mutex.
+    samples: Mutex<PercentileSamples<T>>,
+    size: usize,
+    min_val: T,
+    max_val: T,
+    sum_val: f64,
+}
+
+impl<T> Percentile<T> {
+    fn lock_samples(&self) -> MutexGuard<'_, PercentileSamples<T>> {
+        self.samples.lock().expect("Percentile samples mutex poisoned")
+    }
+}
+
+impl<T: Clone> Clone for Percentile<T> {
+    fn clone(&self) -> Self {
+        Self {
+            samples: Mutex::new(self.lock_samples().clone()),
+            size: self.size,
+            min_val: self.min_val.clone(),
+            max_val: self.max_val.clone(),
+            sum_val: self.sum_val,
+        }
+    }
+}
+
+impl<T: Default> Default for Percentile<T> {
+    fn default() -> Self {
+        Percentile {
+            samples: Mutex::new(PercentileSamples {
+                values: Vec::new(),
+                is_sorted: false,
+                dt: None,
+            }),
+            size: 0,
+            min_val: T::default(),
+            max_val: T::default(),
+            sum_val: 0.0,
+        }
+    }
+}
+
+impl<T: CanGetFloat64 + Clone + Default> Percentile<T> {
+    /// Go `Percentile.Add`: adds a value to calculate the percentile.
+    pub fn add(&mut self, value: T) {
+        let samples = self.samples.get_mut().expect("Percentile samples mutex poisoned");
+        samples.is_sorted = false;
+        self.sum_val += value.get_float64();
+        self.size += 1;
+        if samples.dt.is_none() && samples.values.is_empty() {
+            self.min_val = value.clone();
+            self.max_val = value.clone();
+        } else {
+            if value.get_float64() < self.min_val.get_float64() {
+                self.min_val = value.clone();
+            }
+            if value.get_float64() > self.max_val.get_float64() {
+                self.max_val = value.clone();
+            }
+        }
+        match &mut samples.dt {
+            None => {
+                samples.values.push(value);
+                if samples.values.len() >= MAX_DETAILS_NUMS_FOR_ONE_QUERY {
+                    let mut dt = TDigest::default();
+                    for v in &samples.values {
+                        dt.add(v.get_float64(), 1.0);
+                    }
+                    samples.values = Vec::new();
+                    samples.dt = Some(dt);
+                }
+            }
+            Some(dt) => dt.add(value.get_float64(), 1.0),
+        }
+    }
+
+    /// Go `Percentile.GetPercentile`: the percentile `f` of the values.
+    pub fn get_percentile(&mut self, f: f64) -> f64 {
+        self.samples
+            .get_mut()
+            .expect("Percentile samples mutex poisoned")
+            .get_percentile(f)
     }
 
     /// Go `Percentile.GetMax`: the max value.
@@ -425,26 +459,28 @@ impl<T: CanGetFloat64 + Clone + Default> Percentile<T> {
     /// Go `Percentile.MergePercentile`: merges two `Percentile`s. As in Go,
     /// the digest-to-digest branch leaves `minVal`/`maxVal` untouched.
     pub fn merge_percentile(&mut self, p2: &Percentile<T>) {
-        self.is_sorted = false;
-        let Some(other_dt) = &p2.dt else {
-            for v in &p2.values {
+        let samples = self.samples.get_mut().expect("Percentile samples mutex poisoned");
+        samples.is_sorted = false;
+        let mut other = p2.lock_samples();
+        let Some(other_dt) = &mut other.dt else {
+            for v in &other.values {
                 self.add(v.clone());
             }
             return;
         };
         self.sum_val += p2.sum_val;
         self.size += p2.size;
-        if self.dt.is_none() {
+        if samples.dt.is_none() {
             let mut dt = TDigest::default();
-            for v in &self.values {
+            for v in &samples.values {
                 dt.add(v.get_float64(), 1.0);
             }
-            self.values = Vec::new();
-            self.dt = Some(dt);
+            samples.values = Vec::new();
+            samples.dt = Some(dt);
         }
-        if let Some(dt) = &mut self.dt {
-            let mut other = other_dt.clone();
-            dt.add_centroid_list(&other.centroids());
+        if let Some(dt) = &mut samples.dt {
+            other_dt.process();
+            dt.add_centroid_list(&other_dt.processed);
         }
     }
 
@@ -667,14 +703,13 @@ impl CopRuntimeStats {
     #[must_use]
     #[expect(
         clippy::cast_possible_truncation,
-        clippy::cast_sign_loss,
         reason = "Go time.Duration(float64) and int64 division conversions"
     )]
     pub fn string(&self) -> String {
-        let mut proc_times = self.stats.proc_times.clone();
+        let proc_times = &self.stats.proc_times;
         let total_tasks = proc_times.size();
         let is_tiflash_cop = self.store_type == StoreType::TiFlash;
-        let mut buf = String::with_capacity(16);
+        let mut buf = String::with_capacity(if total_tasks > 1 { 128 } else { 48 });
         let print_tiflash_specific_info = |buf: &mut String| {
             if is_tiflash_cop {
                 buf.push_str(", ");
@@ -705,38 +740,30 @@ impl CopRuntimeStats {
         if total_tasks == 1 {
             buf.push_str(self.store_type.name());
             buf.push_str("_task:{time:");
-            buf.push_str(&format_duration(StdDuration::from_nanos(
-                (proc_times.get_percentile(0.0) as i64).max(0) as u64,
-            )));
-            buf.push_str(", loops:");
-            buf.push_str(&self.stats.loops.to_string());
+            append_explain_duration(&mut buf, (proc_times.get_min().get_float64() as i64).max(0));
+            write!(buf, ", loops:{}", self.stats.loops).expect("writing to String");
             print_tiflash_specific_info(&mut buf);
         } else if total_tasks > 0 {
+            let (p80, p95) = {
+                let mut samples = proc_times.lock_samples();
+                (samples.get_percentile(0.8), samples.get_percentile(0.95))
+            };
             buf.push_str(self.store_type.name());
             buf.push_str("_task:{proc max:");
-            buf.push_str(&format_duration(StdDuration::from_nanos(
-                (proc_times.get_max().get_float64() as i64).max(0) as u64,
-            )));
+            append_explain_duration(&mut buf, (proc_times.get_max().get_float64() as i64).max(0));
             buf.push_str(", min:");
-            buf.push_str(&format_duration(StdDuration::from_nanos(
-                (proc_times.get_min().get_float64() as i64).max(0) as u64,
-            )));
+            append_explain_duration(&mut buf, (proc_times.get_min().get_float64() as i64).max(0));
             buf.push_str(", avg: ");
-            buf.push_str(&format_duration(StdDuration::from_nanos(
-                ((proc_times.sum() as i64) / (total_tasks as i64)).max(0) as u64,
-            )));
+            append_explain_duration(
+                &mut buf,
+                ((proc_times.sum() as i64) / (total_tasks as i64)).max(0),
+            );
             buf.push_str(", p80:");
-            buf.push_str(&format_duration(StdDuration::from_nanos(
-                (proc_times.get_percentile(0.8) as i64).max(0) as u64,
-            )));
+            append_explain_duration(&mut buf, (p80 as i64).max(0));
             buf.push_str(", p95:");
-            buf.push_str(&format_duration(StdDuration::from_nanos(
-                (proc_times.get_percentile(0.95) as i64).max(0) as u64,
-            )));
-            buf.push_str(", iters:");
-            buf.push_str(&self.stats.loops.to_string());
-            buf.push_str(", tasks:");
-            buf.push_str(&total_tasks.to_string());
+            append_explain_duration(&mut buf, (p95 as i64).max(0));
+            write!(buf, ", iters:{}, tasks:{total_tasks}", self.stats.loops)
+                .expect("writing to String");
             print_tiflash_specific_info(&mut buf);
         }
         if !is_tiflash_cop {
@@ -1571,6 +1598,39 @@ mod tests {
             num_iterations: Some(num_iterations),
             ..ExecutorExecutionSummary::default()
         }
+    }
+
+    #[test]
+    fn rendering_processes_the_digest_and_keeps_later_samples() {
+        let stats = RuntimeStatsColl::new(None);
+        for index in 0..MAX_DETAILS_NUMS_FOR_ONE_QUERY {
+            stats.record_one_cop_task(
+                1,
+                StoreType::TiKv,
+                &mock_executor_execution_summary(index as u64 + 1, 1, 1),
+            );
+        }
+        let pending_samples = || {
+            let stats = stats.get_cop_stats(1).unwrap();
+            let stats = stats.lock().unwrap();
+            let samples = stats.stats.proc_times.lock_samples();
+            samples.dt.as_ref().unwrap().unprocessed.len()
+        };
+        assert_eq!(pending_samples(), MAX_DETAILS_NUMS_FOR_ONE_QUERY);
+        let first = stats.cop_runtime_info(1).unwrap();
+        assert_eq!(stats.cop_runtime_info(1).unwrap(), first);
+        assert_eq!(pending_samples(), 0);
+
+        stats.record_one_cop_task(
+            1,
+            StoreType::TiKv,
+            &mock_executor_execution_summary(20_000, 1, 1),
+        );
+        assert_eq!(pending_samples(), 1);
+        let updated = stats.cop_runtime_info(1).unwrap();
+        assert_eq!(updated.act_rows, first.act_rows + 1);
+        assert!(updated.info.contains("proc max:20µs"));
+        assert_eq!(pending_samples(), 0);
     }
 
     /// Port of Go `TestCopRuntimeStats` (`execdetails_test.go`), expected

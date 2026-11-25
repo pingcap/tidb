@@ -15,7 +15,9 @@ pub use escape::{path_escape, path_unescape, query_escape, query_escape_string, 
 pub use parse::{parse, parse_request_uri};
 pub use values::{parse_query, Values};
 
-use escape::{escape, unescape, Encoding};
+use std::borrow::Cow;
+
+use escape::{append_escaped, escape_cow, unescape, unescape_matches, Encoding};
 use parse::{valid_encoded, valid_optional_port};
 use tidb_go_strconv::quote_bytes;
 
@@ -114,12 +116,22 @@ impl Userinfo {
 
     /// Go `Userinfo.String`.
     pub fn string(&self) -> Vec<u8> {
-        let mut s = escape(&self.username, Encoding::UserPassword);
-        if self.password_set {
-            s.push(b':');
-            s.extend(escape(&self.password, Encoding::UserPassword));
-        }
+        let mut s = Vec::with_capacity(
+            self.username.len() + self.password.len() + usize::from(self.password_set),
+        );
+        self.append_to(
+            &mut s,
+            self.password_set.then_some(self.password.as_slice()),
+        );
         s
+    }
+
+    fn append_to(&self, s: &mut Vec<u8>, password: Option<&[u8]>) {
+        append_escaped(s, &self.username, Encoding::UserPassword);
+        if let Some(password) = password {
+            s.push(b':');
+            append_escaped(s, password, Encoding::UserPassword);
+        }
     }
 }
 
@@ -155,7 +167,7 @@ impl URL {
     /// default encoding of `path` differs from `p`.
     pub(crate) fn set_path(&mut self, p: &[u8]) -> Result<(), Error> {
         let path = unescape(p, Encoding::Path)?;
-        self.raw_path = if escape(&path, Encoding::Path) == p {
+        self.raw_path = if escape_cow(&path, Encoding::Path).as_ref() == p {
             Vec::new()
         } else {
             p.to_vec()
@@ -167,7 +179,7 @@ impl URL {
     /// Go `URL.setFragment`.
     pub(crate) fn set_fragment(&mut self, f: &[u8]) -> Result<(), Error> {
         let frag = unescape(f, Encoding::Fragment)?;
-        self.raw_fragment = if escape(&frag, Encoding::Fragment) == f {
+        self.raw_fragment = if escape_cow(&frag, Encoding::Fragment).as_ref() == f {
             Vec::new()
         } else {
             f.to_vec()
@@ -178,32 +190,75 @@ impl URL {
 
     /// Go `URL.EscapedPath`.
     pub fn escaped_path(&self) -> Vec<u8> {
+        self.escaped_path_cow().into_owned()
+    }
+
+    /// Go `URL.EscapedPath` with its pass-through paths borrowing the URL.
+    pub fn escaped_path_cow(&self) -> Cow<'_, [u8]> {
         if !self.raw_path.is_empty()
             && valid_encoded(&self.raw_path, Encoding::Path)
-            && unescape(&self.raw_path, Encoding::Path).is_ok_and(|p| p == self.path)
+            && unescape_matches(&self.raw_path, &self.path)
         {
-            return self.raw_path.clone();
+            return Cow::Borrowed(&self.raw_path);
         }
         if self.path == b"*" {
-            return b"*".to_vec();
+            return Cow::Borrowed(&self.path);
         }
-        escape(&self.path, Encoding::Path)
+        escape_cow(&self.path, Encoding::Path)
     }
 
     /// Go `URL.EscapedFragment`.
     pub fn escaped_fragment(&self) -> Vec<u8> {
+        self.escaped_fragment_cow().into_owned()
+    }
+
+    fn escaped_fragment_cow(&self) -> Cow<'_, [u8]> {
         if !self.raw_fragment.is_empty()
             && valid_encoded(&self.raw_fragment, Encoding::Fragment)
-            && unescape(&self.raw_fragment, Encoding::Fragment).is_ok_and(|f| f == self.fragment)
+            && unescape_matches(&self.raw_fragment, &self.fragment)
         {
-            return self.raw_fragment.clone();
+            return Cow::Borrowed(&self.raw_fragment);
         }
-        escape(&self.fragment, Encoding::Fragment)
+        escape_cow(&self.fragment, Encoding::Fragment)
     }
 
     /// Go `URL.String`, as bytes.
     pub fn to_bytes(&self) -> Vec<u8> {
-        let mut buf = Vec::new();
+        self.render_bytes::<false>()
+    }
+
+    fn render_bytes<const REDACT_PASSWORD: bool>(&self) -> Vec<u8> {
+        let escaped_path: Cow<'_, [u8]> = if self.opaque.is_empty() {
+            self.escaped_path_cow()
+        } else {
+            Cow::Borrowed(&[])
+        };
+        let fragment: Cow<'_, [u8]> = if self.fragment.is_empty() {
+            Cow::Borrowed(&[])
+        } else {
+            self.escaped_fragment_cow()
+        };
+        let user = self.user.as_ref().map(|user| {
+            let password = if REDACT_PASSWORD {
+                b"xxxxx".as_slice()
+            } else {
+                user.password.as_slice()
+            };
+            (user, user.password_set.then_some(password))
+        });
+        let user_len = user.map_or(0, |(user, password)| {
+            user.username.len() + password.map_or(0, <[u8]>::len)
+        });
+        let mut buf = Vec::with_capacity(
+            self.scheme.len()
+                + self.opaque.len()
+                + self.host.len()
+                + user_len
+                + escaped_path.len()
+                + self.raw_query.len()
+                + fragment.len()
+                + 12,
+        );
         if !self.scheme.is_empty() {
             buf.extend_from_slice(&self.scheme);
             buf.push(b':');
@@ -217,13 +272,13 @@ impl URL {
                 if !self.host.is_empty() || !self.path.is_empty() || self.user.is_some() {
                     buf.extend_from_slice(b"//");
                 }
-                if let Some(user) = &self.user {
-                    buf.extend(user.string());
+                if let Some((user, password)) = user {
+                    user.append_to(&mut buf, password);
                     buf.push(b'@');
                 }
-                buf.extend(escape(&self.host, Encoding::Host));
+                append_escaped(&mut buf, &self.host, Encoding::Host);
             }
-            let mut path = self.escaped_path();
+            let mut path = escaped_path.as_ref();
             if self.omit_host
                 && self.host.is_empty()
                 && self.user.is_none()
@@ -231,7 +286,7 @@ impl URL {
             {
                 // Re-parsing must not turn such a path into an authority.
                 buf.extend_from_slice(b"%2F");
-                path.remove(0);
+                path = &path[1..];
             }
             if path.first().is_some_and(|&c| c != b'/') && !self.host.is_empty() {
                 buf.push(b'/');
@@ -244,7 +299,7 @@ impl URL {
             {
                 buf.extend_from_slice(b"./");
             }
-            buf.extend(path);
+            buf.extend_from_slice(path);
         }
         if self.force_query || !self.raw_query.is_empty() {
             buf.push(b'?');
@@ -252,7 +307,7 @@ impl URL {
         }
         if !self.fragment.is_empty() {
             buf.push(b'#');
-            buf.extend(self.escaped_fragment());
+            buf.extend_from_slice(&fragment);
         }
         buf
     }
@@ -261,16 +316,12 @@ impl URL {
     /// are ASCII and the raw ones are slices of the input. Other bytes are
     /// replaced by U+FFFD; [`URL::to_bytes`] keeps them.
     pub fn string(&self) -> String {
-        String::from_utf8_lossy(&self.to_bytes()).into_owned()
+        rendered_text(self.to_bytes())
     }
 
     /// Go `URL.Redacted`: [`URL::string`] with any password as `xxxxx`.
     pub fn redacted(&self) -> String {
-        let mut url = self.clone();
-        if let Some(user) = url.user.as_mut().filter(|user| user.password_set) {
-            user.password = b"xxxxx".to_vec();
-        }
-        url.string()
+        rendered_text(self.render_bytes::<true>())
     }
 
     /// Go `URL.IsAbs`.
@@ -310,6 +361,11 @@ impl URL {
     pub fn port(&self) -> &[u8] {
         split_host_port(&self.host).1
     }
+}
+
+fn rendered_text(bytes: Vec<u8>) -> String {
+    String::from_utf8(bytes)
+        .unwrap_or_else(|error| String::from_utf8_lossy(error.as_bytes()).into_owned())
 }
 
 /// Go `splitHostPort`: a numeric port is split off; brackets are removed.

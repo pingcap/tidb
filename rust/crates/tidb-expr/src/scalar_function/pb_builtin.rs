@@ -16,17 +16,198 @@
 //! SQL function names are diagnostic metadata, never an overload selector here.
 
 use super::{class_kernels, cast_json_argument_value, eval_numeric_operand_row, eval_numeric_row, ScalarFunction};
+use std::borrow::Cow;
+use std::ops::Range;
 use tidb_exprctx::context::{Columns, EvalError};
 use crate::expression::{ConstLevel, Expression};
 use tidb_ast::BinaryOp;
+use tidb_charset::Collation;
 use tidb_chunk::row::Row;
-use tidb_datatype::{Datum, EvalType, FieldType, VectorFloat32};
+use tidb_datatype::{Datum, EvalType, FieldType, FieldTypeCode, VectorFloat32};
 use tidb_proto::tipb::ScalarFuncSig;
 
 pub(crate) type ValuesKernel = fn(&[Datum], &dyn Columns) -> Result<Datum, EvalError>;
 /// A signature that reads its node's build state -- Go `baseBuiltinFunc`'s
 /// collator or an argument's field type -- beside the argument values.
 pub(crate) type MethodKernel = fn(&ScalarFunction, &[Datum], &dyn Columns) -> Result<Datum, EvalError>;
+
+pub(crate) fn borrow_string_argument<'a>(arg: &'a Expression, row: Row<'a>) -> Option<(&'a [u8], bool)> {
+    match arg {
+        Expression::Constant(constant) => match constant.literal_value()? {
+            Datum::String(value) => Some((value.bytes(), value.collation() == Collation::Binary)),
+            Datum::Bytes(bytes) => Some((bytes, true)),
+            _ => None,
+        },
+        _ => {
+            let (index, field) = string_column(arg)?;
+            let bytes = row.try_borrow_var_bytes(index)?;
+            Some((bytes, field.collation() == Collation::Binary))
+        }
+    }
+}
+
+fn string_column(arg: &Expression) -> Option<(usize, &FieldType)> {
+    let Expression::Column(column) = arg else {
+        return None;
+    };
+    let field = column.get_static_type()?;
+    if !matches!(
+        field.code(),
+        FieldTypeCode::Varchar
+            | FieldTypeCode::VarString
+            | FieldTypeCode::String
+            | FieldTypeCode::Blob
+            | FieldTypeCode::TinyBlob
+            | FieldTypeCode::MediumBlob
+            | FieldTypeCode::LongBlob
+    ) {
+        return None;
+    }
+    Some((usize::try_from(column.index).ok()?, field))
+}
+
+#[inline]
+fn slice_int_column(arg: &Expression, row: Row<'_>) -> Option<usize> {
+    let Expression::Column(column) = arg else {
+        return None;
+    };
+    if !matches!(
+        column.get_static_type()?.code(),
+        FieldTypeCode::Tiny | FieldTypeCode::Short | FieldTypeCode::Int24
+            | FieldTypeCode::Long | FieldTypeCode::LongLong | FieldTypeCode::Year
+    ) {
+        return None;
+    }
+    let index = usize::try_from(column.index).ok()?;
+    (index < row.len()).then_some(index)
+}
+
+#[inline]
+fn binary_substring_slice(bytes: &[u8], pos: i64, length: Option<i64>) -> StringSlice {
+    let size = bytes.len();
+    let range = crate::string_fn::substring_range(pos, length, || size);
+    StringSlice::Input(range.start.min(size)..range.end.min(size))
+}
+
+#[inline]
+fn binary_substring_columns(
+    bytes: &[u8],
+    row: Row<'_>,
+    pos: &Expression,
+    length: Option<&Expression>,
+) -> Option<StringSlice> {
+    let pos = slice_int_column(pos, row)?;
+    let length = match length {
+        Some(length) => Some(slice_int_column(length, row)?),
+        None => None,
+    };
+    let Some(pos) = row.get_nullable_int64(pos) else {
+        return Some(StringSlice::Null);
+    };
+    let length = match length {
+        Some(index) => match row.get_nullable_int64(index) {
+            Some(length) => Some(length),
+            None => return Some(StringSlice::Null),
+        },
+        None => None,
+    };
+    Some(binary_substring_slice(bytes, pos, length))
+}
+
+enum StringSlice {
+    Null,
+    Input(Range<usize>),
+    Owned(Vec<u8>),
+}
+
+impl StringSlice {
+    fn selected(input: &[u8], result: &[u8]) -> Self {
+        if result.is_empty() {
+            return Self::Input(0..0);
+        }
+        let offset = result.as_ptr().addr().checked_sub(input.as_ptr().addr());
+        if let Some(start) = offset {
+            if let Some(end) = start.checked_add(result.len()).filter(|&end| end <= input.len()) {
+                return Self::Input(start..end);
+            }
+        }
+        // Lossy character decoding may have selected bytes in its own buffer.
+        Self::Owned(result.to_vec())
+    }
+
+    fn into_datum(
+        self,
+        input: &[u8],
+        collation: Collation,
+        retain: impl FnOnce(Range<usize>) -> Option<Datum>,
+    ) -> Datum {
+        match self {
+            Self::Null => Datum::Null,
+            Self::Owned(result) => Datum::new_collation_string_datum(result, collation),
+            Self::Input(range) => {
+                if range.len() <= tidb_datatype::StringDatum::INLINE_CAPACITY {
+                    return Datum::String(tidb_datatype::StringDatum::from_slice(&input[range], collation));
+                }
+                if range.len() >= tidb_chunk::column::Column::MIN_RETAINED_CELL_BYTES {
+                    if let Some(result) = retain(range.clone()) {
+                        return result;
+                    }
+                }
+                Datum::new_collation_string_datum(&input[range], collation)
+            }
+        }
+    }
+}
+
+fn string_return_collation(function: &ScalarFunction) -> Collation {
+    function.get_static_type().map_or(Collation::DEFAULT, FieldType::collation)
+}
+
+fn with_slice_argument(
+    arg: &Expression,
+    row: Row<'_>,
+    collation: Collation,
+    evaluate: impl FnOnce(&[u8], bool) -> Result<StringSlice, EvalError>,
+) -> Result<Option<Datum>, EvalError> {
+    let column = string_column(arg);
+    let borrowed = match column {
+        Some((index, field)) => row.try_borrow_var_bytes(index)
+            .map(|bytes| (bytes, field.collation() == Collation::Binary)),
+        None => borrow_string_argument(arg, row),
+    };
+    if let Some((bytes, binary)) = borrowed {
+        let result = evaluate(bytes, binary)?.into_datum(bytes, collation, |range| {
+            let (index, _) = column?;
+            let width = range.len();
+            let bytes = row.try_snapshot_var_cell_view(index, Some(range))?;
+            bytes.into_retained_string(0..width, collation).map(Datum::String)
+        });
+        return Ok(Some(result));
+    }
+    let Some((index, field)) = column else {
+        return Ok(None);
+    };
+    // Evaluate the remaining arguments after releasing the column read lock.
+    let Some(bytes) = row.try_snapshot_var_cell_view(index, None) else {
+        return Ok(None);
+    };
+    let slice = evaluate(&bytes, field.collation() == Collation::Binary)?;
+    if let StringSlice::Input(range) = &slice {
+        if range.len() >= tidb_chunk::column::Column::MIN_RETAINED_CELL_BYTES {
+            return Ok(bytes.into_retained_string(range.clone(), collation).map(Datum::String));
+        }
+    }
+    Ok(Some(slice.into_datum(&bytes, collation, |_| None)))
+}
+
+fn string_length(bytes: &[u8], binary: bool) -> Datum {
+    let length = if binary {
+        bytes.len()
+    } else {
+        crate::build::go_utf8_rune_count(bytes)
+    };
+    Datum::Int(length as i64)
+}
 
 /// Go `builtinStrcmpSig`: the comparison under `b.collation`.
 fn strcmp_method(function: &ScalarFunction, values: &[Datum], _: &dyn Columns) -> Result<Datum, EvalError> {
@@ -269,18 +450,7 @@ fn sec_to_time_method(function: &ScalarFunction, values: &[Datum], ctx: &dyn Col
 /// `builtinStrToDateDurationSig`: a time-only parse under the datetime
 /// signature is the zero date with that time, which NO_ZERO_DATE refuses.
 fn str_to_date_method(function: &ScalarFunction, values: &[Datum], ctx: &dyn Columns) -> Result<Datum, EvalError> {
-    str_to_date_of(function, values, true, ctx)
-}
-
-/// Go `builtinStrToDate{Date,Datetime,Duration}Sig`'s row form (`row_form`)
-/// or vector form; see [`crate::time_fn::calendar::str_to_date_with`].
-pub(super) fn str_to_date_of(
-    function: &ScalarFunction,
-    values: &[Datum],
-    row_form: bool,
-    ctx: &dyn Columns,
-) -> Result<Datum, EvalError> {
-    let mut result = crate::time_fn::calendar::str_to_date_with(values, row_form, ctx)?;
+    let mut result = crate::time_fn::calendar::str_to_date(values, ctx)?;
     if function.pb_code() == ScalarFuncSig::StrToDateDatetime {
         if let Ok(text) = result.sql_string() {
             if text.contains(':') && !text.contains('-') {
@@ -388,12 +558,48 @@ fn grouping_method(function: &ScalarFunction, values: &[Datum], _: &dyn Columns)
     Ok(Datum::UInt(metadata.eval(grouping_id as u64)))
 }
 
-fn ltrim_values(values: &[Datum], _: &dyn Columns) -> Result<Datum, EvalError> {
-    crate::builtin_ext::string2::ltrim(&values[0])
+fn ltrim_row(function: &ScalarFunction, ctx: &dyn Columns, row: Row<'_>) -> Result<Datum, EvalError> {
+    trim_spaces_row(function, ctx, row, tidb_ast::TrimDirection::Leading)
 }
 
-fn rtrim_values(values: &[Datum], _: &dyn Columns) -> Result<Datum, EvalError> {
-    crate::builtin_ext::string2::rtrim(&values[0])
+fn rtrim_row(function: &ScalarFunction, ctx: &dyn Columns, row: Row<'_>) -> Result<Datum, EvalError> {
+    trim_spaces_row(function, ctx, row, tidb_ast::TrimDirection::Trailing)
+}
+
+fn trim_both_spaces_row(
+    function: &ScalarFunction,
+    ctx: &dyn Columns,
+    row: Row<'_>,
+) -> Result<Datum, EvalError> {
+    trim_spaces_row(function, ctx, row, tidb_ast::TrimDirection::Both)
+}
+
+#[inline(always)]
+fn trim_spaces_row(
+    function: &ScalarFunction,
+    ctx: &dyn Columns,
+    row: Row<'_>,
+    direction: tidb_ast::TrimDirection,
+) -> Result<Datum, EvalError> {
+    use tidb_ast::TrimDirection::*;
+    let arg = &function.args[0];
+    if let Some((index, _)) = string_column(arg) {
+        let collation = if direction == Both {
+            Collation::DEFAULT
+        } else {
+            string_return_collation(function)
+        };
+        if let Some(result) = row.try_select_var_string(index, collation, |bytes| {
+            crate::string_fn::trim_space_range(bytes, direction)
+        }) {
+            return Ok(result);
+        }
+    }
+    match direction {
+        Leading => crate::builtin_ext::string2::ltrim(&arg.eval(ctx, row)?),
+        Trailing => crate::builtin_ext::string2::rtrim(&arg.eval(ctx, row)?),
+        Both => trim_row(function, ctx, row),
+    }
 }
 
 fn left_values(values: &[Datum], _: &dyn Columns) -> Result<Datum, EvalError> {
@@ -444,15 +650,24 @@ fn instr_method(function: &ScalarFunction, values: &[Datum], _: &dyn Columns) ->
 /// the optional second argument is the string to remove (a space by default)
 /// and the optional third an `ast.TrimDirectionType` integer.
 fn trim_row(function: &ScalarFunction, ctx: &dyn Columns, row: Row<'_>) -> Result<Datum, EvalError> {
-    let value = function.args[0].eval(ctx, row)?;
-    if value.is_null() {
-        return Ok(Datum::Null);
-    }
-    let remstr = match function.args.get(1) {
-        Some(argument) => argument.eval(ctx, row)?,
-        None => Datum::new_string_datum(" "),
+    let arg = &function.args[0];
+    let borrowed = borrow_string_argument(arg, row).map(|(bytes, _)| bytes);
+    let retained = if borrowed.is_none() {
+        string_column(arg).and_then(|(index, _)| row.try_retain_var_cell(index))
+    } else {
+        None
     };
-    if remstr.is_null() {
+    let value = if borrowed.is_some() || retained.is_some() {
+        None
+    } else {
+        let value = arg.eval(ctx, row)?;
+        if value.is_null() {
+            return Ok(Datum::Null);
+        }
+        Some(value)
+    };
+    let remstr = function.args.get(1).map(|arg| arg.eval(ctx, row)).transpose()?;
+    if remstr.as_ref().is_some_and(Datum::is_null) {
         return Ok(Datum::Null);
     }
     let direction = match function.args.get(2) {
@@ -469,10 +684,50 @@ fn trim_row(function: &ScalarFunction, ctx: &dyn Columns, row: Row<'_>) -> Resul
         }
         None => tidb_ast::TrimDirection::Both,
     };
-    let binary = matches!(value, Datum::Bytes(_));
-    let text = crate::coerce::coerce_str_bytes(&value)?;
-    let remove = crate::coerce::coerce_str_bytes(&remstr)?;
-    Ok(crate::string_fn::trim_value(text, remove, direction, binary))
+    let (text, bytes_result) = if let Some(bytes) = borrowed {
+        let bytes_result = matches!(arg, Expression::Constant(constant)
+            if matches!(constant.literal_value(), Some(Datum::Bytes(_))));
+        (Cow::Borrowed(bytes), bytes_result)
+    } else if let Some(bytes) = retained.as_deref() {
+        (Cow::Borrowed(bytes), false)
+    } else {
+        let value = value.as_ref().expect("materialized TRIM argument");
+        let Some(bytes) = crate::coerce::borrow_str_bytes(value)? else {
+            return Ok(Datum::Null);
+        };
+        (bytes, matches!(value, Datum::Bytes(_)))
+    };
+    let remove = match remstr.as_ref() {
+        Some(remstr) => {
+            let Some(bytes) = crate::coerce::borrow_str_bytes(remstr)? else {
+                return Ok(Datum::Null);
+            };
+            bytes
+        }
+        None => Cow::Borrowed(b" ".as_slice()),
+    };
+    let range = crate::string_fn::trim_range(&text, &remove, direction);
+    if range.len() >= tidb_chunk::column::Column::MIN_RETAINED_CELL_BYTES {
+        let selected = if let Some(bytes) = &retained {
+            Some(bytes.slice(range.clone()))
+        } else if borrowed.is_some() {
+            string_column(arg).and_then(|(index, _)| row.try_retain_var_bytes(index, range.clone()))
+        } else {
+            None
+        };
+        if let Some(retained) = selected {
+            return Ok(Datum::String(tidb_datatype::StringDatum::from_shared_bytes(
+                retained,
+                tidb_charset::Collation::DEFAULT,
+            )));
+        }
+    }
+    let result = &text[range];
+    Ok(if bytes_result {
+        Datum::new_bytes_datum(result)
+    } else {
+        Datum::String(tidb_datatype::StringDatum::from_slice(result, Collation::DEFAULT))
+    })
 }
 
 /// Go `builtinConvertSig.evalString`.
@@ -635,6 +890,7 @@ pub(crate) enum Kernel {
     Values(ValuesKernel),
     Method(MethodKernel),
     Row(RowKernel),
+    RowAndValues { row: RowKernel, values: ValuesKernel },
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -969,7 +1225,9 @@ impl PbBuiltin {
             UuidVersion => Kernel::Values(|values, _| crate::builtin_ext::misc::uuid_version(&values[0])),
             SysDateWithoutFsp | SysDateWithFsp => Kernel::Method(sys_date_method),
             RandWithSeedFirstGen => Kernel::Row(rand_row),
-            Sha1 => Kernel::Values(|values, _| crate::builtin_ext::crypto::hash_unary::<sha1::Sha1>(&values[0])),
+            Sha1 => Kernel::Values(|values, _| {
+                crate::builtin_ext::crypto::hash_unary(&values[0], crate::builtin_ext::crypto::sha1_bytes)
+            }),
             Sha2 => Kernel::Values(|values, _| crate::builtin_ext::crypto::sha2_hash(&values[0], &values[1])),
             UncompressedLength => Kernel::Values(|values, ctx| {
                 crate::builtin_ext::crypto::uncompressed_length(&values[0], ctx)
@@ -995,8 +1253,14 @@ impl PbBuiltin {
             Elt => Kernel::Values(|values, _| crate::string_fn::elt(values)),
             FieldInt | FieldReal | FieldString => Kernel::Method(field_method),
             HexStrArg | HexIntArg => Kernel::Method(hex_method),
-            LTrim => Kernel::Values(ltrim_values),
-            RTrim => Kernel::Values(rtrim_values),
+            LTrim => Kernel::RowAndValues {
+                row: ltrim_row,
+                values: |values, _| crate::builtin_ext::string2::ltrim(&values[0]),
+            },
+            RTrim => Kernel::RowAndValues {
+                row: rtrim_row,
+                values: |values, _| crate::builtin_ext::string2::rtrim(&values[0]),
+            },
             Right | RightUtf8 => Kernel::Values(right_values),
             Space => Kernel::Values(crate::string_packet::space),
             Md5 => Kernel::Values(md5_values),
@@ -1015,13 +1279,8 @@ impl PbBuiltin {
             Conv => Kernel::Conv,
             RoundInt | RoundReal | RoundDec => Kernel::Round,
             Date => Kernel::Values(crate::time_fn::date),
-            DateDiff => Kernel::Values(|values, _| crate::time_fn::calendar::date_diff(values)),
-            DateFormatSig => Kernel::Values(|values, cols| {
-                let [date, format] = values else {
-                    return Err(EvalError::WrongParameterCount("date_format"));
-                };
-                crate::time_fn::calendar::date_format_in(date, format, Some(cols))
-            }),
+            DateDiff => Kernel::Values(super::builtin_time_vec::projections::date_diff_row),
+            DateFormatSig => Kernel::Values(super::builtin_time_vec::projections::format_row),
             Hour => Kernel::Values(|values, _| {
                 crate::time_fn::calendar::time_part(values, |time| i64::from(time.0))
             }),
@@ -1036,9 +1295,7 @@ impl PbBuiltin {
             WeekWithMode | WeekWithoutMode => Kernel::Values(|values, ctx| {
                 crate::time_fn::week(values, ctx.default_week_format(), ctx)
             }),
-            TimestampDiff => {
-                Kernel::Values(|values, _| crate::time_fn::calendar::timestamp_diff(values))
-            }
+            TimestampDiff => Kernel::Values(super::builtin_time_vec::projections::timestamp_diff_row),
             ExtractDatetimeFromString => Kernel::Values(|values, ctx| {
                 crate::time_fn::extract::extract_values(
                     values,
@@ -1220,7 +1477,8 @@ impl PbBuiltin {
             FormatWithLocale => Kernel::Values(crate::builtin_ext::string2::format_with_locale),
             Insert | InsertUtf8 => Kernel::Values(crate::string_fn::insert_with_context),
             Char => Kernel::Values(crate::string_fn::char_func_with_context),
-            Trim1Arg | Trim2Args | Trim3Args => Kernel::Row(trim_row),
+            Trim1Arg => Kernel::Row(trim_both_spaces_row),
+            Trim2Args | Trim3Args => Kernel::Row(trim_row),
             Convert => Kernel::Row(convert_row),
             // builtin_math.go
             Rand => Kernel::Row(rand_const_row),
@@ -1317,7 +1575,9 @@ impl PbBuiltin {
             return Ok(Datum::Null);
         }
                 match kernel {
-                    Kernel::Values(eval) => eval(&values, ctx),
+                    Kernel::Values(eval) | Kernel::RowAndValues { values: eval, .. } => {
+                        eval(&values, ctx)
+                    }
                     Kernel::Method(eval) => eval(function, &values, ctx),
                     Kernel::RegexpFamily(name) => function.eval_regexp_family(name, &values, ctx),
                     Kernel::ConvertCharset { from_binary } => {
@@ -1351,40 +1611,29 @@ impl PbBuiltin {
                         let Some(value) = values.first_mut() else {
                             return Err(EvalError::Unsupported("protobuf string builtin arity"));
                         };
-                        if !value.is_null() {
-                            let bytes = crate::arg_eval_type::eval_string(value)?
-                                .ok_or(EvalError::Unsupported("protobuf string argument"))?;
-                            *value = if binary {
-                                Datum::Bytes(bytes)
-                            } else {
-                                Datum::new_string_datum(bytes)
-                            };
-                        }
                         match operation {
-                            StringOp::Length => Ok(match &values[0] {
-                                Datum::Null => Datum::Null,
-                                Datum::Bytes(bytes) => Datum::Int(bytes.len() as i64),
-                                value => Datum::Int(
-                                    crate::string_signature::StrUnits::of_with_signature(
-                                        value, false,
-                                    )?
-                                    .expect("non-NULL string")
-                                    .len() as i64,
-                                ),
-                            }),
-                            StringOp::Upper => crate::string_fn::case_convert_with_type(
-                                &values,
-                                true,
-                                args[0].static_type(),
-                                binary,
-                            ),
-                            StringOp::Lower => crate::string_fn::case_convert_with_type(
-                                &values,
-                                false,
-                                args[0].static_type(),
-                                binary,
-                            ),
-                            StringOp::Substring => crate::string_fn::substring(&values, ctx),
+                            StringOp::Length => {
+                                let Some(bytes) = crate::arg_eval_type::eval_string_bytes(value)? else {
+                                    return Ok(Datum::Null);
+                                };
+                                Ok(string_length(bytes, binary))
+                            }
+                            StringOp::Substring => crate::string_fn::substring(&values, ctx, binary),
+                            StringOp::Upper | StringOp::Lower => {
+                                let bytes = crate::arg_eval_type::eval_string(value)?
+                                    .ok_or(EvalError::Unsupported("protobuf string argument"))?;
+                                *value = if binary {
+                                    Datum::Bytes(bytes)
+                                } else {
+                                    Datum::new_string_datum(bytes)
+                                };
+                                crate::string_fn::case_convert_with_type(
+                                    &values,
+                                    matches!(operation, StringOp::Upper),
+                                    args[0].static_type(),
+                                    binary,
+                                )
+                            }
                         }
                     }
                     Kernel::FromUnixTime => {
@@ -1421,7 +1670,7 @@ impl PbBuiltin {
                             &values,
                             &types,
                             ctx,
-                            cache_paths.then_some(&function.json_modify_path_cache),
+                            cache_paths.then_some(&function.json_path_cache),
                         )
                     }
                     _ => unreachable!("lazy kernels were handled before evaluating arguments"),
@@ -1492,6 +1741,202 @@ impl PbBuiltin {
                     EvalType::VectorFloat32 => crate::cast::cast_as_vector_float32(value, field),
                     _ => Err(EvalError::Unsupported("protobuf cast target")),
                 }
+    }
+
+    fn eval_borrowed_string(
+        self,
+        function: &ScalarFunction,
+        ctx: &dyn Columns,
+        row: Row<'_>,
+    ) -> Result<Option<Datum>, EvalError> {
+        match (self.kernel, function.args.as_slice()) {
+            (Kernel::RegexpFamily(name @ ("REGEXP_SUBSTR" | "REGEXP_INSTR")), [text, pattern])
+                if !tidb_datatype::is_ci_collation(function.derived_collation().name()) =>
+            {
+                if let (Some((text, _)), Some((pattern, _))) =
+                    (borrow_string_argument(text, row), borrow_string_argument(pattern, row))
+                {
+                    return Ok(crate::builtin_ext::regexp::find_ascii_literal(
+                        text,
+                        pattern,
+                        name == "REGEXP_INSTR",
+                    ));
+                }
+                Ok(None)
+            }
+            (Kernel::RegexpFamily("REGEXP_REPLACE"), [text, pattern, replacement])
+                if !tidb_datatype::is_ci_collation(function.derived_collation().name()) =>
+            {
+                if let (Some((text, _)), Some((pattern, _)), Some((replacement, _))) = (
+                    borrow_string_argument(text, row),
+                    borrow_string_argument(pattern, row),
+                    borrow_string_argument(replacement, row),
+                ) {
+                    return Ok(crate::builtin_ext::regexp::replace_plain_literal(
+                        text,
+                        pattern,
+                        replacement,
+                    ));
+                }
+                Ok(None)
+            }
+            (Kernel::Values(_) | Kernel::Method(_), [arg])
+                if matches!(
+                    self.signature,
+                    ScalarFuncSig::Ascii | ScalarFuncSig::BitLength | ScalarFuncSig::Ord
+                ) =>
+            {
+                if let Some((index, field)) = string_column(arg) {
+                    if self.signature == ScalarFuncSig::BitLength {
+                        return Ok(row.try_var_bytes_len(index).map(|length| {
+                            length.map_or(Datum::Null, |n| Datum::Int(n as i64 * 8))
+                        }));
+                    }
+                    let mut prefix = [0; 4];
+                    let width = if self.signature == ScalarFuncSig::Ascii {
+                        1
+                    } else {
+                        prefix.len()
+                    };
+                    let copied = row.try_copy_var_bytes_prefix(index, &mut prefix[..width]);
+                    return Ok(copied.map(|len| {
+                        len.map_or(Datum::Null, |len| {
+                            if self.signature == ScalarFuncSig::Ascii {
+                                Datum::Int(i64::from(prefix[0]))
+                            } else {
+                                Datum::Int(crate::string_fn::ord_from_bytes(
+                                    &prefix[..len],
+                                    field.charset_name(),
+                                ))
+                            }
+                        })
+                    }));
+                }
+                Ok(borrow_string_argument(arg, row).map(|(bytes, binary)| {
+                    Datum::Int(match self.signature {
+                        ScalarFuncSig::Ascii => i64::from(bytes.first().copied().unwrap_or(0)),
+                        ScalarFuncSig::BitLength => bytes.len() as i64 * 8,
+                        _ => {
+                            let charset = arg.static_type().map_or(
+                                if binary { "binary" } else { "utf8mb4" },
+                                FieldType::charset_name,
+                            );
+                            crate::string_fn::ord_from_bytes(bytes, charset)
+                        }
+                    })
+                }))
+            }
+            (
+                Kernel::String {
+                    operation: StringOp::Length,
+                    binary,
+                },
+                [arg],
+            ) => {
+                if binary {
+                    if let Some(length) = string_column(arg)
+                        .and_then(|(index, _)| row.try_var_bytes_len(index))
+                    {
+                        return Ok(Some(length.map_or(Datum::Null, |n| Datum::Int(n as i64))));
+                    }
+                }
+                Ok(borrow_string_argument(arg, row).map(|(bytes, _)| string_length(bytes, binary)))
+            }
+            (
+                Kernel::String {
+                    operation: StringOp::Substring,
+                    binary,
+                },
+                [arg, pos, length @ ..],
+            ) if length.len() <= 1 => {
+                with_slice_argument(arg, row, string_return_collation(function), |bytes, _| {
+                    if binary {
+                        if let Some(result) = binary_substring_columns(bytes, row, pos, length.first()) {
+                            return Ok(result);
+                        }
+                    }
+                    let pos = pos.eval(ctx, row)?;
+                    if pos.is_null() {
+                        return Ok(StringSlice::Null);
+                    }
+                    let length = length
+                        .first()
+                        .map(|length| length.eval(ctx, row))
+                        .transpose()?;
+                    let Some((pos, length)) =
+                        crate::string_fn::substring_arguments(&pos, length.as_ref(), ctx)?
+                    else {
+                        return Ok(StringSlice::Null);
+                    };
+                    if binary {
+                        return Ok(binary_substring_slice(bytes, pos, length));
+                    }
+                    let units = crate::string_signature::StrUnits::from_bytes(
+                        Cow::Borrowed(bytes), false,
+                    );
+                    Ok(StringSlice::selected(bytes, crate::string_fn::substring_slice(
+                        &units, pos, length,
+                    )))
+                })
+            }
+            (Kernel::Values(_), [arg, delim, count])
+                if self.signature == ScalarFuncSig::SubstringIndex =>
+            {
+                let Some((delim, _)) = borrow_string_argument(delim, row) else {
+                    return Ok(None);
+                };
+                with_slice_argument(arg, row, string_return_collation(function), |bytes, _| {
+                    let count = count.eval(ctx, row)?;
+                    if count.is_null() {
+                        return Ok(StringSlice::Null);
+                    }
+                    let result = crate::string_fn::substring_index_byte_slice(
+                        bytes, delim, crate::cast::to_i64_signed(&count),
+                        matches!(count, Datum::UInt(_)),
+                    );
+                    Ok(StringSlice::selected(bytes, result))
+                })
+            }
+            (Kernel::Values(_), [arg, length])
+                if matches!(
+                    self.signature,
+                    ScalarFuncSig::Left
+                        | ScalarFuncSig::LeftUtf8
+                        | ScalarFuncSig::Right
+                        | ScalarFuncSig::RightUtf8
+                ) =>
+            {
+                let from_left =
+                    matches!(self.signature, ScalarFuncSig::Left | ScalarFuncSig::LeftUtf8);
+                with_slice_argument(arg, row, string_return_collation(function), |bytes, binary| {
+                    let length = if let Some(index) = slice_int_column(length, row) {
+                        row.get_nullable_int64(index)
+                    } else {
+                        let length = length.eval(ctx, row)?;
+                        (!length.is_null()).then(|| crate::cast::to_i64_signed(&length))
+                    };
+                    let Some(length) = length else {
+                        return Ok(StringSlice::Null);
+                    };
+                    let count = length.max(0) as usize;
+                    if binary {
+                        let width = count.min(bytes.len());
+                        return Ok(StringSlice::Input(if from_left {
+                            0..width
+                        } else {
+                            bytes.len() - width..bytes.len()
+                        }));
+                    }
+                    let units = crate::string_signature::StrUnits::from_bytes(
+                        Cow::Borrowed(bytes), false,
+                    );
+                    Ok(StringSlice::selected(bytes, crate::string_fn::take_string_unit_slice(
+                        &units, count, from_left,
+                    )))
+                })
+            }
+            _ => Ok(None),
+        }
     }
 
     pub(super) fn eval(
@@ -1720,7 +2165,7 @@ impl PbBuiltin {
             }
             Kernel::Like => function.eval_like(ctx, row, false),
             Kernel::Ilike => function.eval_like(ctx, row, true),
-            Kernel::Row(eval) => eval(function, ctx, row),
+            Kernel::Row(eval) | Kernel::RowAndValues { row: eval, .. } => eval(function, ctx, row),
             Kernel::DateArithmetic { subtract } => {
                 if args.len() != 3 {
                     return Err(EvalError::Unsupported("protobuf date arithmetic arity"));
@@ -1754,7 +2199,41 @@ impl PbBuiltin {
                 self.cast_value(function, value, ctx)
             }
             Kernel::Regexp => function.eval_regexp_like(ctx, row),
+            Kernel::RegexpFamily(name) if args.len() <= 6 => {
+                if let Some(result) = self.eval_borrowed_string(function, ctx, row)? {
+                    return Ok(result);
+                }
+                let mut values: [Cow<'_, Datum>; 6] =
+                    std::array::from_fn(|_| Cow::Borrowed(&Datum::Null));
+                let values = &mut values[..args.len()];
+                for (slot, arg) in values.iter_mut().zip(args) {
+                    let literal = match arg {
+                        Expression::Constant(constant) => constant.literal_value(),
+                        _ => None,
+                    };
+                    let value = match literal {
+                        // These literal kinds can be read directly. Decimal
+                        // and hybrid values need the ordinary evaluation rules.
+                        Some(
+                            value @ (Datum::Null | Datum::String(_) | Datum::Bytes(_)
+                            | Datum::Int(_) | Datum::UInt(_)),
+                        ) => Cow::Borrowed(value),
+                        _ => Cow::Owned(arg.eval(ctx, row)?),
+                    };
+                    if value.is_null() {
+                        return Ok(Datum::Null);
+                    }
+                    *slot = value;
+                }
+                function.eval_regexp_family(name, values, ctx)
+            }
+            Kernel::Json if matches!(self.signature, ScalarFuncSig::JsonKeysSig | ScalarFuncSig::JsonKeys2ArgsSig) => {
+                crate::builtin_ext::json::json_keys_row(args, ctx, row, &function.json_path_cache)
+            }
             kernel => {
+                if let Some(result) = self.eval_borrowed_string(function, ctx, row)? {
+                    return Ok(result);
+                }
                 let mut values = Vec::with_capacity(args.len());
                 for arg in args {
                     let value = arg.eval(ctx, row)?;
@@ -1766,7 +2245,25 @@ impl PbBuiltin {
                     }
                     values.push(value);
                 }
-                self.eval_values(function, values, ctx)
+                let result = self.eval_values(function, values, ctx)?;
+                match self.signature {
+                    ScalarFuncSig::Left | ScalarFuncSig::LeftUtf8 | ScalarFuncSig::Right
+                    | ScalarFuncSig::RightUtf8 | ScalarFuncSig::Substring2Args
+                    | ScalarFuncSig::Substring2ArgsUtf8 | ScalarFuncSig::Substring3Args
+                    | ScalarFuncSig::Substring3ArgsUtf8 | ScalarFuncSig::SubstringIndex => {
+                        // Go ScalarFunction.Eval calls SetString with the
+                        // return type's collation for all these signatures.
+                        let collation = string_return_collation(function);
+                        Ok(match result {
+                            Datum::Bytes(bytes) => Datum::new_collation_string_datum(bytes, collation),
+                            Datum::String(string) if string.collation() != collation => {
+                                Datum::new_collation_string_datum(string.into_bytes(), collation)
+                            }
+                            result => result,
+                        })
+                    }
+                    _ => Ok(result),
+                }
             }
         }
     }

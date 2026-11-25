@@ -16,6 +16,7 @@ tidb-logutil = { path = "../tidb-logutil" }
 tidb-store-driver-txn = { path = "../tidb-store-driver-txn" }
 tidb-kv = { path = "../tidb-kv" }
 tidb-datatype = { path = "../tidb-datatype" }
+tidb-rowcodec = { path = "../tidb-rowcodec" }
 tidb-tablecodec = { path = "../tidb-tablecodec" }
 tikv-client.workspace = true
 tidb-txnkv = { path = "../tidb-txnkv" }

@@ -2,6 +2,7 @@
 
 use std::ops::{Bound, Range};
 
+use prost::bytes::{Buf, Bytes};
 use serde_derive::{Deserialize, Serialize};
 
 use crate::proto::keyspacepb;
@@ -46,6 +47,10 @@ pub enum Keyspace {
 pub enum KeyMode {
     Raw,
     Txn,
+}
+
+fn cop_range_bounds(range: &crate::proto::coprocessor::KeyRange) -> (&[u8], &[u8]) {
+    (&range.start, &range.end)
 }
 
 impl Keyspace {
@@ -228,10 +233,14 @@ fn crate_error_contains_decode(error: &crate::Error) -> bool {
 }
 
 fn decode_memcomparable_key(encoded_key: &[u8]) -> crate::Result<Vec<u8>> {
-    let mut decoded = Vec::new();
+    let mut decoded = Vec::with_capacity(encoded_key.len());
     crate::kv::codec::decode_bytes(encoded_key, &mut decoded)
         .map_err(|error| crate::Error::ApiCodecDecode(Box::new(error)))?;
     Ok(decoded)
+}
+
+fn keyspace_out_of_bounds_error() -> crate::Error {
+    crate::Error::StringError("given key does not belong to the keyspace".to_owned())
 }
 
 /// Writes the legacy numeric V2 arm of the pinned context keyspace oneof.
@@ -402,9 +411,7 @@ impl ApiV2Codec {
             return Ok(Vec::new());
         }
         if !encoded_key.starts_with(&self.prefix) {
-            return Err(crate::Error::StringError(
-                "given key does not belong to the keyspace".to_owned(),
-            ));
+            return Err(keyspace_out_of_bounds_error());
         }
         Ok(encoded_key[KEYSPACE_PREFIX_LEN..].to_vec())
     }
@@ -468,25 +475,104 @@ impl ApiV2Codec {
         range: &crate::proto::coprocessor::KeyRange,
     ) -> crate::proto::coprocessor::KeyRange {
         let (start, end) = self.encode_range(&range.start, &range.end);
-        crate::proto::coprocessor::KeyRange { start, end }
+        crate::proto::coprocessor::KeyRange {
+            start: start.into(),
+            end: end.into(),
+        }
     }
 
     pub fn encode_cop_ranges(
         &self,
         ranges: &[crate::proto::coprocessor::KeyRange],
     ) -> Vec<crate::proto::coprocessor::KeyRange> {
+        if let [range] = ranges {
+            return vec![self.encode_cop_range(range)];
+        }
+        self.encode_cop_range_bounds(ranges.iter().map(cop_range_bounds))
+    }
+
+    /// Projects logical key bounds directly into API V2 coprocessor ranges.
+    pub fn encode_cop_range_bounds<'a>(
+        &self,
+        mut ranges: impl Iterator<Item = (&'a [u8], &'a [u8])> + Clone,
+    ) -> Vec<crate::proto::coprocessor::KeyRange> {
+        let packed = self.pack_cop_range_bounds(ranges.clone());
+        if packed.is_empty() {
+            return Vec::new();
+        }
+        let mut packed = Bytes::from_owner(packed);
+        if ranges.size_hint() == (1, Some(1)) {
+            let (start, _) = ranges.next().expect("one range");
+            return vec![crate::proto::coprocessor::KeyRange {
+                start: packed.split_to(KEYSPACE_PREFIX_LEN + start.len()),
+                end: packed,
+            }];
+        }
         ranges
-            .iter()
-            .map(|range| self.encode_cop_range(range))
+            .map(|(start, end)| Self::take_packed_cop_range(&mut packed, start, end))
             .collect()
+    }
+
+    fn pack_cop_range_bounds<'a>(
+        &self,
+        ranges: impl Iterator<Item = (&'a [u8], &'a [u8])> + Clone,
+    ) -> Vec<u8> {
+        // Share the prefixed boundary storage across the range list.
+        let capacity = ranges
+            .clone()
+            .map(|(start, end)| 2 * KEYSPACE_PREFIX_LEN + start.len() + end.len())
+            .sum();
+        let mut packed = Vec::with_capacity(capacity);
+        for (start, end) in ranges {
+            packed.extend_from_slice(&self.prefix);
+            packed.extend_from_slice(start);
+            packed.extend_from_slice(self.forward_end_prefix(end));
+            packed.extend_from_slice(end);
+        }
+        packed
+    }
+
+    fn take_packed_cop_range(
+        packed: &mut Bytes,
+        start: &[u8],
+        end: &[u8],
+    ) -> crate::proto::coprocessor::KeyRange {
+        crate::proto::coprocessor::KeyRange {
+            start: packed.split_to(KEYSPACE_PREFIX_LEN + start.len()),
+            end: packed.split_to(KEYSPACE_PREFIX_LEN + end.len()),
+        }
+    }
+
+    fn encode_owned_cop_ranges(&self, ranges: &mut [crate::proto::coprocessor::KeyRange]) {
+        match ranges {
+            [] => {}
+            [range] => *range = self.encode_cop_range(range),
+            _ => {
+                let mut packed =
+                    Bytes::from(self.pack_cop_range_bounds(ranges.iter().map(cop_range_bounds)));
+                for range in ranges {
+                    *range = Self::take_packed_cop_range(&mut packed, &range.start, &range.end);
+                }
+            }
+        }
     }
 
     pub fn decode_cop_range(
         &self,
         range: &mut crate::proto::coprocessor::KeyRange,
     ) -> crate::Result<()> {
-        (range.start, range.end) = self.decode_range(&range.start, &range.end)?;
+        self.check_range_bounds(&range.start, &range.end)?;
+        self.strip_cop_prefix(&mut range.start);
+        self.strip_cop_prefix(&mut range.end);
         Ok(())
+    }
+
+    fn strip_cop_prefix(&self, bound: &mut Bytes) {
+        if bound.len() > KEYSPACE_PREFIX_LEN && bound.starts_with(&self.prefix) {
+            bound.advance(KEYSPACE_PREFIX_LEN);
+        } else {
+            *bound = Bytes::new();
+        }
     }
 
     /// Clones and encodes the per-region tasks carried by a batched
@@ -497,11 +583,25 @@ impl ApiV2Codec {
     ) -> Vec<crate::proto::coprocessor::StoreBatchTask> {
         tasks
             .iter()
-            .map(|task| {
-                let mut task = task.clone();
-                task.ranges = self.encode_cop_ranges(&task.ranges);
-                task
-            })
+            .map(
+                |crate::proto::coprocessor::StoreBatchTask {
+                     region_id,
+                     region_epoch,
+                     peer,
+                     ranges,
+                     task_id,
+                     versioned_ranges,
+                     buckets_version,
+                 }| crate::proto::coprocessor::StoreBatchTask {
+                    region_id: *region_id,
+                    region_epoch: *region_epoch,
+                    peer: *peer,
+                    ranges: self.encode_cop_range_bounds(ranges.iter().map(cop_range_bounds)),
+                    task_id: *task_id,
+                    versioned_ranges: versioned_ranges.clone(),
+                    buckets_version: *buckets_version,
+                },
+            )
             .collect()
     }
 
@@ -511,9 +611,17 @@ impl ApiV2Codec {
         &self,
         region: &crate::proto::coprocessor::RegionInfo,
     ) -> crate::proto::coprocessor::RegionInfo {
-        let mut region = region.clone();
-        region.ranges = self.encode_cop_ranges(&region.ranges);
-        region
+        use crate::proto::coprocessor::RegionInfo;
+        let RegionInfo {
+            region_id,
+            region_epoch,
+            ranges,
+        } = region;
+        RegionInfo {
+            region_id: *region_id,
+            region_epoch: *region_epoch,
+            ranges: self.encode_cop_ranges(ranges),
+        }
     }
 
     /// Clones and encodes TiFlash region descriptors, matching client-go's
@@ -553,9 +661,18 @@ impl ApiV2Codec {
         &self,
         request: &crate::proto::coprocessor::Request,
     ) -> crate::proto::coprocessor::Request {
-        let mut request = request.clone();
-        request.ranges = self.encode_cop_ranges(&request.ranges);
-        request.tasks = self.encode_cop_store_batch_tasks(&request.tasks);
+        self.encode_owned_coprocessor_request(request.clone())
+    }
+
+    /// Encodes API V2 ranges in an owned request before dispatch.
+    pub fn encode_owned_coprocessor_request(
+        &self,
+        mut request: crate::proto::coprocessor::Request,
+    ) -> crate::proto::coprocessor::Request {
+        self.encode_owned_cop_ranges(&mut request.ranges);
+        for task in &mut request.tasks {
+            self.encode_owned_cop_ranges(&mut task.ranges);
+        }
         request
     }
 
@@ -565,10 +682,100 @@ impl ApiV2Codec {
         &self,
         request: &crate::proto::coprocessor::BatchRequest,
     ) -> crate::proto::coprocessor::BatchRequest {
-        let mut request = request.clone();
-        request.regions = self.encode_cop_region_infos(&request.regions);
-        request.table_regions = self.encode_cop_table_regions(&request.table_regions);
+        self.encode_owned_batch_coprocessor_request(request.clone())
+    }
+
+    /// Projects a TiFlash task's region lists directly into a new API V2
+    /// request while keeping the original ranges available for retries.
+    pub fn encode_batch_coprocessor_regions(
+        &self,
+        regions: &[crate::proto::coprocessor::RegionInfo],
+        tables: &[crate::proto::coprocessor::TableRegions],
+    ) -> (
+        Vec<crate::proto::coprocessor::RegionInfo>,
+        Vec<crate::proto::coprocessor::TableRegions>,
+    ) {
+        use crate::proto::coprocessor::{RegionInfo, TableRegions};
+        if tables.is_empty() && regions.len() <= 1 {
+            return (self.encode_cop_region_infos(regions), Vec::new());
+        }
+
+        let mut packed = self.pack_batch_coprocessor_bounds(regions, tables);
+        let mut project_regions = |source: &[RegionInfo]| {
+            source
+                .iter()
+                .map(
+                    |RegionInfo {
+                         region_id,
+                         region_epoch,
+                         ranges,
+                     }| RegionInfo {
+                        region_id: *region_id,
+                        region_epoch: *region_epoch,
+                        ranges: ranges
+                            .iter()
+                            .map(|range| {
+                                Self::take_packed_cop_range(&mut packed, &range.start, &range.end)
+                            })
+                            .collect(),
+                    },
+                )
+                .collect()
+        };
+        let regions = project_regions(regions);
+        let tables = tables
+            .iter()
+            .map(
+                |TableRegions {
+                     physical_table_id,
+                     regions,
+                 }| TableRegions {
+                    physical_table_id: *physical_table_id,
+                    regions: project_regions(regions),
+                },
+            )
+            .collect();
+        (regions, tables)
+    }
+
+    /// Encodes API V2 ranges in an owned TiFlash batch request.
+    pub fn encode_owned_batch_coprocessor_request(
+        &self,
+        mut request: crate::proto::coprocessor::BatchRequest,
+    ) -> crate::proto::coprocessor::BatchRequest {
+        if request.table_regions.is_empty() && request.regions.len() <= 1 {
+            if let Some(region) = request.regions.first_mut() {
+                self.encode_owned_cop_ranges(&mut region.ranges);
+            }
+            return request;
+        }
+
+        // All rewritten bounds in the batch share one backing buffer.
+        let mut packed =
+            self.pack_batch_coprocessor_bounds(&request.regions, &request.table_regions);
+        let regions = request.regions.iter_mut().chain(
+            request
+                .table_regions
+                .iter_mut()
+                .flat_map(|table| &mut table.regions),
+        );
+        for range in regions.flat_map(|region| &mut region.ranges) {
+            *range = Self::take_packed_cop_range(&mut packed, &range.start, &range.end);
+        }
+
         request
+    }
+
+    fn pack_batch_coprocessor_bounds(
+        &self,
+        regions: &[crate::proto::coprocessor::RegionInfo],
+        tables: &[crate::proto::coprocessor::TableRegions],
+    ) -> Bytes {
+        let bounds = regions
+            .iter()
+            .chain(tables.iter().flat_map(|table| &table.regions))
+            .flat_map(|region| region.ranges.iter().map(cop_range_bounds));
+        Bytes::from(self.pack_cop_range_bounds(bounds))
     }
 
     /// Clones and encodes the key-bearing fields of an MPP dispatch request,
@@ -600,20 +807,29 @@ impl ApiV2Codec {
             let (end, start) = self.encode_range_with_reverse(end, start, false);
             return (start, end);
         }
-        let encoded_end = if end.is_empty() {
-            self.end_key.to_vec()
-        } else {
-            self.encode_key(end)
-        };
+        let mut encoded_end = Vec::with_capacity(KEYSPACE_PREFIX_LEN + end.len());
+        encoded_end.extend_from_slice(self.forward_end_prefix(end));
+        encoded_end.extend_from_slice(end);
         (self.encode_key(start), encoded_end)
     }
 
-    pub fn decode_range(&self, start: &[u8], end: &[u8]) -> crate::Result<(Vec<u8>, Vec<u8>)> {
-        if start >= self.end_key.as_slice() || (!end.is_empty() && end <= self.prefix.as_slice()) {
-            return Err(crate::Error::StringError(
-                "given key does not belong to the keyspace".to_owned(),
-            ));
+    fn forward_end_prefix(&self, end: &[u8]) -> &[u8; KEYSPACE_PREFIX_LEN] {
+        if end.is_empty() {
+            &self.end_key
+        } else {
+            &self.prefix
         }
+    }
+
+    fn check_range_bounds(&self, start: &[u8], end: &[u8]) -> crate::Result<()> {
+        if start >= self.end_key.as_slice() || (!end.is_empty() && end <= self.prefix.as_slice()) {
+            return Err(keyspace_out_of_bounds_error());
+        }
+        Ok(())
+    }
+
+    pub fn decode_range(&self, start: &[u8], end: &[u8]) -> crate::Result<(Vec<u8>, Vec<u8>)> {
+        self.check_range_bounds(start, end)?;
 
         let start = start
             .strip_prefix(&self.prefix)
@@ -632,7 +848,21 @@ impl ApiV2Codec {
 
     pub fn decode_region_key(&self, encoded_key: &[u8]) -> crate::Result<Vec<u8>> {
         let decoded = decode_memcomparable_key(encoded_key)?;
-        self.decode_key(&decoded)
+        if decoded.is_empty() {
+            return Ok(Vec::new());
+        }
+        self.strip_decoded_region_prefix(decoded)
+            .ok_or_else(keyspace_out_of_bounds_error)
+    }
+
+    fn strip_decoded_region_prefix(&self, mut decoded: Vec<u8>) -> Option<Vec<u8>> {
+        let len = decoded.strip_prefix(&self.prefix)?.len();
+        if len == 0 {
+            return Some(Vec::new());
+        }
+        decoded.copy_within(KEYSPACE_PREFIX_LEN.., 0);
+        decoded.truncate(len);
+        Some(decoded)
     }
 
     pub fn encode_region_range(&self, start: &[u8], end: &[u8]) -> (Vec<u8>, Vec<u8>) {
@@ -659,7 +889,13 @@ impl ApiV2Codec {
         } else {
             decode_memcomparable_key(end)?
         };
-        self.decode_range(&decoded_start, &decoded_end)
+        self.check_range_bounds(&decoded_start, &decoded_end)?;
+        Ok((
+            self.strip_decoded_region_prefix(decoded_start)
+                .unwrap_or_default(),
+            self.strip_decoded_region_prefix(decoded_end)
+                .unwrap_or_default(),
+        ))
     }
 
     /// Decodes API V2 boundaries on every region returned by commands such as
@@ -1329,16 +1565,92 @@ mod tests {
         );
 
         let mut cop_range = crate::proto::coprocessor::KeyRange {
-            start: b"a".to_vec(),
-            end: Vec::new(),
+            start: b"a".to_vec().into(),
+            end: Vec::new().into(),
         };
         let encoded_cop_range = codec.encode_cop_range(&cop_range);
-        assert_eq!(encoded_cop_range.start, b"r\0\x10\x92a");
-        assert_eq!(encoded_cop_range.end, b"r\0\x10\x93");
+        assert_eq!(encoded_cop_range.start.as_ref(), b"r\0\x10\x92a");
+        assert_eq!(encoded_cop_range.end.as_ref(), b"r\0\x10\x93");
         cop_range = encoded_cop_range;
         codec.decode_cop_range(&mut cop_range).unwrap();
-        assert_eq!(cop_range.start, b"a");
+        assert_eq!(cop_range.start.as_ref(), b"a");
         assert!(cop_range.end.is_empty());
+    }
+
+    #[test]
+    fn api_v2_coprocessor_ranges_share_bytes_and_preserve_clipping() {
+        use crate::proto::coprocessor::KeyRange;
+
+        for mode in [KeyMode::Raw, KeyMode::Txn] {
+            let codec = ApiV2Codec::new(mode, MAX_KEYSPACE_ID).unwrap();
+            let ranges = [
+                KeyRange::default(),
+                KeyRange {
+                    start: Bytes::from(vec![b'a'; 4096]),
+                    end: Bytes::from(vec![b'z'; 4096]),
+                },
+            ];
+            let mut encoded = codec.encode_cop_ranges(&ranges);
+            assert_eq!(encoded[0].start.as_ref(), &codec.prefix());
+            assert_eq!(encoded[0].end.as_ref(), &codec.end_key());
+            assert_eq!(encoded[1], codec.encode_cop_range(&ranges[1]));
+            let start = encoded[1].start.clone();
+            let end = encoded[1].end.clone();
+
+            for range in &mut encoded {
+                codec.decode_cop_range(range).unwrap();
+            }
+            assert_eq!(encoded, ranges);
+            assert_eq!(
+                encoded[1].start.as_ptr(),
+                start[KEYSPACE_PREFIX_LEN..].as_ptr()
+            );
+            assert_eq!(encoded[1].end.as_ptr(), end[KEYSPACE_PREFIX_LEN..].as_ptr());
+
+            let mut outside = KeyRange {
+                start: Bytes::copy_from_slice(&codec.end_key()),
+                end,
+            };
+            let original = outside.clone();
+            assert!(codec.decode_cop_range(&mut outside).is_err());
+            assert_eq!(outside, original);
+        }
+    }
+
+    #[test]
+    fn api_v2_owned_coprocessor_request_preserves_non_range_fields() {
+        use crate::proto::coprocessor::{KeyRange, Request, StoreBatchTask, VersionedKeyRange};
+
+        let codec = ApiV2Codec::new(KeyMode::Txn, 9).unwrap();
+        let logical = KeyRange {
+            start: Bytes::from_static(b"start"),
+            end: Bytes::from_static(b"end"),
+        };
+        let versioned = VersionedKeyRange {
+            range: Some(logical.clone()),
+            read_ts: 13,
+        };
+        let request = Request {
+            data: Bytes::from_static(b"dag"),
+            ranges: vec![logical.clone()],
+            versioned_ranges: vec![versioned.clone()],
+            tasks: vec![StoreBatchTask {
+                task_id: 23,
+                buckets_version: 7,
+                ranges: vec![logical.clone(), KeyRange::default()],
+                versioned_ranges: vec![versioned],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let mut expected = request.clone();
+        expected.ranges = vec![codec.encode_cop_range(&logical)];
+        expected.tasks[0].ranges = vec![
+            codec.encode_cop_range(&logical),
+            codec.encode_cop_range(&KeyRange::default()),
+        ];
+        assert_eq!(codec.encode_coprocessor_request(&request), expected);
+        assert_eq!(codec.encode_owned_coprocessor_request(request), expected);
     }
 
     #[test]
@@ -2412,8 +2724,8 @@ mod tests {
             meta: Some(mpp::TaskMeta::default()),
             regions: vec![coprocessor::RegionInfo {
                 ranges: vec![coprocessor::KeyRange {
-                    start: b"a".to_vec(),
-                    end: b"b".to_vec(),
+                    start: b"a".to_vec().into(),
+                    end: b"b".to_vec().into(),
                 }],
                 ..Default::default()
             }],

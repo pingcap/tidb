@@ -102,11 +102,11 @@ fn coprocessor_requests_dispatch_through_region_resolution_to_the_handler() {
         let request = coprocessor::Request {
             // DAG request type, as `pkg/store/copr` sends for executors.
             tp: 103,
-            data: b"dag-payload".to_vec(),
+            data: b"dag-payload".to_vec().into(),
             start_ts: start_ts.version(),
             ranges: vec![coprocessor::KeyRange {
-                start: b"a".to_vec(),
-                end: b"z".to_vec(),
+                start: b"a".to_vec().into(),
+                end: b"z".to_vec().into(),
             }],
             ..Default::default()
         };
@@ -157,10 +157,10 @@ fn a_stale_region_context_returns_a_region_error_for_the_copr_layer_to_retry() {
 
         let request = coprocessor::Request {
             tp: 103,
-            data: b"dag-payload".to_vec(),
+            data: b"dag-payload".to_vec().into(),
             ranges: vec![coprocessor::KeyRange {
-                start: b"a".to_vec(),
-                end: b"z".to_vec(),
+                start: b"a".to_vec().into(),
+                end: b"z".to_vec().into(),
             }],
             ..Default::default()
         };

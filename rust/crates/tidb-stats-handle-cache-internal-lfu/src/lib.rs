@@ -23,23 +23,26 @@ use tidb_ristretto::{Cache, Callback, Config, Item};
 use tidb_stats::{CopyIntent, Table};
 use tidb_stats_handle_cache_internal::StatsCacheInner;
 use tidb_stats_handle_cache_metrics as metrics;
+use tidb_zeropool::ThreadShards;
 
 const KEY_SET_COUNT: usize = 256;
 
+type Tables = HashMap<i64, Arc<Table>, foldhash::fast::RandomState>;
+
 struct KeySetShard {
-    shards: Vec<RwLock<HashMap<i64, Arc<Table>>>>,
+    shards: Vec<RwLock<Tables>>,
 }
 
 impl KeySetShard {
     fn new() -> Self {
         Self {
             shards: (0..KEY_SET_COUNT)
-                .map(|_| RwLock::new(HashMap::new()))
+                .map(|_| RwLock::new(Tables::default()))
                 .collect(),
         }
     }
 
-    fn shard(&self, key: i64) -> &RwLock<HashMap<i64, Arc<Table>>> {
+    fn shard(&self, key: i64) -> &RwLock<Tables> {
         // `rem_euclid` keeps every i64 key in `[0, 256)`: identical to the
         // signed remainder for non-negative keys, and a valid shard for the
         // negative ids the cluster allocator can hand the stats cache (a
@@ -55,6 +58,13 @@ impl KeySetShard {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .get(&key)
             .cloned()
+    }
+
+    fn contains_key(&self, key: i64) -> bool {
+        self.shard(key)
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .contains_key(&key)
     }
 
     fn put(&self, key: i64, table: Arc<Table>) {
@@ -101,7 +111,7 @@ impl KeySetShard {
         for shard in &self.shards {
             *shard
                 .write()
-                .unwrap_or_else(std::sync::PoisonError::into_inner) = HashMap::new();
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = Tables::default();
         }
     }
 }
@@ -220,10 +230,10 @@ impl Callback<CachedTable> for Callbacks {
 /// Go `LFU`.
 pub struct Lfu {
     state: Arc<State>,
-    // Reads share the lifetime gate. Close takes it exclusively through the
-    // final primary drop/join, so every concurrent closer observes completion.
+    // Reads use their local lifetime gate. Close holds every shard through
+    // the final primary drop/join so all concurrent closers observe completion.
     // Callbacks use State's weak primary reference and never acquire this gate.
-    cache: Arc<RwLock<Option<Arc<Primary>>>>,
+    cache: Arc<ThreadShards<RwLock<Option<Arc<Primary>>>>>,
 }
 
 impl Lfu {
@@ -264,7 +274,7 @@ impl Lfu {
             .map_err(|_| "primary cache already initialized".to_owned())?;
         Ok(Self {
             state,
-            cache: Arc::new(RwLock::new(Some(cache))),
+            cache: Arc::new(ThreadShards::new(|| RwLock::new(Some(Arc::clone(&cache))))),
         })
     }
 
@@ -275,6 +285,7 @@ impl Lfu {
 
     fn primary(&self) -> RwLockReadGuard<'_, Option<Arc<Primary>>> {
         self.cache
+            .local()
             .read()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
@@ -309,6 +320,19 @@ impl StatsCacheInner for Lfu {
                     .map(|value| value.expect("LFU eviction trigger is not a table"))
             })
             .or_else(|| self.state.tables.get(table_id))
+    }
+
+    fn contains_table(&self, table_id: i64) -> bool {
+        let resident = self
+            .primary()
+            .as_ref()
+            .and_then(|cache| cache.get_with(&table_id, Option::is_some));
+        if let Some(table) = resident {
+            assert!(table, "LFU eviction trigger is not a table");
+            true
+        } else {
+            self.state.tables.contains_key(table_id)
+        }
     }
 
     fn put(&self, table_id: i64, table: Arc<Table>) -> bool {
@@ -363,14 +387,17 @@ impl StatsCacheInner for Lfu {
         metrics::cost_gauge().set(self.cost() as f64);
     }
     fn close(&self) {
-        let mut primary = self
+        let mut shards: Vec<_> = self
             .cache
-            .write()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+            .iter()
+            .map(|shard| shard.write().unwrap_or_else(std::sync::PoisonError::into_inner))
+            .collect();
         if self.state.closed.swap(true, Ordering::AcqRel) {
             return;
         }
-        if let Some(cache) = primary.take() {
+        let mut owners = shards.iter_mut().filter_map(|shard| shard.take());
+        if let Some(cache) = owners.next() {
+            owners.for_each(drop);
             cache.clear();
             self.state.tables.clear();
             cache.close();
@@ -591,6 +618,8 @@ mod tests {
         cache.wait_for_async_updates();
 
         let table = cache.get(1).expect("secondary metadata table");
+        assert!(cache.contains_table(1));
+        assert!(!cache.contains_table(2));
         assert_eq!(cache.len(), 1);
         table.hist_coll.for_each_column(|_, column| {
             assert!(column.is_all_evicted());

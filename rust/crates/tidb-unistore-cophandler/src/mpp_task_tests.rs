@@ -83,8 +83,8 @@ fn dag(root: tipb::Executor) -> coprocessor::Request {
     let (start, end) = tidb_tablecodec::table_key::get_table_handle_key_range(90);
     coprocessor::Request {
         tp: crate::REQ_TYPE_DAG,
-        data: dag.encode_to_vec(),
-        ranges: vec![coprocessor::KeyRange { start, end }],
+        data: dag.encode_to_vec().into(),
+        ranges: vec![coprocessor::KeyRange { start: start.into(), end: end.into() }],
         start_ts: 20,
         ..Default::default()
     }
@@ -237,8 +237,8 @@ fn a_left_outer_join_pads_unmatched_rows_with_nulls() {
         &store,
         &coprocessor::Request {
             tp: crate::REQ_TYPE_DAG,
-            data: dag.encode_to_vec(),
-            ranges: vec![coprocessor::KeyRange { start, end }],
+            data: dag.encode_to_vec().into(),
+            ranges: vec![coprocessor::KeyRange { start: start.into(), end: end.into() }],
             start_ts: 20,
             ..Default::default()
         },

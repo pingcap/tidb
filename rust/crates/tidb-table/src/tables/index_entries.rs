@@ -27,15 +27,19 @@
 //! `TIMESTAMP` key part to UTC before encoding it, so the entry a Shanghai
 //! session files is the entry a UTC session seeks.
 
+use std::borrow::{Borrow, Cow};
+
 use tidb_tablecodec::table_key::encode_index_seek_key;
 use tidb_codec::Encoder;
 use tidb_datatype::{is_bin_collation, Datum, SessionTimeZone};
 use tidb_tablecodec::{
-    cut_index_key, decode_handle_in_index_value, generate_index_key, generate_index_value,
+    datum_with_prefix_len, decode_handle_in_index_value, decode_index_values_from_columns,
+    encode_truncated_index_key_refs, generate_index_value_with_columns, render_index_values_from_columns,
+    skip_index_key_columns,
     index_kv_is_unique, IndexColumn as CodecIndexColumn, IndexInfo as CodecIndexInfo,
-    TableColumn as CodecTableColumn, TableInfo as CodecTableInfo,
+    IndexValueHandle, TableColumn as CodecTableColumn, TableIndexError, TableInfo as CodecTableInfo,
 };
-use tidb_txnkv::{AssertionOp, Key};
+use tidb_txnkv::{AssertionOp, CommonHandle, Key};
 
 use tidb_datatype::UNSPECIFIED_LENGTH;
 use tidb_kv::storage::{StorageError, TableStorage};
@@ -53,11 +57,11 @@ pub struct IndexEntryForCheck {
 
 /// One entry key a row files under one index (see
 /// [`TableCommon::index_entry_keys`]).
-pub struct IndexEntryKey {
+pub struct IndexEntryKey<V = Datum> {
     pub key: Vec<u8>,
     pub distinct: bool,
     /// The value tuple the key encodes, before key truncation.
-    pub values: Vec<Datum>,
+    pub values: Vec<V>,
 }
 
 pub(crate) struct UniquePointRead {
@@ -116,6 +120,36 @@ impl TableCommon {
         duplicate_key: &str,
         lazy: bool,
     ) -> Result<bool, KvTableError> {
+        self.check_insert_key_with_hint(store, key, lazy, || {
+            (Cow::Borrowed(duplicate_value), Cow::Borrowed(duplicate_key))
+        })
+    }
+
+    /// Builds diagnostic text only when returning or deferring a duplicate.
+    pub(super) fn check_insert_key_with_hint<'a>(
+        &self,
+        store: &mut dyn TableStorage,
+        key: &Key,
+        lazy: bool,
+        hint: impl Fn() -> (Cow<'a, str>, Cow<'a, str>),
+    ) -> Result<bool, KvTableError> {
+        let presume = self.probe_insert_key(store, key, lazy, &hint)?;
+        if presume {
+            let (value, index) = hint();
+            store.mark_presume_key_not_exists_with_hint(key, &value, &index);
+        }
+        Ok(presume)
+    }
+
+    /// Checks for a duplicate and reports whether a local miss defers the check.
+    /// The caller records a deferred hint when it is ready to write the value.
+    pub(super) fn probe_insert_key<'a>(
+        &self,
+        store: &mut dyn TableStorage,
+        key: &Key,
+        lazy: bool,
+        hint: impl FnOnce() -> (Cow<'a, str>, Cow<'a, str>),
+    ) -> Result<bool, KvTableError> {
         // Go `addRecord` / `index.create`: "Always check key for temporary
         // table because it does not write to TiKV" -- no prewrite would ever
         // see a presumption (`tables.go:898`, `index.go:476`).
@@ -126,25 +160,16 @@ impl TableCommon {
             store.get(key)
         };
         match value {
-            Ok(value) if !value.is_empty() => Err(KvTableError::Mysql(
-                tidb_terror::MysqlError::from_terror(
-                    &tidb_kv::kv_errors::ERR_KEY_EXISTS.fast_gen_by_args(&[
-                        (duplicate_value.to_owned()).into(),
-                        (duplicate_key.to_owned()).into(),
-                    ]),
-                ),
-            )),
-            Ok(_) => Ok(false),
-            Err(StorageError::NotFound) => {
-                if lazy {
-                    store.mark_presume_key_not_exists_with_hint(
-                        key,
-                        duplicate_value,
-                        duplicate_key,
-                    );
-                }
-                Ok(lazy)
+            Ok(value) if !value.is_empty() => {
+                let (duplicate_value, duplicate_key) = hint();
+                let message = tidb_txnkv::gen_key_exists_err(&[duplicate_value], &duplicate_key)
+                    .into_message();
+                Err(KvTableError::Mysql(tidb_terror::MysqlError::from_owned_terror(
+                    tidb_kv::kv_errors::ERR_KEY_EXISTS.generate(message),
+                )))
             }
+            Ok(_) => Ok(false),
+            Err(StorageError::NotFound) => Ok(lazy),
             Err(error) => Err(KvTableError::from(error)),
         }
     }
@@ -237,14 +262,8 @@ impl TableCommon {
         value: &[u8],
         zone: &SessionTimeZone,
     ) -> Result<Vec<Datum>, KvTableError> {
-        self.codec_table_info()
-            .decode_index_values_from_index(
-                self.use_new_collation,
-                Some(zone),
-                &self.codec_index_info(index),
-                key,
-                value,
-            )
+        let columns = self.index_entry_columns(index)?;
+        decode_index_values_from_columns(self.use_new_collation, Some(zone), &columns, key, value)
             .map_err(|error| KvTableError::Decode(format!("{error:?}")))
     }
 
@@ -315,29 +334,46 @@ impl TableCommon {
     /// with `unique key uidx(a(3))` holding `'abcdef'`, inserting `'abcxyz'`
     /// is rejected.
     pub fn index_values(&self, index: &Index, row: &[Datum]) -> Vec<Datum> {
+        self.projected_index_values(index, row).map(Cow::into_owned).collect()
+    }
+
+    /// Renders duplicate-key values directly from the row projection.
+    pub fn index_duplicate_value_text(&self, index: &Index, row: &[Datum]) -> String {
+        duplicate_value_text_parts(self.projected_index_values(index, row))
+    }
+
+    /// Projects indexed values, borrowing unchanged values from the row.
+    pub fn projected_index_values<'a>(
+        &'a self,
+        index: &'a Index,
+        row: &'a [Datum],
+    ) -> impl Iterator<Item = Cow<'a, Datum>> + 'a {
+        let info = index.read();
+        let index_id = info.id;
         index
             .column_offsets
             .iter()
             .enumerate()
-            .map(|(position, offset)| {
+            .map(move |(position, offset)| {
                 // Go `castIndexValuesToChangingTypes` before
                 // `TruncateIndexValues`, which cuts by the part's type.
-                let mut value = self.cast_index_values_to_changing_types(
-                    index.read().id,
-                    position,
-                    *offset,
-                    row.get(*offset).cloned().unwrap_or(Datum::Null),
-                );
-                if let Some(field_type) = self.get_idx_changing_field_type(index.read().id, position, *offset) {
-                    tidb_tablecodec::cut_datum_by_prefix_len(
-                        &mut value,
-                        index.prefix_length(position),
-                        &field_type,
-                    );
+                let value = row.get(*offset).unwrap_or(&Datum::Null);
+                let cast = self.cast_index_values_to_changing_types(index_id, position, *offset, value);
+                let length = info.columns.get(position)
+                    .map_or(UNSPECIFIED_LENGTH, |column| column.read().length);
+                if length == UNSPECIFIED_LENGTH {
+                    return cast.map_or(Cow::Borrowed(value), Cow::Owned);
                 }
-                value
+                let Some(field_type) = self.get_idx_changing_field_type(index_id, position, *offset) else {
+                    return cast.map_or(Cow::Borrowed(value), Cow::Owned);
+                };
+                if let Some(mut cast) = cast {
+                    tidb_tablecodec::cut_datum_by_prefix_len(&mut cast, length, &field_type);
+                    Cow::Owned(cast)
+                } else {
+                    datum_with_prefix_len(value, length, &field_type)
+                }
             })
-            .collect()
     }
 
     /// Go `IndexInfo.MVIndex`: whether one of `index`'s key parts is a
@@ -363,6 +399,15 @@ impl TableCommon {
         if !self.mv_index(index) {
             return Ok(vec![values]);
         }
+        self.expand_index_values(index, values, |value| value)
+    }
+
+    fn expand_index_values<V: Borrow<Datum> + Clone>(
+        &self,
+        index: &Index,
+        values: Vec<V>,
+        wrap: impl Fn(Datum) -> V,
+    ) -> Result<Vec<Vec<V>>, KvTableError> {
         let is_array_part = |position: usize| {
             self.columns.get(index.column_offsets[position])
                 .is_some_and(|column| column.read().field_type.is_array())
@@ -381,7 +426,7 @@ impl TableCommon {
                 }
                 // A non-JSON datum here is an element a cleanup passed in
                 // directly; it files as itself, like a NULL array.
-                let Datum::Json(array) = value else {
+                let Datum::Json(array) = value.borrow() else {
                     tuple.push(value.clone());
                     json_is_null = true;
                     continue;
@@ -399,7 +444,7 @@ impl TableCommon {
                     if !seen.insert(element.hash_value().map_err(json_error)?) {
                         continue;
                     }
-                    tuple.push(json_element_datum(&element)?);
+                    tuple.push(wrap(json_element_datum(&element)?));
                     break;
                 }
             }
@@ -424,18 +469,94 @@ impl TableCommon {
         physical_id: i64,
         zone: &SessionTimeZone,
     ) -> Result<Vec<IndexEntryKey>, KvTableError> {
-        self.get_indexed_value(index, self.index_values(index, row))?
-            .into_iter()
-            .map(|values| {
-                let (key, distinct) =
-                    self.index_key_of_values(index, values.clone(), handle, physical_id, zone)?;
-                Ok(IndexEntryKey {
-                    key,
-                    distinct,
-                    values,
-                })
-            })
-            .collect()
+        let values = self.index_values(index, row);
+        if self.mv_index(index) {
+            self.expand_index_values(index, values, |value| value)?
+                .into_iter()
+                .map(|values| self.encode_index_entry(index, values, handle, physical_id, zone, false))
+                .collect()
+        } else {
+            Ok(vec![self.encode_index_entry(index, values, handle, physical_id, zone, true)?])
+        }
+    }
+
+    /// Borrows unchanged key parts through key and value encoding.
+    pub fn index_entries_for_write<'a>(
+        &'a self,
+        index: &'a Index,
+        row: &'a [Datum],
+        handle: &TableHandle,
+        physical_id: i64,
+        zone: &SessionTimeZone,
+    ) -> Result<Vec<IndexEntryKey<Cow<'a, Datum>>>, KvTableError> {
+        let values = self.projected_index_values(index, row).collect();
+        if self.mv_index(index) {
+            self.expand_index_values(index, values, Cow::Owned)?
+                .into_iter()
+                .map(|values| self.encode_index_entry(index, values, handle, physical_id, zone, false))
+                .collect()
+        } else {
+            let entry = self.encode_index_entry(index, values, handle, physical_id, zone, true)?;
+            Ok(vec![entry])
+        }
+    }
+
+    fn encode_index_entry<V: Borrow<Datum>>(
+        &self,
+        index: &Index,
+        values: Vec<V>,
+        handle: &TableHandle,
+        physical_id: i64,
+        zone: &SessionTimeZone,
+        prefixes_applied: bool,
+    ) -> Result<IndexEntryKey<V>, KvTableError> {
+        let (key, distinct) = self.index_key_of_values(
+            index,
+            &values,
+            Some(handle),
+            physical_id,
+            zone,
+            prefixes_applied,
+        )?;
+        Ok(IndexEntryKey {
+            key,
+            distinct,
+            values,
+        })
+    }
+
+    pub(crate) fn index_keys_for_row(
+        &self,
+        index: &Index,
+        row: &[Datum],
+        handle: &TableHandle,
+        physical_id: i64,
+        zone: &SessionTimeZone,
+    ) -> Result<Vec<(Vec<u8>, bool)>, KvTableError> {
+        if self.mv_index(index) {
+            return Ok(self.index_entries_for_write(index, row, handle, physical_id, zone)?
+                .into_iter()
+                .map(|entry| (entry.key, entry.distinct))
+                .collect());
+        }
+        let key = self.index_key_for_row(index, row, handle, physical_id, zone)?;
+        Ok(vec![key])
+    }
+
+    fn index_key_for_row(
+        &self,
+        index: &Index,
+        row: &[Datum],
+        handle: &TableHandle,
+        physical_id: i64,
+        zone: &SessionTimeZone,
+    ) -> Result<(Vec<u8>, bool), KvTableError> {
+        if index.column_offsets.len() == 1 {
+            let value = self.projected_index_values(index, row).next().unwrap();
+            return self.index_key_of_values(index, &[value], Some(handle), physical_id, zone, true);
+        }
+        let values: Vec<_> = self.projected_index_values(index, row).collect();
+        self.index_key_of_values(index, &values, Some(handle), physical_id, zone, true)
     }
 
     /// Go `index.GenIndexKey(..., kv.IntHandle(math.MinInt64), nil)`: the
@@ -451,10 +572,11 @@ impl TableCommon {
     ) -> Result<Vec<u8>, KvTableError> {
         self.index_key_of_values(
             index,
-            values,
-            &TableHandle::Int(i64::MIN),
+            &values,
+            Some(&TableHandle::Int(i64::MIN)),
             physical_id,
             zone,
+            false,
         )
         .map(|(key, _)| key)
     }
@@ -478,8 +600,7 @@ impl TableCommon {
             {
                 continue;
             }
-            let values = self.index_values(index, row);
-            let (key, _) = self.index_key_of_values(index, values, handle, physical_id, &zone)?;
+            let (key, _) = self.index_key_for_row(index, row, handle, physical_id, &zone)?;
             keys.push(key);
         }
         Ok(keys)
@@ -508,62 +629,86 @@ impl TableCommon {
         else {
             return Err(KvTableError::Decode("no such index".to_owned()));
         };
-        match handle {
-            Some(handle) => self.index_key_of_values(index, values, handle, physical_id, zone),
-            None => self.index_key_of_values_with_handle(index, values, None, physical_id, zone),
-        }
-    }
-
-    /// Go `GenIndexKey` over one value tuple.
-    fn index_key_of_values(
-        &self,
-        index: &Index,
-        values: Vec<Datum>,
-        handle: &TableHandle,
-        physical_id: i64,
-        zone: &SessionTimeZone,
-    ) -> Result<(Vec<u8>, bool), KvTableError> {
-        let handle = match handle {
-            TableHandle::Int(value) => tidb_txnkv::IntHandle::new(*value).into(),
-            TableHandle::Common(bytes) => tidb_txnkv::CommonHandle::new(bytes.clone())
-                .map_err(|error| KvTableError::Encode(format!("{error:?}")))?
-                .into(),
-        };
-        let handle = if index.read().global && index.read().global_index_version >= 1 {
-            tidb_txnkv::PartitionHandle::new(physical_id, Some(handle)).into()
-        } else {
-            handle
-        };
-        self.index_key_of_values_with_handle(index, values, Some(&handle), physical_id, zone)
+        self.index_key_of_values(index, &values, handle, physical_id, zone, false)
     }
 
     /// Go `GenIndexKey` over one value tuple and an optional handle.
-    fn index_key_of_values_with_handle(
+    fn index_key_of_values(
         &self,
         index: &Index,
-        mut values: Vec<Datum>,
-        handle: Option<&tidb_txnkv::Handle>,
+        values: &[impl Borrow<Datum>],
+        handle: Option<&TableHandle>,
         physical_id: i64,
         zone: &SessionTimeZone,
+        prefixes_applied: bool,
     ) -> Result<(Vec<u8>, bool), KvTableError> {
-        generate_index_key(
+        let info = index.read();
+        let handle = handle.map(|handle| -> Result<tidb_txnkv::Handle, KvTableError> {
+            let handle = match handle {
+                TableHandle::Int(value) => tidb_txnkv::IntHandle::new(*value).into(),
+                TableHandle::Common(bytes) => tidb_txnkv::CommonHandle::new(bytes.clone())
+                    .map_err(|error| KvTableError::Encode(format!("{error:?}")))?
+                    .into(),
+            };
+            if info.global && info.global_index_version >= 1 {
+                return Ok(tidb_txnkv::PartitionHandle::new(physical_id, Some(handle)).into());
+            }
+            Ok(handle)
+        }).transpose()?;
+        // Key parts are already projected for ordinary row writes. The
+        // remaining key metadata only controls the prefix and handle suffix.
+        let index_info = CodecIndexInfo {
+            id: info.id,
+            columns: Vec::new(),
+            unique: info.unique,
+            global: info.global,
+            global_index_version: info.global_index_version,
+            primary: info.primary,
+        };
+        let mut truncated = None;
+        if !prefixes_applied || self.changing_index_parts.contains_key(&info.id) {
+            for (position, value) in values.iter().enumerate() {
+                let length = info.columns.get(position)
+                    .map_or(UNSPECIFIED_LENGTH, |column| column.read().length);
+                let column = &self.columns[index.column_offsets[position]];
+                if length == UNSPECIFIED_LENGTH {
+                    continue;
+                }
+                // During a column change the original and changing type
+                // can have different byte or rune prefix rules.
+                let value = datum_with_prefix_len(value.borrow(), length, &column.read().field_type);
+                if let Cow::Owned(_) = value {
+                    let parts = truncated.get_or_insert_with(|| {
+                        values.iter().map(|value| Cow::Borrowed(value.borrow())).collect::<Vec<_>>()
+                    });
+                    parts[position] = value;
+                }
+            }
+        }
+        drop(info);
+        let table_id = if index_info.global {
+            self.global_index_table_id(index_info.id)
+        } else {
+            physical_id
+        };
+        let values = values.iter().enumerate().map(|(position, value)| match &truncated {
+            Some(parts) => parts[position].as_ref(),
+            None => value.borrow(),
+        });
+        encode_truncated_index_key_refs(
             Encoder::new(self.use_new_collation),
             Some(zone),
-            &self.codec_table_info(),
-            &self.codec_index_info(index),
-            if index.read().global {
-                self.global_index_table_id(index.read().id)
-            } else {
-                physical_id
-            },
-            &mut values,
-            handle,
+            self.pk_handle_offset().is_some() || !self.common_handle_offsets().is_empty(),
+            &index_info,
+            table_id,
+            values,
+            handle.as_ref(),
         )
         .map_err(|error| KvTableError::Encode(format!("{error:?}")))
     }
 
     /// The `tidb-tablecodec` projection of this table's metadata, which is
-    /// what [`generate_index_value`] reads to decide an entry's FORMAT.
+    /// what [`tidb_tablecodec::generate_index_value`] reads to decide an entry's FORMAT.
     ///
     /// Only the clustered PRIMARY KEY appears in `indices`: that list is read
     /// for exactly one purpose, `common_pk_restored_column_ids`, and the index
@@ -579,17 +724,7 @@ impl TableCommon {
                 .columns
                 .iter()
                 .enumerate()
-                .map(|(offset, column)| CodecTableColumn {
-                    id: column.read().id,
-                    offset,
-                    primary_key: column
-                        .read().field_type
-                        .has_flag(tidb_datatype::FieldTypeFlags::PRI_KEY),
-                    field_type: column.read().field_type.clone(),
-                    // Go `ColumnInfo.ChangingFieldType`, set while a MODIFY
-                    // COLUMN that rewrites no rows checks writes.
-                    changing_field_type: self.changing_field_types.get(&offset).cloned(),
-                })
+                .map(|(offset, column)| self.codec_column_info(offset, column))
                 .collect(),
             indices: if common_handle {
                 vec![CodecIndexInfo {
@@ -632,50 +767,99 @@ impl TableCommon {
     /// # Errors
     /// The key or the value does not decode as an entry of `index`.
     pub fn gen_index_value_from_index(&self, index: &Index, key: &[u8], value: &[u8]) -> Result<Vec<Vec<u8>>, KvTableError> {
-        self.codec_table_info()
-            .generate_index_values_from_index(
-                self.use_new_collation,
-                Some(&SessionTimeZone::Local),
-                &self.codec_index_info(index),
-                key,
-                value,
-            )
-            .map_err(|error| KvTableError::Decode(format!("{error:?}")))
+        let columns = self.index_entry_columns(index)?;
+        render_index_values_from_columns(
+            self.use_new_collation,
+            Some(&SessionTimeZone::Local),
+            &columns,
+            key,
+            value,
+        )
+        .map_err(|error| KvTableError::Decode(format!("{error:?}")))
+    }
+
+    fn index_entry_columns(&self, index: &Index) -> Result<Vec<tidb_rowcodec::ColumnInfo>, KvTableError> {
+        let index_id = index.read().id;
+        let changing_parts = self.changing_index_parts.get(&index_id);
+        let pk_is_handle = self.pk_handle_offset().is_some();
+        index
+            .column_offsets
+            .iter()
+            .enumerate()
+            .map(|(position, &offset)| {
+                let column = self.columns.get(offset).ok_or_else(|| {
+                    let error = TableIndexError::Metadata("invalid index column offset");
+                    KvTableError::Decode(format!("{error:?}"))
+                })?;
+                let column = column.read();
+                let field_type = if changing_parts.is_some_and(|parts| parts.contains(&position)) {
+                    self.changing_field_types.get(&offset).unwrap_or(&column.field_type)
+                } else {
+                    &column.field_type
+                };
+                Ok(tidb_rowcodec::ColumnInfo {
+                    id: column.id,
+                    is_pk_handle: pk_is_handle
+                        && column.field_type.has_flag(tidb_datatype::FieldTypeFlags::PRI_KEY),
+                    virtual_generated: false,
+                    field_type: field_type.clone(),
+                })
+            })
+            .collect()
     }
 
     /// The `tidb-tablecodec` view of one of this table's indexes.
     pub(crate) fn codec_index_info(&self, index: &Index) -> CodecIndexInfo {
+        let info = index.read();
+        let changing_parts = self.changing_index_parts.get(&info.id);
         CodecIndexInfo {
-            id: index.read().id,
+            id: info.id,
             columns: index
                 .column_offsets
                 .iter()
                 .enumerate()
                 .map(|(position, offset)| CodecIndexColumn {
                     offset: *offset,
-                    length: index.prefix_length(position),
-                    use_changing_type: self
-                        .changing_index_parts
-                        .get(&index.read().id)
-                        .is_some_and(|parts| parts.contains(&position)),
+                    length: info
+                        .columns
+                        .get(position)
+                        .map_or(UNSPECIFIED_LENGTH, |column| column.read().length),
+                    use_changing_type: changing_parts.is_some_and(|parts| parts.contains(&position)),
                 })
                 .collect(),
-            unique: index.read().unique,
-            global: index.read().global,
-            global_index_version: index.read().global_index_version,
-            primary: index.read().primary,
+            unique: info.unique,
+            global: info.global,
+            global_index_version: info.global_index_version,
+            primary: info.primary,
+        }
+    }
+
+    fn codec_column_info(&self, offset: usize, column: &crate::column::Column) -> CodecTableColumn {
+        let column = column.read();
+        CodecTableColumn {
+            id: column.id,
+            offset,
+            primary_key: column
+                .field_type
+                .has_flag(tidb_datatype::FieldTypeFlags::PRI_KEY),
+            field_type: column.field_type.clone(),
+            changing_field_type: self.changing_field_types.get(&offset).cloned(),
         }
     }
 
     /// Go `tables.NeedRestoredData`: whether ANY of `index`'s key parts stores
     /// a column whose new-collation sort key loses the original bytes.
     pub(crate) fn index_needs_restored_data(&self, index: &Index) -> bool {
+        if !self.use_new_collation {
+            return false;
+        }
+        let index_id = index.read().id;
         index
             .column_offsets
             .iter()
             .enumerate()
             .any(|(position, offset)| {
-                self.get_idx_changing_field_type(index.read().id, position, *offset)
+                self.get_idx_changing_field_type(index_id, position, *offset)
                     .is_some_and(|field_type| {
                         field_type.need_restored_data_with_collation(self.use_new_collation)
                     })
@@ -691,25 +875,28 @@ impl TableCommon {
     /// clustered primary key may not declare a prefix, so the truncation
     /// target is always the whole column.
     fn handle_restored_data(&self, row: &[Datum]) -> Vec<Datum> {
+        if !self.use_new_collation {
+            return Vec::new();
+        }
         self.common_handle_offsets()
             .iter()
             .filter_map(|offset| {
-                let column = self.public_columns.get(*offset)?;
+                let column = self.public_columns.get(*offset)?.read();
                 if !column
-                    .read().field_type
+                    .field_type
                     .need_restored_data_with_collation(self.use_new_collation)
                 {
                     return None;
                 }
-                let value = row.get(*offset).cloned().unwrap_or(Datum::Null);
+                let value = row.get(*offset).unwrap_or(&Datum::Null);
                 // Go `ConvertDatumToTailSpaceCount`: a bin collation's sort
                 // key differs from the data only by the trailing spaces it
                 // trimmed, so the COUNT restores it and the string would be a
                 // second copy of the key.
-                if is_bin_collation(column.read().field_type.collation_name()) {
-                    return Some(Datum::Int(trailing_spaces(&value) as i64));
+                if is_bin_collation(column.field_type.collation_name()) {
+                    return Some(Datum::Int(trailing_spaces(value) as i64));
                 }
-                Some(value)
+                Some(value.clone())
             })
             .collect()
     }
@@ -727,7 +914,7 @@ impl TableCommon {
     pub fn gen_index_value(
         &self,
         index: &Index,
-        values: &[Datum],
+        values: &[impl Borrow<Datum>],
         row: &[Datum],
         handle: &TableHandle,
         distinct: bool,
@@ -749,10 +936,10 @@ impl TableCommon {
     /// [`Self::gen_index_value`] with Go's `untouched` flag
     /// (`UncommittedIndexKVFlag`), which marks an entry an UPDATE rewrote
     /// without changing and which the commit then drops.
-    fn index_entry_value_marked(
+    pub(super) fn index_entry_value_marked(
         &self,
         index: &Index,
-        values: &[Datum],
+        values: &[impl Borrow<Datum>],
         row: &[Datum],
         handle: &TableHandle,
         distinct: bool,
@@ -760,24 +947,53 @@ impl TableCommon {
         physical_id: i64,
         zone: &SessionTimeZone,
     ) -> Result<Vec<u8>, KvTableError> {
+        let common_bytes;
         let handle = match handle {
-            TableHandle::Int(value) => tidb_txnkv::IntHandle::new(*value).into(),
-            TableHandle::Common(bytes) => tidb_txnkv::CommonHandle::new(bytes.clone())
-                .map_err(|e| KvTableError::Encode(format!("{e:?}")))?
-                .into(),
+            TableHandle::Int(value) => IndexValueHandle::Int(*value),
+            TableHandle::Common(bytes) => {
+                common_bytes = CommonHandle::normalize_encoding(Cow::Borrowed(bytes))
+                    .map_err(|e| KvTableError::Encode(format!("{e:?}")))?;
+                IndexValueHandle::Common(&common_bytes)
+            }
         };
-        generate_index_value(
+        let need_restored_data = self.index_needs_restored_data(index);
+        let handle_restored_data = self.handle_restored_data(row);
+        let index_columns = if need_restored_data || !handle_restored_data.is_empty() {
+            self.codec_index_info(index).columns
+        } else {
+            Vec::new()
+        };
+        let global = index.read().global;
+        generate_index_value_with_columns(
             self.use_new_collation,
             Some(zone),
-            &self.codec_table_info(),
-            &self.codec_index_info(index),
-            self.index_needs_restored_data(index),
+            !self.common_handle_offsets().is_empty(),
+            global,
+            &index_columns,
+            need_restored_data,
             distinct,
             untouched,
             values,
-            &handle,
-            if index.read().global { physical_id } else { 0 },
-            &self.handle_restored_data(row),
+            handle,
+            if global { physical_id } else { 0 },
+            &handle_restored_data,
+            |offset| {
+                self.columns
+                    .get(offset)
+                    .map(|column| Cow::Owned(self.codec_column_info(offset, column)))
+            },
+            || {
+                self.common_handle_offsets()
+                    .iter()
+                    .filter_map(|offset| {
+                        let column = self.columns.get(*offset)?.read();
+                        column
+                            .field_type
+                            .need_restored_data_with_collation(self.use_new_collation)
+                            .then_some(column.id)
+                    })
+                    .collect()
+            },
         )
         .map_err(|e| KvTableError::Encode(format!("{e:?}")))
     }
@@ -860,7 +1076,6 @@ impl TableCommon {
         // Go `addIndices` composes the message from the row's (cut) values
         // before any multi-valued expansion, which is why a duplicate element
         // reports the whole array (`'["y"]'`).
-        let duplicate_value = duplicate_value_text(&self.index_values(index, row));
         // Go `allowOverwriteOfOldGlobalIndex`: in TRUNCATE PARTITION's
         // delete-reorganization state a global index key may still point at
         // a truncated partition; such an entry is overwritten, not a
@@ -877,13 +1092,20 @@ impl TableCommon {
                 _ => None,
             }
         };
-        for entry in self.index_entry_keys(index, row, handle, physical_id, zone)? {
-            let value = self.gen_index_value(
+        let duplicate_hint = || {
+            (
+                Cow::Owned(self.index_duplicate_value_text(index, row)),
+                Cow::Owned(self.qualified_key(index.read().name.original())),
+            )
+        };
+        for entry in self.index_entries_for_write(index, row, handle, physical_id, zone)? {
+            let value = self.index_entry_value_marked(
                 index,
                 &entry.values,
                 row,
                 handle,
                 entry.distinct,
+                false,
                 physical_id,
                 zone,
             )?;
@@ -910,7 +1132,7 @@ impl TableCommon {
                     if !old_partition.is_some_and(|pid| ignored.contains(&pid)) {
                         return Err(KvTableError::Mysql(tidb_terror::MysqlError::from_terror(
                             &tidb_kv::kv_errors::ERR_KEY_EXISTS.fast_gen_by_args(&[
-                                duplicate_value.clone().into(),
+                                self.index_duplicate_value_text(index, row).into(),
                                 self.qualified_key(index.read().name.original()).into(),
                             ]),
                         )));
@@ -924,12 +1146,7 @@ impl TableCommon {
                 // Not found: Go's ordinary not-found path below.
             }
             let lazy_check = if entry.distinct {
-                self.check_insert_key(store, 
-                    &key,
-                    &duplicate_value,
-                    &self.qualified_key(index.read().name.original()),
-                    lazy_dup_check,
-                )?
+                self.check_insert_key_with_hint(store, &key, lazy_dup_check, duplicate_hint)?
             } else {
                 lazy_dup_check
             };
@@ -965,7 +1182,7 @@ impl TableCommon {
         zone: &SessionTimeZone,
     ) -> Result<(), KvTableError> {
         let _create = tidb_tracing::start_thread_region("index.Create");
-        for entry in self.index_entry_keys(index, row, handle, physical_id, zone)? {
+        for entry in self.index_entries_for_write(index, row, handle, physical_id, zone)? {
             let key = Key::from_bytes(entry.key);
             match store.get_local(&key) {
                 Ok(staged) if !staged.is_empty() => continue,
@@ -998,9 +1215,9 @@ impl TableCommon {
         physical_id: i64,
         zone: &SessionTimeZone,
     ) -> Result<(), KvTableError> {
-        for entry in self.index_entry_keys(index, row, handle, physical_id, zone)? {
+        for (key, _) in self.index_keys_for_row(index, row, handle, physical_id, zone)? {
             store
-                .delete_with_assertion(Key::from_bytes(entry.key), AssertionOp::AssertExist)
+                .delete_with_assertion(Key::from_bytes(key), AssertionOp::AssertExist)
                 .map_err(KvTableError::from)?;
         }
         Ok(())
@@ -1153,28 +1370,30 @@ impl TableCommon {
                 )?;
                 continue;
             }
-            let old_values = self.index_values(index, old_row);
-            let new_values = self.index_values(index, new_row);
+            let old_values: Vec<_> = self.projected_index_values(index, old_row).collect();
+            let new_values: Vec<_> = self.projected_index_values(index, new_row).collect();
             let (old_key, old_distinct) =
-                self.index_key_of_values(index, old_values.clone(), handle, physical_id, zone)?;
+                self.index_key_of_values(index, &old_values, Some(handle), physical_id, zone, true)?;
             let (new_key, new_distinct) =
-                self.index_key_of_values(index, new_values.clone(), handle, physical_id, zone)?;
+                self.index_key_of_values(index, &new_values, Some(handle), physical_id, zone, true)?;
             if old_key == new_key && old_distinct == new_distinct {
-                let old_value = self.gen_index_value(
+                let old_value = self.index_entry_value_marked(
                     index,
                     &old_values,
                     old_row,
                     handle,
                     old_distinct,
+                    false,
                     physical_id,
                     zone,
                 )?;
-                let new_value = self.gen_index_value(
+                let new_value = self.index_entry_value_marked(
                     index,
                     &new_values,
                     new_row,
                     handle,
                     new_distinct,
+                    false,
                     physical_id,
                     zone,
                 )?;
@@ -1212,22 +1431,30 @@ impl TableCommon {
                     .map_err(KvTableError::from)?;
                 continue;
             }
-            let value = self.gen_index_value(
+            let value = self.index_entry_value_marked(
                 index,
                 &new_values,
                 new_row,
                 handle,
                 new_distinct,
+                false,
                 physical_id,
                 zone,
             )?;
             let key = Key::from_bytes(new_key);
             let lazy_check = if new_distinct {
-                self.check_insert_key(store, 
+                self.check_insert_key_with_hint(
+                    store,
                     &key,
-                    &duplicate_value_text(&new_values),
-                    &self.qualified_key(index.read().name.original()),
                     lazy_dup_check,
+                    || {
+                        (
+                            Cow::Owned(duplicate_value_text_parts(
+                                new_values.iter().map(Cow::as_ref),
+                            )),
+                            Cow::Owned(self.qualified_key(index.read().name.original())),
+                        )
+                    },
                 )?
             } else {
                 false
@@ -1536,7 +1763,7 @@ pub fn index_entry_handle(
         return Ok(convert_handle(&handle));
     }
     // The handle is appended to the key after the indexed values.
-    let (_, rest) = cut_index_key(key, index.column_offsets.len())
+    let rest = skip_index_key_columns(key, index.column_offsets.len())
         .map_err(|e| KvTableError::Decode(format!("{e:?}")))?;
     if common {
         return Ok(TableHandle::Common(rest.to_vec()));
@@ -1564,7 +1791,14 @@ pub fn index_entry_handle(
 /// `genIndexKeyStrs` -- so a unique prefix index reports the CUT value:
 /// `'abc'`, not the `'abcxyz'` that was offered.
 pub fn duplicate_value_text(values: &[Datum]) -> String {
-    values.iter().map(datum_text).collect::<Vec<_>>().join("-")
+    duplicate_value_text_parts(values.iter())
+}
+
+fn duplicate_value_text_parts(values: impl Iterator<Item = impl Borrow<Datum>>) -> String {
+    values
+        .map(|value| datum_text(value.borrow()))
+        .collect::<Vec<_>>()
+        .join("-")
 }
 
 /// The key range one index occupies: `t{tid}_i{iid}` and its `PrefixNext`.
@@ -1590,4 +1824,195 @@ pub enum IndexExistence {
     Missing,
     /// A distinct entry names another row (Go `kv.ErrKeyExists`).
     OtherHandle(TableHandle),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::column::Column;
+    use tidb_charset::Collation;
+    use tidb_datatype::{FieldType, FieldTypeCode};
+    use tidb_kv::storage::MemTableStorage;
+    use tidb_model::{ColumnInfo, GoShared, IndexColumn, IndexInfo};
+
+    #[test]
+    fn unique_index_diagnostic_runs_for_conflict_and_deferred_check() {
+        let table = TableCommon::with_collation(1, Vec::new(), false);
+        let mut store = MemTableStorage::new();
+        let key = Key::from_bytes(b"unique".to_vec());
+        let calls = std::cell::Cell::new(0);
+        let diagnostic = || {
+            calls.set(calls.get() + 1);
+            (Cow::Borrowed("abc"), Cow::Borrowed("table.idx"))
+        };
+
+        assert!(!table.check_insert_key_with_hint(&mut store, &key, false, diagnostic).unwrap());
+        assert_eq!(calls.get(), 0);
+        assert!(table.check_insert_key_with_hint(&mut store, &key, true, diagnostic).unwrap());
+        assert_eq!(calls.get(), 1);
+
+        store.set(key.clone(), vec![1]).unwrap();
+        let err = table.check_insert_key_with_hint(&mut store, &key, false, diagnostic).unwrap_err();
+        let KvTableError::Mysql(err) = err else {
+            panic!("expected duplicate-key error");
+        };
+        assert!(err.message.contains("'abc'"));
+        assert!(err.message.contains("'table.idx'"));
+        assert_eq!(calls.get(), 2);
+    }
+
+    #[test]
+    fn primary_duplicate_is_reported_before_row_encoding() {
+        let columns = (1..=2)
+            .map(|id| {
+                Column::new(GoShared::new(ColumnInfo {
+                    id,
+                    field_type: FieldType::new(FieldTypeCode::LongLong),
+                    ..ColumnInfo::default()
+                }))
+            })
+            .collect();
+        let mut table = TableCommon::with_collation(1, columns, false);
+        table.set_name("bench");
+        table.set_pk_handle_offset(0);
+        let context = tidb_tblctx::StaticMutateContext::new();
+        let mut store = MemTableStorage::new();
+        table
+            .insert_row(&mut store, &[Datum::Int(71), Datum::Int(42)], &context)
+            .unwrap();
+        let malformed = Datum::Raw(vec![0xff]);
+        let error = table
+            .insert_row(&mut store, &[Datum::Int(71), malformed.clone()], &context)
+            .unwrap_err()
+            .into_mysql_error();
+        assert_eq!(error.code, 1062);
+        assert_eq!(error.message, "Duplicate entry '71' for key 'bench.PRIMARY'");
+        assert!(matches!(
+            table.insert_row(&mut store, &[Datum::Int(72), malformed], &context),
+            Err(KvTableError::Encode(_))
+        ));
+    }
+
+    #[test]
+    fn index_write_borrows_companion_values_when_expanding_array() {
+        let types = [
+            FieldType::new(FieldTypeCode::LongLong).with_array(true),
+            FieldType::new(FieldTypeCode::Blob).with_collation(Collation::Binary),
+        ];
+        let columns = types
+            .into_iter()
+            .map(|field_type| {
+                Column::new(GoShared::new(ColumnInfo {
+                    field_type,
+                    ..Default::default()
+                }))
+            })
+            .collect();
+        let table = TableCommon::with_collation(1, columns, false);
+        let index = Index::new(
+            IndexInfo {
+                id: 2,
+                columns: [0, 1]
+                    .into_iter()
+                    .map(|offset| IndexColumn {
+                        offset,
+                        length: UNSPECIFIED_LENGTH,
+                        ..Default::default()
+                    })
+                    .collect::<Vec<_>>()
+                    .into(),
+                ..Default::default()
+            },
+            vec![0, 1],
+        );
+        let row = [
+            Datum::Json(tidb_datatype::BinaryJSON::parse("[7,7,9]").unwrap()),
+            Datum::Bytes(vec![0xff; 128]),
+        ];
+        let handle = TableHandle::Int(8);
+        let zone = SessionTimeZone::utc();
+        let entries = table
+            .index_entries_for_write(&index, &row, &handle, 1, &zone)
+            .unwrap();
+        let owned = table
+            .index_entry_keys(&index, &row, &handle, 1, &zone)
+            .unwrap();
+        assert_eq!(entries.len(), 2);
+        for (entry, owned) in entries.iter().zip(owned) {
+            assert_eq!(entry.key, owned.key);
+            assert_eq!(entry.distinct, owned.distinct);
+            assert!(matches!(
+                &entry.values[1],
+                Cow::Borrowed(value) if std::ptr::eq(*value, &row[1])
+            ));
+            let owned_value = table
+                .gen_index_value(&index, &owned.values, &row, &handle, owned.distinct, 1, &zone)
+                .unwrap();
+            assert_eq!(
+                table.gen_index_value(&index, &entry.values, &row, &handle, entry.distinct, 1, &zone)
+                    .unwrap(),
+                owned_value
+            );
+        }
+    }
+
+    #[test]
+    fn changing_index_type_preserves_projected_values_and_key_prefix() {
+        let binary = FieldType::new(FieldTypeCode::Varchar).with_collation(Collation::Binary);
+        let column = Column::new(GoShared::new(ColumnInfo {
+            id: 1,
+            field_type: binary,
+            ..Default::default()
+        }));
+        let mut table = TableCommon::with_collation(1, vec![column], false);
+        table.set_changing_field_type(
+            0,
+            FieldType::new(FieldTypeCode::Varchar).with_collation(Collation::Utf8Mb4Bin),
+        );
+        table.set_changing_index_parts(2, vec![0]);
+        let index = Index::new(
+            IndexInfo {
+                id: 2,
+                unique: true,
+                columns: vec![IndexColumn {
+                    offset: 0,
+                    length: 1,
+                    ..Default::default()
+                }]
+                .into(),
+                ..Default::default()
+            },
+            vec![0],
+        );
+        let row = [Datum::new_collation_string_datum(
+            "éx".as_bytes().to_vec(),
+            Collation::Utf8Mb4Bin,
+        )];
+        let handle = TableHandle::Int(7);
+        let zone = SessionTimeZone::utc();
+        let mut entries = table.index_entry_keys(&index, &row, &handle, 1, &zone).unwrap();
+        let entry = entries.pop().unwrap();
+        assert_eq!(entry.values[0].go_bytes(), "é".as_bytes());
+
+        let value_key = Encoder::new(false).encode_key(&[Datum::Bytes(vec![0xc3])]).unwrap();
+        let expected = encode_index_seek_key(1, 2, &value_key);
+        let value = 7_i64.to_be_bytes();
+        assert_eq!(
+            table
+                .index_entry_values_for_check(&index, &entry.key, &value, &zone)
+                .unwrap(),
+            vec![Datum::new_collation_string_datum(
+                vec![0xc3],
+                Collation::Utf8Mb4Bin,
+            )],
+        );
+        assert_eq!(
+            table
+                .gen_index_value_from_index(&index, &entry.key, &value)
+                .unwrap(),
+            vec![vec![0xc3]],
+        );
+        assert_eq!((entry.key, entry.distinct), (expected.clone(), true));
+        assert_eq!(table.index_keys_for_row(&index, &row, &handle, 1, &zone).unwrap(), vec![(expected, true)]);
+    }
 }

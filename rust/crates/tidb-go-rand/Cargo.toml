@@ -9,3 +9,6 @@ description = "Go math/rand's seeded source (rngSource) and the Rand methods TiD
 
 [lints]
 workspace = true
+
+[dependencies]
+tidb-fastrand = { path = "../tidb-fastrand" }

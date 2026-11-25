@@ -436,14 +436,28 @@ pub struct SliceLocation {
     pub length: i32,
 }
 
-#[derive(Clone)]
-enum BytesStorage {
-    Pooled {
-        block: Arc<RwLock<Block>>,
-        offset: usize,
-        length: usize,
-    },
-    Standalone(Arc<RwLock<Block>>),
+impl SliceLocation {
+    fn range(&self) -> Range<usize> {
+        let start = usize::try_from(self.offset).expect("negative slice offset");
+        let end =
+            usize::try_from(self.offset.wrapping_add(self.length)).expect("negative slice end");
+        start..end
+    }
+}
+
+struct SharedBlock {
+    // Byte guards expose only slices, so the block's length cannot change.
+    len: usize,
+    data: RwLock<Block>,
+}
+
+impl SharedBlock {
+    fn new(block: Block) -> Self {
+        Self {
+            len: block.len(),
+            data: RwLock::new(block),
+        }
+    }
 }
 
 /// Native slice header for the `[]byte` values returned by Go.
@@ -452,38 +466,21 @@ enum BytesStorage {
 /// Go: all aliases must be released before the buffer is reset or destroyed.
 #[derive(Clone)]
 pub struct Bytes {
-    storage: BytesStorage,
+    block: Arc<SharedBlock>,
+    range: Range<usize>,
 }
 
 impl Bytes {
-    fn pooled(block: Arc<RwLock<Block>>, offset: usize, length: usize) -> Self {
-        Self {
-            storage: BytesStorage::Pooled {
-                block,
-                offset,
-                length,
-            },
-        }
-    }
-
     fn standalone(length: usize) -> Self {
         Self {
-            storage: BytesStorage::Standalone(Arc::new(RwLock::new(Block::from_vec(vec![
-                0;
-                length
-            ])))),
+            block: Arc::new(SharedBlock::new(Block::from_vec(vec![0; length]))),
+            range: 0..length,
         }
     }
 
     /// Go `len(bytes)`.
     pub fn len(&self) -> usize {
-        match &self.storage {
-            BytesStorage::Pooled { length, .. } => *length,
-            BytesStorage::Standalone(bytes) => bytes
-                .read()
-                .unwrap_or_else(|poisoned| poisoned.into_inner())
-                .len(),
-        }
+        self.range.len()
     }
 
     /// Go `cap(bytes)`; pooled allocations use a full slice expression.
@@ -493,53 +490,25 @@ impl Bytes {
 
     /// Borrows the slice's bytes.
     pub fn as_slice(&self) -> BytesRef<'_> {
-        match &self.storage {
-            BytesStorage::Pooled {
-                block,
-                offset,
-                length,
-            } => BytesRef {
-                guard: block
-                    .read()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner()),
-                range: *offset..*offset + *length,
-            },
-            BytesStorage::Standalone(bytes) => {
-                let guard = bytes
-                    .read()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner());
-                let length = guard.len();
-                BytesRef {
-                    guard,
-                    range: 0..length,
-                }
-            }
+        BytesRef {
+            guard: self
+                .block
+                .data
+                .read()
+                .unwrap_or_else(|poisoned| poisoned.into_inner()),
+            range: self.range.clone(),
         }
     }
 
     /// Mutably borrows the slice's bytes.
     pub fn as_mut_slice(&self) -> BytesMut<'_> {
-        match &self.storage {
-            BytesStorage::Pooled {
-                block,
-                offset,
-                length,
-            } => BytesMut {
-                guard: block
-                    .write()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner()),
-                range: *offset..*offset + *length,
-            },
-            BytesStorage::Standalone(bytes) => {
-                let guard = bytes
-                    .write()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner());
-                let length = guard.len();
-                BytesMut {
-                    guard,
-                    range: 0..length,
-                }
-            }
+        BytesMut {
+            guard: self
+                .block
+                .data
+                .write()
+                .unwrap_or_else(|poisoned| poisoned.into_inner()),
+            range: self.range.clone(),
         }
     }
 }
@@ -578,10 +547,22 @@ impl DerefMut for BytesMut<'_> {
     }
 }
 
+/// Read-only access to all blocks in an exclusively owned buffer.
+pub struct BufferSlices<'a> {
+    blocks: Vec<&'a [u8]>,
+}
+
+impl BufferSlices<'_> {
+    /// Borrows the bytes of a location returned by the buffer.
+    pub fn get_slice(&self, location: &SliceLocation) -> &[u8] {
+        &self.blocks[location.buf_idx as usize][location.range()]
+    }
+}
+
 /// Go `Buffer`: an arena that draws fixed-size blocks from a [`Pool`].
 pub struct Buffer {
     pool: Arc<Pool>,
-    blocks: Vec<Arc<RwLock<Block>>>,
+    blocks: Vec<Arc<SharedBlock>>,
     block_cnt_limit: isize,
     cur_block_idx: isize,
     cur_idx: isize,
@@ -620,10 +601,7 @@ impl Buffer {
         if self.cur_block_idx < 0 {
             return 0;
         }
-        self.blocks[self.cur_block_idx as usize]
-            .read()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .len() as isize
+        self.blocks[self.cur_block_idx as usize].len as isize
     }
 
     /// Go's private `recordSmallObjOverhead`.
@@ -671,6 +649,7 @@ impl Buffer {
         for block in std::mem::take(&mut self.blocks) {
             let block = Arc::try_unwrap(block)
                 .unwrap_or_else(|_| panic!("membuf aliases must be released before Destroy"))
+                .data
                 .into_inner()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
             self.pool.release_block(block);
@@ -691,7 +670,7 @@ impl Buffer {
     }
 
     fn append_block(&mut self, block: Block) {
-        self.blocks.push(Arc::new(RwLock::new(block)));
+        self.blocks.push(Arc::new(SharedBlock::new(block)));
         self.cur_block_idx = self.blocks.len() as isize - 1;
         self.cur_idx = 0;
     }
@@ -790,7 +769,7 @@ impl Buffer {
             return Ok(None);
         }
 
-        if let Some(limiter) = self.pool.limiter.clone() {
+        if let Some(limiter) = &self.pool.limiter {
             let mut need_bytes: isize = 0;
             if need_block && self.cur_block_idx >= self.blocks.len() as isize - 1 {
                 need_bytes = need_bytes.wrapping_add(self.pool.block_size);
@@ -839,15 +818,36 @@ impl Buffer {
 
     /// Go `GetSlice`.
     pub fn get_slice(&self, location: &SliceLocation) -> Bytes {
-        let start = usize::try_from(location.offset).expect("negative slice offset");
-        let end = usize::try_from(location.offset.wrapping_add(location.length))
-            .expect("negative slice end");
-        let block = Arc::clone(&self.blocks[location.buf_idx as usize]);
-        let length = block
-            .read()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())[start..end]
-            .len();
-        Bytes::pooled(block, start, length)
+        let range = location.range();
+        let block = &self.blocks[location.buf_idx as usize];
+        assert!(
+            range.start <= range.end && range.end <= block.len,
+            "invalid slice range"
+        );
+        Bytes {
+            block: Arc::clone(block),
+            range,
+        }
+    }
+
+    /// Borrows all block slices for repeated access by location.
+    ///
+    /// Returns `None` while any block has a live `Bytes` handle. On success,
+    /// the exclusive borrow allows repeated lookups without locking.
+    pub fn try_borrow_slices(&mut self) -> Option<BufferSlices<'_>> {
+        let blocks = self
+            .blocks
+            .iter_mut()
+            .map(|block| {
+                let block = Arc::get_mut(block)?;
+                let data = block
+                    .data
+                    .get_mut()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                Some(&data[..])
+            })
+            .collect::<Option<Vec<_>>>()?;
+        Some(BufferSlices { blocks })
     }
 
     /// Go `AddBytes`.
@@ -1030,6 +1030,33 @@ mod tests {
         assert_ne!(&*bytes(&second), appended_first.as_slice());
         drop(first);
         drop(second);
+        buffer.destroy();
+        pool.destroy();
+    }
+
+    #[test]
+    fn borrow_slices_requires_exclusive_blocks() {
+        let pool = Arc::new(Pool::new([with_block_size(8)]));
+        let mut buffer = pool.new_buffer([]);
+        let (first, first_location) = buffer.alloc_bytes_with_slice_location(5);
+        let first = first.unwrap();
+        first.as_mut_slice().copy_from_slice(b"first");
+        let (second, second_location) = buffer.alloc_bytes_with_slice_location(6);
+        let second = second.unwrap();
+        second.as_mut_slice().copy_from_slice(b"second");
+
+        drop(first);
+        assert!(buffer.try_borrow_slices().is_none());
+        drop(second);
+        let slices = buffer.try_borrow_slices().unwrap();
+        assert_eq!(slices.get_slice(&first_location), b"first");
+        assert_eq!(slices.get_slice(&second_location), b"second");
+        drop(slices);
+
+        buffer.reset();
+        let output = buffer.add_bytes(b"again").unwrap();
+        assert_eq!(&*output.as_slice(), b"again");
+        drop(output);
         buffer.destroy();
         pool.destroy();
     }

@@ -18,7 +18,47 @@
 //! secondary pointer pool to avoid interface boxing. A poisoned Rust mutex is
 //! recovered instead of becoming a new failure mode; Go mutexes do not poison.
 
-use std::sync::{Mutex, MutexGuard};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::Mutex;
+
+const SHARDS: usize = 16;
+static NEXT_SHARD: AtomicUsize = AtomicUsize::new(0);
+thread_local! {
+    static LOCAL_SHARD: usize = NEXT_SHARD.fetch_add(1, Ordering::Relaxed) % SHARDS;
+}
+
+// Keep independent locks off the same cache line.
+#[repr(align(128))]
+struct Shard<T>(T);
+
+/// Cache-aligned shards with a stable shard assignment for each thread.
+pub struct ThreadShards<T>(Box<[Shard<T>; SHARDS]>);
+
+impl<T> ThreadShards<T> {
+    /// Constructs each shard from the supplied factory.
+    pub fn new(mut make: impl FnMut() -> T) -> Self {
+        Self(Box::new(std::array::from_fn(|_| Shard(make()))))
+    }
+
+    /// Returns the shard assigned to this thread.
+    #[inline]
+    pub fn local(&self) -> &T {
+        &self.0[LOCAL_SHARD.with(|&index| index)].0
+    }
+
+    /// Returns the shards in order for operations that need to visit all of them.
+    pub fn iter(&self) -> impl ExactSizeIterator<Item = &T> {
+        self.0.iter().map(|shard| &shard.0)
+    }
+
+    fn from_local(&self) -> impl Iterator<Item = &T> {
+        let home = LOCAL_SHARD.with(|&index| index);
+        self.0[home..]
+            .iter()
+            .chain(&self.0[..home])
+            .map(|shard| &shard.0)
+    }
+}
 
 type Factory<T> = dyn Fn() -> T + Send + Sync;
 
@@ -41,14 +81,29 @@ impl<T> ItemSource<T> {
 /// The zero value is valid and produces `T::default()` while the pool is
 /// empty, matching Go's generic zero value.
 pub struct Pool<T> {
-    items: Mutex<Vec<T>>,
+    items: ThreadShards<PoolShard<T>>,
     source: ItemSource<T>,
+}
+
+struct PoolShard<T> {
+    values: Mutex<Vec<T>>,
+    // Updated under the values lock. An empty shard needs no lock on a read.
+    available: AtomicBool,
+}
+
+impl<T> PoolShard<T> {
+    fn new() -> Self {
+        Self {
+            values: Mutex::new(Vec::new()),
+            available: AtomicBool::new(false),
+        }
+    }
 }
 
 impl<T: Default> Default for Pool<T> {
     fn default() -> Self {
         Self {
-            items: Mutex::new(Vec::new()),
+            items: ThreadShards::new(PoolShard::new),
             source: ItemSource::Zero(T::default),
         }
     }
@@ -58,28 +113,42 @@ impl<T> Pool<T> {
     /// Creates a pool that calls `factory` whenever no pooled value exists.
     pub fn new(factory: impl Fn() -> T + Send + Sync + 'static) -> Self {
         Self {
-            items: Mutex::new(Vec::new()),
+            items: ThreadShards::new(PoolShard::new),
             source: ItemSource::Factory(Box::new(factory)),
         }
     }
 
     /// Gets a pooled value or creates its source-compatible replacement.
     pub fn get(&self) -> T {
-        if let Some(item) = self.items().pop() {
-            return item;
+        for shard in self.items.from_local() {
+            if !shard.available.load(Ordering::Acquire) {
+                continue;
+            }
+            let mut values = shard
+                .values
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if let Some(item) = values.pop() {
+                if values.is_empty() {
+                    shard.available.store(false, Ordering::Release);
+                }
+                return item;
+            }
         }
         self.source.create()
     }
 
     /// Returns a value to the pool.
     pub fn put(&self, item: T) {
-        self.items().push(item);
-    }
-
-    fn items(&self) -> MutexGuard<'_, Vec<T>> {
-        self.items
+        let shard = self.items.local();
+        let mut values = shard
+            .values
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        values.push(item);
+        if values.len() == 1 {
+            shard.available.store(true, Ordering::Release);
+        }
     }
 }
 
@@ -100,6 +169,18 @@ mod tests {
         is_not_racy();
         does_not_allocate_after_warmup();
         zero_value_is_valid();
+    }
+
+    #[test]
+    fn reuses_an_item_returned_by_another_thread() {
+        let pool = &Pool::new(|| -1);
+        thread::scope(|scope| {
+            for expected in [42, 43] {
+                assert_eq!(pool.get(), -1);
+                scope.spawn(move || pool.put(expected)).join().unwrap();
+                assert_eq!(pool.get(), expected);
+            }
+        });
     }
 
     fn provides_correct_values() {

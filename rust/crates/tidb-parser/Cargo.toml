@@ -27,6 +27,7 @@ tidb-parser-types = { path = "../tidb-parser-types" }
 tidb-terror = { path = "../tidb-terror" }
 tidb-parser-format = { path = "../tidb-parser-format" }
 tidb-parser-util = { path = "../tidb-parser-util" }
+tidb-goruntime = { path = "../tidb-goruntime" }
 tidb-hack = { path = "../tidb-hack" }
 tidb-lexer = { path = "../tidb-lexer" }
 tidb-ast = { path = "../tidb-ast" }
@@ -35,5 +36,5 @@ tidb-mysql = { path = "../tidb-mysql" }
 encoding_rs.workspace = true
 getrandom.workspace = true
 sha1.workspace = true
-sha2.workspace = true
+sha2 = "0.11"
 subtle.workspace = true

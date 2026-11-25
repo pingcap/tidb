@@ -15,8 +15,12 @@
 //! Transcreation of Go `pkg/timer/runtime/cache.go`: the runtime's view of the
 //! timers it manages, kept sorted by the moment each should next be examined.
 
+use std::borrow::Cow;
+use std::cmp::Ordering;
+use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
 
+use chrono::{DateTime, Utc};
 use tidb_timeutil::{zone, TimeZone};
 
 use tidb_timer::go_time::GoTime;
@@ -44,9 +48,8 @@ pub fn never_try_trigger_time() -> GoTime {
 
 /// Go `timerCacheItem`.
 ///
-/// Go threads the item into a `container/list` and remembers its element in
-/// `sortEle`. The Rust cache keeps the sort order as a `Vec` of timer ids
-/// instead (see [`TimersCache::sorted`]), so there is no element handle here.
+/// Go remembers the list element in `sortEle`. Rust verifies the item's
+/// last known index against [`TimersCache::sorted`] before using it.
 #[derive(Debug, Clone)]
 pub struct TimerCacheItem {
     /// Go `timer`; `None` before the first `update`.
@@ -59,6 +62,8 @@ pub struct TimerCacheItem {
     pub proc_status: RuntimeProcStatus,
     /// Go `triggerEventID`.
     pub trigger_event_id: String,
+    sort_index: usize,
+    present_on_refresh: bool,
 }
 
 impl Default for TimerCacheItem {
@@ -69,53 +74,77 @@ impl Default for TimerCacheItem {
             next_try_trigger_time: never_try_trigger_time(),
             proc_status: RuntimeProcStatus::Idle,
             trigger_event_id: String::new(),
+            sort_index: 0,
+            present_on_refresh: false,
         }
     }
 }
 
 impl TimerCacheItem {
+    fn from_record(timer: TimerRecord, now_func: &NowFunc) -> Self {
+        let (next_event_time, next_try_trigger_time) = Self::trigger_times(&timer, now_func);
+        Self {
+            timer: Some(timer),
+            next_event_time,
+            next_try_trigger_time,
+            proc_status: RuntimeProcStatus::Idle,
+            trigger_event_id: String::new(),
+            sort_index: 0,
+            present_on_refresh: false,
+        }
+    }
+
     /// Go `(*timerCacheItem).update`.
     pub fn update(&mut self, timer: &TimerRecord, now_func: &NowFunc) -> bool {
-        if let Some(current) = &self.timer {
-            if timer.version < current.version {
-                return false;
-            }
-
-            if timer.version == current.version
-                && !location_changed(timer.location.as_ref(), current.location.as_ref())
-            {
-                return false;
-            }
+        if !self.should_replace(timer) {
+            return false;
         }
+        self.replace_record(timer.clone_record(), now_func);
+        true
+    }
 
-        let timer = timer.clone_record();
-        self.next_event_time = None;
-        self.next_try_trigger_time = never_try_trigger_time();
+    fn should_replace(&self, timer: &TimerRecord) -> bool {
+        self.timer.as_ref().is_none_or(|current| {
+            timer.version > current.version
+                || (timer.version == current.version
+                    && location_changed(timer.location.as_ref(), current.location.as_ref()))
+        })
+    }
 
+    fn event_changed_while_waiting(&self, timer: &TimerRecord) -> bool {
+        self.proc_status == RuntimeProcStatus::WaitTriggerClose
+            && self.trigger_event_id != timer.event_id
+    }
+
+    fn trigger_times(timer: &TimerRecord, now_func: &NowFunc) -> (Option<GoTime>, GoTime) {
+        let mut next_event_time = None;
         if timer.spec.enable {
             if let Ok((time, true)) = timer.next_event_time() {
-                self.next_event_time = Some(time);
+                next_event_time = Some(time);
             }
 
             if timer.is_manual_requesting() {
-                self.next_event_time = Some(now_func());
+                next_event_time = Some(now_func());
             }
         }
 
-        match timer.event_status.as_str() {
-            SchedEventStatus::IDLE => {
-                if let Some(next) = &self.next_event_time {
-                    self.next_try_trigger_time = next.clone();
-                }
-            }
-            SchedEventStatus::TRIGGER => {
-                self.next_try_trigger_time = timer.event_start.clone();
-            }
-            _ => {}
-        }
+        let next_try = match timer.event_status.as_str() {
+            SchedEventStatus::IDLE => next_event_time
+                .clone()
+                .unwrap_or_else(never_try_trigger_time),
+            SchedEventStatus::TRIGGER => timer.event_start.clone(),
+            _ => never_try_trigger_time(),
+        };
+        (next_event_time, next_try)
+    }
 
+    fn replace_record(&mut self, timer: TimerRecord, now_func: &NowFunc) -> DateTime<Utc> {
+        let (next_event_time, next_try) = Self::trigger_times(&timer, now_func);
+        let previous = self.next_try_trigger_time.instant();
+        self.next_event_time = next_event_time;
         self.timer = Some(timer);
-        true
+        self.next_try_trigger_time = next_try;
+        previous
     }
 }
 
@@ -125,14 +154,14 @@ pub struct TimersCache {
     pub items: HashMap<String, TimerCacheItem>,
     /// Go `sorted`, a `container/list` ordered by `nextTryTriggerTime`.
     ///
-    /// Rust has no intrusive list, so the order is a `Vec` of timer ids and
-    /// [`TimersCache::resort`] reproduces `MoveBefore`/`MoveAfter` exactly by
-    /// removing and re-inserting at the index Go's scan would land on.
+    /// Rust keeps timer IDs in a vector. [`TimersCache::resort`] uses the same
+    /// insertion positions as Go's `MoveBefore` and `MoveAfter`.
     pub sorted: Vec<String>,
     /// Go `waitCloseTimerIDs`.
     pub wait_close_timer_ids: HashSet<String>,
     /// Go `nowFunc`.
     pub now_func: NowFunc,
+    sort_shift: isize,
 }
 
 impl TimersCache {
@@ -143,28 +172,58 @@ impl TimersCache {
             sorted: Vec::new(),
             wait_close_timer_ids: HashSet::new(),
             now_func: super::default_now_func(),
+            sort_shift: 0,
         }
     }
 
     /// Go `(*timersCache).updateTimer`.
     pub fn update_timer(&mut self, timer: &TimerRecord) -> bool {
-        let now_func = self.now_func.clone();
-        let item = self.items.entry(timer.id.clone()).or_default();
-        let change = item.update(timer, &now_func);
-        if change {
-            self.resort(&timer.id);
-        }
+        self.update_record(Cow::Borrowed(timer))
+    }
 
-        let reset = {
-            let item = &self.items[&timer.id];
-            item.proc_status == RuntimeProcStatus::WaitTriggerClose
-                && item.trigger_event_id != timer.event_id
+    fn update_record(&mut self, timer: Cow<'_, TimerRecord>) -> bool {
+        let Some(item) = self.items.get_mut(&timer.id) else {
+            self.insert_record(timer.into_owned());
+            return true;
         };
-        if reset {
-            self.set_timer_proc_status(&timer.id, RuntimeProcStatus::Idle, "");
+        let reset = item.event_changed_while_waiting(&timer);
+        if !item.should_replace(&timer) {
+            if reset {
+                self.set_timer_proc_status(&timer.id, RuntimeProcStatus::Idle, "");
+            }
+            return false;
         }
 
-        change
+        let id = match &timer {
+            Cow::Borrowed(timer) => Cow::Borrowed(timer.id.as_str()),
+            Cow::Owned(timer) => Cow::Owned(timer.id.clone()),
+        };
+        let sort_index = item.sort_index;
+        let previous = item.replace_record(timer.into_owned(), &self.now_func);
+        let next = item.next_try_trigger_time.instant();
+        self.resort_with_index(&id, sort_index, Some((previous, next)));
+        if reset {
+            self.set_timer_proc_status(&id, RuntimeProcStatus::Idle, "");
+        }
+        true
+    }
+
+    fn insert_record(&mut self, timer: TimerRecord) {
+        let id = timer.id.clone();
+        let mut item = TimerCacheItem::from_record(timer, &self.now_func);
+        let comes_after = |id: &String| {
+            self.items[id]
+                .next_try_trigger_time
+                .after(&item.next_try_trigger_time)
+        };
+        let sort_index = if self.sorted.last().is_some_and(comes_after) {
+            self.sorted.partition_point(|id| !comes_after(id))
+        } else {
+            self.sorted.len()
+        };
+        item.sort_index = sort_index;
+        self.items.insert(id.clone(), item);
+        self.sorted.insert(sort_index, id);
     }
 
     /// Go `(*timersCache).removeTimer`.
@@ -184,28 +243,140 @@ impl TimersCache {
 
     /// Go `(*timersCache).partialBatchUpdateTimers`.
     pub fn partial_batch_update_timers(&mut self, timers: &[TimerRecord]) -> bool {
+        self.update_records(timers.iter().map(Cow::Borrowed))
+    }
+
+    pub(crate) fn partial_batch_update_owned_timers(&mut self, timers: Vec<TimerRecord>) -> bool {
+        self.update_records(timers.into_iter().map(Cow::Owned))
+    }
+
+    fn update_records<'a>(
+        &mut self,
+        timers: impl ExactSizeIterator<Item = Cow<'a, TimerRecord>>,
+    ) -> bool {
+        if self.items.is_empty() {
+            if self.sorted.is_empty() && timers.len() > 1 {
+                return self.load_initial_records(timers);
+            }
+            self.items.reserve(timers.len());
+            self.sorted.reserve(timers.len());
+        }
         let mut change = false;
         for timer in timers {
-            if self.update_timer(timer) {
-                change = true;
-            }
+            change |= self.update_record(timer);
         }
         change
     }
 
+    fn load_initial_records<'a>(
+        &mut self,
+        mut timers: impl ExactSizeIterator<Item = Cow<'a, TimerRecord>>,
+    ) -> bool {
+        let mut items = std::mem::take(&mut self.items);
+        let mut sorted = std::mem::take(&mut self.sorted);
+        items.reserve(timers.len());
+        sorted.reserve(timers.len());
+
+        // Go inserts new timers after existing timers at the same instant.
+        // A repeated ID can move an existing timer in either direction, so
+        // publish the ordered prefix before processing that update.
+        let mut repeated = None;
+        let mut previous = None;
+        let mut ordered = true;
+        for timer in &mut timers {
+            let Entry::Vacant(slot) = items.entry(timer.id.clone()) else {
+                repeated = Some(timer);
+                break;
+            };
+            let mut item = TimerCacheItem::from_record(timer.into_owned(), &self.now_func);
+            let instant = item.next_try_trigger_time.instant();
+            ordered &= previous.is_none_or(|previous| previous <= instant);
+            previous = Some(instant);
+            item.sort_index = sorted.len();
+            sorted.push(slot.key().clone());
+            slot.insert(item);
+        }
+
+        if !ordered {
+            sorted.sort_by_cached_key(|id| items[id].next_try_trigger_time.instant());
+            for (index, id) in sorted.iter().enumerate() {
+                items
+                    .get_mut(id)
+                    .expect("sorted timer is in the cache")
+                    .sort_index = index;
+            }
+        }
+        self.items = items;
+        self.sorted = sorted;
+        for timer in repeated.into_iter().chain(timers) {
+            self.update_record(timer);
+        }
+        true
+    }
+
     /// Go `(*timersCache).fullUpdateTimers`.
     pub fn full_update_timers(&mut self, timers: &[TimerRecord]) {
-        let present: HashSet<&str> = timers.iter().map(|timer| timer.id.as_str()).collect();
-        let stale: Vec<String> = self
-            .items
-            .keys()
-            .filter(|id| !present.contains(id.as_str()))
-            .cloned()
-            .collect();
-        for id in stale {
-            self.remove_timer(&id);
+        if self.prepare_refresh(timers) {
+            self.partial_batch_update_timers(timers);
         }
-        self.partial_batch_update_timers(timers);
+    }
+
+    pub(crate) fn full_update_owned_timers(&mut self, timers: Vec<TimerRecord>) {
+        if self.prepare_refresh(&timers) {
+            self.partial_batch_update_owned_timers(timers);
+        }
+    }
+
+    /// Remove absent records and report whether the incoming records can
+    /// change the cache. When they can, apply them in the source order.
+    fn prepare_refresh(&mut self, timers: &[TimerRecord]) -> bool {
+        if self.items.is_empty() {
+            return !timers.is_empty();
+        }
+        if timers.is_empty() {
+            let orphaned = |id: &String| !self.items.contains_key(id);
+            // Verified positions for every map key account for the entire
+            // sorted vector when both collections have the same length.
+            if self.sorted.len() == self.items.len()
+                && self.items.iter().all(|(id, item)| self.sorted.get(item.sort_index) == Some(id))
+            {
+                self.sorted.clear();
+            } else {
+                self.sorted.retain(orphaned);
+            }
+            self.wait_close_timer_ids.retain(orphaned);
+            self.items.clear();
+            return false;
+        }
+        let mut present = 0;
+        let mut update = false;
+        for timer in timers {
+            if let Some(item) = self.items.get_mut(timer.id.as_str()) {
+                present += usize::from(!std::mem::replace(&mut item.present_on_refresh, true));
+                // Equal versions in different locations may need an offset
+                // comparison. Leave that decision to the ordinary update.
+                update = update
+                    || item.timer.as_ref().is_none_or(|current| {
+                        timer.version > current.version
+                            || (timer.version == current.version
+                                && timer.location != current.location)
+                    })
+                    || item.event_changed_while_waiting(timer);
+            } else {
+                update = true;
+            }
+        }
+        if present < self.items.len() {
+            let keep = |id: &String| self.items.get(id).is_none_or(|item| item.present_on_refresh);
+            self.sorted.retain(keep);
+            self.wait_close_timer_ids.retain(keep);
+            self.items.retain(|_, item| std::mem::take(&mut item.present_on_refresh));
+        } else {
+            for item in self.items.values_mut() {
+                item.present_on_refresh = false;
+            }
+        }
+        update
     }
 
     /// Go `(*timersCache).setTimerProcStatus`.
@@ -228,8 +399,9 @@ impl TimersCache {
     }
 
     /// Go `(*timersCache).updateNextTryTriggerTime`.
+    #[inline]
     pub fn update_next_try_trigger_time(&mut self, timer_id: &str, time: GoTime) {
-        let Some(item) = self.items.get(timer_id) else {
+        let Some(item) = self.items.get_mut(timer_id) else {
             return;
         };
 
@@ -247,11 +419,11 @@ impl TimersCache {
             return;
         }
 
-        self.items
-            .get_mut(timer_id)
-            .expect("item was just read")
-            .next_try_trigger_time = time;
-        self.resort(timer_id);
+        let previous = item.next_try_trigger_time.instant();
+        let next = time.instant();
+        item.next_try_trigger_time = time;
+        let sort_index = item.sort_index;
+        self.resort_with_index(timer_id, sort_index, Some((previous, next)));
     }
 
     /// Go `(*timersCache).iterTryTriggerTimers`.
@@ -281,41 +453,148 @@ impl TimersCache {
 
     /// Go `(*timersCache).resort`.
     pub fn resort(&mut self, timer_id: &str) {
-        let position = match self.sorted.iter().position(|id| id == timer_id) {
-            Some(position) => position,
-            None => {
-                self.sorted.push(timer_id.to_string());
-                self.sorted.len() - 1
-            }
-        };
+        self.resort_with_index(timer_id, self.items[timer_id].sort_index, None);
+    }
 
-        let next_trigger = self.items[timer_id].next_try_trigger_time.clone();
-
-        if position > 0 && self.trigger_at(position - 1).after(&next_trigger) {
-            let mut cursor = position - 1;
-            while cursor > 0 && self.trigger_at(cursor - 1).after(&next_trigger) {
-                cursor -= 1;
+    #[inline]
+    fn resort_with_index(
+        &mut self,
+        timer_id: &str,
+        sort_index: usize,
+        change: Option<(DateTime<Utc>, DateTime<Utc>)>,
+    ) {
+        let matches = |index| self.sorted.get(index).is_some_and(|id| id == timer_id);
+        if matches(sort_index) {
+            // A verified position at the relevant edge cannot move farther.
+            let direction = change.map(|(previous, next)| next.cmp(&previous));
+            let must_check_neighbors = match direction {
+                Some(Ordering::Equal) => false,
+                Some(Ordering::Less) => sort_index != 0,
+                Some(Ordering::Greater) => sort_index + 1 != self.sorted.len(),
+                None => true,
+            };
+            if must_check_neighbors {
+                let next = change.map_or_else(
+                    || self.items[timer_id].next_try_trigger_time.instant(),
+                    |(_, next)| next,
+                );
+                self.resort_at(timer_id, sort_index, sort_index, next, direction);
             }
-            let id = self.sorted.remove(position);
-            self.sorted.insert(cursor, id);
             return;
         }
 
-        let last = self.sorted.len() - 1;
-        if position < last && self.trigger_at(position + 1).before(&next_trigger) {
-            let mut cursor = position + 1;
-            while cursor < last && self.trigger_at(cursor + 1).before(&next_trigger) {
-                cursor += 1;
-            }
-            let id = self.sorted.remove(position);
-            self.sorted.insert(cursor, id);
+        // A move can shift a contiguous range by the same amount. Reuse the
+        // last observed shift and check the ID before trusting the position.
+        let position = if self.sorted.last().is_some_and(|id| id == timer_id) {
+            Some(self.sorted.len() - 1)
+        } else if self.sorted.first().is_some_and(|id| id == timer_id) {
+            Some(0)
+        } else {
+            sort_index
+                .checked_add_signed(self.sort_shift)
+                .and_then(|index| {
+                    [index, index.saturating_add(1), index.saturating_sub(1)]
+                        .into_iter()
+                        .find(|&candidate| matches(candidate))
+                })
         }
+        .or_else(|| {
+            if let Some((previous, _)) = change {
+                self.find_previous_position(timer_id, previous)
+            } else {
+                self.sorted.iter().position(|id| id == timer_id)
+            }
+        });
+        let direction = position.and_then(|_| change.map(|(previous, next)| next.cmp(&previous)));
+        let position = if let Some(position) = position {
+            self.sort_shift = position as isize - sort_index as isize;
+            position
+        } else {
+            self.sorted.push(timer_id.to_owned());
+            self.sorted.len() - 1
+        };
+        let next = change.map_or_else(
+            || self.items[timer_id].next_try_trigger_time.instant(),
+            |(_, next)| next,
+        );
+        self.resort_at(timer_id, position, sort_index, next, direction);
     }
 
-    fn trigger_at(&self, index: usize) -> GoTime {
-        self.items[&self.sorted[index]]
-            .next_try_trigger_time
-            .clone()
+    fn find_previous_position(&self, timer_id: &str, previous: DateTime<Utc>) -> Option<usize> {
+        // The changed timer is still in its old position. Use its old time
+        // when finding the range of timers that shared that time.
+        let start = self.sorted.partition_point(|id| {
+            id != timer_id && self.items[id].next_try_trigger_time.instant() < previous
+        });
+        if self.sorted.get(start).is_some_and(|id| id == timer_id) {
+            return Some(start);
+        }
+        let len = self.sorted[start..].partition_point(|id| {
+            id == timer_id || self.items[id].next_try_trigger_time.instant() <= previous
+        });
+        self.sorted[start..start + len]
+            .iter()
+            .position(|id| id == timer_id)
+            .map(|index| start + index)
+    }
+
+    #[inline]
+    fn resort_at(
+        &mut self,
+        timer_id: &str,
+        position: usize,
+        sort_index: usize,
+        next_trigger: DateTime<Utc>,
+        direction: Option<Ordering>,
+    ) {
+        let trigger_at = |id: &String| self.items[id].next_try_trigger_time.instant();
+        if position == 0
+            && direction == Some(Ordering::Greater)
+            && self.sorted.len() > 1
+            && trigger_at(&self.sorted[self.sorted.len() - 1]) < next_trigger
+        {
+            let id = self.sorted.remove(0);
+            self.sorted.push(id);
+            return;
+        }
+
+        // The slices on either side of the changed timer remain sorted.
+        let destination = if direction != Some(Ordering::Greater)
+            && position > 0
+            && trigger_at(&self.sorted[position - 1]) > next_trigger
+        {
+            let destination = if position == 1 || trigger_at(&self.sorted[0]) > next_trigger {
+                0
+            } else {
+                self.sorted[..position - 1].partition_point(|id| trigger_at(id) <= next_trigger)
+            };
+            self.sorted[destination..=position].rotate_right(1);
+            destination
+        } else if direction != Some(Ordering::Less)
+            && position + 1 < self.sorted.len()
+            && trigger_at(&self.sorted[position + 1]) < next_trigger
+        {
+            let last = self.sorted.len() - 1;
+            let destination = if position + 1 == last || trigger_at(&self.sorted[last]) < next_trigger {
+                last
+            } else {
+                position + 1
+                    + self.sorted[position + 2..last]
+                        .partition_point(|id| trigger_at(id) < next_trigger)
+            };
+            self.sorted[position..=destination].rotate_left(1);
+            destination
+        } else {
+            position
+        };
+        // An endpoint has a direct lookup even when its hint is stale.
+        // Avoid rehashing the moved item just to update such a hint.
+        if sort_index != destination && destination != 0 && destination + 1 != self.sorted.len() {
+            self.items
+                .get_mut(timer_id)
+                .expect("sorted timer is in the cache")
+                .sort_index = destination;
+        }
     }
 }
 
@@ -337,5 +616,92 @@ pub fn location_changed(a: Option<&TimeZone>, b: Option<&TimeZone>) -> bool {
         (None, None) => false,
         (None, Some(_)) | (Some(_), None) => true,
         (Some(a), Some(b)) => zone(a).1 != zone(b).1,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn timer(id: &str, version: u64, trigger: i64) -> TimerRecord {
+        TimerRecord {
+            id: id.into(),
+            version,
+            event_status: SchedEventStatus::trigger(),
+            event_start: GoTime::from_unix(trigger, 0),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn owned_refresh_preserves_equal_time_order_and_stale_event_reset() {
+        let mut cache = TimersCache::new();
+        let mut first = timer("first", 2, 0);
+        first.event_data = vec![42; 1024];
+        let data = first.event_data.as_ptr();
+        cache.full_update_owned_timers(vec![
+            timer("late", 1, 10),
+            first,
+            timer("second", 1, 0),
+            timer("late", 2, 0),
+            timer("last", 1, 10),
+        ]);
+        assert_eq!(cache.sorted, ["first", "second", "late", "last"]);
+        let installed = cache.items["first"].timer.as_ref().unwrap();
+        assert_eq!(installed.event_data.as_ptr(), data);
+
+        cache.set_timer_proc_status("first", RuntimeProcStatus::WaitTriggerClose, "old");
+        assert!(!cache.partial_batch_update_owned_timers(vec![timer("first", 1, 10)]));
+        assert_eq!(cache.items["first"].timer.as_ref().unwrap().version, 2);
+        assert_eq!(cache.items["first"].proc_status, RuntimeProcStatus::Idle);
+        assert!(cache.wait_close_timer_ids.is_empty());
+        assert_eq!(cache.sorted, ["first", "second", "late", "last"]);
+    }
+
+    #[test]
+    fn full_refresh_preserves_orphaned_indexes_and_ignores_duplicate_membership() {
+        let mut cache = TimersCache::new();
+        let kept = timer("kept", 1, 0);
+        let removed = timer("removed", 1, 1);
+        cache.full_update_timers(&[kept.clone(), removed]);
+        cache.set_timer_proc_status("removed", RuntimeProcStatus::WaitTriggerClose, "event");
+        cache.full_update_timers(&[kept.clone(), kept]);
+        assert_eq!(cache.sorted, ["kept"]);
+        assert_eq!(cache.items.len(), 1);
+        assert!(cache.wait_close_timer_ids.is_empty());
+
+        cache.sorted[0] = "orphan".into();
+        cache.wait_close_timer_ids.insert("orphan".into());
+        cache.full_update_timers(&[]);
+        assert!(cache.items.is_empty());
+        assert_eq!(cache.sorted, ["orphan"]);
+        assert!(cache.wait_close_timer_ids.contains("orphan"));
+    }
+
+    #[test]
+    fn initial_batch_keeps_trigger_order_and_positions() {
+        let mut cache = TimersCache::new();
+        let early = GoTime::from_unix(0, 1);
+        let middle = GoTime::from_unix(0, 2);
+        let mut updated = timer("first", 2, 0);
+        updated.event_start = middle.clone();
+        let mut tied = timer("tied", 1, 0);
+        tied.event_start = middle;
+        let mut start = timer("start", 1, 0);
+        start.event_start = early;
+        let timers = [
+            timer("first", 1, 2),
+            tied,
+            start,
+            updated,
+            timer("last", 1, 1),
+        ];
+
+        assert!(cache.partial_batch_update_timers(&timers));
+        assert_eq!(cache.sorted, ["start", "tied", "first", "last"]);
+        cache.update_next_try_trigger_time("start", GoTime::from_unix(0, 2));
+        assert_eq!(cache.sorted, ["start", "tied", "first", "last"]);
+        cache.update_next_try_trigger_time("tied", GoTime::from_unix(3, 0));
+        assert_eq!(cache.sorted, ["start", "first", "last", "tied"]);
     }
 }

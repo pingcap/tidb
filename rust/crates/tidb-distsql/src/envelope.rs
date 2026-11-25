@@ -185,6 +185,10 @@ impl RequestEnvelope {
     /// partition count. Deferring the rule to Build loses builder call order.
     #[must_use]
     pub fn small_limit_concurrency(&self) -> Option<u64> {
+        self.small_limit_concurrency_for(self.partition_count)
+    }
+
+    pub(crate) fn small_limit_concurrency_for(&self, partition_count: usize) -> Option<u64> {
         if self.executors.len() < 2 {
             return None;
         }
@@ -198,26 +202,35 @@ impl RequestEnvelope {
             .and_then(|index| self.executors.get(index))
             .is_some_and(|executor| executor.kind == ExecutorKind::IndexLookup);
         (small_limit && (self.executors.len() == 2 || index_lookup_pushdown))
-            .then_some(self.partition_count.max(1) as u64)
+            .then_some(partition_count.max(1) as u64)
     }
 
     /// Applies the only DAG rule owned by Go `Build` itself.
     #[must_use]
     pub fn build_concurrency(&self, current: u64, default_concurrency: u64) -> u64 {
-        if self.executors.len() == 1
-            && self.keep_order
-            && current == default_concurrency
-            && self.executors[0].kind.is_simple_scan()
-        {
-            2
-        } else {
-            current
-        }
+        build_dag_concurrency(self.is_single_scan(), self.keep_order, current, default_concurrency)
+    }
+
+    pub(crate) fn is_single_scan(&self) -> bool {
+        matches!(&self.executors[..], [executor] if executor.kind.is_simple_scan())
     }
 
     /// Returns the source `LimitSize` field from the terminal executor.
     #[must_use]
     pub fn limit_size(&self) -> Option<u64> {
         self.executors.last().and_then(|executor| executor.limit)
+    }
+}
+
+pub(crate) fn build_dag_concurrency(
+    single_scan: bool,
+    keep_order: bool,
+    current: u64,
+    default_concurrency: u64,
+) -> u64 {
+    if single_scan && keep_order && current == default_concurrency {
+        2
+    } else {
+        current
     }
 }

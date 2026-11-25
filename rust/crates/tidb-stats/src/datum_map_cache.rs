@@ -18,10 +18,9 @@
 //! values remain bytes, time and float fields use typed decoding, and every
 //! other column uses the ordinary one-datum decoder.
 
-use std::collections::HashMap;
-
 use chrono::TimeZone;
-use tidb_codec::{decode_as_date_time, decode_as_float32, decode_one, CodecError};
+use hashbrown::HashMap;
+use tidb_codec::{CodecError, decode_as_date_time, decode_as_float32, decode_one};
 use tidb_datatype::{Datum, FieldTypeCode, TimeType};
 
 /// Caches decoded Datum values by their immutable encoded TopN bytes.
@@ -76,7 +75,8 @@ impl DatumMapCache {
     }
 }
 
-fn top_n_meta_to_datum<TZ: TimeZone>(
+/// Decodes a partition TopN value for comparison with histogram bounds.
+pub fn top_n_meta_to_datum<TZ: TimeZone>(
     encoded_value: &[u8],
     mysql_type: u8,
     is_index: bool,

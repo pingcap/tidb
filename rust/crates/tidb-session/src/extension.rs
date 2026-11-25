@@ -280,9 +280,9 @@ impl Session {
             }
             let mut text = tidb_parser::normalize(sql, self.redact_mode());
             if self.redact_log_mode() != "ON" && !params.is_empty() {
-                text.push_str(&tidb_redact::string(
+                text.push_str(&tidb_redact::string_cow(
                     &self.redact_log_mode(),
-                    &format!(
+                    format!(
                         " [arguments: {}]",
                         tidb_datatype::datums_to_str_no_err_smart(&params)
                     ),

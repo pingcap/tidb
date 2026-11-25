@@ -24,7 +24,6 @@
 //! double-quoted JSON string. The constructors take VALUE arguments, so
 //! `JSON_ARRAY('[1]')` is a one-element array holding the string `"[1]"`.
 
-use super::value::json_sql_string;
 use crate::coerce::coerce_str;
 use crate::{Datum, EvalError, JsonError};
 use tidb_datatype::FieldType;
@@ -45,9 +44,9 @@ pub(super) fn json_quote(v: &Datum) -> Result<Datum, EvalError> {
             }))
         }
     };
-    Ok(Datum::new_string_datum(tidb_datatype::json_marshal_string_to(
-        &String::from_utf8_lossy(bytes),
-    )))
+    Ok(Datum::new_string_datum(
+        tidb_datatype::json_marshal_string_bytes_to(bytes),
+    ))
 }
 
 /// `JSON_UNQUOTE(str)`, port of `builtinJSONUnquoteSig.evalString`: a
@@ -65,23 +64,33 @@ pub(super) fn json_unquote(v: &Datum) -> Result<Datum, EvalError> {
             None => Ok(Datum::new_string_datum(document.to_string())),
         };
     }
-    let Some(text) = json_sql_string(v)? else {
-        return if *v == Datum::Null {
-            Ok(Datum::Null)
-        } else {
-            Err(EvalError::Unsupported("JSON_UNQUOTE requires string"))
-        };
+    let bytes = match v {
+        Datum::Null => return Ok(Datum::Null),
+        Datum::String(text) => text.bytes(),
+        Datum::Bytes(bytes) => bytes,
+        _ => return Err(EvalError::Unsupported("JSON_UNQUOTE requires string")),
     };
-    if text.len() >= 2
-        && text.starts_with('"')
-        && text.ends_with('"')
-        && !tidb_datatype::json_scanner::valid(text.as_bytes())
-    {
+    if !matches!(bytes, [b'"', .., b'"']) {
+        return Ok(Datum::new_string_datum(bytes));
+    }
+    let inner = json_unquote_quoted_content(bytes)?;
+    if memchr::memchr(b'\\', inner).is_none() {
+        return Ok(Datum::new_string_datum(inner));
+    }
+    let mut decoded = Vec::with_capacity(inner.len());
+    tidb_datatype::unquote_json_string_bytes_to(inner, &mut decoded)
+        .map_err(super::modify::binary_json_error)?;
+    Ok(Datum::new_string_datum(decoded))
+}
+
+/// Checks that a double-quoted argument is one JSON value, as Go does
+/// before its MySQL escape decoder runs.
+pub(crate) fn json_unquote_quoted_content(bytes: &[u8]) -> Result<&[u8], EvalError> {
+    debug_assert!(matches!(bytes, [b'"', .., b'"']));
+    if !tidb_datatype::json_scanner::valid(bytes) {
         return Err(EvalError::Json(JsonError::InvalidText));
     }
-    tidb_datatype::unquote_string(text)
-        .map(Datum::new_string_datum)
-        .map_err(super::modify::binary_json_error)
+    Ok(&bytes[1..bytes.len() - 1])
 }
 
 /// `JSON_ARRAY(value [, value] ...)`, port of `jsonArrayFunctionClass` and
@@ -165,6 +174,15 @@ pub(super) fn json_object(
 mod tests {
     use super::*;
     use tidb_datatype::{FieldTypeCode, FieldTypeFlags};
+
+    #[test]
+    fn json_quote_replaces_each_invalid_utf8_byte() {
+        let input = Datum::Bytes(b"\xf0\x9f\x92<\xef\xbf\xbd".to_vec());
+        assert_eq!(
+            json_quote(&input).unwrap(),
+            Datum::new_string_datum("\"\u{fffd}\u{fffd}\u{fffd}<\u{fffd}\""),
+        );
+    }
 
     fn boolean_int() -> FieldType {
         let mut ft = FieldType::new(FieldTypeCode::LongLong);

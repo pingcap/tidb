@@ -19,7 +19,55 @@
 //! of that resolution instead of guessing it. Live DDL schema-state selection
 //! and default-value evaluation remain upstream prerequisites.
 
+use bytes::Bytes;
+use tidb_goruntime::{go_runtime::GoSharedSlice, GoString};
 use tidb_planner_cardinality::index_range_policy::{IndexRangeShape, RangeBoundKind};
+
+/// ENUM and SET labels retained from the source FieldType.
+#[derive(Clone, Debug, Default)]
+pub struct ScanColumnLabels(GoSharedSlice<GoString>);
+
+impl ScanColumnLabels {
+    /// Borrows the visible elements through the retained slice header.
+    pub fn with_visible<R>(&self, read: impl FnOnce(&[GoString]) -> R) -> R {
+        self.0.with_visible(read)
+    }
+}
+
+impl From<GoSharedSlice<GoString>> for ScanColumnLabels {
+    fn from(labels: GoSharedSlice<GoString>) -> Self {
+        Self(labels)
+    }
+}
+
+impl From<Vec<String>> for ScanColumnLabels {
+    fn from(labels: Vec<String>) -> Self {
+        Self(GoSharedSlice::from_vec(
+            labels.into_iter().map(GoString::from).collect(),
+        ))
+    }
+}
+
+impl PartialEq for ScanColumnLabels {
+    fn eq(&self, other: &Self) -> bool {
+        if self.0.len() != other.0.len() {
+            return false;
+        }
+        if self.0.is_empty()
+            || self.0.backing_ptr_eq(&other.0)
+                && self.with_visible(|labels| labels.as_ptr())
+                    == other.with_visible(|labels| labels.as_ptr())
+        {
+            return true;
+        }
+        // Slices can alias the same backing, so release the first read
+        // before acquiring the second one.
+        let labels = self.0.snapshot();
+        other.0.with_visible(|other| labels == other)
+    }
+}
+
+impl Eq for ScanColumnLabels {}
 
 /// A source-resolved `tipb.ColumnInfo` without a protobuf dependency in the
 /// planner crate.
@@ -38,9 +86,9 @@ pub struct ScanColumnInfo {
     /// MySQL column flags.
     pub flag: i32,
     /// Enum/set elements.
-    pub elems: Vec<String>,
+    pub elems: ScanColumnLabels,
     /// Already encoded origin default value, when one must be sent.
-    pub default_val: Option<Vec<u8>>,
+    pub default_val: Option<Bytes>,
     /// Whether this column is the row handle.
     pub pk_handle: bool,
     /// Whether this is an array column used by a multi-valued index.

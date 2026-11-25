@@ -155,7 +155,7 @@ pub fn serialize_data_to_buf(chk: &Chunk, buf: &mut Vec<u8>) -> i64 {
         buf.extend_from_slice(&col.null_bitmap);
         let data = col.data.read();
         buf.extend_from_slice(data.as_ref());
-        for &offset in &col.offsets {
+        for offset in col.offsets.iter() {
             put_i64(buf, offset);
         }
     }

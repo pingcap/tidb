@@ -474,6 +474,35 @@ fn test_block_on_clear() {
         }
     });
 }
+
+#[test]
+fn close_drains_operations_and_declines_new_lookups() {
+    let c = cache(10);
+    assert!(c.set(&1, 1, 1));
+    c.wait();
+    let operation = c.core.operation().unwrap();
+    let (closed, done) = std::sync::mpsc::channel();
+    thread::scope(|scope| {
+        scope.spawn(|| {
+            c.close();
+            closed.send(()).unwrap();
+        });
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while c.core.state.load(Ordering::Acquire) == OPEN && Instant::now() < deadline {
+            thread::yield_now();
+        }
+        let clearing = c.core.state.load(Ordering::Acquire) == CLEARING;
+        let declined = c.get(&1).is_none();
+        let returned_early = done.try_recv().is_ok();
+        drop(operation);
+
+        assert!(clearing && declined);
+        assert!(!returned_early);
+        done.recv_timeout(Duration::from_secs(5)).unwrap();
+    });
+    assert!(c.get(&1).is_none());
+}
+
 #[test]
 fn test_drop_updates() {
     for _ in 0..100 {

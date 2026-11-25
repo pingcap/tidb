@@ -19,7 +19,8 @@ use std::net::ToSocketAddrs;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
-use tidb_domain_serverinfo::serverinfo_syncer::{join_host_port, Syncer};
+use tidb_domain_serverinfo::serverinfo_syncer::Syncer;
+use tidb_go_net::join_host_port_number;
 use serde::Deserialize;
 
 /// Go infoschema.ServerInfo, before SQL datum conversion.
@@ -190,8 +191,8 @@ impl ClusterTopology {
             };
             servers.push(ClusterServer {
                 server_type: "tidb".into(),
-                address: join_host_port(&info.ip, info.port),
-                status_address: join_host_port(&info.ip, info.status_port),
+                address: join_host_port_number(&info.ip, info.port),
+                status_address: join_host_port_number(&info.ip, info.status_port),
                 version,
                 git_hash: info.version_info.git_hash,
                 start_timestamp: info.start_timestamp,

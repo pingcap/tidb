@@ -25,12 +25,12 @@ use std::cmp::Ordering;
 use tidb_charset::Collation;
 use tidb_chunk::chunk::Chunk;
 use tidb_chunk::row::Row;
-use tidb_datatype::{Datum, Decimal, MyDecimal, MAX_DECIMAL_SCALE};
+use tidb_datatype::{CollationCollator, Datum, Decimal, MyDecimal, StringDatum, MAX_DECIMAL_SCALE, MYDECIMAL_STRUCT_SIZE};
 use tidb_driver_error::ExecError;
-use tidb_goruntime::GoString;
 use tidb_serialization as util;
 
-use crate::agg_func::{deserialize_partial_result_common, partial, AggFunc, AggFuncUpdateContext, BaseAggFunc, MaxMinSlidingWindowAggFunc, PartialResult, SlidingWindowAggFunc};
+use crate::agg_func::{append_rounded_decimal, deserialize_partial_result_common, deserialize_typed_partial_results, partial, AggFunc, AggFuncUpdateContext, BaseAggFunc, MaxMinSlidingWindowAggFunc, PartialResult, PartialResultString, SlidingWindowAggFunc};
+use crate::func_sum::eval_my_decimal;
 use crate::spill_serialize_helper::SerializeHelper;
 
 /// Go `DefPartialResult4MaxMinIntSize`.
@@ -66,6 +66,34 @@ pub const DEF_MAX_MIN_DEQUE_SIZE: i64 = 40;
 pub struct PartialResult4MaxMin {
     pub(crate) val: Option<Datum>,
     pub(crate) deque: Option<MinMaxDeque>,
+}
+
+/// The stored value of Go's grouped integer MAX and MIN, including the
+/// payload below a NULL flag. Unsigned values keep their original bits.
+struct PartialResult4MaxMinInt {
+    is_null: bool,
+    val: i64,
+}
+
+/// Go `partialResult4MaxMinDecimal` for grouped MAX and MIN.
+#[derive(Clone, Copy)]
+struct PartialResult4MaxMinDecimal {
+    is_null: bool,
+    val: MyDecimal,
+}
+
+struct PartialResult4MaxMinString {
+    is_null: bool,
+    val: PartialResultString,
+}
+
+impl Default for PartialResult4MaxMinDecimal {
+    fn default() -> Self {
+        Self {
+            is_null: true,
+            val: MyDecimal::default(),
+        }
+    }
 }
 
 /// Go `Pair`: a deque item and its absolute row position.
@@ -173,6 +201,10 @@ pub enum MaxMinKind {
 }
 
 impl MaxMinKind {
+    fn is_integer(self) -> bool {
+        matches!(self, Self::Int | Self::Uint)
+    }
+
     /// Go `DefPartialResult4MaxMinXSize`.
     const fn size(self) -> i64 {
         match self {
@@ -245,6 +277,29 @@ impl MaxMin {
         Ok(if self.is_max { cmp == Ordering::Greater } else { cmp == Ordering::Less })
     }
 
+    fn decimal_better(&self, candidate: &MyDecimal, current: &MyDecimal) -> bool {
+        let order = candidate.compare(current);
+        if self.is_max { order.is_gt() } else { order.is_lt() }
+    }
+
+    fn string_better(&self, candidate: &[u8], current: &[u8]) -> bool {
+        let order = self.collation.compare(candidate, current);
+        if self.is_max { order.is_gt() } else { order.is_lt() }
+    }
+
+    fn keep_integer_extreme(&self, state: &mut PartialResult4MaxMinInt, value: i64) {
+        let order = if self.kind == MaxMinKind::Uint {
+            (value as u64).cmp(&(state.val as u64))
+        } else {
+            value.cmp(&state.val)
+        };
+        let better = if self.is_max { order.is_gt() } else { order.is_lt() };
+        if state.is_null || better {
+            state.is_null = false;
+            state.val = value;
+        }
+    }
+
     /// Go `serializePartialResult4MaxMinX`: `isNull`, then the value -- Go's
     /// zero value of the kind while `isNull` holds.
     fn encode(&self, p: &PartialResult4MaxMin, buf: &mut Vec<u8>) {
@@ -269,9 +324,9 @@ impl MaxMin {
                 buf,
             ),
             (MaxMinKind::Decimal, _) => util::serialize_my_decimal(&MyDecimal::default(), buf),
-            (MaxMinKind::String, Some(Datum::String(text))) => util::serialize_string(&GoString::from(text.bytes().to_vec()), buf),
-            (MaxMinKind::String, Some(Datum::Bytes(bytes))) => util::serialize_string(&GoString::from(bytes.clone()), buf),
-            (MaxMinKind::String, _) => util::serialize_string(&GoString::default(), buf),
+            (MaxMinKind::String, Some(Datum::String(text))) => util::serialize_bytes_buffer(text.bytes(), buf),
+            (MaxMinKind::String, Some(Datum::Bytes(bytes))) => util::serialize_bytes_buffer(bytes, buf),
+            (MaxMinKind::String, _) => util::serialize_bytes_buffer(&[], buf),
             (MaxMinKind::Time, Some(Datum::Time(value))) => util::serialize_time(*value, buf),
             (MaxMinKind::Time, _) => util::serialize_u64(0, buf),
             (MaxMinKind::Duration, Some(Datum::Duration(value))) => util::serialize_duration(*value, buf),
@@ -308,7 +363,14 @@ impl MaxMin {
             MaxMinKind::Float32 => Datum::Float32(f64::from(pab.read_f32())),
             MaxMinKind::Float64 => Datum::Real(pab.read_f64()),
             MaxMinKind::Decimal => Datum::Decimal(Decimal::from_my_decimal(&pab.read_my_decimal())),
-            MaxMinKind::String => Datum::new_string_datum(pab.read_string().as_bytes().to_vec()),
+            MaxMinKind::String => {
+                let bytes = pab.read_buffer();
+                if bytes.len() <= StringDatum::INLINE_CAPACITY {
+                    Datum::String(StringDatum::from_slice(bytes, Collation::DEFAULT))
+                } else {
+                    Datum::new_string_datum(bytes.to_vec())
+                }
+            }
             MaxMinKind::Time => Datum::Time(pab.read_time()),
             MaxMinKind::Duration => Datum::Duration(pab.read_duration()),
             MaxMinKind::JSON => Datum::Json(pab.read_binary_json()),
@@ -317,18 +379,130 @@ impl MaxMin {
             MaxMinKind::VectorFloat32 => panic!("Not implemented"),
         }
     }
+
+    // Keep integer cells on a short path through the spill serializer.
+    #[inline(never)]
+    fn serialize_integer_partial(
+        &self,
+        partial_result: &mut PartialResult,
+        chk: &mut Chunk,
+        spill_helper: &mut SerializeHelper,
+    ) {
+        if let Some(p) = partial_result.downcast_ref::<PartialResult4MaxMinInt>() {
+            let mut bytes = [0; 9];
+            bytes[0] = u8::from(p.is_null);
+            bytes[1..].copy_from_slice(&p.val.to_ne_bytes());
+            chk.append_byte_array(self.base.ordinal, &bytes);
+        } else {
+            self.serialize_integer_datum(partial_result, chk, spill_helper);
+        }
+    }
+
+    // Sliding MAX and MIN store their current value in a Datum.
+    #[cold]
+    fn serialize_integer_datum(
+        &self,
+        partial_result: &mut PartialResult,
+        chk: &mut Chunk,
+        spill_helper: &mut SerializeHelper,
+    ) {
+        let p = partial::<PartialResult4MaxMin>(partial_result);
+        let bytes = spill_helper.encode(|buf| self.encode(p, buf));
+        chk.append_bytes(self.base.ordinal, bytes);
+    }
+
+    fn deserialize_datum_partials(&self, src: &Chunk) -> (Vec<PartialResult>, i64) {
+        deserialize_partial_result_common(src, self.base.ordinal, |helper| {
+            let state = helper.read_row(|pab| self.decode(pab))?;
+            Some((Box::new(state), self.kind.size()))
+        })
+    }
 }
 
 impl AggFunc for MaxMin {
     fn alloc_partial_result(&self) -> (PartialResult, i64) {
+        if self.kind.is_integer() {
+            return (Box::new(PartialResult4MaxMinInt { is_null: true, val: 0 }), self.kind.size());
+        }
+        if self.kind == MaxMinKind::Decimal {
+            return (Box::new(PartialResult4MaxMinDecimal::default()), self.kind.size());
+        }
+        if self.kind == MaxMinKind::String {
+            return (
+                Box::new(PartialResult4MaxMinString { is_null: true, val: PartialResultString::new() }),
+                self.kind.size(),
+            );
+        }
         (Box::new(PartialResult4MaxMin::default()), self.kind.size())
     }
 
     fn reset_partial_result(&self, pr: &mut PartialResult) {
+        if self.kind.is_integer() {
+            if let Some(p) = pr.downcast_mut::<PartialResult4MaxMinInt>() {
+                *p = PartialResult4MaxMinInt { is_null: true, val: 0 };
+                return;
+            }
+        }
+        if self.kind == MaxMinKind::Decimal {
+            if let Some(p) = pr.downcast_mut::<PartialResult4MaxMinDecimal>() {
+                p.is_null = true;
+                return;
+            }
+        }
+        if self.kind == MaxMinKind::String {
+            if let Some(p) = pr.downcast_mut::<PartialResult4MaxMinString>() {
+                p.is_null = true;
+                return;
+            }
+        }
         partial::<PartialResult4MaxMin>(pr).val = None;
     }
 
     fn update_partial_result(&self, sctx: &AggFuncUpdateContext, rows_in_group: &[Row<'_>], pr: &mut PartialResult) -> Result<i64, ExecError> {
+        if self.kind.is_integer() {
+            let p = partial::<PartialResult4MaxMinInt>(pr);
+            for &row in rows_in_group {
+                let value = match self.base.args[0].eval(sctx, row).map_err(ExecError::Eval)? {
+                    Datum::Int(value) => value,
+                    Datum::UInt(value) => value as i64,
+                    Datum::Null => continue,
+                    _ => return Err(ExecError::internal("MAX or MIN read a non-integer argument")),
+                };
+                self.keep_integer_extreme(p, value);
+            }
+            return Ok(0);
+        }
+        if self.kind == MaxMinKind::Decimal {
+            let p = partial::<PartialResult4MaxMinDecimal>(pr);
+            for &row in rows_in_group {
+                let Some(value) = eval_my_decimal(&self.base, sctx, row)? else {
+                    continue;
+                };
+                if p.is_null || self.decimal_better(&value, &p.val) {
+                    p.is_null = false;
+                    p.val = value;
+                }
+            }
+            return Ok(0);
+        }
+        if self.kind == MaxMinKind::String {
+            let p = partial::<PartialResult4MaxMinString>(pr);
+            let mut mem_delta = 0;
+            for &row in rows_in_group {
+                let input = self.base.args[0].eval(sctx, row).map_err(ExecError::Eval)?;
+                if input.is_null() {
+                    continue;
+                }
+                let value = input.go_bytes();
+                if p.is_null || self.string_better(value, &p.val) {
+                    let previous_len = if p.is_null { 0 } else { p.val.len() };
+                    mem_delta += value.len() as i64 - previous_len as i64;
+                    p.val = PartialResultString::from_slice(value);
+                    p.is_null = false;
+                }
+            }
+            return Ok(mem_delta);
+        }
         let p = partial::<PartialResult4MaxMin>(pr);
         let mut mem_delta = 0;
         for row in rows_in_group {
@@ -354,6 +528,43 @@ impl AggFunc for MaxMin {
     }
 
     fn merge_partial_result(&self, _sctx: &AggFuncUpdateContext, src: &mut PartialResult, dst: &mut PartialResult) -> Result<i64, ExecError> {
+        if self.kind.is_integer() {
+            if let Some(source) = src.downcast_ref::<PartialResult4MaxMinInt>() {
+                if !source.is_null {
+                    let destination = partial::<PartialResult4MaxMinInt>(dst);
+                    self.keep_integer_extreme(destination, source.val);
+                }
+                return Ok(0);
+            }
+        }
+        if self.kind == MaxMinKind::Decimal {
+            if let Some(source) = src.downcast_ref::<PartialResult4MaxMinDecimal>() {
+                let destination = partial::<PartialResult4MaxMinDecimal>(dst);
+                if !source.is_null
+                    && (destination.is_null || self.decimal_better(&source.val, &destination.val))
+                {
+                    *destination = *source;
+                }
+                return Ok(0);
+            }
+        }
+        if self.kind == MaxMinKind::String {
+            if let Some(source) = src.downcast_ref::<PartialResult4MaxMinString>() {
+                if source.is_null {
+                    return Ok(0);
+                }
+                let destination = partial::<PartialResult4MaxMinString>(dst);
+                if destination.is_null || self.string_better(&source.val, &destination.val) {
+                    if destination.val.len() == source.val.len() {
+                        destination.val.copy_from_slice(&source.val);
+                    } else {
+                        destination.val = source.val.clone();
+                    }
+                    destination.is_null = false;
+                }
+                return Ok(0);
+            }
+        }
         let Some(p1) = partial::<PartialResult4MaxMin>(src).val.clone() else {
             return Ok(0);
         };
@@ -370,6 +581,37 @@ impl AggFunc for MaxMin {
     }
 
     fn append_final_result_2_chunk(&self, _sctx: &AggFuncUpdateContext, pr: &mut PartialResult, chk: &mut Chunk) -> Result<(), ExecError> {
+        if self.kind.is_integer() {
+            if let Some(p) = pr.downcast_ref::<PartialResult4MaxMinInt>() {
+                if p.is_null {
+                    chk.append_null(self.base.ordinal);
+                } else if self.kind == MaxMinKind::Uint {
+                    chk.append_uint64(self.base.ordinal, p.val as u64);
+                } else {
+                    chk.append_int64(self.base.ordinal, p.val);
+                }
+                return Ok(());
+            }
+        }
+        if self.kind == MaxMinKind::Decimal {
+            if let Some(p) = pr.downcast_mut::<PartialResult4MaxMinDecimal>() {
+                if p.is_null {
+                    chk.append_null(self.base.ordinal);
+                    return Ok(());
+                }
+                return append_rounded_decimal(&self.base, &mut p.val, chk);
+            }
+        }
+        if self.kind == MaxMinKind::String {
+            if let Some(p) = pr.downcast_ref::<PartialResult4MaxMinString>() {
+                if p.is_null {
+                    chk.append_null(self.base.ordinal);
+                } else {
+                    chk.append_bytes(self.base.ordinal, &p.val);
+                }
+                return Ok(());
+            }
+        }
         let p = partial::<PartialResult4MaxMin>(pr);
         let Some(value) = p.val.as_mut() else {
             chk.append_null(self.base.ordinal);
@@ -387,19 +629,92 @@ impl AggFunc for MaxMin {
         Ok(())
     }
 
-    fn serialize_partial_result(&self, partial_result: &mut PartialResult, chk: &mut Chunk, _spill_helper: &mut SerializeHelper) {
-        let p = partial::<PartialResult4MaxMin>(partial_result).clone();
-        let mut buf = Vec::with_capacity(64);
-        self.encode(&p, &mut buf);
-        chk.append_bytes(self.base.ordinal, &buf);
+    fn serialize_partial_result(
+        &self,
+        partial_result: &mut PartialResult,
+        chk: &mut Chunk,
+        spill_helper: &mut SerializeHelper,
+    ) {
+        if self.kind.is_integer() {
+            return self.serialize_integer_partial(partial_result, chk, spill_helper);
+        }
+        if self.kind == MaxMinKind::Decimal {
+            if let Some(p) = partial_result.downcast_ref::<PartialResult4MaxMinDecimal>() {
+                let mut bytes = [0; 1 + MYDECIMAL_STRUCT_SIZE];
+                bytes[0] = u8::from(p.is_null);
+                bytes[1..].copy_from_slice(&p.val.to_raw_bytes());
+                chk.append_byte_array(self.base.ordinal, &bytes);
+                return;
+            }
+        }
+        if self.kind == MaxMinKind::String {
+            let (is_null, value) = if let Some(p) = partial_result.downcast_ref::<PartialResult4MaxMinString>() {
+                (p.is_null, p.val.as_slice())
+            } else {
+                let p = partial::<PartialResult4MaxMin>(partial_result);
+                let value = match p.val.as_ref() {
+                    Some(Datum::String(value)) => value.bytes(),
+                    Some(Datum::Bytes(value)) => value,
+                    _ => &[],
+                };
+                (p.val.is_none(), value)
+            };
+            let mut header = [0; 1 + size_of::<isize>()];
+            header[0] = u8::from(is_null);
+            spill_helper.append_string_partial(chk, self.base.ordinal, header, value);
+            return;
+        }
+        let p = partial::<PartialResult4MaxMin>(partial_result);
+        if self.kind == MaxMinKind::JSON {
+            let (type_code, value) = match p.val.as_ref() {
+                Some(Datum::Json(value)) => (value.type_code(), value.value()),
+                _ => (0, &[][..]),
+            };
+            let mut header = [0; 2 + size_of::<isize>()];
+            header[0] = u8::from(p.val.is_none());
+            header[1] = type_code;
+            spill_helper.append_buffer(chk, self.base.ordinal, header, value);
+            return;
+        }
+        let bytes = spill_helper.encode(|buf| self.encode(p, buf));
+        chk.append_bytes(self.base.ordinal, bytes);
     }
 
     fn deserialize_partial_result(&self, src: &Chunk) -> (Vec<PartialResult>, i64) {
-        deserialize_partial_result_common(src, self.base.ordinal, |helper| {
-            let (mut pr, mem_delta) = self.alloc_partial_result();
-            *partial::<PartialResult4MaxMin>(&mut pr) = helper.read_row(|pab| self.decode(pab))?;
-            Some((pr, mem_delta))
-        })
+        if self.kind.is_integer() {
+            return deserialize_partial_result_common(src, self.base.ordinal, |helper| {
+                let state = helper.read_row_bytes(|bytes| {
+                    let &[is_null, value @ ..] =
+                        bytes.first_chunk::<9>().expect("integer MAX or MIN spill cell");
+                    PartialResult4MaxMinInt {
+                        is_null: is_null & 1 != 0,
+                        val: i64::from_ne_bytes(value),
+                    }
+                })?;
+                Some((Box::new(state), self.kind.size()))
+            });
+        }
+        if self.kind == MaxMinKind::Decimal {
+            return deserialize_partial_result_common(src, self.base.ordinal, |helper| {
+                let state = helper.read_row(|pab| PartialResult4MaxMinDecimal {
+                    is_null: pab.read_bool(),
+                    val: pab.read_my_decimal(),
+                })?;
+                Some((Box::new(state), self.kind.size()))
+            });
+        }
+        if self.kind == MaxMinKind::String {
+            return deserialize_typed_partial_results(
+                src,
+                self.base.ordinal,
+                DEF_PARTIAL_RESULT_4_MAX_MIN_STRING_SIZE,
+                |pab| PartialResult4MaxMinString {
+                    is_null: pab.read_bool(),
+                    val: PartialResultString::from_slice(pab.read_buffer()),
+                },
+            );
+        }
+        self.deserialize_datum_partials(src)
     }
 }
 
@@ -452,9 +767,11 @@ impl MaxMinSliding {
 
 impl AggFunc for MaxMinSliding {
     fn alloc_partial_result(&self) -> (PartialResult, i64) {
-        let (mut pr, mem_delta) = self.inner.alloc_partial_result();
-        partial::<PartialResult4MaxMin>(&mut pr).deque = Some(MinMaxDeque::new(self.inner.is_max));
-        (pr, mem_delta + DEF_MAX_MIN_DEQUE_SIZE)
+        let pr = PartialResult4MaxMin {
+            deque: Some(MinMaxDeque::new(self.inner.is_max)),
+            ..Default::default()
+        };
+        (Box::new(pr), self.inner.kind.size() + DEF_MAX_MIN_DEQUE_SIZE)
     }
 
     fn reset_partial_result(&self, pr: &mut PartialResult) {
@@ -486,7 +803,7 @@ impl AggFunc for MaxMinSliding {
     }
 
     fn deserialize_partial_result(&self, src: &Chunk) -> (Vec<PartialResult>, i64) {
-        self.inner.deserialize_partial_result(src)
+        self.inner.deserialize_datum_partials(src)
     }
 
     fn as_sliding_window(&self) -> Option<&dyn SlidingWindowAggFunc> {

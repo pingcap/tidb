@@ -29,6 +29,8 @@
 pub(crate) mod sampling;
 mod virtual_samples;
 
+pub use sampling::encode_columns_request;
+
 use std::collections::{BTreeMap, HashSet};
 
 use tidb_datatype::UNSPECIFIED_LENGTH;
@@ -687,6 +689,8 @@ mod tests {
         let request = schema
             .request(&plan, &AnalyzeOptions::default(), 0.01, 0, 0)
             .unwrap();
+        let request: tidb_proto::tipb::AnalyzeReq =
+            prost::Message::decode(request.data.as_slice()).unwrap();
         let columns = request.col_req.unwrap();
         assert_eq!(columns.primary_column_ids, vec![8, 7]);
         assert_eq!(columns.column_groups[0].column_offsets, vec![1, 0]);
@@ -713,6 +717,8 @@ mod tests {
         let request = schema
             .request(&plan, &AnalyzeOptions::default(), 0.01, 0, 0)
             .unwrap();
+        let request: tidb_proto::tipb::AnalyzeReq =
+            prost::Message::decode(request.data.as_slice()).unwrap();
         let columns = request.col_req.unwrap();
         assert_eq!(columns.columns_info.len(), 2);
         assert_eq!(columns.columns_info[1].column_id, Some(-1));

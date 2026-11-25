@@ -19,7 +19,8 @@
 //! and slice-backing representations are added here as model clone surfaces
 //! migrate away from Rust-only deep ownership.
 
-use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
+use std::ops::ControlFlow;
+use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard, TryLockError};
 
 pub(crate) use tidb_goruntime::go_runtime::{
     go_64_next_slice_capacity_for_element, go_64_slice_decode_capacity,
@@ -134,10 +135,11 @@ impl<T> GoShared<T> {
         Arc::ptr_eq(&self.0, &other.0)
     }
 
-    /// Stable process-local address used by Go `%p`/default pointer
-    /// formatting. Semantic equality should continue to use [`Self::ptr_eq`].
+    /// Stable process-local address used by Go `%p` formatting and pointer
+    /// identity indexes. Indexes must retain a handle so the address cannot
+    /// be reused while it is indexed.
     #[must_use]
-    pub(crate) fn identity_address(&self) -> usize {
+    pub fn identity_address(&self) -> usize {
         Arc::as_ptr(&self.0) as usize
     }
 
@@ -366,6 +368,47 @@ impl<T> GoSharedPointerSlice<T> {
             .map(|pointer| pointer.expect("nil pointer in Go slice"))
     }
 
+    /// Visits pointees in slice order, retaining only the handles the visitor
+    /// clones. The visitor must not re-enter the backing array or pointee.
+    pub fn visit_deref<B>(
+        &self,
+        mut visit: impl FnMut(&GoShared<T>, &T) -> ControlFlow<B>,
+    ) -> ControlFlow<B> {
+        let mut next = 0;
+        self.0.with_visible(|handles| {
+            for handle in handles {
+                let handle = handle.as_ref().expect("nil pointer in Go slice");
+                // A writer can hold this pointee while editing the backing
+                // array. Release the array guard before waiting for a pointee.
+                let value = match handle.0.try_read() {
+                    Ok(value) => value,
+                    Err(TryLockError::Poisoned(error)) => error.into_inner(),
+                    Err(TryLockError::WouldBlock) => break,
+                };
+                next += 1;
+                visit(handle, &value)?;
+            }
+            ControlFlow::Continue(())
+        })?;
+        for index in next..self.len() {
+            let handle = self.get(index).expect("nil pointer in Go slice");
+            visit(&handle, &handle.read())?;
+        }
+        ControlFlow::Continue(())
+    }
+
+    /// Finds the first matching pointee in slice order.
+    pub(crate) fn find_deref(&self, matches: impl Fn(&T) -> bool) -> Option<GoShared<T>> {
+        self.visit_deref(|handle, value| {
+            if matches(value) {
+                ControlFlow::Break(handle.clone())
+            } else {
+                ControlFlow::Continue(())
+            }
+        })
+        .break_value()
+    }
+
     /// Allocates a fresh outer slice and maps non-null pointees through the
     /// source type's clone operation. Go clone methods choose different nil
     /// policies, so callers must name it rather than inheriting Rust `Clone`.
@@ -522,6 +565,39 @@ mod tests {
         assert_eq!(pointer.read().id, 7);
         pointer.write().id = 8;
         assert_eq!(alias.read().id, 8);
+    }
+
+    #[test]
+    fn pointer_slice_scan_releases_backing_before_waiting_for_a_pointee() {
+        let contended = GoShared::new(Item { id: 2 });
+        let slice = GoSharedPointerSlice::from_handles(vec![
+            Some(GoShared::new(Item { id: 1 })),
+            Some(contended.clone()),
+        ]);
+        let guard = contended.write();
+        let (visiting, started) = std::sync::mpsc::channel();
+        let (updated, changed) = std::sync::mpsc::channel();
+        let timeout = std::time::Duration::from_secs(2);
+        std::thread::scope(|scope| {
+            let scanner = scope.spawn(|| {
+                slice.find_deref(|item| {
+                    if item.id == 1 {
+                        visiting.send(()).unwrap();
+                    }
+                    item.id == 2
+                })
+            });
+            let started = started.recv_timeout(timeout);
+            scope.spawn(|| {
+                slice.set(0, Some(GoShared::new(Item { id: 3 })));
+                updated.send(()).unwrap();
+            });
+            let changed = changed.recv_timeout(timeout);
+            drop(guard);
+            started.unwrap();
+            changed.unwrap();
+            assert!(scanner.join().unwrap().unwrap().ptr_eq(&contended));
+        });
     }
 
     #[test]

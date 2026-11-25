@@ -23,8 +23,8 @@ use tidb_datatype::{Datum, SessionTimeZone};
 use tidb_kv::storage::{StagingHandle, TableStorage};
 use tidb_tablecodec::table_key::{decode_index_id, decode_row_key, decode_table_id};
 use tidb_tablecodec::{
-    cut_datum_by_prefix_len, decode_column_value, decode_index_handle, decode_index_kv,
-    decode_temp_index_value, is_record_key, temp_index_key_to_index_key,
+    cut_datum_by_prefix_len, decode_column_value, decode_index_handle, decode_index_kv_refs,
+    decode_current_temp_index_value, is_record_key, temp_index_key_to_index_key,
     temp_index_value_is_untouched, HandleStatus, INDEX_ID_MASK,
 };
 
@@ -105,9 +105,9 @@ impl TableCommon {
                     // Never committed to the storage.
                     continue;
                 }
-                let history = decode_temp_index_value(&m.value)
+                let current = decode_current_temp_index_value(&m.value)
                     .map_err(|error| KvTableError::Decode(format!("{error:?}")))?;
-                let value = history.last().map(|current| current.value.clone()).unwrap_or_default();
+                let value = current.map(|operation| operation.value).unwrap_or_default();
                 if value.is_empty() {
                     // A deletion.
                     continue;
@@ -115,7 +115,7 @@ impl TableCommon {
                 let mut org_key = m.key.clone();
                 temp_index_key_to_index_key(&mut org_key)
                     .map_err(|error| KvTableError::Decode(format!("{error:?}")))?;
-                decode_index_handle(&org_key, &value, columns_len)
+                decode_index_handle(&org_key, value, columns_len)
             } else {
                 decode_index_handle(&m.key, &m.value, columns_len)
             }
@@ -163,25 +163,25 @@ impl TableCommon {
                 if temp_index_value_is_untouched(&m.value) {
                     continue;
                 }
-                let history = decode_temp_index_value(&m.value)
-                    .map_err(|error| KvTableError::Decode(format!("{error:?}")))?;
-                let Some(current) = history.last() else {
+                let Some(current) = decode_current_temp_index_value(&m.value)
+                    .map_err(|error| KvTableError::Decode(format!("{error:?}")))?
+                else {
                     continue;
                 };
                 is_tmp_idx_val_and_deleted = current.delete;
-                current.value.clone()
+                current.value
             } else {
-                m.value.clone()
+                m.value.as_slice()
             };
             // When the key alone cannot give back the original value.
             if value.is_empty() && self.index_needs_restored_data(index) {
                 continue;
             }
             let row_col_infos = self.build_rowcodec_col_info_for_index_columns(index);
-            let decoded_index_values = decode_index_kv(
+            let decoded_index_values = decode_index_kv_refs(
                 use_new_collate,
                 &m.key,
-                &value,
+                value,
                 index.read().columns.len(),
                 HandleStatus::NotNeeded,
                 &row_col_infos,

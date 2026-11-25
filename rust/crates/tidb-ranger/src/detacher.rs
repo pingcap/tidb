@@ -1239,7 +1239,7 @@ fn merge_two_cnf_ranges(
     let Some(mut merged) = range_result else {
         return other;
     };
-    let Some(other) = other else {
+    let Some(mut other) = other else {
         return Some(merged);
     };
     let mut try_heuristic = false;
@@ -1254,9 +1254,9 @@ fn merge_two_cnf_ranges(
             if other_is_subset {
                 return Some(other);
             }
-            match super::types::intersect_ranges(
-                &other.range_result.ranges,
-                &merged.range_result.ranges,
+            match super::types::intersect_owned_ranges(
+                &mut other.range_result.ranges,
+                &mut merged.range_result.ranges,
             ) {
                 None => try_heuristic = true,
                 Some(intersection) => {
@@ -2079,6 +2079,45 @@ mod tests {
             FieldType::new(FieldTypeCode::LongLong),
             args,
         ).unwrap()
+    }
+
+    #[test]
+    fn cnf_intersection_reuses_owned_byte_bounds() {
+        use crate::types::Range;
+        use tidb_charset::Collation;
+
+        let candidate = |low: &[u8], high: &[u8]| {
+            get_cnf_item_range_result(
+                DetachRangeResult {
+                    ranges: vec![Range {
+                        low_val: vec![Datum::Bytes(low.to_vec())].into(),
+                        high_val: vec![Datum::Bytes(high.to_vec())].into(),
+                        collators: vec![Collation::Binary],
+                        ..Range::default()
+                    }],
+                    ..DetachRangeResult::default()
+                },
+                0,
+                true,
+            )
+        };
+        let byte_buffer = |datum: &Datum| match datum {
+            Datum::Bytes(bytes) => bytes.as_ptr(),
+            _ => unreachable!(),
+        };
+        let first = candidate(b"first", b"third");
+        let second = candidate(b"second", b"upper");
+        let low = byte_buffer(&second.range_result.ranges[0].low_val[0]);
+        let high = byte_buffer(&first.range_result.ranges[0].high_val[0]);
+        let merged = merge_two_cnf_ranges(&int_const(1), Some(first), Some(second), true).unwrap();
+        let [range] = merged.range_result.ranges.as_slice() else {
+            panic!("expected one intersection");
+        };
+        assert_eq!(byte_buffer(&range.low_val[0]), low);
+        assert_eq!(byte_buffer(&range.high_val[0]), high);
+        assert_eq!(range.low_val, [Datum::Bytes(b"second".to_vec())]);
+        assert_eq!(range.high_val, [Datum::Bytes(b"third".to_vec())]);
+        assert_eq!(merged.range_result.access_conds.len(), 1);
     }
 
     /// The CNF walk: conditions over the checked column become access

@@ -1280,6 +1280,7 @@ fn check_generated_columns(
         let Some(generated) = generated else {
             continue;
         };
+        let generated = generated.into_definition();
         let mut column = column.write();
         column.generated_expr_string = generated.expr_text;
         column.generated_stored = generated.stored;
@@ -2251,7 +2252,7 @@ pub fn hidden_index_column_info(
     hidden: crate::expression_index::HiddenIndexColumn,
     offset: usize,
 ) -> ColumnInfo {
-    let generated = hidden.generated;
+    let generated = hidden.generated.into_definition();
     // Go keys `Dependences` by `Name.L`.
     let mut dependences = GoStringSet::default();
     for dependency in generated.dependencies {
@@ -3235,7 +3236,8 @@ fn build_column(
                     context.get_expr_ctx().get_eval_ctx().like_default_escape(),
                     context.get_expr_ctx().get_charset_info().0,
                 )
-                .map_err(generated_column_admission_error)?;
+                .map_err(generated_column_admission_error)?
+                .into_definition();
                 info.generated_expr_string = generated.expr_text;
                 info.generated_stored = generated.stored;
                 // Go `findDependedColumnNames` keys the set by `Name.L`.

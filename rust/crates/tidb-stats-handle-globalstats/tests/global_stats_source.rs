@@ -104,7 +104,7 @@ fn source_merge_partition_topn_counts_and_removes_histogram_values() {
                     lower_bound: Datum::Int(3),
                     upper_bound: Datum::Int(4),
                 },
-            ],
+            ].into(),
             ..Default::default()
         })
         .collect();
@@ -195,7 +195,7 @@ fn partition_item(fm_hashes: impl IntoIterator<Item = u64>) -> PartitionStatsIte
                 ndv: 2,
                 lower_bound: Datum::Int(1),
                 upper_bound: Datum::Int(4),
-            }],
+            }].into(),
             ..Default::default()
         },
         cmsketch: None,

@@ -14,7 +14,9 @@ workspace = true
 tidb-timer = { path = "../tidb-timer" }
 tidb-logutil = { path = "../tidb-logutil" }
 tidb-timeutil = { path = "../tidb-timeutil" }
+chrono.workspace = true
 chrono-tz.workspace = true
+crossbeam-channel = "0.5"
 tidb-log = { path = "../tidb-log" }
 
 [[test]]

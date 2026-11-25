@@ -61,18 +61,26 @@ tidb-resolve = { path = "../tidb-resolve" }
 tidb-sqlexec = { path = "../tidb-sqlexec" }
 tidb-vardef = { path = "../tidb-vardef" }
 flate2 = { workspace = true }
+crc32fast = { workspace = true }
+memchr = "2"
+simdutf8 = { version = "0.1.5", features = ["aarch64_neon"] }
+base64-simd = "0.8"
 getrandom = { workspace = true }
 chrono = { workspace = true }
 chrono-tz = { workspace = true }
+jiff = { version = "0.2", features = ["tzdb-bundle-always"] }
 regex = { workspace = true }
 md-5 = { workspace = true }
-sha1 = { workspace = true }
-sha2 = { workspace = true }
+sha1 = "0.11"
+sha2 = "0.11"
 serde_json = { workspace = true }
 jsonschema = { workspace = true }
 reqwest = { workspace = true }
 fluent-uri = { workspace = true }
 prost = { workspace = true }
+
+[target.'cfg(target_arch = "aarch64")'.dependencies]
+aws-lc-rs = { version = "1.18", default-features = false, features = ["aws-lc-sys"] }
 
 [dev-dependencies]
 tidb-sqlkiller = { path = "../tidb-sqlkiller" }

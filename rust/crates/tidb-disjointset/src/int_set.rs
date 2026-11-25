@@ -37,14 +37,7 @@ impl SimpleIntSet {
 
     /// Finds the representative element and compresses the traversed path.
     pub fn find_root(&mut self, element: isize) -> isize {
-        let index = usize::try_from(element).expect("negative disjoint set index");
-        let parent = self.parent[index];
-        if element == parent {
-            return element;
-        }
-        let root = self.find_root(parent);
-        self.parent[index] = root;
-        root
+        find_root(&mut self.parent, element)
     }
 
     /// Removes every element while retaining the allocation for reuse.
@@ -59,6 +52,39 @@ impl SimpleIntSet {
         self.parent.reserve(size);
         self.parent.extend((0..size).map(|value| value as isize));
     }
+}
+
+/// Finds the root, then compresses the complete path without using the stack.
+#[inline]
+pub(crate) fn find_root(parents: &mut [isize], element: isize) -> isize {
+    let index = usize::try_from(element).expect("negative disjoint set index");
+    let mut root = parents[index];
+    if root == element {
+        return root;
+    }
+    let mut next = parents[root as usize];
+    if next == root {
+        return root;
+    }
+    root = next;
+    loop {
+        next = parents[root as usize];
+        if next == root {
+            break;
+        }
+        root = next;
+    }
+
+    let mut current = element;
+    loop {
+        let parent = &mut parents[current as usize];
+        if *parent == root {
+            break;
+        }
+        current = *parent;
+        *parent = root;
+    }
+    root
 }
 
 #[cfg(test)]
@@ -112,5 +138,26 @@ mod tests {
         let mut sparse = Set::new(1);
         sparse.find_root(1);
         assert!(catch_unwind(AssertUnwindSafe(|| sparse.find_val(-1))).is_err());
+    }
+
+    #[test]
+    fn compresses_long_chains_without_using_the_stack() {
+        std::thread::Builder::new()
+            .stack_size(128 * 1024)
+            .spawn(|| {
+                let size = 32_768;
+                let mut dense = SimpleIntSet::new(size);
+                let mut sparse = Set::new(size);
+                for i in 0..size - 1 {
+                    dense.union(i, i + 1);
+                    sparse.union(i + 1, i);
+                }
+                assert_eq!(dense.find_root(0), size - 1);
+                assert!(dense.parent.iter().all(|&parent| parent == size - 1));
+                assert_eq!(sparse.find_val(1), Some(size - 1));
+            })
+            .unwrap()
+            .join()
+            .unwrap();
     }
 }

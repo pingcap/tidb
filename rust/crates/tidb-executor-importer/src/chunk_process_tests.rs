@@ -13,7 +13,7 @@
 //! with a unique index, explicit AUTO_INCREMENT values, an encoding error
 //! and the non-strict truncation.
 
-use super::chunk_process::{ChunkProcessor, ParserEncodeReader};
+use super::chunk_process::{ChunkProcessor, ParserEncodeReader, QueryChunk, QueryChunkEncodeReader};
 use super::kv_encode::TableKVEncoder;
 use super::{ASTArgs, LoadDataController, Plan};
 use serde_json::Value;
@@ -51,21 +51,7 @@ fn file_chunk_process_matches_go_capture() {
     for line in include_str!("../testdata/import_into_chunk_go.jsonl").lines() {
         let rec: Value = serde_json::from_str(line).unwrap();
         let name = rec["case"].as_str().unwrap();
-        let meta = tidb_meta::value::parse_table_info(rec["table_info"].to_string().as_bytes(), 0).unwrap();
-        let table = tidb_table::table_from_meta::table_from_meta(&meta, &tidb_table::table_from_meta::AutoIdSource::Unavailable).unwrap();
-        let stmt = import(rec["import"].as_str().unwrap());
-        let mut plan = Plan::new_import_plan(&stmt, 6, "").unwrap();
-        let sql_mode = tidb_mysql::get_sql_mode(rec["sql_mode"].as_str().unwrap()).unwrap().0;
-        plan.sql_mode = sql_mode;
-        let args = ASTArgs { columns_and_user_vars: stmt.columns_and_user_vars.clone(), column_assignments: stmt.column_assignments.clone() };
-        let ctrl = LoadDataController::new(plan, table, args).unwrap_or_else(|e| panic!("{name}: {e:?}"));
-        let cfg = EncodingConfig {
-            session_options: SessionOptions { sql_mode, timestamp: 1_234_567_890, ..SessionOptions::default() },
-            path: String::new(),
-            table: meta.clone(),
-            use_identity_auto_row_id: false,
-        };
-        let mut encoder = TableKVEncoder::new(&cfg, &ctrl, PanickingAllocators::new(meta.sep_auto_inc())).unwrap();
+        let (ctrl, mut encoder) = go_capture_encoder(&rec);
         let data = rec["data"].as_str().unwrap();
         let mut parser = tidb_lightning_mydump::CsvParser::from_bytes(&ctrl.generate_csv_config(), data.as_bytes().to_vec(), None).unwrap();
         let reader = ParserEncodeReader { parser: &mut parser, end_offset: data.len() as i64, filename: "x.csv:0".to_owned() };
@@ -106,6 +92,85 @@ fn file_chunk_process_matches_go_capture() {
         let sums: Vec<u64> = serde_json::from_value(rec["sums"].clone()).unwrap();
         assert_eq!([ds, is, dk, ik, checksum.merged_checksum().sum()], sums[..5], "{name}: checksums");
     }
+}
+
+fn go_capture_encoder(rec: &Value) -> (LoadDataController, TableKVEncoder) {
+    let meta = tidb_meta::value::parse_table_info(rec["table_info"].to_string().as_bytes(), 0).unwrap();
+    let table = tidb_table::table_from_meta::table_from_meta(&meta, &tidb_table::table_from_meta::AutoIdSource::Unavailable).unwrap();
+    let stmt = import(rec["import"].as_str().unwrap());
+    let mut plan = Plan::new_import_plan(&stmt, 6, "").unwrap();
+    let sql_mode = tidb_mysql::get_sql_mode(rec["sql_mode"].as_str().unwrap()).unwrap().0;
+    plan.sql_mode = sql_mode;
+    let args = ASTArgs {
+        columns_and_user_vars: stmt.columns_and_user_vars.clone(),
+        column_assignments: stmt.column_assignments.clone(),
+    };
+    let ctrl = LoadDataController::new(plan, table, args)
+        .unwrap_or_else(|error| panic!("{}: {error:?}", rec["case"]));
+    let cfg = EncodingConfig {
+        session_options: SessionOptions { sql_mode, timestamp: 1_234_567_890, ..SessionOptions::default() },
+        path: String::new(),
+        table: meta.clone(),
+        use_identity_auto_row_id: false,
+    };
+    let encoder = TableKVEncoder::new(&cfg, &ctrl, PanickingAllocators::new(meta.sep_auto_inc())).unwrap();
+    (ctrl, encoder)
+}
+
+#[test]
+fn delivery_panic_cancels_open_query_source() {
+    use std::time::Duration;
+    use tidb_datatype::Datum;
+
+    struct PanickingWriter;
+
+    impl EngineWriter for PanickingWriter {
+        fn append_rows(&mut self, _: &Context, _: &[String], _: tidb_lightning_backend::Rows) -> tidb_lightning_backend::Result<()> {
+            panic!("injected writer panic");
+        }
+        fn is_synced(&self) -> bool {
+            true
+        }
+        fn close(&mut self, _: &Context) -> tidb_lightning_backend::Result<ChunkFlushStatus> {
+            Ok(ChunkFlushStatus::default())
+        }
+    }
+
+    let (ctx, cancel) = Context::with_cancel(&Context::background());
+    let (input, rows) = crossbeam_channel::bounded(1);
+    input.send(QueryChunk {
+        rows: vec![vec![Datum::Int(1), Datum::Int(2), Datum::Int(3)]],
+        row_id_offset: 0,
+    }).unwrap();
+    let (finished, result) = crossbeam_channel::bounded(1);
+    let processor = std::thread::spawn(move || {
+        let capture = include_str!("../testdata/import_into_chunk_go.jsonl");
+        let rec: Value = serde_json::from_str(capture.lines().next().unwrap()).unwrap();
+        let (_, mut encoder) = go_capture_encoder(&rec);
+        let mut data_writer = PanickingWriter;
+        let mut index_writer = Recorder::default();
+        let mut processor = ChunkProcessor::new(
+            "query".to_owned(),
+            Box::new(QueryChunkEncodeReader::new(rows)),
+            -1,
+            &mut encoder,
+            &[],
+            &mut data_writer,
+            &mut index_writer,
+            None,
+        );
+        processor.min_deliver_row_cnt = 1;
+        let mut checksum = KvGroupChecksum::with_keyspace(&[]);
+        let error = processor.process(&ctx, &mut checksum).unwrap_err();
+        finished.send(error.to_string()).unwrap();
+    });
+
+    let outcome = result.recv_timeout(Duration::from_secs(2));
+    // Let the original pipeline finish if it still needs the caller to close or cancel.
+    cancel.cancel();
+    drop(input);
+    processor.join().unwrap();
+    assert_eq!(outcome.as_deref(), Ok("deliver loop panicked"));
 }
 
 /// An import client that takes every write, records the written pairs and

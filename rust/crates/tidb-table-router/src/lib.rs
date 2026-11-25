@@ -22,9 +22,10 @@
 use tidb_table_rule_selector::{InsertType, Selector, TrieSelector};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
+use std::borrow::Cow;
 use std::fmt;
 use std::sync::Arc;
-use tidb_mysql::to_lowercase as go_simple_lowercase;
+use tidb_mysql::{to_lowercase as go_simple_lowercase, to_lowercase_cow};
 
 /// An error returned by table-rule validation or routing.
 #[derive(Debug)]
@@ -199,6 +200,30 @@ impl TableRule {
         self.schema_pattern = go_simple_lowercase(&self.schema_pattern);
         self.table_pattern = go_simple_lowercase(&self.table_pattern);
     }
+
+    /// Extracts column values using the patterns compiled by [`Self::valid`].
+    pub fn extract_columns(
+        &self,
+        schema: &str,
+        table: &str,
+        source: &str,
+    ) -> (Vec<String>, Vec<String>) {
+        let mut columns = Vec::new();
+        let mut values = Vec::new();
+        if let Some(extractor) = &self.table_extractor {
+            columns.push(extractor.target_column.clone());
+            values.push(extract_value(table, extractor.regexp.as_ref()));
+        }
+        if let Some(extractor) = &self.schema_extractor {
+            columns.push(extractor.target_column.clone());
+            values.push(extract_value(schema, extractor.regexp.as_ref()));
+        }
+        if let Some(extractor) = &self.source_extractor {
+            columns.push(extractor.target_column.clone());
+            values.push(extract_value(source, extractor.regexp.as_ref()));
+        }
+        (columns, values)
+    }
 }
 
 #[derive(Clone)]
@@ -285,9 +310,9 @@ impl Table {
     /// Go `Route`: table-level rules have priority over schema-level rules.
     pub fn route(&self, schema: &str, table: &str) -> Result<(String, String), TableRouterError> {
         let (schema_match, table_match) = if self.case_sensitive {
-            (schema.to_owned(), table.to_owned())
+            (Cow::Borrowed(schema), Cow::Borrowed(table))
         } else {
-            (go_simple_lowercase(schema), go_simple_lowercase(table))
+            (to_lowercase_cow(schema), to_lowercase_cow(table))
         };
         let (schema_rules, table_rules) = Self::classify(
             self.selector
@@ -317,19 +342,12 @@ impl Table {
             table_rules.first()
         };
 
-        let mut target_schema = selected
-            .map(|rule| rule.target_schema.clone())
+        let (target_schema, target_table) = selected
+            .map(|rule| (rule.target_schema.as_str(), rule.target_table.as_str()))
             .unwrap_or_default();
-        let mut target_table = selected
-            .map(|rule| rule.target_table.clone())
-            .unwrap_or_default();
-        if target_schema.is_empty() {
-            target_schema = schema.to_owned();
-        }
-        if target_table.is_empty() {
-            target_table = table.to_owned();
-        }
-        Ok((target_schema, target_table))
+        let target_schema = if target_schema.is_empty() { schema } else { target_schema };
+        let target_table = if target_table.is_empty() { table } else { target_table };
+        Ok((target_schema.to_owned(), target_table.to_owned()))
     }
 
     /// Go `FetchExtendColumn`.
@@ -354,22 +372,7 @@ impl Table {
         let Some(rule) = rule else {
             return (Vec::new(), Vec::new());
         };
-
-        let mut columns = Vec::new();
-        let mut values = Vec::new();
-        if let Some(extractor) = &rule.table_extractor {
-            columns.push(extractor.target_column.clone());
-            values.push(extract_value(table, extractor.regexp.as_ref()));
-        }
-        if let Some(extractor) = &rule.schema_extractor {
-            columns.push(extractor.target_column.clone());
-            values.push(extract_value(schema, extractor.regexp.as_ref()));
-        }
-        if let Some(extractor) = &rule.source_extractor {
-            columns.push(extractor.target_column.clone());
-            values.push(extract_value(source, extractor.regexp.as_ref()));
-        }
-        (columns, values)
+        rule.extract_columns(schema, table, source)
     }
 
     fn classify(entries: Vec<RuleEntry>) -> Result<ClassifiedRules, TableRouterError> {

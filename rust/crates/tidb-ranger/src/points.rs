@@ -156,15 +156,15 @@ pub fn get_not_null_full_range() -> Vec<Point> {
 pub fn full_int_range(is_unsigned: bool) -> Ranges {
     if is_unsigned {
         return vec![super::types::Range {
-            low_val: vec![Datum::UInt(0)],
-            high_val: vec![Datum::UInt(u64::MAX)],
+            low_val: vec![Datum::UInt(0)].into(),
+            high_val: vec![Datum::UInt(u64::MAX)].into(),
             collators: vec![Collation::Binary],
             ..super::types::Range::default()
         }];
     }
     vec![super::types::Range {
-        low_val: vec![Datum::Int(i64::MIN)],
-        high_val: vec![Datum::Int(i64::MAX)],
+        low_val: vec![Datum::Int(i64::MIN)].into(),
+        high_val: vec![Datum::Int(i64::MAX)].into(),
         collators: vec![Collation::Binary],
         ..super::types::Range::default()
     }]
@@ -174,8 +174,8 @@ pub fn full_int_range(is_unsigned: bool) -> Ranges {
 #[must_use]
 pub fn full_range() -> Ranges {
     vec![super::types::Range {
-        low_val: vec![Datum::Null],
-        high_val: vec![Datum::MaxValue],
+        low_val: vec![Datum::Null].into(),
+        high_val: vec![Datum::MaxValue].into(),
         collators: vec![Collation::Binary],
         ..super::types::Range::default()
     }]
@@ -185,8 +185,8 @@ pub fn full_range() -> Ranges {
 #[must_use]
 pub fn full_not_null_range() -> Ranges {
     vec![super::types::Range {
-        low_val: vec![Datum::MinNotNull],
-        high_val: vec![Datum::MaxValue],
+        low_val: vec![Datum::MinNotNull].into(),
+        high_val: vec![Datum::MaxValue].into(),
         collators: vec![Collation::Binary],
         ..super::types::Range::default()
     }]
@@ -196,8 +196,8 @@ pub fn full_not_null_range() -> Ranges {
 #[must_use]
 pub fn null_range() -> Ranges {
     vec![super::types::Range {
-        low_val: vec![Datum::Null],
-        high_val: vec![Datum::Null],
+        low_val: vec![Datum::Null].into(),
+        high_val: vec![Datum::Null].into(),
         collators: vec![Collation::Binary],
         ..super::types::Range::default()
     }]

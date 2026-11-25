@@ -43,7 +43,7 @@ fn range(start: &str, end: &str) -> KeyRange {
 fn metadata(ranges: Vec<KeyRange>) -> KvRequestMetadata {
     let mut metadata = KvRequestMetadata::default();
     metadata.request_type = RequestType::Dag;
-    metadata.data = Some(b"dag".to_vec());
+    metadata.data = Some((&b"dag"[..]).into());
     metadata.key_ranges = Some(PartitionedKeyRanges::new_non_partitioned(ranges).into());
     metadata.keep_order = true;
     metadata.cacheable = true;
@@ -68,8 +68,8 @@ fn response(data: &str, start: &str, end: &str, read_bytes: u64) -> CoprocessorR
     CoprocessorResponse {
         data: data.as_bytes().to_vec().into(),
         range: Some(CoprocessorKeyRange {
-            start: start.as_bytes().to_vec(),
-            end: end.as_bytes().to_vec(),
+            start: start.as_bytes().to_vec().into(),
+            end: end.as_bytes().to_vec().into(),
         }),
         exec_details_v2: Some(Box::new(CoprocessorExecDetailsV2 {
             scan_detail_v2: Some(CoprocessorScanDetailV2 {
@@ -159,7 +159,27 @@ fn continuation_uses_the_next_iterator_wide_paging_task_index() {
         .unwrap();
     assert_eq!(continuation.logical_task_id(), 1);
     assert_eq!(continuation.page_index(), 3);
-    assert_eq!(continuation.request().ranges, [range("g", "m")]);
+    assert_eq!(continuation.request().ranges.to_ranges(), [range("g", "m")]);
+}
+
+#[test]
+fn paging_and_retry_share_unchanged_request_keys() {
+    let metadata = metadata(vec![range("a", "e"), range("g", "m"), range("m", "z")]);
+    let original = &metadata.key_ranges.as_ref().unwrap().first_partition_ranges()[1];
+    let mut runtime = prepare(&metadata, &[topology(1, "a", "z")], None).unwrap();
+    let first = runtime.prepared_attempt(1).unwrap();
+    assert!(std::ptr::eq(&first.request().ranges[1], original));
+    let accepted = runtime
+        .accept_response(1, response("partial", "a", "c", 1), None, Duration::from_secs(1))
+        .unwrap();
+    assert_eq!(accepted.paging.remaining_ranges[0], range("c", "e"));
+    assert!(std::ptr::eq(&accepted.paging.remaining_ranges[1], original));
+
+    let failed = runtime.consume_failed_attempt(accepted.next_attempt_id.unwrap()).unwrap();
+    let retried = runtime.retry_transport_attempt(failed).unwrap();
+    let attempt = runtime.prepared_attempt(retried.active_attempt_ids[0]).unwrap();
+    assert_eq!(attempt.request().ranges[0], range("c", "e"));
+    assert!(std::ptr::eq(&attempt.request().ranges[1], original));
 }
 
 #[test]
@@ -185,7 +205,7 @@ fn cache_is_prepared_per_attempt_restored_before_paging_and_rebuilt_for_continua
     );
     let continued = runtime.prepared_attempt(continuation).unwrap();
     assert_eq!(continued.page_index(), 2);
-    assert_eq!(continued.request().ranges, [range("m", "z")]);
+    assert_eq!(continued.request().ranges.to_ranges(), [range("m", "z")]);
     assert_eq!(continued.request().paging_size, 4);
     assert_ne!(continued.cache_key().unwrap(), initial_key);
     assert_eq!(
@@ -229,7 +249,7 @@ fn cache_is_prepared_per_attempt_restored_before_paging_and_rebuilt_for_continua
     let replay_initial_key = replay.prepared_attempt(1).unwrap().cache_key().unwrap();
     let replay_continued = replay.prepared_attempt(replay_continuation).unwrap();
     assert_eq!(replay_continued.page_index(), 2);
-    assert_eq!(replay_continued.request().ranges, [range("m", "z")]);
+    assert_eq!(replay_continued.request().ranges.to_ranges(), [range("m", "z")]);
     assert_ne!(replay_continued.cache_key().unwrap(), replay_initial_key);
     assert_eq!(
         replay.next_response(1),
@@ -497,7 +517,7 @@ fn region_error_attempt_is_consumed_once_without_success_state_mutation() {
     let failed = runtime.consume_region_error(1).unwrap();
     assert_eq!(failed.attempt_id(), 1);
     assert_eq!(failed.logical_task_id(), 1);
-    assert_eq!(failed.ranges(), [range("a", "z")]);
+    assert_eq!(failed.ranges().to_ranges(), [range("a", "z")]);
     assert_eq!(failed.paging_size(), 2);
     assert!(runtime.in_flight_attempt_ids().is_empty());
     assert_eq!(runtime.predicted_read_bytes(), 0);
@@ -534,7 +554,7 @@ fn transport_failure_rebinds_only_response_ownership_without_success_state_mutat
     assert_eq!(runtime.in_flight_attempt_ids(), [2, 3]);
     let retry = runtime.prepared_attempt(3).unwrap();
     assert_eq!(retry.logical_task_id(), 1);
-    assert_eq!(retry.request().ranges, [range("a", "m")]);
+    assert_eq!(retry.request().ranges.to_ranges(), [range("a", "m")]);
     assert_eq!(retry.request().paging_size, 2);
     assert_eq!(runtime.prepared_attempt(2).unwrap(), &future);
     assert_eq!(runtime.predicted_read_bytes(), 0);
@@ -560,7 +580,7 @@ fn known_leader_retry_rebinds_one_logical_task_without_growing_paging() {
     assert_eq!(replacement.active_attempt_ids, [2]);
     let resent = runtime.prepared_attempt(2).unwrap();
     assert_eq!(resent.logical_task_id(), 1);
-    assert_eq!(resent.request().ranges, [range("a", "z")]);
+    assert_eq!(resent.request().ranges.to_ranges(), [range("a", "z")]);
     assert_eq!(resent.request().paging_size, 2);
     assert_eq!(resent.page_index(), 2);
 }
@@ -593,11 +613,11 @@ fn rebuild_splits_only_failed_task_and_preserves_prior_page_and_future_attempt()
     assert_eq!(replacement.active_attempt_ids, [4, 5]);
     assert_eq!(runtime.in_flight_attempt_ids(), [2, 4, 5]);
     assert_eq!(
-        runtime.prepared_attempt(4).unwrap().request().ranges,
+        runtime.prepared_attempt(4).unwrap().request().ranges.to_ranges(),
         [range("g", "j")]
     );
     assert_eq!(
-        runtime.prepared_attempt(5).unwrap().request().ranges,
+        runtime.prepared_attempt(5).unwrap().request().ranges.to_ranges(),
         [range("j", "m")]
     );
     assert_eq!(
@@ -609,7 +629,7 @@ fn rebuild_splits_only_failed_task_and_preserves_prior_page_and_future_attempt()
         4
     );
     assert_eq!(
-        runtime.prepared_attempt(2).unwrap().request().ranges,
+        runtime.prepared_attempt(2).unwrap().request().ranges.to_ranges(),
         [range("m", "z")]
     );
     assert_eq!(runtime.prepared_attempt(2).unwrap().logical_task_id(), 2);

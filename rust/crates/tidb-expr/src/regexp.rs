@@ -15,18 +15,72 @@
 //! compatibility adapter owns syntax and character classes; this layer owns
 //! SQL match flags and statement-context caching.
 
+use std::{ops::Range, sync::Arc};
+
+use memchr::memmem::Finder;
 use regex::Regex;
+use tidb_go_regexp::RegexpPredicate;
 
 use crate::EvalError;
 
 /// Go `regexpMemorizedSig`: a cached pattern retains either its compiled
 /// expression or the compile error produced for this statement context.
 #[derive(Clone, Debug)]
-pub(crate) struct RegexpMemorizedSig {
-    pub(crate) result: Result<Regex, EvalError>,
+pub(crate) struct RegexpMemorizedSig<T = PositionalRegexp> {
+    pub(crate) result: Result<T, EvalError>,
 }
 
-fn build_regexp(pattern: &str, match_type: &str) -> Result<Regex, EvalError> {
+#[derive(Clone, Debug)]
+pub(crate) enum PositionalRegexp {
+    Literal(Arc<Finder<'static>>),
+    AsciiFolded(Box<[u8]>),
+    Regex(Regex),
+}
+
+impl PositionalRegexp {
+    pub(crate) fn find_nth(&self, text: &str, index: usize) -> Option<Range<usize>> {
+        match self {
+            Self::Literal(finder) => finder
+                .find_iter(text.as_bytes())
+                .nth(index)
+                .map(|start| start..start + finder.needle().len()),
+            Self::AsciiFolded(literal) => find_ascii_folded(text, literal).nth(index),
+            Self::Regex(regex) => regex.find_iter(text).nth(index).map(|found| found.range()),
+        }
+    }
+}
+
+pub(crate) fn find_ascii_folded<'a>(
+    text: &'a str,
+    literal: &'a [u8],
+) -> impl Iterator<Item = Range<usize>> + 'a {
+    let text = text.as_bytes();
+    let candidates = text
+        .len()
+        .checked_sub(literal.len())
+        .map_or(0, |last| last + 1);
+    let first = literal[0];
+    let mut next_start = 0;
+    memchr::memchr2_iter(
+        first.to_ascii_lowercase(),
+        first.to_ascii_uppercase(),
+        &text[..candidates],
+    )
+    .filter_map(move |start| {
+        let end = start + literal.len();
+        if start < next_start || !text[start..end].eq_ignore_ascii_case(literal) {
+            return None;
+        }
+        next_start = end;
+        Some(start..end)
+    })
+}
+
+fn with_regexp_flags<T>(
+    pattern: &str,
+    match_type: &str,
+    evaluate: impl FnOnce(&str, bool, bool, bool) -> Result<T, String>,
+) -> Result<T, EvalError> {
     if pattern.is_empty() {
         return Err(err_regexp("Empty pattern is invalid"));
     }
@@ -46,13 +100,8 @@ fn build_regexp(pattern: &str, match_type: &str) -> Result<Regex, EvalError> {
         }
     }
 
-    tidb_go_regexp::compile_with_flags(
-        pattern,
-        case_insensitive,
-        multi_line,
-        dot_matches_new_line,
-    )
-    .map_err(|error| err_regexp(&go_compile_error_text(pattern, &error)))
+    evaluate(pattern, case_insensitive, multi_line, dot_matches_new_line)
+        .map_err(|error| err_regexp(&go_compile_error_text(pattern, &error)))
 }
 
 /// Go's `regexp.Compile` error text (`error parsing regexp: <code>: `<arg>``)
@@ -82,8 +131,35 @@ fn go_compile_error_text(pattern: &str, reason: &str) -> String {
 /// functions in `builtin_ext::regexp`. Keeping compilation here makes the
 /// `[NOT] REGEXP` predicate and the positional regexp family share exactly
 /// the same empty-pattern, flag, and syntax validation rules.
-pub(crate) fn compile_regexp(pattern: &str, match_type: &str) -> Result<Regex, EvalError> {
-    build_regexp(pattern, match_type)
+pub(crate) fn compile_regexp(pattern: &str, match_type: &str) -> Result<PositionalRegexp, EvalError> {
+    with_regexp_flags(pattern, match_type, |pattern, insensitive, multiline, dot_all| {
+        let literal = pattern.as_bytes();
+        if is_plain_regexp(literal) {
+            if !insensitive {
+                return Ok(PositionalRegexp::Literal(Arc::new(Finder::new(pattern).into_owned())));
+            }
+            // Go's Unicode simple fold can match K with K and S with ſ.
+            // Only use byte matching for short ASCII literals without those folds.
+            if literal.len() <= 16
+                && literal
+                    .iter()
+                    .all(|byte| byte.is_ascii() && !matches!(byte, b'k' | b'K' | b's' | b'S'))
+            {
+                return Ok(PositionalRegexp::AsciiFolded(literal.into()));
+            }
+        }
+        tidb_go_regexp::compile_with_flags(pattern, insensitive, multiline, dot_all)
+            .map(PositionalRegexp::Regex)
+    })
+}
+
+pub(crate) fn is_plain_regexp(pattern: &[u8]) -> bool {
+    !pattern.is_empty() && pattern.len() <= 256 && !pattern.iter().any(|byte| {
+        matches!(
+            byte,
+            b'\\' | b'.' | b'+' | b'*' | b'?' | b'(' | b')' | b'|' | b'[' | b']' | b'{' | b'}' | b'^' | b'$'
+        )
+    })
 }
 
 /// Go `ErrRegexp` (`ClassExpression.NewStd(mysql.ErrRegexp)`, 1139):
@@ -144,26 +220,31 @@ pub(crate) fn regexp_match_type_with_collation(
     format!("{initial}{match_type}")
 }
 
-/// Returns a compiled pattern, memoizing the result when Go's signature says
-/// both pattern-bearing arguments are constant within the statement context.
+/// Matches a predicate, memoizing the compiled result when both
+/// pattern-bearing arguments are constant within the statement context.
 /// The `Result` itself is cached so an invalid pattern is reported repeatedly
 /// without recompiling, matching `regexpMemorizedSig.memorizedErr`.
-pub(crate) fn get_cached_regexp(
-    cache: &crate::builtin_ext::BuiltinFuncCache<RegexpMemorizedSig>,
+pub(crate) fn regexp_like_with_cache(
+    cache: &crate::builtin_ext::BuiltinFuncCache<RegexpMemorizedSig<RegexpPredicate>>,
     context_id: u64,
     cache_enabled: bool,
+    text: &str,
     pattern: &str,
     match_type: &str,
-) -> Result<Regex, EvalError> {
+) -> Result<bool, EvalError> {
     if !cache_enabled {
-        return compile_regexp(pattern, match_type);
+        return regexp_like(text, pattern, match_type);
     }
     let cached = cache.get_or_init_cache(context_id, || {
         Ok::<_, EvalError>(RegexpMemorizedSig {
-            result: compile_regexp(pattern, match_type),
+            result: with_regexp_flags(pattern, match_type, tidb_go_regexp::compile_predicate),
         })
     })?;
-    cached.result.clone()
+    cached
+        .result
+        .as_ref()
+        .map(|regexp| regexp.is_match(text))
+        .map_err(Clone::clone)
 }
 
 /// `REGEXP_LIKE(expr, pat[, match_type])` over the seed evaluator's UTF-8
@@ -171,7 +252,9 @@ pub(crate) fn get_cached_regexp(
 /// scalar-function layer supplies statement-context caching where the Go
 /// signature permits it.
 pub(crate) fn regexp_like(text: &str, pattern: &str, match_type: &str) -> Result<bool, EvalError> {
-    Ok(build_regexp(pattern, match_type)?.is_match(text))
+    with_regexp_flags(pattern, match_type, |pattern, insensitive, multiline, dot_all| {
+        tidb_go_regexp::is_match_with_flags(text, pattern, insensitive, multiline, dot_all)
+    })
 }
 
 /// Whether `text` matches `pattern` anywhere within it — a genuine

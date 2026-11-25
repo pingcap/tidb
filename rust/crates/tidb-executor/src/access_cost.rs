@@ -59,7 +59,8 @@ mod tests {
                 ndv,
                 lower_bound: Datum::Int(1),
                 upper_bound: Datum::Int(ndv),
-            }],
+            }]
+            .into(),
             ..tidb_stats::Histogram::default()
         }
     }

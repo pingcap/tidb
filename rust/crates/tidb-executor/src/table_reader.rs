@@ -176,7 +176,7 @@ pub struct TableReaderExecutor {
     /// The result being read.
     cur: usize,
     /// Go `kvRanges`.
-    kv_ranges: Vec<tidb_txnkv::KeyRange>,
+    kv_ranges: Option<Arc<tidb_txnkv::PartitionedKeyRanges>>,
     /// Go `paging` (the session's `EnablePaging`; never for a reader built
     /// from handles).
     paging: bool,
@@ -224,7 +224,7 @@ impl TableReaderExecutor {
         e: TableReaderForHandles<'_>,
         handles: &mut [tidb_txnkv::Handle],
     ) -> Result<Self, ExecError> {
-        handles.sort_by(|a, b| a.clone().compare(b).unwrap_or(std::cmp::Ordering::Equal));
+        handles.sort_by(|a, b| a.compare(b).unwrap_or(std::cmp::Ordering::Equal));
         let (kv_ranges, hints) = tidb_distsql::table_handles_to_kv_ranges(e.physical_table_id, handles);
         let (virtual_column_index, virtual_column_ret_field_types) =
             crate::mpp_gather::build_virtual_column_info(e.meta.schema(), &e.columns);
@@ -254,7 +254,7 @@ impl TableReaderExecutor {
             by_items: Vec::new(),
             results: Vec::new(),
             cur: 0,
-            kv_ranges: kv_ranges.clone(),
+            kv_ranges: None,
             paging: false,
             mem_tracker: None,
             dag_size: prost::Message::encoded_len(&e.dag),
@@ -266,6 +266,7 @@ impl TableReaderExecutor {
         let result = reader.select_result(
             &statement,
             KvReq { dag: e.dag, key_ranges: kv_ranges, key_range_hints: hints, partition_id_and_ranges: Vec::new() },
+            true,
         )?;
         reader.results.push(ReaderResult::One(result));
         Ok(reader)
@@ -281,12 +282,13 @@ impl TableReaderExecutor {
         const SIZEOF_KEY_RANGE: usize = 48;
         let ranges = self.ranges.len() * SIZEOF_POINTER
             + self.ranges.iter().map(|range| range.mem_usage() as usize).sum::<usize>();
-        let key_bytes: usize = self.kv_ranges.iter().map(|range| range.start_key.len() + range.end_key.len()).sum();
-        let kv_ranges_cap = if self.kv_ranges.is_empty() {
+        let kv_ranges = self.kv_ranges();
+        let key_bytes: usize = kv_ranges.iter().map(|range| range.start_key.len() + range.end_key.len()).sum();
+        let kv_ranges_cap = if kv_ranges.is_empty() {
             0
         } else {
             tidb_goruntime::go_runtime::go_64_next_slice_capacity_for_element(
-                self.kv_ranges.len(),
+                kv_ranges.len(),
                 0,
                 SIZEOF_KEY_RANGE,
                 tidb_goruntime::go_runtime::GoSliceElementLayout::PointerBearing,
@@ -477,7 +479,7 @@ impl TableReaderExecutor {
             by_items: ts.by_items.clone(),
             results: Vec::new(),
             cur: 0,
-            kv_ranges: Vec::new(),
+            kv_ranges: None,
             paging: crate::remote_scan::pushdown_statement_context(ctx).paging,
             mem_tracker: None,
             dag_size: 0,
@@ -551,12 +553,12 @@ impl TableReaderExecutor {
             dag.user = tidb_store.user.clone();
         }
         self.dag_size = prost::Message::encoded_len(&dag);
-        self.kv_ranges.clone_from(&kv_ranges);
         self.results.clear();
         self.cur = 0;
         let result = self.select_result(
             &statement,
             KvReq { dag, key_ranges: kv_ranges, key_range_hints, partition_id_and_ranges: Vec::new() },
+            true,
         )?;
         self.results.push(ReaderResult::One(result));
         Ok(())
@@ -602,20 +604,34 @@ impl TableReaderExecutor {
     /// Go `kvRanges`.
     #[must_use]
     pub fn kv_ranges(&self) -> &[tidb_txnkv::KeyRange] {
-        &self.kv_ranges
+        self.kv_ranges
+            .as_deref()
+            .map_or(&[], tidb_txnkv::PartitionedKeyRanges::first_partition_ranges)
     }
 
     /// Go `SelectResult` over one request.
     fn select_result(
-        &self,
+        &mut self,
         statement: &tidb_distsql::remote_scan::PushdownStatementContext,
         KvReq { dag, key_ranges, key_range_hints, partition_id_and_ranges }: KvReq,
+        retain_ranges: bool,
     ) -> Result<SelectResponseIter, ExecError> {
         // Go `buildKVReq`: a table read on the DDL owner names its server.
         let tidb_server_id = match self.tidb_store.as_ref().and_then(|tidb| tidb.ddl_owner_server_id.as_ref()) {
             Some(owner) => Some(owner().map_err(|error| ExecError::Internal(error.into()))?),
             None => None,
         };
+        // Keep hints aligned with their ranges when building the envelope.
+        let key_ranges = Arc::new(
+            if !key_range_hints.is_empty() && key_range_hints.len() == key_ranges.len() {
+                tidb_txnkv::PartitionedKeyRanges::new_non_partitioned_with_hints(key_ranges, key_range_hints)
+            } else {
+                tidb_txnkv::PartitionedKeyRanges::new_non_partitioned(key_ranges)
+            },
+        );
+        if retain_ranges {
+            self.kv_ranges = Some(Arc::clone(&key_ranges));
+        }
         crate::cop_reader::open_table_read(
             self.client.as_ref(),
             statement,
@@ -623,7 +639,6 @@ impl TableReaderExecutor {
                 store_type: self.store_type,
                 dag,
                 key_ranges,
-                key_range_hints,
                 partition_id_and_ranges,
                 batch_cop: self.batch_cop,
                 schema_version: self.schema_version,
@@ -663,7 +678,7 @@ impl TableReaderExecutor {
             && self.group_by_col_idxs.is_empty()
         {
             let ranges = &grouped_ranges[0];
-            let mut kv_reqs = if self.batch_cop {
+            let kv_reqs = if self.batch_cop {
                 // Use PartitionTable Scan
                 vec![self.build_kv_req_for_partition_table_scan(statement, dag, ranges)?]
             } else {
@@ -672,11 +687,7 @@ impl TableReaderExecutor {
                 // partition separately.
                 self.build_kv_req_separately(statement, dag, ranges)?
             };
-            self.kv_ranges = sort_and_get_kv_ranges_from_reqs(&mut kv_reqs);
-            return kv_reqs
-                .into_iter()
-                .map(|kv_req| self.select_result(statement, kv_req).map(ReaderResult::One))
-                .collect();
+            return self.select_sorted_requests(statement, kv_reqs, ReaderResult::One);
         }
         let mut kv_reqs = self.build_kv_req_separately_for_grouped_ranges(statement, dag, grouped_ranges)?;
         // Even if it's an empty request, we still need to build a kvReq to
@@ -684,11 +695,7 @@ impl TableReaderExecutor {
         if kv_reqs.is_empty() {
             kv_reqs.push(self.build_kv_req(statement, dag, &[])?);
         }
-        self.kv_ranges = sort_and_get_kv_ranges_from_reqs(&mut kv_reqs);
-        let mut results = kv_reqs
-            .into_iter()
-            .map(|kv_req| self.select_result(statement, kv_req))
-            .collect::<Result<Vec<_>, _>>()?;
+        let mut results = self.select_sorted_requests(statement, kv_reqs, std::convert::identity)?;
         if results.len() == 1 {
             return Ok(results.drain(..).map(ReaderResult::One).collect());
         }
@@ -700,6 +707,29 @@ impl TableReaderExecutor {
         )?
         .with_mem_tracker(self.mem_tracker.clone());
         Ok(vec![ReaderResult::Sorted(merged)])
+    }
+
+    fn select_sorted_requests<T>(
+        &mut self,
+        statement: &tidb_distsql::remote_scan::PushdownStatementContext,
+        mut requests: Vec<KvReq>,
+        mut map_result: impl FnMut(SelectResponseIter) -> T,
+    ) -> Result<Vec<T>, ExecError> {
+        if matches!(requests.as_slice(), [request] if request.partition_id_and_ranges.is_empty()) {
+            let mut request = requests.pop().expect("one table reader request");
+            request.key_ranges.sort_by(compare_range_start);
+            return Ok(vec![map_result(self.select_result(statement, request, true)?)]);
+        }
+
+        let sorted = sort_and_get_kv_ranges_from_reqs(&mut requests);
+        self.kv_ranges = Some(tidb_txnkv::PartitionedKeyRanges::new_non_partitioned(sorted).into());
+        requests
+            .into_iter()
+            .map(|request| {
+                self.select_result(statement, request, false)
+                    .map(&mut map_result)
+            })
+            .collect()
     }
 
     /// Go `buildKVReqSeparatelyForGroupedRanges`.
@@ -789,18 +819,21 @@ struct KvReq {
 /// Go `sortAndGetKVRangesFromReqs`: each request's ranges sorted in place,
 /// then all of them, sorted.
 fn sort_and_get_kv_ranges_from_reqs(kv_reqs: &mut [KvReq]) -> Vec<tidb_txnkv::KeyRange> {
-    let by_start_key = |a: &tidb_txnkv::KeyRange, b: &tidb_txnkv::KeyRange| a.start_key.cmp(&b.start_key);
     let mut kv_ranges = Vec::new();
     for kv_req in kv_reqs {
-        kv_req.key_ranges.sort_by(by_start_key);
+        kv_req.key_ranges.sort_by(compare_range_start);
         kv_ranges.extend(kv_req.key_ranges.iter().cloned());
         for partition in &mut kv_req.partition_id_and_ranges {
-            partition.key_ranges.sort_by(by_start_key);
+            partition.key_ranges.sort_by(compare_range_start);
             kv_ranges.extend(partition.key_ranges.iter().cloned());
         }
     }
-    kv_ranges.sort_by(by_start_key);
+    kv_ranges.sort_by(compare_range_start);
     kv_ranges
+}
+
+fn compare_range_start(a: &tidb_txnkv::KeyRange, b: &tidb_txnkv::KeyRange) -> std::cmp::Ordering {
+    a.start_key.cmp(&b.start_key)
 }
 
 /// Go `internalutil.UpdateExecutorTableID` over the DAG's root executor (a
@@ -866,7 +899,7 @@ impl Executor for TableReaderExecutor {
             None => statement.memory.operator_tracker(self.meta.id()),
         };
         self.mem_tracker = Some(tracker);
-        self.kv_ranges.clear();
+        self.kv_ranges = None;
         self.results.clear();
         self.cur = 0;
         // Go `corColInAccess`: the ranges rebuilt over the outer row, and
@@ -915,10 +948,12 @@ impl Executor for TableReaderExecutor {
                 // are differ, we need to reverse the kv range here.
                 std::mem::swap(&mut first_part_grouped_ranges, &mut second_part_grouped_ranges);
             }
+            let mut kv_ranges = Vec::new();
             for ranges in first_part_grouped_ranges.iter().chain(&second_part_grouped_ranges) {
                 let kv_req = self.build_kv_req(&statement, &dag, ranges)?;
-                self.kv_ranges.extend(kv_req.key_ranges);
+                kv_ranges.extend(kv_req.key_ranges);
             }
+            self.kv_ranges = Some(tidb_txnkv::PartitionedKeyRanges::new_non_partitioned(kv_ranges).into());
             return Ok(());
         }
         // Go `buildRespForGroupedRanges` assigns `e.kvRanges` on each call,

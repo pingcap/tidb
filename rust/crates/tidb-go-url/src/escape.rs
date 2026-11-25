@@ -1,6 +1,8 @@
 //! Go `net/url`'s escaping: `shouldEscape`, `unescape`, `escape` and their
 //! exported wrappers.
 
+use std::borrow::Cow;
+
 use crate::Error;
 
 /// Go `url.encoding`.
@@ -34,6 +36,36 @@ pub(crate) fn unhex(c: u8) -> u8 {
 
 /// Go `shouldEscape`: whether `c` is escaped in the URL section `mode`.
 pub(crate) fn should_escape(c: u8, mode: Encoding) -> bool {
+    ESCAPE[mode as usize][usize::from(c)]
+}
+
+// Generate each row from the Go rules, so escaping and host validation
+// classify bytes without repeating the character tests.
+const ESCAPE: [[bool; 256]; 7] = {
+    use Encoding::*;
+    let modes = [
+        Path,
+        PathSegment,
+        Host,
+        Zone,
+        UserPassword,
+        QueryComponent,
+        Fragment,
+    ];
+    let mut table = [[false; 256]; 7];
+    let mut i = 0;
+    while i < modes.len() {
+        let mut c = 0;
+        while c < 256 {
+            table[modes[i] as usize][c] = escape_rule(c as u8, modes[i]);
+            c += 1;
+        }
+        i += 1;
+    }
+    table
+};
+
+const fn escape_rule(c: u8, mode: Encoding) -> bool {
     use Encoding as E;
     if c.is_ascii_alphanumeric() {
         return false;
@@ -73,7 +105,7 @@ pub(crate) fn should_escape(c: u8, mode: Encoding) -> bool {
         },
         _ => {}
     }
-    if mode == E::Fragment && matches!(c, b'!' | b'(' | b')' | b'*') {
+    if matches!(mode, E::Fragment) && matches!(c, b'!' | b'(' | b')' | b'*') {
         return false;
     }
     true
@@ -81,9 +113,20 @@ pub(crate) fn should_escape(c: u8, mode: Encoding) -> bool {
 
 /// Go `unescape`.
 pub(crate) fn unescape(s: &[u8], mode: Encoding) -> Result<Vec<u8>, Error> {
+    if matches!(
+        mode,
+        Encoding::Path | Encoding::PathSegment | Encoding::Fragment
+    ) && !s.contains(&b'%')
+    {
+        return Ok(s.to_vec());
+    }
+    unescape_from(s, mode, 0)
+}
+
+fn unescape_from(s: &[u8], mode: Encoding, start: usize) -> Result<Vec<u8>, Error> {
     let mut n = 0;
     let mut has_plus = false;
-    let mut i = 0;
+    let mut i = start;
     while i < s.len() {
         match s[i] {
             b'%' => {
@@ -122,7 +165,8 @@ pub(crate) fn unescape(s: &[u8], mode: Encoding) -> Result<Vec<u8>, Error> {
         return Ok(s.to_vec());
     }
     let mut t = Vec::with_capacity(s.len() - 2 * n);
-    let mut i = 0;
+    t.extend_from_slice(&s[..start]);
+    let mut i = start;
     while i < s.len() {
         match s[i] {
             b'%' => {
@@ -139,26 +183,83 @@ pub(crate) fn unescape(s: &[u8], mode: Encoding) -> Result<Vec<u8>, Error> {
 
 /// Go `escape`.
 pub(crate) fn escape(s: &[u8], mode: Encoding) -> Vec<u8> {
-    let mut t = Vec::with_capacity(s.len());
-    for &c in s {
-        if c == b' ' && mode == Encoding::QueryComponent {
+    escape_cow(s, mode).into_owned()
+}
+
+pub(crate) fn escape_cow(s: &[u8], mode: Encoding) -> Cow<'_, [u8]> {
+    let row = &ESCAPE[mode as usize];
+    let Some(first) = s.iter().position(|&c| row[usize::from(c)]) else {
+        return Cow::Borrowed(s);
+    };
+    let mut out = Vec::with_capacity(s.len() + 2);
+    append_from_escape(&mut out, s, mode, first);
+    Cow::Owned(out)
+}
+
+/// Append an escaped component when the caller is already building a URL.
+pub(crate) fn append_escaped(t: &mut Vec<u8>, s: &[u8], mode: Encoding) {
+    let row = &ESCAPE[mode as usize];
+    let Some(first) = s.iter().position(|&c| row[usize::from(c)]) else {
+        t.extend_from_slice(s);
+        return;
+    };
+    t.reserve(s.len() + 2);
+    append_from_escape(t, s, mode, first);
+}
+
+fn append_from_escape(t: &mut Vec<u8>, s: &[u8], mode: Encoding, first: usize) {
+    let row = &ESCAPE[mode as usize];
+    t.extend_from_slice(&s[..first]);
+    for &c in &s[first..] {
+        if !row[usize::from(c)] {
+            t.push(c);
+        } else if c == b' ' && mode == Encoding::QueryComponent {
             t.push(b'+');
-        } else if should_escape(c, mode) {
+        } else {
             t.extend_from_slice(&[
                 b'%',
                 UPPERHEX[usize::from(c >> 4)],
                 UPPERHEX[usize::from(c & 15)],
             ]);
-        } else {
-            t.push(c);
         }
     }
-    t
+}
+
+/// Checks a path or fragment hint against the decoded bytes without allocating.
+pub(crate) fn unescape_matches(mut raw: &[u8], mut decoded: &[u8]) -> bool {
+    while let Some((&first, tail)) = raw.split_first() {
+        let byte = if first == b'%' {
+            let Some(([upper, lower], rest)) = tail.split_first_chunk::<2>() else {
+                return false;
+            };
+            if !ishex(*upper) || !ishex(*lower) {
+                return false;
+            }
+            raw = rest;
+            (unhex(*upper) << 4) | unhex(*lower)
+        } else {
+            raw = tail;
+            first
+        };
+        let Some(rest) = decoded.strip_prefix(&[byte]) else {
+            return false;
+        };
+        decoded = rest;
+    }
+    decoded.is_empty()
 }
 
 /// Go `url.QueryUnescape`.
 pub fn query_unescape(s: &[u8]) -> Result<Vec<u8>, Error> {
-    unescape(s, Encoding::QueryComponent)
+    query_unescape_cow(s).map(Cow::into_owned)
+}
+
+/// Borrows an unchanged component and skips its plain prefix when decoding.
+pub(crate) fn query_unescape_cow(s: &[u8]) -> Result<Cow<'_, [u8]>, Error> {
+    let Some(first) = memchr::memchr2(b'%', b'+', s) else {
+        return Ok(Cow::Borrowed(s));
+    };
+    unescape_from(s, Encoding::QueryComponent, first).map(Cow::Owned)
 }
 
 /// Go `url.PathUnescape`.

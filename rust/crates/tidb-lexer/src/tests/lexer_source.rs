@@ -1515,3 +1515,25 @@ fn gbk_client_skips_multibyte_characters_in_quotes() {
     assert_eq!(skip_rune_len(gb18030, &carry(b"\x81\x30\x81\x30")), 10);
     assert_eq!(skip_rune_len(utf8, "\u{e9}'"), 2);
 }
+
+#[test]
+fn quoted_string_search_handles_utf8_escapes_and_end_of_input() {
+    use crate::{Lexer, LiteralValue, SqlMode, TokenKind};
+
+    let mut lexer = Lexer::new("'雪''x\\_\\%\\n' tail");
+    assert_eq!(
+        lexer.next_literal(),
+        LiteralValue::String("雪'x\\_\\%\n".as_bytes().to_vec()),
+    );
+    assert_eq!(lexer.next_token().text, "tail");
+    assert_eq!(Lexer::new("'a\\'").next_token().kind, TokenKind::Invalid);
+
+    let no_backslash = SqlMode {
+        no_backslash_escapes: true,
+        ..SqlMode::default()
+    };
+    assert_eq!(
+        Lexer::new("'a\\'").with_sql_mode(no_backslash).next_literal(),
+        LiteralValue::String(b"a\\".to_vec()),
+    );
+}

@@ -14,26 +14,82 @@
 
 //! Go `pkg/statistics/handle/cache/metrics`.
 
-use std::sync::{LazyLock, RwLock};
+use std::sync::{LazyLock, Mutex};
 
-use prometheus::{
-    exponential_buckets, Counter, CounterVec, Gauge, GaugeVec, Histogram, HistogramOpts, Opts,
-};
+use prometheus::core::{Atomic, AtomicU64, GenericCounter, GenericCounterVec};
+use prometheus::{exponential_buckets, Gauge, GaugeVec, Histogram, HistogramOpts, Opts};
+use tidb_zeropool::ThreadShards;
+
+/// Value of a statistics cache operation counter.
+pub struct CacheOpValue {
+    increments: ThreadShards<AtomicU64>,
+    base: Mutex<u64>,
+}
+
+impl CacheOpValue {
+    fn total(&self) -> u64 {
+        self.increments
+            .iter()
+            .map(Atomic::get)
+            .fold(0, u64::wrapping_add)
+    }
+}
+
+impl Atomic for CacheOpValue {
+    type T = u64;
+
+    fn new(value: u64) -> Self {
+        Self {
+            increments: ThreadShards::new(|| AtomicU64::new(0)),
+            base: Mutex::new(value),
+        }
+    }
+
+    fn set(&self, value: u64) {
+        let mut base = self
+            .base
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        // Apply resets as an offset so they never clear a shard's increments.
+        *base = value.wrapping_sub(self.total());
+    }
+
+    fn get(&self) -> u64 {
+        let base = self
+            .base
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        base.wrapping_add(self.total())
+    }
+
+    #[inline]
+    fn inc_by(&self, delta: u64) {
+        self.increments.local().inc_by(delta);
+    }
+
+    #[inline]
+    fn dec_by(&self, delta: u64) {
+        self.increments.local().dec_by(delta);
+    }
+}
+
+/// Statistics cache operation counter exported as a single Prometheus series.
+pub type CacheOpCounter = GenericCounter<CacheOpValue>;
 
 #[derive(Clone)]
 struct MetricsVars {
-    miss_counter: Counter,
-    hit_counter: Counter,
-    update_counter: Counter,
-    del_counter: Counter,
-    evict_counter: Counter,
-    reject_counter: Counter,
+    miss_counter: CacheOpCounter,
+    hit_counter: CacheOpCounter,
+    update_counter: CacheOpCounter,
+    del_counter: CacheOpCounter,
+    evict_counter: CacheOpCounter,
+    reject_counter: CacheOpCounter,
     cost_gauge: Gauge,
     capacity_gauge: Gauge,
 }
 
-static STATS_CACHE_COUNTER: LazyLock<CounterVec> = LazyLock::new(|| {
-    let metric = CounterVec::new(
+static STATS_CACHE_COUNTER: LazyLock<GenericCounterVec<CacheOpValue>> = LazyLock::new(|| {
+    let metric = GenericCounterVec::new(
         Opts::new("stats_cache_op", "Counter for statsCache operation")
             .namespace("tidb")
             .subsystem("statistics"),
@@ -73,14 +129,23 @@ fn bind_metrics_vars() -> MetricsVars {
     }
 }
 
-static METRICS_VARS: LazyLock<RwLock<MetricsVars>> =
-    LazyLock::new(|| RwLock::new(bind_metrics_vars()));
+static METRICS_VARS: LazyLock<MetricsVars> = LazyLock::new(bind_metrics_vars);
 
 /// Go `InitMetricsVars`.
 pub fn init_metrics_vars() {
-    *METRICS_VARS
-        .write()
-        .unwrap_or_else(std::sync::PoisonError::into_inner) = bind_metrics_vars();
+    // The collector's label children remain registered for its lifetime.
+    LazyLock::force(&METRICS_VARS);
+}
+
+/// Records one cache hit or miss on the registered counter.
+#[inline]
+pub fn record_lookup(hit: bool) {
+    let counter = if hit {
+        &METRICS_VARS.hit_counter
+    } else {
+        &METRICS_VARS.miss_counter
+    };
+    counter.inc();
 }
 
 macro_rules! metric_accessor {
@@ -88,21 +153,17 @@ macro_rules! metric_accessor {
         #[doc = concat!("Clones Go `", stringify!($field), "`.")]
         #[must_use]
         pub fn $name() -> $ty {
-            METRICS_VARS
-                .read()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .$field
-                .clone()
+            METRICS_VARS.$field.clone()
         }
     };
 }
 
-metric_accessor!(miss_counter, miss_counter, Counter);
-metric_accessor!(hit_counter, hit_counter, Counter);
-metric_accessor!(update_counter, update_counter, Counter);
-metric_accessor!(del_counter, del_counter, Counter);
-metric_accessor!(evict_counter, evict_counter, Counter);
-metric_accessor!(reject_counter, reject_counter, Counter);
+metric_accessor!(miss_counter, miss_counter, CacheOpCounter);
+metric_accessor!(hit_counter, hit_counter, CacheOpCounter);
+metric_accessor!(update_counter, update_counter, CacheOpCounter);
+metric_accessor!(del_counter, del_counter, CacheOpCounter);
+metric_accessor!(evict_counter, evict_counter, CacheOpCounter);
+metric_accessor!(reject_counter, reject_counter, CacheOpCounter);
 metric_accessor!(cost_gauge, cost_gauge, Gauge);
 metric_accessor!(capacity_gauge, capacity_gauge, Gauge);
 
@@ -139,6 +200,28 @@ mod tests {
     use super::*;
 
     #[test]
+    fn operation_counter_sums_concurrent_increments_after_reset() {
+        let counter = CacheOpCounter::new("cache_ops", "Cache operations").unwrap();
+        let other = counter.clone();
+        counter.inc_by(17);
+        counter.reset();
+        assert_eq!(other.get(), 0);
+
+        std::thread::scope(|scope| {
+            for _ in 0..8 {
+                scope.spawn(|| {
+                    for _ in 0..2048 {
+                        counter.inc();
+                    }
+                });
+            }
+        });
+        assert_eq!(other.get(), 16_384);
+        let metric = prometheus::core::Metric::metric(&other);
+        assert_eq!(metric.get_counter().get_value(), 16_384.0);
+    }
+
+    #[test]
     fn source_labels_bind_distinct_children() {
         init_metrics_vars();
         let before = [
@@ -149,8 +232,8 @@ mod tests {
             evict_counter().get(),
             reject_counter().get(),
         ];
-        miss_counter().inc();
-        hit_counter().inc();
+        record_lookup(false);
+        record_lookup(true);
         update_counter().inc();
         del_counter().inc();
         evict_counter().inc();
@@ -164,7 +247,7 @@ mod tests {
             reject_counter().get(),
         ];
         for (before, after) in before.into_iter().zip(after) {
-            assert_eq!(after, before + 1.0);
+            assert_eq!(after, before + 1);
         }
 
         cost_gauge().set(12.0);

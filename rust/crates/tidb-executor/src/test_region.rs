@@ -298,12 +298,12 @@ pub(crate) fn run_dag(
         store,
         &tidb_proto::coprocessor::Request {
             tp: tidb_unistore_cophandler::REQ_TYPE_DAG,
-            data: summarized.encode_to_vec(),
+            data: summarized.encode_to_vec().into(),
             ranges: ranges
                 .iter()
                 .map(|(start, end)| tidb_proto::coprocessor::KeyRange {
-                    start: start.clone(),
-                    end: end.clone(),
+                    start: start.clone().into(),
+                    end: end.clone().into(),
                 })
                 .collect(),
             start_ts,

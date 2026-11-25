@@ -21,7 +21,7 @@
 use std::fmt;
 
 use sha1::{Digest, Sha1};
-use sha2::Sha256;
+use sha2::{Digest as _, Sha256};
 use subtle::ConstantTimeEq;
 use tidb_parser_format::{RestoreCtx, RestoreWriter};
 use tidb_mysql::{AuthCachingSha2Password, AuthTiDBSM3Password};

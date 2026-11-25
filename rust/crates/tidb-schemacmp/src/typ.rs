@@ -14,7 +14,7 @@
 
 //! Go `pkg/util/schemacmp/type.go`: the column field-type lattice.
 
-use std::any::Any;
+use std::{any::Any, fmt::Display};
 
 use tidb_datatype::{FieldType, FieldTypeBuilder, FieldTypeCode};
 use tidb_goruntime::GoString;
@@ -25,10 +25,11 @@ use tidb_mysql::types::{
     TypeTiny, TypeYear, UniqueKeyFlag,
 };
 
-use crate::charset_collation::{charset, collation};
+use crate::charset_collation::{CollationLattice, charset, collation};
 use crate::lattice::{
-    field_tp, maybe, singleton, type_mismatch_error, Bool, Byte, IncompatibleError, Int, Lattice,
-    StringList, Tuple, Value,
+    IncompatibleError, Lattice, StringList, Value, combine_compare_result,
+    compare_field_type_codes, distinct_singletons_error, type_mismatch_error,
+    wrap_tuple_index_error,
 };
 
 const FLAG_MASK_KEYS: u64 = (PriKeyFlag | UniqueKeyFlag | MultipleKeyFlag) as u64;
@@ -37,17 +38,16 @@ const FLAG_MASK_DEF_VAL: u64 = (AutoIncrementFlag | NoDefaultValueFlag) as u64;
 /// Go `notPartOfKeys` (`^byte(0)`).
 pub(crate) const NOT_PART_OF_KEYS: u8 = !0;
 
-// Please ensure this list is synchronized with the order of `Tuple(...)` in
-// `encode_field_type_to_lattice`.
-pub(crate) const FIELD_TYPE_TUPLE_INDEX_TP: usize = 0;
-pub(crate) const FIELD_TYPE_TUPLE_INDEX_FLEN: usize = 1;
-pub(crate) const FIELD_TYPE_TUPLE_INDEX_DEC: usize = 2;
-pub(crate) const FIELD_TYPE_TUPLE_INDEX_FLAG_SINGLETON: usize = 3;
-pub(crate) const FIELD_TYPE_TUPLE_INDEX_FLAG_NULL: usize = 4;
-pub(crate) const FIELD_TYPE_TUPLE_INDEX_FLAG_ANTI_KEYS: usize = 5;
-pub(crate) const FIELD_TYPE_TUPLE_INDEX_FLAG_DEF_VAL: usize = 6;
-pub(crate) const FIELD_TYPE_TUPLE_INDEX_COLLATE: usize = 7;
-pub(crate) const FIELD_TYPE_TUPLE_INDEX_ELEMS: usize = 8;
+// Indices in Go's field type tuple, in comparison and join order.
+const TYPE_INDEX: usize = 0;
+const LENGTH_INDEX: usize = 1;
+const DECIMAL_INDEX: usize = 2;
+const FLAGS_INDEX: usize = 3;
+const NULLABLE_INDEX: usize = 4;
+const ANTI_KEYS_INDEX: usize = 5;
+const DEFAULT_INDEX: usize = 6;
+const COLLATION_INDEX: usize = 7;
+const ELEMS_INDEX: usize = 8;
 
 /// Go `ErrMsgAutoTypeWithoutKey`.
 pub const ERR_MSG_AUTO_TYPE_WITHOUT_KEY: &str = "auto type but not defined as a key";
@@ -64,132 +64,98 @@ fn decode_anti_keys(encoded: u8) -> u64 {
     u64::from((!encoded).reverse_bits())
 }
 
-/// Go `encodeFieldTypeToLattice`.
-fn encode_field_type_to_lattice(ft: &FieldType) -> Tuple {
-    let flag = ft.raw_flags();
-    let (flen, dec): (Box<dyn Lattice>, Box<dyn Lattice>) =
-        if ft.code().mysql_type() == TypeNewDecimal {
-            (
-                singleton(Value::Int(ft.flen())),
-                singleton(Value::Int(ft.decimal())),
-            )
-        } else {
-            (Box::new(Int(ft.flen())), Box::new(Int(ft.decimal())))
-        };
-
-    let def_val = if flag & AutoIncrementFlag as u64 != 0 || flag & NoDefaultValueFlag as u64 == 0 {
-        maybe(Some(singleton(Value::Uint(flag & FLAG_MASK_DEF_VAL))))
+fn compare_singletons<T: Copy + Eq + Display>(left: T, right: T) -> Result<i32, IncompatibleError> {
+    if left == right {
+        Ok(0)
     } else {
-        maybe(None)
-    };
-
-    Tuple(vec![
-        field_tp(ft.code().mysql_type()),
-        flen,
-        dec,
-        // TODO(from Go): recognize if the remaining flags can be merged or not.
-        singleton(Value::Uint(
-            flag & !(FLAG_MASK_DEF_VAL | NotNullFlag as u64 | FLAG_MASK_KEYS),
-        )),
-        Box::new(Bool(flag & NotNullFlag as u64 == 0)),
-        Box::new(Byte(encode_anti_keys(flag))),
-        def_val,
-        Box::new(collation(ft.collation_name())),
-        Box::new(StringList(ft.elems_snapshot())),
-    ])
+        Err(distinct_singletons_error(
+            &left.to_string(),
+            &right.to_string(),
+        ))
+    }
 }
 
-/// Go `decodeFieldTypeFromLattice`.
-fn decode_field_type_from_lattice(tup: &Tuple) -> FieldType {
-    let Value::List(lst) = tup.unwrap() else {
-        unreachable!("a tuple unwraps to a list");
-    };
-
-    let &Value::Uint(mut flags) = &lst[FIELD_TYPE_TUPLE_INDEX_FLAG_SINGLETON] else {
-        unreachable!("the flag singleton holds a Go uint");
-    };
-    let &Value::Byte(anti_keys) = &lst[FIELD_TYPE_TUPLE_INDEX_FLAG_ANTI_KEYS] else {
-        unreachable!("the anti-keys entry holds a Go byte");
-    };
-    flags |= decode_anti_keys(anti_keys);
-    if lst[FIELD_TYPE_TUPLE_INDEX_FLAG_NULL] != Value::Bool(true) {
-        flags |= NotNullFlag as u64;
-    }
-    if let &Value::Uint(def_val) = &lst[FIELD_TYPE_TUPLE_INDEX_FLAG_DEF_VAL] {
-        flags |= def_val;
-    } else {
-        flags |= NoDefaultValueFlag as u64;
-    }
-
-    let Value::Str(collate) = &lst[FIELD_TYPE_TUPLE_INDEX_COLLATE] else {
-        unreachable!("the collate entry holds a Go string");
-    };
-    let collate = collate.to_utf8_lossy_go();
-    let mut charset_name = collate
-        .split_once('_')
-        .map_or(collate.as_str(), |cut| cut.0);
-    if charset_name.is_empty() {
-        charset_name = collate.as_str();
-    }
-    let Value::Str(charset_name) = charset(charset_name).unwrap() else {
-        unreachable!("a charset lattice unwraps to a Go string");
-    };
-
-    let (Value::Byte(tp), Value::Int(flen), Value::Int(dec)) = (
-        &lst[FIELD_TYPE_TUPLE_INDEX_TP],
-        &lst[FIELD_TYPE_TUPLE_INDEX_FLEN],
-        &lst[FIELD_TYPE_TUPLE_INDEX_DEC],
-    ) else {
-        unreachable!("the type/flen/decimal entries hold byte and int values");
-    };
-    let Value::StringList(elems) = &lst[FIELD_TYPE_TUPLE_INDEX_ELEMS] else {
-        unreachable!("the elems entry holds a Go string list");
-    };
-
-    FieldTypeBuilder::new()
-        .with_code(FieldTypeCode::from_mysql_type(*tp))
-        .flen_set(*flen)
-        .decimal_set(*dec)
-        .charset_set(charset_name.to_utf8_lossy_go())
-        .collation_set(collate)
-        .elems(elems.iter().cloned())
-        .build()
-        .with_raw_flags(flags)
-}
-
-/// Go's unexported `typ` struct (an embedded `Tuple`), returned by
-/// [`Typ::new`].
+/// Go's unexported `typ` struct, returned by [`Typ::new`].
+///
+/// The Go tuple's nine components have fixed types. Rust stores them together
+/// while keeping the same comparison and join order.
 #[derive(Clone, Debug)]
 pub struct Typ {
-    pub(crate) tuple: Tuple,
+    tp: u8,
+    flen: i64,
+    decimal: i64,
+    flags: u64,
+    nullable: bool,
+    anti_keys: u8,
+    default_flags: Option<u64>,
+    collation: CollationLattice,
+    elems: StringList,
 }
 
 impl Typ {
-    /// Go `Type`: creates the lattice of a column field type.
+    /// Go `Type` and `encodeFieldTypeToLattice`.
     pub fn new(ft: &FieldType) -> Self {
+        let flag = ft.raw_flags();
         Self {
-            tuple: encode_field_type_to_lattice(ft),
+            tp: ft.code().mysql_type(),
+            flen: ft.flen(),
+            decimal: ft.decimal(),
+            flags: flag & !(FLAG_MASK_DEF_VAL | NotNullFlag as u64 | FLAG_MASK_KEYS),
+            nullable: flag & NotNullFlag as u64 == 0,
+            anti_keys: encode_anti_keys(flag),
+            default_flags: (flag & AutoIncrementFlag as u64 != 0
+                || flag & NoDefaultValueFlag as u64 == 0)
+                .then_some(flag & FLAG_MASK_DEF_VAL),
+            collation: collation(ft.collation_name()),
+            elems: StringList(ft.elems_snapshot()),
         }
+    }
+
+    /// Go `decodeFieldTypeFromLattice`.
+    pub(crate) fn decode_field_type(&self) -> FieldType {
+        let mut flags = self.flags | decode_anti_keys(self.anti_keys);
+        if !self.nullable {
+            flags |= NotNullFlag as u64;
+        }
+        flags |= self.default_flags.unwrap_or(NoDefaultValueFlag as u64);
+
+        let collate = self.collation.unwrap_string();
+        let charset_name = collate
+            .split_once('_')
+            .map_or(collate.as_str(), |cut| cut.0);
+        let charset_name = if charset_name.is_empty() {
+            collate.as_str()
+        } else {
+            charset_name
+        };
+        let Value::Str(charset_name) = charset(charset_name).unwrap() else {
+            unreachable!("a charset lattice unwraps to a Go string");
+        };
+
+        FieldTypeBuilder::new()
+            .with_code(FieldTypeCode::from_mysql_type(self.tp))
+            .flen_set(self.flen)
+            .decimal_set(self.decimal)
+            .charset_set(charset_name.to_utf8_lossy_go())
+            .collation_set(collate)
+            .elems(self.elems.0.iter().cloned())
+            .build()
+            .with_raw_flags(flags)
     }
 
     /// Go `hasDefault`.
     pub(crate) fn has_default(&self) -> bool {
-        self.tuple.0[FIELD_TYPE_TUPLE_INDEX_FLAG_DEF_VAL].unwrap() != Value::Nil
+        self.default_flags.is_some()
     }
 
     /// Go `setFlagForMissingColumn`: adjusts the flags of the type for
     /// filling in a missing column. Returns whether the column had no default
     /// values.
     pub(crate) fn set_flag_for_missing_column(&mut self) -> bool {
-        self.tuple.0[FIELD_TYPE_TUPLE_INDEX_FLAG_ANTI_KEYS] = Box::new(Byte(NOT_PART_OF_KEYS));
-        let (def_val, ok) = match self.tuple.0[FIELD_TYPE_TUPLE_INDEX_FLAG_DEF_VAL].unwrap() {
-            Value::Uint(def_val) => (def_val, true),
-            _ => (0, false),
-        };
-        if !ok || def_val & NoDefaultValueFlag as u64 != 0 {
-            self.tuple.0[FIELD_TYPE_TUPLE_INDEX_FLAG_DEF_VAL] = maybe(Some(singleton(
-                Value::Uint(def_val & !(NoDefaultValueFlag as u64)),
-            )));
+        self.anti_keys = NOT_PART_OF_KEYS;
+        let default = self.default_flags.unwrap_or(NoDefaultValueFlag as u64);
+        if default & NoDefaultValueFlag as u64 != 0 {
+            self.default_flags = Some(default & !(NoDefaultValueFlag as u64));
             return true;
         }
         false
@@ -197,41 +163,53 @@ impl Typ {
 
     /// Go `isNotNull`.
     pub(crate) fn is_not_null(&self) -> bool {
-        self.tuple.0[FIELD_TYPE_TUPLE_INDEX_FLAG_NULL].unwrap() != Value::Bool(true)
+        !self.nullable
     }
 
     /// Go `inAutoIncrement`.
     pub(crate) fn in_auto_increment(&self) -> bool {
-        matches!(
-            self.tuple.0[FIELD_TYPE_TUPLE_INDEX_FLAG_DEF_VAL].unwrap(),
-            Value::Uint(def_val) if def_val & AutoIncrementFlag as u64 != 0
-        )
+        self.default_flags
+            .is_some_and(|flag| flag & AutoIncrementFlag as u64 != 0)
     }
 
     /// Go `setAntiKeyFlags`.
     pub(crate) fn set_anti_key_flags(&mut self, flag: u64) {
-        self.tuple.0[FIELD_TYPE_TUPLE_INDEX_FLAG_ANTI_KEYS] =
-            Box::new(Byte(encode_anti_keys(flag)));
+        self.anti_keys = encode_anti_keys(flag);
+    }
+
+    fn compare_dimension(&self, left: i64, right: i64) -> Result<i32, IncompatibleError> {
+        if self.tp == TypeNewDecimal {
+            compare_singletons(left, right)
+        } else {
+            Ok(left.cmp(&right) as i32)
+        }
+    }
+
+    fn compare_default_flags(&self, other: &Self) -> Result<i32, IncompatibleError> {
+        match (self.default_flags, other.default_flags) {
+            (Some(left), Some(right)) => compare_singletons(left, right),
+            (None, None) => Ok(0),
+            (Some(_), None) => Ok(1),
+            (None, Some(_)) => Ok(-1),
+        }
     }
 
     /// Go `getStandardDefaultValue`.
     // The `mysql.Type*` constants keep their Go spellings in `tidb_mysql`.
     #[allow(non_upper_case_globals)]
     pub(crate) fn get_standard_default_value(&self) -> Value {
-        let mut tail = String::new();
-        if let Value::Int(dec) = self.tuple.0[FIELD_TYPE_TUPLE_INDEX_DEC].unwrap() {
-            if dec > 0 {
-                tail = format!(
-                    ".{}",
-                    "0".repeat(usize::try_from(dec).expect("a positive decimal count fits usize"))
-                );
-            }
-        }
-
-        let Value::Byte(tp) = self.tuple.0[FIELD_TYPE_TUPLE_INDEX_TP].unwrap() else {
-            unreachable!("the type entry holds a Go byte");
+        let tail = if self.decimal > 0 {
+            format!(
+                ".{}",
+                "0".repeat(
+                    usize::try_from(self.decimal).expect("a positive decimal count fits usize")
+                )
+            )
+        } else {
+            String::new()
         };
-        let text: String = match tp {
+
+        let text: String = match self.tp {
             TypeTiny | TypeInt24 | TypeShort | TypeLong | TypeLonglong | TypeFloat | TypeDouble
             | TypeNewDecimal => "0".to_owned(),
             TypeTimestamp | TypeDatetime => format!("0000-00-00 00:00:00{tail}"),
@@ -240,25 +218,11 @@ impl Typ {
             TypeYear => "0000".to_owned(),
             TypeJSON => "null".to_owned(),
             TypeTiDBVectorFloat32 => "[]".to_owned(),
-            TypeEnum => {
-                let Value::StringList(elems) = self.tuple.0[FIELD_TYPE_TUPLE_INDEX_ELEMS].unwrap()
-                else {
-                    unreachable!("the elems entry holds a Go string list");
-                };
-                return Value::Str(elems[0].clone());
-            }
+            TypeEnum => return Value::Str(self.elems.0[0].clone()),
             TypeString => {
-                // ref https://github.com/pingcap/tidb/blob/66948b2fd9bec8ea11644770a2fa746c7eba1a1f/ddl/ddl_api.go#L3916
-                // Go `charset.CollationBin` is "binary".
-                if self.tuple.0[FIELD_TYPE_TUPLE_INDEX_COLLATE].unwrap()
-                    == Value::Str(GoString::from("binary"))
-                {
-                    let Value::Int(flen) = self.tuple.0[FIELD_TYPE_TUPLE_INDEX_FLEN].unwrap()
-                    else {
-                        unreachable!("the flen entry holds a Go int");
-                    };
+                if self.collation.is_binary() {
                     let zeroes =
-                        vec![0_u8; usize::try_from(flen).expect("a display width fits usize")];
+                        vec![0_u8; usize::try_from(self.flen).expect("a display width fits usize")];
                     return Value::Str(GoString::from(zeroes));
                 }
                 String::new()
@@ -271,38 +235,85 @@ impl Typ {
 
 impl Lattice for Typ {
     fn unwrap(&self) -> Value {
-        Value::FieldType(Box::new(decode_field_type_from_lattice(&self.tuple)))
+        Value::FieldType(Box::new(self.decode_field_type()))
     }
 
     fn compare(&self, other: &dyn Lattice) -> Result<i32, IncompatibleError> {
-        if let Some(b) = other.as_any().downcast_ref::<Self>() {
-            return self.tuple.compare(&b.tuple);
-        }
-        Err(type_mismatch_error(self, other))
+        let Some(b) = other.as_any().downcast_ref::<Self>() else {
+            return Err(type_mismatch_error(self, other));
+        };
+        let mut order = 0;
+        let mut accumulate = |index, comparison: Result<i32, IncompatibleError>| {
+            let cmp = comparison.map_err(|error| wrap_tuple_index_error(index, error))?;
+            order = combine_compare_result(order, cmp)
+                .map_err(|error| wrap_tuple_index_error(index, error))?;
+            Ok(())
+        };
+        accumulate(TYPE_INDEX, compare_field_type_codes(self.tp, b.tp))?;
+        accumulate(LENGTH_INDEX, self.compare_dimension(self.flen, b.flen))?;
+        accumulate(
+            DECIMAL_INDEX,
+            self.compare_dimension(self.decimal, b.decimal),
+        )?;
+        accumulate(FLAGS_INDEX, compare_singletons(self.flags, b.flags))?;
+        accumulate(NULLABLE_INDEX, Ok(self.nullable.cmp(&b.nullable) as i32))?;
+        accumulate(ANTI_KEYS_INDEX, Ok(self.anti_keys.cmp(&b.anti_keys) as i32))?;
+        accumulate(DEFAULT_INDEX, self.compare_default_flags(b))?;
+        accumulate(
+            COLLATION_INDEX,
+            self.collation.compare_collation(&b.collation),
+        )?;
+        accumulate(ELEMS_INDEX, self.elems.compare_items(&b.elems))?;
+        Ok(order)
     }
 
     fn join(&self, other: &dyn Lattice) -> Result<Box<dyn Lattice>, IncompatibleError> {
         let Some(b) = other.as_any().downcast_ref::<Self>() else {
             return Err(type_mismatch_error(self, other));
         };
-        let gen_join = self.tuple.join(&b.tuple)?;
-        let join = *gen_join
-            .into_any()
-            .downcast::<Tuple>()
-            .expect("a tuple join returns a tuple");
-
-        // Special check: we can't have an AUTO_INCREMENT column without being
-        // a KEY.
-        if let Value::Uint(def_val) = join.0[FIELD_TYPE_TUPLE_INDEX_FLAG_DEF_VAL].unwrap() {
-            if def_val & AutoIncrementFlag as u64 != 0
-                && join.0[FIELD_TYPE_TUPLE_INDEX_FLAG_ANTI_KEYS].unwrap()
-                    == Value::Byte(NOT_PART_OF_KEYS)
-            {
-                return Err(IncompatibleError::raw(ERR_MSG_AUTO_TYPE_WITHOUT_KEY));
-            }
+        let tp_order = compare_field_type_codes(self.tp, b.tp)
+            .map_err(|error| wrap_tuple_index_error(TYPE_INDEX, error))?;
+        if self.tp == TypeNewDecimal {
+            compare_singletons(self.flen, b.flen)
+                .map_err(|error| wrap_tuple_index_error(LENGTH_INDEX, error))?;
+            compare_singletons(self.decimal, b.decimal)
+                .map_err(|error| wrap_tuple_index_error(DECIMAL_INDEX, error))?;
+        }
+        compare_singletons(self.flags, b.flags)
+            .map_err(|error| wrap_tuple_index_error(FLAGS_INDEX, error))?;
+        self.compare_default_flags(b)
+            .map_err(|error| wrap_tuple_index_error(DEFAULT_INDEX, error))?;
+        let default_flags = self.default_flags.or(b.default_flags);
+        let collation = self
+            .collation
+            .join_collation(&b.collation)
+            .map_err(|error| wrap_tuple_index_error(COLLATION_INDEX, error))?;
+        let elems_order = self
+            .elems
+            .compare_items(&b.elems)
+            .map_err(|error| wrap_tuple_index_error(ELEMS_INDEX, error))?;
+        let anti_keys = self.anti_keys.max(b.anti_keys);
+        if anti_keys == NOT_PART_OF_KEYS
+            && default_flags.is_some_and(|flag| flag & AutoIncrementFlag as u64 != 0)
+        {
+            return Err(IncompatibleError::raw(ERR_MSG_AUTO_TYPE_WITHOUT_KEY));
         }
 
-        Ok(Box::new(Self { tuple: join }))
+        Ok(Box::new(Self {
+            tp: if tp_order < 0 { b.tp } else { self.tp },
+            flen: self.flen.max(b.flen),
+            decimal: self.decimal.max(b.decimal),
+            flags: self.flags,
+            nullable: self.nullable || b.nullable,
+            anti_keys,
+            default_flags,
+            collation,
+            elems: if elems_order <= 0 {
+                b.elems.clone()
+            } else {
+                self.elems.clone()
+            },
+        }))
     }
 
     fn go_type_name(&self) -> &'static str {

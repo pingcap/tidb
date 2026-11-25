@@ -15,68 +15,89 @@
 //! Go's `time.Duration.String()`, reproduced for the `SHOW`-style rendering
 //! of durations in model metadata (e.g. resource-group runaway settings).
 //!
-//! This duplicates the algorithm already ported in `tidb-config`; both should
-//! later share one low-level Go-time crate. `d` is a duration in nanoseconds.
+//! `d` is a duration in nanoseconds.
 
 /// Go `time.Duration.String()`: renders `d` nanoseconds the way Go does
 /// (`"0s"`, `"1.5s"`, `"1m30s"`, `"1h1m1s"`, sub-second `ns`/`µs`/`ms`).
 #[must_use]
 pub fn format_go_duration(d: i64) -> String {
-    if d == 0 {
-        return "0s".to_string();
-    }
-    let neg = d < 0;
-    let u = d.unsigned_abs();
-    let mut out = String::new();
+    format_duration_into(d, &mut [0; 32]).to_owned()
+}
 
-    if u < 1_000_000_000 {
-        // Sub-second: ns, µs, or ms with a trimmed fractional part.
-        let (unit, prec): (&str, u32) = if u < 1_000 {
+fn format_duration_into(d: i64, buffer: &mut [u8; 32]) -> &str {
+    if d == 0 {
+        return "0s";
+    }
+    // Go writes the fractional digits from the end of the buffer so it can
+    // skip trailing zeroes. Thirty-two bytes hold even i64::MIN.
+    let mut start = buffer.len();
+    let magnitude = d.unsigned_abs();
+    if magnitude < 1_000_000_000 {
+        let (unit, precision) = if magnitude < 1_000 {
             ("ns", 0)
-        } else if u < 1_000_000 {
+        } else if magnitude < 1_000_000 {
             ("µs", 3)
         } else {
             ("ms", 6)
         };
-        let scale = 10u64.pow(prec);
-        let int = u / scale;
-        let frac = u % scale;
-        out.push_str(&int.to_string());
-        if frac != 0 {
-            let f = format!("{frac:0width$}", width = prec as usize);
-            let f = f.trim_end_matches('0');
-            out.push('.');
-            out.push_str(f);
-        }
-        out.push_str(unit);
+        start -= unit.len();
+        buffer[start..].copy_from_slice(unit.as_bytes());
+        let integer = prepend_fraction(buffer, &mut start, magnitude, precision);
+        prepend_integer(buffer, &mut start, integer);
     } else {
-        let frac = u % 1_000_000_000;
-        let mut secs = u / 1_000_000_000;
-        let mut sec_part = (secs % 60).to_string();
-        if frac != 0 {
-            let f = format!("{frac:09}");
-            sec_part.push('.');
-            sec_part.push_str(f.trim_end_matches('0'));
+        prepend_byte(buffer, &mut start, b's');
+        let seconds = prepend_fraction(buffer, &mut start, magnitude, 9);
+        prepend_integer(buffer, &mut start, seconds % 60);
+        let minutes = seconds / 60;
+        if minutes != 0 {
+            prepend_byte(buffer, &mut start, b'm');
+            prepend_integer(buffer, &mut start, minutes % 60);
+            let hours = minutes / 60;
+            if hours != 0 {
+                prepend_byte(buffer, &mut start, b'h');
+                prepend_integer(buffer, &mut start, hours);
+            }
         }
-        secs /= 60; // now minutes
-        let mins = secs % 60;
-        let hours = secs / 60;
-        if hours != 0 {
-            out.push_str(&hours.to_string());
-            out.push('h');
-        }
-        if hours != 0 || mins != 0 {
-            out.push_str(&mins.to_string());
-            out.push('m');
-        }
-        out.push_str(&sec_part);
-        out.push('s');
     }
-    if neg {
-        format!("-{out}")
-    } else {
-        out
+    if d < 0 {
+        prepend_byte(buffer, &mut start, b'-');
     }
+    std::str::from_utf8(&buffer[start..]).expect("duration digits and units are UTF-8")
+}
+
+fn prepend_byte(buffer: &mut [u8; 32], start: &mut usize, byte: u8) {
+    *start -= 1;
+    buffer[*start] = byte;
+}
+
+fn prepend_integer(buffer: &mut [u8; 32], start: &mut usize, mut value: u64) {
+    loop {
+        prepend_byte(buffer, start, b'0' + (value % 10) as u8);
+        value /= 10;
+        if value == 0 {
+            break;
+        }
+    }
+}
+
+fn prepend_fraction(
+    buffer: &mut [u8; 32],
+    start: &mut usize,
+    mut value: u64,
+    precision: usize,
+) -> u64 {
+    let end = *start;
+    for _ in 0..precision {
+        let digit = (value % 10) as u8;
+        if digit != 0 || *start != end {
+            prepend_byte(buffer, start, b'0' + digit);
+        }
+        value /= 10;
+    }
+    if *start != end {
+        prepend_byte(buffer, start, b'.');
+    }
+    value
 }
 
 /// Formats `ms` milliseconds as Go does for `time.Duration(ms)*time.Millisecond`.
@@ -88,14 +109,23 @@ pub fn format_go_duration_ms(ms: i64) -> String {
 /// Go `execdetails.FormatDuration`: prune elapsed-time precision for EXPLAIN.
 /// Shared by the physical executor and the detailed runtime-stat collector.
 #[must_use]
+pub fn format_explain_duration(ns: i64) -> String {
+    format_go_duration(prune_explain_duration(ns))
+}
+
+/// Appends the same pruned duration as [`format_explain_duration`].
+pub fn append_explain_duration(output: &mut String, ns: i64) {
+    output.push_str(format_duration_into(prune_explain_duration(ns), &mut [0; 32]));
+}
+
 #[expect(
     clippy::cast_precision_loss,
     clippy::cast_possible_truncation,
     reason = "Go FormatDuration converts time.Duration through float64"
 )]
-pub fn format_explain_duration(ns: i64) -> String {
+fn prune_explain_duration(ns: i64) -> i64 {
     if ns <= 1_000 {
-        return format_go_duration(ns);
+        return ns;
     }
     let unit = if ns >= 1_000_000_000 {
         1_000_000_000
@@ -111,7 +141,7 @@ pub fn format_explain_duration(ns: i64) -> String {
     } else {
         decimal = (decimal * 10.0).round() / 10.0;
     }
-    format_go_duration(integer + (decimal * unit as f64) as i64)
+    integer.wrapping_add((decimal * unit as f64) as i64)
 }
 
 #[cfg(test)]
@@ -139,5 +169,16 @@ mod tests {
         assert_eq!(format_go_duration_ms(5000), "5s");
         assert_eq!(format_go_duration_ms(1500), "1.5s");
         assert_eq!(format_go_duration_ms(0), "0s");
+    }
+
+    #[test]
+    fn pruned_duration_wraps_like_go_at_the_signed_limit() {
+        assert_eq!(
+            format_go_duration(i64::MIN),
+            "-2562047h47m16.854775808s"
+        );
+        let mut output = String::from("time:");
+        append_explain_duration(&mut output, i64::MAX);
+        assert_eq!(output, "time:-2562047h47m16.809551616s");
     }
 }

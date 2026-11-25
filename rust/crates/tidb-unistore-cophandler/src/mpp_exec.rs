@@ -253,9 +253,9 @@ fn scan_range(
     desc: bool,
 ) -> Vec<KvPair> {
     let (start_key, end_key) = if desc {
-        (range.end.clone(), range.start.clone())
+        (range.end.to_vec(), range.start.to_vec())
     } else {
-        (range.start.clone(), range.end.clone())
+        (range.start.to_vec(), range.end.to_vec())
     };
     db_reader.scan(&ScanReq {
         start_key,
@@ -323,7 +323,7 @@ impl TableRowDecoder {
     /// Go `tablecodec.DecodeRowKey` + `ChunkDecoder.DecodeToChunk` (+ the
     /// physical table id): one row of the requested columns; `commit_ts` is
     /// the scanned version's (Go `DecodeToChunk(value, commitTS, ...)`).
-    fn decode_to_row(&self, key: &[u8], value: &[u8], commit_ts: u64) -> Result<Row, MppExecError> {
+    fn decode_to_row(&self, key: &[u8], value: Vec<u8>, commit_ts: u64) -> Result<Row, MppExecError> {
         let other = |message: String| MppExecError::Other(message);
         // Go `tablecodec.DecodeRowKey`: an int handle answers directly, a
         // common handle carries the clustered primary key's datums.
@@ -341,7 +341,7 @@ impl TableRowDecoder {
             }
             Err(err) => return Err(other(format!("invalid record key: {err:?}"))),
         };
-        let decoded = tidb_tablecodec::decode_table_row_to_map(
+        let decoded = tidb_tablecodec::decode_owned_table_row_to_map(
             value,
             &self.column_types,
             Some(&self.time_zone),
@@ -514,11 +514,15 @@ impl<'a> TableScanExec<'a> {
 
     /// Go `tableScanExec.Process`'s decode half: the row joins `e.chk`.
     fn process(&mut self, pair_idx: usize) -> Result<Vec<u8>, MppExecError> {
-        let pair = &self.range_pairs[self.range_idx][pair_idx];
+        let pair = &mut self.range_pairs[self.range_idx][pair_idx];
         if let Some(error) = pair_error(pair) {
             return Err(error);
         }
-        let row = self.decoder.decode_to_row(&pair.key, &pair.value, pair.commit_ts)?;
+        let row = self.decoder.decode_to_row(
+            &pair.key,
+            std::mem::take(&mut pair.value),
+            pair.commit_ts,
+        )?;
         let key = pair.key.clone();
         self.chk.push(row);
         self.row_cnt += 1;
@@ -735,19 +739,19 @@ impl<'a> MppExec<'a> for TableScanExec<'a> {
                 let last = &self.kv_ranges[self.kv_ranges.len() - 1];
                 *paging.borrow_mut() = match (&result.last_processed_key, self.desc) {
                     (Some(key), true) => coprocessor::KeyRange {
-                        start: key.clone(),
+                        start: key.clone().into(),
                         ..coprocessor::KeyRange::default()
                     },
                     (None, true) => coprocessor::KeyRange {
-                        start: last.start.clone(),
+                        start: last.start.clone().into(),
                         ..coprocessor::KeyRange::default()
                     },
                     (Some(key), false) => coprocessor::KeyRange {
-                        end: key_next(key),
+                        end: key_next(key).into(),
                         ..coprocessor::KeyRange::default()
                     },
                     (None, false) => coprocessor::KeyRange {
-                        end: last.end.clone(),
+                        end: last.end.clone().into(),
                         ..coprocessor::KeyRange::default()
                     },
                 };
@@ -864,8 +868,8 @@ impl<'a> IndexScanExec<'a> {
     }
 
     /// Go `indexScanExec.isNewVals`.
-    fn is_new_vals(&self, values: &[Vec<u8>]) -> bool {
-        (0..self.num_idx_cols).any(|i| self.prev_vals[i] != values[i])
+    fn is_new_vals(&self, values: &[std::borrow::Cow<'_, [u8]>]) -> bool {
+        (0..self.num_idx_cols).any(|i| self.prev_vals[i] != values[i].as_ref())
     }
 
     /// Go `indexScanExec.Process`.
@@ -875,7 +879,7 @@ impl<'a> IndexScanExec<'a> {
         let physical_key = key;
         let decoded_key = decode_index_keyspace_prefix(key).map_err(other)?;
         let key = decoded_key.as_ref();
-        let values = tidb_tablecodec::decode_index_kv(
+        let values = tidb_tablecodec::decode_index_kv_refs(
             true,
             key,
             value,
@@ -887,8 +891,9 @@ impl<'a> IndexScanExec<'a> {
         self.row_cnt += 1;
         if self.counts.is_some() && (self.prev_vals[0].is_empty() || self.is_new_vals(&values)) {
             self.ndv_cnt += 1;
-            for i in 0..self.num_idx_cols {
-                self.prev_vals[i].clone_from(&values[i]);
+            for (previous, value) in self.prev_vals.iter_mut().zip(&values[..self.num_idx_cols]) {
+                previous.clear();
+                previous.extend_from_slice(value);
             }
         }
         let mut row = Vec::with_capacity(self.num_columns);
@@ -941,12 +946,12 @@ impl<'a> IndexScanExec<'a> {
         let last = &self.kv_ranges[self.kv_ranges.len() - 1];
         if self.desc {
             coprocessor::KeyRange {
-                start: last.start.clone(),
+                start: last.start.clone().into(),
                 ..coprocessor::KeyRange::default()
             }
         } else {
             coprocessor::KeyRange {
-                end: last.end.clone(),
+                end: last.end.clone().into(),
                 ..coprocessor::KeyRange::default()
             }
         }
@@ -1011,12 +1016,12 @@ impl<'a> MppExec<'a> for IndexScanExec<'a> {
                     self.paging_to_range_end()
                 } else if self.desc {
                     coprocessor::KeyRange {
-                        start: self.chunk_last_processed_keys[self.chk_idx - 1].clone(),
+                        start: self.chunk_last_processed_keys[self.chk_idx - 1].clone().into(),
                         ..coprocessor::KeyRange::default()
                     }
                 } else {
                     coprocessor::KeyRange {
-                        end: key_next(&self.chunk_last_processed_keys[self.chk_idx - 1]),
+                        end: key_next(&self.chunk_last_processed_keys[self.chk_idx - 1]).into(),
                         ..coprocessor::KeyRange::default()
                     }
                 };
@@ -1148,8 +1153,8 @@ impl<'a> IndexLookUpExec<'a> {
                 continue;
             }
             ranges.push(coprocessor::KeyRange {
-                start: cur.keys[range_start].clone(),
-                end: key_next(&cur.keys[i]),
+                start: cur.keys[range_start].clone().into(),
+                end: key_next(&cur.keys[i]).into(),
             });
             range_start = i + 1;
         }

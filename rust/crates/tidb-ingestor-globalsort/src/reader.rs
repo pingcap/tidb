@@ -175,20 +175,23 @@ fn read_one_file(
             if let Some(e) = ctx.err() {
                 return Err(crate::other(e.to_string()));
             }
-            let (k, v) = match rd.next_kv() {
+            let (k, v) = match rd.next_kv_ref() {
                 Ok(kv) => kv,
                 Err(e) if e.is_eof() => break,
                 Err(e) => return Err(crate::sst(e)),
             };
-            if k.as_slice() < start_key {
+            if k < start_key {
                 dropped_size += k.len() + v.len();
                 continue;
             }
-            if k.as_slice() >= end_key {
+            if k >= end_key {
                 break;
             }
             size += k.len() + v.len();
-            kvs.push(KVPair { key: k, value: v });
+            kvs.push(KVPair {
+                key: k.to_vec(),
+                value: v.to_vec(),
+            });
         }
         tidb_metrics::globalsort::READ_FROM_CLOUD_STORAGE_DURATION
             .with_label_values(&["read_one_file"])

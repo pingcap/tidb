@@ -27,8 +27,11 @@ pub use row_layout::{
     ROW_FLAG_LARGE, ROW_HEADER_LEN,
 };
 pub use rowcodec::{
-    calculate_raw_checksum, decode_row_to_datums, decode_row_to_map, decode_row_to_old_bytes,
-    encode_row, encode_row_with_checksum, field_type_from_column, remove_keyspace_prefix,
-    ColumnInfo, DatumColumn, DecodeRowOptions, DecodedRow, Handle, RowChecksumPolicy, RowData,
-    RowPackageError,
+    calculate_raw_checksum, decode_row_to_datums, decode_row_to_datums_with_refs, decode_row_to_map,
+    decode_row_to_old_bytes, decode_row_to_old_bytes_in_order,
+    decode_row_to_map_with_fields, decode_shared_row_to_map_with_fields, encode_row,
+    encode_row_with_checksum, encode_row_with_values,
+    field_type_from_column,
+    remove_keyspace_prefix, ColumnInfo, DatumColumn, DecodeRowOptions, DecodedRow, Handle,
+    RowChecksumPolicy, RowData, RowPackageError, MIN_SHARED_ROW_VALUE_BYTES,
 };

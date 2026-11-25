@@ -44,64 +44,72 @@ fn gen_key_exists_err(
     {
         key.drain(..4);
     }
-    let codec_index = |index: &tidb_model::IndexInfo| tidb_tablecodec::IndexInfo {
-        id: index.id,
-        columns: index
-            .columns
-            .iter_deref()
-            .map(|c| {
-                let c = c.read();
-                tidb_tablecodec::IndexColumn {
-                    offset: c.offset as usize,
-                    length: c.length as i64,
-                    use_changing_type: c.use_changing_type,
-                }
+    let columns: Option<Vec<_>> = index
+        .columns
+        .iter_deref()
+        .map(|index_column| {
+            let index_column = index_column.read();
+            let offset = index_column.offset as usize;
+            if offset >= table.columns.len() {
+                return None;
+            }
+            let column = table.columns.get(offset).expect("nil pointer in Go slice");
+            let column = column.read();
+            let field_type = tidb_model::get_idx_changing_field_type(&index_column, &column);
+            Some(tidb_rowcodec::ColumnInfo {
+                id: column.id,
+                is_pk_handle: table.pk_is_handle
+                    && column.field_type.has_flag(tidb_datatype::FieldTypeFlags::PRI_KEY),
+                virtual_generated: false,
+                field_type: field_type.clone(),
             })
-            .collect(),
-        unique: index.unique,
-        global: index.global,
-        global_index_version: index.global_index_version,
-        primary: index.primary,
-    };
-    let codec_table = tidb_tablecodec::TableInfo {
-        columns: table
-            .columns
-            .iter_deref()
-            .map(|c| {
-                let c = c.read();
-                tidb_tablecodec::TableColumn {
-                    id: c.id,
-                    offset: c.offset as usize,
-                    field_type: c.field_type.clone(),
-                    primary_key: c
-                        .field_type
-                        .has_flag(tidb_datatype::FieldTypeFlags::PRI_KEY),
-                    changing_field_type: c.changing_field_type.as_ref().map(|f| f.read().clone()),
-                }
-            })
-            .collect(),
-        indices: table
-            .indices
-            .iter_deref()
-            .map(|i| codec_index(&i.read()))
-            .collect(),
-        pk_is_handle: table.pk_is_handle,
-        is_common_handle: table.is_common_handle,
-        common_handle_version: table.common_handle_version as u8,
-    };
-    let text = codec_table
-        .generate_index_values_from_index(
-            tidb_datatype::new_collation_enabled(),
-            Some(&tidb_datatype::SessionTimeZone::utc()),
-            &codec_index(index),
-            &key,
-            &value,
-        )
-        .map(|values| values.join(&b'-'))
+        })
+        .collect();
+    let text = columns
+        .and_then(|columns| {
+            tidb_tablecodec::render_index_values_from_columns(
+                tidb_datatype::new_collation_enabled(),
+                Some(&tidb_datatype::SessionTimeZone::utc()),
+                &columns,
+                &key,
+                &value,
+            )
+            .ok()
+        })
+        .map(|mut values| {
+            if values.len() == 1 {
+                values.pop().expect("one index value")
+            } else {
+                values.join(&b'-')
+            }
+        })
         .unwrap_or(key);
     let index_name = format!("{}.{}", table.name.original(), index.name.original());
     Error::Database(tidb_kv::kv_errors::ERR_KEY_EXISTS.fast_gen_by_args(&[
-        String::from_utf8_lossy(&text).as_ref().into(),
-        index_name.as_str().into(),
+        String::from_utf8_lossy(&text).into_owned().into(),
+        index_name.into(),
     ]))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn duplicate_error_falls_back_to_key_when_index_offset_is_invalid() {
+        let table = tidb_model::TableInfo::default();
+        let index = tidb_model::IndexInfo {
+            columns: vec![tidb_model::IndexColumn {
+                offset: 1,
+                ..Default::default()
+            }]
+            .into(),
+            ..Default::default()
+        };
+        let error = gen_key_exists_err(b"raw-key".to_vec(), Vec::new(), &index, &table);
+        assert_eq!(
+            error.to_string(),
+            "[kv:1062]Duplicate entry 'raw-key' for key '.'",
+        );
+    }
 }

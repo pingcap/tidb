@@ -16,7 +16,10 @@
 //! the condition algebra used to filter timer records, the update descriptor,
 //! and the store interfaces.
 
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::Arc;
+
+use crossbeam_channel::{Receiver, RecvTimeoutError};
+use tidb_gocontext::{CancelFunc, Context as GoContext};
 
 use tidb_timeutil::TimeZone;
 
@@ -473,35 +476,31 @@ pub struct WatchTimerResponse {
 }
 
 /// Go `WatchTimerChan`, the receive end of the watch stream.
-pub type WatchTimerChan = std::sync::mpsc::Receiver<WatchTimerResponse>;
+pub type WatchTimerChan = Receiver<WatchTimerResponse>;
 
 /// `boundary:` Go's standard-library `context.Context`, which every store
-/// method takes. Rust has no stdlib equivalent, so this carries the one
-/// capability `pkg/timer/api` actually uses: cancellation, observed by the
-/// watch goroutine and ignored by every other method (exactly as in Go, where
-/// the memory store discards its `ctx` argument).
+/// method takes. Timer code uses the Go context's cancellation signal.
 #[derive(Debug, Clone, Default)]
 pub struct Context {
-    cancel: Option<Arc<CancelState>>,
-}
-
-#[derive(Debug, Default)]
-struct CancelState {
-    done: Mutex<bool>,
-    changed: Condvar,
+    inner: GoContext,
 }
 
 /// The cancel function Go's `context.WithCancel` returns.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct CancelFn {
-    state: Arc<CancelState>,
+    inner: CancelFunc,
+}
+
+impl std::fmt::Debug for CancelFn {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.debug_struct("CancelFn").finish_non_exhaustive()
+    }
 }
 
 impl CancelFn {
     /// Cancels the context, waking every waiter.
     pub fn cancel(&self) {
-        *self.state.done.lock().unwrap() = true;
-        self.state.changed.notify_all();
+        self.inner.cancel();
     }
 }
 
@@ -513,41 +512,28 @@ impl Context {
 
     /// Go `context.WithCancel(parent)`.
     pub fn with_cancel() -> (Self, CancelFn) {
-        let state = Arc::new(CancelState::default());
-        (
-            Self {
-                cancel: Some(Arc::clone(&state)),
-            },
-            CancelFn { state },
-        )
+        let (inner, cancel) = GoContext::with_cancel(&GoContext::background());
+        (Self { inner }, CancelFn { inner: cancel })
     }
 
-    /// Go `<-ctx.Done()` polled rather than selected on.
+    /// Go `ctx.Done()`. The receive end disconnects on cancellation.
+    pub fn done(&self) -> Receiver<()> {
+        self.inner.done()
+    }
+
+    /// Whether the context has been cancelled.
     pub fn is_done(&self) -> bool {
-        match &self.cancel {
-            Some(state) => *state.done.lock().unwrap(),
-            None => false,
-        }
+        self.inner.err().is_some()
     }
 
     /// Go's `select { case <-ctx.Done(): case <-time.After(d): }`, which
     /// `pkg/timer/runtime`'s `sleep` helper spells exactly. Returns whether the
     /// context was cancelled before the deadline.
     pub fn wait_done(&self, timeout: std::time::Duration) -> bool {
-        let Some(state) = &self.cancel else {
-            std::thread::sleep(timeout);
-            return false;
-        };
-
-        let done = state.done.lock().unwrap();
-        if *done {
-            return true;
-        }
-        let (done, _) = state
-            .changed
-            .wait_timeout_while(done, timeout, |done| !*done)
-            .unwrap();
-        *done
+        matches!(
+            self.done().recv_timeout(timeout),
+            Err(RecvTimeoutError::Disconnected)
+        )
     }
 }
 

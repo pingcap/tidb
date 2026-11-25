@@ -14,12 +14,11 @@
 
 //! Shared outgoing TiDB memory-table/KILL requests (Go store/copr and executor).
 
-use prost::Message;
+use prost::{bytes::Bytes, Message};
 use std::{sync::Arc, time::Duration};
 use tidb_datatype::{Datum, FieldType, SessionTimeZone};
 use tidb_domain_serverinfo::serverinfo::ServerInfo;
 use crate::{DriverError, MysqlError, StmtContext};
-use tidb_distsql::remote_scan::PushdownScanColumn;
 use tidb_proto::{coprocessor, tipb};
 use tidb_txnkv::driver::tikv_store::TikvStore;
 use tidb_txnkv::rpc::UnaryCancellation;
@@ -157,8 +156,13 @@ impl ClusterPeerClient {
         // Go consumes the raw response once; successful SelectResponse warnings
         // (including unavailable peers) are not interpreted by killRemoteConn.
         self.with_cancellation(ctx, |cancel| {
-            for address in peer_addresses(servers, Some(id.server_id)) {
-                let _ = self.send(&address, &dag, &[], cancel)?;
+            let addresses = peer_addresses(servers, Some(id.server_id));
+            if addresses.is_empty() {
+                return Ok(());
+            }
+            let data = Bytes::from(dag.encode_to_vec());
+            for address in addresses {
+                let _ = self.send(&address, &data, &[], cancel)?;
             }
             Ok(())
         })
@@ -221,13 +225,13 @@ impl ClusterPeerClient {
         let columns_pb = selected
             .iter()
             .map(|(offset, field_type)| {
-                crate::cop_reader::column_to_proto(&PushdownScanColumn {
-                    id: (*offset + 1) as i64,
-                    field_type: (*field_type).clone(),
-                    is_handle: false,
-                    origin_default: None,
-                })
-                .map(|column| crate::dag_request::column_to_pb(&column))
+                crate::cop_reader::column_parts_to_proto(
+                    (*offset + 1) as i64,
+                    field_type,
+                    false,
+                    None,
+                )
+                .map(crate::dag_request::column_into_pb)
                 .ok_or_else(|| "unsupported cluster memory-table column".to_owned())
             })
             .collect::<Result<Vec<_>, _>>()
@@ -308,13 +312,19 @@ impl ClusterPeerClient {
     ) -> Result<PeerRows, DriverError> {
         self.with_cancellation(ctx, |cancel| {
             let mut result = PeerRows::default();
-            for batch in peer_addresses(servers, None).chunks(concurrency.max(1)) {
+            let addresses = peer_addresses(servers, None);
+            if addresses.is_empty() {
+                return Ok(result);
+            }
+            let data = Bytes::from(dag.encode_to_vec());
+            for batch in addresses.chunks(concurrency.max(1)) {
                 let responses = std::thread::scope(|scope| {
                     let handles: Vec<_> = batch
                         .iter()
                         .map(|address| {
+                            let data = &data;
                             scope.spawn(tidb_cpuprofile::labels::inherit(move || {
-                                self.send(address, dag, ranges, cancel)
+                                self.send(address, data, ranges, cancel)
                             }))
                         })
                         .collect();
@@ -356,14 +366,14 @@ impl ClusterPeerClient {
     fn send(
         &self,
         address: &str,
-        dag: &tipb::DagRequest,
+        data: &Bytes,
         ranges: &[coprocessor::KeyRange],
         cancel: &UnaryCancellation,
     ) -> Result<coprocessor::Response, String> {
         let request = coprocessor::Request {
             tp: 103,
             start_ts: u64::MAX,
-            data: dag.encode_to_vec(),
+            data: data.clone(),
             ranges: ranges.to_vec(),
             ..Default::default()
         };
@@ -517,7 +527,7 @@ impl tidb_txnkv::Client for TiDbMemCopClient {
             context: Some(context),
             tp: metadata.request_type.raw(),
             start_ts: metadata.start_ts,
-            data: metadata.data.clone().unwrap_or_default().into(),
+            data: metadata.data.clone().unwrap_or_default(),
             ranges: metadata
                 .key_ranges
                 .as_ref()

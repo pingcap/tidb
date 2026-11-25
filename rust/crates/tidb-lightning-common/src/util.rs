@@ -59,7 +59,30 @@ pub const DEFAULT_IMPORTANT_VARIABLES: &[(&str, &str)] = &[
 pub const DEFAULT_IMPORT_VARIABLES_TIDB: &[(&str, &str)] = &[("tidb_row_format_version", "1")];
 
 /// Go `WriteMySQLIdentifier`: always backquoted, a backquote doubled.
-pub fn write_mysql_identifier(out: &mut String, identifier: &str) {
+#[inline]
+pub fn write_mysql_identifier(out: &mut String, mut identifier: &str) {
+    let mut tick = identifier.find('`');
+    if identifier.len() > 32 && tick.is_some() {
+        write_long_escaped_identifier(out, identifier);
+        return;
+    }
+    // One small reservation covers even consecutive backticks in short names.
+    let extra = tick.map_or(0, |index| identifier.len() - index);
+    out.reserve(identifier.len() + extra + 2);
+    out.push('`');
+    while let Some(index) = tick {
+        let (head, tail) = identifier.split_at(index + 1);
+        out.push_str(head);
+        out.push('`');
+        identifier = tail;
+        tick = identifier.find('`');
+    }
+    out.push_str(identifier);
+    out.push('`');
+}
+
+#[inline(never)]
+fn write_long_escaped_identifier(out: &mut String, identifier: &str) {
     out.reserve(identifier.len() + 2);
     out.push('`');
     out.push_str(&identifier.replace('`', "``"));
@@ -69,6 +92,19 @@ pub fn write_mysql_identifier(out: &mut String, identifier: &str) {
 /// Go `EscapeIdentifier`.
 #[must_use]
 pub fn escape_identifier(identifier: &str) -> String {
+    if identifier.is_empty() {
+        return "``".to_owned();
+    }
+    if identifier.len() == 1 {
+        if identifier == "`" {
+            return "````".to_owned();
+        }
+        let mut out = String::with_capacity(3);
+        out.push('`');
+        out.push_str(identifier);
+        out.push('`');
+        return out;
+    }
     let mut out = String::new();
     write_mysql_identifier(&mut out, identifier);
     out
@@ -77,7 +113,7 @@ pub fn escape_identifier(identifier: &str) -> String {
 /// Go `UniqueTable`: `` `schema`.`table` ``.
 #[must_use]
 pub fn unique_table(schema: &str, table: &str) -> String {
-    let mut out = String::new();
+    let mut out = String::with_capacity(schema.len() + table.len() + 5);
     write_mysql_identifier(&mut out, schema);
     out.push('.');
     write_mysql_identifier(&mut out, table);
@@ -113,4 +149,21 @@ pub fn skip_read_row_count(info: &TableInfo) -> bool {
         }
     }
     true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{escape_identifier, unique_table, write_mysql_identifier};
+
+    #[test]
+    fn quotes_identifiers_with_multibyte_text_and_consecutive_backticks() {
+        assert_eq!(escape_identifier(""), "``");
+        assert_eq!(escape_identifier("`"), "````");
+        assert_eq!(unique_table("库`", "𠮷``表"), "`库```.`𠮷````表`");
+
+        let mut output = String::from("CREATE TABLE ");
+        let name = "é`".repeat(17);
+        write_mysql_identifier(&mut output, &name);
+        assert_eq!(output, format!("CREATE TABLE `{}`", "é``".repeat(17)));
+    }
 }

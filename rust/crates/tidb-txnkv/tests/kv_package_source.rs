@@ -484,16 +484,15 @@ fn TestMemAwareHandleMapWithPartialHandle() {
 
 #[test]
 fn TestKeyRangeDefinition() {
-    assert_eq!(
-        std::mem::size_of::<KeyRange>(),
-        std::mem::size_of::<CoprocessorKeyRange>()
-    );
+    // Go checks layout equality for its pointer conversion. Rust projects
+    // the logical range into protobuf fields explicitly.
     let range = KeyRange::default();
     let protobuf = CoprocessorKeyRange::default();
     assert!(range.start_key.is_empty());
     assert!(range.end_key.is_empty());
     assert!(protobuf.start.is_empty());
     assert!(protobuf.end.is_empty());
+    assert!(protobuf.encode_to_vec().is_empty());
     let ranges = vec![
         KeyRange::new(Key::from_bytes(b"s1".as_slice()), Key::from_bytes(b"e1".as_slice())),
         KeyRange::new(Key::from_bytes(b"s2".as_slice()), Key::from_bytes(b"e2".as_slice())),
@@ -576,8 +575,8 @@ fn resource_group_tag_builder_tags_client_rust_requests() {
 
     let mut cop = coprocessor::Request {
         ranges: vec![coprocessor::KeyRange {
-            start: row_key.clone(),
-            end: Vec::new(),
+            start: row_key.clone().into(),
+            end: Vec::new().into(),
         }],
         ..Default::default()
     };

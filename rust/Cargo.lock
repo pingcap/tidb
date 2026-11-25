@@ -750,7 +750,7 @@ dependencies = [
  "addr2line",
  "cfg-if",
  "libc",
- "miniz_oxide 0.9.1",
+ "miniz_oxide",
  "object 0.40.0",
  "rustc-demangle",
  "windows-link",
@@ -1601,12 +1601,13 @@ checksum = "1d674e81391d1e1ab681a28d99df07927c6d4aa5b027d7da16ba32d1d21ecd99"
 
 [[package]]
 name = "flate2"
-version = "1.1.9"
+version = "1.1.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "843fba2746e448b37e26a819579957415c8cef339bf08564fe8b7ddbd959573c"
+checksum = "6e634e2e0ebac1ee034020da1ca582e17ffe4e0f5e985823721e168928136dcb"
 dependencies = [
  "crc32fast",
- "miniz_oxide 0.8.9",
+ "miniz_oxide",
+ "zlib-rs",
 ]
 
 [[package]]
@@ -2402,6 +2403,7 @@ checksum = "26699905cc795a23e3949585cc7ba3ee8ade090872a27e4316304a777297894a"
 dependencies = [
  "jiff-core",
  "jiff-static",
+ "jiff-tzdb",
  "jiff-tzdb-platform",
  "log",
  "portable-atomic",
@@ -2712,21 +2714,12 @@ checksum = "68354c5c6bd36d73ff3feceb05efa59b6acb7626617f4962be322a825e61f79a"
 
 [[package]]
 name = "miniz_oxide"
-version = "0.8.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1fa76a2c86f704bdb222d66965fb3d63269ce38518b83cb0575fca855ebb6316"
-dependencies = [
- "adler2",
- "simd-adler32",
-]
-
-[[package]]
-name = "miniz_oxide"
 version = "0.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b63fbc4a50860e98e7b2aa7804ded1db5cbc3aff9193adaff57a6931bf7c4b4c"
 dependencies = [
  "adler2",
+ "simd-adler32",
 ]
 
 [[package]]
@@ -3256,9 +3249,9 @@ checksum = "05c8b63e8d9609db387f0324918f81d68fe27748f084ef092fb35954d0539a85"
 
 [[package]]
 name = "portable-atomic-util"
-version = "0.2.8"
+version = "0.2.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "10ab3eb7f3becc3a1cbc4f2c6f20267996cfc1a6467a873763411b136a122715"
+checksum = "c2a106d1259c23fac8e543272398ae0e3c0b8d33c88ed73d0cc71b0f1d902618"
 dependencies = [
  "portable-atomic",
 ]
@@ -4518,6 +4511,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "703d5c7ef118737c72f1af64ad2f6f8c5e1921f818cdcb97b8fe6fc69bf66214"
 
 [[package]]
+name = "simdutf8"
+version = "0.1.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e3a9fe34e3e7a50316060351f37187a3f546bce95496156754b601a5fa71b76e"
+
+[[package]]
 name = "simple_asn1"
 version = "0.6.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5078,6 +5077,7 @@ name = "tidb-bitmap"
 version = "0.0.0"
 dependencies = [
  "crossbeam-channel",
+ "zerocopy",
 ]
 
 [[package]]
@@ -5225,6 +5225,7 @@ name = "tidb-charset"
 version = "0.0.0"
 dependencies = [
  "encoding_rs",
+ "simdutf8",
  "tidb-mysql",
  "tidb-terror",
 ]
@@ -5236,7 +5237,6 @@ dependencies = [
  "crc32fast",
  "tidb-encrypt",
  "tidb-layered-io",
- "tidb-zeropool",
 ]
 
 [[package]]
@@ -5244,12 +5244,13 @@ name = "tidb-chunk"
 version = "0.0.0"
 dependencies = [
  "bytes",
+ "itoa",
+ "parking_lot",
  "tidb-build-tags",
  "tidb-charset",
  "tidb-checksum",
  "tidb-codec",
  "tidb-datatype",
- "tidb-disjointset",
  "tidb-disk",
  "tidb-encrypt",
  "tidb-failpoint",
@@ -5259,6 +5260,7 @@ dependencies = [
  "tidb-memory",
  "tidb-spill-storage",
  "tidb-sqlkiller",
+ "tidb-zeropool",
  "tracing",
 ]
 
@@ -5284,6 +5286,7 @@ version = "0.0.0"
 dependencies = [
  "serde",
  "serde_json",
+ "smallvec",
  "tidb-mysql",
  "tidb-table-rule-selector",
 ]
@@ -5293,6 +5296,7 @@ name = "tidb-compress"
 version = "0.0.0"
 dependencies = [
  "flate2",
+ "snap",
  "tidb-zeropool",
 ]
 
@@ -5461,13 +5465,19 @@ dependencies = [
 name = "tidb-datatype"
 version = "0.0.0"
 dependencies = [
+ "bytes",
  "chrono",
  "chrono-tz",
  "encoding_rs",
+ "itoa",
+ "memchr",
+ "num-bigint",
+ "num-integer",
  "ryu",
  "serde",
  "serde_json",
  "sha2 0.10.9",
+ "simdutf8",
  "smallvec",
  "tidb-charset",
  "tidb-context",
@@ -5480,8 +5490,10 @@ dependencies = [
  "tidb-mysql",
  "tidb-parser-format",
  "tidb-parser-types",
+ "tidb-stringutil",
  "tidb-terror",
  "unicode-general-category",
+ "zerocopy",
 ]
 
 [[package]]
@@ -5728,6 +5740,7 @@ dependencies = [
  "tidb-memory",
  "tidb-model",
  "tidb-pd-client",
+ "tidb-rowcodec",
  "tidb-store-driver-txn",
  "tidb-tablecodec",
  "tidb-terror",
@@ -5876,6 +5889,7 @@ version = "0.0.0"
 dependencies = [
  "tidb-charset",
  "tidb-datatype",
+ "tidb-goruntime",
  "tidb-resourcegrouptag",
  "tidb-txnkv",
  "tikv-client",
@@ -5885,6 +5899,10 @@ dependencies = [
 [[package]]
 name = "tidb-disjointset"
 version = "0.0.0"
+dependencies = [
+ "foldhash 0.1.5",
+ "hashbrown 0.15.5",
+]
 
 [[package]]
 name = "tidb-disk"
@@ -6750,6 +6768,7 @@ dependencies = [
  "serde_yaml",
  "sha2 0.10.9",
  "signal-hook",
+ "simdutf8",
  "smallvec",
  "snap",
  "stacker",
@@ -6974,6 +6993,7 @@ dependencies = [
 name = "tidb-executor-aggfuncs"
 version = "0.0.0"
 dependencies = [
+ "smallvec",
  "tidb-ast",
  "tidb-charset",
  "tidb-chunk",
@@ -7083,6 +7103,7 @@ dependencies = [
  "tidb-vardef",
  "tidb-variable",
  "tikv-client",
+ "utf8_iter",
 ]
 
 [[package]]
@@ -7294,19 +7315,25 @@ dependencies = [
 name = "tidb-expr"
 version = "0.0.0"
 dependencies = [
+ "aws-lc-rs",
+ "base64-simd",
  "chrono",
  "chrono-tz",
+ "crc32fast",
  "flate2",
  "fluent-uri 0.3.2",
  "getrandom 0.3.4",
+ "jiff",
  "jsonschema",
  "md-5",
+ "memchr",
  "prost 0.14.4",
  "regex",
  "reqwest 0.13.4",
  "serde_json",
- "sha1 0.10.7",
- "sha2 0.10.9",
+ "sha1 0.11.0",
+ "sha2 0.11.1",
+ "simdutf8",
  "stacker",
  "tempfile",
  "tidb-ast",
@@ -7494,7 +7521,6 @@ dependencies = [
 name = "tidb-filter"
 version = "0.0.0"
 dependencies = [
- "regex",
  "tidb-go-regexp",
  "tidb-metadef",
  "tidb-mysql",
@@ -7521,6 +7547,7 @@ dependencies = [
 name = "tidb-format-textrow"
 version = "0.0.0"
 dependencies = [
+ "itoa",
  "tidb-charset",
  "tidb-datatype",
  "tidb-goruntime",
@@ -7614,16 +7641,26 @@ dependencies = [
 [[package]]
 name = "tidb-go-net"
 version = "0.0.0"
+dependencies = [
+ "itoa",
+ "memchr",
+]
 
 [[package]]
 name = "tidb-go-rand"
 version = "0.0.0"
+dependencies = [
+ "tidb-fastrand",
+]
 
 [[package]]
 name = "tidb-go-regexp"
 version = "0.0.0"
 dependencies = [
+ "memchr",
  "regex",
+ "regex-automata",
+ "regex-lite",
  "regex-syntax",
 ]
 
@@ -7638,6 +7675,10 @@ dependencies = [
 [[package]]
 name = "tidb-go-strconv"
 version = "0.0.0"
+dependencies = [
+ "memchr",
+ "utf8_iter",
+]
 
 [[package]]
 name = "tidb-go-time-layout"
@@ -7653,6 +7694,7 @@ name = "tidb-go-url"
 version = "0.0.0"
 dependencies = [
  "hex",
+ "memchr",
  "serde",
  "serde_json",
  "tidb-go-strconv",
@@ -7673,9 +7715,11 @@ version = "0.0.0"
 name = "tidb-goruntime"
 version = "0.0.0"
 dependencies = [
- "ryu",
+ "bytes",
+ "itoa",
  "serde",
  "serde_json",
+ "simdutf8",
  "tidb-hack",
 ]
 
@@ -7709,6 +7753,8 @@ version = "0.0.0"
 dependencies = [
  "chrono",
  "crossbeam-channel",
+ "foldhash 0.1.5",
+ "indexmap",
  "serde_json",
  "tidb-ast",
  "tidb-autoid",
@@ -7757,6 +7803,7 @@ version = "0.0.0"
 name = "tidb-infoschema-issyncer"
 version = "0.0.0"
 dependencies = [
+ "arc-swap",
  "serde_json",
  "tidb-ast",
  "tidb-autoid",
@@ -8000,6 +8047,8 @@ dependencies = [
 name = "tidb-kvcache"
 version = "0.0.0"
 dependencies = [
+ "foldhash 0.2.0",
+ "hashbrown 0.15.5",
  "tidb-memory",
 ]
 
@@ -8011,6 +8060,7 @@ version = "0.0.0"
 name = "tidb-lexer"
 version = "0.0.0"
 dependencies = [
+ "memchr",
  "tidb-charset",
  "tidb-hack",
  "tidb-mysql",
@@ -8146,8 +8196,10 @@ name = "tidb-lightning-mydump"
 version = "0.0.0"
 dependencies = [
  "base64 0.22.1",
+ "bytes",
  "encoding_rs",
  "flate2",
+ "memchr",
  "serde",
  "serde_json",
  "tempfile",
@@ -8165,6 +8217,7 @@ version = "0.0.0"
 dependencies = [
  "serde",
  "serde_json",
+ "tidb-goruntime",
  "tidb-log",
 ]
 
@@ -8212,6 +8265,7 @@ dependencies = [
  "log",
  "regex",
  "serde_json",
+ "tidb-goruntime",
  "tidb-hack",
  "tidb-intest",
  "tidb-log",
@@ -8319,6 +8373,7 @@ dependencies = [
  "tidb-dbterror",
  "tidb-dxf",
  "tidb-errno",
+ "tidb-go-strconv",
  "tidb-gocontext",
  "tidb-kv",
  "tidb-metadef",
@@ -8413,6 +8468,7 @@ version = "0.0.0"
 dependencies = [
  "chrono",
  "chrono-tz",
+ "foldhash 0.1.5",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -8611,11 +8667,12 @@ dependencies = [
  "encoding_rs",
  "getrandom 0.3.4",
  "sha1 0.10.7",
- "sha2 0.10.9",
+ "sha2 0.11.1",
  "stacker",
  "subtle",
  "tidb-ast",
  "tidb-charset",
+ "tidb-goruntime",
  "tidb-hack",
  "tidb-lexer",
  "tidb-mysql",
@@ -8629,6 +8686,7 @@ dependencies = [
 name = "tidb-parser-format"
 version = "0.0.0"
 dependencies = [
+ "memchr",
  "tidb-mysql",
 ]
 
@@ -8664,6 +8722,7 @@ version = "0.0.0"
 name = "tidb-partialjson"
 version = "0.0.0"
 dependencies = [
+ "memchr",
  "serde",
  "serde_json",
 ]
@@ -8947,6 +9006,7 @@ dependencies = [
 name = "tidb-planner-core-operator-logicalop"
 version = "0.0.0"
 dependencies = [
+ "bytes",
  "tidb-ast",
  "tidb-charset",
  "tidb-context",
@@ -8956,6 +9016,7 @@ dependencies = [
  "tidb-exprctx",
  "tidb-expression-aggregation",
  "tidb-funcdep",
+ "tidb-goruntime",
  "tidb-hack",
  "tidb-infoschema",
  "tidb-intset",
@@ -9339,6 +9400,7 @@ name = "tidb-protocol"
 version = "0.0.0"
 dependencies = [
  "flate2",
+ "zlib-rs",
  "zstd",
 ]
 
@@ -9390,7 +9452,6 @@ name = "tidb-regexpr-router"
 version = "0.0.0"
 dependencies = [
  "tidb-filter",
- "tidb-go-regexp",
  "tidb-table-filter",
  "tidb-table-router",
 ]
@@ -9442,6 +9503,7 @@ name = "tidb-resourcegrouptag"
 version = "0.0.0"
 dependencies = [
  "prost 0.14.4",
+ "tidb-goruntime",
  "tidb-proto",
  "tidb-tablecodec-rowindexcodec",
 ]
@@ -9520,8 +9582,12 @@ dependencies = [
 name = "tidb-ristretto"
 version = "0.0.0"
 dependencies = [
+ "arc-swap",
  "crossbeam-channel",
+ "foldhash 0.1.5",
+ "parking_lot",
  "rand 0.10.2",
+ "tidb-zeropool",
  "xxhash-rust",
 ]
 
@@ -9531,6 +9597,7 @@ version = "0.0.0"
 dependencies = [
  "chrono",
  "crc32fast",
+ "smallvec",
  "tidb-codec",
  "tidb-datatype",
 ]
@@ -9858,6 +9925,9 @@ version = "0.0.0"
 [[package]]
 name = "tidb-server-internal-util"
 version = "0.0.0"
+dependencies = [
+ "memchr",
+]
 
 [[package]]
 name = "tidb-servermemorylimit"
@@ -10256,6 +10326,7 @@ dependencies = [
 name = "tidb-set"
 version = "0.0.0"
 dependencies = [
+ "foldhash 0.1.5",
  "tidb-datatype",
  "tidb-goruntime",
  "tidb-hack",
@@ -10279,6 +10350,9 @@ dependencies = [
 [[package]]
 name = "tidb-slice"
 version = "0.0.0"
+dependencies = [
+ "itoa",
+]
 
 [[package]]
 name = "tidb-spill-storage"
@@ -10296,6 +10370,8 @@ name = "tidb-sqlescape"
 version = "0.0.0"
 dependencies = [
  "chrono",
+ "itoa",
+ "memchr",
  "tidb-goruntime",
 ]
 
@@ -10339,6 +10415,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "tidb-stacktrace"
+version = "0.0.0"
+dependencies = [
+ "backtrace",
+ "libc",
+]
+
+[[package]]
 name = "tidb-standby"
 version = "0.0.0"
 dependencies = [
@@ -10360,6 +10444,7 @@ version = "0.0.0"
 dependencies = [
  "chrono",
  "chrono-tz",
+ "hashbrown 0.15.5",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -10410,6 +10495,7 @@ dependencies = [
  "tidb-memory",
  "tidb-model",
  "tidb-sessionctx",
+ "tidb-slice",
  "tidb-sqlexec",
  "tidb-stats",
  "tidb-stats-asyncload",
@@ -10474,6 +10560,7 @@ name = "tidb-stats-handle-autoanalyze-priorityqueue"
 version = "0.0.0"
 dependencies = [
  "chrono",
+ "hashbrown 0.15.5",
  "serde",
  "serde_json",
  "tidb-ast",
@@ -10498,6 +10585,7 @@ dependencies = [
 name = "tidb-stats-handle-cache"
 version = "0.0.0"
 dependencies = [
+ "arc-swap",
  "tidb-config",
  "tidb-datatype",
  "tidb-failpoint",
@@ -10525,6 +10613,7 @@ dependencies = [
 name = "tidb-stats-handle-cache-internal-lfu"
 version = "0.0.0"
 dependencies = [
+ "foldhash 0.1.5",
  "rand 0.10.2",
  "tidb-log",
  "tidb-logutil",
@@ -10534,12 +10623,15 @@ dependencies = [
  "tidb-stats-handle-cache-internal",
  "tidb-stats-handle-cache-internal-testutil",
  "tidb-stats-handle-cache-metrics",
+ "tidb-zeropool",
 ]
 
 [[package]]
 name = "tidb-stats-handle-cache-internal-mapcache"
 version = "0.0.0"
 dependencies = [
+ "arc-swap",
+ "foldhash 0.1.5",
  "tidb-stats",
  "tidb-stats-handle-cache-internal",
  "tidb-stats-handle-cache-internal-testutil",
@@ -10560,6 +10652,7 @@ name = "tidb-stats-handle-cache-metrics"
 version = "0.0.0"
 dependencies = [
  "prometheus 0.14.0",
+ "tidb-zeropool",
 ]
 
 [[package]]
@@ -10585,6 +10678,7 @@ name = "tidb-stats-handle-globalstats"
 version = "0.0.0"
 dependencies = [
  "chrono",
+ "hashbrown 0.15.5",
  "tidb-charset",
  "tidb-codec",
  "tidb-cpuprofile",
@@ -10665,6 +10759,7 @@ name = "tidb-stats-handle-storage"
 version = "0.0.0"
 dependencies = [
  "base64 0.22.1",
+ "base64-simd",
  "chrono",
  "serde_json",
  "tidb-ast",
@@ -10836,6 +10931,7 @@ version = "0.0.0"
 dependencies = [
  "chrono",
  "chrono-tz",
+ "crossbeam-channel",
  "serde",
  "serde_json",
  "tempfile",
@@ -10844,6 +10940,7 @@ dependencies = [
  "tidb-config",
  "tidb-datatype",
  "tidb-execdetails",
+ "tidb-gocontext",
  "tidb-hack",
  "tidb-kvcache",
  "tidb-log",
@@ -10927,6 +11024,7 @@ dependencies = [
 name = "tidb-store-helper"
 version = "0.0.0"
 dependencies = [
+ "hex",
  "serde",
  "tidb-codec",
  "tidb-hack",
@@ -10944,8 +11042,10 @@ dependencies = [
 name = "tidb-stringutil"
 version = "0.0.0"
 dependencies = [
+ "memchr",
  "serde",
  "serde_json",
+ "simdutf8",
  "tidb-goruntime",
  "tidb-mysql",
 ]
@@ -11047,6 +11147,7 @@ dependencies = [
  "flate2",
  "serde",
  "serde_json",
+ "smallvec",
  "tidb-ast",
  "tidb-autoid",
  "tidb-charset",
@@ -11123,11 +11224,13 @@ dependencies = [
  "chrono",
  "chrono-tz",
  "prost 0.14.4",
+ "smallvec",
  "tidb-charset",
  "tidb-codec",
  "tidb-datatype",
  "tidb-dbterror",
  "tidb-errno",
+ "tidb-goruntime",
  "tidb-proto",
  "tidb-rowcodec",
  "tidb-terror",
@@ -11205,6 +11308,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tidb-mysql",
+ "tidb-stacktrace",
  "tidb-terror-identity",
  "tracing",
 ]
@@ -11264,7 +11368,9 @@ version = "0.0.0"
 dependencies = [
  "chrono",
  "chrono-tz",
+ "crossbeam-channel",
  "getrandom 0.3.4",
+ "tidb-gocontext",
  "tidb-log",
  "tidb-logutil",
  "tidb-parser",
@@ -11276,7 +11382,9 @@ dependencies = [
 name = "tidb-timer-runtime"
 version = "0.0.0"
 dependencies = [
+ "chrono",
  "chrono-tz",
+ "crossbeam-channel",
  "tidb-log",
  "tidb-logutil",
  "tidb-timer",
@@ -11289,6 +11397,7 @@ version = "0.0.0"
 dependencies = [
  "chrono",
  "chrono-tz",
+ "crossbeam-channel",
  "tidb-ast",
  "tidb-datatype",
  "tidb-log",
@@ -11393,6 +11502,7 @@ version = "0.0.0"
 dependencies = [
  "crossbeam-channel",
  "fastrand",
+ "indexmap",
  "tidb-pd-client",
  "tidb-topsql-reporter-metrics",
  "tidb-topsql-state",
@@ -11409,6 +11519,7 @@ dependencies = [
  "serde_json",
  "tidb-config-kerneltype",
  "tidb-fastrand",
+ "tidb-goruntime",
  "tidb-hack",
  "tidb-intest",
  "tidb-log",
@@ -11422,6 +11533,7 @@ dependencies = [
 name = "tidb-tracing"
 version = "0.0.0"
 dependencies = [
+ "foldhash 0.1.5",
  "serde",
  "tidb-config-kerneltype",
  "tidb-intest",
@@ -11540,6 +11652,7 @@ dependencies = [
  "chrono",
  "futures",
  "futures-timer",
+ "hashbrown 0.15.5",
  "hyper 1.10.1",
  "prost 0.14.4",
  "reqwest 0.13.4",
@@ -11551,6 +11664,7 @@ dependencies = [
  "tidb-failpoint",
  "tidb-go-time-layout",
  "tidb-gocontext",
+ "tidb-goruntime",
  "tidb-hack",
  "tidb-keyspace",
  "tidb-log",
@@ -11649,6 +11763,7 @@ dependencies = [
 name = "tidb-unistore-kverrors"
 version = "0.0.0"
 dependencies = [
+ "hex",
  "tidb-proto",
  "tidb-unistore-lockwaiter",
 ]
@@ -11692,9 +11807,12 @@ name = "tidb-util"
 version = "0.0.0"
 dependencies = [
  "nix 0.31.3",
+ "prost 0.14.4",
+ "simdutf8",
  "tidb-datatype",
  "tidb-dbterror",
  "tidb-errno",
+ "tidb-goruntime",
  "tidb-hack",
  "tidb-metrics",
  "tidb-model",
@@ -13141,6 +13259,12 @@ dependencies = [
  "quote",
  "syn 3.0.3",
 ]
+
+[[package]]
+name = "zlib-rs"
+version = "0.6.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b268e58e7c693d7c271f93ffc4ba3b380412554231c85bf61ca7af91042a4112"
 
 [[package]]
 name = "zmij"

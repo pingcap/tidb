@@ -45,6 +45,20 @@ fn source_common_prefix_length_handles_empty_and_multiple_strings() {
 }
 
 #[test]
+fn source_common_prefix_length_preserves_byte_positions_across_chunks() {
+    let left = [0x5a_u8; 97];
+    let mut right = left;
+    for index in 0..left.len() {
+        right[index] ^= 1;
+        assert_eq!(common_prefix_length(&[&left, &right]), index);
+        assert_eq!(common_prefix_length(&[&right, &left]), index);
+        assert_eq!(common_prefix_length(&[&left, &right[..index]]), index);
+        right[index] = left[index];
+    }
+    assert_eq!(common_prefix_length(&[&left, &right]), left.len());
+}
+
+#[test]
 fn source_byte_scalar_pins_every_switch_width_and_truncates_after_eight() {
     let bytes = [1_u8, 2, 3, 4, 5, 6, 7, 8, 9];
     let expected = [

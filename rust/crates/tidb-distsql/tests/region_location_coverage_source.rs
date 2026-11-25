@@ -241,7 +241,7 @@ fn validate_location_coverage_preserves_every_original_generated_case() {
     assert_eq!(cases.len(), 32, "original generated case count changed");
     for case in cases {
         let task = RegionTaskEnvelope {
-            ranges: case.ranges,
+            ranges: case.ranges.into(),
             ..Default::default()
         };
         assert_eq!(
@@ -256,7 +256,7 @@ fn validate_location_coverage_preserves_every_original_generated_case() {
 #[test]
 fn null_locations_are_invalid_even_when_non_null_neighbors_cover_the_range() {
     let task = RegionTaskEnvelope {
-        ranges: vec![kr("a", "z")],
+        ranges: vec![kr("a", "z")].into(),
         ..Default::default()
     };
     let locations = vec![kl("a", "m", 1), None, kl("m", "z", 2)];

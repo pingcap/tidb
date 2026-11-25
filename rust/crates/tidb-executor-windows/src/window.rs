@@ -25,22 +25,10 @@ use tidb_executor_aggfuncs::agg_func::{AggFunc, AggFuncUpdateContext, PartialRes
 use tidb_executor_internal_exec::{Executor, ExecutorMeta};
 use tidb_executor_internal_vecgroupchecker::VecGroupChecker;
 use tidb_expr::column::Column;
-use tidb_expr::expression::Expression;
 use tidb_exprctx::Columns;
 use tidb_planner_core_operator_logicalop::window::{BoundType, FrameBound};
 
-/// Go `chunk.Row`: a row of a retained child chunk.
-pub(crate) type RowRef = (Arc<Chunk>, usize);
-
-/// The `chunk.Row` a retained row names.
-pub(crate) fn row(row: &RowRef) -> Row<'_> {
-    row.0.get_row(row.1)
-}
-
-/// Go's `rows[start:end]` handed to `UpdatePartialResult`.
-pub(crate) fn rows_of<'a>(rows: impl IntoIterator<Item = &'a RowRef>) -> Vec<Row<'a>> {
-    rows.into_iter().map(row).collect()
-}
+use crate::range_compare::RangeComparison;
 
 /// The error Go's executor recovers a runtime panic into
 /// (`util.GetRecoverError`): `runtime error: <message>`.
@@ -50,11 +38,11 @@ pub(crate) fn go_runtime_error(message: String) -> ExecError {
 
 /// Go `rows[u]` over a partition's `[]chunk.Row`, whose out-of-range index is
 /// the runtime panic Go recovers.
-pub(crate) fn index_row(rows: &[RowRef], u: u64) -> Result<Row<'_>, ExecError> {
+fn index_row<'a>(rows: &[Row<'a>], u: u64) -> Result<Row<'a>, ExecError> {
     usize::try_from(u)
         .ok()
         .and_then(|index| rows.get(index))
-        .map(row)
+        .copied()
         .ok_or_else(|| go_runtime_error(format!("index out of range [{u}] with length {}", rows.len())))
 }
 
@@ -86,27 +74,37 @@ impl<C: Columns + 'static> WindowExec<C> {
     }
 
     fn consume_one_group(&mut self) -> Result<(), ExecError> {
-        let mut group_rows: Vec<RowRef> = Vec::new();
         if self.group_checker.is_exhausted() {
             let eof = self.fetch_child()?;
             if eof {
                 self.executed = true;
-                return self.consume_group_rows(group_rows);
+                return Ok(());
             }
             self.group_checker.split_into_groups(&self.ctx, &self.child_result)?;
         }
         let (begin, mut end) = self.group_checker.get_next_group();
-        for i in begin..end {
-            group_rows.push((Arc::clone(&self.child_result), i));
+        let child_rows = self.child_result.num_rows();
+        if end - begin == 1 && end < child_rows {
+            // This row can be borrowed directly because no more input is needed.
+            return Self::consume_group_rows(
+                &self.ctx,
+                self.processor.as_mut(),
+                &mut self.result_chunks,
+                &mut self.remaining_rows_in_chunk,
+                &[self.child_result.get_row(begin)],
+            );
         }
+        let first_span = (Arc::clone(&self.child_result), begin..end);
+        let mut other_spans = Vec::new();
+        let mut num_rows = end - begin;
 
-        let mut meet_last_group = end == self.child_result.num_rows();
+        let mut meet_last_group = end == child_rows;
         while meet_last_group {
             meet_last_group = false;
             let eof = self.fetch_child()?;
             if eof {
                 self.executed = true;
-                return self.consume_group_rows(group_rows);
+                break;
             }
 
             let is_first_group_same_as_prev =
@@ -115,32 +113,48 @@ impl<C: Columns + 'static> WindowExec<C> {
             if is_first_group_same_as_prev {
                 let begin;
                 (begin, end) = self.group_checker.get_next_group();
-                for i in begin..end {
-                    group_rows.push((Arc::clone(&self.child_result), i));
-                }
+                other_spans.push((Arc::clone(&self.child_result), begin..end));
+                num_rows += end - begin;
                 meet_last_group = end == self.child_result.num_rows();
             }
         }
-        self.consume_group_rows(group_rows)
+        // Keep one chunk owner per span and build row cursors once for the partition.
+        // The processors can then pass frame slices directly to the window functions.
+        let mut group_rows = Vec::with_capacity(num_rows);
+        for (chunk, span) in std::iter::once(&first_span).chain(&other_spans) {
+            group_rows.extend(span.clone().map(|index| chunk.get_row(index)));
+        }
+        Self::consume_group_rows(
+            &self.ctx,
+            self.processor.as_mut(),
+            &mut self.result_chunks,
+            &mut self.remaining_rows_in_chunk,
+            &group_rows,
+        )
     }
 
-    fn consume_group_rows(&mut self, mut group_rows: Vec<RowRef>) -> Result<(), ExecError> {
+    fn consume_group_rows(
+        ctx: &AggFuncUpdateContext,
+        processor: &mut dyn WindowProcessor,
+        result_chunks: &mut VecDeque<Chunk>,
+        remaining_rows_in_chunk: &mut VecDeque<usize>,
+        mut group_rows: &[Row<'_>],
+    ) -> Result<(), ExecError> {
         let mut remaining_rows_in_group = group_rows.len();
         if remaining_rows_in_group == 0 {
             return Ok(());
         }
-        for i in 0..self.result_chunks.len() {
-            let remained = self.remaining_rows_in_chunk[i].min(remaining_rows_in_group);
-            self.remaining_rows_in_chunk[i] -= remained;
+        for (chunk, current_remaining) in result_chunks.iter_mut().zip(remaining_rows_in_chunk) {
+            let remained = (*current_remaining).min(remaining_rows_in_group);
+            *current_remaining -= remained;
             remaining_rows_in_group -= remained;
 
             // Go: "The old implementation needs the processor has these
             // three methods but now it does not have to."
-            self.processor.consume_group_rows(&self.ctx, &mut group_rows)?;
-            self.processor
-                .append_result_2_chunk(&self.ctx, &group_rows, &mut self.result_chunks[i], remained)?;
+            processor.consume_group_rows(ctx, &mut group_rows)?;
+            processor.append_result_2_chunk(ctx, group_rows, chunk, remained)?;
             if remaining_rows_in_group == 0 {
-                self.processor.reset_partial_result();
+                processor.reset_partial_result();
                 break;
             }
         }
@@ -237,13 +251,13 @@ impl<C: Columns + Send + 'static> Executor for WindowExec<C> {
 pub(crate) trait WindowProcessor: Send {
     /// Go `consumeGroupRows`: updates the result for a window function using
     /// the input rows which belong to the same partition.
-    fn consume_group_rows(&mut self, ctx: &AggFuncUpdateContext, rows: &mut Vec<RowRef>) -> Result<(), ExecError>;
+    fn consume_group_rows(&mut self, ctx: &AggFuncUpdateContext, rows: &mut &[Row<'_>]) -> Result<(), ExecError>;
     /// Go `appendResult2Chunk`: appends the final results to chunk. It is
     /// called when there are no more rows in current partition.
     fn append_result_2_chunk(
         &mut self,
         ctx: &AggFuncUpdateContext,
-        rows: &[RowRef],
+        rows: &[Row<'_>],
         chk: &mut Chunk,
         remained: usize,
     ) -> Result<(), ExecError>;
@@ -259,20 +273,18 @@ pub(crate) struct AggWindowProcessor {
 }
 
 impl WindowProcessor for AggWindowProcessor {
-    fn consume_group_rows(&mut self, ctx: &AggFuncUpdateContext, rows: &mut Vec<RowRef>) -> Result<(), ExecError> {
-        let group = rows_of(rows.iter());
+    fn consume_group_rows(&mut self, ctx: &AggFuncUpdateContext, rows: &mut &[Row<'_>]) -> Result<(), ExecError> {
         for (i, window_func) in self.window_funcs.iter().enumerate() {
-            window_func.update_partial_result(ctx, &group, &mut self.partial_results[i])?;
+            window_func.update_partial_result(ctx, rows, &mut self.partial_results[i])?;
         }
-        drop(group);
-        rows.clear();
+        *rows = &[];
         Ok(())
     }
 
     fn append_result_2_chunk(
         &mut self,
         ctx: &AggFuncUpdateContext,
-        _rows: &[RowRef],
+        _rows: &[Row<'_>],
         chk: &mut Chunk,
         mut remained: usize,
     ) -> Result<(), ExecError> {
@@ -343,14 +355,14 @@ impl RowFrameWindowProcessor {
 }
 
 impl WindowProcessor for RowFrameWindowProcessor {
-    fn consume_group_rows(&mut self, _ctx: &AggFuncUpdateContext, _rows: &mut Vec<RowRef>) -> Result<(), ExecError> {
+    fn consume_group_rows(&mut self, _ctx: &AggFuncUpdateContext, _rows: &mut &[Row<'_>]) -> Result<(), ExecError> {
         Ok(())
     }
 
     fn append_result_2_chunk(
         &mut self,
         ctx: &AggFuncUpdateContext,
-        rows: &[RowRef],
+        rows: &[Row<'_>],
         chk: &mut Chunk,
         remained: usize,
     ) -> Result<(), ExecError> {
@@ -379,6 +391,9 @@ pub(crate) struct RangeFrameWindowProcessor {
     pub(crate) partial_results: Vec<PartialResult>,
     pub(crate) start: FrameBound,
     pub(crate) end: FrameBound,
+    pub(crate) start_cmp: Vec<RangeComparison>,
+    pub(crate) end_cmp: Vec<RangeComparison>,
+    pub(crate) reuse_peer_bounds: bool,
     pub(crate) cur_row_idx: u64,
     pub(crate) last_start_offset: u64,
     pub(crate) last_end_offset: u64,
@@ -389,15 +404,23 @@ pub(crate) struct RangeFrameWindowProcessor {
 }
 
 impl RangeFrameWindowProcessor {
-    fn get_start_offset(&mut self, ctx: &AggFuncUpdateContext, rows: &[RowRef]) -> Result<u64, ExecError> {
+    fn get_start_offset(&mut self, ctx: &AggFuncUpdateContext, rows: &[Row<'_>]) -> Result<u64, ExecError> {
         if self.start.unbounded {
             return Ok(0);
+        }
+        if self.reuse_peer_bounds {
+            // Input is ordered. The previous end is the first row of the
+            // next peer group, so its start cannot precede the current row.
+            if self.cur_row_idx >= self.last_end_offset {
+                self.last_start_offset = self.cur_row_idx;
+            }
+            return Ok(self.last_start_offset);
         }
         let num_rows = rows.len() as u64;
         while self.last_start_offset < num_rows {
             let mut res = 0;
             for i in 0..self.order_by_cols.len() {
-                res = cmp_func(
+                res = self.start_cmp[i].compare(
                     ctx,
                     &self.start.compare_cols[i],
                     &self.start.calc_funcs[i],
@@ -419,15 +442,18 @@ impl RangeFrameWindowProcessor {
         Ok(self.last_start_offset)
     }
 
-    fn get_end_offset(&mut self, ctx: &AggFuncUpdateContext, rows: &[RowRef]) -> Result<u64, ExecError> {
+    fn get_end_offset(&mut self, ctx: &AggFuncUpdateContext, rows: &[Row<'_>]) -> Result<u64, ExecError> {
         let num_rows = rows.len() as u64;
         if self.end.unbounded {
             return Ok(num_rows);
         }
+        if self.reuse_peer_bounds && self.cur_row_idx < self.last_end_offset {
+            return Ok(self.last_end_offset);
+        }
         while self.last_end_offset < num_rows {
             let mut res = 0;
             for i in 0..self.order_by_cols.len() {
-                res = cmp_func(
+                res = self.end_cmp[i].compare(
                     ctx,
                     &self.end.calc_funcs[i],
                     &self.end.compare_cols[i],
@@ -451,14 +477,14 @@ impl RangeFrameWindowProcessor {
 }
 
 impl WindowProcessor for RangeFrameWindowProcessor {
-    fn consume_group_rows(&mut self, _ctx: &AggFuncUpdateContext, _rows: &mut Vec<RowRef>) -> Result<(), ExecError> {
+    fn consume_group_rows(&mut self, _ctx: &AggFuncUpdateContext, _rows: &mut &[Row<'_>]) -> Result<(), ExecError> {
         Ok(())
     }
 
     fn append_result_2_chunk(
         &mut self,
         ctx: &AggFuncUpdateContext,
-        rows: &[RowRef],
+        rows: &[Row<'_>],
         chk: &mut Chunk,
         remained: usize,
     ) -> Result<(), ExecError> {
@@ -489,10 +515,10 @@ fn append_frame_results(
     window_funcs: &[Box<dyn AggFunc>],
     partial_results: &mut [PartialResult],
     ctx: &AggFuncUpdateContext,
-    rows: &[RowRef],
+    rows: &[Row<'_>],
     chk: &mut Chunk,
     mut remained: usize,
-    mut next_frame: impl FnMut(&[RowRef]) -> Result<(u64, u64), ExecError>,
+    mut next_frame: impl FnMut(&[Row<'_>]) -> Result<(u64, u64), ExecError>,
 ) -> Result<(), ExecError> {
     let mut initialized_sliding_window = false;
     let (mut last_start, mut last_end) = (0_u64, 0_u64);
@@ -527,8 +553,8 @@ fn append_frame_results(
                         // Store start inside MaxMinSlidingWindowAggFunc.windowInfo.
                         min_max.set_window_start(start);
                     }
-                    let frame = rows_of(&rows[start as usize..end as usize]);
-                    window_func.update_partial_result(ctx, &frame, &mut partial_results[i])?;
+                    let frame = &rows[start as usize..end as usize];
+                    window_func.update_partial_result(ctx, frame, &mut partial_results[i])?;
                 }
             }
             window_func.append_final_result_2_chunk(ctx, &mut partial_results[i], chk)?;
@@ -543,24 +569,4 @@ fn append_frame_results(
         window_func.reset_partial_result(&mut partial_results[i]);
     }
     Ok(())
-}
-
-/// Go `expression.CompareFunc` of a RANGE frame bound (`CmpFuncs[i]`):
-/// evaluates `lhs` over `lhs_row` and `rhs` over `rhs_row` and compares them
-/// in the bound's comparison type, NULL first (`compareNull`).
-pub(crate) fn cmp_func(
-    ctx: &AggFuncUpdateContext,
-    lhs: &Expression,
-    rhs: &Expression,
-    lhs_row: Row<'_>,
-    rhs_row: Row<'_>,
-) -> Result<i64, ExecError> {
-    let lhs_value = lhs.eval(ctx, lhs_row)?;
-    let rhs_value = rhs.eval(ctx, rhs_row)?;
-    let order = tidb_expr::compare_datums_with_collation(
-        &lhs_value,
-        &rhs_value,
-        tidb_expr::collation_derive::collation_of_node(lhs),
-    )?;
-    Ok(order as i64)
 }

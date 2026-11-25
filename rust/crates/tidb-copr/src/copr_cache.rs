@@ -92,7 +92,7 @@ pub fn build_copr_cache_key(
     key.extend_from_slice(&data_len.to_le_bytes());
     key.extend_from_slice(&request.data);
 
-    for range in &request.ranges {
+    for range in request.ranges.iter() {
         let start_len =
             u16::try_from(range.start_key.len()).map_err(|_| CoprCacheError::StartKeyTooBig)?;
         let end_len =
@@ -455,8 +455,8 @@ impl CoprCache {
             if context.paging_enabled {
                 response.range = if value.page_start.is_some() || value.page_end.is_some() {
                     Some(CoprocessorKeyRange {
-                        start: value.page_start.clone().unwrap_or_default(),
-                        end: value.page_end.clone().unwrap_or_default(),
+                        start: value.page_start.clone().unwrap_or_default().into(),
+                        end: value.page_end.clone().unwrap_or_default().into(),
                     })
                 } else {
                     None
@@ -490,8 +490,8 @@ impl CoprCache {
             timestamp: context.start_ts,
             region_id: context.region_id,
             region_data_version: response.cache_last_version,
-            page_start: response.range.as_ref().map(|range| range.start.clone()),
-            page_end: response.range.as_ref().map(|range| range.end.clone()),
+            page_start: response.range.as_ref().map(|range| range.start.to_vec()),
+            page_end: response.range.as_ref().map(|range| range.end.to_vec()),
             ..CoprCacheValue::default()
         };
         if self.set(lookup.key.clone(), value) {

@@ -346,7 +346,7 @@ impl MemoryOpsHistoryManager {
                 if info.port.is_empty() {
                     info.host.clone()
                 } else {
-                    join_host_port(&info.host, &info.port)
+                    join_host_port_str(&info.host, &info.port)
                 }
                 .into_bytes(),
             ),
@@ -418,7 +418,7 @@ impl MemoryOpsHistoryManager {
     }
 }
 
-use tidb_go_net::join_host_port;
+use tidb_go_net::join_host_port_str;
 
 #[cfg(test)]
 mod tests {

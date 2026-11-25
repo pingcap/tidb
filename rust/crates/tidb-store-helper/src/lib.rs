@@ -183,7 +183,7 @@ pub struct TableInfoWithKeyRange {
 
 /// Go `bytesKeyToHex`.
 fn bytes_key_to_hex(key: &[u8]) -> String {
-    key.iter().map(|byte| format!("{byte:02X}")).collect()
+    hex::encode_upper(key)
 }
 
 /// Go `newTableInfoWithKeyRange`.

@@ -142,13 +142,22 @@ fn get_esc(mut chunk: &[u8]) -> Result<(char, &[u8]), &'static str> {
 
 /// Go `utf8.DecodeRuneInString`; invalid bytes consume one byte.
 fn decode_rune(bytes: &[u8]) -> (char, usize) {
-    let valid = match std::str::from_utf8(bytes) {
-        Ok(s) => s,
-        Err(e) => std::str::from_utf8(&bytes[..e.valid_up_to()]).unwrap(),
-    };
-    valid
-        .chars()
-        .next()
-        .map(|c| (c, c.len_utf8()))
-        .unwrap_or(('\u{fffd}', 1))
+    // An iterator error can cover several bytes. Go advances by just one.
+    match utf8_iter::ErrorReportingUtf8Chars::new(bytes).next() {
+        Some(Ok(ch)) => (ch, ch.len_utf8()),
+        _ => (char::REPLACEMENT_CHARACTER, 1),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn match_wildcards_with_valid_and_invalid_runes() {
+        assert_eq!(filepath_match(b"*[0-9].csv", "表7.csv".as_bytes()), Ok(true));
+        assert_eq!(filepath_match(b"??", b"\xf0\x9f"), Ok(true));
+        assert_eq!(filepath_match("[�]".as_bytes(), b"\xff"), Ok(true));
+        assert_eq!(filepath_match(b"[\xff]", b"x"), Err(BAD_PATTERN));
+    }
 }

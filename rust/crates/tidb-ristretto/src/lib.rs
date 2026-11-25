@@ -135,7 +135,7 @@ struct Core<V> {
     metrics: Arc<Metrics>,
     bucket_duration: Duration,
     state: AtomicU8,
-    operations: RwLock<()>,
+    operations: tidb_zeropool::ThreadShards<RwLock<()>>,
 }
 impl<V: Clone + Send + Sync + 'static> Core<V> {
     fn exit(&self, value: Option<V>) {
@@ -164,7 +164,7 @@ impl<V: Clone + Send + Sync + 'static> Core<V> {
             if self.state.load(Ordering::Acquire) != OPEN {
                 return None;
             }
-            if let Ok(guard) = self.operations.try_read() {
+            if let Ok(guard) = self.operations.local().try_read() {
                 return (self.state.load(Ordering::Acquire) == OPEN).then_some(guard);
             }
             thread::yield_now();
@@ -249,7 +249,7 @@ impl<V: Clone + Send + Sync + 'static> Cache<V> {
             metrics,
             bucket_duration,
             state: AtomicU8::new(OPEN),
-            operations: RwLock::new(()),
+            operations: tidb_zeropool::ThreadShards::new(RwLock::default),
         });
         let (stop_writer, writer_stop) = bounded(0);
         let (stop_reader, reader_stop) = bounded(0);
@@ -287,10 +287,20 @@ impl<V: Clone + Send + Sync + 'static> Cache<V> {
     }
     /// Observe a read and return the current, unexpired resident value.
     pub fn get<K: Key + ?Sized>(&self, key: &K) -> Option<V> {
+        self.get_with(key, V::clone)
+    }
+
+    /// Observe a read and inspect the current, unexpired resident value.
+    /// The callback runs under the read guard and must not modify the cache.
+    pub fn get_with<K: Key + ?Sized, R>(
+        &self,
+        key: &K,
+        inspect: impl FnOnce(&V) -> R,
+    ) -> Option<R> {
         let _operation = self.core.operation()?;
         let (key, conflict) = self.core.hash(key);
         self.core.ring.push(key, |keys| self.core.push_reads(keys));
-        let value = self.core.store.get(key, conflict);
+        let value = self.core.store.get_with(key, conflict, inspect);
         self.core.metrics.add(
             if value.is_some() {
                 Metric::Hit
@@ -426,7 +436,12 @@ impl<V: Clone + Send + Sync + 'static> Cache<V> {
             return;
         }
         self.core.state.store(CLEARING, Ordering::Release);
-        let _operations = self.core.operations.write().unwrap();
+        let _operations: Vec<_> = self
+            .core
+            .operations
+            .iter()
+            .map(|shard| shard.write().unwrap())
+            .collect();
         if let Some(writer) = workers.writer.take() {
             let _ = workers.stop_writer.send(());
             writer.join().expect("Ristretto write callback panicked");

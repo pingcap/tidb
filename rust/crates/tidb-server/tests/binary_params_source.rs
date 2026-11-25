@@ -26,6 +26,7 @@
 
 use tidb_param::BinaryParam;
 use tidb_server::binary_params::parse_binary_params;
+use tidb_server::binary_params::parse_binary_params_refs;
 use tidb_server::binary_params::BinaryParamError;
 use tidb_server::binary_params::TYPE_NULL;
 use tidb_server_internal_util::parse_length_encoded_int;
@@ -156,6 +157,24 @@ fn a_send_long_data_bound_param_is_used_directly() {
     let bound: &[u8] = b"xyz";
     let parsed = parse_binary_params(1, &[Some(bound)], &[0x0], &[0xfe, 0], &[], "utf8mb4").unwrap();
     assert_eq!(parsed, vec![param(0xfe, false, false, b"xyz")]);
+}
+
+#[test]
+fn borrowed_binary_params_keep_packet_and_bound_storage() {
+    let packet = b"\x03abc\x07";
+    let bound = b"xyz";
+    let parsed = parse_binary_params_refs(
+        3,
+        &[None, Some(bound), None],
+        &[0b010],
+        &[0xfd, 0, 0xfc, 0, 1, 0],
+        packet,
+        "utf8mb4",
+    )
+    .unwrap();
+    assert!(std::ptr::eq(parsed[0].val.as_ref(), &packet[1..4]));
+    assert!(std::ptr::eq(parsed[1].val.as_ref(), bound.as_slice()));
+    assert!(std::ptr::eq(parsed[2].val.as_ref(), &packet[4..]));
 }
 
 #[test]

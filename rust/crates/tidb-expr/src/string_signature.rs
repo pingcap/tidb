@@ -35,9 +35,11 @@
 //! selected charset decides what a "unit" is (one byte, or one character's
 //! bytes), and each builtin indexes units without knowing which it got.
 
+use std::borrow::Cow;
+
 use tidb_datatype::Datum;
 use tidb_charset::Collation;
-use tidb_goruntime::GoString;
+use tidb_goruntime::decode_go_utf8_lossy;
 
 use crate::coerce::coerce_str_bytes;
 use crate::EvalError;
@@ -66,15 +68,12 @@ pub(crate) fn is_binary_str(value: &Datum) -> bool {
 /// Holding the byte payload (rather than a `Vec<char>`) is what lets the
 /// binary signature preserve arbitrary octets the way Go strings do, while
 /// the UTF-8 signature still counts and cuts on character boundaries.
-pub(crate) struct StrUnits {
-    bytes: Vec<u8>,
-    /// Byte offset of every unit start, plus the total length as terminator,
-    /// so `bounds.len() == len() + 1`.
-    bounds: Vec<usize>,
-    binary: bool,
+pub(crate) enum StrUnits<'a> {
+    Binary(Cow<'a, [u8]>),
+    Text(Cow<'a, str>),
 }
 
-impl StrUnits {
+impl<'a> StrUnits<'a> {
     /// Selects the signature for `value` and produces its unit view, or
     /// `None` when the argument is `NULL`.
     ///
@@ -82,11 +81,8 @@ impl StrUnits {
     /// tail, for one). Such bytes become one unit each, matching Go's
     /// `[]rune` conversion, which yields one `RuneError` per malformed byte
     /// rather than failing.
-    pub(crate) fn of(value: &Datum) -> Result<Option<Self>, EvalError> {
-        let Some(bytes) = coerce_str_bytes(value)? else {
-            return Ok(None);
-        };
-        Ok(Some(Self::from_bytes(bytes, is_binary_str(value))))
+    pub(crate) fn of(value: &'a Datum) -> Result<Option<Self>, EvalError> {
+        Self::of_with_signature(value, is_binary_str(value))
     }
 
     /// Views `value` under an explicitly chosen signature, for the functions
@@ -95,78 +91,124 @@ impl StrUnits {
     /// `types.IsBinaryStr(bf.tp)` after `addBinFlag`, so a binary
     /// replacement string makes `INSERT` slice `str` by bytes too.
     pub(crate) fn of_with_signature(
-        value: &Datum,
+        value: &'a Datum,
         binary: bool,
     ) -> Result<Option<Self>, EvalError> {
-        let Some(bytes) = coerce_str_bytes(value)? else {
-            return Ok(None);
+        let bytes = match value.as_raw_bytes() {
+            Some(bytes) => Cow::Borrowed(bytes),
+            None => match coerce_str_bytes(value)? {
+                Some(bytes) => Cow::Owned(bytes),
+                None => return Ok(None),
+            },
         };
         Ok(Some(Self::from_bytes(bytes, binary)))
     }
 
-    fn from_bytes(bytes: Vec<u8>, binary: bool) -> Self {
+    pub(crate) fn from_bytes(bytes: Cow<'a, [u8]>, binary: bool) -> Self {
         if binary {
-            let bounds = (0..=bytes.len()).collect();
-            return Self {
-                bytes,
-                bounds,
-                binary,
-            };
+            return Self::Binary(bytes);
         }
 
-        // Every Go UTF-8 signature materializes `[]rune(str)` before it
-        // slices or reorders. Converting that rune slice back to a string
-        // replaces EACH malformed source byte with one U+FFFD. Normalize once
-        // here, then derive every boundary in one linear pass; retaining the
-        // malformed octet and merely counting it as a unit produces the right
-        // length but the wrong returned bytes.
-        let bytes = GoString::from(bytes).to_utf8_lossy_go().into_bytes();
-        let text = std::str::from_utf8(&bytes).expect("Go replacement yields valid UTF-8");
-        let mut bounds: Vec<usize> = text.char_indices().map(|(offset, _)| offset).collect();
-        bounds.push(bytes.len());
-        Self {
-            bytes,
-            bounds,
-            binary,
-        }
+        Self::Text(match bytes {
+            Cow::Borrowed(bytes) => go_utf8_text(bytes),
+            Cow::Owned(bytes) => Cow::Owned(
+                String::from_utf8(bytes).unwrap_or_else(|error| decode_go_utf8_lossy(error.as_bytes())),
+            ),
+        })
     }
 
-    /// The number of units, which is what `CHAR_LENGTH`, `LEFT`'s clamp and
-    /// `SUBSTRING`'s position arithmetic all count in.
+    /// The number of units used for negative positions and length clamps.
     pub(crate) fn len(&self) -> usize {
-        self.bounds.len() - 1
+        match self {
+            Self::Binary(bytes) => bytes.len(),
+            Self::Text(text) => text.chars().count(),
+        }
     }
 
     /// The bytes of units `start..end`; both indices are clamped into range,
     /// and an inverted range yields the empty string.
     pub(crate) fn slice(&self, start: usize, end: usize) -> &[u8] {
-        let start = start.min(self.len());
-        let end = end.clamp(start, self.len());
-        &self.bytes[self.bounds[start]..self.bounds[end]]
+        let width = end.saturating_sub(start);
+        match self {
+            Self::Binary(bytes) => {
+                let suffix = &bytes[start.min(bytes.len())..];
+                &suffix[..width.min(suffix.len())]
+            }
+            Self::Text(text) => {
+                let suffix = &text[byte_offset(text, start)..];
+                &suffix.as_bytes()[..byte_offset(suffix, width)]
+            }
+        }
+    }
+
+    /// The last `count` units, clamped to the length of the input.
+    pub(crate) fn tail(&self, count: usize) -> &[u8] {
+        if count == 0 {
+            return b"";
+        }
+        match self {
+            Self::Binary(bytes) => &bytes[bytes.len().saturating_sub(count)..],
+            Self::Text(text) => {
+                let start = text
+                    .char_indices()
+                    .nth_back(count - 1)
+                    .map_or(0, |(offset, _)| offset);
+                &text.as_bytes()[start..]
+            }
+        }
     }
 
     /// The whole payload, for the signatures that only reorder or search it.
     pub(crate) fn bytes(&self) -> &[u8] {
-        &self.bytes
+        match self {
+            Self::Binary(bytes) => bytes,
+            Self::Text(text) => text.as_bytes(),
+        }
     }
 
-    /// The bytes of each unit, in order.
-    pub(crate) fn units(&self) -> impl DoubleEndedIterator<Item = &[u8]> {
-        self.bounds
-            .windows(2)
-            .map(move |window| &self.bytes[window[0]..window[1]])
+    /// Reverses bytes or whole runes according to the selected signature.
+    pub(crate) fn reversed(&self) -> Datum {
+        let bytes = match self {
+            Self::Text(text) if !text.is_ascii() => {
+                let mut reversed = String::with_capacity(text.len());
+                reversed.extend(text.chars().rev());
+                reversed.into_bytes()
+            }
+            _ => {
+                let mut reversed = self.bytes().to_vec();
+                reversed.reverse();
+                reversed
+            }
+        };
+        self.pack(bytes)
     }
 
     /// Rebuilds a result value in the charset this signature was selected
     /// for, so a binary argument keeps producing a binary result the way
     /// `SetBinFlagOrBinStr` arranges in Go.
     pub(crate) fn pack(&self, bytes: Vec<u8>) -> Datum {
-        if self.binary {
-            Datum::new_bytes_datum(bytes)
-        } else {
-            Datum::new_string_datum(bytes)
+        match self {
+            Self::Binary(_) => Datum::new_bytes_datum(bytes),
+            Self::Text(_) => Datum::new_string_datum(bytes),
         }
     }
+}
+
+/// Go's `string([]rune(bytes))`, borrowing memory when UTF-8 is already valid.
+pub(crate) fn go_utf8_text(bytes: &[u8]) -> Cow<'_, str> {
+    match simdutf8::basic::from_utf8(bytes) {
+        Ok(text) => Cow::Borrowed(text),
+        Err(_) => Cow::Owned(decode_go_utf8_lossy(bytes)),
+    }
+}
+
+fn byte_offset(text: &str, units: usize) -> usize {
+    if units >= text.len() {
+        return text.len();
+    }
+    text.char_indices()
+        .nth(units)
+        .map_or(text.len(), |(offset, _)| offset)
 }
 
 #[cfg(test)]

@@ -25,8 +25,12 @@
 //! Byte cells use guard-backed views because a MutRow may share their backing.
 
 use crate::chunk::Chunk;
+use crate::shared_bytes::RetainedBytes;
 use crate::CellBytes;
-use tidb_datatype::{deserialize_vector_float32, Datum, Decimal, EvalType, FieldType, FieldTypeCode, MyDecimal, MySqlDuration, Time, VectorFloat32, MYDECIMAL_STRUCT_SIZE, UNSPECIFIED_LENGTH};
+use tidb_datatype::{
+    Datum, Decimal, EvalType, FieldType, FieldTypeCode, MyDecimal, MySqlDuration, Time,
+    VectorFloat32, VectorFloat32Ref, MYDECIMAL_STRUCT_SIZE, UNSPECIFIED_LENGTH,
+};
 use tidb_goruntime::GoString;
 
 /// Shared typed-cell conversion for row cursors and column-wide consumers.
@@ -39,12 +43,28 @@ pub(crate) struct DatumCell<'a> {
 impl DatumCell<'_> {
     /// Go `DatumWithBuffer`: materializes one cell into caller-owned datum
     /// storage. Existing contents are overwritten for every supported kind.
+    #[inline]
     pub(crate) fn datum_with_buffer(&self, field_type: &FieldType, datum: &mut Datum) {
         if self.column.is_null(self.row) {
             *datum = Datum::Null;
             return;
         }
-        let materialized = match field_type.code() {
+        match field_type.code() {
+            FieldTypeCode::Varchar
+            | FieldTypeCode::VarString
+            | FieldTypeCode::String
+            | FieldTypeCode::Blob
+            | FieldTypeCode::TinyBlob
+            | FieldTypeCode::MediumBlob
+            | FieldTypeCode::LongBlob => {
+                self.column.write_string_datum(self.row, field_type.collation(), datum);
+            }
+            code => self.datum_with_type(code, field_type, datum),
+        }
+    }
+
+    fn datum_with_type(&self, code: FieldTypeCode, field_type: &FieldType, datum: &mut Datum) {
+        let materialized = match code {
             FieldTypeCode::Tiny
             | FieldTypeCode::Short
             | FieldTypeCode::Int24
@@ -59,32 +79,10 @@ impl DatumCell<'_> {
             FieldTypeCode::Year => Datum::Int(self.column.get_int64(self.row)),
             FieldTypeCode::Float => Datum::Float32(f64::from(self.column.get_float32(self.row))),
             FieldTypeCode::Double => Datum::Real(self.column.get_float64(self.row)),
-            FieldTypeCode::Varchar
-            | FieldTypeCode::VarString
-            | FieldTypeCode::String
-            | FieldTypeCode::Blob
-            | FieldTypeCode::TinyBlob
-            | FieldTypeCode::MediumBlob
-            | FieldTypeCode::LongBlob => {
-                let mut value = Datum::Null;
-                value.set_string(
-                    self.column.get_bytes(self.row).to_vec(),
-                    field_type.collation(),
-                );
-                value
-            }
             FieldTypeCode::Bit => Datum::Bit(tidb_datatype::BinaryLiteral::from(
                 self.column.get_bytes(self.row).to_vec(),
             )),
-            FieldTypeCode::Json => {
-                let cell = self.column.get_bytes(self.row);
-                let (type_code, value) = cell
-                    .split_first()
-                    .expect("a JSON cell always carries its type code");
-                Datum::Json(tidb_datatype::BinaryJSON::from_encoded_parts(
-                    *type_code, value,
-                ))
-            }
+            FieldTypeCode::Json => Datum::Json(self.column.get_json(self.row)),
             FieldTypeCode::Enum => {
                 Datum::new_enum(self.column.get_enum(self.row), field_type.collation())
             }
@@ -150,12 +148,12 @@ impl DatumCell<'_> {
             | FieldTypeCode::LongBlob
             | FieldTypeCode::Bit => {}
             FieldTypeCode::Json => {
-                let cell = self.column.get_bytes(self.row);
-                let (type_code, value) = cell
-                    .split_first()
+                let value = self.column.json_cell(self.row, true)
                     .ok_or_else(|| self.invalid_cell(col_idx, field_type, "empty JSON cell"))?;
-                tidb_datatype::BinaryJSON::from_raw(*type_code, value.to_vec())
+                let value = value.validate_layout()
                     .map_err(|error| self.invalid_cell(col_idx, field_type, error))?;
+                *datum = Datum::Json(value);
+                return Ok(());
             }
             FieldTypeCode::Enum | FieldTypeCode::Set => {
                 let cell = self.column.get_bytes(self.row);
@@ -185,9 +183,10 @@ impl DatumCell<'_> {
                     .map_err(|error| self.invalid_cell(col_idx, field_type, error))?;
             }
             FieldTypeCode::VectorFloat32 => {
-                let cell = self.column.get_bytes(self.row);
-                deserialize_vector_float32(cell.as_ref())
+                let value = self.column.try_vector_cell(self.row)
                     .map_err(|error| self.invalid_cell(col_idx, field_type, error))?;
+                *datum = Datum::VectorFloat32(value);
+                return Ok(());
             }
             _ => {}
         }
@@ -394,6 +393,13 @@ impl<'a> Row<'a> {
         self.expect_chunk().column(col_idx).get_int64(self.idx)
     }
 
+    /// Reads a nullable integer cell with one borrow of its column.
+    #[inline]
+    pub fn get_nullable_int64(&self, col_idx: usize) -> Option<i64> {
+        let column = self.expect_chunk().column(col_idx);
+        (!column.is_null(self.idx)).then(|| column.get_int64(self.idx))
+    }
+
     /// Go `GetUint64`.
     pub fn get_uint64(&self, col_idx: usize) -> u64 {
         self.expect_chunk().column(col_idx).get_uint64(self.idx)
@@ -438,12 +444,111 @@ impl<'a> Row<'a> {
     }
 
     /// Go `GetBytes`: the raw bytes of a variable-length column's cell.
+    #[inline]
     pub fn get_bytes(&self, col_idx: usize) -> CellBytes<'a> {
         self.expect_chunk().column_slots()[col_idx].get_bytes(self.idx)
     }
 
+    /// Borrows a present variable-length cell from stable storage. The slice
+    /// can stay live while evaluating other columns without holding a lock.
+    #[inline]
+    pub fn try_borrow_var_bytes(&self, col_idx: usize) -> Option<&'a [u8]> {
+        self.chunk?
+            .column_slots()
+            .get(col_idx)?
+            .try_borrow_cell_bytes(self.idx)
+    }
+
+    /// Reads a variable-length cell's null flag and byte length together.
+    /// `Some(None)` is a NULL cell and `None` means there is no such cell.
+    #[inline]
+    pub fn try_var_bytes_len(&self, col_idx: usize) -> Option<Option<usize>> {
+        let column = self.chunk?.column_slots().get(col_idx)?.read();
+        if column.is_fixed() || self.idx >= column.length() {
+            return None;
+        }
+        Some((!column.is_null(self.idx)).then(|| column.get_raw_length(self.idx)))
+    }
+
+    /// Copies at most `prefix.len()` bytes from a variable-length cell.
+    /// `Some(None)` is a NULL cell and `None` means there is no such cell.
+    #[inline]
+    pub fn try_copy_var_bytes_prefix(
+        &self,
+        col_idx: usize,
+        prefix: &mut [u8],
+    ) -> Option<Option<usize>> {
+        let column = self.chunk?.column_slots().get(col_idx)?.read();
+        if column.is_fixed() || self.idx >= column.length() {
+            return None;
+        }
+        if column.is_null(self.idx) {
+            return Some(None);
+        }
+        let bytes = column.get_bytes(self.idx);
+        let count = prefix.len().min(bytes.len());
+        prefix[..count].copy_from_slice(&bytes[..count]);
+        Some(Some(count))
+    }
+
+    /// Retains an immutable part of a wide variable-length cell when its
+    /// backing can be shared independently of the chunk's later writes.
+    pub fn try_retain_var_bytes(
+        &self,
+        col_idx: usize,
+        range: std::ops::Range<usize>,
+    ) -> Option<bytes::Bytes> {
+        if range.len() < crate::column::Column::MIN_RETAINED_CELL_BYTES {
+            return None;
+        }
+        let column = self.chunk?.column_slots().get(col_idx)?.read();
+        column
+            .retain_cell_bytes(self.idx, Some(range))
+            .map(RetainedBytes::into_bytes)
+    }
+
+    /// Snapshots a wide variable-length cell without keeping its column locked.
+    pub fn try_retain_var_cell(&self, col_idx: usize) -> Option<bytes::Bytes> {
+        let column = self.chunk?.column_slots().get(col_idx)?.read();
+        column
+            .retain_cell_bytes(self.idx, None)
+            .map(RetainedBytes::into_bytes)
+    }
+
+    /// Snapshots a cell or retains a wide subrange with its immutable owner.
+    /// A short whole cell is copied into the returned view's inline storage.
+    pub fn try_snapshot_var_cell_view(
+        &self,
+        col_idx: usize,
+        range: Option<std::ops::Range<usize>>,
+    ) -> Option<CellBytes<'static>> {
+        let column = self.chunk?.column_slots().get(col_idx)?.read();
+        match range {
+            Some(range) => column.retain_cell_bytes(self.idx, Some(range)).map(CellBytes::retained),
+            None => column.try_snapshot_var_cell(self.idx),
+        }
+    }
+
+    /// Selects part of a string cell and retains or copies it into a datum.
+    /// The selector only inspects the supplied bytes because an aliased
+    /// column stays read-locked until the result is captured.
+    #[inline]
+    pub fn try_select_var_string(
+        &self,
+        col_idx: usize,
+        collation: tidb_charset::Collation,
+        select: impl FnOnce(&[u8]) -> std::ops::Range<usize>,
+    ) -> Option<Datum> {
+        self.chunk?
+            .column_slots()
+            .get(col_idx)?
+            .read()
+            .select_string_datum(self.idx, collation, select)
+    }
+
     /// Go `GetString`: a byte-preserving string view of a variable-length
     /// column's cell.
+    #[inline]
     pub fn get_string(&self, col_idx: usize) -> GoString {
         self.expect_chunk().column(col_idx).get_string(self.idx)
     }
@@ -454,6 +559,7 @@ impl<'a> Row<'a> {
     }
 
     /// Go `GetRaw`: the raw element bytes for either column kind.
+    #[inline]
     pub fn get_raw(&self, col_idx: usize) -> CellBytes<'a> {
         self.expect_chunk().column_slots()[col_idx].get_raw(self.idx)
     }
@@ -463,7 +569,17 @@ impl<'a> Row<'a> {
         self.expect_chunk().column(col_idx).get_json(self.idx)
     }
 
+    /// Retains part of an immutable JSON cell and returns any existing source layout.
+    pub fn try_retain_json_slice(
+        &self,
+        col_idx: usize,
+        range: std::ops::Range<usize>,
+    ) -> Option<(bytes::Bytes, Option<tidb_datatype::EncodedJSONLayout>)> {
+        self.chunk?.column_slots().get(col_idx)?.owned_column()?.retain_json_slice(self.idx, range)
+    }
+
     /// Go `GetVectorFloat32`.
+    #[inline]
     pub fn get_vector_float32(&self, col_idx: usize) -> VectorFloat32 {
         self.expect_chunk()
             .column(col_idx)
@@ -473,6 +589,12 @@ impl<'a> Row<'a> {
     /// Go `getNameValue`: the `(name, value)` pair an ENUM/SET cell stores.
     pub fn get_name_value(&self, col_idx: usize) -> (GoString, u64) {
         self.expect_chunk().column(col_idx).get_name_value(self.idx)
+    }
+
+    pub(crate) fn get_name_value_number(&self, col_idx: usize) -> u64 {
+        self.expect_chunk()
+            .column(col_idx)
+            .get_name_value_number(self.idx)
     }
 
     /// Go `IsNull`.
@@ -528,6 +650,7 @@ impl<'a> Row<'a> {
     /// `SetMysqlBit`). A source type with no switch arm leaves a caller-supplied
     /// datum unchanged; [`Row::get_datum`] therefore returns its initialized
     /// NULL value for that same type.
+    #[inline]
     pub fn get_datum(&self, col_idx: usize, field_type: &FieldType) -> Datum {
         let mut datum = Datum::Null;
         self.datum_with_buffer(col_idx, field_type, &mut datum);
@@ -546,13 +669,18 @@ impl<'a> Row<'a> {
     }
 
     /// Go `DatumWithBuffer`: borrow the column once for the whole conversion.
+    #[inline]
     pub fn datum_with_buffer(&self, col_idx: usize, field_type: &FieldType, datum: &mut Datum) {
-        let column = self.expect_chunk().column(col_idx);
-        DatumCell {
-            column: &column,
-            row: self.idx,
+        let slot = &self.expect_chunk().column_slots()[col_idx];
+        let mut write = |column: &crate::column::Column| {
+            DatumCell { column, row: self.idx }.datum_with_buffer(field_type, datum);
+        };
+        if let Some(column) = slot.owned_column() {
+            write(column);
+        } else {
+            let column = slot.read();
+            write(&column);
         }
-        .datum_with_buffer(field_type, datum);
     }
 
     /// Checked `DatumWithBuffer` boundary used by response and spill readers.
@@ -590,71 +718,82 @@ impl<'a> Row<'a> {
     /// may contain arbitrary bytes. Numeric, temporal, JSON, and vector text is
     /// ASCII and follows the corresponding source value formatter.
     pub fn to_string(&self, field_types: &[FieldType]) -> GoString {
+        let mut output = Vec::new();
+        self.append_text(field_types, &mut output);
+        crate::shared_bytes::finish_string(output)
+    }
+
+    pub(crate) fn append_text(&self, field_types: &[FieldType], output: &mut Vec<u8>) {
+        let Some(chunk) = self.chunk else {
+            return;
+        };
+        let columns = chunk.num_cols();
         assert!(
-            field_types.len() >= self.len(),
+            field_types.len() >= columns,
             "Row::to_string needs one field type per column"
         );
-        let mut output = Vec::new();
-        for (col_idx, field_type) in field_types.iter().take(self.len()).enumerate() {
-            if self.is_null(col_idx) {
+        for (col_idx, field_type) in field_types.iter().take(columns).enumerate() {
+            let column = chunk.column(col_idx);
+            if column.is_null(self.idx) {
                 output.extend_from_slice(b"NULL");
             } else {
                 match field_type.eval_type() {
                     EvalType::Int => {
-                        output.extend_from_slice(self.get_int64(col_idx).to_string().as_bytes());
+                        let mut digits = itoa::Buffer::new();
+                        output
+                            .extend_from_slice(digits.format(column.get_int64(self.idx)).as_bytes());
                     }
-                    EvalType::String => match field_type.code() {
-                        FieldTypeCode::Enum => {
-                            let value = self.get_enum(col_idx);
-                            output.extend_from_slice(value.name_bytes());
-                        }
-                        FieldTypeCode::Set => {
-                            let value = self.get_set(col_idx);
-                            output.extend_from_slice(value.name_bytes());
-                        }
-                        _ => output.extend_from_slice(self.get_string(col_idx).as_bytes()),
-                    },
+                    EvalType::String => {
+                        let cell = column.get_bytes(self.idx);
+                        let name = if !cell.is_empty()
+                            && matches!(field_type.code(), FieldTypeCode::Enum | FieldTypeCode::Set)
+                        {
+                            cell.get(8..)
+                                .expect("a name/value cell carries its 8-byte value prefix")
+                        } else {
+                            cell.as_ref()
+                        };
+                        output.extend_from_slice(name);
+                    }
                     EvalType::Datetime | EvalType::Timestamp => {
-                        output.extend_from_slice(self.get_time(col_idx).to_string().as_bytes());
+                        output.extend_from_slice(column.get_time(self.idx).to_string().as_bytes());
                     }
                     EvalType::Decimal => {
-                        output.extend_from_slice(&self.get_my_decimal(col_idx).to_string_bytes());
+                        output.extend_from_slice(&column.get_my_decimal(self.idx).to_string_bytes());
                     }
                     EvalType::Duration => {
                         output.extend_from_slice(
-                            self.get_duration(col_idx, field_type.decimal())
+                            column.get_duration(self.idx, field_type.decimal())
                                 .to_string()
                                 .as_bytes(),
                         );
                     }
                     EvalType::Json => {
-                        output.extend_from_slice(self.get_json(col_idx).to_string().as_bytes());
+                        output.extend_from_slice(column.get_json(self.idx).to_string().as_bytes());
                     }
                     EvalType::Real => {
-                        let value = match field_type.code() {
+                        let (value, bits) = match field_type.code() {
                             FieldTypeCode::Float => {
-                                Datum::Float32(f64::from(self.get_float32(col_idx)))
+                                (f64::from(column.get_float32(self.idx)), 32)
                             }
-                            FieldTypeCode::Double => Datum::Real(self.get_float64(col_idx)),
+                            FieldTypeCode::Double => (column.get_float64(self.idx), 64),
                             _ => unreachable!("only FLOAT and DOUBLE have real eval type"),
                         };
-                        output.extend_from_slice(
-                            &value
-                                .sql_bytes()
-                                .expect("a numeric datum always has a text form"),
-                        );
+                        tidb_goruntime::go_strconv::append_float(output, value, b'f', -1, bits);
                     }
                     EvalType::VectorFloat32 => {
-                        output.extend_from_slice(
-                            self.get_vector_float32(col_idx).to_string().as_bytes(),
-                        );
+                        let cell = column.get_bytes(self.idx);
+                        VectorFloat32Ref::from_encoded(cell.as_ref())
+                            .unwrap_or_else(|error| {
+                                panic!("invalid VectorFloat32 chunk cell: {error}")
+                            })
+                            .append_text_bytes(output);
                     }
                 }
             }
-            if col_idx + 1 != self.len() {
+            if col_idx + 1 != columns {
                 output.extend_from_slice(b", ");
             }
         }
-        output.into()
     }
 }

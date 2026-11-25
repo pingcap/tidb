@@ -8,6 +8,9 @@ use tidb_chunk::{chunk::Chunk, column::Column};
 use tidb_datatype::{Datum, EvalType};
 use tidb_proto::tipb::ScalarFuncSig;
 
+mod digest;
+mod zlib;
+
 /// Go encryption signatures' `vectorized` methods.
 pub(super) fn supported(function: &ScalarFunction) -> bool {
     use ScalarFuncSig::*;
@@ -38,6 +41,19 @@ pub(super) fn eval(
     input: &Chunk,
     result: &mut Column,
 ) -> Result<(), EvalError> {
+    use ScalarFuncSig::*;
+    match function.pb_code() {
+        Md5 => return digest::unary(function, ctx, input, result, crypto::md5_bytes),
+        Sha1 => return digest::unary(function, ctx, input, result, crypto::sha1_bytes),
+        Sha2 => return digest::sha2(function, ctx, input, result),
+        Compress => return zlib::compress(function, ctx, input, result),
+        Uncompress => return zlib::uncompress(function, ctx, input, result),
+        UncompressedLength => return zlib::length(function, ctx, input, result),
+        _ if function.func_name.lowercase() == "sm3" => {
+            return digest::unary(function, ctx, input, result, tidb_parser::auth::sm3_hash);
+        }
+        _ => {}
+    }
     if let Some(mode) = function.aes_mode() {
         let iv = mode.iv_required();
         if !iv && input.num_rows() == 0 {
@@ -108,36 +124,21 @@ pub(super) fn eval(
         }
         return Ok(());
     }
-    use ScalarFuncSig::*;
     let n = input.num_rows();
     let name = function.func_name.lowercase();
-    // Go's argument columns: RANDOM_BYTES reads an int length, SHA2 an int
-    // hash length; every other argument is a string.
-    let arg_type = |index: usize| match (name, function.pb_code(), index) {
-        ("random_bytes", _, 0) | (_, Sha2, 1) => EvalType::Int,
-        _ => EvalType::String,
+    // RANDOM_BYTES reads an int length. The other remaining arguments are strings.
+    let arg_type = if name == "random_bytes" {
+        EvalType::Int
+    } else {
+        EvalType::String
     };
     let mut bufs = Vec::with_capacity(function.args.len());
-    for (index, arg) in function.args.iter().enumerate() {
-        bufs.push(vec_eval::argument(arg, arg_type(index), ctx, input)?);
+    for arg in &function.args {
+        bufs.push(vec_eval::argument(arg, arg_type, ctx, input)?);
     }
     let cell = |buf: usize, i: usize| {
-        vec_eval::value(&bufs[buf], i, arg_type(buf), function.args[buf].static_type())
+        vec_eval::value(&bufs[buf], i, arg_type, function.args[buf].static_type())
     };
-    // Go `builtinUncompressedLengthSig.vecEvalInt`: NULLs merged into an int
-    // result, the rest computed in place.
-    if function.pb_code() == UncompressedLength {
-        result.resize_int64(n, false);
-        result.merge_nulls(&[&bufs[0]]);
-        for i in 0..n {
-            if result.is_null(i) {
-                continue;
-            }
-            let length = crypto::uncompressed_length(&cell(0, i), ctx)?;
-            vec_eval::put(result, i, EvalType::Int, &length)?;
-        }
-        return Ok(());
-    }
     result.reserve_string(n);
     for i in 0..n {
         if bufs.iter().any(|buf| buf.is_null(i)) {
@@ -150,17 +151,11 @@ pub(super) fn eval(
             continue;
         }
         let value = match function.pb_code() {
-            Md5 => crypto::hash_unary::<md5::Md5>(&cell(0, i))?,
-            Sha1 => crypto::hash_unary::<sha1::Sha1>(&cell(0, i))?,
-            Sha2 => crypto::sha2_hash(&cell(0, i), &cell(1, i))?,
-            Compress => crypto::compress(&cell(0, i))?,
-            Uncompress => crypto::uncompress(&cell(0, i), ctx)?,
             Encode => crypto::sql_encode(&cell(0, i), &cell(1, i))?,
             Decode => crypto::sql_decode(&cell(0, i), &cell(1, i))?,
             _ => match name {
                 "password" => crypto::password_hash(&cell(0, i), ctx)?,
                 "random_bytes" => crypto::random_bytes(&cell(0, i))?,
-                "sm3" => crypto::sm3_hash(&cell(0, i))?,
                 _ => unreachable!("not an encryption kernel: {name}"),
             },
         };

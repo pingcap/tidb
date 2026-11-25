@@ -12,4 +12,5 @@ workspace = true
 
 [dependencies]
 tidb-zeropool = { path = "../tidb-zeropool" }
-flate2.workspace = true
+flate2 = { version = "1.1.10", features = ["zlib-rs"] }
+snap.workspace = true

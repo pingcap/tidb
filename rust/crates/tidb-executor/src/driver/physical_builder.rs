@@ -2550,7 +2550,7 @@ impl DataReaderBuilder {
                                 .then(|| tidb_txnkv::Handle::Int(tidb_txnkv::IntHandle::new(handle)))
                         })
                         .collect::<Vec<_>>();
-                    handles.sort_by(|a, b| a.clone().compare(b).unwrap_or(std::cmp::Ordering::Equal));
+                    handles.sort_by(|a, b| a.compare(b).unwrap_or(std::cmp::Ordering::Equal));
                     let (kv_ranges, hints) = tidb_distsql::table_handles_to_kv_ranges(table_id, &handles);
                     e.build_table_reader_base(kv_ranges, hints)?;
                 }
@@ -8690,8 +8690,8 @@ use super::*;
             physical_table_id: table_id,
             tbl_cols: schema.columns,
             ranges: vec![tidb_ranger::types::Range {
-                low_val: vec![tidb_datatype::Datum::Int(low)],
-                high_val: vec![tidb_datatype::Datum::Int(high)],
+                low_val: vec![tidb_datatype::Datum::Int(low)].into(),
+                high_val: vec![tidb_datatype::Datum::Int(high)].into(),
                 collators: vec![tidb_charset::Collation::Binary],
                 low_exclude: false,
                 high_exclude: false,
@@ -8758,8 +8758,8 @@ use super::*;
             index_id,
             index_name: "value_idx".to_owned(),
             ranges: vec![tidb_ranger::types::Range {
-                low_val: vec![tidb_datatype::Datum::Int(low)],
-                high_val: vec![tidb_datatype::Datum::Int(high)],
+                low_val: vec![tidb_datatype::Datum::Int(low)].into(),
+                high_val: vec![tidb_datatype::Datum::Int(high)].into(),
                 collators: vec![tidb_charset::Collation::Binary],
                 low_exclude: false,
                 high_exclude: false,

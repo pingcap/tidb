@@ -15,8 +15,11 @@
 //! SQL argument escaping and formatting.
 
 use chrono::{Datelike, NaiveDateTime, Timelike};
+use memchr::{memchr, memchr_iter};
 use std::fmt;
 use std::io::Write;
+use tidb_goruntime::go_hex;
+use tidb_goruntime::go_strconv::append_float;
 
 /// One dynamically typed `%?` or `%n` argument.
 #[derive(Clone, Debug)]
@@ -228,29 +231,65 @@ fn format_go_float32(value: f32) -> String {
 }
 
 fn append_time(buffer: &mut Vec<u8>, value: Option<NaiveDateTime>) {
-    if let Some(value) = value {
-        buffer.extend_from_slice(
-            format!(
-                "'{:04}-{:02}-{:02} {:02}:{:02}:{:02}",
-                value.year(),
-                value.month(),
-                value.day(),
-                value.hour(),
-                value.minute(),
-                value.second()
-            )
-            .as_bytes(),
-        );
-        let micros = value.nanosecond() / 1_000;
-        if micros != 0 {
-            let fraction = format!("{micros:06}");
-            buffer.push(b'.');
-            buffer.extend_from_slice(fraction.trim_end_matches('0').as_bytes());
-        }
-        buffer.push(b'\'');
-    } else {
+    let Some(value) = value else {
         buffer.extend_from_slice(b"'0000-00-00'");
+        return;
+    };
+    let year = value.year();
+    let micros = value.nanosecond() / 1_000;
+    if !(0..=9999).contains(&year) || micros >= 1_000_000 {
+        append_extended_time(buffer, value, micros);
+        return;
     }
+
+    let mut text = *b"'0000-00-00 00:00:00.000000'";
+    let year = year as u32;
+    text[1..3].copy_from_slice(&decimal_pair(year / 100));
+    text[3..5].copy_from_slice(&decimal_pair(year % 100));
+    text[6..8].copy_from_slice(&decimal_pair(value.month()));
+    text[9..11].copy_from_slice(&decimal_pair(value.day()));
+    text[12..14].copy_from_slice(&decimal_pair(value.hour()));
+    text[15..17].copy_from_slice(&decimal_pair(value.minute()));
+    text[18..20].copy_from_slice(&decimal_pair(value.second()));
+
+    let mut end = 20;
+    if micros != 0 {
+        text[21..23].copy_from_slice(&decimal_pair(micros / 10_000));
+        text[23..25].copy_from_slice(&decimal_pair(micros / 100 % 100));
+        text[25..27].copy_from_slice(&decimal_pair(micros % 100));
+        end = 27;
+        while text[end - 1] == b'0' {
+            end -= 1;
+        }
+    }
+    text[end] = b'\'';
+    buffer.extend_from_slice(&text[..=end]);
+}
+
+fn decimal_pair(value: u32) -> [u8; 2] {
+    [b'0' + (value / 10) as u8, b'0' + (value % 10) as u8]
+}
+
+#[cold]
+fn append_extended_time(buffer: &mut Vec<u8>, value: NaiveDateTime, micros: u32) {
+    buffer.extend_from_slice(
+        format!(
+            "'{:04}-{:02}-{:02} {:02}:{:02}:{:02}",
+            value.year(),
+            value.month(),
+            value.day(),
+            value.hour(),
+            value.minute(),
+            value.second()
+        )
+        .as_bytes(),
+    );
+    if micros != 0 {
+        let fraction = format!("{micros:06}");
+        buffer.push(b'.');
+        buffer.extend_from_slice(fraction.trim_end_matches('0').as_bytes());
+    }
+    buffer.push(b'\'');
 }
 
 /// Go's `%v` spelling of an argument, used by the `%n` type error. Go prints
@@ -307,6 +346,32 @@ fn append_string_argument(mut buffer: Vec<u8>, value: &[u8]) -> Vec<u8> {
     buffer
 }
 
+fn append_identifier(buffer: &mut Vec<u8>, mut identifier: &[u8]) {
+    buffer.reserve(identifier.len() + 2);
+    buffer.push(b'`');
+    while let Some(tick) = memchr(b'`', identifier) {
+        buffer.extend_from_slice(&identifier[..=tick]);
+        buffer.push(b'`');
+        identifier = &identifier[tick + 1..];
+
+        // Process nearby escapes in one bounded pass. When escapes are far
+        // apart, let the next search find another literal slice to copy.
+        if memchr(b'`', &identifier[..identifier.len().min(32)]).is_none() {
+            continue;
+        }
+        let end = identifier.len().min(256);
+        for &byte in &identifier[..end] {
+            buffer.push(byte);
+            if byte == b'`' {
+                buffer.push(byte);
+            }
+        }
+        identifier = &identifier[end..];
+    }
+    buffer.extend_from_slice(identifier);
+    buffer.push(b'`');
+}
+
 /// How a byte-slice argument is spelled. Go writes the bytes raw inside a
 /// `_binary'...'` literal; a caller whose SQL must be UTF-8 text spells the
 /// same value as `_binary X'...'`, which stores the same bytes.
@@ -323,14 +388,14 @@ fn append_argument(
 ) -> Result<Vec<u8>, EscapeError> {
     match argument {
         SqlArg::Null => buffer.extend_from_slice(b"NULL"),
-        SqlArg::Signed(value) => buffer.extend_from_slice(value.to_string().as_bytes()),
-        SqlArg::Unsigned(value) => buffer.extend_from_slice(value.to_string().as_bytes()),
-        SqlArg::Float32(value) => {
-            buffer.extend_from_slice(format_go_float32(*value).as_bytes());
+        SqlArg::Signed(value) => {
+            buffer.extend_from_slice(itoa::Buffer::new().format(*value).as_bytes())
         }
-        SqlArg::Float64(value) => {
-            buffer.extend_from_slice(format_go_float64(*value).as_bytes());
+        SqlArg::Unsigned(value) => {
+            buffer.extend_from_slice(itoa::Buffer::new().format(*value).as_bytes())
         }
+        SqlArg::Float32(value) => append_float(&mut buffer, f64::from(*value), b'g', -1, 32),
+        SqlArg::Float64(value) => append_float(&mut buffer, *value, b'g', -1, 64),
         SqlArg::Bool(value) => buffer.push(if *value { b'1' } else { b'0' }),
         SqlArg::Time(value) => append_time(&mut buffer, *value),
         SqlArg::RawJson(value) => {
@@ -340,10 +405,9 @@ fn append_argument(
         }
         SqlArg::Bytes(None) => buffer.extend_from_slice(b"NULL"),
         SqlArg::Bytes(Some(value)) if bytes_form == BytesForm::Hex => {
+            buffer.reserve((value.len() * 2).saturating_add(b"_binary X''".len()));
             buffer.extend_from_slice(b"_binary X'");
-            for byte in value.iter() {
-                buffer.extend_from_slice(format!("{byte:02X}").as_bytes());
-            }
+            go_hex::append_uppercase(&mut buffer, value);
             buffer.push(b'\'');
         }
         SqlArg::Bytes(Some(value)) => {
@@ -365,7 +429,7 @@ fn append_argument(
                 if index != 0 {
                     buffer.push(b',');
                 }
-                buffer.extend_from_slice(format_go_float32(*value).as_bytes());
+                append_float(&mut buffer, f64::from(*value), b'g', -1, 32);
             }
         }
         SqlArg::Float64s(values) => {
@@ -373,7 +437,7 @@ fn append_argument(
                 if index != 0 {
                     buffer.push(b',');
                 }
-                buffer.extend_from_slice(format_go_float64(*value).as_bytes());
+                append_float(&mut buffer, *value, b'g', -1, 64);
             }
         }
         SqlArg::Unsupported(value) => {
@@ -392,15 +456,20 @@ fn escape_sql_impl(
     bytes_form: BytesForm,
 ) -> Result<Vec<u8>, EscapeError> {
     let bytes = sql.as_ref();
-    let mut buffer = Vec::with_capacity(bytes.len());
+    // Leave room for the rendered value in short templates.
+    let capacity = if arguments.is_empty() {
+        bytes.len()
+    } else {
+        bytes.len().max(32)
+    };
+    let mut buffer = Vec::with_capacity(capacity);
     let mut argument_position = 0;
     let mut index = 0;
-    while index < bytes.len() {
-        let Some(relative) = bytes[index..].iter().position(|byte| *byte == b'%') else {
-            buffer.extend_from_slice(&bytes[index..]);
-            break;
-        };
-        let marker = index + relative;
+    for marker in memchr_iter(b'%', bytes) {
+        if marker < index {
+            // A previous `%%` already consumed this byte.
+            continue;
+        }
         buffer.extend_from_slice(&bytes[index..marker]);
         let specifier = bytes.get(marker + 1).copied().unwrap_or_default();
         match specifier {
@@ -416,14 +485,7 @@ fn escape_sql_impl(
                 let SqlArg::String(identifier) = argument else {
                     return Err(EscapeError::IdentifierType(go_value_string(argument)));
                 };
-                buffer.push(b'`');
-                for byte in identifier.iter().copied() {
-                    buffer.push(byte);
-                    if byte == b'`' {
-                        buffer.push(b'`');
-                    }
-                }
-                buffer.push(b'`');
+                append_identifier(&mut buffer, identifier);
                 index = marker + 2;
             }
             b'?' => {
@@ -457,6 +519,7 @@ fn escape_sql_impl(
             }
         }
     }
+    buffer.extend_from_slice(&bytes[index..]);
     Ok(buffer)
 }
 
@@ -477,9 +540,13 @@ pub fn must_escape_sql(sql: impl AsRef<[u8]>, arguments: &[SqlArg<'_>]) -> Vec<u
 /// [`escape_sql`] for SQL that this tier's parser will read: the statement
 /// text [`must_escape_sql_text`] spells, a byte-slice argument as
 /// `_binary X'...'`.
-pub fn escape_sql_text(sql: impl AsRef<[u8]>, arguments: &[SqlArg<'_>]) -> Result<String, EscapeError> {
+pub fn escape_sql_text(
+    sql: impl AsRef<[u8]>,
+    arguments: &[SqlArg<'_>],
+) -> Result<String, EscapeError> {
     let buffer = escape_sql_impl(sql, arguments, BytesForm::Hex)?;
-    Ok(String::from_utf8_lossy(&buffer).into_owned())
+    Ok(String::from_utf8(buffer)
+        .unwrap_or_else(|error| String::from_utf8_lossy(error.as_bytes()).into_owned()))
 }
 
 /// [`must_escape_sql`] for SQL that this tier's parser will read, which takes
@@ -492,9 +559,7 @@ pub fn escape_sql_text(sql: impl AsRef<[u8]>, arguments: &[SqlArg<'_>]) -> Resul
 ///
 /// Panics when [`escape_sql`] would return an error.
 pub fn must_escape_sql_text(sql: impl AsRef<[u8]>, arguments: &[SqlArg<'_>]) -> String {
-    let buffer =
-        escape_sql_impl(sql, arguments, BytesForm::Hex).unwrap_or_else(|error| panic!("{error}"));
-    String::from_utf8_lossy(&buffer).into_owned()
+    escape_sql_text(sql, arguments).unwrap_or_else(|error| panic!("{error}"))
 }
 
 /// Writes one escaped SQL byte string with one call to the destination.
@@ -523,6 +588,34 @@ mod tests {
     use super::*;
     use chrono::NaiveDate;
 
+    #[test]
+    fn time_literals_keep_microsecond_precision_and_extended_years() {
+        let time = NaiveDate::from_ymd_opt(0, 2, 29)
+            .unwrap()
+            .and_hms_nano_opt(1, 2, 3, 120_009_999)
+            .unwrap();
+        let extended = NaiveDate::from_ymd_opt(10000, 1, 1)
+            .unwrap()
+            .and_hms_nano_opt(0, 0, 0, 100_000_001)
+            .unwrap();
+        let tiny_fraction = NaiveDate::from_ymd_opt(9999, 12, 31)
+            .unwrap()
+            .and_hms_nano_opt(23, 59, 59, 999)
+            .unwrap();
+        assert_eq!(
+            escape_sql(
+                "%?, %?, %?",
+                &[
+                    SqlArg::Time(Some(time)),
+                    SqlArg::Time(Some(extended)),
+                    SqlArg::Time(Some(tiny_fraction)),
+                ],
+            )
+            .unwrap(),
+            b"'0000-02-29 01:02:03.120009', '10000-01-01 00:00:00.1', '9999-12-31 23:59:59'"
+        );
+    }
+
     /// The internal executors take statement text: a byte argument (a
     /// gzipped statistics block) stays a binary literal, and the text stays
     /// UTF-8.
@@ -530,11 +623,26 @@ mod tests {
     fn escape_sql_text_spells_bytes_as_a_binary_hex_literal() {
         let text = escape_sql_text(
             "insert into t values (%?, %?)",
-            &[SqlArg::Bytes(Some(&[0x1f, 0x8b, 0xff])), SqlArg::from("a'b")],
+            &[
+                SqlArg::Bytes(Some(&[0x1f, 0x8b, 0xff])),
+                SqlArg::from("a'b"),
+            ],
         )
         .unwrap();
         assert_eq!(text, "insert into t values (_binary X'1F8BFF', 'a\\'b')");
         assert!(escape_sql_text("%?", &[]).is_err());
+    }
+
+    #[test]
+    fn sql_text_replaces_invalid_utf8_and_raw_sql_keeps_it() {
+        let args = [SqlArg::String(b"x\xf0\x9f y")];
+        let sql = b"SELECT \xff, %? %%";
+        assert_eq!(
+            escape_sql(sql, &args).unwrap(),
+            b"SELECT \xff, 'x\xf0\x9f y' %"
+        );
+        assert_eq!(escape_sql_text(sql, &args).unwrap(), "SELECT �, 'x� y' %");
+        assert_eq!(must_escape_sql_text(sql, &args), "SELECT �, 'x� y' %");
     }
 
     #[test]

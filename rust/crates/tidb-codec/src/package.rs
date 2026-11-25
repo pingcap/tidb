@@ -14,25 +14,29 @@
 
 //! Remaining source surface of `pkg/util/codec/codec.go`.
 //!
-//! Go's chunk-specific entry points are represented as rows of [`Datum`].
-//! This keeps the wire and equality behavior in the codec package without
-//! importing an executor-owned column container into the dependency leaf.
+//! Value decoding can materialize a [`Datum`] or append directly to a chunk.
 
 use tidb_datatype::RuntimeCollator;
 use std::any::Any;
+use std::borrow::Cow;
 
 use chrono::{TimeZone, Utc};
 use chrono_tz::Tz;
+use tidb_chunk::chunk::Chunk;
 use tidb_datatype::{
-    parse_enum_value, parse_set_value, BinaryLiteral, BinaryLiteralWidth, Datum, EvalType,
-    FieldType, FieldTypeCode, FieldTypeFlags, MySqlDuration, SessionTimeZone, Time, TimeType,
+    parse_enum_value, parse_set_value, peek_vector_float32, BinaryJSON, BinaryLiteral, BinaryLiteralWidth, Datum,
+    CheckedJSONKeys, EncodedJSONLayout, EvalType, JSON_TYPE_CODE_OBJECT,
+    FieldType, FieldTypeCode, FieldTypeFlags, MyDecimal, MySqlDuration, RoundMode, SessionTimeZone,
+    Time, TimeType,
 };
 
+use crate::bytes::with_decoded_bytes;
+use crate::decimal::decode_packed_decimal;
 use crate::{
-    decode_one, decode_uint, decode_uvarint, decode_varint, encode_decimal_fixed, encode_float,
-    encode_int, encode_uint, encode_varint, CodecError, COMPACT_BYTES_FLAG, DECIMAL_FLAG,
-    DURATION_FLAG, FLOAT_FLAG, JSON_FLAG, NIL_FLAG, UINT_FLAG, UVARINT_FLAG, VARINT_FLAG,
-    VECTOR_FLOAT32_FLAG,
+    decode_compact_bytes, decode_float, decode_int, decode_one, decode_uint, decode_uvarint, decode_varint,
+    encode_decimal_fixed, encode_float, encode_int, encode_uint, encode_varint, peek_json_len, CodecError,
+    BYTES_FLAG, COMPACT_BYTES_FLAG, DECIMAL_FLAG, DURATION_FLAG, FLOAT_FLAG, INT_FLAG, JSON_FLAG,
+    NIL_FLAG, UINT_FLAG, UVARINT_FLAG, VARINT_FLAG, VECTOR_FLOAT32_FLAG,
 };
 
 /// Go `SerializeMode`.
@@ -184,8 +188,36 @@ pub fn encode_hash_datum(
     value: &Datum,
     field_type: &FieldType,
 ) -> Result<(u8, Vec<u8>), CodecError> {
+    let (flag, payload) = hash_datum_payload(value, field_type)?;
+    let bytes = match payload {
+        HashPayload::Word(word) => word.to_vec(),
+        HashPayload::Bytes(bytes) => bytes.into_owned(),
+    };
+    Ok((flag, bytes))
+}
+
+enum HashPayload<'a> {
+    Word([u8; 8]),
+    Bytes(Cow<'a, [u8]>),
+}
+
+impl HashPayload<'_> {
+    fn as_bytes(&self) -> &[u8] {
+        match self {
+            Self::Word(word) => word,
+            Self::Bytes(bytes) => bytes,
+        }
+    }
+}
+
+fn hash_datum_payload<'a>(
+    value: &'a Datum,
+    field_type: &FieldType,
+) -> Result<(u8, HashPayload<'a>), CodecError> {
+    use HashPayload::{Bytes, Word};
+
     if value.is_null() {
-        return Ok((NIL_FLAG, Vec::new()));
+        return Ok((NIL_FLAG, Bytes(Cow::Borrowed(&[]))));
     }
     let result = match (field_type.code(), value) {
         (
@@ -205,7 +237,7 @@ pub fn encode_hash_datum(
             } else {
                 UVARINT_FLAG
             },
-            value.to_le_bytes().to_vec(),
+            Word(value.to_le_bytes()),
         ),
         (
             FieldTypeCode::Tiny
@@ -215,17 +247,17 @@ pub fn encode_hash_datum(
             | FieldTypeCode::LongLong
             | FieldTypeCode::Year,
             Datum::UInt(value),
-        ) => (UVARINT_FLAG, value.to_le_bytes().to_vec()),
+        ) => (UVARINT_FLAG, Word(value.to_le_bytes())),
         (FieldTypeCode::Float, Datum::Real(value))
         | (FieldTypeCode::Float, Datum::Float32(value)) => {
             let value = f64::from(*value as f32);
             let value = if value == 0.0 { 0.0 } else { value };
-            (FLOAT_FLAG, value.to_le_bytes().to_vec())
+            (FLOAT_FLAG, Word(value.to_le_bytes()))
         }
         (FieldTypeCode::Double, Datum::Real(value))
         | (FieldTypeCode::Double, Datum::Float32(value)) => {
             let value = if *value == 0.0 { 0.0 } else { *value };
-            (FLOAT_FLAG, value.to_le_bytes().to_vec())
+            (FLOAT_FLAG, Word(value.to_le_bytes()))
         }
         (
             FieldTypeCode::String
@@ -238,7 +270,7 @@ pub fn encode_hash_datum(
             Datum::String(value),
         ) => (
             COMPACT_BYTES_FLAG,
-            field_type.runtime_collator().key(value.bytes()),
+            Bytes(field_type.runtime_collator().immutable_key(value.bytes())),
         ),
         (
             FieldTypeCode::String
@@ -249,39 +281,48 @@ pub fn encode_hash_datum(
             | FieldTypeCode::MediumBlob
             | FieldTypeCode::LongBlob,
             Datum::Bytes(value),
-        ) => (COMPACT_BYTES_FLAG, field_type.runtime_collator().key(value)),
+        ) => (
+            COMPACT_BYTES_FLAG,
+            Bytes(field_type.runtime_collator().immutable_key(value)),
+        ),
         (
             FieldTypeCode::Date | FieldTypeCode::Datetime | FieldTypeCode::Timestamp,
             Datum::Time(value),
         ) => (
             UINT_FLAG,
-            value
-                .to_packed_uint()
-                .map_err(|_| CodecError::InvalidEncoding("invalid MySQL time"))?
-                .to_le_bytes()
-                .to_vec(),
+            Word(
+                value
+                    .to_packed_uint()
+                    .map_err(|_| CodecError::InvalidEncoding("invalid MySQL time"))?
+                    .to_le_bytes(),
+            ),
         ),
         (FieldTypeCode::Duration, Datum::Duration(value)) => {
-            (DURATION_FLAG, value.nanoseconds().to_le_bytes().to_vec())
+            (DURATION_FLAG, Word(value.nanoseconds().to_le_bytes()))
         }
         (FieldTypeCode::NewDecimal, Datum::Decimal(value)) => (
             DECIMAL_FLAG,
-            value
-                .to_hash_key()
-                .map_err(|_| CodecError::InvalidEncoding("invalid decimal hash key"))?
-                .0,
+            Bytes(Cow::Owned(
+                value
+                    .to_hash_key()
+                    .map_err(|_| CodecError::InvalidEncoding("invalid decimal hash key"))?
+                    .0,
+            )),
         ),
         (FieldTypeCode::Enum, Datum::Enum(value, _))
             if field_type.has_flag(FieldTypeFlags::ENUM_SET_AS_INT) =>
         {
-            (UVARINT_FLAG, value.value().to_le_bytes().to_vec())
+            (UVARINT_FLAG, Word(value.value().to_le_bytes()))
         }
         (FieldTypeCode::Enum, Datum::Enum(value, _)) => {
             let name = field_type
                 .with_elems_visible(|elements| parse_enum_value(elements, value.value()))
                 .map(|value| value.name_bytes().to_vec())
                 .unwrap_or_default();
-            (COMPACT_BYTES_FLAG, field_type.runtime_collator().key(&name))
+            (
+                COMPACT_BYTES_FLAG,
+                Bytes(Cow::Owned(field_type.runtime_collator().key(&name))),
+            )
         }
         (FieldTypeCode::Set, Datum::Set(value, _)) => {
             let value = field_type
@@ -289,24 +330,28 @@ pub fn encode_hash_datum(
                 .map_err(|_| CodecError::InvalidEncoding("invalid set value"))?;
             (
                 COMPACT_BYTES_FLAG,
-                field_type.runtime_collator().key(value.name_bytes()),
+                Bytes(Cow::Owned(
+                    field_type.runtime_collator().key(value.name_bytes()),
+                )),
             )
         }
         (FieldTypeCode::Bit, Datum::Bit(value))
         | (FieldTypeCode::Bit, Datum::BinaryLiteral(value)) => (
             UVARINT_FLAG,
-            binary_literal_to_u64(value)?.to_le_bytes().to_vec(),
+            Word(binary_literal_to_u64(value)?.to_le_bytes()),
         ),
         (FieldTypeCode::Json, Datum::Json(value)) => (
             JSON_FLAG,
-            value
-                .hash_value()
-                .map_err(|_| CodecError::InvalidEncoding("invalid binary JSON"))?,
+            Bytes(Cow::Owned(
+                value
+                    .hash_value()
+                    .map_err(|_| CodecError::InvalidEncoding("invalid binary JSON"))?,
+            )),
         ),
         (FieldTypeCode::VectorFloat32, Datum::VectorFloat32(value)) => {
-            (VECTOR_FLOAT32_FLAG, value.serialize())
+            (VECTOR_FLOAT32_FLAG, Bytes(Cow::Owned(value.serialize())))
         }
-        (FieldTypeCode::Null, _) => (NIL_FLAG, Vec::new()),
+        (FieldTypeCode::Null, _) => (NIL_FLAG, Bytes(Cow::Borrowed(&[]))),
         _ => {
             return Err(CodecError::InvalidEncoding(
                 "datum and field type do not match",
@@ -330,9 +375,19 @@ pub fn hash_row(
         let value = row
             .get(index)
             .ok_or(CodecError::InvalidEncoding("hash column index"))?;
-        let (flag, bytes) = encode_hash_datum(value, field_type)?;
-        output.push(flag);
-        output.extend_from_slice(&bytes);
+        let (flag, payload) = hash_datum_payload(value, field_type)?;
+        match payload {
+            HashPayload::Word(word) => {
+                let mut tagged = [flag; 9];
+                tagged[1..].copy_from_slice(&word);
+                output.extend_from_slice(&tagged);
+            }
+            HashPayload::Bytes(bytes) => {
+                output.reserve(1 + bytes.len());
+                output.push(flag);
+                output.extend_from_slice(&bytes);
+            }
+        }
     }
     Ok(output)
 }
@@ -353,18 +408,18 @@ pub fn equal_chunk_row(
         return Err(CodecError::InvalidEncoding("hash column count mismatch"));
     }
     for index in 0..left_indices.len() {
-        let left = encode_hash_datum(
+        let (left_flag, left_payload) = hash_datum_payload(
             left.get(left_indices[index])
                 .ok_or(CodecError::InvalidEncoding("hash column index"))?,
             &left_types[index],
         )?;
-        let right = encode_hash_datum(
+        let (right_flag, right_payload) = hash_datum_payload(
             right
                 .get(right_indices[index])
                 .ok_or(CodecError::InvalidEncoding("hash column index"))?,
             &right_types[index],
         )?;
-        if left != right {
+        if left_flag != right_flag || left_payload.as_bytes() != right_payload.as_bytes() {
             return Ok(false);
         }
     }
@@ -445,11 +500,9 @@ pub fn append_hash_group_key_in_timezone<TZ: TimeZone + 'static>(
         }
         (EvalType::Json, Datum::Json(value)) => {
             output.push(JSON_FLAG);
-            output.extend_from_slice(
-                &value
-                    .hash_value()
-                    .map_err(|_| CodecError::InvalidEncoding("invalid binary JSON"))?,
-            );
+            value
+                .append_hash_value(output)
+                .map_err(|_| CodecError::InvalidEncoding("invalid binary JSON"))?;
         }
         (EvalType::String, Datum::String(value)) => {
             output.push(COMPACT_BYTES_FLAG);
@@ -616,12 +669,234 @@ pub fn serialize_keys(
     Ok((keys, nulls))
 }
 
-/// Schema-aware source `Decoder.DecodeOne` without a Go chunk dependency.
+/// Go `Decoder.DecodeOne` for a caller that needs a value-layer datum.
 pub fn decode_one_typed<'a>(
     input: &'a [u8],
     field_type: &FieldType,
 ) -> Result<(&'a [u8], Datum), CodecError> {
     decode_one_typed_in_timezone::<Utc>(input, field_type, None)
+}
+
+/// Retains validation state across values in one default-encoded response.
+#[derive(Default)]
+pub struct ChunkValueDecoder {
+    json_layout: Option<CachedObjectLayout>,
+    tried_key_cache: bool,
+}
+
+enum CachedObjectLayout {
+    Complete { prefix: Vec<u8>, layout: EncodedJSONLayout },
+    Keys { keys: CheckedJSONKeys, consecutive_misses: u8, matched: bool },
+}
+
+impl std::fmt::Debug for ChunkValueDecoder {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let prefix_len = match &self.json_layout {
+            Some(CachedObjectLayout::Complete { prefix, .. }) => prefix.len(),
+            Some(CachedObjectLayout::Keys { keys, .. }) => keys.prefix_len(),
+            None => 0,
+        };
+        f.debug_struct("ChunkValueDecoder")
+            .field("cached_json_prefix_bytes", &prefix_len)
+            .finish()
+    }
+}
+
+impl ChunkValueDecoder {
+    /// Decodes one value into the output column and returns the unread suffix.
+    #[inline]
+    pub fn decode_one<'a, TZ: TimeZone>(
+        &mut self,
+        input: &'a [u8],
+        output: &mut Chunk,
+        column: usize,
+        field_type: &FieldType,
+        timezone: Option<&TZ>,
+    ) -> Result<&'a [u8], CodecError> {
+        decode_chunk_value(input, output, column, field_type, timezone, Some(self))
+    }
+
+    #[inline]
+    fn check_json_layout(&mut self, encoded: &[u8], more_values: bool) -> EncodedJSONLayout {
+        match &mut self.json_layout {
+            Some(CachedObjectLayout::Complete { prefix, layout }) if encoded.starts_with(prefix) => {
+                return *layout;
+            }
+            Some(CachedObjectLayout::Keys { keys, consecutive_misses, matched }) => {
+                if let Some(layout) = keys.check_layout(encoded) {
+                    *consecutive_misses = 0;
+                    *matched = true;
+                    return layout;
+                }
+                *consecutive_misses += 1;
+                // Keep the proof across an interleaved shape. After two
+                // misses, try the new shape if the old proof paid off.
+                if *consecutive_misses == 2 {
+                    self.tried_key_cache = !*matched;
+                    self.json_layout = None;
+                }
+            }
+            _ => {}
+        }
+        if let Some((layout, prefix)) = BinaryJSON::check_flat_object_layout(encoded) {
+            if let Some(len) = prefix.filter(|len| more_values && *len <= 4096) {
+                match &self.json_layout {
+                    None => self.json_layout = Some(CachedObjectLayout::Complete {
+                        prefix: encoded[..len].to_vec(),
+                        layout,
+                    }),
+                    Some(CachedObjectLayout::Complete { prefix, .. })
+                        if prefix.len() == len && !self.tried_key_cache =>
+                    {
+                        // A different key set can still reuse its directory checks.
+                        self.cache_checked_keys(encoded);
+                    }
+                    _ => {}
+                }
+            }
+            return layout;
+        }
+        let layout = BinaryJSON::check_encoded_layout(encoded);
+        if self.json_layout.is_none() && !self.tried_key_cache && more_values && layout.is_valid() {
+            self.cache_checked_keys(encoded);
+        }
+        layout
+    }
+
+    #[cold]
+    fn cache_checked_keys(&mut self, encoded: &[u8]) {
+        self.tried_key_cache = true;
+        if let Some(keys) = CheckedJSONKeys::new(encoded) {
+            self.json_layout = Some(CachedObjectLayout::Keys {
+                keys,
+                consecutive_misses: 0,
+                matched: false,
+            });
+        }
+    }
+}
+
+/// Go `Decoder.DecodeOne`: appends one value and returns the unread suffix.
+#[inline]
+pub fn decode_one_to_chunk<'a, TZ: TimeZone>(
+    input: &'a [u8],
+    output: &mut Chunk,
+    column: usize,
+    field_type: &FieldType,
+    timezone: Option<&TZ>,
+) -> Result<&'a [u8], CodecError> {
+    decode_chunk_value(input, output, column, field_type, timezone, None)
+}
+
+#[inline]
+fn decode_chunk_value<'a, TZ: TimeZone>(
+    input: &'a [u8],
+    output: &mut Chunk,
+    column: usize,
+    field_type: &FieldType,
+    timezone: Option<&TZ>,
+    decoder: Option<&mut ChunkValueDecoder>,
+) -> Result<&'a [u8], CodecError> {
+    match input {
+        [NIL_FLAG, rest @ ..] => {
+            output.append_null(column);
+            Ok(rest)
+        }
+        [COMPACT_BYTES_FLAG, payload @ ..] => {
+            let (remain, bytes) = decode_compact_bytes(payload)?;
+            output.append_bytes(column, bytes);
+            Ok(remain)
+        }
+        [BYTES_FLAG, payload @ ..] => {
+            with_decoded_bytes(payload, |bytes| output.append_bytes(column, bytes))
+        }
+        [JSON_FLAG, payload @ ..] => {
+            let length = peek_json_len(payload)?;
+            let (encoded, remain) = payload.split_at_checked(length).ok_or(CodecError::InsufficientBytes)?;
+            let layout = match (encoded.first(), decoder) {
+                (Some(&JSON_TYPE_CODE_OBJECT), Some(decoder)) => {
+                    decoder.check_json_layout(encoded, !remain.is_empty())
+                }
+                (Some(&JSON_TYPE_CODE_OBJECT), None) => BinaryJSON::check_flat_object_layout(encoded)
+                    .map_or_else(|| BinaryJSON::check_encoded_layout(encoded), |(layout, _)| layout),
+                _ => BinaryJSON::check_encoded_layout(encoded),
+            };
+            if !output.append_json_bytes_with_layout(column, encoded, layout) {
+                return Err(CodecError::InvalidEncoding("invalid binary JSON"));
+            }
+            Ok(remain)
+        }
+        [VECTOR_FLOAT32_FLAG, payload @ ..] => {
+            let length = peek_vector_float32(payload)
+                .map_err(|_| CodecError::InvalidEncoding("invalid vector float32"))?;
+            let (encoded, remain) = payload.split_at(length);
+            output.append_bytes(column, encoded);
+            Ok(remain)
+        }
+        [FLOAT_FLAG, payload @ ..]
+            if matches!(field_type.code(), FieldTypeCode::Float | FieldTypeCode::Double) =>
+        {
+            let (remain, value) = decode_float(payload)?;
+            if field_type.code() == FieldTypeCode::Float {
+                output.append_float32(column, value as f32);
+            } else {
+                output.append_uint64(column, value.to_bits());
+            }
+            Ok(remain)
+        }
+        [flag @ (DURATION_FLAG | INT_FLAG | VARINT_FLAG), payload @ ..]
+            if field_type.code() == FieldTypeCode::Duration =>
+        {
+            let (remain, nanoseconds) = if *flag == VARINT_FLAG {
+                decode_varint(payload)?
+            } else {
+                decode_int(payload)?
+            };
+            let value = MySqlDuration::from_nanoseconds(nanoseconds, field_type.decimal())
+                .map_err(|_| CodecError::InvalidEncoding("invalid duration"))?;
+            output.append_int64(column, value.nanoseconds());
+            Ok(remain)
+        }
+        [flag @ (INT_FLAG | UINT_FLAG | VARINT_FLAG | UVARINT_FLAG), payload @ ..]
+            if matches!(
+                field_type.code(),
+                FieldTypeCode::Tiny
+                    | FieldTypeCode::Short
+                    | FieldTypeCode::Int24
+                    | FieldTypeCode::Long
+                    | FieldTypeCode::LongLong
+                    | FieldTypeCode::Year
+            ) =>
+        {
+            let (remain, bits) = match *flag {
+                INT_FLAG => decode_int(payload).map(|(rest, value)| (rest, value as u64))?,
+                VARINT_FLAG => decode_varint(payload).map(|(rest, value)| (rest, value as u64))?,
+                UINT_FLAG => decode_uint(payload)?,
+                _ => decode_uvarint(payload)?,
+            };
+            output.append_uint64(column, bits);
+            Ok(remain)
+        }
+        [DECIMAL_FLAG, payload @ ..] if field_type.code() == FieldTypeCode::NewDecimal => {
+            let (remain, value, scale) = decode_packed_decimal(payload)?;
+            let target = field_type.decimal();
+            if target >= 0 && i64::from(scale) > target {
+                let mut rounded = MyDecimal::default();
+                if value.round(&mut rounded, target as i32, RoundMode::HalfUp).is_some() {
+                    return Err(CodecError::InvalidEncoding("cannot round decimal payload"));
+                }
+                output.append_my_decimal(column, &rounded);
+            } else {
+                output.append_my_decimal(column, &value);
+            }
+            Ok(remain)
+        }
+        _ => {
+            let (remain, value) = decode_one_typed_in_timezone(input, field_type, timezone)?;
+            output.append_datum(column, &value);
+            Ok(remain)
+        }
+    }
 }
 
 /// Schema-aware source `Decoder.DecodeOne` with timestamp time-zone recovery.

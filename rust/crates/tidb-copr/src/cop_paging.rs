@@ -36,8 +36,6 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use tidb_proto::{CoprocessorKeyRange, CoprocessorResponse};
-use tidb_txnkv::Key;
-use tidb_txnkv::KeyRange;
 use crate::key_ranges::KeyRanges;
 
 use tidb_paging::grow_paging_size;
@@ -130,11 +128,8 @@ pub fn calculate_paging_retry(
     let Some(split) = split else {
         return ranges.clone();
     };
-    if descending {
-        ranges.split(&Key::from_bytes(split.end.as_slice())).0
-    } else {
-        ranges.split(&Key::from_bytes(split.start.as_slice())).1
-    }
+    let key = if descending { &split.end } else { &split.start };
+    ranges.split_for_paging(key, descending)
 }
 
 /// Calculates unconsumed ranges after a successful paging response.
@@ -147,18 +142,15 @@ pub fn calculate_paging_remain(
     let Some(split) = split else {
         return ranges.clone();
     };
-    if descending {
-        ranges.split(&Key::from_bytes(split.start.as_slice())).0
-    } else {
-        ranges.split(&Key::from_bytes(split.end.as_slice())).1
-    }
+    let key = if descending { &split.start } else { &split.end };
+    ranges.split_for_paging(key, descending)
 }
 
 /// Result of consuming one successful coprocessor page.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CopPagingOutcome {
     /// Ranges still requiring a request.
-    pub remaining_ranges: Vec<tidb_txnkv::KeyRange>,
+    pub remaining_ranges: KeyRanges,
     /// Page size for the next request, or zero when paging is complete.
     pub next_paging_size: u64,
     /// MVCC bytes contributed to the EMA by this response.
@@ -293,18 +285,8 @@ impl CopPagingState {
         ema: Arc<ReadBytesEma>,
         mem_tracker: Option<Arc<tidb_memory::Tracker>>,
     ) -> Self {
-        let ranges = task
-            .ranges
-            .iter()
-            .map(|range| {
-                KeyRange::new(
-                    Key::from_bytes(range.start_key.as_slice()),
-                    Key::from_bytes(range.end_key.as_slice()),
-                )
-            })
-            .collect();
         Self {
-            ranges: KeyRanges::new(ranges),
+            ranges: task.ranges.clone(),
             descending,
             paging_size: task.paging_size,
             complete: false,
@@ -330,20 +312,10 @@ impl CopPagingState {
 
     pub(super) fn replace_ranges_for_region_retry(
         &mut self,
-        ranges: Vec<tidb_txnkv::KeyRange>,
+        ranges: KeyRanges,
         paging_size: u64,
     ) {
-        self.ranges = KeyRanges::new(
-            ranges
-                .into_iter()
-                .map(|range| {
-                    KeyRange::new(
-                        Key::from_bytes(range.start_key),
-                        Key::from_bytes(range.end_key),
-                    )
-                })
-                .collect(),
-        );
+        self.ranges = ranges;
         self.paging_size = paging_size;
         self.complete = false;
     }
@@ -390,7 +362,7 @@ impl CopPagingState {
         // else the task's first range's; then `checkRespOOM`.
         let start_key_len = match response.range.as_ref() {
             Some(range) => range.start.len(),
-            None => self.ranges.to_ranges().first().map_or(0, |range| range.start_key.len()),
+            None => self.ranges.get(0).map_or(0, |range| range.start_key.len()),
         };
         self.check_resp_oom(cop_response_mem_size(response, start_key_len, runtime.is_some()));
         match runtime {
@@ -405,7 +377,7 @@ impl CopPagingState {
             self.accept_batched_child(data, exec_details_v2, runtime)?;
         }
         let Some(page_range) = response.range.as_ref() else {
-            self.ranges.reset(Vec::new());
+            self.ranges = KeyRanges::default();
             self.paging_size = 0;
             self.complete = true;
             self.responses.finish()?;
@@ -424,15 +396,7 @@ impl CopPagingState {
             self.paging_size = grow_paging_size(self.paging_size, self.max_paging_size);
         }
         Ok(CopPagingOutcome {
-            remaining_ranges: self
-                .ranges
-                .to_ranges()
-                .into_iter()
-                .map(|range| tidb_txnkv::KeyRange {
-                    start_key: range.start_key,
-                    end_key: range.end_key,
-                })
-                .collect(),
+            remaining_ranges: self.ranges.clone(),
             next_paging_size: self.paging_size,
             observed_read_bytes: read_bytes,
         })
@@ -487,14 +451,7 @@ impl CopPagingState {
         }
         let retry = calculate_paging_retry(&self.ranges, split, self.descending);
         CopPagingOutcome {
-            remaining_ranges: retry
-                .to_ranges()
-                .into_iter()
-                .map(|range| tidb_txnkv::KeyRange {
-                    start_key: range.start_key,
-                    end_key: range.end_key,
-                })
-                .collect(),
+            remaining_ranges: retry,
             next_paging_size: self.paging_size,
             observed_read_bytes: 0,
         }
@@ -535,7 +492,7 @@ impl CopPagingState {
 
     fn completed_outcome(&self) -> CopPagingOutcome {
         CopPagingOutcome {
-            remaining_ranges: Vec::new(),
+            remaining_ranges: KeyRanges::default(),
             next_paging_size: 0,
             observed_read_bytes: 0,
         }
@@ -593,6 +550,35 @@ impl BatchBucketVersionUpdate {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tidb_txnkv::KeyRange;
+
+    #[test]
+    fn paging_keeps_the_requested_half_of_already_split_ranges() {
+        let range = |start: &[u8], end: &[u8]| KeyRange::new(start.into(), end.into());
+        let original = KeyRanges::new(vec![range(b"a", b"e"), range(b"f", b"")]);
+        let (_, ranges) = original.split(&b"b".as_slice().into());
+        let page = CoprocessorKeyRange {
+            start: b"c".as_slice().into(),
+            end: b"f".as_slice().into(),
+        };
+
+        assert_eq!(
+            calculate_paging_remain(&ranges, Some(&page), false).to_ranges(),
+            [range(b"f", b"")],
+        );
+        assert_eq!(
+            calculate_paging_retry(&ranges, Some(&page), false).to_ranges(),
+            [range(b"c", b"e"), range(b"f", b"")],
+        );
+        assert_eq!(
+            calculate_paging_remain(&ranges, Some(&page), true).to_ranges(),
+            [range(b"b", b"c")],
+        );
+        assert_eq!(
+            calculate_paging_retry(&ranges, Some(&page), true).to_ranges(),
+            [range(b"b", b"e")],
+        );
+    }
 
     /// Go `checkRespOOM` / `memTrackerConsumeResp`: a response holds its
     /// `MemSize` on the request's tracker from its arrival until the
@@ -601,10 +587,10 @@ mod tests {
     fn a_queued_response_holds_its_mem_size_until_taken() {
         let tracker = tidb_memory::Tracker::new(1, -1);
         let task = RegionTaskEnvelope {
-            ranges: vec![tidb_txnkv::KeyRange {
-                start_key: b"t1_r".to_vec().into(),
-                end_key: b"t1_s".to_vec().into(),
-            }],
+            ranges: vec![
+                KeyRange::new(b"t1_r".as_slice().into(), b"t1_s".as_slice().into()),
+                KeyRange::new(b"t1_s10".as_slice().into(), b"t1_s20".as_slice().into()),
+            ].into(),
             response_channel_capacity: 2,
             ..RegionTaskEnvelope::default()
         };

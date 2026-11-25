@@ -216,8 +216,9 @@ pub fn append_format_float(buffer: &mut Vec<u8>, value: f64, precision: i32, bit
     // Go `defaultMySQLPrec` for a FLOAT; then the `+` of the exponent and
     // the mantissa's trailing zeros (and a bare point) are removed.
     let precision = if bit_size == 32 { 5 } else { precision };
-    let text = tidb_goruntime::go_strconv::format_float(value, b'e', precision, u32::from(bit_size));
-    append_normalized_float(buffer, &text);
+    let start = buffer.len();
+    tidb_goruntime::go_strconv::append_float(buffer, value, b'e', precision, u32::from(bit_size));
+    normalize_exponent(buffer, start);
 }
 
 /// Result of formatting a datum when the caller owns the final row buffer.
@@ -246,31 +247,32 @@ impl std::fmt::Write for VecFormatWriter<'_> {
     }
 }
 
-/// Appends a base-10 unsigned integer without constructing a temporary
-/// string. This is the allocation-free counterpart of Go's
-/// `strconv.AppendUint` used by `FormatValueText`.
-fn append_unsigned(buffer: &mut Vec<u8>, mut value: u64) {
-    let mut digits = [0u8; 20];
-    let mut cursor = digits.len();
-    if value == 0 {
-        buffer.push(b'0');
-        return;
+fn append_unsigned(buffer: &mut Vec<u8>, value: u64) {
+    if value < 10 {
+        buffer.push(b'0' + value as u8);
+    } else if value < 100 {
+        let value = value as u8;
+        buffer.extend_from_slice(&[b'0' + value / 10, b'0' + value % 10]);
+    } else {
+        buffer.extend_from_slice(itoa::Buffer::new().format(value).as_bytes());
     }
-    while value != 0 {
-        cursor -= 1;
-        digits[cursor] = b'0' + (value % 10) as u8;
-        value /= 10;
-    }
-    buffer.extend_from_slice(&digits[cursor..]);
 }
 
-/// Appends a base-10 signed integer without constructing a temporary string.
-/// `unsigned_abs` handles `i64::MIN` without an overflowing negation.
 fn append_signed(buffer: &mut Vec<u8>, value: i64) {
-    if value < 0 {
-        buffer.push(b'-');
+    if value >= 0 {
+        append_unsigned(buffer, value as u64);
+        return;
     }
-    append_unsigned(buffer, value.unsigned_abs());
+    if value >= -99 {
+        let digits = (-value) as u8;
+        if digits < 10 {
+            buffer.extend_from_slice(&[b'-', b'0' + digits]);
+        } else {
+            buffer.extend_from_slice(&[b'-', b'0' + digits / 10, b'0' + digits % 10]);
+        }
+        return;
+    }
+    buffer.extend_from_slice(itoa::Buffer::new().format(value).as_bytes());
 }
 
 /// Appends one source-shaped scalar directly to `buffer`.
@@ -595,30 +597,30 @@ fn float_precision(column: TextColumn) -> i32 {
     }
 }
 
-fn append_normalized_float(buffer: &mut Vec<u8>, text: &str) {
-    let Some(exponent) = text.find('e') else {
-        buffer.extend_from_slice(text.as_bytes());
+fn normalize_exponent(buffer: &mut Vec<u8>, start: usize) {
+    let Some(exponent) = buffer[start..].iter().rposition(|&byte| byte == b'e') else {
         return;
     };
+    let exponent = start + exponent;
+    let mut mantissa_end = exponent;
 
-    let mantissa = &text[..exponent];
-    if let Some(dot) = mantissa.find('.') {
-        let mut end = mantissa.len();
-        while end > dot + 1 && mantissa.as_bytes()[end - 1] == b'0' {
-            end -= 1;
+    if buffer[exponent - 1] == b'0' {
+        if let Some(dot) = buffer[start..exponent].iter().position(|&byte| byte == b'.') {
+            let dot = start + dot;
+            while mantissa_end > dot + 1 && buffer[mantissa_end - 1] == b'0' {
+                mantissa_end -= 1;
+            }
+            if mantissa_end == dot + 1 {
+                mantissa_end -= 1;
+            }
         }
-        if end == dot + 1 {
-            end -= 1;
-        }
-        buffer.extend_from_slice(&mantissa.as_bytes()[..end]);
-    } else {
-        buffer.extend_from_slice(mantissa.as_bytes());
     }
 
-    let mut exponent_text = &text.as_bytes()[exponent + 1..];
-    if exponent_text.first() == Some(&b'+') {
-        exponent_text = &exponent_text[1..];
+    let has_plus = buffer[exponent + 1] == b'+';
+    if mantissa_end != exponent || has_plus {
+        let exponent_digits = exponent + 1 + usize::from(has_plus);
+        buffer[mantissa_end] = b'e';
+        buffer.copy_within(exponent_digits.., mantissa_end + 1);
+        buffer.truncate(mantissa_end + 1 + buffer.len() - exponent_digits);
     }
-    buffer.push(b'e');
-    buffer.extend_from_slice(exponent_text);
 }

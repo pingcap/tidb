@@ -24,7 +24,7 @@ use crate::*;
 /// resolves against the statement's infoschema.
 #[derive(Debug, Default)]
 pub struct SequenceSnapshot {
-    databases: Arc<HashMap<String, Arc<Database>>>,
+    databases: Arc<CatalogMap<Arc<Database>>>,
     local_temporary: Vec<(CatalogTableKey, Arc<TableEntry>)>,
     current_db: String,
     v2: Option<infoschema_v2::InfoSchemaV2>,

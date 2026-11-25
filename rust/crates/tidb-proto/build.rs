@@ -35,6 +35,41 @@ fn native_service(package: &str) -> FileDescriptorSet {
     descriptors
 }
 
+fn analyze_input(output: &Path) {
+    let descriptor =
+        std::fs::read(output.join("upstream_descriptor.bin")).expect("read TiPB descriptor");
+    let mut input = FileDescriptorSet::decode(descriptor.as_slice()).expect("decode TiPB descriptor");
+    input.file.retain(|file| {
+        file.package.as_deref() == Some("tipb")
+            && file
+                .message_type
+                .iter()
+                .any(|message| message.name.as_deref() == Some("AnalyzeColumnsResp"))
+    });
+    let [file] = input.file.as_mut_slice() else {
+        panic!("expected one TiPB ANALYZE descriptor");
+    };
+    file.message_type.retain(|message| {
+        matches!(
+            message.name.as_deref(),
+            Some("AnalyzeColumnsResp" | "RowSampleCollector" | "RowSample")
+        )
+    });
+    file.source_code_info = None;
+    let directory = output.join("analyze-input");
+    std::fs::create_dir_all(&directory).expect("create ANALYZE input directory");
+    tonic_prost_build::configure()
+        .build_client(false)
+        .build_server(false)
+        .extern_path(".tipb.SampleCollector", "crate::tipb::SampleCollector")
+        .extern_path(".tipb.Histogram", "crate::tipb::Histogram")
+        .extern_path(".tipb.FMSketch", "crate::tipb::FmSketch")
+        .bytes(".tipb.RowSample.row")
+        .out_dir(directory)
+        .compile_fds(input)
+        .expect("generate TiPB ANALYZE input view");
+}
+
 fn main() {
     println!("cargo:rerun-if-changed=proto/tipb");
     println!("cargo:rerun-if-changed=proto/etcd");
@@ -53,6 +88,7 @@ fn main() {
         // its supported RPCs; new upstream methods keep the standard status.
         .generate_default_stubs(true)
         .bytes(".tipb.Chunk.rows_data")
+        .bytes(".tipb.ColumnInfo.default_val")
         .file_descriptor_set_path(output.join("upstream_descriptor.bin"))
         .compile_protos(
             &inputs,
@@ -69,6 +105,7 @@ fn main() {
             .map(PathBuf::from),
         )
         .expect("compile complete TiPB and etcd inputs");
+    analyze_input(&output);
 
     // Go's `github.com/google/pprof/profile` wire format (`profile.proto` of
     // the module version go.mod pins), which `runtime/pprof` writes.

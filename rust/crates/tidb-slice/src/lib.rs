@@ -27,6 +27,19 @@ pub fn int64s_to_strings(ints: &[i64]) -> Vec<String> {
     ints.iter().map(i64::to_string).collect()
 }
 
+/// Appends base-ten integers separated by commas to an existing buffer.
+pub fn append_comma_separated_i64s(output: &mut String, ints: &[i64]) {
+    let Some((&first, rest)) = ints.split_first() else {
+        return;
+    };
+    let mut digits = itoa::Buffer::new();
+    output.push_str(digits.format(first));
+    for &value in rest {
+        output.push(',');
+        output.push_str(digits.format(value));
+    }
+}
+
 /// Uses [`Clone::clone`] to clone every element while preserving source nil.
 ///
 /// `None` represents a nil Go slice. `Some(&[])` represents a present empty
@@ -43,7 +56,16 @@ pub fn deep_clone<T: Clone>(slice: Option<&[T]>) -> Option<Vec<T>> {
 #[cfg(test)]
 #[allow(non_snake_case)]
 mod tests {
-    use super::all_of;
+    use super::{all_of, append_comma_separated_i64s};
+
+    #[test]
+    fn append_decimal_ids_preserves_existing_text_and_signed_values() {
+        let mut text = String::from("id IN (");
+        append_comma_separated_i64s(&mut text, &[]);
+        assert_eq!(text, "id IN (");
+        append_comma_separated_i64s(&mut text, &[i64::MIN, 0, i64::MAX, -1]);
+        assert_eq!(text, "id IN (-9223372036854775808,0,9223372036854775807,-1");
+    }
 
     #[test]
     fn TestSlice() {

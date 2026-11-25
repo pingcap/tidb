@@ -3833,7 +3833,7 @@ mod task_tests {
                     ndv: 10,
                     lower_bound: Datum::Int(1),
                     upper_bound: Datum::Int(10),
-                }],
+                }].into(),
                 ..Default::default()
             },
             top_n: None,
@@ -4637,7 +4637,7 @@ mod task_tests {
                 ndv: 10,
                 lower_bound: Datum::Int(1),
                 upper_bound: Datum::Int(10),
-            }],
+            }].into(),
             ..Histogram::default()
         };
         let hist_coll = tidb_planner_property::stats_info::loaded_hist_coll_for_test(false, 100, 0, [(unique_id, tidb_stats::column::Column {
@@ -4758,7 +4758,7 @@ mod task_tests {
                 ndv: 10,
                 lower_bound: Datum::Int(1),
                 upper_bound: Datum::Int(10),
-            }],
+            }].into(),
             ..Histogram::default()
         };
         let hist_coll = tidb_planner_property::stats_info::loaded_hist_coll_for_test(false, 1_000, 2_000, [(unique_id, tidb_stats::column::Column {

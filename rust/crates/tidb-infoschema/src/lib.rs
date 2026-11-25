@@ -102,9 +102,19 @@ pub fn check_table_mode_is_normal(
         .fast_gen_by_args(&[table_name.to_owned().into(), mode.to_string().into()]))
 }
 
-/// Whether `entry` is a table in a mode other than `TableModeNormal`.
-fn table_mode_is_set(entry: &TableEntry) -> bool {
-    matches!(entry, TableEntry::Kv(table) if table.meta().read().mode != tidb_model::TableMode::NORMAL)
+fn table_flags(entry: &TableEntry) -> (bool, bool, bool) {
+    let TableEntry::Kv(table) = entry else {
+        return (false, false, false);
+    };
+    table_flags_from_meta(&table.read_meta())
+}
+
+fn table_flags_from_meta(meta: &tidb_model::TableInfo) -> (bool, bool, bool) {
+    (
+        meta.lock.is_some(),
+        meta.mode != tidb_model::TableMode::NORMAL,
+        !meta.foreign_keys.is_empty(),
+    )
 }
 
 /// Splits a table reference into its schema and table names. A bare name
@@ -147,20 +157,43 @@ pub const DEFAULT_DATABASE: &str = "test";
 /// in. Spelled lower case, which is the name Go stores and reports.
 pub const SYSTEM_DATABASE: &str = "mysql";
 
+type CatalogMap<V> = indexmap::IndexMap<String, V, foldhash::quality::RandomState>;
+
 /// One schema: Go `infoschema.schemaTables` -- the schema's `DBInfo`
 /// pointer and its tables.
 #[derive(Clone, Debug)]
 struct Database {
     /// Go `schemaTables.dbInfo`.
     info: tidb_model::GoShared<tidb_model::db::DBInfo>,
-    tables: HashMap<String, std::sync::Arc<TableEntry>>,
+    tables: CatalogMap<Arc<TableEntry>>,
+}
+
+/// Prior table objects and their source metadata for one schema reload.
+pub struct BuiltTableTemplates<'a> {
+    database_name: &'a str,
+    database: &'a Database,
+    sources: HashMap<usize, tidb_model::GoShared<tidb_model::TableInfo>>,
+}
+
+impl BuiltTableTemplates<'_> {
+    fn entry_for(
+        &self,
+        table: &tidb_model::GoShared<tidb_model::TableInfo>,
+    ) -> Option<(String, Arc<TableEntry>)> {
+        if !self.sources.contains_key(&table.identity_address()) {
+            return None;
+        }
+        let table = table.read();
+        let (name, entry) = self.database.tables.get_key_value(table.name.lowercase())?;
+        Some((name.clone(), Arc::clone(entry)))
+    }
 }
 
 impl Database {
     fn new(info: tidb_model::db::DBInfo) -> Self {
         Self {
             info: tidb_model::GoShared::new(info),
-            tables: HashMap::new(),
+            tables: CatalogMap::default(),
         }
     }
 
@@ -210,6 +243,26 @@ fn db_info(id: i64, name: &str, charset: TableCharset) -> tidb_model::db::DBInfo
     }
 }
 
+/// The stored metadata for a table ID in a published v1 image.
+#[derive(Debug)]
+struct V1StoredTableIndex {
+    schemas: Vec<tidb_model::GoShared<tidb_model::db::DBInfo>>,
+    tables: HashMap<i64, (usize, tidb_model::GoShared<tidb_model::TableInfo>), foldhash::fast::RandomState>,
+}
+
+/// Positions of runtime tables in the catalog, indexed by table and partition ID.
+#[derive(Debug)]
+pub struct V1TableNameIndex {
+    by_id: HashMap<i64, (usize, usize), foldhash::fast::RandomState>,
+}
+
+impl V1TableNameIndex {
+    /// Whether a runtime table or partition owns this ID.
+    pub fn contains_key(&self, id: &i64) -> bool {
+        self.by_id.contains_key(id)
+    }
+}
+
 /// Go `infoschema.InfoSchema`: one schema image -- databases, their tables,
 /// views and sequences, placement policies and resource groups -- shared by
 /// every session that reads it. Database and table names are
@@ -223,7 +276,10 @@ pub struct InfoSchema {
     rule_bundle_map: HashMap<i64, tidb_placement::Bundle>,
     // Snapshot creation shares schema maps. Mutation detaches only the outer
     // name map and the database it touches, retaining all other table maps.
-    databases: Arc<HashMap<String, Arc<Database>>>,
+    databases: Arc<CatalogMap<Arc<Database>>>,
+    /// V1's stored metadata includes tables and views without a runtime
+    /// table entry. The builder indexes it when it publishes the image.
+    v1_metadata_by_id: Option<Arc<V1StoredTableIndex>>,
     /// Go `infoschema`'s policy map, keyed by the FOLDED policy name.
     ///
     /// A placement policy is a schema object in its own right, not an
@@ -318,9 +374,9 @@ pub struct SessionExtendedInfoSchema {
     /// index view and dropped by every mutator that moves [`Self::version`]
     /// or the metadata epoch.
     planner_view: std::sync::OnceLock<Arc<PlannerSchemaView>>,
-    /// Go InfoSchema's table-ID index. Names resolve against this image's
+    /// Go InfoSchema's table-ID index. Positions resolve against this image's
     /// current entries without retaining a second copy of table storage.
-    pub table_id_names: Arc<std::sync::OnceLock<HashMap<i64, Arc<CatalogTableKey>>>>,
+    pub table_id_names: Arc<std::sync::OnceLock<V1TableNameIndex>>,
     /// Go `SessionExtendedInfoSchema.LocalTemporaryTables`: the LOCAL
     /// temporary tables of the session running a statement, attached for
     /// that statement. A name or an id resolves here before the shared
@@ -414,6 +470,7 @@ impl SessionExtendedInfoSchema {
         self.update_info_schema_bundles_v2();
         self.planner_view.take();
         self.table_id_names = Default::default();
+        self.schema_mut().v1_metadata_by_id = None;
         self.schema_mut().latest_index_schema.take();
     }
 
@@ -581,6 +638,9 @@ impl SessionExtendedInfoSchema {
     /// Go `InfoSchema.TableInfoByID` (storage failures return not found).
     pub fn table_info_by_id(&self, id: i64) -> Option<tidb_model::GoShared<tidb_model::TableInfo>> {
         if let Some(v2) = self.v2() { return v2.table_by_id(id, None).map(|t| t.info.clone()); }
+        if let Some(metadata) = &self.schema.v1_metadata_by_id {
+            return metadata.tables.get(&id).map(|(_, table)| table.clone());
+        }
         self.stored_schemas().iter().flat_map(|db| db.read().deprecated_tables.iter_deref()).find(|t| t.read().id == id)
     }
 
@@ -589,13 +649,20 @@ impl SessionExtendedInfoSchema {
         if let Some(v2) = self.v2() { return self.table_info_by_id(v2.table_id_by_partition_id(id).unwrap_or(id)); }
         self.stored_schemas().iter().flat_map(|db| db.read().deprecated_tables.iter_deref()).find(|t| {
             let t = t.read();
-            t.id == id || t.get_partition_info().is_some_and(|pi| pi.read().definitions.map_visible(|d| d.id).contains(&id))
+            t.id == id || t.get_partition_info().is_some_and(|pi| {
+                pi.read().definitions.with_visible(|partitions| partitions.iter().any(|part| part.id == id))
+            })
         })
     }
 
     /// Go `InfoSchema.TableItemByID`'s schema name, without table loading.
     pub fn schema_name_by_table_id(&self, id: i64) -> Option<String> {
         if let Some(v2) = self.v2() { return v2.table_item_by_id(id).map(|t| t.db_name.original().to_owned()); }
+        if let Some(metadata) = &self.schema.v1_metadata_by_id {
+            return metadata.tables.get(&id).map(|(schema, _)| {
+                metadata.schemas[*schema].read().name.original().to_owned()
+            });
+        }
         self.stored_schemas().iter().find_map(|db| db.read().deprecated_tables.iter_deref().any(|t| t.read().id == id).then(|| db.read().name.original().to_owned()))
     }
 
@@ -751,7 +818,7 @@ impl SessionExtendedInfoSchema {
                 }),
             ),
         ];
-        let mut databases = HashMap::new();
+        let mut databases = CatalogMap::default();
         for (id, key, display, tables) in schemas {
             // Go `initVirtualTables` adds the driver's `DBInfo`, whose
             // `Deprecated.Tables` lists the schema's tables (registered when
@@ -759,7 +826,10 @@ impl SessionExtendedInfoSchema {
             let info = crate::virtual_tables::virtual_schema(key).unwrap_or_else(|| {
                 tidb_model::GoShared::new(db_info(id, display, TableCharset::default()))
             });
-            databases.insert(key.to_owned(), Database { info, tables });
+            databases.insert(key.to_owned(), Arc::new(Database {
+                info,
+                tables: tables.into_iter().collect(),
+            }));
         }
         let catalog = SessionExtendedInfoSchema {
             v2_pins: Default::default(),
@@ -770,12 +840,8 @@ impl SessionExtendedInfoSchema {
                 schema_commit_ts: 0,
                 empty_schema_versions: Vec::new(),
                 rule_bundle_map: HashMap::new(),
-                databases: Arc::new(
-                    databases
-                        .into_iter()
-                        .map(|(name, database)| (name, Arc::new(database)))
-                        .collect(),
-                ),
+                databases: Arc::new(databases),
+                v1_metadata_by_id: None,
                 policies: HashMap::new(),
                 resource_groups: HashMap::new(),
                 masking_policies: Arc::default(),
@@ -1017,12 +1083,7 @@ impl SessionExtendedInfoSchema {
         name: &str,
         mut table: TableEntry,
     ) -> Result<(), DriverError> {
-        let table_is_locked = matches!(&table, TableEntry::Kv(table) if table.lock().is_some());
-        let table_mode_is_set = table_mode_is_set(&table);
-        let table_has_foreign_keys = matches!(
-            &table,
-            TableEntry::Kv(table) if !table.meta().read().foreign_keys.is_empty()
-        );
+        let (table_is_locked, table_mode_is_set, table_has_foreign_keys) = table_flags(&table);
         let schema = self.database_mut(&database.go_to_lower()).ok_or_else(|| {
             DriverError::from(
                 crate::infoschema_errors::ERR_DATABASE_NOT_EXISTS
@@ -1366,41 +1427,37 @@ impl SessionExtendedInfoSchema {
         true
     }
 
-    /// Go `Builder.ApplyDiff` for a table no diff names: the table `previous`
-    /// built from this very `TableInfo` pointer (one of its schema's
-    /// `Deprecated.Tables`) joins this image unchanged. `false` when
-    /// `previous` built nothing from it.
-    pub fn adopt_built_table(
-        &mut self,
-        previous: &SessionExtendedInfoSchema,
-        database: &str,
-        table: &tidb_model::GoShared<tidb_model::TableInfo>,
-    ) -> bool {
-        let database_key = database.go_to_lower();
-        let Some(built) = previous.schema.databases.get(&database_key) else {
-            return false;
-        };
-        let built_from_it = built
+    /// Indexes the source metadata once for a database whose tables may be
+    /// reused while applying a schema diff.
+    pub fn built_table_templates(&self, database: &str) -> Option<BuiltTableTemplates<'_>> {
+        let (database_name, built) = self.schema.databases.get_key_value(&database.go_to_lower())?;
+        let sources = built
             .info
             .read()
             .deprecated_tables
             .iter_deref()
-            .any(|built_table| built_table.ptr_eq(table));
-        if !built_from_it {
-            return false;
-        }
-        let name = table.read().name.lowercase().to_owned();
-        let Some(entry) = built.tables.get(&name).cloned() else {
+            .map(|table| (table.identity_address(), table))
+            .collect();
+        Some(BuiltTableTemplates {
+            database_name,
+            database: built,
+            sources,
+        })
+    }
+
+    /// Go `Builder.ApplyDiff` for an unchanged table: adopts the object
+    /// previously built from this very `TableInfo` pointer.
+    pub fn adopt_built_table(
+        &mut self,
+        templates: &BuiltTableTemplates<'_>,
+        table: &tidb_model::GoShared<tidb_model::TableInfo>,
+    ) -> bool {
+        let Some((name, entry)) = templates.entry_for(table) else {
             return false;
         };
-        let table_is_locked = matches!(&*entry, TableEntry::Kv(table) if table.lock().is_some());
-        let table_mode_is_set = table_mode_is_set(&entry);
-        let table_has_foreign_keys = matches!(
-            &*entry,
-            TableEntry::Kv(table) if !table.meta().read().foreign_keys.is_empty()
-        );
+        let (table_is_locked, table_mode_is_set, table_has_foreign_keys) = table_flags(&entry);
         self.bump_metadata_version();
-        let Some(schema) = self.database_mut(&database_key) else {
+        let Some(schema) = self.database_mut(templates.database_name) else {
             return false;
         };
         schema.tables.insert(name, entry);
@@ -1409,6 +1466,85 @@ impl SessionExtendedInfoSchema {
         self.schema_mut().table_modes_present |= table_mode_is_set;
         self.bump_version();
         true
+    }
+
+    /// Builds and installs the runtime entries for one stored schema.
+    /// The builder runs in stored-table order and may skip a table it cannot
+    /// serve. Unchanged metadata can reuse the corresponding runtime entry.
+    pub fn load_stored_schema_tables(
+        &mut self,
+        info: tidb_model::GoShared<tidb_model::db::DBInfo>,
+        templates: Option<&BuiltTableTemplates<'_>>,
+        mut build: impl FnMut(&tidb_model::TableInfo) -> Option<TableEntry>,
+    ) {
+        self.load_stored_schema_tables_from_handles(info, templates, |table| build(&table.read()));
+    }
+
+    /// Loads the stored table handles so runtime entries can retain their
+    /// corresponding Go metadata pointer.
+    pub fn load_stored_schema_tables_from_handles(
+        &mut self,
+        info: tidb_model::GoShared<tidb_model::db::DBInfo>,
+        templates: Option<&BuiltTableTemplates<'_>>,
+        mut build: impl FnMut(&tidb_model::GoShared<tidb_model::TableInfo>) -> Option<TableEntry>,
+    ) {
+        let (database_key, stored) = {
+            let info = info.read();
+            (info.name.original().go_to_lower(), info.deprecated_tables.clone())
+        };
+        self.create_schema_tables_for_db(info);
+        let mut database = self.database_mut(&database_key);
+        if let Some(database) = &mut database {
+            database.tables.reserve(stored.len());
+        }
+        let mut added = 0;
+        let (mut locked, mut modes, mut foreign_keys) = (false, false, false);
+        let templates = templates.filter(|templates| templates.database_name == database_key);
+        for table in stored.iter_deref() {
+            let mut stored_flags = None;
+            let (name, entry) = if let Some(reused) = templates.and_then(|t| t.entry_for(&table)) {
+                reused
+            } else {
+                let Some(mut entry) = build(&table) else {
+                    continue;
+                };
+                let info = table.read();
+                let name = info.name.original();
+                let key = name.go_to_lower();
+                if let TableEntry::Kv(ref mut runtime) = entry {
+                    if !runtime.meta().ptr_eq(&table) {
+                        Arc::make_mut(runtime).set_name(name);
+                    } else {
+                        if info.name.lowercase() != key {
+                            let name = name.to_owned();
+                            drop(info);
+                            Arc::make_mut(runtime).set_name(&name);
+                        } else {
+                            stored_flags = Some(table_flags_from_meta(&info));
+                        }
+                    }
+                }
+                (key, Arc::new(entry))
+            };
+            let (table_locked, table_mode, table_foreign_keys) =
+                stored_flags.unwrap_or_else(|| table_flags(&entry));
+            locked |= table_locked;
+            modes |= table_mode;
+            foreign_keys |= table_foreign_keys;
+            database
+                .as_deref_mut()
+                .expect("a stored schema's name resolves to its database")
+                .tables
+                .insert(name, entry);
+            added += 1;
+        }
+        // This unpublished database is filled under one metadata version.
+        // Preserve the mutation count and the sticky catalog-wide flags.
+        let schema = self.schema_mut();
+        schema.version += added;
+        schema.table_locks_present |= locked;
+        schema.table_modes_present |= modes;
+        schema.foreign_keys_present |= foreign_keys;
     }
 
     /// Go `Builder.createSchemaTablesForDB`: the schema `info` names, holding
@@ -1426,7 +1562,7 @@ impl SessionExtendedInfoSchema {
             key,
             Arc::new(Database {
                 info,
-                tables: HashMap::new(),
+                tables: CatalogMap::default(),
             }),
         );
         self.bump_version();
@@ -1611,7 +1747,7 @@ impl SessionExtendedInfoSchema {
             .find(|(_, database)| database.id() == id)
             .map(|(key, _)| key.clone())?;
         self.bump_metadata_version();
-        let dropped = Arc::make_mut(&mut self.schema_mut().databases).remove(&key)?;
+        let dropped = Arc::make_mut(&mut self.schema_mut().databases).swap_remove(&key)?;
         self.bump_version();
         Some(dropped.info.clone())
     }
@@ -1696,6 +1832,7 @@ impl SessionExtendedInfoSchema {
         self.get_by_key(&CatalogTableKey::new(database, name))
     }
 
+    #[inline]
     pub fn get_by_key(&self, key: &CatalogTableKey) -> Option<&TableEntry> {
         self.table_handle_ref(key).map(|entry| &**entry)
     }
@@ -1851,9 +1988,8 @@ impl SessionExtendedInfoSchema {
             let table = v2.table_by_id(item.table_id, None)?;
             return Some((item.db_name.original().to_owned(), table.info.read().name.original().to_owned()));
         }
-        let key = self.table_id_names().get(&partition_id)?;
-        let schema = self.schema.databases.get(&key.database)?;
-        match schema.tables.get(&key.table)?.as_ref() {
+        let (_, schema, entry) = self.v1_table_entry_by_id(partition_id)?;
+        match entry {
             TableEntry::Kv(table)
                 if table.meta().read().get_partition_info().is_some_and(|pi| {
                     pi.read()
@@ -1966,7 +2102,7 @@ impl SessionExtendedInfoSchema {
     /// included: a caller holding `&mut TableEntry` may add an index (Go's
     /// DDL owns that, but this tier hands the entry out), so the planner's
     /// view cannot outlive a version. `table_id_names` does not move here:
-    /// it maps a table's id to its (database, name) key, which only a
+    /// it maps a table's id to its position in the maps, which only a
     /// schema-changing operation can move -- `bump_metadata_version` below.
     /// An ordinary DML
     /// write (every `get_mut_in` caller in production) never reassigns a
@@ -1979,6 +2115,7 @@ impl SessionExtendedInfoSchema {
     fn bump_metadata_version(&mut self) {
         self.schema_mut().metadata_version = next_metadata_version();
         self.schema_mut().latest_index_schema.take();
+        self.schema_mut().v1_metadata_by_id = None;
         self.planner_view.take();
         self.statistics_schemas = Arc::default();
         self.invalidate_table_id_names();
@@ -2068,50 +2205,98 @@ impl SessionExtendedInfoSchema {
                     TableEntry::Kv(table) => Some((key.database.as_str(), table)), _ => None,
                 };
             }
-            let key = self.table_id_names().get(&physical_id)?;
-            match self.schema_entry(key)?.as_ref() {
-                TableEntry::Kv(table) => Some((key.database.as_str(), table)),
+            let (database, _, entry) = self.v1_table_entry_by_id(physical_id)?;
+            match entry {
+                TableEntry::Kv(table) => Some((database, table)),
                 _ => None,
             }
         })
     }
 
+    fn v1_table_entry_by_id(&self, id: i64) -> Option<(&str, &Database, &TableEntry)> {
+        let &(database, table) = self.table_id_names().by_id.get(&id)?;
+        let (name, database) = self.schema.databases.get_index(database)?;
+        let (_, entry) = database.tables.get_index(table)?;
+        Some((name, database, entry))
+    }
 
-    fn table_id_names(&self) -> &HashMap<i64, Arc<CatalogTableKey>> {
+    /// Builds the v1 table-ID lookups before publishing the catalog, as Go's
+    /// builder does. Identical stored schemas can share their lookups.
+    pub fn prepare_v1_table_id_lookup(&mut self, previous: Option<&Self>) {
+        debug_assert!(!self.is_v2());
+        let previous = previous.filter(|previous| {
+            previous.table_id_names.get().is_some() && self.has_same_tables(previous)
+        });
+        if let Some(previous) = previous {
+            self.table_id_names = Arc::clone(&previous.table_id_names);
+        } else {
+            self.table_id_names();
+        }
+        let metadata = previous
+            .and_then(|previous| previous.schema.v1_metadata_by_id.clone())
+            .unwrap_or_else(|| Arc::new(self.build_v1_metadata_by_id()));
+        self.schema_mut().v1_metadata_by_id = Some(metadata);
+    }
+
+    fn build_v1_metadata_by_id(&self) -> V1StoredTableIndex {
+        let schemas = self.stored_schemas();
+        let count = schemas.iter().map(|schema| schema.read().deprecated_tables.len()).sum();
+        let mut tables = HashMap::with_capacity_and_hasher(count, foldhash::fast::RandomState::default());
+        for (schema_index, schema) in schemas.iter().enumerate() {
+            let result: std::ops::ControlFlow<()> = schema.read().deprecated_tables.visit_deref(|table, info| {
+                tables.entry(info.id).or_insert_with(|| (schema_index, table.clone()));
+                std::ops::ControlFlow::Continue(())
+            });
+            debug_assert!(result.is_continue());
+        }
+        V1StoredTableIndex { schemas, tables }
+    }
+
+    fn has_same_tables(&self, previous: &Self) -> bool {
+        let databases = &self.schema.databases;
+        let old_databases = &previous.schema.databases;
+        databases.len() == old_databases.len()
+            && databases.iter().zip(old_databases.iter()).all(
+                |((name, database), (old_name, old))| {
+                    name == old_name
+                        && (Arc::ptr_eq(database, old)
+                            // The builder recreates the virtual schema maps from
+                            // the same process-wide table objects.
+                            || (tidb_metadef::is_mem_db(name)
+                                && database.tables.len() == old.tables.len()
+                                && database.tables.iter().zip(old.tables.iter()).all(
+                                    |((name, table), (old_name, entry))| {
+                                        name == old_name && Arc::ptr_eq(table, entry)
+                                    },
+                                )))
+                },
+            )
+    }
+
+    fn table_id_names(&self) -> &V1TableNameIndex {
         self.table_id_names.get_or_init(|| {
-            let mut names = HashMap::new();
-            if let Some(v2) = self.v2() {
-                v2.iterate_all_table_items(|item| {
-                    names.insert(item.table_id, Arc::new(CatalogTableKey::new(item.db_name.lowercase(), item.table_name.lowercase())));
-                    true
-                });
-                for (_, tables) in v2.list_tables_with_special_attribute(|t| t.get_partition_info().is_some()) {
-                    for table in tables {
-                        let ti = table.read();
-                        if let Some(key) = names.get(&ti.id).cloned() {
-                            for pid in ti.get_partition_info().unwrap().read().definitions.map_visible(|d| d.id) { names.insert(pid, key.clone()); }
-                        }
-                    }
-                }
-            }
-            for (database_name, database) in self.schema.databases.iter() {
-                for (table_name, entry) in &database.tables {
+            let table_count = self.schema.databases.values().map(|db| db.tables.len()).sum();
+            let mut index = V1TableNameIndex {
+                by_id: HashMap::with_capacity_and_hasher(
+                    table_count,
+                    foldhash::fast::RandomState::default(),
+                ),
+            };
+            for (database_index, database) in self.schema.databases.values().enumerate() {
+                for (table_index, entry) in database.tables.values().enumerate() {
                     let TableEntry::Kv(table) = entry.as_ref() else {
                         continue;
                     };
-                    let key = Arc::new(CatalogTableKey {
-                        database: database_name.clone(),
-                        table: table_name.clone(),
-                    });
-                    names.insert(table.table_id(), Arc::clone(&key));
-                    if let Some(pi) = table.meta().read().get_partition_info() {
-                        for id in pi.read().definitions.map_visible(|definition| definition.id) {
-                            names.insert(id, Arc::clone(&key));
-                        }
+                    let position = (database_index, table_index);
+                    index.by_id.insert(table.table_id(), position);
+                    if let Some(pi) = table.read_meta().get_partition_info() {
+                        pi.read().definitions.with_visible(|definitions| {
+                            index.by_id.extend(definitions.iter().map(|part| (part.id, position)));
+                        });
                     }
                 }
             }
-            names
+            index
         })
     }
 

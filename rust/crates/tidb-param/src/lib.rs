@@ -22,7 +22,7 @@
 /// text bytes exactly as they arrived, except that the string group is decoded
 /// from the connection's client charset to UTF-8 as Go does.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct BinaryParam {
+pub struct BinaryParam<B = Vec<u8>> {
     /// The MySQL field type declared for this parameter (a `TYPE_*` code).
     pub tp: u8,
     /// Whether the parameter's type pair set the unsigned flag bit.
@@ -31,7 +31,7 @@ pub struct BinaryParam {
     /// length-encoded NULL marker; the NULL-bitmap path uses `tp == TYPE_NULL`).
     pub is_null: bool,
     /// The raw value bytes sliced from the execute packet.
-    pub val: Vec<u8>,
+    pub val: B,
 }
 
 /// A prepared statement's parameter value as the execution binds it: what

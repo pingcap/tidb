@@ -26,7 +26,7 @@
 //! [`crate::Columns::handle_allowed_packet_overflowed`] are the one seam all
 //! of them read.
 
-use crate::coerce::{coerce_str, coerce_str_bytes};
+use crate::coerce::{borrow_str_bytes, coerce_str, coerce_str_bytes};
 use crate::{Datum, EvalError};
 
 /// [`repeat`] with Go's body choice: `vec_flen` is `Some(bf.tp.GetFlen())`
@@ -48,26 +48,39 @@ pub(crate) fn repeat_in_mode(
         return Ok(Datum::Null);
     }
     let count = crate::cast::to_i64_signed(count);
-    if count <= 0 || value.is_empty() {
-        return Ok(Datum::new_string_datum(Vec::<u8>::new()));
+    let Some(output_len) = repeat_output_len(value.len(), count, vec_flen, ctx)? else {
+        return Ok(Datum::Null);
+    };
+    let output = if output_len == 0 {
+        Vec::new()
+    } else {
+        value.repeat(output_len / value.len())
+    };
+    Ok(Datum::new_string_datum(output))
+}
+
+pub(crate) fn repeat_output_len(
+    width: usize,
+    count: i64,
+    vec_flen: Option<i64>,
+    ctx: &dyn crate::Columns,
+) -> Result<Option<usize>, EvalError> {
+    if count <= 0 || width == 0 {
+        return Ok(Some(0));
     }
     let count = count.min(i64::from(i32::MAX)) as usize;
-    let Some(output_len) = value.len().checked_mul(count) else {
+    let Some(output_len) = width.checked_mul(count) else {
         crate::expression_errors::handle_allowed_packet_overflowed(ctx, "repeat")?;
-        return Ok(Datum::Null);
+        return Ok(None);
     };
     if output_len as u64 > ctx.max_allowed_packet() {
         crate::expression_errors::handle_allowed_packet_overflowed(ctx, "repeat")?;
-        return Ok(Datum::Null);
+        return Ok(None);
     }
-    if vec_flen.is_some_and(|flen| value.len() as i64 > flen / count as i64) {
-        return Ok(Datum::Null);
+    if vec_flen.is_some_and(|flen| flen < 0 || output_len as u64 > flen as u64) {
+        return Ok(None);
     }
-    let mut output = Vec::with_capacity(output_len);
-    for _ in 0..count {
-        output.extend_from_slice(&value);
-    }
-    Ok(Datum::new_string_datum(output))
+    Ok(Some(output_len))
 }
 /// `SPACE(n)`: a string of `n` spaces (empty for `n <= 0`); `NULL` if the
 /// argument is `NULL`.  This is the `ETInt` signature from
@@ -84,18 +97,28 @@ pub(crate) fn space(vals: &[Datum], ctx: &dyn crate::Columns) -> Result<Datum, E
         return Ok(Datum::Null);
     }
     let width = crate::cast::to_i64_signed(value);
+    let Some(width) = space_output_len(width, ctx)? else {
+        return Ok(Datum::Null);
+    };
+    Ok(Datum::new_string_datum(vec![b' '; width]))
+}
+
+pub(crate) fn space_output_len(
+    width: i64,
+    ctx: &dyn crate::Columns,
+) -> Result<Option<usize>, EvalError> {
     let width = width.max(0);
     // `builtinSpaceSig.evalString` checks the session packet limit BEFORE the
     // `mysql.MaxBlobWidth` result limit, and only the first of the two warns.
     if (width as u64) > ctx.max_allowed_packet() {
         crate::expression_errors::handle_allowed_packet_overflowed(ctx, "space")?;
-        return Ok(Datum::Null);
+        return Ok(None);
     }
     const MAX_BLOB_WIDTH: i64 = 16_777_216; // pkg/parser/mysql.MaxBlobWidth
     if width > MAX_BLOB_WIDTH {
-        return Ok(Datum::Null);
+        return Ok(None);
     }
-    Ok(Datum::new_string_datum(" ".repeat(width as usize)))
+    Ok(Some(width as usize))
 }
 /// `LPAD(str, len, pad)` / `RPAD(str, len, pad)`: pad (or truncate) `str` to
 /// `len` characters using `pad` on the left/right. Ported from
@@ -297,7 +320,7 @@ const MAX_BYTES_OF_CHARACTER: u64 = 4;
 /// encoded characters; `NULL` propagates.  A result over `max_allowed_packet`
 /// is NULL with warning 1301.
 pub(crate) fn to_base64(vals: &[Datum], ctx: &dyn crate::Columns) -> Result<Datum, EvalError> {
-    let Some(bytes) = coerce_str_bytes(&vals[0])? else {
+    let Some(bytes) = borrow_str_bytes(&vals[0])? else {
         return Ok(Datum::Null);
     };
     // Go `base64NeededEncodedLength` then the packet check, both BEFORE any
@@ -312,37 +335,18 @@ pub(crate) fn to_base64(vals: &[Datum], ctx: &dyn crate::Columns) -> Result<Datu
         crate::expression_errors::handle_allowed_packet_overflowed(ctx, "to_base64")?;
         return Ok(Datum::Null);
     }
-    const A: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut out = String::new();
-    for chunk in bytes.chunks(3) {
-        let b0 = chunk[0];
-        let b1 = chunk.get(1).copied().unwrap_or(0);
-        let b2 = chunk.get(2).copied().unwrap_or(0);
-        let n = (u32::from(b0) << 16) | (u32::from(b1) << 8) | u32::from(b2);
-        out.push(A[(n >> 18 & 63) as usize] as char);
-        out.push(A[(n >> 12 & 63) as usize] as char);
-        out.push(if chunk.len() > 1 {
-            A[(n >> 6 & 63) as usize] as char
-        } else {
-            '='
-        });
-        out.push(if chunk.len() > 2 {
-            A[(n & 63) as usize] as char
-        } else {
-            '='
-        });
+    let encoded: Vec<u8> = base64_simd::STANDARD.encode_type(bytes.as_ref());
+    if encoded.len() <= 76 {
+        return Ok(Datum::new_string_datum(encoded));
     }
-    if out.len() > 76 {
-        let mut wrapped = String::with_capacity(out.len() + out.len() / 76);
-        for (i, chunk) in out.as_bytes().chunks(76).enumerate() {
-            if i > 0 {
-                wrapped.push('\n');
-            }
-            wrapped.push_str(std::str::from_utf8(chunk).unwrap());
-        }
-        out = wrapped;
+    let (first, rest) = encoded.split_at(76);
+    let mut wrapped = Vec::with_capacity(needed as usize);
+    wrapped.extend_from_slice(first);
+    for line in rest.chunks(76) {
+        wrapped.push(b'\n');
+        wrapped.extend_from_slice(line);
     }
-    Ok(Datum::new_string_datum(out))
+    Ok(Datum::new_string_datum(wrapped))
 }
 #[cfg(test)]
 mod space_tests {

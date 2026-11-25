@@ -14,21 +14,19 @@
 
 //! Go `iterator.go`: a cursor over the entries of a [`MemStore`].
 
-use crate::arena::ArenaAddr;
+use crate::arena::{ArenaAddr, NULL_ARENA_ADDR};
 use crate::MemStore;
 
 /// Go `Iterator`: iterates the entries in the [`MemStore`].
 ///
-/// Like Go's, it keeps its own copy of the current key and value rather than
-/// pointing into the arena, so a write between two positioning calls cannot
-/// invalidate it. Rust adds the borrow of the store, which is what makes the
-/// single-writer discipline checkable: no write can happen while an iterator
-/// is alive.
+/// The iterator borrows the store, so the current node and its arena slices
+/// stay valid until the iterator moves.
 #[derive(Debug)]
 pub struct Iterator<'a> {
     ls: &'a MemStore,
-    key: Vec<u8>,
-    val: Vec<u8>,
+    current: ArenaAddr,
+    key: &'a [u8],
+    val: &'a [u8],
 }
 
 impl MemStore {
@@ -37,8 +35,9 @@ impl MemStore {
     pub fn new_iterator(&self) -> Iterator<'_> {
         Iterator {
             ls: self,
-            key: Vec::new(),
-            val: Vec::new(),
+            current: NULL_ARENA_ADDR,
+            key: &[],
+            val: &[],
         }
     }
 }
@@ -53,25 +52,30 @@ impl Iterator<'_> {
     /// Go `Key`: the key at the current position.
     #[must_use]
     pub fn key(&self) -> &[u8] {
-        &self.key
+        self.key
     }
 
     /// Go `Value`: the value at the current position.
     #[must_use]
     pub fn value(&self) -> &[u8] {
-        &self.val
+        self.val
     }
 
     /// Go `Next`: moves to the next entry.
     pub fn next(&mut self) {
-        let (e, _) = self.ls.find_greater(&self.key, false);
+        let e = if self.current.is_null() {
+            // Go searches after the empty key when there is no current node.
+            self.ls.find_greater(b"", false).0
+        } else {
+            self.ls.get_next(self.current, 0)
+        };
         self.set_key_value(e);
     }
 
     /// Go `Prev`: moves to the previous entry.
     pub fn prev(&mut self) {
         // find <. No equality allowed.
-        let (e, _) = self.ls.find_less(&self.key, false);
+        let (e, _) = self.ls.find_less(self.key, false);
         self.set_key_value(e);
     }
 
@@ -108,14 +112,14 @@ impl Iterator<'_> {
 
     /// Go `setKeyValue`.
     fn set_key_value(&mut self, e: ArenaAddr) {
-        let ls = self.ls;
-        self.key.clear();
-        self.val.clear();
+        self.current = e;
         if e.is_null() {
-            return;
+            self.key = &[];
+            self.val = &[];
+        } else {
+            self.key = self.ls.key_of(e);
+            self.val = self.ls.value_of(e);
         }
-        self.key.extend_from_slice(ls.key_of(e));
-        self.val.extend_from_slice(ls.value_of(e));
     }
 }
 
@@ -192,6 +196,31 @@ mod tests {
 
         it.seek_for_prev(&num_to_key(2000));
         check_key(&it, 990);
+    }
+
+    #[test]
+    fn next_preserves_empty_key_and_end_behavior() {
+        let mut ls = MemStore::with_seed(256, 42);
+        ls.put(b"", b"first");
+        ls.put(b"a", b"second");
+        ls.put(b"b", b"");
+
+        let mut it = ls.new_iterator();
+        it.next();
+        assert_eq!((it.key(), it.value()), (&b"a"[..], &b"second"[..]));
+        it.seek_to_first();
+        assert!(!it.valid());
+        assert_eq!((it.key(), it.value()), (&b""[..], &b"first"[..]));
+        it.next();
+        assert_eq!(it.key(), b"a");
+        it.next();
+        assert!(it.valid());
+        assert_eq!((it.key(), it.value()), (&b"b"[..], &b""[..]));
+        it.next();
+        assert!(!it.valid());
+        assert_eq!((it.key(), it.value()), (&b""[..], &b""[..]));
+        it.next();
+        assert_eq!(it.key(), b"a");
     }
 
     /// Not a Go test: `SeekForExclusivePrev` has no Go coverage at all, and it

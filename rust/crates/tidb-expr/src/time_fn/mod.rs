@@ -304,18 +304,30 @@ pub(crate) fn time(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalErro
     let Some(value) = coerce_str(&vals[0])? else {
         return Ok(Datum::Null);
     };
-    let fsp = duration_parse::get_fsp(&value);
-    let (duration, truncated) = match crate::cast::parse_duration(cols, &value, i64::from(fsp)) {
-        Ok(parsed) => (parsed.value, parsed.event.is_some()),
-        Err(_) => (tidb_datatype::MySqlDuration::from_raw_parts(0, 0), true),
+    time_text(&value, cols).map(Datum::Duration)
+}
+
+pub(crate) fn time_text(value: &str, cols: &dyn Columns) -> Result<tidb_datatype::MySqlDuration, EvalError> {
+    use tidb_datatype::{DurationParseError, MySqlDuration};
+    let fsp = i64::from(duration_parse::get_fsp(value));
+    let trimmed = value.trim();
+    let (duration, truncated) = match tidb_datatype::parse_duration(trimmed.as_bytes(), fsp) {
+        Ok(parsed) => (
+            MySqlDuration::from_raw_parts(parsed.nanoseconds(), parsed.fsp()),
+            parsed.event().is_some(),
+        ),
+        Err(DurationParseError::DateTimeFallback(_)) => match crate::cast::parse_duration(cols, trimmed, fsp) {
+            Ok(parsed) => (parsed.value, parsed.event.is_some()),
+            Err(_) => (MySqlDuration::from_raw_parts(0, 0), true),
+        },
+        Err(_) => (MySqlDuration::from_raw_parts(0, 0), true),
     };
     if truncated {
-        crate::expression_errors::handle_truncate(cols, &format!(
-            "Truncated incorrect time value: '{}'",
-            tidb_datatype::warning_subject_byte_cap(&value)
+        cols.handle_truncate_error(tidb_datatype::types_errors::ERR_TRUNCATED_WRONG_VAL.generate(
+            format!("Truncated incorrect time value: '{}'", tidb_datatype::warning_subject_byte_cap(value)),
         ))?;
     }
-    Ok(Datum::Duration(duration))
+    Ok(duration)
 }
 
 fn no_clock_err() -> EvalError {
@@ -715,23 +727,34 @@ pub(crate) fn yearweek(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, Eval
     }))
 }
 
+pub(crate) const MONTH_NAMES: [&str; 12] = [
+    "January",
+    "February",
+    "March",
+    "April",
+    "May",
+    "June",
+    "July",
+    "August",
+    "September",
+    "October",
+    "November",
+    "December",
+];
+
+pub(crate) const WEEKDAY_NAMES: [&str; 7] = [
+    "Sunday",
+    "Monday",
+    "Tuesday",
+    "Wednesday",
+    "Thursday",
+    "Friday",
+    "Saturday",
+];
+
 /// `builtinMonthNameSig` in `pkg/expression/builtin_time.go`: a zero date
 /// warns under NO_ZERO_DATE and is otherwise NULL, as a zero month is.
 pub(crate) fn monthname(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
-    const MONTHS: [&str; 12] = [
-        "January",
-        "February",
-        "March",
-        "April",
-        "May",
-        "June",
-        "July",
-        "August",
-        "September",
-        "October",
-        "November",
-        "December",
-    ];
     let [value] = vals else {
         return Err(EvalError::Unsupported("bad function arity"));
     };
@@ -741,28 +764,21 @@ pub(crate) fn monthname(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, Eva
         .map(date_fields)
         .filter(|&(_, month, _)| month != 0)
         .map_or(Datum::Null, |(_, month, _)| {
-            Datum::new_string_datum(MONTHS[(month - 1) as usize].to_string())
+            Datum::new_string_datum(MONTH_NAMES[(month - 1) as usize].to_string())
         }))
 }
 
 /// `builtinDayNameSig` in `pkg/expression/builtin_time.go`: an invalid zero
 /// date warns and is NULL.
 pub(crate) fn dayname(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
-    const DAYS: [&str; 7] = [
-        "Sunday",
-        "Monday",
-        "Tuesday",
-        "Wednesday",
-        "Thursday",
-        "Friday",
-        "Saturday",
-    ];
     let [value] = vals else {
         return Err(EvalError::Unsupported("bad function arity"));
     };
     let time = checked_date_arg(value, cols, tidb_datatype::Time::invalid_zero)?;
     Ok(time.map(date_fields).map_or(Datum::Null, |(y, m, d)| {
-        Datum::new_string_datum(DAYS[(days_from_civil(y, m, d) + 4).rem_euclid(7) as usize].to_string())
+        Datum::new_string_datum(
+            WEEKDAY_NAMES[(days_from_civil(y, m, d) + 4).rem_euclid(7) as usize].to_string(),
+        )
     }))
 }
 
@@ -989,18 +1005,24 @@ pub(crate) fn sec_to_time(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, E
     // `HandleTruncate`.
     let magnitude = seconds.abs();
     if (magnitude as u64) / 3600 > 838 {
-        // Go's `errTruncatedWrongValue` is the expression package's.
-        cols.handle_truncate_error(
-            crate::expression_errors::ERR_TRUNCATED_WRONG_VALUE.generate(format!(
-                "Truncated incorrect time value: '{}'",
-                tidb_goruntime::go_strconv::format_float(magnitude, b'f', -1, 64)
-            )),
-        )?;
+        sec_to_time_overflow(magnitude, cols)?;
     }
     Ok(Datum::new_string_datum(format_duration(
         seconds,
         duration_precision(&vals[0])?,
     )))
+}
+
+/// Go's `errTruncatedWrongValue` is the expression package's.
+#[cold]
+pub(crate) fn sec_to_time_overflow(magnitude: f64, ctx: &dyn Columns) -> Result<(), EvalError> {
+    let mut seconds = tidb_goruntime::go_strconv::format_float(magnitude, b'f', -1, 64);
+    // The error template clips its argument to 128 characters. Float text is ASCII.
+    seconds.truncate(128);
+    ctx.handle_truncate_error(
+        crate::expression_errors::ERR_TRUNCATED_WRONG_VALUE
+            .generate(format!("Truncated incorrect time value: '{seconds}'")),
+    )
 }
 
 /// The result FSP comes from TiDB's argument type. String coercion uses the
@@ -1090,11 +1112,15 @@ pub(crate) fn makedate(vals: &[Datum]) -> Result<Datum, EvalError> {
     if vals.len() != 2 {
         return Err(EvalError::Unsupported("bad function arity"));
     }
-    let (Some(mut year), Some(day)) = (int_arg(&vals[0])?, int_arg(&vals[1])?) else {
+    let (Some(year), Some(day)) = (int_arg(&vals[0])?, int_arg(&vals[1])?) else {
         return Ok(Datum::Null);
     };
+    Ok(makedate_int(year, day).map_or(Datum::Null, Datum::new_time))
+}
+
+pub(crate) fn makedate_int(mut year: i64, day: i64) -> Option<tidb_datatype::Time> {
     if day <= 0 || !(0..=9999).contains(&year) {
-        return Ok(Datum::Null);
+        return None;
     }
     if year < 70 {
         year += 2000;
@@ -1107,10 +1133,7 @@ pub(crate) fn makedate(vals: &[Datum]) -> Result<Datum, EvalError> {
     // is NULL.
     let ret_timestamp = tidb_datatype::calc_daynr(year, 1, 1);
     let ret = tidb_datatype::time_from_days(ret_timestamp.wrapping_add(day).wrapping_sub(1));
-    if ret.is_zero() || ret.core_time().year() > 9999 {
-        return Ok(Datum::Null);
-    }
-    Ok(Datum::new_time(ret))
+    (!ret.is_zero() && ret.core_time().year() <= 9999).then_some(ret)
 }
 
 /// `builtinMakeTimeSig` in `pkg/expression/builtin_time.go`.
@@ -1173,15 +1196,16 @@ pub(crate) fn period_add(vals: &[Datum]) -> Result<Datum, EvalError> {
     let (Some(period), Some(months)) = (int_arg(&vals[0])?, int_arg(&vals[1])?) else {
         return Ok(Datum::Null);
     };
-    if !valid_period(period) {
-        // TiDB returns ER_WRONG_ARGUMENTS (1210). EvalError carries the
-        // source-facing message but not the server code prefix.
-        return Err(EvalError::IncorrectArguments(
-            "Incorrect arguments to period_add".to_owned(),
-        ));
-    }
-    let sum = (period_to_month(period as u64) as i64).wrapping_add(months);
-    Ok(Datum::Int(month_to_period(sum as u64) as i64))
+    period_add_int(period, months).map(Datum::Int)
+}
+
+#[inline]
+pub(crate) fn period_add_int(period: i64, months: i64) -> Result<i64, EvalError> {
+    let Some(month) = valid_period_month(period) else {
+        return Err(invalid_period("period_add"));
+    };
+    let sum = (month as i64).wrapping_add(months);
+    Ok(month_to_period(sum as u64) as i64)
 }
 
 /// `PERIOD_DIFF(period1, period2)`, ported from
@@ -1193,34 +1217,39 @@ pub(crate) fn period_diff(vals: &[Datum]) -> Result<Datum, EvalError> {
     let (Some(period1), Some(period2)) = (int_arg(&vals[0])?, int_arg(&vals[1])?) else {
         return Ok(Datum::Null);
     };
-    if !valid_period(period1) || !valid_period(period2) {
-        return Err(EvalError::IncorrectArguments(
-            "Incorrect arguments to period_diff".to_owned(),
-        ));
-    }
+    period_diff_int(period1, period2).map(Datum::Int)
+}
+
+#[inline]
+pub(crate) fn period_diff_int(period1: i64, period2: i64) -> Result<i64, EvalError> {
+    let (Some(first), Some(second)) = (valid_period_month(period1), valid_period_month(period2))
+    else {
+        return Err(invalid_period("period_diff"));
+    };
     // Go subtracts the uint64 month totals before converting to int64.
-    Ok(Datum::Int(
-        period_to_month(period1 as u64).wrapping_sub(period_to_month(period2 as u64)) as i64,
-    ))
+    Ok(first.wrapping_sub(second) as i64)
 }
 
-fn valid_period(period: i64) -> bool {
-    period >= 0 && period % 100 != 0 && period % 100 <= 12
+#[cold]
+fn invalid_period(name: &str) -> EvalError {
+    EvalError::IncorrectArguments(format!("Incorrect arguments to {name}"))
 }
 
-/// Exact `period2Month` from `pkg/expression/builtin_time.go`.
-fn period_to_month(period: u64) -> u64 {
-    if period == 0 {
-        return 0;
+/// TiDB's period validation and `period2Month` share the same quotient.
+#[inline]
+fn valid_period_month(period: i64) -> Option<u64> {
+    let period = u64::try_from(period).ok()?;
+    let month = period % 100;
+    if month.wrapping_sub(1) >= 12 {
+        return None;
     }
     let mut year = period / 100;
-    let month = period % 100;
     if year < 70 {
         year += 2_000;
     } else if year < 100 {
         year += 1_900;
     }
-    year.wrapping_mul(12).wrapping_add(month).wrapping_sub(1)
+    Some(year * 12 + month - 1)
 }
 
 /// Exact `month2Period` from `pkg/expression/builtin_time.go`.
@@ -1245,8 +1274,19 @@ pub(crate) fn time_format(vals: &[Datum]) -> Result<Datum, EvalError> {
     if vals.len() != 2 {
         return Err(EvalError::Unsupported("bad function arity"));
     }
-    let Some((seconds, fraction)) = duration(&vals[0])? else {
-        return Ok(Datum::Null);
+    let duration = match &vals[0] {
+        Datum::Duration(duration) => *duration,
+        other => {
+            let Some((seconds, fraction)) = duration(other)? else {
+                return Ok(Datum::Null);
+            };
+            let (micros, _) = tidb_datatype::parse_frac(fraction.as_bytes(), 6).unwrap_or((0, false));
+            let sign = if seconds < 0 { -1 } else { 1 };
+            tidb_datatype::MySqlDuration::from_raw_parts(
+                seconds.saturating_mul(1_000_000_000).saturating_add(sign * micros * 1_000),
+                0,
+            )
+        }
     };
     let Some(mask) = coerce_str(&vals[1])? else {
         return Ok(Datum::Null);
@@ -1254,39 +1294,7 @@ pub(crate) fn time_format(vals: &[Datum]) -> Result<Datum, EvalError> {
     if mask.is_empty() {
         return Ok(Datum::Null);
     }
-    let sign = if seconds < 0 { "-" } else { "" };
-    let total = seconds.unsigned_abs();
-    let hour = total / 3600;
-    let minute = total / 60 % 60;
-    let second = total % 60;
-    let hour12 = (hour + 11) % 12 + 1;
-    let mut out = String::new();
-    let mut chars = mask.chars();
-    while let Some(c) = chars.next() {
-        if c != '%' {
-            out.push(c);
-            continue;
-        }
-        match chars.next() {
-            None => out.push('%'),
-            Some('H') => out.push_str(&format!("{sign}{hour:02}")),
-            Some('k') => out.push_str(&format!("{sign}{hour}")),
-            Some('h' | 'I') => out.push_str(&format!("{hour12:02}")),
-            Some('l') => out.push_str(&hour12.to_string()),
-            Some('i') => out.push_str(&format!("{minute:02}")),
-            Some('S' | 's') => out.push_str(&format!("{second:02}")),
-            Some('f') => out.push_str(&format!("{fraction:0<6}")),
-            Some('p') => out.push_str(if hour < 12 { "AM" } else { "PM" }),
-            Some('T') => out.push_str(&format!("{sign}{hour:02}:{minute:02}:{second:02}")),
-            Some('r') => out.push_str(&format!(
-                "{hour12:02}:{minute:02}:{second:02} {}",
-                if hour < 12 { "AM" } else { "PM" }
-            )),
-            Some('%') => out.push('%'),
-            Some(other) => out.push(other),
-        }
-    }
-    Ok(Datum::new_string_datum(out))
+    Ok(Datum::new_string_datum(duration.duration_format(&mask)))
 }
 
 #[cfg(test)]

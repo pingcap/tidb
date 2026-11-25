@@ -12,50 +12,20 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Bit-exact transcription of go's `compress/flate` DEFLATE encoder at
-//! compression level 6 (`DefaultCompression`), plus the `compress/zlib`
-//! framing, for `COMPRESS()`'s wire bytes.
+//! Go 1.27.4's default zlib encoder for SQL COMPRESS.
 //!
-//! MySQL compatibility is mostly arbitrary, and the compressed BYTES are the
-//! arbitrary part: TiDB evaluates `COMPRESS` through go's standard library,
-//! whose flate encoder makes different match/Huffman choices from every Rust
-//! backend (`flate2`'s miniz included), so the wire values differ byte for
-//! byte even though both decode to the same text. Instead of calling a
-//! backend we transcribe go's own encoder (go src/compress/flate/deflate.go,
-//! huffman_bit_writer.go, huffman_code.go, token.go, BSD licensed) so every
-//! input produces go's exact bytes. On amd64 go's `haveArchExp`-style
-//! assembly does not exist for flate — the pure-Go bodies below are exactly
-//! what runs there.
-//!
-//! # What COMPRESS drives
-//!
-//! TiDB's `deflate()` helper (`pkg/expression/builtin_encryption.go`) is
-//! `zlib.NewWriter` + `Write(data)` + `Close()` — Write feeds the window,
-//! Close sets `sync` and drains: the pending tokens become a NON-final block
-//! and `close()` appends the final empty STORED block
-//! (`writeStoredHeader(0, true)`), then zlib's Close writes the adler.
-//! Captured end to end: `COMPRESS('aaaaaaaaaa')` is
-//! `0a000000 789c 4a840340 000000ffff 14e103cb`.
+//! TiDB writes each payload once and closes the writer. The level-6 parser
+//! finds matches in input blocks and the writer chooses the Go block format
+//! and tables. The SQL wrapper adds the length prefix and optional dot.
 
-const LOG_WINDOW_SIZE: usize = 15;
-const WINDOW_SIZE: usize = 1 << LOG_WINDOW_SIZE;
-const WINDOW_MASK: usize = WINDOW_SIZE - 1;
+mod blocks;
+mod level6;
 
-const BASE_MATCH_LENGTH: usize = 3;
-const MIN_MATCH_LENGTH: usize = 4;
+use std::sync::LazyLock;
+
+const WINDOW_SIZE: usize = 1 << 15;
 const MAX_MATCH_LENGTH: usize = 258;
-const BASE_MATCH_OFFSET: usize = 1;
-
-const MAX_FLATE_BLOCK_TOKENS: usize = 1 << 14;
-const MAX_STORE_BLOCK_SIZE: usize = 65535;
-const HASH_BITS: u32 = 17;
-const HASH_SIZE: usize = 1 << HASH_BITS;
-const HASH_MASK: usize = HASH_SIZE - 1;
-const MAX_HASH_OFFSET: usize = 1 << 24;
-
-const SKIP_NEVER: i32 = i32::MAX;
-
-const HASHMUL: u32 = 0x1e35_a7bd;
+const MAX_STORE_BLOCK_SIZE: usize = 65_535;
 
 // huffman_bit_writer.go's length tables.
 const LENGTH_EXTRA_BITS: [i8; 29] = [
@@ -171,17 +141,15 @@ struct Hcode {
 }
 
 /// go `literalNode`.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 struct LiteralNode {
     literal: u16,
     freq: i32,
 }
 
-/// go `huffmanEncoder` (huffman_code.go). The reusable `freqcache` becomes a
-/// scratch vec handed in by the bit writer, which owns the allocations.
+/// Go's canonical Huffman code generator.
 struct HuffmanEncoder {
     codes: Vec<Hcode>,
-    bit_count: [i32; 17],
 }
 
 const MAX_NUM_LIT: usize = 286;
@@ -190,10 +158,15 @@ const CODEGEN_CODE_COUNT: usize = 19;
 const BAD_CODE: u8 = 255;
 
 impl HuffmanEncoder {
+    fn covers(&self, freq: &[i32]) -> bool {
+        freq.iter()
+            .zip(&self.codes)
+            .all(|(&n, code)| n == 0 || code.len != 0)
+    }
+
     fn new(size: usize) -> Self {
         Self {
             codes: vec![Hcode::default(); size],
-            bit_count: [0; 17],
         }
     }
 
@@ -210,13 +183,9 @@ impl HuffmanEncoder {
     /// go `huffmanEncoder.bitCounts` (huffman_code.go) — the level-table
     /// algorithm that fits `n` leaves into `maxBits` levels, transcribed
     /// line for line (including the `maxNode()` sentinel append).
-    fn bit_counts(&mut self, list: &mut Vec<LiteralNode>, max_bits_in: i32) -> Vec<i32> {
+    fn bit_counts(list: &[LiteralNode], max_bits_in: i32) -> [i32; MAX_BITS_LIMIT] {
         let mut max_bits = max_bits_in;
-        let n = list.len() as i32;
-        list.push(LiteralNode {
-            literal: u16::MAX,
-            freq: i32::MAX,
-        });
+        let n = list.len() as i32 - 1;
         if max_bits > n - 1 {
             max_bits = n - 1;
         }
@@ -260,8 +229,9 @@ impl HuffmanEncoder {
                 levels[level as usize].next_char_freq = list[n2 as usize].freq;
             } else {
                 levels[level as usize].last_freq = levels[level as usize].next_pair_freq;
-                let lower = leaf_counts[(level - 1) as usize][..level as usize].to_vec();
-                leaf_counts[level as usize][..level as usize].copy_from_slice(&lower);
+                let count = leaf_counts[level as usize][level as usize];
+                leaf_counts[level as usize] = leaf_counts[(level - 1) as usize];
+                leaf_counts[level as usize][level as usize] = count;
                 levels[(level - 1) as usize].needed = 2;
             }
             levels[level as usize].needed -= 1;
@@ -280,7 +250,7 @@ impl HuffmanEncoder {
         }
 
         let counts = &leaf_counts[max_bits as usize];
-        let mut bit_count = vec![0i32; max_bits as usize + 1];
+        let mut bit_count = [0; MAX_BITS_LIMIT];
         let mut bits = 1usize;
         for lvl in (1..=max_bits as usize).rev() {
             bit_count[bits] = counts[lvl] - counts[lvl - 1];
@@ -290,7 +260,7 @@ impl HuffmanEncoder {
     }
 
     /// go `huffmanEncoder.assignEncodingAndSize`.
-    fn assign_encoding_and_size(&mut self, bit_count: &[i32], list: &mut Vec<LiteralNode>) {
+    fn assign_encoding_and_size(&mut self, bit_count: &[i32], list: &mut [LiteralNode]) {
         let mut code = 0u16;
         let mut list_len = list.len();
         for (n, bits) in bit_count.iter().enumerate() {
@@ -301,9 +271,8 @@ impl HuffmanEncoder {
             }
             let chunk = &mut list[list_len - bits as usize..list_len];
             // go `byLiteral.sort`.
-            chunk.sort_by_key(|node| node.literal);
+            chunk.sort_unstable_by_key(|node| node.literal);
             for node in chunk.iter() {
-                if node.literal == u16::MAX {}
                 self.codes[node.literal as usize] = Hcode {
                     code: reverse_bits(code, n as u8),
                     len: n as u16,
@@ -314,25 +283,23 @@ impl HuffmanEncoder {
         }
     }
 
-    /// go `huffmanEncoder.generate`. (go's `freqcache` is a reusable
-    /// scratch buffer; allocating per call here changes no output byte.)
+    /// Go `huffmanEncoder.generate`.
     fn generate(&mut self, freq: &[i32], max_bits: i32) {
-        let mut list: Vec<LiteralNode> = Vec::with_capacity(freq.len() + 1);
-        let mut count = 0usize;
+        let mut list = [LiteralNode::default(); MAX_NUM_LIT + 1];
+        let mut count = 0;
         for (i, f) in freq.iter().enumerate() {
             if *f != 0 {
-                list.push(LiteralNode {
+                list[count] = LiteralNode {
                     literal: i as u16,
                     freq: *f,
-                });
+                };
                 count += 1;
             } else {
                 self.codes[i].len = 0;
             }
         }
-        list.truncate(count);
         if count <= 2 {
-            for (i, node) in list.iter().enumerate() {
+            for (i, node) in list[..count].iter().enumerate() {
                 self.codes[node.literal as usize] = Hcode {
                     code: i as u16,
                     len: 1,
@@ -341,15 +308,13 @@ impl HuffmanEncoder {
             return;
         }
         // go `byFreq.sort`: frequency first, literal second.
-        list.sort_by(|a, b| (a.freq, a.literal).cmp(&(b.freq, b.literal)));
-        let real_len = list.len();
-        let bit_count = self.bit_counts(&mut list, max_bits);
-        // go's `list = list[0 : n+1]; list[n] = maxNode()` re-slices locally:
-        // the sentinel (and the freqcache slot behind it) never reaches
-        // assignEncodingAndSize — its chunks cover exactly the `count` real
-        // leaves. Truncate the appended sentinel away before assigning.
-        list.truncate(real_len);
-        self.assign_encoding_and_size(&bit_count, &mut list);
+        list[..count].sort_unstable_by_key(|node| (node.freq, node.literal));
+        list[count] = LiteralNode {
+            literal: u16::MAX,
+            freq: i32::MAX,
+        };
+        let bit_count = Self::bit_counts(&list[..=count], max_bits);
+        self.assign_encoding_and_size(&bit_count, &mut list[..count]);
     }
 }
 
@@ -363,35 +328,41 @@ struct LevelInfo {
     needed: i32,
 }
 
-fn fixed_literal_encoding() -> HuffmanEncoder {
-    let mut h = HuffmanEncoder::new(MAX_NUM_LIT);
-    for ch in 0..MAX_NUM_LIT as u16 {
-        let (bits, size): (u16, u16) = if ch < 144 {
-            (ch + 48, 8)
-        } else if ch < 256 {
-            (ch + 400 - 144, 9)
-        } else if ch < 280 {
-            (ch - 256, 7)
-        } else {
-            (ch + 192 - 280, 8)
-        };
-        h.codes[ch as usize] = Hcode {
-            code: reverse_bits(bits, size as u8),
-            len: size,
-        };
-    }
-    h
+fn fixed_literal_encoding() -> &'static HuffmanEncoder {
+    static ENCODING: LazyLock<HuffmanEncoder> = LazyLock::new(|| {
+        let mut h = HuffmanEncoder::new(MAX_NUM_LIT);
+        for ch in 0..MAX_NUM_LIT as u16 {
+            let (bits, size): (u16, u16) = if ch < 144 {
+                (ch + 48, 8)
+            } else if ch < 256 {
+                (ch + 400 - 144, 9)
+            } else if ch < 280 {
+                (ch - 256, 7)
+            } else {
+                (ch + 192 - 280, 8)
+            };
+            h.codes[ch as usize] = Hcode {
+                code: reverse_bits(bits, size as u8),
+                len: size,
+            };
+        }
+        h
+    });
+    &ENCODING
 }
 
-fn fixed_offset_encoding() -> HuffmanEncoder {
-    let mut h = HuffmanEncoder::new(30);
-    for (ch, code) in h.codes.iter_mut().enumerate() {
-        *code = Hcode {
-            code: reverse_bits(ch as u16, 5),
-            len: 5,
-        };
-    }
-    h
+fn fixed_offset_encoding() -> &'static HuffmanEncoder {
+    static ENCODING: LazyLock<HuffmanEncoder> = LazyLock::new(|| {
+        let mut h = HuffmanEncoder::new(30);
+        for (ch, code) in h.codes.iter_mut().enumerate() {
+            *code = Hcode {
+                code: reverse_bits(ch as u16, 5),
+                len: 5,
+            };
+        }
+        h
+    });
+    &ENCODING
 }
 
 /// go `huffmanBitWriter`, writing into a growable byte buffer (the deflate
@@ -407,6 +378,9 @@ struct HuffmanBitWriter {
     literal_encoding: HuffmanEncoder,
     offset_encoding: HuffmanEncoder,
     codegen_encoding: HuffmanEncoder,
+    temp_literal_encoding: HuffmanEncoder,
+    previous_header: usize,
+    wrote_huffman: bool,
 }
 
 impl HuffmanBitWriter {
@@ -422,12 +396,14 @@ impl HuffmanBitWriter {
             literal_encoding: HuffmanEncoder::new(MAX_NUM_LIT),
             codegen_encoding: HuffmanEncoder::new(CODEGEN_CODE_COUNT),
             offset_encoding: HuffmanEncoder::new(30),
+            temp_literal_encoding: HuffmanEncoder::new(MAX_NUM_LIT),
+            previous_header: 0,
+            wrote_huffman: false,
         }
     }
 
     /// go `flush`: pad the trailing bits into full bytes.
     fn flush(&mut self) {
-        let mut n = self.out.len();
         while self.nbits != 0 {
             let byte = self.bits as u8;
             self.out.push(byte);
@@ -437,7 +413,6 @@ impl HuffmanBitWriter {
             } else {
                 self.nbits = 0;
             }
-            n += 1;
         }
         self.bits = 0;
     }
@@ -488,13 +463,17 @@ impl HuffmanBitWriter {
     }
 
     /// go `generateCodegen`.
-    fn generate_codegen(&mut self, num_literals: usize, num_offsets: usize) {
+    fn generate_codegen(&mut self, num_literals: usize, num_offsets: usize, huffman_only: bool) {
         self.codegen_freq = [0; CODEGEN_CODE_COUNT];
         for i in 0..num_literals {
             self.codegen[i] = self.literal_encoding.codes[i].len as u8;
         }
-        for i in 0..num_offsets {
-            self.codegen[num_literals + i] = self.offset_encoding.codes[i].len as u8;
+        if huffman_only {
+            self.codegen[num_literals] = 1;
+        } else {
+            for i in 0..num_offsets {
+                self.codegen[num_literals + i] = self.offset_encoding.codes[i].len as u8;
+            }
         }
         self.codegen[num_literals + num_offsets] = BAD_CODE;
         let mut size = self.codegen[0];
@@ -555,7 +534,7 @@ impl HuffmanBitWriter {
     }
 
     /// go `dynamicSize`.
-    fn dynamic_size(&self, extra_bits: usize) -> (usize, usize) {
+    fn header_size(&self) -> (usize, usize) {
         let mut num_codegens = self.codegen_freq.len();
         while num_codegens > 4 && self.codegen_freq[CODEGEN_ORDER[num_codegens - 1]] == 0 {
             num_codegens -= 1;
@@ -569,11 +548,7 @@ impl HuffmanBitWriter {
             + self.codegen_freq[16] as usize * 2
             + self.codegen_freq[17] as usize * 3
             + self.codegen_freq[18] as usize * 7;
-        let size = header
-            + self.literal_encoding.bit_length(&self.literal_freq)
-            + self.offset_encoding.bit_length(&self.offset_freq)
-            + extra_bits;
-        (size, num_codegens)
+        (header, num_codegens)
     }
 
     /// go `fixedSize`.
@@ -581,20 +556,6 @@ impl HuffmanBitWriter {
         3 + fixed_literal_encoding().bit_length(&self.literal_freq)
             + fixed_offset_encoding().bit_length(&self.offset_freq)
             + extra_bits
-    }
-
-    /// go `storedSize`.
-    fn stored_size(&self, input: Option<&[u8]>) -> (usize, bool) {
-        match input {
-            None => (0, false),
-            Some(input) => {
-                if input.len() <= MAX_STORE_BLOCK_SIZE {
-                    ((input.len() + 5) * 8, true)
-                } else {
-                    (0, false)
-                }
-            }
-        }
     }
 
     /// go `writeDynamicHeader`.
@@ -642,8 +603,14 @@ impl HuffmanBitWriter {
 
     /// go `writeStoredHeader`.
     fn write_stored_header(&mut self, length: usize, is_eof: bool) {
-        let flag: i32 = if is_eof { 1 } else { 0 };
-        self.write_bits(flag, 3);
+        self.close_block();
+        if length == 0 && is_eof {
+            self.write_fixed_header(true);
+            self.write_bits(0, 7);
+            self.flush();
+            return;
+        }
+        self.write_bits(i32::from(is_eof), 3);
         self.flush();
         self.write_bits(length as i32, 16);
         self.write_bits(!(length as u16) as i32, 16);
@@ -651,6 +618,7 @@ impl HuffmanBitWriter {
 
     /// go `writeFixedHeader`.
     fn write_fixed_header(&mut self, is_eof: bool) {
+        self.close_block();
         let value: i32 = if is_eof { 3 } else { 2 };
         self.write_bits(value, 3);
     }
@@ -669,6 +637,7 @@ impl HuffmanBitWriter {
             self.literal_freq[LENGTH_CODES_START + length_code(length) as usize] += 1;
             self.offset_freq[offset_code(offset) as usize] += 1;
         }
+        self.literal_freq[256] = 1;
         let mut num_literals = self.literal_freq.len();
         while self.literal_freq[num_literals - 1] == 0 {
             num_literals -= 1;
@@ -681,8 +650,6 @@ impl HuffmanBitWriter {
             self.offset_freq[0] = 1;
             num_offsets = 1;
         }
-        self.literal_encoding.generate(&self.literal_freq, 15);
-        self.offset_encoding.generate(&self.offset_freq, 15);
         (num_literals, num_offsets)
     }
 
@@ -711,371 +678,92 @@ impl HuffmanBitWriter {
             }
         }
     }
-
-    /// go `writeBlock` (huffman_bit_writer.go): the dynamic/fixed/stored
-    /// decision and the block emission.
-    fn write_block(&mut self, mut tokens: Vec<Token>, eof: bool, input: Option<&[u8]>) {
-        tokens.push(literal_token(256)); // endBlockMarker
-        let (num_literals, num_offsets) = self.index_tokens(&tokens);
-        let mut extra_bits = 0usize;
-        let (stored_size, storable) = self.stored_size(input);
-        if storable {
-            for length_code in (257 + 8)..num_literals {
-                extra_bits += self.literal_freq[length_code] as usize
-                    * LENGTH_EXTRA_BITS[length_code - 257] as usize;
-            }
-            for offset_code in 4..num_offsets {
-                extra_bits += self.offset_freq[offset_code] as usize
-                    * OFFSET_EXTRA_BITS[offset_code] as usize;
-            }
-        }
-        let mut using_fixed = true;
-        let mut size = self.fixed_size(extra_bits);
-        self.generate_codegen(num_literals, num_offsets);
-        self.codegen_encoding.generate(&self.codegen_freq, 7);
-        let (dynamic_size, num_codegens) = self.dynamic_size(extra_bits);
-        if dynamic_size < size {
-            size = dynamic_size;
-            using_fixed = false;
-        }
-        if storable && stored_size < size {
-            self.write_stored_header(input.map_or(0, <[u8]>::len), eof);
-            if let Some(input) = input {
-                self.write_bytes(input);
-            }
-            return;
-        }
-        if using_fixed {
-            self.write_fixed_header(eof);
-            // go writes the tokens through the FIXED tables here.
-            let fixed_lit = fixed_literal_encoding();
-            let fixed_off = fixed_offset_encoding();
-            let (le_codes, oe_codes): (Vec<Hcode>, Vec<Hcode>) =
-                (fixed_lit.codes.clone(), fixed_off.codes.clone());
-            self.write_tokens_with(&tokens, &le_codes, &oe_codes);
-            return;
-        }
-        self.write_dynamic_header(num_literals, num_offsets, num_codegens, eof);
-        let literal_codes = self.literal_encoding.codes.clone();
-        let offset_codes = self.offset_encoding.codes.clone();
-        self.write_tokens_with(&tokens, &literal_codes, &offset_codes);
-    }
-}
-
-/// go `compressor` at level 6 (`good 8, lazy 16, nice 128, chain 128,
-/// skipNever`), writing through [`HuffmanBitWriter`]. The window/hash-chain
-/// arrays are boxed: 1<<17 + 1<<15 u32s exceed a comfortable stack frame.
-struct Compressor {
-    w: HuffmanBitWriter,
-    // go `compressionLevel{6, 8, 16, 128, 128, skipNever}`.
-    good: i32,
-    lazy: i32,
-    nice: i32,
-    chain: i32,
-    fast_skip_hashing: i32,
-    chain_head: i32,
-    hash_head: Box<[u32; HASH_SIZE]>,
-    hash_prev: Box<[u32; WINDOW_SIZE]>,
-    hash_offset: usize,
-    index: usize,
-    window: Box<[u8; 2 * WINDOW_SIZE]>,
-    window_end: usize,
-    block_start: usize,
-    byte_available: bool,
-    tokens: Vec<Token>,
-    length: usize,
-    offset: usize,
-    /// Go's signed `int`: negative for an input shorter than a minimum
-    /// match, where no position is inserted into the hash chains.
-    max_insert_index: isize,
-    sync: bool,
-    scratch: Vec<LiteralNode>,
-}
-
-impl Compressor {
-    /// go `initDeflate`.
-    fn new_level6() -> Self {
-        Self {
-            w: HuffmanBitWriter::new(),
-            good: 8,
-            lazy: 16,
-            nice: 128,
-            chain: 128,
-            fast_skip_hashing: SKIP_NEVER,
-            chain_head: -1,
-            hash_head: Box::new([0; HASH_SIZE]),
-            hash_prev: Box::new([0; WINDOW_SIZE]),
-            hash_offset: 1,
-            index: 0,
-            window: Box::new([0; 2 * WINDOW_SIZE]),
-            window_end: 0,
-            block_start: 0,
-            byte_available: false,
-            tokens: Vec::with_capacity(MAX_FLATE_BLOCK_TOKENS + 1),
-            length: MIN_MATCH_LENGTH - 1,
-            offset: 0,
-            max_insert_index: 0,
-            sync: false,
-            scratch: Vec::new(),
-        }
-    }
-
-    /// go `writeBlock` (deflate.go): bounds the block's input window slice.
-    fn write_block_at(&mut self, tokens: Vec<Token>, index: usize) {
-        if index > 0 {
-            let window: Option<&[u8]> = if self.block_start <= index {
-                Some(&self.window[self.block_start..index])
-            } else {
-                None
-            };
-            self.block_start = index;
-            let input = window.map(|window| window.to_vec());
-            self.w.write_block(tokens, false, input.as_deref());
-        }
-    }
-
-    /// go `fillDeflate`.
-    fn fill_deflate(&mut self, b: &[u8]) -> usize {
-        if self.index >= 2 * WINDOW_SIZE - (MIN_MATCH_LENGTH + MAX_MATCH_LENGTH) {
-            // shift the window by windowSize
-            self.window.copy_within(WINDOW_SIZE..2 * WINDOW_SIZE, 0);
-            self.index -= WINDOW_SIZE;
-            self.window_end -= WINDOW_SIZE;
-            if self.block_start >= WINDOW_SIZE {
-                self.block_start -= WINDOW_SIZE;
-            } else {
-                self.block_start = usize::MAX;
-            }
-            self.hash_offset += WINDOW_SIZE;
-            if self.hash_offset > MAX_HASH_OFFSET {
-                let delta = self.hash_offset - 1;
-                self.hash_offset -= delta;
-                self.chain_head -= delta as i32;
-                for v in self.hash_prev.iter_mut() {
-                    if (*v as usize) > delta {
-                        *v -= delta as u32;
-                    } else {
-                        *v = 0;
-                    }
-                }
-                for v in self.hash_head.iter_mut() {
-                    if (*v as usize) > delta {
-                        *v -= delta as u32;
-                    } else {
-                        *v = 0;
-                    }
-                }
-            }
-        }
-        let n = (b.len()).min(self.window.len() - self.window_end);
-        self.window[self.window_end..self.window_end + n].copy_from_slice(&b[..n]);
-        self.window_end += n;
-        n
-    }
-
-    /// go `findMatch`.
-    fn find_match(
-        &self,
-        pos: usize,
-        prev_head: i32,
-        prev_length: usize,
-        lookahead: usize,
-    ) -> (usize, usize, bool) {
-        let mut min_match_look = MAX_MATCH_LENGTH;
-        if lookahead < min_match_look {
-            min_match_look = lookahead;
-        }
-        let win = &self.window[0..pos + min_match_look];
-        let mut nice = win.len() - pos;
-        if (self.nice as usize) < nice {
-            nice = self.nice as usize;
-        }
-        let mut tries = self.chain as usize;
-        let mut length = prev_length;
-        if length >= self.good as usize {
-            tries >>= 2;
-        }
-        let w_end = win[pos + length];
-        let min_index = pos.saturating_sub(WINDOW_SIZE) as i32;
-        let mut offset = 0usize;
-        let mut ok = false;
-        let mut i = prev_head;
-        while tries > 0 {
-            let iu = i as usize;
-            if w_end == win[iu + length] {
-                let n = match_len(&win[iu..], &win[pos..], min_match_look);
-                if n > length && (n > MIN_MATCH_LENGTH || pos - iu <= 4096) {
-                    length = n;
-                    offset = pos - iu;
-                    ok = true;
-                    if n >= nice {
-                        break;
-                    }
-                }
-            }
-            if i == min_index {
-                // hashPrev[i & windowMask] has already been overwritten.
-                break;
-            }
-            i = self.hash_prev[iu & WINDOW_MASK] as i32 - self.hash_offset as i32;
-            if i < min_index || i < 0 {
-                break;
-            }
-        }
-        (length, offset, ok)
-    }
-
-    /// go `deflate` (the level-6 step), transcribed loop for loop.
-    fn deflate_step(&mut self) {
-        if self.window_end - self.index < MIN_MATCH_LENGTH + MAX_MATCH_LENGTH && !self.sync {
-            return;
-        }
-        self.max_insert_index = self.window_end as isize - (MIN_MATCH_LENGTH as isize - 1);
-        loop {
-            let lookahead = self.window_end - self.index;
-            if lookahead < MIN_MATCH_LENGTH + MAX_MATCH_LENGTH {
-                if !self.sync {
-                    break;
-                }
-                if lookahead == 0 {
-                    if self.byte_available {
-                        self.tokens
-                            .push(literal_token(self.window[self.index - 1] as u32));
-                        self.byte_available = false;
-                    }
-                    if !self.tokens.is_empty() {
-                        let tokens = std::mem::take(&mut self.tokens);
-                        self.write_block_at(tokens, self.index);
-                        self.tokens = Vec::with_capacity(MAX_FLATE_BLOCK_TOKENS + 1);
-                    }
-                    break;
-                }
-            }
-            if (self.index as isize) < self.max_insert_index {
-                let hash = hash4(&self.window[self.index..self.index + MIN_MATCH_LENGTH]);
-                let hh = &mut self.hash_head[hash as usize & HASH_MASK];
-                self.chain_head = *hh as i32;
-                self.hash_prev[self.index & WINDOW_MASK] = self.chain_head as u32;
-                *hh = (self.index + self.hash_offset) as u32;
-            }
-            let prev_length = self.length;
-            let prev_offset = self.offset;
-            self.length = MIN_MATCH_LENGTH - 1;
-            self.offset = 0;
-            let min_index = self.index.saturating_sub(WINDOW_SIZE);
-            if self.chain_head - self.hash_offset as i32 >= min_index as i32
-                && lookahead > prev_length
-                && prev_length < self.lazy as usize
-            {
-                let (new_length, new_offset, ok) = self.find_match(
-                    self.index,
-                    self.chain_head - self.hash_offset as i32,
-                    MIN_MATCH_LENGTH - 1,
-                    lookahead,
-                );
-                if ok {
-                    self.length = new_length;
-                    self.offset = new_offset;
-                }
-            }
-            if prev_length >= MIN_MATCH_LENGTH && self.length <= prev_length {
-                // The previous match is better: emit it.
-                self.tokens.push(match_token(
-                    (prev_length - BASE_MATCH_LENGTH) as u32,
-                    (prev_offset - BASE_MATCH_OFFSET) as u32,
-                ));
-                // Insert into the hash table everything up to the end of the
-                // match; without enough lookahead the last two strings stay
-                // out of the table.
-                let new_index = self.index + prev_length - 1;
-                let mut index = self.index;
-                index += 1;
-                while index < new_index {
-                    if (index as isize) < self.max_insert_index {
-                        let hash = hash4(&self.window[index..index + MIN_MATCH_LENGTH]);
-                        let hh = &mut self.hash_head[hash as usize & HASH_MASK];
-                        self.hash_prev[index & WINDOW_MASK] = *hh;
-                        *hh = (index + self.hash_offset) as u32;
-                    }
-                    index += 1;
-                }
-                self.index = index;
-                self.byte_available = false;
-                self.length = MIN_MATCH_LENGTH - 1;
-            } else {
-                // go: `if d.fastSkipHashing != skipNever || d.byteAvailable`
-                // — at level 6 only a PENDING byte emits here; the very first
-                // loop iteration just advances the index.
-                if self.byte_available {
-                    let i = self.index - 1;
-                    self.tokens.push(literal_token(self.window[i] as u32));
-                    if self.tokens.len() == MAX_FLATE_BLOCK_TOKENS {
-                        let tokens = std::mem::take(&mut self.tokens);
-                        self.write_block_at(tokens, i + 1);
-                        self.tokens = Vec::with_capacity(MAX_FLATE_BLOCK_TOKENS + 1);
-                    }
-                }
-                self.index += 1;
-                self.byte_available = true;
-            }
-            if self.tokens.len() == MAX_FLATE_BLOCK_TOKENS {
-                let tokens = std::mem::take(&mut self.tokens);
-                let index = self.index;
-                self.write_block_at(tokens, index);
-                self.tokens = Vec::with_capacity(MAX_FLATE_BLOCK_TOKENS + 1);
-            }
-        }
-    }
-
-    /// go `compressor.close`: drain with sync, then the final empty STORED
-    /// block (`writeStoredHeader(0, true)`).
-    fn close(&mut self) {
-        self.sync = true;
-        self.deflate_step();
-        self.w.write_stored_header(0, true);
-        self.w.flush();
-    }
-}
-
-/// go `hash4`.
-fn hash4(b: &[u8]) -> u32 {
-    ((u32::from(b[3]) | u32::from(b[2]) << 8 | u32::from(b[1]) << 16 | u32::from(b[0]) << 24)
-        .wrapping_mul(HASHMUL))
-        >> (32 - HASH_BITS)
 }
 
 /// go `matchLen`.
 fn match_len(a: &[u8], b: &[u8], max: usize) -> usize {
     let a = &a[..max];
     let b = &b[..a.len()];
-    for (i, av) in a.iter().enumerate() {
-        if b[i] != *av {
-            return i;
+    let (a_words, a_tail) = a.as_chunks::<8>();
+    let (b_words, b_tail) = b.as_chunks::<8>();
+    for (i, (&a, &b)) in a_words.iter().zip(b_words).enumerate() {
+        let different = u64::from_le_bytes(a) ^ u64::from_le_bytes(b);
+        if different != 0 {
+            return i * 8 + different.trailing_zeros() as usize / 8;
         }
     }
-    max
+    a_words.len() * 8
+        + a_tail
+            .iter()
+            .zip(b_tail)
+            .position(|(a, b)| a != b)
+            .unwrap_or(a_tail.len())
 }
 
-/// go `zlib.NewWriter` + `Write` + `Close` at level 6: the full zlib stream
-/// (header + deflate + adler32) COMPRESS's `deflate()` helper produces.
-pub fn go_zlib_deflate(data: &[u8]) -> Vec<u8> {
-    let mut compressor = Compressor::new_level6();
-    // zlib.NewWriter's header.
-    let mut out = vec![0x78, 0x9c];
-    compressor.w.out = std::mem::take(&mut out);
-    // Writer.Write: step then fill until the input drains.
-    let mut b = data;
-    while !b.is_empty() {
-        compressor.deflate_step();
-        let n = compressor.fill_deflate(b);
-        b = &b[n..];
+/// Reusable state for Go's single-write zlib stream.
+pub(crate) struct ZlibEncoder {
+    writer: HuffmanBitWriter,
+    level6: Option<level6::Level6>,
+    tokens: Vec<Token>,
+}
+
+impl ZlibEncoder {
+    pub(crate) fn new() -> Self {
+        Self {
+            writer: HuffmanBitWriter::new(),
+            level6: None,
+            tokens: Vec::new(),
+        }
     }
-    // Writer.Close: sync drain + final empty stored block; then the adler.
-    compressor.close();
-    let mut out = std::mem::take(&mut compressor.w.out);
-    let adler = adler32(data);
-    out.extend_from_slice(&adler.to_be_bytes());
-    out
+
+    pub(crate) fn encode(&mut self, data: &[u8], prefix: &[u8]) -> &mut Vec<u8> {
+        let writer = &mut self.writer;
+        writer.out.clear();
+        writer.out.extend_from_slice(prefix);
+        writer.out.extend_from_slice(&[0x78, 0x9c]);
+        writer.bits = 0;
+        writer.nbits = 0;
+        writer.previous_header = 0;
+        writer.wrote_huffman = false;
+        if let Some(level6) = &mut self.level6 {
+            level6.reset();
+        }
+
+        for (index, input) in data.chunks(MAX_STORE_BLOCK_SIZE).enumerate() {
+            let start = index * MAX_STORE_BLOCK_SIZE;
+            let end = start + input.len();
+            let sync = end == data.len();
+            if input.len() <= 32 {
+                writer.write_stored_block(input);
+                continue;
+            }
+            if input.len() < 128 {
+                writer.write_huffman_block(input, sync);
+                continue;
+            }
+            self.tokens.clear();
+            self.level6.get_or_insert_with(level6::Level6::new).encode(
+                &mut self.tokens,
+                data,
+                start,
+                end,
+            );
+            if self.tokens.is_empty() {
+                writer.write_stored_block(input);
+            } else if self.tokens.len() > input.len() - (input.len() >> 4) {
+                writer.write_huffman_block(input, sync);
+            } else {
+                writer.write_dynamic_block(&mut self.tokens, input, sync);
+            }
+        }
+        writer.write_stored_header(0, true);
+        writer.out.extend_from_slice(&adler32(data).to_be_bytes());
+        &mut writer.out
+    }
+
+    pub(crate) fn into_output(self) -> Vec<u8> {
+        self.writer.out
+    }
 }
 
 /// go `adler32` (hash/adler32.go): `s = (1 + Σ b[i])`, `s1/s2` rolling.
@@ -1083,15 +771,14 @@ fn adler32(data: &[u8]) -> u32 {
     const MOD: u32 = 65521;
     let mut s1: u32 = 1;
     let mut s2: u32 = 0;
-    for byte in data {
-        s1 += u32::from(*byte);
-        if s1 >= MOD {
-            s1 -= MOD;
+    // RFC 1950 bounds the unreduced sums to u32 over 5,552 bytes.
+    for block in data.chunks(5552) {
+        for &byte in block {
+            s1 += u32::from(byte);
+            s2 += s1;
         }
-        s2 += s1;
-        if s2 >= MOD {
-            s2 -= MOD;
-        }
+        s1 %= MOD;
+        s2 %= MOD;
     }
     (s2 << 16) | s1
 }
@@ -1100,64 +787,73 @@ fn adler32(data: &[u8]) -> u32 {
 mod tests {
     use std::io::Read;
 
-    use super::go_zlib_deflate;
+    use sha2::{Digest, Sha256};
 
-    /// Captured from `go run` against compress/zlib (NewWriter + Write +
-    /// Close), which is TiDB's `deflate()` helper byte for byte.
-    #[test]
-    fn compresses_like_go_zlib() {
-        assert_eq!(
-            go_zlib_deflate(b"aaaaaaaaaa"),
-            [
-                0x78, 0x9c, 0x4a, 0x84, 0x03, 0x40, 0x00, 0x00, 0x00, 0xff, 0xff, 0x14, 0xe1, 0x03,
-                0xcb,
-            ]
-        );
-        assert_eq!(
-            go_zlib_deflate(b"hello world"),
-            [
-                0x78, 0x9c, 0xca, 0x48, 0xcd, 0xc9, 0xc9, 0x57, 0x28, 0xcf, 0x2f, 0xca, 0x49, 0x01,
-                0x04, 0x00, 0x00, 0xff, 0xff, 0x1a, 0x0b, 0x04, 0x5d,
-            ]
-        );
-    }
+    use super::ZlibEncoder;
 
-    /// Inputs shorter than a minimum match: Go's `maxInsertIndex` is a
-    /// negative `int` there, which skips hashing (`COMPRESS('b')` panicked
-    /// on the unsigned subtraction). Go 1.25's level-6 compressor (the
-    /// branch's go.mod toolchain; Go 1.27 rewrote the encoder, so its bytes
-    /// differ for every input here and above) writes each byte as a
-    /// fixed-Huffman literal, then close's empty final stored block, then
-    /// the Adler-32. The bytes are that derivation, and they inflate back.
     #[test]
-    fn compresses_inputs_shorter_than_a_match_like_go_zlib() {
-        let cases: [(&[u8], &[u8]); 3] = [
+    fn compresses_like_go_1_27_4_zlib() {
+        // Captured from Go 1.27.4 zlib.NewWriter, Write, and Close.
+        let cases: &[(&[u8], &[u8])] = &[
+            (b"", &[0x78, 0x9c, 0x03, 0x00, 0x00, 0x00, 0x00, 0x01]),
             (
-                b"",
-                &[0x78, 0x9c, 0x01, 0x00, 0x00, 0xff, 0xff, 0x00, 0x00, 0x00, 0x01],
-            ),
-            (
-                b"b",
+                b"a",
                 &[
-                    0x78, 0x9c, 0x4a, 0x02, 0x04, 0x00, 0x00, 0xff, 0xff, 0x00, 0x63, 0x00, 0x63,
+                    0x78, 0x9c, 0x00, 0x01, 0x00, 0xfe, 0xff, 0x61, 0x03, 0x00, 0x00, 0x62, 0x00,
+                    0x62,
                 ],
             ),
             (
-                b"ab",
+                b"aaaaaaaaaa",
                 &[
-                    0x78, 0x9c, 0x4a, 0x4c, 0x02, 0x04, 0x00, 0x00, 0xff, 0xff, 0x01, 0x26, 0x00,
-                    0xc4,
+                    0x78, 0x9c, 0x00, 0x0a, 0x00, 0xf5, 0xff, b'a', b'a', b'a', b'a', b'a', b'a',
+                    b'a', b'a', b'a', b'a', 0x03, 0x00, 0x14, 0xe1, 0x03, 0xcb,
+                ],
+            ),
+            (
+                b"hello world",
+                &[
+                    0x78, 0x9c, 0x00, 0x0b, 0x00, 0xf4, 0xff, b'h', b'e', b'l', b'l', b'o', b' ',
+                    b'w', b'o', b'r', b'l', b'd', 0x03, 0x00, 0x1a, 0x0b, 0x04, 0x5d,
                 ],
             ),
         ];
-        for (input, expected) in cases {
-            let compressed = go_zlib_deflate(input);
-            assert_eq!(compressed, expected, "input {input:?}");
+        let mut encoder = ZlibEncoder::new();
+        for &(input, expected) in cases {
+            let compressed = encoder.encode(input, &[]);
+            assert_eq!(compressed, expected, "{input:?}");
             let mut inflated = Vec::new();
             flate2::read::ZlibDecoder::new(compressed.as_slice())
                 .read_to_end(&mut inflated)
                 .unwrap();
             assert_eq!(inflated, input);
+        }
+    }
+
+    #[test]
+    fn go_1_27_4_multiblock_streams_match_after_reset() {
+        let tile = (0..274).map(|i| (i * 31 + i / 7) as u8).collect::<Vec<_>>();
+        let mut encoder = ZlibEncoder::new();
+        // Lengths and hashes captured from Go 1.27.4. Both values cross the
+        // match history boundary and use more than one DEFLATE block.
+        for (input, size, sha256) in [
+            (
+                b"tidb-zlib: stored,huffman,match; ".repeat(13_000),
+                1395,
+                "941d4e51dfd98ebbfe041acc0ad80bc430c91e881282fa0bbb8f214ab895d095",
+            ),
+            (
+                tile.repeat(1680),
+                2431,
+                "76bfe7c6fb114778e53742fd88d0c5e75aebd27ebc6865ac1e023dada82d401c",
+            ),
+        ] {
+            let compressed = encoder.encode(&input, &[]);
+            assert_eq!(compressed.len(), size);
+            assert_eq!(
+                tidb_goruntime::go_hex::encode_to_string(&Sha256::digest(compressed)),
+                sha256,
+            );
         }
     }
 }

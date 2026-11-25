@@ -11,9 +11,41 @@ use serde_json::{json, Value};
 use tidb_gocontext::Context;
 use tidb_ingestor_engineapi::OnDuplicateKey;
 use tidb_objstore::storeapi::Storage;
-use tidb_objstore::LocalStorage;
+use tidb_objstore::{LocalStorage, MemStorage};
 
 use super::*;
+
+#[test]
+fn borrowed_records_follow_refills_and_concurrent_mode_switches() {
+    let ctx = Context::background();
+    let store: Arc<dyn Storage> = Arc::new(MemStorage::new());
+    let mut data = Vec::new();
+    for i in 0_u8..40 {
+        data.extend_from_slice(&1_u64.to_be_bytes());
+        data.extend_from_slice(&37_u64.to_be_bytes());
+        data.push(i);
+        data.extend_from_slice(&[i + 1; 37]);
+    }
+    store.write_file(&ctx, "data", &data).unwrap();
+
+    let mut reader = KVReader::new(&ctx, "data", store.as_ref(), 0, 63).unwrap();
+    reader.enable_concurrent_read(store.clone(), "data", 3, 17);
+    reader.switch_concurrent_mode(true).unwrap();
+    let first = reader.next_kv().unwrap();
+    for i in 1_u8..40 {
+        if i == 11 {
+            reader.switch_concurrent_mode(false).unwrap();
+        } else if i == 24 {
+            reader.switch_concurrent_mode(true).unwrap();
+        }
+        let (key, value) = reader.next_kv_ref().unwrap();
+        assert_eq!(key, &[i]);
+        assert_eq!(value, &[i + 1; 37]);
+    }
+    assert!(reader.next_kv_ref().unwrap_err().is_eof());
+    assert_eq!(first, (vec![0], vec![1; 37]));
+    reader.close().unwrap();
+}
 
 /// The probe's `kvs`: keys written out of order, and with `dup_every`,
 /// 1 to 3 duplicates of every key divisible by it.

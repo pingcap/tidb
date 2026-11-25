@@ -15,24 +15,35 @@
 //! Index-key and index-value half of Go `pkg/tablecodec/tablecodec.go`.
 
 use std::collections::{BTreeMap, HashSet};
+use std::borrow::{Borrow, Cow};
 use std::fmt;
 
 use tidb_datatype::{
-    is_bin_collation, Datum, FieldType, FieldTypeCode, SessionTimeZone, UNSPECIFIED_LENGTH,
+    is_bin_collation, Datum, FieldType, FieldTypeCode, SessionTimeZone, StringDatum, UNSPECIFIED_LENGTH,
 };
 use tidb_txnkv::{CommonHandle, Handle, IntHandle, PartitionHandle};
 
 use crate::table_row::{decode_column_value, TableRowError};
-use crate::table_key::encode_index_seek_key;
+use crate::table_key::{append_index_key_prefix, encode_index_seek_key};
 use crate::table_key::{
     MAX_OLD_ENCODE_VALUE_LEN, TEMP_INDEX_PREFIX, UNCOMMITTED_INDEX_KV_FLAG,
 };
-use tidb_codec::{cut_one, decode_int, decode_one, encode_bytes, encode_int, encode_value, CodecError, Encoder, BYTES_FLAG, INT_FLAG};
-use tidb_rowcodec::{decode_row_to_old_bytes, encode_row, ColumnInfo, RowPackageError, ROW_CODEC_VERSION};
+use tidb_codec::{
+    cut_one, decode_int, decode_one, encode_bytes, encode_int, encode_uvarint, encode_varint,
+    encoded_bytes_len, skip_bytes, split_cut_bytes,
+    CodecError, Encoder, BYTES_FLAG, INT_FLAG, UVARINT_FLAG, VARINT_FLAG,
+};
+use tidb_rowcodec::{
+    decode_raw_uint, decode_row_to_old_bytes, decode_row_to_old_bytes_in_order,
+    encode_row_with_values, ColumnInfo, RawRowValue, RowChecksumPolicy, RowDecoder,
+    RowPackageError, ROW_CODEC_VERSION,
+};
 
 const ID_LEN: usize = 8;
 const PREFIX_LEN: usize = 1 + ID_LEN + 2;
 const INDEX_VALUES_OFFSET: usize = PREFIX_LEN + ID_LEN;
+const COMMON_HANDLE_HEADER_LEN: usize = 3;
+const PARTITION_ID_SEGMENT_LEN: usize = 1 + ID_LEN;
 
 fn inner_handle(handle: &Handle) -> &Handle {
     match handle {
@@ -185,22 +196,13 @@ impl TableInfo {
         key: &[u8],
         value: &[u8],
     ) -> Result<Vec<Datum>, TableIndexError> {
-        let columns = self.index_columns(index)?;
-        let encoded_values = decode_index_kv(
+        decode_index_values_from_columns(
             use_new_collation,
+            timezone,
+            &self.index_columns(index)?,
             key,
             value,
-            columns.len(),
-            HandleStatus::NotNeeded,
-            &columns,
-        )?;
-        encoded_values
-            .iter()
-            .zip(&columns)
-            .map(|(encoded, column)| {
-                Ok(decode_column_value(encoded, &column.field_type, timezone)?)
-            })
-            .collect()
+        )
     }
 
     /// Mirrors `TableInfo.HasClusteredIndex`.
@@ -221,30 +223,74 @@ impl TableInfo {
         key: &[u8],
         value: &[u8],
     ) -> Result<Vec<Vec<u8>>, TableIndexError> {
-        let columns = self.index_columns(index)?;
-        let encoded_values = decode_index_kv(
+        render_index_values_from_columns(
             use_new_collation,
+            timezone,
+            &self.index_columns(index)?,
             key,
             value,
-            columns.len(),
-            HandleStatus::NotNeeded,
-            &columns,
-        )?;
-        encoded_values
-            .iter()
-            .zip(&columns)
-            .map(|(encoded, column)| {
-                let datum = decode_column_value(encoded, &column.field_type, timezone)?;
-                let mut rendered = datum.sql_bytes().unwrap_or_else(|_| encoded.clone());
-                if column.field_type.is_binary_string()
-                    || column.field_type.code() == FieldTypeCode::Bit
-                {
-                    rendered = format_non_ascii_printable_to_hex(&rendered);
-                }
-                Ok(rendered)
-            })
-            .collect()
+        )
     }
+}
+
+/// Decodes an index entry using column metadata in index key order.
+pub fn decode_index_values_from_columns(
+    use_new_collation: bool,
+    timezone: Option<&SessionTimeZone>,
+    columns: &[ColumnInfo],
+    key: &[u8],
+    value: &[u8],
+) -> Result<Vec<Datum>, TableIndexError> {
+    map_index_values(use_new_collation, columns, key, value, |encoded, field_type| {
+        Ok(decode_column_value(encoded, field_type, timezone)?)
+    })
+}
+
+/// Renders an index entry using column metadata in index key order.
+/// Binary strings and BIT values escape non-printable bytes as uppercase hex.
+pub fn render_index_values_from_columns(
+    use_new_collation: bool,
+    timezone: Option<&SessionTimeZone>,
+    columns: &[ColumnInfo],
+    key: &[u8],
+    value: &[u8],
+) -> Result<Vec<Vec<u8>>, TableIndexError> {
+    map_index_values(use_new_collation, columns, key, value, |encoded, field_type| {
+        let datum = decode_column_value(encoded, field_type, timezone)?;
+        let mut rendered = datum.sql_bytes().unwrap_or_else(|_| encoded.to_vec());
+        if field_type.is_binary_string() || field_type.code() == FieldTypeCode::Bit {
+            rendered = format_non_ascii_printable_to_hex(&rendered);
+        }
+        Ok(rendered)
+    })
+}
+
+fn map_index_values<T>(
+    use_new_collation: bool,
+    columns: &[ColumnInfo],
+    key: &[u8],
+    value: &[u8],
+    project: impl Fn(&[u8], &FieldType) -> Result<T, TableIndexError>,
+) -> Result<Vec<T>, TableIndexError> {
+    if value.len() <= MAX_OLD_ENCODE_VALUE_LEN {
+        if let [column] = columns {
+            let (encoded, _) = cut_one(&key[INDEX_VALUES_OFFSET..])?;
+            return Ok(vec![project(encoded, &column.field_type)?]);
+        }
+    }
+    let encoded_values = decode_index_kv_refs(
+        use_new_collation,
+        key,
+        value,
+        columns.len(),
+        HandleStatus::NotNeeded,
+        columns,
+    )?;
+    encoded_values
+        .iter()
+        .zip(columns)
+        .map(|(encoded, column)| project(encoded, &column.field_type))
+        .collect()
 }
 
 fn format_non_ascii_printable_to_hex(bytes: &[u8]) -> Vec<u8> {
@@ -333,14 +379,38 @@ pub fn get_table_index_key_range(table_id: i64, index_id: i64) -> (Vec<u8>, Vec<
 
 /// Cuts `length` encoded index columns and returns the remaining handle suffix.
 pub fn cut_index_key(key: &[u8], length: usize) -> Result<(Vec<Vec<u8>>, &[u8]), TableIndexError> {
+    cut_index_key_with(key, length, length, <[u8]>::to_vec)
+}
+
+/// Borrows the encoded index columns and the remaining handle suffix.
+pub fn cut_index_key_refs(key: &[u8], length: usize) -> Result<(Vec<&[u8]>, &[u8]), TableIndexError> {
+    cut_index_key_with(key, length, length, std::convert::identity)
+}
+
+fn cut_index_key_with<'a, T>(
+    key: &'a [u8],
+    length: usize,
+    capacity: usize,
+    project: impl Fn(&'a [u8]) -> T,
+) -> Result<(Vec<T>, &'a [u8]), TableIndexError> {
     let mut remaining = &key[INDEX_VALUES_OFFSET..];
-    let mut values = Vec::with_capacity(length);
+    let mut values = Vec::with_capacity(capacity);
     for _ in 0..length {
         let (value, tail) = cut_one(remaining)?;
-        values.push(value.to_vec());
+        values.push(project(value));
         remaining = tail;
     }
     Ok((values, remaining))
+}
+
+/// Returns the handle suffix without materializing the encoded index columns.
+pub fn skip_index_key_columns(key: &[u8], length: usize) -> Result<&[u8], TableIndexError> {
+    let mut suffix = &key[INDEX_VALUES_OFFSET..];
+    for _ in 0..length {
+        let (_, remaining) = cut_one(suffix)?;
+        suffix = remaining;
+    }
+    Ok(suffix)
 }
 
 /// Cuts index columns into a caller-provided column-ID map.
@@ -447,8 +517,12 @@ fn encode_partition_id(output: &mut Vec<u8>, partition_id: i64) {
 
 /// Decodes an eight-byte legacy integer-handle index value.
 pub fn decode_int_handle_in_index_value(data: &[u8]) -> Result<Handle, TableIndexError> {
+    Ok(IntHandle::new(read_index_integer(data)).into())
+}
+
+fn read_index_integer(data: &[u8]) -> i64 {
     let bytes: [u8; 8] = data[..ID_LEN].try_into().unwrap();
-    Ok(IntHandle::new(i64::from_be_bytes(bytes)).into())
+    i64::from_be_bytes(bytes)
 }
 
 /// Decodes a handle carried in a non-unique index-key suffix.
@@ -460,13 +534,29 @@ pub fn decode_handle_in_index_key(suffix: &[u8]) -> Result<Handle, TableIndexErr
             decode_handle_in_index_key(remaining)?,
         ));
     }
+    match decode_single_int_index_handle(suffix)? {
+        Some(value) => Ok(IntHandle::new(value).into()),
+        None => Ok(common_handle(suffix)?),
+    }
+}
+
+fn decode_single_int_index_handle(suffix: &[u8]) -> Result<Option<i64>, TableIndexError> {
+    match suffix {
+        [INT_FLAG, payload @ ..] => {
+            let (remaining, value) = decode_int(payload)?;
+            return Ok(remaining.is_empty().then_some(value));
+        }
+        [BYTES_FLAG, payload @ ..] => {
+            skip_bytes(payload)?;
+            return Ok(None);
+        }
+        _ => {}
+    }
     let (remaining, datum) = decode_one(suffix)?;
     if remaining.is_empty() {
-        if let Some(value) = datum.as_int() {
-            return Ok(IntHandle::new(value).into());
-        }
+        return Ok(datum.as_int());
     }
-    Ok(common_handle(suffix.to_vec())?)
+    Ok(None)
 }
 
 /// Self-describing segments of an extensible index value.
@@ -480,6 +570,14 @@ pub struct IndexValueSegments {
     pub restored_values: Option<Vec<u8>>,
     /// Legacy raw eight-byte integer handle.
     pub int_handle: Option<Vec<u8>>,
+}
+
+#[derive(Default)]
+struct IndexValueSegmentsRef<'a> {
+    common_handle: Option<&'a [u8]>,
+    partition_id: Option<&'a [u8]>,
+    restored_values: Option<&'a [u8]>,
+    int_handle: Option<&'a [u8]>,
 }
 
 /// Half-open key range accepted by tablecodec's partition verifier.
@@ -540,44 +638,49 @@ pub fn index_value_version(value: &[u8]) -> u8 {
 
 /// Splits any supported index-value layout into its semantic segments.
 pub fn split_index_value(value: &[u8]) -> Result<IndexValueSegments, TableIndexError> {
-    if index_value_version(value) == 0 {
-        if value.len() <= MAX_OLD_ENCODE_VALUE_LEN {
-            return Ok(IndexValueSegments {
-                int_handle: Some(value.to_vec()),
-                ..IndexValueSegments::default()
-            });
-        }
-        split_extensible_index_value(value, 1)
-    } else {
-        split_extensible_index_value(value, 3)
-    }
+    let segments = split_index_value_ref(value);
+    Ok(IndexValueSegments {
+        common_handle: segments.common_handle.map(<[u8]>::to_vec),
+        partition_id: segments.partition_id.map(<[u8]>::to_vec),
+        restored_values: segments.restored_values.map(<[u8]>::to_vec),
+        int_handle: segments.int_handle.map(<[u8]>::to_vec),
+    })
 }
 
-fn split_extensible_index_value(
-    value: &[u8],
-    header_len: usize,
-) -> Result<IndexValueSegments, TableIndexError> {
+fn split_index_value_ref(value: &[u8]) -> IndexValueSegmentsRef<'_> {
+    if value.len() <= MAX_OLD_ENCODE_VALUE_LEN {
+        return IndexValueSegmentsRef {
+            int_handle: Some(value),
+            ..IndexValueSegmentsRef::default()
+        };
+    }
+
+    let header_len = if index_value_version(value) == 0 { 1 } else { 3 };
+    split_extensible_index_value(value, header_len)
+}
+
+fn split_extensible_index_value(value: &[u8], header_len: usize) -> IndexValueSegmentsRef<'_> {
     let tail_len = usize::from(value[0]);
     let tail = &value[value.len() - tail_len..];
     let mut options = &value[header_len..value.len() - tail_len];
-    let mut segments = IndexValueSegments::default();
+    let mut segments = IndexValueSegmentsRef::default();
     if tail.len() >= ID_LEN {
-        segments.int_handle = Some(tail[..ID_LEN].to_vec());
+        segments.int_handle = Some(&tail[..ID_LEN]);
     }
     if options.first() == Some(&COMMON_HANDLE_FLAG) {
         let length = usize::from(u16::from_be_bytes(options[1..3].try_into().unwrap()));
         let end = 3 + length;
-        segments.common_handle = Some(options[3..end].to_vec());
+        segments.common_handle = Some(&options[3..end]);
         options = &options[end..];
     }
     if options.first() == Some(&PARTITION_ID_FLAG) {
-        segments.partition_id = Some(options[1..9].to_vec());
+        segments.partition_id = Some(&options[1..9]);
         options = &options[9..];
     }
     if options.first() == Some(&RESTORE_DATA_FLAG) {
-        segments.restored_values = Some(options.to_vec());
+        segments.restored_values = Some(options);
     }
-    Ok(segments)
+    segments
 }
 
 /// Decodes a unique-index value handle, including partition wrapping.
@@ -585,17 +688,16 @@ pub fn decode_handle_in_index_value(value: &[u8]) -> Result<Option<Handle>, Tabl
     if value.len() <= MAX_OLD_ENCODE_VALUE_LEN {
         return decode_int_handle_in_index_value(value).map(Some);
     }
-    let segments = split_index_value(value)?;
+    let segments = split_index_value_ref(value);
     let mut handle = segments
         .int_handle
-        .as_deref()
         .map(decode_int_handle_in_index_value)
         .transpose()?;
     if let Some(encoded) = segments.common_handle {
         handle = Some(common_handle(encoded)?);
     }
     if let Some(encoded) = segments.partition_id {
-        let (_, partition_id) = decode_int(&encoded)?;
+        let (_, partition_id) = decode_int(encoded)?;
         handle = Some(match handle {
             Some(handle) => partition_handle(partition_id, handle),
             None => PartitionHandle::new(partition_id, None).into(),
@@ -610,12 +712,12 @@ pub fn decode_index_handle(
     value: &[u8],
     columns_len: usize,
 ) -> Result<Option<Handle>, TableIndexError> {
-    let (_, suffix) = cut_index_key(key, columns_len)?;
+    let suffix = skip_index_key_columns(key, columns_len)?;
     if !suffix.is_empty() {
         let mut handle = decode_handle_in_index_key(suffix)?;
-        if value.len() >= ID_LEN {
-            if let Some(encoded) = split_index_value(value)?.partition_id {
-                let (_, partition_id) = decode_int(&encoded)?;
+        if value.len() > MAX_OLD_ENCODE_VALUE_LEN {
+            if let Some(encoded) = split_index_value_ref(value).partition_id {
+                let (_, partition_id) = decode_int(encoded)?;
                 handle = partition_handle(partition_id, inner_handle(&handle).clone());
             }
         }
@@ -634,39 +736,11 @@ pub fn index_kv_is_unique(value: &[u8]) -> bool {
     }
     let version = index_value_version(value);
     if version == 1 {
-        split_extensible_index_value(value, 3)
-            .is_ok_and(|segments| segments.common_handle.is_some())
+        split_extensible_index_value(value, 3).common_handle.is_some()
     } else {
-        split_extensible_index_value(value, 1)
-            .is_ok_and(|segments| segments.int_handle.is_some() || segments.common_handle.is_some())
+        let segments = split_extensible_index_value(value, 1);
+        segments.int_handle.is_some() || segments.common_handle.is_some()
     }
-}
-
-/// Decodes one rune the way Go's `utf8.DecodeRune` does: a valid sequence
-/// yields its rune and width, and ANY invalid byte -- a truncated multi-byte
-/// head, a stray continuation byte, an overlong form, or a surrogate half --
-/// yields `U+FFFD` and a width of exactly ONE byte. Rust's own
-/// `String::from_utf8_lossy` instead collapses a maximal invalid SUBSEQUENCE
-/// into a single `U+FFFD`, so `F0 9F` is one replacement to Rust and two to
-/// Go. That difference is what [`truncate_index_value`] cannot afford: the
-/// prefix-index key written for a row must be the key an index lookup later
-/// rebuilds, and Go writes both.
-///
-/// `str::from_utf8` accepts exactly the sequences Go's decoder accepts
-/// (surrogates and overlong forms are errors in both), so trying the widths
-/// in order and keeping the first whose single rune spans the whole slice
-/// reproduces `DecodeRune` without a hand-rolled UTF-8 table.
-fn go_decode_rune(bytes: &[u8]) -> (char, usize) {
-    for width in 1..=bytes.len().min(4) {
-        if let Ok(text) = std::str::from_utf8(&bytes[..width]) {
-            if let Some(rune) = text.chars().next() {
-                if rune.len_utf8() == width {
-                    return (rune, width);
-                }
-            }
-        }
-    }
-    (char::REPLACEMENT_CHARACTER, 1)
 }
 
 /// Source `tablecodec.TruncateIndexValue`.
@@ -703,41 +777,65 @@ pub fn truncate_index_value(
 /// every other, which always re-lands it as a string in `column_type`'s
 /// collation. Answers whether a cut happened.
 pub fn cut_datum_by_prefix_len(value: &mut Datum, length: i64, column_type: &FieldType) -> bool {
-    if length == UNSPECIFIED_LENGTH {
+    let Some((end, by_bytes)) = datum_prefix_bound(value, length, column_type) else {
         return false;
-    }
-    let was_bytes = match value {
-        Datum::Bytes(_) => true,
-        Datum::String(_) => false,
-        _ => return false,
     };
-    let Some(bytes) = value.as_raw_bytes().map(<[u8]>::to_vec) else {
-        return false;
+    if by_bytes {
+        if let Datum::Bytes(bytes) = value {
+            bytes.truncate(end);
+            return true;
+        }
+    }
+    *value = copy_datum_prefix(value, end, by_bytes, column_type);
+    true
+}
+
+/// Copies the indexed portion of a borrowed datum into an owned key part.
+pub fn clone_datum_by_prefix_len(value: &Datum, length: i64, column_type: &FieldType) -> Datum {
+    datum_with_prefix_len(value, length, column_type).into_owned()
+}
+
+/// Borrows an unchanged value and copies only the indexed portion when cut.
+pub fn datum_with_prefix_len<'a>(value: &'a Datum, length: i64, column_type: &FieldType) -> Cow<'a, Datum> {
+    match datum_prefix_bound(value, length, column_type) {
+        Some((end, by_bytes)) => Cow::Owned(copy_datum_prefix(value, end, by_bytes, column_type)),
+        None => Cow::Borrowed(value),
+    }
+}
+
+fn datum_prefix_bound(value: &Datum, length: i64, column_type: &FieldType) -> Option<(usize, bool)> {
+    if length == UNSPECIFIED_LENGTH {
+        return None;
+    }
+    let bytes = match value {
+        Datum::Bytes(bytes) => bytes.as_slice(),
+        Datum::String(string) => string.bytes(),
+        _ => return None,
     };
     let length = usize::try_from(length).unwrap_or(usize::MAX);
+    if bytes.len() <= length {
+        return None;
+    }
+    if matches!(column_type.charset_name(), "binary" | "ascii") {
+        return Some((length, true));
+    }
+    let end = rune_prefix_end(bytes, length)?;
+    (end < bytes.len()).then_some((end, false))
+}
+
+fn copy_datum_prefix(value: &Datum, end: usize, by_bytes: bool, column_type: &FieldType) -> Datum {
+    let bytes = &value.go_bytes()[..end];
+    if by_bytes && matches!(value, Datum::Bytes(_)) {
+        return Datum::Bytes(bytes.to_vec());
+    }
     let collation = column_type.collation();
-    match column_type.charset_name() {
-        "binary" | "ascii" => {
-            if bytes.len() <= length {
-                return false;
-            }
-            let truncated = bytes[..length].to_vec();
-            *value = if was_bytes {
-                Datum::new_bytes_datum(truncated)
-            } else {
-                Datum::new_collation_string_datum(truncated, collation)
-            };
-            true
-        }
-        _ => {
-            let runes = go_runes(&bytes);
-            if runes.len() <= length {
-                return false;
-            }
-            let truncated: String = runes[..length].iter().collect();
-            *value = Datum::new_collation_string_datum(truncated.into_bytes(), collation);
-            true
-        }
+    if by_bytes || bytes.is_ascii() {
+        Datum::String(StringDatum::from_slice(bytes, collation))
+    } else {
+        Datum::new_collation_string_datum(
+            tidb_goruntime::decode_go_utf8_lossy(bytes).into_bytes(),
+            collation,
+        )
     }
 }
 
@@ -756,20 +854,38 @@ pub fn reach_prefix_len(value: &Datum, length: i64, column_type: &FieldType) -> 
     let length = usize::try_from(length).unwrap_or(usize::MAX);
     match column_type.charset_name() {
         "binary" | "ascii" => bytes.len() == length,
-        _ => go_runes(bytes).len() == length,
+        _ => bytes.len() <= length.saturating_mul(4)
+            && rune_prefix_end(bytes, length) == Some(bytes.len()),
     }
 }
 
-/// Go `bytes.Runes`: every invalid byte is its own `U+FFFD`.
-fn go_runes(bytes: &[u8]) -> Vec<char> {
-    let mut runes = Vec::new();
-    let mut rest = bytes;
-    while !rest.is_empty() {
-        let (rune, width) = go_decode_rune(rest);
-        runes.push(rune);
-        rest = &rest[width..];
+/// Byte offset after exactly `length` Go runes, if the input has that many.
+fn rune_prefix_end(bytes: &[u8], length: usize) -> Option<usize> {
+    if bytes.get(..length)?.is_ascii() {
+        return Some(length);
     }
-    runes
+    // A rune occupies at most four bytes. Any partial sequence at this
+    // bound starts after the requested runes and cannot affect the cut.
+    let bound = bytes.len().min(length.saturating_mul(4));
+    let mut offset = 0;
+    let mut remaining = length;
+    for chunk in bytes[..bound].utf8_chunks() {
+        let valid = chunk.valid();
+        let count = valid.chars().count();
+        if remaining < count {
+            return valid.char_indices().nth(remaining).map(|(i, _)| offset + i);
+        }
+        offset += valid.len();
+        remaining -= count;
+        // Go consumes each invalid byte as a separate replacement rune.
+        let invalid = chunk.invalid().len();
+        if remaining <= invalid {
+            return Some(offset + remaining);
+        }
+        remaining -= invalid;
+        offset += invalid;
+    }
+    None
 }
 
 /// Truncates every indexed value using table/index metadata.
@@ -796,35 +912,86 @@ pub fn generate_index_key(
     indexed_values: &mut [Datum],
     handle: Option<&Handle>,
 ) -> Result<(Vec<u8>, bool), TableIndexError> {
-    let distinct = index.unique && indexed_values.iter().all(|value| !value.is_null());
     truncate_index_values(table, index, indexed_values)?;
-    let encoded = match timezone {
-        Some(timezone) => encoder.encode_key_in_timezone(timezone, indexed_values)?,
-        None => encoder.encode_key(indexed_values)?,
-    };
-    let mut key = encode_index_seek_key(physical_table_id, index.id, &encoded);
-    if !distinct {
-        if let Some(handle) = handle {
-            if index.global_index_version >= 1 {
-                if table.has_clustered_index() {
-                    return Err(TableIndexError::Metadata(
-                        "clustered index is not supported in GlobalIndexVersionV1+",
-                    ));
-                }
-                let partition_id = handle_partition_id(handle).ok_or(TableIndexError::Metadata(
-                    "handle is not a PartitionHandle in GlobalIndexVersionV1+",
-                ))?;
-                encode_partition_id(&mut key, partition_id);
+    encode_truncated_index_key(
+        encoder,
+        timezone,
+        table.has_clustered_index(),
+        index,
+        physical_table_id,
+        indexed_values,
+        handle,
+    )
+}
+
+/// Builds a key from values whose index prefixes the caller already applied.
+pub fn encode_truncated_index_key(
+    encoder: Encoder,
+    timezone: Option<&SessionTimeZone>,
+    has_clustered_index: bool,
+    index: &IndexInfo,
+    physical_table_id: i64,
+    indexed_values: &[Datum],
+    handle: Option<&Handle>,
+) -> Result<(Vec<u8>, bool), TableIndexError> {
+    encode_truncated_index_key_refs(
+        encoder,
+        timezone,
+        has_clustered_index,
+        index,
+        physical_table_id,
+        indexed_values.iter(),
+        handle,
+    )
+}
+
+/// Builds a key from the borrowed values in an already-truncated tuple.
+pub fn encode_truncated_index_key_refs<'a>(
+    encoder: Encoder,
+    timezone: Option<&SessionTimeZone>,
+    has_clustered_index: bool,
+    index: &IndexInfo,
+    physical_table_id: i64,
+    indexed_values: impl Clone + Iterator<Item = &'a Datum>,
+    handle: Option<&Handle>,
+) -> Result<(Vec<u8>, bool), TableIndexError> {
+    let distinct = index.unique && indexed_values.clone().all(|value| !value.is_null());
+    let suffix = handle.filter(|_| !distinct);
+    let suffix_len = suffix.map_or(0, |handle| {
+        let partition_len = if index.global_index_version >= 1 { ID_LEN + 1 } else { 0 };
+        let handle_len = match inner_handle(handle) {
+            Handle::Common(value) => value.encoded().len(),
+            _ => ID_LEN + 1,
+        };
+        partition_len + handle_len
+    });
+    let values_len = tidb_codec::pre_realloc_size_for_refs(indexed_values.clone(), true).unwrap_or(0);
+    let mut key = Vec::with_capacity(INDEX_VALUES_OFFSET + values_len + suffix_len);
+    append_index_key_prefix(&mut key, physical_table_id, index.id);
+    match timezone {
+        Some(timezone) => encoder.append_key_refs_in_timezone(timezone, &mut key, indexed_values)?,
+        None => encoder.append_key_refs_in_timezone(&chrono::Utc, &mut key, indexed_values)?,
+    }
+    if let Some(handle) = suffix {
+        if index.global_index_version >= 1 {
+            if has_clustered_index {
+                return Err(TableIndexError::Metadata(
+                    "clustered index is not supported in GlobalIndexVersionV1+",
+                ));
             }
-            match inner_handle(handle) {
-                Handle::Int(value) => {
-                    key.push(INT_FLAG);
-                    encode_int(&mut key, value.value());
-                }
-                Handle::Common(value) => key.extend_from_slice(value.encoded()),
-                Handle::Partition(_) => {
-                    unreachable!("inner_handle removes partition wrappers")
-                }
+            let partition_id = handle_partition_id(handle).ok_or(TableIndexError::Metadata(
+                "handle is not a PartitionHandle in GlobalIndexVersionV1+",
+            ))?;
+            encode_partition_id(&mut key, partition_id);
+        }
+        match inner_handle(handle) {
+            Handle::Int(value) => {
+                key.push(INT_FLAG);
+                encode_int(&mut key, value.value());
+            }
+            Handle::Common(value) => key.extend_from_slice(value.encoded()),
+            Handle::Partition(_) => {
+                unreachable!("inner_handle removes partition wrappers")
             }
         }
     }
@@ -847,12 +1014,67 @@ pub fn generate_index_value(
     partition_id: i64,
     handle_restored_data: &[Datum],
 ) -> Result<Vec<u8>, TableIndexError> {
-    if table.is_common_handle && table.common_handle_version == 1 {
+    generate_index_value_with_columns(
+        use_new_collation,
+        timezone,
+        table.is_common_handle && table.common_handle_version == 1,
+        index.global,
+        &index.columns,
+        need_restored_data,
+        distinct,
+        untouched,
+        indexed_values,
+        IndexValueHandle::from(handle),
+        partition_id,
+        handle_restored_data,
+        |offset| table.columns.get(offset).map(Cow::Borrowed),
+        || common_pk_restored_column_ids(use_new_collation, table),
+    )
+}
+
+/// The parts of a row handle used by the index value encoder.
+#[derive(Clone, Copy)]
+pub enum IndexValueHandle<'a> {
+    /// An integer handle.
+    Int(i64),
+    /// A validated common handle including its minimum-width padding.
+    Common(&'a [u8]),
+}
+
+impl<'a> From<&'a Handle> for IndexValueHandle<'a> {
+    fn from(handle: &'a Handle) -> Self {
+        match inner_handle(handle) {
+            Handle::Int(handle) => Self::Int(handle.value()),
+            Handle::Common(handle) => Self::Common(handle.encoded()),
+            Handle::Partition(_) => unreachable!("inner_handle removes partition wrappers"),
+        }
+    }
+}
+
+/// Encodes an index value, resolving table metadata only for restored data.
+#[allow(clippy::too_many_arguments)]
+pub fn generate_index_value_with_columns<'a>(
+    use_new_collation: bool,
+    timezone: Option<&SessionTimeZone>,
+    common_handle_v1: bool,
+    global: bool,
+    index_columns: &[IndexColumn],
+    need_restored_data: bool,
+    distinct: bool,
+    untouched: bool,
+    indexed_values: &[impl Borrow<Datum>],
+    handle: IndexValueHandle<'_>,
+    partition_id: i64,
+    handle_restored_data: &[Datum],
+    column_at: impl Fn(usize) -> Option<Cow<'a, TableColumn>>,
+    common_pk_ids: impl FnOnce() -> Vec<i64>,
+) -> Result<Vec<u8>, TableIndexError> {
+    if common_handle_v1 {
         generate_index_value_v1(
             use_new_collation,
             timezone,
-            table,
-            index,
+            global,
+            index_columns,
             need_restored_data,
             distinct,
             untouched,
@@ -860,118 +1082,154 @@ pub fn generate_index_value(
             handle,
             partition_id,
             handle_restored_data,
+            column_at,
+            common_pk_ids,
         )
     } else {
         generate_index_value_v0(
             timezone,
-            table,
-            index,
+            global,
+            index_columns,
             need_restored_data,
             distinct,
             untouched,
             indexed_values,
             handle,
             partition_id,
+            column_at,
         )
     }
 }
 
 #[allow(clippy::too_many_arguments)]
-fn generate_index_value_v0(
+fn generate_index_value_v0<'a>(
     timezone: Option<&SessionTimeZone>,
-    table: &TableInfo,
-    index: &IndexInfo,
+    global: bool,
+    index_columns: &[IndexColumn],
     need_restored_data: bool,
     distinct: bool,
     untouched: bool,
-    indexed_values: &[Datum],
-    handle: &Handle,
+    indexed_values: &[impl Borrow<Datum>],
+    handle: IndexValueHandle<'_>,
     partition_id: i64,
+    column_at: impl Fn(usize) -> Option<Cow<'a, TableColumn>>,
 ) -> Result<Vec<u8>, TableIndexError> {
-    let mut value = vec![0];
-    let mut extensible = false;
-    let mut tail_len = 0;
-    if !handle.is_int() && distinct {
-        encode_common_handle(&mut value, &handle.encoded());
-        extensible = true;
+    let int_handle = match handle {
+        IndexValueHandle::Int(value) if distinct => Some(value),
+        _ => None,
+    };
+    if !global && !need_restored_data {
+        if !distinct {
+            let marker = if untouched {
+                UNCOMMITTED_INDEX_KV_FLAG
+            } else {
+                b'0'
+            };
+            return Ok(vec![marker]);
+        }
+        if let Some(int_handle) = int_handle {
+            let mut value = Vec::with_capacity(ID_LEN + usize::from(untouched));
+            value.extend_from_slice(&int_handle.to_be_bytes());
+            if untouched {
+                value.push(UNCOMMITTED_INDEX_KV_FLAG);
+            }
+            return Ok(value);
+        }
     }
-    if index.global {
+    let common_handle = match handle {
+        IndexValueHandle::Common(bytes) if distinct => Some(bytes),
+        _ => None,
+    };
+    let common_len = common_handle.map_or(0, |bytes| COMMON_HANDLE_HEADER_LEN + bytes.len());
+    let partition_len = usize::from(global) * PARTITION_ID_SEGMENT_LEN;
+    let int_len = usize::from(int_handle.is_some()) * ID_LEN;
+    let capacity = (1 + common_len + partition_len + int_len).max(10) + usize::from(untouched);
+    let mut value = Vec::with_capacity(capacity);
+    value.push(0);
+    let mut tail_len = 0;
+    if let Some(bytes) = common_handle {
+        encode_common_handle(&mut value, bytes);
+    }
+    if global {
         encode_partition_id(&mut value, partition_id);
-        extensible = true;
     }
     if need_restored_data {
-        let ids = index
-            .columns
+        let ids = index_columns
             .iter()
             .map(|column| {
-                table
-                    .columns
-                    .get(column.offset)
+                column_at(column.offset)
                     .map(|column| column.id)
                     .ok_or(TableIndexError::Metadata("invalid index column offset"))
             })
             .collect::<Result<Vec<_>, _>>()?;
-        encode_row(timezone, &ids, indexed_values, &mut value)?;
-        extensible = true;
+        encode_row_with_values(
+            timezone,
+            &ids,
+            indexed_values,
+            &RowChecksumPolicy::None,
+            &mut value,
+        )?;
     }
-    if extensible {
-        if handle.is_int() && distinct {
-            tail_len += ID_LEN;
-            value.extend_from_slice(&encode_handle_in_unique_index_value(handle, false));
-        } else if value.len() < 10 {
-            let padding = 10 - value.len();
-            tail_len += padding;
-            value.resize(10, 0);
-        }
-        if untouched {
-            tail_len += 1;
-            value.push(UNCOMMITTED_INDEX_KV_FLAG);
-        }
-        value[0] = u8::try_from(tail_len)
-            .map_err(|_| TableIndexError::Invalid("index-value tail exceeds uint8"))?;
-        return Ok(value);
-    }
-    value.clear();
-    if distinct {
-        value.extend_from_slice(&encode_handle_in_unique_index_value(handle, untouched));
+    if let Some(int_handle) = int_handle {
+        tail_len += ID_LEN;
+        value.extend_from_slice(&int_handle.to_be_bytes());
+    } else if value.len() < 10 {
+        let padding = 10 - value.len();
+        tail_len += padding;
+        value.resize(10, 0);
     }
     if untouched {
+        tail_len += 1;
         value.push(UNCOMMITTED_INDEX_KV_FLAG);
     }
-    if value.is_empty() {
-        value.push(b'0');
-    }
+    value[0] = u8::try_from(tail_len)
+        .map_err(|_| TableIndexError::Invalid("index-value tail exceeds uint8"))?;
     Ok(value)
 }
 
 #[allow(clippy::too_many_arguments)]
-fn generate_index_value_v1(
+fn generate_index_value_v1<'a>(
     use_new_collation: bool,
     timezone: Option<&SessionTimeZone>,
-    table: &TableInfo,
-    index: &IndexInfo,
+    global: bool,
+    index_columns: &[IndexColumn],
     need_restored_data: bool,
     distinct: bool,
     untouched: bool,
-    indexed_values: &[Datum],
-    handle: &Handle,
+    indexed_values: &[impl Borrow<Datum>],
+    handle: IndexValueHandle<'_>,
     partition_id: i64,
     handle_restored_data: &[Datum],
+    column_at: impl Fn(usize) -> Option<Cow<'a, TableColumn>>,
+    common_pk_ids: impl FnOnce() -> Vec<i64>,
 ) -> Result<Vec<u8>, TableIndexError> {
-    let mut value = vec![0, INDEX_VERSION_FLAG, 1];
-    if distinct {
-        encode_common_handle(&mut value, &handle.encoded());
+    let int_bytes;
+    let encoded_handle = if distinct {
+        Some(match handle {
+            IndexValueHandle::Int(value) => {
+                int_bytes = tidb_codec::encode_int_to_cmp_uint(value).to_be_bytes();
+                int_bytes.as_slice()
+            }
+            IndexValueHandle::Common(bytes) => bytes,
+        })
+    } else {
+        None
+    };
+    let handle_len = encoded_handle.map_or(0, |bytes| COMMON_HANDLE_HEADER_LEN + bytes.len());
+    let partition_len = usize::from(global) * PARTITION_ID_SEGMENT_LEN;
+    let mut value = Vec::with_capacity(3 + handle_len + partition_len + usize::from(untouched));
+    value.extend_from_slice(&[0, INDEX_VERSION_FLAG, 1]);
+    if let Some(bytes) = encoded_handle {
+        encode_common_handle(&mut value, bytes);
     }
-    if index.global {
+    if global {
         encode_partition_id(&mut value, partition_id);
     }
     if need_restored_data || !handle_restored_data.is_empty() {
         let mut ids = Vec::new();
         let mut data = Vec::new();
-        for (position, index_column) in index.columns.iter().enumerate() {
-            let column = table
-                .columns
-                .get(index_column.offset)
+        for (position, index_column) in index_columns.iter().enumerate() {
+            let column = column_at(index_column.offset)
                 .ok_or(TableIndexError::Metadata("invalid index column offset"))?;
             if column.primary_key {
                 continue;
@@ -988,23 +1246,24 @@ fn generate_index_value_v1(
                 ids.push(column.id);
                 let indexed = indexed_values
                     .get(position)
-                    .ok_or(TableIndexError::Metadata("missing indexed value"))?;
+                    .ok_or(TableIndexError::Metadata("missing indexed value"))?
+                    .borrow();
                 if is_bin_collation(field_type.collation_name()) {
                     let spaces = indexed
                         .as_raw_bytes()
                         .map(|bytes| bytes.iter().rev().take_while(|byte| **byte == b' ').count())
                         .unwrap_or(0);
-                    data.push(Datum::UInt(spaces as u64));
+                    data.push(Cow::Owned(Datum::UInt(spaces as u64)));
                 } else {
-                    data.push(indexed.clone());
+                    data.push(Cow::Borrowed(indexed));
                 }
             }
         }
         if !handle_restored_data.is_empty() {
-            ids.extend(common_pk_restored_column_ids(use_new_collation, table));
-            data.extend_from_slice(handle_restored_data);
+            ids.extend(common_pk_ids());
+            data.extend(handle_restored_data.iter().map(Cow::Borrowed));
         }
-        encode_row(timezone, &ids, &data, &mut value)?;
+        encode_row_with_values(timezone, &ids, &data, &RowChecksumPolicy::None, &mut value)?;
     }
     if untouched {
         value[0] = 1;
@@ -1031,22 +1290,58 @@ pub fn common_pk_restored_column_ids(use_new_collation: bool, table: &TableInfo)
         .collect()
 }
 
-fn reencode_handle(handle: &Handle, unsigned: bool) -> Result<Vec<Vec<u8>>, TableIndexError> {
-    match inner_handle(handle) {
-        Handle::Int(value) => Ok(vec![encode_value(&[if unsigned {
-            Datum::UInt(value.value() as u64)
-        } else {
-            Datum::Int(value.value())
-        }])?]),
-        Handle::Common(_) => encoded_handle_columns(handle),
-        Handle::Partition(_) => unreachable!("inner_handle removes partition wrappers"),
+fn append_index_key_handle<'a>(
+    results: &mut Vec<Cow<'a, [u8]>>,
+    mut suffix: &'a [u8],
+    unsigned: bool,
+) -> Result<(), TableIndexError> {
+    // Partition metadata is returned separately from the value segment.
+    while suffix.first() == Some(&PARTITION_ID_FLAG) {
+        (suffix, _) = decode_int(&suffix[1..])?;
     }
+    if let Some(value) = decode_single_int_index_handle(suffix)? {
+        results.push(Cow::Owned(encode_index_integer(value, unsigned)));
+    } else {
+        append_common_handle_columns(results, suffix)?;
+    }
+    Ok(())
+}
+
+fn append_common_handle_columns<'a>(
+    results: &mut Vec<Cow<'a, [u8]>>,
+    encoded: &'a [u8],
+) -> Result<(), TableIndexError> {
+    if encoded.len() <= usize::from(u16::MAX) {
+        CommonHandle::scan_encoded_columns(encoded, |column| {
+            results.push(Cow::Borrowed(column));
+        })?;
+    } else {
+        // Keep the source's 16-bit offset behavior for oversized inputs.
+        let handle = common_handle(encoded)?;
+        results.extend(encoded_handle_columns(&handle)?.into_iter().map(Cow::Owned));
+    }
+    Ok(())
+}
+
+fn encode_index_integer(value: i64, unsigned: bool) -> Vec<u8> {
+    let mut encoded = Vec::with_capacity(11);
+    if unsigned {
+        encoded.push(UVARINT_FLAG);
+        encode_uvarint(&mut encoded, value as u64);
+    } else {
+        encoded.push(VARINT_FLAG);
+        encode_varint(&mut encoded, value);
+    }
+    encoded
 }
 
 fn decode_restored_values(
     columns: &[ColumnInfo],
     restored: &[u8],
 ) -> Result<Vec<Vec<u8>>, TableIndexError> {
+    if columns.windows(2).all(|pair| pair[0].id < pair[1].id) {
+        return Ok(decode_row_to_old_bytes_in_order(restored, columns)?);
+    }
     let offsets = columns
         .iter()
         .enumerate()
@@ -1087,9 +1382,31 @@ fn restored_columns(use_new_collation: bool, columns: &[ColumnInfo]) -> Vec<Colu
 fn decode_restored_values_v5(
     use_new_collation: bool,
     columns: &[ColumnInfo],
-    mut results: Vec<Vec<u8>>,
+    results: &mut [Cow<'_, [u8]>],
     restored: &[u8],
-) -> Result<Vec<Vec<u8>>, TableIndexError> {
+) -> Result<(), TableIndexError> {
+    if let ([column], [result, ..]) = (columns, &mut *results) {
+        let field_type = &column.field_type;
+        if field_type.code().is_type_varchar()
+            && is_bin_collation(field_type.collation_name())
+            && field_type.need_restored_data_with_collation(use_new_collation)
+        {
+            if let Cow::Borrowed([BYTES_FLAG, encoded @ ..]) = *result {
+                let (row, _) = RowDecoder::parse(restored).map_err(RowPackageError::Decode)?;
+                if let RawRowValue::NotNull { bytes, .. } =
+                    row.column(column.id).map_err(RowPackageError::Decode)?
+                {
+                    let padding = decode_raw_uint(bytes).map_err(RowPackageError::Decode)? as usize;
+                    let (prefix, tail) = split_cut_bytes(encoded).map_err(TableRowError::Codec)?;
+                    if padding != 0 {
+                        *result = Cow::Owned(encode_cut_bytes_with_spaces(prefix, tail, padding));
+                    }
+                    return Ok(());
+                }
+            }
+        }
+    }
+
     let restore_columns = restored_columns(use_new_collation, columns);
     let offsets = columns
         .iter()
@@ -1102,13 +1419,31 @@ fn decode_restored_values_v5(
         if restored_value.is_empty() {
             continue;
         }
-        if is_bin_collation(columns[index].field_type.collation_name()) {
-            let original = decode_column_value(&results[index], &columns[index].field_type, None)?;
-            let count_type = FieldType::new(FieldTypeCode::LongLong).with_unsigned(true);
-            let padding = decode_column_value(&restored_value, &count_type, None)?
-                .as_uint()
-                .ok_or(TableIndexError::Invalid("invalid restored padding"))?
-                as usize;
+        let field_type = &columns[index].field_type;
+        if is_bin_collation(field_type.collation_name()) {
+            let padding = || -> Result<usize, TableIndexError> {
+                let count_type = FieldType::new(FieldTypeCode::LongLong).with_unsigned(true);
+                decode_column_value(&restored_value, &count_type, None)?
+                    .as_uint()
+                    .map(|count| count as usize)
+                    .ok_or(TableIndexError::Invalid("invalid restored padding"))
+            };
+            let cut = match results[index] {
+                Cow::Borrowed([BYTES_FLAG, encoded @ ..]) if field_type.code().is_type_varchar() => {
+                    Some(encoded)
+                }
+                _ => None,
+            };
+            if let Some(encoded) = cut {
+                let (prefix, tail) = split_cut_bytes(encoded).map_err(TableRowError::Codec)?;
+                let padding = padding()?;
+                if padding != 0 {
+                    results[index] = Cow::Owned(encode_cut_bytes_with_spaces(prefix, tail, padding));
+                }
+                continue;
+            }
+            let original = decode_column_value(&results[index], field_type, None)?;
+            let padding = padding()?;
             if padding == 0 {
                 continue;
             }
@@ -1118,12 +1453,22 @@ fn decode_restored_values_v5(
             bytes.resize(bytes.len() + padding, b' ');
             let mut encoded = vec![BYTES_FLAG];
             encode_bytes(&mut encoded, &bytes);
-            results[index] = encoded;
+            results[index] = Cow::Owned(encoded);
         } else {
-            results[index] = restored_value;
+            results[index] = Cow::Owned(restored_value);
         }
     }
-    Ok(results)
+    Ok(())
+}
+
+fn encode_cut_bytes_with_spaces(prefix: &[u8], tail: &[u8], padding: usize) -> Vec<u8> {
+    let mut tail = smallvec::SmallVec::<[u8; 32]>::from_slice(tail);
+    tail.resize(tail.len() + padding, b' ');
+    let mut encoded = Vec::with_capacity(1 + prefix.len() + encoded_bytes_len(tail.len()));
+    encoded.push(BYTES_FLAG);
+    encoded.extend_from_slice(prefix);
+    encode_bytes(&mut encoded, &tail);
+    encoded
 }
 
 /// Decodes index columns and an optional handle into old datum-value bytes.
@@ -1135,85 +1480,100 @@ pub fn decode_index_kv(
     handle_status: HandleStatus,
     columns: &[ColumnInfo],
 ) -> Result<Vec<Vec<u8>>, TableIndexError> {
-    let (mut results, suffix) = cut_index_key(key, columns_len)?;
+    if value.len() <= MAX_OLD_ENCODE_VALUE_LEN && handle_status == HandleStatus::NotNeeded {
+        return cut_index_key(key, columns_len).map(|(values, _)| values);
+    }
+    let results = decode_index_kv_refs(use_new_collation, key, value, columns_len, handle_status, columns)?;
+    Ok(results.into_iter().map(Cow::into_owned).collect())
+}
+
+/// Decodes index columns and an optional handle, borrowing unchanged encoded fields.
+pub fn decode_index_kv_refs<'a>(
+    use_new_collation: bool,
+    key: &'a [u8],
+    value: &'a [u8],
+    columns_len: usize,
+    handle_status: HandleStatus,
+    columns: &[ColumnInfo],
+) -> Result<Vec<Cow<'a, [u8]>>, TableIndexError> {
+    let capacity =
+        columns_len.saturating_add(usize::from(handle_status != HandleStatus::NotNeeded));
+    let (mut results, suffix) = cut_index_key_with(key, columns_len, capacity, Cow::Borrowed)?;
     if value.len() <= MAX_OLD_ENCODE_VALUE_LEN {
         if handle_status == HandleStatus::NotNeeded {
             return Ok(results);
         }
-        let handle = if suffix.is_empty() {
-            decode_int_handle_in_index_value(value)?
+        let unsigned = handle_status == HandleStatus::Unsigned;
+        if suffix.is_empty() {
+            results.push(Cow::Owned(encode_index_integer(
+                read_index_integer(value),
+                unsigned,
+            )));
         } else {
-            decode_handle_in_index_key(suffix)?
-        };
-        results.extend(reencode_handle(
-            &handle,
-            handle_status == HandleStatus::Unsigned,
-        )?);
+            append_index_key_handle(&mut results, suffix, unsigned)?;
+        }
         return Ok(results);
     }
 
-    let segments = split_index_value(value)?;
-    if let Some(restored) = segments.restored_values.as_deref() {
-        if index_value_version(value) == 1 {
-            results = decode_restored_values_v5(
+    let version_one = index_value_version(value) == 1;
+    let segments = split_index_value_ref(value);
+    if let Some(restored) = segments.restored_values {
+        if version_one {
+            decode_restored_values_v5(
                 use_new_collation,
                 &columns[..columns_len],
-                results,
+                &mut results,
                 restored,
             )?;
         } else {
-            results = decode_restored_values(&columns[..columns_len], restored)?;
+            results.clear();
+            results.extend(
+                decode_restored_values(&columns[..columns_len], restored)?
+                    .into_iter()
+                    .map(Cow::Owned),
+            );
         }
     }
     if handle_status == HandleStatus::NotNeeded {
         return Ok(results);
     }
 
-    let handle = if index_value_version(value) == 1 {
-        // Go's clustered-index V1 decode wraps BOTH the unique common-handle
-        // segment and the non-unique key suffix in kv.NewCommonHandle
-        // (tablecodec.go:1968-1975): the suffix of a single-int-column
-        // common handle must stay a common handle, never collapse to an int
-        // handle.
-        if let Some(encoded) = segments.common_handle.as_deref() {
-            common_handle(encoded)?
-        } else {
-            common_handle(suffix)?
-        }
-    } else if let Some(encoded) = segments.int_handle.as_deref() {
-        decode_int_handle_in_index_value(encoded)?
-    } else if let Some(encoded) = segments.common_handle {
-        decode_handle_in_index_key(&encoded)?
-    } else {
-        decode_handle_in_index_key(suffix)?
-    };
-    if index_value_version(value) == 1 {
-        assert!(!handle.is_int(), "IntHandle.NumCols is unsupported");
-        let handle_columns = columns.get(columns_len..).unwrap_or_default();
-        let restored = segments.restored_values.as_deref().unwrap_or_default();
-        let mut encoded = encoded_handle_columns(&handle)?;
-        if !restored.is_empty() {
+    if version_one {
+        // V1 uses common-handle fields in both the value segment and key suffix.
+        let start = results.len();
+        let encoded = segments.common_handle.unwrap_or(suffix);
+        append_common_handle_columns(&mut results, encoded)?;
+        if let Some(restored) = segments.restored_values {
+            let handle_columns = columns.get(columns_len..).unwrap_or_default();
             let mut relevant_len = handle_columns.len();
             while relevant_len > 0 && handle_columns[relevant_len - 1].id < 0 {
                 relevant_len -= 1;
             }
-            encoded = decode_restored_values_v5(
+            decode_restored_values_v5(
                 use_new_collation,
                 &handle_columns[..relevant_len],
-                encoded,
+                &mut results[start..],
                 restored,
             )?;
         }
-        results.extend(encoded);
     } else {
-        results.extend(reencode_handle(
-            &handle,
-            handle_status == HandleStatus::Unsigned,
-        )?);
+        let unsigned = handle_status == HandleStatus::Unsigned;
+        if let Some(encoded) = segments.int_handle {
+            results.push(Cow::Owned(encode_index_integer(
+                read_index_integer(encoded),
+                unsigned,
+            )));
+        } else {
+            append_index_key_handle(
+                &mut results,
+                segments.common_handle.unwrap_or(suffix),
+                unsigned,
+            )?;
+        }
     }
     if let Some(encoded) = segments.partition_id {
-        let (_, partition_id) = decode_int(&encoded)?;
-        results.push(encode_value(&[Datum::Int(partition_id)])?);
+        let (_, partition_id) = decode_int(encoded)?;
+        results.push(Cow::Owned(encode_index_integer(partition_id, false)));
     }
     Ok(results)
 }
@@ -1256,9 +1616,9 @@ pub enum TempIndexValueFlag {
 
 /// One temporary-index history element.
 #[derive(Clone, Debug)]
-pub struct TempIndexValueElem {
+pub struct TempIndexValueElem<B = Vec<u8>> {
     /// Encoded ordinary index value.
-    pub value: Vec<u8>,
+    pub value: B,
     /// Handle for a distinct deletion.
     pub handle: Option<Handle>,
     /// Temporary-index stage byte.
@@ -1270,6 +1630,9 @@ pub struct TempIndexValueElem {
     /// Whether a deleted handle carries a partition ID.
     pub global: bool,
 }
+
+/// A temporary-index operation whose value borrows the encoded history.
+pub type TempIndexValueElemRef<'a> = TempIndexValueElem<&'a [u8]>;
 
 impl PartialEq for TempIndexValueElem {
     fn eq(&self, other: &Self) -> bool {
@@ -1314,7 +1677,7 @@ impl TempIndexValue {
     }
 }
 
-impl TempIndexValueElem {
+impl<B: AsRef<[u8]>> TempIndexValueElem<B> {
     /// Encodes one history element and appends it to `output`.
     pub fn encode(&self, output: &mut Vec<u8>) -> Result<(), TableIndexError> {
         match (self.delete, self.distinct) {
@@ -1348,30 +1711,48 @@ impl TempIndexValueElem {
             }
             (true, false) => output.push(TempIndexValueFlag::NonDistinctDeleted as u8),
             (false, true) => {
+                let value = self.value.as_ref();
                 output.push(TempIndexValueFlag::Normal as u8);
                 output.extend_from_slice(
-                    &u16::try_from(self.value.len())
+                    &u16::try_from(value.len())
                         .map_err(|_| TableIndexError::Invalid("temporary value too long"))?
                         .to_be_bytes(),
                 );
-                output.extend_from_slice(&self.value);
+                output.extend_from_slice(value);
             }
             (false, false) => {
                 output.push(TempIndexValueFlag::NonDistinctNormal as u8);
-                output.extend_from_slice(&self.value);
+                output.extend_from_slice(self.value.as_ref());
             }
         }
         output.push(self.key_version);
         Ok(())
     }
+}
 
+impl TempIndexValueElem {
     /// Decodes one history element and returns the remaining bytes.
     pub fn decode(input: &[u8]) -> Result<(Self, &[u8]), TableIndexError> {
+        let (element, remaining) = TempIndexValueElemRef::decode_ref(input)?;
+        let owned = Self {
+            value: element.value.to_vec(),
+            handle: element.handle,
+            key_version: element.key_version,
+            delete: element.delete,
+            distinct: element.distinct,
+            global: element.global,
+        };
+        Ok((owned, remaining))
+    }
+}
+
+impl<'a> TempIndexValueElemRef<'a> {
+    fn decode_ref(input: &'a [u8]) -> Result<(Self, &'a [u8]), TableIndexError> {
         let (&flag, mut input) = input
             .split_first()
             .ok_or(TableIndexError::Invalid("empty temporary index value"))?;
         let mut element = Self {
-            value: Vec::new(),
+            value: &[],
             handle: None,
             key_version: 0,
             delete: false,
@@ -1381,7 +1762,7 @@ impl TempIndexValueElem {
         match flag {
             value if value == TempIndexValueFlag::Normal as u8 => {
                 let length = read_u16(&mut input)?;
-                element.value = take(&mut input, length)?.to_vec();
+                element.value = take(&mut input, length)?;
                 element.key_version = take(&mut input, 1)?[0];
                 element.distinct = true;
             }
@@ -1389,7 +1770,7 @@ impl TempIndexValueElem {
                 let (&key_version, value) = input
                     .split_last()
                     .ok_or(TableIndexError::Invalid("short temporary index value"))?;
-                element.value = value.to_vec();
+                element.value = value;
                 element.key_version = key_version;
                 input = &[];
             }
@@ -1399,7 +1780,7 @@ impl TempIndexValueElem {
                 element.handle = Some(if length == ID_LEN {
                     decode_int_handle_in_index_value(encoded)?
                 } else {
-                    common_handle(encoded.to_vec())?
+                    common_handle(encoded)?
                 });
                 if input.first() == Some(&b'p') {
                     element.global = true;
@@ -1454,10 +1835,36 @@ pub fn decode_temp_index_value(
     Ok(elements)
 }
 
+/// Decodes the history while borrowing normal index values from the input.
+pub fn decode_temp_index_value_refs(
+    mut value: &[u8],
+) -> Result<Vec<TempIndexValueElemRef<'_>>, TableIndexError> {
+    let mut elements = Vec::new();
+    while !value.is_empty() {
+        let (element, remaining) = TempIndexValueElemRef::decode_ref(value)?;
+        elements.push(element);
+        value = remaining;
+    }
+    Ok(elements)
+}
+
+/// Reads the latest operation and validates the history without collecting it.
+pub fn decode_current_temp_index_value(
+    mut value: &[u8],
+) -> Result<Option<TempIndexValueElemRef<'_>>, TableIndexError> {
+    let mut current = None;
+    while !value.is_empty() {
+        let (element, remaining) = TempIndexValueElemRef::decode_ref(value)?;
+        current = Some(element);
+        value = remaining;
+    }
+    Ok(current)
+}
+
 /// Removes older operations overwritten by the same distinct handle.
-pub fn filter_overwritten_temp_index_values(
-    mut values: Vec<TempIndexValueElem>,
-) -> Vec<TempIndexValueElem> {
+pub fn filter_overwritten_temp_index_values<B: AsRef<[u8]>>(
+    mut values: Vec<TempIndexValueElem<B>>,
+) -> Vec<TempIndexValueElem<B>> {
     if values.len() <= 1 || !values[0].distinct {
         return values;
     }
@@ -1468,7 +1875,7 @@ pub fn filter_overwritten_temp_index_values(
             Some(handle) => handle_identity(handle),
             None => {
                 let mut identity = vec![0xff];
-                identity.extend_from_slice(&value.value);
+                identity.extend_from_slice(value.value.as_ref());
                 identity
             }
         })

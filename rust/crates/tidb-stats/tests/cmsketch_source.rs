@@ -849,6 +849,25 @@ fn murmur3_hash_vectors_match_go_sum128() {
 }
 
 #[test]
+fn murmur3_streaming_matches_each_split_and_tail_length() {
+    use tidb_stats::cmsketch::Murmur3Hasher128;
+
+    let bytes: Vec<_> = (0..97).map(|n| (n * 41 + 9) as u8).collect();
+    for end in 0..=bytes.len() {
+        let expected = hash_bytes(&bytes[..end]);
+        for first in 0..=end {
+            for second in first..=end {
+                let mut hash = Murmur3Hasher128::default();
+                hash.write(&bytes[..first]);
+                hash.write(&bytes[first..second]);
+                hash.write(&bytes[second..end]);
+                assert_eq!(hash.finish(), expected, "split {first}/{second}/{end}");
+            }
+        }
+    }
+}
+
+#[test]
 fn source_bucket_index_uses_hash_stride_and_width() {
     let sketch = CmsSketch::new(3, 8);
     let hash = Hash128 { h1: 7, h2: 13 };
@@ -1352,6 +1371,27 @@ fn cmsketch_proto_small_vectors_and_nil_message_match_generated_go_wire() {
 }
 
 #[test]
+fn cmsketch_wire_uses_live_shared_topn_lengths_and_preserves_empty_keys() {
+    let key = Arc::new(RwLock::new(vec![b'a']));
+    let mut topn = TopN::new(2);
+    topn.append_top_n(Arc::clone(&key), u64::MAX);
+    topn.append(b"", 0);
+
+    for length in [16_384, 0] {
+        *key.write().unwrap() = vec![b'b'; length];
+        let wire = encode_cmsketch_and_topn(None, Some(&topn)).unwrap();
+        // Both TopN messages have an explicitly present data field.
+        assert!(wire.ends_with(&[0x12, 0x04, 0x0a, 0x00, 0x10, 0x00, 0x18, 0x00]));
+        let (_, decoded) = decode_cmsketch_and_embedded_topn(&wire).unwrap();
+        let decoded = decoded.unwrap();
+        assert_eq!(decoded.entries().len(), 2);
+        assert!(decoded.entries().iter().any(|entry| {
+            entry.count == u64::MAX && entry.encoded == vec![b'b'; length]
+        }));
+    }
+}
+
+#[test]
 fn source_cmsketch_and_topn_from_proto_preserves_graph_and_ordering_semantics() {
     assert_eq!(cm_sketch_and_top_n_from_proto(None), (None, None));
     assert_eq!(
@@ -1703,6 +1743,119 @@ fn source_topn_merge_ranking_and_spill() {
 }
 
 #[test]
+fn source_topn_merge_uses_live_shared_keys_and_owns_results() {
+    let encoded: SharedTopNBytes = Arc::new(RwLock::new(b"stale".to_vec()));
+    let mut shared = TopN::new(1);
+    shared.append_top_n(Arc::clone(&encoded), u64::MAX);
+    let mut owned = TopN::new(2);
+    owned.append(b"same", 2);
+    owned.append(b"other", 3);
+    let mut zero = TopN::new(1);
+    zero.append(b"skipped", 0);
+
+    *encoded.write().unwrap() = b"same".to_vec();
+    let (selected, spilled) = merge_topn(&[None, Some(&shared), Some(&owned), Some(&zero)], 1);
+    *encoded.write().unwrap() = b"changed again".to_vec();
+
+    assert_eq!(selected.unwrap().query_bytes(b"other"), Some(3));
+    assert_eq!(
+        spilled,
+        [TopNEntry {
+            encoded: b"same".to_vec(),
+            count: 1,
+        }]
+    );
+    assert_eq!(merge_topn(&[None, Some(&zero)], 1), (None, Vec::new()));
+}
+
+#[test]
+fn source_topn_merge_preserves_ranking_across_wide_key_prefixes() {
+    let prefix = [b'p'; 256];
+    let key = |suffix: &[u8]| [prefix.as_slice(), suffix].concat();
+    let mut first = TopN::new(3);
+    first.append(&key(b""), 1);
+    first.append(&key(b"a"), 2);
+    first.append(&key(b"z"), 5);
+    let shared = Arc::new(RwLock::new(key(b"stale")));
+    let mut second = TopN::new(1);
+    second.append_top_n(Arc::clone(&shared), 3);
+    *shared.write().unwrap() = key(b"a");
+
+    let (selected, remainder) = merge_topn(&[Some(&first), Some(&second)], 1);
+    assert_eq!(selected.unwrap().entries()[0], TopNEntry { encoded: key(b"a"), count: 5 });
+    assert_eq!(remainder[0], TopNEntry { encoded: key(b"z"), count: 5 });
+    assert_eq!(remainder[1], TopNEntry { encoded: key(b""), count: 1 });
+
+    let mut last = TopN::new(2);
+    last.append(b"a", 5);
+    last.append(&key(b"z"), 1);
+    let (selected, remainder) = merge_topn(&[Some(&first), Some(&second), Some(&last)], 2);
+    *shared.write().unwrap() = b"changed".to_vec();
+    let selected = selected.unwrap();
+    assert_eq!(selected.entries(), [
+        TopNEntry { encoded: b"a".to_vec(), count: 5 },
+        TopNEntry { encoded: key(b"z"), count: 6 },
+    ]);
+    assert_eq!(remainder, [
+        TopNEntry { encoded: key(b"a"), count: 5 },
+        TopNEntry { encoded: key(b""), count: 1 },
+    ]);
+}
+
+#[test]
+fn source_topn_merge_checks_full_wide_keys_when_hash_samples_match() {
+    let key = |first, middle| {
+        let mut bytes = vec![0; 256];
+        bytes[0] = first;
+        bytes[100] = middle;
+        bytes
+    };
+    let first_key = key(b'a', 1);
+    let second_key = key(b'a', 2);
+    let third_key = key(b'z', 1);
+    let mut first = TopN::new(2);
+    first.append(&first_key, u64::MAX);
+    first.append(&third_key, 2);
+    let mut second = TopN::new(2);
+    second.append(&second_key, 3);
+    second.append(&first_key, 2);
+
+    let (selected, remainder) = merge_topn(&[Some(&first), Some(&second)], 2);
+    let selected = selected.unwrap();
+    assert_eq!(selected.num(), 2);
+    assert_eq!(selected.query_bytes(&second_key), Some(3));
+    assert_eq!(selected.query_bytes(&third_key), Some(2));
+    assert_eq!(remainder, [TopNEntry { encoded: first_key, count: 1 }]);
+}
+
+#[test]
+fn source_topn_merge_checks_stored_order_before_skipping_wide_key_hashing() {
+    let key = |first| {
+        let mut bytes = vec![0; 256];
+        bytes[0] = first;
+        bytes
+    };
+    let mut first = TopN::new(2);
+    first.append(&key(b'a'), 2);
+    first.append(&key(b'b'), 1);
+    let mut second = TopN::new(2);
+    second.append(&key(b'c'), 5);
+    second.append(&key(b'd'), 1);
+    let (selected, _) = merge_topn(&[Some(&first), Some(&second)], 2);
+    let selected = selected.unwrap();
+    assert_eq!(selected.query_bytes(&key(b'a')), Some(2));
+    assert_eq!(selected.query_bytes(&key(b'c')), Some(5));
+
+    let mut unsorted = TopN::new(3);
+    unsorted.append(&key(b'c'), 5);
+    unsorted.append(&key(b'a'), 6);
+    unsorted.append(&key(b'd'), 1);
+    let (selected, remainder) = merge_topn(&[Some(&first), Some(&unsorted)], 2);
+    assert_eq!(selected.unwrap().query_bytes(&key(b'a')), Some(8));
+    assert_eq!(remainder.len(), 2);
+}
+
+#[test]
 fn source_topn_zero_limit_clears_destination_before_spill() {
     let mut destination = TopN::new(1);
     destination.append(b"a", 3);
@@ -1848,6 +2001,12 @@ fn source_decoder_finishes_wire_parse_before_converting_row_shapes() {
     ];
     let panic = std::panic::catch_unwind(|| decode_cmsketch(&longer));
     assert!(panic.is_err());
+
+    // Spare space in the next row cannot absorb an oversized middle row.
+    let longer_middle = [
+        0x0a, 0x02, 0x08, 0x01, 0x0a, 0x04, 0x08, 0x02, 0x08, 0x03, 0x0a, 0x02, 0x08, 0x04,
+    ];
+    assert!(std::panic::catch_unwind(|| decode_cmsketch(&longer_middle)).is_err());
 
     // Unmarshal finishes before DecodeCMSketch copies row counters. A later
     // wire error therefore wins over the longer-row index panic.

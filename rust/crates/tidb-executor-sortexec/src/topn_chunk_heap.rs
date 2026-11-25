@@ -72,26 +72,237 @@ use tidb_goruntime::go_heap;
 use std::cmp::Ordering;
 
 use tidb_chunk::chunk::Chunk;
+use tidb_chunk::column::RawCells;
 use tidb_chunk::compare::ColumnCompareFunc;
+use tidb_chunk::ColumnRead;
 use tidb_chunk::list::ROW_PTR_SIZE;
 use tidb_chunk::row::Row;
-use tidb_datatype::FieldType;
+use tidb_datatype::{FieldType, FieldTypeCode};
 
 use tidb_driver_error::ExecError;
 use crate::{compare_rows, compile_compare_funcs};
 use tidb_expression_aggregation::ByItems;
+use tidb_expr::expression::Expression;
 
 /// Go `chunk.RowPtr`: `(chunk index, row index)` into the heap's row store.
 pub type RowPtr = (usize, usize);
 
+/// Go compiles column indices and comparators when the executor is opened.
+struct SortColumn {
+    index: usize,
+    compare: ColumnCompareFunc,
+    desc: bool,
+    integer_sign_bit: Option<u64>,
+}
+
+enum RowOrder {
+    Columns(Vec<SortColumn>),
+    Expressions {
+        items: Vec<ByItems>,
+        compare_funcs: Vec<Option<ColumnCompareFunc>>,
+    },
+}
+
+impl RowOrder {
+    fn new(items: Vec<ByItems>) -> Self {
+        let compare_funcs = compile_compare_funcs(&items);
+        let column_index = |item: &ByItems| usize::try_from(item.expr.as_column()?.index).ok();
+        if items.iter().zip(&compare_funcs).all(|(item, compare)| {
+            matches!(item.expr, Expression::Constant(_))
+                || (compare.is_some() && column_index(item).is_some())
+        }) {
+            let keys = items
+                .iter()
+                .zip(compare_funcs)
+                .filter_map(|(item, compare)| {
+                    Some(SortColumn {
+                        index: column_index(item)?,
+                        compare: compare?,
+                        desc: item.desc,
+                        integer_sign_bit: item.expr.as_column()?.get_static_type().and_then(|field| {
+                            match field.code() {
+                                FieldTypeCode::Tiny
+                                | FieldTypeCode::Short
+                                | FieldTypeCode::Int24
+                                | FieldTypeCode::Long
+                                | FieldTypeCode::LongLong
+                                | FieldTypeCode::Year => {
+                                    Some(if field.is_unsigned() { 0 } else { 1 << 63 })
+                                }
+                                _ => None,
+                            }
+                        }),
+                    })
+                })
+                .collect();
+            Self::Columns(keys)
+        } else {
+            Self::Expressions { items, compare_funcs }
+        }
+    }
+
+    fn compare(&self, left: Row<'_>, right: Row<'_>) -> Result<Ordering, ExecError> {
+        match self {
+            Self::Columns(keys) => {
+                for key in keys {
+                    if key.index >= left.len() || key.index >= right.len() {
+                        return Err(tidb_exprctx::EvalError::Unsupported(
+                            "column index is outside the input row",
+                        ).into());
+                    }
+                    let left_column = left
+                        .chunk()
+                        .expect("a non-empty row has a chunk")
+                        .column(key.index);
+                    let right_column = right
+                        .chunk()
+                        .expect("a non-empty row has a chunk")
+                        .column(key.index);
+                    let cmp = (key.compare)(&left_column, left.idx(), &right_column, right.idx());
+                    if cmp != Ordering::Equal {
+                        return Ok(if key.desc { cmp.reverse() } else { cmp });
+                    }
+                }
+                Ok(Ordering::Equal)
+            }
+            Self::Expressions { items, compare_funcs } => compare_rows(
+                items,
+                compare_funcs,
+                &tidb_exprctx::context::NoColumns,
+                left,
+                right,
+            ),
+        }
+    }
+
+    // Hold column reads for the bulk operation just as SortPartition does.
+    // Checking column indices up front lets this comparator sort the pointers
+    // directly. The fallback still preserves the original pointers on error.
+    fn bind<'a>(
+        &'a self,
+        chunks: &'a [Chunk],
+        retained: usize,
+    ) -> Option<Vec<BoundSortColumn<'a>>> {
+        let Self::Columns(keys) = self else {
+            return None;
+        };
+        if retained < 32 || chunks.iter().any(|chunk| chunk.sel().is_some()) {
+            // Small inputs need little comparison work. The row comparator
+            // also resolves logical row indices through chunk selections.
+            return None;
+        }
+
+        let stored: usize = chunks.iter().map(Chunk::num_rows).sum();
+        let integer_keys = keys.iter().filter(|key| key.integer_sign_bit.is_some()).count();
+        // Limit the temporary ranks to 1 MiB and skip them when most stored
+        // rows have been evicted from the heap.
+        let pack_integers = retained >= 128
+            && stored <= retained.saturating_mul(2)
+            && stored.saturating_mul(integer_keys) <= 65_536;
+
+        keys.iter()
+            .map(|key| {
+                if chunks.iter().any(|chunk| key.index >= chunk.num_cols()) {
+                    return None;
+                }
+                let columns: Vec<_> = chunks
+                    .iter()
+                    .map(|chunk| chunk.try_column(key.index))
+                    .collect::<Option<_>>()?;
+                if let Some(sign_bit) = key.integer_sign_bit.filter(|_| pack_integers) {
+                    if columns.iter().zip(chunks).all(|(column, chunk)| {
+                        column.rows() >= chunk.num_rows()
+                            && column.is_fixed()
+                            && (column.rows() == 0 || column.get_raw_length(0) == 8)
+                    }) {
+                        let values = columns
+                            .iter()
+                            .zip(chunks)
+                            .map(|(column, chunk)| {
+                                let cells = column.raw_cells();
+                                (0..chunk.num_rows())
+                                    .map(|row| {
+                                        integer_rank(&cells, row, sign_bit, key.desc)
+                                    })
+                                    .collect()
+                            })
+                            .collect();
+                        return Some(BoundSortColumn::Integer(values));
+                    }
+                }
+                Some(BoundSortColumn::Borrowed { key, columns })
+            })
+            .collect()
+    }
+}
+
+// The extra bit preserves every u64 value and gives NULL its own rank.
+#[inline]
+fn integer_rank(cells: &RawCells<'_>, row: usize, sign_bit: u64, desc: bool) -> u128 {
+    let rank = if cells.is_null(row) {
+        0
+    } else {
+        let bytes = cells.get(row).try_into().expect("integer chunk cell");
+        u128::from(u64::from_ne_bytes(bytes) ^ sign_bit) + 1
+    };
+    if desc { !rank } else { rank }
+}
+
+#[derive(Clone, Copy)]
+struct IntegerKey {
+    index: usize,
+    sign_bit: u64,
+    desc: bool,
+}
+
+impl IntegerKey {
+    fn new(key: &SortColumn) -> Option<Self> {
+        Some(Self {
+            index: key.index,
+            sign_bit: key.integer_sign_bit?,
+            desc: key.desc,
+        })
+    }
+
+    fn column(self, chunk: &Chunk) -> Option<ColumnRead<'_>> {
+        if self.index >= chunk.num_cols() {
+            return None;
+        }
+        let column = chunk.try_column(self.index)?;
+        (column.is_fixed() && column.rows() > 0 && column.get_raw_length(0) == 8).then_some(column)
+    }
+}
+
+enum BoundSortColumn<'a> {
+    Integer(Vec<Vec<u128>>),
+    Borrowed {
+        key: &'a SortColumn,
+        columns: Vec<ColumnRead<'a>>,
+    },
+}
+
+fn compare_bound_rows(keys: &[BoundSortColumn<'_>], left: RowPtr, right: RowPtr) -> Ordering {
+    for key in keys {
+        let cmp = match key {
+            BoundSortColumn::Integer(values) => {
+                values[left.0][left.1].cmp(&values[right.0][right.1])
+            }
+            BoundSortColumn::Borrowed { key, columns } => {
+                let cmp = (key.compare)(&columns[left.0], left.1, &columns[right.0], right.1);
+                if key.desc { cmp.reverse() } else { cmp }
+            }
+        };
+        if cmp != Ordering::Equal {
+            return cmp;
+        }
+    }
+    Ordering::Equal
+}
+
 /// Go `topNChunkHeap`: the retained rows of a `TopN` and the max-heap over
 /// them.
 pub struct TopNChunkHeap {
-    /// Go `compareRow`/`greaterRow`, which this port derives from the by-items
-    /// rather than carrying as two closures.
-    by_items: Vec<ByItems>,
-    /// Go `keyCmpFuncs`, one per by-item.
-    compare_funcs: Vec<Option<ColumnCompareFunc>>,
+    row_order: RowOrder,
     /// The CHILD's output types -- see the module narrowings for why they are
     /// not the TopN's own.
     field_types: Vec<FieldType>,
@@ -133,8 +344,7 @@ impl TopNChunkHeap {
     #[must_use]
     pub fn new() -> Self {
         TopNChunkHeap {
-            by_items: Vec::new(),
-            compare_funcs: Vec::new(),
+            row_order: RowOrder::Columns(Vec::new()),
             field_types: Vec::new(),
             init_cap: 0,
             max_chunk_size: 0,
@@ -161,8 +371,7 @@ impl TopNChunkHeap {
         total_limit: u64,
         idx: usize,
     ) {
-        self.compare_funcs = compile_compare_funcs(&by_items);
-        self.by_items = by_items;
+        self.row_order = RowOrder::new(by_items);
         self.field_types = field_types;
         self.init_cap = init_cap;
         self.max_chunk_size = max_chunk_size;
@@ -292,13 +501,7 @@ impl TopNChunkHeap {
 
     /// Go `compareRow`: the by-item order of two rows, from their cells.
     fn compare(&self, a: Row<'_>, b: Row<'_>) -> Result<Ordering, ExecError> {
-        compare_rows(
-            &self.by_items,
-            &self.compare_funcs,
-            &tidb_exprctx::context::NoColumns,
-            a,
-            b,
-        )
+        self.row_order.compare(a, b)
     }
 
     /// Captures a comparison error (see [`TopNChunkHeap::take_cmp_err`]) and
@@ -374,6 +577,13 @@ impl TopNChunkHeap {
 
     /// Go `heap.Init(h)`.
     pub fn heap_init(&mut self) {
+        if let Some(keys) = self.row_order.bind(&self.row_chunks, self.row_ptrs.len()) {
+            go_heap::init(&mut self.row_ptrs, &mut |&a, &b| {
+                compare_bound_rows(&keys, a, b) == Ordering::Greater
+            });
+            return;
+        }
+
         self.with_ptrs(|heap, ptrs| {
             go_heap::init(ptrs, &mut |a, b| {
                 heap.key_columns_compare(*a, *b) == Ordering::Greater
@@ -421,9 +631,148 @@ impl TopNChunkHeap {
     /// Go `processChk`: every row of `chk`, one at a time, against the heap's
     /// max.
     pub fn process_chk(&mut self, chk: &Chunk) {
-        for i in 0..chk.num_rows() {
+        let rows = chk.num_rows();
+        let mut start = 0;
+        if rows != 0 && !self.row_ptrs.is_empty() {
+            if rows < 32 {
+                start = self.first_better_integer_row(chk).unwrap_or(0);
+            } else {
+                if self.process_ranked_rows(chk).is_some() {
+                    return;
+                }
+                start = self.first_better_row(chk).unwrap_or(0);
+            }
+        }
+        for i in start..rows {
             self.update(chk.get_row(i));
         }
+    }
+
+    fn first_better_integer_row(&self, input: &Chunk) -> Option<usize> {
+        let RowOrder::Columns(keys) = &self.row_order else {
+            return None;
+        };
+        let [key] = keys.as_slice() else {
+            return None;
+        };
+        let key = IntegerKey::new(key)?;
+        let [worst] = Self::integer_row_key([key], self.row_at(0))?;
+        let column = key.column(input)?;
+        let cells = column.raw_cells();
+        let rows = input.num_rows();
+        Some(
+            (0..rows)
+                .find(|&i| {
+                    integer_rank(&cells, input.get_row(i).idx(), key.sign_bit, key.desc) < worst
+                })
+                .unwrap_or(rows),
+        )
+    }
+
+    // The worst row stays at the root until a better key arrives. Borrow the
+    // two chunks' key columns once for that initial run of rejected rows.
+    fn first_better_row(&self, input: &Chunk) -> Option<usize> {
+        let RowOrder::Columns(keys) = &self.row_order else {
+            return None;
+        };
+        let root = self.row_at(0);
+        let chunk = root.chunk()?;
+        let columns: Vec<_> = keys
+            .iter()
+            .map(|key| {
+                if key.index >= chunk.num_cols() || key.index >= input.num_cols() {
+                    return None;
+                }
+                Some((key, chunk.try_column(key.index)?, input.try_column(key.index)?))
+            })
+            .collect::<Option<_>>()?;
+
+        for i in 0..input.num_rows() {
+            let row = input.get_row(i).idx();
+            for (key, worst, next) in &columns {
+                let cmp = (key.compare)(worst, root.idx(), next, row);
+                let cmp = if key.desc { cmp.reverse() } else { cmp };
+                if cmp == Ordering::Greater {
+                    return Some(i);
+                }
+                if cmp == Ordering::Less {
+                    break;
+                }
+            }
+        }
+        Some(input.num_rows())
+    }
+
+    fn process_ranked_rows(&mut self, input: &Chunk) -> Option<()> {
+        let RowOrder::Columns(keys) = &self.row_order else {
+            return None;
+        };
+        let key = IntegerKey::new;
+        match keys.as_slice() {
+            [a] => self.process_integer_keys(input, [key(a)?]),
+            [a, b] => self.process_integer_keys(input, [key(a)?, key(b)?]),
+            [a, b, c] => self.process_integer_keys(input, [key(a)?, key(b)?, key(c)?]),
+            [a, b, c, d] => self.process_integer_keys(input, [key(a)?, key(b)?, key(c)?, key(d)?]),
+            _ => None,
+        }
+    }
+
+    fn integer_row_key<const N: usize>(keys: [IntegerKey; N], row: Row<'_>) -> Option<[u128; N]> {
+        let chunk = row.chunk()?;
+        let mut ranks = [0; N];
+        for (slot, key) in ranks.iter_mut().zip(keys) {
+            let column = key.column(chunk)?;
+            let cells = column.raw_cells();
+            *slot = integer_rank(&cells, row.idx(), key.sign_bit, key.desc);
+        }
+        Some(ranks)
+    }
+
+    fn process_integer_keys<const N: usize>(
+        &mut self,
+        input: &Chunk,
+        keys: [IntegerKey; N],
+    ) -> Option<()> {
+        let retained = self.row_ptrs.len();
+        let rows = input.num_rows();
+        // Bound the scratch needed for input and retained ranks, plus the
+        // temporary retained pointers, to at most one MiB.
+        if retained.saturating_add(rows).saturating_mul(N) > 32_768 {
+            return None;
+        }
+        let root = Self::integer_row_key(keys, self.row_at(0))?;
+        let mut inputs = vec![[0; N]; rows];
+        for (index, key) in keys.into_iter().enumerate() {
+            let column = key.column(input)?;
+            let cells = column.raw_cells();
+            for (i, ranks) in inputs.iter_mut().enumerate() {
+                ranks[index] = integer_rank(&cells, input.get_row(i).idx(), key.sign_bit, key.desc);
+            }
+            if N > 1 && index == 0 && inputs.iter().all(|rank| rank[0] > root[0]) {
+                return Some(());
+            }
+        }
+        let Some(first) = inputs.iter().position(|rank| *rank < root) else {
+            return Some(());
+        };
+
+        // Preserve the original heap layout. Fix compares the same keys and
+        // follows the same swaps as the row-based path, including ties.
+        let mut heap = Vec::with_capacity(retained);
+        for &ptr in &self.row_ptrs {
+            heap.push((ptr, Self::integer_row_key(keys, self.stored_row(ptr))?));
+        }
+        for (row_index, rank) in inputs.into_iter().enumerate().skip(first) {
+            if rank < heap[0].1 {
+                let ptr = self.append_row(input.get_row(row_index));
+                heap[0] = (ptr, rank);
+                go_heap::fix(&mut heap, 0, &mut |a, b| a.1 > b.1);
+            }
+        }
+        for (ptr, entry) in self.row_ptrs.iter_mut().zip(heap) {
+            *ptr = entry.0;
+        }
+        Some(())
     }
 
     /// Go `doCompaction`: rebuild the chunks and row pointers from the retained
@@ -450,6 +799,14 @@ impl TopNChunkHeap {
     ///
     /// The emit cursor is re-seeded with `offset`, as Go seeds `chkHeap.idx`.
     pub fn sort_row_ptrs_ascending(&mut self, offset: usize) -> Result<(), ExecError> {
+        if let Some(keys) = self.row_order.bind(&self.row_chunks, self.row_ptrs.len()) {
+            tidb_goruntime::go_pdqsort::go_sort_func_by(&mut self.row_ptrs, |&a, &b| {
+                compare_bound_rows(&keys, a, b)
+            });
+            self.idx = offset;
+            return Ok(());
+        }
+
         let ptrs = std::mem::take(&mut self.row_ptrs);
         let mut order: Vec<usize> = (0..ptrs.len()).collect();
         // The comparison error is captured as in `SortExec`.

@@ -283,13 +283,15 @@ fn trace_event_modes() {
 fn ring_buffer_snapshot_order() {
     let recorder = RingBufferSink::new(2);
 
-    let event = |name: &str, nanos: u64| Event {
-        category: TXN_LIFECYCLE,
-        name: name.to_owned(),
-        phase: Phase::Instant,
-        timestamp: UNIX_EPOCH + Duration::from_nanos(nanos),
-        trace_id: Vec::new(),
-        fields: Vec::new(),
+    let event = |name: &str, nanos: u64| {
+        Event::new(
+            UNIX_EPOCH + Duration::from_nanos(nanos),
+            name,
+            Phase::Instant,
+            Vec::new(),
+            Vec::new(),
+            TXN_LIFECYCLE,
+        )
     };
 
     let context = TraceContext::background();
@@ -305,18 +307,18 @@ fn ring_buffer_snapshot_order() {
 #[test]
 fn ring_buffer_flush_to() {
     let recorder = RingBufferSink::new(4);
-    let event = Event {
-        category: TXN_LIFECYCLE,
-        name: "flush".to_owned(),
-        phase: Phase::Instant,
+    let event = Event::new(
         // 123456 microseconds
-        timestamp: UNIX_EPOCH + Duration::from_nanos(123_456_000),
-        trace_id: Vec::new(),
-        fields: vec![
+        UNIX_EPOCH + Duration::from_nanos(123_456_000),
+        "flush",
+        Phase::Instant,
+        Vec::new(),
+        vec![
             Field::new("status", Value::Str("ok".to_owned())),
             int_field("count", 2),
         ],
-    };
+        TXN_LIFECYCLE,
+    );
     recorder.record(&TraceContext::background(), &event);
 
     let events = recorder.snapshot();
@@ -325,6 +327,37 @@ fn ring_buffer_flush_to() {
     assert_eq!(events[0].category, TXN_LIFECYCLE);
     assert_eq!(events[0].timestamp, event.timestamp);
     assert_eq!(events[0].fields.len(), 2);
+}
+
+#[test]
+fn snapshots_share_payloads_until_edited() {
+    let recorder = RingBufferSink::new(1);
+    let mut event = Event::new(
+        UNIX_EPOCH,
+        "original",
+        Phase::Instant,
+        vec![1, 2, 3],
+        vec![int_field("count", 1)],
+        TXN_LIFECYCLE,
+    );
+    let context = TraceContext::background();
+    recorder.record(&context, &event);
+    let mut first = recorder.snapshot();
+    assert_eq!(first[0].fields.as_ptr(), event.fields.as_ptr());
+
+    first[0].name.push_str(" snapshot");
+    first[0].fields[0].value = Value::I64(2);
+    event.trace_id[0] = 4;
+    let stored = recorder.snapshot();
+    assert_eq!(stored[0].name, "original");
+    assert_eq!(stored[0].trace_id, [1, 2, 3]);
+    assert!(matches!(stored[0].fields[0].value, Value::I64(1)));
+    assert_eq!(event.name, "original");
+    assert_eq!(first[0].trace_id, [1, 2, 3]);
+
+    recorder.record(&context, &event);
+    assert_eq!(stored[0].trace_id, [1, 2, 3]);
+    assert_eq!(recorder.snapshot()[0].trace_id, [4, 2, 3]);
 }
 
 // Go `TestCategoryNames`.

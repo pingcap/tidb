@@ -48,12 +48,12 @@ fn valid_interval(low: &Point, high: &Point) -> Result<bool, PointBuilderError> 
     let mut l = tidb_codec::encode_key(std::slice::from_ref(&low.value))
         .map_err(|error| PointBuilderError::Unsupported(error.to_string()))?;
     if low.excl {
-        l = prefix_next(&l);
+        prefix_next(&mut l);
     }
     let mut r = tidb_codec::encode_key(std::slice::from_ref(&high.value))
         .map_err(|error| PointBuilderError::Unsupported(error.to_string()))?;
     if !high.excl {
-        r = prefix_next(&r);
+        prefix_next(&mut r);
     }
     Ok(l < r)
 }
@@ -199,9 +199,9 @@ pub fn points_2_ranges(
     let mut i = 0;
     while i + 1 < range_points.len() {
         ranges.push(Range {
-            low_val: vec![range_points[i].value.clone()],
+            low_val: vec![range_points[i].value.clone()].into(),
             low_exclude: range_points[i].excl,
-            high_val: vec![range_points[i + 1].value.clone()],
+            high_val: vec![range_points[i + 1].value.clone()].into(),
             high_exclude: range_points[i + 1].excl,
             collators: vec![collator],
         });
@@ -236,9 +236,9 @@ pub fn points_2_table_ranges(
     let mut i = 0;
     while i + 1 < range_points.len() {
         ranges.push(Range {
-            low_val: vec![range_points[i].value.clone()],
+            low_val: vec![range_points[i].value.clone()].into(),
             low_exclude: range_points[i].excl,
-            high_val: vec![range_points[i + 1].value.clone()],
+            high_val: vec![range_points[i + 1].value.clone()].into(),
             high_exclude: range_points[i + 1].excl,
             collators: vec![collator],
         });
@@ -871,8 +871,8 @@ mod tests {
     fn ranges_to_string_renders_composite_and_full_ranges() {
         let binary = tidb_charset::Collation::Binary;
         let composite = Range {
-            low_val: vec![Datum::Int(1), Datum::Int(2)],
-            high_val: vec![Datum::Int(1), Datum::Int(5)],
+            low_val: vec![Datum::Int(1), Datum::Int(2)].into(),
+            high_val: vec![Datum::Int(1), Datum::Int(5)].into(),
             collators: vec![binary, binary],
             low_exclude: false,
             high_exclude: true,
@@ -883,8 +883,8 @@ mod tests {
         );
 
         let full = Range {
-            low_val: vec![Datum::Null],
-            high_val: vec![Datum::MaxValue],
+            low_val: vec![Datum::Null].into(),
+            high_val: vec![Datum::MaxValue].into(),
             collators: vec![binary],
             ..Range::default()
         };
@@ -895,8 +895,8 @@ mod tests {
     fn ranges_to_string_rejects_malformed_composite_ranges() {
         let binary = tidb_charset::Collation::Binary;
         let mismatched = Range {
-            low_val: vec![Datum::Int(1)],
-            high_val: vec![],
+            low_val: vec![Datum::Int(1)].into(),
+            high_val: vec![].into(),
             collators: vec![binary],
             ..Range::default()
         };
@@ -906,8 +906,8 @@ mod tests {
         );
 
         let unexpected = Range {
-            low_val: vec![Datum::Int(1), Datum::Int(2)],
-            high_val: vec![Datum::Int(3), Datum::Int(4)],
+            low_val: vec![Datum::Int(1), Datum::Int(2)].into(),
+            high_val: vec![Datum::Int(3), Datum::Int(4)].into(),
             collators: vec![binary, binary],
             ..Range::default()
         };
@@ -961,8 +961,8 @@ mod tests {
     #[test]
     fn union_ranges_merges_by_encoded_order() {
         let int_range = |low: i64, high: i64, high_exclude: bool| Range {
-            low_val: vec![Datum::Int(low)],
-            high_val: vec![Datum::Int(high)],
+            low_val: vec![Datum::Int(low)].into(),
+            high_val: vec![Datum::Int(high)].into(),
             collators: vec![tidb_charset::Collation::Binary],
             low_exclude: false,
             high_exclude,
@@ -992,8 +992,8 @@ mod tests {
             for merge_consecutive in [false, true] {
                 let result = union_ranges(
                     vec![Range {
-                        low_val: vec![low.clone()],
-                        high_val: vec![high.clone()],
+                        low_val: vec![low.clone()].into(),
+                        high_val: vec![high.clone()].into(),
                         collators: vec![tidb_charset::Collation::Binary],
                         low_exclude: false,
                         high_exclude: false,

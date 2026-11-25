@@ -75,43 +75,56 @@ impl<T> Channel<T> {
 
     /// Sends a value and returns it when the channel is closed.
     pub fn send_result(&self, value: T) -> Result<(), crossbeam_channel::SendError<T>> {
-        let sender = self
-            .inner
-            .sender
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .clone();
-        let Some(sender) = sender else {
-            return Err(crossbeam_channel::SendError(value));
+        let (sender, value) = {
+            let guard = self
+                .inner
+                .sender
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let Some(sender) = guard.as_ref() else {
+                return Err(crossbeam_channel::SendError(value));
+            };
+            // A receiver on another thread may free a buffer slot before we
+            // can park. One-slot channels reach this state on every handoff.
+            let mut value = value;
+            let mut retries = match sender.capacity() {
+                Some(1) => 64,
+                Some(2..) => 8,
+                _ => 0,
+            };
+            loop {
+                match sender.try_send(value) {
+                    Ok(()) => return Ok(()),
+                    Err(crossbeam_channel::TrySendError::Disconnected(value)) => {
+                        return Err(crossbeam_channel::SendError(value));
+                    }
+                    Err(crossbeam_channel::TrySendError::Full(pending)) => {
+                        if retries == 0 {
+                            break (sender.clone(), pending);
+                        }
+                        retries -= 1;
+                        value = pending;
+                        std::hint::spin_loop();
+                    }
+                }
+            }
         };
-        let mut selected = crossbeam_channel::Select::new();
-        let send_index = selected.send(&sender);
-        let closed_index = selected.recv(&self.inner.closed);
-        let operation = selected.select();
-        if operation.index() == send_index {
-            operation.send(&sender, value)
-        } else {
-            debug_assert_eq!(operation.index(), closed_index);
-            let _ = operation.recv(&self.inner.closed);
-            Err(crossbeam_channel::SendError(value))
+        // The sender clone keeps the underlying channel open while waiting.
+        // Observe the explicit close notification before trying to send.
+        crossbeam_channel::select_biased! {
+            recv(self.inner.closed) -> _ => Err(crossbeam_channel::SendError(value)),
+            send(sender, value) -> result => result,
         }
     }
 
     /// Attempts a nonblocking send.
     pub fn try_send(&self, value: T) -> Result<(), crossbeam_channel::TrySendError<T>> {
-        if !matches!(
-            self.inner.closed.try_recv(),
-            Err(crossbeam_channel::TryRecvError::Empty)
-        ) {
-            return Err(crossbeam_channel::TrySendError::Disconnected(value));
-        }
         let sender = self
             .inner
             .sender
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .clone();
-        let Some(sender) = sender else {
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let Some(sender) = sender.as_ref() else {
             return Err(crossbeam_channel::TrySendError::Disconnected(value));
         };
         sender.try_send(value)
@@ -172,20 +185,10 @@ impl<T> Channel<T> {
         let Some(sender) = self.sender() else {
             return false;
         };
-        let mut selected = crossbeam_channel::Select::new();
-        let send_index = selected.send(&sender);
-        let closed_index = selected.recv(&self.inner.closed);
-        let cancelled_index = selected.recv(cancelled);
-        let operation = selected.select();
-        if operation.index() == send_index {
-            operation.send(&sender, value).is_ok()
-        } else if operation.index() == closed_index {
-            let _ = operation.recv(&self.inner.closed);
-            false
-        } else {
-            debug_assert_eq!(operation.index(), cancelled_index);
-            let _ = operation.recv(cancelled);
-            false
+        crossbeam_channel::select! {
+            send(sender, value) -> result => result.is_ok(),
+            recv(self.inner.closed) -> _ => false,
+            recv(cancelled) -> _ => false,
         }
     }
 }

@@ -19,7 +19,7 @@ use std::collections::BTreeMap;
 
 /// Go `set.Key`.
 pub trait Keyed {
-    /// Go `Key`: the identity the set dedups on.
+    /// Go `Key`: the item's stable identity within the set.
     fn key(&self) -> String;
 }
 
@@ -66,7 +66,12 @@ impl<T: Keyed + Clone> KeySet<T> {
 
     /// Go `ToList`: sorted by key.
     pub fn to_list(&self) -> Vec<T> {
-        self.items.values().cloned().collect()
+        self.iter().cloned().collect()
+    }
+
+    /// Borrows the items in the same key order as [`Self::to_list`].
+    pub fn iter(&self) -> impl ExactSizeIterator<Item = &T> {
+        self.items.values()
     }
 
     pub fn size(&self) -> usize {
@@ -75,10 +80,16 @@ impl<T: Keyed + Clone> KeySet<T> {
 
     /// Go `UnionSet`.
     pub fn union(sets: &[&Self]) -> Self {
-        let mut union = Self::new();
-        for set in sets {
-            for item in set.items.values() {
-                union.add(item.clone());
+        let Some((last, earlier)) = sets.split_last() else {
+            return Self::new();
+        };
+        // Visit the last representative first so that overwritten items are never cloned.
+        let mut union = (*last).clone();
+        for set in earlier.iter().rev() {
+            for (key, item) in &set.items {
+                if !union.items.contains_key(key) {
+                    union.items.insert(key.clone(), item.clone());
+                }
             }
         }
         union
@@ -86,58 +97,69 @@ impl<T: Keyed + Clone> KeySet<T> {
 
     /// Go `AndSet` of two sets.
     pub fn intersection(left: &Self, right: &Self) -> Self {
-        let mut set = Self::new();
-        for item in left.items.values() {
-            if right.contains(item) {
-                set.add(item.clone());
-            }
-        }
-        set
+        let items = left
+            .items
+            .iter()
+            .filter(|(key, _)| right.items.contains_key(*key))
+            .map(|(key, item)| (key.clone(), item.clone()))
+            .collect();
+        Self { items }
     }
 
     /// Go `DiffSet`: the items of `left` that `right` lacks.
     pub fn difference(left: &Self, right: &Self) -> Self {
-        let mut set = Self::new();
-        for item in left.items.values() {
-            if !right.contains(item) {
-                set.add(item.clone());
-            }
-        }
-        set
+        let items = left
+            .items
+            .iter()
+            .filter(|(key, _)| !right.items.contains_key(*key))
+            .map(|(key, item)| (key.clone(), item.clone()))
+            .collect();
+        Self { items }
     }
 
     /// Go `CombSet`: every combination of `number_of_items` items, in the
     /// order the include-then-exclude recursion yields them.
     pub fn comb_set(&self, number_of_items: usize) -> Vec<Self> {
-        let list = self.to_list();
-        let mut current = Self::new();
-        comb_iterate(&list, &mut current, 0, number_of_items)
+        match number_of_items {
+            0 => return vec![Self::new()],
+            count if count > self.size() => return Vec::new(),
+            count if count == self.size() => return vec![self.clone()],
+            _ => {}
+        }
+        let entries: Vec<_> = self.items.iter().collect();
+        let mut current = Vec::with_capacity(number_of_items);
+        let mut result = Vec::new();
+        comb_iterate(&entries, &mut current, number_of_items, &mut result);
+        result
     }
 }
 
-fn comb_iterate<T: Keyed + Clone>(
-    list: &[T],
-    current: &mut KeySet<T>,
-    depth: usize,
-    number_of_items: usize,
-) -> Vec<KeySet<T>> {
-    if current.size() == number_of_items {
-        return vec![current.clone()];
+fn comb_iterate<'a, T: Keyed + Clone>(
+    entries: &[(&'a String, &'a T)],
+    current: &mut Vec<(&'a String, &'a T)>,
+    remaining: usize,
+    result: &mut Vec<KeySet<T>>,
+) {
+    if remaining == 0 {
+        let items = current
+            .iter()
+            .map(|&(key, item)| (key.clone(), item.clone()))
+            .collect();
+        result.push(KeySet { items });
+        return;
     }
-    if depth == list.len() || current.size() > number_of_items {
-        return Vec::new();
+    // This call always has enough entries to fill the remaining positions.
+    for i in 0..=entries.len() - remaining {
+        current.push(entries[i]);
+        comb_iterate(&entries[i + 1..], current, remaining - 1, result);
+        current.pop();
     }
-    let mut result = Vec::new();
-    current.add(list[depth].clone());
-    result.extend(comb_iterate(list, current, depth + 1, number_of_items));
-    current.remove(&list[depth]);
-    result.extend(comb_iterate(list, current, depth + 1, number_of_items));
-    result
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::{cell::Cell, rc::Rc};
 
     #[derive(Clone, Debug, PartialEq)]
     struct Item(&'static str);
@@ -165,5 +187,49 @@ mod tests {
         assert_eq!(keys(&KeySet::difference(&set, &other)), vec!["a", "c"]);
         assert_eq!(keys(&KeySet::intersection(&set, &other)), vec!["b"]);
         assert_eq!(keys(&KeySet::union(&[&set, &other])), vec!["a", "b", "c"]);
+    }
+
+    #[test]
+    fn set_operations_reuse_stored_keys_and_preserve_representatives() {
+        #[derive(Clone)]
+        struct Counted {
+            name: &'static str,
+            tag: u8,
+            calls: Rc<Cell<usize>>,
+        }
+
+        impl Keyed for Counted {
+            fn key(&self) -> String {
+                self.calls.set(self.calls.get() + 1);
+                self.name.to_owned()
+            }
+        }
+
+        let calls = Rc::new(Cell::new(0));
+        let item = |name, tag| Counted {
+            name,
+            tag,
+            calls: calls.clone(),
+        };
+        let left = KeySet::from_items([item("b", 2), item("a", 1), item("c", 3)]);
+        let right = KeySet::from_items([item("d", 5), item("b", 4)]);
+        let tags = |set: &KeySet<Counted>| {
+            set.to_list()
+                .into_iter()
+                .map(|item| item.tag)
+                .collect::<Vec<_>>()
+        };
+        calls.set(0);
+
+        assert_eq!(tags(&KeySet::union(&[&left, &right])), [1, 4, 3, 5]);
+        assert_eq!(tags(&KeySet::intersection(&left, &right)), [2]);
+        assert_eq!(tags(&KeySet::difference(&left, &right)), [1, 3]);
+        assert_eq!(
+            left.comb_set(2).iter().map(tags).collect::<Vec<_>>(),
+            [vec![1, 2], vec![1, 3], vec![2, 3]]
+        );
+        assert_eq!(tags(&left.comb_set(3)[0]), [1, 2, 3]);
+        assert!(left.comb_set(4).is_empty());
+        assert_eq!(calls.get(), 0);
     }
 }

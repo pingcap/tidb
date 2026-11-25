@@ -1398,8 +1398,8 @@ pub fn get_index_row_count(
         };
         if position < range.low_val.len() {
             let suffix = Range {
-                low_val: vec![range.low_val[position].clone()],
-                high_val: vec![range.high_val[position].clone()],
+                low_val: vec![range.low_val[position].clone()].into(),
+                high_val: vec![range.high_val[position].clone()].into(),
                 collators: vec![range.collators[position]],
                 low_exclude: range.low_exclude,
                 high_exclude: range.high_exclude,
@@ -1486,8 +1486,8 @@ pub fn exp_backoff_estimation(
                 if let Some(candidates) = recursive_indexes.get(position) {
                     let one_column_range = Range {
                         collators: vec![range.collators[0]],
-                        low_val: vec![range.low_val[position].clone()],
-                        high_val: vec![range.high_val[position].clone()],
+                        low_val: vec![range.low_val[position].clone()].into(),
+                        high_val: vec![range.high_val[position].clone()].into(),
                         low_exclude: last && range.low_exclude,
                         high_exclude: last && range.high_exclude,
                     };
@@ -1876,7 +1876,7 @@ mod equal_cond_selectivity_tests {
                     ndv,
                     lower_bound: Datum::Bytes(b"a".to_vec()),
                     upper_bound: Datum::Bytes(b"z".to_vec()),
-                }],
+                }].into(),
                 null_count: 0,
                 ..super::Histogram::default()
             },
@@ -2059,8 +2059,8 @@ mod recursive_index_estimation_tests {
         ];
         let range = Range {
             collators: vec![tidb_charset::Collation::Binary; 2],
-            low_val: vec![Datum::Int(1), Datum::Int(5)],
-            high_val: vec![Datum::Int(1), Datum::Int(9)],
+            low_val: vec![Datum::Int(1), Datum::Int(5)].into(),
+            high_val: vec![Datum::Int(1), Datum::Int(9)].into(),
             low_exclude: false,
             high_exclude: false,
         };
@@ -2094,7 +2094,7 @@ mod recursive_index_estimation_tests {
                     ndv: 10,
                     lower_bound: Datum::Int(1),
                     upper_bound: Datum::Int(10),
-                }],
+                }].into(),
                 ..Histogram::default()
             },
             top_n: None,
@@ -2105,8 +2105,8 @@ mod recursive_index_estimation_tests {
         let columns = vec![Some(&column), None];
         let range = Range {
             collators: vec![tidb_charset::Collation::Binary; 2],
-            low_val: vec![Datum::Int(1), Datum::Int(5)],
-            high_val: vec![Datum::Int(1), Datum::Int(9)],
+            low_val: vec![Datum::Int(1), Datum::Int(5)].into(),
+            high_val: vec![Datum::Int(1), Datum::Int(9)].into(),
             low_exclude: false,
             high_exclude: false,
         };
@@ -2158,7 +2158,7 @@ mod recursive_index_estimation_tests {
                     ndv: 10,
                     lower_bound: Datum::Int(1),
                     upper_bound: Datum::Int(10),
-                }],
+                }].into(),
                 ..Histogram::default()
             },
             top_n: None,
@@ -2176,8 +2176,8 @@ mod recursive_index_estimation_tests {
         ];
         let range = Range {
             collators: vec![tidb_charset::Collation::Binary; 2],
-            low_val: vec![Datum::Int(1), Datum::Raw(vec![1])],
-            high_val: vec![Datum::Int(1), Datum::Raw(vec![1])],
+            low_val: vec![Datum::Int(1), Datum::Raw(vec![1])].into(),
+            high_val: vec![Datum::Int(1), Datum::Raw(vec![1])].into(),
             low_exclude: false,
             high_exclude: false,
         };
@@ -2217,7 +2217,7 @@ mod recursive_index_estimation_tests {
                     ndv: 100,
                     lower_bound: Datum::Int(1),
                     upper_bound: Datum::Int(10),
-                }],
+                }].into(),
                 ..Histogram::default()
             },
             top_n: None,
@@ -2241,8 +2241,8 @@ mod recursive_index_estimation_tests {
         ];
         let range = Range {
             collators: vec![tidb_charset::Collation::Binary; 2],
-            low_val: vec![Datum::Int(1), Datum::Int(5)],
-            high_val: vec![Datum::Int(1), Datum::Int(9)],
+            low_val: vec![Datum::Int(1), Datum::Int(5)].into(),
+            high_val: vec![Datum::Int(1), Datum::Int(9)].into(),
             low_exclude: false,
             high_exclude: false,
         };
@@ -2273,8 +2273,8 @@ mod recursive_index_estimation_tests {
         ] {
             let range = Range {
                 collators: vec![tidb_charset::Collation::Binary; 1],
-                low_val: vec![low],
-                high_val: vec![high],
+                low_val: vec![low].into(),
+                high_val: vec![high].into(),
                 low_exclude: false,
                 high_exclude: false,
             };
@@ -2311,10 +2311,10 @@ mod recursive_index_estimation_tests {
         };
         let range = Range {
             collators: vec![tidb_charset::Collation::Binary; 1],
-            low_val: vec![Datum::Int(1)],
+            low_val: vec![Datum::Int(1)].into(),
             high_val: vec![Datum::VectorFloat32(
                 tidb_datatype::VectorFloat32::must_create(vec![1.0]),
-            )],
+            )].into(),
             low_exclude: false,
             high_exclude: false,
         };
@@ -2346,8 +2346,8 @@ mod recursive_index_estimation_tests {
             .collect::<Vec<_>>();
         let range = Range {
             collators: vec![tidb_charset::Collation::Binary; 2],
-            low_val: vec![Datum::Raw(vec![1]), Datum::Int(1)],
-            high_val: vec![Datum::Raw(vec![1]), Datum::Int(1)],
+            low_val: vec![Datum::Raw(vec![1]), Datum::Int(1)].into(),
+            high_val: vec![Datum::Raw(vec![1]), Datum::Int(1)].into(),
             low_exclude: false,
             high_exclude: false,
         };
@@ -2509,8 +2509,8 @@ mod version_one_value_tests {
                     }
                     for (low, high, expected) in [(2, 2, 7.0), (1, 3, 22.0)] {
                         let range = Range {
-                            low_val: vec![values[low].clone()],
-                            high_val: vec![values[high].clone()],
+                            low_val: vec![values[low].clone()].into(),
+                            high_val: vec![values[high].clone()].into(),
                             collators: vec![Collation::Binary],
                             low_exclude: false,
                             high_exclude: false,
@@ -2580,7 +2580,7 @@ mod version_one_value_tests {
                     ndv: 5,
                     lower_bound: values[0].clone(),
                     upper_bound: values[4].clone(),
-                }],
+                }].into(),
                 ..Histogram::default()
             },
             top_n: None,
@@ -2700,7 +2700,7 @@ mod value_encoding_error_tests {
                     ndv: 0,
                     lower_bound: value.clone(),
                     upper_bound: value.clone(),
-                }],
+                }].into(),
                 ..Histogram::default()
             },
             top_n: None,
@@ -2746,7 +2746,7 @@ mod version_one_index_dispatch_tests {
                     ndv: 5,
                     lower_bound: Datum::Bytes(encode_key(&[Datum::Int(0)]).unwrap()),
                     upper_bound: Datum::Bytes(encode_key(&[Datum::Int(4)]).unwrap()),
-                }],
+                }].into(),
                 ..Histogram::default()
             },
             top_n: None,
@@ -2771,8 +2771,8 @@ mod version_one_index_dispatch_tests {
     fn version_one_index_enumeration_uses_cms_without_v2_growth_scaling() {
         let index = index();
         let range = Range {
-            low_val: vec![Datum::Int(1)],
-            high_val: vec![Datum::Int(3)],
+            low_val: vec![Datum::Int(1)].into(),
+            high_val: vec![Datum::Int(3)].into(),
             collators: vec![Collation::Binary],
             low_exclude: false,
             high_exclude: false,
@@ -2787,8 +2787,8 @@ mod version_one_index_dispatch_tests {
     fn range(low: Vec<Datum>, high: Vec<Datum>) -> Range {
         Range {
             collators: vec![Collation::Binary; low.len()],
-            low_val: low,
-            high_val: high,
+            low_val: low.into(),
+            high_val: high.into(),
             low_exclude: false,
             high_exclude: false,
         }

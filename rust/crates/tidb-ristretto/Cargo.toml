@@ -11,6 +11,10 @@ description = "Native owner of the pinned Ristretto v0.1.1 cache contract"
 workspace = true
 
 [dependencies]
+arc-swap = "1.9.2"
 crossbeam-channel = "0.5"
+foldhash.workspace = true
+parking_lot = "0.12"
 rand = "0.10"
+tidb-zeropool = { path = "../tidb-zeropool" }
 xxhash-rust = { version = "0.8", features = ["xxh64"] }

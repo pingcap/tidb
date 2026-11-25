@@ -84,6 +84,7 @@ impl<'a> RowDecoder<'a> {
     ///
     /// [`RowLayout`] remains the owner of physical header/offset/checksum
     /// framing; this wrapper adds the source decoder's raw lookup surface.
+    #[inline]
     pub fn parse(input: &'a [u8]) -> Result<(Self, &'a [u8]), RowDecodeError> {
         let (layout, remainder) = RowLayout::parse(input)?;
         Ok((Self { layout }, remainder))
@@ -98,6 +99,7 @@ impl<'a> RowDecoder<'a> {
     ///
     /// Negative IDs cannot occur in the u32 row metadata and are therefore
     /// classified as missing, matching the source binary-search contract.
+    #[inline]
     pub fn column(&self, column_id: i64) -> Result<RawRowValue<'a>, RowDecodeError> {
         match self.layout.find_column(column_id) {
             ColumnLookup::NotNull(index) => Ok(RawRowValue::NotNull {

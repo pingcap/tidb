@@ -97,6 +97,19 @@ impl SliceShape {
         self.len = new_len;
     }
 
+    /// Replays equal-sized appends by visiting only growth boundaries.
+    fn append_repeated(&mut self, width: usize, count: usize, element_size: usize) {
+        if width == 0 {
+            return;
+        }
+        let end = self.len + width * count;
+        while self.cap < end {
+            let overflow = (self.cap - self.len) / width + 1;
+            self.cap = grown_capacity(self.len + overflow * width, self.cap, element_size);
+        }
+        self.len = end;
+    }
+
     /// Go `append(nil, s...)`, the copy `Column.CopyConstruct` makes.
     fn copied(self, element_size: usize) -> Self {
         let mut copy = Self::default();
@@ -182,6 +195,27 @@ impl BoundsColumn {
         self.length += 1;
     }
 
+    fn from_bounds<'a>(type_size: i64, capacity: usize, bounds: impl IntoIterator<Item = &'a Datum>) -> Self {
+        let mut column = Self::new(type_size, capacity);
+        let bounds = bounds.into_iter().filter(|datum| !matches!(datum, Datum::MinNotNull | Datum::MaxValue));
+        if let Some(width) = column.elem_len {
+            column.length = bounds.count();
+            column.data.append_repeated(width, column.length, 1);
+        } else {
+            for bound in bounds {
+                if !bound.is_null() {
+                    for segment in var_len_cell_appends(bound) {
+                        column.data.append(segment, 1);
+                    }
+                }
+                column.length += 1;
+            }
+            column.offsets.append_repeated(1, column.length, 8);
+        }
+        column.null_bitmap.append_repeated(1, column.length.div_ceil(8), 1);
+        column
+    }
+
     /// Go `Chunk.TruncateTo` on this column; `data_len` is the byte length of
     /// the retained rows, which only the bounds themselves know.
     fn truncate_to(&mut self, rows: usize, data_len: usize) {
@@ -223,18 +257,22 @@ impl BoundsColumn {
 /// Go never appends a fixed-width kind to a variable-length column (its
 /// typed chunk would index an empty `elemBuf`); such a datum is accounted at
 /// the width its own column type stores.
-fn var_len_cell_appends(datum: &Datum) -> Vec<usize> {
+fn var_len_cell_appends(datum: &Datum) -> [usize; 2] {
+    // A missing segment is an empty append and cannot change capacity.
     match datum {
-        Datum::String(value) => vec![value.bytes().len()],
-        Datum::Bytes(value) | Datum::Raw(value) => vec![value.len()],
-        Datum::BinaryLiteral(value) | Datum::Bit(value) => vec![value.as_bytes().len()],
-        Datum::Enum(value, _) => vec![8, value.name_bytes().len()],
-        Datum::Set(value, _) => vec![8, value.name_bytes().len()],
-        Datum::Json(value) => vec![1, value.value().len()],
-        Datum::VectorFloat32(value) => vec![value.serialized_size()],
-        other => bound_type_size(other)
-            .and_then(|size| usize::try_from(size).ok())
-            .map_or_else(Vec::new, |size| vec![size]),
+        Datum::String(value) => [value.bytes().len(), 0],
+        Datum::Bytes(value) | Datum::Raw(value) => [value.len(), 0],
+        Datum::BinaryLiteral(value) | Datum::Bit(value) => [value.as_bytes().len(), 0],
+        Datum::Enum(value, _) => [8, value.name_bytes().len()],
+        Datum::Set(value, _) => [8, value.name_bytes().len()],
+        Datum::Json(value) => [1, value.value().len()],
+        Datum::VectorFloat32(value) => [value.serialized_size(), 0],
+        other => [
+            bound_type_size(other)
+                .and_then(|size| usize::try_from(size).ok())
+                .unwrap_or(0),
+            0,
+        ],
     }
 }
 
@@ -378,6 +416,20 @@ impl HistogramAllocation {
         bounds.columns[0].append_datum(upper);
     }
 
+    /// Returns the offset before the final upper bound in an incrementally
+    /// built bounds column. A missing bound can leave the row count short.
+    pub(crate) fn last_upper_offset(&self, bucket_len: usize, upper: &Datum) -> Option<usize> {
+        let column = self.bounds.as_ref()?.columns.first()?;
+        if column.length != bucket_len * 2 {
+            return None;
+        }
+        if column.elem_len.is_some() {
+            // TruncateTo computes the data length from the fixed element size.
+            return Some(0);
+        }
+        column.data.len.checked_sub(var_len_cell_len(upper))
+    }
+
     /// Go `updateLastBucket`'s bounds edit: `TruncateTo(2*l-1)` then the new
     /// upper bound appended. `retained_data_len` is the byte length of the
     /// bounds kept by the truncation.
@@ -401,14 +453,13 @@ impl HistogramAllocation {
         bounds: impl IntoIterator<Item = &'a Datum>,
         bucket_len: usize,
     ) {
-        let Some(old) = &self.bounds else {
+        let Some(old) = &mut self.bounds else {
             return;
         };
-        let mut rebuilt = BoundsChunk::new(old.type_size(), chunk_capacity, 1);
-        for bound in bounds {
-            rebuilt.columns[0].append_datum(bound);
-        }
-        self.bounds = Some(rebuilt);
+        let rebuilt = BoundsColumn::from_bounds(old.type_size(), chunk_capacity, bounds);
+        old.capacity = chunk_capacity;
+        old.columns.truncate(1);
+        old.columns[0] = rebuilt;
         self.bucket_len = bucket_len;
     }
 
@@ -520,7 +571,7 @@ pub(crate) fn var_len_cell_len(datum: &Datum) -> usize {
     if matches!(datum, Datum::Null) {
         return 0;
     }
-    var_len_cell_appends(datum).iter().sum()
+    var_len_cell_appends(datum).into_iter().sum()
 }
 
 #[cfg(test)]
@@ -582,6 +633,29 @@ use tidb_charset::Collation;
     }
 
     #[test]
+    fn rebuilt_bounds_match_incremental_growth() {
+        use super::BoundsColumn;
+
+        let values = [
+            Datum::Bytes(vec![b'x'; 100]),
+            Datum::Null,
+            Datum::MinNotNull,
+            Datum::Bytes(vec![b'y'; 1024]),
+            Datum::MaxValue,
+        ];
+        for type_size in [-1, 8] {
+            for capacity in [0, 1, 255, 256, 1024] {
+                let bounds = values.iter().cycle().take(1301);
+                let mut incremental = BoundsColumn::new(type_size, capacity);
+                for datum in bounds.clone() {
+                    incremental.append_datum(datum);
+                }
+                assert_eq!(BoundsColumn::from_bounds(type_size, capacity, bounds), incremental);
+            }
+        }
+    }
+
+    #[test]
     fn storage_shaped_histograms_match_go() {
         // The live `acc.t` columns: `id` (250 int buckets) and `v` (250
         // VARCHAR buckets of at most 8-byte bounds) report 10295 and 20295.
@@ -619,9 +693,12 @@ use tidb_charset::Collation;
             ndv: 3000,
             ..Histogram::default()
         };
-        loaded.load_buckets_from_storage(&tp(FieldTypeCode::LongLong), ints(250, 250).buckets);
+        loaded.load_buckets_from_storage(&tp(FieldTypeCode::LongLong), ints(250, 250).buckets.into());
         assert_eq!(loaded.memory_usage(), 10295);
-        loaded.load_buckets_from_storage(&tp(FieldTypeCode::Varchar), varchar(250, 5, 250).buckets);
+        loaded.load_buckets_from_storage(
+            &tp(FieldTypeCode::Varchar),
+            varchar(250, 5, 250).buckets.into(),
+        );
         assert_eq!(loaded.memory_usage(), 20295);
 
         // A struct literal carries no Go allocation and is accounted as the
@@ -670,7 +747,12 @@ use tidb_charset::Collation;
             1,
             1,
         );
-        updated.update_last_bucket(Datum::Bytes(b"c".to_vec()), 2, 1, false);
+        updated.update_last_bucket(
+            std::borrow::Cow::Owned(Datum::Bytes(b"c".to_vec())),
+            2,
+            1,
+            false,
+        );
         updated.append_bucket(
             Datum::Bytes(b"d".to_vec()),
             Datum::Bytes(b"e".to_vec()),

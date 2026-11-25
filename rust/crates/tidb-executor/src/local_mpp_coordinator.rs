@@ -404,7 +404,7 @@ impl MppTaskGeneratorContext for GeneratorContext<'_> {
 
     fn construct_mpp_tasks(
         &self,
-        req: &MppBuildTasksRequest,
+        req: MppBuildTasksRequest,
     ) -> Result<Vec<Arc<dyn MppTaskLocation>>, PlanError> {
         let kv_context = self
             .statement

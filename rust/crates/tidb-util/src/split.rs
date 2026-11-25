@@ -18,13 +18,17 @@
 /// `upper`, over the eight bytes after their common prefix, appended to
 /// `values_list`.
 pub fn get_values_list(lower: &[u8], upper: &[u8], num: usize, values_list: &mut Vec<Vec<u8>>) {
+    if num == 1 {
+        return;
+    }
     let common_prefix_idx = longest_common_prefix_len(lower, upper);
-    let step = get_step_value(&lower[common_prefix_idx..], &upper[common_prefix_idx..], num);
-    let mut start_v = get_uint64_from_bytes(&lower[common_prefix_idx..], 0);
+    let (prefix, lower) = lower.split_at(common_prefix_idx);
+    let (mut start_v, step) = get_start_and_step(lower, &upper[common_prefix_idx..], num);
     // To get `num` regions, only need to split `num-1` idx keys.
+    values_list.reserve(num - 1);
     for _ in 1..num {
-        let mut value = Vec::with_capacity(common_prefix_idx + 8);
-        value.extend_from_slice(&lower[..common_prefix_idx]);
+        let mut value = Vec::with_capacity(prefix.len() + 8);
+        value.extend_from_slice(prefix);
         start_v = start_v.wrapping_add(step);
         value.extend_from_slice(&start_v.to_be_bytes());
         values_list.push(value);
@@ -33,21 +37,38 @@ pub fn get_values_list(lower: &[u8], upper: &[u8], num: usize, values_list: &mut
 
 /// Go `longestCommonPrefixLen`.
 fn longest_common_prefix_len(s1: &[u8], s2: &[u8]) -> usize {
-    s1.iter().zip(s2).take_while(|(a, b)| a == b).count()
+    let len = s1.len().min(s2.len());
+    let (left_chunks, left_tail) = s1[..len].as_chunks::<8>();
+    let (right_chunks, right_tail) = s2[..len].as_chunks::<8>();
+    for (index, (left, right)) in left_chunks.iter().zip(right_chunks).enumerate() {
+        let differing_bits = u64::from_be_bytes(*left) ^ u64::from_be_bytes(*right);
+        if differing_bits != 0 {
+            return index * 8 + differing_bits.leading_zeros() as usize / 8;
+        }
+    }
+    left_chunks.len() * 8
+        + left_tail
+            .iter()
+            .zip(right_tail)
+            .position(|(left, right)| left != right)
+            .unwrap_or(left_tail.len())
 }
 
-/// Go `getStepValue`: `(upper - lower) / num` over their first eight bytes.
-fn get_step_value(lower: &[u8], upper: &[u8], num: usize) -> u64 {
-    let lower_uint = get_uint64_from_bytes(lower, 0);
-    let upper_uint = get_uint64_from_bytes(upper, 0xff);
-    upper_uint.wrapping_sub(lower_uint) / num as u64
+/// Go's initial value and `getStepValue` over the first eight suffix bytes.
+fn get_start_and_step(lower: &[u8], upper: &[u8], num: usize) -> (u64, u64) {
+    let start = get_uint64_from_bytes(lower, 0);
+    let end = get_uint64_from_bytes(upper, 0xff);
+    let step = end.wrapping_sub(start) / num as u64;
+    (start, step)
 }
 
 /// Go `getUint64FromBytes`: the first eight bytes, padded with `pad`.
 fn get_uint64_from_bytes(bs: &[u8], pad: u8) -> u64 {
+    if let Some(first) = bs.first_chunk::<8>() {
+        return u64::from_be_bytes(*first);
+    }
     let mut buf = [pad; 8];
-    let len = bs.len().min(8);
-    buf[..len].copy_from_slice(&bs[..len]);
+    buf[..bs.len()].copy_from_slice(bs);
     u64::from_be_bytes(buf)
 }
 
@@ -62,6 +83,14 @@ mod tests {
         for (s1, s2, l) in cases {
             assert_eq!(longest_common_prefix_len(s1.as_bytes(), s2.as_bytes()), l);
         }
+        let left = [0; 66];
+        let mut right = left;
+        for i in 0..right.len() {
+            right[i] = 1;
+            assert_eq!(longest_common_prefix_len(&left, &right), i);
+            right[i] = 0;
+        }
+        assert_eq!(longest_common_prefix_len(&left, &right[..65]), 65);
     }
 
     /// Go `TestGetStepValue`.
@@ -79,7 +108,7 @@ mod tests {
         ];
         for (lower, upper, l, v) in cases {
             assert_eq!(longest_common_prefix_len(lower, upper), l);
-            assert_eq!(get_step_value(&lower[l..], &upper[l..], 1), v);
+            assert_eq!(get_start_and_step(&lower[l..], &upper[l..], 1).1, v);
         }
     }
 }

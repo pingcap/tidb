@@ -1499,13 +1499,8 @@ pub fn stored_range_bound_text(bound: RangeBound, unsigned: bool) -> String {
 /// The guard is Go's own: a string shorter than two characters, or one that
 /// is not quoted at BOTH ends, is returned untouched.
 pub fn unwrap_from_single_quotes(value: &str) -> String {
-    let bytes = value.as_bytes();
-    if bytes.len() < 2 || bytes[0] != b'\'' || bytes[bytes.len() - 1] != b'\'' {
-        return value.to_owned();
-    }
-    value[1..value.len() - 1]
-        .replace("\\\\", "\\")
-        .replace("''", "'")
+    String::from_utf8(tidb_datatype::unwrap_from_single_quotes(value.as_bytes()))
+        .expect("removing ASCII escape bytes preserves UTF-8")
 }
 
 /// Go `stringutil.Escape(def.Name.O, sqlMode)` (`ddl/partition.go:5201`):

@@ -15,6 +15,7 @@
 use smallvec::SmallVec;
 
 use super::{pad_scale, Decimal, DecimalDigits, INLINE_DECIMAL_DIGITS};
+use crate::mydecimal::{parse_decimal_group, MyDecimal};
 
 // ===========================================================================
 // Binary storage codec: faithful port of Go `MyDecimal` `ToBin`/`DecimalBinSize`
@@ -33,6 +34,7 @@ use super::{pad_scale, Decimal, DecimalDigits, INLINE_DECIMAL_DIGITS};
 // payload rather than accepting an arbitrary-precision compatibility branch.
 
 pub(super) const DIGITS_PER_WORD: usize = 9;
+const MAX_U64_COEFFICIENT_DIGITS: usize = 19;
 const CODEC_WORD_SIZE: usize = 4;
 pub(super) const CODEC_WORD_BUF_LEN: usize = 9;
 /// Largest value one 1e9 word holds (Go `wordMax` = `wordBase - 1`).
@@ -41,6 +43,19 @@ const CODEC_WORD_MAX: i32 = 999_999_999;
 pub(super) const CODEC_MAX_DECIMAL_SCALE: i32 = 30;
 /// Bytes needed to store `k` decimal digits packed into one partial word.
 const DIG2BYTES: [usize; 10] = [0, 1, 1, 2, 2, 3, 3, 4, 4, 4];
+static DIGIT_TRIPLETS: [[u8; 3]; 1000] = {
+    let mut triplets = [[0; 3]; 1000];
+    let mut index = 0;
+    while index < triplets.len() {
+        triplets[index] = [
+            b'0' + (index / 100) as u8,
+            b'0' + (index / 10 % 10) as u8,
+            b'0' + (index % 10) as u8,
+        ];
+        index += 1;
+    }
+    triplets
+};
 /// `10^k` for `k` in `0..=9` (all fit in `i32`; `10^9 < i32::MAX`).
 pub(super) const CODEC_POWERS10: [i32; 10] = [
     1,
@@ -154,14 +169,21 @@ fn read_word(b: &[u8], size: usize) -> i32 {
                 ((u32::from(b[0]) << 16) | (u32::from(b[1]) << 8) | u32::from(b[2])) as i32
             }
         }
-        4 => {
-            i32::from(b[3])
-                + (i32::from(b[2]) << 8)
-                + (i32::from(b[1]) << 16)
-                + (i32::from(b[0] as i8) << 24)
-        }
+        4 => i32::from_be_bytes(*b.first_chunk().expect("four decimal word bytes")),
         _ => 0,
     }
+}
+
+#[inline]
+fn read_bin_word(bin: &[u8], offset: usize, size: usize, mask: i32) -> i32 {
+    // Restoring the first byte's high bit also changes that word's sign
+    // extension when it occupies fewer than four bytes.
+    let sign_bit = if offset == 0 {
+        i32::MIN >> (32 - size * 8)
+    } else {
+        0
+    };
+    read_word(&bin[offset..], size) ^ mask ^ sign_bit
 }
 
 /// Go `countLeadingZeroes(i, word)`: leading zero decimal digits of `word` when
@@ -173,6 +195,151 @@ fn count_leading_zeroes(mut i: usize, word: i32) -> usize {
         leading += 1;
     }
     leading
+}
+
+/// Writes all nine digits of a packed word, including leading zeros.
+#[inline]
+fn write_word_digits(word: u32, output: &mut [u8; DIGITS_PER_WORD]) {
+    let head = word / 1_000_000;
+    let middle = word / 1000 % 1000;
+    let tail = word % 1000;
+    output[..3].copy_from_slice(&DIGIT_TRIPLETS[head as usize]);
+    output[3..6].copy_from_slice(&DIGIT_TRIPLETS[middle as usize]);
+    output[6..].copy_from_slice(&DIGIT_TRIPLETS[tail as usize]);
+}
+
+/// All coefficients with at most nineteen digits fit in one u64. Combine the
+/// validated words first, then format a single integer with the required scale.
+#[inline]
+fn decode_small_coefficient(
+    bin: &[u8],
+    leading_digits: usize,
+    trailing_digits: usize,
+    scale: usize,
+    mask: i32,
+) -> Option<Decimal> {
+    let leading_width = DIG2BYTES[leading_digits];
+    let trailing_width = DIG2BYTES[trailing_digits];
+    let full_words_end = bin.len() - trailing_width;
+    let mut coefficient = 0_u64;
+    if leading_width != 0 {
+        let word = read_bin_word(bin, 0, leading_width, mask) as u32;
+        if word >= CODEC_POWERS10[leading_digits] as u32 {
+            return None;
+        }
+        coefficient = u64::from(word);
+    }
+
+    let (words, _) = bin[leading_width..full_words_end].as_chunks::<CODEC_WORD_SIZE>();
+    let mut word_mask = if leading_width == 0 { mask ^ i32::MIN } else { mask };
+    for &bytes in words {
+        let word = (i32::from_be_bytes(bytes) ^ word_mask) as u32;
+        word_mask = mask;
+        if word > CODEC_WORD_MAX as u32 {
+            return None;
+        }
+        coefficient = coefficient * 1_000_000_000 + u64::from(word);
+    }
+    if trailing_width != 0 {
+        let word = read_bin_word(bin, full_words_end, trailing_width, mask) as u32;
+        let power = CODEC_POWERS10[trailing_digits] as u32;
+        if word >= power {
+            return None;
+        }
+        coefficient = coefficient * u64::from(power) + u64::from(word);
+    }
+
+    let mut formatted = itoa::Buffer::new();
+    let text = formatted.format(coefficient).as_bytes();
+    let digits = if text.len() < scale {
+        let mut padded = [b'0'; MAX_U64_COEFFICIENT_DIGITS];
+        padded[scale - text.len()..scale].copy_from_slice(text);
+        SmallVec::from_slice(&padded[..scale])
+    } else {
+        SmallVec::from_slice(text)
+    };
+    Some(Decimal {
+        negative: mask != 0 && (coefficient != 0 || scale != 0),
+        digits: DecimalDigits::from_ascii(digits),
+        scale: scale as u32,
+        storage_scale: scale as u32,
+        declared_shape: None,
+    })
+}
+
+/// Decodes a complete, canonical binary payload directly into its coefficient.
+fn decode_coefficient(
+    bin: &[u8],
+    integer_digits: usize,
+    fraction_digits: usize,
+    leading_digits: usize,
+    trailing_digits: usize,
+    mask: i32,
+) -> Option<Decimal> {
+    let leading_width = DIG2BYTES[leading_digits];
+    let trailing_width = DIG2BYTES[trailing_digits];
+    let full_words_end = bin.len() - trailing_width;
+    let precision = integer_digits + fraction_digits;
+    let mut digits = [b'0'; CODEC_WORD_BUF_LEN * DIGITS_PER_WORD];
+    let mut formatted = itoa::Buffer::new();
+
+    if leading_digits != 0 {
+        let word = read_bin_word(bin, 0, leading_width, mask) as u32;
+        if word >= CODEC_POWERS10[leading_digits] as u32 {
+            return None;
+        }
+        if word != 0 {
+            let text = formatted.format(word).as_bytes();
+            digits[leading_digits - text.len()..leading_digits].copy_from_slice(text);
+        }
+    }
+
+    let (words, _) = bin[leading_width..full_words_end].as_chunks::<CODEC_WORD_SIZE>();
+    let (groups, _) =
+        digits[leading_digits..precision - trailing_digits].as_chunks_mut::<DIGITS_PER_WORD>();
+    let mut word_mask = if leading_width == 0 {
+        mask ^ i32::MIN
+    } else {
+        mask
+    };
+    for (&bytes, group) in words.iter().zip(groups) {
+        let word = (i32::from_be_bytes(bytes) ^ word_mask) as u32;
+        word_mask = mask;
+        if word > CODEC_WORD_MAX as u32 {
+            return None;
+        }
+        if word != 0 {
+            write_word_digits(word, group);
+        }
+    }
+
+    if trailing_digits != 0 {
+        let word = read_bin_word(bin, full_words_end, trailing_width, mask) as u32;
+        if word >= CODEC_POWERS10[trailing_digits] as u32 {
+            return None;
+        }
+        if word != 0 {
+            let text = formatted.format(word).as_bytes();
+            digits[precision - text.len()..precision].copy_from_slice(text);
+        }
+    }
+
+    let first = digits[..integer_digits]
+        .iter()
+        .position(|&digit| digit != b'0')
+        .unwrap_or(integer_digits);
+    let coefficient = &digits[first..precision];
+    Some(Decimal {
+        negative: mask != 0 && !coefficient.is_empty(),
+        digits: DecimalDigits::from_ascii(SmallVec::from_slice(if coefficient.is_empty() {
+            b"0"
+        } else {
+            coefficient
+        })),
+        scale: fraction_digits as u32,
+        storage_scale: fraction_digits as u32,
+        declared_shape: None,
+    })
 }
 
 /// Go `DecimalBinSize`: byte length of the fixed-length binary for
@@ -232,51 +399,23 @@ impl MyDecimalWords {
 
         let mut word_buf = [0i32; CODEC_WORD_BUF_LEN];
 
-        // Integer part: read the integer prefix right-to-left into base-1e9
-        // words, filling word_buf[words_int-1] down to word_buf[0].
-        let mut word_idx = words_int;
-        let mut word: i32 = 0;
-        let mut inner = 0usize;
-        let mut remaining = digits_int;
-        let mut si = source_digits_int;
-        while remaining > 0 {
-            remaining -= 1;
-            si -= 1;
-            word += i32::from(digits[si] - b'0') * CODEC_POWERS10[inner];
-            inner += 1;
-            if inner == DIGITS_PER_WORD {
-                word_idx -= 1;
-                word_buf[word_idx] = word;
-                word = 0;
-                inner = 0;
-            }
-        }
-        if inner != 0 {
-            word_idx -= 1;
-            word_buf[word_idx] = word;
+        // Retain the low integer words and the high fractional words when
+        // an input fills the nine-word buffer.
+        let integer = &digits[source_digits_int - digits_int..source_digits_int];
+        for (word, group) in word_buf[..words_int]
+            .iter_mut()
+            .rev()
+            .zip(integer.rchunks(DIGITS_PER_WORD))
+        {
+            *word = parse_decimal_group(group);
         }
 
-        // Fraction part: read the fraction digits left-to-right; the final
-        // partial word is left-aligned into the high digit positions.
-        word_idx = words_int;
-        word = 0;
-        inner = 0;
-        remaining = digits_frac;
-        let mut fi = source_digits_int;
-        while remaining > 0 {
-            remaining -= 1;
-            word = i32::from(digits[fi] - b'0') + word * 10;
-            fi += 1;
-            inner += 1;
-            if inner == DIGITS_PER_WORD {
-                word_buf[word_idx] = word;
-                word_idx += 1;
-                word = 0;
-                inner = 0;
-            }
-        }
-        if inner != 0 {
-            word_buf[word_idx] = word * CODEC_POWERS10[DIGITS_PER_WORD - inner];
+        let fraction = &digits[source_digits_int..source_digits_int + digits_frac];
+        for (word, group) in word_buf[words_int..]
+            .iter_mut()
+            .zip(fraction.chunks(DIGITS_PER_WORD))
+        {
+            *word = parse_decimal_group(group) * CODEC_POWERS10[DIGITS_PER_WORD - group.len()];
         }
 
         MyDecimalWords {
@@ -287,61 +426,60 @@ impl MyDecimalWords {
         }
     }
 
-    /// Reconstructs a normalized [`Decimal`] from the word view, extracting the
-    /// coefficient digits exactly as Go `ToString` reads them: integer words
-    /// least-significant-first (each digit via `/10`), fraction words
-    /// most-significant-first (each digit via `/1e8`, left-aligned). The Rust
-    /// `Decimal` re-normalizes and `Display` re-inserts the point/sign, matching
-    /// Go `ToString`.
+    /// Reconstructs a normalized [`Decimal`] by writing coefficient digits
+    /// word by word. Fraction words are left-aligned.
     pub(super) fn to_decimal(&self) -> Decimal {
         let (word_start_idx, digits_int) = self.remove_leading_zeros();
         let digits_frac = self.digits_frac;
-
-        // Build one coefficient buffer. The previous implementation allocated
-        // separate integer/fraction vectors and then copied both into a
-        // String; that turns every DECIMAL cell into several heap operations.
-        // Go's MyDecimal already owns a fixed word buffer, so keep the Rust
-        // representation to one final coefficient allocation as well.
         let int_len = digits_int.max(0) as usize;
         let fraction_len = digits_frac.max(0) as usize;
-        let mut coefficient = SmallVec::<[u8; INLINE_DECIMAL_DIGITS]>::new();
-        coefficient.resize(int_len + fraction_len, b'0');
-        if digits_int > 0 {
-            let mut pos = int_len;
-            let mut word_idx = word_start_idx + digits_to_words(digits_int as usize);
-            let mut remaining = digits_int;
-            while remaining > 0 {
-                word_idx -= 1;
-                let mut x = self.word_buf[word_idx];
-                let take = remaining.min(DIGITS_PER_WORD as i32);
-                for _ in 0..take {
-                    let y = x / 10;
-                    pos -= 1;
-                    coefficient[pos] = b'0' + (x - y * 10) as u8;
-                    x = y;
+        let mut coefficient =
+            SmallVec::<[u8; INLINE_DECIMAL_DIGITS]>::from_elem(b'0', int_len + fraction_len);
+        let (integer, fraction) = coefficient.split_at_mut(int_len);
+        let mut buffer = itoa::Buffer::new();
+
+        let int_words = digits_to_words(int_len);
+        let (int_buf, frac_buf) = self.word_buf[word_start_idx..].split_at(int_words);
+        // The integer's leading partial word can be shorter than a full word.
+        for (&word, digits) in int_buf.iter().rev().zip(integer.rchunks_mut(DIGITS_PER_WORD)) {
+            if word > 0 {
+                let text = buffer.format(word as u32).as_bytes();
+                let count = text.len().min(digits.len());
+                // A partial integer may carry extra high digits in an accepted
+                // noncanonical wire value. Keep the low digits, as before.
+                let start = digits.len() - count;
+                digits[start..].copy_from_slice(&text[text.len() - count..]);
+            } else if word < 0 {
+                let mut remaining = word;
+                for digit in digits.iter_mut().rev() {
+                    let next = remaining / 10;
+                    *digit = b'0' + (remaining - next * 10) as u8;
+                    remaining = next;
                 }
-                remaining -= DIGITS_PER_WORD as i32;
             }
         }
 
-        // Fraction coefficient digits, built left-to-right like Go `ToString`.
-        if digits_frac > 0 {
-            let dig_mask = CODEC_POWERS10[DIGITS_PER_WORD - 1]; // ten8 = 10^8
-            let mut word_idx = word_start_idx + digits_to_words(digits_int.max(0) as usize);
-            let mut remaining = digits_frac;
-            let mut offset = int_len;
-            while remaining > 0 {
-                let mut x = self.word_buf[word_idx];
-                word_idx += 1;
-                let take = remaining.min(DIGITS_PER_WORD as i32);
-                for _ in 0..take {
-                    let y = x / dig_mask;
-                    coefficient[offset] = b'0' + y as u8;
-                    offset += 1;
-                    x -= y * dig_mask;
-                    x *= 10;
+        // Fraction words are left-aligned, including the last partial word.
+        for (&word, digits) in frac_buf[..digits_to_words(fraction_len)]
+            .iter()
+            .zip(fraction.chunks_mut(DIGITS_PER_WORD))
+        {
+            if word != 0 {
+                let text = buffer.format(word as u32).as_bytes();
+                if let Some(leading_zeros) = DIGITS_PER_WORD.checked_sub(text.len()) {
+                    if let Some(rest) = digits.get_mut(leading_zeros..) {
+                        rest.copy_from_slice(&text[..rest.len()]);
+                    }
+                } else {
+                    // The legacy JSON representation exposes the raw words.
+                    let mut remaining = word;
+                    let divisor = CODEC_POWERS10[DIGITS_PER_WORD - 1];
+                    for digit in digits {
+                        let next = remaining / divisor;
+                        *digit = b'0' + next as u8;
+                        remaining = (remaining - next * divisor) * 10;
+                    }
                 }
-                remaining -= DIGITS_PER_WORD as i32;
             }
         }
 
@@ -382,6 +520,25 @@ impl MyDecimalWords {
     }
 }
 
+impl MyDecimal {
+    /// Decodes Go's fixed-width decimal payload into base-1e9 words.
+    ///
+    /// Returns the packed value, the byte count, and Go's soft codec warning.
+    #[inline]
+    pub fn from_bin(
+        bin: &[u8],
+        precision: i32,
+        frac: i32,
+    ) -> Result<(Self, usize, Option<DecimalCodecWarning>), DecimalCodecError> {
+        if bin.is_empty() {
+            return Err(DecimalCodecError::BadNumber);
+        }
+        let (words, consumed, warning) = Decimal::decode_bin_words(bin, precision, frac)
+            .map_err(|_| DecimalCodecError::BadNumber)?;
+        Ok((Self::from_bin_words(words, frac), consumed, warning))
+    }
+}
+
 impl Decimal {
     /// Faithful port of Go `MyDecimal.ToBin`/`WriteBin`: the fixed-length,
     /// memcmp-comparable binary encoding at `{precision, frac}`. Returns the
@@ -395,6 +552,20 @@ impl Decimal {
         let mut bin = vec![0u8; checked_bin_size(precision, frac)?];
         let warning = MyDecimalWords::from_decimal(self).write_bin(precision, frac, &mut bin)?;
         Ok((bin, warning))
+    }
+
+    /// Appends the fixed-length binary form to an existing buffer, like Go
+    /// `MyDecimal.WriteBin`. The payload is appended even on a soft warning.
+    pub fn write_bin(
+        &self,
+        precision: i32,
+        frac: i32,
+        buffer: &mut Vec<u8>,
+    ) -> Result<Option<DecimalCodecWarning>, DecimalCodecError> {
+        let size = checked_bin_size(precision, frac)?;
+        let start = buffer.len();
+        buffer.resize(start + size, 0);
+        MyDecimalWords::from_decimal(self).write_bin(precision, frac, &mut buffer[start..])
     }
 }
 
@@ -554,12 +725,13 @@ impl Decimal {
     /// [`Decimal`], returning it, the number of bytes consumed, and any soft
     /// truncation/overflow. A hard [`DecimalCodecError`] signals an illegal
     /// `{precision, frac}`, an oversized layout, or a corrupt payload.
+    #[inline]
     pub fn from_bin(
         bin: &[u8],
         precision: i32,
         frac: i32,
     ) -> Result<(Decimal, usize, Option<DecimalCodecWarning>), DecimalCodecError> {
-        Self::from_bin_with_failure(bin, precision, frac).map_err(|failure| failure.error)
+        Self::decode_bin(bin, precision, frac).map_err(|_| DecimalCodecError::BadNumber)
     }
 
     /// Decodes a binary decimal while retaining Go's post-error receiver and
@@ -571,14 +743,68 @@ impl Decimal {
         precision: i32,
         frac: i32,
     ) -> Result<(Decimal, usize, Option<DecimalCodecWarning>), DecimalCodecFailure> {
-        let zero = || DecimalCodecFailure {
+        Self::decode_bin(bin, precision, frac).map_err(|consumed| DecimalCodecFailure {
             value: Decimal::from_literal("0"),
-            consumed: 0,
+            consumed,
             error: DecimalCodecError::BadNumber,
+        })
+    }
+
+    // The cursor is the only additional information needed to return Go's
+    // failure state, which always has the zero value.
+    #[inline]
+    fn decode_bin(
+        bin: &[u8],
+        precision: i32,
+        frac: i32,
+    ) -> Result<(Decimal, usize, Option<DecimalCodecWarning>), usize> {
+        let Some(&sign) = bin.first() else {
+            return Err(0);
         };
-        if bin.is_empty() {
-            return Err(zero());
+        if precision >= frac && frac >= 0 {
+            let integer_digits = (precision - frac) as usize;
+            let fraction_digits = frac as usize;
+            let words_int = integer_digits / DIGITS_PER_WORD;
+            let words_frac = fraction_digits / DIGITS_PER_WORD;
+            let leading = integer_digits % DIGITS_PER_WORD;
+            let trailing = fraction_digits % DIGITS_PER_WORD;
+            let size = (words_int + words_frac) * CODEC_WORD_SIZE
+                + DIG2BYTES[leading]
+                + DIG2BYTES[trailing];
+            if words_int + words_frac + usize::from(leading != 0) + usize::from(trailing != 0)
+                <= CODEC_WORD_BUF_LEN
+            {
+                let mask = if sign & 0x80 != 0 { 0 } else { -1 };
+                if let Some(payload) = bin.get(..size) {
+                    let value = if precision <= MAX_U64_COEFFICIENT_DIGITS as i32 {
+                        decode_small_coefficient(payload, leading, trailing, fraction_digits, mask)
+                    } else {
+                        decode_coefficient(
+                            payload,
+                            integer_digits,
+                            fraction_digits,
+                            leading,
+                            trailing,
+                            mask,
+                        )
+                    };
+                    if let Some(value) = value {
+                        return Ok((value, size, None));
+                    }
+                }
+            }
         }
+        Self::decode_bin_words(bin, precision, frac)
+            .map(|(words, consumed, warning)| (words.to_decimal(), consumed, warning))
+    }
+
+    // Go's word decoder also handles short payloads, noncanonical partial
+    // words, and shapes needing the nine-word adjustment.
+    fn decode_bin_words(
+        bin: &[u8],
+        precision: i32,
+        frac: i32,
+    ) -> Result<(MyDecimalWords, usize, Option<DecimalCodecWarning>), usize> {
         let digits_int = precision - frac;
         let words_int = digits_int / DIGITS_PER_WORD as i32;
         let leading_digits = digits_int - words_int * DIGITS_PER_WORD as i32;
@@ -595,24 +821,25 @@ impl Decimal {
 
         // Sign lives in the top bit of the first byte (0 => negative).
         let mask: i32 = if bin[0] & 0x80 > 0 { 0 } else { -1 };
-        let bin_size = decimal_bin_size(precision, frac)
-            .map_err(|error| DecimalCodecFailure { error, ..zero() })?;
+        let bin_size = decimal_bin_size(precision, frac).map_err(|_| 0_usize)?;
         if bin_size > 40 {
-            return Err(DecimalCodecFailure {
-                value: Decimal::from_literal("0"),
-                consumed: 0,
-                error: DecimalCodecError::BadNumber,
-            });
+            return Err(0);
         }
 
-        // Private copy with the sign bit restored (Go pads to 40 then slices;
-        // only [0..bin_size] is ever read). Keep this fixed-size buffer on the
-        // stack: DecodeDecimal is on the hot row-response path and the Go
-        // MyDecimal decoder does not allocate a payload-sized buffer.
-        let mut buf = [0u8; 40];
-        let n = bin.len().min(bin_size);
-        buf[..n].copy_from_slice(&bin[..n]);
-        buf[0] ^= 0x80;
+        // Only short or adjusted-width payloads need Go's zero-padded
+        // scratch layout. The first word restores the sign bit as it loads.
+        let mut padded = [0_u8; 40];
+        let buf = if digits_int >= 0
+            && frac >= 0
+            && words_int_to + words_frac_to <= CODEC_WORD_BUF_LEN as i32
+            && bin.len() >= bin_size
+        {
+            &bin[..bin_size]
+        } else {
+            let n = bin.len().min(bin_size);
+            padded[..n].copy_from_slice(&bin[..n]);
+            &padded[..]
+        };
 
         let mut bin_idx = 0usize;
         let mut warning: Option<DecimalCodecWarning> = None;
@@ -642,17 +869,12 @@ impl Decimal {
         let mut word_idx = 0usize;
         if leading_digits > 0 {
             let i = DIG2BYTES[leading_digits as usize];
-            let x = read_word(&buf[bin_idx..], i);
+            w.word_buf[word_idx] = read_bin_word(buf, bin_idx, i, mask);
             bin_idx += i;
-            w.word_buf[word_idx] = x ^ mask;
             if u64::from(w.word_buf[word_idx] as u32)
                 >= u64::from(CODEC_POWERS10[leading_digits as usize + 1] as u32)
             {
-                return Err(DecimalCodecFailure {
-                    value: Decimal::from_literal("0"),
-                    consumed: bin_size,
-                    error: DecimalCodecError::BadNumber,
-                });
+                return Err(bin_size);
             }
             if word_idx > 0 || w.word_buf[word_idx] != 0 {
                 word_idx += 1;
@@ -663,13 +885,9 @@ impl Decimal {
 
         let stop = bin_idx + words_int as usize * CODEC_WORD_SIZE;
         while bin_idx < stop {
-            w.word_buf[word_idx] = read_word(&buf[bin_idx..], CODEC_WORD_SIZE) ^ mask;
+            w.word_buf[word_idx] = read_bin_word(buf, bin_idx, CODEC_WORD_SIZE, mask);
             if w.word_buf[word_idx] as u32 > CODEC_WORD_MAX as u32 {
-                return Err(DecimalCodecFailure {
-                    value: Decimal::from_literal("0"),
-                    consumed: bin_size,
-                    error: DecimalCodecError::BadNumber,
-                });
+                return Err(bin_size);
             }
             if word_idx > 0 || w.word_buf[word_idx] != 0 {
                 word_idx += 1;
@@ -681,13 +899,9 @@ impl Decimal {
 
         let stop = bin_idx + words_frac as usize * CODEC_WORD_SIZE;
         while bin_idx < stop {
-            w.word_buf[word_idx] = read_word(&buf[bin_idx..], CODEC_WORD_SIZE) ^ mask;
+            w.word_buf[word_idx] = read_bin_word(buf, bin_idx, CODEC_WORD_SIZE, mask);
             if w.word_buf[word_idx] as u32 > CODEC_WORD_MAX as u32 {
-                return Err(DecimalCodecFailure {
-                    value: Decimal::from_literal("0"),
-                    consumed: bin_size,
-                    error: DecimalCodecError::BadNumber,
-                });
+                return Err(bin_size);
             }
             word_idx += 1;
             bin_idx += CODEC_WORD_SIZE;
@@ -695,19 +909,14 @@ impl Decimal {
 
         if trailing_digits > 0 {
             let i = DIG2BYTES[trailing_digits as usize];
-            let x = read_word(&buf[bin_idx..], i);
-            w.word_buf[word_idx] =
-                (x ^ mask) * CODEC_POWERS10[DIGITS_PER_WORD - trailing_digits as usize];
+            w.word_buf[word_idx] = read_bin_word(buf, bin_idx, i, mask)
+                .wrapping_mul(CODEC_POWERS10[DIGITS_PER_WORD - trailing_digits as usize]);
             if w.word_buf[word_idx] as u32 > CODEC_WORD_MAX as u32 {
-                return Err(DecimalCodecFailure {
-                    value: Decimal::from_literal("0"),
-                    consumed: bin_size,
-                    error: DecimalCodecError::BadNumber,
-                });
+                return Err(bin_size);
             }
         }
 
-        Ok((w.to_decimal(), bin_size, warning))
+        Ok((w, bin_size, warning))
     }
 
     /// Go `MyDecimal.MarshalJSON`'s exact persistence object.

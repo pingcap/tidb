@@ -165,7 +165,7 @@ pub fn handle_mpp_dag_req(
     req: &coprocessor::Request,
     mpp_ctx: Arc<mpp_task::MppCtx>,
 ) -> coprocessor::Response {
-    let dag_req = match tipb::DagRequest::decode(req.data.as_slice()) {
+    let dag_req = match tipb::DagRequest::decode(req.data.as_ref()) {
         Ok(dag_req) => dag_req,
         Err(err) => return other_error(&err.to_string()),
     };
@@ -1061,7 +1061,7 @@ pub fn build_dag(req: &coprocessor::Request) -> Result<DagContext, String> {
     if req.tp != REQ_TYPE_DAG {
         return Err(format!("unsupported request type {}", req.tp));
     }
-    let dag_req = tipb::DagRequest::decode(req.data.as_slice())
+    let dag_req = tipb::DagRequest::decode(req.data.as_ref())
         .map_err(|decode_err| format!("invalid dag request: {decode_err}"))?;
     for executor in &dag_req.executors {
         tipb::ExecType::try_from(executor.tp.unwrap_or_default())
@@ -1488,10 +1488,10 @@ mod tests {
             &mut store,
             &coprocessor::Request {
                 tp: REQ_TYPE_DAG,
-                data,
+                data: data.into(),
                 ranges: vec![coprocessor::KeyRange {
-                    start: vec![1, 2],
-                    end: vec![1, 2],
+                    start: vec![1, 2].into(),
+                    end: vec![1, 2].into(),
                     ..coprocessor::KeyRange::default()
                 }],
                 ..coprocessor::Request::default()
@@ -1524,7 +1524,7 @@ mod tests {
         };
         let request = coprocessor::Request {
             tp: REQ_TYPE_DAG,
-            data: dag.encode_to_vec(),
+            data: dag.encode_to_vec().into(),
             ranges: vec![coprocessor::KeyRange::default()],
             ..Default::default()
         };
@@ -1543,7 +1543,7 @@ mod tests {
         dag.encode(&mut data).expect("encodes");
         let req = coprocessor::Request {
             tp: REQ_TYPE_DAG,
-            data,
+            data: data.into(),
             ranges: vec![coprocessor::KeyRange::default()],
             start_ts: 42,
             ..coprocessor::Request::default()
@@ -1567,7 +1567,7 @@ mod tests {
         named.encode(&mut data).expect("encodes");
         let context = build_dag(&coprocessor::Request {
             tp: REQ_TYPE_DAG,
-            data,
+            data: data.into(),
             ranges: vec![coprocessor::KeyRange::default()],
             ..coprocessor::Request::default()
         })
@@ -1716,10 +1716,10 @@ mod tests {
             &mut store,
             &coprocessor::Request {
                 tp: REQ_TYPE_DAG,
-                data,
+                data: data.into(),
                 ranges: vec![coprocessor::KeyRange {
-                    start: range_start,
-                    end: range_end,
+                    start: range_start.into(),
+                    end: range_end.into(),
                 }],
                 start_ts: 20,
                 ..coprocessor::Request::default()
@@ -1805,10 +1805,10 @@ mod tests {
             &mut store,
             &coprocessor::Request {
                 tp: REQ_TYPE_DAG,
-                data,
+                data: data.into(),
                 ranges: vec![coprocessor::KeyRange {
-                    start: range_start,
-                    end: range_end,
+                    start: range_start.into(),
+                    end: range_end.into(),
                 }],
                 start_ts: 20,
                 ..coprocessor::Request::default()
@@ -1909,10 +1909,10 @@ mod tests {
             &mut store,
             &coprocessor::Request {
                 tp: REQ_TYPE_DAG,
-                data,
+                data: data.into(),
                 ranges: vec![coprocessor::KeyRange {
-                    start: range_start,
-                    end: range_end,
+                    start: range_start.into(),
+                    end: range_end.into(),
                 }],
                 start_ts: 20,
                 ..coprocessor::Request::default()
@@ -2027,10 +2027,10 @@ mod tests {
             &mut store,
             &coprocessor::Request {
                 tp: REQ_TYPE_DAG,
-                data,
+                data: data.into(),
                 ranges: vec![coprocessor::KeyRange {
-                    start: range_start,
-                    end: range_end,
+                    start: range_start.into(),
+                    end: range_end.into(),
                 }],
                 start_ts: 9,
                 ..coprocessor::Request::default()
@@ -2087,10 +2087,10 @@ mod tests {
             &mut store,
             &coprocessor::Request {
                 tp: REQ_TYPE_DAG,
-                data,
+                data: data.into(),
                 ranges: vec![coprocessor::KeyRange {
-                    start: range_start,
-                    end: range_end,
+                    start: range_start.into(),
+                    end: range_end.into(),
                 }],
                 start_ts: 20,
                 ..coprocessor::Request::default()
@@ -2163,10 +2163,10 @@ mod tests {
             &mut store,
             &coprocessor::Request {
                 tp: REQ_TYPE_DAG,
-                data,
+                data: data.into(),
                 ranges: vec![coprocessor::KeyRange {
-                    start: range_start,
-                    end: range_end,
+                    start: range_start.into(),
+                    end: range_end.into(),
                 }],
                 start_ts: 20,
                 ..coprocessor::Request::default()
@@ -2280,10 +2280,10 @@ mod tests {
             &mut store,
             &coprocessor::Request {
                 tp: REQ_TYPE_DAG,
-                data,
+                data: data.into(),
                 ranges: vec![coprocessor::KeyRange {
-                    start: range_start,
-                    end: range_end,
+                    start: range_start.into(),
+                    end: range_end.into(),
                 }],
                 start_ts: 20,
                 ..coprocessor::Request::default()
@@ -2395,10 +2395,10 @@ mod tests {
             &mut store,
             &coprocessor::Request {
                 tp: REQ_TYPE_DAG,
-                data,
+                data: data.into(),
                 ranges: vec![coprocessor::KeyRange {
-                    start: range_start,
-                    end: range_end,
+                    start: range_start.into(),
+                    end: range_end.into(),
                 }],
                 start_ts: 20,
                 ..coprocessor::Request::default()
@@ -2519,10 +2519,10 @@ mod tests {
             &mut store,
             &coprocessor::Request {
                 tp: REQ_TYPE_DAG,
-                data,
+                data: data.into(),
                 ranges: vec![coprocessor::KeyRange {
-                    start: range_start,
-                    end: range_end,
+                    start: range_start.into(),
+                    end: range_end.into(),
                 }],
                 start_ts: 20,
                 ..coprocessor::Request::default()
@@ -2624,10 +2624,10 @@ mod tests {
         let (range_start, range_end) = tidb_tablecodec::table_key::get_table_handle_key_range(table_id);
         coprocessor::Request {
             tp: REQ_TYPE_DAG,
-            data,
+            data: data.into(),
             ranges: vec![coprocessor::KeyRange {
-                start: range_start,
-                end: range_end,
+                start: range_start.into(),
+                end: range_end.into(),
             }],
             start_ts: 20,
             ..coprocessor::Request::default()

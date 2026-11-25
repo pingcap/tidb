@@ -10,3 +10,5 @@ description = "Go net: the host:port helpers TiDB uses (Rust)."
 workspace = true
 
 [dependencies]
+itoa = "1"
+memchr = "2"

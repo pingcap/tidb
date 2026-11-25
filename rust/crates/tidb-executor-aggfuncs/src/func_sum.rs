@@ -98,6 +98,30 @@ pub(crate) fn eval_decimal(base: &BaseAggFunc, sctx: &AggFuncUpdateContext, row:
     })
 }
 
+/// Go typed `EvalDecimal` for aggregates whose state uses packed decimal words.
+pub(crate) fn eval_my_decimal(
+    base: &BaseAggFunc,
+    sctx: &AggFuncUpdateContext,
+    row: Row<'_>,
+) -> Result<Option<MyDecimal>, ExecError> {
+    if let tidb_expr::expression::Expression::Column(column) = &base.args[0] {
+        if column
+            .ret_type
+            .as_ref()
+            .is_some_and(|ty| ty.code() == tidb_datatype::FieldTypeCode::NewDecimal)
+        {
+            if let (Some(chunk), Ok(index)) = (row.chunk(), usize::try_from(column.index)) {
+                if index < chunk.num_cols() {
+                    let column = chunk.column(index);
+                    let row = row.idx();
+                    return Ok((!column.is_null(row)).then(|| column.get_my_decimal(row)));
+                }
+            }
+        }
+    }
+    eval_decimal(base, sctx, row)?.as_ref().map(my_decimal).transpose()
+}
+
 /// Go `types.DecimalAdd`.
 pub(crate) fn decimal_add(left: &Decimal, right: &Decimal) -> Decimal {
     left.add_mysql(right).0

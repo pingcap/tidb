@@ -340,10 +340,11 @@ pub trait MppStreamResponse: crate::Response + Send {
 pub trait MppClient: std::fmt::Debug + Send + Sync {
     /// Go `ConstructMPPTasks`: the stores one fragment's tasks run on, each
     /// with the regions of `request` it reads, located under `kv_context`.
+    /// The builder takes ownership of the request's keys for its native ranges.
     fn construct_mpp_tasks(
         &self,
         ctx: &Arc<dyn MppContext>,
-        request: &MppBuildTasksRequest,
+        request: MppBuildTasksRequest,
         kv_context: &crate::StatementKvContext,
         dispatch_policy: tidb_tiflashcompute::DispatchPolicy,
         replica_read: tidb_tiflash::ReplicaRead,

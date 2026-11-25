@@ -245,8 +245,7 @@ impl AggFunc for GroupConcat {
                     }
                     Some(buffer) => buffer.write(&self.0.sep),
                 }
-                let vals = p.vals_buf.bytes().to_vec();
-                p.buffer.as_mut().expect("just set").write(&vals);
+                p.buffer.as_mut().expect("just set").write(p.vals_buf.bytes());
             }
             match p.buffer.as_mut() {
                 Some(buffer) => self.0.truncate_partial_result_if_need(sctx, buffer),

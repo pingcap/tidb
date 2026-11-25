@@ -18,5 +18,5 @@
 mod escape;
 mod hash64;
 
-pub use escape::unescape_char;
+pub use escape::{append_unescaped_char, unescape_char};
 pub use hash64::IHasher;

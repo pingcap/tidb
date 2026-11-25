@@ -17,13 +17,15 @@
 //! the node's client-rust store. The coprocessor holds it as a trait object,
 //! so a transaction opener can hand its node's store to the reads it serves.
 
+use std::borrow::Cow;
 use std::sync::Arc;
 use std::time::Duration;
 
-use prost::Message as _;
-
+use tidb_proto::{CoprocessorRequest, CoprocessorResponse};
 use tidb_txnkv::driver::tikv_store::TikvStore;
 use tidb_txnkv::lock::LockRecoveryResult;
+
+use crate::coprocessor_request::CoprocessorRequestEnvelope;
 
 /// One task's `Backoffer` (Go `bo`), shared with the store's sender and lock
 /// resolver.
@@ -32,9 +34,9 @@ pub type CopBackoffer = Arc<tokio::sync::Mutex<tikv_client::tikv::Backoffer>>;
 /// What the store's sender answered for one task.
 #[derive(Debug)]
 pub enum NativeCopSend {
-    /// The response, encoded (`coprocessor.Response`), and the address of
-    /// the store that answered (client-go `rpcCtx.Addr`).
-    Response(Vec<u8>, Option<String>),
+    /// The native response and the address of the store that answered
+    /// (client-go `rpcCtx.Addr`).
+    Response(CoprocessorResponse, Option<String>),
     /// A region error the caller handles: the task's ranges are located again.
     RegionError(String),
 }
@@ -46,27 +48,44 @@ pub trait NativeCopStore: Send + Sync + 'static {
     fn cluster_id(&self) -> u64;
 
     /// Go `RegionCache.SplitKeyRangesByLocations`' locations: the regions
-    /// covering `ranges`, in key order, located with the `bo` whose ctx
+    /// covering borrowed logical bounds, in key order, located with the `bo` whose ctx
     /// holds `kv_context` (its PD waits are the statement's).
-    fn locate(
+    fn locate<'a>(
         &self,
-        ranges: &[(Vec<u8>, Vec<u8>)],
+        ranges: &mut (dyn Iterator<Item = (&'a [u8], &'a [u8])> + Send),
         kv_context: &tidb_txnkv::StatementKvContext,
     ) -> Result<Vec<tikv_client::RegionWithLeader>, tikv_client::Error>;
 
-    /// Go `KVStore.SendReq(bo, req, region, timeout)`, `request` encoded.
+    /// Go `KVStore.SendReq(bo, req, region, timeout)`.
     /// `kv_context` holds Go's `bo.GetCtx()` values: the
     /// `util.RUDetailsCtxKey` value the resource-control interceptor charges
     /// for each RPC and the `util.ExecDetailsKey` value.
     fn send(
         &self,
         backoffer: &CopBackoffer,
-        request: &[u8],
+        request: CoprocessorRequest,
         region: (u64, u64, u64),
         timeout: Duration,
         kv_context: &tidb_txnkv::StatementKvContext,
         stats: Option<Arc<tikv_client::RegionRequestRuntimeStats>>,
     ) -> Result<NativeCopSend, tikv_client::Error>;
+
+    /// Sends a prepared envelope with the transport's final request context.
+    #[allow(clippy::too_many_arguments)]
+    fn send_prepared(
+        &self,
+        backoffer: &CopBackoffer,
+        request: &CoprocessorRequestEnvelope,
+        context: &tidb_proto::KvrpcContext,
+        region: (u64, u64, u64),
+        timeout: Duration,
+        kv_context: &tidb_txnkv::StatementKvContext,
+        stats: Option<Arc<tikv_client::RegionRequestRuntimeStats>>,
+    ) -> Result<NativeCopSend, tikv_client::Error> {
+        let mut request = request.to_proto();
+        request.context = Some(context.clone());
+        self.send(backoffer, request, region, timeout, kv_context, stats)
+    }
 
     /// Go `ResolveLocksWithOpts` for a read, from `handleLockErr`, under the
     /// same `bo` ctx as [`Self::send`].
@@ -151,66 +170,120 @@ where
     }
 }
 
+fn send_coprocessor_request<PdC: tikv_client::PdClient>(
+    store: &TikvStore<PdC>,
+    backoffer: &CopBackoffer,
+    request: CoprocessorRequest,
+    region: (u64, u64, u64),
+    timeout: Duration,
+    kv_context: &tidb_txnkv::StatementKvContext,
+    stats: Option<Arc<tikv_client::RegionRequestRuntimeStats>>,
+) -> Result<NativeCopSend, tikv_client::Error> {
+    let region = tikv_client::RegionVerId {
+        id: region.0,
+        conf_ver: region.1,
+        ver: region.2,
+    };
+    let send = store
+        .store()
+        .send_req_ctx_with_stats(Arc::clone(backoffer), request, &region, timeout, stats);
+    match store.block_on(with_statement_kv_context(kv_context, send)) {
+        Ok((response, address)) => Ok(NativeCopSend::Response(response, address)),
+        Err(tikv_client::Error::RegionError(error)) => {
+            Ok(NativeCopSend::RegionError(format!("{error:?}")))
+        }
+        Err(error) => Err(error),
+    }
+}
+
 impl<PdC: tikv_client::PdClient> NativeCopStore for TikvStore<PdC> {
     fn cluster_id(&self) -> u64 {
         self.block_on(self.store().pd_client().cluster_id())
     }
 
-    fn locate(
+    fn locate<'a>(
         &self,
-        ranges: &[(Vec<u8>, Vec<u8>)],
+        ranges: &mut (dyn Iterator<Item = (&'a [u8], &'a [u8])> + Send),
         kv_context: &tidb_txnkv::StatementKvContext,
     ) -> Result<Vec<tikv_client::RegionWithLeader>, tikv_client::Error> {
         self.block_on(with_statement_kv_context(kv_context, async {
             let pd = self.store().pd_client();
-            let codec=match self.store().keyspace() {
-                tikv_client::request::Keyspace::Enable {keyspace_id}=>Some(tikv_client::request::ApiV2Codec::new(tikv_client::request::KeyMode::Txn,keyspace_id)?),
-                _=>None,
+            let codec = match self.store().keyspace() {
+                tikv_client::request::Keyspace::Enable { keyspace_id } => Some(
+                    tikv_client::request::ApiV2Codec::new(tikv_client::request::KeyMode::Txn, keyspace_id)?,
+                ),
+                _ => None,
             };
+            let prefix = codec.as_ref().map(tikv_client::request::ApiV2Codec::prefix);
+            let prefix = prefix.as_ref().map(|prefix| prefix.as_slice());
             let mut regions: Vec<tikv_client::RegionWithLeader> = Vec::new();
             // The physical bounds of the location in use (Go's `loc`).
             let mut current: Option<(Vec<u8>, Vec<u8>)> = None;
             for (start, end) in ranges {
+                if current.as_ref().is_some_and(|bounds| {
+                    location_covers_logical_range(bounds, start, end, prefix)
+                }) {
+                    continue;
+                }
                 // Go `CodecPDClient`: TiDB sees logical boundaries, while
                 // the native client's region cache retains physical keys.
-                let (start,end)=codec.as_ref().map_or_else(||(start.clone(),end.clone()),|codec|codec.encode_range(start,end));
-                let mut next = start;
+                let (mut next, end) = if let Some(codec) = &codec {
+                    let (start, end) = codec.encode_range(start, end);
+                    (Cow::Owned(start), Cow::Owned(end))
+                } else {
+                    (Cow::Borrowed(start), Cow::Borrowed(end))
+                };
                 loop {
                     // Go `SplitKeyRangesByLocations`: a key the current
                     // location contains stays with it, and only a key past it
                     // is located again. Two locations therefore never overlap,
                     // however the region cache changed between two lookups (a
                     // split of the table being read).
-                    if let Some((_, current_end)) =
-                        current.as_ref().filter(|bounds| location_contains(bounds, &next))
+                    if let Some((_, current_end)) = current
+                        .as_ref()
+                        .filter(|(start, end)| location_contains(start, end, &next))
                     {
-                        if current_end.is_empty() || (!end.is_empty() && *current_end >= end) {break;}
-                        next = current_end.clone();
+                        if current_end.is_empty()
+                            || (!end.is_empty() && current_end.as_slice() >= end.as_ref())
+                        {
+                            break;
+                        }
+                        next = Cow::Owned(current_end.clone());
                         continue;
                     }
-                    let mut region = pd.region_for_key(&next.clone().into()).await?;
+                    let lookup_key = tikv_client::Key::from(next.into_owned());
+                    let mut region = pd.region_for_key(&lookup_key).await?;
+                    let located_from: &[u8] = (&lookup_key).into();
                     let region_end = region.region.end_key.clone();
                     // A location refreshed since the previous one was read may
                     // begin before that one ends; it is used from this key on.
-                    if region.region.start_key < next
-                        && current.as_ref().is_some_and(|(_, current_end)| region.region.start_key < *current_end)
+                    if region.region.start_key.as_slice() < located_from
+                        && current.as_ref().is_some_and(|(_, current_end)| {
+                            region.region.start_key < *current_end
+                        })
                     {
-                        region.region.start_key.clone_from(&next);
+                        region.region.start_key.clear();
+                        region.region.start_key.extend_from_slice(located_from);
                     }
                     current = Some((region.region.start_key.clone(), region_end.clone()));
                     if regions.last().is_none_or(|last| last.region.id != region.region.id) {
-                        if let Some(codec)=&codec {
-                            (region.region.start_key,region.region.end_key)=codec.decode_range(&region.region.start_key,&region.region.end_key)?;
-                            if let Some(buckets)=&mut region.buckets {
-                                let wire=tikv_client::request::ApiV1Codec::new(tikv_client::request::KeyMode::Txn);
-                                let encoded=buckets.keys.iter().map(|key|wire.encode_region_key(key)).collect::<Vec<_>>();
-                                buckets.keys=codec.decode_bucket_keys(&encoded)?;
+                        if let Some(codec) = &codec {
+                            (region.region.start_key, region.region.end_key) =
+                                codec.decode_range(&region.region.start_key, &region.region.end_key)?;
+                            if let Some(buckets) = &mut region.buckets {
+                                let wire = tikv_client::request::ApiV1Codec::new(tikv_client::request::KeyMode::Txn);
+                                let encoded = buckets.keys.iter()
+                                    .map(|key| wire.encode_region_key(key))
+                                    .collect::<Vec<_>>();
+                                buckets.keys = codec.decode_bucket_keys(&encoded)?;
                             }
                         }
                         regions.push(region);
                     }
-                    if region_end.is_empty() || (!end.is_empty() && region_end >= end) {break;}
-                    next = region_end;
+                    if region_end.is_empty() || (!end.is_empty() && region_end.as_slice() >= end.as_ref()) {
+                        break;
+                    }
+                    next = Cow::Owned(region_end);
                 }
             }
             Ok(regions)
@@ -220,38 +293,37 @@ impl<PdC: tikv_client::PdClient> NativeCopStore for TikvStore<PdC> {
     fn send(
         &self,
         backoffer: &CopBackoffer,
-        request: &[u8],
+        request: CoprocessorRequest,
         region: (u64, u64, u64),
         timeout: Duration,
         kv_context: &tidb_txnkv::StatementKvContext,
         stats: Option<Arc<tikv_client::RegionRequestRuntimeStats>>,
     ) -> Result<NativeCopSend, tikv_client::Error> {
-        let request = tikv_client::proto::coprocessor::Request::decode(request)
-            .map_err(|error| tikv_client::Error::StringError(error.to_string()))?;
         // Go `codecV2.EncodeRequest(CmdCop)`: prefix every unary/batched
         // range before dispatch. The native plan decodes response key fields.
-        let request=match self.store().keyspace() {
-            tikv_client::request::Keyspace::Enable {keyspace_id}=>tikv_client::request::ApiV2Codec::new(tikv_client::request::KeyMode::Txn,keyspace_id)?.encode_coprocessor_request(&request),
-            _=>request,
-        };
-        let region = tikv_client::RegionVerId {
-            id: region.0,
-            conf_ver: region.1,
-            ver: region.2,
-        };
-        let send = self
-            .store()
-            .send_req_ctx_with_stats(Arc::clone(backoffer), request, &region, timeout, stats);
-        let sent = self.block_on(with_statement_kv_context(kv_context, send));
-        match sent {
-            Ok((response, address)) => {
-                Ok(NativeCopSend::Response(response.encode_to_vec(), address))
+        let request = match self.store().keyspace() {
+            tikv_client::request::Keyspace::Enable { keyspace_id } => {
+                tikv_client::request::ApiV2Codec::new(tikv_client::request::KeyMode::Txn, keyspace_id)?
+                    .encode_owned_coprocessor_request(request)
             }
-            Err(tikv_client::Error::RegionError(error)) => {
-                Ok(NativeCopSend::RegionError(format!("{error:?}")))
-            }
-            Err(error) => Err(error),
-        }
+            _ => request,
+        };
+        send_coprocessor_request(self, backoffer, request, region, timeout, kv_context, stats)
+    }
+
+    fn send_prepared(
+        &self,
+        backoffer: &CopBackoffer,
+        request: &CoprocessorRequestEnvelope,
+        context: &tidb_proto::KvrpcContext,
+        region: (u64, u64, u64),
+        timeout: Duration,
+        kv_context: &tidb_txnkv::StatementKvContext,
+        stats: Option<Arc<tikv_client::RegionRequestRuntimeStats>>,
+    ) -> Result<NativeCopSend, tikv_client::Error> {
+        let mut request = request.to_proto_for_keyspace(self.store().keyspace())?;
+        request.context = Some(context.clone());
+        send_coprocessor_request(self, backoffer, request, region, timeout, kv_context, stats)
     }
 
     fn resolve_lock(
@@ -263,14 +335,9 @@ impl<PdC: tikv_client::PdClient> NativeCopStore for TikvStore<PdC> {
         kv_context: &tidb_txnkv::StatementKvContext,
     ) -> Result<LockRecoveryResult, tikv_client::Error> {
         use tikv_client::txnkv::txnlock::{LockHintsInRequest, ResolveLocksOptions};
-        let lock = tikv_client::proto::kvrpcpb::LockInfo::decode(lock.encode_to_vec().as_slice())
-            .map_err(|error| tikv_client::Error::StringError(error.to_string()))?;
-        let native_context =
-            tikv_client::proto::kvrpcpb::Context::decode(context.encode_to_vec().as_slice())
-                .map_err(|error| tikv_client::Error::StringError(error.to_string()))?;
         let opts = ResolveLocksOptions {
             caller_start_ts,
-            locks: vec![lock],
+            locks: vec![lock.clone()],
             for_read: true,
             lock_hints_in_request: LockHintsInRequest::new(
                 &context.resolved_locks,
@@ -281,7 +348,7 @@ impl<PdC: tikv_client::PdClient> NativeCopStore for TikvStore<PdC> {
         let result = self.block_on(with_statement_kv_context(
             kv_context,
             self.store()
-                .resolve_locks_with_opts(&native_context, Arc::clone(backoffer), opts),
+                .resolve_locks_with_opts(context, Arc::clone(backoffer), opts),
         ))?;
         Ok(LockRecoveryResult {
             ttl: Duration::from_millis(u64::try_from(result.ttl).unwrap_or(0)),
@@ -353,22 +420,69 @@ impl<PdC: tikv_client::PdClient> NativeCopStore for TikvStore<PdC> {
 
 /// Go `KeyLocation.Contains`: whether `key` is in `[start, end)`, an empty
 /// end being unbounded.
-fn location_contains((start, end): &(Vec<u8>, Vec<u8>), key: &[u8]) -> bool {
-    key >= start.as_slice() && (end.is_empty() || key < end.as_slice())
+fn location_contains(start: &[u8], end: &[u8], key: &[u8]) -> bool {
+    key >= start && (end.is_empty() || key < end)
+}
+
+fn location_covers_logical_range(
+    (physical_start, physical_end): &(Vec<u8>, Vec<u8>),
+    range_start: &[u8],
+    range_end: &[u8],
+    prefix: Option<&[u8]>,
+) -> bool {
+    // A physical boundary outside this keyspace clips to its logical edge,
+    // like ApiV2Codec::decode_range. The current region intersects the keyspace.
+    let (start, end) = if let Some(prefix) = prefix {
+        (
+            physical_start.strip_prefix(prefix).unwrap_or_default(),
+            physical_end.strip_prefix(prefix).unwrap_or_default(),
+        )
+    } else {
+        (physical_start.as_slice(), physical_end.as_slice())
+    };
+    location_contains(start, end, range_start)
+        && (end.is_empty() || (!range_end.is_empty() && range_end <= end))
 }
 
 #[cfg(test)]
 mod location_tests {
-    use super::location_contains;
+    use super::{location_contains, location_covers_logical_range};
 
     #[test]
     fn a_location_contains_its_half_open_range() {
-        let bounded = (b"b".to_vec(), b"d".to_vec());
-        assert!(location_contains(&bounded, b"b"));
-        assert!(location_contains(&bounded, b"c"));
-        assert!(!location_contains(&bounded, b"d"));
-        assert!(!location_contains(&bounded, b"a"));
-        let unbounded = (b"b".to_vec(), Vec::new());
-        assert!(location_contains(&unbounded, b"zz"));
+        assert!(location_contains(b"b", b"d", b"b"));
+        assert!(location_contains(b"b", b"d", b"c"));
+        assert!(!location_contains(b"b", b"d", b"d"));
+        assert!(!location_contains(b"b", b"d", b"a"));
+        assert!(location_contains(b"b", b"", b"zz"));
+    }
+
+    #[test]
+    fn logical_keyspace_coverage_matches_encoded_boundaries() {
+        let codec = tikv_client::request::ApiV2Codec::new(tikv_client::request::KeyMode::Txn, 42)
+            .unwrap();
+        let prefix = codec.prefix();
+        let regions = [
+            (vec![], vec![]),
+            (vec![10], vec![250, 250]),
+            (prefix.to_vec(), codec.encode_key(b"m")),
+            (codec.encode_key(b"m"), codec.encode_key(b"w")),
+            (codec.encode_key(b"m"), codec.end_key().to_vec()),
+        ];
+        let keys: &[&[u8]] = &[b"", b"a", b"m", b"n", b"w", b"z"];
+        for bounds in &regions {
+            for &start in keys {
+                for &end in keys.iter().filter(|&&end| end.is_empty() || start <= end) {
+                    let (physical_start, physical_end) = codec.encode_range(start, end);
+                    let encoded_coverage = location_contains(&bounds.0, &bounds.1, &physical_start)
+                        && (bounds.1.is_empty() || physical_end <= bounds.1);
+                    assert_eq!(
+                        location_covers_logical_range(bounds, start, end, Some(&prefix)),
+                        encoded_coverage,
+                        "location {bounds:?} and range {start:?}..{end:?}",
+                    );
+                }
+            }
+        }
     }
 }

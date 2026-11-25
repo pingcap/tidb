@@ -293,7 +293,7 @@ impl MutRow {
             target.null_bitmap[0] = u8::from(prepared.not_null);
             target.data = prepared.data;
             if let Some(length) = prepared.variable_length {
-                target.offsets[1] = length;
+                target.offsets.set(1, length);
             }
         }
     }
@@ -316,8 +316,8 @@ fn prepare_shallow_column(source: &mut Column, row_idx: usize) -> PreparedShallo
             variable_length: None,
         }
     } else {
-        let start = source.offsets[row_idx] as usize;
-        let end = source.offsets[row_idx + 1] as usize;
+        let start = source.offsets.at(row_idx) as usize;
+        let end = source.offsets.at(row_idx + 1) as usize;
         let data = source.data.share_range(start, end);
         PreparedShallowColumn {
             not_null,
@@ -330,7 +330,7 @@ fn prepare_shallow_column(source: &mut Column, row_idx: usize) -> PreparedShallo
 /// Go `cleanColOfMutRow`: zero every offset and clear the null bit, so the
 /// cell reads back as an empty NULL until something writes it.
 fn clean_col_of_mut_row(column: &mut Column) {
-    column.offsets.fill(0);
+    column.offsets.make_owned().fill(0);
     column.null_bitmap[0] = 0;
 }
 
@@ -340,8 +340,8 @@ fn new_mut_row_fixed_len_column(elem_size: usize) -> Column {
         length: 1,
         elem_buf: Some(vec![0; elem_size]),
         data: SharedBytes::zeros(elem_size),
-        null_bitmap: vec![1],
-        offsets: Vec::new(),
+        null_bitmap: vec![1].into(),
+        offsets: Default::default(),
         avoid_reusing: false,
     }
 }
@@ -354,8 +354,8 @@ fn new_mut_row_var_len_column(val_size: usize) -> Column {
         length: 1,
         elem_buf: None,
         data: SharedBytes::zeros(val_size),
-        null_bitmap: vec![1],
-        offsets: vec![0, val_size as i64],
+        null_bitmap: vec![1].into(),
+        offsets: vec![0, val_size as i64].into(),
         avoid_reusing: false,
     }
 }
@@ -545,10 +545,10 @@ fn set_mut_row_bytes(column: &mut Column, bytes: &[u8]) {
         column.data.truncate(bytes.len());
     } else {
         column.data = SharedBytes::zeros(bytes.len());
-        column.null_bitmap = vec![0];
+        column.null_bitmap = vec![0].into();
     }
     column.data.copy_from_slice(0..bytes.len(), bytes);
-    column.offsets[1] = bytes.len() as i64;
+    column.offsets.set(1, bytes.len() as i64);
 }
 
 /// Go `setMutRowNameValue`.
@@ -558,11 +558,11 @@ fn set_mut_row_name_value(column: &mut Column, name: &[u8], value: u64) {
         column.data.truncate(data_len);
     } else {
         column.data = SharedBytes::zeros(data_len);
-        column.null_bitmap = vec![0];
+        column.null_bitmap = vec![0].into();
     }
     column.data.copy_from_slice(0..8, &value.to_le_bytes());
     column.data.copy_from_slice(8..data_len, name);
-    column.offsets[1] = data_len as i64;
+    column.offsets.set(1, data_len as i64);
 }
 
 /// Go `setMutRowJSON`: the type code byte followed by the value bytes.
@@ -572,11 +572,11 @@ fn set_mut_row_json(column: &mut Column, value: &BinaryJSON) {
         column.data.truncate(data_len);
     } else {
         column.data = SharedBytes::zeros(data_len);
-        column.null_bitmap = vec![0];
+        column.null_bitmap = vec![0].into();
     }
     column.data.set(0, value.type_code());
     column.data.copy_from_slice(1..data_len, value.value());
-    column.offsets[1] = data_len as i64;
+    column.offsets.set(1, data_len as i64);
 }
 
 #[cfg(test)]
@@ -810,7 +810,7 @@ use tidb_charset::Collation;
             let column = mut_row.chunk.column(i);
             assert!(column.is_null(0), "col {i}: must read back NULL");
             assert!(
-                column.offsets.iter().all(|&off| off == 0),
+                column.offsets.iter().all(|off| off == 0),
                 "col {i}: offsets must be zeroed"
             );
             assert_eq!(&column.data, data, "col {i}: data buffer changed");
@@ -1124,9 +1124,18 @@ use tidb_charset::Collation;
         row_chunk.append_string(0, "abc");
         row_chunk.append_int64(1, 123);
         row_chunk.append_time(2, zero_timestamp);
+        assert!(row_chunk.column_ref(0).try_borrow_stable().is_some());
+        let row = row_chunk.get_row(0);
+        assert_eq!(row.try_borrow_var_bytes(0), Some(b"abc".as_slice()));
+        assert_eq!(row.try_borrow_var_bytes(1), None);
         mut_row.shallow_copy_partial_row(0, &mut row_chunk, 0);
         let copied = mut_row.to_row();
         let row = row_chunk.get_row(0);
+        assert_eq!(copied.try_borrow_var_bytes(0), None);
+        assert_eq!(row.try_borrow_var_bytes(0), None);
+        assert!(row_chunk.column_ref(0).try_borrow_stable().is_none());
+        assert_eq!(copied.try_var_bytes_len(0), Some(Some(3)));
+        assert_eq!(row.try_var_bytes_len(0), Some(Some(3)));
         assert_eq!(
             copied.get_string(0).as_bytes(),
             row.get_string(0).as_bytes()
@@ -1196,8 +1205,8 @@ use tidb_charset::Collation;
             assert!(row.is_null(index), "column {index} holds NULL");
             {
                 let column = mut_row.chunk.columns[index].read();
-                for offset in &column.offsets {
-                    assert_eq!(*offset, 0, "column {index} offsets collapse to 0");
+                for offset in column.offsets.iter() {
+                    assert_eq!(offset, 0, "column {index} offsets collapse to 0");
                 }
             }
             let after = snapshot(&mut_row, index);

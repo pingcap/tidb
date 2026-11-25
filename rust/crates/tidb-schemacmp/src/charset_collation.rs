@@ -150,24 +150,18 @@ pub fn collation(co: &str) -> CollationLattice {
 
 impl CollationLattice {
     /// Go `unwrapString`: the normalized collation spelling.
-    fn unwrap_string(&self) -> String {
+    pub(crate) fn unwrap_string(&self) -> String {
         if self.suffix.is_empty() {
             return self.charset.value.clone();
         }
         format!("{}_{}", self.charset.value, self.suffix)
     }
-}
 
-impl Lattice for CollationLattice {
-    fn unwrap(&self) -> Value {
-        Value::Str(GoString::from(self.unwrap_string()))
+    pub(crate) fn is_binary(&self) -> bool {
+        self.suffix.is_empty() && self.charset.value == "binary"
     }
 
-    fn compare(&self, other: &dyn Lattice) -> Result<i32, IncompatibleError> {
-        let Some(b) = other.as_any().downcast_ref::<Self>() else {
-            return Err(type_mismatch_error(self, other));
-        };
-
+    pub(crate) fn compare_collation(&self, b: &Self) -> Result<i32, IncompatibleError> {
         if self.suffix != b.suffix {
             return Err(incompatible_collation_error(
                 &self.unwrap_string(),
@@ -178,17 +172,13 @@ impl Lattice for CollationLattice {
         self.charset.compare(&b.charset)
     }
 
-    fn join(&self, other: &dyn Lattice) -> Result<Box<dyn Lattice>, IncompatibleError> {
-        let Some(b) = other.as_any().downcast_ref::<Self>() else {
-            return Err(type_mismatch_error(self, other));
-        };
-
-        let error = match self.compare(b) {
+    pub(crate) fn join_collation(&self, b: &Self) -> Result<Self, IncompatibleError> {
+        let error = match self.compare_collation(b) {
             Ok(cmp) => {
                 if cmp >= 0 {
-                    return Ok(self.clone_lattice());
+                    return Ok(self.clone());
                 }
-                return Ok(b.clone_lattice());
+                return Ok(b.clone());
             }
             Err(error) => error,
         };
@@ -208,10 +198,30 @@ impl Lattice for CollationLattice {
             .downcast_ref::<CharsetLattice>()
             .expect("charset join returns a charset lattice")
             .clone();
-        Ok(Box::new(Self {
+        Ok(Self {
             charset: joined,
             suffix: self.suffix.clone(),
-        }))
+        })
+    }
+}
+
+impl Lattice for CollationLattice {
+    fn unwrap(&self) -> Value {
+        Value::Str(GoString::from(self.unwrap_string()))
+    }
+
+    fn compare(&self, other: &dyn Lattice) -> Result<i32, IncompatibleError> {
+        let Some(b) = other.as_any().downcast_ref::<Self>() else {
+            return Err(type_mismatch_error(self, other));
+        };
+        self.compare_collation(b)
+    }
+
+    fn join(&self, other: &dyn Lattice) -> Result<Box<dyn Lattice>, IncompatibleError> {
+        let Some(b) = other.as_any().downcast_ref::<Self>() else {
+            return Err(type_mismatch_error(self, other));
+        };
+        self.join_collation(b).map(|joined| Box::new(joined) as Box<dyn Lattice>)
     }
 
     fn go_type_name(&self) -> &'static str {

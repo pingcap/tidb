@@ -68,11 +68,9 @@ use tidb_datatype::{
     ConversionFlags, Datum, EvalType, FieldType, FieldTypeCode, SessionTimeZone,
     DEFAULT_STATEMENT_FLAGS,
 };
-use tidb_stats::cmsketch::{
-    cm_sketch_and_top_n_from_proto, CmsSketchProto, CmsSketchProtoRow, CmsSketchProtoTopN,
-};
+use tidb_stats::cmsketch::{cmsketch_and_topn_from_decoded, TopNEntry};
 use tidb_stats::histogram::Histogram;
-use tidb_stats::{fm_sketch_from_proto, ColAndIdxExistenceMap, Column, FmSketchProto, HistColl, Index, StatsLoadedStatus, Table};
+use tidb_stats::{ColAndIdxExistenceMap, Column, FmSketch, HistColl, Index, StatsLoadedStatus, Table};
 use tidb_stats_util::{JsonBucket, JsonCmSketch, JsonCmSketchRow, JsonCmSketchTopN, JsonColumn, JsonFmSketch, JsonHistogram, JsonPredicateColumn};
 use tidb_stats_util::JsonTable;
 
@@ -129,7 +127,7 @@ pub fn parse_stats_json(data: &str) -> Result<JsonTable, LoadStatsError> {
 }
 
 fn encode_base64(value: &[u8]) -> String {
-    base64::engine::general_purpose::STANDARD.encode(value)
+    base64_simd::STANDARD.encode_to_string(value)
 }
 
 fn histogram_to_json(
@@ -142,15 +140,16 @@ fn histogram_to_json(
             if column_bounds {
                 value
                     .sql_bytes()
+                    .map(|bytes| encode_base64(&bytes))
                     .map_err(|error| LoadStatsError::Convert(error.to_string()))
             } else {
-                Ok(value.go_bytes().to_vec())
+                Ok(encode_base64(value.go_bytes()))
             }
         };
         buckets.push(Some(JsonBucket {
             count: bucket.count,
-            lower_bound: Some(encode_base64(&bound(&bucket.lower_bound)?)),
-            upper_bound: Some(encode_base64(&bound(&bucket.upper_bound)?)),
+            lower_bound: Some(bound(&bucket.lower_bound)?),
+            upper_bound: Some(bound(&bucket.upper_bound)?),
             repeats: bucket.repeat,
             ndv: Some(bucket.ndv),
         }));
@@ -169,28 +168,22 @@ fn cmsketch_to_json(
         return None;
     }
     let rows = sketch.map(|sketch| {
-        (0..sketch.depth())
+        sketch
+            .counter_rows()
             .map(|row| {
                 Some(JsonCmSketchRow {
-                    counters: Some(
-                        (0..sketch.width())
-                            .map(|column| {
-                                sketch
-                                    .counter_at(row, column)
-                                    .expect("CMSketch coordinate inside dimensions")
-                            })
-                            .collect(),
-                    ),
+                    counters: Some(row.to_vec()),
                 })
             })
             .collect()
     });
     let top_n = topn.map(|topn| {
-        topn.resolved_entries()
-            .into_iter()
-            .map(|entry| {
+        topn.entries()
+            .iter()
+            .enumerate()
+            .map(|(index, entry)| {
                 Some(JsonCmSketchTopN {
-                    data: Some(encode_base64(&entry.encoded)),
+                    data: Some(topn.with_resolved_bytes(index, encode_base64)),
                     count: entry.count,
                 })
             })
@@ -305,9 +298,11 @@ pub fn gen_json_table_from_stats(
 fn decode_base64(field: Option<&String>) -> Result<Vec<u8>, LoadStatsError> {
     match field {
         None => Ok(Vec::new()),
-        Some(text) => base64::engine::general_purpose::STANDARD
-            .decode(text)
-            .map_err(|error| LoadStatsError::Base64(error.to_string())),
+        Some(text) => base64_simd::STANDARD.decode_to_vec(text).or_else(|_| {
+            base64::engine::general_purpose::STANDARD
+                .decode(text)
+                .map_err(|error| LoadStatsError::Base64(error.to_string()))
+        }),
     }
 }
 
@@ -352,12 +347,7 @@ static EMPTY_BUCKET: JsonBucket = JsonBucket {
     ndv: None,
 };
 
-/// The dumped `tipb.CMSketch` handed to the shared
-/// [`cm_sketch_and_top_n_from_proto`] conversion -- the same code path Go's
-/// `CMSketchAndTopNFromProto` is, so a sketch loads exactly as one decoded
-/// from `mysql.stats_histograms` would, TopN sort included. That final
-/// `topN.Sort()` matters: the estimator binary-searches the TopN
-/// (`TopN.LowerBound`), and the dump wrote entries in pruning order.
+/// Go `CMSketchAndTopNFromProto` for the dumped sketch and decoded TopN keys.
 fn cmsketch_from_json(
     proto: Option<&JsonCmSketch>,
 ) -> Result<
@@ -370,50 +360,34 @@ fn cmsketch_from_json(
     let Some(proto) = proto else {
         return Ok((None, None));
     };
-    let rows = match &proto.rows {
-        None => None,
-        Some(rows) => Some(
-            rows.iter()
-                .map(|row| {
-                    row.as_ref().map(|row| CmsSketchProtoRow {
-                        counters: row.counters.clone(),
-                    })
-                })
-                .collect(),
-        ),
-    };
-    let top_n = match &proto.top_n {
-        None => None,
-        Some(entries) => {
-            let mut converted = Vec::with_capacity(entries.len());
-            for entry in entries {
-                converted.push(match entry {
-                    None => None,
-                    Some(entry) => Some(CmsSketchProtoTopN {
-                        data: Some(decode_base64(entry.data.as_ref())?),
-                        count: entry.count,
-                    }),
-                });
-            }
-            Some(converted)
-        }
-    };
-    let native = CmsSketchProto {
-        rows,
-        top_n,
-        default_value: proto.default_value,
-    };
-    Ok(cm_sketch_and_top_n_from_proto(Some(&native)))
+    let entries = proto.top_n.as_deref().unwrap_or_default();
+    let mut topn = Vec::with_capacity(entries.len());
+    for entry in entries.iter().flatten() {
+        topn.push(TopNEntry {
+            encoded: decode_base64(entry.data.as_ref())?,
+            count: entry.count,
+        });
+    }
+    assert!(topn.len() == entries.len(), "nil CMSketchTopN message");
+    let rows = proto.rows.as_deref().unwrap_or_default().iter().map(|row| {
+        row.as_ref()
+            .expect("nil CMSketchRow message")
+            .counters
+            .as_deref()
+            .unwrap_or_default()
+    });
+    Ok(cmsketch_and_topn_from_decoded(rows, topn.into_iter(), proto.default_value)
+        .expect("CMSketch protobuf dimensions exceed addressable memory"))
 }
 
 /// Go `statistics.FMSketchFromProto` for the JSON proto-shaped value.
 fn fmsketch_from_json(proto: Option<&JsonFmSketch>) -> Option<tidb_stats::FmSketch> {
-    proto.and_then(|proto| {
-        let native = FmSketchProto {
-            mask: proto.mask,
-            hashset: proto.hashset.clone().unwrap_or_default(),
-        };
-        fm_sketch_from_proto(Some(&native))
+    proto.map(|proto| {
+        FmSketch::from_raw_parts(
+            proto.mask,
+            0,
+            proto.hashset.as_deref().unwrap_or_default().iter().copied(),
+        )
     })
 }
 
@@ -470,7 +444,7 @@ fn column_from_json(
     info: &tidb_model::GoShared<tidb_model::ColumnInfo>,
     json: &JsonColumn,
     physical_id: i64,
-    is_handle: bool,
+    pk_is_handle: bool,
 ) -> Result<Column, LoadStatsError> {
     let column = info.read();
     let proto = json
@@ -526,7 +500,8 @@ fn column_from_json(
         stats_loaded_status: StatsLoadedStatus::full_load(),
         physical_id,
         stats_version: resolve_stats_version(json),
-        is_handle,
+        is_handle: pk_is_handle
+            && column.field_type.has_flag(tidb_datatype::FieldTypeFlags::PRI_KEY),
     })
 }
 
@@ -565,7 +540,8 @@ fn index_from_json(
 /// `partitions` entry) against one table's schema, producing the canonical
 /// full statistics table for one physical table id.
 ///
-/// Name resolution mirrors Go's double loop exactly: a dumped entry that
+/// Name resolution matches Go's case-sensitive comparison of stored
+/// lowercase names and dump keys. A dumped entry that
 /// matches no current column or index is DROPPED silently (the schema moved
 /// on since the dump), and a column with no dumped entry simply has no
 /// statistics -- the estimator falls back to its per-column pseudo rates for
@@ -576,6 +552,51 @@ pub fn statistics_table_from_json(
     json: &JsonTable,
 ) -> Result<Table, LoadStatsError> {
     table_stats_from_json(&table.meta().read(), physical_id, json)
+}
+
+/// Match wide dumps with one metadata scan. Keep dump-key order and the
+/// original order of metadata with the same name, including duplicate names.
+fn visit_stats_matches<T>(
+    metadata: &tidb_model::GoSharedPointerSlice<T>,
+    dumped: &BTreeMap<String, Option<JsonColumn>>,
+    name_of: impl Fn(&T) -> &str,
+    null_entry: &str,
+    mut visit: impl FnMut(&tidb_model::GoShared<T>, &JsonColumn) -> Result<(), LoadStatsError>,
+) -> Result<(), LoadStatsError> {
+    if dumped.len() > 1 && dumped.len().saturating_mul(metadata.len()) >= 256 {
+        let handles = metadata.handles();
+        // The direct path preserves the dereference order for nil pointers.
+        if handles.iter().all(Option::is_some) {
+            let mut matches = Vec::with_capacity(handles.len().min(dumped.len()));
+            for handle in handles.into_iter().flatten() {
+                let key = dumped
+                    .get_key_value(name_of(&handle.read()))
+                    .map(|(name, _)| name.as_str());
+                if let Some(key) = key {
+                    matches.push((key, handle));
+                }
+            }
+            matches.sort_by_key(|(key, _)| *key);
+            let mut matches = matches.iter().peekable();
+            for (name, entry) in dumped {
+                let entry = entry.as_ref().expect(null_entry);
+                while matches.peek().is_some_and(|(key, _)| key == name) {
+                    let (_, handle) = matches.next().unwrap();
+                    visit(handle, entry)?;
+                }
+            }
+            return Ok(());
+        }
+    }
+    for (name, entry) in dumped {
+        let entry = entry.as_ref().expect(null_entry);
+        for handle in metadata.iter_deref() {
+            if name_of(&handle.read()) == name {
+                visit(&handle, entry)?;
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Go `storage.TableStatsFromJSON(tableInfo, physicalID, jsonTbl)`.
@@ -593,54 +614,40 @@ pub fn table_stats_from_json(
     );
     let mut existence = ColAndIdxExistenceMap::new(table.columns.len(), table.indices.len());
     if let Some(dumped) = &json.indices {
-        for (name, entry) in dumped {
-            let entry = entry.as_ref().expect("index stats JSON entry is null");
-            for index in table.indices.iter_deref() {
-                // Go: `idxInfo.Name.L != id` -- the LOWERCASED schema name
-                // against the raw map key. Dumps write lowercase keys
-                // (`GenJSONTableFromStats` uses `.Name.L`), so an uppercase
-                // key matches nothing there and must match nothing here.
-                let (id, matches) = {
-                    let info = index.read();
-                    (info.id, info.name.lowercase() == name)
-                };
-                if !matches {
-                    continue;
-                }
-                let item = index_from_json(&index, entry, physical_id)?;
+        visit_stats_matches(
+            &table.indices,
+            dumped,
+            |index| index.name.lowercase(),
+            "index stats JSON entry is null",
+            |index, entry| {
+                let item = index_from_json(index, entry, physical_id)?;
+                let id = item.histogram.id;
                 if item.stats_version != 0 {
                     hist_coll.stats_version = item.stats_version as i32;
                 }
                 hist_coll.set_index(id, item);
                 existence.insert_index(id, true);
-            }
-        }
+                Ok(())
+            },
+        )?;
     }
     if let Some(dumped) = &json.columns {
-        for (name, entry) in dumped {
-            let entry = entry.as_ref().expect("column stats JSON entry is null");
-            for column in table.columns.iter_deref() {
-                // Same rule as the index loop: `colInfo.Name.L != id`.
-                let (id, matches, primary_key) = {
-                    let info = column.read();
-                    (
-                        info.id,
-                        info.name.lowercase() == name,
-                        info.field_type.has_flag(tidb_datatype::FieldTypeFlags::PRI_KEY),
-                    )
-                };
-                if !matches {
-                    continue;
-                }
-                let is_handle = table.pk_is_handle && primary_key;
-                let item = column_from_json(&column, entry, physical_id, is_handle)?;
+        visit_stats_matches(
+            &table.columns,
+            dumped,
+            |column| column.name.lowercase(),
+            "column stats JSON entry is null",
+            |column, entry| {
+                let item = column_from_json(column, entry, physical_id, table.pk_is_handle)?;
+                let id = item.histogram.id;
                 if item.stats_version != 0 {
                     hist_coll.stats_version = item.stats_version as i32;
                 }
                 hist_coll.set_column(id, item);
                 existence.insert_column(id, true);
-            }
-        }
+                Ok(())
+            },
+        )?;
     }
     Ok(Table {
         existence_map: Some(Arc::new(RwLock::new(existence))),
@@ -656,6 +663,85 @@ pub fn table_stats_from_json(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tidb_stats::FmSketchProto;
+
+    #[test]
+    fn wide_restore_preserves_dump_order_and_duplicate_metadata_order() {
+        use tidb_model::{ColumnInfo, TableInfo};
+
+        let make_column = |id, name| {
+            ColumnInfo::new(id, name, FieldType::new(FieldTypeCode::LongLong))
+        };
+        let mut pk = make_column(1, "Zed");
+        pk.field_type.add_flags(tidb_datatype::FieldTypeFlags::PRI_KEY);
+        let mut columns = vec![
+            pk,
+            make_column(2, "Key"),
+            make_column(2, "KEY"),
+            make_column(3, "Real"),
+        ];
+        columns.extend((4..32).map(|id| make_column(id, "with_no_dump")));
+        let schema = TableInfo {
+            pk_is_handle: true,
+            columns: columns.into(),
+            ..Default::default()
+        };
+        let item = |version| JsonColumn {
+            histogram: Some(JsonHistogram::default()),
+            stats_ver: Some(version),
+            ..Default::default()
+        };
+        let mut dumped = BTreeMap::from([
+            ("key".to_owned(), Some(item(1))),
+            ("zed".to_owned(), Some(item(2))),
+            ("Real".to_owned(), Some(item(3))),
+        ]);
+        dumped.extend((0..8).map(|id| (format!("stale{id}"), Some(item(3)))));
+        let mut json = JsonTable {
+            columns: Some(dumped),
+            ..Default::default()
+        };
+
+        let restored = table_stats_from_json(&schema, 42, &json).unwrap();
+        assert_eq!(restored.hist_coll.column_count(), 2);
+        assert_eq!(restored.hist_coll.stats_version, 2);
+        assert!(restored.hist_coll.get_column(1).unwrap().read().unwrap().is_handle);
+        let duplicate = restored.hist_coll.get_column(2).unwrap();
+        let last = schema.columns.iter_deref().nth(2).unwrap();
+        assert!(duplicate.read().unwrap().info.as_ref().unwrap().ptr_eq(&last));
+
+        let dumped = json.columns.as_mut().unwrap();
+        dumped.get_mut("key").unwrap().as_mut().unwrap().histogram = Some(JsonHistogram {
+            ndv: 1,
+            buckets: Some(vec![Some(JsonBucket {
+                lower_bound: Some("?".to_owned()),
+                ..Default::default()
+            })]),
+        });
+        dumped.insert("zzzz".to_owned(), None);
+        assert!(matches!(
+            table_stats_from_json(&schema, 42, &json),
+            Err(LoadStatsError::Base64(_))
+        ));
+    }
+
+    #[test]
+    fn stats_base64_keeps_padding_and_invalid_input_errors() {
+        let scalar = base64::engine::general_purpose::STANDARD;
+        for len in [0, 1, 2, 3, 31, 32, 33, 63, 64, 65, 2_800] {
+            let bytes: Vec<_> = (0..len).map(|i| (i * 157) as u8).collect();
+            let encoded = encode_base64(&bytes);
+            assert_eq!(encoded, scalar.encode(&bytes));
+            assert_eq!(decode_base64(Some(&encoded)).unwrap(), bytes);
+        }
+        for malformed in ["A===", "Zh==", "Zg", "Zg==\r\n", "Zg== ", "AAé="] {
+            let expected = scalar.decode(malformed).unwrap_err().to_string();
+            assert_eq!(
+                decode_base64(Some(&malformed.to_owned())),
+                Err(LoadStatsError::Base64(expected))
+            );
+        }
+    }
 
     #[test]
     fn projection_keeps_analyzed_items_that_are_not_resident() {

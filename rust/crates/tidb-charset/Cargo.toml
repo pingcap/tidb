@@ -10,6 +10,7 @@ description = "TiDB character sets and encodings: Go pkg/parser/charset (Rust re
 [dependencies]
 tidb-terror = { path = "../tidb-terror" }
 encoding_rs.workspace = true
+simdutf8 = { version = "0.1.5", features = ["aarch64_neon"] }
 tidb-mysql = { path = "../tidb-mysql" }
 
 [lints]

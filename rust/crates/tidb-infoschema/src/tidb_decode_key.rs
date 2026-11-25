@@ -22,7 +22,7 @@ use tidb_tablecodec::table_key::{decode_index_key, decode_key_head, decode_recor
 use tidb_rowcodec::ColumnInfo;
 use tidb_datatype::{Datum, FieldType, SessionTimeZone};
 use tidb_hack::GoToLower;
-use tidb_tablecodec::{decode_column_value, decode_index_kv, HandleStatus};
+use tidb_tablecodec::{decode_column_value, decode_index_kv_refs, HandleStatus};
 
 use tidb_table::tables::TableCommon;
 
@@ -240,7 +240,7 @@ fn decode_index(
             })
             .collect::<Result<Vec<_>, &str>>()
             .map_err(str::to_owned)?;
-        let encoded = decode_index_kv(
+        let encoded = decode_index_kv_refs(
             table.use_new_collation,
             key,
             &[0],

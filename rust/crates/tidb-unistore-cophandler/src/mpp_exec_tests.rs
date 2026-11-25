@@ -248,12 +248,12 @@ fn count_star(group_by_b: bool) -> tipb::Executor {
 
 fn table_range() -> coprocessor::KeyRange {
     let (start, end) = tidb_tablecodec::table_key::get_table_handle_key_range(TABLE_ID);
-    coprocessor::KeyRange { start, end }
+    coprocessor::KeyRange { start: start.into(), end: end.into() }
 }
 
 fn index_range() -> coprocessor::KeyRange {
     let (start, end) = tidb_tablecodec::get_table_index_key_range(TABLE_ID, INDEX_ID);
-    coprocessor::KeyRange { start, end }
+    coprocessor::KeyRange { start: start.into(), end: end.into() }
 }
 
 /// What the response reports: each executor's produced rows, the processed
@@ -288,7 +288,7 @@ fn run(
         store,
         &coprocessor::Request {
             tp: REQ_TYPE_DAG,
-            data: dag.encode_to_vec(),
+            data: dag.encode_to_vec().into(),
             ranges,
             start_ts: 20,
             ..coprocessor::Request::default()
@@ -445,8 +445,8 @@ fn an_index_range_scan_under_a_limit_reads_the_range() {
     let mut store = MvccStore::new();
     seed_big(&mut store);
     let range = coprocessor::KeyRange {
-        start: index_key(&[Datum::Int(3)]),
-        end: index_key(&[Datum::Int(4)]),
+        start: index_key(&[Datum::Int(3)]).into(),
+        end: index_key(&[Datum::Int(4)]).into(),
     };
     let answer = run(&mut store, vec![index_scan(), limit(5)], vec![range]);
     assert_eq!(answer.produced, [29, 5]);
@@ -488,12 +488,12 @@ fn a_table_range_scan_goroutine_chunks_span_its_ranges() {
     seed_big(&mut store);
     let ranges = vec![
         coprocessor::KeyRange {
-            start: row_key(1),
-            end: row_key(51),
+            start: row_key(1).into(),
+            end: row_key(51).into(),
         },
         coprocessor::KeyRange {
-            start: row_key(100),
-            end: row_key(151),
+            start: row_key(100).into(),
+            end: row_key(151).into(),
         },
     ];
     let answer = run(&mut store, vec![table_scan(false), limit(3)], ranges);

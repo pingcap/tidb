@@ -3,8 +3,17 @@
 //! Go `builtin_time_vec.go`: temporal argument columns and datatype kernels.
 
 use super::{vec_eval, ScalarFunction};
+mod arithmetic;
+mod constructors;
 mod date_arithmetic;
+mod date_time;
+mod duration_constructors;
+mod parts;
+pub(super) mod projections;
+mod str_to_date;
+mod text;
 mod week;
+mod zones;
 use crate::{Columns, EvalError};
 use tidb_chunk::{chunk::Chunk, column::Column};
 use tidb_datatype::{Datum, EvalType};
@@ -23,16 +32,10 @@ pub(super) fn supported(function: &ScalarFunction) -> bool {
     matches!(
         function.pb_builtin.kernel,
         super::Kernel::DateArithmetic { .. }
-    ) || matches!(
+    ) || parts::supported(function.pb_code()) || matches!(
         function.pb_code(),
-        Month
-            | Year
-            | Date
-            | FromUnixTime1Arg
+        FromUnixTime1Arg
             | FromUnixTime2Arg
-            | ExtractDatetime
-            | ExtractDuration
-            | DayName
             | WeekDay
             | TimeFormat
             | UtcTimeWithArg
@@ -45,47 +48,34 @@ pub(super) fn supported(function: &ScalarFunction) -> bool {
             | NowWithArg
             | NowWithoutArg
             | GetFormat
-            | LastDay
             | StrToDateDate
             | StrToDateDatetime
             | StrToDateDuration
             | FromDays
-            | MicroSecond
-            | Quarter
             | WeekWithMode
             | WeekWithoutMode
-            | ToSeconds
-            | Minute
-            | Second
             | MakeDate
             | WeekOfYear
             | UtcTimestampWithArg
             | UtcTimestampWithoutArg
-            | TimeToSec
             | UtcDate
             | UnixTimestampDec
             | UnixTimestampInt
             | TimestampAdd
-            | ToDays
             | DateFormatSig
-            | Hour
             | SecToTime
             | DateDiff
             | CurrentDate
             | MakeTime
-            | DayOfYear
             | TimestampDiff
             | CurrentTime0Arg
             | CurrentTime1Arg
             | Time
-            | MonthName
             | SysDateWithFsp
             | SysDateWithoutFsp
-            | DayOfWeek
             | ConvertTz
             | Timestamp1Arg
             | Timestamp2Args
-            | DayOfMonth
             | DurationDurationTimeDiff
             | DurationStringTimeDiff
             | StringDurationTimeDiff
@@ -122,6 +112,51 @@ pub(super) fn eval(
     if week::supported(function) {
         return week::eval(function, ctx, input, result);
     }
+    if parts::supported(sig) {
+        return parts::eval(function, ctx, input, result);
+    }
+    match sig {
+        ConvertTz => return zones::convert_tz(function, ctx, input, result),
+        FromUnixTime1Arg | FromUnixTime2Arg => return zones::from_unixtime(function, ctx, input, result),
+        AddDurationAndDuration | SubDurationAndDuration | DurationDurationTimeDiff
+        | AddDatetimeAndDuration | SubDatetimeAndDuration | TimeTimeTimeDiff => {
+            return arithmetic::eval(function, ctx, input, result);
+        }
+        DateDiff | TimestampDiff => return projections::difference(function, ctx, input, result),
+        DateFormatSig => return projections::format(function, ctx, input, result),
+        TimeFormat => return projections::time_format(function, ctx, input, result),
+        Time => return text::time(function, ctx, input, result),
+        AddDatetimeAndString | SubDatetimeAndString | AddDurationAndString | SubDurationAndString => {
+            return text::arithmetic(function, ctx, input, result);
+        }
+        AddStringAndDuration | SubStringAndDuration | AddStringAndString | SubStringAndString => {
+            return text::string_arithmetic(function, ctx, input, result);
+        }
+        AddDateAndDuration | SubDateAndDuration | AddDateAndString | SubDateAndString => {
+            return date_time::arithmetic(function, ctx, input, result);
+        }
+        Timestamp1Arg | Timestamp2Args => return date_time::timestamp(function, ctx, input, result),
+        StrToDateDate | StrToDateDatetime | StrToDateDuration => {
+            return str_to_date::eval(function, ctx, input, result);
+        }
+        StringStringTimeDiff | DurationStringTimeDiff | StringDurationTimeDiff
+        | StringTimeTimeDiff | TimeStringTimeDiff => {
+            return text::difference(function, ctx, input, result);
+        }
+        FromDays => return constructors::from_days(function, ctx, input, result),
+        MakeDate => return constructors::makedate(function, ctx, input, result),
+        SecToTime | MakeTime => {
+            if let Some(result) = duration_constructors::eval(function, ctx, input, result) {
+                return result;
+            }
+        }
+        _ => (),
+    }
+    if matches!(sig, PeriodAdd | PeriodDiff)
+        || matches!(function.func_name.lowercase(), "period_add" | "period_diff")
+    {
+        return constructors::period(function, ctx, input, result);
+    }
     if matches!(sig, CurrentTime1Arg | UtcTimeWithArg) {
         return clock_duration(function, ctx, input, result);
     }
@@ -151,10 +186,10 @@ pub(super) fn eval(
         }
         return Ok(());
     }
-    if matches!(
-        sig,
-        Hour | Minute | Second | MicroSecond | TimeFormat | UnixTimestampInt | UnixTimestampDec
-    ) {
+    if matches!(sig, UnixTimestampInt | UnixTimestampDec) {
+        if let Some(result) = constructors::unix_timestamp(function, ctx, input, result) {
+            return result;
+        }
         return with_row_fallback(function, ctx, input, result);
     }
     if function.args.is_empty() {
@@ -175,13 +210,7 @@ pub(super) fn eval(
             matches!(first, TemporalKind::Datetime | TemporalKind::Duration)
                 && second != TemporalKind::Datetime
         });
-    let reuse = (add_sub_reuse
-        || matches!(
-            sig,
-            Date | LastDay | PeriodAdd | PeriodDiff | ConvertTz | MakeTime
-        )
-        || matches!(function.func_name.lowercase(), "period_add" | "period_diff"))
-    .then_some(0);
+    let reuse = (add_sub_reuse || sig == MakeTime).then_some(0);
     vec_eval::map_arguments(function, ctx, input, result, reuse, |mut values| {
         if sig == UtcTimestampWithArg && values[0].is_null() {
             return Ok(Datum::Null);
@@ -196,24 +225,14 @@ pub(super) fn eval(
         }
         // Go `builtin{Add,Sub}*Sig.vecEval*`: their own string parsing, not
         // the row form's (`add_sub_time`'s `row_path`).
-        if matches!(sig, StrToDateDate | StrToDateDatetime | StrToDateDuration) {
-            return super::pb_builtin::str_to_date_of(function, &values, false, ctx);
-        }
         if let Some(sign) = crate::time_fn::add_sub::sign_of_signature(sig) {
             return super::pb_builtin::add_sub_time_of(function, &values, sign, false, ctx);
-        }
-        if sig == ConvertTz {
-            return super::pb_builtin::temporal_of_ret_type(
-                function,
-                crate::time_fn::convert_tz::convert_tz(&values)?,
-                ctx,
-            );
         }
         function.pb_builtin.eval_values(function, values, ctx)
     })
 }
 
-/// Go `builtin{Hour,Minute,Second,MicroSecond,TimeFormat,UnixTimestamp*}Sig`:
+/// Go `builtinUnixTimestamp*Sig`:
 /// only an error in the first argument's typed column evaluation uses rows.
 fn with_row_fallback(
     function: &ScalarFunction,
@@ -234,32 +253,14 @@ fn with_row_fallback(
         Ok(buffer) => buffer,
         Err(_) => return super::builtin_control_vec::fallback(function, ctx, input, result),
     };
-    let format = if function.args.len() == 2 {
-        Some(vec_eval::argument(
-            &function.args[1],
-            EvalType::String,
-            ctx,
-            input,
-        )?)
-    } else {
-        None
-    };
     crate::chunk_executor::allocate(domain, input.num_rows(), result);
     for row in 0..input.num_rows() {
-        let mut values = vec![vec_eval::value(
+        let values = vec![vec_eval::value(
             &buffer,
             row,
             first_type,
             first.static_type(),
         )];
-        if let Some(format) = &format {
-            values.push(vec_eval::value(
-                format,
-                row,
-                EvalType::String,
-                function.args[1].static_type(),
-            ));
-        }
         let value = function.pb_builtin.eval_values(function, values, ctx)?;
         vec_eval::put(result, row, domain, &value)?;
     }
@@ -369,25 +370,7 @@ pub(super) fn dayname_index(
     input: &Chunk,
     result: &mut Column,
 ) -> Result<(), EvalError> {
-    let dates = vec_eval::argument(&function.args[0], EvalType::Datetime, ctx, input)?;
-    crate::chunk_executor::allocate(target, input.num_rows(), result);
-    result.merge_nulls(&[&dates]);
-    for row in 0..input.num_rows() {
-        if result.is_null(row) {
-            continue;
-        }
-        let value = crate::time_fn::weekday(&[Datum::Time(dates.get_time(row))], ctx)?;
-        let value = if target == EvalType::Real {
-            match value {
-                Datum::Int(value) => Datum::Real(value as f64),
-                value => value,
-            }
-        } else {
-            value
-        };
-        vec_eval::put(result, row, target, &value)?;
-    }
-    Ok(())
+    parts::dayname_index(function, target, ctx, input, result)
 }
 
 /// Go `builtinCurrentTime1ArgSig.vecEvalDuration` and

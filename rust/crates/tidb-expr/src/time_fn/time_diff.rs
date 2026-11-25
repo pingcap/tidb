@@ -22,7 +22,7 @@
 //! for most text and a DATETIME only for a twelve-digit-or-longer value, and
 //! the call is NULL when the two sides land on different kinds.
 
-use tidb_datatype::{Datum, DurationOrTime, MySqlDuration, Time, MAX_FSP};
+use tidb_datatype::{Datum, DurationOrTime, MySqlDuration, SessionTimeZone, Time, TimeType, MAX_FSP};
 
 use crate::{Columns, EvalError};
 
@@ -35,7 +35,7 @@ pub(crate) enum TimeDiffArg {
 }
 
 /// One side after its signature read it.
-enum Operand {
+pub(crate) enum Operand {
     Duration(MySqlDuration),
     Time(Time),
 }
@@ -65,23 +65,8 @@ pub(crate) fn time_diff(
     let Some(right) = operand(right, kinds[1], fsp, cols)? else {
         return Ok(Datum::Null);
     };
-    let difference = match (left, right) {
-        (Operand::Duration(left), Operand::Duration(right)) => {
-            let difference = left
-                .checked_sub(right)
-                .map_err(|_| EvalError::IntOverflow)?;
-            truncate_overflow(difference, cols)?
-        }
-        (Operand::Time(left), Operand::Time(right)) => {
-            let difference = left
-                .sub(right, &cols.time_zone())
-                .map_err(|_| EvalError::Unsupported("TIMEDIFF over an unconvertible TIMESTAMP"))?;
-            truncate_overflow(difference, cols)?
-        }
-        // A string side that parsed to the other kind: `lhsIsDuration !=
-        // rhsIsDuration`, or the `!isDuration` / `isDuration` exits of the
-        // mixed string signatures.
-        _ => return Ok(Datum::Null),
+    let Some(difference) = difference(left, right, cols)? else {
+        return Ok(Datum::Null);
     };
     // The chunk column carries the result type's decimal, which is what Go
     // reads the value back with.
@@ -89,6 +74,31 @@ pub(crate) fn time_diff(
         difference.nanoseconds(),
         if fsp >= 0 { fsp } else { difference.fsp() },
     )))
+}
+
+pub(crate) fn difference(left: Operand, right: Operand, cols: &dyn Columns) -> Result<Option<MySqlDuration>, EvalError> {
+    let difference = match (left, right) {
+        (Operand::Duration(left), Operand::Duration(right)) => {
+            let difference = MySqlDuration::from_raw_parts(
+                subtract_duration(left.nanoseconds(), right.nanoseconds())?,
+                left.fsp().max(right.fsp()),
+            );
+            truncate_overflow(difference, cols)?
+        }
+        (Operand::Time(left), Operand::Time(right)) => {
+            let difference = if left.kind() == TimeType::Timestamp && right.kind() == TimeType::Timestamp {
+                left.sub(right, &cols.time_zone())
+            } else {
+                left.sub(right, &chrono::Utc)
+            }.map_err(|_| EvalError::Unsupported("TIMEDIFF over an unconvertible TIMESTAMP"))?;
+            truncate_overflow(difference, cols)?
+        }
+        // A string side that parsed to the other kind: `lhsIsDuration !=
+        // rhsIsDuration`, or the `!isDuration` / `isDuration` exits of the
+        // mixed string signatures.
+        _ => return Ok(None),
+    };
+    Ok(Some(difference))
 }
 
 /// Reads one side as its signature does: `EvalDuration` / `EvalTime` for a
@@ -126,15 +136,16 @@ fn operand(
             else {
                 return Ok(None);
             };
-            convert_string_to_duration(&text, fsp, cols).map(Some)
+            convert_string_to_duration(&text, fsp, &cols.time_zone(), cols).map(Some)
         }
     }
 }
 
 /// Go `convertStringToDuration` + `types.StrToDuration`.
-fn convert_string_to_duration(
+pub(crate) fn convert_string_to_duration(
     text: &str,
     fsp: i64,
+    zone: &SessionTimeZone,
     cols: &dyn Columns,
 ) -> Result<Operand, EvalError> {
     let mut fsp = fsp;
@@ -145,8 +156,7 @@ fn convert_string_to_duration(
         }
     }
     let trimmed = text.trim();
-    let zone = cols.time_zone();
-    match tidb_datatype::str_to_duration(trimmed, fsp, &zone) {
+    match tidb_datatype::str_to_duration(trimmed, fsp, zone) {
         Ok(converted) => match converted.value {
             // `StrToDateTime` succeeded; its own truncation is a plain
             // warning `parseDatetime` appends.
@@ -180,7 +190,9 @@ fn convert_string_to_duration(
 }
 
 fn truncated_time(text: &str, cols: &dyn Columns) -> Result<(), EvalError> {
-    crate::expression_errors::handle_truncate(cols, &format!("Truncated incorrect time value: '{text}'"))
+    cols.handle_truncate_error(tidb_datatype::types_errors::ERR_TRUNCATED_WRONG_VAL.generate(format!(
+        "Truncated incorrect time value: '{}'", tidb_datatype::warning_subject_byte_cap(text),
+    )))
 }
 
 /// The tail of `calculateTimeDiff` / `calculateDurationTimeDiff`:
@@ -190,15 +202,46 @@ fn truncate_overflow(
     difference: MySqlDuration,
     cols: &dyn Columns,
 ) -> Result<MySqlDuration, EvalError> {
-    let clamped = tidb_datatype::truncate_overflow_mysql_time(difference.nanoseconds());
-    if clamped.overflow().is_some() {
-        crate::expression_errors::handle_truncate(cols, &format!(
-            "Truncated incorrect time value: '{}'",
-            tidb_model::go_duration::format_go_duration(difference.nanoseconds())
-        ))?;
-    }
     Ok(MySqlDuration::from_raw_parts(
-        clamped.value(),
+        truncate_duration_difference(difference.nanoseconds(), cols)?,
         difference.fsp(),
+    ))
+}
+
+/// Go `SubInt64` and `SubDuration` share the signed-minimum subtraction case.
+#[inline]
+pub(crate) fn subtract_duration(left: i64, right: i64) -> Result<i64, EvalError> {
+    if let Some(value) = left.checked_sub(right) {
+        return Ok(value);
+    }
+    if right == i64::MIN && left > 0 {
+        return Ok(left.wrapping_sub(right));
+    }
+    Err(duration_overflow(left, right))
+}
+
+#[cold]
+pub(crate) fn duration_overflow(left: i64, right: i64) -> EvalError {
+    EvalError::DataOutOfRange {
+        value: "BIGINT",
+        expression: format!("({left}, {right})"),
+    }
+}
+
+#[inline]
+pub(crate) fn truncate_duration_difference(nanos: i64, ctx: &dyn Columns) -> Result<i64, EvalError> {
+    let limit = tidb_datatype::MAX_TIME_NANOS;
+    if nanos.unsigned_abs() <= limit as u64 {
+        return Ok(nanos);
+    }
+    time_difference_overflow(nanos, ctx)?;
+    Ok(nanos.clamp(-limit, limit))
+}
+
+#[cold]
+fn time_difference_overflow(nanos: i64, ctx: &dyn Columns) -> Result<(), EvalError> {
+    let value = tidb_model::go_duration::format_go_duration(nanos);
+    ctx.handle_truncate_error(tidb_datatype::types_errors::ERR_TRUNCATED_WRONG_VAL.generate(
+        format!("Truncated incorrect time value: '{value}'"),
     ))
 }

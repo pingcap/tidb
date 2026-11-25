@@ -57,8 +57,10 @@ use search::json_search;
 use crate::{Datum, EvalError};
 use tidb_datatype::FieldType;
 
-pub(crate) use document::{json_depth, json_storage_free, json_storage_size};
-pub(crate) use modify::{json_document, parse_json_modify_paths};
+pub(crate) use construct::json_unquote_quoted_content;
+pub(crate) use document::{json_contains_path_row, json_depth, json_extract_row, json_keys_row, json_length_row, json_storage_free, json_storage_size, literal_root_path, literal_string};
+pub(crate) use predicate::contains_path_mode;
+pub(crate) use modify::{binary_json_error, json_document, parse_json_modify_paths, parse_json_path};
 
 /// Go `verifyJSONArgsType` (`builtin_json.go`): each argument at
 /// `json_args_index` (every argument when `None`) must be NULL-typed, JSON, or

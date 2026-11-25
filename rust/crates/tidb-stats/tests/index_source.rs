@@ -55,7 +55,7 @@ fn populated_index(version: i64) -> Index {
                 ndv: 2,
                 lower_bound: Datum::Bytes(b"a".to_vec()),
                 upper_bound: Datum::Bytes(b"z".to_vec()),
-            }],
+            }].into(),
             ..Histogram::default()
         },
         stats_loaded_status: StatsLoadedStatus::full_load(),

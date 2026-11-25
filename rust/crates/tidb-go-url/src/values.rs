@@ -1,7 +1,8 @@
 //! Go `net/url`'s `Values`, `ParseQuery` and `Values.Encode`.
 
-use crate::escape::{query_escape, query_unescape};
+use crate::escape::{append_escaped, query_unescape_cow, Encoding};
 use crate::Error;
+use memchr::memchr;
 use std::collections::BTreeMap;
 
 /// Go `url.Values`. Go's map has no order; this one iterates by key, the
@@ -41,15 +42,17 @@ impl Values {
     /// Go `Values.Encode`: `key=value` pairs sorted by key.
     pub fn encode(&self) -> Vec<u8> {
         let mut buf = Vec::new();
+        let mut encoded_key = Vec::new();
         for (key, values) in &self.0 {
-            let key = query_escape(key);
+            encoded_key.clear();
+            append_escaped(&mut encoded_key, key, Encoding::QueryComponent);
             for value in values {
                 if !buf.is_empty() {
                     buf.push(b'&');
                 }
-                buf.extend_from_slice(&key);
+                buf.extend_from_slice(&encoded_key);
                 buf.push(b'=');
-                buf.extend(query_escape(value));
+                append_escaped(&mut buf, value, Encoding::QueryComponent);
             }
         }
         buf
@@ -69,7 +72,9 @@ pub fn parse_query(query: impl AsRef<[u8]>) -> (Values, Option<Error>) {
 
 /// Go `parseQuery`.
 fn parse_query_into(m: &mut Values, mut query: &[u8]) -> Option<Error> {
-    if query.iter().filter(|&&c| c == b'&').count() + 1 > DEFAULT_MAX_PARAMS {
+    if query.len() >= DEFAULT_MAX_PARAMS
+        && query.iter().filter(|&&c| c == b'&').count() >= DEFAULT_MAX_PARAMS
+    {
         return Some(Error::Other(
             "number of URL query parameters exceeded limit".into(),
         ));
@@ -77,7 +82,7 @@ fn parse_query_into(m: &mut Values, mut query: &[u8]) -> Option<Error> {
     let mut err = None;
     while !query.is_empty() {
         let key;
-        (key, query) = match query.iter().position(|&c| c == b'&') {
+        (key, query) = match memchr(b'&', query) {
             Some(i) => (&query[..i], &query[i + 1..]),
             None => (query, &b""[..]),
         };
@@ -89,25 +94,25 @@ fn parse_query_into(m: &mut Values, mut query: &[u8]) -> Option<Error> {
         if key.is_empty() {
             continue;
         }
-        let (key, value) = match key.iter().position(|&c| c == b'=') {
+        let (key, value) = match memchr(b'=', key) {
             Some(i) => (&key[..i], &key[i + 1..]),
             None => (key, &b""[..]),
         };
-        let key = match query_unescape(key) {
+        let key = match query_unescape_cow(key) {
             Ok(key) => key,
             Err(e) => {
                 err.get_or_insert(e);
                 continue;
             }
         };
-        let value = match query_unescape(value) {
-            Ok(value) => value,
+        let value = match query_unescape_cow(value) {
+            Ok(value) => value.into_owned(),
             Err(e) => {
                 err.get_or_insert(e);
                 continue;
             }
         };
-        m.add(key, value);
+        m.add(key.into_owned(), value);
     }
     err
 }

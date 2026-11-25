@@ -483,6 +483,9 @@ pub(crate) struct TcpResultSetSink<'a, W: Write> {
 /// huge result set streams instead of accumulating without bound.
 const SINK_COALESCE_FLUSH_BYTES: usize = 256 * 1024;
 
+// Go PacketIO's bufio.Writer bypasses staging for frames larger than 16 KiB.
+const DIRECT_WRITE_PAYLOAD_LIMIT: usize = 16 * 1024 - 4;
+
 impl<'a, W: Write> TcpResultSetSink<'a, W> {
     pub(crate) const fn new(output: &'a mut PacketIoWriter<W>, sequence: u8) -> Self {
         Self {
@@ -500,7 +503,7 @@ impl<'a, W: Write> TcpResultSetSink<'a, W> {
         self.sequence
     }
 
-    /// Hands every queued frame to the transport in ONE coalesced write.
+    /// Sends any remaining frames and flushes the transport.
     fn flush_pending(&mut self) -> Result<(), SinkWriteError> {
         if self.pending_bytes == 0 {
             return Ok(());
@@ -521,12 +524,15 @@ impl<W: Write> ResultSetSink for TcpResultSetSink<'_, W> {
         // counters. Preserve this response's logical sequence across bounded
         // flushes, just as the former connection-output adapter did.
         self.output.set_sequence(self.sequence);
-        self.output
-            .buffer_packet(payload)
-            .map_err(|error| SinkWriteError {
-                message: error.to_string(),
-                bytes_escaped: true,
-            })?;
+        let result = if payload.len() > DIRECT_WRITE_PAYLOAD_LIMIT {
+            self.output.write_packet(payload)
+        } else {
+            self.output.buffer_packet(payload)
+        };
+        result.map_err(|error| SinkWriteError {
+            message: error.to_string(),
+            bytes_escaped: true,
+        })?;
         self.sequence = self.output.sequence();
         self.pending_bytes += payload.len().saturating_add(4);
         if self.pending_bytes >= SINK_COALESCE_FLUSH_BYTES {
@@ -550,6 +556,34 @@ mod tests {
     use crate::mysql_connection::MysqlConnectionError;
     use tidb_config::config_tree::config::{get_global_config, store_global_config};
     use tidb_config::config_tree::{Config, ErrorMessageExtension};
+
+    #[test]
+    fn result_sink_streams_wide_packets_after_pending_frames() {
+        use super::{TcpResultSetSink, DIRECT_WRITE_PAYLOAD_LIMIT};
+        use crate::resultset_writer::ResultSetSink;
+        use tidb_protocol::{CompressionAlgorithm, PacketIoReader, PacketIoWriter};
+
+        let small = vec![b's'; DIRECT_WRITE_PAYLOAD_LIMIT];
+        let wide = vec![b'w'; DIRECT_WRITE_PAYLOAD_LIMIT + 1];
+        let mut output = PacketIoWriter::new(Vec::new(), CompressionAlgorithm::None).unwrap();
+        let mut sink = TcpResultSetSink::new(&mut output, 254);
+        sink.write_payload(&small).unwrap();
+        assert!(sink.output.get_ref().is_empty());
+        sink.write_payload(&wide).unwrap();
+        assert_eq!(sink.output.get_ref().len(), small.len() + wide.len() + 8);
+        assert_eq!(sink.next_sequence(), 0);
+        sink.write_payload(b"terminal").unwrap();
+        sink.flush().unwrap();
+
+        let bytes = output.into_inner();
+        let mut reader =
+            PacketIoReader::new(bytes.as_slice(), CompressionAlgorithm::None).unwrap();
+        reader.set_sequence(254);
+        for expected in [small.as_slice(), wide.as_slice(), b"terminal"] {
+            assert_eq!(reader.read_packet().unwrap(), expected);
+        }
+        assert_eq!(reader.sequence(), 1);
+    }
 
     #[test]
     fn result_sink_keeps_sequences_across_bounded_compressed_flushes() {

@@ -23,13 +23,18 @@
 //! rendering in [`stringify`], and the persistence envelope in
 //! [`json_envelope`].
 
+use std::cell::Cell;
 use std::cmp::Ordering;
 use std::fmt;
+use std::sync::Arc;
+
+use tidb_goruntime::go_pdqsort::go_sort_func_by;
+use tidb_goruntime::GoString;
 
 use crate::{
-    BinaryJSON, BinaryJSONError, BinaryLiteral, Charset, Collation, ConversionFlags, Converted,
-    Decimal, Encoding, EncodingResult, EncodingType, MySqlDuration, MysqlEnum, MysqlSet, Time,
-    TransformOp, VectorFloat32,
+    BinaryJSON, BinaryJSONError, BinaryLiteral, Charset, Collation, CollationCollator,
+    ConversionFlags, Converted, Decimal, Encoding, EncodingResult, EncodingType, MySqlDuration,
+    MysqlEnum, MysqlSet, Time, TransformOp, VectorFloat32,
 };
 
 mod compare;
@@ -39,7 +44,7 @@ mod stringify;
 
 pub use stringify::{
     datums_to_bytes, datums_to_string, datums_to_str_no_err, datums_to_str_no_err_smart, is_printable,
-    unwrap_from_single_quotes, wrap_in_single_quotes,
+    unwrap_from_single_quotes, unwrap_from_single_quotes_ref, wrap_in_single_quotes,
 };
 
 /// Go TiDB's complete datum-kind domain.
@@ -119,8 +124,104 @@ impl DatumKind {
 /// charset-aware expression operation with an explicit error policy.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StringDatum {
-    bytes: Vec<u8>,
+    bytes: StringBytes,
     collation: Collation,
+}
+
+#[derive(Clone)]
+enum StringBytes {
+    Inline {
+        bytes: [u8; StringDatum::INLINE_CAPACITY],
+        len: u8,
+    },
+    Owned(Vec<u8>),
+    Snapshot(StringSnapshot),
+    Shared(bytes::Bytes),
+    Vector(Arc<Vec<u8>>, std::ops::Range<usize>),
+    Retained(GoString),
+}
+
+// Keep one allocation per power-of-two size class and thread. A checked-out
+// buffer holds at most twice the requested length. Live datums can move freely
+// between threads because they exclusively own their bytes.
+const MIN_CACHED_STRING_BYTES: usize = 64;
+const MAX_CACHED_STRING_BYTES: usize = 4096;
+const STRING_BUFFER_SLOTS: usize =
+    (MAX_CACHED_STRING_BYTES.ilog2() - MIN_CACHED_STRING_BYTES.ilog2() + 1) as usize;
+
+thread_local! {
+    static STRING_SNAPSHOT_BUFFERS: [Cell<Vec<u8>>; STRING_BUFFER_SLOTS] =
+        const { [const { Cell::new(Vec::new()) }; STRING_BUFFER_SLOTS] };
+}
+
+#[derive(Clone)]
+struct StringSnapshot(Vec<u8>);
+
+impl StringSnapshot {
+    #[inline]
+    fn slot(size: usize) -> usize {
+        let log2_rounded_up = usize::BITS - (size - 1).leading_zeros();
+        (log2_rounded_up - MIN_CACHED_STRING_BYTES.ilog2()) as usize
+    }
+
+    #[inline]
+    fn copy_from(source: &[u8]) -> Self {
+        let mut bytes = STRING_SNAPSHOT_BUFFERS
+            .try_with(|buffers| buffers[Self::slot(source.len())].take())
+            .unwrap_or_default();
+        if bytes.capacity() < source.len() {
+            bytes = source.to_vec();
+        } else if bytes.len() >= source.len() {
+            bytes.truncate(source.len());
+            bytes.copy_from_slice(source);
+        } else {
+            bytes.clear();
+            bytes.extend_from_slice(source);
+        }
+        Self(bytes)
+    }
+}
+
+impl Drop for StringSnapshot {
+    fn drop(&mut self) {
+        let capacity = self.0.capacity();
+        if (MIN_CACHED_STRING_BYTES..=MAX_CACHED_STRING_BYTES).contains(&capacity) {
+            let _ = STRING_SNAPSHOT_BUFFERS.try_with(|buffers| {
+                let slot = &buffers[Self::slot(capacity)];
+                let previous = slot.replace(std::mem::take(&mut self.0));
+                if previous.capacity() > capacity {
+                    slot.set(previous);
+                }
+            });
+        }
+    }
+}
+
+impl AsRef<[u8]> for StringBytes {
+    fn as_ref(&self) -> &[u8] {
+        match self {
+            Self::Inline { bytes, len } => &bytes[..usize::from(*len)],
+            Self::Owned(bytes) => bytes,
+            Self::Snapshot(bytes) => &bytes.0,
+            Self::Shared(bytes) => bytes,
+            Self::Vector(owner, range) => &owner[range.clone()],
+            Self::Retained(bytes) => bytes.as_bytes(),
+        }
+    }
+}
+
+impl PartialEq for StringBytes {
+    fn eq(&self, other: &Self) -> bool {
+        self.as_ref() == other.as_ref()
+    }
+}
+
+impl Eq for StringBytes {}
+
+impl fmt::Debug for StringBytes {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.as_ref().fmt(formatter)
+    }
 }
 
 /// Failure at a Rust textual projection of Go `Datum.ToString` bytes, or at
@@ -205,17 +306,67 @@ impl From<BinaryJSONError> for DatumValueError {
 }
 
 impl StringDatum {
+    /// Maximum length of a copied string stored directly in its datum.
+    pub const INLINE_CAPACITY: usize = 32;
+
     /// Creates a string payload from raw bytes and a registered collation.
     pub fn new(bytes: impl Into<Vec<u8>>, collation: Collation) -> Self {
         Self {
-            bytes: bytes.into(),
+            bytes: StringBytes::Owned(bytes.into()),
             collation,
         }
     }
 
+    /// Copies raw bytes with the given collation.
+    #[inline]
+    pub fn from_slice(bytes: &[u8], collation: Collation) -> Self {
+        if (MIN_CACHED_STRING_BYTES..MAX_CACHED_STRING_BYTES).contains(&bytes.len()) {
+            return Self {
+                bytes: StringBytes::Snapshot(StringSnapshot::copy_from(bytes)),
+                collation,
+            };
+        }
+        if bytes.len() > Self::INLINE_CAPACITY {
+            return Self::new(bytes.to_vec(), collation);
+        }
+        let mut inline = [0; Self::INLINE_CAPACITY];
+        inline[..bytes.len()].copy_from_slice(bytes);
+        Self {
+            bytes: StringBytes::Inline {
+                bytes: inline,
+                len: bytes.len() as u8,
+            },
+            collation,
+        }
+    }
+
+    /// Retains an immutable byte view as a string with the given collation.
+    pub fn from_shared_bytes(bytes: bytes::Bytes, collation: Collation) -> Self {
+        Self {
+            bytes: StringBytes::Shared(bytes),
+            collation,
+        }
+    }
+
+    /// Retains a Go string's immutable backing with the given collation.
+    #[inline]
+    pub fn from_go_string(bytes: GoString, collation: Collation) -> Self {
+        Self {
+            bytes: StringBytes::Retained(bytes),
+            collation,
+        }
+    }
+
+    /// Retains a string view into an immutable vector. `bytes` must be a
+    /// subslice of `owner`.
+    #[inline]
+    pub fn from_shared_subslice(owner: &Arc<Vec<u8>>, bytes: &[u8], collation: Collation) -> Self {
+        Self::from_go_string(GoString::from_shared_subslice(owner, bytes), collation)
+    }
+
     /// Returns the unchanged stored byte sequence.
     pub fn bytes(&self) -> &[u8] {
-        &self.bytes
+        self.bytes.as_ref()
     }
 
     /// Decodes the payload as UTF-8 without replacement.
@@ -224,17 +375,29 @@ impl StringDatum {
     /// character semantics must choose how the resulting error or warning is
     /// exposed; this representation layer never silently changes octets.
     pub fn as_utf8(&self) -> Result<&str, std::str::Utf8Error> {
-        std::str::from_utf8(&self.bytes)
+        std::str::from_utf8(self.bytes())
     }
 
     /// Consumes the string payload and returns its unchanged bytes.
     pub fn into_bytes(self) -> Vec<u8> {
-        self.bytes
+        match self.bytes {
+            StringBytes::Inline { bytes, len } => bytes[..usize::from(len)].to_vec(),
+            StringBytes::Owned(bytes) => bytes,
+            StringBytes::Snapshot(mut bytes) => std::mem::take(&mut bytes.0),
+            StringBytes::Shared(bytes) => bytes.into(),
+            StringBytes::Vector(owner, range) => owner[range].to_vec(),
+            StringBytes::Retained(bytes) => bytes.as_bytes().to_vec(),
+        }
     }
 
     /// Returns the string's registered collation.
     pub const fn collation(&self) -> Collation {
         self.collation
+    }
+
+    /// Changes the collation without changing the stored bytes.
+    pub fn set_collation(&mut self, collation: Collation) {
+        self.collation = collation;
     }
 
     /// Derives the string's character set from the collation registry.
@@ -382,6 +545,58 @@ impl Datum {
     /// typed collation makes an unregistered name impossible.
     pub fn new_collation_string_datum(bytes: impl Into<Vec<u8>>, collation: Collation) -> Self {
         Self::String(StringDatum::new(bytes, collation))
+    }
+
+    /// Copies a string into this datum, reusing inline space or a same-sized
+    /// owned buffer when available.
+    #[inline]
+    pub fn set_copied_string(&mut self, bytes: &[u8], collation: Collation) {
+        match self {
+            Self::String(StringDatum {
+                bytes: StringBytes::Inline { bytes: buffer, len },
+                collation: previous_collation,
+            }) if bytes.len() <= StringDatum::INLINE_CAPACITY => {
+                buffer[..bytes.len()].copy_from_slice(bytes);
+                *len = bytes.len() as u8;
+                *previous_collation = collation;
+            }
+            Self::String(StringDatum {
+                bytes: StringBytes::Owned(buffer) | StringBytes::Snapshot(StringSnapshot(buffer)),
+                collation: previous_collation,
+            }) if bytes.len() > StringDatum::INLINE_CAPACITY && buffer.len() == bytes.len() => {
+                buffer.copy_from_slice(bytes);
+                *previous_collation = collation;
+            }
+            _ => *self = Self::String(StringDatum::from_slice(bytes, collation)),
+        }
+    }
+
+    /// Sets a string view, reusing the held reference when reading from the
+    /// same immutable vector.
+    #[doc(hidden)]
+    #[inline]
+    pub fn set_retained_string(
+        &mut self,
+        bytes: &Arc<Vec<u8>>,
+        range: std::ops::Range<usize>,
+        collation: Collation,
+    ) {
+        assert!(range.start <= range.end && range.end <= bytes.len());
+        if let Self::String(StringDatum {
+            bytes: StringBytes::Vector(owner, previous_range),
+            collation: previous_collation,
+        }) = self
+        {
+            if Arc::ptr_eq(owner, bytes) {
+                *previous_range = range;
+                *previous_collation = collation;
+                return;
+            }
+        }
+        *self = Self::String(StringDatum {
+            bytes: StringBytes::Vector(Arc::clone(bytes), range),
+            collation,
+        });
     }
 
     /// Equivalent to Go `NewBytesDatum` / `SetBytes`. A byte datum always has
@@ -749,19 +964,37 @@ pub fn datums_contain_null(datums: &[Datum]) -> bool {
 }
 
 /// Source `SortDatums`, using each right-hand datum's collation.
+/// A failed comparison counts as a tie. The final comparison's error
+/// determines the return value.
 pub fn sort_datums(datums: &mut [Datum]) -> Result<(), DatumValueError> {
-    for index in 1..datums.len() {
-        let mut current = index;
-        while current > 0 {
-            let collation = datums[current].collation().unwrap_or(Collation::Binary);
-            if datums[current - 1].compare(&datums[current], collation)? != Ordering::Greater {
-                break;
-            }
-            datums.swap(current - 1, current);
-            current -= 1;
-        }
+    if datums.len() < 2 {
+        return Ok(());
     }
-    Ok(())
+
+    let use_new_collation = crate::new_collation_enabled();
+    let mut last_error = None;
+    go_sort_func_by(datums, |left, right| {
+        let collation = if use_new_collation {
+            right.collation().unwrap_or(Collation::Utf8Mb4Bin)
+        } else {
+            Collation::Binary
+        };
+        let (order, error) = match (left, right) {
+            (Datum::Int(left), Datum::Int(right)) => (left.cmp(right), None),
+            (Datum::String(left), Datum::String(right)) => {
+                (collation.compare(left.bytes(), right.bytes()), None)
+            }
+            (Datum::Decimal(left), Datum::Decimal(right)) => (left.cmp(right), None),
+            _ => left.compare_with_error(right, collation),
+        };
+        last_error = error;
+        if last_error.is_some() {
+            Ordering::Equal
+        } else {
+            order
+        }
+    });
+    last_error.map_or(Ok(()), Err)
 }
 
 /// Go `types.EstimatedMemUsage`: one row's datums, as many times as there
@@ -779,7 +1012,7 @@ mod tests {
     use super::{
         clone_row, datums_contain_null, datums_to_string, datums_to_str_no_err,
         datums_to_str_no_err_smart, estimated_mem_usage, is_printable, sort_datums, Datum,
-        DatumKind,
+        DatumKind, StringDatum,
     };
     use crate::{
         parse_datetime, parse_enum_value, BinaryJSON, BinaryLiteral, Charset, Collation,
@@ -804,6 +1037,49 @@ mod tests {
         assert_eq!(bytes.as_raw_bytes(), Some(raw.as_slice()));
         assert_eq!(bytes.collation(), Some(Collation::Binary));
         assert_eq!(bytes.charset(), Some(Charset::Binary));
+    }
+
+    #[test]
+    fn copied_string_datum_preserves_bytes_at_inline_limit() {
+        let max = StringDatum::INLINE_CAPACITY;
+        for len in [0, 1, max, max + 1] {
+            let bytes: Vec<_> = (0..len).map(|i| (0xff ^ i) as u8).collect();
+            let datum = StringDatum::from_slice(&bytes, Collation::Utf8Mb4Bin);
+            assert_eq!(datum.collation(), Collation::Utf8Mb4Bin);
+            assert_eq!(datum, StringDatum::new(bytes.clone(), Collation::Utf8Mb4Bin));
+            assert_eq!(datum.clone().into_bytes(), bytes);
+        }
+    }
+
+    #[test]
+    fn copied_string_buffer_recycles_only_after_drop() {
+        std::thread::spawn(|| {
+            let bytes = [0xff; 1024];
+            let first = StringDatum::from_slice(&bytes, Collation::Binary);
+            let first_ptr = first.bytes().as_ptr();
+            let second = StringDatum::from_slice(&[b's'; 256], Collation::Utf8Mb4Bin);
+            assert_ne!(first_ptr, second.bytes().as_ptr());
+            let second = second.into_bytes();
+
+            drop(first);
+            let slot = super::StringSnapshot::slot(bytes.len());
+            let buffer = super::STRING_SNAPSHOT_BUFFERS.with(|buffers| buffers[slot].take());
+            assert_eq!(buffer.as_ptr(), first_ptr);
+            super::STRING_SNAPSHOT_BUFFERS.with(|buffers| buffers[slot].set(buffer));
+
+            let replacement = StringDatum::from_slice(&[b'r'; 768], Collation::Utf8Mb4Bin);
+            assert_eq!(replacement.bytes().as_ptr(), first_ptr);
+            assert_eq!(replacement.bytes(), &[b'r'; 768]);
+            assert_eq!(replacement.collation(), Collation::Utf8Mb4Bin);
+            assert_eq!(second, [b's'; 256]);
+
+            drop(replacement);
+            let small = StringDatum::from_slice(&[b't'; 64], Collation::Binary).into_bytes();
+            assert_eq!(small, [b't'; 64]);
+            assert!(small.capacity() <= 128);
+        })
+        .join()
+        .unwrap();
     }
 
     #[test]
@@ -1111,6 +1387,28 @@ mod tests {
             datums_to_str_no_err_smart(&[Datum::new_string_datum("a\0b")]),
             "0x610062"
         );
+    }
+
+    #[test]
+    fn sort_datums_uses_right_collation_and_last_comparison_error() {
+        let mut strings = [
+            Datum::new_collation_string_datum("a", Collation::Binary),
+            Datum::new_collation_string_datum("Z", Collation::Utf8Mb4GeneralCi),
+        ];
+        sort_datums(&mut strings).unwrap();
+        assert_eq!(strings[0].as_raw_bytes(), Some(b"Z".as_slice()));
+
+        let original = [
+            Datum::Int(2),
+            Datum::new_collation_string_datum("bad", Collation::Binary),
+            Datum::Int(1),
+            Datum::Int(3),
+        ];
+        let mut values = original.clone();
+        assert!(sort_datums(&mut values[..3]).is_err());
+        assert_eq!(values, original);
+        sort_datums(&mut values).unwrap();
+        assert_eq!(values, original);
     }
 
     #[test]

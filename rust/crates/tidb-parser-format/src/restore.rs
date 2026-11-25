@@ -15,11 +15,12 @@
 //! Go `format.go`'s restore state: `RestoreFlags`, `RestoreCtx` and
 //! `CTERestorer`.
 
+use std::borrow::Cow;
 use std::convert::Infallible;
 use std::fmt::{self, Write};
 use std::ops::{BitAnd, BitAndAssign, BitOr, BitOrAssign, Deref, DerefMut, Not};
 
-use tidb_mysql::{to_lowercase as go_simple_lowercase, to_uppercase as go_simple_uppercase};
+use tidb_mysql::{to_lowercase_cow, to_uppercase_cow};
 
 /// Unicode version used by Go's simple-rune case mapping in this transcreation.
 pub const GO_SIMPLE_CASE_UNICODE_VERSION: &str = tidb_mysql::GO_UNICODE_VERSION;
@@ -346,14 +347,13 @@ impl<W: RestoreWriter> RestoreCtx<W> {
 
     /// Writes a keyword using source uppercase/lowercase priority.
     pub fn write_keyword(&mut self, keyword: &str) {
-        let keyword = if self.flags.has_keyword_uppercase() {
-            go_simple_uppercase(keyword)
+        let _ = if self.flags.has_keyword_uppercase() {
+            self.writer.write_str(&to_uppercase_cow(keyword))
         } else if self.flags.has_keyword_lowercase() {
-            go_simple_lowercase(keyword)
+            self.writer.write_str(&to_lowercase_cow(keyword))
         } else {
-            keyword.to_owned()
+            self.writer.write_str(keyword)
         };
-        let _ = self.writer.write_str(&keyword);
     }
 
     /// Writes a special-comment envelope when enabled. If `write` returns an
@@ -386,45 +386,65 @@ impl<W: RestoreWriter> RestoreCtx<W> {
 
     /// Writes a string using source backslash and quote priority.
     pub fn write_string(&mut self, value: &str) {
-        let mut value = value.to_owned();
-        if self.flags.has_string_escape_backslash() {
-            value = value.replace('\\', "\\\\");
-        }
+        let escape_backslash = self.flags.has_string_escape_backslash();
         let quote = if self.flags.has_string_single_quotes() {
-            value = value.replace('\'', "''");
             "'"
         } else if self.flags.has_string_double_quotes() {
-            value = value.replace('"', "\"\"");
             "\""
         } else {
             ""
         };
+        if let (true, [quote_byte]) = (escape_backslash, quote.as_bytes()) {
+            let mut matches = memchr::memchr2_iter(b'\\', *quote_byte, value.as_bytes());
+            match matches.next() {
+                None => return self.write_quoted(quote, value),
+                Some(first) if value.len() <= 256 => {
+                    return self.write_quoted(quote, &double_at_positions(value, first, matches));
+                }
+                Some(_) => {}
+            }
+        }
+        let mut value = Cow::Borrowed(value);
+        if escape_backslash && value.as_bytes().contains(&b'\\') {
+            value = Cow::Owned(value.replace('\\', "\\\\"));
+        }
+        if self.flags.has_string_single_quotes() {
+            if value.as_bytes().contains(&b'\'') {
+                value = Cow::Owned(value.replace('\'', "''"));
+            }
+        } else if self.flags.has_string_double_quotes() && value.as_bytes().contains(&b'"') {
+            value = Cow::Owned(value.replace('"', "\"\""));
+        }
+        self.write_quoted(quote, &value);
+    }
+
+    fn write_quoted(&mut self, quote: &str, value: &str) {
         let _ = self.writer.write_str(quote);
-        let _ = self.writer.write_str(&value);
+        let _ = self.writer.write_str(value);
         let _ = self.writer.write_str(quote);
     }
 
     /// Writes a name using source case and quote priority.
     pub fn write_name(&mut self, name: &str) {
-        let mut name = if self.flags.has_name_uppercase() {
-            go_simple_uppercase(name)
+        let name = if self.flags.has_name_uppercase() {
+            to_uppercase_cow(name)
         } else if self.flags.has_name_lowercase() {
-            go_simple_lowercase(name)
+            to_lowercase_cow(name)
         } else {
-            name.to_owned()
+            Cow::Borrowed(name)
         };
-        let quote = if self.flags.has_name_double_quotes() {
-            name = name.replace('"', "\"\"");
-            "\""
+        let (quote, doubled) = if self.flags.has_name_double_quotes() {
+            ("\"", "\"\"")
         } else if self.flags.has_name_back_quotes() {
-            name = name.replace('`', "``");
-            "`"
+            ("`", "``")
         } else {
-            ""
+            ("", "")
         };
-        let _ = self.writer.write_str(quote);
-        let _ = self.writer.write_str(&name);
-        let _ = self.writer.write_str(quote);
+        let name = match quote.as_bytes().first() {
+            Some(&byte) => double_quotes(&name, byte, doubled),
+            None => Cow::Borrowed(name.as_ref()),
+        };
+        self.write_quoted(quote, &name);
     }
 
     /// Writes text without transformation.
@@ -436,4 +456,30 @@ impl<W: RestoreWriter> RestoreCtx<W> {
     pub fn write_plain_fmt(&mut self, arguments: fmt::Arguments<'_>) {
         let _ = self.writer.write_fmt(arguments);
     }
+}
+
+fn double_quotes<'a>(value: &'a str, quote: u8, doubled: &str) -> Cow<'a, str> {
+    let mut matches = memchr::memchr_iter(quote, value.as_bytes());
+    let Some(first) = matches.next() else {
+        return Cow::Borrowed(value);
+    };
+    if value.len() > 32 {
+        return Cow::Owned(value.replace(char::from(quote), doubled));
+    }
+    double_at_positions(value, first, matches)
+}
+
+fn double_at_positions(
+    value: &str,
+    first: usize,
+    matches: impl Iterator<Item = usize>,
+) -> Cow<'_, str> {
+    let mut result = String::with_capacity(2 * value.len());
+    let mut start = 0;
+    for index in std::iter::once(first).chain(matches) {
+        result.push_str(&value[start..=index]);
+        start = index;
+    }
+    result.push_str(&value[start..]);
+    Cow::Owned(result)
 }

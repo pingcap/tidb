@@ -109,8 +109,28 @@ impl MinMaxKind {
             MinMaxKind::Decimal => a.get_my_decimal(a_row).compare(&b.get_my_decimal(b_row)),
             MinMaxKind::Time => a.get_time(a_row).compare(b.get_time(b_row)),
             MinMaxKind::String(collator) => {
-                collator.compare(a.get_string(a_row).as_bytes(), b.get_string(b_row).as_bytes())
+                tidb_chunk::compare::compare_column_strings(collator, a, a_row, b, b_row)
             }
+        }
+    }
+
+    fn prepare_compare<'a>(
+        self,
+        left: &'a Column,
+        right: &'a Column,
+    ) -> impl Fn(usize, usize) -> Ordering + 'a {
+        let strings = match self {
+            Self::String(collator) => left
+                .try_variable_cells()
+                .zip(right.try_variable_cells())
+                .map(|(left, right)| (collator, left, right)),
+            _ => None,
+        };
+        move |left_row, right_row| match &strings {
+            Some((collator, left, right)) => {
+                collator.compare(left.get(left_row), right.get(right_row))
+            }
+            None => self.compare(left, left_row, right, right_row),
         }
     }
 }
@@ -352,7 +372,13 @@ impl AggMerger for MinMaxMerger {
         validate_count_columns(&count_col, &added_cnt_col, &removed_cnt_col, num_rows)?;
 
         let kind = self.kind;
-        let compare = |a: &Column, b: &Column, row: usize| kind.compare(a, row, b, row);
+        let compare_deltas = if self.is_max {
+            kind.prepare_compare(&added_col, &removed_col)
+        } else {
+            kind.prepare_compare(&removed_col, &added_col)
+        };
+        let compare_added_old = kind.prepare_compare(&added_col, &old_col);
+        let compare_removed_old = kind.prepare_compare(&removed_col, &old_col);
         // An extremum that outranks another: greater for MAX, smaller for MIN.
         let outranks = |ordering: Ordering| {
             (self.is_max && ordering == Ordering::Greater) || (!self.is_max && ordering == Ordering::Less)
@@ -378,11 +404,7 @@ impl AggMerger for MinMaxMerger {
             if add_exists != remove_exists {
                 choose_add_remove = if add_exists { Ordering::Greater } else { Ordering::Less };
             } else if add_exists && remove_exists {
-                choose_add_remove = if self.is_max {
-                    compare(&added_col, &removed_col, row_idx)
-                } else {
-                    compare(&removed_col, &added_col, row_idx)
-                };
+                choose_add_remove = compare_deltas(row_idx, row_idx);
                 if choose_add_remove == Ordering::Equal {
                     choose_add_remove = added_cnt.cmp(&removed_cnt);
                     same_extremum_value = true;
@@ -398,12 +420,12 @@ impl AggMerger for MinMaxMerger {
                     // aggregates do not carry the replacement extremum value.
                     // In this case, recompute is required.
                     // If sameExtremumValue is false, it means both sides are absent, and old value should be kept
-                    if same_extremum_value && (!old_exists || outranks(compare(&added_col, &old_col, row_idx))) {
+                    if same_extremum_value && (!old_exists || outranks(compare_added_old(row_idx, row_idx))) {
                         decision = MinMaxDecision::Recompute;
                     }
                 }
                 Ordering::Greater => {
-                    if !old_exists || outranks(compare(&added_col, &old_col, row_idx)) {
+                    if !old_exists || outranks(compare_added_old(row_idx, row_idx)) {
                         decision = MinMaxDecision::UseAdded;
                     }
                 }
@@ -422,7 +444,7 @@ impl AggMerger for MinMaxMerger {
                     if !old_exists {
                         return Err(state_error("remove-dominant without old value"));
                     }
-                    let cmp_old = compare(&removed_col, &old_col, row_idx);
+                    let cmp_old = compare_removed_old(row_idx, row_idx);
                     if outranks(cmp_old) {
                         return Err(state_error("remove-dominant outranks old value"));
                     }

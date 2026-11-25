@@ -4,11 +4,13 @@
 //! concurrently.
 
 use std::io::{Read, Seek, SeekFrom};
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
+use std::sync::{mpsc, Arc};
 use std::time::Duration;
 
 use tidb_gocontext::Context;
+use tidb_goruntime::worker_pool::LanePool;
 use tidb_objstore::objectio::Reader as ObjReader;
 use tidb_objstore::storeapi::{ReaderOption, Storage};
 
@@ -62,9 +64,10 @@ struct ConcurrentFileReader {
     concurrency: usize,
     read_buffer_size: usize,
     storage: Arc<dyn Storage>,
-    name: String,
+    name: Arc<str>,
     offset: i64,
     file_size: i64,
+    lanes: Option<LanePool>,
 }
 
 impl ConcurrentFileReader {
@@ -74,45 +77,80 @@ impl ConcurrentFileReader {
         if self.offset >= self.file_size {
             return Err(Error::Eof);
         }
-        let mut jobs = Vec::new();
-        for buf in bufs.iter_mut().take(self.concurrency) {
+        if bufs.is_empty() {
+            return Ok(Vec::new());
+        }
+        if self.lanes.is_none() || self.file_size - self.offset <= self.read_buffer_size as i64 {
+            let offset = self.offset;
+            let len = self.next_range_len();
+            read_range(
+                &self.ctx,
+                self.storage.as_ref(),
+                &self.name,
+                offset,
+                &mut bufs[0][..len],
+            )?;
+            return Ok(vec![len]);
+        }
+
+        let (send, receive) = mpsc::channel();
+        let mut lens = Vec::with_capacity(self.concurrency);
+        for (index, buf) in bufs.iter_mut().take(self.concurrency).enumerate() {
             if self.offset >= self.file_size {
                 break;
             }
-            let end = (self.read_buffer_size as i64).min(self.file_size - self.offset) as usize;
-            jobs.push((self.offset, &mut buf[..end]));
-            self.offset += end as i64;
-        }
-        let lens: Vec<usize> = jobs.iter().map(|(_, b)| b.len()).collect();
-        let results: Vec<Result<()>> = std::thread::scope(|scope| {
-            let handles: Vec<_> = jobs
-                .into_iter()
-                .map(|(offset, buf)| {
-                    let (ctx, storage, name) = (&self.ctx, &self.storage, &self.name);
-                    scope.spawn(move || {
-                        let len = buf.len();
-                        tidb_objstore::read_data_in_range(ctx, storage.as_ref(), name, offset, buf)
-                            .map(|_| ())
-                            .map_err(|e| {
-                                Error::from(e)
-                                    .annotate(format!("offset: {offset}, readSize: {len}"))
-                            })
-                    })
+            let offset = self.offset;
+            let len = self.next_range_len();
+            lens.push(len);
+            let mut buf = std::mem::take(buf);
+            let (ctx, storage, name) = (self.ctx.clone(), self.storage.clone(), self.name.clone());
+            let send = send.clone();
+            self.lanes
+                .as_ref()
+                .expect("concurrent read lanes")
+                .submit(move || {
+                    let result = read_range(&ctx, storage.as_ref(), &name, offset, &mut buf[..len]);
+                    let _ = send.send((index, buf, result));
                 })
-                .collect();
-            handles
-                .into_iter()
-                .map(|h| {
-                    h.join()
-                        .unwrap_or_else(|_| Err(Error::Other("read panicked".into())))
-                })
-                .collect()
-        });
-        for r in results {
-            r?;
+                .expect("read lanes are open while the reader is active");
         }
-        Ok(lens)
+        drop(send);
+
+        // Recover every buffer before returning and report errors in range order.
+        let mut first_error = None;
+        for (index, buf, result) in receive {
+            bufs[index] = buf;
+            match result {
+                Err(error) if first_error.as_ref().is_none_or(|&(first, _)| index < first) => {
+                    first_error = Some((index, error));
+                }
+                _ => {}
+            }
+        }
+        first_error.map_or(Ok(lens), |(_, error)| Err(error))
     }
+
+    fn next_range_len(&mut self) -> usize {
+        let len = (self.read_buffer_size as i64).min(self.file_size - self.offset) as usize;
+        self.offset += len as i64;
+        len
+    }
+}
+
+fn read_range(
+    ctx: &Context,
+    store: &dyn Storage,
+    name: &str,
+    offset: i64,
+    buf: &mut [u8],
+) -> Result<()> {
+    let len = buf.len();
+    catch_unwind(AssertUnwindSafe(|| {
+        tidb_objstore::read_data_in_range(ctx, store, name, offset, buf)
+            .map(|_| ())
+            .map_err(|e| Error::from(e).annotate(format!("offset: {offset}, readSize: {len}")))
+    }))
+    .unwrap_or_else(|_| Err(Error::Other("read panicked".into())))
 }
 
 /// Go `byteReader.concurrentReader`.
@@ -240,14 +278,17 @@ impl ByteReader {
             .map_err(|e| io_err(&e))?;
         let file_size = self.storage_reader.get_file_size()?;
         let c = &mut self.concurrent;
+        let unread = file_size.saturating_sub(curr_offset as i64).max(0) as usize;
+        let useful_lanes = c.concurrency.min(unread.div_ceil(c.buf_size_per_conc.max(1)));
         c.reader = Some(ConcurrentFileReader {
             ctx: self.ctx.clone(),
             concurrency: c.concurrency,
             read_buffer_size: c.buf_size_per_conc,
             storage: Arc::clone(c.store.as_ref().expect("enabled")),
-            name: c.filename.clone(),
+            name: c.filename.as_str().into(),
             offset: curr_offset as i64,
             file_size,
+            lanes: (useful_lanes > 1).then(|| LanePool::new_dedicated("sst-range-read", useful_lanes)),
         });
         c.large_buf = (0..c.concurrency)
             .map(|_| vec![0; c.buf_size_per_conc])
@@ -428,6 +469,7 @@ impl ByteReader {
         );
         c.large_buf = Vec::new();
         c.large_lens = Vec::new();
+        c.reader = None;
         c.now = false;
         let reload_cnt = std::mem::take(&mut c.reload_cnt);
         let offset_in_old = self.cur_offset + self.cur_idx * c.buf_size_per_conc;

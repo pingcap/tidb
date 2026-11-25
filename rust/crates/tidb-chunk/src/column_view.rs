@@ -15,13 +15,18 @@
 //! Borrow-scoped views over packed column bytes.
 
 use std::fmt;
-use std::ops::Deref;
+use std::ops::{Deref, Range};
 
-use crate::shared_bytes::SharedBytesRead;
+use crate::shared_bytes::{RetainedBytes, SharedBytesRead};
 
-pub(crate) enum ColumnBytesStorage<'a> {
-    Borrowed(SharedBytesRead<'a>),
+pub(crate) const INLINE_COPY_BYTES: usize = 64;
+
+enum ColumnBytesStorage<'a> {
+    Borrowed(&'a [u8]),
+    Locked(SharedBytesRead<'a>, Range<usize>),
     Owned(Vec<u8>),
+    Retained(RetainedBytes),
+    Inline([u8; INLINE_COPY_BYTES], u8),
 }
 
 /// A read guard over a contiguous region of a column's packed bytes.
@@ -29,21 +34,49 @@ pub(crate) enum ColumnBytesStorage<'a> {
 /// The guard keeps shared storage stable for the duration of the borrow and
 /// behaves like a byte slice through [`Deref`] and [`AsRef`].
 pub struct ColumnBytes<'a> {
-    pub(crate) storage: ColumnBytesStorage<'a>,
-    pub(crate) start: usize,
-    pub(crate) end: usize,
+    storage: ColumnBytesStorage<'a>,
 }
 
 /// A row-cell byte view returned by [`crate::column::Column`].
 pub type CellBytes<'a> = ColumnBytes<'a>;
 
 impl<'a> ColumnBytes<'a> {
-    pub(crate) fn owned(bytes: Vec<u8>) -> Self {
+    pub(crate) fn borrowed(bytes: SharedBytesRead<'a>, range: Range<usize>) -> Self {
+        let storage = match bytes {
+            SharedBytesRead::Owned(bytes) => ColumnBytesStorage::Borrowed(&bytes[range]),
+            bytes => ColumnBytesStorage::Locked(bytes, range),
+        };
+        Self { storage }
+    }
+
+    pub(crate) fn copied(bytes: &[u8]) -> Self {
         let end = bytes.len();
+        let storage = if end <= INLINE_COPY_BYTES {
+            let mut copied = [0; INLINE_COPY_BYTES];
+            copied[..end].copy_from_slice(bytes);
+            ColumnBytesStorage::Inline(copied, end as u8)
+        } else {
+            ColumnBytesStorage::Owned(bytes.to_vec())
+        };
+        Self { storage }
+    }
+
+    pub(crate) fn retained(bytes: RetainedBytes) -> Self {
         Self {
-            storage: ColumnBytesStorage::Owned(bytes),
-            start: 0,
-            end,
+            storage: ColumnBytesStorage::Retained(bytes),
+        }
+    }
+
+    /// Converts part of an already retained cell to a string with the same owner.
+    /// Returns `None` for byte views that do not own a retained cell.
+    pub fn into_retained_string(
+        self,
+        range: Range<usize>,
+        collation: tidb_charset::Collation,
+    ) -> Option<tidb_datatype::StringDatum> {
+        match self.storage {
+            ColumnBytesStorage::Retained(bytes) => Some(bytes.into_string(range, collation)),
+            _ => None,
         }
     }
 }
@@ -51,16 +84,20 @@ impl<'a> ColumnBytes<'a> {
 impl Deref for ColumnBytes<'_> {
     type Target = [u8];
 
+    #[inline]
     fn deref(&self) -> &Self::Target {
-        let bytes = match &self.storage {
-            ColumnBytesStorage::Borrowed(bytes) => bytes.as_ref(),
+        match &self.storage {
+            ColumnBytesStorage::Borrowed(bytes) => bytes,
+            ColumnBytesStorage::Locked(bytes, range) => &bytes[range.clone()],
             ColumnBytesStorage::Owned(bytes) => bytes.as_slice(),
-        };
-        &bytes[self.start..self.end]
+            ColumnBytesStorage::Retained(bytes) => bytes.as_ref(),
+            ColumnBytesStorage::Inline(bytes, len) => &bytes[..usize::from(*len)],
+        }
     }
 }
 
 impl AsRef<[u8]> for ColumnBytes<'_> {
+    #[inline]
     fn as_ref(&self) -> &[u8] {
         self
     }

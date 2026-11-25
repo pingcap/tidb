@@ -35,7 +35,7 @@
 
 use std::sync::Arc;
 use tidb_stats_handle_syncload::stats_watch::{StatsSnapshot, TableStatsState};
-use tidb_infoschema::{SessionExtendedInfoSchema, ViewDef};
+use tidb_infoschema::{SessionExtendedInfoSchema, TableEntry, ViewDef};
 #[cfg(test)]
 use tidb_model::GoShared;
 use tidb_model::{SchemaState, TableInfo};
@@ -46,7 +46,7 @@ const PRI_KEY_FLAG: u32 = 1 << 1;
 
 // Go `tables.TableFromMeta` and the auto-id seam moved beside the DDL
 // planner; the server keeps reaching them by their old paths.
-use tidb_table::table_from_meta::cluster_table;
+use tidb_table::table_from_meta::{cluster_table, cluster_table_from_shared_meta};
 use tidb_table::table_from_meta::{AutoIdSource, TableAutoIds};
 
 pub use tidb_infoschema::cluster_catalog::SkippedTable;
@@ -151,20 +151,25 @@ pub fn table_from_meta(
     cached_table_session: Option<&CachedTableSessionFactory>,
 ) -> Result<tidb_table::tables::TableCommon, String> {
     let auto = AutoIdSource::In { db_id, ids: auto_ids };
+    prepare_cached_table(cluster_table(table, &auto)?, cached_table_session)
+}
+
+fn prepare_cached_table(
+    mut kv_table: tidb_table::tables::TableCommon,
+    cached_table_session: Option<&CachedTableSessionFactory>,
+) -> Result<tidb_table::tables::TableCommon, String> {
     // A cached template clone carries neutral storage and valid
     // process-wide allocator handles; only the store needs rebinding.
-    cluster_table(table, &auto).and_then(|mut kv_table| {
-        if let Some(cached) = kv_table.cached_table() {
-            match cached_table_session {
-                Some(factory) => {
-                    let exec = factory().map_err(|error| format!("cached table session: {error}"))?;
-                    cached.init(Box::new(tidb_table::tables::state_remote::StateRemoteHandle::new(exec)));
-                }
-                None => kv_table.clear_cached_table(),
+    if let Some(cached) = kv_table.cached_table() {
+        match cached_table_session {
+            Some(factory) => {
+                let exec = factory().map_err(|error| format!("cached table session: {error}"))?;
+                cached.init(Box::new(tidb_table::tables::state_remote::StateRemoteHandle::new(exec)));
             }
+            None => kv_table.clear_cached_table(),
         }
-        Ok(kv_table)
-    })
+    }
+    Ok(kv_table)
 }
 
 fn build_cluster_session_catalog(
@@ -203,7 +208,10 @@ fn build_cluster_session_catalog(
         catalog.set_policy(policy.clone());
     }
     for database in &loaded.stored_schemas() {
-        let schema = database.read().name.original().to_owned();
+        let (schema, db_id) = {
+            let database = database.read();
+            (database.name.original().to_owned(), database.id)
+        };
         // Go `Builder.copySchemaTables`: a schema no diff touched keeps the
         // tables the previous version built.
         if let Some(previous) = previous {
@@ -221,55 +229,43 @@ fn build_cluster_session_catalog(
         }
         // Go `Builder.createSchemaTablesForDB`: the schema holds its
         // `DBInfo` -- charset, collation, placement and all.
-        catalog.create_schema_tables_for_db(database.clone());
-        for table_handle in database.read().deprecated_tables.iter_deref() {
-            // Go `ApplyDiff`: a table no diff names keeps the object the
-            // previous image built, its cached table's runtime with it.
-            if previous
-                .is_some_and(|previous| catalog.adopt_built_table(previous, &schema, &table_handle))
-            {
-                continue;
-            }
-            let table = table_handle.read();
+        let templates = previous.and_then(|previous| previous.built_table_templates(&schema));
+        let auto = AutoIdSource::In { db_id, ids: auto_ids };
+        catalog.load_stored_schema_tables_from_handles(database.clone(), templates.as_ref(), |source| {
+            let table = source.read();
             if table.is_view() {
                 let name = table.name.original();
-                match cluster_view(&table) {
-                    Ok(view) => catalog
-                        .register_view_in(&schema, name, view)
-                        .expect("the schema was created just above this loop"),
-                    Err(reason) => skipped.push(SkippedTable {
-                        name: format!("{schema}.{name}"),
-                        reason,
-                    }),
-                }
-                continue;
+                return match cluster_view(&table) {
+                    Ok(view) => Some(TableEntry::View(view)),
+                    Err(reason) => {
+                        skipped.push(SkippedTable { name: format!("{schema}.{name}"), reason });
+                        None
+                    }
+                };
             }
             if table.is_sequence() {
                 // Go loads every PUBLIC sequence into the infoschema
                 // (`infoschema.loadSequence`); SHOW TABLES lists it and
                 // NEXTVAL/LASTVAL/SETVAL resolve against it. Skipping it here
                 // is what made `SELECT nextval(...)` answer 1146 on this tier.
-                match auto_ids.sequence_allocator_for(database.read().id, &table) {
-                    Some(sequence) => catalog
-                        .register_sequence_in(&schema, table.name.original(), sequence)
-                        .expect("the schema was created just above this loop"),
-                    None => skipped.push(SkippedTable {
-                        name: format!("{schema}.{}", table.name.original()),
-                        reason: "it is a sequence and this tier has no sequence counter".to_owned(),
-                    }),
-                }
-                continue;
+                return match auto_ids.sequence_allocator_for(db_id, &table) {
+                    Some(sequence) => Some(TableEntry::Sequence(sequence)),
+                    None => {
+                        skipped.push(SkippedTable {
+                            name: format!("{schema}.{}", table.name.original()),
+                            reason: "it is a sequence and this tier has no sequence counter".to_owned(),
+                        });
+                        None
+                    }
+                };
             }
-            let built = table_from_meta(&table, database.read().id, auto_ids, cached_table_session);
+            drop(table);
+            let built = cluster_table_from_shared_meta(source, &auto)
+                .and_then(|table| prepare_cached_table(table, cached_table_session));
             match built {
-                Ok(kv_table) => {
-                    // Go: a table is metadata; the session's statements read
-                    // and write through `sctx.Txn()`, never the table.
-                    catalog
-                        .register_kv_in(&schema, table.name.original(), kv_table)
-                        .expect("the schema was created just above this loop");
-                }
+                Ok(kv_table) => Some(TableEntry::Kv(Arc::new(kv_table))),
                 Err(reason) => {
+                    let table = source.read();
                     // A table a DDL job holds in an intermediate state (DROP's
                     // write-only / delete-only, CREATE's delete-only before
                     // its foreign keys go public) is not a port gap: Go loads
@@ -282,9 +278,13 @@ fn build_cluster_session_catalog(
                         name: format!("{schema}.{}", table.name.original()),
                         reason,
                     });
+                    None
                 }
             }
-        }
+        });
+    }
+    if cross_ks || !loaded.uses_infoschema_v2() || loaded.schema_ts() == 0 {
+        catalog.prepare_v1_table_id_lookup(previous);
     }
     ClusterSessionCatalog {
         catalog,
@@ -625,6 +625,126 @@ use tidb_table::table_from_meta::kv_index;
             Vec::new(),
             7,
         )
+    }
+
+    #[test]
+    fn ordinary_v1_table_retains_stored_metadata_until_runtime_edit() {
+        let loaded = one_table_catalog(TableInfo {
+            id: 400,
+            name: CiString::new("Original"),
+            columns: vec![column(1, 0, "id", true)].into(),
+            pk_is_handle: true,
+            state: SchemaState::PUBLIC,
+            ..TableInfo::default()
+        });
+        let source = loaded.table_info_by_id(400).unwrap();
+        let ids = LocalTableAutoIds::default();
+        let catalog = cluster_session_catalog_with_templates(&loaded, None, &ids, None, None).catalog;
+        let runtime = catalog.table_by_id(400).unwrap().1;
+        assert!(runtime.meta().ptr_eq(&source));
+        assert_eq!(runtime.pk_handle_offset(), Some(0));
+
+        let mut changed = Arc::clone(runtime);
+        Arc::make_mut(&mut changed).set_name("Renamed");
+        assert!(!changed.meta().ptr_eq(&source));
+        assert_eq!(changed.name(), "Renamed");
+        assert_eq!(source.read().name.original(), "Original");
+        assert_eq!(catalog.table_by_id(400).unwrap().1.name(), "Original");
+    }
+
+    #[test]
+    fn v1_catalog_prepares_and_reuses_physical_id_lookup() {
+        use tidb_model::partition::PartitionInfo;
+
+        let table = |id, partition_id| TableInfo {
+            id,
+            name: CiString::new("hashed"),
+            columns: vec![column(1, 0, "id", true)].into(),
+            pk_is_handle: true,
+            state: SchemaState::PUBLIC,
+            partition: Some(GoShared::new(PartitionInfo {
+                partition_type: tidb_ast::PartitionType::HASH,
+                expr: "`id`".to_owned(),
+                num: 1,
+                enable: true,
+                definitions: vec![partition_definition(partition_id, "p0")].into(),
+                ..PartitionInfo::default()
+            })),
+            ..TableInfo::default()
+        };
+        let ids = LocalTableAutoIds::default();
+        let loaded = one_table_catalog(table(400, 401));
+        let first = cluster_session_catalog_with_templates(&loaded, None, &ids, None, None).catalog;
+        let lookup = first.table_id_names.get().expect("published v1 ID lookup");
+        assert!(lookup.contains_key(&400));
+        assert!(lookup.contains_key(&401));
+        assert_eq!(first.table_by_id(401).unwrap().1.table_id(), 400);
+
+        let reused =
+            cluster_session_catalog_with_templates(&loaded, None, &ids, Some(&first), None).catalog;
+        assert!(Arc::ptr_eq(&first.table_id_names, &reused.table_id_names));
+
+        let loaded = one_table_catalog(table(402, 403));
+        let updated =
+            cluster_session_catalog_with_templates(&loaded, None, &ids, Some(&first), None).catalog;
+        assert!(!Arc::ptr_eq(&first.table_id_names, &updated.table_id_names));
+        assert!(updated.table_by_id(400).is_none());
+        assert!(updated.table_by_id(401).is_none());
+        assert_eq!(updated.table_by_id(403).unwrap().1.table_id(), 402);
+        assert_eq!(first.table_by_id(401).unwrap().1.table_id(), 400);
+        assert!(first.table_by_id(403).is_none());
+    }
+
+    #[test]
+    fn incremental_reload_reuses_only_unchanged_table_sources() {
+        use tidb_model::go_runtime::GoSharedPointerSlice;
+
+        let table = |id, name| GoShared::new(TableInfo {
+            id,
+            name: CiString::new(name),
+            columns: vec![column(1, 0, "id", true)].into(),
+            pk_is_handle: true,
+            state: SchemaState::PUBLIC,
+            ..TableInfo::default()
+        });
+        let unchanged = table(401, "unchanged");
+        let source = table(402, "changed");
+        let catalog = |version, changed| {
+            SessionExtendedInfoSchema::init_with_db_infos(
+                vec![GoShared::new(DBInfo {
+                    id: 5,
+                    name: CiString::new("App"),
+                    deprecated_tables: GoSharedPointerSlice::from_handles(vec![
+                        Some(unchanged.clone()),
+                        Some(changed),
+                    ]),
+                    ..DBInfo::default()
+                })],
+                Vec::new(),
+                Vec::new(),
+                version,
+            )
+        };
+        let ids = LocalTableAutoIds::default();
+        let old =
+            cluster_session_catalog_with_templates(&catalog(1, source.clone()), None, &ids, None, None)
+                .catalog;
+
+        let updated = source.clone_rust_value();
+        updated.write().columns =
+            vec![column(1, 0, "id", true), column(2, 1, "extra", false)].into();
+        let new =
+            cluster_session_catalog_with_templates(&catalog(2, updated), None, &ids, Some(&old), None)
+                .catalog;
+        assert!(Arc::ptr_eq(
+            old.table_by_id(401).unwrap().1,
+            new.table_by_id(401).unwrap().1
+        ));
+        let (_, previous) = old.table_by_id(402).unwrap();
+        let (_, changed) = new.table_by_id(402).unwrap();
+        assert!(!Arc::ptr_eq(previous, changed));
+        assert_eq!(previous.meta().read().columns.len(), 1);
+        assert_eq!(changed.meta().read().columns.len(), 2);
     }
 
     /// The table this loader used to refuse by name. It is served now: the
@@ -1152,10 +1272,9 @@ impl tidb_infoschema::infoschema_v2::TableLoader for InfoSchemaV2TableLoader {
                 ))
             })?;
         normalize_diff_loaded_table_info(&mut info);
-        let entry = if info.is_view() {
-            tidb_infoschema::TableEntry::View(
-                ViewDef::from_table_info(&info).map_err(ClusterCatalogError::Decode)?,
-            )
+        let (info, entry) = if info.is_view() {
+            let view = ViewDef::from_table_info(&info).map_err(ClusterCatalogError::Decode)?;
+            (tidb_model::GoShared::new(info), TableEntry::View(view))
         } else if info.is_sequence() {
             let sequence = self
                 .auto_ids
@@ -1163,10 +1282,10 @@ impl tidb_infoschema::infoschema_v2::TableLoader for InfoSchemaV2TableLoader {
                 .ok_or_else(|| {
                     ClusterCatalogError::Decode("sequence allocator unavailable".into())
                 })?;
-            tidb_infoschema::TableEntry::Sequence(sequence)
+            (tidb_model::GoShared::new(info), TableEntry::Sequence(sequence))
         } else {
-            let table = tidb_table::table_from_meta::table_from_meta(
-                &info,
+            let table = tidb_table::table_from_meta::table_from_owned_meta(
+                info,
                 &AutoIdSource::In {
                     db_id,
                     ids: self.auto_ids.as_ref(),
@@ -1179,11 +1298,7 @@ impl tidb_infoschema::infoschema_v2::TableLoader for InfoSchemaV2TableLoader {
                     tidb_table::tables::state_remote::StateRemoteHandle::new(exec),
                 ));
             }
-            tidb_infoschema::TableEntry::Kv(Arc::new(table))
-        };
-        let info = match &entry {
-            tidb_infoschema::TableEntry::Kv(table) => table.meta(),
-            _ => tidb_model::GoShared::new(info),
+            (table.meta(), TableEntry::Kv(Arc::new(table)))
         };
         let size = tidb_infoschema::infoschema_v2::table_cache_entry_size(&info.read(), &entry);
         Ok(tidb_infoschema::infoschema_v2::CachedTable {

@@ -63,7 +63,7 @@ fn rows_and_decoded(session: &mut Session, sql: &str) -> (Vec<Vec<String>>, BTre
         else {
             return;
         };
-        let Ok(dag) = tidb_proto::tipb::DagRequest::decode(request.data.as_slice()) else {
+        let Ok(dag) = tidb_proto::tipb::DagRequest::decode(request.data.as_ref()) else {
             return;
         };
         let mut ids = recorded.lock().unwrap();

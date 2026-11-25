@@ -6,6 +6,12 @@ use std::mem::size_of;
 fn vec_bytes<T>(v: &Vec<T>) -> usize {
     v.capacity() * size_of::<T>()
 }
+fn offset_bytes(offsets: &std::borrow::Cow<'static, [usize]>) -> usize {
+    match offsets {
+        std::borrow::Cow::Borrowed(_) => 0,
+        std::borrow::Cow::Owned(offsets) => vec_bytes(offsets),
+    }
+}
 fn strings(v: &Vec<String>) -> usize {
     vec_bytes(v) + v.iter().map(String::capacity).sum::<usize>()
 }
@@ -16,9 +22,11 @@ fn datum(v: &Datum) -> usize {
 fn column(v: &crate::column::Column) -> usize {
     let mut bytes = v.origin_default.as_ref().map_or(0, datum);
     if let Some(generated) = &v.generated {
-        bytes += generated.expr_text.capacity()
+        bytes += size_of::<crate::generated_column::GeneratedColumnDefinition>()
+            + generated.expr_text.capacity()
             + strings(&generated.dependencies)
-            + generated.expr.memory_usage() as usize;
+            + (generated.expr.memory_usage() as usize)
+                .saturating_sub(std::mem::size_of_val(&generated.expr));
     }
     if let Some(default) = &v.default_value {
         bytes += match default {
@@ -112,8 +120,8 @@ impl TableCommon {
                 .map(|v| vec_bytes(&v.index.column_offsets))
                 .sum::<usize>();
         bytes += vec_bytes(&self.hidden_offsets)
-            + vec_bytes(&self.visible_offsets)
-            + vec_bytes(&self.writable_offsets)
+            + offset_bytes(&self.visible_offsets)
+            + offset_bytes(&self.writable_offsets)
             + vec_bytes(&self.common_handle_offsets)
             + vec_bytes(&self.common_handle_prefix_lengths);
         bytes += self.read_partitions.as_ref().map_or(0, vec_bytes);

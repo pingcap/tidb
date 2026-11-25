@@ -645,8 +645,8 @@ fn partition_value_equals(left: &str, right: &str) -> bool {
     if left_keyword || right_keyword {
         return left_keyword && right_keyword && left.eq_ignore_ascii_case(right);
     }
-    super::table_partition::unwrap_from_single_quotes(left)
-        == super::table_partition::unwrap_from_single_quotes(right)
+    tidb_datatype::unwrap_from_single_quotes_ref(left.as_bytes())
+        == tidb_datatype::unwrap_from_single_quotes_ref(right.as_bytes())
 }
 
 /// Go `compareRangePartitionValues`, which only ever answers whether

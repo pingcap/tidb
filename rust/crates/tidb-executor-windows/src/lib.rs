@@ -19,6 +19,7 @@
 
 mod builder;
 mod pipelined_window;
+mod range_compare;
 mod window;
 
 pub use builder::{build, build_ordered, WindowPlan};

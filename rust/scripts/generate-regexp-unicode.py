@@ -1,0 +1,176 @@
+#!/usr/bin/env python3
+# Copyright 2026 PingCAP, Inc.
+# Licensed under the Apache License, Version 2.0 (the "License").
+
+"""Generate Unicode regex classes from the pinned Go regexp/syntax parser."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+from pathlib import Path
+import struct
+import subprocess
+import tempfile
+
+
+GO_VERSION = "go1.27.4"
+HELPER = r'''
+package main
+
+import (
+    "encoding/json"
+    "os"
+    "regexp/syntax"
+    "sort"
+    "strings"
+    "unicode"
+)
+
+func normalized(name string) string {
+    return strings.ToLower(strings.NewReplacer("_", "", "-", "", " ", "").Replace(name))
+}
+
+func ranges(name string, folded bool) []rune {
+    flags := syntax.Perl
+    if folded { flags |= syntax.FoldCase }
+    re, err := syntax.Parse("\\p{" + name + "}", flags)
+    if err != nil { panic(err) }
+    switch re.Op {
+    case syntax.OpCharClass:
+        return re.Rune
+    case syntax.OpLiteral:
+        if len(re.Rune) != 1 { panic(re.String()) }
+        first := re.Rune[0]
+        members := []rune{first}
+        if re.Flags&syntax.FoldCase != 0 {
+            for r := unicode.SimpleFold(first); r != first; r = unicode.SimpleFold(r) {
+                members = append(members, r)
+            }
+        }
+        sort.Slice(members, func(i, j int) bool { return members[i] < members[j] })
+        out := make([]rune, 0, 2*len(members))
+        for _, r := range members { out = append(out, r, r) }
+        return out
+    case syntax.OpAnyChar:
+        return []rune{0, unicode.MaxRune}
+    case syntax.OpAnyCharNotNL:
+        return []rune{0, '\n'-1, '\n'+1, unicode.MaxRune}
+    case syntax.OpNoMatch:
+        return []rune{}
+    default:
+        panic(re.String())
+    }
+}
+
+func main() {
+    names := map[string]bool{"Any": true, "Assigned": true, "ASCII": true}
+    for name := range unicode.Categories { names[name] = true }
+    for name := range unicode.CategoryAliases { names[name] = true }
+    for name := range unicode.Scripts { names[name] = true }
+    result := make(map[string][2][]rune)
+    for name := range names {
+        canonical := normalized(name)
+        result[canonical] = [2][]rune{ranges(canonical, false), ranges(canonical, true)}
+    }
+    if err := json.NewEncoder(os.Stdout).Encode(result); err != nil { panic(err) }
+}
+'''
+
+
+def generate() -> tuple[str, bytes]:
+    env = dict(os.environ, GOTOOLCHAIN=GO_VERSION)
+    version = subprocess.check_output(["go", "env", "GOVERSION"], env=env, text=True).strip()
+    if version != GO_VERSION:
+        raise SystemExit(f"expected {GO_VERSION}, got {version}")
+    with tempfile.TemporaryDirectory() as directory:
+        helper = Path(directory) / "main.go"
+        helper.write_text(HELPER, encoding="utf-8")
+        classes = json.loads(subprocess.check_output(["go", "run", "-mod=readonly", str(helper)], env=env))
+
+    ids = {}
+    descriptors = []
+    names = []
+    data = bytearray()
+
+    def words(mask: int) -> str:
+        return ", ".join(
+            f"0x{(mask >> shift) & ((1 << 64) - 1):016x}"
+            for shift in range(0, 256, 64)
+        )
+
+    def utf8_lead(rune: int) -> int:
+        if rune < 0x800:
+            return 0xC0 | (rune >> 6)
+        if rune < 0x10000:
+            return 0xE0 | (rune >> 12)
+        return 0xF0 | (rune >> 18)
+
+    for name, variants in sorted(classes.items()):
+        indices = []
+        for ranges in variants:
+            key = tuple(ranges)
+            if key not in ids:
+                ids[key] = len(descriptors)
+                latin1 = 0
+                full_bmp = 0
+                pages = 0
+                utf8_leads = 0
+                for start, end in zip(ranges[::2], ranges[1::2]):
+                    first, last = start >> 10, end >> 10
+                    for page in range(first, min(last + 1, first + 64)):
+                        pages |= 1 << (page & 63)
+                    for page in range((start + 255) >> 8, min((end + 1) >> 8, 256)):
+                        full_bmp |= 1 << page
+                    if start < 256:
+                        latin1 |= ((1 << (min(end, 255) + 1)) - 1) ^ ((1 << start) - 1)
+                    if end >= 128:
+                        first_lead = utf8_lead(max(128, start))
+                        last_lead = utf8_lead(end)
+                        for lead in range(first_lead, last_lead + 1):
+                            utf8_leads |= 1 << (lead & 63)
+
+                descriptors.append(
+                    f"    Class {{ start: {len(data) // 8}, count: {len(ranges) // 2}, "
+                    f"latin1: [{words(latin1)}], full_bmp: [{words(full_bmp)}], "
+                    f"pages: 0x{pages:016x}, utf8_leads: 0x{utf8_leads:016x} }},"
+                )
+                data.extend(struct.pack(f"<{len(ranges)}I", *ranges))
+            indices.append(ids[key])
+        names.append(f'    ({json.dumps(name)}, [{indices[0]}, {indices[1]}]),')
+
+    lines = [
+        "// @generated by rust/scripts/generate-regexp-unicode.py",
+        f"// Source: Go {GO_VERSION} regexp/syntax.",
+        "",
+        "const NAMES: &[(&str, [usize; 2])] = &[",
+        *names,
+        "];",
+        "",
+        "#[rustfmt::skip]",
+        "const CLASSES: &[Class] = &[",
+        *descriptors,
+        "];",
+        "",
+    ]
+    return "\n".join(lines), bytes(data)
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--check", action="store_true")
+    args = parser.parse_args()
+    target = Path(__file__).resolve().parent.parent / "crates/tidb-go-regexp/src"
+    source, ranges = generate()
+    for name, data in [("unicode_class_data.rs", source.encode()), ("unicode_class_ranges.bin", ranges)]:
+        path = target / name
+        if args.check:
+            if not path.exists() or path.read_bytes() != data:
+                raise SystemExit(f"regenerate {path}")
+        else:
+            path.write_bytes(data)
+
+
+if __name__ == "__main__":
+    main()

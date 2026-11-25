@@ -17,7 +17,7 @@
 use std::cmp::Ordering;
 
 use tidb_datatype::{
-    check_vector_dim_valid, deserialize_vector_float32, peek_vector_float32, VectorFloat32,
+    check_vector_dim_valid, deserialize_vector_float32, peek_vector_float32, VectorFloat32, VectorFloat32Ref,
     MAX_VECTOR_DIMENSION,
 };
 
@@ -225,6 +225,20 @@ fn vector_text_parse_and_format_rules_match_source() {
 }
 
 #[test]
+fn vector_text_formats_halfway_values_and_nonfinite_values_like_go() {
+    let rounded = VectorFloat32::parse("[-181168.625,447746.625]").unwrap();
+    assert_eq!(rounded.to_string(), "[-181168.62,447746.62]");
+
+    let mut nonfinite = VectorFloat32::init(3);
+    nonfinite.elements_mut().copy_from_slice(&[
+        f32::INFINITY,
+        f32::NEG_INFINITY,
+        f32::NAN,
+    ]);
+    assert_eq!(nonfinite.to_string(), "[+Inf,-Inf,NaN]");
+}
+
+#[test]
 fn vector_wire_format_and_decode_rules_match_source() {
     let mut vector = VectorFloat32::init(2);
     vector.elements_mut().copy_from_slice(&[1.1, 2.2]);
@@ -260,6 +274,25 @@ fn vector_wire_format_and_decode_rules_match_source() {
     let (round_trip, remaining) = deserialize_vector_float32(&serialized).unwrap();
     assert_eq!(round_trip, vector);
     assert_eq!(remaining, [1, 2, 3, 4]);
+
+    let bits = [0x8000_0000, 0x0000_0001, 0x7f80_1234, 0xff80_0000];
+    let encoded = wire(&bits);
+    let mut unaligned = vec![42];
+    unaligned.extend_from_slice(&encoded);
+    unaligned.extend_from_slice(b"tail");
+    let (decoded, remaining) = deserialize_vector_float32(&unaligned[1..]).unwrap();
+    assert_eq!(remaining, b"tail");
+    assert!(decoded.elements().iter().map(|value| value.to_bits()).eq(bits));
+    let view = VectorFloat32Ref::from_encoded(&unaligned[1..]).unwrap();
+    assert!(view.l2_norm().is_nan());
+    assert!(VectorFloat32Ref::from_encoded(&unaligned[1..encoded.len()]).is_err());
+    let mut prefixed = vec![42];
+    decoded.serialize_to(&mut prefixed);
+    assert_eq!(prefixed, unaligned[..1 + encoded.len()]);
+    let mut changed = decoded.clone();
+    changed.elements_mut()[0] = 5.0;
+    assert_eq!(changed.elements()[0], 5.0);
+    assert_eq!(decoded.serialize(), encoded);
 
     let large_wire = wire(&vec![0; MAX_VECTOR_DIMENSION + 1]);
     let (large, remaining) = deserialize_vector_float32(&large_wire).unwrap();
@@ -323,9 +356,10 @@ fn vector_clone_zero_and_memory_rules_match_source() {
     original.elements_mut()[1] = 7.0;
     assert_eq!(cloned.elements(), [9.0, 2.0]);
 
+    // Go's EstimatedMemUsage charges the slice header and the wire bytes.
     assert_eq!(
         original.estimated_mem_usage(),
-        std::mem::size_of::<VectorFloat32>() + original.serialized_size()
+        3 * std::mem::size_of::<usize>() + original.serialized_size()
     );
     if std::mem::size_of::<usize>() == 8 {
         assert_eq!(original.estimated_mem_usage(), 36);
@@ -376,4 +410,28 @@ fn vector_functions_cover_source_precision_errors_and_edge_cases() {
         .cosine_distance(&VectorFloat32::default())
         .unwrap()
         .is_nan());
+}
+
+#[cfg(target_arch = "aarch64")]
+#[test]
+fn vector_distance_rounding_matches_go_arm64() {
+    let left = VectorFloat32::must_create(
+        [0xbf0c_255f, 0xbf8f_e21a, 0x3f9b_184b, 0x3f22_91c0].map(f32::from_bits),
+    );
+    let right = VectorFloat32::must_create(
+        [0xbf4f_7a25, 0xbdc8_c8c9, 0x3f1d_47f3, 0xbfa5_a5a6].map(f32::from_bits),
+    );
+    // Go 1.27.4 arm64 results for the exact four-element inputs above.
+    assert_eq!(
+        left.l2_squared_distance(&right).unwrap().to_bits(),
+        0x4014_cd29_6000_0000
+    );
+    assert_eq!(
+        left.inner_product(&right).unwrap().to_bits(),
+        0x3fde_7f0a_8000_0000
+    );
+    assert_eq!(
+        left.cosine_distance(&right).unwrap().to_bits(),
+        0x3feb_0293_ce85_0ded
+    );
 }

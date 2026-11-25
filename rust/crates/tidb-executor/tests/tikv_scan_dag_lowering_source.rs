@@ -189,8 +189,8 @@ fn table_scan_preserves_pre_resolved_column_and_common_handle_metadata() {
         column_len: 20,
         decimal: 3,
         flag: 2,
-        elems: vec!["red".to_owned(), "blue".to_owned()],
-        default_val: Some(vec![1, 42]),
+        elems: vec!["red".to_owned(), "blue".to_owned()].into(),
+        default_val: Some(prost::bytes::Bytes::from_static(&[1, 42])),
         pk_handle: true,
         array: false,
     };

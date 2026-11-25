@@ -14,9 +14,10 @@
 
 //! Complete registry from `pkg/parser/charset/charset.go`.
 
-use std::collections::HashMap;
+use std::borrow::Cow;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
-use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering as AtomicOrdering};
 use std::sync::{OnceLock, RwLock};
 
 use tidb_mysql::to_lowercase as go_simple_lowercase;
@@ -178,6 +179,22 @@ impl Charset {
         } else {
             None
         }
+    }
+
+    /// Resolves a collation ID to a supported charset without copying its names.
+    pub fn from_collation_id(id: i32) -> Option<Self> {
+        if id == 46 {
+            return Some(Self::Utf8Mb4);
+        }
+        let state = registry_state();
+        if let Some(slot) = state.charset_ids.get(id as usize) {
+            return CHARSET_TAGS
+                .get(usize::from(slot.load(AtomicOrdering::Acquire)))
+                .copied();
+        }
+        let guard = state.data.read().expect("charset registry lock poisoned");
+        let collation = guard.collations_by_id.get(&id)?;
+        Self::from_name(&collation.charset_name)
     }
 
     /// Returns the charset's maximum bytes per character, which is what turns
@@ -557,9 +574,49 @@ impl Registry {
     }
 }
 
+// The built-in collation IDs fit through 2048. Custom IDs outside this
+// range use the registry. The table only resolves supported charset enums.
+const CHARSET_ID_SLOTS: usize = 2049;
+const CHARSET_TAGS: [Charset; 7] = [
+    Charset::Binary,
+    Charset::Ascii,
+    Charset::Latin1,
+    Charset::Utf8,
+    Charset::Utf8Mb4,
+    Charset::Gbk,
+    Charset::Gb18030,
+];
+
+fn charset_tag(name: &str) -> u8 {
+    Charset::from_name(name)
+        .and_then(|charset| CHARSET_TAGS.iter().position(|&tag| tag == charset))
+        .map_or(u8::MAX, |tag| tag as u8)
+}
+
+struct RegistryState {
+    data: RwLock<Registry>,
+    charset_ids: [AtomicU8; CHARSET_ID_SLOTS],
+}
+
+fn registry_state() -> &'static RegistryState {
+    static REGISTRY: OnceLock<RegistryState> = OnceLock::new();
+    REGISTRY.get_or_init(|| {
+        let registry = Registry::source();
+        let charset_ids = [const { AtomicU8::new(u8::MAX) }; CHARSET_ID_SLOTS];
+        for collation in registry.collations_by_id.values() {
+            if let Some(slot) = charset_ids.get(collation.id as usize) {
+                slot.store(charset_tag(&collation.charset_name), AtomicOrdering::Relaxed);
+            }
+        }
+        RegistryState {
+            data: RwLock::new(registry),
+            charset_ids,
+        }
+    })
+}
+
 fn registry() -> &'static RwLock<Registry> {
-    static REGISTRY: OnceLock<RwLock<Registry>> = OnceLock::new();
-    REGISTRY.get_or_init(|| RwLock::new(Registry::source()))
+    &registry_state().data
 }
 
 // Go initializes this to enabled in `pkg/util/collate.init`; bootstrap later
@@ -669,13 +726,13 @@ pub fn valid_charset_and_collation(charset: &str, collation: &str) -> bool {
     } else {
         charset
     };
-    let Ok(info) = get_charset_info(charset) else {
-        return false;
-    };
-    collation.is_empty()
-        || info
-            .collations
-            .contains_key(utf8_alias(&go_simple_lowercase(collation)))
+    with_charset_info(charset, |info| {
+        collation.is_empty()
+            || info
+                .collations
+                .contains_key(utf8_alias(&lookup_name(collation)))
+    })
+    .unwrap_or(false)
 }
 
 /// Returns the legacy parser default; GBK and GB18030 are deliberately absent.
@@ -690,7 +747,7 @@ pub fn get_default_collation_legacy(charset: &str) -> Result<String, CharsetErro
 
 /// Returns a supported charset's default collation.
 pub fn get_default_collation(charset: &str) -> Result<String, CharsetError> {
-    Ok(get_charset_info(charset)?.default_collation)
+    with_charset_info(charset, |info| info.default_collation.clone())
 }
 
 /// Returns TiDB's default charset and collation.
@@ -698,26 +755,43 @@ pub const fn get_default_charset_and_collate() -> (&'static str, &'static str) {
     ("utf8mb4", "utf8mb4_bin")
 }
 
-/// Looks up supported charset information and distinguishes unsupported names.
-/// Whether `name` names a charset MySQL/go knows at all (supported or merely
-/// catalogued), case-insensitively. `SET NAMES` validation answers 1115 only
-/// for names outside this set.
+/// Returns whether the live registry supports this charset, case-insensitively.
 #[must_use]
 pub fn charset_known(name: &str) -> bool {
-    get_charset_info(name).is_ok()
+    with_charset_info(name, |_| ()).is_ok()
 }
 
+/// Looks up supported charset information and distinguishes unsupported names.
 pub fn get_charset_info(charset: &str) -> Result<CharsetInfo, CharsetError> {
-    let canonical = if charset.eq_ignore_ascii_case("utf8mb3") {
-        "utf8".to_owned()
+    with_charset_info(charset, Clone::clone)
+}
+
+// Most lookup keys already have their canonical ASCII spelling.
+fn lookup_name(name: &str) -> Cow<'_, str> {
+    if name
+        .bytes()
+        .all(|b| b.is_ascii() && !b.is_ascii_uppercase())
+    {
+        Cow::Borrowed(name)
     } else {
-        go_simple_lowercase(charset)
+        Cow::Owned(go_simple_lowercase(name))
+    }
+}
+
+fn with_charset_info<T>(
+    charset: &str,
+    read: impl FnOnce(&CharsetInfo) -> T,
+) -> Result<T, CharsetError> {
+    let canonical = if let Some(known) = Charset::from_name(charset) {
+        Cow::Borrowed(known.name())
+    } else {
+        lookup_name(charset)
     };
     let guard = registry().read().expect("charset registry lock poisoned");
-    if let Some(info) = guard.supported.get(&canonical) {
-        return Ok(info.clone());
+    if let Some(info) = guard.supported.get(canonical.as_ref()) {
+        return Ok(read(info));
     }
-    if guard.known.contains_key(&canonical) {
+    if guard.known.contains_key(canonical.as_ref()) {
         return Err(CharsetError::UnsupportedCharset(charset.to_owned()));
     }
     Err(CharsetError::UnknownCharset(charset.to_owned()))
@@ -758,20 +832,31 @@ pub fn known_charset_name(cs: &str) -> Option<&'static str> {
 /// every collation Go declares (`collationsNameMap`).
 #[must_use]
 pub fn collation_name(name: &str) -> Option<&'static str> {
-    let lower = go_simple_lowercase(name);
-    let alias = utf8_alias(&lower);
-    ALL_COLLATIONS.iter().find(|collation| collation.name == alias).map(|collation| collation.name)
+    static NAMES: OnceLock<HashSet<&'static str>> = OnceLock::new();
+    let names = NAMES.get_or_init(|| ALL_COLLATIONS.iter().map(|row| row.name).collect());
+    names.get(utf8_alias(&lookup_name(name))).copied()
 }
 
 /// Looks up any registered collation name.
 pub fn get_collation_by_name(name: &str) -> Result<CollationInfo, CharsetError> {
+    with_collation_by_name(name, CollationInfo::clone)
+        .ok_or_else(|| CharsetError::UnknownCollation(name.to_owned()))
+}
+
+/// Looks up the ID of a registered collation without copying its metadata.
+#[must_use]
+pub fn get_collation_id_by_name(name: &str) -> Option<i32> {
+    with_collation_by_name(name, |collation| collation.id)
+}
+
+fn with_collation_by_name<T>(name: &str, read: impl FnOnce(&CollationInfo) -> T) -> Option<T> {
+    let name = lookup_name(name);
     registry()
         .read()
         .expect("charset registry lock poisoned")
         .collations_by_name
-        .get(utf8_alias(&go_simple_lowercase(name)))
-        .cloned()
-        .ok_or_else(|| CharsetError::UnknownCollation(name.to_owned()))
+        .get(utf8_alias(&name))
+        .map(read)
 }
 
 /// Go `newCollatorIDMap`'s keys (`pkg/util/collate/collate.go`): the
@@ -851,10 +936,14 @@ pub fn remove_charset(name: &str) {
 
 /// Adds a collation to every applicable registry view.
 pub fn add_collation(collation: CollationInfo) {
-    registry()
-        .write()
-        .expect("charset registry lock poisoned")
-        .add_collation(collation);
+    let state = registry_state();
+    let slot = state.charset_ids.get(collation.id as usize);
+    let tag = charset_tag(&collation.charset_name);
+    let mut registry = state.data.write().expect("charset registry lock poisoned");
+    registry.add_collation(collation);
+    if let Some(slot) = slot {
+        slot.store(tag, AtomicOrdering::Release);
+    }
 }
 
 /// Appends a collation to the supported list.
@@ -885,6 +974,41 @@ mod tests {
         );
         for row in ALL_COLLATIONS {
             assert_eq!(get_collation_by_name(row.name).unwrap().id, row.id);
+            assert_eq!(get_collation_id_by_name(row.name), Some(row.id));
+        }
+        assert_eq!(get_collation_id_by_name("UTF8MB3_BIN"), Some(83));
+        assert_eq!(get_collation_id_by_name("not_a_collation"), None);
+    }
+
+    #[test]
+    fn charset_lookup_tracks_builtin_and_custom_collation_ids() {
+        let _guard = REGISTRY_TEST_LOCK.lock().unwrap();
+        for row in ALL_COLLATIONS {
+            let (name, _, error) = get_charset_info_by_id(row.id);
+            assert!(error.is_none(), "id {}", row.id);
+            assert_eq!(Charset::from_collation_id(row.id), Charset::from_name(&name));
+        }
+        for id in [2000, 50_000] {
+            assert_eq!(Charset::from_collation_id(id), None);
+            for (name, charset) in [
+                ("GBK", Some(Charset::Gbk)),
+                ("ascii", Some(Charset::Ascii)),
+                ("unsupported", None),
+            ] {
+                add_collation(CollationInfo {
+                    id,
+                    charset_name: name.to_owned(),
+                    name: format!("test_charset_lookup_{id}"),
+                    is_default: false,
+                    sortlen: 1,
+                    pad_attribute: PAD_SPACE.to_owned(),
+                });
+                assert_eq!(
+                    get_collation_id_by_name(&format!("TEST_CHARSET_LOOKUP_{id}")),
+                    Some(id)
+                );
+                assert_eq!(Charset::from_collation_id(id), charset);
+            }
         }
     }
 

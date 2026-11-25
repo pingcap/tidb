@@ -2434,8 +2434,8 @@ fn build_range_fallbacks_match_go() {
 fn append_ranges_to_point_ranges_matches_go() {
     use super::types::{Range, Ranges};
     let int_range = |low: &[i64], high: &[i64]| Range {
-        low_val: low.iter().map(|v| Datum::Int(*v)).collect(),
-        high_val: high.iter().map(|v| Datum::Int(*v)).collect(),
+        low_val: low.iter().map(|v| Datum::Int(*v)).collect::<Vec<_>>().into(),
+        high_val: high.iter().map(|v| Datum::Int(*v)).collect::<Vec<_>>().into(),
         collators: vec![tidb_charset::Collation::Binary; low.len()],
         low_exclude: false,
         high_exclude: false,
@@ -2715,8 +2715,8 @@ fn range_mem_usage_matches_go() {
     use super::types::{ranges_mem_usage, Range, EMPTY_RANGE_SIZE};
     use tidb_datatype::EMPTY_DATUM_SIZE;
     let r1 = Range {
-        low_val: vec![Datum::Int(0)],
-        high_val: vec![Datum::Int(1)],
+        low_val: vec![Datum::Int(0)].into(),
+        high_val: vec![Datum::Int(1)].into(),
         collators: vec![tidb_charset::Collation::Binary],
         low_exclude: false,
         high_exclude: false,
@@ -2730,8 +2730,8 @@ fn range_mem_usage_matches_go() {
         ))
     };
     let r2 = Range {
-        low_val: vec![string_datum("abcde")],
-        high_val: vec![string_datum("fghij")],
+        low_val: vec![string_datum("abcde")].into(),
+        high_val: vec![string_datum("fghij")].into(),
         collators: vec![tidb_charset::Collation::Binary],
         low_exclude: false,
         high_exclude: false,

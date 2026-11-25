@@ -292,6 +292,7 @@ const UNICODE_UPPERCASE_LETTERS: &[(u32, u32)] = &[
     (0x10C7, 0x10C7),
     (0x10CD, 0x10CD),
     (0x13A0, 0x13F5),
+    (0x1C89, 0x1C89),
     (0x1C90, 0x1CBA),
     (0x1CBD, 0x1CBF),
     (0x1E00, 0x1E00),
@@ -616,9 +617,15 @@ const UNICODE_UPPERCASE_LETTERS: &[(u32, u32)] = &[
     (0xA7C2, 0xA7C2),
     (0xA7C4, 0xA7C7),
     (0xA7C9, 0xA7C9),
+    (0xA7CB, 0xA7CC),
+    (0xA7CE, 0xA7CE),
     (0xA7D0, 0xA7D0),
+    (0xA7D2, 0xA7D2),
+    (0xA7D4, 0xA7D4),
     (0xA7D6, 0xA7D6),
     (0xA7D8, 0xA7D8),
+    (0xA7DA, 0xA7DA),
+    (0xA7DC, 0xA7DC),
     (0xA7F5, 0xA7F5),
     (0xFF21, 0xFF3A),
     (0x10400, 0x10427),
@@ -628,8 +635,10 @@ const UNICODE_UPPERCASE_LETTERS: &[(u32, u32)] = &[
     (0x1058C, 0x10592),
     (0x10594, 0x10595),
     (0x10C80, 0x10CB2),
+    (0x10D50, 0x10D65),
     (0x118A0, 0x118BF),
     (0x16E40, 0x16E5F),
+    (0x16EA0, 0x16EB8),
     (0x1D400, 0x1D419),
     (0x1D434, 0x1D44D),
     (0x1D468, 0x1D481),
@@ -662,7 +671,7 @@ const UNICODE_UPPERCASE_LETTERS: &[(u32, u32)] = &[
     (0x1D790, 0x1D7A8),
     (0x1D7CA, 0x1D7CA),
     (0x1E900, 0x1E921),
-]; // 646 ranges
+]; // 655 ranges
 const UNICODE_LOWERCASE_LETTERS: &[(u32, u32)] = &[
     (0x61, 0x7A),
     (0xB5, 0xB5),
@@ -809,7 +818,7 @@ const UNICODE_LOWERCASE_LETTERS: &[(u32, u32)] = &[
     (0x24B, 0x24B),
     (0x24D, 0x24D),
     (0x24F, 0x293),
-    (0x295, 0x2AF),
+    (0x296, 0x2AF),
     (0x371, 0x371),
     (0x373, 0x373),
     (0x377, 0x377),
@@ -938,6 +947,7 @@ const UNICODE_LOWERCASE_LETTERS: &[(u32, u32)] = &[
     (0x10FD, 0x10FF),
     (0x13F8, 0x13FD),
     (0x1C80, 0x1C88),
+    (0x1C8A, 0x1C8A),
     (0x1D00, 0x1D2B),
     (0x1D6B, 0x1D77),
     (0x1D79, 0x1D9A),
@@ -1268,11 +1278,14 @@ const UNICODE_LOWERCASE_LETTERS: &[(u32, u32)] = &[
     (0xA7C3, 0xA7C3),
     (0xA7C8, 0xA7C8),
     (0xA7CA, 0xA7CA),
+    (0xA7CD, 0xA7CD),
+    (0xA7CF, 0xA7CF),
     (0xA7D1, 0xA7D1),
     (0xA7D3, 0xA7D3),
     (0xA7D5, 0xA7D5),
     (0xA7D7, 0xA7D7),
     (0xA7D9, 0xA7D9),
+    (0xA7DB, 0xA7DB),
     (0xA7F6, 0xA7F6),
     (0xA7FA, 0xA7FA),
     (0xAB30, 0xAB5A),
@@ -1288,8 +1301,10 @@ const UNICODE_LOWERCASE_LETTERS: &[(u32, u32)] = &[
     (0x105B3, 0x105B9),
     (0x105BB, 0x105BC),
     (0x10CC0, 0x10CF2),
+    (0x10D70, 0x10D85),
     (0x118C0, 0x118DF),
     (0x16E60, 0x16E7F),
+    (0x16EBB, 0x16ED3),
     (0x1D41A, 0x1D433),
     (0x1D44E, 0x1D454),
     (0x1D456, 0x1D467),
@@ -1322,7 +1337,7 @@ const UNICODE_LOWERCASE_LETTERS: &[(u32, u32)] = &[
     (0x1DF0B, 0x1DF1E),
     (0x1DF25, 0x1DF2A),
     (0x1E922, 0x1E943),
-]; // 658 ranges
+]; // 664 ranges
 
 fn contains_codepoint(ranges: &[(u32, u32)], character: char) -> bool {
     let codepoint = character as u32;
@@ -1340,11 +1355,13 @@ fn contains_codepoint(ranges: &[(u32, u32)], character: char) -> bool {
 }
 
 /// Mirrors Go `unicode.IsUpper`, whose domain is category `Lu`.
+#[must_use]
 pub fn is_unicode_uppercase_letter(character: char) -> bool {
     contains_codepoint(UNICODE_UPPERCASE_LETTERS, character)
 }
 
 /// Mirrors Go `unicode.IsLower`, whose domain is category `Ll`.
+#[must_use]
 pub fn is_unicode_lowercase_letter(character: char) -> bool {
     contains_codepoint(UNICODE_LOWERCASE_LETTERS, character)
 }

@@ -220,6 +220,7 @@ impl SchedEventStatus {
     }
 
     /// The underlying string.
+    #[inline]
     pub fn as_str(&self) -> &str {
         &self.0
     }

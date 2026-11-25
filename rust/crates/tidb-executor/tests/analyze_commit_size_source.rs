@@ -93,7 +93,8 @@ fn stats_item_inserts_use_go_statement_batches() {
             lower_bound: Datum::Bytes(vec![0; 300_000]),
             upper_bound: Datum::Bytes(vec![0; 300_000]),
         },
-    ];
+    ]
+    .into();
     assert_eq!(save_topn_sql(4242, &oversized).len(), 2);
     assert_eq!(save_buckets_sql(4242, &oversized).expect("buckets build").len(), 2);
 }

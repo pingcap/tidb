@@ -74,6 +74,16 @@ pub enum KeyInfoTableLookup {
 pub trait KeyInfoCatalog {
     /// Resolves a logical table ID first, then a physical partition ID.
     fn resolve_physical_table(&self, physical_id: i64) -> Option<KeyInfoTableLookup>;
+
+    /// Resolves the metadata needed to decode one key. Implementations may
+    /// return only the requested index, or no indexes for a record key.
+    fn resolve_physical_table_for_key(
+        &self,
+        physical_id: i64,
+        _index_id: Option<i64>,
+    ) -> Option<KeyInfoTableLookup> {
+        self.resolve_physical_table(physical_id)
+    }
 }
 
 /// Go `keydecoder.HandleType`.
@@ -230,23 +240,24 @@ pub fn decode_key<C: KeyInfoCatalog + ?Sized>(
 
     let head = decode_key_head(key)
         .map_err(|error| failure(DecodedKey::default(), KeyDecoderError::InvalidHead(error)))?;
-    let physical_table_id = match head {
-        KeyHead::Record { table_id } | KeyHead::Index { table_id, .. } => table_id,
+    let (physical_table_id, index_id) = match head {
+        KeyHead::Record { table_id } => (table_id, None),
+        KeyHead::Index { table_id, index_id } => (table_id, Some(index_id)),
     };
     let mut decoded = DecodedKey {
         table_id: physical_table_id,
         ..DecodedKey::default()
     };
 
-    let table = match catalog.resolve_physical_table(physical_table_id) {
+    let indexes = match catalog.resolve_physical_table_for_key(physical_table_id, index_id) {
         Some(KeyInfoTableLookup::Resolved(table)) => {
             decoded.table_id = table.table_id;
-            decoded.table_name.clone_from(&table.table_name);
+            decoded.table_name = table.table_name;
             decoded.db_id = table.db_id;
-            decoded.db_name.clone_from(&table.db_name);
+            decoded.db_name = table.db_name;
             decoded.partition_id = table.partition_id;
-            decoded.partition_name.clone_from(&table.partition_name);
-            Some(table)
+            decoded.partition_name = table.partition_name;
+            table.indexes
         }
         Some(KeyInfoTableLookup::TableWithoutSchema {
             table_name,
@@ -256,13 +267,13 @@ pub fn decode_key<C: KeyInfoCatalog + ?Sized>(
             decoded.table_id = table_id;
             return Ok(decoded);
         }
-        None => None,
+        None => Vec::new(),
     };
 
     if is_record {
         return decode_record(key, decoded, physical_table_id);
     }
-    decode_index(key, decoded, table.as_ref())
+    decode_index(key, decoded, indexes)
 }
 
 fn failure(decoded: DecodedKey, error: KeyDecoderError) -> KeyDecoderFailure {
@@ -298,17 +309,15 @@ fn decode_record(
 fn decode_index(
     key: &[u8],
     mut decoded: DecodedKey,
-    table: Option<&KeyInfoTable>,
+    indexes: Vec<KeyInfoIndex>,
 ) -> Result<DecodedKey, KeyDecoderFailure> {
     let Ok((_, index_id, values)) = decode_index_key(key) else {
         // Go logs and returns the partial result with nil error here.
         return Ok(decoded);
     };
     decoded.index_id = index_id;
-    if let Some(index) =
-        table.and_then(|table| table.indexes.iter().find(|index| index.id == index_id))
-    {
-        decoded.index_name.clone_from(&index.name);
+    if let Some(index) = indexes.into_iter().find(|index| index.id == index_id) {
+        decoded.index_name = index.name;
         decoded.index_values = Some(values);
     }
     Ok(decoded)

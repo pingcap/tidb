@@ -18,6 +18,64 @@ use crate::column::Column;
 use crate::iterator::ChunkIterator;
 use tidb_datatype::Decimal;
 
+#[test]
+fn medium_string_retains_appended_backing_across_refill() {
+    let value = [0xff; 64];
+    for batched in [false, true] {
+        let mut column = Column::new_var_len_column(2);
+        if batched {
+            column.append_byte_rows(
+                [Some((value.len(), std::iter::once(value.as_slice()))), None].into_iter(),
+            );
+        } else {
+            column.append_bytes(&value);
+            column.append_null();
+        }
+
+        let retained = column.get_string(0);
+        assert_eq!(retained.as_bytes().as_ptr(), column.get_bytes(0).as_ptr());
+        assert!(column.get_string(1).is_empty());
+        assert!(column.retain_cell_bytes(0, None).is_none());
+
+        column.reset();
+        if batched {
+            column.append_byte_rows(std::iter::once(Some((
+                b"refilled".len(),
+                std::iter::once(b"refilled".as_slice()),
+            ))));
+        } else {
+            column.append_bytes(b"refilled");
+        }
+        assert_eq!(column.get_string(0).as_bytes(), b"refilled");
+        assert_eq!(retained.as_bytes(), &value);
+    }
+}
+
+#[test]
+fn fallible_byte_rows_keep_completed_cells_and_discard_partial_cells() {
+    let mut column = Column::new_var_len_column(2);
+    column.append_bytes(b"first");
+    let result = column.try_append_byte_rows(24, |row, cell| {
+        cell.append(b"[");
+        cell.append_pattern(b"ab", 5);
+        cell.append(b"]");
+        match row {
+            0 => Ok(true),
+            1 => Ok(false),
+            _ => Err("row error"),
+        }
+    });
+    assert_eq!(result, Err("row error"));
+    assert_eq!(column.rows(), 3);
+    assert_eq!(column.get_raw(0), b"first");
+    assert_eq!(column.get_raw(1), b"[ababa]");
+    assert!(column.is_null(2));
+    assert_eq!(column.get_raw(2), b"");
+    column.append_bytes(b"last");
+    assert_eq!(column.get_raw(3), b"last");
+    assert_eq!(column.null_count(), 1);
+}
+
 /// Stands in for Go's `rand` in the reconstruct tests: those tests draw a
 /// fresh random selection and null pattern on every run, so a fixed
 /// generator run over several seeds keeps the same coverage while staying
@@ -175,6 +233,221 @@ fn reconstruct_var_len() {
     }
 }
 
+#[test]
+fn short_reconstruction_copies_match_overlapping_slice_copies() {
+    let original: Vec<u8> = (0..80).collect();
+    for len in 8..32 {
+        for source in 0..=original.len() - len {
+            for destination in 0..=original.len() - len {
+                let mut expected = original.clone();
+                expected.copy_within(source..source + len, destination);
+                let mut actual = original.clone();
+                if len < 16 {
+                    copy_cell_ends_within::<8>(&mut actual, source..source + len, destination);
+                } else {
+                    copy_cell_ends_within::<16>(&mut actual, source..source + len, destination);
+                }
+                assert_eq!(actual, expected);
+            }
+        }
+    }
+}
+
+#[test]
+fn reconstruct_one_wire_cell_keeps_the_initialized_tail() {
+    let values = [101, 202, 303, 404];
+    for (row, present) in [(3, true), (2, false)] {
+        let mut column = Column::new_fixed_len_column(8, values.len());
+        for value in values {
+            column.append_int64(value);
+        }
+        column.set_null(row, !present);
+        let wire = bytes::Bytes::from(column.data.snapshot());
+        column.data = SharedBytes::from_bytes(wire.clone());
+        column.reconstruct(&[row]);
+
+        let source = if present { row } else { 0 };
+        assert_eq!(column.is_null(0), !present);
+        assert_eq!(column.get_raw(0).as_ptr(), wire[source * 8..].as_ptr());
+        assert_eq!(column.get_data_cap(), wire.len());
+
+        column.reset();
+        column.resize_int64(values.len(), true);
+        let mut expected = values;
+        expected[0] = values[source];
+        for (index, value) in expected.into_iter().enumerate() {
+            assert_eq!(column.get_int64(index), value);
+            assert!(column.is_null(index));
+        }
+        assert_eq!(&wire[..8], &values[0].to_ne_bytes());
+    }
+}
+
+#[test]
+fn reconstruct_one_wire_string_preserves_capacity_on_append() {
+    let mut column = Column::new_var_len_column(4);
+    for value in ["first", "second", "third", "fourth"] {
+        column.append_string(value);
+    }
+    let wire = bytes::Bytes::from(column.data.snapshot());
+    let offset_bytes = column.offsets.iter().flat_map(i64::to_ne_bytes).collect::<Vec<_>>();
+    column.offsets.replace_wire(bytes::Bytes::from(offset_bytes));
+    column.data = SharedBytes::from_string_bytes(std::sync::Arc::new(wire.clone()), 0..wire.len());
+    let offset_capacity = column.get_offset_cap();
+    column.reconstruct(&[1]);
+    assert_eq!(column.get_raw(0).as_ptr(), wire[5..].as_ptr());
+    assert_eq!(column.get_raw(0).as_ref(), b"second");
+    column.append_string("new");
+    assert_eq!(column.get_raw(0).as_ref(), b"second");
+    assert_eq!(column.get_raw(1).as_ref(), b"new");
+    assert_eq!(column.get_data_cap(), wire.len());
+    assert_eq!(column.get_offset_cap(), offset_capacity);
+    assert_eq!(wire.as_ref(), b"firstsecondthirdfourth");
+}
+
+#[test]
+fn reconstruct_contiguous_wire_strings_checks_null_cell_width() {
+    for stale in [false, true] {
+        let mut column = Column::new_var_len_column(4);
+        column.append_string("first");
+        if stale {
+            column.append_string("stale");
+            column.set_null(1, true);
+        } else {
+            column.append_null();
+        }
+        column.append_string("third");
+        column.append_string("fourth");
+        let wire = bytes::Bytes::from(column.data.snapshot());
+        column.data = SharedBytes::from_string_bytes(std::sync::Arc::new(wire.clone()), 0..wire.len());
+        column.reconstruct(&[1, 2]);
+
+        assert!(column.is_null(0));
+        assert!(column.get_raw(0).is_empty());
+        assert_eq!(column.get_raw(1).as_ref(), b"third");
+        if !stale {
+            assert_eq!(column.get_raw(1).as_ptr(), wire[5..].as_ptr());
+        }
+        assert_eq!(column.get_data_cap(), wire.len());
+    }
+}
+
+#[test]
+fn reconstruct_frozen_preserves_null_payload_and_capacity() {
+    let mut fixed = Column::new_fixed_len_column(8, 5);
+    for value in [101, 202, 303, 404, 505] {
+        fixed.append_int64(value);
+    }
+    fixed.null_bitmap[0] &= !(1 << 2);
+
+    let mut variable = Column::new_var_len_column(5);
+    for value in ["stale-null", "second", "", "fourth", "fifth"] {
+        variable.append_string(value);
+    }
+    variable.null_bitmap[0] &= !1;
+
+    for (column, selection) in [(fixed, [1, 2, 4]), (variable, [0, 1, 4])] {
+        let mut expected = column.copy_construct();
+        expected.reconstruct(&selection);
+        let mut frozen = column;
+        let raw = frozen.data.snapshot();
+        let wire_data = bytes::Bytes::copy_from_slice(&raw);
+        frozen.data = SharedBytes::from_bytes(wire_data.clone());
+        if !frozen.is_fixed() {
+            let wire_offsets = frozen
+                .offsets
+                .as_slice()
+                .iter()
+                .flat_map(i64::to_ne_bytes)
+                .collect::<Vec<_>>();
+            frozen.offsets.replace_wire(bytes::Bytes::from(wire_offsets));
+            let cells = frozen.raw_cells();
+            let read = cells.variable_cells();
+            for row in 0..frozen.rows() {
+                assert_eq!(read(row), frozen.get_raw(row).as_ref());
+            }
+        }
+        let data_capacity = frozen.get_data_cap();
+        let offset_capacity = frozen.get_offset_cap();
+        frozen.reconstruct(&selection);
+        assert_eq!(frozen, expected);
+        assert_eq!(frozen.get_data_cap(), data_capacity);
+        assert_eq!(frozen.get_offset_cap(), offset_capacity);
+        assert_eq!(wire_data.as_ref(), raw.as_slice());
+    }
+}
+
+#[test]
+fn reconstruct_frozen_prefix_retains_bytes_and_capacity_until_mutated() {
+    let mut fixed = Column::new_fixed_len_column(8, 32);
+    let mut variable = Column::new_var_len_column(32);
+    for row in 0..32 {
+        fixed.append_int64(row);
+        if row == 1 {
+            variable.append_null();
+        } else {
+            variable.append_string(format!("row{row}"));
+        }
+    }
+    for mut column in [fixed, variable] {
+        let wire = bytes::Bytes::from(column.data.snapshot());
+        let cap = wire.len();
+        column.data = if column.is_fixed() {
+            SharedBytes::from_bytes(wire.clone())
+        } else {
+            SharedBytes::from_string_bytes(std::sync::Arc::new(wire.clone()), 0..cap)
+        };
+        let original = column.get_raw(0).to_vec();
+        column.reconstruct(&[0, 1, 2]);
+        assert!(column.data.is_frozen());
+        assert_eq!(column.get_raw(0).as_ptr(), wire.as_ptr());
+        assert_eq!(column.get_data_cap(), cap);
+        assert_eq!(column.rows(), 3);
+
+        column.append_own_range(0, 1);
+        assert!(!column.data.is_frozen());
+        assert_eq!(column.get_data_cap(), cap);
+        assert_eq!(column.get_raw(3).as_ref(), original.as_slice());
+        assert_eq!(&wire[..original.len()], original.as_slice());
+    }
+}
+
+#[test]
+fn reconstruct_wire_preserves_bytes_reexposed_by_resize_and_shallow_copy() {
+    let mut source = Column::new_fixed_len_column(8, 32);
+    for row in 0..32 {
+        source.append_int64(row * 13 + 2);
+    }
+    let wire = bytes::Bytes::from(source.data.snapshot());
+    for selection in [[0, 1, 2], [1, 8, 19]] {
+        for follow_on in ["resize", "shallow", "append"] {
+            let mut expected = source.copy_construct();
+            expected.reconstruct(&selection);
+            let mut column = source.copy_construct();
+            column.data = SharedBytes::from_bytes(wire.clone());
+            column.reconstruct(&selection);
+            match follow_on {
+                "shallow" => {
+                    let mut view = column.data.share_range(0, 8);
+                    view.set(0, 0xcd);
+                    expected.data.set(0, 0xcd);
+                }
+                "append" => {
+                    column.copy_rows_from(&source, &[17]);
+                    expected.copy_rows_from(&source, &[17]);
+                }
+                _ => {}
+            }
+            column.resize_int64(16, true);
+            expected.resize_int64(16, true);
+
+            assert_eq!(column, expected);
+            assert_eq!(column.get_data_cap(), source.get_data_cap());
+            assert_eq!(wire[0], 2);
+        }
+    }
+}
+
 /// A range append is the hot path used when a response or executor chunk is
 /// folded into its output.  Compare the batched implementation with the
 /// source cell-by-cell path across aligned, partially aligned and unrelated
@@ -209,6 +482,105 @@ fn append_range_from_matches_cell_appends_for_all_bitmap_alignments() {
             assert_eq!(actual.null_bitmap, expected.null_bitmap);
             assert_eq!(actual.offsets, expected.offsets);
             assert_eq!(actual.data.snapshot(), expected.data.snapshot());
+        }
+    }
+}
+
+#[test]
+fn range_append_matches_scalar_metadata_when_reusing_or_growing_buffers() {
+    for length in 32..40 {
+        let mut source = Column::new_var_len_column(length);
+        for row in 0..length {
+            if (row * 7 + row / 3) % 5 < 2 {
+                source.append_null();
+            } else {
+                source.append_string(format!("row{row}"));
+            }
+        }
+        for begin in 0..8 {
+            for count in [0, 1, 8, 9, 17, length - begin] {
+                let end = begin + count;
+                for reserve in [0, length * 2] {
+                    let mut expected = source.copy_construct();
+                    let mut distinct = source.copy_construct();
+                    let mut overlap = source.copy_construct();
+                    for column in [&mut expected, &mut distinct, &mut overlap] {
+                        column.null_bitmap.reserve(reserve);
+                        column.offsets.reserve(reserve);
+                    }
+                    for row in begin..end {
+                        expected.append_cell_by_cell(&source, row);
+                    }
+                    distinct.append_range_from(&source, begin, end);
+                    overlap.append_own_range(begin, end);
+                    for column in [distinct, overlap] {
+                        assert_eq!(column, expected, "length {length}, rows {begin}..{end}");
+                        assert_eq!(column.get_null_bitmap_cap(), expected.get_null_bitmap_cap());
+                        assert_eq!(column.get_offset_cap(), expected.get_offset_cap());
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn append_own_range_preserves_frozen_and_retained_payloads() {
+    let mut source = Column::new_var_len_column(8);
+    let first = vec![0xa7; 4096];
+    source.append_bytes(&first);
+    source.append_null();
+    source.append_bytes(b"");
+    source.append_bytes(b"tail");
+
+    let mut expected = source.copy_construct();
+    expected.append_range_from(&source, 0, 3);
+
+    let wire_data = bytes::Bytes::from(source.data.snapshot());
+    let wire_offsets = source
+        .offsets
+        .as_slice()
+        .iter()
+        .flat_map(i64::to_ne_bytes)
+        .collect::<Vec<_>>();
+    let mut frozen = source.copy_construct();
+    frozen.data = SharedBytes::from_bytes(wire_data.clone());
+    frozen.offsets.replace_wire(bytes::Bytes::from(wire_offsets));
+    frozen.append_own_range(0, 3);
+    assert_eq!(frozen, expected);
+    assert_eq!(&wire_data[..first.len()], first.as_slice());
+
+    source.data.retain_for_slices();
+    let retained = source.get_string(0);
+    source.append_own_range(0, 3);
+    assert_eq!(source, expected);
+    assert_eq!(retained.as_bytes(), first.as_slice());
+}
+
+#[test]
+fn append_own_range_matches_snapshot_across_bitmap_alignments() {
+    for field_type in [
+        FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+        FieldType::new(tidb_datatype::FieldTypeCode::VarString),
+    ] {
+        for length in [32, 33] {
+            let mut source = Column::new_column(&field_type, length);
+            for row in 0..length {
+                if row % 5 == 0 {
+                    source.append_null();
+                } else if source.is_fixed() {
+                    source.append_int64(row as i64);
+                } else {
+                    source.append_string(format!("row{row}"));
+                }
+            }
+            for (begin, end) in [(0, 0), (0, 1), (1, 18), (8, 32), (9, 27), (15, 31), (0, length)] {
+                let mut expected = source.copy_construct();
+                expected.append_range_from(&source, begin, end);
+                let mut actual = source.copy_construct();
+                actual.append_own_range(begin, end);
+                assert_eq!(actual, expected, "rows {begin}..{end} of {length}");
+            }
         }
     }
 }
@@ -528,7 +900,7 @@ fn resize_preserves_scratch_and_offset_headers() {
     assert_eq!(fixed.get_raw(0), &scratch.to_ne_bytes());
 
     let mut changing = Column::new_var_len_column(2);
-    changing.offsets = vec![7, 9];
+    changing.offsets = vec![7, 9].into();
     changing.resize_int64(0, false);
     assert_eq!(changing.offsets, vec![7, 9]);
     changing.reserve_string(1);
@@ -759,6 +1131,26 @@ fn copy_reconstruct_reuses_destination_and_preserves_avoid_reusing() {
 }
 
 #[test]
+fn copy_construct_handles_overlapping_payloads_and_reuses_scratch() {
+    let mut source = Column::new_fixed_len_column(8, 8);
+    source.append_int64(10);
+    source.append_null();
+    source.append_int64(30);
+    let mut destination = Column::new_fixed_len_column(8, 8);
+    destination.data = source.data.share_range(8, 24);
+    let scratch = destination.elem_buf.as_ref().unwrap().as_ptr();
+
+    source.copy_construct_to(&mut destination);
+
+    assert!(destination.data.backing_ptr_eq(&source.data));
+    assert_eq!(destination.elem_buf.as_ref().unwrap().as_ptr(), scratch);
+    assert_eq!(destination.rows(), 3);
+    assert_eq!(destination.get_int64(0), 10);
+    assert!(destination.is_null(1));
+    assert_eq!(destination.get_int64(2), 30);
+}
+
+#[test]
 fn direct_string_json_and_raw_join_cell_surfaces_match_go() {
     let mut strings = Column::new_var_len_column(2);
     strings.append_string("hello");
@@ -818,13 +1210,70 @@ fn set_null_ranges_and_merge_nulls_match_rowwise_and() {
 #[test]
 fn go_test_large_string_column_offset() {
     let mut col = Column::new_var_len_column(1);
-    col.offsets[0] = 6 << 30;
-    assert_eq!(col.offsets[0], 6_i64 << 30);
+    col.offsets.set(0, 6 << 30);
+    assert_eq!(col.offsets.at(0), 6_i64 << 30);
 }
 
 /// Go `TestJSONColumn` (`pkg/util/chunk/column_test.go`): 1024 distinct
 /// JSON objects round-trip through the column, and reading them back
 /// through the COLUMN and through a `Row` agrees, printed form included.
+#[test]
+fn json_reads_reuse_layout_results_for_unchanged_cells() {
+    use tidb_datatype::{BinaryJSON, BinaryJSONError};
+
+    let field = FieldType::new(FieldTypeCode::Json);
+    let value = BinaryJSON::parse(&format!("\"{}\"", "界".repeat(1500))).unwrap();
+    let raw = BinaryJSON::from_encoded_parts(value.type_code(), value.value());
+    let mut column = Column::new_column(&field, 1);
+    column.append_json(&value);
+    let retained = column.get_json(0);
+    assert_eq!(retained.known_encoded_layout(), Some(true));
+    column.append_json(&value);
+    assert_eq!(column.get_json(1), value);
+
+    column.set_cell_bytes(0, &raw.encoded());
+    assert_eq!(column.get_json(0).known_encoded_layout(), None);
+    assert_eq!(column.try_datum(0, &field).unwrap(), Datum::Json(raw.clone()));
+    assert_eq!(column.get_json(0).known_encoded_layout(), Some(true));
+
+    column.with_cell_bytes_mut(0, |bytes| *bytes.last_mut().unwrap() = 0xff);
+    assert_eq!(column.get_json(0).known_encoded_layout(), None);
+    assert!(column.try_datum(0, &field).is_err());
+    assert_eq!(column.get_json(0).known_encoded_layout(), Some(false));
+    assert_eq!(
+        column.get_json(0).element_depth(),
+        Err(BinaryJSONError::InvalidBinary)
+    );
+    assert_eq!(retained, value);
+
+    column.reset();
+    column.append_json(&raw);
+    assert_eq!(column.get_json(0).known_encoded_layout(), None);
+}
+
+#[test]
+fn json_layout_reuse_checks_the_middle_of_same_sized_cells() {
+    use tidb_datatype::{BinaryJSON, BinaryJSONError};
+
+    let field = FieldType::new(FieldTypeCode::Json);
+    let value = BinaryJSON::parse(&format!(r#"{{"text":"{}"}}"#, "界".repeat(1800))).unwrap();
+    let raw = BinaryJSON::from_encoded_parts(value.type_code(), value.value());
+    let mut corrupt = value.value().to_vec();
+    let middle = corrupt.len() / 2;
+    corrupt[middle] = 0xff;
+    let corrupt = BinaryJSON::from_encoded_parts(value.type_code(), corrupt);
+
+    let mut column = Column::new_column(&field, 3);
+    column.append_json(&raw);
+    column.append_json(&raw);
+    column.append_json(&corrupt);
+
+    let cells = column.raw_cells();
+    assert_eq!(cells.json_depth(0), Ok(2));
+    assert_eq!(cells.json_depth(1), Ok(2));
+    assert_eq!(cells.json_depth(2), Err(BinaryJSONError::InvalidBinary));
+}
+
 #[test]
 fn go_test_json_column() {
     let field = FieldType::new(FieldTypeCode::Json);
@@ -1596,6 +2045,14 @@ fn go_test_set_nulls() {
             assert!(col.is_null(k));
         }
     }
+
+    col.resize_float64(19, true);
+    col.set_nulls(3, 18, false);
+    assert_eq!(col.null_bitmap, [0xf8, 0xff, 0x03]);
+    col.set_nulls(5, 17, true);
+    assert_eq!(col.null_bitmap, [0x18, 0, 0x02]);
+    col.set_nulls(16, 16, false);
+    assert_eq!(col.null_bitmap, [0x18, 0, 0x02]);
 }
 
 /// Go `TestResizeReserve`: random resizes land on the exact row count, and
@@ -1867,4 +2324,97 @@ fn go_test_column_resize_int64() {
 fn zero_value_variable_column_reads_as_empty_bytes() {
     let column = Column::default();
     assert!(column.get_bytes(0).is_empty());
+}
+
+#[test]
+fn write_int64_rows_clears_reused_null_cell_bytes() {
+    let mut column = Column::new_fixed_len_column(8, 2);
+    column.append_int64(99);
+    column.append_int64(123);
+
+    column.write_int64_rows([Some(-7), None, Some(41)].into_iter());
+    assert_eq!(column.length(), 3);
+    assert_eq!(column.get_int64(0), -7);
+    assert!(column.is_null(1));
+    assert_eq!(column.get_int64(1), 0);
+    assert_eq!(column.get_int64(2), 41);
+}
+#[test]
+fn borrowed_json_metadata_rechecks_replaced_cells() {
+    use tidb_datatype::{BinaryJSON, BinaryJSONError};
+
+    let text = "界".repeat(2048);
+    let parsed = BinaryJSON::parse(&format!("{{\"wide\":\"{text}\"}}")).unwrap();
+    let value = BinaryJSON::from_encoded_parts(parsed.type_code(), parsed.value());
+    let mut column = Column::new_var_len_column(1);
+    column.append_json(&value);
+
+    assert_eq!(column.raw_cells().json_depth(0), Ok(2));
+    assert_eq!(
+        column.raw_cells().json_object_keys(0),
+        Ok(Some(parsed.keys().unwrap()))
+    );
+
+    let mut invalid = value.encoded();
+    *invalid.last_mut().unwrap() = 0xff;
+    column.set_raw(0, &invalid);
+    assert_eq!(
+        column.raw_cells().json_depth(0),
+        Err(BinaryJSONError::InvalidBinary)
+    );
+    assert_eq!(
+        column.raw_cells().json_object_keys(0),
+        Err(BinaryJSONError::InvalidBinary)
+    );
+
+    column.set_raw(0, &value.encoded());
+    assert_eq!(column.raw_cells().json_depth(0), Ok(2));
+}
+
+#[test]
+fn sql_json_depth_checks_the_empty_container_header() {
+    use tidb_datatype::{BinaryJSON, BinaryJSONError};
+
+    let mut column = Column::new_var_len_column(2);
+    for (row, document) in ["[]", "{}"].into_iter().enumerate() {
+        let empty = BinaryJSON::parse(document).unwrap();
+        let mut invalid = empty.encoded();
+        invalid[5] = 7;
+        assert_eq!(empty.get_elem_depth(), Ok(1));
+        assert_eq!(
+            BinaryJSON::from_encoded_parts(invalid[0], &invalid[1..]).get_elem_depth(),
+            Err(BinaryJSONError::InvalidBinary),
+        );
+
+        column.append_json(&empty);
+        assert_eq!(column.raw_cells().json_depth_for_sql(row), Ok(1));
+        column.set_raw(row, &invalid);
+        assert_eq!(column.raw_cells().json_depth_for_sql(row), Err(BinaryJSONError::InvalidBinary));
+    }
+}
+
+#[test]
+fn sql_json_depth_cache_is_separate_and_clears_on_replacement() {
+    use tidb_datatype::{BinaryJSON, BinaryJSONError, JSON_TYPE_CODE_LITERAL};
+
+    let parsed = BinaryJSON::parse(&format!("[{}[0]]", "0,".repeat(1024))).unwrap();
+    let raw = BinaryJSON::from_encoded_parts(parsed.type_code(), parsed.value());
+    let mut column = Column::new_var_len_column(2);
+    column.append_json(&raw);
+    column.append_json(&raw);
+    assert_eq!(column.raw_cells().json_depth_for_sql(0), Ok(3));
+    assert_eq!(column.raw_cells().json_depth_for_sql(1), Ok(3));
+    assert_eq!(column.get_json(0).known_encoded_layout(), None);
+
+    let mut encoded = raw.encoded();
+    let last = 1 + 8 + 1024 * 5;
+    encoded[last] = JSON_TYPE_CODE_LITERAL;
+    encoded[last + 1] = 0;
+    column.set_raw(0, &encoded);
+    assert_eq!(column.raw_cells().json_depth_for_sql(0), Ok(2));
+    assert_eq!(column.raw_cells().json_depth_for_sql(1), Ok(3));
+    column.reset();
+    column.append_bytes(&[]);
+    column.append_json(&raw);
+    assert_eq!(column.raw_cells().json_depth_for_sql(0), Err(BinaryJSONError::InvalidBinary));
 }

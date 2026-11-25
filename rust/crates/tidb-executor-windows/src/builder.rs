@@ -29,6 +29,7 @@ use tidb_exprctx::Columns;
 use tidb_planner_core_operator_logicalop::window::{BoundType, FrameBound, FrameType, WindowFrame};
 
 use crate::pipelined_window::{OrderedWindowExec, PipelinedWindowExec};
+use crate::range_compare::RangeComparison;
 use crate::window::{
     AggWindowProcessor, RangeFrameWindowProcessor, RowFrameWindowProcessor, WindowExec, WindowProcessor,
 };
@@ -130,6 +131,9 @@ fn build_window<C: Columns + Send + 'static>(
                 (start, end, is_range_frame)
             }
         };
+        let start_cmp = RangeComparison::for_bound(&start, false);
+        let end_cmp = RangeComparison::for_bound(&end, true);
+        let reuse_peer_bounds = is_range_frame && same_peer_bounds(&start, &end, &start_cmp, &end_cmp, order_by_cols.len());
         return Ok(Built::Pipelined(PipelinedWindowExec {
             child_result: Arc::new(child_exec.new_chunk()),
             meta,
@@ -138,6 +142,8 @@ fn build_window<C: Columns + Send + 'static>(
             num_window_funcs,
             window_funcs,
             partial_results,
+            start_cmp,
+            end_cmp,
             start,
             end,
             group_checker: VecGroupChecker::new(group_by_items),
@@ -151,15 +157,16 @@ fn build_window<C: Columns + Send + 'static>(
             cur_row_idx: 0,
             last_start_row: 0,
             last_end_row: 0,
-            staged_start_row: 0,
-            staged_end_row: 0,
+            staged_start_row: 0.into(),
+            staged_end_row: 0.into(),
             row_start: 0,
             order_by_cols: if is_range_frame { order_by_cols } else { Vec::new() },
             expected_cmp_result: if is_range_frame { cmp_result } else { 0 },
-            rows: VecDeque::new(),
+            rows: Default::default(),
             row_cnt: 0,
             whole: false,
             is_range_frame,
+            reuse_peer_bounds,
             empty_frame: false,
             initialized_sliding_window: false,
         }));
@@ -179,9 +186,15 @@ fn build_window<C: Columns + Send + 'static>(
             let mut end = frame_bound(frame.end, BoundType::Following);
             start.update_compare_cols(&ctx, &order_by_cols)?;
             end.update_compare_cols(&ctx, &order_by_cols)?;
+            let start_cmp = RangeComparison::for_bound(&start, false);
+            let end_cmp = RangeComparison::for_bound(&end, true);
+            let reuse_peer_bounds = same_peer_bounds(&start, &end, &start_cmp, &end_cmp, order_by_cols.len());
             Box::new(RangeFrameWindowProcessor {
                 window_funcs,
                 partial_results,
+                start_cmp,
+                end_cmp,
+                reuse_peer_bounds,
                 start,
                 end,
                 cur_row_idx: 0,
@@ -204,6 +217,14 @@ fn build_window<C: Columns + Send + 'static>(
         num_window_funcs,
         processor,
     }))
+}
+
+fn same_peer_bounds(start: &FrameBound, end: &FrameBound, start_cmp: &[RangeComparison], end_cmp: &[RangeComparison], key_count: usize) -> bool {
+    let current_row = |bound: &FrameBound, cmp: &[RangeComparison]| {
+        !bound.unbounded && bound.bound_type == BoundType::CurrentRow
+            && cmp.len() == key_count && cmp.iter().all(RangeComparison::compares_same_column)
+    };
+    (start.unbounded || current_row(start, start_cmp)) && current_row(end, end_cmp)
 }
 
 /// Go `&logicalop.FrameBound{Type: tp, UnBounded: true}`.

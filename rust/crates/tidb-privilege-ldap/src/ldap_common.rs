@@ -281,11 +281,11 @@ fn try_connect_ldap_through_tls(
     Ok(ldap_connection)
 }
 
-use tidb_go_net::join_host_port;
+use tidb_go_net::join_host_port_number;
 
 /// Go `connectionFactory`.
 fn connection_factory(config: &ConnectConfig) -> Result<Conn, ldap_conn::Error> {
-    let address = join_host_port(&config.ldap_server_host, config.ldap_server_port);
+    let address = join_host_port_number(&config.ldap_server_host, config.ldap_server_port);
     if config.enable_tls {
         return match try_connect_ldap_through_start_tls(config, &address) {
             Ok(conn) => Ok(conn),

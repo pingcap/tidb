@@ -280,36 +280,31 @@ fn regexp_constant_pattern_corpus_matches_scalar_evaluation() {
 #[test]
 fn regexp_cache_identity_by_statement_context() {
     use crate::builtin_ext::BuiltinFuncCache;
-    use crate::regexp::{get_cached_regexp, RegexpMemorizedSig};
+    use crate::regexp::{regexp_like_with_cache, RegexpMemorizedSig};
     use std::sync::Arc;
 
-    let cache = BuiltinFuncCache::<RegexpMemorizedSig>::default();
-    assert!(get_cached_regexp(&cache, 7, false, "uncached", "").is_ok());
+    let cache = BuiltinFuncCache::default();
+    assert!(regexp_like_with_cache(&cache, 7, false, "x-uncached", "uncached", "").unwrap());
     assert!(cache.get_cache(7).is_none());
 
-    let first = get_cached_regexp(&cache, 7, true, "ccc", "").expect("compile first pattern");
-    assert_eq!(first.as_str(), "ccc");
+    assert!(regexp_like_with_cache(&cache, 7, true, "ccc", "ccc", "").unwrap());
     let cached = cache.get_cache(7).expect("cached pattern");
-    assert_eq!(
-        cached.result.as_ref().expect("cached compile").as_str(),
-        "ccc"
-    );
+    assert!(!regexp_like_with_cache(&cache, 7, true, "ddd", "ddd", "").unwrap());
     let hit = cache.get_cache(7).expect("same-context hit");
     assert!(Arc::ptr_eq(&cached, &hit));
 
-    let second = get_cached_regexp(&cache, 8, true, "ddd", "").expect("new context pattern");
-    assert_eq!(second.as_str(), "ddd");
+    assert!(regexp_like_with_cache(&cache, 8, true, "ddd", "ddd", "").unwrap());
     let replacement = cache.get_cache(8).expect("replaced context cache");
     assert!(!Arc::ptr_eq(&cached, &replacement));
 
-    let error = get_cached_regexp(&cache, 9, true, "(", "");
+    let error = regexp_like_with_cache(&cache, 9, true, "ccc", "(", "");
     assert!(matches!(
         error,
         Err(crate::EvalError::Conversion(_))
     ));
     let cached_error = cache.get_cache(9).expect("compile error is memoized");
     assert!(cached_error.result.is_err());
-    assert!(get_cached_regexp(&cache, 9, true, "ccc", "").is_err());
+    assert!(regexp_like_with_cache(&cache, 9, true, "ccc", "ccc", "").is_err());
 
     let clone = cache.clone();
     assert!(clone.get_cache(9).is_none());

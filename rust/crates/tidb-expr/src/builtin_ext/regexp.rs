@@ -22,11 +22,19 @@
 //! values; its scalar-function caller supplies the source's context-keyed
 //! compiled-pattern and replacement-instruction caches.
 
-use regex::{Captures, Regex};
+use std::{
+    borrow::{Borrow, Cow},
+    ops::Range,
+    sync::Arc,
+};
+
+use regex::Regex;
 
 use super::BuiltinFuncCache;
 use crate::coerce::coerce_str;
-use crate::regexp::{compile_regexp, RegexpMemorizedSig};
+use crate::regexp::{
+    compile_regexp, find_ascii_folded, is_plain_regexp, PositionalRegexp, RegexpMemorizedSig,
+};
 use crate::{Datum, EvalError};
 
 const INVALID_INDEX: &str = "Index out of bounds in regular expression search";
@@ -34,12 +42,32 @@ const INVALID_RETURN_OPTION: &str =
     "Incorrect arguments to regexp_instr: return_option must be 1 or 0";
 const INVALID_SUBSTITUTION: &str = "Substitution number is out of range";
 
+enum MemoizedValue<T> {
+    Local(T),
+    Cached(Arc<T>),
+}
+
+impl<T> AsRef<T> for MemoizedValue<T> {
+    fn as_ref(&self) -> &T {
+        match self {
+            Self::Local(value) => value,
+            Self::Cached(value) => value,
+        }
+    }
+}
+
+impl MemoizedValue<RegexpMemorizedSig> {
+    fn regexp(&self) -> Result<&PositionalRegexp, EvalError> {
+        self.as_ref().result.as_ref().map_err(Clone::clone)
+    }
+}
+
 /// Values-only regexp dispatch with Go's statement-context memoization. The
 /// caller supplies the build-time constness decisions because this tier has
 /// already evaluated the argument expressions.
 pub(crate) fn dispatch_with_cache(
     name: &str,
-    vals: &[Datum],
+    vals: &[impl Borrow<Datum>],
     context_id: u64,
     cache_pattern: bool,
     cache_replacement: bool,
@@ -48,32 +76,29 @@ pub(crate) fn dispatch_with_cache(
     replacement_cache: &BuiltinFuncCache<Vec<ReplacementPart>>,
 ) -> Option<Result<Datum, EvalError>> {
     let compile = |pattern: &str, match_type: &str| {
-        // Go `getRegexpMatchType`: the derived collation seeds the flags.
-        let match_type = crate::regexp::regexp_match_type_with_collation(match_type, collation);
-        let match_type = match_type.as_str();
+        let build = || {
+            // Go `getRegexpMatchType`: the derived collation seeds the flags.
+            let match_type = crate::regexp::regexp_match_type_with_collation(match_type, collation);
+            compile_regexp(pattern, &match_type)
+        };
         if !cache_pattern {
-            return compile_regexp(pattern, match_type);
+            return build().map(|regexp| {
+                MemoizedValue::Local(RegexpMemorizedSig { result: Ok(regexp) })
+            });
         }
-        let cached = regexp_cache.get_or_init_cache(context_id, || {
-            Ok::<_, EvalError>(RegexpMemorizedSig {
-                result: compile_regexp(pattern, match_type),
+        regexp_cache
+            .get_or_init_cache(context_id, || {
+                Ok::<_, EvalError>(RegexpMemorizedSig { result: build() })
             })
-        });
-        match cached {
-            Ok(cached) => cached.result.clone(),
-            Err(error) => Err(error),
-        }
+            .map(MemoizedValue::Cached)
     };
     let resolve_replacement = |value: &str| {
         if !cache_replacement {
-            return Ok(replacement_parts(value));
+            return Ok(MemoizedValue::Local(replacement_parts(value)));
         }
-        let cached = replacement_cache
-            .get_or_init_cache(context_id, || Ok::<_, EvalError>(replacement_parts(value)));
-        match cached {
-            Ok(cached) => Ok(cached.as_ref().clone()),
-            Err(error) => Err(error),
-        }
+        replacement_cache
+            .get_or_init_cache(context_id, || Ok::<_, EvalError>(replacement_parts(value)))
+            .map(MemoizedValue::Cached)
     };
 
     match (name, vals.len()) {
@@ -109,41 +134,87 @@ fn trim_at(text: &str, pos: i64) -> Result<(usize, &str), EvalError> {
     if pos < 1 {
         return Err(crate::regexp::err_regexp(INVALID_INDEX));
     }
-    // Go's signatures accept the one-indexed start of an empty string.  The
-    // regex then still gets to see the empty input (for example `^$` matches
-    // at position 1).  Any other position is genuinely out of range.
-    if text.is_empty() && pos == 1 {
+    // Position one is valid even for the empty string.
+    if pos == 1 {
         return Ok((0, text));
     }
-    let chars = text.chars().count() as i64;
-    if pos > chars {
+    let Some((byte, _)) = usize::try_from(pos - 1)
+        .ok()
+        .and_then(|skip| text.char_indices().nth(skip))
+    else {
         return Err(crate::regexp::err_regexp(INVALID_INDEX));
-    }
-    let byte = text
-        .char_indices()
-        .nth((pos - 1) as usize)
-        .map_or(text.len(), |(byte, _)| byte);
+    };
     Ok((byte, &text[byte..]))
 }
 
-fn optional_string(value: &Datum) -> Result<Option<String>, EvalError> {
-    coerce_str(value)
+fn optional_string(value: &Datum) -> Result<Option<Cow<'_, str>>, EvalError> {
+    let bytes = match value {
+        Datum::String(value) => value.bytes(),
+        Datum::Bytes(value) => value,
+        _ => return coerce_str(value).map(|value| value.map(Cow::Owned)),
+    };
+    Ok(Some(lossy_text(bytes)))
 }
 
-fn required_string(value: &Datum) -> Result<Option<String>, EvalError> {
+fn lossy_text(bytes: &[u8]) -> Cow<'_, str> {
+    if bytes.len() >= 64 {
+        if let Ok(text) = simdutf8::basic::from_utf8(bytes) {
+            return Cow::Borrowed(text);
+        }
+    }
+    String::from_utf8_lossy(bytes)
+}
+
+/// An ASCII literal cannot match an invalid UTF-8 byte or a replacement
+/// character introduced by lossy decoding. Count characters only in the
+/// prefix needed to return the position.
+pub(crate) fn find_ascii_literal(text: &[u8], pattern: &[u8], position: bool) -> Option<Datum> {
+    if !pattern.is_ascii() || !is_plain_regexp(pattern) {
+        return None;
+    }
+    let last = pattern.len() - 1;
+    let found = text.get(last..).and_then(|ends| {
+        // No candidate can start before the first possible final byte.
+        let first = memchr::memchr(pattern[last], ends)?;
+        if last == 0 {
+            return Some(first);
+        }
+        memchr::memmem::find(&text[first..], pattern).map(|offset| first + offset)
+    });
+    Some(match (found, position) {
+        (Some(byte), true) => Datum::Int(1 + lossy_text(&text[..byte]).chars().count() as i64),
+        (Some(_), false) => Datum::new_string_datum(pattern),
+        (None, true) => Datum::Int(0),
+        (None, false) => Datum::Null,
+    })
+}
+
+pub(crate) fn replace_plain_literal(text: &[u8], pattern: &[u8], replacement: &[u8]) -> Option<Datum> {
+    if !is_plain_regexp(pattern) || memchr::memchr(b'\\', replacement).is_some() {
+        return None;
+    }
+    let pattern = std::str::from_utf8(pattern).ok()?;
+    let text = lossy_text(text);
+    let replacement = lossy_text(replacement);
+    Some(Datum::new_string_datum(text.replace(pattern, replacement.as_ref())))
+}
+
+fn required_string(value: &Datum) -> Result<Option<Cow<'_, str>>, EvalError> {
     optional_string(value)
 }
 
 fn regexp_substr_with_compiler(
-    vals: &[Datum],
-    compile: impl FnOnce(&str, &str) -> Result<Regex, EvalError>,
+    vals: &[impl Borrow<Datum>],
+    compile: impl FnOnce(&str, &str) -> Result<MemoizedValue<RegexpMemorizedSig>, EvalError>,
 ) -> Result<Datum, EvalError> {
-    let (Some(text), Some(pattern)) = (required_string(&vals[0])?, required_string(&vals[1])?)
-    else {
+    let (Some(text), Some(pattern)) = (
+        required_string(vals[0].borrow())?,
+        required_string(vals[1].borrow())?,
+    ) else {
         return Ok(Datum::Null);
     };
     let pos = if vals.len() >= 3 {
-        let Some(pos) = integer(&vals[2])? else {
+        let Some(pos) = integer(vals[2].borrow())? else {
             return Ok(Datum::Null);
         };
         pos
@@ -151,7 +222,7 @@ fn regexp_substr_with_compiler(
         1
     };
     let occurrence = if vals.len() >= 4 {
-        let Some(occurrence) = integer(&vals[3])? else {
+        let Some(occurrence) = integer(vals[3].borrow())? else {
             return Ok(Datum::Null);
         };
         occurrence.max(1)
@@ -159,33 +230,35 @@ fn regexp_substr_with_compiler(
         1
     };
     let match_type = if vals.len() == 5 {
-        let Some(match_type) = optional_string(&vals[4])? else {
+        let Some(match_type) = optional_string(vals[4].borrow())? else {
             return Ok(Datum::Null);
         };
         match_type
     } else {
-        String::new()
+        Cow::Borrowed("")
     };
 
     let (_, trimmed) = trim_at(&text, pos)?;
     let regexp = compile(&pattern, &match_type)?;
     let matched = regexp
-        .find_iter(trimmed)
-        .nth((occurrence - 1) as usize)
-        .map(|matched| matched.as_str().to_owned());
+        .regexp()?
+        .find_nth(trimmed, (occurrence - 1) as usize)
+        .map(|matched| &trimmed[matched]);
     Ok(matched.map_or(Datum::Null, Datum::new_string_datum))
 }
 
 fn regexp_instr_with_compiler(
-    vals: &[Datum],
-    compile: impl FnOnce(&str, &str) -> Result<Regex, EvalError>,
+    vals: &[impl Borrow<Datum>],
+    compile: impl FnOnce(&str, &str) -> Result<MemoizedValue<RegexpMemorizedSig>, EvalError>,
 ) -> Result<Datum, EvalError> {
-    let (Some(text), Some(pattern)) = (required_string(&vals[0])?, required_string(&vals[1])?)
-    else {
+    let (Some(text), Some(pattern)) = (
+        required_string(vals[0].borrow())?,
+        required_string(vals[1].borrow())?,
+    ) else {
         return Ok(Datum::Null);
     };
     let pos = if vals.len() >= 3 {
-        let Some(pos) = integer(&vals[2])? else {
+        let Some(pos) = integer(vals[2].borrow())? else {
             return Ok(Datum::Null);
         };
         pos
@@ -193,7 +266,7 @@ fn regexp_instr_with_compiler(
         1
     };
     let occurrence = if vals.len() >= 4 {
-        let Some(occurrence) = integer(&vals[3])? else {
+        let Some(occurrence) = integer(vals[3].borrow())? else {
             return Ok(Datum::Null);
         };
         occurrence.max(1)
@@ -201,7 +274,7 @@ fn regexp_instr_with_compiler(
         1
     };
     let return_option = if vals.len() >= 5 {
-        let Some(return_option) = integer(&vals[4])? else {
+        let Some(return_option) = integer(vals[4].borrow())? else {
             return Ok(Datum::Null);
         };
         if return_option != 0 && return_option != 1 {
@@ -212,29 +285,22 @@ fn regexp_instr_with_compiler(
         0
     };
     let match_type = if vals.len() == 6 {
-        let Some(match_type) = optional_string(&vals[5])? else {
+        let Some(match_type) = optional_string(vals[5].borrow())? else {
             return Ok(Datum::Null);
         };
         match_type
     } else {
-        String::new()
+        Cow::Borrowed("")
     };
 
     let (_, trimmed) = trim_at(&text, pos)?;
     let regexp = compile(&pattern, &match_type)?;
-    let Some(matched) = regexp.find_iter(trimmed).nth((occurrence - 1) as usize) else {
+    let Some(matched) = regexp.regexp()?.find_nth(trimmed, (occurrence - 1) as usize) else {
         return Ok(Datum::Int(0));
     };
 
-    let prefix_chars = trimmed[..matched.start()].chars().count() as i64;
-    let end_chars = trimmed[..matched.end()].chars().count() as i64;
-    Ok(Datum::Int(
-        pos + if return_option == 0 {
-            prefix_chars
-        } else {
-            end_chars
-        },
-    ))
+    let byte = if return_option == 0 { matched.start } else { matched.end };
+    Ok(Datum::Int(pos + trimmed[..byte].chars().count() as i64))
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -277,52 +343,119 @@ pub(crate) fn replacement_parts(replacement: &str) -> Vec<ReplacementPart> {
     parts
 }
 
-fn render_replacement(
-    captures: &Captures<'_>,
+fn render_replacement<'a>(
+    output: &mut String,
+    matched: &str,
+    capture: impl Fn(usize) -> Option<&'a str>,
     parts: &[ReplacementPart],
-) -> Result<Vec<u8>, EvalError> {
-    let mut rendered = Vec::new();
+) -> Result<(), EvalError> {
     for part in parts {
-        match part {
-            ReplacementPart::Literal(literal) => rendered.extend_from_slice(literal),
+        let text = match part {
+            ReplacementPart::Literal(literal) => std::str::from_utf8(literal)
+                .map_err(|_| EvalError::Unsupported("invalid UTF-8 regexp replacement"))?,
+            ReplacementPart::Group(0) => matched,
             ReplacementPart::Group(group) => {
-                let Some(capture) = captures.get(*group) else {
-                    return Err(EvalError::Unsupported(INVALID_SUBSTITUTION));
-                };
-                rendered.extend_from_slice(capture.as_str().as_bytes());
+                capture(*group).ok_or(EvalError::Unsupported(INVALID_SUBSTITUTION))?
             }
-        }
+        };
+        output.push_str(text);
     }
-    Ok(rendered)
+    Ok(())
 }
 
 fn replace_matches(
     text: &str,
+    start: usize,
+    regexp: &PositionalRegexp,
+    parts: &[ReplacementPart],
+    occurrence: i64,
+) -> Result<String, EvalError> {
+    let suffix = &text[start..];
+    match regexp {
+        PositionalRegexp::Literal(finder) => replace_iter(
+            text, start, parts, occurrence,
+            finder.find_iter(suffix.as_bytes()).map(|at| at..at + finder.needle().len()),
+        ),
+        PositionalRegexp::AsciiFolded(literal) => replace_iter(
+            text, start, parts, occurrence, find_ascii_folded(suffix, literal),
+        ),
+        PositionalRegexp::Regex(regexp)
+            if !parts.iter().any(|part| matches!(part, ReplacementPart::Group(1..))) =>
+        {
+            replace_iter(
+                text, start, parts, occurrence,
+                regexp.find_iter(suffix).map(|matched| matched.range()),
+            )
+        }
+        PositionalRegexp::Regex(regexp) => replace_captures(text, start, regexp, parts, occurrence),
+    }
+}
+
+fn replace_iter(
+    text: &str,
+    start: usize,
+    parts: &[ReplacementPart],
+    occurrence: i64,
+    matches: impl Iterator<Item = Range<usize>>,
+) -> Result<String, EvalError> {
+    let mut output = String::with_capacity(text.len());
+    let mut copied_until = 0;
+    let count = if occurrence == 0 { usize::MAX } else { 1 };
+    let skip = usize::try_from(occurrence.max(1) - 1).unwrap_or(usize::MAX);
+    for matched in matches.skip(skip).take(count) {
+        let absolute = start + matched.start..start + matched.end;
+        output.push_str(&text[copied_until..absolute.start]);
+        copied_until = absolute.end;
+        render_replacement(&mut output, &text[absolute], |_| None, parts)?;
+    }
+    output.push_str(&text[copied_until..]);
+    Ok(output)
+}
+
+fn replace_captures(
+    text: &str,
+    start: usize,
     regexp: &Regex,
     parts: &[ReplacementPart],
     occurrence: i64,
 ) -> Result<String, EvalError> {
+    let suffix = &text[start..];
+    let mut locations = regexp.capture_locations();
+    let mut previous_end = None;
     let mut output = String::with_capacity(text.len());
     let mut copied_until = 0;
-    let mut match_number = 0_i64;
-    for captures in regexp.captures_iter(text) {
-        let Some(matched) = captures.get(0) else {
-            continue;
-        };
-        match_number += 1;
-        let selected = occurrence == 0 || match_number == occurrence;
-        if !selected {
+    let mut skip = occurrence.max(1) - 1;
+    while let Some(mut matched) =
+        regexp.captures_read_at(&mut locations, suffix, previous_end.unwrap_or(0))
+    {
+        // Both the Go and Rust match iterators skip empty matches at the end
+        // of a preceding match. Resume at the next UTF-8 boundary.
+        if matched.is_empty() && previous_end == Some(matched.end()) {
+            let at = matched.end();
+            if at == suffix.len() {
+                break;
+            }
+            let next = suffix.ceil_char_boundary(at + 1);
+            let Some(found) = regexp.captures_read_at(&mut locations, suffix, next) else {
+                break;
+            };
+            matched = found;
+        }
+        previous_end = Some(matched.end());
+        if skip > 0 {
+            skip -= 1;
             continue;
         }
-        output.push_str(&text[copied_until..matched.start()]);
-        let rendered = render_replacement(&captures, parts)?;
-        let rendered = std::str::from_utf8(&rendered)
-            .map_err(|_| EvalError::Unsupported("invalid UTF-8 regexp replacement"))?;
-        output.push_str(rendered);
-        copied_until = matched.end();
-        if occurrence > 0 {
-            output.push_str(&text[copied_until..]);
-            return Ok(output);
+        output.push_str(&text[copied_until..start + matched.start()]);
+        copied_until = start + matched.end();
+        render_replacement(
+            &mut output,
+            matched.as_str(),
+            |group| locations.get(group).map(|(lo, hi)| &suffix[lo..hi]),
+            parts,
+        )?;
+        if occurrence != 0 {
+            break;
         }
     }
     output.push_str(&text[copied_until..]);
@@ -330,19 +463,19 @@ fn replace_matches(
 }
 
 fn regexp_replace_with_compiler(
-    vals: &[Datum],
-    compile: impl FnOnce(&str, &str) -> Result<Regex, EvalError>,
-    resolve_replacement: impl FnOnce(&str) -> Result<Vec<ReplacementPart>, EvalError>,
+    vals: &[impl Borrow<Datum>],
+    compile: impl FnOnce(&str, &str) -> Result<MemoizedValue<RegexpMemorizedSig>, EvalError>,
+    resolve_replacement: impl FnOnce(&str) -> Result<MemoizedValue<Vec<ReplacementPart>>, EvalError>,
 ) -> Result<Datum, EvalError> {
     let (Some(text), Some(pattern), Some(replacement)) = (
-        required_string(&vals[0])?,
-        required_string(&vals[1])?,
-        required_string(&vals[2])?,
+        required_string(vals[0].borrow())?,
+        required_string(vals[1].borrow())?,
+        required_string(vals[2].borrow())?,
     ) else {
         return Ok(Datum::Null);
     };
     let pos = if vals.len() >= 4 {
-        let Some(pos) = integer(&vals[3])? else {
+        let Some(pos) = integer(vals[3].borrow())? else {
             return Ok(Datum::Null);
         };
         pos
@@ -350,7 +483,7 @@ fn regexp_replace_with_compiler(
         1
     };
     let occurrence = if vals.len() >= 5 {
-        let Some(occurrence) = integer(&vals[4])? else {
+        let Some(occurrence) = integer(vals[4].borrow())? else {
             return Ok(Datum::Null);
         };
         if occurrence < 0 {
@@ -362,27 +495,39 @@ fn regexp_replace_with_compiler(
         0
     };
     let match_type = if vals.len() == 6 {
-        let Some(match_type) = optional_string(&vals[5])? else {
+        let Some(match_type) = optional_string(vals[5].borrow())? else {
             return Ok(Datum::Null);
         };
         match_type
     } else {
-        String::new()
+        Cow::Borrowed("")
     };
 
-    let (byte, trimmed) = trim_at(&text, pos)?;
+    let (byte, _) = trim_at(&text, pos)?;
     let regexp = compile(&pattern, &match_type)?;
+    let regexp = regexp.regexp()?;
     let parts = resolve_replacement(&replacement)?;
-    let replaced = replace_matches(trimmed, &regexp, &parts, occurrence)?;
-    let mut output = String::with_capacity(byte + replaced.len());
-    output.push_str(&text[..byte]);
-    output.push_str(&replaced);
+    let output = replace_matches(&text, byte, regexp, parts.as_ref(), occurrence)?;
     Ok(Datum::new_string_datum(output))
 }
 
 #[cfg(test)]
 mod tests {
     use crate::{Datum, EvalError};
+
+    #[test]
+    fn literal_search_preserves_byte_matches_and_character_positions() {
+        let text = "界end banana";
+        assert_eq!(super::find_ascii_literal(text.as_bytes(), b"ana", true), Some(Datum::Int(7)));
+        assert_eq!(
+            super::find_ascii_literal(b"\xffneedle", b"needle", false),
+            Some(Datum::new_string_datum("needle")),
+        );
+        assert_eq!(super::find_ascii_literal(b"n", b"needle", true), Some(Datum::Int(0)));
+        assert!(super::find_ascii_literal(b"abc", b"a.c", false).is_none());
+        assert!(super::find_ascii_literal(b"abc", b"", true).is_none());
+        assert!(super::replace_plain_literal(b"abc", b"a", b"\\0").is_none());
+    }
 
     /// Go's builtin test door over a context-free session.
     fn eval_builtin_func(name: &str, vals: &[Datum]) -> Option<Result<Datum, crate::EvalError>> {
@@ -407,6 +552,56 @@ mod tests {
         let actual = call(name, values).expect("source scalar row should evaluate");
         let expected = expected.map_or(Datum::Null, Datum::Int);
         assert_eq!(actual, expected, "{name}({values:?})");
+    }
+
+    #[test]
+    fn regexp_case_insensitive_literals_keep_go_positions_and_folds() {
+        let text = "界aAAa☃aa";
+        assert_int(
+            "REGEXP_INSTR",
+            &[string(text), string("Aa"), Datum::Int(1), Datum::Int(2), Datum::Int(1), string("i")],
+            Some(6),
+        );
+        assert_string(
+            "REGEXP_REPLACE",
+            &[string(text), string("Aa"), string(r"<\0>"), Datum::Int(1), Datum::Int(0), string("i")],
+            Some("界<aA><Aa>☃<aa>"),
+        );
+        for (text, pattern, expected) in [("μKk", "K", "K"), ("ſs界S", "S", "ſ")] {
+            assert_string(
+                "REGEXP_SUBSTR",
+                &[string(text), string(pattern), Datum::Int(1), Datum::Int(1), string("i")],
+                Some(expected),
+            );
+        }
+    }
+
+    #[test]
+    fn regexp_replace_capture_locations_keep_match_boundaries() {
+        for (text, pattern, pos, occurrence, expected) in [
+            ("文aa界a💡", "(a*)", 1, 0, "<:>文<aa:aa>界<a:a>💡<:>"),
+            ("文aa界a💡", "(a*)", 1, 2, "文<aa:aa>界a💡"),
+            ("前catdog catdog", "(^cat|dog)", 2, 1, "前<cat:cat>dog catdog"),
+            (
+                "aa word! 世界 word? aaword",
+                r"\b(word)\b",
+                1,
+                2,
+                "aa word! 世界 <word:word>? aaword",
+            ),
+        ] {
+            assert_string(
+                "REGEXP_REPLACE",
+                &[
+                    string(text),
+                    string(pattern),
+                    string(r"<\1:\0>"),
+                    Datum::Int(pos),
+                    Datum::Int(occurrence),
+                ],
+                Some(expected),
+            );
+        }
     }
 
     #[test]

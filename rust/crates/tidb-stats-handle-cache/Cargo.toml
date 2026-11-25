@@ -14,6 +14,7 @@ workspace = true
 failpoints = ["dep:tidb-failpoint", "tidb-failpoint/failpoints"]
 
 [dependencies]
+arc-swap = "1.9.2"
 tidb-datatype = { path = "../tidb-datatype" }
 tidb-infoschema = { path = "../tidb-infoschema" }
 tidb-table = { path = "../tidb-table" }

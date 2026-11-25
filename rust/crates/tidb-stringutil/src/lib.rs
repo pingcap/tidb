@@ -22,6 +22,8 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fmt;
 
+use memchr::{memchr, memchr2, memchr3};
+use tidb_goruntime::go_chars;
 use tidb_mysql::SqlMode;
 
 /// An invalid quoted string.
@@ -43,6 +45,16 @@ impl std::error::Error for UnquoteError {}
 ///
 /// The decoded bytes and the unconsumed suffix are returned separately.
 pub fn unquote_char(input: &[u8], quote: u8) -> Result<(Vec<u8>, &[u8]), UnquoteError> {
+    let mut value = Vec::with_capacity(4);
+    let tail = append_unquoted_char(input, quote, &mut value)?;
+    Ok((value, tail))
+}
+
+fn append_unquoted_char<'a>(
+    input: &'a [u8],
+    quote: u8,
+    out: &mut Vec<u8>,
+) -> Result<&'a [u8], UnquoteError> {
     let first = input[0];
     if first == quote {
         return Err(UnquoteError);
@@ -51,27 +63,29 @@ pub fn unquote_char(input: &[u8], quote: u8) -> Result<(Vec<u8>, &[u8]), Unquote
         let width = decode_utf8_prefix(input)
             .filter(|(character, _)| *character != char::REPLACEMENT_CHARACTER)
             .map_or(1, |(_, width)| width);
-        return Ok((input[..width].to_vec(), &input[width..]));
+        out.extend_from_slice(&input[..width]);
+        return Ok(&input[width..]);
     }
     if first != b'\\' {
-        return Ok((vec![first], &input[1..]));
+        out.push(first);
+        return Ok(&input[1..]);
     }
     let Some((&escaped, tail)) = input[1..].split_first() else {
         return Err(UnquoteError);
     };
-    let value = match escaped {
-        b'b' => vec![b'\x08'],
-        b'n' => vec![b'\n'],
-        b'r' => vec![b'\r'],
-        b't' => vec![b'\t'],
-        b'Z' => vec![0x1a],
-        b'0' => vec![0],
-        b'_' | b'%' => vec![b'\\', escaped],
-        b'\\' => vec![b'\\'],
-        b'\'' | b'"' => vec![escaped],
-        other => vec![other],
-    };
-    Ok((value, tail))
+    if matches!(escaped, b'_' | b'%') {
+        out.push(b'\\');
+    }
+    out.push(match escaped {
+        b'b' => b'\x08',
+        b'n' => b'\n',
+        b'r' => b'\r',
+        b't' => b'\t',
+        b'Z' => 0x1a,
+        b'0' => 0,
+        other => other,
+    });
+    Ok(tail)
 }
 
 fn decode_utf8_prefix(input: &[u8]) -> Option<(char, usize)> {
@@ -91,24 +105,6 @@ fn decode_utf8_prefix(input: &[u8]) -> Option<(char, usize)> {
         .map(|character| (character, expected))
 }
 
-fn decode_go_runes(input: &[u8]) -> Vec<char> {
-    let mut runes = Vec::with_capacity(input.len());
-    let mut input = input;
-    while let Some((&first, _)) = input.split_first() {
-        if first < 0x80 {
-            runes.push(char::from(first));
-            input = &input[1..];
-        } else if let Some((character, width)) = decode_utf8_prefix(input) {
-            runes.push(character);
-            input = &input[width..];
-        } else {
-            runes.push(char::REPLACEMENT_CHARACTER);
-            input = &input[1..];
-        }
-    }
-    runes
-}
-
 /// Removes matching single or double quotes and decodes TiDB backslash
 /// escapes. The returned bytes are not required to be UTF-8.
 pub fn unquote(input: &[u8]) -> Result<Vec<u8>, UnquoteError> {
@@ -120,16 +116,32 @@ pub fn unquote(input: &[u8]) -> Result<Vec<u8>, UnquoteError> {
         return Err(UnquoteError);
     }
     let mut body = &input[1..input.len() - 1];
-    if !body.contains(&b'\\') && !body.contains(&quote) {
+    let Some(mut special) = memchr2(b'\\', quote, body) else {
         return Ok(body.to_vec());
+    };
+    let mut result = Vec::with_capacity(body.len());
+    // A second escape near the first favors the scalar decoder over
+    // repeatedly searching short literal spans.
+    if special < 8
+        && body.get(special + 2..).is_some_and(|tail| {
+            memchr2(b'\\', quote, &tail[..tail.len().min(6)]).is_some()
+        })
+    {
+        while !body.is_empty() {
+            body = append_unquoted_char(body, quote, &mut result)?;
+        }
+        return Ok(result);
     }
-    let mut result = Vec::with_capacity(body.len().saturating_mul(3) / 2);
-    while !body.is_empty() {
-        let (value, tail) = unquote_char(body, quote)?;
-        result.extend_from_slice(&value);
-        body = tail;
+    loop {
+        result.extend_from_slice(&body[..special]);
+        body = &body[special..];
+        body = append_unquoted_char(body, quote, &mut result)?;
+        let Some(next) = memchr2(b'\\', quote, body) else {
+            result.extend_from_slice(body);
+            return Ok(result);
+        };
+        special = next;
     }
-    Ok(result)
 }
 
 /// One compiled wildcard-pattern token.
@@ -153,67 +165,194 @@ pub fn compile_pattern_inner(
     pattern: impl AsRef<[u8]>,
     escape: u8,
 ) -> (Vec<char>, Vec<PatternType>) {
-    compile_pattern_units(decode_go_runes(pattern.as_ref()), Some(char::from(escape)))
-}
-
-fn compile_pattern_units<T: Copy + PartialEq + From<u8>>(
-    units: impl IntoIterator<Item = T>,
-    escape: Option<T>,
-) -> (Vec<T>, Vec<PatternType>) {
-    let units = units.into_iter().collect::<Vec<_>>();
-    let mut weights = Vec::with_capacity(units.len());
-    let mut types = Vec::with_capacity(units.len());
-    let mut index = 0;
-    while index < units.len() {
-        let mut unit = units[index];
-        let kind = if Some(unit) == escape {
-            if index + 1 < units.len() {
-                index += 1;
-                unit = units[index];
+    let pattern = pattern.as_ref();
+    if pattern.len() <= SHORT_PATTERN_BYTES {
+        if pattern.is_ascii() {
+            if memchr3(escape, b'_', b'%', pattern).is_none() {
+                let weights = pattern.iter().copied().map(char::from).collect();
+                return (weights, vec![PatternType::Match; pattern.len()]);
             }
-            PatternType::Match
-        } else if unit == T::from(b'_') {
-            if types.last() == Some(&PatternType::Any) {
-                *weights.last_mut().expect("Any has a weight") = T::from(b'_');
-                *types.last_mut().expect("Any has a type") = PatternType::One;
-                unit = T::from(b'%');
-                PatternType::Any
-            } else {
-                PatternType::One
-            }
-        } else if unit == T::from(b'%') {
-            if types.last() == Some(&PatternType::Any) {
-                index += 1;
-                continue;
-            }
-            PatternType::Any
-        } else {
-            PatternType::Match
-        };
-        weights.push(unit);
-        types.push(kind);
-        index += 1;
+            return compile_short_pattern(
+                pattern.iter().copied().map(char::from),
+                char::from(escape),
+            );
+        }
+        return compile_short_pattern(go_chars(pattern), char::from(escape));
     }
+    let mut weights = Vec::new();
+    let mut types = Vec::new();
+    compile_pattern_into(pattern, escape, &mut weights, &mut types);
     (weights, types)
 }
 
+const SHORT_PATTERN_BYTES: usize = 32;
+
+fn compile_short_pattern<T: Copy + PartialEq + From<u8>>(
+    units: impl Iterator<Item = T>,
+    escape: T,
+) -> (Vec<T>, Vec<PatternType>) {
+    let mut weights = [T::from(0); SHORT_PATTERN_BYTES];
+    let mut types = [PatternType::Match; SHORT_PATTERN_BYTES];
+    let mut length = 0;
+    walk_pattern(units, escape, |weight, kind| {
+        weights[length] = weight;
+        types[length] = kind;
+        length += 1;
+    });
+    (weights[..length].to_vec(), types[..length].to_vec())
+}
+
+/// Compiles a Unicode wildcard pattern into reusable buffers.
+pub fn compile_pattern_into(
+    pattern: &[u8],
+    escape: u8,
+    weights: &mut Vec<char>,
+    types: &mut Vec<PatternType>,
+) {
+    if pattern.is_ascii() {
+        if memchr3(escape, b'_', b'%', pattern).is_none() {
+            weights.clear();
+            weights.reserve(pattern.len());
+            weights.extend(pattern.iter().copied().map(char::from));
+            types.clear();
+            types.resize(pattern.len(), PatternType::Match);
+            return;
+        }
+        compile_pattern_units(
+            pattern.iter().copied().map(char::from),
+            pattern.len(),
+            char::from(escape),
+            weights,
+            types,
+        );
+        return;
+    }
+    let length = if pattern.len() <= 64 {
+        pattern.len()
+    } else {
+        pattern
+            .utf8_chunks()
+            .map(|chunk| chunk.valid().chars().count() + chunk.invalid().len())
+            .sum()
+    };
+    compile_pattern_units(
+        go_chars(pattern),
+        length,
+        char::from(escape),
+        weights,
+        types,
+    );
+}
+
+fn compile_pattern_units<T: Copy + PartialEq + From<u8>>(
+    units: impl Iterator<Item = T>,
+    capacity: usize,
+    escape: T,
+    weights: &mut Vec<T>,
+    types: &mut Vec<PatternType>,
+) {
+    weights.resize(capacity, T::from(0));
+    types.resize(capacity, PatternType::Match);
+    let mut entries = weights.iter_mut().zip(types.iter_mut());
+    walk_pattern(units, escape, |weight, kind| {
+        let (stored_weight, stored_type) = entries.next().expect("one token per input unit");
+        *stored_weight = weight;
+        *stored_type = kind;
+    });
+    let length = capacity - entries.len();
+    weights.truncate(length);
+    types.truncate(length);
+}
+
+/// A run of wildcards can emit its underscores immediately. Consecutive
+/// percent tokens collapse into one trailing percent for the run.
+fn walk_pattern<T: Copy + PartialEq + From<u8>>(
+    mut units: impl Iterator<Item = T>,
+    escape: T,
+    mut emit: impl FnMut(T, PatternType),
+) {
+    let percent = T::from(b'%');
+    let underscore = T::from(b'_');
+    let mut any = false;
+    while let Some(mut unit) = units.next() {
+        if unit == escape {
+            unit = units.next().unwrap_or(unit);
+        } else if unit == underscore {
+            emit(unit, PatternType::One);
+            continue;
+        } else if unit == percent {
+            any = true;
+            continue;
+        }
+        if any {
+            emit(percent, PatternType::Any);
+            any = false;
+        }
+        emit(unit, PatternType::Match);
+    }
+    if any {
+        emit(percent, PatternType::Any);
+    }
+}
+
 /// Compiles a binary wildcard pattern.
+#[inline]
 pub fn compile_pattern_binary(pattern: &[u8], escape: u8) -> (Vec<u8>, Vec<PatternType>) {
     compile_pattern_inner_binary(pattern, escape)
 }
 
 /// Handles escapes and wildcards in a binary pattern.
+#[inline]
 pub fn compile_pattern_inner_binary(pattern: &[u8], escape: u8) -> (Vec<u8>, Vec<PatternType>) {
-    compile_pattern_units(pattern.iter().copied(), Some(escape))
+    if pattern.len() <= SHORT_PATTERN_BYTES {
+        if memchr3(escape, b'_', b'%', pattern).is_none() {
+            return (pattern.to_vec(), vec![PatternType::Match; pattern.len()]);
+        }
+        return compile_short_pattern(pattern.iter().copied(), escape);
+    }
+    let mut weights = Vec::new();
+    let mut types = Vec::new();
+    compile_pattern_binary_into(pattern, escape, &mut weights, &mut types);
+    (weights, types)
+}
+
+/// Compiles a binary wildcard pattern into reusable buffers.
+pub fn compile_pattern_binary_into(
+    pattern: &[u8],
+    escape: u8,
+    weights: &mut Vec<u8>,
+    types: &mut Vec<PatternType>,
+) {
+    if memchr3(escape, b'_', b'%', pattern).is_none() {
+        weights.clear();
+        weights.extend_from_slice(pattern);
+        types.clear();
+        types.resize(pattern.len(), PatternType::Match);
+        return;
+    }
+    compile_pattern_units(
+        pattern.iter().copied(),
+        pattern.len(),
+        escape,
+        weights,
+        types,
+    );
 }
 
 /// Converts a TiDB `LIKE` pattern to an anchored regular expression using the
 /// caller-provided escape byte.
 pub fn compile_like_to_regexp(pattern: impl AsRef<[u8]>, escape: u8) -> String {
-    let (weights, types) = compile_pattern(pattern, escape);
-    let mut result = String::with_capacity(weights.len().saturating_mul(2) + 2);
+    let pattern = pattern.as_ref();
+    match pattern {
+        [] => return "^$".to_owned(),
+        [b'%'] if escape != b'%' => return "^.*$".to_owned(),
+        [b'_'] if escape != b'_' => return "^.$".to_owned(),
+        [byte] if !byte.is_ascii() => return "^\u{fffd}$".to_owned(),
+        _ => {}
+    }
+    let mut result = String::with_capacity(pattern.len() + 2);
     result.push('^');
-    for (weight, kind) in weights.into_iter().zip(types) {
+    walk_pattern(go_chars(pattern), char::from(escape), |weight, kind| {
         match kind {
             PatternType::Match => {
                 if matches!(
@@ -239,14 +378,14 @@ pub fn compile_like_to_regexp(pattern: impl AsRef<[u8]>, escape: u8) -> String {
             PatternType::One => result.push('.'),
             PatternType::Any => result.push_str(".*"),
         }
-    }
+    });
     result.push('$');
     result
 }
 
 /// Matches a binary string against a compiled binary wildcard pattern.
 pub fn do_match_binary(input: &[u8], weights: &[u8], types: &[PatternType]) -> bool {
-    do_match_units(input, weights, types, |left, right| left == right)
+    do_match_units(input.iter().copied(), weights, types, |left, right| left == right)
 }
 
 /// Matches a Unicode string against a compiled Unicode wildcard pattern.
@@ -261,52 +400,47 @@ pub fn do_match_customized(
     types: &[PatternType],
     matcher: impl Fn(char, char) -> bool,
 ) -> bool {
-    let input = decode_go_runes(input.as_ref());
-    do_match_units(&input, weights, types, matcher)
+    do_match_units(go_chars(input.as_ref()), weights, types, matcher)
 }
 
-fn do_match_units<T: Copy>(
-    input: &[T],
+fn do_match_units<T: Copy, I: Iterator<Item = T> + Clone>(
+    mut input: I,
     weights: &[T],
     types: &[PatternType],
     matcher: impl Fn(T, T) -> bool,
 ) -> bool {
     debug_assert_eq!(weights.len(), types.len());
-    let (mut char_index, mut pattern_index) = (0, 0);
-    let (mut next_char_index, mut next_pattern_index) = (0, 0);
-    while pattern_index < weights.len() || char_index < input.len() {
-        if pattern_index < weights.len() {
-            match types[pattern_index] {
-                PatternType::Match
-                    if char_index < input.len()
-                        && matcher(input[char_index], weights[pattern_index]) =>
-                {
-                    pattern_index += 1;
-                    char_index += 1;
-                    continue;
+    let mut index = 0;
+    let mut retry = None;
+    loop {
+        match types.get(index) {
+            Some(PatternType::Any) => {
+                index += 1;
+                if index == types.len() {
+                    return true;
                 }
-                PatternType::One if char_index < input.len() => {
-                    pattern_index += 1;
-                    char_index += 1;
-                    continue;
-                }
-                PatternType::Any => {
-                    next_pattern_index = pattern_index;
-                    next_char_index = char_index + 1;
-                    pattern_index += 1;
-                    continue;
-                }
-                PatternType::Match | PatternType::One => {}
+                retry = Some((index, input.clone()));
+                continue;
             }
+            Some(PatternType::One) if input.next().is_some() => {
+                index += 1;
+                continue;
+            }
+            Some(PatternType::Match) if input.next().is_some_and(|c| matcher(c, weights[index])) => {
+                index += 1;
+                continue;
+            }
+            None if input.next().is_none() => return true,
+            _ => {}
         }
-        if next_char_index > 0 && next_char_index <= input.len() {
-            pattern_index = next_pattern_index;
-            char_index = next_char_index;
-            continue;
+        // Let the most recent % consume one more input unit and retry its suffix.
+        let Some((suffix, cursor)) = &mut retry else { return false };
+        if cursor.next().is_none() {
+            return false;
         }
-        return false;
+        index = *suffix;
+        input = cursor.clone();
     }
-    true
 }
 
 /// Whether a compiled pattern contains no wildcard token.
@@ -368,13 +502,27 @@ pub fn escape(identifier: &[u8], sql_mode: SqlMode) -> Vec<u8> {
     } else {
         b'`'
     };
-    let mut escaped = Vec::with_capacity(identifier.len() + 2);
+    let quotes = memchr::memchr_iter(quote, identifier);
+    let count = quotes.clone().count();
+    let mut escaped = Vec::with_capacity(identifier.len() + count + 2);
     escaped.push(quote);
-    for &byte in identifier {
-        escaped.push(byte);
-        if byte == quote {
+    if count == 0 {
+        escaped.extend_from_slice(identifier);
+    } else if count > identifier.len() / 8 {
+        for &byte in identifier {
             escaped.push(byte);
+            if byte == quote {
+                escaped.push(quote);
+            }
         }
+    } else {
+        let mut start = 0;
+        for end in quotes {
+            escaped.extend_from_slice(&identifier[start..=end]);
+            escaped.push(quote);
+            start = end + 1;
+        }
+        escaped.extend_from_slice(&identifier[start..]);
     }
     escaped.push(quote);
     escaped
@@ -384,16 +532,40 @@ pub fn escape(identifier: &[u8], sql_mode: SqlMode) -> Vec<u8> {
 pub fn build_string_from_labels(labels: &HashMap<String, String>) -> String {
     let mut labels = labels.iter().collect::<Vec<_>>();
     labels.sort_unstable_by_key(|(key, _)| *key);
-    labels
-        .into_iter()
-        .map(|(key, value)| format!("{key}={value}"))
-        .collect::<Vec<_>>()
-        .join(",")
+    let capacity = labels
+        .iter()
+        .map(|(k, v)| k.len() + v.len() + 2)
+        .sum::<usize>()
+        .saturating_sub(1);
+    let mut out = String::with_capacity(capacity);
+    for (i, (key, value)) in labels.into_iter().enumerate() {
+        if i != 0 {
+            out.push(',');
+        }
+        out.push_str(key);
+        out.push('=');
+        out.push_str(value);
+    }
+    out
 }
 
 /// Counts trailing ASCII spaces.
+#[inline]
 pub fn get_tail_space_count(value: &[u8]) -> i64 {
-    value.iter().rev().take_while(|byte| **byte == b' ').count() as i64
+    let mut remaining = value;
+    while let Some((head, tail)) = remaining.split_last_chunk::<8>() {
+        let difference = u64::from_le_bytes(*tail) ^ u64::from_le_bytes([b' '; 8]);
+        if difference != 0 {
+            return (value.len() - remaining.len()) as i64
+                + i64::from(difference.leading_zeros() / 8);
+        }
+        remaining = head;
+    }
+    let end = remaining
+        .iter()
+        .rposition(|&byte| byte != b' ')
+        .map_or(0, |index| index + 1);
+    (value.len() - end) as i64
 }
 
 /// Returns the width encoded by the first byte of a UTF-8 sequence.
@@ -451,44 +623,83 @@ pub fn lower_one_string(value: &mut [u8]) {
 /// Lowercases ASCII letters without changing the meaning of an ASCII-letter
 /// escape marker. Returns the possibly uppercased effective escape byte.
 pub fn lower_one_string_excluding_escape_char(value: &mut [u8], escape: u8) -> u8 {
-    let actual_escape = if is_lower_ascii(escape) {
-        escape.to_ascii_uppercase()
-    } else {
-        escape
-    };
+    let actual_escape = escape.to_ascii_uppercase();
+    // An incomplete UTF-8 sequence at the end is only non-ASCII bytes.
+    // Go skips them, so lowercasing the ASCII bytes is still equivalent.
+    if value.is_ascii()
+        || (escape.is_ascii()
+            && value.len() >= 64
+            && !simdutf8::compat::from_utf8(value).is_err_and(|error| error.error_len().is_some()))
+    {
+        if escape.is_ascii_alphabetic() && memchr(escape, value).is_some() {
+            let mut escaped = false;
+            for byte in value {
+                escaped = *byte == escape && !escaped;
+                *byte = if escaped {
+                    actual_escape
+                } else {
+                    byte.to_ascii_lowercase()
+                };
+            }
+        } else {
+            value.make_ascii_lowercase();
+        }
+        return actual_escape;
+    }
+
+    // An ASCII non-letter escape retains its value and has width one.
+    // For other bytes, Go advances by the lead-byte width even on malformed UTF-8.
+    if escape.is_ascii() && !escape.is_ascii_alphabetic() {
+        let mut index = 0;
+        while let Some(byte) = value.get_mut(index) {
+            let current = *byte;
+            if current.is_ascii_uppercase() {
+                *byte = current | 0x20;
+                index += 1;
+            } else {
+                index += utf8_len(current);
+            }
+        }
+        return escape;
+    }
+
     let mut escaped = false;
     let mut index = 0;
-    while index < value.len() {
-        if is_upper_ascii(value[index]) {
-            if value[index] == escape && !escaped {
-                escaped = true;
-                index += 1;
-                continue;
-            }
-            value[index] = value[index].to_ascii_lowercase();
+    while let Some(byte) = value.get_mut(index) {
+        let current = *byte;
+        if current == escape && !escaped {
+            *byte = actual_escape;
+            escaped = true;
+            index += 1;
         } else {
-            if value[index] == escape && !escaped {
-                escaped = true;
-                value[index] = actual_escape;
-                index += 1;
-                continue;
-            }
-            index += utf8_len(value[index]).saturating_sub(1);
+            *byte = current.to_ascii_lowercase();
+            escaped = false;
+            index += utf8_len(current);
         }
-        escaped = false;
-        index += 1;
     }
     actual_escape
 }
 
 /// Escapes `?` for a glob path pattern.
 pub fn escape_glob_question_mark(value: impl AsRef<[u8]>) -> String {
-    let mut escaped = String::new();
-    for character in decode_go_runes(value.as_ref()) {
-        if character == '?' {
-            escaped.push('\\');
+    let bytes = value.as_ref();
+    let mut escaped =
+        String::with_capacity(bytes.len() + memchr::memchr_iter(b'?', bytes).count());
+    for chunk in bytes.utf8_chunks() {
+        let text = chunk.valid();
+        if text.contains('?') {
+            for ch in text.chars() {
+                if ch == '?' {
+                    escaped.push('\\');
+                }
+                escaped.push(ch);
+            }
+        } else {
+            escaped.push_str(text);
         }
-        escaped.push(character);
+        for _ in chunk.invalid() {
+            escaped.push(char::REPLACEMENT_CHARACTER);
+        }
     }
     escaped
 }
@@ -513,27 +724,72 @@ pub fn go_json_float(value: f64) -> String {
 /// Go `json.Marshal` of a value: `encoding/json` escapes `<`, `>`, `&` and the
 /// U+2028/U+2029 separators inside strings.
 pub fn go_json_marshal<T: serde::Serialize + ?Sized>(value: &T) -> String {
-    go_json_html_escape(&serde_json::to_string(value).unwrap_or_default())
+    let compact = serde_json::to_string(value).unwrap_or_default();
+    escape_json_html(&compact).unwrap_or(compact)
 }
 
 /// The escapes Go `json.Marshal` applies inside strings over serde's compact
 /// text: `<`, `>`, `&` and U+2028/U+2029 (none of them can occur outside a
 /// string in JSON text).
 pub fn go_json_html_escape(compact: &str) -> String {
-    compact
-        .replace('<', "\\u003c")
-        .replace('>', "\\u003e")
-        .replace('&', "\\u0026")
-        .replace('\u{2028}', "\\u2028")
-        .replace('\u{2029}', "\\u2029")
+    escape_json_html(compact).unwrap_or_else(|| compact.to_owned())
+}
+
+fn escape_json_html(compact: &str) -> Option<String> {
+    let bytes = compact.as_bytes();
+    let first_html = memchr3(b'<', b'>', b'&', bytes);
+    let prefix = &bytes[..first_html.unwrap_or(bytes.len())];
+    let first_separator = memchr(0xe2, prefix).and_then(|start| {
+        let suffix = &prefix[start..];
+        memchr::memchr2_iter(0xa8, 0xa9, suffix)
+            .find(|&end| end >= 2 && suffix[end - 2..end] == [0xe2, 0x80])
+            .map(|end| start + end - 2)
+    });
+    let first = first_separator.or(first_html)?;
+    let mut result = String::with_capacity(bytes.len() + 16);
+    result.push_str(&compact[..first]);
+    let mut copied = first;
+    let mut escape_block = |offset, block: &[u8]| {
+        for (index, &byte) in block.iter().enumerate() {
+            let index = offset + index;
+            let (width, escaped) = match byte {
+                b'<' => (1, "\\u003c"),
+                b'>' => (1, "\\u003e"),
+                b'&' => (1, "\\u0026"),
+                0xe2 => match bytes.get(index + 1..index + 3) {
+                    Some([0x80, 0xa8]) => (3, "\\u2028"),
+                    Some([0x80, 0xa9]) => (3, "\\u2029"),
+                    _ => continue,
+                },
+                _ => continue,
+            };
+            result.push_str(&compact[copied..index]);
+            result.push_str(escaped);
+            copied = index + width;
+        }
+    };
+    const BLOCK_SIZE: usize = 256;
+    for (index, block) in bytes[first..].chunks(BLOCK_SIZE).enumerate() {
+        if index == 0 || memchr3(b'<', b'>', b'&', block).is_some() || memchr(0xe2, block).is_some() {
+            escape_block(first + index * BLOCK_SIZE, block);
+        }
+    }
+    result.push_str(&compact[copied..]);
+    Some(result)
 }
 
 /// Go `json.Indent(dst, src, prefix, indent)` over valid JSON text: a newline
 /// and the indentation after `{`, `[` and `,`, a space after `:`, and empty
-/// objects and arrays kept as `{}` and `[]`; strings are copied unchanged and
-/// insignificant whitespace is dropped.
+/// objects and arrays kept as `{}` and `[]`. Strings and the source's trailing
+/// JSON whitespace are copied unchanged.
 #[must_use]
 pub fn go_json_indent(src: &str, prefix: &str, indent: &str) -> String {
+    let is_space = |c| matches!(c, ' ' | '\t' | '\n' | '\r');
+    let src = src.trim_start_matches(is_space);
+    if !src.starts_with(['{', '[']) {
+        return src.to_owned();
+    }
+    let body = src.trim_end_matches(is_space);
     let newline = |dst: &mut String, depth: usize| {
         dst.push('\n');
         dst.push_str(prefix);
@@ -544,43 +800,34 @@ pub fn go_json_indent(src: &str, prefix: &str, indent: &str) -> String {
     let mut dst = String::with_capacity(src.len() * 2);
     let mut need_indent = false;
     let mut depth = 0usize;
-    let mut in_string = false;
-    let mut escaped = false;
-    for c in src.chars() {
-        if in_string {
-            dst.push(c);
-            if escaped {
-                escaped = false;
-            } else if c == '\\' {
-                escaped = true;
-            } else if c == '"' {
-                in_string = false;
-            }
+    let mut rest = body;
+    while let [byte, ..] = rest.as_bytes() {
+        if matches!(byte, b' ' | b'\t' | b'\n' | b'\r') {
+            rest = &rest[1..];
             continue;
         }
-        if matches!(c, ' ' | '\t' | '\n' | '\r') {
-            continue;
-        }
-        if need_indent && c != '}' && c != ']' {
+        if need_indent && !matches!(byte, b'}' | b']') {
             need_indent = false;
             depth += 1;
             newline(&mut dst, depth);
         }
-        match c {
+        match byte {
             // delay indent so that empty object and array are formatted as {} and [].
-            '{' | '[' => {
+            b'{' | b'[' => {
                 need_indent = true;
-                dst.push(c);
             }
-            ',' => {
-                dst.push(c);
+            b',' => {
+                dst.push(',');
                 newline(&mut dst, depth);
+                rest = &rest[1..];
+                continue;
             }
-            ':' => {
-                dst.push(c);
-                dst.push(' ');
+            b':' => {
+                dst.push_str(": ");
+                rest = &rest[1..];
+                continue;
             }
-            '}' | ']' => {
+            b'}' | b']' => {
                 if need_indent {
                     // suppress indent in empty object/array
                     need_indent = false;
@@ -588,16 +835,56 @@ pub fn go_json_indent(src: &str, prefix: &str, indent: &str) -> String {
                     depth = depth.saturating_sub(1);
                     newline(&mut dst, depth);
                 }
-                dst.push(c);
             }
-            '"' => {
-                in_string = true;
-                dst.push(c);
+            b'"' => {
+                let end = json_string_span(rest.as_bytes());
+                dst.push_str(&rest[..end]);
+                rest = &rest[end..];
+                continue;
             }
-            c => dst.push(c),
+            _ => {
+                let len = rest.as_bytes()[1..]
+                    .iter()
+                    .position(|byte| {
+                        matches!(
+                            byte,
+                            b' ' | b'\t' | b'\n' | b'\r' | b'{' | b'}' | b'[' | b']' | b',' | b':' | b'"'
+                        )
+                    })
+                    .map_or(rest.len(), |index| index + 1);
+                dst.push_str(&rest[..len]);
+                rest = &rest[len..];
+                continue;
+            }
         }
+        dst.push(char::from(*byte));
+        rest = &rest[1..];
     }
+    dst.push_str(&src[body.len()..]);
     dst
+}
+
+fn json_string_span(bytes: &[u8]) -> usize {
+    let mut offset = 1;
+    while let Some(next) = memchr::memchr2(b'"', b'\\', &bytes[offset..]) {
+        let index = offset + next;
+        if bytes[index] == b'"' {
+            return index + 1;
+        }
+        offset = (index + 2).min(bytes.len());
+        // Scan a bounded window after an escape. Adjacent escapes can then
+        // be skipped without repeatedly restarting the byte search.
+        let end = (offset + 64).min(bytes.len());
+        while offset < end {
+            match bytes[offset] {
+                b'"' => return offset + 1,
+                b'\\' => offset += 2,
+                _ => offset += 1,
+            }
+        }
+        offset = offset.min(bytes.len());
+    }
+    bytes.len()
 }
 
 #[cfg(test)]
@@ -616,7 +903,25 @@ mod tests {
             "{\n \"a\": [\n  1,\n  {\n   \"b\": \"x, y: {z}\"\n  }\n ],\n \"e\": {},\n \"f\": [],\n \"g\": \"q\\\"\\\\\"\n}"
         );
         assert_eq!(go_json_indent("\"success!\"", "", " "), "\"success!\"");
+        assert_eq!(go_json_indent(" \t42\r\n", "p", "i"), "42\r\n");
+        assert_eq!(go_json_indent(" \n[ 1 ]\t\r\n", "p", "i"), "[\npi1\np]\t\r\n");
         assert_eq!(go_json_html_escape(r#"{"a":"<&>"}"#), r#"{"a":"\u003c\u0026\u003e"}"#);
+    }
+
+    #[test]
+    fn json_formatting_preserves_escapes_across_scan_boundaries() {
+        for gap in 61..=66 {
+            let token = format!(r#""\\{}\"µ""#, "x".repeat(gap));
+            let input = format!(" [{token},[]] \r\n");
+            let expected = format!("[\n. {token},\n. []\n.] \r\n");
+            assert_eq!(go_json_indent(&input, ".", " "), expected);
+        }
+
+        let text = "x".repeat(254);
+        let input = format!("\"<{text}\u{2028}€\u{2029}\"");
+        let escaped = format!("\"\\u003c{text}\\u2028€\\u2029\"");
+        assert_eq!(go_json_html_escape(&input), escaped);
+        assert_eq!(go_json_marshal(&format!("<{text}\u{2028}€\u{2029}")), escaped);
     }
 
     #[test]
@@ -705,6 +1010,16 @@ mod tests {
     }
 
     #[test]
+    fn punctuation_escape_keeps_the_go_utf8_byte_steps() {
+        let mut input = b"A\xe7\x81AB\\C".to_vec();
+        assert_eq!(
+            lower_one_string_excluding_escape_char(&mut input, b'\\'),
+            b'\\'
+        );
+        assert_eq!(input, b"a\xe7\x81Ab\\c");
+    }
+
+    #[test]
     fn test_compile_like_to_regexp() {
         let regex_rows = [
             ("", "^$"),
@@ -740,6 +1055,40 @@ mod tests {
         assert_eq!(compile_like_to_regexp("+%a", b'+'), "^%a$");
         assert_eq!(compile_like_to_regexp("+_a", b'+'), "^_a$");
         assert_eq!(compile_like_to_regexp(r"\%a", b'+'), r"^\\.*a$");
+    }
+
+    #[test]
+    fn binary_wildcard_runs_keep_escaped_percent_between_runs() {
+        use PatternType::{Any, Match, One};
+
+        let tail = br"%_%_\%%_";
+        let mut weights = Vec::new();
+        let mut kinds = Vec::new();
+        for prefix_len in [64, 0] {
+            let mut pattern = vec![0xff; prefix_len];
+            pattern.extend_from_slice(tail);
+            let mut expected_weights = vec![0xff; prefix_len];
+            expected_weights.extend_from_slice(b"__%%_%");
+            let mut expected_kinds = vec![Match; prefix_len];
+            expected_kinds.extend([One, One, Any, Match, One, Any]);
+            compile_pattern_binary_into(&pattern, b'\\', &mut weights, &mut kinds);
+            assert_eq!(weights, expected_weights);
+            assert_eq!(kinds, expected_kinds);
+            assert_eq!(
+                compile_pattern_binary(&pattern, b'\\'),
+                (expected_weights, expected_kinds),
+            );
+        }
+    }
+
+    #[test]
+    fn lowercase_preserves_ascii_inside_a_malformed_sequence() {
+        let mut text = vec![b'B'; 67];
+        text.extend_from_slice(b"\xe7\x81AZ\xf0\x9f");
+        let mut expected = vec![b'b'; 67];
+        expected.extend_from_slice(b"\xe7\x81Az\xf0\x9f");
+        assert_eq!(lower_one_string_excluding_escape_char(&mut text, b'\\'), b'\\');
+        assert_eq!(text, expected);
     }
 
     #[test]
@@ -784,6 +1133,7 @@ mod tests {
         assert_eq!(escape_glob_question_mark("12*3"), "12*3");
         assert_eq!(escape_glob_question_mark("12?"), r"12\?");
         assert_eq!(escape_glob_question_mark("[1-2]"), "[1-2]");
+        assert_eq!(escape_glob_question_mark(b"\xf0\x9f?"), r"��\?");
     }
 
     #[test]

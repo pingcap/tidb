@@ -215,8 +215,7 @@ impl AdminIndexContext {
             crate::cop_reader::TableRead {
                 store_type: tidb_kv::store_type::StoreType::TiKv,
                 dag,
-                key_ranges,
-                key_range_hints: Vec::new(),
+                key_ranges: tidb_txnkv::PartitionedKeyRanges::new_non_partitioned(key_ranges).into(),
                 partition_id_and_ranges: Vec::new(),
                 batch_cop: false,
                 schema_version: 0,
@@ -478,9 +477,12 @@ impl RecoverIndexExec {
         let mut distinct_flags = Vec::new();
         let mut row_idx = Vec::new();
         for (i, row) in rows.iter().enumerate() {
-            for entry in self.table.index_entry_keys(&self.index, &row.row, &row.handle, self.physical_id, &zone).map_err(kv_error)? {
-                batch_keys.push(Key::from_bytes(entry.key));
-                distinct_flags.push(entry.distinct);
+            let keys = self.table
+                .index_keys_for_check(&self.index, &row.row, &row.handle, self.physical_id, &zone)
+                .map_err(kv_error)?;
+            for (key, distinct) in keys {
+                batch_keys.push(Key::from_bytes(key));
+                distinct_flags.push(distinct);
                 row_idx.push(i);
             }
         }
@@ -531,7 +533,7 @@ impl RecoverIndexExec {
             store.lock_keys_optimistically(&[Key::from_bytes(record_key)]).map_err(storage_error)?;
             // `index.Create(..., table.WithIgnoreAssertion,
             // table.DupKeyCheckSkip)`: every entry of the row, unchecked.
-            for entry in self.table.index_entry_keys(&self.index, &row.row, &row.handle, self.physical_id, &zone).map_err(kv_error)? {
+            for entry in self.table.index_entries_for_write(&self.index, &row.row, &row.handle, self.physical_id, &zone).map_err(kv_error)? {
                 let value = self
                     .table
                     .gen_index_value(&self.index, &entry.values, &row.row, &row.handle, entry.distinct, self.physical_id, &zone)

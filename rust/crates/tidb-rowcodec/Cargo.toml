@@ -14,4 +14,5 @@ workspace = true
 tidb-codec = { path = "../tidb-codec" }
 chrono.workspace = true
 crc32fast.workspace = true
+smallvec.workspace = true
 tidb-datatype = { path = "../tidb-datatype" }

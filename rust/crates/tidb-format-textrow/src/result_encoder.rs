@@ -21,13 +21,9 @@
 //! Go implementations do for those paths), while other supported encodings
 //! use the complete `pkg/parser/charset` authority in `tidb-datatype`.
 
-use std::fmt;
+use std::{borrow::Cow, fmt};
 
-use tidb_charset::find_encoding;
-use tidb_charset::get_charset_info_by_id;
-use tidb_charset::Charset;
-use tidb_charset::TransformOp;
-
+use tidb_charset::{Charset, Encoding, TransformOp};
 
 /// MySQL's default collation IDs used by TiDB's result metadata path.
 ///
@@ -101,6 +97,17 @@ impl ResultCharset {
             Charset::Utf8Mb4 => Self::Utf8Mb4,
             Charset::Gbk => Self::Gbk,
             Charset::Gb18030 => Self::Gb18030,
+        }
+    }
+
+    fn encoding(self) -> Encoding {
+        match self {
+            Self::Ascii => Encoding::Ascii,
+            Self::Gbk => Encoding::Gbk,
+            Self::Gb18030 => Encoding::Gb18030,
+            // TiDB treats UTF-8 as binary and its Latin-1 result encoder
+            // passes bytes through. Unknown names also use binary.
+            _ => Encoding::Binary,
         }
     }
 }
@@ -202,6 +209,17 @@ impl ResultEncoder {
         self.result_charset
     }
 
+    /// Whether a column's bytes can pass through without a charset lookup.
+    #[inline]
+    pub fn can_skip_data_encoding(&self, collation_id: u16) -> bool {
+        match self.result_charset {
+            Some(result) if result != ResultCharset::Binary => {
+                result.encoding() == Encoding::Binary
+            }
+            _ => collation_id == UTF8MB4_DEFAULT_COLLATION_ID,
+        }
+    }
+
     /// Returns the charset ID advertised in a text-protocol column definition.
     ///
     /// This is the source `ColumnCharsetID` rule: null/empty results,
@@ -225,7 +243,8 @@ impl ResultEncoder {
     /// explicit error until their registry rows and conversion
     /// implementations are ported.
     pub fn update_data_encoding(&mut self, collation_id: u16) -> Result<(), ResultEncoderError> {
-        let charset = charset_from_collation_id(collation_id)
+        let charset = Charset::from_collation_id(i32::from(collation_id))
+            .map(ResultCharset::from_datatype)
             .ok_or(ResultEncoderError::UnsupportedCollationId(collation_id))?;
         self.data_is_binary = charset == ResultCharset::Binary;
         self.data_charset = Some(charset);
@@ -240,7 +259,13 @@ impl ResultEncoder {
     /// replacement bytes, so this API preserves that behavior.
     pub fn encode_meta(&self, src: &[u8]) -> Result<Vec<u8>, ResultEncoderError> {
         let charset = self.result_charset.unwrap_or(ResultCharset::Binary);
-        Ok(encode_with_charset(src, charset))
+        Ok(match charset.encoding() {
+            Encoding::Binary => src.to_vec(),
+            encoding => encoding
+                .transform(src, TransformOp::ENCODE_REPLACE)
+                .into_parts()
+                .0,
+        })
     }
 
     /// Encodes row data using the source column/session precedence rule.
@@ -248,36 +273,39 @@ impl ResultEncoder {
     /// A null result, a binary session result, or a binary column uses the
     /// column charset. All other columns use the session result charset.
     pub fn encode_data(&self, src: &[u8]) -> Result<Vec<u8>, ResultEncoderError> {
-        let Some(data_charset) = self.data_charset else {
-            return Err(ResultEncoderError::DataEncodingUnset);
-        };
-        let use_data_charset = self.result_charset.is_none()
-            || self.result_charset == Some(ResultCharset::Binary)
-            || self.data_is_binary;
-        let charset = if use_data_charset {
-            data_charset
-        } else {
-            self.result_charset.expect("non-null result charset")
-        };
-        Ok(encode_with_charset(src, charset))
+        Ok(self.encode_data_cow(src)?.into_owned())
+    }
+
+    /// Encodes row data, borrowing the source bytes when they pass through unchanged.
+    pub fn encode_data_cow<'a>(&self, src: &'a [u8]) -> Result<Cow<'a, [u8]>, ResultEncoderError> {
+        Ok(match self.data_encoding()? {
+            Encoding::Binary => Cow::Borrowed(src),
+            encoding => encoding.transform_cow(src, TransformOp::ENCODE_REPLACE).0,
+        })
     }
 
     /// Owned counterpart of [`Self::encode_data`].  The binary prepared-result
     /// writer already owns string cells, so the UTF-8/binary no-op encodings
     /// can retain that allocation instead of cloning every cell once more.
     pub fn encode_data_owned(&self, src: Vec<u8>) -> Result<Vec<u8>, ResultEncoderError> {
-        let Some(data_charset) = self.data_charset else {
-            return Err(ResultEncoderError::DataEncodingUnset);
+        Ok(match self.data_encoding()? {
+            Encoding::Binary => src,
+            encoding => encoding
+                .transform_owned(src, TransformOp::ENCODE_REPLACE)
+                .into_parts()
+                .0,
+        })
+    }
+
+    fn data_encoding(&self) -> Result<Encoding, ResultEncoderError> {
+        let column = self
+            .data_charset
+            .ok_or(ResultEncoderError::DataEncodingUnset)?;
+        let charset = match self.result_charset {
+            Some(result) if result != ResultCharset::Binary && !self.data_is_binary => result,
+            _ => column,
         };
-        let use_data_charset = self.result_charset.is_none()
-            || self.result_charset == Some(ResultCharset::Binary)
-            || self.data_is_binary;
-        let charset = if use_data_charset {
-            data_charset
-        } else {
-            self.result_charset.expect("non-null result charset")
-        };
-        Ok(encode_with_charset_owned(src, charset))
+        Ok(charset.encoding())
     }
 }
 
@@ -291,60 +319,6 @@ fn charset_default_collation_id(charset: ResultCharset) -> u16 {
         ResultCharset::Binary => BINARY_DEFAULT_COLLATION_ID,
         ResultCharset::Gbk => GBK_DEFAULT_COLLATION_ID,
         ResultCharset::Gb18030 => GB18030_DEFAULT_COLLATION_ID,
-    }
-}
-
-fn charset_from_collation_id(id: u16) -> Option<ResultCharset> {
-    let (charset, _, error) = get_charset_info_by_id(i32::from(id));
-    error
-        .is_none()
-        .then(|| Charset::from_name(&charset))
-        .flatten()
-        .map(ResultCharset::from_datatype)
-}
-
-fn encode_with_charset(src: &[u8], charset: ResultCharset) -> Vec<u8> {
-    match charset {
-        // Go's FindEncodingTakeUTF8AsNoop deliberately uses the binary
-        // encoder for UTF-8, and its Latin-1 encoder's `Transform` returns
-        // the source (`encoding_latin1.go`). Keep these paths allocation-only.
-        ResultCharset::Unknown
-        | ResultCharset::Binary
-        | ResultCharset::Latin1
-        | ResultCharset::Utf8
-        | ResultCharset::Utf8Mb4 => src.to_vec(),
-        ResultCharset::Ascii | ResultCharset::Gbk | ResultCharset::Gb18030 => {
-            find_encoding(match charset {
-                ResultCharset::Ascii => "ascii",
-                ResultCharset::Gbk => "gbk",
-                ResultCharset::Gb18030 => "gb18030",
-                _ => unreachable!(),
-            })
-            .transform(src, TransformOp::ENCODE_REPLACE)
-            .bytes()
-            .to_vec()
-        }
-    }
-}
-
-fn encode_with_charset_owned(src: Vec<u8>, charset: ResultCharset) -> Vec<u8> {
-    match charset {
-        ResultCharset::Unknown
-        | ResultCharset::Binary
-        | ResultCharset::Latin1
-        | ResultCharset::Utf8
-        | ResultCharset::Utf8Mb4 => src,
-        ResultCharset::Ascii | ResultCharset::Gbk | ResultCharset::Gb18030 => {
-            find_encoding(match charset {
-                ResultCharset::Ascii => "ascii",
-                ResultCharset::Gbk => "gbk",
-                ResultCharset::Gb18030 => "gb18030",
-                _ => unreachable!(),
-            })
-            .transform(&src, TransformOp::ENCODE_REPLACE)
-            .bytes()
-            .to_vec()
-        }
     }
 }
 

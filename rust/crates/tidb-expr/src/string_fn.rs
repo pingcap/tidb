@@ -16,16 +16,20 @@
 //! below. `POSITION(a IN b)` and `TRIM(...)` have dedicated AST grammars; the
 //! rewriter lowers them to scalar functions.
 
-use tidb_datatype::CollationCollator;
-use crate::coerce::{coerce_str, coerce_str_bytes};
+use std::borrow::Cow;
+
+use memchr::memmem;
+use tidb_datatype::{CollationCollator, Collator};
+use crate::coerce::{borrow_str_bytes, coerce_str, coerce_str_bytes};
 use crate::ops::to_f64_with_mysql_string;
-use crate::string_signature::StrUnits;
+use crate::string_signature::{go_utf8_text, StrUnits};
 use crate::{Datum, EvalError};
 use tidb_datatype::FieldType;
 use tidb_charset::find_encoding;
 use tidb_charset::get_default_collation;
 use tidb_charset::Collation;
-use tidb_goruntime::GoString;
+use tidb_charset::Encoding;
+use tidb_goruntime::{go_chars, go_hex, GoString};
 use tidb_charset::TransformOp;
 
 /// CONCAT: `NULL` if any argument is `NULL`, else the concatenation.
@@ -117,7 +121,7 @@ pub(crate) fn ascii(vals: &[Datum]) -> Result<Datum, EvalError> {
     if vals.len() != 1 {
         return Err(EvalError::Unsupported("bad function arity"));
     }
-    let Some(bytes) = coerce_str_bytes(&vals[0])? else {
+    let Some(bytes) = borrow_str_bytes(&vals[0])? else {
         return Ok(Datum::Null);
     };
     Ok(Datum::Int(i64::from(bytes.first().copied().unwrap_or(0))))
@@ -129,7 +133,7 @@ pub(crate) fn bit_length(vals: &[Datum]) -> Result<Datum, EvalError> {
     if vals.len() != 1 {
         return Err(EvalError::Unsupported("bad function arity"));
     }
-    let Some(bytes) = coerce_str_bytes(&vals[0])? else {
+    let Some(bytes) = borrow_str_bytes(&vals[0])? else {
         return Ok(Datum::Null);
     };
     Ok(Datum::Int((bytes.len() as i64) * 8))
@@ -150,12 +154,23 @@ pub(crate) fn str_take(vals: &[Datum], from_left: bool) -> Result<Datum, EvalErr
     let Some(units) = StrUnits::of(&vals[0])? else {
         return Ok(Datum::Null);
     };
-    let (start, end) = if from_left {
-        (0, n.min(units.len()))
+    Ok(take_string_units(&units, n, from_left))
+}
+
+pub(crate) fn take_string_units(units: &StrUnits<'_>, n: usize, from_left: bool) -> Datum {
+    units.pack(take_string_unit_slice(units, n, from_left).to_vec())
+}
+
+pub(crate) fn take_string_unit_slice<'a>(
+    units: &'a StrUnits<'_>,
+    n: usize,
+    from_left: bool,
+) -> &'a [u8] {
+    if from_left {
+        units.slice(0, n)
     } else {
-        (units.len().saturating_sub(n), units.len())
-    };
-    Ok(units.pack(units.slice(start, end).to_vec()))
+        units.tail(n)
+    }
 }
 
 /// `SUBSTRING(s, pos[, len])`: 1-indexed, counting in the units of the
@@ -169,9 +184,46 @@ pub(crate) fn str_take(vals: &[Datum], from_left: bool) -> Result<Datum, EvalErr
 pub(crate) fn substring(
     vals: &[Datum],
     cols: &dyn tidb_exprctx::context::Columns,
+    binary: bool,
 ) -> Result<Datum, EvalError> {
     if vals.contains(&Datum::Null) {
         return Ok(Datum::Null);
+    }
+    let [value, args @ ..] = vals else {
+        return Err(EvalError::Unsupported("bad SUBSTRING arguments"));
+    };
+    let Some(bytes) = crate::arg_eval_type::eval_string_bytes(value)? else {
+        return Ok(Datum::Null);
+    };
+    let (pos, length) = match args {
+        [pos] => (pos, None),
+        [pos, length] => (pos, Some(length)),
+        _ => return Err(EvalError::Unsupported("bad SUBSTRING arguments")),
+    };
+    substring_bytes(bytes, pos, length, cols, binary)
+}
+
+pub(crate) fn substring_bytes(
+    bytes: &[u8],
+    pos: &Datum,
+    length: Option<&Datum>,
+    cols: &dyn tidb_exprctx::context::Columns,
+    binary: bool,
+) -> Result<Datum, EvalError> {
+    let Some((pos, length)) = substring_arguments(pos, length, cols)? else {
+        return Ok(Datum::Null);
+    };
+    let units = StrUnits::from_bytes(Cow::Borrowed(bytes), binary);
+    Ok(units.pack(substring_slice(&units, pos, length).to_vec()))
+}
+
+pub(crate) fn substring_arguments(
+    pos: &Datum,
+    length: Option<&Datum>,
+    cols: &dyn tidb_exprctx::context::Columns,
+) -> Result<Option<(i64, Option<i64>)>, EvalError> {
+    if pos.is_null() || length.is_some_and(Datum::is_null) {
+        return Ok(None);
     }
     // Go builds every `substring` signature through
     // `newBaseBuiltinFuncWithTp(..., types.ETInt, ...)` for the position and
@@ -182,45 +234,52 @@ pub(crate) fn substring(
     // go's position/length arguments are WrapWithCastAsInt-wrapped: the
     // conversion warns `Truncated incorrect INTEGER value` exactly like an
     // explicit CAST (`SUBSTRING('abc', 1, 'x')` warns 1292 for 'x').
-    let (str, pos, length) = match vals {
-        [str, pos] => (
-            str,
-            crate::cast::to_i64_signed_with_warnings(pos, cols)?,
-            None,
-        ),
-        [str, pos, length] => (
-            str,
-            crate::cast::to_i64_signed_with_warnings(pos, cols)?,
-            Some(crate::cast::to_i64_signed_with_warnings(length, cols)?),
-        ),
-        _ => return Err(EvalError::Unsupported("bad SUBSTRING arguments")),
-    };
-    let Some(units) = StrUnits::of(str)? else {
-        return Ok(Datum::Null);
-    };
-    let string_len = units.len() as i64;
-    let pos = if pos < 0 { pos + string_len } else { pos - 1 };
-    let start = if !(0..=string_len).contains(&pos) {
-        units.len()
+    let pos = crate::cast::to_i64_signed_with_warnings(pos, cols)?;
+    let length = length
+        .map(|length| crate::cast::to_i64_signed_with_warnings(length, cols))
+        .transpose()?;
+    Ok(Some((pos, length)))
+}
+
+pub(crate) fn substring_slice<'a>(
+    units: &'a StrUnits<'_>,
+    pos: i64,
+    length: Option<i64>,
+) -> &'a [u8] {
+    let range = substring_range(pos, length, || units.len());
+    units.slice(range.start, range.end)
+}
+
+#[inline]
+pub(crate) fn substring_range(
+    pos: i64,
+    length: Option<i64>,
+    units: impl FnOnce() -> usize,
+) -> std::ops::Range<usize> {
+    let start = if pos < 0 {
+        pos + units() as i64
     } else {
-        pos as usize
+        pos - 1
     };
+    if start < 0 {
+        return 0..0;
+    }
     let end = match length {
-        None => units.len(),
-        Some(length) if length <= 0 => start,
+        None => usize::MAX,
+        Some(length) if length <= 0 => return 0..0,
         Some(length) => {
             // Go's source computes `end := pos + length` in int64.  A
             // positive length can therefore wrap when `pos > 0`, and the
             // following `end < pos` branch returns the empty string.  Do
             // not use saturating_add here: it would silently turn that
             // source-visible overflow into an unexpectedly long tail.
-            let Some(end) = (start as i64).checked_add(length) else {
-                return Ok(units.pack(Vec::new()));
+            let Some(end) = start.checked_add(length) else {
+                return 0..0;
             };
-            (end as usize).min(units.len())
+            usize::try_from(end).unwrap_or(usize::MAX)
         }
     };
-    Ok(units.pack(units.slice(start, end).to_vec()))
+    usize::try_from(start).unwrap_or(usize::MAX)..end
 }
 
 /// `REVERSE(s)`: the units of `s` in the opposite order. Go's
@@ -235,11 +294,7 @@ pub(crate) fn reverse(vals: &[Datum]) -> Result<Datum, EvalError> {
     let Some(units) = StrUnits::of(value)? else {
         return Ok(Datum::Null);
     };
-    let mut out = Vec::with_capacity(units.bytes().len());
-    for unit in units.units().rev() {
-        out.extend_from_slice(unit);
-    }
-    Ok(units.pack(out))
+    Ok(units.reversed())
 }
 
 /// `LOCATE(substr, str)` / `INSTR(str, substr)` / `POSITION(substr IN str)`
@@ -268,15 +323,13 @@ pub(crate) fn locate(
             collation,
         ));
     }
-    let (Some(needle), Some(haystack)) = (coerce_str_bytes(substr)?, coerce_str_bytes(str)?) else {
+    let (Some(needle), Some(haystack)) = (borrow_str_bytes(substr)?, borrow_str_bytes(str)?) else {
         return Ok(Datum::Null);
     };
     if needle.is_empty() {
         return Ok(Datum::Int(1));
     }
-    let found = haystack
-        .windows(needle.len())
-        .position(|window| window == needle.as_slice());
+    let found = memmem::find(&haystack, &needle);
     Ok(Datum::Int(found.map_or(0, |index| index as i64 + 1)))
 }
 
@@ -290,9 +343,8 @@ pub(crate) fn locate(
 /// and an empty needle answers `pos` itself (reported 1-based). Under a
 /// case-insensitive collation Go lowers BOTH strings with `strings.ToLower`
 /// before the rune-count bounds, so the bounds apply to the lowered lengths.
-/// Matching in the slice is by the function's collator — which the 2-arg
-/// path already relies on — so a folding collation finds a case-folded
-/// occurrence exactly as it does without a start position.
+/// Both UTF-8 signatures search the collation keys, so expansions are matched
+/// consistently with or without a start position.
 pub(crate) fn locate_with_position(
     vals: &[Datum],
     collation: tidb_charset::Collation,
@@ -303,17 +355,7 @@ pub(crate) fn locate_with_position(
     // Go evaluates substr, str, then pos, and isNull on ANY of them is the
     // NULL result (the Int signatures return `0, true, nil`).
     let binary = collation == tidb_charset::Collation::Binary;
-    let needle_opt = if binary {
-        coerce_str_bytes(substr)?.map(|bytes| bytes.to_vec())
-    } else {
-        coerce_str(substr)?.map(|text| text.into_bytes())
-    };
-    let hay_opt = if binary {
-        coerce_str_bytes(str)?.map(|bytes| bytes.to_vec())
-    } else {
-        coerce_str(str)?.map(|text| text.into_bytes())
-    };
-    let (Some(needle), Some(hay)) = (needle_opt, hay_opt) else {
+    let (Some(needle), Some(hay)) = (borrow_str_bytes(substr)?, borrow_str_bytes(str)?) else {
         return Ok(Datum::Null);
     };
     let Some(position) = crate::arg_eval_type::eval_int(pos)? else {
@@ -329,9 +371,7 @@ pub(crate) fn locate_with_position(
         if needle.is_empty() {
             return Ok(Datum::Int(start + 1));
         }
-        let found = hay[start as usize..]
-            .windows(needle.len())
-            .position(|window| window == needle.as_slice());
+        let found = memmem::find(&hay[start as usize..], &needle);
         return Ok(Datum::Int(
             found.map_or(0, |index| start + index as i64 + 1),
         ));
@@ -340,35 +380,25 @@ pub(crate) fn locate_with_position(
     // Under a case-insensitive collation Go lowers both strings BEFORE the
     // rune-count bounds, using `strings.ToLower` (the same simple mapping
     // `tidb_mysql::to_lowercase` ports).
-    let lower = tidb_datatype::is_ci_collation(collation.name());
-    let (needle, hay) = if lower {
+    let hay = go_utf8_text(&hay);
+    let (needle, hay) = if tidb_datatype::is_ci_collation(collation.name()) {
         (
-            tidb_mysql::to_lowercase(&String::from_utf8_lossy(&needle)).into_bytes(),
-            tidb_mysql::to_lowercase(&String::from_utf8_lossy(&hay)).into_bytes(),
+            Cow::Owned(tidb_mysql::to_lowercase(&go_utf8_text(&needle)).into_bytes()),
+            Cow::Owned(tidb_mysql::to_lowercase(&hay)),
         )
     } else {
         (needle, hay)
     };
-    // Go converts to `[]rune`, which turns each invalid byte into U+FFFD.
-    let needle = String::from_utf8_lossy(&needle).into_owned();
-    let hay = String::from_utf8_lossy(&hay).into_owned();
-    let needle: Vec<char> = needle.chars().collect();
-    let hay: Vec<char> = hay.chars().collect();
-    if start < 0 || start > hay.len() as i64 - needle.len() as i64 {
+    let needle_len = go_chars(needle.as_ref()).count();
+    if start < 0 || start > hay.chars().count() as i64 - needle_len as i64 {
         return Ok(Datum::Int(0));
     }
     if needle.is_empty() {
         return Ok(Datum::Int(start + 1));
     }
-    let slice: String = hay[start as usize..].iter().collect();
-    let window = needle.iter().collect::<String>();
-    for offset in 0..=(slice.chars().count() - needle.len()) {
-        let candidate: String = slice.chars().skip(offset).take(needle.len()).collect();
-        if collation.compare(candidate.as_bytes(), window.as_bytes()) == std::cmp::Ordering::Equal {
-            return Ok(Datum::Int(start + offset as i64 + 1));
-        }
-    }
-    Ok(Datum::Int(0))
+    let slice_start = hay.char_indices().nth(start as usize).unwrap().0;
+    let found = locate_string_with_collation(&hay[slice_start..], &needle, collation);
+    Ok(Datum::Int(if found == 0 { 0 } else { start + found }))
 }
 
 /// `LOCATE`/`INSTR`/`POSITION` under an explicit collation.
@@ -397,7 +427,7 @@ pub(crate) fn position_with_collation(
     if substr.is_empty() {
         return Datum::Int(1);
     }
-    Datum::Int(locate_string_with_collation(&str, &substr, collation))
+    Datum::Int(locate_string_with_collation(&str, substr.as_bytes(), collation))
 }
 
 /// Go `locateStringWithCollation` (`util.go:821`): the needle's collation
@@ -406,19 +436,29 @@ pub(crate) fn position_with_collation(
 /// one character 'ß' is found at the two characters 'ss'.
 fn locate_string_with_collation(
     str: &str,
-    substr: &str,
+    substr: &[u8],
     collation: tidb_charset::Collation,
 ) -> i64 {
     let collator = tidb_datatype::get_collator(collation.name());
+    if matches!(
+        collator,
+        Collator::DerivedBinary
+            | Collator::New(
+                Collation::Binary
+                    | Collation::AsciiBin
+                    | Collation::Latin1Bin
+                    | Collation::Utf8Bin
+                    | Collation::Utf8Mb4Bin
+                    | Collation::Utf8Mb40900Bin
+            )
+    ) {
+        return memmem::find(str.as_bytes(), substr).map_or(0, |found| {
+            str[..str.ceil_char_boundary(found)].chars().count() as i64 + 1
+        });
+    }
     let str_key = collator.key_without_trim_right_space(str.as_bytes());
-    let substr_key = collator.key_without_trim_right_space(substr.as_bytes());
-    let Some(found) = (if substr_key.is_empty() {
-        Some(0)
-    } else {
-        str_key
-            .windows(substr_key.len())
-            .position(|window| window == substr_key.as_slice())
-    }) else {
+    let substr_key = collator.key_without_trim_right_space(substr);
+    let Some(found) = memmem::find(&str_key, &substr_key) else {
         return 0;
     };
     if found == 0 {
@@ -473,38 +513,52 @@ pub(crate) fn replace(vals: &[Datum]) -> Result<Datum, EvalError> {
         return Err(EvalError::Unsupported("bad REPLACE arity"));
     };
     let (Some(s), Some(from), Some(to)) = (
-        coerce_str_bytes(value)?,
-        coerce_str_bytes(from)?,
-        coerce_str_bytes(to)?,
+        borrow_str_bytes(value)?,
+        borrow_str_bytes(from)?,
+        borrow_str_bytes(to)?,
     ) else {
         return Ok(Datum::Null);
     };
-    if from.is_empty() {
-        return Ok(string_result(value, s));
+    let mut out = Vec::new();
+    if !replace_bytes_into(&s, &from, &to, &mut out) {
+        out = s.into_owned();
     }
-    Ok(string_result(value, replace_bytes(&s, &from, &to)))
+    Ok(string_result(value, out))
 }
 
 /// Replaces non-overlapping byte occurrences, matching Go's
-/// `strings.ReplaceAll` over an arbitrary Go string.  Keeping this byte based
-/// means binary arguments never pass through a lossy UTF-8 decode.
-fn replace_bytes(value: &[u8], from: &[u8], to: &[u8]) -> Vec<u8> {
-    let mut out = Vec::with_capacity(value.len());
+/// `strings.ReplaceAll` over an arbitrary Go string. A false return indicates
+/// the caller can reuse `value` directly.
+pub(crate) fn replace_bytes_into(
+    value: &[u8],
+    from: &[u8],
+    to: &[u8],
+    out: &mut Vec<u8>,
+) -> bool {
+    if from.is_empty() || from == to {
+        return false;
+    }
+    let finder = memmem::Finder::new(from);
+    let Some(mut start) = finder.find(value) else {
+        return false;
+    };
+    out.clear();
+    out.reserve(value.len());
     let mut cursor = 0;
-    while cursor <= value.len() {
-        let Some(relative) = value[cursor..]
-            .windows(from.len())
-            .position(|window| window == from)
-        else {
-            out.extend_from_slice(&value[cursor..]);
-            break;
-        };
-        let start = cursor + relative;
+    loop {
         out.extend_from_slice(&value[cursor..start]);
         out.extend_from_slice(to);
         cursor = start + from.len();
+        let rest = &value[cursor..];
+        if rest.starts_with(from) {
+            start = cursor;
+        } else if let Some(relative) = finder.find(rest) {
+            start = cursor + relative;
+        } else {
+            out.extend_from_slice(rest);
+            return true;
+        }
     }
-    out
 }
 
 /// Preserve binary result semantics when the source string is binary; normal
@@ -587,18 +641,13 @@ pub(crate) fn hex(vals: &[Datum]) -> Result<Datum, EvalError> {
         }
         Datum::String(_)
         | Datum::Bytes(_)
+        | Datum::Raw(_)
         | Datum::BinaryLiteral(_)
         | Datum::Duration(_)
         | Datum::Enum(_, _)
         | Datum::Set(_, _)
         | Datum::Time(_)
         | Datum::Json(_) => hex_string_value(&vals[0]),
-        Datum::Raw(value) => Ok(Datum::new_string_datum(
-            value
-                .iter()
-                .map(|byte| format!("{byte:02X}"))
-                .collect::<String>(),
-        )),
         Datum::MinNotNull | Datum::MaxValue => {
             Err(EvalError::Unsupported("range sentinel HEX argument"))
         }
@@ -606,26 +655,27 @@ pub(crate) fn hex(vals: &[Datum]) -> Result<Datum, EvalError> {
             let bytes = other
                 .to_bytes()
                 .map_err(|_| EvalError::Unsupported("HEX argument conversion"))?;
-            Ok(Datum::new_string_datum(
-                bytes
-                    .iter()
-                    .map(|byte| format!("{byte:02X}"))
-                    .collect::<String>(),
-            ))
+            Ok(Datum::new_string_datum(go_hex::encode_uppercase_to_string(
+                &bytes,
+            )))
         }
     }
 }
 
 fn hex_string_value(value: &Datum) -> Result<Datum, EvalError> {
-    let Some(bytes) = coerce_str_bytes(value)? else {
-        return Ok(Datum::Null);
+    let bytes = match value {
+        Datum::String(_) | Datum::Bytes(_) | Datum::Raw(_) | Datum::BinaryLiteral(_) => {
+            value.go_bytes()
+        }
+        Datum::Enum(value, _) => value.name_bytes(),
+        Datum::Set(value, _) => value.name_bytes(),
+        _ => {
+            return Ok(coerce_str_bytes(value)?.map_or(Datum::Null, |bytes| {
+                Datum::new_string_datum(go_hex::encode_uppercase_to_string(&bytes))
+            }));
+        }
     };
-    Ok(Datum::new_string_datum(
-        bytes
-            .iter()
-            .map(|byte| format!("{byte:02X}"))
-            .collect::<String>(),
-    ))
+    Ok(Datum::new_string_datum(go_hex::encode_uppercase_to_string(bytes)))
 }
 
 /// Go `hexFunctionClass.getFunction`: select the string or integer signature
@@ -670,24 +720,26 @@ pub(crate) fn hex_with_type(
 /// also follow the normal invalid-hex `NULL` path rather than becoming a Rust
 /// UTF-8 decoding error.
 pub(crate) fn unhex(vals: &[Datum]) -> Result<Datum, EvalError> {
-    let Some(s) = coerce_str_bytes(&vals[0])? else {
+    let Some(s) = borrow_str_bytes(&vals[0])? else {
         return Ok(Datum::Null);
     };
-    let mut digits = Vec::with_capacity(s.len() + s.len() % 2);
-    if s.len() % 2 != 0 {
-        digits.push(b'0');
-    }
-    digits.extend_from_slice(&s);
-    let mut bytes = Vec::with_capacity(digits.len() / 2);
-    for pair in digits.as_chunks::<2>().0 {
-        let hi = hex_nibble(pair[0]);
-        let lo = hex_nibble(pair[1]);
-        match (hi, lo) {
-            (Some(h), Some(l)) => bytes.push((h << 4) | l),
-            _ => return Ok(Datum::Null),
-        }
+    let mut bytes = Vec::new();
+    if !decode_sql_hex(&s, &mut bytes) {
+        return Ok(Datum::Null);
     }
     Ok(Datum::new_bytes_datum(bytes))
+}
+
+pub(crate) fn decode_sql_hex(input: &[u8], output: &mut Vec<u8>) -> bool {
+    let odd = input.len() % 2;
+    let (head, digits) = input.split_at(odd);
+    output.resize(input.len().div_ceil(2), 0);
+    if let [digit] = *head {
+        if go_hex::decode_pairs(&mut output[..1], &[[b'0', digit]]).is_err() {
+            return false;
+        }
+    }
+    go_hex::decode_pairs(&mut output[odd..], digits.as_chunks::<2>().0).is_ok()
 }
 
 /// `BIN(n)`: the base-2 form of an implicitly-cast integer as an unsigned
@@ -824,15 +876,6 @@ fn trim_go_space(bytes: &[u8]) -> &[u8] {
         end -= 1;
     }
     &bytes[start..end]
-}
-
-fn hex_nibble(byte: u8) -> Option<u8> {
-    match byte {
-        b'0'..=b'9' => Some(byte - b'0'),
-        b'a'..=b'f' => Some(byte - b'a' + 10),
-        b'A'..=b'F' => Some(byte - b'A' + 10),
-        _ => None,
-    }
 }
 
 /// `BIN`'s argument path.  This mirrors
@@ -1019,6 +1062,13 @@ pub(crate) fn field_with_collation(
                 };
                 collation.compare(&needle, &candidate) == std::cmp::Ordering::Equal
             }
+            FieldComparisonMode::Integer
+                if matches!(vals[0], Datum::Int(_) | Datum::UInt(_))
+                    && matches!(v, Datum::Int(_) | Datum::UInt(_)) =>
+            {
+                // Go EvalInt returns the same int64 carrier for both types.
+                vals[0].get_int64() == v.get_int64()
+            }
             FieldComparisonMode::Integer => {
                 crate::eval_binary(tidb_ast::BinaryOp::Eq, vals[0].clone(), v.clone())?
                     == Datum::Int(1)
@@ -1132,61 +1182,140 @@ pub(crate) fn substring_index(vals: &[Datum]) -> Result<Datum, EvalError> {
     let [value, delim_value, count_value] = vals else {
         return Err(EvalError::Unsupported("bad SUBSTRING_INDEX arity"));
     };
-    let (Some(s), Some(delim)) = (coerce_str_bytes(value)?, coerce_str_bytes(delim_value)?) else {
+    let (Some(s), Some(delim)) = (borrow_str_bytes(value)?, borrow_str_bytes(delim_value)?) else {
         return Ok(Datum::Null);
     };
-    if count_value == &Datum::Null {
-        return Ok(Datum::Null);
-    }
-    if delim.is_empty() {
-        return Ok(string_result(value, Vec::new()));
-    }
-    // A UInt64 above MaxInt64 is the source's unsigned ETInt overflow case;
-    // builtinSubstringIndexSig returns the complete string before applying
-    // the negative-count branch.  The ordinary signed path uses TiDB's
-    // shared EvalInt coercion for strings, decimals, and reals.
-    if matches!(count_value, Datum::UInt(n) if *n > i64::MAX as u64) {
-        return Ok(string_result(value, s));
-    }
-    let count = crate::cast::to_i64_signed(count_value);
-    if count == 0 {
-        return Ok(string_result(value, Vec::new()));
-    }
-    let parts = split_bytes(&s, &delim);
-    let (start, end) = if count > 0 {
-        (0, (count as usize).min(parts.len()))
-    } else if count == i64::MIN {
-        (0, parts.len())
-    } else {
-        let n = (-count) as usize;
-        (parts.len().saturating_sub(n), parts.len())
-    };
-    let mut out = Vec::new();
-    for (index, part) in parts[start..end].iter().enumerate() {
-        if index != 0 {
-            out.extend_from_slice(&delim);
-        }
-        out.extend_from_slice(part);
-    }
-    Ok(string_result(value, out))
+    Ok(substring_index_bytes(
+        &s,
+        &delim,
+        count_value,
+        matches!(value, Datum::Bytes(_)),
+    ))
 }
 
-fn split_bytes<'a>(value: &'a [u8], delim: &[u8]) -> Vec<&'a [u8]> {
-    debug_assert!(!delim.is_empty());
-    let mut parts = Vec::new();
-    let mut start = 0;
-    let mut cursor = 0;
-    while cursor + delim.len() <= value.len() {
-        if &value[cursor..cursor + delim.len()] == delim {
-            parts.push(&value[start..cursor]);
-            cursor += delim.len();
-            start = cursor;
-        } else {
-            cursor += 1;
-        }
+pub(crate) fn substring_index_bytes(
+    value: &[u8],
+    delim: &[u8],
+    count: &Datum,
+    bytes_result: bool,
+) -> Datum {
+    if count.is_null() {
+        return Datum::Null;
     }
-    parts.push(&value[start..]);
-    parts
+    let result = if delim.is_empty() {
+        &[]
+    } else {
+        substring_index_byte_slice(
+            value,
+            delim,
+            crate::cast::to_i64_signed(count),
+            matches!(count, Datum::UInt(_)),
+        )
+    };
+    if bytes_result {
+        Datum::new_bytes_datum(result)
+    } else {
+        Datum::new_string_datum(result)
+    }
+}
+
+pub(crate) fn substring_index_byte_slice<'a>(
+    value: &'a [u8],
+    delim: &[u8],
+    count: i64,
+    unsigned: bool,
+) -> &'a [u8] {
+    if delim.is_empty() || count == 0 {
+        return &[];
+    }
+    if unsigned && count < 0 {
+        return value;
+    }
+    match usize::try_from(count.unsigned_abs()) {
+        Ok(n) if n <= value.len() / delim.len() => substring_index_slice(value, delim, n, count < 0),
+        _ => value,
+    }
+}
+
+fn substring_index_slice<'a>(
+    value: &'a [u8],
+    delim: &[u8],
+    n: usize,
+    from_right: bool,
+) -> &'a [u8] {
+    let index = if let [byte] = delim {
+        let mut matches = memchr::memchr_iter(*byte, value);
+        let mut skip = n - 1;
+        let mut from_back = from_right;
+        // Bulk counting is cheaper than visiting every match for a deep seek.
+        if n >= value.len().div_ceil(4).max(64) {
+            let Some(other_side) = matches.clone().count().checked_sub(n) else {
+                return value;
+            };
+            if other_side < skip {
+                skip = other_side;
+                from_back = !from_back;
+            }
+        }
+        if from_back {
+            matches.nth_back(skip)
+        } else {
+            matches.nth(skip)
+        }
+    } else if from_right {
+        nth_delimiter_from_right(value, delim, n)
+    } else if n == 1 {
+        memmem::find(value, delim)
+    } else {
+        memmem::find_iter(value, delim).nth(n - 1)
+    };
+    match index {
+        Some(index) if from_right => &value[index + delim.len()..],
+        Some(index) => &value[..index],
+        None => value,
+    }
+}
+
+fn nth_delimiter_from_right(value: &[u8], delim: &[u8], n: usize) -> Option<usize> {
+    // Go's split consumes the leftmost non-overlapping match first. A
+    // rightmost match is safe if no earlier match overlaps its beginning.
+    if n == 1 {
+        let last = memmem::rfind(value, delim)?;
+        let overlap = delim.len() - 1;
+        let preceding = &value[last.saturating_sub(overlap)..last + overlap];
+        if memmem::find(preceding, delim).is_none() {
+            return Some(last);
+        }
+        return memmem::find_iter(value, delim).last();
+    }
+
+    let mut recent = [0; 8];
+    if n <= recent.len() {
+        let finder = memmem::Finder::new(delim);
+        let mut offset = 0;
+        let mut next = 0;
+        let mut full = false;
+        loop {
+            let remaining = &value[offset..];
+            if !remaining.starts_with(delim) {
+                let Some(index) = finder.find(remaining) else {
+                    break;
+                };
+                offset += index;
+            }
+            recent[next] = offset;
+            offset += delim.len();
+            next += 1;
+            if next == n {
+                full = true;
+                next = 0;
+            }
+        }
+        return full.then_some(recent[next]);
+    }
+    let mut matches = memmem::find_iter(value, delim);
+    let skip = matches.clone().count().checked_sub(n)?;
+    matches.nth(skip)
 }
 
 /// `INSERT(str, pos, len, newstr)`: replaces the `len` characters of `str`
@@ -1267,15 +1396,20 @@ pub(crate) fn make_set(vals: &[Datum]) -> Result<Datum, EvalError> {
         return Ok(Datum::Null);
     };
     let bits = bits as u64;
-    let mut parts = Vec::new();
-    for (i, v) in vals[1..].iter().enumerate() {
+    let mut output = Vec::new();
+    let mut first = true;
+    for (i, v) in vals[1..].iter().take(64).enumerate() {
         if bits & (1 << i) != 0 {
-            if let Some(s) = coerce_str(v)? {
-                parts.push(s);
+            if let Some(bytes) = borrow_str_bytes(v)? {
+                if !first {
+                    output.push(b',');
+                }
+                first = false;
+                output.extend_from_slice(&bytes);
             }
         }
     }
-    Ok(Datum::new_string_datum(parts.join(",")))
+    Ok(Datum::new_string_datum(output))
 }
 /// Go `EXPORT_SET(bits, on, off[, separator[, number_of_bits]])`
 /// (`builtin_string.go:3403`/`:3434-3542`): bit 0 first, `separator`
@@ -1287,52 +1421,59 @@ pub(crate) fn export_set(vals: &[Datum]) -> Result<Datum, EvalError> {
     if !(3..=5).contains(&vals.len()) {
         return Err(EvalError::Unsupported("bad EXPORT_SET arguments"));
     }
-    if vals.iter().any(|v| matches!(v, Datum::Null)) {
+    if vals.iter().any(Datum::is_null) {
         return Ok(Datum::Null);
     }
-    let bits = crate::arg_eval_type::eval_int(&vals[0])?.unwrap_or(0);
-    let Some(on) = crate::arg_eval_type::eval_string(&vals[1])? else {
-        return Ok(Datum::Null);
+    let bits = crate::arg_eval_type::eval_int(&vals[0])?.expect("non-NULL mask");
+    let on = crate::arg_eval_type::eval_string_bytes(&vals[1])?.expect("non-NULL on value");
+    let off = crate::arg_eval_type::eval_string_bytes(&vals[2])?.expect("non-NULL off value");
+    let separator = match vals.get(3) {
+        Some(value) => crate::arg_eval_type::eval_string_bytes(value)?.expect("non-NULL separator"),
+        None => b",",
     };
-    let Some(off) = crate::arg_eval_type::eval_string(&vals[2])? else {
-        return Ok(Datum::Null);
+    let count = match vals.get(4) {
+        Some(value) => crate::arg_eval_type::eval_int(value)?.expect("non-NULL bit count"),
+        None => 64,
     };
-    let on = String::from_utf8_lossy(&on).into_owned();
-    let off = String::from_utf8_lossy(&off).into_owned();
-    let (separator, number_of_bits) = match vals.len() {
-        3 => (",".to_owned(), 64),
-        4 => {
-            let Some(separator) = crate::arg_eval_type::eval_string(&vals[3])? else {
-                return Ok(Datum::Null);
-            };
-            (String::from_utf8_lossy(&separator).into_owned(), 64)
-        }
-        _ => {
-            let Some(separator) = crate::arg_eval_type::eval_string(&vals[3])? else {
-                return Ok(Datum::Null);
-            };
-            let separator = String::from_utf8_lossy(&separator).into_owned();
-            let number = crate::arg_eval_type::eval_int(&vals[4])?.unwrap_or(64);
-            let number_of_bits = if !(0..=64).contains(&number) {
-                64
-            } else {
-                number
-            };
-            (separator, number_of_bits)
-        }
-    };
-    let mut result = String::new();
-    for i in 0..number_of_bits {
-        if bits & (1 << i) > 0 {
-            result.push_str(&on);
-        } else {
-            result.push_str(&off);
-        }
-        if i < number_of_bits - 1 {
-            result.push_str(&separator);
-        }
+    let (width, fragments) = export_set_fragments(bits, on, off, separator, count);
+    let mut result = Vec::with_capacity(width);
+    for fragment in fragments {
+        result.extend_from_slice(fragment);
     }
     Ok(Datum::new_string_datum(result))
+}
+
+/// Returns the byte width and the pieces of a Go EXPORT_SET result.
+pub(crate) fn export_set_fragments<'a>(
+    bits: i64,
+    on: &'a [u8],
+    off: &'a [u8],
+    separator: &'a [u8],
+    count: i64,
+) -> (usize, impl ExactSizeIterator<Item = &'a [u8]>) {
+    let count = if (0..=64).contains(&count) {
+        count as usize
+    } else {
+        64
+    };
+    // Go uses signed `bits & (1 << i) > 0`, so bit 63 is always off.
+    let bits =
+        (bits as u64 & i64::MAX as u64) & u64::MAX.checked_shr((64 - count) as u32).unwrap_or(0);
+    let on_count = bits.count_ones() as usize;
+    let width = on_count * on.len()
+        + (count - on_count) * off.len()
+        + count.saturating_sub(1) * separator.len();
+    let fragment_count = if width == 0 { 0 } else { count * 2 - 1 };
+    let fragments = (0..fragment_count).map(move |index| {
+        if index & 1 != 0 {
+            separator
+        } else if bits & (1 << (index / 2)) != 0 {
+            on
+        } else {
+            off
+        }
+    });
+    (width, fragments)
 }
 
 /// Evaluates `FROM_BASE64` with Go's signature-level packet bound. The Go
@@ -1347,7 +1488,7 @@ pub(crate) fn from_base64_with_packet_limit(
     if vals.len() != 1 {
         return Err(EvalError::Unsupported("FROM_BASE64 arity"));
     }
-    let Some(input) = coerce_str_bytes(&vals[0])? else {
+    let Some(input) = borrow_str_bytes(&vals[0])? else {
         return Ok(Datum::Null);
     };
     if let Some(ctx) = ctx {
@@ -1360,58 +1501,55 @@ pub(crate) fn from_base64_with_packet_limit(
             return Ok(Datum::Null);
         }
     }
-    let cleaned: Vec<u8> = input
-        .into_iter()
-        .filter(|byte| !matches!(byte, b' ' | b'\t' | b'\r' | b'\n'))
-        .collect();
-    if cleaned.is_empty() {
-        return Ok(Datum::new_bytes_datum(Vec::new()));
+    Ok(decode_base64(&input).map_or(Datum::Null, Datum::new_bytes_datum))
+}
+
+fn decode_base64(input: &[u8]) -> Option<Vec<u8>> {
+    if let Ok(decoded) = base64_simd::STANDARD.decode_type(input) {
+        return Some(decoded);
     }
-    if !cleaned.len().is_multiple_of(4) {
-        return Ok(Datum::Null);
+
+    // Go discards spaces, tabs, CR and LF. It requires padding for short
+    // final groups and ignores their unused bits. Check the cleaned length
+    // and reject form feed before using the forgiving decoder for tail bits.
+    let cleaned = strip_base64_whitespace(input);
+    if !cleaned.len().is_multiple_of(4) || memchr::memchr(b'\x0c', &cleaned).is_some() {
+        return None;
     }
-    let val = |c: u8| -> Option<u8> {
-        match c {
-            b'A'..=b'Z' => Some(c - b'A'),
-            b'a'..=b'z' => Some(c - b'a' + 26),
-            b'0'..=b'9' => Some(c - b'0' + 52),
-            b'+' => Some(62),
-            b'/' => Some(63),
-            _ => None,
-        }
+    base64_simd::forgiving_decode_to_vec(&cleaned).ok()
+}
+
+fn strip_base64_whitespace(input: &[u8]) -> Cow<'_, [u8]> {
+    let mut lines = memchr::memchr2_iter(b'\r', b'\n', input).peekable();
+    let mut spaces = memchr::memchr2_iter(b' ', b'\t', input).peekable();
+    let mut delimiters = std::iter::from_fn(|| match (lines.peek(), spaces.peek()) {
+        (Some(line), Some(space)) if line < space => lines.next(),
+        (_, Some(_)) => spaces.next(),
+        _ => lines.next(),
+    });
+    let Some(first) = delimiters.next() else {
+        return Cow::Borrowed(input);
     };
-    let mut bytes = Vec::new();
-    for (group_index, chunk) in cleaned.as_chunks::<4>().0.iter().enumerate() {
-        let last = group_index + 1 == cleaned.len() / 4;
-        let Some(a) = val(chunk[0]) else {
-            return Ok(Datum::Null);
-        };
-        let Some(b) = val(chunk[1]) else {
-            return Ok(Datum::Null);
-        };
-        bytes.push((a << 2) | (b >> 4));
-        if chunk[2] == b'=' {
-            if !last || chunk[3] != b'=' || b & 0x0f != 0 {
-                return Ok(Datum::Null);
-            }
-            continue;
+    let mut cleaned = Vec::with_capacity(input.len());
+    cleaned.extend_from_slice(&input[..first]);
+    let mut start = first + 1;
+    for (count, index) in delimiters.enumerate() {
+        // Copying whole runs pays off for wrapped lines. Switch to a byte
+        // filter when separators are too dense to benefit from run copying.
+        if count >= 16 && count > index / 8 {
+            cleaned.extend(
+                input[start..]
+                    .iter()
+                    .copied()
+                    .filter(|byte| !matches!(byte, b' ' | b'\t' | b'\r' | b'\n')),
+            );
+            return Cow::Owned(cleaned);
         }
-        let Some(c) = val(chunk[2]) else {
-            return Ok(Datum::Null);
-        };
-        bytes.push((b << 4) | (c >> 2));
-        if chunk[3] == b'=' {
-            if !last || c & 0x03 != 0 {
-                return Ok(Datum::Null);
-            }
-            continue;
-        }
-        let Some(d) = val(chunk[3]) else {
-            return Ok(Datum::Null);
-        };
-        bytes.push((c << 6) | d);
+        cleaned.extend_from_slice(&input[start..index]);
+        start = index + 1;
     }
-    Ok(Datum::new_bytes_datum(bytes))
+    cleaned.extend_from_slice(&input[start..]);
+    Cow::Owned(cleaned)
 }
 
 #[cfg(test)]
@@ -1455,7 +1593,7 @@ mod from_base64_tests {
 
     #[test]
     fn malformed_padding_and_arity_return_null_or_error() {
-        for input in ["asc", "YWJj=", "YWI", "YQ===", "YQ=A", "Y!Jj", "YR=="] {
+        for input in ["asc", "YWJj=", "YWI", "YQ===", "YQ=A", "Y!Jj", "YW\x0cJj"] {
             assert_eq!(builtin("from_base64", &[s(input)]).unwrap(), Datum::Null, "{input:?}");
         }
         assert_eq!(
@@ -1466,6 +1604,16 @@ mod from_base64_tests {
             builtin("from_base64", &[s("YWI=")]).unwrap(),
             Datum::new_bytes_datum(b"ab".to_vec())
         );
+    }
+
+    #[test]
+    fn ignores_unused_bits_in_the_padded_final_group() {
+        for (input, expected) in [("YR==", b"a".as_slice()), ("YWJ=", b"ab".as_slice())] {
+            assert_eq!(
+                builtin("from_base64", &[s(input)]).unwrap(),
+                Datum::new_bytes_datum(expected.to_vec())
+            );
+        }
     }
 }
 
@@ -1481,11 +1629,8 @@ pub(crate) fn ord_with_type(
     let [value] = vals else {
         return Err(EvalError::Unsupported("bad ORD arity"));
     };
-    let Some(bytes) = coerce_str_bytes(value)? else {
+    let Some(bytes) = borrow_str_bytes(value)? else {
         return Ok(Datum::Null);
-    };
-    let Some(&first_byte) = bytes.first() else {
-        return Ok(Datum::Int(0));
     };
     let charset = arg_type.map_or_else(
         || {
@@ -1497,20 +1642,46 @@ pub(crate) fn ord_with_type(
         },
         FieldType::charset_name,
     );
-    let encoding = find_encoding(charset);
-    let utf8_first = find_encoding("utf8mb4").peek(&bytes);
-    let (encoded, error) = encoding
-        .transform(utf8_first, TransformOp::ENCODE)
-        .into_parts();
+    Ok(Datum::Int(ord_from_bytes(&bytes, charset)))
+}
+
+pub(crate) fn ord_from_bytes(bytes: &[u8], charset: &str) -> i64 {
+    ord_prefix(bytes, || find_encoding(charset))
+}
+
+pub(crate) fn ord_in_encoding(bytes: &[u8], encoding: Encoding) -> i64 {
+    ord_prefix(bytes, || encoding)
+}
+
+fn ord_prefix(bytes: &[u8], encoding: impl FnOnce() -> Encoding) -> i64 {
+    let Some(&first_byte) = bytes.first() else {
+        return 0;
+    };
+    if first_byte.is_ascii() {
+        return i64::from(first_byte);
+    }
+    let encoding = encoding();
+    if matches!(encoding, Encoding::Binary | Encoding::Latin1) {
+        return i64::from(first_byte);
+    }
+    let utf8_first = Encoding::Utf8.peek(bytes);
+    let fold = |bytes: &[u8]| {
+        bytes.iter().fold(0_i64, |acc, &byte| acc * 256 + i64::from(byte))
+    };
+    if encoding == Encoding::Utf8 {
+        return if encoding.is_valid(utf8_first) {
+            fold(utf8_first)
+        } else {
+            i64::from(first_byte)
+        };
+    }
+    let (encoded, error) = encoding.transform_cow(utf8_first, TransformOp::ENCODE);
     let first = if error.is_some() {
         std::slice::from_ref(&first_byte)
     } else {
         encoding.peek(&encoded)
     };
-    let n = first
-        .iter()
-        .fold(0_i64, |acc, &byte| acc * 256 + i64::from(byte));
-    Ok(Datum::Int(n))
+    fold(first)
 }
 
 /// Go `expression.Quote`: `str` wrapped in single quotes with `'`, `\`, NUL
@@ -1518,17 +1689,41 @@ pub(crate) fn ord_with_type(
 pub fn quote_str(str: &str) -> String {
     let mut out = String::with_capacity(str.len() + 2);
     out.push('\'');
-    for c in str.chars() {
-        match c {
-            '\'' => out.push_str("\\'"),
-            '\\' => out.push_str("\\\\"),
-            '\0' => out.push_str("\\0"),
-            '\x1a' => out.push_str("\\Z"),
-            _ => out.push(c),
+    append_quoted_text(&mut out, str);
+    out.push('\'');
+    out
+}
+
+pub(crate) fn append_quoted(out: &mut String, input: &[u8]) {
+    out.push('\'');
+    if let Ok(valid) = simdutf8::basic::from_utf8(input) {
+        append_quoted_text(out, valid);
+    } else {
+        for chunk in input.utf8_chunks() {
+            append_quoted_text(out, chunk.valid());
+            for _ in chunk.invalid() {
+                out.push(char::REPLACEMENT_CHARACTER);
+            }
         }
     }
     out.push('\'');
-    out
+}
+
+fn append_quoted_text(out: &mut String, input: &str) {
+    let mut start = 0;
+    for (index, byte) in input.bytes().enumerate() {
+        let escaped = match byte {
+            b'\'' => "\\'",
+            b'\\' => "\\\\",
+            0 => "\\0",
+            0x1a => "\\Z",
+            _ => continue,
+        };
+        out.push_str(&input[start..index]);
+        out.push_str(escaped);
+        start = index + 1;
+    }
+    out.push_str(&input[start..]);
 }
 
 /// `QUOTE(s)`: `s` wrapped in single quotes with `'`, `\`, NUL and Ctrl-Z
@@ -1545,12 +1740,11 @@ pub fn quote_str(str: &str) -> String {
 /// `crate::arg_eval_type`'s `types.ETString` cast
 /// (`builtin_string.go:3180`).
 pub(crate) fn quote(vals: &[Datum]) -> Result<Datum, EvalError> {
-    let Some(bytes) = crate::arg_eval_type::eval_string(&vals[0])? else {
+    let Some(bytes) = crate::arg_eval_type::eval_string_bytes(&vals[0])? else {
         return Ok(Datum::new_string_datum("NULL".to_string()));
     };
-    // `String::from_utf8_lossy` is Go's `[]rune` conversion: both replace
-    // each malformed byte with U+FFFD rather than refusing the value.
-    let out = quote_str(&String::from_utf8_lossy(&bytes));
+    let mut out = String::with_capacity(bytes.len() + 2);
+    append_quoted(&mut out, bytes);
     // Go's `SetBinFlagOrBinStr(args[0].GetType(...), bf.tp)` (`:3184`): a
     // binary argument makes the quoted result binary too.
     Ok(if crate::string_signature::is_binary_str(&vals[0]) {
@@ -1684,11 +1878,8 @@ pub(crate) fn format_num(vals: &[Datum], ctx: &dyn crate::Columns) -> Result<Dat
 /// if !isNull && !found { tc.AppendWarning(errUnknownLocale.FastGenByArgs(locale)) }
 /// ```
 ///
-/// The grouping itself is `tidb_mysql::locale::format_by_locale`, the
-/// complete port of `pkg/parser/mysql/locale_format.go` -- which is where
-/// the `found` flag comes from, and why the unknown-locale warning is
-/// reachable at all now. A second, less faithful locale table used to live
-/// here beside it; it had no `found` flag and so could not raise 1649.
+/// Look up the grouping rules and the `found` flag through
+/// `tidb_mysql::locale`, which ports `pkg/parser/mysql/locale_format.go`.
 ///
 /// `locale` is `None` for the NULL a three-argument `FORMAT` evaluated to,
 /// which Go warns about with the literal text `NULL` BEFORE it falls back to
@@ -1706,30 +1897,32 @@ pub(crate) fn format_num_locale(
     let [number, precision, ..] = vals else {
         return Err(EvalError::Unsupported("bad FORMAT arguments"));
     };
-    let Some(number) = format_number_text(number, ctx)? else {
+    let Some(mut number) = format_number_text(number, ctx)? else {
         return Ok(Datum::Null);
     };
     let Some(precision) = format_precision(precision, ctx)? else {
         return Ok(Datum::Null);
     };
-    // `evalNumDecArgsForFormat`: `d` is clamped, the number is rounded to it,
-    // and BOTH cross into `FormatByLocale` as decimal strings.
-    let precision = precision.clamp(0, FORMAT_MAX_DECIMALS) as usize;
-    let rounded = round_format_args(&number, precision);
-    let (locale, is_null_locale) = match locale {
-        Some(locale) => (locale, false),
-        None => ("en_US", true),
-    };
-    if is_null_locale {
-        append_unknown_locale_warning(ctx, "NULL");
-    }
-    let (formatted, found) =
-        tidb_mysql::locale::format_by_locale(&rounded, &precision.to_string(), locale)
-            .map_err(|_| EvalError::Unsupported("bad FORMAT arguments"))?;
-    if !is_null_locale && !found {
-        append_unknown_locale_warning(ctx, locale);
-    }
+    let style = format_locale(locale, ctx);
+    let mut formatted = Vec::new();
+    append_format_number(&mut number, precision, style, &mut formatted);
     Ok(Datum::new_bytes_datum(formatted))
+}
+
+pub(crate) fn format_locale(
+    locale: Option<&str>,
+    ctx: &dyn crate::Columns,
+) -> tidb_mysql::locale::LocaleFormatStyle {
+    let (style, found) = tidb_mysql::locale::locale_format_style(locale.unwrap_or("en_US"));
+    if locale.is_none() || !found {
+        append_unknown_locale_warning(ctx, locale.unwrap_or("NULL"));
+    }
+    style
+}
+
+/// The shortest fixed-point spelling Go passes to roundFormatArgs.
+pub(crate) fn append_format_real(number: f64, output: &mut Vec<u8>) {
+    tidb_goruntime::go_strconv::append_float(output, number, b'f', -1, 64);
 }
 
 /// Go `formatMaxDecimals` (`pkg/expression/builtin_string.go`).
@@ -1746,13 +1939,17 @@ fn append_unknown_locale_warning(ctx: &dyn crate::Columns, locale: &str) {
 fn format_number_text(
     value: &Datum,
     ctx: &dyn crate::Columns,
-) -> Result<Option<String>, EvalError> {
+) -> Result<Option<Vec<u8>>, EvalError> {
     Ok(match value {
         Datum::Null => None,
-        Datum::Int(n) => Some(n.to_string()),
-        Datum::UInt(n) => Some(n.to_string()),
-        Datum::Decimal(n) => Some(n.to_string()),
-        Datum::Real(n) => Some(n.to_string()),
+        Datum::Int(n) => Some(n.to_string().into_bytes()),
+        Datum::UInt(n) => Some(n.to_string().into_bytes()),
+        Datum::Decimal(n) => Some(n.to_string().into_bytes()),
+        Datum::Real(n) => {
+            let mut output = Vec::new();
+            append_format_real(*n, &mut output);
+            Some(output)
+        }
         // `FORMAT` requests ETReal for everything else, and that is the
         // NUMERIC reading of the argument, never its text: captured from
         // TiDB, `FORMAT(d,2)` on `DATE'2021-01-01'` is `20,210,101.00`,
@@ -1760,7 +1957,11 @@ fn format_number_text(
         // its ordinal and a `json` string its numeric prefix. Rendering
         // `sql_string()` here instead formatted `'2021-01-01'` -- the text --
         // and answered `2.00`.
-        other => Some(crate::ops::to_f64_with_mysql_string(other, ctx)?.to_string()),
+        other => {
+            let mut output = Vec::new();
+            append_format_real(crate::ops::to_f64_with_mysql_string(other, ctx)?, &mut output);
+            Some(output)
+        }
     })
 }
 
@@ -1797,70 +1998,53 @@ fn round_float_to_i64_saturating(value: f64) -> i64 {
     }
 }
 
-fn round_format_args(number: &str, precision: usize) -> String {
-    let (negative, number) = number
-        .strip_prefix('-')
-        .map_or((false, number), |n| (true, n));
-    let (mut integer, fraction) = number.split_once('.').unwrap_or((number, ""));
-    if !integer.bytes().all(|digit| digit.is_ascii_digit())
-        || !fraction.bytes().all(|digit| digit.is_ascii_digit())
-    {
-        integer = "0";
-    }
-    let mut fraction: Vec<u8> = fraction.bytes().take(precision).collect();
-    while fraction.len() < precision {
-        fraction.push(b'0');
-    }
-    let round_up = number
-        .split_once('.')
-        .and_then(|(_, f)| f.as_bytes().get(precision))
-        .is_some_and(|d| *d >= b'5');
-    if round_up {
-        let mut carry = true;
-        for digit in fraction.iter_mut().rev() {
-            if *digit == b'9' {
-                *digit = b'0';
-            } else {
-                *digit += 1;
-                carry = false;
-                break;
-            }
-        }
-        if carry {
-            let mut digits = integer.as_bytes().to_vec();
-            for digit in digits.iter_mut().rev() {
-                if *digit == b'9' {
-                    *digit = b'0';
-                } else {
-                    *digit += 1;
-                    carry = false;
-                    break;
+/// Rounds a typed numeric spelling half up, then adds the locale separators.
+/// Only the prefix retained at the clamped precision participates in the carry.
+pub(crate) fn append_format_number(
+    number: &mut Vec<u8>,
+    precision: i64,
+    style: tidb_mysql::locale::LocaleFormatStyle,
+    output: &mut Vec<u8>,
+) {
+    let precision = precision.clamp(0, FORMAT_MAX_DECIMALS) as usize;
+    let sign = usize::from(number.first() == Some(&b'-'));
+    let fraction = if number.get(sign).is_some_and(u8::is_ascii_digit) {
+        let mut point = memchr::memchr(b'.', number).unwrap_or(number.len());
+        let mut end = number.len().min(point + 1 + precision);
+        if number.get(end).is_some_and(|&digit| digit >= b'5') {
+            let mut carry = true;
+            for digit in number[sign..end].iter_mut().rev() {
+                match *digit {
+                    b'.' => {}
+                    b'9' => *digit = b'0',
+                    _ => {
+                        *digit += 1;
+                        carry = false;
+                        break;
+                    }
                 }
             }
             if carry {
-                return format_number_parts(
-                    negative,
-                    format!("1{}", "0".repeat(integer.len())),
-                    fraction,
-                );
+                number.insert(sign, b'1');
+                point += 1;
+                end += 1;
             }
-            return format_number_parts(negative, String::from_utf8(digits).unwrap(), fraction);
         }
+        if sign != 0 {
+            output.push(b'-');
+        }
+        style.append_grouped_integer(&number[sign..point], output);
+        &number[(point + 1).min(end)..end]
+    } else {
+        // Go FormatByLocale treats NaN and infinities as unsigned zero.
+        output.push(b'0');
+        &[]
+    };
+    if precision != 0 {
+        output.extend_from_slice(style.decimal_point.as_bytes());
+        output.extend_from_slice(fraction);
+        output.resize(output.len() + precision - fraction.len(), b'0');
     }
-    format_number_parts(negative, integer.to_string(), fraction)
-}
-
-fn format_number_parts(negative: bool, integer: String, fraction: Vec<u8>) -> String {
-    let mut out = String::new();
-    if negative {
-        out.push('-');
-    }
-    out.push_str(&integer);
-    if !fraction.is_empty() {
-        out.push('.');
-        out.push_str(std::str::from_utf8(&fraction).unwrap());
-    }
-    out
 }
 
 /// `CHAR(n1, n2, ...)` (parser-renamed `CHAR_FUNC`) ported from
@@ -1978,30 +2162,98 @@ pub(crate) fn trim_value(
     let (Some(mut str), Some(remstr)) = (str, remstr) else {
         return Datum::Null;
     };
-    if remstr.is_empty() {
-        return if binary {
-            Datum::new_bytes_datum(str)
-        } else {
-            Datum::new_string_datum(str)
-        };
-    }
-    use tidb_ast::TrimDirection::*;
-    if matches!(direction, Leading | Both) {
-        while str.starts_with(&remstr) {
-            str.drain(..remstr.len());
-        }
-    }
-    if matches!(direction, Trailing | Both) {
-        while str.ends_with(&remstr) {
-            let new_len = str.len() - remstr.len();
-            str.truncate(new_len);
-        }
-    }
+    let range = trim_range(&str, &remstr, direction);
+    str.truncate(range.end);
+    str.drain(..range.start);
     if binary {
         Datum::new_bytes_datum(str)
     } else {
         Datum::new_string_datum(str)
     }
+}
+
+pub(crate) fn trim_range(
+    value: &[u8],
+    remove: &[u8],
+    direction: tidb_ast::TrimDirection,
+) -> std::ops::Range<usize> {
+    use tidb_ast::TrimDirection::*;
+    if remove == b" " {
+        return trim_space_range(value, direction);
+    }
+    if remove.is_empty() {
+        return 0..value.len();
+    }
+    let mut repeated = [0; 64];
+    // Skip several complete repetitions per comparison for long runs.
+    let block = if value.len() >= repeated.len() && remove.len() <= 16 {
+        if let [byte] = remove {
+            repeated.fill(*byte);
+            Some(repeated.as_slice())
+        } else {
+            let len = repeated.len() / remove.len() * remove.len();
+            for part in repeated[..len].chunks_exact_mut(remove.len()) {
+                part.copy_from_slice(remove);
+            }
+            Some(&repeated[..len])
+        }
+    } else {
+        None
+    };
+    let mut trimmed = value;
+    if matches!(direction, Leading | Both) {
+        if let Some(block) = block {
+            while let Some(rest) = trimmed.strip_prefix(block) {
+                trimmed = rest;
+            }
+        }
+        while let Some(rest) = trimmed.strip_prefix(remove) {
+            trimmed = rest;
+        }
+    }
+    let start = value.len() - trimmed.len();
+    if matches!(direction, Trailing | Both) {
+        if let Some(block) = block {
+            while let Some(rest) = trimmed.strip_suffix(block) {
+                trimmed = rest;
+            }
+        }
+        while let Some(rest) = trimmed.strip_suffix(remove) {
+            trimmed = rest;
+        }
+    }
+    start..start + trimmed.len()
+}
+
+/// Go's space cutset consists of one ASCII byte.
+#[inline]
+pub(crate) fn trim_space_range(
+    value: &[u8],
+    direction: tidb_ast::TrimDirection,
+) -> std::ops::Range<usize> {
+    use tidb_ast::TrimDirection::*;
+    const SPACES: &[u8; 32] = &[b' '; 32];
+    let mut trimmed = value;
+    if matches!(direction, Leading | Both) {
+        if trimmed.first() == Some(&b' ') {
+            while let Some(rest) = trimmed.strip_prefix(SPACES) {
+                trimmed = rest;
+            }
+            let prefix = trimmed.iter().take_while(|&&byte| byte == b' ').count();
+            trimmed = &trimmed[prefix..];
+        }
+    }
+    let start = value.len() - trimmed.len();
+    if matches!(direction, Trailing | Both) {
+        if trimmed.last() == Some(&b' ') {
+            while let Some(rest) = trimmed.strip_suffix(SPACES) {
+                trimmed = rest;
+            }
+            let suffix = trimmed.iter().rev().take_while(|&&byte| byte == b' ').count();
+            trimmed = &trimmed[..trimmed.len() - suffix];
+        }
+    }
+    start..start + trimmed.len()
 }
 
 #[cfg(test)]

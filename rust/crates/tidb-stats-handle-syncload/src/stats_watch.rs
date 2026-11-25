@@ -221,7 +221,7 @@ impl SharedStats {
         {
             return Some(Arc::clone(table));
         }
-        if self.cache.get(physical_id).is_some()
+        if self.cache.contains_table(physical_id)
             || (partitioned && self.cache.len() >= 64)
             || !cacheable
         {

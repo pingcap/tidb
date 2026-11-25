@@ -19,15 +19,32 @@
 /// `\%` and `\_` retain the backslash because they remain pattern escapes;
 /// every other unrecognized escape discards the backslash.
 pub fn unescape_char(byte: u8) -> Vec<u8> {
+    if matches!(byte, b'%' | b'_') {
+        vec![b'\\', byte]
+    } else {
+        vec![unescape_byte(byte)]
+    }
+}
+
+/// Appends a decoded backslash escape to an existing string-literal buffer.
+#[inline]
+pub fn append_unescaped_char(output: &mut Vec<u8>, byte: u8) {
+    if matches!(byte, b'%' | b'_') {
+        output.extend_from_slice(&[b'\\', byte]);
+    } else {
+        output.push(unescape_byte(byte));
+    }
+}
+
+fn unescape_byte(byte: u8) -> u8 {
     match byte {
-        b'n' => vec![b'\n'],
-        b'0' => vec![0],
-        b'b' => vec![8],
-        b'Z' => vec![26],
-        b'r' => vec![b'\r'],
-        b't' => vec![b'\t'],
-        b'%' | b'_' => vec![b'\\', byte],
-        _ => vec![byte],
+        b'n' => b'\n',
+        b'0' => 0,
+        b'b' => 8,
+        b'Z' => 26,
+        b'r' => b'\r',
+        b't' => b'\t',
+        _ => byte,
     }
 }
 

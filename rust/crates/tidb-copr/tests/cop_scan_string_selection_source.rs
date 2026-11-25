@@ -199,7 +199,7 @@ impl QueryTransport for FakeTransport {
         _operation: QueryOperation,
     ) -> Result<Option<Self::Response>, String> {
         let bytes = request.metadata().data.clone().expect("a DAG request");
-        let dag = DagRequest::decode(bytes.as_slice()).expect("the request is a TiDB DAG");
+        let dag = DagRequest::decode(bytes.as_ref()).expect("the request is a TiDB DAG");
         let scan = dag.executors[0]
             .tbl_scan
             .as_ref()

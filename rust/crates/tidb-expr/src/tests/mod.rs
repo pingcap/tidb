@@ -464,6 +464,74 @@ fn unhex_source_vectors_preserve_odd_digit_left_padding() {
     );
 }
 
+#[test]
+fn vector_hex_keeps_selected_nulls_empty_values_and_integer_bits() {
+    use crate::{
+        column::Column, evaluator::EvaluatorSuite, expression::Expression,
+        new_function::new_function_base,
+    };
+    use tidb_chunk::chunk::Chunk;
+    use tidb_datatype::{FieldType, FieldTypeCode, FieldTypeFlags};
+
+    let run = |name: &str, field: &FieldType, input: &mut Chunk| {
+        let mut column = Column::new(1, field.clone());
+        column.index = 0;
+        let output = FieldType::new(FieldTypeCode::VarString);
+        let expr = new_function_base(
+            &NoColumns,
+            name,
+            output.clone(),
+            vec![Expression::Column(column)],
+        )
+        .unwrap();
+        let evaluator = EvaluatorSuite::new(vec![expr], false);
+        let mut result = Chunk::new_chunk_with_capacity(&[output], input.num_rows());
+        evaluator.run(&NoColumns, input, &mut result).unwrap();
+        let column = result.column(0);
+        (0..result.num_rows())
+            .map(|row| (!column.is_null(row)).then(|| column.get_bytes(row).to_vec()))
+            .collect::<Vec<_>>()
+    };
+
+    let string = FieldType::new(FieldTypeCode::VarString);
+    let mut empty = Chunk::new_chunk_with_capacity(std::slice::from_ref(&string), 2);
+    empty.append_bytes(0, b"");
+    empty.append_null(0);
+    empty.set_sel(Some(vec![1, 0, 0]));
+    for name in ["hex", "unhex"] {
+        assert_eq!(
+            run(name, &string, &mut empty),
+            vec![None, Some(vec![]), Some(vec![])]
+        );
+    }
+
+    let mut digits = Chunk::new_chunk_with_capacity(std::slice::from_ref(&string), 3);
+    digits.append_bytes(0, b"ABC");
+    digits.append_bytes(0, b"A\xff");
+    digits.append_bytes(0, b"ff00");
+    digits.set_sel(Some(vec![2, 1, 0]));
+    assert_eq!(
+        run("unhex", &string, &mut digits),
+        vec![Some(vec![0xff, 0]), None, Some(vec![0x0a, 0xbc])]
+    );
+
+    let mut unsigned = FieldType::new(FieldTypeCode::LongLong);
+    unsigned.set_flag(FieldTypeFlags::UNSIGNED);
+    let mut integers = Chunk::new_chunk_with_capacity(std::slice::from_ref(&unsigned), 3);
+    integers.append_uint64(0, 0);
+    integers.append_uint64(0, 0xabc);
+    integers.append_uint64(0, u64::MAX);
+    integers.set_sel(Some(vec![2, 0, 1]));
+    assert_eq!(
+        run("hex", &unsigned, &mut integers),
+        vec![
+            Some(b"FFFFFFFFFFFFFFFF".to_vec()),
+            Some(b"0".to_vec()),
+            Some(b"ABC".to_vec())
+        ]
+    );
+}
+
 /// Default-charset rows from `pkg/expression/builtin_string_test.go:1548
 /// TestBitLength`. The current UTF-8 String domain deliberately does not
 /// pretend to model the source table's GBK connection-charset conversion.
@@ -909,7 +977,10 @@ fn right_and_rpad_sig_source_vectors_preserve_scalar_boundaries() {
     ] {
         assert_eq!(e(expr), want, "{expr}");
     }
-    assert_eq!(v("right(unhex('6162FF'), 1)"), Datum::new_bytes_datum(vec![0xff]));
+    assert_eq!(
+        v("right(unhex('6162FF'), 1)"),
+        Datum::new_collation_string_datum(vec![0xff], tidb_charset::Collation::Binary),
+    );
     assert_eq!(
         string_fn::str_take(
             &[
@@ -1168,8 +1239,14 @@ fn left_right_source_vectors_preserve_count_and_byte_boundaries() {
     ] {
         assert_eq!(e(expr), want, "{expr}");
     }
-    assert_eq!(v("left(unhex('0102'), 1)"), Datum::new_bytes_datum(vec![0x01]));
-    assert_eq!(v("right(unhex('0102'), 1)"), Datum::new_bytes_datum(vec![0x02]));
+    assert_eq!(
+        v("left(unhex('0102'), 1)"),
+        Datum::new_collation_string_datum(vec![0x01], tidb_charset::Collation::Binary),
+    );
+    assert_eq!(
+        v("right(unhex('0102'), 1)"),
+        Datum::new_collation_string_datum(vec![0x02], tidb_charset::Collation::Binary),
+    );
     assert_eq!(e("left('你好世界', 2)"), "STR:你好");
     assert_eq!(e("right('你好世界', 2)"), "STR:世界");
 }
@@ -1253,6 +1330,10 @@ fn substring_index_source_vectors_preserve_count_and_bytes() {
         ("substring_index('', '.', 0)", "STR:"),
         ("substring_index('', '.', 1)", "STR:"),
         ("substring_index('', '.', -1)", "STR:"),
+        ("substring_index('aaaaa', 'aa', -1)", "STR:a"),
+        ("substring_index('aaaaa', 'aa', -2)", "STR:aaa"),
+        ("substring_index('ababa', 'aba', -1)", "STR:ba"),
+        ("substring_index('::a::b::', '::', -2)", "STR:b::"),
         ("substring_index(NULL, '.', 1)", "NULL"),
         ("substring_index('www.pingcap.com', NULL, 1)", "NULL"),
         ("substring_index('www.pingcap.com', '.', NULL)", "NULL"),
@@ -1379,6 +1460,12 @@ fn trim_source_vectors_preserve_direction_and_whole_remstr() {
         ),
         Datum::new_bytes_datum(vec![0xff])
     );
+    let repeated = b"aba".repeat(43);
+    let value = [repeated.as_slice(), b"ba\xffab", &repeated].concat();
+    assert_eq!(
+        string_fn::trim_value(Some(value), Some(b"aba".to_vec()), TrimDirection::Both, true),
+        Datum::new_bytes_datum(b"ba\xffab")
+    );
     assert_eq!(
         string_fn::trim_value(Some(b"bar".to_vec()), None, TrimDirection::Both, false,),
         Datum::Null
@@ -1387,6 +1474,194 @@ fn trim_source_vectors_preserve_direction_and_whole_remstr() {
         string_fn::trim_value(Some(b"bar".to_vec()), None, TrimDirection::Leading, false,),
         Datum::Null
     );
+}
+
+#[test]
+fn trim_retains_large_binary_string_when_the_input_chunk_is_reused() {
+    use crate::expression::Expression;
+
+    let mut field = tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::VarString);
+    field.set_charset_name("binary");
+    field.set_collation_name("binary");
+    let mut column = crate::column::Column::new(1, field.clone());
+    column.index = 0;
+    let expr = crate::new_function::new_function_base(
+        &crate::NoColumns,
+        "trim",
+        field.clone(),
+        vec![
+            Expression::Column(column),
+            Expression::Constant(crate::constant::Constant::new(
+                Datum::new_string_datum("x"),
+                field.clone(),
+            )),
+        ],
+    )
+    .unwrap();
+    let mut chunk = tidb_chunk::chunk::Chunk::new_chunk_with_capacity(&[field], 1);
+    let payload = vec![0xff; 8192];
+    chunk.append_bytes(0, &[b"x", payload.as_slice(), b"x"].concat());
+    let row = chunk.get_row(0);
+    let trimmed = expr.eval(&crate::NoColumns, row).unwrap();
+    assert_eq!(
+        trimmed.go_bytes().as_ptr(),
+        row.try_borrow_var_bytes(0).unwrap()[1..].as_ptr()
+    );
+
+    chunk.reset();
+    chunk.append_bytes(0, &vec![b'z'; payload.len() + 2]);
+    assert_eq!(trimmed, Datum::new_string_datum(payload));
+}
+
+#[test]
+fn scalar_space_trims_retain_selected_bytes_from_an_aliased_column() {
+    use crate::expression::Expression;
+    use tidb_charset::Collation;
+    use tidb_datatype::{FieldType, FieldTypeCode};
+
+    let field = FieldType::new(FieldTypeCode::VarString).with_collation(Collation::Binary);
+    let mut column = crate::column::Column::new(1, field.clone());
+    column.index = 1;
+    let column = Expression::Column(column);
+    let mut chunk =
+        tidb_chunk::chunk::Chunk::new_chunk_with_capacity(&[field.clone(), field.clone()], 2);
+    let middle = vec![0xff; 8192];
+    let input = [b"  ".as_slice(), &middle, b" "].concat();
+    chunk.append_bytes(0, &input);
+    chunk.append_null(0);
+    chunk.make_ref(0, 1);
+    let base = chunk.get_row(0).get_bytes(1).as_ptr();
+
+    let mut results = Vec::new();
+    for (name, span) in [
+        ("trim", 2..input.len() - 1),
+        ("ltrim", 2..input.len()),
+        ("rtrim", 0..input.len() - 1),
+    ] {
+        let expr = crate::new_function::new_function_base(
+            &crate::NoColumns,
+            name,
+            field.clone(),
+            vec![column.clone()],
+        )
+        .unwrap();
+        let result = expr.eval(&crate::NoColumns, chunk.get_row(0)).unwrap();
+        assert_eq!(
+            result.go_bytes().as_ptr(),
+            base.wrapping_add(span.start),
+            "{name}"
+        );
+        if name != "trim" {
+            assert_eq!(
+                result,
+                Datum::new_collation_string_datum(&input[span.clone()], Collation::Binary),
+                "{name}"
+            );
+        }
+        assert_eq!(
+            expr.eval(&crate::NoColumns, chunk.get_row(1)).unwrap(),
+            Datum::Null
+        );
+        results.push((result, span));
+    }
+
+    chunk.reset();
+    chunk.append_bytes(0, &vec![b'z'; input.len()]);
+    for (result, span) in results {
+        assert_eq!(result.go_bytes(), &input[span]);
+    }
+}
+
+#[test]
+fn scalar_slices_retain_wide_binary_results_and_use_the_return_collation() {
+    use crate::expression::Expression;
+    use tidb_datatype::{FieldType, FieldTypeCode};
+
+    let mut field = FieldType::new(FieldTypeCode::VarString);
+    field.set_charset_name("binary");
+    field.set_collation_name("binary");
+    let mut column = crate::column::Column::new(1, field.clone());
+    column.index = 1;
+    let column = Expression::Column(column);
+    let integer = |value| {
+        Expression::Constant(crate::constant::Constant::new(
+            Datum::Int(value),
+            FieldType::new(FieldTypeCode::LongLong),
+        ))
+    };
+    let delimiter = Expression::Constant(crate::constant::Constant::new(
+        Datum::new_string_datum("|"),
+        field.clone(),
+    ));
+    let fields = [field.clone(), field.clone()];
+    let mut chunk = tidb_chunk::chunk::Chunk::new_chunk_with_capacity(&fields, 2);
+    let middle = vec![b'x'; tidb_chunk::column::Column::MIN_RETAINED_CELL_BYTES];
+    let input = [b"\xff\x80|".as_slice(), &middle, b"|\0z\xff"].concat();
+    chunk.append_bytes(0, &input);
+    chunk.append_null(0);
+    chunk.make_ref(0, 1);
+
+    let binary_string = |bytes: &[u8]| {
+        Datum::new_collation_string_datum(bytes, tidb_charset::Collation::Binary)
+    };
+    for (name, tail, expected) in [
+        ("left", vec![integer(2)], binary_string(b"\xff\x80")),
+        ("right", vec![integer(2)], binary_string(b"z\xff")),
+        (
+            "substring",
+            vec![integer(2), integer(2)],
+            binary_string(b"\x80|"),
+        ),
+        (
+            "substring_index",
+            vec![delimiter.clone(), integer(1)],
+            binary_string(b"\xff\x80"),
+        ),
+    ] {
+        let mut args = vec![column.clone()];
+        args.extend(tail);
+        let expr =
+            crate::new_function::new_function_base(&crate::NoColumns, name, field.clone(), args)
+                .unwrap();
+        assert_eq!(
+            expr.eval(&crate::NoColumns, chunk.get_row(0)).unwrap(),
+            expected,
+            "{name}"
+        );
+        assert_eq!(
+            expr.eval(&crate::NoColumns, chunk.get_row(1)).unwrap(),
+            Datum::Null,
+            "{name}"
+        );
+    }
+
+    let width = middle.len();
+    let base = chunk.column(1).get_bytes(0).as_ptr();
+    let mut snapshots = Vec::new();
+    for (name, tail, range) in [
+        ("left", vec![integer(width as i64)], 0..width),
+        (
+            "right",
+            vec![integer(width as i64)],
+            input.len() - width..input.len(),
+        ),
+        ("substring", vec![integer(2), integer(width as i64)], 1..1 + width),
+        ("substring_index", vec![delimiter, integer(2)], 0..3 + width),
+    ] {
+        let mut args = vec![column.clone()];
+        args.extend(tail);
+        let expr =
+            crate::new_function::new_function_base(&crate::NoColumns, name, field.clone(), args)
+                .unwrap();
+        let result = expr.eval(&crate::NoColumns, chunk.get_row(0)).unwrap();
+        assert_eq!(result.go_bytes().as_ptr(), base.wrapping_add(range.start), "{name}");
+        snapshots.push((result, range));
+    }
+    chunk.reset();
+    chunk.append_bytes(0, &vec![b'z'; input.len()]);
+    for (result, range) in snapshots {
+        assert_eq!(result, binary_string(&input[range]));
+    }
 }
 
 /// Scalar and binary rows from `pkg/expression/builtin_string_test.go:169

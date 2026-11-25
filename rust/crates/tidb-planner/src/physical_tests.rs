@@ -124,8 +124,8 @@ fn parameter_in_condition(column: Column, orders: &[i64]) -> Expression {
 
 fn point_range(value: i64) -> tidb_ranger::types::Range {
     tidb_ranger::types::Range {
-        low_val: vec![Datum::Int(value)],
-        high_val: vec![Datum::Int(value)],
+        low_val: vec![Datum::Int(value)].into(),
+        high_val: vec![Datum::Int(value)].into(),
         collators: vec![tidb_charset::Collation::DEFAULT],
         low_exclude: false,
         high_exclude: false,
@@ -489,8 +489,8 @@ fn cached_point_plan_rebuilds_composite_equalities_as_one_closed_point() {
     let first = Column::new(3, int_type.clone());
     let second = Column::new(4, int_type.clone());
     let template_range = tidb_ranger::types::Range {
-        low_val: vec![Datum::Int(0), Datum::Int(0)],
-        high_val: vec![Datum::Int(0), Datum::Int(0)],
+        low_val: vec![Datum::Int(0), Datum::Int(0)].into(),
+        high_val: vec![Datum::Int(0), Datum::Int(0)].into(),
         collators: vec![tidb_charset::Collation::DEFAULT; 2],
         low_exclude: false,
         high_exclude: false,
@@ -590,8 +590,8 @@ fn cached_point_plan_rebuilds_a_collated_string_key_as_its_sort_key() {
     eq.collation
         .set_charset_and_collation("utf8mb4", "utf8mb4_general_ci");
     let template_range = tidb_ranger::types::Range {
-        low_val: vec![Datum::Bytes(Vec::new())],
-        high_val: vec![Datum::Bytes(Vec::new())],
+        low_val: vec![Datum::Bytes(Vec::new())].into(),
+        high_val: vec![Datum::Bytes(Vec::new())].into(),
         collators: vec![tidb_charset::Collation::Binary],
         low_exclude: false,
         high_exclude: false,
@@ -667,8 +667,8 @@ fn cached_batch_point_plan_rebuilds_dnf_equalities_as_unioned_points() {
         vec![conjunction([0, 1]), conjunction([2, 3])],
     ).unwrap();
     let template_range = tidb_ranger::types::Range {
-        low_val: vec![Datum::Int(0), Datum::Int(0)],
-        high_val: vec![Datum::Int(0), Datum::Int(0)],
+        low_val: vec![Datum::Int(0), Datum::Int(0)].into(),
+        high_val: vec![Datum::Int(0), Datum::Int(0)].into(),
         collators: vec![tidb_charset::Collation::DEFAULT; 2],
         low_exclude: false,
         high_exclude: false,
@@ -2509,7 +2509,7 @@ fn cop_read_size_uses_output_columns_scan_histograms_and_output_cardinality() {
                 ndv: 0,
                 lower_bound: tidb_datatype::Datum::Null,
                 upper_bound: tidb_datatype::Datum::Null,
-            }],
+            }].into(),
             ..tidb_stats::Histogram::default()
         },
         stats_version: 1,

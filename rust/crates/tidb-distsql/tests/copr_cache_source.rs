@@ -107,7 +107,7 @@ fn test_build_cache_key() {
                 start_key: vec![0x01, 0x01, 0x02].into(),
                 end_key: vec![0x01, 0x01, 0x03].into(),
             },
-        ],
+        ].into(),
         ..CoprocessorRequestEnvelope::default()
     };
 
@@ -325,7 +325,7 @@ fn test_get_set_and_live_request_response_lifecycle() {
         ranges: vec![KeyRange {
             start_key: b"a".to_vec().into(),
             end_key: b"z".to_vec().into(),
-        }],
+        }].into(),
         paging_size_bytes: 1024,
         ..CoprocessorRequestEnvelope::default()
     };
@@ -339,8 +339,8 @@ fn test_get_set_and_live_request_response_lifecycle() {
     let mut miss = CoprocessorResponse {
         data: b"cached".to_vec().into(),
         range: Some(CoprocessorKeyRange {
-            start: b"m".to_vec(),
-            end: b"z".to_vec(),
+            start: b"m".to_vec().into(),
+            end: b"z".to_vec().into(),
         }),
         cache_last_version: 9,
         can_be_cached: true,
@@ -375,7 +375,7 @@ fn test_get_set_and_live_request_response_lifecycle() {
         CoprCacheResponseOutcome::Hit
     );
     assert_eq!(hit.data.as_ref(), b"cached");
-    assert_eq!(hit.range.unwrap().start, b"m");
+    assert_eq!(hit.range.unwrap().start.as_ref(), b"m");
     let metrics_after = copr_cache_metric_snapshot();
     // The counters are process-global like Go's Prometheus vectors. Other
     // parallel tests can only increase them, so assert the lifecycle's
@@ -408,7 +408,7 @@ fn request_eligibility_and_bounded_storage_stay_inside_the_owner() {
     .unwrap();
     let mut request = CoprocessorRequestEnvelope {
         tp: 1,
-        ranges: vec![KeyRange::default(), KeyRange::default()],
+        ranges: vec![KeyRange::default(), KeyRange::default()].into(),
         ..CoprocessorRequestEnvelope::default()
     };
     assert!(cache
@@ -416,7 +416,7 @@ fn request_eligibility_and_bounded_storage_stay_inside_the_owner() {
         .is_none());
     assert!(!request.is_cache_enabled);
 
-    request.ranges.truncate(1);
+    request.ranges = request.ranges.slice(0, 1);
     assert!(cache
         .prepare_request(
             &mut request,
@@ -476,8 +476,8 @@ fn hit_without_a_valid_local_value_is_rejected() {
     let mut response = CoprocessorResponse {
         data: b"tikv must remain untouched".to_vec().into(),
         range: Some(CoprocessorKeyRange {
-            start: b"a".to_vec(),
-            end: b"z".to_vec(),
+            start: b"a".to_vec().into(),
+            end: b"z".to_vec().into(),
         }),
         is_cache_hit: true,
         ..CoprocessorResponse::default()
@@ -487,7 +487,7 @@ fn hit_without_a_valid_local_value_is_rejected() {
         Err(CoprCacheError::IllegalCacheHit)
     );
     assert_eq!(response.data.as_ref(), b"tikv must remain untouched");
-    assert_eq!(response.range.unwrap().start, b"a");
+    assert_eq!(response.range.unwrap().start.as_ref(), b"a");
 }
 
 #[test]
@@ -499,7 +499,7 @@ fn paging_hit_preserves_absent_present_empty_and_nonpaging_range_states() {
         ranges: vec![KeyRange {
             start_key: b"a".to_vec().into(),
             end_key: b"z".to_vec().into(),
-        }],
+        }].into(),
         paging_size_bytes: 1,
         ..CoprocessorRequestEnvelope::default()
     };
@@ -572,8 +572,8 @@ fn paging_hit_preserves_absent_present_empty_and_nonpaging_range_states() {
     let mut absent_hit = CoprocessorResponse {
         is_cache_hit: true,
         range: Some(CoprocessorKeyRange {
-            start: b"stale".to_vec(),
-            end: b"stale".to_vec(),
+            start: b"stale".to_vec().into(),
+            end: b"stale".to_vec().into(),
         }),
         ..CoprocessorResponse::default()
     };
@@ -589,8 +589,8 @@ fn paging_hit_preserves_absent_present_empty_and_nonpaging_range_states() {
     let mut nonpaging_hit = CoprocessorResponse {
         is_cache_hit: true,
         range: Some(CoprocessorKeyRange {
-            start: b"transport".to_vec(),
-            end: b"range".to_vec(),
+            start: b"transport".to_vec().into(),
+            end: b"range".to_vec().into(),
         }),
         ..CoprocessorResponse::default()
     };
@@ -601,7 +601,7 @@ fn paging_hit_preserves_absent_present_empty_and_nonpaging_range_states() {
             response_context(7, 101, false),
         )
         .unwrap();
-    assert_eq!(nonpaging_hit.range.unwrap().start, b"transport");
+    assert_eq!(nonpaging_hit.range.unwrap().start.as_ref(), b"transport");
 }
 
 #[test]
@@ -616,7 +616,7 @@ fn cache_key_rejects_oversized_range_keys_in_source_order() {
         ranges: vec![KeyRange {
             start_key: oversized.clone().into(),
             end_key: b"z".to_vec().into(),
-        }],
+        }].into(),
         ..CoprocessorRequestEnvelope::default()
     };
     assert_eq!(
@@ -624,8 +624,10 @@ fn cache_key_rejects_oversized_range_keys_in_source_order() {
         Err(CoprCacheError::StartKeyTooBig)
     );
 
-    request.ranges[0].start_key = b"a".to_vec().into();
-    request.ranges[0].end_key = oversized.into();
+    request.ranges.reset(vec![KeyRange {
+        start_key: b"a".to_vec().into(),
+        end_key: oversized.into(),
+    }]);
     assert_eq!(
         build_copr_cache_key(&request),
         Err(CoprCacheError::EndKeyTooBig)

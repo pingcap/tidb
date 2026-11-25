@@ -12,7 +12,6 @@ workspace = true
 
 [dependencies]
 tidb-layered-io = { path = "../tidb-layered-io" }
-tidb-zeropool = { path = "../tidb-zeropool" }
 crc32fast.workspace = true
 
 [dev-dependencies]

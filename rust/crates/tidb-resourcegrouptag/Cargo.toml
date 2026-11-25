@@ -11,6 +11,7 @@ description = "TiDB pkg/util/resourcegrouptag: the resource group tag of a reque
 workspace = true
 
 [dependencies]
+tidb-goruntime = { path = "../tidb-goruntime" }
 tidb-tablecodec-rowindexcodec = { path = "../tidb-tablecodec-rowindexcodec" }
 prost.workspace = true
 tidb-proto = { path = "../tidb-proto" }

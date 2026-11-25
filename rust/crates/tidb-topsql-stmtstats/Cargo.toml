@@ -15,6 +15,7 @@ tidb-pd-client = { path = "../tidb-pd-client" }
 tidb-topsql-reporter-metrics = { path = "../tidb-topsql-reporter-metrics" }
 tidb-topsql-state = { path = "../tidb-topsql-state" }
 crossbeam-channel = "0.5"
+indexmap = "2"
 tikv-client.workspace = true
 
 [dev-dependencies]

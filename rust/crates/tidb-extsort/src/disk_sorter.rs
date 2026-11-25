@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use std::cmp::{Ordering, Reverse};
-use std::collections::{BinaryHeap, HashMap, HashSet};
+use std::collections::{BinaryHeap, HashMap, HashSet, VecDeque, binary_heap::PeekMut};
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufReader, BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
@@ -37,6 +37,8 @@ const DISK_SORTER_STATE_SORTED: i32 = 2;
 const RUN_MAGIC: &[u8; 8] = b"TDBXSRT1";
 const RUN_HEADER_LEN: u64 = 24;
 const RUN_BLOCK_SIZE: usize = 4 << 10;
+// Go shares an 8 MiB Pebble block cache among the sorter's readers.
+const RUN_CACHE_SIZE: usize = 8 << 20;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 struct FileMetadata {
@@ -281,6 +283,7 @@ struct RunBlockIndex {
 struct RunReader {
     path: PathBuf,
     count: u64,
+    data_end: u64,
     blocks: Vec<RunBlockIndex>,
     first_key: Vec<u8>,
     last_key: Vec<u8>,
@@ -297,7 +300,10 @@ impl RunReader {
         }
         let count = read_u64(&mut reader)?;
         let footer_offset = read_u64(&mut reader)?;
-        reader.seek(SeekFrom::Start(footer_offset))?;
+        let footer_position = i64::try_from(footer_offset)
+            .map_err(|_| Error::message("invalid external-sort footer offset"))?;
+        // Small runs usually already have their footer in the read buffer.
+        reader.seek_relative(footer_position - RUN_HEADER_LEN as i64)?;
         let stats_len = read_u64(&mut reader)? as usize;
         let mut encoded_stats = vec![0; stats_len];
         reader.read_exact(&mut encoded_stats)?;
@@ -316,6 +322,7 @@ impl RunReader {
         Ok(Self {
             path: path.to_path_buf(),
             count,
+            data_end: footer_offset,
             blocks,
             first_key,
             last_key,
@@ -350,10 +357,39 @@ fn read_u64(reader: &mut impl Read) -> std::io::Result<u64> {
     Ok(u64::from_be_bytes(bytes))
 }
 
+#[derive(Debug, Default)]
+struct RunBlockCache {
+    blocks: HashMap<(i64, usize), Arc<RunBlock>>,
+    order: VecDeque<(i64, usize)>,
+    size: usize,
+}
+
+impl RunBlockCache {
+    fn insert(&mut self, key: (i64, usize), block: RunBlock) -> Arc<RunBlock> {
+        if let Some(cached) = self.blocks.get(&key) {
+            return Arc::clone(cached);
+        }
+        let size = block.size();
+        let block = Arc::new(block);
+        if size <= RUN_CACHE_SIZE {
+            while self.size + size > RUN_CACHE_SIZE {
+                let oldest = self.order.pop_front().expect("occupied block cache");
+                let removed = self.blocks.remove(&oldest).expect("cached block");
+                self.size -= removed.size();
+            }
+            self.size += size;
+            self.order.push_back(key);
+            self.blocks.insert(key, Arc::clone(&block));
+        }
+        block
+    }
+}
+
 #[derive(Debug)]
 struct ReaderPool {
     dirname: PathBuf,
     readers: Mutex<HashMap<i64, (Arc<RunReader>, usize)>>,
+    blocks: Mutex<RunBlockCache>,
 }
 
 impl ReaderPool {
@@ -361,6 +397,7 @@ impl ReaderPool {
         Arc::new(Self {
             dirname,
             readers: Mutex::new(HashMap::new()),
+            blocks: Mutex::new(RunBlockCache::default()),
         })
     }
 
@@ -416,6 +453,12 @@ impl ReaderPool {
         }
     }
 
+    fn block_cache(&self) -> std::sync::MutexGuard<'_, RunBlockCache> {
+        self.blocks
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
     #[cfg(test)]
     fn len(&self) -> usize {
         self.readers
@@ -448,14 +491,37 @@ impl Drop for ReaderLease {
     }
 }
 
+#[derive(Debug)]
+struct RecordBounds {
+    key_start: usize,
+    value_start: usize,
+    value_end: usize,
+}
+
+#[derive(Debug)]
+struct RunBlock {
+    bytes: Vec<u8>,
+    records: Vec<RecordBounds>,
+}
+
+impl RunBlock {
+    fn size(&self) -> usize {
+        std::mem::size_of::<Self>()
+            + self.bytes.capacity()
+            + self.records.capacity() * std::mem::size_of::<RecordBounds>()
+    }
+
+    fn key(&self, record: &RecordBounds) -> &[u8] {
+        &self.bytes[record.key_start..record.value_start]
+    }
+}
+
 struct SstIter {
     lease: Option<ReaderLease>,
     file: Option<BufReader<File>>,
-    file_offset: u64,
-    record_index: Option<u64>,
-    next_offset: u64,
-    key: Vec<u8>,
-    value: Vec<u8>,
+    next_file_offset: Option<u64>,
+    block: Option<(usize, Arc<RunBlock>)>,
+    record_index: Option<usize>,
     error: Option<Error>,
 }
 
@@ -465,117 +531,185 @@ impl SstIter {
         Ok(Self {
             lease: Some(lease),
             file: Some(file),
-            file_offset: 0,
+            next_file_offset: Some(0),
+            block: None,
             record_index: None,
-            next_offset: RUN_HEADER_LEN,
-            key: Vec::new(),
-            value: Vec::new(),
             error: None,
         })
     }
 
     fn invalidate(&mut self) -> bool {
         self.record_index = None;
-        self.key.clear();
-        self.value.clear();
         false
     }
 
-    fn read_record(&mut self, offset: u64, record_index: u64) -> bool {
-        self.error = None;
-        let result = (|| -> std::io::Result<()> {
-            let file = self.file.as_mut().expect("open iterator");
-            if self.file_offset != offset {
-                file.seek(SeekFrom::Start(offset))?;
-                self.file_offset = offset;
+    fn read_block(
+        &mut self,
+        offset: u64,
+        end: u64,
+        count: u64,
+        sequential: bool,
+    ) -> Result<RunBlock> {
+        let length = end
+            .checked_sub(offset)
+            .and_then(|length| usize::try_from(length).ok())
+            .filter(|length| count > 0 && count <= (*length / 8) as u64)
+            .ok_or_else(|| Error::message("invalid external-sort block bounds"))?;
+        let mut bytes = vec![0; length];
+        self.read_block_bytes(&mut bytes, offset, sequential)?;
+
+        let mut records = Vec::with_capacity(count as usize);
+        let mut cursor = 0;
+        for _ in 0..count {
+            let Some(header) = bytes[cursor..].first_chunk::<8>() else {
+                return Err(Error::message("truncated external-sort record header"));
+            };
+            let lengths = header.as_chunks::<4>().0;
+            let key_start = cursor + 8;
+            let key_length = u32::from_be_bytes(lengths[0]) as usize;
+            let value_length = u32::from_be_bytes(lengths[1]) as usize;
+            let value_start = key_start.checked_add(key_length);
+            let value_end = value_start.and_then(|start| start.checked_add(value_length));
+            let (Some(value_start), Some(value_end)) = (value_start, value_end) else {
+                return Err(Error::message("invalid external-sort record lengths"));
+            };
+            if value_end > length {
+                return Err(Error::message("truncated external-sort record"));
             }
-            let key_length = read_u32(file)? as usize;
-            let value_length = read_u32(file)? as usize;
-            self.key.resize(key_length, 0);
-            self.value.resize(value_length, 0);
-            file.read_exact(&mut self.key)?;
-            file.read_exact(&mut self.value)?;
-            self.next_offset = offset + 8 + key_length as u64 + value_length as u64;
-            self.file_offset = self.next_offset;
-            Ok(())
-        })();
-        match result {
-            Ok(()) => {
-                self.record_index = Some(record_index);
+            records.push(RecordBounds {
+                key_start,
+                value_start,
+                value_end,
+            });
+            cursor = value_end;
+        }
+        if cursor != length {
+            return Err(Error::message("invalid external-sort block length"));
+        }
+        Ok(RunBlock { bytes, records })
+    }
+
+    fn read_block_bytes(
+        &mut self,
+        bytes: &mut [u8],
+        offset: u64,
+        sequential: bool,
+    ) -> std::io::Result<()> {
+        let file = self.file.as_mut().expect("open iterator");
+        #[cfg(unix)]
+        if !sequential {
+            use std::os::unix::fs::FileExt;
+            return file.get_ref().read_exact_at(bytes, offset);
+        }
+        #[cfg(not(unix))]
+        let _ = sequential;
+        if self.next_file_offset.take() != Some(offset) {
+            file.seek(SeekFrom::Start(offset))?;
+        }
+        file.read_exact(bytes)?;
+        self.next_file_offset = Some(offset + bytes.len() as u64);
+        Ok(())
+    }
+
+    fn load_block(&mut self, block_index: usize, sequential: bool) -> bool {
+        self.error = None;
+        if self
+            .block
+            .as_ref()
+            .is_some_and(|(index, _)| *index == block_index)
+        {
+            return true;
+        }
+        let lease = self.lease.as_ref().expect("open iterator");
+        let reader = &lease.reader;
+        let Some(block) = reader.blocks.get(block_index) else {
+            return self.invalidate();
+        };
+        let (end, next_record) = reader
+            .blocks
+            .get(block_index + 1)
+            .map_or((reader.data_end, reader.count), |next| {
+                (next.offset, next.record_index)
+            });
+        let offset = block.offset;
+        let count = next_record.saturating_sub(block.record_index);
+        let key = (lease.file_num, block_index);
+        let cached = lease.pool.block_cache().blocks.get(&key).cloned();
+        if let Some(cached) = cached {
+            self.block = Some((block_index, cached));
+            return true;
+        }
+        self.block = None;
+        match self.read_block(offset, end, count, sequential) {
+            Ok(block) => {
+                let lease = self.lease.as_ref().expect("open iterator");
+                let cached = lease.pool.block_cache().insert(key, block);
+                self.block = Some((block_index, cached));
                 true
             }
             Err(error) => {
-                self.error = Some(error.into());
+                self.error = Some(error);
                 self.invalidate()
             }
         }
+    }
+
+    fn current_block(&self) -> &RunBlock {
+        &self.block.as_ref().expect("loaded block").1
+    }
+
+    fn first_in_block(&mut self, block_index: usize) -> bool {
+        if !self.load_block(block_index, true) {
+            return false;
+        }
+        self.record_index = Some(0);
+        true
     }
 }
 
 impl Iterator for SstIter {
     fn seek(&mut self, key: &[u8]) -> bool {
-        let (count, block) = {
-            let reader = &self.lease.as_ref().expect("open iterator").reader;
-            if reader.count == 0 {
-                return self.invalidate();
-            }
-            let block_index = reader
-                .blocks
-                .partition_point(|block| block.first_key.as_slice() <= key)
-                .saturating_sub(1);
-            (reader.count, reader.blocks[block_index].clone())
-        };
-        if !self.read_record(block.offset, block.record_index) {
+        let reader = &self.lease.as_ref().expect("open iterator").reader;
+        let block_index = reader
+            .blocks
+            .partition_point(|block| block.first_key.as_slice() <= key)
+            .saturating_sub(1);
+        if !self.load_block(block_index, false) {
             return false;
         }
-        while self.key.as_slice() < key {
-            let index = self.record_index.expect("valid record");
-            if index + 1 >= count || !self.read_record(self.next_offset, index + 1) {
-                return self.invalidate();
-            }
+        let block = self.current_block();
+        let record_index = block
+            .records
+            .partition_point(|record| block.key(record) < key);
+        if record_index == block.records.len() {
+            return self.first_in_block(block_index + 1);
         }
+        self.record_index = Some(record_index);
         true
     }
 
     fn first(&mut self) -> bool {
-        let count = self.lease.as_ref().expect("open iterator").reader.count;
-        if count == 0 {
-            return self.invalidate();
-        }
-        self.read_record(RUN_HEADER_LEN, 0)
+        self.first_in_block(0)
     }
 
     fn next(&mut self) -> bool {
         let Some(record_index) = self.record_index else {
             return false;
         };
-        let count = self.lease.as_ref().expect("open iterator").reader.count;
-        if record_index + 1 >= count {
-            return self.invalidate();
+        let (index, block) = self.block.as_ref().expect("loaded block");
+        if record_index + 1 < block.records.len() {
+            self.record_index = Some(record_index + 1);
+            return true;
         }
-        self.read_record(self.next_offset, record_index + 1)
+        self.first_in_block(*index + 1)
     }
 
     fn last(&mut self) -> bool {
-        let (count, block) = {
-            let reader = &self.lease.as_ref().expect("open iterator").reader;
-            if reader.count == 0 {
-                return self.invalidate();
-            }
-            (
-                reader.count,
-                reader.blocks.last().expect("non-empty run").clone(),
-            )
-        };
-        if !self.read_record(block.offset, block.record_index) {
+        let reader = &self.lease.as_ref().expect("open iterator").reader;
+        if !self.load_block(reader.blocks.len().saturating_sub(1), false) {
             return false;
         }
-        while self.record_index.expect("valid record") + 1 < count {
-            let index = self.record_index.expect("valid record");
-            if !self.read_record(self.next_offset, index + 1) {
-                return false;
-            }
-        }
+        self.record_index = Some(self.current_block().records.len() - 1);
         true
     }
 
@@ -588,33 +722,47 @@ impl Iterator for SstIter {
     }
 
     fn unsafe_key(&self) -> &[u8] {
-        &self.key
+        self.record_index.map_or(&[], |index| {
+            let block = self.current_block();
+            block.key(&block.records[index])
+        })
     }
 
     fn unsafe_value(&self) -> &[u8] {
-        &self.value
+        self.record_index.map_or(&[], |index| {
+            let block = self.current_block();
+            let record = &block.records[index];
+            &block.bytes[record.value_start..record.value_end]
+        })
     }
 
     fn close(&mut self) -> Result<()> {
         self.record_index = None;
-        self.key.clear();
-        self.value.clear();
+        self.block = None;
         self.file.take();
         self.lease.take();
         Ok(())
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
 struct HeapNode {
-    key: Vec<u8>,
     file_index: usize,
+    iterator: Box<dyn Iterator>,
+}
+
+impl Eq for HeapNode {}
+
+impl PartialEq for HeapNode {
+    fn eq(&self, other: &Self) -> bool {
+        self.cmp(other) == Ordering::Equal
+    }
 }
 
 impl Ord for HeapNode {
     fn cmp(&self, other: &Self) -> Ordering {
-        self.key
-            .cmp(&other.key)
+        self.iterator
+            .unsafe_key()
+            .cmp(other.iterator.unsafe_key())
             .then_with(|| self.file_index.cmp(&other.file_index))
     }
 }
@@ -629,10 +777,11 @@ type OpenIterator = Arc<dyn Fn(&FileMetadata) -> Result<Box<dyn Iterator>> + Sen
 
 struct MergingIter {
     heap: BinaryHeap<Reverse<HeapNode>>,
-    opened: HashMap<usize, Box<dyn Iterator>>,
     ordered_files: Vec<FileMetadata>,
     next_file_index: usize,
     open_iterator: OpenIterator,
+    current_key: Vec<u8>,
+    reused: HashSet<usize>,
     error: Option<Error>,
 }
 
@@ -646,27 +795,26 @@ impl MergingIter {
         );
         Self {
             heap: BinaryHeap::new(),
-            opened: HashMap::new(),
             ordered_files,
             next_file_index: 0,
             open_iterator,
+            current_key: Vec::new(),
+            reused: HashSet::new(),
             error: None,
         }
     }
 
     fn push_current(&mut self, file_index: usize, iterator: Box<dyn Iterator>) {
         self.heap.push(Reverse(HeapNode {
-            key: iterator.unsafe_key().to_vec(),
             file_index,
+            iterator,
         }));
-        self.opened.insert(file_index, iterator);
     }
 
     fn close_opened(&mut self) -> Result<()> {
-        self.heap.clear();
         let mut first_error = None;
-        for (_, mut iterator) in self.opened.drain() {
-            if let Err(error) = iterator.close() {
+        for Reverse(mut node) in self.heap.drain() {
+            if let Err(error) = node.iterator.close() {
                 if first_error.is_none() {
                     first_error = Some(error);
                 }
@@ -681,7 +829,7 @@ impl MergingIter {
             if self
                 .heap
                 .peek()
-                .is_some_and(|node| node.0.key.as_slice() < file.start_key.as_slice())
+                .is_some_and(|node| node.0.iterator.unsafe_key() < file.start_key.as_slice())
             {
                 break;
             }
@@ -713,14 +861,13 @@ impl MergingIter {
         !self.heap.is_empty()
     }
 
-    fn advance_file(&mut self, file_index: usize) -> bool {
-        let mut iterator = self
-            .opened
-            .remove(&file_index)
-            .expect("heap item has an iterator");
-        if iterator.next() {
-            self.push_current(file_index, iterator);
+    fn advance_file(&mut self) -> bool {
+        let mut first = self.heap.peek_mut().expect("non-empty merge heap");
+        if first.0.iterator.next() {
+            drop(first);
         } else {
+            // Remove the exhausted iterator before the heap examines its key again.
+            let Reverse(HeapNode { mut iterator, .. }) = PeekMut::pop(first);
             if let Some(error) = iterator.error() {
                 self.error = Some(Error::message(error.to_string()));
             }
@@ -740,31 +887,31 @@ impl MergingIter {
 impl Iterator for MergingIter {
     fn seek(&mut self, key: &[u8]) -> bool {
         self.error = None;
-        self.heap.clear();
-        let old_opened = std::mem::take(&mut self.opened);
-        let mut reused = HashSet::new();
-        for (index, mut iterator) in old_opened {
-            let file = &self.ordered_files[index];
+        self.reused.clear();
+        let mut items = std::mem::take(&mut self.heap).into_vec();
+        items.retain_mut(|Reverse(node)| {
+            let file = &self.ordered_files[node.file_index];
             if self.error.is_none()
                 && key >= file.start_key.as_slice()
                 && key < file.end_key.as_slice()
-                && iterator.seek(key)
+                && node.iterator.seek(key)
             {
-                reused.insert(index);
-                self.push_current(index, iterator);
-                continue;
+                self.reused.insert(node.file_index);
+                return true;
             }
             if self.error.is_none() {
-                if let Some(error) = iterator.error() {
+                if let Some(error) = node.iterator.error() {
                     self.error = Some(Error::message(error.to_string()));
                 }
             }
-            if let Err(error) = iterator.close() {
+            if let Err(error) = node.iterator.close() {
                 if self.error.is_none() {
                     self.error = Some(error);
                 }
             }
-        }
+            false
+        });
+        self.heap = BinaryHeap::from(items);
         if self.error.is_some() {
             return false;
         }
@@ -775,7 +922,7 @@ impl Iterator for MergingIter {
                 self.next_file_index = index;
                 break;
             }
-            if reused.contains(&index) {
+            if self.reused.contains(&index) {
                 continue;
             }
             if file.end_key.as_slice() <= key {
@@ -813,16 +960,18 @@ impl Iterator for MergingIter {
 
     fn next(&mut self) -> bool {
         self.error = None;
-        let Some(current_key) = self.heap.peek().map(|node| node.0.key.clone()) else {
+        let Some(first) = self.heap.peek() else {
             return false;
         };
+        self.current_key.clear();
+        self.current_key
+            .extend_from_slice(first.0.iterator.unsafe_key());
         while self
             .heap
             .peek()
-            .is_some_and(|node| node.0.key == current_key)
+            .is_some_and(|node| node.0.iterator.unsafe_key() == self.current_key)
         {
-            let Reverse(node) = self.heap.pop().expect("checked heap");
-            if !self.advance_file(node.file_index) && self.error.is_some() {
+            if !self.advance_file() && self.error.is_some() {
                 return false;
             }
         }
@@ -879,14 +1028,20 @@ impl Iterator for MergingIter {
     }
 
     fn unsafe_key(&self) -> &[u8] {
-        &self.heap.peek().expect("iterator is invalid").0.key
+        self.heap
+            .peek()
+            .expect("iterator is invalid")
+            .0
+            .iterator
+            .unsafe_key()
     }
 
     fn unsafe_value(&self) -> &[u8] {
-        let index = self.heap.peek().expect("iterator is invalid").0.file_index;
-        self.opened
-            .get(&index)
-            .expect("heap item has an iterator")
+        self.heap
+            .peek()
+            .expect("iterator is invalid")
+            .0
+            .iterator
             .unsafe_value()
     }
 
@@ -1028,46 +1183,7 @@ impl DiskSorter {
                 .fetch_max(file_num, AtomicOrdering::SeqCst);
             file_numbers.push(file_num);
         }
-        let files = Mutex::new(Vec::with_capacity(file_numbers.len()));
-        let first_error = Mutex::new(None);
-        let canceled = AtomicBool::new(false);
-        std::thread::scope(|scope| {
-            for file_num in file_numbers {
-                let files = &files;
-                let first_error = &first_error;
-                let canceled = &canceled;
-                scope.spawn(move || {
-                    if canceled.load(AtomicOrdering::Relaxed) {
-                        return;
-                    }
-                    match self.read_file_metadata(file_num) {
-                        Ok(file) => files
-                            .lock()
-                            .unwrap_or_else(|poisoned| poisoned.into_inner())
-                            .push(file),
-                        Err(error) => {
-                            let mut slot = first_error
-                                .lock()
-                                .unwrap_or_else(|poisoned| poisoned.into_inner());
-                            if slot.is_none() {
-                                *slot = Some(error);
-                            }
-                            drop(slot);
-                            canceled.store(true, AtomicOrdering::Relaxed);
-                        }
-                    }
-                });
-            }
-        });
-        if let Some(error) = first_error
-            .into_inner()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-        {
-            return Err(error);
-        }
-        let mut files = files
-            .into_inner()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut files = self.recover_files(&file_numbers)?;
         if fs::metadata(self.inner.dirname.join(DISK_SORTER_SORTED_FILE)).is_ok() {
             files.sort_by(|left, right| left.start_key.cmp(&right.start_key));
             *self
@@ -1091,11 +1207,52 @@ impl DiskSorter {
         Ok(())
     }
 
+    fn recover_files(&self, file_numbers: &[i64]) -> Result<Vec<FileMetadata>> {
+        // Bound the number of native threads by the available CPUs.
+        let batches = file_numbers.len().div_ceil(2);
+        let workers = if batches > 1 {
+            std::thread::available_parallelism()
+                .map_or(1, usize::from)
+                .min(batches)
+        } else {
+            1
+        };
+        let recover_batch = |batch: &[i64]| {
+            batch
+                .iter()
+                .map(|&file_num| self.read_file_metadata(file_num))
+                .collect::<Result<Vec<_>>>()
+        };
+        if workers < 2 {
+            return recover_batch(file_numbers);
+        }
+
+        std::thread::scope(|scope| {
+            let mut batches = file_numbers.chunks(file_numbers.len().div_ceil(workers));
+            let first = batches.next().expect("at least one recovery batch");
+            let jobs = batches
+                .map(|batch| {
+                    std::thread::Builder::new().spawn_scoped(scope, move || recover_batch(batch))
+                })
+                .collect::<std::io::Result<Vec<_>>>()?;
+            let mut files = Vec::with_capacity(file_numbers.len());
+            files.extend(recover_batch(first)?);
+            for job in jobs {
+                files.extend(job.join().expect("recovery worker panicked")?);
+            }
+            Ok(files)
+        })
+    }
+
     fn read_file_metadata(&self, file_num: i64) -> Result<FileMetadata> {
-        let lease = self.inner.reader_pool.get(file_num)?;
-        let reader = &lease.reader;
-        let start_key = reader.first_key.clone();
-        let last_key = reader.last_key.clone();
+        // Recovery opens each file once, before any iterator can use the pool.
+        let path = make_filename(&self.inner.dirname, file_num);
+        let RunReader {
+            first_key: start_key,
+            last_key,
+            stats: kv_stats,
+            ..
+        } = RunReader::open(&path)?;
         let mut end_key = last_key.clone();
         end_key.push(0);
         Ok(FileMetadata {
@@ -1103,7 +1260,7 @@ impl DiskSorter {
             start_key,
             end_key,
             last_key,
-            kv_stats: reader.stats.clone(),
+            kv_stats,
         })
     }
 
@@ -1326,15 +1483,28 @@ fn create_sort_directory(path: &Path) -> std::io::Result<()> {
 }
 
 #[derive(Clone, Debug)]
+#[cfg(test)]
 struct KeyValue {
     key: Vec<u8>,
     value: Vec<u8>,
 }
 
+struct BufferedKeyValue {
+    start: usize,
+    key_end: usize,
+    end: usize,
+}
+
+impl BufferedKeyValue {
+    fn key<'a>(&self, buffer: &'a [u8]) -> &'a [u8] {
+        &buffer[self.start..self.key_end]
+    }
+}
+
 struct DiskSorterWriter {
     sorter: Arc<DiskSorterInner>,
-    key_values: Vec<KeyValue>,
-    buffered_bytes: usize,
+    key_values: Vec<BufferedKeyValue>,
+    buffer: Vec<u8>,
 }
 
 impl DiskSorterWriter {
@@ -1349,18 +1519,20 @@ impl DiskSorterWriter {
             + 1;
         let mut writer =
             SstWriter::new(&self.sorter.dirname, file_num, DEFAULT_KV_STATS_BUCKET_SIZE)?;
+        let buffer = self.buffer.as_slice();
         self.key_values
-            .sort_unstable_by(|left, right| left.key.cmp(&right.key));
+            .sort_unstable_by(|left, right| left.key(buffer).cmp(right.key(buffer)));
         let mut last_key: &[u8] = &[];
-        for key_value in &self.key_values {
-            if last_key == key_value.key.as_slice() {
+        for pair in &self.key_values {
+            let key = pair.key(buffer);
+            if last_key == key {
                 continue;
             }
-            if let Err(error) = writer.set(&key_value.key, &key_value.value) {
+            if let Err(error) = writer.set(key, &buffer[pair.key_end..pair.end]) {
                 let _ = writer.close();
                 return Err(error);
             }
-            last_key = &key_value.key;
+            last_key = key;
         }
         let metadata = writer.close()?;
         self.sorter
@@ -1369,7 +1541,10 @@ impl DiskSorterWriter {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .push(metadata);
         self.key_values.clear();
-        self.buffered_bytes = 0;
+        self.buffer.clear();
+        if self.buffer.capacity() > self.sorter.options.writer_buffer_size {
+            self.buffer = Vec::new();
+        }
         Ok(())
     }
 }
@@ -1377,23 +1552,29 @@ impl DiskSorterWriter {
 impl Writer for DiskSorterWriter {
     /// Go `ingestctrl.Engine.TotalMemorySize`, for extsort's writer buffers.
     fn memory_size(&self) -> usize {
-        self.key_values.capacity() * std::mem::size_of::<KeyValue>()
-            + self
-                .key_values
-                .iter()
-                .map(|pair| pair.key.capacity() + pair.value.capacity())
-                .sum::<usize>()
+        self.key_values.capacity() * std::mem::size_of::<BufferedKeyValue>()
+            + self.buffer.capacity()
     }
 
     fn put(&mut self, key: &[u8], value: &[u8]) -> Result<()> {
-        if self.buffered_bytes + key.len() + value.len() > self.sorter.options.writer_buffer_size {
+        let size = key.len() + value.len();
+        let limit = self.sorter.options.writer_buffer_size;
+        if self.buffer.len() + size > limit {
             self.flush_inner()?;
         }
-        self.key_values.push(KeyValue {
-            key: key.to_vec(),
-            value: value.to_vec(),
+        let start = self.buffer.len();
+        let end = start + size;
+        if end > self.buffer.capacity() {
+            let capacity = self.buffer.capacity().saturating_mul(2).min(limit).max(end);
+            self.buffer.reserve_exact(capacity - start);
+        }
+        self.buffer.extend_from_slice(key);
+        self.buffer.extend_from_slice(value);
+        self.key_values.push(BufferedKeyValue {
+            start,
+            key_end: start + key.len(),
+            end,
         });
-        self.buffered_bytes += key.len() + value.len();
         Ok(())
     }
 
@@ -1416,7 +1597,7 @@ impl ExternalSorter for DiskSorter {
         Ok(Box::new(DiskSorterWriter {
             sorter: Arc::clone(&self.inner),
             key_values: Vec::new(),
-            buffered_bytes: 0,
+            buffer: Vec::new(),
         }))
     }
 
@@ -1831,6 +2012,39 @@ mod tests {
     }
 
     #[test]
+    fn disk_sorter_reopen_rejects_a_damaged_run_and_can_retry() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path();
+        let options = test_options();
+        for id in 1_u8..=65 {
+            write_sst_file(path, i64::from(id), &[(&[id], &[id])]);
+        }
+        let damaged = super::make_filename(path, 66);
+        fs::write(&damaged, b"damaged run").unwrap();
+        let Err(error) = DiskSorter::open(path, Some(options.clone())) else {
+            panic!("recovery accepted a damaged run");
+        };
+        assert_eq!(error.to_string(), "invalid external-sort run magic");
+        fs::remove_file(damaged).unwrap();
+
+        let canceled = no_cancel();
+        let sorter = DiskSorter::open(path, Some(options)).unwrap();
+        let mut writer = sorter.new_writer(&canceled).unwrap();
+        writer.put(&[66], &[66]).unwrap();
+        writer.close().unwrap();
+        assert!(super::make_filename(path, 66).is_file());
+        sorter.sort(&canceled).unwrap();
+        let mut iterator = sorter.new_iterator(&canceled).unwrap();
+        let rows = collect(&mut *iterator).unwrap();
+        assert_eq!(rows.len(), 66);
+        for (row, id) in rows.iter().zip(1_u8..=66) {
+            assert_eq!(row.key, [id]);
+            assert_eq!(row.value, [id]);
+        }
+        iterator.close().unwrap();
+    }
+
+    #[test]
     fn kv_stats_collector() {
         let key_values = [
             (b"aa".as_slice(), b"11".as_slice()),
@@ -2062,6 +2276,32 @@ mod tests {
         assert!(!iterator.next());
         assert!(!iterator.valid());
         iterator.close().unwrap();
+    }
+
+    #[test]
+    fn evicting_a_run_block_keeps_other_iterators_positioned() {
+        let directory = tempfile::tempdir().unwrap();
+        let value = vec![0xa5; RUN_CACHE_SIZE / 2];
+        write_sst_file(
+            directory.path(),
+            1,
+            &[(b"aa", &value), (b"cc", &value), (b"ee", b"")],
+        );
+        let pool = ReaderPool::new(directory.path().to_path_buf());
+        let mut first = SstIter::new(pool.get(1).unwrap()).unwrap();
+        let mut second = SstIter::new(pool.get(1).unwrap()).unwrap();
+        assert!(first.first());
+        assert!(second.seek(b"bb"));
+        assert_eq!(second.unsafe_key(), b"cc");
+        assert_eq!(second.unsafe_value(), &value);
+        assert_eq!(pool.block_cache().blocks.len(), 1);
+        assert_eq!(first.unsafe_key(), b"aa");
+        assert_eq!(first.unsafe_value(), &value);
+        assert!(second.next());
+        assert_eq!(second.unsafe_key(), b"ee");
+        assert!(second.unsafe_value().is_empty());
+        assert!(second.seek(b"aa"));
+        assert_eq!(second.unsafe_value(), &value);
     }
 
     #[test]

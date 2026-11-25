@@ -15,10 +15,10 @@
 //! Transcreation of Go `pkg/util/table-filter/parser.go`.
 //!
 //! Parses serialized filter rules into [`Matcher`]s. Wildcard patterns
-//! (`*`, `?`, `[...]`) are compiled into anchored `(?s)^...$` regexes, exactly
-//! as Go does. The `@file` directive imports rules from a file.
+//! (`*`, `?`, `[...]`) use the matching semantics of Go's anchored
+//! `(?s)^...$` regexes. The `@file` directive imports rules from a file.
 
-use super::matchers::{new_regexp_matcher, ColumnRule, Matcher, TableRule};
+use super::matchers::{new_regexp_matcher, ColumnRule, Matcher, SimpleGlob, TableRule};
 use super::FilterError;
 use regex::Regex;
 use std::sync::LazyLock;
@@ -106,12 +106,26 @@ impl MatcherParser {
         needs_dot_separator: bool,
     ) -> Result<(Matcher, &'a str), FilterError> {
         let bytes = line.as_bytes();
-        let mut literal: Vec<u8> = Vec::with_capacity(bytes.len());
-        let mut wildcard: Vec<u8> = Vec::with_capacity(bytes.len() + 6);
-        let mut is_literal_string = true;
-        wildcard.extend_from_slice(b"(?s)^");
+        let prefix_end = bytes
+            .iter()
+            .position(|&byte| !is_pattern_literal(byte))
+            .unwrap_or(bytes.len());
+        if prefix_end == bytes.len() || (needs_dot_separator && bytes[prefix_end] == b'.') {
+            return Ok((
+                Matcher::Str(line[..prefix_end].to_owned()),
+                &line[prefix_end..],
+            ));
+        }
 
-        let mut i = 0;
+        let prefix = &bytes[..prefix_end];
+        let mut literal = Vec::with_capacity(bytes.len());
+        literal.extend_from_slice(prefix);
+        let mut wildcard = Vec::with_capacity(bytes.len() + 6);
+        wildcard.extend_from_slice(b"(?s)^");
+        wildcard.extend_from_slice(prefix);
+        let mut is_literal_string = true;
+
+        let mut i = prefix_end;
         while i < bytes.len() {
             let c = bytes[i];
             match c {
@@ -182,7 +196,7 @@ impl MatcherParser {
                     i = end;
                 }
                 _ => {
-                    if !(c == b'$' || c == b'_' || c.is_ascii_alphanumeric() || c >= 0x80) {
+                    if !is_pattern_literal(c) {
                         return Err(
                             self.errorf(&format!("unexpected special character '{}'", c as char))
                         );
@@ -201,11 +215,22 @@ impl MatcherParser {
                 remaining,
             ));
         }
+        let pattern = &line[..i];
+        if pattern == "*" {
+            return Ok((Matcher::True, remaining));
+        }
+        if let Some(glob) = SimpleGlob::new(pattern) {
+            return Ok((Matcher::Glob(glob), remaining));
+        }
         wildcard.push(b'$');
         let pat = String::from_utf8(wildcard).expect("wildcard regex is valid UTF-8");
         let m = self.new_regexp_matcher(&pat)?;
         Ok((m, remaining))
     }
+}
+
+fn is_pattern_literal(byte: u8) -> bool {
+    byte == b'$' || byte == b'_' || byte.is_ascii_alphanumeric() || !byte.is_ascii()
 }
 
 /// Shared behavior for the table- and column-rule parsers, including the `@file`

@@ -32,8 +32,8 @@ use tidb_mysql::types::{
 
 use crate::lattice::{
     equality_singleton, map_lattice, maybe_singleton_interface, maybe_singleton_string, singleton,
-    wrap_map_key_error, Bool, Equality, IncompatibleError, Int64, Lattice, LatticeMap, MapLattice,
-    Tuple, Value,
+    wrap_map_key_error, Bool, Equality, IncompatibleError, Int64, Lattice, LatticeMap, MapIterAction,
+    MapLattice, Tuple, Value,
 };
 use crate::typ::{Typ, ERR_MSG_AUTO_TYPE_WITHOUT_KEY};
 
@@ -210,6 +210,31 @@ fn restore_index_info_from_unwrapped<W: RestoreWriter>(
     ctx.write_plain(")");
 }
 
+fn for_each_tuple_map_pair(
+    left: &BTreeMap<String, Tuple>,
+    right: &BTreeMap<String, Tuple>,
+    action: MapIterAction<'_>,
+) -> Result<(), IncompatibleError> {
+    let mut right = right.iter().peekable();
+    let mut right_only = Vec::new();
+    for (key, left_value) in left {
+        while let Some(entry) = right.next_if(|(candidate, _)| *candidate < key) {
+            right_only.push(entry);
+        }
+        let right_value = right
+            .next_if(|(candidate, _)| *candidate == key)
+            .map(|(_, value)| value as &dyn Lattice);
+        action(key, Some(left_value), right_value)?;
+    }
+
+    // Keep right-only keys after the left pass so conflicting schemas
+    // report the same first error as the general map traversal.
+    for (key, right_value) in right_only.into_iter().chain(right) {
+        action(key, None, Some(right_value))?;
+    }
+    Ok(())
+}
+
 macro_rules! tuple_map {
     ($(#[$doc:meta])* $name:ident, $compare_with_nil:item, $join_with_nil:item, $should_delete:literal) => {
         $(#[$doc])*
@@ -241,6 +266,15 @@ macro_rules! tuple_map {
                     action(key, value)?;
                 }
                 Ok(())
+            }
+
+            fn for_each_pair(
+                &self,
+                other: &dyn LatticeMap,
+                action: MapIterAction<'_>,
+            ) -> Option<Result<(), IncompatibleError>> {
+                let other = other.as_any().downcast_ref::<Self>()?;
+                Some(for_each_tuple_map_pair(&self.0, &other.0, action))
             }
 
             $compare_with_nil
@@ -448,36 +482,38 @@ fn restore_table_info_from_unwrapped<W: RestoreWriter>(
 /// Go `Table`: a table in the database.
 #[derive(Clone, Debug)]
 pub struct Table {
-    value: Box<dyn Lattice>,
+    value: Tuple,
 }
 
 /// Go `Encode`: encodes a table.
 pub fn encode(ti: &TableInfo) -> Table {
     Table {
-        value: Box::new(encode_table_info_to_lattice(ti)),
+        value: encode_table_info_to_lattice(ti),
     }
 }
 
 /// Go `DecodeColumnFieldTypes`: decodes column field types from the lattice.
 /// The map is keyed by the lower-case column name, exactly like Go's.
 pub fn decode_column_field_types(t: &Table) -> BTreeMap<String, FieldType> {
-    let Value::List(table) = t.value.unwrap() else {
-        unreachable!("a table lattice unwraps to a list");
-    };
-    let Value::Map(column_maps) = &table[TABLE_INFO_TUPLE_INDEX_COLUMNS] else {
-        unreachable!("the table tuple's columns entry is a map");
-    };
-    let mut cols = BTreeMap::new();
-    for (key, value) in column_maps {
-        let Value::List(column) = value else {
-            unreachable!("the columns map stores column tuples");
-        };
-        let Value::FieldType(field_type) = &column[COLUMN_INFO_TUPLE_INDEX_FIELD_TYPES] else {
-            unreachable!("a column tuple's last entry is its field type");
-        };
-        cols.insert(key.clone(), (**field_type).clone());
-    }
-    cols
+    let columns = t.value.0[TABLE_INFO_TUPLE_INDEX_COLUMNS]
+        .as_any()
+        .downcast_ref::<MapLattice>()
+        .expect("the table tuple's columns entry is a lattice map")
+        .inner
+        .as_any()
+        .downcast_ref::<ColumnMap>()
+        .expect("the columns lattice map is a columnMap");
+    columns
+        .0
+        .iter()
+        .map(|(name, column)| {
+            let typ = column.0[COLUMN_INFO_TUPLE_INDEX_FIELD_TYPES]
+                .as_any()
+                .downcast_ref::<Typ>()
+                .expect("a column tuple's last entry is its field type");
+            (name.clone(), typ.decode_field_type())
+        })
+        .collect()
 }
 
 impl Table {
@@ -491,12 +527,12 @@ impl Table {
 
     /// Go `Compare`: the `Lattice` comparison over whole tables.
     pub fn compare(&self, other: &Self) -> Result<i32, IncompatibleError> {
-        self.value.compare(other.value.as_ref())
+        self.value.compare(&other.value)
     }
 
     /// Go `Join`: a helper function to join two tables.
     pub fn join(&self, other: &Self) -> Result<Self, IncompatibleError> {
-        let res = self.value.join(other.value.as_ref())?;
+        let res = self.value.join(&other.value)?;
         let mut table = *res
             .into_any()
             .downcast::<Tuple>()
@@ -565,15 +601,13 @@ impl Table {
             if flag.is_none() && ty.in_auto_increment() {
                 return Err(wrap_map_key_error(
                     name,
-                    &IncompatibleError::raw(ERR_MSG_AUTO_TYPE_WITHOUT_KEY),
+                    IncompatibleError::raw(ERR_MSG_AUTO_TYPE_WITHOUT_KEY),
                 ));
             }
             ty.set_anti_key_flags(flag.unwrap_or(0));
         }
 
-        Ok(Self {
-            value: Box::new(table),
-        })
+        Ok(Self { value: table })
     }
 }
 

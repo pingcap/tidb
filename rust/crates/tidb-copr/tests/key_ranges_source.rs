@@ -195,10 +195,10 @@ fn unanchored_source_methods_preserve_reset_string_and_safe_pb_conversion() {
 
     let protobuf = ranges.to_pb_ranges();
     assert_eq!(protobuf.len(), 2);
-    assert_eq!(protobuf[0].start, b"a\n");
-    assert_eq!(protobuf[0].end, b"b\t");
-    assert_eq!(protobuf[1].start, b"c");
-    assert_eq!(protobuf[1].end, b"d");
+    assert_eq!(protobuf[0].start.as_ref(), b"a\n");
+    assert_eq!(protobuf[0].end.as_ref(), b"b\t");
+    assert_eq!(protobuf[1].start.as_ref(), b"c");
+    assert_eq!(protobuf[1].end.as_ref(), b"d");
 
     let binary_and_utf8 = KeyRanges::new(vec![KeyRange::new(
         Key::from_bytes([0xff, b'\"', b'\\', 0x00, 0x1b, 0x7f].as_slice()),

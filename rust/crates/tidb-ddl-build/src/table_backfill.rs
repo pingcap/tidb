@@ -26,7 +26,7 @@ use std::collections::HashMap;
 
 use tidb_txnkv::Key;
 
-use tidb_table::tables::index_entries::{convert_handle, duplicate_value_text};
+use tidb_table::tables::index_entries::convert_handle;
 use tidb_table::tables::row_decoder::RowDecoder;
 use tidb_table::tables::{Index, TableCommon, KvTableError, RowDecodeContext, TableHandle};
 
@@ -301,8 +301,8 @@ impl KvTableBackfill for TableCommon {
         for (_, handle, row) in &rows {
             for index in &indexes {
                 batch.scanned += 1;
-                for entry in self.index_entry_keys(index, row, handle, physical_id, &zone)? {
-                    let key = Key::from_bytes(entry.key.clone());
+                for entry in self.index_entries_for_write(index, row, handle, physical_id, &zone)? {
+                    let key = Key::from_bytes(entry.key);
                     if entry.distinct {
                         match store.get(&key) {
                             Ok(value) if !value.is_empty() => {
@@ -349,7 +349,7 @@ impl KvTableBackfill for TableCommon {
         let mut filed: HashMap<Vec<u8>, TableHandle> = HashMap::new();
         for (row_key, handle, row) in &rows {
             batch.scanned += 1;
-            let entries = self.index_entry_keys(&index, row, handle, physical_id, &zone)?;
+            let entries = self.index_entries_for_write(&index, row, handle, physical_id, &zone)?;
             let mut skip = index.read().unique;
             let mut pending = Vec::with_capacity(entries.len());
             for entry in entries {
@@ -384,8 +384,7 @@ impl KvTableBackfill for TableCommon {
                                 tidb_terror::MysqlError::from_terror(
                                     &tidb_kv::kv_errors::ERR_KEY_EXISTS.fast_gen_by_args(
                                         &[
-                                            (duplicate_value_text(&self.index_values(&index, row)))
-                                                .into(),
+                                            self.index_duplicate_value_text(&index, row).into(),
                                             (self.qualified_key(index.read().name.original())).into(),
                                         ],
                                     ),
@@ -466,31 +465,27 @@ impl KvTableBackfill for TableCommon {
                 if key.as_slice() >= end || records.len() >= batch_count {
                     break;
                 }
-                let elements = tidb_tablecodec::decode_temp_index_value(iter.value())
+                let mut elements = tidb_tablecodec::decode_temp_index_value_refs(iter.value())
                     .map_err(|error| KvTableError::Decode(format!("{error:?}")))?;
                 scanned += elements.len() as u64;
                 // Go `decodeTempIndexHandleFromIndexKV`, before `FilterOverwritten`:
                 // an element without a handle in its value names the row
                 // through the key or the original index value.
-                let elements = elements
-                    .into_iter()
-                    .map(|mut element| {
-                        if element.handle.is_none() {
-                            element.handle = Some(
-                                tidb_tablecodec::decode_index_handle(
-                                    &key,
-                                    &element.value,
-                                    index.column_offsets.len(),
-                                )
-                                .map_err(|error| KvTableError::Decode(format!("{error:?}")))?
-                                .ok_or_else(|| {
-                                    KvTableError::Decode("temporary entry names no row".to_owned())
-                                })?,
-                            );
-                        }
-                        Ok(element)
-                    })
-                    .collect::<Result<Vec<_>, KvTableError>>()?;
+                for element in &mut elements {
+                    if element.handle.is_none() {
+                        element.handle = Some(
+                            tidb_tablecodec::decode_index_handle(
+                                &key,
+                                element.value,
+                                index.column_offsets.len(),
+                            )
+                            .map_err(|error| KvTableError::Decode(format!("{error:?}")))?
+                            .ok_or_else(|| {
+                                KvTableError::Decode("temporary entry names no row".to_owned())
+                            })?,
+                        );
+                    }
+                }
                 let elements = tidb_tablecodec::filter_overwritten_temp_index_values(elements);
                 let mut origin_key = key.clone();
                 tidb_tablecodec::temp_index_key_to_index_key(&mut origin_key)
@@ -501,17 +496,17 @@ impl KvTableBackfill for TableCommon {
                     {
                         continue;
                     }
-                    let raw_handle = element.handle.clone().expect("decoded before FilterOverwritten");
+                    let raw_handle = element.handle.expect("decoded before FilterOverwritten");
                     let handle = convert_handle(&raw_handle);
                     let distinct =
-                        !element.delete && tidb_tablecodec::index_kv_is_unique(&element.value);
+                        !element.delete && tidb_tablecodec::index_kv_is_unique(element.value);
                     records.push(TempRecord {
                         temp_key: key.clone(),
                         origin_key: origin_key.clone(),
                         value: if element.delete {
                             Vec::new()
                         } else {
-                            element.value.clone()
+                            element.value.to_vec()
                         },
                         handle,
                         raw_handle,
@@ -884,7 +879,7 @@ pub fn encode_index_kvs(
             if !table.index_condition_holds(index,row,zone)? {
                 continue;
             }
-            for entry in table.index_entry_keys(index,row,handle,physical_id,zone)? {
+            for entry in table.index_entries_for_write(index,row,handle,physical_id,zone)? {
                 let value=table.gen_index_value(index,&entry.values,row,handle,entry.distinct,physical_id,zone)?;
                 entries.push(IndexKV{index_id:index.read().id,key:entry.key,value,row_id:row_id.clone()});
             }

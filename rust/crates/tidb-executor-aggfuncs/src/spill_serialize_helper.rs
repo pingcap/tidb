@@ -15,6 +15,7 @@
 //! Go `pkg/executor/aggfuncs/spill_serialize_helper.go`: the bytes a
 //! spilled partial result is stored as.
 
+use tidb_chunk::chunk::Chunk;
 use tidb_serialization as util;
 
 /// Go `SerializeHelper`: one reused buffer the encodings are written into.
@@ -37,11 +38,43 @@ impl SerializeHelper {
         }
     }
 
-    /// Go `serializePartialResult4Count`.
-    pub(crate) fn serialize_partial_result_4_count(&mut self, value: i64) -> &[u8] {
+    /// Encodes one partial result into the reused spill buffer.
+    pub(crate) fn encode(&mut self, write: impl FnOnce(&mut Vec<u8>)) -> &[u8] {
         self.buf.clear();
-        util::serialize_i64(value, &mut self.buf);
+        write(&mut self.buf);
         &self.buf
+    }
+
+    /// Writes a spill cell whose header ends with a Go byte-buffer length.
+    #[inline]
+    pub(crate) fn append_buffer<const N: usize>(
+        &mut self,
+        chunk: &mut Chunk,
+        ordinal: usize,
+        mut header: [u8; N],
+        value: &[u8],
+    ) {
+        let length = isize::try_from(value.len()).expect("a spill value fits in isize");
+        header[N - size_of::<isize>()..].copy_from_slice(&length.to_ne_bytes());
+        if !chunk.try_append_prefixed_bytes(ordinal, &header, value) {
+            self.buf.clear();
+            self.buf.reserve(N + value.len());
+            self.buf.extend_from_slice(&header);
+            self.buf.extend_from_slice(value);
+            chunk.append_bytes(ordinal, &self.buf);
+        }
+    }
+
+    // Keep variable-length string writes out of the scalar serializers.
+    #[inline(never)]
+    pub(crate) fn append_string_partial<const N: usize>(
+        &mut self,
+        chunk: &mut Chunk,
+        ordinal: usize,
+        header: [u8; N],
+        value: &[u8],
+    ) {
+        self.append_buffer(chunk, ordinal, header, value);
     }
 
     /// Go `serializePartialResult4SumFloat64`.

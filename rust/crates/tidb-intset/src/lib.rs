@@ -17,16 +17,16 @@
 //!
 //! Faithful adaptation: Go caches values in `[0,64)` in a `uint64` bitmap
 //! and spills the rest into `golang.org/x/tools/container/intsets.Sparse`.
-//! The Rust port keeps the same `u64` fast path and represents the spill
-//! set with a `BTreeSet<i64>` — which provides the same observable
-//! ordering, membership, `Min`/`Max`, and `LowerBound` behavior `Sparse`
-//! exposes here. Once a value outside `[0,64)` is inserted the set becomes
-//! "large" (and stays large even if that value is later removed), exactly
-//! as in the source; `equals` handles the large-but-all-small case.
+//! The Rust port keeps the same `u64` fast path and stores the spill set in
+//! ordered 256-bit blocks. Once a value outside `[0,64)` is inserted, removing
+//! that value preserves the spill storage. `equals` handles a spilled set
+//! containing only small values.
 
 use std::borrow::Borrow;
-use std::collections::BTreeSet;
 use std::fmt;
+
+mod sparse;
+use sparse::{word_mask, SparseSet};
 
 const SMALL_CUT_OFF: i64 = 64;
 /// Go `intsets.MaxInt` sentinel (max platform int; 64-bit here) returned by
@@ -40,8 +40,8 @@ const MIN_INT: i64 = i64::MIN;
 pub struct FastIntSet {
     // uint64 bitmap of 0..63.
     small: u64,
-    // Spill set for values outside [0,64); `Some` once "large".
-    large: Option<BTreeSet<i64>>,
+    // All values, including the small bitmap, once the set has spilled.
+    large: Option<SparseSet>,
 }
 
 impl FastIntSet {
@@ -83,27 +83,11 @@ impl FastIntSet {
             self.small |= 1u64 << (i as u64);
         }
         if !is_small && self.large.is_none() {
-            self.large = Some(self.to_large());
+            self.large = Some(SparseSet::from_small(self.small));
         }
         if let Some(l) = &mut self.large {
             l.insert(i);
         }
-    }
-
-    // Go `toLarge`: materialize the current contents into a BTreeSet.
-    fn to_large(&self) -> BTreeSet<i64> {
-        if let Some(l) = &self.large {
-            return l.clone();
-        }
-        let mut large = BTreeSet::new();
-        let (mut i, mut ok) = self.next(0);
-        while ok {
-            large.insert(i);
-            let n = self.next(i + 1);
-            i = n.0;
-            ok = n.1;
-        }
-        large
     }
 
     /// Go `Next`: the next present value `>= start_val`, only seeking
@@ -120,14 +104,12 @@ impl FastIntSet {
                 return (gap + start_val, true);
             }
         }
-        if let Some(l) = &self.large {
-            match l.range(start_val..).next() {
-                Some(&res) if res != MAX_INT => return (res, true),
-                None => return (MAX_INT, false),
-                Some(_) => return (MAX_INT, false),
-            }
-        }
-        (MAX_INT, false)
+        let value = self
+            .large
+            .as_ref()
+            .and_then(|large| large.next(start_val))
+            .unwrap_or(MAX_INT);
+        (value, value != MAX_INT)
     }
 
     /// Go `Remove`.
@@ -136,7 +118,7 @@ impl FastIntSet {
             self.small &= !(1u64 << (i as u64));
         }
         if let Some(l) = &mut self.large {
-            l.remove(&i);
+            l.remove(i);
         }
     }
 
@@ -154,7 +136,7 @@ impl FastIntSet {
             return self.small & (1u64 << (i as u64)) != 0;
         }
         match &self.large {
-            Some(l) => l.contains(&i),
+            Some(l) => l.contains(i),
             None => false,
         }
     }
@@ -164,23 +146,23 @@ impl FastIntSet {
         if self.is_empty() {
             return Vec::new();
         }
-        if let Some(l) = &self.large {
-            return l.iter().copied().collect();
-        }
         let mut res = Vec::with_capacity(self.len());
-        self.for_each(|i| res.push(i));
+        if let Some(large) = &self.large {
+            large.for_each(|i| res.push(i));
+        } else {
+            self.for_each(|i| res.push(i));
+        }
         res
     }
 
     /// Go `ForEach` (ascending).
     pub fn for_each(&self, mut f: impl FnMut(i64)) {
         if let Some(large) = &self.large {
-            for &value in large {
-                if value == MAX_INT {
-                    break;
+            large.for_each(|value| {
+                if value != MAX_INT {
+                    f(value);
                 }
-                f(value);
-            }
+            });
             return;
         }
         let mut values = self.small;
@@ -199,15 +181,11 @@ impl FastIntSet {
     /// Go `CopyFrom`.
     pub fn copy_from(&mut self, target: &FastIntSet) {
         self.small = target.small;
-        match &target.large {
-            Some(tl) => {
-                self.large = Some(tl.clone());
-            }
-            None => {
-                if let Some(l) = &mut self.large {
-                    l.clear();
-                }
-            }
+        match (&mut self.large, &target.large) {
+            (Some(large), Some(source)) => large.copy_from(source),
+            (None, Some(source)) => self.large = Some(source.clone()),
+            (Some(large), None) => large.clear(),
+            (None, None) => {}
         }
     }
 
@@ -233,10 +211,8 @@ impl FastIntSet {
 
     // Go `largeToSmall`.
     fn large_to_small(&self) -> (u64, bool) {
-        let l = self.large.as_ref().expect("set contains no large");
-        let excess = l.iter().next().copied().unwrap_or(0) < 0
-            || l.iter().next_back().copied().unwrap_or(-1) >= SMALL_CUT_OFF;
-        (self.small, excess)
+        let large = self.large.as_ref().expect("set contains no large");
+        (self.small, large.has_outside_small())
     }
 
     /// Go `GetSmallUInt64`.
@@ -259,51 +235,41 @@ impl FastIntSet {
     /// Go `DifferenceWith`.
     pub fn difference_with(&mut self, rhs: &FastIntSet) {
         self.small &= !rhs.small;
-        if self.large.is_none() {
-            return;
-        }
-        let rhs_large = rhs.to_large();
-        if let Some(l) = &mut self.large {
-            for x in &rhs_large {
-                l.remove(x);
+        if let Some(left) = &mut self.large {
+            if let Some(right) = &rhs.large {
+                left.difference_with(right);
+            } else {
+                left.remove_small(rhs.small);
             }
         }
     }
 
     /// Go `Union`.
     pub fn union(&self, rhs: &FastIntSet) -> FastIntSet {
-        let mut c = self.copy();
-        c.union_with(rhs);
-        c
+        let small = self.small | rhs.small;
+        let large = match (&self.large, &rhs.large) {
+            (None, None) => None,
+            (Some(left), None) => {
+                let mut merged = left.clone();
+                merged.insert_small(rhs.small);
+                Some(merged)
+            }
+            (None, Some(right)) => Some(SparseSet::from_small(small).union(right)),
+            (Some(left), Some(right)) => Some(left.union(right)),
+        };
+        FastIntSet { small, large }
     }
 
     /// Go `UnionWith`.
     pub fn union_with(&mut self, rhs: &FastIntSet) {
-        self.small |= rhs.small;
-        if self.large.is_none() && rhs.large.is_none() {
+        if rhs.large.is_none() {
+            self.small |= rhs.small;
+            if let Some(left) = &mut self.large {
+                left.insert_small(rhs.small);
+            }
             return;
         }
-        if self.large.is_none() {
-            self.large = Some(self.to_large());
-        }
-        let mut merged = self.large.take().unwrap();
-        match &rhs.large {
-            None => {
-                let (mut i, mut ok) = rhs.next(0);
-                while ok {
-                    merged.insert(i);
-                    let n = rhs.next(i + 1);
-                    i = n.0;
-                    ok = n.1;
-                }
-            }
-            Some(rl) => {
-                for &x in rl {
-                    merged.insert(x);
-                }
-            }
-        }
-        self.large = Some(merged);
+        *self = self.union(rhs);
     }
 
     /// Go `Intersection`.
@@ -316,15 +282,13 @@ impl FastIntSet {
     /// Go `IntersectionWith`.
     pub fn intersection_with(&mut self, rhs: &FastIntSet) {
         self.small &= rhs.small;
-        if rhs.large.is_none() {
+        if let Some(right) = &rhs.large {
+            if let Some(left) = &mut self.large {
+                left.intersection_with(right);
+            }
+        } else {
             self.large = None;
         }
-        if self.large.is_none() {
-            return;
-        }
-        let rhs_large = rhs.to_large();
-        let l = self.large.as_mut().unwrap();
-        l.retain(|x| rhs_large.contains(x));
     }
 
     /// Go `Intersects`.
@@ -332,12 +296,10 @@ impl FastIntSet {
         if self.small & rhs.small != 0 {
             return true;
         }
-        if self.large.is_none() || rhs.large.is_none() {
-            return false;
+        match (&self.large, &rhs.large) {
+            (Some(left), Some(right)) => left.intersects(right),
+            _ => false,
         }
-        let rhs_large = rhs.to_large();
-        let Some(sl) = &self.large else { return false };
-        sl.iter().any(|x| rhs_large.contains(x))
     }
 
     /// Go `SubsetOf`.
@@ -346,7 +308,7 @@ impl FastIntSet {
             return (self.small & rhs.small) == self.small;
         }
         if let (Some(sl), Some(rl)) = (&self.large, &rhs.large) {
-            return sl.is_subset(rl);
+            return sl.subset_of(rl);
         }
         // self is large, rhs is small.
         let (_, excess) = self.large_to_small();
@@ -388,21 +350,20 @@ impl FastIntSet {
     /// Go `AddRange` (inclusive `[from, to]`).
     pub fn add_range(&mut self, from: i64, to: i64) {
         assert!(to >= from, "invalid range when adding range to FastIntSet");
-        let within_small_bounds = from >= 0 && to < SMALL_CUT_OFF;
-        if within_small_bounds && self.large.is_none() {
-            let n_values = (to - from + 1) as u64;
-            // Go defines an over-width shift as 0, so `1<<64 - 1` is all
-            // ones; replicate that (n_values == 64 only when from == 0).
-            let ones = if n_values >= 64 {
-                u64::MAX
-            } else {
-                (1u64 << n_values) - 1
-            };
-            self.small |= ones << (from as u64);
-        } else {
-            for i in from..=to {
-                self.insert(i);
-            }
+        if from == to {
+            self.insert(from);
+            return;
+        }
+        let previous_small = self.small;
+        let first_small = from.max(0);
+        let last_small = to.min(SMALL_CUT_OFF - 1);
+        if first_small <= last_small {
+            self.small |= word_mask(first_small as usize, last_small as usize);
+        }
+        if self.large.is_some() || from < 0 || to >= SMALL_CUT_OFF {
+            self.large
+                .get_or_insert_with(|| SparseSet::from_small(previous_small))
+                .add_range(from, to);
         }
     }
 }
@@ -412,7 +373,11 @@ impl fmt::Display for FastIntSet {
     // pair, `a` for a singleton); every negative value is its own singleton.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         use std::fmt::Write as _;
-        let mut buf = String::from("(");
+        if self.is_empty() {
+            return f.write_str("()");
+        }
+        let mut buf = String::with_capacity(8);
+        buf.push('(');
         let append_range = |buf: &mut String, start: i64, end: i64| {
             if buf.len() > 1 {
                 buf.push(',');
@@ -746,6 +711,26 @@ mod tests {
         }
     }
 
+    #[test]
+    fn add_range_preserves_existing_bits_at_block_boundaries() {
+        let mut set = FastIntSet::new([-300, -257, -250, 65, 300, MAX_INT - 4, MAX_INT]);
+        set.add_range(-259, 257);
+        set.add_range(MAX_INT - 3, MAX_INT);
+        set.add_range(MIN_INT, MIN_INT + 2);
+
+        let expected: Vec<_> = (MIN_INT..=MIN_INT + 2)
+            .chain([-300])
+            .chain(-259..=257)
+            .chain([300])
+            .chain(MAX_INT - 4..=MAX_INT)
+            .collect();
+        assert_eq!(set.len(), expected.len());
+        assert_eq!(set.sorted_array(), expected);
+        assert_eq!(set.next(MAX_INT - 1), (MAX_INT - 1, true));
+        assert_eq!(set.next(MAX_INT), (MAX_INT, false));
+        assert!(set.has(MAX_INT));
+    }
+
     // Go TestGetSmallUInt64.
     #[test]
     fn get_small_uint64() {
@@ -768,6 +753,10 @@ mod tests {
     #[test]
     fn string_format() {
         assert_eq!(FastIntSet::new(&[]).to_string(), "()");
+        let mut spilled = FastIntSet::new([MIN_INT, -2, -1]);
+        assert_eq!(spilled.to_string(), "(-9223372036854775808,-2,-1)");
+        spilled.clear();
+        assert_eq!(spilled.to_string(), "()");
         assert_eq!(
             FastIntSet::new(&[-5, -3, -2, -1, 0, 1, 2, 3, 4, 5]).to_string(),
             "(-5,-3,-2,-1,0-5)"

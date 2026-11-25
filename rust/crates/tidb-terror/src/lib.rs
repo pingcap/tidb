@@ -22,15 +22,15 @@ pub mod catalog_support;
 mod mysql_error;
 
 pub use mysql_error::MysqlError;
+pub use tidb_stacktrace::StackTrace;
 
-use std::backtrace::Backtrace;
 use std::borrow::Cow;
 use std::error::Error;
 use std::fmt;
 use std::process;
 use std::sync::{Arc, LazyLock};
 
-use tidb_mysql::errors::{errcode, mysql_state, FormatArg, SqlError};
+use tidb_mysql::errors::{errcode, format_template, mysql_state, FormatArg, SqlError};
 use tidb_mysql::errors::ErrMessage;
 pub use tidb_terror_identity::{
     class_for_rfc_code, register_error_class, registration_frozen, TerrorClass, TerrorCode,
@@ -64,7 +64,7 @@ pub struct TerrorError {
     rfc_code: Cow<'static, str>,
     message: Cow<'static, str>,
     redact_arg_pos: &'static [usize],
-    stack: Option<Arc<Backtrace>>,
+    stack: Option<Arc<StackTrace>>,
     /// Source `cause`, set by `Wrap`.
     cause: Option<Arc<dyn Error + Send + Sync>>,
 }
@@ -152,10 +152,14 @@ impl TerrorError {
 
     /// Generates a contextual message while retaining the prototype identity.
     pub fn generate(&self, message: impl Into<String>) -> Self {
+        self.generate_with_message(Cow::Owned(message.into()))
+    }
+
+    fn generate_with_message(&self, message: Cow<'static, str>) -> Self {
         Self {
             identity: self.identity,
             rfc_code: self.rfc_code.clone(),
-            message: Cow::Owned(message.into()),
+            message,
             redact_arg_pos: self.redact_arg_pos,
             stack: None,
             cause: self.cause.clone(),
@@ -173,7 +177,7 @@ impl TerrorError {
     /// Source `GenWithStack`, using Rust's native captured backtrace.
     pub fn gen_with_stack(&self, message: impl Into<String>) -> Self {
         let mut generated = self.generate(message);
-        generated.stack = Some(Arc::new(Backtrace::force_capture()));
+        generated.stack = Some(Arc::new(StackTrace::capture()));
         generated
     }
 
@@ -181,38 +185,28 @@ impl TerrorError {
     /// applying its precision and redaction rules before capturing a stack.
     pub fn gen_with_stack_by_args(&self, arguments: &[FormatArg]) -> Self {
         if arguments.is_empty() {
-            // Go GetMsg returns the template verbatim when there are no args.
             return self.gen_with_stack(self.message());
         }
-        let formatted = SqlError::new_f(
-            self.protocol_code(),
+        self.gen_with_stack(format_template(
             self.message(),
             self.redact_arg_pos,
             arguments,
-        );
-        self.gen_with_stack(formatted.message)
+        ))
     }
 
     /// Source `FastGenByArgs`: formats the prototype's catalog message like
-    /// [`Self::generate_with_stack_by_args`], without capturing a stack.
+    /// [`Self::gen_with_stack_by_args`], without capturing a stack.
     pub fn fast_gen_by_args(&self, arguments: &[FormatArg]) -> Self {
         if arguments.is_empty() {
-            return self.generate(self.message());
+            // Go GetMsg returns the template verbatim when there are no args.
+            return self.generate_with_message(self.message.clone());
         }
-        let formatted = SqlError::new_f(
-            self.protocol_code(),
-            self.message(),
-            self.redact_arg_pos,
-            arguments,
-        );
-        self.generate(formatted.message)
+        self.fast_gen(self.message(), arguments)
     }
 
     /// Source `FastGen` formatting over the shared Go-format authority.
     pub fn fast_gen(&self, format: &str, arguments: &[FormatArg]) -> Self {
-        let formatted =
-            SqlError::new_f(self.protocol_code(), format, self.redact_arg_pos, arguments);
-        self.generate(formatted.message)
+        self.generate(format_template(format, self.redact_arg_pos, arguments))
     }
 
     /// Returns the stable class/code identity.
@@ -241,7 +235,7 @@ impl TerrorError {
     }
 
     /// Returns the captured Rust backtrace for a stack-generating operation.
-    pub fn stack(&self) -> Option<&Backtrace> {
+    pub fn stack(&self) -> Option<&StackTrace> {
         self.stack.as_deref()
     }
 
@@ -250,16 +244,25 @@ impl TerrorError {
         other
             .map(root_cause)
             .and_then(|other| other.downcast_ref::<Self>())
-            .is_some_and(|other| self.id() == other.id())
+            .is_some_and(|other| self == other)
     }
 
     /// Source `ToSQLError`. Synthesized/unregistered identities deliberately
     /// use `ErrUnknown`, matching `getMySQLErrorCode` fallback behavior.
     pub fn to_sql_error(&self) -> SqlError {
+        self.sql_error_with_message(self.message.to_string())
+    }
+
+    fn into_sql_error(mut self) -> SqlError {
+        let message = std::mem::take(&mut self.message).into_owned();
+        self.sql_error_with_message(message)
+    }
+
+    fn sql_error_with_message(&self, message: String) -> SqlError {
         let code = self.protocol_code();
         SqlError {
             code,
-            message: self.message.to_string(),
+            message,
             state: mysql_state(code),
             identity: Some(self.identity),
         }
@@ -289,7 +292,11 @@ impl TerrorError {
 
 impl PartialEq for TerrorError {
     fn eq(&self, other: &Self) -> bool {
-        self.id() == other.id()
+        match (self.rfc_code.is_empty(), other.rfc_code.is_empty()) {
+            (false, false) => self.rfc_code == other.rfc_code,
+            (true, true) => self.code() == other.code(),
+            _ => self.id() == other.id(),
+        }
     }
 }
 
@@ -297,12 +304,11 @@ impl Eq for TerrorError {}
 
 impl fmt::Display for TerrorError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let identity = if self.rfc_code.is_empty() {
-            self.code().value().to_string()
+        if self.rfc_code.is_empty() {
+            write!(formatter, "[{}]{}", self.code().value(), self.message)?;
         } else {
-            self.rfc_code.to_string()
-        };
-        write!(formatter, "[{identity}]{}", self.message)?;
+            write!(formatter, "[{}]{}", self.rfc_code, self.message)?;
+        }
         if let Some(cause) = &self.cause {
             write!(formatter, ": {cause}")?;
         }
@@ -346,25 +352,36 @@ pub fn annotate(err: Arc<dyn Error + Send + Sync>, message: impl Into<String>) -
 /// Source `errors.GetErrStackMsg`: the messages along the error chain
 /// without their error codes, joined by ": ".
 pub fn get_err_stack_msg(err: Option<&(dyn Error + 'static)>) -> String {
-    let Some(err) = err else {
-        return String::new();
-    };
-    // Go's `messenger`s: `*Error` and `withMessage`.
-    let msg = if let Some(t_err) = err.downcast_ref::<TerrorError>() {
-        t_err.message()
-    } else if let Some(with_message) = err.downcast_ref::<WithMessage>() {
-        &with_message.msg
-    } else {
-        return err.to_string();
-    };
-    let cause_msg = get_err_stack_msg(err.source());
-    if msg.is_empty() {
-        cause_msg
-    } else if cause_msg.is_empty() {
-        msg.to_owned()
-    } else {
-        format!("{msg}: {cause_msg}")
+    fn append(output: &mut String, message: &str) {
+        if message.is_empty() {
+            return;
+        }
+        if !output.is_empty() {
+            output.push_str(": ");
+        }
+        output.push_str(message);
     }
+
+    let mut output = String::new();
+    let mut current = err;
+    while let Some(error) = current {
+        // Go recurses only through errors that expose a message.
+        let message = if let Some(terror) = error.downcast_ref::<TerrorError>() {
+            terror.message()
+        } else if let Some(context) = error.downcast_ref::<WithMessage>() {
+            &context.msg
+        } else {
+            let message = error.to_string();
+            if output.is_empty() {
+                return message;
+            }
+            append(&mut output, &message);
+            break;
+        };
+        append(&mut output, message);
+        current = error.source();
+    }
+    output
 }
 
 #[derive(Serialize)]
@@ -512,7 +529,7 @@ pub fn terror_error_equal(
         left.downcast_ref::<TerrorError>(),
         right.downcast_ref::<TerrorError>(),
     ) {
-        (Some(left), Some(right)) => left.id() == right.id(),
+        (Some(left), Some(right)) => left == right,
         _ => left.to_string() == right.to_string(),
     }
 }
@@ -528,14 +545,14 @@ where
     E: fmt::Display,
 {
     if let Err(error) = function() {
-        tracing::error!(error = %error, stack = %Backtrace::force_capture(), "function call errored");
+        tracing::error!(error = %error, stack = %StackTrace::capture(), "function call errored");
     }
 }
 
 /// Source `Log`: log a present error with a stack and ignore `None`.
 pub fn log(error: Option<&(dyn Error + 'static)>) {
     if let Some(error) = error {
-        tracing::error!(error = %error, stack = %Backtrace::force_capture(), "encountered error");
+        tracing::error!(error = %error, stack = %StackTrace::capture(), "encountered error");
     }
 }
 
@@ -550,7 +567,7 @@ pub fn must_nil(
     for close in cleanup {
         close();
     }
-    tracing::error!(error = %error, stack = %Backtrace::force_capture(), "unexpected error");
+    tracing::error!(error = %error, stack = %StackTrace::capture(), "unexpected error");
     process::exit(1);
 }
 

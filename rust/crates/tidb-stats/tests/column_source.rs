@@ -48,7 +48,7 @@ fn populated_column(stats_version: i64) -> Column {
                 ndv: 2,
                 lower_bound: Datum::new_int(1),
                 upper_bound: Datum::new_int(2),
-            }],
+            }].into(),
             ..Histogram::default()
         },
         stats_loaded_status: StatsLoadedStatus::full_load(),

@@ -23,7 +23,10 @@
 //! versions exact while leaving cache lookup, retries, endpoint selection,
 //! and RPC dispatch to the separate TiKV transport owner.
 
+use std::borrow::Borrow;
 use std::collections::BTreeMap;
+use std::ops::Range;
+use std::sync::Arc;
 
 use prost::Message;
 use tidb_proto::{
@@ -35,7 +38,9 @@ use tidb_txnkv::KvRequestMetadata;
 use crate::read_bytes_ema::ReadBytesEma;
 use tidb_txnkv::Key;
 use tidb_txnkv::KeyRange;
+use tidb_txnkv::PartitionedKeyRanges;
 use crate::key_ranges::KeyRanges;
+use crate::range_diagnostics::{compare_range_order, range_issues};
 
 /// Region epoch metadata copied from `metapb.RegionEpoch`.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -132,7 +137,7 @@ pub struct RegionTaskEnvelope {
     /// Optional target peer from the region cache.
     pub peer: Option<RegionTaskPeer>,
     /// Ordered key ranges belonging to this child task.
-    pub ranges: Vec<KeyRange>,
+    pub ranges: KeyRanges,
     /// Coprocessor task identifier used to match responses.
     pub task_id: u64,
     /// Optional TiCI versioned point ranges.
@@ -164,7 +169,7 @@ impl Default for RegionTaskEnvelope {
             region_id: 0,
             region_epoch: None,
             peer: None,
-            ranges: Vec::new(),
+            ranges: KeyRanges::default(),
             task_id: 0,
             versioned_ranges: Vec::new(),
             buckets_version: 0,
@@ -184,6 +189,10 @@ impl RegionTaskEnvelope {
     /// Encodes the exact `StoreBatchTask` protobuf field numbers.
     #[must_use]
     pub fn encode_to_vec(&self) -> Vec<u8> {
+        self.to_proto().encode_to_vec()
+    }
+
+    pub(crate) fn to_proto(&self) -> StoreBatchTask {
         StoreBatchTask {
             region_id: self.region_id,
             region_epoch: self.region_epoch.map(|epoch| CoprocessorRegionEpoch {
@@ -196,29 +205,21 @@ impl RegionTaskEnvelope {
                 role: peer.role,
                 is_witness: peer.is_witness,
             }),
-            ranges: self
-                .ranges
-                .iter()
-                .map(|range| CoprocessorKeyRange {
-                    start: range.start_key.to_vec(),
-                    end: range.end_key.to_vec(),
-                })
-                .collect(),
+            ranges: self.ranges.to_pb_ranges(),
             task_id: self.task_id,
             versioned_ranges: self
                 .versioned_ranges
                 .iter()
                 .map(|range| CoprocessorVersionedKeyRange {
                     range: Some(CoprocessorKeyRange {
-                        start: range.range.start_key.to_vec(),
-                        end: range.range.end_key.to_vec(),
+                        start: prost::bytes::Bytes::copy_from_slice(&range.range.start_key),
+                        end: prost::bytes::Bytes::copy_from_slice(&range.range.end_key),
                     }),
                     read_ts: range.read_ts,
                 })
                 .collect(),
             buckets_version: self.buckets_version,
         }
-        .encode_to_vec()
     }
 
     /// Encodes the source `ToPBBatchTasks` child list in order.
@@ -277,35 +278,55 @@ pub fn build_region_tasks(
     topology: &[RegionTaskTopology],
 ) -> Option<Vec<RegionTaskEnvelope>> {
     let key_ranges = metadata.key_ranges.as_ref()?;
-    let mut original_ranges = Vec::new();
-    let mut original_hints = Vec::new();
-    let hints_shape_valid = key_ranges.row_count_hints().len() == key_ranges.partitions().len()
-        && key_ranges
-            .partitions()
+    let partitions = key_ranges.partitions();
+    let hint_groups = key_ranges.row_count_hints();
+    let hints_shape_valid = hint_groups.len() == partitions.len()
+        && partitions
             .iter()
-            .zip(key_ranges.row_count_hints())
+            .zip(hint_groups)
             .all(|(ranges, hints)| ranges.len() == hints.len());
-    for (partition_index, partition) in key_ranges.partitions().iter().enumerate() {
-        for (range_index, range) in partition.iter().enumerate() {
-            original_ranges.push(range.clone());
-            if hints_shape_valid {
-                original_hints.push(key_ranges.row_count_hints()[partition_index][range_index]);
-            }
-        }
+
+    if let [ranges] = partitions {
+        let hints = hints_shape_valid.then(|| hint_groups[0].as_slice());
+        return build_region_tasks_for_ranges(metadata, topology, ranges, hints, Some(key_ranges));
     }
 
-    let mut ranges = KeyRanges::new(original_ranges);
-    let reordered = crate::range_diagnostics::ensure_monotonic_key_ranges(&mut ranges);
-    let hints = (!reordered && hints_shape_valid).then_some(original_hints.as_slice());
+    let ranges: Vec<_> = partitions.iter().flatten().collect();
+    let hints: Option<Vec<_>> =
+        hints_shape_valid.then(|| hint_groups.iter().flatten().copied().collect());
+    build_region_tasks_for_ranges(metadata, topology, &ranges, hints.as_deref(), None)
+}
+
+fn build_region_tasks_for_ranges(
+    metadata: &KvRequestMetadata,
+    topology: &[RegionTaskTopology],
+    ranges: &[impl Borrow<KeyRange>],
+    hints: Option<&[usize]>,
+    shared: Option<&Arc<PartitionedKeyRanges>>,
+) -> Option<Vec<RegionTaskEnvelope>> {
     if ranges.is_empty() {
         return Some(Vec::new());
     }
     if !topology_is_valid(topology) {
         return None;
     }
+    let original = ranges.iter().map(Borrow::borrow);
+    if range_issues(original.clone()).is_empty() {
+        return build_sorted_region_tasks(metadata, topology, ranges, hints, shared);
+    }
+    let mut reordered: Vec<_> = original.collect();
+    reordered.sort_by(|left, right| compare_range_order(left, right));
+    build_sorted_region_tasks(metadata, topology, &reordered, None, None)
+}
 
-    // Go keeps the range storage behind KeyRanges and borrows it through
-    // RefAt. Do not deep-copy every key again for splitting and coverage.
+fn build_sorted_region_tasks(
+    metadata: &KvRequestMetadata,
+    topology: &[RegionTaskTopology],
+    ranges: &[impl Borrow<KeyRange>],
+    hints: Option<&[usize]>,
+    shared: Option<&Arc<PartitionedKeyRanges>>,
+) -> Option<Vec<RegionTaskEnvelope>> {
+    // Keep the original keys borrowed through both splitting and coverage checking.
     let mut tasks = Vec::new();
     // Both the request ranges and the region/bucket boundaries are monotonic.
     // Go's `SplitKeyRangesByLocations` walks them with one cursor; restarting
@@ -314,8 +335,17 @@ pub fn build_region_tasks(
     let mut range_cursor = 0;
     let mut hint_cursor = 0;
     for region in topology {
-        for bucket in normalized_bucket_ranges(region)? {
-            let fragments = intersect_sorted_ranges(&ranges, &bucket, &mut range_cursor);
+        let bounds = [region.start_key.as_slice(), region.end_key.as_slice()];
+        let bucket_keys;
+        let boundaries = if region.bucket_keys.is_empty() {
+            &bounds[..]
+        } else {
+            bucket_keys = normalized_bucket_keys(region);
+            &bucket_keys[..]
+        };
+        for keys in boundaries.windows(2) {
+            let bucket = keys[0]..keys[1];
+            let fragments = intersect_sorted_ranges(ranges, &bucket, &mut range_cursor, shared);
             if fragments.is_empty() {
                 continue;
             }
@@ -345,7 +375,7 @@ pub fn build_region_tasks(
                 paging,
                 paging_size,
                 row_count_hint: hints.map_or(-1, |hints| {
-                    row_count_hint_for_bucket(&bucket, &ranges, hints, &mut hint_cursor)
+                    row_count_hint_for_bucket(&bucket, ranges, hints, &mut hint_cursor)
                 }),
                 response_channel_capacity,
                 store_busy_threshold_ms: u64::try_from(metadata.store_busy_threshold_ns)
@@ -358,7 +388,7 @@ pub fn build_region_tasks(
         }
     }
 
-    if !coverage_scan((0..ranges.len()).map(|index| ranges.ref_at(index)), &tasks).0 {
+    if !coverage_scan(ranges.iter().map(Borrow::borrow), &tasks).0 {
         return None;
     }
     if metadata.store_batch_size > 0 && (hints.is_some() || metadata.allow_batch_task_data_merge) {
@@ -399,48 +429,33 @@ fn topology_is_valid(topology: &[RegionTaskTopology]) -> bool {
     true
 }
 
-fn normalized_bucket_ranges(region: &RegionTaskTopology) -> Option<Vec<KeyRange>> {
-    let mut interior: Vec<Vec<u8>> = region
-        .bucket_keys
-        .iter()
-        .filter_map(|key| {
-            let after_start = key.as_slice() > region.start_key.as_slice();
-            let before_end =
-                region.end_key.is_empty() || key.as_slice() < region.end_key.as_slice();
-            (after_start && before_end).then(|| key.clone())
-        })
-        .collect();
-    interior.sort();
-    interior.dedup();
-    let mut keys = Vec::with_capacity(interior.len() + 2);
-    keys.push(region.start_key.clone());
-    keys.extend(interior);
-    keys.push(region.end_key.clone());
-    if keys.len() < 2 {
-        return None;
-    }
-    Some(
-        keys.windows(2)
-            .map(|pair| KeyRange {
-                start_key: pair[0].clone().into(),
-                end_key: pair[1].clone().into(),
-            })
-            .collect(),
-    )
+fn normalized_bucket_keys(region: &RegionTaskTopology) -> Vec<&[u8]> {
+    let start = region.start_key.as_slice();
+    let end = region.end_key.as_slice();
+    let mut keys = Vec::with_capacity(region.bucket_keys.len() + 2);
+    keys.push(start);
+    keys.extend(
+        region
+            .bucket_keys
+            .iter()
+            .map(Vec::as_slice)
+            .filter(|key| *key > start && (end.is_empty() || *key < end)),
+    );
+    keys[1..].sort_unstable();
+    keys.dedup();
+    keys.push(end);
+    keys
 }
 
-fn intersect_range(range: &KeyRange, bucket: &KeyRange) -> Option<KeyRange> {
+fn intersect_range(range: &KeyRange, bucket: &Range<&[u8]>) -> Option<KeyRange> {
     let start = range.start_key.as_bytes();
     let end = range.end_key.as_bytes();
     if start == end {
-        return contains_key(bucket, start).then(|| range.clone());
+        return (start >= bucket.start && (bucket.end.is_empty() || start < bucket.end))
+            .then(|| range.clone());
     }
-    let intersection_start = if start < bucket.start_key.as_slice() {
-        bucket.start_key.as_slice()
-    } else {
-        start
-    };
-    let intersection_end = min_end(end, &bucket.end_key);
+    let intersection_start = start.max(bucket.start);
+    let intersection_end = min_end(end, bucket.end);
     if !intersection_end.is_empty() && intersection_start >= intersection_end {
         return None;
     }
@@ -454,17 +469,23 @@ fn intersect_range(range: &KeyRange, bucket: &KeyRange) -> Option<KeyRange> {
 /// order Go gives to one region task. A point range (`start == end`) is kept
 /// only in the bucket that contains that point.
 fn intersect_sorted_ranges(
-    ranges: &KeyRanges,
-    bucket: &KeyRange,
+    ranges: &[impl Borrow<KeyRange>],
+    bucket: &Range<&[u8]>,
     cursor: &mut usize,
-) -> Vec<KeyRange> {
-    while *cursor < ranges.len() && ends_before_bucket(ranges.ref_at(*cursor), bucket) {
+    shared: Option<&Arc<PartitionedKeyRanges>>,
+) -> KeyRanges {
+    while ranges
+        .get(*cursor)
+        .is_some_and(|range| ends_before_bucket(range.borrow(), bucket))
+    {
         *cursor += 1;
     }
     let start = *cursor;
+    if let Some(shared) = shared {
+        return clip_shared_ranges(shared, start, bucket);
+    }
     let mut fragments = Vec::new();
-    for index in start..ranges.len() {
-        let range = ranges.ref_at(index);
+    for range in ranges[start..].iter().map(Borrow::borrow) {
         if starts_at_or_after_bucket_end(range, bucket) {
             break;
         }
@@ -472,20 +493,57 @@ fn intersect_sorted_ranges(
             fragments.push(fragment);
         }
     }
-    fragments
+    fragments.into()
 }
 
-fn ends_before_bucket(range: &KeyRange, bucket: &KeyRange) -> bool {
+/// A validated input group intersects a bucket in one contiguous span.
+/// Only the first and last ranges can require new boundaries.
+fn clip_shared_ranges(
+    shared: &Arc<PartitionedKeyRanges>,
+    mut start: usize,
+    bucket: &Range<&[u8]>,
+) -> KeyRanges {
+    let ranges = shared.first_partition_ranges();
+    let mut end = if bucket.end.is_empty() {
+        ranges.len()
+    } else {
+        start + ranges[start..].partition_point(|range| !starts_at_or_after_bucket_end(range, bucket))
+    };
+    if start == end {
+        return KeyRanges::default();
+    }
+    let first = if ranges[start].start_key.as_slice() < bucket.start {
+        let clipped = intersect_range(&ranges[start], bucket);
+        start += 1;
+        clipped
+    } else {
+        None
+    };
+    let last = if start < end && !bucket.end.is_empty() {
+        let range = &ranges[end - 1];
+        if range.end_key.is_empty() || range.end_key.as_slice() > bucket.end {
+            end -= 1;
+            intersect_range(range, bucket)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+    KeyRanges::from_request(Arc::clone(shared), start..end, first, last)
+}
+
+fn ends_before_bucket(range: &KeyRange, bucket: &Range<&[u8]>) -> bool {
     let start = range.start_key.as_bytes();
     let end = range.end_key.as_bytes();
     if start == end {
-        return start < bucket.start_key.as_slice();
+        return start < bucket.start;
     }
-    !end.is_empty() && end <= bucket.start_key.as_slice()
+    !end.is_empty() && end <= bucket.start
 }
 
-fn starts_at_or_after_bucket_end(range: &KeyRange, bucket: &KeyRange) -> bool {
-    !bucket.end_key.is_empty() && range.start_key.as_bytes() >= bucket.end_key.as_slice()
+fn starts_at_or_after_bucket_end(range: &KeyRange, bucket: &Range<&[u8]>) -> bool {
+    !bucket.end.is_empty() && range.start_key.as_bytes() >= bucket.end
 }
 
 fn min_end<'a>(left: &'a [u8], right: &'a [u8]) -> &'a [u8] {
@@ -498,24 +556,23 @@ fn min_end<'a>(left: &'a [u8], right: &'a [u8]) -> &'a [u8] {
     }
 }
 
-fn contains_key(range: &KeyRange, key: &[u8]) -> bool {
-    key >= range.start_key.as_slice()
-        && (range.end_key.is_empty() || key < range.end_key.as_slice())
-}
-
 fn row_count_hint_for_bucket(
-    bucket: &KeyRange,
-    originals: &KeyRanges,
+    bucket: &Range<&[u8]>,
+    originals: &[impl Borrow<KeyRange>],
     hints: &[usize],
     cursor: &mut usize,
 ) -> i64 {
-    while *cursor < originals.len() && ends_before_bucket(originals.ref_at(*cursor), bucket) {
+    while originals
+        .get(*cursor)
+        .is_some_and(|range| ends_before_bucket(range.borrow(), bucket))
+    {
         *cursor += 1;
     }
     let start = *cursor;
-    (start..originals.len())
-        .map(|index| originals.ref_at(index))
-        .zip(hints.iter().skip(start))
+    originals[start..]
+        .iter()
+        .map(Borrow::borrow)
+        .zip(&hints[start..])
         .take_while(|(original, _)| !starts_at_or_after_bucket_end(original, bucket))
         .map(|(_, hint)| i64::try_from(*hint).unwrap_or(i64::MAX))
         .sum()
@@ -525,14 +582,17 @@ fn coverage_scan<'a>(
     ranges: impl IntoIterator<Item = &'a KeyRange>,
     tasks: &[RegionTaskEnvelope],
 ) -> (bool, usize) {
-    let mut fragments = tasks.iter().flat_map(|task| &task.ranges);
+    let mut fragments = tasks.iter().flat_map(|task| task.ranges.iter());
     let mut examined_fragments = 0;
     for range in ranges {
+        let Some(mut fragment) = fragments.next() else {
+            return (false, examined_fragments);
+        };
+        examined_fragments += 1;
+        if std::ptr::eq(fragment, range) {
+            continue;
+        }
         if range.start_key == range.end_key {
-            let Some(fragment) = fragments.next() else {
-                return (false, examined_fragments);
-            };
-            examined_fragments += 1;
             if fragment.start_key != range.start_key || fragment.end_key != range.end_key {
                 return (false, examined_fragments);
             }
@@ -541,10 +601,6 @@ fn coverage_scan<'a>(
 
         let mut expected_start = range.start_key.as_bytes();
         loop {
-            let Some(fragment) = fragments.next() else {
-                return (false, examined_fragments);
-            };
-            examined_fragments += 1;
             if fragment.start_key.as_slice() != expected_start {
                 return (false, examined_fragments);
             }
@@ -564,6 +620,11 @@ fn coverage_scan<'a>(
                 }
             }
             expected_start = fragment_end;
+            let Some(next) = fragments.next() else {
+                return (false, examined_fragments);
+            };
+            fragment = next;
+            examined_fragments += 1;
         }
     }
 
@@ -589,7 +650,7 @@ mod tests {
             fragments.push(range);
         }
         let tasks = [RegionTaskEnvelope {
-            ranges: fragments,
+            ranges: fragments.into(),
             ..RegionTaskEnvelope::default()
         }];
 
@@ -600,6 +661,27 @@ mod tests {
             "coverage validation examined {examined_fragments} fragments for {} ranges",
             ranges.len()
         );
+    }
+
+    #[test]
+    fn bucket_tasks_share_the_unchanged_middle_range() {
+        let range = |start: &[u8], end: &[u8]| KeyRange::new(start.into(), end.into());
+        let mut metadata = KvRequestMetadata::default();
+        let input = Arc::new(PartitionedKeyRanges::new_non_partitioned(vec![
+            range(b"a", b"c"),
+            range(b"d", b"f"),
+            range(b"g", b"z"),
+        ]));
+        metadata.key_ranges = Some(input.clone());
+        let topology = [RegionTaskTopology {
+            bucket_keys: vec![b"b".to_vec(), b"m".to_vec()],
+            ..Default::default()
+        }];
+        let tasks = build_region_tasks(&metadata, &topology).unwrap();
+        assert_eq!(tasks.len(), 3);
+        assert_eq!(tasks[1].ranges[0], range(b"b", b"c"));
+        assert!(std::ptr::eq(&tasks[1].ranges[1], &input.first_partition_ranges()[1]));
+        assert_eq!(tasks[1].ranges[2], range(b"g", b"m"));
     }
 
     /// Every region task carries the row-count hint of the ranges that fall
@@ -647,6 +729,16 @@ mod tests {
             vec![8, 7],
             "the first region holds the 3 and 5 ranges"
         );
+
+        let mut partitioned = sorted.clone();
+        partitioned.key_ranges = Some(
+            tidb_txnkv::PartitionedKeyRanges::new_partitioned_with_hints(
+                vec![vec![range(10, 11)], vec![], vec![range(20, 21), range(40, 41)]],
+                vec![vec![3], vec![], vec![5, 7]],
+            )
+            .into(),
+        );
+        assert_eq!(build_region_tasks(&partitioned, &topology(30)), Some(tasks));
 
         // The same ranges out of order: the sort that repairs them also
         // detaches the hints, so no task may claim one.

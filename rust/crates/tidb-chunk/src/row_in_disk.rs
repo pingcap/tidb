@@ -28,8 +28,8 @@
 //! [`crate::chunk_in_disk::DataInDiskByChunks`] cannot do.
 //!
 //! Both files go through [`DiskFileReaderWriter`], so every write passes the
-//! checksum layer: what lands on disk is 1024-byte payload blocks each
-//! prefixed by its four-byte CRC32-Castagnoli. [`ReaderWithCache`] exists
+//! checksum layer: what lands on disk is 1024-byte blocks, each starting
+//! with a four-byte checksum. [`ReaderWithCache`] exists
 //! because the tail of the stream sits in the writer's block buffer and has
 //! NOT reached the file, yet must still be readable.
 //!
@@ -38,7 +38,7 @@
 //! checksum payload not yet framed and framed plaintext not yet encrypted to
 //! disk. Go-written deterministic file images below pin both layers.
 
-use std::io;
+use std::io::{self, BufReader, Read};
 
 use tidb_disk as disk;
 use tidb_layered_io::{ReadAt, ReadAtResult};
@@ -57,69 +57,68 @@ const DEFAULT_DATA_IN_DISK_BY_ROWS_PATH: &str = "chunk.DataInDiskByRows";
 /// Go `defaultChunkDataInDiskByRowsOffsetPath`.
 const DEFAULT_DATA_IN_DISK_BY_ROWS_OFFSET_PATH: &str = "chunk.DataInDiskByRowsOffset";
 
-/// Go `i64SliceToBytes`: Go reinterprets the slice's memory, which is
-/// native-endian. Every platform this runs on is little-endian, and the bytes
-/// are compared against Go's own spill files, so the encoding is spelled out
-/// rather than reinterpreted.
-fn i64_slice_to_bytes(values: &[i64], out: &mut Vec<u8>) {
-    for value in values {
-        out.extend_from_slice(&value.to_le_bytes());
+/// Go `rowInDisk.WriteTo`: sizes first, then the cells back to back.
+fn write_row_to(row: Row<'_>, num_cols: usize, out: &mut Vec<u8>) {
+    let header_start = out.len();
+    out.resize(header_start + 8 * num_cols, 0);
+    for col_idx in 0..num_cols {
+        let size = if row.is_null(col_idx) {
+            -1
+        } else {
+            let cell = row.get_raw(col_idx);
+            out.extend_from_slice(&cell);
+            cell.len() as i64
+        };
+        let pos = header_start + 8 * col_idx;
+        out[pos..pos + 8].copy_from_slice(&size.to_le_bytes());
     }
-}
-
-/// Go `bytesToI64Slice`, one element.
-fn bytes_to_i64(bytes: &[u8]) -> i64 {
-    i64::from_le_bytes(bytes.try_into().expect("8 bytes"))
 }
 
 /// Go `diskFormatRow`: one row's column sizes (`-1` meaning null) and the raw
 /// bytes of its not-null columns.
 #[derive(Default)]
 struct DiskFormatRow {
-    sizes_of_columns: Vec<i64>,
-    cells: Vec<Vec<u8>>,
+    header: Vec<u8>,
+    payload: Vec<u8>,
 }
 
 impl DiskFormatRow {
-    /// Go `convertFromRow`: the shallow copy Go makes is a real copy here, so
-    /// the serialized row does not borrow the source chunk.
-    fn convert_from_row(row: Row<'_>, reuse: &mut DiskFormatRow) {
-        reuse.sizes_of_columns.clear();
-        reuse.cells.clear();
-        for col_idx in 0..row
-            .chunk()
-            .expect("cannot spill the empty Row sentinel")
-            .num_cols()
-        {
-            if row.is_null(col_idx) {
-                reuse.sizes_of_columns.push(-1);
-            } else {
-                let cell = row.get_raw(col_idx);
-                reuse.sizes_of_columns.push(cell.len() as i64);
-                reuse.cells.push(cell.to_vec());
+    /// Go `rowInDisk.ReadFrom`. Read the contiguous payload in one operation.
+    fn read_from(&mut self, reader: &mut impl Read, num_cols: usize) -> io::Result<()> {
+        self.header.resize(8 * num_cols, 0);
+        reader.read_exact(&mut self.header)?;
+        let mut payload_len = 0usize;
+        for &bytes in self.header.as_chunks::<8>().0 {
+            let size = i64::from_le_bytes(bytes);
+            if size != -1 {
+                payload_len = usize::try_from(size)
+                    .ok()
+                    .and_then(|size| payload_len.checked_add(size))
+                    .ok_or_else(|| {
+                        io::Error::new(io::ErrorKind::InvalidData, "invalid spilled row size")
+                    })?;
             }
         }
-    }
-
-    /// Go `rowInDisk.WriteTo`: sizes first, then the cells back to back.
-    fn write_to(&self, out: &mut Vec<u8>) {
-        i64_slice_to_bytes(&self.sizes_of_columns, out);
-        for cell in &self.cells {
-            out.extend_from_slice(cell);
-        }
+        self.payload
+            .try_reserve(payload_len.saturating_sub(self.payload.len()))
+            .map_err(io::Error::other)?;
+        self.payload.resize(payload_len, 0);
+        reader.read_exact(&mut self.payload)
     }
 
     /// Go `diskFormatRow.toRow`'s append half. Destination selection and the
     /// nil/full replacement policy live at the public container boundary.
     fn to_row(&self, chk: &mut Chunk) -> usize {
         let mut cell_off = 0;
-        for (col_idx, size) in self.sizes_of_columns.iter().enumerate() {
+        for (col_idx, &bytes) in self.header.as_chunks::<8>().0.iter().enumerate() {
+            let size = i64::from_le_bytes(bytes);
             let mut col = chk.column_mut(col_idx);
-            if *size == -1 {
+            if size == -1 {
                 col.append_null();
             } else {
-                col.append_raw_cell(&self.cells[cell_off]);
-                cell_off += 1;
+                let end = cell_off + size as usize;
+                col.append_raw_cell(&self.payload[cell_off..end]);
+                cell_off = end;
             }
         }
         chk.num_rows() - 1
@@ -176,44 +175,39 @@ impl AppendedDiskRow<'_> {
     }
 }
 
-/// Go `rowInDisk.ReadFrom`, reading positionally out of `file` at `offset`.
-///
-/// Go reads through an `io.SectionReader`, one `io.ReadFull` for the sizes and
-/// one per not-null cell. The same reads happen here, at explicit offsets.
-/// Returns the number of bytes the row occupies.
-fn read_row_from(
-    file: &DiskFileReaderWriter,
+/// Go's section reader over the logical spill stream.
+struct SpillSectionReader<'a> {
+    file: &'a DiskFileReaderWriter,
     offset: i64,
-    num_col: usize,
-    into: &mut DiskFormatRow,
-) -> Result<i64, DiskError> {
-    let mut sizes = vec![0u8; 8 * num_col];
-    file.read_full_at(&mut sizes, offset)?;
-    into.sizes_of_columns.clear();
-    into.cells.clear();
-    for i in 0..num_col {
-        into.sizes_of_columns
-            .push(bytes_to_i64(&sizes[i * 8..i * 8 + 8]));
-    }
-    let mut consumed = 8 * num_col as i64;
-    for i in 0..num_col {
-        let size = into.sizes_of_columns[i];
-        if size == -1 {
-            continue;
+    end: i64,
+}
+
+impl Read for SpillSectionReader<'_> {
+    fn read(&mut self, destination: &mut [u8]) -> io::Result<usize> {
+        let remaining = self.end.saturating_sub(self.offset).max(0) as u64;
+        let count = remaining.min(destination.len() as u64) as usize;
+        if count == 0 {
+            return Ok(0);
         }
-        let mut cell = vec![0u8; size as usize];
-        file.read_full_at(&mut cell, offset + consumed)?;
-        consumed += size;
-        into.cells.push(cell);
+        let read = self
+            .file
+            .read_full_at(&mut destination[..count], self.offset)?;
+        self.offset += read as i64;
+        Ok(read)
     }
-    Ok(consumed)
+}
+
+struct SpilledChunk {
+    num_rows: usize,
+    first_row: usize,
+    // Bound read-ahead to this chunk's logical bytes.
+    data_end: i64,
 }
 
 /// Go `DataInDiskByRows`: rows spilled to disk, addressed by [`RowPtr`].
 pub struct DataInDiskByRows {
     field_types: Vec<FieldType>,
-    num_rows_of_each_chunk: Vec<usize>,
-    row_num_of_each_chunk_first_row: Vec<usize>,
+    chunks: Vec<SpilledChunk>,
     total_num_rows: usize,
     disk_tracker: std::sync::Arc<disk::Tracker>,
     storage: std::sync::Arc<SpillStorage>,
@@ -227,8 +221,7 @@ impl DataInDiskByRows {
     pub fn new(field_types: Vec<FieldType>, storage: std::sync::Arc<SpillStorage>) -> Self {
         DataInDiskByRows {
             field_types,
-            num_rows_of_each_chunk: Vec::new(),
-            row_num_of_each_chunk_first_row: Vec::new(),
+            chunks: Vec::new(),
             total_num_rows: 0,
             // Go: "TODO(fengliyuan): set the quota of disk usage."
             disk_tracker: disk::new_tracker(LABEL_FOR_CHUNK_DATA_IN_DISK_BY_ROWS, -1),
@@ -273,13 +266,13 @@ impl DataInDiskByRows {
     /// Go `NumRowsOfChunk`.
     #[must_use]
     pub fn num_rows_of_chunk(&self, chk_id: usize) -> usize {
-        self.num_rows_of_each_chunk[chk_id]
+        self.chunks[chk_id].num_rows
     }
 
     /// Go `NumChunks`.
     #[must_use]
     pub fn num_chunks(&self) -> usize {
-        self.num_rows_of_each_chunk.len()
+        self.chunks.len()
     }
 
     /// The field types the container was built with.
@@ -311,33 +304,33 @@ impl DataInDiskByRows {
         // each one starts in the logical (pre-checksum) stream.
         let off_write = self.data_file.off_write();
         let mut buf = Vec::new();
-        let mut offsets_of_rows = Vec::with_capacity(chk.num_rows());
-        let mut format = DiskFormatRow::default();
-        for row_idx in 0..chk.num_rows() {
-            DiskFormatRow::convert_from_row(chk.get_row(row_idx), &mut format);
-            offsets_of_rows.push(off_write + buf.len() as i64);
-            format.write_to(&mut buf);
+        let num_rows = chk.num_rows();
+        let num_cols = chk.num_cols();
+        let mut offset_buf = Vec::with_capacity(num_rows * 8);
+        for row_idx in 0..num_rows {
+            let offset = off_write + buf.len() as i64;
+            offset_buf.extend_from_slice(&offset.to_le_bytes());
+            write_row_to(chk.get_row(row_idx), num_cols, &mut buf);
         }
         let n = self.data_file.write(&buf)? as i64;
 
-        self.num_rows_of_each_chunk.push(offsets_of_rows.len());
-        self.row_num_of_each_chunk_first_row
-            .push(self.total_num_rows);
-        let mut offset_buf = Vec::with_capacity(offsets_of_rows.len() * 8);
-        i64_slice_to_bytes(&offsets_of_rows, &mut offset_buf);
+        self.chunks.push(SpilledChunk {
+            num_rows,
+            first_row: self.total_num_rows,
+            data_end: off_write + n,
+        });
         let n2 = self.offset_file.write(&offset_buf)? as i64;
 
         if self.disk_tracker.consume_and_check_exceed(n + n2) {
             return Err(DiskError::QuotaExceeded);
         }
-        self.total_num_rows += chk.num_rows();
+        self.total_num_rows += num_rows;
         Ok(())
     }
 
     /// Go `getOffset`.
     fn get_offset(&self, chk_idx: u32, row_idx: u32) -> Result<i64, DiskError> {
-        let offset_in_offset_file =
-            self.row_num_of_each_chunk_first_row[chk_idx as usize] + row_idx as usize;
+        let offset_in_offset_file = self.chunks[chk_idx as usize].first_row + row_idx as usize;
         let mut b = [0u8; 8];
         let n = self
             .offset_file
@@ -347,24 +340,29 @@ impl DataInDiskByRows {
                 "The file spilled is broken, can not get data offset from the disk",
             ));
         }
-        Ok(bytes_to_i64(&b))
+        Ok(i64::from_le_bytes(b))
     }
 
     /// Go `GetChunk`: reads a whole spilled chunk back.
     ///
-    /// Go hands the row decoding to a goroutine feeding a channel, purely for
-    /// throughput; the rows are produced in the same order either way, so the
-    /// loop is serial here.
+    /// Buffer sequential reads so adjacent rows share work in the checksum
+    /// and encryption layers.
     pub fn get_chunk(&self, chk_idx: usize) -> Result<Chunk, DiskError> {
-        let chk_size = self.num_rows_of_each_chunk[chk_idx];
-        let mut chk = Chunk::new_chunk_with_capacity(&self.field_types, chk_size);
-        let mut offset = self.get_offset(chk_idx as u32, 0)?;
+        let spilled = &self.chunks[chk_idx];
+        let mut chk = Chunk::new_chunk_with_capacity(&self.field_types, spilled.num_rows);
+        let offset = self.get_offset(chk_idx as u32, 0)?;
+        let mut reader = BufReader::with_capacity(
+            4096,
+            SpillSectionReader {
+                file: &self.data_file,
+                offset,
+                end: spilled.data_end,
+            },
+        );
         let mut format = DiskFormatRow::default();
-        for _ in 0..chk_size {
-            let consumed =
-                read_row_from(&self.data_file, offset, self.field_types.len(), &mut format)?;
+        for _ in 0..spilled.num_rows {
+            format.read_from(&mut reader, self.field_types.len())?;
             format.to_row(&mut chk);
-            offset += consumed;
         }
         Ok(chk)
     }
@@ -377,9 +375,14 @@ impl DataInDiskByRows {
         ptr: RowPtr,
         chunk: Option<&'a mut Chunk>,
     ) -> Result<AppendedDiskRow<'a>, DiskError> {
-        let off = self.get_offset(ptr.chk_idx, ptr.row_idx)?;
+        let offset = self.get_offset(ptr.chk_idx, ptr.row_idx)?;
+        let mut reader = SpillSectionReader {
+            file: &self.data_file,
+            offset,
+            end: self.data_file.off_write(),
+        };
         let mut format = DiskFormatRow::default();
-        read_row_from(&self.data_file, off, self.field_types.len(), &mut format)?;
+        format.read_from(&mut reader, self.field_types.len())?;
         match chunk {
             Some(chunk) if !chunk.is_full() => {
                 let row_index = format.to_row(chunk);
@@ -447,19 +450,16 @@ impl Drop for DataInDiskByRows {
 
 /// Go `ReaderWithCache`: reads through to `reader`, then tops the result up
 /// from the writer's not-yet-flushed cache.
-pub struct ReaderWithCache<R> {
+pub struct ReaderWithCache<R, C = Vec<u8>> {
     reader: R,
     cache_off: i64,
-    cache: Vec<u8>,
+    cache: C,
 }
 
 impl<R: ReadAt> ReaderWithCache<R> {
     /// Go `NewReaderWithCache`.
     ///
-    /// Go shares the writer's cache slice by reference and sees later writes
-    /// through it; a snapshot is taken here instead, because the Rust writer
-    /// owns its buffer mutably. Each read builds a fresh reader from the
-    /// writer's current cache, so a reader never serves a stale tail.
+    /// Takes an owned snapshot of the supplied cache.
     #[must_use]
     pub fn new(reader: R, cache: &[u8], cache_off: i64) -> Self {
         ReaderWithCache {
@@ -470,7 +470,17 @@ impl<R: ReadAt> ReaderWithCache<R> {
     }
 }
 
-impl<R: ReadAt> ReadAt for ReaderWithCache<R> {
+impl<'a, R: ReadAt> ReaderWithCache<R, &'a [u8]> {
+    pub(crate) fn borrowing(reader: R, cache: &'a [u8], cache_off: i64) -> Self {
+        Self {
+            reader,
+            cache_off,
+            cache,
+        }
+    }
+}
+
+impl<R: ReadAt, C: AsRef<[u8]>> ReadAt for ReaderWithCache<R, C> {
     fn read_at(&self, destination: &mut [u8], offset: i64) -> ReadAtResult {
         let result = self.reader.read_at(destination, offset);
         let Some(error) = &result.error else {
@@ -487,15 +497,16 @@ impl<R: ReadAt> ReadAt for ReaderWithCache<R> {
         // The caller's buffer is not full, so the rest must come from cache.
         let remaining = &mut destination[read_cnt..];
         let begin = (offset - self.cache_off).max(0) as usize;
-        let begin = begin.min(self.cache.len());
+        let cache = self.cache.as_ref();
+        let begin = begin.min(cache.len());
         let mut end = begin + remaining.len();
         let mut hit_eof = false;
-        if end > self.cache.len() {
+        if end > cache.len() {
             hit_eof = true;
-            end = self.cache.len();
+            end = cache.len();
         }
         let copied = end - begin;
-        remaining[..copied].copy_from_slice(&self.cache[begin..end]);
+        remaining[..copied].copy_from_slice(&cache[begin..end]);
         let total = read_cnt + copied;
         if hit_eof {
             ReadAtResult::eof(total)
@@ -970,6 +981,39 @@ mod tests {
         drop(container);
         drop(storage);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn chunk_read_ahead_stops_before_later_corrupt_blocks() {
+        use std::io::{Seek, SeekFrom, Write};
+
+        let storage = isolated_storage("bounded-row-read", SpillEncryptionMethod::Plaintext);
+        let dir = storage.path().to_path_buf();
+        let fields = vec![FieldType::new(C::Blob)];
+        let mut first = Chunk::new_chunk_with_capacity(&fields, 1);
+        first.append_bytes(0, b"first");
+        let mut second = Chunk::new_chunk_with_capacity(&fields, 1);
+        second.append_bytes(0, &[42; 4096]);
+        let container = spill(&fields, &[first, second], Arc::clone(&storage));
+
+        let mut file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(container.data_file_path().unwrap())
+            .unwrap();
+        file.seek(SeekFrom::Start(1024)).unwrap();
+        let mut byte = [0];
+        file.read_exact(&mut byte).unwrap();
+        file.seek(SeekFrom::Start(1024)).unwrap();
+        file.write_all(&[byte[0] ^ 1]).unwrap();
+
+        let restored = container.get_chunk(0).unwrap();
+        assert_eq!(&*restored.get_row(0).get_bytes(0), b"first");
+        assert!(container.get_chunk(1).is_err());
+        drop(file);
+        drop(container);
+        drop(storage);
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     /// Go `diskFormatRow.toRow` replaces a nil OR full destination with a

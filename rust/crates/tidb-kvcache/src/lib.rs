@@ -19,9 +19,10 @@
 //! slots instead of Go's `container/list`; the ordering and eviction contract
 //! are unchanged. The cache is intentionally not synchronized.
 
-use std::collections::HashMap;
+use hashbrown::HashTable;
 use std::error::Error;
 use std::fmt;
+use std::hash::BuildHasher;
 
 /// Source heap-profile function name exposed by the Go package.
 pub const PROFILE_NAME: &str = "github.com/pingcap/tidb/pkg/util/kvcache.(*SimpleLRUCache).Put";
@@ -84,7 +85,8 @@ impl fmt::Display for InvalidCapacity {
 impl Error for InvalidCapacity {}
 
 struct Node<K, V> {
-    hash: Vec<u8>,
+    hash: Box<[u8]>,
+    hash_code: u64,
     key: K,
     value: V,
     previous: Option<usize>,
@@ -99,9 +101,45 @@ struct MemoryGuard {
 
 type EvictionCallback<K, V> = Box<dyn FnMut(&K, &V) + Send>;
 
+const SMALL_CACHE_SLOTS: usize = 8;
+const LONG_KEY_THRESHOLD: usize = 64;
+const WIDE_KEY_THRESHOLD: usize = 1024;
+
+struct WideKeyBucket {
+    sample: u64,
+    count: usize,
+    // When the count falls to one, the XOR is the remaining slot index.
+    slot_xor: usize,
+}
+
+fn wide_keys_equal(stored: &[u8], requested: &[u8]) -> bool {
+    const EDGE_BYTES: usize = 64;
+    const BLOCK_BYTES: usize = 4096;
+    debug_assert!(requested.len() >= WIDE_KEY_THRESHOLD);
+    if stored.len() != requested.len() {
+        return false;
+    }
+    let end = requested.len() - EDGE_BYTES;
+    if stored[end..] != requested[end..] {
+        return false;
+    }
+    if requested.len() >= 2 * BLOCK_BYTES {
+        // A wider suffix check catches late mismatches beyond the edge.
+        // Check the first bytes before reading that block for an early miss.
+        let block = end - BLOCK_BYTES;
+        return stored[..EDGE_BYTES] == requested[..EDGE_BYTES]
+            && stored[block..end] == requested[block..end]
+            && stored[EDGE_BYTES..block] == requested[EDGE_BYTES..block];
+    }
+    stored[..end] == requested[..end]
+}
+
 /// A non-thread-safe least-recently-used cache.
 pub struct SimpleLruCache<K, V> {
-    elements: HashMap<Vec<u8>, usize>,
+    // Slots own the byte keys. The table indexes them by their saved hash.
+    elements: HashTable<usize>,
+    hash_builder: foldhash::fast::RandomState,
+    wide_key_samples: HashTable<WideKeyBucket>,
     nodes: Vec<Option<Node<K, V>>>,
     free: Vec<usize>,
     newest: Option<usize>,
@@ -120,7 +158,9 @@ impl<K: CacheKey, V> SimpleLruCache<K, V> {
     pub fn new(capacity: usize) -> Self {
         assert!(capacity > 0, "capacity of LRU Cache should be at least 1.");
         Self {
-            elements: HashMap::new(),
+            elements: HashTable::new(),
+            hash_builder: foldhash::fast::RandomState::default(),
+            wide_key_samples: HashTable::new(),
             nodes: Vec::new(),
             free: Vec::new(),
             newest: None,
@@ -168,7 +208,7 @@ impl<K: CacheKey, V> SimpleLruCache<K, V> {
     where
         Q: CacheKey + ?Sized,
     {
-        let index = *self.elements.get(key.hash_bytes())?;
+        let index = self.find_index(key.hash_bytes())?;
         self.move_to_front(index);
         Some(&self.node(index).value)
     }
@@ -181,7 +221,7 @@ impl<K: CacheKey, V> SimpleLruCache<K, V> {
     where
         Q: CacheKey + ?Sized,
     {
-        let index = *self.elements.get(key.hash_bytes())?;
+        let index = self.find_index(key.hash_bytes())?;
         Some(&self.node(index).value)
     }
 
@@ -190,14 +230,20 @@ impl<K: CacheKey, V> SimpleLruCache<K, V> {
     /// Updating an existing byte hash retains its original key object and
     /// does not run capacity or process-memory eviction, as in the source.
     pub fn put(&mut self, key: K, value: V) {
-        let hash = key.hash_bytes().to_vec();
-        if let Some(&index) = self.elements.get(hash.as_slice()) {
+        let hash = key.hash_bytes();
+        let mut hash_code = None;
+        if let Some(index) = self.find_index_using(hash, || {
+            let code = self.hash_builder.hash_one(hash);
+            hash_code = Some(code);
+            self.find_hashed(hash, code)
+        }) {
             self.node_mut(index).value = value;
             self.move_to_front(index);
             return;
         }
 
-        self.insert_new(hash, key, value);
+        let hash_code = hash_code.unwrap_or_else(|| self.hash_builder.hash_one(hash));
+        self.insert_new(hash.into(), hash_code, key, value);
         if self.memory_guard.is_none() {
             if self.entry_count() > self.capacity {
                 self.evict_oldest();
@@ -231,7 +277,7 @@ impl<K: CacheKey, V> SimpleLruCache<K, V> {
     where
         Q: CacheKey + ?Sized,
     {
-        let Some(&index) = self.elements.get(key.hash_bytes()) else {
+        let Some(index) = self.find_index(key.hash_bytes()) else {
             return;
         };
         let _ = self.remove_index(index);
@@ -251,16 +297,12 @@ impl<K: CacheKey, V> SimpleLruCache<K, V> {
 
     /// Returns values in most-recently-used order.
     pub fn values(&self) -> Vec<&V> {
-        self.indices_from_newest()
-            .map(|index| &self.node(index).value)
-            .collect()
+        self.collect_entries(|node| &node.value)
     }
 
     /// Returns keys in most-recently-used order.
     pub fn keys(&self) -> Vec<&K> {
-        self.indices_from_newest()
-            .map(|index| &self.node(index).key)
-            .collect()
+        self.collect_entries(|node| &node.key)
     }
 
     /// Changes the maximum entry count.
@@ -285,21 +327,124 @@ impl<K: CacheKey, V> SimpleLruCache<K, V> {
         Some((node.key, node.value))
     }
 
-    fn insert_new(&mut self, hash: Vec<u8>, key: K, value: V) {
+    fn find_index(&self, hash: &[u8]) -> Option<usize> {
+        self.find_index_using(hash, || {
+            self.find_hashed(hash, self.hash_builder.hash_one(hash))
+        })
+    }
+
+    fn find_hashed(&self, hash: &[u8], hash_code: u64) -> Option<usize> {
+        self.elements
+            .find(hash_code, |&index| self.node(index).hash.as_ref() == hash)
+            .copied()
+    }
+
+    fn find_index_using(
+        &self,
+        hash: &[u8],
+        find_hashed: impl FnOnce() -> Option<usize>,
+    ) -> Option<usize> {
+        if hash.len() > LONG_KEY_THRESHOLD && self.nodes.len() <= SMALL_CACHE_SLOTS {
+            return self.find_small_long_key(hash, find_hashed);
+        }
+        if hash.len() >= 256 {
+            if hash.len() >= WIDE_KEY_THRESHOLD {
+                let sample = self.wide_key_sample(hash);
+                let bucket = self
+                    .wide_key_samples
+                    .find(sample, |bucket| bucket.sample == sample)?;
+                if bucket.count == 1 {
+                    let index = bucket.slot_xor;
+                    return wide_keys_equal(&self.node(index).hash, hash).then_some(index);
+                }
+            }
+            // A repeated long key can be cheaper to compare than to hash again.
+            if let Some(index) = self.newest {
+                let newest = &self.node(index).hash;
+                if newest.last_chunk::<8>() == hash.last_chunk::<8>() && newest.as_ref() == hash {
+                    return Some(index);
+                }
+            }
+        }
+        find_hashed()
+    }
+
+    // Sampled words narrow the set of candidates. Identity still depends on
+    // exact equality of the stored and requested key bytes.
+    fn wide_key_sample(&self, key: &[u8]) -> u64 {
+        let width = key.len();
+        let word = |bytes: &[u8]| u64::from_ne_bytes(*bytes.first_chunk::<8>().unwrap());
+        let sample = (
+            width,
+            word(key),
+            word(&key[width / 2..]),
+            word(&key[width - 8..]),
+        );
+        self.hash_builder.hash_one(sample)
+    }
+
+    fn find_small_long_key(
+        &self,
+        hash: &[u8],
+        find_hashed: impl FnOnce() -> Option<usize>,
+    ) -> Option<usize> {
+        // Match Go's small string map: test both ends, compare the whole key
+        // for a single candidate, and hash if there are several candidates.
+        let first = hash.first_chunk::<8>();
+        let last = hash.last_chunk::<8>();
+        let mut candidate = None;
+        for (index, node) in self.nodes.iter().enumerate() {
+            let Some(node) = node else { continue };
+            let stored = &node.hash;
+            if stored.len() == hash.len()
+                && stored.first_chunk::<8>() == first
+                && stored.last_chunk::<8>() == last
+            {
+                if candidate.is_some() {
+                    return find_hashed();
+                }
+                candidate = Some(index);
+            }
+        }
+        candidate.filter(|&index| self.node(index).hash.as_ref() == hash)
+    }
+
+    fn insert_new(&mut self, hash: Box<[u8]>, hash_code: u64, key: K, value: V) {
         let index = if let Some(index) = self.free.pop() {
             index
         } else {
             self.nodes.push(None);
             self.nodes.len() - 1
         };
+        if hash.len() >= WIDE_KEY_THRESHOLD {
+            let sample = self.wide_key_sample(&hash);
+            let mut entry = self
+                .wide_key_samples
+                .entry(sample, |bucket| bucket.sample == sample, |bucket| bucket.sample)
+                .or_insert(WideKeyBucket {
+                    sample,
+                    count: 0,
+                    slot_xor: 0,
+                });
+            let bucket = entry.get_mut();
+            bucket.count += 1;
+            bucket.slot_xor ^= index;
+        }
         self.nodes[index] = Some(Node {
-            hash: hash.clone(),
+            hash,
+            hash_code,
             key,
             value,
             previous: None,
             next: None,
         });
-        self.elements.insert(hash, index);
+        let nodes = &self.nodes;
+        self.elements.insert_unique(hash_code, index, |&index| {
+            nodes[index]
+                .as_ref()
+                .expect("table index must contain a node")
+                .hash_code
+        });
         self.link_front(index);
     }
 
@@ -355,7 +500,26 @@ impl<K: CacheKey, V> SimpleLruCache<K, V> {
         let node = self.nodes[index]
             .take()
             .expect("linked LRU index must contain a node");
-        self.elements.remove(node.hash.as_slice());
+        self.elements
+            .find_entry(node.hash_code, |&stored| stored == index)
+            .ok()
+            .expect("linked LRU index must be in the table")
+            .remove();
+        if node.hash.len() >= WIDE_KEY_THRESHOLD {
+            let sample = self.wide_key_sample(&node.hash);
+            let mut entry = self
+                .wide_key_samples
+                .find_entry(sample, |bucket| bucket.sample == sample)
+                .ok()
+                .expect("wide entry must have a sample bucket");
+            let bucket = entry.get_mut();
+            if bucket.count == 1 {
+                entry.remove();
+            } else {
+                bucket.count -= 1;
+                bucket.slot_xor ^= index;
+            }
+        }
         self.free.push(index);
         node
     }
@@ -393,11 +557,15 @@ impl<K: CacheKey, V> SimpleLruCache<K, V> {
         (guard.quota as f64 * (1.0 - guard.guard)) as u64
     }
 
-    fn indices_from_newest(&self) -> Indices<'_, K, V> {
-        Indices {
-            cache: self,
-            next: self.newest,
+    fn collect_entries<T>(&self, field: impl Fn(&Node<K, V>) -> &T) -> Vec<&T> {
+        let mut entries = Vec::with_capacity(self.entry_count());
+        let mut next = self.newest;
+        while let Some(index) = next {
+            let node = self.node(index);
+            entries.push(field(node));
+            next = node.next;
         }
+        entries
     }
 
     fn node(&self, index: usize) -> &Node<K, V> {
@@ -410,24 +578,6 @@ impl<K: CacheKey, V> SimpleLruCache<K, V> {
         self.nodes[index]
             .as_mut()
             .expect("linked LRU index must contain a node")
-    }
-}
-
-struct Indices<'a, K, V> {
-    cache: &'a SimpleLruCache<K, V>,
-    next: Option<usize>,
-}
-
-impl<K, V> Iterator for Indices<'_, K, V> {
-    type Item = usize;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let index = self.next?;
-        self.next = self.cache.nodes[index]
-            .as_ref()
-            .expect("linked LRU index must contain a node")
-            .next;
-        Some(index)
     }
 }
 

@@ -8,6 +8,7 @@ repository.workspace = true
 description = "Go net/url parsing, escaping and query values, for ports of Go code that reads storage URLs (Rust rewrite)."
 
 [dependencies]
+memchr = "2"
 tidb-go-strconv = { path = "../tidb-go-strconv" }
 
 [dev-dependencies]

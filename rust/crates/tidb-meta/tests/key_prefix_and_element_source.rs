@@ -178,6 +178,43 @@ fn key_parse_failures_preserve_go_error_class_message_and_partial_value() {
     ));
 }
 
+#[test]
+fn key_parse_stops_at_go_unsigned_overflow() {
+    use tidb_meta::MetaError;
+    use tidb_meta::error::IntegerParseFailure;
+
+    for (token, failure, partial) in [
+        ("18446744073709551616x", IntegerParseFailure::Range, i64::MAX),
+        ("-18446744073709551616x", IntegerParseFailure::Range, i64::MIN),
+        ("18446744073709551615x", IntegerParseFailure::Syntax, 0),
+        ("9223372036854775808x", IntegerParseFailure::Syntax, 0),
+    ] {
+        assert_eq!(
+            key::parse_db_key(format!("DB:{token}").as_bytes()),
+            Err(MetaError::InvalidFieldInteger {
+                value: token.as_bytes().to_vec(),
+                partial,
+                failure,
+                traced: true,
+            }),
+        );
+    }
+}
+
+#[test]
+fn key_parse_quotes_control_and_invalid_bytes_like_go() {
+    for (field, quoted) in [
+        (b"DB:a\0".as_slice(), r#""a\x00""#),
+        (b"DB:\"\xff\t", r#""\"\xff\t""#),
+        (b"DB:\x07\x1b", r#""\a\x1b""#),
+    ] {
+        assert_eq!(
+            key::parse_db_key(field).unwrap_err().to_string(),
+            format!("strconv.Atoi: parsing {quoted}: invalid syntax"),
+        );
+    }
+}
+
 // --- `TestElement` -- `pkg/meta/meta_test.go:558`, every row ----------------
 
 #[test]

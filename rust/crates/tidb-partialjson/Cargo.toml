@@ -11,5 +11,6 @@ description = "TiDB util/partialjson: Go pkg/util/partialjson (Rust rewrite)."
 workspace = true
 
 [dependencies]
+memchr = "2"
 serde.workspace = true
 serde_json = { workspace = true, features = ["raw_value"] }

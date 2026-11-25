@@ -587,6 +587,17 @@ fn test_join_schemas() {
 
 // Go `TestTableString`.
 #[test]
+fn left_column_conflict_precedes_missing_right_column() {
+    let left = encode(&to_table_info("CREATE TABLE t (z BIGINT)"));
+    let right = encode(&to_table_info("CREATE TABLE t (a INT NOT NULL, z DATE)"));
+
+    let error = left.compare(&right).unwrap_err();
+    assert!(error.to_string().contains(r#"at map key "z""#));
+    let error = left.join(&right).unwrap_err();
+    assert!(error.to_string().contains(r#"at map key "z""#));
+}
+
+#[test]
 fn test_table_string() {
     // [input, expect]
     let cases: [[&str; 2]; 7] = [

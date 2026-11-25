@@ -11,5 +11,6 @@ description = "TiDB pkg/store/mockstore/unistore/tikv/kverrors: the unistore TiK
 workspace = true
 
 [dependencies]
+hex = "0.4"
 tidb-unistore-lockwaiter = { path = "../tidb-unistore-lockwaiter" }
 tidb-proto = { path = "../tidb-proto" }

@@ -472,7 +472,7 @@ impl MppClient for MockMppClient {
     fn construct_mpp_tasks(
         &self,
         _: &Arc<dyn MppContext>,
-        _: &MppBuildTasksRequest,
+        _: MppBuildTasksRequest,
         _: &StatementKvContext,
         _: tidb_tiflashcompute::DispatchPolicy,
         _: ReplicaRead,

@@ -151,14 +151,14 @@ pub fn convert_range_from_expected_cnt(
     let converted_range = if descending {
         Range {
             low_val: source.high_val.clone(),
-            high_val: vec![Datum::MaxValue],
+            high_val: vec![Datum::MaxValue].into(),
             collators: source.collators.clone(),
             low_exclude: !source.high_exclude,
             high_exclude: false,
         }
     } else {
         Range {
-            low_val: vec![Datum::Null],
+            low_val: vec![Datum::Null].into(),
             high_val: source.low_val.clone(),
             collators: source.collators.clone(),
             low_exclude: false,
@@ -355,8 +355,8 @@ use tidb_charset::Collation;
     ) -> CountedRange {
         CountedRange::new(
             Range {
-                low_val: vec![Datum::Int(low)],
-                high_val: vec![Datum::Int(high)],
+                low_val: vec![Datum::Int(low)].into(),
+                high_val: vec![Datum::Int(high)].into(),
                 collators: vec![Collation::Binary],
                 low_exclude,
                 high_exclude,
@@ -444,7 +444,7 @@ use tidb_charset::Collation;
                         ndv: 100,
                         lower_bound: Datum::Int(1),
                         upper_bound: Datum::Int(100),
-                    }],
+                    }].into(),
                     ..Histogram::default()
                 },
                 top_n: None,
@@ -573,7 +573,7 @@ use tidb_charset::Collation;
                     ndv: 100,
                     lower_bound: Datum::Bytes(b"a".to_vec()),
                     upper_bound: Datum::Bytes(b"z".to_vec()),
-                }],
+                }].into(),
                 ..Histogram::default()
             },
             top_n: None,

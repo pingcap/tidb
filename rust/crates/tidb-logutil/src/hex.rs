@@ -43,11 +43,7 @@ pub enum PrettyValue {
 /// Go `prettyPrint`.
 pub fn pretty_print(w: &mut String, val: &PrettyValue) {
     match val {
-        PrettyValue::Bytes(b) => {
-            for byte in b {
-                let _ = write!(w, "{byte:02x}");
-            }
-        }
+        PrettyValue::Bytes(b) => w.push_str(&tidb_goruntime::go_hex::encode_to_string(b)),
         PrettyValue::Slice(items) => {
             w.push('[');
             for (i, item) in items.iter().enumerate() {

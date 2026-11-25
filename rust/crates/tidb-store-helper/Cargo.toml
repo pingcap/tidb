@@ -11,6 +11,7 @@ description = "TiDB pkg/store/helper: the PD region reads the memory tables use 
 workspace = true
 
 [dependencies]
+hex = "0.4"
 serde = { workspace = true }
 tidb-tablecodec = { path = "../tidb-tablecodec" }
 tidb-logutil = { path = "../tidb-logutil" }

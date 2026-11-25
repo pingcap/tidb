@@ -21,8 +21,10 @@
 //! leaving Context, batch tasks, region routing, and RPC ownership explicit.
 
 use prost::encoding::{self, WireType};
-use tidb_proto::KvrpcContext;
+use tidb_proto::{CoprocessorKeyRange, CoprocessorRequest, KvrpcContext, StoreBatchTask};
+use tikv_client::request::{ApiV2Codec, KeyMode, Keyspace};
 
+use crate::key_ranges::KeyRanges;
 use tidb_txnkv::KvRequestMetadata;
 use tidb_txnkv::KeyRange;
 
@@ -40,7 +42,7 @@ pub struct CoprocessorRequestEnvelope {
     /// Exact source `kv.Request.Data` bytes (field 3).
     pub data: prost::bytes::Bytes,
     /// Ordered half-open ranges for this coprocessor task (field 4).
-    pub ranges: Vec<KeyRange>,
+    pub ranges: KeyRanges,
     /// Optional cache flag supplied by a future cache owner (field 5).
     pub is_cache_enabled: bool,
     /// Optional cache-version predicate supplied by a future cache owner (field 6).
@@ -53,9 +55,9 @@ pub struct CoprocessorRequestEnvelope {
     pub is_trace_enabled: bool,
     /// Task-local row paging size (field 10).
     pub paging_size: u64,
-    /// Encoded `coprocessor.StoreBatchTask`s batched into this request
+    /// `coprocessor.StoreBatchTask`s batched into this request
     /// (field 11, Go `copTask.ToPBBatchTasks`).
-    pub tasks: Vec<Vec<u8>>,
+    pub tasks: Vec<StoreBatchTask>,
     /// Source connection identifier (field 12).
     pub connection_id: u64,
     /// Source connection alias (field 13).
@@ -79,21 +81,16 @@ impl CoprocessorRequestEnvelope {
     /// boundaries or pretending that a region router already exists.
     #[must_use]
     pub fn from_metadata(metadata: &KvRequestMetadata, ranges: Vec<KeyRange>) -> Self {
-        Self::from_metadata_with_data(
-            metadata,
-            ranges,
-            metadata.data.clone().unwrap_or_default().into(),
-        )
+        Self::from_metadata_with_ranges(metadata, ranges.into())
     }
 
-    pub(crate) fn from_metadata_with_data(
+    pub(crate) fn from_metadata_with_ranges(
         metadata: &KvRequestMetadata,
-        ranges: Vec<KeyRange>,
-        data: prost::bytes::Bytes,
+        ranges: KeyRanges,
     ) -> Self {
         Self {
             tp: metadata.request_type.raw(),
-            data,
+            data: metadata.data.clone().unwrap_or_default(),
             ranges,
             start_ts: metadata.start_ts,
             schema_ver: metadata.schema_version,
@@ -123,7 +120,7 @@ impl CoprocessorRequestEnvelope {
 
     /// Attaches the batched child tasks (Go `req.Tasks = task.ToPBBatchTasks()`).
     #[must_use]
-    pub fn with_batch_tasks(mut self, tasks: Vec<Vec<u8>>) -> Self {
+    pub fn with_batch_tasks(mut self, tasks: Vec<StoreBatchTask>) -> Self {
         self.tasks = tasks;
         self
     }
@@ -141,6 +138,54 @@ impl CoprocessorRequestEnvelope {
         self.is_cache_enabled = true;
         self.cache_if_match_version = version;
         self
+    }
+
+    /// Builds the native request while sharing the encoded data payload.
+    #[must_use]
+    pub fn to_proto(&self) -> CoprocessorRequest {
+        self.to_proto_with_ranges(self.ranges.to_pb_ranges(), self.tasks.clone())
+    }
+
+    /// Builds the native request with the transaction keyspace used by its store.
+    pub fn to_proto_for_keyspace(
+        &self,
+        keyspace: Keyspace,
+    ) -> tikv_client::Result<CoprocessorRequest> {
+        let Keyspace::Enable { keyspace_id } = keyspace else {
+            return Ok(self.to_proto());
+        };
+        let codec = ApiV2Codec::new(KeyMode::Txn, keyspace_id)?;
+        Ok(self.to_proto_with_ranges(
+            self.ranges.to_api_v2_pb_ranges(&codec),
+            codec.encode_cop_store_batch_tasks(&self.tasks),
+        ))
+    }
+
+    fn to_proto_with_ranges(
+        &self,
+        ranges: Vec<CoprocessorKeyRange>,
+        tasks: Vec<StoreBatchTask>,
+    ) -> CoprocessorRequest {
+        CoprocessorRequest {
+            context: self.context.clone(),
+            tp: self.tp,
+            data: self.data.clone(),
+            ranges,
+            is_cache_enabled: self.is_cache_enabled,
+            cache_if_match_version: self.cache_if_match_version,
+            start_ts: self.start_ts,
+            schema_ver: self.schema_ver,
+            is_trace_enabled: self.is_trace_enabled,
+            paging_size: self.paging_size,
+            tasks,
+            connection_id: self.connection_id,
+            connection_alias: self.connection_alias.clone(),
+            max_keys_read: self.max_keys_read,
+            paging_size_bytes: self.paging_size_bytes,
+            allow_batch_task_data_merge: self.allow_batch_task_data_merge,
+            execute_batch_tasks_serially: self.execute_batch_tasks_serially,
+            ..Default::default()
+        }
     }
 
     /// Serializes the exact protobuf field numbers owned by this projection.
@@ -167,7 +212,7 @@ impl CoprocessorRequestEnvelope {
         if !self.data.is_empty() {
             encode_bytes_field(3, &self.data, buf);
         }
-        for range in &self.ranges {
+        for range in self.ranges.iter() {
             encoding::encode_key(4, WireType::LengthDelimited, buf);
             encoding::encode_varint(key_range_encoded_len(range) as u64, buf);
             let (start, end) = (range.start_key.as_slice(), range.end_key.as_slice());
@@ -197,7 +242,7 @@ impl CoprocessorRequestEnvelope {
             encoding::uint64::encode(10, &self.paging_size, buf);
         }
         for task in &self.tasks {
-            encode_bytes_field(11, task, buf);
+            encoding::message::encode(11, task, buf);
         }
         if self.connection_id != 0 {
             encoding::uint64::encode(12, &self.connection_id, buf);
@@ -230,7 +275,7 @@ impl CoprocessorRequestEnvelope {
         if !self.data.is_empty() {
             len += bytes_field_len(3, self.data.len());
         }
-        for range in &self.ranges {
+        for range in self.ranges.iter() {
             let inner = key_range_encoded_len(range);
             len += encoding::key_len(4) + encoding::encoded_len_varint(inner as u64) + inner;
         }
@@ -253,7 +298,7 @@ impl CoprocessorRequestEnvelope {
             len += encoding::uint64::encoded_len(10, &self.paging_size);
         }
         for task in &self.tasks {
-            len += bytes_field_len(11, task.len());
+            len += encoding::message::encoded_len(11, task);
         }
         if self.connection_id != 0 {
             len += encoding::uint64::encoded_len(12, &self.connection_id);
@@ -299,4 +344,85 @@ fn encode_bytes_field(tag: u32, bytes: &[u8], buf: &mut Vec<u8>) {
     encoding::encode_key(tag, WireType::LengthDelimited, buf);
     encoding::encode_varint(bytes.len() as u64, buf);
     buf.extend_from_slice(bytes);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use prost::Message;
+
+    #[test]
+    fn prepared_keyspace_request_matches_typed_request_encoding() {
+        let ranges: KeyRanges = vec![
+            KeyRange::new(b"".as_slice().into(), b"a\0".as_slice().into()),
+            KeyRange::new(b"b\xff".as_slice().into(), b"".as_slice().into()),
+        ]
+        .into();
+        let request = CoprocessorRequestEnvelope {
+            tasks: vec![
+                StoreBatchTask {
+                    region_id: 17,
+                    task_id: 3,
+                    buckets_version: 5,
+                    ranges: ranges.to_pb_ranges(),
+                    versioned_ranges: vec![tidb_proto::CoprocessorVersionedKeyRange {
+                        range: Some(CoprocessorKeyRange {
+                            start: prost::bytes::Bytes::from_static(b"point"),
+                            end: prost::bytes::Bytes::from_static(b"point\0"),
+                        }),
+                        read_ts: 21,
+                    }],
+                    ..Default::default()
+                },
+                StoreBatchTask {
+                    task_id: 4,
+                    ranges: ranges.slice(1, 2).to_pb_ranges(),
+                    ..Default::default()
+                },
+            ],
+            ranges,
+            data: prost::bytes::Bytes::from_static(b"dag"),
+            start_ts: 45,
+            paging_size: 256,
+            ..Default::default()
+        };
+        let logical = request.to_proto();
+        for keyspace_id in [0, 57, 0xff_ffff] {
+            let codec = ApiV2Codec::new(KeyMode::Txn, keyspace_id).unwrap();
+            let projected = request
+                .to_proto_for_keyspace(Keyspace::Enable { keyspace_id })
+                .unwrap();
+            let expected = codec.encode_owned_coprocessor_request(logical.clone());
+            assert_eq!(projected.encode_to_vec(), expected.encode_to_vec());
+            assert_eq!(projected.ranges[1].end.as_ref(), codec.end_key());
+            assert_eq!(projected.clone(), projected);
+        }
+        for keyspace in [Keyspace::Disable, Keyspace::V1Ttl, Keyspace::ApiV2NoPrefix] {
+            assert_eq!(request.to_proto_for_keyspace(keyspace).unwrap(), logical);
+        }
+    }
+
+    #[test]
+    fn native_ranges_share_one_buffer_and_keep_empty_boundaries() {
+        let request = CoprocessorRequestEnvelope {
+            ranges: vec![
+                KeyRange::new(b"".as_slice().into(), b"a\0".as_slice().into()),
+                KeyRange::new(b"b\xff".as_slice().into(), b"".as_slice().into()),
+            ].into(),
+            ..Default::default()
+        };
+        let native = request.to_proto();
+        assert_eq!(native.encode_to_vec(), request.encode_to_vec());
+        assert!(native.ranges[0].start.is_empty());
+        assert!(native.ranges[1].end.is_empty());
+        assert_eq!(native.ranges[0].end.as_ref(), b"a\0");
+        assert_eq!(native.ranges[1].start.as_ref(), b"b\xff");
+        assert_eq!(
+            native.ranges[0].end.as_ptr().addr() + native.ranges[0].end.len(),
+            native.ranges[1].start.as_ptr().addr(),
+        );
+        let cloned = native.clone();
+        assert_eq!(cloned.ranges[0].end.as_ptr(), native.ranges[0].end.as_ptr());
+        assert_eq!(cloned.ranges[1].start.as_ptr(), native.ranges[1].start.as_ptr());
+    }
 }

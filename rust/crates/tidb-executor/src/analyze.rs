@@ -43,17 +43,18 @@
 pub mod exec;
 pub mod panic_recovery;
 
-use tidb_datatype::CollationCollator;
+use std::borrow::{Borrow, Cow};
+
 #[cfg(test)]
 use tidb_codec::encode_value;
-use tidb_codec::encode_value_in_timezone;
-use tidb_datatype::{Datum, EvalType, FieldType, FieldTypeCode};
+use tidb_codec::{append_value_refs_in_timezone, estimate_value_size};
 use tidb_charset::Collation;
+use tidb_datatype::{CollationCollator, Datum, EvalType, FieldType, FieldTypeCode};
 use tidb_stats::builder::{build_hist_and_topn, BuildOptions, SampleCollector, SampleItem};
 use tidb_stats::cmsketch::TopN;
 use tidb_stats::histogram::Histogram;
 use tidb_stats::row_sample_collector::{
-    get_adjusted_sample_rate, RowSampleCollector, SamplePolicy, ScannedRow, SlotValue,
+    get_adjusted_sample_rate, HashedSlotValue, RowSampleCollector, SamplePolicy, SlotValue,
 };
 use tidb_stats::sample_bytes::MAX_SAMPLE_VALUE_LENGTH;
 
@@ -311,14 +312,16 @@ impl AnalyzedColumn {
     /// compares. That is also why Go's `histogramFromStorageWithParams` reads a
     /// string bound back as raw bytes rather than at the column's declared
     /// type: the stored bound may not even be valid in the column's charset.
-    fn stored_value(&self, value: &Datum) -> Datum {
-        let Some(collation) = self.collation else {
-            return value.clone();
-        };
-        match value {
-            Datum::String(string) => Datum::Bytes(collation.key(string.bytes())),
-            Datum::Bytes(bytes) => Datum::Bytes(collation.key(bytes)),
-            other => other.clone(),
+    fn stored_value<'a>(&self, value: &'a Datum) -> Cow<'a, Datum> {
+        match (self.collation, value) {
+            (Some(collation), Datum::String(string)) => {
+                Cow::Owned(Datum::Bytes(collation.key(string.bytes())))
+            }
+            (Some(collation), Datum::Bytes(bytes)) => match collation.immutable_key(bytes) {
+                Cow::Borrowed(key) if key.len() == bytes.len() => Cow::Borrowed(value),
+                key => Cow::Owned(Datum::Bytes(key.into_owned())),
+            },
+            _ => Cow::Borrowed(value),
         }
     }
 }
@@ -451,72 +454,101 @@ impl AnalyzePlan {
                 .count()
     }
 
-    /// One row's stored values and its contribution to every slot.
-    fn row_of(&self, columns: &[Datum]) -> Result<ScannedRowValues, AnalyzeError> {
-        let mut sampled = Vec::with_capacity(columns.len());
-        let mut keyed_columns = Vec::with_capacity(columns.len());
-        let mut slots = Vec::with_capacity(self.slot_count());
-        let mut sizes = Vec::with_capacity(columns.len());
+    /// Prepares a complete row's contributions before updating the collector.
+    fn prepare_slots(
+        &self,
+        columns: &[Datum],
+        slots: &mut Vec<HashedSlotValue>,
+        encoded: &mut Vec<u8>,
+    ) -> Result<(), AnalyzeError> {
+        slots.clear();
+        let needs_keyed_columns = self
+            .indexes
+            .iter()
+            .any(|index| index.needs_own_slot() && !index.has_prefix());
+        let mut keyed_columns = Vec::new();
+        if needs_keyed_columns {
+            keyed_columns.reserve_exact(columns.len());
+        }
         for (position, value) in columns.iter().enumerate() {
+            let keyed = self.columns[position].stored_value(value);
+            encoded.clear();
+            append_value_refs_in_timezone(&self.time_zone, encoded, std::slice::from_ref(&keyed))
+                .map_err(|error| AnalyzeError::Encode(error.to_string()))?;
             // The size is deliberately the ORIGINAL value's, not the
             // collation key's: Go computes it before the substitution and
             // says so, because `tot_col_size` describes what the table
             // stores.
-            let size = encode_value_in_timezone(&self.time_zone, std::slice::from_ref(value))
-                .map_err(|error| AnalyzeError::Encode(error.to_string()))?
-                .len() as i64
-                - 1;
-            let keyed = self.columns[position].stored_value(value);
-            let encoded_value = encode_value_in_timezone(&self.time_zone, std::slice::from_ref(&keyed))
-                .map_err(|error| AnalyzeError::Encode(error.to_string()))?;
-            sizes.push(size);
-            slots.push(SlotContribution {
-                encoded_value,
-                size,
-                is_null: value.is_null(),
-            });
-            keyed_columns.push(keyed);
-            sampled.push(value.clone());
+            let size = match value {
+                Datum::String(_) | Datum::Bytes(_) | Datum::Json(_) | Datum::VectorFloat32(_) => {
+                    estimate_value_size(value)
+                        .map_err(|error| AnalyzeError::Encode(error.to_string()))?
+                }
+                _ => encoded.len(),
+            } as i64 - 1;
+            slots.push(
+                SlotValue {
+                    encoded_value: encoded,
+                    size,
+                    is_null: value.is_null(),
+                }
+                .into_hashed(),
+            );
+            if needs_keyed_columns {
+                keyed_columns.push(keyed);
+            }
         }
         for index in self.indexes.iter().filter(|index| index.needs_own_slot()) {
             // Ordinary column groups use the collector's collation-keyed
             // values. A prefix index is a special index in Go: its NDV is
             // collected from the cut index key instead of that column group.
             let group = if index.has_prefix() {
-                self.index_values(index, &sampled)
+                self.index_values(index, columns)
             } else {
                 self.index_values(index, &keyed_columns)
             };
-            let encoded_value = encode_value_in_timezone(&self.time_zone, &group)
+            encoded.clear();
+            append_value_refs_in_timezone(&self.time_zone, encoded, &group)
                 .map_err(|error| AnalyzeError::Encode(error.to_string()))?;
             let size = index
                 .column_positions
                 .iter()
                 .filter(|position| !columns[**position].is_null())
-                .map(|position| sizes[*position])
+                .map(|position| slots[*position].size)
                 .sum();
-            slots.push(SlotContribution {
-                encoded_value,
-                size,
-                is_null: group.len() == 1 && group[0].is_null(),
-            });
+            slots.push(
+                SlotValue {
+                    encoded_value: encoded,
+                    size,
+                    is_null: group.len() == 1 && group[0].is_null(),
+                }
+                .into_hashed(),
+            );
         }
-        Ok(ScannedRowValues { sampled, slots })
+        Ok(())
     }
 
-    fn index_values(&self, index: &AnalyzedIndex, sampled: &[Datum]) -> Vec<Datum> {
+    fn index_values<'a>(
+        &self,
+        index: &AnalyzedIndex,
+        sampled: &'a [impl Borrow<Datum>],
+    ) -> Vec<Cow<'a, Datum>> {
         index
             .column_positions
             .iter()
             .enumerate()
             .map(|(key_position, column_position)| {
-                let mut value = sampled[*column_position].clone();
-                tidb_tablecodec::cut_datum_by_prefix_len(
-                    &mut value,
-                    index.prefix_length(key_position),
-                    &self.columns[*column_position].field_type,
-                );
-                value
+                let value = sampled[*column_position].borrow();
+                let length = index.prefix_length(key_position);
+                if length == tidb_datatype::UNSPECIFIED_LENGTH {
+                    Cow::Borrowed(value)
+                } else {
+                    Cow::Owned(tidb_tablecodec::clone_datum_by_prefix_len(
+                        value,
+                        length,
+                        &self.columns[*column_position].field_type,
+                    ))
+                }
             })
             .collect()
     }
@@ -567,22 +599,6 @@ impl AnalyzedIndex {
     }
 }
 
-/// One slot's contribution for one scanned row.
-struct SlotContribution {
-    encoded_value: Vec<u8>,
-    size: i64,
-    is_null: bool,
-}
-
-/// One scanned row, in the two forms the collector needs.
-struct ScannedRowValues {
-    /// Raw decoded row values. Go retains this form in `SampleRow.Columns`:
-    /// column workers derive collation keys from it, while index workers cut
-    /// prefix lengths before encoding the index key.
-    sampled: Vec<Datum>,
-    slots: Vec<SlotContribution>,
-}
-
 /// One built histogram, before either tier decides where to keep it.
 #[derive(Clone, Debug)]
 pub struct AnalyzedHistogram {
@@ -623,6 +639,8 @@ pub struct AnalyzeRun<'a> {
     plan: &'a AnalyzePlan,
     options: AnalyzeOptions,
     collector: RowSampleCollector,
+    slots: Vec<HashedSlotValue>,
+    encoded_slot: Vec<u8>,
     sample_rate: f64,
     /// Both native callers scan one record-key range in ascending KV-handle
     /// order. Carry that order through the sampler so its heap layout cannot
@@ -649,10 +667,13 @@ impl<'a> AnalyzeRun<'a> {
                 "ANALYZE TABLE needs a positive SAMPLES count or a positive SAMPLERATE".to_owned(),
             )
         })?;
+        let slot_count = plan.slot_count();
         Ok(Self {
             plan,
             options: *options,
-            collector: RowSampleCollector::new(plan.slot_count(), policy),
+            collector: RowSampleCollector::new(slot_count, policy),
+            slots: Vec::with_capacity(slot_count),
+            encoded_slot: Vec::new(),
             sample_rate,
             next_handle_order: 0,
         })
@@ -662,26 +683,19 @@ impl<'a> AnalyzeRun<'a> {
     /// Rows must arrive in ascending record-key/handle order; both native
     /// production scanners satisfy that contract.
     pub fn push(&mut self, columns: &[Datum]) -> Result<(), AnalyzeError> {
-        let mut row = self.plan.row_of(columns)?;
+        self.plan.prepare_slots(columns, &mut self.slots, &mut self.encoded_slot)?;
         // Go's sample row contains the handle columns and rebuilds a Handle
         // after collectors merge. This engine has one ordered record-range
         // scan rather than region collectors, so the scan position is an
         // exact monotone handle-order key even for an implicit `_tidb_rowid`.
         // It travels as an internal final Datum and is never a stats slot.
-        row.sampled.push(Datum::Int(self.next_handle_order));
+        let handle_order = self.next_handle_order;
         self.next_handle_order = self.next_handle_order.wrapping_add(1);
-        let slots: Vec<SlotValue<'_>> = row
-            .slots
-            .iter()
-            .map(|slot| SlotValue {
-                encoded_value: &slot.encoded_value,
-                size: slot.size,
-                is_null: slot.is_null,
-            })
-            .collect();
-        self.collector.collect(&ScannedRow {
-            columns: &row.sampled,
-            slots: &slots,
+        self.collector.collect_hashed(&self.slots, || {
+            let mut sampled = Vec::with_capacity(columns.len() + 1);
+            sampled.extend_from_slice(columns);
+            sampled.push(Datum::Int(handle_order));
+            sampled
         });
         Ok(())
     }
@@ -846,7 +860,7 @@ impl<'a> AnalyzeRun<'a> {
             if value_length(sampled_value) > MAX_SAMPLE_VALUE_LENGTH {
                 continue;
             }
-            let value = column.stored_value(sampled_value);
+            let value = column.stored_value(sampled_value).into_owned();
             collected.samples.push(SampleItem {
                 encoded: encode_key_of(&value, &plan.time_zone)?,
                 value,
@@ -982,6 +996,77 @@ mod tests {
             "t",
         )
         .unwrap()
+    }
+
+    #[test]
+    fn analyze_sizes_use_original_bytes_before_collation() {
+        let values = [
+            Datum::new_string_datum("A        "),
+            Datum::Bytes(vec![0xff; 128]),
+            Datum::Json(tidb_datatype::BinaryJSON::parse(r#"{"key":[1,2]}"#).unwrap()),
+            Datum::VectorFloat32(tidb_datatype::VectorFloat32::must_create(vec![1.0, -2.0])),
+        ];
+        let columns = [
+            FieldTypeCode::VarString,
+            FieldTypeCode::Blob,
+            FieldTypeCode::Json,
+            FieldTypeCode::VectorFloat32,
+        ]
+        .into_iter()
+        .enumerate()
+        .map(|(position, code)| AnalyzedColumn {
+            id: position as i64 + 1,
+            name: format!("c{position}"),
+            field_type: FieldType::new(code),
+            absent_value: Datum::Null,
+            collation: (position == 0).then_some(Collation::Utf8Mb4GeneralCi),
+        })
+        .collect();
+        let plan = AnalyzePlan::new(columns, Vec::new(), "t").unwrap();
+        let mut slots = Vec::new();
+        let mut encoded = Vec::new();
+        plan.prepare_slots(&values, &mut slots, &mut encoded).unwrap();
+
+        for (position, (slot, value)) in slots.iter().zip(&values).enumerate() {
+            let original = encode_value(std::slice::from_ref(value)).unwrap();
+            assert_eq!(slot.size, original.len() as i64 - 1);
+            let keyed = plan.columns[position].stored_value(value);
+            let keyed_bytes = encode_value(std::slice::from_ref(keyed.as_ref())).unwrap();
+            assert_eq!(slot.hash, tidb_stats::hash_bytes(&keyed_bytes).h1);
+            if position == 0 {
+                assert_ne!(slot.size, keyed_bytes.len() as i64 - 1);
+            }
+        }
+    }
+
+    #[test]
+    fn analyze_failed_row_does_not_commit_any_slots() {
+        let mut columns = one_int_column_plan().columns;
+        let mut second = columns[0].clone();
+        second.id = 2;
+        columns.push(second);
+        let plan = AnalyzePlan::new(columns, Vec::new(), "t").unwrap();
+        let mut run = AnalyzeRun::start(
+            &plan,
+            &AnalyzeOptions {
+                sample_rate: Some(1.0),
+                ..AnalyzeOptions::default()
+            },
+            None,
+        )
+        .unwrap();
+
+        let rejected = [Datum::Int(50), Datum::Raw(vec![0xff])];
+        assert!(matches!(run.push(&rejected), Err(AnalyzeError::Encode(_))));
+        assert_eq!(run.next_handle_order, 0);
+
+        let accepted = [Datum::Null, Datum::Int(30)];
+        run.push(&accepted).unwrap();
+        let result = run.finish().unwrap();
+        assert_eq!((result.scanned_rows, result.sampled_rows), (1, 1));
+        assert_eq!(result.columns[0].histogram.null_count, 1);
+        assert_eq!(result.columns[0].fm_sketch.as_ref().unwrap().ndv(), 0);
+        assert_eq!(result.columns[1].fm_sketch.as_ref().unwrap().ndv(), 1);
     }
 
     #[test]

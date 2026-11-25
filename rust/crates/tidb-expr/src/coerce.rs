@@ -17,6 +17,7 @@
 //! Representation remains owned exclusively by `tidb-datatype`; this module
 //! owns only evaluator operations over that representation.
 
+use std::borrow::Cow;
 use std::cmp::Ordering;
 
 use tidb_datatype::{BinaryLiteralIntOutcome, Datum, Decimal};
@@ -262,6 +263,14 @@ pub(crate) fn coerce_str_bytes(value: &Datum) -> Result<Option<Vec<u8>>, EvalErr
             return Err(EvalError::Unsupported("range sentinel byte coercion"));
         }
     })
+}
+
+/// Borrows an existing byte payload or uses the ordinary string conversion.
+pub(crate) fn borrow_str_bytes(value: &Datum) -> Result<Option<Cow<'_, [u8]>>, EvalError> {
+    if let Some(bytes) = value.as_raw_bytes() {
+        return Ok(Some(Cow::Borrowed(bytes)));
+    }
+    Ok(coerce_str_bytes(value)?.map(Cow::Owned))
 }
 
 pub(crate) fn binary_literal_value(value: &tidb_datatype::BinaryLiteral) -> u64 {

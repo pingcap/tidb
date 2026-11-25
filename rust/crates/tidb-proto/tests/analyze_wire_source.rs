@@ -38,10 +38,20 @@ fn full_sampling_response_preserves_counts_and_sample_weights() {
         0x1a, 0x0e, 0x0a, 0x07, 0x0a, 0x03, 0x01, 0x02, 0x03, 0x10, 0x07, 0x10, 0x02, 0x18, 0xe8,
         0x07,
     ];
-    let response = tipb::AnalyzeColumnsResp::decode(wire.as_slice()).unwrap();
+    let wire = prost::bytes::Bytes::copy_from_slice(&wire);
+    let response = tidb_proto::analyze_input::AnalyzeColumnsResp::decode(wire.clone()).unwrap();
+    assert_eq!(
+        response.encode_to_vec(),
+        tipb::AnalyzeColumnsResp::decode(wire.as_ref())
+            .unwrap()
+            .encode_to_vec(),
+    );
     let collector = response.row_collector.unwrap();
     assert_eq!(collector.count, Some(1000));
     assert_eq!(collector.null_counts, vec![2]);
     assert_eq!(collector.samples[0].weight, Some(7));
-    assert_eq!(collector.samples[0].row, vec![vec![1, 2, 3]]);
+    assert_eq!(collector.samples[0].row.len(), 1);
+    let cell = &collector.samples[0].row[0];
+    assert_eq!(cell.as_ref(), [1, 2, 3]);
+    assert_eq!(cell.as_ptr(), wire[6..].as_ptr());
 }

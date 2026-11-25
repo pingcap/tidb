@@ -82,6 +82,7 @@ pub fn encode_varint(buffer: &mut Vec<u8>, value: i64) {
 }
 
 /// Decodes Go `encoding/binary.Varint`'s representation.
+#[inline]
 pub fn decode_varint(input: &[u8]) -> Result<(&[u8], i64), CodecError> {
     let (remain, unsigned) = decode_uvarint(input)?;
     let mut value = (unsigned >> 1) as i64;
@@ -101,22 +102,42 @@ pub fn encode_uvarint(buffer: &mut Vec<u8>, mut value: u64) {
 }
 
 /// Decodes Go `encoding/binary.Uvarint`'s representation.
+#[inline]
 pub fn decode_uvarint(input: &[u8]) -> Result<(&[u8], u64), CodecError> {
-    let mut value = 0_u64;
-    for (index, byte) in input.iter().copied().enumerate() {
-        if index == 9 && byte > 1 {
-            return Err(CodecError::InvalidEncoding("varint larger than 64 bits"));
+    let (remain, value) = match input {
+        [a @ 0..=0x7f, rest @ ..] => (rest, u64::from(*a)),
+        [a, b @ 0..=0x7f, rest @ ..] => {
+            (rest, u64::from(a & 0x7f) | (u64::from(*b) << 7))
         }
+        [a, b, c @ 0..=0x7f, rest @ ..] => (
+            rest,
+            u64::from(a & 0x7f) | (u64::from(b & 0x7f) << 7) | (u64::from(*c) << 14),
+        ),
+        _ => return decode_long_uvarint(input),
+    };
+    Ok((remain, value))
+}
+
+#[inline(never)]
+fn decode_long_uvarint(input: &[u8]) -> Result<(&[u8], u64), CodecError> {
+    let mut value = 0_u64;
+    for (index, byte) in input.iter().copied().take(9).enumerate() {
         if byte < 0x80 {
             value |= u64::from(byte) << (7 * index);
             return Ok((&input[index + 1..], value));
         }
-        if index >= 9 {
-            return Err(CodecError::InvalidEncoding("varint larger than 64 bits"));
-        }
         value |= u64::from(byte & 0x7f) << (7 * index);
     }
-    Err(CodecError::InsufficientBytes)
+    // Only one payload bit fits in the tenth byte. A continuation there
+    // is incomplete until an eleventh byte arrives, as in Go binary.Uvarint.
+    match input.get(9).copied() {
+        Some(byte @ 0..=1) => Ok((&input[10..], value | (u64::from(byte) << 63))),
+        Some(2..=0x7f) => Err(CodecError::InvalidEncoding("varint larger than 64 bits")),
+        Some(_) if input.len() > 10 => {
+            Err(CodecError::InvalidEncoding("varint larger than 64 bits"))
+        }
+        _ => Err(CodecError::InsufficientBytes),
+    }
 }
 
 /// Appends TiDB's variable-length mem-comparable signed integer.
@@ -125,15 +146,17 @@ pub fn encode_comparable_varint(buffer: &mut Vec<u8>, value: i64) {
         encode_comparable_uvarint(buffer, value as u64);
         return;
     }
-    let bytes = value.to_be_bytes();
-    let length = (1..8)
-        .find(|length| {
-            let threshold = -((1_i128 << (length * 8)) - 1);
-            i128::from(value) >= threshold
-        })
-        .unwrap_or(8);
-    buffer.push(NEGATIVE_TAG_END - length as u8);
-    buffer.extend_from_slice(&bytes[8 - length..]);
+    let length = byte_width(value.unsigned_abs());
+    if length == 1 {
+        buffer.extend_from_slice(&[NEGATIVE_TAG_END - 1, value as u8]);
+        return;
+    }
+    append_comparable_word(
+        buffer,
+        NEGATIVE_TAG_END - length as u8,
+        value as u64,
+        length,
+    );
 }
 
 /// Appends TiDB's variable-length mem-comparable unsigned integer.
@@ -142,11 +165,31 @@ pub fn encode_comparable_uvarint(buffer: &mut Vec<u8>, value: u64) {
         buffer.push(value as u8 + NEGATIVE_TAG_END);
         return;
     }
-    let bytes = value.to_be_bytes();
-    let first = bytes.iter().position(|byte| *byte != 0).unwrap_or(7);
-    let encoded = &bytes[first..];
-    buffer.push(POSITIVE_TAG_START + encoded.len() as u8);
-    buffer.extend_from_slice(encoded);
+    let length = byte_width(value);
+    append_comparable_word(buffer, POSITIVE_TAG_START + length as u8, value, length);
+}
+
+fn byte_width(value: u64) -> usize {
+    8 - (value.leading_zeros() / 8) as usize
+}
+
+fn append_comparable_word(buffer: &mut Vec<u8>, tag: u8, value: u64, length: usize) {
+    let [b7, b6, b5, b4, b3, b2, b1, b0] = value.to_be_bytes();
+    // Append the tag and the significant low bytes together, as Go does.
+    match length {
+        1 => buffer.extend_from_slice(&[tag, b0]),
+        2 => buffer.extend_from_slice(&[tag, b1, b0]),
+        3 => buffer.extend_from_slice(&[tag, b2, b1, b0]),
+        4 => {
+            let encoded = ((u64::from(tag) << 32) | u64::from(value as u32)).to_be_bytes();
+            buffer.extend_from_slice(&encoded[3..]);
+        }
+        5 => buffer.extend_from_slice(&[tag, b4, b3, b2, b1, b0]),
+        6 => buffer.extend_from_slice(&[tag, b5, b4, b3, b2, b1, b0]),
+        7 => buffer.extend_from_slice(&[tag, b6, b5, b4, b3, b2, b1, b0]),
+        8 => buffer.extend_from_slice(&[tag, b7, b6, b5, b4, b3, b2, b1, b0]),
+        _ => unreachable!("comparable integers use one to eight payload bytes"),
+    }
 }
 
 /// Decodes TiDB's variable-length mem-comparable unsigned integer.

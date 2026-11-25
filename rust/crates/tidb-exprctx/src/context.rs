@@ -18,6 +18,7 @@
 //! evaluation context. It owns no scalar representation; every value crossing
 //! the seam is the dependency-leaf [`tidb_datatype::Datum`].
 
+use std::borrow::Cow;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use tidb_datatype::Datum;
@@ -547,6 +548,11 @@ pub trait Columns {
         "OFF".to_owned()
     }
 
+    /// Borrows the redaction setting when the evaluation context stores it.
+    fn tidb_redact_log_ref(&self) -> Cow<'_, str> {
+        Cow::Owned(self.tidb_redact_log())
+    }
+
     /// Go `StmtCtx.FTSFunctionIsUsed`.
     fn fts_function_is_used(&self) -> bool {
         false
@@ -905,6 +911,10 @@ pub struct NoColumns;
 impl Columns for NoColumns {
     fn get(&self, _: &[String]) -> Option<Datum> {
         None
+    }
+
+    fn tidb_redact_log_ref(&self) -> Cow<'_, str> {
+        Cow::Borrowed("OFF")
     }
 }
 

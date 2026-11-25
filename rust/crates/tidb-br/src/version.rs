@@ -17,6 +17,7 @@
 //! parser. `FetchVersion` (a `database/sql` query, used by the Dumpling and
 //! Lightning CLIs) is not ported.
 
+use std::borrow::Cow;
 use std::sync::{LazyLock, Mutex};
 
 use regex::Regex;
@@ -386,8 +387,9 @@ pub fn check_tidb_version(version_str: &str, min: &Version, max: &Version) -> Re
 #[must_use]
 pub fn normalize_backup_version(version: &str) -> Option<Version> {
     let trimmed = version.trim();
-    let unquoted = tidb_go_strconv::unquote(trimmed.as_bytes())
-        .map_or_else(|_| trimmed.to_owned(), |b| String::from_utf8_lossy(&b).into_owned());
+    let unquoted =
+        tidb_go_strconv::unquote_view(trimmed.as_bytes()).unwrap_or(Cow::Borrowed(trimmed.as_bytes()));
+    let unquoted = String::from_utf8_lossy(&unquoted);
     let normalized = unquoted.trim();
     match tidb_go_semver::new_version(normalized) {
         Ok(v) => Some(v),

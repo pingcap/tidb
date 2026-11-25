@@ -64,7 +64,7 @@ impl Job {
             "job id: {}, estimated size: {}, sql: {}",
             self.job_id,
             self.job_size,
-            tidb_redact::string(redact, &self.sql)
+            tidb_redact::string_cow(redact, self.sql.as_str())
         )
     }
 }

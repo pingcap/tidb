@@ -32,7 +32,8 @@ pub use consts::*;
 pub use locale::*;
 pub use privilege::*;
 pub use simple_case::{
-    equal_fold, lowercase_equal, simple_fold, to_lowercase, to_uppercase, GO_UNICODE_VERSION,
+    equal_fold, lowercase_equal, simple_case_char, simple_fold, to_lowercase, to_lowercase_cow, to_uppercase,
+    to_uppercase_cow, utf8_to_case_cow, GO_UNICODE_VERSION,
 };
 pub use types::*;
 pub use unicode_category::{is_unicode_lowercase_letter, is_unicode_uppercase_letter};

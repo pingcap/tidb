@@ -23,10 +23,10 @@
 mod common;
 
 use std::collections::HashSet;
-use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
+use crossbeam_channel::{Receiver, bounded};
 use tidb_timer::client::TimerClient;
 use tidb_timer::go_time::{GoTime, MINUTE, SECOND};
 use tidb_timer::hook::Hook;
@@ -37,7 +37,7 @@ use tidb_timer_runtime::{
     max_trigger_event_interval, min_trigger_event_interval, new_timer_runtime_builder,
     re_watch_interval, retry_busy_worker_interval, set_batch_process_watch_resp_interval,
     set_in_test_intervals, set_max_trigger_event_interval, set_min_trigger_event_interval,
-    set_re_watch_interval, TimerGroupRuntime,
+    set_re_watch_interval, TimerGroupRuntime, WaitGroup,
 };
 use tidb_timer::store::{
     Context, OperatorTp, OptionalVal, TimerCond, WatchTimerEvent, WatchTimerEventType,
@@ -86,7 +86,7 @@ fn channel_only_worker(
     runtime: &TimerGroupRuntime,
     capacity: usize,
 ) -> Receiver<Option<TriggerEventRequest>> {
-    let (sender, receiver): (SyncSender<Option<TriggerEventRequest>>, _) = sync_channel(capacity);
+    let (sender, receiver) = bounded(capacity);
     runtime.workers().insert(
         "hook1".to_string(),
         Arc::new(HookWorker::channel_only(sender)),
@@ -96,6 +96,112 @@ fn channel_only_worker(
 
 fn fixed_now(now: GoTime) -> Arc<dyn Fn() -> GoTime + Send + Sync> {
     Arc::new(move || now.clone())
+}
+
+#[test]
+fn wait_group_covers_concurrent_waiters_and_nested_callbacks() {
+    let group = Arc::new(WaitGroup::new());
+    let nested_group = Arc::clone(&group);
+    let (release_parent, parent_gate) = bounded::<()>(1);
+    let (release_child, child_gate) = bounded::<()>(1);
+    let (started_child, child_started) = bounded::<()>(1);
+    group.run(move || {
+        parent_gate.recv().unwrap();
+        nested_group.run(move || {
+            started_child.send(()).unwrap();
+            child_gate.recv().unwrap();
+        });
+    });
+
+    let (ready, started_wait) = bounded::<()>(2);
+    let (done, completed_wait) = bounded::<()>(2);
+    let waiters: Vec<_> = (0..2)
+        .map(|_| {
+            let group = Arc::clone(&group);
+            let (ready, done) = (ready.clone(), done.clone());
+            std::thread::spawn(move || {
+                ready.send(()).unwrap();
+                group.wait();
+                done.send(()).unwrap();
+            })
+        })
+        .collect();
+    for _ in 0..2 {
+        started_wait.recv_timeout(Duration::from_secs(1)).unwrap();
+    }
+    let returned_before_parent = completed_wait.recv_timeout(Duration::from_millis(40)).is_ok();
+    release_parent.send(()).unwrap();
+    child_started.recv_timeout(Duration::from_secs(1)).unwrap();
+    let returned_before_child = completed_wait.recv_timeout(Duration::from_millis(40)).is_ok();
+    release_child.send(()).unwrap();
+    for waiter in waiters {
+        waiter.join().unwrap();
+    }
+    group.wait();
+    assert!(!returned_before_parent, "a waiter missed the parent callback");
+    assert!(!returned_before_child, "a waiter missed the nested callback");
+}
+
+#[test]
+fn wait_group_completes_after_callback_panic() {
+    let group = WaitGroup::new();
+    group.run(|| panic!("callback panic"));
+    group.wait();
+
+    let (done, completed) = bounded::<()>(1);
+    group.run(move || done.send(()).unwrap());
+    group.wait();
+    completed.try_recv().unwrap();
+}
+
+#[test]
+fn wait_group_allows_blocking_callbacks_to_run_concurrently() {
+    const CALLBACKS: usize = 12;
+    let group = WaitGroup::new();
+    let (started_tx, started_rx) = bounded::<()>(CALLBACKS);
+    let (release_tx, release_rx) = bounded::<()>(CALLBACKS);
+
+    for _ in 0..2 {
+        for _ in 0..CALLBACKS {
+            let (started, release) = (started_tx.clone(), release_rx.clone());
+            group.run(move || {
+                started.send(()).unwrap();
+                release.recv().unwrap();
+            });
+        }
+        let all_started = (0..CALLBACKS)
+            .all(|_| started_rx.recv_timeout(Duration::from_secs(1)).is_ok());
+        for _ in 0..CALLBACKS {
+            release_tx.send(()).unwrap();
+        }
+        group.wait();
+        assert!(all_started, "idle worker reuse limited running callbacks");
+    }
+}
+
+#[test]
+fn wait_group_publishes_callback_results_across_reuse() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Barrier;
+
+    let group = WaitGroup::new();
+    let results = Arc::new([AtomicUsize::new(0), AtomicUsize::new(0)]);
+    let both_started = Arc::new(Barrier::new(results.len()));
+    for round in 1..=32 {
+        for slot in 0..results.len() {
+            let results = Arc::clone(&results);
+            let both_started = Arc::clone(&both_started);
+            group.run(move || {
+                both_started.wait();
+                results[slot].store(round, Ordering::Relaxed);
+            });
+        }
+        group.wait();
+        for result in results.iter() {
+            assert_eq!(result.load(Ordering::Relaxed), round);
+        }
+        group.wait();
+    }
 }
 
 #[test]
@@ -843,7 +949,7 @@ fn test_create_watch_timer_chan() {
     let (mock_core, mock_store) = MockStoreCore::new();
     let runtime = new_timer_runtime_builder("g1", mock_store).build();
 
-    let (sender, receiver) = sync_channel(1);
+    let (sender, receiver) = bounded(1);
     sender
         .send(WatchTimerResponse {
             events: vec![WatchTimerEvent {
@@ -879,10 +985,10 @@ fn test_watch_timer_retry() {
     let (mock_core, mock_store) = MockStoreCore::new();
 
     // a closed channel: the sender is dropped straight away
-    let (closed_tx, closed_rx) = sync_channel::<WatchTimerResponse>(0);
+    let (closed_tx, closed_rx) = bounded::<WatchTimerResponse>(0);
     drop(closed_tx);
     // a channel that stays open
-    let (normal_tx, normal_rx) = sync_channel::<WatchTimerResponse>(0);
+    let (normal_tx, normal_rx) = bounded::<WatchTimerResponse>(0);
 
     mock_core.on_watch_supported.always(Outcome::Ok(true));
     mock_core.on_list.always(Outcome::Ok(Vec::new()));
