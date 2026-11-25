@@ -306,13 +306,9 @@ type Service struct {
 	closeOnce sync.Once
 }
 
-// New return a Service instance.
-func New(selfAddr string, etcdAddr []string, store kv.Storage, tlsConfig *tls.Config) *Service {
-	service, err := NewWithContext(context.Background(), selfAddr, etcdAddr, store, tlsConfig)
-	if err != nil {
-		panic(err)
-	}
-	return service
+// New returns a Service instance or an initialization error.
+func New(selfAddr string, etcdAddr []string, store kv.Storage, tlsConfig *tls.Config) (*Service, error) {
+	return NewWithContext(context.Background(), selfAddr, etcdAddr, store, tlsConfig)
 }
 
 // NewWithContext allows cancellation while initializing the AutoID service.

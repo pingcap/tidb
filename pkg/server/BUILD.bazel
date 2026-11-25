@@ -245,6 +245,7 @@ go_test(
         "@com_github_pingcap_kvproto//pkg/kvrpcpb",
         "@com_github_pingcap_kvproto//pkg/metapb",
         "@com_github_pingcap_kvproto//pkg/tikvpb",
+        "@com_github_pingcap_log//:log",
         "@com_github_prometheus_client_golang//prometheus",
         "@com_github_prometheus_client_golang//prometheus/testutil",
         "@com_github_prometheus_client_model//go",
@@ -261,5 +262,7 @@ go_test(
         "@org_golang_google_grpc//status",
         "@org_uber_go_atomic//:atomic",
         "@org_uber_go_goleak//:goleak",
+        "@org_uber_go_zap//:zap",
+        "@org_uber_go_zap//zapcore",
     ],
 )

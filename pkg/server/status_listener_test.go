@@ -25,6 +25,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/deploymode"
 	"github.com/pingcap/tidb/pkg/config/diagnosticmode"
@@ -36,6 +37,8 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.etcd.io/etcd/api/v3/etcdserverpb"
 	"go.uber.org/goleak"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 	"google.golang.org/grpc"
 )
 
@@ -77,11 +80,11 @@ func (c *statusShutdownController) OnServerShutdown(s StandbyShutdownServer) {
 type statusAutoIDStore struct {
 	kv.Storage
 	kv.EtcdBackend
-	etcdAddr string
+	etcdAddrs []string
 }
 
 func (s *statusAutoIDStore) EtcdAddrs() ([]string, error) {
-	return []string{s.etcdAddr}, nil
+	return s.etcdAddrs, nil
 }
 
 func (*statusAutoIDStore) TLSConfig() *tls.Config { return nil }
@@ -124,6 +127,34 @@ func (*blockingStatusLeaseServer) LeaseKeepAlive(stream etcdserverpb.Lease_Lease
 }
 
 func TestStatusServerClose(t *testing.T) {
+	t.Run("AutoID initialization error", func(t *testing.T) {
+		store := testkit.CreateMockStore(t)
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/server/autoIDServiceStore", func(storage *kv.Storage, err *error) {
+			*storage = &statusAutoIDStore{Storage: store}
+			*err = nil
+		})
+		cfg := util.NewTestConfig()
+		cfg.Store = config.StoreTypeTiKV
+		cfg.Path = "%"
+		s := NewTestServer(cfg)
+		defer s.Close()
+		grpcServer := grpc.NewServer()
+		defer grpcServer.Stop()
+		logger, props, err := log.InitLogger(new(log.Config), zap.WithFatalHook(zapcore.WriteThenPanic))
+		require.NoError(t, err)
+		defer log.ReplaceGlobals(logger, props)()
+
+		require.PanicsWithValue(t, "initialize auto ID service failed", func() {
+			s.setupAutoIDService(context.Background(), grpcServer)
+		})
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		require.NotPanics(t, func() {
+			require.Nil(t, s.setupAutoIDService(ctx, grpcServer))
+		})
+		require.Empty(t, grpcServer.GetServiceInfo(), "failed AutoID initialization must not register a service")
+	})
+
 	t.Run("blocked AutoID lease grant", func(t *testing.T) {
 		ignoreCurrent := goleak.IgnoreCurrent()
 		t.Cleanup(func() { goleak.VerifyNone(t, ignoreCurrent) })
@@ -139,7 +170,7 @@ func TestStatusServerClose(t *testing.T) {
 		go func() { _ = grpcServer.Serve(listener) }()
 		defer grpcServer.Stop()
 		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/server/autoIDServiceStore", func(storage *kv.Storage, err *error) {
-			*storage = &statusAutoIDStore{Storage: store, etcdAddr: listener.Addr().String()}
+			*storage = &statusAutoIDStore{Storage: store, etcdAddrs: []string{listener.Addr().String()}}
 			*err = nil
 		})
 		cfg := util.NewTestConfig()

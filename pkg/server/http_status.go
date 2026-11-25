@@ -697,7 +697,7 @@ func (s *Server) setupAutoIDService(ctx context.Context, grpcServer *grpc.Server
 		if ctx.Err() != nil {
 			return nil
 		}
-		panic(err)
+		logutil.BgLogger().Fatal("initialize auto ID service failed", zap.Error(err))
 	}
 	logutil.BgLogger().Info("register auto service at", zap.String("addr", selfAddr))
 	pb.RegisterAutoIDAllocServer(grpcServer, service)

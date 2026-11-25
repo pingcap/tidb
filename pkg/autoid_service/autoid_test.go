@@ -63,6 +63,12 @@ func (resp rebaseResp) check(msg string) {
 	require.Equal(resp.T, string(resp.RebaseResponse.GetErrmsg()), msg)
 }
 
+func TestNew(t *testing.T) {
+	service, err := New("", nil, nil, nil)
+	require.EqualError(t, err, "etcdclient: no available endpoints")
+	require.Nil(t, service)
+}
+
 func TestConcurrent(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
