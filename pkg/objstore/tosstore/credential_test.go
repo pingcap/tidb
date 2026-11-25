@@ -31,6 +31,7 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	vtos "github.com/volcengine/ve-tos-golang-sdk/v2/tos"
 )
@@ -142,7 +143,7 @@ func TestAssumeRole(t *testing.T) {
 		calls := 0
 		hc := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 			calls++
-			require.Equal(t, "sts.cn-beijing.volcengineapi.com", req.URL.Host)
+			assert.Equal(t, "sts.cn-beijing.volcengineapi.com", req.URL.Host)
 			return response(200, fmt.Sprintf(`{"Result":{"Credentials":{"AccessKeyId":"assumed","SecretAccessKey":"secret","SessionToken":"token","ExpiredTime":%q}}}`, time.Now().Add(time.Hour).Format(time.RFC3339))), nil
 		})}
 		for _, forward := range []bool{false, true} {
@@ -190,7 +191,7 @@ func TestAssumeRole(t *testing.T) {
 		calls := 0
 		http.DefaultTransport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
 			calls++
-			require.Equal(t, "sts.cn-beijing.volcengineapi.com", req.URL.Host)
+			assert.Equal(t, "sts.cn-beijing.volcengineapi.com", req.URL.Host)
 			return response(200, fmt.Sprintf(`{"Result":{"Credentials":{"AccessKeyId":"assumed","SecretAccessKey":"secret","SessionToken":"token","ExpiredTime":%q}}}`, time.Now().Add(time.Hour).Format(time.RFC3339))), nil
 		})
 		q := testBackend()
@@ -297,6 +298,38 @@ func TestCredentialRefresh(t *testing.T) {
 	p.current.expiry = time.Now().Add(-time.Second)
 	p.mu.Unlock()
 	require.Empty(t, p.Credential())
+
+	t.Run("expired refresh failure honors backoff window", func(t *testing.T) {
+		var fetches atomic.Int32
+		stsErr := errors.New("STS unavailable")
+		creds := &credentials{
+			current: credential{
+				Credential: vtos.Credential{AccessKeyID: "expired", AccessKeySecret: "sk"},
+				expiry:     time.Now().Add(-time.Second),
+			},
+			fetch: func(context.Context) (credential, error) {
+				fetches.Add(1)
+				return credential{}, stsErr
+			},
+		}
+		for range 3 {
+			_, err := creds.resolve(context.Background())
+			require.ErrorIs(t, err, stsErr)
+		}
+		require.EqualValues(t, 1, fetches.Load())
+		creds.mu.Lock()
+		require.WithinDuration(t, time.Now().Add(30*time.Second), creds.refreshAt, time.Second)
+		creds.refreshAt = time.Now().Add(-time.Second)
+		creds.fetch = func(context.Context) (credential, error) {
+			fetches.Add(1)
+			return temporaryCredential("recovered", "sk", "token", time.Now().Add(time.Hour).Format(time.RFC3339))
+		}
+		creds.mu.Unlock()
+		got, err := creds.resolve(context.Background())
+		require.NoError(t, err)
+		require.Equal(t, "recovered", got.AccessKeyID)
+		require.EqualValues(t, 2, fetches.Load())
+	})
 }
 
 func TestCredentialGuard(t *testing.T) {

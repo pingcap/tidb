@@ -51,6 +51,7 @@ type credentials struct {
 	mu        sync.Mutex
 	current   credential
 	refreshAt time.Time
+	lastErr   error
 	call      *refreshCall
 	fetch     func(context.Context) (credential, error)
 }
@@ -121,6 +122,11 @@ func (c *credentials) resolve(ctx context.Context) (vtos.Credential, error) {
 	c.mu.Lock()
 	now := time.Now()
 	valid := c.fetch == nil || now.Before(c.current.expiry)
+	if !valid && c.call == nil && c.lastErr != nil && now.Before(c.refreshAt) {
+		err := c.lastErr
+		c.mu.Unlock()
+		return vtos.Credential{}, err
+	}
 	if c.fetch != nil && c.call == nil && (!valid || !now.Before(c.refreshAt)) {
 		c.startRefreshLocked(ctx)
 	}
@@ -175,8 +181,10 @@ func (c *credentials) refresh(ctx context.Context, call *refreshCall) {
 	if call.err == nil {
 		call.result.fetchedAt = now
 		c.current = call.result
+		c.lastErr = nil
 		c.refreshAt = c.current.expiry.Add(-min(c.current.expiry.Sub(now)/10, 6*time.Minute))
 	} else {
+		c.lastErr = call.err
 		c.refreshAt = now.Add(30 * time.Second)
 	}
 	c.call = nil
