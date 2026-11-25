@@ -357,10 +357,11 @@ func TestIndexJoinAnalyzeLookUpFilters(t *testing.T) {
 func testIndexJoinLookupRangeCount(t *testing.T) {
 	fixture := prepareForAnalyzeLookUpFilters()
 	ds := fixture.dataSourceNode
-	var bValues, cValues []string
-	for i := range 36 {
-		bValues = append(bValues, fmt.Sprint(i))
-		cValues = append(cValues, fmt.Sprintf("'%02d'", i))
+	bValues := make([]string, 36)
+	cValues := make([]string, len(bValues))
+	for i := range bValues {
+		bValues[i] = fmt.Sprint(i)
+		cValues[i] = fmt.Sprintf("'%02d'", i)
 	}
 	predicate := fmt.Sprintf("b in (%s) and c in (%s)", strings.Join(bValues, ","), strings.Join(cValues, ","))
 	conds, err := rewriteSimpleExpr(ds.SCtx().GetExprCtx(), predicate, ds.Schema(), fixture.dsNames)
