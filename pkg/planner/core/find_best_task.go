@@ -908,7 +908,7 @@ func comparePseudo(lhsPseudo, rhsPseudo, lhsFullMatch, rhsFullMatch bool, eqOrIn
 }
 
 // Return the index with the higher EqOrInCondCount as winner (1 for lhs, -1 for rhs, 0 for tie),
-// unless its range count exceeds rangeMaxCount. Zero disables this threshold.
+// unless its range count exceeds rangeMaxCount. A value of zero disables this threshold.
 // For example:
 //
 //	where a=1 and b=1 and c=1 and d=1
