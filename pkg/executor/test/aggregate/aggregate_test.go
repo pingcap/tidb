@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/aggregate"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/stretchr/testify/require"
 )
@@ -380,6 +381,33 @@ func genListPartition(begin, end int) string {
 	}
 	buf.WriteString(fmt.Sprintf("%v)", end-1))
 	return buf.String()
+}
+
+func TestHashAggFinalizationError(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_json_objectagg(k mediumtext, v int)")
+	tk.MustExec("insert into t_json_objectagg values (repeat('a', 65535), 1), (repeat('b', 65536), 2)")
+
+	for _, concurrency := range [][2]int{{1, 1}, {1, 2}, {2, 1}, {2, 2}} {
+		t.Run(fmt.Sprintf("partial=%d/final=%d", concurrency[0], concurrency[1]), func(t *testing.T) {
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("use test")
+			tk.MustExec(fmt.Sprintf("set tidb_hashagg_partial_concurrency=%d", concurrency[0]))
+			tk.MustExec(fmt.Sprintf("set tidb_hashagg_final_concurrency=%d", concurrency[1]))
+			// A 65535-byte key is valid; the next byte is rejected only during finalization.
+			tk.MustQuery("select /*+ hash_agg() */ json_length(json_objectagg(k, v)) from t_json_objectagg where v = 1").Check(testkit.Rows("1"))
+			for _, sql := range []string{
+				"select /*+ hash_agg() */ json_objectagg(k, v) from t_json_objectagg where v = 2",
+				"select /*+ hash_agg() */ json_objectagg(k, v) from t_json_objectagg where v = 2 group by v",
+				"select /*+ hash_agg() */ count(*), json_objectagg(k, v) from t_json_objectagg where v = 2 group by v",
+			} {
+				tk.MustHavePlan(sql, "HashAgg")
+				require.EqualError(t, tk.QueryToErr(sql), types.ErrJSONObjectKeyTooLong.Error(), sql)
+			}
+		})
+	}
 }
 
 func TestParallelHashAgg(t *testing.T) {

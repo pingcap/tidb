@@ -9,13 +9,18 @@ go_test(
     ],
     data = glob(["testdata/**"]),
     flaky = True,
+<<<<<<< HEAD
     shard_count = 7,
+=======
+    shard_count = 12,
+>>>>>>> 65cf2f0a62d (executor: propagate parallel HashAgg finalization errors (#73675))
     deps = [
         "//pkg/config",
         "//pkg/executor/aggregate",
         "//pkg/session",
         "//pkg/testkit",
         "//pkg/testkit/testsetup",
+        "//pkg/types",
         "//pkg/util/sqlexec",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
