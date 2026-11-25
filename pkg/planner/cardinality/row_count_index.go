@@ -547,7 +547,10 @@ func expBackoffEstimationByColIDs(sctx planctx.PlanContext, coll *statistics.His
 		l = 0
 	})
 	if l == 1 {
-		return singleColumnEstResults[0], singleColumnEstResults[0], singleColumnEstResults[0], true, nil
+		// With a single usable column there is nothing to back off, but its worst case
+		// (tracked in maxSel) still applies.
+		sel = singleColumnEstResults[0]
+		return sel, sel, max(maxSel, sel), true, nil
 	} else if l == 0 {
 		return 0, 0, 0, false, nil
 	}
