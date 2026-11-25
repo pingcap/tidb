@@ -485,6 +485,12 @@ func (er *expressionRewriter) constructBinaryOpFunction(l expression.Expression,
 func (er *expressionRewriter) buildSubquery(ctx context.Context, planCtx *exprRewriterPlanCtx, subq *ast.SubqueryExpr, subqueryCtx subQueryCtx) (np base.LogicalPlan, hintFlags uint64, err error) {
 	intest.AssertNotNil(planCtx)
 	b := planCtx.builder
+	// The subquery shares this builder with its outer query. Keep its clauses
+	// from changing the context of later outer expressions.
+	outerClause := b.curClause
+	defer func() {
+		b.curClause = outerClause
+	}()
 	if er.schema != nil {
 		outerSchema := er.schema.Clone()
 		b.outerSchemas = append(b.outerSchemas, outerSchema)
