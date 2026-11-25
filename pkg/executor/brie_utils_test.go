@@ -22,6 +22,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/executor"
@@ -394,6 +395,53 @@ func TestBRIEGlueSessionReadOnlySequence(t *testing.T) {
 			require.NoError(t, err)
 			require.Greater(t, next, int64(41))
 		})
+	}
+}
+
+func TestBRIEGlueSessionAutocommit(t *testing.T) {
+	for _, batch := range []bool{false, true} {
+		for _, readOnly := range []bool{false, true} {
+			t.Run(fmt.Sprintf("batch=%t/readOnly=%t", batch, readOnly), func(t *testing.T) {
+				store := testkit.CreateMockStore(t)
+				tk := testkit.NewTestKit(t, store)
+				tk.MustExec("set global autocommit = 0")
+				defer tk.MustExec("set global autocommit = 1")
+				testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockModifySchemaReadOnlyDDL", "return")
+
+				ctx := context.Background()
+				gs, err := executor.NewBRIEGlueForTest(tk.Session()).CreateSession(store)
+				require.NoError(t, err)
+				defer gs.Close()
+				// Match restore initialization, which loads global session defaults.
+				require.NoError(t, gs.Execute(ctx, "set @@sql_mode = ''"))
+				dbName := ast.NewCIStr("restore_autocommit")
+				require.NoError(t, gs.CreateDatabaseOnExistError(ctx, &model.DBInfo{
+					Name: dbName, ReadOnly: readOnly,
+				}))
+
+				for _, name := range []string{"s1", "s2"} {
+					tbl := &model.TableInfo{
+						Name: ast.NewCIStr(name), State: model.StatePublic,
+						Sequence: &model.SequenceInfo{Start: 1, MinValue: 1, MaxValue: 1000, Increment: 1},
+					}
+					if batch {
+						batchSession, ok := gs.(glue.BatchCreateTableSession)
+						require.True(t, ok)
+						require.NoError(t, batchSession.CreateTables(ctx, map[string][]*model.TableInfo{dbName.L: {tbl}}))
+					} else {
+						require.NoError(t, gs.CreateTable(ctx, dbName, tbl))
+					}
+					// Interleave creation and SETVAL to detect a stale transaction schema
+					// when the same restore worker handles another sequence.
+					func() {
+						defer privilege.WithInternalSchemaReadOnlyBypass(gs.GetSessionCtx(), dbName.L)()
+						require.NoError(t, gs.Execute(ctx, fmt.Sprintf("do setval(%s.%s, 41)", dbName.O, name)))
+					}()
+				}
+				require.True(t, gs.GetSessionCtx().GetSessionVars().IsAutocommit())
+				require.False(t, gs.GetSessionCtx().GetSessionVars().InTxn())
+			})
+		}
 	}
 }
 

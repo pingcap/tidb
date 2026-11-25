@@ -44,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
@@ -737,6 +738,12 @@ func (gs *tidbGlue) GetDomain(_ kv.Storage) (*domain.Domain, error) {
 func (gs *tidbGlue) CreateSession(_ kv.Storage) (glue.Session, error) {
 	newSCtx, err := CreateSession(gs.se)
 	if err != nil {
+		return nil, err
+	}
+	// Restore workers interleave direct DDL calls and SQL, so each SQL statement
+	// must finish its transaction before the worker creates another table.
+	if err := newSCtx.GetSessionVars().SetSystemVar(vardef.AutoCommit, "1"); err != nil {
+		CloseSession(newSCtx)
 		return nil, err
 	}
 	return &tidbGlueSession{se: newSCtx}, nil
