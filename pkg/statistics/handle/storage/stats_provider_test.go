@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package crossks_test
+package storage_test
 
 import (
 	"context"
@@ -21,7 +21,6 @@ import (
 
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/domain/crossks"
 	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
@@ -30,13 +29,14 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	plannerstats "github.com/pingcap/tidb/pkg/planner/core/stats"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	statsstorage "github.com/pingcap/tidb/pkg/statistics/handle/storage"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
 
-var _ plannerstats.PhysicalTableStatsProvider = (*crossks.OnDemandStatsProvider)(nil)
+var _ plannerstats.PhysicalTableStatsProvider = (*statsstorage.OnDemandStatsProvider)(nil)
 
 type countingSessionPool struct {
 	util.DestroyableSessionPool
@@ -82,7 +82,7 @@ func TestOnDemandStatsProviderLoadsAndCachesStats(t *testing.T) {
 	require.NoError(t, err)
 
 	spyPool := &countingSessionPool{DestroyableSessionPool: dom.SysSessionPool()}
-	provider := crossks.NewOnDemandStatsProvider(spyPool)
+	provider := statsstorage.NewOnDemandStatsProvider(spyPool)
 
 	// First lookup hits storage once and returns real analyzed stats.
 	gotT := provider.GetPhysicalTableStats(tblT.Meta().ID, tblT.Meta())
@@ -113,7 +113,7 @@ func TestOnDemandStatsProviderLoadsAndCachesStats(t *testing.T) {
 	require.Equal(t, missingTblInfo.ID, gotMissing.PhysicalID)
 
 	// Failing pool falls back cleanly to pseudo stats.
-	errPoolProvider := crossks.NewOnDemandStatsProvider(&countingSessionPool{getErr: errors.New("pool exhausted")})
+	errPoolProvider := statsstorage.NewOnDemandStatsProvider(&countingSessionPool{getErr: errors.New("pool exhausted")})
 	require.True(t, errPoolProvider.GetPhysicalTableStats(tblT.Meta().ID, tblT.Meta()).Pseudo)
 
 	// Verify planning against a partitioned table without a Domain (simulating cross-KS session).

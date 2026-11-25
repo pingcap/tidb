@@ -29,7 +29,6 @@ import (
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/ddl/systable"
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
-	"github.com/pingcap/tidb/pkg/domain/crossks"
 	"github.com/pingcap/tidb/pkg/domain/sqlsvrapi"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/executor"
@@ -45,6 +44,7 @@ import (
 	plannerstats "github.com/pingcap/tidb/pkg/planner/core/stats"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	statsstorage "github.com/pingcap/tidb/pkg/statistics/handle/storage"
 	kvstore "github.com/pingcap/tidb/pkg/store"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/table"
@@ -613,7 +613,7 @@ func TestDomainAcquireKSRuntimeHandle(t *testing.T) {
 		require.NoError(t, err)
 		defer pool.Destroy(partRes)
 		partSE := partRes.(sessionctx.Context)
-		partSE.GetSessionVars().StatsProvider = crossks.NewOnDemandStatsProvider(pool)
+		partSE.GetSessionVars().StatsProvider = statsstorage.NewOnDemandStatsProvider(pool)
 
 		var observedDynamic bool
 		var observedRowCount int64

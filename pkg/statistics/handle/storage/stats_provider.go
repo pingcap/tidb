@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package crossks
+package storage
 
 import (
 	"context"
@@ -23,16 +23,15 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics"
-	statsstorage "github.com/pingcap/tidb/pkg/statistics/handle/storage"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
 
-// OnDemandStatsProvider loads physical table statistics on demand from the
-// target keyspace's mysql.stats_* system tables and caches them only for the
-// lifetime of this provider (e.g. a single cross-keyspace SQL compilation or
-// background task). It avoids running a resident StatsHandle per keyspace.
+// OnDemandStatsProvider loads physical table statistics on demand from
+// mysql.stats_* system tables and caches them only for the lifetime of this
+// provider (for example, a single cross-keyspace SQL compilation or background
+// task). It avoids running a resident StatsHandle per keyspace.
 type OnDemandStatsProvider struct {
 	sessPool util.DestroyableSessionPool
 
@@ -41,7 +40,7 @@ type OnDemandStatsProvider struct {
 }
 
 // NewOnDemandStatsProvider creates a scoped on-demand stats provider backed by
-// the target keyspace's session pool.
+// sessPool.
 func NewOnDemandStatsProvider(sessPool util.DestroyableSessionPool) *OnDemandStatsProvider {
 	return &OnDemandStatsProvider{
 		sessPool: sessPool,
@@ -70,7 +69,7 @@ func (p *OnDemandStatsProvider) GetPhysicalTableStats(physicalTableID int64, tbl
 
 	tbl, err := p.loadFromStorage(physicalTableID, tblInfo)
 	if err != nil {
-		logutil.BgLogger().Warn("failed to load cross-keyspace table stats on demand, fallback to pseudo",
+		logutil.BgLogger().Warn("failed to load table stats on demand, fallback to pseudo",
 			zap.Int64("physicalTableID", physicalTableID),
 			zap.String("table", tblInfo.Name.O),
 			zap.Error(err))
@@ -100,5 +99,5 @@ func (p *OnDemandStatsProvider) loadFromStorage(physicalTableID int64, tblInfo *
 	}
 	// loadAll=true loads full histograms/TopN in one shot so the planner does
 	// not rely on Domain's background StatsSyncLoad workers.
-	return statsstorage.TableStatsFromStorage(auxSCtx, 0, tblInfo, physicalTableID, true, 0, nil)
+	return TableStatsFromStorage(auxSCtx, 0, tblInfo, physicalTableID, true, 0, nil)
 }
