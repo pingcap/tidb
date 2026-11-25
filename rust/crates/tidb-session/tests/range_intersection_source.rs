@@ -115,3 +115,82 @@ fn range_intersection_issue73063() {
         }
     }
 }
+
+/// Go master `TestRangeCountThreshold` (#70768): `tidb_opt_range_max_count`
+/// only stops skyline pruning from preferring a path for its extra
+/// equality/IN predicates; ranges are still built, plans still cache.
+#[test]
+fn range_count_threshold() {
+    let mut tk = TestKit::new();
+    tk.must_exec("use test");
+    tk.must_exec("drop table if exists t_range_count");
+    tk.must_exec("create table t_range_count (a int, b int, c int, index idx(a, b, c))");
+    tk.must_exec("insert into t_range_count values (10,40,70), (20,50,75), (30,60,80), (10,99,70)");
+    tk.must_exec("set @@tidb_opt_range_max_size=0");
+    tk.must_query("select @@tidb_opt_range_max_count").check(["1000"]);
+    let query = "select /*+ use_index(t_range_count, idx) */ * from t_range_count where a in (10,20,30) and b in (40,50,60) and c between 70 and 80";
+    tk.must_exec("set @@tidb_opt_range_max_count=0");
+    let unlimited = rows_of(&mut tk, &format!("explain format='plan_tree' {query}"));
+    let text = format!("{unlimited:?}");
+    assert!(text.contains("range:[10 40 70,10 40 80]") && text.contains("[30 60 70,30 60 80]"), "{text}");
+    // "The threshold only affects candidate comparison; all nine ranges can
+    // still be built."
+    tk.must_exec("set @@tidb_opt_range_max_count=4");
+    assert_eq!(rows_of(&mut tk, &format!("explain format='plan_tree' {query}")), unlimited);
+    tk.must_query("show warnings").check(Vec::<&str>::new());
+    tk.must_query(&format!("{query} order by a")).check(["10 40 70", "20 50 75", "30 60 80"]);
+    let single_in = "select /*+ use_index(t_range_count, idx) */ * from t_range_count where a in (10,20,30,40,50,60)";
+    let plan = format!("{:?}", rows_of(&mut tk, &format!("explain format='plan_tree' {single_in}")));
+    assert!(plan.contains("IndexRangeScan") && plan.contains("[60,60]"), "{plan}");
+    tk.must_query("show warnings").check(Vec::<&str>::new());
+
+    tk.must_exec("drop table if exists t_range_count_pk");
+    tk.must_exec("create table t_range_count_pk (a int, b int, primary key(a,b) clustered)");
+    let plan = format!(
+        "{:?}",
+        rows_of(&mut tk, "explain format='plan_tree' select * from t_range_count_pk where a in (10,20,30,40,50,60)")
+    );
+    assert!(plan.contains("TableRangeScan") && plan.contains("[60,60]"), "{plan}");
+    tk.must_query("show warnings").check(Vec::<&str>::new());
+
+    tk.must_query("select /*+ set_var(tidb_opt_range_max_count=1) */ @@tidb_opt_range_max_count").check(["1"]);
+    tk.must_query("show warnings").check(Vec::<&str>::new());
+    tk.must_query("select @@tidb_opt_range_max_count").check(["4"]);
+
+    // "Exceeding the threshold must not disable prepared-plan caching or range
+    // rebuilds."
+    tk.must_exec("set @@tidb_enable_prepared_plan_cache=1");
+    tk.must_exec("prepare stmt from 'select /*+ use_index(t_range_count, idx) */ * from t_range_count where a in (?,?,?) and b in (?,?,?) and c between ? and ? order by a,b'");
+    tk.must_exec("set @a=10, @b=20, @c=30, @d=40, @e=50, @f=60, @g=70, @h=80");
+    for i in 0..2 {
+        tk.must_query("execute stmt using @a,@b,@c,@d,@e,@f,@g,@h").check(["10 40 70", "20 50 75", "30 60 80"]);
+        // Go reads `StmtCtx.GetWarnings()`: a `show warnings` statement here
+        // would become the statement `@@last_plan_from_cache` describes.
+        assert!(tk.session().warnings().is_empty(), "{:?}", tk.session().warnings());
+        tk.must_query("select @@last_plan_from_cache").check([i.to_string()]);
+    }
+    tk.must_exec("set @c=70, @e=99");
+    tk.must_query("execute stmt using @a,@b,@c,@d,@e,@f,@g,@h").check(["10 40 70", "10 99 70"]);
+    tk.must_query("select @@last_plan_from_cache").check(["1"]);
+    tk.must_exec("deallocate prepare stmt");
+}
+
+/// Go master `TestSetVar`'s `tidb_opt_range_max_count` block (#70768).
+#[test]
+fn set_tidb_opt_range_max_count() {
+    let mut tk = TestKit::new();
+    tk.must_query("select @@tidb_opt_range_max_count").check(["1000"]);
+    tk.must_exec("set global tidb_opt_range_max_count = -1");
+    tk.must_query("show warnings").check(["Warning 1292 Truncated incorrect tidb_opt_range_max_count value: '-1'"]);
+    tk.must_query("select @@global.tidb_opt_range_max_count").check(["0"]);
+    tk.must_exec("set global tidb_opt_range_max_count = 1024");
+    tk.must_query("select @@global.tidb_opt_range_max_count").check(["1024"]);
+    tk.must_exec("set session tidb_opt_range_max_count = 2048");
+    tk.must_query("select @@session.tidb_opt_range_max_count").check(["2048"]);
+    tk.must_exec("set session tidb_opt_range_max_count = 0");
+    tk.must_query("select @@session.tidb_opt_range_max_count").check(["0"]);
+    tk.must_exec("set global tidb_opt_range_max_count = default");
+    tk.must_query("select @@global.tidb_opt_range_max_count").check(["1000"]);
+}
+
+

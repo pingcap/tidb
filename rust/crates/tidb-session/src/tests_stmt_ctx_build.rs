@@ -228,6 +228,23 @@ fn range_quota_uses_session_snapshot_and_refreshes_after_set() {
     assert_eq!(original.range_max_size(), 67_108_864);
 }
 
+/// Go `SessionVars.RangeMaxCount` reaches skyline pruning through the
+/// statement context (`compareEqOrIn` reads it per statement, #70768).
+#[test]
+fn range_count_threshold_uses_session_snapshot_and_refreshes_after_set() {
+    let mut session = crate::Session::new();
+    let original = session.statement_context(false);
+    assert_eq!(original.range_max_count(), 1000);
+    for count in [4_i64, 0, i64::MAX] {
+        session
+            .run(&format!("SET tidb_opt_range_max_count = {count}"))
+            .unwrap();
+        assert_eq!(session.statement_context(false).range_max_count(), count);
+        assert_eq!(session.statement_context(true).range_max_count(), count);
+    }
+    assert_eq!(original.range_max_count(), 1000);
+}
+
 
 #[test]
 fn selected_record_keys_reach_the_owner_from_query_and_dml_contexts() {

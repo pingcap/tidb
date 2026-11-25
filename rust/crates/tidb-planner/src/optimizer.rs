@@ -102,6 +102,8 @@ pub trait OptimizeContext:
     fn in_explain_stmt(&self) -> bool;
     /// Go `SessionVars.RangeMaxSize`.
     fn range_max_size(&self) -> i64;
+    /// Go `SessionVars.RangeMaxCount`.
+    fn range_max_count(&self) -> i64;
     /// Go `SessionVars.SelectivityFactor`.
     fn selectivity_factor(&self) -> f64;
     /// Go's range-fallback warning hook (`StmtCtx.RecordRangeFallback`).
@@ -560,6 +562,7 @@ pub fn physical_optimize<C: OptimizeContext>(
     .with_partial_ordered_index_for_topn(ctx.is_partial_ordered_index_for_top_n_enabled())
     .with_opt_prefix_index_single_scan(ctx.opt_prefix_index_single_scan())
     .with_allow_prefer_range_scan(ctx.allow_prefer_range_scan())
+    .with_range_max_count(ctx.range_max_count())
     .with_prefer_index_merge_by_fix_control(
         ctx.optimizer_fix_control()
             .get_bool_with_default(tidb_fixcontrol::FIX_52869, false),

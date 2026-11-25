@@ -38,6 +38,8 @@ pub struct CandidateMetrics {
     pub full_index_match: bool,
     /// Go equalPredicateCount; IndexJoin uses the number of used columns.
     pub eq_or_in_count: usize,
+    /// Go `len(candidatePath.path.Ranges)`, read by `compareEqOrIn`.
+    pub range_count: usize,
     /// Estimated rows after access predicates, before index filtering.
     pub count_after_access: f64,
     /// Estimated rows after index filtering.
@@ -165,6 +167,7 @@ pub(crate) fn get_index_candidate(
         pseudo: !source.index_has_analyzed(index.read().id),
         full_index_match,
         eq_or_in_count,
+        range_count: path.ranges.len(),
         count_after_access: estimate.est,
         count_after_index,
         min_count_after_access: estimate.min_est,
@@ -238,6 +241,26 @@ fn compare_pseudo(
     0
 }
 
+/// Go `compareEqOrIn` (master #70768): the candidate with more equality/IN
+/// conditions wins, unless its range count exceeds `range_max_count` ("More
+/// equality/IN predicates can produce many seeks. Do not give that path an
+/// advantage on predicate count alone"); zero disables the threshold.
+fn compare_eq_or_in(left: &CandidateMetrics, right: &CandidateMetrics, range_max_count: i64) -> i8 {
+    if left.partial_paths || right.partial_paths {
+        return 0;
+    }
+    let too_many = |candidate: &CandidateMetrics| {
+        range_max_count > 0 && i64::try_from(candidate.range_count).unwrap_or(i64::MAX) > range_max_count
+    };
+    if left.eq_or_in_count > right.eq_or_in_count {
+        return if too_many(left) { 0 } else { 1 };
+    }
+    if left.eq_or_in_count < right.eq_or_in_count {
+        return if too_many(right) { 0 } else { -1 };
+    }
+    0
+}
+
 /// Go `compareCandidates`. `row_count_ratio_threshold` is the current value of
 /// optimizer fix 45132 (Go default 1000); zero disables that comparison.
 pub fn compare_candidates(
@@ -247,6 +270,7 @@ pub fn compare_candidates(
     expected_count: f64,
     prefer_range: bool,
     row_count_ratio_threshold: f64,
+    range_max_count: i64,
 ) -> CandidateComparison {
     if left.multi_valued || right.multi_valued {
         return CandidateComparison::default();
@@ -266,14 +290,7 @@ pub fn compare_candidates(
         (scan, true)
     };
     let risk = compare_risk(left, right);
-    let eq = if left.partial_paths || right.partial_paths {
-        0
-    } else {
-        compare_bool(
-            left.eq_or_in_count > right.eq_or_in_count,
-            left.eq_or_in_count < right.eq_or_in_count,
-        )
-    };
+    let eq = compare_eq_or_in(left, right, range_max_count);
     let predicates = access + risk + eq;
     let total = access + scan + matched + global;
     let result = |ordering, used_row_count_ratio| CandidateComparison {
@@ -349,6 +366,7 @@ pub fn insert_skyline_candidate<T>(
     expected_count: f64,
     prefer_range: bool,
     row_count_ratio_threshold: f64,
+    range_max_count: i64,
 ) -> (bool, bool, bool) {
     let mut missing_stats = false;
     let mut used_ratio = false;
@@ -363,6 +381,7 @@ pub fn insert_skyline_candidate<T>(
             expected_count,
             prefer_range,
             row_count_ratio_threshold,
+            range_max_count,
         );
         missing_stats |= result.winner_is_pseudo;
         used_ratio |= result.used_row_count_ratio;
@@ -380,6 +399,62 @@ pub fn insert_skyline_candidate<T>(
 #[cfg(test)]
 mod skyline_tests {
     use super::*;
+
+    /// Go master `TestRangeCount`'s `testRangeCountComparison` (#70768).
+    #[test]
+    fn range_count_comparison() {
+        for (name, threshold, lhs_ranges, rhs_ranges, lhs_count, rhs_count, want) in [
+            ("disabled", 0, 1001, 1, 3, 2, 1),
+            ("below threshold", 1000, 999, 1, 3, 2, 1),
+            ("at threshold", 1000, 1000, 1, 3, 2, 1),
+            ("above threshold", 1000, 1001, 1, 3, 2, 0),
+            ("both above threshold", 1000, 1001, 1002, 3, 2, 0),
+            ("only weaker candidate above threshold", 1000, 1, 1001, 3, 2, 1),
+            ("equal predicate counts", 1000, 1001, 1, 2, 2, 0),
+            ("single range", 1, 1, 1, 3, 2, 1),
+        ] {
+            let mut lhs = CandidateMetrics { range_count: lhs_ranges, eq_or_in_count: lhs_count, ..Default::default() };
+            let rhs = CandidateMetrics { range_count: rhs_ranges, eq_or_in_count: rhs_count, ..Default::default() };
+            assert_eq!(compare_eq_or_in(&lhs, &rhs, threshold), want, "{name}");
+            assert_eq!(compare_eq_or_in(&rhs, &lhs, threshold), -want, "{name}");
+            // IndexMerge's predicate counts remain incomparable, even with the
+            // threshold disabled.
+            lhs.partial_paths = true;
+            assert_eq!(compare_eq_or_in(&lhs, &rhs, threshold), 0, "{name}");
+            assert_eq!(compare_eq_or_in(&rhs, &lhs, threshold), 0, "{name}");
+        }
+    }
+
+    /// Go master `TestRangeCount`'s `testRangeCountSkyline` (#70768).
+    #[test]
+    fn range_count_skyline() {
+        let candidate = |id: i64, eq_count: usize, range_count: usize, max_count: f64, pseudo: bool| CandidateMetrics {
+            access_columns: tidb_planner_util::column_length::Col2Len::from_pairs([(id, -1)]),
+            single_scan: true,
+            eq_or_in_count: eq_count,
+            range_count,
+            count_after_access: 10.0,
+            max_count_after_access: max_count,
+            pseudo,
+            ..Default::default()
+        };
+        for pseudo in [false, true] {
+            let (lhs, rhs) = (candidate(1, 3, 1001, 10.0, pseudo), candidate(2, 2, 1, 20.0, pseudo));
+            for (threshold, want) in [(0, 1), (1001, 1), (1000, 0)] {
+                let result = compare_candidates(&lhs, &rhs, pseudo, 0.0, true, 1000.0, threshold).ordering;
+                assert_eq!(result, want, "pseudo={pseudo} threshold={threshold}");
+                let result = compare_candidates(&rhs, &lhs, pseudo, 0.0, true, 1000.0, threshold).ordering;
+                assert_eq!(result, -want, "reversed: pseudo={pseudo} threshold={threshold}");
+            }
+        }
+        // "A missing-statistics index must not retain its extra equality/IN
+        // preference above the threshold."
+        let (lhs, rhs) = (candidate(1, 3, 1001, 10.0, true), candidate(2, 2, 1, 10.0, false));
+        for (threshold, want) in [(0, 1), (1001, 1), (1000, -1)] {
+            assert_eq!(compare_candidates(&lhs, &rhs, false, 0.0, true, 1000.0, threshold).ordering, want, "{threshold}");
+            assert_eq!(compare_candidates(&rhs, &lhs, false, 0.0, true, 1000.0, threshold).ordering, -want, "{threshold}");
+        }
+    }
 
     #[test]
     fn index_facts_keep_full_key_filters_and_dnf_equality_counts() {
@@ -506,6 +581,7 @@ mod skyline_tests {
                     f64::MAX,
                     false,
                     1000.0,
+                    tidb_vardef::defaults::DEF_TIDB_OPT_RANGE_MAX_COUNT,
                 );
             }
             assert_eq!(candidates.len(), 1);
@@ -524,6 +600,7 @@ mod skyline_tests {
             f64::MAX,
             false,
             1000.0,
+            tidb_vardef::defaults::DEF_TIDB_OPT_RANGE_MAX_COUNT,
         );
         assert_eq!(candidates.len(), 2);
         for candidate in &mut candidates {
@@ -537,6 +614,7 @@ mod skyline_tests {
             f64::MAX,
             false,
             1000.0,
+            tidb_vardef::defaults::DEF_TIDB_OPT_RANGE_MAX_COUNT,
         );
         assert_eq!(candidates.len(), 3);
     }
@@ -552,6 +630,7 @@ mod skyline_tests {
             f64::MAX,
             false,
             1000.0,
+            tidb_vardef::defaults::DEF_TIDB_OPT_RANGE_MAX_COUNT,
         );
         assert_eq!(candidates.len(), 2);
         assert!(candidates[0].is_none());

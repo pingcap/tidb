@@ -619,6 +619,9 @@ pub struct SessionVars {
     pub(crate) opt_index_prune_threshold: i32,
     /// Go `SessionVars.RangeMaxSize`, maintained by `tidb_opt_range_max_size`'s `SetSession`.
     pub(crate) range_max_size: i64,
+    /// Go `SessionVars.RangeMaxCount` (master #70768), maintained by
+    /// `tidb_opt_range_max_count`'s `SetSession`.
+    pub(crate) range_max_count: i64,
     /// Go `SessionVars.OptPrefixIndexSingleScan`, maintained by `tidb_opt_prefix_index_single_scan`'s `SetSession`.
     pub(crate) opt_prefix_index_single_scan: bool,
     /// Go `SessionVars.allowPreferRangeScan`, maintained by `tidb_opt_prefer_range_scan`'s `SetSession`.
@@ -901,6 +904,7 @@ impl Default for SessionVars {
             stats_load_sync_wait: crate::vars_typed::registry_stats_load_sync_wait(),
             opt_index_prune_threshold: crate::vars_typed::registry_opt_index_prune_threshold(),
             range_max_size: crate::vars_typed::registry_range_max_size(),
+            range_max_count: tidb_vardef::defaults::DEF_TIDB_OPT_RANGE_MAX_COUNT,
             opt_prefix_index_single_scan: crate::vars_typed::registry_opt_prefix_index_single_scan(),
             allow_prefer_range_scan: crate::vars_typed::registry_allow_prefer_range_scan(),
             optimizer_use_invisible_indexes: crate::vars_typed::registry_optimizer_use_invisible_indexes(),

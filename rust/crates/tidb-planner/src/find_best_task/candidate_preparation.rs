@@ -90,6 +90,7 @@ pub(super) fn prepare_ordinary_paths<'a>(
                         table.min_access_conds_for_dnf_cond,
                     )
                     .0,
+                    range_count: table.ranges.len(),
                     count_after_access: estimate.est,
                     count_after_index: 0.0,
                     min_count_after_access: estimate.min_est,
@@ -157,6 +158,7 @@ pub(super) fn prepare_ordinary_paths<'a>(
             prop.expected_cnt,
             ctx.prefer_range_scan,
             ctx.index_join_skyline_threshold,
+            ctx.range_max_count,
         );
         idx_missing_stats |= missing;
     }

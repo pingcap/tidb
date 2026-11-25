@@ -641,6 +641,9 @@ pub const DEF_TIDB_ANALYZE_PARTITION_CONCURRENCY: i64 = 2;
 /// Go `DefTiDBOptRangeMaxSize` (= `64 * int64(size.MB)`).
 /// Resolved from 64 * int64(size.MB).
 pub const DEF_TIDB_OPT_RANGE_MAX_SIZE: i64 = 67108864;
+/// Go `DefTiDBOptRangeMaxCount`: the default range-count threshold for
+/// equality/IN preference in skyline pruning.
+pub const DEF_TIDB_OPT_RANGE_MAX_COUNT: i64 = 1000;
 /// Go `DefTiDBCostModelVer` (= `2`).
 pub const DEF_TIDB_COST_MODEL_VER: i64 = 2;
 /// Go `DefTiDBServerMemoryLimitSessMinSize` (= `128 << 20`).

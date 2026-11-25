@@ -223,6 +223,9 @@ impl crate::optimizer::OptimizeContext for StmtContext {
     fn range_max_size(&self) -> i64 {
         StmtContext::range_max_size(self)
     }
+    fn range_max_count(&self) -> i64 {
+        StmtContext::range_max_count(self)
+    }
     fn selectivity_factor(&self) -> f64 {
         StmtContext::selectivity_factor(self)
     }

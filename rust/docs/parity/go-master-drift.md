@@ -268,8 +268,7 @@ Security, verified ported or not applicable: 032f17c27bc (probe: cached PointGet
 
 Correctness, fixed 2026-11-26 with Go's tests ported (mutation-checked): c0c535c7f5d (MPP full outer join: `preferMppBCJ`, `ToPB` join type, AnyType partition; `TestMPPFullOuterJoinToPB`'s protobuf assertion needs a plan-to-protobuf test seam), c5b8e96c47b + 379c5c45e37 (`IntersectSortedRanges`, master `compareLexicographically`, `intersectAppendedRanges`, and the residual filters kept when the best CNF ranges replace the point ranges: a wrong result on a prefix index -- July Go has it too), 82af7f5d393 (`IsJobMatch`), 32a66e481bd + 8c92bcda87f (binary literals in SUM/AVG and HAVING MIN/MAX), 3917369462b (RENAME advances the revision; Go's failed-rename half needs a `renameTableErr` failpoint site), 22fd1ac756e's `Selectivity` JSON skip.
 
-Correctness, still unported:
-- 93a01d31f6d -- `tidb_opt_range_max_count` and `compareEqOrIn` absent.
+Also fixed: 93a01d31f6d (`tidb_opt_range_max_count`, `compareEqOrIn`; Go TestRangeCountThreshold, the TestRangeCount units, TestSetVar's block). Not ported: its `upgradeToVer318` -- Rust's upgrade steps stop at version 263 (July), so the bootstrap upgrade path for every later master version is its own gap.
 
 ## Found while porting (not in the token list)
 
