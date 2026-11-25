@@ -793,6 +793,7 @@ type candidatePath struct {
 	// Length equals len(path.PartialIndexPaths). Only set for IndexMerge paths.
 	partialPathMatchResults      []indexMergePathMatch
 	indexJoinCols                int     // how many index columns are used in access conditions in this IndexJoin.
+	indexJoinRangeCount          int     // number of constructed lookup ranges per outer row, zero for ordinary access paths.
 	countAfterAccess4IndexJoin   float64 // adjusted CountAfterAccess used only by index join candidate comparison.
 	countAfterAccess4IndexJoinOK bool    // whether countAfterAccess4IndexJoin is stable enough for skyline pruning.
 	isFullRange                  bool    // cached result of whether this path covers the full scan range.
@@ -1039,6 +1040,15 @@ func hasStatsForEstimation(c *candidatePath, statsTbl *statistics.Table) bool {
 	return found == len(c.accessCondsColMap)
 }
 
+func (c *candidatePath) exceedsRangeMaxCount(maxCount int64) bool {
+	count := len(c.path.Ranges)
+	if c.indexJoinRangeCount > 0 {
+		// The DataSource ranges do not include access conditions supplied by the outer row.
+		count = c.indexJoinRangeCount
+	}
+	return maxCount > 0 && int64(count) > maxCount
+}
+
 // isBroadIndexLookup returns true if c is a non-covering index that may read so much of the table that a
 // table lookup per row can cost more than scanning the table. That is the case if either:
 //   - its own estimate reads at least cost.SelectionFactor (the default selectivity) of tableRows. The estimate
@@ -1051,7 +1061,7 @@ func isBroadIndexLookup(c *candidatePath, tableRows float64, rangeMaxCount int64
 	if c.path.IsTablePath() || c.path.IsSingleScan {
 		return false
 	}
-	if rangeMaxCount > 0 && int64(len(c.path.Ranges)) > rangeMaxCount {
+	if c.exceedsRangeMaxCount(rangeMaxCount) {
 		return true
 	}
 	return c.path.CountAfterAccess > 0 && c.path.CountAfterAccess >= tableRows*cost.SelectionFactor
@@ -1102,13 +1112,13 @@ func compareEqOrIn(lhs, rhs *candidatePath, rangeMaxCount int64) (predCompare in
 	if lhs.eqOrInCount > rhs.eqOrInCount {
 		// More equality/IN predicates can produce many seeks. Do not give that path an
 		// advantage on predicate count alone; leave the other skyline dimensions intact.
-		if rangeMaxCount > 0 && int64(len(lhs.path.Ranges)) > rangeMaxCount {
+		if lhs.exceedsRangeMaxCount(rangeMaxCount) {
 			return 0
 		}
 		return 1
 	}
 	if lhs.eqOrInCount < rhs.eqOrInCount {
-		if rangeMaxCount > 0 && int64(len(rhs.path.Ranges)) > rangeMaxCount {
+		if rhs.exceedsRangeMaxCount(rangeMaxCount) {
 			return 0
 		}
 		return -1
@@ -1989,10 +1999,11 @@ func indexHasAnalyzedStats(ds *logicalop.DataSource, path *util.AccessPath) bool
 	return idx != nil && idx.IsAnalyzed()
 }
 
-func getIndexCandidateForIndexJoin(sctx planctx.PlanContext, path *util.AccessPath, indexJoinCols int, countAfterAccess4IndexJoin float64, countAfterAccess4IndexJoinOK bool) *candidatePath {
+func getIndexCandidateForIndexJoin(sctx planctx.PlanContext, path *util.AccessPath, indexJoinCols, indexJoinRangeCount int, countAfterAccess4IndexJoin float64, countAfterAccess4IndexJoinOK bool) *candidatePath {
 	candidate := &candidatePath{
 		path:                         path,
 		indexJoinCols:                indexJoinCols,
+		indexJoinRangeCount:          indexJoinRangeCount,
 		countAfterAccess4IndexJoin:   countAfterAccess4IndexJoin,
 		countAfterAccess4IndexJoinOK: countAfterAccess4IndexJoinOK,
 	}
