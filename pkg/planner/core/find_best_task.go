@@ -1793,7 +1793,9 @@ func getIndexCandidate(ds *logicalop.DataSource, path *util.AccessPath, prop *pr
 }
 
 // buildPrunedRangeAccessPath creates a new AccessPath that uses only the first `cutoff` index columns
-// for range construction. This reduces the number of ranges when IN-list columns are dropped.
+// for range construction, reducing the number of ranges when IN-list columns are dropped.
+// uniquePointLookup indicates originalPath probes single unique keys whose CountAfterAccess reflects
+// probe count (at most one row per key, including misses) rather than matching rows.
 func buildPrunedRangeAccessPath(ds *logicalop.DataSource, originalPath *util.AccessPath, cutoff int, uniquePointLookup bool) (*util.AccessPath, error) {
 	if cutoff >= len(originalPath.IdxCols) || cutoff < 1 {
 		return nil, nil
@@ -1873,15 +1875,20 @@ func buildPrunedRangeAccessPath(ds *logicalop.DataSource, originalPath *util.Acc
 	}
 	filteredLowerBound := ds.StatsInfo().RowCount
 	if uniquePointLookup {
-		// The probe count is exact, but some unique keys may be missing. A sparse
-		// prefix can therefore contain fewer rows than there are probes, while a
-		// dense prefix can contain many more. Estimate the scan from prefix stats
-		// and cap the filtered-row lower bound at the estimated rows scanned.
+		// For a unique point lookup, originalPath.CountAfterAccess counts probes
+		// (including missing keys) rather than actual matches. A sparse prefix can
+		// scan fewer rows than probes (where max would inflate scan cost), while a
+		// dense prefix can scan many more (where min would undercount it). Use the
+		// prefix estimate directly and cap the post-filter floor so CountAfterIndex
+		// cannot exceed CountAfterAccess.
 		prunedPath.CountAfterAccess = count.Est
 		filteredLowerBound = min(filteredLowerBound, count.Est)
 	} else {
-		// Prefix ranges include every original match. Reuse the adjusted estimate
-		// as a floor without applying the SelectionFactor penalty a second time.
+		// Prefix ranges are a superset of the original ranges, so they cannot return
+		// fewer rows. Floor by originalPath.CountAfterAccess, which already passed
+		// through adjustCountAfterAccess; calling adjustCountAfterAccess here would
+		// charge the SelectionFactor penalty twice whenever summed per-range estimates
+		// exceed the coarser prefix estimate.
 		prunedPath.CountAfterAccess = max(count.Est, originalPath.CountAfterAccess)
 	}
 	prunedPath.MinCountAfterAccess = count.MinEst
@@ -1934,7 +1941,10 @@ func appendPrunedRangeCandidates(ds *logicalop.DataSource, prop *property.Physic
 		if (path.EqCondCount <= 1 && inListCount < 2) || !indexHasAnalyzedStats(ds, path) {
 			continue
 		}
-		// Keep full unique-key ranges unless their count warrants comparing a prefix scan.
+		// Full-key ranges on a unique index match at most one row each and can become a
+		// [Batch]PointGet, so shortening them normally adds scan work for no benefit.
+		// Above a positive RangeMaxCount, still consider shorter prefixes in case
+		// probing many missing keys costs more than scanning a prefix.
 		threshold := ds.SCtx().GetSessionVars().RangeMaxCount
 		if path.Index.Unique && rangesCoverAllIndexColumns(path) && (threshold == 0 || int64(len(path.Ranges)) <= threshold) {
 			continue

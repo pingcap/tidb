@@ -1293,6 +1293,8 @@ func TestIssue73346(t *testing.T) {
 	plan := func(sql string) string {
 		return fmt.Sprint(tk.MustQuery("explain format='plan_tree' " + sql).Rows())
 	}
+	// Above RangeMaxCount with sparse prefixes (5,000 probes for 50 hits), uk(p_id, e_id)
+	// chooses a p_id prefix scan; small IN products still use BatchPointGet.
 	large := query(parents, children)
 	sparsePlan := plan(large)
 	require.Contains(t, sparsePlan, "index:uk(p_id, e_id) range:[100,100]")
@@ -1300,15 +1302,15 @@ func TestIssue73346(t *testing.T) {
 	tk.MustQuery(large).Sort().Check(testkit.Rows(children...))
 	require.Contains(t, plan(query(parents[:2], children[:2])), "Batch_Point_Get root table:i")
 
-	// Disabling the threshold keeps the original full-key plan. A single IN
-	// on the parent primary key can still use BatchPointGet above the threshold.
+	// Disabling the threshold keeps full-key BatchPointGet on i. With threshold 32,
+	// a single IN on p.id (100 values) cannot shorten further and still uses BatchPointGet on p.
 	tk.MustExec("set @@tidb_opt_range_max_count = 0")
 	require.Contains(t, plan(large), "Batch_Point_Get root table:i")
 	tk.MustExec("set @@tidb_opt_range_max_count = 32")
 	require.Contains(t, plan(large), "Batch_Point_Get root table:p")
 	tk.MustExec("set @@tidb_opt_range_max_count = default")
 
-	// Keep the same lookup keys, but make scanning their prefixes expensive.
+	// Keep the same lookup keys, but populate dense prefixes so prefix scans cost more than BatchPointGet.
 	for _, parent := range parents {
 		tk.MustExec(`insert into i with recursive d(k) as (select 1 union all select k+1 from d where k<500)
 			select 100000+?*500+k, ?, 100000+?*500+k, 0 from d`, parent, parent, parent)
