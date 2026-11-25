@@ -1278,12 +1278,13 @@ func TestIssue73346(t *testing.T) {
 	}
 	analyze("p")
 	analyze("i")
-	var parents, children []string
-	for i := range 100 {
+	parents := make([]string, 100)
+	children := make([]string, 50)
+	for i := range parents {
 		id := 100 + i*7
-		parents = append(parents, fmt.Sprint(id))
-		if i < 50 {
-			children = append(children, fmt.Sprint(id*10+1))
+		parents[i] = fmt.Sprint(id)
+		if i < len(children) {
+			children[i] = fmt.Sprint(id*10 + 1)
 		}
 	}
 	query := func(p, e []string) string {
