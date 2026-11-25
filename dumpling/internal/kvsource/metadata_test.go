@@ -39,6 +39,7 @@ func TestMetadataSnapshotMatchesSQLMetadata(t *testing.T) {
 	tk.MustExec("set @@sql_mode = default, @@time_zone = '+00:00'")
 	tk.MustExec("create placement policy metadata_policy followers=2")
 	tk.MustExec("create database metadata charset utf8mb4 collate utf8mb4_bin placement policy=metadata_policy")
+	tk.MustExec("create table metadata.plain (id int primary key, value varchar(20) default 'offline')")
 	tk.MustExec("create table metadata.shared (id bigint primary key auto_increment) " +
 		"auto_id_cache=1000 auto_increment=201 placement policy=metadata_policy")
 	tk.MustExec("create table metadata.separate (id bigint unsigned primary key auto_increment) " +
@@ -64,7 +65,7 @@ func TestMetadataSnapshotMatchesSQLMetadata(t *testing.T) {
 	tk.MustExec("set @@time_zone = '+00:00'")
 
 	wantTables := make(map[string]string)
-	for _, name := range []string{"shared", "separate", "random", "partitioned", "referencing"} {
+	for _, name := range []string{"plain", "shared", "separate", "random", "partitioned", "referencing"} {
 		wantTables[name] = tk.MustQuery("show create table metadata." + name).Rows()[0][1].(string)
 	}
 	wantPolicy := tk.MustQuery("show create placement policy metadata_policy").Rows()[0][1].(string)

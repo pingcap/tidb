@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
@@ -329,6 +330,39 @@ func unixSocketAvailable() bool {
 
 func mockFactory() (pools.Resource, error) {
 	return nil, errors.New("mock factory should not be called")
+}
+
+func TestAdvancedSysSessionPoolUsesDomainBoundFactory(t *testing.T) {
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	dom := NewDomain(store, 80*time.Millisecond, 0, 0, mockFactory)
+	t.Cleanup(func() {
+		dom.Close()
+		require.NoError(t, store.Close())
+	})
+
+	created := 0
+	// Init installs this factory before schema reload can request a statistics session.
+	dom.sysExecutorFactory = func(bound *Domain) (pools.Resource, error) {
+		require.Same(t, dom, bound)
+		created++
+		ctx := mock.NewContext()
+		ctx.BindDomainAndSchValidator(bound, nil)
+		return ctx, nil
+	}
+
+	for range 2 {
+		se, err := dom.AdvancedSysSessionPool().Get()
+		require.NoError(t, err)
+		t.Cleanup(se.Close)
+		require.NoError(t, se.WithSessionContext(func(ctx sessionctx.Context) error {
+			require.Same(t, dom, GetDomain(ctx))
+			return nil
+		}))
+		// Close instead of returning it so the next Get must create another session.
+		se.Close()
+	}
+	require.Equal(t, 2, created)
 }
 
 type stmtSummarySysVarContext struct {

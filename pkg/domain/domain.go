@@ -689,7 +689,9 @@ func NewDomainWithEtcdClient(
 	}
 
 	do.advancedSysSessionPool = syssession.NewAdvancedSessionPool(systemSessionPoolSize, func() (syssession.SessionContext, error) {
-		r, err := factory()
+		// Schema reload can request a statistics session while holding its lock.
+		// Use the Domain-bound factory installed by Init to avoid taking the global Domain map lock.
+		r, err := do.sysExecutorFactory(do)
 		if err != nil {
 			return nil, err
 		}

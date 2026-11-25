@@ -196,6 +196,7 @@ go_test(
         "//pkg/resourcegroup/runaway",
         "//pkg/server",
         "//pkg/session",
+        "//pkg/sessionctx",
         "//pkg/sessionctx/vardef",
         "//pkg/sessionctx/variable",
         "//pkg/store/mockstore",

@@ -160,7 +160,8 @@ func (*schemaContext) GetTraceCtx() context.Context { panic("unimplemented") }
 
 func (*schemaContext) GetStore() kv.Storage { panic("unimplemented") }
 
-func (*schemaContext) GetInfoSchema() infoschema.MetaOnlyInfoSchema { panic("unimplemented") }
+// GetInfoSchema returns nil because offline schema rendering has no live InfoSchema.
+func (*schemaContext) GetInfoSchema() infoschema.MetaOnlyInfoSchema { return nil }
 
 func (*schemaContext) GetLatestInfoSchema() infoschema.MetaOnlyInfoSchema { panic("unimplemented") }
 
