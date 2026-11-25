@@ -1217,6 +1217,34 @@ func TestAddForeignKey(t *testing.T) {
 	tk.MustExec("insert into t1 values (1, 10);")
 	tk.MustExec("insert into t2 values (1, 10);")
 	tk.MustGetDBError("insert into t2 values (2, 20)", plannererrors.ErrNoReferencedRow2)
+
+	// Test adding a foreign key rejects orphan child rows even when the
+	// referenced key contains NULL values.
+	tk.MustExec("drop table if exists t1,t2")
+	tk.MustExec("create table t1 (id int key, business_key int, unique key uk_business_key(business_key));")
+	tk.MustExec("create table t2 (id int key, parent_key int, index idx_parent_key(parent_key));")
+	tk.MustExec("insert into t1 values (1, 1), (2, null);")
+	tk.MustExec("insert into t2 values (1, 1), (2, 2);")
+	tk.MustGetErrCode("alter table t2 add constraint fk_parent foreign key (parent_key) references t1(business_key)", 1452)
+	tbl2Info = getTableInfo(t, dom, "test", "t2")
+	require.Equal(t, 0, len(tbl2Info.ForeignKeys))
+
+	// Control: a NULL child key is exempt, and every non-NULL child key has a match.
+	tk.MustExec("delete from t2 where parent_key = 2;")
+	tk.MustExec("insert into t2 values (2, null);")
+	tk.MustExec("alter table t2 add constraint fk_parent foreign key (parent_key) references t1(business_key)")
+	tbl2Info = getTableInfo(t, dom, "test", "t2")
+	require.Equal(t, 1, len(tbl2Info.ForeignKeys))
+
+	// Test the composite-key case with a NULL component in the referenced key.
+	tk.MustExec("drop table if exists t1,t2")
+	tk.MustExec("create table t1 (id int key, a int, b int, unique key uk_ab(a, b));")
+	tk.MustExec("create table t2 (id int key, x int, y int, index idx_xy(x, y));")
+	tk.MustExec("insert into t1 values (1, 1, 1), (2, 2, null);")
+	tk.MustExec("insert into t2 values (1, 1, 1), (2, 2, 2);")
+	tk.MustGetErrCode("alter table t2 add constraint fk_xy foreign key (x, y) references t1(a, b)", 1452)
+	tbl2Info = getTableInfo(t, dom, "test", "t2")
+	require.Equal(t, 0, len(tbl2Info.ForeignKeys))
 }
 
 func TestAlterTableAddForeignKeyError(t *testing.T) {
