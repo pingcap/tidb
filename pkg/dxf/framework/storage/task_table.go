@@ -990,12 +990,12 @@ func (mgr *TaskManager) SwitchTaskStepInBatch(
 	return mgr.WithNewSession(func(se sessionctx.Context) error {
 		// some subtasks may be inserted by other schedulers, we can skip them.
 		rs, err := sqlexec.ExecSQL(ctx, se.GetSQLExecutor(), `
-			select count(1) from mysql.tidb_background_subtask
+			select ordinal, exec_id from mysql.tidb_background_subtask
 			where task_key = %? and step = %?`, TaskIDToKey(task.ID), nextStep)
 		if err != nil {
 			return err
 		}
-		existingTaskCnt := int(rs[0].GetInt64(0))
+		existingTaskCnt := len(rs)
 		if existingTaskCnt > len(subtasks) {
 			return errors.Annotatef(ErrUnstableSubtasks, "expected %d, got %d",
 				len(subtasks), existingTaskCnt)
@@ -1003,6 +1003,30 @@ func (mgr *TaskManager) SwitchTaskStepInBatch(
 		subtaskBatches := mgr.splitSubtasks(subtasks[existingTaskCnt:])
 		for _, batch := range subtaskBatches {
 			if err = mgr.insertSubtasks(ctx, se, batch); err != nil {
+				return err
+			}
+		}
+		// Reconcile any pre-existing pending subtasks whose exec_id differs from
+		// the current plan before making the step runnable, while guarding on the
+		// task's state/step so a stale scheduler cannot overwrite assignments after
+		// another scheduler has already switched the step.
+		for _, row := range rs {
+			ordinal := int(row.GetInt64(0))
+			if ordinal < 1 || ordinal > len(subtasks) ||
+				subtasks[ordinal-1].Ordinal != ordinal ||
+				row.GetString(1) == subtasks[ordinal-1].ExecID {
+				continue
+			}
+			if _, err = sqlexec.ExecSQL(ctx, se.GetSQLExecutor(), `
+				update mysql.tidb_background_subtask
+				set exec_id = %?
+				where task_key = %? and step = %? and ordinal = %? and state = %?
+				  and exists (
+				      select 1 from mysql.tidb_global_task
+				      where id = %? and state = %? and step = %?
+				  )`,
+				subtasks[ordinal-1].ExecID, TaskIDToKey(task.ID), nextStep, ordinal, proto.SubtaskStatePending,
+				task.ID, task.State, task.Step); err != nil {
 				return err
 			}
 		}

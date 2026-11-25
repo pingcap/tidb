@@ -471,6 +471,32 @@ func TestSwitchTaskStepInBatch(t *testing.T) {
 	err = tm.SwitchTaskStepInBatch(ctx, task3, proto.TaskStateRunning, proto.StepOne, subtasks3[:1])
 	require.ErrorIs(t, err, storage.ErrUnstableSubtasks)
 	require.ErrorContains(t, err, "expected 1, got 2")
+
+	// Reconcile conflicting pending exec_id from a concurrent/previous scheduler
+	// before making the step runnable, and ignore stale schedulers after switch.
+	task4, subtasks4 := prepare("key4")
+	_, err = sqlexec.ExecSQL(ctx, tk.Session(), `
+		insert into mysql.tidb_background_subtask(
+			step, task_key, exec_id, meta, state, type, concurrency, ordinal, create_time, checkpoint, summary)
+		values (%?, %?, %?, %?, %?, %?, %?, %?, CURRENT_TIMESTAMP(), '{}', '{}')`,
+		subtasks4[0].Step, subtasks4[0].TaskID, ":4001", subtasks4[0].Meta,
+		proto.SubtaskStatePending, proto.Type2Int(subtasks4[0].Type), subtasks4[0].Concurrency, subtasks4[0].Ordinal)
+	require.NoError(t, err)
+	require.NoError(t, tm.SwitchTaskStepInBatch(ctx, task4, proto.TaskStateRunning, proto.StepOne, subtasks4))
+	task4After, err := tm.GetTaskByID(ctx, task4.ID)
+	require.NoError(t, err)
+	checkAfterSwitchStep(t, startTime, task4After, subtasks4, proto.StepOne)
+
+	// A stale scheduler retrying SwitchTaskStepInBatch with old task state/step
+	// must not overwrite the winning scheduler's subtask assignments.
+	staleSubtasks := make([]*proto.Subtask, len(subtasks4))
+	for i, st := range subtasks4 {
+		cp := *st
+		cp.ExecID = ":4001"
+		staleSubtasks[i] = &cp
+	}
+	require.NoError(t, tm.SwitchTaskStepInBatch(ctx, task4, proto.TaskStateRunning, proto.StepOne, staleSubtasks))
+	checkAfterSwitchStep(t, startTime, task4After, subtasks4, proto.StepOne)
 }
 
 func TestGetTopUnfinishedTasks(t *testing.T) {
