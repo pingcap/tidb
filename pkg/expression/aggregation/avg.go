@@ -78,9 +78,16 @@ func (af *avgFunction) GetResult(evalCtx *AggEvaluateContext) (d types.Datum) {
 		d.SetFloat64(sum / float64(evalCtx.Count))
 		return
 	case types.KindMysqlDecimal:
+		x := evalCtx.Value.GetMysqlDecimal()
+		y := types.NewDecFromInt(evalCtx.Count)
 		to := new(types.MyDecimal)
-		err := types.DecimalAvg(evalCtx.Value.GetMysqlDecimal(), evalCtx.Count, to,
-			evalCtx.Ctx.GetDivPrecisionIncrement(), min(af.RetTp.GetDecimal(), mysql.MaxDecimalScale))
+		err := types.DecimalDiv(x, y, to, evalCtx.Ctx.GetDivPrecisionIncrement())
+		terror.Log(err)
+		frac := af.RetTp.GetDecimal()
+		if frac == -1 {
+			frac = mysql.MaxDecimalScale
+		}
+		err = to.Round(to, min(frac, mysql.MaxDecimalScale), types.ModeHalfUp)
 		terror.Log(err)
 		d.SetMysqlDecimal(to)
 	}

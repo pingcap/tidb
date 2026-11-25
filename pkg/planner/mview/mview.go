@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/planctx"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	utilhint "github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/mviewutil"
@@ -430,7 +431,7 @@ func ResolveFastRefreshSource(is infoschema.InfoSchema, mv *model.TableInfo) (*F
 		return nil, errors.Errorf("table %s is not a materialized view", mv.Name.O)
 	}
 	if mv.MaterializedView.DefinitionDivPrecisionIncrement < 0 ||
-		mv.MaterializedView.DefinitionDivPrecisionIncrement > vardef.MaxDivPrecisionIncrement {
+		mv.MaterializedView.DefinitionDivPrecisionIncrement > int(variable.GetSysVar(vardef.DivPrecisionIncrement).MaxValue) {
 		return nil, errors.Errorf("materialized view %s has invalid maintenance numeric metadata", mv.Name.O)
 	}
 	if len(mv.MaterializedView.BaseTableIDs) != 1 {

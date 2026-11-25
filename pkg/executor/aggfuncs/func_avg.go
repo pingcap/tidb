@@ -18,9 +18,11 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/hack"
+	"github.com/pingcap/tidb/pkg/util/mviewutil"
 	"github.com/pingcap/tidb/pkg/util/set"
 )
 
@@ -43,6 +45,7 @@ const (
 // - "avgPartial4Decimal"
 type baseAvgDecimal struct {
 	baseAggFunc
+	inMViewMaintenance bool
 }
 
 func (e *baseAvgDecimal) SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *SerializeHelper) {
@@ -86,11 +89,25 @@ func (e *baseAvgDecimal) AppendFinalResult2Chunk(ctx AggFuncUpdateContext, pr Pa
 		chk.AppendNull(e.ordinal)
 		return nil
 	}
+	decimalCount := types.NewDecFromInt(p.count)
+	finalResult := new(types.MyDecimal)
+	increment := ctx.GetDivPrecisionIncrement()
+	if e.inMViewMaintenance && e.retTp != nil {
+		increment = mviewutil.AvgDivPrecisionIncrement(&p.sum, increment, e.retTp.GetDecimal())
+	}
+	err := types.DecimalDiv(&p.sum, decimalCount, finalResult, increment)
+	if err != nil {
+		return err
+	}
 	if e.retTp == nil {
 		return errors.New("e.retTp of avg should not be nil")
 	}
-	finalResult := new(types.MyDecimal)
-	if err := types.DecimalAvg(&p.sum, p.count, finalResult, ctx.GetDivPrecisionIncrement(), e.retTp.GetDecimal()); err != nil {
+	frac := e.retTp.GetDecimal()
+	if frac == -1 {
+		frac = mysql.MaxDecimalScale
+	}
+	err = finalResult.Round(finalResult, frac, types.ModeHalfUp)
+	if err != nil {
 		return err
 	}
 	chk.AppendMyDecimal(e.ordinal, finalResult)
@@ -286,11 +303,21 @@ func (e *baseAvgDistinct4Decimal) AppendFinalResult2Chunk(ctx AggFuncUpdateConte
 		}
 		sum, sumTmp = sumTmp, sum
 	}
+	decimalCount := types.NewDecFromInt(count)
+	finalResult := new(types.MyDecimal)
+	err := types.DecimalDiv(sum, decimalCount, finalResult, ctx.GetDivPrecisionIncrement())
+	if err != nil {
+		return err
+	}
 	if e.retTp == nil {
 		return errors.New("e.retTp of avg should not be nil")
 	}
-	finalResult := new(types.MyDecimal)
-	if err := types.DecimalAvg(sum, count, finalResult, ctx.GetDivPrecisionIncrement(), e.retTp.GetDecimal()); err != nil {
+	frac := e.retTp.GetDecimal()
+	if frac == -1 {
+		frac = mysql.MaxDecimalScale
+	}
+	err = finalResult.Round(finalResult, frac, types.ModeHalfUp)
+	if err != nil {
 		return err
 	}
 	chk.AppendMyDecimal(e.ordinal, finalResult)

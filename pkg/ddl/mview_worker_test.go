@@ -564,7 +564,7 @@ func TestInitMViewSession(t *testing.T) {
 	restore()
 	require.Equal(t, 2, sessVars.DivPrecisionIncrement)
 
-	definition.DefinitionDivPrecisionIncrement = vardef.MaxDivPrecisionIncrement + 1
+	definition.DefinitionDivPrecisionIncrement = int(variable.GetSysVar(vardef.DivPrecisionIncrement).MaxValue) + 1
 	restore, err = InitMViewSession(sessVars, definition, "mv_db", "mv_group")
 	require.ErrorContains(t, err, "invalid maintenance numeric metadata")
 	require.Nil(t, restore)

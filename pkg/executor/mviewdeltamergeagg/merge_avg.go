@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/mviewutil"
 )
 
 func (e *Exec) buildAvgMerger(
@@ -149,6 +150,9 @@ func (m *avgMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chunk.Colu
 		}
 	}
 	frac := m.retTp.GetDecimal()
+	if frac == types.UnspecifiedLength {
+		frac = mysql.MaxDecimalScale
+	}
 
 	for rowIdx := range numRows {
 		countExpr := countExprVals[rowIdx]
@@ -193,16 +197,20 @@ func (m *avgMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chunk.Colu
 		default:
 			return errors.Errorf("AVG SUM dependency has unsupported eval type %s", sumEvalType)
 		}
-		avg := new(types.MyDecimal)
-		if err := types.DecimalAvg(&sum, countExpr, avg, m.divPrecisionIncrement, frac); err != nil {
+		var avg, count types.MyDecimal
+		increment := mviewutil.AvgDivPrecisionIncrement(&sum, m.divPrecisionIncrement, frac)
+		if err := types.DecimalDiv(&sum, count.FromInt(countExpr), &avg, increment); err != nil {
 			return err
 		}
-		candidate := *avg
+		if err := avg.Round(&avg, frac, types.ModeHalfUp); err != nil {
+			return err
+		}
+		candidate := avg
 		materialized, err := types.ProduceDecWithSpecifiedTp(types.StrictContext, &candidate, m.retTp)
 		if err != nil {
 			return errors.Annotate(err, "AVG result cannot be represented by the MV output type")
 		}
-		if materialized.Compare(avg) != 0 {
+		if materialized.Compare(&avg) != 0 {
 			return errors.Errorf("AVG result would change value %s to %s", avg.String(), materialized.String())
 		}
 		resultDecimalVals[rowIdx] = *materialized

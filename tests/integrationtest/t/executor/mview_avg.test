@@ -149,11 +149,12 @@ drop materialized view mv_avg_zero;
 drop materialized view log on t_mv_avg_zero;
 drop table t_mv_avg_zero;
 
-# The defining query and MV both use the DECIMAL scale limit for AVG.
+# Wide DECIMAL AVG must fit the result and its rounding digit at the definition DPI.
 set div_precision_increment = 4;
 create table t_mv_avg_high (id int primary key, a int not null, b decimal(65,30));
 insert into t_mv_avg_high values (1, 1, 1), (2, 1, 2), (3, 1, 2), (4, 2, null), (5, 3, 99999999999999999999999999999999999.123456789012345678901234567890);
 select a, avg(b) from t_mv_avg_high group by a order by a;
+set div_precision_increment = 30;
 create materialized view log on t_mv_avg_high (id, a, b) purge next date_add(now(), interval 1 hour);
 create materialized view mv_avg_high (a, av, s, c, n) refresh fast as
 select a, avg(b), sum(b), count(b), count(*) from t_mv_avg_high group by a;
@@ -161,6 +162,7 @@ select column_type from information_schema.columns where table_schema='test' and
 select * from mv_avg_high order by a;
 set div_precision_increment = 8;
 insert into t_mv_avg_high values (6, 1, 1);
+update t_mv_avg_high set b = 99999999999999999999999999999999999.123456789012345678901234567889 where id = 5;
 refresh materialized view mv_avg_high fast;
 select * from mv_avg_high order by a;
 refresh materialized view mv_avg_high complete in place;

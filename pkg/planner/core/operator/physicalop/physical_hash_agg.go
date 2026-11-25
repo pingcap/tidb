@@ -17,12 +17,14 @@ package physicalop
 import (
 	"fmt"
 	"math"
+	"slices"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
@@ -251,6 +253,18 @@ func tryToGetMppHashAggs(la *logicalop.LogicalAggregation, prop *property.Physic
 			agg.MppRunMode = MppTiDB
 		}
 		hashAggs = append(hashAggs, agg)
+	}
+
+	// Finalize MV DECIMAL AVG in TiDB with the same division precision as FAST
+	// refresh. TiFlash can still compute the partial SUM and COUNT.
+	if la.SCtx().GetSessionVars().InMViewMaintenance {
+		for _, agg := range la.AggFuncs {
+			if agg.Name == ast.AggFuncAvg && agg.RetTp.GetType() == mysql.TypeNewDecimal {
+				return slices.DeleteFunc(hashAggs, func(plan base.PhysicalPlan) bool {
+					return plan.(*PhysicalHashAgg).MppRunMode != MppTiDB
+				})
+			}
+		}
 	}
 
 	// handle MPP Agg hints

@@ -301,7 +301,7 @@ func InitMViewSession(
 	if mviewInfo == nil {
 		return nil, errors.New("materialized view: missing definition metadata")
 	}
-	if mviewInfo.DefinitionDivPrecisionIncrement < 0 || mviewInfo.DefinitionDivPrecisionIncrement > vardef.MaxDivPrecisionIncrement {
+	if mviewInfo.DefinitionDivPrecisionIncrement < 0 || mviewInfo.DefinitionDivPrecisionIncrement > int(variable.GetSysVar(vardef.DivPrecisionIncrement).MaxValue) {
 		return nil, errors.New("materialized view: invalid maintenance numeric metadata")
 	}
 	timezone := mviewInfo.DefinitionTimeZone.Clone()

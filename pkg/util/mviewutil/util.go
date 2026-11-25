@@ -21,8 +21,19 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 )
+
+// AvgDivPrecisionIncrement limits the fractional digits requested by DECIMAL
+// division during MV AVG finalization. Keep the rounding digit when it fits
+// within the definition's increment, without requesting excess decimal words.
+func AvgDivPrecisionIncrement(sum *types.MyDecimal, increment, scale int) int {
+	if scale == types.UnspecifiedLength {
+		scale = mysql.MaxDecimalScale
+	}
+	return min(increment, max(0, scale+1-int(sum.GetDigitsFrac())))
+}
 
 // ShadowTablePrefix identifies candidate tables for abandoned refresh-shadow cleanup.
 const ShadowTablePrefix = "__mv_shadow_"

@@ -703,12 +703,6 @@ func TestMulMyDecimal(t *testing.T) {
 }
 
 func TestDivModMyDecimal(t *testing.T) {
-	t.Run("AVG rounds across a word boundary", func(t *testing.T) {
-		var avg MyDecimal
-		require.NoError(t, DecimalAvg(NewDecFromInt(2), 3, &avg, 30, 9))
-		require.Equal(t, "0.666666667", avg.String())
-	})
-
 	type tcase struct {
 		a      string
 		b      string

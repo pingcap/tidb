@@ -2181,21 +2181,6 @@ func DecimalDiv(from1, from2, to *MyDecimal, fracIncr int) error {
 	return doDivMod(from1, from2, to, nil, fracIncr)
 }
 
-// DecimalAvg divides sum by a nonzero count and rounds to the AVG result scale.
-func DecimalAvg(sum *MyDecimal, count int64, to *MyDecimal, fracIncr, scale int) error {
-	if scale == UnspecifiedLength {
-		scale = mysql.MaxDecimalScale
-	}
-	// Keep a digit for rounding, but avoid requesting excess fractional words
-	// that can exhaust the division buffer for wide integer results.
-	fracIncr = min(fracIncr, max(0, scale+1-int(sum.digitsFrac)))
-	var divisor MyDecimal
-	if err := DecimalDiv(sum, divisor.FromInt(count), to, fracIncr); err != nil {
-		return err
-	}
-	return to.Round(to, scale, ModeHalfUp)
-}
-
 /*
 DecimalMod does modulus of two decimals.
 

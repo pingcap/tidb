@@ -34,6 +34,7 @@ import (
 	_ "github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/mock"
@@ -180,7 +181,7 @@ func TestBuildCountSum(t *testing.T) {
 		{Pos: 7, DB: mvDBName, Tbl: mvTableAlias, Col: "__mview_mv_rowid", OrigCol: "_tidb_rowid"},
 	})
 
-	mv.MaterializedView.DefinitionDivPrecisionIncrement = vardef.MaxDivPrecisionIncrement + 1
+	mv.MaterializedView.DefinitionDivPrecisionIncrement = int(variable.GetSysVar(vardef.DivPrecisionIncrement).MaxValue) + 1
 	_, err = mview.Build(
 		sctx.GetPlanCtx(),
 		is,
