@@ -1014,6 +1014,72 @@ func TestNewIndexWithLowNDVColumnStats(t *testing.T) {
 	require.Greater(t, estRows, 10.0)
 }
 
+func TestMissingStatsIndexRangeMaxIncludesTopN(t *testing.T) {
+	ctx := mock.NewContext()
+	ctx.GetSessionVars().RiskRangeSkewRatio = 0
+	field := types.NewFieldType(mysql.TypeLonglong)
+	coll := statistics.NewHistColl(1, 1000, 0, 2, 0)
+	coll.CanNotTriggerLoad = true
+	topNEntry := func(value int64, count uint64) statistics.TopNMeta {
+		encoded, err := codec.EncodeKey(ctx.GetSessionVars().StmtCtx.TimeZone(), nil, types.NewIntDatum(value))
+		require.NoError(t, err)
+		return statistics.TopNMeta{Encoded: encoded, Count: count}
+	}
+	setColumnStats := func(id, ndv, lower, upper, bucketCount, repeat int64, topN ...statistics.TopNMeta) {
+		hist := statistics.NewHistogram(id, ndv, 0, 0, field, 1, 0)
+		lo, hi := types.NewIntDatum(lower), types.NewIntDatum(upper)
+		hist.AppendBucket(&lo, &hi, bucketCount, repeat)
+		coll.SetCol(id, &statistics.Column{
+			Histogram:         *hist,
+			Info:              &model.ColumnInfo{ID: id},
+			TopN:              &statistics.TopN{TopN: topN},
+			StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
+			StatsVer:          statistics.Version2,
+		})
+	}
+	setColumnStats(1, 2, 2, 2, 100, 100, topNEntry(1, 900))
+	setColumnStats(2, 101, 0, 100, 700, 10, topNEntry(15, 300))
+
+	// Estimate a = 1 AND 10 <= b AND b < 20 on an unanalyzed index (a, b).
+	// The range excludes the last histogram value but includes the TopN value 15.
+	one, ten, twenty := types.NewIntDatum(1), types.NewIntDatum(10), types.NewIntDatum(20)
+	binary := collate.GetBinaryCollator()
+	columnRange := &ranger.Range{
+		LowVal: []types.Datum{ten}, HighVal: []types.Datum{twenty},
+		HighExclude: true, Collators: []collate.Collator{binary},
+	}
+	indexRange := &ranger.Range{
+		LowVal: []types.Datum{one, ten}, HighVal: []types.Datum{one, twenty},
+		HighExclude: true, Collators: []collate.Collator{binary, binary},
+	}
+
+	columnEstimate, err := cardinality.GetRowCountByColumnRanges(ctx, coll, 2, []*ranger.Range{columnRange}, false)
+	require.NoError(t, err)
+	require.InDelta(t, 369, columnEstimate.Est, 1e-9)
+	require.InDelta(t, 69, columnEstimate.MinEst, 1e-9)
+	indexCols := []*expression.Column{{ID: 1, UniqueID: 1, RetType: field}, {ID: 2, UniqueID: 2, RetType: field}}
+	indexEstimate, err := cardinality.GetRowCountByIndexRanges(ctx, coll, 3, []*ranger.Range{indexRange}, indexCols)
+	require.NoError(t, err)
+	require.InDelta(t, 369*math.Sqrt(0.9), indexEstimate.Est, 1e-9)
+
+	// b's worst case is 690 histogram rows plus 300 TopN rows, capped by
+	// the 900 rows matching a when estimating the compound index range.
+	require.Equal(t, 900.0, indexEstimate.MaxEst)
+	require.Equal(t, 990.0, columnEstimate.MaxEst)
+
+	// Two disjoint ranges in the same histogram bucket can each use the bucket's
+	// skew bound. Their combined maximum still cannot exceed the table row count.
+	setColumnStats(2, 103, 0, 100, 400, 10, topNEntry(15, 300), topNEntry(35, 300))
+	otherRange := &ranger.Range{
+		LowVal: []types.Datum{one, types.NewIntDatum(30)}, HighVal: []types.Datum{one, types.NewIntDatum(40)},
+		HighExclude: true, Collators: []collate.Collator{binary, binary},
+	}
+	indexEstimate, err = cardinality.GetRowCountByIndexRanges(ctx, coll, 3, []*ranger.Range{indexRange, otherRange}, indexCols)
+	require.NoError(t, err)
+	require.InDelta(t, 2*339*math.Sqrt(0.9), indexEstimate.Est, 1e-9)
+	require.Equal(t, 1000.0, indexEstimate.MaxEst)
+}
+
 func TestMissingStatsIndexWithVirtualColumn(t *testing.T) {
 	// An index without statistics on a virtual column (which has no column statistics) and a column with
 	// statistics must still account for the virtual column, and report its statistics as missing.
