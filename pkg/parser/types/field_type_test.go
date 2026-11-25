@@ -15,11 +15,13 @@ package types_test
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
+	"github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	// import parser_driver
 	_ "github.com/pingcap/tidb/pkg/parser/test_driver"
@@ -192,6 +194,60 @@ func TestFieldType(t *testing.T) {
 	ft.SetDecimal(0)
 	require.Equal(t, "char(0)", ft.String())
 	require.True(t, HasCharset(ft))
+
+	t.Run("BinaryAttribute", func(t *testing.T) {
+		for _, tc := range []struct {
+			name    string
+			tp      byte
+			flen    int
+			decimal int
+			charset string
+			flags   uint
+			want    string
+		}{
+			{"count", mysql.TypeLonglong, 21, 0, charset.CharsetBin, 0, "bigint(21)"},
+			{"sum", mysql.TypeNewDecimal, 41, 0, charset.CharsetBin, 0, "decimal(41,0)"},
+			{"unsigned", mysql.TypeLong, 11, 0, "", mysql.UnsignedFlag | mysql.ZerofillFlag, "int(11) UNSIGNED ZEROFILL"},
+			{"double", mysql.TypeDouble, -1, -1, charset.CharsetBin, 0, "double"},
+			{"date", mysql.TypeDate, -1, -1, charset.CharsetBin, 0, "date"},
+			{"time", mysql.TypeDuration, -1, 3, charset.CharsetBin, 0, "time(3)"},
+			{"datetime", mysql.TypeDatetime, -1, 6, charset.CharsetBin, 0, "datetime(6)"},
+			{"timestamp", mysql.TypeTimestamp, -1, 6, charset.CharsetBin, 0, "timestamp(6)"},
+			{"json", mysql.TypeJSON, -1, -1, charset.CharsetBin, 0, "json"},
+			{"char", mysql.TypeString, 10, -1, charset.CharsetUTF8MB4, 0, "char(10) BINARY CHARACTER SET utf8mb4 COLLATE utf8mb4_bin"},
+			{"varchar", mysql.TypeVarchar, 10, -1, charset.CharsetUTF8MB4, 0, "varchar(10) BINARY CHARACTER SET utf8mb4 COLLATE utf8mb4_bin"},
+			{"text", mysql.TypeBlob, -1, -1, charset.CharsetUTF8MB4, 0, "text BINARY CHARACTER SET utf8mb4 COLLATE utf8mb4_bin"},
+			{"enum", mysql.TypeEnum, -1, -1, charset.CharsetUTF8MB4, 0, "enum('x') BINARY"},
+			{"set", mysql.TypeSet, -1, -1, charset.CharsetUTF8MB4, 0, "set('x') BINARY"},
+			{"binary", mysql.TypeString, 10, -1, charset.CharsetBin, 0, "binary(10)"},
+			{"varbinary", mysql.TypeVarchar, 10, -1, charset.CharsetBin, 0, "varbinary(10)"},
+			{"blob", mysql.TypeBlob, -1, -1, charset.CharsetBin, 0, "blob"},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				ft := NewFieldType(tc.tp)
+				ft.SetFlen(tc.flen)
+				ft.SetDecimal(tc.decimal)
+				ft.SetCharset(tc.charset)
+				ft.SetFlag(mysql.BinaryFlag | tc.flags)
+				if tc.charset == charset.CharsetUTF8MB4 {
+					ft.SetCollate(charset.CollationUTF8MB4)
+				}
+				if tc.tp == mysql.TypeEnum || tc.tp == mysql.TypeSet {
+					ft.SetElems([]string{"x"})
+				}
+				original := ft.Clone()
+				p := parser.New()
+				_, err := p.ParseOneStmt(fmt.Sprintf("CREATE TABLE t (a %s)", ft.String()), "", "")
+				require.NoError(t, err)
+				require.Equal(t, tc.want, ft.String())
+				var restored strings.Builder
+				require.NoError(t, ft.Restore(format.NewRestoreCtx(format.DefaultRestoreFlags, &restored)))
+				_, err = p.ParseOneStmt(fmt.Sprintf("CREATE TABLE t (a %s)", restored.String()), "", "")
+				require.NoError(t, err)
+				require.Equal(t, original, ft, "formatting must preserve type metadata")
+			})
+		}
+	})
 }
 
 func TestHasCharsetFromStmt(t *testing.T) {

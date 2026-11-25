@@ -113,6 +113,27 @@ func TestScalarFunction(t *testing.T) {
 	require.Equal(t, sf.Repertoire(), newSf.Repertoire())
 	_, ok = newSf.Function.(*builtinValuesIntSig)
 	require.True(t, ok)
+
+	t.Run("CastBinaryFlag", func(t *testing.T) {
+		for _, tc := range []struct {
+			tp   byte
+			flen int
+			want string
+		}{
+			{mysql.TypeLonglong, 21, "bigint(21) BINARY"},
+			{mysql.TypeNewDecimal, 41, "decimal(41,0) BINARY"},
+		} {
+			retType := types.NewFieldType(tc.tp)
+			retType.SetFlen(tc.flen)
+			retType.SetDecimal(0)
+			types.SetBinChsClnFlag(retType)
+			cast := BuildCastFunction(ctx, a, retType)
+			require.Equal(t, "cast(Column#1, "+tc.want+")", cast.StringWithCtx(ctx, "OFF"))
+			require.Equal(t, "cast(Column#1, "+tc.want+")", cast.ExplainInfo(ctx))
+			require.Equal(t, "cast(?, "+tc.want+")", cast.ExplainNormalizedInfo())
+			require.Equal(t, "cast(?, "+tc.want+")", cast.ExplainNormalizedInfo4InList())
+		}
+	})
 }
 
 func TestScalarFunctionCloneWithArgs(t *testing.T) {

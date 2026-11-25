@@ -136,7 +136,7 @@ func (sf *ScalarFunction) StringWithCtx(ctx ParamValues, redact string) string {
 		for _, arg := range sf.GetArgs() {
 			buffer.WriteString(arg.StringWithCtx(ctx, redact))
 			buffer.WriteString(", ")
-			buffer.WriteString(sf.RetType.String())
+			buffer.WriteString(sf.RetType.StringForExplain())
 		}
 	default:
 		for i, arg := range sf.GetArgs() {

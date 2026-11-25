@@ -15,15 +15,59 @@
 package aggregation
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
+	_ "github.com/pingcap/tidb/pkg/types/parser_driver"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
+
+func TestAggregateResultTypeString(t *testing.T) {
+	ctx := mock.NewContext()
+	intType := types.NewFieldType(mysql.TypeLonglong)
+	intType.SetFlen(20)
+	decimalType := types.NewFieldType(mysql.TypeNewDecimal)
+	decimalType.SetFlen(19)
+	decimalType.SetDecimal(2)
+	for _, tc := range []struct {
+		name  string
+		fn    string
+		input *types.FieldType
+		want  string
+	}{
+		{"count", ast.AggFuncCount, nil, "bigint(21)"},
+		{"sum_int", ast.AggFuncSum, intType, "decimal(41,0)"},
+		{"sum_decimal", ast.AggFuncSum, decimalType, "decimal(41,2)"},
+		{"sum_double", ast.AggFuncSum, types.NewFieldType(mysql.TypeDouble), "double"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var args []expression.Expression
+			if tc.input != nil {
+				args = []expression.Expression{&expression.Column{RetType: tc.input}}
+			}
+			desc, err := newBaseFuncDesc(ctx, tc.fn, args)
+			require.NoError(t, err)
+			require.True(t, mysql.HasBinaryFlag(desc.RetTp.GetFlag()))
+			original := desc.RetTp.Clone()
+			// TiCDC builds the MV's CREATE TABLE from these inferred column types.
+			definition := desc.RetTp.String()
+			if mysql.HasNotNullFlag(desc.RetTp.GetFlag()) {
+				definition += " NOT NULL"
+			}
+			p := parser.New()
+			_, err = p.ParseOneStmt(fmt.Sprintf("CREATE TABLE mv (n %s)", definition), "", "")
+			require.NoError(t, err)
+			require.Equal(t, tc.want, desc.RetTp.String())
+			require.Equal(t, original, desc.RetTp, "formatting must preserve aggregate metadata")
+		})
+	}
+}
 
 func TestClone(t *testing.T) {
 	ctx := mock.NewContext()
