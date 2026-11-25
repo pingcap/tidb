@@ -3437,8 +3437,8 @@ func (ts *PhysicalTableScan) expandMPPVirtualTextFilters(ds *logicalop.DataSourc
 	if ds.ColsRequiringFullLen == nil {
 		return
 	}
-	var virtualCols []*expression.Column
-	var replacements []expression.Expression
+	virtualCols := make([]*expression.Column, 0, len(ts.Schema().Columns))
+	replacements := make([]expression.Expression, 0, len(ts.Schema().Columns))
 	exprCtx := ds.SCtx().GetExprCtx()
 	evalCtx := exprCtx.GetEvalCtx()
 	for _, col := range ts.Schema().Columns {
