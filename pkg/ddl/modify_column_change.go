@@ -181,14 +181,6 @@ func classifyColumnChange(tbl *model.TableInfo, oldCol, newCol *model.ColumnInfo
 	if !hasRelatedIndex(tbl, oldCol.ID) {
 		return change
 	}
-	// Indexed CHAR -> VARCHAR cannot stay metadata-only because index restored
-	// data encoding can change even when row values fit unchanged.
-	if isCharToVarchar(oldCol, newCol) {
-		if !isNonBinaryCharChange(oldCol, newCol) {
-			return model.ModifyTypeReorg
-		}
-		change = model.ModifyTypeNoReorgWithCheck
-	}
 	if needsIndexReorg(oldCol, newCol) {
 		// Index-only reorg only runs validation SQL for integers and non-binary
 		// CHAR/VARCHAR; other indexed string types (e.g. TEXT with a prefix
@@ -398,10 +390,6 @@ func isIntegerChange(from, to *model.ColumnInfo) bool {
 
 func isCharOrVarcharChange(from, to *model.ColumnInfo) bool {
 	return types.IsTypeChar(from.GetType()) && types.IsTypeChar(to.GetType())
-}
-
-func isCharToVarchar(oldCol, newCol *model.ColumnInfo) bool {
-	return oldCol.GetType() == mysql.TypeString && types.IsTypeVarchar(newCol.GetType())
 }
 
 func isVarcharToChar(oldCol, newCol *model.ColumnInfo) bool {

@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit/external"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
@@ -721,5 +722,15 @@ func TestModifyColumnCharsetClassification(t *testing.T) {
 	tk.MustExec("insert into t values ('a'), ('B')")
 	tk.MustExec("alter table t modify c varchar(10) collate utf8_general_ci")
 	tk.MustQuery("select c from t where c = 'A'").Check(testkit.Rows("a"))
+	tk.MustExec("admin check table t")
+
+	origNewCollate := collate.NewCollationEnabled()
+	defer collate.SetNewCollationEnabledForTest(origNewCollate)
+	collate.SetNewCollationEnabledForTest(false)
+	tk.MustExec("drop table t")
+	tk.MustExec("create table t (a char(4) charset utf8 primary key nonclustered)")
+	tk.MustExec("insert into t values ('abc')")
+	tk.MustExec("alter table t modify a varchar(8) charset utf8")
+	tk.MustQuery("select a from t where a = 'abc'").Check(testkit.Rows("abc"))
 	tk.MustExec("admin check table t")
 }

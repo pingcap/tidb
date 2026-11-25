@@ -50,10 +50,11 @@ analysis is structured into three layers:
    display width; DECIMAL requires identical precision/scale/sign; ENUM/SET
    preserve member ordinals; BINARY length changes require padding changes;
    vector dimensions must match unless target is unconstrained). For indexed
-   columns it applies the `CHAR -> VARCHAR` rule and checks index
-   key/restored-data encoding via `needsIndexReorg` (including incompatible
-   collation changes under new collation, routing non-integer/non-char types
-   like `TEXT` with prefix indexes to `ModifyTypeReorg`). `isMetaOnlyChange`
+   columns it checks index key/restored-data encoding via `needsIndexReorg`
+   (including incompatible collation changes under new collation and
+   `NeedRestoredData` changes such as `CHAR -> VARCHAR` with `_bin` collations,
+   routing non-integer/non-char types like `TEXT` with prefix indexes to
+   `ModifyTypeReorg`). `isMetaOnlyChange`
    uses the same classification for dependent-object checks; nullability remains
    a separate check.
 2. **Support validation (`validateModifyColumn`)**: validates the target

@@ -48,6 +48,7 @@ import (
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/generic"
 	"github.com/pingcap/tidb/pkg/util/mock"
@@ -440,6 +441,31 @@ func TestModifyColumn(t *testing.T) {
 		reorgNew := colDefStrToColInfo(t, "varchar(10) collate utf8_unicode_ci", ctx)
 		_, err = analyzeModifyColumn(newIndexedTable(reorgOld), reorgOld, reorgNew)
 		require.NoError(t, err)
+
+		origNewCollate := collate.NewCollationEnabled()
+		t.Cleanup(func() { collate.SetNewCollationEnabledForTest(origNewCollate) })
+
+		collate.SetNewCollationEnabledForTest(false)
+		oldCollatePKOld := colDefStrToColInfo(t, "char(4) character set utf8", ctx)
+		oldCollatePKOld.AddFlag(mysql.PriKeyFlag)
+		oldCollatePKNew := colDefStrToColInfo(t, "varchar(8) character set utf8", ctx)
+		change, err = analyzeModifyColumn(newIndexedTable(oldCollatePKOld), oldCollatePKOld, oldCollatePKNew)
+		require.NoError(t, err)
+		require.Equal(t, model.ModifyTypeNoReorg, change)
+
+		collate.SetNewCollationEnabledForTest(true)
+		newCollateBinPKOld := colDefStrToColInfo(t, "char(4) character set utf8 collate utf8_bin", ctx)
+		newCollateBinPKOld.AddFlag(mysql.PriKeyFlag)
+		newCollateBinPKNew := colDefStrToColInfo(t, "varchar(8) character set utf8 collate utf8_bin", ctx)
+		_, err = analyzeModifyColumn(newIndexedTable(newCollateBinPKOld), newCollateBinPKOld, newCollateBinPKNew)
+		require.EqualError(t, err, "[ddl:8200]Unsupported modify column: this column has primary key flag")
+
+		newCollateCIPKOld := colDefStrToColInfo(t, "char(4) character set utf8 collate utf8_general_ci", ctx)
+		newCollateCIPKOld.AddFlag(mysql.PriKeyFlag)
+		newCollateCIPKNew := colDefStrToColInfo(t, "varchar(8) character set utf8 collate utf8_general_ci", ctx)
+		change, err = analyzeModifyColumn(newIndexedTable(newCollateCIPKOld), newCollateCIPKOld, newCollateCIPKNew)
+		require.NoError(t, err)
+		require.Equal(t, model.ModifyTypeNoReorg, change)
 	})
 
 	t.Run("resolveModifyColumnType", func(t *testing.T) {
