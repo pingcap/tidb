@@ -194,8 +194,8 @@ func testMaterializedViewServiceMLogAnalyze(t *testing.T) {
 	tk.MustExec("create materialized view log on t_mvs_analyze (a)")
 	require.NoError(t, statstestutil.HandleNextDDLEventWithTxn(handle))
 	tk.MustExec("insert into t_mvs_analyze values (1), (2)")
-	require.NoError(t, handle.DumpStatsDeltaToKV(true))
-	require.NoError(t, handle.Update(context.Background(), dom.InfoSchema()))
+	require.NoError(t, handle.Usage().DumpStatsDeltaToKV(true))
+	require.NoError(t, handle.Cache().Update(context.Background(), dom.InfoSchema()))
 	require.NoError(t, dom.GetMVService().SetTaskBackpressureConfig(mvservice.TaskBackpressureConfig{}))
 	require.NoError(t, dom.StartMVService())
 

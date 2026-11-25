@@ -1016,6 +1016,22 @@ func (s *Server) ShowTxnList() []*txninfo.TxnInfo {
 	return rs
 }
 
+// ShowInternalTxnList exposes internal transactions to unauthenticated system
+// queries that drain database writes; ordinary TIDB_TRX visibility is unchanged.
+func (s *Server) ShowInternalTxnList() []*txninfo.TxnInfo {
+	s.sessionMapMutex.Lock()
+	defer s.sessionMapMutex.Unlock()
+	var result []*txninfo.TxnInfo
+	for se := range s.internalSessions {
+		if provider, ok := se.(interface{ TxnInfo() *txninfo.TxnInfo }); ok {
+			if info := provider.TxnInfo(); info != nil && info.ProcessInfo != nil {
+				result = append(result, info)
+			}
+		}
+	}
+	return result
+}
+
 // UpdateProcessCPUTime updates specific process's tidb CPU time when the process is still running
 // It implements ProcessCPUTimeUpdater interface
 func (s *Server) UpdateProcessCPUTime(connID uint64, sqlID uint64, cpuTime time.Duration) {

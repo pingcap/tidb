@@ -205,7 +205,7 @@ func TestReorgPartitionFailures(t *testing.T) {
 		tk := testkit.NewTestKit(t, store)
 		tk.MustExec("use test")
 		tk.MustExec(create)
-		events := dom.StatsHandle().DDLEventCh()
+		events := dom.StatsHandle().DDL().DDLEventCh()
 		for len(events) > 0 {
 			<-events
 		}

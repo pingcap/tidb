@@ -41,6 +41,7 @@ import (
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	storeerr "github.com/pingcap/tidb/pkg/store/driver/error"
+	"github.com/pingcap/tidb/pkg/types"
 	basic "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	disttaskutil "github.com/pingcap/tidb/pkg/util/disttask"
@@ -62,10 +63,19 @@ const (
 	mvLogPurgeHistoryOrphanedReason = "task heartbeat expired before purge history finalize"
 )
 
+// StatsHandle is the part of the stats handle that the MV service uses. It reads the stats of
+// MV log tables, and takes the process IDs of the analyze statements that it runs.
+type StatsHandle interface {
+	statstypes.NonPseudoPhysicalTableStatsGetter
+
+	// ProcIDs returns the generator of the process IDs of the analyze statements.
+	ProcIDs() statsutil.AutoAnalyzeProcIDGenerator
+}
+
 type serviceHelper struct {
 	durationObserverCache durationObserverCache
 	runEventCounterCache  runEventCounterCache
-	statsHandleGetter     func() statstypes.StatsHandle
+	statsHandleGetter     func() StatsHandle
 	sysProcTracker        sysproctrack.Tracker
 	isAutoAnalyzeStopped  func() bool
 
@@ -124,7 +134,7 @@ type mviewMetricComponentTypeKey struct {
 }
 
 // newServiceHelper builds a default helper used by MVService.
-func newServiceHelper(statsHandleGetter func() statstypes.StatsHandle, sysProcTracker sysproctrack.Tracker) *serviceHelper {
+func newServiceHelper(statsHandleGetter func() StatsHandle, sysProcTracker sysproctrack.Tracker) *serviceHelper {
 	return &serviceHelper{
 		durationObserverCache: newDurationObserverCache(8),
 		runEventCounterCache:  newRunEventCounterCache(16),
@@ -1563,7 +1573,7 @@ func (*serviceHelper) LoadTiDBMVLogAccumulationRowCounts(
 	return rowCounts, nil
 }
 
-func (h *serviceHelper) getStatsHandle() (statstypes.StatsHandle, error) {
+func (h *serviceHelper) getStatsHandle() (StatsHandle, error) {
 	if h == nil || h.statsHandleGetter == nil {
 		return nil, errors.New("mv service stats handle getter is nil")
 	}
@@ -1760,7 +1770,7 @@ func (h *serviceHelper) AnalyzeMVLog(ctx context.Context, sysSessionPool basic.S
 	needVersionRewriteWarn := !statistics.AnalyzeVersionMatchesForTableStats(statsTbl, tableStatsVer)
 	_, _, err = statsautoanalyzeexec.RunAnalyzeStmt(
 		sctx,
-		statsHandle,
+		statsHandle.ProcIDs(),
 		h.sysProcTracker,
 		tableStatsVer,
 		needVersionRewriteWarn,
@@ -1773,7 +1783,10 @@ func (h *serviceHelper) AnalyzeMVLog(ctx context.Context, sysSessionPool basic.S
 
 // LoadAllTiDBMVRefresh loads all scheduled MV refresh tasks from metadata.
 func (*serviceHelper) LoadAllTiDBMVRefresh(ctx context.Context, sysSessionPool basic.SessionPool) (map[int64]*mviewTask, error) {
-	const sql = `SELECT NEXT_REFRESH_UNIX_SECONDS, MVIEW_ID, LAST_SUCCESS_READ_TSO FROM mysql.tidb_mview_refresh_info WHERE NEXT_REFRESH_UNIX_SECONDS IS NOT NULL`
+	const sql = `SELECT i.NEXT_REFRESH_UNIX_SECONDS, i.MVIEW_ID, i.LAST_SUCCESS_READ_TSO, a.ALERT_LEVEL, a.LAST_SUCCESS_SNAPSHOT_TIME
+FROM mysql.tidb_mview_refresh_info AS i
+LEFT JOIN mysql.tidb_mview_refresh_alert AS a ON a.MVIEW_ID = i.MVIEW_ID
+WHERE i.NEXT_REFRESH_UNIX_SECONDS IS NOT NULL`
 	se, err := sysSessionPool.Get()
 	if err != nil {
 		return nil, err
@@ -1809,6 +1822,12 @@ func (*serviceHelper) LoadAllTiDBMVRefresh(ctx context.Context, sysSessionPool b
 			nextRefresh:        nextRefresh,
 			lastSuccessReadTSO: lastSuccessReadTSO,
 			lastSuccessTime:    lastSuccessTime,
+		}
+		if !row.IsNull(3) {
+			m.persistedAlertLevel = row.GetString(3)
+		}
+		if !row.IsNull(4) && !lastSuccessTime.IsZero() {
+			m.persistedAlertSnapshotMatches = row.GetTime(4).CoreTime() == types.FromGoTime(lastSuccessTime)
 		}
 		schemaName, mviewName, alertWarningSec, alertOverdueSec, found, resolveErr := resolveMVIdentityByID(ctx, sctx, mviewID)
 		if resolveErr == nil && found {
@@ -1876,7 +1895,7 @@ func RegisterMVService(
 	ctx context.Context,
 	registerHandler func(notifier.HandlerID, notifier.SchemaChangeHandler),
 	se basic.SessionPool,
-	statsHandleGetter func() statstypes.StatsHandle,
+	statsHandleGetter func() StatsHandle,
 	sysProcTracker sysproctrack.Tracker,
 	isAutoAnalyzeStopped func() bool,
 	onDDLHandled func(),

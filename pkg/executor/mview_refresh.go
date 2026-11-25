@@ -403,6 +403,11 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 	if err != nil {
 		return err
 	}
+	if refreshMode != ast.RefreshMaterializedViewModeCompleteOutOfPlace {
+		if err := activateSchemaReadOnlyWrite(e.Ctx(), tblInfo); err != nil {
+			return err
+		}
+	}
 	if err := checkRefreshMaterializedViewBaseTableSelect(e.Ctx(), domain.GetDomain(e.Ctx()).InfoSchema(), tblInfo.MaterializedView); err != nil {
 		return err
 	}
@@ -447,6 +452,9 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedView(kctx contex
 		return err
 	}
 	defer e.ReleaseSysSession(releaseCtx, refreshSctx)
+	if privilege.CanWriteReadOnlySchema(e.Ctx(), schemaName.L) {
+		defer privilege.WithInternalSchemaReadOnlyBypass(refreshSctx, schemaName.L)()
+	}
 	if e.stepObserver != nil {
 		defer setMVRefreshObserveRedaction(refreshSctx, e.Ctx().GetSessionVars().EnableRedactLog)()
 	}
@@ -1111,6 +1119,9 @@ func (e *RefreshMaterializedViewExec) executeRefreshMaterializedViewCompleteOutO
 		return 0, err
 	}
 	defer e.ReleaseSysSession(releaseCtx, buildSctx)
+	if privilege.CanWriteReadOnlySchema(e.Ctx(), schemaName.L) {
+		defer privilege.WithInternalSchemaReadOnlyBypass(buildSctx, schemaName.L)()
+	}
 	if e.stepObserver != nil {
 		defer setMVRefreshObserveRedaction(buildSctx, e.Ctx().GetSessionVars().EnableRedactLog)()
 	}

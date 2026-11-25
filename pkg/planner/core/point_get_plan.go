@@ -90,7 +90,8 @@ func TryFastPlan(ctx base.PlanContext, node *resolve.NodeW) (p base.Plan) {
 	ctx.GetSessionVars().PlanColumnID.Store(0)
 	switch x := node.Node.(type) {
 	case *ast.SelectStmt:
-		if x.SelectIntoOpt != nil {
+		// SQL_CALC_FOUND_ROWS must reach PlanBuilder to build the count branch.
+		if x.SelectIntoOpt != nil || shouldCalcFoundRows(ctx, x.SelectStmtOpts) {
 			return nil
 		}
 		defer func() {

@@ -265,6 +265,9 @@ type Plan struct {
 	QuerySource *QuerySource `json:",omitempty"`
 	DBName      string
 	DBID        int64
+	// SchemaReadOnlyBypass carries the submitting SQL session's authorization to
+	// the internal table-mode job. It is not inherited by background task metadata.
+	SchemaReadOnlyBypass bool `json:"-"`
 	// TableInfo is the table info we used during import, we might change it
 	// if add index by SQL is enabled(it's disabled now).
 	TableInfo *model.TableInfo

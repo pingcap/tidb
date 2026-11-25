@@ -302,21 +302,19 @@ func (a *baseFuncDesc) TypeInfer4FinalCount(finalCountRetType *types.FieldType) 
 // Because child returns integer or decimal type.
 func (a *baseFuncDesc) typeInfer4Avg(ctx expression.EvalContext) {
 	divPrecIncre := ctx.GetDivPrecisionIncrement()
-	argTp := a.Args[0].GetType(ctx)
-	switch argTp.GetType() {
+	switch a.Args[0].GetType(ctx).GetType() {
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
 		a.RetTp = types.NewFieldType(mysql.TypeNewDecimal)
 		a.RetTp.SetDecimalUnderLimit(divPrecIncre)
-		flen, _ := mysql.GetDefaultFieldLengthAndDecimal(argTp.GetType())
+		flen, _ := mysql.GetDefaultFieldLengthAndDecimal(a.Args[0].GetType(ctx).GetType())
 		a.RetTp.SetFlenUnderLimit(flen + divPrecIncre)
 	case mysql.TypeYear, mysql.TypeNewDecimal:
 		a.RetTp = types.NewFieldType(mysql.TypeNewDecimal)
-		a.RetTp.UpdateFlenAndDecimalUnderLimit(argTp, divPrecIncre, divPrecIncre)
-		a.RetTp.SetDecimalUnderLimit(a.RetTp.GetDecimal())
+		a.RetTp.UpdateFlenAndDecimalUnderLimit(a.Args[0].GetType(ctx), divPrecIncre, divPrecIncre)
 	case mysql.TypeDouble, mysql.TypeFloat:
 		a.RetTp = types.NewFieldType(mysql.TypeDouble)
 		a.RetTp.SetFlen(mysql.MaxRealWidth)
-		a.RetTp.SetDecimal(argTp.GetDecimal())
+		a.RetTp.SetDecimal(a.Args[0].GetType(ctx).GetDecimal())
 	case mysql.TypeDate, mysql.TypeDuration, mysql.TypeDatetime, mysql.TypeTimestamp:
 		a.RetTp = types.NewFieldType(mysql.TypeDouble)
 		a.RetTp.SetFlen(mysql.MaxRealWidth)

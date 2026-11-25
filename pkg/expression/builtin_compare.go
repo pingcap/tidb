@@ -1234,6 +1234,7 @@ type builtinIntervalIntSig struct {
 func (b *builtinIntervalIntSig) Clone() builtinFunc {
 	newSig := &builtinIntervalIntSig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.hasNullable = b.hasNullable
 	return newSig
 }
 

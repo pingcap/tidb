@@ -50,32 +50,6 @@ func TestClone(t *testing.T) {
 
 func TestBaseFunc_InferAggRetType(t *testing.T) {
 	ctx := mock.NewContext()
-	t.Run("decimal AVG", func(t *testing.T) {
-		ctx := mock.NewContext()
-		for _, tc := range []struct {
-			precision, scale, increment int
-			wantPrecision, wantScale    int
-		}{
-			{10, 2, 4, 14, 6},
-			{10, 2, 30, 40, 30},
-			{65, 30, 4, 65, 30},
-			{60, 10, 30, 65, 30},
-			{65, 0, 4, 65, 4},
-		} {
-			ctx.GetSessionVars().DivPrecisionIncrement = tc.increment
-			colType := types.NewFieldType(mysql.TypeNewDecimal)
-			colType.SetFlen(tc.precision)
-			colType.SetDecimal(tc.scale)
-			desc, err := newBaseFuncDesc(ctx, ast.AggFuncAvg, []expression.Expression{
-				&expression.Column{RetType: colType},
-			})
-			require.NoError(t, err)
-			require.Equal(t, mysql.TypeNewDecimal, desc.RetTp.GetType())
-			require.Equal(t, tc.wantPrecision, desc.RetTp.GetFlen())
-			require.Equal(t, tc.wantScale, desc.RetTp.GetDecimal())
-		}
-	})
-
 	doubleType := types.NewFieldType(mysql.TypeDouble)
 	bitType := types.NewFieldType(mysql.TypeBit)
 
@@ -236,6 +210,46 @@ func TestTypeInfer4AvgSum(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, partialSumFunc.RetTp.GetFlen(), 51)
 		require.Equal(t, partialSumFunc.RetTp.GetDecimal(), 8)
+	}
+}
+
+func TestTypeInfer4AvgScale(t *testing.T) {
+	tests := []struct {
+		name                                     string
+		scale, increment, wantFlen, wantAvgScale int
+	}{
+		{"normal", 2, 4, 44, 6},
+		{"at_limit", 26, 4, 44, 30},
+		{"above_limit", 27, 4, 44, 30},
+		{"max_input_scale", 30, 4, 44, 30},
+		{"zero_increment", 30, 0, 40, 30},
+		{"max_increment", 30, 30, 65, 30},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := mock.NewContext()
+			ctx.GetSessionVars().DivPrecisionIncrement = tt.increment
+			argCol := &expression.Column{RetType: types.NewFieldType(mysql.TypeNewDecimal)}
+			argCol.RetType.SetFlen(40)
+			argCol.RetType.SetDecimal(tt.scale)
+
+			avgFunc, err := newBaseFuncDesc(ctx, ast.AggFuncAvg, []expression.Expression{argCol})
+			require.NoError(t, err)
+			require.Equal(t, mysql.TypeNewDecimal, avgFunc.RetTp.GetType())
+			require.Equal(t, tt.wantFlen, avgFunc.RetTp.GetFlen())
+			require.Equal(t, tt.wantAvgScale, avgFunc.RetTp.GetDecimal())
+
+			sumFunc, err := newBaseFuncDesc(ctx, ast.AggFuncSum, []expression.Expression{argCol})
+			require.NoError(t, err)
+			require.Equal(t, 62, sumFunc.RetTp.GetFlen())
+			require.Equal(t, tt.scale, sumFunc.RetTp.GetDecimal())
+
+			avgRetType := avgFunc.RetTp.Clone()
+			avgFunc.Name = ast.AggFuncSum
+			require.NoError(t, avgFunc.TypeInfer4AvgSum(ctx.GetEvalCtx(), avgRetType))
+			require.Equal(t, 62, avgFunc.RetTp.GetFlen())
+			require.Equal(t, tt.scale, avgFunc.RetTp.GetDecimal())
+		})
 	}
 }
 
