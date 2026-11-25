@@ -591,7 +591,7 @@ func (m *Mutator) checkPolicyNotExists(policyKey []byte) error {
 func (m *Mutator) checkMaskingPolicyExists(policyID int64, policyKey []byte) error {
 	v, err := m.txn.HGet(mMaskingPolicies, policyKey)
 	if err == nil && v == nil {
-		err = errors.WithMessage(ErrMaskingPolicyNotExists, fmt.Sprintf("masking policy id : %d doesn't exist", policyID))
+		err = ErrMaskingPolicyNotExists.GenWithStack("masking policy id : %d doesn't exist", policyID)
 	}
 	return errors.Trace(err)
 }
@@ -599,7 +599,7 @@ func (m *Mutator) checkMaskingPolicyExists(policyID int64, policyKey []byte) err
 func (m *Mutator) checkMaskingPolicyNotExists(policyID int64, policyKey []byte) error {
 	v, err := m.txn.HGet(mMaskingPolicies, policyKey)
 	if err == nil && v != nil {
-		err = errors.WithMessage(ErrMaskingPolicyExists, fmt.Sprintf("masking policy id : %d already exists", policyID))
+		err = ErrMaskingPolicyExists.GenWithStack("masking policy id : %d already exists", policyID)
 	}
 	return errors.Trace(err)
 }
@@ -1673,7 +1673,7 @@ func (m *Mutator) GetMaskingPolicy(policyID int64) (*model.MaskingPolicyInfo, er
 		return nil, errors.Trace(err)
 	}
 	if value == nil {
-		return nil, errors.WithMessage(ErrMaskingPolicyNotExists, fmt.Sprintf("masking policy id : %d doesn't exist", policyID))
+		return nil, ErrMaskingPolicyNotExists.GenWithStack("masking policy id : %d doesn't exist", policyID)
 	}
 
 	value, err = detachMagicByte(value)

@@ -151,14 +151,17 @@ func TestMaskingPolicy(t *testing.T) {
 	err = m.CreateMaskingPolicy(policy)
 	require.Error(t, err)
 	require.True(t, meta.ErrMaskingPolicyExists.Equal(err))
-	require.ErrorContains(t, err, "masking policy already exists")
-	require.ErrorContains(t, err, "masking policy id : 1 already exists")
+	require.EqualError(t, err, "[meta:8268]masking policy id : 1 already exists")
 
 	_, err = m.GetMaskingPolicy(2)
 	require.Error(t, err)
 	require.True(t, meta.ErrMaskingPolicyNotExists.Equal(err))
-	require.ErrorContains(t, err, "masking policy doesn't exist")
-	require.ErrorContains(t, err, "masking policy id : 2 doesn't exist")
+	require.EqualError(t, err, "[meta:8269]masking policy id : 2 doesn't exist")
+
+	err = m.UpdateMaskingPolicy(&model.MaskingPolicyInfo{ID: 2})
+	require.Error(t, err)
+	require.True(t, meta.ErrMaskingPolicyNotExists.Equal(err))
+	require.EqualError(t, err, "[meta:8269]masking policy id : 2 doesn't exist")
 
 	val, err := m.GetMaskingPolicy(1)
 	require.NoError(t, err)
