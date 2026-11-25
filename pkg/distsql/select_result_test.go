@@ -23,6 +23,7 @@ import (
 	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/copr"
@@ -33,6 +34,39 @@ import (
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
 )
+
+func TestSelectResultWarningCode(t *testing.T) {
+	for _, tc := range []struct {
+		name, label string
+		code        int32
+		want        uint16
+	}{
+		{"MPP data too long", "mpp", mysql.ErrDataTooLong, mysql.ErrDataTooLong},
+		{"cop data too long", "dag", mysql.ErrDataTooLong, mysql.ErrUnknown},
+		{"other MPP warning", "mpp", mysql.WarnDataTruncated, mysql.ErrUnknown},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sctx := newMockSessionContext()
+			const message = "warning from a remote task"
+			r := selectResult{
+				ctx:   sctx.GetDistSQLCtx(),
+				label: tc.label,
+				resp: &mockResponse{
+					ctx:      sctx,
+					total:    1,
+					batch:    1,
+					warnings: []*tipb.Error{{Code: tc.code, Msg: message}},
+				},
+			}
+			require.NoError(t, r.fetchResp(context.Background()))
+			warnings := sctx.GetSessionVars().StmtCtx.GetWarnings()
+			require.Len(t, warnings, 1)
+			warning := terror.ToSQLError(warnings[0].Err.(*terror.Error))
+			require.Equal(t, tc.want, warning.Code)
+			require.Equal(t, message, warning.Message)
+		})
+	}
+}
 
 func TestUpdateCopRuntimeStats(t *testing.T) {
 	ctx := mock.NewContext()

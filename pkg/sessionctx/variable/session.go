@@ -1942,10 +1942,10 @@ func (s *SessionVars) IsMPPEnforced() bool {
 	return s.allowMPPExecution && s.enforceMPPExecution
 }
 
-// ChooseMppVersion indicates the mpp-version used to build mpp plan, if mpp-version is unspecified, use the latest version.
+// ChooseMppVersion returns the explicitly selected MPP protocol version or the default.
 func (s *SessionVars) ChooseMppVersion() kv.MppVersion {
 	if s.mppVersion == kv.MppVersionUnspecified {
-		return kv.GetNewestMppVersion()
+		return kv.MppVersionV2 // V3 requires opting in on a cluster with upgraded TiFlash nodes.
 	}
 	return s.mppVersion
 }

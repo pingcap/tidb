@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
@@ -3130,6 +3131,10 @@ func convertToTableScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 			}
 			ts.SetStats(util.DeriveLimitStats(ts.StatsInfo(), float64(prop.VectorProp.TopK)))
 		}
+		if prop.TaskTp == property.MppTaskType && candidate.path.IsTiFlashSimpleTablePath() &&
+			ds.SCtx().GetSessionVars().ChooseMppVersion() >= kv.MppVersionV3 {
+			ts.expandMPPVirtualTextFilters(ds)
+		}
 		// ********************************** future deprecated start **************************/
 		var hasVirtualColumn bool
 		for _, col := range ts.schema.Columns {
@@ -3422,6 +3427,83 @@ func convertToBatchPointGet(ds *logicalop.DataSource, prop *property.PhysicalPro
 	}
 
 	return rTsk
+}
+
+// expandMPPVirtualTextFilters expands filter-only LOWER(TEXT) virtual columns
+// on this physical candidate. The logical schema and other access paths still
+// use the original column, including indexes on the generated value.
+func (ts *PhysicalTableScan) expandMPPVirtualTextFilters(ds *logicalop.DataSource) {
+	// Without column pruning, we cannot tell whether a parent needs the virtual column.
+	if ds.ColsRequiringFullLen == nil {
+		return
+	}
+	virtualCols := make([]*expression.Column, 0, len(ts.Schema().Columns))
+	replacements := make([]expression.Expression, 0, len(ts.Schema().Columns))
+	exprCtx := ds.SCtx().GetExprCtx()
+	evalCtx := exprCtx.GetEvalCtx()
+	for _, col := range ts.Schema().Columns {
+		if col.VirtualExpr == nil {
+			continue
+		}
+		if slices.ContainsFunc(ds.ColsRequiringFullLen, func(used *expression.Column) bool {
+			return used.UniqueID == col.UniqueID
+		}) {
+			return
+		}
+		lower, ok := col.VirtualExpr.(*expression.ScalarFunction)
+		if !ok || lower.FuncName.L != ast.Lower {
+			return
+		}
+		input, ok := lower.GetArgs()[0].(*expression.Column)
+		if !ok || input.VirtualExpr != nil {
+			return
+		}
+		target, source := col.GetType(evalCtx), lower.GetType(evalCtx)
+		if target.GetType() != mysql.TypeBlob || target.GetFlen() <= 0 ||
+			target.GetCharset() != charset.CharsetUTF8MB4 || target.GetCollate() != charset.CollationUTF8MB4 ||
+			source.GetCharset() != target.GetCharset() || source.GetCollate() != target.GetCollate() ||
+			mysql.HasNotNullFlag(target.GetFlag()) {
+			return
+		}
+		castType := target.Clone()
+		// In MPP v3, the generated-column flag on a CAST result field type
+		// requests generated-column assignment semantics on TiFlash.
+		castType.AddFlag(mysql.GeneratedColumnFlag)
+		cast := expression.BuildCastFunction(exprCtx, lower.Clone(), castType)
+		cast.SetCoercibility(col.Coercibility())
+		virtualCols = append(virtualCols, col)
+		replacements = append(replacements, cast)
+	}
+	if len(virtualCols) == 0 {
+		return
+	}
+
+	virtualSchema := expression.NewSchema(virtualCols...)
+	conditions := slices.Clone(ts.filterCondition)
+	usedVirtual := false
+	for i, cond := range conditions {
+		changed, failed, rewritten := expression.ColumnSubstituteImpl(exprCtx, cond, virtualSchema, replacements, true)
+		if failed {
+			return
+		}
+		usedVirtual = usedVirtual || changed
+		conditions[i] = rewritten
+	}
+	if !usedVirtual || !expression.CanExprsPushDown(util.GetPushDownCtx(ts.SCtx()), conditions, kv.TiFlash) {
+		return
+	}
+
+	schema := ts.Schema().Clone()
+	columns := ExpandVirtualColumn(ts.Columns, schema, ts.Table.Columns)
+	for i := len(schema.Columns) - 1; i >= 0; i-- {
+		if virtualSchema.Contains(schema.Columns[i]) {
+			schema.Columns = slices.Delete(schema.Columns, i, i+1)
+			columns = slices.Delete(columns, i, i+1)
+		}
+	}
+	ts.SetSchema(schema)
+	ts.Columns = columns
+	ts.filterCondition = conditions
 }
 
 func (ts *PhysicalTableScan) addPushedDownSelectionToMppTask(mpp *MppTask, stats *property.StatsInfo) *MppTask {

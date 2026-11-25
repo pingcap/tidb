@@ -643,8 +643,11 @@ func TestMppVersionError(t *testing.T) {
 	err := domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
 	require.NoError(t, err)
 	tk.MustExec("set @@session.tidb_enforce_mpp=ON")
+	// The default MPP version can be lower than the newest supported version.
+	version := kv.GetNewestMppVersion()
+	tk.MustExec(fmt.Sprintf("set @@session.mpp_version=%d", version))
 	{
-		item := fmt.Sprintf("return(%d)", kv.GetNewestMppVersion()+1)
+		item := fmt.Sprintf("return(%d)", version+1)
 		require.Nil(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/MppVersionError", item))
 	}
 	{
@@ -653,7 +656,7 @@ func TestMppVersionError(t *testing.T) {
 	}
 	require.Nil(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/MppVersionError"))
 	{
-		item := fmt.Sprintf("return(%d)", kv.GetNewestMppVersion())
+		item := fmt.Sprintf("return(%d)", version)
 		require.Nil(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/MppVersionError", item))
 	}
 	{

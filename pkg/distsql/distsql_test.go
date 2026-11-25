@@ -207,6 +207,7 @@ type mockResponse struct {
 	ctx   sessionctx.Context
 	// intermediateOutputs is used to mock the intermediate output from coprocessor.
 	intermediateOutputs [][]*tipb.IntermediateOutput
+	warnings            []*tipb.Error
 	closed              bool
 	sync.Mutex
 }
@@ -281,6 +282,7 @@ func (resp *mockResponse) Next(context.Context) (kv.ResultSubset, error) {
 		Chunks:              chunks,
 		OutputCounts:        []int64{1},
 		IntermediateOutputs: intermediateOutputs,
+		Warnings:            resp.warnings,
 	}
 	if canUseChunkRPC(resp.ctx.GetDistSQLCtx()) {
 		respPB.EncodeType = tipb.EncodeType_TypeChunk

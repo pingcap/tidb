@@ -33,7 +33,7 @@ func TestVersion(t *testing.T) {
 }
 
 func TestMppVersion(t *testing.T) {
-	assert.Equal(t, int64(2), GetNewestMppVersion().ToInt64())
+	assert.Equal(t, int64(3), GetNewestMppVersion().ToInt64())
 	{
 		v, ok := ToMppVersion("unspecified")
 		assert.True(t, ok)

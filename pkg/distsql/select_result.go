@@ -455,7 +455,12 @@ func (r *selectResult) fetchRespWithIntermediateResults(ctx context.Context, int
 			return err
 		}
 		for _, warning := range r.selectResp.Warnings {
-			r.ctx.AppendWarning(dbterror.ClassTiKV.Synthesize(terror.ErrCode(warning.Code), warning.Msg))
+			class := dbterror.ClassTiKV
+			if r.label == "mpp" && warning.Code == errno.ErrDataTooLong {
+				// TiFlash uses the same warning as TiDB's virtual TEXT assignment.
+				class = dbterror.ClassTypes
+			}
+			r.ctx.AppendWarning(class.Synthesize(terror.ErrCode(warning.Code), warning.Msg))
 		}
 
 		r.partialCount++
