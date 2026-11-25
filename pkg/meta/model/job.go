@@ -245,10 +245,12 @@ func (action ActionType) String() string {
 }
 
 // ModifyColumnType is used to indicate what type of modify column job it is.
+type ModifyColumnType byte
+
 // Note: to maintain compatibility, value 6(mysql.TypeNull) should not be used here which may be used by older version of TiDB.
 // https://github.com/pingcap/tidb/blob/cf587d3793d7d147132d90eb1850981d3ec41780/pkg/ddl/modify_column.go#L998-L1004
 const (
-	ModifyTypeNone byte = iota
+	ModifyTypeNone ModifyColumnType = iota
 	// modify column that guarantees no reorganization or check is needed.
 	ModifyTypeNoReorg
 
@@ -266,7 +268,7 @@ const (
 )
 
 // ModifyTypeToString converts ModifyColumnType to string.
-func ModifyTypeToString(tp byte) string {
+func ModifyTypeToString(tp ModifyColumnType) string {
 	switch tp {
 	case ModifyTypeNone:
 		return "none"

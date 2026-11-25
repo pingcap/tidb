@@ -653,8 +653,8 @@ func TestModifyColumnWithSkipReorg(t *testing.T) {
 	tk.MustExecToErr("alter table t modify column b tinyint not null")
 
 	// VARCHAR -> CHAR
-	var gotTp byte
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/getModifyColumnType", func(tp byte) {
+	var gotTp model.ModifyColumnType
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/getModifyColumnType", func(tp model.ModifyColumnType) {
 		gotTp = tp
 	})
 
@@ -750,8 +750,8 @@ func TestModifyColumnIndexReorgAllowsNull(t *testing.T) {
 	tk.MustExec("insert into t values (1, 'a')")
 	tbl := external.GetTableByName(t, tk, "test", "t")
 
-	var gotTp byte
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/getModifyColumnType", func(tp byte) {
+	var gotTp model.ModifyColumnType
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/getModifyColumnType", func(tp model.ModifyColumnType) {
 		gotTp = tp
 	})
 
@@ -788,7 +788,7 @@ func TestGetModifyColumnType(t *testing.T) {
 		beforeType string
 		afterType  string
 		index      bool
-		tp         byte
+		tp         model.ModifyColumnType
 	}
 
 	store := testkit.CreateMockStore(t)
@@ -951,8 +951,8 @@ func TestGetModifyColumnType(t *testing.T) {
 		},
 	}
 
-	var gotTp byte
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/getModifyColumnType", func(tp byte) {
+	var gotTp model.ModifyColumnType
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/getModifyColumnType", func(tp model.ModifyColumnType) {
 		gotTp = tp
 	})
 
@@ -1145,8 +1145,8 @@ func TestModifyIntegerColumn(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	var reorgType byte
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/getModifyColumnType", func(tp byte) {
+	var reorgType model.ModifyColumnType
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/getModifyColumnType", func(tp model.ModifyColumnType) {
 		reorgType = tp
 	})
 
@@ -1175,13 +1175,13 @@ func TestModifyIntegerColumn(t *testing.T) {
 		}
 	}
 
-	successValue := func(insertVal string, newColTp string, expectReorgTp byte) {
+	successValue := func(insertVal string, newColTp string, expectReorgTp model.ModifyColumnType) {
 		tk.MustExec(fmt.Sprintf("insert into t values %s", insertVal))
 		tk.MustExec(fmt.Sprintf("alter table t modify column a %s", newColTp))
 		require.Equal(t, expectReorgTp, reorgType)
 	}
 
-	signed2Signed := func(oldColTp, newColTp string, expectReorgTp byte) {
+	signed2Signed := func(oldColTp, newColTp string, expectReorgTp model.ModifyColumnType) {
 		maxValOfNewCol, minValOfNewCol := maxMinSignedVal[newColTp][0], maxMinSignedVal[newColTp][1]
 		maxValOfOldCol, minValOfOldCol := maxMinSignedVal[oldColTp][0], maxMinSignedVal[oldColTp][1]
 		tk.MustExec("drop table if exists t")
@@ -1203,7 +1203,7 @@ func TestModifyIntegerColumn(t *testing.T) {
 		successValue(fmt.Sprintf("(%d), (%d), (0)", maxValOfNewCol, minValOfNewCol), newColTp, expectReorgTp)
 	}
 
-	unsigned2Unsigned := func(oldColTp, newColTp string, expectReorgTp byte) {
+	unsigned2Unsigned := func(oldColTp, newColTp string, expectReorgTp model.ModifyColumnType) {
 		maxValOfNewCol, minValOfNewCol := maxMinUnsignedVal[newColTp][0], maxMinUnsignedVal[newColTp][1]
 		maxValOfOldCol := maxMinUnsignedVal[oldColTp][0]
 		tk.MustExec("drop table if exists t")
@@ -1219,7 +1219,7 @@ func TestModifyIntegerColumn(t *testing.T) {
 		successValue(fmt.Sprintf("(%d), (%d), (1)", maxValOfNewCol, minValOfNewCol), newColTp, expectReorgTp)
 	}
 
-	signed2Unsigned := func(oldColTp, newColTp string, expectReorgTp byte, oldColIdx, newColIdx int) {
+	signed2Unsigned := func(oldColTp, newColTp string, expectReorgTp model.ModifyColumnType, oldColIdx, newColIdx int) {
 		maxValOfOldCol, minValOfOldCol := maxMinSignedVal[oldColTp][0], maxMinSignedVal[oldColTp][1]
 		maxValOfNewCol := maxMinUnsignedVal[newColTp][0]
 		tk.MustExec("drop table if exists t")
@@ -1243,7 +1243,7 @@ func TestModifyIntegerColumn(t *testing.T) {
 		successValue(fmt.Sprintf("(%d), (1), (0)", min(uint(maxValOfOldCol), maxValOfNewCol)), newColTp, expectReorgTp)
 	}
 
-	unsigned2Signed := func(oldColTp, newColTp string, expectReorgTp byte) {
+	unsigned2Signed := func(oldColTp, newColTp string, expectReorgTp model.ModifyColumnType) {
 		maxValOfNewCol := maxMinSignedVal[newColTp][0]
 		maxValOfOldCol := maxMinUnsignedVal[oldColTp][0]
 		tk.MustExec("drop table if exists t")
@@ -1291,8 +1291,8 @@ func TestModifyStringColumn(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	var reorgType byte
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/getModifyColumnType", func(tp byte) {
+	var reorgType model.ModifyColumnType
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/getModifyColumnType", func(tp model.ModifyColumnType) {
 		reorgType = tp
 	})
 	type testCase struct {
@@ -1300,7 +1300,7 @@ func TestModifyStringColumn(t *testing.T) {
 		newColTp        string
 		insertVal       string
 		pass            bool
-		expectedReorgTp byte
+		expectedReorgTp model.ModifyColumnType
 	}
 	noPaddingStrLen5 := strings.Repeat("a", 5)
 	noPaddingStrLen15 := strings.Repeat("a", 15)
@@ -1648,7 +1648,7 @@ func TestModifyColumnReorgScheduling(t *testing.T) {
 				}
 			})
 			var scheduledForReorg bool
-			var gotType byte
+			var gotType model.ModifyColumnType
 			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 				if job.Type == model.ActionModifyColumn && job.SchemaState == model.StateNone {
 					// NeedReorg is submission-only; scheduling reads the persisted SQL column.
@@ -1657,7 +1657,7 @@ func TestModifyColumnReorgScheduling(t *testing.T) {
 					scheduledForReorg = rows[0][0] == "1"
 				}
 			})
-			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/getModifyColumnType", func(tp byte) {
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/getModifyColumnType", func(tp model.ModifyColumnType) {
 				gotType = tp
 			})
 			tk.MustExec(tc.sql)
@@ -1665,9 +1665,9 @@ func TestModifyColumnReorgScheduling(t *testing.T) {
 			require.Equal(t, !rename, scheduledForReorg)
 			require.Equal(t, !rename, fastReorg)
 			if tc.drift && !rename {
-				require.Equal(t, byte(model.ModifyTypeReorg), gotType)
+				require.Equal(t, model.ModifyTypeReorg, gotType)
 			} else {
-				require.Equal(t, byte(model.ModifyTypeNoReorg), gotType)
+				require.Equal(t, model.ModifyTypeNoReorg, gotType)
 			}
 			if tc.drift && rename {
 				tk.MustQuery("select b from t").Check(testkit.Rows("1.234"))

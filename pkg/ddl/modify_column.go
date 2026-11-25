@@ -90,8 +90,8 @@ func adjustModifyColumnType(
 	tblInfo *model.TableInfo,
 	oldCol *model.ColumnInfo,
 	sqlMode mysql.SQLMode,
-	modifyType byte,
-) byte {
+	modifyType model.ModifyColumnType,
+) model.ModifyColumnType {
 	newCol := args.Column
 	if modifyType == model.ModifyTypeNoReorg {
 		// It's not NULL->NOTNULL change
@@ -102,7 +102,7 @@ func adjustModifyColumnType(
 	}
 
 	// For backward compatibility
-	if args.ModifyColumnType == mysql.TypeNull {
+	if args.ModifyColumnType == model.ModifyColumnType(mysql.TypeNull) {
 		return model.ModifyTypeReorg
 	}
 
@@ -263,7 +263,7 @@ func (w *worker) onModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, 
 	// For first time running this job, or the job from older version,
 	// we need to fill the ModifyColumnType.
 	if args.ModifyColumnType == model.ModifyTypeNone ||
-		args.ModifyColumnType == mysql.TypeNull {
+		args.ModifyColumnType == model.ModifyColumnType(mysql.TypeNull) {
 		// Check the modify types again, as the type may be changed by other no-reorg modify-column jobs.
 		// For example, there are two DDLs submitted in parallel:
 		//      CREATE TABLE t (c VARCHAR(255) charset utf8);
@@ -2501,12 +2501,6 @@ func validateMaterializedViewBaseModifyColumn(
 	}
 	_, err := buildMaterializedViewRelatedTableInfoForModifyColumn(is, nil, op, baseTbl.Meta(), oldCol, newCol)
 	return err
-}
-
-// ConvertBetweenCharAndVarchar check whether column converted between char and varchar
-// TODO: it is used for plugins. so change plugin's using and remove it.
-func ConvertBetweenCharAndVarchar(oldCol, newCol byte) bool {
-	return types.ConvertBetweenCharAndVarchar(oldCol, newCol)
 }
 
 // ProcessColumnCharsetAndCollation process column charset and collation
