@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/sysproctrack"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
+	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/stretchr/testify/require"
 )
 
@@ -40,7 +41,7 @@ type testHeapObject struct {
 func (t testHeapObject) ValidateAndPrepare(sctx sessionctx.Context) (bool, string) {
 	panic("implement me")
 }
-func (t testHeapObject) Analyze(statsHandle statstypes.StatsHandle, sysProcTracker sysproctrack.Tracker) error {
+func (t testHeapObject) Analyze(statsutil.SessionPool, statsutil.AutoAnalyzeProcIDGenerator, sysproctrack.Tracker) error {
 	panic("implement me")
 }
 func (t testHeapObject) SetWeight(weight float64) {

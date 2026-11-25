@@ -671,7 +671,7 @@ func (d *ddl) IsTiFlashPollEnabled() bool {
 func (d *ddl) RegisterStatsHandle(h *handle.Handle) {
 	d.ddlCtx.statsHandle = h
 	d.executor.statsHandle = h
-	d.ddlEventCh = h.DDLEventCh()
+	d.ddlEventCh = h.DDL().DDLEventCh()
 }
 
 const noSubJob int64 = -1 // noSubJob indicates the event is not a merged ddl.
