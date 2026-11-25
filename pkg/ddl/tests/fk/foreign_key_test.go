@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/stretchr/testify/require"
@@ -884,6 +885,36 @@ func TestTruncateOrDropTableWithForeignKeyReferred(t *testing.T) {
 			tk.MustExec(sql)
 		}
 	}
+
+	tk.MustExec("drop table if exists c, c_survivor, p")
+	tk.MustExec("set @@foreign_key_checks=1")
+	tk.MustExec("create table p (id int primary key)")
+	tk.MustExec("create table c (id int primary key, pid int, foreign key (pid) references p(id))")
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test")
+	var renameErr error
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterDropTableObject", func(tableName string) {
+		if tableName == "p" {
+			renameErr = tk2.ExecToErr("rename table c to c_survivor")
+		}
+	})
+	tk.MustExec("drop table if exists p, c")
+	require.Error(t, renameErr)
+	tk.MustGetErrCode("show create table p", errno.ErrNoSuchTable)
+	tk.MustGetErrCode("show create table c", errno.ErrNoSuchTable)
+	tk.MustGetErrCode("show create table c_survivor", errno.ErrNoSuchTable)
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/afterDropTableObject")
+
+	// A cycle cannot be safely dropped through independent jobs while FK
+	// checks are enabled. Reject it without making either parent disappear.
+	tk.MustExec("create table cycle_a (id int primary key, pid int)")
+	tk.MustExec("create table cycle_b (id int primary key, pid int, foreign key(pid) references cycle_a(id))")
+	tk.MustExec("alter table cycle_a add foreign key(pid) references cycle_b(id)")
+	require.Error(t, tk.ExecToErr("drop table cycle_a, cycle_b"))
+	tk.MustQuery("select count(*) from cycle_a").Check(testkit.Rows("0"))
+	tk.MustQuery("select count(*) from cycle_b").Check(testkit.Rows("0"))
+	tk.MustExec("set @@foreign_key_checks=0")
+	tk.MustExec("drop table cycle_a, cycle_b")
 }
 
 func TestDropIndexNeededInForeignKey(t *testing.T) {
