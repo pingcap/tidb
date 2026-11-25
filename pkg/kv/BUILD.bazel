@@ -69,6 +69,7 @@ go_test(
     name = "kv_test",
     timeout = "short",
     srcs = [
+        "cachedb_test.go",
         "checker_test.go",
         "error_test.go",
         "fault_injection_test.go",
@@ -84,7 +85,11 @@ go_test(
     ],
     embed = [":kv"],
     flaky = True,
+<<<<<<< HEAD
     shard_count = 27,
+=======
+    shard_count = 33,
+>>>>>>> 9848e96bb72 (kv: ignore optional point-get cache admission failures (#73655))
     deps = [
         "//pkg/config/kerneltype",
         "//pkg/keyspace",
@@ -100,6 +105,7 @@ go_test(
         "//pkg/util/codec",
         "//pkg/util/resourcegrouptag",
         "//pkg/util/size",
+        "@com_github_coocood_freecache//:freecache",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_kvproto//pkg/coprocessor",
         "@com_github_pingcap_kvproto//pkg/deadlock",
