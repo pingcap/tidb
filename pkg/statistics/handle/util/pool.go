@@ -22,13 +22,22 @@ import (
 	"github.com/tiancaiamao/gp"
 )
 
-// Pool is used to reuse goroutine and session.
-type Pool interface {
-	// GPool returns the goroutine pool.
-	GPool() *gp.Pool
-
+// SessionPool gives the sessions that run the SQL statements of the stats handle.
+type SessionPool interface {
 	// SPool returns the session pool.
 	SPool() syssession.Pool
+}
+
+// GoroutinePool gives the goroutines that ANALYZE and the concurrent load of JSON stats reuse.
+type GoroutinePool interface {
+	// GPool returns the goroutine pool.
+	GPool() *gp.Pool
+}
+
+// Pool is used to reuse goroutine and session.
+type Pool interface {
+	SessionPool
+	GoroutinePool
 
 	// Close closes the goroutine pool.
 	Close()
@@ -37,7 +46,7 @@ type Pool interface {
 var _ Pool = (*pool)(nil)
 
 type pool struct {
-	// This gpool is used to reuse goroutines in the global stats merge.
+	// This gpool reuses the goroutines of ANALYZE and the concurrent load of JSON stats.
 	gpool *gp.Pool
 	pool  syssession.Pool
 }

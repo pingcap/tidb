@@ -136,7 +136,7 @@ func prepareData(t *testing.T, client *testserverclient.TestServerClient, statHa
 	tk.MustExec("insert into test(a,b) values (1, 'v'),(3, 'vvv'),(5, 'vv')")
 	is := statHandle.Domain().InfoSchema()
 	tk.MustExec("flush stats_delta *.*")
-	require.NoError(t, h.Update(context.Background(), is))
+	require.NoError(t, h.Cache().Update(context.Background(), is))
 }
 
 func testDumpPartitionTableStats(t *testing.T, client *testserverclient.TestServerClient, handler *optimizor.StatsHandler) {
@@ -178,7 +178,7 @@ func preparePartitionData(t *testing.T, client *testserverclient.TestServerClien
 	tk.MustExec("analyze table test2")
 	is := statHandle.Domain().InfoSchema()
 	tk.MustExec("flush stats_delta *.*")
-	require.NoError(t, h.Update(context.Background(), is))
+	require.NoError(t, h.Cache().Update(context.Background(), is))
 }
 
 func prepareTableWithoutStats(t *testing.T, client *testserverclient.TestServerClient) {
@@ -301,7 +301,7 @@ func TestStatsPriorityQueueAPI(t *testing.T) {
 
 	// Init the queue.
 	handle := dom.StatsHandle()
-	require.False(t, handle.HandleAutoAnalyze())
+	require.False(t, handle.AutoAnalyze().HandleAutoAnalyze())
 
 	resp, err = client.FetchStatus("/stats/priority-queue")
 	require.NoError(t, err)

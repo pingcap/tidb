@@ -55,6 +55,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"
+	"github.com/pingcap/tidb/pkg/lightning/manual"
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	"github.com/pingcap/tidb/pkg/lightning/metric"
 	"github.com/pingcap/tidb/pkg/lightning/tikv"
@@ -542,21 +543,27 @@ func (c *BackendConfig) SetWorkerConcurrency(concurrency int) {
 	c.WorkerConcurrency.Store(int32(concurrency))
 }
 
-// Backend is a local backend.
-type Backend struct {
+var (
+	// RunInTest indicates whether the current process is running in test.
+	RunInTest bool
+	// LastAlloc is the last ID allocator.
+	LastAlloc atomic.Pointer[manual.Allocator]
+)
+
+var inMemTest = false
+
+// Ingestor controls SST ingestion independently of local engine storage.
+type Ingestor struct {
 	pdCli     pd.Client
 	pdHTTPCli pdhttp.Client
 	splitCli  split.SplitClient
 	pdAddrs   []string
-	tikvCli   *tikvclient.KVStore
-	tikvCliMu sync.Mutex
 	tls       *common.TLS
 	tikvCodec tikvclient.Codec
 
 	collector execute.Collector
 
 	BackendConfig
-	engineMgr *engineManager
 
 	supportMultiIngest  bool
 	importClientFactory importClientFactory
@@ -566,7 +573,18 @@ type Backend struct {
 	ingestLimiter atomic.Pointer[ingestLimiter]
 	logger        log.Logger
 
+	bufferPool     *membuf.Pool
 	nextgenHTTPCli *http.Client
+}
+
+// Backend manages local engines and ingests their sorted data to TiKV.
+type Backend struct {
+	*Ingestor
+	engineMgr *engineManager
+
+	// Duplicate detection initializes a separate TiKV client lazily.
+	tikvCli   *tikvclient.KVStore
+	tikvCliMu sync.Mutex
 }
 
 var _ DiskUsage = (*Backend)(nil)
@@ -609,15 +627,14 @@ func pdSecurityOption(tls *common.TLS) pd.SecurityOption {
 	return tls.ToPDSecurityOption()
 }
 
-// NewBackend creates a local backend with a caller-owned PD client. The backend
-// shares callerOwnedCodecPDCli for PD operations and does not close it in
-// Backend.Close.
-func NewBackend(
+// NewIngestor creates an SST ingest controller without local engine storage.
+// The caller retains ownership of callerOwnedCodecPDCli, including on error.
+func NewIngestor(
 	ctx context.Context,
 	tls *common.TLS,
 	config BackendConfig,
 	callerOwnedCodecPDCli *tikvclient.CodecPDClient,
-) (b *Backend, err error) {
+) (ingestor *Ingestor, err error) {
 	var (
 		pdHTTPCli            pdhttp.Client
 		importClientFactory  *importClientFactoryImpl
@@ -634,7 +651,6 @@ func NewBackend(
 			pdHTTPCli.Close()
 		}
 	}()
-	config.adjust()
 	pdSvcDiscovery := callerOwnedCodecPDCli.GetServiceDiscovery()
 	pdAddrs := pdSvcDiscovery.GetServiceURLs()
 
@@ -651,31 +667,60 @@ func NewBackend(
 		return nil, common.ErrCheckMultiIngest.Wrap(err).GenWithStackByArgs()
 	}
 
-	writeLimiter := newStoreWriteLimiter(config.StoreWriteBWLimit)
-	local := &Backend{
-		pdCli:     callerOwnedCodecPDCli,
-		pdHTTPCli: pdHTTPCli,
-		splitCli:  splitCli,
-		pdAddrs:   append([]string(nil), pdAddrs...),
-		tls:       tls,
-		tikvCodec: callerOwnedCodecPDCli.GetCodec(),
+	local := newIngestor(ctx, config)
+	local.pdCli = callerOwnedCodecPDCli
+	local.pdHTTPCli = pdHTTPCli
+	local.splitCli = splitCli
+	local.pdAddrs = append([]string(nil), pdAddrs...)
+	local.tls = tls
+	local.tikvCodec = callerOwnedCodecPDCli.GetCodec()
+	local.supportMultiIngest = multiIngestSupported
+	local.importClientFactory = importClientFactory
+	local.tikvSideCheckFreeSpace(ctx)
 
+	return local, nil
+}
+
+// newIngestor initializes resources shared by production and test constructors.
+func newIngestor(ctx context.Context, config BackendConfig) *Ingestor {
+	i := &Ingestor{
 		BackendConfig: config,
-
-		supportMultiIngest:  multiIngestSupported,
-		importClientFactory: importClientFactory,
-		writeLimiter:        writeLimiter,
-		logger:              log.Wrap(tidblogutil.Logger(ctx)),
+		logger:        log.Wrap(tidblogutil.Logger(ctx)),
+		bufferPool:    newBufferPool(),
+		writeLimiter:  newStoreWriteLimiter(config.StoreWriteBWLimit),
 	}
-	local.engineMgr, err = newEngineManager(config, local, local.logger)
+	if m, ok := metric.GetCommonMetric(ctx); ok {
+		i.metrics = m
+	}
+	return i
+}
+
+// NewIngestorForTest creates an ingestor without network or local engine setup.
+func NewIngestorForTest(ctx context.Context, config BackendConfig, storeHelper StoreHelper) *Ingestor {
+	i := newIngestor(ctx, config)
+	i.tikvCodec = storeHelper.GetTiKVCodec()
+	return i
+}
+
+// NewBackend creates a local engine manager and an SST ingest controller.
+// The caller retains ownership of callerOwnedCodecPDCli, including on error.
+func NewBackend(
+	ctx context.Context,
+	tls *common.TLS,
+	config BackendConfig,
+	callerOwnedCodecPDCli *tikvclient.CodecPDClient,
+) (*Backend, error) {
+	config.adjust()
+	ingestor, err := NewIngestor(ctx, tls, config, callerOwnedCodecPDCli)
 	if err != nil {
 		return nil, err
 	}
-	if m, ok := metric.GetCommonMetric(ctx); ok {
-		local.metrics = m
+	local := &Backend{Ingestor: ingestor}
+	local.engineMgr, err = newEngineManager(config, ingestor, ingestor.logger, ingestor.bufferPool)
+	if err != nil {
+		ingestor.Close()
+		return nil, err
 	}
-	local.tikvSideCheckFreeSpace(ctx)
-
 	return local, nil
 }
 
@@ -683,31 +728,36 @@ func NewBackend(
 func NewBackendForTest(ctx context.Context, config BackendConfig, storeHelper StoreHelper) (*Backend, error) {
 	config.adjust()
 
-	logger := log.Wrap(tidblogutil.Logger(ctx))
-	engineMgr, err := newEngineManager(config, storeHelper, logger)
+	ingestor := NewIngestorForTest(ctx, config, storeHelper)
+	engineMgr, err := newEngineManager(config, storeHelper, ingestor.logger, ingestor.bufferPool)
 	if err != nil {
+		ingestor.Close()
 		return nil, err
 	}
 	local := &Backend{
-		BackendConfig: config,
-		logger:        logger,
-		engineMgr:     engineMgr,
-	}
-	if m, ok := metric.GetCommonMetric(ctx); ok {
-		local.metrics = m
+		Ingestor:  ingestor,
+		engineMgr: engineMgr,
 	}
 
 	return local, nil
 }
 
-// SetCollector sets the collector for the local backend
-func (local *Backend) SetCollector(c execute.Collector) {
+// SetCollector sets the collector for ingest metering.
+func (local *Ingestor) SetCollector(c execute.Collector) {
 	local.collector = c
 }
 
 // TotalMemoryConsume returns the total memory usage of the local backend.
 func (local *Backend) TotalMemoryConsume() int64 {
-	return local.engineMgr.totalMemoryConsume()
+	return local.engineMgr.totalMemoryConsume() + local.Ingestor.TotalMemoryConsume()
+}
+
+// TotalMemoryConsume returns memory cached by the ingest worker buffer pool.
+func (local *Ingestor) TotalMemoryConsume() int64 {
+	if local.bufferPool == nil {
+		return 0
+	}
+	return local.bufferPool.TotalSize()
 }
 
 func checkMultiIngestSupport(ctx context.Context, pdCli pd.Client, factory importClientFactory) (bool, error) {
@@ -772,7 +822,7 @@ func checkMultiIngestSupport(ctx context.Context, pdCli pd.Client, factory impor
 	return true, nil
 }
 
-func (local *Backend) tikvSideCheckFreeSpace(ctx context.Context) {
+func (local *Ingestor) tikvSideCheckFreeSpace(ctx context.Context) {
 	if !local.ShouldCheckTiKV {
 		return
 	}
@@ -797,28 +847,38 @@ func (local *Backend) tikvSideCheckFreeSpace(ctx context.Context) {
 	}
 }
 
-// Close the local backend.
+// Close releases the local engines, duplicate-check client, and ingest resources.
 func (local *Backend) Close() {
 	if local.engineMgr != nil {
 		local.engineMgr.close()
 	}
-	if local.importClientFactory != nil {
-		local.importClientFactory.close()
-	}
-
 	local.tikvCliMu.Lock()
 	tikvCli := local.tikvCli
 	local.tikvCli = nil
 	local.tikvCliMu.Unlock()
-
 	if tikvCli != nil {
 		_ = tikvCli.Close()
+	}
+	if local.Ingestor != nil {
+		local.Ingestor.Close()
+	}
+}
+
+// Close releases the resources owned by the ingestor. The caller-owned PD
+// client and external engines remain the caller's responsibility.
+func (local *Ingestor) Close() {
+	if local.importClientFactory != nil {
+		local.importClientFactory.close()
 	}
 	if local.pdHTTPCli != nil {
 		local.pdHTTPCli.Close()
 	}
 	if local.nextgenHTTPCli != nil {
 		local.nextgenHTTPCli.CloseIdleConnections()
+	}
+	if local.bufferPool != nil {
+		local.bufferPool.Destroy()
+		local.bufferPool = nil
 	}
 }
 
@@ -918,7 +978,7 @@ func (local *Backend) CloseEngine(ctx context.Context, cfg *backend.EngineConfig
 // forceTableSplitRange turns on force_partition_range for importing.
 // See https://github.com/tikv/tikv/pull/18866 for detail.
 // It returns a resetter to turn off.
-func (local *Backend) forceTableSplitRange(ctx context.Context,
+func (local *Ingestor) forceTableSplitRange(ctx context.Context,
 	startKey, endKey kv.Key, stores []*metapb.Store) (resetter func()) {
 	subctx, cancel := context.WithCancel(ctx)
 	var wg util.WaitGroupWrapper
@@ -1117,7 +1177,7 @@ func getRegionSplitKeys(
 
 // prepareAndSendJob will read the engine to get estimated key range, then split
 // and scatter regions for these range and send region jobs to jobToWorkerCh.
-func (local *Backend) prepareAndSendJob(
+func (local *Ingestor) prepareAndSendJob(
 	ctx context.Context,
 	engine engineapi.Engine,
 	regionSplitKeys [][]byte,
@@ -1186,7 +1246,7 @@ func (local *Backend) prepareAndSendJob(
 }
 
 // generateAndSendJob scans the region in ranges and send region jobs to jobToWorkerCh.
-func (local *Backend) generateAndSendJob(
+func (local *Ingestor) generateAndSendJob(
 	ctx context.Context,
 	engine engineapi.Engine,
 	regionSplitSize, regionSplitKeys int64,
@@ -1271,7 +1331,7 @@ var fakeRegionJobs map[[2]string]struct {
 
 // generateJobForRange will scan the region in `keyRange` and generate region jobs.
 // It will retry internally when scan region meet error.
-func (local *Backend) generateJobForRange(
+func (local *Ingestor) generateJobForRange(
 	ctx context.Context,
 	data engineapi.IngestData,
 	sortedJobRanges []engineapi.Range,
@@ -1407,7 +1467,7 @@ func (local *Backend) ImportEngine(
 
 // IngestExternalEngine ingests an external engine created by
 // globalsort.NewExternalEngine to TiKV.
-func (local *Backend) IngestExternalEngine(
+func (local *Ingestor) IngestExternalEngine(
 	ctx context.Context,
 	e *globalsort.Engine,
 	regionSplitSize, regionSplitKeys int64,
@@ -1418,7 +1478,7 @@ func (local *Backend) IngestExternalEngine(
 
 // adjustRegionSplitSizeKeys raises the given region split size and keys to the
 // ones configured in TiKV if they are larger.
-func (local *Backend) adjustRegionSplitSizeKeys(
+func (local *Ingestor) adjustRegionSplitSizeKeys(
 	ctx context.Context,
 	regionSplitSize, regionSplitKeys int64,
 ) (adjustedSize, adjustedKeys int64) {
@@ -1438,7 +1498,7 @@ func (local *Backend) adjustRegionSplitSizeKeys(
 
 // ingestEngine splits and scatters regions for the engine, then writes and
 // ingests its data to TiKV. It doesn't depend on how the engine is managed.
-func (local *Backend) ingestEngine(
+func (local *Ingestor) ingestEngine(
 	ctx context.Context,
 	e engineapi.Engine,
 	regionSplitSize, regionSplitKeys int64,
@@ -1551,7 +1611,7 @@ var (
 	testJobWg         *sync.WaitGroup
 )
 
-func (local *Backend) doImport(
+func (local *Ingestor) doImport(
 	ctx context.Context,
 	engine engineapi.Engine,
 	regionSplitKeys [][]byte,
@@ -1736,7 +1796,7 @@ func (local *Backend) doImport(
 	return err
 }
 
-func (local *Backend) newRegionJobWorker(
+func (local *Ingestor) newRegionJobWorker(
 	ctx context.Context,
 	clusterID uint64,
 	toCh, jobFromWorkerCh chan *regionJob,
@@ -1760,7 +1820,7 @@ func (local *Backend) newRegionJobWorker(
 		cloudW := &objStoreRegionJobWorker{
 			ingestCli:      ingestcli.NewClient(local.TiKVWorkerURL, clusterID, isHTTPS, local.nextgenHTTPCli, local.splitCli),
 			writeBatchSize: local.KVWriteBatchSize,
-			bufPool:        local.engineMgr.getBufferPool(),
+			bufPool:        local.bufferPool,
 			collector:      local.collector,
 		}
 		base.writeFn = cloudW.write
@@ -1876,7 +1936,7 @@ func (local *Backend) LocalWriter(ctx context.Context, cfg *backend.LocalWriterC
 // for multirocksdb. This function will spawn a goroutine to keep switch mode
 // periodically until the context is done. The return done channel is used to
 // notify the caller that the background goroutine is exited.
-func (local *Backend) switchModeBySplitKeys(
+func (local *Ingestor) switchModeBySplitKeys(
 	ctx context.Context,
 	splitKeys [][]byte,
 ) (<-chan struct{}, error) {
@@ -1971,12 +2031,12 @@ func (local *Backend) EngineFileSizes() (res []backend.EngineFileSize) {
 }
 
 // GetTS implements StoreHelper interface.
-func (local *Backend) GetTS(ctx context.Context) (physical, logical int64, err error) {
+func (local *Ingestor) GetTS(ctx context.Context) (physical, logical int64, err error) {
 	return local.pdCli.GetTS(ctx)
 }
 
 // GetTiKVCodec implements StoreHelper interface.
-func (local *Backend) GetTiKVCodec() tikvclient.Codec {
+func (local *Ingestor) GetTiKVCodec() tikvclient.Codec {
 	return local.tikvCodec
 }
 
@@ -2033,4 +2093,18 @@ func GetRegionSplitSizeKeys(ctx context.Context, cli pd.Client, tls *common.TLS)
 		tidblogutil.Logger(ctx).Warn("get region split size and keys failed", zap.Error(err), zap.String("store", serverInfo.StatusAddr))
 	}
 	return 0, 0, errors.New("get region split size and keys failed")
+}
+
+func newBufferPool() *membuf.Pool {
+	alloc := manual.Allocator{}
+	if RunInTest {
+		alloc.RefCnt = new(atomic.Int64)
+		LastAlloc.Store(&alloc)
+	}
+	var opts = make([]membuf.Option, 0, 1)
+	if !inMemTest {
+		// otherwise, we use the default allocator that can be tracked by golang runtime.
+		opts = append(opts, membuf.WithAllocator(alloc))
+	}
+	return membuf.NewPool(opts...)
 }

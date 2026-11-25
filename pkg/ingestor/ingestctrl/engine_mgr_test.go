@@ -76,7 +76,9 @@ func TestEngineManager(t *testing.T) {
 	}
 
 	backendConfig := getBackendConfig(t)
-	em, err := newEngineManager(backendConfig, storeHelper, log.L())
+	pool := newBufferPool()
+	t.Cleanup(pool.Destroy)
+	em, err := newEngineManager(backendConfig, storeHelper, log.L(), pool)
 	require.NoError(t, err)
 	storeHelper.EXPECT().GetTS(gomock.Any()).Return(int64(0), int64(0), nil)
 	engine1ID := uuid.New()
@@ -116,7 +118,9 @@ func TestCleanupAllLocalEnginesLogsErrorOnly(t *testing.T) {
 
 	observedCore, observedLogs := observer.New(zapcore.DebugLevel)
 	backendConfig := getBackendConfig(t)
-	em, err := newEngineManager(backendConfig, storeHelper, log.Wrap(zap.New(observedCore)))
+	pool := newBufferPool()
+	t.Cleanup(pool.Destroy)
+	em, err := newEngineManager(backendConfig, storeHelper, log.Wrap(zap.New(observedCore)), pool)
 	require.NoError(t, err)
 
 	ctx := context.Background()

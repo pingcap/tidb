@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/sysproctrack"
 	"github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
+	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"go.uber.org/zap"
 )
 
@@ -62,9 +63,11 @@ type AnalysisJob interface {
 		sctx sessionctx.Context,
 	) (bool, string)
 
-	// Analyze executes the analyze statement within a transaction.
+	// Analyze executes the analyze statement within a transaction. It runs in the sessions of pool,
+	// and takes the process ID of the statement from procIDs.
 	Analyze(
-		statsHandle statstypes.StatsHandle,
+		pool statsutil.SessionPool,
+		procIDs statsutil.AutoAnalyzeProcIDGenerator,
 		sysProcTracker sysproctrack.Tracker,
 	) error
 

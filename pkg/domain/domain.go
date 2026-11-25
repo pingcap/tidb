@@ -93,7 +93,6 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics/handle"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze"
 	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
-	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	handleutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	kvstore "github.com/pingcap/tidb/pkg/store"
 	"github.com/pingcap/tidb/pkg/telemetry"
@@ -713,7 +712,7 @@ func (do *Domain) Init(
 		do.ctx,
 		do.ddlNotifier.RegisterHandler,
 		do.sysSessionPool,
-		func() statstypes.StatsHandle {
+		func() mvservice.StatsHandle {
 			return do.StatsHandle()
 		},
 		&do.sysProcesses,
@@ -860,7 +859,7 @@ func (do *Domain) Start(startMode ddl.StartMode) error {
 	}, "mdlCheckLoop")
 	do.wg.Run(do.topNSlowQueryLoop, "topNSlowQueryLoop")
 	do.wg.Run(func() {
-		do.info.ServerInfoSyncer().ServerInfoSyncLoop(do.store, do.exit)
+		do.info.ServerInfoSyncer().ServerInfoSyncLoop(do.ctx, do.store, do.exit)
 	}, "infoSyncerKeeper")
 	do.wg.Run(do.globalConfigSyncerKeeper, "globalConfigSyncerKeeper")
 	do.wg.Run(do.runawayManager.RunawayRecordFlushLoop, "runawayRecordFlushLoop")
@@ -2096,7 +2095,7 @@ func (do *Domain) StartLoadStatsSubWorkers(concurrency int) {
 	statsHandle := do.StatsHandle()
 	for range concurrency {
 		do.wg.Add(1)
-		go statsHandle.SubLoadWorker(do.exit, do.wg)
+		go statsHandle.SyncLoad().SubLoadWorker(do.exit, do.wg)
 	}
 	logutil.BgLogger().Info("start load stats sub workers", zap.Int("workerCount", concurrency))
 }
@@ -2168,7 +2167,7 @@ func (do *Domain) loadStatsWorker() {
 	for {
 		select {
 		case <-loadTicker.C:
-			err = statsHandle.Update(ctx, do.InfoSchema())
+			err = statsHandle.Cache().Update(ctx, do.InfoSchema())
 			if err != nil {
 				logutil.BgLogger().Warn("update stats info failed", zap.Error(err))
 			}
@@ -2199,7 +2198,7 @@ func (do *Domain) asyncLoadHistogram() {
 	for {
 		select {
 		case <-cleanupTicker.C:
-			err = statsHandle.LoadNeededHistograms(do.InfoSchema())
+			err = statsHandle.Storage().LoadNeededHistograms(do.InfoSchema())
 			if err != nil {
 				statslogutil.StatsErrVerboseSampleLogger().Warn("Load histograms failed", zap.Error(err))
 			}
@@ -2221,7 +2220,7 @@ func (do *Domain) indexUsageWorker() {
 		case <-do.exit:
 			return
 		case <-gcStatsTicker.C:
-			if err := handle.GCIndexUsage(); err != nil {
+			if err := handle.Usage().GCIndexUsage(); err != nil {
 				statslogutil.StatsLogger().Error("gc index usage failed", zap.Error(err))
 			}
 		}
@@ -2300,7 +2299,7 @@ func (do *Domain) gcStatsWorker() {
 				if !do.statsOwner.IsOwner() {
 					return
 				}
-				err := statsHandle.GCStats(do.InfoSchema(), do.GetSchemaLease())
+				err := statsHandle.GC().GCStats(do.InfoSchema(), do.GetSchemaLease())
 				if err != nil {
 					logutil.BgLogger().Warn("GC stats failed", zap.Error(err))
 				}
@@ -2309,11 +2308,11 @@ func (do *Domain) gcStatsWorker() {
 		case <-readMemTicker.C:
 			callWithRecover("gcStatsWorker", func() {
 				memory.ForceReadMemStats()
-				do.StatsHandle().StatsCache.TriggerEvict()
+				do.StatsHandle().Cache().TriggerEvict()
 			})
 		case <-updateStatsHealthyTicker.C:
 			callWithRecover("gcStatsWorker", func() {
-				statsHandle.UpdateStatsHealthyMetrics()
+				statsHandle.Cache().UpdateStatsHealthyMetrics()
 			})
 		}
 	}
@@ -2344,7 +2343,7 @@ func (do *Domain) dumpColStatsUsageWorker() {
 		case <-do.exit:
 			return
 		case <-dumpColStatsUsageTicker.C:
-			err := statsHandle.DumpColStatsUsageToKV()
+			err := statsHandle.Usage().DumpColStatsUsageToKV()
 			if err != nil {
 				logutil.BgLogger().Warn("dump column stats usage failed", zap.Error(err))
 			}
@@ -2371,7 +2370,7 @@ func (do *Domain) deltaUpdateTickerWorker() {
 			do.deltaUpdateTickerWorkerExitPreprocessing(statsHandle)
 			return
 		case <-deltaUpdateTicker.C:
-			err := statsHandle.DumpStatsDeltaToKV(false)
+			err := statsHandle.Usage().DumpStatsDeltaToKV(false)
 			if err != nil {
 				logutil.BgLogger().Warn("dump stats delta failed", zap.Error(err))
 			}
@@ -2407,13 +2406,13 @@ func (do *Domain) autoAnalyzeWorker() {
 			// at the same time.
 			// This causes the auto analyze task to be triggered all the time and block the shutdown of tidb.
 			if vardef.RunAutoAnalyze.Load() && !do.stopAutoAnalyze.Load() && do.statsOwner.IsOwner() {
-				statsHandle.HandleAutoAnalyze()
+				statsHandle.AutoAnalyze().HandleAutoAnalyze()
 			} else if !vardef.RunAutoAnalyze.Load() || !do.statsOwner.IsOwner() {
 				// Once the auto analyze is disabled or this instance is not the owner,
 				// we close the priority queue to release resources.
 				// This would guarantee that when auto analyze is re-enabled or this instance becomes the owner again,
 				// the priority queue would be re-initialized.
-				statsHandle.ClosePriorityQueue()
+				statsHandle.AutoAnalyze().ClosePriorityQueue()
 			}
 		case <-do.exit:
 			return
@@ -2458,7 +2457,7 @@ func (do *Domain) analyzeJobsCleanupWorker() {
 			// Only the owner should perform this operation.
 			if do.statsOwner.IsOwner() {
 				updateTime := time.Now().AddDate(0, 0, -daysToKeep)
-				err := statsHandle.DeleteAnalyzeJobs(updateTime)
+				err := statsHandle.AutoAnalyze().DeleteAnalyzeJobs(updateTime)
 				if err != nil {
 					logutil.BgLogger().Warn("gc analyze history failed", zap.Error(err))
 				}
@@ -2475,13 +2474,13 @@ func (do *Domain) analyzeJobsCleanupWorker() {
 				}
 			}
 
-			err := statsHandle.CleanupCorruptedAnalyzeJobsOnCurrentInstance(analyzeProcessIDs)
+			err := statsHandle.AutoAnalyze().CleanupCorruptedAnalyzeJobsOnCurrentInstance(analyzeProcessIDs)
 			if err != nil {
 				logutil.BgLogger().Warn("cleanup analyze jobs on current instance failed", zap.Error(err))
 			}
 
 			if do.statsOwner.IsOwner() {
-				err = statsHandle.CleanupCorruptedAnalyzeJobsOnDeadInstances()
+				err = statsHandle.AutoAnalyze().CleanupCorruptedAnalyzeJobsOnDeadInstances()
 				if err != nil {
 					logutil.BgLogger().Warn("cleanup analyze jobs on dead instances failed", zap.Error(err))
 				}
