@@ -495,7 +495,7 @@ func (rs *KS3Storage) open(
 	ctx context.Context,
 	path string,
 	startOffset, endOffset int64,
-) (io.ReadCloser, s3like.RangeInfo, error) {
+) (_ io.ReadCloser, _ s3like.RangeInfo, retErr error) {
 	input := &s3.GetObjectInput{
 		Bucket: aws.String(rs.options.Bucket),
 		Key:    aws.String(rs.options.Prefix + path),
@@ -523,6 +523,12 @@ func (rs *KS3Storage) open(
 	if err != nil {
 		return nil, s3like.RangeInfo{}, errors.Trace(err)
 	}
+	defer func() {
+		// The caller takes ownership of the body only after validation succeeds.
+		if retErr != nil && result.Body != nil {
+			_ = result.Body.Close()
+		}
+	}()
 
 	var r s3like.RangeInfo
 	// Those requests without a `Range` will have no `ContentRange` in the response,
