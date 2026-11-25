@@ -305,13 +305,17 @@ func TestGreedyOutputRowsAlternativeRound(t *testing.T) {
 		require.NotContains(t, alternative, "TableFullScan")
 		require.Contains(t, alternative, "table:r, index:idx_principal(principal_id, principal_type)")
 		require.True(t, roundRuns(t, small))
+		// A LEADING hint that leaves one other input fixes the order, so the round is skipped.
+		require.False(t, roundRuns(t, strings.Replace(small, "select ", "select /*+ leading(r, p) */ ", 1)))
 		// A SET_VAR hint, which a binding can carry, enables the round for one statement.
 		hinted := strings.Replace(small, "select ", "select /*+ SET_VAR(tidb_opt_enable_alternative_logical_plans=ON) */ ", 1)
 		require.Equal(t, alternative, plan("off", hinted))
 
-		// Group 0 has 50,000 members, and the default order stays cheaper.
+		// Group 0 has 50,000 members, so members is read in full in either order.
 		big := query(0)
-		require.Equal(t, plan("off", big), plan("on", big))
+		for _, alternative := range []string{"off", "on"} {
+			require.Contains(t, plan(alternative, big), "TableFullScan cop[tikv] table:m keep order:true")
+		}
 
 		// Only greedy join reorder of the advanced implementation arms the round.
 		tk.MustExec("set tidb_opt_join_reorder_threshold = 10")
@@ -340,12 +344,16 @@ func TestGreedyOutputRowsAlternativeRound(t *testing.T) {
 		// Base tables cost the same either way, so the round is skipped.
 		require.False(t, roundRuns(t, "select sum(a.v + b.v + c.v) from anchors a join fanout b on a.k = b.k "+
 			"join agg_input c on c.k = a.k"))
-		// These aggregations are costed above their output rows, but they rank the
-		// same way under both costings and keep their order, so the round is skipped.
-		require.False(t, roundRuns(t, "select count(*) from (select k, max(v) as mx from agg_input group by k) x "+
-			"join (select k, max(v) as mx from agg_input group by k) y on x.k = y.k "+
-			"join (select k, max(v) as mx from agg_input group by k) z on y.k = z.k"))
-		// The trial build raises the same join hint conflicts, and its warnings are discarded.
+		// These aggregations are costed above their output rows, so the round runs.
+		// They rank the same way under both costings, so the round builds the same
+		// plan, and the plan of round 1 is kept.
+		aggs := "select count(*) from (select k, max(v) as mx from agg_input group by k) x " +
+			"join (select k, max(v) as mx from agg_input group by k) y on x.k = y.k " +
+			"join (select k, max(v) as mx from agg_input group by k) z on y.k = z.k"
+		require.True(t, roundRuns(t, aggs))
+		require.Equal(t, plan("off", aggs), plan("on", aggs))
+		// The round raises the same join hint conflicts, and only the warnings of
+		// the chosen plan are kept.
 		hinted := "select /*+ hash_join(x) merge_join(y) */ count(*) from (select k, max(v) as mx from agg_input group by k) x " +
 			"join (select k, max(v) as mx from agg_input group by k) y on x.k = y.k " +
 			"join (select k, max(v) as mx from agg_input group by k) z on y.k = z.k"

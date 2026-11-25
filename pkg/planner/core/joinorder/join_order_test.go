@@ -18,10 +18,11 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/domain"
-	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
+	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/stretchr/testify/require"
 )
 
@@ -86,12 +87,17 @@ func TestCloneNodesForGreedyStartIsolation(t *testing.T) {
 	require.NotNil(t, cloned[0].p)
 }
 
-func TestJoinTreeShape(t *testing.T) {
+func TestArmGreedyOutputRowsRound(t *testing.T) {
 	ctx := coretestsdk.MockContext()
 	t.Cleanup(func() {
 		domain.GetDomain(ctx).StatsHandle().Close()
 	})
 
+	leaf := func(rows float64) *Node {
+		p := logicalop.LogicalTableDual{}.Init(ctx, 0)
+		p.SetStats(&property.StatsInfo{RowCount: rows})
+		return &Node{p: p, cumCost: LegacyLeafCost(p)}
+	}
 	input := logicalop.LogicalTableDual{}.Init(ctx, 0)
 	input.SetStats(&property.StatsInfo{RowCount: 8_000_000})
 	agg := logicalop.LogicalAggregation{}.Init(ctx, 0)
@@ -99,22 +105,29 @@ func TestJoinTreeShape(t *testing.T) {
 	agg.SetStats(&property.StatsInfo{RowCount: 10})
 	require.Equal(t, 8_000_010.0, LegacyLeafCost(agg))
 	require.Equal(t, 10.0, outputRowsLeafCost(agg))
+	inflated := &Node{p: agg, cumCost: LegacyLeafCost(agg)}
 
-	a := logicalop.LogicalTableDual{}.Init(ctx, 0)
-	b := logicalop.LogicalTableDual{}.Init(ctx, 0)
-	group := &joinGroup{vertexes: []base.LogicalPlan{a, b, agg}}
-	join := func(tp base.JoinType, left, right base.LogicalPlan) base.LogicalPlan {
-		j := logicalop.LogicalJoin{JoinType: tp}.Init(ctx, 0)
-		j.SetChildren(left, right)
-		return j
+	vars := ctx.GetSessionVars()
+	sc := vars.StmtCtx
+	check := func(nodes []*Node, enabled, wantRelevant bool, want stmtctx.AlternativeRoundState) {
+		t.Helper()
+		vars.ResetRelevantOptVarsAndFixes(true)
+		vars.EnableAlternativeLogicalPlans = enabled
+		sc.ResetAlternativeLogicalPlanSignals()
+		armGreedyOutputRowsRound(ctx, nodes)
+		_, relevant := vars.RelevantOptVars[vardef.TiDBOptEnableAlternativeLogicalPlans]
+		require.Equal(t, wantRelevant, relevant)
+		require.Equal(t, want, sc.AlternativeLogicalPlanGreedyOutputRows)
 	}
-	shape := func(p base.LogicalPlan) string { return joinTreeShape(group, p) }
-	abc := shape(join(base.InnerJoin, join(base.InnerJoin, a, b), agg))
-	require.Equal(t, "inner join(2,inner join(0,1))", abc)
-	// The physical optimizer tries both sides of an inner join.
-	require.Equal(t, abc, shape(join(base.InnerJoin, agg, join(base.InnerJoin, b, a))))
-	require.NotEqual(t, abc, shape(join(base.InnerJoin, join(base.InnerJoin, a, agg), b)))
-	require.NotEqual(t,
-		shape(join(base.LeftOuterJoin, join(base.InnerJoin, a, b), agg)),
-		shape(join(base.LeftOuterJoin, agg, join(base.InnerJoin, a, b))))
+	// Base relations cost the same either way.
+	check([]*Node{leaf(1), leaf(2), leaf(3)}, true, false, stmtctx.AlternativeRoundNone)
+	// Two inputs only commute, which the physical optimizer covers.
+	check([]*Node{inflated, leaf(2)}, true, false, stmtctx.AlternativeRoundNone)
+	check([]*Node{leaf(1), inflated, leaf(3)}, false, true, stmtctx.AlternativeRoundNone)
+	check([]*Node{leaf(1), inflated, leaf(3)}, true, true, stmtctx.AlternativeRoundEligible)
+
+	// The round's own build leaves it active.
+	sc.AlternativeLogicalPlanGreedyOutputRows = stmtctx.AlternativeRoundActive
+	sc.MarkAlternativeLogicalPlanGreedyOutputRows()
+	require.Equal(t, stmtctx.AlternativeRoundActive, sc.AlternativeLogicalPlanGreedyOutputRows)
 }

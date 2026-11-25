@@ -496,14 +496,13 @@ type StatementContext struct {
 	// AlternativeLogicalPlanSemiJoinRewrite indicates whether the current logical
 	// build found a semi join that can try an additional SEMI_JOIN_REWRITE round.
 	AlternativeLogicalPlanSemiJoinRewrite bool
-	// AlternativeLogicalPlanGreedyReorderByOutputRows indicates whether the current
-	// first round found a greedy join group whose join order changes when its
-	// inputs are costed by their output rows instead of their subtree rows.
-	AlternativeLogicalPlanGreedyReorderByOutputRows bool
-	// AlternativeLogicalPlanGreedyOutputRows is a mode flag set by the
-	// "greedy-output-rows" alternative round. When true, greedy join reorder
-	// costs each join group input by its estimated output rows only.
-	AlternativeLogicalPlanGreedyOutputRows bool
+	// AlternativeLogicalPlanGreedyOutputRows is the state of the
+	// "greedy-output-rows" alternative round. The first round makes it eligible
+	// when it finds a greedy join group of at least three inputs with an input
+	// costed above its output rows. The round makes it active while it builds
+	// its plan, and greedy join reorder then costs each join group input by its
+	// estimated output rows only.
+	AlternativeLogicalPlanGreedyOutputRows AlternativeRoundState
 	// AlternativeLogicalPlanFTSLikeFallback is a mode flag controlling how the
 	// expression rewriter handles MATCH...AGAINST in predicate contexts. When
 	// false (the default, matching Alt-disabled behavior) the rewriter emits
@@ -713,6 +712,20 @@ func (sc *StatementContext) RestoreLogicalPlanBuildState(state LogicalPlanBuildS
 	sc.RangeFallbackHandler = contextutil.NewRangeFallbackHandler(&sc.PlanCacheTracker, sc)
 }
 
+// AlternativeRoundState is the state of an alternative logical plan round that
+// the first round arms and that changes how the plan is built while it runs.
+type AlternativeRoundState uint8
+
+const (
+	// AlternativeRoundNone means the first round did not arm the round.
+	AlternativeRoundNone AlternativeRoundState = iota
+	// AlternativeRoundEligible means the first round armed the round, so it runs
+	// after the first round.
+	AlternativeRoundEligible
+	// AlternativeRoundActive means the round is building its plan.
+	AlternativeRoundActive
+)
+
 // ResetAlternativeLogicalPlanSignals clears the statement-local signals used by the
 // alternative logical plan feature.
 func (sc *StatementContext) ResetAlternativeLogicalPlanSignals() {
@@ -723,8 +736,7 @@ func (sc *StatementContext) ResetAlternativeLogicalPlanSignals() {
 	sc.AlternativeLogicalPlanHasPredicateContextMatch = false
 	sc.AlternativeLogicalPlanPreferCorrelate = false
 	sc.AlternativeLogicalPlanSemiJoinRewrite = false
-	sc.AlternativeLogicalPlanGreedyReorderByOutputRows = false
-	sc.AlternativeLogicalPlanGreedyOutputRows = false
+	sc.AlternativeLogicalPlanGreedyOutputRows = AlternativeRoundNone
 	sc.AlternativeLogicalPlanMixedStorageEngines = false
 	sc.AlternativeLogicalPlanMissingTiFlashPath = false
 	sc.AlternativeLogicalPlanHasStoreTypeHint = false
@@ -762,11 +774,13 @@ func (sc *StatementContext) MarkAlternativeLogicalPlanSemiJoinRewrite() {
 	sc.AlternativeLogicalPlanSemiJoinRewrite = true
 }
 
-// MarkAlternativeLogicalPlanGreedyReorderByOutputRows records that the current
-// first round found a greedy join group that the greedy-output-rows round
-// orders differently.
-func (sc *StatementContext) MarkAlternativeLogicalPlanGreedyReorderByOutputRows() {
-	sc.AlternativeLogicalPlanGreedyReorderByOutputRows = true
+// MarkAlternativeLogicalPlanGreedyOutputRows records that the current build
+// found a greedy join group for the greedy-output-rows round. An active round
+// stays active.
+func (sc *StatementContext) MarkAlternativeLogicalPlanGreedyOutputRows() {
+	if sc.AlternativeLogicalPlanGreedyOutputRows == AlternativeRoundNone {
+		sc.AlternativeLogicalPlanGreedyOutputRows = AlternativeRoundEligible
+	}
 }
 
 // MarkAlternativeLogicalPlanMixedStorageEngines records that round 1's chosen

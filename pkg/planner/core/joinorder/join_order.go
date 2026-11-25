@@ -21,7 +21,6 @@ import (
 	"math"
 	"math/bits"
 	"slices"
-	"strconv"
 	"strings"
 
 	"github.com/cockroachdb/errors"
@@ -29,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -559,85 +559,48 @@ func checkConnectionAndMakeJoin(detector *ConflictDetector, leftPlan, rightPlan 
 	return checkResult, newNode, nil
 }
 
-func (j *joinOrderGreedy) optimize() (base.LogicalPlan, error) {
-	if j.ctx.GetSessionVars().StmtCtx.AlternativeLogicalPlanGreedyOutputRows {
-		return j.optimizeByLeafCost(outputRowsLeafCost)
-	}
-	p, err := j.optimizeByLeafCost(LegacyLeafCost)
-	if err != nil {
-		return nil, err
-	}
-	j.armGreedyOutputRowsRound(p)
-	return p, nil
-}
-
-// armGreedyOutputRowsRound arms the greedy-output-rows alternative round when
-// costing this group's inputs by their output rows builds a join order other
-// than p. Only an input costed above its output rows, because LegacyLeafCost
-// also counts the rows below it, can change the order. With two inputs the
-// order only commutes, which the physical optimizer already covers.
-func (j *joinOrderGreedy) armGreedyOutputRowsRound(p base.LogicalPlan) {
-	group := j.group
-	if len(group.vertexes) < 3 ||
-		!slices.ContainsFunc(group.vertexes, func(v base.LogicalPlan) bool {
-			return LegacyLeafCost(v) > outputRowsLeafCost(v)
-		}) {
+// armGreedyOutputRowsRound makes the greedy-output-rows alternative round
+// eligible when a group of at least three inputs has an input costed above its
+// output rows, as LegacyLeafCost also counts the rows below it. Otherwise both
+// costings rank the inputs the same way and build the same order, and with only
+// two inputs the physical optimizer already tries both sides of the join.
+func armGreedyOutputRowsRound(ctx base.PlanContext, nodes []*Node) {
+	if len(nodes) < 3 {
 		return
 	}
-	vars := j.ctx.GetSessionVars()
-	vars.RecordRelevantOptVar(vardef.TiDBOptEnableAlternativeLogicalPlans)
-	if !vars.EnableAlternativeLogicalPlans {
-		return
-	}
-	// The trial order is discarded, and so are the warnings its build raises.
-	warnings := slices.Clone(vars.StmtCtx.GetWarnings())
-	alternative, err := j.optimizeByLeafCost(outputRowsLeafCost)
-	vars.StmtCtx.SetWarnings(warnings)
-	if err == nil && joinTreeShape(group, alternative) != joinTreeShape(group, p) {
-		vars.StmtCtx.MarkAlternativeLogicalPlanGreedyReorderByOutputRows()
-	}
-}
-
-// joinTreeShape describes the join order of a reordered group by the indexes
-// of its inputs. Children of inner joins are sorted, as the physical optimizer
-// tries both sides of an inner join.
-func joinTreeShape(group *joinGroup, p base.LogicalPlan) string {
-	inputs := make(map[int]int, len(group.vertexes))
-	for i, v := range group.vertexes {
-		inputs[v.ID()] = i
-	}
-	var shape func(base.LogicalPlan) string
-	shape = func(p base.LogicalPlan) string {
-		if i, ok := inputs[p.ID()]; ok {
-			return strconv.Itoa(i)
-		}
-		children := make([]string, 0, len(p.Children()))
-		for _, child := range p.Children() {
-			children = append(children, shape(child))
-		}
-		name := p.TP()
-		if join, ok := p.(*logicalop.LogicalJoin); ok {
-			name = join.JoinType.String()
-			if join.JoinType == base.InnerJoin {
-				slices.Sort(children)
+	for _, node := range nodes {
+		if node.cumCost > outputRowsLeafCost(node.p) {
+			vars := ctx.GetSessionVars()
+			vars.RecordRelevantOptVar(vardef.TiDBOptEnableAlternativeLogicalPlans)
+			if vars.EnableAlternativeLogicalPlans {
+				vars.StmtCtx.MarkAlternativeLogicalPlanGreedyOutputRows()
 			}
+			return
 		}
-		return name + "(" + strings.Join(children, ",") + ")"
 	}
-	return shape(p)
 }
 
-func (j *joinOrderGreedy) optimizeByLeafCost(costLeaf func(base.LogicalPlan) float64) (base.LogicalPlan, error) {
+func (j *joinOrderGreedy) optimize() (base.LogicalPlan, error) {
 	group := j.group
 	detector := newConflictDetector(j.ctx)
+	outputRows := j.ctx.GetSessionVars().StmtCtx.AlternativeLogicalPlanGreedyOutputRows == stmtctx.AlternativeRoundActive
+	costLeaf := LegacyLeafCost
+	if outputRows {
+		costLeaf = outputRowsLeafCost
+	}
 	nodes, err := detector.Build(group, costLeaf)
 	if err != nil {
 		return nil, err
 	}
-	nodeWithHint, nodes, err := j.buildJoinByHint(detector, nodes)
+	nodeWithHint, rest, err := j.buildJoinByHint(detector, nodes)
 	if err != nil {
 		return nil, err
 	}
+	// A LEADING hint that leaves at most one other input fixes the order.
+	if !outputRows && (nodeWithHint == nil || len(rest) >= 2) {
+		armGreedyOutputRowsRound(j.ctx, nodes)
+	}
+	nodes = rest
 	if len(nodes) < 1 {
 		return nodeWithHint.p, nil
 	}

@@ -515,7 +515,6 @@ func buildAndOptimizeLogicalPlanRound(
 	bestCost *float64,
 	bestLogicalPlanCtx *logicalPlanBuildCtx,
 	optFlagAdjust func(uint64) uint64,
-	minCostImprovement float64,
 ) (base.Plan, types.NameSlice, bool, error) {
 	builder := planBuilderPool.Get().(*core.PlanBuilder)
 	defer planBuilderPool.Put(builder.ResetForReuse())
@@ -598,7 +597,7 @@ func buildAndOptimizeLogicalPlanRound(
 		return p, names, false, nil
 	}
 
-	if *bestPlan == nil || cost < *bestCost*(1-minCostImprovement) {
+	if *bestPlan == nil || cost < *bestCost {
 		*bestCost = cost
 		*bestPlan = finalPlan
 		*bestNames = names
@@ -608,11 +607,6 @@ func buildAndOptimizeLogicalPlanRound(
 	}
 	return p, names, false, nil
 }
-
-// greedyOutputRowsMinCostImprovement is how much cheaper, relatively, the
-// greedy-output-rows round's plan must be to replace the current best plan, so
-// that near ties keep the default join order.
-const greedyOutputRowsMinCostImprovement = 0.01
 
 // optimizeCnt is a global variable only used for test.
 var optimizeCnt int
@@ -641,7 +635,7 @@ func shouldTrySemiJoinRewriteRound(sessVars *variable.SessionVars) bool {
 
 func shouldTryGreedyOutputRowsRound(sessVars *variable.SessionVars) bool {
 	return sessVars.EnableAlternativeLogicalPlans &&
-		sessVars.StmtCtx.AlternativeLogicalPlanGreedyReorderByOutputRows
+		sessVars.StmtCtx.AlternativeLogicalPlanGreedyOutputRows == stmtctx.AlternativeRoundEligible
 }
 
 // shouldTryEngineRestrictedRounds holds the gates shared by the tikv-only and
@@ -674,14 +668,11 @@ func shouldTryTiFlashOnlyRound(sessVars *variable.SessionVars) bool {
 // cleanup that restores exactly what it changed. The saved values live in the
 // returned closure, never in package state: optimize can run concurrently in
 // different sessions, so each invocation must own its own saved state.
-// minCostImprovement is the relative cost reduction the round's plan needs to
-// replace the current best plan; zero means any cheaper plan wins.
 type alternativeRound struct {
-	name               string
-	adjustFlag         func(uint64) uint64
-	enabled            func(*variable.SessionVars) bool
-	setup              func(*variable.SessionVars) (cleanup func())
-	minCostImprovement float64
+	name       string
+	adjustFlag func(uint64) uint64
+	enabled    func(*variable.SessionVars) bool
+	setup      func(*variable.SessionVars) (cleanup func())
 }
 
 var alternativeRounds = [...]alternativeRound{
@@ -700,15 +691,15 @@ var alternativeRounds = [...]alternativeRound{
 		// group input by its estimated output rows. By default an input also
 		// counts the rows below it, so a small aggregation over a large join is
 		// joined last even when it could drive index lookups into the other
-		// inputs. Round 1 arms this round only when costing the inputs of a
-		// greedy group by output rows changes its join order.
+		// inputs. Round 1 arms this round when a greedy group of at least three
+		// inputs has an input costed above its output rows.
 		name:    "greedy-output-rows",
 		enabled: shouldTryGreedyOutputRowsRound,
 		setup: func(sv *variable.SessionVars) func() {
-			sv.StmtCtx.AlternativeLogicalPlanGreedyOutputRows = true
-			return func() { sv.StmtCtx.AlternativeLogicalPlanGreedyOutputRows = false }
+			sv.StmtCtx.AlternativeLogicalPlanGreedyOutputRows = stmtctx.AlternativeRoundActive
+			// This round is enabled only when round 1 made it eligible.
+			return func() { sv.StmtCtx.AlternativeLogicalPlanGreedyOutputRows = stmtctx.AlternativeRoundEligible }
 		},
-		minCostImprovement: greedyOutputRowsMinCostImprovement,
 	},
 	{
 		name:       "correlate",
@@ -857,7 +848,6 @@ func optimize(ctx context.Context, sctx planctx.PlanContext, node *resolve.NodeW
 		&bestCost,
 		&bestLogicalPlanCtx,
 		nil,
-		0,
 	)
 	if err != nil {
 		return nil, nil, 0, err
@@ -932,7 +922,6 @@ func optimize(ctx context.Context, sctx planctx.PlanContext, node *resolve.NodeW
 				&bestCost,
 				&bestLogicalPlanCtx,
 				round.adjustFlag,
-				round.minCostImprovement,
 			)
 		}()
 		if err != nil {
