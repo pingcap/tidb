@@ -40,7 +40,8 @@ const (
 
 	// MppVersionV2 supports TiFlash version [v7.3, ~], support ReportMPPTaskStatus service
 	MppVersionV2
-	// MppVersionV3
+	// MppVersionV3 supports byte-limited casts for virtual generated TEXT columns.
+	MppVersionV3
 
 	mppVersionMax
 

@@ -17,6 +17,7 @@ package planner_test
 import (
 	"archive/zip"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -107,4 +108,31 @@ func TestAlternativeRiskPlanCacheIsolation(t *testing.T) {
 	tk.MustExec("set tidb_opt_enable_risk_based_plan_selection=OFF")
 	tk.MustQuery("execute s using @b").Check(testkit.Rows("1"))
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+}
+
+func TestMPPVirtualTextFilter(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t, mockstore.WithMockTiFlash(2))
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table objects(id int primary key, label varchar(32), txt text, txt_lower text as (lower(txt)) virtual) collate utf8mb4_bin")
+	tk.MustExec("create table edges(obj_id int)")
+	testkit.SetTiFlashReplica(t, dom, "test", "objects")
+	testkit.SetTiFlashReplica(t, dom, "test", "edges")
+	tk.MustExec("set tidb_allow_mpp=on, tidb_allow_tiflash_cop=off, tidb_enforce_mpp=off")
+	tk.MustExec("set tidb_isolation_read_engines='tiflash,tidb', tidb_opt_enable_alternative_logical_plans=on")
+	const query = "select o.id, o.label from objects o where o.txt_lower = 'fagor' and exists " +
+		"(select 1 from edges d where d.obj_id = o.id) order by o.label limit 1000"
+	explain := func(query string) string {
+		return fmt.Sprint(tk.MustQuery("explain format='brief' " + query).Rows())
+	}
+	require.Contains(t, explain(query), "Apply")
+
+	tk.MustExec("set mpp_version=3")
+	plan := explain(query)
+	require.Regexp(t, `HashJoin[^]]*mpp\[tiflash\]`, plan)
+	require.Regexp(t, `Selection[^]]*mpp\[tiflash\][^]]*cast[(]lower`, plan)
+	require.NotContains(t, plan, "Apply")
+	projected := explain("select txt_lower from objects where txt_lower = 'fagor'")
+	require.Regexp(t, `Selection[^]]*root[^]]*txt_lower`, projected)
+	require.NotContains(t, projected, "cast(lower")
 }

@@ -338,6 +338,7 @@ func NewPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt) (key, binding
 		ftsMode |= 8
 	}
 	hash = codec.EncodeInt(hash, ftsMode)
+	hash = codec.EncodeInt(hash, vars.ChooseMppVersion().ToInt64())
 	hash = codec.EncodeInt(hash, int64(vars.SQLMode))
 	hash = codec.EncodeInt(hash, int64(timezoneOffset))
 	if _, ok := vars.IsolationReadEngines[kv.TiDB]; ok {
