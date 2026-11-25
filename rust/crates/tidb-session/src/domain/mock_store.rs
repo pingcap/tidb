@@ -47,6 +47,15 @@ pub struct MockStoreDomain {
     _dist_task_loop: Option<tidb_domain_core::domain::dist_task::DistTaskLoop>,
 }
 
+/// Go testkit's `CreateMockStoreAndDomain` cleanup, `dom.Close()`: the
+/// domain's own workers hold it, so it would never drop on its own and its
+/// DDL loop, owner campaigns and stats workers would outlive the store.
+impl Drop for MockStoreDomain {
+    fn drop(&mut self) {
+        self.stack.factory.close();
+    }
+}
+
 impl MockStoreDomain {
     /// The domain booted over this store.
     #[cfg(test)]
@@ -446,4 +455,30 @@ impl NodeConn {
             .map_err(|error| format!("commit: {error:?}"))
     }
 
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    /// Go testkit closes the domain at cleanup (`dom.Close()`), and
+    /// `Domain.Close` stops the DDL (its delete-range emulator included) and
+    /// closes the session pools whose sessions hold the domain. A store's
+    /// last session dropping therefore frees its domain, and the workers
+    /// with it: a test opening many sessions does not keep every store
+    /// alive.
+    #[test]
+    fn a_dropped_store_frees_its_domain() {
+        let mut session = crate::Session::new();
+        session.run("select 1").unwrap();
+        let store = session.node.as_ref().unwrap().store.clone().unwrap();
+        let domain = Arc::downgrade(store.domain());
+        drop(store);
+        drop(session);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while domain.strong_count() != 0 && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        assert_eq!(domain.strong_count(), 0, "the domain outlived its store");
+    }
 }

@@ -2357,6 +2357,11 @@ impl Domain {
         if let Some(owner) = &self.stats_owner {
             owner.close();
         }
+        // Go `do.dxfSessionPool.Close()`: the pooled sessions hold this
+        // domain, so they must go for it to drop.
+        if let Some(pool) = self.dxf_session_pool.get() {
+            pool.close();
+        }
         if let Some(refresher) = self.auto_analyze_refresher.get() {
             refresher
                 .lock()
@@ -2364,6 +2369,10 @@ impl Domain {
                 .close();
         } else if let Some(queue) = self.auto_analyze_priority_queue.get() {
             queue.close();
+        }
+        // Go `do.advancedSysSessionPool.Close()`, after the stats handle.
+        if let Some(pool) = self.advanced_sys_session_pool.get() {
+            pool.close();
         }
     }
 }

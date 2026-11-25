@@ -32,18 +32,33 @@ const DEL_BATCH_SIZE: usize = 65536;
 /// Go `delBackLog`.
 const DEL_BACK_LOG: usize = 128;
 
-/// The emulator's wake-up handle (Go `delRange.emulatorCh`). Dropping it
-/// stops the emulator.
+/// The emulator's wake-up handle (Go `delRange.emulatorCh`) and its worker
+/// (Go `delRange.wait`).
 pub struct DelRangeEmulator {
-    wake: SyncSender<()>,
+    wake: std::sync::Mutex<Option<SyncSender<()>>>,
+    worker: std::sync::Mutex<Option<std::thread::JoinHandle<()>>>,
 }
 
 impl DelRangeEmulator {
     /// Go `addDelRangeJob`'s `dr.emulatorCh <- struct{}{}`. A full backlog
     /// already guarantees a pass after this job's rows were written.
     pub fn notify(&self) {
-        match self.wake.try_send(()) {
-            Ok(()) | Err(TrySendError::Full(())) | Err(TrySendError::Disconnected(())) => {}
+        let wake = self.wake.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(wake) = wake.as_ref() {
+            match wake.try_send(()) {
+                Ok(()) | Err(TrySendError::Full(())) | Err(TrySendError::Disconnected(())) => {}
+            }
+        }
+    }
+
+    /// Go `delRange.clear`: `close(dr.quitCh)` ends the emulator loop and
+    /// `dr.wait.Wait()` waits out a pass in progress. Idempotent.
+    pub fn clear(&self) {
+        tidb_ddl_logutil::ddl_logger().info("closing delRange", &[]);
+        drop(self.wake.lock().unwrap_or_else(std::sync::PoisonError::into_inner).take());
+        let worker = self.worker.lock().unwrap_or_else(std::sync::PoisonError::into_inner).take();
+        if let Some(worker) = worker {
+            let _ = worker.join();
         }
     }
 }
@@ -58,11 +73,14 @@ where
     S: StoreClient,
 {
     let (wake, woken) = sync_channel(DEL_BACK_LOG);
-    std::thread::Builder::new()
+    let worker = std::thread::Builder::new()
         .name("ddl-del-range-emulator".to_owned())
         .spawn(move || run_emulator(&opener, timeout, sess_pool.as_ref(), &woken))
         .map_err(|error| error.to_string())?;
-    Ok(DelRangeEmulator { wake })
+    Ok(DelRangeEmulator {
+        wake: std::sync::Mutex::new(Some(wake)),
+        worker: std::sync::Mutex::new(Some(worker)),
+    })
 }
 
 fn run_emulator<S>(

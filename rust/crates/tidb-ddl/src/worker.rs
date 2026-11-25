@@ -3616,8 +3616,8 @@ where
     /// job-version detector and the temp-dir loop stop, the owner campaign
     /// loop breaks (`BreakCampaignLoop`: the process's owner manager keeps
     /// its session until `CloseOwnerManager`; a manager of this DDL's own
-    /// closes) and the job scheduler stops. A second call finds every worker
-    /// already taken.
+    /// closes), the job scheduler stops and the delete-range emulator clears.
+    /// A second call finds every worker already taken.
     fn stop(&self) {
         self.server_state_context.cancel();
         let _ = self.min_job_id_stop.send(());
@@ -3637,6 +3637,10 @@ where
             self.owner.close();
         }
         self.scheduler.stop();
+        // Go `d.delRangeMgr.clear()`, before the session pool closes.
+        if let Some(emulator) = self.scheduler.del_range.get() {
+            emulator.clear();
+        }
     }
 
     fn update_table_replica_info(
