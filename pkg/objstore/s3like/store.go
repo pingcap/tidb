@@ -619,9 +619,6 @@ func (rs *Storage) open(
 		// We must ensure the `ContentLengh` has data even if for empty objects,
 		// otherwise we have no places to get the object size
 		if result.ContentLength == nil {
-			if result.Body != nil {
-				_ = result.Body.Close()
-			}
 			return nil, RangeInfo{}, errors.Annotatef(berrors.ErrStorageUnknown, "open file '%s' failed. The S3 object has no content length", path)
 		}
 		objectSize := *(result.ContentLength)
@@ -642,17 +639,11 @@ func (rs *Storage) open(
 	} else {
 		r, err = ParseRangeInfo(result.ContentRange)
 		if err != nil {
-			if result.Body != nil {
-				_ = result.Body.Close()
-			}
 			return nil, RangeInfo{}, errors.Trace(err)
 		}
 	}
 
 	if startOffset != r.Start || (endOffset != 0 && endOffset != r.End+1) {
-		if result.Body != nil {
-			_ = result.Body.Close()
-		}
 		rangeStr := "<empty>"
 		if result.ContentRange != nil {
 			rangeStr = *result.ContentRange

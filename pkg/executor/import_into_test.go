@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/s3like"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -207,6 +208,7 @@ func TestNextGenS3ExternalID(t *testing.T) {
 				for _, schema := range []string{"s3", "oss", "tos"} {
 					tk.MustMatchErrMsg(fmt.Sprintf("IMPORT INTO test.t FROM '%s://bucket'", schema), `(?i).*Feature 'IMPORT INTO .*without access key/secret access key or role ARN' is not supported when security enhanced mode is enabled`)
 				}
+				tk.MustMatchErrMsg("IMPORT INTO test.t FROM 'tos://bucket?role-arn=arn'", `(?i).*Feature 'IMPORT INTO from TOS with role ARN' is not supported when security enhanced mode is enabled`)
 			})
 		}
 	})
@@ -233,10 +235,17 @@ func TestNextGenS3ExternalID(t *testing.T) {
 					require.NoError(t, err)
 					require.Contains(t, u.Query(), s3like.S3ExternalID)
 					require.Equal(t, "aaa", u.Query().Get(s3like.S3ExternalID))
+					if u.Scheme == "tos" {
+						backend, err := objstore.ParseBackend(plan.Path, nil)
+						require.NoError(t, err)
+						s, err := objstore.New(context.Background(), backend, nil)
+						require.NoError(t, err)
+						s.Close()
+					}
 					panic("FAIL IT, AS WE CANNOT RUN IT HERE")
 				})
 				for _, schema := range []string{"s3", "oss", "tos"} {
-					err := tk.QueryToErr(fmt.Sprintf("IMPORT INTO test.t FROM '%s://bucket?access-key=ak&secret-access-key=sk'", schema))
+					err := tk.QueryToErr(fmt.Sprintf("IMPORT INTO test.t FROM '%s://bucket?region=cn-beijing&access-key=ak&secret-access-key=sk'", schema))
 					require.ErrorContains(t, err, "FAIL IT, AS WE CANNOT RUN IT HERE")
 				}
 			})
@@ -299,6 +308,9 @@ func TestNextGenS3ExternalID(t *testing.T) {
 						fmt.Sprintf("IMPORT INTO test.t FROM '%s://bucket?external-id=allowed'", schema),
 						`(?i).*Feature 'IMPORT INTO .*without access key/secret access key or role ARN' is not supported when security enhanced mode is enabled`)
 				}
+				tk.MustMatchErrMsg(
+					"IMPORT INTO test.t FROM 'tos://bucket?external-id=allowed&role-arn=arn'",
+					`(?i).*Feature 'IMPORT INTO from TOS with role ARN' is not supported when security enhanced mode is enabled`)
 				for _, tc := range []struct {
 					name  string
 					param string

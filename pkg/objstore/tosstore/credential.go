@@ -18,7 +18,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -28,11 +27,28 @@ import (
 	"time"
 
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	tidbutil "github.com/pingcap/tidb/pkg/util"
 	vtos "github.com/volcengine/ve-tos-golang-sdk/v2/tos"
 	"github.com/volcengine/volcengine-go-sdk/service/sts"
 	"github.com/volcengine/volcengine-go-sdk/volcengine"
 	vecred "github.com/volcengine/volcengine-go-sdk/volcengine/credentials"
 	"github.com/volcengine/volcengine-go-sdk/volcengine/session"
+)
+
+const (
+	// minPresignRefreshInterval throttles forced refreshes when a presign TTL
+	// exceeds the current temporary credential's remaining lifetime.
+	minPresignRefreshInterval = 5 * time.Minute
+	// maxProactiveRefreshLead caps how early background refresh starts before expiry.
+	maxProactiveRefreshLead = 6 * time.Minute
+	// refreshRetryBackoff delays retries after a failed OIDC/STS refresh.
+	refreshRetryBackoff = 30 * time.Second
+	// refreshTimeout bounds a single background OIDC/STS refresh attempt.
+	refreshTimeout = 10 * time.Second
+	// stsSessionDurationSeconds requests 1-hour temporary STS credentials.
+	stsSessionDurationSeconds = 3600
+	// maxOIDCResponseBytes bounds the OIDC STS response body read into memory.
+	maxOIDCResponseBytes = 64 << 10
 )
 
 type credential struct {
@@ -47,16 +63,31 @@ type refreshCall struct {
 	err    error
 }
 
+// credentials caches and refreshes TOS credentials with fail-closed expiry.
+//
+// ve-tos-golang-sdk v2.9.2 ships WithCredentialsProvider (which marks cached
+// credentials immortal after a refresh failure) and NewFederationCredentials
+// (which ignores failed refreshes and can serve expired credentials), and
+// neither accepts a caller context. Maintaining this small cache preserves
+// fail-closed expiry, context-cancellable waiters, singleflight refreshes, and
+// retry backoff.
 type credentials struct {
 	mu        sync.Mutex
 	current   credential
 	refreshAt time.Time
 	lastErr   error
 	call      *refreshCall
+	closed    bool
 	fetch     func(context.Context) (credential, error)
+	baseCtx   context.Context
+	cancel    context.CancelFunc
+	wg        tidbutil.WaitGroupWrapper
 }
 
-func newCredentials(qs *backuppb.S3, injected *http.Client) (*credentials, error) {
+// resolveBaseCredential selects explicit backend credentials first, then
+// environment variables (TOS_ACCESS_KEY/TOS_SECRET_KEY/TOS_SECURITY_TOKEN).
+// Partial static credentials are rejected fail-closed.
+func resolveBaseCredential(qs *backuppb.S3) (credential, bool, error) {
 	base := credential{Credential: vtos.Credential{
 		AccessKeyID: qs.AccessKey, AccessKeySecret: qs.SecretAccessKey, SecurityToken: qs.SessionToken,
 	}}
@@ -67,16 +98,26 @@ func newCredentials(qs *backuppb.S3, injected *http.Client) (*credentials, error
 			SecurityToken:   os.Getenv("TOS_SECURITY_TOKEN"),
 		}
 	}
+	if base.Credential == (vtos.Credential{}) {
+		return credential{}, false, nil
+	}
+	if strings.TrimSpace(base.AccessKeyID) == "" || strings.TrimSpace(base.AccessKeySecret) == "" {
+		return credential{}, false, invalidConfig("TOS static credentials require both access key and secret key")
+	}
+	return base, true, nil
+}
+
+func newCredentials(qs *backuppb.S3, injected *http.Client) (*credentials, error) {
+	base, hasStatic, err := resolveBaseCredential(qs)
+	if err != nil {
+		return nil, err
+	}
 	var oidc *oidcSource
-	if base.Credential != (vtos.Credential{}) {
-		if strings.TrimSpace(base.AccessKeyID) == "" || strings.TrimSpace(base.AccessKeySecret) == "" {
-			return nil, invalidConfig("TOS static credentials require both access key and secret key")
-		}
+	if hasStatic {
 		if qs.RoleArn == "" {
 			return &credentials{current: base}, nil
 		}
 	} else {
-		var err error
 		oidc, err = newOIDCSource(qs.Region, injected)
 		if err != nil {
 			return nil, err
@@ -84,28 +125,47 @@ func newCredentials(qs *backuppb.S3, injected *http.Client) (*credentials, error
 	}
 
 	region, role := qs.Region, qs.RoleArn
-	return &credentials{fetch: func(ctx context.Context) (credential, error) {
-		resolved := base
-		if oidc != nil {
-			var err error
-			resolved, err = oidc.fetch(ctx)
-			if err != nil {
-				return credential{}, err
+	baseCtx, cancel := context.WithCancel(context.Background())
+	return &credentials{
+		baseCtx: baseCtx,
+		cancel:  cancel,
+		fetch: func(ctx context.Context) (credential, error) {
+			resolved := base
+			if oidc != nil {
+				var err error
+				resolved, err = oidc.fetch(ctx)
+				if err != nil {
+					return credential{}, err
+				}
 			}
-		}
-		if role == "" {
-			return resolved, nil
-		}
-		// The SDK modifies both the client and its transport in NewSession.
-		httpClient, closeIdle := newSTSHTTPClient(injected)
-		if closeIdle != nil {
-			defer closeIdle()
-		}
-		return assumeRole(ctx, region, role, resolved.Credential, httpClient)
-	}}, nil
+			if role == "" {
+				return resolved, nil
+			}
+			// The SDK modifies both the client and its transport in NewSession.
+			httpClient, closeIdle := newSTSHTTPClient(injected)
+			if closeIdle != nil {
+				defer closeIdle()
+			}
+			return assumeRole(ctx, region, role, resolved.Credential, httpClient)
+		},
+	}, nil
 }
 
-// Credential is called by the SDK without a context, including on retries.
+// close cancels any in-flight background refresh and waits for it to finish.
+func (c *credentials) close() {
+	c.mu.Lock()
+	c.closed = true
+	cancel := c.cancel
+	c.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+	c.wg.Wait()
+}
+
+// Credential implements vtos.Credentials and is called by the SDK signer
+// without a context, including on retries. Returning an empty credential when
+// expired causes credentialGuardTransport to fail closed before transmission.
 func (c *credentials) Credential() vtos.Credential {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -115,20 +175,29 @@ func (c *credentials) Credential() vtos.Credential {
 	return c.current.Credential
 }
 
+// resolve ensures a valid credential is available, starting or joining a
+// shared background refresh when due and honoring backoff after failures.
 func (c *credentials) resolve(ctx context.Context) (vtos.Credential, error) {
 	if err := ctx.Err(); err != nil {
 		return vtos.Credential{}, err
 	}
 	c.mu.Lock()
+	if c.closed {
+		c.mu.Unlock()
+		return vtos.Credential{}, context.Canceled
+	}
 	now := time.Now()
 	valid := c.fetch == nil || now.Before(c.current.expiry)
-	if !valid && c.call == nil && c.lastErr != nil && now.Before(c.refreshAt) {
+	refreshing := c.call != nil
+	retryBlocked := !valid && !refreshing && c.lastErr != nil && now.Before(c.refreshAt)
+	if retryBlocked {
 		err := c.lastErr
 		c.mu.Unlock()
 		return vtos.Credential{}, err
 	}
-	if c.fetch != nil && c.call == nil && (!valid || !now.Before(c.refreshAt)) {
-		c.startRefreshLocked(ctx)
+	refreshDue := !valid || !now.Before(c.refreshAt)
+	if c.fetch != nil && !refreshing && refreshDue {
+		c.startRefreshLocked()
 	}
 	cred, call := c.current.Credential, c.call
 	c.mu.Unlock()
@@ -138,28 +207,59 @@ func (c *credentials) resolve(ctx context.Context) (vtos.Credential, error) {
 	return call.wait(ctx)
 }
 
+// shouldRefreshForPresign reports whether a presign request asks for a longer
+// lifetime than the current temporary credential has left, subject to
+// minPresignRefreshInterval throttling so repeated presigns do not hammer STS.
+func (c *credentials) shouldRefreshForPresign(now time.Time, expire time.Duration) bool {
+	if c.fetch == nil || c.current.expiry.IsZero() {
+		return false
+	}
+	if c.lastErr != nil && now.Before(c.refreshAt) {
+		return false
+	}
+	return c.current.expiry.Sub(now) < expire && now.Sub(c.current.fetchedAt) >= minPresignRefreshInterval
+}
+
 func (c *credentials) resolveForPresign(ctx context.Context, expire time.Duration) (vtos.Credential, error) {
 	if _, err := c.resolve(ctx); err != nil {
 		return vtos.Credential{}, err
 	}
 	c.mu.Lock()
-	current := c.current
-	if c.fetch == nil || current.expiry.IsZero() || time.Until(current.expiry) >= expire || time.Since(current.fetchedAt) < 5*time.Minute {
+	if c.closed {
 		c.mu.Unlock()
-		return current.Credential, nil
+		return vtos.Credential{}, context.Canceled
+	}
+	now := time.Now()
+	if !c.shouldRefreshForPresign(now, expire) {
+		cred := c.current.Credential
+		c.mu.Unlock()
+		return cred, nil
 	}
 	if c.call == nil {
-		c.startRefreshLocked(ctx)
+		c.startRefreshLocked()
 	}
 	call := c.call
 	c.mu.Unlock()
 	return call.wait(ctx)
 }
 
-func (c *credentials) startRefreshLocked(ctx context.Context) {
-	c.call = &refreshCall{done: make(chan struct{})}
-	// One canceled waiter must not cancel either STS hop for other callers.
-	go c.refresh(context.WithoutCancel(ctx), c.call)
+func (c *credentials) startRefreshLocked() {
+	call := &refreshCall{done: make(chan struct{})}
+	c.call = call
+	parent := c.baseCtx
+	if parent == nil {
+		parent = context.Background()
+	}
+	// Detach from individual waiter contexts so one canceled caller does not
+	// abort an STS refresh shared by others; close() still cancels baseCtx.
+	c.wg.RunWithRecover(
+		func() { c.refresh(parent, call) },
+		func(r any) {
+			if r != nil {
+				c.finishRefresh(call, credential{}, errors.New("TOS credential refresh panicked"))
+			}
+		},
+	)
 }
 
 func (call *refreshCall) wait(ctx context.Context) (vtos.Credential, error) {
@@ -171,23 +271,30 @@ func (call *refreshCall) wait(ctx context.Context) (vtos.Credential, error) {
 	}
 }
 
-func (c *credentials) refresh(ctx context.Context, call *refreshCall) {
-	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+func (c *credentials) refresh(parent context.Context, call *refreshCall) {
+	ctx, cancel := context.WithTimeout(parent, refreshTimeout)
 	defer cancel()
-	call.result, call.err = c.fetch(ctx)
+	result, err := c.fetch(ctx)
+	c.finishRefresh(call, result, err)
+}
+
+func (c *credentials) finishRefresh(call *refreshCall, result credential, err error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	now := time.Now()
-	if call.err == nil {
-		call.result.fetchedAt = now
-		c.current = call.result
+	call.result, call.err = result, err
+	if err == nil {
+		result.fetchedAt = now
+		c.current = result
 		c.lastErr = nil
-		c.refreshAt = c.current.expiry.Add(-min(c.current.expiry.Sub(now)/10, 6*time.Minute))
+		c.refreshAt = c.current.expiry.Add(-min(c.current.expiry.Sub(now)/10, maxProactiveRefreshLead))
 	} else {
-		c.lastErr = call.err
-		c.refreshAt = now.Add(30 * time.Second)
+		c.lastErr = err
+		c.refreshAt = now.Add(refreshRetryBackoff)
 	}
-	c.call = nil
+	if c.call == call {
+		c.call = nil
+	}
 	close(call.done)
 }
 
@@ -298,12 +405,14 @@ func (s *oidcSource) exchange(ctx context.Context, form url.Values) (credential,
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return credential{}, resp.StatusCode, fmt.Errorf("OIDC STS returned HTTP %d", resp.StatusCode)
+		return credential{}, resp.StatusCode, sanitizedStatusError("OIDC STS", resp.StatusCode, "", "")
 	}
-	const limit = 64 << 10
-	data, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxOIDCResponseBytes+1))
+	if err != nil {
+		return credential{}, 0, requestError(ctx, "OIDC STS", err)
+	}
 	var out vecred.AssumeRoleWithOIDCResponse
-	if err != nil || len(data) > limit || json.Unmarshal(data, &out) != nil {
+	if len(data) > maxOIDCResponseBytes || json.Unmarshal(data, &out) != nil {
 		return credential{}, 0, errors.New("invalid OIDC STS response")
 	}
 	if metaErr := out.ResponseMetadata.Error; metaErr != nil {
@@ -323,6 +432,13 @@ func (s *oidcSource) exchange(ctx context.Context, form url.Values) (credential,
 
 func stsHost(region string) string { return "sts." + region + ".volcengineapi.com" }
 
+// assumeRole exchanges base credentials (static or OIDC temporary credentials)
+// for a target role via Volcengine STS AssumeRole.
+//
+// We call sts.AssumeRoleWithContext directly instead of volcengine-go-sdk's
+// higher-level credentials.StsAssumeRole/NewStsCredentials helpers because
+// those helpers do not accept a base session token (breaking OIDC -> AssumeRole
+// chaining), a caller context, or an injected HTTP client.
 func assumeRole(ctx context.Context, region, role string, base vtos.Credential, httpClient *http.Client) (credential, error) {
 	sess, err := session.NewSession(volcengine.NewConfig().WithRegion(region).WithEndpoint(stsHost(region)).
 		WithHTTPClient(httpClient).WithCredentials(vecred.NewStaticCredentials(base.AccessKeyID, base.AccessKeySecret, base.SecurityToken)))
@@ -345,7 +461,7 @@ func assumeRole(ctx context.Context, region, role string, base vtos.Credential, 
 		tr.Proxy = savedProxy
 	}
 	out, err := stsClient.AssumeRoleWithContext(ctx, &sts.AssumeRoleInput{
-		RoleTrn: volcengine.String(role), RoleSessionName: volcengine.String("tidb"), DurationSeconds: volcengine.Int32(3600),
+		RoleTrn: volcengine.String(role), RoleSessionName: volcengine.String("tidb"), DurationSeconds: volcengine.Int32(stsSessionDurationSeconds),
 	})
 	if err != nil {
 		return credential{}, requestError(ctx, "STS AssumeRole", err)

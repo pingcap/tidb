@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -26,10 +27,12 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"testing/iotest"
 	"time"
 
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	"github.com/pingcap/tidb/pkg/ingestor/errdef"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -136,6 +139,20 @@ func TestOIDCExchange(t *testing.T) {
 	})
 	_, err = source.fetch(ctx)
 	require.ErrorIs(t, err, context.Canceled)
+
+	// Body read errors preserve net.Error rather than being masked as invalid JSON.
+	readNetErr := &net.OpError{Op: "read", Net: "tcp", Err: context.DeadlineExceeded}
+	source.httpClient.Transport = roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(iotest.ErrReader(readNetErr)),
+		}, nil
+	})
+	_, err = source.fetch(context.Background())
+	var gotNetErr net.Error
+	require.ErrorAs(t, err, &gotNetErr)
+	require.True(t, gotNetErr.Timeout())
 }
 
 func TestAssumeRole(t *testing.T) {
@@ -201,6 +218,33 @@ func TestAssumeRole(t *testing.T) {
 		s.Close()
 		require.Equal(t, 1, calls)
 	})
+	t.Run("sanitized STS RequestFailure status mapping", func(t *testing.T) {
+		for _, tc := range []struct {
+			status    int
+			code      string
+			retryable bool
+		}{
+			{http.StatusForbidden, "AccessDenied", false},
+			{http.StatusServiceUnavailable, "ServiceUnavailable", true},
+		} {
+			hc := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+				body := fmt.Sprintf(`{"ResponseMetadata":{"RequestId":"req-sts-%d","Error":{"Code":%q,"Message":"private-sts-secret"}}}`, tc.status, tc.code)
+				return response(tc.status, body), nil
+			})}
+			_, err := assumeRole(context.Background(), "cn-beijing", "target-role", vtos.Credential{AccessKeyID: "id", AccessKeySecret: "sk"}, hc)
+			require.Error(t, err)
+			require.ErrorContains(t, err, tc.code)
+			require.ErrorContains(t, err, fmt.Sprintf("req-sts-%d", tc.status))
+			require.NotContains(t, err.Error(), "private-sts-secret")
+			var httpErr *errdef.HTTPStatusError
+			if tc.retryable {
+				require.ErrorAs(t, err, &httpErr)
+				require.Equal(t, tc.status, httpErr.StatusCode)
+			} else {
+				require.False(t, errors.As(err, &httpErr))
+			}
+		}
+	})
 	var calls int
 	client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		calls++
@@ -241,6 +285,30 @@ func TestCredentialRefresh(t *testing.T) {
 			require.NoError(t, err)
 			require.Contains(t, url, "fresh-token")
 		}
+		require.EqualValues(t, 1, fetches.Load())
+	})
+	t.Run("presign honors failure backoff while current credential is valid", func(t *testing.T) {
+		ctx := context.Background()
+		s, err := NewTOSStorage(ctx, testBackend(), nil)
+		require.NoError(t, err)
+		defer s.Close()
+		p := s.cli.creds
+		p.current.fetchedAt = time.Now().Add(-10 * time.Minute)
+		p.current.expiry = time.Now().Add(30 * time.Minute)
+		p.refreshAt = p.current.expiry.Add(-time.Minute)
+		var fetches atomic.Int32
+		stsErr := errors.New("STS unavailable")
+		p.fetch = func(context.Context) (credential, error) {
+			fetches.Add(1)
+			return credential{}, stsErr
+		}
+		_, err = s.PresignFile(ctx, "file", 2*time.Hour)
+		require.ErrorIs(t, err, stsErr)
+		// Subsequent presign within the 30s backoff window reuses the still-valid
+		// credential instead of hammering STS.
+		signed, err := s.PresignFile(ctx, "file", 2*time.Hour)
+		require.NoError(t, err)
+		require.Contains(t, signed, "test-token")
 		require.EqualValues(t, 1, fetches.Load())
 	})
 	var calls atomic.Int32
@@ -329,6 +397,49 @@ func TestCredentialRefresh(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, "recovered", got.AccessKeyID)
 		require.EqualValues(t, 2, fetches.Load())
+		creds.close()
+	})
+
+	t.Run("panic during refresh is recovered and unblocks waiters", func(t *testing.T) {
+		creds := &credentials{
+			fetch: func(context.Context) (credential, error) {
+				panic("boom")
+			},
+		}
+		_, err := creds.resolve(context.Background())
+		require.ErrorContains(t, err, "panicked")
+		creds.close()
+	})
+
+	t.Run("close cancels and waits for in-flight refresh", func(t *testing.T) {
+		baseCtx, cancel := context.WithCancel(context.Background())
+		started := make(chan struct{})
+		exited := make(chan struct{})
+		creds := &credentials{
+			baseCtx: baseCtx,
+			cancel:  cancel,
+			fetch: func(ctx context.Context) (credential, error) {
+				close(started)
+				defer close(exited)
+				<-ctx.Done()
+				return credential{}, ctx.Err()
+			},
+		}
+		done := make(chan error, 1)
+		go func() {
+			_, err := creds.resolve(context.Background())
+			done <- err
+		}()
+		<-started
+		creds.close()
+		select {
+		case <-exited:
+		default:
+			t.Fatal("close returned before refresh goroutine exited")
+		}
+		require.ErrorIs(t, <-done, context.Canceled)
+		_, err := creds.resolve(context.Background())
+		require.ErrorIs(t, err, context.Canceled)
 	})
 }
 

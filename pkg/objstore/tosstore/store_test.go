@@ -24,6 +24,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"reflect"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -57,7 +58,7 @@ func TestEndpointAndRegion(t *testing.T) {
 	t.Setenv("VOLCENGINE_REGION", "")
 	t.Setenv("REGION", "cn-shanghai")
 	for _, tc := range []struct{ endpoint, input, region, host string }{
-		{"", "", "cn-shanghai", "https://tos-cn-shanghai.ivolces.com"},
+		{"", "", "cn-shanghai", "https://tos-cn-shanghai.volces.com"},
 		{"", " cn-beijing ", "cn-beijing", "https://tos-cn-beijing.volces.com"},
 		{"https://tos-cn-beijing.ivolces.com/", "", "cn-beijing", "https://tos-cn-beijing.ivolces.com"},
 		{"http://tos-cn-beijing.volces.com", "cn-beijing", "cn-beijing", "http://tos-cn-beijing.volces.com"},
@@ -71,9 +72,14 @@ func TestEndpointAndRegion(t *testing.T) {
 		require.Equal(t, tc.region, region)
 	}
 	t.Setenv("VOLCENGINE_REGION", "cn-beijing")
-	_, region, err := endpointAndRegion("", "")
+	endpoint, region, err := endpointAndRegion("", "")
 	require.NoError(t, err)
 	require.Equal(t, "cn-beijing", region)
+	require.Equal(t, "https://tos-cn-beijing.ivolces.com", endpoint)
+	endpoint, region, err = endpointAndRegion("", "cn-shanghai")
+	require.NoError(t, err)
+	require.Equal(t, "cn-shanghai", region)
+	require.Equal(t, "https://tos-cn-shanghai.volces.com", endpoint)
 	t.Setenv("VOLCENGINE_REGION", "")
 	t.Setenv("REGION", "")
 	for _, tc := range []struct{ endpoint, region string }{
@@ -149,6 +155,17 @@ func TestStorageConfig(t *testing.T) {
 		require.Equal(t, object.Bytes(), b)
 		require.Same(t, tr, hc.Transport)
 		require.False(t, tr.DisableCompression)
+	})
+
+	t.Run("default client uses ProxyFromEnvironment", func(t *testing.T) {
+		hc, closeIdle := newTOSHTTPClient(nil)
+		defer closeIdle()
+		tr, ok := hc.Transport.(*http.Transport)
+		require.True(t, ok)
+		require.NotNil(t, tr.Proxy)
+		// Compare function pointers instead of calling ProxyFromEnvironment so
+		// this test never triggers or depends on Go's process-wide envProxyOnce cache.
+		require.Equal(t, reflect.ValueOf(http.ProxyFromEnvironment).Pointer(), reflect.ValueOf(tr.Proxy).Pointer())
 	})
 
 	t.Run("injected client with default transport", func(t *testing.T) {
@@ -235,13 +252,17 @@ func TestStorageConfig(t *testing.T) {
 
 func TestPermissionsAndPresigning(t *testing.T) {
 	t.Setenv("VOLCENGINE_REGION", "cn-beijing")
-	for _, endpoint := range []string{"", "https://custom.example.org"} {
+	for _, tc := range []struct {
+		endpoint, dataHost, signedHost string
+	}{
+		{"", "bucket.tos-cn-beijing.ivolces.com", "bucket.tos-cn-beijing.volces.com"},
+		{"https://tos-cn-beijing.ivolces.com", "bucket.tos-cn-beijing.ivolces.com", "bucket.tos-cn-beijing.volces.com"},
+		{"https://tos-cn-beijing.ivolces.cn", "bucket.tos-cn-beijing.ivolces.cn", "bucket.tos-cn-beijing.volces.cn"},
+		{"https://custom.example.org", "bucket.custom.example.org", "bucket.custom.example.org"},
+	} {
 		q := testBackend()
-		q.Endpoint = endpoint
-		dataHost, signedHost := "bucket.tos-cn-beijing.ivolces.com", "bucket.tos-cn-beijing.volces.com"
-		if endpoint != "" {
-			dataHost, signedHost = "bucket.custom.example.org", "bucket.custom.example.org"
-		}
+		q.Endpoint = tc.endpoint
+		dataHost, signedHost := tc.dataHost, tc.signedHost
 		stats := &recording.AccessStats{}
 		opts := &storeapi.Options{AccessRecording: stats, CheckPermissions: []storeapi.Permission{storeapi.AccessBuckets},
 			HTTPClient: &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {

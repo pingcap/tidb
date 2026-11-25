@@ -12,6 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+// Package tosstore implements storeapi.Storage for Volcengine TOS using the
+// official ve-tos-golang-sdk/v2 client (tos:// / provider=tos-sdk).
 package tosstore
 
 import (
@@ -54,9 +56,11 @@ func (s *TOSStore) CopyFrom(ctx context.Context, inStore storeapi.Storage, spec 
 	return s.Storage.CopyFrom(ctx, src, spec)
 }
 
-// Close releases the storage and SDK client.
+// Close releases the storage, stops background credential refresh, and closes
+// owned idle connections.
 func (s *TOSStore) Close() {
 	s.Storage.Close()
+	s.cli.creds.close()
 	s.cli.svc.Close()
 	if s.closeIdle != nil {
 		s.closeIdle()
@@ -77,8 +81,18 @@ func parseEndpoint(raw string) (*url.URL, error) {
 }
 
 var standardHost = regexp.MustCompile(`^tos-([a-z0-9-]+)\.i?volces\.(com|cn)$`)
+var standardPrivateHost = regexp.MustCompile(`^tos-([a-z0-9-]+)\.ivolces\.(com|cn)$`)
 var regionLabel = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
 
+// endpointAndRegion resolves the TOS data endpoint and region.
+//
+// ve-tos-golang-sdk/v2's SupportedRegion map only covers a fixed subset of
+// regions, so we derive the standard endpoint consistently for any valid
+// region when none is configured. Only the Volcengine-specific
+// VOLCENGINE_REGION env var selects the same-region private ivolces.com
+// endpoint (while PresignObject still signs with publicEndpoint); generic
+// REGION is only used as a region fallback and always resolves to the public
+// endpoint so non-Volcengine hosts never get an unreachable private host.
 func endpointAndRegion(endpoint, region string) (string, string, error) {
 	region = strings.TrimSpace(region)
 	if endpoint != "" {
@@ -98,20 +112,20 @@ func endpointAndRegion(endpoint, region string) (string, string, error) {
 		}
 		endpoint = u.Scheme + "://" + u.Host
 	}
-	podRegion := strings.TrimSpace(os.Getenv("VOLCENGINE_REGION"))
-	if podRegion == "" {
-		podRegion = strings.TrimSpace(os.Getenv("REGION"))
-	}
+	volcRegion := strings.TrimSpace(os.Getenv("VOLCENGINE_REGION"))
 	if region == "" {
-		region = podRegion
+		region = volcRegion
+		if region == "" {
+			region = strings.TrimSpace(os.Getenv("REGION"))
+		}
 	}
 	// Region is interpolated into both the data and STS hostnames.
 	if !regionLabel.MatchString(region) {
 		return "", "", invalidConfig("a valid TOS region is required")
 	}
 	if endpoint == "" {
-		if region == podRegion {
-			endpoint = "https://tos-" + region + ".ivolces.com"
+		if region == volcRegion {
+			endpoint = internalEndpoint(region)
 		} else {
 			endpoint = publicEndpoint(region)
 		}
@@ -119,8 +133,34 @@ func endpointAndRegion(endpoint, region string) (string, string, error) {
 	return endpoint, region, nil
 }
 
+func internalEndpoint(region string) string {
+	return "https://tos-" + region + ".ivolces.com"
+}
+
 func publicEndpoint(region string) string {
 	return "https://tos-" + region + ".volces.com"
+}
+
+// presignEndpoint returns the AlternativeEndpoint for presigned URLs, mapping
+// empty or standard private ivolces.(com|cn) endpoints to their public
+// volces.(com|cn) counterparts while leaving custom endpoints intact.
+func presignEndpoint(endpoint, region string) string {
+	if endpoint == "" {
+		return publicEndpoint(region)
+	}
+	u, err := url.Parse(endpoint)
+	if err != nil {
+		return ""
+	}
+	host := strings.TrimSuffix(strings.ToLower(u.Hostname()), ".")
+	if m := standardPrivateHost.FindStringSubmatch(host); m != nil {
+		pubHost := "tos-" + m[1] + ".volces." + m[2]
+		if port := u.Port(); port != "" {
+			pubHost = net.JoinHostPort(pubHost, port)
+		}
+		return u.Scheme + "://" + pubHost
+	}
+	return ""
 }
 
 // NewTOSStorage creates a native TOS store for a single bucket prefix.
@@ -153,13 +193,20 @@ func NewTOSStorage(ctx context.Context, backend *backuppb.S3, opts *storeapi.Opt
 		return nil, err
 	}
 	if _, err := creds.resolve(ctx); err != nil {
+		creds.close()
 		return nil, err
 	}
 	hc, closeIdle := newTOSHTTPClient(opts.HTTPClient)
+	// NewDefaultTransportWithClient leaves HighLatencyLogThreshold at 0, which
+	// disables slow-request logging without needing WithHighLatencyLogThreshold.
 	next := vtos.NewDefaultTransportWithClient(hc)
 	svc, err := vtos.NewClientV2(endpoint, vtos.WithRegion(region), vtos.WithCredentials(creds),
-		vtos.WithHighLatencyLogThreshold(0), vtos.WithTransport(&credentialGuardTransport{next, opts.AccessRecording}))
+		vtos.WithTransport(&credentialGuardTransport{next, opts.AccessRecording}))
 	if err != nil {
+		creds.close()
+		if closeIdle != nil {
+			closeIdle()
+		}
 		return nil, invalidConfig("failed to initialize TOS client")
 	}
 	loc := storeapi.NewBucketPrefix(qs.Bucket, qs.Prefix)
@@ -201,6 +248,7 @@ func newTOSHTTPClient(injected *http.Client) (http.Client, func()) {
 			WriteTimeout: cfg.WriteTimeout,
 		}
 		tr = &http.Transport{
+			Proxy:                 http.ProxyFromEnvironment,
 			DialContext:           dialer.DialContext,
 			MaxIdleConns:          cfg.MaxIdleConns,
 			MaxIdleConnsPerHost:   cfg.MaxIdleConnsPerHost,

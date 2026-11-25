@@ -36,7 +36,20 @@ import (
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	vtos "github.com/volcengine/ve-tos-golang-sdk/v2/tos"
 	"github.com/volcengine/ve-tos-golang-sdk/v2/tos/enum"
+	"github.com/volcengine/volcengine-go-sdk/volcengine/volcengineerr"
 	"golang.org/x/sync/errgroup"
+)
+
+const (
+	// tosNoSuchBucketEC is the Volcengine TOS extended error code for a missing
+	// bucket (sometimes returned with HTTP 403 rather than 404).
+	// See https://www.volcengine.com/docs/6349/74874.
+	tosNoSuchBucketEC = "0006-00000001"
+
+	// maxPresignExpiry is the maximum TTL (7 days / 604800 seconds) allowed by
+	// Volcengine TOS presigned URLs.
+	// See https://www.volcengine.com/docs/6349/127700.
+	maxPresignExpiry = 7 * 24 * time.Hour
 )
 
 type client struct {
@@ -46,7 +59,27 @@ type client struct {
 	options *backuppb.S3
 }
 
-// SDK errors can contain a request URL or a server message echoing credentials.
+// sanitizedStatusError formats an HTTP/API failure with only safe metadata
+// (status code, error code, request ID), excluding raw server messages and URLs
+// that may echo credentials. Transient statuses (408, 429, 5xx) are returned as
+// *errdef.HTTPStatusError so Lightning/BR retry classifiers recognize them.
+func sanitizedStatusError(operation string, statusCode int, code, requestID string) error {
+	details := ""
+	if code != "" {
+		details += " code=" + code
+	}
+	if requestID != "" {
+		details += " request-id=" + requestID
+	}
+	if statusCode == http.StatusRequestTimeout || statusCode == http.StatusTooManyRequests || statusCode/100 == 5 {
+		return &errdef.HTTPStatusError{StatusCode: statusCode, Message: operation + details}
+	}
+	return errors.Errorf("%s failed with HTTP %d%s", operation, statusCode, details)
+}
+
+// requestError maps TOS, STS, and transport errors into sanitized errors while
+// preserving context cancellation, retryable HTTPStatusError, and net.Error.
+// SDK errors can contain request URLs or server messages echoing credentials.
 func requestError(ctx context.Context, operation string, err error) error {
 	if err == nil {
 		return nil
@@ -56,17 +89,17 @@ func requestError(ctx context.Context, operation string, err error) error {
 	}
 	var server *vtos.TosServerError
 	if goerrors.As(err, &server) {
-		details := ""
-		if server.Code != "" {
-			details += " code=" + server.Code
-		}
-		if server.RequestID != "" {
-			details += " request-id=" + server.RequestID
-		}
-		if server.StatusCode == http.StatusRequestTimeout || server.StatusCode == http.StatusTooManyRequests || server.StatusCode/100 == 5 {
-			return &errdef.HTTPStatusError{StatusCode: server.StatusCode, Message: operation + details}
-		}
-		return errors.Errorf("%s failed with HTTP %d%s", operation, server.StatusCode, details)
+		return sanitizedStatusError(operation, server.StatusCode, server.Code, server.RequestID)
+	}
+	var stsErr volcengineerr.RequestFailure
+	if goerrors.As(err, &stsErr) && stsErr.StatusCode() > 0 {
+		return sanitizedStatusError(operation, stsErr.StatusCode(), stsErr.Code(), stsErr.RequestID())
+	}
+	// volcengineerr.Error exposes OrigErr() rather than Go's Unwrap(), so unwrap
+	// transport causes explicitly before checking url.Error / net.Error.
+	var veErr volcengineerr.Error
+	if goerrors.As(err, &veErr) && veErr.OrigErr() != nil {
+		err = veErr.OrigErr()
 	}
 	var clientErr *vtos.TosClientError
 	if goerrors.As(err, &clientErr) && clientErr.Cause != nil {
@@ -102,7 +135,7 @@ func (c *client) CheckBucketExistence(ctx context.Context) error {
 }
 
 func missingBucket(e *vtos.TosServerError) bool {
-	return e.EC == "0006-00000001" || e.RequestInfo.EcCode == "0006-00000001" || e.Code == "NoSuchBucket"
+	return e.EC == tosNoSuchBucketEC || e.RequestInfo.EcCode == tosNoSuchBucketEC || e.Code == "NoSuchBucket"
 }
 
 var errNoSuchKey = errors.New("TOS object does not exist")
@@ -206,6 +239,20 @@ func (c *client) DeleteObjects(ctx context.Context, names []string) error {
 		return requestError(ctx, "DeleteMultiObjects", err)
 	}
 	if len(out.Error) > 0 {
+		seen := make(map[string]struct{}, len(out.Error))
+		codes := make([]string, 0, len(out.Error))
+		for _, item := range out.Error {
+			if item.Code == "" {
+				continue
+			}
+			if _, ok := seen[item.Code]; !ok {
+				seen[item.Code] = struct{}{}
+				codes = append(codes, item.Code)
+			}
+		}
+		if len(codes) > 0 {
+			return fmt.Errorf("DeleteMultiObjects returned %d deletion errors (codes=%s)", len(out.Error), strings.Join(codes, ","))
+		}
 		return fmt.Errorf("DeleteMultiObjects returned %d deletion errors", len(out.Error))
 	}
 	return nil
@@ -270,22 +317,25 @@ func (c *client) CopyObject(ctx context.Context, in *s3like.CopyInput) error {
 }
 
 func (c *client) PresignObject(ctx context.Context, name string, expire time.Duration) (string, error) {
-	if expire <= 0 || expire > 7*24*time.Hour {
+	if expire <= 0 || expire > maxPresignExpiry {
 		return "", errors.New("TOS presign expiry must be positive and at most seven days")
 	}
 	if _, err := c.creds.resolveForPresign(ctx, expire); err != nil {
 		return "", err
 	}
 	in := &vtos.PreSignedURLInput{HTTPMethod: http.MethodGet, Bucket: c.Bucket, Key: c.ObjectKey(name),
-		Expires: max(1, int64(expire/time.Second))}
-	if c.options.Endpoint == "" {
-		in.AlternativeEndpoint = publicEndpoint(c.options.Region)
+		Expires: max(1, int64(expire.Seconds()))}
+	if alt := presignEndpoint(c.options.Endpoint, c.options.Region); alt != "" {
+		in.AlternativeEndpoint = alt
 	}
 	out, err := c.svc.PreSignedURL(in)
 	if err != nil {
 		return "", requestError(ctx, "PreSignedURL", err)
 	}
-	// Presigning bypasses the transport guard. Expiry can race the SDK signer.
+	// PreSignedURL signs locally without going through credentialGuardTransport.
+	// In ve-tos-golang-sdk/v2 (tos/sign_v4.go), the signer formats X-Tos-Credential
+	// as "<AccessKeyID>/<date>/<region>/tos/request" without returning an error if
+	// Credential() returned an empty credential upon expiry, yielding a leading "/".
 	u, err := url.Parse(out.SignedUrl)
 	if err != nil || strings.HasPrefix(u.Query().Get("X-Tos-Credential"), "/") {
 		return "", errors.New("invalid TOS presigned URL")
@@ -471,16 +521,26 @@ func (u *multipartUploader) Upload(ctx context.Context, rd io.Reader) error {
 			break
 		}
 	}
-	uploadErr := group.Wait()
-	if readErr != nil && ctx.Err() == nil && (uploadErr == nil || goerrors.Is(uploadErr, context.Canceled)) {
-		uploadErr = readErr
-	}
-	if uploadErr == nil && ctx.Err() != nil {
-		uploadErr = ctx.Err()
-	}
+	waitErr := group.Wait()
+	uploadErr := selectMultipartError(ctx.Err(), waitErr, readErr)
 	if uploadErr != nil {
 		w.abort(ctx)
 		return uploadErr
 	}
 	return w.Close(ctx)
+}
+
+// selectMultipartError resolves the terminal error after group.Wait():
+//  1. A substantive part-upload error wins over cascading read/cancel errors.
+//  2. While the caller context is still active, an input read error wins over
+//     sibling part cancellations triggered by cancelParts().
+//  3. Caller context cancellation wins if uploads otherwise succeeded.
+func selectMultipartError(ctxErr, uploadErr, readErr error) error {
+	if readErr != nil && ctxErr == nil && (uploadErr == nil || goerrors.Is(uploadErr, context.Canceled)) {
+		return readErr
+	}
+	if uploadErr != nil {
+		return uploadErr
+	}
+	return ctxErr
 }

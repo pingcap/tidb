@@ -168,11 +168,12 @@ func TestObjectRequests(t *testing.T) {
 		var in struct{ Objects []vtos.ObjectTobeDeleted }
 		require.NoError(t, json.NewDecoder(req.Body).Decode(&in))
 		require.Equal(t, []vtos.ObjectTobeDeleted{{Key: "backup/a"}, {Key: "backup/b"}}, in.Objects)
-		return response(200, `{"Error":[{"Key":"backup/b","Message":"private-value"}]}`), nil
+		return response(200, `{"Error":[{"Key":"backup/b","Code":"AccessDenied","Message":"private-value"}]}`), nil
 	}
 	require.NoError(t, c.DeleteObjects(ctx, nil))
 	err = c.DeleteObjects(ctx, []string{"a", "b"})
 	require.ErrorContains(t, err, "1 deletion errors")
+	require.ErrorContains(t, err, "codes=AccessDenied")
 	require.NotContains(t, err.Error(), "private-value")
 }
 

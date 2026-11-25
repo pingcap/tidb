@@ -16,6 +16,7 @@ go_library(
         "//pkg/objstore/recording",
         "//pkg/objstore/s3like",
         "//pkg/objstore/storeapi",
+        "//pkg/util",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_kvproto//pkg/brpb",
         "@com_github_volcengine_ve_tos_golang_sdk_v2//tos",
@@ -24,6 +25,7 @@ go_library(
         "@com_github_volcengine_volcengine_go_sdk//volcengine",
         "@com_github_volcengine_volcengine_go_sdk//volcengine/credentials",
         "@com_github_volcengine_volcengine_go_sdk//volcengine/session",
+        "@com_github_volcengine_volcengine_go_sdk//volcengine/volcengineerr",
         "@org_golang_x_sync//errgroup",
     ],
 )
