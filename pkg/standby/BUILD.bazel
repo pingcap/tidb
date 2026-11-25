@@ -18,3 +18,22 @@ go_library(
         "@org_uber_go_zap//:zap",
     ],
 )
+<<<<<<< HEAD
+=======
+
+go_test(
+    name = "standby_test",
+    timeout = "short",
+    srcs = ["standby_test.go"],
+    embed = [":standby"],
+    flaky = True,
+    shard_count = 13,
+    deps = [
+        "//pkg/config",
+        "//pkg/config/deploymode",
+        "//pkg/config/kerneltype",
+        "//pkg/server",
+        "@com_github_stretchr_testify//require",
+    ],
+)
+>>>>>>> 3c244286c36 (standby: make repeated activation cancellation harmless (#73661))
