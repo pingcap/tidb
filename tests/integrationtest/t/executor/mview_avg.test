@@ -149,28 +149,36 @@ drop materialized view mv_avg_zero;
 drop materialized view log on t_mv_avg_zero;
 drop table t_mv_avg_zero;
 
-# Wide DECIMAL AVG must fit the result and its rounding digit at the definition DPI.
-set div_precision_increment = 4;
-create table t_mv_avg_high (id int primary key, a int not null, b decimal(65,30));
-insert into t_mv_avg_high values (1, 1, 1), (2, 1, 2), (3, 1, 2), (4, 2, null), (5, 3, 99999999999999999999999999999999999.123456789012345678901234567890);
-select a, avg(b) from t_mv_avg_high group by a order by a;
+# FAST can maintain a wide value whose native AVG truncates at the definition DPI.
+# Rebuilds must return the truncation error and preserve the last good result.
 set div_precision_increment = 30;
+create table t_mv_avg_high (id int primary key, a int not null, b decimal(65,30));
+insert into t_mv_avg_high values (1, 1, 1), (2, 1, 2), (3, 1, 2), (4, 2, null);
 create materialized view log on t_mv_avg_high (id, a, b) purge next date_add(now(), interval 1 hour);
 create materialized view mv_avg_high (a, av, s, c, n) refresh fast as
-select a, avg(b), sum(b), count(b), count(*) from t_mv_avg_high group by a;
+select /*+ HASH_AGG() */ a, avg(b), sum(b), count(b), count(*) from t_mv_avg_high group by a;
 select column_type from information_schema.columns where table_schema='test' and table_name='mv_avg_high' and column_name='av';
-select * from mv_avg_high order by a;
 set div_precision_increment = 8;
-insert into t_mv_avg_high values (6, 1, 1);
-update t_mv_avg_high set b = 99999999999999999999999999999999999.123456789012345678901234567889 where id = 5;
+insert into t_mv_avg_high values (5, 3, 99999999999999999999999999999999999.123456789012345678901234567890);
 refresh materialized view mv_avg_high fast;
 select * from mv_avg_high order by a;
+
+update t_mv_avg_high set b = 99999999999999999999999999999999999.123456789012345678901234567889 where id = 5;
+--error 1265
 refresh materialized view mv_avg_high complete in place;
 select * from mv_avg_high order by a;
+--error 1265
 refresh materialized view mv_avg_high complete out of place;
 select * from mv_avg_high order by a;
+--error 1265
 refresh materialized view mv_avg_high complete delta apply;
 select * from mv_avg_high order by a;
+
+set div_precision_increment = 30;
+--error 1265
+create materialized view mv_avg_high_failed (a, av, s, c, n) refresh fast as
+select /*+ HASH_AGG() */ a, avg(b), sum(b), count(b), count(*) from t_mv_avg_high group by a;
+select count(*) from information_schema.tables where table_schema='test' and table_name='mv_avg_high_failed';
 drop materialized view mv_avg_high;
 drop materialized view log on t_mv_avg_high;
 drop table t_mv_avg_high;

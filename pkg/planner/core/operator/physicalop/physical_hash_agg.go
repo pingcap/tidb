@@ -255,8 +255,8 @@ func tryToGetMppHashAggs(la *logicalop.LogicalAggregation, prop *property.Physic
 		hashAggs = append(hashAggs, agg)
 	}
 
-	// Finalize MV DECIMAL AVG in TiDB with the same division precision as FAST
-	// refresh. TiFlash can still compute the partial SUM and COUNT.
+	// Use TiDB's native DECIMAL AVG finalization during MV rebuilds.
+	// TiFlash can still compute the partial SUM and COUNT.
 	if la.SCtx().GetSessionVars().InMViewMaintenance {
 		for _, agg := range la.AggFuncs {
 			if agg.Name == ast.AggFuncAvg && agg.RetTp.GetType() == mysql.TypeNewDecimal {

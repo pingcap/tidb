@@ -18,12 +18,10 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/expression/expropt"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/hack"
-	"github.com/pingcap/tidb/pkg/util/mviewutil"
 	"github.com/pingcap/tidb/pkg/util/set"
 )
 
@@ -91,16 +89,7 @@ func (e *baseAvgDecimal) AppendFinalResult2Chunk(ctx AggFuncUpdateContext, pr Pa
 	}
 	decimalCount := types.NewDecFromInt(p.count)
 	finalResult := new(types.MyDecimal)
-	increment := ctx.GetDivPrecisionIncrement()
-	if e.retTp != nil {
-		mvIncrement := mviewutil.AvgDivPrecisionIncrement(&p.sum, increment, e.retTp.GetDecimal())
-		if mvIncrement < increment {
-			if vars, err := (expropt.SessionVarsPropReader{}).GetSessionVars(ctx); err == nil && vars.InMViewMaintenance {
-				increment = mvIncrement
-			}
-		}
-	}
-	err := types.DecimalDiv(&p.sum, decimalCount, finalResult, increment)
+	err := types.DecimalDiv(&p.sum, decimalCount, finalResult, ctx.GetDivPrecisionIncrement())
 	if err != nil {
 		return err
 	}

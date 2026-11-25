@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -171,20 +172,23 @@ func TestImportQueryPlanExecution(t *testing.T) {
 			runImportQuery(t, newWorkerSession(t, store), q, sql)
 		}
 	})
-	t.Run("MV decimal AVG uses the definition DPI", func(t *testing.T) {
+	t.Run("MV decimal AVG returns truncation errors", func(t *testing.T) {
 		const value = "99999999999999999999999999999999999.123456789012345678901234567890"
 		tk.MustExec("create table query_avg_src (g int, v decimal(65,30))")
 		tk.MustExec("insert into query_avg_src values (1, " + value + ")")
 		tk.MustExec("set div_precision_increment=30")
 		t.Cleanup(func() { tk.MustExec("set div_precision_increment=8") })
 
-		const sql = "import into unused_target from select avg(v) from query_avg_src group by g"
+		const sql = "import into unused_target from select /*+ HASH_AGG() */ avg(v) from query_avg_src group by g"
 		require.NoError(t, tk.Session().PrepareTxnCtx(context.Background(), nil))
 		submitVars := tk.Session().GetSessionVars()
 		submitVars.InMViewMaintenance = true
 		defer func() { submitVars.InMViewMaintenance = false }()
 		q := captureImportQuery(t, tk, sql)
-		require.Equal(t, []string{"[" + value + "]"}, runImportQuery(t, newWorkerSession(t, store), q, sql))
+		output := make(chan importer.QueryChunk, 1)
+		err := executor.RunImportQuery(context.Background(), newWorkerSession(t, store), q, sql, importQueryMemQuota, output)
+		require.ErrorIs(t, err, types.ErrTruncated)
+		require.Empty(t, output)
 	})
 	t.Run("statement time", func(t *testing.T) {
 		sql := "import into unused_target from select unix_timestamp(now())"

@@ -129,12 +129,18 @@ func (w *HashAggFinalWorker) consumeIntermData(sctx sessionctx.Context) error {
 	}
 }
 
-func (w *HashAggFinalWorker) generateResultAndSend(sctx sessionctx.Context, result *chunk.Chunk) {
+// generateResultAndSend returns false when the final worker must stop.
+func (w *HashAggFinalWorker) generateResultAndSend(sctx sessionctx.Context, result *chunk.Chunk) bool {
 	var finished bool
 	exprCtx := sctx.GetExprCtx()
+	failOnFinalizationError := sctx.GetSessionVars().InMViewMaintenance
 	for _, results := range w.partialResultMap.M {
 		for j, af := range w.aggFuncs {
 			if err := af.AppendFinalResult2Chunk(exprCtx.GetEvalCtx(), results[j], result); err != nil {
+				if failOnFinalizationError {
+					w.outputCh <- &AfFinalResult{err: err}
+					return false
+				}
 				logutil.BgLogger().Error("HashAggFinalWorker failed to append final result to Chunk", zap.Error(err))
 			}
 		}
@@ -147,10 +153,11 @@ func (w *HashAggFinalWorker) generateResultAndSend(sctx sessionctx.Context, resu
 			w.outputCh <- &AfFinalResult{chk: result, giveBackCh: w.finalResultHolderCh}
 			result, finished = w.receiveFinalResultHolder()
 			if finished {
-				return
+				return false
 			}
 		}
 	}
+	return true
 }
 
 func (w *HashAggFinalWorker) sendFinalResult(sctx sessionctx.Context) {
@@ -166,7 +173,9 @@ func (w *HashAggFinalWorker) sendFinalResult(sctx sessionctx.Context) {
 	execStart := time.Now()
 	updateExecTime(w.stats, execStart)
 	if w.spillHelper.isSpilledChunksIOEmpty() {
-		w.generateResultAndSend(sctx, result)
+		if !w.generateResultAndSend(sctx, result) {
+			return
+		}
 	} else {
 		for {
 			if w.checkFinishChClosed() {
@@ -180,7 +189,9 @@ func (w *HashAggFinalWorker) sendFinalResult(sctx sessionctx.Context) {
 			if eof {
 				break
 			}
-			w.generateResultAndSend(sctx, result)
+			if !w.generateResultAndSend(sctx, result) {
+				return
+			}
 		}
 	}
 

@@ -19,7 +19,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/mviewutil"
 )
 
 func (e *Exec) buildAvgMerger(
@@ -200,7 +199,8 @@ func (m *avgMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chunk.Colu
 			return errors.Errorf("AVG SUM dependency has unsupported eval type %s", sumEvalType)
 		}
 		var avg, count types.MyDecimal
-		increment := mviewutil.AvgDivPrecisionIncrement(&sum, m.divPrecisionIncrement, frac)
+		// Keep an extra digit for final rounding within the definition's increment.
+		increment := min(m.divPrecisionIncrement, max(0, frac+1-int(sum.GetDigitsFrac())))
 		if err := types.DecimalDiv(&sum, count.FromInt(countExpr), &avg, increment); err != nil {
 			return err
 		}
