@@ -310,6 +310,89 @@ func TestIndexJoinSkylinePruningWithoutStableNDV(t *testing.T) {
 	require.Zero(t, result)
 }
 
+func TestRangeCountComparison(t *testing.T) {
+	for _, tc := range []struct {
+		name                 string
+		threshold            int64
+		lhsRanges, rhsRanges int
+		lhsCount, rhsCount   int
+		want                 int
+	}{
+		{"disabled", 0, 1001, 1, 3, 2, 1},
+		{"below threshold", 1000, 999, 1, 3, 2, 1},
+		{"at threshold", 1000, 1000, 1, 3, 2, 1},
+		{"above threshold", 1000, 1001, 1, 3, 2, 0},
+		{"both above threshold", 1000, 1001, 1002, 3, 2, 0},
+		{"only weaker candidate above threshold", 1000, 1, 1001, 3, 2, 1},
+		{"equal predicate counts", 1000, 1001, 1, 2, 2, 0},
+		{"single range", 1, 1, 1, 3, 2, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			lhs := &candidatePath{path: &util.AccessPath{Ranges: make(ranger.Ranges, tc.lhsRanges)}, eqOrInCount: tc.lhsCount}
+			rhs := &candidatePath{path: &util.AccessPath{Ranges: make(ranger.Ranges, tc.rhsRanges)}, eqOrInCount: tc.rhsCount}
+			require.Equal(t, tc.want, compareEqOrIn(lhs, rhs, tc.threshold))
+			require.Equal(t, -tc.want, compareEqOrIn(rhs, lhs, tc.threshold))
+			// IndexMerge's predicate counts remain incomparable, even with the threshold disabled.
+			lhs.path.PartialIndexPaths = []*util.AccessPath{{}}
+			require.Zero(t, compareEqOrIn(lhs, rhs, tc.threshold))
+			require.Zero(t, compareEqOrIn(rhs, lhs, tc.threshold))
+		})
+	}
+}
+
+func TestRangeCountSkyline(t *testing.T) {
+	ctx := mock.NewContext()
+	prop := property.NewPhysicalProperty(property.RootTaskType, nil, false, 0, false)
+	newCandidate := func(id int64, eqCount, rangeCount int) *candidatePath {
+		return &candidatePath{
+			path: &util.AccessPath{
+				Index:            &model.IndexInfo{ID: id},
+				Ranges:           make(ranger.Ranges, rangeCount),
+				IsSingleScan:     true,
+				CountAfterAccess: 10,
+			},
+			accessCondsColMap: map[int64]int{1: -1},
+			eqOrInCount:       eqCount,
+		}
+	}
+	for _, pseudo := range []bool{false, true} {
+		stats := &statistics.Table{
+			HistColl:              statistics.HistColl{Pseudo: pseudo},
+			ColAndIdxExistenceMap: statistics.NewColAndIndexExistenceMapWithoutSize(),
+		}
+		if !pseudo {
+			stats.ColAndIdxExistenceMap.InsertIndex(1, true)
+			stats.ColAndIdxExistenceMap.InsertIndex(2, true)
+		}
+		lhs, rhs := newCandidate(1, 3, 1001), newCandidate(2, 2, 1)
+		for _, tc := range []struct {
+			threshold int64
+			want      int
+		}{{0, 1}, {1001, 1}, {1000, 0}} {
+			ctx.GetSessionVars().RangeMaxCount = tc.threshold
+			result, _ := compareCandidates(ctx.GetPlanCtx(), stats, prop, lhs, rhs)
+			require.Equal(t, tc.want, result, "pseudo=%v threshold=%d", pseudo, tc.threshold)
+			result, _ = compareCandidates(ctx.GetPlanCtx(), stats, prop, rhs, lhs)
+			require.Equal(t, -tc.want, result, "reversed: pseudo=%v threshold=%d", pseudo, tc.threshold)
+		}
+	}
+
+	// A missing-statistics index must not retain its extra equality/IN preference above the threshold.
+	stats := &statistics.Table{ColAndIdxExistenceMap: statistics.NewColAndIndexExistenceMapWithoutSize()}
+	stats.ColAndIdxExistenceMap.InsertIndex(2, true)
+	lhs, rhs := newCandidate(1, 3, 1001), newCandidate(2, 2, 1)
+	for _, tc := range []struct {
+		threshold int64
+		want      int
+	}{{0, 1}, {1001, 1}, {1000, 0}} {
+		ctx.GetSessionVars().RangeMaxCount = tc.threshold
+		result, _ := compareCandidates(ctx.GetPlanCtx(), stats, prop, lhs, rhs)
+		require.Equal(t, tc.want, result)
+		result, _ = compareCandidates(ctx.GetPlanCtx(), stats, prop, rhs, lhs)
+		require.Equal(t, -tc.want, result)
+	}
+}
+
 func TestMissingStatsIndexVsFullScan(t *testing.T) {
 	ctx := MockContext()
 	defer domain.GetDomain(ctx).StatsHandle().Close()

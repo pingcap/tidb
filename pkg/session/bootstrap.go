@@ -1350,6 +1350,9 @@ const (
 	// version234 creates the column masking policy system table.
 	version234 = 234
 
+	// version235 initializes tidb_opt_range_max_count on upgrade.
+	version235 = 235
+
 	// ...
 	// [version231, version238] is the version range reserved for patches of 8.5.x
 	// ...
@@ -1359,7 +1362,7 @@ const (
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version234
+var currentBootstrapVersion int64 = version235
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1549,6 +1552,7 @@ var (
 		upgradeToVer232,
 		upgradeToVer233,
 		upgradeToVer234,
+		upgradeToVer235,
 	}
 )
 
@@ -3926,4 +3930,11 @@ func upgradeToVer234(s sessiontypes.Session, ver int64) {
 		return
 	}
 	doReentrantDDL(s, CreateMaskingPolicyTable)
+}
+
+func upgradeToVer235(s sessiontypes.Session, ver int64) {
+	if ver >= version235 {
+		return
+	}
+	initGlobalVariableIfNotExists(s, variable.TiDBOptRangeMaxCount, variable.DefTiDBOptRangeMaxCount)
 }
