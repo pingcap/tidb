@@ -824,7 +824,6 @@ func (e *Exec) prepareMergers() error {
 		return errors.Errorf("the first MViewDeltaMergeAgg mapping must output exactly 1 column, got %d", len(e.AggMappings[0].ColID))
 	}
 	minMaxOutputCols := make(map[int]struct{})
-	definitionDivPrecisionIncrement := -1
 	for i := range e.AggMappings {
 		mapping := e.AggMappings[i]
 		if mapping.AggFunc == nil {
@@ -870,14 +869,7 @@ func (e *Exec) prepareMergers() error {
 		case ast.AggFuncSum:
 			merger, err = e.buildSumMerger(mapping, colID2ComputedIdx, childTypes)
 		case ast.AggFuncAvg:
-			if definitionDivPrecisionIncrement < 0 {
-				if e.TargetInfo == nil || e.TargetInfo.MaterializedView == nil {
-					err = errors.New("AVG merge requires materialized view metadata")
-					break
-				}
-				definitionDivPrecisionIncrement = e.TargetInfo.MaterializedView.DefinitionDivPrecisionIncrement
-			}
-			merger, err = e.buildAvgMerger(mapping, colID2ComputedIdx, childTypes, definitionDivPrecisionIncrement)
+			merger, err = e.buildAvgMerger(mapping, colID2ComputedIdx, childTypes)
 		case ast.AggFuncMin, ast.AggFuncMax:
 			if e.MinMaxRecompute == nil {
 				err = errors.Errorf("%s merge requires MinMaxRecompute metadata", aggName)

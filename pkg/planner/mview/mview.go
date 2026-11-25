@@ -1548,10 +1548,8 @@ func buildMLogDeltaSelect(
 
 	for _, ac := range aggCols {
 		switch ac.info.Kind {
-		case AggCountStar:
-			continue
-		case AggAvg:
-			// AVG is derived from the explicit SUM/COUNT state columns.
+		case AggCountStar, AggAvg:
+			// The row count was added above. AVG is derived from SUM/COUNT state.
 			continue
 		case AggCount:
 			if ac.argExpr == nil {
@@ -1753,10 +1751,8 @@ func buildMergeSourceSelect(
 	})
 	for _, ac := range aggCols {
 		switch ac.info.Kind {
-		case AggCountStar:
-			continue
-		case AggAvg:
-			// AVG has no delta payload; it is finalized by the merge executor.
+		case AggCountStar, AggAvg:
+			// The row-count delta was added above. AVG has no delta payload.
 			continue
 		case AggMax, AggMin:
 			names := []string{ac.deltaName, ac.addedCountDeltaName, ac.removedValueDelta, ac.removedCountDelta}

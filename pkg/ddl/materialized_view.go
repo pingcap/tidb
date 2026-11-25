@@ -1899,14 +1899,6 @@ func validateCreateMaterializedViewQuery(
 				fmt.Sprintf("unsupported aggregate function: CREATE MATERIALIZED VIEW AVG on column %s requires matching SUM(%s) in SELECT list", colName, colName),
 			)
 		}
-		baseCol := baseColMap[colName]
-		if !mysql.HasNotNullFlag(baseCol.GetFlag()) {
-			if _, ok := countExprCols[colName]; !ok {
-				return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
-					fmt.Sprintf("CREATE MATERIALIZED VIEW AVG on column %s requires matching COUNT(%s) in SELECT list", colName, colName),
-				)
-			}
-		}
 	}
 
 	groupByInfos := make([]mviewGroupByInfo, 0, len(sel.GroupBy.Items))

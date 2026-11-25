@@ -61,9 +61,8 @@ func resolveDepRef(depColID int, colID2ComputedIdx map[int]int, deltaAggColCount
 func getDepColumn(input *chunk.Chunk, computedByOrder []*chunk.Column, ref depRef) (*chunk.Column, error) {
 	switch ref.source {
 	case depFromInput:
-		numCols := input.NumCols()
-		if ref.idx < 0 || ref.idx >= numCols {
-			return nil, errors.Errorf("input dependency col idx %d out of range [0,%d)", ref.idx, numCols)
+		if ref.idx < 0 || ref.idx >= input.NumCols() {
+			return nil, errors.Errorf("input dependency col idx %d out of range [0,%d)", ref.idx, input.NumCols())
 		}
 		return input.Column(ref.idx), nil
 	case depFromComputed:
@@ -110,12 +109,10 @@ func validateSignedIntType(tp *types.FieldType) error {
 	if tp == nil {
 		return errors.New("type is unavailable")
 	}
-	evalType := tp.EvalType()
-	if evalType != types.ETInt {
-		return errors.Errorf("eval type must be int, got %s", evalType)
+	if tp.EvalType() != types.ETInt {
+		return errors.Errorf("eval type must be int, got %s", tp.EvalType())
 	}
-	flags := tp.GetFlag()
-	if mysql.HasUnsignedFlag(flags) {
+	if mysql.HasUnsignedFlag(tp.GetFlag()) {
 		return errors.New("type must be signed integer")
 	}
 	return nil
