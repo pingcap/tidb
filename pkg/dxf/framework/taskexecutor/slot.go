@@ -94,7 +94,8 @@ func (sm *slotManager) canAlloc(task *proto.TaskBase) (canAlloc bool, tasksNeedF
 // canAlloc is used to check whether the instance can run the task, it returns 2
 // values:
 // - canAlloc: whether the instance can run the task.
-// - tasksNeedFree: the tasks that need to be preempted before running this task.
+// - tasksNeedFree: the tasks of low ranking that must free their slots before
+// running this task.
 func (sm *slotManager) canAlloc0(task *proto.TaskBase) (canAlloc bool, tasksNeedFree []*proto.TaskBase) {
 	if int(sm.available.Load()) >= task.RequiredSlots {
 		return true, nil
