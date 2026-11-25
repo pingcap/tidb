@@ -83,7 +83,7 @@ func TestStatsProviderBindingAndFallback(t *testing.T) {
 		},
 	}
 
-	stats.SetStatsProvider(ctx.GetSessionVars(), provider)
+	ctx.GetSessionVars().StatsProvider = provider
 	require.Equal(t, provider, stats.GetStatsProvider(ctx))
 
 	// Non-dynamic partition prune queries the requested physical partition ID.
@@ -104,8 +104,7 @@ func TestStatsProviderBindingAndFallback(t *testing.T) {
 	require.True(t, gotMissing.Pseudo)
 
 	// Clearing the provider restores the default fallback behavior.
-	stats.SetStatsProvider(ctx.GetSessionVars(), nil)
+	ctx.GetSessionVars().StatsProvider = nil
 	require.Nil(t, stats.GetStatsProvider(ctx))
-	require.Nil(t, ctx.GetSessionVars().StatsProvider)
 	require.True(t, stats.GetStatsTable(ctx, tblInfo, tblInfo.ID).Pseudo)
 }

@@ -138,8 +138,10 @@ func TestOnDemandStatsProviderLoadsAndCachesStats(t *testing.T) {
 	ctxWithStats.GetSessionVars().PartitionPruneMode.Store(string(variable.Dynamic))
 	ctxWithStats.GetSessionVars().StmtCtx.UseDynamicPruneMode = true
 	ctxWithStats.SetInfoSchema(is)
-	plannerstats.SetStatsProvider(ctxWithStats.GetSessionVars(), provider)
-	defer plannerstats.SetStatsProvider(ctxWithStats.GetSessionVars(), nil)
+	ctxWithStats.GetSessionVars().StatsProvider = provider
+	defer func() {
+		ctxWithStats.GetSessionVars().StatsProvider = nil
+	}()
 
 	_, _, err = planner.Optimize(context.Background(), ctxWithStats, resolve.NewNodeW(stmt), is)
 	require.NoError(t, err)

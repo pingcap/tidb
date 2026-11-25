@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/util/intest"
 )
@@ -40,29 +39,14 @@ type PhysicalTableStatsProvider interface {
 	GetPhysicalTableStats(physicalTableID int64, tblInfo *model.TableInfo) *statistics.Table
 }
 
-// SetStatsProvider binds an optional stats provider to session variables.
-// Pass nil to clear a previously bound provider.
-func SetStatsProvider(vars *variable.SessionVars, provider PhysicalTableStatsProvider) {
-	if vars == nil {
-		return
-	}
-	if provider == nil {
-		vars.StatsProvider = nil
-		return
-	}
-	vars.StatsProvider = provider
-}
-
 // GetStatsProvider returns Domain's StatsHandle when available, or falls back to
-// a session-scoped provider bound via SetStatsProvider.
+// SessionVars.StatsProvider.
 func GetStatsProvider(ctx base.PlanContext) PhysicalTableStatsProvider {
 	if dom := domain.GetDomain(ctx); dom != nil && dom.StatsHandle() != nil {
 		return dom.StatsHandle()
 	}
-	if vars := ctx.GetSessionVars(); vars != nil {
-		if p, ok := vars.StatsProvider.(PhysicalTableStatsProvider); ok {
-			return p
-		}
+	if p, ok := ctx.GetSessionVars().StatsProvider.(PhysicalTableStatsProvider); ok {
+		return p
 	}
 	return nil
 }
