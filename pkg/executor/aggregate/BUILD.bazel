@@ -46,7 +46,11 @@ go_test(
     timeout = "short",
     srcs = ["agg_spill_test.go"],
     flaky = True,
+<<<<<<< HEAD
     shard_count = 3,
+=======
+    shard_count = 6,
+>>>>>>> 65cf2f0a62d (executor: propagate parallel HashAgg finalization errors (#73675))
     deps = [
         ":aggregate",
         "//pkg/config",
