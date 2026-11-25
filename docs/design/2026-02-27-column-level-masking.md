@@ -150,7 +150,7 @@ BR behavior in 8.5:
 
 - BR backs up `mysql.tidb_masking_policy` like the other system tables, whenever the table filter selects it (a full backup does by default).
 - A snapshot restore does not restore masking policies. It skips `mysql.tidb_masking_policy`, also with `--with-sys-table`: it does not create or change any policy on the target cluster, and policies that already exist there are kept as they are.
-- Masking policy DDL in an incremental backup is not handled specially: an incremental restore replays it like other DDL, so it can create, change or drop policies on the target cluster. Incremental backup is deprecated.
+- An incremental restore does not apply masking policy DDL. An incremental backup can record `CREATE`, `ALTER` and `DROP MASKING POLICY` jobs. These jobs identify the target table but do not carry the database or table metadata that incremental restore uses to select DDL for replay, so it never replays them, even when it restores that table. Operators must apply policy changes made after the base backup on the target cluster themselves. Incremental backup is deprecated.
 - A backup with backup schema version 3, which development builds of this feature wrote for backups with masking policies, is rejected before any data is imported: BR supports at most version 2.
 - A snapshot restore brings back table data only. A restored table has no masking policy unless one is created on the target cluster.
 - Point-in-time recovery does not rebuild the policies of the source cluster on the target cluster either. This says nothing about the content of a log backup: log backup records the changes of the whole data key range, so its raw files may contain masking policy data and must be protected like the protected data itself.
