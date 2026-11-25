@@ -18,7 +18,6 @@ import (
 	"cmp"
 	"context"
 	"crypto/tls"
-	"fmt"
 	"math"
 	"slices"
 	"strconv"
@@ -28,7 +27,6 @@ import (
 	"time"
 
 	"github.com/docker/go-units"
-	"github.com/fatih/color"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -46,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/restore"
+	"github.com/pingcap/tidb/br/pkg/restore/indexrepair"
 	"github.com/pingcap/tidb/br/pkg/restore/ingestrec"
 	importclient "github.com/pingcap/tidb/br/pkg/restore/internal/import_client"
 	"github.com/pingcap/tidb/br/pkg/restore/internal/rawkv"
@@ -86,10 +85,6 @@ const maxSplitKeysOnce = 10240
 
 // rawKVBatchCount specifies the count of entries that the rawkv client puts into TiKV.
 const rawKVBatchCount = 64
-
-// session count for repairing ingest indexes. Currently only one TiDB node executes adding index jobs
-// at the same time and the add-index job concurrency is about min(10, `TiDB CPUs / 4`).
-const defaultRepairIndexSessionCount uint = 10
 
 // LogRestoreManager is a comprehensive wrapper that encapsulates all logic related to log restoration,
 // including concurrency management, checkpoint handling, and file importing for efficient log processing.
@@ -1588,6 +1583,7 @@ func (rc *LogClient) ResetTiflashReplicas(ctx context.Context, sqls []string, g 
 	return eg.Wait()
 }
 
+<<<<<<< HEAD
 func colsToStr(cols []ast.CIStr) string {
 	var str strings.Builder
 	for i, col := range cols {
@@ -1742,16 +1738,19 @@ func (rc *LogClient) generateRepairIngestIndexSQLs(
 }
 
 // RepairIngestIndex drops the indexes from IngestRecorder and re-add them.
+=======
+// RepairIngestIndex repairs indexes recorded during log restore using the shared DDL repair.
+>>>>>>> 3305e7995d3 (br: rebuild global indexes after restoring partition IDs (#72504))
 func (rc *LogClient) RepairIngestIndex(
 	ctx context.Context,
 	ingestRecorder *ingestrec.IngestRecorder,
-	logCheckpointMetaManager checkpoint.LogMetaManagerT,
+	logCheckpointMetaManager checkpoint.IndexRepairMetaManager,
 	g glue.Glue,
 ) error {
-	sqls, fkSqls, fromCheckpoint, err := rc.generateRepairIngestIndexSQLs(ctx, ingestRecorder, logCheckpointMetaManager)
-	if err != nil {
-		return errors.Trace(err)
+	if !rc.useCheckpoint {
+		logCheckpointMetaManager = nil
 	}
+<<<<<<< HEAD
 
 	info := rc.dom.InfoSchema()
 	console := glue.GetConsole(g)
@@ -1910,6 +1909,9 @@ func (rc *LogClient) RepairIngestIndex(
 	})
 
 	return nil
+=======
+	return indexrepair.RepairIndexes(ctx, rc.dom, ingestRecorder, logCheckpointMetaManager, g, addIndexSQLStorage)
+>>>>>>> 3305e7995d3 (br: rebuild global indexes after restoring partition IDs (#72504))
 }
 
 func (rc *LogClient) RecordDeleteRange(sql *stream.PreDelRangeQuery) {
