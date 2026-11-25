@@ -40,7 +40,9 @@ fn thousands_separators_and_negative_digits() {
 
     // Negative digits zero out integer positions.
     assert_eq!(try_sql(&mut session, "select round(1234, -2)"), "i:1200");
-    assert_eq!(try_sql(&mut session, "select round(1250, -2)"), "i:1200");
+    // Go master `roundIntWithFrac` (06441e2a681): integers round half away
+    // from zero, so 1250 is 1300.
+    assert_eq!(try_sql(&mut session, "select round(1250, -2)"), "i:1300");
 
     // The float path rounds half away from zero.
     assert_eq!(try_sql(&mut session, "select round(2.5), round(-2.5)"), "d:3|d:-3");

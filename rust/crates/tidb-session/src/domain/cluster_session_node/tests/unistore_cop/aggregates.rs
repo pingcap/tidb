@@ -407,8 +407,24 @@ fn derived_table_order_by_is_removed_unless_top_level_limit_or_disabled() {
     let plan = ops(&mut tk, with_limit);
     assert!(plan.iter().any(|op| op.contains("Sort") || op.contains("TopN")), "{plan:?}");
     rows(&mut tk, "SET tidb_remove_orderby_in_subquery = OFF");
+    // Kept, the derived table's `ORDER BY s.a + 0` follows `s.a`
+    // (`GetSingleColumn`), which the primary-key scan provides in order: no
+    // Sort, as on Go master (`TableFullScan ... keep order:true`).
     let plan = ops(&mut tk, derived);
-    assert!(plan.iter().any(|op| op.contains("Sort")), "{plan:?}");
+    assert_eq!(
+        plan,
+        [
+            "HashAgg",
+            "└─HashJoin",
+            "  ├─Projection(Build)",
+            "  │ └─Projection",
+            "  │   └─TableReader",
+            "  │     └─TableFullScan",
+            "  └─TableReader(Probe)",
+            "    └─TableFullScan",
+        ],
+        "{plan:?}"
+    );
     rows(&mut tk, "SET tidb_remove_orderby_in_subquery = DEFAULT");
     let plan = ops(&mut tk, "SELECT s.a, SUM(s.b) sm FROM s GROUP BY s.a ORDER BY SUM(s.b)");
     assert!(plan.iter().any(|op| op.contains("Sort")), "{plan:?}");

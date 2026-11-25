@@ -1186,9 +1186,8 @@ mod tests {
         partition.adding_definitions = vec![def(3, "p2"), def(4, "p3"), def(5, "p4")].into();
         let adding = partition.ids_in_ddl_to_ignore();
         assert_eq!(adding.snapshot(), vec![3, 4, 5]);
-        // The source seeds this result with DroppingDefinitions' length (1),
-        // then grows the noscan []int64 header while appending three IDs.
-        assert_eq!(adding.capacity(), 4);
+        // Go master sizes this result by AddingDefinitions (three IDs).
+        assert_eq!(adding.capacity(), 3);
         partition.ddl_action = ActionType::ACTION_NONE;
         let none = partition.ids_in_ddl_to_ignore();
         assert!(!none.is_allocated());

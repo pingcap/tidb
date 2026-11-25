@@ -1046,6 +1046,7 @@ pub fn update_target_columns(
     let plan_ids = PlanIdAllocator::new();
     let column_ids = ColumnIdAllocator::new();
     let targets = PlanBuilder::new(&source, ctx, &plan_ids, &column_ids, ctx.session_zone())
+        .for_name_resolution()
         .resolve_update_targets(update)
         .map_err(crate::optimize::planner_error_to_driver)?;
     Ok(targets
@@ -1105,6 +1106,7 @@ pub fn single_update_assignments(
     let plan_ids = PlanIdAllocator::new();
     let column_ids = ColumnIdAllocator::new();
     PlanBuilder::new(&source, ctx, &plan_ids, &column_ids, ctx.session_zone())
+        .for_name_resolution()
         .resolve_single_update_assignments(update, ctx.allow_write_row_id())
 }
 
@@ -1211,7 +1213,8 @@ pub fn physical_dml_source_plan_with_allocators(
                     &target_plan_ids,
                     &target_column_ids,
                     session_zone.clone(),
-                );
+                )
+                .for_name_resolution();
                 match write {
                     MultiDmlRef::Update(update) => {
                         visit_info.extend(targets.update_write_visits(update)?);
@@ -1384,6 +1387,7 @@ pub fn delete_targets(
     let plan_ids = PlanIdAllocator::new();
     let column_ids = ColumnIdAllocator::new();
     PlanBuilder::new(&source, ctx, &plan_ids, &column_ids, ctx.session_zone())
+        .for_name_resolution()
         .resolve_delete_targets(delete)
 }
 

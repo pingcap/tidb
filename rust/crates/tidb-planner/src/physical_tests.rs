@@ -1792,8 +1792,9 @@ fn partial_order_projection_maps_columns_and_rejects_computed_keys() {
 
 #[test]
 fn a_physical_sort_retains_scalar_by_items_like_go() {
-    // Go `getPhysicalSort` copies `LogicalSort.ByItems` verbatim. Only the
-    // separate NominalSort candidate requires column-only items.
+    // Go `getPhysicalSort` copies `LogicalSort.ByItems` verbatim, and
+    // `getNominalSort` keeps them too while asking the child for the column
+    // a `+`/`-` chain follows.
     use tidb_planner_core_operator_logicalop::{BaseLogicalPlan, LogicalSort};
     use tidb_expression_aggregation::ByItems;
 
@@ -1817,12 +1818,23 @@ fn a_physical_sort_retains_scalar_by_items_like_go() {
 
     let plans =
         exhaust_physical_plans_4_logical_sort(&sort, &PhysicalProperty::default(), &allocator, 1.0);
-    assert_eq!(plans.len(), 1, "a scalar item has no NominalSort candidate");
+    // Go `GetPropByOrderByItemsContainScalarFunc`: `col + 1` follows `col`'s
+    // order, so beside the PhysicalSort there is a non-column NominalSort
+    // asking the child for `col` descending; both keep the full ByItems.
+    assert_eq!(plans.len(), 2, "a PhysicalSort and a NominalSort");
     let PhysicalPlan::Sort(physical) = &plans[0] else {
         panic!("a PhysicalSort, got {:?}", plans[0]);
     };
     assert!(physical.by_items[0].expr.equal(&expression));
     assert!(physical.by_items[0].desc);
+    let PhysicalPlan::NominalSort(nominal) = &plans[1] else {
+        panic!("a NominalSort, got {:?}", plans[1]);
+    };
+    assert!(!nominal.only_column);
+    assert!(nominal.by_items[0].expr.equal(&expression));
+    let child = nominal.base.child_req_prop(0).expect("a required child property");
+    assert_eq!(child.sort_items.len(), 1);
+    assert!(child.sort_items[0].desc);
 }
 
 #[test]

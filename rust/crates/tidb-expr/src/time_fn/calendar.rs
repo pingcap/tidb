@@ -69,10 +69,14 @@ pub(crate) fn date_part(
     Ok(component_date(vals)?.map_or(Datum::Null, |ymd| Datum::Int(f(ymd))))
 }
 
-/// The value Go `types.ParseTime` names when `text` fails to parse:
-/// `checkMonthDay` reports an invalid month or day by the parsed fields,
-/// `"%d-%d-%d"` (unpadded, a two-digit year adjusted as `adjustYear` does,
-/// any clock part dropped); every other failure names the input itself.
+/// The value Go `types.ParseTime` names when `text` fails to parse.
+/// `checkMonthDay` names the parsed fields, `"%d-%d-%d"` (unpadded, a
+/// two-digit year adjusted as `adjustYear` does, the clock dropped), for a
+/// month past 12 or a day within 1..=31 past its month's length; every other
+/// failure -- a malformed clock, a day of 32, a year out of range -- fails
+/// earlier and names the input itself (captured from Go TiDB:
+/// `'2020-2-30'`, `'2020-13-1'`, but `'2020-01-32'`, `'99999999999-01-01'`,
+/// `'2020-01-01 xx:10:10'`).
 pub(crate) fn go_parse_time_error_value(text: &str, cols: &dyn Columns) -> String {
     let parsed = tidb_datatype::parse_time(
         text,
@@ -83,24 +87,35 @@ pub(crate) fn go_parse_time_error_value(text: &str, cols: &dyn Columns) -> Strin
         false,
         &cols.time_zone(),
     );
-    if !matches!(
-        parsed,
-        Err(tidb_datatype::TimeError::InvalidDate | tidb_datatype::TimeError::OutOfRange("month" | "day"))
-    ) {
+    if parsed.is_ok() {
         return text.to_owned();
     }
-    let date = text.trim().split(|c: char| c.is_whitespace() || c == 'T').next().unwrap_or("");
-    let fields: Vec<&str> = date.split(|c: char| !c.is_ascii_digit()).filter(|f| !f.is_empty()).collect();
+    let mut parts = text.trim().splitn(2, |c: char| c.is_whitespace() || c == 'T');
+    let date = parts.next().unwrap_or("");
+    if parts.next().is_some_and(|clock| {
+        !clock.trim().bytes().all(|b| b.is_ascii_digit() || matches!(b, b':' | b'.'))
+    }) {
+        return text.to_owned();
+    }
+    let fields: Vec<&str> = date.split('-').collect();
     let [year, month, day] = fields.as_slice() else {
         return text.to_owned();
     };
-    let (Ok(mut y), Ok(m), Ok(d)) = (year.parse::<i64>(), month.parse::<i64>(), day.parse::<i64>()) else {
+    if [year, month, day].iter().any(|field| field.is_empty() || !field.bytes().all(|b| b.is_ascii_digit())) {
+        return text.to_owned();
+    }
+    let (Ok(mut y), Ok(m), Ok(d)) = (year.parse::<i64>(), month.parse::<u32>(), day.parse::<u32>()) else {
         return text.to_owned();
     };
     if year.len() <= 2 {
         y += if y < 70 { 2000 } else { 1900 };
     }
-    format!("{y}-{m}-{d}")
+    let past_month_length = (1..=12).contains(&m) && (1..=31).contains(&d) && d > days_in_month(y, m);
+    if m > 12 || past_month_length {
+        format!("{y}-{m}-{d}")
+    } else {
+        text.to_owned()
+    }
 }
 
 /// Parses a date or datetime string's calendar date into `(year, month,

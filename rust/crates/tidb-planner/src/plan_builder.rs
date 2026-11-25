@@ -713,6 +713,11 @@ pub struct PlanBuilder<'a, S: TableSource, C: Columns> {
     /// documented planner-only boundary (the `EvaluateSeparately` outcome is
     /// reported as an error instead of a wrong plan).
     pub subquery_evaluator: Option<SubqueryEvaluator<'a>>,
+    /// A builder that only resolves the names a DML statement writes
+    /// (`resolve_update_targets` and its siblings, a pass Go folds into its
+    /// one `buildUpdate`/`buildDelete`): an uncorrelated subquery stands in as
+    /// a typed NULL (EXISTS as 0) instead of running a second time.
+    pub resolve_names_only: bool,
     /// Go `PlanContext`'s session-side reach for the statement builders:
     /// the privilege manager, the login user and the session manager.
     /// `None` builds as Go does without a privilege manager.
@@ -1745,6 +1750,7 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
             in_straight_join: false,
             handle_helper: HandleColHelper::new(),
             subquery_evaluator: None,
+            resolve_names_only: false,
             session_ctx: None,
             mpp_warning_sink: None,
             tiflash_engine_removed_due_to_strict_sql_mode: false,
@@ -1857,6 +1863,13 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
     #[must_use]
     pub const fn with_subquery_evaluator(mut self, evaluator: SubqueryEvaluator<'a>) -> Self {
         self.subquery_evaluator = Some(evaluator);
+        self
+    }
+
+    /// See [`Self::resolve_names_only`].
+    #[must_use]
+    pub const fn for_name_resolution(mut self) -> Self {
+        self.resolve_names_only = true;
         self
     }
 
@@ -2447,6 +2460,22 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
         negated: bool,
     ) -> Result<Expression, PlanError> {
         let Some(evaluator) = self.subquery_evaluator else {
+            if self.resolve_names_only {
+                return Ok(match (kind, inner.schema()) {
+                    (SubqueryKind::Scalar, Some(schema)) if schema.len() == 1 => {
+                        Expression::Constant(Constant::new(
+                            tidb_datatype::Datum::Null,
+                            schema.columns[0].ret_type.clone().unwrap_or_else(|| {
+                                tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::Null)
+                            }),
+                        ))
+                    }
+                    _ => Expression::Constant(Constant::new(
+                        tidb_datatype::Datum::Int(0),
+                        tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+                    )),
+                });
+            }
             return Err(PlanError::internal(
                 "uncorrelated subquery evaluation requires the executor hook",
             ));
