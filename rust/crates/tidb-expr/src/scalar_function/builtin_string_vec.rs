@@ -280,14 +280,23 @@ fn case_convert<const UPPER: bool>(
     let rows = input.num_rows();
     vec_eval::with_argument_column(arg, EvalType::String, ctx, input, |column, selection| {
         let cells = column.raw_cells();
+        result.reserve_string(rows);
+        let bytes_at = cells.variable_cells();
         if selection.is_none() && column.null_count() == 0 && cells.is_ascii() {
-            column.copy_construct_to(result);
+            if cells.data_len() <= result.get_data_cap() {
+                column.copy_construct_to(result);
+            } else {
+                let append: Result<(), std::convert::Infallible> =
+                    result.try_append_byte_rows(rows, |row, output| {
+                        output.append(bytes_at(row));
+                        Ok(true)
+                    });
+                append.unwrap();
+            }
             result.map_ascii_case::<UPPER>();
             return;
         }
 
-        let bytes_at = cells.variable_cells();
-        result.reserve_string(rows);
         let append: Result<(), std::convert::Infallible> = result.try_append_byte_rows(rows, |row, out| {
             let row = selection.map_or(row, |selection| selection[row]);
             if cells.is_null(row) {

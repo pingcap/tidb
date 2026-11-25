@@ -2823,6 +2823,7 @@ impl ByteRow<'_> {
 
     #[inline]
     pub fn append(&mut self, bytes: &[u8]) {
+        self.reserve(bytes.len());
         match bytes {
             [byte] => self.0.push(*byte),
             [_, _] => self.0.extend_from_slice(bytes.first_chunk::<2>().unwrap()),

@@ -15,33 +15,34 @@ pub(super) fn convert_tz(
     input: &Chunk,
     result: &mut Column,
 ) -> Result<(), EvalError> {
-    let time = vec_eval::read_argument(&function.args[0], EvalType::Datetime, ctx, input)?;
+    vec_eval::eval_into(&function.args[0], EvalType::Datetime, ctx, input, result)?;
     let from = vec_eval::read_argument(&function.args[1], EvalType::String, ctx, input)?;
     let to = vec_eval::read_argument(&function.args[2], EvalType::String, ctx, input)?;
-    let time = time.cells();
-    let time = time.fixed::<8>();
     let from = from.cells();
     let to = to.cells();
     let fsp = function
         .get_static_type()
         .expect("CONVERT_TZ type")
         .decimal();
-    result.resize_time(input.num_rows(), false);
     result.with_fixed_cells_mut(|output, bitmap| {
         for (row, output) in output.iter_mut().enumerate() {
-            if let (Some(&time), Some(from), Some(to)) = (time(row), from.bytes(row), to.bytes(row))
-            {
+            let bit = 1 << (row & 7);
+            let presence = &mut bitmap[row >> 3];
+            if *presence & bit == 0 {
+                continue;
+            }
+            if let (Some(from), Some(to)) = (from.bytes(row), to.bytes(row)) {
                 let from = std::str::from_utf8(from).ok().and_then(tz::parse_conv_tz);
                 let to = std::str::from_utf8(to).ok().and_then(tz::parse_conv_tz);
                 if let (Some(from), Some(to)) = (from, to) {
-                    let time = Time::from_go_raw_like_go(u64::from_ne_bytes(time));
+                    let time = Time::from_go_raw_like_go(u64::from_ne_bytes(*output));
                     if let Some(time) = tz::convert_packed(time, &from, &to, fsp) {
                         *output = time.go_raw().to_ne_bytes();
                         continue;
                     }
                 }
             }
-            bitmap[row / 8] &= !(1 << (row % 8));
+            *presence &= !bit;
         }
         Ok(())
     })

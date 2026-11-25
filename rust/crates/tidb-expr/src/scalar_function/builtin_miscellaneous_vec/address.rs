@@ -112,7 +112,7 @@ fn format_ipv4(
             let input_values = cells.fixed_cells::<8>();
             let rows = input.num_rows();
             let mut scratch = [0; 15];
-            result.reserve_string_with_size_hint(rows, 15);
+            result.reserve_string(rows);
             result.try_append_byte_rows(rows, |row, output| {
                 let row = selection.map_or(row, |select| select[row]);
                 if cells.is_null(row) {

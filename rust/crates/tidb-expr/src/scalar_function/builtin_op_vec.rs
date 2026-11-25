@@ -18,37 +18,6 @@ pub(super) fn logic(
     let Kernel::Logic(op) = function.pb_builtin.kernel else {
         unreachable!()
     };
-    // Direct integer columns cannot raise conversion warnings. Keep the
-    // ordered evaluation and fallback for all other operands.
-    if function.args.iter().all(|arg| {
-        vec_eval::direct_argument_column(arg, EvalType::Int, input)
-            .is_ok_and(|column| column.is_some())
-    }) {
-        return vec_eval::with_argument_pair(
-            &function.args[0],
-            &function.args[1],
-            EvalType::Int,
-            ctx,
-            input,
-            |left, right| {
-                result.resize_int64(input.num_rows(), false);
-                match op {
-                    BinaryOp::LogicAnd => logic_columns(left, right, result, |a, b, pa, pb| {
-                        (a & b, (pa & pb) | (pa & !a) | (pb & !b))
-                    }),
-                    BinaryOp::LogicOr => logic_columns(left, right, result, |a, b, pa, pb| {
-                        let value = (pa & a) | (pb & b);
-                        (value, (pa & pb) | value)
-                    }),
-                    BinaryOp::LogicXor => {
-                        logic_columns(left, right, result, |a, b, pa, pb| (a ^ b, pa & pb))
-                    }
-                    _ => unreachable!(),
-                }
-                Ok(())
-            },
-        );
-    }
     let before_left = ctx.warning_count();
     vec_eval::eval_into(&function.args[0], EvalType::Int, ctx, input, result)?;
     let before_right = ctx.warning_count();
@@ -57,96 +26,81 @@ pub(super) fn logic(
         ctx.truncate_warnings(before_left);
         return super::builtin_control_vec::fallback(function, ctx, input, result);
     }
-    let right = right?.into_contiguous();
-    let source = right.raw_cells();
-    result.with_fixed_cells_mut(|cells, bitmap| {
-        for (row, (cell, other)) in cells.iter_mut().zip(source.fixed_cells()).enumerate() {
-            let bit = 1 << (row & 7);
-            let mask = &mut bitmap[row >> 3];
-            let a_null = *mask & bit == 0;
-            let b_null = source.is_null(row);
-            let a = i64::from_ne_bytes(*cell) != 0;
-            let b = i64::from_ne_bytes(*other) != 0;
-            let value = match op {
-                BinaryOp::LogicAnd if (!a_null && !a) || (!b_null && !b) => Some(false),
-                BinaryOp::LogicOr if (!a_null && a) || (!b_null && b) => Some(true),
-                _ if a_null || b_null => None,
-                BinaryOp::LogicXor => Some(a != b),
-                _ => Some(b),
-            };
-            if let Some(value) = value {
-                *cell = i64::from(value).to_ne_bytes();
-                *mask |= bit;
-            } else {
-                *mask &= !bit;
-            }
-        }
-    });
+    let right = right?;
+    match op {
+        BinaryOp::LogicAnd => logic_columns(right, result, |a, b, pa, pb| {
+            (a & b, (pa & pb) | (pa & !a) | (pb & !b))
+        }),
+        BinaryOp::LogicOr => logic_columns(right, result, |a, b, pa, pb| {
+            let value = (pa & a) | (pb & b);
+            (value, (pa & pb) | value)
+        }),
+        BinaryOp::LogicXor => logic_columns(right, result, |a, b, pa, pb| (a ^ b, pa & pb)),
+        _ => unreachable!(),
+    }
     Ok(())
 }
 
-// The operation returns the truth value and whether the row is non-null.
+// The left operand occupies the result column, as in Go's logical kernels.
 fn logic_columns(
-    left: vec_eval::ReadArgument<'_>,
     right: vec_eval::ReadArgument<'_>,
     result: &mut Column,
     logic: impl Fn(bool, bool, bool, bool) -> (bool, bool),
 ) {
-    let (left, left_selection) = left.source();
-    let (right, right_selection) = right.source();
-    let (left, right) = (left.raw_cells(), right.raw_cells());
-    let (a, b) = (left.fixed_cells::<8>(), right.fixed_cells::<8>());
+    let (right, selection) = right.source();
+    let right = right.raw_cells();
+    let values = right.fixed_cells::<8>();
     result.with_fixed_cells_mut(|cells, bitmap| {
-        if left_selection.is_some() || right_selection.is_some() {
-            for (row, cell) in cells.iter_mut().enumerate() {
-                let l = left_selection.map_or(row, |selection| selection[row]);
-                let r = right_selection.map_or(row, |selection| selection[row]);
+        if let Some(selection) = selection {
+            for (row, (cell, &source)) in cells.iter_mut().zip(selection).enumerate() {
+                let bit = 1 << (row & 7);
+                let mask = &mut bitmap[row >> 3];
                 let (value, present) = logic(
-                    u64::from_ne_bytes(a[l]) != 0,
-                    u64::from_ne_bytes(b[r]) != 0,
-                    !left.is_null(l),
-                    !right.is_null(r),
+                    u64::from_ne_bytes(*cell) != 0,
+                    u64::from_ne_bytes(values[source]) != 0,
+                    *mask & bit != 0,
+                    !right.is_null(source),
                 );
                 if present {
                     *cell = i64::from(value).to_ne_bytes();
+                    *mask |= bit;
                 } else {
-                    *cell = a[l];
-                    bitmap[row >> 3] &= !(1 << (row & 7));
+                    *mask &= !bit;
                 }
             }
             return;
         }
-        let presence = left.not_null_bitmap().iter().zip(right.not_null_bitmap());
-        for ((((out, mask), a), b), (&pa, &pb)) in cells
+        for (((out, mask), values), &pb) in cells
             .chunks_mut(8)
             .zip(bitmap)
-            .zip(a.chunks(8))
-            .zip(b.chunks(8))
-            .zip(presence)
+            .zip(values.chunks(8))
+            .zip(right.not_null_bitmap())
         {
+            let pa = *mask;
             if pa & pb == u8::MAX {
-                for ((cell, &a), &b) in out.iter_mut().zip(a).zip(b) {
+                for (cell, &value) in out.iter_mut().zip(values) {
                     let (value, _) = logic(
-                        u64::from_ne_bytes(a) != 0,
-                        u64::from_ne_bytes(b) != 0,
+                        u64::from_ne_bytes(*cell) != 0,
+                        u64::from_ne_bytes(value) != 0,
                         true,
                         true,
                     );
                     *cell = i64::from(value).to_ne_bytes();
                 }
             } else {
-                for (bit, ((cell, &a), &b)) in out.iter_mut().zip(a).zip(b).enumerate() {
+                for (index, (cell, &value)) in out.iter_mut().zip(values).enumerate() {
+                    let bit = 1 << index;
                     let (value, present) = logic(
-                        u64::from_ne_bytes(a) != 0,
-                        u64::from_ne_bytes(b) != 0,
-                        pa & (1 << bit) != 0,
-                        pb & (1 << bit) != 0,
+                        u64::from_ne_bytes(*cell) != 0,
+                        u64::from_ne_bytes(value) != 0,
+                        pa & bit != 0,
+                        pb & bit != 0,
                     );
                     if present {
                         *cell = i64::from(value).to_ne_bytes();
+                        *mask |= bit;
                     } else {
-                        *cell = a;
-                        *mask &= !(1 << bit);
+                        *mask &= !bit;
                     }
                 }
             }
@@ -187,6 +141,39 @@ pub(super) fn predicate(
         Kernel::IsNull(t) | Kernel::Truth { domain: t, .. } => t,
         _ => unreachable!(),
     };
+    if domain == EvalType::Int {
+        vec_eval::eval_into(&function.args[0], domain, ctx, input, result)?;
+        match function.pb_builtin.kernel {
+            Kernel::IsNull(_) => result.with_fixed_cells_mut(|cells, bitmap| {
+                for (group, mask) in cells.chunks_mut(8).zip(bitmap) {
+                    let present = *mask;
+                    for (bit, cell) in group.iter_mut().enumerate() {
+                        *cell = i64::from(present & (1 << bit) == 0).to_ne_bytes();
+                    }
+                    *mask = ((1_u16 << group.len()) - 1) as u8;
+                }
+            }),
+            Kernel::Truth { negate, keep_null, falsity, .. } => {
+                let invert = negate ^ falsity;
+                result.with_fixed_cells_mut(|cells, bitmap| {
+                    for (group, mask) in cells.chunks_mut(8).zip(bitmap) {
+                        let present = *mask;
+                        for (bit, cell) in group.iter_mut().enumerate() {
+                            if present & (1 << bit) != 0 {
+                                let value = u64::from_ne_bytes(*cell) != 0;
+                                *cell = i64::from(value ^ invert).to_ne_bytes();
+                            } else if !keep_null {
+                                *cell = [0; 8];
+                                *mask |= 1 << bit;
+                            }
+                        }
+                    }
+                });
+            }
+            _ => unreachable!(),
+        }
+        return Ok(());
+    }
     if matches!(function.pb_builtin.kernel, Kernel::IsNull(_)) {
         return vec_eval::with_argument_column(
             &function.args[0],
@@ -237,15 +224,6 @@ pub(super) fn predicate(
             let source = source.raw_cells();
             result.resize_int64(input.num_rows(), false);
             match domain {
-                EvalType::Int => truth_rows(
-                    result,
-                    &source,
-                    selection,
-                    invert,
-                    keep_null,
-                    |raw| u64::from_ne_bytes(*raw) != 0,
-                    |raw| *raw,
-                ),
                 EvalType::Real => {
                     truth_rows(
                         result,

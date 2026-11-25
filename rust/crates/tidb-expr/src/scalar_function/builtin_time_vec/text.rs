@@ -53,16 +53,18 @@ pub(super) fn arithmetic(
     } else {
         EvalType::Duration
     };
-    let left = vec_eval::read_argument(&function.args[0], domain, ctx, input)?;
+    vec_eval::eval_into(&function.args[0], domain, ctx, input, result)?;
     let right = vec_eval::read_argument(&function.args[1], EvalType::String, ctx, input)?;
-    let left = left.cells();
-    let left = left.fixed::<8>();
     let right = right.cells();
-    result.resize_int64(input.num_rows(), false);
     result.with_fixed_cells_mut(|output, bitmap| {
         for (row, output) in output.iter_mut().enumerate() {
-            if let (Some(&left), Some(right)) = (left(row), right.bytes(row)) {
-                let raw = i64::from_ne_bytes(left);
+            let bit = 1 << (row & 7);
+            let presence = &mut bitmap[row >> 3];
+            if *presence & bit == 0 {
+                continue;
+            }
+            if let Some(right) = right.bytes(row) {
+                let raw = i64::from_ne_bytes(*output);
                 let time = Time::from_go_raw_like_go(raw as u64);
                 if let Some(duration) = (!datetime || !time.is_zero())
                     .then(|| parse_operand(right, ctx))
@@ -89,7 +91,7 @@ pub(super) fn arithmetic(
                     continue;
                 }
             }
-            bitmap[row / 8] &= !(1 << (row % 8));
+            *presence &= !bit;
         }
         Ok(())
     })

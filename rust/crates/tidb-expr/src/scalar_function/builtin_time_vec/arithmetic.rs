@@ -20,33 +20,19 @@ pub(super) fn eval(
     let right = &function.args[1];
     let rows = input.num_rows();
     match function.pb_code() {
-        AddDurationAndDuration => vec_eval::with_argument_pair(
-            left,
-            right,
-            EvalType::Duration,
-            ctx,
-            input,
-            |left, right| {
-                vec_eval::write_fixed_pair(left, right, result, rows, |a, b| {
-                    let nanos = a
-                        .checked_add(b)
-                        .ok_or_else(|| time_diff::duration_overflow(a, b))?;
-                    Ok(Some(nanos.to_ne_bytes()))
-                })
-            },
-        ),
-        SubDurationAndDuration => vec_eval::with_argument_pair(
-            left,
-            right,
-            EvalType::Duration,
-            ctx,
-            input,
-            |left, right| {
-                vec_eval::write_fixed_pair(left, right, result, rows, |a, b| {
-                    Ok(Some(time_diff::subtract_duration(a, b)?.to_ne_bytes()))
-                })
-            },
-        ),
+        AddDurationAndDuration | SubDurationAndDuration => {
+            let subtract = function.pb_code() == SubDurationAndDuration;
+            vec_eval::eval_into(left, EvalType::Duration, ctx, input, result)?;
+            let right = vec_eval::read_argument(right, EvalType::Duration, ctx, input)?;
+            update_left(result, right, |a, b| {
+                let nanos = if subtract {
+                    time_diff::subtract_duration(a, b)?
+                } else {
+                    a.checked_add(b).ok_or_else(|| time_diff::duration_overflow(a, b))?
+                };
+                Ok(Some(nanos.to_ne_bytes()))
+            })
+        }
         DurationDurationTimeDiff => vec_eval::with_argument_pair(
             left,
             right,
@@ -92,9 +78,9 @@ pub(super) fn eval(
         ),
         AddDatetimeAndDuration | SubDatetimeAndDuration => {
             let subtract = function.pb_code() == SubDatetimeAndDuration;
-            let left = vec_eval::read_argument(left, EvalType::Datetime, ctx, input)?;
+            vec_eval::eval_into(left, EvalType::Datetime, ctx, input, result)?;
             let right = vec_eval::read_argument(right, EvalType::Duration, ctx, input)?;
-            vec_eval::write_fixed_pair(left, right, result, rows, |raw, nanos| {
+            update_left(result, right, |raw, nanos| {
                 let time = Time::from_go_raw_like_go(raw as u64);
                 if time.is_zero() {
                     return Ok(None);
@@ -109,6 +95,32 @@ pub(super) fn eval(
         }
         _ => unreachable!("typed temporal arithmetic signature"),
     }
+}
+
+fn update_left(
+    result: &mut Column,
+    right: vec_eval::ReadArgument<'_>,
+    map: impl Fn(i64, i64) -> Result<Option<[u8; 8]>, EvalError>,
+) -> Result<(), EvalError> {
+    let right = right.cells();
+    let right = right.fixed::<8>();
+    result.with_fixed_cells_mut(|output, bitmap| {
+        for (row, left) in output.iter_mut().enumerate() {
+            let bit = 1 << (row & 7);
+            let presence = &mut bitmap[row >> 3];
+            if *presence & bit == 0 {
+                continue;
+            }
+            if let Some(&right) = right(row) {
+                if let Some(value) = map(i64::from_ne_bytes(*left), i64::from_ne_bytes(right))? {
+                    *left = value;
+                    continue;
+                }
+            }
+            *presence &= !bit;
+        }
+        Ok(())
+    })
 }
 
 pub(super) fn add_to_datetime(

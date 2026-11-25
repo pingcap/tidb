@@ -162,10 +162,11 @@ impl TableCommon {
         match value {
             Ok(value) if !value.is_empty() => {
                 let (duplicate_value, duplicate_key) = hint();
-                let message = tidb_txnkv::gen_key_exists_err(&[duplicate_value], &duplicate_key)
-                    .into_message();
                 Err(KvTableError::Mysql(tidb_terror::MysqlError::from_owned_terror(
-                    tidb_kv::kv_errors::ERR_KEY_EXISTS.generate(message),
+                    tidb_kv::kv_errors::ERR_KEY_EXISTS.fast_gen_by_args(&[
+                        duplicate_value.into_owned().into(),
+                        duplicate_key.into_owned().into(),
+                    ]),
                 )))
             }
             Ok(_) => Ok(false),

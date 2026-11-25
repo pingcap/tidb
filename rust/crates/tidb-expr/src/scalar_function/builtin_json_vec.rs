@@ -104,15 +104,16 @@ fn unquote(
         |source, selection| {
             let cells = source.raw_cells();
             let bytes_at = cells.variable_cells();
+            result.reserve_string(rows);
             if selection.is_none()
                 && source.null_count() == 0
+                && cells.data_len() <= result.get_data_cap()
                 && (0..rows).all(|row| !quoted(bytes_at(row)))
             {
                 *result = source.copy_reconstruct(None, Some(std::mem::take(result)));
                 return Ok(());
             }
             let mut decoded = Vec::new();
-            result.reserve_string(rows);
             result.try_append_byte_rows(rows, |row, output| {
                 let row = selection.map_or(row, |selection| selection[row]);
                 if cells.is_null(row) {

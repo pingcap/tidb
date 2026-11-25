@@ -77,6 +77,7 @@ pub(crate) fn format_concrete_path(components: &[JSONPathLocation<'_>]) -> Strin
 const CONTAINS_ASTERISK: u8 = 0x01;
 const CONTAINS_DOUBLE_ASTERISK: u8 = 0x02;
 const CONTAINS_RANGE: u8 = 0x04;
+const CONTAINS_QUOTED_ASTERISK: u8 = 0x08;
 
 impl JSONPathExpression {
     pub(crate) fn from_locations(components: &[JSONPathLocation<'_>]) -> Self {
@@ -115,6 +116,10 @@ impl JSONPathExpression {
     /// Returns whether the expression can select more than one value.
     pub fn could_match_multiple_values(&self) -> bool {
         self.contains_any_asterisk() || self.contains_any_range()
+    }
+
+    pub(crate) fn requires_walk(&self) -> bool {
+        self.flags != 0
     }
 
     /// Returns a copy with one exact array index appended.
@@ -406,6 +411,11 @@ impl Parser {
         };
         if !quoted && !is_ecmascript_identifier(&key) {
             return false;
+        }
+        // Go walks every member for this decoded key even though the quoted
+        // form does not set its multiple-selection flag.
+        if key == "*" {
+            expression.flags |= CONTAINS_QUOTED_ASTERISK;
         }
         expression.legs.push(JSONPathLeg::Key(key));
         true

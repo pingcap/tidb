@@ -85,6 +85,16 @@ impl EncodedJSONSelection<'_> {
     }
 }
 
+impl<'a> EncodedJSONSelection<'a> {
+    fn borrowed(root: BinaryJSONRef<'a>, value: BinaryJSONRef<'a>) -> Self {
+        Self::Borrowed {
+            type_code: value.type_code,
+            value: value.value,
+            root: value.type_code == root.type_code && std::ptr::eq(value.value, root.value),
+        }
+    }
+}
+
 impl BinaryJSON {
     /// Extracts one or more parsed paths using MySQL autowrap semantics.
     pub fn extract(
@@ -93,7 +103,7 @@ impl BinaryJSON {
     ) -> Result<Option<BinaryJSON>, BinaryJSONError> {
         if let Some(root) = self.canonical_view() {
             if let [path] = paths {
-                if !path.could_match_multiple_values() {
+                if !path.requires_walk() {
                     return extract_exact(root, path.legs())
                         .map(|value| value.map(|value| self.share_view(value)));
                 }
@@ -229,7 +239,7 @@ impl BinaryJSON {
         let (&type_code, value) = cell.split_first().ok_or(BinaryJSONError::InvalidBinary)?;
         if layout.is_canonical() {
             let root = BinaryJSONRef { type_code, value };
-            return extract_exact(root, path.legs())?.map(count_elements).transpose();
+            return sql_length(root, Some(path));
         }
 
         // Keep the ordinary tree-based path for noncanonical wire values.
@@ -252,7 +262,7 @@ impl BinaryJSON {
         let root = encoded_view(cell)?;
         let value = if layout.is_canonical() {
             if let [path] = paths {
-                if !path.could_match_multiple_values() {
+                if !path.requires_walk() {
                     let Some(value) = extract_exact(root, path.legs())? else {
                         return Ok(false);
                     };
@@ -286,7 +296,7 @@ impl BinaryJSON {
     ) -> Result<Option<BinaryJSON>, BinaryJSONError> {
         let root = encoded_view(cell)?;
         if layout.is_canonical() {
-            return extract_exact(root, path.legs())?
+            return select_key_object(root, path)?
                 .filter(|value| value.type_code == JSON_TYPE_CODE_OBJECT)
                 .map(|value| value.container()?.encode_keys())
                 .transpose();
@@ -854,12 +864,27 @@ fn sql_key_array<'a>(
     path: Option<&JSONPathExpression>,
 ) -> Result<Option<JSONKeyArray<'a>>, BinaryJSONError> {
     let object = match path {
-        Some(path) => extract_exact(root, path.legs())?,
+        Some(path) => select_key_object(root, path)?,
         None => Some(root),
     };
     object.filter(|value| value.type_code == JSON_TYPE_CODE_OBJECT)
         .map(|value| value.container()?.checked_key_array::<true>())
         .transpose()
+}
+
+fn select_key_object<'a>(
+    root: BinaryJSONRef<'a>,
+    path: &JSONPathExpression,
+) -> Result<Option<BinaryJSONRef<'a>>, BinaryJSONError> {
+    if !path.requires_walk() {
+        return extract_exact(root, path.legs());
+    }
+    match extract_sql_selection(root, std::slice::from_ref(path))? {
+        Some(EncodedJSONSelection::Borrowed { type_code, value, .. }) => {
+            Ok(Some(BinaryJSONRef { type_code, value }))
+        }
+        _ => Ok(None), // Wrapped matches form an array, which has no object keys.
+    }
 }
 
 fn keys_from_view(root: BinaryJSONRef<'_>, canonical: bool) -> Result<BinaryJSON, BinaryJSONError> {
@@ -1026,6 +1051,15 @@ fn sql_length(
     path: Option<&JSONPathExpression>,
 ) -> Result<Option<usize>, BinaryJSONError> {
     if let Some(path) = path.filter(|path| !path.legs().is_empty()) {
+        if path.requires_walk() {
+            return match extract_sql_selection(root, std::slice::from_ref(path))? {
+                Some(EncodedJSONSelection::Borrowed { type_code, value, .. }) => {
+                    count_elements(BinaryJSONRef { type_code, value }).map(Some)
+                }
+                Some(EncodedJSONSelection::Owned(value)) => value.element_count().map(Some),
+                None => Ok(None),
+            };
+        }
         return extract_exact(root, path.legs())?.map(count_elements).transpose();
     }
     count_elements(root).map(Some)
@@ -1040,7 +1074,7 @@ fn extract_exact<'a>(
 
 #[inline]
 fn sql_path_exists(root: BinaryJSONRef<'_>, path: &JSONPathExpression) -> Result<bool, BinaryJSONError> {
-    if path.could_match_multiple_values() {
+    if path.requires_walk() {
         visit_path_matches(root, path.legs(), &mut |_| true)
     } else {
         extract_exact(root, path.legs()).map(|target| target.is_some())
@@ -1090,10 +1124,12 @@ fn pack_path_matches(
     paths: &[JSONPathExpression],
 ) -> Result<Option<BinaryJSON>, BinaryJSONError> {
     let matches = collect_path_matches(root, paths)?;
-    if matches.is_empty() {
-        Ok(None)
-    } else {
-        BinaryJSON::array_from_views(&matches).map(Some)
+    match (paths, matches.as_slice()) {
+        (_, []) => Ok(None),
+        ([path], [value]) if !path.could_match_multiple_values() => Ok(Some(
+            value.copy().with_known_layout(Some(EncodedJSONLayout::canonical())),
+        )),
+        _ => BinaryJSON::array_from_views(&matches).map(Some),
     }
 }
 
@@ -1102,19 +1138,18 @@ fn extract_sql_selection<'a>(
     paths: &[JSONPathExpression],
 ) -> Result<Option<EncodedJSONSelection<'a>>, BinaryJSONError> {
     if let [path] = paths {
-        if !path.could_match_multiple_values() {
-            return Ok(extract_exact(root, path.legs())?.map(|value| EncodedJSONSelection::Borrowed {
-                type_code: value.type_code,
-                value: value.value,
-                root: value.type_code == root.type_code && std::ptr::eq(value.value, root.value),
-            }));
+        if !path.requires_walk() {
+            return Ok(extract_exact(root, path.legs())?
+                .map(|value| EncodedJSONSelection::borrowed(root, value)));
         }
     }
     let matches = collect_path_matches(root, paths)?;
-    if matches.is_empty() {
-        Ok(None)
-    } else {
-        encode_view_array(matches.into_iter()).map(|value| Some(EncodedJSONSelection::Owned(value)))
+    match (paths, matches.as_slice()) {
+        (_, []) => Ok(None),
+        ([path], [value]) if !path.could_match_multiple_values() => {
+            Ok(Some(EncodedJSONSelection::borrowed(root, *value)))
+        }
+        _ => encode_view_array(matches.into_iter()).map(|value| Some(EncodedJSONSelection::Owned(value))),
     }
 }
 
@@ -1124,7 +1159,7 @@ fn collect_path_matches<'a>(
 ) -> Result<SmallVec<[BinaryJSONRef<'a>; 4]>, BinaryJSONError> {
     let mut matches = SmallVec::<[BinaryJSONRef<'_>; 4]>::new();
     for path in paths {
-        if path.could_match_multiple_values() {
+        if path.requires_walk() {
             let first = matches.len();
             let mut seen = None;
             visit_path_matches(root, path.legs(), &mut |value| {
@@ -2165,6 +2200,26 @@ mod tests {
         let path = parse_json_path_expr("$.x").unwrap();
         let result = value.extract(&[path.clone(), path]).unwrap().unwrap();
         assert_eq!(result.to_string(), "[1, 1]");
+    }
+
+    #[test]
+    fn quoted_asterisks_walk_object_members_and_only_wrap_multiple_matches() {
+        let multiple = json(r#"{"a": 1,"b": 2}"#);
+        let single = json(r#"{"a": {"key": 1}}"#);
+        for spelling in [r#"$."*""#, r#"$."\u002a""#] {
+            let path = parse_json_path_expr(spelling).unwrap();
+            let paths = std::slice::from_ref(&path);
+            assert!(!path.could_match_multiple_values());
+            assert_eq!(multiple.extract_for_sql(paths).unwrap().unwrap(), json("[1, 2]"));
+            assert_eq!(multiple.extract(paths).unwrap().unwrap(), json("[1, 2]"));
+            assert_eq!(multiple.get_length(Some(&path)).unwrap(), Some(2));
+            assert!(multiple.get_keys(Some(&path)).unwrap().is_none());
+            assert!(multiple.path_exists_for_sql(&path).unwrap());
+            assert_eq!(single.extract_for_sql(paths).unwrap().unwrap(), json(r#"{"key": 1}"#));
+            assert_eq!(single.get_keys(Some(&path)).unwrap().unwrap(), json(r#"["key"]"#));
+        }
+        let unquoted = parse_json_path_expr("$.*").unwrap();
+        assert_eq!(single.extract_for_sql(&[unquoted]).unwrap().unwrap(), json(r#"[{"key": 1}]"#));
     }
 
     #[test]
