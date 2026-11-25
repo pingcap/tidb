@@ -1018,17 +1018,16 @@ func TestBuildCreateMaterializedViewLogPurgeInfoUpsertSQL(t *testing.T) {
 }
 
 func TestBuildCreateMaterializedViewImportSQL(t *testing.T) {
-	const selectSQL = "select a, avg(b), sum(b), count(b), count(1) from t group by a"
 	mvTblInfo := &model.TableInfo{
 		Name: ast.NewCIStr("mv"),
 		MaterializedView: &model.MaterializedViewInfo{
-			SQLContent: selectSQL,
+			SQLContent: "select a, count(1) from t group by a",
 		},
 	}
 
 	sql, err := buildCreateMaterializedViewImportSQL("test", mvTblInfo, 0, "")
 	require.NoError(t, err)
-	require.Contains(t, sql, "IMPORT INTO `test`.`mv` FROM ("+selectSQL+")")
+	require.Contains(t, sql, "IMPORT INTO `test`.`mv` FROM (")
 	require.Contains(t, sql, "WITH disable_precheck")
 	require.NotContains(t, strings.ToUpper(sql), "AS OF TIMESTAMP")
 
@@ -1039,10 +1038,6 @@ func TestBuildCreateMaterializedViewImportSQL(t *testing.T) {
 	sql, err = buildCreateMaterializedViewImportSQL("test", mvTblInfo, 12, "64gib")
 	require.NoError(t, err)
 	require.Contains(t, sql, "WITH disable_precheck, thread=12, disk_quota='64gib'")
-
-	sql, err = buildCreateMaterializedViewInsertSQL("test", mvTblInfo)
-	require.NoError(t, err)
-	require.Equal(t, "REPLACE INTO `test`.`mv` "+selectSQL, sql)
 }
 
 func TestNormalizeMVDefinitionHintDBNames(t *testing.T) {

@@ -103,10 +103,10 @@ func (e *Exec) buildSumMerger(
 	if err := validateSumValueTypes(retTp, deltaTp); err != nil {
 		return nil, err
 	}
-	hasCountRef := len(mapping.DependencyColID) == 2
+	isNullableSum := len(mapping.DependencyColID) == 2
 
 	var countRef depRef
-	if hasCountRef {
+	if isNullableSum {
 		countRef, err = resolveDepRef(mapping.DependencyColID[1], colID2ComputedIdx, e.DeltaAggColCount)
 		if err != nil {
 			return nil, err
@@ -126,12 +126,15 @@ func (e *Exec) buildSumMerger(
 
 	switch retTp.EvalType() {
 	case types.ETInt:
+		if deltaTp.EvalType() != types.ETInt {
+			return nil, errors.Errorf("SUM int merge expects integer delta dependency, got %s", deltaTp.EvalType())
+		}
 		if mysql.HasUnsignedFlag(retTp.GetFlag()) {
 			return &sumUintMerger{
 				outputCols:  []int{outputColID},
 				deltaRef:    deltaRef,
 				countRef:    countRef,
-				hasCountRef: hasCountRef,
+				hasCountRef: isNullableSum,
 				retTp:       retTp,
 			}, nil
 		}
@@ -139,7 +142,7 @@ func (e *Exec) buildSumMerger(
 			outputCols:  []int{outputColID},
 			deltaRef:    deltaRef,
 			countRef:    countRef,
-			hasCountRef: hasCountRef,
+			hasCountRef: isNullableSum,
 			retTp:       retTp,
 		}, nil
 	case types.ETReal:
@@ -147,7 +150,7 @@ func (e *Exec) buildSumMerger(
 			outputCols:  []int{outputColID},
 			deltaRef:    deltaRef,
 			countRef:    countRef,
-			hasCountRef: hasCountRef,
+			hasCountRef: isNullableSum,
 			retTp:       retTp,
 		}, nil
 	case types.ETDecimal:
@@ -155,7 +158,7 @@ func (e *Exec) buildSumMerger(
 			outputCols:  []int{outputColID},
 			deltaRef:    deltaRef,
 			countRef:    countRef,
-			hasCountRef: hasCountRef,
+			hasCountRef: isNullableSum,
 			retTp:       retTp,
 		}, nil
 	default:
