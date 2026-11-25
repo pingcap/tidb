@@ -367,6 +367,7 @@ func newWithCli(ctx context.Context, selfAddr string, cli *clientv3.Client, stor
 	})
 	// 10 means that autoid service's etcd lease is 10s.
 	err := l.CampaignOwner(10)
+	failpoint.InjectCall("afterAutoIDCampaign", service)
 	if !stopCancel() {
 		// The callback may not have run yet. Cancel before joining the owner loop.
 		cancel()

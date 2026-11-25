@@ -39,6 +39,7 @@ go_test(
         "//pkg/parser/ast",
         "//pkg/store/mockstore",
         "//pkg/testkit",
+        "//pkg/testkit/testfailpoint",
         "@com_github_pingcap_kvproto//pkg/autoid",
         "@com_github_pingcap_kvproto//pkg/keyspacepb",
         "@com_github_stretchr_testify//require",

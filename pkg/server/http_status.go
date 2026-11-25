@@ -57,7 +57,6 @@ import (
 	util2 "github.com/pingcap/tidb/pkg/server/internal/util"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/statistics/handle/initstats"
-	"github.com/pingcap/tidb/pkg/store"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/cpuprofile"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -663,21 +662,13 @@ func (s *Server) startHTTPServer() {
 // setupAutoIDService initializes and registers the AutoID service for TiKV stores
 func (s *Server) setupAutoIDService(ctx context.Context, grpcServer *grpc.Server) *autoid.Service {
 	failpoint.InjectCall("beforeAutoIDService")
-	keyspaceName := config.GetGlobalKeyspaceName()
-
-	var fullPath string
-	if keyspaceName == "" {
-		fullPath = fmt.Sprintf("%s://%s", s.cfg.Store, s.cfg.Path)
-	} else {
-		fullPath = fmt.Sprintf("%s://%s?keyspaceName=%s", s.cfg.Store, s.cfg.Path, keyspaceName)
-	}
-
-	store, err := store.New(fullPath)
-	failpoint.InjectCall("autoIDServiceStore", &store, &err)
-	if err != nil {
-		logutil.BgLogger().Error("new tikv store fail", zap.Error(err))
+	driver, ok := s.driver.(*TiDBDriver)
+	if !ok {
 		return nil
 	}
+	// Reuse the server's store. Reopening it initializes a PD client before the
+	// store cache lookup and cannot be canceled when shutdown starts.
+	store := driver.store
 
 	ebd, ok := store.(kv.EtcdBackend)
 	if !ok {

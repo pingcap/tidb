@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.etcd.io/etcd/tests/v3/integration"
@@ -304,4 +305,26 @@ func TestGRPC(t *testing.T) {
 	lease, err := etcdCli.TimeToLive(context.Background(), leases.Leases[0].ID)
 	require.NoError(t, err)
 	require.EqualValues(t, -1, lease.TTL, "shutdown must revoke ownership without waiting for lease expiry")
+
+	t.Run("canceled startup revokes lease", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/autoid_service/afterAutoIDCampaign", func(service *Service) {
+			t.Cleanup(service.Close)
+			require.Eventually(t, service.IsOwner, 5*time.Second, 10*time.Millisecond)
+			leases, err = etcdCli.Leases(context.Background())
+			require.NoError(t, err)
+			require.Len(t, leases.Leases, 1)
+			cancel()
+		})
+		service, err := newWithCli(ctx, addr, etcdCli, store)
+		if service != nil {
+			defer service.Close()
+		}
+		require.ErrorIs(t, err, context.Canceled)
+		require.Nil(t, service)
+		lease, err := etcdCli.TimeToLive(context.Background(), leases.Leases[0].ID)
+		require.NoError(t, err)
+		require.EqualValues(t, -1, lease.TTL, "aborted startup must revoke ownership without waiting for lease expiry")
+	})
 }

@@ -86,7 +86,6 @@ go_library(
         "//pkg/sessiontxn",
         "//pkg/statistics/handle/initstats",
         "//pkg/statistics/handle/util",
-        "//pkg/store",
         "//pkg/store/driver/error",
         "//pkg/store/helper",
         "//pkg/tablecodec",

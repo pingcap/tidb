@@ -129,14 +129,12 @@ func (*blockingStatusLeaseServer) LeaseKeepAlive(stream etcdserverpb.Lease_Lease
 func TestStatusServerClose(t *testing.T) {
 	t.Run("AutoID initialization error", func(t *testing.T) {
 		store := testkit.CreateMockStore(t)
-		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/server/autoIDServiceStore", func(storage *kv.Storage, err *error) {
-			*storage = &statusAutoIDStore{Storage: store}
-			*err = nil
-		})
 		cfg := util.NewTestConfig()
 		cfg.Store = config.StoreTypeTiKV
+		// AutoID initialization must reuse the open store without reopening this path.
 		cfg.Path = "%"
 		s := NewTestServer(cfg)
+		s.driver = NewTiDBDriver(&statusAutoIDStore{Storage: store})
 		defer s.Close()
 		grpcServer := grpc.NewServer()
 		defer grpcServer.Stop()
@@ -169,15 +167,12 @@ func TestStatusServerClose(t *testing.T) {
 		etcdserverpb.RegisterLeaseServer(grpcServer, leaseServer)
 		go func() { _ = grpcServer.Serve(listener) }()
 		defer grpcServer.Stop()
-		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/server/autoIDServiceStore", func(storage *kv.Storage, err *error) {
-			*storage = &statusAutoIDStore{Storage: store, etcdAddrs: []string{listener.Addr().String()}}
-			*err = nil
-		})
 		cfg := util.NewTestConfig()
 		cfg.Status.StatusPort = 0
 		cfg.Store = config.StoreTypeTiKV
 		cfg.Path = "%"
 		s := NewTestServer(cfg)
+		s.driver = NewTiDBDriver(&statusAutoIDStore{Storage: store, etcdAddrs: []string{listener.Addr().String()}})
 		require.NoError(t, s.listenStatusHTTPServer())
 		closed := make(chan struct{})
 		servingDone := make(chan struct{})
@@ -270,8 +265,9 @@ func TestStatusServerClose(t *testing.T) {
 	}
 
 	t.Run("during asynchronous initialization", func(t *testing.T) {
+		ignoreCurrent := goleak.IgnoreCurrent()
+		t.Cleanup(func() { goleak.VerifyNone(t, ignoreCurrent) })
 		store, dom := testkit.CreateMockStoreAndDomain(t)
-		defer goleak.VerifyNone(t, goleak.IgnoreCurrent())
 		cfg := util.NewTestConfig()
 		cfg.Status.StatusPort = 0
 		s := NewTestServer(cfg)
