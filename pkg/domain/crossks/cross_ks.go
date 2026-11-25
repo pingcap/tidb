@@ -420,12 +420,12 @@ func (m *Manager) initializeEntry(
 // createSessionManager initializes the runtime and returns a function that
 // starts its background workers after publication.
 func (*Manager) createSessionManager(
-	openCtx context.Context,
+	ctx context.Context,
 	ks string,
 	ksSessFactoryGetter func(string, validatorapi.Validator) pools.Factory,
 ) (_ *SessionManager, _ func(), err error) {
 	startTime := time.Now()
-	getStoreFn := func(ks string) (kv.Storage, error) { return getOrCreateStore(openCtx, ks) }
+	getStoreFn := func(ks string) (kv.Storage, error) { return getOrCreateStore(ctx, ks) }
 	failpoint.InjectCall("beforeGetStore", &getStoreFn)
 	var store kv.Storage
 	store, err = getStoreFn(ks)
@@ -443,7 +443,7 @@ func (*Manager) createSessionManager(
 	}()
 
 	// A driver open runs to completion even if the acquisition is canceled.
-	if err = openCtx.Err(); err != nil {
+	if err = ctx.Err(); err != nil {
 		return nil, nil, err
 	}
 
