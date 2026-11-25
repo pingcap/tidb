@@ -17,6 +17,7 @@ package core_test
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/domain"
@@ -28,6 +29,60 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
+
+func TestTextLowerPrefixLikeGeneratedColumnSubstitution(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_unsafe_substitute = off")
+	tk.MustExec(`create table t (
+		id int primary key, tenant int, kind int,
+		body text, lower_body text as (lower(body)) virtual,
+		key tenant_kind_body (tenant, kind, lower_body(500))
+	) charset=utf8mb4 collate=utf8mb4_bin`)
+	tk.MustExec(`insert into t (id, tenant, kind, body) values
+		(1, 1, 2, 'Admiral-100004'), (2, 1, 2, 'ADMIRAL-100004 tail'),
+		(3, 1, 2, 'Admiral-100005'), (4, 1, 2, NULL),
+		(5, 1, 3, 'Admiral-100004'), (6, 2, 2, 'Admiral-100004'),
+		(7, 1, 2, 'ⱥA')`)
+	sql := "select id from t where tenant = 1 and kind = 2 and lower(body) like 'admiral-100004%'"
+	plan := fmt.Sprint(tk.MustQuery("explain format='brief' " + sql).Rows())
+	require.Contains(t, plan, "index:tenant_kind_body")
+	require.Contains(t, plan, `[1 2 "admiral-100004",1 2 "admiral-100005")`)
+	tk.MustQuery(sql + " order by id").Check(testkit.Rows("1", "2"))
+	tk.MustQuery("select id from t where lower(body) like 'ⱥ%'").Check(testkit.Rows("7"))
+	tk.MustQuery("select id from t where lower(body) not like 'admiral-100004%' order by id").Check(testkit.Rows("3", "7"))
+
+	// LOWER can increase the byte length. A suffix search must see the bytes
+	// beyond the generated TEXT column's truncation boundary.
+	tk.MustExec("set sql_mode = ''")
+	tk.MustExec("insert into t (id, tenant, kind, body) values (8, 1, 2, concat(repeat('Ⱥ', 25000), 'Z'))")
+	tk.MustQuery("select length(lower(body)) > length(lower_body) from t where id = 8").Check(testkit.Rows("1"))
+	tk.MustQuery("select id from t where lower(body) like '%z'").Check(testkit.Rows("8"))
+	tk.MustQuery("select id from t where lower(body) like 'ⱥ%' order by id").Check(testkit.Rows("7", "8"))
+	tk.MustQuery("select id from t where lower(body) = concat(repeat('ⱥ', 25000), 'z')").Check(testkit.Rows("8"))
+
+	// A cached statement must preserve the expression when the pattern changes.
+	tk.MustExec("set tidb_enable_prepared_plan_cache = on")
+	tk.MustExec("prepare s from 'select id from t where lower(body) like ? order by id'")
+	tk.MustExec("set @pattern = 'admiral-100004%'")
+	tk.MustQuery("execute s using @pattern").Check(testkit.Rows("1", "2", "5", "6"))
+	tk.MustExec("set @pattern = '%z'")
+	tk.MustQuery("execute s using @pattern").Check(testkit.Rows("8"))
+
+	// The capacity check uses bytes, including a multibyte prefix.
+	tk.MustExec(`create table short_text (
+		body text, lower_body tinytext as (lower(body)) virtual, key (lower_body(50))
+	) charset=utf8mb4 collate=utf8mb4_bin`)
+	tk.MustExec("insert into short_text (body) values (repeat('Ⱥ', 100))")
+	shortPrefixSQL := "select count(*) from short_text where lower(body) like 'ⱥ%'"
+	shortPrefixPlan := fmt.Sprint(tk.MustQuery("explain format='brief' " + shortPrefixSQL).Rows())
+	require.Contains(t, shortPrefixPlan, "range:[")
+	tk.MustQuery(shortPrefixSQL).Check(testkit.Rows("1"))
+	tk.MustQuery("select length(lower(body)) > length(lower_body) from short_text").Check(testkit.Rows("1"))
+	longPrefix := strings.Repeat("ⱥ", 90) + "%"
+	tk.MustQuery("select count(*) from short_text where lower(body) like '" + longPrefix + "'").Check(testkit.Rows("1"))
+}
 
 // ➜  core git:(master) ✗ go tool pprof m5.file
 // File: ___5BenchmarkSubstituteExpression_in_github_com_pingcap_tidb_planner_core.test

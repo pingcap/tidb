@@ -17,10 +17,15 @@ package core
 import (
 	"bytes"
 	"context"
+	"strings"
+	"unicode/utf8"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/charset"
+	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
@@ -46,22 +51,23 @@ type ExprColumnMap map[expression.Expression]*expression.Column
 func (gc *GcSubstituter) Optimize(ctx context.Context, lp base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
 	planChanged := false
 	exprToColumn := make(ExprColumnMap)
-	collectGenerateColumn(lp, exprToColumn)
-	if len(exprToColumn) == 0 {
+	prefixLikeColumns := make(ExprColumnMap)
+	collectGenerateColumn(lp, exprToColumn, prefixLikeColumns)
+	if len(exprToColumn) == 0 && len(prefixLikeColumns) == 0 {
 		return lp, planChanged, nil
 	}
-	return gc.substitute(ctx, lp, exprToColumn, opt), planChanged, nil
+	return gc.substitute(ctx, lp, exprToColumn, prefixLikeColumns, opt), planChanged, nil
 }
 
 // collectGenerateColumn collect the generate column and save them to a map from their expressions to themselves.
 // For the sake of simplicity, we don't collect the stored generate column because we can't get their expressions directly.
 // TODO: support stored generate column.
-func collectGenerateColumn(lp base.LogicalPlan, exprToColumn ExprColumnMap) {
+func collectGenerateColumn(lp base.LogicalPlan, exprToColumn, prefixLikeColumns ExprColumnMap) {
 	if _, ok := lp.(*logicalop.LogicalCTE); ok {
 		return
 	}
 	for _, child := range lp.Children() {
-		collectGenerateColumn(child, exprToColumn)
+		collectGenerateColumn(child, exprToColumn, prefixLikeColumns)
 	}
 	ds, ok := lp.(*logicalop.DataSource)
 	if !ok {
@@ -83,12 +89,59 @@ func collectGenerateColumn(lp base.LogicalPlan, exprToColumn ExprColumnMap) {
 			if colInfo.IsGenerated() && !colInfo.GeneratedStored {
 				s := ds.Schema().Columns
 				col := expression.ColInfo2Col(s, colInfo)
-				if col != nil && col.GetType(ectx).PartialEqual(col.VirtualExpr.GetType(ectx), lp.SCtx().GetSessionVars().EnableUnsafeSubstitute) {
+				if col == nil {
+					continue
+				}
+				if col.GetType(ectx).PartialEqual(col.VirtualExpr.GetType(ectx), lp.SCtx().GetSessionVars().EnableUnsafeSubstitute) {
 					exprToColumn[col.VirtualExpr] = col
+				} else if prefixLikeColumns != nil && p.Index.Tp == model.IndexTypeBtree && isTextLowerColumn(ectx, col) {
+					prefixLikeColumns[col.VirtualExpr] = col
 				}
 			}
 		}
 	}
+}
+
+func isTextLowerColumn(ctx expression.EvalContext, col *expression.Column) bool {
+	lower, ok := col.VirtualExpr.(*expression.ScalarFunction)
+	if !ok || lower.FuncName.L != ast.Lower {
+		return false
+	}
+	input, ok := lower.GetArgs()[0].(*expression.Column)
+	if !ok {
+		return false
+	}
+	columnType, lowerType, inputType := col.GetType(ctx), lower.GetType(ctx), input.GetType(ctx)
+	return types.IsTypeBlob(inputType.GetType()) && types.IsTypeBlob(columnType.GetType()) &&
+		lowerType.GetType() == mysql.TypeVarString &&
+		(!mysql.HasNotNullFlag(columnType.GetFlag()) || mysql.HasNotNullFlag(inputType.GetFlag())) &&
+		columnType.GetCharset() == charset.CharsetUTF8MB4 && lowerType.GetCharset() == charset.CharsetUTF8MB4 &&
+		columnType.GetCollate() == charset.CollationUTF8MB4 && lowerType.GetCollate() == charset.CollationUTF8MB4
+}
+
+// A TEXT cast may truncate LOWER's result in bytes. A literal prefix followed
+// by '%' has the same match (including NULL) as long as the cast preserves the
+// entire prefix. Byte length bounds the match under utf8mb4_bin. A parameter
+// can change the pattern when the plan is reused, so only accept literals.
+func textLikePrefixLength(like *expression.ScalarFunction) int {
+	_, collation := like.CharsetAndCollation()
+	if collation != charset.CollationUTF8MB4 {
+		return 0
+	}
+	pattern, ok := like.GetArgs()[1].(*expression.Constant)
+	if !ok || pattern.ConstLevel() != expression.ConstStrict || pattern.Value.Kind() != types.KindString {
+		return 0
+	}
+	escape, ok := like.GetArgs()[2].(*expression.Constant)
+	if !ok || escape.ConstLevel() != expression.ConstStrict || escape.Value.Kind() != types.KindInt64 ||
+		escape.Value.GetInt64() != '\\' {
+		return 0
+	}
+	prefix, ok := strings.CutSuffix(pattern.Value.GetString(), "%")
+	if !ok || strings.ContainsAny(prefix, "%_\\") || !utf8.ValidString(prefix) {
+		return 0
+	}
+	return len(prefix)
 }
 
 func tryToSubstituteExpr(expr *expression.Expression, lp base.LogicalPlan, candidateExpr expression.Expression, tp types.EvalType, schema *expression.Schema, col *expression.Column, opt *optimizetrace.LogicalOptimizeOp) bool {
@@ -122,10 +175,10 @@ func appendSubstituteColumnStep(lp base.LogicalPlan, candidateExpr expression.Ex
 
 // SubstituteExpression is Exported for bench
 func SubstituteExpression(cond expression.Expression, lp base.LogicalPlan, exprToColumn ExprColumnMap, schema *expression.Schema, opt *optimizetrace.LogicalOptimizeOp) bool {
-	return substituteExpression(cond, lp, exprToColumn, schema, opt)
+	return substituteExpression(cond, lp, exprToColumn, nil, schema, opt)
 }
 
-func substituteExpression(cond expression.Expression, lp base.LogicalPlan, exprToColumn ExprColumnMap, schema *expression.Schema, opt *optimizetrace.LogicalOptimizeOp) bool {
+func substituteExpression(cond expression.Expression, lp base.LogicalPlan, exprToColumn, prefixLikeColumns ExprColumnMap, schema *expression.Schema, opt *optimizetrace.LogicalOptimizeOp) bool {
 	sf, ok := cond.(*expression.ScalarFunction)
 	if !ok {
 		return false
@@ -176,22 +229,33 @@ func substituteExpression(cond expression.Expression, lp base.LogicalPlan, exprT
 		for candidateExpr, column := range exprToColumn {
 			collectChanged(tryToSubstituteExpr(expr, lp, candidateExpr, tp, schema, column, opt))
 		}
+		if !changed && len(prefixLikeColumns) != 0 {
+			if prefixLength := textLikePrefixLength(sf); prefixLength > 0 {
+				for candidateExpr, column := range prefixLikeColumns {
+					if prefixLength <= column.GetType(ectx).GetFlen() &&
+						tryToSubstituteExpr(expr, lp, candidateExpr, tp, schema, column, opt) {
+						changed = true
+						break
+					}
+				}
+			}
+		}
 	case ast.LogicOr, ast.LogicAnd:
-		collectChanged(substituteExpression(sf.GetArgs()[0], lp, exprToColumn, schema, opt))
-		collectChanged(substituteExpression(sf.GetArgs()[1], lp, exprToColumn, schema, opt))
+		collectChanged(substituteExpression(sf.GetArgs()[0], lp, exprToColumn, prefixLikeColumns, schema, opt))
+		collectChanged(substituteExpression(sf.GetArgs()[1], lp, exprToColumn, prefixLikeColumns, schema, opt))
 	case ast.UnaryNot:
-		collectChanged(substituteExpression(sf.GetArgs()[0], lp, exprToColumn, schema, opt))
+		collectChanged(substituteExpression(sf.GetArgs()[0], lp, exprToColumn, prefixLikeColumns, schema, opt))
 	}
 	return changed
 }
 
-func (gc *GcSubstituter) substitute(ctx context.Context, lp base.LogicalPlan, exprToColumn ExprColumnMap, opt *optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
+func (gc *GcSubstituter) substitute(ctx context.Context, lp base.LogicalPlan, exprToColumn, prefixLikeColumns ExprColumnMap, opt *optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
 	var tp types.EvalType
 	ectx := lp.SCtx().GetExprCtx().GetEvalCtx()
 	switch x := lp.(type) {
 	case *logicalop.LogicalSelection:
 		for _, cond := range x.Conditions {
-			substituteExpression(cond, lp, exprToColumn, x.Schema(), opt)
+			substituteExpression(cond, lp, exprToColumn, prefixLikeColumns, x.Schema(), opt)
 		}
 	case *logicalop.LogicalProjection:
 		for i := range x.Exprs {
@@ -224,7 +288,7 @@ func (gc *GcSubstituter) substitute(ctx context.Context, lp base.LogicalPlan, ex
 		}
 	}
 	for _, child := range lp.Children() {
-		gc.substitute(ctx, child, exprToColumn, opt)
+		gc.substitute(ctx, child, exprToColumn, prefixLikeColumns, opt)
 	}
 	return lp
 }

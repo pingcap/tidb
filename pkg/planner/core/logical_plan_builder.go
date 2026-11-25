@@ -1838,7 +1838,7 @@ func (b *PlanBuilder) buildProjection(ctx context.Context, p base.LogicalPlan, f
 		// optimization. For example: select a+1 from t order by a+1, with a virtual generate column c as (a+1) and
 		// an index on c. We need to add c into the projection so that we can replace a+1 with c.
 		exprToColumn := make(ExprColumnMap)
-		collectGenerateColumn(p, exprToColumn)
+		collectGenerateColumn(p, exprToColumn, nil)
 		for expr, col := range exprToColumn {
 			idx := p.Schema().ColumnIndex(col)
 			if idx == -1 {
