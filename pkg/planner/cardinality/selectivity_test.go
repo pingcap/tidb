@@ -1014,6 +1014,40 @@ func TestNewIndexWithLowNDVColumnStats(t *testing.T) {
 	require.Greater(t, estRows, 10.0)
 }
 
+func TestMissingStatsIndexRangeExcludeNotCarriedOver(t *testing.T) {
+	// An index without statistics, where only some of its columns have statistics, is estimated column by
+	// column. The excluded endpoint of the last column of one range must not leak into the prefix columns
+	// of the next range: the estimate of two ranges must be the sum of their separate estimates.
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("create table t(a int, b int, c int)")
+	testKit.MustExec("set @@tidb_analyze_version=2")
+	testKit.MustExec("set @@global.tidb_enable_auto_analyze='OFF'")
+	testKit.MustExec("insert into t select mod(a,10), mod(a,10), a from (with recursive x as (select 1 as a union all select a + 1 AS a from x where a < 1000) select a from x) as subquery")
+	// c has no statistics, so exponential backoff is not used and the per-column fallback is exercised.
+	testKit.MustExec("analyze table t columns a, b")
+	testKit.MustExec("create index idx_abc on t(a, b, c)")
+	estRows := func(cond string) float64 {
+		rows := testKit.MustQuery("explain format='brief' select * from t use index(idx_abc) where " + cond).Rows()
+		for _, row := range rows {
+			if strings.Contains(row[0].(string), "IndexRangeScan") {
+				est, err := strconv.ParseFloat(row[1].(string), 64)
+				require.NoError(t, err)
+				return est
+			}
+		}
+		require.FailNow(t, "no IndexRangeScan", "%v", rows)
+		return 0
+	}
+	first := estRows("a = 1 and b = 1 and c > 5")
+	second := estRows("a = 2 and b = 2 and c >= 3")
+	both := estRows("(a = 1 and b = 1 and c > 5) or (a = 2 and b = 2 and c >= 3)")
+	require.Greater(t, second, 1.0)
+	require.InDelta(t, first+second, both, 0.02)
+}
+
 func TestMissingStatsIndexWithVirtualColumn(t *testing.T) {
 	// An index without statistics on a virtual column (which has no column statistics) and a column with
 	// statistics must still account for the virtual column, and report its statistics as missing.
