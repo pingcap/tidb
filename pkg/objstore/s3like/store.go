@@ -443,17 +443,12 @@ func (rs *Storage) DeleteFile(ctx context.Context, file string) error {
 	return rs.s3Cli.DeleteObject(ctx, file)
 }
 
-// s3DeleteObjectsLimit is the upper limit of objects in a delete request.
-// See https://docs.aws.amazon.com/AmazonS3/latest/API/API_DeleteObjects.html.
-// OSS shares the same limit, see https://www.alibabacloud.com/help/en/oss/developer-reference/deletemultipleobjects
-const s3DeleteObjectsLimit = 1000
-
 // DeleteFiles delete the files in batch in s3 storage.
 func (rs *Storage) DeleteFiles(ctx context.Context, files []string) error {
 	for len(files) > 0 {
 		batch := files
-		if len(batch) > s3DeleteObjectsLimit {
-			batch = batch[:s3DeleteObjectsLimit]
+		if len(batch) > storeapi.S3DeleteObjectsLimit {
+			batch = batch[:storeapi.S3DeleteObjectsLimit]
 		}
 		err := rs.s3Cli.DeleteObjects(ctx, batch)
 		if err != nil {
