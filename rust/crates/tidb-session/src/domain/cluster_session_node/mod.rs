@@ -954,8 +954,10 @@ impl<'s> ClusterServerSession<'s> {
         // (`inMViewDeltaMergeStmt`, `inMViewCompleteDeltaApplyStmt`), read at
         // the statement's for-update timestamp; any other write (SET,
         // DDL-adjacent statements) at its read timestamp.
+        // Go `ResetContextOfStmt` classifies an EXECUTE by its prepared
+        // statement (`InUpdateStmt` / `InDeleteStmt` / `InInsertStmt`).
         let is_dml = matches!(
-            stmt,
+            self.session.execute_target(stmt),
             Stmt::Dml(dml) if matches!(
                 dml.as_ref(),
                 tidb_ast::DmlStmt::Insert(_) | tidb_ast::DmlStmt::Update(_) | tidb_ast::DmlStmt::Delete(_)

@@ -30826,3 +30826,48 @@ fn test_upgrade_sysvars() {
         );
     }
 }
+
+/// Go `pessimistictest.TestPlanCacheSchemaChange`'s text-protocol half over
+/// unistore: Go `ResetContextOfStmt` classifies an `EXECUTE` by its prepared
+/// statement, so a prepared UPDATE in a pessimistic transaction reads at the
+/// for-update timestamp (`executorBuilder.getSnapshotTS`), cached plan or
+/// not, and sees the rows another session committed after the transaction
+/// began. Read at the start timestamp, the cached `EXECUTE` matched no row.
+#[test]
+fn a_prepared_update_reads_at_the_for_update_ts_like_go() {
+    let (stack, _users) = cop_backed_stack();
+    let factory = &stack.factory;
+    let mut tmp = factory.open_session(session_context(2101)).expect("session");
+    tmp.node_conn()
+        .execute_write("set global tidb_enable_prepared_plan_cache=ON")
+        .expect("set")
+        .expect("set");
+    let mut tk = factory.open_session(session_context(2102)).expect("session");
+    let mut tk3 = factory.open_session(session_context(2103)).expect("session");
+    for session in [&mut tk, &mut tk3] {
+        session.node_conn().execute_write("USE test").expect("use").expect("use");
+    }
+    let write = |session: &mut Session, sql: &str| {
+        session.node_conn().execute_write(sql).expect(sql).expect(sql).affected_rows
+    };
+    write(&mut tk, "create table t (id int primary key, v int, unique index iv (v), vv int)");
+    write(&mut tk, "insert into t values(1, 1, 1), (2, 2, 2), (4, 4, 4)");
+    write(&mut tk, "prepare update_stmt from 'update t set vv = vv + 1 where v = ?'");
+    write(&mut tk, "set @v = 1");
+    write(&mut tk, "execute update_stmt using @v");
+    tk.node_conn().control_transaction("BEGIN PESSIMISTIC").expect("begin");
+    write(&mut tk3, "alter table t drop index iv");
+    write(&mut tk3, "update t set v = 3 where v = 2");
+    write(&mut tk3, "update t set v = 5 where v = 4");
+    write(&mut tk, "set @v = 2");
+    assert_eq!(write(&mut tk, "execute update_stmt using @v"), 0);
+    assert_eq!(displayed(rows(&mut tk, "select @@last_plan_from_cache")), [["0"]]);
+    write(&mut tk, "set @v = 3");
+    assert_eq!(write(&mut tk, "execute update_stmt using @v"), 1);
+    assert_eq!(displayed(rows(&mut tk, "select @@last_plan_from_cache")), [["1"]]);
+    tk.node_conn().control_transaction("COMMIT").expect("commit");
+    assert_eq!(
+        displayed(rows(&mut tk, "select * from t order by id")),
+        [["1", "1", "2"], ["2", "3", "3"], ["4", "5", "4"]]
+    );
+}

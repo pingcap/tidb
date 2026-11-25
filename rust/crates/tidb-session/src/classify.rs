@@ -212,6 +212,21 @@ impl Session {
         self.statement_read_shape_bound(&stmt)
     }
 
+    /// The statement Go's `ResetContextOfStmt` classifies: an `EXECUTE`'s
+    /// prepared statement (`prepareStmt.PreparedAst.Stmt`), else the
+    /// statement itself.
+    #[must_use]
+    pub(crate) fn execute_target<'a>(&'a self, stmt: &'a Stmt) -> &'a Stmt {
+        if let Stmt::Session(session) = stmt {
+            if let tidb_ast::SessionStmt::Execute { name, .. } = &**session {
+                if let Some(prepared) = self.prepared_statements.get(name) {
+                    return &prepared.statement;
+                }
+            }
+        }
+        stmt
+    }
+
     /// Classifies an already-bound prepared statement without replacing its
     /// markers again. This is the fast path used by the cluster-session wire
     /// executor, which binds once and shares the resulting tree with planning.
