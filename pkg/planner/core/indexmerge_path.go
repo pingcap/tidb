@@ -385,6 +385,12 @@ func generateANDIndexMerge4NormalIndex(ds *logicalop.DataSource, normalPathCnt i
 		}
 	}
 
+	// Every row of the intersection is a row of each partial path's index, so a filter that
+	// a partial index guarantees is true for all of them.
+	for _, path := range partialPaths {
+		dedupedFinalFilters = ds.RemoveConditionsGuaranteedByIndex(path.Index, dedupedFinalFilters)
+	}
+
 	// Keep these partial filters as a part of table filters for safety if there is any parameter.
 	if expression.MaybeOverOptimized4PlanCache(ds.SCtx().GetExprCtx(), partialFilters...) {
 		dedupedFinalFilters = append(dedupedFinalFilters, partialFilters...)

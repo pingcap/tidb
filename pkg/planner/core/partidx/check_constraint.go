@@ -17,6 +17,7 @@ package partidx
 import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/ranger"
@@ -152,11 +153,32 @@ func implIsNotNull(rangerctx *context.RangerContext, targetCol *expression.Colum
 // column, but it rejects rows with 'A' that the index has. So the collation and coercibility
 // of every sub-expression must also match. A filter with constants that may change between
 // executions of a cached plan is never the same condition.
+// A comparison on a TIMESTAMP column depends on the session time zone, and the index keeps the
+// rows that met the condition in the time zone used when each row was written, so such a
+// condition is never the same condition either. `IS [NOT] NULL` does not depend on it.
 func IsSameCondition(ctx expression.BuildContext, filter, indexCond expression.Expression) bool {
 	evalCtx := ctx.GetEvalCtx()
 	return filter.Equal(evalCtx, indexCond) &&
 		sameCollations(evalCtx, filter, indexCond) &&
+		!dependsOnTimeZone(evalCtx, indexCond) &&
 		!expression.MaybeOverOptimized4PlanCache(ctx, filter)
+}
+
+func dependsOnTimeZone(evalCtx expression.EvalContext, expr expression.Expression) bool {
+	switch x := expr.(type) {
+	case *expression.Column:
+		return x.GetType(evalCtx).GetType() == mysql.TypeTimestamp
+	case *expression.ScalarFunction:
+		if x.FuncName.L == ast.IsNull {
+			return false
+		}
+		for _, arg := range x.GetArgs() {
+			if dependsOnTimeZone(evalCtx, arg) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func sameCollations(evalCtx expression.EvalContext, a, b expression.Expression) bool {

@@ -989,6 +989,28 @@ key idx_c (tenant_id, col_id) where c > 10)`)
 		require.Contains(t, plan, "intersection")
 		require.NotContains(t, plan, "Selection")
 		tk.MustQuery(mergeQuery).Check(testkit.Rows("1"))
+		// The same holds for an AND index merge of normal indexes: idx ia guarantees c > 10,
+		// so it is not evaluated on the table for the rows found through ib.
+		tk.MustExec("drop table if exists tn")
+		tk.MustExec("create table tn (a int, b int, c int, d int, key ia(a) where c > 10, key ib(b))")
+		tk.MustExec("insert into tn values (1, 1, 20, 1), (1, 1, 5, 1), (1, 2, 30, 1), (2, 1, 40, 1)")
+		mergeQuery = "select /*+ use_index_merge(tn, ia, ib) */ count(*) from tn where a = 1 and b = 1 and c > 10"
+		plan = fmt.Sprintf("%v", tk.MustQuery("explain format = 'brief' "+mergeQuery).Rows())
+		require.Contains(t, plan, "intersection")
+		require.NotContains(t, plan, "Selection")
+		tk.MustQuery(mergeQuery).Check(testkit.Rows("1"))
+		// A comparison on a TIMESTAMP column depends on the time zone, and the index keeps the
+		// rows that met the condition when they were written, so the filter is still evaluated.
+		tk.MustExec("drop table if exists tz")
+		tk.MustExec("set @@time_zone = '+00:00'")
+		tk.MustExec("create table tz (a int, ts timestamp, key idx_ts(a) where ts > '2026-01-01 00:00:00')")
+		tk.MustExec("insert into tz values (1, '2026-01-01 01:00:00')")
+		tk.MustExec("set @@time_zone = '-02:00'")
+		tzQuery := "select /*+ use_index(tz, idx_ts) */ count(*) from tz where a = 1 and ts > '2026-01-01 00:00:00'"
+		plan = fmt.Sprintf("%v", tk.MustQuery("explain format = 'brief' "+tzQuery).Rows())
+		require.Contains(t, plan, "IndexLookUp")
+		tk.MustQuery(tzQuery).Check(testkit.Rows("0"))
+		tk.MustExec("set @@time_zone = default")
 		// The guaranteed condition is also skipped when prefix index single scan is off.
 		tk.MustExec("set @@tidb_opt_prefix_index_single_scan = 0")
 		offQuery := "select /*+ use_index(t, idx_json) */ count(*) from t where tenant_id = 1 and sheet_id = 1 and col_id = 1 and value_json is not null"
