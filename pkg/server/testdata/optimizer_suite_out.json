@@ -233,7 +233,6 @@
                     },
                     {
                       "Candidate cost": 3605.5598,
-                      "FTS ILIKE round": false,
                       "Selected": true
                     }
                   ]
@@ -434,7 +433,6 @@
                 },
                 {
                   "Candidate cost": 304643.238,
-                  "FTS ILIKE round": false,
                   "Selected": true
                 }
               ]
@@ -673,7 +671,6 @@
                     },
                     {
                       "Candidate cost": 455.31399999999996,
-                      "FTS ILIKE round": false,
                       "Selected": true
                     }
                   ]

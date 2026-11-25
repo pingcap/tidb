@@ -1140,8 +1140,6 @@ type SessionVars struct {
 	// EnableLocalMatchAgainst enables row-wise no-score MATCH ... AGAINST
 	// evaluation in TiDB and permits the equivalent scalar expression to run in TiFlash.
 	EnableLocalMatchAgainst bool
-	// EnableFTSLikeFallback enables the substring-based MATCH alternative round.
-	EnableFTSLikeFallback bool
 
 	// EnableSemiJoinRewrite enables the SEMI_JOIN_REWRITE hint for subqueries in the where clause.
 	EnableSemiJoinRewrite bool

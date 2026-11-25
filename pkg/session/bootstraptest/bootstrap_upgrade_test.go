@@ -1156,6 +1156,49 @@ func TestAnalyzeDistsqlConcurrencyByUpgrade750To850(t *testing.T) {
 	require.Equal(t, int64(32), row.GetInt64(0))
 }
 
+func TestLocalMatchDefaultOnlyAffectsFreshBootstrap(t *testing.T) {
+	for _, persistedValue := range []string{variable.Off, variable.On} {
+		t.Run(persistedValue, func(t *testing.T) {
+			store, dom := session.CreateStoreAndBootstrap(t)
+			defer func() { require.NoError(t, store.Close()) }()
+			tk := testkit.NewTestKit(t, store)
+			tk.MustQuery("select variable_value from mysql.global_variables where variable_name='tidb_enable_local_match_against'").Check(testkit.Rows(variable.On))
+
+			// An old default OFF and an operator-set OFF have the same stored
+			// representation. Preserve either value rather than overriding an opt-out.
+			tk.MustExec("set global tidb_enable_local_match_against=" + persistedValue)
+			upgradeFromVersion := session.CurrentBootstrapVersion - 1
+			txn, err := store.Begin()
+			require.NoError(t, err)
+			require.NoError(t, meta.NewMutator(txn).FinishBootstrap(upgradeFromVersion))
+			require.NoError(t, txn.Commit(context.Background()))
+			revertVersionAndVariables(t, tk.Session(), int(upgradeFromVersion))
+			session.UnsetStoreBootstrapped(store.UUID())
+			dom.Close()
+
+			domUpgraded, err := session.BootstrapSession(store)
+			require.NoError(t, err)
+			defer domUpgraded.Close()
+			upgraded := testkit.NewTestKit(t, store)
+			upgradedVersion, err := session.GetBootstrapVersion(upgraded.Session())
+			require.NoError(t, err)
+			require.Equal(t, session.CurrentBootstrapVersion, upgradedVersion)
+			upgraded.MustQuery("select variable_value from mysql.global_variables where variable_name='tidb_enable_local_match_against'").Check(testkit.Rows(persistedValue))
+			want := "0"
+			if persistedValue == variable.On {
+				want = "1"
+			}
+			upgraded.MustQuery("select @@global.tidb_enable_local_match_against, @@session.tidb_enable_local_match_against").Check(testkit.Rows(want + " " + want))
+
+			// After TiFlash is upgraded, operators can adopt the new default for
+			// future sessions without changing the value of an existing session.
+			upgraded.MustExec("set global tidb_enable_local_match_against=default")
+			upgraded.MustQuery("select @@session.tidb_enable_local_match_against").Check(testkit.Rows(want))
+			testkit.NewTestKit(t, store).MustQuery("select @@session.tidb_enable_local_match_against").Check(testkit.Rows("1"))
+		})
+	}
+}
+
 func TestAutoAnalyzeConcurrencyDefaultOnlyAffectsFreshBootstrap(t *testing.T) {
 	store, dom := session.CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
