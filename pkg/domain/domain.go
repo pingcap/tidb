@@ -2167,6 +2167,12 @@ func (do *Domain) loadStatsWorker() {
 	do.cancelFns.mu.Unlock()
 
 	do.initStats(ctx)
+	if value, err := failpoint.Eval("github.com/pingcap/tidb/pkg/domain/skipPeriodicStatsRefresh"); err == nil && value == true {
+		// SQL integration tests load existing stats once and refresh analyzed tables explicitly.
+		logutil.BgLogger().Info("periodic stats refresh disabled for SQL integration tests")
+		return
+	}
+
 	statsHandle := do.StatsHandle()
 	var err error
 	for {
