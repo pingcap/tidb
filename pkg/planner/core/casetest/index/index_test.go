@@ -992,13 +992,28 @@ key idx_c (tenant_id, col_id) where c > 10)`)
 		// The same holds for an AND index merge of normal indexes: idx ia guarantees c > 10,
 		// so it is not evaluated on the table for the rows found through ib.
 		tk.MustExec("drop table if exists tn")
-		tk.MustExec("create table tn (a int, b int, c int, d int, key ia(a) where c > 10, key ib(b))")
+		tk.MustExec("create table tn (a int, b int, c int, d int, key ia(a) where c > 10, key ib(b), key ic(c))")
 		tk.MustExec("insert into tn values (1, 1, 20, 1), (1, 1, 5, 1), (1, 2, 30, 1), (2, 1, 40, 1)")
 		mergeQuery = "select /*+ use_index_merge(tn, ia, ib) */ count(*) from tn where a = 1 and b = 1 and c > 10"
 		plan = fmt.Sprintf("%v", tk.MustQuery("explain format = 'brief' "+mergeQuery).Rows())
 		require.Contains(t, plan, "intersection")
 		require.NotContains(t, plan, "Selection")
 		tk.MustQuery(mergeQuery).Check(testkit.Rows("1"))
+		// With a parameter, the index access conditions are also kept as table filters for
+		// safety, but c > 10, which ia guarantees, is still not one of them.
+		tk.MustExec("prepare stn from 'select /*+ use_index_merge(tn, ia, ic) */ count(*) from tn where a = ? and c > 10'")
+		tk.MustExec("set @a = 1")
+		tk.MustQuery("execute stn using @a").Check(testkit.Rows("2"))
+		tkProcess := tk.Session().ShowProcess()
+		tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: []*sessmgr.ProcessInfo{tkProcess}})
+		plan = fmt.Sprintf("%v", tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Rows())
+		require.Contains(t, plan, "intersection")
+		require.Contains(t, plan, "eq(test.tn.a, 1)")
+		require.NotContains(t, plan, "gt(test.tn.c, 10)")
+		tk.MustExec("set @a = 2")
+		tk.MustQuery("execute stn using @a").Check(testkit.Rows("1"))
+		tk.MustExec("set @a = 3")
+		tk.MustQuery("execute stn using @a").Check(testkit.Rows("0"))
 		// A comparison on a TIMESTAMP column depends on the time zone, and the index keeps the
 		// rows that met the condition when they were written, so the filter is still evaluated.
 		tk.MustExec("drop table if exists tz")
