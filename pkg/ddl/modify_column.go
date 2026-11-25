@@ -48,7 +48,6 @@ import (
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
-	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/filter"
 	"github.com/pingcap/tidb/pkg/util/generatedexpr"
@@ -58,10 +57,6 @@ import (
 
 func hasModifyFlag(col *model.ColumnInfo) bool {
 	return col.ChangingFieldType != nil || mysql.HasPreventNullInsertFlag(col.GetFlag())
-}
-
-func isNullToNotNullChange(oldCol, newCol *model.ColumnInfo) bool {
-	return !mysql.HasNotNullFlag(oldCol.GetFlag()) && mysql.HasNotNullFlag(newCol.GetFlag())
 }
 
 func isColumnCommentOnlyChange(oldCol, newCol *model.ColumnInfo) bool {
@@ -81,57 +76,6 @@ func clearModifyColumnTempFlags(col *model.ColumnInfo) {
 	}
 	col.DelFlag(mysql.PreventNullInsertFlag)
 	col.ChangingFieldType = nil
-}
-
-// adjustModifyColumnType applies nullability checks and execution restrictions to
-// the conversion classification. Restrictions may require a more conservative path.
-func adjustModifyColumnType(
-	args *model.ModifyColumnArgs,
-	tblInfo *model.TableInfo,
-	oldCol *model.ColumnInfo,
-	sqlMode mysql.SQLMode,
-	modifyType model.ModifyColumnType,
-) model.ModifyColumnType {
-	newCol := args.Column
-	if modifyType == model.ModifyTypeNoReorg {
-		// It's not NULL->NOTNULL change
-		if !isNullToNotNullChange(oldCol, newCol) {
-			return model.ModifyTypeNoReorg
-		}
-		return model.ModifyTypeNoReorgWithCheck
-	}
-
-	// For backward compatibility
-	if args.ModifyColumnType == model.ModifyColumnType(mysql.TypeNull) {
-		return model.ModifyTypeReorg
-	}
-
-	// FIXME(joechenrh): handle partition and TiFlash replica case
-	if tblInfo.Partition != nil || (tblInfo.TiFlashReplica != nil && tblInfo.TiFlashReplica.Count > 0) {
-		return model.ModifyTypeReorg
-	}
-
-	failpoint.Inject("disableLossyDDLOptimization", func(val failpoint.Value) {
-		if v, ok := val.(bool); ok && v {
-			failpoint.Return(model.ModifyTypeReorg)
-		}
-	})
-
-	// FIXME(joechenrh): remove this when stats correctness is resolved.
-	// Since stats may store bytes encoded by codec.EncodeKey, we should disable the optimization
-	// if the same data produces different encoded bytes for the old and new types.
-	if (isIntegerChange(oldCol, args.Column) &&
-		mysql.HasUnsignedFlag(oldCol.GetFlag()) != mysql.HasUnsignedFlag(args.Column.GetFlag())) ||
-		(isCharChange(oldCol, args.Column) &&
-			!collate.CompatibleCollate(oldCol.GetCollate(), args.Column.GetCollate())) {
-		return model.ModifyTypeReorg
-	}
-
-	if !sqlMode.HasStrictMode() {
-		return model.ModifyTypeReorg
-	}
-
-	return modifyType
 }
 
 func getChangingCol(
@@ -261,7 +205,8 @@ func (w *worker) onModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, 
 	}
 
 	// For first time running this job, or the job from older version,
-	// we need to fill the ModifyColumnType.
+	// validate and resolve ModifyColumnType from current metadata.
+	resolvedModifyType := false
 	if args.ModifyColumnType == model.ModifyTypeNone ||
 		args.ModifyColumnType == model.ModifyColumnType(mysql.TypeNull) {
 		// Check the modify types again, as the type may be changed by other no-reorg modify-column jobs.
@@ -272,25 +217,20 @@ func (w *worker) onModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, 
 		// Previously, the second DDL will be submitted successfully (VARCHAR(255) utf8 -> VARCHAR(100) utf8 is OK)
 		// but fail during execution, since the columnID has changed. However, as we now may reuse the old column,
 		// we must check the type again here as utf8mb4->utf8 is an invalid change.
-		change, analyzeErr := analyzeModifyColumn(tblInfo, oldCol, args.Column)
-		if analyzeErr != nil {
+		modifyType, resolveErr := resolveModifyColumnType(tblInfo, oldCol, args.Column, args.ModifyColumnType, job.SQLMode)
+		if resolveErr != nil {
 			job.State = model.JobStateCancelled
-			return ver, errors.Trace(analyzeErr)
+			return ver, errors.Trace(resolveErr)
 		}
 
-		args.ModifyColumnType = adjustModifyColumnType(args, tblInfo, oldCol, job.SQLMode, change)
+		args.ModifyColumnType = modifyType
+		resolvedModifyType = true
 		logutil.DDLLogger().Info("get type for modify column",
 			zap.String("query", job.Query),
 			zap.String("oldColumnName", args.OldColumnName.L),
 			zap.Int64("oldColumnID", oldCol.ID),
 			zap.String("type", model.ModifyTypeToString(args.ModifyColumnType)),
 		)
-		if oldCol.GetType() == mysql.TypeVarchar && args.Column.GetType() == mysql.TypeString &&
-			(args.ModifyColumnType == model.ModifyTypeNoReorgWithCheck ||
-				args.ModifyColumnType == model.ModifyTypeIndexReorg) {
-			logutil.DDLLogger().Info("meet varchar to char modify column, change type to precheck")
-			args.ModifyColumnType = model.ModifyTypePrecheck
-		}
 	}
 
 	if job.IsRollingback() {
@@ -314,9 +254,11 @@ func (w *worker) onModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, 
 		return ver, errors.Trace(err)
 	}
 
-	if err = checkModifyTypes(oldCol, args.Column, isColumnWithIndex(oldCol.Name.L, tblInfo.Indices)); err != nil {
-		job.State = model.JobStateCancelled
-		return ver, errors.Trace(err)
+	if !resolvedModifyType {
+		if err = checkModifyTypes(oldCol, args.Column, isColumnWithIndex(oldCol.Name.L, tblInfo.Indices)); err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
 	}
 
 	if err = checkColumnReferencedByPartialCondition(tblInfo, args.Column.Name); err != nil {
@@ -966,8 +908,7 @@ func (w *worker) precheckForVarcharToChar(
 	// If existing data is in range, we continue running without row reorg.
 	// The flag is retained, so string with trailing spaces still can't be inserted.
 	if err == nil {
-		modifyType := classifyColumnChange(tblInfo, oldCol, newCol)
-		args.ModifyColumnType = adjustModifyColumnType(args, tblInfo, oldCol, job.SQLMode, modifyType)
+		args.ModifyColumnType = resolveModifyColumnTypeAfterPrecheck(tblInfo, oldCol, newCol, args.ModifyColumnType, job.SQLMode)
 		logutil.DDLLogger().Info("precheck done, change modify type",
 			zap.String("query", job.Query),
 			zap.String("oldColumnName", args.OldColumnName.L),

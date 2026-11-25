@@ -369,6 +369,11 @@ func TestModifyColumn(t *testing.T) {
 		{"varchar(10) character set utf8", "char(10) character set gbk", dbterror.ErrUnsupportedModifyCharset.GenWithStackByArgs("charset from utf8 to gbk")},
 		{"varchar(10) character set utf8", "varchar(10) character set gbk", dbterror.ErrUnsupportedModifyCharset.GenWithStackByArgs("charset from utf8 to gbk")},
 		{"varchar(10) character set gbk", "varchar(255) character set gbk", nil},
+		{"binary(4)", "char(10)", dbterror.ErrUnsupportedModifyCharset.GenWithStackByArgs("charset from binary to utf8mb4")},
+		{"varchar(10)", "varchar(10) character set ascii", dbterror.ErrUnsupportedModifyCharset.GenWithStackByArgs("charset from utf8mb4 to ascii")},
+		{"varchar(10)", "varchar(8) character set ascii", nil},
+		{"char(4) character set utf8mb4", "varchar(10) character set ascii", nil},
+		{"date", "bit(8)", dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("change from original type date to bit(8) is currently unsupported yet")},
 	}
 	for _, tt := range tests {
 		colA := colDefStrToColInfo(t, tt.origin, ctx)
@@ -380,6 +385,172 @@ func TestModifyColumn(t *testing.T) {
 			require.EqualError(t, err, tt.err.Error())
 		}
 	}
+
+	t.Run("primaryKeyAndIndexedCollation", func(t *testing.T) {
+		pkOld := colDefStrToColInfo(t, "int", ctx)
+		pkOld.AddFlag(mysql.PriKeyFlag)
+		pkNew := colDefStrToColInfo(t, "tinyint", ctx)
+		require.EqualError(t, checkModifyTypes(pkOld, pkNew, true), "[ddl:8200]Unsupported modify column: this column has primary key flag")
+
+		idxOld := colDefStrToColInfo(t, "varchar(10) collate utf8_bin", ctx)
+		idxNew := colDefStrToColInfo(t, "varchar(10) collate utf8_general_ci", ctx)
+		require.EqualError(
+			t,
+			checkModifyTypes(idxOld, idxNew, true),
+			"[ddl:8200]Unsupported modifying collation of column 'a' from 'utf8_bin' to 'utf8_general_ci' when index is defined on it.",
+		)
+
+		reorgOld := colDefStrToColInfo(t, "char(20) collate utf8mb4_bin", ctx)
+		reorgNew := colDefStrToColInfo(t, "varchar(10) collate utf8_unicode_ci", ctx)
+		require.NoError(t, checkModifyTypes(reorgOld, reorgNew, true))
+	})
+
+	t.Run("resolveModifyColumnType", func(t *testing.T) {
+		newTable := func(col *model.ColumnInfo, hasIndex, partitioned, hasTiFlash bool) *model.TableInfo {
+			col.ID = 1
+			col.Offset = 0
+			tbl := &model.TableInfo{Columns: []*model.ColumnInfo{col}}
+			if hasIndex {
+				tbl.Indices = []*model.IndexInfo{{
+					ID:      1,
+					Name:    ast.NewCIStr("idx_a"),
+					Columns: []*model.IndexColumn{{Name: col.Name, Offset: 0, Length: -1}},
+				}}
+			}
+			if partitioned {
+				tbl.Partition = &model.PartitionInfo{}
+			}
+			if hasTiFlash {
+				tbl.TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1}
+			}
+			return tbl
+		}
+
+		for _, tc := range []struct {
+			name        string
+			origin      string
+			to          string
+			hasIndex    bool
+			partitioned bool
+			hasTiFlash  bool
+			storedType  model.ModifyColumnType
+			sqlMode     mysql.SQLMode
+			wantInitial model.ModifyColumnType
+			wantPostPre model.ModifyColumnType
+		}{
+			{
+				name:        "intWidening",
+				origin:      "int",
+				to:          "bigint",
+				sqlMode:     mysql.ModeStrictAllTables,
+				wantInitial: model.ModifyTypeNoReorg,
+			},
+			{
+				name:        "intWideningNullToNotNull",
+				origin:      "int",
+				to:          "bigint not null",
+				sqlMode:     mysql.ModeStrictAllTables,
+				wantInitial: model.ModifyTypeNoReorgWithCheck,
+			},
+			{
+				name:        "intNarrowStrict",
+				origin:      "bigint",
+				to:          "int",
+				sqlMode:     mysql.ModeStrictAllTables,
+				wantInitial: model.ModifyTypeNoReorgWithCheck,
+			},
+			{
+				name:        "intNarrowNonStrict",
+				origin:      "bigint",
+				to:          "int",
+				sqlMode:     mysql.ModeNone,
+				wantInitial: model.ModifyTypeReorg,
+			},
+			{
+				name:        "intNarrowLegacyTypeNull",
+				origin:      "bigint",
+				to:          "int",
+				storedType:  model.ModifyColumnType(mysql.TypeNull),
+				sqlMode:     mysql.ModeStrictAllTables,
+				wantInitial: model.ModifyTypeReorg,
+			},
+			{
+				name:        "intNarrowPartitioned",
+				origin:      "bigint",
+				to:          "int",
+				partitioned: true,
+				sqlMode:     mysql.ModeStrictAllTables,
+				wantInitial: model.ModifyTypeReorg,
+			},
+			{
+				name:        "intNarrowTiFlash",
+				origin:      "bigint",
+				to:          "int",
+				hasTiFlash:  true,
+				sqlMode:     mysql.ModeStrictAllTables,
+				wantInitial: model.ModifyTypeReorg,
+			},
+			{
+				name:        "intSignToggleStatsFallback",
+				origin:      "int",
+				to:          "int unsigned",
+				sqlMode:     mysql.ModeStrictAllTables,
+				wantInitial: model.ModifyTypeReorg,
+			},
+			{
+				name:        "varcharToCharPrecheckNoIndex",
+				origin:      "varchar(20) collate utf8mb4_bin",
+				to:          "char(10) collate utf8mb4_bin",
+				sqlMode:     mysql.ModeStrictAllTables,
+				wantInitial: model.ModifyTypePrecheck,
+				wantPostPre: model.ModifyTypeNoReorgWithCheck,
+			},
+			{
+				name:        "varcharToCharPrecheckIndexedBin",
+				origin:      "varchar(20) collate utf8mb4_bin",
+				to:          "char(10) collate utf8mb4_bin",
+				hasIndex:    true,
+				sqlMode:     mysql.ModeStrictAllTables,
+				wantInitial: model.ModifyTypePrecheck,
+				wantPostPre: model.ModifyTypeIndexReorg,
+			},
+			{
+				name:        "charToVarcharNoIndex",
+				origin:      "char(10) collate utf8mb4_bin",
+				to:          "varchar(20) collate utf8mb4_bin",
+				sqlMode:     mysql.ModeStrictAllTables,
+				wantInitial: model.ModifyTypeNoReorg,
+			},
+			{
+				name:        "charToVarcharIndexedBin",
+				origin:      "char(10) collate utf8mb4_bin",
+				to:          "varchar(20) collate utf8mb4_bin",
+				hasIndex:    true,
+				sqlMode:     mysql.ModeStrictAllTables,
+				wantInitial: model.ModifyTypeIndexReorg,
+			},
+			{
+				name:        "binaryWideningReorg",
+				origin:      "binary(4)",
+				to:          "binary(8)",
+				sqlMode:     mysql.ModeStrictAllTables,
+				wantInitial: model.ModifyTypeReorg,
+			},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				oldCol := colDefStrToColInfo(t, tc.origin, ctx)
+				newCol := colDefStrToColInfo(t, tc.to, ctx)
+				tbl := newTable(oldCol, tc.hasIndex, tc.partitioned, tc.hasTiFlash)
+				got, err := resolveModifyColumnType(tbl, oldCol, newCol, tc.storedType, tc.sqlMode)
+				require.NoError(t, err)
+				require.Equal(t, tc.wantInitial, got)
+				if tc.wantPostPre != model.ModifyTypeNone {
+					post := resolveModifyColumnTypeAfterPrecheck(tbl, oldCol, newCol, got, tc.sqlMode)
+					require.Equal(t, tc.wantPostPre, post)
+				}
+			})
+		}
+	})
 }
 
 func TestProcessModifyColumnOptionsGenerated(t *testing.T) {

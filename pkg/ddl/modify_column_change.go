@@ -19,6 +19,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -28,8 +29,16 @@ import (
 	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
-// analyzeModifyColumn is shared by submission and execution. Execution must use
-// current metadata, since another DDL may have changed the column since submission.
+// =============================================================================
+// 1. Entry points
+// =============================================================================
+
+// analyzeModifyColumn validates conversion support and returns the base
+// ModifyColumnType (metadata-only, validation-only, index rewrite, or row
+// rewrite) without execution-time restrictions.
+//
+// Shared by submission and execution. Execution must evaluate against current
+// metadata, since another DDL may have changed the column since submission.
 func analyzeModifyColumn(tbl *model.TableInfo, oldCol, newCol *model.ColumnInfo) (model.ModifyColumnType, error) {
 	if err := checkModifyTypes(oldCol, newCol, isColumnWithIndex(oldCol.Name.L, tbl.Indices)); err != nil {
 		return model.ModifyTypeReorg, err
@@ -37,47 +46,199 @@ func analyzeModifyColumn(tbl *model.TableInfo, oldCol, newCol *model.ColumnInfo)
 	return classifyColumnChange(tbl, oldCol, newCol), nil
 }
 
-// classifyColumnChange returns the base ModifyType for the conversion. Execution
-// may add nullability checks or fall back to a more conservative ModifyType.
+// resolveModifyColumnType validates and determines the initial execution
+// ModifyColumnType for a MODIFY/CHANGE COLUMN job against current metadata.
+func resolveModifyColumnType(
+	tbl *model.TableInfo,
+	oldCol, newCol *model.ColumnInfo,
+	storedType model.ModifyColumnType,
+	sqlMode mysql.SQLMode,
+) (model.ModifyColumnType, error) {
+	baseType, err := analyzeModifyColumn(tbl, oldCol, newCol)
+	if err != nil {
+		return model.ModifyTypeReorg, err
+	}
+	modifyType := applyExecutionRestrictions(tbl, oldCol, newCol, storedType, sqlMode, baseType)
+	if needsVarcharToCharPrecheck(oldCol, newCol, modifyType) {
+		return model.ModifyTypePrecheck, nil
+	}
+	return modifyType, nil
+}
+
+// resolveModifyColumnTypeAfterPrecheck determines the execution
+// ModifyColumnType after VARCHAR -> CHAR data precheck succeeds.
+func resolveModifyColumnTypeAfterPrecheck(
+	tbl *model.TableInfo,
+	oldCol, newCol *model.ColumnInfo,
+	storedType model.ModifyColumnType,
+	sqlMode mysql.SQLMode,
+) model.ModifyColumnType {
+	baseType := classifyColumnChange(tbl, oldCol, newCol)
+	return applyExecutionRestrictions(tbl, oldCol, newCol, storedType, sqlMode, baseType)
+}
+
+// noReorgDataStrict reports whether the column conversion is strictly
+// metadata-only regardless of existing row data. Nullability is checked
+// separately by callers.
+func noReorgDataStrict(tbl *model.TableInfo, oldCol, newCol *model.ColumnInfo) bool {
+	return classifyColumnChange(tbl, oldCol, newCol) == model.ModifyTypeNoReorg
+}
+
+func isNullToNotNullChange(oldCol, newCol *model.ColumnInfo) bool {
+	return !mysql.HasNotNullFlag(oldCol.GetFlag()) && mysql.HasNotNullFlag(newCol.GetFlag())
+}
+
+// =============================================================================
+// 2. Conversion support validation
+// =============================================================================
+
+// checkModifyTypes validates whether modifying from -> to is supported at all
+// (either metadata-only or via reorganization). It checks cross-type support,
+// primary key restrictions, and charset/collation compatibility.
+func checkModifyTypes(from, to *model.ColumnInfo, hasIndex bool) error {
+	fromFt := &from.FieldType
+	toFt := &to.FieldType
+
+	if from.GetType() != to.GetType() && !isTypeChangeSupported(fromFt.GetType(), toFt.GetType()) {
+		msg := fmt.Sprintf("change from original type %v to %v is currently unsupported yet", fromFt.CompactStr(), toFt.CompactStr())
+		return dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs(msg)
+	}
+
+	// Check whether the type/length/scale/signedness/member change itself
+	// (ignoring charset) requires data validation or reorganization rather than
+	// a metadata-only update. CHAR -> VARCHAR under new collation is included
+	// so primary-key rejection and reorg-assisted charset conversion stay consistent.
+	typeNeedsReorg := classifyColumnValueStorage(from, to) != model.ModifyTypeNoReorg ||
+		convertBetweenCharAndVarchar(from.GetType(), to.GetType())
+	if typeNeedsReorg && mysql.HasPriKeyFlag(fromFt.GetFlag()) {
+		return dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("this column has primary key flag")
+	}
+
+	err := checkModifyCharsetAndCollation(toFt.GetCharset(), toFt.GetCollate(), fromFt.GetCharset(), fromFt.GetCollate(), hasIndex)
+	if err == nil {
+		return nil
+	}
+	if toFt.GetCharset() == charset.CharsetGBK || fromFt.GetCharset() == charset.CharsetGBK {
+		return errors.Trace(err)
+	}
+	if strings.Contains(err.Error(), "Unsupported modifying collation") {
+		colErrMsg := "Unsupported modifying collation of column '%s' from '%s' to '%s' when index is defined on it."
+		err = dbterror.ErrUnsupportedModifyCollation.GenWithStack(colErrMsg, from.Name.L, from.GetCollate(), to.GetCollate())
+	}
+
+	// When the type change already triggers reorganization, non-GBK charset and
+	// collation changes are handled during reorg rather than rejected up front.
+	// Note: ErrUnsupportedModifyCharset and ErrUnsupportedModifyCollation share
+	// ErrUnsupportedDDLOperation (code 8200).
+	if typeNeedsReorg && (dbterror.ErrUnsupportedModifyCharset.Equal(err) || dbterror.ErrUnsupportedModifyCollation.Equal(err)) {
+		return nil
+	}
+	return errors.Trace(err)
+}
+
+// isTypeChangeSupported reports whether cross-type reorganization from
+// originTp to toTp is implemented. Callers handle originTp == toTp separately.
+func isTypeChangeSupported(originTp, toTp byte) bool {
+	if originTp == mysql.TypeTiDBVectorFloat32 || toTp == mysql.TypeTiDBVectorFloat32 {
+		// TODO: Cross-type conversion involving vector is not supported.
+		return false
+	}
+
+	switch toTp {
+	case mysql.TypeBit:
+		// TODO: date/datetime/timestamp/time/year/string/json -> bit are not compatible with MySQL yet.
+		switch originTp {
+		case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp,
+			mysql.TypeDuration, mysql.TypeYear, mysql.TypeJSON:
+			return false
+		default:
+			return !types.IsString(originTp)
+		}
+	case mysql.TypeEnum, mysql.TypeSet:
+		// TODO: temporal/decimal/float/double/json/bit -> enum/set are not supported yet.
+		switch originTp {
+		case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp,
+			mysql.TypeDuration, mysql.TypeYear,
+			mysql.TypeNewDecimal, mysql.TypeFloat, mysql.TypeDouble,
+			mysql.TypeJSON, mysql.TypeBit:
+			return false
+		}
+	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
+		// TODO: enum/set/bit/decimal/float/double -> date/datetime/timestamp are not supported yet.
+		switch originTp {
+		case mysql.TypeEnum, mysql.TypeSet, mysql.TypeBit,
+			mysql.TypeNewDecimal, mysql.TypeFloat, mysql.TypeDouble:
+			return false
+		}
+	case mysql.TypeDuration:
+		// TODO: enum/set/bit -> time are not supported yet.
+		switch originTp {
+		case mysql.TypeEnum, mysql.TypeSet, mysql.TypeBit:
+			return false
+		}
+	}
+	return true
+}
+
+// =============================================================================
+// 3. Storage & index conversion classification
+// =============================================================================
+
+// classifyColumnChange returns the base ModifyColumnType from row storage and
+// index encoding requirements. Nullability and execution-time restrictions are
+// applied later in applyExecutionRestrictions.
 func classifyColumnChange(tbl *model.TableInfo, oldCol, newCol *model.ColumnInfo) model.ModifyColumnType {
 	change := classifyColumnValues(oldCol, newCol)
 	if change == model.ModifyTypeReorg {
 		return change
 	}
-	hasIndex := len(getRelatedIndexIDs(tbl, oldCol.ID, false)) != 0
-	// Indexed CHAR -> VARCHAR retains the existing validation path because
-	// restored index values can change even when row values fit unchanged.
-	if hasIndex && oldCol.GetType() == mysql.TypeString && types.IsTypeVarchar(newCol.GetType()) {
-		if !isCharChange(oldCol, newCol) || types.IsBinaryStr(&oldCol.FieldType) || types.IsBinaryStr(&newCol.FieldType) {
+	if !hasRelatedIndex(tbl, oldCol.ID) {
+		return change
+	}
+	// Indexed CHAR -> VARCHAR cannot stay metadata-only because index restored
+	// data encoding can change even when row values fit unchanged.
+	if isCharToVarchar(oldCol, newCol) {
+		if !isNonBinaryCharChange(oldCol, newCol) {
 			return model.ModifyTypeReorg
 		}
 		change = model.ModifyTypeNoReorgWithCheck
 	}
-	if change == model.ModifyTypeNoReorgWithCheck && hasIndex && needIndexReorg(oldCol, newCol) {
+	if change == model.ModifyTypeNoReorgWithCheck && needIndexReorg(oldCol, newCol) {
 		return model.ModifyTypeIndexReorg
 	}
 	return change
 }
 
-// noReorgDataStrict is the data-independent predicate used by dependent objects
-// and execution flags. Nullability is checked separately by the caller.
-func noReorgDataStrict(tbl *model.TableInfo, oldCol, newCol *model.ColumnInfo) bool {
-	return classifyColumnChange(tbl, oldCol, newCol) == model.ModifyTypeNoReorg
-}
-
-// classifyColumnValues decides whether row values can be reused, need validation,
-// or must be rewritten. Index requirements and job restrictions are applied later.
+// classifyColumnValues decides whether existing row values can be reused as-is,
+// need validation, or must be rewritten.
 func classifyColumnValues(oldCol, newCol *model.ColumnInfo) model.ModifyColumnType {
-	// ENUM/SET store ordinals rather than encoded strings. Safe UTF8/Latin1
-	// widening also preserves the existing representation.
-	if oldCol.GetCharset() != newCol.GetCharset() &&
-		oldCol.GetType() != mysql.TypeEnum && oldCol.GetType() != mysql.TypeSet &&
-		!(newCol.GetCharset() == charset.CharsetUTF8MB4 &&
-			(oldCol.GetCharset() == charset.CharsetUTF8 || oldCol.GetCharset() == charset.CharsetLatin1)) {
+	if !isCharsetMetadataCompatible(oldCol, newCol) {
 		return model.ModifyTypeReorg
 	}
+	return classifyColumnValueStorage(oldCol, newCol)
+}
+
+// isCharsetMetadataCompatible reports whether stored values remain valid
+// without row conversion when the column charset changes.
+// ENUM/SET store ordinals rather than encoded strings; UTF8/Latin1 -> UTF8MB4
+// widening also preserves existing byte representations.
+func isCharsetMetadataCompatible(oldCol, newCol *model.ColumnInfo) bool {
+	if oldCol.GetCharset() == newCol.GetCharset() {
+		return true
+	}
+	if oldCol.GetType() == mysql.TypeEnum || oldCol.GetType() == mysql.TypeSet {
+		return true
+	}
+	return newCol.GetCharset() == charset.CharsetUTF8MB4 &&
+		(oldCol.GetCharset() == charset.CharsetUTF8 || oldCol.GetCharset() == charset.CharsetLatin1)
+}
+
+// classifyColumnValueStorage classifies a column conversion by type family,
+// length, scale, signedness, and member list, independent of charset changes.
+func classifyColumnValueStorage(oldCol, newCol *model.ColumnInfo) model.ModifyColumnType {
 	sameType := oldCol.GetType() == newCol.GetType()
 	sameSign := mysql.HasUnsignedFlag(oldCol.GetFlag()) == mysql.HasUnsignedFlag(newCol.GetFlag())
+
 	switch {
 	case isIntegerChange(oldCol, newCol):
 		// Display widths do not describe the stored integer range.
@@ -111,32 +272,21 @@ func classifyColumnValues(oldCol, newCol *model.ColumnInfo) model.ModifyColumnTy
 	return model.ModifyTypeReorg
 }
 
-func isStringStorageType(tp byte) bool {
-	switch tp {
-	case mysql.TypeString, mysql.TypeVarchar, mysql.TypeVarString,
-		mysql.TypeTinyBlob, mysql.TypeBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
-		return true
-	default:
-		return false
-	}
-}
-
 func classifyStringValues(oldCol, newCol *model.ColumnInfo) model.ModifyColumnType {
 	if oldCol.GetType() == mysql.TypeString && newCol.GetType() == mysql.TypeString &&
-		types.IsBinaryStr(&oldCol.FieldType) {
+		types.IsBinaryStr(&oldCol.FieldType) && types.IsBinaryStr(&newCol.FieldType) {
 		// BINARY pads with zero bytes; widening changes existing values too.
 		if oldCol.GetFlen() == newCol.GetFlen() {
 			return model.ModifyTypeNoReorg
 		}
 		return model.ModifyTypeReorg
 	}
-	varcharToChar := types.IsTypeVarchar(oldCol.GetType()) && newCol.GetType() == mysql.TypeString
-	if !varcharToChar && preservesColumnRange(oldCol, newCol) {
+	if !isVarcharToChar(oldCol, newCol) && preservesColumnRange(oldCol, newCol) {
 		return model.ModifyTypeNoReorg
 	}
-	// Only nonbinary CHAR/VARCHAR conversions have a length/trailing-space
+	// Only non-binary CHAR/VARCHAR conversions have a length/trailing-space
 	// validation path. Binary padding and other string conversions require rewriting.
-	if isCharChange(oldCol, newCol) && !types.IsBinaryStr(&oldCol.FieldType) && !types.IsBinaryStr(&newCol.FieldType) {
+	if isNonBinaryCharChange(oldCol, newCol) {
 		return model.ModifyTypeNoReorgWithCheck
 	}
 	return model.ModifyTypeReorg
@@ -158,51 +308,102 @@ func needIndexReorg(oldCol, changingCol *model.ColumnInfo) bool {
 
 	intest.Assert(isCharChange(oldCol, changingCol))
 
-	// Check index key part, ref tablecodec.GenIndexKey
+	// Check index key part, ref tablecodec.GenIndexKey.
 	if !collate.CompatibleCollate(oldCol.GetCollate(), changingCol.GetCollate()) {
 		return true
 	}
 
-	// Check index value part, ref tablecodec.GenIndexValuePortal
+	// Check index value part, ref tablecodec.GenIndexValuePortal.
 	// TODO(joechenrh): It's better to check each index here, because not all indexes need
 	// reorg even if the below condition is true.
 	return types.NeedRestoredData(&oldCol.FieldType) != types.NeedRestoredData(&changingCol.FieldType)
 }
 
-// checkModifyTypes validates whether the conversion is supported, including
-// conversions that require reorganization. It does not imply metadata safety.
-func checkModifyTypes(from, to *model.ColumnInfo, needRewriteCollationData bool) error {
-	fromFt := &from.FieldType
-	toFt := &to.FieldType
-	canReorg, err := checkModifyTypeCompatible(fromFt, toFt)
-	if err != nil {
-		if !canReorg {
-			return errors.Trace(dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs(err.Error()))
-		}
-		if mysql.HasPriKeyFlag(fromFt.GetFlag()) {
-			msg := "this column has primary key flag"
-			return dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs(msg)
+func hasRelatedIndex(tbl *model.TableInfo, colID int64) bool {
+	for _, idx := range tbl.Indices {
+		if idx.HasColumnInIndexColumns(tbl, colID) {
+			return true
 		}
 	}
-
-	err = checkModifyCharsetAndCollation(toFt.GetCharset(), toFt.GetCollate(), fromFt.GetCharset(), fromFt.GetCollate(), needRewriteCollationData)
-
-	if err != nil {
-		if toFt.GetCharset() == charset.CharsetGBK || fromFt.GetCharset() == charset.CharsetGBK {
-			return errors.Trace(err)
-		}
-		if strings.Contains(err.Error(), "Unsupported modifying collation") {
-			colErrMsg := "Unsupported modifying collation of column '%s' from '%s' to '%s' when index is defined on it."
-			err = dbterror.ErrUnsupportedModifyCollation.GenWithStack(colErrMsg, from.Name.L, from.GetCollate(), to.GetCollate())
-		}
-
-		// column type change can handle the charset change between these two types in the process of the reorg.
-		if dbterror.ErrUnsupportedModifyCharset.Equal(err) && canReorg {
-			return nil
-		}
-	}
-	return errors.Trace(err)
+	return false
 }
+
+// =============================================================================
+// 4. Execution-time restrictions & precheck
+// =============================================================================
+
+// applyExecutionRestrictions adjusts a base conversion classification for
+// nullability checks, legacy job compatibility, and runtime restrictions
+// (partitions, TiFlash, stats encoding, and non-strict SQL mode).
+// Restrictions can only move a change to a more conservative execution path.
+func applyExecutionRestrictions(
+	tbl *model.TableInfo,
+	oldCol, newCol *model.ColumnInfo,
+	storedType model.ModifyColumnType,
+	sqlMode mysql.SQLMode,
+	baseType model.ModifyColumnType,
+) model.ModifyColumnType {
+	if baseType == model.ModifyTypeNoReorg {
+		if isNullToNotNullChange(oldCol, newCol) {
+			return model.ModifyTypeNoReorgWithCheck
+		}
+		return model.ModifyTypeNoReorg
+	}
+
+	// Backward compatibility: older TiDB versions stored mysql.TypeNull to mark
+	// jobs that could need reorg; keep them on the conservative full-reorg path.
+	if storedType == model.ModifyColumnType(mysql.TypeNull) {
+		return model.ModifyTypeReorg
+	}
+
+	// FIXME(joechenrh): handle partition and TiFlash replica case.
+	if tbl.Partition != nil || (tbl.TiFlashReplica != nil && tbl.TiFlashReplica.Count > 0) {
+		return model.ModifyTypeReorg
+	}
+
+	failpoint.Inject("disableLossyDDLOptimization", func(val failpoint.Value) {
+		if v, ok := val.(bool); ok && v {
+			failpoint.Return(model.ModifyTypeReorg)
+		}
+	})
+
+	// FIXME(joechenrh): remove this when stats correctness is resolved.
+	// Since stats may store bytes encoded by codec.EncodeKey, disable the
+	// optimization if the same data produces different encoded bytes for the
+	// old and new types.
+	if hasIncompatibleStatsEncoding(oldCol, newCol) {
+		return model.ModifyTypeReorg
+	}
+
+	if !sqlMode.HasStrictMode() {
+		return model.ModifyTypeReorg
+	}
+
+	return baseType
+}
+
+func hasIncompatibleStatsEncoding(oldCol, newCol *model.ColumnInfo) bool {
+	if isIntegerChange(oldCol, newCol) {
+		return mysql.HasUnsignedFlag(oldCol.GetFlag()) != mysql.HasUnsignedFlag(newCol.GetFlag())
+	}
+	if isCharChange(oldCol, newCol) {
+		return !collate.CompatibleCollate(oldCol.GetCollate(), newCol.GetCollate())
+	}
+	return false
+}
+
+// needsVarcharToCharPrecheck reports whether a VARCHAR -> CHAR conversion
+// should start in ModifyTypePrecheck to verify no existing values have trailing
+// spaces before deciding between a no-row-reorg path and full reorg.
+func needsVarcharToCharPrecheck(oldCol, newCol *model.ColumnInfo, modifyType model.ModifyColumnType) bool {
+	return oldCol.GetType() == mysql.TypeVarchar &&
+		newCol.GetType() == mysql.TypeString &&
+		(modifyType == model.ModifyTypeNoReorgWithCheck || modifyType == model.ModifyTypeIndexReorg)
+}
+
+// =============================================================================
+// 5. Type predicates
+// =============================================================================
 
 func isIntegerChange(from, to *model.ColumnInfo) bool {
 	return mysql.IsIntegerType(from.GetType()) && mysql.IsIntegerType(to.GetType())
@@ -212,159 +413,49 @@ func isCharChange(from, to *model.ColumnInfo) bool {
 	return types.IsTypeChar(from.GetType()) && types.IsTypeChar(to.GetType())
 }
 
-// IsElemsChangedToModifyColumn check elems changed
+func isCharToVarchar(oldCol, newCol *model.ColumnInfo) bool {
+	return oldCol.GetType() == mysql.TypeString && types.IsTypeVarchar(newCol.GetType())
+}
+
+func isVarcharToChar(oldCol, newCol *model.ColumnInfo) bool {
+	return types.IsTypeVarchar(oldCol.GetType()) && newCol.GetType() == mysql.TypeString
+}
+
+func isNonBinaryCharChange(oldCol, newCol *model.ColumnInfo) bool {
+	return isCharChange(oldCol, newCol) &&
+		!types.IsBinaryStr(&oldCol.FieldType) &&
+		!types.IsBinaryStr(&newCol.FieldType)
+}
+
+func isStringStorageType(tp byte) bool {
+	switch tp {
+	case mysql.TypeString, mysql.TypeVarchar, mysql.TypeVarString,
+		mysql.TypeTinyBlob, mysql.TypeBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
+		return true
+	default:
+		return false
+	}
+}
+
+// convertBetweenCharAndVarchar reports whether converting between VARCHAR and
+// CHAR requires reorganization for compatibility checks:
+//  1. VARCHAR -> CHAR strips trailing spaces.
+//  2. CHAR -> VARCHAR under new collation can change secondary index restored data.
+func convertBetweenCharAndVarchar(oldCol, newCol byte) bool {
+	return (types.IsTypeVarchar(oldCol) && newCol == mysql.TypeString) ||
+		(oldCol == mysql.TypeString && types.IsTypeVarchar(newCol) && collate.NewCollationEnabled())
+}
+
+// IsElemsChangedToModifyColumn reports whether modifying ENUM/SET elements
+// removes or changes any existing element ordinal.
 func IsElemsChangedToModifyColumn(oldElems, newElems []string) bool {
 	if len(newElems) < len(oldElems) {
 		return true
 	}
 	for index, oldElem := range oldElems {
-		newElem := newElems[index]
-		if oldElem != newElem {
+		if oldElem != newElems[index] {
 			return true
 		}
 	}
 	return false
-}
-
-// checkModifyTypeCompatible checks whether changes column type to another is compatible and can be changed.
-// If types are compatible and can be directly changed, nil err will be returned; otherwise the types are incompatible.
-// There are two cases when types incompatible:
-// 1. returned canReorg == true: types can be changed by reorg
-// 2. returned canReorg == false: type change not supported yet
-func checkModifyTypeCompatible(origin *types.FieldType, to *types.FieldType) (canReorg bool, err error) {
-	// Deal with the same type.
-	if origin.GetType() == to.GetType() {
-		if origin.GetType() == mysql.TypeEnum || origin.GetType() == mysql.TypeSet {
-			typeVar := "set"
-			if origin.GetType() == mysql.TypeEnum {
-				typeVar = "enum"
-			}
-			if len(to.GetElems()) < len(origin.GetElems()) {
-				msg := fmt.Sprintf("the number of %s column's elements is less than the original: %d", typeVar, len(origin.GetElems()))
-				return true, dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs(msg)
-			}
-			for index, originElem := range origin.GetElems() {
-				toElem := to.GetElems()[index]
-				if originElem != toElem {
-					msg := fmt.Sprintf("cannot modify %s column value %s to %s", typeVar, originElem, toElem)
-					return true, dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs(msg)
-				}
-			}
-		}
-
-		if origin.GetType() == mysql.TypeNewDecimal {
-			// Floating-point and fixed-point types also can be UNSIGNED. As with integer types, this attribute prevents
-			// negative values from being stored in the column. Unlike the integer types, the upper range of column values
-			// remains the same.
-			if to.GetFlen() != origin.GetFlen() || to.GetDecimal() != origin.GetDecimal() || mysql.HasUnsignedFlag(to.GetFlag()) != mysql.HasUnsignedFlag(origin.GetFlag()) {
-				msg := fmt.Sprintf("decimal change from decimal(%d, %d) to decimal(%d, %d)", origin.GetFlen(), origin.GetDecimal(), to.GetFlen(), to.GetDecimal())
-				return true, dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs(msg)
-			}
-		}
-
-		needReorg, reason := needReorgToChange(origin, to)
-		if !needReorg {
-			return false, nil
-		}
-		return true, dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs(reason)
-	}
-
-	// Deal with the different type.
-	if !checkTypeChangeSupported(origin, to) {
-		unsupportedMsg := fmt.Sprintf("change from original type %v to %v is currently unsupported yet", origin.CompactStr(), to.CompactStr())
-		return false, dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs(unsupportedMsg)
-	}
-
-	// Check if different type can directly convert and no need to reorg.
-	stringToString := types.IsString(origin.GetType()) && types.IsString(to.GetType())
-	integerToInteger := mysql.IsIntegerType(origin.GetType()) && mysql.IsIntegerType(to.GetType())
-	if stringToString || integerToInteger {
-		needReorg, reason := needReorgToChange(origin, to)
-		if !needReorg {
-			return false, nil
-		}
-		return true, dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs(reason)
-	}
-
-	notCompatibleMsg := fmt.Sprintf("type %v not match origin %v", to.CompactStr(), origin.CompactStr())
-	return true, dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs(notCompatibleMsg)
-}
-
-func needReorgToChange(origin *types.FieldType, to *types.FieldType) (needReorg bool, reasonMsg string) {
-	toFlen := to.GetFlen()
-	originFlen := origin.GetFlen()
-	if mysql.IsIntegerType(to.GetType()) && mysql.IsIntegerType(origin.GetType()) {
-		// For integers, we should ignore the potential display length represented by flen, using
-		// the default flen of the type.
-		originFlen, _ = mysql.GetDefaultFieldLengthAndDecimal(origin.GetType())
-		toFlen, _ = mysql.GetDefaultFieldLengthAndDecimal(to.GetType())
-	}
-
-	if ConvertBetweenCharAndVarchar(origin.GetType(), to.GetType()) {
-		return true, "conversion between char and varchar string needs reorganization"
-	}
-
-	if toFlen > 0 && toFlen != originFlen {
-		if toFlen < originFlen {
-			return true, fmt.Sprintf("length %d is less than origin %d", toFlen, originFlen)
-		}
-
-		// Due to the behavior of padding \x00 at binary type, we need to reorg when binary length changed
-		isBinaryType := func(tp *types.FieldType) bool { return tp.GetType() == mysql.TypeString && types.IsBinaryStr(tp) }
-		if isBinaryType(origin) && isBinaryType(to) {
-			return true, "can't change binary types of different length"
-		}
-	}
-	if to.GetDecimal() > 0 && to.GetDecimal() < origin.GetDecimal() {
-		return true, fmt.Sprintf("decimal %d is less than origin %d", to.GetDecimal(), origin.GetDecimal())
-	}
-	if mysql.HasUnsignedFlag(origin.GetFlag()) != mysql.HasUnsignedFlag(to.GetFlag()) {
-		return true, "can't change unsigned integer to signed or vice versa"
-	}
-	return false, ""
-}
-
-func checkTypeChangeSupported(origin *types.FieldType, to *types.FieldType) bool {
-	if (types.IsTypeTime(origin.GetType()) || origin.GetType() == mysql.TypeDuration || origin.GetType() == mysql.TypeYear ||
-		types.IsString(origin.GetType()) || origin.GetType() == mysql.TypeJSON) &&
-		to.GetType() == mysql.TypeBit {
-		// TODO: Currently date/datetime/timestamp/time/year/string/json data type cast to bit are not compatible with mysql, should fix here after compatible.
-		return false
-	}
-
-	if (types.IsTypeTime(origin.GetType()) || origin.GetType() == mysql.TypeDuration || origin.GetType() == mysql.TypeYear ||
-		origin.GetType() == mysql.TypeNewDecimal || origin.GetType() == mysql.TypeFloat || origin.GetType() == mysql.TypeDouble || origin.GetType() == mysql.TypeJSON || origin.GetType() == mysql.TypeBit) &&
-		(to.GetType() == mysql.TypeEnum || to.GetType() == mysql.TypeSet) {
-		// TODO: Currently date/datetime/timestamp/time/year/decimal/float/double/json/bit cast to enum/set are not support yet, should fix here after supported.
-		return false
-	}
-
-	if (origin.GetType() == mysql.TypeEnum || origin.GetType() == mysql.TypeSet || origin.GetType() == mysql.TypeBit ||
-		origin.GetType() == mysql.TypeNewDecimal || origin.GetType() == mysql.TypeFloat || origin.GetType() == mysql.TypeDouble) &&
-		(types.IsTypeTime(to.GetType())) {
-		// TODO: Currently enum/set/bit/decimal/float/double cast to date/datetime/timestamp type are not support yet, should fix here after supported.
-		return false
-	}
-
-	if origin.GetType() == mysql.TypeTiDBVectorFloat32 || to.GetType() == mysql.TypeTiDBVectorFloat32 {
-		// TODO: Vector type not supported.
-		return false
-	}
-
-	if (origin.GetType() == mysql.TypeEnum || origin.GetType() == mysql.TypeSet || origin.GetType() == mysql.TypeBit) &&
-		to.GetType() == mysql.TypeDuration {
-		// TODO: Currently enum/set/bit cast to time are not support yet, should fix here after supported.
-		return false
-	}
-
-	return true
-}
-
-// ConvertBetweenCharAndVarchar is that Column type conversion between varchar to char need reorganization because
-// 1. varchar -> char: char type is stored with the padding removed. All the indexes need to be rewritten.
-// 2. char -> varchar: the index value encoding of secondary index on clustered primary key tables is different.
-// These secondary indexes need to be rewritten.
-func ConvertBetweenCharAndVarchar(oldCol, newCol byte) bool {
-	return (types.IsTypeVarchar(oldCol) && newCol == mysql.TypeString) ||
-		(oldCol == mysql.TypeString && types.IsTypeVarchar(newCol) && collate.NewCollationEnabled())
 }
