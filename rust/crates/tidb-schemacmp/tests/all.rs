@@ -19,3 +19,6 @@ mod charset_collation_test;
 mod lattice_test;
 mod table_test;
 mod type_test;
+
+// Go's test binary links `planner/core`, whose `init` sets `expression.BuildSimpleExpr`.
+tidb_planner_init::link!();

@@ -15,3 +15,6 @@
 mod key_ranges_source;
 mod cop_scan_string_selection_source;
 mod dag_zone_contract;
+
+// Go's test binary links `planner/core`, whose `init` sets `expression.BuildSimpleExpr`.
+tidb_planner_init::link!();

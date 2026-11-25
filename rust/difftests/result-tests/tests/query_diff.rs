@@ -47,12 +47,11 @@ fn corpus_dir() -> PathBuf {
     difftest_root().join("corpus")
 }
 
-/// Parses and executes a table-less `SELECT` against a fresh session,
-/// returning its result label.
-fn rust_run(sql: &str) -> Result<String, String> {
+/// Parses and executes a table-less `SELECT` in `session`, returning its
+/// result label.
+fn rust_run(session: &mut Session, sql: &str) -> Result<String, String> {
     let stmt = tidb_parser::parse(sql).map_err(|e| e.message)?;
     let ordered = statement_is_ordered(&stmt);
-    let mut session = Session::new();
     match session.run(sql).map_err(|e| format!("{e:?}"))? {
         StmtResult::Rows(rows) => Ok(rows_label(&rows, ordered)),
         StmtResult::Affected(_) | StmtResult::Done(_) => {
@@ -82,6 +81,10 @@ fn run_pair(
         "[{label}] corpus/golden count mismatch (regenerate the golden)"
     );
 
+    // gorun records a file's golden in one session, statement after
+    // statement; so does the replay (a session per statement booted a
+    // store per statement).
+    let mut session = Session::new();
     let mut matched = 0;
     let mut skipped = 0;
     for (sql, want) in stmts.iter().zip(&golden) {
@@ -89,7 +92,7 @@ fn run_pair(
             skipped += 1;
             continue;
         }
-        match rust_run(sql) {
+        match rust_run(&mut session, sql) {
             Ok(got) if &got == want => matched += 1,
             Ok(got) => failures.push(format!(
                 "\n--- [{label}] {sql}\n  go  : {want}\n  rust: {got}"

@@ -5387,6 +5387,7 @@ dependencies = [
  "tidb-paging",
  "tidb-pd-client",
  "tidb-placement",
+ "tidb-planner-init",
  "tidb-proto",
  "tidb-ristretto",
  "tidb-sessionctx",
@@ -9547,6 +9548,7 @@ dependencies = [
  "tidb-mysql",
  "tidb-parser",
  "tidb-parser-format",
+ "tidb-planner-init",
 ]
 
 [[package]]

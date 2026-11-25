@@ -22,6 +22,7 @@ tidb-mysql = { path = "../tidb-mysql" }
 
 [dev-dependencies]
 tidb-ddl-build = { path = "../tidb-ddl-build" }
+tidb-planner-init = { path = "../tidb-planner-init" }
 regex.workspace = true
 tidb-parser = { path = "../tidb-parser" }
 

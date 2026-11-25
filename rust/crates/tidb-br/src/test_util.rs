@@ -44,6 +44,8 @@ pub struct MockPdClient {
     pub service_calls: Mutex<Vec<(String, i64, u64)>>,
     /// The TSO answer; `None` is `(1, 2)`, `Some((-1, _))` the wall clock.
     pub ts: Mutex<Option<(i64, i64)>>,
+    /// The last wall-clock answer (client-go mocktikv's `tsMu`).
+    wall_ts: Mutex<(i64, i64)>,
 }
 
 impl MockPdClient {
@@ -62,9 +64,19 @@ impl PdClient for MockPdClient {
     fn get_ts(&self, _: &Context) -> Result<(i64, i64)> {
         match *self.ts.lock().unwrap() {
             None => Ok((1, 2)),
-            Some((-1, l)) => {
-                let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap();
-                Ok((now.as_millis() as i64, l))
+            // client-go mocktikv pdClient.GetTS: strictly increasing.
+            Some((-1, _)) => {
+                let mut last = self.wall_ts.lock().unwrap();
+                let ts = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_millis() as i64;
+                if last.0 >= ts {
+                    last.1 += 1;
+                } else {
+                    *last = (ts, 0);
+                }
+                Ok(*last)
             }
             Some(ts) => Ok(ts),
         }
