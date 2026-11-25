@@ -859,7 +859,7 @@ func (do *Domain) Start(startMode ddl.StartMode) error {
 	}, "mdlCheckLoop")
 	do.wg.Run(do.topNSlowQueryLoop, "topNSlowQueryLoop")
 	do.wg.Run(func() {
-		do.info.ServerInfoSyncer().ServerInfoSyncLoop(do.store, do.exit)
+		do.info.ServerInfoSyncer().ServerInfoSyncLoop(do.ctx, do.store, do.exit)
 	}, "infoSyncerKeeper")
 	do.wg.Run(do.globalConfigSyncerKeeper, "globalConfigSyncerKeeper")
 	do.wg.Run(do.runawayManager.RunawayRecordFlushLoop, "runawayRecordFlushLoop")

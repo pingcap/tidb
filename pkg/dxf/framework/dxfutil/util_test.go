@@ -107,7 +107,7 @@ func TestAcquireTaskRuntime(t *testing.T) {
 		defer ctrl.Finish()
 
 		runtimeHandle := sqlsvrapimock.NewMockKSRuntimeHandle(ctrl)
-		runtimeHandle.EXPECT().Release()
+		runtimeHandle.EXPECT().Release(false)
 		server := sqlsvrapimock.NewMockServer(ctrl)
 		server.EXPECT().AcquireKSRuntime("task_ks", "holder").Return(runtimeHandle, nil)
 
