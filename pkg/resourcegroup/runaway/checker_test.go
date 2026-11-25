@@ -297,6 +297,15 @@ func TestCheckThresholds(t *testing.T) {
 		return c, m
 	}
 
+	t.Run("ElapsedWithoutDeadlineError", func(t *testing.T) {
+		c, m := newCheckerWithAction(rmpb.RunawayAction_Kill)
+		c.deadline = time.Now().Add(-time.Second)
+		c.settings.Rule.ExecElapsedTimeMs = 1
+		assert.NoError(t, c.CheckThresholds(nil, 0, nil))
+		assert.False(t, c.markedByIdentifyInRunawaySettings.Load())
+		assert.Empty(t, m.runawayQueriesChan)
+	})
+
 	t.Run("BelowThreshold", func(t *testing.T) {
 		c, _ := newCheckerWithAction(rmpb.RunawayAction_Kill)
 		err := c.CheckThresholds(&util.RUDetails{}, 50, nil)

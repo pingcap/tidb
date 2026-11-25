@@ -2378,7 +2378,7 @@ var defaultSysVars = []*SysVar{
 		s.EnableAlternativeLogicalPlans = TiDBOptOn(val)
 		return nil
 	}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptAlternativePlanRiskMode, Value: "OFF", Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptEnableRiskBasedPlanSelection, Value: "OFF", Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.AlternativePlanRiskMode = TiDBOptOn(val)
 		return nil
 	}},

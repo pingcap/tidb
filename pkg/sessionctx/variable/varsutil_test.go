@@ -224,9 +224,9 @@ func TestVarsutil(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, v.EnableAlternativeLogicalPlans)
 	require.False(t, v.AlternativePlanRiskMode)
-	require.NoError(t, v.SetSystemVar(TiDBOptAlternativePlanRiskMode, "ON"))
+	require.NoError(t, v.SetSystemVar(TiDBOptEnableRiskBasedPlanSelection, "ON"))
 	require.True(t, v.AlternativePlanRiskMode)
-	require.NoError(t, v.SetSystemVar(TiDBOptAlternativePlanRiskMode, "OFF"))
+	require.NoError(t, v.SetSystemVar(TiDBOptEnableRiskBasedPlanSelection, "OFF"))
 	require.False(t, v.AlternativePlanRiskMode)
 
 	require.Equal(t, 32, v.InitChunkSize)

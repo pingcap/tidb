@@ -477,6 +477,7 @@ var planBuilderPool = sync.Pool{
 }
 
 type logicalPlanBuildCtx struct {
+	optimizeTracer           *tracing.OptimizeTracer
 	stmtCtxState             stmtctx.LogicalPlanBuildState
 	plannerSelectBlockAsName *[]ast.HintTable
 	mapScalarSubQ            []any
@@ -486,6 +487,7 @@ type logicalPlanBuildCtx struct {
 
 func saveLogicalPlanBuildCtx(sessVars *variable.SessionVars) logicalPlanBuildCtx {
 	return logicalPlanBuildCtx{
+		optimizeTracer:           sessVars.StmtCtx.OptimizeTracer,
 		stmtCtxState:             sessVars.StmtCtx.SaveLogicalPlanBuildState(),
 		plannerSelectBlockAsName: sessVars.PlannerSelectBlockAsName.Load(),
 		mapScalarSubQ:            sessVars.MapScalarSubQ,
@@ -496,6 +498,7 @@ func saveLogicalPlanBuildCtx(sessVars *variable.SessionVars) logicalPlanBuildCtx
 
 func restoreLogicalPlanBuildCtx(sessVars *variable.SessionVars, logicalPlanCtx logicalPlanBuildCtx) {
 	sessVars.StmtCtx.RestoreLogicalPlanBuildState(logicalPlanCtx.stmtCtxState)
+	sessVars.StmtCtx.OptimizeTracer = logicalPlanCtx.optimizeTracer
 	sessVars.PlannerSelectBlockAsName.Store(logicalPlanCtx.plannerSelectBlockAsName)
 	sessVars.MapScalarSubQ = logicalPlanCtx.mapScalarSubQ
 	sessVars.MapHashCode2UniqueID4ExtendedCol = logicalPlanCtx.mapHashCode2UniqueID

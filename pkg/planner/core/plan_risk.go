@@ -79,15 +79,16 @@ func AssessPhysicalPlanRisk(plan base.PhysicalPlan) PhysicalPlanRisk {
 		}
 		if join := riskIndexJoin(p); join != nil && len(p.Children()) == 2 {
 			outer, inner := p.Children()[1-join.InnerChildIdx], p.Children()[join.InnerChildIdx]
-			_, outerFlash := riskStorageEngines(outer)
-			innerKV, _ := riskStorageEngines(inner)
+			_, outerFlash := riskStorageEngines(outer, false)
+			innerKV, _ := riskStorageEngines(inner, false)
 			if outerFlash && innerKV {
+				reads := riskReadRows(inner)
 				profile.Signals = append(profile.Signals, PlanRiskSignal{
 					Kind: "cross_engine_index_probe", Operator: p.ExplainID().String(),
 					OuterRows: riskRows(outer), InnerRows: riskRows(inner),
 					EffectiveOuterCalls: riskEffectiveOuter(p, outer, demand), Demand: demand,
 					EffectiveInnerRows: riskScaleInner(p, outer, inner, demand),
-					InnerReadRows:      riskReadRows(inner), EffectiveReadRows: riskEffectiveReads(p, outer, inner, demand),
+					InnerReadRows:      reads, EffectiveReadRows: riskEffectiveReads(p, outer, reads, demand),
 					InnerAccess: riskInnerAccess(inner), SemiJoin: riskSemiJoin(join.JoinType),
 				})
 			}
@@ -106,7 +107,7 @@ func AssessPhysicalPlanRisk(plan base.PhysicalPlan) PhysicalPlanRisk {
 					if _, cte := n.(*PhysicalCTE); cte {
 						return
 					}
-					k, f := riskStorageEngines(n)
+					k, f := riskStorageEngines(n, false)
 					join := riskIndexJoin(n)
 					_, nestedApply := n.(*PhysicalApply)
 					_, reader := riskReader(n)
@@ -117,7 +118,6 @@ func AssessPhysicalPlanRisk(plan base.PhysicalPlan) PhysicalPlanRisk {
 							SemiJoin: riskSemiJoin(apply.JoinType), MayShortCircuit: riskSemiJoin(apply.JoinType),
 							EffectiveOuterCalls: riskEffectiveOuter(p, outer, demand), Demand: demand, InnerAccess: riskInnerAccess(n),
 							CacheMissLowerBound: riskCacheMissLowerBound(apply, outer),
-							InnerReadRows:       riskReadRows(inner), EffectiveReadRows: riskEffectiveReads(p, outer, inner, demand),
 						}
 						if (join != nil || nestedApply) && len(n.Children()) == 2 {
 							idx := 1
@@ -137,6 +137,8 @@ func AssessPhysicalPlanRisk(plan base.PhysicalPlan) PhysicalPlanRisk {
 						}
 						signal.RemoteOperators = []string{n.ExplainID().String()}
 						if signalIndex < 0 {
+							signal.InnerReadRows = riskReadRows(inner)
+							signal.EffectiveReadRows = riskEffectiveReads(p, outer, signal.InnerReadRows, demand)
 							signalIndex = len(profile.Signals)
 							profile.Signals = append(profile.Signals, signal)
 						} else {
@@ -169,7 +171,7 @@ func AssessPhysicalPlanRisk(plan base.PhysicalPlan) PhysicalPlanRisk {
 		if idx, ok := riskProbeOuterIndex(p); ok && len(p.Children()) == 2 {
 			outer := p.Children()[idx]
 			if demand != nil {
-				childDemand = riskEffectiveOuter(p, outer, demand)
+				childDemand = riskOuterDemandPerProbe(p, outer, demand)
 			}
 			visit(outer, childDemand)
 			visit(p.Children()[1-idx], nil)
@@ -251,7 +253,7 @@ func riskFiniteRows(v *float64) bool {
 	return v != nil && *v >= 0 && !math.IsNaN(*v) && !math.IsInf(*v, 0)
 }
 
-// Demand is an estimate of the output consumed through a streaming path. A
+// Demand is estimated output consumption per invocation through a streaming path. A
 // filter may require many input rows; a blocking operator always clears it.
 func riskChildDemand(p base.PhysicalPlan, demand *float64) *float64 {
 	switch x := p.(type) {
@@ -266,7 +268,7 @@ func riskChildDemand(p base.PhysicalPlan, demand *float64) *float64 {
 		return demand
 	case *PhysicalSelection:
 		if demand != nil && len(p.Children()) == 1 {
-			out, in := riskRows(p).AllProbes, riskRows(p.Children()[0]).AllProbes
+			out, in := riskRows(p).PerProbe, riskRows(p.Children()[0]).PerProbe
 			if riskFiniteRows(out) && riskFiniteRows(in) && *out > 0 {
 				needed := min(*in, *demand**in / *out)
 				return &needed
@@ -286,8 +288,8 @@ func riskProbeOuterIndex(p base.PhysicalPlan) (int, bool) {
 	return 0, false
 }
 
-func riskEffectiveOuter(p, outer base.PhysicalPlan, demand *float64) *float64 {
-	rows := riskRows(outer).AllProbes
+func riskOuterDemandPerProbe(p, outer base.PhysicalPlan, demand *float64) *float64 {
+	rows := riskRows(outer).PerProbe
 	if demand == nil || !riskFiniteRows(rows) {
 		return rows
 	}
@@ -303,12 +305,28 @@ func riskEffectiveOuter(p, outer base.PhysicalPlan, demand *float64) *float64 {
 			return &needed
 		}
 	}
-	output := riskRows(p).AllProbes
+	output := riskRows(p).PerProbe
 	if !riskFiniteRows(output) || *output <= 0 {
 		return rows
 	}
 	needed := min(*rows, *demand**rows / *output)
 	return &needed
+}
+
+// Convert local demand to total calls only at the point where we record the
+// risk. Propagating total calls would charge the enclosing probe parents twice.
+func riskEffectiveOuter(p, outer base.PhysicalPlan, demand *float64) *float64 {
+	rows := riskRows(outer)
+	if demand == nil {
+		return rows.AllProbes
+	}
+	needed := riskOuterDemandPerProbe(p, outer, demand)
+	if !riskFiniteRows(rows.AllProbes) || !riskFiniteRows(rows.PerProbe) ||
+		!riskFiniteRows(needed) || *rows.PerProbe == 0 {
+		return rows.AllProbes
+	}
+	calls := *rows.AllProbes * (*needed / *rows.PerProbe)
+	return &calls
 }
 
 func riskScaleInner(p, outer, inner base.PhysicalPlan, demand *float64) *float64 {
@@ -403,8 +421,8 @@ func riskReadRows(p base.PhysicalPlan) PlanRiskRows {
 	return result
 }
 
-func riskEffectiveReads(p, outer, inner base.PhysicalPlan, demand *float64) *float64 {
-	reads, calls, effective := riskReadRows(inner).AllProbes, riskRows(outer).AllProbes, riskEffectiveOuter(p, outer, demand)
+func riskEffectiveReads(p, outer base.PhysicalPlan, innerReadRows PlanRiskRows, demand *float64) *float64 {
+	reads, calls, effective := innerReadRows.AllProbes, riskRows(outer).AllProbes, riskEffectiveOuter(p, outer, demand)
 	if !riskFiniteRows(reads) || !riskFiniteRows(calls) || !riskFiniteRows(effective) || *calls == 0 {
 		return nil
 	}
@@ -422,7 +440,7 @@ func EstimatePhysicalPlanReadRows(p base.PhysicalPlan) *float64 {
 // NeedsTiFlashAlternative limits the extra engine search to actual join/apply
 // plans. A normal single-table access already compares its engine paths.
 func NeedsTiFlashAlternative(p base.PhysicalPlan) bool {
-	tikv, _ := riskStorageEngines(p)
+	tikv, _ := riskStorageEngines(p, true)
 	return tikv && riskContainsJoin(p)
 }
 
@@ -578,7 +596,7 @@ func riskDependsOnApply(p base.PhysicalPlan, apply *PhysicalApply) bool {
 	return false
 }
 
-func riskStorageEngines(p base.PhysicalPlan) (tikv, tiflash bool) {
+func riskStorageEngines(p base.PhysicalPlan, includeCTEProducers bool) (tikv, tiflash bool) {
 	if p == nil {
 		return
 	}
@@ -589,10 +607,15 @@ func riskStorageEngines(p base.PhysicalPlan) (tikv, tiflash bool) {
 		return true, false
 	case *PhysicalCTE:
 		// A producer's engine is not evidence of repeated reads by its consumer.
-		return false, false
+		if !includeCTEProducers {
+			return false, false
+		}
+		seedKV, seedFlash := riskStorageEngines(x.SeedPlan, true)
+		recurKV, recurFlash := riskStorageEngines(x.RecurPlan, true)
+		return seedKV || recurKV, seedFlash || recurFlash
 	}
 	for _, child := range p.Children() {
-		k, f := riskStorageEngines(child)
+		k, f := riskStorageEngines(child, includeCTEProducers)
 		tikv, tiflash = tikv || k, tiflash || f
 	}
 	return

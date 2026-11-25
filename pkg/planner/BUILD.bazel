@@ -62,6 +62,7 @@ go_test(
         "//pkg/sessionctx/variable",
         "//pkg/store/mockstore",
         "//pkg/testkit",
+        "//pkg/util/tracing",
         "@com_github_stretchr_testify//require",
     ],
 )

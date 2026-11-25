@@ -411,4 +411,34 @@ func TestPlanRiskUnorderedApplyLimitDemand(t *testing.T) {
 	// A demand for join output does not cap the work of its inner subtree.
 	upper.SetChildren(outer, apply)
 	assertCalls(limit, 100000, true)
+	// An inner LIMIT caps each invocation. Parent-probe metadata accounts
+	// for the 2,000 invocations when recording total calls and reads.
+	upperOuter := PhysicalTableReader{StoreType: kv.TiKV}.Init(ctx, 0)
+	upperOuter.SetStats(&property.StatsInfo{RowCount: 2000})
+	upper.SetChildren(upperOuter, limit)
+	limit.SetChildren(apply)
+	apply.JoinType = logicalop.LeftOuterSemiJoin
+	outer.SetProbeParents([]base.PhysicalPlan{upper})
+	reader.SetProbeParents([]base.PhysicalPlan{upper, apply})
+	scan.SetProbeParents([]base.PhysicalPlan{upper, apply})
+	scan.StatsInfo().RowCount = 100
+	assertCalls(upper, 20000, true)
+	profile := AssessPhysicalPlanRisk(upper)
+	require.InDelta(t, 2000000, *profile.Signals[0].EffectiveReadRows, 0.001)
+
+}
+
+func TestPlanRiskCTEProducerEngine(t *testing.T) {
+	ctx := mock.NewContextDeprecated().GetPlanCtx()
+	stats := &property.StatsInfo{RowCount: 1}
+	reader := PhysicalTableReader{StoreType: kv.TiKV}.Init(ctx, 0)
+	seed := PhysicalHashJoin{}.Init(ctx, stats, 0)
+	seed.SetChildren(reader, reader)
+	cte := PhysicalCTE{SeedPlan: seed}.Init(ctx, stats)
+	require.True(t, NeedsTiFlashAlternative(cte))
+	tikv, tiflash := riskStorageEngines(cte, false)
+	require.False(t, tikv)
+	require.False(t, tiflash)
+	reader.StoreType = kv.TiFlash
+	require.False(t, NeedsTiFlashAlternative(cte))
 }

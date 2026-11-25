@@ -15,10 +15,16 @@
 package planner_test
 
 import (
+	"archive/zip"
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/util/tracing"
 	"github.com/stretchr/testify/require"
 )
 
@@ -47,11 +53,31 @@ func TestTiFlashOnlyRoundIntegration(t *testing.T) {
 	tk.MustQuery("select @@tidb_isolation_read_engines").Check(testkit.Rows("tikv,tiflash,tidb"))
 	require.Contains(t, trace("select /*+ read_from_storage(tikv[t]) */ * from t where b=1"), `"reason":"mode_off"`)
 	for _, sql := range []string{
-		"select /*+ read_from_storage(tikv[t]) */ * from t where b=1",
+		"select /*+ read_from_storage(tikv[t]) */ * from t join replica_t n on t.b=n.a",
 		"select * from t join no_replica n on t.a=n.a",
 	} {
 		require.NotContains(t, trace(sql), `"Alternative round":"tiflash-only"`)
 	}
+	finalPlan := func() []*tracing.PlanTrace {
+		t.Helper()
+		name := tk.MustQuery("trace plan " + joinSQL).Rows()[0][0].(string)
+		path := filepath.Join(domain.GetOptimizerTraceDirName(), name)
+		t.Cleanup(func() { _ = os.Remove(path) })
+		z, err := zip.OpenReader(path)
+		require.NoError(t, err)
+		defer z.Close()
+		f, err := z.Open("trace.json")
+		require.NoError(t, err)
+		defer f.Close()
+		var result tracing.OptimizeTracer
+		require.NoError(t, json.NewDecoder(f).Decode(&result))
+		require.NotEmpty(t, result.FinalPlan)
+		return result.FinalPlan
+	}
+	withAlternative := finalPlan()
+	tk.MustExec("set tidb_opt_enable_alternative_logical_plans=off")
+	require.Equal(t, finalPlan(), withAlternative)
+	tk.MustExec("set tidb_opt_enable_alternative_logical_plans=on")
 	tk.MustExec("set tidb_enforce_mpp=on")
 	require.NotContains(t, trace(joinSQL), `"Alternative round":"tiflash-only"`)
 	tk.MustExec("set tidb_enforce_mpp=off, tidb_allow_mpp=off")
@@ -71,14 +97,14 @@ func TestAlternativeRiskPlanCacheIsolation(t *testing.T) {
 	tk.MustExec("prepare s from 'select a from cache_t where b=?'")
 	tk.MustExec("set @b=10")
 	for _, mode := range []string{"OFF", "ON"} {
-		tk.MustExec("set tidb_opt_alternative_plan_risk_mode=" + mode)
+		tk.MustExec("set tidb_opt_enable_risk_based_plan_selection=" + mode)
 		tk.MustQuery("execute s using @b").Check(testkit.Rows("1"))
 		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 		tk.MustQuery("execute s using @b").Check(testkit.Rows("1"))
 		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 	}
 	// Switching back can reuse only the previously cached OFF plan.
-	tk.MustExec("set tidb_opt_alternative_plan_risk_mode=OFF")
+	tk.MustExec("set tidb_opt_enable_risk_based_plan_selection=OFF")
 	tk.MustQuery("execute s using @b").Check(testkit.Rows("1"))
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 }
