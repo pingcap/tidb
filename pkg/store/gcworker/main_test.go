@@ -18,13 +18,17 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/testkit/testmain"
 	"github.com/pingcap/tidb/pkg/testkit/testsetup"
+	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/goleak"
 )
 
 func TestMain(m *testing.M) {
+	// Embedded Unistore returns keys with the NextGen keyspace prefix.
+	kv.StandAloneTiDB = true
 	testsetup.SetupForCommonTest()
 	tikv.EnableFailpoints()
 	opts := []goleak.Option{
@@ -37,6 +41,7 @@ func TestMain(m *testing.M) {
 		goleak.IgnoreTopFunction("internal/poll.runtime_pollWait"),
 	}
 	callback := func(i int) int {
+		memory.CleanupGlobalMemArbitratorForTest()
 		// wait for MVCCLevelDB to close, MVCCLevelDB will be closed in one second
 		time.Sleep(time.Second)
 		return i
