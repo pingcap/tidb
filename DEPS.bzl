@@ -1751,8 +1751,9 @@ def go_deps():
         name = "com_github_go_jose_go_jose_v4",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/go-jose/go-jose/v4",
-        sum = "h1:moDMcTHmvE6Groj34emNPLs/qtYXRVcd6S7NHbHz3kA=",
-        version = "v4.1.4",
+        replace = "github.com/go-jose/go-jose/v4",
+        sum = "h1:sNRkftxFJxwsILiQukqp5z83QBSmntVwmgRY7AqBDO4=",
+        version = "v4.1.6",
     )
     go_repository(
         name = "com_github_go_kit_log",
