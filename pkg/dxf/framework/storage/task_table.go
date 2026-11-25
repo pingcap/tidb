@@ -1092,7 +1092,7 @@ func (*TaskManager) findMismatchedPendingSubtasks(
 	if err != nil {
 		return nil, err
 	}
-	var mismatched []*proto.Subtask
+	mismatched := make([]*proto.Subtask, 0, len(rs))
 	for _, row := range rs {
 		ordinal := int(row.GetInt64(0))
 		if ordinal < 1 || ordinal > len(subtasks) ||
