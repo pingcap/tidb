@@ -207,15 +207,7 @@ func (m *avgMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chunk.Colu
 		if err := avg.Round(&avg, frac, types.ModeHalfUp); err != nil {
 			return err
 		}
-		candidate := avg
-		materialized, err := types.ProduceDecWithSpecifiedTp(types.StrictContext, &candidate, m.retTp)
-		if err != nil {
-			return errors.Annotate(err, "AVG result cannot be represented by the MV output type")
-		}
-		if materialized.Compare(&avg) != 0 {
-			return errors.Errorf("AVG result would change value %s to %s", avg.String(), materialized.String())
-		}
-		resultDecimalVals[rowIdx] = *materialized
+		resultDecimalVals[rowIdx] = avg
 		resultCol.SetNull(rowIdx, false)
 	}
 	outputCols[0] = resultCol

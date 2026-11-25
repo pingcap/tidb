@@ -478,6 +478,31 @@ func TestAvgFinalizesFromUpdatedSumAndCounts(t *testing.T) {
 	require.Equal(t, "5.00", res.ComputedCols[7].GetDecimal(0).String())
 	require.True(t, res.ComputedCols[4].IsNull(1))
 	require.True(t, res.ComputedCols[7].IsNull(1))
+
+	t.Run("output capacity is checked at row encoding", func(t *testing.T) {
+		// Use a target column that cannot hold the computed 5.00.
+		narrowAvgType := ftAvg.Clone()
+		narrowAvgType.SetFlen(2)
+		merger := avgMerger{
+			outputCols:            []int{0},
+			sumRef:                depRef{source: depFromComputed, idx: 4},
+			countExprRef:          depRef{source: depFromComputed, idx: 5},
+			countStarRef:          depRef{source: depFromComputed, idx: 6},
+			retTp:                 narrowAvgType,
+			sumTp:                 ftInt,
+			divPrecisionIncrement: 4,
+		}
+		input := chunk.NewChunkWithCapacity([]*types.FieldType{narrowAvgType}, 1)
+		input.AppendNull(0)
+		output := make([]*chunk.Column, 1)
+		require.NoError(t, merger.mergeChunk(input, res.ComputedCols, output, nil))
+		require.Equal(t, "5.00", output[0].GetDecimal(0).String())
+
+		var datum types.Datum
+		chunkRowColDatum(output[0], 0, narrowAvgType, &datum)
+		_, err := datum.GetMysqlDecimal().ToBin(datum.Length(), datum.Frac())
+		require.ErrorIs(t, err, types.ErrOverflow)
+	})
 }
 
 func TestAvgFinalizesFromUpdatedRealSumAndCounts(t *testing.T) {
