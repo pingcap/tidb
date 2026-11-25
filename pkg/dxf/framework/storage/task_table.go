@@ -1034,6 +1034,7 @@ func (mgr *TaskManager) reconcileAndSwitchTaskStep(
 	for {
 		done := false
 		err := mgr.WithNewTxn(ctx, func(se sessionctx.Context) error {
+			failpoint.InjectCall("beforeLockTaskForSwitchStep")
 			// 1. Lock the task row to serialize concurrent schedulers.
 			rs, err := sqlexec.ExecSQL(ctx, se.GetSQLExecutor(), `
 				select 1 from mysql.tidb_global_task
@@ -1087,7 +1088,7 @@ func (*TaskManager) findMismatchedPendingSubtasks(
 ) ([]*proto.Subtask, error) {
 	rs, err := sqlexec.ExecSQL(ctx, se.GetSQLExecutor(), `
 		select ordinal, exec_id from mysql.tidb_background_subtask
-		where task_key = %? and step = %? and state = %?`,
+		where task_key = %? and step = %? and state = %? for update`,
 		TaskIDToKey(taskID), step, proto.SubtaskStatePending)
 	if err != nil {
 		return nil, err

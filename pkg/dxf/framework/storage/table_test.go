@@ -530,6 +530,42 @@ func TestSwitchTaskStepInBatch(t *testing.T) {
 		require.Len(t, st.Meta, 70*1024)
 	}
 
+	// Under REPEATABLE READ, a replacement scheduler that begins its txn before
+	// another scheduler commits an intermediate reconciliation batch must still
+	// see that committed reassignment after acquiring the task-row lock.
+	t.Run("snapshot_overlap_between_batches", func(t *testing.T) {
+		task7, subtasks7 := prepare("key7")
+		for _, st := range subtasks7 {
+			_, err = sqlexec.ExecSQL(ctx, tk.Session(), `
+				insert into mysql.tidb_background_subtask(
+					step, task_key, exec_id, meta, state, type, concurrency, ordinal, create_time, checkpoint, summary)
+				values (%?, %?, %?, %?, %?, %?, %?, %?, CURRENT_TIMESTAMP(), '{}', '{}')`,
+				st.Step, st.TaskID, ":4000", st.Meta,
+				proto.SubtaskStatePending, proto.Type2Int(st.Type), st.Concurrency, st.Ordinal)
+			require.NoError(t, err)
+		}
+		injected := false
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/dxf/framework/storage/beforeLockTaskForSwitchStep", func() {
+			if injected {
+				return
+			}
+			injected = true
+			// Commit an intermediate reassignment after SwitchTaskStepInBatch has
+			// already started its txn (BEGIN), leaving tidb_global_task unchanged.
+			tkOther := testkit.NewTestKit(t, store)
+			_, err := sqlexec.ExecSQL(ctx, tkOther.Session(), `
+				update mysql.tidb_background_subtask
+				set exec_id = %?
+				where task_key = %? and step = %? and ordinal = %? and state = %?`,
+				":4001", storage.TaskIDToKey(task7.ID), proto.StepOne, 1, proto.SubtaskStatePending)
+			require.NoError(t, err)
+		})
+		require.NoError(t, tm.SwitchTaskStepInBatch(ctx, task7, proto.TaskStateRunning, proto.StepOne, subtasks7))
+		task7After, err := tm.GetTaskByID(ctx, task7.ID)
+		require.NoError(t, err)
+		checkAfterSwitchStep(t, startTime, task7After, subtasks7, proto.StepOne)
+	})
+
 	// Two overlapping SwitchTaskStepInBatch calls before the step switch must
 	// serialize on the task row so the losing scheduler cannot sneak a partial
 	// exec_id reassignment in before the winner commits.
