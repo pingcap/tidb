@@ -22,6 +22,7 @@ import (
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/domain/crossks"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -95,6 +96,13 @@ func TestOnDemandStatsProviderLoadsAndCachesStats(t *testing.T) {
 	// Second lookup hits the provider cache without borrowing another session.
 	gotTCached := provider.GetPhysicalTableStats(tblT.Meta().ID, tblT.Meta())
 	require.Same(t, gotT, gotTCached)
+	require.Equal(t, int64(1), spyPool.getCount.Load())
+
+	// Reserved/system table IDs return pseudo stats without querying storage.
+	sysTblInfo := &model.TableInfo{ID: metadef.TiDBImportJobsTableID, Name: ast.NewCIStr("tidb_import_jobs")}
+	gotSys := provider.GetPhysicalTableStats(sysTblInfo.ID, sysTblInfo)
+	require.True(t, gotSys.Pseudo)
+	require.Equal(t, sysTblInfo.ID, gotSys.PhysicalID)
 	require.Equal(t, int64(1), spyPool.getCount.Load())
 
 	// Missing table stats gracefully fall back to pseudo stats.

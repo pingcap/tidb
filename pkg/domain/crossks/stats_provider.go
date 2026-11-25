@@ -19,6 +19,7 @@ import (
 	"sync"
 
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics"
@@ -54,6 +55,13 @@ func NewOnDemandStatsProvider(sessPool util.DestroyableSessionPool) *OnDemandSta
 func (p *OnDemandStatsProvider) GetPhysicalTableStats(physicalTableID int64, tblInfo *model.TableInfo) *statistics.Table {
 	if tblInfo == nil {
 		return nil
+	}
+	// Never query mysql.stats_* for reserved/system tables to avoid recursive
+	// stats lookups when loading mysql.stats_* itself.
+	if metadef.IsReservedID(physicalTableID) {
+		tbl := statistics.PseudoTable(tblInfo, false, true)
+		tbl.PhysicalID = physicalTableID
+		return tbl
 	}
 
 	p.mu.Lock()

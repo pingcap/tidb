@@ -29,6 +29,7 @@ import (
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/ddl/systable"
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
+	"github.com/pingcap/tidb/pkg/domain/crossks"
 	"github.com/pingcap/tidb/pkg/domain/sqlsvrapi"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/executor"
@@ -40,6 +41,8 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
+	plannerstats "github.com/pingcap/tidb/pkg/planner/core/stats"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	kvstore "github.com/pingcap/tidb/pkg/store"
@@ -584,6 +587,61 @@ func TestDomainAcquireKSRuntimeHandle(t *testing.T) {
 			}
 		}
 		require.Equal(t, map[int64]int64{1: 2, 2: 1}, result)
+
+		// Verify OnDemandStatsProvider loads target keyspace stats and enables
+		// dynamic partition pruning for cross-keyspace import queries.
+		tk.MustExec(`create table query_part(id bigint, v bigint, key idx_v(v))
+			partition by range (id) (
+				partition p0 values less than (10),
+				partition p1 values less than (20)
+			)`)
+		tk.MustExec("insert into query_part values (1, 10), (2, 20), (11, 30), (12, 40)")
+		tk.MustExec("set tidb_partition_prune_mode = 'dynamic'")
+		tk.MustExec("analyze table query_part")
+
+		partSQL := "import into unused_target from select id, v from query_part where id < 10"
+		require.NoError(t, tk.Session().PrepareTxnCtx(ctx, nil))
+		require.NoError(t, executor.PlanImportQueryForTest(tk.Session(), partSQL))
+		partCaptured, err := importer.CaptureQuerySource(tk.Session(), partSQL)
+		require.NoError(t, err)
+
+		partTbl, err := tk.Session().GetLatestInfoSchema().(infoschema.InfoSchema).TableByName(
+			ctx, ast.NewCIStr("test"), ast.NewCIStr("query_part"))
+		require.NoError(t, err)
+
+		partRes, err := pool.Get()
+		require.NoError(t, err)
+		defer pool.Destroy(partRes)
+		partSE := partRes.(sessionctx.Context)
+		partSE.GetSessionVars().StatsProvider = crossks.NewOnDemandStatsProvider(pool)
+
+		var observedDynamic bool
+		var observedRowCount int64
+		var observedPseudo bool
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/afterImportQueryOptimize", func(p base.PhysicalPlan) {
+			observedDynamic = p.SCtx().GetSessionVars().StmtCtx.UseDynamicPruneMode
+			tblStats := plannerstats.GetStatsTable(p.SCtx(), partTbl.Meta(), partTbl.Meta().ID)
+			observedPseudo = tblStats.Pseudo
+			observedRowCount = tblStats.RealtimeCount
+		})
+
+		partOut := make(chan importer.QueryChunk, 4)
+		err = executor.RunImportQuery(ctx, partSE, partCaptured, partSQL, 1<<20, partOut)
+		require.NoError(t, err)
+		close(partOut)
+		require.True(t, observedDynamic)
+		require.False(t, observedPseudo)
+		require.Equal(t, int64(4), observedRowCount)
+
+		partResult := make(map[int64]int64)
+		for batch := range partOut {
+			chk := batch.Chk
+			for i := range chk.NumRows() {
+				row := chk.GetRow(i)
+				partResult[row.GetInt64(0)] = row.GetInt64(1)
+			}
+		}
+		require.Equal(t, map[int64]int64{1: 10, 2: 20}, partResult)
 	})
 	t.Run("job check and ordinary holder share a runtime", func(t *testing.T) {
 		ctx := util.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)

@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/failpoint"
 	brlogutil "github.com/pingcap/tidb/br/pkg/logutil"
 	tidbconfig "github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/domain/crossks"
 	"github.com/pingcap/tidb/pkg/domain/sqlsvrapi"
 	"github.com/pingcap/tidb/pkg/dxf/framework/handle"
 	"github.com/pingcap/tidb/pkg/dxf/framework/metering"
@@ -439,6 +440,9 @@ func (s *importStepExecutor) readQuery(
 	}
 
 	se := resource.(sessionctx.Context)
+	if se.IsCrossKS() {
+		se.GetSessionVars().StatsProvider = crossks.NewOnDemandStatsProvider(pool)
+	}
 	ctx = execdetails.ContextWithInitializedExecDetails(ctx)
 
 	defer func() {

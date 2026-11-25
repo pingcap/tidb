@@ -28,6 +28,7 @@ import (
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
+	plannerstats "github.com/pingcap/tidb/pkg/planner/core/stats"
 	"github.com/pingcap/tidb/pkg/resourcegroup"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
@@ -105,8 +106,10 @@ func prepareImportQuery(
 		// context, so select the execution group before compilation starts.
 		vars.SetResourceGroupName(resourcegroup.DefaultResourceGroupName)
 	}
-	// Without a statistics provider, this worker uses static partition pruning.
-	vars.PartitionPruneMode.Store("static")
+	if plannerstats.GetStatsProvider(sctx.GetPlanCtx()) == nil {
+		// Without a statistics provider, this worker uses static partition pruning.
+		vars.PartitionPruneMode.Store("static")
+	}
 	vars.InMViewMaintenance = q.InMViewMaintenance
 	vars.InRestrictedSQL = true
 	vars.InternalSQLScanUserTable = false

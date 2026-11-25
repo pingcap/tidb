@@ -24,6 +24,7 @@ go_library(
         "//pkg/config/kerneltype",
         "//pkg/ddl",
         "//pkg/domain",
+        "//pkg/domain/crossks",
         "//pkg/domain/serverinfo",
         "//pkg/domain/sqlsvrapi",
         "//pkg/dumpformat/parquetfile",
