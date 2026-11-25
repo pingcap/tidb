@@ -113,8 +113,9 @@ func getStreamAggs(lp base.LogicalPlan, prop *property.PhysicalProperty) []base.
 	allTaskTypes := prop.GetAllPossibleChildTaskTypes()
 	streamAggs := make([]base.PhysicalPlan, 0, len(la.PossibleProperties.Orders)*(len(allTaskTypes)-1)+len(allTaskTypes))
 	vars := la.SCtx().GetSessionVars()
-	enableSkipScan := vars.GetEnableSkipScan() && vars.SQLMode.HasOnlyFullGroupBy() &&
-		len(groupByCols) > 0 && prop.IndexJoinProp == nil
+	// Read the switch last because the getter records it as relevant to the plan.
+	enableSkipScan := len(groupByCols) > 0 && prop.IndexJoinProp == nil &&
+		vars.SQLMode.HasOnlyFullGroupBy() && vars.GetEnableSkipScan()
 	var skipTarget *expression.Column
 	var skipDesc bool
 	if enableSkipScan {
