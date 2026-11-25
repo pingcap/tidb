@@ -30,12 +30,15 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/types"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
+	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/stretchr/testify/assert"
@@ -235,8 +238,10 @@ func TestLogicalPlanBuildStateRestore(t *testing.T) {
 	sc.SetCacheType(contextutil.SessionNonPrepared)
 	sc.EnablePlanCache()
 
+	sc.MaskingPolicyChecks = []stmtctx.MaskingPolicyCheck{{PolicyID: 1, TableID: 42, ColumnID: 3}}
 	state := sc.SaveLogicalPlanBuildState()
 
+	sc.MaskingPolicyChecks[0].PolicyID = 2
 	sc.AppendWarning(errors.New("candidate warning"))
 	sc.AppendExtraWarning(errors.New("candidate extra warning"))
 	sc.Tables = []stmtctx.TableEntry{{DB: "candidate", Table: "t2"}}
@@ -249,6 +254,7 @@ func TestLogicalPlanBuildStateRestore(t *testing.T) {
 
 	sc.RestoreLogicalPlanBuildState(state)
 
+	require.Equal(t, int64(1), sc.MaskingPolicyChecks[0].PolicyID)
 	warnings := sc.GetWarnings()
 	require.Len(t, warnings, 1)
 	require.Equal(t, "baseline warning", warnings[0].Err.Error())
@@ -415,7 +421,7 @@ func TestNewStmtCtx(t *testing.T) {
 	require.Same(t, time.UTC, sc.TimeZone())
 	var levels errctx.LevelMap
 	levels[errctx.ErrGroupDividedByZero] = errctx.LevelWarn
-	require.Equal(t, errctx.NewContextWithLevels(levels, sc), sc.ErrCtx())
+	require.Equal(t, errctx.NewContextWithLevels(levels, sc.EvalWarnAppender()), sc.ErrCtx())
 	sc.AppendWarning(errors.NewNoStackError("err1"))
 	warnings := sc.GetWarnings()
 	require.Equal(t, 1, len(warnings))
@@ -427,7 +433,7 @@ func TestNewStmtCtx(t *testing.T) {
 	require.Equal(t, types.DefaultStmtFlags, sc.TypeFlags())
 	require.Same(t, tz, sc.TimeZone())
 	require.Same(t, tz, sc.TimeZone())
-	require.Equal(t, errctx.NewContextWithLevels(levels, sc), sc.ErrCtx())
+	require.Equal(t, errctx.NewContextWithLevels(levels, sc.EvalWarnAppender()), sc.ErrCtx())
 	sc.AppendWarning(errors.NewNoStackError("err2"))
 	warnings = sc.GetWarnings()
 	require.Equal(t, 1, len(warnings))
@@ -452,13 +458,13 @@ func TestSetStmtCtxTypeFlags(t *testing.T) {
 	sc.SetTypeFlags(types.FlagAllowNegativeToUnsigned | types.FlagSkipASCIICheck)
 	require.Equal(t, types.FlagAllowNegativeToUnsigned|types.FlagSkipASCIICheck, sc.TypeFlags())
 	require.Equal(t, sc.TypeFlags(), sc.TypeFlags())
-	require.Equal(t, errctx.NewContextWithLevels(levels, sc), sc.ErrCtx())
+	require.Equal(t, errctx.NewContextWithLevels(levels, sc.EvalWarnAppender()), sc.ErrCtx())
 
 	sc.SetTypeFlags(types.FlagSkipASCIICheck | types.FlagSkipUTF8Check | types.FlagTruncateAsWarning)
 	require.Equal(t, types.FlagSkipASCIICheck|types.FlagSkipUTF8Check|types.FlagTruncateAsWarning, sc.TypeFlags())
 	require.Equal(t, sc.TypeFlags(), sc.TypeFlags())
 	levels[errctx.ErrGroupTruncate] = errctx.LevelWarn
-	require.Equal(t, errctx.NewContextWithLevels(levels, sc), sc.ErrCtx())
+	require.Equal(t, errctx.NewContextWithLevels(levels, sc.EvalWarnAppender()), sc.ErrCtx())
 }
 
 func TestResetStmtCtx(t *testing.T) {
@@ -478,7 +484,7 @@ func TestResetStmtCtx(t *testing.T) {
 	levels := errctx.LevelMap{}
 	levels[errctx.ErrGroupTruncate] = errctx.LevelIgnore
 	levels[errctx.ErrGroupDividedByZero] = errctx.LevelWarn
-	require.Equal(t, errctx.NewContextWithLevels(levels, sc), sc.ErrCtx())
+	require.Equal(t, errctx.NewContextWithLevels(levels, sc.EvalWarnAppender()), sc.ErrCtx())
 
 	sc.Reset()
 	require.Same(t, time.UTC, sc.TimeZone())
@@ -495,7 +501,7 @@ func TestResetStmtCtx(t *testing.T) {
 	require.Equal(t, "err2", warnings[0].Err.Error())
 	levels = errctx.LevelMap{}
 	levels[errctx.ErrGroupDividedByZero] = errctx.LevelWarn
-	require.Equal(t, errctx.NewContextWithLevels(levels, sc), sc.ErrCtx())
+	require.Equal(t, errctx.NewContextWithLevels(levels, sc.EvalWarnAppender()), sc.ErrCtx())
 }
 
 func TestStmtCtxID(t *testing.T) {
@@ -536,13 +542,13 @@ func TestErrCtx(t *testing.T) {
 	require.Error(t, sc.HandleError(err))
 	levels := errctx.LevelMap{}
 	levels[errctx.ErrGroupDividedByZero] = errctx.LevelWarn
-	require.Equal(t, errctx.NewContextWithLevels(levels, sc), sc.ErrCtx())
+	require.Equal(t, errctx.NewContextWithLevels(levels, sc.EvalWarnAppender()), sc.ErrCtx())
 	levels[errctx.ErrGroupDividedByZero] = errctx.LevelError
 
 	// set error levels
 	levels[errctx.ErrGroupAutoIncReadFailed] = errctx.LevelIgnore
 	sc.SetErrLevels(levels)
-	require.Equal(t, errctx.NewContextWithLevels(levels, sc), sc.ErrCtx())
+	require.Equal(t, errctx.NewContextWithLevels(levels, sc.EvalWarnAppender()), sc.ErrCtx())
 
 	// reset the types flags will re-initialize the error flag, but keeps the error levels unchanged except for ErrGroupTruncate
 	sc.SetTypeFlags(types.DefaultStmtFlags | types.FlagTruncateAsWarning)
@@ -550,13 +556,13 @@ func TestErrCtx(t *testing.T) {
 	levels = errctx.LevelMap{}
 	levels[errctx.ErrGroupTruncate] = errctx.LevelWarn
 	levels[errctx.ErrGroupAutoIncReadFailed] = errctx.LevelIgnore
-	require.Equal(t, errctx.NewContextWithLevels(levels, sc), sc.ErrCtx())
+	require.Equal(t, errctx.NewContextWithLevels(levels, sc.EvalWarnAppender()), sc.ErrCtx())
 
 	// SetErrLevels will not affect ErrGroupTruncate
 	sc.SetErrLevels(errctx.LevelMap{})
 	levels = errctx.LevelMap{}
 	levels[errctx.ErrGroupTruncate] = errctx.LevelWarn
-	require.Equal(t, errctx.NewContextWithLevels(levels, sc), sc.ErrCtx())
+	require.Equal(t, errctx.NewContextWithLevels(levels, sc.EvalWarnAppender()), sc.ErrCtx())
 }
 
 func TestReservedRowIDAlloc(t *testing.T) {
@@ -591,4 +597,120 @@ func BenchmarkErrCtx(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		sc.ErrCtx()
 	}
+}
+
+func TestRedactMaskingDiagnostics(t *testing.T) {
+	message := func(err error) string {
+		te, ok := errors.Cause(err).(*terror.Error)
+		if !ok {
+			return "1105 " + err.Error()
+		}
+		return fmt.Sprintf("%d %s", te.Code(), te.GetMsg())
+	}
+	plain := errors.New("invalid text: secret")
+	cases := []struct {
+		err error
+		// warning and execErr are the redacted messages of err reported as a
+		// warning and as the error of the statement.
+		warning, execErr string
+	}{
+		// The arguments that errno marks for tidb_redact_log.
+		{types.ErrTruncatedWrongVal.GenWithStackByArgs("INTEGER", "secret"), "1292 Truncated incorrect INTEGER value: '?'", ""},
+		{types.ErrWrongValue.GenWithStackByArgs("datetime", "secret"), "1292 Incorrect datetime value: '?'", ""},
+		{kv.ErrKeyExists.FastGenByArgs("secret", "t.c"), "1062 Duplicate entry '?' for key 't.c'", ""},
+		{types.ErrInvalidJSONPath.GenWithStackByArgs(3), "3143 Invalid JSON path expression. The error is around character position ?.", ""},
+		// The arguments that only the masking rule treats as data values.
+		{types.ErrWrongValueForType.GenWithStackByArgs("string", "secret", "bin_to_uuid"), "1411 Incorrect string value: '?' for function bin_to_uuid", ""},
+		// A message that does not follow the template of its code.
+		{types.ErrTruncatedWrongVal.GenWithStack("bad %s: %s", "INTEGER", "secret"), "1292 Truncated incorrect ? value: '?'", ""},
+		// Plain text keeps what precedes its first data value.
+		{dbterror.ClassTiKV.Synthesize(mysql.ErrTruncatedWrongValue, "Truncated incorrect INTEGER value: 'secret'"), "1292 Truncated incorrect INTEGER value: '?'", ""},
+		{dbterror.ClassTiKV.Synthesize(mysql.ErrTruncatedWrongValue, "Incorrect datetime value: 'secret'"), "1292 Incorrect datetime value: '?'", ""},
+		{dbterror.ClassTiKV.Synthesize(mysql.ErrDupEntry, "Duplicate entry 'secret' for key 't.c'"), "1062 Duplicate entry '?' for key '?'", ""},
+		{dbterror.ClassTiKV.Synthesize(mysql.ErrTruncatedWrongValue, "secret"), "1292 Truncated incorrect ? value: '?'", ""},
+		// The mark of a transaction error that can be retried is kept.
+		{kv.ErrWriteConflict.FastGenByArgs(1, 2, 3, "{tableID=", "1", ", handle=", "secret}", "Optimistic"),
+			"9007 Write conflict, txnStartTS=?, conflictStartTS=?, conflictCommitTS=?, key=????, reason=? " + kv.TxnRetryableMark, ""},
+		{kv.ErrWriteConflictInTiDB.FastGenByArgs(1), "8005 Write conflict, txnStartTS 1 is stale " + kv.TxnRetryableMark,
+			"8005 Write conflict, txnStartTS ? is stale " + kv.TxnRetryableMark},
+		{kv.ErrTxnRetryable.FastGenByArgs("secret"), "8022 Error: KV error safe to retry ? " + kv.TxnRetryableMark, ""},
+		// Errors without data values.
+		{types.ErrDivByZero.GenWithStackByArgs(), "1365 Division by 0", ""},
+		{types.ErrDataTooLong.GenWithStackByArgs("c", 1), "1406 Data too long for column 'c' at row 1", ""},
+		// Nothing tells whether the arguments of another error are data values,
+		// so they are replaced in an execution error, and kept in a warning of
+		// the planner.
+		{types.ErrTooBigScale.GenWithStackByArgs(123456789, "c", 30), "1425 Too big scale 123456789 specified for column 'c'. Maximum is 30.",
+			"1425 Too big scale ? specified for column '?'. Maximum is ?."},
+		{types.ErrTooBigPrecision.GenWithStackByArgs(123456789, "now", 6), "1426 Too-big precision ? specified for 'now'. Maximum is 6.", ""},
+		// A message formatted by the store is rebuilt from the template of its
+		// code unless it is that template.
+		{dbterror.ClassTiKV.Synthesize(mysql.ErrDivisionByZero, "Division by 0"), "1365 Division by 0", ""},
+		{dbterror.ClassTiKV.Synthesize(mysql.ErrDivisionByZero, "Truncated incorrect DOUBLE value: 'secret'"),
+			"1365 Truncated incorrect DOUBLE value: 'secret'", "1365 Division by 0"},
+		// Only an execution error without an error code of its own is hidden.
+		{plain, "1105 invalid text: secret",
+			"1105 the error message is hidden because the statement reads a column masked by a masking policy"},
+	}
+
+	sc := stmtctx.NewStmtCtx()
+	for _, tc := range cases {
+		require.Same(t, tc.err, sc.RedactExecError(tc.err))
+		sc.AppendWarning(tc.err)
+	}
+	for i, w := range sc.GetWarnings() {
+		require.Same(t, cases[i].err, w.Err)
+	}
+
+	sc.SetWarnings(nil)
+	sc.SetRedactDiagnostics()
+	require.NoError(t, sc.RedactExecError(nil))
+	for _, tc := range cases {
+		if tc.execErr == "" {
+			tc.execErr = tc.warning
+		}
+		original := message(tc.err)
+		redacted := sc.RedactExecError(tc.err)
+		require.Equal(t, tc.execErr, message(redacted))
+		// Redacting a redacted diagnostic changes nothing.
+		require.Equal(t, tc.execErr, message(sc.RedactExecError(redacted)))
+		require.Equal(t, original, message(tc.err))
+		require.True(t, terror.ErrorEqual(tc.err, redacted) || tc.err == plain)
+
+		sc.AppendWarning(tc.err)
+		sc.AppendNote(redacted)
+		sc.AppendWarnings([]contextutil.SQLWarn{{Level: contextutil.WarnLevelWarning, Err: tc.err}})
+		warnings := sc.GetWarnings()
+		require.Equal(t, tc.warning, message(warnings[len(warnings)-3].Err))
+		require.Equal(t, tc.execErr, message(warnings[len(warnings)-2].Err))
+		require.Equal(t, tc.warning, message(warnings[len(warnings)-1].Err))
+	}
+	sc.SetWarnings(sc.GetWarnings())
+	require.Len(t, sc.GetWarnings(), 3*len(cases))
+	// A warning raised by evaluating a value is redacted like an execution
+	// error.
+	for _, tc := range cases {
+		if tc.execErr == "" {
+			tc.execErr = tc.warning
+		}
+		sc.SetWarnings(nil)
+		sc.EvalWarnAppender().AppendWarning(tc.err)
+		sc.EvalWarnAppender().AppendNote(tc.err)
+		typeCtx := sc.TypeCtx()
+		typeCtx.AppendWarning(tc.err)
+		for _, w := range sc.GetWarnings() {
+			require.Equal(t, tc.execErr, message(w.Err))
+		}
+	}
+	sc.SetWarnings(nil)
+	sc.AppendWarning(cases[0].err)
+	require.Equal(t, cases[0].warning, message(sc.GetWarnings()[0].Err))
+
+	// The next statement starts without redaction.
+	require.True(t, sc.Reset())
+	require.False(t, sc.RedactDiagnostics)
+	sc.AppendWarning(cases[0].err)
+	sc.EvalWarnAppender().AppendWarning(plain)
+	require.Same(t, cases[0].err, sc.GetWarnings()[0].Err)
+	require.Same(t, plain, sc.GetWarnings()[1].Err)
 }

@@ -213,6 +213,12 @@ const (
 // PlanBuilder builds Plan from an ast.Node.
 // It just builds the ast node straightforwardly.
 type PlanBuilder struct {
+	// buildDepth is the depth of the running Build calls.
+	buildDepth int
+	// maskingSources owns the sources recorded for the result expressions of
+	// the statement being built, see expressionRewriter.maskingSource.
+	maskingSources *expression.SubstituteSources
+
 	ctx          base.PlanContext
 	is           infoschema.InfoSchema
 	outerSchemas []*expression.Schema
@@ -298,6 +304,38 @@ type PlanBuilder struct {
 	allocIDForCTEStorage        int
 	buildingRecursivePartForCTE bool
 	buildingCTE                 bool
+	// buildingSetOprOperands is the nesting depth while building set-operator operands.
+	// When > 0, final masking projection should be skipped for inner SELECT/SET plans and
+	// applied only once on the completed set-operator result.
+	buildingSetOprOperands int
+	// buildingResultSetNode is true while building a subquery inside a FROM clause
+	// (i.e., inside buildResultSetNode). This prevents AT RESULT masking from being
+	// applied inside derived tables, where outer queries need to see original values.
+	buildingResultSetNode bool
+	// maskScalarSubqueryValue is positive while building expressions whose
+	// value is stored or returned by a statement other than SELECT, such as
+	// SET, DO, UPDATE assignments and INSERT values. Scalar subqueries in these
+	// expressions apply masking to their own results.
+	maskScalarSubqueryValue int
+	// rewritingWindowKey is set while the PARTITION BY and ORDER BY items of
+	// a window are rewritten. They have no clause of their own in curClause.
+	rewritingWindowKey bool
+	// scalarSubqueryClause is set while an expression is rewritten outside the
+	// clause that uses its value, such as the arguments of aggregate and window
+	// functions. curClause is left over from an earlier clause then, and scalar
+	// subqueries are classified by this clause instead.
+	scalarSubqueryClause clauseCode
+	// comparedSubquery is set while building a subquery that an UPDATE or
+	// DELETE statement uses outside its assignments, in a predicate or a sort
+	// key. Its fields are not results of the statement.
+	comparedSubquery  bool
+	maskingOuterPlans []base.LogicalPlan
+	// maskingPolicyTables caches whether a table read by the statement has a
+	// masking policy, by table ID.
+	maskingPolicyTables map[int64]bool
+	// Retain raw result dependencies for RESTRICT ON checks after masking has
+	// replaced an output expression with a constant.
+	maskingSourcePlans map[int]base.LogicalPlan
 	// Check whether the current building query is a CTE
 	isCTE bool
 	// CTE table name in lower case, it can be nil
@@ -507,6 +545,7 @@ func (b *PlanBuilder) Init(sctx base.PlanContext, is infoschema.InfoSchema, proc
 
 	b.ctx = sctx
 	b.is = is
+	b.maskingPolicyTables = nil
 	b.hintProcessor = processor
 	if processor != nil {
 		b.hintState = processor.NewBuildState()
@@ -561,7 +600,23 @@ func (b *PlanBuilder) HandleUnusedViewHints() {
 }
 
 // Build builds the ast node to a Plan.
-func (b *PlanBuilder) Build(ctx context.Context, node *resolve.NodeW) (base.Plan, error) {
+func (b *PlanBuilder) Build(ctx context.Context, node *resolve.NodeW) (p base.Plan, err error) {
+	// Every masking projection of the statement is built when the outermost
+	// call returns: an outer query block substitutes into the expressions of
+	// its derived tables. Their sources must not stay in the plan after that.
+	b.buildDepth++
+	defer func() {
+		if b.buildDepth--; b.buildDepth <= 0 {
+			b.buildDepth = 0
+			// An expression that is invalid for its original column, and
+			// was not built for the value of a masking policy instead.
+			if pending := b.maskingSources.PendingError(); err == nil && pending != nil {
+				p, err = nil, pending
+			}
+			b.maskingSources.Release()
+			b.maskingSources = nil
+		}
+	}()
 	// Build might be called recursively, right now they all share the same resolve
 	// context, so it's ok to override it.
 	b.resolveCtx = node.GetResolveContext()
@@ -684,7 +739,23 @@ func (b *PlanBuilder) buildExecute(ctx context.Context, v *ast.ExecuteStmt) (bas
 	return exe, nil
 }
 
+// enterMaskedValueContext marks scalar subqueries built until the returned
+// function is called as producing stored or returned values.
+func (b *PlanBuilder) enterMaskedValueContext() func() {
+	b.maskScalarSubqueryValue++
+	return func() { b.maskScalarSubqueryValue-- }
+}
+
+// enterScalarSubqueryClause makes scalar subqueries built until the returned
+// function is called use clause instead of curClause to classify their result.
+func (b *PlanBuilder) enterScalarSubqueryClause(clause clauseCode) func() {
+	saved := b.scalarSubqueryClause
+	b.scalarSubqueryClause = clause
+	return func() { b.scalarSubqueryClause = saved }
+}
+
 func (b *PlanBuilder) buildDo(ctx context.Context, v *ast.DoStmt) (base.Plan, error) {
+	defer b.enterMaskedValueContext()()
 	var p base.LogicalPlan
 	dual := logicalop.LogicalTableDual{RowCount: 1}.Init(b.ctx, b.getSelectOffset())
 	dual.SetSchema(expression.NewSchema())
@@ -714,7 +785,7 @@ func (b *PlanBuilder) buildDo(ctx context.Context, v *ast.DoStmt) (base.Plan, er
 	}
 	if needBuildAgg {
 		var aggIndexMap map[int]int
-		p, aggIndexMap, err = b.buildAggregation(ctx, p, aggFuncs, nil, nil)
+		p, aggIndexMap, err = b.buildAggregation(ctx, p, aggFuncs, nil, nil, nil, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -743,6 +814,7 @@ func (b *PlanBuilder) buildDo(ctx context.Context, v *ast.DoStmt) (base.Plan, er
 }
 
 func (b *PlanBuilder) buildSet(ctx context.Context, v *ast.SetStmt) (base.Plan, error) {
+	defer b.enterMaskedValueContext()()
 	p := &Set{}
 	for _, vars := range v.Variables {
 		if vars.IsGlobal {
@@ -4440,6 +4512,15 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 	if err != nil {
 		return nil, err
 	}
+	if err = b.checkMaskingPolicyRestrictOnDuplicate(ctx, insertPlan, tableInfo); err != nil {
+		return nil, err
+	}
+	if len(insertPlan.OnDuplicate) > 0 {
+		// The assignments are evaluated on the existing row.
+		if err = recordMaskingPolicyRowRead(ctx, b.ctx, b.is, tableInfo); err != nil {
+			return nil, err
+		}
+	}
 
 	// Calculate generated columns.
 	mockTablePlan.SetSchema(insertPlan.tableSchema)
@@ -4611,6 +4692,7 @@ func (b PlanBuilder) getInsertColExpr(ctx context.Context, insertPlan *Insert, m
 }
 
 func (b *PlanBuilder) buildValuesListOfInsert(ctx context.Context, insert *ast.InsertStmt, insertPlan *Insert, mockTablePlan *logicalop.LogicalTableDual, checkRefColumn func(n ast.Node) ast.Node) error {
+	defer b.enterMaskedValueContext()()
 	affectedValuesCols, err := b.getAffectCols(insert, insertPlan)
 	if err != nil {
 		return err
@@ -4741,6 +4823,11 @@ func (b *PlanBuilder) buildSelectPlanOfInsert(ctx context.Context, insert *ast.I
 	selectPlan, err := b.Build(ctx, nodeW)
 	if err != nil {
 		return err
+	}
+	if lp, ok := selectPlan.(base.LogicalPlan); ok {
+		if err = b.checkMaskingPolicyRestrictOnSelectPlan(ctx, lp, ast.MaskingPolicyRestrictOpInsertIntoSelect); err != nil {
+			return err
+		}
 	}
 
 	// Check to guarantee that the length of the row returned by select is equal to that of affectedValuesCols.
@@ -5636,6 +5723,18 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (base.Plan
 					b.visitInfo = appendVisitInfo(b.visitInfo, mysql.ReferencesPriv, spec.Constraint.Refer.Table.Schema.L,
 						spec.Constraint.Refer.Table.Name.L, "", authErr)
 				}
+			} else if spec.Tp == ast.AlterTableAddMaskingPolicy {
+				err := plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or CREATE MASKING POLICY")
+				b.visitInfo = appendDynamicVisitInfo(b.visitInfo, []string{"CREATE MASKING POLICY"}, false, err)
+			} else if spec.Tp == ast.AlterTableEnableMaskingPolicy ||
+				spec.Tp == ast.AlterTableDisableMaskingPolicy ||
+				spec.Tp == ast.AlterTableModifyMaskingPolicyExpression ||
+				spec.Tp == ast.AlterTableModifyMaskingPolicyRestrictOn {
+				err := plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or ALTER MASKING POLICY")
+				b.visitInfo = appendDynamicVisitInfo(b.visitInfo, []string{"ALTER MASKING POLICY"}, false, err)
+			} else if spec.Tp == ast.AlterTableDropMaskingPolicy {
+				err := plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or DROP MASKING POLICY")
+				b.visitInfo = appendDynamicVisitInfo(b.visitInfo, []string{"DROP MASKING POLICY"}, false, err)
 			}
 		}
 	case *ast.AlterSequenceStmt:
@@ -5870,6 +5969,13 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (base.Plan
 	case *ast.DropPlacementPolicyStmt, *ast.CreatePlacementPolicyStmt, *ast.AlterPlacementPolicyStmt:
 		err := plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or PLACEMENT_ADMIN")
 		b.visitInfo = appendDynamicVisitInfo(b.visitInfo, []string{"PLACEMENT_ADMIN"}, false, err)
+	case *ast.CreateMaskingPolicyStmt:
+		err := plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or CREATE MASKING POLICY")
+		b.visitInfo = appendDynamicVisitInfo(b.visitInfo, []string{"CREATE MASKING POLICY"}, false, err)
+		if v.OrReplace {
+			err = plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or ALTER MASKING POLICY")
+			b.visitInfo = appendDynamicVisitInfo(b.visitInfo, []string{"ALTER MASKING POLICY"}, false, err)
+		}
 	case *ast.CreateResourceGroupStmt, *ast.DropResourceGroupStmt, *ast.AlterResourceGroupStmt:
 		err := plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or RESOURCE_GROUP_ADMIN")
 		b.visitInfo = appendDynamicVisitInfo(b.visitInfo, []string{"RESOURCE_GROUP_ADMIN"}, false, err)
@@ -5996,6 +6102,23 @@ func (b *PlanBuilder) buildExplainFor(explainFor *ast.ExplainForStmt) (base.Plan
 	var explainRows [][]string
 	if explainForFormat == types.ExplainFormatROW {
 		explainRows = processInfo.PlanExplainRows
+	}
+	if processInfo.RedactPlanValues {
+		// The plan holds original values of a masked column, and belongs to
+		// a session that keeps running. Show the rows that session rendered
+		// without them, as a snapshot: the result does not refer to the plan,
+		// so nothing renders or encodes it again. The formats that need the
+		// plan itself are not available.
+		if len(explainRows) == 0 {
+			return nil, plannererrors.ErrNotSupportedYet.GenWithStackByArgs(
+				"EXPLAIN FOR CONNECTION in this format for a statement that reads a masked column")
+		}
+		p := &Explain{Format: explainForFormat, Rows: make([][]string, 0, len(explainRows))}
+		for _, row := range explainRows {
+			p.Rows = append(p.Rows, slices.Clone(row))
+		}
+		p.SetSCtx(b.ctx)
+		return p, p.prepareSchema()
 	}
 	return b.buildExplainPlan(targetPlan, explainForFormat, explainRows, false, nil, processInfo.RuntimeStatsColl)
 }
@@ -6196,6 +6319,8 @@ func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *exp
 		names = []string{"Policy", "Create Policy"}
 	case ast.ShowCreateResourceGroup:
 		names = []string{"Resource_Group", "Create Resource Group"}
+	case ast.ShowMaskingPolicies:
+		names = []string{"Policy_name", "Column_name", "Expression", "Status", "Function_type", "Restrict_on"}
 	case ast.ShowCreateUser:
 		if s.User != nil {
 			names = []string{fmt.Sprintf("CREATE USER for %s", s.User)}

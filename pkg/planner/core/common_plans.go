@@ -931,7 +931,6 @@ func (e *Explain) RenderResult() error {
 	if e.TargetPlan == nil {
 		return nil
 	}
-
 	if e.Analyze && e.Format == types.ExplainFormatTrueCardCost {
 		// true_card_cost mode is used to calibrate the cost model.
 		pp, ok := e.TargetPlan.(base.PhysicalPlan)
@@ -1458,6 +1457,13 @@ func IsPointGetWithPKOrUniqueKeyByAutoCommit(vars *variable.SessionVars, p base.
 
 	// check plan
 	if proj, ok := p.(*PhysicalProjection); ok {
+		for _, expr := range proj.Exprs {
+			if hasSequenceWrite(expr) {
+				// Sequence mutations use an independent metadata transaction.
+				// Keep a real session start TS so database read-only can drain it.
+				return false
+			}
+		}
 		p = proj.Children()[0]
 	}
 
@@ -1497,6 +1503,22 @@ func IsPointGetWithPKOrUniqueKeyByAutoCommit(vars *variable.SessionVars, p base.
 	default:
 		return false
 	}
+}
+
+func hasSequenceWrite(expr expression.Expression) bool {
+	function, ok := expr.(*expression.ScalarFunction)
+	if !ok {
+		return false
+	}
+	if function.FuncName.L == ast.NextVal || function.FuncName.L == ast.SetVal {
+		return true
+	}
+	for _, arg := range function.GetArgs() {
+		if hasSequenceWrite(arg) {
+			return true
+		}
+	}
+	return false
 }
 
 // IsAutoCommitTxn checks if session is in autocommit mode and not InTxn

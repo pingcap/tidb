@@ -248,7 +248,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW,
 		} else {
 			fp = core.TryFastPlan(pctx, node)
 		}
-		if fp != nil {
+		if fp != nil && core.RecordFastPlanMaskingPolicyReads(ctx, pctx, fp) {
 			return fp, fp.OutputNames(), nil
 		}
 	}
@@ -437,7 +437,7 @@ func allowInReadOnlyMode(sctx planctx.PlanContext, node ast.Node) (bool, error) 
 	roles := sctx.GetSessionVars().ActiveRoles
 	// allow replication thread
 	// NOTE: it is required, whether SEM is enabled or not, only user with explicit RESTRICTED_REPLICA_WRITER_ADMIN granted can ignore the restriction, so we need to surpass the case that if SEM is not enabled, SUPER will has all privileges
-	if pm.HasExplicitlyGrantedDynamicPrivilege(roles, "RESTRICTED_REPLICA_WRITER_ADMIN", false) {
+	if pm.HasExplicitlyGrantedDynamicPrivilege(roles, privilege.ReplicaWriterAdminPriv, false) {
 		return true, nil
 	}
 

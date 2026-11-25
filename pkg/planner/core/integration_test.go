@@ -2840,12 +2840,25 @@ func TestIndexScanSeekCost(t *testing.T) {
 	tk.MustExec("set @@cte_max_recursion_depth = 100000")
 	tk.MustExec(`insert into t with recursive cte(n) as (select 1 union all select n + 1 from cte where n < 50000)
 		select n % 2000, n % 7 + 1, n % 11 + 1, n from cte`)
+	// Resolve secondary locks before the mock ANALYZE scan, which skips locked rows.
+	tk.MustQuery("select count(*) from t ignore index(idx_abcd)").Check(testkit.Rows("50000"))
 	// Flush the insert deltas before analyze. Otherwise a late flush raises the modify count
 	// and the table falls back to pseudo stats, which disables pruning.
 	dom := domain.GetDomain(tk.Session())
 	h := dom.StatsHandle()
+	// LFU admission can retain an older entry after rejecting a newer version.
+	// Reset the cache and its version watermark so Update reloads persisted stats
+	// even when the watermark already includes the analyzed version.
+	syncStatsCache := func() {
+		h.WaitForAsyncUpdates()
+		// Keep the delta collectors intact for later inserts.
+		h.StatsCache.Clear()
+		require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
+		h.WaitForAsyncUpdates()
+	}
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	tk.MustExec("analyze table t")
+	syncStatsCache()
 	tk.MustExec("set @@tidb_cost_model_version = 2")
 
 	// The IN-lists cover only part of the values of `b` and `c`, so the residual filters on a
@@ -2886,15 +2899,17 @@ func TestIndexScanSeekCost(t *testing.T) {
 	tk.MustExec("create table t2 (a int, b int, c int, d int, e int, f int, key idx(a, b, c, d, e, f))")
 	tk.MustExec(`insert into t2 with recursive cte(n) as (select 1 union all select n + 1 from cte where n < 100000)
 		select n % 1000, n % 5, n % 4, n % 10, n, n from cte`)
+	tk.MustQuery("select count(*) from t2 ignore index(idx)").Check(testkit.Rows("100000"))
 	// The leading column has only 2 values, so a shorter prefix would scan far more rows per saved
 	// seek than the guard allows, and the full ranges must be kept.
 	tk.MustExec("create table t3 (a int, b int, c int, d int, e int, f int, key idx(a, b, c, d, e, f))")
 	tk.MustExec(`insert into t3 with recursive cte(n) as (select 1 union all select n + 1 from cte where n < 100000)
 		select n % 2, n % 10, n % 1000, n, n, n from cte`)
+	tk.MustQuery("select count(*) from t3 ignore index(idx)").Check(testkit.Rows("100000"))
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	tk.MustExec("analyze table t2")
 	tk.MustExec("analyze table t3")
-	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
+	syncStatsCache()
 
 	const where2 = "a in (1,2,3,4,5,6,7,8,9,10,11,12) and b in (1,2,3,4) and c in (1,2,3) and d in (1,2,3,4,5,6,7,8,9) and e = -1"
 	tk.MustQuery("explain format='brief' select * from t2 where " + where2).Check(testkit.Rows(
@@ -2925,9 +2940,10 @@ func TestIndexScanSeekCost(t *testing.T) {
 	tk.MustExec("create table t4 (a int, b int, c int, d int, e int, primary key(c, d) clustered, key idx(a, b))")
 	tk.MustExec(`insert into t4 with recursive cte(n) as (select 1 union all select n + 1 from cte where n < 20000)
 		select n % 1000, n % 7, n % 13, n, n from cte`)
+	tk.MustQuery("select count(*) from t4 ignore index(idx)").Check(testkit.Rows("20000"))
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	tk.MustExec("analyze table t4")
-	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
+	syncStatsCache()
 	const where4 = "a = 1 and b in (1,2,3,4,5,6) and c in (1,2,3,4,5,6,7,8,9,10) and d in (1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20)"
 	tk.MustQuery("explain format='brief' select * from t4 use index(idx) where "+where4).CheckAt([]int{0, 4}, [][]any{
 		{"IndexLookUp", ""},
@@ -2969,9 +2985,10 @@ func TestIndexScanSeekCost(t *testing.T) {
 	tk.MustExec("create table t5 (a int, b int, c int, d int, unique key uk(a, b, c))")
 	tk.MustExec(`insert into t5 with recursive cte(n) as (select 1 union all select n + 1 from cte where n < 50000)
 		select n % 2000, n % 7, n, n from cte`)
+	tk.MustQuery("select count(*) from t5 ignore index(uk)").Check(testkit.Rows("50000"))
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	tk.MustExec("analyze table t5")
-	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
+	syncStatsCache()
 	const where5 = "a in (1,3) and b in (0,1,2,3,4,5) and c > 100"
 	tk.MustQuery("explain format='brief' select a, b, c from t5 where "+where5).CheckAt([]int{0, 4}, [][]any{
 		{"IndexReader", "index:Selection"},

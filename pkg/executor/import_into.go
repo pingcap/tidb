@@ -34,6 +34,7 @@ import (
 	litkv "github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/privilege"
@@ -253,6 +254,9 @@ func (e *ImportIntoExec) importFromSelect(ctx context.Context) error {
 		return err2
 	}
 	defer CloseSession(newSCtx)
+	if privilege.CanWriteReadOnlySchema(e.userSctx, pmodel.NewCIStr(e.controller.Plan.DBName).L) {
+		defer privilege.WithInternalSchemaReadOnlyBypass(newSCtx, pmodel.NewCIStr(e.controller.Plan.DBName).L)()
+	}
 
 	sqlExec := newSCtx.GetSQLExecutor()
 	if err2 = e.controller.CheckRequirements(ctx, sqlExec); err2 != nil {

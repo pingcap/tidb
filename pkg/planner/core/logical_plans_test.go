@@ -47,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/mock"
@@ -59,6 +60,58 @@ type plannerSuite struct {
 	is   infoschema.InfoSchema
 	sctx sessionctx.Context
 	ctx  base.PlanContext
+}
+
+func TestMaskingPolicyScalarSemiJoinInputs(t *testing.T) {
+	for _, tp := range []logicalop.JoinType{logicalop.LeftOuterSemiJoin, logicalop.AntiLeftOuterSemiJoin} {
+		for _, apply := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/apply=%t", tp, apply), func(t *testing.T) {
+				ctx := mock.NewContext().GetPlanCtx()
+				column := func(id int64) *expression.Column {
+					return &expression.Column{UniqueID: id, RetType: expression.NewOne().RetType.Clone()}
+				}
+				left := logicalop.LogicalTableDual{RowCount: 1}.Init(ctx, 0)
+				left.SetSchema(expression.NewSchema(column(1), column(2)))
+				left.SetOutputNames(types.NameSlice{types.EmptyName, types.EmptyName})
+				right := logicalop.LogicalTableDual{RowCount: 1}.Init(ctx, 0)
+				right.SetSchema(expression.NewSchema())
+				var p base.LogicalPlan
+				if apply {
+					p = logicalop.LogicalApply{LogicalJoin: logicalop.LogicalJoin{JoinType: tp}}.Init(ctx, 0)
+				} else {
+					p = logicalop.LogicalJoin{JoinType: tp}.Init(ctx, 0)
+				}
+				p.SetChildren(left, right)
+				join := maskingScalarJoin(p)
+				require.NotNil(t, join)
+				generated := column(3)
+				join.SetSchema(left.Schema().Clone())
+				p.Schema().Append(generated)
+				p.SetOutputNames(append(left.OutputNames().Shallow(), types.EmptyName))
+				for _, id := range []int64{4, 5} {
+					input := column(id)
+					left.Schema().Append(input)
+					left.SetOutputNames(append(left.OutputNames(), types.EmptyName))
+					idx := appendMaskingInput(p, input)
+					require.Equal(t, left.Schema().Len()-1, idx)
+					require.Equal(t, id, p.Schema().Columns[idx].UniqueID)
+					require.Equal(t, generated.UniqueID, p.Schema().Columns[p.Schema().Len()-1].UniqueID)
+					_, ok := maskingScalarJoinInputs(p, p.Schema().Len()-1)
+					require.True(t, ok)
+					_, ok = maskingScalarJoinInputs(p, idx)
+					require.False(t, ok)
+					join.MergeSchema()
+					require.Equal(t, generated.UniqueID, p.Schema().Columns[p.Schema().Len()-1].UniqueID)
+					require.Len(t, p.OutputNames(), p.Schema().Len())
+					seen := make(map[int64]struct{})
+					for _, col := range p.Schema().Columns {
+						seen[col.UniqueID] = struct{}{}
+					}
+					require.Len(t, seen, p.Schema().Len())
+				}
+			})
+		}
+	}
 }
 
 func (p *plannerSuite) GetParser() *parser.Parser {

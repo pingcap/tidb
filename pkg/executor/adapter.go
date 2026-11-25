@@ -172,7 +172,7 @@ func (a *recordSet) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	err = a.stmt.next(ctx, a.executor, req)
 	if err != nil {
 		a.lastErrs = append(a.lastErrs, err)
-		return err
+		return a.stmt.Ctx.GetSessionVars().StmtCtx.RedactExecError(err)
 	}
 	numRows := req.NumRows()
 	if numRows == 0 {
@@ -218,6 +218,9 @@ func (a *recordSet) Finish() error {
 	})
 	if err != nil {
 		a.lastErrs = append(a.lastErrs, err)
+		if a.stmt != nil {
+			err = a.stmt.Ctx.GetSessionVars().StmtCtx.RedactExecError(err)
+		}
 	}
 	return err
 }

@@ -24,8 +24,21 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/stretchr/testify/require"
 )
+
+func TestSchemataExtensionsMemoryAccounting(t *testing.T) {
+	mt := memtableRetriever{
+		is:         infoschema.MockInfoSchema(nil),
+		extractor:  &plannercore.InfoSchemaSchemataExtractor{},
+		memTracker: memory.NewTracker(-1, -1),
+	}
+	require.NoError(t, mt.setDataFromSchemataExtensions(defaultCtx()))
+	require.NotEmpty(t, mt.rows)
+	require.Equal(t, len(mt.rows), mt.accMemRecordCnt)
+	require.Positive(t, mt.accMemPerBatch)
+}
 
 func TestSetDataFromCheckConstraints(t *testing.T) {
 	tblInfos := []*model.TableInfo{

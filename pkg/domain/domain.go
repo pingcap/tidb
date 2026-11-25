@@ -328,6 +328,7 @@ func (do *Domain) loadInfoSchema(startTS uint64, isSnapshot bool) (infoschema.In
 			// So we keep updating the ts of the infoschema v2.
 			is = raw.CloneAndUpdateTS(startTS)
 		}
+		infoschema.UpdateMaskingPolicySnapshotTS(is, startTS)
 
 		// try to insert here as well to correct the schemaTs if previous is wrong
 		// the insert method check if schemaTs is zero
@@ -351,6 +352,9 @@ func (do *Domain) loadInfoSchema(startTS uint64, isSnapshot bool) (infoschema.In
 		if err == nil {
 			infoschema_metrics.LoadSchemaDurationLoadDiff.Observe(time.Since(startTime).Seconds())
 			isV2, _ := infoschema.IsV2(is)
+			if !isSnapshot {
+				do.preloadMaskingPolicies(is, beginTime)
+			}
 			do.infoCache.Insert(is, schemaTs)
 			logutil.BgLogger().Info("diff load InfoSchema success",
 				zap.Bool("isV2", isV2),
@@ -378,22 +382,6 @@ func (do *Domain) loadInfoSchema(startTS uint64, isSnapshot bool) (infoschema.In
 	})
 
 	// full load.
-	schemas, err := do.fetchAllSchemasWithTables(m)
-	if err != nil {
-		return nil, false, currentSchemaVersion, nil, err
-	}
-
-	policies, err := do.fetchPolicies(m)
-	if err != nil {
-		return nil, false, currentSchemaVersion, nil, err
-	}
-
-	resourceGroups, err := do.fetchResourceGroups(m)
-	if err != nil {
-		return nil, false, currentSchemaVersion, nil, err
-	}
-	infoschema_metrics.LoadSchemaDurationLoadAll.Observe(time.Since(startTime).Seconds())
-
 	data := do.infoCache.Data
 	if isSnapshot {
 		// Use a NewData() to avoid adding the snapshot schema to the infoschema history.
@@ -404,12 +392,13 @@ func (do *Domain) loadInfoSchema(startTS uint64, isSnapshot bool) (infoschema.In
 		// Not adding snapshot schema to history can avoid such cases.
 		data = infoschema.NewData()
 	}
-	builder := infoschema.NewBuilder(do, do.sysFacHack, data, useV2)
-	err = builder.InitWithDBInfos(schemas, policies, resourceGroups, neededSchemaVersion)
+	is, err := do.fullLoadInfoSchema(m, neededSchemaVersion, startTS, data, useV2, startTime)
 	if err != nil {
 		return nil, false, currentSchemaVersion, nil, err
 	}
-	is := builder.Build(startTS)
+	if !isSnapshot {
+		do.preloadMaskingPolicies(is, beginTime)
+	}
 	isV2, _ := infoschema.IsV2(is)
 	logutil.BgLogger().Info("full load InfoSchema success",
 		zap.Bool("isV2", isV2),
@@ -471,7 +460,10 @@ func (*Domain) fetchResourceGroups(m meta.Reader) ([]*model.ResourceGroupInfo, e
 	return allResourceGroups, nil
 }
 
-func (do *Domain) fetchAllSchemasWithTables(m meta.Reader) ([]*model.DBInfo, error) {
+// fetchAllSchemasWithTables fetches the databases and their tables from m in
+// the form a builder of the given schema kind needs: for v2, only the names of
+// the tables of the databases that are loaded on demand.
+func (do *Domain) fetchAllSchemasWithTables(m meta.Reader, useV2 bool) ([]*model.DBInfo, error) {
 	var allSchemas []*model.DBInfo
 	var err error
 	if do.schemaFilter != nil {
@@ -492,7 +484,7 @@ func (do *Domain) fetchAllSchemasWithTables(m meta.Reader) ([]*model.DBInfo, err
 		return nil, nil
 	}
 
-	splittedSchemas := do.splitForConcurrentFetch(allSchemas)
+	splittedSchemas := do.splitForConcurrentFetch(allSchemas, useV2)
 	concurrency := min(len(splittedSchemas), 128)
 
 	eg, ectx := util.NewErrorGroupWithRecoverWithCtx(context.Background())
@@ -500,7 +492,7 @@ func (do *Domain) fetchAllSchemasWithTables(m meta.Reader) ([]*model.DBInfo, err
 	for _, schemas := range splittedSchemas {
 		ss := schemas
 		eg.Go(func() error {
-			return do.fetchSchemasWithTables(ectx, ss, m)
+			return do.fetchSchemasWithTables(ectx, ss, m, useV2)
 		})
 	}
 	if err := eg.Wait(); err != nil {
@@ -514,10 +506,10 @@ func (do *Domain) fetchAllSchemasWithTables(m meta.Reader) ([]*model.DBInfo, err
 // so we decrease the concurrency.
 const fetchSchemaConcurrency = 1
 
-func (*Domain) splitForConcurrentFetch(schemas []*model.DBInfo) [][]*model.DBInfo {
+func (*Domain) splitForConcurrentFetch(schemas []*model.DBInfo, useV2 bool) [][]*model.DBInfo {
 	groupCnt := fetchSchemaConcurrency
 	schemaCnt := len(schemas)
-	if variable.SchemaCacheSize.Load() > 0 && schemaCnt > 1000 {
+	if useV2 && schemaCnt > 1000 {
 		// TODO: Temporary solution to speed up when too many databases, will refactor it later.
 		groupCnt = 8
 	}
@@ -534,7 +526,7 @@ func (*Domain) splitForConcurrentFetch(schemas []*model.DBInfo) [][]*model.DBInf
 	return splitted
 }
 
-func (*Domain) fetchSchemasWithTables(ctx context.Context, schemas []*model.DBInfo, m meta.Reader) error {
+func (*Domain) fetchSchemasWithTables(ctx context.Context, schemas []*model.DBInfo, m meta.Reader, useV2 bool) error {
 	failpoint.Inject("failed-fetch-schemas-with-tables", func() {
 		failpoint.Return(errors.New("failpoint: failed to fetch schemas with tables"))
 	})
@@ -546,7 +538,7 @@ func (*Domain) fetchSchemasWithTables(ctx context.Context, schemas []*model.DBIn
 		}
 		var tables []*model.TableInfo
 		var err error
-		if variable.SchemaCacheSize.Load() > 0 && !infoschema.IsSpecialDB(di.Name.L) {
+		if useV2 && !infoschema.IsSpecialDB(di.Name.L) {
 			name2ID, specialTableInfos, err := m.GetAllNameToIDAndTheMustLoadedTableInfo(di.ID)
 			if err != nil {
 				return err
@@ -693,6 +685,34 @@ func (do *Domain) tryLoadSchemaDiffs(useV2 bool, m meta.Reader, usedVersion, new
 	return is, &relatedChange, diffTypes, nil
 }
 
+// fullLoadInfoSchema builds the schema of neededSchemaVersion from m into
+// data. It neither preloads masking policies nor inserts the schema into the
+// cache. The tables are fetched in the form of the schema kind useV2 is built
+// as, even if tidb_schema_cache_size changes during the load.
+func (do *Domain) fullLoadInfoSchema(m meta.Reader, neededSchemaVersion int64, startTS uint64, data *infoschema.Data, useV2 bool, startTime time.Time) (infoschema.InfoSchema, error) {
+	failpoint.InjectCall("beforeFullLoadFetchSchemas")
+	schemas, err := do.fetchAllSchemasWithTables(m, useV2)
+	if err != nil {
+		return nil, err
+	}
+	policies, err := do.fetchPolicies(m)
+	if err != nil {
+		return nil, err
+	}
+	resourceGroups, err := do.fetchResourceGroups(m)
+	if err != nil {
+		return nil, err
+	}
+	infoschema_metrics.LoadSchemaDurationLoadAll.Observe(time.Since(startTime).Seconds())
+
+	builder := infoschema.NewBuilder(do, do.sysFacHack, data, useV2)
+	err = builder.InitWithDBInfos(schemas, policies, resourceGroups, neededSchemaVersion)
+	if err != nil {
+		return nil, err
+	}
+	return builder.Build(startTS), nil
+}
+
 func canSkipSchemaCheckerDDL(tp model.ActionType) bool {
 	switch tp {
 	case model.ActionUpdateTiFlashReplicaStatus, model.ActionSetTiFlashReplica:
@@ -708,13 +728,101 @@ func (do *Domain) InfoSchema() infoschema.InfoSchema {
 
 // GetSnapshotInfoSchema gets a snapshot information schema.
 func (do *Domain) GetSnapshotInfoSchema(snapshotTS uint64) (infoschema.InfoSchema, error) {
+	if snapshotTS == math.MaxUint64 {
+		// Latest reads still need a real timestamp for delayed policy SQL.
+		version, err := do.store.CurrentVersion(kv.GlobalTxnScope)
+		if err != nil {
+			return nil, err
+		}
+		snapshotTS = version.Ver
+	}
 	// if the snapshotTS is new enough, we can get infoschema directly through snapshotTS.
-	if is := do.infoCache.GetBySnapshotTS(snapshotTS); is != nil {
+	if is, valid := do.infoCache.GetBySnapshotTSWithValidity(snapshotTS); is != nil {
+		// The newest cached schema is returned for any later snapshotTS, even
+		// if a newer schema version has been committed but not loaded yet.
+		// Only advance its policy read time when it is known to be valid at
+		// snapshotTS. Otherwise, keep the time it was last verified at, which
+		// reload keeps advancing for the newest schema.
+		if valid {
+			infoschema.UpdateMaskingPolicySnapshotTS(is, snapshotTS)
+		}
 		return is, nil
 	}
 	is, _, _, _, err := do.loadInfoSchema(snapshotTS, true)
 	infoschema_metrics.LoadSchemaCounterSnapshot.Inc()
 	return is, err
+}
+
+// GetHistoricalInfoSchema gets the information schema valid at snapshotTS for
+// an explicit historical read, such as one under tidb_snapshot or a stale
+// read. Unlike GetSnapshotInfoSchema, it does not take the newest cached
+// schema for a later snapshotTS unless it is known to be valid at that time:
+// a newer schema version may have been committed but not loaded by this node
+// yet. A schema newer than the cached ones is loaded on its own, without
+// being inserted into the cache, so the read does not publish a version that
+// this node has not applied.
+func (do *Domain) GetHistoricalInfoSchema(snapshotTS uint64) (infoschema.InfoSchema, error) {
+	if is, valid := do.infoCache.GetBySnapshotTSWithValidity(snapshotTS); is != nil {
+		// The newest cached schema is valid at snapshotTS if it was verified at
+		// a later time, or if it is still the schema at the current time.
+		if !valid {
+			valid = snapshotTS <= infoschema.MaskingPolicySnapshotTS(is)
+		}
+		if !valid {
+			var err error
+			if valid, err = do.verifyNewestInfoSchema(is); err != nil {
+				return nil, err
+			}
+		}
+		if valid {
+			infoschema.UpdateMaskingPolicySnapshotTS(is, snapshotTS)
+			return is, nil
+		}
+	}
+
+	snapshot := do.store.GetSnapshot(kv.NewVersion(snapshotTS))
+	snapshot.SetOption(kv.TiKVClientReadTimeout, uint64(3000))
+	m := meta.NewReader(snapshot)
+	neededSchemaVersion, err := m.GetSchemaVersionWithNonEmptyDiff()
+	if err != nil {
+		return nil, err
+	}
+	latest := do.infoCache.GetLatest()
+	if latest == nil || neededSchemaVersion <= latest.SchemaMetaVersion() {
+		// The schema is not newer than what this node has applied.
+		is, _, _, _, err := do.loadInfoSchema(snapshotTS, true)
+		infoschema_metrics.LoadSchemaCounterSnapshot.Inc()
+		return is, err
+	}
+	// Build the newer schema on its own data, so neither the cache nor the
+	// data shared by infoschema v2 sees it before this node reloads.
+	useV2 := variable.SchemaCacheSize.Load() > 0
+	is, err := do.fullLoadInfoSchema(m, neededSchemaVersion, snapshotTS, infoschema.NewData(), useV2, time.Now())
+	infoschema_metrics.LoadSchemaCounterSnapshot.Inc()
+	return is, err
+}
+
+// verifyNewestInfoSchema reports whether is, the newest cached schema, is
+// still the schema at the current time. If so, it is valid at any time since
+// it took effect, and its verified time is advanced to the current time, so
+// later historical reads up to that time need no further check. It does not
+// change the cache.
+func (do *Domain) verifyNewestInfoSchema(is infoschema.InfoSchema) (bool, error) {
+	version, err := do.store.CurrentVersion(kv.GlobalTxnScope)
+	if err != nil {
+		return false, err
+	}
+	snapshot := do.store.GetSnapshot(version)
+	snapshot.SetOption(kv.TiKVClientReadTimeout, uint64(3000))
+	schemaVersion, err := meta.NewReader(snapshot).GetSchemaVersionWithNonEmptyDiff()
+	if err != nil {
+		return false, err
+	}
+	if do.infoCache.GetByVersion(schemaVersion) != is {
+		return false, nil
+	}
+	infoschema.UpdateMaskingPolicySnapshotTS(is, version.Ver)
+	return true, nil
 }
 
 // GetSnapshotMeta gets a new snapshot meta at startTS.
@@ -825,6 +933,11 @@ func (do *Domain) Reload() error {
 		metrics.LoadSchemaCounter.WithLabelValues("failed").Inc()
 		return err
 	}
+	// A newly loaded schema has already attempted preloading before publication.
+	// Retry only on a cache hit, never twice in the same reload.
+	if hitCache {
+		do.preloadMaskingPolicies(is, startTime)
+	}
 	metrics.LoadSchemaCounter.WithLabelValues("succ").Inc()
 
 	// only update if it is not from cache
@@ -858,6 +971,29 @@ func (do *Domain) Reload() error {
 	}
 
 	return nil
+}
+
+// preloadMaskingPolicies warms the cache before publishing a new schema, so the
+// first user query does not need to execute an internal coprocessor request.
+func (do *Domain) preloadMaskingPolicies(is infoschema.InfoSchema, startTime time.Time) {
+	failpoint.Inject("skipLoadMaskingPolicies", func() {
+		failpoint.Return()
+	})
+	// Bootstrap and upgrade may not have created the policy table yet.
+	if !is.TableExists(ast.NewCIStr(mysql.SystemDB), ast.NewCIStr("tidb_masking_policy")) {
+		return
+	}
+	// Warming the cache is optional. Include time already spent loading schema
+	// and waiting for another policy loader in this budget, leaving the lease
+	// renewal path independent of the policy SQL's 30-second timeout.
+	budget := min(time.Second, do.schemaLease/4)
+	ctx, cancel := context.WithDeadline(do.ctx, startTime.Add(budget))
+	defer cancel()
+	if err := infoschema.PreloadMaskingPolicies(ctx, is); err != nil {
+		// Keep schema validation/version synchronization running. Policy access
+		// retries the load and returns an error until loading succeeds.
+		logutil.BgLogger().Warn("failed to preload masking policies", zap.Error(err))
+	}
 }
 
 // LogSlowQuery keeps topN recent slow queries in domain.

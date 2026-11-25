@@ -237,6 +237,10 @@ type TxnCtxNoNeedToRestore struct {
 	EnableMDL bool
 	// relatedTableForMDL records the `lock` table for metadata lock. It maps from int64 to int64(version).
 	relatedTableForMDL *sync.Map
+	// relatedTableForReadOnly maps table IDs to database names for read-only
+	// draining and lazy activation checks, including when MDL is enabled:
+	// database read-only jobs do not acquire table metadata locks.
+	relatedTableForReadOnly *sync.Map
 
 	// FairLockingUsed marking whether at least one of the statements in the transaction was executed in
 	// fair locking mode.
@@ -245,6 +249,13 @@ type TxnCtxNoNeedToRestore struct {
 	// fair locking mode, and it takes effect (which is determined according to whether lock-with-conflict
 	// has occurred during execution of any statement).
 	FairLockingEffective bool
+
+	// RedactDiagnostics marks that a statement of the transaction reads a
+	// column that a masking policy masks for the session. The diagnostics of
+	// its later statements are redacted too: COMMIT and other statements may
+	// report an error about the rows it has read and written, such as that of
+	// a unique key check deferred to them.
+	RedactDiagnostics bool
 
 	// CurrentStmtPessimisticLockCache is the cache for pessimistic locked keys in the current statement.
 	// It is merged into `pessimisticLockCache` after a statement finishes.
@@ -413,6 +424,7 @@ func (tc *TransactionContext) Cleanup() {
 	tc.tdmLock.Lock()
 	tc.TableDeltaMap = nil
 	tc.relatedTableForMDL = nil
+	tc.relatedTableForReadOnly = nil
 	tc.tdmLock.Unlock()
 	tc.pessimisticLockCache = nil
 	tc.CurrentStmtPessimisticLockCache = nil
@@ -802,6 +814,11 @@ type SessionVars struct {
 	// Parameter values for plan cache.
 	PlanCacheParams   *PlanCacheParamList
 	LastUpdateTime4PC types.Time
+
+	// maskingPolicyExprCache caches compiled masking policy expressions per schema version.
+	maskingPolicyExprCache any
+	// maskingPolicyExprCacheSchemaVersion is the schema version for maskingPolicyExprCache.
+	maskingPolicyExprCacheSchemaVersion int64
 
 	// ActiveRoles stores active roles for current user
 	ActiveRoles []*auth.RoleIdentity
@@ -3525,15 +3542,49 @@ func (s *SessionVars) GetNegateStrMatchDefaultSelectivity() float64 {
 	return 1 - s.GetStrMatchDefaultSelectivity()
 }
 
+// PlanRedactLog returns the tidb_redact_log mode to render the data values in
+// the plan of the current statement with. The plan of a statement that reads
+// a masked column holds original values, for example the result of a subquery
+// evaluated while planning and the ranges built from it, so it is rendered as
+// with tidb_redact_log = ON, whatever the session has set.
+func (s *SessionVars) PlanRedactLog() string {
+	if s.StmtCtx != nil && s.StmtCtx.ReadsMaskedColumn {
+		return errors.RedactLogEnable
+	}
+	return s.EnableRedactLog
+}
+
 // GetRelatedTableForMDL gets the related table for metadata lock.
 func (s *SessionVars) GetRelatedTableForMDL() *sync.Map {
-	mu := &s.TxnCtx.tdmLock
-	mu.Lock()
-	defer mu.Unlock()
-	if s.TxnCtx.relatedTableForMDL == nil {
-		s.TxnCtx.relatedTableForMDL = new(sync.Map)
+	s.TxnCtxMu.Lock()
+	txnCtx := s.TxnCtx
+	s.TxnCtxMu.Unlock()
+	return txnCtx.GetRelatedTableForMDL()
+}
+
+// GetRelatedTableForMDL returns the table set belonging to this transaction.
+// Callers holding SessionVars.TxnCtxMu can use it without acquiring that mutex again.
+func (tc *TransactionContext) GetRelatedTableForMDL() *sync.Map {
+	tc.tdmLock.Lock()
+	defer tc.tdmLock.Unlock()
+	if tc.relatedTableForMDL == nil {
+		tc.relatedTableForMDL = new(sync.Map)
 	}
-	return s.TxnCtx.relatedTableForMDL
+	return tc.relatedTableForMDL
+}
+
+// GetRelatedTableForReadOnly gets the MDL-independent table-access set used to
+// drain transactions before a database read-only transition finishes.
+func (s *SessionVars) GetRelatedTableForReadOnly() *sync.Map {
+	s.TxnCtxMu.Lock()
+	txnCtx := s.TxnCtx
+	s.TxnCtxMu.Unlock()
+	txnCtx.tdmLock.Lock()
+	defer txnCtx.tdmLock.Unlock()
+	if txnCtx.relatedTableForReadOnly == nil {
+		txnCtx.relatedTableForReadOnly = new(sync.Map)
+	}
+	return txnCtx.relatedTableForReadOnly
 }
 
 // ClearRelatedTableForMDL clears the related table for MDL.

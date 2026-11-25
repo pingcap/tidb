@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/bindinfo/norm"
 	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -278,7 +277,7 @@ func NewPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt) (key, binding
 		// In Rc or ForUpdateRead, we should check if the information schema has been changed since
 		// last time. If it changed, we should rebuild the plan. Here, we use a different and more
 		// up-to-date schema version which can lead plan cache miss and thus, the plan will be rebuilt.
-		latestSchemaVersion = domain.GetDomain(sctx).InfoSchema().SchemaMetaVersion()
+		latestSchemaVersion = sctx.GetDomainInfoSchema().SchemaMetaVersion()
 	}
 
 	// rebuild key to exclude kv.TiFlash when stmt is not read only
@@ -443,12 +442,13 @@ func bool2Byte(flag bool) byte {
 
 // PlanCacheValue stores the cached Statement and StmtNode.
 type PlanCacheValue struct {
-	Plan          base.Plan          // not-read-only, session might update it before reusing
-	OutputColumns types.NameSlice    // read-only
-	memoryUsage   int64              // read-only
-	testKey       int64              // test-only
-	paramTypes    []*types.FieldType // read-only, all parameters' types, different parameters may share same plan
-	stmtHints     *hint.StmtHints    // read-only, hints which set session variables
+	Plan                base.Plan                    // not-read-only, session might update it before reusing
+	OutputColumns       types.NameSlice              // read-only
+	memoryUsage         int64                        // read-only
+	testKey             int64                        // test-only
+	paramTypes          []*types.FieldType           // read-only, all parameters' types, different parameters may share same plan
+	stmtHints           *hint.StmtHints              // read-only, hints which set session variables
+	maskingPolicyChecks []stmtctx.MaskingPolicyCheck // immutable source-column authorization checks
 }
 
 // CloneForInstancePlanCache clones a PlanCacheValue for instance plan cache.
@@ -503,6 +503,7 @@ func (v *PlanCacheValue) MemoryUsage() (sum int64) {
 		}
 	}
 
+	sum += size.SizeOfSlice + int64(cap(v.maskingPolicyChecks))*(size.SizeOfInt64*4)
 	for _, name := range v.OutputColumns {
 		sum += name.MemoryUsage()
 	}
@@ -563,6 +564,16 @@ type PointGetExecutorCache struct {
 	Executor any
 }
 
+// schemaReadOnlyTargetState tells whether a statement may need a database
+// read-only check on each execution.
+type schemaReadOnlyTargetState uint8
+
+const (
+	schemaReadOnlyTargetUnknown schemaReadOnlyTargetState = iota
+	schemaReadOnlyTargetAbsent
+	schemaReadOnlyTargetPresent
+)
+
 // PlanCacheStmt store prepared ast from PrepareExec and other related fields
 type PlanCacheStmt struct {
 	PreparedAst *ast.Prepared
@@ -587,7 +598,10 @@ type PlanCacheStmt struct {
 
 	limits      []*ast.Limit
 	hasSubquery bool
-	tables      []table.Table // to capture table stats changes
+	// schemaReadOnlyTarget caches whether the statement has a node that may
+	// need a database read-only check. It depends only on the statement.
+	schemaReadOnlyTarget schemaReadOnlyTargetState
+	tables               []table.Table // to capture table stats changes
 
 	NormalizedSQL       string
 	NormalizedPlan      string

@@ -20,6 +20,7 @@ package session
 
 import (
 	"flag"
+	"slices"
 	"time"
 
 	"github.com/pingcap/tidb/pkg/session/types"
@@ -30,6 +31,20 @@ import (
 
 // WithMockUpgrade is a flag identify whether tests run with mock upgrading.
 var WithMockUpgrade *bool
+
+// CaptureMockBootstrapStateForTest snapshots the process-wide mock upgrade
+// configuration. Call the returned cleanup after the test's domains are closed.
+func CaptureMockBootstrapStateForTest() func() {
+	upgrades := slices.Clone(bootstrapVersion)
+	version := currentBootstrapVersion
+	flag, kind := WithMockUpgrade, MockUpgradeToVerLatestKind
+	return func() {
+		bootstrapVersion = upgrades
+		currentBootstrapVersion = version
+		WithMockUpgrade = flag
+		MockUpgradeToVerLatestKind = kind
+	}
+}
 
 // RegisterMockUpgradeFlag registers the mock upgrade flag.
 func RegisterMockUpgradeFlag(fSet *flag.FlagSet) {
@@ -160,7 +175,6 @@ func addMockBootstrapVersionForTest(s types.Session) {
 
 	TestHook.OnBootstrapBefore(s)
 	if MockUpgradeToVerLatestKind == defaultMockUpgradeToVerLatest {
-		// TODO if we run all tests in this pkg, it will append again, and fail the test.
 		bootstrapVersion = append(bootstrapVersion, mockUpgradeToVerLatest)
 	} else {
 		bootstrapVersion = append(bootstrapVersion, mockSimpleUpgradeToVerLatest)

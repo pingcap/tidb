@@ -23,6 +23,8 @@ import (
 )
 
 var (
+	// ErrSchemaInReadOnlyMode rejects writes to a read-only database.
+	ErrSchemaInReadOnlyMode = ClassSchema.NewStd(mysql.ErrSchemaInReadOnlyMode)
 	// ErrInvalidWorker means the worker is invalid.
 	ErrInvalidWorker = ClassDDL.NewStd(mysql.ErrInvalidDDLWorker)
 	// ErrNotOwner means we are not owner and can't handle DDL jobs.
@@ -345,6 +347,11 @@ var (
 	// ErrPlacementPolicyInUse is returned when placement policy is in use in drop/alter.
 	ErrPlacementPolicyInUse = ClassDDL.NewStd(mysql.ErrPlacementPolicyInUse)
 
+	// ErrMaskingPolicyExists is returned when masking policy already exists.
+	ErrMaskingPolicyExists = ClassDDL.NewStd(mysql.ErrMaskingPolicyExists)
+	// ErrMaskingPolicyNotExists is returned when masking policy does not exist.
+	ErrMaskingPolicyNotExists = ClassDDL.NewStd(mysql.ErrMaskingPolicyNotExists)
+
 	// ErrMultipleDefConstInListPart returns multiple definition of same constant in list partitioning.
 	ErrMultipleDefConstInListPart = ClassDDL.NewStd(mysql.ErrMultipleDefConstInListPart)
 
@@ -516,6 +523,8 @@ var (
 
 	// ErrInvalidTableAffinity is returned when set an invalid affinity value on a table
 	ErrInvalidTableAffinity = ClassDDL.NewStd(mysql.ErrInvalidAffinityOption)
+	// ErrAccessSystemDBRejected is returned when access system database is rejected.
+	ErrAccessSystemDBRejected = ClassDDL.NewStd(mysql.ErrAccessSysDBRejected)
 )
 
 // ReorgRetryableErrCodes are the error codes that are retryable for reorganization.

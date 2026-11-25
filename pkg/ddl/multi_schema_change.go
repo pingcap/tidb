@@ -113,6 +113,10 @@ func onMultiSchemaChange(w *worker, jobCtx *jobContext, job *model.Job) (ver int
 					job.MultiSchemaInfo.SubJobs[j] = &subJobs[j]
 				}
 				handleRevertibleException(job, sub, proxyJob.Error)
+				// Restoring the TableInfo does not undo the masking policy SQL
+				// of the sub-jobs that ran in this step. Have the whole
+				// transaction rolled back; the job is persisted afterwards.
+				w.maskingPolicyStepRestored = true
 				// The TableInfo and sub-jobs should be restored
 				// because some schema changes update the transaction aggressively.
 				// TODO this error handling cannot handle below case:

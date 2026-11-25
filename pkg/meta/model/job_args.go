@@ -185,11 +185,16 @@ type ModifySchemaArgs struct {
 	// used for modify schema placement policy.
 	// might be nil, means set it to default.
 	PolicyRef *PolicyRefInfo `json:"policy_ref,omitempty"`
+	// used for modify schema read only state.
+	ReadOnly   bool   `json:"read_only,omitempty"`
+	DDLStartTS uint64 `json:"ddl_start_ts,omitempty"`
 }
 
 func (a *ModifySchemaArgs) getArgsV1(job *Job) []any {
 	if job.Type == ActionModifySchemaCharsetAndCollate {
 		return []any{a.ToCharset, a.ToCollate}
+	} else if job.Type == ActionModifySchemaReadOnly {
+		return []any{a.ReadOnly, a.DDLStartTS}
 	}
 	return []any{a.PolicyRef}
 }
@@ -197,6 +202,8 @@ func (a *ModifySchemaArgs) getArgsV1(job *Job) []any {
 func (a *ModifySchemaArgs) decodeV1(job *Job) error {
 	if job.Type == ActionModifySchemaCharsetAndCollate {
 		return errors.Trace(job.decodeArgs(&a.ToCharset, &a.ToCollate))
+	} else if job.Type == ActionModifySchemaReadOnly {
+		return errors.Trace(job.decodeArgs(&a.ReadOnly, &a.DDLStartTS))
 	}
 	return errors.Trace(job.decodeArgs(&a.PolicyRef))
 }
@@ -1224,6 +1231,42 @@ func (a *PlacementPolicyArgs) decodeV1(job *Job) error {
 // GetPlacementPolicyArgs gets the placement policy args.
 func GetPlacementPolicyArgs(job *Job) (*PlacementPolicyArgs, error) {
 	return getOrDecodeArgs[*PlacementPolicyArgs](&PlacementPolicyArgs{}, job)
+}
+
+// MaskingPolicyArgs is the argument for create/alter/drop masking policy
+type MaskingPolicyArgs struct {
+	Policy         *MaskingPolicyInfo `json:"policy,omitempty"`
+	ReplaceOnExist bool               `json:"replace_on_exist,omitempty"`
+	PolicyName     ast.CIStr          `json:"policy_name,omitempty"`
+	AlterAction    ast.AlterTableType `json:"alter_action,omitempty"`
+
+	// it's set for alter/drop policy in v2
+	PolicyID int64 `json:"policy_id"`
+}
+
+func (a *MaskingPolicyArgs) getArgsV1(job *Job) []any {
+	if job.Type == ActionCreateMaskingPolicy {
+		return []any{a.Policy, a.ReplaceOnExist}
+	} else if job.Type == ActionAlterMaskingPolicy {
+		return []any{a.Policy, a.AlterAction}
+	}
+	return []any{a.PolicyName}
+}
+
+func (a *MaskingPolicyArgs) decodeV1(job *Job) error {
+	a.PolicyID = job.SchemaID
+
+	if job.Type == ActionCreateMaskingPolicy {
+		return errors.Trace(job.decodeArgs(&a.Policy, &a.ReplaceOnExist))
+	} else if job.Type == ActionAlterMaskingPolicy {
+		return errors.Trace(job.decodeArgs(&a.Policy, &a.AlterAction))
+	}
+	return errors.Trace(job.decodeArgs(&a.PolicyName))
+}
+
+// GetMaskingPolicyArgs gets the masking policy args.
+func GetMaskingPolicyArgs(job *Job) (*MaskingPolicyArgs, error) {
+	return getOrDecodeArgs[*MaskingPolicyArgs](&MaskingPolicyArgs{}, job)
 }
 
 // SetDefaultValueArgs is the argument for setting default value ddl.

@@ -20,6 +20,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
@@ -103,11 +104,23 @@ func (e *DDLExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 	switch s := e.stmt.(type) {
 	case *ast.CreateTableStmt:
 		if s.TemporaryKeyword == ast.TemporaryLocal {
+			if err := checkLatestSchemaReadOnly(e.Ctx(), s.Table.Schema); err != nil {
+				return err
+			}
 			return e.createSessionTemporaryTable(s)
 		}
 	case *ast.DropTableStmt:
 		if s.IsView {
 			break
+		}
+		// Validate all local targets before dropping any of them.
+		for _, target := range s.Tables {
+			_, local := e.getLocalTemporaryTable(target.Schema, target.Name)
+			if local {
+				if err := checkLatestSchemaReadOnly(e.Ctx(), target.Schema); err != nil {
+					return err
+				}
+			}
 		}
 
 		for tbIdx := len(s.Tables) - 1; tbIdx >= 0; tbIdx-- {
@@ -136,6 +149,13 @@ func (e *DDLExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 		// if all tables are local temporary, directly drop those tables.
 		if len(s.Tables) == 0 {
 			return e.dropLocalTemporaryTables(localTempTablesToDrop)
+		}
+	case *ast.TruncateTableStmt:
+		_, local := e.getLocalTemporaryTable(s.Table.Schema, s.Table.Name)
+		if local {
+			if err := checkLatestSchemaReadOnly(e.Ctx(), s.Table.Schema); err != nil {
+				return err
+			}
 		}
 	}
 
@@ -206,6 +226,8 @@ func (e *DDLExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 		err = e.executeDropSequence(x)
 	case *ast.AlterSequenceStmt:
 		err = e.executeAlterSequence(x)
+	case *ast.CreateMaskingPolicyStmt:
+		err = e.executeCreateMaskingPolicy(x)
 	case *ast.CreatePlacementPolicyStmt:
 		err = e.executeCreatePlacementPolicy(x)
 	case *ast.DropPlacementPolicyStmt:
@@ -242,6 +264,9 @@ func (e *DDLExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 func (e *DDLExec) executeTruncateTable(s *ast.TruncateTableStmt) error {
 	ident := ast.Ident{Schema: s.Table.Schema, Name: s.Table.Name}
 	if _, exist := e.getLocalTemporaryTable(s.Table.Schema, s.Table.Name); exist {
+		if err := checkLatestSchemaReadOnly(e.Ctx(), s.Table.Schema); err != nil {
+			return err
+		}
 		return e.tempTableDDL.TruncateLocalTemporaryTable(s.Table.Schema, s.Table.Name)
 	}
 	err := e.ddlExecutor.TruncateTable(e.Ctx(), ident)
@@ -314,7 +339,14 @@ func (e *DDLExec) executeCreateView(ctx context.Context, s *ast.CreateViewStmt) 
 		return exeerrors.ErrViewInvalid.GenWithStackByArgs(s.ViewName.Schema.L, s.ViewName.Name.L)
 	}
 
-	e.Ctx().GetSessionVars().ClearRelatedTableForMDL()
+	failpoint.InjectCall("afterCreateViewPreprocess", e.Ctx())
+	// Only metadata was read in this transaction; preceding user writes were
+	// already committed above. A read-only transition can cache this transaction's
+	// ID and block the view job until it ends. Start an empty transaction to release
+	// that ID while retaining a context provider for statement completion hooks.
+	if err := sessiontxn.NewTxnInStmt(ctx, e.Ctx()); err != nil {
+		return errors.Trace(err)
+	}
 	return e.ddlExecutor.CreateView(e.Ctx(), s)
 }
 
@@ -742,6 +774,10 @@ func (e *DDLExec) executeAlterSequence(s *ast.AlterSequenceStmt) error {
 
 func (e *DDLExec) executeCreatePlacementPolicy(s *ast.CreatePlacementPolicyStmt) error {
 	return e.ddlExecutor.CreatePlacementPolicy(e.Ctx(), s)
+}
+
+func (e *DDLExec) executeCreateMaskingPolicy(s *ast.CreateMaskingPolicyStmt) error {
+	return e.ddlExecutor.CreateMaskingPolicy(e.Ctx(), s)
 }
 
 func (e *DDLExec) executeDropPlacementPolicy(s *ast.DropPlacementPolicyStmt) error {

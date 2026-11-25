@@ -23,6 +23,7 @@ import (
 	"sort"
 	"sync"
 
+	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
@@ -71,6 +72,21 @@ type infoSchema struct {
 	// referredForeignKeyMap records all table's ReferredFKInfo.
 	// referredSchemaAndTableName => child SchemaAndTableAndForeignKeyName => *model.ReferredFKInfo
 	referredForeignKeyMap map[SchemaAndTableName][]*model.ReferredFKInfo
+	// maskingPolicyTableColumnMap stores masking policy metadata by table and column IDs.
+	// Note: Policy name is only unique per table, not globally. We use [TableID][ColumnID] as key
+	// to avoid name collision when different tables have policies with the same name.
+	maskingPolicyTableColumnMap map[int64]map[int64]*model.MaskingPolicyInfo
+	// maskingPoliciesLoaded indicates whether masking policies have been loaded.
+	maskingPoliciesLoaded bool
+	// Policies belong to the same snapshot as this InfoSchema, even on a cold load.
+	maskingPolicySnapshotTS uint64
+	// maskingPoliciesLoad is non-nil when a masking-policy load is in progress.
+	// Waiters block on it to avoid serving partially initialized policy maps.
+	maskingPoliciesLoad *maskingPolicyLoad
+	// maskingPolicyMutex protects maskingPolicyMap and maskingPolicyTableColumnMap.
+	maskingPolicyMutex sync.RWMutex
+	// factory is used to execute SQL for delayed loading of masking policies.
+	factory func() (pools.Resource, error)
 }
 
 type infoSchemaMisc struct {
@@ -100,7 +116,7 @@ type SchemaAndTableName struct {
 
 // MockInfoSchema only serves for test.
 func MockInfoSchema(tbList []*model.TableInfo) InfoSchema {
-	result := newInfoSchema()
+	result := newInfoSchema(nil)
 	dbInfo := &model.DBInfo{ID: 1, Name: pmodel.NewCIStr("test")}
 	dbInfo.Deprecated.Tables = tbList
 	tableNames := &schemaTables{
@@ -166,7 +182,7 @@ func MockInfoSchema(tbList []*model.TableInfo) InfoSchema {
 
 // MockInfoSchemaWithSchemaVer only serves for test.
 func MockInfoSchemaWithSchemaVer(tbList []*model.TableInfo, schemaVer int64) InfoSchema {
-	result := newInfoSchema()
+	result := newInfoSchema(nil)
 	dbInfo := &model.DBInfo{ID: 1, Name: pmodel.NewCIStr("test")}
 	dbInfo.Deprecated.Tables = tbList
 	tableNames := &schemaTables{
@@ -196,17 +212,19 @@ func (is *infoSchema) base() *infoSchema {
 	return is
 }
 
-func newInfoSchema() *infoSchema {
+func newInfoSchema(factory func() (pools.Resource, error)) *infoSchema {
 	return &infoSchema{
 		infoSchemaMisc: infoSchemaMisc{
 			policyMap:        map[string]*model.PolicyInfo{},
 			resourceGroupMap: map[string]*model.ResourceGroupInfo{},
 			ruleBundleMap:    map[int64]*placement.Bundle{},
 		},
-		schemaMap:             map[string]*schemaTables{},
-		schemaID2Name:         map[int64]string{},
-		sortedTablesBuckets:   make([]sortedTables, bucketCount),
-		referredForeignKeyMap: make(map[SchemaAndTableName][]*model.ReferredFKInfo),
+		schemaMap:                   map[string]*schemaTables{},
+		schemaID2Name:               map[int64]string{},
+		sortedTablesBuckets:         make([]sortedTables, bucketCount),
+		referredForeignKeyMap:       make(map[SchemaAndTableName][]*model.ReferredFKInfo),
+		maskingPolicyTableColumnMap: make(map[int64]map[int64]*model.MaskingPolicyInfo),
+		factory:                     factory,
 	}
 }
 
@@ -816,6 +834,16 @@ type SessionExtendedInfoSchema struct {
 	LocalTemporaryTablesOnce sync.Once
 	LocalTemporaryTables     *SessionTables
 	MdlTables                *SessionTables
+	// mdlPolicySchemas holds, by table ID, the schema that a table in MdlTables
+	// was taken from when its ID differs from the one InfoSchema has for its name.
+	mdlPolicySchemas map[int64]mdlPolicySchema
+}
+
+// mdlPolicySchema is the schema a table replaced by MDL was taken from, and
+// the ID InfoSchema has for the table.
+type mdlPolicySchema struct {
+	schema InfoSchema
+	oldID  int64
 }
 
 // TableByName implements InfoSchema.TableByName
@@ -832,6 +860,9 @@ func (ts *SessionExtendedInfoSchema) TableByName(ctx stdctx.Context, schema, tab
 		}
 	}
 
+	if ts.InfoSchema == nil {
+		return nil, fmt.Errorf("InfoSchema is nil when looking up table %s.%s", schema.O, table.O)
+	}
 	return ts.InfoSchema.TableByName(ctx, schema, table)
 }
 
@@ -906,6 +937,99 @@ func (ts *SessionExtendedInfoSchema) UpdateTableInfo(db *model.DBInfo, tableInfo
 	return nil
 }
 
+// SetMaskingPolicySchema records that the table in MdlTables with ID tableID
+// was taken from src, while InfoSchema has it under oldID, which may be the
+// same ID, as after TRUNCATE TABLE, EXCHANGE PARTITION or a MODIFY COLUMN that
+// replaces the column ID. The DDL moved the masking policies of the table to
+// the new IDs, so only src has them.
+func (ts *SessionExtendedInfoSchema) SetMaskingPolicySchema(oldID, tableID int64, src InfoSchema) {
+	if ts.mdlPolicySchemas == nil {
+		ts.mdlPolicySchemas = make(map[int64]mdlPolicySchema)
+	}
+	ts.mdlPolicySchemas[tableID] = mdlPolicySchema{schema: src, oldID: oldID}
+}
+
+// MaskingPolicyByTableColumn implements InfoSchema.MaskingPolicyByTableColumn.
+// The policies of a table recorded by SetMaskingPolicySchema are looked up in
+// the schema its definition was taken from.
+func (ts *SessionExtendedInfoSchema) MaskingPolicyByTableColumn(ctx stdctx.Context, tableID, columnID int64) (*model.MaskingPolicyInfo, bool, error) {
+	if src, ok := ts.mdlPolicySchemas[tableID]; ok {
+		return src.schema.MaskingPolicyByTableColumn(ctx, tableID, columnID)
+	}
+	return ts.InfoSchema.MaskingPolicyByTableColumn(ctx, tableID, columnID)
+}
+
+// AllMaskingPolicies implements InfoSchema.AllMaskingPolicies. The policies of
+// a table recorded by SetMaskingPolicySchema are taken from the schema its
+// definition was taken from, in place of those InfoSchema has under its old ID.
+func (ts *SessionExtendedInfoSchema) AllMaskingPolicies(ctx stdctx.Context) ([]*model.MaskingPolicyInfo, error) {
+	policies, err := ts.InfoSchema.AllMaskingPolicies(ctx)
+	if err != nil || len(ts.mdlPolicySchemas) == 0 {
+		return policies, err
+	}
+	replaced := make(map[int64]struct{}, 2*len(ts.mdlPolicySchemas))
+	for tableID, src := range ts.mdlPolicySchemas {
+		replaced[tableID] = struct{}{}
+		replaced[src.oldID] = struct{}{}
+	}
+	merged := make([]*model.MaskingPolicyInfo, 0, len(policies))
+	for _, policy := range policies {
+		if _, ok := replaced[policy.TableID]; !ok {
+			merged = append(merged, policy)
+		}
+	}
+	for tableID, src := range ts.mdlPolicySchemas {
+		srcPolicies, err := src.schema.AllMaskingPolicies(ctx)
+		if err != nil {
+			return nil, err
+		}
+		for _, policy := range srcPolicies {
+			if policy.TableID == tableID {
+				merged = append(merged, policy)
+			}
+		}
+	}
+	sortMaskingPolicies(merged)
+	return merged, nil
+}
+
+// MaskingPolicyByName implements InfoSchema.MaskingPolicyByName over the
+// policies returned by AllMaskingPolicies.
+func (ts *SessionExtendedInfoSchema) MaskingPolicyByName(ctx stdctx.Context, name pmodel.CIStr) (*model.MaskingPolicyInfo, bool, error) {
+	if len(ts.mdlPolicySchemas) == 0 {
+		return ts.InfoSchema.MaskingPolicyByName(ctx, name)
+	}
+	policies, err := ts.AllMaskingPolicies(ctx)
+	if err != nil {
+		return nil, false, err
+	}
+	var found *model.MaskingPolicyInfo
+	for _, policy := range policies {
+		if policy.Name.L == name.L {
+			if found != nil {
+				return nil, false, nil
+			}
+			found = policy
+		}
+	}
+	return found, found != nil, nil
+}
+
+// HasMaskingPolicies implements InfoSchema.HasMaskingPolicies. It also counts
+// the policies of the schemas recorded by SetMaskingPolicySchema.
+func (ts *SessionExtendedInfoSchema) HasMaskingPolicies(ctx stdctx.Context) (bool, error) {
+	hasPolicies, err := ts.InfoSchema.HasMaskingPolicies(ctx)
+	if err != nil || hasPolicies {
+		return hasPolicies, err
+	}
+	for _, src := range ts.mdlPolicySchemas {
+		if hasPolicies, err = src.schema.HasMaskingPolicies(ctx); err != nil || hasPolicies {
+			return hasPolicies, err
+		}
+	}
+	return false, nil
+}
+
 // HasTemporaryTable returns whether information schema has temporary table
 func (ts *SessionExtendedInfoSchema) HasTemporaryTable() bool {
 	return ts.LocalTemporaryTables != nil && ts.LocalTemporaryTables.Count() > 0 || ts.InfoSchema.HasTemporaryTable()
@@ -914,8 +1038,9 @@ func (ts *SessionExtendedInfoSchema) HasTemporaryTable() bool {
 // DetachTemporaryTableInfoSchema returns a new SessionExtendedInfoSchema without temporary tables
 func (ts *SessionExtendedInfoSchema) DetachTemporaryTableInfoSchema() *SessionExtendedInfoSchema {
 	return &SessionExtendedInfoSchema{
-		InfoSchema: ts.InfoSchema,
-		MdlTables:  ts.MdlTables,
+		InfoSchema:       ts.InfoSchema,
+		MdlTables:        ts.MdlTables,
+		mdlPolicySchemas: ts.mdlPolicySchemas,
 	}
 }
 

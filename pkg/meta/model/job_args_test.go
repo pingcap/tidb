@@ -133,6 +133,18 @@ func TestModifySchemaArgs(t *testing.T) {
 			require.EqualValues(t, inArgs.PolicyRef, args.PolicyRef)
 		}
 	}
+	inArgs = &ModifySchemaArgs{
+		ReadOnly:   true,
+		DDLStartTS: 123,
+	}
+	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+		j2 := &Job{}
+		require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionModifySchemaReadOnly)))
+		args, err := GetModifySchemaArgs(j2)
+		require.NoError(t, err)
+		require.True(t, args.ReadOnly)
+		require.Equal(t, uint64(123), args.DDLStartTS)
+	}
 }
 
 func TestCreateTableArgs(t *testing.T) {
@@ -848,6 +860,36 @@ func TestPlacementPolicyArgs(t *testing.T) {
 			} else if tp == ActionAlterPlacementPolicy {
 				require.EqualValues(t, inArgs.Policy, args.Policy)
 				require.EqualValues(t, inArgs.PolicyID, args.PolicyID)
+			} else {
+				require.EqualValues(t, inArgs.PolicyName, args.PolicyName)
+				require.EqualValues(t, inArgs.PolicyID, args.PolicyID)
+			}
+		}
+	}
+}
+
+func TestMaskingPolicyArgs(t *testing.T) {
+	inArgs := &MaskingPolicyArgs{
+		Policy:         &MaskingPolicyInfo{ID: 1, Name: ast.NewCIStr("policy"), State: StateDeleteOnly},
+		PolicyName:     ast.NewCIStr("policy_name"),
+		PolicyID:       123,
+		ReplaceOnExist: false,
+		AlterAction:    ast.AlterTableModifyMaskingPolicyRestrictOn,
+	}
+	for _, tp := range []ActionType{ActionCreateMaskingPolicy, ActionAlterMaskingPolicy, ActionDropMaskingPolicy} {
+		for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+			j2 := &Job{}
+			require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, tp)))
+			j2.SchemaID = inArgs.PolicyID
+			args, err := GetMaskingPolicyArgs(j2)
+			require.NoError(t, err)
+			if tp == ActionCreateMaskingPolicy {
+				require.EqualValues(t, inArgs.Policy, args.Policy)
+				require.EqualValues(t, inArgs.ReplaceOnExist, args.ReplaceOnExist)
+			} else if tp == ActionAlterMaskingPolicy {
+				require.EqualValues(t, inArgs.Policy, args.Policy)
+				require.EqualValues(t, inArgs.PolicyID, args.PolicyID)
+				require.EqualValues(t, inArgs.AlterAction, args.AlterAction)
 			} else {
 				require.EqualValues(t, inArgs.PolicyName, args.PolicyName)
 				require.EqualValues(t, inArgs.PolicyID, args.PolicyID)

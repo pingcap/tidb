@@ -854,7 +854,7 @@ type infoschemaV2 struct {
 // NewInfoSchemaV2 create infoschemaV2.
 func NewInfoSchemaV2(r autoid.Requirement, factory func() (pools.Resource, error), infoData *Data) infoschemaV2 {
 	return infoschemaV2{
-		infoSchema: newInfoSchema(),
+		infoSchema: newInfoSchema(factory),
 		Data:       infoData,
 		r:          r,
 		factory:    factory,
@@ -1592,6 +1592,13 @@ func applyModifySchemaDefaultPlacement(b *Builder, m meta.Reader, diff *model.Sc
 	return b.applyModifySchemaDefaultPlacement(m, diff)
 }
 
+func applyModifySchemaReadOnly(b *Builder, m meta.Reader, diff *model.SchemaDiff) error {
+	if b.enableV2 {
+		return b.applyModifySchemaReadOnlyV2(m, diff)
+	}
+	return b.applyModifySchemaReadOnly(m, diff)
+}
+
 func applyDropTable(b *Builder, diff *model.SchemaDiff, dbInfo *model.DBInfo, tableID int64, affected []int64) []int64 {
 	if b.enableV2 {
 		return b.applyDropTableV2(diff, dbInfo, tableID, affected)
@@ -1663,6 +1670,11 @@ func (b *Builder) applyTableUpdateV2(m meta.Reader, diff *model.SchemaDiff) ([]i
 		var err error
 		tblIDs, err = applyCreateTable(b, m, oldDBInfo, newTableID, allocs, diff.Type, tblIDs, diff.Version)
 		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+	if needRefreshMaskingPoliciesForTableDiff(diff) {
+		if err := refreshMaskingPoliciesForTableIDs(b, oldTableID, newTableID); err != nil {
 			return nil, errors.Trace(err)
 		}
 	}
@@ -1756,6 +1768,28 @@ func (b *Builder) applyModifySchemaDefaultPlacementV2(m meta.Reader, diff *model
 	}
 	newDBInfo, _ := b.infoschemaV2.SchemaByID(diff.SchemaID)
 	newDBInfo.PlacementPolicyRef = di.PlacementPolicyRef
+	b.infoschemaV2.deleteDB(di, diff.Version)
+	b.infoschemaV2.addDB(diff.Version, newDBInfo)
+	return nil
+}
+
+func (b *Builder) applyModifySchemaReadOnlyV2(m meta.Reader, diff *model.SchemaDiff) error {
+	di, err := m.GetDatabase(diff.SchemaID)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if di == nil {
+		// This should never happen.
+		return ErrDatabaseNotExists.GenWithStackByArgs(
+			fmt.Sprintf("(Schema ID %d)", diff.SchemaID),
+		)
+	}
+	oldDBInfo, ok := b.infoschemaV2.SchemaByID(diff.SchemaID)
+	if !ok || oldDBInfo == nil {
+		return ErrDatabaseNotExists.GenWithStackByArgs(fmt.Sprintf("(Schema ID %d)", diff.SchemaID))
+	}
+	newDBInfo := oldDBInfo.Clone()
+	newDBInfo.ReadOnly = di.ReadOnly
 	b.infoschemaV2.deleteDB(di, diff.Version)
 	b.infoschemaV2.addDB(diff.Version, newDBInfo)
 	return nil

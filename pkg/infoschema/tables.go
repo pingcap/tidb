@@ -70,6 +70,8 @@ import (
 const (
 	// TableSchemata is the string constant of infoschema table.
 	TableSchemata = "SCHEMATA"
+	// TableSchemataExtensions shows the database read-only state.
+	TableSchemataExtensions = "SCHEMATA_EXTENSIONS"
 	// TableTables is the string constant of infoschema table.
 	TableTables = "TABLES"
 	// TableColumns is the string constant of infoschema table
@@ -249,6 +251,7 @@ const (
 
 var tableIDMap = map[string]int64{
 	TableSchemata:                           autoid.InformationSchemaDBID + 1,
+	TableSchemataExtensions:                 autoid.InformationSchemaDBID + 101,
 	TableTables:                             autoid.InformationSchemaDBID + 2,
 	TableColumns:                            autoid.InformationSchemaDBID + 3,
 	tableColumnStatistics:                   autoid.InformationSchemaDBID + 4,
@@ -1752,6 +1755,12 @@ var tableTiDBIndexUsage = []columnInfo{
 	{name: "LAST_ACCESS_TIME", tp: mysql.TypeDatetime, size: 21},
 }
 
+var tableSchemataExtensions = []columnInfo{
+	{name: "CATALOG_NAME", tp: mysql.TypeVarchar, size: 64},
+	{name: "SCHEMA_NAME", tp: mysql.TypeVarchar, size: 64},
+	{name: "OPTIONS", tp: mysql.TypeVarchar, size: 256},
+}
+
 // GetShardingInfo returns a nil or description string for the sharding information of given TableInfo.
 // The returned description string may be:
 //   - "NOT_SHARDED": for tables that SHARD_ROW_ID_BITS is not specified.
@@ -2404,6 +2413,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	TableTiDBCheckConstraints:               tableTiDBCheckConstraintsCols,
 	TableKeywords:                           tableKeywords,
 	TableTiDBIndexUsage:                     tableTiDBIndexUsage,
+	TableSchemataExtensions:                 tableSchemataExtensions,
 }
 
 func createInfoSchemaTable(_ autoid.Allocators, _ func() (pools.Resource, error), meta *model.TableInfo) (table.Table, error) {

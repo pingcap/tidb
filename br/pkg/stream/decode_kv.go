@@ -16,6 +16,7 @@ package stream
 
 import (
 	"encoding/binary"
+	"math"
 
 	"github.com/pingcap/errors"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
@@ -104,23 +105,23 @@ func DecodeKVEntry(buff []byte) (k, v []byte, length uint32, err error) {
 		return nil, nil, 0, errors.Annotate(berrors.ErrInvalidArgument, "invalid buff")
 	}
 
-	var pos uint32 = 0
-	kLen := binary.LittleEndian.Uint32(buff)
+	var pos uint64 = 0
+	kLen := uint64(binary.LittleEndian.Uint32(buff))
 	pos += 4
-	if uint32(len(buff)) < 8+kLen {
+	if uint64(len(buff)) < 8+kLen {
 		return nil, nil, 0, errors.Annotate(berrors.ErrInvalidArgument, "invalid buff")
 	}
 
 	k = buff[pos : pos+kLen]
 	pos += kLen
-	vLen := binary.LittleEndian.Uint32(buff[pos:])
+	vLen := uint64(binary.LittleEndian.Uint32(buff[pos:]))
 	pos += 4
 
-	if uint32(len(buff)) < 8+kLen+vLen {
+	if uint64(len(buff)) < 8+kLen+vLen || 8+kLen+vLen > math.MaxUint32 {
 		return nil, nil, 0, errors.Annotate(berrors.ErrInvalidArgument, "invalid buff")
 	}
 
 	v = buff[pos : pos+vLen]
 	pos += vLen
-	return k, v, pos, nil
+	return k, v, uint32(pos), nil
 }

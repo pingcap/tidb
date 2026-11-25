@@ -32,6 +32,7 @@ package server
 import (
 	"context"
 	"crypto/tls"
+	stderrors "errors"
 	"fmt"
 	"io"
 	"net"
@@ -606,6 +607,11 @@ func (s *Server) closeListener() {
 		terror.Log(errors.Trace(err))
 		s.socket = nil
 	}
+	if s.statusListener != nil {
+		if err := s.statusListener.Close(); err != nil && !stderrors.Is(err, net.ErrClosed) {
+			terror.Log(errors.Trace(err))
+		}
+	}
 	if s.statusServer != nil {
 		err := s.statusServer.Close()
 		terror.Log(errors.Trace(err))
@@ -870,6 +876,22 @@ func (s *Server) ShowTxnList() []*txninfo.TxnInfo {
 		}
 	}
 	return rs
+}
+
+// ShowInternalTxnList exposes internal transactions to unauthenticated system
+// queries that drain database writes; ordinary TIDB_TRX visibility is unchanged.
+func (s *Server) ShowInternalTxnList() []*txninfo.TxnInfo {
+	s.sessionMapMutex.Lock()
+	defer s.sessionMapMutex.Unlock()
+	var result []*txninfo.TxnInfo
+	for se := range s.internalSessions {
+		if provider, ok := se.(interface{ TxnInfo() *txninfo.TxnInfo }); ok {
+			if info := provider.TxnInfo(); info != nil && info.ProcessInfo != nil {
+				result = append(result, info)
+			}
+		}
+	}
+	return result
 }
 
 // UpdateProcessCPUTime updates specific process's tidb CPU time when the process is still running

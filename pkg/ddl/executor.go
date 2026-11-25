@@ -45,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/metabuild"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -68,6 +69,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
+	plannererrors "github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/dbutil"
 	"github.com/pingcap/tidb/pkg/util/domainutil"
 	"github.com/pingcap/tidb/pkg/util/generic"
@@ -93,6 +95,8 @@ const (
 	// Once tiflashCheckPendingTablesLimit is reached, we trigger a limiter detection.
 	tiflashCheckPendingTablesLimit = 100
 	tiflashCheckPendingTablesRetry = 7
+	// "1" means the database is read-only, "0" or "default" means read-write.
+	databaseReadOnly = "1"
 )
 
 var errCheckConstraintIsOff = errors.NewNoStackError(variable.TiDBEnableCheckConstraint + " is off")
@@ -126,6 +130,7 @@ type Executor interface {
 	CreateSequence(ctx sessionctx.Context, stmt *ast.CreateSequenceStmt) error
 	DropSequence(ctx sessionctx.Context, stmt *ast.DropSequenceStmt) (err error)
 	AlterSequence(ctx sessionctx.Context, stmt *ast.AlterSequenceStmt) error
+	CreateMaskingPolicy(ctx sessionctx.Context, stmt *ast.CreateMaskingPolicyStmt) error
 	CreatePlacementPolicy(ctx sessionctx.Context, stmt *ast.CreatePlacementPolicyStmt) error
 	DropPlacementPolicy(ctx sessionctx.Context, stmt *ast.DropPlacementPolicyStmt) error
 	AlterPlacementPolicy(ctx sessionctx.Context, stmt *ast.AlterPlacementPolicyStmt) error
@@ -303,6 +308,12 @@ func (e *executor) CreateSchemaWithInfo(
 		}
 	}
 
+	if dbInfo.ReadOnly {
+		if err := checkSchemaReadOnlyCompatibility(e.ctx); err != nil {
+			return err
+		}
+	}
+
 	if err := checkTooLongSchema(dbInfo.Name); err != nil {
 		return errors.Trace(err)
 	}
@@ -424,6 +435,45 @@ func (e *executor) ModifySchemaDefaultPlacement(ctx sessionctx.Context, stmt *as
 			Policy: placementPolicyRef.Name.L,
 			Mode:   model.SharedInvolving,
 		})
+	}
+	err = e.doDDLJob2(ctx, job, args)
+	return errors.Trace(err)
+}
+
+func (e *executor) modifySchemaReadOnlyState(ctx sessionctx.Context, stmt *ast.AlterDatabaseStmt, readOnly bool) (err error) {
+	dbName := stmt.Name
+	if metadef.IsMemOrSysDB(dbName.L) {
+		return dbterror.ErrAccessSystemDBRejected.GenWithStackByArgs(dbName.L)
+	}
+	if readOnly {
+		if err := checkSchemaReadOnlyCompatibility(e.ctx); err != nil {
+			return err
+		}
+	}
+	is := e.infoCache.GetLatest()
+	dbInfo, ok := is.SchemaByName(dbName)
+	if !ok {
+		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(dbName.O)
+	}
+	// Even an apparently redundant request must serialize with a pending
+	// transition: its flag is published before existing transactions drain.
+	// Do the DDL job.
+	job := &model.Job{
+		Version:        model.GetJobVerInUse(),
+		SchemaID:       dbInfo.ID,
+		SchemaName:     dbInfo.Name.L,
+		Type:           model.ActionModifySchemaReadOnly,
+		BinlogInfo:     &model.HistoryInfo{},
+		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
+		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{{
+			Database: dbInfo.Name.L,
+			Table:    model.InvolvingAll,
+		}},
+		SQLMode: ctx.GetSessionVars().SQLMode,
+	}
+	args := &model.ModifySchemaArgs{
+		ReadOnly:   readOnly,
+		DDLStartTS: ctx.GetSessionVars().TxnCtx.StartTS,
 	}
 	err = e.doDDLJob2(ctx, job, args)
 	return errors.Trace(err)
@@ -711,10 +761,11 @@ func checkMultiSchemaSpecs(_ sessionctx.Context, specs []*ast.DatabaseOption) er
 func (e *executor) AlterSchema(sctx sessionctx.Context, stmt *ast.AlterDatabaseStmt) (err error) {
 	// Resolve target charset and collation from options.
 	var (
-		toCharset, toCollate     string
-		isAlterCharsetAndCollate bool
-		placementPolicyRef       *model.PolicyRefInfo
-		tiflashReplica           *ast.TiFlashReplicaSpec
+		toCharset, toCollate           string
+		isAlterCharsetAndCollate       bool
+		placementPolicyRef             *model.PolicyRefInfo
+		tiflashReplica                 *ast.TiFlashReplicaSpec
+		modifyReadOnlyOption, readOnly bool
 	)
 
 	err = checkMultiSchemaSpecs(sctx, stmt.Options)
@@ -747,6 +798,11 @@ func (e *executor) AlterSchema(sctx sessionctx.Context, stmt *ast.AlterDatabaseS
 			placementPolicyRef = &model.PolicyRefInfo{Name: pmodel.NewCIStr(val.Value)}
 		case ast.DatabaseSetTiFlashReplica:
 			tiflashReplica = val.TiFlashReplica
+		case ast.DatabaseOptionReadOnly:
+			modifyReadOnlyOption = true
+			if val.Value == databaseReadOnly {
+				readOnly = true
+			}
 		}
 	}
 
@@ -762,6 +818,11 @@ func (e *executor) AlterSchema(sctx sessionctx.Context, stmt *ast.AlterDatabaseS
 	}
 	if tiflashReplica != nil {
 		if err = e.ModifySchemaSetTiFlashReplica(sctx, stmt, tiflashReplica); err != nil {
+			return err
+		}
+	}
+	if modifyReadOnlyOption {
+		if err = e.modifySchemaReadOnlyState(sctx, stmt, readOnly); err != nil {
 			return err
 		}
 	}
@@ -1450,6 +1511,9 @@ func (e *executor) RecoverTable(ctx sessionctx.Context, recoverTableInfo *model.
 			fmt.Sprintf("(Schema ID %d)", schemaID),
 		))
 	}
+	if schema.ReadOnly && !privilege.HasExplicitReplicaWriterAdmin(ctx) {
+		return infoschema.ErrSchemaInReadOnlyMode.GenWithStackByArgs(schema.Name.O)
+	}
 	// Check not exist table with same name.
 	if ok := is.TableExists(schema.Name, tbInfo.Name); ok {
 		return infoschema.ErrTableExists.GenWithStackByArgs(tbInfo.Name)
@@ -1823,6 +1887,18 @@ func (e *executor) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt
 		case ast.AlterTableDropForeignKey:
 			// NOTE: we do not check `if not exists` and `if exists` for ForeignKey now.
 			err = e.DropForeignKey(sctx, ident, pmodel.NewCIStr(spec.Name))
+		case ast.AlterTableAddMaskingPolicy:
+			err = e.AddMaskingPolicy(sctx, ident, spec)
+		case ast.AlterTableEnableMaskingPolicy:
+			err = e.AlterTableMaskingPolicyState(sctx, ident, spec, true)
+		case ast.AlterTableDisableMaskingPolicy:
+			err = e.AlterTableMaskingPolicyState(sctx, ident, spec, false)
+		case ast.AlterTableDropMaskingPolicy:
+			err = e.DropMaskingPolicy(sctx, ident, spec)
+		case ast.AlterTableModifyMaskingPolicyExpression:
+			err = e.ModifyMaskingPolicyExpression(sctx, ident, spec)
+		case ast.AlterTableModifyMaskingPolicyRestrictOn:
+			err = e.ModifyMaskingPolicyRestrictOn(sctx, ident, spec)
 		case ast.AlterTableModifyColumn:
 			err = e.ModifyColumn(ctx, sctx, ident, spec)
 		case ast.AlterTableChangeColumn:
@@ -3368,6 +3444,7 @@ func (e *executor) ChangeColumn(ctx context.Context, sctx sessionctx.Context, id
 	jobW.AddSessionVars(variable.TiDBEnableStatsUpdateDuringDDL, getEnableDDLAnalyze(sctx))
 	jobW.AddSessionVars(variable.TiDBAnalyzeVersion, getAnalyzeVersion(sctx))
 
+	failpoint.InjectCall("beforeSubmitModifyColumnJob")
 	err = e.DoDDLJobWrapper(sctx, jobW)
 	// column not exists, but if_exists flags is true, so we ignore this error.
 	if infoschema.ErrColumnNotExists.Equal(err) && spec.IfExists {
@@ -3470,6 +3547,7 @@ func (e *executor) ModifyColumn(ctx context.Context, sctx sessionctx.Context, id
 	jobW.AddSessionVars(variable.TiDBEnableStatsUpdateDuringDDL, getEnableDDLAnalyze(sctx))
 	jobW.AddSessionVars(variable.TiDBAnalyzeVersion, getAnalyzeVersion(sctx))
 
+	failpoint.InjectCall("beforeSubmitModifyColumnJob")
 	err = e.DoDDLJobWrapper(sctx, jobW)
 	// column not exists, but if_exists flags is true, so we ignore this error.
 	if infoschema.ErrColumnNotExists.Equal(err) && spec.IfExists {
@@ -6563,6 +6641,431 @@ func (e *executor) AlterResourceGroup(ctx sessionctx.Context, stmt *ast.AlterRes
 	return err
 }
 
+func (e *executor) CreateMaskingPolicy(ctx sessionctx.Context, stmt *ast.CreateMaskingPolicyStmt) error {
+	if stmt.OrReplace && stmt.IfNotExists {
+		return dbterror.ErrWrongUsage.GenWithStackByArgs("OR REPLACE", "IF NOT EXISTS")
+	}
+	if err := requireMaskingPolicyDynamicPrivilege(ctx, "CREATE MASKING POLICY"); err != nil {
+		return err
+	}
+
+	tableIdent := ast.Ident{Schema: stmt.Table.Schema, Name: stmt.Table.Name}
+	if tableIdent.Schema.L == "" {
+		schemaName := strings.ToLower(ctx.GetSessionVars().CurrentDB)
+		if schemaName == "" {
+			return errors.Trace(plannererrors.ErrNoDB)
+		}
+		tableIdent.Schema = ast.NewCIStr(schemaName)
+	}
+	schema, tbl, err := e.getSchemaAndTableByIdent(tableIdent)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	// Creating a masking policy on a table effectively modifies the table's schema behavior,
+	// so it requires ALTER privilege on the table in addition to the dynamic privilege.
+	if checker := privilege.GetPrivilegeManager(ctx); checker != nil {
+		if !checker.RequestVerification(
+			ctx.GetSessionVars().ActiveRoles,
+			schema.Name.L,
+			tbl.Meta().Name.L,
+			"",
+			mysql.AlterPriv,
+		) {
+			user := ctx.GetSessionVars().User
+			return plannererrors.ErrTableaccessDenied.GenWithStackByArgs("ALTER", user.AuthUsername, user.AuthHostname, tbl.Meta().Name.L)
+		}
+	}
+
+	policyInfo, err := buildMaskingPolicyInfo(
+		ctx,
+		schema,
+		tbl,
+		stmt.PolicyName,
+		stmt.Column.Name,
+		stmt.Expr,
+		stmt.RestrictOps,
+		stmt.MaskingPolicyState,
+	)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	var onExist OnExist
+	switch {
+	case stmt.IfNotExists:
+		onExist = OnExistIgnore
+	case stmt.OrReplace:
+		onExist = OnExistReplace
+	default:
+		onExist = OnExistError
+	}
+	return e.createMaskingPolicyWithInfo(ctx, tbl.Meta().ID, tbl.Meta().Columns, policyInfo, onExist)
+}
+
+func (e *executor) AddMaskingPolicy(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
+	if err := requireMaskingPolicyDynamicPrivilege(ctx, "CREATE MASKING POLICY"); err != nil {
+		return err
+	}
+	schema, tbl, err := e.getSchemaAndTableByIdent(ident)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	policyInfo, err := buildMaskingPolicyInfo(
+		ctx,
+		schema,
+		tbl,
+		spec.MaskingPolicyName,
+		spec.MaskingPolicyColumn.Name,
+		spec.MaskingPolicyExpr,
+		spec.MaskingPolicyRestrictOps,
+		spec.MaskingPolicyState,
+	)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return e.createMaskingPolicyWithInfo(ctx, tbl.Meta().ID, tbl.Meta().Columns, policyInfo, OnExistError)
+}
+
+// getMaskingPolicyByNameForDDL finds a masking policy by name. It first checks the
+// infoSchema cache, then falls back to querying mysql.tidb_masking_policy directly.
+// The fallback is necessary because DDL operations like TRUNCATE TABLE update the
+// system table outside the infoSchema's snapshot window.
+func (e *executor) getMaskingPolicyByNameForDDL(
+	ctx sessionctx.Context,
+	tableID int64,
+	columns []*model.ColumnInfo,
+	policyName ast.CIStr,
+) (*model.MaskingPolicyInfo, bool, error) {
+	// Fast path: check infoSchema cache.
+	is := e.infoCache.GetLatest()
+	for _, col := range columns {
+		policy, ok, err := is.MaskingPolicyByTableColumn(context.Background(), tableID, col.ID)
+		if err != nil {
+			return nil, false, err
+		}
+		if ok && policy != nil && policy.Name.L == policyName.L {
+			return policy, true, nil
+		}
+	}
+	// Slow path: query system table directly. This handles cases where the
+	// infoSchema's delayed loading has stale data after DDL operations.
+	rows, _, err := ctx.GetRestrictedSQLExecutor().ExecRestrictedSQL(
+		kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL),
+		nil,
+		`SELECT policy_id, policy_name, db_name, table_name, table_id, column_name, column_id, expression, status, masking_type, restrict_on, created_at, updated_at, created_by
+FROM mysql.tidb_masking_policy
+WHERE table_id = %? AND LOWER(policy_name) = %?
+ORDER BY policy_id
+LIMIT 1`,
+		tableID,
+		policyName.L,
+	)
+	if err != nil {
+		return nil, false, err
+	}
+	if len(rows) == 0 {
+		return nil, false, nil
+	}
+	policy, err := maskingPolicyFromSysTableRow(rows[0])
+	if err != nil {
+		return nil, false, err
+	}
+	return policy, true, nil
+}
+
+func (e *executor) AlterTableMaskingPolicyState(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec, enabled bool) error {
+	if err := requireMaskingPolicyDynamicPrivilege(ctx, "ALTER MASKING POLICY"); err != nil {
+		return err
+	}
+	_, tbl, err := e.getSchemaAndTableByIdent(ident)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	policyName := spec.MaskingPolicyName
+	policy, ok, err := e.getMaskingPolicyByNameForDDL(ctx, tbl.Meta().ID, tbl.Meta().Columns, policyName)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return dbterror.ErrMaskingPolicyNotExists.GenWithStackByArgs(policyName.O)
+	}
+
+	status := model.MaskingPolicyStatusEnable
+	if !enabled {
+		status = model.MaskingPolicyStatusDisable
+	}
+	newPolicy := policy.Clone()
+	newPolicy.Status = status
+	newPolicy.UpdatedAt = time.Now()
+
+	job := &model.Job{
+		Version:        model.GetJobVerInUse(),
+		SchemaID:       policy.ID,
+		SchemaName:     policy.DBName.L,
+		TableID:        policy.TableID,
+		TableName:      policy.TableName.L,
+		Type:           model.ActionAlterMaskingPolicy,
+		BinlogInfo:     &model.HistoryInfo{},
+		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
+		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{
+			{
+				Database: policy.DBName.L,
+				Table:    policy.TableName.L,
+			},
+			{
+				Policy: policy.Name.L,
+			},
+		},
+		SQLMode: ctx.GetSessionVars().SQLMode,
+	}
+	args := &model.MaskingPolicyArgs{
+		Policy:      newPolicy,
+		PolicyID:    policy.ID,
+		AlterAction: spec.Tp,
+	}
+	failpoint.InjectCall("beforeSubmitMaskingPolicyAlter", spec.Tp)
+	return errors.Trace(e.doDDLJob2(ctx, job, args))
+}
+
+func (e *executor) DropMaskingPolicy(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
+	if err := requireMaskingPolicyDynamicPrivilege(ctx, "DROP MASKING POLICY"); err != nil {
+		return err
+	}
+	_, tbl, err := e.getSchemaAndTableByIdent(ident)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	policyName := spec.MaskingPolicyName
+	policy, ok, err := e.getMaskingPolicyByNameForDDL(ctx, tbl.Meta().ID, tbl.Meta().Columns, policyName)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return dbterror.ErrMaskingPolicyNotExists.GenWithStackByArgs(policyName.O)
+	}
+
+	job := &model.Job{
+		Version:        model.GetJobVerInUse(),
+		SchemaID:       policy.ID,
+		SchemaName:     policy.DBName.L,
+		TableID:        policy.TableID,
+		TableName:      policy.TableName.L,
+		Type:           model.ActionDropMaskingPolicy,
+		BinlogInfo:     &model.HistoryInfo{},
+		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
+		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{
+			{
+				Database: policy.DBName.L,
+				Table:    policy.TableName.L,
+			},
+			{
+				Policy: policy.Name.L,
+			},
+		},
+		SQLMode: ctx.GetSessionVars().SQLMode,
+	}
+	args := &model.MaskingPolicyArgs{
+		PolicyName: policy.Name,
+		PolicyID:   policy.ID,
+	}
+	failpoint.InjectCall("beforeSubmitMaskingPolicyDrop")
+	return errors.Trace(e.doDDLJob2(ctx, job, args))
+}
+
+// ModifyMaskingPolicyExpression modifies the expression of an existing masking policy.
+func (e *executor) ModifyMaskingPolicyExpression(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
+	if err := requireMaskingPolicyDynamicPrivilege(ctx, "ALTER MASKING POLICY"); err != nil {
+		return err
+	}
+	schema, tbl, err := e.getSchemaAndTableByIdent(ident)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	policyName := spec.MaskingPolicyName
+	policy, ok, err := e.getMaskingPolicyByNameForDDL(ctx, tbl.Meta().ID, tbl.Meta().Columns, policyName)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return dbterror.ErrMaskingPolicyNotExists.GenWithStackByArgs(policyName.O)
+	}
+
+	// Validate and restore the new expression.
+	exprStr, err := restoreMaskingExpression(spec.MaskingPolicyExpr)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	targetCol := model.FindColumnInfoByID(tbl.Meta().Columns, policy.ColumnID)
+	if targetCol == nil {
+		return infoschema.ErrColumnNotExists.GenWithStackByArgs(policy.ColumnName, tbl.Meta().Name)
+	}
+	if err := validateMaskingPolicyExpression(ctx, tbl.Meta(), targetCol, exprStr); err != nil {
+		return errors.Trace(err)
+	}
+
+	newPolicy := policy.Clone()
+	newPolicy.Expression = exprStr
+	newPolicy.MaskingType = maskingPolicyTypeFromExpr(spec.MaskingPolicyExpr)
+	newPolicy.UpdatedAt = time.Now()
+
+	job := &model.Job{
+		Version:        model.GetJobVerInUse(),
+		SchemaID:       policy.ID,
+		SchemaName:     schema.Name.L,
+		TableID:        policy.TableID,
+		TableName:      policy.TableName.L,
+		Type:           model.ActionAlterMaskingPolicy,
+		BinlogInfo:     &model.HistoryInfo{},
+		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
+		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{
+			{
+				Database: schema.Name.L,
+				Table:    policy.TableName.L,
+			},
+			{
+				Policy: policy.Name.L,
+			},
+		},
+		SQLMode: ctx.GetSessionVars().SQLMode,
+	}
+	args := &model.MaskingPolicyArgs{
+		Policy:      newPolicy,
+		PolicyID:    policy.ID,
+		AlterAction: spec.Tp,
+	}
+	failpoint.InjectCall("beforeSubmitMaskingPolicyAlter", spec.Tp)
+	return errors.Trace(e.doDDLJob2(ctx, job, args))
+}
+
+// ModifyMaskingPolicyRestrictOn modifies the restrict-on settings of an existing masking policy.
+func (e *executor) ModifyMaskingPolicyRestrictOn(ctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec) error {
+	if err := requireMaskingPolicyDynamicPrivilege(ctx, "ALTER MASKING POLICY"); err != nil {
+		return err
+	}
+	_, tbl, err := e.getSchemaAndTableByIdent(ident)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	policyName := spec.MaskingPolicyName
+	policy, ok, err := e.getMaskingPolicyByNameForDDL(ctx, tbl.Meta().ID, tbl.Meta().Columns, policyName)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return dbterror.ErrMaskingPolicyNotExists.GenWithStackByArgs(policyName.O)
+	}
+
+	newPolicy := policy.Clone()
+	newPolicy.RestrictOps = spec.MaskingPolicyRestrictOps
+	newPolicy.UpdatedAt = time.Now()
+
+	job := &model.Job{
+		Version:        model.GetJobVerInUse(),
+		SchemaID:       policy.ID,
+		SchemaName:     policy.DBName.L,
+		TableID:        policy.TableID,
+		TableName:      policy.TableName.L,
+		Type:           model.ActionAlterMaskingPolicy,
+		BinlogInfo:     &model.HistoryInfo{},
+		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
+		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{
+			{
+				Database: policy.DBName.L,
+				Table:    policy.TableName.L,
+			},
+			{
+				Policy: policy.Name.L,
+			},
+		},
+		SQLMode: ctx.GetSessionVars().SQLMode,
+	}
+	args := &model.MaskingPolicyArgs{
+		Policy:      newPolicy,
+		PolicyID:    policy.ID,
+		AlterAction: spec.Tp,
+	}
+	failpoint.InjectCall("beforeSubmitMaskingPolicyAlter", spec.Tp)
+	return errors.Trace(e.doDDLJob2(ctx, job, args))
+}
+
+func requireMaskingPolicyDynamicPrivilege(ctx sessionctx.Context, dynamicPriv string) error {
+	checker := privilege.GetPrivilegeManager(ctx)
+	if checker == nil {
+		// Keep behavior for internal/bootstrap sessions without privilege manager.
+		return nil
+	}
+	if checker.RequestDynamicVerification(ctx.GetSessionVars().ActiveRoles, dynamicPriv, false) {
+		return nil
+	}
+	return plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or " + dynamicPriv)
+}
+
+func (e *executor) createMaskingPolicyWithInfo(
+	ctx sessionctx.Context,
+	tableID int64,
+	cols []*model.ColumnInfo,
+	policy *model.MaskingPolicyInfo,
+	onExist OnExist,
+) error {
+	is := e.infoCache.GetLatest()
+	existPolicy, ok, err := e.getMaskingPolicyByNameForDDL(ctx, tableID, cols, policy.Name)
+	if err != nil {
+		return err
+	}
+	if ok {
+		if existPolicy.ColumnID != policy.ColumnID {
+			return dbterror.ErrMaskingPolicyExists.GenWithStackByArgs(existPolicy.Name.O)
+		}
+		err := dbterror.ErrMaskingPolicyExists.GenWithStackByArgs(policy.Name.O)
+		switch onExist {
+		case OnExistIgnore:
+			ctx.GetSessionVars().StmtCtx.AppendNote(err)
+			return nil
+		case OnExistError:
+			return err
+		}
+	}
+	existPolicy, ok, err = is.MaskingPolicyByTableColumn(context.Background(), policy.TableID, policy.ColumnID)
+	if err != nil {
+		return err
+	}
+	if ok && existPolicy.Name.L != policy.Name.L {
+		return dbterror.ErrMaskingPolicyExists.GenWithStackByArgs(existPolicy.Name.O)
+	}
+
+	job := &model.Job{
+		Version:        model.GetJobVerInUse(),
+		SchemaName:     policy.DBName.L,
+		TableID:        policy.TableID,
+		TableName:      policy.TableName.L,
+		Type:           model.ActionCreateMaskingPolicy,
+		BinlogInfo:     &model.HistoryInfo{},
+		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
+		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{
+			{
+				Database: policy.DBName.L,
+				Table:    policy.TableName.L,
+			},
+			{
+				Policy: policy.Name.L,
+			},
+		},
+		SQLMode: ctx.GetSessionVars().SQLMode,
+	}
+	args := &model.MaskingPolicyArgs{
+		Policy:         policy,
+		ReplaceOnExist: onExist == OnExistReplace,
+	}
+	failpoint.InjectCall("beforeSubmitMaskingPolicyCreate")
+	err = e.doDDLJob2(ctx, job, args)
+	if onExist == OnExistIgnore && meta.ErrMaskingPolicyExists.Equal(err) {
+		ctx.GetSessionVars().StmtCtx.AppendNote(err)
+		return nil
+	}
+	return errors.Trace(err)
+}
+
 func (e *executor) CreatePlacementPolicy(ctx sessionctx.Context, stmt *ast.CreatePlacementPolicyStmt) (err error) {
 	if checkIgnorePlacementDDL(ctx) {
 		return nil
@@ -6990,6 +7493,26 @@ func (e *executor) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) (re
 	e.checkInvolvingSchemaInfoInTest(job)
 	// Get a global job ID and put the DDL job in the queue.
 	setDDLJobQuery(ctx, job)
+	// A job can wait behind a read-only transition after its SQL passed
+	// preprocessing. Persist the submitter's bypass decision for the owner.
+	job.CheckSchemaReadOnly = job.Type != model.ActionModifySchemaReadOnly &&
+		job.Type != model.ActionCreateSchema && job.Type != model.ActionUpdateTiFlashReplicaStatus &&
+		job.Type != model.ActionUnlockTable &&
+		!privilege.HasExplicitReplicaWriterAdmin(ctx)
+	if job.CheckSchemaReadOnly {
+		job.CheckSchemaReadOnly = false
+		for _, target := range job.GetInvolvingSchemaInfo() {
+			if target.Mode == model.ExclusiveInvolving && target.Database != model.InvolvingNone &&
+				!privilege.CanWriteReadOnlySchema(ctx, target.Database) {
+				job.CheckSchemaReadOnly = true
+				break
+			}
+		}
+	}
+	if args, ok := jobW.JobArgs.(*model.AlterTableModeArgs); ok && job.Type == model.ActionAlterTableMode && args.TableMode == model.TableModeNormal {
+		// Completing an authorized import only publishes operational metadata.
+		job.CheckSchemaReadOnly = false
+	}
 	e.deliverJobTask(jobW)
 
 	failpoint.Inject("mockParallelSameDDLJobTwice", func(val failpoint.Value) {
@@ -7137,6 +7660,11 @@ func (e *executor) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) (re
 
 		// If a job is a history job, the state must be JobStateSynced or JobStateRollbackDone or JobStateCancelled.
 		if historyJob.IsSynced() {
+			if historyJob.Type == model.ActionModifySchemaReadOnly && historyJob.BinlogInfo.SchemaVersion == 0 && historyJob.BinlogInfo.DBInfo != nil {
+				dbInfo := historyJob.BinlogInfo.DBInfo
+				ctx.GetSessionVars().StmtCtx.AppendNote(fmt.Errorf("database %s is already in the %s state", dbInfo.Name.O,
+					map[bool]string{true: "read-only", false: "read-write"}[dbInfo.ReadOnly]))
+			}
 			// Judge whether there are some warnings when executing DDL under the certain SQL mode.
 			if historyJob.ReorgMeta != nil && len(historyJob.ReorgMeta.Warnings) != 0 {
 				if len(historyJob.ReorgMeta.Warnings) != len(historyJob.ReorgMeta.WarningsCount) {

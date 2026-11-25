@@ -149,7 +149,16 @@ func mergeCreateTableJobs(jobWs []*JobWrapper) ([]*JobWrapper, error) {
 		return jobWs, nil
 	}
 	resJobWs := make([]*JobWrapper, 0, len(jobWs))
-	mergeableJobWs := make(map[string][]*JobWrapper, len(jobWs))
+	type mergeKey struct {
+		schema              string
+		checkSchemaReadOnly bool
+	}
+	type tableKey struct {
+		schema string
+		name   string
+	}
+	seenTables := make(map[tableKey]struct{}, len(jobWs))
+	mergeableJobWs := make(map[mergeKey][]*JobWrapper, len(jobWs))
 	for _, jobW := range jobWs {
 		// we don't merge jobs with ID pre-allocated.
 		if jobW.Type != model.ActionCreateTable || jobW.IDAllocated {
@@ -162,8 +171,16 @@ func mergeCreateTableJobs(jobWs []*JobWrapper) ([]*JobWrapper, error) {
 			resJobWs = append(resJobWs, jobW)
 			continue
 		}
+		// Duplicate creates must retain submission order even when their
+		// read-only checks put them into different merge groups.
+		table := tableKey{schema: jobW.SchemaName, name: args.TableInfo.Name.L}
+		if _, exists := seenTables[table]; exists {
+			return nil, infoschema.ErrTableExists.FastGenByArgs("can not batch create tables with same name")
+		}
+		seenTables[table] = struct{}{}
 		// CreateTables only support tables of same schema now.
-		mergeableJobWs[jobW.Job.SchemaName] = append(mergeableJobWs[jobW.Job.SchemaName], jobW)
+		key := mergeKey{schema: jobW.SchemaName, checkSchemaReadOnly: jobW.CheckSchemaReadOnly}
+		mergeableJobWs[key] = append(mergeableJobWs[key], jobW)
 	}
 
 	for schema, jobs := range mergeableJobWs {
@@ -182,7 +199,7 @@ func mergeCreateTableJobs(jobWs []*JobWrapper) ([]*JobWrapper, error) {
 				return nil, err
 			}
 			start += batchSize
-			logutil.DDLLogger().Info("merge create table jobs", zap.String("schema", schema),
+			logutil.DDLLogger().Info("merge create table jobs", zap.String("schema", schema.schema),
 				zap.Int("total", total), zap.Int("batch_size", batchSize))
 			resJobWs = append(resJobWs, newJobW)
 		}
