@@ -135,7 +135,7 @@ fn grant_revoke_and_show_grants_round_trip() {
     session.run("CREATE USER 'u1'@'%'").unwrap();
     assert_eq!(
         row_text(session.run("SHOW GRANTS FOR 'u1'@'%'")),
-        [["GRANT USAGE ON *.* TO 'u1'@'%'"]]
+        [["GRANT USAGE ON *.* TO `u1`@`%`"]]
     );
 
     session
@@ -143,13 +143,13 @@ fn grant_revoke_and_show_grants_round_trip() {
         .unwrap();
     assert_eq!(
         row_text(session.run("SHOW GRANTS FOR 'u1'@'%'")),
-        [["GRANT SELECT,INSERT,UPDATE,PROCESS,SUPER ON *.* TO 'u1'@'%'"]]
+        [["GRANT SELECT,INSERT,UPDATE,PROCESS,SUPER ON *.* TO `u1`@`%`"]]
     );
 
     session.run("REVOKE SUPER ON *.* FROM 'u1'@'%'").unwrap();
     assert_eq!(
         row_text(session.run("SHOW GRANTS FOR 'u1'@'%'")),
-        [["GRANT SELECT,INSERT,UPDATE,PROCESS ON *.* TO 'u1'@'%'"]]
+        [["GRANT SELECT,INSERT,UPDATE,PROCESS ON *.* TO `u1`@`%`"]]
     );
 
     session.run("DROP USER 'u1'@'%'").unwrap();
@@ -169,7 +169,7 @@ fn show_grants_for_current_user_reports_root_bootstrap() {
     session.set_user("root@%".to_owned(), "root@127.0.0.1".to_owned());
     assert_eq!(
         row_text(session.run("SHOW GRANTS")),
-        [["GRANT ALL PRIVILEGES ON *.* TO 'root'@'%' WITH GRANT OPTION"]]
+        [["GRANT ALL PRIVILEGES ON *.* TO `root`@`%` WITH GRANT OPTION"]]
     );
 }
 
@@ -237,7 +237,7 @@ fn grant_all_privileges_collapses_show_grants() {
         .unwrap();
     assert_eq!(
         row_text(session.run("SHOW GRANTS FOR 'dup1'@'%'")),
-        [["GRANT ALL PRIVILEGES ON *.* TO 'dup1'@'%'"]]
+        [["GRANT ALL PRIVILEGES ON *.* TO `dup1`@`%`"]]
     );
 }
 
@@ -264,9 +264,9 @@ fn grant_option_is_a_per_scope_bit_printed_as_a_line_suffix() {
     assert_eq!(
         row_text(session.run("SHOW GRANTS FOR 'bob'@'%'")),
         [
-            ["GRANT SELECT ON *.* TO 'bob'@'%' WITH GRANT OPTION"],
-            ["GRANT SELECT ON `test`.* TO 'bob'@'%' WITH GRANT OPTION"],
-            ["GRANT SELECT ON `test`.`t` TO 'bob'@'%' WITH GRANT OPTION"],
+            ["GRANT SELECT ON *.* TO `bob`@`%` WITH GRANT OPTION"],
+            ["GRANT SELECT ON `test`.* TO `bob`@`%` WITH GRANT OPTION"],
+            ["GRANT SELECT ON `test`.`t` TO `bob`@`%` WITH GRANT OPTION"],
         ]
     );
 
@@ -281,9 +281,9 @@ fn grant_option_is_a_per_scope_bit_printed_as_a_line_suffix() {
     assert_eq!(
         row_text(session.run("SHOW GRANTS FOR 'bob'@'%'")),
         [
-            ["GRANT SELECT ON *.* TO 'bob'@'%' WITH GRANT OPTION"],
-            ["GRANT SELECT ON `test`.* TO 'bob'@'%'"],
-            ["GRANT SELECT ON `test`.`t` TO 'bob'@'%'"],
+            ["GRANT SELECT ON *.* TO `bob`@`%` WITH GRANT OPTION"],
+            ["GRANT SELECT ON `test`.* TO `bob`@`%`"],
+            ["GRANT SELECT ON `test`.`t` TO `bob`@`%`"],
         ]
     );
     session
@@ -292,9 +292,9 @@ fn grant_option_is_a_per_scope_bit_printed_as_a_line_suffix() {
     assert_eq!(
         row_text(session.run("SHOW GRANTS FOR 'bob'@'%'")),
         [
-            ["GRANT SELECT ON *.* TO 'bob'@'%'"],
-            ["GRANT SELECT ON `test`.* TO 'bob'@'%'"],
-            ["GRANT SELECT ON `test`.`t` TO 'bob'@'%'"],
+            ["GRANT SELECT ON *.* TO `bob`@`%`"],
+            ["GRANT SELECT ON `test`.* TO `bob`@`%`"],
+            ["GRANT SELECT ON `test`.`t` TO `bob`@`%`"],
         ]
     );
 }
@@ -310,14 +310,14 @@ fn grant_all_withholds_grant_option_but_the_named_privilege_confers_it() {
     session.run("GRANT ALL ON *.* TO 'occupied'@'%'").unwrap();
     assert_eq!(
         row_text(session.run("SHOW GRANTS FOR 'occupied'@'%'")),
-        [["GRANT ALL PRIVILEGES ON *.* TO 'occupied'@'%'"]]
+        [["GRANT ALL PRIVILEGES ON *.* TO `occupied`@`%`"]]
     );
     session
         .run("GRANT GRANT OPTION ON *.* TO 'occupied'@'%'")
         .unwrap();
     assert_eq!(
         row_text(session.run("SHOW GRANTS FOR 'occupied'@'%'")),
-        [["GRANT ALL PRIVILEGES ON *.* TO 'occupied'@'%' WITH GRANT OPTION"]]
+        [["GRANT ALL PRIVILEGES ON *.* TO `occupied`@`%` WITH GRANT OPTION"]]
     );
 }
 
@@ -337,8 +337,8 @@ fn db_scope_grant_revoke_and_show_grants_round_trip() {
     assert_eq!(
         row_text(session.run("SHOW GRANTS FOR 'u1'@'%'")),
         [
-            vec!["GRANT USAGE ON *.* TO 'u1'@'%'".to_owned()],
-            vec!["GRANT SELECT ON `db1`.* TO 'u1'@'%'".to_owned()],
+            vec!["GRANT USAGE ON *.* TO `u1`@`%`".to_owned()],
+            vec!["GRANT SELECT ON `db1`.* TO `u1`@`%`".to_owned()],
         ]
     );
 
@@ -348,9 +348,9 @@ fn db_scope_grant_revoke_and_show_grants_round_trip() {
     assert_eq!(
         row_text(session.run("SHOW GRANTS FOR 'u1'@'%'")),
         [
-            vec!["GRANT USAGE ON *.* TO 'u1'@'%'".to_owned()],
-            vec!["GRANT SELECT ON `aaadb`.* TO 'u1'@'%'".to_owned()],
-            vec!["GRANT SELECT ON `db1`.* TO 'u1'@'%'".to_owned()],
+            vec!["GRANT USAGE ON *.* TO `u1`@`%`".to_owned()],
+            vec!["GRANT SELECT ON `aaadb`.* TO `u1`@`%`".to_owned()],
+            vec!["GRANT SELECT ON `db1`.* TO `u1`@`%`".to_owned()],
         ]
     );
 
@@ -361,7 +361,7 @@ fn db_scope_grant_revoke_and_show_grants_round_trip() {
     session.run("GRANT ALL ON db1.* TO 'u1'@'%'").unwrap();
     assert_eq!(
         row_text(session.run("SHOW GRANTS FOR 'u1'@'%'"))[1],
-        vec!["GRANT ALL PRIVILEGES ON `db1`.* TO 'u1'@'%'".to_owned()]
+        vec!["GRANT ALL PRIVILEGES ON `db1`.* TO `u1`@`%`".to_owned()]
     );
 
     session.run("REVOKE ALL ON db1.* FROM 'u1'@'%'").unwrap();
@@ -383,8 +383,8 @@ fn db_scope_grant_revoke_and_show_grants_round_trip() {
     assert_eq!(
         row_text(session.run("SHOW GRANTS FOR 'u1'@'%'")),
         [
-            vec!["GRANT USAGE ON *.* TO 'u1'@'%'".to_owned()],
-            vec!["GRANT SELECT ON `aaadb`.* TO 'u1'@'%'".to_owned()],
+            vec!["GRANT USAGE ON *.* TO `u1`@`%`".to_owned()],
+            vec!["GRANT SELECT ON `aaadb`.* TO `u1`@`%`".to_owned()],
         ]
     );
 }
@@ -437,15 +437,15 @@ fn table_scope_grant_revoke_and_show_grants_round_trip() {
     assert_eq!(
         row_text(session.run("SHOW GRANTS FOR 'u1'@'%'")),
         [
-            vec!["GRANT USAGE ON *.* TO 'u1'@'%'".to_owned()],
-            vec!["GRANT SELECT,INSERT ON `db1`.`t1` TO 'u1'@'%'".to_owned()],
+            vec!["GRANT USAGE ON *.* TO `u1`@`%`".to_owned()],
+            vec!["GRANT SELECT,INSERT ON `db1`.`t1` TO `u1`@`%`".to_owned()],
         ]
     );
 
     session.run("GRANT ALL ON db1.t1 TO 'u1'@'%'").unwrap();
     assert_eq!(
         row_text(session.run("SHOW GRANTS FOR 'u1'@'%'"))[1],
-        vec!["GRANT ALL PRIVILEGES ON `db1`.`t1` TO 'u1'@'%'".to_owned()]
+        vec!["GRANT ALL PRIVILEGES ON `db1`.`t1` TO `u1`@`%`".to_owned()]
     );
 
     // Same zero-row rule as DB scope: the `mysql.Tables_priv` row survives
@@ -453,7 +453,7 @@ fn table_scope_grant_revoke_and_show_grants_round_trip() {
     session.run("REVOKE ALL ON db1.t1 FROM 'u1'@'%'").unwrap();
     assert_eq!(
         row_text(session.run("SHOW GRANTS FOR 'u1'@'%'")),
-        [vec!["GRANT USAGE ON *.* TO 'u1'@'%'".to_owned()]]
+        [vec!["GRANT USAGE ON *.* TO `u1`@`%`".to_owned()]]
     );
 
     // Invalid-scope privilege: refused before the table-existence

@@ -33,9 +33,9 @@ fn error_of(session: &mut Session, sql: &str) -> (u16, String) {
     (mysql.code, mysql.message)
 }
 
-/// Go `showGrants` prints the account and roles raw between single quotes
-/// (`'%s'@'%s'`), escaping only schema and table names; a bare SHOW GRANTS
-/// is titled "Grants for User".
+/// Go master `showGrants` (#70774) escapes the account and each role as
+/// identifiers (`formatAccountName`), as it does schema and table names; a
+/// bare SHOW GRANTS is titled "Grants for User".
 #[test]
 fn show_grants_quotes_accounts_as_go_does() {
     let (registry, mut root) = setup();
@@ -47,9 +47,9 @@ fn show_grants_quotes_accounts_as_go_does() {
     assert_eq!(
         rows,
         vec![
-            vec!["GRANT USAGE ON *.* TO 'u1'@'%'"],
-            vec!["GRANT SELECT ON `test`.* TO 'u1'@'%'"],
-            vec!["GRANT 'r1'@'%' TO 'u1'@'%'"],
+            vec!["GRANT USAGE ON *.* TO `u1`@`%`"],
+            vec!["GRANT SELECT ON `test`.* TO `u1`@`%`"],
+            vec!["GRANT `r1`@`%` TO `u1`@`%`"],
         ]
     );
     let mut u1 = session_as(&registry, root.shared_catalog(), "u1", "%");
@@ -383,8 +383,8 @@ fn dynamic_privilege_names_fold_with_go_to_upper() {
     assert_eq!(
         row_text(root.run("show grants for foo")),
         vec![
-            vec!["GRANT USAGE ON *.* TO 'foo'@'%'".to_owned()],
-            vec!["GRANT BACKUP_ADMIN ON *.* TO 'foo'@'%'".to_owned()]
+            vec!["GRANT USAGE ON *.* TO `foo`@`%`".to_owned()],
+            vec!["GRANT BACKUP_ADMIN ON *.* TO `foo`@`%`".to_owned()]
         ]
     );
 }
@@ -484,4 +484,67 @@ fn process_admits_a_metrics_schema_table_like_go() {
             "u2 | show create table metrics_schema.up | <nil>",
         ]
     );
+}
+
+/// Go master `TestCheckTablePrivilege`'s "delete join privileges" (#71253):
+/// only an unqualified SINGLE-table DELETE may skip the SELECT check; a join
+/// reads its tables through ON/USING even without a WHERE clause.
+#[test]
+fn delete_join_requires_select_on_every_joined_table() {
+    let (registry, mut root) = setup();
+    for sql in [
+        "create database delete_priv_a",
+        "create database delete_priv_b",
+        "create table delete_priv_a.t(id int)",
+        "create table delete_priv_b.t(id int)",
+        "insert into delete_priv_a.t values (1)",
+        "insert into delete_priv_b.t values (1)",
+        "create user 'delete_join'@'localhost'",
+        "grant select,delete on delete_priv_a.* to 'delete_join'@'localhost'",
+    ] {
+        root.run(sql).unwrap();
+    }
+    for query in [
+        "delete a from delete_priv_a.t a join delete_priv_b.t b where a.id=b.id",
+        "delete a from delete_priv_a.t a join delete_priv_b.t b on a.id=b.id",
+        "delete a from delete_priv_a.t a join delete_priv_b.t b using(id)",
+        "delete a from (delete_priv_a.t a join delete_priv_b.t b on a.id=b.id)",
+        "delete a from delete_priv_b.t b join delete_priv_a.t a on a.id=b.id",
+    ] {
+        let mut user = session_as(&registry, root.shared_catalog(), "delete_join", "localhost");
+        user.run("begin").unwrap();
+        assert_eq!(error_of(&mut user, query).0, 1142, "{query}");
+        user.run("rollback").unwrap();
+    }
+    let mut user = session_as(&registry, root.shared_catalog(), "delete_join", "localhost");
+    root.run("grant select on delete_priv_b.* to 'delete_join'@'localhost'").unwrap();
+    let mut user_with_b = session_as(&registry, root.shared_catalog(), "delete_join", "localhost");
+    user_with_b.run("begin").unwrap();
+    assert_eq!(
+        user_with_b.run("delete a from delete_priv_a.t a join delete_priv_b.t b on a.id=b.id").unwrap(),
+        crate::StmtResult::Affected(1)
+    );
+    user_with_b.run("rollback").unwrap();
+    root.run("revoke select on delete_priv_a.* from 'delete_join'@'localhost'").unwrap();
+    // Keep DELETE-only access for unqualified single-table forms, without the
+    // fast path.
+    user = session_as(&registry, root.shared_catalog(), "delete_join", "localhost");
+    user.run("set tidb_opt_fix_control='52592:ON'").unwrap();
+    for query in [
+        "delete from delete_priv_a.t",
+        "delete a from delete_priv_a.t a",
+        "delete from a using delete_priv_a.t a",
+        "delete a from (delete_priv_a.t a)",
+        "delete from a using (delete_priv_a.t a)",
+    ] {
+        user.run("begin").unwrap();
+        assert_eq!(user.run(query).unwrap(), crate::StmtResult::Affected(1), "{query}");
+        user.run("rollback").unwrap();
+    }
+    assert_eq!(
+        error_of(&mut user, "delete a from delete_priv_a.t a join delete_priv_a.t b on a.id=b.id").0,
+        1142
+    );
+    let (_, rows) = crate::tests_support::query_text(&mut root, "select * from delete_priv_a.t");
+    assert_eq!(rows, vec![vec!["1"]]);
 }

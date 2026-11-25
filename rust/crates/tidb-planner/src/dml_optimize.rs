@@ -1220,9 +1220,13 @@ pub fn physical_dml_source_plan_with_allocators(
                         visit_info.extend(targets.update_write_visits(update)?);
                     }
                     MultiDmlRef::Delete(delete) => {
-                        // "If the delete is non-qualified it does not require Select
-                        // Priv".
-                        if delete.where_clause.is_none() && delete.order_by.is_empty() {
+                        // "Only an unqualified single-table delete can omit SELECT
+                        // privileges. Joined tables can be read by ON/USING even
+                        // without a WHERE clause."
+                        if delete.where_clause.is_none()
+                            && delete.order_by.is_empty()
+                            && deletes_from_a_single_table_name(delete)
+                        {
                             visit_info.pop();
                         }
                         visit_info.extend(targets.delete_write_visits(delete)?);
@@ -1527,6 +1531,17 @@ impl CascadeTarget for tidb_ast::UpdateStmt {
         match &self.kind {
             tidb_ast::UpdateKind::Single(table) => Some(table),
             tidb_ast::UpdateKind::Multi { .. } => None,
+        }
+    }
+}
+
+/// Go `getSingleTableNameAndAlias(ds.TableRefs) != nil`: the statement reads
+/// one table, named directly (no join, no derived table).
+fn deletes_from_a_single_table_name(delete: &tidb_ast::DeleteStmt) -> bool {
+    match &delete.kind {
+        tidb_ast::DeleteKind::Single(_) => true,
+        tidb_ast::DeleteKind::Multi { from, .. } => {
+            from.right.is_none() && matches!(from.left, tidb_ast::JoinNode::Table(_))
         }
     }
 }

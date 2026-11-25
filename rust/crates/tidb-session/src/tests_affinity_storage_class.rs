@@ -261,3 +261,52 @@ fn partition_storage_classes_follow_their_scope() {
         vec![vec!["p0", "IA"], vec!["p1", "STANDARD"]]
     );
 }
+
+/// Go master `TestShowAffinityPrivilege` (#73336): SHOW AFFINITY lists only
+/// the tables the user holds some privilege on (`mysql.AllPrivMask`, as SHOW
+/// PLACEMENT does).
+#[test]
+fn show_affinity_lists_only_visible_tables() {
+    let registry = tidb_privilege::PrivilegeRegistry::default();
+    let mut root = crate::tests_support::authenticated_session(&registry, "root", "%");
+    for sql in [
+        "create database secret_db",
+        "create database pub_db",
+        "create table secret_db.secret_t (id int) affinity='table'",
+        "create table pub_db.part_t (id int) affinity='partition' partition by range (id) (partition p0 values less than (100), partition p1 values less than maxvalue)",
+        "create user nopriv",
+    ] {
+        root.run(sql).unwrap();
+    }
+    let user = |root: &Session| crate::tests_support::session_as(&registry, root.shared_catalog(), "nopriv", "%");
+    let mut nopriv = user(&root);
+    assert!(rows(&mut nopriv, "show placement").is_empty());
+    assert!(rows(&mut nopriv, "show databases like '%_db'").is_empty());
+    assert!(rows(&mut nopriv, "show affinity").is_empty());
+
+    let visible = |session: &mut Session| {
+        for sql in ["show affinity", "show affinity like 'part%'", "show affinity where Table_name = 'part_t'"] {
+            let mut got = rows(session, sql);
+            got.sort();
+            let row = |partition: &str| {
+                let mut row = vec!["pub_db".to_owned(), "part_t".to_owned(), partition.to_owned()];
+                row.extend(std::iter::repeat_n("NULL".to_owned(), 5));
+                row
+            };
+            assert_eq!(got, vec![row("p0"), row("p1")], "{sql}");
+        }
+    };
+    root.run("grant select on pub_db.part_t to nopriv").unwrap();
+    visible(&mut user(&root));
+    root.run("revoke select on pub_db.part_t from nopriv").unwrap();
+    for sql in [
+        "create role affinity_reader",
+        "grant select on pub_db.part_t to affinity_reader",
+        "grant affinity_reader to nopriv",
+    ] {
+        root.run(sql).unwrap();
+    }
+    let mut with_role = user(&root);
+    with_role.run("set role affinity_reader").unwrap();
+    visible(&mut with_role);
+}

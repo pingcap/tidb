@@ -313,7 +313,8 @@ fn role_identity(spec: &tidb_ast::RoleIdentity) -> tidb_privilege::Account {
 
 /// Go executor/grant.go's tlsOption2GlobalPriv: reject duplicate or invalid
 /// clauses before publishing the complete REQUIRE image. An omitted clause
-/// produces the empty NONE policy; specified properties retain their text.
+/// produces the empty NONE policy (`{}`), a TOKEN_ISSUER-only one no policy at
+/// all (empty, Go's nil); specified properties retain their text.
 pub fn tls_policy_of(
     options: &[tidb_ast::AlterUserTlsOption],
 ) -> Result<String, DriverError> {
@@ -387,6 +388,11 @@ pub fn tls_policy_of(
         x509_subject: Option<&'a serde_json::Value>,
         #[serde(skip_serializing_if = "Option::is_none")]
         san: Option<&'a serde_json::Value>,
+    }
+    // Go `tlsOption2GlobalPriv` answers nil (no `global_priv` value) when
+    // options were given but none sets an SSL type: TOKEN_ISSUER only.
+    if !options.is_empty() && options.iter().all(|option| matches!(option, T::TokenIssuer(_))) {
+        return Ok(String::new());
     }
     let policy = OrderedPolicy {
         ssl_type: fields.get("ssl_type"),

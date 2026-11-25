@@ -676,23 +676,27 @@ pub fn insert_plan_replayer_success_status_record<E: RestrictedSqlExecutor + ?Si
     }
 }
 
-/// Go `checkUnHandledReplayerTask`'s statement (`plan_replayer.go:522`).
-///
-/// Built with `fmt.Sprintf` and `%v`, not bound parameters — Go's choice, and
-/// the values are digests produced by TiDB itself.
+/// Go `checkUnHandledReplayerTask`'s statement, its digests bound as `%?`.
 #[must_use]
 pub fn check_unhandled_replayer_task_sql(task: &PlanReplayerTaskKey) -> String {
-    format!(
-        "select * from mysql.plan_replayer_status where sql_digest = '{}' and plan_digest = '{}' and fail_reason is null",
-        task.sql_digest, task.plan_digest
+    tidb_sqlescape::must_escape_sql_text(
+        "select * from mysql.plan_replayer_status where sql_digest = %? and plan_digest = %? and fail_reason is null",
+        &[
+            tidb_sqlescape::SqlArg::String(task.sql_digest.as_bytes()),
+            tidb_sqlescape::SqlArg::String(task.plan_digest.as_bytes()),
+        ],
     )
 }
 
-/// Go `CheckPlanReplayerTaskExists`'s statement (`plan_replayer.go:543`).
+/// Go `CheckPlanReplayerTaskExists`'s statement, its digests bound as `%?`.
 #[must_use]
 pub fn check_plan_replayer_task_exists_sql(sql_digest: &str, plan_digest: &str) -> String {
-    format!(
-        "select * from mysql.plan_replayer_task where sql_digest = '{sql_digest}' and plan_digest = '{plan_digest}'"
+    tidb_sqlescape::must_escape_sql_text(
+        "select * from mysql.plan_replayer_task where sql_digest = %? and plan_digest = %?",
+        &[
+            tidb_sqlescape::SqlArg::String(sql_digest.as_bytes()),
+            tidb_sqlescape::SqlArg::String(plan_digest.as_bytes()),
+        ],
     )
 }
 
@@ -1757,6 +1761,20 @@ mod tests {
     /// (`plan_replayer_handle_test.go:30`): two task rows, one of which
     /// already has a status row, leaves exactly one collected task, and an
     /// empty task table leaves none.
+    /// Go master #72730: the digests are bound as `%?`, so a quote in one
+    /// stays inside its string literal.
+    #[test]
+    fn the_task_statements_bind_their_digests() {
+        assert_eq!(
+            check_plan_replayer_task_exists_sql("a' or '1'='1", "*"),
+            r"select * from mysql.plan_replayer_task where sql_digest = 'a\' or \'1\'=\'1' and plan_digest = '*'"
+        );
+        assert_eq!(
+            check_unhandled_replayer_task_sql(&task_key("1'", "2")),
+            r"select * from mysql.plan_replayer_status where sql_digest = '1\'' and plan_digest = '2' and fail_reason is null"
+        );
+    }
+
     #[test]
     fn collect_keeps_only_the_unhandled_tasks() {
         let exec = MockExec {

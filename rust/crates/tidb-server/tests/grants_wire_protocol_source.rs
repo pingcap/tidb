@@ -742,8 +742,8 @@ fn grant_process_and_scoped_select_are_visible_and_live_across_real_connections(
     assert_eq!(
         grants,
         vec![
-            vec!["GRANT USAGE ON *.* TO 'bob'@'%'".to_owned()],
-            vec!["GRANT SELECT ON `test`.* TO 'bob'@'%'".to_owned()],
+            vec!["GRANT USAGE ON *.* TO `bob`@`%`".to_owned()],
+            vec!["GRANT SELECT ON `test`.* TO `bob`@`%`".to_owned()],
         ],
         "bob's own scoped grant, over the real wire: {grants:?}"
     );
@@ -835,9 +835,9 @@ fn grant_process_and_scoped_select_are_visible_and_live_across_real_connections(
     assert_eq!(
         run_query(&mut bob, &mut bob_reader, "SHOW GRANTS"),
         vec![
-            vec!["GRANT PROCESS ON *.* TO 'bob'@'%'".to_owned()],
-            vec!["GRANT SELECT ON `test`.* TO 'bob'@'%'".to_owned()],
-            vec!["GRANT 'watcher'@'%' TO 'bob'@'%'".to_owned()],
+            vec!["GRANT PROCESS ON *.* TO `bob`@`%`".to_owned()],
+            vec!["GRANT SELECT ON `test`.* TO `bob`@`%`".to_owned()],
+            vec!["GRANT `watcher`@`%` TO `bob`@`%`".to_owned()],
         ]
     );
     assert_eq!(run_write(&mut bob, &mut bob_reader, "SET ROLE NONE"), 0);
@@ -868,7 +868,7 @@ fn grant_process_and_scoped_select_are_visible_and_live_across_real_connections(
         run_write(
             &mut root,
             &mut root_reader,
-            "GRANT CONNECTION_ADMIN ON *.* TO 'bob'@'%'"
+            "GRANT CONNECTION_ADMIN ON *.* TO `bob`@`%`"
         ),
         0
     );
@@ -878,9 +878,9 @@ fn grant_process_and_scoped_select_are_visible_and_live_across_real_connections(
     assert_eq!(
         run_query(&mut bob, &mut bob_reader, "SHOW GRANTS"),
         vec![
-            vec!["GRANT USAGE ON *.* TO 'bob'@'%'".to_owned()],
-            vec!["GRANT SELECT ON `test`.* TO 'bob'@'%'".to_owned()],
-            vec!["GRANT CONNECTION_ADMIN ON *.* TO 'bob'@'%'".to_owned()],
+            vec!["GRANT USAGE ON *.* TO `bob`@`%`".to_owned()],
+            vec!["GRANT SELECT ON `test`.* TO `bob`@`%`".to_owned()],
+            vec!["GRANT CONNECTION_ADMIN ON *.* TO `bob`@`%`".to_owned()],
         ]
     );
     assert_eq!(
@@ -974,7 +974,7 @@ fn a_runtime_created_account_can_log_in_over_tcp_until_it_is_dropped() {
         let grants = run_query(&mut carol, &mut carol_reader, "SHOW GRANTS");
         assert_eq!(
             grants,
-            vec![vec!["GRANT USAGE ON *.* TO 'carol'@'%'".to_owned()]],
+            vec![vec!["GRANT USAGE ON *.* TO `carol`@`%`".to_owned()]],
             "carol's own row, over the real wire: {grants:?}"
         );
         write_packet(&mut carol, 0, &[0x01]);
@@ -1114,7 +1114,7 @@ fn a_caching_sha2_password_account_creates_and_then_logs_in() {
     let grants = run_query(&mut root, &mut root_reader, "SHOW GRANTS FOR 'dana'@'%'");
     assert_eq!(
         grants,
-        vec![vec!["GRANT USAGE ON *.* TO 'dana'@'%'".to_owned()]],
+        vec![vec!["GRANT USAGE ON *.* TO `dana`@`%`".to_owned()]],
         "a caching_sha2_password account is a real account: {grants:?}"
     );
 
@@ -1347,7 +1347,7 @@ fn failed_login_attempts_auto_lock_reports_3955_over_the_wire_until_unlocked() {
             &mut root_reader,
             "SHOW CREATE USER 'mallory'@'%'"
         )[0][0],
-        "CREATE USER 'mallory'@'%' IDENTIFIED WITH 'mysql_native_password' \
+        "CREATE USER `mallory`@`%` IDENTIFIED WITH 'mysql_native_password' \
          AS '*9C07CAE3178C7DCA67D1A409B633937A6ABE6125' REQUIRE NONE \
          PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK PASSWORD HISTORY DEFAULT \
          PASSWORD REUSE INTERVAL DEFAULT FAILED_LOGIN_ATTEMPTS 2 PASSWORD_LOCK_TIME 3"

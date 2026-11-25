@@ -71,6 +71,10 @@ fn item_value_columns() -> Vec<(String, FieldType)> {
     ]
 }
 
+/// Go `validPlanReplayerDigest`: 1 to 128 hexadecimal characters.
+fn valid_plan_replayer_digest(digest: &str) -> bool {
+    (1..=128).contains(&digest.len()) && digest.bytes().all(|c| c.is_ascii_hexdigit())
+}
 
 /// The session reach Go's `PlanReplayerExec` takes from its `sctx`.
 pub trait PlanReplayerSession {
@@ -125,6 +129,17 @@ pub trait PlanReplayerExec: PlanReplayerSession {
     ) -> Result<Option<StmtOutput>, DriverError> {
         match stmt {
             tidb_ast::PlanReplayerStmt::Capture { remove, sql_digest, plan_digest } => {
+                // Go `buildPlanReplayer`.
+                if !valid_plan_replayer_digest(sql_digest) {
+                    return Err(DriverError::Mysql(tidb_terror::MysqlError::unknown(
+                        "invalid SQL digest: expected a non-empty hexadecimal string of at most 128 characters",
+                    )));
+                }
+                if plan_digest != "*" && !valid_plan_replayer_digest(plan_digest) {
+                    return Err(DriverError::Mysql(tidb_terror::MysqlError::unknown(
+                        "invalid plan digest: expected a non-empty hexadecimal string of at most 128 characters or '*'",
+                    )));
+                }
                 if *remove {
                     self.remove_capture_task(sql_digest, plan_digest)?;
                 } else {
@@ -292,17 +307,31 @@ pub trait PlanReplayerExec: PlanReplayerSession {
                 "plan replayer capture task already exists",
             )));
         }
-        self.exec_restricted_sql(tidb_txnkv::INTERNAL_TXN_STATS_FOREGROUND_PRIORITY, &format!(
-            "insert into mysql.plan_replayer_task (sql_digest, plan_digest) values ('{sql_digest}','{plan_digest}')"
-        ))?;
+        self.exec_restricted_sql(
+            tidb_txnkv::INTERNAL_TXN_STATS_FOREGROUND_PRIORITY,
+            &tidb_sqlescape::must_escape_sql_text(
+                "insert into mysql.plan_replayer_task (sql_digest, plan_digest) values (%?,%?)",
+                &[
+                    tidb_sqlescape::SqlArg::String(sql_digest.as_bytes()),
+                    tidb_sqlescape::SqlArg::String(plan_digest.as_bytes()),
+                ],
+            ),
+        )?;
         self.collect_plan_replayer_task()
     }
 
     /// Go `PlanReplayerExec.removeCaptureTask`.
     fn remove_capture_task(&mut self, sql_digest: &str, plan_digest: &str) -> Result<(), DriverError> {
-        self.exec_restricted_sql(tidb_txnkv::INTERNAL_TXN_STATS_FOREGROUND_PRIORITY, &format!(
-            "delete from mysql.plan_replayer_task where sql_digest = '{sql_digest}' and plan_digest = '{plan_digest}'"
-        ))?;
+        self.exec_restricted_sql(
+            tidb_txnkv::INTERNAL_TXN_STATS_FOREGROUND_PRIORITY,
+            &tidb_sqlescape::must_escape_sql_text(
+                "delete from mysql.plan_replayer_task where sql_digest = %? and plan_digest = %?",
+                &[
+                    tidb_sqlescape::SqlArg::String(sql_digest.as_bytes()),
+                    tidb_sqlescape::SqlArg::String(plan_digest.as_bytes()),
+                ],
+            ),
+        )?;
         self.collect_plan_replayer_task()
     }
 }

@@ -581,12 +581,17 @@ pub trait AccountPasswordExec: super::account::AccountExec {
                     }
                 }
             }
-            self.mirror_global_priv(
-                &user,
-                &host,
-                &tls_policy,
-                super::account_tables::GlobalPrivWrite::AlterUser,
-            )?;
+            // Go writes `global_priv` only for a REQUIRE that maps to a value
+            // (`len(s.AuthTokenOrTLSOptions) > 0 && len(privData) > 0`), so an
+            // ALTER without one keeps the account's TLS requirement.
+            if !alter.tls_options.is_empty() && !tls_policy.is_empty() {
+                self.mirror_global_priv(
+                    &user,
+                    &host,
+                    &tls_policy,
+                    super::account_tables::GlobalPrivWrite::AlterUser,
+                )?;
+            }
             if !mirror_fields.is_empty() && self.user_table_present() {
                 let sql = format!(
                     "UPDATE mysql.user SET {} WHERE Host={} and User={}",
@@ -740,8 +745,15 @@ pub trait AccountPasswordExec: super::account::AccountExec {
             [row] => tidb_privilege::global_priv_require_str(&super::account_tables::datum_text(&row[0])),
             _ => "NONE".to_owned(),
         };
+        // Go: the account's user and host are escaped as identifiers.
+        let sql_mode = self.session_vars().sql_mode();
+        let escape = |value: &str| {
+            String::from_utf8(tidb_stringutil::escape(value.as_bytes(), sql_mode))
+                .expect("quoting UTF-8 preserves UTF-8")
+        };
+        let account = format!("{}@{}", escape(&user), escape(&host));
         let show_str = format!(
-            "CREATE USER '{user}'@'{host}' IDENTIFIED WITH '{plugin}'{auth_clause} REQUIRE {require_clause}{token_issuer}{max_user_connections} {expire_clause} ACCOUNT {account_clause} PASSWORD HISTORY {history} PASSWORD REUSE INTERVAL {reuse_interval}{failed_login_attempts}{password_lock_time}{attribute_clause}"
+            "CREATE USER {account} IDENTIFIED WITH '{plugin}'{auth_clause} REQUIRE {require_clause}{token_issuer}{max_user_connections} {expire_clause} ACCOUNT {account_clause} PASSWORD HISTORY {history} PASSWORD REUSE INTERVAL {reuse_interval}{failed_login_attempts}{password_lock_time}{attribute_clause}"
         );
         // The column is `buildShowSchema`'s `CREATE USER for <User>`.
         Ok(vec![vec![Datum::Bytes(show_str.into_bytes())]])

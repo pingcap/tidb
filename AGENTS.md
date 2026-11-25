@@ -19,7 +19,7 @@ Guidance for agents working in this repository. MUST is required, SHOULD is the 
 - While iterating, run only the tests that cover the change: `cargo nextest run -p <crate> -E 'test(<name>)'`.
 - Before a commit, run the suites of the crates whose behavior changed. Workspace-wide runs and the integration-corpus replay (`cargo test -p tidb-server --lib integration_corpus_matches_recordings -- --ignored`) are milestone checks, not per-commit ones.
 - A pure move or rename (behavior unchanged) is verified by `cargo check --tests` alone; batch several such steps before any test run.
-- Disk is the binding constraint on this machine: build with one setting throughout (`CARGO_INCREMENTAL=0` for checks and tests alike; mixing settings duplicates every artifact). When space runs low, delete `rust/target/debug/incremental` and prune stale `rust/target/debug/build/*/*` directories.
+- Build with one setting throughout: `CARGO_INCREMENTAL=1` for checks and tests alike (switching rebuilds every workspace crate). Incremental cuts a one-crate edit's rebuild of the `tidb-session` tests from ~60 s to ~11 s at the same test speed, for ~8 GB more target. Iterate under `--profile gate` / `--cargo-profile gate`, the profile the gate uses.
 - A test failure that also fails on the unchanged tip is not yours; confirm that once and move on.
 - MUST NOT run `make bazel_lint_changed` unless the user asks.
 

@@ -1560,7 +1560,7 @@ fn cluster_account_history_rejects_reuse_without_changing_credentials() {
     );
     assert_eq!(
         displayed(rows(&mut session, "SHOW GRANTS FOR 'history_other'@'%'")),
-        [["GRANT ALL PRIVILEGES ON *.* TO 'history_other'@'%'"]]
+        [["GRANT ALL PRIVILEGES ON *.* TO `history_other`@`%`"]]
     );
     assert_eq!(
         displayed(rows(
@@ -6654,14 +6654,37 @@ fn plan_replayer_dump_writes_gos_archive_and_status() {
         [["SELECT * FROM replayed WHERE a = 1".to_owned(), token, "NULL".to_owned()]]
     );
 
-    rows(&mut session, "PLAN REPLAYER CAPTURE 'sql-digest' 'plan-digest'");
+    rows(&mut session, "PLAN REPLAYER CAPTURE '123' '123'");
     assert_eq!(
         displayed(rows(&mut session, "SELECT sql_digest, plan_digest FROM mysql.plan_replayer_task")),
-        [["sql-digest", "plan-digest"]]
+        [["123", "123"]]
     );
-    let again = session.run("PLAN REPLAYER CAPTURE 'sql-digest' 'plan-digest'").unwrap_err();
+    let again = session.run("PLAN REPLAYER CAPTURE '123' '123'").unwrap_err();
     assert_eq!(again.to_mysql_error().message, "plan replayer capture task already exists");
-    rows(&mut session, "PLAN REPLAYER CAPTURE REMOVE 'sql-digest' 'plan-digest'");
+    rows(&mut session, "PLAN REPLAYER CAPTURE REMOVE '123' '123'");
+    assert!(rows(&mut session, "SELECT * FROM mysql.plan_replayer_task").is_empty());
+    // Go master `buildPlanReplayer` (#72730): both digests reach internal SQL,
+    // so only hexadecimal ones (or `*` for the plan) are accepted.
+    for (sql, message) in [
+        (
+            "PLAN REPLAYER CAPTURE 'x'' or ''1''=''1' '123'",
+            "invalid SQL digest: expected a non-empty hexadecimal string of at most 128 characters",
+        ),
+        (
+            "PLAN REPLAYER CAPTURE REMOVE '' '123'",
+            "invalid SQL digest: expected a non-empty hexadecimal string of at most 128 characters",
+        ),
+        (
+            "PLAN REPLAYER CAPTURE 'abc' 'x'' or ''1''=''1'",
+            "invalid plan digest: expected a non-empty hexadecimal string of at most 128 characters or '*'",
+        ),
+    ] {
+        assert_eq!(session.run(sql).unwrap_err().to_mysql_error().message, message, "{sql}");
+    }
+    let long = "a".repeat(129);
+    assert!(session.run(&format!("PLAN REPLAYER CAPTURE '{long}' '*'")).is_err());
+    rows(&mut session, "PLAN REPLAYER CAPTURE 'ABCdef0' '*'");
+    rows(&mut session, "PLAN REPLAYER CAPTURE REMOVE 'ABCdef0' '*'");
     assert!(rows(&mut session, "SELECT * FROM mysql.plan_replayer_task").is_empty());
     tidb_planner_extstore::set_global_ext_storage_for_test(None);
     std::fs::remove_dir_all(&base).unwrap();
@@ -28848,10 +28871,10 @@ fn the_privilege_load_reads_a_peers_rows_through_the_domains_sessions_as_go() {
     assert_eq!(
         displayed(rows(&mut session, "SHOW GRANTS FOR 'peer'@'%'")),
         [
-            ["GRANT SELECT ON *.* TO 'peer'@'%'"],
-            ["GRANT INSERT ON `app`.* TO 'peer'@'%'"],
-            ["GRANT UPDATE,DELETE ON `app`.`t` TO 'peer'@'%'"],
-            ["GRANT BACKUP_ADMIN ON *.* TO 'peer'@'%'"],
+            ["GRANT SELECT ON *.* TO `peer`@`%`"],
+            ["GRANT INSERT ON `app`.* TO `peer`@`%`"],
+            ["GRANT UPDATE,DELETE ON `app`.`t` TO `peer`@`%`"],
+            ["GRANT BACKUP_ADMIN ON *.* TO `peer`@`%`"],
         ]
     );
 }

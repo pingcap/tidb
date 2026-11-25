@@ -225,7 +225,10 @@ fn analyze_table_inner(
         // even after the caller has timed out and moved on; a thread that
         // reports nothing closes it.
         let (done_tx, done_rx) = mpsc::channel();
-        let db_table = format!("`{db_name}`.`{tbl_name}`");
+        let db_table = tidb_sqlescape::must_escape_sql_text(
+            "%n.%n",
+            &[tidb_sqlescape::SqlArg::from(db_name), tidb_sqlescape::SqlArg::from(tbl_name.as_str())],
+        );
         let job_id = job.id;
         let db = db_name.to_owned();
         let table = tbl_name.clone();
