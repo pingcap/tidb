@@ -215,8 +215,14 @@ func (c *LoadKeyspaceController) Handler(svr *server.Server) (string, *http.Serv
 		select {
 		case <-r.Context().Done(): // client closed connection.
 			go func() {
+<<<<<<< HEAD
 				c.EndStandby(errors.New("client closed connection"))
 				signal.TiDBExit(syscall.SIGTERM)
+=======
+				if c.endStandby(errors.New("client closed connection")) {
+					tidbExit(syscall.SIGTERM)
+				}
+>>>>>>> 3c244286c36 (standby: make repeated activation cancellation harmless (#73661))
 			}()
 		case <-timeout: // reach hardlimit timeout from config.
 			logutil.BgLogger().Warn("timeout waiting for activation")
@@ -226,8 +232,14 @@ func (c *LoadKeyspaceController) Handler(svr *server.Server) (string, *http.Serv
 				logutil.BgLogger().Error("failed to write response", zap.Error(err))
 			}
 			go func() {
+<<<<<<< HEAD
 				c.EndStandby(errors.New("timeout waiting for activation"))
 				signal.TiDBExit(syscall.SIGTERM)
+=======
+				if c.endStandby(errors.New("timeout waiting for activation")) {
+					tidbExit(syscall.SIGTERM)
+				}
+>>>>>>> 3c244286c36 (standby: make repeated activation cancellation harmless (#73661))
 			}()
 		case <-c.serverStartCh:
 			if c.startServerErr != nil {
@@ -371,7 +383,15 @@ func (c *LoadKeyspaceController) WaitForActivate() {
 
 // EndStandby is used to notify the temp http server that the tidb server is ready or failed to init.
 func (c *LoadKeyspaceController) EndStandby(err error) {
+	c.endStandby(err)
+}
+
+// endStandby reports whether this call completed activation. Only the winning
+// cancellation or timeout may terminate the server; later retries must not.
+func (c *LoadKeyspaceController) endStandby(err error) bool {
+	completed := false
 	c.endOnce.Do(func() {
+		completed = true
 		c.startServerErr = err
 		close(c.serverStartCh)
 		if httpServer != nil {
@@ -383,6 +403,7 @@ func (c *LoadKeyspaceController) EndStandby(err error) {
 			}
 		}
 	})
+	return completed
 }
 
 // OnServerShutdown is called when the server is going to shut down.
