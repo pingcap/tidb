@@ -10,7 +10,11 @@ go_test(
     ],
     data = glob(["testdata/**"]),
     flaky = True,
+<<<<<<< HEAD
     shard_count = 5,
+=======
+    shard_count = 8,
+>>>>>>> d3a10d865e6 (executor: validate EXCHANGE PARTITION after generated column and auto_increment evaluation (#73521))
     deps = [
         "//pkg/errno",
         "//pkg/parser",

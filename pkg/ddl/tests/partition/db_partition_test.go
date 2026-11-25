@@ -2057,6 +2057,58 @@ func TestExchangePartitionHook(t *testing.T) {
 	tk.MustQuery("select * from pt partition(p0)").Check(testkit.Rows("1"))
 }
 
+func TestExchangePartitionHookGeneratedAndAutoInc(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tkInsert := testkit.NewTestKit(t, store)
+
+	tk.MustExec("set @@tidb_enable_exchange_partition=1")
+	defer tk.MustExec("set @@tidb_enable_exchange_partition=0")
+
+	tk.MustExec("use test")
+	// 1. Generated column as partition key.
+	tk.MustExec(`create table pt_gen (a int, b int as (a + 10) stored) partition by range (b) (
+		partition p0 values less than (15),
+		partition p1 values less than (100)
+	)`)
+	tk.MustExec(`create table nt_gen (a int, b int as (a + 10) stored)`)
+	tk.MustExec("insert into nt_gen (a) values (1)")
+
+	var genChecked bool
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
+		if job.Type == model.ActionExchangeTablePartition && job.SchemaState == model.StateWriteOnly && !genChecked {
+			genChecked = true
+			tkInsert.MustExec("use test")
+			tkInsert.MustGetErrCode("insert into nt_gen (a) values (10)", errno.ErrRowDoesNotMatchGivenPartitionSet)
+			tkInsert.MustGetErrCode("insert into nt_gen (a) select 10", errno.ErrRowDoesNotMatchGivenPartitionSet)
+		}
+	})
+	tk.MustExec("alter table pt_gen exchange partition p0 with table nt_gen")
+	require.True(t, genChecked)
+	tk.MustQuery("select a, b from pt_gen partition(p0)").Check(testkit.Rows("1 11"))
+
+	// 2. Auto-increment column as partition key (lazy auto-ID allocation path).
+	tk.MustExec(`create table pt_ai (id int primary key auto_increment) partition by range (id) (
+		partition p0 values less than (5),
+		partition p1 values less than MAXVALUE
+	)`)
+	tk.MustExec(`create table nt_ai (id int primary key auto_increment)`)
+	tk.MustExec("insert into nt_ai values (9)")
+	tk.MustExec("delete from nt_ai where id = 9")
+
+	var aiChecked bool
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
+		if job.Type == model.ActionExchangeTablePartition && job.SchemaState == model.StateWriteOnly && !aiChecked {
+			aiChecked = true
+			tkInsert.MustExec("use test")
+			tkInsert.MustGetErrCode("insert into nt_ai () values ()", errno.ErrRowDoesNotMatchGivenPartitionSet)
+		}
+	})
+	tk.MustExec("alter table pt_ai exchange partition p0 with table nt_ai")
+	require.True(t, aiChecked)
+	tk.MustQuery("select id from pt_ai partition(p0)").Check(testkit.Rows())
+}
+
 func TestExchangePartitionAutoID(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
