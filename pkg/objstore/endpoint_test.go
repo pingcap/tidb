@@ -138,20 +138,3 @@ func TestMalformedS3BackendDoesNotLeakCredentials(t *testing.T) {
 		}
 	}
 }
-
-func TestParseTOSStorage(t *testing.T) {
-	for _, suffix := range []string{"", "&force-path-style=true", "&force_path_style=true"} {
-		backend, err := ParseBackend("s3://bucket/prefix?provider=volcengine&endpoint=https://tos-s3-cn-beijing.volces.com"+suffix, nil)
-		require.NoError(t, err)
-		require.Equal(t, suffix != "", backend.GetS3().ForcePathStyle)
-	}
-	backend, err := ParseBackend("tos://bucket/prefix?region=cn-beijing", &BackendOptions{
-		S3: s3like.S3BackendOptions{AccessKey: "test-id", SecretAccessKey: "sk"},
-	})
-	require.NoError(t, err)
-	s, err := New(context.Background(), backend, nil)
-	require.NoError(t, err)
-	defer s.Close()
-	require.IsType(t, (*tosstore.TOSStore)(nil), s)
-	require.Equal(t, "tos://bucket/prefix/", s.URI())
-}

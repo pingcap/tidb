@@ -18,8 +18,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -32,8 +33,6 @@ import (
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/stretchr/testify/require"
 	vtos "github.com/volcengine/ve-tos-golang-sdk/v2/tos"
-	"github.com/volcengine/volcengine-go-sdk/volcengine/corehandlers"
-	"github.com/volcengine/volcengine-go-sdk/volcengine/request"
 )
 
 func TestCredentialSources(t *testing.T) {
@@ -44,7 +43,7 @@ func TestCredentialSources(t *testing.T) {
 	for _, key := range []string{"TOS_ACCESS_KEY", "TOS_SECRET_KEY", "TOS_SECURITY_TOKEN", "VOLCENGINE_OIDC_TOKEN_FILE", "VOLCENGINE_OIDC_ROLE_TRN"} {
 		t.Run(key, func(t *testing.T) {
 			t.Setenv(key, "private-value")
-			_, err := newCredentials(q)
+			_, err := newCredentials(q, nil)
 			require.ErrorIs(t, err, berrors.ErrStorageInvalidConfig)
 			require.NotContains(t, err.Error(), "private-value")
 		})
@@ -53,13 +52,13 @@ func TestCredentialSources(t *testing.T) {
 	t.Setenv("TOS_SECRET_KEY", "env-secret")
 	t.Setenv("TOS_SECURITY_TOKEN", "env-token")
 	for _, partial := range []*backuppb.S3{{AccessKey: "id"}, {SecretAccessKey: "private-value"}, {SessionToken: "private-value"}} {
-		_, err := newCredentials(partial)
+		_, err := newCredentials(partial, nil)
 		require.ErrorIs(t, err, berrors.ErrStorageInvalidConfig)
 	}
-	p, err := newCredentials(q)
+	p, err := newCredentials(q, nil)
 	require.NoError(t, err)
 	require.Equal(t, "env-token", p.Credential().SecurityToken)
-	p, err = newCredentials(testBackend())
+	p, err = newCredentials(testBackend(), nil)
 	require.NoError(t, err)
 	require.Equal(t, "test-id", p.Credential().AccessKeyID)
 }
@@ -72,12 +71,12 @@ func TestOIDCExchange(t *testing.T) {
 	t.Setenv("VOLCENGINE_OIDC_ROLE_POLICY", "policy")
 	for _, endpoint := range []string{"http://host", "https://host?private-value", "https://user:private-value@host"} {
 		t.Setenv("VOLCENGINE_OIDC_STS_ENDPOINT", endpoint)
-		_, err := newOIDCSource("region")
+		_, err := newOIDCSource("region", nil)
 		require.ErrorIs(t, err, berrors.ErrStorageInvalidConfig)
 		require.NotContains(t, err.Error(), "private-value")
 	}
 	t.Setenv("VOLCENGINE_OIDC_STS_ENDPOINT", "sts.test")
-	source, err := newOIDCSource("region")
+	source, err := newOIDCSource("region", nil)
 	require.NoError(t, err)
 	n := 0
 	source.httpClient.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
@@ -140,23 +139,16 @@ func TestOIDCExchange(t *testing.T) {
 
 func TestAssumeRole(t *testing.T) {
 	t.Run("forward assumed credentials", func(t *testing.T) {
-		send := corehandlers.SendHandler.Fn
-		t.Cleanup(func() { corehandlers.SendHandler.Fn = send })
 		calls := 0
-		corehandlers.SendHandler.Fn = func(r *request.Request) {
+		hc := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 			calls++
-			body := fmt.Sprintf(`{"Result":{"Credentials":{"AccessKeyId":"assumed","SecretAccessKey":"secret","SessionToken":"token","ExpiredTime":%q}}}`, time.Now().Add(time.Hour).Format(time.RFC3339))
-			r.HTTPResponse = &http.Response{
-				StatusCode:    http.StatusOK,
-				Header:        make(http.Header),
-				Body:          io.NopCloser(strings.NewReader(body)),
-				ContentLength: int64(len(body)),
-			}
-		}
+			require.Equal(t, "sts.cn-beijing.volcengineapi.com", req.URL.Host)
+			return response(200, fmt.Sprintf(`{"Result":{"Credentials":{"AccessKeyId":"assumed","SecretAccessKey":"secret","SessionToken":"token","ExpiredTime":%q}}}`, time.Now().Add(time.Hour).Format(time.RFC3339))), nil
+		})}
 		for _, forward := range []bool{false, true} {
 			q := testBackend()
 			q.Region, q.Endpoint, q.RoleArn = "", "https://tos-cn-beijing.volces.com", "role"
-			s, err := NewTOSStorage(context.Background(), q, &storeapi.Options{SendCredentials: forward})
+			s, err := NewTOSStorage(context.Background(), q, &storeapi.Options{SendCredentials: forward, HTTPClient: hc})
 			require.NoError(t, err)
 			s.Close()
 			if forward {
@@ -169,6 +161,44 @@ func TestAssumeRole(t *testing.T) {
 			}
 		}
 		require.Equal(t, 2, calls)
+	})
+	t.Run("preserve caller HTTP proxy on AssumeRole", func(t *testing.T) {
+		for _, key := range []string{"HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy", "NO_PROXY", "no_proxy"} {
+			t.Setenv(key, "")
+		}
+		var proxyHost atomic.Value
+		proxyErr := errors.New("proxy invoked")
+		tr := &http.Transport{
+			Proxy: func(req *http.Request) (*url.URL, error) {
+				proxyHost.Store(req.URL.Host)
+				return nil, proxyErr
+			},
+			DialContext: func(context.Context, string, string) (net.Conn, error) {
+				return nil, errors.New("unexpected direct dial bypassing proxy")
+			},
+		}
+		q := testBackend()
+		q.Region, q.Endpoint, q.RoleArn = "", "https://tos-cn-beijing.volces.com", "role"
+		_, err := NewTOSStorage(context.Background(), q, &storeapi.Options{HTTPClient: &http.Client{Transport: tr}})
+		require.Error(t, err)
+		require.Equal(t, "sts.cn-beijing.volcengineapi.com", proxyHost.Load())
+		require.NotNil(t, tr.Proxy)
+	})
+	t.Run("custom global http.DefaultTransport does not panic on AssumeRole", func(t *testing.T) {
+		orig := http.DefaultTransport
+		t.Cleanup(func() { http.DefaultTransport = orig })
+		calls := 0
+		http.DefaultTransport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			calls++
+			require.Equal(t, "sts.cn-beijing.volcengineapi.com", req.URL.Host)
+			return response(200, fmt.Sprintf(`{"Result":{"Credentials":{"AccessKeyId":"assumed","SecretAccessKey":"secret","SessionToken":"token","ExpiredTime":%q}}}`, time.Now().Add(time.Hour).Format(time.RFC3339))), nil
+		})
+		q := testBackend()
+		q.Region, q.Endpoint, q.RoleArn = "", "https://tos-cn-beijing.volces.com", "role"
+		s, err := NewTOSStorage(context.Background(), q, nil)
+		require.NoError(t, err)
+		s.Close()
+		require.Equal(t, 1, calls)
 	})
 	var calls int
 	client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {

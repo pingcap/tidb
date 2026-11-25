@@ -147,7 +147,8 @@ func NewTOSStorage(ctx context.Context, backend *backuppb.S3, opts *storeapi.Opt
 		return nil, err
 	}
 	qs.Region = region
-	creds, err := newCredentials(&qs)
+	qs.Provider = s3like.TOSProvider
+	creds, err := newCredentials(&qs, opts.HTTPClient)
 	if err != nil {
 		return nil, err
 	}

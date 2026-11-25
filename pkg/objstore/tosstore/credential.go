@@ -55,7 +55,7 @@ type credentials struct {
 	fetch     func(context.Context) (credential, error)
 }
 
-func newCredentials(qs *backuppb.S3) (*credentials, error) {
+func newCredentials(qs *backuppb.S3, injected *http.Client) (*credentials, error) {
 	base := credential{Credential: vtos.Credential{
 		AccessKeyID: qs.AccessKey, AccessKeySecret: qs.SecretAccessKey, SecurityToken: qs.SessionToken,
 	}}
@@ -76,7 +76,7 @@ func newCredentials(qs *backuppb.S3) (*credentials, error) {
 		}
 	} else {
 		var err error
-		oidc, err = newOIDCSource(qs.Region)
+		oidc, err = newOIDCSource(qs.Region, injected)
 		if err != nil {
 			return nil, err
 		}
@@ -96,8 +96,10 @@ func newCredentials(qs *backuppb.S3) (*credentials, error) {
 			return resolved, nil
 		}
 		// The SDK modifies both the client and its transport in NewSession.
-		httpClient := &http.Client{Transport: &http.Transport{}, CheckRedirect: noRedirect}
-		defer httpClient.CloseIdleConnections()
+		httpClient, closeIdle := newSTSHTTPClient(injected)
+		if closeIdle != nil {
+			defer closeIdle()
+		}
 		return assumeRole(ctx, region, role, resolved.Credential, httpClient)
 	}}, nil
 }
@@ -191,17 +193,42 @@ func temporaryCredential(ak, sk, token, expiration string) (credential, error) {
 
 func noRedirect(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 
+func newSTSHTTPClient(injected *http.Client) (*http.Client, func()) {
+	var hc http.Client
+	if injected != nil {
+		hc = *injected
+	}
+	transport := hc.Transport
+	if transport == nil {
+		transport = http.DefaultTransport
+	}
+	hc.CheckRedirect = noRedirect
+	if base, ok := transport.(*http.Transport); ok {
+		tr := base.Clone()
+		hc.Transport = tr
+		return &hc, tr.CloseIdleConnections
+	}
+	hc.Transport = transport
+	return &hc, nil
+}
+
 type oidcSource struct {
 	tokenFile, role, policy, endpoint string
 	httpClient                        *http.Client
 }
 
-func newOIDCSource(region string) (*oidcSource, error) {
+func newOIDCSource(region string, injected *http.Client) (*oidcSource, error) {
+	hc := &http.Client{CheckRedirect: noRedirect}
+	if injected != nil {
+		copied := *injected
+		copied.CheckRedirect = noRedirect
+		hc = &copied
+	}
 	s := &oidcSource{
 		tokenFile:  os.Getenv("VOLCENGINE_OIDC_TOKEN_FILE"),
 		role:       os.Getenv("VOLCENGINE_OIDC_ROLE_TRN"),
 		policy:     os.Getenv("VOLCENGINE_OIDC_ROLE_POLICY"),
-		httpClient: &http.Client{CheckRedirect: noRedirect},
+		httpClient: hc,
 	}
 	if s.tokenFile == "" || s.role == "" {
 		return nil, invalidConfig("TOS requires static credentials or both VOLCENGINE_OIDC_TOKEN_FILE and VOLCENGINE_OIDC_ROLE_TRN")
@@ -294,7 +321,22 @@ func assumeRole(ctx context.Context, region, role string, base vtos.Credential, 
 	if err != nil {
 		return credential{}, errors.New("cannot initialize Volcengine STS")
 	}
-	out, err := sts.New(sess).AssumeRoleWithContext(ctx, &sts.AssumeRoleInput{
+	// volcengine-go-sdk's ClientConfig unconditionally overwrites Transport.Proxy
+	// with http.ProxyURL(envProxy), dropping a caller-configured Proxy when env
+	// proxy variables are unset.
+	var savedProxy func(*http.Request) (*url.URL, error)
+	var tr *http.Transport
+	if httpClient != nil {
+		tr, _ = httpClient.Transport.(*http.Transport)
+		if tr != nil {
+			savedProxy = tr.Proxy
+		}
+	}
+	stsClient := sts.New(sess)
+	if tr != nil {
+		tr.Proxy = savedProxy
+	}
+	out, err := stsClient.AssumeRoleWithContext(ctx, &sts.AssumeRoleInput{
 		RoleTrn: volcengine.String(role), RoleSessionName: volcengine.String("tidb"), DurationSeconds: volcengine.Int32(3600),
 	})
 	if err != nil {

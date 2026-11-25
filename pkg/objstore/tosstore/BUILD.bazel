@@ -50,7 +50,5 @@ go_test(
         "@com_github_stretchr_testify//assert",
         "@com_github_stretchr_testify//require",
         "@com_github_volcengine_ve_tos_golang_sdk_v2//tos",
-        "@com_github_volcengine_volcengine_go_sdk//volcengine/corehandlers",
-        "@com_github_volcengine_volcengine_go_sdk//volcengine/request",
     ],
 )

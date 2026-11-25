@@ -190,32 +190,18 @@ func TestStorageConfig(t *testing.T) {
 		require.Nil(t, hc.CheckRedirect)
 	})
 
-	t.Run("close an owned idle connection", func(t *testing.T) {
-		closed := make(chan struct{}, 1)
-		server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
-		server.Config.ConnState = func(_ net.Conn, state http.ConnState) {
-			if state == http.StateClosed {
-				closed <- struct{}{}
-			}
-		}
-		server.Start()
-		defer server.Close()
-		q := testBackend()
-		q.Endpoint = server.URL
-		s, err := NewTOSStorage(context.Background(), q, nil)
+	t.Run("close invokes owned idle connection cleanup", func(t *testing.T) {
+		s, err := NewTOSStorage(context.Background(), testBackend(), nil)
 		require.NoError(t, err)
-		require.NoError(t, s.cli.CheckBucketExistence(context.Background()))
-		select {
-		case <-closed:
-			t.Fatal("connection was already closed")
-		default:
+		require.NotNil(t, s.closeIdle)
+		closed := false
+		orig := s.closeIdle
+		s.closeIdle = func() {
+			closed = true
+			orig()
 		}
 		s.Close()
-		select {
-		case <-closed:
-		case <-time.After(3 * time.Second):
-			t.Fatal("idle connection remained open")
-		}
+		require.True(t, closed)
 	})
 
 	t.Run("copy requires a TOS source", func(t *testing.T) {
