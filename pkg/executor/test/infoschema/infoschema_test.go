@@ -1358,3 +1358,17 @@ func TestStatisticShowPublicIndexes(t *testing.T) {
 	})
 	tk.MustExec("alter table t add index idx(b);")
 }
+
+func TestVariablesInfoConcurrentRead(t *testing.T) {
+	// Issue #73702: the UNION branches read VARIABLES_INFO concurrently on the
+	// same session, so the read must not populate the session's sysvar map.
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	count := len(tk.MustQuery("select variable_name from information_schema.variables_info").Rows())
+	for range 20 {
+		tk = testkit.NewTestKit(t, store)
+		tk.MustQuery("select count(*) from (select variable_name from information_schema.variables_info union all " +
+			"select variable_name from information_schema.variables_info union all " +
+			"select variable_name from information_schema.variables_info) t").Check(testkit.Rows(strconv.Itoa(3 * count)))
+	}
+}
