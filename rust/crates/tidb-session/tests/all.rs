@@ -15,6 +15,7 @@
 //! All topology-independent `tidb-session` integration tests in one process.
 
 mod support;
+mod range_intersection_source;
 mod table_sample_after_alter_source;
 mod index_ddl_prefix_and_visibility_source;
 mod ddl_sequence_source;

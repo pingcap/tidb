@@ -226,3 +226,89 @@ fn enforce_mpp_warning4() {
         assert_eq!(got, want, "{sql}");
     }
 }
+
+/// Go master `prepareMPPFullOuterJoinTest` (#70562).
+fn mpp_full_outer_join_kit() -> TestKit {
+    let mut tk = TestKit::new();
+    tk.must_exec("use test");
+    for sql in [
+        "set tidb_cost_model_version=2",
+        "set @@tidb_allow_mpp=1",
+        "set @@tidb_enforce_mpp=1",
+        "set @@tidb_enable_full_outer_join=1",
+        "create table t1 (a int, b int)",
+        "create table t2 (a int, b int)",
+    ] {
+        tk.must_exec(sql);
+    }
+    crate::support::testkit::set_tiflash_replica(&tk, "test", "t1");
+    crate::support::testkit::set_tiflash_replica(&tk, "test", "t2");
+    tk
+}
+
+/// Go master `findMPPFullOuterHashJoin`: the plan's TiFlash full outer hash
+/// join, which must be an MPP shuffle join.
+fn mpp_full_outer_hash_join(tk: &mut TestKit, sql: &str) -> Vec<String> {
+    let plan: Vec<Vec<String>> = tk.must_query(&format!("explain format='brief' {sql}")).rows().to_vec();
+    let join = plan
+        .iter()
+        .find(|row| row[0].contains("HashJoin") && row[2] == "mpp[tiflash]" && row[4].starts_with("full outer join"))
+        .unwrap_or_else(|| panic!("expected MPP TiFlash full outer hash join: {plan:?}"));
+    // A shuffle join hashes both inputs: no broadcast exchange below it.
+    assert!(
+        plan.iter().all(|row| !row[4].contains("ExchangeType: Broadcast")),
+        "{plan:?}"
+    );
+    join.clone()
+}
+
+/// Go master `TestMPPFullOuterJoinToPB`'s planning half (#70562): the shuffle
+/// hint plans an MPP full outer hash join keeping one left and one right
+/// condition. The `ToPB` assertion needs a plan-to-protobuf seam this
+/// harness lacks (and neither Go's nor Rust's mock TiFlash executes the join).
+#[test]
+fn mpp_full_outer_join_to_pb() {
+    let mut tk = mpp_full_outer_join_kit();
+    let join = mpp_full_outer_hash_join(
+        &mut tk,
+        "select /*+ shuffle_join(t1, t2), read_from_storage(tiflash[t1, t2]) */ * from t1 full outer join t2 on t1.a = t2.a and t1.b > 1 and t2.b > 1",
+    );
+    assert!(join[4].contains("left cond:[gt(test.t1.b, 1)]"), "{join:?}");
+    assert!(join[4].contains("right cond:gt(test.t2.b, 1)"), "{join:?}");
+}
+
+/// Go master `TestMPPFullOuterJoinWithoutShuffleHint` (#70562): even with the
+/// broadcast thresholds high, a full outer join plans as an MPP shuffle join
+/// (`preferMppBCJ` answers false for it) and raises no warning.
+#[test]
+fn mpp_full_outer_join_without_shuffle_hint() {
+    let mut tk = mpp_full_outer_join_kit();
+    tk.must_exec("set @@tidb_broadcast_join_threshold_count=1000000000");
+    tk.must_exec("set @@tidb_broadcast_join_threshold_size=1000000000");
+    mpp_full_outer_hash_join(
+        &mut tk,
+        "select /*+ read_from_storage(tiflash[t1, t2]) */ * from t1 full outer join t2 on t1.a = t2.a and t1.b > 1 and t2.b > 1",
+    );
+    tk.must_query("show warnings").check(Vec::<&str>::new());
+}
+
+/// Go master `attach2TaskForMpp4PhysicalHashJoin` (#70562): a full outer
+/// join keeps both sides' rows, so neither side's hash partition describes
+/// its output; an aggregation grouped by a join key re-shuffles above it
+/// (Go master testkit probe).
+#[test]
+fn mpp_full_outer_join_output_is_not_hash_partitioned() {
+    let mut tk = mpp_full_outer_join_kit();
+    let plan: Vec<Vec<String>> = tk
+        .must_query("explain format='brief' select /*+ shuffle_join(t1, t2), read_from_storage(tiflash[t1, t2]) */ t1.a, count(*) from t1 full outer join t2 on t1.a = t2.a group by t1.a")
+        .rows()
+        .to_vec();
+    let agg = plan.iter().position(|row| row[0].contains("HashAgg")).expect("aggregation");
+    let join = plan.iter().position(|row| row[0].contains("HashJoin")).expect("join");
+    assert!(
+        plan[agg..join].iter().any(|row| row[0].contains("ExchangeSender")
+            && row[4].contains("ExchangeType: HashPartition")
+            && row[4].contains("Hash Cols: [name: test.t1.a")),
+        "{plan:#?}"
+    );
+}

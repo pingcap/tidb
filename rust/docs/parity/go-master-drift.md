@@ -79,7 +79,6 @@ Full picture (2026-11-26; per-commit table `tidb-wt/tools/drift/full_picture.tsv
 - 2ddad9e3a5c 2026-07-28 3/3 session: retry waiting for SYSTEM keyspace bootstrap (#70085)
 - 93f713cf551 2026-07-29 3/3 statistics: split OutOfRangeRowCount into count-independent shape and scaling (#70178)
 - 2f3246dadb6 2026-07-29 1/1 memory: mark approximate pool allocation reads as norace (#70205)
-- 22fd1ac756e 2026-07-29 8/10 planner: discount equality-bound clustered-key prefix in index pruning (#69726) -- partly ported (`discounted_handle_prefix`, `handle_cols_to_append`, `has_v0_new_collation_string_handle` exist); missing: `Selectivity` skips JSON columns (Rust records them as used stats items)
 - ab79433f43c 2026-07-29 5/6 importer, mydump: preload small parquet files in a single read (#68250)
 - 19a41f0d4a3 2026-07-31 1/1 planner: estimate index join probe-side row count from the join keys the access path can use (#70176)
 - c25caa6b2d2 2026-08-02 1/1 executor: remove unnecessary ordering from full-sampling Analyze requests (#70275)
@@ -231,7 +230,6 @@ Full picture (2026-11-26; per-commit table `tidb-wt/tools/drift/full_picture.tsv
 - 8626dd78607 2026-11-11 3/6 planner, expression: index field names when building wide projections (#72825)
 - 8947a33f183 2026-11-11 15/17 server: skip small packets and pool zlib and zstd compressors in the compressed protocol (#72226)
 - f01fb0ab6d4 2026-11-12 1/2 stats: lock stats_meta before add-column histogram writes (#72862)
-- c5b8e96c47b 2026-11-12 4/5 planner: intersect appended index ranges with full-column constraints (#72802)
 - 35599163cae 2026-11-12 8/9 session: initialize MDL before starting the DDL scheduler during upgrade (#70464)
 - 2a6eaa16c20 2026-11-12 1/1 planner: safely fall back for invalid TIMESTAMP range bounds (#72603)
 - 573231acda6 2026-11-16 17/19 privilege: harden session-token validation with staged legacy support (#72996)
@@ -262,19 +260,16 @@ All 27 commits whose subject names privileges, injection, redaction, TLS or auth
 Security, fixed 2026-11-26 with Go's tests ported (mutation-checked): 40a24ee562f (PLAN REPLAYER digests validated and bound), 049bb177fa0 (DDL ANALYZE escapes `%n.%n`), 31134f349d7 (DELETE join SELECT checks), 0103aff49f9 (SHOW AFFINITY privilege filter), baa826dceda (client certificates optional under require_secure_transport), 53c40004b93 (ALTER USER keeps REQUIRE; `tls_policy_of` now answers Go's empty privData for TOKEN_ISSUER-only, which also stops CREATE USER writing a `global_priv` row for it), bfa69e13585 (SHOW GRANTS / SHOW CREATE USER escape accounts; `tidb-wt/tools/drift/requote_accounts.py` rewrote the tests that pinned the old quoting).
 
 Security, still unported:
-- 47dc1214658 (`tidb_redact_log` defaults ON; OFF in test builds) -- not ported yet: the default alone made Rust's pooled internal sessions redact plan text (gate 99: restricted-statement EXPLAIN, EXPLAIN EXPLORE, MV refresh EXPLAIN printed `?`). Go master keeps those literal through (1) `rebuildSysVarCache` running every `SetGlobal` hook on a BORROWED pooled session's vars (probe: Go's pooled sessions start ON, the sysvar-cache session is OFF; Rust's `GlobalSysvars::rebuild_sys_var_cache` runs the hooks elsewhere), (2) `planGenerator.Generate` taking the caller's mode, (3) its tests setting `EnableRedactLog = Off` on mock contexts. Port all three with the default.
+- 47dc1214658 (`tidb_redact_log` defaults ON; OFF in test builds) -- not ported yet: the default alone made Rust's pooled internal sessions redact plan text (gate 99: restricted-statement EXPLAIN, EXPLAIN EXPLORE, MV refresh EXPLAIN printed `?`). Go master keeps those literal through (1) `rebuildSysVarCache` running every `SetGlobal` hook on a BORROWED pooled session's vars (probe: Go's pooled sessions start ON, the sysvar-cache session is OFF; Rust's `GlobalSysvars::rebuild_sys_var_cache` runs the hooks elsewhere), (2) `planGenerator.Generate` taking the caller's mode, (3) its tests setting `EnableRedactLog = Off` on mock contexts. Port all three with the default. Blocked on a structural gap: Rust has no `sysSessionPool` reuse (`open_system_session` builds a fresh session per internal statement), so no pooled session can carry a `SetGlobal` hook's session-side effect the way Go's does.
 - 6375454f166 (sessions keep a dropped resource group), 13377f0999b (unredacted slow-query memory cache), d880d7fabe5 (redact keys/values/SQL in diagnostic logs), 70970592ab0 (stmt-summary sample redaction), 573231acda6 / 35232111b23 / dc52119f4a5 (nextgen session token, starter privilege reset, redacted global-variables API).
 - GRANT ... REQUIRE TOKEN_ISSUER '...' alone: Go `grantGlobalPriv` sets `PRIV` to NULL (nil privData); Rust writes `{}`.
 
 Security, verified ported or not applicable: 032f17c27bc (probe: cached PointGet rechecks privileges), d12b596a3f7 (`drop(conn)` closes), 8cde78af3c5, 4c0e2c06244, 1d19049f6e3, d3b2df32e6d, fdfadb96b2c (all under other names); 03148cd4adf partly (objstore yes, lightning config messages unchecked); ce0faf10dc1 (Rust logs no deadlock lock key at all); 6c869bc1432, 1bcfcd48663, f1be26c3f1c (no COM_CHANGE_USER in Rust).
 
-Correctness, unported (found while sampling):
-- c0c535c7f5d -- MPP full outer join: warnings ported 2026-11-25; `preferMppBCJ`'s full-outer `false`, `ToPB`'s `TypeFullOuterJoin` (Rust `_ => TypeInnerJoin`) and the AnyType partition in `attach2TaskForMpp4PhysicalHashJoin` are missing. Probe: Rust never plans one on MPP; Go tests `TestMPPFullOuterJoinToPB`, `TestMPPFullOuterJoinWithoutShuffleHint`.
-- 379c5c45e37 -- Rust's `detachCNFCondAndBuildRangeForIndex` best-CNF block is the pre-master algorithm (no `IntersectSortedRanges`, no residual-filter append).
-- 82af7f5d393 -- `IsJobMatch` filter precedence: Rust reproduces the pre-fix expression deliberately (`tidb-meta/src/transaction_rules.rs`).
-- 32a66e481bd -- SUM/AVG over a binary literal are not cast to real.
+Correctness, fixed 2026-11-26 with Go's tests ported (mutation-checked): c0c535c7f5d (MPP full outer join: `preferMppBCJ`, `ToPB` join type, AnyType partition; `TestMPPFullOuterJoinToPB`'s protobuf assertion needs a plan-to-protobuf test seam), c5b8e96c47b + 379c5c45e37 (`IntersectSortedRanges`, master `compareLexicographically`, `intersectAppendedRanges`, and the residual filters kept when the best CNF ranges replace the point ranges: a wrong result on a prefix index -- July Go has it too), 82af7f5d393 (`IsJobMatch`), 32a66e481bd + 8c92bcda87f (binary literals in SUM/AVG and HAVING MIN/MAX), 3917369462b (RENAME advances the revision; Go's failed-rename half needs a `renameTableErr` failpoint site), 22fd1ac756e's `Selectivity` JSON skip.
+
+Correctness, still unported:
 - 93a01d31f6d -- `tidb_opt_range_max_count` and `compareEqOrIn` absent.
-- 3917369462b -- rename does not advance the table revision (Rust bumps it only in `update_table`).
 
 ## Found while porting (not in the token list)
 

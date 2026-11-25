@@ -106,3 +106,79 @@ fn rename_multiple_tables_keeps_their_columns() {
         assert_eq!(table.visible_columns().len(), 2);
     }
 }
+
+/// `(table id, revision, foreign-key referred tables)` of `db.name`.
+fn rename_revision_info(tk: &crate::support::testkit::TestKit, db: &str, name: &str) -> (i64, u64, Vec<String>) {
+    match tk.get_table_by_name(db, name) {
+        tidb_infoschema::TableEntry::Kv(table) => {
+            let meta = table.meta();
+            let meta = meta.read();
+            let refs = meta.foreign_keys.iter_deref().map(|fk| fk.read().ref_table.lowercase().to_owned()).collect();
+            (meta.id, meta.revision, refs)
+        }
+        _ => panic!("{db}.{name} is a stored table"),
+    }
+}
+
+/// Go master `TestRenameTableRevision` (#73233): a rename keeps the table ID
+/// and advances its revision, so cached plans bound to the old name-to-ID
+/// mapping are invalidated. The failed-rename half drives Go's
+/// `renameTableErr` failpoint, which Rust's rename has no site for.
+#[test]
+fn rename_table_revision() {
+    for enable_fk in [true, false] {
+        let mut tk = crate::support::testkit::TestKit::new();
+        tk.must_exec(&format!("set global tidb_enable_foreign_key = {enable_fk}"));
+        tk.must_exec("create database rename_revision");
+        tk.must_exec("use test");
+        let check_rename = |tk: &mut crate::support::testkit::TestKit, sql: &str, old: (&str, &str), new: (&str, &str)| {
+            let before = rename_revision_info(tk, old.0, old.1);
+            tk.must_exec(sql);
+            let after = rename_revision_info(tk, new.0, new.1);
+            assert_eq!(before.0, after.0, "{sql}");
+            assert!(after.1 > before.1, "{sql}: {} -> {}", before.1, after.1);
+        };
+        tk.must_exec("create table t1(a int primary key)");
+        tk.must_exec("create table t2(a int primary key)");
+        tk.must_exec("insert into t1 values(1)");
+        tk.must_exec("insert into t2 values(2)");
+        check_rename(&mut tk, "rename table t1 to tmp", ("test", "t1"), ("test", "tmp"));
+        check_rename(&mut tk, "rename table t2 to t1", ("test", "t2"), ("test", "t1"));
+        check_rename(&mut tk, "rename table tmp to t2", ("test", "tmp"), ("test", "t2"));
+        tk.must_query("select t1.a,t2.a from t1 join t2").check(["2 1"]);
+        check_rename(&mut tk, "alter table t1 rename to tmp", ("test", "t1"), ("test", "tmp"));
+        check_rename(&mut tk, "rename table tmp to rename_revision.tmp", ("test", "tmp"), ("rename_revision", "tmp"));
+        check_rename(&mut tk, "rename table rename_revision.tmp to test.t1", ("rename_revision", "tmp"), ("test", "t1"));
+        let (before1, before2) = (rename_revision_info(&tk, "test", "t1"), rename_revision_info(&tk, "test", "t2"));
+        tk.must_exec("rename table t1 to tmp, t2 to t1, tmp to t2");
+        let (after1, after2) = (rename_revision_info(&tk, "test", "t2"), rename_revision_info(&tk, "test", "t1"));
+        assert_eq!((before1.0, before2.0), (after1.0, after2.0));
+        assert!(after1.1 > before1.1 && after2.1 > before2.1);
+        tk.must_query("select t1.a,t2.a from t1 join t2").check(["1 2"]);
+        tk.must_exec("set global tidb_enable_foreign_key = on");
+    }
+}
+
+/// Go master `TestRenameTableRevisionWithForeignKeys` (#73233): the renamed
+/// parent and its referring child both advance their revisions.
+#[test]
+fn rename_table_revision_with_foreign_keys() {
+    let mut tk = crate::support::testkit::TestKit::new();
+    tk.must_exec("use test");
+    tk.must_exec("create table parent(a int primary key, b int, foreign key(b) references parent(a))");
+    tk.must_exec("create table child(a int primary key, b int, foreign key(b) references parent(a))");
+    let (parent, child) = (rename_revision_info(&tk, "test", "parent"), rename_revision_info(&tk, "test", "child"));
+    tk.must_exec("rename table parent to renamed_parent");
+    let (new_parent, new_child) = (rename_revision_info(&tk, "test", "renamed_parent"), rename_revision_info(&tk, "test", "child"));
+    assert_eq!(parent.0, new_parent.0);
+    assert!(new_parent.1 > parent.1 && new_child.1 > child.1);
+    assert_eq!(new_parent.2, ["renamed_parent"]);
+    assert_eq!(new_child.2, ["renamed_parent"]);
+    let (parent, child) = (new_parent, new_child);
+    tk.must_exec("rename table child to renamed_child, renamed_parent to parent");
+    let (new_parent, new_child) = (rename_revision_info(&tk, "test", "parent"), rename_revision_info(&tk, "test", "renamed_child"));
+    assert_eq!((parent.0, child.0), (new_parent.0, new_child.0));
+    assert!(new_parent.1 > parent.1 && new_child.1 > child.1);
+    assert_eq!(new_parent.2, ["parent"]);
+    assert_eq!(new_child.2, ["parent"]);
+}

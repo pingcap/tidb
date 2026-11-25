@@ -5244,16 +5244,17 @@ fn attach2_task_for_mpp_4_physical_hash_join(
         (left, right) = convert_mpp_join_partition_keys_if_need(left, right, column_ids, allocator, session)?;
     }
     // The outer task passes its partition to the join: the probe side of an
-    // inner join, the outer side of an outer join, the left of a semi join.
-    let outer_is_right = match join_type {
-        tidb_planner_core_base::LogicalJoinType::Inner => inner_child_idx == 0,
-        tidb_planner_core_base::LogicalJoinType::RightOuter => true,
-        _ => false,
-    };
-    let (partition_type, hash_cols) = if outer_is_right {
-        (right.partition_type(), right.hash_cols().to_vec())
-    } else {
-        (left.partition_type(), left.hash_cols().to_vec())
+    // inner join, the outer side of a left/right outer join, the left of a
+    // semi join. "For full outer join, both sides are preserved, so neither
+    // side's partition property can be passed to the join result. Use
+    // AnyType instead" (Go master #70562).
+    let (partition_type, hash_cols) = match join_type {
+        tidb_planner_core_base::LogicalJoinType::FullOuter => (MppPartitionType::Any, Vec::new()),
+        tidb_planner_core_base::LogicalJoinType::Inner if inner_child_idx == 0 => {
+            (right.partition_type(), right.hash_cols().to_vec())
+        }
+        tidb_planner_core_base::LogicalJoinType::RightOuter => (right.partition_type(), right.hash_cols().to_vec()),
+        _ => (left.partition_type(), left.hash_cols().to_vec()),
     };
     let (Some(left_plan), Some(right_plan)) = (left.plan().cloned(), right.plan().cloned()) else {
         return Err(PlanError::internal("MPP join: a child task has no plan"));

@@ -887,7 +887,9 @@ fn json_comparison_stays_above_the_mpp_reader_as_go() {
             "Selection_9 1.00 root  eq(test.t1.j, cast(cast(\"null\", json BINARY), json BINARY))",
             "└─TableReader_8 1.00 root  MppVersion: 3, data:ExchangeSender_7",
             "  └─ExchangeSender_7 1.00 mpp[tiflash]  ExchangeType: PassThrough",
-            "    └─TableFullScan_6 1.00 mpp[tiflash] table:t1 keep order:false, stats:partial[j:unInitialized]",
+            // Go master #69726: Selectivity skips the JSON column, so no
+            // `stats:partial[j:unInitialized]` (Go master testkit probe).
+            "    └─TableFullScan_6 1.00 mpp[tiflash] table:t1 keep order:false",
         ]
     );
     assert_eq!(text(&mut session, "show warnings"), [refused, refused]);

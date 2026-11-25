@@ -228,7 +228,9 @@ pub fn extract_schema_and_table_name_from_job(data: &[u8]) -> Result<(String, St
     Ok((schema.clone(), table.clone()))
 }
 
-/// Go `IsJobMatch`, including the source expression's `&&`/`||` precedence.
+/// Go `IsJobMatch`: the job's schema passes the schema filter AND its table
+/// passes the table filter (an empty filter passes everything; Go master
+/// #72918 parenthesized the table half).
 pub fn is_job_match(
     job: &[u8],
     schema_names: &BTreeSet<String>,
@@ -238,11 +240,8 @@ pub fn is_job_match(
         return Ok(true);
     }
     let (schema_name, table_name) = extract_schema_and_table_name_from_job(job)?;
-    Ok(
-        ((schema_names.is_empty() || schema_names.contains(&schema_name))
-            && table_names.is_empty())
-            || table_names.contains(&table_name),
-    )
+    Ok((schema_names.is_empty() || schema_names.contains(&schema_name))
+        && (table_names.is_empty() || table_names.contains(&table_name)))
 }
 
 /// Go `DefaultGroupMeta4Test`.

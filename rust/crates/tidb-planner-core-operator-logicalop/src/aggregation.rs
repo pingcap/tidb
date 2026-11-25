@@ -709,6 +709,13 @@ pub fn agg_func_result_matches_arg_for_non_empty_group(func: &AggFuncDesc) -> bo
     if !matches!(func.name(), AGG_FUNC_MAX | AGG_FUNC_MIN) {
         return false;
     }
+    // "MIN/MAX return string values for binary literals. Substituting the raw
+    // literal changes numeric coercion in predicates above the aggregation."
+    if matches!(&func.args()[0], tidb_expr::expression::Expression::Constant(constant)
+        if matches!(constant.value, tidb_datatype::Datum::BinaryLiteral(_)))
+    {
+        return false;
+    }
     func.args()[0].const_level() >= ConstLevel::ONLY_IN_CONTEXT
 }
 
