@@ -2048,6 +2048,10 @@ func TestIssue61609(t *testing.T) {
 // | JSON column (not used by the generated columns)  | ❌ No           | Excluded by tidb_analyze_skip_column_types setting |
 // | Index on virtual column                          | ✅ Yes          | Index entries are stored in TiKV                   |
 // | Index on stored column                           | ✅ Yes          | Index entries are stored in TiKV                   |
+// | JSON column only used by skipped columns         | ❌ No           | Excluded by tidb_analyze_skip_column_types setting |
+// | Generated column depending on a skipped column   | ❌ No           | Its value needs a skipped column, at any depth     |
+// | Vector column used by an expression index        | ✅ Yes          | Needed to build the expression index statistics    |
+// | Expression index on the vector column            | ✅ Yes          | Index entries are stored in TiKV                   |
 func TestGeneratedColumns(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
@@ -2060,15 +2064,23 @@ func TestGeneratedColumns(t *testing.T) {
 		virtual_col VARCHAR(50) AS (JSON_UNQUOTE(JSON_EXTRACT(data, '$.name'))) VIRTUAL,
 		stored_col VARCHAR(50) AS (JSON_UNQUOTE(JSON_EXTRACT(data, '$.status'))) STORED,
 		json_but_not_used_by_generated_column JSON,
+		skipped_data JSON,
+		virtual_on_skipped INT AS (JSON_EXTRACT(skipped_data, '$.x')) VIRTUAL,
+		stored_on_skipped INT AS (JSON_EXTRACT(skipped_data, '$.x')) STORED,
+		virtual_on_virtual INT AS (virtual_on_skipped + 1) VIRTUAL,
+		virtual_on_stored INT AS (stored_on_skipped + 1) VIRTUAL,
+		stored_on_generated INT AS (virtual_on_virtual + virtual_on_stored) STORED,
+		vector_col VECTOR(3),
 		INDEX idx_virtual (virtual_col),
-		INDEX idx_stored (stored_col)
+		INDEX idx_stored (stored_col),
+		INDEX idx_vector_is_null ((vector_col IS NULL))
 	)`)
 
 	// Insert test data with simple JSON
-	tk.MustExec(`INSERT INTO test_gen_cols (id, data, json_but_not_used_by_generated_column) VALUES
-		(1, '{"name": "user1", "status": "active"}', '{"category": "admin", "level": 1}'),
-		(2, '{"name": "user2", "status": "inactive"}', '{"category": "user", "level": 2}'),
-		(3, '{"name": "user3", "status": "active"}', '{"category": "user", "level": 1}')`)
+	tk.MustExec(`INSERT INTO test_gen_cols (id, data, json_but_not_used_by_generated_column, skipped_data, vector_col) VALUES
+		(1, '{"name": "user1", "status": "active"}', '{"category": "admin", "level": 1}', '{"x": 1}', '[1,2,3]'),
+		(2, '{"name": "user2", "status": "inactive"}', '{"category": "user", "level": 2}', '{"x": 2}', NULL),
+		(3, '{"name": "user3", "status": "active"}', '{"category": "user", "level": 1}', '{"x": 3}', '[4,5,6]')`)
 
 	// Analyze the table
 	tk.MustExec("ANALYZE TABLE test_gen_cols")
@@ -2097,6 +2109,15 @@ func TestGeneratedColumns(t *testing.T) {
 	// For indexes on generated columns, we collect statistics because index entries are stored in TiKV regardless of whether the column is virtual or stored
 	require.True(t, tblStats.GetIdx(tbl.Meta().Indices[0].ID).IsAnalyzed())
 	require.True(t, tblStats.GetIdx(tbl.Meta().Indices[1].ID).IsAnalyzed())
+
+	// A skipped column also skips the generated columns over it, at any depth. See https://github.com/pingcap/tidb/issues/72122.
+	for _, name := range []string{"skipped_data", "virtual_on_skipped", "stored_on_skipped", "virtual_on_virtual", "virtual_on_stored", "stored_on_generated"} {
+		require.False(t, tblStats.GetCol(tbl.Meta().FindPublicColumnByName(name).ID).IsAnalyzed(), name)
+	}
+
+	// A vector column that an expression index needs is analyzed, like the base JSON column.
+	require.True(t, tblStats.GetCol(tbl.Meta().FindPublicColumnByName("vector_col").ID).IsAnalyzed())
+	require.True(t, tblStats.GetIdx(tbl.Meta().FindIndexByName("idx_vector_is_null").ID).IsAnalyzed())
 }
 
 // TestSkipStatsForGeneratedColumnsOnSkippedColumns verifies that when we skip JSON columns, the generated columns that depend on them are also skipped.
@@ -2235,46 +2256,6 @@ func TestAnalyzeIndexedGeneratedColumnOnSkippedColumn(t *testing.T) {
 	require.True(t, tblStats.GetCol(tbl.Meta().Columns[1].ID).IsAnalyzed())
 	// Index on generated column should be analyzed
 	require.True(t, tblStats.GetIdx(tbl.Meta().Indices[0].ID).IsAnalyzed())
-}
-
-// TestIssue72122 verifies that ANALYZE keeps every column that a kept generated column or an
-// index needs, when some columns are skipped by type.
-func TestIssue72122(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("set @@tidb_analyze_skip_column_types = 'json'")
-	h := dom.StatsHandle()
-
-	// A generated column over a generated column over a skipped column is skipped too.
-	for _, kind := range []string{"VIRTUAL", "STORED"} {
-		tk.MustExec("drop table if exists t1")
-		tk.MustExec(`CREATE TABLE t1 (id INT PRIMARY KEY, j JSON,
-			b INT AS (JSON_EXTRACT(j, '$.x')) ` + kind + `,
-			c INT AS (b + 1) VIRTUAL,
-			d INT AS (c + 1) STORED)`)
-		tk.MustExec(`INSERT INTO t1 (id, j) VALUES (1, '{"x": 1}'), (2, '{"x": 2}')`)
-		tk.MustExec("ANALYZE TABLE t1 ALL COLUMNS")
-		tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t1"))
-		require.NoError(t, err)
-		tblStats := h.GetPhysicalTableStats(tbl.Meta().ID, tbl.Meta())
-		require.True(t, tblStats.GetCol(tbl.Meta().Columns[0].ID).IsAnalyzed())
-		for _, col := range tbl.Meta().Columns[1:] {
-			require.False(t, tblStats.GetCol(col.ID).IsAnalyzed(), "%s, column %s", kind, col.Name.O)
-		}
-	}
-
-	// An expression index over a vector column keeps the vector column, as it does a skipped JSON column.
-	for _, colType := range []string{"VECTOR(3)", "JSON"} {
-		tk.MustExec("drop table if exists t2")
-		tk.MustExec("CREATE TABLE t2 (id INT PRIMARY KEY, v " + colType + ", KEY idx_null ((v IS NULL)))")
-		tk.MustExec("INSERT INTO t2 VALUES (1, '[1,2,3]'), (2, NULL)")
-		tk.MustExec("ANALYZE TABLE t2")
-		tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t2"))
-		require.NoError(t, err)
-		tblStats := h.GetPhysicalTableStats(tbl.Meta().ID, tbl.Meta())
-		require.True(t, tblStats.GetIdx(tbl.Meta().Indices[0].ID).IsAnalyzed(), colType)
-	}
 }
 
 func TestDynamicExpandMustForceAllColumns(t *testing.T) {
