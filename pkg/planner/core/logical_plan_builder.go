@@ -4815,9 +4815,6 @@ func getLatestVersionFromStatsTable(ctx sessionctx.Context, tblInfo *model.Table
 	} else {
 		statsTbl = statsProvider.GetPhysicalTableStats(pid, tblInfo)
 	}
-	if statsTbl == nil {
-		return 0
-	}
 
 	// 2. Table row count from statistics is zero. Pseudo stats table.
 	realtimeRowCount := statsTbl.RealtimeCount
@@ -5114,9 +5111,8 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 			} else {
 				globalStatsReady := false
 				if statsProvider := stats.GetStatsProvider(b.ctx); statsProvider != nil {
-					if tblStats := statsProvider.GetPhysicalTableStats(tableInfo.ID, tableInfo); tblStats != nil {
-						globalStatsReady = tblStats.IsAnalyzed()
-					}
+					tblStats := statsProvider.GetPhysicalTableStats(tableInfo.ID, tableInfo)
+					globalStatsReady = tblStats.IsAnalyzed()
 				}
 				isDynamicEnabled := b.ctx.GetSessionVars().IsDynamicPartitionPruneEnabled()
 				skipMissingPartition := b.ctx.GetSessionVars().SkipMissingPartitionStats

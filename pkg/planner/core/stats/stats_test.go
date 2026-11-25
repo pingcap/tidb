@@ -26,16 +26,12 @@ import (
 )
 
 type stubStatsProvider struct {
-	tables      map[int64]*statistics.Table
-	queriedIDs  []int64
-	returnNilID int64
+	tables     map[int64]*statistics.Table
+	queriedIDs []int64
 }
 
 func (s *stubStatsProvider) GetPhysicalTableStats(physicalTableID int64, tblInfo *model.TableInfo) *statistics.Table {
 	s.queriedIDs = append(s.queriedIDs, physicalTableID)
-	if physicalTableID == s.returnNilID {
-		return nil
-	}
 	if tbl, ok := s.tables[physicalTableID]; ok {
 		return tbl
 	}
@@ -85,7 +81,6 @@ func TestStatsProviderBindingAndFallback(t *testing.T) {
 			100: globalStats,
 			101: partStats,
 		},
-		returnNilID: 102,
 	}
 
 	stats.SetStatsProvider(ctx.GetSessionVars(), provider)
@@ -103,10 +98,10 @@ func TestStatsProviderBindingAndFallback(t *testing.T) {
 	require.False(t, gotGlobal.Pseudo)
 	require.Equal(t, int64(12345), gotGlobal.RealtimeCount)
 
-	// Returning nil from a custom provider safely falls back to pseudo stats.
+	// Uncached table ID returns pseudo stats from the provider.
 	ctx.GetSessionVars().StmtCtx.UseDynamicPruneMode = false
-	gotNilFallback := stats.GetStatsTable(ctx, tblInfo, 102)
-	require.True(t, gotNilFallback.Pseudo)
+	gotMissing := stats.GetStatsTable(ctx, tblInfo, 102)
+	require.True(t, gotMissing.Pseudo)
 
 	// Clearing the provider restores the default fallback behavior.
 	stats.SetStatsProvider(ctx.GetSessionVars(), nil)

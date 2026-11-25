@@ -33,6 +33,9 @@ import (
 // PhysicalTableStatsProvider provides read-only physical table statistics for planning.
 // Both *handle.Handle and lightweight on-demand loaders (for example, cross-keyspace
 // session loaders) implement this interface.
+// Implementations must return a non-nil *statistics.Table for a non-nil tblInfo,
+// falling back to a pseudo stats table when real stats are unavailable (matching
+// (*handle.Handle).GetPhysicalTableStats).
 type PhysicalTableStatsProvider interface {
 	GetPhysicalTableStats(physicalTableID int64, tblInfo *model.TableInfo) *statistics.Table
 }
@@ -104,9 +107,6 @@ func GetStatsTable(ctx base.PlanContext, tblInfo *model.TableInfo, pid int64) *s
 		statsTbl = statsProvider.GetPhysicalTableStats(tblInfo.ID, tblInfo)
 	} else {
 		statsTbl = statsProvider.GetPhysicalTableStats(pid, tblInfo)
-	}
-	if statsTbl == nil {
-		return statistics.PseudoTable(tblInfo, false, true)
 	}
 	intest.Assert(statsTbl.ColAndIdxExistenceMap != nil, "The existence checking map must not be nil.")
 
