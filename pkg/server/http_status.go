@@ -85,10 +85,9 @@ func (s *Server) startStatusHTTP() error {
 	if !s.cfg.Status.ReportStatus {
 		return nil
 	}
-	ctx := s.statusInitializationContext()
 	s.statusMu.Lock()
 	defer s.statusMu.Unlock()
-	if s.statusClosed || ctx.Err() != nil {
+	if s.statusClosed {
 		return net.ErrClosed
 	}
 	if diagnosticmode.Enabled() {
@@ -708,7 +707,7 @@ func (s *Server) startStatusServerAndRPCServer(serverMux *http.ServeMux) {
 	failpoint.InjectCall("beforeStatusServerInit")
 	ctx := s.statusInitializationContext()
 	s.statusMu.Lock()
-	if s.statusClosed || ctx.Err() != nil {
+	if s.statusClosed {
 		s.statusMu.Unlock()
 		return
 	}
