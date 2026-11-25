@@ -250,6 +250,70 @@ fn check_resource_group_validation(group: &ResourceGroupInfo) -> Result<(), Driv
 }
 
 impl Session {
+    /// Go `session.rebindDroppedResourceGroup` (master #72794): "DROP
+    /// RESOURCE GROUP only checks the users bound in mysql.user, so a session
+    /// may still use a dropped group: it logged in before ALTER USER moved
+    /// the user, or it ran SET RESOURCE GROUP." The session takes the group a
+    /// new session of its account gets -- the account's current group when
+    /// resource control is on and that group exists, otherwise `default` --
+    /// and the statement warns. An open transaction follows, as every
+    /// statement hands the transaction its group.
+    pub(crate) fn rebind_dropped_resource_group(&mut self) {
+        let dropped = self.vars.resource_group.clone();
+        if dropped.is_empty() || dropped == DEFAULT_RESOURCE_GROUP_NAME {
+            return;
+        }
+        let Some(bound) = self.rebind_target(&dropped) else { return };
+        let target = bound.unwrap_or_else(|| DEFAULT_RESOURCE_GROUP_NAME.to_owned());
+        tidb_logutil::bg_logger().info(
+            "resource group of the session no longer exists, rebind the session",
+            &[
+                tidb_log::Field::new("dropped", tidb_log::Value::Str(dropped.clone())),
+                tidb_log::Field::new("target", tidb_log::Value::Str(target.clone())),
+            ],
+        );
+        self.vars.resource_group.clone_from(&target);
+        self.append_warning(
+            tidb_context::WarningLevel::Warning,
+            1105,
+            format!("resource group {dropped} no longer exists, the session now uses resource group {target}"),
+        );
+    }
+
+    /// `None` when `dropped` still exists in the latest schema; otherwise
+    /// the account's bound group when resource control is on and that group
+    /// exists (`Some(Some(group))`), else `Some(None)` for `default`.
+    fn rebind_target(&self, dropped: &str) -> Option<Option<String>> {
+        // Go reads `infoCache.GetLatest()`, not the open transaction's
+        // schema: a group dropped mid-transaction is gone.
+        let latest = self.latest_info_schema.as_ref().map(|latest| latest.latest());
+        let session_catalog;
+        let catalog: &tidb_infoschema::SessionExtendedInfoSchema = match &latest {
+            Some(latest) => latest,
+            None => {
+                let Ok(guard) = self.lock_catalog() else { return None };
+                session_catalog = guard;
+                &session_catalog
+            }
+        };
+        if catalog.resource_group(dropped).is_some() {
+            return None;
+        }
+        let bound = if tidb_vardef::ENABLE_RESOURCE_CONTROL.load(std::sync::atomic::Ordering::SeqCst) {
+            self.current_identity()
+                .zip(self.privileges.as_ref())
+                .and_then(|((user, host), registry)| registry.user_attributes(user, host))
+                .and_then(|json| serde_json::from_str::<serde_json::Value>(&json).ok())
+                .and_then(|attributes| {
+                    attributes.get("resource_group").and_then(serde_json::Value::as_str).map(str::to_owned)
+                })
+                .filter(|group| !group.is_empty() && catalog.resource_group(group).is_some())
+        } else {
+            None
+        };
+        Some(bound)
+    }
+
     /// Go `executeCreateUser`/`executeAlterUser`'s RESOURCE GROUP arm: the
     /// lowercase name the account's `user_attributes` records under
     /// `resource_group`, after the feature gate, the role refusal

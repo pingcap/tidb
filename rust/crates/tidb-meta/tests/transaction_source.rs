@@ -1835,14 +1835,20 @@ fn ddl_history_is_big_endian_reverse_inclusive_and_filtered_before_decode() {
     from_two.get_last_jobs(9, &mut jobs).unwrap();
     assert_eq!(jobs.iter().map(|job| job.id).collect::<Vec<_>>(), [2, 1]);
 
-    let mut filtered = meta
-        .get_last_history_ddl_jobs_iterator_with_filter::<RecordedJob>(
-            BTreeSet::from(["does-not-match".to_owned()]),
-            BTreeSet::from(["t2".to_owned()]),
-        )
-        .unwrap();
-    filtered.get_last_jobs(3, &mut jobs).unwrap();
-    assert_eq!(jobs.iter().map(|job| job.id).collect::<Vec<_>>(), [2]);
+    // Go master `IsJobMatch` (#72918): the schema AND the table filter apply.
+    let filtered_ids = |schema: &str, table: &str| {
+        let mut filtered = meta
+            .get_last_history_ddl_jobs_iterator_with_filter::<RecordedJob>(
+                BTreeSet::from([schema.to_owned()]),
+                BTreeSet::from([table.to_owned()]),
+            )
+            .unwrap();
+        let mut jobs = Vec::new();
+        filtered.get_last_jobs(3, &mut jobs).unwrap();
+        jobs.iter().map(|job| job.id).collect::<Vec<_>>()
+    };
+    assert_eq!(filtered_ids("s2", "t2"), [2]);
+    assert!(filtered_ids("does-not-match", "t2").is_empty());
 }
 
 #[test]

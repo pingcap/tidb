@@ -16143,6 +16143,35 @@ fn show_affinity_lists_affinity_tables_as_go_does() {
     );
 }
 
+/// Go master `TestSessionFallsBackFromDroppedResourceGroup`'s transaction
+/// case (#72794): a group dropped while a session's transaction is open is
+/// gone from the LATEST schema (`infoCache.GetLatest()`), so the next
+/// statement of that transaction moves the session to `default`, warns, and
+/// the transaction commits. The commit-group assertion drives Go's
+/// `TxnResourceGroupChecker` failpoint, which has no Rust site.
+#[test]
+fn a_transaction_moves_off_a_dropped_resource_group_as_go() {
+    let (stack, _users) = cop_backed_stack();
+    let mut root = stack.factory.open_session(session_context(1017)).unwrap();
+    let mut tk = stack.factory.open_session(session_context(1018)).unwrap();
+    rows(&mut root, "use test");
+    rows(&mut root, "create table t (id int primary key)");
+    rows(&mut root, "create resource group rg3 ru_per_sec=1000");
+    rows(&mut tk, "use test");
+    rows(&mut tk, "set resource group rg3");
+    rows(&mut tk, "begin pessimistic");
+    assert!(rows(&mut tk, "select * from t").is_empty());
+    rows(&mut root, "drop resource group rg3");
+    rows(&mut tk, "insert into t values (1)");
+    assert_eq!(
+        displayed(rows(&mut tk, "show warnings")),
+        [["Warning", "1105", "resource group rg3 no longer exists, the session now uses resource group default"]]
+    );
+    assert_eq!(displayed(rows(&mut tk, "select current_resource_group()")), [["default"]]);
+    rows(&mut tk, "commit");
+    assert_eq!(displayed(rows(&mut root, "select id from t")), [["1"]]);
+}
+
 /// Go's resource-group DDL (`onCreateResourceGroup` / `onAlterResourceGroup`
 /// / `onDropResourceGroup`) keeps the group in meta and in the resource
 /// manager (the mock on unistore), behind the executor's existence checks.
