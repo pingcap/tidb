@@ -110,5 +110,9 @@ var (
 	ErrLoadDataLocalUnsupportedOption = dbterror.ClassExecutor.NewStd(mysql.ErrLoadDataLocalUnsupportedOption)
 	ErrLoadDataPreCheckFailed         = dbterror.ClassExecutor.NewStd(mysql.ErrLoadDataPreCheckFailed)
 
+	ErrMVAdvisoryLockConflict      = dbterror.ClassExecutor.NewStd(mysql.ErrMVAdvisoryLockConflict)
+	ErrMVRefreshLogBaselineChanged = dbterror.ClassExecutor.NewStd(mysql.ErrMVRefreshLogBaselineChanged)
+
 	ErrMaxKeysReadExceeded = dbterror.ClassExecutor.NewStd(mysql.ErrMaxKeysReadExceeded)
+	ErrMaintenanceMode     = dbterror.ClassExecutor.NewStd(mysql.ErrMaintenanceMode)
 )

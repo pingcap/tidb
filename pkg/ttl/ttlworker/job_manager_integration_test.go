@@ -362,8 +362,8 @@ func TestTTLAutoAnalyze(t *testing.T) {
 	h := dom.StatsHandle()
 	is := dom.InfoSchema()
 	tk.MustExec("flush stats_delta *.*")
-	require.NoError(t, h.Update(context.Background(), is))
-	require.True(t, h.HandleAutoAnalyze())
+	require.NoError(t, h.Cache().Update(context.Background(), is))
+	require.True(t, h.AutoAnalyze().HandleAutoAnalyze())
 }
 
 func TestTriggerTTLJob(t *testing.T) {

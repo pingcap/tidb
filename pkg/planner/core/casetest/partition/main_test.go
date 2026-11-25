@@ -44,7 +44,6 @@ func TestMain(m *testing.M) {
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.TiKVClient.AsyncCommit.SafeWindow = 0
 		conf.TiKVClient.AsyncCommit.AllowedClockDrift = 0
-		conf.Performance.EnableStatsCacheMemQuota = true
 	})
 	callback := func(i int) int {
 		testDataMap.GenerateOutputIfNeeded()

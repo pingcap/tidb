@@ -33,7 +33,9 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
+	"github.com/pingcap/tidb/pkg/dxf/importinto/taskinfo"
 	"github.com/pingcap/tidb/pkg/dxf/operator"
+	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
@@ -83,7 +85,7 @@ type importStepExecutor struct {
 	execute.NoopCollector
 
 	taskID        int64
-	taskMeta      *TaskMeta
+	taskMeta      *taskinfo.TaskMeta
 	tableImporter *importer.TableImporter
 	queryRuntime  sqlsvrapi.Runtime
 	store         tidbkv.Storage
@@ -110,7 +112,7 @@ type importStepExecutor struct {
 func getTableImporter(
 	ctx context.Context,
 	taskID int64,
-	taskMeta *TaskMeta,
+	taskMeta *taskinfo.TaskMeta,
 	store tidbkv.Storage,
 	logger *zap.Logger,
 ) (*importer.TableImporter, error) {
@@ -167,7 +169,7 @@ func (s *importStepExecutor) Init(ctx context.Context) (err error) {
 	}
 	// when creating the table importer, it's using plan.ThreadCnt, not the resource
 	// CPU, we should refactor it later, that requires refactors the local backend.
-	tableImporter.Backend().SetWorkerConcurrency(int(s.GetResource().CPU.Capacity()))
+	tableImporter.Ingestor().SetWorkerConcurrency(int(s.GetResource().CPU.Capacity()))
 	s.tableImporter = tableImporter
 	defer func() {
 		if err == nil {
@@ -447,7 +449,7 @@ func (s *importStepExecutor) readQuery(
 		}
 	}()
 
-	return importer.RunImportQuery(
+	return executor.RunImportQuery(
 		ctx, se, s.taskMeta.Plan.QuerySource, s.taskMeta.Stmt,
 		int64(float64(s.GetResource().Mem.Capacity())*queryMemBudgetRatio), selected)
 }
@@ -538,7 +540,7 @@ func (s *importStepExecutor) Cleanup(_ context.Context) (err error) {
 type mergeSortStepExecutor struct {
 	taskexecutor.BaseStepExecutor
 	task     *proto.TaskBase
-	taskMeta *TaskMeta
+	taskMeta *taskinfo.TaskMeta
 	logger   *zap.Logger
 	// subtask of a task is run in serial now, so we don't need lock here.
 	// change to SyncMap when we support parallel subtask in the future.
@@ -747,7 +749,7 @@ type writeAndIngestStepExecutor struct {
 	taskexecutor.BaseStepExecutor
 
 	taskID        int64
-	taskMeta      *TaskMeta
+	taskMeta      *taskinfo.TaskMeta
 	logger        *zap.Logger
 	tableImporter *importer.TableImporter
 	store         tidbkv.Storage
@@ -763,7 +765,7 @@ func (e *writeAndIngestStepExecutor) Init(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	tableImporter.Backend().SetWorkerConcurrency(int(e.GetResource().CPU.Capacity()))
+	tableImporter.Ingestor().SetWorkerConcurrency(int(e.GetResource().CPU.Capacity()))
 	e.tableImporter = tableImporter
 	return nil
 }
@@ -803,7 +805,7 @@ func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *pr
 		task.End2(zapcore.ErrorLevel, err, zap.Stringer("obj-store-access", accessRec))
 	}()
 
-	localBackend := e.tableImporter.Backend()
+	ingestor := e.tableImporter.Ingestor()
 	// compatible with old version task meta
 	jobKeys := sm.RangeJobKeys
 	if jobKeys == nil {
@@ -823,7 +825,7 @@ func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *pr
 		kvGroup:  sm.KVGroup,
 		meterRec: meterRec,
 	}
-	localBackend.SetCollector(collector)
+	ingestor.SetCollector(collector)
 
 	ts := sm.TS
 	if ts == 0 {
@@ -854,7 +856,7 @@ func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *pr
 			e.logger.Warn("failed to close engine", zap.Error(err))
 		}
 	}()
-	err = localBackend.IngestExternalEngine(ctx, eng, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
+	err = ingestor.IngestExternalEngine(ctx, eng, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -911,7 +913,7 @@ type postProcessStepExecutor struct {
 	taskID       int64
 	store        tidbkv.Storage
 	taskTbl      taskexecutor.TaskTable
-	taskMeta     *TaskMeta
+	taskMeta     *taskinfo.TaskMeta
 	taskKeyspace string
 	logger       *zap.Logger
 }
@@ -924,7 +926,7 @@ func NewPostProcessStepExecutor(
 	taskID int64,
 	store tidbkv.Storage,
 	taskTbl taskexecutor.TaskTable,
-	taskMeta *TaskMeta,
+	taskMeta *taskinfo.TaskMeta,
 	taskKeyspace string,
 	logger *zap.Logger,
 ) execute.StepExecutor {
@@ -989,7 +991,7 @@ func (*importExecutor) IsRetryableError(err error) bool {
 }
 
 func (e *importExecutor) GetStepExecutor(task *proto.Task) (execute.StepExecutor, error) {
-	taskMeta := TaskMeta{}
+	taskMeta := taskinfo.TaskMeta{}
 	if err := json.Unmarshal(task.Meta, &taskMeta); err != nil {
 		return nil, errors.Trace(err)
 	}

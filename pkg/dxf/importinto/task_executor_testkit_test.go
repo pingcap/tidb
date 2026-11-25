@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/dxf/importinto"
+	"github.com/pingcap/tidb/pkg/dxf/importinto/taskinfo"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
@@ -81,7 +82,7 @@ func TestPostProcessStepExecutor(t *testing.T) {
 	require.True(t, ok)
 	table, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
-	taskMeta := &importinto.TaskMeta{
+	taskMeta := &taskinfo.TaskMeta{
 		Plan: importer.Plan{
 			DBID:             db.ID,
 			Checksum:         config.OpLevelRequired,
@@ -130,6 +131,8 @@ func TestImportStepExecutorCleanupAllLocalEnginesOnRetry(t *testing.T) {
 	if kerneltype.IsNextGen() {
 		t.Skip("next-gen doesn't support local sort, skip this test")
 	}
+	t.Cleanup(tidbconfig.RestoreFunc())
+	tidbconfig.UpdateGlobal(func(c *tidbconfig.Config) { c.TempDir = t.TempDir() })
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -145,7 +148,7 @@ func TestImportStepExecutorCleanupAllLocalEnginesOnRetry(t *testing.T) {
 	dataPath := filepath.ToSlash(filepath.Join(t.TempDir(), "data.csv"))
 	require.NoError(t, os.WriteFile(dataPath, []byte("1,1\n"), 0o600))
 
-	taskMetaBytes, err := json.Marshal(importinto.TaskMeta{
+	taskMetaBytes, err := json.Marshal(taskinfo.TaskMeta{
 		Plan: importer.Plan{
 			DBID:             dbInfo.ID,
 			DBName:           "test",
@@ -193,6 +196,7 @@ func TestImportStepExecutorCleanupAllLocalEnginesOnRetry(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	require.NoError(t, stepExecutor.Init(ctx))
+	t.Cleanup(func() { require.NoError(t, stepExecutor.Cleanup(ctx)) })
 
 	subtaskMetaBytes, err := json.Marshal(importinto.ImportStepMeta{
 		ID: 1,
@@ -240,13 +244,13 @@ func newQueryStepExecutor(t *testing.T, tk *testkit.TestKit, sql string) (execut
 	require.NoError(t, err)
 	tbl, err := dom.InfoSchema().TableByName(ctx, importPlan.Table.Schema, importPlan.Table.Name)
 	require.NoError(t, err)
-	plan, err := importer.NewImportPlan(ctx, tk.Session(), importPlan, tbl)
+	plan, err := executor.NewImportPlan(ctx, tk.Session(), importPlan, tbl)
 	require.NoError(t, err)
 	plan.CloudStorageURI = sortDir
 	plan.QuerySource, err = importer.CaptureQuerySource(tk.Session(), sql)
 	require.NoError(t, err)
 
-	meta, err := json.Marshal(importinto.TaskMeta{Plan: *plan, Stmt: sql})
+	meta, err := json.Marshal(taskinfo.TaskMeta{Plan: *plan, Stmt: sql})
 	require.NoError(t, err)
 	task := &proto.Task{
 		TaskBase: proto.TaskBase{ID: queryStepTaskID, Type: proto.ImportInto, Step: proto.ImportStepQuery, RequiredSlots: 2},
@@ -288,6 +292,14 @@ func newQuerySubtask(t *testing.T, sortStore storeapi.Storage, id int64) *proto.
 func TestImportQueryStep(t *testing.T) {
 	t.Cleanup(tidbconfig.RestoreFunc())
 	tidbconfig.UpdateGlobal(func(c *tidbconfig.Config) { c.TempDir = t.TempDir() })
+	importDir := importer.GetImportRootDir(tidbconfig.GetGlobalConfig())
+	// Query workers use global sort and must leave the local import path untouched.
+	require.NoError(t, os.WriteFile(importDir, []byte("preserve"), 0o600))
+	t.Cleanup(func() {
+		contents, err := os.ReadFile(importDir)
+		require.NoError(t, err)
+		require.Equal(t, "preserve", string(contents))
+	})
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -295,7 +307,7 @@ func TestImportQueryStep(t *testing.T) {
 	tk.MustExec("insert into query_src values (1,10),(1,20),(2,30)")
 	tk.MustExec("create table query_dst(g bigint primary key, c bigint, s decimal(42,0))")
 	sql := "import into query_dst from (select /*+ STREAM_AGG() */ g, count(*), sum(v) from query_src use index(idx_g) group by g) with thread=2"
-	require.NoError(t, importer.PlanImportQueryForTest(tk.Session(), sql))
+	require.NoError(t, executor.PlanImportQueryForTest(tk.Session(), sql))
 	step, sortStore := newQueryStepExecutor(t, tk, sql)
 	ctx := context.Background()
 
@@ -318,7 +330,7 @@ func TestImportQueryStep(t *testing.T) {
 		tk.MustExec("insert into query_bad values (1, 'not json')")
 		tk.MustExec("create table query_bad_dst(g bigint primary key, j json)")
 		badSQL := "import into query_bad_dst from (select g, cast(j as json) from query_bad) with thread=2"
-		require.NoError(t, importer.PlanImportQueryForTest(tk.Session(), badSQL))
+		require.NoError(t, executor.PlanImportQueryForTest(tk.Session(), badSQL))
 		badStep, badStore := newQueryStepExecutor(t, tk, badSQL)
 		runCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 		defer cancel()
@@ -343,7 +355,7 @@ func TestImportQueryStep(t *testing.T) {
 
 	t.Run("encode many chunks", func(t *testing.T) {
 		manySQL := "import into query_many_dst from (select v from query_many) with thread=2"
-		require.NoError(t, importer.PlanImportQueryForTest(tk.Session(), manySQL))
+		require.NoError(t, executor.PlanImportQueryForTest(tk.Session(), manySQL))
 		manyStep, manyStore := newQueryStepExecutor(t, tk, manySQL)
 		subtask := newQuerySubtask(t, manyStore, 4)
 		require.NoError(t, manyStep.RunSubtask(ctx, subtask))
@@ -365,7 +377,7 @@ func TestImportQueryStep(t *testing.T) {
 
 	t.Run("empty query result", func(t *testing.T) {
 		emptySQL := "import into query_many_dst from (select v from query_many where v < 0) with thread=2"
-		require.NoError(t, importer.PlanImportQueryForTest(tk.Session(), emptySQL))
+		require.NoError(t, executor.PlanImportQueryForTest(tk.Session(), emptySQL))
 		emptyStep, emptyStore := newQueryStepExecutor(t, tk, emptySQL)
 		subtask := newQuerySubtask(t, emptyStore, 5)
 		require.NoError(t, emptyStep.RunSubtask(ctx, subtask))
@@ -377,7 +389,7 @@ func TestImportQueryStep(t *testing.T) {
 
 	t.Run("encode failure stops the query", func(t *testing.T) {
 		manySQL := "import into query_many_dst from (select v from query_many) with thread=2"
-		require.NoError(t, importer.PlanImportQueryForTest(tk.Session(), manySQL))
+		require.NoError(t, executor.PlanImportQueryForTest(tk.Session(), manySQL))
 		manyStep, manyStore := newQueryStepExecutor(t, tk, manySQL)
 		// The encoders fail before reading any chunk, so the query blocks on
 		// sending until the pipeline is canceled.

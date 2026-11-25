@@ -905,6 +905,38 @@ func TestHypoIndexHint(t *testing.T) {
 		testKit.MustHavePlan(`select 1 from t1, t2 where t1.a=1 and t1.b=t2.b`, "─HashJoin")
 		testKit.MustHavePlan(`select /*+ HYPO_INDEX(t1, idx_ab, a, b), HYPO_INDEX(t2, idx_b, b) */ 1 from t1, t2 where t1.a=1 and t1.b=t2.b`, "IndexHashJoin")
 
+		// Expression hypothetical indexes must keep their hidden columns for planning.
+		testKit.MustExec("insert into t1 values (41, 41, 44)")
+		testKit.MustExec("create index hypo_expr_a type hypo on t1 ((a + 1))")
+		checkRange := func(sql, index, indexRange string) {
+			plan := fmt.Sprint(testKit.MustQuery("explain format = 'brief' " + sql).Rows())
+			require.Contains(t, plan, "IndexRangeScan")
+			require.Contains(t, plan, "index:"+index+"(")
+			require.Contains(t, plan, "range:"+indexRange)
+		}
+		checkRange("select * from t1 where a + 1 = 42", "hypo_expr_a", "[42,42]")
+		testKit.MustExec("create index hypo_expr_bc type hypo on t1 ((b + 2), c)")
+		checkRange("select b + 2, c from t1 where b + 2 = 43 and c = 44", "hypo_expr_bc", "[43 44,43 44]")
+		showCreate := testKit.MustQuery("show create table t1").Rows()[0][1].(string)
+		require.Contains(t, showCreate, "KEY `hypo_expr_a` ((`a` + 1)) /* HYPO INDEX */")
+		require.Contains(t, showCreate, "KEY `hypo_expr_bc` ((`b` + 2),`c`) /* HYPO INDEX */")
+
+		// The hypothetical columns must not leak into execution or another session.
+		testKit.MustQuery("select * from t1").Check(testkit.Rows("41 41 44"))
+		other := testkit.NewTestKit(t, testKit.Session().GetStore())
+		require.NotContains(t, other.MustQuery("show create table test.t1").Rows()[0][1], "HYPO INDEX")
+		other.MustQuery("select * from test.t1").Check(testkit.Rows("41 41 44"))
+		tbl, err := domain.GetDomain(testKit.Session()).InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t1"))
+		require.NoError(t, err)
+		require.Len(t, tbl.Meta().Columns, 3)
+		require.Empty(t, tbl.Meta().Indices)
+
+		testKit.MustExec("drop hypo index hypo_expr_a on t1")
+		checkRange("select b + 2, c from t1 where b + 2 = 43 and c = 44", "hypo_expr_bc", "[43 44,43 44]")
+		testKit.MustExec("drop hypo index hypo_expr_bc on t1")
+		testKit.MustNotHavePlan("select * from t1 where a + 1 = 42", "IndexRangeScan")
+		require.NotContains(t, testKit.MustQuery("show create table t1").Rows()[0][1], "HYPO INDEX")
+
 		// invalid cases
 		testKit.MustHavePlan(`select /*+ HYPO_INDEX(t1, idx_a) */ a from t1 where a=1`, "TableFullScan")
 		testKit.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1105 Invalid HYPO_INDEX hint, valid usage: HYPO_INDEX(tableName, indexName, cols...)"))
@@ -2298,12 +2330,15 @@ func TestVirtualExprPushDown(t *testing.T) {
 			key idx_exp_lower ((lower(s)))
 		)`)
 		tk.MustExec("insert into t_bug(s) values ('B'),('a')")
+		// `g` and the hidden column behind idx_exp_lower both evaluate lower(s), so the index
+		// order already satisfies ORDER BY g and the limit is pushed to the build side. This is
+		// the same plan the equivalent index on `g` gets just below.
 		tk.MustQuery("explain format='plan_tree' select /* issue:67981 */ * from t_bug force index (idx_exp_lower) where lower(s) >= 'a' order by g limit 1;").Check(testkit.Rows(
 			"Projection root  test.t_bug.id, test.t_bug.s, test.t_bug.g",
-			"└─TopN root  test.t_bug.g, offset:0, count:1",
-			"  └─IndexLookUp root  ",
-			"    ├─IndexRangeScan(Build) cop[tikv] table:t_bug, index:idx_exp_lower(lower(`s`)) range:[\"a\",+inf], keep order:false, stats:pseudo",
-			"    └─TableRowIDScan(Probe) cop[tikv] table:t_bug keep order:false, stats:pseudo"))
+			"└─IndexLookUp root  limit embedded(offset:0, count:1)",
+			"  ├─Limit(Build) cop[tikv]  offset:0, count:1",
+			"  │ └─IndexRangeScan cop[tikv] table:t_bug, index:idx_exp_lower(lower(`s`)) range:[\"a\",+inf], keep order:true, stats:pseudo",
+			"  └─TableRowIDScan(Probe) cop[tikv] table:t_bug keep order:false, stats:pseudo"))
 		tk.MustQuery("select /* issue:67981 */ * from t_bug force index (idx_exp_lower) where lower(s) >= 'a' order by g limit 1;").Check(testkit.Rows("2 a a"))
 		tk.MustQuery("explain format='plan_tree' select /* issue:67981 */ * from t_bug force index (g) where lower(s) >= 'a' order by g limit 1;").Check(testkit.Rows(
 			"Projection root  test.t_bug.id, test.t_bug.s, test.t_bug.g",
@@ -2464,9 +2499,9 @@ func TestIssue48257(t *testing.T) {
 	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, tk *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
 		h := dom.StatsHandle()
 		oriLease := h.Lease()
-		h.SetLease(1)
+		h.SetLeaseForTest(1)
 		defer func() {
-			h.SetLease(oriLease)
+			h.SetLeaseForTest(oriLease)
 		}()
 		tk.MustExec("use test")
 
@@ -2475,7 +2510,7 @@ func TestIssue48257(t *testing.T) {
 		testutil.HandleNextDDLEventWithTxn(h)
 		tk.MustExec("insert into t value(1)")
 		tk.MustExec("flush stats_delta *.*")
-		require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
+		require.NoError(t, h.Cache().Update(context.Background(), dom.InfoSchema()))
 		tk.MustExec("analyze table t all columns")
 		tk.MustQuery("explain format = brief select * from t").Check(testkit.Rows(
 			"TableReader 1.00 root  data:TableFullScan",
@@ -2483,7 +2518,7 @@ func TestIssue48257(t *testing.T) {
 		))
 		tk.MustExec("insert into t value(1)")
 		tk.MustExec("flush stats_delta *.*")
-		require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
+		require.NoError(t, h.Cache().Update(context.Background(), dom.InfoSchema()))
 		tk.MustQuery("explain format = brief select * from t").Check(testkit.Rows(
 			"TableReader 2.00 root  data:TableFullScan",
 			"└─TableFullScan 2.00 cop[tikv] table:t keep order:false",
@@ -2501,7 +2536,7 @@ func TestIssue48257(t *testing.T) {
 		testutil.HandleNextDDLEventWithTxn(h)
 		tk.MustExec("insert into t1 value(1)")
 		tk.MustExec("flush stats_delta *.*")
-		require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
+		require.NoError(t, h.Cache().Update(context.Background(), dom.InfoSchema()))
 		tk.MustExec("analyze table t1 all columns")
 		tk.MustQuery("explain format = brief select * from t1").Check(testkit.Rows(
 			"TableReader 1.00 root  data:TableFullScan",
@@ -2509,7 +2544,7 @@ func TestIssue48257(t *testing.T) {
 		))
 		tk.MustExec("insert into t1 value(1)")
 		tk.MustExec("flush stats_delta *.*")
-		require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
+		require.NoError(t, h.Cache().Update(context.Background(), dom.InfoSchema()))
 		tk.MustQuery("explain format = brief select * from t1").Check(testkit.Rows(
 			"TableReader 2.00 root  data:TableFullScan",
 			"└─TableFullScan 2.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
@@ -2519,7 +2554,7 @@ func TestIssue48257(t *testing.T) {
 			"TableReader 10000.00 root  data:TableFullScan",
 			"└─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
 		))
-		require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
+		require.NoError(t, h.Storage().LoadNeededHistograms(dom.InfoSchema()))
 		tk.MustQuery("explain format = brief select * from t1").Check(testkit.Rows(
 			"TableReader 1.00 root  data:TableFullScan",
 			"└─TableFullScan 1.00 cop[tikv] table:t1 keep order:false",
@@ -2776,7 +2811,7 @@ func TestIndexScanSeekCost(t *testing.T) {
 	// and the table falls back to pseudo stats, which disables pruning.
 	dom := domain.GetDomain(tk.Session())
 	h := dom.StatsHandle()
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	require.NoError(t, h.Usage().DumpStatsDeltaToKV(true))
 	tk.MustExec("analyze table t")
 	tk.MustExec("set @@tidb_cost_model_version = 2")
 
@@ -2823,10 +2858,10 @@ func TestIndexScanSeekCost(t *testing.T) {
 	tk.MustExec("create table t3 (a int, b int, c int, d int, e int, f int, key idx(a, b, c, d, e, f))")
 	tk.MustExec(`insert into t3 with recursive cte(n) as (select 1 union all select n + 1 from cte where n < 100000)
 		select n % 2, n % 10, n % 1000, n, n, n from cte`)
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	require.NoError(t, h.Usage().DumpStatsDeltaToKV(true))
 	tk.MustExec("analyze table t2")
 	tk.MustExec("analyze table t3")
-	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
+	require.NoError(t, h.Cache().Update(context.Background(), dom.InfoSchema()))
 
 	const where2 = "a in (1,2,3,4,5,6,7,8,9,10,11,12) and b in (1,2,3,4) and c in (1,2,3) and d in (1,2,3,4,5,6,7,8,9) and e = -1"
 	tk.MustQuery("explain format='brief' select * from t2 where " + where2).Check(testkit.Rows(
@@ -2857,9 +2892,9 @@ func TestIndexScanSeekCost(t *testing.T) {
 	tk.MustExec("create table t4 (a int, b int, c int, d int, e int, primary key(c, d) clustered, key idx(a, b))")
 	tk.MustExec(`insert into t4 with recursive cte(n) as (select 1 union all select n + 1 from cte where n < 20000)
 		select n % 1000, n % 7, n % 13, n, n from cte`)
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	require.NoError(t, h.Usage().DumpStatsDeltaToKV(true))
 	tk.MustExec("analyze table t4")
-	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
+	require.NoError(t, h.Cache().Update(context.Background(), dom.InfoSchema()))
 	const where4 = "a = 1 and b in (1,2,3,4,5,6) and c in (1,2,3,4,5,6,7,8,9,10) and d in (1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20)"
 	tk.MustQuery("explain format='brief' select * from t4 use index(idx) where "+where4).CheckAt([]int{0, 4}, [][]any{
 		{"IndexLookUp", ""},

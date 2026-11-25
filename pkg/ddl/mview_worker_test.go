@@ -318,11 +318,36 @@ func TestBuildMViewRefreshOutOfPlaceCutoverInvolvingSchemaInfo(t *testing.T) {
 	require.Len(t, involving, 3)
 	require.NotContains(t, involving, model.InvolvingSchemaInfo{Database: "test", Table: "$mlog$base", Mode: model.ExclusiveInvolving})
 
-	oldMView.MaterializedView.BaseTableIDs = []int64{base.ID, shadow.ID}
-	_, err = buildMViewRefreshOutOfPlaceCutoverInvolvingSchemaInfo(
-		context.Background(), is, ast.NewCIStr("test"), oldMView.ID, shadow.ID,
-	)
-	require.ErrorContains(t, err, "materialized view must reference exactly one base table")
+	mlog.MaterializedViewLog.DependentMViewIDs = []int64{oldMView.ID}
+	// A shared child can have another source. The cutover claim includes the
+	// child once and every upstream source/log that the worker can rewrite.
+	old, _ := is.TableByID(context.Background(), oldMView.ID)
+	parent := old.Meta().Clone()
+	parent.MaterializedView.BaseTableIDs = []int64{base.ID, 107}
+	parent.MaterializedViewBase = &model.MaterializedViewBaseInfo{MLogID: 105, MViewIDs: []int64{106}}
+	sourceBase, _ := is.TableByID(context.Background(), base.ID)
+	baseInfo := sourceBase.Meta().Clone()
+	baseInfo.MaterializedViewBase = &model.MaterializedViewBaseInfo{MLogID: 104, MViewIDs: []int64{oldMView.ID}}
+	shadowTable, _ := is.TableByID(context.Background(), shadow.ID)
+	nested := infoschema.MockInfoSchema([]*model.TableInfo{
+		parent, baseInfo, shadowTable.Meta(),
+		{ID: 104, Name: ast.NewCIStr("input_log"), State: model.StatePublic, MaterializedViewLog: &model.MaterializedViewLogInfo{BaseTableID: base.ID, DependentMViewIDs: []int64{oldMView.ID}}},
+		{ID: 105, Name: ast.NewCIStr("output_log"), State: model.StatePublic},
+		{ID: 106, Name: ast.NewCIStr("shared_child"), State: model.StatePublic, MaterializedView: &model.MaterializedViewInfo{BaseTableIDs: []int64{oldMView.ID, base.ID}}},
+		{ID: 107, Name: ast.NewCIStr("second_source"), State: model.StatePublic, MaterializedViewBase: &model.MaterializedViewBaseInfo{MLogID: 108}},
+		{ID: 108, Name: ast.NewCIStr("second_log"), State: model.StatePublic, MaterializedViewLog: &model.MaterializedViewLogInfo{BaseTableID: 107, DependentMViewIDs: []int64{106}}},
+	})
+	involving, err = buildMViewRefreshOutOfPlaceCutoverInvolvingSchemaInfo(context.Background(), nested, ast.NewCIStr("test"), oldMView.ID, shadow.ID)
+	require.NoError(t, err)
+	require.Len(t, involving, 7)
+	tableNames := make([]string, 0, len(involving))
+	for _, info := range involving {
+		require.Equal(t, "test", info.Database)
+		require.Equal(t, model.ExclusiveInvolving, info.Mode)
+		tableNames = append(tableNames, info.Table)
+	}
+	// second_log serves another MV, so cutover does not rewrite or claim it.
+	require.ElementsMatch(t, []string{"mv", "base", "__mv_shadow", "input_log", "output_log", "shared_child", "second_source"}, tableNames)
 }
 
 func TestBuildDropTableInvolvingSchemaInfo(t *testing.T) {

@@ -747,6 +747,8 @@ type RefreshMaterializedViewImplementStmt struct {
 	LastSuccessfulRefreshReadTSO uint64
 	TargetRefreshReadTSO         uint64
 	MLogRetainedLowerTSO         uint64
+	// RegisteredMLogIDs is the FAST baseline read under the refresh-info row lock.
+	RegisteredMLogIDs []int64
 }
 
 // Restore implements Node interface.
@@ -4646,7 +4648,8 @@ func (n *TableOptimizerHint) Restore(ctx *format.RestoreCtx) error {
 			}
 			table.Restore(ctx)
 		}
-	case "use_index", "ignore_index", "use_index_merge", "force_index", "order_index", "no_order_index", "index_lookup_pushdown", "no_index_lookup_pushdown":
+	case "use_index", "ignore_index", "use_index_merge", "force_index", "order_index", "no_order_index",
+		"index_lookup_pushdown", "no_index_lookup_pushdown", "skip_scan", "no_skip_scan":
 		n.Tables[0].Restore(ctx)
 		ctx.WritePlain(" ")
 		for i, index := range n.Indexes {

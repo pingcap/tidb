@@ -32,11 +32,11 @@ import (
 	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
 	"github.com/pingcap/tidb/pkg/ingestor/simplesst"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/lightning/importdef"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
 	pd "github.com/tikv/pd/client"
@@ -245,7 +245,7 @@ func TestGenerateMergeSortSpecs(t *testing.T) {
 				Name:  ast.NewCIStr("tb"),
 				State: model.StatePublic,
 			},
-			LineFieldsInfo: core.LineFieldsInfo{
+			LineFieldsInfo: importdef.LineFieldsInfo{
 				FieldsTerminatedBy: "\t",
 				LinesTerminatedBy:  "\n",
 			},

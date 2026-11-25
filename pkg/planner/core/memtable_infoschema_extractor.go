@@ -19,6 +19,7 @@ import (
 	"context"
 	"fmt"
 	"maps"
+	"math"
 	"regexp"
 	"slices"
 	"sort"
@@ -363,6 +364,8 @@ func (e *InfoSchemaTablesExtractor) HasTableSchema(name string) bool {
 // InfoSchemaDDLExtractor is the predicate extractor for information_schema.ddl_jobs.
 type InfoSchemaDDLExtractor struct {
 	InfoSchemaBaseExtractor
+	// MinJobID bounds descending history iteration. Zero means no bound.
+	MinJobID int64
 }
 
 // NewInfoSchemaDDLExtractor creates a new InfoSchemaDDLExtractor.
@@ -389,7 +392,45 @@ func (e *InfoSchemaDDLExtractor) Extract(
 	predicates []expression.Expression,
 ) (remained []expression.Expression) {
 	e.InfoSchemaBaseExtractor.Extract(ctx, schema, names, predicates)
+	e.MinJobID = 0
+	jobIDCols := e.findColumn(schema, names, "job_id")
+	for _, predicate := range predicates {
+		fn, ok := predicate.(*expression.ScalarFunction)
+		if !ok || fn.FuncName.L != ast.GE {
+			continue
+		}
+		args := fn.GetArgs()
+		col, ok := args[0].(*expression.Column)
+		if !ok || jobIDCols[col.UniqueID] == nil {
+			continue
+		}
+		bound, ok := args[1].(*expression.Constant)
+		if !ok || bound.DeferredExpr != nil || bound.ParamMarker != nil {
+			continue
+		}
+		// Avoid coercions that could round the bound up and exclude SQL matches.
+		switch bound.Value.Kind() {
+		case types.KindInt64:
+			e.MinJobID = max(e.MinJobID, bound.Value.GetInt64())
+		case types.KindUint64:
+			if value := bound.Value.GetUint64(); value <= math.MaxInt64 {
+				e.MinJobID = max(e.MinJobID, int64(value))
+			}
+		}
+	}
 	return predicates
+}
+
+// ExplainInfo implements base.MemTablePredicateExtractor.
+func (e *InfoSchemaDDLExtractor) ExplainInfo(p base.PhysicalPlan) string {
+	info := e.InfoSchemaBaseExtractor.ExplainInfo(p)
+	if e.MinJobID > 0 {
+		if info != "" {
+			info += ", "
+		}
+		info += fmt.Sprintf("min_job_id:%d", e.MinJobID)
+	}
+	return info
 }
 
 // InfoSchemaViewsExtractor is the predicate extractor for information_schema.views.

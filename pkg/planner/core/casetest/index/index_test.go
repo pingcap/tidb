@@ -164,6 +164,92 @@ func TestRowFunctionMatchTheIndexRangeScan(t *testing.T) {
 }
 
 func TestRangeIntersection(t *testing.T) {
+	t.Run("issue73063", func(t *testing.T) {
+		store := testkit.CreateMockStore(t)
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("create table r (a int, b varchar(20), c int, key idx(a,b(1)))")
+		tk.MustExec("insert into r values (1,'xa',1),(1,'xz',1),(1,'ya',1),(2,'zz',1),(3,'aa',1),(1,'xz',0)")
+		for _, fixControl := range []string{"54337:OFF,44389:OFF", "", "54337:OFF,44389:ON"} {
+			t.Run("fixControl="+fixControl, func(t *testing.T) {
+				tk := testkit.NewTestKit(t, store)
+				tk.MustExec("use test")
+				tk.MustExec(fmt.Sprintf("set tidb_opt_fix_control='%s'", fixControl))
+				// The prefix range includes 'xa', so the OR must remain a filter.
+				// Conversely, b > 'xx' must not filter the a > 2 branch.
+				for _, indexHint := range []string{"force index(idx)", "ignore index(idx)"} {
+					tk.MustQuery("select * from r " + indexHint + " where ((a=1 and b>'xx') or a>2) and c=1 order by a,b,c").Check(testkit.Rows("1 xz 1", "1 ya 1", "3 aa 1"))
+				}
+			})
+		}
+	})
+
+	t.Run("issue72780", func(t *testing.T) {
+		tk := testkit.NewTestKit(t, testkit.CreateMockStore(t))
+		tk.MustExec("use test")
+		tk.MustExec("set @@tidb_opt_fix_control = '54337:ON'")
+		tk.MustExec("create table issue72780 (id int primary key, a int, b bigint, c bigint, key abc(a,b,c))")
+		tk.MustExec("insert into issue72780 values (1,0,null,1),(2,0,9,1),(3,0,10,null),(4,0,10,19),(5,0,10,20),(6,1,9,1),(7,2,10,19),(8,5,9,1),(9,0,11,1)")
+		cases := []struct {
+			predicate string
+			ranges    string
+		}{
+			{"a in (1,0,5,2) and ((a=0 and (b<10 or b is null)) or (a=0 and b=10 and (c<20 or c is null)))", "range:[0 NULL,0 10), [0 10 NULL,0 10 20)"},
+			{"a in (1,0,5,2) and (a=0 or (a=0 and b=1701659790724 and (c<209597 or c is null)))", "range:[0,0]"},
+			{"a in (-1,0,1) and ((a>0 and b=9) or (a=0 and b>9))", "range:(0 9,0 +inf], [1 9,1 +inf]"},
+		}
+		for _, tt := range cases {
+			query := "select id from issue72780 %s where " + tt.predicate + " order by a desc,b desc,c desc limit 3"
+			indexed := fmt.Sprintf(query, "force index(abc)")
+			found := false
+			for _, row := range tk.MustQuery("explain format='brief' " + indexed).Rows() {
+				if strings.Contains(fmt.Sprint(row[0]), "IndexRangeScan") {
+					found = true
+					require.Contains(t, fmt.Sprint(row), tt.ranges+", keep order:")
+				}
+			}
+			require.True(t, found)
+			for _, quota := range []int{0, 1, 1024} {
+				tk.MustExec(fmt.Sprintf("set @@tidb_opt_range_max_size = %d", quota))
+				for _, limit := range []int{3, 50} {
+					q := strings.Replace(query, "limit 3", fmt.Sprintf("limit %d", limit), 1)
+					tk.MustQuery(fmt.Sprintf(q, "force index(abc)")).Check(tk.MustQuery(fmt.Sprintf(q, "ignore index(abc)")).Rows())
+				}
+			}
+			tk.MustExec("set @@tidb_opt_range_max_size = default")
+		}
+		tk.MustQuery("select id from issue72780 force index(abc) where a in (1,2) and ((a=0 and b<10) or (a=0 and b=10 and c<20))").Check(testkit.Rows())
+		tk.MustExec("create table prefix72780 (a varchar(8), b int, key ab(a(1),b))")
+		tk.MustExec("insert into prefix72780 values ('aa',1),('ab',1),('ab',2),('ba',1),('ba',2),('bb',2)")
+		prefixQuery := "select a,b from prefix72780 %s where a in ('aa','ab','ba') and ((a='ab' and b=1) or (a='ba' and b=2)) order by a,b limit 10"
+		tk.MustQuery(fmt.Sprintf(prefixQuery, "force index(ab)")).Check(tk.MustQuery(fmt.Sprintf(prefixQuery, "ignore index(ab)")).Rows())
+		tk.MustExec("prepare stmt from 'select id from issue72780 force index(abc) where a in (?,?) and ((a=0 and b<10) or (a=0 and b=10 and c<20)) order by id'")
+		tk.MustExec("set @a=0,@b=1")
+		tk.MustQuery("execute stmt using @a,@b").Check(testkit.Rows("2", "4"))
+		tk.MustExec("set @a=1,@b=2")
+		tk.MustQuery("execute stmt using @a,@b").Check(testkit.Rows())
+		for _, typ := range []string{"enum('a','z','b')", "set('a','z','b')"} {
+			tk.MustExec("drop table if exists enum72780")
+			tk.MustExec("create table enum72780 (a int, b " + typ + ", c int, key abc(a,b,c))")
+			tk.MustExec("insert into enum72780 values (0,'a',1),(0,'z',1),(0,'b',1),(1,'a',1),(1,'z',1),(1,'b',1),(0,null,1)")
+			for _, predicate := range []string{
+				"a in (0,1) and b in ('a','z','b') and ((a=0 and b='z' and c>0) or (a=1 and b='a' and c>0))",
+				"a in (0,1) and ((a=0 and b in ('a','z','b') and c>0) or (a=1 and b='z' and c>0))",
+			} {
+				q := "select a,b,c from enum72780 %s where " + predicate + " order by a,b,c limit 50"
+				tk.MustQuery(fmt.Sprintf(q, "force index(abc)")).Check(tk.MustQuery(fmt.Sprintf(q, "ignore index(abc)")).Rows())
+			}
+		}
+
+		tk.MustExec("create table bit72780 (a int, b bit(16), key ab(a,b))")
+		tk.MustExec("insert into bit72780 values (1,255),(1,256),(1,511),(1,512),(2,255),(2,256),(2,511),(2,512),(1,null)")
+		bitQuery := "select a,b+0 from bit72780 %s where a in (1,2) and ((a=1 and b=255) or (a=2 and b<512)) order by a,b"
+		tk.MustQuery(fmt.Sprintf(bitQuery, "force index(ab)")).Check(testkit.Rows("1 255", "2 255", "2 256", "2 511"))
+		tk.MustQuery(fmt.Sprintf(bitQuery, "force index(ab)")).Check(tk.MustQuery(fmt.Sprintf(bitQuery, "ignore index(ab)")).Rows())
+
+		tk.MustExec("deallocate prepare stmt")
+	})
+
 	testkit.RunTestUnderCascades(t, func(t *testing.T, testKit *testkit.TestKit, cascades, caller string) {
 		testKit.MustExec("use test")
 		testKit.MustExec(`set @@tidb_opt_fix_control = "54337:ON"`)
@@ -393,6 +479,29 @@ func TestPartialIndexWithPlanCache(t *testing.T) {
 		tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).CheckContain("idx2")
 		tk.MustExec("execute stmt using @a")
 		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+
+		// Explicit and join-derived IS NOT NULL filters must remain cacheable.
+		tk.MustExec("insert into t values (1, 10), (2, 20), (NULL, 30)")
+		tk.MustExec("create table partial_cache_outer(a int, b int)")
+		tk.MustExec("insert into partial_cache_outer values (1, 10), (2, 20), (NULL, 30)")
+		for _, query := range []string{
+			"select a, b from t use index(idx1) where a is not null and b = ?",
+			"select t.a, t.b from partial_cache_outer l join t use index(idx1) on l.a = t.a where l.b = ?",
+		} {
+			tk.MustExec("prepare stmt from '" + query + "'")
+			tk.MustExec("set @a = 10")
+			tk.MustQuery("execute stmt using @a").Check(testkit.Rows("1 10"))
+			tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+			tk.MustExec("set @a = 20")
+			tk.MustQuery("execute stmt using @a").Check(testkit.Rows("2 20"))
+			tkProcess = tk.Session().ShowProcess()
+			ps[0] = tkProcess
+			tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+			tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).CheckContain("idx1")
+			tk.MustExec("set @a = 30")
+			tk.MustQuery("execute stmt using @a").Check(testkit.Rows())
+			tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+		}
 	})
 }
 
@@ -784,4 +893,21 @@ func TestCorrelatedColumnPathNotPrunedByRisk(t *testing.T) {
 		Sort().Check(testkit.Rows(
 		"000000000000000000000000000000000005 000000000000000000000000000000000005",
 		"000000000000000000000000000000000007 <nil>"))
+}
+
+func TestPartialIndexInvalidTimestampRange(t *testing.T) {
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+		tk.MustExec("use test")
+		tk.MustExec("set time_zone = 'UTC'")
+		tk.MustExec("set sql_mode = 'ALLOW_INVALID_DATES'")
+		tk.MustExec("create table t_invalid_timestamp (k int, ts timestamp, index idx(k) where ts < '0000-00-00 12:00:00')")
+		tk.MustExec("insert into t_invalid_timestamp values (0, '0000-00-00 00:00:00'), (1, '2017-03-01 00:00:00')")
+		tk.MustQuery("select k from t_invalid_timestamp ignore index (idx) where ts >= '2017-03-01'").Check(testkit.Rows("1"))
+		tk.MustQuery("select k from t_invalid_timestamp force index (idx) where ts >= '2017-03-01'").Check(testkit.Rows("1"))
+		tk.MustQuery("explain select k from t_invalid_timestamp force index (idx) where ts >= '2017-03-01'").CheckNotContain("index:idx")
+
+		// Exact predicate matching remains valid even when its range is approximate.
+		tk.MustQuery("select k from t_invalid_timestamp force index (idx) where ts < '0000-00-00 12:00:00'").Check(testkit.Rows("0"))
+		tk.MustQuery("explain select k from t_invalid_timestamp force index (idx) where ts < '0000-00-00 12:00:00'").CheckContain("index:idx")
+	})
 }

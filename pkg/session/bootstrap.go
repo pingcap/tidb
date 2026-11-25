@@ -30,6 +30,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/deploymode"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -63,10 +64,6 @@ var bootstrapOwnerKey = "/tidb/distributeDDLOwnerLock/"
 // bootstrap initiates system DB for a store.
 func bootstrap(s sessionapi.Session) {
 	startTime := time.Now()
-	err := InitMDLVariableForBootstrap(s.GetStore())
-	if err != nil {
-		logutil.BgLogger().Fatal("init metadata lock failed during bootstrap", zap.Error(err))
-	}
 	dom := domain.GetDomain(s)
 	bootLogger := logutil.SampleLoggerFactory(30*time.Second, 1)()
 	for {
@@ -77,7 +74,9 @@ func bootstrap(s sessionapi.Session) {
 		}
 		// For rolling upgrade, we can't do upgrade only in the owner.
 		if b {
-			upgrade(s)
+			// Bootstrap initialization has already persisted and enabled MDL
+			// before the domain started, so no legacy MDL migration is needed.
+			upgradeWithMDLMigration(s, skipLegacyMDLMigration)
 			logutil.BgLogger().Info("upgrade successful in bootstrap",
 				zap.Duration("take time", time.Since(startTime)))
 			return
@@ -85,6 +84,9 @@ func bootstrap(s sessionapi.Session) {
 		// To reduce conflict when multiple TiDB-server start at the same time.
 		// Actually only one server need to do the bootstrap. So we chose DDL owner to do this.
 		if dom.DDL().OwnerManager().IsOwner() {
+			if err := initLegacyECDSASessionToken(s.GetStore(), true); err != nil {
+				logutil.BgLogger().Fatal("disable legacy ECDSA session tokens during bootstrap failed", zap.Error(err))
+			}
 			doDDLWorks(s)
 			doDMLWorks(s)
 			runBootstrapSQLFile = true
@@ -344,6 +346,10 @@ var (
 		{ID: metadef.TiDBMViewRefreshAlertTableID, Name: metadef.TiDBMViewRefreshAlertTableName, SQL: metadef.CreateTiDBMViewRefreshAlertTable},
 		{ID: metadef.TiDBMLogPurgeHistTableID, Name: metadef.TiDBMLogPurgeHistTableName, SQL: metadef.CreateTiDBMLogPurgeHistTable},
 	}
+	// systemTablesOfMaterializedViewRefreshSourceNextGenVersion contains the MV input-log baseline table.
+	systemTablesOfMaterializedViewRefreshSourceNextGenVersion = []TableBasicInfo{
+		{ID: metadef.TiDBMViewFastRefreshSourceInfoTableID, Name: metadef.TiDBMViewFastRefreshSourceInfoTableName, SQL: metadef.CreateTiDBMViewFastRefreshSourceInfoTable},
+	}
 	// systemTablesOfStorageClassTransitionNextGenVersion contains the durable
 	// operation table used by the NextGen storage-class transition poller.
 	systemTablesOfStorageClassTransitionNextGenVersion = []TableBasicInfo{
@@ -374,12 +380,51 @@ var versionedBootstrapSchemas = []versionedBootstrapSchema{
 	{ver: meta.MaterializedViewNextGenBootTableVersion, databases: []DatabaseBasicInfo{
 		{ID: metadef.SystemDatabaseID, Name: mysql.SystemDB, Tables: systemTablesOfMaterializedViewNextGenVersion},
 	}},
+	{ver: meta.MaterializedViewRefreshSourceNextGenBootTableVersion, databases: []DatabaseBasicInfo{
+		{ID: metadef.SystemDatabaseID, Name: mysql.SystemDB, Tables: systemTablesOfMaterializedViewRefreshSourceNextGenVersion},
+	}},
 }
 
-func bootstrapSchemas(store kv.Storage) error {
+// checkBootstrapSchemaDeployment validates the system schema layout and reports
+// whether Classic bootstrap has already completed.
+func checkBootstrapSchemaDeployment(m meta.Reader) (classicBootstrapped bool, err error) {
+	systemDB, err := m.GetDatabase(metadef.SystemDatabaseID)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	bootstrapVer, err := m.GetBootstrapVersion()
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	classicMySQLDBID, err := meta.GetLegacySystemDBID(m)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+
+	if systemDB == nil && bootstrapVer > notBootstrapped && !deploymode.IsStarter() {
+		return false, errors.Errorf("the cluster is already bootstrapped with a non-NextGen binary; please start with starter deployment mode (deploy-mode=\"starter\"); bootstrap version is %d, configured deploy-mode is %q", bootstrapVer, deploymode.Get())
+	}
+	if classicMySQLDBID != 0 && systemDB != nil {
+		return false, errors.Errorf("both reserved-ID and legacy-ID mysql databases exist: reserved ID %d, legacy ID %d; resolve the mixed system schema layout before starting NextGen TiDB", systemDB.ID, classicMySQLDBID)
+	}
+	if classicMySQLDBID != 0 && bootstrapVer == notBootstrapped {
+		return false, errors.Errorf("interrupted Classic bootstrap detected: mysql database has legacy ID %d but bootstrap version is 0; complete Classic bootstrap before starting NextGen TiDB", classicMySQLDBID)
+	}
+	return systemDB == nil && bootstrapVer > notBootstrapped, nil
+}
+
+func bootstrapNextGenSchemas(store kv.Storage) error {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	return kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
 		m := meta.NewMutator(txn)
+		classicBootstrapped, err := checkBootstrapSchemaDeployment(m)
+		if err != nil {
+			return err
+		}
+		if classicBootstrapped {
+			logutil.BgLogger().Info("skip NextGen schema bootstrap for a cluster already bootstrapped with a non-NextGen binary")
+			return nil
+		}
 		currVer, err := m.GetNextGenBootTableVersion()
 		if err != nil {
 			return errors.Trace(err)

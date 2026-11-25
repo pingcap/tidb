@@ -19,8 +19,6 @@ import (
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser"
-	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/mview"
@@ -244,99 +242,6 @@ func newExplainRUForestFixture(cteCount, scalarCount int) (*FlatPhysicalPlan, *E
 	}
 	result.TotalRU = float64(3 + 3*cteCount + 3*scalarCount)
 	return flat, result
-}
-
-func TestNewLineFieldsInfo(t *testing.T) {
-	cases := []struct {
-		sql      string
-		expected LineFieldsInfo
-	}{
-		{
-			"load data infile 'a' into table t",
-			LineFieldsInfo{
-				FieldsTerminatedBy: "\t",
-				FieldsEnclosedBy:   "",
-				FieldsEscapedBy:    "\\",
-				FieldsOptEnclosed:  false,
-				LinesStartingBy:    "",
-				LinesTerminatedBy:  "\n",
-			},
-		},
-		{
-			"load data infile 'a' into table t fields terminated by 'a'",
-			LineFieldsInfo{
-				FieldsTerminatedBy: "a",
-				FieldsEnclosedBy:   "",
-				FieldsEscapedBy:    "\\",
-				FieldsOptEnclosed:  false,
-				LinesStartingBy:    "",
-				LinesTerminatedBy:  "\n",
-			},
-		},
-		{
-			"load data infile 'a' into table t fields optionally enclosed by 'a'",
-			LineFieldsInfo{
-				FieldsTerminatedBy: "\t",
-				FieldsEnclosedBy:   "a",
-				FieldsEscapedBy:    "\\",
-				FieldsOptEnclosed:  true,
-				LinesStartingBy:    "",
-				LinesTerminatedBy:  "\n",
-			},
-		},
-		{
-			"load data infile 'a' into table t fields enclosed by 'a'",
-			LineFieldsInfo{
-				FieldsTerminatedBy: "\t",
-				FieldsEnclosedBy:   "a",
-				FieldsEscapedBy:    "\\",
-				FieldsOptEnclosed:  false,
-				LinesStartingBy:    "",
-				LinesTerminatedBy:  "\n",
-			},
-		},
-		{
-			"load data infile 'a' into table t fields escaped by 'a'",
-			LineFieldsInfo{
-				FieldsTerminatedBy: "\t",
-				FieldsEnclosedBy:   "",
-				FieldsEscapedBy:    "a",
-				FieldsOptEnclosed:  false,
-				LinesStartingBy:    "",
-				LinesTerminatedBy:  "\n",
-			},
-		},
-		{
-			"load data infile 'a' into table t lines starting by 'a'",
-			LineFieldsInfo{
-				FieldsTerminatedBy: "\t",
-				FieldsEnclosedBy:   "",
-				FieldsEscapedBy:    "\\",
-				FieldsOptEnclosed:  false,
-				LinesStartingBy:    "a",
-				LinesTerminatedBy:  "\n",
-			},
-		},
-		{
-			"load data infile 'a' into table t lines terminated by 'aa'",
-			LineFieldsInfo{
-				FieldsTerminatedBy: "\t",
-				FieldsEnclosedBy:   "",
-				FieldsEscapedBy:    "\\",
-				FieldsOptEnclosed:  false,
-				LinesStartingBy:    "",
-				LinesTerminatedBy:  "aa",
-			},
-		},
-	}
-	p := parser.New()
-	for _, c := range cases {
-		stmt, err := p.ParseOneStmt(c.sql, "", "")
-		require.NoError(t, err, c.sql)
-		ldStmt := stmt.(*ast.LoadDataStmt)
-		lineFieldsInfo := NewLineFieldsInfo(ldStmt.FieldsInfo, ldStmt.LinesInfo)
-		require.Equal(t, c.expected, lineFieldsInfo)
-	}
 }
 
 func TestExplainRUResultOwnershipContract(t *testing.T) {

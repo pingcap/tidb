@@ -17,6 +17,7 @@ package issuetest
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/errno"
@@ -980,6 +981,35 @@ ORDER BY t1.a, t2.a, t3.a, var`
 		tk.MustQuery("SELECT /* issue:66706 */ ref0 FROM (SELECT v0.c0 AS ref0, SIGN(v0.c0) AS ref1 FROM v0) AS s WHERE ref1").Check(testkit.Rows("0.99"))
 		tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows())
 	})
+
+	// issue-72560-order-by-null-constant-arithmetic-uses-index-order
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+		resetTestDB(t, tk)
+		tk.MustExec("create table t (id int primary key, c int not null, key i(c))")
+		tk.MustExec("insert into t values (1, 30), (2, 10), (3, 20)")
+		tk.MustExec("analyze table t")
+		for _, orderBy := range []string{"null-c desc, id", "null-c, id", "c-null, id", "null+c desc, id", "c+null, id"} {
+			tk.MustQuery("select /* issue:72560 */ id from t use index(i) order by " + orderBy).Check(testkit.Rows("1", "2", "3"))
+			tk.MustQuery("select /* issue:72560 */ id from t ignore index(i) order by " + orderBy).Check(testkit.Rows("1", "2", "3"))
+		}
+		// non-NULL constants can still use the index order without a Sort
+		query := "select /* issue:72560 */ id from t use index(i) order by 1-c desc, id"
+		tk.MustQuery(query).Check(testkit.Rows("2", "3", "1"))
+		plan := tk.MustQuery("explain format = 'brief' " + query)
+		plan.MultiCheckContain([]string{"index:i(c)", "keep order:true"})
+		plan.CheckNotContain("Sort")
+
+		// parameters may become NULL on a later execution, so a cached plan must keep the Sort
+		tk.MustExec("set @@tidb_enable_prepared_plan_cache = 1")
+		tk.MustExec("prepare s from 'select /* issue:72560 */ id from t use index(i) order by nullif(?, 0) - c desc, id'")
+		tk.MustExec("set @p = 1")
+		tk.MustQuery("execute s using @p").Check(testkit.Rows("2", "3", "1"))
+		tk.MustQuery("execute s using @p").Check(testkit.Rows("2", "3", "1"))
+		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+		tk.MustExec("set @p = 0")
+		tk.MustQuery("execute s using @p").Check(testkit.Rows("1", "2", "3"))
+		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	})
 }
 
 func TestOnlyFullGroupCantFeelUnaryConstant(t *testing.T) {
@@ -990,4 +1020,241 @@ func TestOnlyFullGroupCantFeelUnaryConstant(t *testing.T) {
 		testKit.MustQuery("select a,min(a) from t where a=-1;").Check(testkit.Rows("<nil> <nil>"))
 		testKit.MustQuery("select a,min(a) from t where -1=a;").Check(testkit.Rows("<nil> <nil>"))
 	})
+}
+
+// TestIssue72289 checks that DISTINCT / UNION / GROUP BY over different grouping() results of the same
+// expand operator are not merged, since all of them take the same gid column as the argument.
+func TestIssue72289(t *testing.T) {
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+		tk.MustExec("use test")
+		tk.MustExec("create table t(a int, b int)")
+		tk.MustExec("insert into t values (1, 2)")
+		three := testkit.Rows("0 0", "0 1", "1 1")
+		tk.MustQuery("select grouping(a) ga, grouping(b) gb from t group by a, b with rollup order by ga, gb").Check(three)
+		tk.MustQuery("select distinct grouping(a) ga, grouping(b) gb from t group by a, b with rollup order by ga, gb").Check(three)
+		tk.MustQuery("select distinct grouping(b) gb, grouping(a) ga from t group by a, b with rollup order by ga, gb").Check(testkit.Rows("0 0", "1 0", "1 1"))
+		tk.MustQuery("select distinct grouping(a, b), grouping(b, a) from t group by a, b with rollup order by 1, 2").Check(testkit.Rows("0 0", "1 2", "3 3"))
+		tk.MustQuery("select distinct grouping(a), grouping(b), grouping(a, b) from t group by a, b with rollup order by 1, 2").Check(testkit.Rows("0 0 0", "0 1 1", "1 1 3"))
+		tk.MustQuery("select ga, gb from (select grouping(a) ga, grouping(b) gb from t group by a, b with rollup) tmp group by ga, gb order by ga, gb").Check(three)
+		tk.MustQuery("select grouping(a) ga, grouping(b) gb from t group by a, b with rollup union select grouping(a), grouping(b) from t group by a, b with rollup order by ga, gb").Check(three)
+		tk.MustQuery("select grouping(a) ga, grouping(b) gb from t group by a, b with rollup union all select grouping(a), grouping(b) from t group by a, b with rollup order by ga, gb").
+			Check(testkit.Rows("0 0", "0 0", "0 1", "0 1", "1 1", "1 1"))
+		tk.MustQuery("select grouping(a), grouping(b) from t group by a, b with rollup intersect select grouping(a), grouping(b) from t group by a, b with rollup order by 1, 2").Check(three)
+		// the same grouping() results are still merged.
+		tk.MustQuery("select distinct grouping(a) ga, grouping(a) ga2 from t group by a, b with rollup order by ga").Check(testkit.Rows("0 0", "1 1"))
+		// prepared statement and plan cache.
+		tk.MustExec("prepare stmt from 'select distinct grouping(a) ga, grouping(b) gb from t where a >= ? group by a, b with rollup order by ga, gb'")
+		tk.MustExec("set @v = 0")
+		tk.MustQuery("execute stmt using @v").Check(three)
+		tk.MustQuery("execute stmt using @v").Check(three)
+		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	})
+}
+
+// TestDuplicateExpressionIndexOrdering covers the case where several expression indexes on one
+// table repeat the same expression. DDL creates one hidden generated column per index, and the
+// ORDER BY expression is substituted with only one of them, so the chosen plan used to depend on
+// Go map iteration order and flipped between plan builds of the same statement.
+func TestDuplicateExpressionIndexOrdering(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t_dup_expr_idx")
+	tk.MustExec(`create table t_dup_expr_idx (
+		ns varchar(64) not null,
+		s  varchar(64),
+		st int not null,
+		k  int not null,
+		primary key (ns, st))`)
+	tk.MustExec("create index idx_default on t_dup_expr_idx (ns, (lower(s)), st)")
+	tk.MustExec("create index idx_k on t_dup_expr_idx (ns, k, (lower(s)), st)")
+	tk.MustExec("create index idx_s on t_dup_expr_idx (ns, s, (lower(s)), st)")
+	tk.MustExec("create index idx_st on t_dup_expr_idx (ns, st, (lower(s)))")
+	for i := range 200 {
+		tk.MustExec(fmt.Sprintf("insert into t_dup_expr_idx values ('ns%d', 'S%d', %d, %d)", i%4, i, i, i%5))
+	}
+	tk.MustExec("analyze table t_dup_expr_idx")
+
+	// Reports the index that supplies the ordering, or "sorted" when the plan had to sort
+	// instead. Naming the index alone is not enough: a plan that scans the right index with
+	// keep order:false and sorts on top still reads the whole range.
+	orderingIndex := func(sql string) string {
+		name := "no-index"
+		for _, row := range tk.MustQuery("explain format='brief' " + sql).Rows() {
+			op := fmt.Sprintf("%v", row[0])
+			if strings.Contains(op, "TopN") || strings.Contains(op, "Sort") {
+				return "sorted"
+			}
+			if !strings.Contains(op, "IndexRangeScan") {
+				continue
+			}
+			if !strings.Contains(fmt.Sprintf("%v", row[4]), "keep order:true") {
+				continue
+			}
+			obj := fmt.Sprintf("%v", row[3])
+			name = obj[strings.Index(obj, "index:")+len("index:"):]
+			name = name[:strings.Index(name, "(")]
+		}
+		return name
+	}
+
+	for _, c := range []struct{ sql, index string }{
+		// Only ns is bound, so the index that orders by the expression right after ns wins.
+		{"select ns, st from t_dup_expr_idx where ns = 'ns0' order by lower(s), st limit 5", "idx_default"},
+		// k is bound too, so the expression is the next ordering column of idx_k.
+		{"select ns, st from t_dup_expr_idx where ns = 'ns0' and k = 1 order by lower(s), st limit 5", "idx_k"},
+	} {
+		// Repeat: the bug reproduced only intermittently, in proportion to the number of
+		// duplicate-expression indexes.
+		for range 20 {
+			require.Equal(t, c.index, orderingIndex(c.sql), "sql: %s", c.sql)
+		}
+		require.Equal(t, c.index, orderingIndex("/* issue:70708 */ "+c.sql))
+	}
+}
+
+func TestExpressionIndexMergeSort(t *testing.T) {
+	t.Run("nullability", func(t *testing.T) {
+		store := testkit.CreateMockStore(t)
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec(`create table t_order_null (
+			id int primary key, s varchar(20),
+			g varchar(20) as (lower(s)) virtual,
+			gn varchar(20) as (lower(s)) virtual not null,
+			key ig(g,id), key ign(gn,id))`)
+		// INSERT IGNORE coerces NULL to '' for gn, so the generated expressions
+		// alone do not establish that g and gn have the same index ordering.
+		tk.MustExec("insert ignore into t_order_null(id,s) values (1,''),(2,null),(3,'A')")
+		for _, sortCol := range []string{"g", "gn"} {
+			t.Run(sortCol, func(t *testing.T) {
+				for _, index := range []string{"ig", "ign"} {
+					for _, direction := range []string{"asc", "desc"} {
+						for _, limit := range []int{1, 3} {
+							suffix := fmt.Sprintf(" order by %s %s,id limit %d", sortCol, direction, limit)
+							want := tk.MustQuery("select id,s,g,gn from t_order_null ignore index(ig,ign)" + suffix).Rows()
+							sql := "select id,s,g,gn from t_order_null force index(" + index + ")" + suffix
+							require.Equal(t, want, tk.MustQuery(sql).Rows(), sql)
+						}
+					}
+				}
+			})
+		}
+	})
+	t.Run("unionIndexMerge", func(t *testing.T) {
+		for _, partitioned := range []bool{false, true} {
+			t.Run(fmt.Sprintf("partitioned=%v", partitioned), func(t *testing.T) {
+				store := testkit.CreateMockStore(t)
+				tk := testkit.NewTestKit(t, store)
+				tk.MustExec("use test")
+				tk.MustExec("set tidb_partition_prune_mode='dynamic'")
+				ddl := `create table t_order_merge (
+					id int primary key, a int, b int, s varchar(20),
+					key ia(a,(lower(s))), key ib(b,(lower(s))))`
+				if partitioned {
+					ddl += ` partition by range(id) (partition p0 values less than (3), partition p1 values less than (maxvalue))`
+				}
+				tk.MustExec(ddl)
+				// id=3 is returned by both partial paths and must still be deduplicated.
+				tk.MustExec("insert into t_order_merge values (1,1,0,'B'),(2,0,1,'a'),(3,1,1,'C'),(4,2,0,'D'),(5,0,2,'e')")
+				for _, predicate := range []string{"a=1 or b=1", "a in (1,2) or b in (1,2)"} {
+					for _, direction := range []string{"asc", "desc"} {
+						for _, limit := range []int{1, 5} {
+							suffix := fmt.Sprintf(" where %s order by lower(s) %s limit %d", predicate, direction, limit)
+							sql := "select /*+ use_index_merge(t_order_merge,ia,ib) */ id,s from t_order_merge" + suffix
+							want := tk.MustQuery("select id,s from t_order_merge ignore index(ia,ib)" + suffix).Rows()
+							tk.MustQuery(sql).Check(want)
+							plan := fmt.Sprint(tk.MustQuery("explain format='brief' " + sql).Rows())
+							require.Contains(t, plan, "IndexMerge", sql)
+							require.Contains(t, plan, "keep order:true", sql)
+							require.NotContains(t, plan, "TopN", sql)
+							require.NotContains(t, plan, "Sort", sql)
+						}
+					}
+				}
+			})
+		}
+	})
+
+	t.Run("prefixColumns", func(t *testing.T) {
+		store := testkit.CreateMockStore(t)
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("set tidb_partition_prune_mode='dynamic'")
+		tk.MustExec(`create table t_merge_prefix (
+			id int primary key, s varchar(20),
+			g1 varchar(20) as (lower(s)) virtual,
+			g2 varchar(20) as (lower(s)) virtual,
+			g3 varchar(20) as (lower(s)) virtual,
+			key ix(g1(1), g2))
+			partition by range(id) (
+				partition p0 values less than (10),
+				partition p1 values less than (maxvalue))`)
+		tk.MustExec("insert into t_merge_prefix(id,s) values (1,'ab'),(11,'aa')")
+		// g1 exists in the index schema but only stores a prefix; g3 is absent.
+		// Both must use the complete g2 values for the cross-partition merge.
+		for _, sortCol := range []string{"g1", "g2", "g3"} {
+			t.Run(sortCol, func(t *testing.T) {
+				for _, order := range []string{"asc", "desc"} {
+					want := testkit.Rows("11 aa aa", "1 ab ab")
+					if order == "desc" {
+						want = testkit.Rows("1 ab ab", "11 aa aa")
+					}
+					for _, limit := range []int{1, 2} {
+						// Keep the residual predicate on the table side to isolate sorting
+						// from prefix-index filtering and still build a point prefix range.
+						sql := "select id,s,g3 from t_merge_prefix force index(ix) " +
+							"where (g1='aa' and s='aa') or (g1='ab' and s='ab') " +
+							fmt.Sprintf("order by %s %s limit %d", sortCol, order, limit)
+						plan := fmt.Sprint(tk.MustQuery("explain format='brief' " + sql).Rows())
+						require.Contains(t, plan, "IndexLookUp", sql)
+						require.Contains(t, plan, "keep order:true", sql)
+						require.NotContains(t, plan, "TopN", sql)
+						require.NotContains(t, plan, "Sort", sql)
+						require.Equal(t, want[:limit], tk.MustQuery(sql).Rows(), sql)
+					}
+				}
+			})
+		}
+	})
+	for _, partitioned := range []bool{false, true} {
+		t.Run(fmt.Sprintf("partitioned=%v", partitioned), func(t *testing.T) {
+			store := testkit.CreateMockStore(t)
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("use test")
+			tk.MustExec("set tidb_partition_prune_mode='dynamic'")
+			ddl := `create table t_merge_expr (
+				id bigint primary key, ns int, s varchar(20),
+				g varchar(20) generated always as (lower(s)) virtual,
+				key ix(ns, (lower(s))))`
+			if partitioned {
+				ddl += ` partition by range(id) (
+					partition p0 values less than (10),
+					partition p1 values less than (maxvalue))`
+			}
+			tk.MustExec(ddl)
+			tk.MustExec("insert into t_merge_expr(id,ns,s) values (1,1,'B'),(11,1,'a'),(2,2,'D'),(12,2,'c')")
+			for _, predicate := range []string{"ns = 1", "ns in (1,2)"} {
+				for _, fields := range []string{"id, g", "id, s, g"} {
+					for _, order := range []string{"asc", "desc"} {
+						// g and the index's hidden column have different IDs. Covering scans
+						// merge output rows, while lookups merge rows from the index side.
+						suffix := " where " + predicate + " order by g " + order + " limit 3"
+						sql := "select " + fields + " from t_merge_expr force index(ix)" + suffix
+						plan := fmt.Sprint(tk.MustQuery("explain format='brief' " + sql).Rows())
+						require.NotContains(t, plan, "TopN", sql)
+						require.NotContains(t, plan, "Sort", sql)
+						require.Contains(t, plan, "keep order:true", sql)
+						if fields == "id, g" {
+							require.Contains(t, plan, "IndexReader", sql)
+						} else {
+							require.Contains(t, plan, "IndexLookUp", sql)
+						}
+						want := tk.MustQuery("select " + fields + " from t_merge_expr ignore index(ix)" + suffix).Rows()
+						tk.MustQuery(sql).Check(want)
+					}
+				}
+			}
+		})
+	}
 }

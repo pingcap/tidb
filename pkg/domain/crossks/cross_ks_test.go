@@ -31,6 +31,7 @@ import (
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/domain/sqlsvrapi"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
+	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/keyspace"
@@ -418,7 +419,7 @@ func TestDomainAcquireKSRuntimeHandle(t *testing.T) {
 	}
 	integration.BeforeTestExternal(t)
 	cluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 2})
-	defer cluster.Terminate(t)
+	t.Cleanup(func() { cluster.Terminate(t) })
 	keyspaceIDs := map[string]uint32{
 		keyspace.System:     1,
 		"ks-runtime-domain": 2,
@@ -475,7 +476,7 @@ func TestDomainAcquireKSRuntimeHandle(t *testing.T) {
 	handle, err := sysKSDom.AcquireKSRuntime(targetKS, "test/domain-runtime-handle")
 	require.NoError(t, err)
 	t.Cleanup(func() {
-		handle.Release()
+		handle.Release(false)
 		ksMgr := sysKSDom.GetCrossKSMgr()
 		ksMgr.CloseKS(targetKS)
 	})
@@ -553,7 +554,7 @@ func TestDomainAcquireKSRuntimeHandle(t *testing.T) {
 		ctx := util.WithInternalSourceType(context.Background(), kv.InternalDistTask)
 		sql := "import into unused_target from select /*+ STREAM_AGG() SET_VAR(tidb_mem_quota_query=1073741824) */ g,count(*) from query_source use index(idx_g) where v >= 10 group by g"
 		require.NoError(t, tk.Session().PrepareTxnCtx(ctx, nil))
-		require.NoError(t, importer.PlanImportQueryForTest(tk.Session(), sql))
+		require.NoError(t, executor.PlanImportQueryForTest(tk.Session(), sql))
 		captured, err := importer.CaptureQuerySource(tk.Session(), sql)
 		require.NoError(t, err)
 
@@ -569,7 +570,7 @@ func TestDomainAcquireKSRuntimeHandle(t *testing.T) {
 		require.NoError(t, err)
 		defer pool.Destroy(resource)
 		output := make(chan importer.QueryChunk, 4)
-		err = importer.RunImportQuery(ctx, resource.(sessionctx.Context), captured, sql, 1<<20, output)
+		err = executor.RunImportQuery(ctx, resource.(sessionctx.Context), captured, sql, 1<<20, output)
 		require.NoError(t, err)
 		close(output)
 		result := make(map[int64]int64)
@@ -583,6 +584,28 @@ func TestDomainAcquireKSRuntimeHandle(t *testing.T) {
 			}
 		}
 		require.Equal(t, map[int64]int64{1: 2, 2: 1}, result)
+	})
+	t.Run("job check and ordinary holder share a runtime", func(t *testing.T) {
+		ctx := util.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
+		check, err := sysKSDom.AcquireKSRuntime(targetKS, "test/job-check")
+		require.NoError(t, err)
+		defer check.Release(true)
+		require.Same(t, handle.SysSessionPool(), check.SysSessionPool())
+		mgr := storage.NewTaskManager(check.SysSessionPool())
+		for _, sql := range []string{
+			"select count(1) from mysql.tidb_ddl_job",
+			"select count(1) from mysql.tidb_import_jobs where status in ('pending', 'running')",
+		} {
+			rows, err := mgr.ExecuteSQLWithNewSession(ctx, sql)
+			require.NoError(t, err)
+			require.Len(t, rows, 1)
+		}
+		check.Release(true)
+		_, exists := crossKSMgr.Get(targetKS)
+		require.True(t, exists, "the ordinary holder still needs the runtime")
+		handle.Release(false)
+		_, exists = crossKSMgr.Get(targetKS)
+		require.True(t, exists, "ordinary release keeps the idle runtime available for reuse")
 	})
 }
 
@@ -776,7 +799,7 @@ func alterTableModeInKeyspaceForTest(
 	if err != nil {
 		return err
 	}
-	defer runtime.Release()
+	defer runtime.Release(false)
 	return runtime.AlterTableMode(ctx, req)
 }
 

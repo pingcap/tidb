@@ -509,7 +509,9 @@ func (s *session) FieldList(tableName string) ([]*resolve.ResultField, error) {
 }
 
 // TxnInfo returns a pointer to a *copy* of the internal TxnInfo, thus is *read only*
-// Process field may not initialize if this is a session used internally.
+// It returns nil without an active transaction. Otherwise ProcessInfo includes
+// related tables even for internal sessions without a process-list entry; their
+// connection identity fields may be zero-valued.
 func (s *session) TxnInfo() *txninfo.TxnInfo {
 	s.txn.mu.RLock()
 	// Copy on read to get a snapshot, this API shouldn't be frequently called.
@@ -522,7 +524,9 @@ func (s *session) TxnInfo() *txninfo.TxnInfo {
 
 	processInfo := s.ShowProcess()
 	if processInfo == nil {
-		return &txnInfo
+		// Internal sessions can write user tables without a process-list entry.
+		// Their access set is still needed by database read-only draining.
+		processInfo = &sessmgr.ProcessInfo{}
 	}
 	txnInfo.ProcessInfo = &txninfo.ProcessInfo{
 		ConnectionID:    processInfo.ID,
@@ -531,6 +535,10 @@ func (s *session) TxnInfo() *txninfo.TxnInfo {
 		RelatedTableIDs: make(map[int64]struct{}),
 	}
 	s.GetSessionVars().GetRelatedTableForMDL().Range(func(key, _ any) bool {
+		txnInfo.ProcessInfo.RelatedTableIDs[key.(int64)] = struct{}{}
+		return true
+	})
+	s.GetSessionVars().GetRelatedTableForReadOnly().Range(func(key, _ any) bool {
 		txnInfo.ProcessInfo.RelatedTableIDs[key.(int64)] = struct{}{}
 		return true
 	})
@@ -558,7 +566,7 @@ func (s *session) doCommit(ctx context.Context) error {
 		// to prevent the case that a long running auto-commit statement is now trying to commit.
 		pm := privilege.GetPrivilegeManager(s)
 		roles := s.sessionVars.ActiveRoles
-		if pm != nil && !pm.HasExplicitlyGrantedDynamicPrivilege(roles, "RESTRICTED_REPLICA_WRITER_ADMIN", false) {
+		if pm != nil && !pm.HasExplicitlyGrantedDynamicPrivilege(roles, privilege.ReplicaWriterAdminPriv, false) {
 			s.RollbackTxn(ctx)
 			return plannererrors.ErrSQLInReadOnlyMode
 		}
@@ -1935,12 +1943,10 @@ func (s *session) executeInternalImpl(ctx context.Context, sql string, args ...a
 	rs, err = s.ExecuteStmt(ctx, stmtNode)
 	if err != nil {
 		s.sessionVars.StmtCtx.AppendError(err)
-	}
-	if rs == nil {
 		return nil, err
 	}
 
-	return rs, err
+	return rs, nil
 }
 
 // Execute is deprecated, we can remove it as soon as plugins are migrated.
@@ -2836,7 +2842,7 @@ func (s *session) executeStmtImpl(ctx context.Context, stmtNode ast.StmtNode) (r
 				zap.Error(err),
 				zap.String("session", s.String()))
 		}
-		return recordSet, err
+		return nil, err
 	}
 	if !s.isInternal() && config.GetGlobalConfig().EnableTelemetry {
 		telemetry.CurrentExecuteCount.Inc()
@@ -3151,6 +3157,7 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 			err = errors.New("statement RU result-set test error")
 		}
 	})
+	failpoint.InjectCall("afterRunStmtExec", &sessVars.SQLKiller, rs != nil, &err)
 
 	if se.txn.Valid() && se.txn.IsPipelined() {
 		// Pipelined-DMLs can return assertion errors and write conflicts here because they flush
@@ -3169,6 +3176,13 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 	if rs != nil {
 		if err != nil {
 			s.(*executor.ExecStmt).RecordStatementRUFinalOutcome(false)
+			if finisher, ok := rs.(interface{ Finish() error }); ok {
+				terror.Log(finisher.Finish())
+			}
+			// Pass the execution error to finalization before EXPLAIN ANALYZE DML can commit.
+			err = finishStmt(ctx, se, err, s)
+			terror.Log(executor.CloseRecordSetWithError(rs, err))
+			return nil, err
 		}
 		if se.GetSessionVars().StmtCtx.IsExplainAnalyzeDML {
 			if !sessVars.InTxn() {
@@ -3187,7 +3201,7 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 			RecordSet: rs,
 			sql:       s,
 			se:        se,
-		}, err
+		}, nil
 	}
 
 	err = finishStmt(ctx, se, err, s)
@@ -3360,15 +3374,20 @@ func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields
 	var dedupKey string
 	if s.sessionVars.EnableCachePrepareStmt {
 		// Session-level prepare dedup cache: if the same SQL text has been prepared
-		// before in this session (with the same charset/collation/currentDB), reuse
-		// the already-built PlanCacheStmt and skip the expensive Preprocess+Build.
+		// before in this session with the same parsing context, reuse the
+		// already-built PlanCacheStmt and skip the expensive Build step.
 		charset, collation := s.sessionVars.GetCharsetInfo()
-		dedupKey = variable.PrepareDedupCacheKey(sql, charset, collation, s.sessionVars.CurrentDB, s.sessionVars.SQLMode)
+		clientCharset, charsetErr := s.sessionVars.GetSessionOrGlobalSystemVar(ctx, vardef.CharacterSetClient)
+		if charsetErr != nil {
+			// Match the fallback used by GetParseParams.
+			clientCharset = ""
+		}
+		dedupKey = variable.PrepareDedupCacheKey(sql, charset, collation, s.sessionVars.CurrentDB, clientCharset, s.sessionVars.SQLMode)
 		if v := s.sessionVars.GetPrepareStmtDedupCache(dedupKey); v != nil {
 			cached := v.(*plannercore.PrepareStmtCacheEntry)
 			is := sessiontxn.GetTxnManager(s).GetTxnInfoSchema()
 			if cached.Stmt.SchemaVersion == is.SchemaMetaVersion() {
-				newStmt, rebuildErr := s.rebuildFromPrepareCache(ctx, cached, sql, charset, collation)
+				newStmt, rebuildErr := s.rebuildFromPrepareCache(ctx, cached, sql)
 				if rebuildErr == nil {
 					stmtID = s.sessionVars.GetNextPreparedStmtID()
 					if err = s.sessionVars.AddPreparedStmt(stmtID, newStmt); err != nil {
@@ -3419,12 +3438,9 @@ func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields
 func (s *session) rebuildFromPrepareCache(
 	ctx context.Context,
 	cached *plannercore.PrepareStmtCacheEntry,
-	sql, charset, collation string,
+	sql string,
 ) (*plannercore.PlanCacheStmt, error) {
-	stmts, _, err := s.ParseSQL(ctx, sql,
-		parser.CharsetConnection(charset),
-		parser.CollationConnection(collation),
-	)
+	stmts, _, err := s.ParseSQL(ctx, sql, s.sessionVars.GetParseParams()...)
 	if err != nil {
 		return nil, err
 	}
@@ -4277,9 +4293,9 @@ func CreateSessionWithOpt(store kv.Storage, opt *Opt) (sessionapi.Session, error
 	// Add stats collector, and it will be freed by background stats worker
 	// which periodically updates stats using the collected data.
 	if do.StatsHandle() != nil && do.StatsUpdating() {
-		s.statsCollector = do.StatsHandle().NewSessionStatsItem().(*usage.SessionStatsItem)
+		s.statsCollector = do.StatsHandle().Usage().NewSessionStatsItem()
 		if config.GetGlobalConfig().Instance.EnableCollectExecutionInfo.Load() {
-			s.idxUsageCollector = do.StatsHandle().NewSessionIndexUsageCollector()
+			s.idxUsageCollector = do.StatsHandle().Usage().NewSessionIndexUsageCollector()
 		}
 	}
 
@@ -4410,18 +4426,27 @@ func InitDDLTables(store kv.Storage) error {
 	})
 }
 
-// initBootstrapDependentTables creates system tables that classic kernel upgrade
-// DDL may consult before the ordinary upgrade DDL reaches their creation step.
+// initBootstrapDependentTables creates system tables that Classic and legacy
+// NextGen upgrade DDL may consult before reaching their ordinary creation step.
 func initBootstrapDependentTables(store kv.Storage, ver int64) error {
-	// This is only for classic upgrades from below version280. Fresh bootstrap and
-	// next-gen create the table elsewhere. After version280, the table may have been renamed.
-	if !kerneltype.IsClassic() || ver <= notBootstrapped || ver >= version280 || currentBootstrapVersion < version280 {
+	// After version280, the table may have been renamed. Fresh bootstrap and
+	// native NextGen create the table elsewhere.
+	if ver <= notBootstrapped || ver >= version280 || currentBootstrapVersion < version280 {
 		return nil
 	}
 
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	return kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMutator(txn)
+		if kerneltype.IsNextGen() {
+			isLegacyNextGen, err := t.IsLegacyNextGen()
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if !isLegacyNextGen {
+				return nil
+			}
+		}
 		dbID, err := t.CreateMySQLDatabaseIfNotExists()
 		if err != nil {
 			return err
@@ -4511,19 +4536,6 @@ func createAndSplitTables(store kv.Storage, t *meta.Mutator, dbID int64, tables 
 	return nil
 }
 
-// InitMDLVariableForBootstrap initializes the metadata lock variable.
-func InitMDLVariableForBootstrap(store kv.Storage) error {
-	err := kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), store, true, func(_ context.Context, txn kv.Transaction) error {
-		t := meta.NewMutator(txn)
-		return t.SetMetadataLock(true)
-	})
-	if err != nil {
-		return err
-	}
-	vardef.SetEnableMDL(true)
-	return nil
-}
-
 // InitTiDBSchemaCacheSize initializes the tidb schema cache size.
 func InitTiDBSchemaCacheSize(store kv.Storage) error {
 	var (
@@ -4550,30 +4562,32 @@ func InitTiDBSchemaCacheSize(store kv.Storage) error {
 	return nil
 }
 
-// InitMDLVariable initializes the metadata lock variable.
-func InitMDLVariable(store kv.Storage) error {
-	isNull := false
-	enable := false
-	var err error
-	err = kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), store, true, func(_ context.Context, txn kv.Transaction) error {
-		t := meta.NewMutator(txn)
-		enable, isNull, err = t.GetMetadataLock()
-		if err != nil {
-			return err
-		}
-		if isNull {
-			// Workaround for version: nightly-2022-11-07 to nightly-2022-11-17.
-			enable = true
-			logutil.BgLogger().Warn("metadata lock is null")
-			err = t.SetMetadataLock(true)
-			if err != nil {
-				return err
-			}
-		}
+// initLegacyECDSASessionToken loads the one-way compatibility gate. Only the
+// owner of a fresh bootstrap may persist it without checking cluster versions.
+func initLegacyECDSASessionToken(store kv.Storage, bootstrap bool) error {
+	if kerneltype.IsNextGen() {
 		return nil
+	}
+	disabled := false
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
+	err := kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
+		m := meta.NewMutator(txn)
+		if bootstrap {
+			disabled = true
+			return m.SetLegacyECDSASessionTokenDisabled()
+		}
+		var err error
+		disabled, err = m.GetLegacyECDSASessionTokenDisabled()
+		return err
 	})
-	vardef.SetEnableMDL(enable)
-	return err
+	if err != nil {
+		return err
+	}
+	if disabled {
+		// Publish only after persistence succeeds, and never undo an observed gate.
+		vardef.SetLegacyECDSASessionTokenDisabled(true)
+	}
+	return nil
 }
 
 // BootstrapSession bootstrap session and domain.
@@ -4604,6 +4618,10 @@ func BootstrapSession4DistExecution(store kv.Storage) (*domain.Domain, error) {
 // such as system time zone
 // - start domain and other routines.
 func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsImpl func(store kv.Storage, cnt int) ([]*session, error), extWorkloadMgr extworkload.Manager) (*domain.Domain, error) {
+	// Load before any bootstrap, upgrade, normal, or diagnostic domain can start.
+	if err := initLegacyECDSASessionToken(store, false); err != nil {
+		return nil, err
+	}
 	if diagnosticmode.Enabled() {
 		return bootstrapSessionImplDiagnostic(ctx, store)
 	}
@@ -4633,7 +4651,7 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 		}
 	}
 	if kerneltype.IsNextGen() {
-		if err := bootstrapSchemas(store); err != nil {
+		if err := bootstrapNextGenSchemas(store); err != nil {
 			return nil, err
 		}
 	}
@@ -4650,12 +4668,18 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 		if err != nil {
 			return nil, err
 		}
-	} else {
-		logutil.BgLogger().Info("cluster already bootstrapped", zap.Int64("version", ver))
-		err = InitMDLVariable(store)
-		if err != nil {
+		// Another node may have completed fresh bootstrap while this node waited.
+		if err = initLegacyECDSASessionToken(store, false); err != nil {
 			return nil, err
 		}
+	} else {
+		logutil.BgLogger().Info("cluster already bootstrapped", zap.Int64("version", ver))
+	}
+	// The temporary upgrade domain can enable persisted MDL during the legacy
+	// migration. Reload it after that domain closes and before the final domain
+	// starts; the later sysvar-cache loop cannot safely repair this with queued jobs.
+	if _, err = initMDLVariable(store, mdlInitEnableOnNull); err != nil {
+		return nil, err
 	}
 	skipInitGlobalVarFromSystemDB := false
 	failpoint.Inject("skipInitGlobalVarFromSystemDB", func(val failpoint.Value) {
@@ -4702,7 +4726,7 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 			return nil, err
 		}
 	}
-	ses, err := createSessionsImpl(store, 10)
+	ses, err := createSessionsImpl(store, 9)
 	if err != nil {
 		return nil, err
 	}
@@ -4714,8 +4738,7 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 	// ses[5]: telemetry, expression pushdown
 	// ses[6]: plan replayer collector
 	// ses[7]: dump file GC
-	// ses[8]: historical stats
-	// ses[9]: bootstrap SQL file
+	// ses[8]: bootstrap SQL file
 	for i := range ses {
 		ses[i].GetSessionVars().InRestrictedSQL = true
 	}
@@ -4802,16 +4825,13 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 	// setup dumpFileGcChecker
 	dom.SetupDumpFileGCChecker(ses[7])
 	dom.DumpFileGcCheckerLoop()
-	// setup historical stats worker
-	dom.SetupHistoricalStatsWorker(ses[8])
-	dom.StartHistoricalStatsWorker()
 	failToLoadOrParseSQLFile := false // only used for unit test
 	if runBootstrapSQLFile {
 		pm := &privileges.UserPrivileges{
 			Handle: dom.PrivilegeHandle(),
 		}
-		privilege.BindPrivilegeManager(ses[9], pm)
-		if err := doBootstrapSQLFile(ses[9]); err != nil && intest.EnableInternalCheck {
+		privilege.BindPrivilegeManager(ses[8], pm)
+		if err := doBootstrapSQLFile(ses[8]); err != nil && intest.EnableInternalCheck {
 			failToLoadOrParseSQLFile = true
 		}
 	}
@@ -4914,6 +4934,36 @@ func getStartMode(ver int64) ddl.StartMode {
 	return ddl.Normal
 }
 
+type legacyMDLMigration int
+
+const (
+	skipLegacyMDLMigration legacyMDLMigration = iota
+	requireLegacyMDLMigration
+)
+
+func initMDLForBootstrap(store kv.Storage, startMode ddl.StartMode) (legacyMDLMigration, error) {
+	var (
+		isNull bool
+		err    error
+	)
+	switch startMode {
+	case ddl.Bootstrap:
+		_, err = initMDLVariable(store, mdlInitForceEnable)
+	case ddl.Upgrade:
+		isNull, err = initMDLVariable(store, mdlInitKeepDisabledOnNull)
+	case ddl.Normal:
+		// Another TiDB can complete the upgrade before this instance acquires
+		// the upgrade lock. See https://github.com/pingcap/tidb/issues/64539.
+		_, err = initMDLVariable(store, mdlInitEnableOnNull)
+	default:
+		err = errors.Errorf("unknown start mode %q when initializing metadata lock", startMode)
+	}
+	if isNull {
+		return requireLegacyMDLMigration, err
+	}
+	return skipLegacyMDLMigration, err
+}
+
 // runInBootstrapSession create a special session for bootstrap to run.
 // If no bootstrap and storage is remote, we must use a little lease time to
 // bootstrap quickly, after bootstrapped, we will reset the lease time.
@@ -4965,6 +5015,13 @@ func runInBootstrapSession(store kv.Storage, ver int64, opts domainCreateOptions
 			}
 		}
 	}
+	// The scheduler can run as soon as the domain starts. Initialize runtime
+	// MDL first and remember whether the upgrade needs the legacy migration.
+	mdlMigration, err := initMDLForBootstrap(store, startMode)
+	if err != nil {
+		logutil.BgLogger().Fatal("init metadata lock before starting domain failed",
+			zap.String("startMode", string(startMode)), zap.Error(err))
+	}
 	s, err := createSessionWithDomainOptions(store, opts)
 	if err != nil {
 		// Bootstrap fail will cause program exit.
@@ -4990,13 +5047,7 @@ func runInBootstrapSession(store kv.Storage, ver int64, opts domainCreateOptions
 		// below sleep is used to mitigate https://github.com/pingcap/tidb/issues/57003,
 		// to let the older owner have time to notice that it's already retired.
 		time.Sleep(owner.WaitTimeOnForceOwner)
-		upgrade(s)
-	case ddl.Normal:
-		// We need to init MDL variable before start the domain to prevent potential stuck issue
-		// when upgrade is skipped. See https://github.com/pingcap/tidb/issues/64539.
-		if err := InitMDLVariable(store); err != nil {
-			logutil.BgLogger().Fatal("init metadata lock failed during normal startup", zap.Error(err))
-		}
+		upgradeWithMDLMigration(s, mdlMigration)
 	}
 	finishBootstrap(store)
 	s.ClearValue(sessionctx.Initing)
@@ -5132,10 +5183,10 @@ func createSessionWithOpt(
 func attachStatsCollector(s *session, dom *domain.Domain) *session {
 	if dom.StatsHandle() != nil && dom.StatsUpdating() {
 		if s.statsCollector == nil {
-			s.statsCollector = dom.StatsHandle().NewSessionStatsItem().(*usage.SessionStatsItem)
+			s.statsCollector = dom.StatsHandle().Usage().NewSessionStatsItem()
 		}
 		if s.idxUsageCollector == nil && config.GetGlobalConfig().Instance.EnableCollectExecutionInfo.Load() {
-			s.idxUsageCollector = dom.StatsHandle().NewSessionIndexUsageCollector()
+			s.idxUsageCollector = dom.StatsHandle().Usage().NewSessionIndexUsageCollector()
 		}
 	}
 

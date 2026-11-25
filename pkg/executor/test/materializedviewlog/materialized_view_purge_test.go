@@ -772,6 +772,12 @@ func TestPurgeMaterializedViewLogNowaitConflict(t *testing.T) {
 	require.NoError(t, err)
 	mlogID := mlogTable.Meta().ID
 
+	advisoryLockName := fmt.Sprintf("mlog_purge_%d", mlogID)
+	require.NoError(t, tk1.Session().GetAdvisoryLock(advisoryLockName, 1))
+	defer tk1.Session().ReleaseAllAdvisoryLocks()
+	tk2.MustGetErrCode("purge materialized view log on t_purge_nowait_conflict", errno.ErrMVAdvisoryLockConflict)
+	require.True(t, tk1.Session().ReleaseAdvisoryLock(advisoryLockName))
+
 	tk1.MustExec("begin pessimistic")
 	tk1.MustQuery(fmt.Sprintf("select 1 from mysql.tidb_mlog_purge_info where mlog_id = %d for update", mlogID)).
 		Check(testkit.Rows("1"))
@@ -1464,13 +1470,13 @@ func TestPurgeMaterializedViewLogUpdatesStatsMetaRowCount(t *testing.T) {
 	mlogID := mlogTable.Meta().ID
 
 	tk.MustExec("insert into t_purge_stats_meta values (1, 10), (2, 20), (3, 30), (4, 40), (5, 50)")
-	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(true))
+	require.NoError(t, dom.StatsHandle().Usage().DumpStatsDeltaToKV(true))
 	tk.MustQuery(fmt.Sprintf("select modify_count, count from mysql.stats_meta where table_id = %d", mlogID)).
 		Check(testkit.Rows("5 5"))
 
 	tk.MustExec("purge materialized view log on t_purge_stats_meta")
 	tk.MustQuery("select count(*) from `$mlog$t_purge_stats_meta`").Check(testkit.Rows("0"))
-	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(true))
+	require.NoError(t, dom.StatsHandle().Usage().DumpStatsDeltaToKV(true))
 	tk.MustQuery(fmt.Sprintf("select modify_count, count from mysql.stats_meta where table_id = %d", mlogID)).
 		Check(testkit.Rows("10 0"))
 }

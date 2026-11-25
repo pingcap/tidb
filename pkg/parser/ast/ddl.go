@@ -87,6 +87,7 @@ const (
 	DatabaseOptionCollate
 	DatabaseOptionEncryption
 	DatabaseSetTiFlashReplica
+	DatabaseOptionReadOnly
 	DatabaseOptionPlacementPolicy = DatabaseOptionType(PlacementOptionPolicy)
 )
 
@@ -133,6 +134,10 @@ func (n *DatabaseOption) Restore(ctx *format.RestoreCtx) error {
 			}
 			ctx.WriteString(v)
 		}
+	case DatabaseOptionReadOnly:
+		ctx.WriteKeyWord("READ ONLY")
+		ctx.WritePlain(" = ")
+		ctx.WritePlain(n.Value)
 	default:
 		return errors.Errorf("invalid DatabaseOptionType: %d", n.Tp)
 	}
@@ -535,6 +540,8 @@ const (
 	// MariaDB period markers for restore only; no engine semantics.
 	ColumnOptionMariaDBRowStart
 	ColumnOptionMariaDBRowEnd
+	// ColumnOptionSRID is the SRID attribute of a geometry column.
+	ColumnOptionSRID
 )
 
 var (
@@ -572,6 +579,8 @@ type ColumnOption struct {
 	ConstraintName      string
 	PrimaryKeyTp        PrimaryKeyType
 	SecondaryEngineAttr string
+	// SRID is only for ColumnOptionSRID.
+	SRID uint32
 }
 
 // Restore implements Node interface.
@@ -698,6 +707,9 @@ func (n *ColumnOption) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord("GENERATED ALWAYS AS ROW START")
 	case ColumnOptionMariaDBRowEnd:
 		ctx.WriteKeyWord("GENERATED ALWAYS AS ROW END")
+	case ColumnOptionSRID:
+		ctx.WriteKeyWord("SRID ")
+		ctx.WritePlainf("%d", n.SRID)
 	default:
 		return errors.New("An error occurred while splicing ColumnOption")
 	}
@@ -965,6 +977,8 @@ const (
 	// It will be rewritten into ConstraintColumnar after preprocessor phase.
 	ConstraintVector
 	ConstraintColumnar
+	// ConstraintSpatial is only used in AST. The preprocessor rejects it.
+	ConstraintSpatial
 )
 
 // Constraint is constraint for table definition.
@@ -1019,6 +1033,8 @@ func (n *Constraint) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord("UNIQUE INDEX")
 	case ConstraintFulltext:
 		ctx.WriteKeyWord("FULLTEXT")
+	case ConstraintSpatial:
+		ctx.WriteKeyWord("SPATIAL")
 	case ConstraintCheck:
 		if n.Name != "" {
 			ctx.WriteKeyWord("CONSTRAINT ")
@@ -1805,18 +1821,22 @@ func (n *MViewRefreshClause) Restore(ctx *format.RestoreCtx) error {
 type CreateMaterializedViewStmt struct {
 	ddlNode
 
-	ViewName   *TableName
-	Cols       []CIStr
-	Comment    string
-	Refresh    *MViewRefreshClause
-	Attributes string
-	Options    []*TableOption
-	Select     ResultSetNode
+	IfNotExists bool
+	ViewName    *TableName
+	Cols        []CIStr
+	Comment     string
+	Refresh     *MViewRefreshClause
+	Attributes  string
+	Options     []*TableOption
+	Select      ResultSetNode
 }
 
 // Restore implements Node interface.
 func (n *CreateMaterializedViewStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("CREATE MATERIALIZED VIEW ")
+	if n.IfNotExists {
+		ctx.WriteKeyWord("IF NOT EXISTS ")
+	}
 	if err := n.ViewName.Restore(ctx); err != nil {
 		return errors.Annotate(err, "An error occurred while restore CreateMaterializedViewStmt.ViewName")
 	}
@@ -1949,6 +1969,7 @@ func (n *MLogAccumulationAlertClause) Restore(ctx *format.RestoreCtx) error {
 type CreateMaterializedViewLogStmt struct {
 	ddlNode
 
+	IfNotExists       bool
 	Table             *TableName
 	Cols              []CIStr
 	Options           []*TableOption
@@ -1958,7 +1979,11 @@ type CreateMaterializedViewLogStmt struct {
 
 // Restore implements Node interface.
 func (n *CreateMaterializedViewLogStmt) Restore(ctx *format.RestoreCtx) error {
-	ctx.WriteKeyWord("CREATE MATERIALIZED VIEW LOG ON ")
+	ctx.WriteKeyWord("CREATE MATERIALIZED VIEW LOG ")
+	if n.IfNotExists {
+		ctx.WriteKeyWord("IF NOT EXISTS ")
+	}
+	ctx.WriteKeyWord("ON ")
 	if err := n.Table.Restore(ctx); err != nil {
 		return errors.Annotate(err, "An error occurred while restore CreateMaterializedViewLogStmt.Table")
 	}

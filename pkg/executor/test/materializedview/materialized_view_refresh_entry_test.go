@@ -97,21 +97,36 @@ func TestMaterializedViewRefreshEntryValidation(t *testing.T) {
 	tk.MustExec("create materialized view log on src_entry (g,v)")
 	tk.MustExec("create materialized view mv_entry (g,s,cnt) as select g,sum(v),count(*) from src_entry group by g")
 	require.ErrorContains(t, tk.ExecToErr("refresh materialized view mv_entry with async mode complete in place"), "WITH ASYNC MODE is not supported yet")
-	for _, suffix := range []string{"", " dry run", " with profile"} {
-		tk.MustExec("begin")
-		require.ErrorContains(t, tk.ExecToErr("refresh materialized view mv_entry complete in place"+suffix), "cannot run REFRESH MATERIALIZED VIEW in explicit transaction")
-		tk.MustExec("rollback")
-	}
+	observer := newMViewTestKit(t, store)
 	tk.MustExec("prepare stmt from 'refresh materialized view mv_entry complete in place'")
-	tk.MustExec("begin")
-	require.ErrorContains(t, tk.ExecToErr("execute stmt"), "cannot run REFRESH MATERIALIZED VIEW in explicit transaction")
-	tk.MustExec("rollback")
+	for _, autocommit := range []bool{true, false} {
+		for i, statement := range []string{
+			"refresh materialized view mv_entry complete in place",
+			"refresh materialized view mv_entry complete in place dry run",
+			"refresh materialized view mv_entry complete in place with profile",
+			"execute stmt",
+		} {
+			t.Run(fmt.Sprintf("autocommit=%t/statement=%d", autocommit, i), func(t *testing.T) {
+				tk.MustExec(fmt.Sprintf("set autocommit=%t", autocommit))
+				if autocommit {
+					tk.MustExec("begin")
+				}
+				tk.MustExec("insert into src_entry values (1,10)")
+				require.ErrorContains(t, tk.ExecToErr(statement), "cannot run REFRESH MATERIALIZED VIEW in explicit transaction")
+				require.True(t, tk.Session().GetSessionVars().InTxn())
+				tk.MustQuery("select * from src_entry").Check(testkit.Rows("1 10"))
+				observer.MustQuery("select * from test.src_entry").Check(testkit.Rows())
+				tk.MustExec("commit")
+				observer.MustQuery("select * from test.src_entry").Check(testkit.Rows("1 10"))
+				tk.MustExec("set autocommit=1")
+				tk.MustExec("delete from src_entry")
+			})
+		}
+	}
 	tk.MustExec("deallocate prepare stmt")
 	tk.MustExec("set autocommit=0")
 	tk.MustExec("refresh materialized view mv_entry complete in place")
-	tk.MustExec("insert into src_entry values (1,10)")
-	require.ErrorContains(t, tk.ExecToErr("refresh materialized view mv_entry complete in place"), "cannot run REFRESH MATERIALIZED VIEW in explicit transaction")
-	tk.MustExec("rollback")
+	require.False(t, tk.Session().GetSessionVars().InTxn())
 	tk.MustExec("set autocommit=1")
 }
 

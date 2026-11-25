@@ -382,6 +382,9 @@ const (
 	// TiDBOptPreferRangeScan is used to enable/disable the optimizer to always prefer range scan over table scan, ignoring their costs.
 	TiDBOptPreferRangeScan = "tidb_opt_prefer_range_scan"
 
+	// TiDBOptEnableSkipScan controls whether the optimizer can use skip index scan.
+	TiDBOptEnableSkipScan = "tidb_opt_enable_skip_scan"
+
 	// TiDBOptEnableNoDecorrelateInSelect is used to control whether to enable the NO_DECORRELATE hint for subqueries in the select list.
 	TiDBOptEnableNoDecorrelateInSelect = "tidb_opt_enable_no_decorrelate_in_select"
 
@@ -1098,7 +1101,8 @@ const (
 	// TiDBMergePartitionStatsConcurrency is deprecated. It is kept for backward compatibility
 	// but no longer affects behavior. Global stats always use the combined merge algorithm.
 	TiDBMergePartitionStatsConcurrency = "tidb_merge_partition_stats_concurrency"
-	// TiDBEnableAsyncMergeGlobalStats indicates whether to enable async merge global stats
+	// TiDBEnableAsyncMergeGlobalStats is deprecated. It is kept for backward compatibility
+	// but no longer affects behavior. Global stats are always merged asynchronously.
 	TiDBEnableAsyncMergeGlobalStats = "tidb_enable_async_merge_global_stats"
 	// TiDBOptPrefixIndexSingleScan indicates whether to do some optimizations to avoid double scan for prefix index.
 	// When set to true, `col is (not) null`(`col` is index prefix column) is regarded as index filter rather than table filter.
@@ -1249,7 +1253,7 @@ const (
 	TiDBGCMaxWaitTime = "tidb_gc_max_wait_time"
 	// TiDBEnableEnhancedSecurity restricts SUPER users from certain operations.
 	TiDBEnableEnhancedSecurity = "tidb_enable_enhanced_security"
-	// TiDBEnableHistoricalStats enables the historical statistics feature (default off)
+	// TiDBEnableHistoricalStats keeps compatibility for the removed historical statistics feature.
 	TiDBEnableHistoricalStats = "tidb_enable_historical_stats"
 	// TiDBPersistAnalyzeOptions persists analyze options for later analyze and auto-analyze
 	TiDBPersistAnalyzeOptions = "tidb_persist_analyze_options"
@@ -1391,9 +1395,9 @@ const (
 	PasswordReuseHistory = "password_history"
 	// PasswordReuseTime limit how long passwords can be reused.
 	PasswordReuseTime = "password_reuse_interval"
-	// TiDBHistoricalStatsDuration indicates the duration to remain tidb historical stats
+	// TiDBHistoricalStatsDuration keeps compatibility for the removed historical statistics feature.
 	TiDBHistoricalStatsDuration = "tidb_historical_stats_duration"
-	// TiDBEnableHistoricalStatsForCapture indicates whether use historical stats in plan replayer capture
+	// TiDBEnableHistoricalStatsForCapture keeps compatibility for the removed historical statistics feature.
 	TiDBEnableHistoricalStatsForCapture = "tidb_enable_historical_stats_for_capture"
 	// TiDBEnableResourceControl indicates whether resource control feature is enabled
 	TiDBEnableResourceControl = "tidb_enable_resource_control"
@@ -1619,6 +1623,7 @@ const (
 	DefOptForceInlineCTE                = false
 	DefOptInSubqToJoinAndAgg            = true
 	DefOptPreferRangeScan               = true
+	DefOptEnableSkipScan                = false
 	DefOptEnableNoDecorrelateInSelect   = false
 	DefOptEnableAlternativeLogicalPlans = false
 	DefOptEnableSemiJoinRewrite         = false
@@ -1889,7 +1894,6 @@ const (
 	DefTiDBGOGCMinValue                               = 100
 	DefTiDBOptPrefixIndexSingleScan                   = true
 	DefTiDBOptPartialOrderedIndexForTopN              = "DISABLE"
-	DefTiDBEnableAsyncMergeGlobalStats                = true
 	DefTiDBExternalTS                                 = 0
 	DefTiDBEnableExternalTSRead                       = false
 	DefTiDBEnableReusechunk                           = true
@@ -1913,7 +1917,6 @@ const (
 	DefMaxUserConnections                             = 0
 	DefTiDBStoreBatchSize                             = 4
 	DefTiDBHistoricalStatsDuration                    = 7 * 24 * time.Hour
-	DefTiDBEnableHistoricalStatsForCapture            = false
 	DefTiDBTTLJobScheduleWindowStartTime              = "00:00 +0000"
 	DefTiDBTTLJobScheduleWindowEndTime                = "23:59 +0000"
 	DefTiDBTTLScanWorkerCount                         = 4
@@ -2125,16 +2128,14 @@ var (
 			DefTiDBTTLJobScheduleWindowEndTime,
 		),
 	)
-	TTLScanWorkerCount              = atomic.NewInt32(DefTiDBTTLScanWorkerCount)
-	TTLDeleteWorkerCount            = atomic.NewInt32(DefTiDBTTLDeleteWorkerCount)
-	PasswordHistory                 = atomic.NewInt64(DefPasswordReuseHistory)
-	PasswordReuseInterval           = atomic.NewInt64(DefPasswordReuseTime)
-	IsSandBoxModeEnabled            = atomic.NewBool(false)
-	MaxUserConnectionsValue         = atomic.NewUint32(DefMaxUserConnections)
-	MaxPreparedStmtCountValue       = atomic.NewInt64(DefMaxPreparedStmtCount)
-	HistoricalStatsDuration         = atomic.NewDuration(DefTiDBHistoricalStatsDuration)
-	EnableHistoricalStatsForCapture = atomic.NewBool(DefTiDBEnableHistoricalStatsForCapture)
-	TTLRunningTasks                 = atomic.NewInt32(DefTiDBTTLRunningTasks)
+	TTLScanWorkerCount        = atomic.NewInt32(DefTiDBTTLScanWorkerCount)
+	TTLDeleteWorkerCount      = atomic.NewInt32(DefTiDBTTLDeleteWorkerCount)
+	PasswordHistory           = atomic.NewInt64(DefPasswordReuseHistory)
+	PasswordReuseInterval     = atomic.NewInt64(DefPasswordReuseTime)
+	IsSandBoxModeEnabled      = atomic.NewBool(false)
+	MaxUserConnectionsValue   = atomic.NewUint32(DefMaxUserConnections)
+	MaxPreparedStmtCountValue = atomic.NewInt64(DefMaxPreparedStmtCount)
+	TTLRunningTasks           = atomic.NewInt32(DefTiDBTTLRunningTasks)
 	// always set the default value to false because the resource control in kv-client is not inited
 	// It will be initialized to the right value after the first call of `rebuildSysVarCache`
 	EnableResourceControl           = atomic.NewBool(false)
@@ -2373,6 +2374,21 @@ const (
 	// IndexLookUpPushDownPolicyForce indicates to force push down the index lookup for all tables.
 	IndexLookUpPushDownPolicyForce = "force"
 )
+
+// TSOClientRPCModeToConcurrency returns the PD client concurrency for a TSO RPC mode.
+// It returns zero for an unsupported mode.
+func TSOClientRPCModeToConcurrency(mode string) int {
+	switch mode {
+	case TSOClientRPCModeDefault:
+		return 1
+	case TSOClientRPCModeParallel:
+		return 2
+	case TSOClientRPCModeParallelFast:
+		return 4
+	default:
+		return 0
+	}
+}
 
 // Global config name list.
 const (

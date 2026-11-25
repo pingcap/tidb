@@ -44,9 +44,9 @@ func TestConcurrentLoadHist(t *testing.T) {
 	testKit.MustExec("insert into t values (1,1,1),(2,2,2),(3,3,3)")
 
 	oriLease := dom.StatsHandle().Lease()
-	dom.StatsHandle().SetLease(1)
+	dom.StatsHandle().SetLeaseForTest(1)
 	defer func() {
-		dom.StatsHandle().SetLease(oriLease)
+		dom.StatsHandle().SetLeaseForTest(oriLease)
 	}()
 	testKit.MustExec("analyze table t")
 
@@ -66,8 +66,8 @@ func TestConcurrentLoadHist(t *testing.T) {
 		neededColumns = append(neededColumns, model.StatsLoadItem{TableItemID: model.TableItemID{TableID: tableInfo.ID, ID: col.ID, IsIndex: false}, FullLoad: true})
 	}
 	timeout := time.Nanosecond * mathutil.MaxInt
-	h.SendLoadRequests(stmtCtx, neededColumns, timeout)
-	rs := h.SyncWaitStatsLoad(stmtCtx)
+	h.SyncLoad().SendLoadRequests(stmtCtx, neededColumns, timeout)
+	rs := h.SyncLoad().SyncWaitStatsLoad(stmtCtx)
 	require.Nil(t, rs)
 	stat = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	hg := stat.GetCol(tableInfo.Columns[2].ID).Histogram
@@ -87,9 +87,9 @@ func TestConcurrentLoadHistTimeout(t *testing.T) {
 	testKit.MustExec("insert into t values (1,1,1),(2,2,2),(3,3,3)")
 
 	oriLease := dom.StatsHandle().Lease()
-	dom.StatsHandle().SetLease(1)
+	dom.StatsHandle().SetLeaseForTest(1)
 	defer func() {
-		dom.StatsHandle().SetLease(oriLease)
+		dom.StatsHandle().SetLeaseForTest(oriLease)
 	}()
 	testKit.MustExec("analyze table t")
 
@@ -113,8 +113,8 @@ func TestConcurrentLoadHistTimeout(t *testing.T) {
 	for _, col := range tableInfo.Columns {
 		neededColumns = append(neededColumns, model.StatsLoadItem{TableItemID: model.TableItemID{TableID: tableInfo.ID, ID: col.ID, IsIndex: false}, FullLoad: true})
 	}
-	h.SendLoadRequests(stmtCtx, neededColumns, 0) // set timeout to 0 so task will go to timeout channel
-	rs := h.SyncWaitStatsLoad(stmtCtx)
+	h.SyncLoad().SendLoadRequests(stmtCtx, neededColumns, 0) // set timeout to 0 so task will go to timeout channel
+	rs := h.SyncLoad().SyncWaitStatsLoad(stmtCtx)
 	require.Error(t, rs)
 	stat = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	// require.Nil(t, stat.GetCol(tableInfo.Columns[2].ID))
@@ -139,9 +139,9 @@ func TestConcurrentLoadHistWithPanicAndFail(t *testing.T) {
 	analyzehelper.TriggerPredicateColumnsCollection(t, testKit, store, "t", "c")
 
 	oriLease := dom.StatsHandle().Lease()
-	dom.StatsHandle().SetLease(1)
+	dom.StatsHandle().SetLeaseForTest(1)
 	defer func() {
-		dom.StatsHandle().SetLease(oriLease)
+		dom.StatsHandle().SetLeaseForTest(oriLease)
 	}()
 	testKit.MustExec("analyze table t")
 
@@ -171,8 +171,8 @@ func TestConcurrentLoadHistWithPanicAndFail(t *testing.T) {
 
 	for _, fp := range failpoints {
 		// clear statsCache
-		h.Clear()
-		require.NoError(t, dom.StatsHandle().Update(context.Background(), is))
+		h.ClearForTest()
+		require.NoError(t, dom.StatsHandle().Cache().Update(context.Background(), is))
 
 		// no stats at beginning
 		stat := h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
@@ -180,14 +180,14 @@ func TestConcurrentLoadHistWithPanicAndFail(t *testing.T) {
 		require.True(t, c == nil || (c.Histogram.Len()+c.TopN.Num() == 0))
 
 		stmtCtx1 := stmtctx.NewStmtCtx()
-		h.SendLoadRequests(stmtCtx1, neededColumns, timeout)
+		h.SyncLoad().SendLoadRequests(stmtCtx1, neededColumns, timeout)
 		stmtCtx2 := stmtctx.NewStmtCtx()
-		h.SendLoadRequests(stmtCtx2, neededColumns, timeout)
+		h.SyncLoad().SendLoadRequests(stmtCtx2, neededColumns, timeout)
 
 		exitCh := make(chan struct{})
 		require.NoError(t, failpoint.Enable(fp.failPath, fp.inTerms))
 
-		task1, err1 := h.HandleOneTask(nil, exitCh)
+		task1, err1 := h.SyncLoad().HandleOneTask(nil, exitCh)
 		require.Error(t, err1)
 		require.NotNil(t, task1)
 		for _, resultCh := range stmtCtx1.StatsLoad.ResultCh {
@@ -214,7 +214,7 @@ func TestConcurrentLoadHistWithPanicAndFail(t *testing.T) {
 		}
 
 		require.NoError(t, failpoint.Disable(fp.failPath))
-		task3, err3 := h.HandleOneTask(task1, exitCh)
+		task3, err3 := h.SyncLoad().HandleOneTask(task1, exitCh)
 		require.NoError(t, err3)
 		require.Nil(t, task3)
 		for _, resultCh := range stmtCtx1.StatsLoad.ResultCh {
@@ -254,9 +254,9 @@ func TestRetry(t *testing.T) {
 	analyzehelper.TriggerPredicateColumnsCollection(t, testKit, store, "t", "c")
 
 	oriLease := dom.StatsHandle().Lease()
-	dom.StatsHandle().SetLease(1)
+	dom.StatsHandle().SetLeaseForTest(1)
 	defer func() {
-		dom.StatsHandle().SetLease(oriLease)
+		dom.StatsHandle().SetLeaseForTest(oriLease)
 	}()
 	testKit.MustExec("analyze table t")
 
@@ -272,8 +272,8 @@ func TestRetry(t *testing.T) {
 	timeout := time.Nanosecond * mathutil.MaxInt
 
 	// clear statsCache
-	h.Clear()
-	require.NoError(t, dom.StatsHandle().Update(context.Background(), is))
+	h.ClearForTest()
+	require.NoError(t, dom.StatsHandle().Cache().Update(context.Background(), is))
 
 	// no stats at beginning
 	stat := h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
@@ -281,9 +281,9 @@ func TestRetry(t *testing.T) {
 	require.True(t, c == nil || (c.Histogram.Len()+c.TopN.Num() == 0))
 
 	stmtCtx1 := stmtctx.NewStmtCtx()
-	h.SendLoadRequests(stmtCtx1, neededColumns, timeout)
+	h.SyncLoad().SendLoadRequests(stmtCtx1, neededColumns, timeout)
 	stmtCtx2 := stmtctx.NewStmtCtx()
-	h.SendLoadRequests(stmtCtx2, neededColumns, timeout)
+	h.SyncLoad().SendLoadRequests(stmtCtx2, neededColumns, timeout)
 
 	exitCh := make(chan struct{})
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/statistics/handle/syncload/mockReadStatsForOneFail", "return(true)"))
@@ -293,7 +293,7 @@ func TestRetry(t *testing.T) {
 	)
 
 	for range syncload.RetryCount {
-		task1, err1 = h.HandleOneTask(task1, exitCh)
+		task1, err1 = h.SyncLoad().HandleOneTask(task1, exitCh)
 		require.Error(t, err1)
 		require.NotNil(t, task1)
 		select {
@@ -303,7 +303,7 @@ func TestRetry(t *testing.T) {
 		default:
 		}
 	}
-	result, err1 := h.HandleOneTask(task1, exitCh)
+	result, err1 := h.SyncLoad().HandleOneTask(task1, exitCh)
 	require.NoError(t, err1)
 	require.Nil(t, result)
 	for _, resultCh := range stmtCtx1.StatsLoad.ResultCh {
@@ -314,7 +314,7 @@ func TestRetry(t *testing.T) {
 	}
 	task1.Retry = 0
 	for range syncload.RetryCount * 5 {
-		task1, err1 = h.HandleOneTask(task1, exitCh)
+		task1, err1 = h.SyncLoad().HandleOneTask(task1, exitCh)
 		require.Error(t, err1)
 		require.NotNil(t, task1)
 		select {
@@ -343,9 +343,9 @@ func TestSendLoadRequestsWaitTooLong(t *testing.T) {
 	tk.MustExec("insert into t values (1,1,1),(2,2,2),(3,3,3)")
 
 	oriLease := dom.StatsHandle().Lease()
-	dom.StatsHandle().SetLease(1)
+	dom.StatsHandle().SetLeaseForTest(1)
 	defer func() {
-		dom.StatsHandle().SetLease(oriLease)
+		dom.StatsHandle().SetLeaseForTest(oriLease)
 	}()
 	tk.MustExec("analyze table t all columns")
 	h := dom.StatsHandle()
@@ -359,13 +359,13 @@ func TestSendLoadRequestsWaitTooLong(t *testing.T) {
 	}
 	stmtCtx := stmtctx.NewStmtCtx()
 	timeout := time.Nanosecond * 100
-	require.NoError(t, h.SendLoadRequests(stmtCtx, neededColumns, timeout))
+	require.NoError(t, h.SyncLoad().SendLoadRequests(stmtCtx, neededColumns, timeout))
 	for _, resultCh := range stmtCtx.StatsLoad.ResultCh {
 		rs1 := <-resultCh
 		require.Error(t, rs1.Err)
 	}
 	stmtCtx1 := stmtctx.NewStmtCtx()
-	require.NoError(t, h.SendLoadRequests(stmtCtx1, neededColumns, timeout))
+	require.NoError(t, h.SyncLoad().SendLoadRequests(stmtCtx1, neededColumns, timeout))
 	for _, resultCh := range stmtCtx1.StatsLoad.ResultCh {
 		rs1 := <-resultCh
 		require.Error(t, rs1.Err)
@@ -390,9 +390,9 @@ func TestSyncWaitStatsLoadWithFailedResultBeforeTimer(t *testing.T) {
 	tk.MustExec("insert into t values (1,1),(2,2),(3,3)")
 
 	oriLease := dom.StatsHandle().Lease()
-	dom.StatsHandle().SetLease(1)
+	dom.StatsHandle().SetLeaseForTest(1)
 	defer func() {
-		dom.StatsHandle().SetLease(oriLease)
+		dom.StatsHandle().SetLeaseForTest(oriLease)
 	}()
 	tk.MustExec("analyze table t")
 	h := dom.StatsHandle()
@@ -405,19 +405,19 @@ func TestSyncWaitStatsLoadWithFailedResultBeforeTimer(t *testing.T) {
 	}
 	timeout := 50 * time.Millisecond
 	stmtCtx := stmtctx.NewStmtCtx()
-	require.NoError(t, h.SendLoadRequests(stmtCtx, neededColumns, timeout))
+	require.NoError(t, h.SyncLoad().SendLoadRequests(stmtCtx, neededColumns, timeout))
 	// Send the same request from an observer statement context. It normally joins the singleflight
 	// call above, so once the observer receives the errored result, the same result has already
 	// been sent to stmtCtx's result channel. Even if the observer starts a new singleflight call,
 	// receiving its result still guarantees the first call has finished delivery.
 	observerCtx := stmtctx.NewStmtCtx()
-	require.NoError(t, h.SendLoadRequests(observerCtx, neededColumns, timeout))
+	require.NoError(t, h.SyncLoad().SendLoadRequests(observerCtx, neededColumns, timeout))
 	require.Len(t, observerCtx.StatsLoad.ResultCh, 1)
 	rs := <-observerCtx.StatsLoad.ResultCh[0]
 	require.Error(t, rs.Err) // no worker handles the request, so it times out
 	// The errored result is waiting in stmtCtx's result channel, so SyncWaitStatsLoad consumes it
 	// instead of hitting its own timer. It must still report the failure.
-	require.Error(t, h.SyncWaitStatsLoad(stmtCtx))
+	require.Error(t, h.SyncLoad().SyncWaitStatsLoad(stmtCtx))
 }
 
 func TestSyncLoadOnObjectWhichCanNotFoundInStorage(t *testing.T) {
@@ -427,7 +427,7 @@ func TestSyncLoadOnObjectWhichCanNotFoundInStorage(t *testing.T) {
 	tk.MustExec("create table t(a int, b int, c int, primary key(a))")
 	h := dom.StatsHandle()
 	// Skip create table event.
-	<-h.DDLEventCh()
+	<-h.DDL().DDLEventCh()
 	tk.MustExec("insert into t values (1,1,1),(2,2,2),(3,3,3)")
 	tk.MustExec("analyze table t columns a, b")
 	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
@@ -435,7 +435,7 @@ func TestSyncLoadOnObjectWhichCanNotFoundInStorage(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, tbl)
 	tblInfo := tbl.Meta()
-	statsTbl, ok := h.Get(tblInfo.ID)
+	statsTbl, ok := h.Cache().Get(tblInfo.ID)
 	require.True(t, ok)
 	// Only a and b.
 	require.Equal(t, 2, statsTbl.ColAndIdxExistenceMap.ColNum())
@@ -447,12 +447,12 @@ func TestSyncLoadOnObjectWhichCanNotFoundInStorage(t *testing.T) {
 	tk.MustExec("alter table t add column d int default 2")
 	err = statstestutil.HandleNextDDLEventWithTxn(h)
 	require.NoError(t, err)
-	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
+	require.NoError(t, h.Cache().Update(context.Background(), dom.InfoSchema()))
 	tbl, err = dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	require.NotNil(t, tbl)
 	tblInfo = tbl.Meta()
-	statsTbl, ok = h.Get(tblInfo.ID)
+	statsTbl, ok = h.Cache().Get(tblInfo.ID)
 	require.True(t, ok)
 	require.True(t, statsTbl.ColAndIdxExistenceMap.Has(tblInfo.Columns[3].ID, false))
 	require.True(t, statsTbl.ColAndIdxExistenceMap.HasAnalyzed(tblInfo.Columns[3].ID, false))
@@ -460,7 +460,7 @@ func TestSyncLoadOnObjectWhichCanNotFoundInStorage(t *testing.T) {
 	// Try sync load.
 	tk.MustExec("select * from t where a >= 1 and b = 2 and c = 3 and d = 4")
 	require.Eventually(t, func() bool {
-		statsTbl, ok = h.Get(tblInfo.ID)
+		statsTbl, ok = h.Cache().Get(tblInfo.ID)
 		require.True(t, ok)
 		return statsTbl.ColNum() == 3
 	}, 5*time.Second, 100*time.Millisecond)
@@ -478,7 +478,7 @@ func TestSyncLoadOnObjectWhichCanNotFoundInStorage(t *testing.T) {
 	require.NoError(t, h.InitStatsLite(context.TODO(), dom.InfoSchema()))
 	tk.MustExec("select * from t where a >= 1 and b = 2 and c = 3 and d = 4")
 	require.Eventually(t, func() bool {
-		statsTbl, ok = h.Get(tblInfo.ID)
+		statsTbl, ok = h.Cache().Get(tblInfo.ID)
 		require.True(t, ok)
 		return statsTbl.ColNum() == 4
 	}, 5*time.Second, 100*time.Millisecond)

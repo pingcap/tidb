@@ -28,11 +28,12 @@ import (
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/statistics/handle"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
+	statsutil "github.com/pingcap/tidb/pkg/statistics/util"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	pdhttp "github.com/tikv/pd/client/http"
@@ -225,7 +226,11 @@ func (rc *SnapClient) RestorePipeline(ctx context.Context, plCtx PipelineContext
 
 	// pipeline update meta and load stats
 	if plCtx.LoadStats && !plCtx.LoadStatsPhysical {
-		rc.registerUpdateMetaAndLoadStats(handlerBuilder, plCtx.ExtStorage, updateCh, plCtx.StatsConcurrency)
+		var writer statsWriter
+		if h := rc.dom.StatsHandle(); h != nil {
+			writer = h.Storage()
+		}
+		rc.registerUpdateMetaAndLoadStats(handlerBuilder, plCtx.ExtStorage, updateCh, plCtx.StatsConcurrency, writer)
 	}
 
 	// pipeline wait Tiflash synced
@@ -452,15 +457,22 @@ func (buffer *statsMetaItemBuffer) take() (metaUpdates []statstypes.MetaUpdate) 
 	return metaUpdates
 }
 
-func (buffer *statsMetaItemBuffer) UpdateMetasRest(ctx context.Context, statsHandler *handle.Handle) error {
+// statsWriter is the part of the stats storage that the restore writes the stats with.
+type statsWriter interface {
+	metautil.StatsLoader
+	LoadStatsFromJSONNoUpdate(ctx context.Context, is infoschema.InfoSchema, jsonTbl *statsutil.JSONTable, concurrencyForPartition int) error
+	SaveMetaToStorage(refreshLastHistVer bool, metaUpdates ...statstypes.MetaUpdate) error
+}
+
+func (buffer *statsMetaItemBuffer) UpdateMetasRest(ctx context.Context, writer statsWriter) error {
 	metaUpdates := buffer.take()
 	if len(metaUpdates) == 0 {
 		return nil
 	}
-	return buffer.saveMetaToStorageWithRetry(ctx, statsHandler, metaUpdates)
+	return buffer.saveMetaToStorageWithRetry(ctx, writer, metaUpdates)
 }
 
-func (buffer *statsMetaItemBuffer) TryUpdateMetas(ctx context.Context, statsHandler *handle.Handle, physicalID, count int64) error {
+func (buffer *statsMetaItemBuffer) TryUpdateMetas(ctx context.Context, writer statsWriter, physicalID, count int64) error {
 	item := statstypes.MetaUpdate{
 		PhysicalID:  physicalID,
 		Count:       count,
@@ -470,17 +482,17 @@ func (buffer *statsMetaItemBuffer) TryUpdateMetas(ctx context.Context, statsHand
 	if len(metaUpdates) == 0 {
 		return nil
 	}
-	return buffer.saveMetaToStorageWithRetry(ctx, statsHandler, metaUpdates)
+	return buffer.saveMetaToStorageWithRetry(ctx, writer, metaUpdates)
 }
 
 func (buffer *statsMetaItemBuffer) saveMetaToStorageWithRetry(
 	ctx context.Context,
-	statsHandler *handle.Handle,
+	writer statsWriter,
 	metaUpdates []statstypes.MetaUpdate,
 ) error {
 	state := utils.InitialRetryState(8, 500*time.Millisecond, 500*time.Millisecond)
 	err := utils.WithRetry(ctx, func() error {
-		if err := statsHandler.SaveMetaToStorage("br restore", false, metaUpdates...); err != nil {
+		if err := writer.SaveMetaToStorage(false, metaUpdates...); err != nil {
 			log.Error("failed to save meta to storage", zap.Error(err))
 			return errors.Trace(err)
 		}
@@ -499,17 +511,17 @@ func calculateRowCountForPhysicalTable(files []*backuppb.File) int64 {
 	return int64(totalKvs)
 }
 
-func updateStatsMetaForNonPartitionTable(ctx context.Context, buffer *statsMetaItemBuffer, statsHandler *handle.Handle,
+func updateStatsMetaForNonPartitionTable(ctx context.Context, buffer *statsMetaItemBuffer, writer statsWriter,
 	tbl *restoreutils.CreatedTable) error {
 	count := calculateRowCountForPhysicalTable(tbl.OldTable.FilesOfPhysicals[tbl.OldTable.Info.ID])
-	if statsErr := buffer.TryUpdateMetas(ctx, statsHandler, tbl.Table.ID, count); statsErr != nil {
+	if statsErr := buffer.TryUpdateMetas(ctx, writer, tbl.Table.ID, count); statsErr != nil {
 		log.Error("update stats meta failed", zap.Error(statsErr))
 		return statsErr
 	}
 	return nil
 }
 
-func updateStatsMetaForPartitionTable(ctx context.Context, buffer *statsMetaItemBuffer, statsHandler *handle.Handle,
+func updateStatsMetaForPartitionTable(ctx context.Context, buffer *statsMetaItemBuffer, writer statsWriter,
 	tbl *restoreutils.CreatedTable) error {
 	totalCount := int64(0)
 	physicalRowCountMap := make(map[int64]int64)
@@ -535,25 +547,25 @@ func updateStatsMetaForPartitionTable(ctx context.Context, buffer *statsMetaItem
 				)
 				return errors.Trace(err)
 			}
-			if statsErr := buffer.TryUpdateMetas(ctx, statsHandler, newDefID, count); statsErr != nil {
+			if statsErr := buffer.TryUpdateMetas(ctx, writer, newDefID, count); statsErr != nil {
 				log.Error("update stats meta failed", zap.Error(statsErr))
 				return statsErr
 			}
 		}
 	}
-	if statsErr := buffer.TryUpdateMetas(ctx, statsHandler, tbl.Table.ID, totalCount); statsErr != nil {
+	if statsErr := buffer.TryUpdateMetas(ctx, writer, tbl.Table.ID, totalCount); statsErr != nil {
 		log.Error("update stats meta failed", zap.Error(statsErr))
 		return statsErr
 	}
 	return nil
 }
 
-func updateStatsMetaForTable(ctx context.Context, buffer *statsMetaItemBuffer, statsHandler *handle.Handle,
+func updateStatsMetaForTable(ctx context.Context, buffer *statsMetaItemBuffer, writer statsWriter,
 	tbl *restoreutils.CreatedTable) error {
 	if tbl.OldTable.Info.Partition == nil {
-		return updateStatsMetaForNonPartitionTable(ctx, buffer, statsHandler, tbl)
+		return updateStatsMetaForNonPartitionTable(ctx, buffer, writer, tbl)
 	}
-	return updateStatsMetaForPartitionTable(ctx, buffer, statsHandler, tbl)
+	return updateStatsMetaForPartitionTable(ctx, buffer, writer, tbl)
 }
 
 func (rc *SnapClient) registerUpdateMetaAndLoadStats(
@@ -561,8 +573,8 @@ func (rc *SnapClient) registerUpdateMetaAndLoadStats(
 	s storeapi.Storage,
 	updateCh glue.Progress,
 	statsConcurrency uint,
+	writer statsWriter,
 ) {
-	statsHandler := rc.dom.StatsHandle()
 	buffer := NewStatsMetaItemBuffer()
 
 	builder.RegisterPipelineTask("Update Stats", statsConcurrency, func(c context.Context, tbl *restoreutils.CreatedTable) error {
@@ -578,7 +590,7 @@ func (rc *SnapClient) registerUpdateMetaAndLoadStats(
 			)
 			start := time.Now()
 			// NOTICE: skip updating cache after load stats from json
-			if statsErr = statsHandler.LoadStatsFromJSONNoUpdate(c, rc.dom.InfoSchema(), &targetStats, 0); statsErr != nil {
+			if statsErr = writer.LoadStatsFromJSONNoUpdate(c, rc.dom.InfoSchema(), &targetStats, 0); statsErr != nil {
 				log.Error("analyze table failed", zap.Any("table", &targetStats), zap.Error(statsErr))
 			}
 			log.Info("restore stat done",
@@ -592,7 +604,7 @@ func (rc *SnapClient) registerUpdateMetaAndLoadStats(
 			)
 			start := time.Now()
 			rewriteIDMap := restoreutils.GetTableIDMap(tbl.Table, tbl.OldTable.Info)
-			if statsErr = metautil.RestoreStats(c, s, rc.cipher, statsHandler, tbl.Table, oldTable.StatsFileIndexes, rewriteIDMap); statsErr != nil {
+			if statsErr = metautil.RestoreStats(c, s, rc.cipher, writer, tbl.Table, oldTable.StatsFileIndexes, rewriteIDMap); statsErr != nil {
 				log.Error("analyze table failed", zap.Any("table", oldTable.StatsFileIndexes), zap.Error(statsErr))
 			}
 			log.Info("restore statistic data done",
@@ -604,14 +616,14 @@ func (rc *SnapClient) registerUpdateMetaAndLoadStats(
 		if statsErr != nil || (oldTable.Stats == nil && len(oldTable.StatsFileIndexes) == 0) {
 			// Not need to return err when failed because of update analysis-meta
 			log.Info("start update metas", zap.Stringer("table", oldTable.Info.Name), zap.Stringer("db", oldTable.DB.Name))
-			if statsErr = updateStatsMetaForTable(c, buffer, statsHandler, tbl); statsErr != nil {
+			if statsErr = updateStatsMetaForTable(c, buffer, writer, tbl); statsErr != nil {
 				return statsErr
 			}
 		}
 		updateCh.Inc()
 		return nil
 	}, func(c context.Context) error {
-		if statsErr := buffer.UpdateMetasRest(c, statsHandler); statsErr != nil {
+		if statsErr := buffer.UpdateMetasRest(c, writer); statsErr != nil {
 			log.Error("update stats meta failed", zap.Error(statsErr))
 			return statsErr
 		}

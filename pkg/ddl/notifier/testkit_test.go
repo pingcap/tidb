@@ -647,10 +647,12 @@ func TestMViewRefreshOutOfPlaceCutoverEventPublished(t *testing.T) {
 	tk.MustExec("create materialized view log on t (a, b) purge next date_add(now(), interval 1 hour)")
 	tk.MustExec("create materialized view mv (a, s, cnt) refresh fast next date_add(now(), interval 1 hour) as select a, sum(b), count(1) from t group by a")
 
+	tk.MustExec("create materialized view log on mv (a, s, cnt)")
 	is := dom.InfoSchema()
 	mvTable, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("mv"))
 	require.NoError(t, err)
 	oldMViewID := mvTable.Meta().ID
+	oldMLogID := mvTable.Meta().MaterializedViewBase.MLogID
 
 	tk.MustExec("insert into t values (3, 4)")
 	tk.MustExec("refresh materialized view mv complete out of place")
@@ -659,6 +661,8 @@ func TestMViewRefreshOutOfPlaceCutoverEventPublished(t *testing.T) {
 	mvTable, err = is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("mv"))
 	require.NoError(t, err)
 	newMViewID := mvTable.Meta().ID
+	newMLogID := mvTable.Meta().MaterializedViewBase.MLogID
+	require.NotEqual(t, oldMLogID, newMLogID)
 
 	require.Eventually(t, func() bool {
 		cutoverEventsMu.Lock()
@@ -673,4 +677,9 @@ func TestMViewRefreshOutOfPlaceCutoverEventPublished(t *testing.T) {
 	require.Equal(t, oldMViewID, oldMVInfo.ID)
 	require.Equal(t, "mv", newMVInfo.Name.L)
 	require.Equal(t, "mv", oldMVInfo.Name.L)
+	newLog, oldLog := cutoverEvents[0].GetMViewRefreshOutOfPlaceCutoverMLogInfo()
+	require.Equal(t, newMLogID, newLog.ID)
+	require.Equal(t, oldMLogID, oldLog.ID)
+	require.Equal(t, newMViewID, newLog.MaterializedViewLog.BaseTableID)
+	require.Equal(t, oldMViewID, oldLog.MaterializedViewLog.BaseTableID)
 }

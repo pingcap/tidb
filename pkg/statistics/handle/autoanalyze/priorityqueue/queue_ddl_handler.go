@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -31,12 +32,16 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics/handle/lockstats"
 	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"go.uber.org/zap"
 )
 
 // HandleDDLEvent handles DDL events for the priority queue.
 func (pq *AnalysisPriorityQueue) HandleDDLEvent(_ context.Context, sctx sessionctx.Context, event *notifier.SchemaChangeEvent) error {
+	// A panic would stop the DDL notifier, and a new stats owner would replay the same event.
+	// So log the panic and skip the event, the same as an error below.
+	defer util.Recover(metrics.LabelStats, "AnalysisPriorityQueue.HandleDDLEvent", nil, false)
 	pq.syncFields.mu.Lock()
 	defer pq.syncFields.mu.Unlock()
 	// If the priority queue is not initialized, we should retry later.
@@ -159,7 +164,7 @@ func (pq *AnalysisPriorityQueue) recreateAndPushJobForTable(sctx sessionctx.Cont
 	// For static partitioned tables, we need to recreate the job for each partition.
 	if partitionInfo != nil && pruneMode == variable.Static {
 		for _, def := range partitionInfo.Definitions {
-			partitionStats, found := pq.statsHandle.GetNonPseudoPhysicalTableStats(def.ID)
+			partitionStats, found := pq.tableStats.GetNonPseudoPhysicalTableStats(def.ID)
 			if !found {
 				return nil
 			}
@@ -170,7 +175,7 @@ func (pq *AnalysisPriorityQueue) recreateAndPushJobForTable(sctx sessionctx.Cont
 		}
 		return nil
 	}
-	stats, found := pq.statsHandle.GetNonPseudoPhysicalTableStats(tableInfo.ID)
+	stats, found := pq.tableStats.GetNonPseudoPhysicalTableStats(tableInfo.ID)
 	if !found {
 		return nil
 	}
@@ -218,7 +223,7 @@ func (pq *AnalysisPriorityQueue) handleAddIndexEvent(
 		// For static partitioned tables, we need to recreate the job for each partition.
 		for _, def := range partitionInfo.Definitions {
 			partitionID := def.ID
-			partitionStats, found := pq.statsHandle.GetNonPseudoPhysicalTableStats(partitionID)
+			partitionStats, found := pq.tableStats.GetNonPseudoPhysicalTableStats(partitionID)
 			if !found {
 				return nil
 			}
@@ -231,7 +236,7 @@ func (pq *AnalysisPriorityQueue) handleAddIndexEvent(
 	}
 
 	// For normal tables and dynamic partitioned tables, we only need to recreate the job for the table.
-	stats, found := pq.statsHandle.GetNonPseudoPhysicalTableStats(tableInfo.ID)
+	stats, found := pq.tableStats.GetNonPseudoPhysicalTableStats(tableInfo.ID)
 	if !found {
 		return nil
 	}
@@ -371,7 +376,7 @@ func (pq *AnalysisPriorityQueue) handleExchangeTablePartitionEvent(
 	is := sctx.GetLatestInfoSchema().(infoschema.InfoSchema)
 	// Get the new table info after the exchange.
 	// Note: We should use the ID of the partitioned table to get the new table info after the exchange.
-	tblInfo, ok := pq.statsHandle.TableInfoByID(is, partInfo.Definitions[0].ID)
+	tblInfo, ok := pq.tables.TableInfoByID(is, partInfo.Definitions[0].ID)
 	if ok {
 		return pq.recreateAndPushJobForTable(sctx, tblInfo.Meta())
 	}
