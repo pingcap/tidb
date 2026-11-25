@@ -425,7 +425,6 @@ func TestPlanRiskUnorderedApplyLimitDemand(t *testing.T) {
 	assertCalls(upper, 20000, true)
 	profile := AssessPhysicalPlanRisk(upper)
 	require.InDelta(t, 2000000, *profile.Signals[0].EffectiveReadRows, 0.001)
-
 }
 
 func TestPlanRiskCTEProducerEngine(t *testing.T) {
