@@ -31,6 +31,12 @@
 [profile.default]
 leak-timeout = "2s"
 
+# A runaway test is killed and reported TIMEOUT instead of running unbounded.
+# The longest healthy tests take ~2 min (adminpause, materialized view refresh,
+# 2026-11-25 gate and workspace runs); 10 min is five times that. Without it
+# difftest query_diff ran 70 min and grew to 25 GB in a workspace run.
+slow-timeout = { period = "60s", terminate-after = 10 }
+
 # Matches `.cargo/config.toml`'s `jobs = 12`: leaving four of the sixteen
 # cores free keeps the machine responsive during a run, and the lighter spawn
 # also reduces the pipe-close contention the note above measures.
