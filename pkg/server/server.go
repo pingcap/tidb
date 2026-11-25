@@ -158,7 +158,7 @@ type Server struct {
 	// Once statusClosed is set, no initializer may publish resources or add to statusWG.
 	statusMu       sync.Mutex
 	statusClosed   bool
-	statusWG       sync.WaitGroup
+	statusWG       util.WaitGroupWrapper
 	statusAddr     string
 	statusListener net.Listener
 	statusServer   atomic.Pointer[http.Server]

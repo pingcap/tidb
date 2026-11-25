@@ -98,11 +98,7 @@ func (s *Server) startStatusHTTP() error {
 	if err != nil {
 		return err
 	}
-	s.statusWG.Add(1)
-	go func() {
-		defer s.statusWG.Done()
-		s.startHTTPServer()
-	}()
+	s.statusWG.Run(s.startHTTPServer)
 	return nil
 }
 
@@ -126,9 +122,7 @@ func (s *Server) startDiagnosticHTTP() error {
 	// Publish before Serve starts so closeListener also handles early shutdown.
 	s.statusServer.Store(statusServer)
 	listener := s.statusListener
-	s.statusWG.Add(1)
-	go util.WithRecovery(func() {
-		defer s.statusWG.Done()
+	s.statusWG.RunWithRecover(func() {
 		if err := statusServer.Serve(listener); err != nil && err != http.ErrServerClosed {
 			logutil.BgLogger().Warn("diagnostic http server error", zap.Error(err))
 		}
@@ -744,15 +738,12 @@ func (s *Server) startStatusServerAndRPCServer(serverMux *http.ServeMux) {
 	s.statusServer.Store(statusServer)
 	s.grpcServer = grpcServer
 
-	s.statusWG.Add(2)
-	go util.WithRecovery(func() {
-		defer s.statusWG.Done()
+	s.statusWG.RunWithRecover(func() {
 		err := grpcServer.Serve(grpcL)
 		logutil.BgLogger().Warn("grpc server error", zap.Error(err))
 	}, nil)
 
-	go util.WithRecovery(func() {
-		defer s.statusWG.Done()
+	s.statusWG.RunWithRecover(func() {
 		err := statusServer.Serve(httpL)
 		logutil.BgLogger().Warn("http server error", zap.Error(err))
 	}, nil)
