@@ -19,8 +19,10 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
@@ -75,17 +77,6 @@ func TestPartialIndex(t *testing.T) {
 		dbterror.ErrUnsupportedAddPartialIndex)
 	tk.MustExec("drop table t;")
 
-<<<<<<< HEAD
-=======
-	// Test ALTER TABLE cannot silently discard a partial primary key condition.
-	tk.MustExec("create table t3 (a int not null);")
-	tk.MustGetDBError("alter table t3 add primary key(a) where a > 0;",
-		dbterror.ErrUnsupportedAddPartialIndex)
-
-	// A partial unique index is not an implicit primary key, even when every index column is NOT NULL.
-	tk.MustExec("create table t4 (a int not null, unique index uk(a) where a > 0);")
-	tk.MustExec("alter table t4 alter index uk invisible;")
-
 	t.Run("standalone transactional merge", func(t *testing.T) {
 		if *testkit.WithTiKV != "" {
 			t.Skip("requires standalone unistore without ingest")
@@ -94,11 +85,11 @@ func TestPartialIndex(t *testing.T) {
 			t.Skip("standalone TiDB uses DDL job v2")
 		}
 		standalone := kv.StandAloneTiDB
-		fastReorg := vardef.EnableFastReorg.Swap(true)
+		fastReorg := variable.EnableFastReorg.Swap(true)
 		kv.StandAloneTiDB = true
 		t.Cleanup(func() {
 			kv.StandAloneTiDB = standalone
-			vardef.EnableFastReorg.Store(fastReorg)
+			variable.EnableFastReorg.Store(fastReorg)
 		})
 		tk := testkit.NewTestKit(t, store)
 		tk.MustExec("use test")
@@ -110,14 +101,14 @@ func TestPartialIndex(t *testing.T) {
 		tk.MustExec("update standalone_idx set enabled = null where id = 3")
 
 		var reorgType model.ReorgType
-		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
 			if job.Type == model.ActionAddIndex && job.SchemaState == model.StateWriteReorganization {
 				reorgType = job.ReorgMeta.ReorgTp
 			}
 		})
 		dml := testkit.NewTestKit(t, store)
 		dml.MustExec("use test")
-		const beforeMerge = "github.com/pingcap/tidb/pkg/ddl/beforeBackfillMerge"
+		const beforeMerge = "github.com/pingcap/tidb/pkg/ddl/BeforeBackfillMerge"
 		var ranMergeDML bool
 		var mergeDMLErr error
 		testfailpoint.EnableCall(t, beforeMerge, func() {
@@ -184,7 +175,6 @@ func TestPartialIndex(t *testing.T) {
 		})
 	})
 
->>>>>>> 455bee4611b (ddl: support partial indexes with fast reorg on unistore (#73649))
 	checkColumnTypes := func(columnTypes []string, literals []string, shouldAllowed bool) {
 		for _, columnType := range columnTypes {
 			for _, literal := range literals {

@@ -16,6 +16,7 @@ go_library(
         "rpc_server.go",
         "server.go",
         "stat.go",
+        "status_listener.go",
         "user_connections.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/server",
@@ -149,6 +150,7 @@ go_test(
         "rpc_server_test.go",
         "server_test.go",
         "stat_test.go",
+        "status_listener_test.go",
         "tidb_library_test.go",
         "tidb_test.go",
         "user_connections_test.go",
@@ -221,6 +223,7 @@ go_test(
         "@com_github_tikv_client_go_v2//tikv",
         "@org_golang_google_grpc//codes",
         "@org_golang_google_grpc//status",
+        "@org_uber_go_atomic//:atomic",
         "@org_uber_go_goleak//:goleak",
     ],
 )
