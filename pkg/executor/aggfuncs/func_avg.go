@@ -18,6 +18,7 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/expression/expropt"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -45,7 +46,6 @@ const (
 // - "avgPartial4Decimal"
 type baseAvgDecimal struct {
 	baseAggFunc
-	inMViewMaintenance bool
 }
 
 func (e *baseAvgDecimal) SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *SerializeHelper) {
@@ -92,8 +92,13 @@ func (e *baseAvgDecimal) AppendFinalResult2Chunk(ctx AggFuncUpdateContext, pr Pa
 	decimalCount := types.NewDecFromInt(p.count)
 	finalResult := new(types.MyDecimal)
 	increment := ctx.GetDivPrecisionIncrement()
-	if e.inMViewMaintenance && e.retTp != nil {
-		increment = mviewutil.AvgDivPrecisionIncrement(&p.sum, increment, e.retTp.GetDecimal())
+	if e.retTp != nil {
+		mvIncrement := mviewutil.AvgDivPrecisionIncrement(&p.sum, increment, e.retTp.GetDecimal())
+		if mvIncrement < increment {
+			if vars, err := (expropt.SessionVarsPropReader{}).GetSessionVars(ctx); err == nil && vars.InMViewMaintenance {
+				increment = mvIncrement
+			}
+		}
 	}
 	err := types.DecimalDiv(&p.sum, decimalCount, finalResult, increment)
 	if err != nil {

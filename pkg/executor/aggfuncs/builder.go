@@ -20,7 +20,6 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
-	"github.com/pingcap/tidb/pkg/expression/expropt"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
@@ -373,12 +372,6 @@ func buildAvg(ctx AggFuncBuildContext, aggFuncDesc *aggregation.AggFuncDesc, ord
 		ordinal: ordinal,
 		retTp:   aggFuncDesc.RetTp,
 	}
-	decimalBase := baseAvgDecimal{baseAggFunc: base}
-	if aggFuncDesc.RetTp.EvalType() == types.ETDecimal && !aggFuncDesc.HasDistinct {
-		if vars, err := (expropt.SessionVarsPropReader{}).GetSessionVars(ctx.GetEvalCtx()); err == nil {
-			decimalBase.inMViewMaintenance = vars.InMViewMaintenance
-		}
-	}
 	switch aggFuncDesc.Mode {
 	// Build avg functions which consume the original data and remove the
 	// duplicated input of the same group.
@@ -393,7 +386,7 @@ func buildAvg(ctx AggFuncBuildContext, aggFuncDesc *aggregation.AggFuncDesc, ord
 			if aggFuncDesc.HasDistinct {
 				return &avgOriginal4DistinctDecimal{baseAvgDistinct4Decimal{baseAvgDistinct{base}}}
 			}
-			return &avgOriginal4Decimal{decimalBase}
+			return &avgOriginal4Decimal{baseAvgDecimal{base}}
 		default:
 			if aggFuncDesc.HasDistinct {
 				return &avgOriginal4DistinctFloat64{baseAvgDistinct4Float64{baseAvgDistinct{base}}}
@@ -412,7 +405,7 @@ func buildAvg(ctx AggFuncBuildContext, aggFuncDesc *aggregation.AggFuncDesc, ord
 			if aggFuncDesc.HasDistinct {
 				return &avgPartial4DistinctDecimal{baseAvgDistinct4Decimal{baseAvgDistinct{base}}}
 			}
-			return &avgPartial4Decimal{decimalBase}
+			return &avgPartial4Decimal{baseAvgDecimal{base}}
 		case mysql.TypeDouble:
 			if aggFuncDesc.HasDistinct {
 				return &avgPartial4DistinctFloat64{baseAvgDistinct4Float64{baseAvgDistinct{base}}}
