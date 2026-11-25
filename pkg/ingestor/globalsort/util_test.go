@@ -340,13 +340,13 @@ func TestCleanUpFilesErrors(t *testing.T) {
 				cancel()
 				return nil
 			},
-			deleteFiles: func(_ context.Context, _ []string) error {
+			deleteFiles: func(ctx context.Context, _ []string) error {
 				calls++
-				return nil
+				return ctx.Err()
 			},
 		}
 		require.ErrorIs(t, CleanUpFiles(ctx, store, "subtask"), context.Canceled)
-		require.Zero(t, calls)
+		require.Equal(t, 1, calls)
 	})
 }
 

@@ -333,11 +333,10 @@ func (rs *KS3Storage) DeleteFile(ctx context.Context, file string) error {
 
 // DeleteFiles delete the files in batch in s3 storage.
 func (rs *KS3Storage) DeleteFiles(ctx context.Context, files []string) error {
-	const s3DeleteObjectsLimit = 1000
 	for len(files) > 0 {
 		batch := files
-		if len(batch) > s3DeleteObjectsLimit {
-			batch = batch[:s3DeleteObjectsLimit]
+		if len(batch) > storeapi.S3DeleteObjectsLimit {
+			batch = batch[:storeapi.S3DeleteObjectsLimit]
 		}
 		objects := make([]*s3.ObjectIdentifier, 0, len(batch))
 		for _, file := range batch {

@@ -138,6 +138,11 @@ type WriterOption struct {
 // object may have. S3, GCS and OSS all cap this at 10000.
 const MaxUploadParts = 10000
 
+// S3DeleteObjectsLimit is the maximum number of objects in an S3 delete request.
+// OSS shares the same limit.
+// See https://docs.aws.amazon.com/AmazonS3/latest/API/API_DeleteObjects.html.
+const S3DeleteObjectsLimit = 1000
+
 // ErrExceedMaxUploadParts is returned by a Create'd writer when a single object
 // would need more than MaxUploadParts parts.
 var ErrExceedMaxUploadParts = errors.New("data exceeds the object store's per-object multipart upload part limit")

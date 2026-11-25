@@ -31,10 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 )
 
-const (
-	metaName         = "meta.json"
-	cleanupBatchSize = 1000
-)
+const metaName = "meta.json"
 
 // CleanUpFiles deletes files under the given non-partitioned dirs in bounded batches.
 // See simplesst.GetAllFileNames for the directory layout. An error can leave a
@@ -46,26 +43,20 @@ func CleanUpFiles(ctx context.Context, store storeapi.Storage, nonPartitionedDir
 	if len(nonPartitionedDirs) == 0 {
 		return nil
 	}
-	names := make([]string, 0, cleanupBatchSize)
+	names := make([]string, 0, storeapi.S3DeleteObjectsLimit)
 	err := simplesst.WalkFiles(ctx, store, func(path string) error {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
 		names = append(names, path)
-		if len(names) < cleanupBatchSize {
+		if len(names) < storeapi.S3DeleteObjectsLimit {
 			return nil
 		}
 		if err := store.DeleteFiles(ctx, names); err != nil {
 			return err
 		}
 		// Storage wrappers such as objstore.Batched may retain the slice.
-		names = make([]string, 0, cleanupBatchSize)
+		names = make([]string, 0, storeapi.S3DeleteObjectsLimit)
 		return nil
 	}, nonPartitionedDirs...)
 	if err != nil {
-		return err
-	}
-	if err := ctx.Err(); err != nil {
 		return err
 	}
 	if len(names) == 0 {
