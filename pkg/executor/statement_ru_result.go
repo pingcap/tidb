@@ -320,10 +320,7 @@ func (calculator statementRUCalculator) finalize() (statementRUFinalizedSnapshot
 		}
 	}
 	if calculator.report != nil {
-		// Freeze full-mode details independently of the mutable accumulator.
-		report := *calculator.report
-		report.addStatementUnits(calculator.units)
-		calculator.report = &report
+		calculator.report = calculator.report.freeze(calculator.units)
 	}
 	return statementRUFinalizedSnapshot{
 		units:            calculator.units,
