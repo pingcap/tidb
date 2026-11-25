@@ -2154,15 +2154,17 @@ func (do *Domain) startStatsLoading() {
 	skipPeriodicRefresh, _ := value.(bool)
 	skipPeriodicRefresh = err == nil && skipPeriodicRefresh
 	if do.statsLease >= 0 && !skipPeriodicRefresh {
-		// loadStatsWorker calls initStats before entering its refresh loop.
 		do.wg.Run(do.loadStatsWorker, "loadStatsWorker")
 		return
 	}
 
 	do.wg.Run(func() {
+		// Initial stats loading is still required as part of normal server startup
+		// (normally handled by loadStatsWorker before its refresh loop), and it
+		// closes InitStatsDone so force-init-stats can open the SQL listener.
 		do.initStats(do.ctx)
 		if skipPeriodicRefresh {
-			logutil.BgLogger().Info("periodic stats refresh disabled for SQL integration tests")
+			statslogutil.StatsLogger().Info("periodic stats refresh disabled for SQL integration tests")
 		}
 	}, "initStats")
 }
