@@ -225,6 +225,28 @@ fn vector_text_parse_and_format_rules_match_source() {
 }
 
 #[test]
+fn vector_text_number_tokens_and_error_order_match_go() {
+    let vector = VectorFloat32::parse("[+1,-+1,+.5,-0,-1e-500]").unwrap();
+    assert_eq!(
+        vector.elements().iter().map(|value| value.to_bits()).collect::<Vec<_>>(),
+        [1.0_f32, -1.0, 0.5, -0.0, -0.0].map(f32::to_bits),
+    );
+    for text in ["[1e39,]", "[1e39]suffix", "[1e39,2"] {
+        assert_eq!(
+            VectorFloat32::parse(text).unwrap_err().to_string(),
+            "value 1e+39 out of range for float32",
+        );
+    }
+    for text in ["[1e39", "[false,1e39]", "[01]", "[1.]", "[1]\u{a0}"] {
+        assert_eq!(
+            VectorFloat32::parse(text).unwrap_err().to_string(),
+            format!("Invalid vector text: {text}"),
+        );
+    }
+    assert_eq!(VectorFloat32::parse("[1]\x0b").unwrap().elements(), [1.0]);
+}
+
+#[test]
 fn vector_text_formats_halfway_values_and_nonfinite_values_like_go() {
     let rounded = VectorFloat32::parse("[-181168.625,447746.625]").unwrap();
     assert_eq!(rounded.to_string(), "[-181168.62,447746.62]");

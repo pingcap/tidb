@@ -1628,6 +1628,32 @@ fn test_vectorized_builtin_vec_func() {
     }
 }
 
+#[test]
+fn vec_from_text_reads_selected_rows_in_order() {
+    let string = FieldType::new(FieldTypeCode::VarString);
+    let vector = FieldType::new(FieldTypeCode::VectorFloat32);
+    let expression = crate::new_function::new_function_base(
+        &NoColumns,
+        "vec_from_text",
+        vector,
+        vec![column(0, &string)],
+    )
+    .unwrap();
+    let mut input = Chunk::new_chunk_with_capacity(&[string], 4);
+    input.append_bytes(0, b"[1,2]");
+    input.append_bytes(0, b"[invalid]");
+    input.append_bytes(0, b"[3,4]");
+    input.append_null(0);
+    input.set_sel(Some(vec![2, 3, 0, 2]));
+    let mut output = Column::default();
+    eval_into(&expression, EvalType::VectorFloat32, &NoColumns, &input, &mut output).unwrap();
+    assert_eq!(output.rows(), 4);
+    assert_eq!(output.get_vector_float32(0).elements(), [3.0, 4.0]);
+    assert!(output.is_null(1));
+    assert_eq!(output.get_vector_float32(2).elements(), [1.0, 2.0]);
+    assert_eq!(output.get_vector_float32(3).elements(), [3.0, 4.0]);
+}
+
 /// Go `TestVectorizedBuiltinEncryptionFunc`: nullable byte strings and keys.
 #[test]
 fn test_vectorized_builtin_encryption_func() {

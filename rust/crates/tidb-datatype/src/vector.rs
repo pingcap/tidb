@@ -25,7 +25,7 @@ use std::sync::{Mutex, OnceLock, PoisonError};
 #[cfg(target_endian = "little")]
 use bytes::Buf;
 use bytes::Bytes;
-use serde_json::value::RawValue;
+use smallvec::SmallVec;
 #[cfg(target_endian = "little")]
 use zerocopy::{FromBytes, IntoBytes};
 
@@ -566,33 +566,7 @@ impl VectorFloat32 {
 
     /// Parses the JSON-array text accepted by TiDB.
     pub fn parse(text: &str) -> Result<Self, VectorError> {
-        if text.trim() == "null" {
-            return Err(VectorError::new(format!("Invalid vector text: {text}")));
-        }
-        let values: Vec<&RawValue> = serde_json::from_str(text)
-            .map_err(|_| VectorError::new(format!("Invalid vector text: {text}")))?;
-        let mut elements = Vec::with_capacity(values.len());
-        for value in values {
-            let value = value
-                .get()
-                .parse::<f64>()
-                .map_err(|_| VectorError::new(format!("Invalid vector text: {text}")))?;
-            if value.is_nan() {
-                return Err(VectorError::new("NaN not allowed in vector"));
-            }
-            if value.is_infinite() {
-                return Err(VectorError::new(format!("Invalid vector text: {text}")));
-            }
-            if !(-f64::from(f32::MAX)..=f64::from(f32::MAX)).contains(&value) {
-                return Err(VectorError::new(format!(
-                    "value {} out of range for float32",
-                    format_go_exponent(value)
-                )));
-            }
-            elements.push(value as f32);
-        }
-        check_vector_dim_valid(elements.len() as isize)?;
-        Ok(Self::from_elements(elements))
+        parse_vector_text(text)
     }
 
     /// Returns whether this is the source zero value.
@@ -1101,6 +1075,162 @@ pub fn check_vector_dim_valid(dimensions: isize) -> Result<(), VectorError> {
         )));
     }
     Ok(())
+}
+
+fn parse_vector_text(text: &str) -> Result<VectorFloat32, VectorError> {
+    let invalid = || VectorError::new(format!("Invalid vector text: {text}"));
+    let start = skip_vector_space(text);
+    let Some(array) = start.strip_prefix('[') else {
+        if let Some(tail) = start.strip_prefix("null") {
+            if text.trim() != "null" && valid_vector_tail(tail) {
+                return Ok(VectorFloat32::default());
+            }
+        }
+        return Err(invalid());
+    };
+    let mut input = skip_vector_space(array);
+    let capacity = if input.len() >= 128 {
+        (memchr::memchr_iter(b',', input.as_bytes()).count() + 1).min(MAX_VECTOR_DIMENSION)
+    } else {
+        0
+    };
+    let mut elements = SmallVec::<[f32; INLINE_VECTOR_ELEMENTS]>::with_capacity(capacity);
+    let mut dimensions = 0;
+    let tail = if let Some(tail) = input.strip_prefix(']') {
+        tail
+    } else {
+        loop {
+            let (value, tail) = read_vector_number(input).ok_or_else(invalid)?;
+            if value.abs() > f64::from(f32::MAX) {
+                return Err(VectorError::new(format!(
+                    "value {} out of range for float32",
+                    format_go_exponent(value)
+                )));
+            }
+            if dimensions < MAX_VECTOR_DIMENSION {
+                elements.push(value as f32);
+            }
+            dimensions += 1;
+            let tail = skip_vector_space(tail);
+            match tail.as_bytes().first() {
+                Some(b',') => input = skip_vector_space(&tail[1..]),
+                Some(b']') => break &tail[1..],
+                _ => return Err(invalid()),
+            }
+        }
+    };
+    if !valid_vector_tail(tail) {
+        return Err(invalid());
+    }
+    check_vector_dim_valid(dimensions as isize)?;
+    if elements.spilled() {
+        return Ok(VectorFloat32::from_elements(elements.into_vec()));
+    }
+    let mut values = [0.0; INLINE_VECTOR_ELEMENTS];
+    values[..elements.len()].copy_from_slice(&elements);
+    Ok(VectorFloat32 {
+        elements: VectorElements::Inline {
+            values,
+            len: dimensions as u8,
+        },
+    })
+}
+
+#[inline]
+fn skip_vector_space(input: &str) -> &str {
+    let count = input
+        .as_bytes()
+        .iter()
+        .take_while(|&&byte| matches!(byte, b' ' | b'\t' | b'\r' | b'\n'))
+        .count();
+    &input[count..]
+}
+
+fn valid_vector_tail(tail: &str) -> bool {
+    // jsoniter's trailing Skip consumes one unexpected byte. Go's TrimSpace
+    // also treats vertical tab and form feed as whitespace.
+    matches!(skip_vector_space(tail).as_bytes(), [] | [b'\x0b' | b'\x0c', ..])
+}
+
+#[inline]
+fn read_vector_number(input: &str) -> Option<(f64, &str)> {
+    const POW10: [f64; 7] = [1.0, 10.0, 100.0, 1_000.0, 10_000.0, 100_000.0, 1_000_000.0];
+    let magnitude = input.strip_prefix('-').unwrap_or(input);
+    let negative = magnitude.len() != input.len();
+    let bytes = magnitude.as_bytes();
+    let first = *bytes.first()?;
+    if first == b'.' || (first == b'0' && bytes.get(1).is_some_and(u8::is_ascii_digit)) {
+        return None;
+    }
+    if !first.is_ascii_digit() {
+        return read_vector_number_slow(magnitude, negative, 0, false);
+    }
+
+    let mut value = u64::from(first - b'0');
+    let mut len = 1;
+    while let Some(digit) = bytes
+        .get(len)
+        .map(|byte| byte.wrapping_sub(b'0'))
+        .filter(|&digit| digit < 10)
+    {
+        if len == 15 {
+            return read_vector_number_slow(magnitude, negative, len, false);
+        }
+        value = value * 10 + u64::from(digit);
+        len += 1;
+    }
+    let mut scale = 0;
+    if bytes.get(len) == Some(&b'.') {
+        len += 1;
+        let start = len;
+        while let Some(digit) = bytes
+            .get(len)
+            .map(|byte| byte.wrapping_sub(b'0'))
+            .filter(|&digit| digit < 10)
+        {
+            if len == 16 || len - start == 6 {
+                return read_vector_number_slow(magnitude, negative, len, true);
+            }
+            value = value * 10 + u64::from(digit);
+            len += 1;
+        }
+        scale = len - start;
+        if scale == 0 {
+            return None;
+        }
+    }
+    if !matches!(bytes.get(len), Some(b',' | b']' | b'}' | b' ' | b'\t' | b'\n' | b'\r')) {
+        return read_vector_number_slow(magnitude, negative, len, scale != 0);
+    }
+    let value = if scale == 0 {
+        value as f64
+    } else {
+        value as f64 / POW10[scale]
+    };
+    Some((if negative { -value } else { value }, &magnitude[len..]))
+}
+
+#[cold]
+fn read_vector_number_slow(
+    magnitude: &str,
+    negative: bool,
+    checked: usize,
+    checked_fraction: bool,
+) -> Option<(f64, &str)> {
+    let rest = &magnitude.as_bytes()[checked..];
+    let len = checked + rest
+        .iter()
+        .position(|byte| !matches!(byte, b'0'..=b'9' | b'+' | b'-' | b'.' | b'e' | b'E'))?;
+    let number = &magnitude[..len];
+    if (checked == 0 && number.starts_with('-'))
+        || (!checked_fraction && number[checked..].split_once('.').is_some_and(|(_, fraction)| {
+            !fraction.as_bytes().first().is_some_and(u8::is_ascii_digit)
+        }))
+    {
+        return None;
+    }
+    let value = number.parse::<f64>().ok()?;
+    value.is_finite().then(|| (if negative { -value } else { value }, &magnitude[len..]))
 }
 
 fn format_go_exponent(value: f64) -> String {

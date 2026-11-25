@@ -173,26 +173,35 @@ fn from_text(
     result: &mut Column,
 ) -> Result<(), EvalError> {
     let n = input.num_rows();
-    let buf = vec_eval::argument(&function.args[0], EvalType::String, ctx, input)?;
     let flen = function
         .get_static_type()
         .expect("vector return type")
         .flen();
-    result.reserve_vector_float32(n);
-    for i in 0..n {
-        if buf.is_null(i) {
-            result.append_null();
-            continue;
-        }
-        let bytes = buf.get_bytes(i);
-        let text = std::str::from_utf8(bytes.as_ref())
-            .map_err(|error| EvalError::Vector(error.to_string()))?;
-        let vector =
-            VectorFloat32::parse(text).map_err(|error| EvalError::Vector(error.to_string()))?;
-        vector
-            .check_dims_fit_column(usize::try_from(flen).ok())
-            .map_err(|error| EvalError::Vector(error.to_string()))?;
-        result.append_vector_float32(&vector);
-    }
-    Ok(())
+    let dimensions = usize::try_from(flen).ok();
+    vec_eval::with_argument_column(
+        &function.args[0],
+        EvalType::String,
+        ctx,
+        input,
+        |column, selection| {
+            let cells = column.raw_cells();
+            let get = cells.variable_cells();
+            result.reserve_vector_float32(n);
+            for row in 0..n {
+                let row = selection.map_or(row, |selection| selection[row]);
+                if cells.is_null(row) {
+                    result.append_null();
+                    continue;
+                }
+                let text = std::str::from_utf8(get(row))
+                    .map_err(|error| EvalError::Vector(error.to_string()))?;
+                let vector = VectorFloat32::parse(text)
+                    .map_err(|error| EvalError::Vector(error.to_string()))?;
+                vector.check_dims_fit_column(dimensions)
+                    .map_err(|error| EvalError::Vector(error.to_string()))?;
+                result.append_vector_float32(&vector);
+            }
+            Ok(())
+        },
+    )?
 }
