@@ -53,7 +53,8 @@ func TestTiDBOptOn(t *testing.T) {
 
 func TestNewSessionVars(t *testing.T) {
 	vars := NewSessionVars(nil)
-	require.Equal(t, vardef.DefTiDBEnableOnDuplicateExpressionReuse, vars.EnableOnDuplicateExprReuse)
+	require.False(t, vars.EnableOnDuplicateExprReuse)
+	require.Equal(t, vardef.Off, GetSysVar(vardef.TiDBEnableOnDuplicateExpressionReuse).Value)
 	require.NoError(t, vars.SetSystemVar(vardef.TiDBEnableOnDuplicateExpressionReuse, "OFF"))
 	require.False(t, vars.EnableOnDuplicateExprReuse)
 	require.NoError(t, vars.SetSystemVar(vardef.TiDBEnableOnDuplicateExpressionReuse, "ON"))

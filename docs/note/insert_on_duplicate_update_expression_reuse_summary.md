@@ -63,10 +63,10 @@ and values(c2) != 1
 1. 在 AST rewrite 阶段复用相同 SQL 子表达式。
 2. 在 `ResolveIndices` 阶段继续复用已经构造出的 expression 子树。
 
-同时新增一个 session/global 开关控制该优化，默认开启：
+同时新增一个 session/global 开关控制该优化，默认关闭，可按需开启：
 
 ```sql
-tidb_enable_on_duplicate_expression_reuse = ON
+tidb_enable_on_duplicate_expression_reuse = OFF
 ```
 
 如果关闭该开关，或者当前 `ON DUPLICATE KEY UPDATE` 表达式足够简单，该路径会回到原先逐个 assignment 独立 rewrite / resolve 的行为，尽量避免额外性能成本和语义风险。
@@ -213,8 +213,8 @@ tidb_enable_on_duplicate_expression_reuse
 
 - Scope: `GLOBAL | SESSION`
 - 类型: bool
-- 默认值: `ON`
-- 支持 session 级关闭，用于规避潜在兼容风险。
+- 默认值: `OFF`
+- 支持 session/global 级开启，用于按需启用该优化。
 - 已加入 hint updatable verified map，可以通过相关 hint 更新。
 
 当开关为 `OFF`，或当前 `ON DUPLICATE KEY UPDATE` 表达式没有达到复杂度阈值时：
@@ -392,9 +392,9 @@ AST rewrite 阶段通过 restore text 判断相同子树，因此必须确保不
 
 `ScalarFunction.CloneWithArgs` 不复制原来的 `hashcode` / `canonicalhashcode` 缓存，因为传入 args 从 API 角度不一定与旧 args 完全等价。新 expression 会在需要 hash 时基于新 args 重新计算。
 
-### 默认开启风险
+### 默认关闭
 
-变量默认开启可以让真实 `ON DUPLICATE KEY UPDATE` 场景直接受益，但也意味着新逻辑会进入线上默认路径。为降低风险，保留了 session/global 开关，发现异常时可以快速关闭。
+变量默认关闭，`ON DUPLICATE KEY UPDATE` 默认沿用原有路径。可通过 session/global 开关或 `SET_VAR` hint 按需开启该优化，并在发现异常时关闭。
 
 ### 未完成验证
 

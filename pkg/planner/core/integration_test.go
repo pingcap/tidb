@@ -158,6 +158,7 @@ func TestNoneAccessPathsFoundByIsolationRead(t *testing.T) {
 func TestInsertSelectOnDuplicateUpdateExpressionReuseKeepsSchemaName(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
+	tk.MustQuery("select @@global.tidb_enable_on_duplicate_expression_reuse, @@session.tidb_enable_on_duplicate_expression_reuse").Check(testkit.Rows("0 0"))
 
 	tk.MustExec("create database d1")
 	tk.MustExec("create database d2")

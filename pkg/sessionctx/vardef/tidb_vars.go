@@ -1709,7 +1709,7 @@ const (
 	DefTiDBEnableStrictNotNullCheck         = true
 	DefEnableStrictDoubleTypeCheck          = true
 	DefEnableVectorizedExpression           = true
-	DefTiDBEnableOnDuplicateExpressionReuse = true
+	DefTiDBEnableOnDuplicateExpressionReuse = false
 	DefTiDBEnableTiKVShortCircuitExpression = false
 	DefTiDBOptJoinReorderThreshold          = 0
 	DefTiDBOptEnableAdvancedJoinReorder     = true
