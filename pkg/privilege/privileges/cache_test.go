@@ -604,8 +604,9 @@ func TestColumnPrivilegeCacheCorrectness(t *testing.T) {
 
 	const colNum = 512
 	colNames := make([]string, 0, colNum)
-	for range colNum {
-		colNames = append(colNames, generateRandomString(5))
+	// Prefix random names to avoid SQL keywords and duplicate identifiers.
+	for i := range colNum {
+		colNames = append(colNames, fmt.Sprintf("c%d_%s", i, generateRandomString(5)))
 	}
 	var sb strings.Builder
 	sb.WriteString("create table t(")
@@ -620,8 +621,8 @@ func TestColumnPrivilegeCacheCorrectness(t *testing.T) {
 
 	const userNum = 3
 	userNames := make([]string, 0, userNum)
-	for range userNum {
-		userName := generateRandomString(5)
+	for i := range userNum {
+		userName := fmt.Sprintf("u%d_%s", i, generateRandomString(5))
 		userNames = append(userNames, userName)
 		tk.MustExec(fmt.Sprintf("create user %s", userName))
 	}
