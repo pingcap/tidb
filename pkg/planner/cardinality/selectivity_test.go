@@ -950,6 +950,62 @@ func TestVirtualColumnIndexEstimation(t *testing.T) {
 	require.InDelta(t, 50.0, estRows, 0.01)
 }
 
+func TestVirtualColumnEstimatedFromBaseColumn(t *testing.T) {
+	// ANALYZE builds no statistics for a virtual generated column, so conditions
+	// on lc = lower(c) used to get the pseudo estimate. They are now estimated by
+	// evaluating them over the statistics of c.
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@global.tidb_enable_auto_analyze='OFF'")
+	tk.MustExec("set @@session.tidb_analyze_version=2")
+	tk.MustExec("set @@tidb_stats_load_sync_wait = 3000")
+	tk.MustExec(`create table t(id int primary key, c varchar(32) collate utf8mb4_bin, k int,
+		lc varchar(32) collate utf8mb4_bin as (lower(c)) virtual,
+		ck varchar(64) collate utf8mb4_bin as (concat(c, k)) virtual)`)
+	// 1000 rows: 'Alpha' in three letter cases, 100 rows each; 'Beta' in three
+	// letter cases, 30 rows each; 10 NULLs; 600 distinct 'Item-<n>' values.
+	tk.MustExec(`insert into t(id, c, k)
+		select x.a,
+			case when x.a <= 300 then elt(1 + mod(x.a, 3), 'Alpha', 'ALPHA', 'alpha')
+				when x.a <= 390 then elt(1 + mod(x.a, 3), 'Beta', 'BETA', 'beta')
+				when x.a <= 400 then null
+				else concat('Item-', x.a) end,
+			mod(x.a, 10)
+		from (with recursive x as (select 1 as a union all select a + 1 from x where a < 1000) select a from x) as x`)
+	tk.MustExec("analyze table t all columns with 64 buckets, 100 topn")
+	require.Empty(t, tk.MustQuery("show stats_histograms where db_name = 'test' and table_name = 't' and column_name = 'lc'").Rows())
+
+	// Keep only the statistics metadata in the cache: the statistics of c must be
+	// loaded because of the conditions on lc, which c doesn't appear in.
+	h := dom.StatsHandle()
+	h.ClearForTest()
+	require.NoError(t, h.InitStatsLite(context.Background(), dom.InfoSchema()))
+
+	for _, tc := range []struct {
+		cond     string
+		min, max float64
+	}{
+		{"lc = 'alpha'", 270, 330},
+		{"lc in ('alpha', 'beta')", 350, 430},
+		{"lc like '%lph%'", 270, 330},
+		{"lc = 'alpha' and lc like 'al%'", 270, 330},
+		{"lc = 'item-500'", 0.5, 5},
+		{"lc is null", 5, 15},
+		// lc is estimated from c and combined with k by independence: 300 * 10%.
+		{"lc = 'alpha' and k = 1", 15, 60},
+	} {
+		estRows := getTableReaderEstRows(t, tk, "select * from t where "+tc.cond)
+		require.GreaterOrEqual(t, estRows, tc.min, tc.cond)
+		require.LessOrEqual(t, estRows, tc.max, tc.cond)
+	}
+
+	// A virtual column over more than one column keeps the default selectivity
+	// (0.8 of 1000 rows), as do all the conditions above without this estimation.
+	estRows := getTableReaderEstRows(t, tk, "select * from t where ck = 'Alpha1'")
+	require.InDelta(t, 800.0, estRows, 0.01)
+}
+
 func TestNewIndexWithColumnStats(t *testing.T) {
 	// Test two identical tables where one has no statistics at all, and the other only has column statistics but no index statistics
 	// Test that we supplement index estimation with column stats if there are no index stats available

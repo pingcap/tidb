@@ -115,6 +115,10 @@ func Selectivity(
 			// timing-dependent status that surfaces as stats:partial[<json col>:...].
 			continue
 		}
+		if node := virtualColumnStatsNode(ctx, coll, col, remainedExprs); node != nil {
+			nodes = append(nodes, node)
+			continue
+		}
 		id := col.UniqueID
 		colStats := coll.GetCol(id)
 		if colStats != nil {
@@ -913,6 +917,16 @@ func getMaskAndSelectivityForMVIndex(
 // GetSelectivityByFilter try to estimate selectivity of expressions by evaluate the expressions using TopN, Histogram buckets boundaries and NULL.
 // Currently, this method can only handle expressions involving a single column.
 func GetSelectivityByFilter(sctx planctx.PlanContext, coll *statistics.HistColl, filters expression.Expression) (ok bool, selectivity float64, err error) {
+	return getSelectivityByFilter(sctx, coll, filters, 0)
+}
+
+// getSelectivityByFilter is GetSelectivityByFilter with one extra input: when
+// histPoints > 0, the filter is known to select at most histPoints distinct
+// values outside the TopN, so the histogram part is capped at histPoints values
+// of average size. Evaluating the bucket bounds samples the histogram at only
+// 2 * buckets points, which can't estimate a few rare values: one matching
+// bound already counts as a whole bucket.
+func getSelectivityByFilter(sctx planctx.PlanContext, coll *statistics.HistColl, filters expression.Expression, histPoints int) (ok bool, selectivity float64, err error) {
 	// 1. Make sure the expressions
 	//   (1) are safe to be evaluated here,
 	//   (2) involve only one column,
@@ -1050,6 +1064,9 @@ func GetSelectivityByFilter(sctx planctx.PlanContext, coll *statistics.HistColl,
 		}
 		lowerBoundsSel = float64(lowerBoundMatchCnt) / float64(histBucketsLen)
 		histSel = lowerBoundsSel*lowerBoundsRatio + upperBoundsSel*upperBoundsRatio
+		if histPoints > 0 && hist.NDV > 0 {
+			histSel = min(histSel, float64(histPoints)/float64(hist.NDV))
+		}
 		histSel *= histTotalCnt / totalCnt
 	}
 
