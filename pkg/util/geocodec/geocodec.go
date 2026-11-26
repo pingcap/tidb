@@ -32,7 +32,7 @@ import (
 )
 
 const (
-	// Version1 is the stored-format version whose payload is the bare value.
+	// Version1 is the first stored-format version.
 	Version1 byte = 1
 	// MaxDepth bounds nesting, counted in geometry headers from the root (a POINT is 1), so
 	// hostile input fails instead of overflowing the goroutine stack.
@@ -56,7 +56,6 @@ const (
 
 	byteOrderLittle byte = 1
 
-	// sridSize is the size of the bare value's SRID prefix.
 	sridSize = 4
 	// minGeometrySize is the smallest possible WKB geometry: a byte-order byte, a type
 	// word and a zero count.
@@ -96,7 +95,6 @@ const (
 	dimsXYZM dims = 0b11
 )
 
-// size is the number of bytes in a position.
 func (d dims) size() int {
 	switch d {
 	case dimsXY:
@@ -107,13 +105,8 @@ func (d dims) size() int {
 	return 24
 }
 
-// CheckBare checks b, a bare value from an untrusted source, against every rule of the
-// format, building nothing and allocating nothing: the SRID prefix, then one geometry,
-// little-endian throughout and without the SRID flag, of type codes 1 to 7, each member of
-// the type its parent requires and with its parent's Z and M, finite coordinates except a
-// POINT EMPTY's NaNs, at least one point in each ring, nesting at most MaxDepth, counts
-// that fit in the input, and nothing after the geometry. MySQL's structure rules, such as
-// a linestring's minimum of two points, are not checked.
+// CheckBare checks a bare value from a client against every rule of the format, without
+// allocating. MySQL's structure rules, such as a linestring's 2+ points, are not checked.
 func CheckBare(b []byte) error {
 	if len(b) < sridSize {
 		return ErrInvalid
@@ -121,13 +114,13 @@ func CheckBare(b []byte) error {
 	return validate(b[sridSize:])
 }
 
-// BareToStored returns the stored format of bare, a value CheckBare has accepted.
+// BareToStored prepends the version byte; bare must have passed CheckBare.
 func BareToStored(bare []byte) []byte {
 	stored := make([]byte, 0, 1+len(bare))
 	return append(append(stored, Version1), bare...)
 }
 
-// StoredToBare returns the bare value a stored value holds, without copying it.
+// StoredToBare checks and strips the version byte, without copying.
 func StoredToBare(stored []byte) ([]byte, error) {
 	if len(stored) == 0 {
 		return nil, ErrInvalid
@@ -138,8 +131,7 @@ func StoredToBare(stored []byte) ([]byte, error) {
 	return stored[1:], nil
 }
 
-// Header returns a bare value's SRID and geometry type from its root header, without
-// reading its body.
+// Header reads only the root header of a bare value.
 func Header(bare []byte) (srid uint32, typ Type, err error) {
 	c := cursor{buf: bare}
 	if srid, err = c.uint32(); err != nil {
@@ -193,15 +185,14 @@ func ParseColumnValue(b []byte) (bare []byte, srid uint32, sum Summary, err erro
 	return bare, binary.LittleEndian.Uint32(b), v.sum, nil
 }
 
-// cursor reads WKB from buf at pos. claimed sums the bytes every count read so far needs,
-// so nested counts cannot claim the same bytes again and allocate many times the input.
 type cursor struct {
-	buf     []byte
-	pos     int
+	buf []byte
+	pos int
+	// claimed sums the bytes every count read so far needs, so nested counts cannot claim
+	// the same bytes twice.
 	claimed uint64
 }
 
-// next returns the next n bytes and moves past them.
 func (c *cursor) next(n int) ([]byte, error) {
 	if n > len(c.buf)-c.pos {
 		return nil, ErrInvalid
@@ -211,7 +202,6 @@ func (c *cursor) next(n int) ([]byte, error) {
 	return b, nil
 }
 
-// littleEndian reads a byte-order byte, which must say little-endian.
 func (c *cursor) littleEndian() error {
 	b, err := c.next(1)
 	if err != nil {
@@ -223,7 +213,6 @@ func (c *cursor) littleEndian() error {
 	return nil
 }
 
-// uint32 reads a little-endian uint32.
 func (c *cursor) uint32() (uint32, error) {
 	b, err := c.next(4)
 	if err != nil {
@@ -232,8 +221,8 @@ func (c *cursor) uint32() (uint32, error) {
 	return binary.LittleEndian.Uint32(b), nil
 }
 
-// count reads an element count and checks that its elements, at least minSize bytes each,
-// fit in the input together with every earlier count's.
+// count reads an element count whose elements, minSize bytes or more each, must fit in the
+// input with every earlier count's.
 func (c *cursor) count(minSize int) (int, error) {
 	n, err := c.uint32()
 	if err != nil {
@@ -247,8 +236,7 @@ func (c *cursor) count(minSize int) (int, error) {
 	return int(n), nil
 }
 
-// splitType splits an EWKB type word into the geometry type, the coordinates of its
-// positions, and whether an SRID follows; ok is false for a type code other than 1 to 7.
+// splitType splits an EWKB type word; ok is false for a type code other than 1 to 7.
 func splitType(word uint32) (typ Type, d dims, hasSRID, ok bool) {
 	typ = Type(word &^ ewkbFlags)
 	if word&ewkbZ != 0 {
@@ -260,7 +248,6 @@ func splitType(word uint32) (typ Type, d dims, hasSRID, ok bool) {
 	return typ, d, word&ewkbSRID != 0, typ >= TypePoint && typ <= TypeGeometryCollection
 }
 
-// memberTypeOf returns the type a collection's members must have.
 func memberTypeOf(typ Type) Type {
 	switch typ {
 	case TypeMultiPoint:
@@ -273,7 +260,6 @@ func memberTypeOf(typ Type) Type {
 	return anyType
 }
 
-// validate checks b, the EWKB of a bare value, as CheckBare describes.
 func validate(b []byte) error {
 	v := validator{c: cursor{buf: b}}
 	return v.run()
@@ -302,8 +288,7 @@ func (v *validator) run() error {
 	return nil
 }
 
-// geometry checks one geometry. A member of a collection passes the type its parent
-// requires and the parent's coordinates, which it must match.
+// geometry checks one geometry; want and parentDims are what its parent requires.
 func (v *validator) geometry(depth int, want Type, parentDims dims) error {
 	if depth > MaxDepth {
 		return ErrTooDeep
@@ -350,9 +335,8 @@ func (v *validator) geometry(depth int, want Type, parentDims dims) error {
 	return nil
 }
 
-// point checks a point's coordinates: all finite, or all NaN, which is POINT EMPTY. A
-// point has no count to write as 0, as the other empty geometries do, so EWKB writes POINT
-// EMPTY as NaN coordinates, as PostGIS and GEOS do. MySQL's format has no POINT EMPTY.
+// point accepts all-NaN coordinates: EWKB writes POINT EMPTY that way, as PostGIS and GEOS
+// do.
 func (v *validator) point(size int) error {
 	coords, err := v.c.next(size)
 	if err != nil {
@@ -396,8 +380,6 @@ func (v *validator) positions(coords []byte, size int) {
 	v.sum.Envelope = env
 }
 
-// sequence checks a count of positions of size bytes and their coordinates, which must be
-// finite, and returns the count.
 func (v *validator) sequence(size int) (int, error) {
 	n, err := v.c.count(size)
 	if err != nil {
@@ -414,8 +396,7 @@ func (v *validator) sequence(size int) (int, error) {
 	return n, nil
 }
 
-// polygon checks a polygon: rings of at least one point each, or none, which is POLYGON
-// EMPTY.
+// polygon requires a point in each ring; no rings is POLYGON EMPTY.
 func (v *validator) polygon(size int) error {
 	n, err := v.c.count(4)
 	if err != nil {
@@ -436,7 +417,6 @@ func (v *validator) polygon(size int) error {
 	return nil
 }
 
-// finite reports whether every little-endian coordinate in coords is finite.
 func finite(coords []byte) bool {
 	for i := 0; i+8 <= len(coords); i += 8 {
 		if binary.LittleEndian.Uint64(coords[i:])&nonFinite == nonFinite {
