@@ -441,16 +441,7 @@ fn validate_offsets(offsets: &[[u8; 8]], ordinal: usize) -> Result<usize, CodecD
     }
     // Accumulate violations so the compiler can compare several adjacent
     // pairs at a time even if the table starts at an unaligned byte.
-    let out_of_order = match offsets {
-        [_] => false,
-        [_, last] => read(*last) < 0,
-        _ => offsets[1..]
-            .iter()
-            .zip(offsets)
-            .fold(false, |invalid, (&next, &previous)| {
-                invalid | (read(next) < read(previous))
-            }),
-    };
+    let out_of_order = offsets_out_of_order(offsets);
     if out_of_order {
         let index = offsets
             .windows(2)
@@ -464,6 +455,42 @@ fn validate_offsets(offsets: &[[u8; 8]], ordinal: usize) -> Result<usize, CodecD
         });
     }
     offset_data_len(offsets, ordinal)
+}
+
+fn offsets_out_of_order(offsets: &[[u8; 8]]) -> bool {
+    #[cfg(target_arch = "aarch64")]
+    if offsets.len() > 16_384 {
+        // Load each word once, carrying the last word into the next block.
+        // Reduce violations per lane to keep the comparisons parallel.
+        const LANES: usize = 24;
+        let (blocks, tail) = offsets[1..].as_chunks::<LANES>();
+        let mut previous = i64::from_ne_bytes(offsets[0]);
+        // A failed comparison sets every bit in its lane's mask.
+        let mut invalid = [0i64; LANES];
+        for block in blocks {
+            let next = block.map(i64::from_ne_bytes);
+            invalid[0] |= -i64::from(next[0] < previous);
+            for i in 1..LANES {
+                invalid[i] |= -i64::from(next[i] < next[i - 1]);
+            }
+            previous = next[LANES - 1];
+        }
+        return invalid.into_iter().any(|lane| lane != 0)
+            || offsets_out_of_order_tail(&offsets[offsets.len() - tail.len() - 1..]);
+    }
+    offsets_out_of_order_tail(offsets)
+}
+
+#[inline]
+fn offsets_out_of_order_tail(offsets: &[[u8; 8]]) -> bool {
+    let read = |value| i64::from_ne_bytes(value);
+    match offsets {
+        [_] => false,
+        [first, last] => read(*last) < read(*first),
+        _ => offsets[1..].iter().zip(offsets).fold(false, |invalid, (&next, &previous)| {
+            invalid | (read(next) < read(previous))
+        }),
+    }
 }
 
 #[inline]
@@ -1222,6 +1249,31 @@ mod tests {
                 value: 1,
             })
         );
+    }
+
+    #[test]
+    fn large_wire_offsets_report_the_first_decrease_across_blocks_and_tail() {
+        const ROWS: usize = 16_387;
+        let mut offsets: Vec<_> = (0..=ROWS)
+            .map(|index| (index as i64 / 2).to_ne_bytes())
+            .collect();
+        assert_eq!(validate_offsets(&offsets, 2), Ok(ROWS / 2));
+
+        for index in [1, 24, 25, 16_368, 16_369, ROWS - 1, ROWS] {
+            let original = offsets[index];
+            for value in [i64::MIN, i64::from_ne_bytes(offsets[index - 1]) - 1] {
+                offsets[index] = value.to_ne_bytes();
+                assert_eq!(
+                    validate_offsets(&offsets, 2),
+                    Err(CodecDecodeError::InvalidOffset {
+                        ordinal: 2,
+                        offset_index: index,
+                        value,
+                    })
+                );
+            }
+            offsets[index] = original;
+        }
     }
 
     #[test]

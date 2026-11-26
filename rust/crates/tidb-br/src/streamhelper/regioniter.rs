@@ -19,6 +19,7 @@ use std::time::Duration;
 
 use tidb_gocontext::Context;
 use tidb_proto::metapb;
+use tidb_redact::{key as redact, key_owned};
 
 use crate::errors::{self, Result, ERR_PD_BATCH_SCAN_REGION};
 use crate::utils::backoff::RetryState;
@@ -71,10 +72,6 @@ pub trait TiKVClusterMeta: Send + Sync {
     /// # Errors
     /// PD's error.
     fn fetch_current_ts(&self, ctx: &Context) -> Result<u64>;
-}
-
-fn redact(key: &[u8]) -> String {
-    tidb_redact::key(key)
 }
 
 /// Go `kv.Key.Next`.
@@ -189,8 +186,14 @@ impl RegionIter<'_> {
                         "failed with trying to scan regions",
                         &[
                             tidb_log::Field::new("error", tidb_log::Value::Str(err.to_string())),
-                            tidb_log::Field::new("start", tidb_log::Value::Str(redact(&self.current_start_key))),
-                            tidb_log::Field::new("end", tidb_log::Value::Str(redact(&self.end_key))),
+                            tidb_log::Field::new(
+                                "start",
+                                tidb_log::Value::Str(key_owned(&self.current_start_key)),
+                            ),
+                            tidb_log::Field::new(
+                                "end",
+                                tidb_log::Value::Str(key_owned(&self.end_key)),
+                            ),
                         ],
                     );
                 }

@@ -439,7 +439,10 @@ impl Listener {
                         tidb_log::warn(
                             "start key not encoded, skipping",
                             &[
-                                Field::new("event", Value::Str(tidb_redact::key(&m.start_key))),
+                                Field::new(
+                                    "event",
+                                    Value::Str(tidb_redact::key_owned(&m.start_key)),
+                                ),
                                 Field::new("error", Value::Str(err)),
                             ],
                         );
@@ -452,7 +455,10 @@ impl Listener {
                         tidb_log::warn(
                             "end key not encoded, skipping",
                             &[
-                                Field::new("event", Value::Str(tidb_redact::key(&m.end_key))),
+                                Field::new(
+                                    "event",
+                                    Value::Str(tidb_redact::key_owned(&m.end_key)),
+                                ),
                                 Field::new("error", Value::Str(err)),
                             ],
                         );

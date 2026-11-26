@@ -749,30 +749,92 @@ impl ChunkValueDecoder {
                         if prefix.len() == len && !self.tried_key_cache =>
                     {
                         // A different key set can still reuse its directory checks.
-                        self.cache_checked_keys(encoded);
+                        self.cache_checked_keys(encoded, CheckedJSONKeys::new);
                     }
                     _ => {}
                 }
+            } else if prefix.is_none()
+                && encoded.len() >= 2048
+                && more_values
+                && self.json_layout.is_none()
+                && !self.tried_key_cache
+            {
+                self.cache_checked_keys(encoded, CheckedJSONKeys::for_wide_string_run);
             }
             return layout;
         }
         let layout = BinaryJSON::check_encoded_layout(encoded);
         if self.json_layout.is_none() && !self.tried_key_cache && more_values && layout.is_valid() {
-            self.cache_checked_keys(encoded);
+            self.cache_checked_keys(encoded, CheckedJSONKeys::new);
         }
         layout
     }
 
     #[cold]
-    fn cache_checked_keys(&mut self, encoded: &[u8]) {
+    fn cache_checked_keys(
+        &mut self,
+        encoded: &[u8],
+        check: fn(&[u8]) -> Option<CheckedJSONKeys>,
+    ) {
         self.tried_key_cache = true;
-        if let Some(keys) = CheckedJSONKeys::new(encoded) {
+        if let Some(keys) = check(encoded) {
             self.json_layout = Some(CachedObjectLayout::Keys {
                 keys,
                 consecutive_misses: 0,
                 matched: false,
             });
         }
+    }
+}
+
+#[cfg(test)]
+mod chunk_value_decoder_tests {
+    use super::*;
+
+    #[test]
+    fn large_flat_json_reuses_layout_and_revalidates_text() {
+        let make_cell = |text: &str| {
+            let members = (0..16)
+                .map(|index| format!(r#""key{index:03}":"{text}""#))
+                .collect::<Vec<_>>()
+                .join(",");
+            let mut encoded = vec![JSON_FLAG];
+            BinaryJSON::parse(&format!("{{{members}}}")).unwrap().append_encoded_to(&mut encoded);
+            encoded
+        };
+        let ascii = make_cell(&"a".repeat(154));
+        let unicode = make_cell(&format!("値{}", "b".repeat(151)));
+        let mut invalid = unicode.clone();
+        *invalid.last_mut().unwrap() = 0xff;
+        let input = [ascii.as_slice(), &unicode, &invalid].concat();
+        let field_type = FieldType::new(FieldTypeCode::Json);
+        let mut chunk = Chunk::new_chunk_with_capacity(std::slice::from_ref(&field_type), 3);
+        let mut decoder = ChunkValueDecoder::default();
+
+        let rest = decoder.decode_one(&input, &mut chunk, 0, &field_type, Some(&Utc)).unwrap();
+        assert!(matches!(decoder.json_layout, Some(CachedObjectLayout::Keys { .. })));
+        let rest = decoder.decode_one(rest, &mut chunk, 0, &field_type, Some(&Utc)).unwrap();
+        assert_eq!(chunk.get_row(0).get_raw(0).as_ref(), &ascii[1..]);
+        assert_eq!(chunk.get_row(1).get_raw(0).as_ref(), &unicode[1..]);
+        assert!(decoder.decode_one(rest, &mut chunk, 0, &field_type, Some(&Utc)).is_err());
+        assert_eq!(chunk.num_rows(), 2);
+    }
+
+    #[test]
+    fn large_flat_json_without_wide_strings_keeps_flat_validation() {
+        let members = (0..128)
+            .map(|index| {
+                let value = if index % 2 == 0 { "1.5" } else { r#""short""# };
+                format!(r#""key{index:03}":{value}"#)
+            })
+            .collect::<Vec<_>>()
+            .join(",");
+        let cell = BinaryJSON::parse(&format!("{{{members}}}")).unwrap().encoded();
+        assert!(cell.len() >= 2048);
+        let mut decoder = ChunkValueDecoder::default();
+        assert!(decoder.check_json_layout(&cell, true).is_valid());
+        assert!(decoder.tried_key_cache);
+        assert!(decoder.json_layout.is_none());
     }
 }
 

@@ -130,9 +130,21 @@ impl Chunk {
         capacity: usize,
         required_rows: usize,
     ) -> Self {
+        Self::from_reusable_slots(
+            columns.into_iter().map(ColumnSlot::new).collect(),
+            capacity,
+            required_rows,
+        )
+    }
+
+    pub(crate) fn from_reusable_slots(
+        columns: Vec<ColumnSlot>,
+        capacity: usize,
+        required_rows: usize,
+    ) -> Self {
         Chunk {
             sel: None,
-            columns: columns.into_iter().map(ColumnSlot::new).collect(),
+            columns,
             columns_initialized: true,
             num_virtual_rows: 0,
             capacity,
@@ -577,29 +589,15 @@ impl Chunk {
         self.num_virtual_rows = 0;
     }
 
-    /// Go `resetForReuse`: decouple all column owners and restore the literal
-    /// zero-value chunk metadata while returning each unique column owner to
-    /// the caller. Aliased slots yield one owner; a cross-chunk live owner is
-    /// not reusable yet.
-    pub(crate) fn reset_for_reuse(&mut self, mut recycle: impl FnMut(Column)) {
+    /// Go `resetForReuse`: restore zero-value chunk metadata and detach its slots.
+    pub(crate) fn take_column_slots(&mut self) -> Vec<ColumnSlot> {
         self.sel = None;
         self.num_virtual_rows = 0;
         self.capacity = 0;
         self.required_rows = 0;
         self.in_complete_chunk = false;
         self.columns_initialized = false;
-        let mut slots = std::mem::take(&mut self.columns);
-        let mut shared_owners = HashSet::new();
-        // Drop duplicate references before trying to recover sole owners.
-        slots.retain(|slot| match slot {
-            ColumnSlot::Owned(_) | ColumnSlot::Registered(_) => true,
-            ColumnSlot::Shared(owner) => shared_owners.insert(std::sync::Arc::as_ptr(owner)),
-        });
-        for slot in slots {
-            if let Ok(column) = slot.into_unique_column() {
-                recycle(column);
-            }
-        }
+        std::mem::take(&mut self.columns)
     }
 
     /// Go allocator `resetForReuse`: drop column owners (which independently

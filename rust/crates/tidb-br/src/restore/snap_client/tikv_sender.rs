@@ -363,8 +363,8 @@ impl SnapClient {
                 tidb_log::warn(
                     &format!("start key must be smaller than end key, so skip sending {op} partition range request"),
                     &[
-                        Field::new("start key", Value::Str(tidb_redact::key(protect_start))),
-                        Field::new("end key", Value::Str(tidb_redact::key(protect_end))),
+                        Field::new("start key", Value::Str(tidb_redact::key_owned(protect_start))),
+                        Field::new("end key", Value::Str(tidb_redact::key_owned(protect_end))),
                     ],
                 );
                 true

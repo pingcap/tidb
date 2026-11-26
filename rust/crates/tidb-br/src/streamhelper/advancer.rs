@@ -990,8 +990,14 @@ impl CheckpointAdvancer {
             "Advancer starts to resolve locks",
             &[
                 Field::new("category", Value::Str("advancer".into())),
-                Field::new("StartKey", Value::Str(tidb_redact::key(&checkpoint_to_resolve.start_key))),
-                Field::new("EndKey", Value::Str(tidb_redact::key(&checkpoint_to_resolve.end_key))),
+                Field::new(
+                    "StartKey",
+                    Value::Str(tidb_redact::key_owned(&checkpoint_to_resolve.start_key)),
+                ),
+                Field::new(
+                    "EndKey",
+                    Value::Str(tidb_redact::key_owned(&checkpoint_to_resolve.end_key)),
+                ),
                 Field::new("checkpoint", Value::U64(checkpoint_to_resolve.ts)),
                 Field::new("current-ts", Value::U64(current_ts)),
                 Field::new("max-version", Value::U64(max_version)),

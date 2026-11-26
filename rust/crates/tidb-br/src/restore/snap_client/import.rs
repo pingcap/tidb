@@ -1011,8 +1011,8 @@ impl FileImporter for SnapFileImporter {
                 tidb_log::debug(
                     "scan regions",
                     &[
-                        Field::new("start key", Value::Str(tidb_redact::key(&start_key))),
-                        Field::new("end key", Value::Str(tidb_redact::key(&end_key))),
+                        Field::new("start key", Value::Str(tidb_redact::key_owned(&start_key))),
+                        Field::new("end key", Value::Str(tidb_redact::key_owned(&end_key))),
                         Field::new("count", Value::I64(regions.len() as i64)),
                         Field::new("pool size", Value::I64(1)),
                     ],

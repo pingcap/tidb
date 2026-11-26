@@ -122,7 +122,23 @@ impl EncodedJSONLayout {
 pub struct CheckedJSONKeys {
     prefix: Vec<u8>,
     packed_keys: Option<PackedObjectKeys>,
-    value_checks: Option<Vec<PayloadCheck>>,
+    value_checks: PayloadChecks,
+}
+
+enum PayloadChecks {
+    Fields(Vec<PayloadCheck>),
+    Run(Box<CheckedChildRun>),
+    General,
+}
+
+#[cfg(test)]
+impl PayloadChecks {
+    fn as_deref(&self) -> Option<&[PayloadCheck]> {
+        match self {
+            Self::Fields(checks) => Some(checks),
+            _ => None,
+        }
+    }
 }
 
 struct PackedObjectKeys {
@@ -240,12 +256,194 @@ struct CheckedChildLayout {
     offset: usize,
     prefix: Box<[u8]>,
     depth: u8,
+    last_key: Option<CheckedChildLastKey>,
+    last_key_changed: bool,
+}
+
+struct CheckedChildLastKey {
+    start: u8,
+    previous: u8,
+    order_prefix_end: u8,
+}
+
+impl CheckedChildLayout {
+    #[inline]
+    fn matches(&mut self, value: &[u8]) -> bool {
+        (!self.last_key_changed && value.starts_with(&self.prefix))
+            || self.matches_changed_key(value)
+    }
+
+    #[cold]
+    fn matches_changed_key(&mut self, value: &[u8]) -> bool {
+        let Some(key) = &self.last_key else {
+            return false;
+        };
+        let start = usize::from(key.start);
+        let Some(last) = value.get(start..self.prefix.len()) else {
+            return false;
+        };
+        let order_end = usize::from(key.order_prefix_end);
+        let order_prefix = &self.prefix[..order_end];
+        let order_matches = if (48..=64).contains(&order_end) {
+            let current = &value[..order_end];
+            current.first_chunk::<48>() == order_prefix.first_chunk::<48>()
+                && current.last_chunk::<16>() == order_prefix.last_chunk::<16>()
+        } else {
+            value.starts_with(order_prefix)
+        };
+        let ordered = order_matches
+            || (value.starts_with(&self.prefix[..start])
+                && &self.prefix[usize::from(key.previous)..start] < last);
+        let matches = ordered && is_valid_child_json_text(last);
+        self.last_key_changed |= matches;
+        matches
+    }
 }
 
 struct CheckedChildValues {
     layout: CheckedChildLayout,
     size: usize,
-    checks: Box<[ChildValueCheck]>,
+    checks: ChildValueChecks,
+}
+
+enum ChildValueChecks {
+    // Keep this common pair inline so each row can check both offsets directly.
+    FloatAndString { number: usize, text: usize },
+    General(Box<[ChildValueCheck]>),
+}
+
+struct CheckedChildRun {
+    prefix: Box<[u8]>,
+    depth: u8,
+    offset: usize,
+    size: usize,
+    count: usize,
+    number: usize,
+    text: usize,
+}
+
+impl CheckedChildRun {
+    #[cold]
+    fn find(parent: JSONContainer<'_>) -> Option<Box<Self>> {
+        let end = parent.value_entries + parent.count * VALUE_ENTRY_SIZE;
+        let entries = parent.value[parent.value_entries..end].as_chunks::<VALUE_ENTRY_SIZE>().0;
+        let first = entries.first()?;
+        if !matches!(first[0], JSON_TYPE_CODE_OBJECT | JSON_TYPE_CODE_ARRAY)
+            || entries.last()?[0] != first[0]
+        {
+            return None;
+        }
+        let (PayloadCheck::ChildWithValues(proof), _) = PayloadCheck::for_child(parent, 0, first, 128)? else {
+            return None;
+        };
+        let ChildValueChecks::FloatAndString { number, text } = proof.checks else {
+            return None;
+        };
+        let mut remaining = &parent.value[proof.layout.offset..];
+        for entry in entries {
+            let offset = parent.value.len() - remaining.len();
+            if entry[0] != first[0] || value_entry_offset(entry) != offset {
+                return None;
+            }
+            let (child, rest) = remaining.split_at_checked(proof.size)?;
+            if !child.starts_with(&proof.layout.prefix) {
+                return None;
+            }
+            remaining = rest;
+        }
+        Some(Box::new(Self {
+            prefix: proof.layout.prefix,
+            depth: proof.layout.depth,
+            offset: proof.layout.offset,
+            size: proof.size,
+            count: entries.len(),
+            number,
+            text,
+        }))
+    }
+
+    #[inline(never)]
+    fn validate(&self, parent: JSONContainer<'_>) -> Result<ValidatedLayout, BinaryJSONError> {
+        let first = self.offset;
+        let last = first + (self.count - 1) * self.size;
+        let sample = &parent.value[first + self.text..first + self.size];
+        // Sample once per row so distinct strings avoid a comparison per child.
+        // Only a fully validated string can be reused inside the loop.
+        if sample[0] < 128 && sample == &parent.value[last + self.text..last + self.size] {
+            self.validate_with_reuse::<true>(parent)
+        } else {
+            self.validate_with_reuse::<false>(parent)
+        }
+    }
+
+    #[inline]
+    fn validate_with_reuse<const REUSE_TEXT: bool>(
+        &self,
+        parent: JSONContainer<'_>,
+    ) -> Result<ValidatedLayout, BinaryJSONError> {
+        let prefix = &self.prefix;
+        if (48..=64).contains(&prefix.len()) {
+            let front = prefix.first_chunk::<48>().unwrap();
+            let tail = prefix.last_chunk::<16>().unwrap();
+            let tail_at = prefix.len() - tail.len();
+            return self.validate_children::<REUSE_TEXT>(parent, |child| {
+                child.first_chunk::<48>() == Some(front)
+                    && child[tail_at..].first_chunk::<16>() == Some(tail)
+            });
+        }
+        self.validate_children::<REUSE_TEXT>(parent, |child| child.starts_with(prefix))
+    }
+
+    #[inline]
+    fn validate_children<const REUSE_TEXT: bool>(
+        &self,
+        parent: JSONContainer<'_>,
+        same_layout: impl Fn(&[u8]) -> bool,
+    ) -> Result<ValidatedLayout, BinaryJSONError> {
+        let start = self.offset;
+        let size = self.size;
+        let values = &parent.value[start..start + size * self.count];
+        let mut checked_text = None::<&[u8]>;
+        let mut matched = self.count;
+        let mut layout = ValidatedLayout { canonical: true, depth: 1 };
+        for (index, child) in values.chunks_exact(size).enumerate() {
+            if !same_layout(child) {
+                let current = Self::validate_changed_child(parent, index)?;
+                layout.canonical &= current.canonical;
+                layout.depth = layout.depth.max(current.depth);
+                matched -= 1;
+                continue;
+            }
+            let number = child[self.number..self.number + 8].try_into().unwrap();
+            if !f64::from_le_bytes(number).is_finite() {
+                return Err(BinaryJSONError::InvalidBinary);
+            }
+            let payload = &child[self.text..];
+            if REUSE_TEXT && checked_text.is_some_and(|text| payload.starts_with(text)) {
+                continue;
+            }
+            validate_string_payload::<false>(payload)?;
+            if REUSE_TEXT && payload[0] < 128 {
+                // Include the checked length byte so a prefix of another
+                // string cannot reuse the previous validation.
+                checked_text = Some(&payload[..1 + usize::from(payload[0])]);
+            }
+        }
+        if matched != 0 {
+            layout.depth = layout.depth.max(self.depth);
+        }
+        // The parent above the deepest child adds one nesting level.
+        layout.depth += 1;
+        Ok(layout)
+    }
+
+    #[cold]
+    fn validate_changed_child(
+        parent: JSONContainer<'_>,
+        index: usize,
+    ) -> Result<ValidatedLayout, BinaryJSONError> {
+        parent.child_payload(index)?.validate_layout_at::<true>(1, false)
+    }
 }
 
 enum ChildValueCheck {
@@ -282,11 +480,38 @@ impl PayloadCheck {
             }
         }
         let prefix_end = child.checked_key_prefix(budget.min(128))?;
+        let keys = child.value[HEADER_SIZE..child.value_entries].as_chunks::<KEY_ENTRY_SIZE>().0;
+        let last_key = if keys.is_empty() {
+            None
+        } else {
+            // Packed keys follow the directories and do not overlap. The
+            // parent's packed-key offsets include the type byte.
+            PackedObjectKeys::new(keys, 1 + end, 1 + prefix_end).map(|packed| {
+                let start = packed.last_start - 1;
+                let previous = packed.previous_start - 1;
+                let prior_key = &child.value[previous..start];
+                // Keep enough of the last key to prove it still sorts after
+                // its predecessor, even when the rest of the key changes.
+                let order_len = prior_key
+                    .iter()
+                    .zip(&child.value[start..prefix_end])
+                    .take_while(|(a, b)| a == b)
+                    .count()
+                    + usize::from(!prior_key.is_empty());
+                CheckedChildLastKey {
+                    start: start as u8,
+                    previous: previous as u8,
+                    order_prefix_end: (start + order_len) as u8,
+                }
+            })
+        };
         let layout = CheckedChildLayout {
             index,
             offset: value_entry_offset(entry),
             prefix: child.value[..prefix_end].into(),
             depth: 1 + u8::from(child.count != 0),
+            last_key,
+            last_key_changed: false,
         };
         let check = if values.is_empty() {
             Self::Child(layout)
@@ -294,7 +519,12 @@ impl PayloadCheck {
             Self::ChildWithValues(Box::new(CheckedChildValues {
                 layout,
                 size: child.value.len(),
-                checks: values.into_boxed_slice(),
+                checks: match values.as_slice() {
+                    [ChildValueCheck::Float(number), ChildValueCheck::String(text)] => {
+                        ChildValueChecks::FloatAndString { number: *number, text: *text }
+                    }
+                    _ => ChildValueChecks::General(values.into_boxed_slice()),
+                },
             }))
         };
         Some((check, prefix_end))
@@ -306,7 +536,17 @@ impl CheckedChildValues {
     fn validate_values(&self, value: &[u8]) -> Result<(), BinaryJSONError> {
         // The matching parent directory and child header prove this range.
         let value = &value[..self.size];
-        for check in &self.checks {
+        let checks = match &self.checks {
+            ChildValueChecks::FloatAndString { number, text } => {
+                let word = value[*number..*number + 8].try_into().unwrap();
+                if !f64::from_le_bytes(word).is_finite() {
+                    return Err(BinaryJSONError::InvalidBinary);
+                }
+                return validate_string_payload::<false>(&value[*text..]);
+            }
+            ChildValueChecks::General(checks) => checks,
+        };
+        for check in checks {
             match *check {
                 ChildValueCheck::Float(offset) => {
                     let word = value[offset..offset + 8].try_into().unwrap();
@@ -314,7 +554,7 @@ impl CheckedChildValues {
                         return Err(BinaryJSONError::InvalidBinary);
                     }
                 }
-                ChildValueCheck::String(offset) => validate_string_payload(&value[offset..])?,
+                ChildValueCheck::String(offset) => validate_string_payload::<false>(&value[offset..])?,
             }
         }
         Ok(())
@@ -330,14 +570,541 @@ struct PackedStringRun {
 enum PackedStringLengths {
     Fixed(u8),
     Varying(Box<[u8]>),
+    Wide(Box<PackedWideStringLengths>),
+}
+
+struct PackedWideStringLengths {
+    lengths: WideStringLengths,
+    text: WideStringText,
+    adaptive_prefix: Option<WidePrefixProbe>,
+}
+
+enum WideStringText {
+    General,
+    SharedPrefix(Box<[u8]>),
+    #[cfg(target_arch = "aarch64")]
+    ThreeBytePrefix,
+}
+
+struct WidePrefixProbe {
+    length: WideStringLength,
+    prefix: Option<Box<[u8]>>,
+    rows_until_probe: u8,
+    interval: u8,
+}
+
+impl WidePrefixProbe {
+    fn matching_prefix(&mut self, encoded: &[u8]) -> Option<&[u8]> {
+        if self.prefix.is_none() {
+            if self.rows_until_probe == 0 {
+                self.learn(encoded);
+            } else {
+                self.rows_until_probe -= 1;
+            }
+        }
+        self.prefix
+            .as_deref()
+            .filter(|prefix| encoded[2..self.length.width()].starts_with(prefix))
+    }
+
+    #[cold]
+    fn learn(&mut self, encoded: &[u8]) {
+        self.rows_until_probe = self.interval - 1;
+        // Odd intervals keep probes from locking onto one of two alternating rows.
+        self.interval = (2 * self.interval + 1).min(31);
+        let width = self.length.width();
+        let first = &encoded[..width];
+        let middle_start = (encoded.len() / width / 2) * width;
+        let middle = &encoded[middle_start..middle_start + width];
+        let last = &encoded[encoded.len() - width..];
+        if [first, middle, last].iter().any(|cell| !cell.starts_with(&self.length.encoded)) {
+            return;
+        }
+        let Some(prefix) = long_text_prefix(&first[2..]).map(str::as_bytes) else {
+            return;
+        };
+        if middle[2..].starts_with(prefix) && last[2..].starts_with(prefix) {
+            self.prefix = Some(prefix.into());
+        }
+    }
+}
+
+enum WideStringLengths {
+    Fixed(WideStringLength),
+    Varying(Box<[WideStringCell]>),
+}
+
+#[derive(Clone, Copy)]
+struct WideStringCell {
+    length: WideStringLength,
+    prefix_len: u16,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct WideStringLength {
+    length: u16,
+    encoded: [u8; 2],
+}
+
+impl WideStringLength {
+    fn read(value: &[u8]) -> Option<Self> {
+        let &[low @ 0x80..=0xff, high @ 1..=0x7f] = value.first_chunk::<2>()? else {
+            return None;
+        };
+        Some(Self {
+            length: u16::from(low & 0x7f) | (u16::from(high) << 7),
+            encoded: [low, high],
+        })
+    }
+
+    fn width(self) -> usize {
+        usize::from(self.length) + self.encoded.len()
+    }
+
+    #[inline(always)]
+    fn validate(
+        self,
+        cell: &[u8],
+        prefix_len: usize,
+        valid_text: &impl Fn(&[u8], usize) -> bool,
+    ) -> Result<bool, BinaryJSONError> {
+        let (length, text) = cell.split_at(self.encoded.len());
+        if length != self.encoded {
+            return Ok(false);
+        }
+        if !valid_text(text, prefix_len) {
+            return Err(BinaryJSONError::InvalidBinary);
+        }
+        Ok(true)
+    }
+}
+
+impl PackedWideStringLengths {
+    fn validate(&mut self, encoded: &[u8]) -> Result<bool, BinaryJSONError> {
+        if let Some(prefix) = self
+            .adaptive_prefix
+            .as_mut()
+            .and_then(|probe| probe.matching_prefix(encoded))
+        {
+            #[cfg(target_arch = "aarch64")]
+            if matches!(self.text, WideStringText::ThreeBytePrefix) {
+                return self.lengths.validate_cells(encoded, 0, |text, _| {
+                    is_valid_json_text(
+                        text.strip_prefix(prefix).unwrap_or_else(|| after_three_byte_prefix(text)),
+                    )
+                });
+            }
+            return self.lengths.validate_with_prefix(encoded, prefix);
+        }
+        #[cfg(target_arch = "aarch64")]
+        if !matches!(self.text, WideStringText::SharedPrefix(_)) {
+            if let WideStringLengths::Fixed(length) = self.lengths {
+                let sample = &encoded[2..length.width()];
+                let validated = match sample[0] {
+                    0xc2..=0xdf => self.validate_mixed_width::<false>(encoded, length.width()),
+                    0xf0..=0xf4 => self.validate_mixed_width::<true>(encoded, length.width()),
+                    _ => None,
+                };
+                if let Some(result) = validated {
+                    return result;
+                }
+            }
+        }
+        match &self.text {
+            WideStringText::SharedPrefix(prefix) => {
+                self.lengths.validate_with_prefix(encoded, prefix)
+            }
+            #[cfg(target_arch = "aarch64")]
+            WideStringText::ThreeBytePrefix => self.lengths.validate_cells(encoded, 0, |text, _| {
+                is_valid_json_text(after_three_byte_prefix(text))
+            }),
+            WideStringText::General => self.lengths.validate_cells(encoded, 0, |text, _| {
+                is_valid_wide_json_text(text)
+            }),
+        }
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    #[inline(never)]
+    fn validate_mixed_width<const FOUR_FIRST: bool>(
+        &self,
+        encoded: &[u8],
+        width: usize,
+    ) -> Option<Result<bool, BinaryJSONError>> {
+        let middle = (encoded.len() / width / 2) * width;
+        let samples = [
+            &encoded[2..width],
+            &encoded[middle + 2..middle + width],
+            &encoded[encoded.len() - width + 2..],
+        ];
+        if !samples.iter().all(|text| valid_mixed_pair::<FOUR_FIRST>(text.first_chunk().unwrap())) {
+            return None;
+        }
+        if samples.iter().all(|text| text[..6] == text[6..12]) {
+            return Some(self.lengths.validate_cells(encoded, 0, |text, _| {
+                validate_mixed_text::<false>(text, after_repeated_pair::<FOUR_FIRST>)
+            }));
+        }
+        // Use the aligned scanner when at least two 192-byte batches fit.
+        if width >= 2 + usize::from(FOUR_FIRST) * 4 + 2 * MIXED_PAIR_BATCH_BYTES {
+            self.validate_distinct_mixed_width::<FOUR_FIRST, true>(encoded, samples)
+        } else {
+            self.validate_distinct_mixed_width::<FOUR_FIRST, false>(encoded, samples)
+        }
+    }
+
+    #[cfg(target_arch = "aarch64")]
+    #[inline]
+    fn validate_distinct_mixed_width<const FOUR_FIRST: bool, const BATCHED: bool>(
+        &self,
+        encoded: &[u8],
+        samples: [&[u8]; 3],
+    ) -> Option<Result<bool, BinaryJSONError>> {
+        if samples.iter().all(|text| {
+            if BATCHED {
+                // Only half the field needs to fit the pattern for this
+                // probe. Stop at a whole pair in the normalized order.
+                let lead = usize::from(FOUR_FIRST) * 4;
+                let end = lead + (text.len().div_ceil(2) - lead).next_multiple_of(6);
+                after_mixed_pairs::<FOUR_FIRST, true>(&text[..end]).is_empty()
+            } else {
+                after_mixed_pairs::<FOUR_FIRST, false>(text).len() <= text.len() / 2
+            }
+        }) {
+            return Some(self.lengths.validate_cells(encoded, 0, |text, _| {
+                validate_mixed_text::<BATCHED>(text, after_mixed_pairs::<FOUR_FIRST, BATCHED>)
+            }));
+        }
+        None
+    }
+}
+
+#[inline]
+fn is_valid_wide_json_text(text: &[u8]) -> bool {
+    is_wide_ascii(text) || simdutf8::basic::from_utf8(text).is_ok()
+}
+
+#[inline]
+fn is_wide_ascii(text: &[u8]) -> bool {
+    // Two-byte string lengths always encode at least 128 bytes of text.
+    let (blocks, tail) = text.as_chunks::<128>();
+    if !blocks.iter().all(|block| block.is_ascii()) {
+        return false;
+    }
+    // Check a fixed-width window over the tail so the compiler can unroll
+    // the ASCII test. The window may overlap the already checked blocks.
+    match tail.len() {
+        0 => true,
+        1..=32 => text.last_chunk::<32>().unwrap().is_ascii(),
+        33..=64 => text.last_chunk::<64>().unwrap().is_ascii(),
+        _ => text.last_chunk::<128>().unwrap().is_ascii(),
+    }
+}
+
+impl WideStringLengths {
+    fn validate_with_prefix(&self, encoded: &[u8], prefix: &[u8]) -> Result<bool, BinaryJSONError> {
+        self.validate_cells(encoded, prefix.len(), |text, len| {
+            is_valid_json_text(text.strip_prefix(&prefix[..len]).unwrap_or(text))
+        })
+    }
+
+    fn validate_cells(
+        &self,
+        mut encoded: &[u8],
+        fixed_prefix_len: usize,
+        valid_text: impl Fn(&[u8], usize) -> bool,
+    ) -> Result<bool, BinaryJSONError> {
+        match self {
+            Self::Fixed(length) => {
+                for cell in encoded.chunks_exact(length.width()) {
+                    if !length.validate(cell, fixed_prefix_len, &valid_text)? {
+                        return Ok(false);
+                    }
+                }
+            }
+            Self::Varying(lengths) => {
+                for field in lengths {
+                    let (cell, remaining) = encoded.split_at(field.length.width());
+                    if !field.length.validate(cell, usize::from(field.prefix_len), &valid_text)? {
+                        return Ok(false);
+                    }
+                    encoded = remaining;
+                }
+            }
+        }
+        Ok(true)
+    }
+}
+
+#[inline]
+fn three_byte_mismatch(lead: u8, first: u8, second: u8) -> u8 {
+    let lead_class = (lead & 0xf0) ^ 0xe0;
+    let continuations = ((first ^ 0x80) | (second ^ 0x80)) & 0xc0;
+    // Bits 3 and 2 differ for E4 through EB, whose continuation bytes have no
+    // restrictions beyond the usual 80 through BF range.
+    let lead_range = ((lead ^ (lead >> 1)) & 4) ^ 4;
+    lead_class | continuations | lead_range
+}
+
+#[cfg(target_arch = "aarch64")]
+#[inline]
+fn after_three_byte_prefix(mut text: &[u8]) -> &[u8] {
+    if text.first().is_some_and(|b| b & 0xf0 == 0xe0) {
+        while let Some((group, rest)) = text.split_first_chunk::<48>() {
+            // Fixed array size lets the compiler vectorize 16 complete characters.
+            let mismatches = std::array::from_fn(|i| {
+                three_byte_mismatch(group[3 * i], group[3 * i + 1], group[3 * i + 2])
+            });
+            if u128::from_ne_bytes(mismatches) != 0 {
+                break;
+            }
+            text = rest;
+        }
+        if text.len() <= 16 {
+            while let Some((&[lead, first, second], rest)) = text.split_first_chunk::<3>() {
+                if three_byte_mismatch(lead, first, second) != 0 {
+                    break;
+                }
+                text = rest;
+            }
+        }
+    }
+    text
+}
+
+#[cfg(target_arch = "aarch64")]
+#[inline]
+fn validate_mixed_text<const RESUME: bool>(text: &[u8], peel_pairs: impl Fn(&[u8]) -> &[u8]) -> bool {
+    let tail = if text[0] & 0xf0 == 0xe0 {
+        after_three_byte_prefix(text)
+    } else {
+        peel_pairs(text)
+    };
+    if RESUME && tail.len() >= 6 + MIXED_PAIR_BATCH_BYTES && tail.len() != text.len() {
+        let (block, rest) = tail.split_first_chunk::<6>().unwrap();
+        // Verify a complete window before resuming. If the window ends
+        // inside a character, validate the original suffix instead.
+        if rest.first_chunk().is_some_and(valid_mixed_pair::<false>)
+            && simdutf8::basic::from_utf8(block).is_ok()
+        {
+            return is_valid_json_text(after_mixed_pairs::<false, true>(rest));
+        }
+    }
+    is_valid_json_text(tail)
+}
+
+#[cfg(target_arch = "aarch64")]
+#[inline]
+fn mixed_pair<const FOUR_FIRST: bool>(pair: &[u8; 6]) -> [u8; 6] {
+    if FOUR_FIRST {
+        [pair[4], pair[5], pair[0], pair[1], pair[2], pair[3]]
+    } else {
+        *pair
+    }
+}
+
+#[cfg(target_arch = "aarch64")]
+#[inline]
+fn valid_mixed_pair<const FOUR_FIRST: bool>(pair: &[u8; 6]) -> bool {
+    let [a, b, c, d, e, f] = mixed_pair::<FOUR_FIRST>(pair);
+    let continuations = ((b ^ 0x80) | (d ^ 0x80) | (e ^ 0x80) | (f ^ 0x80)) & 0xc0;
+    a.wrapping_sub(0xc2) < 30 && c.wrapping_sub(0xf0) < 5 && continuations == 0
+        && (c != 0xf0 || d >= 0x90) && (c != 0xf4 || d < 0x90)
+}
+
+#[cfg(target_arch = "aarch64")]
+#[inline]
+fn mixed_pair_mismatch(words: &[[u8; 2]], start: usize) -> u16 {
+    let two = u16::from_be_bytes(words[start]);
+    let four = u16::from_be_bytes(words[start + 1]);
+    let tail = u16::from_be_bytes(words[start + 2]);
+    let two_outside_range = u16::from(two.wrapping_sub(0xc280) > 0x1d3f);
+    // F090..=F48F is exactly 1,024 words. The continuation mask
+    // excludes gaps between lead bytes within that range.
+    let four_outside_range = four.wrapping_sub(0xf090) & 0xfc00;
+    let second_bytes = ((two | four) & 0x0040) | ((!two | !four) & 0x0080);
+    let remaining_bytes = (tail & 0xc0c0) ^ 0x8080;
+    two_outside_range | four_outside_range | second_bytes | remaining_bytes
+}
+
+#[cfg(target_arch = "aarch64")]
+#[inline]
+fn after_mixed_pairs<const FOUR_FIRST: bool, const BATCHED: bool>(mut text: &[u8]) -> &[u8] {
+    if FOUR_FIRST {
+        let Some(pair) = text.first_chunk::<6>() else { return text };
+        if !valid_mixed_pair::<true>(pair) {
+            return text;
+        }
+        // Remove the proven leading character, so the rest uses the
+        // same two-then-four order as the forward scan.
+        text = &text[4..];
+    }
+    if BATCHED {
+        text = after_mixed_pair_batches(text);
+    }
+    while let Some((group, rest)) = text.split_first_chunk::<48>() {
+        let words = group.as_chunks::<2>().0;
+        let invalid: [u16; 8] =
+            std::array::from_fn(|index| mixed_pair_mismatch(words, 3 * index));
+        if invalid.iter().fold(0, |bits, error| bits | error) != 0 {
+            if BATCHED {
+                // The earlier lanes already prove complete pairs.
+                let verified_pairs = invalid.iter().position(|&error| error != 0).unwrap();
+                return &text[6 * verified_pairs..];
+            }
+            return text;
+        }
+        text = rest;
+    }
+    while let Some((pair, rest)) = text.split_first_chunk::<6>() {
+        if mixed_pair_mismatch(pair.as_chunks::<2>().0, 0) != 0 {
+            break;
+        }
+        text = rest;
+    }
+    if FOUR_FIRST {
+        if let Some((&[lead, continuation], rest)) = text.split_first_chunk::<2>() {
+            if (0xc2..=0xdf).contains(&lead) && continuation & 0xc0 == 0x80 {
+                return rest;
+            }
+        }
+    }
+    text
+}
+
+#[cfg(target_arch = "aarch64")]
+const MIXED_PAIR_BATCH_BYTES: usize = 192;
+
+#[cfg(target_arch = "aarch64")]
+#[inline]
+fn after_mixed_pair_batches(text: &[u8]) -> &[u8] {
+    use zerocopy::FromBytes;
+
+    // Load aligned words directly. On a failed batch the 48-byte scanner
+    // can still prove a shorter prefix.
+    let even_end = text.len() & !1;
+    let Ok(words) = <[u16]>::ref_from_bytes(&text[..even_end]) else {
+        return after_shifted_mixed_pair_batches(text);
+    };
+    let mut consumed = 0;
+    for batch in words.as_chunks::<{ MIXED_PAIR_BATCH_BYTES / 2 }>().0 {
+        let valid = batch.as_chunks::<3>().0.iter().fold(true, |valid, &[two, four, tail]| {
+            let two = two.to_le();
+            let four = four.to_le();
+            let tail = tail.to_le();
+            // Each lead selects four ranges of the second byte. F0 owns
+            // ranges 1–3, F1 through F3 own 4–15, and F4 owns 16.
+            let four_range = ((four & 7) << 2) | ((four >> 12) & 3);
+            // A bitwise reduction allows every pair in the batch to be
+            // checked without a branch per character.
+            valid & (two & 0xc0e0 == 0x80c0)
+                & (two & 0x001e != 0)
+                & (four & 0xc0f8 == 0x80f0)
+                & (four_range.wrapping_sub(1) < 16)
+                & (tail & 0xc0c0 == 0x8080)
+        });
+        if !valid {
+            break;
+        }
+        consumed += MIXED_PAIR_BATCH_BYTES;
+    }
+    &text[consumed..]
+}
+
+#[cfg(target_arch = "aarch64")]
+#[inline(never)]
+fn after_shifted_mixed_pair_batches(text: &[u8]) -> &[u8] {
+    use zerocopy::FromBytes;
+
+    if text.len() <= MIXED_PAIR_BATCH_BYTES || !(0xc2..=0xdf).contains(&text[0]) {
+        return text;
+    }
+    let end = 1 + ((text.len() - 1) & !1);
+    let Ok(words) = <[u16]>::ref_from_bytes(&text[1..end]) else {
+        return text;
+    };
+    let mut consumed = 0;
+    for batch in words.as_chunks::<{ MIXED_PAIR_BATCH_BYTES / 2 }>().0 {
+        let pairs = batch.as_chunks::<3>().0;
+        let valid = pairs.iter().enumerate().fold(
+            true,
+            |valid, (index, &[first, middle, last])| {
+                // After skipping the first lead, the words contain the
+                // bytes [b,c], [d,e], [f,next_a] of a,b,c,d,e,f pairs.
+                let first = first.to_le();
+                let middle = middle.to_le();
+                let last = last.to_le();
+                let four = (first & 0xff00) | (middle & 0x00ff);
+                valid & (four.wrapping_sub(0xf090) <= 0x03ff)
+                    & (first & 0x00c0 == 0x0080)
+                    & (middle & 0xc0c0 == 0x8080)
+                    & (last & 0x00c0 == 0x0080)
+                    & ((index + 1 == pairs.len()) | (last.wrapping_sub(0xc200) <= 0x1dff))
+            },
+        );
+        if !valid {
+            break;
+        }
+        consumed += MIXED_PAIR_BATCH_BYTES;
+        // The last word includes this byte, but it belongs to the next
+        // pair and may instead begin an ASCII suffix.
+        if !(0xc2..=0xdf).contains(&text[consumed]) {
+            break;
+        }
+    }
+    &text[consumed..]
+}
+
+#[cfg(target_arch = "aarch64")]
+#[inline]
+fn after_repeated_pair<const FOUR_FIRST: bool>(mut text: &[u8]) -> &[u8] {
+    let Some(sample @ &[a, b, c, d, e, f]) = text.first_chunk::<6>() else {
+        return text;
+    };
+    if !valid_mixed_pair::<FOUR_FIRST>(sample) {
+        return text;
+    }
+    let pair = u128::from(u64::from_le_bytes([a, b, c, d, e, f, 0, 0]));
+    // Six bytes against 16-byte words gives starting phases 0, 4 and 2.
+    let first = pair | (pair << 48) | (pair << 96);
+    let second = (pair >> 32) | (pair << 16) | (pair << 64) | (pair << 112);
+    let third = (pair >> 16) | (pair << 32) | (pair << 80);
+    while let Some((group, rest)) = text.split_first_chunk::<48>() {
+        let words = group.as_chunks::<16>().0;
+        if (u128::from_le_bytes(words[0]) ^ first) | (u128::from_le_bytes(words[1]) ^ second)
+            | (u128::from_le_bytes(words[2]) ^ third) != 0
+        {
+            return text;
+        }
+        text = rest;
+    }
+    while let Some((pair, rest)) = text.split_first_chunk::<6>() {
+        if pair != sample {
+            break;
+        }
+        text = rest;
+    }
+    text
+}
+
+fn long_text_prefix(text: &[u8]) -> Option<&str> {
+    let end = text.iter().rposition(|b| !b.is_ascii())? + 1;
+    if end > 256 {
+        return None;
+    }
+    simdutf8::basic::from_utf8(&text[..end]).ok()
 }
 
 impl PackedStringRun {
     fn find(value: &[u8], entries: &[[u8; VALUE_ENTRY_SIZE]]) -> Option<Self> {
         let start = value_entry_offset(entries.first()?);
+        let first = *value.get(start)?;
+        if first >= 0x80 {
+            return Self::find_wide(value, entries, start);
+        }
         let mut end = start;
         let mut count = 0;
-        let mut fixed_length = Some(*value.get(start)?);
+        let mut fixed_length = Some(first);
         for entry in entries {
             if entry[0] != JSON_TYPE_CODE_STRING || value_entry_offset(entry) != end {
                 break;
@@ -367,17 +1134,133 @@ impl PackedStringRun {
         Some(Self { start, end, lengths })
     }
 
+    #[cold]
+    fn find_wide(value: &[u8], entries: &[[u8; VALUE_ENTRY_SIZE]], start: usize) -> Option<Self> {
+        let first = WideStringLength::read(value.get(start..)?)?;
+        let mut end = start;
+        let mut count = 0;
+        let mut varying = Vec::new();
+        let (mut longest_start, mut longest) = (start, first);
+        for entry in entries {
+            if entry[0] != JSON_TYPE_CODE_STRING || value_entry_offset(entry) != end {
+                break;
+            }
+            let Some(length) = WideStringLength::read(&value[end..]) else {
+                break;
+            };
+            let next = end.checked_add(length.width())?;
+            if next > value.len() {
+                break;
+            }
+            if length != first && varying.is_empty() {
+                varying.resize(count, WideStringCell { length: first, prefix_len: 0 });
+            }
+            if !varying.is_empty() {
+                varying.push(WideStringCell { length, prefix_len: 0 });
+            }
+            if length.length > longest.length {
+                (longest_start, longest) = (end, length);
+            }
+            count += 1;
+            end = next;
+        }
+        if count < 4 {
+            return None;
+        }
+        let prefix = long_text_prefix(&value[longest_start + 2..longest_start + longest.width()]);
+        let (lengths, shared_prefix) = if varying.is_empty() {
+            let second = &value[start + first.width() + 2..start + 2 * first.width()];
+            (
+                WideStringLengths::Fixed(first),
+                prefix.filter(|p| second.starts_with(p.as_bytes())),
+            )
+        } else {
+            let shared = prefix.filter(|prefix| {
+                let mut offset = start;
+                let mut matches = 0;
+                for field in &mut varying {
+                    let next = offset + field.length.width();
+                    let text = &value[offset + 2..next];
+                    // `str::get` checks the code-point boundary for shorter fields.
+                    let candidate = text.iter().rposition(|b| !b.is_ascii())
+                        .and_then(|last| prefix.get(..=last));
+                    if let Some(candidate) = candidate.filter(|p| text.starts_with(p.as_bytes())) {
+                        field.prefix_len = candidate.len() as u16;
+                        matches += 1;
+                    }
+                    offset = next;
+                }
+                matches >= 2
+            });
+            (WideStringLengths::Varying(varying.into_boxed_slice()), shared)
+        };
+        let adaptive_prefix = match &lengths {
+            WideStringLengths::Fixed(length) if shared_prefix.is_none() => {
+                let width = length.width();
+                (!value[start + 2..start + width].is_ascii()
+                    && !value[start + width + 2..start + 2 * width].is_ascii())
+                    .then_some(WidePrefixProbe {
+                        length: *length,
+                        prefix: None,
+                        rows_until_probe: 0,
+                        interval: 1,
+                    })
+            }
+            _ => None,
+        };
+        let text = match shared_prefix {
+            Some(prefix) => WideStringText::SharedPrefix(prefix.as_bytes().into()),
+            None => WideStringText::General,
+        };
+        #[cfg(target_arch = "aarch64")]
+        let text = if matches!(text, WideStringText::General) {
+            let second = match &lengths {
+                WideStringLengths::Fixed(length) => *length,
+                WideStringLengths::Varying(fields) => fields[1].length,
+            };
+            let second_start = start + first.width();
+            let samples = [
+                &value[start + 2..second_start],
+                &value[second_start + 2..second_start + second.width()],
+            ];
+            // Select the faster prefix scan when it covers most of both samples.
+            if samples
+                .iter()
+                .all(|sample| after_three_byte_prefix(sample).len() <= sample.len() / 2)
+            {
+                WideStringText::ThreeBytePrefix
+            } else {
+                text
+            }
+        } else {
+            text
+        };
+        Some(Self {
+            start,
+            end,
+            lengths: PackedStringLengths::Wide(Box::new(PackedWideStringLengths {
+                lengths,
+                text,
+                adaptive_prefix,
+            })),
+        })
+    }
+
     #[inline]
     fn count(&self) -> usize {
         match &self.lengths {
             PackedStringLengths::Fixed(length) => (self.end - self.start) / (usize::from(*length) + 1),
             PackedStringLengths::Varying(lengths) => lengths.len(),
+            PackedStringLengths::Wide(wide) => match &wide.lengths {
+                WideStringLengths::Fixed(length) => (self.end - self.start) / length.width(),
+                WideStringLengths::Varying(lengths) => lengths.len(),
+            },
         }
     }
 
-    fn validate(&self, value: &[u8]) -> Result<bool, BinaryJSONError> {
+    fn validate(&mut self, value: &[u8]) -> Result<bool, BinaryJSONError> {
         let encoded = &value[self.start..self.end];
-        match &self.lengths {
+        match &mut self.lengths {
             PackedStringLengths::Fixed(length) => {
                 if !encoded.chunks_exact(usize::from(*length) + 1).all(|cell| cell[0] == *length) {
                     return Ok(false);
@@ -385,13 +1268,14 @@ impl PackedStringRun {
             }
             PackedStringLengths::Varying(lengths) => {
                 let mut offset = 0;
-                for &length in lengths {
+                for &length in lengths.iter() {
                     if encoded.get(offset) != Some(&length) {
                         return Ok(false);
                     }
                     offset += usize::from(length) + 1;
                 }
             }
+            PackedStringLengths::Wide(width) => return width.validate(encoded),
         }
         // The single-byte lengths are ASCII. They separate the strings, so
         // an incomplete UTF-8 sequence cannot cross a field boundary.
@@ -407,20 +1291,54 @@ impl CheckedJSONKeys {
             return None;
         };
         let object = BinaryJSONRef { type_code: JSON_TYPE_CODE_OBJECT, value }.container().ok()?;
+        Self::from_object(cell, object)
+    }
+
+    fn from_object(cell: &[u8], object: JSONContainer<'_>) -> Option<Self> {
         if object.count < 16 {
             return None;
         }
+        let value = object.value;
         let end = object.checked_key_prefix(8191)?;
         let keys = value[HEADER_SIZE..object.value_entries].as_chunks::<KEY_ENTRY_SIZE>().0;
+        let value_checks = match CheckedChildRun::find(object) {
+            Some(run) => PayloadChecks::Run(run),
+            None => object.payload_checks().ok()?.map_or(PayloadChecks::General, PayloadChecks::Fields),
+        };
         Some(Self {
             packed_keys: PackedObjectKeys::new(
                 keys,
                 1 + object.value_entries + object.count * VALUE_ENTRY_SIZE,
                 1 + end,
             ),
-            value_checks: object.payload_checks().ok()?,
+            value_checks,
             prefix: cell[..1 + end].to_vec(),
         })
+    }
+
+    /// Saves the layout only when it can check a run of wide strings together.
+    #[doc(hidden)]
+    pub fn for_wide_string_run(cell: &[u8]) -> Option<Self> {
+        let [JSON_TYPE_CODE_OBJECT, value @ ..] = cell else {
+            return None;
+        };
+        let object = BinaryJSONRef { type_code: JSON_TYPE_CODE_OBJECT, value }.container().ok()?;
+        let end = object.value_entries + object.count * VALUE_ENTRY_SIZE;
+        let entries = value[object.value_entries..end].as_chunks::<VALUE_ENTRY_SIZE>().0;
+        if !entries.iter().any(|entry| {
+            entry[0] == JSON_TYPE_CODE_STRING
+                && value.get(value_entry_offset(entry)).is_some_and(|&length| length >= 128)
+        }) {
+            return None;
+        }
+        let keys = Self::from_object(cell, object)?;
+        let PayloadChecks::Fields(checks) = &keys.value_checks else {
+            return None;
+        };
+        checks.iter().any(|check| matches!(
+            check,
+            PayloadCheck::Strings(PackedStringRun { lengths: PackedStringLengths::Wide(_), .. })
+        )).then_some(keys)
     }
 
     /// Returns the validated prefix length.
@@ -443,8 +1361,9 @@ impl CheckedJSONKeys {
         let view = BinaryJSONRef { type_code: JSON_TYPE_CODE_OBJECT, value: &cell[1..] };
         Some(EncodedJSONLayout::from_validation(view.container().and_then(|container| {
             match &mut self.value_checks {
-                Some(indices) => container.validate_payloads(indices),
-                None => view.validate_container_layout::<true>(container, 0, true),
+                PayloadChecks::Fields(indices) => container.validate_payloads(indices),
+                PayloadChecks::Run(run) => run.validate(container),
+                PayloadChecks::General => view.validate_container_layout::<true>(container, 0, true),
             }
         })))
     }
@@ -876,6 +1795,15 @@ impl BinaryJSON {
         let keys = value[HEADER_SIZE..container.value_entries].as_chunks::<KEY_ENTRY_SIZE>().0;
         let first = keys.first()?;
         let first_len = u16::from_le_bytes([first[4], first[5]]);
+        let layout = EncodedJSONLayout(BinaryLayout::Validated(ValidatedLayout {
+            canonical: true,
+            depth: 2,
+        }));
+        if container.count >= 16 {
+            if let Some(end) = check_packed_integer_object(value, keys, entries, value_end, first_len) {
+                return Some((layout, Some(1 + end)));
+            }
+        }
         if !(1..=16).contains(&first_len)
             || matches!(entries.last()?[0], JSON_TYPE_CODE_ARRAY | JSON_TYPE_CODE_OBJECT)
         {
@@ -892,13 +1820,7 @@ impl BinaryJSON {
         };
         let key_end = prefix.unwrap_or(value.len());
         check_short_ascii_keys(value, keys, key_end)?;
-        Some((
-            EncodedJSONLayout(BinaryLayout::Validated(ValidatedLayout {
-                canonical: true,
-                depth: 2,
-            })),
-            prefix.map(|end| 1 + end),
-        ))
+        Some((layout, prefix.map(|end| 1 + end)))
     }
 
     /// Reuses a layout result from a storage range holding these exact bytes.
@@ -1208,6 +2130,91 @@ impl BinaryJSON {
     }
 }
 
+fn check_packed_integer_object(
+    value: &[u8],
+    keys: &[[u8; KEY_ENTRY_SIZE]],
+    entries: &[[u8; VALUE_ENTRY_SIZE]],
+    key_start: usize,
+    width: u16,
+) -> Option<usize> {
+    let kind = entries.first()?[0];
+    if !(1..=8).contains(&width)
+        || !matches!(kind, JSON_TYPE_CODE_INT64 | JSON_TYPE_CODE_UINT64)
+    {
+        return None;
+    }
+    let key_end = key_start.checked_add(keys.len().checked_mul(usize::from(width))?)?;
+    if key_end.checked_add(entries.len().checked_mul(8)?)? != value.len() {
+        return None;
+    }
+    // Match the complete directories, including each type or key width.
+    // A matching offset always has its whole payload inside the object.
+    let first_key = key_start as u64 | (u64::from(width) << 32);
+    let first_value = u64::from(kind) | ((key_end as u64) << 8);
+    if !check_packed_entries::<KEY_ENTRY_SIZE, 12>(keys.as_flattened(), first_key, u64::from(width))
+        || !check_packed_entries::<VALUE_ENTRY_SIZE, 15>(entries.as_flattened(), first_value, 8 << 8)
+    {
+        return None;
+    }
+    let data = &value[key_start..key_end];
+    let ordered = match width {
+        1 => check_packed_key_order::<1>(data),
+        2 => check_packed_key_order::<2>(data),
+        3 => check_packed_key_order::<3>(data),
+        4 => check_packed_key_order::<4>(data),
+        5 => check_packed_key_order::<5>(data),
+        6 => check_packed_key_order::<6>(data),
+        7 => check_packed_key_order::<7>(data),
+        8 => check_packed_key_order::<8>(data),
+        _ => false,
+    };
+    (ordered && data.is_ascii()).then_some(key_end)
+}
+
+fn check_packed_entries<const ENTRY: usize, const BLOCK: usize>(
+    bytes: &[u8],
+    first: u64,
+    step: u64,
+) -> bool {
+    // The offset fields advance by the same amount in every block. Pack
+    // two key entries or three value entries into each comparison.
+    let entries = BLOCK / ENTRY;
+    let mut expected = 0;
+    let mut increment = 0;
+    for index in 0..entries {
+        let shift = index * ENTRY * 8;
+        expected |= u128::from(first + step * index as u64) << shift;
+        increment |= u128::from(step * entries as u64) << shift;
+    }
+    let (blocks, tail) = bytes.as_chunks::<BLOCK>();
+    for block in blocks {
+        if *block != *expected.to_le_bytes().first_chunk::<BLOCK>().expect("block fits in a word") {
+            return false;
+        }
+        expected += increment;
+    }
+    tail == &expected.to_le_bytes()[..tail.len()]
+}
+
+fn check_packed_key_order<const WIDTH: usize>(data: &[u8]) -> bool {
+    let (keys, _) = data.as_chunks::<WIDTH>();
+    let word = |key: &[u8; WIDTH]| {
+        let mut bytes = [0; 8];
+        bytes[..WIDTH].copy_from_slice(key);
+        u64::from_be_bytes(bytes)
+    };
+    let Some((first, keys)) = keys.split_first() else {
+        return true;
+    };
+    let mut previous = word(first);
+    keys.iter().all(|key| {
+        let current = word(key);
+        let ordered = previous < current;
+        previous = current;
+        ordered
+    })
+}
+
 fn check_short_ascii_keys(
     value: &[u8],
     entries: &[[u8; KEY_ENTRY_SIZE]],
@@ -1225,6 +2232,45 @@ fn check_short_ascii_keys(
 #[inline]
 fn is_valid_json_text(text: &[u8]) -> bool {
     (text.len() <= 16 && text.is_ascii()) || simdutf8::basic::from_utf8(text).is_ok()
+}
+
+#[inline]
+fn is_valid_child_json_text(text: &[u8]) -> bool {
+    if text.len() <= 16 {
+        text.is_ascii() || is_valid_short_json_unicode(text)
+    } else {
+        simdutf8::basic::from_utf8(text).is_ok()
+    }
+}
+
+#[inline(never)]
+fn is_valid_short_json_unicode(text: &[u8]) -> bool {
+    if let Some((&[lead, first, second], tail)) = text.split_first_chunk::<3>() {
+        if three_byte_mismatch(lead, first, second) == 0 {
+            return tail.is_ascii() || is_valid_other_short_json_unicode(tail);
+        }
+    }
+    is_valid_other_short_json_unicode(text)
+}
+
+#[inline(never)]
+fn is_valid_other_short_json_unicode(text: &[u8]) -> bool {
+    let continuation = |byte: u8| byte & 0xc0 == 0x80;
+    // Validate a complete leading character before checking the remaining
+    // text. E0, ED, F0 and F4 have additional bounds on the next byte.
+    let tail = match text {
+        [lead @ 0xe0..=0xef, a, b, tail @ ..]
+            if continuation(*a) && continuation(*b)
+                && (*lead != 0xe0 || *a >= 0xa0)
+                && (*lead != 0xed || *a < 0xa0) => tail,
+        [0xc2..=0xdf, a, tail @ ..] if continuation(*a) => tail,
+        [lead @ 0xf0..=0xf4, a, b, c, tail @ ..]
+            if continuation(*a) && continuation(*b) && continuation(*c)
+                && (*lead != 0xf0 || *a >= 0x90)
+                && (*lead != 0xf4 || *a < 0x90) => tail,
+        _ => return std::str::from_utf8(text).is_ok(),
+    };
+    tail.is_ascii() || std::str::from_utf8(tail).is_ok()
 }
 
 fn check_flat_keys<const MAX_WIDTH: usize>(
@@ -1275,7 +2321,7 @@ fn check_flat_values(value: &[u8], entries: &[[u8; VALUE_ENTRY_SIZE]]) -> Option
                 }
             }
             JSON_TYPE_CODE_STRING => {
-                validate_string_payload(value.get(value_entry_offset(entry)..)?).ok()?;
+                validate_string_payload::<true>(value.get(value_entry_offset(entry)..)?).ok()?;
             }
             JSON_TYPE_CODE_FLOAT64 => {
                 let word = value.get(value_entry_offset(entry)..)?.first_chunk::<8>()?;
@@ -1290,16 +2336,29 @@ fn check_flat_values(value: &[u8], entries: &[[u8; VALUE_ENTRY_SIZE]]) -> Option
 }
 
 #[inline]
-fn validate_string_payload(payload: &[u8]) -> Result<(), BinaryJSONError> {
+fn validate_string_payload<const CHECK_WIDE_ASCII: bool>(payload: &[u8]) -> Result<(), BinaryJSONError> {
     if let [length @ 0..=127, text @ ..] = payload {
         let text = text.get(..usize::from(*length)).ok_or(BinaryJSONError::InvalidBinary)?;
-        if !is_valid_json_text(text) {
+        let valid = if CHECK_WIDE_ASCII {
+            is_valid_json_text(text)
+        } else {
+            is_valid_child_json_text(text)
+        };
+        if !valid {
             return Err(BinaryJSONError::InvalidBinary);
         }
-        Ok(())
-    } else {
-        BinaryJSONRef { type_code: JSON_TYPE_CODE_STRING, value: payload }.validate_scalar_payload::<true>(false)
+        return Ok(());
     }
+    if CHECK_WIDE_ASCII {
+        if let Some(length) = WideStringLength::read(payload) {
+            let text = payload.get(2..length.width()).ok_or(BinaryJSONError::InvalidBinary)?;
+            if !is_valid_wide_json_text(text) {
+                return Err(BinaryJSONError::InvalidBinary);
+            }
+            return Ok(());
+        }
+    }
+    BinaryJSONRef { type_code: JSON_TYPE_CODE_STRING, value: payload }.validate_scalar_payload::<true>(false)
 }
 
 fn read_opaque(value: &[u8]) -> Result<(u8, &[u8]), BinaryJSONError> {
@@ -1742,12 +2801,16 @@ impl<'a> BinaryJSONRef<'a> {
                     .checked_add(length)
                     .ok_or(BinaryJSONError::InvalidBinary)?;
                 let bytes = &payload(size)?[prefix..];
-                if !CHECK_TEXT || (bytes.len() <= 16 && bytes.is_ascii()) {
+                if !CHECK_TEXT {
                     return Ok(());
                 }
-                simdutf8::basic::from_utf8(bytes)
-                    .map(|_| ())
-                    .map_err(|_| BinaryJSONError::InvalidBinary)
+                let (blocks, tail) = bytes.as_chunks::<128>();
+                let text = match blocks.iter().position(|block| !block.is_ascii()) {
+                    // Every preceding byte is ASCII, so this starts at a character boundary.
+                    Some(index) => &bytes[index * 128..],
+                    None => tail,
+                };
+                is_valid_json_text(text).then_some(()).ok_or(BinaryJSONError::InvalidBinary)
             }
             JSON_TYPE_CODE_LITERAL => match payload(1)?[0] {
                 JSON_LITERAL_NULL | JSON_LITERAL_FALSE | JSON_LITERAL_TRUE => Ok(()),
@@ -1961,7 +3024,7 @@ impl<'a> JSONContainer<'a> {
                 PayloadCheck::Child(child) => {
                     // The root proof fixes the offset and the available length.
                     // The child prefix fixes its bounds, entries, and keys.
-                    if self.value[child.offset..].starts_with(&child.prefix) {
+                    if child.matches(&self.value[child.offset..]) {
                         ValidatedLayout { canonical: true, depth: child.depth }
                     } else {
                         let index = child.index;
@@ -1971,7 +3034,7 @@ impl<'a> JSONContainer<'a> {
                 }
                 PayloadCheck::ChildWithValues(child) => {
                     let value = &self.value[child.layout.offset..];
-                    if value.starts_with(&child.layout.prefix) {
+                    if child.layout.matches(value) {
                         child.validate_values(value)?;
                         ValidatedLayout { canonical: true, depth: child.layout.depth }
                     } else {
@@ -4033,6 +5096,35 @@ mod tests {
     use super::*;
 
     #[test]
+    fn short_json_unicode_validation_preserves_utf8_boundaries() {
+        let prefixes: &[&[u8]] = &[
+            b"\xc1\xbf",
+            b"\xc2\x80",
+            b"\xdf\xbf",
+            b"\xe0\x9f\xbf",
+            b"\xe0\xa0\x80",
+            b"\xe4\x80\x80",
+            b"\xeb\xbf\xbf",
+            b"\xed\x9f\xbf",
+            b"\xed\xa0\x80",
+            b"\xef\xbf\xbf",
+            b"\xf0\x8f\xbf\xbf",
+            b"\xf0\x90\x80\x80",
+            b"\xf4\x8f\xbf\xbf",
+            b"\xf4\x90\x80\x80",
+            b"\xf5\x80\x80\x80",
+            b"\xe8\xb5",
+        ];
+        let tails: &[&[u8]] = &[b"", b"123", "值é🙂".as_bytes(), b"ascii\xff"];
+        for &prefix in prefixes {
+            for &tail in tails {
+                let text = [prefix, tail].concat();
+                assert_eq!(is_valid_child_json_text(&text), std::str::from_utf8(&text).is_ok());
+            }
+        }
+    }
+
+    #[test]
     fn checked_object_keys_do_not_reuse_child_validation() {
         let members = (0..16)
             .map(|index| format!(r#""k{index:02}":{index}"#))
@@ -4098,7 +5190,7 @@ mod tests {
             BinaryJSON::parse(&format!("{{{members}}}")).unwrap().encoded()
         };
         let mut keys = CheckedJSONKeys::new(&record(1)).unwrap();
-        let checks = keys.value_checks.as_ref().unwrap();
+        let checks = keys.value_checks.as_deref().unwrap();
         assert_eq!(checks.len(), 40);
         let PayloadCheck::Child(child) = &checks[39] else {
             panic!("expected a checked child object");
@@ -4113,7 +5205,7 @@ mod tests {
         assert!(!keys.check_layout(&malformed).unwrap().is_valid());
 
         let mut unordered = updated;
-        assert!(matches!(keys.value_checks.as_ref().unwrap()[39], PayloadCheck::Value(39)));
+        assert!(matches!(keys.value_checks.as_deref().unwrap()[39], PayloadCheck::Value(39)));
 
         let key_offset = 1 + offset + prefix_len - 2;
         unordered[key_offset] = b'z';
@@ -4123,27 +5215,62 @@ mod tests {
     }
 
     #[test]
-    fn checked_child_revalidates_floats_and_bounds_strings_to_the_child() {
-        let record = |number, text| {
+    fn checked_child_keeps_its_proof_when_only_the_last_key_changes() {
+        let record = |last| {
             let members = (0..16)
                 .map(|index| format!(r#""k{index:02}":{index}"#))
                 .collect::<Vec<_>>()
                 .join(",");
-            BinaryJSON::parse(&format!(r#"{{"child":{{"number":{number},"text":"{text}"}},{members}}}"#))
+            BinaryJSON::parse(&format!(r#"{{"child":{{"a":1,"{last}":2}},{members}}}"#))
                 .unwrap()
                 .encoded()
         };
-        let mut keys = CheckedJSONKeys::new(&record(1.5, "abc")).unwrap();
+        let original = record("foo");
+        let mut keys = CheckedJSONKeys::new(&original).unwrap();
+        let [PayloadCheck::Child(child)] = keys.value_checks.as_deref().unwrap() else {
+            panic!("expected a checked child object");
+        };
+        let key_start = 1 + child.offset + child.prefix.len() - 3;
+        for key in ["fog", "zap"] {
+            assert!(keys.check_layout(&record(key)).unwrap().is_canonical());
+            assert!(matches!(keys.value_checks.as_deref(), Some([PayloadCheck::Child(_)])));
+        }
+
+        let mut invalid = record("fog");
+        invalid[key_start] = 0xff;
+        assert!(!keys.check_layout(&invalid).unwrap().is_valid());
+
+        let mut unordered = record("fog");
+        unordered[key_start] = b'!';
+        let mut keys = CheckedJSONKeys::new(&original).unwrap();
+        let layout = keys.check_layout(&unordered).unwrap();
+        assert!(layout.is_valid() && !layout.is_canonical());
+        assert!(matches!(keys.value_checks.as_deref(), Some([PayloadCheck::Value(_)])));
+    }
+
+    #[test]
+    fn checked_child_revalidates_floats_and_bounds_strings_to_the_child() {
+        let record = |number, text, key| {
+            let members = (0..16)
+                .map(|index| format!(r#""k{index:02}":{index}"#))
+                .collect::<Vec<_>>()
+                .join(",");
+            BinaryJSON::parse(&format!(r#"{{"child":{{"number":{number},"{key}":"{text}"}},{members}}}"#))
+                .unwrap()
+                .encoded()
+        };
+        let mut keys = CheckedJSONKeys::new(&record(1.5, "abc", "text")).unwrap();
         let [PayloadCheck::ChildWithValues(child)] = keys.value_checks.as_deref().unwrap() else {
             panic!("expected a cached child object");
         };
-        let [ChildValueCheck::Float(number), ChildValueCheck::String(text)] = *child.checks else {
+        let ChildValueChecks::FloatAndString { number, text } = child.checks else {
             panic!("expected float and string checks");
         };
         let number = 1 + child.layout.offset + number;
         let text = 1 + child.layout.offset + text;
-        let current = record(2.5, "雪");
+        let current = record(2.5, "雪", "term");
         assert!(keys.check_layout(&current).unwrap().is_canonical());
+        assert!(matches!(keys.value_checks.as_deref(), Some([PayloadCheck::ChildWithValues(_)])));
 
         let mut nonfinite = current.clone();
         nonfinite[number..number + 8].copy_from_slice(&f64::NAN.to_le_bytes());
@@ -4155,6 +5282,99 @@ mod tests {
             assert!(!keys.check_layout(broken).unwrap().is_valid());
             assert!(!BinaryJSON::check_encoded_layout(broken).is_valid());
         }
+    }
+
+    #[test]
+    fn checked_child_revalidates_second_unicode_character() {
+        let record = |key, text| {
+            let members = (0..16)
+                .map(|index| format!(r#""k{index:02}":{index}"#))
+                .collect::<Vec<_>>()
+                .join(",");
+            BinaryJSON::parse(&format!(r#"{{"child":{{"number":1.5,"{key}":"{text}"}},{members}}}"#))
+                .unwrap()
+                .encoded()
+        };
+        let original = record("字é0", "読🙂");
+        let changed = record("字ñ1", "読𐀀");
+        let mut keys = CheckedJSONKeys::new(&original).unwrap();
+        let [PayloadCheck::ChildWithValues(child)] = keys.value_checks.as_deref().unwrap() else {
+            panic!("expected a cached child object");
+        };
+        let ChildValueChecks::FloatAndString { text, .. } = child.checks else {
+            panic!("expected float and string checks");
+        };
+        let child_start = 1 + child.layout.offset;
+        let key = child.layout.last_key.as_ref().unwrap();
+        let second_key_character = child_start + usize::from(key.start) + 3;
+        let second_text_character = child_start + text + 1 + 3;
+        assert!(keys.check_layout(&changed).unwrap().is_canonical());
+
+        let mut invalid_key = changed.clone();
+        invalid_key[second_key_character] = 0xc0;
+        let mut invalid_text = changed;
+        invalid_text[second_text_character + 1] = 0x8f;
+        for invalid in [&invalid_text, &invalid_key] {
+            assert!(!keys.check_layout(invalid).unwrap().is_valid());
+            assert!(!BinaryJSON::check_encoded_layout(invalid).is_valid());
+        }
+    }
+
+    #[test]
+    fn checked_child_run_revalidates_changed_layouts_and_payloads() {
+        let record = |number, change_key, distinct_text| {
+            let members = (0..20)
+                .map(|index| {
+                    let key = if change_key && index == 4 { "zvalue" } else { "status" };
+                    let status = if distinct_text { index } else { 0 };
+                    format!(
+                        r#""key{index:03}":{{"index":{index},"reading":{number},"{key}":"値{status:03}"}}"#
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(",");
+            BinaryJSON::parse(&format!("{{{members}}}")).unwrap().encoded()
+        };
+        let initial = record(1.5, false, false);
+        let changed = record(2.5, true, true);
+        let mut keys = CheckedJSONKeys::new(&initial).unwrap();
+        let PayloadChecks::Run(run) = &keys.value_checks else {
+            panic!("expected a shared child proof");
+        };
+        assert_eq!(run.count, 20);
+        let (offset, size, number, text) = (1 + run.offset, run.size, run.number, run.text);
+        let same_layout = |keys: &mut CheckedJSONKeys, cell: &[u8]| {
+            let cached = keys.check_layout(cell).unwrap();
+            let general = BinaryJSON::check_encoded_layout(cell);
+            assert_eq!(cached.is_valid(), general.is_valid());
+            assert_eq!(cached.is_canonical(), general.is_canonical());
+            assert_eq!(
+                BinaryJSON::encoded_element_depth(cell, || Some(cached)),
+                BinaryJSON::encoded_element_depth(cell, || Some(general)),
+            );
+        };
+        same_layout(&mut keys, &initial);
+        same_layout(&mut keys, &record(2.5, false, true));
+        same_layout(&mut keys, &changed);
+
+        let mut empty = initial.clone();
+        for child in empty[offset..].chunks_exact_mut(size) {
+            child[..4].fill(0);
+        }
+        same_layout(&mut keys, &empty);
+
+        let last = offset + 19 * size;
+        let mut nonfinite = initial.clone();
+        nonfinite[last + number..last + number + 8].copy_from_slice(&f64::NAN.to_le_bytes());
+        let mut invalid_utf8 = initial.clone();
+        invalid_utf8[offset + 8 * size + text + 1] = 0xff;
+        let mut beyond_child = initial.clone();
+        beyond_child[last + text] += 1;
+        for broken in [&nonfinite, &invalid_utf8, &beyond_child] {
+            assert!(!keys.check_layout(broken).unwrap().is_valid());
+            same_layout(&mut keys, broken);
+        }
+        same_layout(&mut keys, &initial);
     }
 
     #[test]
@@ -4216,6 +5436,333 @@ mod tests {
             split_character[start + FIRST.len()] = 0xc2;
             assert!(!BinaryJSON::check_encoded_layout(&split_character).is_valid());
             assert!(!keys.check_layout(&split_character).unwrap().is_valid());
+        }
+    }
+
+    #[test]
+    fn checked_packed_long_strings_keep_utf8_within_each_value() {
+        let text = format!("{}0123", "雪語".repeat(25));
+        let members = (0..40)
+            .map(|index| format!(r#""k{index:02}":"{text}""#))
+            .collect::<Vec<_>>()
+            .join(",");
+        let cell = BinaryJSON::parse(&format!("{{{members}}}")).unwrap().encoded();
+        let mut keys = CheckedJSONKeys::new(&cell).unwrap();
+        let Some([PayloadCheck::Strings(run)]) = keys.value_checks.as_deref() else {
+            panic!("expected a packed long-string run");
+        };
+        assert_eq!(run.count(), 40);
+        let start = 1 + run.start;
+        assert!(keys.check_layout(&cell).unwrap().is_canonical());
+
+        let mut changed = cell.clone();
+        changed[start + 2..start + 5].copy_from_slice("風".as_bytes());
+        let end = start + 2 + text.len();
+        changed[end - 3..end].copy_from_slice("雨".as_bytes());
+        assert!(keys.check_layout(&changed).unwrap().is_canonical());
+
+        let mut shortened = cell.clone();
+        shortened[start] -= 1;
+        assert!(BinaryJSON::check_encoded_layout(&shortened).is_canonical());
+        assert!(keys.check_layout(&shortened).unwrap().is_canonical());
+
+        let mut broken = cell;
+        // The next length begins with a continuation byte. It cannot supply
+        // the missing byte of this string's final code point.
+        broken[start + 2 + text.len() - 1] = 0xc2;
+        assert!(!BinaryJSON::check_encoded_layout(&broken).is_valid());
+        assert!(!keys.check_layout(&broken).unwrap().is_valid());
+    }
+
+    #[test]
+    fn checked_packed_long_strings_keep_a_run_when_widths_differ() {
+        let text = |index: usize| format!("{}0123", "雪語".repeat(25 + index % 3));
+        let members = (0..48)
+            .map(|index| format!(r#""k{index:02}":"{}""#, text(index)))
+            .collect::<Vec<_>>()
+            .join(",");
+        let cell = BinaryJSON::parse(&format!("{{{members}}}")).unwrap().encoded();
+        let mut keys = CheckedJSONKeys::new(&cell).unwrap();
+        let Some([PayloadCheck::Strings(run)]) = keys.value_checks.as_deref() else {
+            panic!("expected one run of varying-width long strings");
+        };
+        assert_eq!(run.count(), 48);
+        let start = 1 + run.start;
+        assert!(keys.check_layout(&cell).unwrap().is_canonical());
+
+        let second_length = start + 2 + text(0).len();
+        let mut shortened = cell.clone();
+        shortened[second_length] -= 1;
+        assert!(BinaryJSON::check_encoded_layout(&shortened).is_canonical());
+        assert!(keys.check_layout(&shortened).unwrap().is_canonical());
+
+        let mut broken = cell;
+        broken[second_length + 2 + text(1).len() - 1] = 0xc2;
+        assert!(!BinaryJSON::check_encoded_layout(&broken).is_valid());
+        assert!(!keys.check_layout(&broken).unwrap().is_valid());
+    }
+
+    #[test]
+    fn scalar_string_checks_utf8_after_ascii_blocks() {
+        let mut cell = vec![JSON_TYPE_CODE_STRING];
+        encode_uvarint(513, &mut cell);
+        let text_start = cell.len();
+        cell.resize(text_start + 513, b'a');
+        assert!(BinaryJSON::check_encoded_layout(&cell).is_canonical());
+
+        for offset in [0, 127, 128, 129, 509] {
+            let mut cell = cell.clone();
+            let start = text_start + offset;
+            cell[start..start + 4].copy_from_slice("🙂".as_bytes());
+            assert!(BinaryJSON::check_encoded_layout(&cell).is_canonical());
+            cell[start + 3] = 0xff;
+            assert!(!BinaryJSON::check_encoded_layout(&cell).is_valid());
+        }
+        *cell.last_mut().unwrap() = 0xf0;
+        assert!(!BinaryJSON::check_encoded_layout(&cell).is_valid());
+    }
+
+    #[test]
+    #[cfg(target_arch = "aarch64")]
+    fn mixed_pair_retry_preserves_utf8_at_a_window_boundary() {
+        let peel = after_mixed_pairs::<false, true>;
+        let pair = [0xc2, 0x80, 0xf4, 0x8f, 0xbf, 0xbf];
+        let mut text = pair.repeat(170);
+        text.extend_from_slice(b"tail");
+
+        text[600..606].copy_from_slice("é値a".as_bytes());
+        let (missed, remaining) = peel(&text).split_first_chunk::<6>().unwrap();
+        assert!(std::str::from_utf8(missed).is_ok());
+        assert!(remaining.first_chunk().is_some_and(valid_mixed_pair::<false>));
+        assert!(validate_mixed_text::<true>(&text, peel));
+        for index in [601, 1020] {
+            let mut invalid = text.clone();
+            invalid[index] = 0xff;
+            assert!(!validate_mixed_text::<true>(&invalid, peel));
+        }
+
+        text[600..606].copy_from_slice(&pair);
+        text[618..636].copy_from_slice("値🙂🙂🙂読".as_bytes());
+        let (missed, _) = peel(&text).split_first_chunk::<6>().unwrap();
+        assert!(std::str::from_utf8(missed).is_err());
+        assert!(std::str::from_utf8(&text).is_ok());
+        assert!(validate_mixed_text::<true>(&text, peel));
+    }
+
+    #[test]
+    #[cfg(target_arch = "aarch64")]
+    fn mixed_pair_batches_check_both_alignments_and_stop_before_invalid_input() {
+        use zerocopy::IntoBytes;
+
+        let mut words = [0_u16; 195];
+        let bytes = words.as_mut_bytes();
+        let pair = [0xc2, 0x80, 0xf4, 0x8f, 0xbf, 0xbf];
+        for cell in bytes[..384].chunks_exact_mut(6) {
+            cell.copy_from_slice(&pair);
+        }
+        bytes[384..388].copy_from_slice(b"tail");
+        let text = &mut bytes[..388];
+        assert_eq!(after_mixed_pair_batches(text), b"tail");
+        assert_eq!(after_mixed_pairs::<false, true>(text), b"tail");
+
+        text[193] = 0xff;
+        assert_eq!(after_mixed_pair_batches(text), &text[192..]);
+        assert!(std::str::from_utf8(after_mixed_pairs::<false, true>(text)).is_err());
+        text[193] = 0x80;
+
+        bytes.copy_within(0..388, 1);
+        let unaligned = &bytes[1..389];
+        assert_eq!(after_mixed_pair_batches(unaligned), b"tail");
+        assert_eq!(after_mixed_pair_batches(&unaligned[..384]), &unaligned[192..384]);
+        assert_eq!(after_mixed_pairs::<false, true>(unaligned), b"tail");
+
+        for index in [192, 383] {
+            let original = bytes[1 + index];
+            bytes[1 + index] = 0x7f;
+            let unaligned = &bytes[1..389];
+            assert_eq!(after_mixed_pair_batches(unaligned), &unaligned[192..]);
+            assert!(std::str::from_utf8(after_mixed_pairs::<false, true>(unaligned)).is_err());
+            bytes[1 + index] = original;
+        }
+    }
+
+    #[test]
+    #[cfg(target_arch = "aarch64")]
+    fn packed_mixed_width_prefixes_prove_complete_characters() {
+        fn check<const FOUR_FIRST: bool>() {
+            for (repeated, range_edges) in [(false, false), (true, false), (false, true)] {
+                let peel: fn(&[u8]) -> &[u8] = if repeated {
+                    after_repeated_pair::<FOUR_FIRST>
+                } else {
+                    after_mixed_pairs::<FOUR_FIRST, false>
+                };
+                let mut text = String::new();
+                for index in 0..25 {
+                    let delta = if repeated { 0 } else { index };
+                    let two = char::from_u32(0x100 + delta).unwrap();
+                    let four = if range_edges {
+                        if index % 2 == 0 { '\u{10000}' } else { '\u{10ffff}' }
+                    } else {
+                        char::from_u32(0x1f600 + delta).unwrap()
+                    };
+                    if FOUR_FIRST {
+                        text.push(four);
+                        text.push(two);
+                    } else {
+                        text.push(two);
+                        text.push(four);
+                    }
+                }
+                text.push_str("tail");
+                let text = text.into_bytes();
+                assert_eq!(peel(&text), b"tail");
+                for index in [0, 1, 2, 3, 4, 5, 47, 48, 95, 96, 144, 149, 153] {
+                    for byte in [0, 0x7f, 0x80, 0x8f, 0xc0, 0xf4, 0xf5, 0xff] {
+                        let mut changed = text.clone();
+                        changed[index] = byte;
+                        assert_eq!(
+                            validate_mixed_text::<false>(&changed, peel),
+                            std::str::from_utf8(&changed).is_ok(),
+                        );
+                    }
+                }
+            }
+        }
+        check::<false>();
+        check::<true>();
+    }
+
+    #[test]
+    #[cfg(target_arch = "aarch64")]
+    fn checked_wide_strings_validate_mixed_utf8_after_the_three_byte_prefix() {
+        let members = (0..40)
+            .map(|index| {
+                let ch = char::from_u32(0x4e00 + index).unwrap();
+                let text = ch.to_string().repeat(50);
+                format!(r#""k{index:02}":"{text}0123""#)
+            })
+            .collect::<Vec<_>>()
+            .join(",");
+        let cell = BinaryJSON::parse(&format!("{{{members}}}")).unwrap().encoded();
+        let mut keys = CheckedJSONKeys::new(&cell).unwrap();
+        let Some([PayloadCheck::Strings(run)]) = keys.value_checks.as_deref() else {
+            panic!("expected a packed long-string run");
+        };
+        let PackedStringLengths::Wide(wide) = &run.lengths else {
+            panic!("expected wide string lengths");
+        };
+        assert!(matches!(wide.text, WideStringText::ThreeBytePrefix));
+        let start = 1 + run.start + 2;
+        for offset in [0, 15, 30, 144] {
+            for replacement in [
+                [0xe4, 0x80, 0x80, 0xeb, 0xbf, 0xbf],
+                [0xf0, 0x9f, 0x99, 0x82, b'x', b'y'],
+                [0xe0, 0x80, 0x80, b'x', b'y', b'z'],
+                [0xed, 0xa0, 0x80, b'x', b'y', b'z'],
+                [0xe4, 0x80, 0x7f, b'x', b'y', b'z'],
+            ] {
+                let mut changed = cell.clone();
+                changed[start + offset..start + offset + replacement.len()]
+                    .copy_from_slice(&replacement);
+                let general = BinaryJSON::check_encoded_layout(&changed);
+                let cached = keys.check_layout(&changed).unwrap();
+                assert_eq!(cached.is_valid(), general.is_valid());
+                assert_eq!(cached.is_canonical(), general.is_canonical());
+            }
+        }
+        let mut broken = cell;
+        broken[start + 153] = 0xc2;
+        assert!(!keys.check_layout(&broken).unwrap().is_valid());
+    }
+
+    #[test]
+    fn packed_long_strings_learn_a_later_prefix_and_keep_field_bounds() {
+        let common = "é🙂".repeat(25);
+        let record = |shared| {
+            let members = (0..40)
+                .map(|index| {
+                    let text = if shared {
+                        common.clone()
+                    } else {
+                        char::from_u32(0x4e00 + index).unwrap().to_string().repeat(50)
+                    };
+                    format!(r#""k{index:02}":"{text}0123""#)
+                })
+                .collect::<Vec<_>>()
+                .join(",");
+            BinaryJSON::parse(&format!("{{{members}}}")).unwrap().encoded()
+        };
+        let original = record(false);
+        let later = record(true);
+        let mut keys = CheckedJSONKeys::new(&original).unwrap();
+        for _ in 0..24 {
+            assert!(keys.check_layout(&original).unwrap().is_canonical());
+        }
+        for row in 0..32 {
+            let input = if row % 2 == 0 { &later } else { &original };
+            assert!(keys.check_layout(input).unwrap().is_canonical());
+        }
+        let Some([PayloadCheck::Strings(run)]) = keys.value_checks.as_deref() else {
+            panic!("expected a packed long-string run");
+        };
+        let PackedStringLengths::Wide(wide) = &run.lengths else {
+            panic!("expected wide string lengths");
+        };
+        assert_eq!(wide.adaptive_prefix.as_ref().unwrap().prefix.as_deref(), Some(common.as_bytes()));
+        let start = 1 + run.start;
+        assert!(keys.check_layout(&original).unwrap().is_canonical());
+
+        let width = 2 + common.len() + 4;
+        let second = start + width;
+        let mut mixed = later.clone();
+        mixed[second..second + width].copy_from_slice(&original[second..second + width]);
+        assert!(keys.check_layout(&mixed).unwrap().is_canonical());
+        mixed[second + width - 1] = 0xc2;
+        assert!(!keys.check_layout(&mixed).unwrap().is_valid());
+
+        let mut shorter = later.clone();
+        shorter[start] -= 1;
+        assert!(BinaryJSON::check_encoded_layout(&shorter).is_canonical());
+        assert!(keys.check_layout(&shorter).unwrap().is_canonical());
+
+        let mut broken = later;
+        broken[start + 2 + common.len() + 3] = 0xc2;
+        assert!(!keys.check_layout(&broken).unwrap().is_valid());
+    }
+
+    #[test]
+    fn packed_integer_objects_check_directory_tails_and_sorted_ascii_keys() {
+        for count in [16, 17, 18] {
+            for width in 1..=8 {
+                let padding = "x".repeat(width - 1);
+                let keys = (0..count)
+                    .map(|index| format!(r#""{padding}\u{:04x}":{index}"#, b'A' as usize + index))
+                    .collect::<Vec<_>>()
+                    .join(",");
+                let cell = BinaryJSON::parse(&format!("{{{keys}}}")).unwrap().encoded();
+                let value_entries = 1 + HEADER_SIZE + count * KEY_ENTRY_SIZE;
+                let key_start = value_entries + count * VALUE_ENTRY_SIZE;
+                let (layout, prefix) = BinaryJSON::check_flat_object_layout(&cell).unwrap();
+                assert!(layout.is_canonical());
+                assert_eq!(prefix, Some(key_start + count * width));
+
+                let mut unordered = cell.clone();
+                unordered.swap(key_start + width - 1, key_start + 2 * width - 1);
+                assert!(BinaryJSON::check_flat_object_layout(&unordered).is_none());
+                let layout = BinaryJSON::check_encoded_layout(&unordered);
+                assert!(layout.is_valid() && !layout.is_canonical());
+
+                let mut invalid_key = cell.clone();
+                invalid_key[key_start + count * width - 1] = 0xff;
+                assert!(BinaryJSON::check_flat_object_layout(&invalid_key).is_none());
+                assert!(!BinaryJSON::check_encoded_layout(&invalid_key).is_valid());
+
+                let mut invalid_offset = cell;
+                let last_offset = value_entries + (count - 1) * VALUE_ENTRY_SIZE + 1;
+                invalid_offset[last_offset..last_offset + 4].copy_from_slice(&u32::MAX.to_le_bytes());
+                assert!(BinaryJSON::check_flat_object_layout(&invalid_offset).is_none());
+                assert!(!BinaryJSON::check_encoded_layout(&invalid_offset).is_valid());
+            }
         }
     }
 

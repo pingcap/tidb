@@ -273,21 +273,39 @@ pub fn need_redact() -> bool {
     tidb_mysql::errors::redaction_mode() != tidb_mysql::errors::RedactionMode::Disabled
 }
 
-/// Go `redact.Value`: `?` when redaction is enabled, else `arg` unchanged.
-pub fn value(arg: &str) -> String {
+/// Go `redact.Value`: returns `?` when redaction is enabled, or borrows `arg`.
+#[inline]
+pub fn value(arg: &str) -> &str {
     if need_redact() {
-        "?".to_owned()
+        "?"
     } else {
-        arg.to_owned()
+        arg
     }
 }
 
 /// Go `redact.Key`: `?` when redaction is enabled, else the upper-case hex
 /// encoding of `key` (`strings.ToUpper(hex.EncodeToString(key))`).
-pub fn key(key: &[u8]) -> String {
+#[inline]
+pub fn key(key: &[u8]) -> Cow<'static, str> {
     if need_redact() {
-        return "?".to_owned();
+        return Cow::Borrowed("?");
     }
+    if key.is_empty() {
+        return Cow::Borrowed("");
+    }
+    Cow::Owned(encode_key(key))
+}
+
+/// Redacts a key as an owned string for consumers that retain it.
+pub fn key_owned(key: &[u8]) -> String {
+    if need_redact() {
+        "?".to_owned()
+    } else {
+        encode_key(key)
+    }
+}
+
+fn encode_key(key: &[u8]) -> String {
     const HEX: &[u8; 16] = b"0123456789ABCDEF";
     let mut out = String::with_capacity(key.len() * 2);
     for &byte in key {
@@ -472,12 +490,18 @@ mod tests {
         let secret = "secret";
 
         init_redact(false);
-        assert_eq!(value(secret), secret);
+        let plain = value(secret);
+        assert_eq!(plain, secret);
+        assert_eq!(plain.as_ptr(), secret.as_ptr());
         assert_eq!(key(secret.as_bytes()), "736563726574");
+        assert_eq!(key_owned(secret.as_bytes()), "736563726574");
 
         init_redact(true);
         assert_eq!(value(secret), "?");
-        assert_eq!(key(secret.as_bytes()), "?");
+        let masked = key(secret.as_bytes());
+        assert_eq!(masked, "?");
+        assert_eq!(masked.as_ptr(), key(b"").as_ptr());
+        assert_eq!(key_owned(secret.as_bytes()), "?");
 
         init_redact(false);
     }

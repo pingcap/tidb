@@ -15,7 +15,7 @@
 //! Go `br/pkg/streamhelper/spans/utils.go`: overlap and collapse predicates
 //! over spans, plus the order-insensitive equality used by the package tests.
 
-use std::cmp::Ordering;
+use std::{borrow::Cow, cmp::Ordering};
 
 use tidb_redact as redact;
 
@@ -41,7 +41,7 @@ pub fn overlaps(a: &Span, b: &Span) -> bool {
 #[must_use]
 pub fn stringify_range(rng: &Span) -> String {
     let end = if rng.end_key.is_empty() {
-        "inf".to_owned()
+        Cow::Borrowed("inf")
     } else {
         redact::key(&rng.end_key)
     };

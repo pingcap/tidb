@@ -332,7 +332,7 @@ impl AdvancerExt {
             ctx,
             "failed to get global checkpoint from metadata store",
             &[
-                Field::new("key", Value::Str(tidb_redact::key(key.as_bytes()))),
+                Field::new("key", Value::Str(tidb_redact::key_owned(key.as_bytes()))),
                 Field::new("task", Value::Str(task_name.to_owned())),
             ],
             |timeout| {
@@ -371,7 +371,7 @@ impl AdvancerExt {
             ctx,
             "failed to upload global checkpoint to metadata store",
             &[
-                Field::new("key", Value::Str(tidb_redact::key(key.as_bytes()))),
+                Field::new("key", Value::Str(tidb_redact::key_owned(key.as_bytes()))),
                 Field::new("task", Value::Str(task_name.to_owned())),
                 Field::new("checkpoint", Value::U64(checkpoint)),
             ],

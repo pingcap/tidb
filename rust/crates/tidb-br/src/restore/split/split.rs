@@ -21,6 +21,7 @@ use std::time::{Duration, Instant};
 
 use tidb_gocontext::Context;
 use tidb_log::{Field, Value};
+use tidb_redact::{key, key_owned};
 
 use super::client::SplitClient;
 use super::region::RegionInfo;
@@ -216,10 +217,6 @@ impl<C: SplitClient> RegionSplitter<C> {
         cancel.cancel();
         left
     }
-}
-
-fn key(k: &[u8]) -> String {
-    tidb_redact::key(k)
 }
 
 fn epoch_text(r: &RegionInfo) -> String {
@@ -575,15 +572,15 @@ pub fn get_split_keys_of_regions(
             tidb_log::error(
                 "in getSplitKeysOfRegions, regions don't cover all keys",
                 &[
-                    Field::new("firstKey", Value::Str(key(&sorted_keys[0]))),
-                    Field::new("lastKey", Value::Str(key(last_key))),
+                    Field::new("firstKey", Value::Str(key_owned(&sorted_keys[0]))),
+                    Field::new("lastKey", Value::Str(key_owned(last_key))),
                     Field::new(
                         "firstRegionStartKey",
-                        Value::Str(key(sorted_regions
+                        Value::Str(key_owned(sorted_regions
                             .first()
                             .map_or(&[][..], |r| r.region.start_key.as_slice()))),
                     ),
-                    Field::new("lastRegionEndKey", Value::Str(key(&end))),
+                    Field::new("lastRegionEndKey", Value::Str(key_owned(&end))),
                 ],
             );
         }
