@@ -38,6 +38,16 @@ python3 rust/scripts/generate-go-simple-case.py --check
 `go-name-audit.py` lists Rust items whose names do not follow their Go
 counterparts.
 
+`tidb-errno`'s code constants and message catalog are generated from Go's
+`pkg/errno` (the Go master tree the drift ports read); after a Go error code
+change, regenerate instead of editing:
+
+```bash
+python3 -I rust/scripts/generate-errno.py ../gomaster
+```
+
+`--check` fails when the generated files are stale against that tree.
+
 ## Shared SQL server checks
 
 Both storage engines use the ordinary session and shared catalog. Use:

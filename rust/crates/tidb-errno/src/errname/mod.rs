@@ -3,84 +3,13 @@
 
 //! Direct message and redaction catalog from `pkg/errno/errname.go`.
 
-#![allow(non_upper_case_globals)]
+use tidb_mysql::errors::{CatalogEntry, ErrMessage};
 
-use super::errcode;
-use tidb_mysql::errors::CatalogEntry;
-use tidb_mysql::errors::ErrMessage;
+// The messages and `CATALOG` are generated from Go's errname.go by
+// rust/scripts/generate-errno.py.
+mod catalog_generated;
 
-mod catalog_1;
-mod catalog_2;
-mod catalog_3;
-mod catalog_4;
-mod consts_1;
-mod consts_2;
-mod consts_3;
-mod consts_4;
-
-pub use consts_1::*;
-pub use consts_2::*;
-pub use consts_3::*;
-pub use consts_4::*;
-
-const CATALOG_LEN: usize = 1168;
-
-/// Concatenates the catalog parts into one contiguous array, in the
-/// same source order, entirely at compile time.
-const fn build_catalog() -> [CatalogEntry; CATALOG_LEN] {
-    const EMPTY_MESSAGE: ErrMessage = ErrMessage {
-        raw: "",
-        redact_arg_pos: &[],
-    };
-    let mut out = [CatalogEntry {
-        name: "",
-        code: 0,
-        message: EMPTY_MESSAGE,
-    }; CATALOG_LEN];
-    let mut pos = 0;
-    {
-        let src = catalog_1::CATALOG_1;
-        let mut i = 0;
-        while i < src.len() {
-            out[pos] = src[i];
-            pos += 1;
-            i += 1;
-        }
-    }
-    {
-        let src = catalog_2::CATALOG_2;
-        let mut i = 0;
-        while i < src.len() {
-            out[pos] = src[i];
-            pos += 1;
-            i += 1;
-        }
-    }
-    {
-        let src = catalog_3::CATALOG_3;
-        let mut i = 0;
-        while i < src.len() {
-            out[pos] = src[i];
-            pos += 1;
-            i += 1;
-        }
-    }
-    {
-        let src = catalog_4::CATALOG_4;
-        let mut i = 0;
-        while i < src.len() {
-            out[pos] = src[i];
-            pos += 1;
-            i += 1;
-        }
-    }
-    out
-}
-
-static CATALOG_ARRAY: [CatalogEntry; CATALOG_LEN] = build_catalog();
-
-/// Complete TiDB message catalog in source order.
-pub const CATALOG: &[CatalogEntry] = &CATALOG_ARRAY;
+pub use catalog_generated::*;
 
 /// Finds the source entry registered for `code`.
 #[must_use]
