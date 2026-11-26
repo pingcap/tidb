@@ -249,35 +249,35 @@ fn show_create_user_prints_the_lockout_and_expiry_clauses() {
         (
             "CREATE USER e1 PASSWORD EXPIRE",
             "e1",
-            format!("CREATE USER 'e1'@'%' {head} PASSWORD EXPIRE ACCOUNT UNLOCK {tail}"),
+            format!("CREATE USER `e1`@`%` {head} PASSWORD EXPIRE ACCOUNT UNLOCK {tail}"),
         ),
         (
             "CREATE USER e2 PASSWORD EXPIRE DEFAULT",
             "e2",
-            format!("CREATE USER 'e2'@'%' {head} PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK {tail}"),
+            format!("CREATE USER `e2`@`%` {head} PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK {tail}"),
         ),
         (
             "CREATE USER e3 PASSWORD EXPIRE NEVER",
             "e3",
-            format!("CREATE USER 'e3'@'%' {head} PASSWORD EXPIRE NEVER ACCOUNT UNLOCK {tail}"),
+            format!("CREATE USER `e3`@`%` {head} PASSWORD EXPIRE NEVER ACCOUNT UNLOCK {tail}"),
         ),
         (
             "CREATE USER e4 PASSWORD EXPIRE INTERVAL 7 DAY",
             "e4",
             format!(
-                "CREATE USER 'e4'@'%' {head} PASSWORD EXPIRE INTERVAL 7 DAY ACCOUNT UNLOCK {tail}"
+                "CREATE USER `e4`@`%` {head} PASSWORD EXPIRE INTERVAL 7 DAY ACCOUNT UNLOCK {tail}"
             ),
         ),
         (
             "CREATE USER e5",
             "e5",
-            format!("CREATE USER 'e5'@'%' {head} PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK {tail}"),
+            format!("CREATE USER `e5`@`%` {head} PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK {tail}"),
         ),
         (
             "CREATE USER e6 PASSWORD EXPIRE INTERVAL 5 DAY FAILED_LOGIN_ATTEMPTS 2 PASSWORD_LOCK_TIME 3",
             "e6",
             format!(
-                "CREATE USER 'e6'@'%' {head} PASSWORD EXPIRE INTERVAL 5 DAY ACCOUNT UNLOCK {tail} \
+                "CREATE USER `e6`@`%` {head} PASSWORD EXPIRE INTERVAL 5 DAY ACCOUNT UNLOCK {tail} \
                  FAILED_LOGIN_ATTEMPTS 2 PASSWORD_LOCK_TIME 3"
             ),
         ),
@@ -285,7 +285,7 @@ fn show_create_user_prints_the_lockout_and_expiry_clauses() {
             "CREATE USER e7 FAILED_LOGIN_ATTEMPTS 3 PASSWORD_LOCK_TIME UNBOUNDED",
             "e7",
             format!(
-                "CREATE USER 'e7'@'%' {head} PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK {tail} \
+                "CREATE USER `e7`@`%` {head} PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK {tail} \
                  FAILED_LOGIN_ATTEMPTS 3 PASSWORD_LOCK_TIME UNBOUNDED"
             ),
         ),
@@ -300,20 +300,20 @@ fn show_create_user_prints_the_lockout_and_expiry_clauses() {
         (
             "ALTER USER e5 PASSWORD EXPIRE INTERVAL 3 DAY",
             format!(
-                "CREATE USER 'e5'@'%' {head} PASSWORD EXPIRE INTERVAL 3 DAY ACCOUNT UNLOCK {tail}"
+                "CREATE USER `e5`@`%` {head} PASSWORD EXPIRE INTERVAL 3 DAY ACCOUNT UNLOCK {tail}"
             ),
         ),
         (
             "ALTER USER e5 PASSWORD EXPIRE NEVER",
-            format!("CREATE USER 'e5'@'%' {head} PASSWORD EXPIRE NEVER ACCOUNT UNLOCK {tail}"),
+            format!("CREATE USER `e5`@`%` {head} PASSWORD EXPIRE NEVER ACCOUNT UNLOCK {tail}"),
         ),
         (
             "ALTER USER e5 PASSWORD EXPIRE DEFAULT",
-            format!("CREATE USER 'e5'@'%' {head} PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK {tail}"),
+            format!("CREATE USER `e5`@`%` {head} PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK {tail}"),
         ),
         (
             "ALTER USER e5 PASSWORD EXPIRE",
-            format!("CREATE USER 'e5'@'%' {head} PASSWORD EXPIRE ACCOUNT UNLOCK {tail}"),
+            format!("CREATE USER `e5`@`%` {head} PASSWORD EXPIRE ACCOUNT UNLOCK {tail}"),
         ),
     ] {
         session.run(sql).unwrap();
@@ -331,7 +331,7 @@ fn show_create_user_prints_the_lockout_and_expiry_clauses() {
     session.run("CREATE ROLE r1").unwrap();
     assert_eq!(
         show(&mut session, "r1"),
-        format!("CREATE USER 'r1'@'%' {head} PASSWORD EXPIRE ACCOUNT LOCK {tail}")
+        format!("CREATE USER `r1`@`%` {head} PASSWORD EXPIRE ACCOUNT LOCK {tail}")
     );
 }
 

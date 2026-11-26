@@ -111,6 +111,45 @@ pub enum SkipClass {
     AcceptedAlternativeError,
 }
 
+/// Go master's `tests/integrationtest` scripts and recordings for the topics
+/// whose recordings master changed, vendored by
+/// `rust/scripts/vendor-gomaster-recordings.sh` (its `PIN` file names the
+/// commit).
+pub fn gomaster_recordings_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("testdata/gomaster")
+}
+
+/// Go master's recorded block for each statement of `topic`, keyed by the
+/// statement's text and its occurrence among statements of that text, or an
+/// empty map when master's recording of the topic is not vendored.
+///
+/// # Errors
+///
+/// A vendored script or recording that does not parse or align.
+pub fn master_recordings(topic: &str) -> Result<std::collections::HashMap<(String, usize), Vec<Vec<u8>>>, String> {
+    let dir = gomaster_recordings_dir();
+    let script_path = dir.join(format!("t/{topic}.test"));
+    let recorded_path = recording_path(&dir, topic);
+    let mut blocks = std::collections::HashMap::new();
+    if !script_path.exists() || !recorded_path.exists() {
+        return Ok(blocks);
+    }
+    let script = fs::read_to_string(&script_path)
+        .map_err(|e| format!("read {}: {e}", script_path.display()))?;
+    let recorded =
+        fs::read(&recorded_path).map_err(|e| format!("read {}: {e}", recorded_path.display()))?;
+    let items = parse_test(&script)?;
+    let mut seen: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+    for (item, block) in align_bytes(&items, &recorded)? {
+        if let Item::Stmt(stmt) = item {
+            let occurrence = seen.entry(stmt.sql.as_str()).or_default();
+            blocks.insert((stmt.sql.clone(), *occurrence), block);
+            *occurrence += 1;
+        }
+    }
+    Ok(blocks)
+}
+
 /// `tests/integrationtest` at the repository root: the scripts, the
 /// recordings and the files they load.
 pub fn integrationtest_dir() -> PathBuf {
@@ -181,6 +220,10 @@ pub enum MatchKind {
     /// A statement whose recording is empty, and which this engine also
     /// completed without a result set.
     SideEffect,
+    /// A statement that diverges from this branch's recording and matches Go
+    /// master's recording of it ([`master_recordings`]): a ported Go-master
+    /// change.
+    GoMaster,
 }
 
 /// One topic's replay outcome.
@@ -337,37 +380,69 @@ fn display_block(lines: &[Vec<u8>]) -> String {
         .join(" / ")
 }
 
-/// Compares one statement's outcome against its recorded block.
+/// Compares one statement's outcome against its recorded block and, when the
+/// statement diverges from it, against Go master's recording of the same
+/// statement (`master`, present only where the two recordings differ).
 ///
 /// Returns `Ok(kind)` when the outcome matches, `Err(Some(detail))` for a
 /// divergence to report, and `Err(None)` when the statement was skipped (its
-/// class already recorded).
+/// class already recorded). A statement is run once; only the verdict looks
+/// at more than one recording.
 fn compare(
     session: &mut dyn ReplaySession,
     stmt: &Stmt,
     recorded: &[Vec<u8>],
+    master: Option<&[Vec<u8>]>,
     report: &mut TopicReport,
 ) -> Result<MatchKind, Option<String>> {
     // `--enable_warnings` appended this statement's `SHOW WARNINGS` to its own
     // output rather than rewriting it, so the block is two blocks. Comparing
     // the halves separately is what makes these statements comparable at all,
     // and it puts the warning texts themselves under the gate.
-    let (rows, warnings) = if stmt.warnings {
-        let (rows, warnings) = split_warnings_bytes(recorded);
-        (rows, Some(warnings))
-    } else {
-        (recorded, None)
+    let halves = |block: &'_ [Vec<u8>]| {
+        if stmt.warnings {
+            let (rows, warnings) = split_warnings_bytes(block);
+            (rows.to_vec(), Some(warnings.map(<[Vec<u8>]>::to_vec)))
+        } else {
+            (block.to_vec(), None)
+        }
     };
-    match (compare_output(session, stmt, rows, report), warnings) {
-        // Only a statement that was actually COMPARED gets its warnings
-        // compared: a skip means this tier never produced the outcome the
-        // warnings would belong to.
-        (Ok(kind), Some(want)) => match warning_difference(session, want) {
-            None => Ok(kind),
-            Some(detail) => Err(Some(detail)),
-        },
-        (Ok(kind), None) => Ok(kind),
-        (outcome, _) => outcome,
+    let (rows, warnings) = halves(recorded);
+    let produced = produce(session, stmt, &rows, report)?;
+    // Only a statement that was actually COMPARED gets its warnings compared:
+    // a skip means this tier never produced the outcome the warnings would
+    // belong to. Asked at most once.
+    let mut ours_warnings: Option<Result<Vec<Vec<u8>>, String>> = None;
+    let mut verdict_with_warnings =
+        |rows: &[Vec<u8>], warnings: &Option<Option<Vec<Vec<u8>>>>| -> Verdict {
+            match (judge(&produced, stmt, rows), warnings) {
+                (Verdict::Match(kind), Some(want)) => {
+                    let ours = ours_warnings.get_or_insert_with(|| session_warnings(session));
+                    match warning_difference(ours, want.as_deref()) {
+                        None => Verdict::Match(kind),
+                        Some(detail) => Verdict::Diverge(detail),
+                    }
+                }
+                (verdict, _) => verdict,
+            }
+        };
+    match verdict_with_warnings(&rows, &warnings) {
+        Verdict::Diverge(detail) => {
+            // A ported Go-master change answers as master recorded it.
+            if let Some(master) = master {
+                let (rows, warnings) = halves(master);
+                match verdict_with_warnings(&rows, &warnings) {
+                    Verdict::Match(_) => return Ok(MatchKind::GoMaster),
+                    Verdict::Skip(SkipClass::BothRejected) => {
+                        report.skip(SkipClass::BothRejected);
+                        return Err(None);
+                    }
+                    _ => {}
+                }
+            }
+            Err(Some(detail))
+        }
+        verdict => verdict.record(stmt, report),
     }
 }
 
@@ -386,18 +461,13 @@ fn run_command(session: &mut dyn ReplaySession, sql: &str) -> Result<StmtOutput,
     Ok(output)
 }
 
-/// Reports how this session's warnings differ from the recorded ones, or
-/// `None` when they agree.
-///
-/// `want` is `None` when the recorder appended no block at all, which says the
-/// statement warned about NOTHING -- an assertion in its own right, so it is
-/// read as the empty list rather than waived.
+/// This session's warnings as the recorder renders them, sorted.
 ///
 /// `SHOW WARNINGS` does not consume what it reports and the buffer is reset by
 /// the next statement anyway, so asking here is observationally neutral -- it
 /// is also exactly what mysqltest itself did to produce the recording.
-fn warning_difference(session: &mut dyn ReplaySession, want: Option<&[Vec<u8>]>) -> Option<String> {
-    let ours = match session.run_with_columns("SHOW WARNINGS") {
+fn session_warnings(session: &mut dyn ReplaySession) -> Result<Vec<Vec<u8>>, String> {
+    let mut ours = match session.run_with_columns("SHOW WARNINGS") {
         // `SHOW WARNINGS` answers `Level`, `Code`, `Message` -- and its rows
         // go through the same client rendering every other result set does.
         Ok(StmtOutput::Rows { columns, rows }) => rows
@@ -420,14 +490,27 @@ fn warning_difference(session: &mut dyn ReplaySession, want: Option<&[Vec<u8>]>)
                 line
             })
             .collect::<Vec<Vec<u8>>>(),
-        _ => return Some("  rust: SHOW WARNINGS answered with no result set".to_owned()),
+        _ => return Err("  rust: SHOW WARNINGS answered with no result set".to_owned()),
     };
     // mysql-tester sorts the block it appends under `--enable_warnings`
     // (every recorded multi-warning block is in byte order, while an explicit
     // `SHOW WARNINGS` result keeps the server's order), so the server's order
     // is compared the same way.
-    let mut ours = ours;
     ours.sort();
+    Ok(ours)
+}
+
+/// Reports how this session's warnings differ from the recorded ones, or
+/// `None` when they agree.
+///
+/// `want` is `None` when the recorder appended no block at all, which says the
+/// statement warned about NOTHING -- an assertion in its own right, so it is
+/// read as the empty list rather than waived.
+fn warning_difference(ours: &Result<Vec<Vec<u8>>, String>, want: Option<&[Vec<u8>]>) -> Option<String> {
+    let ours = match ours {
+        Ok(ours) => ours,
+        Err(detail) => return Some(detail.clone()),
+    };
     let want = want.unwrap_or(&[]);
     if ours == want {
         return None;
@@ -442,13 +525,11 @@ fn warning_difference(session: &mut dyn ReplaySession, want: Option<&[Vec<u8>]>)
         if ours.is_empty() {
             "<none>".to_owned()
         } else {
-            display_block(&ours)
+            display_block(ours)
         }
     ))
 }
 
-/// Compares one statement's own output -- rows or rejection -- against the
-/// recorded block, with any appended warnings block already removed.
 /// Resolves a `load stats 'relative/path.json'` statement against
 /// `tests/integrationtest/`, the directory the recording's CLIENT ran from.
 ///
@@ -545,12 +626,53 @@ fn ensure_stats_fixtures_unzipped(dir: &std::path::Path) {
     });
 }
 
-fn compare_output(
+/// What running one statement produced: its outcome and the result's output
+/// names.
+struct Produced {
+    outcome: Result<StmtOutput, DriverError>,
+    output_names: Vec<tidb_datatype::FieldNameMetadata>,
+}
+
+/// One recording's verdict on a [`Produced`] outcome.
+enum Verdict {
+    Match(MatchKind),
+    Skip(SkipClass),
+    /// TiDB answered and this engine refused: the statement and the error.
+    OutOfDomain(String),
+    Diverge(String),
+}
+
+impl Verdict {
+    /// Counts the verdict in `report` the way the replay always has.
+    fn record(self, stmt: &Stmt, report: &mut TopicReport) -> Result<MatchKind, Option<String>> {
+        match self {
+            Verdict::Match(kind) => Ok(kind),
+            Verdict::Skip(class) => {
+                report.skip(class);
+                Err(None)
+            }
+            Verdict::OutOfDomain(error) => {
+                report.skip(SkipClass::OutOfDomain);
+                if show_out_of_domain() {
+                    eprintln!("OUT OF DOMAIN: {}\n  {error}", stmt.sql);
+                }
+                report.out_of_domain.push((stmt.sql.clone(), error));
+                Err(None)
+            }
+            Verdict::Diverge(detail) => Err(Some(detail)),
+        }
+    }
+}
+
+/// Runs one statement for comparison against `recorded` (its own output,
+/// warnings block already removed), or skips it: `Err(None)` with the skip's
+/// class recorded.
+fn produce(
     session: &mut dyn ReplaySession,
     stmt: &Stmt,
     recorded: &[Vec<u8>],
     report: &mut TopicReport,
-) -> Result<MatchKind, Option<String>> {
+) -> Result<Produced, Option<String>> {
     // The one statement class whose TEXT the harness owns a piece of: a
     // relative `load stats` path belongs to the recording client's working
     // directory, resolved here so the engine below can take it literally.
@@ -574,11 +696,7 @@ fn compare_output(
         report.skip(SkipClass::RecorderRewroteOutput(reason));
         return Err(None);
     }
-    let recorded_error = stmt.expect_error
-        || recorded
-            .first()
-            .is_some_and(|line| line.starts_with(b"Error "));
-
+    let recorded_error = recorded_error(stmt, recorded);
     let plan = plan_statement(stmt_sql);
     let sql = match &plan {
         Some(PlanStatement::NotComparable(reason)) if !recorded_error => {
@@ -611,7 +729,21 @@ fn compare_output(
     if traced {
         eprintln!("SQL< {}ms", started.elapsed().as_millis());
     }
-    match (outcome, recorded_error) {
+    Ok(Produced { outcome, output_names })
+}
+
+/// Whether `recorded` holds a rejection rather than rows.
+fn recorded_error(stmt: &Stmt, recorded: &[Vec<u8>]) -> bool {
+    stmt.expect_error
+        || recorded
+            .first()
+            .is_some_and(|line| line.starts_with(b"Error "))
+}
+
+/// Judges one statement's own output -- rows or rejection -- against one
+/// recorded block, with any appended warnings block already removed.
+fn judge(produced: &Produced, stmt: &Stmt, recorded: &[Vec<u8>]) -> Verdict {
+    match (&produced.outcome, recorded_error(stmt, recorded)) {
         // TiDB rejected it and so did we. The wording is TiDB's; the
         // rejection and its code and SQLSTATE are asserted.
         (Err(error), true) => {
@@ -632,48 +764,37 @@ fn compare_output(
                     .map(str::to_owned);
                 Some((code, state))
             });
-            let ours = error.to_mysql_error();
+            let ours = error.clone().to_mysql_error();
             let our_state = String::from_utf8_lossy(&ours.state).into_owned();
             if want.as_ref().is_some_and(|(code, state)| {
                 *code != ours.code || state.as_ref().is_some_and(|state| *state != our_state)
             }) {
-                return Err(Some(format!(
+                return Verdict::Diverge(format!(
                     "  tidb: {}\n  rust: Error {} ({}): {}",
                     first.unwrap_or_default(),
                     ours.code,
                     our_state,
                     ours.message
-                )));
+                ));
             }
-            report.skip(SkipClass::BothRejected);
-            Err(None)
+            Verdict::Skip(SkipClass::BothRejected)
         }
-        (Ok(_), true) => Err(Some(format!(
+        (Ok(_), true) => Verdict::Diverge(format!(
             "  tidb: {}\n  rust: accepted the statement",
             recorded
                 .first()
                 .map_or_else(|| "<error>".to_owned(), |line| display_line(line))
-        ))),
+        )),
         (Err(error), false)
             if stmt
                 .accepted_errors
                 .contains(&error.clone().to_mysql_error().code) =>
         {
-            report.skip(SkipClass::AcceptedAlternativeError);
-            Err(None)
+            Verdict::Skip(SkipClass::AcceptedAlternativeError)
         }
-        (Err(error), false) => {
-            report.skip(SkipClass::OutOfDomain);
-            if show_out_of_domain() {
-                eprintln!("OUT OF DOMAIN: {}\n  {error:?}", stmt.sql);
-            }
-            report
-                .out_of_domain
-                .push((stmt.sql.clone(), format!("{error:?}")));
-            Err(None)
-        }
+        (Err(error), false) => Verdict::OutOfDomain(format!("{error:?}")),
         (Ok(StmtOutput::Rows { columns, rows }), false) => {
-            let mut ours = render_rows(&columns, &output_names, &rows);
+            let mut ours = render_rows(columns, &produced.output_names, rows);
             let mut theirs: Vec<Vec<u8>> = recorded.to_vec();
             // `--sorted_result` means the recorder sorted the row lines under
             // an already-written header, so only the bodies are sorted here.
@@ -695,21 +816,21 @@ fn compare_output(
                 .flat_map(|line| line.split(|byte| *byte == b'\n').map(|part| part.to_vec()))
                 .collect();
             if ours == theirs {
-                Ok(MatchKind::Rows)
+                Verdict::Match(MatchKind::Rows)
             } else {
-                Err(Some(format!(
+                Verdict::Diverge(format!(
                     "  tidb: {}\n  rust: {}",
                     display_block(&theirs),
                     display_block(&ours)
-                )))
+                ))
             }
         }
         // A side effect records no output of its own.
-        (Ok(_), false) if recorded.is_empty() => Ok(MatchKind::SideEffect),
-        (Ok(other), false) => Err(Some(format!(
+        (Ok(_), false) if recorded.is_empty() => Verdict::Match(MatchKind::SideEffect),
+        (Ok(other), false) => Verdict::Diverge(format!(
             "  tidb: {}\n  rust: {other:?}",
             display_block(recorded)
-        ))),
+        )),
     }
 }
 
@@ -732,6 +853,8 @@ fn run_topic_on_this_stack<B: ReplayBackend>(topic: &str) -> Result<TopicReport,
         fs::read(&recorded_path).map_err(|e| format!("read {}: {e}", recorded_path.display()))?;
     let items = parse_test(&script)?;
     let aligned = align_bytes(&items, &recorded)?;
+    let master = master_recordings(topic)?;
+    let mut occurrences: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
 
     let mut report = TopicReport::default();
     let mut connections = B::open(topic)?;
@@ -752,9 +875,15 @@ fn run_topic_on_this_stack<B: ReplayBackend>(topic: &str) -> Result<TopicReport,
             }
             Item::Echo(_) => continue,
         };
+        let occurrence = occurrences.entry(stmt.sql.as_str()).or_default();
+        let master_block = master
+            .get(&(stmt.sql.clone(), *occurrence))
+            .filter(|master_block| **master_block != block);
+        *occurrence += 1;
         let statement_started = std::time::Instant::now();
-        let outcome =
-            connections.with_current(&mut |session| compare(session, stmt, &block, &mut report));
+        let outcome = connections.with_current(&mut |session| {
+            compare(session, stmt, &block, master_block.map(Vec::as_slice), &mut report)
+        });
         let spent = report
             .statement_time
             .entry(statement_kind(&stmt.sql))

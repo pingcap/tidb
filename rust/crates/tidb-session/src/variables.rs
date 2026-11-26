@@ -246,6 +246,9 @@ impl Session {
     /// it as the process list's `RESOURCE_GROUP` (Go `SetProcessInfo` reads
     /// the statement's group, hint included).
     pub(crate) fn activate_statement_resource_group(&mut self, stmt: &Stmt) {
+        // Go `executeStmtImpl` rebinds a dropped group after
+        // `ResetContextOfStmt`, before the statement compiles.
+        self.rebind_dropped_resource_group();
         self.resolve_statement_resource_group(stmt);
         self.publish_statement_resource_group();
     }

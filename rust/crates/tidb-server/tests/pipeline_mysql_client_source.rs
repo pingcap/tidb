@@ -1062,7 +1062,9 @@ fn mysql_client_runs_the_pipeline_end_to_end() {
     let grants = run_query(&mut client, &mut reader, "SHOW GRANTS");
     assert_eq!(
         grants[0][0],
-        "GRANT ALL PRIVILEGES ON *.* TO 'alice'@'%' WITH GRANT OPTION",
+        // Go master `formatAccountName` escapes under the session's SQL
+        // mode, which this client runs with ANSI_QUOTES.
+        "GRANT ALL PRIVILEGES ON *.* TO \"alice\"@\"%\" WITH GRANT OPTION",
         "{grants:?}"
     );
     // A fresh account reports USAGE, as Go's mysql.user does -- and reading
@@ -1075,7 +1077,7 @@ fn mysql_client_runs_the_pipeline_end_to_end() {
     let other = run_query(&mut client, &mut reader, "SHOW GRANTS FOR 'wireusage'@'%'");
     assert_eq!(
         other[0][0],
-        "GRANT USAGE ON *.* TO 'wireusage'@'%'",
+        "GRANT USAGE ON *.* TO \"wireusage\"@\"%\"",
         "{other:?}"
     );
 

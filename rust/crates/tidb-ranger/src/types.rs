@@ -808,20 +808,34 @@ fn append_datum(output: &mut String, datum: &Datum) {
     }
 }
 
-/// The value filling a missing column under Go's prefix-bound extension.
-fn bound_padding(low: bool, open: bool) -> &'static Datum {
-    if low == open {
-        // Open lower or closed upper bound.
-        &Datum::MaxValue
-    } else {
-        &Datum::MinNotNull
-    }
+/// Go `indexOrderDatum`: ENUM, SET and BIT values in their numeric index
+/// ordering (`Datum.Compare` orders ENUM/SET by name and BIT by bytes).
+fn index_order_datum(datum: &Datum) -> Result<std::borrow::Cow<'_, Datum>, tidb_datatype::DatumValueError> {
+    use std::borrow::Cow;
+    Ok(match datum {
+        Datum::Enum(value, _) => Cow::Owned(Datum::UInt(value.value())),
+        Datum::Set(value, _) => Cow::Owned(Datum::UInt(value.value())),
+        // Go: "Match codec.EncodeKey: an unrepresentable literal must fail
+        // even if the statement context would otherwise truncate it to a
+        // warning."
+        Datum::Bit(literal) | Datum::BinaryLiteral(literal) => {
+            let (value, error) =
+                literal.to_int_with_policy(tidb_datatype::TruncationPolicy::STRICT, |_| {});
+            if let Some(error) = error {
+                return Err(tidb_datatype::DatumValueError::Comparison(error.to_string()));
+            }
+            Cow::Owned(Datum::UInt(value))
+        }
+        _ => Cow::Borrowed(datum),
+    })
 }
 
-/// Go `compareLexicographically`: bounds of different widths extend with
-/// the side-appropriate infinities, then compare column-wise; the
-/// open/low flags break ties exactly per Go's switch.
-fn compare_lexicographically(
+/// Go `compareLexicographically` (master #72802): compare the common prefix
+/// in index storage order; a shorter bound sits outside every suffix value
+/// of the longer one -- a closed lower or an open upper prefix before them,
+/// the other prefix bounds after -- and equal-width bounds break ties on the
+/// open/low flags.
+pub(crate) fn compare_lexicographically(
     bound1: &[Datum],
     bound2: &[Datum],
     collators: &[Collation],
@@ -833,19 +847,19 @@ fn compare_lexicographically(
     use std::cmp::Ordering;
     let n1 = bound1.len();
     let n2 = bound2.len();
-    for (i, (left, right)) in bound1.iter().zip(bound2).enumerate() {
-        let cmp = left.compare(right, collators[i])?;
+    for i in 0..n1.min(n2) {
+        let left = index_order_datum(&bound1[i])?;
+        let right = index_order_datum(&bound2[i])?;
+        let cmp = left.compare(&right, collators[i])?;
         if cmp != Ordering::Equal {
             return Ok(cmp);
         }
     }
-    for i in n1.min(n2)..n1.max(n2) {
-        let left = bound1.get(i).unwrap_or_else(|| bound_padding(low1, open1));
-        let right = bound2.get(i).unwrap_or_else(|| bound_padding(low2, open2));
-        let cmp = left.compare(right, collators[i])?;
-        if cmp != Ordering::Equal {
-            return Ok(cmp);
-        }
+    if n1 < n2 {
+        return Ok(if low1 != open1 { Ordering::Less } else { Ordering::Greater });
+    }
+    if n2 < n1 {
+        return Ok(if low2 != open2 { Ordering::Greater } else { Ordering::Less });
     }
 
     Ok(match (open1, open2) {
@@ -894,7 +908,7 @@ fn prefix(
 }
 
 /// Go `checkCollators`.
-fn check_collators(ran1: &Range, ran2: &Range, length: usize) -> bool {
+pub(crate) fn check_collators(ran1: &Range, ran2: &Range, length: usize) -> bool {
     ran1.collators[..length.min(ran1.collators.len())]
         == ran2.collators[..length.min(ran2.collators.len())]
 }

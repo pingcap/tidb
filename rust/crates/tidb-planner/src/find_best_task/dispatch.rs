@@ -176,6 +176,8 @@ pub struct DispatchContext<'a> {
     /// prefers one IndexJoin inner access path over another. A non-positive
     /// value disables the empirical rule, matching Go's fix-control getter.
     pub index_join_skyline_threshold: f64,
+    /// Go `SessionVars.RangeMaxCount`, read by `compareEqOrIn`.
+    pub range_max_count: i64,
     /// Go `SessionVars.IsMPPAllowed()`, which controls MPP candidates.
     pub mpp_allowed: bool,
     /// Go `SessionVars.IsTiFlashCopBanned()`.
@@ -295,6 +297,7 @@ impl<'a> DispatchContext<'a> {
             index_join_row_count_upper_bound: false,
             enable_point_get_conversion: true,
             index_join_skyline_threshold: 1_000.0,
+            range_max_count: tidb_vardef::defaults::DEF_TIDB_OPT_RANGE_MAX_COUNT,
             // Go `vardef.DefTiDBAllowMPPExecution` is true.
             mpp_allowed: true,
             // Go `DefTiDBAllowTiFlashCop` is false.
@@ -571,6 +574,14 @@ impl<'a> DispatchContext<'a> {
     #[must_use]
     pub const fn with_index_join_row_count_upper_bound(mut self, enabled: bool) -> Self {
         self.index_join_row_count_upper_bound = enabled;
+        self
+    }
+
+    /// Go `SessionVars.RangeMaxCount` (`tidb_opt_range_max_count`), read by
+    /// `compareEqOrIn`; zero disables the threshold.
+    #[must_use]
+    pub const fn with_range_max_count(mut self, count: i64) -> Self {
+        self.range_max_count = count;
         self
     }
 
@@ -2870,6 +2881,7 @@ fn index_join_candidate(
         candidate.index_columns.insert(column.unique_id, *length);
     }
     candidate.eq_or_in_count = core.index_join_cols;
+    candidate.range_count = core.ranges.len();
     candidate.matches_property = false;
     // Go `isFullIndexMatch` reads the static EqOrInCondCount with the widened
     // index-condition map.
@@ -2950,6 +2962,7 @@ fn index_join_path_compare(
             f64::MAX,
             ctx.prefer_range_scan,
             ctx.index_join_skyline_threshold,
+            ctx.range_max_count,
         );
         match comparison.ordering {
             1 => return true,

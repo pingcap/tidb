@@ -389,6 +389,10 @@ fn rename_one(
         table.auto_id_schema_id = 0;
     }
     table.name = info.new_table_name.clone();
+    // Go master #73233: "Renaming preserves the table ID, so advance its
+    // revision to invalidate cached plans that depend on the previous
+    // name-to-ID binding."
+    table.revision += 1;
     let Some(new_database) = catalog
         .schema_by_id(new_schema_id)
     else {

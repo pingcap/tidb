@@ -131,24 +131,6 @@ impl MysqlServerTls {
         ca: Option<&Path>,
         min_version: &str,
     ) -> Result<Self, MysqlTlsError> {
-        Self::from_material_with_client_auth(
-            certs,
-            key,
-            origin,
-            ca,
-            min_version,
-            tidb_tls::REQUIRE_SECURE_TRANSPORT.load(std::sync::atomic::Ordering::SeqCst),
-        )
-    }
-
-    fn from_material_with_client_auth(
-        certs: Vec<CertificateDer<'static>>,
-        key: PrivateKeyDer<'static>,
-        origin: &'static str,
-        ca: Option<&Path>,
-        min_version: &str,
-        require_secure: bool,
-    ) -> Result<Self, MysqlTlsError> {
         if !matches!(min_version, "" | "TLSv1.2" | "TLSv1.3") {
             tidb_logutil::bg_logger().warn(
                 "Invalid TLS version, using default instead",
@@ -167,46 +149,34 @@ impl MysqlServerTls {
         let builder = ServerConfig::builder_with_provider(Arc::clone(&provider))
             .with_protocol_versions(versions)
             .map_err(|error| MysqlTlsError::Material(error.to_string()))?;
+        // Go `LoadTLSCertificates`: `NoClientCert`, or `VerifyClientCertIfGiven`
+        // once the CA file yields a certificate; `require_secure_transport` does
+        // not make a client certificate mandatory (Go master #69951).
         let mut verifies_client_certificates = false;
-        let request_only = || {
-            Arc::new(RequestClientCert {
-                provider: Arc::clone(&provider),
-            })
-        };
         let builder = if let Some(ca) = ca {
             let file = fs::File::open(ca)
                 .map_err(|error| MysqlTlsError::Material(format!("{}: {error}", ca.display())))?;
             let mut roots = rustls::RootCertStore::empty();
             // Go AppendCertsFromPEM keeps valid certificates and ignores invalid
-            // blocks; an empty pool retains the no-CA request policy.
+            // blocks; an empty pool keeps `NoClientCert`.
             for cert in rustls_pemfile::certs(&mut BufReader::new(file)).flatten() {
                 let _ = roots.add(cert);
             }
             if roots.is_empty() {
-                if require_secure {
-                    builder.with_client_cert_verifier(request_only())
-                } else {
-                    builder.with_no_client_auth()
-                }
+                builder.with_no_client_auth()
             } else {
                 verifies_client_certificates = true;
                 let verifier = rustls::server::WebPkiClientVerifier::builder_with_provider(
                     Arc::new(roots),
                     provider,
                 );
-                let verifier = if require_secure {
-                    verifier
-                } else {
-                    verifier.allow_unauthenticated()
-                };
                 builder.with_client_cert_verifier(
                     verifier
+                        .allow_unauthenticated()
                         .build()
                         .map_err(|error| MysqlTlsError::Material(error.to_string()))?,
                 )
             }
-        } else if require_secure {
-            builder.with_client_cert_verifier(request_only())
         } else {
             builder.with_no_client_auth()
         };
@@ -381,73 +351,6 @@ impl rustls::server::ResolvesServerCert for PemResolver {
             ),
         }
         Some(Arc::clone(&current))
-    }
-}
-
-/// Go RequestClientCert parses certificates and verifies handshake signatures,
-/// but does not verify trust/expiry. This policy NEVER supplies account X509
-/// evidence: the accepted socket separately retains CA-verification provenance.
-#[derive(Debug)]
-struct RequestClientCert {
-    provider: Arc<rustls::crypto::CryptoProvider>,
-}
-
-impl rustls::server::danger::ClientCertVerifier for RequestClientCert {
-    fn client_auth_mandatory(&self) -> bool {
-        false
-    }
-    fn root_hint_subjects(&self) -> &[rustls::DistinguishedName] {
-        &[]
-    }
-    fn verify_client_cert(
-        &self,
-        end_entity: &CertificateDer<'_>,
-        intermediates: &[CertificateDer<'_>],
-        _: rustls::pki_types::UnixTime,
-    ) -> Result<rustls::server::danger::ClientCertVerified, rustls::Error> {
-        for cert in std::iter::once(end_entity).chain(intermediates) {
-            let (remaining, _) =
-                x509_parser::parse_x509_certificate(cert.as_ref()).map_err(|_| {
-                    rustls::Error::InvalidCertificate(rustls::CertificateError::BadEncoding)
-                })?;
-            if !remaining.is_empty() {
-                return Err(rustls::Error::InvalidCertificate(
-                    rustls::CertificateError::BadEncoding,
-                ));
-            }
-        }
-        Ok(rustls::server::danger::ClientCertVerified::assertion())
-    }
-    fn verify_tls12_signature(
-        &self,
-        message: &[u8],
-        cert: &CertificateDer<'_>,
-        dss: &rustls::DigitallySignedStruct,
-    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
-        rustls::crypto::verify_tls12_signature(
-            message,
-            cert,
-            dss,
-            &self.provider.signature_verification_algorithms,
-        )
-    }
-    fn verify_tls13_signature(
-        &self,
-        message: &[u8],
-        cert: &CertificateDer<'_>,
-        dss: &rustls::DigitallySignedStruct,
-    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
-        rustls::crypto::verify_tls13_signature(
-            message,
-            cert,
-            dss,
-            &self.provider.signature_verification_algorithms,
-        )
-    }
-    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
-        self.provider
-            .signature_verification_algorithms
-            .supported_schemes()
     }
 }
 
@@ -681,7 +584,6 @@ impl ClientStream {
     }
 
     /// Only a configured CA verifier establishes trusted chain evidence.
-    /// Go RequestClientCert supplies parsed peers without VerifiedChains.
     pub fn has_verified_client_certificate(&self) -> bool {
         match &*self.inner.lock().expect("client stream lock") {
             ClientStreamInner::Tls(stream, true) => {
@@ -1214,13 +1116,12 @@ mod account_tls_batch_handshake_tests {
         let policy = policy.map(str::to_owned);
         let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../tidb-pd-client/testdata/tls");
         let ca = dir.join("ca.crt");
-        let tls = MysqlServerTls::from_material_with_client_auth(
+        let tls = MysqlServerTls::from_material_with_policy(
             read_certificates(&dir.join("server.crt")).unwrap(),
             read_private_key(&dir.join("server.key")).unwrap(),
             "test",
             trust_clients.then_some(ca.as_path()),
             minimum,
-            !trust_clients,
         )
         .unwrap();
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -1238,23 +1139,21 @@ mod account_tls_batch_handshake_tests {
                 return (false, false, false);
             }
             if !trust_clients {
+                // Go `NoClientCert`: without a CA the server asks for no certificate.
                 let guard = stream.inner.lock().unwrap();
                 let ClientStreamInner::Tls(peer, _) = &*guard else {
                     unreachable!()
                 };
-                assert_eq!(
-                    peer.conn
-                        .peer_certificates()
-                        .is_some_and(|certs| !certs.is_empty()),
-                    client_kind != 0,
-                    "RequestClientCert must actually request the peer certificate"
+                assert!(
+                    peer.conn.peer_certificates().is_none_or(|certs| certs.is_empty()),
+                    "NoClientCert must not request the peer certificate"
                 );
                 drop(guard);
                 assert!(stream.verified_tls_peer().is_none());
             }
             // Go AuthenticateRequest.ConnState.PeerCertificates (x01_extension Go probe).
             let state = stream.tls_connection_state().unwrap();
-            assert_eq!(state.peer_certificates.is_empty(), client_kind == 0);
+            assert_eq!(state.peer_certificates.is_empty(), !trust_clients || client_kind == 0);
             for cert in &state.peer_certificates {
                 assert!(x509_parser::parse_x509_certificate(cert).is_ok());
             }
@@ -1353,9 +1252,20 @@ mod account_tls_batch_handshake_tests {
         result
     }
 
+    /// Go `TestTLSVerify` (issue 69870, master #69951): with a CA configured,
+    /// a TLS client without a certificate still connects after
+    /// `require_secure_transport` is turned on and the TLS config is rebuilt.
+    #[test]
+    fn require_secure_transport_keeps_client_certificates_optional() {
+        let previous = tidb_tls::REQUIRE_SECURE_TRANSPORT.swap(true, std::sync::atomic::Ordering::SeqCst);
+        let outcome = handshake_client_policy(0, false, "", Some("{}"), true);
+        tidb_tls::REQUIRE_SECURE_TRANSPORT.store(previous, std::sync::atomic::Ordering::SeqCst);
+        assert_eq!(outcome, (true, false, true));
+    }
+
     #[test]
     fn tls_owner_request_without_ca_never_creates_verified_account_evidence() {
-        // Go util.LoadTLSCertificates RequestClientCert; privileges checks
+        // Go util.LoadTLSCertificates NoClientCert; privileges checks
         // VerifiedChains, not merely PeerCertificates (TLS1.2 and TLS1.3).
         for tls12 in [true, false] {
             for client in [0, 1, 2] {

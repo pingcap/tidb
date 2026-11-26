@@ -254,6 +254,10 @@ pub trait ShowExec: crate::simple::account_password::AccountPasswordExec {
                 }
             }
         }
+        // Go checks `mysql.AllPrivMask` on each table, as SHOW PLACEMENT does.
+        infos.retain(|info| {
+            self.has_any_scoped_privilege(&info.db, &info.table, tidb_privilege::all_priv_mask())
+        });
         // A stable sort keeps a table's partitions in definition order.
         infos.sort_by(|left, right| {
             right

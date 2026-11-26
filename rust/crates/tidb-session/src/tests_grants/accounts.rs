@@ -91,7 +91,7 @@ fn create_user_identified_with_stores_the_plugin_and_validates_credentials() {
     assert!(dana_auth.starts_with("$A$"));
     assert_eq!(
         row_text(session.run("SHOW GRANTS FOR 'dana'@'%'")),
-        [["GRANT USAGE ON *.* TO 'dana'@'%'"]]
+        [["GRANT USAGE ON *.* TO `dana`@`%`"]]
     );
 
     // A plugin-only clause (no BY/AS) is a passwordless account under that
@@ -167,9 +167,9 @@ fn rename_user_moves_the_whole_account_row() {
     assert_eq!(
         row_text(session.run("SHOW GRANTS FOR 'bobby'@'%'")),
         [
-            ["GRANT SELECT ON *.* TO 'bobby'@'%'"],
-            ["GRANT SELECT ON `test`.* TO 'bobby'@'%'"],
-            ["GRANT SELECT ON `test`.`t` TO 'bobby'@'%'"],
+            ["GRANT SELECT ON *.* TO `bobby`@`%`"],
+            ["GRANT SELECT ON `test`.* TO `bobby`@`%`"],
+            ["GRANT SELECT ON `test`.`t` TO `bobby`@`%`"],
         ]
     );
     assert!(session.run("SHOW GRANTS FOR 'bob'@'%'").is_err());
@@ -263,8 +263,8 @@ fn rename_user_moves_role_edges_and_default_roles() {
     assert_eq!(
         row_text(session.run("SHOW GRANTS FOR 'u2'@'%' USING 'r1'@'%'")),
         [
-            ["GRANT USAGE ON *.* TO 'u2'@'%'"],
-            ["GRANT 'r1'@'%' TO 'u2'@'%'"],
+            ["GRANT USAGE ON *.* TO `u2`@`%`"],
+            ["GRANT `r1`@`%` TO `u2`@`%`"],
         ]
     );
 
@@ -273,8 +273,8 @@ fn rename_user_moves_role_edges_and_default_roles() {
     assert_eq!(
         row_text(session.run("SHOW GRANTS FOR 'u2'@'%' USING 'r2'@'%'")),
         [
-            ["GRANT USAGE ON *.* TO 'u2'@'%'"],
-            ["GRANT 'r2'@'%' TO 'u2'@'%'"],
+            ["GRANT USAGE ON *.* TO `u2`@`%`"],
+            ["GRANT `r2`@`%` TO `u2`@`%`"],
         ]
     );
 }
@@ -356,7 +356,7 @@ fn drop_user_clears_scoped_grant_rows() {
     session.run("CREATE USER 'gone'@'%'").unwrap();
     assert_eq!(
         row_text(session.run("SHOW GRANTS FOR 'gone'@'%'")),
-        [["GRANT USAGE ON *.* TO 'gone'@'%'"]]
+        [["GRANT USAGE ON *.* TO `gone`@`%`"]]
     );
 }
 
@@ -378,7 +378,7 @@ fn show_create_user_prints_the_captured_default_clause_set() {
     assert_eq!(rows.len(), 1);
     assert_eq!(
         rows[0][0],
-        "CREATE USER 'plain'@'%' IDENTIFIED WITH 'mysql_native_password' AS \
+        "CREATE USER `plain`@`%` IDENTIFIED WITH 'mysql_native_password' AS \
          '*0DB55B5CA3F29C6BCD42E6CF2D2BA346859991AB' REQUIRE NONE PASSWORD \
          EXPIRE DEFAULT ACCOUNT UNLOCK PASSWORD HISTORY DEFAULT PASSWORD \
          REUSE INTERVAL DEFAULT"
@@ -388,7 +388,7 @@ fn show_create_user_prints_the_captured_default_clause_set() {
     let rows = row_text(session.run("SHOW CREATE USER 'nopw'@'%'"));
     assert_eq!(
         rows[0][0],
-        "CREATE USER 'nopw'@'%' IDENTIFIED WITH 'mysql_native_password' AS \
+        "CREATE USER `nopw`@`%` IDENTIFIED WITH 'mysql_native_password' AS \
          '' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK PASSWORD \
          HISTORY DEFAULT PASSWORD REUSE INTERVAL DEFAULT"
     );
@@ -407,7 +407,7 @@ fn show_create_user_names_the_accounts_own_plugin() {
         .unwrap();
     let rows = row_text(session.run("SHOW CREATE USER 'sha2'@'%'"));
     assert!(rows[0][0]
-        .starts_with("CREATE USER 'sha2'@'%' IDENTIFIED WITH 'caching_sha2_password' AS '"));
+        .starts_with("CREATE USER `sha2`@`%` IDENTIFIED WITH 'caching_sha2_password' AS '"));
 }
 
 /// A ROLE is a locked `mysql.user` row with no password (Go's `CREATE
@@ -457,7 +457,7 @@ fn show_create_user_current_user_resolves_the_session_identity() {
     let mut session = session_with_privileges();
     session.set_user("root@%".to_owned(), "root@127.0.0.1".to_owned());
     let rows = row_text(session.run("SHOW CREATE USER CURRENT_USER()"));
-    assert!(rows[0][0].starts_with("CREATE USER 'root'@'%' IDENTIFIED WITH"));
+    assert!(rows[0][0].starts_with("CREATE USER `root`@`%` IDENTIFIED WITH"));
 }
 
 /// `REQUIRE SSL` / `REQUIRE NONE` are real stored state, and the
@@ -494,13 +494,12 @@ fn require_policies_are_stored_shown_and_invalid_forms_are_refused() {
     assert!(shown(&mut session, "plain").contains(" REQUIRE SSL "));
     session.run("ALTER USER 'plain'@'%' REQUIRE NONE").unwrap();
     assert!(shown(&mut session, "plain").contains(" REQUIRE NONE "));
-    // Go `executeAlterUser` rewrites the policy on every ALTER USER, `{}`
-    // for one without REQUIRE, so a password-only ALTER clears it
-    // (captured on this branch).
+    // Go master `executeAlterUser` (#70401) writes the policy only for an
+    // ALTER with a REQUIRE clause, so a password-only ALTER keeps it.
     session
         .run("ALTER USER 'ssl'@'%' IDENTIFIED BY 'x'")
         .unwrap();
-    assert!(shown(&mut session, "ssl").contains(" REQUIRE NONE "));
+    assert!(shown(&mut session, "ssl").contains(" REQUIRE SSL "));
 
     session.run("CREATE USER 'x509'@'%' REQUIRE X509").unwrap();
     assert!(shown(&mut session, "x509").contains(" REQUIRE X509 "));
@@ -514,13 +513,13 @@ fn require_policies_are_stored_shown_and_invalid_forms_are_refused() {
             .run(&format!("CREATE USER '{account}'@'%' REQUIRE {clause}"))
             .unwrap();
         assert!(shown(&mut session, account).contains(&format!(" REQUIRE {clause} ")));
-        // Every ALTER USER rewrites the policy (see above).
+        // An ALTER USER without REQUIRE keeps the policy (see above).
         session
             .run(&format!(
                 "ALTER USER '{account}'@'%' IDENTIFIED BY 'rotated'"
             ))
             .unwrap();
-        assert!(shown(&mut session, account).contains(" REQUIRE NONE "));
+        assert!(shown(&mut session, account).contains(&format!(" REQUIRE {clause} ")));
         session
             .run(&format!("ALTER USER '{account}'@'%' REQUIRE {clause}"))
             .unwrap();
@@ -581,7 +580,7 @@ fn token_issuer_is_recorded_for_token_accounts_like_go() {
     assert_eq!(warnings(&session), [(1105, "TOKEN_ISSUER is not needed for 'mysql_native_password' user".to_owned())]);
     assert_eq!(
         shown(&mut session, "invalid"),
-        "CREATE USER 'invalid'@'%' IDENTIFIED WITH 'mysql_native_password' AS '' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK PASSWORD HISTORY DEFAULT PASSWORD REUSE INTERVAL DEFAULT"
+        "CREATE USER `invalid`@`%` IDENTIFIED WITH 'mysql_native_password' AS '' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK PASSWORD HISTORY DEFAULT PASSWORD REUSE INTERVAL DEFAULT"
     );
     session
         .run(r#"CREATE USER 'tok'@'%' IDENTIFIED WITH 'tidb_auth_token' REQUIRE TOKEN_ISSUER 'iss1' ATTRIBUTE '{"email": "a@b.c"}'"#)
@@ -589,7 +588,7 @@ fn token_issuer_is_recorded_for_token_accounts_like_go() {
     assert!(warnings(&session).is_empty());
     assert_eq!(
         shown(&mut session, "tok"),
-        r#"CREATE USER 'tok'@'%' IDENTIFIED WITH 'tidb_auth_token' AS '' REQUIRE NONE token_issuer iss1 PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK PASSWORD HISTORY DEFAULT PASSWORD REUSE INTERVAL DEFAULT ATTRIBUTE '{"email": "a@b.c"}'"#
+        r#"CREATE USER `tok`@`%` IDENTIFIED WITH 'tidb_auth_token' AS '' REQUIRE NONE token_issuer iss1 PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK PASSWORD HISTORY DEFAULT PASSWORD REUSE INTERVAL DEFAULT ATTRIBUTE '{"email": "a@b.c"}'"#
     );
     session.run("CREATE USER 'tok2'@'%' IDENTIFIED WITH 'tidb_auth_token'").unwrap();
     assert_eq!(
@@ -600,7 +599,7 @@ fn token_issuer_is_recorded_for_token_accounts_like_go() {
     assert!(warnings(&session).is_empty());
     assert_eq!(
         shown(&mut session, "tok2"),
-        "CREATE USER 'tok2'@'%' IDENTIFIED WITH 'tidb_auth_token' AS '' REQUIRE NONE token_issuer iss2 PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK PASSWORD HISTORY DEFAULT PASSWORD REUSE INTERVAL DEFAULT"
+        "CREATE USER `tok2`@`%` IDENTIFIED WITH 'tidb_auth_token' AS '' REQUIRE NONE token_issuer iss2 PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK PASSWORD HISTORY DEFAULT PASSWORD REUSE INTERVAL DEFAULT"
     );
     session.run("ALTER USER 'invalid'@'%' REQUIRE TOKEN_ISSUER 'x'").unwrap();
     assert_eq!(warnings(&session), [(1105, "TOKEN_ISSUER is not needed for the auth plugin".to_owned())]);
@@ -688,20 +687,20 @@ fn show_create_user_renders_the_mysql_user_row() {
     };
     assert_eq!(
         show(&mut boot, "'u1'@'%'"),
-        "CREATE USER 'u1'@'%' IDENTIFIED WITH 'caching_sha2_password' AS '' REQUIRE NONE \
+        "CREATE USER `u1`@`%` IDENTIFIED WITH 'caching_sha2_password' AS '' REQUIRE NONE \
          PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK PASSWORD HISTORY DEFAULT PASSWORD REUSE \
          INTERVAL DEFAULT"
     );
     assert_eq!(
         show(&mut boot, "'u2'@'%'"),
-        "CREATE USER 'u2'@'%' IDENTIFIED WITH 'caching_sha2_password' AS '' REQUIRE NONE \
+        "CREATE USER `u2`@`%` IDENTIFIED WITH 'caching_sha2_password' AS '' REQUIRE NONE \
          PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK PASSWORD HISTORY DEFAULT PASSWORD REUSE \
          INTERVAL DEFAULT FAILED_LOGIN_ATTEMPTS 3 PASSWORD_LOCK_TIME UNBOUNDED \
          ATTRIBUTE '{\"comment\": \"hello\"}'"
     );
     assert_eq!(
         show(&mut boot, "'u3'@'%'"),
-        "CREATE USER 'u3'@'%' IDENTIFIED WITH 'caching_sha2_password' AS '' REQUIRE NONE \
+        "CREATE USER `u3`@`%` IDENTIFIED WITH 'caching_sha2_password' AS '' REQUIRE NONE \
          PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK PASSWORD HISTORY DEFAULT PASSWORD REUSE \
          INTERVAL DEFAULT ATTRIBUTE '{\"age\": 20}'"
     );
@@ -730,13 +729,14 @@ fn account_statements_write_the_privilege_tables_like_go() {
         [["{}"]]
     );
     run(&mut session, "create user u1 require ssl");
+    // Go master (#70401): an ALTER without REQUIRE keeps the policy.
     run(&mut session, "alter user u1 identified by 'x'");
     assert_eq!(
         rows(
             &mut session,
             "select priv from mysql.global_priv where user='u1'"
         ),
-        [["{}"]]
+        [[r#"{"ssl_type":1}"#]]
     );
     run(&mut session, "alter user u1 require x509");
     run(&mut session, "grant select on *.* to u1");
@@ -910,5 +910,67 @@ fn account_statements_write_the_privilege_tables_like_go() {
             "select count(*) from mysql.global_priv where user='u9'"
         ),
         [["0"]]
+    );
+}
+
+/// Go master `TestAlterUserPreservesRequire` (#70401): an ALTER USER without
+/// a REQUIRE clause keeps the account's TLS requirements; an explicit REQUIRE
+/// still replaces them, and a TOKEN_ISSUER-only REQUIRE writes no
+/// `mysql.global_priv` row.
+#[test]
+fn alter_user_preserves_require() {
+    let mut session = session_with_privileges();
+    let priv_of = |session: &mut Session, user: &str| {
+        row_text(session.run(&format!("SELECT Priv FROM mysql.global_priv WHERE User='{user}' AND Host='%'")))
+    };
+    session
+        .run("CREATE USER 'require_user'@'%' REQUIRE SUBJECT '/C=US/O=Example/CN=TiDB' SAN 'DNS:foo'")
+        .unwrap();
+    let required = vec![vec![r#"{"ssl_type":3,"x509_subject":"/C=US/O=Example/CN=TiDB","san":"DNS:foo"}"#.to_owned()]];
+    assert_eq!(priv_of(&mut session, "require_user"), required);
+
+    // ALTER USER without a REQUIRE clause must not wipe the TLS requirements.
+    session.run("ALTER USER 'require_user'@'%' ACCOUNT LOCK").unwrap();
+    assert_eq!(priv_of(&mut session, "require_user"), required);
+    assert_eq!(
+        row_text(session.run("SELECT Account_locked FROM mysql.user WHERE User='require_user' AND Host='%'")),
+        [["Y"]]
+    );
+    assert_eq!(
+        row_text(session.run("SHOW CREATE USER 'require_user'@'%'")),
+        [["CREATE USER `require_user`@`%` IDENTIFIED WITH 'mysql_native_password' AS '' REQUIRE SUBJECT '/C=US/O=Example/CN=TiDB' SAN 'DNS:foo' PASSWORD EXPIRE DEFAULT ACCOUNT LOCK PASSWORD HISTORY DEFAULT PASSWORD REUSE INTERVAL DEFAULT"]]
+    );
+
+    // A few more attribute-only ALTERs must also preserve the requirements.
+    for sql in [
+        "ALTER USER 'require_user'@'%' ACCOUNT UNLOCK",
+        "ALTER USER 'require_user'@'%' PASSWORD EXPIRE",
+        "ALTER USER 'require_user'@'%' COMMENT ''",
+    ] {
+        session.run(sql).unwrap();
+        assert_eq!(priv_of(&mut session, "require_user"), required, "{sql}");
+    }
+
+    // An explicit REQUIRE clause is still honored.
+    session.run("ALTER USER 'require_user'@'%' REQUIRE SSL").unwrap();
+    assert_eq!(priv_of(&mut session, "require_user"), [[r#"{"ssl_type":1}"#]]);
+    // REQUIRE NONE explicitly clears the requirements.
+    session.run("ALTER USER 'require_user'@'%' REQUIRE NONE").unwrap();
+    assert_eq!(priv_of(&mut session, "require_user"), [["{}"]]);
+
+    // A token-issuer-only REQUIRE is stored in mysql.user, not global_priv, so
+    // it must not write an (empty) global_priv row.
+    session
+        .run("CREATE USER 'token_only'@'%' IDENTIFIED WITH 'tidb_auth_token' REQUIRE token_issuer 'issuer-abc'")
+        .unwrap();
+    let count = |session: &mut Session| {
+        row_text(session.run("SELECT count(*) FROM mysql.global_priv WHERE User='token_only' AND Host='%'"))
+    };
+    assert_eq!(count(&mut session), [["0"]]);
+    session.run("ALTER USER 'token_only'@'%' ACCOUNT LOCK").unwrap();
+    assert_eq!(count(&mut session), [["0"]]);
+    assert_eq!(
+        row_text(session.run("SHOW CREATE USER 'token_only'@'%'")),
+        [["CREATE USER `token_only`@`%` IDENTIFIED WITH 'tidb_auth_token' AS '' REQUIRE NONE token_issuer issuer-abc PASSWORD EXPIRE DEFAULT ACCOUNT LOCK PASSWORD HISTORY DEFAULT PASSWORD REUSE INTERVAL DEFAULT"]]
     );
 }

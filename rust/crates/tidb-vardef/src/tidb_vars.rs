@@ -1101,6 +1101,11 @@ pub const TIDB_FOREIGN_KEY_CHECK_IN_SHARED_LOCK: &str = "tidb_foreign_key_check_
 /// limit for ranges.
 /// Go `TiDBOptRangeMaxSize`.
 pub const TIDB_OPT_RANGE_MAX_SIZE: &str = "tidb_opt_range_max_size";
+/// Go `TiDBOptRangeMaxCount` (master #70768): the range-count threshold above
+/// which skyline pruning does not prefer an access path for having more
+/// equality/IN predicates. It does not limit range construction; 0 disables
+/// the threshold.
+pub const TIDB_OPT_RANGE_MAX_COUNT: &str = "tidb_opt_range_max_count";
 /// TiDBOptAdvancedJoinHint indicates whether the join method hint is compatible with join order hint.
 /// Go `TiDBOptAdvancedJoinHint`.
 pub const TIDB_OPT_ADVANCED_JOIN_HINT: &str = "tidb_opt_advanced_join_hint";

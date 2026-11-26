@@ -72,12 +72,12 @@ fn dynamic_privileges_grant_revoke_and_show_grants() {
     assert_eq!(
         row_text(session.run("SHOW GRANTS FOR 'u1'@'%'")),
         [
-            ["GRANT SELECT,PROCESS ON *.* TO 'u1'@'%'"],
-            ["GRANT INSERT ON `db1`.* TO 'u1'@'%'"],
-            ["GRANT UPDATE ON `db1`.`t` TO 'u1'@'%'"],
-            ["GRANT BACKUP_ADMIN,CONNECTION_ADMIN ON *.* TO 'u1'@'%'"],
+            ["GRANT SELECT,PROCESS ON *.* TO `u1`@`%`"],
+            ["GRANT INSERT ON `db1`.* TO `u1`@`%`"],
+            ["GRANT UPDATE ON `db1`.`t` TO `u1`@`%`"],
+            ["GRANT BACKUP_ADMIN,CONNECTION_ADMIN ON *.* TO `u1`@`%`"],
             [
-                "GRANT RESTRICTED_USER_ADMIN,SYSTEM_VARIABLES_ADMIN ON *.* TO 'u1'@'%' \
+                "GRANT RESTRICTED_USER_ADMIN,SYSTEM_VARIABLES_ADMIN ON *.* TO `u1`@`%` \
                      WITH GRANT OPTION"
             ],
         ]
@@ -106,12 +106,12 @@ fn dynamic_privileges_grant_revoke_and_show_grants() {
     assert_eq!(
         row_text(session.run("SHOW GRANTS FOR 'u1'@'%'")),
         [
-            ["GRANT SELECT,PROCESS ON *.* TO 'u1'@'%'"],
-            ["GRANT INSERT ON `db1`.* TO 'u1'@'%'"],
-            ["GRANT UPDATE ON `db1`.`t` TO 'u1'@'%'"],
-            ["GRANT CONNECTION_ADMIN ON *.* TO 'u1'@'%'"],
+            ["GRANT SELECT,PROCESS ON *.* TO `u1`@`%`"],
+            ["GRANT INSERT ON `db1`.* TO `u1`@`%`"],
+            ["GRANT UPDATE ON `db1`.`t` TO `u1`@`%`"],
+            ["GRANT CONNECTION_ADMIN ON *.* TO `u1`@`%`"],
             [
-                "GRANT RESTRICTED_USER_ADMIN,SYSTEM_VARIABLES_ADMIN ON *.* TO 'u1'@'%' \
+                "GRANT RESTRICTED_USER_ADMIN,SYSTEM_VARIABLES_ADMIN ON *.* TO `u1`@`%` \
                      WITH GRANT OPTION"
             ],
         ]
@@ -126,8 +126,8 @@ fn dynamic_privileges_grant_revoke_and_show_grants() {
     assert_eq!(
         row_text(session.run("SHOW GRANTS FOR 'u2'@'%'")),
         [
-            ["GRANT USAGE ON *.* TO 'u2'@'%'"],
-            ["GRANT DASHBOARD_CLIENT,ROLE_ADMIN ON *.* TO 'u2'@'%'"],
+            ["GRANT USAGE ON *.* TO `u2`@`%`"],
+            ["GRANT DASHBOARD_CLIENT,ROLE_ADMIN ON *.* TO `u2`@`%`"],
         ]
     );
 
@@ -137,12 +137,12 @@ fn dynamic_privileges_grant_revoke_and_show_grants() {
     session.run("REVOKE ALL ON *.* FROM 'u2'@'%'").unwrap();
     assert_eq!(
         row_text(session.run("SHOW GRANTS FOR 'u2'@'%'")),
-        [["GRANT USAGE ON *.* TO 'u2'@'%'"]]
+        [["GRANT USAGE ON *.* TO `u2`@`%`"]]
     );
     session.run("GRANT ALL ON *.* TO 'u2'@'%'").unwrap();
     assert_eq!(
         row_text(session.run("SHOW GRANTS FOR 'u2'@'%'")),
-        [["GRANT ALL PRIVILEGES ON *.* TO 'u2'@'%'"]]
+        [["GRANT ALL PRIVILEGES ON *.* TO `u2`@`%`"]]
     );
 }
 
@@ -184,7 +184,7 @@ fn super_is_the_fallback_for_every_dynamic_privilege() {
     assert!(!registry.request_dynamic_verification("plain", "%", "BACKUP_ADMIN", false));
     assert_eq!(
         row_text(session.run("SHOW GRANTS FOR 'su'@'%'")),
-        [["GRANT SUPER ON *.* TO 'su'@'%' WITH GRANT OPTION"]]
+        [["GRANT SUPER ON *.* TO `su`@`%` WITH GRANT OPTION"]]
     );
 
     // Re-granting without `WITH GRANT OPTION` is a REPLACE, not an OR:

@@ -81,6 +81,7 @@ pub struct StatementVarSnapshot {
     plan_replayer_capture_enabled: bool,
     opt_index_prune_threshold: i32,
     range_max_size: i64,
+    range_max_count: i64,
     opt_prefix_index_single_scan: bool,
     prefer_range_scan: bool,
     optimizer_use_invisible_indexes: bool,
@@ -1057,6 +1058,7 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
                 || self.session_vars().enable_plan_replayed_continues_capture(),
             opt_index_prune_threshold: self.session_vars().opt_index_prune_threshold(),
             range_max_size: self.session_vars().range_max_size(),
+            range_max_count: self.session_vars().range_max_count(),
             opt_prefix_index_single_scan: self.session_vars().opt_prefix_index_single_scan(),
             prefer_range_scan: self.session_vars().allow_prefer_range_scan(),
             optimizer_use_invisible_indexes: self.session_vars().optimizer_use_invisible_indexes(),
@@ -1314,6 +1316,7 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
         let plan_replayer_capture_enabled = snapshot.plan_replayer_capture_enabled;
         let opt_index_prune_threshold = snapshot.opt_index_prune_threshold;
         let range_max_size = snapshot.range_max_size;
+        let range_max_count = snapshot.range_max_count;
         let opt_prefix_index_single_scan = snapshot.opt_prefix_index_single_scan;
         let prefer_range_scan = snapshot.prefer_range_scan;
         let optimizer_use_invisible_indexes = snapshot.optimizer_use_invisible_indexes;
@@ -1674,6 +1677,7 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
                     .with_table_delta(std::sync::Arc::clone(&self.transaction_table_delta_ref()))
                     .with_opt_index_prune_threshold(opt_index_prune_threshold)
                     .with_range_max_size(range_max_size)
+                    .with_range_max_count(range_max_count)
                     .with_opt_prefix_index_single_scan(opt_prefix_index_single_scan)
                     .with_prefer_range_scan(prefer_range_scan)
                     .with_optimizer_use_invisible_indexes(optimizer_use_invisible_indexes)
@@ -1884,6 +1888,7 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
                 .with_table_delta(std::sync::Arc::clone(&self.transaction_table_delta_ref()))
                 .with_opt_index_prune_threshold(opt_index_prune_threshold)
                 .with_range_max_size(range_max_size)
+                    .with_range_max_count(range_max_count)
                 .with_opt_prefix_index_single_scan(opt_prefix_index_single_scan)
                 .with_prefer_range_scan(prefer_range_scan)
                 .with_optimizer_use_invisible_indexes(optimizer_use_invisible_indexes)

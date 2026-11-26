@@ -21,7 +21,7 @@
 //! planner consumption, and session lifecycle remain external.
 
 /// Source-owned system-variable names verified as SET_VAR-hint updatable.
-pub const HINT_UPDATABLE_VARIABLES: [&str; 129] = [
+pub const HINT_UPDATABLE_VARIABLES: [&str; 130] = [
     "tidb_opt_agg_push_down",
     "tidb_opt_derive_topn",
     "tidb_opt_broadcast_cartesian_join",
@@ -122,6 +122,7 @@ pub const HINT_UPDATABLE_VARIABLES: [&str; 129] = [
     "tidb_enable_non_prepared_plan_cache",
     "tidb_plan_cache_max_plan_size",
     "tidb_opt_range_max_size",
+    "tidb_opt_range_max_count",
     "tidb_opt_advanced_join_hint",
     "tidb_opt_prefix_index_single_scan",
     "tidb_store_batch_size",

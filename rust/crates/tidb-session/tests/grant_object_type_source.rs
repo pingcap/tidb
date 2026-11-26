@@ -28,21 +28,21 @@ fn grant_and_revoke_ignore_the_object_type() {
     tk.must_exec("create table sa.t (a int, b int)");
     tk.must_exec("create user u");
     tk.must_exec("grant select on table sa.t to u");
-    tk.must_query("show grants for u").check(["GRANT USAGE ON *.* TO 'u'@'%'", "GRANT SELECT ON `sa`.`t` TO 'u'@'%'"]);
+    tk.must_query("show grants for u").check(["GRANT USAGE ON *.* TO `u`@`%`", "GRANT SELECT ON `sa`.`t` TO `u`@`%`"]);
     tk.must_exec("revoke select on table sa.t from u");
-    tk.must_query("show grants for u").check(["GRANT USAGE ON *.* TO 'u'@'%'"]);
+    tk.must_query("show grants for u").check(["GRANT USAGE ON *.* TO `u`@`%`"]);
     tk.must_get_err_code("grant execute on function sa.f to u", 1144);
     tk.must_contain_err_msg("grant select on function sa.f to u", "Table 'sa.f' doesn't exist");
     tk.must_exec("grant select on procedure sa.t to u");
-    tk.must_query("show grants for u").check(["GRANT USAGE ON *.* TO 'u'@'%'", "GRANT SELECT ON `sa`.`t` TO 'u'@'%'"]);
+    tk.must_query("show grants for u").check(["GRANT USAGE ON *.* TO `u`@`%`", "GRANT SELECT ON `sa`.`t` TO `u`@`%`"]);
     tk.must_exec("revoke select on procedure sa.t from u");
 
     tk.must_contain_err_msg("grant select (b) on sa.* to u", "Table 'sa.' doesn't exist");
     tk.must_contain_err_msg("grant select (b) on *.* to u", "Table 'test.' doesn't exist");
     tk.must_exec("grant select on sa.* to u");
     tk.must_exec("revoke select (b) on sa.* from u");
-    tk.must_query("show grants for u").check(["GRANT USAGE ON *.* TO 'u'@'%'"]);
+    tk.must_query("show grants for u").check(["GRANT USAGE ON *.* TO `u`@`%`"]);
     tk.must_exec("grant select on *.* to u");
     tk.must_exec("revoke select (b) on *.* from u");
-    tk.must_query("show grants for u").check(["GRANT USAGE ON *.* TO 'u'@'%'"]);
+    tk.must_query("show grants for u").check(["GRANT USAGE ON *.* TO `u`@`%`"]);
 }

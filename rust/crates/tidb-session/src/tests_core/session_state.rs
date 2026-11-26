@@ -1431,19 +1431,22 @@ fn session_migration_rejects_malformed_state_before_restoring_handlers() {
 }
 
 #[test]
-fn session_migration_batch_grant_accounts_print_raw_in_single_quotes() {
-    // Go `showGrants` prints the account as `'%s'@'%s'` whatever the SQL
-    // mode; only schema and table names follow it.
+fn session_migration_batch_grant_accounts_are_escaped_under_the_sql_mode() {
+    // Go master `showGrants` (#70774) escapes the account as identifiers
+    // (`formatAccountName`): backquotes, or double quotes under ANSI_QUOTES,
+    // each doubled inside the name.
     let mut session = Session::new();
     session.attach_privileges(tidb_privilege::PrivilegeRegistry::default());
     session.run("CREATE USER 'quote`\"user'@'%'").unwrap();
-    for sql_mode in ["''", "'ANSI_QUOTES'"] {
+    for (sql_mode, shown) in [
+        ("''", "GRANT USAGE ON *.* TO `quote``\"user`@`%`"),
+        ("'ANSI_QUOTES'", "GRANT USAGE ON *.* TO \"quote`\"\"user\"@\"%\""),
+    ] {
         session.run(&format!("SET sql_mode={sql_mode}")).unwrap();
         assert_eq!(
             session.run("SHOW GRANTS FOR 'quote`\"user'@'%'").unwrap(),
-            StmtResult::Rows(vec![vec![Datum::new_string_datum(
-                "GRANT USAGE ON *.* TO 'quote`\"user'@'%'"
-            )]])
+            StmtResult::Rows(vec![vec![Datum::new_string_datum(shown)]]),
+            "{sql_mode}"
         );
     }
 }

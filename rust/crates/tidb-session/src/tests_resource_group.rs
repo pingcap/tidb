@@ -160,3 +160,59 @@ fn resource_groups_follow_go() {
     run(&mut session, "drop resource group rg2");
     run(&mut session, "drop resource group if exists rg2");
 }
+
+/// Go master `TestSessionFallsBackFromDroppedResourceGroup` (#72794), on
+/// the in-process tier, whose sessions each hold their own catalog: the
+/// mid-transaction case, which needs Go's latest-schema read, runs on a node
+/// session instead.
+#[test]
+fn session_falls_back_from_dropped_resource_group() {
+    let privs = tidb_privilege::PrivilegeRegistry::default();
+    let mut root = bootstrap_session(&privs);
+    root.set_user("root@%".into(), "root@%".into());
+    for sql in [
+        "use test",
+        "create table t (id int primary key)",
+        "create resource group rg1 ru_per_sec=1000",
+        "create resource group rg2 ru_per_sec=1000",
+        "create user u1 resource group rg1",
+        "grant all on test.* to u1",
+    ] {
+        run(&mut root, sql);
+    }
+    let group = |session: &mut Session| row_text(session.run("select current_resource_group()"));
+    let warnings = |session: &mut Session| row_text(session.run("show warnings"));
+
+    // "A session logged in before its user moves to another group falls back
+    // to the user's current group once the old group is dropped."
+    let mut tk = session_as(&privs, root.shared_catalog(), "u1", "%");
+    assert_eq!(group(&mut tk), [["rg1"]]);
+    run(&mut root, "alter user u1 resource group rg2");
+    assert_eq!(group(&mut tk), [["rg1"]]);
+    run(&mut root, "drop resource group rg1");
+    assert_eq!(group(&mut tk), [["rg2"]]);
+    assert_eq!(
+        warnings(&mut tk),
+        [["Warning", "1105", "resource group rg1 no longer exists, the session now uses resource group rg2"]]
+    );
+    assert_eq!(group(&mut tk), [["rg2"]]);
+    assert!(warnings(&mut tk).is_empty());
+
+    // "A group set by SET RESOURCE GROUP falls back to default when the user
+    // has no group." (The mid-transaction half runs on a node session:
+    // `a_transaction_moves_off_a_dropped_resource_group_as_go`.)
+    run(&mut root, "create resource group rg3 ru_per_sec=1000");
+    let mut tk2 = session_as(&privs, root.shared_catalog(), "root", "%");
+    run(&mut tk2, "set resource group rg3");
+    run(&mut root, "drop resource group rg3");
+    assert_eq!(group(&mut tk2), [["default"]]);
+
+    // "A group dropped and created again before the next statement is kept."
+    run(&mut root, "create resource group rg4 ru_per_sec=1000");
+    let mut tk3 = session_as(&privs, root.shared_catalog(), "root", "%");
+    run(&mut tk3, "set resource group rg4");
+    run(&mut root, "drop resource group rg4");
+    run(&mut root, "create resource group rg4 ru_per_sec=2000");
+    assert_eq!(group(&mut tk3), [["rg4"]]);
+    assert!(warnings(&mut tk3).is_empty());
+}

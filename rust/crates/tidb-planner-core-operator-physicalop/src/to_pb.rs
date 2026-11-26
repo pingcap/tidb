@@ -818,6 +818,7 @@ impl PhysicalHashJoin {
         let pb_join_type = match self.join_type {
             LogicalJoinType::LeftOuter => tipb::JoinType::TypeLeftOuterJoin,
             LogicalJoinType::RightOuter => tipb::JoinType::TypeRightOuterJoin,
+            LogicalJoinType::FullOuter => tipb::JoinType::TypeFullOuterJoin,
             LogicalJoinType::Semi => tipb::JoinType::TypeSemiJoin,
             LogicalJoinType::AntiSemi => tipb::JoinType::TypeAntiSemiJoin,
             LogicalJoinType::LeftOuterSemi => tipb::JoinType::TypeLeftOuterSemiJoin,

@@ -1937,6 +1937,8 @@ pub struct StmtContextData {
     /// Go `SessionVars.OptIndexPruneThreshold`.
     opt_index_prune_threshold: i32,
     range_max_size: i64,
+    /// Go `SessionVars.RangeMaxCount` (master #70768).
+    range_max_count: i64,
     /// Go `RangerContext.OptPrefixIndexSingleScan`.
     opt_prefix_index_single_scan: bool,
     /// Go `SessionVars.preferRangeScan` (`tidb_opt_prefer_range_scan`).
@@ -2275,6 +2277,14 @@ context_configuration! {
     #[must_use]
     pub fn with_range_max_size(mut self, bytes: i64) -> Self {
         self.range_max_size = bytes;
+        self
+    }
+
+    /// Sets skyline pruning's equality/IN range-count threshold; zero
+    /// disables it.
+    #[must_use]
+    pub fn with_range_max_count(mut self, count: i64) -> Self {
+        self.range_max_count = count;
         self
     }
 
@@ -3885,6 +3895,7 @@ impl StmtContext {
             stats_load_pseudo_timeout: tidb_vardef::defaults::DEF_TIDB_STATS_LOAD_PSEUDO_TIMEOUT,
             opt_index_prune_threshold: 20,
             range_max_size: tidb_vardef::defaults::DEF_TIDB_OPT_RANGE_MAX_SIZE,
+            range_max_count: tidb_vardef::defaults::DEF_TIDB_OPT_RANGE_MAX_COUNT,
             opt_prefix_index_single_scan: true,
             prefer_range_scan: tidb_vardef::defaults::DEF_OPT_PREFER_RANGE_SCAN,
             optimizer_use_invisible_indexes: false,
@@ -4483,6 +4494,12 @@ impl StmtContext {
     #[must_use]
     pub fn range_max_size(&self) -> i64 {
         self.range_max_size
+    }
+
+    /// Go `SessionVars.RangeMaxCount`.
+    #[must_use]
+    pub fn range_max_count(&self) -> i64 {
+        self.range_max_count
     }
 
     /// The scanner `sql_mode` flags for this statement's re-parses.

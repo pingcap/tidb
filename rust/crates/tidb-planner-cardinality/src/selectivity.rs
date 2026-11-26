@@ -201,6 +201,18 @@ pub fn selectivity(
         if column.is_hidden && column.virtual_expr.is_some() {
             continue;
         }
+        // Go master #69726: "JSON columns have no column statistics (ANALYZE
+        // builds none; only multi-valued indexes over them are analyzed), so
+        // they contribute no selectivity. Skip them to avoid recording a
+        // meaningless, stats-load-timing-dependent status that surfaces as
+        // stats:partial[<json col>:...]."
+        if column
+            .ret_type
+            .as_ref()
+            .is_some_and(|ft| ft.eval_type() == tidb_datatype::EvalType::Json)
+        {
+            continue;
+        }
         if !coll.has_column(column.unique_id) {
             if !column.is_hidden {
                 ctx.record_used_item(column.id, false);

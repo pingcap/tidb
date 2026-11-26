@@ -276,6 +276,10 @@ fn test_cluster() -> (String, Arc<MemoryStore>, MemoryPool) {
     )
 }
 
+/// Go's `require.Eventually` deadline in `worker_test.go`: every wait there
+/// allows a minute, because the worker retries on one-second ticks.
+const GO_EVENTUALLY: Duration = Duration::from_secs(60);
+
 fn wait_until(timeout: Duration, mut predicate: impl FnMut() -> bool) {
     let deadline = Instant::now() + timeout;
     while Instant::now() < deadline {
@@ -538,10 +542,10 @@ fn test_global_worker() {
     worker.change_sampling_interval("1").unwrap();
     worker.change_snapshot_interval("3600").unwrap();
     worker.set_repository_dest("table").unwrap();
-    wait_until(Duration::from_secs(3), || {
+    wait_until(GO_EVENTUALLY, || {
         worker.check_tables_exist(Local::now())
     });
-    wait_until(Duration::from_secs(3), || {
+    wait_until(GO_EVENTUALLY, || {
         pool.database
             .lock()
             .unwrap()
@@ -550,7 +554,7 @@ fn test_global_worker() {
             .any(|capture| capture.table == "HIST_MEMORY_USAGE")
     });
     worker.take_snapshot().unwrap();
-    wait_until(Duration::from_secs(2), || {
+    wait_until(GO_EVENTUALLY, || {
         pool.database.lock().unwrap().max_snap_id > 0
     });
     worker.stop();
@@ -566,11 +570,11 @@ fn test_admin_workload_repo() {
     worker.change_sampling_interval("600").unwrap();
     worker.change_snapshot_interval("5000").unwrap();
     worker.start().unwrap();
-    wait_until(Duration::from_secs(3), || {
+    wait_until(GO_EVENTUALLY, || {
         worker.check_tables_exist(Local::now())
     });
     worker.take_snapshot().unwrap();
-    wait_until(Duration::from_secs(2), || {
+    wait_until(GO_EVENTUALLY, || {
         let database = pool.database.lock().unwrap();
         database.max_snap_id == 1 && !database.snapshot_updates.is_empty()
     });
@@ -589,7 +593,7 @@ fn test_sampling_timing_worker() {
     worker.change_sampling_interval("1").unwrap();
     worker.change_snapshot_interval("3600").unwrap();
     worker.start().unwrap();
-    wait_until(Duration::from_secs(5), || {
+    wait_until(GO_EVENTUALLY, || {
         pool.database
             .lock()
             .unwrap()
@@ -617,7 +621,7 @@ fn test_sampling_timing_worker() {
 
     worker.change_sampling_interval("2").unwrap();
     let before = first.len();
-    wait_until(Duration::from_secs(6), || {
+    wait_until(GO_EVENTUALLY, || {
         pool.database
             .lock()
             .unwrap()
@@ -665,7 +669,7 @@ fn test_snapshot_timing_worker() {
     worker.change_sampling_interval("600").unwrap();
     worker.change_snapshot_interval("1").unwrap();
     worker.start().unwrap();
-    wait_until(Duration::from_secs(5), || {
+    wait_until(GO_EVENTUALLY, || {
         let database = pool.database.lock().unwrap();
         ["HIST_MEMORY_USAGE2", "HIST_MEMORY_USAGE3"]
             .into_iter()
@@ -711,9 +715,9 @@ fn test_multiple_worker() {
         worker.change_snapshot_interval("3600").unwrap();
     }
     first.start().unwrap();
-    wait_until(Duration::from_secs(4), || worker_is_owner(&first));
+    wait_until(GO_EVENTUALLY, || worker_is_owner(&first));
     second.start().unwrap();
-    wait_until(Duration::from_secs(4), || {
+    wait_until(GO_EVENTUALLY, || {
         let database = pool.database.lock().unwrap();
         ["worker1", "worker2"].into_iter().all(|worker| {
             database.captures.iter().any(|capture| {
@@ -726,13 +730,13 @@ fn test_multiple_worker() {
     assert!(!worker_is_owner(&second));
 
     first.stop();
-    wait_until(Duration::from_secs(4), || worker_is_owner(&second));
+    wait_until(GO_EVENTUALLY, || worker_is_owner(&second));
     first.start().unwrap();
-    wait_until(Duration::from_secs(4), || {
+    wait_until(GO_EVENTUALLY, || {
         first.enabled() && !worker_is_owner(&first) && worker_is_owner(&second)
     });
     second.stop();
-    wait_until(Duration::from_secs(4), || worker_is_owner(&first));
+    wait_until(GO_EVENTUALLY, || worker_is_owner(&first));
     first.stop();
 }
 
@@ -764,7 +768,7 @@ fn test_house_keeper_thread() {
     let owner =
         (worker.owner_factory.as_ref().unwrap())("/tidb/workloadrepo/owner", "workloadrepo");
     owner.campaign_owner(&[]).unwrap();
-    wait_until(Duration::from_secs(3), || owner.is_owner());
+    wait_until(GO_EVENTUALLY, || owner.is_owner());
     let stop = Arc::new(AtomicBool::new(false));
     let runner = {
         let worker = Arc::clone(&worker);
@@ -776,14 +780,14 @@ fn test_house_keeper_thread() {
             });
         })
     };
-    wait_until(Duration::from_secs(2), || {
+    wait_until(GO_EVENTUALLY, || {
         let database = pool.database.lock().unwrap();
         database.tables["HIST_PROCESSLIST"].partitions == [date(0), date(1), date(2)]
             && database.tables["HIST_DATA_LOCK_WAITS"].partitions
                 == [date(-1), date(0), date(1), date(2)]
     });
     worker.set_retention_days("1").unwrap();
-    wait_until(Duration::from_secs(2), || {
+    wait_until(GO_EVENTUALLY, || {
         pool.database.lock().unwrap().tables["HIST_DATA_LOCK_WAITS"].partitions
             == [date(0), date(1), date(2)]
     });
@@ -825,7 +829,7 @@ fn test_owner_random_down() {
             worker
         })
         .collect::<Vec<_>>();
-    wait_until(Duration::from_secs(5), || {
+    wait_until(GO_EVENTUALLY, || {
         workers.iter().any(|worker| worker_is_owner(worker))
             && workers[0].check_tables_exist(Local::now())
             && pool.database.lock().unwrap().max_snap_id > 0
@@ -844,13 +848,13 @@ fn test_owner_random_down() {
             2 => old_owner.resign_owner(&Context::background()).unwrap(),
             _ => unreachable!(),
         }
-        wait_until(Duration::from_secs(5), || {
+        wait_until(GO_EVENTUALLY, || {
             workers
                 .iter()
                 .enumerate()
                 .any(|(index, worker)| index != old_index && worker_is_owner(worker))
         });
-        wait_until(Duration::from_secs(4), || {
+        wait_until(GO_EVENTUALLY, || {
             pool.database.lock().unwrap().max_snap_id > previous_snap_id
         });
         match mode {
@@ -873,7 +877,7 @@ fn test_stopping_and_restarting_worker() {
     worker.change_sampling_interval("1").unwrap();
     worker.change_snapshot_interval("1").unwrap();
     worker.set_repository_dest("table").unwrap();
-    wait_until(Duration::from_secs(4), || {
+    wait_until(GO_EVENTUALLY, || {
         let database = pool.database.lock().unwrap();
         !database.captures.is_empty() && database.max_snap_id > 0
     });
@@ -888,7 +892,7 @@ fn test_stopping_and_restarting_worker() {
         assert_eq!((database.captures.len(), database.max_snap_id), stopped);
     }
     worker.start().unwrap();
-    wait_until(Duration::from_secs(4), || {
+    wait_until(GO_EVENTUALLY, || {
         let database = pool.database.lock().unwrap();
         database.captures.len() > stopped.0 && database.max_snap_id > stopped.1
     });

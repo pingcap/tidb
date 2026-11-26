@@ -974,6 +974,20 @@ impl SessionVars {
         Ok(())
     }
 
+    /// Go `tidb_opt_range_max_count`'s `SetSession`:
+    /// `TidbOptInt64(val, DefTiDBOptRangeMaxCount)`.
+    pub(crate) fn set_session_range_max_count(&mut self, value: &str) -> Result<(), VarError> {
+        self.range_max_count =
+            crate::varsutil::tidb_opt_int64(value, tidb_vardef::defaults::DEF_TIDB_OPT_RANGE_MAX_COUNT);
+        Ok(())
+    }
+
+    /// Go `SessionVars.RangeMaxCount` (`tidb_opt_range_max_count`).
+    #[must_use]
+    pub const fn range_max_count(&self) -> i64 {
+        self.range_max_count
+    }
+
     /// Go `SessionVars.RangeMaxSize` (`tidb_opt_range_max_size`).
     #[must_use]
     pub const fn range_max_size(&self) -> i64 {

@@ -255,6 +255,9 @@ fn calc_hash_exchange_size_by_child(
 /// Go `preferMppBCJ`: if we can use mpp broadcast join, that's our first
 /// choice.
 fn prefer_mpp_bcj(op: &LogicalJoin, plan: &LogicalPlan, ctx: &DispatchContext<'_>) -> bool {
+    if op.join_type == LogicalJoinType::FullOuter {
+        return false;
+    }
     if op.equal_conditions.is_empty() && ctx.mpp_join.allow_cartesian_bcj == 2 {
         return true;
     }

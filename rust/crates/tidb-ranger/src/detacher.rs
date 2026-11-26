@@ -1383,6 +1383,42 @@ impl RangeDetacher<'_> {
     }
 
     /// Go `chooseBetweenRangeAndPoint` (Fix54337-gated; a no-op when off).
+    /// Go `intersectAppendedRanges` (master #72802, #73064): restores the
+    /// constraints on the leading columns that were left as residual filters
+    /// while building ranges on the suffix columns.
+    fn intersect_appended_ranges(&self, res: &mut DetachRangeResult, best: Option<&CnfItemRangeResult>) {
+        if !self.fix_54337 {
+            return;
+        }
+        let Some(best) = best else { return };
+        let intersected = super::ranger::intersect_sorted_ranges(
+            &res.ranges,
+            &best.range_result.ranges,
+            self.range_max_size,
+            self.merge_consecutive,
+        );
+        let intersection = match intersected {
+            Ok((_, true)) => {
+                self.record_range_fallback();
+                return;
+            }
+            Ok((intersection, false)) => intersection,
+            Err(_) => return,
+        };
+        res.ranges = intersection;
+        res.access_conds = append_conditions_if_not_exist(
+            std::mem::take(&mut res.access_conds),
+            &best.range_result.access_conds,
+        );
+        // "Access conditions can describe only an approximation (e.g. prefix
+        // indexes). Neither candidate's residual filters can be removed
+        // merely by intersecting."
+        res.remained_conds = append_conditions_if_not_exist(
+            std::mem::take(&mut res.remained_conds),
+            &best.range_result.remained_conds,
+        );
+    }
+
     fn choose_between_range_and_point(
         &self,
         res: &mut DetachRangeResult,
@@ -1547,6 +1583,7 @@ impl RangeDetacher<'_> {
                     }
                     res.eq_or_in_count += tail_res.eq_or_in_count;
                 }
+                self.intersect_appended_ranges(&mut res, best.as_ref());
                 return Ok(res);
             }
             res.remained_conds.extend(tail_res.remained_conds);
@@ -1583,6 +1620,14 @@ impl RangeDetacher<'_> {
                 if best_is_subset && !point_is_subset {
                     res.remained_conds =
                         remove_conditions(&res.remained_conds, &best.range_result.access_conds);
+                    // Go master #73064: "Access conditions may only yield
+                    // approximate ranges, e.g. for prefix indexes. Preserve
+                    // the chosen candidate's residual filters when replacing
+                    // the ranges."
+                    res.remained_conds = append_conditions_if_not_exist(
+                        std::mem::take(&mut res.remained_conds),
+                        &best.range_result.remained_conds,
+                    );
                     res.ranges = best.range_result.ranges.clone();
                     res.access_conds = best.range_result.access_conds.clone();
                 }

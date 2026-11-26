@@ -1560,7 +1560,7 @@ fn cluster_account_history_rejects_reuse_without_changing_credentials() {
     );
     assert_eq!(
         displayed(rows(&mut session, "SHOW GRANTS FOR 'history_other'@'%'")),
-        [["GRANT ALL PRIVILEGES ON *.* TO 'history_other'@'%'"]]
+        [["GRANT ALL PRIVILEGES ON *.* TO `history_other`@`%`"]]
     );
     assert_eq!(
         displayed(rows(
@@ -6654,14 +6654,37 @@ fn plan_replayer_dump_writes_gos_archive_and_status() {
         [["SELECT * FROM replayed WHERE a = 1".to_owned(), token, "NULL".to_owned()]]
     );
 
-    rows(&mut session, "PLAN REPLAYER CAPTURE 'sql-digest' 'plan-digest'");
+    rows(&mut session, "PLAN REPLAYER CAPTURE '123' '123'");
     assert_eq!(
         displayed(rows(&mut session, "SELECT sql_digest, plan_digest FROM mysql.plan_replayer_task")),
-        [["sql-digest", "plan-digest"]]
+        [["123", "123"]]
     );
-    let again = session.run("PLAN REPLAYER CAPTURE 'sql-digest' 'plan-digest'").unwrap_err();
+    let again = session.run("PLAN REPLAYER CAPTURE '123' '123'").unwrap_err();
     assert_eq!(again.to_mysql_error().message, "plan replayer capture task already exists");
-    rows(&mut session, "PLAN REPLAYER CAPTURE REMOVE 'sql-digest' 'plan-digest'");
+    rows(&mut session, "PLAN REPLAYER CAPTURE REMOVE '123' '123'");
+    assert!(rows(&mut session, "SELECT * FROM mysql.plan_replayer_task").is_empty());
+    // Go master `buildPlanReplayer` (#72730): both digests reach internal SQL,
+    // so only hexadecimal ones (or `*` for the plan) are accepted.
+    for (sql, message) in [
+        (
+            "PLAN REPLAYER CAPTURE 'x'' or ''1''=''1' '123'",
+            "invalid SQL digest: expected a non-empty hexadecimal string of at most 128 characters",
+        ),
+        (
+            "PLAN REPLAYER CAPTURE REMOVE '' '123'",
+            "invalid SQL digest: expected a non-empty hexadecimal string of at most 128 characters",
+        ),
+        (
+            "PLAN REPLAYER CAPTURE 'abc' 'x'' or ''1''=''1'",
+            "invalid plan digest: expected a non-empty hexadecimal string of at most 128 characters or '*'",
+        ),
+    ] {
+        assert_eq!(session.run(sql).unwrap_err().to_mysql_error().message, message, "{sql}");
+    }
+    let long = "a".repeat(129);
+    assert!(session.run(&format!("PLAN REPLAYER CAPTURE '{long}' '*'")).is_err());
+    rows(&mut session, "PLAN REPLAYER CAPTURE 'ABCdef0' '*'");
+    rows(&mut session, "PLAN REPLAYER CAPTURE REMOVE 'ABCdef0' '*'");
     assert!(rows(&mut session, "SELECT * FROM mysql.plan_replayer_task").is_empty());
     tidb_planner_extstore::set_global_ext_storage_for_test(None);
     std::fs::remove_dir_all(&base).unwrap();
@@ -16118,6 +16141,35 @@ fn show_affinity_lists_affinity_tables_as_go_does() {
         )),
         [row("a2", "p1")]
     );
+}
+
+/// Go master `TestSessionFallsBackFromDroppedResourceGroup`'s transaction
+/// case (#72794): a group dropped while a session's transaction is open is
+/// gone from the LATEST schema (`infoCache.GetLatest()`), so the next
+/// statement of that transaction moves the session to `default`, warns, and
+/// the transaction commits. The commit-group assertion drives Go's
+/// `TxnResourceGroupChecker` failpoint, which has no Rust site.
+#[test]
+fn a_transaction_moves_off_a_dropped_resource_group_as_go() {
+    let (stack, _users) = cop_backed_stack();
+    let mut root = stack.factory.open_session(session_context(1017)).unwrap();
+    let mut tk = stack.factory.open_session(session_context(1018)).unwrap();
+    rows(&mut root, "use test");
+    rows(&mut root, "create table t (id int primary key)");
+    rows(&mut root, "create resource group rg3 ru_per_sec=1000");
+    rows(&mut tk, "use test");
+    rows(&mut tk, "set resource group rg3");
+    rows(&mut tk, "begin pessimistic");
+    assert!(rows(&mut tk, "select * from t").is_empty());
+    rows(&mut root, "drop resource group rg3");
+    rows(&mut tk, "insert into t values (1)");
+    assert_eq!(
+        displayed(rows(&mut tk, "show warnings")),
+        [["Warning", "1105", "resource group rg3 no longer exists, the session now uses resource group default"]]
+    );
+    assert_eq!(displayed(rows(&mut tk, "select current_resource_group()")), [["default"]]);
+    rows(&mut tk, "commit");
+    assert_eq!(displayed(rows(&mut root, "select id from t")), [["1"]]);
 }
 
 /// Go's resource-group DDL (`onCreateResourceGroup` / `onAlterResourceGroup`
@@ -28848,10 +28900,10 @@ fn the_privilege_load_reads_a_peers_rows_through_the_domains_sessions_as_go() {
     assert_eq!(
         displayed(rows(&mut session, "SHOW GRANTS FOR 'peer'@'%'")),
         [
-            ["GRANT SELECT ON *.* TO 'peer'@'%'"],
-            ["GRANT INSERT ON `app`.* TO 'peer'@'%'"],
-            ["GRANT UPDATE,DELETE ON `app`.`t` TO 'peer'@'%'"],
-            ["GRANT BACKUP_ADMIN ON *.* TO 'peer'@'%'"],
+            ["GRANT SELECT ON *.* TO `peer`@`%`"],
+            ["GRANT INSERT ON `app`.* TO `peer`@`%`"],
+            ["GRANT UPDATE,DELETE ON `app`.`t` TO `peer`@`%`"],
+            ["GRANT BACKUP_ADMIN ON *.* TO `peer`@`%`"],
         ]
     );
 }

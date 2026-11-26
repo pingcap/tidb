@@ -255,6 +255,22 @@ impl BaseFuncDesc {
             names::JSON_OBJECTAGG => self.type_infer_4_json_object_agg(ctx)?,
             other => return Err(AggDescError::UnsupportedAggFunction(other.to_owned())),
         }
+        // Go master #71234: "Preserve numeric literal semantics before
+        // pushdown encodes binary literals as strings. Other aggregates may
+        // need the original bytes."
+        if matches!(self.name.as_str(), names::SUM | names::AVG)
+            && matches!(
+                self.args.first(),
+                Some(Expression::Constant(constant))
+                    if matches!(constant.value, tidb_datatype::Datum::BinaryLiteral(_))
+            )
+        {
+            let literal = std::mem::replace(
+                &mut self.args[0],
+                Expression::Constant(tidb_expr::constant::Constant::default()),
+            );
+            self.args[0] = wrap_cast::wrap_with_cast_as_real(&wrap_cast::ColumnsBuildContext(ctx), literal)?;
+        }
         Ok(())
     }
 

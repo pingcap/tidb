@@ -1674,7 +1674,7 @@ fn iter_all_tables_clamps_workers_streams_ranges_and_serializes_callbacks() {
 }
 
 #[test]
-fn job_name_filter_keeps_go_operator_precedence() {
+fn job_name_filter_extracts_and_matches_names() {
     let job = br#"{"schema_name":"s","table_name":"t","ignored":1}"#;
     assert_eq!(
         extract_schema_and_table_name_from_job(job).unwrap(),
@@ -1685,7 +1685,7 @@ fn job_name_filter_keeps_go_operator_precedence() {
 
     let schemas = BTreeSet::from(["other".to_owned()]);
     let tables = BTreeSet::from(["t".to_owned()]);
-    assert!(is_job_match(job, &schemas, &tables).unwrap());
+    assert!(!is_job_match(job, &schemas, &tables).unwrap());
 
     let schemas = BTreeSet::from(["s".to_owned()]);
     let tables = BTreeSet::from(["other".to_owned()]);
@@ -1835,14 +1835,20 @@ fn ddl_history_is_big_endian_reverse_inclusive_and_filtered_before_decode() {
     from_two.get_last_jobs(9, &mut jobs).unwrap();
     assert_eq!(jobs.iter().map(|job| job.id).collect::<Vec<_>>(), [2, 1]);
 
-    let mut filtered = meta
-        .get_last_history_ddl_jobs_iterator_with_filter::<RecordedJob>(
-            BTreeSet::from(["does-not-match".to_owned()]),
-            BTreeSet::from(["t2".to_owned()]),
-        )
-        .unwrap();
-    filtered.get_last_jobs(3, &mut jobs).unwrap();
-    assert_eq!(jobs.iter().map(|job| job.id).collect::<Vec<_>>(), [2]);
+    // Go master `IsJobMatch` (#72918): the schema AND the table filter apply.
+    let filtered_ids = |schema: &str, table: &str| {
+        let mut filtered = meta
+            .get_last_history_ddl_jobs_iterator_with_filter::<RecordedJob>(
+                BTreeSet::from([schema.to_owned()]),
+                BTreeSet::from([table.to_owned()]),
+            )
+            .unwrap();
+        let mut jobs = Vec::new();
+        filtered.get_last_jobs(3, &mut jobs).unwrap();
+        jobs.iter().map(|job| job.id).collect::<Vec<_>>()
+    };
+    assert_eq!(filtered_ids("s2", "t2"), [2]);
+    assert!(filtered_ids("does-not-match", "t2").is_empty());
 }
 
 #[test]
@@ -2129,4 +2135,26 @@ fn oldest_schema_version_reads_the_last_mvcc_short_value_at_max_ts() {
         get_oldest_schema_version(&mut reader),
         Err(MetaError::Storage("mvcc unavailable".to_owned()))
     );
+}
+
+/// Go master `TestIsJobMatch` (#72918): the schema and table filters both
+/// apply.
+#[test]
+fn is_job_match_applies_both_filters() {
+    let job = br#"{"schema_name":"db1","table_name":"t1"}"#;
+    let set = |names: &[&str]| names.iter().map(|name| (*name).to_owned()).collect::<BTreeSet<_>>();
+    for (name, schemas, tables, want) in [
+        ("no filters", &[][..], &[][..], true),
+        ("schema matches", &["db1"][..], &[][..], true),
+        ("schema differs", &["db2"][..], &[][..], false),
+        ("table matches", &[][..], &["t1"][..], true),
+        ("table differs", &[][..], &["t2"][..], false),
+        ("both match", &["db1"][..], &["t1"][..], true),
+        ("same table in another schema", &["db2"][..], &["t1"][..], false),
+        ("same schema with another table", &["db1"][..], &["t2"][..], false),
+        ("both differ", &["db2"][..], &["t2"][..], false),
+        ("multiple schemas and tables", &["db2", "db1"][..], &["t2", "t1"][..], true),
+    ] {
+        assert_eq!(is_job_match(job, &set(schemas), &set(tables)).unwrap(), want, "{name}");
+    }
 }

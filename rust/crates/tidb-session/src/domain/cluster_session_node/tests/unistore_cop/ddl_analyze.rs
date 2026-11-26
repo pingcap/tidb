@@ -152,3 +152,29 @@ fn add_index_without_stats_update_during_ddl_does_not_analyze_like_go() {
         vec![vec!["0".to_owned()]]
     );
 }
+
+/// Go master `TestAnalyzeTableWithQuotedIdentifiers` (#73190): the ANALYZE an
+/// ADD INDEX runs names the database and table as escaped identifiers, so a
+/// backtick in either still analyzes that table.
+#[test]
+fn analyze_after_add_index_quotes_identifiers_like_go() {
+    let (stack, _users) = cop_backed_stack();
+    let mut tk = stack.factory.open_session(session_context(2203)).unwrap();
+    rows(&mut tk, "set @@tidb_stats_update_during_ddl = 1");
+    let quote_ident = |name: &str| format!("`{}`", name.replace('`', "``"));
+    let (db_name, table_name) = ("db`name", "table`name");
+    let (quoted_db, quoted_table) = (quote_ident(db_name), quote_ident(table_name));
+    rows(&mut tk, &format!("create database {quoted_db}"));
+    rows(&mut tk, &format!("create table {quoted_db}.{quoted_table} (id int)"));
+    rows(&mut tk, &format!("insert into {quoted_db}.{quoted_table} values (1)"));
+    rows(&mut tk, "delete from mysql.analyze_jobs");
+    rows(&mut tk, &format!("alter table {quoted_db}.{quoted_table} add index idx_id (id)"));
+    assert_eq!(
+        displayed(rows(
+            &mut tk,
+            "select count(*) from mysql.analyze_jobs where table_schema = 'db`name' and table_name = 'table`name'"
+        )),
+        [["1"]]
+    );
+    rows(&mut tk, &format!("drop database {quoted_db}"));
+}

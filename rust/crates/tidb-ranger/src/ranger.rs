@@ -306,6 +306,113 @@ pub fn has_prefix(lengths: &[i64]) -> bool {
     lengths.iter().any(|l| *l != UNSPECIFIED_LENGTH)
 }
 
+/// Why [`intersect_sorted_ranges`] declined to intersect.
+#[derive(Debug)]
+pub enum IntersectRangesError {
+    /// Go `errors.New(...)`: an input breaks the sweep invariant.
+    Invalid(&'static str),
+    /// A bound comparison failed.
+    Compare(tidb_datatype::DatumValueError),
+    /// A bound could not be encoded.
+    Codec(tidb_codec::CodecError),
+}
+
+/// Go `IntersectSortedRanges` (master #72802): intersects sorted,
+/// non-overlapping index ranges in one O(N+M) sweep, coalescing adjacent
+/// results by the same encoded-key rule as [`union_ranges`]. `Ok((_, true))`
+/// reports that the output exceeded `range_max_size` (zero means unlimited);
+/// an unsorted or overlapping input is an error, and callers keep their
+/// original ranges.
+pub fn intersect_sorted_ranges(
+    left: &Ranges,
+    right: &Ranges,
+    range_max_size: i64,
+    merge_consecutive: bool,
+) -> Result<(Ranges, bool), IntersectRangesError> {
+    use super::types::{check_collators, compare_lexicographically};
+    use IntersectRangesError::{Codec, Compare, Invalid};
+    let wider = |a: &Range, b: &Range| {
+        if b.collators.len() > a.collators.len() {
+            b.collators.clone()
+        } else {
+            a.collators.clone()
+        }
+    };
+    // Check the sweep invariant before narrowing any range.
+    for ranges in [left, right] {
+        for pair in ranges.windows(2) {
+            let (prev, next) = (&pair[0], &pair[1]);
+            if !check_collators(prev, next, prev.low_val.len().min(next.low_val.len())) {
+                return Err(Invalid("incompatible range collators"));
+            }
+            let cmp = compare_lexicographically(
+                &prev.high_val,
+                &next.low_val,
+                &wider(prev, next),
+                prev.high_exclude,
+                next.low_exclude,
+                false,
+                true,
+            )
+            .map_err(Compare)?;
+            if cmp != std::cmp::Ordering::Less {
+                return Err(Invalid("intersection requires sorted, non-overlapping ranges"));
+            }
+        }
+    }
+    let mut intersection = Ranges::new();
+    let mut mem_usage = 0_i64;
+    let mut last_end: Vec<u8> = Vec::new();
+    let (mut i, mut j) = (0, 0);
+    while i < left.len() && j < right.len() {
+        let (l, r) = (&left[i], &right[j]);
+        if !check_collators(l, r, l.low_val.len().min(r.low_val.len())) {
+            return Err(Invalid("incompatible range collators"));
+        }
+        let cmp = compare_lexicographically(
+            &l.high_val,
+            &r.high_val,
+            &wider(l, r),
+            l.high_exclude,
+            r.high_exclude,
+            false,
+            false,
+        )
+        .map_err(Compare)?;
+        let x = l.intersect_range(r).map_err(Compare)?;
+        // The interval ending first cannot intersect any later interval in
+        // the opposite input. Advancing both on equal ends bounds visits by
+        // N+M.
+        if cmp != std::cmp::Ordering::Greater {
+            i += 1;
+        }
+        if cmp != std::cmp::Ordering::Less {
+            j += 1;
+        }
+        let Some(x) = x else { continue };
+        mem_usage += x.mem_usage();
+        if range_max_size > 0 && mem_usage > range_max_size {
+            return Ok((Ranges::new(), true));
+        }
+        let (start, end) = x.encode().map_err(Codec)?;
+        // Intersections arrive in order: coalesce with the previous one.
+        if !intersection.is_empty()
+            && (last_end > start || (merge_consecutive && last_end == start))
+        {
+            if end > last_end {
+                let last = intersection.last_mut().expect("checked non-empty");
+                last.high_val = x.high_val;
+                last.high_exclude = x.high_exclude;
+                last_end = end;
+            }
+        } else {
+            intersection.push(x);
+            last_end = end;
+        }
+    }
+    Ok((intersection, false))
+}
+
 /// Go `UnionRanges`: sort by encoded start key and merge overlapping (or,
 /// with `merge_consecutive`, touching) ranges. Returns the original codec
 /// error when either bound cannot be encoded.
@@ -958,6 +1065,217 @@ mod tests {
 
     /// `UnionRanges` merges by encoded-key order: overlapping merges
     /// always, touching merges only with `merge_consecutive`.
+    fn ranges_text(ranges: &Ranges) -> String {
+        ranges.iter().map(Range::to_display_string).collect::<Vec<_>>().join(" ")
+    }
+
+    fn binary(n: usize) -> Vec<tidb_charset::Collation> {
+        vec![tidb_charset::Collation::Binary; n]
+    }
+
+    fn point(bound: Vec<Datum>) -> Range {
+        Range { low_val: bound.clone().into(), high_val: bound.clone().into(), collators: binary(bound.len()), low_exclude: false, high_exclude: false }
+    }
+
+    /// Go master `TestIntersectionSubset` "nullable suffix" (#72802): a
+    /// one-column prefix bound equal to a point's first column intersects
+    /// to the point when closed and to nothing when open, either way round.
+    #[test]
+    fn intersect_range_with_a_nullable_suffix() {
+        let point = point(vec![Datum::Int(1), Datum::Null]);
+        for exclude in [false, true] {
+            for lower in [false, true] {
+                let mut prefix = Range {
+                    low_val: vec![Datum::Int(0)].into(),
+                    high_val: vec![Datum::Int(2)].into(),
+                    collators: binary(1),
+                    low_exclude: false,
+                    high_exclude: false,
+                };
+                if lower {
+                    prefix.low_val[0] = Datum::Int(1);
+                    prefix.low_exclude = exclude;
+                } else {
+                    prefix.high_val[0] = Datum::Int(1);
+                    prefix.high_exclude = exclude;
+                }
+                for reverse in [false, true] {
+                    let (left, right) = if reverse { (&point, &prefix) } else { (&prefix, &point) };
+                    let got = left.intersect_range(right).unwrap();
+                    if exclude {
+                        assert!(got.is_none(), "{exclude} {lower} {reverse}");
+                    } else {
+                        assert_eq!(got.unwrap().to_display_string(), point.to_display_string());
+                    }
+                }
+            }
+        }
+    }
+
+    /// Go master `TestIntersectSortedRanges` (#72802): the sweep against
+    /// pairwise intersection, index-order edge cases and invalid inputs.
+    #[test]
+    fn intersect_sorted_ranges() {
+        // ENUM and SET bounds follow their numeric index order, not names.
+        for values in [
+            vec![
+                Datum::Enum(tidb_datatype::MysqlEnum::new("a", 1), tidb_charset::Collation::Binary),
+                Datum::Enum(tidb_datatype::MysqlEnum::new("z", 2), tidb_charset::Collation::Binary),
+                Datum::Enum(tidb_datatype::MysqlEnum::new("b", 3), tidb_charset::Collation::Binary),
+            ],
+            vec![
+                Datum::Set(tidb_datatype::MysqlSet::new("a", 1), tidb_charset::Collation::Binary),
+                Datum::Set(tidb_datatype::MysqlSet::new("z", 2), tidb_charset::Collation::Binary),
+                Datum::Set(tidb_datatype::MysqlSet::new("a,z", 3), tidb_charset::Collation::Binary),
+            ],
+        ] {
+            let bound = |v: &Datum| vec![Datum::Int(0), v.clone()];
+            let wide = Range {
+                low_val: bound(&values[0]).into(),
+                high_val: bound(&values[2]).into(),
+                collators: binary(2),
+                low_exclude: false,
+                high_exclude: false,
+            };
+            let points: Ranges = values.iter().map(|v| point(bound(v))).collect();
+            for reverse in [false, true] {
+                for right in [points[1..2].to_vec(), points.clone()] {
+                    let want = ranges_text(&right);
+                    let mut left = vec![wide.clone()];
+                    let mut right = right;
+                    if reverse {
+                        std::mem::swap(&mut left, &mut right);
+                    }
+                    let (got, fallback) = super::intersect_sorted_ranges(&left, &right, 0, false).unwrap();
+                    assert!(!fallback);
+                    assert_eq!(ranges_text(&got), want);
+                }
+            }
+        }
+
+        // BIT bounds follow their numeric order whatever the literal width.
+        for mysql_bit in [false, true] {
+            for width in [None, Some(2), Some(8)] {
+                let bit = |value: u64| {
+                    let literal = tidb_datatype::BinaryLiteral::from_uint(
+                        value,
+                        width.map(|w: u8| tidb_datatype::BinaryLiteralWidth::try_from(w).unwrap()),
+                    );
+                    if mysql_bit { Datum::Bit(literal) } else { Datum::BinaryLiteral(literal) }
+                };
+                let bound = |d: Datum| vec![Datum::Int(1), d];
+                let wide = vec![Range {
+                    low_val: bound(Datum::MinNotNull).into(),
+                    high_val: bound(bit(512)).into(),
+                    collators: binary(2),
+                    low_exclude: false,
+                    high_exclude: true,
+                }];
+                let points: Ranges = [255, 256, 511, 512].into_iter().map(|v| point(bound(bit(v)))).collect();
+                for reverse in [false, true] {
+                    let (left, right) = if reverse { (&points, &wide) } else { (&wide, &points) };
+                    let (got, fallback) = super::intersect_sorted_ranges(left, right, 0, false).unwrap();
+                    assert!(!fallback);
+                    assert_eq!(ranges_text(&got), ranges_text(&points[..3].to_vec()));
+                }
+            }
+        }
+
+        // An overflowing BIT literal is refused, as codec.EncodeKey refuses it.
+        for mysql_bit in [false, true] {
+            for overflow in [false, true] {
+                let mut bytes = vec![0, 0, 0, 0, 0, 0, 0, 0, 255];
+                if overflow {
+                    bytes[0] = 1;
+                }
+                let literal = tidb_datatype::BinaryLiteral::from(bytes);
+                let datum = if mysql_bit { Datum::Bit(literal) } else { Datum::BinaryLiteral(literal) };
+                let one = point(vec![datum]);
+                let wide = Range {
+                    low_val: vec![Datum::MinNotNull].into(),
+                    high_val: vec![Datum::UInt(512)].into(),
+                    collators: binary(1),
+                    low_exclude: false,
+                    high_exclude: true,
+                };
+                for reverse in [false, true] {
+                    let (left, right) =
+                        if reverse { (vec![one.clone()], vec![wide.clone()]) } else { (vec![wide.clone()], vec![one.clone()]) };
+                    let result = super::intersect_sorted_ranges(&left, &right, 0, false);
+                    if overflow {
+                        assert!(result.is_err());
+                    } else {
+                        let (got, fallback) = result.unwrap();
+                        assert!(!fallback);
+                        assert_eq!(ranges_text(&got), ranges_text(&vec![one.clone()]));
+                    }
+                }
+            }
+        }
+
+        // Open/closed endpoints, nullable suffixes and unequal widths.
+        for open in [false, true] {
+            let mut left = Ranges::new();
+            let mut right = Ranges::new();
+            for i in 0..32_i64 {
+                left.push(Range {
+                    low_val: vec![Datum::Int(i * 3)].into(),
+                    high_val: vec![Datum::Int(i * 3 + 1)].into(),
+                    collators: binary(1),
+                    low_exclude: open,
+                    high_exclude: false,
+                });
+                right.push(Range {
+                    low_val: vec![Datum::Int(i * 3), Datum::Null].into(),
+                    high_val: vec![Datum::Int(i * 3 + 2), Datum::Int(2)].into(),
+                    collators: binary(2),
+                    low_exclude: false,
+                    high_exclude: open,
+                });
+            }
+            for merge in [false, true] {
+                let want = union_ranges(crate::types::intersect_ranges(&left, &right).unwrap(), merge).unwrap();
+                for reverse in [false, true] {
+                    let (l, r) = if reverse { (&right, &left) } else { (&left, &right) };
+                    let (got, fallback) = super::intersect_sorted_ranges(l, r, 0, merge).unwrap();
+                    assert!(!fallback);
+                    assert_eq!(ranges_text(&got), ranges_text(&want));
+                    let (_, fallback) = super::intersect_sorted_ranges(l, r, 1, merge).unwrap();
+                    assert!(fallback);
+                }
+            }
+        }
+
+        let make_range = |low: i64, high: i64| Range {
+            low_val: vec![Datum::Int(low)].into(),
+            high_val: vec![Datum::Int(high)].into(),
+            collators: binary(1),
+            low_exclude: false,
+            high_exclude: false,
+        };
+        // One interval can intersect many on the opposite side; adjacent
+        // encoded keys coalesce only when requested.
+        let left = vec![make_range(0, 10)];
+        let right = vec![make_range(0, 1), make_range(2, 3), make_range(4, 10)];
+        for merge in [false, true] {
+            for reverse in [false, true] {
+                let (l, r) = if reverse { (&right, &left) } else { (&left, &right) };
+                let want = union_ranges(crate::types::intersect_ranges(l, r).unwrap(), merge).unwrap();
+                let (got, fallback) = super::intersect_sorted_ranges(l, r, 0, merge).unwrap();
+                assert!(!fallback);
+                assert_eq!(ranges_text(&got), ranges_text(&want));
+            }
+        }
+        for right in [Vec::new(), vec![make_range(11, 12)]] {
+            let (got, fallback) = super::intersect_sorted_ranges(&left, &right, 0, true).unwrap();
+            assert!(!fallback);
+            assert!(got.is_empty());
+        }
+        for invalid in [vec![make_range(3, 4), make_range(0, 1)], vec![make_range(0, 3), make_range(2, 4)]] {
+            assert!(super::intersect_sorted_ranges(&left, &invalid, 0, true).is_err());
+        }
+    }
+
     #[test]
     fn union_ranges_merges_by_encoded_order() {
         let int_range = |low: i64, high: i64, high_exclude: bool| Range {
