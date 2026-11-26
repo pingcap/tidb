@@ -749,6 +749,15 @@ func (e *AnalyzeColumnsExecV2) subBuildWorker(ctx context.Context, resultCh chan
 	})
 
 	colLen := len(e.colsInfo)
+<<<<<<< HEAD
+=======
+	bufferedMemSize := int64(0)
+	bufferedReleaseSize := int64(0)
+	defer func() {
+		e.memTracker.Consume(bufferedMemSize)
+		e.memTracker.Release(bufferedReleaseSize)
+	}()
+>>>>>>> 187eba37caf (executor, util/memory: keep global analyze memory usage non-negative (#65503))
 
 workLoop:
 	for {
