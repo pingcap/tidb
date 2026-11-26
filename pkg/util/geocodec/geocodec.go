@@ -126,10 +126,10 @@ const (
 	dialectBare
 )
 
-// MySQLToStored converts the bare value, MySQL's binary format or that format extended
+// BareToStored converts the bare value, MySQL's binary format or that format extended
 // with Z and M, into the stored format. It checks the WKB framing, not MySQL's structure
 // rules such as a linestring's minimum of two points.
-func MySQLToStored(b []byte) (stored []byte, srid uint32, err error) {
+func BareToStored(b []byte) (stored []byte, srid uint32, err error) {
 	if len(b) < 4 {
 		return nil, 0, ErrInvalid
 	}

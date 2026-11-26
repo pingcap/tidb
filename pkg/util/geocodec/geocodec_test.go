@@ -48,7 +48,7 @@ var (
 
 // checkStoredToBare requires StoredToBare to agree with Header on a stored value b: it
 // refuses what Header refuses, and otherwise rewrites only the root header, so the bare
-// value reads back as b whenever MySQLToStored accepts it. It never panics, whatever b
+// value reads back as b whenever BareToStored accepts it. It never panics, whatever b
 // holds after its root header, which no writer stores broken.
 func checkStoredToBare(t testing.TB, b []byte) {
 	got, err := StoredToBare(b)
@@ -63,7 +63,7 @@ func checkStoredToBare(t testing.TB, b []byte) {
 	require.Equal(t, byteOrderLittle, got[4], "%X", b)
 	require.Equal(t, binary.LittleEndian.Uint32(b[2:])&^ewkbSRID, binary.LittleEndian.Uint32(got[5:]), "%X", b)
 	require.Equal(t, b[10:], got[9:], "%X", b)
-	again, againSRID, err := MySQLToStored(got)
+	again, againSRID, err := BareToStored(got)
 	if err != nil {
 		// A body the stored format allows and the bare value does not, such as a
 		// big-endian member, or a broken one.
@@ -78,7 +78,7 @@ func TestMySQLFormat(t *testing.T) {
 	// Bytes from MySQL 9.7.2: HEX(ST_GeomFromText('POINT(1 2)', 4326)), latitude 1 and
 	// longitude 2, which MySQL holds longitude first, as the stored format does.
 	mysql4326 := mustHex(t, "E6100000 01 01000000 0000000000000040 000000000000F03F")
-	s, srid, err := MySQLToStored(mysql4326)
+	s, srid, err := BareToStored(mysql4326)
 	require.NoError(t, err)
 	require.Equal(t, uint32(4326), srid)
 
@@ -90,7 +90,7 @@ func TestMySQLFormat(t *testing.T) {
 
 	// Any SRID passes through, since no SRS axis order is applied.
 	mysql12345 := mustHex(t, "39300000 01 01000000 000000000000F03F 0000000000000040")
-	s, srid, err = MySQLToStored(mysql12345)
+	s, srid, err = BareToStored(mysql12345)
 	require.NoError(t, err)
 	require.Equal(t, uint32(12345), srid)
 	back, err = StoredToBare(s)
@@ -99,7 +99,7 @@ func TestMySQLFormat(t *testing.T) {
 
 	// The smallest valid value: GEOMETRYCOLLECTION EMPTY, 13 bytes.
 	smallest := mustHex(t, "00000000 01 07000000 00000000")
-	s, _, err = MySQLToStored(smallest)
+	s, _, err = BareToStored(smallest)
 	require.NoError(t, err)
 	back, err = StoredToBare(s)
 	require.NoError(t, err)
@@ -133,7 +133,7 @@ func TestMySQLFormat(t *testing.T) {
 		"no geometry":              "E6100000",
 	}
 	for name, h := range rejects {
-		_, _, err := MySQLToStored(mustHex(t, h))
+		_, _, err := BareToStored(mustHex(t, h))
 		require.ErrorIs(t, err, ErrInvalid, name)
 	}
 }
@@ -144,7 +144,7 @@ func TestStoredLayout(t *testing.T) {
 		0:    "01 01 01000020 00000000 000000000000F03F 0000000000000040",
 		4326: "01 01 01000020 E6100000 000000000000F03F 0000000000000040",
 	} {
-		s, _, err := MySQLToStored(mysqlOf(srid, point12))
+		s, _, err := BareToStored(mysqlOf(srid, point12))
 		require.NoError(t, err)
 		require.Equal(t, mustHex(t, h), s)
 	}
@@ -238,7 +238,7 @@ func TestStoredTrusted(t *testing.T) {
 		require.ErrorIs(t, validate(b[1:], dialectEWKB), ErrInvalid, c.name)
 		bare, err := StoredToBare(b)
 		require.NoError(t, err, c.name)
-		_, _, err = MySQLToStored(bare)
+		_, _, err = BareToStored(bare)
 		require.ErrorIs(t, err, ErrInvalid, c.name)
 		checkStoredToBare(t, b)
 	}
@@ -290,7 +290,7 @@ func TestStoredBigEndian(t *testing.T) {
 	member := mustHex(t, "01 01 04000020 E6100000 01000000 00 00000001 3FF0000000000000 4000000000000000")
 	bare, err := StoredToBare(member)
 	require.NoError(t, err)
-	_, _, err = MySQLToStored(bare)
+	_, _, err = BareToStored(bare)
 	require.ErrorIs(t, err, ErrInvalid)
 	srid, typ, err := Header(member)
 	require.NoError(t, err)
@@ -341,7 +341,7 @@ func TestBareFrame(t *testing.T) {
 		bare, err := StoredToBare(s)
 		require.NoError(t, err, "%X", s)
 		require.Equal(t, mysqlOf(4326, v), bare)
-		back, srid, err := MySQLToStored(bare)
+		back, srid, err := BareToStored(bare)
 		require.NoError(t, err, "%X", bare)
 		require.Equal(t, s, back)
 		require.Equal(t, uint32(4326), srid)
@@ -351,7 +351,7 @@ func TestBareFrame(t *testing.T) {
 	// A POINT EMPTY of another NaN reads back as it was written.
 	for _, nan := range nanBits {
 		p := le(TypePoint, dimsXYM, coords(math.Float64frombits(nan), math.Float64frombits(nan), math.Float64frombits(nan)))
-		s, _, err := MySQLToStored(mysqlOf(0, p))
+		s, _, err := BareToStored(mysqlOf(0, p))
 		require.NoError(t, err, "%X", p)
 		require.Equal(t, stored(0, p), s)
 	}
@@ -363,7 +363,7 @@ func TestBareFrame(t *testing.T) {
 		{mysqlChain(MaxDepth, emptyPoint(dimsXY)), storedChain(MaxDepth, 0, emptyPoint(dimsXY))},
 		{mysqlChain(MaxDepth, line(dimsXY)), storedChain(MaxDepth, 0, line(dimsXY))},
 	} {
-		s, _, err := MySQLToStored(c.bare)
+		s, _, err := BareToStored(c.bare)
 		require.NoError(t, err)
 		require.Equal(t, c.stored, s)
 		bare, err := StoredToBare(s)
@@ -382,7 +382,7 @@ func TestDepthBound(t *testing.T) {
 		{append(make([]byte, 4), nestedCollections(MaxDepth)...), storedChain(MaxDepth, 0, nestedCollections(1))},
 		{mysqlChain(MaxDepth, point12), storedChain(MaxDepth, 0, point12)},
 	} {
-		s, _, err := MySQLToStored(c.mysql)
+		s, _, err := BareToStored(c.mysql)
 		require.NoError(t, err)
 		require.Equal(t, c.stored, s)
 		back, err := StoredToBare(s)
@@ -403,7 +403,7 @@ func TestDepthBound(t *testing.T) {
 		{nil, storedChain(MaxDepth+1, ewkbZ, mustHex(t, "01 01000080 000000000000F87F 000000000000F87F 000000000000F87F"))},
 	} {
 		if c.mysql != nil {
-			_, _, err := MySQLToStored(c.mysql)
+			_, _, err := BareToStored(c.mysql)
 			require.ErrorIs(t, err, ErrTooDeep)
 		}
 		require.ErrorIs(t, validate(c.stored[1:], dialectEWKB), ErrTooDeep)
@@ -424,7 +424,7 @@ func TestDepthBound(t *testing.T) {
 	deepFirst := append(append(append([]byte{}, root...), deep...), bad...)
 	require.ErrorIs(t, validate(badFirst[1:], dialectEWKB), ErrInvalid)
 	require.ErrorIs(t, validate(deepFirst[1:], dialectEWKB), ErrTooDeep)
-	_, _, err := MySQLToStored(mysqlOf(0, badFirst[2:]))
+	_, _, err := BareToStored(mysqlOf(0, badFirst[2:]))
 	require.ErrorIs(t, err, ErrInvalid)
 }
 
@@ -457,11 +457,11 @@ func TestTruncatedAndOverLong(t *testing.T) {
 		mysql, err := StoredToBare(s)
 		require.NoError(t, err, "%X", s)
 		for n := range mysql {
-			_, _, err := MySQLToStored(mysql[:n])
+			_, _, err := BareToStored(mysql[:n])
 			require.ErrorIs(t, err, ErrInvalid, "%X cut to %d", mysql, n)
 		}
 		for _, extra := range [][]byte{{0}, {1}, mysql[4:]} {
-			_, _, err := MySQLToStored(append(append([]byte{}, mysql...), extra...))
+			_, _, err := BareToStored(append(append([]byte{}, mysql...), extra...))
 			require.ErrorIs(t, err, ErrInvalid, "%X", mysql)
 		}
 	}
@@ -484,7 +484,7 @@ func randomBytes(rnd *rand.Rand, n int) []byte {
 
 func TestGarbage(t *testing.T) {
 	for _, s := range []string{"", "x", "POINT(1 2)", "\x00\x00\x00\x00", "\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff"} {
-		_, _, err := MySQLToStored([]byte(s))
+		_, _, err := BareToStored([]byte(s))
 		require.Error(t, err)
 		_, err = StoredToBare([]byte(s))
 		require.Error(t, err)
@@ -493,7 +493,7 @@ func TestGarbage(t *testing.T) {
 	rnd := rand.New(rand.NewPCG(1, 2))
 	for range 20000 {
 		b := randomBytes(rnd, rnd.IntN(80))
-		if _, _, err := MySQLToStored(b); err != nil {
+		if _, _, err := BareToStored(b); err != nil {
 			require.True(t, errors.Is(err, ErrInvalid) || errors.Is(err, ErrTooDeep), "%X: %v", b, err)
 		}
 		s := append([]byte{Version1}, b...)
@@ -575,7 +575,7 @@ func TestGenerated(t *testing.T) {
 					bare, err := StoredToBare(s)
 					require.NoError(t, err, "%X", s)
 					require.Equal(t, mysqlOf(srid, wkb), bare)
-					again, gotSRID, err := MySQLToStored(bare)
+					again, gotSRID, err := BareToStored(bare)
 					if hasBig {
 						require.ErrorIs(t, err, ErrInvalid, "%X", bare)
 						bigEndian++
@@ -593,7 +593,7 @@ func TestGenerated(t *testing.T) {
 	require.Greater(t, bigEndian, 1000)
 }
 
-// TestGeneratedMutations checks StoredToBare and MySQLToStored on generated values with one
+// TestGeneratedMutations checks StoredToBare and BareToStored on generated values with one
 // byte changed, which reach the checks a well-formed value does not.
 func TestGeneratedMutations(t *testing.T) {
 	rnd := rand.New(rand.NewPCG(20261111, 2))
@@ -609,7 +609,7 @@ func TestGeneratedMutations(t *testing.T) {
 					b[pos] = v
 					checkStoredToBare(t, b)
 					m := mysqlOf(0, b[1:])
-					if got, _, err := MySQLToStored(m); err == nil {
+					if got, _, err := BareToStored(m); err == nil {
 						back, err := StoredToBare(got)
 						require.NoError(t, err, "%X", m)
 						require.Equal(t, m, back)
@@ -633,12 +633,12 @@ func TestNestedCountsAllocs(t *testing.T) {
 	}
 	b = append(b, make([]byte, pad)...)
 	s := storedFromMySQL(b)
-	_, _, err := MySQLToStored(b)
+	_, _, err := BareToStored(b)
 	require.ErrorIs(t, err, ErrInvalid)
 	require.ErrorIs(t, validate(s[1:], dialectEWKB), ErrInvalid)
 	checkStoredToBare(t, s)
 	for _, f := range []func(){
-		func() { _, _, _ = MySQLToStored(b) },
+		func() { _, _, _ = BareToStored(b) },
 		func() { _ = validate(s[1:], dialectEWKB) },
 	} {
 		require.Equal(t, 0.0, testing.AllocsPerRun(1, f))
@@ -657,7 +657,7 @@ func TestStoredToBareAllocs(t *testing.T) {
 	require.Equal(t, 0.0, testing.AllocsPerRun(100, func() { _, _ = StoredToBare(s[:9]) }))
 }
 
-// TestIngestAllocs checks that MySQLToStored's validate allocates nothing: a value that
+// TestIngestAllocs checks that BareToStored's validate allocates nothing: a value that
 // converts allocates its result, and a value that does not convert allocates nothing,
 // whatever its counts claim.
 func TestIngestAllocs(t *testing.T) {
@@ -670,19 +670,19 @@ func TestIngestAllocs(t *testing.T) {
 		{hostileCounts(), 0},
 		{deep[:len(deep)-1], 0},
 	} {
-		allocs := testing.AllocsPerRun(3, func() { _, _, _ = MySQLToStored(c.b) })
+		allocs := testing.AllocsPerRun(3, func() { _, _, _ = BareToStored(c.b) })
 		require.Equal(t, c.allocs, allocs, "%X", c.b[:min(len(c.b), 32)])
 	}
 }
 
-func FuzzMySQLToStored(f *testing.F) {
+func FuzzBareToStored(f *testing.F) {
 	f.Add(mustHex(f, "E6100000 01 01000000 0000000000000040 000000000000F03F"))
 	f.Add(mysqlOf(0, collectionOf(TypeGeometryCollection, dimsXY, triangle)))
 	f.Add(mysqlOf(0, collectionOf(TypeGeometryCollection, dimsXY, point12,
 		collectionOf(TypeMultiPoint, dimsXY, le(TypePoint, dimsXY, coords(3, 4))))))
 	f.Add(mysqlOf(4326, collectionOf(TypeMultiPoint, dimsXYM, le(TypePoint, dimsXYM, coords(1, 2, 3)), emptyPoint(dimsXYM))))
 	f.Fuzz(func(t *testing.T, b []byte) {
-		s, _, err := MySQLToStored(b)
+		s, _, err := BareToStored(b)
 		if err != nil {
 			return
 		}
