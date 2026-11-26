@@ -6284,13 +6284,6 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 	proj.SetOutputNames(make(types.NameSlice, len(p.OutputNames())))
 	copy(proj.OutputNames(), p.OutputNames())
 	copy(proj.Schema().Columns, p.Schema().Columns[:oldSchemaLen])
-	for i := len(proj.OutputNames()) - 1; i >= 0; i-- {
-		if proj.OutputNames()[i].ColName.L == model.ExtraCommitTSName.L {
-			proj.SetOutputNames(slices.Delete(proj.OutputNames(), i, i+1))
-			proj.Schema().Columns = slices.Delete(proj.Schema().Columns, i, i+1)
-			proj.Exprs = slices.Delete(proj.Exprs, i, i+1)
-		}
-	}
 	proj.SetChildren(p)
 	p = proj
 
@@ -6335,7 +6328,9 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 	used := bitset.New(uint(p.Schema().Len()))
 	colRef := b.ctx.GetSessionVars().StmtCtx.ColRefFromUpdatePlan
 	for i, col := range p.Schema().Columns {
-		if _, ok := updatedAliases[p.OutputNames()[i].TblName.L]; ok || colRef.Has(int(col.UniqueID)) {
+		// The commit timestamp is outside the writable row, but assignments may read it.
+		_, updated := updatedAliases[p.OutputNames()[i].TblName.L]
+		if colRef.Has(int(col.UniqueID)) || (updated && col.ID != model.ExtraCommitTSID) {
 			used.Set(uint(i))
 		}
 	}

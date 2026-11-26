@@ -72,6 +72,15 @@ func TestColumnToProto(t *testing.T) {
 	pc = util.ColumnToProto(col1, false, false)
 	require.Equal(t, int32(-8), pc.Collation)
 
+	commitTSCol := model.NewExtraCommitTSColInfo()
+	commitTSTableScan := tables.BuildTableScanFromInfos(
+		&model.TableInfo{ID: 1}, []*model.ColumnInfo{commitTSCol}, true,
+	)
+	require.Len(t, commitTSTableScan.Columns, 1)
+	require.Equal(t, int64(model.ExtraCommitTSID), commitTSTableScan.Columns[0].ColumnId)
+	require.Equal(t, int32(mysql.TypeLonglong), commitTSTableScan.Columns[0].Tp)
+	require.NotZero(t, commitTSTableScan.Columns[0].Flag&int32(mysql.UnsignedFlag))
+
 	tp = types.NewFieldType(mysql.TypeEnum)
 	tp.SetFlag(10)
 	tp.SetElems([]string{"a", "b"})
