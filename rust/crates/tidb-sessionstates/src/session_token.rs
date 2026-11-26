@@ -78,6 +78,11 @@ pub struct SessionToken {
     /// The user the token logs in as.
     #[serde(default)]
     pub username: String,
+    /// The host of the privilege account the token is bound to. Omitted when
+    /// empty, so re-marshalling tokens from older servers preserves the
+    /// original signed payload, which has no hostname field.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub hostname: String,
     /// When the token was signed.
     #[serde(rename = "sign-time", default = "go_zero_time", with = "go_time")]
     pub sign_time: DateTime<FixedOffset>,
@@ -94,15 +99,17 @@ pub struct SessionToken {
     pub signature: Vec<u8>,
 }
 
-/// Go `CreateSessionToken`: creates a token for the user.
+/// Go `CreateSessionToken`: creates a token bound to the matched privilege
+/// account for the proxy.
 ///
 /// # Errors
 ///
 /// Go's `ErrCannotMigrateSession` when no certificate can sign it.
-pub fn create_session_token(username: &str) -> Result<SessionToken, TerrorError> {
+pub fn create_session_token(username: &str, hostname: &str) -> Result<SessionToken, TerrorError> {
     let now = get_now();
     let mut token = SessionToken {
         username: username.to_owned(),
+        hostname: hostname.to_owned(),
         sign_time: now,
         expire_time: add(now, current_token_lifetime()),
         signature: Vec::new(),
@@ -122,8 +129,8 @@ pub fn create_session_token(username: &str) -> Result<SessionToken, TerrorError>
 ///
 /// The token does not decode, its signature does not verify against a
 /// current certificate, it expired, its lifetime is too long, or it names
-/// another user.
-pub fn validate_session_token(token_bytes: &[u8], username: &str) -> Result<(), String> {
+/// another account.
+pub fn validate_session_token(token_bytes: &[u8], username: &str, hostname: &str) -> Result<(), String> {
     let mut token: SessionToken =
         serde_json::from_slice(token_bytes).map_err(|error| error.to_string())?;
     let signature = std::mem::take(&mut token.signature);
@@ -149,9 +156,17 @@ pub fn validate_session_token(token_bytes: &[u8], username: &str) -> Result<(), 
         ])
         .to_string());
     }
-    if !tidb_mysql::equal_fold(username, &token.username) {
+    // Privilege records identify accounts by exact username and matched host.
+    if username != token.username {
         return Err(
             cannot_migrate(&["username does not match", username, &token.username]).to_string(),
+        );
+    }
+    // Older servers issue tokens without a hostname. Allow those tokens during
+    // rolling upgrades, and enforce host binding when the token includes it.
+    if !token.hostname.is_empty() && hostname != token.hostname {
+        return Err(
+            cannot_migrate(&["hostname does not match", hostname, &token.hostname]).to_string(),
         );
     }
     Ok(())
@@ -302,11 +317,12 @@ impl SigningCert {
                 }
                 signer.sign_oneshot_to_vec(content).map_err(openssl)
             }
-            // Go's `ecdsa.PrivateKey.Sign` takes the content itself as the
-            // digest, truncated to the curve order as OpenSSL truncates it.
+            // ECDSA expects a digest and truncates inputs longer than the
+            // curve order. Hash the complete payload so every token field is
+            // authenticated.
             Id::EC => key
                 .ec_key()
-                .and_then(|ec_key| EcdsaSig::sign(content, &ec_key))
+                .and_then(|ec_key| EcdsaSig::sign(&openssl::sha::sha256(content), &ec_key))
                 .and_then(|signature| signature.to_der())
                 .map_err(openssl),
             _ => Err(unsupported()),
@@ -325,8 +341,13 @@ impl SigningCert {
             }
             let result = match info.priv_key.id() {
                 // ECDSA is special: `PrivateKey.Sign` doesn't match with
-                // `Certificate.CheckSignature`.
-                Id::EC => verify_ecdsa(&info.cert, content, signature)
+                // `Certificate.CheckSignature`. Older servers sign raw JSON,
+                // which ECDSA truncates to a curve-order prefix and can leave
+                // timestamps unauthenticated. Accept it only during an
+                // upgrade; new tokens always sign the full payload digest.
+                Id::EC => (verify_ecdsa(&info.cert, &openssl::sha::sha256(content), signature)
+                    || (!tidb_vardef::is_legacy_ecdsa_session_token_disabled()
+                        && verify_ecdsa(&info.cert, content, signature)))
                     .then_some(())
                     .ok_or_else(|| "x509: ECDSA verification failure".to_owned()),
                 _ => check_certificate_signature(&info.cert, info.algorithm, content, signature),

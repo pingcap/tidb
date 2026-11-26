@@ -17,6 +17,7 @@ failpoints = []
 
 [dependencies]
 fail = "0.4"
+tidb-go-strconv = { path = "../tidb-go-strconv" }
 
 [dev-dependencies]
 tidb-failpoint = { path = ".", features = ["failpoints"] }

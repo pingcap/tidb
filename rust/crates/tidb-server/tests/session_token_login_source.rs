@@ -172,7 +172,7 @@ fn a_migrated_session_logs_in_with_its_session_token_like_go() {
         another_user.clone(),
     ]));
     let token = tidb_stringutil::go_json_marshal(
-        &tidb_sessionstates::create_session_token("auth_session_token").unwrap(),
+        &tidb_sessionstates::create_session_token("auth_session_token", "%").unwrap(),
     )
     .into_bytes();
 
@@ -200,5 +200,19 @@ fn a_migrated_session_logs_in_with_its_session_token_like_go() {
 
     // using the token to auth with another user should fail
     let (reply, _) = login(&users, "another_user", SESSION_TOKEN, &token);
+    assert_eq!(error_code(&reply), 1045);
+
+    // Case-distinct usernames and different matched hosts are separate
+    // accounts: `CREATE USER 'AUTH_SESSION_TOKEN'@'%'` and
+    // `'auth_session_token'@'localhost'`, which the loopback peer matches
+    // before the token's `%` account.
+    users.accounts().replace_from(&registry_from_user_rows([
+        LoadedUser::new("auth_session_token", "%", NATIVE, ""),
+        LoadedUser::new("AUTH_SESSION_TOKEN", "%", NATIVE, ""),
+        LoadedUser::new("auth_session_token", "localhost", NATIVE, ""),
+    ]));
+    let (reply, _) = login(&users, "AUTH_SESSION_TOKEN", SESSION_TOKEN, &token);
+    assert_eq!(error_code(&reply), 1045);
+    let (reply, _) = login(&users, "auth_session_token", SESSION_TOKEN, &token);
     assert_eq!(error_code(&reply), 1045);
 }

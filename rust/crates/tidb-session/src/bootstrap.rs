@@ -153,6 +153,37 @@ impl<S: StoreClient> UpgradeStore for TxnUpgradeStore<'_, S> {
     }
 }
 
+/// Go `initLegacyECDSASessionToken`: loads the one-way compatibility gate.
+/// Only the owner of a fresh bootstrap may persist it without checking
+/// cluster versions.
+///
+/// # Errors
+///
+/// The meta transaction failed.
+pub fn init_legacy_ecdsa_session_token<S: StoreClient>(
+    store: &TxnUpgradeStore<'_, S>,
+    bootstrap: bool,
+) -> Result<(), String> {
+    if tidb_config_kerneltype::is_next_gen() {
+        return Ok(());
+    }
+    let mut disabled = false;
+    store.run_in_new_txn(tidb_txnkv::INTERNAL_TXN_BOOTSTRAP, true, |mutator| {
+        if bootstrap {
+            disabled = true;
+            return mutator.set_legacy_ecdsa_session_token_disabled().map_err(MetaTxnError::from);
+        }
+        disabled = mutator.get_legacy_ecdsa_session_token_disabled().map_err(MetaTxnError::from)?;
+        Ok(())
+    })?;
+    if disabled {
+        // Publish only after persistence succeeds, and never undo an
+        // observed gate.
+        tidb_vardef::set_legacy_ecdsa_session_token_disabled(true);
+    }
+    Ok(())
+}
+
 /// Go `tidbDefMemoryQuotaQuery`: the variable name in mysql.tidb table and it
 /// records the default value of mem-quota-query when upgrade from v3.0.x to
 /// v4.0.9+.

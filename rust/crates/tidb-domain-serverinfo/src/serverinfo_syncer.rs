@@ -445,6 +445,17 @@ impl Syncer {
     /// Without a client the map is this node alone, which is Go's
     /// single-node answer.
     pub fn get_all_server_info(&self) -> Result<HashMap<String, ServerInfo>, String> {
+        if let Some(value) = tidb_failpoint::eval("github.com/pingcap/tidb/pkg/domain/serverinfo/mockGetAllServerInfo") {
+            let res: HashMap<String, serde_json::Value> =
+                serde_json::from_str(&value.string()).map_err(|error| error.to_string())?;
+            let mut all = HashMap::with_capacity(res.len());
+            for (key, value) in res {
+                let mut info = ServerInfo::default();
+                info.unmarshal(value.to_string().as_bytes()).map_err(|error| error.to_string())?;
+                all.insert(key, info);
+            }
+            return Ok(all);
+        }
         let Some(etcd) = self.etcd.as_ref() else {
             let info = self.get_local_server_info();
             return Ok(HashMap::from([(info.static_info.id.clone(), info)]));

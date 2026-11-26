@@ -1066,7 +1066,7 @@ fn purge_locked<S: MvSession>(
         }
     };
     if let Some(message) =
-        tidb_failpoint::eval(&format!("{FP}mockPurgeMaterializedViewLogErrorBeforeInsertHist")).and_then(|value| value.as_string().map(str::to_owned))
+        tidb_failpoint::eval(&format!("{FP}mockPurgeMaterializedViewLogErrorBeforeInsertHist")).and_then(|value| value.as_string())
     {
         return Err(plain(message));
     }

@@ -354,3 +354,47 @@ fn the_upgrade_runs_under_the_bootstrap_request_source() {
     assert!(sources.contains(&"internal_others".to_owned()), "{sources:?}");
     assert!(!sources.iter().any(|source| source == "unknown"), "{sources:?}");
 }
+
+/// Go `TestInitLegacyECDSASessionToken` (`pkg/session/session_test.go`): a
+/// fresh bootstrap commits the one-way legacy ECDSA session-token gate and
+/// publishes it, and loading it again never undoes an observed transition.
+/// Go's injected commit and read failures have no seam here (`TxnUpgradeStore`
+/// runs on the real transaction opener).
+#[test]
+fn test_init_legacy_ecdsa_session_token() {
+    let original = tidb_vardef::is_legacy_ecdsa_session_token_disabled();
+    // fresh bootstrap
+    if tidb_config_kerneltype::is_classic() {
+        tidb_vardef::set_legacy_ecdsa_session_token_disabled(false);
+    }
+    let (stack, _users) = cop_backed_stack();
+    assert!(tidb_vardef::is_legacy_ecdsa_session_token_disabled());
+    let meta = tidb_store_driver_txn::meta_txn::MetaStore::new(
+        std::sync::Arc::new(stack.opener.clone()),
+        Duration::from_secs(10),
+    );
+    let mut disabled = false;
+    tidb_meta::MetaStore::run_in_new_txn(
+        &meta,
+        &tidb_gocontext::Context::background(),
+        tidb_txnkv::INTERNAL_TXN_BOOTSTRAP,
+        false,
+        &mut |txn| {
+            disabled = tidb_meta::transaction::Mutator::new(txn).get_legacy_ecdsa_session_token_disabled()?;
+            Ok(())
+        },
+    )
+    .unwrap();
+    assert_eq!(disabled, tidb_config_kerneltype::is_classic());
+
+    if tidb_config_kerneltype::is_classic() {
+        // A persisted gate is adopted on the next load, and a repeated fresh
+        // write is harmless.
+        tidb_vardef::set_legacy_ecdsa_session_token_disabled(false);
+        crate::bootstrap::init_legacy_ecdsa_session_token(&store(&stack), false).unwrap();
+        assert!(tidb_vardef::is_legacy_ecdsa_session_token_disabled());
+        crate::bootstrap::init_legacy_ecdsa_session_token(&store(&stack), true).unwrap();
+        assert!(tidb_vardef::is_legacy_ecdsa_session_token_disabled());
+    }
+    tidb_vardef::set_legacy_ecdsa_session_token_disabled(original);
+}
