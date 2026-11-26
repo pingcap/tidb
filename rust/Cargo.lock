@@ -9726,6 +9726,7 @@ dependencies = [
  "tidb-ingestor-globalsort",
  "tidb-ingestor-ingestctrl",
  "tidb-ingestor-simplesst",
+ "tidb-intest",
  "tidb-keyspace",
  "tidb-kv",
  "tidb-kvcache",

@@ -72,6 +72,9 @@ pub struct StatementObservation {
     /// Go `logStmt`'s crucial statements (account, privilege and schema
     /// changes), which go to the background log instead of the general log.
     pub crucial: bool,
+    /// Go `a.StmtNode.(*ast.SelectStmt)` with `Kind ==
+    /// SelectStmtKindSelect`: a plain SELECT, not `TABLE` or `VALUES`.
+    pub select_kind_select: bool,
 }
 
 #[derive(Default)]
@@ -109,6 +112,14 @@ impl StatementPhases {
             _ => Duration::ZERO,
         }
     }
+}
+
+/// Go `ExecStmt.isSlowQueryCacheable`: whether this statement may keep its
+/// original SQL in the plaintext slow-query cache. Only a directly executed
+/// SELECT qualifies. Prepared executions, TABLE, VALUES, and sensitive
+/// statements do not.
+fn is_slow_query_cacheable(observation: &StatementObservation) -> bool {
+    !observation.prepared && observation.secure_text.is_none() && observation.select_kind_select
 }
 
 /// Go `variable.PlanCacheParamList` as `StmtExecInfo.SampleParams` holds it:
@@ -552,6 +563,21 @@ pub trait ExecStmtObservation: crate::sessionctx::SessionContext {
             current_db_changed: self.session_vars().current_db_changed,
             ..tidb_variable::slow_log::SlowLogSessionVars::default()
         };
+        // Go `LogSlowQuery`: tidb_redact_log OFF already writes the original
+        // SQL to the slow log, so the plaintext cache is skipped. ON and
+        // MARKER redact that line; only a non-sensitive SELECT is queued,
+        // before the redacted line is written. A full queue drops the cache
+        // entry and the disk write still happens.
+        if self.redact_log_mode() != "OFF" && is_slow_query_cacheable(observation) {
+            crate::slow_query_cache::put_into_global_cache(
+                crate::slow_query_cache::slow_query_key_of(
+                    items.txn_ts,
+                    crate::slow_query_cache::slow_query_time_key(items.time_total),
+                    &items.digest,
+                ),
+                observation.text.clone(),
+            );
+        }
         let entry = tidb_variable::slow_log::slow_log_format(&vars, &items);
         // Go `SlowLogFormat` clears `CurrentDBChanged` once it printed `use`.
         self.session_vars_mut().current_db_changed = false;

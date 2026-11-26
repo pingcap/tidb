@@ -457,6 +457,7 @@ impl Session {
             ruv2_metrics,
             record_last_query: false,
             crucial: false,
+            select_kind_select: false,
             phases: Arc::new(Mutex::new(StatementPhases {
                 parse,
                 parse_before_start: parse,
@@ -781,6 +782,9 @@ impl Session {
             // Go's ExecuteStmt node records whatever it executes.
             observation.record_last_query = observation.prepared || records_last_query_info(stmt);
             observation.crucial = is_crucial_stmt(stmt);
+            observation.select_kind_select = matches!(stmt, Stmt::Query(query)
+                if matches!(&**query, tidb_ast::QueryStmt::Select(select)
+                    if select.kind == tidb_ast::SelectStatementKind::Select));
             observation.routed = !matches!(stmt, Stmt::Dml(_) | Stmt::Query(_));
             // Go `getSQLForProcessInfo`: the process list shows a sensitive
             // statement's secure text once its node is known.

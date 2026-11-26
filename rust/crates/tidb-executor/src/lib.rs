@@ -176,6 +176,7 @@ mod tests_table_part2_source;
 pub mod range_group_merge;
 pub mod union_all;
 pub mod slow_query;
+pub mod slow_query_cache;
 pub use partition_routing::{PartitionKind, PartitionExpr, RangeBound};
 pub mod expand;
 pub mod projection;
