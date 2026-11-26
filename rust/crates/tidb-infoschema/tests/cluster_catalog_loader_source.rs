@@ -57,7 +57,8 @@ fn batched_schema_uses_current_runtime_entries_and_keeps_stored_metadata() {
     let mut catalog = SessionExtendedInfoSchema::init_with_db_infos(
         Vec::new(), Vec::new(), Vec::new(), 1,
     );
-    catalog.load_stored_schema_tables(db, None, |table| {
+    catalog.load_stored_schema_tables_from_handles(db, None, |table| {
+        let table = table.read();
         (table.state == SchemaState::PUBLIC)
             .then(|| TableEntry::Kv(Arc::new(TableCommon::new(table.id, Vec::new()))))
     });

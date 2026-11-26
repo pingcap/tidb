@@ -1445,19 +1445,36 @@ impl SessionExtendedInfoSchema {
         })
     }
 
-    /// Go `Builder.ApplyDiff` for an unchanged table: adopts the object
-    /// previously built from this very `TableInfo` pointer.
+    /// Go `Builder.ApplyDiff` for a table no diff names: the table `previous`
+    /// built from this very `TableInfo` pointer (one of its schema's
+    /// `Deprecated.Tables`) joins this image unchanged. `false` when
+    /// `previous` built nothing from it.
     pub fn adopt_built_table(
         &mut self,
-        templates: &BuiltTableTemplates<'_>,
+        previous: &SessionExtendedInfoSchema,
+        database: &str,
         table: &tidb_model::GoShared<tidb_model::TableInfo>,
     ) -> bool {
-        let Some((name, entry)) = templates.entry_for(table) else {
+        let database_key = database.go_to_lower();
+        let Some(built) = previous.schema.databases.get(&database_key) else {
+            return false;
+        };
+        let built_from_it = built
+            .info
+            .read()
+            .deprecated_tables
+            .iter_deref()
+            .any(|built_table| built_table.ptr_eq(table));
+        if !built_from_it {
+            return false;
+        }
+        let name = table.read().name.lowercase().to_owned();
+        let Some(entry) = built.tables.get(&name).cloned() else {
             return false;
         };
         let (table_is_locked, table_mode_is_set, table_has_foreign_keys) = table_flags(&entry);
         self.bump_metadata_version();
-        let Some(schema) = self.database_mut(templates.database_name) else {
+        let Some(schema) = self.database_mut(&database_key) else {
             return false;
         };
         schema.tables.insert(name, entry);
@@ -1466,18 +1483,6 @@ impl SessionExtendedInfoSchema {
         self.schema_mut().table_modes_present |= table_mode_is_set;
         self.bump_version();
         true
-    }
-
-    /// Builds and installs the runtime entries for one stored schema.
-    /// The builder runs in stored-table order and may skip a table it cannot
-    /// serve. Unchanged metadata can reuse the corresponding runtime entry.
-    pub fn load_stored_schema_tables(
-        &mut self,
-        info: tidb_model::GoShared<tidb_model::db::DBInfo>,
-        templates: Option<&BuiltTableTemplates<'_>>,
-        mut build: impl FnMut(&tidb_model::TableInfo) -> Option<TableEntry>,
-    ) {
-        self.load_stored_schema_tables_from_handles(info, templates, |table| build(&table.read()));
     }
 
     /// Loads the stored table handles so runtime entries can retain their
