@@ -2042,6 +2042,14 @@ pub struct StmtContextData {
     allow_derive_topn: bool,
     /// Go `SessionVars.EnableChunkRPC` (`tidb_enable_chunk_rpc`).
     enable_chunk_rpc: bool,
+    /// Go `SessionVars.TiFlashFineGrainedShuffleBatchSize`.
+    tiflash_fine_grained_shuffle_batch_size: u64,
+    /// Go `SessionVars.EnableParallelHashaggSpill`.
+    enable_parallel_hashagg_spill: bool,
+    /// Go `SessionVars.TrackAggregateMemoryUsage`.
+    track_aggregate_memory_usage: bool,
+    /// Go `SessionVars.SlowQueryFile` (`tidb_slow_query_file`).
+    slow_query_file: String,
     /// Which `ResetContextOfStmt` arm built this context; see
     /// [`StatementClass`]. It is an INPUT to [`StmtContext::push_down_flags`],
     /// which is why it rides the context rather than being re-derived at the
@@ -2554,6 +2562,24 @@ context_configuration! {
     #[must_use]
     pub fn with_enable_chunk_rpc(mut self, enabled: bool) -> Self {
         self.enable_chunk_rpc = enabled;
+        self
+    }
+    /// The session variables an executor reads through [`Columns::sysvar`],
+    /// captured at statement start: Go `SessionVars.
+    /// TiFlashFineGrainedShuffleBatchSize`, `EnableParallelHashaggSpill`,
+    /// `TrackAggregateMemoryUsage` and `SlowQueryFile`.
+    #[must_use]
+    pub fn with_executor_session_vars(
+        mut self,
+        tiflash_fine_grained_shuffle_batch_size: u64,
+        enable_parallel_hashagg_spill: bool,
+        track_aggregate_memory_usage: bool,
+        slow_query_file: String,
+    ) -> Self {
+        self.tiflash_fine_grained_shuffle_batch_size = tiflash_fine_grained_shuffle_batch_size;
+        self.enable_parallel_hashagg_spill = enable_parallel_hashagg_spill;
+        self.track_aggregate_memory_usage = track_aggregate_memory_usage;
+        self.slow_query_file = slow_query_file;
         self
     }
     /// Go `SessionVars.AllowDeriveTopN`, captured at statement start.
@@ -3950,6 +3976,10 @@ impl StmtContext {
             enable_parallel_apply: false,
             allow_derive_topn: false,
             enable_chunk_rpc: true,
+            tiflash_fine_grained_shuffle_batch_size: tidb_vardef::defaults::DEF_TIFLASH_FINE_GRAINED_SHUFFLE_BATCH_SIZE as u64,
+            enable_parallel_hashagg_spill: tidb_vardef::defaults::DEF_TIDB_ENABLE_PARALLEL_HASHAGG_SPILL,
+            track_aggregate_memory_usage: tidb_vardef::defaults::DEF_TIDB_TRACK_AGGREGATE_MEMORY_USAGE,
+            slow_query_file: String::new(),
             statement_class: StatementClass::Other,
             enable_stable_result_mode: false,
             ignore_inlist_plan_digest: tidb_vardef::defaults::DEF_TIDB_IGNORE_INLIST_PLAN_DIGEST,
@@ -7962,6 +7992,18 @@ impl Columns for StmtContext {
         if name.eq_ignore_ascii_case("warning_count") {
             return Some(Datum::UInt(self.client_warning_count as u64));
         }
+        if name.eq_ignore_ascii_case(tidb_vardef::tidb_vars::TIFLASH_FINE_GRAINED_SHUFFLE_BATCH_SIZE) {
+            return Some(Datum::UInt(self.tiflash_fine_grained_shuffle_batch_size));
+        }
+        if name.eq_ignore_ascii_case(tidb_vardef::tidb_vars::TIDB_ENABLE_PARALLEL_HASHAGG_SPILL) {
+            return Some(Datum::Int(i64::from(self.enable_parallel_hashagg_spill)));
+        }
+        if name.eq_ignore_ascii_case(tidb_vardef::tidb_vars::TIDB_TRACK_AGGREGATE_MEMORY_USAGE) {
+            return Some(Datum::Int(i64::from(self.track_aggregate_memory_usage)));
+        }
+        if name.eq_ignore_ascii_case(tidb_vardef::tidb_vars::TIDB_SLOW_QUERY_FILE) {
+            return Some(Datum::Bytes(self.slow_query_file.clone().into_bytes()));
+        }
         if matches!(scope, Some(tidb_ast::SysVarScope::Global)) {
             return self
                 .global_sysvars
@@ -7969,6 +8011,13 @@ impl Columns for StmtContext {
                 .and_then(|accessor| accessor.get_global_sysvar(name))
                 .map(|value| Datum::Bytes(value.as_bytes().to_vec()));
         }
+        // A session variable this context holds no snapshot of would read
+        // as its caller's default however the session set it: answer it
+        // from a field filled at statement start (stmt_ctx_build) instead.
+        debug_assert!(
+            false,
+            "StmtContext::sysvar has no snapshot of @@{name}; add it as a field filled from the session's variables"
+        );
         None
     }
 

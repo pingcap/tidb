@@ -143,6 +143,10 @@ pub struct StatementVarSnapshot {
     enable_parallel_apply: bool,
     /// Go `SessionVars.EnableChunkRPC` (`tidb_enable_chunk_rpc`).
     enable_chunk_rpc: bool,
+    /// Go `SessionVars.TiFlashFineGrainedShuffleBatchSize`,
+    /// `EnableParallelHashaggSpill`, `TrackAggregateMemoryUsage` and
+    /// `SlowQueryFile`.
+    executor_session_vars: (u64, bool, bool, String),
     /// Go `SessionVars.AllowDeriveTopN` (`tidb_opt_derive_topn`).
     allow_derive_topn: bool,
     hashagg_partial_concurrency: usize,
@@ -1143,6 +1147,26 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
                 .get_system(tidb_vardef::tidb_vars::TIDB_ENABLE_CHUNK_RPC)
                 .ok()
                 .is_none_or(|value| value.eq_ignore_ascii_case("on") || value == "1"),
+            executor_session_vars: {
+                let system = |name: &str| self.session_vars().get_system(name).ok();
+                let enabled = |name: &str, default: bool| {
+                    system(name).map_or(default, |value| value.eq_ignore_ascii_case("on") || value == "1")
+                };
+                (
+                    system(tidb_vardef::tidb_vars::TIFLASH_FINE_GRAINED_SHUFFLE_BATCH_SIZE)
+                        .and_then(|value| value.parse().ok())
+                        .unwrap_or(tidb_vardef::defaults::DEF_TIFLASH_FINE_GRAINED_SHUFFLE_BATCH_SIZE as u64),
+                    enabled(
+                        tidb_vardef::tidb_vars::TIDB_ENABLE_PARALLEL_HASHAGG_SPILL,
+                        tidb_vardef::defaults::DEF_TIDB_ENABLE_PARALLEL_HASHAGG_SPILL,
+                    ),
+                    enabled(
+                        tidb_vardef::tidb_vars::TIDB_TRACK_AGGREGATE_MEMORY_USAGE,
+                        tidb_vardef::defaults::DEF_TIDB_TRACK_AGGREGATE_MEMORY_USAGE,
+                    ),
+                    system(tidb_vardef::tidb_vars::TIDB_SLOW_QUERY_FILE).unwrap_or_default(),
+                )
+            },
             allow_derive_topn: self.session_vars().allow_derive_topn(),
             apply_cache_capacity: self.session_vars().mem_quota_apply_cache(),
             hashagg_partial_concurrency: resolved_concurrency(self.session_vars().hash_agg_partial_concurrency()),
@@ -1423,6 +1447,8 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
         let apply_cache_capacity = snapshot.apply_cache_capacity;
         let enable_parallel_apply = snapshot.enable_parallel_apply;
         let enable_chunk_rpc = snapshot.enable_chunk_rpc;
+        let (fine_grained_shuffle_batch_size, parallel_hashagg_spill, track_aggregate_memory, slow_query_file) =
+            snapshot.executor_session_vars.clone();
         let allow_derive_topn = snapshot.allow_derive_topn;
         let hashagg_partial_concurrency = snapshot.hashagg_partial_concurrency;
         let hashagg_final_concurrency = snapshot.hashagg_final_concurrency;
@@ -1660,6 +1686,12 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
                     .with_apply_cache_capacity(apply_cache_capacity)
                     .with_parallel_apply(enable_parallel_apply)
                 .with_enable_chunk_rpc(enable_chunk_rpc)
+                .with_executor_session_vars(
+                    fine_grained_shuffle_batch_size,
+                    parallel_hashagg_spill,
+                    track_aggregate_memory,
+                    slow_query_file.clone(),
+                )
                     .with_allow_derive_topn(allow_derive_topn)
                     .with_block_encryption_mode(block_encryption_mode)
                     .with_parser_config(self.session_vars().build_parser_switches())
@@ -1869,6 +1901,12 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
                 .with_apply_cache_capacity(apply_cache_capacity)
                 .with_parallel_apply(enable_parallel_apply)
                 .with_enable_chunk_rpc(enable_chunk_rpc)
+                .with_executor_session_vars(
+                    fine_grained_shuffle_batch_size,
+                    parallel_hashagg_spill,
+                    track_aggregate_memory,
+                    slow_query_file.clone(),
+                )
                 .with_block_encryption_mode(block_encryption_mode)
                 .with_sysdate_is_now(sysdate_is_now)
                 .with_replica_read(replica_read)

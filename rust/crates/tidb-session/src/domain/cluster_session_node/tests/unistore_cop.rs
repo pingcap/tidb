@@ -31611,3 +31611,29 @@ fn test_statement_duration_metrics() {
     assert_eq!(command("internal"), internal_command + 1);
     assert_eq!(statement("Select"), select_before);
 }
+
+/// The session variables executors read through `StmtContext::sysvar`
+/// follow the session (Go reads `SessionVars` fields): before, these four
+/// read as their defaults whatever the session set.
+#[test]
+fn statement_context_answers_executor_session_vars() {
+    use tidb_exprctx::Columns as _;
+    let (stack, _users) = cop_backed_stack();
+    let mut tk = stack.factory.open_session(session_context(90)).expect("session opens");
+    let read = |tk: &Session, name: &str| tk.statement_context_of(false, false, true).sysvar(None, name);
+    assert_eq!(read(&tk, "tiflash_fine_grained_shuffle_batch_size"), Some(Datum::UInt(8192)));
+    assert_eq!(read(&tk, "tidb_enable_parallel_hashagg_spill"), Some(Datum::Int(1)));
+    assert_eq!(read(&tk, "tidb_track_aggregate_memory_usage"), Some(Datum::Int(1)));
+    rows(&mut tk, "set tiflash_fine_grained_shuffle_batch_size = 1024");
+    rows(&mut tk, "set tidb_enable_parallel_hashagg_spill = 0");
+    rows(&mut tk, "set tidb_track_aggregate_memory_usage = 0");
+    rows(&mut tk, "set tidb_slow_query_file = 'other-slow.log'");
+    assert_eq!(read(&tk, "tiflash_fine_grained_shuffle_batch_size"), Some(Datum::UInt(1024)));
+    assert_eq!(read(&tk, "tidb_enable_parallel_hashagg_spill"), Some(Datum::Int(0)));
+    assert_eq!(read(&tk, "tidb_track_aggregate_memory_usage"), Some(Datum::Int(0)));
+    assert_eq!(read(&tk, "tidb_slow_query_file"), Some(Datum::Bytes(b"other-slow.log".to_vec())));
+    assert_eq!(
+        read(&tk, "tidb_slow_query_file"),
+        tk.statement_context_of(true, false, false).sysvar(None, "tidb_slow_query_file")
+    );
+}
