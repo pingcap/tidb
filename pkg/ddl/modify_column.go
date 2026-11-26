@@ -985,11 +985,31 @@ func (w *worker) doModifyColumnWithCheck(
 	return w.finishModifyColumnWithoutReorg(jobCtx, job, tblInfo, newCol, oldCol, pos)
 }
 
+// preserveOriginDefaultValue retains oldCol's origin default value when
+// MODIFY COLUMN reuses existing row storage without rewriting rows.
+func preserveOriginDefaultValue(newCol, oldCol *model.ColumnInfo) {
+	newCol.OriginDefaultValue = oldCol.OriginDefaultValue
+	newCol.OriginDefaultValueBit = oldCol.OriginDefaultValueBit
+	newCol.Version = oldCol.Version
+	if newCol.GetOriginDefaultValue() == nil || oldCol.FieldType.Equals(&newCol.FieldType) {
+		return
+	}
+	// If the old origin default does not fit the narrowed target type (possible
+	// only when no row depends on it, otherwise data validation would have failed),
+	// clear it so coprocessor scans do not emit truncation warnings when encoding defaults.
+	ctx := exprctx.CtxWithHandleTruncateErrLevel(newReorgExprCtx(), errctx.LevelError)
+	if _, err := table.GetColOriginDefaultValue(ctx, newCol); err != nil {
+		newCol.OriginDefaultValue = nil
+		newCol.OriginDefaultValueBit = nil
+	}
+}
+
 func adjustTableInfoAfterModifyColumn(
 	tblInfo *model.TableInfo, newCol, oldCol *model.ColumnInfo, pos *ast.ColumnPosition) error {
 	// We need the latest column's offset and state. This information can be obtained from the store.
 	newCol.Offset = oldCol.Offset
 	newCol.State = oldCol.State
+	preserveOriginDefaultValue(newCol, oldCol)
 	if pos != nil && pos.RelativeColumn != nil && oldCol.Name.L == pos.RelativeColumn.Name.L {
 		// For cases like `modify column b after b`, it should report this error.
 		return errors.Trace(infoschema.ErrColumnNotExists.GenWithStackByArgs(oldCol.Name, tblInfo.Name))
@@ -1543,7 +1563,9 @@ func (w *worker) doModifyColumnIndexReorg(
 			oldTp := oldCol.FieldType
 			oldName := oldCol.Name
 			oldID := oldCol.ID
-			tblInfo.Columns[oldCol.Offset] = args.Column.Clone()
+			newCol := args.Column.Clone()
+			preserveOriginDefaultValue(newCol, oldCol)
+			tblInfo.Columns[oldCol.Offset] = newCol
 			tblInfo.Columns[oldCol.Offset].ChangingFieldType = &oldTp
 			tblInfo.Columns[oldCol.Offset].Offset = oldCol.Offset
 			tblInfo.Columns[oldCol.Offset].ID = oldID

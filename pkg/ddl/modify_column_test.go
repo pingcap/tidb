@@ -1687,3 +1687,94 @@ func TestModifyColumnReorgScheduling(t *testing.T) {
 		})
 	}
 }
+
+func TestModifyColumnPreserveOriginDefault(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	t.Run("varcharToTinyTextValidationOnly", func(t *testing.T) {
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("create table t (id int)")
+		tk.MustExec("insert into t values (1)")
+		tk.MustExec("alter table t add column c varchar(255) default 'saved'")
+
+		tblBefore := external.GetTableByName(t, tk, "test", "t")
+		colIDBefore := tblBefore.Meta().Columns[1].ID
+
+		var gotType model.ModifyColumnType
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/getModifyColumnType", func(tp model.ModifyColumnType) {
+			gotType = tp
+		})
+		tk.MustExec("alter table t modify column c tinytext")
+		require.Equal(t, model.ModifyTypeNoReorgWithCheck, gotType)
+
+		tblAfter := external.GetTableByName(t, tk, "test", "t")
+		require.Equal(t, colIDBefore, tblAfter.Meta().Columns[1].ID)
+
+		tk.MustExec("insert into t (id) values (2)")
+		tk.MustQuery("select id, c from t order by id").Check(testkit.Rows("1 saved", "2 <nil>"))
+		tk.MustExec("admin check table t")
+	})
+
+	t.Run("varcharNarrowingKeepsNullAndValueOriginDefault", func(t *testing.T) {
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("create table t (id int)")
+		tk.MustExec("insert into t values (1)")
+		tk.MustExec("alter table t add column c1 varchar(255) default 'saved'")
+		tk.MustExec("alter table t add column c2 varchar(255)")
+
+		var gotType model.ModifyColumnType
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/getModifyColumnType", func(tp model.ModifyColumnType) {
+			gotType = tp
+		})
+		tk.MustExec("alter table t modify column c1 varchar(100)")
+		require.Equal(t, model.ModifyTypeNoReorgWithCheck, gotType)
+		tk.MustExec("alter table t modify column c2 varchar(100) default 'new'")
+		require.Equal(t, model.ModifyTypeNoReorgWithCheck, gotType)
+
+		tk.MustExec("insert into t (id) values (2)")
+		tk.MustQuery("select id, c1, c2 from t order by id").Check(testkit.Rows(
+			"1 saved <nil>",
+			"2 <nil> new",
+		))
+		tk.MustExec("admin check table t")
+	})
+
+	t.Run("indexReorgPreservesOriginDefault", func(t *testing.T) {
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("create table t (id int)")
+		tk.MustExec("insert into t values (1)")
+		tk.MustExec("alter table t add column c char(10) collate utf8mb4_bin default 'saved'")
+		tk.MustExec("alter table t add index idx(c)")
+
+		var gotType model.ModifyColumnType
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/getModifyColumnType", func(tp model.ModifyColumnType) {
+			gotType = tp
+		})
+		tk.MustExec("alter table t modify column c varchar(20) collate utf8mb4_bin")
+		require.Equal(t, model.ModifyTypeIndexReorg, gotType)
+
+		tk.MustExec("insert into t (id) values (2)")
+		tk.MustQuery("select id, c from t order by id").Check(testkit.Rows("1 saved", "2 <nil>"))
+		tk.MustExec("admin check table t")
+	})
+
+	t.Run("emptyTableClearsOutOfRangeOriginDefault", func(t *testing.T) {
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("create table t (id int)")
+		tk.MustExec("alter table t add column c int default 1000")
+		tk.MustExec("alter table t modify column c tinyint")
+
+		tblAfter := external.GetTableByName(t, tk, "test", "t")
+		require.Nil(t, tblAfter.Meta().Columns[1].GetOriginDefaultValue())
+		tk.MustQuery("select * from t").Check(testkit.Rows())
+		tk.MustQuery("show warnings").Check(testkit.Rows())
+	})
+}
