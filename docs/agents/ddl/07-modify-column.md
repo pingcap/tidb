@@ -49,7 +49,10 @@ analysis is structured into three layers:
    in `classifyByRowValue` / `classifyByStringRowValue` (integer ranges ignore
    display width; DECIMAL requires identical precision/scale/sign; ENUM/SET
    preserve member ordinals; BINARY length changes require padding changes;
-   vector dimensions must match unless target is unconstrained). For indexed
+   vector dimensions must match unless target is unconstrained). Nonbinary
+   CHAR/VARCHAR to TEXT/BLOB can skip data validation if the maximum source byte
+   length fits the target byte limit. With the same charset, a conversion that
+   requires validation checks the byte length of existing rows. For indexed
    columns it checks index key/restored-data encoding via `needsIndexReorg`
    (including incompatible collation changes under new collation and
    `NeedRestoredData` changes such as `CHAR -> VARCHAR` with `_bin` collations,

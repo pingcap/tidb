@@ -696,6 +696,25 @@ func TestModifyColumnCharsetClassification(t *testing.T) {
 			require.Equal(t, before, tk.MustQuery("select hex(c) from t").Rows())
 		})
 	}
+	t.Run("textByteLimit", func(t *testing.T) {
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("set sql_mode = 'STRICT_ALL_TABLES'")
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("create table t (c varchar(255) collate utf8mb4_bin)")
+		tk.MustExec("insert into t values (repeat(convert(x'C385' using utf8mb4), 128))")
+		tk.MustGetErrCode("alter table t modify c tinytext collate utf8mb4_bin", errno.WarnDataTruncated)
+		tk.MustQuery("select data_type from information_schema.columns where table_schema = 'test' and table_name = 't'").
+			Check(testkit.Rows("varchar"))
+		tk.MustQuery("select char_length(c), length(c) from t").Check(testkit.Rows("128 256"))
+
+		columnID := external.GetTableByName(t, tk, "test", "t").Meta().Columns[0].ID
+		tk.MustExec("delete from t")
+		tk.MustExec("insert into t values (concat(repeat(convert(x'C385' using utf8mb4), 127), 'x'))")
+		tk.MustExec("alter table t modify c tinytext collate utf8mb4_bin")
+		tk.MustQuery("select length(c) from t").Check(testkit.Rows("255"))
+		require.Equal(t, columnID, external.GetTableByName(t, tk, "test", "t").Meta().Columns[0].ID)
+	})
 	tk.MustExec("drop table t")
 	tk.MustExec("create table t (c varchar(5) character set utf8 collate utf8_bin primary key)")
 	tk.MustExec("insert into t values ('éééé')")

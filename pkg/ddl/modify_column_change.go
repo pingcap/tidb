@@ -16,6 +16,7 @@ package ddl
 
 import (
 	"fmt"
+	"unicode/utf8"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -259,15 +260,36 @@ func classifyByStringRowValue(oldCol, newCol *model.ColumnInfo) model.ModifyColu
 		}
 		return model.ModifyTypeReorg
 	}
+	if needsStringByteLengthCheck(oldCol, newCol) {
+		if oldCol.GetCharset() == newCol.GetCharset() {
+			return model.ModifyTypeNoReorgWithCheck
+		}
+		return model.ModifyTypeReorg
+	}
 	if !isVarcharToChar(oldCol, newCol) && preservesColumnRange(oldCol, newCol) {
 		return model.ModifyTypeNoReorg
 	}
-	// Only non-binary CHAR/VARCHAR conversions have a length/trailing-space
-	// validation path. Binary padding and other string conversions require rewriting.
 	if isNonBinaryCharChange(oldCol, newCol) {
 		return model.ModifyTypeNoReorgWithCheck
 	}
 	return model.ModifyTypeReorg
+}
+
+// needsStringByteLengthCheck reports whether a character limit fails to
+// guarantee that every source value fits a target with a byte limit.
+func needsStringByteLengthCheck(oldCol, newCol *model.ColumnInfo) bool {
+	if stringLengthInBytes(oldCol) || !stringLengthInBytes(newCol) {
+		return false
+	}
+
+	sourceLimit, targetLimit := oldCol.GetFlen(), newCol.GetFlen()
+	// Dividing converts the target byte limit to a guaranteed UTF-8
+	// character capacity without overflowing the source limit.
+	return targetLimit >= 0 && (sourceLimit < 0 || sourceLimit > targetLimit/utf8.UTFMax)
+}
+
+func stringLengthInBytes(col *model.ColumnInfo) bool {
+	return col.GetCharset() == charset.CharsetBin || types.IsTypeBlob(col.GetType())
 }
 
 // preservesColumnRange is the default rule for unchanged storage formats:
