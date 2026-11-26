@@ -1640,13 +1640,13 @@ fn check_indexes_in_modifiable_columns(
     Ok(())
 }
 
-/// Clears `hasModifyFlag`'s marks on the old column (the rollbacks' first
-/// move).
+/// Go `clearModifyColumnTempFlags`: removes in-progress modify-column
+/// markers from the old column (the rollbacks' first move). Its own NOT NULL
+/// stays: a failed MODIFY COLUMN must not drop an original constraint.
 fn clear_modify_flag(column: &GoShared<tidb_model::ColumnInfo>) {
     let mut column = column.write();
     if has_modify_flag(&column) {
         column.del_flag(u64::from(FieldTypeFlags::PREVENT_NULL_INSERT));
-        column.del_flag(u64::from(FieldTypeFlags::NOT_NULL));
         column.changing_field_type = None;
     }
 }
@@ -2812,7 +2812,9 @@ fn do_modify_column_index_reorg(
         SchemaState::NONE => {
             {
                 let mut old = target.old.write();
-                old.add_flag(u64::from(FieldTypeFlags::PREVENT_NULL_INSERT));
+                if is_null_to_not_null_change(&old, &new) {
+                    old.add_flag(u64::from(FieldTypeFlags::PREVENT_NULL_INSERT));
+                }
                 old.changing_field_type = Some(GoShared::new(new.field_type.clone()));
             }
             update_object_state(None, &changing_indexes, SchemaState::DELETE_ONLY);

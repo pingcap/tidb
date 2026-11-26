@@ -97,3 +97,42 @@ fn modify_not_null_preserves_go_precheck_error_and_timestamp_boundary() {
         [["10"], ["NULL"]]
     );
 }
+
+/// Go `TestModifyColumnRollbackKeepsOriginalNotNull` (Go master
+/// 3eee6459185): a failed MODIFY COLUMN keeps the column's original NOT NULL;
+/// the rollback only clears the in-progress markers. (Go's NullToNotNull
+/// case needs the `beforeDoModifyColumnSkipReorgCheck` failpoint, which has no
+/// Rust site.)
+#[test]
+fn modify_column_rollback_keeps_original_not_null() {
+    let mut tk = Session::new();
+    tk.run("set session sql_mode = 'STRICT_TRANS_TABLES'").unwrap();
+    let assert_not_null_preserved = |tk: &mut Session, column: &str, data_type: &str| {
+        assert_eq!(
+            row_text(tk.run(&format!(
+                "select data_type, is_nullable from information_schema.columns \
+                 where table_schema = 'test' and table_name = 't' and column_name = '{column}'"
+            ))),
+            [[data_type, "NO"]]
+        );
+        let error = tk.run(&format!("insert into t (id, {column}) values (100, null)")).unwrap_err();
+        assert_eq!(error.to_string(), format!("Column '{column}' cannot be null"));
+    };
+
+    // NoReorgWithCheck
+    tk.run("drop table if exists t").unwrap();
+    tk.run("create table t (id int primary key, c int not null)").unwrap();
+    tk.run("insert into t values (1, 1000), (2, 2000)").unwrap();
+    let error = tk.run("alter table t modify column c tinyint not null").unwrap_err();
+    assert!(error.to_string().contains("Data truncated for column 'c'"), "{error}");
+    assert_not_null_preserved(&mut tk, "c", "int");
+
+    // IndexReorg
+    tk.run("drop table if exists t").unwrap();
+    tk.run("create table t (id int primary key, c char(20) collate utf8mb4_bin not null, index idx(c))")
+        .unwrap();
+    tk.run("insert into t values (1, 'abcdefghijklmnop')").unwrap();
+    let error = tk.run("alter table t modify column c varchar(10) collate utf8mb4_bin not null").unwrap_err();
+    assert!(error.to_string().contains("Data truncated for column 'c'"), "{error}");
+    assert_not_null_preserved(&mut tk, "c", "char");
+}
