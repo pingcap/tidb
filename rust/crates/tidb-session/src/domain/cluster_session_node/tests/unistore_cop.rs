@@ -31088,3 +31088,79 @@ fn plan_cache_rename_table_rebuilds_for_the_renamed_table() {
     assert_eq!(last(&mut tk), [["1"]]);
     tk.node_conn().control_transaction("rollback").unwrap();
 }
+
+/// Go master 328460a9af0 (`executor/update` integration case, recorded
+/// results): after EXCHANGE PARTITION two partitions of a non-clustered table
+/// hold the same `_tidb_rowid`, so a multi-table UPDATE tracks each matched row
+/// by its partition and handle; a clustered table keeps its handle.
+#[test]
+fn multi_table_update_tracks_rows_by_partition_after_exchange() {
+    let (stack, _users) = cop_backed_stack();
+    let mut tk = stack.factory.open_session(session_context(941)).unwrap();
+    let mut update = |tk: &mut Session, sql: &str| {
+        let affected = tk
+            .node_conn()
+            .execute_write(sql)
+            .unwrap_or_else(|error| panic!("{sql}: {error:?}"))
+            .expect("an UPDATE reports its rows")
+            .affected_rows;
+        assert_eq!(affected, 2, "{sql}");
+    };
+    let rows_of = |tk: &mut Session, sql: &str| displayed(rows(tk, sql));
+    rows(&mut tk, "use test");
+    for (create_tp, create_tx, insert_tp, insert_tx) in [
+        (
+            "create table tp (a int, b int, c int, key (b), key (c)) partition by range (a) (partition p0 values less than (10), partition p1 values less than (20))",
+            "create table tx (a int, b int, c int, key (b), key (c))",
+            "insert into tp values (1, 1, 1)",
+            "insert into tx values (11, 11, 11)",
+        ),
+        (
+            "create table tp (a int, b int, c int, s int as (b + c) stored, v int as (b * 10 + c) virtual, key (s), key (v)) partition by range (a) (partition p0 values less than (10), partition p1 values less than (20))",
+            "create table tx (a int, b int, c int, s int as (b + c) stored, v int as (b * 10 + c) virtual, key (s), key (v))",
+            "insert into tp (a, b, c) values (1, 1, 1)",
+            "insert into tx (a, b, c) values (11, 11, 11)",
+        ),
+    ] {
+        rows(&mut tk, "drop table if exists tp, tx");
+        for sql in [create_tp, create_tx, insert_tp, insert_tx, "alter table tp exchange partition p1 with table tx"] {
+            rows(&mut tk, sql);
+        }
+        let generated = create_tp.contains(" s int ");
+        update(&mut tk, "update tp t1, tp t2 set t1.b = 100, t2.c = 200 where t1.a = 1 and t2.a = 11");
+        let expected: &[&[&str]] = if generated {
+            &[&["1", "100", "1", "101", "1001", "1"], &["11", "11", "200", "211", "310", "1"]]
+        } else {
+            &[&["1", "100", "1", "1"], &["11", "11", "200", "1"]]
+        };
+        assert_eq!(rows_of(&mut tk, "select *, _tidb_rowid from tp order by a"), expected);
+        update(&mut tk, "update tp t1, tp t2 set t1.b = 300, t2.b = 400 where t1.a = 1 and t2.a = 11");
+        let expected: &[&[&str]] = if generated {
+            &[&["1", "300", "1", "301", "3001", "1"], &["11", "400", "200", "600", "4200", "1"]]
+        } else {
+            &[&["1", "300", "1", "1"], &["11", "400", "200", "1"]]
+        };
+        assert_eq!(rows_of(&mut tk, "select *, _tidb_rowid from tp order by a"), expected);
+        if !generated {
+            update(&mut tk, "update tp t1, tp t2 set t1.c = t2.b, t2.c = t1.b where t1.a = 1 and t2.a = 11");
+            assert_eq!(
+                rows_of(&mut tk, "select *, _tidb_rowid from tp order by a"),
+                [["1", "300", "400", "1"], ["11", "400", "300", "1"]]
+            );
+            update(&mut tk, "update tp t1, tp t2 set t1.b = 1, t2.c = 2 where t1.a = 1 and t2.a = 1");
+            assert_eq!(
+                rows_of(&mut tk, "select *, _tidb_rowid from tp order by a"),
+                [["1", "1", "2", "1"], ["11", "400", "300", "1"]]
+            );
+        }
+        rows(&mut tk, "admin check table tp");
+    }
+    rows(&mut tk, "drop table if exists tp, tx");
+    rows(&mut tk, "create table tp (a int, b int, c int, primary key (a) clustered) partition by range (a) (partition p0 values less than (10), partition p1 values less than (20))");
+    rows(&mut tk, "create table tx (a int, b int, c int, primary key (a) clustered)");
+    rows(&mut tk, "insert into tp values (1, 1, 1)");
+    rows(&mut tk, "insert into tx values (11, 11, 11)");
+    rows(&mut tk, "alter table tp exchange partition p1 with table tx");
+    update(&mut tk, "update tp t1, tp t2 set t1.b = 100, t2.c = 200 where t1.a = 1 and t2.a = 11");
+    assert_eq!(rows_of(&mut tk, "select * from tp order by a"), [["1", "100", "1"], ["11", "11", "200"]]);
+}

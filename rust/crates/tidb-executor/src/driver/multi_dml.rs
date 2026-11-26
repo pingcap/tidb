@@ -107,9 +107,10 @@ struct UpdatedTable {
     default_meta: Vec<super::dml::ColumnDefaultMeta>,
     /// Generated offsets in the complete writable row.
     generated_columns: Vec<usize>,
-    /// Go `UpdateExec.prepare` keeps partitioned heap rows eligible even when
-    /// another physical row has the same bare handle.
-    skip_repeated_updates: bool,
+    /// A partitioned table without a clustered index: its `_tidb_rowid` is
+    /// only unique within a partition after EXCHANGE PARTITION, so its rows
+    /// are tracked by partition and handle (Go `partitionRowKey`).
+    partitioned_heap: bool,
     selected_partitions: Option<Vec<i64>>,
 }
 
@@ -208,7 +209,7 @@ pub(crate) fn run_multi_update(
                 .enumerate()
                 .filter_map(|(offset, column)| column.generated.is_some().then_some(offset))
                 .collect(),
-            skip_repeated_updates: !heap || kv.partition().is_none(),
+            partitioned_heap: heap && kv.partition().is_some(),
             selected_partitions: selected_partition_ids(
                 &table.partitions,
                 entry,
@@ -364,16 +365,19 @@ pub(crate) fn run_multi_update(
             })
             .collect::<Result<Vec<_>, DriverError>>()?;
         let mut prepared = Vec::with_capacity(tables.len());
+        // Go `UpdateExec.rowKeys`: each updatable target's row key.
+        let mut row_keys = Vec::with_capacity(tables.len());
         // Compose every target from the same input row before merging aliases.
         for (slot, table) in updated.iter().enumerate() {
             let Some(id) = ids[slot].as_ref().filter(|_| targets[slot].is_some()) else {
                 prepared.push(None);
+                row_keys.push(None);
                 continue;
             };
-            if table.skip_repeated_updates
-                && updated_row_keys[slot].get(&super::dml::kv_handle(id)?) == Some(&true)
-            {
+            let row_key = partition_row_key(catalog, &tables[slot], table, id, &row.stored[slot], ctx)?;
+            if updated_row_keys[slot].get(&row_key) == Some(&true) {
                 prepared.push(None);
+                row_keys.push(None);
                 continue;
             }
             // Go `rowsColMultiplyForPreparedRow`: an updatable target this
@@ -391,7 +395,7 @@ pub(crate) fn run_multi_update(
             }
             if multiple[slot] {
                 // Go `mergeNonGenerated`.
-                let handle = super::dml::kv_handle(id)?;
+                let handle = row_key.clone();
                 let rows = merged
                     .entry(targets[slot].clone().expect("an assigned base table"))
                     .or_default();
@@ -424,6 +428,7 @@ pub(crate) fn run_multi_update(
                     .map_err(DriverError::from)?;
             }
             prepared.push(Some((old, new)));
+            row_keys.push(Some(row_key));
         }
         for (slot, prepared) in prepared.iter_mut().enumerate() {
             let Some((old, new)) = prepared else { continue };
@@ -432,7 +437,7 @@ pub(crate) fn run_multi_update(
             let (database, name) = targets[slot]
                 .as_ref()
                 .expect("prepared target is a base table");
-            let handle = super::dml::kv_handle(id)?;
+            let handle = row_keys[slot].clone().expect("prepared target has a row key");
             let merge_key = (database.clone(), name.clone());
             // Go `mergeGenerated(..., beforeEval=true)`: it sets the merged
             // row back unchanged, charging its estimate and the handle's.
@@ -510,6 +515,34 @@ pub(crate) fn run_multi_update(
     Ok(super::dml::UpdateWritten {
         matched: matched_rows,
         fk: fk.into_inner(),
+    })
+}
+
+/// Go `UpdateExec.partitionRowKey`: the row key a multi-table UPDATE tracks a
+/// matched row by. A partitioned table without a clustered index adds the
+/// partition ID to the handle, since `_tidb_rowid` is only unique within a
+/// partition after EXCHANGE PARTITION. Aliases of a table share one table
+/// object holding only one alias's PARTITION () set, so the row is located
+/// without it; a row no partition accepts keeps its plain handle, and the
+/// write reports the error where UPDATE IGNORE handles it.
+fn partition_row_key(
+    catalog: &SessionExtendedInfoSchema,
+    position: &tidb_planner_core_operator_physicalop::UpdateTablePos,
+    table: &UpdatedTable,
+    id: &TableHandle,
+    row: &[Datum],
+    ctx: &crate::StmtContext,
+) -> Result<tidb_txnkv::Handle, DriverError> {
+    let handle = super::dml::kv_handle(id)?;
+    if !table.partitioned_heap {
+        return Ok(handle);
+    }
+    let Some(TableEntry::Kv(kv)) = catalog.get_in(&position.database, &position.table) else {
+        return Ok(handle);
+    };
+    Ok(match kv.locate_partition(row, ctx) {
+        Ok(physical_id) => tidb_txnkv::PartitionHandle::new(physical_id, Some(handle)).into(),
+        Err(_) => handle,
     })
 }
 
