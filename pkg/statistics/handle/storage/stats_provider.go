@@ -15,14 +15,13 @@
 package storage
 
 import (
-	"context"
 	"sync"
 
-	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics"
+	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
@@ -82,19 +81,22 @@ func (p *OnDemandStatsProvider) GetPhysicalTableStats(physicalTableID int64, tbl
 	return tbl
 }
 
-func (p *OnDemandStatsProvider) loadFromStorage(physicalTableID int64, tblInfo *model.TableInfo) (*statistics.Table, error) {
+func (p *OnDemandStatsProvider) loadFromStorage(physicalTableID int64, tblInfo *model.TableInfo) (_ *statistics.Table, err error) {
 	res, err := p.sessPool.Get()
 	if err != nil {
 		return nil, err
 	}
 	auxSCtx := res.(sessionctx.Context)
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 	defer func() {
-		auxSCtx.RollbackTxn(ctx)
+		auxSCtx.RollbackTxn(statsutil.StatsCtx)
+		if err != nil {
+			p.sessPool.Destroy(res)
+			return
+		}
 		p.sessPool.Put(res)
 	}()
 
-	if _, err := auxSCtx.GetSQLExecutor().ExecuteInternal(ctx, "BEGIN"); err != nil {
+	if _, _, err = statsutil.ExecRows(auxSCtx, "BEGIN"); err != nil {
 		return nil, err
 	}
 	// loadAll=true loads full histograms/TopN in one shot so the planner does
