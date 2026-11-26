@@ -531,6 +531,13 @@ pub fn new_stmt_record(info: &StmtExecInfo) -> StmtRecord {
         bin_plan = BINARY_PLAN_DISCARDED_ENCODED.clone();
     }
     let (binding_sql, binding_digest) = info.lazy_info.binding_sql_and_digest();
+    // The sample stays unredacted in memory; the log writer redacts its
+    // output copy (Go `marshalStmtRecordWithEvicted`).
+    let sample_sql = match (&info.sensitive_stmt, &info.sample_params) {
+        (Some(secure_text), _) => secure_text.clone(),
+        (None, Some(params)) => format!("{}{params}", info.stmt_ctx.original_sql),
+        (None, None) => info.stmt_ctx.original_sql.clone(),
+    };
     StmtRecord {
         schema_name: info.schema_name.clone(),
         digest: info.digest.clone(),
@@ -541,7 +548,7 @@ pub fn new_stmt_record(info: &StmtExecInfo) -> StmtRecord {
         is_internal: info.is_internal,
         binding_sql,
         binding_digest,
-        sample_sql: format_sql(&info.lazy_info.original_sql()),
+        sample_sql: format_sql(&sample_sql),
         charset: info.charset.clone(),
         collation: info.collation.clone(),
         // PrevSQL is already truncated to cfg.Log.QueryLogMaxLen.
@@ -1043,6 +1050,19 @@ pub fn marshal_stmt_record_with_evicted(
     r: &StmtRecord,
     evicted: bool,
 ) -> Result<Vec<u8>, serde_json::Error> {
+    // Readers can still hold the source record, so redact only an output copy.
+    let output;
+    let r = match tidb_mysql::errors::redaction_mode() {
+        tidb_mysql::errors::RedactionMode::Enabled => {
+            output = StmtRecord { sample_sql: r.normalized_sql.clone(), ..r.clone() };
+            &output
+        }
+        tidb_mysql::errors::RedactionMode::Marker => {
+            output = StmtRecord { sample_sql: tidb_redact::string("MARKER", &r.sample_sql), ..r.clone() };
+            &output
+        }
+        tidb_mysql::errors::RedactionMode::Disabled => r,
+    };
     let config = tidb_config::config_tree::config::get_global_config();
     let fields = config.get_keyspace_observability_stmt_log_fields();
     if fields.is_empty() {
@@ -1436,6 +1456,8 @@ pub fn generate_stmt_exec_info_4_test(digest: &str) -> StmtExecInfo {
         charset: String::new(),
         collation: String::new(),
         normalized_sql: "normalized_sql".to_owned(),
+        sensitive_stmt: None,
+        sample_params: None,
         digest: digest.to_owned(),
         prev_sql: String::new(),
         prev_sql_digest: String::new(),

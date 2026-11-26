@@ -76,6 +76,8 @@ fn add_statement_summary(digest: &str, normalized_sql: &str) {
         charset: "utf8mb4".to_owned(),
         collation: "utf8mb4_bin".to_owned(),
         normalized_sql: normalized_sql.to_owned(),
+        sensitive_stmt: None,
+        sample_params: None,
         digest: digest.to_owned(),
         prev_sql: String::new(),
         prev_sql_digest: String::new(),

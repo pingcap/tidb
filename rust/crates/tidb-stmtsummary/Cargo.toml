@@ -14,6 +14,7 @@ workspace = true
 tidb-execdetails = { path = "../tidb-execdetails" }
 tidb-logutil = { path = "../tidb-logutil" }
 tidb-plancodec = { path = "../tidb-plancodec" }
+tidb-redact = { path = "../tidb-redact" }
 tidb-ppcpuusage = { path = "../tidb-ppcpuusage" }
 chrono.workspace = true
 chrono-tz.workspace = true
@@ -24,6 +25,7 @@ tidb-datatype = { path = "../tidb-datatype" }
 tidb-hack = { path = "../tidb-hack" }
 tidb-kvcache = { path = "../tidb-kvcache" }
 tidb-model = { path = "../tidb-model" }
+tidb-mysql = { path = "../tidb-mysql" }
 tidb-parser = { path = "../tidb-parser" }
 tidb-log = { path = "../tidb-log" }
 tikv-client = { path = "../../third_party/tikv-client-rs" }

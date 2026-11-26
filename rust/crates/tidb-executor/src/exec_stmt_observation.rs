@@ -111,6 +111,20 @@ impl StatementPhases {
     }
 }
 
+/// Go `variable.PlanCacheParamList` as `StmtExecInfo.SampleParams` holds it:
+/// a prepared execution's arguments, `String` rendering them as a log suffix.
+struct PlanCacheParams(Vec<tidb_datatype::Datum>);
+
+impl std::fmt::Display for PlanCacheParams {
+    /// Go `PlanCacheParamList.String`.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.0.is_empty() {
+            return Ok(());
+        }
+        write!(f, " [arguments: {}]", tidb_datatype::datums_to_str_no_err_smart(&self.0))
+    }
+}
+
 struct LazyStatement {
     sql: String,
     /// The plan's encodings, rendered here once, when the summary first asks
@@ -723,20 +737,29 @@ pub trait ExecStmtObservation: crate::sessionctx::SessionContext {
             String::new()
         };
         let prev_sql_digest = attributed_prev_digest.unwrap_or_default();
-        // Go `getLazyStmtText` / `updatePrevStmt`: a sensitive statement is
-        // summarized by its secure text.
-        let summary_sql = observation
-            .secure_text
-            .clone()
-            .unwrap_or_else(|| observation.text.clone());
-        *self.previous_summary_statement() =
-            Some((summary_sql.clone(), observation.digest.to_string()));
+        // Go `ExecStmt.getLazyStmtText` (`GetOriginalSQL`, v1's sample) and
+        // `updatePrevStmt` (`PrevStmt`, formatted by `formatSQL`): the text a
+        // log may carry under `tidb_redact_log`.
+        let summary_sql = self.text_to_log(observation, false);
+        *self.previous_summary_statement() = Some((
+            tidb_variable::slow_log::format_sql(&summary_sql, self.query_log_max_len()),
+            observation.digest.to_string(),
+        ));
+        // Go `SummaryStmt`: `SampleParams = sessVars.PlanCacheParams`, the
+        // v2 record's unredacted sample suffix.
+        let sample_params = self
+            .prepared_params()
+            .filter(|params| !params.is_empty())
+            .map(|params| {
+                Arc::new(PlanCacheParams(params.to_vec())) as Arc<dyn std::fmt::Display + Send + Sync>
+            });
         let plan = self
             .process_plan_info_cell()
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone();
         let mut ctx = StmtSummaryStmtCtx::default();
+        ctx.original_sql = observation.text.clone();
         ctx.stmt_type = observation.label.clone();
         ctx.tables = phases.tables.clone();
         ctx.index_names = if observation.routed {
@@ -757,6 +780,8 @@ pub trait ExecStmtObservation: crate::sessionctx::SessionContext {
                 .get_system("collation_connection")
                 .unwrap_or_default(),
             normalized_sql: observation.normalized.clone(),
+            sensitive_stmt: observation.secure_text.clone(),
+            sample_params,
             digest: observation.digest.to_string(),
             prev_sql,
             prev_sql_digest,

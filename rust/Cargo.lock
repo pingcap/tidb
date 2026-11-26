@@ -10849,9 +10849,11 @@ dependencies = [
  "tidb-log",
  "tidb-logutil",
  "tidb-model",
+ "tidb-mysql",
  "tidb-parser",
  "tidb-plancodec",
  "tidb-ppcpuusage",
+ "tidb-redact",
  "tikv-client",
 ]
 

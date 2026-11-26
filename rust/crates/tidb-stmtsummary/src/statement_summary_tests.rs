@@ -120,6 +120,8 @@ pub(crate) fn generate_any_exec_info() -> StmtExecInfo {
         charset: String::new(),
         collation: String::new(),
         normalized_sql: "normalized_sql".to_owned(),
+        sensitive_stmt: None,
+        sample_params: None,
         digest: "digest".to_owned(),
         prev_sql: String::new(),
         prev_sql_digest: String::new(),
@@ -502,6 +504,8 @@ fn test_add_statement() {
     let info2 = StmtExecInfo {
         schema_name: "schema_name".to_owned(),
         normalized_sql: "normalized_sql".to_owned(),
+        sensitive_stmt: None,
+        sample_params: None,
         digest: "digest".to_owned(),
         plan_digest: "plan_digest".to_owned(),
         user: "user2".to_owned(),
