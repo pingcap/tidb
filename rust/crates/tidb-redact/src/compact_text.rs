@@ -85,6 +85,7 @@ fn s3_fields(out: &mut String, s3: &backup::S3) {
     string_field(out, "session_token", &s3.session_token);
     string_field(out, "provider", &s3.provider);
     string_field(out, "profile", &s3.profile);
+    string_field(out, "sse_kms_encryption_context", &s3.sse_kms_encryption_context);
 }
 
 fn gcs_fields(out: &mut String, gcs: &backup::Gcs) {

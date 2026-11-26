@@ -15,6 +15,7 @@ enableassert = ["tidb-intest/enableassert"]
 intest = ["tidb-intest/intest"]
 
 [dependencies]
+tidb-ast = { path = "../tidb-ast" }
 tidb-mysql = { path = "../tidb-mysql" }
 tidb-intest = { path = "../tidb-intest" }
 tidb-proto = { path = "../tidb-proto" }

@@ -9443,6 +9443,7 @@ dependencies = [
 name = "tidb-redact"
 version = "0.0.0"
 dependencies = [
+ "tidb-ast",
  "tidb-intest",
  "tidb-mysql",
  "tidb-proto",

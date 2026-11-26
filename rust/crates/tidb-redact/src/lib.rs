@@ -345,19 +345,31 @@ impl std::fmt::Display for TaskInfoRedacted<'_> {
         };
 
         let mut redacted = info.clone();
+        // Encryption keys and KMS credentials must never enter diagnostic
+        // output, whether or not general log redaction is enabled.
+        redacted.security_config = None;
         if let Some(storage) = &mut redacted.storage {
             use backup::storage_backend::Backend;
 
             match &mut storage.backend {
                 Some(Backend::S3(s3)) => {
+                    s3.endpoint = tidb_ast::redact_url(&s3.endpoint);
                     s3.access_key = "[REDACTED]".to_owned();
                     s3.secret_access_key = "[REDACTED]".to_owned();
                     s3.sse_kms_key_id = "[REDACTED]".to_owned();
+                    if !s3.session_token.is_empty() {
+                        s3.session_token = "[REDACTED]".to_owned();
+                    }
+                    if !s3.sse_kms_encryption_context.is_empty() {
+                        s3.sse_kms_encryption_context = "[REDACTED]".to_owned();
+                    }
                 }
                 Some(Backend::Gcs(gcs)) => {
+                    gcs.endpoint = tidb_ast::redact_url(&gcs.endpoint);
                     gcs.credentials_blob = "[REDACTED]".to_owned();
                 }
                 Some(Backend::AzureBlobStorage(azure)) => {
+                    azure.endpoint = tidb_ast::redact_url(&azure.endpoint);
                     azure.shared_key = "[REDACTED]".to_owned();
                     azure.access_sig = "[REDACTED]".to_owned();
                     azure.encryption_key = Some(backup::AzureCustomerKey {
@@ -483,6 +495,150 @@ mod tests {
         let mut got = Vec::new();
         de_redact(false, input, &mut got, "|").unwrap();
         assert_eq!(got, b"line|");
+    }
+
+    /// Go `TestTaskInfoS3CredentialsRedacted`.
+    #[test]
+    fn test_task_info_s3_credentials_redacted() {
+        use backup::storage_backend::Backend;
+        for (name, endpoint, expected) in [
+            ("signed", "https://FAKE_USER:FAKE_PASS@host/path?sig=FAKE_SIGNATURE#FAKE_FRAGMENT", "https://host/path"),
+            ("malformed", "https://FAKE_USER:FAKE_PASS@host/path%zz?sig=FAKE_SIGNATURE", "(invalid URL)"),
+        ] {
+            for (backend_name, backend) in [
+                ("s3", Backend::S3(backup::S3 { endpoint: endpoint.to_owned(), ..Default::default() })),
+                ("gcs", Backend::Gcs(backup::Gcs { endpoint: endpoint.to_owned(), ..Default::default() })),
+                (
+                    "azure",
+                    Backend::AzureBlobStorage(backup::AzureBlobStorage {
+                        endpoint: endpoint.to_owned(),
+                        ..Default::default()
+                    }),
+                ),
+            ] {
+                let info = backup::StreamBackupTaskInfo {
+                    storage: Some(backup::StorageBackend { backend: Some(backend) }),
+                    ..Default::default()
+                };
+                let original = info.clone();
+                let output = TaskInfoRedacted { info: Some(&info) }.to_string();
+                assert_eq!(original, info, "{backend_name}/{name}: logging must not mutate task endpoints");
+                for secret in ["FAKE_USER", "FAKE_PASS", "FAKE_SIGNATURE", "FAKE_FRAGMENT"] {
+                    assert!(!output.contains(secret), "{backend_name}/{name}: {output}");
+                }
+                assert!(output.contains(&format!("endpoint:\"{expected}\"")), "{backend_name}/{name}: {output}");
+            }
+        }
+        let s3 = backup::S3 {
+            bucket: "backup-bucket".to_owned(),
+            session_token: "session-token-value".to_owned(),
+            sse_kms_encryption_context: "eyJ0ZW5hbnQiOiJjb250ZXh0LXZhbHVlIn0=".to_owned(),
+            ..Default::default()
+        };
+        let info = backup::StreamBackupTaskInfo {
+            name: "backup-task".to_owned(),
+            storage: Some(backup::StorageBackend { backend: Some(Backend::S3(s3.clone())) }),
+            ..Default::default()
+        };
+        let original = info.clone();
+        let redacted = TaskInfoRedacted { info: Some(&info) }.to_string();
+        assert!(!redacted.contains(&s3.session_token), "{redacted}");
+        assert!(!redacted.contains(&s3.sse_kms_encryption_context), "{redacted}");
+        assert!(redacted.contains(&s3.bucket), "{redacted}");
+        assert!(redacted.contains(&info.name), "{redacted}");
+        assert_eq!(original, info);
+    }
+
+    /// Go `TestTaskInfoEncryptionCredentialsRedacted`: the task's security
+    /// configuration never reaches its log text, whether or not log
+    /// redaction is enabled.
+    #[test]
+    fn test_task_info_encryption_credentials_redacted() {
+        use backup::stream_backup_task_security_config::Encryption;
+        use tidb_proto::encryptionpb;
+        use encryptionpb::master_key::Backend as MasterKeyBackend;
+        let _guard = redaction_mode_guard();
+        let kms = |kms: encryptionpb::MasterKeyKms| encryptionpb::MasterKey { backend: Some(MasterKeyBackend::Kms(kms)) };
+        for enabled in [false, true] {
+            init_redact(enabled);
+            for (name, config) in [
+                ("unencrypted", None),
+                (
+                    "plaintext-data-key",
+                    Some(backup::StreamBackupTaskSecurityConfig {
+                        encryption: Some(Encryption::PlaintextDataKey(backup::CipherInfo {
+                            cipher_key: b"FAKE_DATA_KEY_01234567890123456789".to_vec(),
+                            ..Default::default()
+                        })),
+                    }),
+                ),
+                (
+                    "master-keys",
+                    Some(backup::StreamBackupTaskSecurityConfig {
+                        encryption: Some(Encryption::MasterKeyConfig(backup::MasterKeyConfig {
+                            master_keys: vec![
+                                kms(encryptionpb::MasterKeyKms {
+                                    vendor: "aws".to_owned(),
+                                    aws_kms: Some(encryptionpb::AwsKms {
+                                        access_key: "FAKE_KMS_ACCESS".to_owned(),
+                                        secret_access_key: "FAKE_KMS_SECRET".to_owned(),
+                                    }),
+                                    ..Default::default()
+                                }),
+                                kms(encryptionpb::MasterKeyKms {
+                                    vendor: "azure".to_owned(),
+                                    azure_kms: Some(encryptionpb::AzureKms {
+                                        client_secret: "FAKE_AZURE_SECRET".to_owned(),
+                                        client_certificate: "FAKE_CERTIFICATE".to_owned(),
+                                        client_certificate_password: "FAKE_CERT_PASSWORD".to_owned(),
+                                        ..Default::default()
+                                    }),
+                                    ..Default::default()
+                                }),
+                                kms(encryptionpb::MasterKeyKms {
+                                    vendor: "gcp".to_owned(),
+                                    gcp_kms: Some(encryptionpb::GcpKms { credential: "FAKE_GCP_CREDENTIAL".to_owned() }),
+                                    ..Default::default()
+                                }),
+                            ],
+                            ..Default::default()
+                        })),
+                    }),
+                ),
+            ] {
+                let info = backup::StreamBackupTaskInfo {
+                    name: "backup-task".to_owned(),
+                    security_config: config,
+                    storage: Some(backup::StorageBackend {
+                        backend: Some(backup::storage_backend::Backend::S3(backup::S3 {
+                            bucket: "backup-bucket".to_owned(),
+                            session_token: "FAKE_SESSION_TOKEN".to_owned(),
+                            ..Default::default()
+                        })),
+                    }),
+                    ..Default::default()
+                };
+                let original = info.clone();
+                let output = TaskInfoRedacted { info: Some(&info) }.to_string();
+                for secret in [
+                    "FAKE_DATA_KEY",
+                    "FAKE_KMS_ACCESS",
+                    "FAKE_KMS_SECRET",
+                    "FAKE_AZURE_SECRET",
+                    "FAKE_CERTIFICATE",
+                    "FAKE_CERT_PASSWORD",
+                    "FAKE_GCP_CREDENTIAL",
+                    "FAKE_SESSION_TOKEN",
+                ] {
+                    assert!(!output.contains(secret), "{name}/{enabled}: {output}");
+                }
+                assert!(!output.contains("security_config"), "{name}/{enabled}: {output}");
+                assert!(output.contains(&info.name), "{name}/{enabled}: {output}");
+                assert!(output.contains("backup-bucket"), "{name}/{enabled}: {output}");
+                assert_eq!(original, info, "{name}/{enabled}: logging must not mutate encryption configuration");
+            }
+        }
+        init_redact(false);
     }
 
     #[test]
