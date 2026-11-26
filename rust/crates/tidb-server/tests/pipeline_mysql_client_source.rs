@@ -3545,6 +3545,75 @@ fn an_explain_result_is_written_through_its_pooled_chunk_like_go() {
     }
 }
 
+/// A `tidb-server --store unistore` child process for the tests that need the
+/// server binary itself. Its ports come from binding port 0 and releasing it,
+/// so another socket can take one before the server binds it; the server then
+/// exits on the bind error, and only that failure starts it again on fresh
+/// ports. Its output goes to a log file that any other startup failure prints.
+struct UnistoreServerProcess {
+    child: std::process::Child,
+    port: u16,
+    log: std::path::PathBuf,
+    base: std::path::PathBuf,
+}
+
+impl UnistoreServerProcess {
+    fn start(name: &str) -> Self {
+        let free_port = || TcpListener::bind(("127.0.0.1", 0)).unwrap().local_addr().unwrap().port();
+        let base = std::env::temp_dir().join(format!("tidb-server-{name}-{}", std::process::id()));
+        for attempt in 0.. {
+            let (port, status_port) = (free_port(), free_port());
+            let log = base.with_extension(format!("{attempt}.log"));
+            let output = std::fs::File::create(&log).expect("create the server log");
+            let child = std::process::Command::new(env!("CARGO_BIN_EXE_tidb-server"))
+                .args(["--store", "unistore", "--path", base.to_str().unwrap()])
+                .args(["--host", "127.0.0.1", "-P", &port.to_string(), "--socket", ""])
+                .args(["--status-host", "127.0.0.1", "--status", &status_port.to_string()])
+                .stdout(output.try_clone().unwrap())
+                .stderr(output)
+                .spawn()
+                .expect("start tidb-server");
+            let mut server = Self { child, port, log, base: base.clone() };
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(180);
+            loop {
+                if TcpStream::connect(("127.0.0.1", port)).is_ok() {
+                    return server;
+                }
+                if let Some(status) = server.child.try_wait().unwrap() {
+                    let log = std::fs::read_to_string(&server.log).unwrap_or_default();
+                    if attempt < 3 && log.to_lowercase().contains("address already in use") {
+                        break;
+                    }
+                    panic!("tidb-server exited before listening ({status}):\n{log}");
+                }
+                if std::time::Instant::now() >= deadline {
+                    let _ = server.child.kill();
+                    let _ = server.child.wait();
+                    let log = std::fs::read_to_string(&server.log).unwrap_or_default();
+                    panic!("tidb-server did not listen on {port} in 180 s:\n{log}");
+                }
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+        }
+        unreachable!()
+    }
+
+    fn connect(&self) -> TcpStream {
+        TcpStream::connect(("127.0.0.1", self.port)).expect("connect to tidb-server")
+    }
+}
+
+impl Drop for UnistoreServerProcess {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+        // A failing test keeps the server's log.
+        if !std::thread::panicking() {
+            let _ = std::fs::remove_file(&self.log);
+        }
+    }
+}
+
 /// Go's `writeChunks` writes every record set through `rs.NewChunk(alloc)`:
 /// a plain EXPLAIN (whose `ExplainExec` builds no executors) and a SHOW draw
 /// their write chunk from the connection's allocator too, so the string
@@ -3553,36 +3622,9 @@ fn an_explain_result_is_written_through_its_pooled_chunk_like_go() {
 /// loop that installs an allocator per statement, as `clientConn` does.
 #[test]
 fn a_plain_explain_and_a_show_write_through_pooled_chunks_like_go() {
-    let free_port = || TcpListener::bind(("127.0.0.1", 0)).unwrap().local_addr().unwrap().port();
-    let (port, status_port) = (free_port(), free_port());
-    let base = std::env::temp_dir().join(format!("tidb-server-pooled-write-{}", std::process::id()));
-    struct Child(std::process::Child);
-    impl Drop for Child {
-        fn drop(&mut self) {
-            let _ = self.0.kill();
-            let _ = self.0.wait();
-        }
-    }
-    let _child = Child(
-        std::process::Command::new(env!("CARGO_BIN_EXE_tidb-server"))
-            .args(["--store", "unistore", "--path", base.to_str().unwrap()])
-            .args(["--host", "127.0.0.1", "-P", &port.to_string(), "--socket", ""])
-            .args(["--status-host", "127.0.0.1", "--status", &status_port.to_string()])
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .spawn()
-            .expect("start tidb-server"),
-    );
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(180);
-    let mut client = loop {
-        match TcpStream::connect(("127.0.0.1", port)) {
-            Ok(client) => break client,
-            Err(_) if std::time::Instant::now() < deadline => {
-                std::thread::sleep(std::time::Duration::from_millis(100));
-            }
-            Err(error) => panic!("tidb-server did not listen: {error}"),
-        }
-    };
+    let server = UnistoreServerProcess::start("pooled-write");
+    let base = server.base.clone();
+    let mut client = server.connect();
     let mut reader = PacketReader::new(client.try_clone().unwrap());
     // The flags a pymysql client sends, whose text queries the node splits
     // into statements as Go's `handleQuery` does.
@@ -3650,38 +3692,11 @@ fn a_plain_explain_and_a_show_write_through_pooled_chunks_like_go() {
 /// `u1` and a second `root` under the global limit are refused with 1203.
 #[test]
 fn a_login_loads_its_user_and_counts_against_max_user_connections_like_go() {
-    let free_port = || TcpListener::bind(("127.0.0.1", 0)).unwrap().local_addr().unwrap().port();
-    let (port, status_port) = (free_port(), free_port());
-    let base = std::env::temp_dir().join(format!("tidb-server-user-connections-{}", std::process::id()));
-    struct Child(std::process::Child);
-    impl Drop for Child {
-        fn drop(&mut self) {
-            let _ = self.0.kill();
-            let _ = self.0.wait();
-        }
-    }
     // The accounts are the store's own, as Go's are: the bootstrap's
     // passwordless `root@%`.
-    let _child = Child(
-        std::process::Command::new(env!("CARGO_BIN_EXE_tidb-server"))
-            .args(["--store", "unistore", "--path", base.to_str().unwrap()])
-            .args(["--host", "127.0.0.1", "-P", &port.to_string(), "--socket", ""])
-            .args(["--status-host", "127.0.0.1", "--status", &status_port.to_string()])
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .spawn()
-            .expect("start tidb-server"),
-    );
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(180);
-    let connect = || loop {
-        match TcpStream::connect(("127.0.0.1", port)) {
-            Ok(client) => break client,
-            Err(_) if std::time::Instant::now() < deadline => {
-                std::thread::sleep(std::time::Duration::from_millis(100));
-            }
-            Err(error) => panic!("tidb-server did not listen: {error}"),
-        }
-    };
+    let server = UnistoreServerProcess::start("user-connections");
+    let base = server.base.clone();
+    let connect = || server.connect();
     // The login's answer: `OK`, or the error packet's code and message.
     let login = |user: &str| {
         let mut client = connect();
