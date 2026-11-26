@@ -89,12 +89,13 @@ func stored(srid uint32, g []byte) []byte {
 	return append(b, g[5:]...)
 }
 
-// mysqlOf makes a little-endian 2D root geometry g a value in MySQL's format at srid.
+// mysqlOf makes a little-endian root geometry g without an SRID the bare value at srid:
+// MySQL's binary format for a 2D value, extended with the Z and M flags otherwise.
 func mysqlOf(srid uint32, g []byte) []byte {
 	return append(binary.LittleEndian.AppendUint32(nil, srid), g...)
 }
 
-// storedFromMySQL rewrites the root header of MySQL-format bytes into the stored format.
+// storedFromMySQL rewrites the root header of a bare value into the stored format.
 func storedFromMySQL(m []byte) []byte { return stored(binary.LittleEndian.Uint32(m), m[4:]) }
 
 // nestedCollections returns WKB (little-endian, no SRID) for depth GEOMETRYCOLLECTIONs,
@@ -129,7 +130,7 @@ func storedChain(depth int, flags uint32, leaf []byte) []byte {
 	return append(b, leaf...)
 }
 
-// mysqlChain is storedChain in MySQL's binary format, without flags.
+// mysqlChain is storedChain as a bare value, without flags.
 func mysqlChain(depth int, leaf []byte) []byte {
 	b := make([]byte, 4)
 	for range depth - 1 {
@@ -175,8 +176,8 @@ func hostileCounts() []byte {
 	return append(b, make([]byte, size-len(b))...)
 }
 
-// wkbGen generates random WKB of every type, byte by byte, and knows whether MySQL's
-// format can hold what it generates.
+// wkbGen generates random WKB of every type, byte by byte, and knows whether what it
+// generates has a big-endian member, which the bare value cannot hold.
 type wkbGen struct {
 	rnd *rand.Rand
 	d   dims
@@ -215,16 +216,16 @@ func (g *wkbGen) float() float64 {
 	return g.rnd.NormFloat64() * 1000
 }
 
-// geometry returns random WKB of type typ, little-endian at the root, and whether MySQL's
-// format cannot hold it.
-func (g *wkbGen) geometry(typ Type, depth int) (b []byte, notMySQL bool) {
+// geometry returns random WKB of type typ, little-endian at the root, and whether a member
+// is big-endian.
+func (g *wkbGen) geometry(typ Type, depth int) (b []byte, bigEndian bool) {
 	var order binary.AppendByteOrder = binary.LittleEndian
 	orderByte := byteOrderLittle
 	if depth > 1 && g.rnd.Float64() < g.big {
 		order, orderByte = binary.BigEndian, byteOrderBig
+		bigEndian = true
 	}
 	b = order.AppendUint32(append(b, orderByte), uint32(typ)|flagsOf(g.d))
-	notMySQL = g.d != dimsXY
 	isEmpty := typ != TypeGeometryCollection && g.rnd.Float64() < g.empty
 	positions := func(n int) {
 		b = order.AppendUint32(b, uint32(n))
@@ -260,7 +261,7 @@ func (g *wkbGen) geometry(typ Type, depth int) (b []byte, notMySQL bool) {
 	default:
 		n := 0
 		if typ == TypeGeometryCollection {
-			// A GEOMETRYCOLLECTION is expressible empty, so it is empty a quarter of the time.
+			// A GEOMETRYCOLLECTION is empty a quarter of the time.
 			n = g.rnd.IntN(4)
 		} else if !isEmpty {
 			n = 1 + g.rnd.IntN(3)
@@ -275,12 +276,12 @@ func (g *wkbGen) geometry(typ Type, depth int) (b []byte, notMySQL bool) {
 				}
 				member = types[g.rnd.IntN(len(types))]
 			}
-			m, memberNotMySQL := g.geometry(member, depth+1)
+			m, memberBigEndian := g.geometry(member, depth+1)
 			b = append(b, m...)
-			notMySQL = notMySQL || memberNotMySQL
+			bigEndian = bigEndian || memberBigEndian
 		}
 	}
-	return b, notMySQL || isEmpty
+	return b, bigEndian
 }
 
 func (g *wkbGen) srid() uint32 {
