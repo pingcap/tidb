@@ -594,8 +594,8 @@ impl ApiV2Codec {
                      buckets_version,
                  }| crate::proto::coprocessor::StoreBatchTask {
                     region_id: *region_id,
-                    region_epoch: *region_epoch,
-                    peer: *peer,
+                    region_epoch: region_epoch.clone(),
+                    peer: peer.clone(),
                     ranges: self.encode_cop_range_bounds(ranges.iter().map(cop_range_bounds)),
                     task_id: *task_id,
                     versioned_ranges: versioned_ranges.clone(),
@@ -619,7 +619,7 @@ impl ApiV2Codec {
         } = region;
         RegionInfo {
             region_id: *region_id,
-            region_epoch: *region_epoch,
+            region_epoch: region_epoch.clone(),
             ranges: self.encode_cop_ranges(ranges),
         }
     }
@@ -711,7 +711,7 @@ impl ApiV2Codec {
                          ranges,
                      }| RegionInfo {
                         region_id: *region_id,
-                        region_epoch: *region_epoch,
+                        region_epoch: region_epoch.clone(),
                         ranges: ranges
                             .iter()
                             .map(|range| {

@@ -22,7 +22,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut prost = prost_build::Config::new();
     prost.enable_type_names();
-    prost.type_attribute(".", "#[allow(clippy::all)]");
     // Go's SharedBytes custom fields borrow the received message body. Bytes
     // retains that ownership across native and TiDB consumers without a copy.
     prost.bytes([
@@ -81,8 +80,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 fn use_borrowed_key_range_encoder(staging: &Path) -> io::Result<()> {
     // The custom Message implementation matches this exact two-field wire
     // contract. A schema or generator change must be reconciled explicitly.
-    const DERIVED: &str = r#"#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
-pub struct KeyRange {
+    // The derive line before it varies with the prost version (newer prost
+    // adds `Eq, Hash`), so it is matched as one `::prost::Message` derive.
+    const DERIVED_FIELDS: &str = r#"pub struct KeyRange {
     #[prost(bytes = "bytes", tag = "1")]
     pub start: ::prost::bytes::Bytes,
     #[prost(bytes = "bytes", tag = "2")]
@@ -93,15 +93,29 @@ pub struct KeyRange {
     pub start: ::prost::bytes::Bytes,
     pub end: ::prost::bytes::Bytes,
 }"#;
-    let path = staging.join("coprocessor.rs");
-    let generated = fs::read_to_string(&path)?;
-    if generated.matches(DERIVED).count() != 1 {
-        return Err(io::Error::new(
+    let invalid = || {
+        io::Error::new(
             io::ErrorKind::InvalidData,
             "expected the generated coprocessor KeyRange wire fields",
-        ));
+        )
+    };
+    let path = staging.join("coprocessor.rs");
+    let generated = fs::read_to_string(&path)?;
+    if generated.matches(DERIVED_FIELDS).count() != 1 {
+        return Err(invalid());
     }
-    fs::write(path, generated.replacen(DERIVED, FIELDS, 1))
+    let fields = generated.find(DERIVED_FIELDS).ok_or_else(invalid)?;
+    let derive = generated[..fields].trim_end_matches('\n');
+    let derive_start = derive.rfind('\n').map_or(0, |index| index + 1);
+    let line = &derive[derive_start..];
+    if !(line.starts_with("#[derive(") && line.ends_with("::prost::Message)]")) {
+        return Err(invalid());
+    }
+    let mut output = String::with_capacity(generated.len());
+    output.push_str(&generated[..derive_start]);
+    output.push_str(FIELDS);
+    output.push_str(&generated[fields + DERIVED_FIELDS.len()..]);
+    fs::write(path, output)
 }
 
 fn verify_protoc_version() -> io::Result<()> {

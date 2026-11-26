@@ -54,10 +54,12 @@ index a3a5a7a..91a927a 100644
  # Keep this compatible with rust-toolchain 1.84.1.
  tempfile = "=3.14.0"
 diff --git a/proto-build/src/main.rs b/proto-build/src/main.rs
-index cf347df..d773078 100644
 --- a/proto-build/src/main.rs
 +++ b/proto-build/src/main.rs
-@@ -34,11 +34,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
+@@ -63,14 +63,14 @@
+         prost.boxed(path);
+     }
+ 
 -    tonic_build::configure()
 +    tonic_prost_build::configure()
          .emit_rerun_if_changed(false)
@@ -69,5 +71,5 @@ index cf347df..d773078 100644
 -        .compile_with_config(prost, &protos, &["proto/include", "proto"])?;
 +        .compile_with_config(prost, &protos, &["proto/include".into(), "proto".into()])?;
  
+     use_borrowed_key_range_encoder(staging.path())?;
      install_generated_output(staging.path(), Path::new(GENERATED_DIR))?;
-     Ok(())

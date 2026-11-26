@@ -1202,7 +1202,7 @@ macro_rules! region_pinned {
             ) -> BoxStream<'static, $crate::Result<(Self::Shard, $crate::region::RegionWithLeader)>>
             {
                 let region_id = self.context.as_ref().map_or(0, |context| context.region_id);
-                let region_epoch = self.context.as_ref().and_then(|context| context.region_epoch);
+                let region_epoch = self.context.as_ref().and_then(|context| context.region_epoch.clone());
                 let pd_client = pd_client.clone();
                 futures::stream::once(async move {
                     let region = pd_client.region_for_id(region_id).await?;
