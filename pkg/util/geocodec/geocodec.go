@@ -186,9 +186,6 @@ func ParseColumnValue(b []byte) (bare []byte, srid uint32, sum Summary, err erro
 type cursor struct {
 	buf []byte
 	pos int
-	// claimed sums the bytes every count read so far needs, so nested counts cannot claim
-	// the same bytes twice.
-	claimed uint64
 }
 
 func (c *cursor) next(n int) ([]byte, error) {
@@ -220,17 +217,15 @@ func (c *cursor) uint32() (uint32, error) {
 }
 
 // count reads an element count whose elements, minSize bytes or more each, must fit in the
-// input with every earlier count's.
+// rest of the input.
 func (c *cursor) count(minSize int) (int, error) {
 	n, err := c.uint32()
 	if err != nil {
 		return 0, err
 	}
-	need := uint64(n) * uint64(minSize)
-	if need > uint64(len(c.buf)-c.pos) || c.claimed+need > uint64(len(c.buf)) {
+	if uint64(n)*uint64(minSize) > uint64(len(c.buf)-c.pos) {
 		return 0, ErrInvalid
 	}
-	c.claimed += need
 	return int(n), nil
 }
 
