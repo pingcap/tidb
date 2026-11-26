@@ -3131,9 +3131,8 @@ func convertToTableScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 			}
 			ts.SetStats(util.DeriveLimitStats(ts.StatsInfo(), float64(prop.VectorProp.TopK)))
 		}
-		if prop.TaskTp == property.MppTaskType && candidate.path.IsTiFlashSimpleTablePath() &&
-			ds.SCtx().GetSessionVars().ChooseMppVersion() >= kv.MppVersionV3 {
-			ts.expandMPPVirtualTextFilters(ds)
+		if prop.TaskTp == property.MppTaskType && candidate.path.IsTiFlashSimpleTablePath() {
+			ts.expandMPPVirtualColumnFilters(ds)
 		}
 		// ********************************** future deprecated start **************************/
 		var hasVirtualColumn bool
@@ -3429,18 +3428,18 @@ func convertToBatchPointGet(ds *logicalop.DataSource, prop *property.PhysicalPro
 	return rTsk
 }
 
-// expandMPPVirtualTextFilters expands filter-only LOWER(TEXT) virtual columns
+// expandMPPVirtualColumnFilters expands filter-only virtual columns
 // on this physical candidate. The logical schema and other access paths still
 // use the original column, including indexes on the generated value.
-func (ts *PhysicalTableScan) expandMPPVirtualTextFilters(ds *logicalop.DataSource) {
+func (ts *PhysicalTableScan) expandMPPVirtualColumnFilters(ds *logicalop.DataSource) {
 	// Without column pruning, we cannot tell whether a parent needs the virtual column.
-	if ds.ColsRequiringFullLen == nil {
+	if ds.ColsRequiringFullLen == nil || !expression.ContainVirtualColumn(ts.filterCondition) {
 		return
 	}
 	virtualCols := make([]*expression.Column, 0, len(ts.Schema().Columns))
 	replacements := make([]expression.Expression, 0, len(ts.Schema().Columns))
 	exprCtx := ds.SCtx().GetExprCtx()
-	evalCtx := exprCtx.GetEvalCtx()
+	mppVersion := ds.SCtx().GetSessionVars().ChooseMppVersion()
 	for _, col := range ts.Schema().Columns {
 		if col.VirtualExpr == nil {
 			continue
@@ -3450,29 +3449,12 @@ func (ts *PhysicalTableScan) expandMPPVirtualTextFilters(ds *logicalop.DataSourc
 		}) {
 			return
 		}
-		lower, ok := col.VirtualExpr.(*expression.ScalarFunction)
-		if !ok || lower.FuncName.L != ast.Lower {
+		replacement, ok := mppVirtualColumnExpr(exprCtx, col, mppVersion)
+		if !ok {
 			return
 		}
-		input, ok := lower.GetArgs()[0].(*expression.Column)
-		if !ok || input.VirtualExpr != nil {
-			return
-		}
-		target, source := col.GetType(evalCtx), lower.GetType(evalCtx)
-		if target.GetType() != mysql.TypeBlob || target.GetFlen() <= 0 ||
-			target.GetCharset() != charset.CharsetUTF8MB4 || target.GetCollate() != charset.CollationUTF8MB4 ||
-			source.GetCharset() != target.GetCharset() || source.GetCollate() != target.GetCollate() ||
-			mysql.HasNotNullFlag(target.GetFlag()) {
-			return
-		}
-		castType := target.Clone()
-		// In MPP v3, the generated-column flag on a CAST result field type
-		// requests generated-column assignment semantics on TiFlash.
-		castType.AddFlag(mysql.GeneratedColumnFlag)
-		cast := expression.BuildCastFunction(exprCtx, lower.Clone(), castType)
-		cast.SetCoercibility(col.Coercibility())
 		virtualCols = append(virtualCols, col)
-		replacements = append(replacements, cast)
+		replacements = append(replacements, replacement)
 	}
 	if len(virtualCols) == 0 {
 		return
@@ -3504,6 +3486,52 @@ func (ts *PhysicalTableScan) expandMPPVirtualTextFilters(ds *logicalop.DataSourc
 	ts.SetSchema(schema)
 	ts.Columns = columns
 	ts.filterCondition = conditions
+}
+
+// mppVirtualColumnExpr returns an expression that preserves the generated
+// column's value and can be evaluated from stored columns.
+func mppVirtualColumnExpr(ctx expression.BuildContext, col *expression.Column, version kv.MppVersion) (expression.Expression, bool) {
+	expr := col.VirtualExpr
+	evalCtx := ctx.GetEvalCtx()
+	target, source := col.GetType(evalCtx), expr.GetType(evalCtx)
+	if mysql.HasNotNullFlag(target.GetFlag()) && !mysql.HasNotNullFlag(source.GetFlag()) {
+		return nil, false
+	}
+	if types.IsTypeInteger(target.GetType()) && target.Equal(source) {
+		switch e := expr.(type) {
+		case *expression.Column:
+			if e.VirtualExpr == nil {
+				return e.Clone(), true
+			}
+		case *expression.ScalarFunction:
+			// A matching result type does not rule out conversions or warnings
+			// inside an expression. ABS of a stored integer needs no such cast.
+			if e.FuncName.L == ast.Abs {
+				if input, ok := e.GetArgs()[0].(*expression.Column); ok && input.VirtualExpr == nil &&
+					types.IsTypeInteger(input.GetType(evalCtx).GetType()) {
+					return e.Clone(), true
+				}
+			}
+		}
+	}
+	lower, ok := expr.(*expression.ScalarFunction)
+	if version < kv.MppVersionV3 || !ok || lower.FuncName.L != ast.Lower {
+		return nil, false
+	}
+	input, ok := lower.GetArgs()[0].(*expression.Column)
+	if !ok || input.VirtualExpr != nil || target.GetType() != mysql.TypeBlob || target.GetFlen() <= 0 ||
+		target.GetCharset() != charset.CharsetUTF8MB4 || target.GetCollate() != charset.CollationUTF8MB4 ||
+		source.GetCharset() != target.GetCharset() || source.GetCollate() != target.GetCollate() ||
+		mysql.HasNotNullFlag(target.GetFlag()) {
+		return nil, false
+	}
+	castType := target.Clone()
+	// In MPP v3, the generated-column flag on a CAST result field type
+	// requests generated-column assignment semantics on TiFlash.
+	castType.AddFlag(mysql.GeneratedColumnFlag)
+	cast := expression.BuildCastFunction(ctx, lower.Clone(), castType)
+	cast.SetCoercibility(col.Coercibility())
+	return cast, true
 }
 
 func (ts *PhysicalTableScan) addPushedDownSelectionToMppTask(mpp *MppTask, stats *property.StatsInfo) *MppTask {

@@ -61,6 +61,9 @@ func TestTextLowerPrefixLikeGeneratedColumnSubstitution(t *testing.T) {
 	tk.MustQuery("select id from t where lower(body) like '%z'").Check(testkit.Rows("8"))
 	tk.MustQuery("select id from t where lower(body) like 'ⱥ%' order by id").Check(testkit.Rows("7", "8"))
 	tk.MustQuery("select id from t where lower(body) = concat(repeat('ⱥ', 25000), 'z')").Check(testkit.Rows("8"))
+	tk.MustExec("insert ignore into t (id, tenant, kind, body) values (9, 1, 2, concat('x', repeat(' ', 65532), _utf8mb4 0xC8BA))")
+	tk.MustQuery("select id from t where tenant = 1 and kind = 2 and lower_body = 'x'").Check(testkit.Rows("9"))
+	tk.MustQuery("select id from t where tenant = 1 and kind = 2 and lower(body) = 'x'").Check(testkit.Rows())
 
 	// A cached statement must preserve the expression when the pattern changes.
 	tk.MustExec("set tidb_enable_prepared_plan_cache = on")
