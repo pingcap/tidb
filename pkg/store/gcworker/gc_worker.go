@@ -555,15 +555,9 @@ func (w *GCWorker) checkPrepare(ctx context.Context) (bool, uint64, error) {
 			return false, 0, nil
 		}
 		persistedSafePointTime := oracle.GetTimeFromTS(persistedSafePoint)
-		savedSafePoint, err := w.loadTime(gcSafePointKey)
+		err = w.saveTimeIfNewer(ctx, gcSafePointKey, persistedSafePointTime)
 		if err != nil {
 			return false, 0, errors.Trace(err)
-		}
-		if savedSafePoint == nil || savedSafePoint.Before(persistedSafePointTime) {
-			err = w.saveTime(gcSafePointKey, persistedSafePointTime)
-			if err != nil {
-				return false, 0, errors.Trace(err)
-			}
 		}
 		err = w.saveTime(gcLastRunTimeKey, now)
 		if err != nil {
@@ -575,7 +569,7 @@ func (w *GCWorker) checkPrepare(ctx context.Context) (bool, uint64, error) {
 	if err != nil {
 		return false, 0, errors.Trace(err)
 	}
-	err = w.saveTime(gcSafePointKey, *newSafePoint)
+	err = w.saveTimeIfNewer(ctx, gcSafePointKey, *newSafePoint)
 	if err != nil {
 		return false, 0, errors.Trace(err)
 	}
@@ -1615,6 +1609,84 @@ func (w *GCWorker) checkLeader(ctx context.Context) (bool, error) {
 func (w *GCWorker) saveTime(key string, t time.Time) error {
 	err := w.saveValueToSysTable(key, t.Format(tikvutil.GCTimeFormat))
 	return errors.Trace(err)
+}
+
+// saveTimeIfNewer atomically persists t under key in mysql.tidb only if no
+// timestamp is stored yet or the stored timestamp is strictly earlier than t.
+func (w *GCWorker) saveTimeIfNewer(ctx context.Context, key string, t time.Time) error {
+	value := t.Format(tikvutil.GCTimeFormat)
+	se := createSession(w.store)
+	defer se.Close()
+	execCtx := kv.WithInternalSourceType(ctx, kv.InternalTxnGC)
+
+	const maxAttempts = 5
+	for attempt := range maxAttempts {
+		if _, err := se.ExecuteInternal(execCtx, "BEGIN PESSIMISTIC"); err != nil {
+			return errors.Trace(err)
+		}
+		rs, err := se.ExecuteInternal(execCtx, `SELECT HIGH_PRIORITY (variable_value) FROM mysql.tidb WHERE variable_name=%? FOR UPDATE`, key)
+		if err != nil {
+			se.RollbackTxn(execCtx)
+			if kv.IsTxnRetryableError(err) && attempt+1 < maxAttempts {
+				continue
+			}
+			return errors.Trace(err)
+		}
+		req := rs.NewChunk(nil)
+		err = rs.Next(execCtx, req)
+		terror.Call(rs.Close)
+		if err != nil {
+			se.RollbackTxn(execCtx)
+			if kv.IsTxnRetryableError(err) && attempt+1 < maxAttempts {
+				continue
+			}
+			return errors.Trace(err)
+		}
+
+		if req.NumRows() == 0 {
+			// Use plain INSERT instead of ON DUPLICATE KEY UPDATE so a concurrent
+			// writer inserting a newer timestamp causes ErrKeyExists rather than
+			// being overwritten; the next attempt then locks and compares the row.
+			_, err = se.ExecuteInternal(execCtx, `INSERT HIGH_PRIORITY INTO mysql.tidb VALUES (%?, %?, %?)`,
+				key, value, gcVariableComments[key])
+		} else {
+			if !req.GetRow(0).IsNull(0) {
+				curStr := req.GetRow(0).GetString(0)
+				if curStr != "" {
+					curTime, parseErr := tikvutil.CompatibleParseGCTime(curStr)
+					if parseErr != nil {
+						se.RollbackTxn(execCtx)
+						return errors.Trace(parseErr)
+					}
+					if !curTime.Before(t) {
+						se.RollbackTxn(execCtx)
+						return nil
+					}
+				}
+			}
+			_, err = se.ExecuteInternal(execCtx, `UPDATE HIGH_PRIORITY mysql.tidb SET variable_value = %?, comment = %? WHERE variable_name = %?`,
+				value, gcVariableComments[key], key)
+		}
+		if err != nil {
+			se.RollbackTxn(execCtx)
+			if (kv.ErrKeyExists.Equal(err) || kv.IsTxnRetryableError(err)) && attempt+1 < maxAttempts {
+				continue
+			}
+			return errors.Trace(err)
+		}
+		if err = se.CommitTxn(execCtx); err != nil {
+			se.RollbackTxn(execCtx)
+			if (kv.ErrKeyExists.Equal(err) || kv.IsTxnRetryableError(err)) && attempt+1 < maxAttempts {
+				continue
+			}
+			return errors.Trace(err)
+		}
+		logutil.BgLogger().Debug("save kv if newer", zap.String("category", "gc worker"),
+			zap.String("key", key),
+			zap.String("value", value))
+		return nil
+	}
+	return errors.Errorf("failed to atomically advance %s after %d attempts", key, maxAttempts)
 }
 
 func (w *GCWorker) loadTime(key string) (*time.Time, error) {

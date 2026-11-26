@@ -37,6 +37,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikvrpc"
+	tikvutil "github.com/tikv/client-go/v2/util"
 	"github.com/tikv/pd/client/clients/gc"
 	pdhttp "github.com/tikv/pd/client/http"
 )
@@ -897,4 +898,126 @@ func TestCheckPrepareReplacementLeaderAbortsRetryWhenSQLSafePointPersistFails(t 
 	_, err = checkSe.Execute(ctx, fmt.Sprintf("set @@tidb_snapshot = '%d'", oldSnapTS))
 	require.Error(t, err)
 	require.True(t, variable.ErrSnapshotTooOld.Equal(err), "expected ErrSnapshotTooOld (8055), got: %v", err)
+
+	t.Run("overlapping workers never regress SQL safe point", func(t *testing.T) {
+		s := createGCWorkerSuite(t, withSchemaLease(220*time.Minute))
+		ctx := gcContext()
+		se := createSession(s.store)
+		defer se.Close()
+
+		baseTime, err := s.gcWorker.getOracleTime()
+		require.NoError(t, err)
+		sp0Time := baseTime.Truncate(time.Millisecond)
+		s.oracle.AddOffset(2 * time.Minute)
+		spATime := sp0Time.Add(2 * time.Minute)
+		s.oracle.AddOffset(2 * time.Minute)
+		midSnapTS := s.mustAllocTs(t)
+		s.oracle.AddOffset(2 * time.Minute)
+		spBTime := spATime.Add(4 * time.Minute)
+		spA := oracle.GoTimeToTS(spATime)
+		spB := oracle.GoTimeToTS(spBTime)
+		require.Less(t, spA, midSnapTS)
+		require.Less(t, midSnapTS, spB)
+
+		assertMidSnapshotRejected := func() {
+			checkSe := createSession(s.store)
+			defer checkSe.Close()
+			_, execErr := checkSe.Execute(ctx, fmt.Sprintf("set @@tidb_snapshot = '%d'", midSnapTS))
+			require.Error(t, execErr)
+			require.True(t, variable.ErrSnapshotTooOld.Equal(execErr), "expected ErrSnapshotTooOld (8055), got: %v", execErr)
+		}
+
+		oldWorker := newTestGCWorker(t, s.store, s.pdClient)
+		newWorker := newTestGCWorker(t, s.store, s.pdClient)
+
+		// Subcase 1: Existing row at SP0. Old worker starts saveTimeIfNewer(SP_A) and
+		// pauses at CmdPrewrite while new leader concurrently advances to SP_B.
+		// Pessimistic row locking serializes both writes so SQL ends at SP_B and never
+		// regresses to SP_A.
+		require.NoError(t, oldWorker.saveTime(gcSafePointKey, sp0Time))
+
+		spAVal := []byte(spATime.Format(tikvutil.GCTimeFormat))
+		pausedOld := make(chan struct{})
+		releaseOld := make(chan struct{})
+		var pausedOnce atomic.Bool
+		var h handler = func(_ string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
+			if prewrite, ok := req.Req.(*kvrpcpb.PrewriteRequest); ok {
+				for _, m := range prewrite.Mutations {
+					if bytes.Contains(m.Value, spAVal) && pausedOnce.CompareAndSwap(false, true) {
+						close(pausedOld)
+						<-releaseOld
+					}
+				}
+			}
+			return nil, nil
+		}
+		s.client.prewriteHandler.Store(&h)
+		t.Cleanup(func() { s.client.prewriteHandler.Store(nil) })
+
+		oldDone := make(chan error, 1)
+		go func() {
+			oldDone <- oldWorker.saveTimeIfNewer(ctx, gcSafePointKey, spATime)
+		}()
+
+		select {
+		case <-pausedOld:
+		case <-time.After(10 * time.Second):
+			t.Fatal("timed out waiting for old worker prewrite pause")
+		}
+
+		newDone := make(chan error, 1)
+		go func() {
+			newDone <- newWorker.saveTimeIfNewer(ctx, gcSafePointKey, spBTime)
+		}()
+
+		// Give newWorker time to contend on the locked mysql.tidb row before releasing oldWorker.
+		time.Sleep(50 * time.Millisecond)
+		close(releaseOld)
+
+		require.NoError(t, <-oldDone)
+		require.NoError(t, <-newDone)
+		s.client.prewriteHandler.Store(nil)
+
+		savedSP, err := newWorker.loadTime(gcSafePointKey)
+		require.NoError(t, err)
+		require.NotNil(t, savedSP)
+		require.True(t, savedSP.Equal(spBTime), "expected SQL safe point %v, got %v", spBTime, *savedSP)
+		assertMidSnapshotRejected()
+
+		// Subcase 2: New leader has already committed SP_B; a delayed old worker
+		// resuming with lower SP_A must keep SP_B intact and midSnapTS must stay rejected.
+		require.NoError(t, oldWorker.saveTimeIfNewer(ctx, gcSafePointKey, spATime))
+		savedSP, err = newWorker.loadTime(gcSafePointKey)
+		require.NoError(t, err)
+		require.NotNil(t, savedSP)
+		require.True(t, savedSP.Equal(spBTime), "delayed older worker must not regress SQL safe point from %v to %v", spBTime, *savedSP)
+		assertMidSnapshotRejected()
+
+		// Subcase 3: Missing row initially. Two workers concurrently insert SP_A and SP_B
+		// via saveTimeIfNewer; plain INSERT + ErrKeyExists retry ensures final SQL safe
+		// point is strictly SP_B regardless of goroutine scheduling order.
+		for range 5 {
+			mustExecSQL(t, se, fmt.Sprintf("delete from mysql.tidb where variable_name = '%s'", gcSafePointKey))
+			start := make(chan struct{})
+			errA := make(chan error, 1)
+			errB := make(chan error, 1)
+			go func() {
+				<-start
+				errA <- oldWorker.saveTimeIfNewer(ctx, gcSafePointKey, spATime)
+			}()
+			go func() {
+				<-start
+				errB <- newWorker.saveTimeIfNewer(ctx, gcSafePointKey, spBTime)
+			}()
+			close(start)
+			require.NoError(t, <-errA)
+			require.NoError(t, <-errB)
+
+			savedSP, err = newWorker.loadTime(gcSafePointKey)
+			require.NoError(t, err)
+			require.NotNil(t, savedSP)
+			require.True(t, savedSP.Equal(spBTime), "concurrent empty-row insert regressed SQL safe point to %v", *savedSP)
+			assertMidSnapshotRejected()
+		}
+	})
 }
