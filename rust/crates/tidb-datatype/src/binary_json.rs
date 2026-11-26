@@ -3733,7 +3733,7 @@ pub fn unquote_string(text: &str) -> Result<String, BinaryJSONError> {
 /// Quotes a JSON path key, leaving an unescaped ECMAScript identifier bare.
 pub fn quote_json_string(text: &str) -> String {
     let quoted = json_marshal_string_to(text);
-    if is_ecmascript_identifier(text)
+    if crate::json_path::is_ecmascript_identifier(text)
         && quoted.as_bytes()[1..quoted.len() - 1] == text.as_bytes()[..]
     {
         text.to_owned()
@@ -4122,24 +4122,6 @@ fn decode_hex_u16(hex: &[u8]) -> Result<u16, BinaryJSONError> {
             .ok_or(BinaryJSONError::InvalidText)?;
         Ok((value << 4) | digit as u16)
     })
-}
-
-fn is_ecmascript_identifier(value: &str) -> bool {
-    let bytes = value.as_bytes();
-    let Some(&first) = bytes.first() else {
-        return false;
-    };
-    let is_letter = |byte: u8| {
-        byte.is_ascii_alphabetic()
-            || matches!(
-                byte,
-                0xAA | 0xB5 | 0xBA | 0xC0..=0xD6 | 0xD8..=0xF6 | 0xF8..=0xFF
-            )
-    };
-    (is_letter(first) || first == b'$' || first == b'_')
-        && bytes[1..]
-            .iter()
-            .all(|byte| is_letter(*byte) || byte.is_ascii_digit() || matches!(byte, b'$' | b'_'))
 }
 
 fn encode_base64(bytes: &[u8]) -> String {
@@ -5094,6 +5076,29 @@ fn format_node(value: &JSONNode) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Go `TestMarshalFloatInContainer`: a double inside a container renders
+    /// as it does alone, whatever content precedes it in the buffer.
+    #[test]
+    fn test_marshal_float_in_container() {
+        for (input, expected) in [
+            (r#"["1234567e-0", 1.2345678e20]"#, r#"["1234567e-0", 1.2345678e20]"#),
+            (r#"["ae-0x", 1.5e-20]"#, r#"["ae-0x", 1.5e-20]"#),
+            (r#"{"e-0": 1e-20, "k": [1e20, -1.5e-20]}"#, r#"{"e-0": 1e-20, "k": [1e20, -1.5e-20]}"#),
+        ] {
+            assert_eq!(BinaryJSON::parse(input).unwrap().to_string(), expected, "{input}");
+        }
+        // The float is rendered after the other content in the buffer, and
+        // the content before it should not affect the result.
+        for f in [1.2345678e20, 1.5e-20, -1e300, 5e-324] {
+            let scalar = BinaryJSON::parse(&f.to_string()).unwrap().to_string();
+            for n in 0..30 {
+                let prefix = format!("{}e-0", "x".repeat(n));
+                let json = BinaryJSON::parse(&format!(r#"["{prefix}", {f:e}]"#)).unwrap();
+                assert_eq!(json.to_string(), format!(r#"["{prefix}", {scalar}]"#));
+            }
+        }
+    }
 
     fn encoded_test_object(entries: impl Iterator<Item = String>) -> Vec<u8> {
         let members = entries.collect::<Vec<_>>().join(",");

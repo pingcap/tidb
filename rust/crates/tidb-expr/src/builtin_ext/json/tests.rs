@@ -470,7 +470,10 @@ fn containers_paths_and_binary_json_format_match_go() {
         "{\"a\": 1, \"b\": 2}"
     );
     assert!(parse_path("$**").is_err());
-    assert!(parse_path("$.宽").is_err());
+    // Go master e86b42ec9cf: a bare key's letters follow MySQL's
+    // lowest-byte rule, so U+5BBD (0xBD) is a letter and U+4F60 (0x60) not.
+    assert!(parse_path("$.宽").is_ok());
+    assert!(parse_path("$.你").is_err());
     assert!(parse_path("$.\"宽\"").is_ok());
 }
 

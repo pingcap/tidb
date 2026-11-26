@@ -333,9 +333,14 @@ impl Parser {
                 return false;
             };
             let mut selection = JSONPathArraySelection::Index(start);
+            // Try to read " to " and the end.
             if self.peek_is_space() {
                 self.skip_whitespace();
-                if self.try_read_string(&TO) && self.peek_is_space() {
+                if self.try_read_string(&TO) {
+                    // `to` must be followed by whitespace, like MySQL.
+                    if !self.peek_is_space() {
+                        return false;
+                    }
                     self.skip_whitespace();
                     if self.exhausted() {
                         return false;
@@ -393,7 +398,7 @@ impl Parser {
             let start = self.position;
             while self
                 .peek()
-                .is_some_and(|ch| !(ch.is_whitespace() || ch == '.' || ch == '[' || ch == '*'))
+                .is_some_and(|ch| !(is_json_path_white_space(ch) || ch == '.' || ch == '[' || ch == '*'))
             {
                 self.position += 1;
             }
@@ -440,8 +445,13 @@ impl Parser {
                     self.position = record;
                     return None;
                 }
+                // Keep the whitespace after `last` if it's not followed by
+                // '-', so the caller can still check the end of the path and
+                // the " to " of a range.
+                let last_end = self.position;
                 self.skip_whitespace();
                 if self.exhausted() || self.peek() != Some('-') {
+                    self.position = last_end;
                     return Some(-1);
                 }
                 self.position += 1;
@@ -495,11 +505,12 @@ impl Parser {
     }
 
     fn peek_is_space(&self) -> bool {
-        self.peek().is_some_and(char::is_whitespace)
+        self.peek().is_some_and(is_json_path_white_space)
     }
 
+    /// Go `jsonPathStream.skipWhiteSpace`.
     fn skip_whitespace(&mut self) {
-        while self.peek().is_some_and(char::is_whitespace) {
+        while self.peek().is_some_and(is_json_path_white_space) {
             self.position += 1;
         }
     }
@@ -533,25 +544,85 @@ fn write_path_index(output: &mut impl fmt::Write, index: i64) -> fmt::Result {
     }
 }
 
-fn is_ecmascript_identifier(value: &str) -> bool {
-    let bytes = value.as_bytes();
-    let Some(&first) = bytes.first() else {
-        return false;
-    };
-    if !is_latin1_letter(first) && first != b'$' && first != b'_' {
-        return false;
-    }
-    bytes[1..].iter().all(|&byte| {
-        is_latin1_letter(byte) || byte.is_ascii_digit() || byte == b'$' || byte == b'_'
-    })
+/// Go `isJSONPathWhiteSpace`: MySQL's `is_whitespace` in
+/// sql-common/json_path.cc only treats the ASCII whitespace characters as
+/// whitespace in a JSON path.
+fn is_json_path_white_space(c: char) -> bool {
+    c == ' ' || ('\t'..='\r').contains(&c)
 }
 
-fn is_latin1_letter(byte: u8) -> bool {
-    byte.is_ascii_alphabetic()
-        || matches!(
-            byte,
-            0xAA | 0xB5 | 0xBA | 0xC0..=0xD6 | 0xD8..=0xF6 | 0xF8..=0xFF
-        )
+/// Go `isEcmascriptIdentifier`: MySQL's `is_ecmascript_identifier`, which
+/// decides whether a key in a JSON path needs to be quoted. (A `&str` is
+/// always valid UTF-8, Go's first refusal.)
+pub(crate) fn is_ecmascript_identifier(value: &str) -> bool {
+    if value.is_empty() {
+        return false;
+    }
+    for (i, c) in value.char_indices() {
+        // accept letter
+        if is_json_path_letter(c) {
+            continue;
+        }
+        // accept '$' and '_'
+        if c == '$' || c == '_' {
+            continue;
+        }
+        // the first character must be a letter or '$' or '_'
+        if i == 0 {
+            return false;
+        }
+        // accept unicode combining mark
+        if is_unicode_combining_mark(c) {
+            continue;
+        }
+        // accept digit
+        if is_json_path_digit(c) {
+            continue;
+        }
+        // accept unicode connector punctuation
+        if is_unicode_connector_punctuation(c) {
+            continue;
+        }
+        // accept ZWNJ and ZWJ
+        if c == '\u{200C}' || c == '\u{200D}' {
+            continue;
+        }
+        return false;
+    }
+    true
+}
+
+/// Go `isUnicodeCombiningMark`: MySQL's `unicode_combining_mark`, which only
+/// covers the Combining Diacritical Marks block. MySQL also uses it to
+/// exclude these code points from `is_letter`, because the lowest bytes of
+/// some of them are ASCII letters.
+fn is_unicode_combining_mark(c: char) -> bool {
+    ('\u{300}'..='\u{36F}').contains(&c)
+}
+
+/// Go `isJSONPathLetter`: MySQL's `is_letter` checks the code point with
+/// `my_isalpha(&my_charset_utf8mb4_bin, codepoint)`, which only looks up the
+/// lowest byte of the code point in the ctype table of utf8mb4.
+fn is_json_path_letter(c: char) -> bool {
+    if is_unicode_combining_mark(c) {
+        return false;
+    }
+    let b = c as u32 as u8;
+    b.is_ascii_lowercase() || b.is_ascii_uppercase() || (0x80..=0xFE).contains(&b)
+}
+
+/// Go `isJSONPathDigit`: MySQL's `is_digit` also only checks the lowest byte
+/// of the code point.
+fn is_json_path_digit(c: char) -> bool {
+    (c as u32 as u8).is_ascii_digit()
+}
+
+/// Go `unicode.Is(unicode.Pc, c)`: the connector punctuation category.
+fn is_unicode_connector_punctuation(c: char) -> bool {
+    matches!(
+        c,
+        '_' | '\u{203F}' | '\u{2040}' | '\u{2054}' | '\u{FE33}' | '\u{FE34}' | '\u{FE4D}'..='\u{FE4F}' | '\u{FF3F}'
+    )
 }
 
 // Go quoteJSONString escapes the named JSON control characters, quotes,
@@ -620,6 +691,14 @@ mod tests {
             ("$[1 to last]", true, 1),
             ("$[1to3]", false, 0),
             ("$[last - 5 to last - 10]", false, 0),
+            ("$[last to last]", true, 1),
+            ("$[last ]", true, 1),
+            ("$[last ", false, 0),
+            ("$[last  ", false, 0),
+            ("$[last\tto last]", true, 1),
+            ("$[last to]", false, 0),
+            ("$[1 to]", false, 0),
+            ("$[1 tox]", false, 0),
             ("$.\\\"escaped quotes\\\"[3][*].*.key3", false, 0),
             (
                 "$.hello \\\"escaped quotes\\\" world[3][*].*.key3",
@@ -645,6 +724,25 @@ mod tests {
             ("$.Ѡ", false, 0),
             ("$.\"Ѡ\"", true, 1),
             ("$.µ", true, 1),
+            // The expected results below are the same as MySQL 8.0, which
+            // checks letters and digits by the lowest byte of the code point.
+            ("$.é", true, 1),
+            ("$.ß", true, 1),
+            ("$.α", true, 1),
+            ("$.с", true, 1),
+            ("$.aб", true, 1),
+            ("$.б", false, 0),
+            ("$.ÿ", false, 0),
+            ("$.Ā", false, 0),
+            ("$.你", false, 0),
+            ("$.\"你\"", true, 1),
+            // MySQL only treats ASCII whitespace as whitespace in a JSON
+            // path, so U+00A0 and U+0085 are part of the key, and U+3000 is
+            // not a letter.
+            ("$.a\u{a0}b", true, 1),
+            ("$.a\u{85}b", true, 1),
+            ("$.a\u{a0}.b", true, 2),
+            ("$.a\u{3000}b", false, 0),
         ];
         for (path, success, legs) in cases {
             let result = parse_json_path_expr(path);
@@ -652,6 +750,18 @@ mod tests {
             if let Ok(expression) = result {
                 assert_eq!(expression.legs().len(), legs, "{path}");
             }
+        }
+    }
+
+    /// Go `TestPathKeyRoundTrip`: the path built from a key by
+    /// `quoteJSONString`, like the result of JSON_SEARCH, parses back to the
+    /// same key.
+    #[test]
+    fn test_path_key_round_trip() {
+        for key in ["a", "a b", "é", "你", "a\u{a0}b", "a\u{85}b", "a\u{1680}b", "a\u{3000}b", "a.b", "a\"b"] {
+            let path = format!("$.{}", crate::binary_json::quote_json_string(key));
+            let expression = parse_json_path_expr(&path).unwrap_or_else(|error| panic!("{key}: {error:?}"));
+            assert_eq!(expression.legs(), [JSONPathLeg::Key(key.to_owned())], "{key}");
         }
     }
 
@@ -736,6 +846,15 @@ mod go_position_tests {
             ("$[last-a]", 2),
             ("$.*.", 4),
             ("$.\"a\"b", 5),
+            // Go master e86b42ec9cf (probed): `to` must be followed by
+            // whitespace, `last` keeps its trailing whitespace, and keys are
+            // letters by MySQL's lowest-byte rule.
+            ("$[0 to]", 6),
+            ("$[1 tox]", 6),
+            ("$[last ", 7),
+            ("$.a\u{3000}b", 5),
+            ("$.б", 3),
+            ("$.你", 3),
         ] {
             assert_eq!(
                 parse_json_path_expr(path).map_err(|error| error.position),
@@ -743,7 +862,6 @@ mod go_position_tests {
                 "{path}"
             );
         }
-        assert!(parse_json_path_expr("$[0 to]").is_ok());
         assert!(parse_json_path_expr("$.\"*\"").is_ok());
     }
 }
