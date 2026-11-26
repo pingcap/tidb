@@ -230,28 +230,28 @@ impl SingleTargetDataSink {
         let conn = self.try_establish_connection(addr).await?;
         let client = TopSqlAgentClient::new(conn).max_decoding_message_size(usize::MAX);
         let (sql, plan, records, ru) = tokio::join!(
-            send_batch(
+            recover_send(send_batch(
                 client.clone(),
                 data.sql_metas.clone(),
                 &TOPSQL_REPORT_SQL_COUNT_HISTOGRAM,
                 (&REPORT_SQL_DURATION_SUCC_HISTOGRAM, &REPORT_SQL_DURATION_FAILED_HISTOGRAM),
                 |mut client, stream| async move { client.report_sql_meta(stream).await },
-            ),
-            send_batch(
+            )),
+            recover_send(send_batch(
                 client.clone(),
                 data.plan_metas.clone(),
                 &TOPSQL_REPORT_PLAN_COUNT_HISTOGRAM,
                 (&REPORT_PLAN_DURATION_SUCC_HISTOGRAM, &REPORT_PLAN_DURATION_FAILED_HISTOGRAM),
                 |mut client, stream| async move { client.report_plan_meta(stream).await },
-            ),
-            send_batch(
+            )),
+            recover_send(send_batch(
                 client.clone(),
                 data.data_records.clone(),
                 &TOPSQL_REPORT_RECORD_COUNTER_HISTOGRAM,
                 (&REPORT_RECORD_DURATION_SUCC_HISTOGRAM, &REPORT_RECORD_DURATION_FAILED_HISTOGRAM),
                 |mut client, stream| async move { client.report_top_sql_records(stream).await },
-            ),
-            send_batch_top_ru_record(&data.ru_records),
+            )),
+            recover_send(send_batch_top_ru_record(&data.ru_records)),
         );
         sql.and(plan).and(records).and(ru)
     }
@@ -331,6 +331,28 @@ where
 
 /// Go `sendBatchTopRURecord`: TopRU over SingleTarget is intentionally
 /// unsupported now.
+/// Go `util.WithRecovery` around each of `doSend`'s four sends: a panic is
+/// that send's error (Go `util.GetRecoverError`), accounted as a failed
+/// report instead of unwinding through the sender.
+async fn recover_send(send: impl std::future::Future<Output = Result<(), String>>) -> Result<(), String> {
+    use futures::FutureExt as _;
+    std::panic::AssertUnwindSafe(async move {
+        let _ = tidb_failpoint::eval("github.com/pingcap/tidb/pkg/util/topsql/reporter/mockSingleTargetSendPanic");
+        send.await
+    })
+    .catch_unwind()
+    .await
+    .unwrap_or_else(|payload| {
+        Err(if let Some(message) = payload.downcast_ref::<&str>() {
+            (*message).to_owned()
+        } else if let Some(message) = payload.downcast_ref::<String>() {
+            message.clone()
+        } else {
+            "non-string panic payload".to_owned()
+        })
+    })
+}
+
 async fn send_batch_top_ru_record(_records: &[TopRuRecord]) -> Result<(), String> {
     Ok(())
 }
@@ -466,6 +488,50 @@ mod tests {
             std::thread::sleep(Duration::from_millis(20));
         }
         assert!(!tidb_topsql_state::top_sql_enabled());
+        ds.close();
+        reporter.close();
+    }
+
+    /// Go `TestSingleTargetDataSink`, "recovers send panics": a send that
+    /// panics is that report's failure (one failed sample, no success), and
+    /// the next report goes through.
+    #[test]
+    fn test_single_target_data_sink_recovers_send_panics() {
+        let agent = MockAgent::default();
+        let (ready, address) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async move {
+                let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+                ready.send(listener.local_addr().unwrap()).unwrap();
+                tonic::transport::Server::builder()
+                    .add_service(TopSqlAgentServer::new(agent))
+                    .serve_with_incoming(tokio_stream::wrappers::TcpListenerStream::new(listener))
+                    .await
+                    .unwrap();
+            });
+        });
+        let address = address.recv().unwrap().to_string();
+        let reporter = new_reporter();
+        let ds = SingleTargetDataSink::new(Arc::clone(&reporter).data_sink_registerer().unwrap());
+        let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let run_do_send = || {
+            let task = SendTask {
+                data: Arc::new(ReportData::default()),
+                deadline: Instant::now() + Duration::from_secs(5),
+            };
+            runtime.block_on(ds.do_send(&address, task));
+        };
+        let panic_path = "github.com/pingcap/tidb/pkg/util/topsql/reporter/mockSingleTargetSendPanic";
+        let failed_before = REPORT_ALL_DURATION_FAILED_HISTOGRAM.get_sample_count();
+        let succeeded_before = REPORT_ALL_DURATION_SUCC_HISTOGRAM.get_sample_count();
+        tidb_failpoint::enable(panic_path, "panic").unwrap();
+        run_do_send();
+        assert_eq!(REPORT_ALL_DURATION_FAILED_HISTOGRAM.get_sample_count(), failed_before + 1);
+        assert_eq!(REPORT_ALL_DURATION_SUCC_HISTOGRAM.get_sample_count(), succeeded_before);
+        tidb_failpoint::disable(panic_path);
+        run_do_send();
+        assert_eq!(REPORT_ALL_DURATION_FAILED_HISTOGRAM.get_sample_count(), failed_before + 1);
+        assert_eq!(REPORT_ALL_DURATION_SUCC_HISTOGRAM.get_sample_count(), succeeded_before + 1);
         ds.close();
         reporter.close();
     }

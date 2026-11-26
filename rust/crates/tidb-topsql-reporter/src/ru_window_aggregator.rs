@@ -241,6 +241,18 @@ impl RuWindowAggregator {
 
     /// Go `ruWindowAggregator.takeBucketsForWindow`: extracts the buckets of a
     /// window under lock, or `None` when the window has already been reported.
+    /// Go `dropReportData`: discards closed report windows and advances the
+    /// report boundary. Buckets from the still-open window are retained for
+    /// the next report tick.
+    pub fn drop_report_data(&self, now_ts: u64) {
+        let window_end = align_to_interval(now_ts, RU_REPORT_WINDOW_SECONDS);
+        let mut state = self.state.lock().unwrap();
+        state.buckets.retain(|&ts, _| ts >= window_end);
+        if window_end > state.last_reported_end_ts {
+            state.last_reported_end_ts = window_end;
+        }
+    }
+
     fn take_buckets_for_window(&self, window_end: u64) -> Option<HashMap<u64, RuPointBucket>> {
         let mut state = self.state.lock().unwrap();
 
@@ -548,6 +560,26 @@ mod tests {
         let state = agg.state.lock().unwrap();
         assert_eq!(RuVersion::V2, state.current_version);
         assert_eq!(1, state.buckets.len());
+    }
+
+    /// Go `TestRUWindowAggregatorResetCurrentWindowDropsUntilBoundary`,
+    /// "backpressure drop keeps still-open window".
+    #[test]
+    fn test_ru_window_aggregator_backpressure_drop_keeps_still_open_window() {
+        let agg = RuWindowAggregator::new();
+        agg.add_batch_to_bucket(1, one(ru_key("u-closed", "sql-closed", "plan-closed"), incr(1.0, 1, 1)));
+        for ts in [61, 76, 91] {
+            agg.add_batch_to_bucket(ts, one(ru_key("u-open", "sql-open", "plan-open"), incr(2.0, 1, 1)));
+        }
+
+        agg.drop_report_data(97);
+
+        let records = agg.take_report_records(120, 60, b"ks").expect("records");
+        assert!(find_ru_record_by_digest(&records, "u-closed", "sql-closed", "plan-closed").is_none());
+        let open = find_ru_record(&records, "u-open", "sql-open", "plan-open");
+        assert_eq!(open.items.len(), 1);
+        assert_eq!(open.items[0].timestamp_sec, 60);
+        assert!((open.items[0].total_ru - 6.0).abs() < 1e-9);
     }
 
     #[test]

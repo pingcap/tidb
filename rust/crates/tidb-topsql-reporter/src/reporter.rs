@@ -26,6 +26,7 @@ use tidb_topsql_collector::{ProcessCpuTimeUpdater, SqlCpuCollector, SqlCpuTimeRe
 use tidb_topsql_reporter_metrics::{
     IGNORE_COLLECT_CHANNEL_FULL_COUNTER, IGNORE_COLLECT_RU_CHANNEL_FULL_COUNTER,
     IGNORE_COLLECT_STMT_CHANNEL_FULL_COUNTER, IGNORE_REPORT_CHANNEL_FULL_COUNTER,
+    IGNORE_REPORT_DATA_BY_BACKPRESSURE_COUNTER,
 };
 use tidb_topsql_state::GLOBAL_STATE;
 use tidb_topsql_stmtstats::{RuIncrementMap, StatementStatsMap};
@@ -41,6 +42,8 @@ use crate::ru_window_aggregator::{RuBatch, RuWindowAggregator};
 const REPORT_TIMEOUT: Duration = Duration::from_secs(40);
 /// Go `collectChanBufferSize`.
 const COLLECT_CHAN_BUFFER_SIZE: usize = 2;
+/// Go `reportCollectedDataChanSize`.
+const REPORT_COLLECTED_DATA_CHAN_SIZE: usize = 2;
 
 /// Go `nowFunc`.
 fn now_unix() -> u64 {
@@ -218,7 +221,7 @@ impl RemoteTopSqlReporter {
             collect_cpu_time_chan: cpu_rx,
             collect_stmt_stats_chan: bounded(COLLECT_CHAN_BUFFER_SIZE),
             collect_ru_increments_chan: bounded(COLLECT_CHAN_BUFFER_SIZE),
-            report_collected_data_chan: bounded(1),
+            report_collected_data_chan: bounded(REPORT_COLLECTED_DATA_CHAN_SIZE),
             collecting: Mutex::new(Collecting::new()),
             ru_aggregator: RuWindowAggregator::new(),
             normalized_sql_map: NormalizedSqlMap::new(),
@@ -335,6 +338,19 @@ impl RemoteTopSqlReporter {
     /// report tick path. Each call emits at most one aligned closed 60s RU
     /// window.
     fn take_data_and_send_to_report_chan(&self, timestamp: u64) {
+        let chan = &self.report_collected_data_chan.0;
+        // collectWorker is the only sender, so the channel cannot become full
+        // between this check and the send below.
+        if chan.len() == REPORT_COLLECTED_DATA_CHAN_SIZE {
+            IGNORE_REPORT_CHANNEL_FULL_COUNTER.inc();
+            // SQL/plan metadata remains on the reporter side because it is
+            // bounded by MaxCollect and can decode records collected after
+            // backpressure recovers.
+            *self.lock_collecting() = Collecting::new();
+            self.ru_aggregator.drop_report_data(timestamp);
+            IGNORE_REPORT_DATA_BY_BACKPRESSURE_COUNTER.inc();
+            return;
+        }
         let ru_records = self.ru_aggregator.take_report_records(
             timestamp,
             tidb_topsql_state::get_top_ru_item_interval() as u64,
@@ -346,11 +362,7 @@ impl RemoteTopSqlReporter {
             normalized_sql_map: self.normalized_sql_map.take(),
             normalized_plan_map: self.normalized_plan_map.take(),
         };
-        // Send to report channel. When channel is full, data will be dropped.
-        if let Err(TrySendError::Full(_)) = self.report_collected_data_chan.0.try_send(data) {
-            // ignore if chan blocked
-            IGNORE_REPORT_CHANNEL_FULL_COUNTER.inc();
-        }
+        let _ = chan.send(data);
     }
 
     /// Go `reportWorker` sends data to the gRPC endpoint from the
@@ -575,6 +587,72 @@ pub(crate) mod tests {
         }
 
         fn on_reporter_closing(&self) {}
+    }
+
+    /// Go `TestReporterChannelsFullDropsAndMetrics`, its report-channel
+    /// half: with the report channel full (two batches, no report worker)
+    /// the next tick drops its collected records and closed RU windows
+    /// instead of queueing them, counts both drops, keeps the SQL and plan
+    /// metadata, and the reporter recovers once the channel drains.
+    #[test]
+    fn test_reporter_channels_full_drops_and_metrics() {
+        let tsr = new_reporter();
+        let chan = &tsr.report_collected_data_chan;
+        // Go `expectedReportBufferSize`.
+        assert_eq!(chan.0.capacity(), Some(2));
+        let ru = |timestamp: u64| RuBatch {
+            timestamp,
+            data: {
+                let mut data = tidb_topsql_stmtstats::RuIncrementMap::new();
+                data.insert(
+                    tidb_topsql_stmtstats::RuKey {
+                        user: "u1".to_owned(),
+                        sql_digest: tidb_topsql_stmtstats::BinaryDigest::from("ru-sql"),
+                        plan_digest: tidb_topsql_stmtstats::BinaryDigest::from("ru-plan"),
+                    },
+                    tidb_topsql_stmtstats::RuIncrement { total_ru: 1.0, exec_count: 1, exec_duration: 1 },
+                );
+                data
+            },
+            version: tidb_topsql_stmtstats::default_ru_version(),
+        };
+        for i in 0..REPORT_COLLECTED_DATA_CHAN_SIZE as u64 {
+            let report_end = (i + 1) * 60;
+            tsr.register_sql(format!("bounded-sql-{i}").as_bytes(), &format!("select {i}"), false);
+            tsr.process_cpu_time_data(report_end - 1, vec![record(&format!("bounded-sql-{i}"), "p", 1)]);
+            tsr.ru_aggregator.add_batch(&ru(report_end - 1));
+            tsr.take_data_and_send_to_report_chan(report_end);
+        }
+        assert_eq!(chan.1.len(), REPORT_COLLECTED_DATA_CHAN_SIZE);
+
+        let report_drops = IGNORE_REPORT_CHANNEL_FULL_COUNTER.get();
+        let backpressure_drops = IGNORE_REPORT_DATA_BY_BACKPRESSURE_COUNTER.get();
+        let drop_end = (REPORT_COLLECTED_DATA_CHAN_SIZE as u64 + 1) * 60;
+        tsr.register_sql(b"bounded-sql-2", "select 2", false);
+        tsr.process_cpu_time_data(drop_end - 1, vec![record("bounded-sql-2", "p", 2)]);
+        tsr.ru_aggregator.add_batch(&ru(drop_end - 1));
+        tsr.take_data_and_send_to_report_chan(drop_end);
+        assert!(tsr.lock_collecting().records.is_empty());
+        assert!(tsr.lock_collecting().evicted.is_empty());
+        assert!(tsr.ru_aggregator.take_report_records(drop_end, 60, KEYSPACE_NAME).is_none());
+        assert_eq!(IGNORE_REPORT_CHANNEL_FULL_COUNTER.get(), report_drops + 1.0);
+        assert_eq!(IGNORE_REPORT_DATA_BY_BACKPRESSURE_COUNTER.get(), backpressure_drops + 1.0);
+        assert_eq!(chan.1.len(), REPORT_COLLECTED_DATA_CHAN_SIZE);
+
+        for _ in 0..REPORT_COLLECTED_DATA_CHAN_SIZE {
+            let mut queued = chan.1.try_recv().unwrap();
+            assert_eq!(queued.collected.get_report_records().len(), 1);
+            assert_eq!(queued.normalized_sql_map.to_proto(KEYSPACE_NAME).len(), 1);
+            assert!(queued.ru_records.is_some());
+        }
+
+        // The metadata registered before the drop decodes the recovered tick.
+        let recovery_end = drop_end + 60;
+        tsr.process_cpu_time_data(recovery_end - 1, vec![record("bounded-sql-2", "p", 1)]);
+        tsr.take_data_and_send_to_report_chan(recovery_end);
+        let mut recovered = chan.1.try_recv().unwrap();
+        assert_eq!(recovered.collected.get_report_records().len(), 1);
+        assert_eq!(recovered.normalized_sql_map.to_proto(KEYSPACE_NAME).len(), 1);
     }
 
     pub(crate) fn new_reporter() -> Arc<RemoteTopSqlReporter> {

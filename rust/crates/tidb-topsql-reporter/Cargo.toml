@@ -28,4 +28,8 @@ tidb-topsql-reporter-metrics = { path = "../tidb-topsql-reporter-metrics" }
 tidb-topsql-state = { path = "../tidb-topsql-state" }
 tidb-topsql-stmtstats = { path = "../tidb-topsql-stmtstats" }
 tidb-hack = { path = "../tidb-hack" }
+tidb-failpoint = { path = "../tidb-failpoint" }
 tracing = "0.1"
+
+[dev-dependencies]
+tidb-failpoint = { path = "../tidb-failpoint", features = ["failpoints"] }

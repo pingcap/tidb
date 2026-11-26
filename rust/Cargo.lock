@@ -11475,6 +11475,7 @@ dependencies = [
  "prometheus 0.14.0",
  "prost 0.14.4",
  "tidb-config",
+ "tidb-failpoint",
  "tidb-hack",
  "tidb-log",
  "tidb-logutil",
