@@ -48,13 +48,14 @@ impl SqlDigestTextRetriever {
         }
     }
 
-    /// Go `runFetchDigestQuery`: `statements_summary` and its history (the
-    /// `cluster_` tables when `query_global`), unioned so a digest just moved
-    /// to the history is still found, filtered to `in_values` when given.
+    /// Go `runFetchDigestQuery`: the normalized SQL texts from either the
+    /// current or the history statement summary table (the `cluster_` one
+    /// when `query_global`), only of `in_values` when given, else every row.
     fn run_fetch_digest_query(
         &self,
         exec: &dyn SqlExecutor,
         query_global: bool,
+        history: bool,
         in_values: &[String],
     ) -> Result<HashMap<String, String>, SqlExecError> {
         let context = tikv_client::util::with_internal_source_type(
@@ -62,15 +63,20 @@ impl SqlDigestTextRetriever {
             // Go `kv.InternalTxnOthers`, client-go's `util.InternalTxnOthers`.
             tikv_client::util::INTERNAL_TXN_OTHERS,
         );
-        let mut stmt = if query_global {
-            "select digest, digest_text from information_schema.cluster_statements_summary union distinct \
-             select digest, digest_text from information_schema.cluster_statements_summary_history"
-                .to_owned()
+        let mut table = if query_global {
+            "information_schema.cluster_statements_summary".to_owned()
         } else {
-            "select digest, digest_text from information_schema.statements_summary union distinct \
-             select digest, digest_text from information_schema.statements_summary_history"
-                .to_owned()
+            "information_schema.statements_summary".to_owned()
         };
+        if history {
+            table.push_str("_history");
+        }
+        // DISTINCT restores the deduplication the old UNION DISTINCT
+        // provided: the same (digest, digest_text) pair appears once per
+        // summary window, so a plain SELECT would materialize and size the
+        // result by the total history row count.
+        let mut stmt = format!("select distinct digest, digest_text from {table}");
+        // Add the where clause when a digest batch is specified.
         if !in_values.is_empty() {
             stmt.push_str(" where digest in (");
             stmt.push_str(&vec!["%?"; in_values.len()].join(","));
@@ -95,69 +101,93 @@ impl SqlDigestTextRetriever {
     }
 
     /// Go `updateDigestInfo`: a digest whose text is still unknown takes the
-    /// query's.
+    /// query's nonempty one.
     fn update_digest_info(&mut self, query_result: &HashMap<String, String>) {
         for (digest, text) in &mut self.sql_digests_map {
             if !text.is_empty() {
                 continue;
             }
             if let Some(sql_text) = query_result.get(digest) {
-                text.clone_from(sql_text);
+                if !sql_text.is_empty() {
+                    text.clone_from(sql_text);
+                }
             }
         }
     }
 
-    /// Go `RetrieveLocal`: the texts this node's summaries know.
-    ///
-    /// # Errors
-    /// The summary query's failure.
-    pub fn retrieve_local(&mut self, exec: &dyn SqlExecutor) -> Result<(), SqlExecError> {
-        if self.sql_digests_map.is_empty() {
-            return Ok(());
-        }
-        let query_result = if self.sql_digests_map.len() <= self.fetch_all_limit {
-            let in_values: Vec<String> = self.sql_digests_map.keys().cloned().collect();
-            let query_result = self.run_fetch_digest_query(exec, false, &in_values)?;
-            if query_result.len() == self.sql_digests_map.len() {
-                self.sql_digests_map = query_result;
-                return Ok(());
-            }
-            query_result
-        } else {
-            self.run_fetch_digest_query(exec, false, &[])?
-        };
-        self.update_digest_info(&query_result);
-        Ok(())
-    }
-
-    /// Go `RetrieveGlobal`: [`Self::retrieve_local`], then the whole
-    /// cluster's summaries for the digests still unknown.
-    ///
-    /// # Errors
-    /// The summary query's failure.
-    pub fn retrieve_global(&mut self, exec: &dyn SqlExecutor) -> Result<(), SqlExecError> {
-        self.retrieve_local(exec)?;
-        // In some unit-test environments the cluster tables cannot be read,
-        // and querying them blocks for tens of seconds.
-        if tidb_failpoint::eval("github.com/pingcap/tidb/pkg/expression/sqlDigestRetrieverSkipRetrieveGlobal").is_some() {
-            return Ok(());
-        }
-        let unknown_digests: Vec<String> = self
+    /// Go `unresolvedDigests`: the digests still without a text, sorted.
+    fn unresolved_digests(&self) -> Vec<String> {
+        let mut digests: Vec<String> = self
             .sql_digests_map
             .iter()
             .filter(|(_, text)| text.is_empty())
             .map(|(digest, _)| digest.clone())
             .collect();
-        if unknown_digests.is_empty() {
+        digests.sort();
+        digests
+    }
+
+    /// Go `hasUnresolvedDigests`.
+    fn has_unresolved_digests(&self) -> bool {
+        self.sql_digests_map.values().any(String::is_empty)
+    }
+
+    /// Go `retrieveDigests`: one query of the chosen table for the digests
+    /// still unresolved.
+    fn retrieve_digests(
+        &mut self,
+        exec: &dyn SqlExecutor,
+        query_global: bool,
+        history: bool,
+    ) -> Result<(), SqlExecError> {
+        let digests = self.unresolved_digests();
+        if digests.is_empty() {
             return Ok(());
         }
-        let query_result = if self.sql_digests_map.len() <= self.fetch_all_limit {
-            self.run_fetch_digest_query(exec, true, &unknown_digests)?
-        } else {
-            self.run_fetch_digest_query(exec, true, &[])?
-        };
+        let batch_size = if self.fetch_all_limit == 0 { 512 } else { self.fetch_all_limit };
+        // Reading the table once avoids a very long WHERE IN clause. It also
+        // matters for the history table: every history query rescans all
+        // summary files, so one query per digest batch would multiply the
+        // scan cost.
+        let in_values: &[String] = if digests.len() > batch_size { &[] } else { &digests };
+        let query_result = self.run_fetch_digest_query(exec, query_global, history, in_values)?;
         self.update_digest_info(&query_result);
         Ok(())
+    }
+
+    /// Go `RetrieveLocal`: the texts this node's summaries know, the history
+    /// read only for the digests the current summary does not.
+    ///
+    /// # Errors
+    /// The summary query's failure.
+    pub fn retrieve_local(&mut self, exec: &dyn SqlExecutor) -> Result<(), SqlExecError> {
+        self.retrieve_digests(exec, false, false)?;
+        self.retrieve_digests(exec, false, true)
+    }
+
+    /// Go `RetrieveGlobal`: this node's current summary, then the cluster's
+    /// current summary before this node's history (a digest recorded on
+    /// another node then costs no local history scan), then the cluster's
+    /// history for what is still unknown.
+    ///
+    /// # Errors
+    /// The summary query's failure.
+    pub fn retrieve_global(&mut self, exec: &dyn SqlExecutor) -> Result<(), SqlExecError> {
+        self.retrieve_digests(exec, false, false)?;
+        // In some unit-test environments the cluster tables cannot be read,
+        // and querying them blocks for tens of seconds.
+        if tidb_failpoint::eval("github.com/pingcap/tidb/pkg/expression/sqlDigestRetrieverSkipRetrieveGlobal").is_some() {
+            return self.retrieve_digests(exec, false, true);
+        }
+        // Accepted trade-off (Go): a digest held only in local history pays
+        // a remote query first.
+        let global_current = self.retrieve_digests(exec, true, false);
+        self.retrieve_digests(exec, false, true)?;
+        if !self.has_unresolved_digests() {
+            return Ok(());
+        }
+        global_current?;
+        self.retrieve_digests(exec, true, true)
     }
 }
 
@@ -174,14 +204,20 @@ mod tests {
 
     use super::SqlDigestTextRetriever;
 
-    /// Go's `mockLocalData` / `mockGlobalData`, answered through the
-    /// restricted executor the retriever really calls: the statements
-    /// summary of this node, or of the cluster for the `cluster_` tables,
-    /// filtered to the `WHERE IN` digests when the query names them.
+    /// Go's `mockQuery`, answered through the restricted executor the
+    /// retriever really calls: the current or history statements summary of
+    /// this node, or of the cluster for the `cluster_` tables, filtered to
+    /// the `WHERE IN` digests when the query names them. Each query is
+    /// recorded as (global, history, digests).
+    #[derive(Default)]
     struct SummaryTables {
         local: HashMap<String, String>,
         global: HashMap<String, String>,
-        queries: Mutex<Vec<(bool, usize)>>,
+        local_history: HashMap<String, String>,
+        global_history: HashMap<String, String>,
+        /// The cluster's current summary fails to answer.
+        fail_global_current: bool,
+        queries: Mutex<Vec<(bool, bool, Vec<String>)>>,
     }
 
     impl RestrictedSqlExecutor for SummaryTables {
@@ -205,22 +241,36 @@ mod tests {
             sql: &str,
             arguments: &[SqlArg<'_>],
         ) -> tidb_sqlexec::Result<(Vec<Vec<Datum>>, Vec<ResultFieldRef>)> {
-            let global = sql.contains("cluster_statements_summary");
+            let (global, history) = match sql.split(" where ").next().unwrap() {
+                "select distinct digest, digest_text from information_schema.statements_summary" => (false, false),
+                "select distinct digest, digest_text from information_schema.statements_summary_history" => (false, true),
+                "select distinct digest, digest_text from information_schema.cluster_statements_summary" => (true, false),
+                "select distinct digest, digest_text from information_schema.cluster_statements_summary_history" => {
+                    (true, true)
+                }
+                other => panic!("unexpected query {other}"),
+            };
             assert_eq!(sql.contains(" where digest in ("), !arguments.is_empty(), "{sql}");
-            self.queries.lock().unwrap().push((global, arguments.len()));
-            let table = if global { &self.global } else { &self.local };
-            let wanted: Option<Vec<String>> = (!arguments.is_empty()).then(|| {
-                arguments
-                    .iter()
-                    .map(|argument| match argument {
-                        SqlArg::String(bytes) => String::from_utf8(bytes.to_vec()).unwrap(),
-                        _ => panic!("a digest is a string argument"),
-                    })
-                    .collect()
-            });
+            let wanted: Vec<String> = arguments
+                .iter()
+                .map(|argument| match argument {
+                    SqlArg::String(bytes) => String::from_utf8(bytes.to_vec()).unwrap(),
+                    _ => panic!("a digest is a string argument"),
+                })
+                .collect();
+            self.queries.lock().unwrap().push((global, history, wanted.clone()));
+            if self.fail_global_current && global && !history {
+                return Err("cluster summary unavailable".into());
+            }
+            let table = match (global, history) {
+                (false, false) => &self.local,
+                (false, true) => &self.local_history,
+                (true, false) => &self.global,
+                (true, true) => &self.global_history,
+            };
             let rows = table
                 .iter()
-                .filter(|(digest, _)| wanted.as_ref().is_none_or(|wanted| wanted.contains(digest)))
+                .filter(|(digest, _)| wanted.is_empty() || wanted.contains(digest))
                 .map(|(digest, text)| {
                     vec![
                         Datum::new_string_datum(digest.as_bytes().to_vec()),
@@ -236,6 +286,10 @@ mod tests {
         pairs.iter().map(|(digest, text)| ((*digest).to_owned(), (*text).to_owned())).collect()
     }
 
+    fn digests(names: &[&str]) -> Vec<String> {
+        names.iter().map(|name| (*name).to_owned()).collect()
+    }
+
     /// Go `TestSQLDigestTextRetriever`, with its mock data served by the
     /// summary tables the retriever queries.
     #[test]
@@ -243,12 +297,18 @@ mod tests {
         let tables = SummaryTables {
             local: map(&[("digest1", "text1"), ("digest2", "text2"), ("digest6", "text6")]),
             global: map(&[("digest2", "text2"), ("digest3", "text3"), ("digest4", "text4"), ("digest7", "text7")]),
-            queries: Mutex::default(),
+            global_history: map(&[("digest5", "text5")]),
+            ..SummaryTables::default()
         };
         let requested = map(&[("digest1", ""), ("digest2", ""), ("digest3", ""), ("digest4", ""), ("digest5", "")]);
         let expected_local = map(&[("digest1", "text1"), ("digest2", "text2"), ("digest3", ""), ("digest4", ""), ("digest5", "")]);
-        let expected_global =
-            map(&[("digest1", "text1"), ("digest2", "text2"), ("digest3", "text3"), ("digest4", "text4"), ("digest5", "")]);
+        let expected_global = map(&[
+            ("digest1", "text1"),
+            ("digest2", "text2"),
+            ("digest3", "text3"),
+            ("digest4", "text4"),
+            ("digest5", "text5"),
+        ]);
 
         let mut r = SqlDigestTextRetriever::new();
         r.sql_digests_map = requested.clone();
@@ -257,11 +317,7 @@ mod tests {
         r.sql_digests_map = requested.clone();
         r.retrieve_global(&tables).unwrap();
         assert_eq!(r.sql_digests_map, expected_global);
-        // Listed digests: the local query names all five, the global one the
-        // three still unknown.
-        assert_eq!(*tables.queries.lock().unwrap(), [(false, 5), (false, 5), (true, 3)]);
 
-        tables.queries.lock().unwrap().clear();
         r.fetch_all_limit = 1;
         r.sql_digests_map = requested.clone();
         r.retrieve_local(&tables).unwrap();
@@ -269,7 +325,121 @@ mod tests {
         r.sql_digests_map = requested;
         r.retrieve_global(&tables).unwrap();
         assert_eq!(r.sql_digests_map, expected_global);
-        // Past `fetchAllLimit` every query fetches all rows.
-        assert_eq!(*tables.queries.lock().unwrap(), [(false, 0), (false, 0), (true, 0)]);
+    }
+
+    /// Go `TestSQLDigestTextRetriever/current summary hit skips history`.
+    #[test]
+    fn test_sql_digest_text_retriever_current_summary_hit_skips_history() {
+        let tables = SummaryTables { local: map(&[("digest1", "text1")]), ..SummaryTables::default() };
+        let mut r = SqlDigestTextRetriever::new();
+        r.sql_digests_map = map(&[("digest1", "")]);
+        r.retrieve_local(&tables).unwrap();
+        assert!(tables.queries.lock().unwrap().iter().all(|(_, history, _)| !history));
+        assert_eq!(r.sql_digests_map, map(&[("digest1", "text1")]));
+    }
+
+    /// Go `TestSQLDigestTextRetriever/cluster current hit precedes local history`.
+    #[test]
+    fn test_sql_digest_text_retriever_cluster_current_hit_precedes_local_history() {
+        let tables = SummaryTables {
+            local: map(&[("digest1", "text1")]),
+            global: map(&[("digest3", "text3")]),
+            local_history: map(&[("digest2", "text2")]),
+            ..SummaryTables::default()
+        };
+        let mut r = SqlDigestTextRetriever::new();
+        r.sql_digests_map = map(&[("digest1", ""), ("digest2", ""), ("digest3", "")]);
+        r.retrieve_global(&tables).unwrap();
+        assert_eq!(r.sql_digests_map, map(&[("digest1", "text1"), ("digest2", "text2"), ("digest3", "text3")]));
+        assert_eq!(
+            *tables.queries.lock().unwrap(),
+            [
+                (false, false, digests(&["digest1", "digest2", "digest3"])),
+                (true, false, digests(&["digest2", "digest3"])),
+                (false, true, digests(&["digest2"])),
+            ]
+        );
+    }
+
+    /// Go `RetrieveGlobal`: a failed cluster current lookup is no error once
+    /// the local history resolves every digest, and is returned otherwise
+    /// (before the cluster history is read).
+    #[test]
+    fn test_sql_digest_text_retriever_cluster_current_failure() {
+        let tables = SummaryTables {
+            local_history: map(&[("digest1", "text1")]),
+            fail_global_current: true,
+            ..SummaryTables::default()
+        };
+        let mut r = SqlDigestTextRetriever::new();
+        r.sql_digests_map = map(&[("digest1", "")]);
+        r.retrieve_global(&tables).unwrap();
+        assert_eq!(r.sql_digests_map, map(&[("digest1", "text1")]));
+
+        tables.queries.lock().unwrap().clear();
+        r.sql_digests_map = map(&[("digest1", ""), ("digest2", "")]);
+        let error = r.retrieve_global(&tables).unwrap_err();
+        assert!(error.to_string().contains("cluster summary unavailable"), "{error}");
+        assert!(!tables.queries.lock().unwrap().iter().any(|(global, history, _)| *global && *history));
+    }
+
+    /// Go `TestSQLDigestTextRetriever/unrequested results do not replace requested digests`.
+    #[test]
+    fn test_sql_digest_text_retriever_unrequested_results_do_not_replace_requested_digests() {
+        struct Unrequested;
+        impl RestrictedSqlExecutor for Unrequested {
+            fn parse_with_params(&self, _: &dyn ExecutionContext, _: &str, _: &[SqlArg<'_>]) -> tidb_sqlexec::Result<Stmt> {
+                unreachable!()
+            }
+            fn exec_restricted_stmt(
+                &self,
+                _: &dyn ExecutionContext,
+                _: &Stmt,
+                _: &[OptionFuncAlias],
+            ) -> tidb_sqlexec::Result<(Vec<Vec<Datum>>, Vec<ResultFieldRef>)> {
+                unreachable!()
+            }
+            fn exec_restricted_sql(
+                &self,
+                _: &dyn ExecutionContext,
+                _: &[OptionFuncAlias],
+                _: &str,
+                _: &[SqlArg<'_>],
+            ) -> tidb_sqlexec::Result<(Vec<Vec<Datum>>, Vec<ResultFieldRef>)> {
+                Ok((
+                    vec![vec![
+                        Datum::new_string_datum(b"unrequested".to_vec()),
+                        Datum::new_string_datum(b"some SQL".to_vec()),
+                    ]],
+                    Vec::new(),
+                ))
+            }
+        }
+        let mut r = SqlDigestTextRetriever::new();
+        r.sql_digests_map = map(&[("requested", "")]);
+        r.retrieve_local(&Unrequested).unwrap();
+        assert_eq!(r.sql_digests_map, map(&[("requested", "")]));
+    }
+
+    /// Go `TestSQLDigestTextRetriever/large history lookup scans history once`.
+    #[test]
+    fn test_sql_digest_text_retriever_large_history_lookup_scans_history_once() {
+        let tables = SummaryTables::default();
+        let mut r = SqlDigestTextRetriever::new();
+        r.fetch_all_limit = 2;
+        r.sql_digests_map = map(&[("digest1", ""), ("digest2", ""), ("digest3", ""), ("digest4", ""), ("digest5", "")]);
+        r.retrieve_local(&tables).unwrap();
+        // Every history query rescans all summary files, so the number of
+        // history queries equals the number of history scans: more digests
+        // than the limit fetch all rows in one unfiltered query.
+        let history_calls: Vec<usize> = tables
+            .queries
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(_, history, _)| *history)
+            .map(|(_, _, digests)| digests.len())
+            .collect();
+        assert_eq!(history_calls, [0]);
     }
 }

@@ -858,21 +858,26 @@ mod tests {
         }
     }
 
-    /// Go `SQLDigestTextRetriever` as Go's own tests drive it
-    /// (`mockLocalData` / `mockGlobalData` answering `runMockQuery`): the
-    /// texts come from the restricted statements `runFetchDigestQuery`
-    /// issues, the local summaries first and the cluster's for what remains.
+    /// Go `SQLDigestTextRetriever` as Go's own tests drive it (`mockQuery`
+    /// answering `runMockQuery`): the texts come from the restricted
+    /// statements `runFetchDigestQuery` issues, the local current summary
+    /// first, then the cluster's, then the histories for what remains.
     #[test]
     fn digest_text_retrieval_runs_gos_restricted_queries() {
         use std::collections::HashMap;
         use std::sync::atomic::AtomicBool;
         use std::sync::Mutex;
-        const LOCAL: &str = "select digest, digest_text from information_schema.statements_summary \
-                             union distinct select digest, digest_text from \
-                             information_schema.statements_summary_history";
-        const GLOBAL: &str = "select digest, digest_text from information_schema.cluster_statements_summary \
-                              union distinct select digest, digest_text from \
-                              information_schema.cluster_statements_summary_history";
+        const LOCAL: &str = "select distinct digest, digest_text from information_schema.statements_summary";
+        const GLOBAL: &str =
+            "select distinct digest, digest_text from information_schema.cluster_statements_summary";
+        const LOCAL_HISTORY: &str =
+            "select distinct digest, digest_text from information_schema.statements_summary_history";
+        const GLOBAL_HISTORY: &str =
+            "select distinct digest, digest_text from information_schema.cluster_statements_summary_history";
+        // The table a query reads (its text before the digest filter).
+        fn table(sql: &str) -> &str {
+            sql.split(" where ").next().unwrap()
+        }
         struct DigestSql {
             local: HashMap<String, String>,
             global: HashMap<String, String>,
@@ -927,7 +932,15 @@ mod tests {
                 if global && self.fail.load(Ordering::SeqCst) {
                     return Err("digest peer failure".into());
                 }
-                let data = if global { &self.global } else { &self.local };
+                // The histories hold nothing here.
+                let empty = HashMap::new();
+                let data = if table(sql).ends_with("_history") {
+                    &empty
+                } else if global {
+                    &self.global
+                } else {
+                    &self.local
+                };
                 // Go `runMockQuery`.
                 let rows = if in_values.is_empty() {
                     data.iter().collect::<Vec<_>>()
@@ -1010,17 +1023,19 @@ mod tests {
                 text
             );
         }
-        // `RetrieveLocal` lists every digest; `RetrieveGlobal` the unknown.
-        let sorted = |mut values: Vec<String>| {
-            values.sort();
-            values
-        };
+        // The local current summary lists every digest, the cluster's the
+        // unknown, then each history the still unknown (sorted, as Go's
+        // `unresolvedDigests`).
         let queries = sql.queries();
-        assert_eq!(queries.len(), 2);
+        assert_eq!(queries.len(), 4);
         assert_eq!(queries[0].0, format!("{LOCAL} where digest in (%?,%?,%?)"));
-        assert_eq!(sorted(queries[0].1.clone()), ["c1c2", "d1d2", "e1e2"]);
+        assert_eq!(queries[0].1, ["c1c2", "d1d2", "e1e2"]);
         assert_eq!(queries[1].0, format!("{GLOBAL} where digest in (%?,%?)"));
-        assert_eq!(sorted(queries[1].1.clone()), ["d1d2", "e1e2"]);
+        assert_eq!(queries[1].1, ["d1d2", "e1e2"]);
+        assert_eq!(queries[2].0, format!("{LOCAL_HISTORY} where digest in (%?)"));
+        assert_eq!(queries[2].1, ["e1e2"]);
+        assert_eq!(queries[3].0, format!("{GLOBAL_HISTORY} where digest in (%?)"));
+        assert_eq!(queries[3].1, ["e1e2"]);
         // A peer's text-only scan retrieves globally on the receiving node.
         {
             use tidb_deadlockhistory::{
@@ -1148,9 +1163,12 @@ mod tests {
             };
             assert_eq!(rows.len(), size);
             let queries = sql.queries();
-            assert_eq!(queries.len(), before + 2);
-            for (query, prefix) in queries[before..].iter().zip([LOCAL, GLOBAL]) {
-                assert!(query.0.starts_with(prefix));
+            assert_eq!(queries.len(), before + 4);
+            for (query, expected) in queries[before..]
+                .iter()
+                .zip([LOCAL, GLOBAL, LOCAL_HISTORY, GLOBAL_HISTORY])
+            {
+                assert_eq!(table(&query.0), expected);
                 assert_eq!(query.1.len(), if size <= 512 { size } else { 0 });
                 assert_eq!(query.0.contains(" where digest in ("), size <= 512);
             }
