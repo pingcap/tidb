@@ -31164,3 +31164,47 @@ fn multi_table_update_tracks_rows_by_partition_after_exchange() {
     update(&mut tk, "update tp t1, tp t2 set t1.b = 100, t2.c = 200 where t1.a = 1 and t2.a = 11");
     assert_eq!(rows_of(&mut tk, "select * from tp order by a"), [["1", "100", "1"], ["11", "11", "200"]]);
 }
+
+/// Go `TestCorrelatedColumnPathNotPrunedByRisk` (Go master 38d990578c4):
+/// idx_a is reachable only through the correlated equality, so it starts
+/// from a full range; its correlated estimate must carry matching min/max
+/// row counts, or skyline pruning drops it for phantom risk and idx_b wins.
+#[test]
+fn test_correlated_column_path_not_pruned_by_risk() {
+    let (stack, _users) =
+        cop_backed_stack_with_stats_lease(Some(tidb_domain_core::node_config::StatsLease::Zero));
+    let mut tk = stack.factory.open_session(session_context(942)).unwrap();
+    rows(&mut tk, "use test");
+    rows(&mut tk, "set @@tidb_enable_collect_execution_info=0");
+    rows(&mut tk, "create table t_outer (id char(36) primary key)");
+    rows(&mut tk, "insert into t_outer values (lpad(5,36,'0')), (lpad(7,36,'0'))");
+    rows(
+        &mut tk,
+        "create table t (id char(36) primary key, a char(36) default null, b char(36) not null, \
+         v char(36) not null, key idx_a (a), key idx_b (b))",
+    );
+    let values = (1..=1000)
+        .map(|i| format!("(lpad({i},36,'0'),lpad({i},36,'0'),lpad({},36,'0'),lpad({i},36,'0'))", i % 20))
+        .collect::<Vec<_>>()
+        .join(",");
+    rows(&mut tk, &format!("insert into t values {values}"));
+    rows(&mut tk, "analyze table t");
+    rows(&mut tk, "analyze table t_outer");
+    let query = "select o.id, (select t.v from t where t.a = o.id and t.b = lpad(5,36,'0') limit 1) from t_outer o";
+    let plan = displayed(rows(&mut tk, &format!("explain format = 'brief' {query}")))
+        .into_iter()
+        .map(|row| row.join(" "))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(plan.contains("index:idx_a(a) range: decided by [eq(test.t.a, test.t_outer.id)]"), "{plan}");
+    assert!(!plan.contains("index:idx_b(b)"), "{plan}");
+    let mut result = displayed(rows(&mut tk, query));
+    result.sort();
+    assert_eq!(
+        result,
+        [
+            ["000000000000000000000000000000000005", "000000000000000000000000000000000005"],
+            ["000000000000000000000000000000000007", "NULL"],
+        ]
+    );
+}

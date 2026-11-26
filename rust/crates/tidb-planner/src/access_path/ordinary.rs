@@ -122,6 +122,31 @@ pub(crate) fn fill_index_path(
     Ok(())
 }
 
+/// Go `scaleCorColCountAfterAccess`: scales the min/max row estimates by the
+/// same factor the correlated equalities applied to CountAfterAccess. Those
+/// equalities cannot become ranges at plan time, so CountAfterAccess is
+/// re-derived by dividing by each correlated column's NDV while the min/max
+/// still describe the pre-split ranges; left alone, a path that started from
+/// a full range keeps a table-sized max next to a one-row estimate, and
+/// skyline pruning's risk comparison drops it before cost is considered.
+/// Scaling rather than collapsing keeps the spread the other predicates
+/// contributed.
+fn scale_cor_col_count_after_access(
+    count_after_access: f64,
+    min_count_after_access: &mut f64,
+    max_count_after_access: &mut f64,
+    count_before_split: f64,
+) {
+    if count_before_split <= 0.0 {
+        *min_count_after_access = count_after_access;
+        *max_count_after_access = count_after_access;
+        return;
+    }
+    let scale = count_after_access / count_before_split;
+    *min_count_after_access *= scale;
+    *max_count_after_access *= scale;
+}
+
 /// Go `deriveIndexPathStats` / `deriveCommonHandleTablePathStats`: when every
 /// access condition is an equality or IN, `SplitCorColAccessCondFromFilters`
 /// extends the access prefix with `index_col = correlated_col` filters (and
@@ -230,10 +255,17 @@ pub(crate) fn derive_index_path_stats(
     let estimate = Some(derived)
         .map(|mut estimate| {
             if !correlated_columns.is_empty() {
+                let count_before_split = estimate.est;
                 estimate.est = correlated_access_count_after_access(
                     source,
                     estimate.est,
                     &correlated_columns,
+                );
+                scale_cor_col_count_after_access(
+                    estimate.est,
+                    &mut estimate.min_est,
+                    &mut estimate.max_est,
+                    count_before_split,
                 );
             }
             if let (Some(filtered), Some(table)) =
@@ -493,18 +525,28 @@ pub(crate) fn fill_table_path(
             None => Some(estimate_int_table_path(source, path, context)?),
         };
     }
+    let mut count_before_split = None;
     if path.correlated_access_count > 0 {
         let first = path.eq_or_in_cond_count;
         let columns = path.idx_cols[first..first + path.correlated_access_count]
             .iter()
             .map(|(column, _)| column.clone())
             .collect::<Vec<_>>();
+        count_before_split = count_after_access;
         count_after_access = count_after_access
             .map(|count| correlated_access_count_after_access(source, count, &columns));
     }
     let estimate = common_estimate;
     let mut min_count_after_access = estimate.map_or(0.0, |estimate| estimate.min_est);
     let mut max_count_after_access = estimate.map_or(0.0, |estimate| estimate.max_est);
+    if let (Some(before), Some(count)) = (count_before_split, count_after_access) {
+        scale_cor_col_count_after_access(
+            count,
+            &mut min_count_after_access,
+            &mut max_count_after_access,
+            before,
+        );
+    }
     if let (Some(count), Some(filtered), Some(table)) = (
         count_after_access.as_mut(),
         source.base.base.stats_info(),
