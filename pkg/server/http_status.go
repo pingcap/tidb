@@ -694,7 +694,7 @@ func (s *Server) startStatusServerAndRPCServer(serverMux *http.ServeMux) {
 	m := cmux.New(s.statusListener)
 	// Match connections in order:
 	// First HTTP, and otherwise grpc.
-	httpL := m.Match(cmux.HTTP1Fast())
+	httpL := m.Match(cmux.HTTP1Fast(http.MethodPatch))
 	grpcL := m.Match(cmux.Any())
 
 	statusServer := &http.Server{Addr: s.statusAddr, Handler: util2.NewCorsHandler(serverMux, s.cfg)}
