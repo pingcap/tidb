@@ -17,15 +17,14 @@
 //   - The stored format, which a geometry column holds: a version byte, then little-endian
 //     EWKB (WKB with Z, M and SRID flags) with the SRID flag always set.
 //   - The bare value, which a bare SELECT returns: a 4-byte little-endian SRID, then
-//     little-endian WKB with EWKB's Z and M flags and without its SRID flag. A 2D value
-//     without an empty geometry other than a GEOMETRYCOLLECTION is in MySQL's binary
-//     format, and every other value is in that format extended with the Z and M flags.
+//     little-endian EWKB without the SRID flag. A 2D value whose only empty geometry is a
+//     GEOMETRYCOLLECTION is thus in MySQL's binary format, and every other value is in
+//     that format extended with the Z and M flags.
 //
-// Both hold the same coordinates in the same order below the root header, so a conversion
-// rewrites only the header. Bytes from a client are checked against every rule of the
-// format once, by validate; a stored value, checked when it was written, is converted from
-// its root header alone. validate bounds nesting at MaxDepth, consumes the input exactly
-// and checks counts against the input before allocating.
+// Both hold the seven OGC geometry types, type codes 1 to 7, and the same coordinates in
+// the same order below the root header, so a conversion rewrites only the root header.
+// Bytes from a client are checked against every rule of the format once, by validate; a
+// stored value, checked when it was written, is converted from its root header alone.
 package geocodec
 
 import (
@@ -51,8 +50,8 @@ var (
 	// ErrUnsupportedVersion means a stored value starts with an unknown version byte.
 	ErrUnsupportedVersion = errors.New("unsupported geometry storage format version")
 
-	// errBigEndianStored is the ErrInvalid of a big-endian geometry in a stored value, which
-	// every writer writes little-endian.
+	// errBigEndianStored is the ErrInvalid of a stored value whose root is big-endian: every
+	// writer writes the stored format little-endian throughout.
 	errBigEndianStored = fmt.Errorf("%w: big-endian geometry in a stored value", ErrInvalid)
 	// errStoredWithoutSRID is the ErrInvalid of a stored value whose root has no SRID flag.
 	errStoredWithoutSRID = fmt.Errorf("%w: stored geometry without the SRID flag", ErrInvalid)
@@ -114,21 +113,25 @@ func (d dims) size() int {
 	return 24
 }
 
-// dialect selects which WKB variant validate accepts.
+// dialect selects which variant of EWKB validate accepts. Both have the seven OGC types
+// only, so a type word is a type code from 1 to 7 with EWKB's Z, M and SRID flags; an
+// ISO type code, such as 1001 for POINT Z, is an unknown type.
 type dialect int
 
 const (
-	// dialectEWKB is the stored-format payload: either byte order, EWKB flags for Z, M
-	// and a root SRID.
+	// dialectEWKB is EWKB as a client may send it: either byte order in each geometry, and
+	// the SRID flag, if any, only at the root.
 	dialectEWKB dialect = iota
-	// dialectBare is the WKB inside the bare value: little-endian, with EWKB's Z and M
-	// flags but never its SRID flag, since the SRID is the 4-byte prefix.
+	// dialectBare is the EWKB inside the bare value: little-endian, without the SRID
+	// flag, since the SRID is the value's first 4 bytes, also little-endian.
 	dialectBare
 )
 
-// BareToStored converts the bare value, MySQL's binary format or that format extended
-// with Z and M, into the stored format. It checks the WKB framing, not MySQL's structure
-// rules such as a linestring's minimum of two points.
+// BareToStored converts a bare value into the stored format: b is a 4-byte little-endian
+// SRID, then little-endian EWKB without the SRID flag, MySQL's binary format or that
+// format extended with the Z and M flags. It checks the EWKB against every rule validate
+// applies, but not MySQL's structure rules such as a linestring's minimum of two points,
+// and then rewrites only the root header.
 func BareToStored(b []byte) (stored []byte, srid uint32, err error) {
 	if len(b) < 4 {
 		return nil, 0, ErrInvalid
@@ -147,8 +150,10 @@ func BareToStored(b []byte) (stored []byte, srid uint32, err error) {
 }
 
 // StoredToBare converts a stored value into the bare value, rewriting only the root
-// header: the SRID moves to the 4-byte prefix and the SRID flag is cleared, while the Z and
-// M flags stay. The body is copied as it is, since it was checked when it was written.
+// header: the SRID moves to a 4-byte little-endian prefix and the SRID flag is cleared,
+// while the Z and M flags stay. The stored value is little-endian, as every writer writes
+// it: Header refuses a big-endian root, and the body, checked when it was written, is
+// copied as it is.
 func StoredToBare(stored []byte) ([]byte, error) {
 	srid, _, err := Header(stored)
 	if err != nil {
@@ -165,14 +170,16 @@ func StoredToBare(stored []byte) ([]byte, error) {
 	return append(out, body...), nil
 }
 
-// Header returns a stored value's SRID and geometry type without parsing its body.
+// Header returns a stored value's SRID and geometry type from its root header, which must
+// be little-endian and carry the SRID flag, without reading its body.
 func Header(stored []byte) (srid uint32, typ Type, err error) {
 	payload, err := payloadOf(stored)
 	if err != nil {
 		return 0, 0, err
 	}
 	c := cursor{buf: payload}
-	// payloadOf has checked that the root is not big-endian and has the SRID flag.
+	// payloadOf has refused a big-endian root and one without the SRID flag; an unknown
+	// byte order or a root too short is refused here.
 	if _, err := c.byteOrder(); err != nil {
 		return 0, 0, err
 	}
@@ -191,8 +198,10 @@ func Header(stored []byte) (srid uint32, typ Type, err error) {
 }
 
 // payloadOf returns a stored value's EWKB, whose root must be little-endian and carry the
-// SRID flag, as every writer writes it. A root too short or of an unknown byte order is
-// left to the walk to report.
+// SRID flag, as every writer writes it: a big-endian root is errBigEndianStored and a root
+// without the flag errStoredWithoutSRID. It reads nothing below the root's type word, and
+// leaves a root too short or of an unknown byte order to the caller's read of the root
+// header to report.
 func payloadOf(stored []byte) ([]byte, error) {
 	if len(stored) == 0 {
 		return nil, ErrInvalid
@@ -273,7 +282,7 @@ func bitsAt(b []byte, order byte) uint64 {
 }
 
 // splitType splits an EWKB type word into the geometry type, the coordinates of its
-// positions, and whether an SRID follows; ok is false for an unknown type code.
+// positions, and whether an SRID follows; ok is false for a type code other than 1 to 7.
 func splitType(word uint32) (typ Type, d dims, hasSRID, ok bool) {
 	typ = Type(word &^ ewkbFlags)
 	if word&ewkbZ != 0 {
@@ -298,8 +307,11 @@ func memberTypeOf(typ Type) Type {
 	return anyType
 }
 
-// validate checks b, WKB in dialect d from an untrusted source, against every rule of the
-// format, building nothing and allocating nothing.
+// validate checks b, EWKB in dialect d from an untrusted source, against every rule of the
+// format, building nothing and allocating nothing: the dialect's byte order and SRID flag,
+// type codes 1 to 7, each member of the type its parent requires and with its parent's Z
+// and M, finite coordinates except a POINT EMPTY's NaNs, at least one point in each ring,
+// nesting at most MaxDepth, counts that fit in the input, and nothing after the geometry.
 func validate(b []byte, d dialect) error {
 	v := validator{c: cursor{buf: b}, dialect: d}
 	if err := v.geometry(1, anyType, dimsXY); err != nil {
@@ -368,10 +380,10 @@ func (v *validator) geometry(depth int, want Type, parentDims dims) error {
 	return nil
 }
 
-// point checks a point's coordinates: all finite, or all NaN. A point has no count to
-// write as 0, as the other empty geometries do, so EWKB writes POINT EMPTY as NaN
-// coordinates, as PostGIS and GEOS do, and so does the bare value. MySQL's format has no
-// POINT EMPTY.
+// point checks a point's coordinates: all finite, or all NaN, which is POINT EMPTY. A
+// point has no count to write as 0, as the other empty geometries do, so EWKB writes POINT
+// EMPTY as NaN coordinates, as PostGIS and GEOS do, and so does the bare value. MySQL's
+// format has no POINT EMPTY.
 func (v *validator) point(order byte, size int) error {
 	coords, err := v.c.next(size)
 	if err != nil {
@@ -405,7 +417,8 @@ func (v *validator) sequence(order byte, size int) (int, error) {
 	return n, nil
 }
 
-// polygon checks a polygon: rings of at least one point each.
+// polygon checks a polygon: rings of at least one point each, or none, which is POLYGON
+// EMPTY.
 func (v *validator) polygon(order byte, size int) error {
 	n, err := v.c.count(order, 4)
 	if err != nil {

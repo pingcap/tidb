@@ -144,7 +144,7 @@ func TestStoredLayout(t *testing.T) {
 		0:    "01 01 01000020 00000000 000000000000F03F 0000000000000040",
 		4326: "01 01 01000020 E6100000 000000000000F03F 0000000000000040",
 	} {
-		s, _, err := BareToStored(mysqlOf(srid, point12))
+		s, _, err := BareToStored(bareOf(srid, point12))
 		require.NoError(t, err)
 		require.Equal(t, mustHex(t, h), s)
 	}
@@ -340,7 +340,7 @@ func TestBareFrame(t *testing.T) {
 		s := stored(4326, v)
 		bare, err := StoredToBare(s)
 		require.NoError(t, err, "%X", s)
-		require.Equal(t, mysqlOf(4326, v), bare)
+		require.Equal(t, bareOf(4326, v), bare)
 		back, srid, err := BareToStored(bare)
 		require.NoError(t, err, "%X", bare)
 		require.Equal(t, s, back)
@@ -351,7 +351,7 @@ func TestBareFrame(t *testing.T) {
 	// A POINT EMPTY of another NaN reads back as it was written.
 	for _, nan := range nanBits {
 		p := le(TypePoint, dimsXYM, coords(math.Float64frombits(nan), math.Float64frombits(nan), math.Float64frombits(nan)))
-		s, _, err := BareToStored(mysqlOf(0, p))
+		s, _, err := BareToStored(bareOf(0, p))
 		require.NoError(t, err, "%X", p)
 		require.Equal(t, stored(0, p), s)
 	}
@@ -360,8 +360,8 @@ func TestBareFrame(t *testing.T) {
 	for _, c := range []struct {
 		bare, stored []byte
 	}{
-		{mysqlChain(MaxDepth, emptyPoint(dimsXY)), storedChain(MaxDepth, 0, emptyPoint(dimsXY))},
-		{mysqlChain(MaxDepth, line(dimsXY)), storedChain(MaxDepth, 0, line(dimsXY))},
+		{bareChain(MaxDepth, emptyPoint(dimsXY)), storedChain(MaxDepth, 0, emptyPoint(dimsXY))},
+		{bareChain(MaxDepth, line(dimsXY)), storedChain(MaxDepth, 0, line(dimsXY))},
 	} {
 		s, _, err := BareToStored(c.bare)
 		require.NoError(t, err)
@@ -376,34 +376,34 @@ func TestDepthBound(t *testing.T) {
 	// One bound applies to both directions, so a value that is stored converts back.
 	garbage := bytes.Repeat([]byte{0xff}, minGeometrySize)
 	for _, c := range []struct {
-		mysql  []byte
+		bare   []byte
 		stored []byte
 	}{
 		{append(make([]byte, 4), nestedCollections(MaxDepth)...), storedChain(MaxDepth, 0, nestedCollections(1))},
-		{mysqlChain(MaxDepth, point12), storedChain(MaxDepth, 0, point12)},
+		{bareChain(MaxDepth, point12), storedChain(MaxDepth, 0, point12)},
 	} {
-		s, _, err := BareToStored(c.mysql)
+		s, _, err := BareToStored(c.bare)
 		require.NoError(t, err)
 		require.Equal(t, c.stored, s)
 		back, err := StoredToBare(s)
 		require.NoError(t, err)
-		require.Equal(t, c.mysql, back)
+		require.Equal(t, c.bare, back)
 		checkStoredToBare(t, s)
 	}
 
 	for _, c := range []struct {
-		mysql  []byte
+		bare   []byte
 		stored []byte
 	}{
 		{append(make([]byte, 4), nestedCollections(MaxDepth+1)...), storedChain(MaxDepth+1, 0, nestedCollections(1))},
-		{mysqlChain(MaxDepth+1, point12), storedChain(MaxDepth+1, 0, point12)},
+		{bareChain(MaxDepth+1, point12), storedChain(MaxDepth+1, 0, point12)},
 		// Depth is checked before anything else in a geometry. Its parent's count still
 		// needs room for the smallest geometry.
-		{mysqlChain(MaxDepth+1, garbage), storedChain(MaxDepth+1, 0, garbage)},
+		{bareChain(MaxDepth+1, garbage), storedChain(MaxDepth+1, 0, garbage)},
 		{nil, storedChain(MaxDepth+1, ewkbZ, mustHex(t, "01 01000080 000000000000F87F 000000000000F87F 000000000000F87F"))},
 	} {
-		if c.mysql != nil {
-			_, _, err := BareToStored(c.mysql)
+		if c.bare != nil {
+			_, _, err := BareToStored(c.bare)
 			require.ErrorIs(t, err, ErrTooDeep)
 		}
 		require.ErrorIs(t, validate(c.stored[1:], dialectEWKB), ErrTooDeep)
@@ -424,7 +424,7 @@ func TestDepthBound(t *testing.T) {
 	deepFirst := append(append(append([]byte{}, root...), deep...), bad...)
 	require.ErrorIs(t, validate(badFirst[1:], dialectEWKB), ErrInvalid)
 	require.ErrorIs(t, validate(deepFirst[1:], dialectEWKB), ErrTooDeep)
-	_, _, err := BareToStored(mysqlOf(0, badFirst[2:]))
+	_, _, err := BareToStored(bareOf(0, badFirst[2:]))
 	require.ErrorIs(t, err, ErrInvalid)
 }
 
@@ -454,15 +454,15 @@ func TestTruncatedAndOverLong(t *testing.T) {
 			checkStoredToBare(t, long)
 		}
 
-		mysql, err := StoredToBare(s)
+		bare, err := StoredToBare(s)
 		require.NoError(t, err, "%X", s)
-		for n := range mysql {
-			_, _, err := BareToStored(mysql[:n])
-			require.ErrorIs(t, err, ErrInvalid, "%X cut to %d", mysql, n)
+		for n := range bare {
+			_, _, err := BareToStored(bare[:n])
+			require.ErrorIs(t, err, ErrInvalid, "%X cut to %d", bare, n)
 		}
-		for _, extra := range [][]byte{{0}, {1}, mysql[4:]} {
-			_, _, err := BareToStored(append(append([]byte{}, mysql...), extra...))
-			require.ErrorIs(t, err, ErrInvalid, "%X", mysql)
+		for _, extra := range [][]byte{{0}, {1}, bare[4:]} {
+			_, _, err := BareToStored(append(append([]byte{}, bare...), extra...))
+			require.ErrorIs(t, err, ErrInvalid, "%X", bare)
 		}
 	}
 }
@@ -574,7 +574,7 @@ func TestGenerated(t *testing.T) {
 
 					bare, err := StoredToBare(s)
 					require.NoError(t, err, "%X", s)
-					require.Equal(t, mysqlOf(srid, wkb), bare)
+					require.Equal(t, bareOf(srid, wkb), bare)
 					again, gotSRID, err := BareToStored(bare)
 					if hasBig {
 						require.ErrorIs(t, err, ErrInvalid, "%X", bare)
@@ -608,7 +608,7 @@ func TestGeneratedMutations(t *testing.T) {
 				for _, v := range append(values, s[pos]^byte(1+rnd.IntN(255))) {
 					b[pos] = v
 					checkStoredToBare(t, b)
-					m := mysqlOf(0, b[1:])
+					m := bareOf(0, b[1:])
 					if got, _, err := BareToStored(m); err == nil {
 						back, err := StoredToBare(got)
 						require.NoError(t, err, "%X", m)
@@ -632,7 +632,7 @@ func TestNestedCountsAllocs(t *testing.T) {
 		b = binary.LittleEndian.AppendUint32(b, uint32((cap(b)-len(b)-4)/minGeometrySize))
 	}
 	b = append(b, make([]byte, pad)...)
-	s := storedFromMySQL(b)
+	s := storedFromBare(b)
 	_, _, err := BareToStored(b)
 	require.ErrorIs(t, err, ErrInvalid)
 	require.ErrorIs(t, validate(s[1:], dialectEWKB), ErrInvalid)
@@ -661,7 +661,7 @@ func TestStoredToBareAllocs(t *testing.T) {
 // converts allocates its result, and a value that does not convert allocates nothing,
 // whatever its counts claim.
 func TestIngestAllocs(t *testing.T) {
-	deep := mysqlChain(MaxDepth-1, multiPointWKB(10000))
+	deep := bareChain(MaxDepth-1, multiPointWKB(10000))
 	for _, c := range []struct {
 		b      []byte
 		allocs float64
@@ -677,10 +677,10 @@ func TestIngestAllocs(t *testing.T) {
 
 func FuzzBareToStored(f *testing.F) {
 	f.Add(mustHex(f, "E6100000 01 01000000 0000000000000040 000000000000F03F"))
-	f.Add(mysqlOf(0, collectionOf(TypeGeometryCollection, dimsXY, triangle)))
-	f.Add(mysqlOf(0, collectionOf(TypeGeometryCollection, dimsXY, point12,
+	f.Add(bareOf(0, collectionOf(TypeGeometryCollection, dimsXY, triangle)))
+	f.Add(bareOf(0, collectionOf(TypeGeometryCollection, dimsXY, point12,
 		collectionOf(TypeMultiPoint, dimsXY, le(TypePoint, dimsXY, coords(3, 4))))))
-	f.Add(mysqlOf(4326, collectionOf(TypeMultiPoint, dimsXYM, le(TypePoint, dimsXYM, coords(1, 2, 3)), emptyPoint(dimsXYM))))
+	f.Add(bareOf(4326, collectionOf(TypeMultiPoint, dimsXYM, le(TypePoint, dimsXYM, coords(1, 2, 3)), emptyPoint(dimsXYM))))
 	f.Fuzz(func(t *testing.T, b []byte) {
 		s, _, err := BareToStored(b)
 		if err != nil {
