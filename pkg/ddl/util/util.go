@@ -54,6 +54,8 @@ const (
 	updateDeleteRangeSQL         = `UPDATE mysql.gc_delete_range SET start_key = %? WHERE job_id = %? AND element_id = %? AND start_key = %?`
 	deleteDoneRecordSQL          = `DELETE FROM mysql.gc_delete_range_done WHERE job_id = %? AND element_id = %?`
 	loadGlobalVarsSQL            = `SELECT HIGH_PRIORITY variable_name, variable_value from mysql.global_variables where variable_name in (` // + nameList + ")"
+	// DDLOwnerKey is the ddl owner path that is saved to etcd.
+	DDLOwnerKey = "/tidb/ddl/fg/owner"
 	// DDLAllSchemaVersions is the path on etcd that is used to store all servers current schema versions.
 	DDLAllSchemaVersions = "/tidb/ddl/all_schema_versions"
 	// DDLAllSchemaVersionsByJob is the path on etcd that is used to store all servers current schema versions.
@@ -66,6 +68,9 @@ const (
 	AddingDDLJobNotifyKey = "/tidb/ddl/add_ddl_job_general"
 	// ServerGlobalState is the path on etcd that is used to store the server global state.
 	ServerGlobalState = "/tidb/server/global_state"
+	// SysVarCacheKey is the path on etcd that is used to notify servers to
+	// reload their sysvar caches.
+	SysVarCacheKey = "/tidb/sysvars"
 	// SessionTTL is the etcd session's TTL in seconds.
 	SessionTTL = 90
 )

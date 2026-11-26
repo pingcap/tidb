@@ -18,10 +18,30 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/stretchr/testify/require"
 )
+
+type parserDriverInPlaceVisitor struct {
+	enter func(ast.Node) bool
+	leave func(ast.Node) bool
+}
+
+func (v *parserDriverInPlaceVisitor) Enter(node ast.Node) bool {
+	if v.enter == nil {
+		return false
+	}
+	return v.enter(node)
+}
+
+func (v *parserDriverInPlaceVisitor) Leave(node ast.Node) bool {
+	if v.leave == nil {
+		return true
+	}
+	return v.leave(node)
+}
 
 func TestValueExprRestore(t *testing.T) {
 	tests := []struct {
@@ -52,6 +72,45 @@ func TestValueExprRestore(t *testing.T) {
 			require.Equalf(t, test.expect, sb.String(), "datum: %#v", test.datum)
 		})
 	}
+
+	t.Run("walk", func(t *testing.T) {
+		testCases := []struct {
+			name string
+			node ast.Node
+		}{
+			{name: "value_expr", node: &ValueExpr{}},
+			{name: "param_marker_expr", node: &ParamMarkerExpr{}},
+		}
+
+		for _, testCase := range testCases {
+			t.Run(testCase.name, func(t *testing.T) {
+				var events []string
+				visitor := &parserDriverInPlaceVisitor{
+					enter: func(node ast.Node) bool {
+						require.Same(t, testCase.node, node)
+						events = append(events, "enter")
+						return true
+					},
+					leave: func(node ast.Node) bool {
+						require.Same(t, testCase.node, node)
+						events = append(events, "leave")
+						return true
+					},
+				}
+
+				require.True(t, ast.Walk(testCase.node, visitor))
+				require.Equal(t, []string{"enter", "leave"}, events)
+
+				allocationVisitor := &parserDriverInPlaceVisitor{}
+				var ok bool
+				allocations := testing.AllocsPerRun(100, func() {
+					ok = ast.Walk(testCase.node, allocationVisitor)
+				})
+				require.True(t, ok)
+				require.Zero(t, allocations)
+			})
+		}
+	})
 }
 
 func TestValueExprFormat(t *testing.T) {

@@ -104,6 +104,79 @@ func (s *SchemaChangeEvent) GetCreateTableInfo() *model.TableInfo {
 	return s.inner.TableInfo
 }
 
+// NewAlterMaterializedViewRefreshEvent creates a schema change event for an MV refresh metadata change.
+func NewAlterMaterializedViewRefreshEvent(tableInfo, oldTableInfo *model.TableInfo) *SchemaChangeEvent {
+	return &SchemaChangeEvent{inner: &jsonSchemaChangeEvent{
+		Tp: model.ActionAlterMaterializedViewRefresh, TableInfo: tableInfo, OldTableInfo: oldTableInfo,
+	}}
+}
+
+// GetAlterMaterializedViewRefreshInfo returns the changed MV table info.
+func (s *SchemaChangeEvent) GetAlterMaterializedViewRefreshInfo() *model.TableInfo {
+	intest.Assert(s.inner.Tp == model.ActionAlterMaterializedViewRefresh)
+	return s.inner.TableInfo
+}
+
+// NewAlterMaterializedViewAttributesEvent creates a schema change event for an MV attributes change.
+func NewAlterMaterializedViewAttributesEvent(tableInfo, oldTableInfo *model.TableInfo) *SchemaChangeEvent {
+	return &SchemaChangeEvent{inner: &jsonSchemaChangeEvent{
+		Tp: model.ActionAlterMaterializedViewAttributes, TableInfo: tableInfo, OldTableInfo: oldTableInfo,
+	}}
+}
+
+// GetAlterMaterializedViewAttributesInfo returns the changed MV table info.
+func (s *SchemaChangeEvent) GetAlterMaterializedViewAttributesInfo() *model.TableInfo {
+	intest.Assert(s.inner.Tp == model.ActionAlterMaterializedViewAttributes)
+	return s.inner.TableInfo
+}
+
+// NewAlterMaterializedViewLogPurgeEvent creates a schema change event for an MLog purge metadata change.
+func NewAlterMaterializedViewLogPurgeEvent(tableInfo, oldTableInfo *model.TableInfo) *SchemaChangeEvent {
+	return &SchemaChangeEvent{inner: &jsonSchemaChangeEvent{
+		Tp: model.ActionAlterMaterializedViewLogPurge, TableInfo: tableInfo, OldTableInfo: oldTableInfo,
+	}}
+}
+
+// GetAlterMaterializedViewLogPurgeInfo returns the changed MLog table info.
+func (s *SchemaChangeEvent) GetAlterMaterializedViewLogPurgeInfo() *model.TableInfo {
+	intest.Assert(s.inner.Tp == model.ActionAlterMaterializedViewLogPurge)
+	return s.inner.TableInfo
+}
+
+// NewMViewRefreshOutOfPlaceCutoverEvent creates a cutover schema-change event.
+func NewMViewRefreshOutOfPlaceCutoverEvent(
+	tableInfo *model.TableInfo,
+	oldTableInfo *model.TableInfo,
+	mlogInfo *model.TableInfo,
+	oldMLogInfo *model.TableInfo,
+) *SchemaChangeEvent {
+	return &SchemaChangeEvent{
+		inner: &jsonSchemaChangeEvent{
+			Tp:               model.ActionMViewRefreshOutOfPlaceCutover,
+			TableInfo:        tableInfo,
+			OldTableInfo:     oldTableInfo,
+			MLogTableInfo:    mlogInfo,
+			OldMLogTableInfo: oldMLogInfo,
+		},
+	}
+}
+
+// GetMViewRefreshOutOfPlaceCutoverInfo returns the new and old MV metadata.
+func (s *SchemaChangeEvent) GetMViewRefreshOutOfPlaceCutoverInfo() (
+	newTableInfo *model.TableInfo,
+	oldTableInfo *model.TableInfo,
+) {
+	intest.Assert(s.inner.Tp == model.ActionMViewRefreshOutOfPlaceCutover)
+	return s.inner.TableInfo, s.inner.OldTableInfo
+}
+
+// GetMViewRefreshOutOfPlaceCutoverMLogInfo returns the replacement output logs,
+// or nil for a target without its own MLog.
+func (s *SchemaChangeEvent) GetMViewRefreshOutOfPlaceCutoverMLogInfo() (newMLog, oldMLog *model.TableInfo) {
+	intest.Assert(s.inner.Tp == model.ActionMViewRefreshOutOfPlaceCutover)
+	return s.inner.MLogTableInfo, s.inner.OldMLogTableInfo
+}
+
 // NewTruncateTableEvent creates a SchemaChangeEvent whose type is
 // ActionTruncateTable.
 func NewTruncateTableEvent(
@@ -433,32 +506,36 @@ func NewFlashbackClusterEvent() *SchemaChangeEvent {
 	}
 }
 
-// NewDropSchemaEvent creates a schema change event whose type is ActionDropSchema.
-func NewDropSchemaEvent(dbInfo *model.DBInfo, tables []*model.TableInfo) *SchemaChangeEvent {
-	miniTables := make([]*MiniTableInfoForSchemaEvent, len(tables))
-	for i, table := range tables {
-		miniTables[i] = &MiniTableInfoForSchemaEvent{
-			ID:   table.ID,
-			Name: table.Name,
-		}
-		if table.Partition != nil {
-			partLen := len(table.Partition.Definitions)
-			miniTables[i].Partitions = make([]*MiniPartitionInfoForSchemaEvent, partLen)
-			for j, part := range table.Partition.Definitions {
-				miniTables[i].Partitions[j] = &MiniPartitionInfoForSchemaEvent{
-					ID:   part.ID,
-					Name: part.Name,
-				}
+// NewMiniTableInfoForSchemaEvent extracts the table information required by a drop schema event.
+func NewMiniTableInfoForSchemaEvent(table *model.TableInfo) *MiniTableInfoForSchemaEvent {
+	miniTable := &MiniTableInfoForSchemaEvent{
+		ID:   table.ID,
+		Name: table.Name,
+	}
+	if table.Partition != nil {
+		miniTable.Partitions = make([]*MiniPartitionInfoForSchemaEvent, len(table.Partition.Definitions))
+		for i, part := range table.Partition.Definitions {
+			miniTable.Partitions[i] = &MiniPartitionInfoForSchemaEvent{
+				ID:   part.ID,
+				Name: part.Name,
 			}
 		}
 	}
+	return miniTable
+}
+
+// NewDropSchemaEvent creates a drop schema event from already-extracted table information.
+func NewDropSchemaEvent(
+	dbInfo *model.DBInfo,
+	tables []*MiniTableInfoForSchemaEvent,
+) *SchemaChangeEvent {
 	return &SchemaChangeEvent{
 		inner: &jsonSchemaChangeEvent{
 			Tp: model.ActionDropSchema,
 			MiniDBInfo: &MiniDBInfoForSchemaEvent{
 				ID:     dbInfo.ID,
 				Name:   dbInfo.Name,
-				Tables: miniTables,
+				Tables: tables,
 			},
 		},
 	}
@@ -499,14 +576,16 @@ type MiniPartitionInfoForSchemaEvent struct {
 // jsonSchemaChangeEvent is used by SchemaChangeEvent when needed to (un)marshal data,
 // we want to hide the details to subscribers, so SchemaChangeEvent contain this struct.
 type jsonSchemaChangeEvent struct {
-	MiniDBInfo      *MiniDBInfoForSchemaEvent `json:"mini_db_info,omitempty"`
-	TableInfo       *model.TableInfo          `json:"table_info,omitempty"`
-	OldTableInfo    *model.TableInfo          `json:"old_table_info,omitempty"`
-	AddedPartInfo   *model.PartitionInfo      `json:"added_partition_info,omitempty"`
-	DroppedPartInfo *model.PartitionInfo      `json:"dropped_partition_info,omitempty"`
-	Columns         []*model.ColumnInfo       `json:"columns,omitempty"`
-	Indexes         []*model.IndexInfo        `json:"indexes,omitempty"`
-	Analyzed        bool                      `json:"Analyzed,omitempty"`
+	MLogTableInfo    *model.TableInfo          `json:"mlog_table_info,omitempty"`
+	OldMLogTableInfo *model.TableInfo          `json:"old_mlog_table_info,omitempty"`
+	MiniDBInfo       *MiniDBInfoForSchemaEvent `json:"mini_db_info,omitempty"`
+	TableInfo        *model.TableInfo          `json:"table_info,omitempty"`
+	OldTableInfo     *model.TableInfo          `json:"old_table_info,omitempty"`
+	AddedPartInfo    *model.PartitionInfo      `json:"added_partition_info,omitempty"`
+	DroppedPartInfo  *model.PartitionInfo      `json:"dropped_partition_info,omitempty"`
+	Columns          []*model.ColumnInfo       `json:"columns,omitempty"`
+	Indexes          []*model.IndexInfo        `json:"indexes,omitempty"`
+	Analyzed         bool                      `json:"Analyzed,omitempty"`
 	// OldTableID4Partition is used to store the table ID when a table transitions from being partitioned to non-partitioned,
 	// or vice versa.
 	OldTableID4Partition int64 `json:"old_table_id_for_partition,omitempty"`

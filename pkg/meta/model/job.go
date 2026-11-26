@@ -17,6 +17,7 @@ package model
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -116,7 +117,7 @@ const (
 	ActionModifyEngineAttribute                 ActionType = 74
 	ActionAlterTableMode                        ActionType = 75
 	ActionRefreshMeta                           ActionType = 76
-	ActionModifySchemaReadOnly                  ActionType = 77 // reserve for database read-only feature
+	ActionModifySchemaReadOnly                  ActionType = 77
 	ActionAlterTableAffinity                    ActionType = 78
 	ActionAlterTableSoftDeleteInfo              ActionType = 79 // reserve for soft-delete feature
 	ActionModifySchemaSoftDeleteAndActiveActive ActionType = 80 // reserve for soft-delete and active-active feature
@@ -124,6 +125,16 @@ const (
 	ActionAlterMaskingPolicy                    ActionType = 82
 	ActionDropMaskingPolicy                     ActionType = 83
 	ActionAlterTableSetRegionSplitPolicy        ActionType = 84
+	ActionCreateMaterializedViewLog             ActionType = 85
+	ActionCreateMaterializedView                ActionType = 86
+	ActionDropMaterializedViewLog               ActionType = 87
+	ActionDropMaterializedView                  ActionType = 88
+	ActionAlterMaterializedViewRefresh          ActionType = 89
+	ActionAlterMaterializedViewLogPurge         ActionType = 90
+	ActionAlterMaterializedViewAttributes       ActionType = 91
+	ActionMViewRefreshOutOfPlaceCutover         ActionType = 92
+	ActionCreateMaterializedViewShadow          ActionType = 93
+	ActionDropMaterializedViewShadow            ActionType = 94
 
 	// range [200, 256) is reserved for a downstream fork
 )
@@ -209,6 +220,16 @@ var ActionMap = map[ActionType]string{
 	ActionAlterMaskingPolicy:                    "alter masking policy",
 	ActionDropMaskingPolicy:                     "drop masking policy",
 	ActionAlterTableSetRegionSplitPolicy:        "alter table set region split policy",
+	ActionCreateMaterializedViewLog:             "create materialized view log",
+	ActionCreateMaterializedView:                "create materialized view",
+	ActionDropMaterializedViewLog:               "drop materialized view log",
+	ActionDropMaterializedView:                  "drop materialized view",
+	ActionAlterMaterializedViewRefresh:          "alter materialized view refresh",
+	ActionAlterMaterializedViewLogPurge:         "alter materialized view log purge",
+	ActionAlterMaterializedViewAttributes:       "alter materialized view attributes",
+	ActionMViewRefreshOutOfPlaceCutover:         "refresh materialized view complete out-of-place cutover",
+	ActionCreateMaterializedViewShadow:          "create materialized view shadow table",
+	ActionDropMaterializedViewShadow:            "drop materialized view shadow table",
 
 	// `ActionAlterTableAlterPartition` is removed and will never be used.
 	// Just left a tombstone here for compatibility.
@@ -285,6 +306,8 @@ const (
 	StateReplicaOnly
 	// StateGlobalTxnOnly means we can only use global txn for operator on this schema element
 	StateGlobalTxnOnly
+	// StatePendingReadOnly means this database is pending to be read-only.
+	StatePendingReadOnly
 	/*
 	 *  Please add the new state at the end to keep the values consistent across versions.
 	 */
@@ -307,6 +330,8 @@ func (s SchemaState) String() string {
 		return "replica only"
 	case StateGlobalTxnOnly:
 		return "global txn only"
+	case StatePendingReadOnly:
+		return "pending read only"
 	default:
 		return "none"
 	}
@@ -432,6 +457,11 @@ type Job struct {
 	// itself (AdminCommandBySystem) or by user (AdminCommandByEndUser).
 	AdminOperator AdminCommandOperator `json:"admin_operator"`
 
+	// PauseReason records the durable reason when a job is paused by TiDB itself.
+	PauseReason *JobPauseReason `json:"pause_reason,omitempty"`
+	// ResumeReason records why a job is explicitly resumed after a durable pause.
+	ResumeReason *JobResumeReason `json:"resume_reason,omitempty"`
+
 	// TraceInfo indicates the information for SQL tracing
 	TraceInfo *tracing.TraceInfo `json:"trace_info"`
 
@@ -446,6 +476,10 @@ type Job struct {
 	// Only happens when tidb_enable_fast_create_table = on
 	// this field is useless since 8.3
 	LocalMode bool `json:"local_mode"`
+	// CheckSchemaReadOnly requires the owner to recheck writable schemas before
+	// the first step. The submitter's explicit replica-writer bypass clears it.
+	// A multi-schema parent consumes it before creating any sub-job proxies.
+	CheckSchemaReadOnly bool `json:"check_schema_read_only,omitempty"`
 
 	// SQLMode for executing DDL query.
 	SQLMode mysql.SQLMode `json:"sql_mode"`
@@ -457,6 +491,15 @@ type Job struct {
 	// LastSchemaVersion records the latest schema version returned by runOneJobStep.
 	// If it is zero, for non-MDL scenario, scheduler can skip waitVersionSyncedWithoutMDL.
 	LastSchemaVersion int64 `json:"last_schema_version"`
+
+	// RU stores the resource units accounted for this DDL job. The calculated RU,
+	// rather than the raw buffered KV byte count, is stored so it stays fixed after
+	// the job finishes even if the accounting weight or formula changes later.
+	// A multi-schema change keeps cumulative RU on its parent Job, not its SubJobs:
+	// parent Job.RU -> SubJob.ToProxyJob -> proxy Job.RU ->
+	// updateParentJobFromProxy -> parent Job.RU. The next SubJob's proxy therefore
+	// starts with the RU accumulated by all preceding SubJobs.
+	RU float64 `json:"ru,omitempty"`
 }
 
 // FinishTableJob is called when a job is finished.
@@ -707,6 +750,53 @@ func (job *Job) IsPausedBySystem() bool {
 	return job.IsPaused() && job.AdminOperator == AdminCommandBySystem
 }
 
+// HasPauseReason returns whether the job has a specific pause reason.
+func (job *Job) HasPauseReason(reasonType string) bool {
+	return job.PauseReason != nil && job.PauseReason.Type == reasonType
+}
+
+// SetPauseReason records a durable pause reason.
+func (job *Job) SetPauseReason(reasonType, message string) {
+	job.PauseReason = &JobPauseReason{
+		Type:    reasonType,
+		Message: message,
+	}
+}
+
+// ClearPauseReason clears the durable pause reason.
+func (job *Job) ClearPauseReason() {
+	job.PauseReason = nil
+}
+
+// HasResumeReason returns whether the job has a specific resume reason.
+func (job *Job) HasResumeReason(reasonType string) bool {
+	return job.ResumeReason != nil && job.ResumeReason.Type == reasonType
+}
+
+// SetResumeReason records a durable resume reason.
+func (job *Job) SetResumeReason(reasonType string) {
+	job.ResumeReason = &JobResumeReason{
+		Type: reasonType,
+	}
+}
+
+// ClearResumeReason clears the durable resume reason.
+func (job *Job) ClearResumeReason() {
+	job.ResumeReason = nil
+}
+
+// IsPausedBySystemForKVDiskFull returns whether the job was paused by system due to TiKV disk full.
+func (job *Job) IsPausedBySystemForKVDiskFull() bool {
+	return job.IsPausedBySystem() && job.HasPauseReason(JobPauseReasonKVDiskFull)
+}
+
+// IsPausingOrPausedBySystemForKVDiskFull returns whether the job is pausing or paused by system due to TiKV disk full.
+func (job *Job) IsPausingOrPausedBySystemForKVDiskFull() bool {
+	return (job.IsPausing() || job.IsPaused()) &&
+		job.AdminOperator == AdminCommandBySystem &&
+		job.HasPauseReason(JobPauseReasonKVDiskFull)
+}
+
 // IsPausing indicates whether the job is pausing.
 func (job *Job) IsPausing() bool {
 	return job.State == JobStatePausing
@@ -788,7 +878,7 @@ func (job *Job) GetSystemVars(name string) (string, bool) {
 // MayNeedReorg indicates that this job may need to reorganize the data.
 func (job *Job) MayNeedReorg() bool {
 	switch job.Type {
-	case ActionAddIndex, ActionAddPrimaryKey, ActionReorganizePartition,
+	case ActionAddIndex, ActionAddPrimaryKey, ActionCreateMaterializedView, ActionReorganizePartition,
 		ActionRemovePartitioning, ActionAlterTablePartitioning:
 		return true
 	case ActionModifyColumn:
@@ -825,14 +915,17 @@ func (job *Job) IsRollbackable() bool {
 		if job.SchemaState == StatePublic {
 			return false
 		}
+	case ActionCreateMaterializedView:
+		return job.SchemaState == StateNone || job.SchemaState == StateWriteReorganization
 	case ActionAddTablePartition:
 		return job.SchemaState == StateNone || job.SchemaState == StateReplicaOnly
 	case ActionDropColumn, ActionDropSchema, ActionDropTable, ActionDropSequence,
+		ActionDropMaterializedView, ActionDropMaterializedViewLog, ActionDropMaterializedViewShadow,
 		ActionDropForeignKey, ActionDropTablePartition:
 		return job.SchemaState == StatePublic
 	case ActionTruncateTablePartition:
 		return job.SchemaState == StatePublic || job.SchemaState == StateWriteOnly
-	case ActionRebaseAutoID, ActionShardRowID,
+	case ActionRebaseAutoID, ActionShardRowID, ActionMViewRefreshOutOfPlaceCutover,
 		ActionTruncateTable, ActionAddForeignKey, ActionRenameTable, ActionRenameTables,
 		ActionModifyTableCharsetAndCollate,
 		ActionModifySchemaCharsetAndCollate, ActionRepairTable,
@@ -870,9 +963,36 @@ func (job *Job) GetInvolvingSchemaInfo() []InvolvingSchemaInfo {
 	}
 }
 
+// NormalizeInvolvingSchemaInfo enforces the DDL scheduler dependency-key
+// invariant: before a job is submitted, every scheduler object name must be in
+// canonical lower case. This includes the fallback Job.SchemaName/TableName and
+// explicit InvolvingSchemaInfo Database/Table/Policy/ResourceGroup fields. The
+// only exceptions are the sentinel values InvolvingAll and InvolvingNone. The
+// scheduler compares exact strings, so original-case names can make two DDL jobs
+// on the same object look independent.
+func (job *Job) NormalizeInvolvingSchemaInfo() {
+	job.SchemaName = normalizeInvolvingName(job.SchemaName)
+	job.TableName = normalizeInvolvingName(job.TableName)
+	for i := range job.InvolvingSchemaInfo {
+		item := &job.InvolvingSchemaInfo[i]
+		item.Database = normalizeInvolvingName(item.Database)
+		item.Table = normalizeInvolvingName(item.Table)
+		item.Policy = normalizeInvolvingName(item.Policy)
+		item.ResourceGroup = normalizeInvolvingName(item.ResourceGroup)
+	}
+}
+
+func normalizeInvolvingName(name string) string {
+	if name == InvolvingAll || name == InvolvingNone {
+		return name
+	}
+	return strings.ToLower(name)
+}
+
 // CheckInvolvingSchemaInfo check the job should set valid InvolvingSchemaInfo,
-// job scheduler uses this info to calculate job dependency, invalid
-// InvolvingSchemaInfo may cause job scheduler stuck or execute DDLs in wrong order.
+// job scheduler uses this info to calculate exact-string job dependency keys.
+// Invalid or unnormalized InvolvingSchemaInfo may cause job scheduler stuck or
+// execute DDLs in wrong order.
 func (job *Job) CheckInvolvingSchemaInfo() error {
 	involvedSI := job.GetInvolvingSchemaInfo()
 	for _, info := range involvedSI {
@@ -908,22 +1028,23 @@ func (job *Job) ClearDecodedArgs() {
 // SubJob is a representation of one DDL schema change. A Job may contain zero
 // (when multi-schema change is not applicable) or more SubJobs.
 type SubJob struct {
-	Type         ActionType `json:"type"`
-	JobArgs      JobArgs    `json:"-"`
-	args         []any
-	RawArgs      json.RawMessage `json:"raw_args"`
-	SchemaState  SchemaState     `json:"schema_state"`
-	SnapshotVer  uint64          `json:"snapshot_ver"`
-	RealStartTS  uint64          `json:"real_start_ts"`
-	Revertible   bool            `json:"revertible"`
-	State        JobState        `json:"state"`
-	RowCount     int64           `json:"row_count"`
-	Warning      *terror.Error   `json:"warning"`
-	NeedReorg    bool            `json:"-"`
-	SchemaVer    int64           `json:"schema_version"`
-	ReorgTp      ReorgType       `json:"reorg_tp"`
-	ReorgStage   ReorgStage      `json:"reorg_stage"`
-	AnalyzeState int8            `json:"analyze_state"`
+	Type                ActionType `json:"type"`
+	JobArgs             JobArgs    `json:"-"`
+	args                []any
+	RawArgs             json.RawMessage       `json:"raw_args"`
+	SchemaState         SchemaState           `json:"schema_state"`
+	SnapshotVer         uint64                `json:"snapshot_ver"`
+	RealStartTS         uint64                `json:"real_start_ts"`
+	Revertible          bool                  `json:"revertible"`
+	State               JobState              `json:"state"`
+	RowCount            int64                 `json:"row_count"`
+	Warning             *terror.Error         `json:"warning"`
+	NeedReorg           bool                  `json:"-"`
+	SchemaVer           int64                 `json:"schema_version"`
+	ReorgTp             ReorgType             `json:"reorg_tp"`
+	ReorgStage          ReorgStage            `json:"reorg_stage"`
+	AnalyzeState        int8                  `json:"analyze_state"`
+	InvolvingSchemaInfo []InvolvingSchemaInfo `json:"involving_schema_info,omitempty"`
 }
 
 // IsNormal returns true if the sub-job is normally running.
@@ -954,38 +1075,41 @@ func (sub *SubJob) ToProxyJob(parentJob *Job, seq int) Job {
 		reorgMeta.AnalyzeState = sub.AnalyzeState
 	}
 	return Job{
-		Version:         parentJob.Version,
-		ID:              parentJob.ID,
-		Type:            sub.Type,
-		SchemaID:        parentJob.SchemaID,
-		TableID:         parentJob.TableID,
-		SchemaName:      parentJob.SchemaName,
-		State:           sub.State,
-		Warning:         sub.Warning,
-		Error:           nil,
-		ErrorCount:      0,
-		RowCount:        sub.RowCount,
-		Mu:              sync.Mutex{},
-		NeedReorg:       sub.NeedReorg,
-		args:            sub.args,
-		RawArgs:         sub.RawArgs,
-		SchemaState:     sub.SchemaState,
-		SnapshotVer:     sub.SnapshotVer,
-		RealStartTS:     sub.RealStartTS,
-		StartTS:         parentJob.StartTS,
-		DependencyID:    parentJob.DependencyID,
-		Query:           parentJob.Query,
-		BinlogInfo:      parentJob.BinlogInfo,
-		ReorgMeta:       reorgMeta,
-		MultiSchemaInfo: &MultiSchemaInfo{Revertible: sub.Revertible, Seq: int32(seq)},
-		Priority:        parentJob.Priority,
-		SeqNum:          parentJob.SeqNum,
-		Charset:         parentJob.Charset,
-		Collate:         parentJob.Collate,
-		AdminOperator:   parentJob.AdminOperator,
-		TraceInfo:       parentJob.TraceInfo,
-		SQLMode:         parentJob.SQLMode,
-		SessionVars:     parentJob.SessionVars,
+		Version:             parentJob.Version,
+		ID:                  parentJob.ID,
+		Type:                sub.Type,
+		SchemaID:            parentJob.SchemaID,
+		TableID:             parentJob.TableID,
+		SchemaName:          parentJob.SchemaName,
+		State:               sub.State,
+		Warning:             sub.Warning,
+		Error:               nil,
+		ErrorCount:          0,
+		RowCount:            sub.RowCount,
+		Mu:                  sync.Mutex{},
+		NeedReorg:           sub.NeedReorg,
+		args:                sub.args,
+		RawArgs:             sub.RawArgs,
+		SchemaState:         sub.SchemaState,
+		SnapshotVer:         sub.SnapshotVer,
+		RealStartTS:         sub.RealStartTS,
+		StartTS:             parentJob.StartTS,
+		DependencyID:        parentJob.DependencyID,
+		Query:               parentJob.Query,
+		BinlogInfo:          parentJob.BinlogInfo,
+		ReorgMeta:           reorgMeta,
+		MultiSchemaInfo:     &MultiSchemaInfo{Revertible: sub.Revertible, Seq: int32(seq)},
+		Priority:            parentJob.Priority,
+		SeqNum:              parentJob.SeqNum,
+		Charset:             parentJob.Charset,
+		Collate:             parentJob.Collate,
+		AdminOperator:       parentJob.AdminOperator,
+		ResumeReason:        parentJob.ResumeReason,
+		RU:                  parentJob.RU,
+		TraceInfo:           parentJob.TraceInfo,
+		SQLMode:             parentJob.SQLMode,
+		SessionVars:         parentJob.SessionVars,
+		InvolvingSchemaInfo: sub.InvolvingSchemaInfo,
 	}
 }
 
@@ -1000,6 +1124,7 @@ func (sub *SubJob) FromProxyJob(proxyJob *Job, ver int64) {
 	sub.Warning = proxyJob.Warning
 	sub.RowCount = proxyJob.RowCount
 	sub.SchemaVer = ver
+	sub.InvolvingSchemaInfo = proxyJob.InvolvingSchemaInfo
 	if proxyJob.ReorgMeta != nil {
 		sub.ReorgTp = proxyJob.ReorgMeta.ReorgTp
 		sub.ReorgStage = proxyJob.ReorgMeta.Stage
@@ -1045,6 +1170,8 @@ type MultiSchemaInfo struct {
 
 	RelativeColumns []ast.CIStr `json:"-"`
 	PositionColumns []ast.CIStr `json:"-"`
+
+	InvolvingSchemaInfo []InvolvingSchemaInfo `json:"-"`
 }
 
 // AddForeignKeyInfo contains foreign key information.
@@ -1214,6 +1341,24 @@ const (
 	AdminCommandBySystem
 )
 
+const (
+	// JobPauseReasonKVDiskFull indicates TiDB paused the DDL job because a storage node reported disk full.
+	JobPauseReasonKVDiskFull = "tikv_disk_full"
+	// JobResumeReasonKVDiskFull indicates the end user resumed a DDL job paused because a storage node reported disk full.
+	JobResumeReasonKVDiskFull = "tikv_disk_full"
+)
+
+// JobPauseReason records why a DDL job was paused.
+type JobPauseReason struct {
+	Type    string `json:"type"`
+	Message string `json:"message,omitempty"`
+}
+
+// JobResumeReason records why a DDL job was resumed.
+type JobResumeReason struct {
+	Type string `json:"type"`
+}
+
 // String implements fmt.Stringer interface.
 func (a *AdminCommandOperator) String() string {
 	switch *a {
@@ -1310,6 +1455,20 @@ type TimeZoneLocation struct {
 	// indexIngestBaseWorker might access the location concurrently
 	location *time.Location
 	mu       sync.RWMutex
+}
+
+// Clone returns a copy of the time zone location without copying its mutex.
+func (tz *TimeZoneLocation) Clone() TimeZoneLocation {
+	if tz == nil {
+		return TimeZoneLocation{}
+	}
+	tz.mu.RLock()
+	defer tz.mu.RUnlock()
+	return TimeZoneLocation{
+		Name:     tz.Name,
+		Offset:   tz.Offset,
+		location: tz.location,
+	}
 }
 
 // GetLocation gets the timezone location.

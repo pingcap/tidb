@@ -57,12 +57,12 @@ var (
 	tablePrivMask          = computePrivMask(mysql.AllTablePrivs)
 )
 
-const globalDBVisible = mysql.CreatePriv | mysql.SelectPriv | mysql.InsertPriv | mysql.UpdatePriv | mysql.DeletePriv | mysql.ShowDBPriv | mysql.DropPriv | mysql.AlterPriv | mysql.IndexPriv | mysql.CreateViewPriv | mysql.ShowViewPriv | mysql.GrantPriv | mysql.TriggerPriv | mysql.ReferencesPriv | mysql.ExecutePriv | mysql.CreateTMPTablePriv
+const globalDBVisible = mysql.CreatePriv | mysql.SelectPriv | mysql.InsertPriv | mysql.UpdatePriv | mysql.DeletePriv | mysql.ShowDBPriv | mysql.DropPriv | mysql.AlterPriv | mysql.IndexPriv | mysql.CreateViewPriv | mysql.ShowViewPriv | mysql.OperateViewPriv | mysql.GrantPriv | mysql.TriggerPriv | mysql.ReferencesPriv | mysql.ExecutePriv | mysql.CreateTMPTablePriv
 
 const (
 	sqlLoadRoleGraph        = "SELECT HIGH_PRIORITY FROM_USER, FROM_HOST, TO_USER, TO_HOST FROM mysql.role_edges"
 	sqlLoadGlobalPrivTable  = "SELECT HIGH_PRIORITY Host,User,Priv FROM mysql.global_priv"
-	sqlLoadDBTable          = "SELECT HIGH_PRIORITY Host,DB,User,Select_priv,Insert_priv,Update_priv,Delete_priv,Create_priv,Drop_priv,Grant_priv,Index_priv,References_priv,Lock_tables_priv,Create_tmp_table_priv,Event_priv,Create_routine_priv,Alter_routine_priv,Alter_priv,Execute_priv,Create_view_priv,Show_view_priv,Trigger_priv FROM mysql.db"
+	sqlLoadDBTable          = "SELECT HIGH_PRIORITY Host,DB,User,Select_priv,Insert_priv,Update_priv,Delete_priv,Create_priv,Drop_priv,Grant_priv,Index_priv,References_priv,Lock_tables_priv,Create_tmp_table_priv,Event_priv,Create_routine_priv,Alter_routine_priv,Alter_priv,Execute_priv,Create_view_priv,Show_view_priv,Operate_view_priv,Trigger_priv FROM mysql.db"
 	sqlLoadTablePrivTable   = "SELECT HIGH_PRIORITY Host,DB,User,Table_name,Grantor,Timestamp,Table_priv,Column_priv FROM mysql.tables_priv"
 	sqlLoadColumnsPrivTable = "SELECT HIGH_PRIORITY Host,DB,User,Table_name,Column_name,Timestamp,Column_priv FROM mysql.columns_priv"
 	sqlLoadDefaultRoles     = "SELECT HIGH_PRIORITY HOST, USER, DEFAULT_ROLE_HOST, DEFAULT_ROLE_USER FROM mysql.default_roles"
@@ -70,7 +70,7 @@ const (
 	sqlLoadUserTable = `SELECT HIGH_PRIORITY Host,User,authentication_string,
 	Create_priv, Select_priv, Insert_priv, Update_priv, Delete_priv, Show_db_priv, Super_priv,
 	Create_user_priv,Create_tablespace_priv,Trigger_priv,Drop_priv,Process_priv,Grant_priv,
-	References_priv,Alter_priv,Execute_priv,Index_priv,Create_view_priv,Show_view_priv,
+	References_priv,Alter_priv,Execute_priv,Index_priv,Create_view_priv,Show_view_priv,Operate_view_priv,
 	Create_role_priv,Drop_role_priv,Create_tmp_table_priv,Lock_tables_priv,Create_routine_priv,
 	Alter_routine_priv,Event_priv,Shutdown_priv,Reload_priv,File_priv,Config_priv,Repl_client_priv,Repl_slave_priv,
 	Account_locked,Plugin,Token_issuer,User_attributes,password_expired,password_last_changed,password_lifetime,max_user_connections FROM mysql.user`
@@ -116,6 +116,10 @@ type UserRecord struct {
 	UserAttributesInfo
 
 	AuthenticationString string
+	// AdditionalAuthString holds the MySQL-compatible secondary
+	// ("additional") password hash decoded from user_attributes.$.additional_password.
+	// Empty when the user has no secondary password.
+	AdditionalAuthString string
 	Privileges           mysql.PrivilegeType
 	AccountLocked        bool // A role record when this field is true
 	AuthPlugin           string
@@ -1058,6 +1062,17 @@ func (p *MySQLPrivilege) decodeUserTableRow(userList map[string]struct{}) func(c
 					}
 					value.ResourceGroup = strings.Clone(resourceGroup)
 				}
+				pathExpr, err = types.ParseJSONPathExpr("$.additional_password")
+				if err != nil {
+					return err
+				}
+				if additionalBJ, found := bj.Extract([]types.JSONPathExpression{pathExpr}); found {
+					additional, err := additionalBJ.Unquote()
+					if err != nil {
+						return err
+					}
+					value.AdditionalAuthString = strings.Clone(additional)
+				}
 				passwordLocking := PasswordLocking{}
 				if err := passwordLocking.ParseJSON(bj); err != nil {
 					return err
@@ -1726,6 +1741,8 @@ func (p *MySQLPrivilege) showGrants(ctx sessionctx.Context, user, host string, r
 	var gs []string //nolint: prealloc
 	var sortFromIdx int
 	var hasGlobalGrant = false
+	sqlMode := ctx.GetSessionVars().SQLMode
+	account := formatAccountName(user, host, sqlMode)
 	// Some privileges may granted from role inheritance.
 	// We should find these inheritance relationship.
 	allRoles := p.FindAllUserEffectiveRoles(user, host, roles)
@@ -1761,9 +1778,9 @@ func (p *MySQLPrivilege) showGrants(ctx sessionctx.Context, user, host string, r
 	if len(g) > 0 {
 		var s string
 		if (currentPriv & mysql.GrantPriv) > 0 {
-			s = fmt.Sprintf(`GRANT %s ON *.* TO '%s'@'%s' WITH GRANT OPTION`, g, user, host)
+			s = fmt.Sprintf(`GRANT %s ON *.* TO %s WITH GRANT OPTION`, g, account)
 		} else {
-			s = fmt.Sprintf(`GRANT %s ON *.* TO '%s'@'%s'`, g, user, host)
+			s = fmt.Sprintf(`GRANT %s ON *.* TO %s`, g, account)
 		}
 		gs = append(gs, s)
 	}
@@ -1772,9 +1789,9 @@ func (p *MySQLPrivilege) showGrants(ctx sessionctx.Context, user, host string, r
 	if len(gs) == 0 && hasGlobalGrant {
 		var s string
 		if (currentPriv & mysql.GrantPriv) > 0 {
-			s = fmt.Sprintf("GRANT USAGE ON *.* TO '%s'@'%s' WITH GRANT OPTION", user, host)
+			s = fmt.Sprintf("GRANT USAGE ON *.* TO %s WITH GRANT OPTION", account)
 		} else {
-			s = fmt.Sprintf("GRANT USAGE ON *.* TO '%s'@'%s'", user, host)
+			s = fmt.Sprintf("GRANT USAGE ON *.* TO %s", account)
 		}
 		gs = append(gs, s)
 	}
@@ -1797,22 +1814,21 @@ func (p *MySQLPrivilege) showGrants(ctx sessionctx.Context, user, host string, r
 		return true
 	})
 
-	sqlMode := ctx.GetSessionVars().SQLMode
 	for dbName, priv := range dbPrivTable {
 		dbName = stringutil.Escape(dbName, sqlMode)
 		g := dbPrivToString(priv)
 		if len(g) > 0 {
 			var s string
 			if (priv & mysql.GrantPriv) > 0 {
-				s = fmt.Sprintf(`GRANT %s ON %s.* TO '%s'@'%s' WITH GRANT OPTION`, g, dbName, user, host)
+				s = fmt.Sprintf(`GRANT %s ON %s.* TO %s WITH GRANT OPTION`, g, dbName, account)
 			} else {
-				s = fmt.Sprintf(`GRANT %s ON %s.* TO '%s'@'%s'`, g, dbName, user, host)
+				s = fmt.Sprintf(`GRANT %s ON %s.* TO %s`, g, dbName, account)
 			}
 			gs = append(gs, s)
 		} else if len(g) == 0 && (priv&mysql.GrantPriv) > 0 {
 			// We have GRANT OPTION on the db, but no privilege granted.
 			// Wo we need to print a special USAGE line.
-			s := fmt.Sprintf(`GRANT USAGE ON %s.* TO '%s'@'%s' WITH GRANT OPTION`, dbName, user, host)
+			s := fmt.Sprintf(`GRANT USAGE ON %s.* TO %s WITH GRANT OPTION`, dbName, account)
 			gs = append(gs, s)
 		}
 	}
@@ -1841,15 +1857,15 @@ func (p *MySQLPrivilege) showGrants(ctx sessionctx.Context, user, host string, r
 		if len(g) > 0 {
 			var s string
 			if (priv & mysql.GrantPriv) > 0 {
-				s = fmt.Sprintf(`GRANT %s ON %s TO '%s'@'%s' WITH GRANT OPTION`, g, k, user, host)
+				s = fmt.Sprintf(`GRANT %s ON %s TO %s WITH GRANT OPTION`, g, k, account)
 			} else {
-				s = fmt.Sprintf(`GRANT %s ON %s TO '%s'@'%s'`, g, k, user, host)
+				s = fmt.Sprintf(`GRANT %s ON %s TO %s`, g, k, account)
 			}
 			gs = append(gs, s)
 		} else if len(g) == 0 && (priv&mysql.GrantPriv) > 0 {
 			// We have GRANT OPTION on the table, but no privilege granted.
 			// Wo we need to print a special USAGE line.
-			s := fmt.Sprintf(`GRANT USAGE ON %s TO '%s'@'%s' WITH GRANT OPTION`, k, user, host)
+			s := fmt.Sprintf(`GRANT USAGE ON %s TO %s WITH GRANT OPTION`, k, account)
 			gs = append(gs, s)
 		}
 	}
@@ -1871,7 +1887,7 @@ func (p *MySQLPrivilege) showGrants(ctx sessionctx.Context, user, host string, r
 	})
 	for k, v := range columnPrivTable {
 		privCols := privOnColumnsToString(v)
-		s := fmt.Sprintf(`GRANT %s ON %s TO '%s'@'%s'`, privCols, k, user, host)
+		s := fmt.Sprintf(`GRANT %s ON %s TO %s`, privCols, k, account)
 		gs = append(gs, s)
 	}
 	slices.Sort(gs[sortFromIdx:])
@@ -1886,7 +1902,7 @@ func (p *MySQLPrivilege) showGrants(ctx sessionctx.Context, user, host string, r
 	if ok {
 		sortedRes := make([]string, 0, 10)
 		for k := range edgeTable.roleList {
-			tmp := fmt.Sprintf("'%s'@'%s'", k.Username, k.Hostname)
+			tmp := formatAccountName(k.Username, k.Hostname, sqlMode)
 			sortedRes = append(sortedRes, tmp)
 		}
 		slices.Sort(sortedRes)
@@ -1896,7 +1912,7 @@ func (p *MySQLPrivilege) showGrants(ctx sessionctx.Context, user, host string, r
 				g += ", "
 			}
 		}
-		s := fmt.Sprintf(`GRANT %s TO '%s'@'%s'`, g, user, host)
+		s := fmt.Sprintf(`GRANT %s TO %s`, g, account)
 		gs = append(gs, s)
 	}
 
@@ -1940,15 +1956,19 @@ func (p *MySQLPrivilege) showGrants(ctx sessionctx.Context, user, host string, r
 	// Merge the DYNAMIC privs into a line for non-grantable and then grantable.
 	if len(dynamicPrivs) > 0 {
 		slices.Sort(dynamicPrivs)
-		s := fmt.Sprintf("GRANT %s ON *.* TO '%s'@'%s'", strings.Join(dynamicPrivs, ","), user, host)
+		s := fmt.Sprintf("GRANT %s ON *.* TO %s", strings.Join(dynamicPrivs, ","), account)
 		gs = append(gs, s)
 	}
 	if len(grantableDynamicPrivs) > 0 {
 		slices.Sort(grantableDynamicPrivs)
-		s := fmt.Sprintf("GRANT %s ON *.* TO '%s'@'%s' WITH GRANT OPTION", strings.Join(grantableDynamicPrivs, ","), user, host)
+		s := fmt.Sprintf("GRANT %s ON *.* TO %s WITH GRANT OPTION", strings.Join(grantableDynamicPrivs, ","), account)
 		gs = append(gs, s)
 	}
 	return gs
+}
+
+func formatAccountName(user, host string, sqlMode mysql.SQLMode) string {
+	return stringutil.Escape(user, sqlMode) + "@" + stringutil.Escape(host, sqlMode)
 }
 
 type columnStr = string
@@ -2192,6 +2212,13 @@ func (h *Handle) Get() *MySQLPrivilege {
 // UpdateAll loads all the users' privilege info from kv storage.
 func (h *Handle) UpdateAll() error {
 	priv := newMySQLPrivilege()
+	// Propagate the sysvar accessor like updateUsers does: decodeUserTableRow
+	// resolves legacy empty-plugin rows via default_authentication_plugin, and
+	// without the accessor a full reload (e.g. FLUSH PRIVILEGES) would resolve
+	// those rows as mysql_native_password while the lazy per-user path resolves
+	// them via the configured default — the same row would authenticate
+	// differently depending on which path loaded it.
+	priv.globalVars = h.globalVars
 	res, err := h.sctx.Get()
 	if err != nil {
 		return errors.Trace(err)

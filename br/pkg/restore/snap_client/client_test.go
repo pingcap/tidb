@@ -20,6 +20,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"math"
+	"net"
 	"slices"
 	"sort"
 	"strconv"
@@ -28,6 +29,7 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/br/pkg/checkpoint"
@@ -39,16 +41,24 @@ import (
 	importclient "github.com/pingcap/tidb/br/pkg/restore/internal/import_client"
 	snapclient "github.com/pingcap/tidb/br/pkg/restore/snap_client"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
+	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/tablecodec"
+	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/require"
+	pd "github.com/tikv/pd/client"
+	"github.com/tikv/pd/client/opt"
+	"github.com/tikv/pd/client/pkg/caller"
+	"go.uber.org/goleak"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/keepalive"
 )
 
 var mc *mock.Cluster
@@ -110,6 +120,100 @@ func TestCreateTables(t *testing.T) {
 	for i := range tables {
 		require.True(t, oldTableIDExist[int64(i)], "table rule does not exist")
 	}
+}
+
+func TestCreateTablesWithPlanPreservesSourceMetadata(t *testing.T) {
+	m := mc
+	client := snapclient.NewRestoreClient(m.PDClient, m.PDHTTPCli, nil, split.DefaultTestKeepaliveCfg)
+	require.NoError(t, client.InitConnections(gluetidb.New(), m.Storage))
+	ctx := context.Background()
+
+	sourceDB := &metautil.Database{Info: &model.DBInfo{
+		ID:       100,
+		Name:     ast.NewCIStr("route_source"),
+		ReadOnly: true,
+	}}
+	targetDB := sourceDB.Info.Clone()
+	targetDB.Name = ast.NewCIStr("route_target")
+	require.NoError(t, client.CreateDatabasesWithPlan(ctx, []*restoreutils.DatabaseRestorePlan{{
+		Source: sourceDB,
+		Target: targetDB,
+	}}))
+
+	createdDB, ok := m.Domain.InfoSchema().SchemaByName(targetDB.Name)
+	require.True(t, ok)
+	require.True(t, createdDB.ReadOnly, "restore must preserve the source database read-only state")
+
+	timestampField := types.NewFieldType(mysql.TypeTimestamp)
+	source := &metautil.Table{
+		DB: sourceDB.Info,
+		Info: &model.TableInfo{
+			ID:   101,
+			Name: ast.NewCIStr("source_table"),
+			Columns: []*model.ColumnInfo{{
+				ID:        1,
+				Name:      ast.NewCIStr("id"),
+				FieldType: *timestampField,
+				State:     model.StatePublic,
+			}},
+			Charset: "utf8mb4",
+			Collate: "utf8mb4_bin",
+			TTLInfo: &model.TTLInfo{
+				ColumnName:       ast.NewCIStr("id"),
+				IntervalExprStr:  "1",
+				IntervalTimeUnit: int(ast.TimeUnitDay),
+				Enable:           true,
+			},
+		},
+	}
+	targetInfo := source.Info.Clone()
+	targetInfo.Name = ast.NewCIStr("target_table")
+
+	_, err := client.AllocTableIDs(ctx, []*metautil.Table{source}, false, false, nil)
+	require.NoError(t, err)
+	created, err := client.CreateTablesWithPlan(ctx, []*restoreutils.TableRestorePlan{{
+		Source:     source,
+		TargetDB:   targetDB,
+		TargetInfo: targetInfo,
+	}}, 0)
+	require.NoError(t, err)
+	require.Len(t, created, 1)
+	require.Same(t, source, created[0].OldTable)
+	require.Equal(t, "route_target", created[0].TargetDBName().O)
+	require.Equal(t, "target_table", created[0].Table.Name.O)
+
+	_, err = m.Domain.InfoSchema().TableByName(ctx, ast.NewCIStr("route_target"), ast.NewCIStr("target_table"))
+	require.NoError(t, err)
+	require.Equal(t, "route_source", source.DB.Name.O)
+	require.Equal(t, "source_table", source.Info.Name.O)
+	require.True(t, source.Info.TTLInfo.Enable)
+	require.True(t, targetInfo.TTLInfo.Enable)
+	sourceSequence := &metautil.Table{DB: sourceDB.Info, Info: &model.TableInfo{
+		ID: 102, Name: ast.NewCIStr("source_sequence"), State: model.StatePublic,
+		Sequence: &model.SequenceInfo{Start: 1, MinValue: 1, MaxValue: 1000, Increment: 1}, AutoIncID: 41,
+	}}
+	targetSequence := sourceSequence.Info.Clone()
+	targetSequence.Name = ast.NewCIStr("target_sequence")
+	_, err = client.AllocTableIDs(ctx, []*metautil.Table{sourceSequence}, false, false, nil)
+	require.NoError(t, err)
+	_, err = client.CreateTablesWithPlan(ctx, []*restoreutils.TableRestorePlan{{Source: sourceSequence, TargetDB: targetDB, TargetInfo: targetSequence}}, 0)
+	require.NoError(t, err)
+	reader := testkit.NewTestKit(t, m.Storage)
+	reader.MustGetErrCode("insert into route_target.target_table values (now())", 3989)
+	require.ErrorContains(t, reader.QueryToErr("select nextval(route_target.target_sequence)"), "read only mode")
+	restoreSession, err := gluetidb.New().CreateSession(m.Storage)
+	require.NoError(t, err)
+	defer restoreSession.Close()
+	// Internal sessions do not inherit a restore operation's scoped authorization.
+	internalCtx := kv.WithInternalSourceType(ctx, kv.InternalTxnBR)
+	rs, err := restoreSession.GetSessionCtx().GetSQLExecutor().ExecuteInternal(internalCtx, "do setval(route_target.target_sequence, 99)")
+	if err == nil && rs != nil {
+		err = rs.Next(internalCtx, rs.NewChunk(nil))
+		require.NoError(t, rs.Close())
+	}
+	require.ErrorContains(t, err, "read only mode")
+	reader.MustExec("alter database route_target read only = 0")
+	reader.MustQuery("select nextval(route_target.target_sequence)").Check(testkit.Rows("42"))
 }
 
 func getStartedMockedCluster(t *testing.T) *mock.Cluster {
@@ -194,14 +298,15 @@ func TestCreateDuplicateDatabaseForOneSession(t *testing.T) {
 
 	ctx := context.Background()
 	db := &metautil.Database{Info: &model.DBInfo{Name: ast.NewCIStr("user_db")}}
-	require.False(t, db.IsReusedByPITR())
-	err = client.CreateDatabases(ctx, []*metautil.Database{db})
+	plan := &restoreutils.DatabaseRestorePlan{Source: db, Target: db.Info.Clone()}
+	require.False(t, plan.Reused)
+	err = client.CreateDatabasesWithPlan(ctx, []*restoreutils.DatabaseRestorePlan{plan})
 	require.NoError(t, err)
-	require.False(t, db.IsReusedByPITR())
+	require.False(t, plan.Reused)
 	// continue to create the same database
-	err = client.CreateDatabases(ctx, []*metautil.Database{db})
+	err = client.CreateDatabasesWithPlan(ctx, []*restoreutils.DatabaseRestorePlan{plan})
 	require.NoError(t, err)
-	require.True(t, db.IsReusedByPITR())
+	require.True(t, plan.Reused)
 }
 
 func TestCreateDuplicateDatabaseForSessionPool(t *testing.T) {
@@ -217,23 +322,27 @@ func TestCreateDuplicateDatabaseForSessionPool(t *testing.T) {
 	db1 := &metautil.Database{Info: &model.DBInfo{Name: ast.NewCIStr("user_db_1")}}
 	db2 := &metautil.Database{Info: &model.DBInfo{Name: ast.NewCIStr("user_db_2")}}
 	db3 := &metautil.Database{Info: &model.DBInfo{Name: ast.NewCIStr("user_db_3")}}
-	require.False(t, db1.IsReusedByPITR())
-	require.False(t, db2.IsReusedByPITR())
-	require.False(t, db3.IsReusedByPITR())
-	err = client.CreateDatabases(ctx, []*metautil.Database{db1, db2, db3})
+	plan1 := &restoreutils.DatabaseRestorePlan{Source: db1, Target: db1.Info.Clone()}
+	plan2 := &restoreutils.DatabaseRestorePlan{Source: db2, Target: db2.Info.Clone()}
+	plan3 := &restoreutils.DatabaseRestorePlan{Source: db3, Target: db3.Info.Clone()}
+	require.False(t, plan1.Reused)
+	require.False(t, plan2.Reused)
+	require.False(t, plan3.Reused)
+	err = client.CreateDatabasesWithPlan(ctx, []*restoreutils.DatabaseRestorePlan{plan1, plan2, plan3})
 	require.NoError(t, err)
-	require.False(t, db1.IsReusedByPITR())
-	require.False(t, db2.IsReusedByPITR())
-	require.False(t, db3.IsReusedByPITR())
+	require.False(t, plan1.Reused)
+	require.False(t, plan2.Reused)
+	require.False(t, plan3.Reused)
 	// continue to create the same databases
 	db4 := &metautil.Database{Info: &model.DBInfo{Name: ast.NewCIStr("user_db_4")}}
-	require.False(t, db4.IsReusedByPITR())
-	err = client.CreateDatabases(ctx, []*metautil.Database{db1, db2, db3, db4})
+	plan4 := &restoreutils.DatabaseRestorePlan{Source: db4, Target: db4.Info.Clone()}
+	require.False(t, plan4.Reused)
+	err = client.CreateDatabasesWithPlan(ctx, []*restoreutils.DatabaseRestorePlan{plan1, plan2, plan3, plan4})
 	require.NoError(t, err)
-	require.True(t, db1.IsReusedByPITR())
-	require.True(t, db2.IsReusedByPITR())
-	require.True(t, db3.IsReusedByPITR())
-	require.False(t, db4.IsReusedByPITR())
+	require.True(t, plan1.Reused)
+	require.True(t, plan2.Reused)
+	require.True(t, plan3.Reused)
+	require.False(t, plan4.Reused)
 }
 
 func TestCheckTargetClusterFreshWithTable(t *testing.T) {
@@ -366,6 +475,10 @@ func (fakeImportCli FakeImporterClient) SetDownloadSpeedLimit(
 
 func (fakeImportCli FakeImporterClient) CheckMultiIngestSupport(ctx context.Context, stores []uint64) error {
 	return nil
+}
+
+func (fakeImportCli FakeImporterClient) IsBatchDownloadLatestMVCCSupported(ctx context.Context, stores []uint64) (bool, error) {
+	return true, nil
 }
 
 func TestSetSpeedLimit(t *testing.T) {
@@ -704,4 +817,98 @@ func TestGetMinUserTableID(t *testing.T) {
 		generateMetautilTable("test2", 5, 6),
 	})
 	require.Equal(t, int64(2), minUserTableID)
+}
+
+type mockImportPDClient struct {
+	pd.Client
+	stores []*metapb.Store
+}
+
+func (m *mockImportPDClient) WithCallerComponent(caller.Component) pd.Client {
+	return m
+}
+
+func (m *mockImportPDClient) GetAllStores(context.Context, ...opt.GetStoreOption) ([]*metapb.Store, error) {
+	return m.stores, nil
+}
+
+func (m *mockImportPDClient) GetStore(_ context.Context, storeID uint64, _ ...opt.GetStoreOption) (*metapb.Store, error) {
+	for _, store := range m.stores {
+		if store.GetId() == storeID {
+			return store, nil
+		}
+	}
+	return nil, errors.Errorf("store %d not found", storeID)
+}
+
+type fakeImportSSTServer struct {
+	import_sstpb.UnimplementedImportSSTServer
+}
+
+func (*fakeImportSSTServer) MultiIngest(context.Context, *import_sstpb.MultiIngestRequest) (*import_sstpb.IngestResponse, error) {
+	return &import_sstpb.IngestResponse{}, nil
+}
+
+func (*fakeImportSSTServer) BatchDownload(context.Context, *import_sstpb.DownloadRequest) (*import_sstpb.DownloadResponse, error) {
+	return &import_sstpb.DownloadResponse{}, nil
+}
+
+func TestSnapClientCloseClosesImporterWithoutRestorer(t *testing.T) {
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	srv := grpc.NewServer()
+	import_sstpb.RegisterImportSSTServer(srv, &fakeImportSSTServer{})
+	serveDone := make(chan struct{})
+	go func() {
+		defer close(serveDone)
+		_ = srv.Serve(lis)
+	}()
+	defer func() {
+		srv.Stop()
+		<-serveDone
+	}()
+
+	baseline := goleak.IgnoreCurrent()
+
+	addr := lis.Addr().String()
+	pdCli := &mockImportPDClient{
+		Client: mc.PDClient,
+		stores: []*metapb.Store{
+			{Id: 1, Address: addr},
+			{Id: 2, Address: addr},
+			{Id: 3, Address: addr},
+		},
+	}
+
+	keepaliveCfg := keepalive.ClientParameters{
+		Time:                10 * time.Second,
+		Timeout:             3 * time.Second,
+		PermitWithoutStream: true,
+	}
+	client := snapclient.NewRestoreClient(pdCli, nil, nil, keepaliveCfg)
+	client.SetConcurrencyPerStore(1)
+
+	err = client.LoadSchemaIfNeededAndInitClient(
+		context.Background(),
+		&backuppb.BackupMeta{IsRawKv: true},
+		&backuppb.StorageBackend{},
+		nil,
+		false,
+		nil,
+		nil,
+		false,
+		true,
+		false,
+	)
+	require.NoError(t, err)
+
+	// Closing SnapClient before GetRestorer initializes rc.restorer must still close
+	// rc.importer and its cached gRPC connections (e.g., checkpoint resume jumping straight
+	// to index repair without restoring SST files). Calling Close again must also be safe.
+	client.Close()
+	client.Close()
+	srv.Stop()
+	<-serveDone
+
+	require.NoError(t, goleak.Find(baseline))
 }

@@ -318,6 +318,26 @@ func (e *baseAvgDistinct4Decimal) AppendFinalResult2Chunk(ctx AggFuncUpdateConte
 	return nil
 }
 
+func (e *baseAvgDistinct4Decimal) SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *SerializeHelper) {
+	pr := (*partialResult4AvgDistinctDecimal)(partialResult)
+	resBuf := spillHelper.serializePartialResult4AvgDistinctDecimal(*pr)
+	chk.AppendBytes(e.ordinal, resBuf)
+}
+
+func (e *baseAvgDistinct4Decimal) DeserializePartialResult(src *chunk.Chunk) ([]PartialResult, int64) {
+	return deserializePartialResultCommon(src, e.ordinal, e.deserializeForSpill)
+}
+
+func (e *baseAvgDistinct4Decimal) deserializeForSpill(helper *deserializeHelper) (PartialResult, int64) {
+	pr, memDelta := e.AllocPartialResult()
+	result := (*partialResult4AvgDistinctDecimal)(pr)
+	success, dataMemDelta := helper.deserializePartialResult4AvgDistinctDecimal(result)
+	if !success {
+		return nil, 0
+	}
+	return pr, memDelta + dataMemDelta
+}
+
 type avgPartial4DistinctDecimal struct {
 	baseAvgDistinct4Decimal
 }
@@ -532,6 +552,26 @@ func (e *baseAvgDistinct4Float64) AppendFinalResult2Chunk(_ AggFuncUpdateContext
 	}
 	chk.AppendFloat64(e.ordinal, sum/float64(count))
 	return nil
+}
+
+func (e *baseAvgDistinct4Float64) SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *SerializeHelper) {
+	pr := (*partialResult4AvgDistinctFloat64)(partialResult)
+	resBuf := spillHelper.serializePartialResult4AvgDistinctFloat64(*pr)
+	chk.AppendBytes(e.ordinal, resBuf)
+}
+
+func (e *baseAvgDistinct4Float64) DeserializePartialResult(src *chunk.Chunk) ([]PartialResult, int64) {
+	return deserializePartialResultCommon(src, e.ordinal, e.deserializeForSpill)
+}
+
+func (e *baseAvgDistinct4Float64) deserializeForSpill(helper *deserializeHelper) (PartialResult, int64) {
+	pr, memDelta := e.AllocPartialResult()
+	result := (*partialResult4AvgDistinctFloat64)(pr)
+	success, dataMemDelta := helper.deserializePartialResult4AvgDistinctFloat64(result)
+	if !success {
+		return nil, 0
+	}
+	return pr, memDelta + dataMemDelta
 }
 
 type avgPartial4DistinctFloat64 struct {

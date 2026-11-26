@@ -25,6 +25,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config/deploymode"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -40,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
+	"github.com/pingcap/tidb/pkg/structure"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testenv"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
@@ -324,7 +326,138 @@ func TestUpgradeVersion75(t *testing.T) {
 	require.Equal(t, "char(255)", strings.ToLower(row.GetString(1)))
 }
 
+func probeFirstMDLSchedulerDispatch(t *testing.T) func(bool) {
+	t.Helper()
+	original := vardef.IsMDLEnabled()
+	vardef.SetEnableMDL(false)
+	t.Cleanup(func() { vardef.SetEnableMDL(original) })
+	observed := make(chan bool, 1)
+	var first sync.Once
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeLoadAndDeliverJobs", func() {
+		first.Do(func() { observed <- vardef.IsMDLEnabled() })
+	})
+	return func(expected bool) {
+		t.Helper()
+		select {
+		case enabled := <-observed:
+			require.Equal(t, expected, enabled, "MDL state at first scheduler dispatch")
+		case <-time.After(10 * time.Second):
+			require.FailNow(t, "the DDL scheduler did not dispatch")
+		}
+	}
+}
+
+func testBootstrapMDLBeforeScheduler(t *testing.T) {
+	assertFirstDispatch := probeFirstMDLSchedulerDispatch(t)
+	store, dom := session.CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+	defer dom.Close()
+	assertFirstDispatch(true)
+}
+
+func testUpgradeMDLStartupState(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("Legacy MDL migration only applies to the classic kernel")
+	}
+	originalMockUpgrade := session.WithMockUpgrade
+	session.WithMockUpgrade = nil
+	t.Cleanup(func() { session.WithMockUpgrade = originalMockUpgrade })
+	originalMDL := vardef.IsMDLEnabled()
+	t.Cleanup(func() { vardef.SetEnableMDL(originalMDL) })
+	for _, state := range []string{"enabled", "disabled", "missing"} {
+		t.Run(state, func(t *testing.T) {
+			store, dom := session.CreateStoreAndBootstrap(t)
+			defer func() { require.NoError(t, store.Close()) }()
+			se := session.CreateSessionAndSetID(t, store)
+			defer se.Close()
+			version := session.CurrentBootstrapVersion - 1
+			revertVersionAndVariables(t, se, int(version))
+			if state == "missing" {
+				session.MustExec(t, se, "delete from mysql.global_variables where variable_name='tidb_enable_metadata_lock'")
+			} else {
+				value := "0"
+				if state == "enabled" {
+					value = "1"
+				}
+				session.MustExec(t, se, fmt.Sprintf("update mysql.global_variables set variable_value='%s' where variable_name='tidb_enable_metadata_lock'", value))
+			}
+			dom.Close()
+			txn, err := store.Begin()
+			require.NoError(t, err)
+			m := meta.NewMutator(txn)
+			require.NoError(t, m.FinishBootstrap(version))
+			if state == "missing" {
+				// Reproduce the absent meta key of pre-MDL clusters without replaying
+				// unrelated historical schema migrations.
+				require.NoError(t, structure.NewStructure(txn, txn, []byte("m")).Clear([]byte("metadataLock")))
+			} else {
+				require.NoError(t, m.SetMetadataLock(state == "enabled"))
+			}
+			require.NoError(t, txn.Commit(context.Background()))
+			store.SetOption(session.StoreBootstrappedKey, nil)
+			vardef.SetEnableMDL(state != "enabled")
+
+			type observation struct {
+				mode    ddl.StartMode
+				enabled bool
+			}
+			starts := make(chan observation, 2)
+			dispatches := make(chan observation, 2)
+			var mu sync.Mutex
+			var mode ddl.StartMode
+			seen := make(map[ddl.StartMode]bool)
+			// Observe startup as well as first dispatch so the later sysvar-cache
+			// reconciliation cannot hide a stale runtime setting.
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeDDLStart", func(startMode ddl.StartMode) {
+				mu.Lock()
+				defer mu.Unlock()
+				mode = startMode
+				starts <- observation{mode, vardef.IsMDLEnabled()}
+			})
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeLoadAndDeliverJobs", func() {
+				mu.Lock()
+				defer mu.Unlock()
+				if !seen[mode] {
+					seen[mode] = true
+					dispatches <- observation{mode, vardef.IsMDLEnabled()}
+				}
+			})
+			upgraded, err := session.BootstrapSession(store)
+			require.NoError(t, err)
+			defer upgraded.Close()
+			for _, observations := range []chan observation{starts, dispatches} {
+				for _, expected := range []observation{{ddl.Upgrade, state == "enabled"}, {ddl.Normal, state != "disabled"}} {
+					select {
+					case actual := <-observations:
+						require.Equal(t, expected, actual)
+					case <-time.After(10 * time.Second):
+						require.FailNow(t, "the DDL scheduler did not start or dispatch")
+					}
+				}
+			}
+			txn, err = store.Begin()
+			require.NoError(t, err)
+			enabled, missing, err := meta.NewMutator(txn).GetMetadataLock()
+			require.NoError(t, err)
+			require.NoError(t, txn.Rollback())
+			require.False(t, missing)
+			require.Equal(t, state != "disabled", enabled)
+			value := "1"
+			if state == "disabled" {
+				value = "0"
+			}
+			testkit.NewTestKit(t, store).MustQuery("select variable_value from mysql.global_variables where variable_name='tidb_enable_metadata_lock'").Check(testkit.Rows(value))
+		})
+	}
+}
+
 func TestUpgradeVersionMockLatest(t *testing.T) {
+	t.Run("fresh bootstrap", testBootstrapMDLBeforeScheduler)
+	t.Run("MDL startup state", testUpgradeMDLStartupState)
+	t.Run("version upgrade", testUpgradeVersionMockLatest)
+}
+
+func testUpgradeVersionMockLatest(t *testing.T) {
 	mock := true
 	session.WithMockUpgrade = &mock
 
@@ -346,9 +479,11 @@ func TestUpgradeVersionMockLatest(t *testing.T) {
 	require.Equal(t, session.CurrentBootstrapVersion-1, ver)
 	startUpgrade(store)
 	dom.Close()
+	assertFirstDispatch := probeFirstMDLSchedulerDispatch(t)
 	domLatestV, err := session.BootstrapSession(store)
 	require.NoError(t, err)
 	defer domLatestV.Close()
+	assertFirstDispatch(true)
 
 	finishUpgrade(store)
 
@@ -1097,59 +1232,235 @@ ORDER BY index_name, seq_in_index`).Check(testkit.Rows(
 	))
 }
 
-func TestUpgradeVersion260MaskingPolicy(t *testing.T) {
+func TestUpgradeVersion280MaskingPolicy(t *testing.T) {
+	fromVersions := []int{251, 254}
+	if kerneltype.IsNextGen() {
+		originalMode := deploymode.Get()
+		require.NoError(t, deploymode.Set(deploymode.Starter))
+		t.Cleanup(func() { require.NoError(t, deploymode.Set(originalMode)) })
+	} else {
+		fromVersions = append(fromVersions, 189)
+	}
+	for _, fromVersion := range fromVersions {
+		t.Run(fmt.Sprintf("from_version_%d", fromVersion), func(t *testing.T) {
+			store, dom := session.CreateStoreAndBootstrap(t)
+			defer func() { require.NoError(t, store.Close()) }()
+
+			se := session.CreateSessionAndSetID(t, store)
+			txn, err := store.Begin()
+			require.NoError(t, err)
+			m := meta.NewMutator(txn)
+			err = m.FinishBootstrap(int64(fromVersion))
+			require.NoError(t, err)
+			err = txn.Commit(context.Background())
+			require.NoError(t, err)
+			revertVersionAndVariables(t, se, fromVersion)
+			if fromVersion < 252 {
+				// Ensure upgrade252 performs a column change, rather than a no-op.
+				session.MustExec(t, se, "SET SESSION sql_mode = ''")
+				session.MustExec(t, se, "ALTER TABLE mysql.bind_info CHANGE create_time create_time TIMESTAMP")
+				session.MustExec(t, se, "ALTER TABLE mysql.bind_info CHANGE update_time update_time TIMESTAMP")
+			}
+
+			is := dom.InfoSchema()
+			policyTbl, err := is.TableByName(context.Background(), ast.NewCIStr("mysql"), ast.NewCIStr("tidb_masking_policy"))
+			require.NoError(t, err)
+			policyDBID := policyTbl.Meta().DBID
+			policyTblID := policyTbl.Meta().ID
+			require.Equal(t, kerneltype.IsNextGen(), metadef.IsReservedID(policyTblID))
+
+			txn, err = store.Begin()
+			require.NoError(t, err)
+			m = meta.NewMutator(txn)
+			err = m.DropTableOrView(policyDBID, policyTblID)
+			require.NoError(t, err)
+			exists, err := m.CheckTableExists(policyDBID, policyTblID)
+			require.NoError(t, err)
+			require.False(t, exists)
+			err = txn.Commit(context.Background())
+			require.NoError(t, err)
+
+			store.SetOption(session.StoreBootstrappedKey, nil)
+			ver, err := session.GetBootstrapVersion(se)
+			require.NoError(t, err)
+			require.Equal(t, int64(fromVersion), ver)
+			dom.Close()
+
+			if kerneltype.IsNextGen() {
+				// Model the legacy mysql layout while preserving physical
+				// table IDs so the existing rows remain readable after the move.
+				txn, err := store.Begin()
+				require.NoError(t, err)
+				m := meta.NewMutator(txn)
+				tables, err := m.ListTables(context.Background(), policyDBID)
+				require.NoError(t, err)
+				require.NoError(t, m.CreateSysDatabaseByID("mysql", 1))
+				for _, tbl := range tables {
+					require.NoError(t, m.CreateTableOrView(1, tbl))
+				}
+				require.NoError(t, m.DropDatabase(policyDBID))
+				require.NoError(t, txn.Commit(context.Background()))
+			}
+
+			newVer, err := session.BootstrapSession(store)
+			require.NoError(t, err)
+			defer newVer.Close()
+
+			seLatestV := session.CreateSessionAndSetID(t, store)
+			ver, err = session.GetBootstrapVersion(seLatestV)
+			require.NoError(t, err)
+			require.Equal(t, session.CurrentBootstrapVersion, ver)
+
+			upgradedPolicyTbl, err := newVer.InfoSchema().TableByName(
+				context.Background(), ast.NewCIStr("mysql"), ast.NewCIStr("tidb_masking_policy"))
+			require.NoError(t, err)
+			if kerneltype.IsNextGen() {
+				require.Equal(t, int64(1), upgradedPolicyTbl.Meta().DBID)
+				_, exists := newVer.InfoSchema().SchemaByID(metadef.SystemDatabaseID)
+				require.False(t, exists, "upgrade must preserve the legacy mysql database")
+			}
+			require.False(t, metadef.IsReservedID(upgradedPolicyTbl.Meta().ID),
+				"legacy upgrade should allocate a global table ID")
+			require.NotEqual(t, policyTblID, upgradedPolicyTbl.Meta().ID,
+				"recreating the table must not reuse a dropped physical table ID")
+
+			tk := testkit.NewTestKit(t, store)
+			checkTiDBMaskingPolicyTableSchema(t, tk)
+		})
+	}
+
+	if kerneltype.IsNextGen() {
+		return // NextGen forbids renaming built-in system tables.
+	}
+
+	for _, tc := range []struct {
+		name                      string
+		simulateConcurrentUpgrade bool
+	}{
+		{name: "normal_restart_after_system_table_rename"},
+		{name: "upgrade_completed_after_initial_version_read", simulateConcurrentUpgrade: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store, dom := session.CreateStoreAndBootstrap(t)
+			defer func() { require.NoError(t, store.Close()) }()
+
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("RENAME TABLE mysql.tidb_masking_policy TO mysql.tidb_masking_policy_bak")
+			dom.Close()
+
+			if tc.simulateConcurrentUpgrade {
+				txn, err := store.Begin()
+				require.NoError(t, err)
+				require.NoError(t, meta.NewMutator(txn).FinishBootstrap(189))
+				require.NoError(t, txn.Commit(context.Background()))
+
+				// Simulate another TiDB completing the upgrade after this TiDB reads
+				// the old bootstrap version but before it acquires the upgrade lock.
+				testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/session/afterGetStoreBootstrapVersion", func(ver int64) {
+					require.Equal(t, int64(189), ver)
+					txn, err := store.Begin()
+					require.NoError(t, err)
+					require.NoError(t, meta.NewMutator(txn).FinishBootstrap(session.CurrentBootstrapVersion))
+					require.NoError(t, txn.Commit(context.Background()))
+				})
+			}
+			store.SetOption(session.StoreBootstrappedKey, nil)
+
+			restartedDom, err := session.BootstrapSession(store)
+			require.NoError(t, err)
+			defer restartedDom.Close()
+
+			tk = testkit.NewTestKit(t, store)
+			tk.MustQuery("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='mysql' AND table_name='tidb_masking_policy'").
+				Check(testkit.Rows("0"))
+			tk.MustQuery("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='mysql' AND table_name='tidb_masking_policy_bak'").
+				Check(testkit.Rows("1"))
+		})
+	}
+}
+
+func TestUpgradeMaterializedViewBootstrap(t *testing.T) {
 	if kerneltype.IsNextGen() {
 		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
 	}
-	const fromVersion = 254
+
+	for _, previousVersion := range []int{315, 320} {
+		t.Run(fmt.Sprintf("from_%d", previousVersion), func(t *testing.T) {
+			store, dom := session.CreateStoreAndBootstrap(t)
+			defer func() { require.NoError(t, store.Close()) }()
+
+			tk := testkit.NewTestKit(t, store)
+			tables := []string{"tidb_mview_fast_refresh_source_info"}
+			if previousVersion < 316 {
+				tables = append(tables,
+					"tidb_mview_refresh_info",
+					"tidb_mlog_purge_info",
+					"tidb_mview_refresh_hist",
+					"tidb_mview_refresh_alert",
+					"tidb_mlog_purge_hist",
+				)
+			}
+			for _, tableName := range tables {
+				tk.MustExec("DROP TABLE mysql." + tableName)
+			}
+
+			se := session.CreateSessionAndSetID(t, store)
+			txn, err := store.Begin()
+			require.NoError(t, err)
+			require.NoError(t, meta.NewMutator(txn).FinishBootstrap(int64(previousVersion)))
+			require.NoError(t, txn.Commit(context.Background()))
+			revertVersionAndVariables(t, se, previousVersion)
+			store.SetOption(session.StoreBootstrappedKey, nil)
+			ver, err := session.GetBootstrapVersion(se)
+			require.NoError(t, err)
+			require.EqualValues(t, previousVersion, ver)
+
+			dom.Close()
+			newDom, err := session.BootstrapSession(store)
+			require.NoError(t, err)
+			defer newDom.Close()
+
+			tk = testkit.NewTestKit(t, store)
+			ver, err = session.GetBootstrapVersion(tk.Session())
+			require.NoError(t, err)
+			require.Equal(t, session.CurrentBootstrapVersion, ver)
+			checkMaterializedViewBootstrapSchema(t, tk)
+			tk.MustQuery("SELECT MVIEW_ID, MLOG_ID FROM mysql.tidb_mview_fast_refresh_source_info").Check(testkit.Rows())
+		})
+	}
+}
+
+func TestUpgradeVersion317OperateViewPrivilege(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
+	}
 
 	store, dom := session.CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
 
-	seV254 := session.CreateSessionAndSetID(t, store)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("ALTER TABLE mysql.user DROP COLUMN Operate_view_priv")
+	tk.MustExec("ALTER TABLE mysql.db DROP COLUMN Operate_view_priv")
+	tk.MustExec("ALTER TABLE mysql.tables_priv MODIFY COLUMN Table_priv SET('Select','Insert','Update','Delete','Create','Drop','Grant','Index','Alter','Create View','Show View','Trigger','References')")
+
+	se := session.CreateSessionAndSetID(t, store)
 	txn, err := store.Begin()
 	require.NoError(t, err)
-	m := meta.NewMutator(txn)
-	err = m.FinishBootstrap(int64(fromVersion))
-	require.NoError(t, err)
-	err = txn.Commit(context.Background())
-	require.NoError(t, err)
-	revertVersionAndVariables(t, seV254, fromVersion)
-
-	is := dom.InfoSchema()
-	policyTbl, err := is.TableByName(context.Background(), ast.NewCIStr("mysql"), ast.NewCIStr("tidb_masking_policy"))
-	require.NoError(t, err)
-	policyDBID := policyTbl.Meta().DBID
-	policyTblID := policyTbl.Meta().ID
-
-	txn, err = store.Begin()
-	require.NoError(t, err)
-	m = meta.NewMutator(txn)
-	err = m.DropTableOrView(policyDBID, policyTblID)
-	require.NoError(t, err)
-	exists, err := m.CheckTableExists(policyDBID, policyTblID)
-	require.NoError(t, err)
-	require.False(t, exists)
-	err = txn.Commit(context.Background())
-	require.NoError(t, err)
-
+	require.NoError(t, meta.NewMutator(txn).FinishBootstrap(317-1))
+	require.NoError(t, txn.Commit(context.Background()))
+	revertVersionAndVariables(t, se, 317-1)
 	store.SetOption(session.StoreBootstrappedKey, nil)
-	ver, err := session.GetBootstrapVersion(seV254)
-	require.NoError(t, err)
-	require.Equal(t, int64(fromVersion), ver)
+
 	dom.Close()
-
-	newVer, err := session.BootstrapSession(store)
+	newDom, err := session.BootstrapSession(store)
 	require.NoError(t, err)
-	defer newVer.Close()
+	defer newDom.Close()
 
-	seLatestV := session.CreateSessionAndSetID(t, store)
-	ver, err = session.GetBootstrapVersion(seLatestV)
+	tk = testkit.NewTestKit(t, store)
+	ver, err := session.GetBootstrapVersion(tk.Session())
 	require.NoError(t, err)
 	require.Equal(t, session.CurrentBootstrapVersion, ver)
-
-	tk := testkit.NewTestKit(t, store)
-	checkTiDBMaskingPolicyTableSchema(t, tk)
+	checkOperateViewPrivilegeBootstrapSchema(t, tk)
 }
 
 func TestUpgradeWithAnalyzeColumnOptions(t *testing.T) {
@@ -1483,4 +1794,178 @@ func TestUpgradeVersion256PlanCacheSkipStatsOnBinding(t *testing.T) {
 	require.Equal(t, 1, req.NumRows())
 	row := req.GetRow(0)
 	require.Equal(t, "ON", row.GetString(0))
+}
+
+func TestUpgradeVersion284EnableTxnFile(t *testing.T) {
+	tests := []struct {
+		name          string
+		legacyValue   string
+		newValue      string
+		expectedValue string
+		rollback      bool
+	}{
+		{name: "legacy ON", legacyValue: "ON", newValue: "ON", expectedValue: "OFF"},
+		{name: "legacy OFF", legacyValue: "OFF", newValue: "OFF", expectedValue: "ON"},
+		{name: "target absent", legacyValue: "ON", expectedValue: "OFF"},
+		{name: "legacy absent", newValue: "ON", expectedValue: "ON"},
+		{name: "rollback on error", legacyValue: "ON", newValue: "ON", expectedValue: "ON", rollback: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store, dom := session.CreateStoreAndBootstrap(t)
+			defer func() { require.NoError(t, store.Close()) }()
+			// The upgrade must start from 283 (= version284 - 1) so that the ver284
+			// step under test actually runs; deriving it from CurrentBootstrapVersion
+			// breaks on any branch that bumps the bootstrap version (issue #70691).
+			const upgradeFromVersion = int64(283)
+			var migrationCommitted atomicutil.Bool
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/session/afterUpgradeToVer284Commit", func(s sessionapi.Session) {
+				migrationCommitted.Store(!s.GetSessionVars().InTxn())
+			})
+			var readInTxn atomicutil.Bool
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/session/afterUpgradeToVer284Read", func(s sessionapi.Session) {
+				readInTxn.Store(s.GetSessionVars().InTxn())
+			})
+			var replacementUncommitted atomicutil.Bool
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/session/afterUpgradeToVer284Replace", func(sessionapi.Session) {
+				observer := testkit.NewTestKit(t, store)
+				expectedRows := testkit.Rows("tidb_disable_txn_file " + tt.legacyValue)
+				if tt.newValue != "" {
+					expectedRows = testkit.Rows(
+						"tidb_disable_txn_file "+tt.legacyValue,
+						"tidb_enable_txn_file "+tt.newValue,
+					)
+				}
+				observer.MustQuery("SELECT variable_name, variable_value FROM mysql.global_variables WHERE variable_name IN ('tidb_disable_txn_file', 'tidb_enable_txn_file') ORDER BY variable_name").Check(expectedRows)
+				observer.MustQuery("SELECT variable_value FROM mysql.tidb WHERE variable_name='tidb_server_version'").Check(
+					testkit.Rows(fmt.Sprintf("%d", upgradeFromVersion)),
+				)
+				replacementUncommitted.Store(true)
+			})
+			var rollbackObserved atomicutil.Bool
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/session/afterUpgradeToVer284Rollback", func(s sessionapi.Session) {
+				require.False(t, s.GetSessionVars().InTxn())
+				observer := testkit.NewTestKit(t, store)
+				observer.MustQuery("SELECT variable_name, variable_value FROM mysql.global_variables WHERE variable_name IN ('tidb_disable_txn_file', 'tidb_enable_txn_file') ORDER BY variable_name").Check(
+					testkit.Rows(
+						"tidb_disable_txn_file "+tt.legacyValue,
+						"tidb_enable_txn_file "+tt.newValue,
+					),
+				)
+				observer.MustQuery("SELECT variable_value FROM mysql.tidb WHERE variable_name='tidb_server_version'").Check(
+					testkit.Rows(fmt.Sprintf("%d", upgradeFromVersion)),
+				)
+				rollbackObserved.Store(true)
+				panic("upgradeToVer284 rollback observed")
+			})
+			if kerneltype.IsNextGen() && tt.rollback {
+				testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/session/mockUpgradeToVer284Error", "return()")
+			}
+
+			se := session.CreateSessionAndSetID(t, store)
+			txn, err := store.Begin()
+			require.NoError(t, err)
+			m := meta.NewMutator(txn)
+			require.NoError(t, m.FinishBootstrap(upgradeFromVersion))
+			require.NoError(t, txn.Commit(context.Background()))
+			revertVersionAndVariables(t, se, int(upgradeFromVersion))
+
+			if tt.legacyValue == "" {
+				session.MustExec(t, se, "DELETE FROM mysql.global_variables WHERE variable_name='tidb_disable_txn_file'")
+			} else {
+				session.MustExec(t, se, "REPLACE INTO mysql.global_variables VALUES (?, ?)", "tidb_disable_txn_file", tt.legacyValue)
+			}
+			if tt.newValue == "" {
+				session.MustExec(t, se, "DELETE FROM mysql.global_variables WHERE variable_name='tidb_enable_txn_file'")
+			} else {
+				session.MustExec(t, se, "REPLACE INTO mysql.global_variables VALUES (?, ?)", "tidb_enable_txn_file", tt.newValue)
+			}
+			session.MustExec(t, se, "COMMIT")
+
+			store.SetOption(session.StoreBootstrappedKey, nil)
+			dom.Close()
+			if kerneltype.IsNextGen() && tt.rollback {
+				require.PanicsWithValue(t, "upgradeToVer284 rollback observed", func() {
+					_, _ = session.BootstrapSession(store)
+				})
+				domCurrent, err := session.GetDomain(store)
+				require.NoError(t, err)
+				defer domCurrent.Close()
+			} else {
+				domCurrent, err := session.BootstrapSession(store)
+				require.NoError(t, err)
+				defer domCurrent.Close()
+			}
+
+			tk := testkit.NewTestKit(t, store)
+			expectedRows := testkit.Rows("tidb_enable_txn_file " + tt.expectedValue)
+			if kerneltype.IsNextGen() && tt.legacyValue != "" {
+				expectedRows = testkit.Rows(
+					"tidb_disable_txn_file "+tt.legacyValue,
+					"tidb_enable_txn_file "+tt.expectedValue,
+				)
+			} else if kerneltype.IsClassic() {
+				switch {
+				case tt.legacyValue != "" && tt.newValue != "":
+					expectedRows = testkit.Rows(
+						"tidb_disable_txn_file "+tt.legacyValue,
+						"tidb_enable_txn_file "+tt.newValue,
+					)
+				case tt.legacyValue != "":
+					expectedRows = testkit.Rows("tidb_disable_txn_file " + tt.legacyValue)
+				}
+			}
+			tk.MustQuery("SELECT variable_name, variable_value FROM mysql.global_variables WHERE variable_name IN ('tidb_disable_txn_file', 'tidb_enable_txn_file') ORDER BY variable_name").Check(
+				expectedRows,
+			)
+			if kerneltype.IsNextGen() {
+				require.True(t, readInTxn.Load())
+				if tt.rollback {
+					require.True(t, rollbackObserved.Load())
+					require.False(t, migrationCommitted.Load())
+				} else {
+					require.True(t, migrationCommitted.Load())
+				}
+				if tt.legacyValue != "" {
+					require.True(t, replacementUncommitted.Load())
+				}
+			}
+		})
+	}
+}
+
+func TestDefaultAnalyzeBackgroundOnlyAffectsFreshBootstrap(t *testing.T) {
+	store, dom := session.CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+
+	defaultGroup, ok := dom.InfoSchema().ResourceGroupByName(ast.NewCIStr("default"))
+	require.True(t, ok)
+	require.NotNil(t, defaultGroup.Background)
+	require.Equal(t, []string{kv.InternalTxnStats}, defaultGroup.Background.JobTypes)
+	require.Zero(t, defaultGroup.Background.ResourceUtilLimit)
+
+	// Next-gen has no upgrade path in its first release; skip the upgrade-only check below.
+	if kerneltype.IsNextGen() {
+		dom.Close()
+		return
+	}
+
+	upgradeFromVersion := session.CurrentBootstrapVersion - 1
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	m := meta.NewMutator(txn)
+	require.NoError(t, m.DropResourceGroup(meta.DefaultGroupMeta4Test().ID))
+	require.NoError(t, m.FinishBootstrap(upgradeFromVersion))
+	require.NoError(t, txn.Commit(context.Background()))
+	store.SetOption(session.StoreBootstrappedKey, nil)
+	dom.Close()
+
+	domUpgraded, err := session.BootstrapSession(store)
+	require.NoError(t, err)
+	defer domUpgraded.Close()
+	defaultGroup, ok = domUpgraded.InfoSchema().ResourceGroupByName(ast.NewCIStr("default"))
+	require.True(t, ok)
+	// The upgrade path should not backfill the fresh-bootstrap background setting.
+	require.Nil(t, defaultGroup.Background)
 }

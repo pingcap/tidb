@@ -77,7 +77,8 @@ func TestGlobalMemoryControlForAnalyze(t *testing.T) {
 	tk0 := testkit.NewTestKit(t, store)
 	tk0.MustExec("set global tidb_mem_oom_action = 'cancel'")
 	tk0.MustExec("set global tidb_server_memory_limit = 512MB")
-	tk0.MustExec("set global tidb_server_memory_limit_sess_min_size = 128")
+	// 64MB keeps the test session (a few KB) out of MemUsageTop1Tracker, so only the analyze can be killed.
+	tk0.MustExec("set global tidb_server_memory_limit_sess_min_size = 64MB")
 
 	sm := newLiveSessionManager(dom, tk0.Session())
 	dom.ServerMemoryLimitHandle().SetSessionManager(sm)
@@ -107,7 +108,8 @@ func TestGlobalMemoryControlForPrepareAnalyze(t *testing.T) {
 	tk0.MustExec("set global tidb_mem_oom_action = 'cancel'")
 	tk0.MustExec("set global tidb_mem_quota_query = 209715200 ") // 200MB
 	tk0.MustExec("set global tidb_server_memory_limit = 5GB")
-	tk0.MustExec("set global tidb_server_memory_limit_sess_min_size = 128")
+	// 64MB keeps the test session (a few KB) out of MemUsageTop1Tracker, so only the analyze can be killed.
+	tk0.MustExec("set global tidb_server_memory_limit_sess_min_size = 64MB")
 
 	sm := newLiveSessionManager(dom, tk0.Session())
 	dom.ServerMemoryLimitHandle().SetSessionManager(sm)
@@ -150,7 +152,8 @@ func TestGlobalMemoryControlForAutoAnalyze(t *testing.T) {
 	//originalVal2 := tk.MustQuery("select @@global.tidb_server_memory_limit").Rows()[0][0].(string)
 	tk.MustExec("set global tidb_server_memory_limit = 512MB")
 	originalVal3 := tk.MustQuery("select @@global.tidb_server_memory_limit_sess_min_size").Rows()[0][0].(string)
-	tk.MustExec("set global tidb_server_memory_limit_sess_min_size = 128")
+	// 64MB keeps the test session (a few KB) out of MemUsageTop1Tracker, so only the analyze can be killed.
+	tk.MustExec("set global tidb_server_memory_limit_sess_min_size = 64MB")
 	defer func() {
 		tk.MustExec(fmt.Sprintf("set global tidb_mem_oom_action = %v", originalVal1))
 		//tk.MustExec(fmt.Sprintf("set global tidb_server_memory_limit = %v", originalVal2))
@@ -198,7 +201,7 @@ func TestGlobalMemoryControlForAutoAnalyze(t *testing.T) {
 
 	tk.MustExec("insert into t values(4),(5),(6)")
 	tk.MustExec("flush stats_delta *.*")
-	err := h.Update(context.Background(), dom.InfoSchema())
+	err := h.Cache().Update(context.Background(), dom.InfoSchema())
 	require.NoError(t, err)
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/memory/ReadMemStats", `return(536870912)`))
@@ -211,7 +214,7 @@ func TestGlobalMemoryControlForAutoAnalyze(t *testing.T) {
 	childTrackers = executor.GlobalAnalyzeMemoryTracker.GetChildrenForTest()
 	require.Len(t, childTrackers, 0)
 
-	h.HandleAutoAnalyze()
+	h.AutoAnalyze().HandleAutoAnalyze()
 	rs := tk.MustQuery("select fail_reason from mysql.analyze_jobs where table_name=? and state=? limit 1", "t", "failed")
 	failReason := rs.Rows()[0][0].(string)
 	require.True(t, strings.Contains(failReason, "Your query has been cancelled due to exceeding the allowed memory limit for the tidb-server instance and this query is currently using the most memory. Please try narrowing your query scope or increase the tidb_server_memory_limit and try again."))

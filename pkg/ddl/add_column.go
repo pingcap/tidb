@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/metabuild"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -41,13 +42,16 @@ import (
 	field_types "github.com/pingcap/tidb/pkg/parser/types"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	storeerr "github.com/pingcap/tidb/pkg/store/driver/error"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
 	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/pingcap/tidb/pkg/util/mviewutil"
 	"go.uber.org/zap"
 )
 
@@ -77,7 +81,20 @@ func (w *worker) onAddColumn(jobCtx *jobContext, job *model.Job) (ver int64, err
 		}
 		return ver, errors.Trace(err)
 	}
+	if err = refreshMLogAddedColumnFromBase(jobCtx.metaMut, job, tblInfo, columnInfo, colFromArgs); err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+	if err = w.acquireMLogBaseMVRefreshLock(jobCtx, job, tblInfo); err != nil {
+		return ver, errors.Trace(err)
+	}
 	if columnInfo == nil {
+		if tblInfo.MaterializedViewLog != nil {
+			if err = setMLogAddedColumnOriginDefault(colFromArgs); err != nil {
+				job.State = model.JobStateCancelled
+				return ver, errors.Trace(err)
+			}
+		}
 		columnInfo = InitAndAddColumnToTable(tblInfo, colFromArgs)
 		logutil.DDLLogger().Info("run add column job", zap.Stringer("job", job), zap.Reflect("columnInfo", *columnInfo))
 		if err = checkAddColumnTooManyColumns(len(tblInfo.Columns)); err != nil {
@@ -129,7 +146,8 @@ func (w *worker) onAddColumn(jobCtx *jobContext, job *model.Job) (ver int64, err
 		}
 		tblInfo.MoveColumnInfo(columnInfo.Offset, offset)
 		columnInfo.State = model.StatePublic
-		// Use updateVersionAndTableInfoWithCheck to validate the table before making it public
+		syncMLogColumnsAfterAddColumn(tblInfo)
+		// Validate the final public table info before publishing its schema version.
 		ver, err = updateVersionAndTableInfoWithCheck(jobCtx, job, tblInfo, originalState != columnInfo.State)
 		if err != nil {
 			return ver, errors.Trace(err)
@@ -147,6 +165,146 @@ func (w *worker) onAddColumn(jobCtx *jobContext, job *model.Job) (ver int64, err
 	}
 
 	return ver, errors.Trace(err)
+}
+
+func (w *worker) acquireMLogBaseMVRefreshLock(jobCtx *jobContext, job *model.Job, tblInfo *model.TableInfo) error {
+	if tblInfo.MaterializedViewLog == nil {
+		return nil
+	}
+	baseTblInfo, err := getTableInfo(jobCtx.metaMut, tblInfo.MaterializedViewLog.BaseTableID, job.SchemaID)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if baseTblInfo.MaterializedView == nil {
+		return nil
+	}
+
+	// Internal refresh sessions do not participate in MDL. Exclude refreshes
+	// that could still write with the old MLog columns or skip logging updates
+	// to newly tracked columns. The scheduler releases the lock after the whole
+	// job, including multi-schema sub-jobs, rollback and schema synchronization.
+	lockName := mviewutil.RefreshAdvisoryLockName(job.SchemaID, baseTblInfo.ID)
+	if err := w.sess.GetAdvisoryLock(lockName, 1); err != nil {
+		if storeerr.ErrLockWaitTimeout.Equal(err) {
+			if isUnstartedMLogAddColumnJob(job, tblInfo) {
+				// A new job must not retain its DDL scheduling claim while an OOP
+				// refresh holds the lock and waits for its cutover DDL. A resumed
+				// job with existing schema changes must finish or roll them back.
+				job.State = model.JobStateCancelled
+			}
+			return exeerrors.ErrMVAdvisoryLockConflict.FastGenByArgs(fmt.Sprintf(
+				"cannot alter materialized view log on %s.%s: materialized view refresh is running, please retry later", job.SchemaName, baseTblInfo.Name.O))
+		}
+		return errors.Trace(err)
+	}
+	return nil
+}
+
+func isUnstartedMLogAddColumnJob(job *model.Job, tblInfo *model.TableInfo) bool {
+	if job.SchemaState != model.StateNone {
+		return false
+	}
+	// A StateNone proxy may follow an already-started column sub-job. Its
+	// non-public columns persist across pauses and owner changes.
+	for _, col := range tblInfo.Columns {
+		if col.State != model.StatePublic {
+			return false
+		}
+	}
+	return true
+}
+
+func isMLogAddColumnRefreshLockWait(job *model.Job, err error) bool {
+	return job.IsRunning() &&
+		(job.Type == model.ActionAddColumn || job.Type == model.ActionMultiSchemaChange) &&
+		exeerrors.ErrMVAdvisoryLockConflict.Equal(err)
+}
+
+func refreshMLogAddedColumnFromBase(
+	t *meta.Mutator,
+	job *model.Job,
+	mlogTableInfo *model.TableInfo,
+	columnInfo *model.ColumnInfo,
+	colFromArgs *model.ColumnInfo,
+) error {
+	if mlogTableInfo == nil || mlogTableInfo.MaterializedViewLog == nil || colFromArgs == nil {
+		return nil
+	}
+	if columnInfo != nil {
+		switch columnInfo.State {
+		case model.StateNone, model.StateDeleteOnly, model.StateWriteOnly:
+		default:
+			return nil
+		}
+	}
+
+	baseTblInfo, err := t.GetTable(job.SchemaID, mlogTableInfo.MaterializedViewLog.BaseTableID)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if baseTblInfo == nil {
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(
+			"ALTER MATERIALIZED VIEW LOG with invalid base table metadata",
+		)
+	}
+	baseCol := model.FindColumnInfo(baseTblInfo.Columns, colFromArgs.Name.L)
+	if baseCol == nil || baseCol.State != model.StatePublic {
+		return infoschema.ErrColumnNotExists.GenWithStackByArgs(colFromArgs.Name, baseTblInfo.Name)
+	}
+
+	ft := *baseCol.FieldType.Clone()
+	ft.DelFlag(mysql.PriKeyFlag | mysql.UniqueKeyFlag | mysql.MultipleKeyFlag | mysql.AutoIncrementFlag | mysql.OnUpdateNowFlag)
+	colFromArgs.FieldType = ft
+	return nil
+}
+
+func setMLogAddedColumnOriginDefault(colInfo *model.ColumnInfo) error {
+	if colInfo == nil || !mysql.HasNotNullFlag(colInfo.GetFlag()) {
+		return nil
+	}
+	if useSingleSpaceDefaultForMLogStringColumn(colInfo) {
+		return colInfo.SetOriginDefaultValue(" ")
+	}
+	if colInfo.GetOriginDefaultValue() != nil {
+		return nil
+	}
+	originDefault, err := generateOriginDefaultValue(colInfo, nil, true)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return colInfo.SetOriginDefaultValue(originDefault)
+}
+
+func useSingleSpaceDefaultForMLogStringColumn(colInfo *model.ColumnInfo) bool {
+	if colInfo.GetCharset() == charset.CharsetBin {
+		return false
+	}
+	switch colInfo.GetType() {
+	case mysql.TypeString, mysql.TypeVarchar, mysql.TypeVarString,
+		mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
+		return true
+	default:
+		return false
+	}
+}
+
+func syncMLogColumnsAfterAddColumn(tblInfo *model.TableInfo) {
+	if tblInfo == nil || tblInfo.MaterializedViewLog == nil {
+		return
+	}
+	trackedCols := make([]ast.CIStr, 0, len(tblInfo.Columns))
+	for _, col := range tblInfo.Columns {
+		if col.State != model.StatePublic || isMLogMetaColumnName(col.Name.L) {
+			continue
+		}
+		trackedCols = append(trackedCols, col.Name)
+	}
+	tblInfo.MaterializedViewLog.Columns = trackedCols
+}
+
+func isMLogMetaColumnName(name string) bool {
+	return name == strings.ToLower(model.MaterializedViewLogDMLTypeColumnName) ||
+		name == strings.ToLower(model.MaterializedViewLogOldNewColumnName)
 }
 
 func checkAndCreateNewColumn(ctx sessionctx.Context, ti ast.Ident, schema *model.DBInfo, spec *ast.AlterTableSpec, t table.Table, specNewColumn *ast.ColumnDef) (*table.Column, error) {
@@ -218,6 +376,12 @@ func CreateNewColumn(ctx sessionctx.Context, schema *model.DBInfo, spec *ast.Alt
 		if option.Tp == ast.ColumnOptionGenerated {
 			if err := checkIllegalFn4Generated(specNewColumn.Name.Name.L, typeColumn, option.Expr); err != nil {
 				return nil, errors.Trace(err)
+			}
+			if err := checkEmbedTextGeneratedColumn(specNewColumn.Name.Name.L, option.Expr, option.Stored); err != nil {
+				return nil, errors.Trace(err)
+			}
+			if option.Stored && expression.IsEmbedTextFuncCall(option.Expr) {
+				return nil, dbterror.ErrUnsupportedOnGeneratedColumn.GenWithStackByArgs("adding a generated column using EMBED_TEXT() through ALTER TABLE")
 			}
 
 			if option.Stored {
@@ -467,6 +631,10 @@ func checkTooBigFieldLengthAndTryAutoConvert(ctx *metabuild.Context, tp *types.F
 // columnDefToCol converts ColumnDef to Col and TableConstraints.
 // outPriKeyConstraint is the primary key constraint out of column definition. such as: create table t1 (id int , age int, primary key(id));
 func columnDefToCol(ctx *metabuild.Context, offset int, colDef *ast.ColumnDef, outPriKeyConstraint *ast.Constraint) (*table.Column, []*ast.Constraint, error) {
+	// Reject geometry columns before their options, since a default value can't be converted to geometry yet.
+	if colDef.Tp.GetType() == mysql.TypeGeometry {
+		return nil, nil, dbterror.ErrNotSupportedYet.GenWithStackByArgs("geometry columns")
+	}
 	var constraints = make([]*ast.Constraint, 0)
 	col := table.ToColumn(&model.ColumnInfo{
 		Offset:    offset,
@@ -574,6 +742,11 @@ func columnDefToCol(ctx *metabuild.Context, offset int, colDef *ast.ColumnDef, o
 				}
 			case ast.ColumnOptionFulltext:
 				ctx.AppendWarning(dbterror.ErrTableCantHandleFt.FastGenByArgs())
+			case ast.ColumnOptionSRID:
+				// A geometry column was rejected at the start of columnDefToCol.
+				if col.GetType() != mysql.TypeGeometry {
+					return nil, nil, dbterror.ErrWrongUsage.GenWithStackByArgs("SRID", "non-geometry column")
+				}
 			case ast.ColumnOptionCheck:
 				if !vardef.EnableCheckConstraint.Load() {
 					ctx.AppendWarning(errCheckConstraintIsOff)
@@ -923,7 +1096,8 @@ func setDefaultValueWithBinaryPadding(col *table.Column, value any) error {
 	}
 	// https://dev.mysql.com/doc/refman/8.0/en/binary-varbinary.html
 	// Set the default value for binary type should append the paddings.
-	if value != nil {
+	// Expression defaults store SQL text; only their evaluated values need padding.
+	if value != nil && !col.DefaultIsExpr {
 		if col.GetType() == mysql.TypeString && types.IsBinaryStr(&col.FieldType) && len(value.(string)) < col.GetFlen() {
 			padding := make([]byte, col.GetFlen()-len(value.(string)))
 			col.DefaultValue = string(append([]byte(col.DefaultValue.(string)), padding...))

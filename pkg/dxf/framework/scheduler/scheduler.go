@@ -19,7 +19,6 @@ import (
 	goerrors "errors"
 	"fmt"
 	"math/rand"
-	"strings"
 	"sync/atomic"
 	"time"
 
@@ -33,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
+	"github.com/pingcap/tidb/pkg/ingestor/errdef"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/backoff"
@@ -43,12 +43,7 @@ import (
 	"go.uber.org/zap"
 )
 
-const (
-	// for a cancelled task, it's terminal state is reverted or reverted_failed,
-	// so we use a special error message to indicate that the task is cancelled
-	// by user.
-	taskCancelMsg = "cancelled by user"
-)
+const metricStateAll = "all"
 
 var (
 	// CheckTaskFinishedInterval is the interval for scheduler.
@@ -198,7 +193,7 @@ func (s *BaseScheduler) scheduleTask() {
 		if err != nil {
 			if goerrors.Is(err, storage.ErrTaskNotFound) {
 				// this can happen when task is reverted/succeed, but before
-				// we reach here, cleanup routine move it to history.
+				// We reach here when task cleanup moves it to history.
 				s.logger.Debug("task not found, might be reverted/succeed/failed")
 				return
 			}
@@ -287,7 +282,7 @@ func (s *BaseScheduler) onCancelling() error {
 	s.logger.Info("on cancelling state", zap.Stringer("state", task.State),
 		zap.String("step", proto.Step2Str(task.Type, task.Step)))
 
-	return s.revertTask(errors.New(taskCancelMsg))
+	return s.revertTask(errors.New(storage.TaskCancelMessage))
 }
 
 // handle task in pausing state, cancel all running subtasks.
@@ -305,6 +300,19 @@ func (s *BaseScheduler) onPausing() error {
 		s.logger.Debug("on pausing state, this task keeps current state", zap.Stringer("state", task.State))
 		return nil
 	}
+	subTaskErrs, err := s.getSubtaskErrorsIfAnyFailedOrCanceled(task, cntByStates)
+	if err != nil {
+		return err
+	}
+	pausedFailed, err := s.pauseFailedSubtasksOnKVDiskFull(task, cntByStates, subTaskErrs)
+	if err != nil {
+		return err
+	}
+	if pausedFailed {
+		s.logger.Info("converted failed disk-full subtasks to paused, keep task pausing",
+			zap.Stringer("state", task.State))
+		return nil
+	}
 
 	s.logger.Info("all running subtasks paused, update the task to paused state")
 	if err = s.taskMgr.PausedTask(s.ctx, task.ID); err != nil {
@@ -313,6 +321,21 @@ func (s *BaseScheduler) onPausing() error {
 	task.State = proto.TaskStatePaused
 	s.task.Store(task)
 	return nil
+}
+
+func (s *BaseScheduler) pauseFailedSubtasksOnKVDiskFull(task *proto.Task, cntByStates map[proto.SubtaskState]int64, subTaskErrs []error) (bool, error) {
+	if cntByStates[proto.SubtaskStateFailed] == 0 {
+		return false, nil
+	}
+	if !shouldPauseOnKVDiskFull(task, cntByStates, subTaskErrs) {
+		return false, nil
+	}
+	if err := s.taskMgr.PauseTaskOnError(s.ctx, task.ID, task.State, task.Step, subTaskErrs[0]); err != nil {
+		return false, errors.Trace(err)
+	}
+	task.Error = subTaskErrs[0]
+	s.task.Store(task)
+	return true, nil
 }
 
 // handle task in paused state.
@@ -353,12 +376,17 @@ func (s *BaseScheduler) onReverting() error {
 	task := s.getTaskClone()
 	s.logger.Debug("on reverting state", zap.Stringer("state", task.State),
 		zap.String("step", proto.Step2Str(task.Type, task.Step)))
+	// Batched step publication can leave paused subtasks beyond task.Step.
+	// Drain the whole task before deciding whether reversion is complete.
+	if err := s.taskMgr.CancelPausedSubtasks(s.ctx, task.ID); err != nil {
+		return errors.Trace(err)
+	}
 	cntByStates, err := s.taskMgr.GetSubtaskCntGroupByStates(s.ctx, task.ID, task.Step)
 	if err != nil {
 		s.logger.Warn("check task failed", zap.Error(err))
 		return err
 	}
-	runnableSubtaskCnt := cntByStates[proto.SubtaskStatePending] + cntByStates[proto.SubtaskStateRunning]
+	runnableSubtaskCnt := cntByStates[proto.SubtaskStatePending] + cntByStates[proto.SubtaskStateRunning] + cntByStates[proto.SubtaskStatePaused]
 	if runnableSubtaskCnt == 0 {
 		if err = s.OnDone(s.ctx, s, task); err != nil {
 			return errors.Trace(err)
@@ -416,16 +444,29 @@ func (s *BaseScheduler) onRunning() error {
 		return err
 	}
 	if cntByStates[proto.SubtaskStateFailed] > 0 || cntByStates[proto.SubtaskStateCanceled] > 0 {
-		subTaskErrs, err := s.taskMgr.GetSubtaskErrors(s.ctx, task.ID)
+		subTaskErrs, err := s.getSubtaskErrorsIfAnyFailedOrCanceled(task, cntByStates)
 		if err != nil {
-			s.logger.Warn("collect subtask error failed", zap.Error(err))
 			return err
 		}
-		if len(subTaskErrs) > 0 {
-			s.logger.Warn("subtasks encounter errors", zap.Errors("subtask-errs", subTaskErrs))
-			// we only store the first error as task error.
-			return s.revertTaskOrManualRecover(subTaskErrs[0])
+		if len(subTaskErrs) == 0 {
+			taskErr := errors.Errorf("subtasks in failed/canceled state without error, taskID %d, step %d, failed %d, canceled %d",
+				task.ID, task.Step, cntByStates[proto.SubtaskStateFailed], cntByStates[proto.SubtaskStateCanceled])
+			s.logger.Warn("subtasks encounter failed/canceled states without error", zap.Error(taskErr))
+			return s.revertTaskOrManualRecover(taskErr)
 		}
+		s.logger.Warn("subtasks encounter errors", zap.Errors("subtask-errs", subTaskErrs))
+		if shouldPauseOnKVDiskFull(task, cntByStates, subTaskErrs) {
+			if err := s.taskMgr.PauseTaskOnError(s.ctx, task.ID, task.State, task.Step, subTaskErrs[0]); err != nil {
+				return errors.Trace(err)
+			}
+			taskClone := *task
+			taskClone.State = proto.TaskStatePausing
+			taskClone.Error = subTaskErrs[0]
+			s.task.Store(&taskClone)
+			return nil
+		}
+		// we only store the first error as task error.
+		return s.revertTaskOrManualRecover(subTaskErrs[0])
 	} else if s.isStepSucceed(cntByStates) {
 		return s.switch2NextStep()
 	}
@@ -434,6 +475,33 @@ func (s *BaseScheduler) onRunning() error {
 	s.OnTick(s.ctx, task)
 	s.logger.Debug("on running state, this task keeps current state", zap.Stringer("state", task.State))
 	return nil
+}
+
+func (s *BaseScheduler) getSubtaskErrorsIfAnyFailedOrCanceled(task *proto.Task, cntByStates map[proto.SubtaskState]int64) ([]error, error) {
+	if cntByStates[proto.SubtaskStateFailed] == 0 && cntByStates[proto.SubtaskStateCanceled] == 0 {
+		return nil, nil
+	}
+	subTaskErrs, err := s.taskMgr.GetSubtaskErrors(s.ctx, task.ID)
+	if err != nil {
+		s.logger.Warn("collect subtask error failed", zap.Error(err))
+		return nil, err
+	}
+	return subTaskErrs, nil
+}
+
+func shouldPauseOnKVDiskFull(task *proto.Task, cntByStates map[proto.SubtaskState]int64, subTaskErrs []error) bool {
+	if !task.ExtraParams.PauseOnKVDiskFull || cntByStates[proto.SubtaskStateCanceled] > 0 || len(subTaskErrs) == 0 {
+		return false
+	}
+	if cntByStates[proto.SubtaskStateFailed] != int64(len(subTaskErrs)) {
+		return false
+	}
+	for _, err := range subTaskErrs {
+		if !errdef.IsKVDiskFullError(err) {
+			return false
+		}
+	}
+	return true
 }
 
 // onModifying is called when task is in modifying state.
@@ -501,7 +569,7 @@ func (s *BaseScheduler) switch2NextStep() error {
 		if err := s.OnDone(s.ctx, s, task); err != nil {
 			return errors.Trace(err)
 		}
-		if err := s.taskMgr.SucceedTask(s.ctx, task.ID); err != nil {
+		if err := s.taskMgr.SucceedTask(s.ctx, task); err != nil {
 			return errors.Trace(err)
 		}
 		task.Step = nextStep
@@ -517,19 +585,18 @@ func (s *BaseScheduler) switch2NextStep() error {
 	if err != nil {
 		return err
 	}
-	if task.MaxNodeCount > 0 && len(eligibleNodes) > task.MaxNodeCount {
-		// OnNextSubtasksBatch may use len(eligibleNodes) as a hint to
-		// calculate the number of subtasks, so we need to do this before
-		// filtering nodes by available slots in scheduleSubtask.
-		eligibleNodes = eligibleNodes[:task.MaxNodeCount]
+	// Limit the planning hint without restricting the nodes available for placement.
+	nodeCnt := len(eligibleNodes)
+	if task.MaxNodeCount > 0 {
+		nodeCnt = min(nodeCnt, task.MaxNodeCount)
 	}
 
-	s.logger.Info("eligible instances", zap.Int("num", len(eligibleNodes)))
-	if len(eligibleNodes) == 0 {
+	s.logger.Info("eligible instances", zap.Int("num", nodeCnt))
+	if nodeCnt == 0 {
 		return errors.New("no available TiDB node to dispatch subtasks")
 	}
 
-	metas, err := s.OnNextSubtasksBatch(s.ctx, s, task, eligibleNodes, nextStep)
+	metas, err := s.OnNextSubtasksBatch(s.ctx, s, task, nodeCnt, nextStep)
 	if err != nil {
 		s.logger.Warn("generate part of subtasks failed", zap.Error(err))
 		return s.handlePrepareOrPlanErr(err)
@@ -556,6 +623,15 @@ func (s *BaseScheduler) scheduleSubTask(
 		zap.Int("requiredSlots", task.RequiredSlots),
 		zap.Int("subtasks", len(metas)))
 
+	var size uint64
+	for _, meta := range metas {
+		size += uint64(len(meta))
+	}
+	// as other fields and generated key and index KV takes space too, we limit
+	// the size of subtasks to 80% of the transaction limit.
+	limit := max(uint64(float64(kv.TxnTotalSizeLimit.Load())*0.8), 1)
+	insertInBatch := size >= limit
+
 	// the scheduled node of the subtask might not be optimal, as we run all
 	// scheduler in parallel, and update might be called too many times when
 	// multiple tasks are switching to next step.
@@ -564,8 +640,19 @@ func (s *BaseScheduler) scheduleSubTask(
 	if err := s.slotMgr.update(s.ctx, s.nodeMgr, s.taskMgr); err != nil {
 		return err
 	}
+	// Prefer nodes with enough slots, falling back to all eligible nodes if none qualify.
+	// Then limit the number of execution nodes to MaxNodeCount.
 	adjustedEligibleNodes := s.slotMgr.adjustEligibleNodes(eligibleNodes, task.RequiredSlots)
-	var size uint64
+	if insertInBatch {
+		var err error
+		adjustedEligibleNodes, err = s.keepExistingStepNodes(task.ID, subtaskStep, eligibleNodes, adjustedEligibleNodes)
+		if err != nil {
+			return err
+		}
+	}
+	if task.MaxNodeCount > 0 && len(adjustedEligibleNodes) > task.MaxNodeCount {
+		adjustedEligibleNodes = adjustedEligibleNodes[:task.MaxNodeCount]
+	}
 	subTasks := make([]*proto.Subtask, 0, len(metas))
 	for i, meta := range metas {
 		// our schedule target is to maximize the resource usage of all nodes while
@@ -584,16 +671,11 @@ func (s *BaseScheduler) scheduleSubTask(
 		s.logger.Debug("create subtasks", zap.String("instanceID", instanceID))
 		subTasks = append(subTasks, proto.NewSubtask(
 			subtaskStep, task.ID, task.Type, instanceID, task.RequiredSlots, meta, i+1))
-
-		size += uint64(len(meta))
 	}
 	failpoint.InjectCall("cancelBeforeUpdateTask", task.ID)
 
-	// as other fields and generated key and index KV takes space too, we limit
-	// the size of subtasks to 80% of the transaction limit.
-	limit := max(uint64(float64(kv.TxnTotalSizeLimit.Load())*0.8), 1)
 	fn := s.taskMgr.SwitchTaskStep
-	if size >= limit {
+	if insertInBatch {
 		// On default, transaction size limit is controlled by tidb_mem_quota_query
 		// which is 1G on default, so it's unlikely to reach this limit, but in
 		// case user set txn-total-size-limit explicitly, we insert in batch.
@@ -612,6 +694,47 @@ func (s *BaseScheduler) scheduleSubTask(
 			return true, err
 		},
 	)
+}
+
+// keepExistingStepNodes preserves still-eligible nodes that already hold
+// partially inserted subtasks for (taskID, step) ahead of slot-filtered nodes
+// before applying MaxNodeCount. This prevents SwitchTaskStepInBatch recovery
+// from counting the task's own pending rows as used slots, picking different
+// hosts, and exceeding MaxNodeCount once the step becomes runnable.
+func (s *BaseScheduler) keepExistingStepNodes(
+	taskID int64,
+	step proto.Step,
+	eligibleNodes []string,
+	adjustedEligibleNodes []string,
+) ([]string, error) {
+	activeSubtasks, err := s.taskMgr.GetActiveSubtasks(s.ctx, taskID)
+	if err != nil {
+		return nil, err
+	}
+	existing := make(map[string]struct{})
+	for _, st := range activeSubtasks {
+		if st.Step == step {
+			existing[st.ExecID] = struct{}{}
+		}
+	}
+	if len(existing) == 0 {
+		return adjustedEligibleNodes, nil
+	}
+
+	// Preserving eligibleNodes order is enough here: previous batches already
+	// respected MaxNodeCount and distributed subtasks round-robin.
+	res := make([]string, 0, len(eligibleNodes))
+	for _, node := range eligibleNodes {
+		if _, ok := existing[node]; ok {
+			res = append(res, node)
+		}
+	}
+	for _, node := range adjustedEligibleNodes {
+		if _, ok := existing[node]; !ok {
+			res = append(res, node)
+		}
+	}
+	return res, nil
 }
 
 func (s *BaseScheduler) handlePrepareOrPlanErr(err error) error {
@@ -735,14 +858,6 @@ func (s *BaseScheduler) GetLogger() *zap.Logger {
 	return s.logger
 }
 
-// IsCancelledErr checks if the error is a cancelled error.
-func IsCancelledErr(err error) bool {
-	if err == nil {
-		return false
-	}
-	return strings.Contains(err.Error(), taskCancelMsg)
-}
-
 // getEligibleNodes returns the eligible(live) nodes for the task.
 // if the task can only be scheduled to some specific nodes, return them directly,
 // we don't care liveliness of them.
@@ -760,19 +875,26 @@ func getEligibleNodes(ctx context.Context, sch Scheduler, managedNodes []string)
 }
 
 func onTaskFinished(state proto.TaskState, taskErr error) {
-	// when task finishes, we classify the finished tasks into succeed/failed/cancelled
-	var metricState string
-
-	if state == proto.TaskStateSucceed || state == proto.TaskStateFailed {
-		metricState = state.String()
-	} else if state == proto.TaskStateReverted {
-		metricState = proto.TaskStateFailed.String()
-		if IsCancelledErr(taskErr) {
-			metricState = "cancelled"
-		}
-	}
+	// when task finishes, we classify the finished tasks into succeed/failed/cancelled/data-error.
+	metricState := getMetricState(state, taskErr)
 	if len(metricState) > 0 {
-		dxfmetric.FinishedTaskCounter.WithLabelValues("all").Inc()
+		dxfmetric.FinishedTaskCounter.WithLabelValues(metricStateAll).Inc()
 		dxfmetric.FinishedTaskCounter.WithLabelValues(metricState).Inc()
+	}
+}
+
+func getMetricState(state proto.TaskState, taskErr error) string {
+	switch state {
+	case proto.TaskStateSucceed:
+		return state.String()
+	case proto.TaskStateFailed:
+		return state.String()
+	case proto.TaskStateReverted:
+		if classification := storage.ClassifyTaskError(state, taskErr); classification != "" {
+			return classification
+		}
+		return proto.TaskStateFailed.String()
+	default:
+		return ""
 	}
 }

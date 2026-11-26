@@ -22,6 +22,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -38,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -80,6 +82,12 @@ func WithPreprocessorReturn(ret *PreprocessorReturn) PreprocessOpt {
 	return func(p *preprocessor) {
 		p.PreprocessorReturn = ret
 	}
+}
+
+// useProvidedInfoSchemaAsIs keeps table resolution on the infoschema selected
+// by the caller instead of upgrading table metadata through MDL.
+func useProvidedInfoSchemaAsIs(p *preprocessor) {
+	p.useInfoSchemaAsIs = true
 }
 
 // TryAddExtraLimit trys to add an extra limit for SELECT or UNION statement when sql_select_limit is set.
@@ -145,7 +153,7 @@ func Preprocess(ctx context.Context, sctx sessionctx.Context, node *resolve.Node
 	if v.PreprocessorReturn == nil {
 		v.PreprocessorReturn = &PreprocessorReturn{}
 	}
-	node.Node.Accept(&v)
+	preprocessSQLCalcFoundRows(node.Node, &v)
 	// InfoSchema must be non-nil after preprocessing
 	v.ensureInfoSchema()
 	sctx.GetPlanCtx().SetReadonlyUserVarMap(v.varsReadonly)
@@ -163,7 +171,8 @@ const (
 	// inTxnRetry is set when visiting in transaction retry.
 	inTxnRetry
 	// inCreateOrDropTable is set when visiting create/drop table/view/sequence,
-	// rename table, alter table add foreign key, alter table in prepare stmt, and BR restore.
+	// rename table, complete out-of-place materialized view refresh, alter table add
+	// foreign key, alter table in prepare stmt, and BR restore.
 	// TODO need a better name to clarify it's meaning
 	inCreateOrDropTable
 	// parentIsJoin is set when visiting node's parent is join.
@@ -225,7 +234,7 @@ func (pw *preprocessWith) UpdateCTEConsumerCount(tableName string) {
 	}
 }
 
-// preprocessor is an ast.Visitor that preprocess
+// preprocessor is an ast.InPlaceVisitor that preprocesses
 // ast Nodes parsed from parser.
 type preprocessor struct {
 	ctx    context.Context
@@ -254,9 +263,370 @@ type preprocessor struct {
 	err error
 
 	resolveCtx *resolve.Context
+
+	// useInfoSchemaAsIs keeps table resolution on the infoschema selected by the
+	// caller, instead of upgrading table metadata to the latest domain schema.
+	useInfoSchemaAsIs bool
+	// readOnlyDefaultDB preserves PREPARE's binding for multi-delete targets.
+	readOnlyDefaultDB string
 }
 
-func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
+type tableSourceCollector struct {
+	tableName []*ast.TableName
+}
+
+func (t *tableSourceCollector) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
+	if ts, ok := in.(*ast.TableSource); ok {
+		if tblName, ok := ts.Source.(*ast.TableName); ok {
+			t.tableName = append(t.tableName, tblName)
+		}
+	}
+	return in, false
+}
+
+func (*tableSourceCollector) Leave(in ast.Node) (out ast.Node, ok bool) {
+	return in, true
+}
+
+func getAllDBNames(node *ast.TableRefsClause) []ast.CIStr {
+	if node == nil {
+		return nil
+	}
+	dbNames := make([]ast.CIStr, 0)
+	collector := tableSourceCollector{
+		tableName: make([]*ast.TableName, 0),
+	}
+	node.Accept(&collector)
+
+	for _, tblName := range collector.tableName {
+		dbNames = append(dbNames, tblName.Schema)
+	}
+	return dbNames
+}
+
+// resolveUpdatableTables collects updatable table names and registers synthesized
+// alias table names in resolveCtx.
+func (p *preprocessor) resolveUpdatableTables(node *ast.TableRefsClause) []*ast.TableName {
+	if node == nil {
+		return nil
+	}
+	resolver := &updatableTableListResolver{resolveCtx: p.resolveCtx}
+	ast.Walk(node, resolver)
+	return resolver.updatableTableList
+}
+
+func (p *preprocessor) schemasForMatchingTables(
+	tables []*ast.TableName,
+	match func(*ast.TableName, *resolve.TableNameW) bool,
+) []ast.CIStr {
+	dbNames := make([]ast.CIStr, 0, 1)
+	for _, tbl := range tables {
+		tblW := p.resolveCtx.GetTableName(tbl)
+		if tblW == nil || tblW.DBInfo == nil || !match(tbl, tblW) {
+			continue
+		}
+		dbNames = append(dbNames, tblW.DBInfo.Name)
+		p.checkLocalTemporaryTableReadOnly(tblW)
+	}
+	return dbNames
+}
+
+func (p *preprocessor) checkLocalTemporaryTableReadOnly(tbl *resolve.TableNameW) {
+	if tbl == nil || tbl.DBInfo == nil || tbl.TableInfo == nil || tbl.TableInfo.TempTableType != model.TempTableLocal {
+		return
+	}
+	// Local tables are not protected by MDL or database transaction draining.
+	// A write must therefore use the current flag even in an older transaction.
+	db, exists := p.sctx.GetLatestISWithoutSessExt().SchemaByName(tbl.DBInfo.Name)
+	if exists && db.ReadOnly && !privilege.CanWriteReadOnlySchema(p.sctx, db.Name.L) {
+		p.err = infoschema.ErrSchemaInReadOnlyMode.GenWithStackByArgs(db.Name.O)
+	}
+}
+
+func (p *preprocessor) checkLocalTemporaryWriteTargets(refs *ast.TableRefsClause) {
+	if refs == nil {
+		return
+	}
+	collector := &tableSourceCollector{}
+	refs.Accept(collector)
+	for _, name := range collector.tableName {
+		p.checkLocalTemporaryTableReadOnly(p.resolveCtx.GetTableName(name))
+	}
+}
+
+func updateAssignmentTargetsTable(tableInfo *model.TableInfo, columnName string) bool {
+	if columnName == model.ExtraHandleName.L {
+		// _tidb_rowid is a synthesized handle rather than a public column and is
+		// only assignable when the table uses an implicit row ID.
+		return !tableInfo.PKIsHandle && !tableInfo.IsCommonHandle
+	}
+	for _, column := range tableInfo.Columns {
+		if column.State == model.StatePublic && column.Name.L == columnName {
+			return true
+		}
+	}
+	return false
+}
+
+func (p *preprocessor) extractUpdateSchemas(node *ast.UpdateStmt) []ast.CIStr {
+	dbNames := make([]ast.CIStr, 0, len(node.List))
+	tables := p.resolveUpdatableTables(node.TableRefs)
+	for _, assignment := range node.List {
+		column := assignment.Column
+		if column.Schema.L != "" {
+			dbNames = append(dbNames, column.Schema)
+			for _, tbl := range tables {
+				resolved := p.resolveCtx.GetTableName(tbl)
+				if resolved != nil && resolved.DBInfo != nil && resolved.DBInfo.Name.L == column.Schema.L &&
+					(column.Table.L == "" || column.Table.L == tbl.Name.L) {
+					p.checkLocalTemporaryTableReadOnly(resolved)
+				}
+			}
+			continue
+		}
+
+		// Check every matching schema so name-resolution ambiguity cannot bypass
+		// the read-only guard. The planner reports invalid ambiguous assignments later.
+		dbNames = append(dbNames, p.schemasForMatchingTables(tables, func(tbl *ast.TableName, tblW *resolve.TableNameW) bool {
+			if tblW.TableInfo == nil || !updateAssignmentTargetsTable(tblW.TableInfo, column.Name.L) {
+				return false
+			}
+			return column.Table.L == "" || column.Table.L == tbl.Name.L
+		})...)
+	}
+	return dbNames
+}
+
+func (p *preprocessor) extractMultiDeleteSchemas(node *ast.DeleteStmt) []ast.CIStr {
+	dbNames := make([]ast.CIStr, 0, len(node.Tables.Tables))
+	defaultDB := p.sctx.GetSessionVars().CurrentDB
+	if p.readOnlyDefaultDB != "" {
+		defaultDB = p.readOnlyDefaultDB
+	}
+	updatableList := make(map[string]bool)
+	tableNameByKey := make(map[string]*ast.TableName)
+	collectTableName(node.TableRefs.TableRefs, &updatableList, &tableNameByKey)
+	for _, target := range node.Tables.Tables {
+		tbl, canUpdate, foundMatch := resolveMultiDeleteTarget(
+			target,
+			defaultDB,
+			updatableList,
+			tableNameByKey,
+		)
+		if !foundMatch || !canUpdate {
+			// The planner reports the corresponding unknown or non-updatable table error.
+			continue
+		}
+		tblW := p.resolveCtx.GetTableName(tbl)
+		if tblW != nil && tblW.DBInfo != nil {
+			dbNames = append(dbNames, tblW.DBInfo.Name)
+			p.checkLocalTemporaryTableReadOnly(tblW)
+		}
+	}
+	return dbNames
+}
+
+// mayHaveSchemaReadOnlyTarget reports whether extractSchema can return a schema
+// for the node. The answer depends only on the node itself, never on the
+// session, so it stays valid for every execution of a prepared statement.
+// extractSchema returns early for any other node: a statement kind added there
+// has to be added here as well.
+func mayHaveSchemaReadOnlyTarget(in ast.Node) bool {
+	switch node := in.(type) {
+	case *ast.SelectStmt:
+		// Whether a lock clause writes depends on its type and on the session.
+		return node.LockInfo != nil
+	case *ast.CreateTableStmt, *ast.CreateViewStmt, *ast.CreateMaterializedViewStmt,
+		*ast.CreateMaterializedViewLogStmt, *ast.DropMaterializedViewStmt, *ast.DropMaterializedViewLogStmt,
+		*ast.AlterMaterializedViewLogStmt, *ast.AlterMaterializedViewStmt, *ast.RefreshMaterializedViewStmt,
+		*ast.PurgeMaterializedViewLogStmt, *ast.AdminStmt, *ast.DropTableStmt, *ast.RenameTableStmt,
+		*ast.AlterDatabaseStmt, *ast.DropDatabaseStmt, *ast.CreateIndexStmt, *ast.AlterTableStmt,
+		*ast.ImportIntoStmt, *ast.TruncateTableStmt, *ast.DropIndexStmt, *ast.LoadDataStmt,
+		*ast.CreateSequenceStmt, *ast.AlterSequenceStmt, *ast.DropSequenceStmt,
+		*ast.InsertStmt, *ast.DeleteStmt, *ast.UpdateStmt:
+		return true
+	}
+	return false
+}
+
+// schemaReadOnlyTargetFinder looks for a node that may need a read-only check.
+type schemaReadOnlyTargetFinder struct {
+	found bool
+}
+
+func (f *schemaReadOnlyTargetFinder) Enter(in ast.Node) bool {
+	f.found = f.found || mayHaveSchemaReadOnlyTarget(in)
+	return f.found
+}
+
+func (f *schemaReadOnlyTargetFinder) Leave(ast.Node) bool { return !f.found }
+
+// stmtMayHaveSchemaReadOnlyTarget reports whether any node of the statement may
+// need a database read-only check.
+func stmtMayHaveSchemaReadOnlyTarget(stmt ast.Node) bool {
+	finder := &schemaReadOnlyTargetFinder{}
+	ast.Walk(stmt, finder)
+	return finder.found
+}
+
+// extractSchema extracts the schemas modified by the statement for database read-only checks.
+func (p *preprocessor) extractSchema(in ast.Node) []ast.CIStr {
+	// This runs for every node of every statement: return before allocating.
+	if !mayHaveSchemaReadOnlyTarget(in) {
+		return nil
+	}
+	dbNames := make([]ast.CIStr, 0, 1)
+
+	switch node := in.(type) {
+	case *ast.CreateTableStmt:
+		dbNames = append(dbNames, node.Table.Schema)
+	case *ast.CreateViewStmt:
+		dbNames = append(dbNames, node.ViewName.Schema)
+	case *ast.CreateMaterializedViewStmt:
+		dbNames = append(dbNames, node.ViewName.Schema)
+	case *ast.CreateMaterializedViewLogStmt:
+		dbNames = append(dbNames, node.Table.Schema)
+	case *ast.DropMaterializedViewStmt:
+		dbNames = append(dbNames, node.ViewName.Schema)
+	case *ast.DropMaterializedViewLogStmt:
+		dbNames = append(dbNames, node.Table.Schema)
+	case *ast.AlterMaterializedViewLogStmt:
+		dbNames = append(dbNames, node.Table.Schema)
+	case *ast.AlterMaterializedViewStmt:
+		dbNames = append(dbNames, node.ViewName.Schema)
+	case *ast.RefreshMaterializedViewStmt:
+		dbNames = append(dbNames, node.ViewName.Schema)
+	case *ast.PurgeMaterializedViewLogStmt:
+		dbNames = append(dbNames, node.Table.Schema)
+	case *ast.AdminStmt:
+		if node.Tp == ast.AdminRecoverIndex || node.Tp == ast.AdminCleanupIndex {
+			for _, tbl := range node.Tables {
+				dbNames = append(dbNames, tbl.Schema)
+			}
+		}
+	case *ast.DropTableStmt:
+		for _, tbl := range node.Tables {
+			dbNames = append(dbNames, tbl.Schema)
+		}
+	case *ast.RenameTableStmt:
+		for _, tbl := range node.TableToTables {
+			dbNames = append(dbNames, tbl.OldTable.Schema)
+			dbNames = append(dbNames, tbl.NewTable.Schema)
+		}
+	case *ast.AlterDatabaseStmt:
+		dbName := node.Name
+		if node.AlterDefaultDatabase {
+			// buildDDL writes the resolved CurrentDB back to Name, so a prepared
+			// AST may retain the database used by an earlier plan build.
+			dbName = ast.NewCIStr(p.sctx.GetSessionVars().CurrentDB)
+		}
+		for _, opt := range node.Options {
+			// Allow changing READ ONLY itself so a read-only database can be
+			// switched back to writable.
+			if opt.Tp != ast.DatabaseOptionReadOnly {
+				dbNames = append(dbNames, dbName)
+			}
+		}
+	case *ast.DropDatabaseStmt:
+		dbNames = append(dbNames, node.Name)
+	case *ast.CreateIndexStmt:
+		dbNames = append(dbNames, node.Table.Schema)
+	case *ast.AlterTableStmt:
+		dbNames = append(dbNames, node.Table.Schema)
+		for _, spec := range node.Specs {
+			if spec.NewTable != nil {
+				dbNames = append(dbNames, spec.NewTable.Schema)
+			}
+		}
+	case *ast.ImportIntoStmt:
+		// An in-flight physical import may keep writing after a later read-only
+		// transition succeeds. This is expected behavior in the current version:
+		// read-only mode is checked only at statement entry. This behavior may
+		// change in future versions.
+		dbNames = append(dbNames, node.Table.Schema)
+	case *ast.TruncateTableStmt:
+		dbNames = append(dbNames, node.Table.Schema)
+	case *ast.DropIndexStmt:
+		dbNames = append(dbNames, node.Table.Schema)
+	case *ast.LoadDataStmt:
+		p.checkLocalTemporaryTableReadOnly(p.resolveCtx.GetTableName(node.Table))
+		dbNames = append(dbNames, node.Table.Schema)
+	case *ast.CreateSequenceStmt:
+		dbNames = append(dbNames, node.Name.Schema)
+	case *ast.AlterSequenceStmt:
+		dbNames = append(dbNames, node.Name.Schema)
+	case *ast.DropSequenceStmt:
+		for _, sequence := range node.Sequences {
+			dbNames = append(dbNames, sequence.Schema)
+		}
+	case *ast.InsertStmt:
+		p.checkLocalTemporaryWriteTargets(node.Table)
+		dbNames = append(dbNames, getAllDBNames(node.Table)...)
+	case *ast.DeleteStmt:
+		if node.Tables != nil {
+			dbNames = append(dbNames, p.extractMultiDeleteSchemas(node)...)
+		} else {
+			// single table delete statement
+			p.checkLocalTemporaryWriteTargets(node.TableRefs)
+			dbNames = append(dbNames, getAllDBNames(node.TableRefs)...)
+		}
+	case *ast.UpdateStmt:
+		dbNames = append(dbNames, p.extractUpdateSchemas(node)...)
+	case *ast.SelectStmt:
+		if node.LockInfo != nil {
+			if logicalop.IsSelectForUpdateLockType(node.LockInfo.LockType) ||
+				(logicalop.IsSelectForShareLockType(node.LockInfo.LockType) && p.sctx.GetSessionVars().SharedLockPromotion) {
+				allTables := func(*ast.TableName, *resolve.TableNameW) bool { return true }
+				dbNames = append(dbNames, p.schemasForMatchingTables(node.LockInfo.Tables, allTables)...)
+				if len(dbNames) == 0 {
+					// No OF clause, or only CTE targets: the executor locks all
+					// direct tables in this query block. Inner SELECTs check their
+					// own locks; their read sources are not outer lock targets.
+					dbNames = append(dbNames, p.schemasForMatchingTables(p.resolveUpdatableTables(node.From), allTables)...)
+				}
+			}
+		}
+	}
+	return dbNames
+}
+
+func (p *preprocessor) checkSchemaReadOnlyInStmt(in ast.Node) {
+	dbNames := p.extractSchema(in)
+	for _, dbName := range dbNames {
+		p.checkSchemaReadOnly(dbName)
+	}
+}
+
+// schemaReadOnlyChecker rechecks session-dependent permissions without repeating
+// name resolution or mutating the prepared statement's other preprocessing state.
+type schemaReadOnlyChecker struct {
+	*preprocessor
+}
+
+func (*schemaReadOnlyChecker) Enter(ast.Node) bool { return false }
+
+func (c *schemaReadOnlyChecker) Leave(in ast.Node) bool {
+	c.checkSchemaReadOnlyInStmt(in)
+	return c.err == nil
+}
+
+func (p *preprocessor) checkSchemaReadOnly(dbName ast.CIStr) {
+	if p.err != nil {
+		return
+	}
+
+	dbInfo, exists := p.ensureInfoSchema().SchemaByName(dbName)
+	if exists && dbInfo.ReadOnly {
+		// Accept an explicit replica-writer grant or a trusted operation's scoped
+		// authorization. Internal or unauthenticated sessions alone stay blocked.
+		if privilege.CanWriteReadOnlySchema(p.sctx, dbName.L) {
+			return
+		}
+		p.err = errors.Trace(infoschema.ErrSchemaInReadOnlyMode.GenWithStackByArgs(dbName.O))
+	}
+}
+
+func (p *preprocessor) Enter(in ast.Node) bool {
 	switch node := in.(type) {
 	case *ast.AdminStmt:
 		p.checkAdminCheckTableGrammar(node)
@@ -267,8 +637,10 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		if node.With != nil {
 			p.preprocessWith.cteStack = append(p.preprocessWith.cteStack, node.With.CTEs)
 		}
-		p.checkSelectNoopFuncs(node)
-		// SelectStmt.Accept visits FROM before LockInfo, so one per-SELECT context can collect FROM
+		if p.err == nil {
+			p.checkSelectNoopFuncs(node)
+		}
+		// ast.Walk visits FROM before LockInfo, so one per-SELECT context can collect FROM
 		// table refs during traversal and later bind LockInfo targets without re-walking the FROM tree.
 		p.pushLockSelectCtx(node)
 	case *ast.SetOprStmt:
@@ -277,11 +649,15 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		}
 	case *ast.UpdateStmt:
 		p.stmtTp = TypeUpdate
+		p.err = checkCommitTSWrite(nil, node.List)
 	case *ast.InsertStmt:
 		p.stmtTp = TypeInsert
 		// handle the insert table name imminently
 		// insert into t with t ..., the insert can not see t here. We should hand it before the CTE statement
 		p.handleTableName(node.Table.TableRefs.Left.(*ast.TableSource).Source.(*ast.TableName))
+		if p.err == nil {
+			p.err = checkCommitTSWrite(node.Columns, node.OnDuplicate)
+		}
 	case *ast.ExecuteStmt:
 		p.stmtTp = TypeExecute
 		p.resolveExecuteStmt(node)
@@ -295,6 +671,16 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		p.flag |= inCreateOrDropTable
 		p.checkCreateViewGrammar(node)
 		p.checkCreateViewWithSelectGrammar(node)
+	case *ast.CreateMaterializedViewStmt:
+		p.stmtTp = TypeCreate
+		p.flag |= inCreateOrDropTable
+	case *ast.CreateMaterializedViewLogStmt:
+		p.stmtTp = TypeCreate
+	case *ast.DropMaterializedViewStmt:
+		p.stmtTp = TypeDrop
+		p.flag |= inCreateOrDropTable
+	case *ast.DropMaterializedViewLogStmt:
+		p.stmtTp = TypeDrop
 	case *ast.DropTableStmt:
 		p.flag |= inCreateOrDropTable
 		p.stmtTp = TypeDrop
@@ -317,6 +703,26 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		}
 		p.resolveAlterTableStmt(node)
 		p.checkAlterTableGrammar(node)
+	case *ast.AlterMaterializedViewStmt:
+		p.stmtTp = TypeAlter
+		// ALTER MATERIALIZED VIEW validates its target during DDL handling; do not
+		// register it as an ordinary table dependency during preprocessing.
+		p.flag |= inCreateOrDropTable
+	case *ast.AlterMaterializedViewLogStmt:
+		p.stmtTp = TypeAlter
+	case *ast.PurgeMaterializedViewLogStmt:
+		p.stmtTp = TypeAlter
+	case *ast.CompareMaterializedViewStmt:
+		// Resolve the MV and its output table separately from historical data reads.
+		p.flag |= inCreateOrDropTable
+	case *ast.RefreshMaterializedViewStmt:
+		if node.Type == ast.RefreshMaterializedViewTypeComplete &&
+			node.CompleteType == ast.RefreshMaterializedViewCompleteTypeOutOfPlace {
+			// Complete out-of-place refresh validates its target in the refresh
+			// executor and manages cutover separately. Do not register the target as
+			// a normal table dependency in the refresh session's MDL-related table set.
+			p.flag |= inCreateOrDropTable
+		}
 	case *ast.CreateDatabaseStmt:
 		p.stmtTp = TypeCreate
 		p.checkCreateDatabaseGrammar(node)
@@ -337,7 +743,7 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		p.checkSetOprSelectList(node)
 	case *ast.DeleteTableList:
 		p.stmtTp = TypeDelete
-		return in, true
+		return true
 	case *ast.Join:
 		p.checkNonUniqTableAlias(node)
 	case *ast.CreateBindingStmt:
@@ -348,7 +754,7 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 			EraseLastSemicolon(node.HintedNode)
 			p.checkBindGrammar(node.OriginNode, node.HintedNode, p.sctx.GetSessionVars().CurrentDB)
 		}
-		return in, true
+		return true
 	case *ast.DropBindingStmt:
 		p.stmtTp = TypeDrop
 		if node.OriginNode != nil {
@@ -358,22 +764,22 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 				p.checkBindGrammar(node.OriginNode, node.HintedNode, p.sctx.GetSessionVars().CurrentDB)
 			}
 		}
-		return in, true
+		return true
 	case *ast.RecoverTableStmt:
 		// The specified table in recover table statement maybe already been dropped.
 		// So skip check table name here, otherwise, recover table [table_name] syntax will return
 		// table not exists error. But recover table statement is use to recover the dropped table. So skip children here.
-		return in, true
+		return true
 	case *ast.FlashBackTableStmt:
 		if len(node.NewName) > 0 {
 			p.checkFlashbackTableGrammar(node)
 		}
-		return in, true
+		return true
 	case *ast.FlashBackDatabaseStmt:
 		if len(node.NewName) > 0 {
 			p.checkFlashbackDatabaseGrammar(node)
 		}
-		return in, true
+		return true
 	case *ast.RepairTableStmt:
 		p.stmtTp = TypeRepair
 		// The RepairTable should consist of the logic for creating tables and renaming tables.
@@ -392,6 +798,10 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		p.checkDropSequenceGrammar(node)
 	case *ast.FuncCastExpr:
 		p.checkFuncCastExpr(node)
+	case *ast.JSONSumCrc32Expr:
+		if node.Tp.ArrayType().GetType() == mysql.TypeGeometry {
+			p.err = plannererrors.ErrNotSupportedYet.GenWithStackByArgs("spatial type casts")
+		}
 	case *ast.FuncCallExpr:
 		if node.FnName.L == ast.NextVal || node.FnName.L == ast.LastVal || node.FnName.L == ast.SetVal {
 			p.flag |= inSequenceFunction
@@ -424,8 +834,13 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		with := p.preprocessWith
 		beforeOffset := len(with.cteCanUsed)
 		with.cteBeforeOffset = append(with.cteBeforeOffset, beforeOffset)
-		if cteNode, exist := node.(*ast.CommonTableExpression); exist && cteNode.IsRecursive {
-			with.cteCanUsed = append(with.cteCanUsed, cteNode.Name.L)
+		if cteNode, exist := node.(*ast.CommonTableExpression); exist {
+			// Preprocess can run repeatedly on a prepared statement's AST after schema changes.
+			// Recompute the consumer count instead of accumulating the result from an earlier run.
+			cteNode.ConsumerCount = 0
+			if cteNode.IsRecursive {
+				with.cteCanUsed = append(with.cteCanUsed, cteNode.Name.L)
+			}
 		}
 	case *ast.BeginStmt:
 		// If the begin statement was like following:
@@ -453,8 +868,8 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		if node.Value != nil {
 			p.varsMutable[nameLower] = struct{}{}
 			delete(p.varsReadonly, nameLower)
-		} else if p.stmtTp == TypeSelect {
-			// Only check the variable in select statement.
+		} else if p.stmtTp == TypeSelect || p.stmtTp == TypeUpdate || p.stmtTp == TypeInsert || p.stmtTp == TypeDelete {
+			// Only check variables in SELECT, UPDATE, INSERT, and DELETE statements.
 			_, ok := p.varsMutable[nameLower]
 			if !ok {
 				p.varsReadonly[nameLower] = struct{}{}
@@ -463,16 +878,24 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 	case *ast.Constraint:
 		// Used in ALTER TABLE or CREATE TABLE
 		p.checkConstraintGrammar(node)
-	case *ast.ColumnName:
-		if node.Name.L == model.ExtraCommitTSName.L &&
-			(p.stmtTp == TypeSelect || p.stmtTp == TypeSetOpr || p.stmtTp == TypeUpdate || p.stmtTp == TypeDelete) {
-			p.err = plannererrors.ErrInternal.GenWithStack("Usage of column name '%s' is not supported for now",
-				model.ExtraCommitTSName.O)
-		}
 	default:
 		p.flag &= ^parentIsJoin
 	}
-	return in, p.err != nil
+	return p.err != nil
+}
+
+// checkCommitTSWrite checks the explicit write targets of INSERT and UPDATE.
+func checkCommitTSWrite(columns []*ast.ColumnName, assignments []*ast.Assignment) error {
+	checkCommitTSColumnFunc := func(col *ast.ColumnName) bool {
+		return col.Name.L == model.ExtraCommitTSName.L
+	}
+	if slices.ContainsFunc(columns, checkCommitTSColumnFunc) || slices.ContainsFunc(assignments, func(assign *ast.Assignment) bool {
+		return checkCommitTSColumnFunc(assign.Column)
+	}) {
+		return plannererrors.ErrInternal.GenWithStack("Usage of column name '%s' is not supported for now",
+			model.ExtraCommitTSName.O)
+	}
+	return nil
 }
 
 // EraseLastSemicolon removes last semicolon of sql.
@@ -550,7 +973,7 @@ func (p *preprocessor) tableByName(tn *ast.TableName) (table.Table, error) {
 	is := p.ensureInfoSchema()
 
 	// for 'SHOW CREATE VIEW/SEQUENCE ...' statement, ignore local temporary tables.
-	if p.stmtTp == TypeShow && (p.showTp == ast.ShowCreateView || p.showTp == ast.ShowCreateSequence) {
+	if p.stmtTp == TypeShow && (p.showTp == ast.ShowCreateView || p.showTp == ast.ShowCreateSequence || p.showTp == ast.ShowCreateMaterializedView || p.showTp == ast.ShowCreateMaterializedViewLog || p.showTp == ast.ShowMaterializedViewRemainLogs || p.showTp == ast.ShowMaterializedViewLogWaitPurge) {
 		is = temptable.DetachLocalTemporaryTableInfoSchema(is)
 	}
 
@@ -622,8 +1045,8 @@ func (p *preprocessor) checkBindGrammar(originNode, hintedNode ast.StmtNode, def
 		})
 	}
 	aliasChecker := &aliasChecker{}
-	originNode.Accept(aliasChecker)
-	hintedNode.Accept(aliasChecker)
+	ast.Walk(originNode, aliasChecker)
+	ast.Walk(hintedNode, aliasChecker)
 	originSQL, _ := bindinfo.NormalizeStmtForBinding(originNode, defaultDB, false)
 	hintedSQL, _ := bindinfo.NormalizeStmtForBinding(hintedNode, defaultDB, false)
 	if originSQL != hintedSQL {
@@ -631,7 +1054,7 @@ func (p *preprocessor) checkBindGrammar(originNode, hintedNode ast.StmtNode, def
 	}
 }
 
-func (p *preprocessor) Leave(in ast.Node) (out ast.Node, ok bool) {
+func (p *preprocessor) Leave(in ast.Node) bool {
 	switch x := in.(type) {
 	case *ast.CreateTableStmt:
 		p.flag &= ^inCreateOrDropTable
@@ -639,12 +1062,14 @@ func (p *preprocessor) Leave(in ast.Node) (out ast.Node, ok bool) {
 		p.checkContainDotColumn(x)
 	case *ast.CreateViewStmt:
 		p.flag &= ^inCreateOrDropTable
-	case *ast.DropTableStmt, *ast.AlterTableStmt, *ast.RenameTableStmt:
+	case *ast.CreateMaterializedViewStmt:
+		p.flag &= ^inCreateOrDropTable
+	case *ast.AlterMaterializedViewStmt, *ast.DropMaterializedViewStmt, *ast.RefreshMaterializedViewStmt, *ast.CompareMaterializedViewStmt, *ast.DropTableStmt, *ast.AlterTableStmt, *ast.RenameTableStmt:
 		p.flag &= ^inCreateOrDropTable
 	case *driver.ParamMarkerExpr:
 		if p.flag&inPrepare == 0 {
 			p.err = parser.ErrSyntax.GenWithStack("syntax error, unexpected '?'")
-			return
+			return false
 		}
 	case *ast.ExplainStmt:
 		if _, ok := x.Stmt.(*ast.ShowStmt); ok {
@@ -748,7 +1173,9 @@ func (p *preprocessor) Leave(in ast.Node) (out ast.Node, ok bool) {
 		}
 	}
 
-	return in, p.err == nil
+	p.checkSchemaReadOnlyInStmt(in)
+
+	return p.err == nil
 }
 
 func checkAutoIncrementOp(colDef *ast.ColumnDef, index int) (bool, error) {
@@ -1306,6 +1733,10 @@ func (p *preprocessor) checkCreateIndexGrammar(stmt *ast.CreateIndexStmt) {
 }
 
 func (p *preprocessor) checkConstraintGrammar(stmt *ast.Constraint) {
+	if stmt.Tp == ast.ConstraintSpatial {
+		p.err = dbterror.ErrUnsupportedIndexType.FastGen("SPATIAL index is not supported")
+		return
+	}
 	// Rewrite VECTOR INDEX into COLUMNAR INDEX
 	if stmt.Tp == ast.ConstraintVector {
 		if stmt.Option.Tp != ast.IndexTypeInvalid && stmt.Option.Tp != ast.IndexTypeHNSW {
@@ -1344,16 +1775,6 @@ func (p *preprocessor) checkSelectNoopFuncs(stmt *ast.SelectStmt) {
 		}
 		return
 	}
-	if stmt.SelectStmtOpts != nil && stmt.SelectStmtOpts.CalcFoundRows {
-		err := expression.ErrFunctionsNoopImpl.GenWithStackByArgs("SQL_CALC_FOUND_ROWS")
-		if noopFuncsMode == variable.OffInt {
-			p.err = err
-			return
-		}
-		// NoopFuncsMode is Warn, append an error
-		p.sctx.GetSessionVars().StmtCtx.AppendWarning(err)
-	}
-
 	// When `tidb_enable_shared_lock_promotion` is enabled, the `for share` statements would be
 	// executed as `for update` statements.
 	if stmt.LockInfo != nil && (stmt.LockInfo.LockType == ast.SelectLockForShare ||
@@ -1386,10 +1807,15 @@ func (p *preprocessor) checkGroupBy(stmt *ast.GroupByClause) {
 }
 
 func (p *preprocessor) checkRenameTableGrammar(stmt *ast.RenameTableStmt) {
-	oldTable := stmt.TableToTables[0].OldTable.Name.String()
-	newTable := stmt.TableToTables[0].NewTable.Name.String()
+	for _, tableToTable := range stmt.TableToTables {
+		oldTable := tableToTable.OldTable.Name.String()
+		newTable := tableToTable.NewTable.Name.String()
 
-	p.checkRenameTable(oldTable, newTable)
+		p.checkRenameTable(oldTable, newTable)
+		if p.err != nil {
+			return
+		}
+	}
 }
 
 func (p *preprocessor) checkRenameTable(oldTable, newTable string) {
@@ -1804,7 +2230,7 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 		return
 	}
 
-	if !p.skipLockMDL() {
+	if !p.skipLockMDL() && !p.useInfoSchemaAsIs {
 		table, err = tryLockMDLAndUpdateSchemaIfNecessary(p.ctx, p.sctx.GetPlanCtx(), ast.NewCIStr(tn.Schema.L), table, p.ensureInfoSchema())
 		if err != nil {
 			p.err = err
@@ -1909,15 +2335,36 @@ func (p *preprocessor) popLockSelectCtx() {
 // checkLockClauseTables validates/attaches tables referenced by SELECT ... FOR UPDATE/LOCK IN SHARE MODE.
 // It binds lock targets to the tables in FROM and keeps backward compatibility by accepting
 // base-table names even when aliases exist, with a warning to guide users to explicit aliases.
+// It rejects MV-related lock targets within the current SELECT.
 func (p *preprocessor) checkLockClauseTables(stmt *ast.SelectStmt, lockCtx *lockSelectCtx) {
-	if stmt.LockInfo == nil || stmt.LockInfo.LockType == ast.SelectLockNone || len(stmt.LockInfo.Tables) == 0 {
+	if stmt.LockInfo == nil || stmt.LockInfo.LockType == ast.SelectLockNone {
 		return
 	}
 	if lockCtx == nil {
 		emptyCtx := newLockSelectCtx(nil)
 		lockCtx = &emptyCtx
 	}
+	checkMViewLockTarget := func(target *ast.TableName) error {
+		tNameW := p.resolveCtx.GetTableName(target)
+		if tNameW == nil {
+			// CTE references have no resolved table metadata.
+			return nil
+		}
+		return CheckMViewUpdatable(p.sctx.GetSessionVars(), tNameW.TableInfo, target.Name.O, "SELECT")
+	}
+	if len(stmt.LockInfo.Tables) == 0 {
+		// Derived queries and CTE bodies have their own SELECT contexts, so their
+		// underlying tables must not become lock targets of this SELECT.
+		for _, ref := range lockCtx.orderedRefs {
+			if err := checkMViewLockTarget(ref.table); err != nil {
+				p.err = err
+				return
+			}
+		}
+		return
+	}
 	warnedCompatRefs := make(map[string]struct{})
+	hasResolvedLockTarget := false
 
 	for _, ref := range stmt.LockInfo.Tables {
 		name := ref.Name.L
@@ -1986,12 +2433,33 @@ func (p *preprocessor) checkLockClauseTables(stmt *ast.SelectStmt, lockCtx *lock
 			// CTE has no *model.HintedTable, we need to skip it.
 			continue
 		}
+		hasResolvedLockTarget = true
 
 		p.resolveCtx.AddTableName(&resolve.TableNameW{
 			TableName: ref,
 			DBInfo:    tNameW.DBInfo,
 			TableInfo: tNameW.TableInfo,
 		})
+	}
+	if p.err != nil {
+		return
+	}
+
+	for _, target := range stmt.LockInfo.Tables {
+		if err := checkMViewLockTarget(target); err != nil {
+			p.err = err
+			return
+		}
+	}
+	if !hasResolvedLockTarget {
+		// CTE-only OF targets leave the executor's lock-all fallback active. Check
+		// this SELECT's direct references without descending into derived queries or CTE bodies.
+		for _, ref := range lockCtx.orderedRefs {
+			if err := checkMViewLockTarget(ref.table); err != nil {
+				p.err = err
+				return
+			}
+		}
 	}
 }
 
@@ -2097,6 +2565,10 @@ func (p *preprocessor) resolveCreateSequenceStmt(stmt *ast.CreateSequenceStmt) {
 }
 
 func (p *preprocessor) checkFuncCastExpr(node *ast.FuncCastExpr) {
+	if node.Tp.ArrayType().GetType() == mysql.TypeGeometry {
+		p.err = plannererrors.ErrNotSupportedYet.GenWithStackByArgs("spatial type casts")
+		return
+	}
 	if node.Tp.EvalType() == types.ETDecimal {
 		if node.Tp.GetFlen() >= node.Tp.GetDecimal() && node.Tp.GetFlen() <= mysql.MaxDecimalWidth && node.Tp.GetDecimal() <= mysql.MaxDecimalScale {
 			// valid
@@ -2223,6 +2695,23 @@ func tryLockMDLAndUpdateSchemaIfNecessary(ctx context.Context, sctx base.PlanCon
 	}()
 
 	if !sctx.GetSessionVars().TxnCtx.EnableMDL {
+		vars := sctx.GetSessionVars()
+		if vars.SnapshotInfoschema != nil || vars.TxnCtx.IsStaleness || tbl.Meta().TempTableType == model.TempTableLocal {
+			return tbl, nil
+		}
+		// Publish the first access before checking the latest flag. Either the
+		// DDL sees this transaction, or this access sees its published flag.
+		tables := vars.GetRelatedTableForReadOnly()
+		if _, loaded := tables.LoadOrStore(tbl.Meta().ID, dbName); !loaded {
+			dbInfo, exists := is.SchemaByName(dbName)
+			latestIS := sctx.GetLatestISWithoutSessExt()
+			latestDB, latestExists := latestIS.SchemaByName(dbName)
+			if exists && latestExists && dbInfo.ReadOnly != latestDB.ReadOnly {
+				tables.Delete(tbl.Meta().ID)
+				return nil, domain.ErrInfoSchemaChanged.GenWithStack("public schema %s read only state has changed", dbInfo.Name.L)
+			}
+		}
+		failpoint.InjectCall("afterCheckSchemaReadOnlyWithoutMDL", dbName)
 		return tbl, nil
 	}
 	if is.SchemaMetaVersion() == 0 {
@@ -2244,6 +2733,10 @@ func tryLockMDLAndUpdateSchemaIfNecessary(ctx context.Context, sctx base.PlanCon
 		return tbl, nil
 	}
 	tableInfo := tbl.Meta()
+	dbInfo, _ := is.SchemaByName(dbName)
+	// Activation must recheck these accesses even with MDL: a database-level
+	// read-only job does not acquire the table's metadata lock.
+	sctx.GetSessionVars().GetRelatedTableForReadOnly().Store(tableInfo.ID, dbName)
 	if _, ok := sctx.GetSessionVars().GetRelatedTableForMDL().Load(tableInfo.ID); !ok {
 		if se, ok := is.(*infoschema.SessionExtendedInfoSchema); ok && skipLock && se.MdlTables != nil {
 			if _, ok := se.MdlTables.TableByID(tableInfo.ID); ok {
@@ -2265,6 +2758,10 @@ func tryLockMDLAndUpdateSchemaIfNecessary(ctx context.Context, sctx base.PlanCon
 		tbl, err = latestIS.TableByName(ctx, dbName, tableInfo.Name)
 		if err != nil {
 			return nil, err
+		}
+		dbInfoLatest, _ := latestIS.SchemaByName(dbName)
+		if dbInfo.ReadOnly != dbInfoLatest.ReadOnly {
+			return nil, domain.ErrInfoSchemaChanged.GenWithStack("public schema %s read only state has changed", dbInfo.Name.L)
 		}
 		if !skipLock {
 			sctx.GetSessionVars().GetRelatedTableForMDL().Store(tbl.Meta().ID, domainSchemaVer)
@@ -2333,7 +2830,25 @@ func tryLockMDLAndUpdateSchemaIfNecessary(ctx context.Context, sctx base.PlanCon
 		if curTxn.Valid() {
 			curTxn.SetOption(kv.TableToColumnMaps, nil)
 		}
-		return tbl, nil
+	}
+	if mvBase := tbl.Meta().MaterializedViewBase; !skipLock && !sctx.GetSessionVars().StmtCtx.IsReadOnly &&
+		tbl.Meta().State == model.StatePublic && mvBase != nil && mvBase.MLogID != 0 {
+		// Writes also depend on the implicit MLog schema. Pin it in the same
+		// transaction InfoSchema so execution and cached plans use the schema
+		// protected by MDL until the transaction ends.
+		mlogTable, ok := is.TableByID(ctx, mvBase.MLogID)
+		if !ok {
+			// The base table may have been upgraded to include a MLog that was
+			// created after this transaction's original InfoSchema.
+			mlogTable, ok = sctx.GetLatestISWithoutSessExt().(infoschema.InfoSchema).TableByID(ctx, mvBase.MLogID)
+		}
+		if !ok {
+			return nil, errors.Errorf("cannot get materialized view log table id=%d (base=%s id=%d)",
+				mvBase.MLogID, tbl.Meta().Name.O, tbl.Meta().ID)
+		}
+		if _, err = tryLockMDLAndUpdateSchemaIfNecessary(ctx, sctx, dbName, mlogTable, is); err != nil {
+			return nil, err
+		}
 	}
 	return tbl, nil
 }
@@ -2354,7 +2869,7 @@ func (p *preprocessor) skipLockMDL() bool {
 //	   so we have to set `tt1` as alias by aliasChecker.
 type aliasChecker struct{}
 
-func (*aliasChecker) Enter(in ast.Node) (ast.Node, bool) {
+func (*aliasChecker) Enter(in ast.Node) bool {
 	if deleteStmt, ok := in.(*ast.DeleteStmt); ok {
 		// 1. check the tableRefs of deleteStmt to find the alias
 		var aliases []*ast.CIStr
@@ -2381,9 +2896,9 @@ func (*aliasChecker) Enter(in ast.Node) (ast.Node, bool) {
 				}
 			}
 		}
-		return in, true
+		return true
 	}
-	return in, false
+	return false
 }
 
 func getTableRefsAlias(tableRefs ast.ResultSetNode) *ast.CIStr {
@@ -2398,6 +2913,6 @@ func getTableRefsAlias(tableRefs ast.ResultSetNode) *ast.CIStr {
 	return nil
 }
 
-func (*aliasChecker) Leave(in ast.Node) (ast.Node, bool) {
-	return in, true
+func (*aliasChecker) Leave(ast.Node) bool {
+	return true
 }

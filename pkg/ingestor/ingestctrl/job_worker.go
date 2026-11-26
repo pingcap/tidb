@@ -83,7 +83,8 @@ type regionJobBaseWorker struct {
 // Besides, the worker must call jobWg.done() if it does not put the job into jobOutCh.
 func (w *regionJobBaseWorker) HandleTask(job *regionJob, _ func(*regionJob)) (err error) {
 	// As we need to call job.done() after panic, we recover here rather than in worker pool.
-	defer putil.Recover("fast_check_table", "handleTableScanTaskWithRecover", func() {
+	metricsLabel, funcInfo, _ := job.RecoverArgs()
+	defer putil.Recover(metricsLabel, funcInfo, func() {
 		err = errors.Errorf("region job worker panic")
 		job.done(w.jobWg)
 	}, false)
@@ -318,7 +319,7 @@ type blkStoreRegionJobWorker struct {
 func (w *blkStoreRegionJobWorker) preRunJob(ctx context.Context, job *regionJob) error {
 	failpoint.Inject("WriteToTiKVNotEnoughDiskSpace", func(_ failpoint.Value) {
 		failpoint.Return(
-			errors.New("the remaining storage capacity of TiKV is less than 10%%; please increase the storage capacity of TiKV and try again"))
+			errdef.ErrKVDiskFull.GenWithStack("the remaining storage capacity of TiKV is less than 10%%; please increase the storage capacity of TiKV and try again"))
 	})
 	if w.checkTiKVSpace {
 		for _, peer := range job.region.Region.GetPeers() {
@@ -463,7 +464,7 @@ func (w *objStoreRegionJobWorker) ingest(ctx context.Context, job *regionJob) er
 func getRegionJobWorkerPool(
 	workerCtx context.Context,
 	jobWg *sync.WaitGroup,
-	local *Backend,
+	local *Ingestor,
 	balancer *storeBalancer,
 	jobToWorkerCh, jobFromWorkerCh chan *regionJob,
 	clusterID uint64,

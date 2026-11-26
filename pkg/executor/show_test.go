@@ -18,18 +18,23 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
-	"github.com/pingcap/tidb/pkg/dxf/importinto"
+	"github.com/pingcap/tidb/pkg/dxf/importinto/taskinfo"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/executor/importer"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/stretchr/testify/require"
+	tikvutil "github.com/tikv/client-go/v2/util"
 )
 
 func TestFillOneImportJobInfo(t *testing.T) {
@@ -63,7 +68,7 @@ func TestFillOneImportJobInfo(t *testing.T) {
 	require.True(t, c.GetRow(0).IsNull(startIdx))
 	require.True(t, c.GetRow(0).IsNull(endIdx))
 
-	executor.FillOneImportJobInfo(c, jobInfo, &importinto.RuntimeInfo{ImportRows: 0})
+	executor.FillOneImportJobInfo(c, jobInfo, &taskinfo.RuntimeInfo{ImportRows: 0})
 	require.False(t, c.GetRow(1).IsNull(rowCntIdx))
 	require.Equal(t, uint64(0), c.GetRow(1).GetUint64(rowCntIdx))
 	require.True(t, c.GetRow(1).IsNull(startIdx))
@@ -81,7 +86,7 @@ func TestFillOneImportJobInfo(t *testing.T) {
 	require.False(t, c.GetRow(2).IsNull(startIdx))
 	require.False(t, c.GetRow(2).IsNull(endIdx))
 
-	ri := &importinto.RuntimeInfo{
+	ri := &taskinfo.RuntimeInfo{
 		Processed: 10,
 		Total:     100000,
 		Speed:     2,
@@ -94,11 +99,11 @@ func TestFillOneImportJobInfo(t *testing.T) {
 	require.Equal(t, "13:53:15", c.GetRow(3).GetString(fmap["CurStepETA"]))
 
 	// runtime info have update time, so use it
-	executor.FillOneImportJobInfo(c, jobInfo, &importinto.RuntimeInfo{ImportRows: 0, UpdateTime: t2025})
+	executor.FillOneImportJobInfo(c, jobInfo, &taskinfo.RuntimeInfo{ImportRows: 0, UpdateTime: t2025})
 	require.EqualValues(t, t2025, c.GetRow(4).GetTime(14))
 
 	// conflict-step runtime progress should use conflict count labels.
-	ri = &importinto.RuntimeInfo{
+	ri = &taskinfo.RuntimeInfo{
 		Step:      proto.ImportStepCollectConflicts,
 		Processed: 12,
 		Total:     34,
@@ -111,7 +116,7 @@ func TestFillOneImportJobInfo(t *testing.T) {
 
 	// preparing phase should be visible while current business step is still init.
 	jobInfo.Step = importer.JobStepPreparing
-	ri = &importinto.RuntimeInfo{
+	ri = &taskinfo.RuntimeInfo{
 		Step: proto.StepInit,
 	}
 	executor.FillOneImportJobInfo(c, jobInfo, ri)
@@ -162,6 +167,13 @@ func TestShow(t *testing.T) {
 	tk.MustQuery("show full tables like '%lmn'").Check(testkit.Rows("abclmn BASE TABLE"))
 	tk.MustGetErrCode("show tables like T", errno.ErrBadField)
 	tk.MustGetErrCode("show tables like `T`", errno.ErrBadField)
+	if kerneltype.IsNextGen() {
+		tk.MustGetErrCode("show raw import jobs where job__id = 1", errno.ErrBadField)
+		tk.MustGetErrCode("show raw import jobs where x.job_id = 1", errno.ErrBadField)
+	} else {
+		tk.MustGetErrCode("show raw import jobs", errno.ErrNotSupportedYet)
+		tk.MustGetErrCode("show raw import job 1", errno.ErrNotSupportedYet)
+	}
 
 	tk.MustExec("drop database test;")
 	tk.MustExec("create database test;")
@@ -174,6 +186,62 @@ func TestShow(t *testing.T) {
 	tk.MustQuery("show variables like 'tidb_redact_log'").Check(testkit.Rows())
 	tk.MustQuery("show session variables like 'tidb_redact_log'").Check(testkit.Rows())
 	tk.MustQuery("show global variables like 'tidb_redact_log'").Check(testkit.Rows("tidb_redact_log OFF"))
+}
+
+func TestAdminShowSlowIARemoteReadStats(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set tidb_slow_log_threshold=300000")
+
+	iaDetail := execdetails.ExecDetails{CopExecDetails: execdetails.CopExecDetails{
+		ScanDetail: &tikvutil.ScanDetail{
+			IaRemoteReadSegmentCount:    4,
+			IaRemoteReadSegmentBytes:    4096,
+			IaRemoteReadSegmentDuration: 15 * time.Millisecond,
+		},
+	}}
+	dom.LogSlowQuery(&domain.SlowQueryInfo{SQL: "user IA", Duration: 2 * time.Second, Detail: iaDetail})
+	dom.LogSlowQuery(&domain.SlowQueryInfo{SQL: "internal IA", Duration: 3 * time.Second, Detail: iaDetail, Internal: true})
+	dom.LogSlowQuery(&domain.SlowQueryInfo{SQL: "user standard", Duration: time.Second})
+	require.Eventually(t, func() bool {
+		return len(dom.ShowSlowQuery(&ast.ShowSlow{Tp: ast.ShowSlowRecent, Count: 3})) == 3
+	}, time.Second, 10*time.Millisecond)
+
+	commands := []string{
+		"admin show slow recent 2",
+		"admin show slow top 1",
+		"admin show slow top internal 1",
+		"admin show slow top all 1",
+	}
+	for _, command := range commands {
+		rs, err := tk.Exec(command)
+		require.NoError(t, err)
+		fields := rs.Fields()
+		require.Len(t, fields, 17)
+		require.Equal(t, "IA_REMOTE_READ_SEGMENT_COUNT", fields[14].ColumnAsName.O)
+		require.Equal(t, mysql.TypeLonglong, fields[14].Column.GetType())
+		require.True(t, mysql.HasUnsignedFlag(fields[14].Column.GetFlag()))
+		require.Equal(t, "IA_REMOTE_READ_SEGMENT_SIZE", fields[15].ColumnAsName.O)
+		require.Equal(t, mysql.TypeLonglong, fields[15].Column.GetType())
+		require.True(t, mysql.HasUnsignedFlag(fields[15].Column.GetFlag()))
+		require.Equal(t, "IA_REMOTE_READ_SEGMENT_WAIT_TIME", fields[16].ColumnAsName.O)
+		require.Equal(t, mysql.TypeDouble, fields[16].Column.GetType())
+		require.NoError(t, rs.Close())
+	}
+
+	rows := tk.MustQuery("admin show slow recent 2").Rows()
+	require.Len(t, rows, 2)
+	for _, row := range rows {
+		if row[0] == "user standard" {
+			require.Equal(t, []any{"0", "0", "0"}, row[14:17])
+		} else {
+			require.Equal(t, "internal IA", row[0])
+			require.Equal(t, []any{"4", "4096", "0.015"}, row[14:17])
+		}
+	}
+	tk.MustQuery("admin show slow top 1").CheckAt([]int{14, 15, 16}, testkit.Rows("4 4096 0.015"))
+	tk.MustQuery("admin show slow top internal 1").CheckAt([]int{14, 15, 16}, testkit.Rows("4 4096 0.015"))
+	tk.MustQuery("admin show slow top all 1").CheckAt([]int{14, 15, 16}, testkit.Rows("4 4096 0.015"))
 }
 
 func TestShowIndex(t *testing.T) {

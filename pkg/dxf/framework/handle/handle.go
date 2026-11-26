@@ -105,6 +105,21 @@ func GetCPUCountOfNode(ctx context.Context) (int, error) {
 
 // SubmitTask submits a task.
 func SubmitTask(ctx context.Context, taskKey string, taskType proto.TaskType, keyspace string, requiredSlots int, targetScope string, maxNodeCnt int, taskMeta []byte) (*proto.Task, error) {
+	return SubmitTaskWithExtraParams(ctx, taskKey, taskType, keyspace, requiredSlots, targetScope, maxNodeCnt, proto.ExtraParams{}, taskMeta)
+}
+
+// SubmitTaskWithExtraParams submits a task with extra params.
+func SubmitTaskWithExtraParams(
+	ctx context.Context,
+	taskKey string,
+	taskType proto.TaskType,
+	keyspace string,
+	requiredSlots int,
+	targetScope string,
+	maxNodeCnt int,
+	extraParams proto.ExtraParams,
+	taskMeta []byte,
+) (*proto.Task, error) {
 	taskManager, err := storage.GetDXFSvcTaskMgr()
 	if err != nil {
 		return nil, err
@@ -117,7 +132,7 @@ func SubmitTask(ctx context.Context, taskKey string, taskType proto.TaskType, ke
 		return nil, storage.ErrTaskAlreadyExists
 	}
 
-	taskID, err := taskManager.CreateTask(ctx, taskKey, taskType, keyspace, requiredSlots, targetScope, maxNodeCnt, proto.ExtraParams{}, taskMeta)
+	taskID, err := taskManager.CreateTask(ctx, taskKey, taskType, keyspace, requiredSlots, targetScope, maxNodeCnt, extraParams, taskMeta)
 	if err != nil {
 		return nil, err
 	}
@@ -136,35 +151,45 @@ func SubmitTask(ctx context.Context, taskKey string, taskType proto.TaskType, ke
 // WaitTaskDoneOrPaused waits for a task done or paused.
 // this API returns error if task failed or cancelled.
 func WaitTaskDoneOrPaused(ctx context.Context, id int64) error {
+	_, err := WaitTaskDoneOrPausedWithResult(ctx, id)
+	return err
+}
+
+// WaitTaskDoneOrPausedWithResult waits for a task done or paused and returns the task.
+// this API returns error if task failed or cancelled.
+func WaitTaskDoneOrPausedWithResult(ctx context.Context, id int64) (*proto.Task, error) {
 	logger := logutil.Logger(ctx).With(zap.Int64("task-id", id))
 	_, err := WaitTask(ctx, id, func(t *proto.TaskBase) bool {
 		return t.IsDone() || t.State == proto.TaskStatePaused
 	})
 	if err != nil {
-		return err
+		return nil, err
 	}
 	taskManager, err := storage.GetDXFSvcTaskMgr()
 	if err != nil {
-		return err
+		return nil, err
 	}
 	found, err := taskManager.GetTaskByIDWithHistory(ctx, id)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	switch found.State {
 	case proto.TaskStateSucceed:
-		return nil
+		return found, nil
 	case proto.TaskStateReverted:
 		logger.Error("task reverted", zap.Error(found.Error))
-		return found.Error
+		if found.Error != nil {
+			return found, found.Error
+		}
+		return found, errors.Errorf("task stopped with state %s", found.State)
 	case proto.TaskStatePaused:
 		logger.Info("task paused")
-		return nil
+		return found, nil
 	case proto.TaskStateFailed:
-		return errors.Errorf("task stopped with state %s, err %v", found.State, found.Error)
+		return found, errors.Errorf("task stopped with state %s, err %v", found.State, found.Error)
 	}
-	return nil
+	return found, nil
 }
 
 // WaitTaskDoneByKey waits for a task done by task key.

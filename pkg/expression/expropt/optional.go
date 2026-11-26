@@ -60,6 +60,9 @@ func (o *OptionalEvalPropProviders) Add(val exprctx.OptionalEvalPropProvider) {
 		case exprctx.OptPropSessionVars:
 			_, ok := val.(*SessionVarsPropProvider)
 			intest.Assert(ok)
+		case exprctx.OptPropSessionContext:
+			_, ok := val.(SessionContextPropProvider)
+			intest.Assert(ok)
 		case exprctx.OptPropInfoSchema:
 			_, ok := val.(InfoSchemaPropProvider)
 			intest.Assert(ok)

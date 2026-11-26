@@ -29,7 +29,9 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	schmock "github.com/pingcap/tidb/pkg/dxf/framework/scheduler/mock"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
+	"github.com/pingcap/tidb/pkg/ingestor/errdef"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/lightning/common"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	utilmock "github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/prometheus/client_golang/prometheus"
@@ -175,6 +177,7 @@ func TestSchedulerOnNextStage(t *testing.T) {
 	schExt.EXPECT().OnNextSubtasksBatch(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(subtaskMetas, nil)
 	taskMgr.EXPECT().GetUsedSlotsOnNodes(gomock.Any()).Return(nil, nil)
+	taskMgr.EXPECT().GetActiveSubtasks(gomock.Any(), task.ID).Return(nil, nil)
 	taskMgr.EXPECT().SwitchTaskStepInBatch(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
 	kv.TxnTotalSizeLimit.Store(1)
 	require.NoError(t, sch.Switch2NextStep())
@@ -185,6 +188,7 @@ func TestSchedulerOnNextStage(t *testing.T) {
 	schExt.EXPECT().OnNextSubtasksBatch(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(subtaskMetas, nil)
 	taskMgr.EXPECT().GetUsedSlotsOnNodes(gomock.Any()).Return(nil, nil)
+	taskMgr.EXPECT().GetActiveSubtasks(gomock.Any(), task.ID).Return(nil, nil)
 	taskMgr.EXPECT().SwitchTaskStepInBatch(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(errors.Annotatef(storage.ErrUnstableSubtasks, "expected %d, got %d",
 			2, 100))
@@ -206,6 +210,230 @@ func TestSchedulerOnNextStage(t *testing.T) {
 	kv.TxnTotalSizeLimit.Store(config.DefTxnTotalSizeLimit)
 	require.NoError(t, sch.Switch2NextStep())
 	require.True(t, ctrl.Satisfied())
+}
+
+func TestSchedulerScheduleSubtasksToNodesWithEnoughSlots(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		nodes        []string
+		maxNodeCount int
+		usedSlots    map[string]int
+		execIDs      []string
+	}{
+		{
+			name:         "only one node has enough slots",
+			nodes:        []string{"n1", "n2", "n3"},
+			maxNodeCount: 1,
+			usedSlots:    map[string]int{"n1": 3, "n2": 1},
+			execIDs:      []string{"n3", "n3"},
+		},
+		{
+			name:         "cap nodes after filtering",
+			nodes:        []string{"n1", "n2", "n3"},
+			maxNodeCount: 1,
+			usedSlots:    map[string]int{"n1": 3},
+			execIDs:      []string{"n2", "n2"},
+		},
+		{
+			name:         "cap nodes after filtering with max node count 2",
+			nodes:        []string{"n1", "n2", "n3", "n4"},
+			maxNodeCount: 2,
+			usedSlots:    map[string]int{"n1": 3, "n3": 3},
+			execIDs:      []string{"n2", "n4"},
+		},
+		{
+			name:         "cap fallback when all nodes are full",
+			nodes:        []string{"n1", "n2", "n3"},
+			maxNodeCount: 1,
+			usedSlots:    map[string]int{"n1": 3, "n2": 3, "n3": 3},
+			execIDs:      []string{"n1", "n1"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			defer ctrl.Finish()
+			taskMgr := mock.NewMockTaskManager(ctrl)
+			schExt := schmock.NewMockExtension(ctrl)
+			task := proto.Task{
+				TaskBase: proto.TaskBase{
+					ID:            1,
+					State:         proto.TaskStatePending,
+					Step:          proto.StepInit,
+					RequiredSlots: 3,
+					MaxNodeCount:  tc.maxNodeCount,
+				},
+			}
+			sch := createScheduler(&task, true, taskMgr, ctrl)
+			sch.Extension = schExt
+			sch.slotMgr.updateCapacity(3)
+			managedNodes := make([]proto.ManagedNode, 0, len(tc.nodes))
+			for _, id := range tc.nodes {
+				managedNodes = append(managedNodes, proto.ManagedNode{ID: id})
+			}
+			sch.nodeMgr.nodes.Store(&managedNodes)
+
+			schExt.EXPECT().GetNextStep(gomock.Any()).Return(proto.StepOne)
+			schExt.EXPECT().GetEligibleInstances(gomock.Any(), gomock.Any()).Return(nil, nil)
+			schExt.EXPECT().OnNextSubtasksBatch(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+				DoAndReturn(func(_ context.Context, _ storage.TaskHandle, _ *proto.Task, nodeCnt int, _ proto.Step) ([][]byte, error) {
+					require.Equal(t, tc.maxNodeCount, nodeCnt)
+					return [][]byte{[]byte(`{}`), []byte(`{}`)}, nil
+				})
+			taskMgr.EXPECT().GetUsedSlotsOnNodes(gomock.Any()).Return(tc.usedSlots, nil)
+			var execIDs []string
+			taskMgr.EXPECT().SwitchTaskStep(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+				DoAndReturn(func(_ context.Context, _ *proto.Task, _ proto.TaskState, _ proto.Step, subtasks []*proto.Subtask) error {
+					for _, st := range subtasks {
+						execIDs = append(execIDs, st.ExecID)
+					}
+					return nil
+				})
+			require.NoError(t, sch.Switch2NextStep())
+			require.Equal(t, tc.execIDs, execIDs)
+			require.True(t, ctrl.Satisfied())
+		})
+	}
+}
+
+func TestSchedulerBatchRecoveryKeepsMaxNodeCount(t *testing.T) {
+	bak := kv.TxnTotalSizeLimit.Load()
+	t.Cleanup(func() {
+		kv.TxnTotalSizeLimit.Store(bak)
+	})
+	kv.TxnTotalSizeLimit.Store(1)
+
+	for _, tc := range []struct {
+		name               string
+		nodes              []string
+		maxNodeCount       int
+		usedSlots          map[string]int
+		existing           []*proto.SubtaskBase
+		subtaskCnt         int
+		wantNewExecIDs     []string
+		wantDistinctExecID []string
+	}{
+		{
+			name:         "keep existing host for max node count 1",
+			nodes:        []string{"n1", "n2"},
+			maxNodeCount: 1,
+			usedSlots:    map[string]int{"n1": 3},
+			existing: []*proto.SubtaskBase{
+				{ID: 1, Step: proto.StepOne, ExecID: "n1", State: proto.SubtaskStatePending, Ordinal: 1},
+				{ID: 2, Step: proto.StepOne, ExecID: "n1", State: proto.SubtaskStatePending, Ordinal: 2},
+			},
+			subtaskCnt:         4,
+			wantNewExecIDs:     []string{"n1", "n1"},
+			wantDistinctExecID: []string{"n1"},
+		},
+		{
+			name:         "keep existing host and fill remaining cap from free nodes",
+			nodes:        []string{"n1", "n2", "n3"},
+			maxNodeCount: 2,
+			usedSlots:    map[string]int{"n1": 3, "n2": 3},
+			existing: []*proto.SubtaskBase{
+				{ID: 1, Step: proto.StepOne, ExecID: "n1", State: proto.SubtaskStatePending, Ordinal: 1},
+			},
+			subtaskCnt:         4,
+			wantNewExecIDs:     []string{"n3", "n1", "n3"},
+			wantDistinctExecID: []string{"n1", "n3"},
+		},
+		{
+			name:         "keep existing hosts at max node count without adding idle node",
+			nodes:        []string{"n1", "n2", "n3"},
+			maxNodeCount: 2,
+			usedSlots:    map[string]int{"n1": 3, "n2": 3},
+			existing: []*proto.SubtaskBase{
+				{ID: 1, Step: proto.StepOne, ExecID: "n1", State: proto.SubtaskStatePending, Ordinal: 1},
+				{ID: 2, Step: proto.StepOne, ExecID: "n2", State: proto.SubtaskStatePending, Ordinal: 2},
+			},
+			subtaskCnt:         4,
+			wantNewExecIDs:     []string{"n1", "n2"},
+			wantDistinctExecID: []string{"n1", "n2"},
+		},
+		{
+			name:         "ignore dead existing host on recovery",
+			nodes:        []string{"n2", "n3"},
+			maxNodeCount: 1,
+			usedSlots:    map[string]int{"n1": 3},
+			existing: []*proto.SubtaskBase{
+				{ID: 1, Step: proto.StepOne, ExecID: "n1", State: proto.SubtaskStatePending, Ordinal: 1},
+			},
+			subtaskCnt:         3,
+			wantNewExecIDs:     []string{"n2", "n2"},
+			wantDistinctExecID: []string{"n1", "n2"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			defer ctrl.Finish()
+			taskMgr := mock.NewMockTaskManager(ctrl)
+			schExt := schmock.NewMockExtension(ctrl)
+			task := proto.Task{
+				TaskBase: proto.TaskBase{
+					ID:            1,
+					State:         proto.TaskStatePending,
+					Step:          proto.StepInit,
+					RequiredSlots: 3,
+					MaxNodeCount:  tc.maxNodeCount,
+				},
+			}
+			sch := createScheduler(&task, true, taskMgr, ctrl)
+			sch.Extension = schExt
+			sch.slotMgr.updateCapacity(3)
+			managedNodes := make([]proto.ManagedNode, 0, len(tc.nodes))
+			for _, id := range tc.nodes {
+				managedNodes = append(managedNodes, proto.ManagedNode{ID: id})
+			}
+			sch.nodeMgr.nodes.Store(&managedNodes)
+
+			metas := make([][]byte, tc.subtaskCnt)
+			for i := range metas {
+				metas[i] = fmt.Appendf(nil, `{"i":%d}`, i+1)
+			}
+			schExt.EXPECT().GetNextStep(gomock.Any()).Return(proto.StepOne)
+			schExt.EXPECT().GetEligibleInstances(gomock.Any(), gomock.Any()).Return(nil, nil)
+			schExt.EXPECT().OnNextSubtasksBatch(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+				Return(metas, nil)
+			taskMgr.EXPECT().GetUsedSlotsOnNodes(gomock.Any()).Return(tc.usedSlots, nil)
+			taskMgr.EXPECT().GetActiveSubtasks(gomock.Any(), task.ID).Return(tc.existing, nil)
+
+			var inserted []*proto.Subtask
+			taskMgr.EXPECT().SwitchTaskStepInBatch(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+				DoAndReturn(func(_ context.Context, _ *proto.Task, _ proto.TaskState, _ proto.Step, subtasks []*proto.Subtask) error {
+					inserted = append(inserted, subtasks[len(tc.existing):]...)
+					return nil
+				})
+			require.NoError(t, sch.Switch2NextStep())
+
+			var ordinals []int
+			distinctSet := make(map[string]struct{})
+			var distinct []string
+			for _, st := range tc.existing {
+				ordinals = append(ordinals, st.Ordinal)
+				if _, ok := distinctSet[st.ExecID]; !ok {
+					distinctSet[st.ExecID] = struct{}{}
+					distinct = append(distinct, st.ExecID)
+				}
+			}
+			newExecIDs := make([]string, 0, len(inserted))
+			for _, st := range inserted {
+				ordinals = append(ordinals, st.Ordinal)
+				newExecIDs = append(newExecIDs, st.ExecID)
+				if _, ok := distinctSet[st.ExecID]; !ok {
+					distinctSet[st.ExecID] = struct{}{}
+					distinct = append(distinct, st.ExecID)
+				}
+			}
+			wantOrdinals := make([]int, tc.subtaskCnt)
+			for i := range wantOrdinals {
+				wantOrdinals[i] = i + 1
+			}
+			require.Equal(t, wantOrdinals, ordinals)
+			require.Equal(t, tc.wantNewExecIDs, newExecIDs)
+			require.Equal(t, tc.wantDistinctExecID, distinct)
+			require.True(t, ctrl.Satisfied())
+		})
+	}
 }
 
 func TestGetEligibleNodes(t *testing.T) {
@@ -248,6 +476,128 @@ func TestSchedulerIsStepSucceed(t *testing.T) {
 			state: 1,
 		}))
 	}
+}
+
+func TestSchedulerAutoPauseOnKVDiskFull(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	taskMgr := mock.NewMockTaskManager(ctrl)
+	taskErr := errdef.ErrKVDiskFull.GenWithStack("store 1 disk full")
+	taskErr2 := errdef.ErrKVDiskFull.GenWithStack("store 2 disk full")
+	task := proto.Task{
+		TaskBase: proto.TaskBase{
+			ID:    1,
+			State: proto.TaskStateRunning,
+			Step:  proto.StepOne,
+			ExtraParams: proto.ExtraParams{
+				PauseOnKVDiskFull: true,
+			},
+		},
+	}
+	sch := createScheduler(&task, true, taskMgr, ctrl)
+
+	schExt := schmock.NewMockExtension(ctrl)
+	sch.Extension = schExt
+	taskMgr.EXPECT().GetSubtaskCntGroupByStates(gomock.Any(), task.ID, task.Step).Return(map[proto.SubtaskState]int64{
+		proto.SubtaskStatePending: 1,
+		proto.SubtaskStateRunning: 1,
+	}, nil)
+	schExt.EXPECT().OnTick(gomock.Any(), gomock.Any()).Return()
+
+	require.NoError(t, sch.onRunning())
+	require.Equal(t, proto.TaskStateRunning, sch.GetTask().State)
+	require.True(t, ctrl.Satisfied())
+
+	taskMgr.EXPECT().GetSubtaskCntGroupByStates(gomock.Any(), task.ID, task.Step).Return(map[proto.SubtaskState]int64{
+		proto.SubtaskStateFailed: 2,
+	}, nil)
+	taskMgr.EXPECT().GetSubtaskErrors(gomock.Any(), task.ID).Return([]error{taskErr, taskErr2}, nil)
+	taskMgr.EXPECT().PauseTaskOnError(gomock.Any(), task.ID, task.State, task.Step, taskErr).Return(nil)
+
+	require.NoError(t, sch.onRunning())
+	require.Equal(t, proto.TaskStatePausing, sch.GetTask().State)
+	require.ErrorIs(t, sch.GetTask().Error, errdef.ErrKVDiskFull)
+	require.True(t, ctrl.Satisfied())
+
+	taskMgr.EXPECT().GetSubtaskCntGroupByStates(gomock.Any(), task.ID, task.Step).Return(map[proto.SubtaskState]int64{
+		proto.SubtaskStateFailed: 1,
+	}, nil)
+	taskMgr.EXPECT().GetSubtaskErrors(gomock.Any(), task.ID).Return([]error{taskErr}, nil)
+	taskMgr.EXPECT().PauseTaskOnError(gomock.Any(), task.ID, proto.TaskStatePausing, task.Step, taskErr).Return(nil)
+
+	require.NoError(t, sch.onPausing())
+	require.Equal(t, proto.TaskStatePausing, sch.GetTask().State)
+	require.ErrorIs(t, sch.GetTask().Error, errdef.ErrKVDiskFull)
+	require.True(t, ctrl.Satisfied())
+
+	taskMgr.EXPECT().GetSubtaskCntGroupByStates(gomock.Any(), task.ID, task.Step).Return(map[proto.SubtaskState]int64{
+		proto.SubtaskStatePaused: 1,
+	}, nil)
+	taskMgr.EXPECT().PausedTask(gomock.Any(), task.ID).Return(nil)
+
+	require.NoError(t, sch.onPausing())
+	require.Equal(t, proto.TaskStatePaused, sch.GetTask().State)
+	require.ErrorIs(t, sch.GetTask().Error, errdef.ErrKVDiskFull)
+	require.True(t, ctrl.Satisfied())
+
+	tests := []struct {
+		name        string
+		cntByState  map[proto.SubtaskState]int64
+		subTaskErrs []error
+	}{
+		{
+			name: "canceled subtasks present",
+			cntByState: map[proto.SubtaskState]int64{
+				proto.SubtaskStateFailed:   1,
+				proto.SubtaskStateCanceled: 1,
+			},
+			subTaskErrs: []error{taskErr},
+		},
+		{
+			name: "mixed error types",
+			cntByState: map[proto.SubtaskState]int64{
+				proto.SubtaskStateFailed: 2,
+			},
+			subTaskErrs: []error{taskErr, errors.New("network error")},
+		},
+		{
+			name: "failed count and error count mismatch",
+			cntByState: map[proto.SubtaskState]int64{
+				proto.SubtaskStateFailed: 2,
+			},
+			subTaskErrs: []error{taskErr},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			require.False(t, shouldPauseOnKVDiskFull(&task, test.cntByState, test.subTaskErrs))
+		})
+	}
+
+	missingErrTask := proto.Task{
+		TaskBase: proto.TaskBase{
+			ID:    2,
+			State: proto.TaskStateRunning,
+			Step:  proto.StepOne,
+			ExtraParams: proto.ExtraParams{
+				PauseOnKVDiskFull: true,
+			},
+		},
+	}
+	missingErrSch := createScheduler(&missingErrTask, true, taskMgr, ctrl)
+	taskMgr.EXPECT().GetSubtaskCntGroupByStates(gomock.Any(), missingErrTask.ID, missingErrTask.Step).Return(map[proto.SubtaskState]int64{
+		proto.SubtaskStateFailed: 1,
+	}, nil)
+	taskMgr.EXPECT().GetSubtaskErrors(gomock.Any(), missingErrTask.ID).Return(nil, nil)
+	taskMgr.EXPECT().RevertTask(gomock.Any(), missingErrTask.ID, proto.TaskStateRunning, gomock.Any()).DoAndReturn(
+		func(_ context.Context, _ int64, _ proto.TaskState, err error) error {
+			require.ErrorContains(t, err, "without error")
+			return nil
+		})
+	require.NoError(t, missingErrSch.onRunning())
+	require.Equal(t, proto.TaskStateReverting, missingErrSch.GetTask().State)
+	require.ErrorContains(t, missingErrSch.GetTask().Error, "without error")
+	require.True(t, ctrl.Satisfied())
 }
 
 func TestSchedulerNotAllocateSlots(t *testing.T) {
@@ -296,6 +646,7 @@ func TestSchedulerNotAllocateSlots(t *testing.T) {
 		return &cloneTask.TaskBase, nil
 	})
 
+	taskMgr.EXPECT().CancelPausedSubtasks(gomock.Any(), cloneTask.ID).Return(nil)
 	taskMgr.EXPECT().GetSubtaskCntGroupByStates(gomock.Any(), cloneTask.ID, cloneTask.Step).Return(map[proto.SubtaskState]int64{
 		proto.SubtaskStatePending: 0,
 		proto.SubtaskStateRunning: 0}, nil)
@@ -437,6 +788,18 @@ func TestSchedulerMaintainTaskFields(t *testing.T) {
 	t.Run("test onResuming", func(t *testing.T) {
 		scheduler.task.Store(&schTask)
 
+		// finish resuming once paused subtasks are 0 even if running subtasks remain
+		taskMgr.EXPECT().GetSubtaskCntGroupByStates(gomock.Any(), task.ID, gomock.Any()).Return(map[proto.SubtaskState]int64{
+			proto.SubtaskStateRunning: 1,
+		}, nil)
+		taskMgr.EXPECT().ResumedTask(gomock.Any(), task.ID).Return(nil)
+		require.NoError(t, scheduler.onResuming())
+		tmpTask := task
+		tmpTask.State = proto.TaskStateRunning
+		require.Equal(t, *scheduler.getTaskClone(), tmpTask)
+		require.True(t, ctrl.Satisfied())
+
+		scheduler.task.Store(&schTask)
 		taskMgr.EXPECT().GetSubtaskCntGroupByStates(gomock.Any(), task.ID, gomock.Any()).Return(nil, nil)
 		taskMgr.EXPECT().ResumedTask(gomock.Any(), task.ID).Return(fmt.Errorf("resume err"))
 		require.ErrorContains(t, scheduler.onResuming(), "resume err")
@@ -447,7 +810,7 @@ func TestSchedulerMaintainTaskFields(t *testing.T) {
 		taskMgr.EXPECT().GetSubtaskCntGroupByStates(gomock.Any(), task.ID, gomock.Any()).Return(nil, nil)
 		taskMgr.EXPECT().ResumedTask(gomock.Any(), task.ID).Return(nil)
 		require.NoError(t, scheduler.onResuming())
-		tmpTask := task
+		tmpTask = task
 		tmpTask.State = proto.TaskStateRunning
 		require.Equal(t, *scheduler.getTaskClone(), tmpTask)
 		require.True(t, ctrl.Satisfied())
@@ -456,17 +819,38 @@ func TestSchedulerMaintainTaskFields(t *testing.T) {
 	t.Run("test onReverting", func(t *testing.T) {
 		scheduler.task.Store(&schTask)
 
-		taskMgr.EXPECT().GetSubtaskCntGroupByStates(gomock.Any(), task.ID, gomock.Any()).Return(nil, nil)
-		schExt.EXPECT().OnDone(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
-		taskMgr.EXPECT().RevertedTask(gomock.Any(), task.ID).Return(fmt.Errorf("reverted err"))
+		// paused subtasks must be drained before checking current step or calling OnDone/RevertedTask
+		taskMgr.EXPECT().CancelPausedSubtasks(gomock.Any(), task.ID).Return(fmt.Errorf("cancel paused err"))
+		require.ErrorContains(t, scheduler.onReverting(), "cancel paused err")
+		require.Equal(t, *scheduler.getTaskClone(), task)
+		require.True(t, ctrl.Satisfied())
+
+		gomock.InOrder(
+			taskMgr.EXPECT().CancelPausedSubtasks(gomock.Any(), task.ID).Return(nil),
+			taskMgr.EXPECT().GetSubtaskCntGroupByStates(gomock.Any(), task.ID, task.Step).Return(nil, nil),
+			schExt.EXPECT().OnDone(gomock.Any(), gomock.Any(), gomock.Any()).Return(fmt.Errorf("on done err")),
+		)
+		require.ErrorContains(t, scheduler.onReverting(), "on done err")
+		require.Equal(t, *scheduler.getTaskClone(), task)
+		require.True(t, ctrl.Satisfied())
+
+		gomock.InOrder(
+			taskMgr.EXPECT().CancelPausedSubtasks(gomock.Any(), task.ID).Return(nil),
+			taskMgr.EXPECT().GetSubtaskCntGroupByStates(gomock.Any(), task.ID, task.Step).Return(nil, nil),
+			schExt.EXPECT().OnDone(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil),
+			taskMgr.EXPECT().RevertedTask(gomock.Any(), task.ID).Return(fmt.Errorf("reverted err")),
+		)
 		require.ErrorContains(t, scheduler.onReverting(), "reverted err")
 		require.Equal(t, *scheduler.getTaskClone(), task)
 		require.True(t, ctrl.Satisfied())
 
 		// revert task successfully
-		taskMgr.EXPECT().GetSubtaskCntGroupByStates(gomock.Any(), task.ID, gomock.Any()).Return(nil, nil)
-		schExt.EXPECT().OnDone(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
-		taskMgr.EXPECT().RevertedTask(gomock.Any(), task.ID).Return(nil)
+		gomock.InOrder(
+			taskMgr.EXPECT().CancelPausedSubtasks(gomock.Any(), task.ID).Return(nil),
+			taskMgr.EXPECT().GetSubtaskCntGroupByStates(gomock.Any(), task.ID, task.Step).Return(nil, nil),
+			schExt.EXPECT().OnDone(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil),
+			taskMgr.EXPECT().RevertedTask(gomock.Any(), task.ID).Return(nil),
+		)
 		require.NoError(t, scheduler.onReverting())
 		tmpTask := task
 		tmpTask.State = proto.TaskStateReverted
@@ -526,17 +910,37 @@ func TestSchedulerMaintainTaskFields(t *testing.T) {
 		require.Equal(t, *scheduler.getTaskClone(), tmpTask)
 		require.True(t, ctrl.Satisfied())
 
-		// task done, but update failed, task state unchanged
-		schExt.EXPECT().OnDone(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
-		taskMgr.EXPECT().SucceedTask(gomock.Any(), task.ID).Return(fmt.Errorf("update err"))
+		// task done, but update failed, task state unchanged. OnDone mutates the
+		// task meta it is called with, and SucceedTask must receive that same
+		// mutated meta so the framework persists it with the state transition.
+		doneMeta := []byte(`{"summary":{"merge_temp_index_txn_kv_size":42}}`)
+		schExt.EXPECT().OnDone(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
+			func(_ context.Context, _ storage.TaskHandle, task *proto.Task) error {
+				task.Meta = doneMeta
+				return nil
+			})
+		taskMgr.EXPECT().SucceedTask(gomock.Any(), gomock.Any()).DoAndReturn(
+			func(_ context.Context, task *proto.Task) error {
+				require.Equal(t, doneMeta, task.Meta)
+				return fmt.Errorf("update err")
+			})
 		require.ErrorContains(t, scheduler.switch2NextStep(), "update err")
 		require.Equal(t, *scheduler.getTaskClone(), tmpTask)
 		// task done successfully, task state changed
-		schExt.EXPECT().OnDone(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
-		taskMgr.EXPECT().SucceedTask(gomock.Any(), task.ID).Return(nil)
+		schExt.EXPECT().OnDone(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
+			func(_ context.Context, _ storage.TaskHandle, task *proto.Task) error {
+				task.Meta = doneMeta
+				return nil
+			})
+		taskMgr.EXPECT().SucceedTask(gomock.Any(), gomock.Any()).DoAndReturn(
+			func(_ context.Context, task *proto.Task) error {
+				require.Equal(t, doneMeta, task.Meta)
+				return nil
+			})
 		require.NoError(t, scheduler.switch2NextStep())
 		tmpTask.State = proto.TaskStateSucceed
 		tmpTask.Step = proto.StepDone
+		tmpTask.Meta = doneMeta
 		require.Equal(t, *scheduler.getTaskClone(), tmpTask)
 	})
 
@@ -748,16 +1152,76 @@ func TestOnTaskFinished(t *testing.T) {
 		return values
 	}
 	onTaskFinished(proto.TaskStateSucceed, nil)
-	require.EqualValues(t, map[string]int{"all": 1, "succeed": 1}, collectMetricsFn())
+	require.EqualValues(t, map[string]int{metricStateAll: 1, "succeed": 1}, collectMetricsFn())
 	onTaskFinished(proto.TaskStateReverted, nil)
-	require.EqualValues(t, map[string]int{"all": 2, "succeed": 1, "failed": 1}, collectMetricsFn())
+	require.EqualValues(t, map[string]int{metricStateAll: 2, "succeed": 1, "failed": 1}, collectMetricsFn())
 	onTaskFinished(proto.TaskStateReverted, errors.New("some err"))
-	require.EqualValues(t, map[string]int{"all": 3, "succeed": 1, "failed": 2}, collectMetricsFn())
-	onTaskFinished(proto.TaskStateReverted, errors.New(taskCancelMsg))
-	require.EqualValues(t, map[string]int{"all": 4, "succeed": 1, "failed": 2, "cancelled": 1}, collectMetricsFn())
+	require.EqualValues(t, map[string]int{metricStateAll: 3, "succeed": 1, "failed": 2}, collectMetricsFn())
+	onTaskFinished(proto.TaskStateReverted, errors.New(storage.TaskCancelMessage))
+	require.EqualValues(t, map[string]int{metricStateAll: 4, "succeed": 1, "failed": 2, "cancelled": 1}, collectMetricsFn())
 	onTaskFinished(proto.TaskStateFailed, errors.New("some err"))
-	require.EqualValues(t, map[string]int{"all": 5, "succeed": 1, "failed": 3, "cancelled": 1}, collectMetricsFn())
+	require.EqualValues(t, map[string]int{metricStateAll: 5, "succeed": 1, "failed": 3, "cancelled": 1}, collectMetricsFn())
+	valueConversionErr := "[Lightning:Restore:ErrEncodeKV]when encoding 1-th data row in this chunk: " +
+		"encode kv error in file orderlab/orderlab.shipment_events.000000000.csv.gz:0 at offset 0: " +
+		"Value conversion failed for column 'event_id'. Expected type: bigint, received value: ?. " +
+		"Reason: [types:1292]Truncated incorrect DOUBLE value: '?'."
+	onTaskFinished(proto.TaskStateReverted, errors.New(valueConversionErr))
+	require.EqualValues(t, map[string]int{
+		metricStateAll: 6, "succeed": 1, "failed": 3, "cancelled": 1, "data-error": 1,
+	}, collectMetricsFn())
+	datetimeConversionErr := "[Lightning:Restore:ErrEncodeKV]when encoding 1-th data row in this chunk: " +
+		"encode kv error in file orderlab/orderlab.shipment_events.000000000.csv.gz:0 at offset 0: " +
+		"Value conversion failed for column 'created_at'. Expected type: datetime, received value: invalid. " +
+		"Reason: [types:1292]Incorrect datetime value: 'invalid' for column 'created_at' at row 1."
+	onTaskFinished(proto.TaskStateReverted, errors.New(datetimeConversionErr))
+	require.EqualValues(t, map[string]int{
+		metricStateAll: 7, "succeed": 1, "failed": 3, "cancelled": 1, "data-error": 2,
+	}, collectMetricsFn())
+	roundTripImportCastErr := func(column, columnType, value, reason string) error {
+		castErr := common.ErrCastValue.FastGenByArgs(column, columnType, value, reason)
+		encodeErr := common.ErrEncodeKV.Wrap(castErr).FastGenByArgs("data.csv", 0)
+		serializedErr := errors.Normalize(errors.GetErrStackMsg(encodeErr),
+			errors.RFCCodeText(string(common.ErrEncodeKV.RFCCode())),
+			errors.MySQLErrorCode(int(common.ErrEncodeKV.Code())))
+		errBytes, err := serializedErr.MarshalJSON()
+		require.NoError(t, err)
+		restoredErr := errors.Normalize("")
+		require.NoError(t, restoredErr.UnmarshalJSON(errBytes))
+		return restoredErr
+	}
+	dataTooLongErr := roundTripImportCastErr("name", "varchar(3)", "abcd",
+		"[types:1406]Data Too Long, field len 3, data len 4")
+	require.NotContains(t, dataTooLongErr.Error(), "ErrCastValue")
+	require.Equal(t, "data-error", getMetricState(proto.TaskStateReverted, dataTooLongErr))
+	notNullErr := roundTripImportCastErr("name", "varchar(10)", "NULL",
+		"[table:1048]Column 'name' cannot be null")
+	require.Equal(t, "data-error", getMetricState(proto.TaskStateReverted, notNullErr))
+	checkConstraintErr := "[Lightning:Restore:ErrEncodeKV]when encoding 1-th data row in this chunk: " +
+		"encode kv error in file data.csv:0 at offset 0: " +
+		"Check constraint 'positive_id' is violated."
+	require.Equal(t, "data-error", getMetricState(proto.TaskStateReverted, errors.New(checkConstraintErr)))
+	noPartitionErr := "[Lightning:Restore:ErrEncodeKV]when encoding 1-th data row in this chunk: " +
+		"encode kv error in file data.csv:0 at offset 0: " +
+		"Table has no partition for value 42"
+	require.Equal(t, "data-error", getMetricState(proto.TaskStateReverted, errors.New(noPartitionErr)))
+	require.Equal(t, "data-error", getMetricState(proto.TaskStateReverted,
+		errors.New("[executor:8167]Duplicate key conflict found. Please resolve conflicts in the input dataset")))
+	require.Equal(t, "data-error", getMetricState(proto.TaskStateReverted,
+		errors.New("[Lightning:Restore:ErrFoundDataConflictRecords]found data conflict records in table t")))
+	require.Equal(t, "data-error", getMetricState(proto.TaskStateReverted,
+		errors.New("[Lightning:Restore:ErrFoundIndexConflictRecords]found index conflict records in table t")))
+	parseErr := "[Lightning:Restore:ErrEncodeKV]encode kv error in file data.csv:0 at offset 0: " +
+		"column count mismatch, expected 3, got 2"
+	require.Equal(t, proto.TaskStateFailed.String(), getMetricState(proto.TaskStateReverted, errors.New(parseErr)))
+	require.Equal(t, proto.TaskStateFailed.String(), getMetricState(proto.TaskStateReverted,
+		errors.New("Value conversion failed for column 'name'")))
+	onTaskFinished(proto.TaskStateReverted, errors.New("[kv:1062]Duplicate entry '1' for key 't.idx'"))
+	require.EqualValues(t, map[string]int{
+		metricStateAll: 8, "succeed": 1, "failed": 3, "cancelled": 1, "data-error": 3,
+	}, collectMetricsFn())
 	// noop for non-finished state.
 	onTaskFinished(proto.TaskStateRunning, nil)
-	require.EqualValues(t, map[string]int{"all": 5, "succeed": 1, "failed": 3, "cancelled": 1}, collectMetricsFn())
+	require.EqualValues(t, map[string]int{
+		metricStateAll: 8, "succeed": 1, "failed": 3, "cancelled": 1, "data-error": 3,
+	}, collectMetricsFn())
 }

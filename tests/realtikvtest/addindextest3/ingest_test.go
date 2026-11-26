@@ -49,6 +49,9 @@ func init() {
 }
 
 func TestAddIndexIngestMemoryUsage(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("memory usage assertion is tied to the local ingest backend which is not used on NextGen")
+	}
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("drop database if exists addindexlit;")
@@ -164,6 +167,7 @@ func TestAddIndexIngestWriterCountOnPartitionTable(t *testing.T) {
 	disttestutil.ReduceCheckInterval(t)
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
+	realtikvtest.SetupNextGenGlobalSort(t, tk)
 	tk.MustExec("drop database if exists addindexlit;")
 	tk.MustExec("create database addindexlit;")
 	tk.MustExec("use addindexlit;")
@@ -195,6 +199,7 @@ func TestAddIndexIngestWriterCountOnPartitionTable(t *testing.T) {
 func TestIngestMVIndexOnPartitionTable(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
+	realtikvtest.SetupNextGenGlobalSort(t, tk)
 	cases := []string{
 		"alter table t add index idx((cast(a as signed array)));",
 		"alter table t add unique index idx(pk, (cast(a as signed array)));",
@@ -247,6 +252,9 @@ func TestIngestMVIndexOnPartitionTable(t *testing.T) {
 }
 
 func TestAddIndexIngestAdjustBackfillWorkerCountFail(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("this test drives the local ingest importer concurrency which is not used on NextGen")
+	}
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("drop database if exists addindexlit;")
@@ -289,6 +297,7 @@ func TestAddIndexIngestAdjustBackfillWorkerCountFail(t *testing.T) {
 func TestAddIndexIngestEmptyTable(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
+	realtikvtest.SetupNextGenGlobalSort(t, tk)
 	tk.MustExec("drop database if exists addindexlit;")
 	tk.MustExec("create database addindexlit;")
 	tk.MustExec("use addindexlit;")
@@ -311,6 +320,7 @@ func TestAddIndexIngestEmptyTable(t *testing.T) {
 func TestAddIndexIngestRestoredData(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
+	realtikvtest.SetupNextGenGlobalSort(t, tk)
 	tk.MustExec("drop database if exists addindexlit;")
 	tk.MustExec("create database addindexlit;")
 	tk.MustExec("use addindexlit;")
@@ -345,6 +355,7 @@ func TestAddIndexIngestRestoredData(t *testing.T) {
 func TestAddIndexIngestUniqueKey(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
+	realtikvtest.SetupNextGenGlobalSort(t, tk)
 	tk.MustExec("drop database if exists addindexlit;")
 	tk.MustExec("create database addindexlit;")
 	tk.MustExec("use addindexlit;")
@@ -373,6 +384,7 @@ func TestAddIndexIngestUniqueKey(t *testing.T) {
 func TestAddIndexSplitTableRanges(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
+	realtikvtest.SetupNextGenGlobalSort(t, tk)
 	tk.MustExec("drop database if exists addindexlit;")
 	tk.MustExec("create database addindexlit;")
 	tk.MustExec("use addindexlit;")
@@ -719,6 +731,40 @@ func TestAddIndexIngestFailures(t *testing.T) {
 	tk.MustExec(`set global tidb_enable_dist_task=off;`)
 }
 
+func TestAddIndexLocalSortDiskSpace(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("have overlapped ingest sst, skip")
+	}
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("drop database if exists addindexlit;")
+	tk.MustExec("create database addindexlit;")
+	tk.MustExec("use addindexlit;")
+	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
+	tk.MustExec(`set global tidb_enable_dist_task=on;`)
+	t.Cleanup(func() {
+		tk.MustExec(`set global tidb_enable_dist_task=off;`)
+	})
+
+	tk.MustExec("create table t(id int primary key, b int, k int);")
+	tk.MustExec("insert into t values (1, 1, 1);")
+
+	tk.MustExec("alter table t add index idx(b);")
+	tk.MustExec("admin check table t;")
+
+	tk.MustExec("drop index idx on t;")
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/ingest/mockLocalSortDiskSpaceProbeFailed", "1*return"))
+	tk.MustExec("alter table t add index idx2(b);")
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/ingest/mockLocalSortDiskSpaceProbeFailed"))
+	tk.MustExec("admin check table t;")
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/ingest/mockLocalSortDiskSpaceInsufficient", "return"))
+	err := tk.ExecToErr("alter table t add index idx3(b);")
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/ingest/mockLocalSortDiskSpaceInsufficient"))
+	require.ErrorContains(t, err, "Check ingest environment failed")
+	require.ErrorContains(t, err, "mock insufficient local sort disk space")
+}
+
 func TestAddIndexImportFailed(t *testing.T) {
 	if kerneltype.IsNextGen() {
 		t.Skip("have overlapped ingest sst, skip")
@@ -768,6 +814,7 @@ func TestAddEmptyMultiValueIndex(t *testing.T) {
 func TestAddUniqueIndexDuplicatedError(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
+	realtikvtest.SetupNextGenGlobalSort(t, tk)
 	tk.MustExec("use test")
 	tk.MustExec("DROP TABLE IF EXISTS `b1cce552` ")
 	tk.MustExec("CREATE TABLE `b1cce552` (\n  `f5d9aecb` timestamp DEFAULT '2031-12-22 06:44:52',\n  `d9337060` varchar(186) DEFAULT 'duplicatevalue',\n  `4c74082f` year(4) DEFAULT '1977',\n  `9215adc3` tinytext DEFAULT NULL,\n  `85ad5a07` decimal(5,0) NOT NULL DEFAULT '68649',\n  `8c60260f` varchar(130) NOT NULL DEFAULT 'drfwe301tuehhkmk0jl79mzekuq0byg',\n  `8069da7b` varchar(90) DEFAULT 'ra5rhqzgjal4o47ppr33xqjmumpiiillh7o5ajx7gohmuroan0u',\n  `91e218e1` tinytext DEFAULT NULL,\n  PRIMARY KEY (`8c60260f`,`85ad5a07`) /*T![clustered_index] CLUSTERED */,\n  KEY `d88975e1` (`8069da7b`)\n);")
@@ -824,6 +871,7 @@ func TestFirstLitSlowStart(t *testing.T) {
 func TestConcFastReorg(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
+	realtikvtest.SetupNextGenGlobalSort(t, tk)
 	tk.MustExec("drop database if exists addindexlit;")
 	tk.MustExec("create database addindexlit;")
 	tk.MustExec("use addindexlit;")

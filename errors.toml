@@ -66,6 +66,11 @@ error = '''
 the migration version isn't supported
 '''
 
+["BR:Common:ErrOperationAborted"]
+error = '''
+operation aborted by user
+'''
+
 ["BR:Common:ErrUndefinedDbOrTable"]
 error = '''
 undefined restore databases or tables
@@ -339,6 +344,11 @@ stream task already exists
 ["BR:Stream:ErrStreamLogTaskHasNoStorage"]
 error = '''
 stream task has no storage
+'''
+
+["GlobalSort:TooManyDataFiles"]
+error = '''
+cannot merge %d data files with concurrency %d into at most %d target files
 '''
 
 ["Import:ErrCastValue"]
@@ -1251,6 +1261,11 @@ error = '''
 A primary key index cannot be invisible
 '''
 
+["ddl:3552"]
+error = '''
+Access to system schema '%s' is rejected.
+'''
+
 ["ddl:3593"]
 error = '''
 You cannot use the window function '%s' in this context.'
@@ -1661,6 +1676,11 @@ error = '''
 Cannot drop, change or modify column '%s': it is referenced in partial index '%s'
 '''
 
+["ddl:8276"]
+error = '''
+Job [%v] has been paused by TiDB because a storage node does not have enough disk space: %s
+'''
+
 ["ddl:9014"]
 error = '''
 TiFlash backfill index failed: %s
@@ -1849,6 +1869,21 @@ Recursive query aborted after %d iterations. Try increasing @@cte_max_recursion_
 ["executor:3638"]
 error = '''
 Cannot use these credentials for '%s@%s' because they contradict the password history policy.
+'''
+
+["executor:3878"]
+error = '''
+Empty password can not be retained as second password for user '%-.64s'@'%-.64s'.
+'''
+
+["executor:3894"]
+error = '''
+Current password can not be retained for user '%-.64s'@'%-.64s' because authentication plugin is being changed.
+'''
+
+["executor:3895"]
+error = '''
+Current password can not be retained for user '%-.64s'@'%-.64s' because new password is empty.
 '''
 
 ["executor:3929"]
@@ -2061,6 +2096,16 @@ error = '''
 Query execution was stopped by the global memory arbitrator [reason=%s] [conn=%d]
 '''
 
+["executor:8182"]
+error = '''
+materialized view advisory lock conflict: %s
+'''
+
+["executor:8183"]
+error = '''
+refresh materialized view %s.%s fast: input log baseline has changed; run COMPLETE refresh to rebuild it
+'''
+
 ["executor:8212"]
 error = '''
 Failed to split region ranges: %s
@@ -2084,6 +2129,11 @@ Unknown background task name '%-.192s'
 ["executor:8274"]
 error = '''
 tidb_max_keys_read limit exceeded
+'''
+
+["executor:8277"]
+error = '''
+During the maintenance window, %s is currently unavailable. It will be available after maintenance finishes
 '''
 
 ["expression:1139"]
@@ -2469,6 +2519,11 @@ The used SELECT statements have a different number of columns
 ["planner:1227"]
 error = '''
 Access denied; you need (at least one of) the %-.128s privilege(s) for this operation
+'''
+
+["planner:1234"]
+error = '''
+Incorrect usage/placement of '%s'
 '''
 
 ["planner:1235"]
@@ -3006,6 +3061,11 @@ error = '''
 Duplicate check constraint name '%s'.
 '''
 
+["schema:3989"]
+error = '''
+Schema '%s' is in read only mode.
+'''
+
 ["schema:4139"]
 error = '''
 Unknown SEQUENCE: '%-.300s'
@@ -3389,6 +3449,11 @@ TiFlash server timeout
 ["tikv:9013"]
 error = '''
 TiFlash server is busy
+'''
+
+["tikv:9015"]
+error = '''
+Shared lock was lost during lock upgrade; transaction cannot continue, txnStartTS=%d, key=%s
 '''
 
 ["types:1063"]

@@ -17,7 +17,6 @@ package storeapi
 import (
 	"context"
 	"fmt"
-	"io"
 	"net/http"
 	"path"
 	"strings"
@@ -25,6 +24,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/google/uuid"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/objstore/objectio"
 	"github.com/pingcap/tidb/pkg/objstore/recording"
 )
@@ -32,10 +32,32 @@ import (
 // Permission represents the permission we need to check in create storage.
 type Permission string
 
-// StrongConsistency is a marker interface that indicates the storage is strong consistent
-// over its `Read`, `Write` and `WalkDir` APIs.
-type StrongConsistency interface {
-	MarkStrongConsistency()
+// Features is a bitset of optional capabilities a Storage implementation may expose.
+// It replaces ad-hoc marker interfaces so callers can probe multiple features with one
+// method call.
+type Features uint64
+
+const (
+	// FeatureStrongConsistency means the storage is strongly consistent over its
+	// Read, Write and WalkDir APIs.
+	FeatureStrongConsistency Features = 1 << iota
+	// FeatureSupportsStartAfter means the storage supports WalkDir StartAfter.
+	FeatureSupportsStartAfter
+)
+
+// FeatureProvider is an optional interface storages may implement to expose
+// capabilities via a Features bitset.
+type FeatureProvider interface {
+	Features() Features
+}
+
+// FeatureOf returns the Features bitset of s. If s does not implement
+// FeatureProvider, it returns 0.
+func FeatureOf(s Storage) Features {
+	if p, ok := s.(FeatureProvider); ok {
+		return p.Features()
+	}
+	return 0
 }
 
 const (
@@ -94,13 +116,6 @@ type WalkOption struct {
 	StartAfter string
 }
 
-// ReadSeekCloser is the interface that groups the basic Read, Seek and Close methods.
-type ReadSeekCloser interface {
-	io.Reader
-	io.Seeker
-	io.Closer
-}
-
 // Uploader upload file with chunks.
 type Uploader interface {
 	// UploadPart upload part of file data to storage
@@ -113,7 +128,24 @@ type Uploader interface {
 type WriterOption struct {
 	Concurrency int
 	PartSize    int64
+	// DirectIO bypasses the OS page cache for local streaming writes. Other
+	// backends ignore it. If opening with direct I/O fails, local storage logs a
+	// warning and falls back to buffered I/O.
+	DirectIO bool
 }
+
+// MaxUploadParts is the maximum number of parts a single multipart-uploaded
+// object may have. S3, GCS and OSS all cap this at 10000.
+const MaxUploadParts = 10000
+
+// S3DeleteObjectsLimit is the maximum number of objects in an S3 delete request.
+// OSS shares the same limit.
+// See https://docs.aws.amazon.com/AmazonS3/latest/API/API_DeleteObjects.html.
+const S3DeleteObjectsLimit = 1000
+
+// ErrExceedMaxUploadParts is returned by a Create'd writer when a single object
+// would need more than MaxUploadParts parts.
+var ErrExceedMaxUploadParts = errors.New("data exceeds the object store's per-object multipart upload part limit")
 
 // ReaderOption reader option.
 type ReaderOption struct {
@@ -150,7 +182,9 @@ type Storage interface {
 	// Open a Reader by file path. path is relative path to storage base path.
 	// Some implementation will use the given ctx as the inner context of the reader.
 	Open(ctx context.Context, path string, option *ReaderOption) (objectio.Reader, error)
-	// DeleteFiles delete the files in storage
+	// DeleteFiles deletes the named files from storage.
+	// Implementations must copy names if they retain it after returning,
+	// so callers can reuse the slice and its backing array after the call.
 	DeleteFiles(ctx context.Context, names []string) error
 	// WalkDir traverse all the files in a dir.
 	//
@@ -164,8 +198,8 @@ type Storage interface {
 	URI() string
 
 	// Create opens a file writer by path. path is relative path to storage base
-	// path. The old file under same path will be overwritten. Currently only s3
-	// implemented WriterOption.
+	// path. The old file under same path will be overwritten. Not all backends
+	// honor WriterOption; see each backend's Create implementation.
 	Create(ctx context.Context, path string, option *WriterOption) (objectio.Writer, error)
 	// Rename file name from oldFileName to newFileName
 	Rename(ctx context.Context, oldFileName, newFileName string) error
@@ -201,7 +235,7 @@ type Options struct {
 	// make sure we can access the storage correctly before execute tasks.
 	CheckPermissions []Permission
 
-	// S3Retryer is the retryer for create s3 storage, if it is nil,
+	// S3Retryer is the retryer for the created s3 storage, if it is nil,
 	// defaultS3Retryer() will be used.
 	S3Retryer aws.Retryer
 

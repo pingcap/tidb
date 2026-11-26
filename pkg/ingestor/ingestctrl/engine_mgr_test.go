@@ -25,12 +25,12 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/pingcap/tidb/br/pkg/mock/mocklocal"
-	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/goleak"
 	"go.uber.org/mock/gomock"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -77,7 +77,9 @@ func TestEngineManager(t *testing.T) {
 	}
 
 	backendConfig := getBackendConfig(t)
-	em, err := newEngineManager(backendConfig, storeHelper, log.L())
+	pool := newBufferPool()
+	t.Cleanup(pool.Destroy)
+	em, err := newEngineManager(backendConfig, storeHelper, log.L(), pool)
 	require.NoError(t, err)
 	storeHelper.EXPECT().GetTS(gomock.Any()).Return(int64(0), int64(0), nil)
 	engine1ID := uuid.New()
@@ -110,16 +112,16 @@ func TestEngineManager(t *testing.T) {
 	em.close()
 }
 
-func TestGetExternalEngineKVStatistics(t *testing.T) {
-	em := &engineManager{
-		externalEngine: map[uuid.UUID]engineapi.Engine{},
-	}
-	// non existent uuid
-	size, count := em.getExternalEngineKVStatistics(uuid.New())
-	require.Zero(t, size)
-	require.Zero(t, count)
-}
+func TestOpenDuplicateDBCleansUpAfterFailure(t *testing.T) {
+	defer goleak.VerifyNone(t, goleak.IgnoreCurrent())
 
+	storeDir := path.Join(t.TempDir(), "not-a-directory")
+	require.NoError(t, os.WriteFile(storeDir, []byte("x"), 0o600))
+
+	db, err := openDuplicateDB(storeDir)
+	require.Error(t, err)
+	require.Nil(t, db)
+}
 func TestCleanupAllLocalEnginesLogsErrorOnly(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
@@ -127,7 +129,9 @@ func TestCleanupAllLocalEnginesLogsErrorOnly(t *testing.T) {
 
 	observedCore, observedLogs := observer.New(zapcore.DebugLevel)
 	backendConfig := getBackendConfig(t)
-	em, err := newEngineManager(backendConfig, storeHelper, log.Wrap(zap.New(observedCore)))
+	pool := newBufferPool()
+	t.Cleanup(pool.Destroy)
+	em, err := newEngineManager(backendConfig, storeHelper, log.Wrap(zap.New(observedCore)), pool)
 	require.NoError(t, err)
 
 	ctx := context.Background()

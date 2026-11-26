@@ -27,9 +27,11 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/join/joinversion"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/redact"
 	"github.com/pingcap/tidb/pkg/util/topsql/stmtstats"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 	"github.com/pingcap/tidb/pkg/util/trxevents"
@@ -40,17 +42,18 @@ import (
 )
 
 // GenSelectResultFromMPPResponse generates an iterator from response.
-func GenSelectResultFromMPPResponse(dctx *distsqlctx.DistSQLContext, fieldTypes []*types.FieldType, planIDs []int, rootID int, resp kv.Response) SelectResult {
+func GenSelectResultFromMPPResponse(dctx *distsqlctx.DistSQLContext, fieldTypes []*types.FieldType, planIDs []int, rootID int, resp kv.Response, reportsDirectly func() bool) SelectResult {
 	// TODO: Add metric label and set open tracing.
 	return &selectResult{
-		label:      "mpp",
-		resp:       resp,
-		rowLen:     len(fieldTypes),
-		fieldTypes: fieldTypes,
-		ctx:        dctx,
-		copPlanIDs: planIDs,
-		rootPlanID: rootID,
-		storeType:  kv.TiFlash,
+		label:              "mpp",
+		resp:               resp,
+		rowLen:             len(fieldTypes),
+		fieldTypes:         fieldTypes,
+		ctx:                dctx,
+		copPlanIDs:         planIDs,
+		rootPlanID:         rootID,
+		storeType:          kv.TiFlash,
+		mppReportsDirectly: reportsDirectly,
 	}
 }
 
@@ -59,6 +62,10 @@ func GenSelectResultFromMPPResponse(dctx *distsqlctx.DistSQLContext, fieldTypes 
 func Select(ctx context.Context, dctx *distsqlctx.DistSQLContext, kvReq *kv.Request, fieldTypes []*types.FieldType) (SelectResult, error) {
 	r, ctx := tracing.StartRegionEx(ctx, "distsql.Select")
 	defer r.End()
+
+	if dctx.QueryCopStoreLimiter != nil {
+		kvReq.QueryCopStoreLimiter = dctx.QueryCopStoreLimiter
+	}
 
 	// For testing purpose.
 	if hook := ctx.Value("CheckSelectRequestHook"); hook != nil {
@@ -70,10 +77,14 @@ func Select(ctx context.Context, dctx *distsqlctx.DistSQLContext, kvReq *kv.Requ
 	eventCb := func(event trxevents.TransactionEvent) {
 		// Note: Do not assume this callback will be invoked within the same goroutine.
 		if copMeetLock := event.GetCopMeetLock(); copMeetLock != nil {
-			logutil.Logger(ctx).Debug("coprocessor encounters lock",
-				zap.Uint64("startTS", kvReq.StartTs),
-				zap.Stringer("lock", copMeetLock.LockInfo),
-				zap.String("stmt", originalSQL))
+			if ce := logutil.Logger(ctx).Check(zap.DebugLevel, "coprocessor encounters lock"); ce != nil {
+				// Use the global mode at logging time for both fields, including delayed callbacks.
+				redactMode := errors.RedactLogEnabled.Load()
+				ce.Write(
+					zap.Uint64("startTS", kvReq.StartTs),
+					zap.Stringer("lock", redact.LockInfoWithMode(copMeetLock.LockInfo, redactMode)),
+					zap.String("stmt", parser.Normalize(originalSQL, redactMode)))
+			}
 		}
 	}
 
@@ -128,7 +139,7 @@ func Select(ctx context.Context, dctx *distsqlctx.DistSQLContext, kvReq *kv.Requ
 		sqlType:            label,
 		memTracker:         kvReq.MemTracker,
 		storeType:          kvReq.StoreType,
-		paging:             kvReq.Paging.Enable,
+		paging:             kvReq.Paging.Enable || kvReq.Paging.PagingSizeBytes > 0,
 		distSQLConcurrency: kvReq.Concurrency,
 	}, nil
 }
@@ -175,7 +186,7 @@ func SelectWithRuntimeStats(ctx context.Context, dctx *distsqlctx.DistSQLContext
 
 // Analyze do a analyze request.
 func Analyze(ctx context.Context, client kv.Client, kvReq *kv.Request, vars any,
-	isRestrict bool, dctx *distsqlctx.DistSQLContext) (SelectResult, error) {
+	isRestrict bool, dctx *distsqlctx.DistSQLContext, planID int) (SelectResult, error) {
 	ctx = WithSQLKvExecCounterInterceptor(ctx, dctx.KvExecCounter)
 	failpoint.Inject("mockAnalyzeRequestWaitForCancel", func(val failpoint.Value) {
 		if val.(bool) {
@@ -189,7 +200,10 @@ func Analyze(ctx context.Context, client kv.Client, kvReq *kv.Request, vars any,
 	})
 	kvReq.RequestSource.RequestSourceInternal = true
 	kvReq.RequestSource.RequestSourceType = kv.InternalTxnStats
-	resp := client.Send(ctx, kvReq, vars, &kv.ClientSendOption{})
+	collectExecutionInfo := config.GetGlobalConfig().Instance.EnableCollectExecutionInfo.Load()
+	resp := client.Send(ctx, kvReq, vars, &kv.ClientSendOption{
+		EnableCollectExecutionInfo: collectExecutionInfo,
+	})
 	if resp == nil {
 		return nil, errors.New("client returns nil response")
 	}
@@ -198,10 +212,14 @@ func Analyze(ctx context.Context, client kv.Client, kvReq *kv.Request, vars any,
 		label = metrics.LblInternal
 	}
 	result := &selectResult{
-		label:     "analyze",
-		resp:      resp,
-		sqlType:   label,
-		storeType: kvReq.StoreType,
+		label:                    "analyze",
+		resp:                     resp,
+		ctx:                      dctx,
+		sqlType:                  label,
+		rootPlanID:               planID,
+		storeType:                kvReq.StoreType,
+		isAnalyze:                true,
+		collectExecDetailsForRaw: collectExecutionInfo,
 	}
 	return result, nil
 }

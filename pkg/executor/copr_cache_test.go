@@ -35,7 +35,7 @@ import (
 func TestIntegrationCopCache(t *testing.T) {
 	originConfig := config.GetGlobalConfig()
 	config.StoreGlobalConfig(config.NewConfig())
-	defer config.StoreGlobalConfig(originConfig)
+	t.Cleanup(func() { config.StoreGlobalConfig(originConfig) })
 
 	cli := &testkit.RegionProperityClient{}
 	hijackClient := func(c tikv.Client) tikv.Client {

@@ -245,12 +245,12 @@ func GetReadRangeFromProps(
 	return readRangesPerKey, nil
 }
 
-// GetAllFileNames returns files with the same non-partitioned dir.
+// GetAllFileNames returns files with the same non-partitioned dirs.
 //   - for intermediate KV/stat files we store them with a partitioned way to mitigate
 //     limitation on Cloud, see randPartitionedPrefix for how we partition the files.
 //   - for meta files, we store them directly under the non-partitioned dir.
 //
-// for example, if nonPartitionedDir is '30001', the files returned might be
+// for example, if nonPartitionedDirs contains '30001', the files returned might be
 //   - 30001/6/meta.json
 //   - 30001/7/meta.json
 //   - 30001/plan/ingest/1/meta.json
@@ -260,11 +260,39 @@ func GetReadRangeFromProps(
 func GetAllFileNames(
 	ctx context.Context,
 	store storeapi.Storage,
-	nonPartitionedDir string,
+	nonPartitionedDirs ...string,
 ) ([]string, error) {
 	var data []string
+	err := WalkFiles(ctx, store, func(path string) error {
+		data = append(data, path)
+		return nil
+	}, nonPartitionedDirs...)
+	if err != nil {
+		return nil, err
+	}
+	// in case the external storage does not guarantee the order of walk
+	sort.Strings(data)
+	return data, nil
+}
 
-	err := store.WalkDir(ctx,
+// WalkFiles calls fn for each file with the given non-partitioned dirs.
+// See GetAllFileNames for the directory layout. Files are visited in storage walk
+// order, and an error from fn stops the walk.
+func WalkFiles(
+	ctx context.Context,
+	store storeapi.Storage,
+	fn func(path string) error,
+	nonPartitionedDirs ...string,
+) error {
+	if len(nonPartitionedDirs) == 0 {
+		return nil
+	}
+	nonPartitionedDirSet := make(map[string]struct{}, len(nonPartitionedDirs))
+	for _, dir := range nonPartitionedDirs {
+		nonPartitionedDirSet[dir] = struct{}{}
+	}
+
+	return store.WalkDir(ctx,
 		&storeapi.WalkOption{},
 		func(path string, size int64) error {
 			// extract the first dir
@@ -275,9 +303,8 @@ func GetAllFileNames(
 			}
 
 			firstDir := bs[:firstIdx]
-			if string(firstDir) == nonPartitionedDir {
-				data = append(data, path)
-				return nil
+			if _, ok := nonPartitionedDirSet[string(firstDir)]; ok {
+				return fn(path)
 			}
 
 			if !IsValidPartition(firstDir) {
@@ -289,15 +316,9 @@ func GetAllFileNames(
 			}
 			secondDir := path[firstIdx+1 : firstIdx+1+secondIdx]
 
-			if secondDir == nonPartitionedDir {
-				data = append(data, path)
+			if _, ok := nonPartitionedDirSet[secondDir]; ok {
+				return fn(path)
 			}
 			return nil
 		})
-	if err != nil {
-		return nil, err
-	}
-	// in case the external storage does not guarantee the order of walk
-	sort.Strings(data)
-	return data, nil
 }

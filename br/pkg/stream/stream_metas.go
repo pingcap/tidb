@@ -52,6 +52,8 @@ const (
 	lockPrefix        = "v1/LOCK"
 	appendLockPrefix  = "v1/APPEND_LOCK"
 
+	migrationMetadataDownloadBatchSize = 128
+
 	SupportedMigVersion = pb.MigrationVersion_M2
 )
 
@@ -1290,7 +1292,7 @@ func (m MigrationExt) processTruncatedTo(ctx context.Context, mig *pb.Migration,
 	result.NewBase.TruncatedTo = mig.TruncatedTo
 	m.Hooks.StartLoadingMetaForTruncating()
 	mdSet := new(StreamMetadataSet)
-	mdSet.MetadataDownloadBatchSize = 128
+	mdSet.MetadataDownloadBatchSize = migrationMetadataDownloadBatchSize
 	shiftTS, err := mdSet.LoadUntilAndCalculateShiftTS(ctx, m.s, mig.TruncatedTo)
 	if err != nil {
 		result.Warnings = append(result.Warnings, errors.Annotatef(err, "failed to open meta storage"))
@@ -1385,17 +1387,33 @@ func LoadIngestedSSTs(
 	s storeapi.Storage,
 	paths []string,
 ) iter.TryNextor[IngestedSSTsGroup] {
-	fullBackupDirIter := iter.FromSlice(paths)
-	backups := iter.TryMap(fullBackupDirIter, func(name string) (PathedIngestedSSTs, error) {
-		// name is the absolute path in external storage.
-		bkup, err := readIngestedSSTs(ctx, name, s)
-		failpoint.InjectCall("load-ingested-ssts-err", &err)
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	reads := iter.Transform(iter.Enumerate(iter.FromSlice(paths)),
+		func(ctx context.Context, indexedPath iter.Indexed[string]) (iter.Indexed[PathedIngestedSSTs], error) {
+			name := indexedPath.Item
+			backup, err := readIngestedSSTs(ctx, name, s)
+			failpoint.InjectCall("load-ingested-ssts-err", &err)
+			if err != nil {
+				return iter.Indexed[PathedIngestedSSTs]{}, errors.Annotatef(err, "failed to read backup at %s", name)
+			}
+			return iter.Indexed[PathedIngestedSSTs]{
+				Index: indexedPath.Index,
+				Item:  PathedIngestedSSTs{IngestedSSTs: backup, path: name},
+			}, nil
+		},
+		iter.WithConcurrency(migrationMetadataDownloadBatchSize),
+	)
+	// Transform emits in completion order. Restore path order before validating each group's finished marker.
+	backups := make([]PathedIngestedSSTs, len(paths))
+	for err, backup := range iter.AsSeq(ctx, reads) {
 		if err != nil {
-			return PathedIngestedSSTs{}, errors.Annotatef(err, "failed to read backup at %s", name)
+			return iter.Fail[IngestedSSTsGroup](err)
 		}
-		return PathedIngestedSSTs{IngestedSSTs: bkup, path: name}, nil
-	})
-	extBackups, err := groupExtraBackups(ctx, backups)
+		backups[backup.Index] = backup.Item
+	}
+	extBackups, err := groupExtraBackups(ctx, iter.FromSlice(backups))
 	if err != nil {
 		return iter.Fail[IngestedSSTsGroup](err)
 	}

@@ -18,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/format/textrow"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/server/internal/util"
@@ -52,6 +53,30 @@ func TestDumpColumn(t *testing.T) {
 	require.Equal(t, mysql.TypeString, dumpType(mysql.TypeSet))
 	require.Equal(t, mysql.TypeString, dumpType(mysql.TypeEnum))
 	require.Equal(t, mysql.TypeBit, dumpType(mysql.TypeBit))
+}
+
+func BenchmarkDumpColumn(b *testing.B) {
+	info := Info{
+		Schema:       "testSchema",
+		Table:        "testTable",
+		OrgTable:     "testOrgTable",
+		Name:         "testName",
+		OrgName:      "testOrgName",
+		ColumnLength: 1,
+		Charset:      106,
+		Flag:         0,
+		Decimal:      1,
+		Type:         14,
+		DefaultValue: "test",
+	}
+	encoder := textrow.NewResultEncoder(charset.CharsetUTF8MB4)
+	buffer := make([]byte, 0, 1024)
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		buffer = info.DumpWithDefault(buffer[:0], encoder)
+	}
 }
 
 func TestDumpColumnWithDefault(t *testing.T) {
@@ -110,7 +135,7 @@ func TestDumpTextValue(t *testing.T) {
 		Decimal: mysql.NotFixedDec,
 	}}
 
-	dp := NewResultEncoder(charset.CharsetUTF8MB4)
+	dp := textrow.NewResultEncoder(charset.CharsetUTF8MB4)
 	null := types.NewIntDatum(0)
 	null.SetNull()
 	bs, err := DumpTextRow(nil, columns, chunk.MutRowFromDatums([]types.Datum{null}).ToRow(), dp)
@@ -166,7 +191,7 @@ func TestDumpTextValue(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "bar", mustDecodeStr(t, bs))
 
-	dp = NewResultEncoder("gbk")
+	dp = textrow.NewResultEncoder("gbk")
 	columns[0].Type = mysql.TypeVarchar
 	dt := []types.Datum{types.NewStringDatum("一")}
 	bs, err = DumpTextRow(nil, columns, chunk.MutRowFromDatums(dt).ToRow(), dp)
@@ -174,7 +199,7 @@ func TestDumpTextValue(t *testing.T) {
 	require.Equal(t, []byte{0xd2, 0xbb}, []byte(mustDecodeStr(t, bs)))
 
 	columns[0].Charset = uint16(mysql.CharsetNameToID("gbk"))
-	dp = NewResultEncoder("binary")
+	dp = textrow.NewResultEncoder("binary")
 	bs, err = DumpTextRow(nil, columns, chunk.MutRowFromDatums(dt).ToRow(), dp)
 	require.NoError(t, err)
 	require.Equal(t, []byte{0xd2, 0xbb}, []byte(mustDecodeStr(t, bs)))

@@ -13,7 +13,8 @@ when only reading one package at a time.
 ## High-Signal Entry Files
 
 - Job submit/runtime bridge:
-  - `pkg/dxf/importinto/job.go`
+  - `pkg/executor/import_into.go`
+  - `pkg/dxf/importinto/taskinfo/runtime_info.go`
 - Scheduler and step transitions:
   - `pkg/dxf/importinto/scheduler.go`
   - `pkg/dxf/framework/proto/step.go`
@@ -51,9 +52,9 @@ when only reading one package at a time.
 
 - "Why is checksum verification skipped in post-process?"
   - In collect-conflicts, `TooManyConflictsFromIndex` is set when the bounded
-    in-memory handle set exceeds its limit.
-  - Limit source: collect-conflicts uses about half of step memory for handle
-    tracking (`sizeLimitOfHandlesFromIndex = resource mem / 2`).
+    in-memory row-key set exceeds its limit.
+  - Limit source: collect-conflicts uses about half of step memory for row-key
+    tracking (`sizeLimitOfRowKeysFromIndex = resource mem / 2`).
   - Post-process checks this flag and skips final checksum verification.
 
 - "Where are conflicted rows persisted?"
@@ -69,12 +70,19 @@ when only reading one package at a time.
 
 ## Cleanup Troubleshooting
 
-- Cleanup entrypoint is `ImportCleanUp.CleanUp` in `clean_up.go`.
+- Cleanup entrypoint is `ImportCleaner.Clean` in `clean_up.go`.
 - Classic kernel behavior:
   - Attempts to switch table mode back to normal.
   - Ignores `infoschema.ErrTableNotExists` during cleanup.
+- Database read-only mode is checked at IMPORT INTO statement entry. Enabling
+  read-only does not fence or cancel a physical import already in progress;
+  ingestion may keep writing after the read-only transition succeeds. Classic
+  FROM SELECT does not register a separate read-only draining transaction.
+  Classic completion and cancellation can still reset table mode to Normal in a
+  read-only database, and explicit replica-writer authorization is propagated to
+  the internal mode claim.
 - Global-sort artifact cleanup:
-  - Deletes task-scoped files via `external.CleanUpFiles(..., <task-id>)`.
+  - Deletes task-scoped files via `globalsort.CleanUpFiles(..., <task-id>)`.
   - Does not delete `conflicted-rows/...` files by design.
 - Nextgen metering:
   - On succeed state, cleanup tries to send metering data based on post-process
@@ -98,7 +106,7 @@ when only reading one package at a time.
 - Find conflict executor paths:
   `rg --line-number --glob '*.go' 'CollectConflictsStepMeta|ConflictResolutionStepMeta|TooManyConflictsFromIndex|conflicted-rows' pkg/dxf/importinto`
 - Find cleanup behavior:
-  `rg --line-number --glob '*.go' 'ImportCleanUp|CleanUpFiles|sendMeterOnCleanUp|redactSensitiveInfo' pkg/dxf/importinto pkg/dxf/framework/scheduler`
+  `rg --line-number --glob '*.go' 'ImportCleaner|CleanUpFiles|sendMeterOnClean|redactSensitiveInfo' pkg/dxf/importinto pkg/dxf/framework/scheduler`
 
 ## Test Surfaces
 
@@ -106,4 +114,4 @@ when only reading one package at a time.
 - `pkg/dxf/importinto/collect_conflicts_test.go`
 - `pkg/dxf/importinto/task_executor_test.go`
 - `pkg/dxf/importinto/scheduler_test.go`
-- `pkg/dxf/importinto/job_testkit_test.go`
+- `pkg/dxf/importinto/scheduler_testkit_test.go`

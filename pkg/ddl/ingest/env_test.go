@@ -22,6 +22,8 @@ import (
 
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
@@ -38,6 +40,45 @@ func TestGenLightningDataDir(t *testing.T) {
 	sPath, err := ingest.GenIngestTempDataDir()
 	require.NoError(t, err)
 	require.Equal(t, tmpDir+"/tmp_ddl-"+port, sPath)
+}
+
+type ingestorConfigStorage struct {
+	kv.Storage
+}
+
+func (ingestorConfigStorage) GetKeyspace() string {
+	return ""
+}
+
+func TestCreateIngestorTLSFailureDoesNotCreateSortDirectory(t *testing.T) {
+	t.Cleanup(config.RestoreFunc())
+	oldMemRoot := ingest.LitMemRoot
+	t.Cleanup(func() { ingest.LitMemRoot = oldMemRoot })
+	ingest.LitMemRoot = ingest.NewMemRootImpl(1 << 30)
+	tempDir := t.TempDir()
+	missingCA := filepath.Join(tempDir, "missing-ca.pem")
+	config.UpdateGlobal(func(cfg *config.Config) {
+		cfg.TempDir = tempDir
+		cfg.Security.ClusterSSLCA = missingCA
+	})
+	job := &model.Job{
+		ID:        123,
+		Type:      model.ActionAddIndex,
+		ReorgMeta: &model.DDLReorgMeta{},
+	}
+	job.ReorgMeta.SetConcurrency(4)
+	ingestor, err := ingest.CreateIngestor(context.Background(), ingestorConfigStorage{}, job, 2)
+	require.ErrorContains(t, err, missingCA)
+	require.Nil(t, ingestor)
+	require.NoDirExists(t, ingest.GetIngestTempDataDir())
+	require.Zero(t, ingest.BackendCounterForTest.Load())
+}
+
+func TestMockBackendLocalStoreDir(t *testing.T) {
+	backendCtx := ingest.NewMockBackendCtx(&model.Job{ID: 123}, nil, nil)
+	backend := backendCtx.GetLocalBackend()
+	require.NotNil(t, backend.Ingestor)
+	require.Equal(t, filepath.Join(os.TempDir(), "mock_backend", "123"), backend.LocalStoreDir)
 }
 
 func TestLitBackendCtxMgr(t *testing.T) {

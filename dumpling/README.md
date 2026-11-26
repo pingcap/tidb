@@ -21,6 +21,25 @@ Features
 
 Any questions? Discord, Slack and other contact options can be found [here](https://docs.pingcap.com/tidb/stable/support)
 
+Password input
+--------------
+
+Use `--ask-password` (or `-a`) to enter the database password at a terminal without
+echoing it or putting it in shell history and process arguments:
+
+```bash
+dumpling -h 127.0.0.1 -P 4000 -u backup --ask-password -o ./export
+```
+
+The prompt requires a controlling terminal and fails if none is available, rather
+than reading a password from a pipe. Input uses the terminal's standard line
+editing and platform-dependent line length limit. Press Enter to submit
+(including an empty password), or Ctrl-C to cancel. Terminal settings are
+restored on completion and on INT/TERM/HUP/QUIT. The option cannot be combined
+with `--password`/`-p` (including `--password=`) or
+`--dump-service`. Existing `-p <password>` behavior is unchanged; omitting both
+password options continues to use an empty password without prompting.
+
 Building
 --------
 
@@ -29,9 +48,9 @@ Building
 3. Run `make dumpling_unit_test` to run the unit tests.
 4. Run `make dumpling_integration_test` to run integration tests. For integration test:
   - The following executables must be copied or generated or linked into these locations:
-    * `bin/sync_diff_inspector` (download from [tidb-enterprise-tools-latest-linux-amd64](http://download.pingcap.org/tidb-enterprise-tools-latest-linux-amd64.tar.gz))
-    * `bin/tidb-server` (download from [tidb-master-linux-amd64](https://download.pingcap.org/tidb-master-linux-amd64.tar.gz))
-    * `bin/tidb-lightning` (download from [tidb-toolkit-latest-linux-amd64](https://download.pingcap.org/tidb-toolkit-latest-linux-amd64.tar.gz))
+    * `bin/sync_diff_inspector` (download from [tidb-enterprise-tools-latest-linux-amd64](https://download.pingcap.com/tidb-enterprise-tools-latest-linux-amd64.tar.gz))
+    * `bin/tidb-server` (download from [tidb-master-linux-amd64](https://download.pingcap.com/tidb-master-linux-amd64.tar.gz))
+    * `bin/tidb-lightning` (download from [tidb-toolkit-latest-linux-amd64](https://download.pingcap.com/tidb-toolkit-latest-linux-amd64.tar.gz))
     * `bin/minio` (download from <https://min.io/download>)
     * Now, you can run `sh ./dumpling/install.sh` to get the above binary files.
   - The following programs must be installed:

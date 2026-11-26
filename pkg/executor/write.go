@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/memory"
@@ -377,6 +378,9 @@ func addUnchangedKeysForLockByRow(
 			return 0, err
 		}
 		physicalID = p.GetPhysicalID()
+	} else if pt, ok := t.(table.PhysicalTable); ok {
+		// REPLACE may have already resolved the row to a physical partition.
+		physicalID = pt.GetPhysicalID()
 	}
 	if keySet&lockRowKey > 0 {
 		unchangedRowKey := tablecodec.EncodeRowKeyWithHandle(physicalID, h)
@@ -410,6 +414,7 @@ func addUnchangedKeysForLockByRow(
 				}
 			}
 			unchangedUniqueKey, _, err := tablecodec.GenIndexKey(
+				codec.NewEncoder(t.UseNewCollate()),
 				stmtCtx.TimeZone(),
 				idx.TableMeta(),
 				meta,

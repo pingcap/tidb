@@ -19,13 +19,31 @@ import (
 	"encoding/json"
 	"fmt"
 	"slices"
+	"sync/atomic"
 	"testing"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
+	"github.com/pingcap/tidb/pkg/ingestor/errdef"
 	"github.com/pingcap/tidb/pkg/ingestor/simplesst"
 	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/stretchr/testify/require"
 )
+
+type walkCountingStorage struct {
+	storeapi.Storage
+	count atomic.Int32
+}
+
+func (s *walkCountingStorage) WalkDir(
+	ctx context.Context,
+	opt *storeapi.WalkOption,
+	fn func(path string, size int64) error,
+) error {
+	s.count.Add(1)
+	return s.Storage.WalkDir(ctx, opt, fn)
+}
 
 func TestGetAllFileNames(t *testing.T) {
 	ctx := context.Background()
@@ -89,17 +107,39 @@ func TestGetAllFileNames(t *testing.T) {
 		"/subtask/3/0", "/subtask/3/1", "/subtask/3/2",
 		"/subtask/3_stat/0", "/subtask/3_stat/1", "/subtask/3_stat/2",
 	}, filenames)
+
+	t.Run("unordered storage", func(t *testing.T) {
+		names := []string{"subtask/7/meta.json", "subtask/6/meta.json", "p00000000/subtask/0/0"}
+		walkErr := errors.New("walk failed")
+		for _, err := range []error{nil, walkErr} {
+			store := &cleanupTestStorage{
+				walkDir: func(_ context.Context, _ *storeapi.WalkOption, fn func(string, int64) error) error {
+					for _, name := range names {
+						if err := fn(name, 1); err != nil {
+							return err
+						}
+					}
+					return err
+				},
+			}
+			got, gotErr := simplesst.GetAllFileNames(ctx, store, "subtask")
+			require.ErrorIs(t, gotErr, err)
+			if err != nil {
+				require.Nil(t, got)
+			} else {
+				require.Equal(t, []string{names[2], names[1], names[0]}, got)
+			}
+		}
+	})
 }
 
-func TestCleanUpFiles(t *testing.T) {
-	ctx := context.Background()
-	store := objstore.NewMemStorage()
+func writeCleanupTestFiles(ctx context.Context, t *testing.T, store storeapi.Storage, dir string) {
 	w := simplesst.NewWriterBuilder().
 		SetMemorySizeLimit(10*(simplesst.LengthBytes*2+2)).
 		SetBlockSize(10*(simplesst.LengthBytes*2+2)).
 		SetPropSizeDistance(5).
 		SetPropKeysDistance(3).
-		Build(store, "/subtask", "0")
+		Build(store, dir, "0")
 	keys := make([][]byte, 0, 30)
 	values := make([][]byte, 0, 30)
 	for i := range 30 {
@@ -110,22 +150,203 @@ func TestCleanUpFiles(t *testing.T) {
 		err := w.WriteRow(ctx, key, values[i], nil)
 		require.NoError(t, err)
 	}
-	err := w.Close(ctx)
-	require.NoError(t, err)
+	require.NoError(t, w.Close(ctx))
+}
 
-	filenames, err := simplesst.GetAllFileNames(ctx, store, "subtask")
+func TestCleanUpFiles(t *testing.T) {
+	ctx := context.Background()
+	baseStore := objstore.NewMemStorage()
+	store := &walkCountingStorage{Storage: baseStore}
+	writeCleanupTestFiles(ctx, t, store, "/subtask")
+	writeCleanupTestFiles(ctx, t, store, "/subtask2")
+	writeCleanupTestFiles(ctx, t, store, "/kept")
+
+	filenames, err := simplesst.GetAllFileNames(ctx, store, "subtask", "subtask2")
 	require.NoError(t, err)
 	filenames = removePartitionPrefix(t, filenames)
 	require.Equal(t, []string{
 		"/subtask/0/0", "/subtask/0/1", "/subtask/0/2",
 		"/subtask/0_stat/0", "/subtask/0_stat/1", "/subtask/0_stat/2",
+		"/subtask2/0/0", "/subtask2/0/1", "/subtask2/0/2",
+		"/subtask2/0_stat/0", "/subtask2/0_stat/1", "/subtask2/0_stat/2",
 	}, filenames)
+	require.Equal(t, int32(1), store.count.Load())
 
-	require.NoError(t, CleanUpFiles(ctx, store, "subtask"))
+	store.count.Store(0)
+	require.NoError(t, CleanUpFiles(ctx, store, "subtask", "subtask2"))
+	require.Equal(t, int32(1), store.count.Load())
 
-	filenames, err = simplesst.GetAllFileNames(ctx, store, "subtask")
+	filenames, err = simplesst.GetAllFileNames(ctx, baseStore, "subtask", "subtask2")
 	require.NoError(t, err)
 	require.Equal(t, []string(nil), filenames)
+	filenames, err = simplesst.GetAllFileNames(ctx, baseStore, "kept")
+	require.NoError(t, err)
+	require.Len(t, filenames, 6)
+}
+
+type cleanupTestStorage struct {
+	storeapi.Storage
+	walkDir     func(context.Context, *storeapi.WalkOption, func(string, int64) error) error
+	deleteFiles func(context.Context, []string) error
+}
+
+func (s *cleanupTestStorage) WalkDir(ctx context.Context, opt *storeapi.WalkOption, fn func(string, int64) error) error {
+	return s.walkDir(ctx, opt, fn)
+}
+
+func (s *cleanupTestStorage) DeleteFiles(ctx context.Context, names []string) error {
+	return s.deleteFiles(ctx, names)
+}
+
+func TestCleanUpFilesBatched(t *testing.T) {
+	const batchSize = 1000
+	ctx := context.Background()
+	fileName := func(i int) string {
+		if i%2 == 0 {
+			return fmt.Sprintf("subtask/%d/meta.json", i)
+		}
+		return fmt.Sprintf("p00000000/subtask2/%d/0_stat/0", i)
+	}
+	for _, fileCount := range []int{0, 1, batchSize, batchSize + 1, 2 * batchSize, 2*batchSize + 1} {
+		t.Run(fmt.Sprintf("files=%d", fileCount), func(t *testing.T) {
+			var batches [][]string
+			walks := 0
+			store := &cleanupTestStorage{
+				walkDir: func(ctx context.Context, opt *storeapi.WalkOption, fn func(string, int64) error) error {
+					walks++
+					require.Equal(t, &storeapi.WalkOption{}, opt)
+					for i := range fileCount {
+						if err := fn(fileName(i), 1); err != nil {
+							return err
+						}
+						require.Equal(t, (i+1)/batchSize, len(batches), "full batches must be deleted during the walk")
+					}
+					return nil
+				},
+				deleteFiles: func(ctx context.Context, names []string) error {
+					require.NotEmpty(t, names)
+					require.LessOrEqual(t, len(names), batchSize)
+					batches = append(batches, slices.Clone(names))
+					return nil
+				},
+			}
+			require.NoError(t, CleanUpFiles(ctx, store, "subtask", "subtask2", "subtask"))
+			require.Equal(t, 1, walks)
+			require.Len(t, batches, (fileCount+batchSize-1)/batchSize)
+			deleted := 0
+			for _, batch := range batches {
+				for _, name := range batch {
+					require.Equal(t, fileName(deleted), name)
+					deleted++
+				}
+			}
+			require.Equal(t, fileCount, deleted)
+		})
+	}
+
+	t.Run("no directories", func(t *testing.T) {
+		// Neither storage method should be called without a target directory.
+		require.NoError(t, CleanUpFiles(ctx, &cleanupTestStorage{}))
+	})
+
+	t.Run("matching directories", func(t *testing.T) {
+		store := objstore.NewMemStorage()
+		matched := []string{
+			"subtask/0/meta.json", "subtask2/plan/ingest/1/meta.json",
+			"p00000000/subtask/0/0", "p11111111/subtask2/0_stat/0",
+		}
+		kept := []string{
+			"subtask", "subtask-other/meta.json", "p00000000",
+			"p00000000/subtask", "p00000000/subtask-other/0/0",
+			"p00000002/subtask/0/0", "other/subtask/0/0",
+		}
+		for _, name := range append(slices.Clone(matched), kept...) {
+			require.NoError(t, store.WriteFile(ctx, name, []byte("data")))
+		}
+		require.NoError(t, CleanUpFiles(ctx, store, "subtask", "subtask2"))
+		for _, name := range matched {
+			exists, err := store.FileExists(ctx, name)
+			require.NoError(t, err)
+			require.False(t, exists, name)
+		}
+		for _, name := range kept {
+			exists, err := store.FileExists(ctx, name)
+			require.NoError(t, err)
+			require.True(t, exists, name)
+		}
+	})
+}
+
+func TestCleanUpFilesErrors(t *testing.T) {
+	testErr := errors.New("cleanup failed")
+	for _, tc := range []struct {
+		name          string
+		walkErr       error
+		deleteErrCall int
+		cancel        bool
+		wantWalked    int
+		wantCalls     int
+		wantErr       error
+	}{
+		{name: "walk", walkErr: testErr, wantWalked: 1001, wantCalls: 1, wantErr: testErr},
+		{name: "full batch", deleteErrCall: 1, wantWalked: 1000, wantCalls: 1, wantErr: testErr},
+		{name: "final batch", deleteErrCall: 2, wantWalked: 1001, wantCalls: 2, wantErr: testErr},
+		{name: "canceled", cancel: true, wantWalked: 1000, wantCalls: 1, wantErr: context.Canceled},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			walked, calls := 0, 0
+			store := &cleanupTestStorage{
+				walkDir: func(ctx context.Context, _ *storeapi.WalkOption, fn func(string, int64) error) error {
+					for i := range 1001 {
+						if err := ctx.Err(); err != nil {
+							return err
+						}
+						walked++
+						if err := fn(fmt.Sprintf("subtask/%d/meta.json", i), 1); err != nil {
+							return err
+						}
+					}
+					return tc.walkErr
+				},
+				deleteFiles: func(_ context.Context, _ []string) error {
+					calls++
+					if calls == tc.deleteErrCall {
+						return testErr
+					}
+					if tc.cancel {
+						cancel()
+					}
+					return nil
+				},
+			}
+			require.ErrorIs(t, CleanUpFiles(ctx, store, "subtask"), tc.wantErr)
+			require.Equal(t, tc.wantWalked, walked)
+			require.Equal(t, tc.wantCalls, calls)
+		})
+	}
+
+	t.Run("canceled before final batch", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		calls := 0
+		store := &cleanupTestStorage{
+			walkDir: func(_ context.Context, _ *storeapi.WalkOption, fn func(string, int64) error) error {
+				if err := fn("subtask/meta.json", 1); err != nil {
+					return err
+				}
+				cancel()
+				return nil
+			},
+			deleteFiles: func(ctx context.Context, _ []string) error {
+				calls++
+				return ctx.Err()
+			},
+		}
+		require.ErrorIs(t, CleanUpFiles(ctx, store, "subtask"), context.Canceled)
+		require.Equal(t, 1, calls)
+	})
 }
 
 func TestSortedKVMeta(t *testing.T) {
@@ -383,6 +604,15 @@ func TestExternalMetaPath(t *testing.T) {
 }
 
 func TestDivideMergeSortDataFilesBasic(t *testing.T) {
+	require.Equal(t, errors.RFCErrorCode("GlobalSort:TooManyDataFiles"), errdef.ErrTooManyDataFiles.RFCCode())
+
+	requireTooManyDataFiles := func(t *testing.T, err error, dataFileCnt, concurrency, threshold int) {
+		t.Helper()
+		expected := errdef.ErrTooManyDataFiles.GenWithStackByArgs(dataFileCnt, concurrency, threshold)
+		require.True(t, errors.ErrorEqual(err, expected))
+		require.EqualError(t, err, expected.Error())
+	}
+
 	testCases := []struct {
 		fileCnt       int
 		nodeCnt       int
@@ -413,6 +643,92 @@ func TestDivideMergeSortDataFilesBasic(t *testing.T) {
 			require.EqualValues(t, tc.expectedSizes, actualSizes)
 		})
 	}
+
+	t.Run("exact target file count", func(t *testing.T) {
+		items := make([]string, 4580)
+		result, err := DivideMergeSortDataFiles(items, 8, 1)
+		require.NoError(t, err)
+		require.Len(t, result, 24)
+		expectedSizes := append(slices.Repeat([]int{250}, 16), 73, 73, 73, 73, 72, 72, 72, 72)
+		totalTargetFileCount := 0
+		for i, group := range result {
+			require.Len(t, group, expectedSizes[i])
+			totalTargetFileCount += len(splitDataFiles(group, 1))
+		}
+		require.Equal(t, 24, totalTargetFileCount)
+		require.LessOrEqual(t, totalTargetFileCount, 250)
+	})
+
+	t.Run("at target file threshold", func(t *testing.T) {
+		result, err := DivideMergeSortDataFiles(make([]string, 62500), 10, 1)
+		require.NoError(t, err)
+		totalTargetFileCount := 0
+		for _, group := range result {
+			totalTargetFileCount += len(splitDataFiles(group, 1))
+		}
+		require.Equal(t, 250, totalTargetFileCount)
+	})
+
+	t.Run("remainder exceeds target file threshold", func(t *testing.T) {
+		result, err := DivideMergeSortDataFiles(make([]string, 62501), 10, 1)
+		require.Nil(t, result)
+		requireTooManyDataFiles(t, err, 62501, 1, 250)
+	})
+
+	t.Run("full groups exceed target file threshold", func(t *testing.T) {
+		result, err := DivideMergeSortDataFiles(make([]string, 62750), 1, 1)
+		require.Nil(t, result)
+		requireTooManyDataFiles(t, err, 62750, 1, 250)
+	})
+
+	t.Run("fixed targets and remainder exceed target file threshold", func(t *testing.T) {
+		result, err := DivideMergeSortDataFiles(make([]string, 62751), 1, 1)
+		require.Nil(t, result)
+		requireTooManyDataFiles(t, err, 62751, 1, 250)
+	})
+
+	t.Run("non-monotonic target file count exceeds threshold", func(t *testing.T) {
+		result, err := DivideMergeSortDataFiles(make([]string, 248128), 62, 64)
+		require.Nil(t, result)
+		requireTooManyDataFiles(t, err, 248128, 64, 4000)
+	})
+
+	t.Run("preserves maximum input files per subtask", func(t *testing.T) {
+		result, err := DivideMergeSortDataFiles(make([]string, 940000), 2, 17)
+		require.NoError(t, err)
+		totalTargetFileCount := 0
+		for _, group := range result {
+			require.LessOrEqual(t, len(group), 4000)
+			totalTargetFileCount += len(splitDataFiles(group, 17))
+		}
+		require.LessOrEqual(t, totalTargetFileCount, 4000)
+
+		result, err = DivideMergeSortDataFiles(make([]string, 940001), 2, 17)
+		require.Nil(t, result)
+		requireTooManyDataFiles(t, err, 940001, 17, 4000)
+	})
+
+	t.Run("large node count", func(t *testing.T) {
+		var result [][]string
+		var err error
+		allocs := testing.AllocsPerRun(1, func() {
+			result, err = DivideMergeSortDataFiles(make([]string, 32000), 32000, 16)
+		})
+		require.NoError(t, err)
+		require.Less(t, allocs, float64(100))
+
+		result, err = DivideMergeSortDataFiles(make([]string, 1000000), 1000000, 16)
+		require.NoError(t, err)
+		require.Len(t, result, 250)
+		totalTargetFileCount := 0
+		maxFiles := simplesst.GetAdjustedMergeSortFileCountStep(16)
+		for _, group := range result {
+			require.Len(t, group, 4000)
+			require.LessOrEqual(t, len(group), maxFiles)
+			totalTargetFileCount += len(splitDataFiles(group, 16))
+		}
+		require.Equal(t, 4000, totalTargetFileCount)
+	})
 }
 
 func TestDivideMergeSortDataFilesSubtaskCount(t *testing.T) {

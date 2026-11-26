@@ -35,10 +35,11 @@ import (
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	fstorage "github.com/pingcap/tidb/pkg/dxf/framework/storage"
-	"github.com/pingcap/tidb/pkg/dxf/importinto"
+	"github.com/pingcap/tidb/pkg/dxf/importinto/taskinfo"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/importinto/jobstats"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
@@ -70,7 +71,6 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
@@ -82,6 +82,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/memory"
 	sem "github.com/pingcap/tidb/pkg/util/sem/compat"
 	"github.com/pingcap/tidb/pkg/util/set"
+	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"github.com/tikv/pd/client/errs"
@@ -118,6 +119,7 @@ type ShowExec struct {
 	Extended    bool // Used for `show extended columns from ...`
 
 	ImportJobID       *int64
+	RawImportJob      bool
 	DistributionJobID *int64
 	ImportGroupKey    string // Used for SHOW IMPORT GROUP <GROUP_KEY>
 }
@@ -193,6 +195,10 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 		return e.fetchShowCreateSequence()
 	case ast.ShowCreateUser:
 		return e.fetchShowCreateUser(ctx)
+	case ast.ShowCreateMaterializedView:
+		return e.fetchShowCreateMaterializedView()
+	case ast.ShowCreateMaterializedViewLog:
+		return e.fetchShowCreateMaterializedViewLog()
 	case ast.ShowCreateView:
 		return e.fetchShowCreateView()
 	case ast.ShowCreateDatabase:
@@ -213,6 +219,14 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 		return e.fetchShowProcedureStatus()
 	case ast.ShowStatus:
 		return e.fetchShowStatus()
+	case ast.ShowMaterializedViews:
+		return e.fetchShowMaterializedViews(ctx)
+	case ast.ShowMaterializedViewLogs:
+		return e.fetchShowMaterializedViewLogs(ctx)
+	case ast.ShowMaterializedViewRemainLogs:
+		return e.fetchShowMaterializedViewRemainLogs(ctx)
+	case ast.ShowMaterializedViewLogWaitPurge:
+		return e.fetchShowMaterializedViewLogWaitPurge(ctx)
 	case ast.ShowTables:
 		return e.fetchShowTables(ctx)
 	case ast.ShowOpenTables:
@@ -288,6 +302,9 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 	case ast.ShowSessionStates:
 		return e.fetchShowSessionStates(ctx)
 	case ast.ShowImportJobs:
+		if e.RawImportJob {
+			return e.fetchRawImportJobs(ctx)
+		}
 		return e.fetchShowImportJobs(ctx)
 	case ast.ShowImportGroups:
 		return e.fetchShowImportGroups(ctx)
@@ -295,8 +312,47 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 		return e.fetchShowDistributionJobs(ctx)
 	case ast.ShowAffinity:
 		return e.fetchShowAffinity(ctx)
+	case ast.ShowStorageClassTransitions:
+		return e.fetchShowStorageClassTransitions(ctx)
 	}
 	return nil
+}
+
+func (e *ShowExec) fetchShowStorageClassTransitions(ctx context.Context) error {
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnMeta)
+	exec := e.Ctx().GetRestrictedSQLExecutor()
+	timeZoneSetup := sqlexec.ExecOptionWithSessionVarsSetup(
+		storageClassTransitionTimeZoneSetup(e.Ctx().GetSessionVars().Location()))
+	rows, _, err := exec.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{timeZoneSetup},
+		`SELECT * FROM information_schema.tikv_storage_class_transitions`)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	checker := privilege.GetPrivilegeManager(e.Ctx())
+	for _, row := range rows {
+		if checker != nil && !checker.RequestVerification(
+			e.Ctx().GetSessionVars().ActiveRoles,
+			strings.ToLower(row.GetString(0)),
+			strings.ToLower(row.GetString(1)),
+			"",
+			mysql.AllPrivMask,
+		) {
+			continue
+		}
+		e.result.AppendRow(row)
+	}
+	return nil
+}
+
+func storageClassTransitionTimeZoneSetup(location *time.Location) sqlexec.SessionVarsSetup {
+	return func(vars *variable.SessionVars) func() {
+		originalTimeZone := vars.TimeZone
+		vars.TimeZone = location
+		return func() {
+			vars.TimeZone = originalTimeZone
+		}
+	}
 }
 
 // visibleChecker checks if a stmt is visible for a certain user.
@@ -308,26 +364,26 @@ type visibleChecker struct {
 	ok        bool
 }
 
-func (v *visibleChecker) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
+func (v *visibleChecker) Enter(in ast.Node) (skipChildren bool) {
 	if x, ok := in.(*ast.TableName); ok {
 		schema := x.Schema.L
 		if schema == "" {
 			schema = v.defaultDB
 		}
 		if !v.is.TableExists(ast.NewCIStr(schema), x.Name) {
-			return in, true
+			return true
 		}
 		activeRoles := v.ctx.GetSessionVars().ActiveRoles
 		if v.manager != nil && !v.manager.RequestVerification(activeRoles, schema, x.Name.L, "", mysql.SelectPriv) {
 			v.ok = false
 		}
-		return in, true
+		return true
 	}
-	return in, false
+	return false
 }
 
-func (*visibleChecker) Leave(in ast.Node) (out ast.Node, ok bool) {
-	return in, true
+func (*visibleChecker) Leave(ast.Node) (proceed bool) {
+	return true
 }
 
 func (e *ShowExec) fetchShowBind() error {
@@ -364,7 +420,7 @@ func (e *ShowExec) fetchShowBind() error {
 			manager:   privilege.GetPrivilegeManager(e.Ctx()),
 			ok:        true,
 		}
-		stmt.Accept(&checker)
+		ast.Walk(stmt, &checker)
 		if !checker.ok {
 			continue
 		}
@@ -645,7 +701,7 @@ func (e *ShowExec) fetchShowTableStatus(ctx context.Context) error {
 	}
 
 	exec := e.Ctx().GetRestrictedSQLExecutor()
-	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnStats)
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnStatsForegroundPriority)
 
 	var snapshot uint64
 	txn, err := e.Ctx().Txn(false)
@@ -1044,12 +1100,9 @@ func getDefaultCollate(charsetName string) string {
 	return ch.DefaultCollation
 }
 
-// ConstructResultOfShowCreateTable constructs the result for show create table.
-func ConstructResultOfShowCreateTable(ctx sessionctx.Context, tableInfo *model.TableInfo, allocators autoid.Allocators, buf *bytes.Buffer) (err error) {
-	return constructResultOfShowCreateTable(ctx, nil, tableInfo, allocators, buf)
-}
-
-func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *ast.CIStr, tableInfo *model.TableInfo, allocators autoid.Allocators, buf *bytes.Buffer) (err error) {
+// ConstructResultOfShowCreateTable renders SHOW CREATE TABLE in the named database,
+// including schema qualifiers for foreign keys referencing another database.
+func ConstructResultOfShowCreateTable(ctx sessionctx.Context, dbName ast.CIStr, tableInfo *model.TableInfo, allocators autoid.Allocators, buf *bytes.Buffer) (err error) {
 	if tableInfo.IsView() {
 		fetchShowCreateTable4View(ctx, tableInfo, buf)
 		return nil
@@ -1058,6 +1111,7 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *ast.CIStr,
 		ConstructResultOfShowCreateSequence(ctx, tableInfo, buf)
 		return nil
 	}
+	tableInfo, hypoIndexes := ctx.GetSessionVars().GetHypoIndexTableInfo(dbName.L, tableInfo)
 
 	tblCharset := tableInfo.Charset
 	if len(tblCharset) == 0 {
@@ -1204,22 +1258,7 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *ast.CIStr,
 		}
 	}
 
-	// consider hypo-indexes
-	hypoIndexes := ctx.GetSessionVars().HypoIndexes
-	if hypoIndexes != nil && dbName != nil {
-		schemaName := dbName.L
-		tblName := tableInfo.Name.L
-		if hypoIndexes[schemaName] != nil && hypoIndexes[schemaName][tblName] != nil {
-			hypoIndexList := make([]*model.IndexInfo, 0, len(hypoIndexes[schemaName][tblName]))
-			for _, index := range hypoIndexes[schemaName][tblName] {
-				hypoIndexList = append(hypoIndexList, index)
-			}
-			sort.Slice(hypoIndexList, func(i, j int) bool { // to make the result stable
-				return hypoIndexList[i].Name.O < hypoIndexList[j].Name.O
-			})
-			publicIndices = append(publicIndices, hypoIndexList...)
-		}
-	}
+	publicIndices = append(publicIndices, hypoIndexes...)
 	if len(publicIndices) > 0 {
 		buf.WriteString(",\n")
 	}
@@ -1301,7 +1340,7 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *ast.CIStr,
 			colNames = append(colNames, stringutil.Escape(col.O, sqlMode))
 		}
 		fmt.Fprintf(buf, "(%s)", strings.Join(colNames, ","))
-		if fk.RefSchema.L != "" && dbName != nil && fk.RefSchema.L != dbName.L {
+		if fk.RefSchema.L != "" && fk.RefSchema.L != dbName.L {
 			fmt.Fprintf(buf, " REFERENCES %s.%s ", stringutil.Escape(fk.RefSchema.O, sqlMode), stringutil.Escape(fk.RefTable.O, sqlMode))
 		} else {
 			fmt.Fprintf(buf, " REFERENCES %s ", stringutil.Escape(fk.RefTable.O, sqlMode))
@@ -1344,6 +1383,19 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *ast.CIStr,
 	buf.WriteString("\n")
 
 	buf.WriteString(") ENGINE=InnoDB")
+
+	if len(tableInfo.EngineAttribute) > 0 {
+		tier, ok, err := ddl.GetSimpleTableStorageClassForShowCreate(tableInfo)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if ok {
+			fmt.Fprintf(buf, " STORAGE_CLASS='%s'", tier)
+		} else {
+			fmt.Fprintf(buf, " ENGINE_ATTRIBUTE='%s'", format.OutputFormat(tableInfo.EngineAttribute))
+		}
+	}
+
 	// We need to explicitly set the default charset and collation
 	// to make it work on MySQL server which has default collate utf8_general_ci.
 	if len(tblCollate) == 0 || tblCollate == "binary" {
@@ -1419,81 +1471,6 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *ast.CIStr,
 		fmt.Fprintf(buf, " /* CACHED ON */")
 	}
 
-	var parse *parser.Parser
-	// Show table region split policy
-	if tableInfo.TableSplitPolicy != nil {
-		parse = parser.New()
-		buf.WriteString("\n/*T![region_split] ")
-		buf.WriteString("SPLIT BETWEEN (")
-
-		policy := tableInfo.TableSplitPolicy
-
-		for i, val := range policy.Lower {
-			if i > 0 {
-				buf.WriteString(", ")
-			}
-			if err := formatSplitValue(parse, buf, val); err != nil {
-				return errors.Trace(err)
-			}
-		}
-		buf.WriteString(") AND (")
-
-		for i, val := range policy.Upper {
-			if i > 0 {
-				buf.WriteString(", ")
-			}
-			if err := formatSplitValue(parse, buf, val); err != nil {
-				return errors.Trace(err)
-			}
-		}
-
-		fmt.Fprintf(buf, ") REGIONS %d", policy.Regions)
-		buf.WriteString(" */")
-	}
-
-	// Show index region split policies
-	for _, indexInfo := range tableInfo.Indices {
-		if indexInfo.RegionSplitPolicy == nil {
-			continue
-		}
-		if parse == nil {
-			parse = parser.New()
-		}
-
-		policy := indexInfo.RegionSplitPolicy
-		buf.WriteString("\n/*T![region_split] ")
-
-		fmt.Fprintf(buf, "SPLIT ")
-		if indexInfo.Name.O == mysql.PrimaryKeyName {
-			fmt.Fprintf(buf, "PRIMARY KEY ")
-		} else {
-			fmt.Fprintf(buf, "INDEX ")
-		}
-		fmt.Fprintf(buf, "%s BETWEEN (", stringutil.Escape(indexInfo.Name.O, sqlMode))
-
-		for i, val := range policy.Lower {
-			if i > 0 {
-				buf.WriteString(", ")
-			}
-			if err := formatSplitValue(parse, buf, val); err != nil {
-				return errors.Trace(err)
-			}
-		}
-		buf.WriteString(") AND (")
-
-		for i, val := range policy.Upper {
-			if i > 0 {
-				buf.WriteString(", ")
-			}
-			if err := formatSplitValue(parse, buf, val); err != nil {
-				return errors.Trace(err)
-			}
-		}
-
-		fmt.Fprintf(buf, ") REGIONS %d", policy.Regions)
-		buf.WriteString(" */")
-	}
-
 	if tableInfo.TTLInfo != nil {
 		restoreFlags := parserformat.RestoreStringSingleQuotes | parserformat.RestoreNameBackQuotes | parserformat.RestoreTiDBSpecialComment
 		restoreCtx := parserformat.NewRestoreCtx(restoreFlags, buf)
@@ -1555,6 +1532,95 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *ast.CIStr,
 
 	// add partition info here.
 	ddl.AppendPartitionInfo(tableInfo.Partition, buf, sqlMode)
+
+	// Region split policies follow the partition clause in the CREATE TABLE
+	// grammar: `CreateTableStmt: ... PartitionOpt SplitIndexListOpt ...`.
+	// Emitting them before `PARTITION BY` produces DDL that cannot be parsed
+	// again, so they are appended after the partition info
+	// (https://github.com/pingcap/tidb/issues/71468).
+	return appendRegionSplitPolicies(buf, tableInfo, sqlMode)
+}
+
+// appendRegionSplitPolicies writes the table-level and index-level region split
+// policies of a table using the `SPLIT ...` clause form accepted by the CREATE
+// TABLE grammar.
+func appendRegionSplitPolicies(buf *bytes.Buffer, tableInfo *model.TableInfo, sqlMode mysql.SQLMode) error {
+	var parse *parser.Parser
+	// Show table region split policy
+	if tableInfo.TableSplitPolicy != nil {
+		parse = parser.New()
+		buf.WriteString("\n/*T![region_split] ")
+		buf.WriteString("SPLIT BETWEEN (")
+
+		policy := tableInfo.TableSplitPolicy
+
+		for i, val := range policy.Lower {
+			if i > 0 {
+				buf.WriteString(", ")
+			}
+			if err := formatSplitValue(parse, buf, val); err != nil {
+				return errors.Trace(err)
+			}
+		}
+		buf.WriteString(") AND (")
+
+		for i, val := range policy.Upper {
+			if i > 0 {
+				buf.WriteString(", ")
+			}
+			if err := formatSplitValue(parse, buf, val); err != nil {
+				return errors.Trace(err)
+			}
+		}
+
+		fmt.Fprintf(buf, ") REGIONS %d", policy.Regions)
+		buf.WriteString(" */")
+	}
+
+	// Show index region split policies
+	for _, indexInfo := range tableInfo.Indices {
+		if indexInfo.RegionSplitPolicy == nil {
+			continue
+		}
+		if parse == nil {
+			parse = parser.New()
+		}
+
+		policy := indexInfo.RegionSplitPolicy
+		buf.WriteString("\n/*T![region_split] ")
+
+		// Note: the primary key branch of the region split policy grammar does not
+		// accept an index name, so only non-PRIMARY indexes are emitted as
+		// `SPLIT INDEX <name>`.
+		if indexInfo.Name.O == mysql.PrimaryKeyName {
+			buf.WriteString("SPLIT PRIMARY KEY BETWEEN (")
+		} else {
+			fmt.Fprintf(buf, "SPLIT INDEX %s BETWEEN (", stringutil.Escape(indexInfo.Name.O, sqlMode))
+		}
+
+		for i, val := range policy.Lower {
+			if i > 0 {
+				buf.WriteString(", ")
+			}
+			if err := formatSplitValue(parse, buf, val); err != nil {
+				return errors.Trace(err)
+			}
+		}
+		buf.WriteString(") AND (")
+
+		for i, val := range policy.Upper {
+			if i > 0 {
+				buf.WriteString(", ")
+			}
+			if err := formatSplitValue(parse, buf, val); err != nil {
+				return errors.Trace(err)
+			}
+		}
+
+		fmt.Fprintf(buf, ") REGIONS %d", policy.Regions)
+		buf.WriteString(" */")
+	}
+
 	return nil
 }
 
@@ -1635,7 +1701,7 @@ func (e *ShowExec) fetchShowCreateTable() error {
 	tableInfo := tb.Meta()
 	var buf bytes.Buffer
 	// TODO: let the result more like MySQL.
-	if err = constructResultOfShowCreateTable(e.Ctx(), &e.DBName, tableInfo, tb.Allocators(e.Ctx().GetTableCtx()), &buf); err != nil {
+	if err = ConstructResultOfShowCreateTable(e.Ctx(), e.DBName, tableInfo, tb.Allocators(e.Ctx().GetTableCtx()), &buf); err != nil {
 		return err
 	}
 	if tableInfo.IsView() {
@@ -1721,6 +1787,10 @@ func ConstructResultOfShowCreateDatabase(ctx sessionctx.Context, dbInfo *model.D
 	if dbInfo.PlacementPolicyRef != nil {
 		// add placement ref info here
 		fmt.Fprintf(buf, " /*T![placement] PLACEMENT POLICY=%s */", stringutil.Escape(dbInfo.PlacementPolicyRef.Name.O, sqlMode))
+	}
+
+	if dbInfo.ReadOnly {
+		fmt.Fprint(buf, " /* READ ONLY = 1 */")
 	}
 	return nil
 }
@@ -1874,7 +1944,7 @@ func (e *ShowExec) fetchShowCreateUser(ctx context.Context) error {
 	if len(rows) == 0 {
 		// FIXME: the error returned is not escaped safely
 		return exeerrors.ErrCannotUser.GenWithStackByArgs("SHOW CREATE USER",
-			fmt.Sprintf("'%s'@'%s'", e.User.Username, e.User.Hostname))
+			fmt.Sprintf("'%s'@'%s'", userName, hostName))
 	}
 
 	authPlugin, err := e.Ctx().GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(vardef.DefaultAuthPlugin)
@@ -1971,9 +2041,11 @@ func (e *ShowExec) fetchShowCreateUser(ctx context.Context) error {
 		authStr = fmt.Sprintf(" AS '%s'", authData)
 	}
 
-	// FIXME: the returned string is not escaped safely
-	showStr := fmt.Sprintf("CREATE USER '%s'@'%s' IDENTIFIED WITH '%s'%s REQUIRE %s%s%s %s ACCOUNT %s PASSWORD HISTORY %s PASSWORD REUSE INTERVAL %s%s%s%s",
-		e.User.Username, e.User.Hostname, authPlugin, authStr, require, tokenIssuer, maxUserConnectionsStr, passwordExpiredStr, accountLocked, passwordHistory, passwordReuseInterval, failedLoginAttempts, passwordLockTimeDays, userAttributes)
+	// FIXME: authPlugin, authData, tokenIssuer, and userAttributes are not escaped safely.
+	account := stringutil.Escape(userName, sessVars.SQLMode) + "@" +
+		stringutil.Escape(hostName, sessVars.SQLMode)
+	showStr := fmt.Sprintf("CREATE USER %s IDENTIFIED WITH '%s'%s REQUIRE %s%s%s %s ACCOUNT %s PASSWORD HISTORY %s PASSWORD REUSE INTERVAL %s%s%s%s",
+		account, authPlugin, authStr, require, tokenIssuer, maxUserConnectionsStr, passwordExpiredStr, accountLocked, passwordHistory, passwordReuseInterval, failedLoginAttempts, passwordLockTimeDays, userAttributes)
 	e.appendRow([]any{showStr})
 	return nil
 }
@@ -2043,6 +2115,7 @@ func (e *ShowExec) fetchShowPrivileges() error {
 	e.appendRow([]any{"Lock tables", "Databases", "To use LOCK TABLES (together with SELECT privilege)"})
 	e.appendRow([]any{"Process", "Server Admin", "To view the plain text of currently executing queries"})
 	e.appendRow([]any{"Proxy", "Server Admin", "To make proxy user possible"})
+	e.appendRow([]any{"Operate view", "Tables", "To execute materialized view and materialized view log maintenance operations"})
 	e.appendRow([]any{"References", "Databases,Tables", "To have references on tables"})
 	e.appendRow([]any{"Reload", "Server Admin", "To reload or refresh tables, logs and privileges"})
 	e.appendRow([]any{"Replication client", "Server Admin", "To ask where the slave or master servers are"})
@@ -2217,9 +2290,9 @@ func (e *ShowExec) fetchShowDistributions(ctx context.Context) error {
 	}
 	distributions := make([]*pdHttp.RegionDistribution, 0)
 	var resp *pdHttp.RegionDistributions
+	storeCodec := e.Ctx().GetStore().GetCodec()
 	for idx, pid := range physicalIDs {
-		startKey := codec.EncodeBytes([]byte{}, tablecodec.GenTablePrefix(pid))
-		endKey := codec.EncodeBytes([]byte{}, tablecodec.GenTablePrefix(pid+1))
+		startKey, endKey := storeCodec.EncodeRegionRange(tablecodec.GenTablePrefix(pid), tablecodec.GenTablePrefix(pid+1))
 		// todo： support engine type
 		resp, err = infosync.GetRegionDistributionByKeyRange(ctx, startKey, endKey, "")
 		if err != nil {
@@ -2447,6 +2520,9 @@ func (e *ShowExec) fetchShowBuiltins() error {
 
 func (e *ShowExec) fetchShowSessionStates(ctx context.Context) error {
 	sessionStates := &sessionstates.SessionStates{}
+	if err := e.Ctx().CheckCanMigrateStates(); err != nil {
+		return err
+	}
 	err := e.Ctx().EncodeStates(ctx, sessionStates)
 	if err != nil {
 		return err
@@ -2465,7 +2541,7 @@ func (e *ShowExec) fetchShowSessionStates(ctx context.Context) error {
 	if user := e.Ctx().GetSessionVars().User; user != nil {
 		// The token may be leaked without secure transport, but the cloud can ensure security in some situations,
 		// so we don't enforce secure connections.
-		if token, err = sessionstates.CreateSessionToken(user.Username); err != nil {
+		if token, err = sessionstates.CreateSessionToken(user.AuthUsername, user.AuthHostname); err != nil {
 			// Some users deploy TiProxy after the cluster is running and configuring signing certs will restart TiDB.
 			// The users may don't need connection migration, e.g. they only want traffic replay, which requires session states
 			// but not session tokens. So we don't return errors, just log it.
@@ -2489,7 +2565,7 @@ func (e *ShowExec) fetchShowSessionStates(ctx context.Context) error {
 }
 
 // FillOneImportJobInfo is exported for testing.
-func FillOneImportJobInfo(result *chunk.Chunk, info *importer.JobInfo, runInfo *importinto.RuntimeInfo) {
+func FillOneImportJobInfo(result *chunk.Chunk, info *importer.JobInfo, runInfo *taskinfo.RuntimeInfo) {
 	fullTableName := utils.EncloseDBAndTable(info.TableSchema, info.TableName)
 	result.AppendInt64(0, info.ID)
 	if info.GroupKey == "" {
@@ -2578,24 +2654,195 @@ func handleImportJobInfo(
 	ctx context.Context, location *time.Location,
 	info *importer.JobInfo, result *chunk.Chunk,
 ) error {
-	var (
-		runInfo *importinto.RuntimeInfo
-		err     error
-	)
+	runInfo, err := getJobRuntime(ctx, location, info)
+	if err != nil {
+		return err
+	}
+	applyJobRuntime(info, runInfo)
+	FillOneImportJobInfo(result, info, runInfo)
+	return nil
+}
 
-	if info.Status == importer.JobStatusRunning {
-		// need to get more info from distributed framework for running jobs
-		runInfo, err = importinto.GetRuntimeInfoForJob(ctx, location, info.ID)
+func getJobRuntime(
+	ctx context.Context,
+	location *time.Location,
+	info *importer.JobInfo,
+) (*taskinfo.RuntimeInfo, error) {
+	if info.Status != jobstats.StatusRunning {
+		return nil, nil
+	}
+
+	// Need to get more info from distributed framework for running jobs.
+	runInfo, err := taskinfo.GetJobRuntimeInfo(ctx, location, info.ID)
+	if err != nil {
+		return nil, err
+	}
+	return runInfo, nil
+}
+
+func applyJobRuntime(info *importer.JobInfo, runInfo *taskinfo.RuntimeInfo) {
+	if runInfo == nil {
+		return
+	}
+	if string(runInfo.Status) == jobstats.StatusAwaitingResolution {
+		info.Status = string(runInfo.Status)
+		info.ErrorMessage = runInfo.ErrorMsg
+	}
+}
+
+func runningJobIDs(infos []*importer.JobInfo) []int64 {
+	jobIDs := make([]int64, 0, len(infos))
+	for _, info := range infos {
+		if info.Status == jobstats.StatusRunning {
+			jobIDs = append(jobIDs, info.ID)
+		}
+	}
+	return jobIDs
+}
+
+func isImportConflictStep(step proto.Step) bool {
+	return jobstats.IsConflictStep(proto.Step2Str(proto.ImportInto, step))
+}
+
+func buildRawJobError(status, message string) *jobstats.RawError {
+	switch status {
+	case jobstats.StatusFailed, jobstats.StatusCancelled:
+		return &jobstats.RawError{
+			Message: message,
+		}
+	case jobstats.StatusAwaitingResolution:
+		return &jobstats.RawError{
+			Message:            message,
+			UserActionRequired: true,
+		}
+	default:
+		if message == "" {
+			return nil
+		}
+		return &jobstats.RawError{
+			Message: message,
+		}
+	}
+}
+
+func buildRawJobSummary(summary *importer.Summary) *jobstats.RawSummary {
+	if summary == nil {
+		return nil
+	}
+	raw := &jobstats.RawSummary{
+		ImportedRows:     summary.ImportedRows,
+		ConflictRows:     summary.ConflictRowCnt,
+		TooManyConflicts: summary.TooManyConflicts,
+	}
+	appendStep := func(name string, summary importer.StepSummary, isConflictStep bool) {
+		if summary.Bytes == 0 && summary.RowCnt == 0 {
+			return
+		}
+		step := jobstats.RawStepSummary{Name: name}
+		if isConflictStep {
+			step.InputConflicts = summary.RowCnt
+		} else {
+			step.InputBytes = summary.Bytes
+			step.InputRows = summary.RowCnt
+		}
+		raw.Steps = append(raw.Steps, step)
+	}
+	appendStep(proto.Step2Str(proto.ImportInto, proto.ImportStepEncodeAndSort), summary.EncodeSummary, false)
+	appendStep(proto.Step2Str(proto.ImportInto, proto.ImportStepMergeSort), summary.MergeSummary, false)
+	appendStep(proto.Step2Str(proto.ImportInto, proto.ImportStepWriteAndIngest), summary.IngestSummary, false)
+	appendStep(jobstats.StepCollectConflicts, summary.CollectConflictsSummary, true)
+	appendStep(jobstats.StepConflictResolution, summary.ResolveConflictsSummary, true)
+	return raw
+}
+
+// buildRawJobStats converts import job info (and optional runtime info) into a machine-friendly contract.
+func buildRawJobStats(
+	location *time.Location,
+	info *importer.JobInfo,
+	runInfo *taskinfo.RuntimeInfo,
+) (*jobstats.RawStats, error) {
+	if location == nil {
+		location = time.UTC
+	}
+
+	setUnix := func(dst *int64, t types.Time) error {
+		if t.IsZero() {
+			return nil
+		}
+		gt, err := t.GoTime(location)
 		if err != nil {
 			return err
 		}
-		if runInfo.Status == proto.TaskStateAwaitingResolution {
-			info.Status = string(runInfo.Status)
-			info.ErrorMessage = runInfo.ErrorMsg
-		}
+		*dst = gt.Unix()
+		return nil
 	}
-	FillOneImportJobInfo(result, info, runInfo)
-	return nil
+
+	statusCategory := jobstats.ClassifyStatus(info.Status)
+	stats := &jobstats.RawStats{
+		Version:             jobstats.ContractVersion,
+		JobID:               info.ID,
+		GroupKey:            info.GroupKey,
+		DataSource:          info.Parameters.FileLocation,
+		TargetTable:         utils.EncloseDBAndTable(info.TableSchema, info.TableName),
+		TableID:             info.TableID,
+		Phase:               info.Step,
+		Status:              info.Status,
+		StatusCategory:      statusCategory,
+		SourceFileSizeBytes: info.SourceFileSize,
+		Error:               buildRawJobError(info.Status, info.ErrorMessage),
+		Summary:             buildRawJobSummary(info.Summary),
+		CreatedBy:           info.CreatedBy,
+	}
+
+	if runInfo != nil {
+		importedRows := runInfo.ImportRows
+		stats.ImportedRows = &importedRows
+
+		step := jobstats.RawStepStats{
+			Name: proto.Step2Str(proto.ImportInto, runInfo.Step),
+		}
+		if isImportConflictStep(runInfo.Step) {
+			step.ProcessedConflicts = runInfo.Processed
+			step.TotalConflicts = runInfo.Total
+			step.SpeedConflictsPerSec = runInfo.Speed
+		} else {
+			step.ProcessedBytes = runInfo.Processed
+			step.TotalBytes = runInfo.Total
+			step.SpeedBytesPerSec = runInfo.Speed
+		}
+		if runInfo.Speed > 0 && runInfo.Total > 0 {
+			remainingSeconds := max((runInfo.Total-runInfo.Processed)/runInfo.Speed, 0)
+			step.RemainingSeconds = &remainingSeconds
+		}
+		stats.CurrentStep = &step
+	} else if info.IsSuccess() && info.Summary != nil {
+		// For finished jobs, use summary.ImportedRows if available.
+		importedRows := info.Summary.ImportedRows
+		stats.ImportedRows = &importedRows
+	}
+
+	if err := setUnix(&stats.CreateTimeUnix, info.CreateTime); err != nil {
+		return nil, err
+	}
+	if err := setUnix(&stats.StartTimeUnix, info.StartTime); err != nil {
+		return nil, err
+	}
+	if err := setUnix(&stats.EndTimeUnix, info.EndTime); err != nil {
+		return nil, err
+	}
+
+	updateTime := info.UpdateTime
+	if runInfo != nil && !runInfo.UpdateTime.IsZero() {
+		updateTime = runInfo.UpdateTime
+	} else if runInfo == nil && !info.EndTime.IsZero() {
+		// Match SHOW IMPORT JOB(S): terminal rows report Last_Update_Time as End_Time.
+		updateTime = info.EndTime
+	}
+	if err := setUnix(&stats.UpdateTimeUnix, updateTime); err != nil {
+		return nil, err
+	}
+
+	return stats, nil
 }
 
 const balanceRangeScheduler = "balance-range-scheduler"
@@ -2618,11 +2865,23 @@ func (e *ShowExec) fetchShowDistributionJobs(ctx context.Context) error {
 		}
 		jobs = append(jobs, job)
 	}
+	keyspaceID, inKeyspace := distributionKeyspaceID(e.Ctx().GetStore())
+	fillJob := func(job map[string]any) error {
+		alias := job["alias"].(string)
+		if inKeyspace {
+			var visible bool
+			// only show the jobs of the current keyspace.
+			if alias, visible = trimDistributionAliasKeyspace(alias, keyspaceID); !visible {
+				return nil
+			}
+		}
+		return fillDistributionJobToChunk(ctx, job, alias, e.result)
+	}
 	if e.DistributionJobID != nil {
 		for _, job := range jobs {
 			jobID, ok := job["job-id"].(float64)
 			if ok && *e.DistributionJobID == int64(jobID) {
-				if err := fillDistributionJobToChunk(ctx, job, e.result); err != nil {
+				if err := fillJob(job); err != nil {
 					return err
 				}
 				break
@@ -2630,7 +2889,7 @@ func (e *ShowExec) fetchShowDistributionJobs(ctx context.Context) error {
 		}
 	} else {
 		for _, job := range jobs {
-			if err := fillDistributionJobToChunk(ctx, job, e.result); err != nil {
+			if err := fillJob(job); err != nil {
 				return err
 			}
 		}
@@ -2638,10 +2897,10 @@ func (e *ShowExec) fetchShowDistributionJobs(ctx context.Context) error {
 	return nil
 }
 
-// fillDistributionJobToChunk fills the distribution job to the chunk
-func fillDistributionJobToChunk(ctx context.Context, job map[string]any, result *chunk.Chunk) error {
-	// alias is {db_name}.{table_name}.{partition_name}
-	alias := strings.Split(job["alias"].(string), ".")
+// fillDistributionJobToChunk fills the distribution job to the chunk.
+// jobAlias is {db_name}.{table_name}.{partition_name} without the keyspace ID prefix.
+func fillDistributionJobToChunk(ctx context.Context, job map[string]any, jobAlias string, result *chunk.Chunk) error {
+	alias := strings.Split(jobAlias, ".")
 	logutil.Logger(ctx).Info("fillDistributionJobToChunk", zap.String("alias", job["alias"].(string)))
 	if len(alias) != 3 {
 		return errs.ErrClientProtoUnmarshal.FastGenByArgs(fmt.Sprintf("alias:%s is invalid", job["alias"].(string)))
@@ -2742,7 +3001,7 @@ func (e *ShowExec) fetchShowImportGroups(ctx context.Context) error {
 		updateTime := types.ZeroTime
 		// See FillOneImportJobInfo, we make the update time calculation same with SHOW IMPORT JOBS.
 		if info.Status == importer.JobStatusRunning {
-			runInfo, err := importinto.GetRuntimeInfoForJob(ctx, sctx.GetSessionVars().Location(), info.ID)
+			runInfo, err := taskinfo.GetJobRuntimeInfo(ctx, sctx.GetSessionVars().Location(), info.ID)
 			if err != nil {
 				return err
 			}
@@ -2847,14 +3106,102 @@ func (e *ShowExec) fetchShowImportJobs(ctx context.Context) error {
 	return nil
 }
 
+// fetchRawImportJobs fills the result with the schema:
+// {"Job_ID", "Group_Key", "Raw_Stats"}.
+func (e *ShowExec) fetchRawImportJobs(ctx context.Context) error {
+	sctx := e.Ctx()
+
+	var hasSuperPriv bool
+	if pm := privilege.GetPrivilegeManager(sctx); pm != nil {
+		hasSuperPriv = pm.RequestVerification(sctx.GetSessionVars().ActiveRoles, "", "", "", mysql.SuperPriv)
+	}
+	// we use sessionCtx from GetTaskManager, user ctx might not have system table privileges.
+	taskManager, err := fstorage.GetTaskManager()
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalDistTask)
+	if err != nil {
+		return err
+	}
+
+	// JobInfo timestamps are decoded by the internal session, so use the same
+	// session location when converting them to Unix seconds.
+	var loc *time.Location
+	appendJob := func(info *importer.JobInfo, runInfo *taskinfo.RuntimeInfo) error {
+		stats, err2 := buildRawJobStats(loc, info, runInfo)
+		if err2 != nil {
+			return err2
+		}
+		// CreateBinaryJSON does not accept Go structs. Marshal the contract first
+		// to preserve its JSON tags, omitted fields, and integer precision.
+		statsBytes, err2 := gjson.Marshal(stats)
+		if err2 != nil {
+			return errors.Trace(err2)
+		}
+		statsJSON := types.BinaryJSON{}
+		if err2 := statsJSON.UnmarshalJSON(statsBytes); err2 != nil {
+			return err2
+		}
+
+		e.result.AppendInt64(0, info.ID)
+		if info.GroupKey == "" {
+			e.result.AppendNull(1)
+		} else {
+			e.result.AppendString(1, info.GroupKey)
+		}
+		e.result.AppendJSON(2, statsJSON)
+		return nil
+	}
+
+	if e.ImportJobID != nil {
+		var info *importer.JobInfo
+		if err = taskManager.WithNewSession(func(se sessionctx.Context) error {
+			loc = se.GetSessionVars().Location()
+			exec := se.GetSQLExecutor()
+			var err2 error
+			info, err2 = importer.GetJob(ctx, exec, *e.ImportJobID, sctx.GetSessionVars().User.String(), hasSuperPriv)
+			return err2
+		}); err != nil {
+			return err
+		}
+		runInfo, err := getJobRuntime(ctx, loc, info)
+		if err != nil {
+			return err
+		}
+		applyJobRuntime(info, runInfo)
+		return appendJob(info, runInfo)
+	}
+
+	var infos []*importer.JobInfo
+	if err = taskManager.WithNewSession(func(se sessionctx.Context) error {
+		loc = se.GetSessionVars().Location()
+		exec := se.GetSQLExecutor()
+		var err2 error
+		infos, err2 = importer.GetAllViewableJobs(ctx, exec, sctx.GetSessionVars().User.String(), hasSuperPriv)
+		return err2
+	}); err != nil {
+		return err
+	}
+	runtimeInfos, err := taskinfo.GetRuntimeInfos(ctx, loc, runningJobIDs(infos))
+	if err != nil {
+		return err
+	}
+	for _, info := range infos {
+		runInfo := runtimeInfos[info.ID]
+		applyJobRuntime(info, runInfo)
+		if err2 := appendJob(info, runInfo); err2 != nil {
+			return err2
+		}
+	}
+	return nil
+}
+
 // tryFillViewColumnType fill the columns type info of a view.
 // Because view's underlying table's column could change or recreate, so view's column type may change over time.
 // To avoid this situation we need to generate a logical plan and extract current column types from Schema.
-func tryFillViewColumnType(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema, dbName ast.CIStr, tbl *model.TableInfo) error {
+func tryFillViewColumnType(_ context.Context, sctx sessionctx.Context, is infoschema.InfoSchema, dbName ast.CIStr, tbl *model.TableInfo) error {
 	if !tbl.IsView() {
 		return nil
 	}
-	ctx = kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
 	// We need to run the build plan process in another session because there may be
 	// multiple goroutines running at the same time while session is not goroutine-safe.
 	// Take joining system table as an example, `fetchBuildSideRows` and `fetchProbeSideChunks` can be run concurrently.
@@ -2910,4 +3257,554 @@ func formatSplitValue(parser *parser.Parser, buf *bytes.Buffer, val string) erro
 		expr.Format(buf)
 	}
 	return err
+}
+
+func (e *ShowExec) fetchShowMaterializedViews(ctx context.Context) error {
+	checker := privilege.GetPrivilegeManager(e.Ctx())
+	if !e.is.SchemaExists(e.DBName) {
+		return exeerrors.ErrBadDB.GenWithStackByArgs(e.DBName)
+	}
+
+	tables, err := e.is.SchemaTableInfos(ctx, e.DBName)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	activeRoles := e.Ctx().GetSessionVars().ActiveRoles
+	var (
+		fieldFilter       string
+		fieldPatternsLike collate.WildcardPattern
+	)
+	if e.Extractor != nil {
+		fieldFilter = e.Extractor.Field()
+		fieldPatternsLike = e.Extractor.FieldPatternLike()
+	}
+	type mvRow struct {
+		id   int64
+		name string
+	}
+	rows := make([]mvRow, 0)
+	for _, tbl := range tables {
+		if tbl.MaterializedView == nil {
+			continue
+		}
+		if checker != nil && !hasAnyMaterializedViewVisiblePriv(checker, activeRoles, e.DBName.O, tbl.Name.O) {
+			continue
+		}
+		if fieldFilter != "" && tbl.Name.L != fieldFilter {
+			continue
+		}
+		if fieldPatternsLike != nil && !fieldPatternsLike.DoMatch(tbl.Name.L) {
+			continue
+		}
+		rows = append(rows, mvRow{id: tbl.ID, name: tbl.Name.O})
+	}
+	sort.Slice(rows, func(i, j int) bool {
+		if rows[i].name == rows[j].name {
+			return rows[i].id < rows[j].id
+		}
+		return rows[i].name < rows[j].name
+	})
+	for _, row := range rows {
+		e.appendRow([]any{row.id, row.name})
+	}
+	return nil
+}
+
+func (e *ShowExec) fetchShowMaterializedViewLogs(ctx context.Context) error {
+	checker := privilege.GetPrivilegeManager(e.Ctx())
+	if !e.is.SchemaExists(e.DBName) {
+		return exeerrors.ErrBadDB.GenWithStackByArgs(e.DBName)
+	}
+
+	tables, err := e.is.SchemaTableInfos(ctx, e.DBName)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	activeRoles := e.Ctx().GetSessionVars().ActiveRoles
+	var (
+		fieldFilter       string
+		fieldPatternsLike collate.WildcardPattern
+	)
+	if e.Extractor != nil {
+		fieldFilter = e.Extractor.Field()
+		fieldPatternsLike = e.Extractor.FieldPatternLike()
+	}
+	type mlogRow struct {
+		id       int64
+		name     string
+		baseID   int64
+		baseName string
+	}
+	rows := make([]mlogRow, 0)
+	for _, tbl := range tables {
+		if tbl.MaterializedViewLog == nil {
+			continue
+		}
+		baseID := tbl.MaterializedViewLog.BaseTableID
+		baseName := ""
+		if baseID != 0 {
+			if baseTbl, ok := e.is.TableByID(ctx, baseID); ok {
+				baseName = baseTbl.Meta().Name.O
+			}
+		}
+		if baseName == "" {
+			continue
+		}
+		lowerMLogName := strings.ToLower(tbl.Name.O)
+		if fieldFilter != "" && lowerMLogName != fieldFilter {
+			continue
+		}
+		if fieldPatternsLike != nil && !fieldPatternsLike.DoMatch(lowerMLogName) {
+			continue
+		}
+		if checker != nil && !hasAnyMaterializedViewVisiblePriv(checker, activeRoles, e.DBName.O, tbl.Name.O) {
+			continue
+		}
+		rows = append(rows, mlogRow{
+			id:       tbl.ID,
+			name:     tbl.Name.O,
+			baseID:   baseID,
+			baseName: baseName,
+		})
+	}
+	sort.Slice(rows, func(i, j int) bool {
+		if rows[i].name == rows[j].name {
+			return rows[i].id < rows[j].id
+		}
+		return rows[i].name < rows[j].name
+	})
+	for _, row := range rows {
+		e.appendRow([]any{row.id, row.name, row.baseID, row.baseName})
+	}
+	return nil
+}
+
+func (e *ShowExec) fetchShowMaterializedViewRemainLogs(ctx context.Context) error {
+	db, ok := e.is.SchemaByName(e.DBName)
+	if !ok {
+		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(e.DBName.O)
+	}
+
+	mviewTable, err := e.getTable()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	mviewMeta := mviewTable.Meta()
+	if mviewMeta.MaterializedView == nil {
+		return exeerrors.ErrWrongObject.GenWithStackByArgs(db.Name.O, mviewMeta.Name.O, "MATERIALIZED VIEW")
+	}
+	if len(mviewMeta.MaterializedView.BaseTableIDs) == 0 {
+		return errors.Errorf("base table does not exist for materialized view %s.%s", db.Name.O, mviewMeta.Name.O)
+	}
+
+	type mlogShowTarget struct {
+		schema ast.CIStr
+		meta   *model.TableInfo
+	}
+
+	seenMLogIDs := make(map[int64]struct{}, len(mviewMeta.MaterializedView.BaseTableIDs))
+	mlogs := make([]mlogShowTarget, 0, len(mviewMeta.MaterializedView.BaseTableIDs))
+	for _, baseTableID := range mviewMeta.MaterializedView.BaseTableIDs {
+		baseTable, ok := e.is.TableByID(ctx, baseTableID)
+		if !ok {
+			return errors.Errorf("base table does not exist for materialized view %s.%s", db.Name.O, mviewMeta.Name.O)
+		}
+		baseMeta := baseTable.Meta()
+		if baseMeta.MaterializedViewBase == nil || baseMeta.MaterializedViewBase.MLogID == 0 {
+			return errors.Errorf("materialized view log does not exist for base table %s", baseMeta.Name.O)
+		}
+		if _, ok = seenMLogIDs[baseMeta.MaterializedViewBase.MLogID]; ok {
+			continue
+		}
+		seenMLogIDs[baseMeta.MaterializedViewBase.MLogID] = struct{}{}
+
+		mlogTable, ok := e.is.TableByID(ctx, baseMeta.MaterializedViewBase.MLogID)
+		if !ok {
+			return errors.Errorf("materialized view log does not exist for base table %s", baseMeta.Name.O)
+		}
+		mlogMeta := mlogTable.Meta()
+		mlogSchema, ok := infoschema.SchemaByTable(e.is, mlogMeta)
+		if !ok {
+			return errors.Errorf("schema does not exist for materialized view log %s", mlogMeta.Name.O)
+		}
+		mlogs = append(mlogs, mlogShowTarget{
+			schema: mlogSchema.Name,
+			meta:   mlogMeta,
+		})
+	}
+
+	execCtx, sqlExec, _, cleanup, err := e.beginMViewLogShowInternalTxn(ctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer cleanup()
+
+	rows, err := sqlexec.ExecSQL(execCtx, sqlExec,
+		"SELECT LAST_SUCCESS_READ_TSO FROM mysql.tidb_mview_refresh_info WHERE MVIEW_ID = %?",
+		mviewMeta.ID,
+	)
+	if err != nil {
+		if infoschema.ErrTableNotExists.Equal(err) {
+			return errors.New("show materialized view remain logs: required system table mysql.tidb_mview_refresh_info does not exist")
+		}
+		return errors.Trace(err)
+	}
+	if len(rows) == 0 {
+		return errors.Errorf("show materialized view remain logs: refresh info row missing for materialized view %s.%s", db.Name.O, mviewMeta.Name.O)
+	}
+	if rows[0].IsNull(0) {
+		return errors.Errorf("show materialized view remain logs: last success read tso is null for materialized view %s.%s", db.Name.O, mviewMeta.Name.O)
+	}
+	lastSuccessReadTSO := rows[0].GetUint64(0)
+
+	for _, mlog := range mlogs {
+		countSQL := sqlescape.MustEscapeSQL(
+			"SELECT COUNT(*) FROM %n.%n WHERE _tidb_commit_ts > %?",
+			mlog.schema.O,
+			mlog.meta.Name.O,
+			lastSuccessReadTSO,
+		)
+		countRows, err := sqlexec.ExecSQL(execCtx, sqlExec, countSQL)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		remainLogs := int64(0)
+		if len(countRows) > 0 && !countRows[0].IsNull(0) {
+			remainLogs = countRows[0].GetInt64(0)
+		}
+		e.appendRow([]any{mviewMeta.ID, mviewMeta.Name.O, mlog.meta.ID, mlog.meta.Name.O, remainLogs})
+	}
+	return nil
+}
+
+func (e *ShowExec) fetchShowMaterializedViewLogWaitPurge(ctx context.Context) error {
+	if _, ok := e.is.SchemaByName(e.DBName); !ok {
+		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(e.DBName.O)
+	}
+
+	baseTable, err := e.getTable()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	baseMeta := baseTable.Meta()
+	if baseMeta.IsView() || baseMeta.IsSequence() || baseMeta.TempTableType != model.TempTableNone {
+		return exeerrors.ErrWrongObject.GenWithStackByArgs(e.DBName.O, baseMeta.Name.O, "BASE TABLE")
+	}
+	if baseMeta.MaterializedViewBase == nil || baseMeta.MaterializedViewBase.MLogID == 0 {
+		return errors.Errorf("materialized view log does not exist for base table %s.%s", e.DBName.O, baseMeta.Name.O)
+	}
+
+	mlogTable, ok := e.is.TableByID(ctx, baseMeta.MaterializedViewBase.MLogID)
+	if !ok {
+		return errors.Errorf("materialized view log does not exist for base table %s.%s", e.DBName.O, baseMeta.Name.O)
+	}
+	mlogMeta := mlogTable.Meta()
+	if mlogMeta.MaterializedViewLog == nil || mlogMeta.MaterializedViewLog.BaseTableID != baseMeta.ID {
+		return errors.Errorf(
+			"table %s.%s is not a materialized view log for base table %s.%s",
+			e.DBName.O,
+			mlogMeta.Name.O,
+			e.DBName.O,
+			baseMeta.Name.O,
+		)
+	}
+	mlogSchema, ok := infoschema.SchemaByTable(e.is, mlogMeta)
+	if !ok {
+		return errors.Errorf("schema does not exist for materialized view log %s", mlogMeta.Name.O)
+	}
+
+	execCtx, sqlExec, showStartTS, cleanup, err := e.beginMViewLogShowInternalTxn(ctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer cleanup()
+
+	rows, err := sqlexec.ExecSQL(execCtx, sqlExec,
+		"SELECT LAST_PURGED_TSO FROM mysql.tidb_mlog_purge_info WHERE MLOG_ID = %?",
+		mlogMeta.ID,
+	)
+	if err != nil {
+		if infoschema.ErrTableNotExists.Equal(err) {
+			return errors.New("show materialized view log wait purge: required system table mysql.tidb_mlog_purge_info does not exist")
+		}
+		return errors.Trace(err)
+	}
+	if len(rows) == 0 {
+		return errors.Errorf("show materialized view log wait purge: purge info row missing for materialized view log on %s.%s", e.DBName.O, baseMeta.Name.O)
+	}
+	var lastPurgedTSO uint64
+	hasLastPurgedTSO := !rows[0].IsNull(0)
+	if hasLastPurgedTSO {
+		lastPurgedTSO = rows[0].GetUint64(0)
+	}
+
+	publicMVIDs, buildingMVIDs, err := collectDependentMViewIDsForMLogPurge(execCtx, sqlExec, baseMeta, mlogMeta.ID)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	safePurgeTSO, err := calcMaterializedViewLogSafePurgeTSO(
+		execCtx,
+		sqlExec,
+		e.DBName.O,
+		baseMeta.Name.O,
+		showStartTS,
+		publicMVIDs,
+		buildingMVIDs,
+	)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	waitPurge := int64(0)
+	if safePurgeTSO > 0 && (!hasLastPurgedTSO || lastPurgedTSO < safePurgeTSO) {
+		var countSQL string
+		if hasLastPurgedTSO {
+			countSQL = sqlescape.MustEscapeSQL(
+				"SELECT COUNT(*) FROM %n.%n WHERE _tidb_commit_ts > %? AND _tidb_commit_ts <= %?",
+				mlogSchema.Name.O,
+				mlogMeta.Name.O,
+				lastPurgedTSO,
+				safePurgeTSO,
+			)
+		} else {
+			countSQL = sqlescape.MustEscapeSQL(
+				"SELECT COUNT(*) FROM %n.%n WHERE _tidb_commit_ts <= %?",
+				mlogSchema.Name.O,
+				mlogMeta.Name.O,
+				safePurgeTSO,
+			)
+		}
+		countRows, err := sqlexec.ExecSQL(execCtx, sqlExec, countSQL)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if len(countRows) > 0 && !countRows[0].IsNull(0) {
+			waitPurge = countRows[0].GetInt64(0)
+		}
+	}
+
+	e.appendRow([]any{mlogMeta.ID, mlogMeta.Name.O, baseMeta.ID, baseMeta.Name.O, waitPurge})
+	return nil
+}
+
+func (e *ShowExec) beginMViewLogShowInternalTxn(ctx context.Context) (
+	context.Context,
+	sqlexec.SQLExecutor,
+	uint64,
+	func(),
+	error,
+) {
+	execCtx := kv.WithInternalSourceType(ctx, kv.InternalTxnMViewMaintenance)
+	releaseCtx := context.WithoutCancel(execCtx)
+
+	internalSctx, err := e.GetSysSession()
+	if err != nil {
+		return nil, nil, 0, nil, errors.Trace(err)
+	}
+	sessVars := internalSctx.GetSessionVars()
+	origMaintenance := sessVars.InMViewMaintenance
+	origEnableMView := sessVars.EnableMView
+	sessVars.EnableMView = true
+	sessVars.InMViewMaintenance = true
+	sqlExec := internalSctx.GetSQLExecutor()
+	if _, err = sqlExec.ExecuteInternal(execCtx, "BEGIN"); err != nil {
+		sessVars.InMViewMaintenance = origMaintenance
+		sessVars.EnableMView = origEnableMView
+		e.ReleaseSysSession(releaseCtx, internalSctx)
+		return nil, nil, 0, nil, errors.Trace(err)
+	}
+	cleanup := func() {
+		_, _ = sqlExec.ExecuteInternal(releaseCtx, "ROLLBACK")
+		sessVars.InMViewMaintenance = origMaintenance
+		sessVars.EnableMView = origEnableMView
+		e.ReleaseSysSession(releaseCtx, internalSctx)
+	}
+	txn, err := internalSctx.Txn(true)
+	if err != nil {
+		cleanup()
+		return nil, nil, 0, nil, errors.Trace(err)
+	}
+	return execCtx, sqlExec, txn.StartTS(), cleanup, nil
+}
+
+func hasAnyMaterializedViewVisiblePriv(
+	checker privilege.Manager,
+	activeRoles []*auth.RoleIdentity,
+	dbName string,
+	tableName string,
+) bool {
+	for _, priv := range materializedViewTablePrivs {
+		if checker.RequestVerification(activeRoles, dbName, tableName, "", priv) {
+			return true
+		}
+	}
+	return false
+}
+
+func (e *ShowExec) fetchShowCreateMaterializedView() error {
+	db, ok := e.is.SchemaByName(e.DBName)
+	if !ok {
+		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(e.DBName.O)
+	}
+
+	tb, err := e.getTable()
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	if tb.Meta().MaterializedView == nil {
+		return exeerrors.ErrWrongObject.GenWithStackByArgs(db.Name.O, tb.Meta().Name.O, "MATERIALIZED VIEW")
+	}
+
+	var buf bytes.Buffer
+	fetchShowCreateTable4MaterializedView(e.Ctx(), tb.Meta(), &buf)
+	e.appendRow([]any{tb.Meta().Name.O, buf.String(), tb.Meta().Charset, tb.Meta().Collate})
+	return nil
+}
+
+func (e *ShowExec) fetchShowCreateMaterializedViewLog() error {
+	if _, ok := e.is.SchemaByName(e.DBName); !ok {
+		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(e.DBName.O)
+	}
+
+	baseTable, err := e.getTable()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	baseMeta := baseTable.Meta()
+	if baseMeta.IsView() || baseMeta.IsSequence() || baseMeta.TempTableType != model.TempTableNone {
+		return exeerrors.ErrWrongObject.GenWithStackByArgs(e.DBName.O, baseMeta.Name.O, "BASE TABLE")
+	}
+
+	if baseMeta.MaterializedViewBase == nil || baseMeta.MaterializedViewBase.MLogID == 0 {
+		return exeerrors.ErrWrongObject.GenWithStackByArgs(e.DBName.O, baseMeta.Name.O, "BASE TABLE WITH MATERIALIZED VIEW LOG")
+	}
+	mlogID := baseMeta.MaterializedViewBase.MLogID
+	mlogTable, ok := e.is.TableByID(context.Background(), mlogID)
+	if !ok {
+		return exeerrors.ErrWrongObject.GenWithStackByArgs(e.DBName.O, baseMeta.Name.O, "BASE TABLE WITH MATERIALIZED VIEW LOG")
+	}
+	mlogName := mlogTable.Meta().Name
+
+	mlogInfo := mlogTable.Meta().MaterializedViewLog
+	if mlogInfo == nil || mlogInfo.BaseTableID != baseMeta.ID {
+		return exeerrors.ErrWrongObject.GenWithStackByArgs(
+			e.DBName.O,
+			mlogName.O,
+			fmt.Sprintf("MATERIALIZED VIEW LOG FOR BASE TABLE %s.%s", e.DBName.O, baseMeta.Name.O),
+		)
+	}
+
+	var buf bytes.Buffer
+	fetchShowCreateTable4MaterializedViewLog(e.Ctx(), baseMeta, mlogTable.Meta(), &buf)
+	e.appendRow([]any{baseMeta.Name.O, buf.String()})
+	return nil
+}
+
+func fetchShowCreateTable4MaterializedView(ctx sessionctx.Context, tb *model.TableInfo, buf *bytes.Buffer) {
+	sqlMode := ctx.GetSessionVars().SQLMode
+	mviewInfo := tb.MaterializedView
+	if mviewInfo == nil {
+		return
+	}
+
+	fmt.Fprintf(buf, "CREATE MATERIALIZED VIEW %s (", stringutil.Escape(tb.Name.O, sqlMode))
+	needComma := false
+	for _, col := range tb.Cols() {
+		if col == nil || col.Hidden {
+			continue
+		}
+		if needComma {
+			buf.WriteString(", ")
+		}
+		buf.WriteString(stringutil.Escape(col.Name.O, sqlMode))
+		needComma = true
+	}
+	buf.WriteString(")")
+	if len(tb.Comment) > 0 {
+		fmt.Fprintf(buf, " COMMENT = '%s'", format.OutputFormat(tb.Comment))
+	}
+
+	if tb.ShardRowIDBits > 0 {
+		fmt.Fprintf(buf, " SHARD_ROW_ID_BITS = %d", tb.ShardRowIDBits)
+	}
+	if tb.PreSplitRegions > 0 {
+		fmt.Fprintf(buf, " PRE_SPLIT_REGIONS = %d", tb.PreSplitRegions)
+	}
+
+	refreshMethod := mviewInfo.RefreshMethod
+	if refreshMethod == "" {
+		refreshMethod = "FAST"
+	}
+	fmt.Fprintf(buf, " REFRESH %s", refreshMethod)
+	if strings.EqualFold(refreshMethod, "FAST") {
+		if mviewInfo.RefreshStartWith != "" {
+			fmt.Fprintf(buf, " START WITH %s", mviewInfo.RefreshStartWith)
+		}
+		if mviewInfo.RefreshNext != "" {
+			fmt.Fprintf(buf, " NEXT %s", mviewInfo.RefreshNext)
+		}
+	}
+	attrPairs := make([]string, 0, 3)
+	if mviewInfo.AlertWarningSec > 0 {
+		attrPairs = append(attrPairs, fmt.Sprintf("mview_alert_warning=%d", mviewInfo.AlertWarningSec))
+	}
+	if mviewInfo.AlertOverdueSec > 0 {
+		attrPairs = append(attrPairs, fmt.Sprintf("mview_alert_overdue=%d", mviewInfo.AlertOverdueSec))
+	}
+	if mviewInfo.AlertRefreshFailed {
+		attrPairs = append(attrPairs, "mview_alert_refresh_failed=yes")
+	}
+	if len(attrPairs) > 0 {
+		fmt.Fprintf(buf, " ATTRIBUTES='%s'", strings.Join(attrPairs, ","))
+	}
+	fmt.Fprintf(buf, " AS %s", mviewInfo.SQLContent)
+}
+
+func fetchShowCreateTable4MaterializedViewLog(
+	ctx sessionctx.Context,
+	baseTable *model.TableInfo,
+	mlogTable *model.TableInfo,
+	buf *bytes.Buffer,
+) {
+	if baseTable == nil || mlogTable == nil || mlogTable.MaterializedViewLog == nil {
+		return
+	}
+
+	sqlMode := ctx.GetSessionVars().SQLMode
+	mlogInfo := mlogTable.MaterializedViewLog
+	fmt.Fprintf(buf, "CREATE MATERIALIZED VIEW LOG ON %s (", stringutil.Escape(baseTable.Name.O, sqlMode))
+	for i, col := range mlogInfo.Columns {
+		if i > 0 {
+			buf.WriteString(", ")
+		}
+		buf.WriteString(stringutil.Escape(col.O, sqlMode))
+	}
+	buf.WriteString(")")
+
+	if mlogTable.ShardRowIDBits > 0 {
+		fmt.Fprintf(buf, " SHARD_ROW_ID_BITS = %d", mlogTable.ShardRowIDBits)
+	}
+	if mlogTable.PreSplitRegions > 0 {
+		fmt.Fprintf(buf, " PRE_SPLIT_REGIONS = %d", mlogTable.PreSplitRegions)
+	}
+
+	if mlogInfo.PurgeMethod != "" || mlogInfo.PurgeStartWith != "" || mlogInfo.PurgeNext != "" {
+		buf.WriteString(" PURGE")
+		if strings.EqualFold(mlogInfo.PurgeMethod, "IMMEDIATE") {
+			buf.WriteString(" IMMEDIATE")
+		} else {
+			if mlogInfo.PurgeStartWith != "" {
+				fmt.Fprintf(buf, " START WITH %s", mlogInfo.PurgeStartWith)
+			}
+			if mlogInfo.PurgeNext != "" {
+				fmt.Fprintf(buf, " NEXT %s", mlogInfo.PurgeNext)
+			}
+		}
+	}
+	if mlogInfo.LogAccumulationAlertRows != nil {
+		fmt.Fprintf(buf, " ALERT ROWS %d", *mlogInfo.LogAccumulationAlertRows)
+	}
 }

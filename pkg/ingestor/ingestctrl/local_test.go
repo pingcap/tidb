@@ -1078,7 +1078,7 @@ func TestMultiIngest(t *testing.T) {
 			multiIngestCheckFn: testCase.multiIngestSupport,
 		}
 
-		local := &Backend{
+		local := &Ingestor{
 			pdCli: &mockPdClient{stores: stores},
 			importClientFactory: &mockImportClientFactory{
 				stores: allStores,
@@ -1183,6 +1183,17 @@ func (m mockIngestData) DecRef() {}
 
 func (m mockIngestData) Finish(_, _ int64) {}
 
+type blockingDecRefIngestData struct {
+	mockIngestData
+	allowDecRef <-chan struct{}
+	decRefDone  chan<- struct{}
+}
+
+func (m *blockingDecRefIngestData) DecRef() {
+	<-m.allowDecRef
+	close(m.decRefDone)
+}
+
 var dummyRegionInfo = &split.RegionInfo{
 	Region: &metapb.Region{Id: 1, Peers: []*metapb.Peer{{Id: 1, StoreId: 1}}},
 	Leader: &metapb.Peer{Id: 1, StoreId: 1},
@@ -1205,7 +1216,8 @@ func TestCheckPeersBusy(t *testing.T) {
 		}}
 
 	createTimeStore12 := 0
-	local := &Backend{
+	local := &Ingestor{
+		bufferPool: membuf.NewPool(),
 		importClientFactory: &mockImportClientFactory{
 			stores: []*metapb.Store{
 				{Id: 11}, {Id: 12}, {Id: 13}, // region ["a", "b")
@@ -1235,9 +1247,7 @@ func TestCheckPeersBusy(t *testing.T) {
 		},
 		tikvCodec: keyspace.CodecV1,
 	}
-	var err error
-	local.engineMgr, err = newEngineManager(local.BackendConfig, local, local.logger)
-	require.NoError(t, err)
+	t.Cleanup(local.Close)
 
 	data := mockIngestData{{[]byte("a"), []byte("a")}, {[]byte("b"), []byte("b")}}
 
@@ -1337,8 +1347,9 @@ func TestNotLeaderErrorNeedUpdatePeers(t *testing.T) {
 			NotLeader: &errorpb.NotLeader{Leader: &metapb.Peer{StoreId: 11}},
 		}}
 
-	local := &Backend{
-		splitCli: initTestSplitClient3Replica([][]byte{{}, {'a'}, {}}, nil),
+	local := &Ingestor{
+		bufferPool: membuf.NewPool(),
+		splitCli:   initTestSplitClient3Replica([][]byte{{}, {'a'}, {}}, nil),
 		importClientFactory: &mockImportClientFactory{
 			stores: []*metapb.Store{
 				{Id: 1}, {Id: 2}, {Id: 3},
@@ -1364,9 +1375,7 @@ func TestNotLeaderErrorNeedUpdatePeers(t *testing.T) {
 		},
 		tikvCodec: keyspace.CodecV1,
 	}
-	var err error
-	local.engineMgr, err = newEngineManager(local.BackendConfig, local, local.logger)
-	require.NoError(t, err)
+	t.Cleanup(local.Close)
 
 	var (
 		workGroup, workerCtx = util.NewErrorGroupWithRecoverWithCtx(context.Background())
@@ -1437,8 +1446,9 @@ func TestPartialWriteIngestErrorWontPanic(t *testing.T) {
 			NotLeader: &errorpb.NotLeader{Leader: &metapb.Peer{StoreId: 11}},
 		}}
 
-	local := &Backend{
-		splitCli: initTestSplitClient3Replica([][]byte{{}, {'c'}}, nil),
+	local := &Ingestor{
+		bufferPool: membuf.NewPool(),
+		splitCli:   initTestSplitClient3Replica([][]byte{{}, {'c'}}, nil),
 		importClientFactory: &mockImportClientFactory{
 			stores: []*metapb.Store{
 				{Id: 1}, {Id: 2}, {Id: 3},
@@ -1462,9 +1472,7 @@ func TestPartialWriteIngestErrorWontPanic(t *testing.T) {
 			LocalStoreDir: path.Join(t.TempDir(), "sorted-kv"),
 		},
 	}
-	var err error
-	local.engineMgr, err = newEngineManager(local.BackendConfig, local, local.logger)
-	require.NoError(t, err)
+	t.Cleanup(local.Close)
 
 	data := mockIngestData{{[]byte("a"), []byte("a")}, {[]byte("a2"), []byte("a2")}}
 
@@ -1534,8 +1542,9 @@ func TestPartialWriteIngestBusy(t *testing.T) {
 	onceResp := &atomic.Pointer[sst.IngestResponse]{}
 	onceResp.Store(notLeaderResp)
 
-	local := &Backend{
-		splitCli: initTestSplitClient3Replica([][]byte{{}, {'c'}}, nil),
+	local := &Ingestor{
+		bufferPool: membuf.NewPool(),
+		splitCli:   initTestSplitClient3Replica([][]byte{{}, {'c'}}, nil),
 		importClientFactory: &mockImportClientFactory{
 			stores: []*metapb.Store{
 				{Id: 1}, {Id: 2}, {Id: 3},
@@ -1559,9 +1568,8 @@ func TestPartialWriteIngestBusy(t *testing.T) {
 			LocalStoreDir: path.Join(t.TempDir(), "sorted-kv"),
 		},
 	}
+	t.Cleanup(local.Close)
 	var err error
-	local.engineMgr, err = newEngineManager(local.BackendConfig, local, local.logger)
-	require.NoError(t, err)
 
 	db, tmpPath := makePebbleDB(t, nil)
 	_, engineUUID := backend.MakeUUID("ww", 0)
@@ -1697,7 +1705,7 @@ func TestSplitRangeAgain4BigRegion(t *testing.T) {
 		getSizePropertiesFn = backup
 	})
 
-	local := &Backend{
+	local := &Ingestor{
 		splitCli: initTestSplitClient(
 			[][]byte{{1}, {11}},      // we have one big region
 			panicSplitRegionClient{}, // make sure no further split region
@@ -1762,7 +1770,7 @@ func TestSplitRangeAgain4BigRegionExternalEngine(t *testing.T) {
 		t.Skip("skip this test on next-gen kernel")
 	}
 	ctx := context.Background()
-	local := &Backend{
+	local := &Ingestor{
 		splitCli: initTestSplitClient(
 			[][]byte{{1}, {11}},      // we have one big region
 			panicSplitRegionClient{}, // make sure no further split region
@@ -1783,21 +1791,22 @@ func TestSplitRangeAgain4BigRegionExternalEngine(t *testing.T) {
 
 	extEngine := globalsort.NewExternalEngine(
 		ctx,
-		memStore,
-		dataFiles,
-		statFiles,
-		[]byte{1},
-		[]byte{10},
-		keys,
-		[][]byte{{1}, {11}},
+		&globalsort.EngineConfig{
+			ExtStore:      memStore,
+			DataFiles:     dataFiles,
+			StatFiles:     statFiles,
+			StartKey:      []byte{1},
+			EndKey:        []byte{10},
+			JobKeys:       keys,
+			SplitKeys:     [][]byte{{1}, {11}},
+			TotalFileSize: 456,
+			TotalKVCount:  789,
+			CheckHotspot:  true,
+			MemCapacity:   16 * units.GiB,
+			OnDup:         engineapi.OnDuplicateKeyIgnore,
+		},
 		10,
 		123,
-		456,
-		789,
-		true,
-		16*units.GiB,
-		engineapi.OnDuplicateKeyIgnore,
-		"",
 	)
 
 	jobCh := make(chan *regionJob, 9)
@@ -1971,7 +1980,7 @@ func TestDoImport(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	l := &Backend{
+	l := &Ingestor{
 		BackendConfig: BackendConfig{
 			WorkerConcurrency: toAtomic(2),
 		},
@@ -2107,6 +2116,279 @@ func TestDoImport(t *testing.T) {
 	}
 	err = l.doImport(ctx, e, initRegionKeys, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
 	require.ErrorContains(t, err, "fatal error")
+
+	t.Run("worker error cancels other running workers", func(t *testing.T) {
+		const fatalErr = "worker fatal error"
+
+		var workerCount atomic.Int32
+		secondWorkerStarted := make(chan struct{})
+		testfailpoint.EnableCall(t,
+			"github.com/pingcap/tidb/pkg/ingestor/ingestctrl/beforeExecuteRegionJob",
+			func(ctx context.Context) {
+				switch workerCount.Add(1) {
+				case 1:
+					<-ctx.Done()
+				case 2:
+					close(secondWorkerStarted)
+				}
+			},
+		)
+
+		regionKeys := [][]byte{{'a'}, {'b'}}
+		jobRange := engineapi.Range{Start: regionKeys[0], End: regionKeys[1]}
+		fakeRegionJobs = map[[2]string]struct {
+			jobs []*regionJob
+			err  error
+		}{
+			{"a", "b"}: {
+				jobs: []*regionJob{
+					{
+						keyRange:   jobRange,
+						ingestData: &Engine{},
+						injected: []injectedBehaviour{{
+							write: injectedWriteBehaviour{err: errors.New(fatalErr)},
+						}},
+						region: dummyRegionInfo,
+					},
+					{
+						keyRange:   jobRange,
+						ingestData: &Engine{},
+						injected: []injectedBehaviour{{
+							write: injectedWriteBehaviour{err: errors.New(fatalErr)},
+						}},
+						region: dummyRegionInfo,
+					},
+				},
+			},
+		}
+
+		ctx, cancel := context.WithCancel(context.Background())
+		local := &Ingestor{
+			BackendConfig: BackendConfig{
+				WorkerConcurrency: toAtomic(2),
+			},
+		}
+		engine := &Engine{regionSplitKeysCache: regionKeys}
+		errCh := make(chan error, 1)
+		go func() {
+			errCh <- local.doImport(
+				ctx,
+				engine,
+				regionKeys,
+				int64(config.SplitRegionSize),
+				int64(config.SplitRegionKeys),
+			)
+		}()
+
+		select {
+		case <-secondWorkerStarted:
+		case <-time.After(10 * time.Second):
+			cancel()
+			t.Fatal("timed out waiting for both region workers to start")
+		}
+
+		select {
+		case err := <-errCh:
+			cancel()
+			require.ErrorContains(t, err, fatalErr)
+		case <-time.After(10 * time.Second):
+			cancel()
+			select {
+			case <-errCh:
+			case <-time.After(10 * time.Second):
+				t.Fatal("doImport remained blocked after canceling its parent context")
+			}
+			t.Fatal("doImport blocked waiting for another worker after a worker error")
+		}
+	})
+
+	t.Run("context canceled before import completes", func(t *testing.T) {
+		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ingestor/ingestctrl/skipStartWorker", "return()")
+		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ingestor/ingestctrl/injectVariables", "return()")
+
+		ctx, cancel := context.WithCancel(context.Background())
+		t.Cleanup(cancel)
+
+		oldJobToWorkerCh := testJobToWorkerCh
+		oldJobWg := testJobWg
+		oldFakeRegionJobs := fakeRegionJobs
+		t.Cleanup(func() {
+			testJobToWorkerCh = oldJobToWorkerCh
+			testJobWg = oldJobWg
+			fakeRegionJobs = oldFakeRegionJobs
+		})
+
+		jobRange := engineapi.Range{Start: []byte{'a'}, End: []byte{'b'}}
+		data := &Engine{}
+		fakeRegionJobs = map[[2]string]struct {
+			jobs []*regionJob
+			err  error
+		}{
+			{"a", "b"}: {
+				jobs: []*regionJob{{
+					keyRange:   jobRange,
+					ingestData: data,
+					region:     dummyRegionInfo,
+				}},
+			},
+		}
+		testJobToWorkerCh = make(chan *regionJob, 1)
+
+		mockEngine := &mockEngineWithData{
+			data:   data,
+			ranges: []engineapi.Range{jobRange},
+		}
+		local := &Ingestor{
+			BackendConfig: BackendConfig{
+				WorkerConcurrency: toAtomic(1),
+			},
+		}
+		errCh := make(chan error, 1)
+		go func() {
+			errCh <- local.doImport(
+				ctx,
+				mockEngine,
+				[][]byte{jobRange.Start, jobRange.End},
+				int64(config.SplitRegionSize),
+				int64(config.SplitRegionKeys),
+			)
+		}()
+
+		var job *regionJob
+		select {
+		case job = <-testJobToWorkerCh:
+		case <-time.After(10 * time.Second):
+			t.Fatal("timed out waiting for a dispatched region job")
+		}
+		cancel()
+		job.done(testJobWg)
+
+		select {
+		case err := <-errCh:
+			require.ErrorIs(t, err, context.Canceled)
+		case <-time.After(10 * time.Second):
+			t.Fatal("timed out waiting for doImport to return")
+		}
+	})
+
+	t.Run("context cancellation waits for running workers", func(t *testing.T) {
+		testfailpoint.Enable(t,
+			"github.com/pingcap/tidb/pkg/ingestor/ingestctrl/mockRunJobSucceed",
+			"return",
+		)
+		workerStarted := make(chan struct{})
+		testfailpoint.EnableCall(t,
+			"github.com/pingcap/tidb/pkg/ingestor/ingestctrl/beforeExecuteRegionJob",
+			func(ctx context.Context) {
+				close(workerStarted)
+				<-ctx.Done()
+			},
+		)
+
+		ctx, cancel := context.WithCancel(context.Background())
+		allowDecRef := make(chan struct{})
+		decRefDone := make(chan struct{})
+		var allowDecRefOnce sync.Once
+		releaseWorker := func() {
+			allowDecRefOnce.Do(func() {
+				close(allowDecRef)
+			})
+		}
+		t.Cleanup(func() {
+			cancel()
+			releaseWorker()
+		})
+		testfailpoint.EnableCall(t,
+			"github.com/pingcap/tidb/pkg/ingestor/ingestctrl/beforeReleaseRegionJobWorkerPool",
+			releaseWorker,
+		)
+
+		jobRange := engineapi.Range{Start: []byte{'a'}, End: []byte{'b'}}
+		data := &blockingDecRefIngestData{
+			mockIngestData: mockIngestData{
+				{[]byte{'a'}, []byte{'a'}},
+			},
+			allowDecRef: allowDecRef,
+			decRefDone:  decRefDone,
+		}
+		fakeRegionJobs = map[[2]string]struct {
+			jobs []*regionJob
+			err  error
+		}{
+			{"a", "b"}: {
+				jobs: []*regionJob{{
+					keyRange:   jobRange,
+					ingestData: data,
+					region:     dummyRegionInfo,
+				}},
+			},
+		}
+
+		mockEngine := &mockEngineWithData{
+			data:          data,
+			ranges:        []engineapi.Range{jobRange},
+			waitForCancel: true,
+		}
+		local := &Ingestor{
+			BackendConfig: BackendConfig{
+				WorkerConcurrency: toAtomic(1),
+			},
+		}
+		errCh := make(chan error, 1)
+		go func() {
+			errCh <- local.doImport(
+				ctx,
+				mockEngine,
+				[][]byte{jobRange.Start, jobRange.End},
+				int64(config.SplitRegionSize),
+				int64(config.SplitRegionKeys),
+			)
+		}()
+
+		select {
+		case <-workerStarted:
+		case <-time.After(10 * time.Second):
+			t.Fatal("timed out waiting for region job worker to start")
+		}
+		cancel()
+
+		select {
+		case err := <-errCh:
+			require.ErrorIs(t, err, context.Canceled)
+		case <-time.After(10 * time.Second):
+			t.Fatal("timed out waiting for doImport to return")
+		}
+		select {
+		case <-decRefDone:
+		default:
+			require.FailNow(t, "doImport returned before its running worker exited")
+		}
+	})
+
+	t.Run("dispatcher propagates context cancellation", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+
+		dispatcher := &dispatcher{workerCtx: ctx}
+		require.ErrorIs(t, dispatcher.run(), context.Canceled)
+	})
+
+	t.Run("dispatcher handles error shutdown when result channel closes", func(t *testing.T) {
+		workerCtx, cancel := context.WithCancel(context.Background())
+		t.Cleanup(cancel)
+		testfailpoint.EnableCall(t,
+			"github.com/pingcap/tidb/pkg/ingestor/ingestctrl/beforeWaitForRegionJobWorkerPoolOutcome",
+			cancel,
+		)
+
+		jobFromWorkerCh := make(chan *regionJob)
+		close(jobFromWorkerCh)
+		jobToWorkerCh := make(chan *regionJob)
+		retryer := newRegionJobRetryer(workerCtx, jobToWorkerCh, &sync.WaitGroup{})
+
+		dispatcher := newDispatcher(workerCtx, jobFromWorkerCh, &sync.WaitGroup{}, retryer)
+		require.ErrorIs(t, dispatcher.run(), context.Canceled)
+	})
 }
 
 func TestRegionJobResetRetryCounter(t *testing.T) {
@@ -2187,7 +2469,7 @@ func TestRegionJobResetRetryCounter(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	l := &Backend{
+	l := &Ingestor{
 		BackendConfig: BackendConfig{
 			WorkerConcurrency: toAtomic(2),
 		},
@@ -2245,7 +2527,7 @@ func TestCtxCancelIsIgnored(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	l := &Backend{
+	l := &Ingestor{
 		BackendConfig: BackendConfig{
 			WorkerConcurrency: toAtomic(1),
 		},
@@ -2273,7 +2555,7 @@ func TestWorkerFailedWhenGeneratingJobs(t *testing.T) {
 	initRegionKeys := [][]byte{{'c'}, {'d'}}
 
 	ctx := context.Background()
-	l := &Backend{
+	l := &Ingestor{
 		BackendConfig: BackendConfig{
 			WorkerConcurrency: toAtomic(1),
 		},
@@ -2334,7 +2616,7 @@ func TestExternalEngine(t *testing.T) {
 	dataFiles, statFiles, err := globalsort.MockExternalEngine(extStorage, keys, values)
 	require.NoError(t, err)
 
-	externalCfg := &backend.ExternalEngineConfig{
+	externalCfg := &globalsort.EngineConfig{
 		ExtStore:      extStorage,
 		DataFiles:     dataFiles,
 		StatFiles:     statFiles,
@@ -2346,9 +2628,8 @@ func TestExternalEngine(t *testing.T) {
 		TotalKVCount:  int64(config.SplitRegionKeys) + 1,
 		MemCapacity:   8 * units.GiB,
 	}
-	engineUUID := uuid.New()
 	hook := &recordScanRegionsHook{}
-	local := &Backend{
+	local := &Ingestor{
 		BackendConfig: BackendConfig{
 			WorkerConcurrency: toAtomic(2),
 			LocalStoreDir:     path.Join(t.TempDir(), "sorted-kv"),
@@ -2358,8 +2639,7 @@ func TestExternalEngine(t *testing.T) {
 		}, hook),
 		pdCli: &mockPdClient{},
 	}
-	local.engineMgr, err = newEngineManager(local.BackendConfig, local, local.logger)
-	require.NoError(t, err)
+	require.NoDirExists(t, local.LocalStoreDir)
 	jobs := make([]*regionJob, 0, 5)
 
 	jobToWorkerCh := make(chan *regionJob, 10)
@@ -2373,18 +2653,15 @@ func TestExternalEngine(t *testing.T) {
 		}
 	}()
 	go func() {
-		err2 := local.CloseEngine(
-			ctx,
-			&backend.EngineConfig{External: externalCfg},
-			engineUUID,
-		)
+		eng := globalsort.NewExternalEngine(ctx, externalCfg, local.GetWorkerConcurrency(), 123)
+		err2 := local.IngestExternalEngine(ctx, eng, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
 		require.NoError(t, err2)
-		err2 = local.ImportEngine(ctx, engineUUID, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
-		require.NoError(t, err2)
+		require.NoError(t, eng.Close())
 		close(done)
 	}()
 
 	<-done
+	require.NoDirExists(t, local.LocalStoreDir)
 
 	// no jobs left in the channel
 	require.Len(t, jobToWorkerCh, 0)
@@ -2433,24 +2710,48 @@ func TestCheckDiskAvail(t *testing.T) {
 	store = &http.StoreInfo{Status: http.StoreStatus{LeaderWeight: 1.0, RegionWeight: 1.0}}
 	err = checkDiskAvail(ctx, store)
 	require.NoError(t, err)
+
+	store = &http.StoreInfo{
+		Store:  http.MetaStore{Address: "127.0.0.1:20160"},
+		Status: http.StoreStatus{Capacity: "100 GB", Available: "5 GB"},
+	}
+	err = checkDiskAvail(ctx, store)
+	require.ErrorIs(t, err, errdef.ErrKVDiskFull)
+	require.Contains(t, err.Error(), "TiKV(127.0.0.1:20160)")
+	require.Contains(t, err.Error(), "increase the storage capacity of TiKV")
+
+	store = &http.StoreInfo{
+		Store: http.MetaStore{
+			Address: "127.0.0.1:3930",
+			Labels: []http.StoreLabel{
+				{Key: "engine", Value: "tiflash"},
+			},
+		},
+		Status: http.StoreStatus{Capacity: "100 GB", Available: "5 GB"},
+	}
+	err = checkDiskAvail(ctx, store)
+	require.ErrorIs(t, err, errdef.ErrKVDiskFull)
+	require.Contains(t, err.Error(), "TiFlash(127.0.0.1:3930)")
+	require.Contains(t, err.Error(), "increase the storage capacity of TiFlash")
 }
 
 func TestBackendCloseWithoutTiKVClient(t *testing.T) {
 	localStoreDir := t.TempDir()
-	b := &Backend{
+	pool := membuf.NewPool()
+	b := &Backend{Ingestor: &Ingestor{
+		bufferPool: pool,
 		BackendConfig: BackendConfig{
 			LocalStoreDir: localStoreDir,
 		},
-		engineMgr: &engineManager{
-			BackendConfig: BackendConfig{
-				LocalStoreDir: localStoreDir,
-			},
-			externalEngine: map[uuid.UUID]engineapi.Engine{},
-			bufferPool:     membuf.NewPool(),
-			logger:         log.L(),
-		},
+
 		importClientFactory: &mockImportClientFactory{},
-	}
+	}, engineMgr: &engineManager{
+		BackendConfig: BackendConfig{
+			LocalStoreDir: localStoreDir,
+		},
+		bufferPool: pool,
+		logger:     log.L(),
+	}}
 
 	require.NotPanics(t, b.Close)
 }
@@ -2496,7 +2797,7 @@ func TestGetDupeControllerInitializesTiKVClientLazily(t *testing.T) {
 		return nil, errors.New("mock kv store error")
 	}
 
-	b := &Backend{
+	b := &Backend{Ingestor: &Ingestor{
 		pdCli:     inputPDCli,
 		pdAddrs:   []string{"127.0.0.1:2379"},
 		tls:       &common.TLS{},
@@ -2504,7 +2805,7 @@ func TestGetDupeControllerInitializesTiKVClientLazily(t *testing.T) {
 		BackendConfig: BackendConfig{
 			DisablePDClientRouterClient: true,
 		},
-	}
+	}}
 
 	dupeController, err := b.GetDupeController(context.Background(), 1, nil)
 	require.Nil(t, dupeController)
@@ -2522,12 +2823,12 @@ func TestGetDupeControllerInitializesTiKVClientLazily(t *testing.T) {
 	routerClientEnabled = false
 	inputPDCli = &mockPdClient{}
 	tikvPDCli = &mockPdClient{}
-	b = &Backend{
+	b = &Backend{Ingestor: &Ingestor{
 		pdCli:     inputPDCli,
 		pdAddrs:   []string{"127.0.0.1:2379"},
 		tls:       &common.TLS{},
 		tikvCodec: keyspace.CodecV1,
-	}
+	}}
 	dupeController, err = b.GetDupeController(context.Background(), 1, nil)
 	require.Nil(t, dupeController)
 	require.ErrorContains(t, err, "mock kv store error")
@@ -2555,11 +2856,11 @@ func TestGetDupeControllerInitializesTiKVClientLazily(t *testing.T) {
 		return nil
 	}
 
-	b = &Backend{
+	b = &Backend{Ingestor: &Ingestor{
 		pdAddrs:   []string{"127.0.0.1:2379"},
 		tls:       &common.TLS{},
 		tikvCodec: keyspace.CodecV1,
-	}
+	}}
 	dupeController, err = b.GetDupeController(ctx, 1, nil)
 	require.Nil(t, dupeController)
 	require.Same(t, ctx, pdClientCtx)
@@ -2731,7 +3032,7 @@ func TestRefAllJobsBeforeSending(t *testing.T) {
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ingestor/ingestctrl/fakeRegionJobs", "return()")
 
 	ctx := context.Background()
-	local := &Backend{
+	local := &Ingestor{
 		BackendConfig: BackendConfig{
 			WorkerConcurrency: *atomic2.NewInt32(2),
 			LocalStoreDir:     path.Join(t.TempDir(), "sorted-kv"),
@@ -2739,9 +3040,6 @@ func TestRefAllJobsBeforeSending(t *testing.T) {
 		splitCli: initTestSplitClient([][]byte{[]byte("a"), []byte("z")}, nil),
 		pdCli:    &mockPdClient{},
 	}
-	var err error
-	local.engineMgr, err = newEngineManager(local.BackendConfig, local, local.logger)
-	require.NoError(t, err)
 
 	// Create a refCountIngestData that tracks reference count
 	data := &refCountIngestData{
@@ -2951,7 +3249,7 @@ func TestRefAllJobsBeforeSending(t *testing.T) {
 
 	// Generate and send jobs
 	// The fix ensures all jobs are ref'd before sending to jobToWorkerCh
-	err = local.generateAndSendJob(ctx, mockEngine, int64(config.SplitRegionSize), int64(config.SplitRegionKeys), jobToWorkerCh, &jobWg)
+	err := local.generateAndSendJob(ctx, mockEngine, int64(config.SplitRegionSize), int64(config.SplitRegionKeys), jobToWorkerCh, &jobWg)
 	require.NoError(t, err)
 
 	// Wait for all jobs to be processed
@@ -2975,7 +3273,7 @@ func TestGenerateAndSendJobDoneAllRefedJobsOnCancel(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
-	local := &Backend{}
+	local := &Ingestor{}
 	local.WorkerConcurrency.Store(1)
 
 	data := &refCountIngestData{
@@ -3033,8 +3331,9 @@ func TestGenerateAndSendJobDoneAllRefedJobsOnCancel(t *testing.T) {
 
 // mockEngineWithData is a mock engine that implements engineapi.Engine
 type mockEngineWithData struct {
-	data   engineapi.IngestData
-	ranges []engineapi.Range
+	data          engineapi.IngestData
+	ranges        []engineapi.Range
+	waitForCancel bool
 }
 
 func (m *mockEngineWithData) ID() string {
@@ -3049,6 +3348,10 @@ func (m *mockEngineWithData) LoadIngestData(ctx context.Context, ch chan<- engin
 		Data:         m.data,
 		SortedRanges: m.ranges,
 	}:
+	}
+	if m.waitForCancel {
+		<-ctx.Done()
+		return ctx.Err()
 	}
 	// Don't close the channel here - generateAndSendJob will close it
 	return nil

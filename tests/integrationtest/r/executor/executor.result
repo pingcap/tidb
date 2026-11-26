@@ -3184,6 +3184,7 @@ Insert	Tables	To insert data into tables
 Lock tables	Databases	To use LOCK TABLES (together with SELECT privilege)
 Process	Server Admin	To view the plain text of currently executing queries
 Proxy	Server Admin	To make proxy user possible
+Operate view	Tables	To execute materialized view and materialized view log maintenance operations
 References	Databases,Tables	To have references on tables
 Reload	Server Admin	To reload or refresh tables, logs and privileges
 Replication client	Server Admin	To ask where the slave or master servers are
@@ -3217,6 +3218,7 @@ RESOURCE_GROUP_ADMIN	Server Admin
 RESOURCE_GROUP_USER	Server Admin	
 TRAFFIC_CAPTURE_ADMIN	Server Admin	
 TRAFFIC_REPLAY_ADMIN	Server Admin	
+APPLICATION_PASSWORD_ADMIN	Server Admin	
 show table status;
 Name	Engine	Version	Row_format	Rows	Avg_row_length	Data_length	Max_data_length	Index_length	Data_free	Auto_increment	Create_time	Update_time	Check_time	Collation	Checksum	Create_options	Comment
 t	InnoDB	10	Compact	0	0	0	0	0	0	NULL	0	NULL	NULL	utf8mb4_bin			

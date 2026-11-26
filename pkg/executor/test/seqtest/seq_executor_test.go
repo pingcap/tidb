@@ -321,7 +321,15 @@ func TestShow(t *testing.T) {
 	require.Len(t, row, 5)
 	require.NotEqual(t, "0", row[1].(string))
 
-	tk.MustQuery("SHOW PRIVILEGES")
+	rows = tk.MustQuery("SHOW PRIVILEGES").Rows()
+	foundOperateView := false
+	for _, r := range rows {
+		if len(r) >= 2 && r[0] == "Operate view" && r[1] == "Tables" {
+			foundOperateView = true
+			break
+		}
+	}
+	require.True(t, foundOperateView)
 
 	// Test show create database
 	testSQL = `create database show_test_DB`
@@ -626,14 +634,14 @@ func TestShowStatsHealthy(t *testing.T) {
 	tk.MustQuery("show stats_healthy").Check(testkit.Rows("test t  100"))
 	tk.MustExec("insert into t values (3), (4), (5), (6), (7), (8), (9), (10)")
 	tk.MustExec("flush stats_delta *.*")
-	err := do.StatsHandle().Update(context.Background(), do.InfoSchema())
+	err := do.StatsHandle().Cache().Update(context.Background(), do.InfoSchema())
 	require.NoError(t, err)
 	tk.MustQuery("show stats_healthy").Check(testkit.Rows("test t  0"))
 	tk.MustExec("analyze table t")
 	tk.MustQuery("show stats_healthy").Check(testkit.Rows("test t  100"))
 	tk.MustExec("delete from t")
 	tk.MustExec("flush stats_delta *.*")
-	err = do.StatsHandle().Update(context.Background(), do.InfoSchema())
+	err = do.StatsHandle().Cache().Update(context.Background(), do.InfoSchema())
 	require.NoError(t, err)
 	tk.MustQuery("show stats_healthy").Check(testkit.Rows("test t  0"))
 }

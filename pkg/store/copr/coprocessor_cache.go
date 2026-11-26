@@ -113,7 +113,7 @@ func coprCacheBuildKey(copReq *coprocessor.Request) ([]byte, error) {
 		}
 		totalLength += 2 + len(r.Start) + 2 + len(r.End)
 	}
-	if copReq.PagingSize > 0 {
+	if copReq.PagingSize > 0 || copReq.PagingSizeBytes > 0 {
 		totalLength++
 	}
 
@@ -149,8 +149,12 @@ func coprCacheBuildKey(copReq *coprocessor.Request) ([]byte, error) {
 		dest += len(r.End)
 	}
 
-	// 1 byte when use paging protocol
-	if copReq.PagingSize > 0 {
+	// 1 byte marks a paging request (row-count or byte-budget). The exact
+	// PagingSize/PagingSizeBytes values are deliberately excluded from the key: a
+	// cached page is self-describing via its returned range, so requests that
+	// differ only in page granularity can safely share a cache entry, while
+	// non-paging requests stay in a separate key space.
+	if copReq.PagingSize > 0 || copReq.PagingSizeBytes > 0 {
 		key[dest] = 1
 	}
 

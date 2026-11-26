@@ -45,6 +45,7 @@ import (
 	autoid "github.com/pingcap/tidb/pkg/autoid_service"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/deploymode"
+	"github.com/pingcap/tidb/pkg/config/diagnosticmode"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -56,7 +57,6 @@ import (
 	util2 "github.com/pingcap/tidb/pkg/server/internal/util"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/statistics/handle/initstats"
-	"github.com/pingcap/tidb/pkg/store"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/cpuprofile"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -75,12 +75,56 @@ import (
 
 const defaultStatusPort = 10080
 
+// fullStatusServerEnabled reports whether cluster HTTP APIs and gRPC are available.
+func (s *Server) fullStatusServerEnabled() bool {
+	return s.cfg.Status.ReportStatus && !diagnosticmode.Enabled()
+}
+
 func (s *Server) startStatusHTTP() error {
+	if !s.cfg.Status.ReportStatus {
+		return nil
+	}
+	s.statusMu.Lock()
+	defer s.statusMu.Unlock()
+	if s.statusClosed {
+		return net.ErrClosed
+	}
+	if diagnosticmode.Enabled() {
+		return s.startDiagnosticHTTP()
+	}
 	err := s.initHTTPListener()
 	if err != nil {
 		return err
 	}
-	go s.startHTTPServer()
+	s.statusWG.Run(s.startHTTPServer)
+	return nil
+}
+
+// startDiagnosticHTTP exposes local diagnostics without starting cluster services.
+func (s *Server) startDiagnosticHTTP() error {
+	if err := s.listenStatusHTTPServer(); err != nil {
+		return err
+	}
+
+	// Keep this allowlist separate from the normal management API router.
+	router := mux.NewRouter()
+	router.HandleFunc("/status", s.handleStatus).Methods(http.MethodGet)
+	router.Handle("/metrics", promhttp.Handler()).Methods(http.MethodGet)
+	router.HandleFunc("/debug/pprof/cmdline", withProfilingRequestLog(pprof.Cmdline)).Methods(http.MethodGet)
+	router.HandleFunc("/debug/pprof/profile", withProfilingRequestLog(cpuprofile.ProfileHTTPHandler)).Methods(http.MethodGet)
+	router.HandleFunc("/debug/pprof/symbol", withProfilingRequestLog(pprof.Symbol)).Methods(http.MethodGet)
+	router.HandleFunc("/debug/pprof/trace", withProfilingRequestLog(pprof.Trace)).Methods(http.MethodGet)
+	router.PathPrefix("/debug/pprof/").HandlerFunc(withProfilingRequestLog(pprof.Index)).Methods(http.MethodGet)
+
+	statusServer := &http.Server{Addr: s.statusAddr, Handler: util2.NewCorsHandler(router, s.cfg)}
+	// Publish before Serve starts so closeListener also handles early shutdown.
+	s.statusServer.Store(statusServer)
+	listener := s.statusListener
+	s.statusWG.RunWithRecover(func() {
+		if err := statusServer.Serve(listener); err != nil && err != http.ErrServerClosed {
+			logutil.BgLogger().Warn("diagnostic http server error", zap.Error(err))
+		}
+	}, nil)
 	return nil
 }
 
@@ -116,9 +160,11 @@ func (s *Server) listenStatusHTTPServer() error {
 	tlsConfig = s.SetCNChecker(tlsConfig)
 
 	if tlsConfig != nil {
-		// The protocols should be listed as the same order we dispatch the connection with cmux.
-		tlsConfig.NextProtos = []string{"http/1.1", "h2"}
-		// we need to manage TLS here for cmux to distinguish between HTTP and gRPC.
+		tlsConfig.NextProtos = []string{"http/1.1"}
+		if !diagnosticmode.Enabled() {
+			// Match the order used by cmux to dispatch HTTP and gRPC connections.
+			tlsConfig.NextProtos = append(tlsConfig.NextProtos, "h2")
+		}
 		s.statusListener, err = tls.Listen("tcp", s.statusAddr, tlsConfig)
 	} else {
 		s.statusListener, err = net.Listen("tcp", s.statusAddr)
@@ -129,6 +175,12 @@ func (s *Server) listenStatusHTTPServer() error {
 	} else if RunInGoTest && s.cfg.Status.StatusPort == 0 {
 		s.statusAddr = s.statusListener.Addr().String()
 		s.cfg.Status.StatusPort = uint(s.statusListener.Addr().(*net.TCPAddr).Port)
+	}
+	// Diagnostic HTTP bypasses cmux and tracks connections itself. Leave its
+	// TLS connections unwrapped so net/http can recognize them.
+	if !diagnosticmode.Enabled() {
+		// Track connections before cmux can block reading their protocol prefix.
+		s.statusListener = newStatusListener(s.statusListener)
 	}
 	return nil
 }
@@ -214,6 +266,24 @@ func (b *Ballast) GenHTTPHandler() func(w http.ResponseWriter, r *http.Request) 
 	}
 }
 
+func withProfilingRequestLog(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		fields := []zap.Field{
+			zap.String("method", r.Method),
+			zap.String("path", r.URL.Path),
+			zap.String("remote-addr", r.RemoteAddr),
+		}
+		query := r.URL.Query()
+		for _, key := range []string{"seconds", "debug", "gc"} {
+			if value := query.Get(key); value != "" {
+				fields = append(fields, zap.String(key, value))
+			}
+		}
+		logutil.BgLogger().Info("profiling request received", fields...)
+		next(w, r)
+	}
+}
+
 func (s *Server) startHTTPServer() {
 	router := mux.NewRouter()
 
@@ -224,8 +294,6 @@ func (s *Server) startHTTPServer() {
 	// HTTP path for dump statistics.
 	router.Handle("/stats/dump/{db}/{table}", s.newStatsHandler()).
 		Name("StatsDump")
-	router.Handle("/stats/dump/{db}/{table}/{snapshot}", s.newStatsHistoryHandler()).
-		Name("StatsHistoryDump")
 	router.Handle("/stats/priority-queue", s.newStatsPriorityQueueHandler()).
 		Name("StatsPriorityQueue")
 
@@ -236,6 +304,8 @@ func (s *Server) startHTTPServer() {
 
 	tikvHandlerTool := s.NewTikvHandlerTool()
 	router.Handle("/settings", tikvhandler.NewSettingsHandler(tikvHandlerTool)).Name("Settings")
+	router.Handle("/regions/cache/status", tikvhandler.NewRegionCacheHandler(tikvHandlerTool)).Methods("GET").Name("RegionCacheStatus")
+	router.Handle("/regions/cache/refresh", tikvhandler.NewRegionCacheHandler(tikvHandlerTool)).Methods("POST").Name("RegionCacheRefresh")
 
 	router.Handle("/schema", tikvhandler.NewSchemaHandler(tikvHandlerTool)).Name("Schema")
 	router.Handle("/schema/{db}", tikvhandler.NewSchemaHandler(tikvHandlerTool))
@@ -254,13 +324,19 @@ func (s *Server) startHTTPServer() {
 		router.Handle("/dxf/schedule", tikvhandler.NewDXFScheduleHandler()).Name("DXF_Schedule")
 		router.Handle("/dxf/schedule/tune", tikvhandler.NewDXFScheduleTuneHandler(tikvHandlerTool.Store.(kv.Storage))).Name("DXF_Schedule_Tune")
 		router.Handle("/dxf/task/active", tikvhandler.NewDXFActiveTaskHandler()).Name("DXF_Task_Active")
+		router.Handle("/dxf/nodes", tikvhandler.NewDXFNodesHandler()).Name("DXF_Nodes")
 		router.Handle("/dxf/task/history", tikvhandler.NewDXFTaskHistoryHandler()).Name("DXF_Task_History")
+		// These APIs update only the TiDB process that handles the request and are not persisted.
+		router.Handle("/dxf/schedule/max_concurrent_task", tikvhandler.NewDXFTaskMaxConcurrentHandler()).Name("DXF_Schedule_Max_Concurrent_Task")
+		router.Handle("/dxf/schedule/task_cleanup_batch_size", tikvhandler.NewDXFTaskCleanupBatchSizeHandler()).Name("DXF_Schedule_Task_Cleanup_Batch_Size")
 		router.Handle("/dxf/import-into/history/job/{keyspace}/{job_id}", tikvhandler.NewDXFImportIntoHistoryJobInfoHandler()).Name("DXF_Import_Into_History_Job_Info")
 		router.Handle("/dxf/task/{taskID}/max_runtime_slots", tikvhandler.NewDXFTaskMaxRuntimeSlotsHandler()).Name("DXF_Task_Max_Runtime_Slots")
 	}
 
 	if kerneltype.IsNextGen() {
 		router.Handle("/ddl/check/{db}/{table}/{index}", tikvhandler.NewDDLCheckHandler(tikvHandlerTool)).Name("DDL_Check")
+		router.Handle("/variables/global", tikvhandler.NewGlobalVariablesHandler(tikvHandlerTool)).
+			Methods(http.MethodGet).Name("GlobalVariables")
 	}
 
 	// HTTP path for transaction GC states.
@@ -277,8 +353,11 @@ func (s *Server) startHTTPServer() {
 	router.Handle("/info/all", tikvhandler.NewAllServerInfoHandler(tikvHandlerTool)).Name("InfoALL")
 	// HTTP path for get db and table info that is related to the tableID.
 	router.Handle("/db-table/{tableID}", tikvhandler.NewDBTableHandler(tikvHandlerTool))
-	// HTTP path for get table tiflash replica info.
-	router.Handle("/tiflash/replica-deprecated", tikvhandler.NewFlashReplicaHandler(tikvHandlerTool))
+	// HTTP path for live TiFlash replica count (cluster operators). GET only.
+	router.Handle("/tiflash/replica", tikvhandler.NewFlashReplicaSummaryHandler(tikvHandlerTool)).
+		Methods(http.MethodGet).Name("TiFlashReplicaSummary")
+	// HTTP path for get table tiflash replica info. Only used by tiflash prior than v6.0. Deprecated.
+	router.Handle("/tiflash/replica-deprecated", tikvhandler.NewFlashReplicaDeprecatedHandler(tikvHandlerTool))
 
 	// HTTP path for upgrade operations.
 	router.Handle("/upgrade/{op}", handler.NewClusterUpgradeHandler(tikvHandlerTool.Store.(kv.Storage))).Name("upgrade operations")
@@ -340,12 +419,12 @@ func (s *Server) startHTTPServer() {
 		router.PathPrefix(path).Handler(handler)
 	}
 
-	router.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
-	router.HandleFunc("/debug/pprof/profile", cpuprofile.ProfileHTTPHandler)
-	router.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
-	router.HandleFunc("/debug/pprof/trace", pprof.Trace)
+	router.HandleFunc("/debug/pprof/cmdline", withProfilingRequestLog(pprof.Cmdline))
+	router.HandleFunc("/debug/pprof/profile", withProfilingRequestLog(cpuprofile.ProfileHTTPHandler))
+	router.HandleFunc("/debug/pprof/symbol", withProfilingRequestLog(pprof.Symbol))
+	router.HandleFunc("/debug/pprof/trace", withProfilingRequestLog(pprof.Trace))
 	// Other /debug/pprof paths not covered above are redirected to pprof.Index.
-	router.PathPrefix("/debug/pprof/").HandlerFunc(pprof.Index)
+	router.PathPrefix("/debug/pprof/").HandlerFunc(withProfilingRequestLog(pprof.Index))
 	router.HandleFunc("/debug/traceevent", traceeventHandler)
 
 	router.HandleFunc("/covdata", func(writer http.ResponseWriter, _ *http.Request) {
@@ -440,7 +519,7 @@ func (s *Server) startHTTPServer() {
 		}
 	})
 
-	router.HandleFunc("/debug/zip", func(w http.ResponseWriter, r *http.Request) {
+	router.HandleFunc("/debug/zip", withProfilingRequestLog(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Disposition", `attachment; filename="tidb_debug"`+time.Now().Format("20060102150405")+".zip")
 
 		// dump goroutine/heap/mutex
@@ -522,7 +601,7 @@ func (s *Server) startHTTPServer() {
 
 		err = zw.Close()
 		terror.Log(err)
-	})
+	}))
 
 	// failpoint is enabled only for tests so we can add some http APIs here for tests.
 	failpoint.Inject("enableTestAPI", func() {
@@ -581,66 +660,88 @@ func (s *Server) startHTTPServer() {
 }
 
 // setupAutoIDService initializes and registers the AutoID service for TiKV stores
-func (s *Server) setupAutoIDService(grpcServer *grpc.Server) {
-	keyspaceName := config.GetGlobalKeyspaceName()
-
-	var fullPath string
-	if keyspaceName == "" {
-		fullPath = fmt.Sprintf("%s://%s", s.cfg.Store, s.cfg.Path)
-	} else {
-		fullPath = fmt.Sprintf("%s://%s?keyspaceName=%s", s.cfg.Store, s.cfg.Path, keyspaceName)
+func (s *Server) setupAutoIDService(ctx context.Context, grpcServer *grpc.Server) *autoid.Service {
+	failpoint.InjectCall("beforeAutoIDService")
+	driver, ok := s.driver.(*TiDBDriver)
+	if !ok {
+		return nil
 	}
-
-	store, err := store.New(fullPath)
-	if err != nil {
-		logutil.BgLogger().Error("new tikv store fail", zap.Error(err))
-		return
-	}
+	// Reuse the server's store. Reopening it initializes a PD client before the
+	// store cache lookup and cannot be canceled when shutdown starts.
+	store := driver.store
 
 	ebd, ok := store.(kv.EtcdBackend)
 	if !ok {
-		return
+		return nil
 	}
 
 	etcdAddr, err := ebd.EtcdAddrs()
 	if err != nil {
 		logutil.BgLogger().Error("tikv store not etcd background", zap.Error(err))
-		return
+		return nil
+	}
+	// Mock stores can implement EtcdBackend without supporting etcd.
+	if len(etcdAddr) == 0 {
+		return nil
 	}
 
 	selfAddr := net.JoinHostPort(s.cfg.AdvertiseAddress, strconv.Itoa(int(s.cfg.Status.StatusPort)))
-	service := autoid.New(selfAddr, etcdAddr, store, ebd.TLSConfig())
+	service, err := autoid.NewWithContext(ctx, selfAddr, etcdAddr, store, ebd.TLSConfig())
+	if err != nil {
+		if ctx.Err() != nil {
+			return nil
+		}
+		logutil.BgLogger().Fatal("initialize auto ID service failed", zap.Error(err))
+	}
 	logutil.BgLogger().Info("register auto service at", zap.String("addr", selfAddr))
 	pb.RegisterAutoIDAllocServer(grpcServer, service)
-	s.autoIDService = service
+	return service
 }
 
 func (s *Server) startStatusServerAndRPCServer(serverMux *http.ServeMux) {
+	failpoint.InjectCall("beforeStatusServerInit")
+	ctx := s.statusInitializationContext()
+	s.statusMu.Lock()
+	if s.statusClosed {
+		s.statusMu.Unlock()
+		return
+	}
 	m := cmux.New(s.statusListener)
 	// Match connections in order:
 	// First HTTP, and otherwise grpc.
-	httpL := m.Match(cmux.HTTP1Fast())
+	httpL := m.Match(cmux.HTTP1Fast(http.MethodPatch))
 	grpcL := m.Match(cmux.Any())
 
 	statusServer := &http.Server{Addr: s.statusAddr, Handler: util2.NewCorsHandler(serverMux, s.cfg)}
 	grpcServer := NewRPCServer(s.cfg, s.dom, s)
 	service.RegisterChannelzServiceToServer(grpcServer)
+	var autoIDService *autoid.Service
 	if s.cfg.Store == config.StoreTypeTiKV {
-		s.setupAutoIDService(grpcServer)
+		autoIDService = s.setupAutoIDService(ctx, grpcServer)
+	}
+	if ctx.Err() != nil {
+		if autoIDService != nil {
+			autoIDService.Close()
+		}
+		grpcServer.Stop()
+		s.statusMu.Unlock()
+		return
 	}
 
+	s.autoIDService = autoIDService
 	s.statusServer.Store(statusServer)
 	s.grpcServer = grpcServer
 
-	go util.WithRecovery(func() {
+	s.statusWG.RunWithRecover(func() {
 		err := grpcServer.Serve(grpcL)
 		logutil.BgLogger().Warn("grpc server error", zap.Error(err))
 	}, nil)
 
-	go util.WithRecovery(func() {
+	s.statusWG.RunWithRecover(func() {
 		err := statusServer.Serve(httpL)
 		logutil.BgLogger().Warn("http server error", zap.Error(err))
 	}, nil)
+	s.statusMu.Unlock()
 
 	err := m.Serve()
 	if err != nil {
@@ -723,19 +824,6 @@ func (s *Server) newStatsHandler() *optimizor.StatsHandler {
 		panic("Failed to get domain")
 	}
 	return optimizor.NewStatsHandler(do)
-}
-
-func (s *Server) newStatsHistoryHandler() *optimizor.StatsHistoryHandler {
-	store, ok := s.driver.(*TiDBDriver)
-	if !ok {
-		panic("Illegal driver")
-	}
-
-	do, err := session.GetDomain(store.store)
-	if err != nil {
-		panic("Failed to get domain")
-	}
-	return optimizor.NewStatsHistoryHandler(do)
 }
 
 func (s *Server) newStatsPriorityQueueHandler() *optimizor.StatsPriorityQueueHandler {

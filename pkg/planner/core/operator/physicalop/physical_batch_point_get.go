@@ -361,6 +361,9 @@ func (p *PointGetPlan) PrunePartitions(sctx sessionctx.Context) (bool, error) {
 	if p.IndexInfo == nil && !p.TblInfo.HasClusteredIndex() && len(p.PartitionNames) == 1 {
 		for i, def := range pi.Definitions {
 			if def.Name.L == p.PartitionNames[0].L {
+				if slices.Contains(pi.IDsInDDLToIgnore(), def.ID) {
+					return true, nil
+				}
 				idx := i
 				p.PartitionIdx = &idx
 				break
@@ -831,6 +834,7 @@ func (p *BatchPointGetPlan) PrunePartitionsAndValues(sctx sessionctx.Context) ([
 				filteredVals = append(filteredVals, idxVals)
 			}
 		}
+		clear(p.IndexValues[len(filteredVals):])
 		p.IndexValues = filteredVals
 		if pi != nil {
 			partIdxs := p.getPartitionIdxs(sctx)
@@ -850,16 +854,18 @@ func (p *BatchPointGetPlan) PrunePartitionsAndValues(sctx sessionctx.Context) ([
 			if partitionsFound == 0 {
 				return nil, true, nil
 			}
-			skipped := 0
+			filteredVals = p.IndexValues[:0]
 			for i, idx := range partIdxs {
 				if idx < 0 {
-					curr := i - skipped
-					p.IndexValues = append(p.IndexValues[:curr], p.IndexValues[curr+1:]...)
-					skipped++
-				} else if !p.SinglePartition {
+					continue
+				}
+				filteredVals = append(filteredVals, p.IndexValues[i])
+				if !p.SinglePartition {
 					p.PartitionIdxs = append(p.PartitionIdxs, idx)
 				}
 			}
+			clear(p.IndexValues[len(filteredVals):])
+			p.IndexValues = filteredVals
 			intest.Assert(p.SinglePartition || partitionsFound == len(p.PartitionIdxs))
 			intest.Assert(partitionsFound == len(p.IndexValues))
 		}
@@ -913,24 +919,25 @@ func (p *BatchPointGetPlan) PrunePartitionsAndValues(sctx sessionctx.Context) ([
 			if partitionsFound == 0 {
 				return nil, true, nil
 			}
-			skipped := 0
+			filteredHandles := handles[:0]
 			for i, idx := range partIdxs {
 				if idx < 0 {
-					curr := i - skipped
-					next := curr + 1
-					handles = append(handles[:curr], handles[next:]...)
-					skipped++
-				} else if !p.SinglePartition {
+					continue
+				}
+				filteredHandles = append(filteredHandles, handles[i])
+				if !p.SinglePartition {
 					p.PartitionIdxs = append(p.PartitionIdxs, idx)
 				}
 			}
+			clear(handles[len(filteredHandles):])
+			handles = filteredHandles
 			intest.Assert(p.SinglePartition || partitionsFound == len(p.PartitionIdxs))
 			intest.Assert(p.SinglePartition || partitionsFound == len(handles))
 		}
 		p.Handles = handles
 	} else {
-		usedValues := make([]bool, len(p.IndexValues))
-		for i, value := range p.IndexValues {
+		filteredValues := p.IndexValues[:0]
+		for _, value := range p.IndexValues {
 			if types.DatumsContainNull(value) {
 				continue
 			}
@@ -952,39 +959,39 @@ func (p *BatchPointGetPlan) PrunePartitionsAndValues(sctx sessionctx.Context) ([
 			}
 			dedup.Set(handle, true)
 			handles = append(handles, handle)
-			usedValues[i] = true
+			filteredValues = append(filteredValues, value)
 		}
-		skipped := 0
-		for i, use := range usedValues {
-			if !use {
-				curr := i - skipped
-				p.IndexValues = slices.Delete(p.IndexValues, curr, curr+1)
-				skipped++
-			}
-		}
+		clear(p.IndexValues[len(filteredValues):])
+		p.IndexValues = filteredValues
 		if pi != nil {
 			partIdxs := p.getPartitionIdxs(sctx)
-			skipped = 0
+			filteredHandles := handles[:0]
+			filteredValues = p.IndexValues[:0]
 			partitionsFound := 0
 			for i, idx := range partIdxs {
-				if partIdxs[i] < 0 ||
+				if idx < 0 ||
 					(p.SinglePartition &&
-						partIdxs[i] != p.PartitionIdxs[0]) ||
+						idx != p.PartitionIdxs[0]) ||
 					!isInExplicitPartitions(pi, idx, p.PartitionNames) {
-					curr := i - skipped
-					handles = slices.Delete(handles, curr, curr+1)
-					p.IndexValues = slices.Delete(p.IndexValues, curr, curr+1)
-					skipped++
 					continue
-				} else if !p.SinglePartition {
+				}
+				filteredHandles = append(filteredHandles, handles[i])
+				filteredValues = append(filteredValues, p.IndexValues[i])
+				if !p.SinglePartition {
 					p.PartitionIdxs = append(p.PartitionIdxs, idx)
 				}
 				partitionsFound++
 			}
+			clear(handles[len(filteredHandles):])
+			clear(p.IndexValues[len(filteredValues):])
+			handles = filteredHandles
+			p.IndexValues = filteredValues
 			if partitionsFound == 0 {
 				return nil, true, nil
 			}
 			intest.Assert(p.SinglePartition || partitionsFound == len(p.PartitionIdxs))
+			intest.Assert(partitionsFound == len(handles))
+			intest.Assert(partitionsFound == len(p.IndexValues))
 		}
 	}
 	return handles, false, nil

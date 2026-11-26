@@ -130,6 +130,19 @@ func extractJoinGroupImpl(p base.LogicalPlan) *joinGroupResult {
 	}
 
 	// If the variable `tidb_opt_advanced_join_hint` is false and the join node has the join method hint, we will not split the current join node to join reorder process.
+	if isJoin && join.JoinType == base.FullOuterJoin {
+		// Full outer join is not reordered in this phase. Keep it as an atomic
+		// node even if join reorder is enabled.
+		if joinOrderHintInfo != nil {
+			join.HintInfo = nil
+			join.InternalHintInfo = nil
+		}
+		return &joinGroupResult{
+			group:              []base.LogicalPlan{p},
+			joinOrderHintInfo:  joinOrderHintInfo,
+			basicJoinGroupInfo: &basicJoinGroupInfo{},
+		}
+	}
 	if !isJoin || (join.PreferJoinType > uint(0) && !p.SCtx().GetSessionVars().EnableAdvancedJoinHint) || join.StraightJoin ||
 		(join.JoinType != base.InnerJoin && join.JoinType != base.LeftOuterJoin && join.JoinType != base.RightOuterJoin) ||
 		((join.JoinType == base.LeftOuterJoin || join.JoinType == base.RightOuterJoin) && join.EqualConditions == nil) ||
@@ -783,9 +796,10 @@ func canReuseInjectedJoinExpr(expr expression.Expression) bool {
 // injectExpr materializes expr as a column on top of p so rewritten join edges can keep using
 // column arguments only.
 //
-// If p is already a projection, we append/reuse the expression there. Otherwise we wrap p in a
-// pass-through projection first, so the new derived column stays local to this branch and the
-// branch's output schema remains explicit for later join construction.
+// If p is already a projection and inlining its referenced outputs would not re-evaluate volatile
+// or side-effecting expressions, we append/reuse the expression there. Otherwise we wrap p in a
+// pass-through projection first, preserving p's materialized outputs while keeping the new derived
+// column local to this branch with an explicit output schema for later join construction.
 //
 // When possible, we reuse an existing semantically equivalent deterministic expression instead of
 // appending a duplicate column. This keeps the rewritten join tree smaller and prevents repeated
@@ -793,6 +807,21 @@ func canReuseInjectedJoinExpr(expr expression.Expression) bool {
 func (s *baseSingleGroupJoinOrderSolver) injectExpr(p base.LogicalPlan, expr expression.Expression) (base.LogicalPlan, *expression.Column) {
 	originalPlanID := p.ID()
 	proj, ok := p.(*logicalop.LogicalProjection)
+	if ok {
+		// AppendExpr substitutes proj's output columns with their defining expressions.
+		// When expr references a volatile or side-effecting output of p, keep p as a
+		// child projection and wrap a new projection on top: for example, first compute
+		// `r = RAND()` in p and then `key = r + r + 1` in the outer projection; otherwise
+		// appending into p would inline `r` as `RAND() + RAND() + 1` and evaluate `RAND()`
+		// multiple times.
+		for _, col := range expression.ExtractColumns(expr) {
+			idx := proj.Schema().ColumnIndex(col)
+			if idx >= 0 && !canReuseInjectedJoinExpr(proj.Exprs[idx]) {
+				ok = false
+				break
+			}
+		}
+	}
 	if !ok {
 		// Build a pass-through projection so the injected expression has a stable output column
 		// without changing the child's original outputs.

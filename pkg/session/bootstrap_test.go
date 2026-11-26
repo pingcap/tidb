@@ -53,16 +53,23 @@ import (
 )
 
 func TestMySQLDBTables(t *testing.T) {
+	require.False(t, metadef.IsBuiltinSystemTable(mysql.SystemDB, "schema_index_usage"))
+	require.False(t, metadef.IsBuiltinSystemTable(mysql.SystemDB, "tidb_mdl_view"))
+	require.False(t, metadef.IsBuiltinSystemTable(mysql.SysDB, "schema_unused_indexes"))
 	require.Len(t, systemTablesOfBaseNextGenVersion, 52, "DO NOT CHANGE IT")
 	for _, verBoot := range versionedBootstrapSchemas {
 		for _, schInfo := range verBoot.databases {
 			testTableBasicInfoSlice(t, schInfo.Tables, "IF NOT EXISTS mysql.%s (")
+			for _, tbl := range schInfo.Tables {
+				require.True(t, metadef.IsBuiltinSystemTable(schInfo.Name, tbl.Name), "missing built-in %s.%s", schInfo.Name, tbl.Name)
+			}
 		}
 	}
 	reservedIDs := make([]int64, 0, len(ddlTableVersionTables)*2)
 	for _, v := range ddlTableVersionTables {
 		for _, tbl := range v.tables {
 			reservedIDs = append(reservedIDs, tbl.ID)
+			require.True(t, metadef.IsBuiltinSystemTable(mysql.SystemDB, tbl.Name), "missing built-in mysql.%s", tbl.Name)
 		}
 	}
 	for _, verBoot := range versionedBootstrapSchemas {
@@ -103,7 +110,11 @@ func TestBootstrap(t *testing.T) {
 	require.NotEqual(t, 0, req.NumRows())
 
 	rows := statistics.RowToDatums(req.GetRow(0), r.Fields())
-	match(t, rows, `%`, "root", "", "mysql_native_password", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y", "Y", nil, nil, nil, "", "N", time.Now(), nil, 0)
+	match(t, rows, `%`, "root", "", "mysql_native_password",
+		"Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y",
+		"Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y",
+		"Y", "Y", "Y", "Y", "Y", "N",
+		"Y", "Y", "Y", "Y", "Y", nil, nil, nil, "", "N", time.Now(), nil, 0)
 	r.Close()
 
 	require.NoError(t, se.Auth(&auth.UserIdentity{Username: "root", Hostname: "anyhost"}, []byte(""), []byte(""), nil))
@@ -195,7 +206,7 @@ func TestBootstrapWithError(t *testing.T) {
 
 	// system tables are not created in `doDDLWorks` for next-gen.
 	if kerneltype.IsNextGen() {
-		require.NoError(t, bootstrapSchemas(store))
+		require.NoError(t, bootstrapNextGenSchemas(store))
 	}
 	// bootstrap
 	{
@@ -244,7 +255,11 @@ func TestBootstrapWithError(t *testing.T) {
 
 	row := req.GetRow(0)
 	rows := statistics.RowToDatums(row, r.Fields())
-	match(t, rows, `%`, "root", "", "mysql_native_password", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y", "Y", nil, nil, nil, "", "N", time.Now(), nil, 0)
+	match(t, rows, `%`, "root", "", "mysql_native_password",
+		"Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y",
+		"Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y",
+		"Y", "Y", "Y", "Y", "Y", "N",
+		"Y", "Y", "Y", "Y", "Y", nil, nil, nil, "", "N", time.Now(), nil, 0)
 	require.NoError(t, r.Close())
 
 	MustExec(t, se, "USE test")
@@ -477,7 +492,7 @@ func TestForIssue23387(t *testing.T) {
 	rows, err := ResultSetToStringSlice(context.Background(), se, rs)
 	require.NoError(t, err)
 	require.Len(t, rows, 1)
-	require.Equal(t, "GRANT USAGE ON *.* TO 'quatest'@'%'", rows[0][0])
+	require.Equal(t, "GRANT USAGE ON *.* TO `quatest`@`%`", rows[0][0])
 }
 
 func TestIndexMergeInNewCluster(t *testing.T) {
@@ -1512,7 +1527,7 @@ func TestKeyspaceEtcdNamespace(t *testing.T) {
 		t.Skip("keyspace is not supported in classic kernel")
 	}
 	keyspaceMeta := keyspacepb.KeyspaceMeta{}
-	keyspaceMeta.Id = 2
+	keyspaceMeta.Keyspace = &keyspacepb.KeyspaceMeta_Id{Id: 2}
 	keyspaceMeta.Name = keyspace.System
 	makeStore(t, &keyspaceMeta, true)
 }
@@ -1555,7 +1570,7 @@ func makeStore(t *testing.T, keyspaceMeta *keyspacepb.KeyspaceMeta, isHasPrefix 
 	t.Cleanup(func() {
 		ddl.CloseOwnerManager(mockStore)
 	})
-	dom, err := domap.getWithEtcdClient(mockStore, etcdClient, nil)
+	dom, err := domap.getWithEtcdClient(mockStore, etcdClient, nil, domainCreateOptions{})
 	require.NoError(t, err)
 	defer dom.Close()
 
@@ -1891,8 +1906,13 @@ func TestVersionedBootstrapSchemas(t *testing.T) {
 	versions := make([]int, 0, len(versionedBootstrapSchemas))
 	dbNameToID := make(map[string]int64)
 	allTableIDs := make([]int64, 0, len(versionedBootstrapSchemas))
+	foundStorageClassTransitionSchema := false
 	for _, vbs := range versionedBootstrapSchemas {
 		versions = append(versions, int(vbs.ver))
+		if vbs.ver == meta.StorageClassTransitionNextGenBootTableVersion {
+			require.True(t, vbs.nextGenOnly)
+			foundStorageClassTransitionSchema = true
+		}
 		for _, db := range vbs.databases {
 			require.Greater(t, db.ID, metadef.ReservedGlobalIDLowerBound)
 			require.LessOrEqual(t, db.ID, metadef.ReservedGlobalIDUpperBound)
@@ -1910,8 +1930,65 @@ func TestVersionedBootstrapSchemas(t *testing.T) {
 	}
 	require.IsIncreasing(t, versions,
 		"versions in versionedBootstrapSchemas should be monotonically increasing, and cannot have duplicate versions")
+	require.True(t, foundStorageClassTransitionSchema)
 	slices.Sort(allTableIDs)
 	require.IsIncreasing(t, allTableIDs, "versionedBootstrapSchemas should not have duplicate table IDs")
+
+	if !kerneltype.IsNextGen() {
+		return
+	}
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, store.Close())
+	})
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	require.NoError(t, kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
+		return meta.NewMutator(txn).SetNextGenBootTableVersion(meta.StorageClassTransitionNextGenBootTableVersion - 1)
+	}))
+	require.NoError(t, bootstrapNextGenSchemas(store))
+	require.NoError(t, kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
+		m := meta.NewMutator(txn)
+		ver, err := m.GetNextGenBootTableVersion()
+		require.NoError(t, err)
+		require.GreaterOrEqual(t, ver, meta.StorageClassTransitionNextGenBootTableVersion)
+		dbID, err := m.GetSystemDBID()
+		require.NoError(t, err)
+		tables, err := m.ListTables(ctx, dbID)
+		require.NoError(t, err)
+		require.True(t, slices.ContainsFunc(tables, func(table *model.TableInfo) bool {
+			return table.ID == metadef.TiDBStorageClassTransitionHistoryTableID
+		}))
+		return nil
+	}))
+
+	t.Run("materialized_view_refresh_source", func(t *testing.T) {
+		store, err := mockstore.NewMockStore()
+		require.NoError(t, err)
+		t.Cleanup(func() {
+			require.NoError(t, store.Close())
+		})
+		require.NoError(t, kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
+			m := meta.NewMutator(txn)
+			require.NoError(t, m.CreateSysDatabaseByIDIfNotExists(mysql.SystemDB, metadef.SystemDatabaseID))
+			return m.SetNextGenBootTableVersion(meta.MaterializedViewNextGenBootTableVersion)
+		}))
+		// A cluster that already created the MV maintenance tables must still
+		// create the refresh-source table under a new bootstrap table version.
+		require.NoError(t, bootstrapNextGenSchemas(store))
+		require.NoError(t, bootstrapNextGenSchemas(store))
+		require.NoError(t, kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
+			m := meta.NewMutator(txn)
+			table, err := m.GetTable(metadef.SystemDatabaseID, metadef.TiDBMViewFastRefreshSourceInfoTableID)
+			require.NoError(t, err)
+			require.NotNil(t, table)
+			require.Equal(t, metadef.TiDBMViewFastRefreshSourceInfoTableName, table.Name.O)
+			ver, err := m.GetNextGenBootTableVersion()
+			require.NoError(t, err)
+			require.Greater(t, ver, meta.MaterializedViewNextGenBootTableVersion)
+			return nil
+		}))
+	})
 }
 
 func TestCheckSystemTableConstraint(t *testing.T) {

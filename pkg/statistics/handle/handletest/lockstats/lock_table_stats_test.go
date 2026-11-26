@@ -22,8 +22,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -57,18 +55,12 @@ func TestLockAndUnlockTableStats(t *testing.T) {
 	tblStats1 := handle.GetPhysicalTableStats(tbl.ID, tbl)
 	require.Equal(t, tblStats, tblStats1)
 
-	lockedTables, err := handle.GetTableLockedAndClearForTest()
+	lockedTables, err := handle.Locker().GetTableLockedAndClearForTest()
 	require.Nil(t, err)
 	require.Equal(t, 1, len(lockedTables))
 
 	// Insert a new row to the table.
 	tk.MustExec("insert into t(a, b) values(3,'c')")
-	// Enable the failpoint to test the historical stats meta is not recorded.
-	err = failpoint.Enable(
-		"github.com/pingcap/tidb/pkg/statistics/handle/usage/panic-when-record-historical-stats-meta",
-		"1*return(true)",
-	)
-	require.NoError(t, err)
 	// Flush stats delta.
 	tk.MustExec("flush stats_delta *.*")
 
@@ -136,14 +128,14 @@ func TestLockTableAndUnlockTableStatsRepeatedly(t *testing.T) {
 	require.Equal(t, tblStats, tblStats1)
 
 	// Lock the table again and check the warning.
-	lockedTables1, err := handle.GetTableLockedAndClearForTest()
+	lockedTables1, err := handle.Locker().GetTableLockedAndClearForTest()
 	require.Nil(t, err)
 	tk.MustExec("lock stats t")
 	tk.MustQuery("show warnings").Check(testkit.Rows(
 		"Warning 1105 skip locking locked table: test.t",
 	))
 
-	lockedTables2, err := handle.GetTableLockedAndClearForTest()
+	lockedTables2, err := handle.Locker().GetTableLockedAndClearForTest()
 	require.Nil(t, err)
 	require.Equal(t, lockedTables1, lockedTables2)
 
@@ -165,11 +157,6 @@ func TestLockTableAndUnlockTableStatsRepeatedly(t *testing.T) {
 }
 
 func TestLockAndUnlockTablesStats(t *testing.T) {
-	restore := config.RestoreFunc()
-	defer restore()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.Performance.EnableStatsCacheMemQuota = true
-	})
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@tidb_analyze_version = 2")
@@ -219,7 +206,7 @@ func TestLockAndUnlockTablesStats(t *testing.T) {
 	tbl2Stats1 := handle.GetPhysicalTableStats(tbl2.Meta().ID, tbl2.Meta())
 	require.Equal(t, tbl2Stats, tbl2Stats1)
 
-	lockedTables, err := handle.GetTableLockedAndClearForTest()
+	lockedTables, err := handle.Locker().GetTableLockedAndClearForTest()
 	require.Nil(t, err)
 	require.Equal(t, 2, len(lockedTables))
 
@@ -253,7 +240,7 @@ func TestDropTableShouldCleanUpLockInfo(t *testing.T) {
 	// GC stats.
 	tk.MustExec("drop table t")
 	ddlLease := time.Duration(0)
-	require.Nil(t, handle.GCStats(dom.InfoSchema(), ddlLease))
+	require.Nil(t, handle.GC().GCStats(dom.InfoSchema(), ddlLease))
 
 	// Check if the lock info is cleaned up.
 	rows = tk.MustQuery(selectTableLockSQL).Rows()
@@ -279,7 +266,7 @@ func TestTruncateTableShouldCleanUpLockInfo(t *testing.T) {
 	// GC stats.
 	tk.MustExec("truncate table t")
 	ddlLease := time.Duration(0)
-	require.Nil(t, handle.GCStats(dom.InfoSchema(), ddlLease))
+	require.Nil(t, handle.GC().GCStats(dom.InfoSchema(), ddlLease))
 
 	// Check if the lock info is cleaned up.
 	rows = tk.MustQuery(selectTableLockSQL).Rows()

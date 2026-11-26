@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.etcd.io/etcd/tests/v3/integration"
@@ -61,6 +62,12 @@ type rebaseResp struct {
 func (resp rebaseResp) check(msg string) {
 	require.NoError(resp.T, resp.error)
 	require.Equal(resp.T, string(resp.RebaseResponse.GetErrmsg()), msg)
+}
+
+func TestNew(t *testing.T) {
+	service, err := New("", nil, nil, nil)
+	require.EqualError(t, err, "etcdclient: no available endpoints")
+	require.Nil(t, service)
 }
 
 func TestConcurrent(t *testing.T) {
@@ -114,7 +121,7 @@ type dest struct {
 }
 
 func checkCurrValue(t *testing.T, cli autoid.AutoIDAllocClient, to dest, minv, maxv int64, keyspaceID uint32) {
-	req := &autoid.AutoIDRequest{DbID: to.dbID, TblID: to.tblID, N: 0, KeyspaceID: keyspaceID}
+	req := &autoid.AutoIDRequest{DbID: to.dbID, TblID: to.tblID, N: 0, Keyspace: &autoid.AutoIDRequest_KeyspaceID{KeyspaceID: keyspaceID}}
 	ctx := context.Background()
 	resp, err := cli.AllocAutoID(ctx, req)
 	require.NoError(t, err)
@@ -130,7 +137,7 @@ func autoIDRequest(t *testing.T, cli autoid.AutoIDAllocClient, to dest, unsigned
 	if len(more) >= 2 {
 		offset = more[1]
 	}
-	req := &autoid.AutoIDRequest{DbID: to.dbID, TblID: to.tblID, IsUnsigned: unsigned, N: n, Increment: increment, Offset: offset, KeyspaceID: keyspaceID}
+	req := &autoid.AutoIDRequest{DbID: to.dbID, TblID: to.tblID, IsUnsigned: unsigned, N: n, Increment: increment, Offset: offset, Keyspace: &autoid.AutoIDRequest_KeyspaceID{KeyspaceID: keyspaceID}}
 	resp, err := cli.AllocAutoID(context.Background(), req)
 	return autoIDResp{resp, err, t}
 }
@@ -156,8 +163,8 @@ func TestAPI(t *testing.T) {
 	if kerneltype.IsNextGen() {
 		// Testing scenarios with keyspace.
 		keyspaceMeta := keyspacepb.KeyspaceMeta{
-			Id:   uint32(0xFFFFFF) - 1,
-			Name: keyspace.System,
+			Keyspace: &keyspacepb.KeyspaceMeta_Id{Id: uint32(0xFFFFFF) - 1},
+			Name:     keyspace.System,
 		}
 		testAPIWithKeyspace(t, &keyspaceMeta)
 	}
@@ -168,7 +175,7 @@ func testAPIWithKeyspace(t *testing.T, keyspaceMeta *keyspacepb.KeyspaceMeta) {
 	if keyspaceMeta == nil {
 		reqKeyspaceID = uint32(tikv.NullspaceID)
 	} else {
-		reqKeyspaceID = keyspaceMeta.Id
+		reqKeyspaceID = keyspaceMeta.GetId()
 	}
 
 	opts := mockstore.WithCurrentKeyspaceMeta(keyspaceMeta)
@@ -244,8 +251,15 @@ func TestGRPC(t *testing.T) {
 	defer listener.Close()
 	addr := listener.Addr().String()
 
-	service := newWithCli(addr, etcdCli, store)
-	defer service.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	service, err := NewWithContext(ctx, addr, etcdCli.Endpoints(), store, nil)
+	require.NoError(t, err)
+	closeService := sync.OnceFunc(service.Close)
+	defer closeService()
+	// Once construction succeeds, startup cancellation must not abandon the
+	// live ownership session or prevent Close from revoking its lease.
+	cancel()
 
 	var i int
 	for !service.leaderShip.IsOwner() {
@@ -256,6 +270,9 @@ func TestGRPC(t *testing.T) {
 		}
 	}
 	require.Less(t, i, 20)
+	leases, err := etcdCli.Leases(context.Background())
+	require.NoError(t, err)
+	require.Len(t, leases.Leases, 1)
 
 	grpcServer := grpc.NewServer()
 	autoid.RegisterAutoIDAllocServer(grpcServer, service)
@@ -281,7 +298,72 @@ func TestGRPC(t *testing.T) {
 		Increment:  1,
 		Offset:     1,
 		IsUnsigned: false,
-		KeyspaceID: keyspaceID,
+		Keyspace:   &autoid.AutoIDRequest_KeyspaceID{KeyspaceID: keyspaceID},
 	})
 	require.NoError(t, err)
+	closeService()
+	lease, err := etcdCli.TimeToLive(context.Background(), leases.Leases[0].ID)
+	require.NoError(t, err)
+	require.EqualValues(t, -1, lease.TTL, "shutdown must revoke ownership without waiting for lease expiry")
+
+	t.Run("canceled startup revokes lease", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/autoid_service/afterAutoIDCampaign", func(service *Service) {
+			t.Cleanup(service.Close)
+			require.Eventually(t, service.IsOwner, 5*time.Second, 10*time.Millisecond)
+			leases, err = etcdCli.Leases(context.Background())
+			require.NoError(t, err)
+			require.Len(t, leases.Leases, 1)
+			cancel()
+		})
+		service, err := newWithCli(ctx, addr, etcdCli, store)
+		if service != nil {
+			defer service.Close()
+		}
+		require.ErrorIs(t, err, context.Canceled)
+		require.Nil(t, service)
+		lease, err := etcdCli.TimeToLive(context.Background(), leases.Leases[0].ID)
+		require.NoError(t, err)
+		require.EqualValues(t, -1, lease.TTL, "aborted startup must revoke ownership without waiting for lease expiry")
+	})
+
+	t.Run("canceled candidate preserves existing owner", func(t *testing.T) {
+		existingOwner, err := newWithCli(context.Background(), "existing-owner", etcdCli, store)
+		require.NoError(t, err)
+		defer existingOwner.Close()
+		require.Eventually(t, existingOwner.IsOwner, 5*time.Second, 10*time.Millisecond)
+		ownerLeases, err := etcdCli.Leases(context.Background())
+		require.NoError(t, err)
+		require.Len(t, ownerLeases.Leases, 1)
+
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/autoid_service/afterAutoIDCampaign", func(service *Service) {
+			t.Cleanup(service.Close)
+			require.False(t, service.IsOwner())
+			leases, err := etcdCli.Leases(context.Background())
+			require.NoError(t, err)
+			require.Len(t, leases.Leases, 2)
+			cancel()
+		})
+		candidate, err := newWithCli(ctx, addr, etcdCli, store)
+		if candidate != nil {
+			defer candidate.Close()
+		}
+		require.ErrorIs(t, err, context.Canceled)
+		require.Nil(t, candidate)
+		require.NoError(t, etcdCli.Ctx().Err(), "the shared client must remain usable")
+		leases, err := etcdCli.Leases(context.Background())
+		require.NoError(t, err)
+		require.Equal(t, ownerLeases.Leases, leases.Leases, "only the canceled candidate's lease should be revoked")
+		require.True(t, existingOwner.IsOwner())
+
+		// In particular, canceling the candidate must not close the shared lease
+		// client and prevent subsequent services from keeping their leases alive.
+		testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/autoid_service/afterAutoIDCampaign")
+		nextCandidate, err := newWithCli(context.Background(), "next-candidate", etcdCli, store)
+		require.NoError(t, err)
+		nextCandidate.Close()
+	})
 }

@@ -99,6 +99,7 @@ type ShowContents struct {
 	Limit *ast.Limit
 
 	ImportJobID       *int64 // Used for SHOW LOAD DATA JOB <jobID>
+	RawImportJob      bool   // Used for SHOW RAW IMPORT JOB(S)
 	ImportGroupKey    string // Used for SHOW IMPORT GROUP <GROUP_KEY>
 	DistributionJobID *int64 // Used for SHOW DISTRIBUTION JOB <JobID>
 }
@@ -190,8 +191,6 @@ func (p *LogicalShow) DeriveStats(_ []*property.StatsInfo, selfSchema *expressio
 // ExtractFD inherits BaseLogicalPlan.LogicalPlan.<22nd> implementation.
 
 // GetBaseLogicalPlan inherits BaseLogicalPlan.LogicalPlan.<23rd> implementation.
-
-// ConvertOuterToInnerJoin inherits BaseLogicalPlan.LogicalPlan.<24th> implementation.
 
 // *************************** end implementation of logicalPlan interface ***************************
 

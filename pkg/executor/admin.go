@@ -314,6 +314,9 @@ type backfillResult struct {
 }
 
 func (e *RecoverIndexExec) backfillIndex(ctx context.Context) (totalAddedCnt, totalScanCnt int64, err error) {
+	if err := activateSchemaReadOnlyWrite(e.Ctx(), e.table.Meta()); err != nil {
+		return 0, 0, err
+	}
 	var (
 		currentHandle kv.Handle
 		lastLogCnt    int64
@@ -404,7 +407,12 @@ func (e *RecoverIndexExec) fetchRecoverRows(ctx context.Context, srcResult dists
 				return nil, err
 			}
 			e.idxValsBufs[result.scanRowCount] = idxVals
-			rsData := tables.TryGetHandleRestoredDataWrapper(e.table.Meta(), plannercore.GetCommonHandleDatum(e.handleCols, row), nil, e.index.Meta())
+			rsData := tables.TryGetHandleRestoredDataWrapper(
+				e.table,
+				plannercore.GetCommonHandleDatum(e.handleCols, row),
+				nil,
+				e.index.Meta(),
+			)
 			e.recoverRows = append(e.recoverRows, recoverRows{handle: handle, idxVals: idxVals, rsData: rsData, skip: true})
 			result.scanRowCount++
 			result.currentHandle = handle
@@ -776,6 +784,9 @@ func (e *CleanupIndexExec) Next(ctx context.Context, req *chunk.Chunk) error {
 }
 
 func (e *CleanupIndexExec) cleanTableIndex(ctx context.Context) error {
+	if err := activateSchemaReadOnlyWrite(e.Ctx(), e.table.Meta()); err != nil {
+		return err
+	}
 	for {
 		ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnAdmin)
 		errInTxn := kv.RunInNewTxn(ctx, e.Ctx().GetStore(), true, func(ctx context.Context, txn kv.Transaction) error {

@@ -32,6 +32,7 @@ package server
 import (
 	"context"
 	"crypto/tls"
+	stderrors "errors"
 	"fmt"
 	"io"
 	"maps"
@@ -40,7 +41,6 @@ import (
 	_ "net/http/pprof" // #nosec G108 for pprof
 	"os"
 	"os/user"
-	"reflect"
 	"strconv"
 	"strings"
 	"sync"
@@ -54,7 +54,9 @@ import (
 	autoid "github.com/pingcap/tidb/pkg/autoid_service"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/deploymode"
+	"github.com/pingcap/tidb/pkg/config/diagnosticmode"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/executor/mppcoordmanager"
 	"github.com/pingcap/tidb/pkg/extension"
 	"github.com/pingcap/tidb/pkg/infoschema/issyncer/mdldef"
@@ -69,13 +71,16 @@ import (
 	"github.com/pingcap/tidb/pkg/privilege/privileges"
 	"github.com/pingcap/tidb/pkg/resourcegroup"
 	servererr "github.com/pingcap/tidb/pkg/server/err"
+	"github.com/pingcap/tidb/pkg/server/internal/advertisedstatus"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/session/txninfo"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/fastrand"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/kvcache"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
@@ -145,6 +150,15 @@ type Server struct {
 	capability uint32
 	dom        *domain.Domain
 
+	statusInitOnce   sync.Once
+	statusInitCtx    context.Context
+	statusInitCancel context.CancelFunc
+
+	// statusMu serializes status service initialization and shutdown, including AutoID.
+	// Once statusClosed is set, no initializer may publish resources or add to statusWG.
+	statusMu       sync.Mutex
+	statusClosed   bool
+	statusWG       util.WaitGroupWrapper
 	statusAddr     string
 	statusListener net.Listener
 	statusServer   atomic.Pointer[http.Server]
@@ -210,7 +224,7 @@ func (s *Server) BitwiseOrAssignCapability(capability uint32) {
 
 // GetStatusServerAddr gets statusServer address for MppCoordinatorManager usage
 func (s *Server) GetStatusServerAddr() (on bool, addr string) {
-	if !s.cfg.Status.ReportStatus {
+	if !s.fullStatusServerEnabled() {
 		return false, ""
 	}
 	if strings.Contains(s.statusAddr, config.DefStatusHost) {
@@ -370,8 +384,12 @@ func (s *Server) InitTiDBListener() error {
 }
 
 func (s *Server) initTiDBListener() (err error) {
-	needTCPListener := s.cfg.Host != "" && (s.cfg.Port != 0 || RunInGoTest)
+	socketOnly := diagnosticmode.Enabled() && s.cfg.Security.SkipGrantTable
+	needTCPListener := s.cfg.Host != "" && (s.cfg.Port != 0 || (RunInGoTest && !socketOnly))
 	needUnixSocket := s.cfg.Socket != ""
+	if socketOnly && (needTCPListener || s.listener != nil || !needUnixSocket) {
+		return errors.New("diagnostic mode with skip-grant-table requires a Unix socket and no MySQL TCP listener")
+	}
 	if (!needTCPListener || s.listener != nil) && (!needUnixSocket || s.socket != nil) &&
 		(s.listener != nil || s.socket != nil) {
 		return nil
@@ -495,6 +513,11 @@ func (s *Server) reportConfig() {
 
 // Run runs the server.
 func (s *Server) Run(dom *domain.Domain) error {
+	// The plaintext slow-query worker is independent of tidb_redact_log.
+	// Tests start it explicitly when they exercise slow-query cache behavior.
+	if !intest.InTest {
+		executor.StartSlowQueryCache()
+	}
 	metrics.ServerEventCounter.WithLabelValues(metrics.ServerStart).Inc()
 	s.reportConfig()
 
@@ -524,6 +547,17 @@ func (s *Server) Run(dom *domain.Domain) error {
 	terror.RegisterFinish()
 	go s.startNetworkListener(s.listener, false, errChan)
 	go s.startNetworkListener(s.socket, true, errChan)
+	// The diagnostic HTTP allowlist does not expose /info for this identity check.
+	if s.fullStatusServerEnabled() {
+		endpointCheckCtx, cancelEndpointCheck := context.WithCancel(context.Background())
+		defer cancelEndpointCheck()
+		advertisedstatus.Start(endpointCheckCtx, advertisedstatus.Options{
+			ReportStatus:     s.cfg.Status.ReportStatus,
+			StatusListener:   s.statusListener,
+			AdvertiseAddress: s.cfg.AdvertiseAddress,
+			LocalID:          s.dom.DDL().GetID(),
+		})
+	}
 	if RunInGoTest && !isClosed(RunInGoTestChan) {
 		close(RunInGoTestChan)
 	}
@@ -580,19 +614,16 @@ func (s *Server) startNetworkListener(listener net.Listener, isUnixSocket bool, 
 
 		clientConn := s.newConn(conn)
 		if isUnixSocket {
-			var (
-				uc *net.UnixConn
-				ok bool
-			)
-			if clientConn.ppEnabled {
-				// Using reflect to get Raw Conn object from proxy protocol wrapper connection object
-				ppv := reflect.ValueOf(conn)
-				vconn := ppv.Elem().FieldByName("Conn")
-				rconn := vconn.Interface()
-				uc, ok = rconn.(*net.UnixConn)
-			} else {
-				uc, ok = conn.(*net.UnixConn)
+			// When PROXY protocol is enabled the accepted conn may be wrapped by
+			// the PROXY-protocol conn, which exposes NetConn() since
+			// go-proxyprotocol v1.0.8. Unwrap it to reach the underlying
+			// *net.UnixConn; a raw conn (for example when the client address is
+			// not in the allowed networks) is left as-is.
+			sockConn := conn
+			if underlay, ok := sockConn.(proxyprotocol.UnderlayConn); ok {
+				sockConn = underlay.NetConn()
 			}
+			uc, ok := sockConn.(*net.UnixConn)
 			if !ok {
 				logutil.BgLogger().Error("Expected UNIX socket, but got something else")
 				return
@@ -648,9 +679,29 @@ func (*Server) checkAuditPlugin(clientConn *clientConn) error {
 	})
 }
 
+// Initialize independently of statusMu so shutdown can cancel an initializer
+// that is holding the lifecycle lock while waiting for its AutoID lease.
+func (s *Server) statusInitializationContext() context.Context {
+	s.statusInitOnce.Do(func() {
+		s.statusInitCtx, s.statusInitCancel = context.WithCancel(context.Background())
+	})
+	return s.statusInitCtx
+}
+
+func (s *Server) cancelStatusInitialization() {
+	s.statusInitializationContext()
+	s.statusInitCancel()
+}
+
 func (s *Server) startShutdown() {
 	logutil.BgLogger().Info("setting tidb-server to report unhealthy (shutting-down)")
 	s.health.Store(false)
+	s.cancelStatusInitialization()
+	// Finish any in-progress service initialization before Starter relinquishes
+	// AutoID ownership, and prevent pending initializers from starting it again.
+	s.statusMu.Lock()
+	s.statusClosed = true
+	s.statusMu.Unlock()
 	// give the load balancer a chance to receive a few unhealthy health reports
 	// before acquiring the s.rwlock and blocking connections.
 	waitTime := time.Duration(s.cfg.GracefulWaitBeforeShutdown) * time.Second
@@ -672,6 +723,7 @@ func (s *Server) enterShutdownMode() {
 }
 
 func (s *Server) closeListener() {
+	s.cancelStatusInitialization()
 	if s.listener != nil {
 		err := s.listener.Close()
 		terror.Log(errors.Trace(err))
@@ -682,6 +734,13 @@ func (s *Server) closeListener() {
 		terror.Log(errors.Trace(err))
 		s.socket = nil
 	}
+	s.statusMu.Lock()
+	s.statusClosed = true
+	if s.statusListener != nil {
+		if err := s.statusListener.Close(); err != nil && !stderrors.Is(err, net.ErrClosed) {
+			terror.Log(errors.Trace(err))
+		}
+	}
 	if statusServer := s.statusServer.Load(); statusServer != nil {
 		err := statusServer.Close()
 		terror.Log(errors.Trace(err))
@@ -691,6 +750,7 @@ func (s *Server) closeListener() {
 		s.grpcServer.Stop()
 		s.grpcServer = nil
 	}
+	s.statusMu.Unlock()
 	if !deploymode.IsStarter() || s.StandbyController == nil {
 		s.AutoIDServiceClose()
 	}
@@ -724,10 +784,13 @@ func (s *Server) GetNeedRequestMgrFree() bool {
 // Close closes the server.
 func (s *Server) Close() {
 	s.startShutdown()
-	s.rwlock.Lock() // // prevent new connections
-	defer s.rwlock.Unlock()
+	s.rwlock.Lock() // prevent new connections
 	s.enterShutdownMode()
 	s.closeListener()
+	s.rwlock.Unlock()
+	// Startup callbacks may need rwlock. Join initialization and serving only
+	// after closing their resources and releasing the client-connection lock.
+	s.statusWG.Wait()
 }
 
 func (s *Server) registerConn(conn *clientConn) bool {
@@ -818,20 +881,21 @@ func (s *Server) onConn(conn *clientConn) {
 		return
 	}
 
-	logutil.Logger(ctx).Debug("new connection", zap.String("remoteAddr", conn.bufReadConn.RemoteAddr().String()))
+	conn.logConnectionEvent(ctx, "login_success")
 
 	defer func() {
 		terror.Log(conn.Close())
 		logutil.Logger(ctx).Debug("connection closed")
 	}()
 
-	if err := conn.increaseUserConnectionsCount(); err != nil {
+	releaseUserConnection, err := conn.increaseUserConnectionsCount()
+	if err != nil {
 		logutil.BgLogger().With(zap.Uint64("conn", conn.connectionID)).
 			Warn("failed to increase the count of connections", zap.Error(err),
 				zap.String("remote addr", conn.bufReadConn.RemoteAddr().String()))
 		return
 	}
-	defer conn.decreaseUserConnectionCount()
+	defer releaseUserConnection()
 
 	if !s.registerConn(conn) {
 		return
@@ -868,6 +932,16 @@ func (s *Server) onConn(conn *clientConn) {
 	if err != nil {
 		return
 	}
+}
+
+func (cc *clientConn) logConnectionEvent(ctx context.Context, event string) {
+	if !vardef.EnableConnectionEventLog.Load() {
+		return
+	}
+	logutil.Logger(ctx).Info("connection event",
+		zap.String("event", event),
+		zap.Stringer("user", cc.getCtx().GetSessionVars().User),
+		zap.String("remoteAddr", cc.bufReadConn.RemoteAddr().String()))
 }
 
 func (cc *clientConn) connectInfo() *variable.ConnectionInfo {
@@ -976,6 +1050,22 @@ func (s *Server) ShowTxnList() []*txninfo.TxnInfo {
 		}
 	}
 	return rs
+}
+
+// ShowInternalTxnList exposes internal transactions to unauthenticated system
+// queries that drain database writes; ordinary TIDB_TRX visibility is unchanged.
+func (s *Server) ShowInternalTxnList() []*txninfo.TxnInfo {
+	s.sessionMapMutex.Lock()
+	defer s.sessionMapMutex.Unlock()
+	var result []*txninfo.TxnInfo
+	for se := range s.internalSessions {
+		if provider, ok := se.(interface{ TxnInfo() *txninfo.TxnInfo }); ok {
+			if info := provider.TxnInfo(); info != nil && info.ProcessInfo != nil {
+				result = append(result, info)
+			}
+		}
+	}
+	return result
 }
 
 // UpdateProcessCPUTime updates specific process's tidb CPU time when the process is still running
@@ -1342,13 +1432,18 @@ func (s *Server) Health() bool {
 
 // AutoIDServiceClose closes the auto ID service.
 func (s *Server) AutoIDServiceClose() {
+	s.statusMu.Lock()
+	defer s.statusMu.Unlock()
 	if s.autoIDService != nil {
 		s.autoIDService.Close()
+		s.autoIDService = nil
 	}
 }
 
 // IsAutoIDOwner checks if the auto ID service is the owner.
 func (s *Server) IsAutoIDOwner() bool {
+	s.statusMu.Lock()
+	defer s.statusMu.Unlock()
 	return s.autoIDService != nil && s.autoIDService.IsOwner()
 }
 

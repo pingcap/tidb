@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/topsql/stmtstats"
 )
@@ -69,11 +70,18 @@ type TiDBStatement struct {
 	id          uint32
 	numParams   int
 	boundParams [][]byte
-	paramsType  []byte
-	ctx         *TiDBContext
-	// this result set should have been closed before stored here. Only the `rowIterator` are used here. This field is
-	// not moved out to reuse the logic inside functions `writeResultSet...`
-	// TODO: move the `fetchedRows` into the statement, and remove the `ResultSet` from statement.
+	// boundParamsTooLarge tracks whether a single COM_STMT_SEND_LONG_DATA parameter has exceeded max_allowed_packet.
+	boundParamsTooLarge bool
+	// boundParamsMemQuotaExceeded tracks whether further COM_STMT_SEND_LONG_DATA
+	// was refused because the session MemTracker would exceed tidb_mem_quota_query.
+	boundParamsMemQuotaExceeded bool
+	// boundLongDataBytes is the number of COM_STMT_SEND_LONG_DATA bytes currently
+	// held by this statement and charged to the session MemTracker.
+	boundLongDataBytes int64
+	paramsType         []byte
+	ctx                *TiDBContext
+	// Eager cursors keep a reader over rowContainer after their result set is closed;
+	// lazy cursors keep a detached result set alive until their iterator is closed.
 	rs resultset.CursorResultSet
 	// the `rowContainer` should contain all pre-fetched results of the statement in `EXECUTE` command.
 	// it's stored here to be closed in RESET and CLOSE command
@@ -108,11 +116,72 @@ func (ts *TiDBStatement) AppendParam(paramID int, data []byte) error {
 	}
 	// If len(data) is 0, append an empty byte slice to the end to distinguish no data and no parameter.
 	if len(data) == 0 {
+		released := int64(len(ts.boundParams[paramID]))
+		if released > 0 {
+			ts.ctx.GetSessionVars().MemTracker.Consume(-released)
+			ts.boundLongDataBytes -= released
+		}
 		ts.boundParams[paramID] = []byte{}
-	} else {
-		ts.boundParams[paramID] = append(ts.boundParams[paramID], data...)
+		return nil
+	}
+	// Once either limit has been exceeded for this statement, keep SEND_LONG_DATA
+	// silent and refuse further growth until RESET/EXECUTE clears the buffers.
+	if ts.boundParamsTooLarge || ts.boundParamsMemQuotaExceeded {
+		return nil
+	}
+
+	chunkSize := int64(len(data))
+	vars := ts.ctx.GetSessionVars()
+	if uint64(len(ts.boundParams[paramID]))+uint64(chunkSize) > vars.MaxAllowedPacket {
+		// MySQL reports the packet-too-large error on the following EXECUTE, not on SEND_LONG_DATA.
+		// Stop appending more bytes once the limit is exceeded so the statement cannot grow unboundedly.
+		ts.boundParamsTooLarge = true
+		return nil
+	}
+
+	// Charge COM_STMT_SEND_LONG_DATA to the session MemTracker so it counts toward
+	// tidb_mem_quota_query. Refuse before Consume to avoid triggering OOM actions
+	// on a protocol command that has no response packet.
+	memTracker := vars.MemTracker
+	quota := vars.MemQuotaQuery
+	if quota > 0 && memTracker.BytesConsumed()+chunkSize >= quota {
+		ts.boundParamsMemQuotaExceeded = true
+		return nil
+	}
+
+	memTracker.Consume(chunkSize)
+	ts.boundParams[paramID] = append(ts.boundParams[paramID], data...)
+	ts.boundLongDataBytes += chunkSize
+	return nil
+}
+
+// CheckLongDataSize implements PreparedStatement CheckLongDataSize method.
+func (ts *TiDBStatement) CheckLongDataSize() error {
+	if ts.boundParamsMemQuotaExceeded {
+		return exeerrors.ErrMemoryExceedForQuery.GenWithStackByArgs(ts.ctx.GetSessionVars().ConnectionID)
+	}
+	if ts.boundParamsTooLarge {
+		return servererr.ErrNetPacketTooLarge
+	}
+	maxAllowedPacket := ts.ctx.GetSessionVars().MaxAllowedPacket
+	for _, boundParam := range ts.boundParams {
+		if uint64(len(boundParam)) > maxAllowedPacket {
+			return servererr.ErrNetPacketTooLarge
+		}
 	}
 	return nil
+}
+
+func (ts *TiDBStatement) releaseBoundLongData() {
+	if ts.boundLongDataBytes > 0 {
+		ts.ctx.GetSessionVars().MemTracker.Consume(-ts.boundLongDataBytes)
+		ts.boundLongDataBytes = 0
+	}
+	for i := range ts.boundParams {
+		ts.boundParams[i] = nil
+	}
+	ts.boundParamsTooLarge = false
+	ts.boundParamsMemQuotaExceeded = false
 }
 
 // NumParams implements PreparedStatement NumParams method.
@@ -137,8 +206,7 @@ func (ts *TiDBStatement) GetParamsType() []byte {
 
 // StoreResultSet stores ResultSet for stmt fetching
 func (ts *TiDBStatement) StoreResultSet(rs resultset.CursorResultSet) {
-	// the original reset set should have been closed, and it's only used to store the iterator through the rowContainer
-	// so it's fine to just overwrite it.
+	// The caller must release any previous cursor before replacing it.
 	ts.rs = rs
 }
 
@@ -149,48 +217,33 @@ func (ts *TiDBStatement) GetResultSet() resultset.CursorResultSet {
 
 // Reset implements PreparedStatement Reset method.
 func (ts *TiDBStatement) Reset() error {
-	for i := range ts.boundParams {
-		ts.boundParams[i] = nil
-	}
+	ts.releaseBoundLongData()
+	return ts.CloseCursor()
+}
+
+// CloseCursor releases each owned cursor resource once, including after an error.
+func (ts *TiDBStatement) CloseCursor() error {
+	rs, rowContainer := ts.rs, ts.rowContainer
+	ts.rs = nil
+	ts.rowContainer = nil
 	ts.hasActiveCursor = false
 
-	resultset.ReportCursorRUV2Delta(ts.rs, 0)
-	if ts.rs != nil && ts.rs.GetRowIterator() != nil {
-		ts.rs.GetRowIterator().Close()
-	}
-	ts.rs = nil
-
-	if ts.rowContainer != nil {
-		ts.rowContainer.GetMemTracker().Detach()
-		ts.rowContainer.GetDiskTracker().Detach()
-
-		rc := ts.rowContainer
-		ts.rowContainer = nil
-
-		err := rc.Close()
-		if err != nil {
-			return err
-		}
+	resultset.ReportCursorRUV2Delta(rs)
+	if rs != nil && rs.GetRowIterator() != nil {
+		rs.GetRowIterator().Close()
 	}
 
+	if rowContainer != nil {
+		return rowContainer.Close()
+	}
 	return nil
 }
 
 // Close implements PreparedStatement Close method.
 func (ts *TiDBStatement) Close() error {
-	resultset.ReportCursorRUV2Delta(ts.rs, 0)
-	if ts.rs != nil && ts.rs.GetRowIterator() != nil {
-		ts.rs.GetRowIterator().Close()
-	}
-
-	if ts.rowContainer != nil {
-		ts.rowContainer.GetMemTracker().Detach()
-		ts.rowContainer.GetDiskTracker().Detach()
-
-		err := ts.rowContainer.Close()
-		if err != nil {
-			return err
-		}
+	ts.releaseBoundLongData()
+	if err := ts.CloseCursor(); err != nil {
+		return err
 	}
 
 	// TODO close at tidb level

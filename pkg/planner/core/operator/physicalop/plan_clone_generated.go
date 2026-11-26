@@ -103,6 +103,8 @@ func (op *PhysicalTableScan) CloneForPlanCache(newCtx base.PlanContext) (base.Pl
 	cloned.AccessCondition = utilfuncp.CloneExpressionsForPlanCache(op.AccessCondition, nil)
 	cloned.FilterCondition = utilfuncp.CloneExpressionsForPlanCache(op.FilterCondition, nil)
 	cloned.LateMaterializationFilterCondition = utilfuncp.CloneExpressionsForPlanCache(op.LateMaterializationFilterCondition, nil)
+	cloned.ForcedLateMaterializationFilterColumnIDs = make([]int64, len(op.ForcedLateMaterializationFilterColumnIDs))
+	copy(cloned.ForcedLateMaterializationFilterColumnIDs, op.ForcedLateMaterializationFilterColumnIDs)
 	cloned.HandleIdx = make([]int, len(op.HandleIdx))
 	copy(cloned.HandleIdx, op.HandleIdx)
 	if op.HandleCols != nil {
@@ -217,6 +219,18 @@ func (op *PhysicalLimit) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, 
 			cloned.PrefixCol = op.PrefixCol.Clone().(*expression.Column)
 		}
 	}
+	return cloned, true
+}
+
+// CloneForPlanCache implements the base.Plan interface.
+func (op *PhysicalCalcFoundRows) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
+	cloned := new(PhysicalCalcFoundRows)
+	*cloned = *op
+	basePlan, baseOK := op.BasePhysicalPlan.CloneForPlanCacheWithSelf(newCtx, cloned)
+	if !baseOK {
+		return nil, false
+	}
+	cloned.BasePhysicalPlan = *basePlan
 	return cloned, true
 }
 

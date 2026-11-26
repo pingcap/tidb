@@ -23,9 +23,11 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/extworkload"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	infoschemacontext "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/owner"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/session/syssession"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
@@ -44,6 +46,11 @@ import (
 )
 
 const scanTaskNotificationType string = "scan"
+
+const (
+	ttlJobManagerLeaderPath = "/tidb/ttl_job_manager/leader"
+	ttlJobManagerPrompt     = "ttl_job_manager"
+)
 
 const insertNewTableIntoStatusTemplate = "INSERT INTO mysql.tidb_ttl_table_status (table_id,parent_table_id) VALUES (%?, %?)"
 const setTableStatusOwnerTemplate = `UPDATE mysql.tidb_ttl_table_status
@@ -126,15 +133,32 @@ type JobManager struct {
 
 	lastReportDelayMetricsTime time.Time
 	leaderFunc                 func() bool
+	ownerManager               owner.Manager
+	extWorkload                extworkload.Manager
+
+	// jobVersionChecker is only accessed by the job loop goroutine.
+	jobVersionChecker ttlJobVersionChecker
+}
+
+// JobManagerOption configures a JobManager.
+type JobManagerOption func(*JobManager)
+
+// WithExternalWorkloadManager configures the external workload manager used by the JobManager.
+func WithExternalWorkloadManager(extWorkloadMgr extworkload.Manager) JobManagerOption {
+	return func(manager *JobManager) {
+		manager.extWorkload = extWorkloadMgr
+	}
 }
 
 // NewJobManager creates a new ttl job manager
-func NewJobManager(id string, sessPool syssession.Pool, store kv.Storage, etcdCli *clientv3.Client, leaderFunc func() bool) (manager *JobManager) {
+func NewJobManager(id string, sessPool syssession.Pool, store kv.Storage, etcdCli *clientv3.Client, leaderFunc func() bool, opts ...JobManagerOption) (manager *JobManager) {
 	manager = &JobManager{}
+	for _, opt := range opts {
+		opt(manager)
+	}
 	manager.id = id
 	manager.store = store
 	manager.sessPool = sessPool
-
 	manager.init(manager.jobLoop)
 	manager.ctx = logutil.WithKeyValue(manager.ctx, "ttl-worker", "job-manager")
 	if intest.InTest {
@@ -156,7 +180,24 @@ func NewJobManager(id string, sessPool syssession.Pool, store kv.Storage, etcdCl
 
 	manager.taskManager = newTaskManager(manager.ctx, sessPool, manager.infoSchemaCache, id, store)
 	manager.leaderFunc = leaderFunc
+	if extworkload.IsTTLTaskWorker(manager.extWorkload) && etcdCli != nil && !intest.InTest {
+		manager.ownerManager = owner.NewOwnerManager(context.Background(), etcdCli, ttlJobManagerPrompt, id, ttlJobManagerLeaderPath)
+		manager.ownerManager.SetListener(&ttlOwnerListener{})
+		if err := manager.ownerManager.CampaignOwner(5); err != nil {
+			logutil.BgLogger().Error("failed to campaign ttl job manager owner",
+				zap.Error(err))
+		}
+		manager.leaderFunc = manager.ownerManager.IsOwner
+	}
 	return
+}
+
+type ttlOwnerListener struct{}
+
+func (*ttlOwnerListener) OnRetireOwner() {}
+
+func (*ttlOwnerListener) OnBecomeOwner() {
+	logutil.BgLogger().Info("leader change of TTL job manager service, this node become owner")
 }
 
 func (m *JobManager) isLeader() bool {
@@ -165,6 +206,9 @@ func (m *JobManager) isLeader() bool {
 
 func (m *JobManager) jobLoop() error {
 	defer func() {
+		if m.ownerManager != nil {
+			m.ownerManager.Close()
+		}
 		logutil.Logger(m.ctx).Info("ttlJobManager loop exited.")
 	}()
 	return withSession(m.sessPool, m.jobLoopWithSession)
@@ -345,7 +389,23 @@ func (m *JobManager) handleSubmitJobRequest(se session.Session, jobReq *SubmitTT
 		return
 	}
 
-	_, err := m.lockNewJob(m.ctx, se, tbl, se.Now(), jobReq.RequestID, false)
+	// The legacy PK scan task format is safe across TiDB builds. Use it directly
+	// when index scan is disabled or this table has no eligible TTL index, so a
+	// rolling upgrade does not unnecessarily block such jobs.
+	versionCheckResult := ttlJobVersionFallbackToPK
+	if vardef.TTLEnableIndexScan.Load() && tbl.FindTTLIndex() != nil {
+		versionCheckResult = m.jobVersionChecker.check(m.ctx)
+	}
+	if versionCheckResult == ttlJobVersionBlockJob {
+		// Do not silently replace the selected index scan with a potentially much
+		// more expensive PK scan for a known mixed build. Returning an error keeps
+		// the timer event retrying; after the upgrade converges, a later attempt can
+		// create the job with index scan as intended.
+		jobReq.RespCh <- errors.New("cannot create TTL job while TiDB server build versions are inconsistent")
+		return
+	}
+	_, err := m.lockNewJob(m.ctx, se, tbl, se.Now(), jobReq.RequestID, false,
+		versionCheckResult == ttlJobVersionAllowIndexScan)
 	jobReq.RespCh <- err
 }
 
@@ -570,6 +630,9 @@ func (m *JobManager) findAllTasksForJob(se session.Session, jobID string) ([]*ca
 }
 
 func (m *JobManager) checkFinishedJob(se session.Session) {
+	runningJobsCount := len(m.runningJobs)
+	totalFinishedJobs := 0
+	maxJobCreateTime := uint64(0)
 	// reverse iteration so that we could remove the job safely in the loop
 	for i := len(m.runningJobs) - 1; i >= 0; i-- {
 		job := m.runningJobs[i]
@@ -603,6 +666,17 @@ func (m *JobManager) checkFinishedJob(se session.Session) {
 				continue
 			}
 			m.removeJob(job)
+			totalFinishedJobs++
+			if createTime := uint64(job.createTime.Unix()); maxJobCreateTime < createTime {
+				maxJobCreateTime = createTime
+			}
+		}
+	}
+	if runningJobsCount > 0 && totalFinishedJobs == runningJobsCount && extworkload.IsTTLTaskWorker(m.extWorkload) {
+		if err := m.extWorkload.RecycleTTLTask(m.ctx, maxJobCreateTime); err != nil {
+			logutil.Logger(m.ctx).Warn("failed to recycle TTL task from external workload controller",
+				zap.Uint64("completedJobCreateTime", maxJobCreateTime),
+				zap.Error(err))
 		}
 	}
 }
@@ -821,7 +895,8 @@ func (m *JobManager) lockHBTimeoutJob(ctx context.Context, se session.Session, t
 }
 
 // lockNewJob locks a new job
-func (m *JobManager) lockNewJob(ctx context.Context, se session.Session, table *cache.PhysicalTable, now time.Time, jobID string, checkScheduleInterval bool) (*ttlJob, error) {
+func (m *JobManager) lockNewJob(ctx context.Context, se session.Session, table *cache.PhysicalTable, now time.Time,
+	jobID string, checkScheduleInterval, allowIndexScan bool) (*ttlJob, error) {
 	var expireTime time.Time
 	err := se.RunInTxn(ctx, func() error {
 		tableStatus, err := m.getTableStatusForUpdateNotWait(ctx, se, table.ID, table.TableInfo.ID, true)
@@ -853,12 +928,32 @@ func (m *JobManager) lockNewJob(ctx context.Context, se session.Session, table *
 			return errors.Wrapf(err, "execute sql: %s", sql)
 		}
 
-		ranges, err := table.SplitScanRanges(ctx, m.store, getScanSplitCnt(se.GetStore()))
-		if err != nil {
-			return errors.Wrap(err, "split scan ranges")
+		var ranges []cache.ScanRange
+		var scanIndexID *int64
+		if allowIndexScan && vardef.TTLEnableIndexScan.Load() {
+			if idx := table.FindTTLIndex(); idx != nil {
+				ranges, err = table.SplitIndexScanRanges(ctx, m.store, idx, expireTime, se.GetSessionVars().Location(), getScanSplitCnt(se.GetStore()))
+				if err != nil {
+					if ctx.Err() != nil {
+						return errors.Wrap(ctx.Err(), "split index scan ranges")
+					}
+					logutil.Logger(ctx).Warn("failed to split TTL index scan ranges, fall back to PK scan",
+						zap.String("table", table.FullName()), zap.String("index", idx.Name.O), zap.Error(err))
+					ranges = nil
+				} else {
+					scanIndexID = &idx.ID
+				}
+			}
+		}
+		if ranges == nil {
+			scanIndexID = nil
+			ranges, err = table.SplitScanRanges(ctx, m.store, getScanSplitCnt(se.GetStore()))
+			if err != nil {
+				return errors.Wrap(err, "split scan ranges")
+			}
 		}
 		for scanID, r := range ranges {
-			sql, args, err = cache.InsertIntoTTLTask(se.GetSessionVars().Location(), jobID, table.ID, scanID, r.Start, r.End, expireTime, now)
+			sql, args, err = cache.InsertIntoTTLTaskWithScanIndexID(se.GetSessionVars().Location(), jobID, table.ID, scanID, r.Start, r.End, expireTime, now, scanIndexID)
 			if err != nil {
 				return errors.Wrap(err, "encode scan task")
 			}

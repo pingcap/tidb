@@ -131,6 +131,7 @@ import (
 	hintLeading               "LEADING"
 	hintSemiJoinRewrite       "SEMI_JOIN_REWRITE"
 	hintNoDecorrelate         "NO_DECORRELATE"
+	hintTiFlashLMFilter       "TIFLASH_LM_FILTER"
 
 	/* Other keywords */
 	hintOLAP            "OLAP"
@@ -726,8 +727,6 @@ UnsupportedIndexLevelOptimizerHintName:
 |	"NO_MRR"
 |	"NO_ICP"
 |	"NO_RANGE_OPTIMIZATION"
-|	"SKIP_SCAN"
-|	"NO_SKIP_SCAN"
 
 SupportedIndexLevelOptimizerHintName:
 	"USE_INDEX"
@@ -738,6 +737,9 @@ SupportedIndexLevelOptimizerHintName:
 |	"NO_ORDER_INDEX"
 |	"INDEX_LOOKUP_PUSHDOWN"
 |	"NO_INDEX_LOOKUP_PUSHDOWN"
+|	"TIFLASH_LM_FILTER"
+|	"SKIP_SCAN"
+|	"NO_SKIP_SCAN"
 
 SubqueryOptimizerHintName:
 	"SEMIJOIN"
@@ -853,6 +855,7 @@ Identifier:
 |	"LEADING"
 |	"SEMI_JOIN_REWRITE"
 |	"NO_DECORRELATE"
+|	"TIFLASH_LM_FILTER"
 /* other keywords */
 |	"OLAP"
 |	"OLTP"

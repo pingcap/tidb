@@ -61,6 +61,8 @@ var (
 	ErrWrongUsage = terror.ClassParser.NewStd(mysql.ErrWrongUsage)
 	// ErrWrongDBName returns for incorrect DB name.
 	ErrWrongDBName = terror.ClassParser.NewStd(mysql.ErrWrongDBName)
+	// ErrDataOutOfRange returns for a value out of range.
+	ErrDataOutOfRange = terror.ClassParser.NewStd(mysql.ErrDataOutOfRange)
 	// SpecFieldPattern special result field pattern
 	SpecFieldPattern = regexp.MustCompile(`(\/\*!(M?[0-9]{5,6})?|\*\/)`)
 	specCodeStart    = regexp.MustCompile(`^\/\*!(M?[0-9]{5,6})?[ \t]*`)
@@ -80,7 +82,18 @@ type ParserConfig struct {
 	EnableWindowFunction        bool
 	EnableStrictDoubleTypeCheck bool
 	SkipPositionRecording       bool
+	// EnableUnsupportedMySQLSyntax enables parser acceptance of selected MySQL syntax unsupported by TiDB.
+	// It is intended for tools and does not imply planner or executor support.
+	EnableUnsupportedMySQLSyntax bool
 }
+
+const (
+	// maxASTDepthStmtOverhead leaves room for statement wrapper nodes on the
+	// visitor path, for example SelectStmt -> FieldList -> SelectField.
+	maxASTDepthStmtOverhead = 64
+	// maxASTDepth bounds user-controlled AST nesting before recursive visitors run.
+	maxASTDepth = maxParenthesesDepth + maxASTDepthStmtOverhead
+)
 
 //revive:enable:exported
 
@@ -93,9 +106,10 @@ type Parser struct {
 	lexer      Scanner
 	hintParser *hintParser
 
-	explicitCharset       bool
-	strictDoubleFieldType bool
-	enableMariaDB         bool
+	explicitCharset              bool
+	strictDoubleFieldType        bool
+	enableMariaDB                bool
+	enableUnsupportedMySQLSyntax bool
 
 	// the following fields are used by yyParse to reduce allocation.
 	cache  []yySymType
@@ -153,6 +167,7 @@ func (parser *Parser) Reset() {
 func (parser *Parser) reset() {
 	parser.explicitCharset = false
 	parser.strictDoubleFieldType = false
+	parser.enableUnsupportedMySQLSyntax = false
 	parser.EnableWindowFunc(true)
 	parser.SetStrictDoubleTypeCheck(true)
 	mode, _ := mysql.GetSQLMode(mysql.DefaultSQLMode)
@@ -174,6 +189,7 @@ func (parser *Parser) SetParserConfig(config ParserConfig) {
 	parser.EnableWindowFunc(config.EnableWindowFunction)
 	parser.SetStrictDoubleTypeCheck(config.EnableStrictDoubleTypeCheck)
 	parser.lexer.skipPositionRecording = config.SkipPositionRecording
+	parser.enableUnsupportedMySQLSyntax = config.EnableUnsupportedMySQLSyntax
 }
 
 // ParseSQL parses a query string to raw ast.StmtNode.
@@ -201,6 +217,9 @@ func (parser *Parser) ParseSQL(sql string, params ...ParseParam) (stmt []ast.Stm
 		return nil, warns, errors.Trace(errs[0])
 	}
 	for _, stmt := range parser.result {
+		if err := checkASTDepth(stmt); err != nil {
+			return nil, warns, errors.Trace(err)
+		}
 		ast.SetFlag(stmt)
 	}
 	return parser.result, warns, nil
@@ -214,6 +233,34 @@ func (parser *Parser) Parse(sql, charset, collation string) (stmt []ast.StmtNode
 
 func (parser *Parser) lastErrorAsWarn() {
 	parser.lexer.lastErrorAsWarn()
+}
+
+func checkASTDepth(stmt ast.StmtNode) error {
+	checker := astDepthChecker{}
+	ast.Walk(stmt, &checker)
+	if checker.exceeded {
+		return ErrParse.GenWithStackByArgs("AST nesting depth exceeds maximum", strconv.Itoa(maxASTDepth))
+	}
+	return nil
+}
+
+type astDepthChecker struct {
+	depth    int
+	exceeded bool
+}
+
+func (c *astDepthChecker) Enter(ast.Node) bool {
+	c.depth++
+	if c.depth > maxASTDepth {
+		c.exceeded = true
+		return true
+	}
+	return false
+}
+
+func (c *astDepthChecker) Leave(ast.Node) bool {
+	c.depth--
+	return !c.exceeded
 }
 
 // ParseOneStmt parses a query and returns an ast.StmtNode.
@@ -358,6 +405,23 @@ func toBit(l yyLexer, lval *yySymType, str string) int {
 	}
 	lval.item = b
 	return bitLit
+}
+
+// getUint64FromBinaryLiteral returns the big-endian value of a hexadecimal literal,
+// ignoring leading zero bytes. ok is false when the value needs more than 64 bits.
+func getUint64FromBinaryLiteral(lit ast.BinaryLiteral) (val uint64, ok bool) {
+	b := lit.ToString()
+	i := 0
+	for i < len(b) && b[i] == 0 {
+		i++
+	}
+	if len(b)-i > 8 {
+		return 0, false
+	}
+	for ; i < len(b); i++ {
+		val = val<<8 | uint64(b[i])
+	}
+	return val, true
 }
 
 func getUint64FromNUM(num interface{}) uint64 {

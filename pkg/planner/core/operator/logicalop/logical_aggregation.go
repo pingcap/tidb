@@ -456,8 +456,6 @@ func (la *LogicalAggregation) ExtractFD() *fd.FDSet {
 
 // GetBaseLogicalPlan inherits BaseLogicalPlan.LogicalPlan.<23rd> implementation.
 
-// ConvertOuterToInnerJoin inherits BaseLogicalPlan.LogicalPlan.<24th> implementation.
-
 // *************************** end implementation of logicalPlan interface ***************************
 
 // HasDistinct shows whether LogicalAggregation has functions with distinct.
@@ -709,6 +707,11 @@ func aggFuncResultMatchesArgForNonEmptyGroup(aggFunc *aggregation.AggFuncDesc) b
 	default:
 		return false
 	}
+	// MIN/MAX return string values for binary literals. Substituting the raw
+	// literal changes numeric coercion in predicates above the aggregation.
+	if expression.IsBinaryLiteral(aggFunc.Args[0]) {
+		return false
+	}
 	return aggFunc.Args[0].ConstLevel() >= expression.ConstOnlyInContext
 }
 
@@ -733,7 +736,7 @@ func (la *LogicalAggregation) getAggFuncsColsForFirstRow() (aggFuncsCols []*expr
 }
 
 // pushDownPredicates split a condition to two parts, can be pushed-down or can not be pushed-down below aggregation.
-func (*LogicalAggregation) pushDownPredicates(cond expression.Expression, groupByColumns *expression.Schema, exprsOriginal []expression.Expression, pushDownFunc pushDownPredicatesFunc) (condsToPush, ret []expression.Expression) {
+func (la *LogicalAggregation) pushDownPredicates(cond expression.Expression, groupByColumns *expression.Schema, exprsOriginal []expression.Expression, pushDownFunc pushDownPredicatesFunc) (condsToPush, ret []expression.Expression) {
 	switch c := cond.(type) {
 	case *expression.Constant:
 		condsToPush = append(condsToPush, cond)
@@ -742,6 +745,9 @@ func (*LogicalAggregation) pushDownPredicates(cond expression.Expression, groupB
 		// with value 0 rather than an empty query result.
 		ret = append(ret, cond)
 	case *expression.ScalarFunction:
+		if len(la.GroupByItems) == 0 {
+			return nil, []expression.Expression{cond}
+		}
 		return pushDownFunc(c, groupByColumns, exprsOriginal)
 	default:
 		ret = append(ret, cond)

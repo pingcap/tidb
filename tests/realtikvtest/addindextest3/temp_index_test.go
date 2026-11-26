@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -31,6 +32,9 @@ import (
 )
 
 func TestMergeTempIndexBasic(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("this test injects the local-backend-only ingest/beforeBackendIngest failpoint")
+	}
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -160,9 +164,9 @@ func TestMergeTempIndexBasic(t *testing.T) {
 		require.Len(t, taskIDRows, 2)
 		taskID := taskIDRows[0][0].(string)
 		mergeTaskID := taskIDRows[1][0].(string)
-		readIdxCntSQL := fmt.Sprintf("select json_extract(summary, '$.row_count') from all_subtasks where task_key = %s and step = 1", taskID)
+		readIdxCntSQL := fmt.Sprintf("select json_extract(summary, '$.row_count') from all_subtasks where task_key = '%s' and step = 1", taskID)
 		tk.MustQuery(readIdxCntSQL).Check(testkit.Rows(tc.readIdxRowCnt...))
-		mergeCntSQL := fmt.Sprintf("select json_extract(summary, '$.row_count') from all_subtasks where task_key = %s and step = 4", mergeTaskID)
+		mergeCntSQL := fmt.Sprintf("select json_extract(summary, '$.row_count') from all_subtasks where task_key = '%s' and step = 4", mergeTaskID)
 		tk.MustQuery(mergeCntSQL).Check(testkit.Rows(tc.mergeIdxCnt...))
 	}
 }
@@ -170,6 +174,7 @@ func TestMergeTempIndexBasic(t *testing.T) {
 func TestMergeTempIndexStuck(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
+	realtikvtest.SetupNextGenGlobalSort(t, tk)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(id int primary key, a bigint)")

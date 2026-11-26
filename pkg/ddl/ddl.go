@@ -21,6 +21,7 @@ package ddl
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -32,6 +33,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/diagnosticmode"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
@@ -46,6 +48,7 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor"
+	"github.com/pingcap/tidb/pkg/extworkload"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
@@ -71,8 +74,6 @@ import (
 )
 
 const (
-	// DDLOwnerKey is the ddl owner path that is saved to etcd, and it's exported for testing.
-	DDLOwnerKey             = "/tidb/ddl/fg/owner"
 	ddlSchemaVersionKeyLock = "/tidb/ddl/schema_version_lock"
 	// addingDDLJobPrefix is the path prefix used to record the newly added DDL job, and it's saved to etcd.
 	addingDDLJobPrefix = "/tidb/ddl/add_ddl_job_"
@@ -93,9 +94,10 @@ const (
 )
 
 var (
-	jobV2FirstVer        = *semver.New("8.4.0")
-	globalIdxV1FirstVer  = *semver.New("8.5.6")
-	detectJobVerInterval = 10 * time.Second
+	jobV2FirstVer                      = *semver.New("8.4.0")
+	globalIdxV1FirstVer                = *semver.New("8.5.6")
+	modernECDSASessionTokenVer         = *semver.New("8.5.9")
+	detectClassicCompatibilityInterval = 10 * time.Second
 )
 
 // StartMode is an enum type for the start mode of the DDL.
@@ -172,9 +174,9 @@ const (
 )
 
 var (
-	// EnableSplitTableRegion is a flag to decide whether to split a new region for
-	// a newly created table. It takes effect only if the Storage supports split
-	// region.
+	// EnableSplitTableRegion controls whether to split a new Region for a newly
+	// created table without pre-split configuration or Region split policies. It
+	// takes effect only if the Storage supports splitting Regions.
 	EnableSplitTableRegion = uint32(0)
 )
 
@@ -201,6 +203,8 @@ type DDL interface {
 	GetID() string
 	// GetMinJobIDRefresher gets the MinJobIDRefresher, this api only works after Start.
 	GetMinJobIDRefresher() *systable.MinJobIDRefresher
+	// StorageClassTransitionStatuses returns active explicit storage-class operation statuses.
+	StorageClassTransitionStatuses() []StorageClassTransitionStatus
 }
 
 type jobSubmitResult struct {
@@ -266,12 +270,13 @@ type ddl struct {
 	wg tidbutil.WaitGroupWrapper // It's only used to deal with data race in restart_test.
 
 	*ddlCtx
-	sessPool          *sess.Pool
-	delRangeMgr       delRangeManager
-	enableTiFlashPoll *atomicutil.Bool
-	sysTblMgr         systable.Manager
-	minJobIDRefresher *systable.MinJobIDRefresher
-	eventPublishStore notifier.Store
+	sessPool                      *sess.Pool
+	delRangeMgr                   delRangeManager
+	enableTiFlashPoll             *atomicutil.Bool
+	sysTblMgr                     systable.Manager
+	minJobIDRefresher             *systable.MinJobIDRefresher
+	eventPublishStore             notifier.Store
+	storageClassTransitionManager *storageClassTransitionManager
 
 	executor     *executor
 	jobSubmitter *JobSubmitter
@@ -350,6 +355,7 @@ type ddlCtx struct {
 	etcdCli      *clientv3.Client
 	autoidCli    *autoid.ClientDiscover
 	schemaLoader SchemaLoader
+	extWorkload  extworkload.Manager
 
 	// reorgCtx is used for reorganization.
 	reorgCtx reorgContexts
@@ -665,7 +671,7 @@ func (d *ddl) IsTiFlashPollEnabled() bool {
 func (d *ddl) RegisterStatsHandle(h *handle.Handle) {
 	d.ddlCtx.statsHandle = h
 	d.executor.statsHandle = h
-	d.ddlEventCh = h.DDLEventCh()
+	d.ddlEventCh = h.DDL().DDLEventCh()
 }
 
 const noSubJob int64 = -1 // noSubJob indicates the event is not a merged ddl.
@@ -710,6 +716,9 @@ func asyncNotifyEvent(jobCtx *jobContext, e *notifier.SchemaChangeEvent, job *mo
 	if subJobID == noSubJob && job.MultiSchemaInfo != nil {
 		subJobID = int64(job.MultiSchemaInfo.Seq)
 	}
+	if sctx != nil {
+		jobCtx.mustRollbackTxnOnError = true
+	}
 	err := notifier.PubSchemeChangeToStore(
 		jobCtx.stepCtx,
 		sctx,
@@ -718,6 +727,7 @@ func asyncNotifyEvent(jobCtx *jobContext, e *notifier.SchemaChangeEvent, job *mo
 		e,
 		jobCtx.eventPublishStore,
 	)
+	failpoint.InjectCall("afterAsyncNotifyEvent", job, &err)
 	if err != nil {
 		logutil.DDLLogger().Error("Error publish schema change event",
 			zap.Int64("jobID", job.ID),
@@ -749,7 +759,7 @@ func newDDL(ctx context.Context, options ...Option) (*ddl, *executor) {
 		id = uuid.New().String()
 		// The etcdCli is nil if the store is localstore which is only used for testing.
 		// So we use mockOwnerManager and memSyncer.
-		manager = owner.NewMockManager(ctx, id, opt.Store, DDLOwnerKey)
+		manager = owner.NewMockManager(ctx, id, opt.Store, util.DDLOwnerKey)
 		schemaVerSyncer = schemaver.NewMemSyncer()
 		serverStateSyncer = serverstate.NewMemSyncer()
 	} else {
@@ -782,6 +792,7 @@ func newDDL(ctx context.Context, options ...Option) (*ddl, *executor) {
 		etcdCli:           opt.EtcdCli,
 		autoidCli:         opt.AutoIDClient,
 		schemaLoader:      opt.SchemaLoader,
+		extWorkload:       opt.ExtWorkloadMgr,
 	}
 	ddlCtx.reorgCtx.reorgCtxMap = make(map[int64]*reorgCtx)
 	ddlCtx.jobCtx.jobCtxMap = make(map[int64]*ReorgContext)
@@ -793,6 +804,7 @@ func newDDL(ctx context.Context, options ...Option) (*ddl, *executor) {
 		enableTiFlashPoll: atomicutil.NewBool(true),
 		eventPublishStore: opt.EventPublishStore,
 	}
+	d.storageClassTransitionManager = newStorageClassTransitionManager(d)
 
 	taskexecutor.RegisterTaskType(proto.Backfill,
 		func(ctx context.Context, task *proto.Task, param taskexecutor.Param) taskexecutor.TaskExecutor {
@@ -804,7 +816,7 @@ func newDDL(ctx context.Context, options ...Option) (*ddl, *executor) {
 		func(ctx context.Context, task *proto.Task, param scheduler.Param) scheduler.Scheduler {
 			return newLitBackfillScheduler(ctx, d, task, param)
 		})
-	scheduler.RegisterSchedulerCleanUpFactory(proto.Backfill, newBackfillCleanUpS3)
+	scheduler.RegisterCleanerFactory(proto.Backfill, newBackfillCleaner)
 	// Register functions for enable/disable ddl when changing system variable `tidb_enable_ddl`.
 	variable.EnableDDL = d.EnableDDL
 	variable.DisableDDL = d.DisableDDL
@@ -866,8 +878,9 @@ func (d *ddl) newDeleteRangeManager(mock bool) delRangeManager {
 
 // Start implements DDL.Start interface.
 func (d *ddl) Start(startMode StartMode, ctxPool *pools.ResourcePool) error {
+	failpoint.InjectCall("beforeDDLStart", startMode)
 	if kerneltype.IsClassic() {
-		d.detectAndUpdateJobVersion()
+		d.detectAndUpdateClassicCompatibility()
 	}
 	campaignOwner := config.GetGlobalConfig().Instance.TiDBEnableDDL.Load()
 	if startMode == Upgrade {
@@ -952,26 +965,19 @@ func (d *ddl) Start(startMode StartMode, ctxPool *pools.ResourcePool) error {
 	return nil
 }
 
-// this detection is only used for Classic kernel. for NextGen(TiDB-X), the job
-// version is always started with V2, no need to detect kernel version.
+// detectAndUpdateClassicCompatibility checks server versions in Classic clusters
+// to select DDL job and global index formats and retire legacy ECDSA session tokens.
+// The minimum versions, ignoring pre-release labels, are 8.4.0 for job V2, 8.5.6
+// for global index V1, and 8.5.9 for modern-only ECDSA verification. Keep polling
+// during an upgrade until all three transitions are complete.
 //
-// detect versions of all TiDB instances and choose a job version to use, rules:
-//   - if it's in test or run in uni-store, use V2 directly if ForceDDLJobVersionToV1InTest
-//     is not set, else use V1, we use this rule to run unit-tests using V1.
-//   - if all TiDB instances have version >= 8.4.0, use V2
-//   - otherwise, we must during upgrade from lower version, then start a background
-//     routine to detect the version of all TiDB instances repeatedly, when upgrade
-//     is done, we will use V2, and exit the routine.
+// NextGen uses fixed job/index formats and disables legacy ECDSA tokens by default,
+// so it does not run this detector. Without etcd, tests and unistore use job V2
+// unless ForceV1 is set, and enable global index V1 without polling.
 //
-// Note: at the time of this PR, some job types hasn't finished migrating to V2,
-// they will stay in V1 regardless of the version we choose here.
-//
-// It's possible that user start a new TiDB of version < 8.4.0 after we detect that
-// all instances have version >= 8.4.0, we will not consider this case here as we
-// don't support downgrade cluster version right now. And even if we try to change
-// the job version in use back to V1, it still will not work when owner transfer
-// to the new TiDB instance which cannot not handle existing submitted jobs of V2.
-func (d *ddl) detectAndUpdateJobVersion() {
+// Downgrades are unsupported: once newer formats are in use or legacy verification
+// is permanently disabled, starting an older TiDB cannot restore compatibility.
+func (d *ddl) detectAndUpdateClassicCompatibility() {
 	if d.etcdCli == nil {
 		if testargsv1.ForceV1 {
 			model.SetJobVerInUse(model.JobVersion1)
@@ -982,20 +988,21 @@ func (d *ddl) detectAndUpdateJobVersion() {
 		return
 	}
 
-	err := d.detectAndUpdateJobVersionOnce()
+	err := d.detectAndUpdateClassicCompatibilityOnce()
 	if err != nil {
-		logutil.DDLLogger().Warn("detect job version failed", zap.String("err", err.Error()))
+		logutil.DDLLogger().Warn("detect Classic cluster compatibility failed", zap.String("err", err.Error()))
 	}
 
-	if model.GetJobVerInUse() == model.JobVersion2 && model.GetGlobalIndexV1Supported() {
+	if model.GetJobVerInUse() == model.JobVersion2 && model.GetGlobalIndexV1Supported() && vardef.IsLegacyECDSASessionTokenDisabled() {
 		return
 	}
 
-	logutil.DDLLogger().Info("job version in use is not v2 or global index v1 not supported, maybe in upgrade, start detecting",
+	logutil.DDLLogger().Info("cluster compatibility checks remain pending, start detecting",
 		zap.Stringer("current", model.GetJobVerInUse()),
-		zap.Bool("globalIndexV1Supported", model.GetGlobalIndexV1Supported()))
+		zap.Bool("globalIndexV1Supported", model.GetGlobalIndexV1Supported()),
+		zap.Bool("legacyECDSASessionTokenDisabled", vardef.IsLegacyECDSASessionTokenDisabled()))
 	d.wg.RunWithLog(func() {
-		ticker := time.NewTicker(detectJobVerInterval)
+		ticker := time.NewTicker(detectClassicCompatibilityInterval)
 		defer ticker.Stop()
 		for {
 			select {
@@ -1003,13 +1010,13 @@ func (d *ddl) detectAndUpdateJobVersion() {
 			case <-d.ctx.Done():
 				return
 			}
-			err = d.detectAndUpdateJobVersionOnce()
+			err = d.detectAndUpdateClassicCompatibilityOnce()
 			if err != nil {
-				logutil.SampleLogger().Warn("detect job version failed", zap.String("err", err.Error()))
+				logutil.SampleLogger().Warn("detect Classic cluster compatibility failed", zap.String("err", err.Error()))
 			}
-			failpoint.InjectCall("afterDetectAndUpdateJobVersionOnce")
-			if model.GetJobVerInUse() == model.JobVersion2 && model.GetGlobalIndexV1Supported() {
-				logutil.DDLLogger().Info("job version in use is v2 and global index v1 supported now, stop detecting")
+			failpoint.InjectCall("afterDetectAndUpdateClassicCompatibilityOnce")
+			if model.GetJobVerInUse() == model.JobVersion2 && model.GetGlobalIndexV1Supported() && vardef.IsLegacyECDSASessionTokenDisabled() {
+				logutil.DDLLogger().Info("cluster compatibility checks completed, stop detecting")
 				return
 			}
 		}
@@ -1019,13 +1026,26 @@ func (d *ddl) detectAndUpdateJobVersion() {
 // when all TiDB instances have version >= 8.4.0, we can use job version 2, otherwise
 // we should use job version 1 to keep compatibility.
 // Also checks whether all instances support global index V1 key format (>= 8.5.6).
-func (d *ddl) detectAndUpdateJobVersionOnce() error {
+// Legacy ECDSA session tokens are permanently disabled once all instances are >= 8.5.9.
+func (d *ddl) detectAndUpdateClassicCompatibilityOnce() error {
+	if !vardef.IsLegacyECDSASessionTokenDisabled() {
+		// Adopt a transition persisted by another node, even if this scan cannot
+		// establish the cluster version. Once observed, it must never be undone.
+		disabled, err := meta.NewReader(d.store.GetSnapshot(kv.MaxVersion)).GetLegacyECDSASessionTokenDisabled()
+		if err != nil {
+			return err
+		}
+		if disabled {
+			vardef.SetLegacyECDSASessionTokenDisabled(true)
+		}
+	}
 	infos, err := infosync.GetAllServerInfo(d.ctx)
 	if err != nil {
 		return err
 	}
 	allSupportV2 := true
 	allSupportGlobalIdxV1 := true
+	allSupportModernECDSA := len(infos) > 0
 	for _, info := range infos {
 		// we don't store TiDB version directly, but concatenated with a MySQL version,
 		// separated by mysql.VersionSeparator.
@@ -1034,6 +1054,7 @@ func (d *ddl) detectAndUpdateJobVersionOnce() error {
 		if idx < 0 {
 			allSupportV2 = false
 			allSupportGlobalIdxV1 = false
+			allSupportModernECDSA = false
 			// see https://github.com/pingcap/tidb/issues/31823
 			logutil.SampleLogger().Warn("unknown server version, might be changed directly in config",
 				zap.String("version", tidbVer))
@@ -1045,13 +1066,16 @@ func (d *ddl) detectAndUpdateJobVersionOnce() error {
 		if err2 != nil {
 			allSupportV2 = false
 			allSupportGlobalIdxV1 = false
+			allSupportModernECDSA = false
 			logutil.SampleLogger().Warn("parse server version failed", zap.String("version", info.Version),
 				zap.String("err", err2.Error()))
 			break
 		}
-		// sem-ver also compares pre-release labels, but we don't need to consider
-		// them here, so we clear them.
+		// All compatibility checks ignore pre-release labels.
 		ver.PreRelease = ""
+		if ver.LessThan(modernECDSASessionTokenVer) {
+			allSupportModernECDSA = false
+		}
 		if ver.LessThan(jobV2FirstVer) {
 			allSupportV2 = false
 		}
@@ -1077,6 +1101,18 @@ func (d *ddl) detectAndUpdateJobVersionOnce() error {
 			zap.Bool("old", model.GetGlobalIndexV1Supported()),
 			zap.Bool("new", allSupportGlobalIdxV1))
 		model.SetGlobalIndexV1Supported(allSupportGlobalIdxV1)
+	}
+	if allSupportModernECDSA && !vardef.IsLegacyECDSASessionTokenDisabled() {
+		ctx := kv.WithInternalSourceType(d.ctx, kv.InternalTxnDDL)
+		if err := kv.RunInNewTxn(ctx, d.store, true, func(_ context.Context, txn kv.Transaction) error {
+			return meta.NewMutator(txn).SetLegacyECDSASessionTokenDisabled()
+		}); err != nil {
+			return err
+		}
+		// Legacy timestamps are not authenticated, so this is a durable one-way
+		// security transition rather than a token-lifetime grace period.
+		vardef.SetLegacyECDSASessionTokenDisabled(true)
+		logutil.DDLLogger().Info("disabled legacy ECDSA session tokens after cluster upgrade")
 	}
 	return nil
 }
@@ -1243,6 +1279,15 @@ func (d *ddl) cleanDeadTableLock(unlockTables []model.TableLockTpInfo, se model.
 
 // SwitchMDL enables MDL or disable MDL.
 func (d *ddl) SwitchMDL(enable bool) error {
+	if diagnosticmode.Enabled() {
+		// Diagnostic mode must not participate in cluster-wide DDL tasks. However,
+		// metadata lock is a cluster-wide setting, and a normal TiDB node may still
+		// change it to OFF. Therefore, diagnostic mode can only prevent this node
+		// from changing the metadata lock setting; it cannot prevent the cluster
+		// setting from becoming OFF. If the cluster setting is OFF, this node may
+		// still participate in DDL tasks, which cannot be avoided here.
+		return diagnosticmode.ErrDDLNotAllowed
+	}
 	isEnableBefore := vardef.IsMDLEnabled()
 	if isEnableBefore == enable {
 		return nil
@@ -1303,7 +1348,7 @@ func delayForAsyncCommit() {
 		// - schema state -> StateWriteReorganization with version V+1
 		// - T commit finish, with TS
 		// - 'wait schema synced' finish
-		// - schema state -> Done with version V+2, commit-ts of this
+		// - schema state -> StatePublic and job state -> JobStateDone with version V+2; commit-ts of this
 		//   transaction must > TS, so it's safe for T to commit.
 		return
 	}
@@ -1328,10 +1373,11 @@ func GetRecoverSnapshotTS(job *model.Job) uint64 {
 	return job.StartTS
 }
 
-// GetDropOrTruncateTableInfoFromJobsByStore implements GetDropOrTruncateTableInfoFromJobs
-func GetDropOrTruncateTableInfoFromJobsByStore(jobs []*model.Job, gcSafePoint uint64, getTable func(uint64, int64, int64) (*model.TableInfo, error), fn func(*model.Job, *model.TableInfo) (bool, error)) (bool, error) {
+// GetDropOrTruncateTableInfoFromJobsByStore implements GetDropOrTruncateTableInfoFromJobs.
+// extraJobTypes lets callers inspect additional candidates to explicitly reject unsupported objects.
+func GetDropOrTruncateTableInfoFromJobsByStore(jobs []*model.Job, gcSafePoint uint64, getTable func(uint64, int64, int64) (*model.TableInfo, error), fn func(*model.Job, *model.TableInfo) (bool, error), extraJobTypes ...model.ActionType) (bool, error) {
 	for _, job := range jobs {
-		if job.Type != model.ActionDropTable && job.Type != model.ActionTruncateTable {
+		if job.Type != model.ActionDropTable && job.Type != model.ActionTruncateTable && !slices.Contains(extraJobTypes, job.Type) {
 			continue
 		}
 
@@ -1478,16 +1524,39 @@ func resumePausedJob(job *model.Job,
 			job.State, job.SchemaState)
 		return dbterror.ErrCannotResumeDDLJob.GenWithStackByArgs(job.ID, errMsg)
 	}
-	// The Paused job should only be resumed by who paused it
-	if job.AdminOperator != byWho {
+	// The Paused job should only be resumed by who paused it, except system
+	// pauses with a reason that explicitly allows end-user recovery.
+	if job.AdminOperator != byWho && !canEndUserResumeSystemPausedJob(job, byWho) {
 		errMsg := fmt.Sprintf("job has been paused by [%s], should not resumed by [%s]",
 			job.AdminOperator.String(), byWho.String())
 		return dbterror.ErrCannotResumeDDLJob.GenWithStackByArgs(job.ID, errMsg)
 	}
 
+	resumeFromKVDiskFullByEndUser := byWho == model.AdminCommandByEndUser && job.IsPausedBySystemForKVDiskFull()
 	job.State = model.JobStateQueueing
+	job.ClearPauseReason()
+	job.Error = nil
+	if resumeFromKVDiskFullByEndUser {
+		job.SetResumeReason(model.JobResumeReasonKVDiskFull)
+	} else {
+		job.ClearResumeReason()
+	}
 
 	return nil
+}
+
+// resumePausedJobForUpgradeFinish resumes jobs paused for upgrade, but leaves
+// resource-protection pauses for explicit user recovery.
+func resumePausedJobForUpgradeFinish(job *model.Job,
+	byWho model.AdminCommandOperator) error {
+	if job.IsPausedBySystemForKVDiskFull() {
+		return nil
+	}
+	return resumePausedJob(job, byWho)
+}
+
+func canEndUserResumeSystemPausedJob(job *model.Job, byWho model.AdminCommandOperator) bool {
+	return byWho == model.AdminCommandByEndUser && job.IsPausedBySystemForKVDiskFull()
 }
 
 // processJobs command on the Job according to the process
@@ -1679,7 +1748,7 @@ func PauseAllJobsBySystem(se sessionctx.Context) (map[int64]error, error) {
 
 // ResumeAllJobsBySystem resumes all paused Jobs because of internal reasons.
 func ResumeAllJobsBySystem(se sessionctx.Context) (map[int64]error, error) {
-	return processAllJobs(context.Background(), resumePausedJob, se, model.AdminCommandBySystem)
+	return processAllJobs(context.Background(), resumePausedJobForUpgradeFinish, se, model.AdminCommandBySystem)
 }
 
 // GetAllDDLJobs get all DDL jobs and sorts jobs by job.ID.

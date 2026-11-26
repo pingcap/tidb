@@ -17,6 +17,8 @@ package aggregate
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"math"
 	"math/rand"
@@ -30,11 +32,63 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor/aggregate"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/stretchr/testify/require"
 )
+
+func TestStreamAggJSONInputBufferReuse(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_init_chunk_size=32")
+	tk.MustExec("set tidb_max_chunk_size=32")
+	tk.MustExec("set tidb_streamagg_concurrency=1")
+	for _, tp := range []struct {
+		name string
+		code byte
+		size int
+	}{
+		{"blob", mysql.TypeBlob, 2},
+		{"varbinary(8)", mysql.TypeVarchar, 2},
+		{"bit(16)", mysql.TypeBit, 2},
+		{"binary(8)", mysql.TypeString, 8},
+	} {
+		t.Run(tp.name, func(t *testing.T) {
+			tk.MustExec("drop table if exists t_json_agg")
+			tk.MustExec("create table t_json_agg(g int, k varchar(8), v " + tp.name + ")")
+			values := make([]string, 0, 96)
+			expectedObjects := []map[string]string{{}, {}}
+			expectedArrays := make([][]string, 2)
+			for i := range 96 {
+				values = append(values, fmt.Sprintf("(%d, '%03d', x'%04x')", i%2, i, i+1))
+				buf := make([]byte, tp.size)
+				buf[1] = byte(i + 1)
+				value := fmt.Sprintf("base64:type%d:%s", tp.code, base64.StdEncoding.EncodeToString(buf))
+				expectedObjects[i%2][fmt.Sprintf("%03d", i)] = value
+				expectedArrays[i%2] = append(expectedArrays[i%2], value)
+			}
+			tk.MustExec("insert into t_json_agg values " + strings.Join(values, ","))
+			// Each group spans multiple Sort output chunks reused by StreamAgg.
+			sql := "select /*+ stream_agg() */ g, json_objectagg(k, v), json_arrayagg(v) from t_json_agg group by g order by g"
+			tk.MustHavePlan(sql, "StreamAgg")
+			tk.MustHavePlan(sql, "Sort")
+			rows := tk.MustQuery(sql).Rows()
+			require.Len(t, rows, 2)
+			for group, row := range rows {
+				var object map[string]string
+				var array []string
+				require.NoError(t, json.Unmarshal([]byte(row[1].(string)), &object))
+				require.NoError(t, json.Unmarshal([]byte(row[2].(string)), &array))
+				require.Equal(t, expectedObjects[group], object)
+				require.ElementsMatch(t, expectedArrays[group], array)
+			}
+		})
+	}
+}
 
 func TestHashAggRuntimeStat(t *testing.T) {
 	partialInfo := &aggregate.AggWorkerInfo{
@@ -71,6 +125,43 @@ func TestHashAggRuntimeStat(t *testing.T) {
 	stats.Merge(stats.Clone())
 	expect = "partial_worker:{wall_time:40s, concurrency:5, task_num:50, tot_wait:20s, tot_exec:10s, tot_time:20s, max:4s, p95:4s}, final_worker:{wall_time:20s, concurrency:8, task_num:80, tot_wait:32ms, tot_exec:16ms, tot_time:56ms, max:7ms, p95:7ms}"
 	require.Equal(t, expect, stats.String())
+}
+
+func TestSumIntDistinct(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_hashagg_partial_concurrency = 4")
+	tk.MustExec("set @@tidb_hashagg_final_concurrency = 4")
+
+	tk.MustExec("create table t(a bigint, b bigint unsigned, g int)")
+	tk.MustExec("insert into t values (1, 1, 1), (1, 1, 1), (2, 2, 1), (2, 2, 1), (3, 3, 2), (3, 3, 2), (null, null, 2)")
+	tk.MustQuery("select sum_int(distinct a), sum_int(distinct b) from t").Check(testkit.Rows("6 6"))
+	tk.MustQuery("select /*+ hash_agg() */ g, sum_int(distinct a), sum_int(distinct b) from t group by g order by g").Check(testkit.Rows(
+		"1 3 3",
+		"2 3 3",
+	))
+
+	tk.MustExec("truncate table t")
+	tk.MustExec("insert into t values (null, null, 1), (null, null, 1)")
+	tk.MustQuery("select sum_int(distinct a), sum_int(distinct b) from t").Check(testkit.Rows("<nil> <nil>"))
+}
+
+func TestSumIntMockCopPushDown(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("create table t(a bigint, b bigint unsigned)")
+	tk.MustExec("insert into t values (1, 1), (2, 2), (null, null)")
+
+	sql := "select /*+ agg_to_cop(), hash_agg() */ sum_int(a), sum_int(b) from t"
+	plan := fmt.Sprint(tk.MustQuery("explain format = 'brief' " + sql).Rows())
+	require.Contains(t, plan, "HashAgg")
+	require.Contains(t, plan, "cop[tikv]")
+	require.Contains(t, plan, "sum_int(test.t.a)")
+	require.Contains(t, plan, "sum_int(test.t.b)")
+	tk.MustQuery(sql).Check(testkit.Rows("3 3"))
 }
 
 func reconstructParallelGroupConcatResult(rows [][]any) []string {
@@ -242,6 +333,10 @@ func TestAggInDisk(t *testing.T) {
 	tk.MustExec("insert into t values(0)")
 	tk.MustQuery("select sum(tt.b) from ( select /*+ HASH_AGG() */ avg(t1.a) as b from t t1 join t t2 group by t1.a, t2.a) as tt").Check(
 		testkit.Rows("4040100.0000"))
+	tk.MustQuery("select sum_int(tt.b) from ( select /*+ HASH_AGG() */ sum_int(t1.a) as b from t t1 join t t2 group by t1.a, t2.a) as tt").Check(
+		testkit.Rows("4060200"))
+	tk.MustQuery("select sum(tt.b), sum_int(tt.b) from ( select /*+ HASH_AGG() */ sum_int(t1.a) as b from t t1 join t t2 group by t1.a, t2.a) as tt").Check(
+		testkit.Rows("4060200 4060200"))
 	// Test no groupby and no data.
 	tk.MustExec("drop table t;")
 	tk.MustExec("create table t(c int, c1 int);")
@@ -380,6 +475,33 @@ func genListPartition(begin, end int) string {
 	}
 	buf.WriteString(fmt.Sprintf("%v)", end-1))
 	return buf.String()
+}
+
+func TestHashAggFinalizationError(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_json_objectagg(k mediumtext, v int)")
+	tk.MustExec("insert into t_json_objectagg values (repeat('a', 65535), 1), (repeat('b', 65536), 2)")
+
+	for _, concurrency := range [][2]int{{1, 1}, {1, 2}, {2, 1}, {2, 2}} {
+		t.Run(fmt.Sprintf("partial=%d/final=%d", concurrency[0], concurrency[1]), func(t *testing.T) {
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("use test")
+			tk.MustExec(fmt.Sprintf("set tidb_hashagg_partial_concurrency=%d", concurrency[0]))
+			tk.MustExec(fmt.Sprintf("set tidb_hashagg_final_concurrency=%d", concurrency[1]))
+			// A 65535-byte key is valid; the next byte is rejected only during finalization.
+			tk.MustQuery("select /*+ hash_agg() */ json_length(json_objectagg(k, v)) from t_json_objectagg where v = 1").Check(testkit.Rows("1"))
+			for _, sql := range []string{
+				"select /*+ hash_agg() */ json_objectagg(k, v) from t_json_objectagg where v = 2",
+				"select /*+ hash_agg() */ json_objectagg(k, v) from t_json_objectagg where v = 2 group by v",
+				"select /*+ hash_agg() */ count(*), json_objectagg(k, v) from t_json_objectagg where v = 2 group by v",
+			} {
+				tk.MustHavePlan(sql, "HashAgg")
+				require.EqualError(t, tk.QueryToErr(sql), types.ErrJSONObjectKeyTooLong.Error(), sql)
+			}
+		})
+	}
 }
 
 func TestParallelHashAgg(t *testing.T) {

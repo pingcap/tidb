@@ -296,6 +296,11 @@ func TestNonTransactionalWithCheckConstraint(t *testing.T) {
 	tk.MustExec("set @@tidb_snapshot=''")
 	checkFn()
 
+	tk.MustExec("set transaction read only as of timestamp @a")
+	require.ErrorContains(t, tk.ExecToErr("batch on a limit 10 update t set b = b + 100"), "tx_read_ts")
+	tk.MustQuery("select count(*) from t").Check(testkit.Rows("0"))
+	tk.MustQuery("select sum(b) from t").Check(testkit.Rows("9900"))
+
 	tk.MustExec("set @@tidb_read_consistency=weak")
 	err = tk.ExecToErr("batch on a limit 10 insert into t1 select * from t")
 	require.Error(t, err)
@@ -515,6 +520,7 @@ func TestNonTransactionalDmlIgnoreMaxExecutionTime(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@tidb_max_chunk_size=10")
 	tk.MustExec("set @@max_execution_time=1000")
+	tk.MustExec("set @@tidb_dml_max_execution_time=1000")
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int, b int, key(a))")
 	for i := range 100 {
@@ -523,4 +529,9 @@ func TestNonTransactionalDmlIgnoreMaxExecutionTime(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/session/CheckMaxExecutionTime", `return(true)`))
 	defer failpoint.Disable("github.com/pingcap/tidb/pkg/session/CheckMaxExecutionTime")
 	tk.MustExec("batch on a limit 10 update t set b = b + 1 where b > 0")
+	require.Equal(t, uint64(0), tk.Session().ShowProcess().MaxExecutionTime)
+	require.Equal(t, uint64(1000), tk.Session().GetSessionVars().DMLMaxExecutionTime)
+
+	tk.MustExec("update t set b = b + 1 where a = 0")
+	require.Equal(t, uint64(1000), tk.Session().ShowProcess().MaxExecutionTime)
 }

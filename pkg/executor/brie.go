@@ -18,7 +18,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -45,12 +44,14 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/printer"
 	semv1 "github.com/pingcap/tidb/pkg/util/sem"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/syncutil"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"github.com/tikv/client-go/v2/oracle"
@@ -226,6 +227,10 @@ func (bq *brieQueue) clearTask(sc *stmtctx.StatementContext) {
 
 	bq.tasks.Range(func(key, value any) bool {
 		item := value.(*brieQueueItem)
+		// Unfinished tasks keep finishTime zero; do not GC them.
+		if item.info.finishTime.IsZero() {
+			return true
+		}
 		if d := currTime.Sub(sc.TypeCtx(), &item.info.finishTime); d.Compare(outdatedDuration) > 0 {
 			bq.tasks.Delete(key)
 		}
@@ -276,17 +281,10 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 	}
 
 	tidbCfg := config.GetGlobalConfig()
-	tlsCfg := task.TLSConfig{
-		CA:   tidbCfg.Security.ClusterSSLCA,
-		Cert: tidbCfg.Security.ClusterSSLCert,
-		Key:  tidbCfg.Security.ClusterSSLKey,
-	}
-	pds := strings.Split(tidbCfg.Path, ",")
 
 	// build common config
 	cfg := task.DefaultConfig()
-	cfg.PD = pds
-	cfg.TLS = tlsCfg
+	task.ApplyTiDBRuntimeConfig(&cfg)
 
 	storageURL, err := objstore.ParseRawURL(s.Storage)
 	if err != nil {
@@ -296,9 +294,15 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 
 	switch storageURL.Scheme {
 	case "s3":
-		objstore.ExtractQueryParameters(storageURL, &cfg.S3)
+		if err := objstore.ExtractQueryParameters(storageURL, &cfg.S3); err != nil {
+			b.err = errors.Annotate(err, "invalid destination URL")
+			return nil
+		}
 	case "gs", "gcs":
-		objstore.ExtractQueryParameters(storageURL, &cfg.GCS)
+		if err := objstore.ExtractQueryParameters(storageURL, &cfg.GCS); err != nil {
+			b.err = errors.Annotate(err, "invalid destination URL")
+			return nil
+		}
 
 	// Only check `semv1.IsEnabled()` because in SEM v2, the statement will be limited by `RESTRICTED_SQL` configuration in
 	// `(b *PlanBuilder).Build`. `sql_rule.go` is used to define the highly customized SQL rules to filter these statements.
@@ -575,6 +579,24 @@ func (e *showMetaExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	return nil
 }
 
+// cancelBRIEOnKill cancels the BRIE task when HandleSignal is QueryInterrupted.
+func cancelBRIEOnKill(taskCtx context.Context, sctx sessionctx.Context, tickCh <-chan time.Time, cancelTask func()) {
+	for {
+		select {
+		case _, ok := <-tickCh:
+			if !ok {
+				return
+			}
+			if exeerrors.ErrQueryInterrupted.Equal(sctx.GetSessionVars().SQLKiller.HandleSignal()) {
+				cancelTask()
+				return
+			}
+		case <-taskCtx.Done():
+			return
+		}
+	}
+}
+
 // Next implements the Executor Next interface.
 func (e *BRIEExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.Reset()
@@ -596,37 +618,32 @@ func (e *BRIEExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			failpoint.Return(taskCtx.Err())
 		}
 	})
-	// manually monitor the Killed status...
 	go func() {
 		ticker := time.NewTicker(3 * time.Second)
 		defer ticker.Stop()
-		for {
-			select {
-			case <-ticker.C:
-				if e.Ctx().GetSessionVars().SQLKiller.HandleSignal() == exeerrors.ErrQueryInterrupted {
-					bq.cancelTask(taskID)
-					return
-				}
-			case <-taskCtx.Done():
-				return
-			}
-		}
+		cancelBRIEOnKill(taskCtx, e.Ctx(), ticker.C, func() {
+			bq.cancelTask(taskID)
+		})
 	}()
 
 	progress, err := bq.acquireTask(taskCtx, taskID)
 	if err != nil {
+		err = mapBRIEErr(e.Ctx(), err, nil)
+		e.info.finishTime = types.CurrentTime(mysql.TypeDatetime)
+		e.info.message = err.Error()
 		return err
 	}
 	defer bq.releaseTask()
+	failpoint.InjectCall("beforeRunBRIETask")
 
 	e.info.execTime = types.CurrentTime(mysql.TypeDatetime)
 	glue := &tidbGlue{se: e.Ctx(), progress: progress, info: e.info}
 
 	switch e.info.kind {
 	case ast.BRIEKindBackup:
-		err = handleBRIEError(task.RunBackup(taskCtx, glue, "Backup", e.backupCfg), exeerrors.ErrBRIEBackupFailed)
+		err = mapBRIEErr(e.Ctx(), task.RunBackup(taskCtx, glue, "Backup", e.backupCfg), exeerrors.ErrBRIEBackupFailed)
 	case ast.BRIEKindRestore:
-		err = handleBRIEError(task.RunRestore(taskCtx, glue, "Restore", e.restoreCfg), exeerrors.ErrBRIERestoreFailed)
+		err = mapBRIEErr(e.Ctx(), task.RunRestore(taskCtx, glue, "Restore", e.restoreCfg), exeerrors.ErrBRIERestoreFailed)
 	default:
 		err = errors.Errorf("unsupported BRIE statement kind: %s", e.info.kind)
 	}
@@ -659,6 +676,23 @@ func handleBRIEError(err error, terror *terror.Error) error {
 		return nil
 	}
 	return terror.GenWithStackByArgs(err)
+}
+
+// mapBRIEErr maps a BRIE task error to the client-visible result.
+// KILL (QueryInterrupted) becomes 1317. Non-KILL failures still go through
+// handleBRIEError when brieErr is non-nil, including CANCEL BR JOB which
+// cancels taskCtx without setting SQLKiller (8124/8125).
+func mapBRIEErr(sctx sessionctx.Context, err error, brieErr *terror.Error) error {
+	if err == nil {
+		return nil
+	}
+	if exeerrors.ErrQueryInterrupted.Equal(sctx.GetSessionVars().SQLKiller.HandleSignal()) {
+		return exeerrors.ErrQueryInterrupted.GenWithStackByArgs()
+	}
+	if brieErr == nil {
+		return err
+	}
+	return handleBRIEError(err, brieErr)
 }
 
 func (e *ShowExec) fetchShowBRIE(kind ast.BRIEKind) error {
@@ -704,6 +738,12 @@ func (gs *tidbGlue) GetDomain(_ kv.Storage) (*domain.Domain, error) {
 func (gs *tidbGlue) CreateSession(_ kv.Storage) (glue.Session, error) {
 	newSCtx, err := CreateSession(gs.se)
 	if err != nil {
+		return nil, err
+	}
+	// Restore workers interleave direct DDL calls and SQL, so each SQL statement
+	// must finish its transaction before the worker creates another table.
+	if err := newSCtx.GetSessionVars().SetSystemVar(vardef.AutoCommit, "1"); err != nil {
+		CloseSession(newSCtx)
 		return nil, err
 	}
 	return &tidbGlueSession{se: newSCtx}, nil
@@ -773,10 +813,10 @@ type tidbGlueSession struct {
 // Execute implements glue.Session
 // These queries execute without privilege checking, since the calling statements
 // such as BACKUP and RESTORE have already been privilege checked.
-// NOTE: Maybe drain the restult too? See `gluetidb.tidbSession.ExecuteInternal` for more details.
+// Use the restore subtask's session to preserve its scoped read-only authorization.
 func (gs *tidbGlueSession) Execute(ctx context.Context, sql string) error {
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnBR)
-	_, _, err := gs.se.GetRestrictedSQLExecutor().ExecRestrictedSQL(ctx, nil, sql)
+	_, _, err := gs.se.GetRestrictedSQLExecutor().ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}, sql)
 	return err
 }
 

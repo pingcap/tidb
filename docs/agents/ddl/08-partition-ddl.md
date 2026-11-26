@@ -109,14 +109,24 @@ State machine (`job.SchemaState`):
 
 Key behaviors:
 
+- Affinity groups for replacement partitions are prepared in `StatePublic`, before
+  new partition IDs are published. Preparation uses the replacement IDs for the
+  old IDs that still match a current partition. A queued job can carry IDs that
+  an earlier truncate has replaced. Preparation errors use the rollback cleanup
+  path because PD may have created groups before its response failed. Rollback
+  deletes only replacement partition groups and uses a 10-second timeout
+  derived from the DDL owner's context so it can run after step cancellation.
 - It replaces old partition IDs with new ones in table metadata:
   - ID replacement helper: `pkg/ddl/partition.go:replaceTruncatePartitions`
 - During intermediate states, it sets flags to filter global index reads/writes correctly:
-  - `pi.NewPartitionIDs` and `pi.DroppingDefinitions` are used by global-index filtering logic (see comments near `onTruncateTablePartition`)
-- If global indexes exist, it reuses the same cleanup as drop-partition:
-  - `cleanGlobalIndexEntriesFromDroppedPartitions`
-- Job finishes and delete-range GC cleans old partition data:
-  - `pkg/ddl/delete_range.go` (`ActionTruncateTablePartition` cases)
+  - `pi.NewPartitionIDs` contains only matched replacement IDs.
+  - `pi.DroppingDefinitions` contains the old definitions that were replaced.
+- The job keeps the queued ID pairs for retries and cancellation. If none of the
+  old IDs still match, no partition is replaced and existing rows are preserved.
+- At finalization, `DroppingDefinitions` limits global-index cleanup, the schema
+  diff, and delete-range GC to the partitions this job replaced. The truncate
+  notification pairs each dropped definition with the replacement ID originally
+  assigned to its old ID.
 
 ## REORGANIZE PARTITION (`ActionReorganizePartition`)
 
@@ -164,13 +174,18 @@ High-level flow:
 
 Partition DDL often needs PD side effects:
 
-- Placement bundle updates: `pkg/ddl/partition.go:alterTablePartitionBundles`, `pkg/ddl/partition.go:droppedPartitionBundles`
+- Placement bundle updates: `pkg/ddl/partition.go:alterTablePartitionBundles`, `pkg/ddl/partition.go:partitionBundlesForDroppedDefinitions`
 - Label rule updates: `pkg/ddl/partition.go:alterTableLabelRule` / `dropLabelRules`
 - TiFlash partition placement + replica status:
   - `infosync.ConfigureTiFlashPDForPartitions`
   - Replica check loop: `checkPartitionReplica`
 
-These should generally happen **before** the state that starts writing to the new partitions, so a retry/rollback doesn’t leave partial placement state.
+These should generally happen **before** the state that starts writing to the new
+partitions. Reorganize-family rollback records the new physical IDs for
+delete-range cleanup, which removes placement bundles and attempts to remove
+TiFlash rules. ADD PARTITION rollback does not currently enqueue those IDs, so
+its placement and TiFlash rules may remain even after its partition metadata and
+label rules are removed.
 
 ## Practical debugging anchors
 

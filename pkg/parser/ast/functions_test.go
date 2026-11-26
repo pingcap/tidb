@@ -35,8 +35,8 @@ func TestFunctionsVisitorCover(t *testing.T) {
 	}
 
 	for _, stmt := range stmts {
-		stmt.Accept(visitor{})
-		stmt.Accept(visitor1{})
+		Walk(stmt, visitor{})
+		Walk(stmt, visitor1{})
 	}
 }
 

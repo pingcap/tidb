@@ -59,7 +59,7 @@ func (s *schedulerImpl) OnTick(context.Context, *proto.Task) {
 }
 
 func (s *schedulerImpl) OnNextSubtasksBatch(_ context.Context, _ storage.TaskHandle,
-	task *proto.Task, _ []string, nextStep proto.Step) (subtaskMetas [][]byte, err error) {
+	task *proto.Task, _ int, nextStep proto.Step) (subtaskMetas [][]byte, err error) {
 	switch nextStep {
 	case proto.StepOne, proto.StepTwo:
 		metas := make([][]byte, s.subtaskCount)
@@ -107,9 +107,9 @@ func (*schedulerImpl) OnPrepare(context.Context, storage.TaskHandle, *proto.Task
 	return nil
 }
 
-type postCleanupImpl struct{}
+type postCleanImpl struct{}
 
-func (*postCleanupImpl) CleanUp(_ context.Context, task *proto.Task) error {
+func (*postCleanImpl) Clean(_ context.Context, task *proto.Task) error {
 	logutil.BgLogger().Info("clean up task", zap.Int64("taskID", task.ID))
 	return nil
 }

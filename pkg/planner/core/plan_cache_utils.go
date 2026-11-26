@@ -20,6 +20,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"hash"
+	"maps"
 	"math"
 	"slices"
 	"sync"
@@ -72,18 +73,29 @@ var (
 )
 
 type paramMarkerExtractor struct {
-	markers []ast.ParamMarkerExpr
+	markers         []ast.ParamMarkerExpr
+	coalesceMarkers []ast.ParamMarkerExpr
+	coalesceDepth   int
 }
 
-func (*paramMarkerExtractor) Enter(in ast.Node) (ast.Node, bool) {
-	return in, false
+func (e *paramMarkerExtractor) Enter(node ast.Node) bool {
+	if fn, ok := node.(*ast.FuncCallExpr); ok && fn.FnName.L == ast.Coalesce {
+		e.coalesceDepth++
+	}
+	return false
 }
 
-func (e *paramMarkerExtractor) Leave(in ast.Node) (ast.Node, bool) {
+func (e *paramMarkerExtractor) Leave(in ast.Node) bool {
 	if x, ok := in.(*driver.ParamMarkerExpr); ok {
 		e.markers = append(e.markers, x)
+		if e.coalesceDepth > 0 {
+			e.coalesceMarkers = append(e.coalesceMarkers, x)
+		}
 	}
-	return in, true
+	if fn, ok := in.(*ast.FuncCallExpr); ok && fn.FnName.L == ast.Coalesce {
+		e.coalesceDepth--
+	}
+	return true
 }
 
 // GeneratePlanCacheStmtWithAST generates the PlanCacheStmt structure for this AST.
@@ -93,7 +105,7 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 	paramSQL string, paramStmt ast.StmtNode, is infoschema.InfoSchema) (*PlanCacheStmt, base.Plan, int, error) {
 	vars := sctx.GetSessionVars()
 	var extractor paramMarkerExtractor
-	paramStmt.Accept(&extractor)
+	ast.Walk(paramStmt, &extractor)
 
 	// DDL Statements can not accept parameters
 	if _, ok := paramStmt.(ast.DDLNode); ok && len(extractor.markers) > 0 {
@@ -139,6 +151,12 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 	}
 	normalizedSQL, digest := parser.NormalizeDigest(prepared.Stmt.Text())
 	hasUsePlanCacheHint := hint.ContainTableHintInStmtNode(paramStmt, hint.HintUsePlanCache)
+	var bindingInfo bindinfo.BindingMatchInfo
+	if isPrepStmt {
+		// PlanBuilder may rewrite the prepared AST, so keep the original binding key.
+		_, bindingInfo.NoDBDigest = bindinfo.NormalizeStmtForBinding(prepared.Stmt, "", true)
+		bindingInfo.TableNames = bindinfo.CollectTableNames(prepared.Stmt)
+	}
 
 	var (
 		cacheable bool
@@ -193,6 +211,7 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 
 	// Collect information for metadata lock.
 	dbName := make([]ast.CIStr, 0, len(vars.StmtCtx.RelatedTableIDs))
+	tblName := make([]ast.CIStr, 0, len(vars.StmtCtx.RelatedTableIDs))
 	tbls := make([]table.Table, 0, len(vars.StmtCtx.RelatedTableIDs))
 	relateVersion := make(map[int64]uint64, len(vars.StmtCtx.RelatedTableIDs))
 	for id := range vars.StmtCtx.RelatedTableIDs {
@@ -207,6 +226,7 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 			return nil, nil, 0, errors.New("database not found in info schema")
 		}
 		dbName = append(dbName, db.Name)
+		tblName = append(tblName, tbl.Meta().Name)
 		tbls = append(tbls, tbl)
 		relateVersion[id] = tbl.Meta().Revision
 	}
@@ -224,15 +244,29 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 		StmtCacheable:       cacheable,
 		UncacheableReason:   reason,
 		HasUsePlanCacheHint: hasUsePlanCacheHint,
+		BindingInfo:         bindingInfo,
 		dbName:              dbName,
+		tblName:             tblName,
 		tbls:                tbls,
 		SchemaVersion:       ret.InfoSchema.SchemaMetaVersion(),
 		RelateVersion:       relateVersion,
 		Params:              extractor.markers,
 	}
 
+	// The non-prepared caller has passed NonPreparedPlanCacheableWithCtx,
+	// which only admits COALESCE in supported UPDATE assignments. Record the
+	// affected markers after sorting: their indexes must match Params/ParamTypes.
+	// Parameters outside COALESCE retain the existing compatibility rules.
+	if !isPrepStmt {
+		for i, marker := range extractor.markers {
+			if slices.Contains(extractor.coalesceMarkers, marker) {
+				preparedObj.exactDecimalParamOffsets = append(preparedObj.exactDecimalParamOffsets, i)
+			}
+		}
+	}
+
 	stmtProcessor := &planCacheStmtProcessor{ctx: ctx, is: is, stmt: preparedObj}
-	paramStmt.Accept(stmtProcessor)
+	ast.Walk(paramStmt, stmtProcessor)
 
 	if err = checkPreparedPriv(ctx, sctx, preparedObj, ret.InfoSchema); err != nil {
 		return nil, nil, 0, err
@@ -387,6 +421,10 @@ func newPlanCacheKeyWithMatchedBinding(
 	hashLen := len(userName) + len(hostName) + len(stmtDB) + len(stmt.StmtText)
 	// schemaVersion + relateVersion + pruneMode
 	hashLen += 8 + len(stmt.RelateVersion)*16 + len(pruneMode)
+	if stmt.snapshotVersion != nil {
+		// Number of snapshot tables and their IDs and revisions.
+		hashLen += 8 + len(stmt.snapshotVersion)*16
+	}
 	// latestSchemaVersion + sqlMode + enableNoBackslashEscapesInLike + timeZoneOffset + isolationReadEngines + selectLimit
 	hashLen += 8 + 8 + 1 + 8 + 4 /*len(kv.TiDB.Name())*/ + 4 /*len(kv.TiKV.Name())*/ + 7 /*len(kv.TiFlash.Name())*/ + 8
 	// binding + connCharset + connCollation + inRestrictedSQL + readOnly + superReadOnly + exprPushdownBlacklistReloadTimeStamp + hasSubquery + foreignKeyChecks
@@ -412,8 +450,17 @@ func newPlanCacheKeyWithMatchedBinding(
 	hash = append(hash, hostName...)
 	hash = append(hash, stmtDB...)
 	hash = append(hash, stmt.StmtText...)
-	hash = codec.EncodeInt(hash, stmt.SchemaVersion)
+	if stmt.snapshotVersion != nil {
+		// Zero distinguishes this key from keys that use a global schema version.
+		hash = codec.EncodeInt(hash, 0)
+	} else {
+		hash = codec.EncodeInt(hash, stmt.SchemaVersion)
+	}
 	hash = hashInt64Uint64Map(hash, stmt.RelateVersion)
+	if stmt.snapshotVersion != nil {
+		hash = codec.EncodeInt(hash, int64(len(stmt.snapshotVersion)))
+		hash = hashInt64Uint64Map(hash, stmt.snapshotVersion)
+	}
 	hash = append(hash, pruneMode...)
 	// Only be set in rc or for update read and leave it default otherwise.
 	// In Rc or ForUpdateRead, we should check whether the information schema has been changed when using plan cache.
@@ -546,6 +593,13 @@ type PlanCacheValue struct {
 	ParamTypes       []*types.FieldType // all parameters' types, different parameters may share same plan
 	StmtHints        *hint.StmtHints    // related hints of this plan, like 'max_execution_time'.
 
+	// Resolved OF targets must outlive the statement context, which is reset before every execution.
+	lockTableIDs map[int64]struct{}
+
+	// Parameter indexes requiring exact DECIMAL precision and scale.
+	// Only COALESCE arguments are included; immutable once the plan is cached.
+	exactDecimalParamOffsets []int
+
 	// Runtime Info, all are READ-WRITE, use UpdateRuntimeInfo() and RuntimeInfo() to access them.
 	executions         int64 // the execution times.
 	processedKeys      int64 // the total number of processed keys in TiKV.
@@ -603,6 +657,8 @@ func (v *PlanCacheValue) MemoryUsage() (sum int64) {
 
 	sum += size.SizeOfInterface + size.SizeOfSlice*2 + int64(cap(v.OutputColumns))*size.SizeOfPointer +
 		size.SizeOfMap + size.SizeOfInt64*2
+	sum += size.SizeOfSlice + int64(cap(v.exactDecimalParamOffsets))*size.SizeOfInt
+	sum += size.SizeOfMap + int64(len(v.lockTableIDs))*size.SizeOfInt64
 	if v.ParamTypes != nil {
 		sum += int64(cap(v.ParamTypes)) * size.SizeOfPointer
 		for _, ft := range v.ParamTypes {
@@ -680,11 +736,15 @@ func NewPlanCacheValue(
 		PlanDigest:       stmt.PlanDigest.String(),
 		BinaryPlan:       binaryPlan,
 
-		LoadTime:      time.Now(),
-		Plan:          plan,
-		OutputColumns: names,
-		ParamTypes:    userParamTypes,
-		StmtHints:     stmtHints.Clone(),
+		LoadTime:                 time.Now(),
+		Plan:                     plan,
+		OutputColumns:            names,
+		ParamTypes:               userParamTypes,
+		StmtHints:                stmtHints.Clone(),
+		exactDecimalParamOffsets: slices.Clone(stmt.exactDecimalParamOffsets),
+	}
+	if lockTableIDs := sctx.GetSessionVars().StmtCtx.LockTableIDs; len(lockTableIDs) > 0 {
+		pcv.lockTableIDs = maps.Clone(lockTableIDs)
 	}
 	pcv.MemoryUsage() // initialize the memory usage field
 	return pcv
@@ -697,8 +757,8 @@ type planCacheStmtProcessor struct {
 	stmt *PlanCacheStmt
 }
 
-// Enter implements Visitor interface.
-func (f *planCacheStmtProcessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
+// Enter implements InPlaceVisitor interface.
+func (f *planCacheStmtProcessor) Enter(in ast.Node) (skipChildren bool) {
 	switch node := in.(type) {
 	case *ast.Limit:
 		f.stmt.limits = append(f.stmt.limits, node)
@@ -710,12 +770,12 @@ func (f *planCacheStmtProcessor) Enter(in ast.Node) (out ast.Node, skipChildren 
 			f.stmt.tables = append(f.stmt.tables, t)
 		}
 	}
-	return in, false
+	return false
 }
 
-// Leave implements Visitor interface.
-func (*planCacheStmtProcessor) Leave(in ast.Node) (out ast.Node, ok bool) {
-	return in, true
+// Leave implements InPlaceVisitor interface.
+func (*planCacheStmtProcessor) Leave(ast.Node) (proceed bool) {
+	return true
 }
 
 // PointGetExecutorCache caches the PointGetExecutor to further improve its performance.
@@ -733,6 +793,16 @@ type PointGetExecutorCache struct {
 	FastPlan *physicalop.PointGetPlan
 }
 
+// schemaReadOnlyTargetState tells whether a statement may need a database
+// read-only check on each execution.
+type schemaReadOnlyTargetState uint8
+
+const (
+	schemaReadOnlyTargetUnknown schemaReadOnlyTargetState = iota
+	schemaReadOnlyTargetAbsent
+	schemaReadOnlyTargetPresent
+)
+
 // PlanCacheStmt store prepared ast from PrepareExec and other related fields
 type PlanCacheStmt struct {
 	PreparedAst *ast.Prepared
@@ -741,6 +811,11 @@ type PlanCacheStmt struct {
 	VisitInfos  []visitInfo
 	Params      []ast.ParamMarkerExpr
 
+	// exactDecimalParamOffsets indexes Params for arguments of COALESCE in
+	// eligible non-prepared UPDATE assignments. Other parameters keep the
+	// existing type compatibility rules, including relaxed DECIMAL precision.
+	exactDecimalParamOffsets []int
+
 	PointGet PointGetExecutorCache
 
 	// below fields are for PointGet short path
@@ -748,6 +823,9 @@ type PlanCacheStmt struct {
 
 	// RelateVersion stores the true cache plan table schema version, since each table schema can be updated separately in transaction.
 	RelateVersion map[int64]uint64
+	// snapshotVersion contains table revisions before MDL overrides, or nil when
+	// the cache key must retain the global schema version.
+	snapshotVersion map[int64]uint64
 
 	StmtCacheable     bool   // Whether this stmt is cacheable.
 	UncacheableReason string // Why this stmt is uncacheable.
@@ -756,7 +834,10 @@ type PlanCacheStmt struct {
 
 	limits      []*ast.Limit
 	hasSubquery bool
-	tables      []table.Table // to capture table stats changes
+	// schemaReadOnlyTarget caches whether the statement has a node that may
+	// need a database read-only check. It depends only on the statement.
+	schemaReadOnlyTarget schemaReadOnlyTargetState
+	tables               []table.Table // to capture table stats changes
 
 	NormalizedSQL       string
 	NormalizedPlan      string
@@ -775,9 +856,10 @@ type PlanCacheStmt struct {
 	//  StmtText: select * from t where a>1 and b <? --> just format the original query;
 	StmtText string
 
-	// dbName and tbls are used to add metadata lock.
-	dbName []ast.CIStr
-	tbls   []table.Table
+	// dbName and tblName retain the table names used to resolve tbls.
+	dbName  []ast.CIStr
+	tblName []ast.CIStr
+	tbls    []table.Table
 }
 
 // PrepareStmtCacheEntry is stored in the session-level prepare dedup cache.
@@ -795,7 +877,7 @@ type PrepareStmtCacheEntry struct {
 // for prepared statements where the actual parameter values are not yet known).
 func ExtractAndSortParamMarkers(stmtNode ast.StmtNode) []ast.ParamMarkerExpr {
 	var extractor paramMarkerExtractor
-	stmtNode.Accept(&extractor)
+	ast.Walk(stmtNode, &extractor)
 	slices.SortFunc(extractor.markers, func(i, j ast.ParamMarkerExpr) int {
 		return cmp.Compare(i.(*driver.ParamMarkerExpr).Offset, j.(*driver.ParamMarkerExpr).Offset)
 	})
@@ -813,7 +895,7 @@ func ExtractAndSortParamMarkers(stmtNode ast.StmtNode) []ast.ParamMarkerExpr {
 // re-parse so that limit nodes and table references point into the new tree.
 func CollectPlanCacheStmtInfo(ctx context.Context, is infoschema.InfoSchema, stmt *PlanCacheStmt, stmtNode ast.StmtNode) {
 	processor := &planCacheStmtProcessor{ctx: ctx, is: is, stmt: stmt}
-	stmtNode.Accept(processor)
+	ast.Walk(stmtNode, processor)
 }
 
 // DBName returns the dbName field (used for metadata lock during Execute).
@@ -822,12 +904,16 @@ func (s *PlanCacheStmt) DBName() []ast.CIStr { return s.dbName }
 // Tbls returns the tbls field (used for metadata lock during Execute).
 func (s *PlanCacheStmt) Tbls() []table.Table { return s.tbls }
 
-// SetDBNameAndTbls sets the dbName and tbls fields, cloning the input slices
+// TableNames returns the table names used to resolve the statement's tables.
+func (s *PlanCacheStmt) TableNames() []ast.CIStr { return s.tblName }
+
+// SetDBNameAndTbls sets the table names and tbls fields, cloning the input slices
 // so that this PlanCacheStmt owns independent backing arrays. This is required
 // because planCachePreprocess replaces tbls[i] in-place during Execute, and
 // sharing the backing array with a cached template would cause cross-stmt contamination.
-func (s *PlanCacheStmt) SetDBNameAndTbls(dbName []ast.CIStr, tbls []table.Table) {
+func (s *PlanCacheStmt) SetDBNameAndTbls(dbName, tblName []ast.CIStr, tbls []table.Table) {
 	s.dbName = slices.Clone(dbName)
+	s.tblName = slices.Clone(tblName)
 	s.tbls = slices.Clone(tbls)
 }
 
@@ -845,6 +931,26 @@ func GetPreparedStmt(stmt *ast.ExecuteStmt, vars *variable.SessionVars) (*PlanCa
 		return prepStmt.(*PlanCacheStmt), nil
 	}
 	return nil, plannererrors.ErrStmtNotFound
+}
+
+// matchesParamTypes applies the cached plan's type requirements to both lookup
+// and insertion. Precision-sensitive plans can coexist under the same cache key.
+func (v *PlanCacheValue) matchesParamTypes(actual any) bool {
+	if !checkTypesCompatibility4PC(v.ParamTypes, actual) {
+		return false
+	}
+	if len(v.exactDecimalParamOffsets) == 0 || actual == nil {
+		return true
+	}
+	for _, i := range v.exactDecimalParamOffsets {
+		tp := actual.([]*types.FieldType)[i]
+		expected := v.ParamTypes[i]
+		if expected.GetType() == mysql.TypeNewDecimal &&
+			(expected.GetFlen() != tp.GetFlen() || expected.GetDecimal() != tp.GetDecimal()) {
+			return false
+		}
+	}
+	return true
 }
 
 // CheckTypesCompatibility4PC compares FieldSlice with []*types.FieldType

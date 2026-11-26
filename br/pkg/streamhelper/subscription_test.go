@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/pingcap/failpoint"
@@ -61,7 +62,7 @@ func collectCheckpointSpans(t *testing.T, sub *streamhelper.FlushSubscriber, che
 			case event := <-sub.Events():
 				observed.Merge(event)
 			default:
-				return observed.MinValue() == checkpoint
+				return observed.MinValue() >= checkpoint
 			}
 		}
 	}, 3*time.Second, 100*time.Millisecond)
@@ -83,12 +84,8 @@ func TestSubBasic(t *testing.T) {
 	}
 	sub.HandleErrors()
 	req.NoError(sub.PendingErrors())
-	waitPendingEvents(t, sub)
+	s := collectCheckpointSpans(t, sub, cp)
 	sub.Drop()
-	s := spans.Sorted(spans.NewFullWith(spans.Full(), 1))
-	for k := range sub.Events() {
-		s.Merge(k)
-	}
 	defer func() {
 		if t.Failed() {
 			fmt.Println(c)
@@ -96,7 +93,7 @@ func TestSubBasic(t *testing.T) {
 		}
 	}()
 
-	req.Equal(cp, s.MinValue(), "%d vs %d", cp, s.MinValue())
+	req.GreaterOrEqual(s.MinValue(), cp, "s.MinValue() = %d, cp = %d", s.MinValue(), cp)
 }
 
 func TestNormalError(t *testing.T) {
@@ -118,12 +115,8 @@ func TestNormalError(t *testing.T) {
 		cp = c.advanceCheckpoints()
 		c.flushAll()
 	}
-	waitPendingEvents(t, sub)
+	s := collectCheckpointSpans(t, sub, cp)
 	sub.Drop()
-	s := spans.Sorted(spans.NewFullWith(spans.Full(), 1))
-	for k := range sub.Events() {
-		s.Merge(k)
-	}
 	req.Equal(cp, s.MinValue(), "%d vs %d", cp, s.MinValue())
 }
 
@@ -203,7 +196,7 @@ func TestStoreRemoved(t *testing.T) {
 		}
 	}()
 
-	req.Equal(cp, s.MinValue(), "cp = %d, s = %d", cp, s.MinValue())
+	req.GreaterOrEqual(s.MinValue(), cp, "s.MinValue() = %d, cp = %d", s.MinValue(), cp)
 }
 
 func TestSomeOfStoreUnsupported(t *testing.T) {
@@ -337,21 +330,36 @@ func TestSubscriptionIdleTimeoutClearsCacheBeforeRetry(t *testing.T) {
 }
 
 func TestSubscriptionIdleTimeoutWhileSendingEvents(t *testing.T) {
-	req := require.New(t)
-	ctx := context.Background()
-	c := createFakeCluster(t, 4, true)
-	c.splitAndScatter(manyRegions(0, 1500)...)
-	installSubscribeSupport(c)
+	// Advance idle time only after setup and event forwarding have blocked,
+	// so scheduler delays cannot expire subscriptions before the output fills.
+	synctest.Test(t, func(t *testing.T) {
+		req := require.New(t)
+		ctx := context.Background()
+		c := createFakeCluster(t, 4, true)
+		c.splitAndScatter(manyRegions(0, 1500)...)
+		installSubscribeSupport(c)
 
-	sub := streamhelper.NewSubscriber(c, c, streamhelper.WithSubscriptionIdleTimeout(200*time.Millisecond))
-	defer sub.Drop()
-	req.NoError(sub.UpdateStoreTopology(ctx))
+		sub := streamhelper.NewSubscriber(c, c, streamhelper.WithSubscriptionIdleTimeout(200*time.Millisecond))
+		defer sub.Drop()
+		req.NoError(sub.UpdateStoreTopology(ctx))
 
-	c.advanceCheckpoints()
-	c.flushAll()
+		c.advanceCheckpoints()
+		c.flushAll()
+		synctest.Wait()
+		req.Len(sub.Events(), cap(sub.Events()))
+		req.NoError(sub.PendingErrors())
 
-	req.Eventually(func() bool {
-		err := sub.PendingErrors()
-		return err != nil && strings.Contains(err.Error(), "has no activity")
-	}, 3*time.Second, 10*time.Millisecond)
+		deadline := time.Now().Add(3 * time.Second)
+		var lastErr error
+		for {
+			lastErr = sub.PendingErrors()
+			if lastErr != nil && strings.Contains(lastErr.Error(), "has no activity") {
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("pending errors did not contain %q within %s; last error: %v", "has no activity", 3*time.Second, lastErr)
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	})
 }

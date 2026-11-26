@@ -47,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	verify "github.com/pingcap/tidb/pkg/lightning/verification"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/metaservice"
 	tidbmetrics "github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/objstore/compressedio"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -56,7 +57,6 @@ import (
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
-	"github.com/pingcap/tidb/pkg/util/etcd"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/promutil"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
@@ -91,6 +91,15 @@ var (
 	defaultMaxEngineSize = int64(5 * config.DefaultBatchSize)
 )
 
+func newEncodingTable(e *LoadDataController) (table.Table, error) {
+	idAlloc := kv.NewPanickingAllocators(e.Table.Meta().SepAutoInc())
+	tbl, err := tables.TableFromMetaWithCollate(e.Table.UseNewCollate(), idAlloc, e.Table.Meta())
+	if err != nil {
+		return nil, errors.Annotatef(err, "failed to tables.TableFromMeta %s", e.Table.Meta().Name)
+	}
+	return tbl, nil
+}
+
 // Chunk records the chunk information.
 type Chunk struct {
 	Path         string
@@ -108,6 +117,15 @@ type Chunk struct {
 // GetKey returns the chunk key used in logs and encode errors.
 func (c *Chunk) GetKey() string {
 	return c.Path + ":" + strconv.FormatInt(c.Offset, 10)
+}
+
+// GetSize get the original file size of this chunk.
+func (c *Chunk) GetSize() int64 {
+	if c.Type == mydump.SourceTypeParquet {
+		// for parquet, Offset/EndOffset means rows
+		return c.FileSize
+	}
+	return c.EndOffset - c.Offset
 }
 
 func (c *Chunk) toSourceFileMeta() mydump.SourceFileMeta {
@@ -189,17 +207,22 @@ func NewTableImporter(
 	id string,
 	kvStore tidbkv.Storage,
 ) (ti *TableImporter, err error) {
-	idAlloc := kv.NewPanickingAllocators(e.Table.Meta().SepAutoInc())
-	tbl, err := tables.TableFromMeta(idAlloc, e.Table.Meta())
-	if err != nil {
-		return nil, errors.Annotatef(err, "failed to tables.TableFromMeta %s", e.Table.Meta().Name)
-	}
-
-	tidbCfg := tidb.GetGlobalConfig()
-	// todo: we only need to prepare this once on each node(we might call it 3 times in distribution framework)
-	dir, err := prepareSortDir(e, id, tidbCfg)
+	tbl, err := newEncodingTable(e)
 	if err != nil {
 		return nil, err
+	}
+
+	// Classic FROM SELECT writes local engines even with an inherited cloud URI.
+	localSort := e.IsLocalSort() || e.DataSourceType == DataSourceTypeQuery && e.QuerySource == nil
+	tidbCfg := tidb.GetGlobalConfig()
+	var dir string
+	var diskQuota int64
+	if localSort {
+		// todo: we only need to prepare this once on each node(we might call it 3 times in distribution framework)
+		dir, err = prepareSortDir(e, id, tidbCfg)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	hostPort := net.JoinHostPort("127.0.0.1", strconv.Itoa(int(tidbCfg.Status.StatusPort)))
@@ -216,15 +239,25 @@ func NewTableImporter(
 
 	backendConfig := e.getLocalBackendCfg(kvStore.GetKeyspace(), tidbCfg.Path, dir)
 	pdCli := kvStore.(tidbkv.StorageWithPD).GetPDClient().(*tikv.CodecPDClient)
-	localBackend, err := ingestctrl.NewBackend(ctx, tls, backendConfig, pdCli)
+	var localBackend *ingestctrl.Backend
+	var ingestor *ingestctrl.Ingestor
+	if localSort {
+		localBackend, err = ingestctrl.NewBackend(ctx, tls, backendConfig, pdCli)
+	} else {
+		ingestor, err = ingestctrl.NewIngestor(ctx, tls, backendConfig, pdCli)
+	}
 	if err != nil {
 		return nil, err
+	}
+	if localSort {
+		diskQuota = adjustDiskQuota(int64(e.DiskQuota), dir, e.logger)
 	}
 
 	return &TableImporter{
 		LoadDataController: e,
 		id:                 id,
 		backend:            localBackend,
+		ingestor:           ingestor,
 		kvStore:            kvStore,
 		tableInfo: &importdef.TableInfo{
 			ID:   e.Table.Meta().ID,
@@ -240,7 +273,7 @@ func NewTableImporter(
 		// todo: use different default for single-node import and distributed import.
 		regionSplitSize: 2 * int64(config.SplitRegionSize),
 		regionSplitKeys: 2 * int64(config.SplitRegionKeys),
-		diskQuota:       adjustDiskQuota(int64(e.DiskQuota), dir, e.logger),
+		diskQuota:       diskQuota,
 		diskQuotaLock:   new(syncutil.RWMutex),
 	}, nil
 }
@@ -253,6 +286,7 @@ type TableImporter struct {
 	// uuid. we use this id to create a unique directory for this importer.
 	id        string
 	backend   *ingestctrl.Backend
+	ingestor  *ingestctrl.Ingestor
 	kvStore   tidbkv.Storage
 	tableInfo *importdef.TableInfo
 	// this table has a separate id allocator used to record the max row id allocated.
@@ -284,24 +318,39 @@ func (s *storeHelper) GetTiKVCodec() tikv.Codec {
 var _ ingestctrl.StoreHelper = (*storeHelper)(nil)
 
 // NewTableImporterForTest creates a new table importer for test.
-func NewTableImporterForTest(ctx context.Context, e *LoadDataController, id string, kvStore tidbkv.Storage) (*TableImporter, error) {
+func NewTableImporterForTest(
+	ctx context.Context,
+	e *LoadDataController,
+	id string,
+	kvStore tidbkv.Storage,
+) (*TableImporter, error) {
 	helper := &storeHelper{kvStore: kvStore}
-	idAlloc := kv.NewPanickingAllocators(e.Table.Meta().SepAutoInc())
-	tbl, err := tables.TableFromMeta(idAlloc, e.Table.Meta())
-	if err != nil {
-		return nil, errors.Annotatef(err, "failed to tables.TableFromMeta %s", e.Table.Meta().Name)
-	}
-
-	tidbCfg := tidb.GetGlobalConfig()
-	dir, err := prepareSortDir(e, id, tidbCfg)
+	tbl, err := newEncodingTable(e)
 	if err != nil {
 		return nil, err
+	}
+
+	// Classic FROM SELECT writes local engines even with an inherited cloud URI.
+	localSort := e.IsLocalSort() || e.DataSourceType == DataSourceTypeQuery && e.QuerySource == nil
+	tidbCfg := tidb.GetGlobalConfig()
+	var dir string
+	if localSort {
+		dir, err = prepareSortDir(e, id, tidbCfg)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	backendConfig := e.getLocalBackendCfg("", tidbCfg.Path, dir)
-	localBackend, err := ingestctrl.NewBackendForTest(ctx, backendConfig, helper)
-	if err != nil {
-		return nil, err
+	var localBackend *ingestctrl.Backend
+	var ingestor *ingestctrl.Ingestor
+	if localSort {
+		localBackend, err = ingestctrl.NewBackendForTest(ctx, backendConfig, helper)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		ingestor = ingestctrl.NewIngestorForTest(ctx, backendConfig, helper)
 	}
 	keyspace := helper.GetTiKVCodec().GetKeyspace()
 
@@ -309,6 +358,7 @@ func NewTableImporterForTest(ctx context.Context, e *LoadDataController, id stri
 		LoadDataController: e,
 		id:                 id,
 		backend:            localBackend,
+		ingestor:           ingestor,
 		tableInfo: &importdef.TableInfo{
 			ID:   e.Table.Meta().ID,
 			Name: e.Table.Meta().Name.O,
@@ -333,8 +383,8 @@ func (ti *TableImporter) GetKVStore() tidbkv.Storage {
 }
 
 // EstimateParquetReaderMemory estimates parser memory for the parquet file path.
-func (ti *TableImporter) EstimateParquetReaderMemory(ctx context.Context, path string) (int64, error) {
-	return parquetfile.EstimateParquetReaderMemory(ctx, ti.LoadDataController.dataStore, path)
+func (ti *TableImporter) EstimateParquetReaderMemory(ctx context.Context, path string, fileSize int64) (int64, error) {
+	return parquetfile.EstimateParquetReaderMemory(ctx, ti.LoadDataController.dataStore, path, fileSize)
 }
 
 func (e *LoadDataController) getParser(ctx context.Context, chunk *Chunk) (mydump.Parser, error) {
@@ -600,9 +650,17 @@ func (ti *TableImporter) ImportAndCleanup(ctx context.Context, closedEngine *bac
 	return kvCount, multierr.Combine(importErr, cleanupErr)
 }
 
-// Backend returns the backend of the importer.
+// Backend returns the backend when the importer uses local engines.
 func (ti *TableImporter) Backend() *ingestctrl.Backend {
 	return ti.backend
+}
+
+// Ingestor returns the ingest controller shared by local and global sort.
+func (ti *TableImporter) Ingestor() *ingestctrl.Ingestor {
+	if ti.ingestor != nil {
+		return ti.ingestor
+	}
+	return ti.backend.Ingestor
 }
 
 // Close implements the io.Closer interface.
@@ -610,13 +668,32 @@ func (ti *TableImporter) Close() error {
 	if ti.LoadDataController != nil {
 		ti.LoadDataController.Close()
 	}
-	ti.backend.Close()
+	if ti.backend != nil {
+		ti.backend.Close()
+	} else {
+		ti.ingestor.Close()
+	}
 	return nil
 }
 
 // Allocators returns allocators used to record max used ID, i.e. PanickingAllocators.
 func (ti *TableImporter) Allocators() autoid.Allocators {
 	return ti.encTable.Allocators(nil)
+}
+
+// StartDiskQuotaCheck starts a background goroutine to check disk quota.
+// The returned function stops the checker and waits for it to finish.
+func (ti *TableImporter) StartDiskQuotaCheck(ctx context.Context) (stop func()) {
+	ctx, cancel := context.WithCancel(ctx)
+	eg, egCtx := tidbutil.NewErrorGroupWithRecoverWithCtx(ctx)
+	eg.Go(func() error {
+		ti.CheckDiskQuota(egCtx)
+		return nil
+	})
+	return func() {
+		cancel()
+		_ = eg.Wait()
+	}
 }
 
 // CheckDiskQuota checks disk quota.
@@ -686,7 +763,9 @@ func (ti *TableImporter) CheckDiskQuota(ctx context.Context) {
 					err = ingestctrl.ConvertToErrFoundConflictRecords(err, ti.encTable)
 				}
 				importErr = multierr.Append(importErr, err)
+				continue
 			}
+			failpoint.InjectCall("afterDiskQuotaImport")
 		}
 		if importErr != nil {
 			// discuss: should we return the error and cancel the import?
@@ -749,6 +828,8 @@ func (ti *TableImporter) ImportSelectedRows(ctx context.Context, se sessionctx.C
 		mu       sync.Mutex
 		checksum = verify.NewKVGroupChecksumWithKeyspace(ti.keyspace)
 	)
+	stopDiskQuotaCheck := ti.StartDiskQuotaCheck(ctx)
+
 	eg, egCtx := tidbutil.NewErrorGroupWithRecoverWithCtx(ctx)
 	for range ti.ThreadCnt {
 		eg.Go(func() error {
@@ -762,7 +843,11 @@ func (ti *TableImporter) ImportSelectedRows(ctx context.Context, se sessionctx.C
 			return ProcessChunk(egCtx, &chunk, ti, dataEngine, indexEngine, ti.logger, chunkChecksum, nil)
 		})
 	}
-	if err = eg.Wait(); err != nil {
+	err = eg.Wait()
+	// Stop disk quota checker before final engine close/import to avoid racing
+	// with FlushAllEngines/UnsafeImportAndReset.
+	stopDiskQuotaCheck()
+	if err != nil {
 		return 0, err
 	}
 
@@ -894,16 +979,10 @@ func RebaseAllocatorBases(ctx context.Context, kvStore tidbkv.Storage, maxIDs ma
 		return err2
 	}
 
-	addrs := strings.Split(tidbCfg.Path, ",")
-	etcdCli, err := clientv3.New(clientv3.Config{
-		Endpoints:        addrs,
-		AutoSyncInterval: 30 * time.Second,
-		TLS:              tls.TLSConfig(),
-	})
+	etcdCli, err := newEtcdClientForAllocatorRebase(ctx, kvStore, tls, strings.Split(tidbCfg.Path, ","))
 	if err != nil {
 		return errors.Trace(err)
 	}
-	etcd.SetEtcdCliByNamespace(etcdCli, keyspace.MakeKeyspaceEtcdNamespace(kvStore.GetCodec()))
 	autoidCli := autoid.NewClientDiscover(etcdCli)
 	r := autoIDRequirement{store: kvStore, autoidCli: autoidCli}
 	err = common.RebaseTableAllocators(ctx, maxIDs, &r, plan.DBID, plan.DesiredTableInfo)
@@ -915,6 +994,28 @@ func RebaseAllocatorBases(ctx context.Context, kvStore tidbkv.Storage, maxIDs ma
 }
 
 type remoteChecksumFunction func() (*ingestctrl.RemoteChecksum, error)
+
+func newEtcdClientForAllocatorRebase(
+	ctx context.Context,
+	kvStore tidbkv.Storage,
+	tls *common.TLS,
+	callerPDAddrs []string,
+) (*clientv3.Client, error) {
+	kvStoreWithPD, ok := kvStore.(tidbkv.StorageWithPD)
+	if !ok {
+		return nil, errors.Errorf("TiKV store does not expose PD client")
+	}
+	return metaservice.NewEtcdClientFromPDClient(
+		ctx,
+		kvStoreWithPD.GetPDClient(),
+		kvStore.GetCodec().GetKeyspaceMeta(),
+		callerPDAddrs,
+		clientv3.Config{
+			AutoSyncInterval: 30 * time.Second,
+			TLS:              tls.TLSConfig(),
+		},
+	)
+}
 
 // VerifyChecksum verify the checksum of the table.
 func VerifyChecksum(ctx context.Context, plan *Plan, localChecksum verify.KVChecksum, logger *zap.Logger, getRemoteChecksumFn remoteChecksumFunction) error {

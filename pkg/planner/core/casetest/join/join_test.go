@@ -25,6 +25,29 @@ import (
 )
 
 func TestSemiJoinOrder(t *testing.T) {
+	t.Run("prefix index inner aggregation", func(t *testing.T) {
+		tk := testkit.NewTestKit(t, testkit.CreateMockStore(t))
+		tk.MustExec("use test")
+		for _, tc := range []struct{ columnType, indexColumn string }{
+			{"blob(54)", "c0(58)"},
+			{"blob(54)", "c0(11)"},
+			{"varbinary(54)", "c0"},
+		} {
+			tk.MustExec("create table t0(c0 " + tc.columnType + " not null)")
+			tk.MustExec("create table t1(c0 " + tc.columnType + " not null)")
+			tk.MustExec("insert into t0 values (unhex('')),(unhex('')),(unhex('302E36313136373338343339313134343736')),(unhex('2D5E097B69')),(unhex('2D31353234393434393733')),(unhex('3147')),(unhex('')),(unhex('534A4959EC92A54F5075'))")
+			tk.MustExec("insert into t1 values " + strings.Repeat("(''),", 32) + "('-1524944973')")
+			tk.MustExec("create index i0 on t0(" + tc.indexColumn + ")")
+			tk.MustExec("analyze table t0,t1")
+			tk.MustExec("drop stats t0")
+			tk.MustExec("drop stats t1")
+			rows := make([]string, 33)
+			rows[32] = "-1524944973"
+			tk.MustQuery("select t1.c0 from t1 where t1.c0 in (select t0.c0 from t0)").Sort().Check(testkit.Rows(rows...))
+			tk.MustQuery("select ref0 from (select t1.c0 as ref0,t1.c0 in (select t0.c0 from t0) as ref1 from t1) s where ref1").Sort().Check(testkit.Rows(rows...))
+			tk.MustExec("drop table t0,t1")
+		}
+	})
 	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
 		tk.MustExec("use test;")
 		tk.MustExec("create table t1 (col0 int, col1 int);")
@@ -372,4 +395,86 @@ JOIN
 			from issue66859_t0 left join issue66859_t1 on issue66859_t0.c0 = issue66859_t1.c0
 			where 5 >= issue66859_t0.c0`).Check(testkit.Rows("-1 <nil>"))
 	})
+}
+
+func TestIndexJoinInnerRowCountUsesUsableJoinKeys(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (k1 int not null, k2 int not null)")
+	tk.MustExec(`create table t2 (
+		k1 int not null,
+		id int not null,
+		k2 int not null,
+		pad varchar(100),
+		primary key (k1, id) clustered,
+		key idx_k1_k2 (k1, k2))`)
+	tk.MustExec("insert into t1 values (1, 1), (2, 1)")
+	// For each k1 value, 1000 rows share the same primary-key prefix; only one row matches each k2.
+	for _, k1 := range []int{1, 2} {
+		var sb strings.Builder
+		sb.WriteString("insert into t2 values ")
+		for n := 1; n <= 1000; n++ {
+			if n > 1 {
+				sb.WriteString(",")
+			}
+			fmt.Fprintf(&sb, "(%d, %d, %d, repeat('x', 50))", k1, n, n)
+		}
+		tk.MustExec(sb.String())
+	}
+	tk.MustExec("analyze table t1, t2")
+	// Issue 69974: the clustered PK can only use the k1 join key, so each probe scans ~1000 rows,
+	// while idx_k1_k2 covers both join keys and reads a single row per probe. The PK path used to
+	// be costed with the post-join cardinality (~1 row per probe) and win.
+	query := `select /*+ inl_hash_join(i) */ o.k1, i.pad from t1 o join t2 i on i.k1 = o.k1 and i.k2 = o.k2`
+	tk.MustQuery("explain format='plan_tree' " + query).CheckContain("idx_k1_k2")
+	// Disabling the fix restores the old estimation and the PK range-scan probe.
+	tk.MustExec("set tidb_opt_fix_control = '44855:OFF'")
+	tk.MustQuery("explain format='plan_tree' " + query).CheckNotContain("idx_k1_k2")
+	tk.MustExec("set tidb_opt_fix_control = ''")
+}
+
+func TestIssue70757IndexJoinInnerIndexSelection(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t_outer (
+		id int not null,
+		c varchar(36) not null,
+		primary key (id),
+		key idx_c (c))`)
+	tk.MustExec(`create table t_inner (
+		id int not null auto_increment,
+		k int not null,
+		c varchar(36) not null,
+		primary key (id),
+		key idx_k (k),
+		key idx_c (c))`)
+
+	const (
+		rowsPerC = 101
+		cNDV     = 3
+	)
+	outerValues := make([]string, 0, rowsPerC)
+	for id := 1; id <= rowsPerC; id++ {
+		outerValues = append(outerValues, fmt.Sprintf("(%d, 'cust-1')", id))
+	}
+	tk.MustExec("insert into t_outer (id, c) values " + strings.Join(outerValues, ","))
+
+	innerValues := make([]string, 0, rowsPerC*cNDV)
+	for k := 1; k <= rowsPerC*cNDV; k++ {
+		innerValues = append(innerValues, fmt.Sprintf("(%d, 'cust-%d')", k, (k-1)/rowsPerC+1))
+	}
+	tk.MustExec("insert into t_inner (k, c) values " + strings.Join(innerValues, ","))
+	tk.MustExec("analyze table t_outer, t_inner")
+
+	// This is a scaled-down form of issue 70757: idx_k has higher NDV, while idx_c
+	// gets a much smaller CountAfterAccess from the propagated c='cust-1' predicate.
+	// Lower the Fix45132 threshold so the small data set triggers the same comparison.
+	// tk.MustExec("set tidb_opt_fix_control = '45132:2'")
+	query := `select /*+ inl_join(i) */ * from t_outer o join t_inner i on i.k = o.id and i.c = o.c where o.c = 'cust-1'`
+	plan := tk.MustQuery("explain format='plan_tree' " + query)
+	plan.CheckContain("outer key:test.t_outer.id, inner key:test.t_inner.k")
+	plan.CheckContain("table:i, index:idx_k(k)")
+	plan.CheckNotContain("table:i, index:idx_c(c)")
 }

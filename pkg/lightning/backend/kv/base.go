@@ -141,6 +141,7 @@ func NewBaseKVEncoder(config *encode.EncodingConfig) (*BaseKVEncoder, error) {
 	if err != nil {
 		return nil, err
 	}
+	se.exprCtx.setNewCollationEnabled(config.Table.UseNewCollate())
 
 	var autoRandomColID int64
 	autoIDFn := func(id int64) int64 { return id }
@@ -167,7 +168,7 @@ func NewBaseKVEncoder(config *encode.EncodingConfig) (*BaseKVEncoder, error) {
 	}
 
 	// collect expressions for evaluating stored generated columns
-	genCols, err := CollectGeneratedColumns(se, meta, cols)
+	genCols, err := CollectGeneratedColumns(se, config.Table)
 	if err != nil {
 		return nil, errors.Annotate(err, "failed to parse generated column expressions")
 	}

@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"sync"
 	"time"
 
@@ -126,7 +127,7 @@ func (d *Batched) CleanEffects() {
 func (d *Batched) DeleteFiles(ctx context.Context, names []string) error {
 	d.effectsMu.Lock()
 	defer d.effectsMu.Unlock()
-	d.effects = append(d.effects, EffDeleteFiles{Files: names})
+	d.effects = append(d.effects, EffDeleteFiles{Files: slices.Clone(names)})
 	return nil
 }
 

@@ -56,7 +56,10 @@ func TestTxnScopeAndValidateReadTs(t *testing.T) {
 	time.Sleep(time.Second)
 
 	// stale read
-	tk.MustQuery("select * from t1 AS OF TIMESTAMP NOW() where id = 1;").Check(testkit.Rows())
+	tk.MustExec("begin")
+	tk.MustExec("set @txn_scope_read_ts = @@tidb_current_ts")
+	tk.MustExec("commit")
+	tk.MustQuery("select * from t1 AS OF TIMESTAMP @txn_scope_read_ts where id = 1;").Check(testkit.Rows())
 
 	// replica read
 	if !kerneltype.IsNextGen() {
@@ -429,16 +432,18 @@ func TestStalenessAndHistoryRead(t *testing.T) {
 			time.Sleep(10 * time.Millisecond)
 		}
 	}
-	time1 := oracle.GetTimeFromTS(getCurrentTS())
+	waitTSAfterTS := func(afterTS uint64) time.Time {
+		// SQL timestamp literals keep only the physical TSO part. Wait for the next
+		// physical tick so the parsed literal is still after the observed TSO.
+		return waitTSAfter(oracle.GetTimeFromTS(afterTS))
+	}
+	time1 := waitTSAfterTS(getCurrentTS())
 	time1TS := oracle.GoTimeToTS(time1)
 	schemaVer1 := tk.Session().GetInfoSchema().SchemaMetaVersion()
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (id int primary key);")
 	tk.MustExec(`drop table if exists t`)
-	lastCommitTSStr := tk.MustQuery("select json_extract(@@tidb_last_txn_info, '$.commit_ts')").Rows()[0][0].(string)
-	lastCommitTS, err := strconv.ParseUint(lastCommitTSStr, 10, 64)
-	require.NoError(t, err)
-	time2 := waitTSAfter(oracle.GetTimeFromTS(lastCommitTS))
+	time2 := waitTSAfterTS(getCurrentTS())
 	time2TS := oracle.GoTimeToTS(time2)
 	schemaVer2 := tk.Session().GetInfoSchema().SchemaMetaVersion()
 
@@ -486,7 +491,7 @@ func TestStalenessAndHistoryRead(t *testing.T) {
 	require.Equal(t, time2TS, tk.Session().GetSessionVars().TxnCtx.StartTS)
 	require.Nil(t, tk.Session().GetSessionVars().SnapshotInfoschema)
 	require.Equal(t, schemaVer2, tk.Session().GetInfoSchema().SchemaMetaVersion())
-	err = tk.ExecToErr(`set @@tidb_snapshot="2020-10-08 16:45:26";`)
+	err := tk.ExecToErr(`set @@tidb_snapshot="2020-10-08 16:45:26";`)
 	require.Regexp(t, ".*Transaction characteristics can't be changed while a transaction is in progress", err.Error())
 	require.Equal(t, uint64(0), tk.Session().GetSessionVars().SnapshotTS)
 	require.Nil(t, tk.Session().GetSessionVars().SnapshotInfoschema)
@@ -659,7 +664,6 @@ func TestSetTransactionReadOnlyAsOf(t *testing.T) {
 }
 
 func TestValidateReadOnlyInStalenessTransaction(t *testing.T) {
-	const stalenessTSExpr = "NOW(3) - INTERVAL 5 SECOND"
 	errMsg1 := ".*only support read-only statement during read-only staleness transactions.*"
 	errMsg2 := ".*select lock hasn't been supported in stale read yet.*"
 	errMsg3 := "GetForUpdateTS not supported for stalenessTxnProvider"
@@ -817,13 +821,27 @@ func TestValidateReadOnlyInStalenessTransaction(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t (id int);")
 	tk.MustExec("create table t1 (id int);")
-	time.Sleep(time.Second)
+	// DATETIME drops the TSO's logical bits, so use a later physical timestamp
+	// than one obtained after both CREATE TABLE statements have finished.
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	pdOracle := store.GetOracle()
+	option := &oracle.Option{TxnScope: oracle.GlobalTxnScope}
+	readTS, err := pdOracle.GetTimestamp(ctx, option)
+	require.NoError(t, err)
+	physicalAfterDDL := oracle.ExtractPhysical(readTS)
+	for oracle.ExtractPhysical(readTS) <= physicalAfterDDL {
+		time.Sleep(10 * time.Millisecond)
+		readTS, err = pdOracle.GetTimestamp(ctx, option)
+		require.NoError(t, err, "waiting for PD's physical timestamp to advance")
+	}
+	tk.MustExec("set @read_ts = tidb_parse_tso(?)", readTS)
 	tk.MustExec(`PREPARE stmt1 FROM 'insert into t(id) values (5);';`)
 	tk.MustExec(`PREPARE stmt2 FROM 'select * from t';`)
 	tk.MustExec(`set @@tidb_enable_noop_functions=1;`)
 	for _, testcase := range testcases {
 		t.Log(testcase.name)
-		tk.MustExec(`START TRANSACTION READ ONLY AS OF TIMESTAMP ` + stalenessTSExpr + `;`)
+		tk.MustExec(`START TRANSACTION READ ONLY AS OF TIMESTAMP @read_ts;`)
 		if testcase.isValidate {
 			tk.MustExec(testcase.sql)
 		} else {
@@ -832,7 +850,7 @@ func TestValidateReadOnlyInStalenessTransaction(t *testing.T) {
 			require.Regexp(t, testcase.errMsg, err.Error(), "name: %s stmt: %s", testcase.name, testcase.sql)
 		}
 		tk.MustExec("commit")
-		tk.MustExec(`set transaction read only as of timestamp ` + stalenessTSExpr + `;`)
+		tk.MustExec(`set transaction read only as of timestamp @read_ts;`)
 		if testcase.isValidate || testcase.isValidateWithoutStart {
 			tk.MustExec(testcase.sql)
 		} else {

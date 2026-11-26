@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/dxf/framework/testutil"
+	"github.com/pingcap/tidb/pkg/ingestor/errdef"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -35,6 +36,13 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
 )
+
+func TestIsCancelledErr(t *testing.T) {
+	require.False(t, storage.IsCancelledErr(nil))
+	require.False(t, storage.IsCancelledErr(errors.New("some err")))
+	require.False(t, storage.IsCancelledErr(context.Canceled))
+	require.True(t, storage.IsCancelledErr(errors.New("cancelled by user")))
+}
 
 func TestTaskState(t *testing.T) {
 	_, gm, ctx := testutil.InitTableTest(t)
@@ -131,10 +139,15 @@ func TestTaskState(t *testing.T) {
 	task, err = gm.GetTaskByID(ctx, id)
 	require.NoError(t, err)
 	checkTaskStateStep(t, task, proto.TaskStateRunning, proto.StepOne)
-	require.NoError(t, gm.SucceedTask(ctx, id))
+	// SucceedTask persists the task meta so schedulers can record a summary
+	// collected when the task finishes.
+	newMeta := []byte(`{"summary":{"merge_temp_index_txn_kv_size":42}}`)
+	task.Meta = newMeta
+	require.NoError(t, gm.SucceedTask(ctx, task))
 	task, err = gm.GetTaskByID(ctx, id)
 	require.NoError(t, err)
 	checkTaskStateStep(t, task, proto.TaskStateSucceed, proto.StepDone)
+	require.JSONEq(t, string(newMeta), string(task.Meta))
 }
 
 func TestWithNewTxnRollbackOnCanceledCtx(t *testing.T) {
@@ -162,6 +175,55 @@ func TestWithNewTxnRollbackOnCanceledCtx(t *testing.T) {
 		_, err := sqlexec.ExecSQL(verifyCtx, se.GetSQLExecutor(), "select 1")
 		return err
 	}))
+}
+
+func TestPauseTaskOnError(t *testing.T) {
+	_, gm, ctx := testutil.InitTableTest(t)
+	require.NoError(t, gm.InitMeta(ctx, ":4000", ""))
+
+	id, err := gm.CreateTask(ctx, "key-pause-on-error", "test", "", 4, "", 0, proto.ExtraParams{}, []byte("test"))
+	require.NoError(t, err)
+	task, err := gm.GetTaskByID(ctx, id)
+	require.NoError(t, err)
+	subtasks := []*proto.Subtask{
+		proto.NewSubtask(proto.StepOne, task.ID, task.Type, ":4000", task.RequiredSlots, proto.EmptyMeta, 1),
+	}
+	require.NoError(t, gm.SwitchTaskStep(ctx, task, proto.TaskStateRunning, proto.StepOne, subtasks))
+	failedSubtasks, err := gm.GetAllSubtasksByStepAndState(ctx, task.ID, proto.StepOne, proto.SubtaskStatePending)
+	require.NoError(t, err)
+	require.Len(t, failedSubtasks, 1)
+	taskErr := errdef.ErrKVDiskFull.GenWithStack("store 1 disk full")
+	require.NoError(t, gm.UpdateSubtaskStateAndError(ctx, ":4000", failedSubtasks[0].ID, proto.SubtaskStateFailed, taskErr))
+
+	require.ErrorIs(t, gm.PauseTaskOnError(ctx, task.ID, proto.TaskStatePending, proto.StepOne, taskErr), storage.ErrTaskChanged)
+	pausedSubtasks, err := gm.GetAllSubtasksByStepAndState(ctx, task.ID, proto.StepOne, proto.SubtaskStatePaused)
+	require.NoError(t, err)
+	require.Empty(t, pausedSubtasks)
+
+	require.NoError(t, gm.PauseTaskOnError(ctx, task.ID, proto.TaskStateRunning, proto.StepOne, taskErr))
+	task, err = gm.GetTaskByID(ctx, id)
+	require.NoError(t, err)
+	require.Equal(t, proto.TaskStatePausing, task.State)
+	require.ErrorIs(t, task.Error, errdef.ErrKVDiskFull)
+	pausedSubtasks, err = gm.GetAllSubtasksByStepAndState(ctx, task.ID, proto.StepOne, proto.SubtaskStatePaused)
+	require.NoError(t, err)
+	require.Len(t, pausedSubtasks, 1)
+
+	require.NoError(t, gm.PausedTask(ctx, id))
+	found, err := gm.ResumeTask(ctx, "key-pause-on-error")
+	require.NoError(t, err)
+	require.True(t, found)
+	task, err = gm.GetTaskByID(ctx, id)
+	require.NoError(t, err)
+	require.Equal(t, proto.TaskStateResuming, task.State)
+	require.NoError(t, task.Error)
+	require.NoError(t, gm.ResumeSubtasks(ctx, id))
+	pendingSubtasks, err := gm.GetAllSubtasksByStepAndState(ctx, task.ID, proto.StepOne, proto.SubtaskStatePending)
+	require.NoError(t, err)
+	require.Len(t, pendingSubtasks, 1)
+	subtaskErrs, err := gm.GetSubtaskErrors(ctx, id)
+	require.NoError(t, err)
+	require.Empty(t, subtaskErrs)
 }
 
 func TestUpdateTaskExtraParams(t *testing.T) {
@@ -342,5 +404,160 @@ func checkTaskAfterModify(
 	})
 	for i, expected := range expectedSTConcurrencies {
 		require.Equal(t, expected, gotSubtasks[i].Concurrency)
+	}
+}
+
+func TestCancelTaskNonTerminalStatesAndSubtasks(t *testing.T) {
+	_, gm, ctx := testutil.InitTableTest(t)
+	require.NoError(t, gm.InitMeta(ctx, ":4000", ""))
+
+	cancellableStates := []struct {
+		key   string
+		state proto.TaskState
+	}{
+		{"cancel-pending", proto.TaskStatePending},
+		{"cancel-running", proto.TaskStateRunning},
+		{"cancel-awaiting", proto.TaskStateAwaitingResolution},
+		{"cancel-paused", proto.TaskStatePaused},
+	}
+
+	for _, tc := range cancellableStates {
+		id, err := gm.CreateTask(ctx, tc.key, "test", "", 4, "", 0, proto.ExtraParams{}, []byte("test"))
+		require.NoError(t, err)
+		require.NoError(t, gm.WithNewSession(func(se sessionctx.Context) error {
+			_, execErr := sqlexec.ExecSQL(ctx, se.GetSQLExecutor(),
+				`update mysql.tidb_global_task set state = %? where id = %?`, tc.state, id)
+			return execErr
+		}))
+		require.NoError(t, gm.CancelTask(ctx, id))
+		task, err := gm.GetTaskByID(ctx, id)
+		require.NoError(t, err)
+		require.Equal(t, proto.TaskStateCancelling, task.State)
+	}
+
+	// Terminal or already-cancelling states remain idempotent no-ops.
+	noopStates := []struct {
+		key   string
+		state proto.TaskState
+	}{
+		{"cancel-cancelling", proto.TaskStateCancelling},
+		{"cancel-reverting", proto.TaskStateReverting},
+		{"cancel-succeed", proto.TaskStateSucceed},
+		{"cancel-reverted", proto.TaskStateReverted},
+		{"cancel-failed", proto.TaskStateFailed},
+	}
+	for _, tc := range noopStates {
+		id, err := gm.CreateTask(ctx, tc.key, "test", "", 4, "", 0, proto.ExtraParams{}, []byte("test"))
+		require.NoError(t, err)
+		require.NoError(t, gm.WithNewSession(func(se sessionctx.Context) error {
+			_, execErr := sqlexec.ExecSQL(ctx, se.GetSQLExecutor(),
+				`update mysql.tidb_global_task set state = %? where id = %?`, tc.state, id)
+			return execErr
+		}))
+		require.NoError(t, gm.CancelTask(ctx, id))
+		task, err := gm.GetTaskByID(ctx, id)
+		require.NoError(t, err)
+		require.Equal(t, tc.state, task.State)
+	}
+
+	// Verify CancelTaskByKeySession also cancels paused tasks cleanly.
+	id, err := gm.CreateTask(ctx, "cancel-key-paused", "test", "", 4, "", 0, proto.ExtraParams{}, []byte("test"))
+	require.NoError(t, err)
+	require.NoError(t, gm.WithNewSession(func(se sessionctx.Context) error {
+		_, execErr := sqlexec.ExecSQL(ctx, se.GetSQLExecutor(),
+			`update mysql.tidb_global_task set state = %? where id = %?`, proto.TaskStatePaused, id)
+		return execErr
+	}))
+	require.NoError(t, gm.WithNewTxn(ctx, func(se sessionctx.Context) error {
+		ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
+		return gm.CancelTaskByKeySession(ctx, se, "cancel-key-paused")
+	}))
+	task, err := gm.GetTaskByID(ctx, id)
+	require.NoError(t, err)
+	require.Equal(t, proto.TaskStateCancelling, task.State)
+
+	// Verify StartSubtask is idempotent if already running for the same execID,
+	// and rejects subtasks that are no longer pending (e.g., canceled).
+	runningSubtaskID := testutil.InsertSubtask(t, gm, id, proto.StepOne, ":4000", []byte(""), proto.SubtaskStatePending, "test", 1)
+	require.NoError(t, gm.StartSubtask(ctx, runningSubtaskID, ":4000"))
+	require.NoError(t, gm.StartSubtask(ctx, runningSubtaskID, ":4000"))
+	pendingSubtaskID := testutil.InsertSubtask(t, gm, id, proto.StepOne, ":4000", []byte(""), proto.SubtaskStatePending, "test", 1)
+	require.NoError(t, gm.CancelSubtask(ctx, ":4000", id))
+	require.ErrorIs(t, gm.StartSubtask(ctx, pendingSubtaskID, ":4000"), storage.ErrSubtaskNotFound)
+}
+
+func TestCancelTaskRejectsIntermediateStates(t *testing.T) {
+	_, gm, ctx := testutil.InitTableTest(t)
+	require.NoError(t, gm.InitMeta(ctx, ":4000", ""))
+
+	intermediateStates := []struct {
+		key   string
+		state proto.TaskState
+	}{
+		{"cancel-pausing", proto.TaskStatePausing},
+		{"cancel-resuming", proto.TaskStateResuming},
+		{"cancel-modifying", proto.TaskStateModifying},
+	}
+
+	for _, tc := range intermediateStates {
+		id, err := gm.CreateTask(ctx, tc.key, "test", "", 4, "", 0, proto.ExtraParams{}, []byte("test"))
+		require.NoError(t, err)
+		require.NoError(t, gm.WithNewSession(func(se sessionctx.Context) error {
+			_, execErr := sqlexec.ExecSQL(ctx, se.GetSQLExecutor(),
+				`update mysql.tidb_global_task set state = %? where id = %?`, tc.state, id)
+			return execErr
+		}))
+
+		err = gm.CancelTask(ctx, id)
+		require.ErrorIs(t, err, storage.ErrTaskStateNotAllow)
+		err = gm.WithNewTxn(ctx, func(se sessionctx.Context) error {
+			ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
+			return gm.CancelTaskByKeySession(ctx, se, tc.key)
+		})
+		require.ErrorIs(t, err, storage.ErrTaskStateNotAllow)
+
+		task, err := gm.GetTaskByID(ctx, id)
+		require.NoError(t, err)
+		require.Equal(t, tc.state, task.State)
+	}
+}
+
+func TestCancelPausedSubtasks(t *testing.T) {
+	_, gm, ctx := testutil.InitTableTest(t)
+	require.NoError(t, gm.InitMeta(ctx, ":4000", ""))
+
+	id, err := gm.CreateTask(ctx, "cancel-paused-subtasks", "test", "", 4, "", 0, proto.ExtraParams{}, []byte("test"))
+	require.NoError(t, err)
+	pendingID := testutil.InsertSubtask(t, gm, id, proto.StepOne, ":4000", []byte(""), proto.SubtaskStatePending, "test", 1)
+	runningID := testutil.InsertSubtask(t, gm, id, proto.StepOne, ":4000", []byte(""), proto.SubtaskStateRunning, "test", 1)
+	pausedStep1ID := testutil.InsertSubtask(t, gm, id, proto.StepOne, ":4000", []byte(""), proto.SubtaskStatePaused, "test", 1)
+	pausedStep2ID := testutil.InsertSubtask(t, gm, id, proto.StepTwo, ":4000", []byte(""), proto.SubtaskStatePaused, "test", 1)
+
+	require.NoError(t, gm.CancelPausedSubtasks(ctx, id))
+
+	subtasksStep1, err := gm.GetSubtasksWithHistory(ctx, id, proto.StepOne)
+	require.NoError(t, err)
+	statesStep1 := make(map[int64]proto.SubtaskState, len(subtasksStep1))
+	for _, st := range subtasksStep1 {
+		statesStep1[st.ID] = st.State
+	}
+	require.Equal(t, proto.SubtaskStatePending, statesStep1[pendingID])
+	require.Equal(t, proto.SubtaskStateRunning, statesStep1[runningID])
+	require.Equal(t, proto.SubtaskStateCanceled, statesStep1[pausedStep1ID])
+
+	subtasksStep2, err := gm.GetSubtasksWithHistory(ctx, id, proto.StepTwo)
+	require.NoError(t, err)
+	require.Len(t, subtasksStep2, 1)
+	require.Equal(t, pausedStep2ID, subtasksStep2[0].ID)
+	require.Equal(t, proto.SubtaskStateCanceled, subtasksStep2[0].State)
+
+	rs, err := gm.ExecuteSQLWithNewSession(ctx,
+		`select id, state_update_time, end_time from mysql.tidb_background_subtask where id in (%?, %?)`,
+		pausedStep1ID, pausedStep2ID)
+	require.NoError(t, err)
+	require.Len(t, rs, 2)
+	for _, row := range rs {
+		require.False(t, row.IsNull(1))
+		require.False(t, row.IsNull(2))
 	}
 }

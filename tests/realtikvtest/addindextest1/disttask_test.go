@@ -29,22 +29,28 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
+	"github.com/pingcap/tidb/pkg/dxf/framework/dxfmetric"
 	"github.com/pingcap/tidb/pkg/dxf/framework/handle"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/dxf/framework/testutil"
 	"github.com/pingcap/tidb/pkg/errno"
+	"github.com/pingcap/tidb/pkg/ingestor/errdef"
+	"github.com/pingcap/tidb/pkg/ingestor/ingestcli"
 	"github.com/pingcap/tidb/pkg/ingestor/ingestctrl"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/tests/realtikvtest"
+	promtestutil "github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
 )
@@ -153,6 +159,202 @@ func TestAddIndexDistBasic(t *testing.T) {
 	checkTmpDDLDir(t)
 }
 
+func TestAddIndexDistAutoPauseOnKVDiskFull(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("DXF and fast reorg are always enabled on nextgen, and this test uses the classic local ingest disk-full failpoint")
+	}
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	if store.Name() != "TiKV" {
+		t.Skip("TiKV store only")
+	}
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("drop database if exists test;")
+	tk.MustExec("create database test;")
+	tk.MustExec("use test;")
+	tk.MustExec("set global tidb_enable_dist_task=1;")
+	t.Cleanup(func() {
+		tk.MustExec("set global tidb_enable_dist_task=0;")
+	})
+	failpointName := "github.com/pingcap/tidb/pkg/ingestor/ingestctrl/WriteToTiKVNotEnoughDiskSpace"
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
+		if job.State == model.JobStatePausing && job.HasPauseReason(model.JobPauseReasonKVDiskFull) {
+			time.Sleep(300 * time.Millisecond)
+		}
+	})
+
+	runAutoPauseCase := func(alterSQL, checkSQL string, verifyJob func(*model.Job)) {
+		testfailpoint.Enable(t, failpointName, "return()")
+		err := tk.ExecToErr(alterSQL)
+		require.Error(t, err)
+		require.True(t, dbterror.ErrDDLAutoPausedByKVDiskFull.Equal(err), "unexpected error: %v", err)
+		testfailpoint.Disable(t, failpointName)
+
+		rows := tk.MustQuery("select job_id, job_meta from mysql.tidb_ddl_job").Rows()
+		require.Len(t, rows, 1)
+		jobID := fmt.Sprint(rows[0][0])
+		job := model.Job{}
+		require.NoError(t, job.Decode([]byte(rows[0][1].(string))))
+		require.True(t, job.IsPausedBySystemForKVDiskFull(), "job: %s", job.String())
+		require.NotNil(t, job.PauseReason)
+		require.Contains(t, job.PauseReason.Message, "TiKV disk full")
+		require.Zero(t, job.ErrorCount)
+		verifyJob(&job)
+
+		tk.MustExec("admin resume ddl jobs " + jobID)
+		require.Eventually(t, func() bool {
+			return tk.ExecToErr(checkSQL) == nil
+		}, 30*time.Second, 200*time.Millisecond)
+	}
+
+	t.Run("single add index", func(t *testing.T) {
+		tk.MustExec("drop table if exists t;")
+		tk.MustExec("create table t(a int, b int);")
+		tk.MustExec("insert into t values (1, 1), (2, 2), (3, 3);")
+
+		runAutoPauseCase(
+			"alter table t add index idx_b(b);",
+			"admin check index t idx_b;",
+			func(job *model.Job) {
+				require.Equal(t, model.ActionAddIndex, job.Type)
+			},
+		)
+	})
+
+	t.Run("multi-schema add index", func(t *testing.T) {
+		tk.MustExec("drop table if exists t_multi;")
+		tk.MustExec("create table t_multi(a int, b int, c int);")
+		tk.MustExec("insert into t_multi values (1, 1, 1), (2, 2, 2), (3, 3, 3);")
+
+		runAutoPauseCase(
+			"alter table t_multi add column d int default 0, add index idx_b(b);",
+			"admin check index t_multi idx_b;",
+			func(job *model.Job) {
+				require.Equal(t, model.ActionMultiSchemaChange, job.Type)
+				require.NotNil(t, job.MultiSchemaInfo)
+				require.Len(t, job.MultiSchemaInfo.SubJobs, 2)
+				require.Equal(t, model.ActionAddColumn, job.MultiSchemaInfo.SubJobs[0].Type)
+				require.Equal(t, model.ActionAddIndex, job.MultiSchemaInfo.SubJobs[1].Type)
+			},
+		)
+		tk.MustQuery("select d from t_multi order by a;").Check(testkit.Rows("0", "0", "0"))
+	})
+}
+
+func TestAddIndexDistRetryOnKVDiskFull(t *testing.T) {
+	if !kerneltype.IsNextGen() {
+		t.Skip("NextGen retries disk-full errors; Classic automatically pauses the job")
+	}
+	testutil.ReduceCheckInterval(t)
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database if not exists addindex_disk_full_retry")
+	tk.MustExec("use addindex_disk_full_retry")
+	realtikvtest.SetupNextGenGlobalSort(t, tk)
+	taskMgr, err := storage.GetTaskManager()
+	require.NoError(t, err)
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalDistTask)
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int primary key, b int)")
+	tk.MustExec("insert into t values (1, 10), (2, 20), (3, 30)")
+
+	var sufficient atomic.Bool
+	var diskFullErrors atomic.Int32
+	var taskID atomic.Int64
+	var once sync.Once
+	var retryBefore float64
+	// Fail the actual ingest call so retries exercise the import error path.
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ingestor/ingestcli/mockIngestError", func(errP *error) {
+		if !sufficient.Load() {
+			*errP = ingestcli.NewIngestAPIError(&errorpb.Error{
+				Message:  "mock TiKV disk full",
+				DiskFull: &errorpb.DiskFull{},
+			}, nil)
+		}
+	})
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/afterRunSubtask",
+		func(e taskexecutor.TaskExecutor, errP *error, _ context.Context) {
+			task := e.GetTaskBase()
+			if task.Type != proto.Backfill || task.Step != proto.BackfillStepWriteAndIngest || !errdef.IsKVDiskFullError(*errP) {
+				return
+			}
+			once.Do(func() {
+				retryBefore = promtestutil.ToFloat64(dxfmetric.ExecuteEventCounter.WithLabelValues(
+					strconv.FormatInt(task.ID, 10), dxfmetric.EventRetry))
+				taskID.Store(task.ID)
+			})
+			diskFullErrors.Add(1)
+		})
+
+	ddlCtx, cancel := context.WithCancel(context.Background())
+	ddlTK := testkit.NewTestKit(t, store)
+	done := make(chan struct{})
+	var ddlErr error
+	go func() {
+		_, ddlErr = ddlTK.ExecWithContext(ddlCtx, "alter table addindex_disk_full_retry.t add index idx_b(b)")
+		close(done)
+	}()
+	t.Cleanup(func() {
+		sufficient.Store(true)
+		select {
+		case <-done:
+			cancel()
+			return
+		default:
+		}
+		for _, row := range tk.MustQuery("select job_id from mysql.tidb_ddl_job").Rows() {
+			_ = tk.ExecToErr("admin cancel ddl jobs " + fmt.Sprint(row[0]))
+		}
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(10 * time.Second):
+			t.Error("ADD INDEX did not stop after cancellation")
+		}
+	})
+
+	require.Eventually(t, func() bool {
+		select {
+		case <-done:
+			return true
+		default:
+		}
+		id := taskID.Load()
+		return id != 0 && diskFullErrors.Load() >= 2 && promtestutil.ToFloat64(
+			dxfmetric.ExecuteEventCounter.WithLabelValues(strconv.FormatInt(id, 10), dxfmetric.EventRetry)) > retryBefore
+	}, time.Minute, 20*time.Millisecond)
+	select {
+	case <-done:
+		require.NoError(t, ddlErr)
+		t.Fatal("ADD INDEX finished before disk space became sufficient")
+	default:
+	}
+	task, err := taskMgr.GetTaskByID(ctx, taskID.Load())
+	require.NoError(t, err)
+	require.Equal(t, proto.TaskStateRunning, task.State)
+	rows := tk.MustQuery("select job_meta from mysql.tidb_ddl_job").Rows()
+	require.Len(t, rows, 1)
+	var job model.Job
+	require.NoError(t, job.Decode([]byte(rows[0][0].(string))))
+	require.Equal(t, model.JobStateRunning, job.State)
+	require.Nil(t, job.PauseReason)
+
+	// Recover capacity without issuing RESUME or another ADD INDEX.
+	sufficient.Store(true)
+	select {
+	case <-done:
+		require.NoError(t, ddlErr)
+	case <-time.After(time.Minute):
+		t.Fatal("ADD INDEX did not finish after disk space recovered")
+	}
+	task, err = taskMgr.GetTaskByIDWithHistory(ctx, taskID.Load())
+	require.NoError(t, err)
+	require.Equal(t, proto.TaskStateSucceed, task.State)
+	tk.MustExec("admin check table t")
+	tk.MustQuery("select a, b from t force index(idx_b) order by b").Check(testkit.Rows("1 10", "2 20", "3 30"))
+}
+
 func TestAddIndexDistCancelWithPartition(t *testing.T) {
 	testutil.ReduceCheckInterval(t)
 	store := realtikvtest.CreateMockStoreAndSetup(t)
@@ -162,6 +364,7 @@ func TestAddIndexDistCancelWithPartition(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk1 := testkit.NewTestKit(t, store)
+	realtikvtest.SetupNextGenGlobalSort(t, tk)
 	tk.MustExec("drop database if exists test;")
 	tk.MustExec("create database test;")
 	tk.MustExec("use test;")
@@ -199,6 +402,7 @@ func TestAddIndexDistCancel(t *testing.T) {
 	testutil.ReduceCheckInterval(t)
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
+	realtikvtest.SetupNextGenGlobalSort(t, tk)
 	tk.MustExec("drop database if exists addindexlit;")
 	tk.MustExec("create database addindexlit;")
 	tk.MustExec("use addindexlit;")
@@ -386,6 +590,7 @@ func TestAddIndexInvalidDistTaskVariableSetting(t *testing.T) {
 func TestAddIndexForCurrentTimestampColumn(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
+	realtikvtest.SetupNextGenGlobalSort(t, tk)
 	tk.MustExec("drop database if exists addindexlit;")
 	tk.MustExec("create database addindexlit;")
 	tk.MustExec("use addindexlit;")
@@ -408,6 +613,7 @@ func TestAddUKErrorMessage(t *testing.T) {
 
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
+	realtikvtest.SetupNextGenGlobalSort(t, tk)
 	tk.MustExec("drop database if exists addindexlit;")
 	tk.MustExec("create database addindexlit;")
 	tk.MustExec("use addindexlit;")
@@ -426,6 +632,7 @@ func TestAddUKErrorMessage(t *testing.T) {
 func TestAddIndexDistLockAcquireFailed(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
+	realtikvtest.SetupNextGenGlobalSort(t, tk)
 	tk.MustExec("use test")
 	if kerneltype.IsClassic() {
 		tk.MustExec("set global tidb_enable_dist_task = on;")
@@ -456,6 +663,7 @@ func TestAddIndexDistLockAcquireFailed(t *testing.T) {
 func TestAddIndexScheduleAway(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
+	realtikvtest.SetupNextGenGlobalSort(t, tk)
 	tk.MustExec("use test")
 	if kerneltype.IsClassic() {
 		tk.MustExec("set global tidb_enable_dist_task = on;")
@@ -487,17 +695,27 @@ func TestAddIndexScheduleAway(t *testing.T) {
 			tk1.MustExec("use test")
 			updateExecID := fmt.Sprintf(`
 				update mysql.tidb_background_subtask set exec_id = 'other' where task_key in
-					(select id from mysql.tidb_global_task where task_key like '%%%d')`, jobID.Load())
+					(select CAST(id AS CHAR) from mysql.tidb_global_task where task_key like '%%%d')`, jobID.Load())
 			tk1.MustExec(updateExecID)
 			<-afterCancel
 			updateExecID = fmt.Sprintf(`
 				update mysql.tidb_background_subtask set exec_id = ':4000' where task_key in
-					(select id from mysql.tidb_global_task where task_key like '%%%d')`, jobID.Load())
+					(select CAST(id AS CHAR) from mysql.tidb_global_task where task_key like '%%%d')`, jobID.Load())
 			tk1.MustExec(updateExecID)
 		})
 	})
+	var afterRunSubtaskRuns atomic.Int32
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/afterRunSubtask",
 		func(_ taskexecutor.TaskExecutor, _ *error, ctx context.Context) {
+			// The read-index subtask cannot finish its first run before the
+			// scheduled-away cancel above, so the first run is the one that must
+			// observe the cancelled context. The cancelled subtask is then
+			// retried, and on global sort further steps (merge-sort,
+			// write-and-ingest) run as well; those later runs have a live context,
+			// so only assert on the first run.
+			if afterRunSubtaskRuns.Add(1) != 1 {
+				return
+			}
 			require.Error(t, ctx.Err())
 			require.Equal(t, context.Canceled, context.Cause(ctx))
 		},
@@ -507,10 +725,10 @@ func TestAddIndexScheduleAway(t *testing.T) {
 }
 
 func TestAddIndexDistCleanUpBlock(t *testing.T) {
-	proto.MaxConcurrentTask = 1
+	t.Cleanup(proto.SetMaxConcurrentTaskForTest(1))
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", `return(1)`)
 	ch := make(chan struct{})
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/dxf/framework/scheduler/doCleanupTask", func() {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/dxf/framework/scheduler/processCleanupTaskBatch", func() {
 		<-ch
 	})
 	store := realtikvtest.CreateMockStoreAndSetup(t)
@@ -519,6 +737,7 @@ func TestAddIndexDistCleanUpBlock(t *testing.T) {
 	}
 
 	tk := testkit.NewTestKit(t, store)
+	realtikvtest.SetupNextGenGlobalSort(t, tk)
 	tk.MustExec("drop database if exists test;")
 	tk.MustExec("create database test;")
 	tk.MustExec("use test;")

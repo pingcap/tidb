@@ -21,6 +21,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/mock"
@@ -258,6 +259,59 @@ func TestBuildSampleFullNDV(t *testing.T) {
 	require.Equal(t, 2, len(topN.TopN), "TopN should be trimmed to sampleNDV-1 items when ndv > sampleNDV")
 }
 
+func TestBuildHistAndTopNUsesAnalyzeDefaultGlobals(t *testing.T) {
+	origBuckets := vardef.AnalyzeDefaultNumBuckets.Load()
+	origTopN := vardef.AnalyzeDefaultNumTopN.Load()
+	defer func() {
+		vardef.AnalyzeDefaultNumBuckets.Store(origBuckets)
+		vardef.AnalyzeDefaultNumTopN.Store(origTopN)
+	}()
+	vardef.AnalyzeDefaultNumBuckets.Store(4)
+	vardef.AnalyzeDefaultNumTopN.Store(4)
+
+	ctx := mock.NewContext()
+	sketch := NewFMSketch(1000)
+	data := make([]*SampleItem, 0, 35)
+	for value, count := range map[int64]int{
+		1: 20,
+		2: 3,
+		3: 3,
+		4: 3,
+		5: 3,
+		6: 3,
+	} {
+		for range count {
+			d := types.NewIntDatum(value)
+			err := sketch.InsertValue(ctx.GetSessionVars().StmtCtx, d)
+			require.NoError(t, err)
+			data = append(data, &SampleItem{Value: d})
+		}
+	}
+	collector := &SampleCollector{
+		Samples:   data,
+		NullCount: 0,
+		Count:     int64(len(data)),
+		FMSketch:  sketch,
+		TotalSize: int64(len(data)) * 8,
+	}
+
+	tp := types.NewFieldType(mysql.TypeLonglong)
+	hist, topN, err := BuildHistAndTopN(ctx, 4, 4, 1, collector, tp, true, nil)
+	require.NoError(t, err)
+	require.Len(t, topN.TopN, 1)
+	require.Equal(t, 2, hist.Len())
+
+	explicitHist, explicitTopN, err := BuildHistAndTopN(ctx, 4, 5, 1, collector, tp, true, nil)
+	require.NoError(t, err)
+	require.Len(t, explicitTopN.TopN, 5)
+	require.NotNil(t, explicitHist)
+
+	explicitHist, explicitTopN, err = BuildHistAndTopN(ctx, 5, 4, 1, collector, tp, true, nil)
+	require.NoError(t, err)
+	require.Len(t, explicitTopN.TopN, 1)
+	require.Greater(t, explicitHist.Len(), hist.Len())
+}
+
 type testSampleSuite struct {
 	count int
 	rs    sqlexec.RecordSet
@@ -268,6 +322,7 @@ func TestSampleSerial(t *testing.T) {
 	t.Run("SubTestCollectColumnStats", SubTestCollectColumnStats(s))
 	t.Run("SubTestMergeSampleCollector", SubTestMergeSampleCollector(s))
 	t.Run("SubTestCollectorProtoConversion", SubTestCollectorProtoConversion(s))
+	t.Run("SubTestSortSampleItems", SubTestSortSampleItems)
 }
 
 func createTestSampleSuite() *testSampleSuite {
@@ -381,4 +436,17 @@ func SubTestCollectorProtoConversion(s *testSampleSuite) func(*testing.T) {
 			require.Equal(t, len(s.Samples), len(collector.Samples))
 		}
 	}
+}
+
+func SubTestSortSampleItems(t *testing.T) {
+	sc := stmtctx.NewStmtCtx()
+	// The first compare fails and the later compares succeed. The error must
+	// not be lost, because the order is not valid after a failed compare.
+	items := []*SampleItem{
+		{Value: types.NewStringDatum("abc"), Ordinal: 0},
+		{Value: types.NewDecimalDatum(types.NewDecFromInt(1)), Ordinal: 1},
+		{Value: types.NewDecimalDatum(types.NewDecFromInt(2)), Ordinal: 2},
+		{Value: types.NewDecimalDatum(types.NewDecFromInt(3)), Ordinal: 3},
+	}
+	require.Error(t, sortSampleItems(sc, items))
 }

@@ -346,6 +346,40 @@ func TestTiFlashExtraColumnPrune(t *testing.T) {
 			})
 			tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
 		}
+
+		tk.MustExec("set @@tidb_mview_enable = on")
+		tk.MustExec("set @@tidb_enforce_mpp = off")
+		tk.MustExec("set @@tidb_isolation_read_engines = 'tikv,tiflash'")
+		sql := "select _tidb_commit_ts from t1"
+		tk.MustHavePlan(sql, "TableFullScan")
+		tikvSQL := "select /*+ read_from_storage(tikv[t1]) */ _tidb_commit_ts from t1"
+		tk.MustHavePlan(tikvSQL, "TableFullScan")
+		require.False(t, tk.HasTiFlashPlan(tikvSQL))
+
+		tk.MustExec("drop table if exists t_commit_ts")
+		tk.MustExec("create table t_commit_ts(a int primary key, b int, c int, index idx_b(b), index idx_c(c))")
+		pointGetSQL := "select _tidb_commit_ts from t_commit_ts where a = 1"
+		tk.MustHavePlan(pointGetSQL, "TableRangeScan")
+		tk.MustNotHavePlan(pointGetSQL, "Point_Get")
+		batchPointGetSQL := "select _tidb_commit_ts from t_commit_ts where a in (1, 2)"
+		tk.MustHavePlan(batchPointGetSQL, "TableRangeScan")
+		tk.MustNotHavePlan(batchPointGetSQL, "Batch_Point_Get")
+		indexLookUpSQL := "select _tidb_commit_ts from t_commit_ts use index (idx_b) where b = 1"
+		tk.MustHavePlan(indexLookUpSQL, "IndexLookUp")
+		tk.MustNotHavePlan(indexLookUpSQL, "IndexReader")
+
+		tk.MustExec("set @@tidb_isolation_read_engines = 'tiflash'")
+		tk.MustHavePlan(sql, "TableFullScan")
+		require.True(t, tk.HasTiFlashPlan(sql))
+		tiflashFilterSQL := "select _tidb_commit_ts from t1 where _tidb_commit_ts > 0"
+		selectionPushedDown := false
+		for _, row := range tk.MustQuery("explain " + tiflashFilterSQL).Rows() {
+			if strings.Contains(row[0].(string), "Selection") && strings.Contains(row[2].(string), "tiflash") {
+				selectionPushedDown = true
+				break
+			}
+		}
+		require.True(t, selectionPushedDown)
 	})
 }
 
@@ -366,8 +400,8 @@ func TestIndexMergeJSONMemberOf2FlakyPart(t *testing.T) {
 		))
 		tk.MustQuery("explain format = 'plan_tree' select * from t use index (iad) where a = 1 and (2 member of (d->'$.b'));").Check(testkit.Rows(
 			"IndexMerge root  type: union",
-			"├─IndexRangeScan(Build) cop[tikv] table:t, index:iad(a, cast(json_extract(`d`, _utf8mb4'$.b') as signed array)) range:[1 2,1 2], keep order:false, stats:partial[d:unInitialized]",
-			"└─TableRowIDScan(Probe) cop[tikv] table:t keep order:false, stats:partial[d:unInitialized]",
+			"├─IndexRangeScan(Build) cop[tikv] table:t, index:iad(a, cast(json_extract(`d`, _utf8mb4'$.b') as signed array)) range:[1 2,1 2], keep order:false",
+			"└─TableRowIDScan(Probe) cop[tikv] table:t keep order:false",
 		))
 	})
 }
@@ -551,8 +585,8 @@ FROM (SELECT DISTINCT balance.portfolio_code AS portfolioCode
 		tk.MustExec(`analyze table t_issue56915 all columns;`)
 		tk.MustQuery("explain format = 'plan_tree' select /* issue:56915 */ * from t_issue56915 where a = 1 and 6 member of (j);").Check(testkit.Rows(
 			"IndexMerge root  type: union",
-			"├─IndexRangeScan(Build) cop[tikv] table:t_issue56915, index:mvi(cast(`j` as signed array), a, b) range:[6 1,6 1], keep order:false, stats:partial[j:unInitialized]",
-			"└─TableRowIDScan(Probe) cop[tikv] table:t_issue56915 keep order:false, stats:partial[j:unInitialized]",
+			"├─IndexRangeScan(Build) cop[tikv] table:t_issue56915, index:mvi(cast(`j` as signed array), a, b) range:[6 1,6 1], keep order:false",
+			"└─TableRowIDScan(Probe) cop[tikv] table:t_issue56915 keep order:false",
 		))
 
 		// issue:63290

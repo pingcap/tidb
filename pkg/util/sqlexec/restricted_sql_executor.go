@@ -61,6 +61,7 @@ type ExecOption struct {
 	AnalyzeSnapshot    *bool
 	TrackSysProc       func(id uint64, ctx sysproctrack.TrackProc) error
 	UnTrackSysProc     func(id uint64)
+	SessionVarsSetup   SessionVarsSetup
 	PartitionPruneMode string
 	SnapshotTS         uint64
 	AnalyzeVer         int
@@ -69,6 +70,10 @@ type ExecOption struct {
 	UseCurSession      bool
 	EnableDDLAnalyze   bool
 }
+
+// SessionVarsSetup configures the session variables used by a restricted SQL
+// execution and returns a function that restores the original values.
+type SessionVarsSetup func(vars *variable.SessionVars) func()
 
 // OptionFuncAlias is defined for the optional parameter of ExecRestrictedStmt/SQL.
 type OptionFuncAlias = func(option *ExecOption)
@@ -114,6 +119,13 @@ var ExecOptionUseSessionPool = func(option *ExecOption) {
 	option.UseCurSession = false
 }
 
+// ExecOptionWithSessionVarsSetup configures the internal session used by ExecRestrictedSQL.
+var ExecOptionWithSessionVarsSetup = func(setup SessionVarsSetup) OptionFuncAlias {
+	return func(option *ExecOption) {
+		option.SessionVarsSetup = setup
+	}
+}
+
 // ExecOptionWithSnapshot tells ExecRestrictedStmt/SQL to use a snapshot.
 func ExecOptionWithSnapshot(snapshot uint64) OptionFuncAlias {
 	return func(option *ExecOption) {
@@ -146,8 +158,11 @@ func GetExecOption(opts []OptionFuncAlias) ExecOption {
 type SQLExecutor interface {
 	// Execute is only used by plugins. It can be removed soon.
 	Execute(ctx context.Context, sql string) ([]RecordSet, error)
-	// ExecuteInternal means execute sql as the internal sql.
+	// ExecuteInternal executes internal SQL. On error it closes any result set and
+	// returns nil for the result. The caller closes any result set returned on success.
 	ExecuteInternal(ctx context.Context, sql string, args ...any) (RecordSet, error)
+	// ExecuteStmt executes a parsed statement. On error it closes any result set and
+	// returns nil for the result. The caller closes any result set returned on success.
 	ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (RecordSet, error)
 }
 

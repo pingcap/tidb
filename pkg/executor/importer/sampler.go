@@ -30,13 +30,13 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
+	"github.com/pingcap/tidb/pkg/lightning/importdef"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/objstore/compressedio"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
@@ -80,7 +80,7 @@ type KVSizeSampleConfig struct {
 	Charset          *string
 	ImportantSysVars map[string]string
 	FieldNullDef     []string
-	LineFieldsInfo   plannercore.LineFieldsInfo
+	LineFieldsInfo   importdef.LineFieldsInfo
 	IgnoreLines      uint64
 
 	ColumnsAndUserVars []*ast.ColumnNameOrUserVar
@@ -209,7 +209,11 @@ func validateKVSizeSampleConfig(cfg *KVSizeSampleConfig) error {
 func (s *kvSizeSampler) CreateColAssignSimpleExprs(
 	ctx expression.BuildContext,
 ) (_ []expression.Expression, _ []contextutil.SQLWarn, retErr error) {
-	return createColAssignSimpleExprs(s.cfg.ColumnAssignments, ctx, &s.colAssignMu)
+	return createColAssignSimpleExprs(
+		s.cfg.ColumnAssignments,
+		ctx,
+		&s.colAssignMu,
+	)
 }
 
 func (s *kvSizeSampler) generateCSVConfig() *config.CSVConfig {
@@ -331,7 +335,7 @@ func (s *kvSizeSampler) sampleOneFile(
 		ParquetMeta: file.ParquetMeta,
 	}
 	idAlloc := kv.NewPanickingAllocators(s.table.Meta().SepAutoInc())
-	tbl, err := tables.TableFromMeta(idAlloc, s.table.Meta())
+	tbl, err := tables.TableFromMetaWithCollate(s.table.UseNewCollate(), idAlloc, s.table.Meta())
 	if err != nil {
 		return 0, 0, 0, errors.Annotatef(err, "failed to tables.TableFromMeta %s", s.table.Meta().Name)
 	}

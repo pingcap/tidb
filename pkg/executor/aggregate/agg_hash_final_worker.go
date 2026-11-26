@@ -24,8 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/aggfuncs"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/logutil"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/pkg/util/execdetails"
 )
 
 // AfFinalResult indicates aggregation functions final result.
@@ -45,13 +44,17 @@ type HashAggFinalWorker struct {
 	outputCh            chan *AfFinalResult
 	finalResultHolderCh chan *chunk.Chunk
 
-	spillHelper *parallelHashAggSpillHelper
+	spillHelper    *parallelHashAggSpillHelper
+	hashStateStats *execdetails.HashStateRuntimeStats
 
 	restoredAggResultMapperMem int64
 }
 
 func (w *HashAggFinalWorker) getInputFromDisk(sctx sessionctx.Context) (ret aggfuncs.AggPartialResultMapper, restoredMem int64, err error) {
 	ret, restoredMem, err = w.spillHelper.restoreOnePartition(sctx)
+	if w.hashStateStats != nil && ret != nil {
+		w.hashStateStats.AddRows(uint64(len(ret.M)))
+	}
 	w.intestDuringFinalWorkerRun(&err)
 	return ret, restoredMem, err
 }
@@ -71,6 +74,12 @@ func (w *HashAggFinalWorker) getPartialInput() (input aggfuncs.AggPartialResultM
 }
 
 func (w *HashAggFinalWorker) mergeInputIntoResultMap(sctx sessionctx.Context, input aggfuncs.AggPartialResultMapper) error {
+	if w.hashStateStats != nil {
+		before := len(w.partialResultMap.M)
+		// Publishing output may be skipped after LIMIT; construction is chargeable
+		// as soon as the groups have been admitted to this worker's result map.
+		defer func() { w.hashStateStats.AddRows(uint64(len(w.partialResultMap.M) - before)) }()
+	}
 	// As the w.partialResultMap is empty when we get the first input.
 	// So it's better to directly assign the input to w.partialResultMap
 	if len(w.partialResultMap.M) == 0 {
@@ -118,13 +127,13 @@ func (w *HashAggFinalWorker) consumeIntermData(sctx sessionctx.Context) error {
 	}
 }
 
-func (w *HashAggFinalWorker) generateResultAndSend(sctx sessionctx.Context, result *chunk.Chunk) {
+func (w *HashAggFinalWorker) generateResultAndSend(sctx sessionctx.Context, result *chunk.Chunk) error {
 	var finished bool
 	exprCtx := sctx.GetExprCtx()
 	for _, results := range w.partialResultMap.M {
 		for j, af := range w.aggFuncs {
 			if err := af.AppendFinalResult2Chunk(exprCtx.GetEvalCtx(), results[j], result); err != nil {
-				logutil.BgLogger().Error("HashAggFinalWorker failed to append final result to Chunk", zap.Error(err))
+				return err
 			}
 		}
 
@@ -136,10 +145,11 @@ func (w *HashAggFinalWorker) generateResultAndSend(sctx sessionctx.Context, resu
 			w.outputCh <- &AfFinalResult{chk: result, giveBackCh: w.finalResultHolderCh}
 			result, finished = w.receiveFinalResultHolder()
 			if finished {
-				return
+				return nil
 			}
 		}
 	}
+	return nil
 }
 
 func (w *HashAggFinalWorker) sendFinalResult(sctx sessionctx.Context) {
@@ -155,7 +165,10 @@ func (w *HashAggFinalWorker) sendFinalResult(sctx sessionctx.Context) {
 	execStart := time.Now()
 	updateExecTime(w.stats, execStart)
 	if w.spillHelper.isSpilledChunksIOEmpty() {
-		w.generateResultAndSend(sctx, result)
+		if err := w.generateResultAndSend(sctx, result); err != nil {
+			w.outputCh <- &AfFinalResult{err: err}
+			return
+		}
 	} else {
 		for {
 			if w.checkFinishChClosed() {
@@ -169,7 +182,10 @@ func (w *HashAggFinalWorker) sendFinalResult(sctx sessionctx.Context) {
 			if eof {
 				break
 			}
-			w.generateResultAndSend(sctx, result)
+			if err := w.generateResultAndSend(sctx, result); err != nil {
+				w.outputCh <- &AfFinalResult{err: err}
+				return
+			}
 		}
 	}
 

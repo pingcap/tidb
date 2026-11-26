@@ -427,7 +427,15 @@ func (m *ownerManager) campaignAndWatch(ctx context.Context) error {
 
 func (m *ownerManager) closeSession() {
 	if m.etcdSes != nil {
-		if err := m.etcdSes.Close(); err != nil {
+		err := m.etcdSes.Close()
+		if err != nil && m.ctx.Err() != nil {
+			// Startup cancellation must interrupt lease creation, but an established
+			// session still needs a live, bounded context to revoke its lease.
+			ctx, cancel := context.WithTimeout(context.WithoutCancel(m.ctx), keyOpDefaultTimeout)
+			_, err = m.etcdCli.Revoke(ctx, m.etcdSes.Lease())
+			cancel()
+		}
+		if err != nil {
 			m.logger.Info("etcd session close failed", zap.Error(err))
 		}
 		m.etcdSes = nil
@@ -436,9 +444,8 @@ func (m *ownerManager) closeSession() {
 
 func (m *ownerManager) refreshSession(retryCnt, ttl int) error {
 	m.closeSession()
-	// Note: we must use manager's context to create session. If we use campaign
-	// context and the context is cancelled, the created session cannot be closed
-	// as session close depends on the context.
+	// Use the manager's context so BreakCampaignLoop can stop campaigning without
+	// orphaning the session, while manager cancellation can still interrupt creation.
 	// One drawback is that when you want to break the campaign loop, and the campaign
 	// loop is refreshing the session, it might wait for a long time to return, it
 	// should be fine as long as network is ok, and acceptable to wait when not.
@@ -484,6 +491,34 @@ func getOwnerInfo(ctx context.Context, etcdCli *clientv3.Client, ownerPath strin
 	}
 	ownerID, op = splitOwnerValues(resp.Kvs[0].Value)
 	return string(resp.Kvs[0].Key), ownerID, op, resp.Header.Revision, resp.Kvs[0].ModRevision, nil
+}
+
+// DeleteOwnerKeyByID scans the election keys under ownerPath and deletes the
+// one whose value (UUID) matches the given id.
+func DeleteOwnerKeyByID(ctx context.Context, etcdCli *clientv3.Client, ownerPath, id string) {
+	childCtx, cancel := context.WithTimeout(ctx, etcd.KeyOpDefaultTimeout)
+	defer cancel()
+	resp, err := etcdCli.Get(childCtx, ownerPath+"/", clientv3.WithPrefix())
+	if err != nil {
+		logutil.BgLogger().Warn("failed to get owner keys for stale cleanup", zap.String("ownerPath", ownerPath), zap.Error(err))
+		return
+	}
+	for _, kv := range resp.Kvs {
+		ownerUUID, _ := splitOwnerValues(kv.Value)
+		if string(ownerUUID) == id {
+			logutil.BgLogger().Info("deleting stale owner key",
+				zap.String("key", string(kv.Key)),
+				zap.String("staleID", id))
+			delCtx, delCancel := context.WithTimeout(ctx, etcd.KeyOpDefaultTimeout)
+			_, err := etcdCli.Delete(delCtx, string(kv.Key))
+			delCancel()
+			if err != nil {
+				logutil.BgLogger().Warn("failed to delete stale owner key",
+					zap.String("key", string(kv.Key)), zap.Error(err))
+			}
+			return
+		}
+	}
 }
 
 // GetOwnerKeyInfo gets the owner key and current revision.

@@ -29,7 +29,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
@@ -43,7 +42,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/statistics"
-	"github.com/pingcap/tidb/pkg/statistics/handle"
+	statshandle "github.com/pingcap/tidb/pkg/statistics/handle"
 	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	handleutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
@@ -52,6 +51,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/tiancaiamao/gp"
@@ -218,7 +218,7 @@ func flushAnalyzeStatsDeltaForTest(ctx context.Context, sctx sessionctx.Context,
 	if len(targetIDs) == 0 {
 		return false, nil
 	}
-	return true, domain.GetDomain(sctx).StatsHandle().DumpStatsDeltaToKV(true, targetIDs...)
+	return true, domain.GetDomain(sctx).StatsHandle().Usage().DumpStatsDeltaToKV(true, targetIDs...)
 }
 
 func canBroadcastAnalyzeStatsDeltaForTest(ctx context.Context) (bool, error) {
@@ -228,9 +228,9 @@ func canBroadcastAnalyzeStatsDeltaForTest(ctx context.Context) (bool, error) {
 	}
 	rpcAddrs := make([]string, 0, len(servers))
 	for _, server := range servers {
-		// Keep the same skip behavior as buildTiDBMemCopTasks for placeholder
-		// nodes that should not receive TiDB-type coprocessor requests.
-		if server.IP == config.UnavailableIP {
+		// Skip processes that register server info but cannot receive TiDB RPC,
+		// such as standalone BR.
+		if server.IsDisableRPC() {
 			continue
 		}
 		// In-process test domains can register server info without starting a
@@ -308,7 +308,7 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 			metrics.ManualAnalyzeCounter.WithLabelValues("succ").Inc()
 		}
 	}()
-	statsHandle := domain.GetDomain(e.Ctx()).StatsHandle()
+	statsHandle := domain.GetAnalyzeStatsHandle(e.Ctx())
 	infoSchema := sessiontxn.GetTxnManager(e.Ctx()).GetTxnInfoSchema()
 	sessionVars := e.Ctx().GetSessionVars()
 	ctx, stop := e.buildAnalyzeKillCtx(ctx)
@@ -320,6 +320,7 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 		return err
 	}
 	warnLockedTableMsg(sessionVars, needAnalyzeTableCnt, skippedTables)
+	warnUnusedNDVRate(sessionVars, tasks)
 
 	if len(tasks) == 0 {
 		return nil
@@ -412,6 +413,12 @@ TASKLOOP:
 		for i := sentTasks; i < len(tasks); i++ {
 			finishJobWithLog(statsHandle, tasks[i].job, err)
 		}
+		// The result handler returns early on a kill signal or a panic, so it may
+		// leave results it never read. waitFinish has closed resultsCh by now.
+		for result := range resultsCh {
+			finishJobWithLog(statsHandle, result.Job, err)
+			result.DestroyAndPutToPool()
+		}
 		return err
 	}
 
@@ -471,7 +478,7 @@ func (e *AnalyzeExec) waitFinish(ctx context.Context, g *errgroup.Group, results
 }
 
 // filterAndCollectTasks filters the tasks that are not locked and collects the table IDs.
-func filterAndCollectTasks(tasks []*analyzeTask, statsHandle *handle.Handle, is infoschema.InfoSchema) ([]*analyzeTask, uint, []string, error) {
+func filterAndCollectTasks(tasks []*analyzeTask, statsHandle *statshandle.AnalyzeHandle, is infoschema.InfoSchema) ([]*analyzeTask, uint, []string, error) {
 	var (
 		filteredTasks       []*analyzeTask
 		skippedTables       []string
@@ -535,7 +542,7 @@ func filterAndCollectTasks(tasks []*analyzeTask, statsHandle *handle.Handle, is 
 }
 
 // getLockedTableAndPartitionIDs queries the locked tables and partitions.
-func getLockedTableAndPartitionIDs(statsHandle *handle.Handle, tasks []*analyzeTask) (map[int64]struct{}, error) {
+func getLockedTableAndPartitionIDs(statsHandle *statshandle.AnalyzeHandle, tasks []*analyzeTask) (map[int64]struct{}, error) {
 	tidAndPids := make([]int64, 0, len(tasks))
 	// Check the locked tables in one transaction.
 	// We need to check all tables and its partitions.
@@ -567,6 +574,37 @@ func warnLockedTableMsg(sessionVars *variable.SessionVars, needAnalyzeTableCnt u
 	}
 }
 
+// warnUnusedNDVRate warns when the tables and partitions to analyze ask for an
+// NDVRATE below 1, in the statement or in saved options, but none samples rows
+// because none has more than tidb_analyze_sampled_ndv_threshold rows.
+func warnUnusedNDVRate(sessionVars *variable.SessionVars, tasks []*analyzeTask) {
+	// Zero turns sampled NDV off, so skip the warning.
+	threshold := vardef.AnalyzeSampledNDVThreshold.Load()
+	if threshold == 0 {
+		return
+	}
+	requested, used := false, false
+	for _, task := range tasks {
+		// Multi-valued and special global index tasks never sample.
+		if task.taskType != colTask {
+			continue
+		}
+		// The builder sends NdvRate only above the threshold. Reuse its decision so
+		// a statement that samples any table or partition gets no false warning.
+		if task.colExec.analyzePB.ColReq.NdvRate != nil {
+			used = true
+		}
+		if rate := math.Float64frombits(task.colExec.opts[ast.AnalyzeOptNDVRate]); rate > 0 && rate < 1 {
+			requested = true
+		}
+	}
+	if requested && !used {
+		sessionVars.StmtCtx.AppendWarning(errors.NewNoStackErrorf(
+			"NDVRATE is not used because no table or partition has more rows than %s(%d)",
+			vardef.TiDBAnalyzeSampledNDVThreshold, threshold))
+	}
+}
+
 func getTableIDFromTask(task *analyzeTask) statistics.AnalyzeTableID {
 	switch task.taskType {
 	case colTask:
@@ -578,6 +616,29 @@ func getTableIDFromTask(task *analyzeTask) statistics.AnalyzeTableID {
 	panic("unreachable")
 }
 
+// writeSavedAnalyzeOption appends one analyze option to the VALUES list of the
+// REPLACE INTO mysql.analyze_options statement. An option that is not set is
+// written as the DEFAULT keyword rather than a hardcoded value, so the column
+// default in the table definition is the source of truth for how "unset" is
+// persisted and this writer cannot drift from it across releases.
+// The reader keeps its own sentinels: getSavedAnalyzeOpts treats sample_num,
+// sample_rate, buckets and ndv_rate as unset when not positive, and topn when
+// negative.
+// Those must stay consistent with the column defaults; changing a default here
+// without changing the reader would turn "unset" into a pinned value.
+func writeSavedAnalyzeOption(sql *strings.Builder, rawOpts map[ast.AnalyzeOptionType]uint64, optType ast.AnalyzeOptionType) {
+	val, ok := rawOpts[optType]
+	if !ok {
+		sql.WriteString("DEFAULT")
+		return
+	}
+	if optType == ast.AnalyzeOptSampleRate || optType == ast.AnalyzeOptNDVRate {
+		sqlescape.MustFormatSQL(sql, "%?", math.Float64frombits(val))
+		return
+	}
+	sqlescape.MustFormatSQL(sql, "%?", val)
+}
+
 func (e *AnalyzeExec) saveAnalyzeOptions() error {
 	if !vardef.PersistAnalyzeOptions.Load() || len(e.OptionsMap) == 0 {
 		return nil
@@ -585,32 +646,41 @@ func (e *AnalyzeExec) saveAnalyzeOptions() error {
 	// only to save table options if dynamic prune mode
 	dynamicPrune := variable.PartitionPruneMode(e.Ctx().GetSessionVars().PartitionPruneMode.Load()) == variable.Dynamic
 	toSaveMap := make(map[int64]core.V2AnalyzeOptions)
+	resetOpts := make(map[ast.AnalyzeOptionType]struct{})
+	partitionIDs := make([]int64, 0)
 	for id, opts := range e.OptionsMap {
+		if dynamicPrune && opts.IsPartition {
+			partitionIDs = append(partitionIDs, id)
+			continue
+		}
+		for optType := range opts.ResetOpts {
+			resetOpts[optType] = struct{}{}
+		}
 		if !opts.IsPartition || !dynamicPrune {
 			toSaveMap[id] = opts
 		}
 	}
 	sql := new(strings.Builder)
-	sqlescape.MustFormatSQL(sql, "REPLACE INTO mysql.analyze_options (table_id,sample_num,sample_rate,buckets,topn,column_choice,column_ids) VALUES ")
+	sqlescape.MustFormatSQL(sql, "REPLACE INTO mysql.analyze_options (table_id,sample_num,sample_rate,buckets,topn,column_choice,column_ids,ndv_rate) VALUES ")
 	idx := 0
 	for _, opts := range toSaveMap {
-		sampleNum := opts.RawOpts[ast.AnalyzeOptNumSamples]
-		sampleRate := float64(0)
-		if val, ok := opts.RawOpts[ast.AnalyzeOptSampleRate]; ok {
-			sampleRate = math.Float64frombits(val)
-		}
-		buckets := opts.RawOpts[ast.AnalyzeOptNumBuckets]
-		topn := int64(-1)
-		if val, ok := opts.RawOpts[ast.AnalyzeOptNumTopN]; ok {
-			topn = int64(val)
-		}
 		colChoice := opts.ColChoice.String()
 		colIDs := make([]string, 0, len(opts.ColumnList))
 		for _, colInfo := range opts.ColumnList {
 			colIDs = append(colIDs, strconv.FormatInt(colInfo.ID, 10))
 		}
 		colIDStrs := strings.Join(colIDs, ",")
-		sqlescape.MustFormatSQL(sql, "(%?,%?,%?,%?,%?,%?,%?)", opts.PhyTableID, sampleNum, sampleRate, buckets, topn, colChoice, colIDStrs)
+		sqlescape.MustFormatSQL(sql, "(%?,", opts.PhyTableID)
+		writeSavedAnalyzeOption(sql, opts.RawOpts, ast.AnalyzeOptNumSamples)
+		sql.WriteString(",")
+		writeSavedAnalyzeOption(sql, opts.RawOpts, ast.AnalyzeOptSampleRate)
+		sql.WriteString(",")
+		writeSavedAnalyzeOption(sql, opts.RawOpts, ast.AnalyzeOptNumBuckets)
+		sql.WriteString(",")
+		writeSavedAnalyzeOption(sql, opts.RawOpts, ast.AnalyzeOptNumTopN)
+		sqlescape.MustFormatSQL(sql, ",%?,%?,", colChoice, colIDStrs)
+		writeSavedAnalyzeOption(sql, opts.RawOpts, ast.AnalyzeOptNDVRate)
+		sql.WriteString(")")
 		if idx < len(toSaveMap)-1 {
 			sqlescape.MustFormatSQL(sql, ",")
 		}
@@ -622,21 +692,56 @@ func (e *AnalyzeExec) saveAnalyzeOptions() error {
 	if err != nil {
 		return err
 	}
+	if dynamicPrune && len(resetOpts) > 0 && len(partitionIDs) > 0 {
+		if err := resetAnalyzeOptionsForPartitions(ctx, exec, resetOpts, partitionIDs); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
-func recordHistoricalStats(sctx sessionctx.Context, tableID int64) error {
-	statsHandle := domain.GetDomain(sctx).StatsHandle()
-	historicalStatsEnabled, err := statsHandle.CheckHistoricalStatsEnable()
-	if err != nil {
-		return errors.Errorf("check tidb_enable_historical_stats failed: %v", err)
+// resetAnalyzeOptionsForPartitions clears only the options explicitly reset by
+// a whole-table ANALYZE in dynamic prune mode. Dynamic mode normally saves only
+// the table row, but old partition rows must not retain overrides that would
+// become effective again after switching back to static pruning.
+func resetAnalyzeOptionsForPartitions(ctx context.Context, exec sqlexec.RestrictedSQLExecutor, resetOpts map[ast.AnalyzeOptionType]struct{}, partitionIDs []int64) error {
+	columns := []struct {
+		optType ast.AnalyzeOptionType
+		name    string
+	}{
+		{ast.AnalyzeOptNumSamples, "sample_num"},
+		{ast.AnalyzeOptSampleRate, "sample_rate"},
+		{ast.AnalyzeOptNumBuckets, "buckets"},
+		{ast.AnalyzeOptNumTopN, "topn"},
+		{ast.AnalyzeOptNDVRate, "ndv_rate"},
 	}
-	if !historicalStatsEnabled {
+	sql := new(strings.Builder)
+	sql.WriteString("UPDATE mysql.analyze_options SET ")
+	updated := 0
+	for _, column := range columns {
+		if _, ok := resetOpts[column.optType]; !ok {
+			continue
+		}
+		if updated > 0 {
+			sql.WriteString(",")
+		}
+		sql.WriteString(column.name)
+		sql.WriteString("=DEFAULT")
+		updated++
+	}
+	if updated == 0 {
 		return nil
 	}
-	historicalStatsWorker := domain.GetDomain(sctx).GetHistoricalStatsWorker()
-	historicalStatsWorker.SendTblToDumpHistoricalStats(tableID)
-	return nil
+	sql.WriteString(" WHERE table_id IN (")
+	for i, partitionID := range partitionIDs {
+		if i > 0 {
+			sql.WriteString(",")
+		}
+		sqlescape.MustFormatSQL(sql, "%?", partitionID)
+	}
+	sql.WriteString(")")
+	_, _, err := exec.ExecRestrictedSQL(ctx, nil, sql.String())
+	return err
 }
 
 // handleResultsError will handle the error fetch from resultsCh and record it in log
@@ -682,19 +787,20 @@ func (e *AnalyzeExec) handleResultsErrorWithConcurrency(
 	globalStatsMap globalStatsMap,
 	resultsCh <-chan *statistics.AnalyzeResults,
 ) error {
-	statsHandle := domain.GetDomain(e.Ctx()).StatsHandle()
+	statsHandle := domain.GetAnalyzeStatsHandle(e.Ctx())
 	wg := util.NewWaitGroupPool(e.gp)
 	saveResultsCh := make(chan *statistics.AnalyzeResults, saveStatsConcurrency)
 	errCh := make(chan error, saveStatsConcurrency)
 	enableAnalyzeSnapshot := e.Ctx().GetSessionVars().EnableAnalyzeSnapshot
 	for range saveStatsConcurrency {
 		worker := newAnalyzeSaveStatsWorker(saveResultsCh, errCh, &e.Ctx().GetSessionVars().SQLKiller)
-		ctx1 := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+		// Deliberately not the analyze source: the heavy TiKV scan is already done,
+		// so there is no point in throttling the save-stats writes as background work.
+		ctx1 := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStatsForegroundPriority)
 		wg.Run(func() {
 			worker.run(ctx1, statsHandle, enableAnalyzeSnapshot)
 		})
 	}
-	tableIDs := map[int64]struct{}{}
 	panicCnt := 0
 	var err error
 	// Only if all the analyze workers exit can we close the saveResultsCh.
@@ -718,7 +824,6 @@ func (e *AnalyzeExec) handleResultsErrorWithConcurrency(
 			continue
 		}
 		handleGlobalStats(needGlobalStats, globalStatsMap, results)
-		tableIDs[results.TableID.GetStatisticsID()] = struct{}{}
 		failpoint.InjectCall("analyzeBeforeSendToSaveResults")
 		saveResultsCh <- results
 	}
@@ -733,12 +838,6 @@ func (e *AnalyzeExec) handleResultsErrorWithConcurrency(
 		intest.Assert(len(errSet) > 0, "errSet should at least contain one error")
 		errMsg := slices.Collect(maps.Keys(errSet))
 		err = errors.New(strings.Join(errMsg, ","))
-	}
-	for tableID := range tableIDs {
-		// Dump stats to historical storage.
-		if err := recordHistoricalStats(e.Ctx(), tableID); err != nil {
-			statslogutil.StatsErrVerboseLogger().Error("record historical stats failed", zap.Error(err))
-		}
 	}
 	return err
 }
@@ -791,9 +890,10 @@ func analyzeWorkerExitErr(ctx context.Context, errExitCh <-chan struct{}) error 
 
 // trySendAnalyzeResult may drop and destroy result when the statement is already
 // aborting, so callers should not reuse result after calling it.
-func (e *AnalyzeExec) trySendAnalyzeResult(ctx context.Context, statsHandle *handle.Handle, resultsCh chan<- *statistics.AnalyzeResults, result *statistics.AnalyzeResults) {
+func (e *AnalyzeExec) trySendAnalyzeResult(ctx context.Context, statsHandle *statshandle.AnalyzeHandle, resultsCh chan<- *statistics.AnalyzeResults, result *statistics.AnalyzeResults) {
 	select {
 	case resultsCh <- result:
+		failpoint.InjectCall("analyzeResultSent")
 		return
 	case <-ctx.Done():
 	case <-e.errExitCh:
@@ -814,7 +914,7 @@ func (e *AnalyzeExec) trySendAnalyzeResult(ctx context.Context, statsHandle *han
 // ctx must be from AnalyzeExec.buildAnalyzeKillCtx
 func (e *AnalyzeExec) analyzeWorker(ctx context.Context, taskCh <-chan *analyzeTask, resultsCh chan<- *statistics.AnalyzeResults) {
 	var task *analyzeTask
-	statsHandle := domain.GetDomain(e.Ctx()).StatsHandle()
+	statsHandle := domain.GetAnalyzeStatsHandle(e.Ctx())
 	defer func() {
 		if r := recover(); r != nil {
 			statslogutil.StatsLogger().Warn("analyze worker panicked", zap.Any("recover", r), zap.Stack("stack"))
@@ -863,6 +963,7 @@ type analyzeTask struct {
 
 type baseAnalyzeExec struct {
 	ctx         sessionctx.Context
+	planID      int
 	tableID     statistics.AnalyzeTableID
 	concurrency int
 	analyzePB   *tipb.AnalyzeReq
@@ -884,14 +985,14 @@ func AddNewAnalyzeJob(ctx sessionctx.Context, job *statistics.AnalyzeJob) {
 	} else {
 		instance = net.JoinHostPort(serverInfo.IP, strconv.Itoa(int(serverInfo.Port)))
 	}
-	statsHandle := domain.GetDomain(ctx).StatsHandle()
+	statsHandle := domain.GetAnalyzeStatsHandle(ctx)
 	err = statsHandle.InsertAnalyzeJob(job, instance, ctx.GetSessionVars().ConnectionID)
 	if err != nil {
 		statslogutil.StatsErrVerboseLogger().Error("failed to insert analyze job", zap.Error(err))
 	}
 }
 
-func finishJobWithLog(statsHandle *handle.Handle, job *statistics.AnalyzeJob, analyzeErr error) {
+func finishJobWithLog(statsHandle *statshandle.AnalyzeHandle, job *statistics.AnalyzeJob, analyzeErr error) {
 	statsHandle.FinishAnalyzeJob(job, analyzeErr, statistics.TableAnalysisJob)
 	if job != nil {
 		var state string

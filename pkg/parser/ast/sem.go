@@ -16,10 +16,28 @@ package ast
 // DDL Statements
 
 const (
+	// CompareMaterializedViewCommand represents COMPARE MATERIALIZED VIEW statement
+	CompareMaterializedViewCommand = "COMPARE MATERIALIZED VIEW"
+	// ShowCreateMaterializedViewCommand represents SHOW CREATE MATERIALIZED VIEW statement
+	ShowCreateMaterializedViewCommand = "SHOW CREATE MATERIALIZED VIEW"
+	// ShowCreateMaterializedViewLogCommand represents SHOW CREATE MATERIALIZED VIEW LOG statement
+	ShowCreateMaterializedViewLogCommand = "SHOW CREATE MATERIALIZED VIEW LOG"
+	// ShowMaterializedViewsCommand represents SHOW MATERIALIZED VIEWS statement
+	ShowMaterializedViewsCommand = "SHOW MATERIALIZED VIEWS"
+	// ShowMaterializedViewLogsCommand represents SHOW MATERIALIZED VIEW LOGS statement
+	ShowMaterializedViewLogsCommand = "SHOW MATERIALIZED VIEW LOGS"
+	// ShowMaterializedViewRemainLogsCommand represents SHOW MATERIALIZED VIEW REMAIN_LOGS statement
+	ShowMaterializedViewRemainLogsCommand = "SHOW MATERIALIZED VIEW REMAIN_LOGS"
+	// ShowMaterializedViewLogWaitPurgeCommand represents SHOW MATERIALIZED VIEW LOG WAIT_PURGE statement
+	ShowMaterializedViewLogWaitPurgeCommand = "SHOW MATERIALIZED VIEW LOG WAIT_PURGE"
 	// AlterDatabaseCommand represents ALTER DATABASE statement
 	AlterDatabaseCommand = "ALTER DATABASE"
 	// AlterInstanceCommand represents ALTER INSTANCE statement
 	AlterInstanceCommand = "ALTER INSTANCE"
+	// AlterMaterializedViewCommand represents ALTER MATERIALIZED VIEW statement
+	AlterMaterializedViewCommand = "ALTER MATERIALIZED VIEW"
+	// AlterMaterializedViewLogCommand represents ALTER MATERIALIZED VIEW LOG statement
+	AlterMaterializedViewLogCommand = "ALTER MATERIALIZED VIEW LOG"
 	// AlterPlacementPolicyCommand represents ALTER PLACEMENT POLICY statement
 	AlterPlacementPolicyCommand = "ALTER PLACEMENT POLICY"
 	// AlterRangeCommand represents ALTER RANGE statement
@@ -38,6 +56,10 @@ const (
 	CreateDatabaseCommand = "CREATE DATABASE"
 	// CreateIndexCommand represents CREATE INDEX statement
 	CreateIndexCommand = "CREATE INDEX"
+	// CreateMaterializedViewCommand represents CREATE MATERIALIZED VIEW statement
+	CreateMaterializedViewCommand = "CREATE MATERIALIZED VIEW"
+	// CreateMaterializedViewLogCommand represents CREATE MATERIALIZED VIEW LOG statement
+	CreateMaterializedViewLogCommand = "CREATE MATERIALIZED VIEW LOG"
 	// CreatePlacementPolicyCommand represents CREATE PLACEMENT POLICY statement
 	CreatePlacementPolicyCommand = "CREATE PLACEMENT POLICY"
 	// CreateMaskingPolicyCommand represents CREATE MASKING POLICY statement
@@ -56,6 +78,18 @@ const (
 	DropDatabaseCommand = "DROP DATABASE"
 	// DropIndexCommand represents DROP INDEX statement
 	DropIndexCommand = "DROP INDEX"
+	// DropMaterializedViewCommand represents DROP MATERIALIZED VIEW statement
+	DropMaterializedViewCommand = "DROP MATERIALIZED VIEW"
+	// DropMaterializedViewLogCommand represents DROP MATERIALIZED VIEW LOG statement
+	DropMaterializedViewLogCommand = "DROP MATERIALIZED VIEW LOG"
+	// PurgeMaterializedViewLogCommand represents PURGE MATERIALIZED VIEW LOG statement
+	PurgeMaterializedViewLogCommand = "PURGE MATERIALIZED VIEW LOG"
+	// CancelMaterializedViewLogPurgeJobCommand represents CANCEL MATERIALIZED VIEW LOG PURGE JOB statement
+	CancelMaterializedViewLogPurgeJobCommand = "CANCEL MATERIALIZED VIEW LOG PURGE JOB"
+	// CancelMaterializedViewRefreshJobCommand represents CANCEL MATERIALIZED VIEW REFRESH JOB statement
+	CancelMaterializedViewRefreshJobCommand = "CANCEL MATERIALIZED VIEW REFRESH JOB"
+	// RefreshMaterializedViewCommand represents REFRESH MATERIALIZED VIEW statement
+	RefreshMaterializedViewCommand = "REFRESH MATERIALIZED VIEW"
 	// DropPlacementPolicyCommand represents DROP PLACEMENT POLICY statement
 	DropPlacementPolicyCommand = "DROP PLACEMENT POLICY"
 	// DropResourceGroupCommand represents DROP RESOURCE GROUP statement
@@ -256,6 +290,8 @@ const (
 	ShowDistributionJobsCommand = "SHOW DISTRIBUTION JOB"
 	// ShowAffinityCommand represents SHOW AFFINITY statement
 	ShowAffinityCommand = "SHOW AFFINITY"
+	// ShowStorageClassTransitionsCommand represents SHOW STORAGE_CLASS TRANSITIONS statement.
+	ShowStorageClassTransitionsCommand = "SHOW STORAGE_CLASS TRANSITIONS"
 )
 
 // Admin Commands
@@ -563,6 +599,26 @@ func (n *CreateViewStmt) SEMCommand() string {
 }
 
 // SEMCommand returns the command string for the statement.
+func (n *CreateMaterializedViewStmt) SEMCommand() string {
+	return CreateMaterializedViewCommand
+}
+
+// SEMCommand returns the command string for the statement.
+func (n *CreateMaterializedViewLogStmt) SEMCommand() string {
+	return CreateMaterializedViewLogCommand
+}
+
+// SEMCommand returns the command string for the statement.
+func (n *AlterMaterializedViewStmt) SEMCommand() string {
+	return AlterMaterializedViewCommand
+}
+
+// SEMCommand returns the command string for the statement.
+func (n *AlterMaterializedViewLogStmt) SEMCommand() string {
+	return AlterMaterializedViewLogCommand
+}
+
+// SEMCommand returns the command string for the statement.
 func (n *DropDatabaseStmt) SEMCommand() string {
 	return DropDatabaseCommand
 }
@@ -593,6 +649,44 @@ func (n *DropTableStmt) SEMCommand() string {
 		return DropViewCommand
 	}
 	return DropTableCommand
+}
+
+// SEMCommand returns the command string for the statement.
+func (n *DropMaterializedViewStmt) SEMCommand() string {
+	return DropMaterializedViewCommand
+}
+
+// SEMCommand returns the command string for the statement.
+func (n *DropMaterializedViewLogStmt) SEMCommand() string {
+	return DropMaterializedViewLogCommand
+}
+
+// SEMCommand returns the command string for the statement.
+func (n *PurgeMaterializedViewLogStmt) SEMCommand() string {
+	return PurgeMaterializedViewLogCommand
+}
+
+// SEMCommand returns the command string for the statement.
+func (n *RefreshMaterializedViewStmt) SEMCommand() string {
+	return RefreshMaterializedViewCommand
+}
+
+// SEMCommand returns the user-facing command because this internal statement
+// is generated while executing REFRESH MATERIALIZED VIEW.
+func (n *RefreshMaterializedViewImplementStmt) SEMCommand() string {
+	return RefreshMaterializedViewCommand
+}
+
+// SEMCommand returns the command string for the statement.
+func (n *CancelMaterializedViewJobStmt) SEMCommand() string {
+	switch n.Tp {
+	case CancelMaterializedViewJobTypeRefresh:
+		return CancelMaterializedViewRefreshJobCommand
+	case CancelMaterializedViewJobTypeLogPurge:
+		return CancelMaterializedViewLogPurgeJobCommand
+	default:
+		return UnknownCommand
+	}
 }
 
 // SEMCommand returns the command string for the statement.
@@ -708,6 +802,18 @@ func (n *SetOprStmt) SEMCommand() string {
 // SEMCommand returns the command string for the statement.
 func (n *ShowStmt) SEMCommand() string {
 	switch n.Tp {
+	case ShowCreateMaterializedView:
+		return ShowCreateMaterializedViewCommand
+	case ShowCreateMaterializedViewLog:
+		return ShowCreateMaterializedViewLogCommand
+	case ShowMaterializedViews:
+		return ShowMaterializedViewsCommand
+	case ShowMaterializedViewLogs:
+		return ShowMaterializedViewLogsCommand
+	case ShowMaterializedViewRemainLogs:
+		return ShowMaterializedViewRemainLogsCommand
+	case ShowMaterializedViewLogWaitPurge:
+		return ShowMaterializedViewLogWaitPurgeCommand
 	case ShowCreateTable:
 		return ShowCreateTableCommand
 	case ShowCreateView:
@@ -840,6 +946,8 @@ func (n *ShowStmt) SEMCommand() string {
 		return ShowDistributionJobsCommand
 	case ShowAffinity:
 		return ShowAffinityCommand
+	case ShowStorageClassTransitions:
+		return ShowStorageClassTransitionsCommand
 	default:
 		return UnknownCommand
 	}
@@ -1333,4 +1441,9 @@ func (n *ProcedureErrorVal) SEMCommand() string {
 // SEMCommand returns the command string for the statement.
 func (n *ProcedureErrorState) SEMCommand() string {
 	return ProcedureCommand
+}
+
+// SEMCommand returns the command string for the statement.
+func (n *CompareMaterializedViewStmt) SEMCommand() string {
+	return CompareMaterializedViewCommand
 }

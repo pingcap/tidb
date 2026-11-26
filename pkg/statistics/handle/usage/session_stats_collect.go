@@ -65,8 +65,8 @@ type TimeCostRecorderForTest interface {
 // 2. If forceDump is true, then return true.
 // 3. If the stats delta haven't been dumped in the past hour, then return true.
 // 4. If the table stats is pseudo or empty or `Modify Count / Table Count` exceeds the threshold.
-func (s *statsUsageImpl) needDumpStatsDelta(is infoschema.InfoSchema, forceDump bool, id int64, item variable.TableDelta, currentTime time.Time) bool {
-	tableItem, ok := s.statsHandle.TableItemByID(is, id)
+func (s *Tracker) needDumpStatsDelta(snapshotTableInfoGetter *utilstats.SnapshotTableInfoGetter, forceDump bool, id int64, item variable.TableDelta, currentTime time.Time) bool {
+	tableItem, ok := snapshotTableInfoGetter.TableItemByID(id)
 	if !ok {
 		return false
 	}
@@ -82,7 +82,7 @@ func (s *statsUsageImpl) needDumpStatsDelta(is infoschema.InfoSchema, forceDump 
 		return true
 	}
 	// use GetNonPseudoPhysicalTableStats to avoid creating pseudo tables and dropping instantly
-	statsTable, found := s.statsHandle.GetNonPseudoPhysicalTableStats(id)
+	statsTable, found := s.tableStats.GetNonPseudoPhysicalTableStats(id)
 	if !found || statsTable == nil || statsTable.RealtimeCount == 0 ||
 		float64(item.Count)/float64(statsTable.RealtimeCount) > DumpStatsDeltaRatio {
 		// Dump the stats when there are many modifications.
@@ -100,7 +100,7 @@ const (
 // If forceDump is false, it dumps only eligible table deltas: ones that have not been dumped for a while,
 // or whose stats are missing/empty, or whose `Modify Count / Table Count` exceeds the ratio threshold.
 // If tableIDs is empty, it dumps every table that held in map to KV.
-func (s *statsUsageImpl) DumpStatsDeltaToKV(forceDump bool, tableIDs ...int64) error {
+func (s *Tracker) DumpStatsDeltaToKV(forceDump bool, tableIDs ...int64) error {
 	defer util.Recover(metrics.LabelStats, "DumpStatsDeltaToKV", nil, false)
 	start := time.Now()
 	defer func() {
@@ -108,10 +108,10 @@ func (s *statsUsageImpl) DumpStatsDeltaToKV(forceDump bool, tableIDs ...int64) e
 		metrics.StatsDeltaUpdateHistogram.Observe(dur.Seconds())
 	}()
 
-	s.SweepSessionStatsList()
-	deltaMap := s.SessionTableDelta().GetDeltaAndReset()
+	s.sessionStats.SweepSessionStatsList()
+	deltaMap := s.sessionStats.SessionTableDelta().GetDeltaAndReset()
 	defer func() {
-		s.SessionTableDelta().Merge(deltaMap)
+		s.sessionStats.SessionTableDelta().Merge(deltaMap)
 	}()
 	if time.Since(start) > tooSlowThreshold {
 		statslogutil.StatsSampleLogger().Warn("Sweeping session list is too slow",
@@ -127,13 +127,11 @@ func (s *statsUsageImpl) DumpStatsDeltaToKV(forceDump bool, tableIDs ...int64) e
 		end := min(i+dumpDeltaBatchSize, len(tableIDs))
 
 		batchTableIDs := tableIDs[i:end]
-		var (
-			statsVersion uint64
-			batchUpdates []*storage.DeltaUpdate
-		)
+		var batchUpdates []*storage.DeltaUpdate
 		batchStart := time.Now()
-		err := utilstats.CallWithSCtx(s.statsHandle.SPool(), func(sctx sessionctx.Context) error {
+		err := utilstats.CallWithSCtx(s.pool.SPool(), func(sctx sessionctx.Context) error {
 			is := sctx.GetLatestInfoSchema().(infoschema.InfoSchema)
+			snapshotTableInfoGetter := utilstats.NewSnapshotTableInfoGetter(is)
 			batchUpdates = make([]*storage.DeltaUpdate, 0, len(batchTableIDs))
 			// Collect all updates in the batch.
 			for _, id := range batchTableIDs {
@@ -143,7 +141,7 @@ func (s *statsUsageImpl) DumpStatsDeltaToKV(forceDump bool, tableIDs ...int64) e
 					item.InitTime = batchStart
 					deltaMap[id] = item
 				}
-				needDump := s.needDumpStatsDelta(is, forceDump, id, item, batchStart)
+				needDump := s.needDumpStatsDelta(snapshotTableInfoGetter, forceDump, id, item, batchStart)
 				if !needDump {
 					continue
 				}
@@ -161,11 +159,11 @@ func (s *statsUsageImpl) DumpStatsDeltaToKV(forceDump bool, tableIDs ...int64) e
 
 			// Process all updates in the batch with a single transaction.
 			// Note: batchUpdates may be modified in dumpStatsDeltaToKV. (e.g. sorting, updating IsLocked)
-			startTs, updated, err := s.dumpStatsDeltaToKV(is, sctx, batchUpdates)
+			failpoint.InjectCall("beforeDumpStatsDeltaToKV")
+			updated, err := s.dumpStatsDeltaToKV(snapshotTableInfoGetter, sctx, batchUpdates)
 			if err != nil {
 				return errors.Trace(err)
 			}
-			statsVersion = startTs
 			// Note: Ensure we use the updated slice after dumpStatsDeltaToKV,
 			// because dumpStatsDeltaToKV may modify the underlying array of batchUpdates.
 			// For example, dumpStatsDeltaToKV may sort the array.
@@ -195,26 +193,46 @@ func (s *statsUsageImpl) DumpStatsDeltaToKV(forceDump bool, tableIDs ...int64) e
 		if err != nil {
 			return errors.Trace(err)
 		}
-		startRecordHistoricalStatsMeta := time.Now()
 		unlockedTableIDs := make([]int64, 0, len(batchUpdates))
 		for _, update := range batchUpdates {
 			if !update.IsLocked {
-				failpoint.Inject("panic-when-record-historical-stats-meta", func() {
-					panic("panic when record historical stats meta")
-				})
 				unlockedTableIDs = append(unlockedTableIDs, update.TableID)
 			}
 		}
-		s.statsHandle.RecordHistoricalStatsMeta(statsVersion, "flush stats", false, unlockedTableIDs...)
-		// Log a warning if recording historical stats meta takes too long, as it can be slow for large table counts
-		if time.Since(startRecordHistoricalStatsMeta) > time.Minute*15 {
-			statslogutil.StatsSampleLogger().Warn("Recording historical stats meta is too slow",
-				zap.Int("tableCount", len(batchUpdates)),
-				zap.Duration("duration", time.Since(startRecordHistoricalStatsMeta)))
+		// The batch wrote its start_ts as the version. If it committed too late, the stats cache on other
+		// TiDB nodes may have moved past that version, so write a newer one, as handleSlowStatsSaving does.
+		if batchDur := time.Since(batchStart); len(unlockedTableIDs) > 0 &&
+			storage.IsStatsMetaWriteTooSlow(s.lease.Lease(), batchDur) {
+			updateStart := time.Now()
+			newVersion, err := s.updateStatsMetaVerForSlowDump(unlockedTableIDs)
+			updateDur := time.Since(updateStart)
+			if err != nil {
+				statslogutil.StatsLogger().Warn("Failed to update stats meta version for slow stats delta dump, "+
+					"the stats cache on other TiDB nodes may miss the delta",
+					zap.Int("tableCount", len(unlockedTableIDs)),
+					zap.Duration("dumpDuration", batchDur),
+					zap.Duration("updateVersionDuration", updateDur),
+					zap.Error(err))
+			} else {
+				statslogutil.StatsSampleLogger().Info("Updated stats meta version for slow stats delta dump",
+					zap.Int("tableCount", len(unlockedTableIDs)),
+					zap.Duration("dumpDuration", batchDur),
+					zap.Duration("updateVersionDuration", updateDur),
+					zap.Uint64("statsVersion", newVersion))
+			}
 		}
 	}
 
 	return nil
+}
+
+// updateStatsMetaVerForSlowDump updates the version of the dumped tables to a newer TS.
+func (s *Tracker) updateStatsMetaVerForSlowDump(tableIDs []int64) (statsVersion uint64, err error) {
+	err = utilstats.CallWithSCtx(s.pool.SPool(), func(sctx sessionctx.Context) error {
+		statsVersion, err = storage.UpdateStatsMetaVer(utilstats.StatsCtx, sctx, tableIDs...)
+		return err
+	}, utilstats.FlagWrapTxn)
+	return statsVersion, errors.Trace(err)
 }
 
 func collectPendingStatsDeltaTableIDs(deltaMap map[int64]variable.TableDelta, targetTableIDs []int64) []int64 {
@@ -253,18 +271,18 @@ func collectPendingStatsDeltaTableIDs(deltaMap map[int64]variable.TableDelta, ta
 //
 // 2. Stashes lock information:
 //   - Records lock information for each table or partition.
-func (s *statsUsageImpl) dumpStatsDeltaToKV(
-	is infoschema.InfoSchema,
+func (s *Tracker) dumpStatsDeltaToKV(
+	snapshotTableInfoGetter *utilstats.SnapshotTableInfoGetter,
 	sctx sessionctx.Context,
 	updates []*storage.DeltaUpdate,
-) (statsVersion uint64, updated []*storage.DeltaUpdate, err error) {
+) (updated []*storage.DeltaUpdate, err error) {
 	if len(updates) == 0 {
-		return 0, nil, nil
+		return nil, nil
 	}
 	beforeLen := len(updates)
-	statsVersion, err = utilstats.GetStartTS(sctx)
+	statsVersion, err := utilstats.GetStartTS(sctx)
 	if err != nil {
-		return 0, nil, errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
 
 	// Collect all table IDs that need lock checking.
@@ -277,15 +295,15 @@ func (s *statsUsageImpl) dumpStatsDeltaToKV(
 		// Add psychical table ID.
 		allTableIDs = append(allTableIDs, update.TableID)
 		// Add parent table ID if it's a partition table.
-		if tblID, ok := is.TableIDByPartitionID(update.TableID); ok {
+		if tblID, ok := snapshotTableInfoGetter.ParentTableID(update.TableID); ok {
 			allTableIDs = append(allTableIDs, tblID)
 		}
 	}
 
 	// Batch get lock status for all tables.
-	lockedTables, err := s.statsHandle.GetLockedTables(allTableIDs...)
+	lockedTables, err := s.locks.GetLockedTables(allTableIDs...)
 	if err != nil {
-		return 0, nil, errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
 
 	// Prepare batch updates
@@ -295,7 +313,7 @@ func (s *statsUsageImpl) dumpStatsDeltaToKV(
 			continue
 		}
 
-		tableID, ok := is.TableIDByPartitionID(update.TableID)
+		tableID, ok := snapshotTableInfoGetter.ParentTableID(update.TableID)
 		if ok { // It's a partition table.
 			isTableLocked := false
 			isPartitionLocked := false
@@ -342,32 +360,32 @@ func (s *statsUsageImpl) dumpStatsDeltaToKV(
 
 	// Batch update stats meta.
 	if err = storage.UpdateStatsMeta(utilstats.StatsCtx, sctx, statsVersion, updates...); err != nil {
-		return 0, nil, errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
 
 	// Because we may sort the updates, we need to return the updated slice.
 	// Otherwise the caller may use the original slice and get wrong results.
-	return statsVersion, updates, nil
+	return updates, nil
 }
 
 // DumpColStatsUsageToKV sweeps the whole list, updates the column stats usage map and dumps it to KV.
-func (s *statsUsageImpl) DumpColStatsUsageToKV() error {
+func (s *Tracker) DumpColStatsUsageToKV() error {
 	defer util.Recover(metrics.LabelStats, "DumpColStatsUsageToKV", nil, false)
 	start := time.Now()
 	defer func() {
 		dur := time.Since(start)
 		metrics.StatsUsageUpdateHistogram.Observe(dur.Seconds())
 	}()
-	s.SweepSessionStatsList()
-	colMap := s.SessionStatsUsage().GetUsageAndReset()
+	s.sessionStats.SweepSessionStatsList()
+	colMap := s.sessionStats.SessionStatsUsage().GetUsageAndReset()
 	defer func() {
-		s.SessionStatsUsage().Merge(colMap)
+		s.sessionStats.SessionStatsUsage().Merge(colMap)
 	}()
 	pairs := make([]ColStatsUsageEntry, 0, len(colMap))
 	for id, t := range colMap {
 		pairs = append(pairs, ColStatsUsageEntry{TableID: id.TableID, ColumnID: id.ID, LastUsedAt: t.UTC().Format(types.TimeFormat)})
 	}
-	if err := DumpColStatsUsageEntries(s.statsHandle.SPool(), pairs, nil); err != nil {
+	if err := DumpColStatsUsageEntries(s.pool.SPool(), pairs, nil); err != nil {
 		return errors.Trace(err)
 	}
 	for id := range colMap {
@@ -431,9 +449,14 @@ type ColStatsUsageEntry struct {
 	ColumnID   int64
 }
 
+// ResetSessionStatsList resets the sessions stats list.
+func (s *Tracker) ResetSessionStatsList() {
+	s.sessionStats.ResetSessionStatsList()
+}
+
 // NewSessionStatsItem allocates a stats collector for a session.
-func (s *statsUsageImpl) NewSessionStatsItem() any {
-	return s.SessionStatsList.NewSessionStatsItem()
+func (s *Tracker) NewSessionStatsItem() *SessionStatsItem {
+	return s.sessionStats.NewSessionStatsItem()
 }
 
 func merge(s *SessionStatsItem, deltaMap *TableDeltaMap, colMap *StatsUsage) {

@@ -15,25 +15,44 @@
 package sqlsvrapi
 
 import (
+	"context"
+
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/owner"
 	"github.com/pingcap/tidb/pkg/util"
 )
 
-// Runtime is the runtime view for accessing a storage through KV or session.
+// Runtime is the runtime view for accessing a keyspace through KV/session and
+// for submitting table-mode DDL operations to that keyspace.
+//
+// TODO: Runtime is a historical name and no longer describes this interface
+// precisely after table-mode DDL submission was added. Keep the name for now to
+// avoid churn until a better keyspace-scoped abstraction is introduced.
 type Runtime interface {
 	Store() kv.Storage
 	SysSessionPool() util.DestroyableSessionPool
+	// AlterTableMode submits an internal table-mode DDL and waits for the result.
+	//
+	// SchemaID, TableID, and TargetMode are required caller inputs.
+	// Cross-keyspace callers must also provide SchemaName and TableName; the
+	// implementation validates them against resolved metadata. CurrentMode is
+	// resolved by the implementation from current metadata before building the DDL
+	// job. The current-keyspace implementation delegates to the local DDL
+	// executor, which re-resolves names by ID. ctx is honored by context-aware
+	// submit/wait paths, while the local DDL executor path does not currently
+	// honor cancellation after the call starts.
+	AlterTableMode(ctx context.Context, target model.AlterTableModeTarget) error
 }
 
-// KSRuntimeHandle is an acquired runtime handle for a target keyspace.
+// KSRuntimeHandle represents one holder of a target keyspace runtime.
+// Release it after use.
 type KSRuntimeHandle interface {
 	Runtime
-	// Release releases the holding of the runtime handle. After calling Release,
-	// the handle should not be used anymore.
-	// the underlying runtime has different lifecycle, the handle is just a view
-	// and does not manage the lifecycle of the runtime.
-	Release()
+	// Release drops this holder. If it was the last holder, closeIfIdle selects
+	// immediate cleanup (true) or retention for reuse until idle eviction (false).
+	// Only the first Release call on a handle takes effect.
+	Release(closeIfIdle bool)
 }
 
 // Server defines the interface for a SQL server.
