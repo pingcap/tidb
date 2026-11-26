@@ -245,6 +245,60 @@ mod tests {
     };
     use tidb_pd_client::ClusterSecurity;
 
+    /// Go `TestStatusServerClose`: shutdown closes a status connection that
+    /// has not finished its protocol prefix (silent TCP, a partial HTTP
+    /// request, a silent TLS handshake) rather than leaving it open.
+    #[test]
+    fn test_status_server_close() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../tidb-pd-client/testdata/tls");
+        for (name, tls, prefix) in [
+            ("silent TCP", false, &b""[..]),
+            ("partial HTTP", false, &b"GET"[..]),
+            ("silent TLS", true, &b""[..]),
+        ] {
+            let security = if tls {
+                ClusterSecurity::new(
+                    dir.join("ca.crt").display().to_string(),
+                    dir.join("server.crt").display().to_string(),
+                    dir.join("server.key").display().to_string(),
+                    vec![],
+                )
+            } else {
+                ClusterSecurity::default()
+            };
+            let server = crate::http_status::start_status_listener_with_routes(
+                "127.0.0.1",
+                0,
+                Arc::new(crate::sql_node::ConnectionTracker::default()),
+                "test".into(),
+                "test".into(),
+                crate::http_status::StatusRoutes { security, ..Default::default() },
+            )
+            .unwrap();
+            let mut conn = TcpStream::connect(server.local_addr()).unwrap();
+            conn.write_all(prefix).unwrap();
+            // Let the server accept the connection and start reading it.
+            std::thread::sleep(Duration::from_millis(200));
+            let (closed_tx, closed_rx) = std::sync::mpsc::channel();
+            std::thread::spawn(move || {
+                drop(server);
+                let _ = closed_tx.send(());
+            });
+            closed_rx
+                .recv_timeout(Duration::from_secs(5))
+                .unwrap_or_else(|_| panic!("{name}: status shutdown did not finish"));
+            conn.set_read_timeout(Some(Duration::from_secs(1))).unwrap();
+            match conn.read(&mut [0_u8; 1]) {
+                Ok(0) => {}
+                Ok(n) => panic!("{name}: read {n} bytes from a closed status server"),
+                Err(error) => assert!(
+                    !matches!(error.kind(), io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut),
+                    "{name}: shutdown left the status connection open"
+                ),
+            }
+        }
+    }
+
     #[test]
     fn peer_host_batch_cluster_tls_http_grpc_cn_and_shutdown() {
         let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../tidb-pd-client/testdata/tls");
