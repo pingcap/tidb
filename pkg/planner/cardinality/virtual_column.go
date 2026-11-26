@@ -18,8 +18,10 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/statistics"
+	"github.com/pingcap/tidb/pkg/types"
 )
 
 // VirtualColumnBaseColumn returns the only stored column that the generation
@@ -85,7 +87,11 @@ func virtualColumnStatsNode(
 	if filter == nil {
 		return nil
 	}
-	ok, sel, err := getSelectivityByFilter(ctx, coll, filter, pointCount(col, conds))
+	histPoints := 0
+	if isCaseMapping(col.VirtualExpr) {
+		histPoints = pointCount(col, conds)
+	}
+	ok, sel, err := getSelectivityByFilter(ctx, coll, filter, histPoints)
 	if err != nil {
 		ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError(
 			"Error when estimating a virtual generated column from its base column: " + err.Error()))
@@ -95,6 +101,29 @@ func virtualColumnStatsNode(
 		return nil
 	}
 	return &StatsNode{Tp: ColType, ID: col.UniqueID, mask: mask, numCols: 1, Selectivity: sel}
+}
+
+// isCaseMapping reports whether expr is LOWER or UPPER of a column, possibly
+// under casts. One value of such an expression comes from only the few case
+// variants of a base value, so a point condition on it selects about as many
+// base values as it has points. That doesn't hold in general: mod(c, 2) = 0
+// selects half of all values.
+func isCaseMapping(expr expression.Expression) bool {
+	for {
+		f, ok := expr.(*expression.ScalarFunction)
+		if !ok {
+			return false
+		}
+		switch f.FuncName.L {
+		case ast.Cast:
+			expr = f.GetArgs()[0]
+			continue
+		case ast.Lower, ast.Lcase, ast.Upper, ast.Ucase:
+			_, isCol := f.GetArgs()[0].(*expression.Column)
+			return isCol
+		}
+		return false
+	}
 }
 
 // pointCount returns how many distinct values of col the conditions can select
@@ -147,10 +176,11 @@ func isColumnAndConstant(col *expression.Column, a, b expression.Expression) boo
 // estimated from the statistics of the column its generation expression reads:
 // col is a virtual generated column over a single stored column, it has no
 // usable statistics of its own (neither column statistics nor an index that it
-// leads), and the base column has full statistics.
+// leads), and the base column has full column statistics whose values can be
+// restored for evaluation.
 func canEstimateFromBaseColumn(ctx planctx.PlanContext, coll *statistics.HistColl, col *expression.Column) bool {
 	base := VirtualColumnBaseColumn(col)
-	if base == nil {
+	if base == nil || !hasRestorableStatsValues(base.RetType) {
 		return false
 	}
 	if colStats := coll.GetCol(col.UniqueID); colStats != nil && colStats.IsFullLoad() &&
@@ -160,8 +190,26 @@ func canEstimateFromBaseColumn(ctx planctx.PlanContext, coll *statistics.HistCol
 	if virtualColumnLeadsIndexWithStats(ctx, coll, col.UniqueID) {
 		return false
 	}
-	_, id := findAvailableStatsForCol(ctx, coll, base.UniqueID)
-	return id >= 0
+	// Only the base column's own statistics: the histogram bounds of an index
+	// are encoded keys, not values of the column's type.
+	isIndex, id := findAvailableStatsForCol(ctx, coll, base.UniqueID)
+	return id >= 0 && !isIndex
+}
+
+// hasRestorableStatsValues reports whether the TopN and histogram values of a
+// column of type tp decode to values of that type, so expressions over the
+// column can be evaluated on them. Temporal values decode as packed integers,
+// and ENUM, SET and BIT as their internal representation.
+func hasRestorableStatsValues(tp *types.FieldType) bool {
+	switch tp.GetType() {
+	case mysql.TypeEnum, mysql.TypeSet, mysql.TypeBit:
+		return false
+	}
+	switch tp.EvalType() {
+	case types.ETString, types.ETInt, types.ETReal, types.ETDecimal:
+		return true
+	}
+	return false
 }
 
 // virtualColumnLeadsIndexWithStats reports whether an index with usable

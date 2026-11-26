@@ -1004,6 +1004,31 @@ func TestVirtualColumnEstimatedFromBaseColumn(t *testing.T) {
 	// (0.8 of 1000 rows), as do all the conditions above without this estimation.
 	estRows := getTableReaderEstRows(t, tk, "select * from t where ck = 'Alpha1'")
 	require.InDelta(t, 800.0, estRows, 0.01)
+
+	// Many base values per virtual column value: the point-count cap applies to
+	// case mappings only, so g IN (0, 1) still selects every row. (c is hashed:
+	// evaluating the bucket bounds samples the histogram, and an arithmetic
+	// sequence would put every lower bound on the same parity.) A temporal base
+	// column's statistics values can't be evaluated, so y keeps the default.
+	tk.MustExec(`create table t2(id int primary key, c int, g int as (mod(c, 2)) virtual,
+		d date, y int as (year(d)) virtual)`)
+	tk.MustExec(`insert into t2(id, c, d)
+		select x.a, mod(crc32(concat('c', x.a)), 1000000), date_add('2020-01-01', interval mod(x.a, 3) year)
+		from (with recursive x as (select 1 as a union all select a + 1 from x where a < 1000) select a from x) as x`)
+	tk.MustExec("analyze table t2 all columns with 64 buckets, 0 topn")
+	for _, tc := range []struct {
+		cond     string
+		min, max float64
+	}{
+		{"g in (0, 1)", 900, 1000},
+		{"g = 0", 400, 600},
+		// The pseudo equality estimate, 1000 / 1000; about 333 rows match.
+		{"y = 2021", 0.99, 1.01},
+	} {
+		estRows := getTableReaderEstRows(t, tk, "select * from t2 where "+tc.cond)
+		require.GreaterOrEqual(t, estRows, tc.min, tc.cond)
+		require.LessOrEqual(t, estRows, tc.max, tc.cond)
+	}
 }
 
 func TestNewIndexWithColumnStats(t *testing.T) {
