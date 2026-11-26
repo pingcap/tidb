@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
@@ -1629,18 +1630,30 @@ func TestModifyColumnReorgScheduling(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	distTaskEnabled := vardef.EnableDistTask.Swap(true)
+	defer vardef.EnableDistTask.Store(distTaskEnabled)
 	fastReorgEnabled := vardef.EnableFastReorg.Swap(true)
 	defer vardef.EnableFastReorg.Store(fastReorgEnabled)
 	for _, tc := range []struct {
-		name  string
-		drift bool
-		sql   string
+		name      string
+		fastReorg bool
+		drift     bool
+		expectErr error
+		expectRow string
+		sql       string
 	}{
-		{"metadata", false, "alter table t modify column a decimal(10,2)"},
-		{"schemaDrift", true, "alter table t modify column a decimal(10,2)"},
-		{"rename", false, "alter table t rename column a to b"},
+		{"metadata", true, false, nil, "1.23", "alter table t modify column a decimal(10,2)"},
+		{"schemaDrift", true, true, nil, "1.23", "alter table t modify column a decimal(10,2)"},
+		{"rename", true, false, nil, "1.23", "alter table t rename column a to b"},
+		{"metadataDistTaskWithoutFastReorg", false, false, nil, "1.23", "alter table t modify column a decimal(10,2) comment 'new'"},
+		{"multiSchemaMetadataDistTaskWithoutFastReorg", false, false, nil, "1.23 <nil>", "alter table t modify column a decimal(10,2) comment 'new', add column b int"},
+		{"schemaDriftDistTaskWithoutFastReorg", false, true, dbterror.ErrUnsupportedDistTask, "1.234", "alter table t modify column a decimal(10,2)"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("use test")
+			vardef.EnableDistTask.Store(true)
+			vardef.EnableFastReorg.Store(tc.fastReorg)
 			tk.MustExec("drop table if exists t")
 			tk.MustExec("create table t (a decimal(10,2), key(a))")
 			tk.MustExec("insert into t values (1.23)")
@@ -1655,15 +1668,17 @@ func TestModifyColumnReorgScheduling(t *testing.T) {
 				initialized = true
 				fastReorg = m.IsFastReorg
 				if tc.drift {
+					vardef.EnableFastReorg.Store(true)
 					other := testkit.NewTestKit(t, store)
 					other.MustExec("alter table test.t modify column a decimal(12,3)")
 					other.MustExec("update test.t set a = 1.234")
+					vardef.EnableFastReorg.Store(tc.fastReorg)
 				}
 			})
 			var scheduledForReorg bool
 			var gotType model.ModifyColumnType
 			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
-				if job.Type == model.ActionModifyColumn && job.SchemaState == model.StateNone {
+				if (job.Type == model.ActionModifyColumn || job.Type == model.ActionMultiSchemaChange) && job.SchemaState == model.StateNone {
 					// NeedReorg is submission-only; scheduling reads the persisted SQL column.
 					other := testkit.NewTestKit(t, store)
 					rows := other.MustQuery(fmt.Sprintf("select reorg from mysql.tidb_ddl_job where job_id = %d", job.ID)).Rows()
@@ -1673,16 +1688,21 @@ func TestModifyColumnReorgScheduling(t *testing.T) {
 			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/getModifyColumnType", func(tp model.ModifyColumnType) {
 				gotType = tp
 			})
-			tk.MustExec(tc.sql)
+			_, err := tk.Exec(tc.sql)
+			if tc.expectErr != nil {
+				require.ErrorIs(t, err, tc.expectErr)
+			} else {
+				require.NoError(t, err)
+			}
 			rename := tc.name == "rename"
 			require.Equal(t, !rename, scheduledForReorg)
-			require.Equal(t, !rename, fastReorg)
+			require.Equal(t, !rename && tc.fastReorg, fastReorg)
 			if tc.drift {
 				require.Equal(t, model.ModifyTypeReorg, gotType)
 			} else {
 				require.Equal(t, model.ModifyTypeNoReorg, gotType)
 			}
-			tk.MustQuery("select * from t").Check(testkit.Rows("1.23"))
+			tk.MustQuery("select * from t").Check(testkit.Rows(tc.expectRow))
 			tk.MustExec("admin check table t")
 		})
 	}

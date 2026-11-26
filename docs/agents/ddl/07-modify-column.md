@@ -77,9 +77,12 @@ New MODIFY/CHANGE COLUMN jobs set `NeedReorg=true`, including metadata-only chan
 so scheduling and reorg settings do not rely on the submission snapshot. This also
 applies to MODIFY COLUMN sub-jobs in multi-schema changes. Initial execution still
 selects the actual conversion from current metadata; the flag does not force data
-rewriting. Lightweight modifications can therefore wait behind reorg jobs. Already
-queued jobs retain their stored scheduling flags. Pure RENAME COLUMN jobs retain
-general-pool scheduling.
+rewriting, and distributed-reorg validation (`IsDistReorg && !IsFastReorg`) is
+deferred to `initForReorgIndexes` so metadata-only changes keep working when
+`tidb_enable_dist_task=ON` and `tidb_ddl_enable_fast_reorg=OFF`. Lightweight
+modifications can therefore wait behind reorg jobs. Already queued jobs retain
+their stored scheduling flags. Pure RENAME COLUMN jobs retain general-pool
+scheduling.
 
 High-level rules (read `applyExecutionRestrictions` for the exact gates):
 
