@@ -108,6 +108,12 @@ func NewAddIndexIngestPipeline(
 	concurrency int,
 	collector execute.Collector,
 ) (*operator.AsyncPipeline, error) {
+	var injectedErr error
+	failpoint.InjectCall("mockNewAddIndexIngestPipelineError", &injectedErr)
+	if injectedErr != nil {
+		return nil, injectedErr
+	}
+
 	indexes, err := indexesForBackfill(tbl, idxInfos)
 	if err != nil {
 		return nil, err

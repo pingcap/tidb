@@ -66,8 +66,9 @@ type BackendCtx interface {
 
 	CheckpointOperator
 
-	// GetLocalBackend exposes ingestctrl.Backend. It's only used in global sort based
-	// ingest.
+	// GetLocalBackend exposes the underlying ingestctrl.Backend when available.
+	// It is used by DDL ingest flows for local-engine operations (e.g. external import,
+	// runtime write-speed tuning, engine cleanup).
 	GetLocalBackend() *ingestctrl.Backend
 	// CollectRemoteDuplicateRows collects duplicate entry error for given index as
 	// the supplement of Ingest.

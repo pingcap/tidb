@@ -205,6 +205,16 @@ func TestCheckpointManagerResumeReorg(t *testing.T) {
 	require.EqualValues(t, []byte{'1', '9'}, globalNextKey)
 	require.EqualValues(t, 123456, mgr.GetImportTS())
 
+	// A leftover duplicate-detection directory alone must not mark local engine data valid.
+	require.NoError(t, os.Mkdir(filepath.Join(tmpFolder, "duplicates"), 0o750))
+	mgrDupOnly, err := ingest.NewCheckpointManager(ctx, sessPool, 1, 1, tmpFolder, nil)
+	require.NoError(t, err)
+	defer mgrDupOnly.Close()
+	require.True(t, mgrDupOnly.IsKeyProcessed([]byte{'1', '9'}))
+	require.False(t, mgrDupOnly.IsKeyProcessed([]byte{'2', '9'}))
+	require.Equal(t, 0, mgrDupOnly.TotalKeyCount())
+	require.EqualValues(t, []byte{'1', '9'}, mgrDupOnly.NextStartKey())
+
 	createDummyFile(t, tmpFolder)
 	mgr2, err := ingest.NewCheckpointManager(ctx, sessPool, 1, 1, tmpFolder, nil)
 	require.NoError(t, err)
@@ -215,4 +225,15 @@ func TestCheckpointManagerResumeReorg(t *testing.T) {
 	require.Equal(t, 100, localCnt)
 	require.EqualValues(t, []byte{'2', '9'}, globalNextKey)
 	require.EqualValues(t, 123456, mgr2.GetImportTS())
+
+	// Resetting local progress after cleaning local engine data rolls the watermark back to GlobalSyncKey.
+	mgr2.ResetLocalCheckpoint()
+	require.True(t, mgr2.IsKeyProcessed([]byte{'1', '9'}))
+	require.False(t, mgr2.IsKeyProcessed([]byte{'2', '9'}))
+	require.EqualValues(t, []byte{'1', '9'}, mgr2.NextStartKey())
+	mgr3, err := ingest.NewCheckpointManager(ctx, sessPool, 1, 1, tmpFolder, nil)
+	require.NoError(t, err)
+	defer mgr3.Close()
+	require.False(t, mgr3.IsKeyProcessed([]byte{'2', '9'}))
+	require.EqualValues(t, []byte{'1', '9'}, mgr3.NextStartKey())
 }

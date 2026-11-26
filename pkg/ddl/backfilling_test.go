@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/exprstatic"
 	"github.com/pingcap/tidb/pkg/ingestor/errdef"
+	"github.com/pingcap/tidb/pkg/ingestor/ingestctrl"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -312,6 +313,53 @@ func TestInitForReorgIndexesRequiresGlobalSort(t *testing.T) {
 	// global sort is allowed
 	vardef.CloudStorageURI.Store("s3://bucket")
 	require.NoError(t, initForReorgIndexes(w, newJob(true), []*model.IndexInfo{{}}))
+}
+
+type testReadIndexBackendCtx struct {
+	localBackend *ingestctrl.Backend
+	registerFn   func(indexIDs []int64, uniques []bool, tbl table.Table) ([]ingest.Engine, error)
+}
+
+func (c *testReadIndexBackendCtx) Register(indexIDs []int64, uniques []bool, tbl table.Table) ([]ingest.Engine, error) {
+	if c.registerFn == nil {
+		return nil, nil
+	}
+	return c.registerFn(indexIDs, uniques, tbl)
+}
+
+func (c *testReadIndexBackendCtx) GetLocalBackend() *ingestctrl.Backend { return c.localBackend }
+
+func TestRegisterReadIndexEnginesNoRetryOnLockHeld(t *testing.T) {
+	// No in-function retry; cleanup is centralized in caller error-path.
+	var registerCalls atomic.Int32
+	backendCtx := &testReadIndexBackendCtx{
+		localBackend: &ingestctrl.Backend{},
+		registerFn: func([]int64, []bool, table.Table) ([]ingest.Engine, error) {
+			registerCalls.Inc()
+			return nil, errors.New("lock held by current process")
+		},
+	}
+
+	engines, err := registerReadIndexEngines(backendCtx, []int64{1}, []bool{false}, nil)
+	require.ErrorContains(t, err, "lock held by current process")
+	require.Nil(t, engines)
+	require.Equal(t, int32(1), registerCalls.Load())
+}
+
+func TestCleanupReadIndexLocalEngines(t *testing.T) {
+	// Best-effort: run when backend exists; no-op when nil.
+	origCleanup := cleanupAllLocalEnginesForReadIndex
+	var cleanupCalls atomic.Int32
+	cleanupAllLocalEnginesForReadIndex = func(*ingestctrl.Backend) {
+		cleanupCalls.Inc()
+	}
+	t.Cleanup(func() { cleanupAllLocalEnginesForReadIndex = origCleanup })
+
+	cleanupReadIndexLocalEngines(&testReadIndexBackendCtx{localBackend: &ingestctrl.Backend{}})
+	require.Equal(t, int32(1), cleanupCalls.Load())
+
+	cleanupReadIndexLocalEngines(&testReadIndexBackendCtx{localBackend: nil})
+	require.Equal(t, int32(1), cleanupCalls.Load())
 }
 
 func assertStaticExprContextEqual(t *testing.T, sctx sessionctx.Context, exprCtx *exprstatic.ExprContext, warnHandler contextutil.WarnHandler) {

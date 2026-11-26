@@ -103,7 +103,9 @@ const (
 	// the lower threshold of max open files for pebble db.
 	openFilesLowerThreshold = 128
 
-	duplicateDBName = "duplicates"
+	// DuplicateDBName is the Pebble directory name used for local duplicate detection.
+	DuplicateDBName = "duplicates"
+	duplicateDBName = DuplicateDBName
 	scanRegionLimit = 128
 )
 
@@ -952,6 +954,9 @@ func (local *Backend) FlushAllEngines(parentCtx context.Context) (err error) {
 // CleanupAllLocalEngines performs best-effort cleanup for all local engines.
 // Failures are logged internally and not returned to the caller.
 func (local *Backend) CleanupAllLocalEngines(ctx context.Context) {
+	if local == nil || local.engineMgr == nil {
+		return
+	}
 	local.engineMgr.cleanupAllLocalEngines(ctx)
 }
 

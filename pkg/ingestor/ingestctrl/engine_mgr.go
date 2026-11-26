@@ -227,11 +227,22 @@ func openPebbleDB(dbPath string, opts *pebble.Options) (*pebble.DB, error) {
 }
 
 // openEngine must be called with holding mutex of Engine.
-func (em *engineManager) openEngine(ctx context.Context, cfg *backend.EngineConfig, engineUUID uuid.UUID) error {
+func (em *engineManager) openEngine(ctx context.Context, cfg *backend.EngineConfig, engineUUID uuid.UUID) (retErr error) {
+	dbPath := filepath.Join(em.LocalStoreDir, engineUUID.String())
+	dbExistedBefore := common.IsDirExists(dbPath)
 	db, err := em.openEngineDB(engineUUID, false)
 	if err != nil {
 		return err
 	}
+	dbOwnedByEngine := false
+	defer func() {
+		if retErr != nil && !dbOwnedByEngine {
+			_ = db.Close()
+			if !dbExistedBefore {
+				_ = os.RemoveAll(dbPath)
+			}
+		}
+	}()
 
 	sstDir := engineSSTDir(em.LocalStoreDir, engineUUID)
 	if !cfg.KeepSortDir {
@@ -239,14 +250,15 @@ func (em *engineManager) openEngine(ctx context.Context, cfg *backend.EngineConf
 			return errors.Trace(err)
 		}
 	}
-	if !common.IsDirExists(sstDir) {
+	sstExistedBefore := common.IsDirExists(sstDir)
+	if !sstExistedBefore {
 		if err := os.Mkdir(sstDir, 0o750); err != nil {
 			return errors.Trace(err)
 		}
 	}
 	engineCtx, cancel := context.WithCancel(ctx)
 
-	e, _ := em.engines.LoadOrStore(engineUUID, &Engine{
+	e, loaded := em.engines.LoadOrStore(engineUUID, &Engine{
 		UUID:               engineUUID,
 		sstDir:             sstDir,
 		sstMetasChan:       make(chan metaOrFlush, 64),
@@ -260,11 +272,31 @@ func (em *engineManager) openEngine(ctx context.Context, cfg *backend.EngineConf
 		keyAdapter:         em.keyAdapter,
 		logger:             log.Wrap(logutil.Logger(ctx)),
 	})
+	if loaded {
+		cancel()
+	}
 	engine := e.(*Engine)
 	engine.lock(importMutexStateOpen)
 	defer engine.unlock()
 	engine.db.Store(db)
+	dbOwnedByEngine = true
 	engine.sstIngester = dbSSTIngester{e: engine}
+	defer func() {
+		if retErr != nil {
+			if !loaded {
+				em.engines.Delete(engineUUID)
+				cancel()
+			} else {
+				engine.closed.Store(true)
+			}
+			_ = engine.Close()
+			if !dbExistedBefore {
+				_ = engine.Cleanup(em.LocalStoreDir)
+			} else if !sstExistedBefore {
+				_ = os.RemoveAll(sstDir)
+			}
+		}
+	}()
 	if err = engine.loadEngineMeta(); err != nil {
 		return errors.Trace(err)
 	}

@@ -83,6 +83,20 @@ type readIndexSummary struct {
 	mu         sync.Mutex
 }
 
+var cleanupAllLocalEnginesForReadIndex = func(backend *ingestctrl.Backend) {
+	// Use Background so best-effort cleanup isn't skipped by cancellation.
+	backend.CleanupAllLocalEngines(context.Background())
+}
+
+type readIndexLocalBackendGetter interface {
+	GetLocalBackend() *ingestctrl.Backend
+}
+
+type readIndexEngineRegistrar interface {
+	readIndexLocalBackendGetter
+	Register(indexIDs []int64, uniques []bool, tbl table.Table) ([]ingest.Engine, error)
+}
+
 func newReadIndexExecutor(
 	store kv.Storage,
 	sessPool *sess.Pool,
@@ -174,7 +188,7 @@ func (r *readIndexStepExecutor) runLocalPipeline(
 	subtask *proto.Subtask,
 	sm *BackfillSubTaskMeta,
 	concurrency int,
-) error {
+) (retErr error) {
 	bCtx, err := ingest.NewBackendCtxBuilder(ctx, r.store, r.job).
 		WithImportDistributedLock(r.etcdCli, sm.TS).
 		WithDistTaskCheckpointManagerParam(
@@ -188,6 +202,19 @@ func (r *readIndexStepExecutor) runLocalPipeline(
 		return err
 	}
 	defer bCtx.Close()
+	defer func() {
+		if retErr == nil {
+			return
+		}
+		// For dist task local based ingest, checkpoint is unsupported.
+		// If there is an error we should keep local sort dir clean.
+		if err1 := bCtx.FinishAndUnregisterEngines(ingest.OptCleanData); err1 != nil {
+			logutil.DDLLogger().Warn("read index executor unregister engine failed", zap.Error(err1))
+		}
+		// Best-effort cleanup all local engines to release the Pebble directory lock.
+		cleanupReadIndexLocalEngines(bCtx)
+	}()
+
 	pipe, err := r.buildLocalStorePipeline(wctx, bCtx, sm, concurrency)
 	if err != nil {
 		return err
@@ -198,12 +225,6 @@ func (r *readIndexStepExecutor) runLocalPipeline(
 	}()
 	err = executeAndClosePipeline(wctx, pipe, nil, nil, r.avgRowSize)
 	if err != nil {
-		// For dist task local based ingest, checkpoint is unsupported.
-		// If there is an error we should keep local sort dir clean.
-		err1 := bCtx.FinishAndUnregisterEngines(ingest.OptCleanData)
-		if err1 != nil {
-			logutil.DDLLogger().Warn("read index executor unregister engine failed", zap.Error(err1))
-		}
 		return err
 	}
 
@@ -405,7 +426,7 @@ func (r *readIndexStepExecutor) buildLocalStorePipeline(
 		}
 		idxNames.WriteString(index.Name.O)
 	}
-	engines, err := backendCtx.Register(indexIDs, uniques, r.ptbl)
+	engines, err := registerReadIndexEngines(backendCtx, indexIDs, uniques, r.ptbl)
 	if err != nil {
 		tidblogutil.Logger(wctx).Error("cannot register new engine",
 			zap.Error(err),
@@ -488,6 +509,21 @@ func (r *readIndexStepExecutor) buildExternalStorePipeline(
 		rowCntCollector,
 		r.store.GetCodec(),
 	)
+}
+
+func cleanupReadIndexLocalEngines(backendCtx readIndexLocalBackendGetter) {
+	if backendCtx == nil {
+		return
+	}
+	backend := backendCtx.GetLocalBackend()
+	if backend == nil {
+		return
+	}
+	cleanupAllLocalEnginesForReadIndex(backend)
+}
+
+func registerReadIndexEngines(backendCtx readIndexEngineRegistrar, indexIDs []int64, uniques []bool, tbl table.Table) ([]ingest.Engine, error) {
+	return backendCtx.Register(indexIDs, uniques, tbl)
 }
 
 type distTaskRowCntCollector struct {
