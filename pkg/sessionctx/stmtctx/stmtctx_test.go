@@ -691,7 +691,6 @@ func TestRedactMaskingDiagnostics(t *testing.T) {
 		{types.ErrTruncatedWrongVal.GenWithStackByArgs("INTEGER", "secret"), "1292 Truncated incorrect INTEGER value: '?'", ""},
 		{types.ErrWrongValue.GenWithStackByArgs("datetime", "secret"), "1292 Incorrect datetime value: '?'", ""},
 		{kv.ErrKeyExists.FastGenByArgs("secret", "t.c"), "1062 Duplicate entry '?' for key 't.c'", ""},
-		{types.ErrInvalidJSONPath.GenWithStackByArgs(3), "3143 Invalid JSON path expression. The error is around character position ?.", ""},
 		// The arguments that only the masking rule treats as data values.
 		{types.ErrWrongValueForType.GenWithStackByArgs("string", "secret", "bin_to_uuid"), "1411 Incorrect string value: '?' for function bin_to_uuid", ""},
 		// A message that does not follow the template of its code.
@@ -713,6 +712,8 @@ func TestRedactMaskingDiagnostics(t *testing.T) {
 		// Nothing tells whether the arguments of another error are data values,
 		// so they are replaced in an execution error, and kept in a warning of
 		// the planner.
+		{types.ErrInvalidJSONPath.GenWithStackByArgs(3), "3143 Invalid JSON path expression. The error is around character position 3.",
+			"3143 Invalid JSON path expression. The error is around character position ?."},
 		{types.ErrTooBigScale.GenWithStackByArgs(123456789, "c", 30), "1425 Too big scale 123456789 specified for column 'c'. Maximum is 30.",
 			"1425 Too big scale ? specified for column '?'. Maximum is ?."},
 		{types.ErrTooBigPrecision.GenWithStackByArgs(123456789, "now", 6), "1426 Too-big precision ? specified for 'now'. Maximum is 6.", ""},
