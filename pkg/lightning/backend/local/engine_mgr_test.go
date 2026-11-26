@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/goleak"
 	"go.uber.org/mock/gomock"
 )
 
@@ -106,6 +107,7 @@ func TestEngineManager(t *testing.T) {
 	em.close()
 }
 
+<<<<<<< HEAD:pkg/lightning/backend/local/engine_mgr_test.go
 func TestGetExternalEngineKVStatistics(t *testing.T) {
 	em := &engineManager{
 		externalEngine: map[uuid.UUID]engineapi.Engine{},
@@ -114,4 +116,45 @@ func TestGetExternalEngineKVStatistics(t *testing.T) {
 	size, count := em.getExternalEngineKVStatistics(uuid.New())
 	require.Zero(t, size)
 	require.Zero(t, count)
+=======
+func TestOpenDuplicateDBCleansUpAfterFailure(t *testing.T) {
+	defer goleak.VerifyNone(t, goleak.IgnoreCurrent())
+
+	storeDir := path.Join(t.TempDir(), "not-a-directory")
+	require.NoError(t, os.WriteFile(storeDir, []byte("x"), 0o600))
+
+	db, err := openDuplicateDB(storeDir)
+	require.Error(t, err)
+	require.Nil(t, db)
+}
+func TestCleanupAllLocalEnginesLogsErrorOnly(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	storeHelper := mocklocal.NewMockStoreHelper(ctrl)
+
+	observedCore, observedLogs := observer.New(zapcore.DebugLevel)
+	backendConfig := getBackendConfig(t)
+	pool := newBufferPool()
+	t.Cleanup(pool.Destroy)
+	em, err := newEngineManager(backendConfig, storeHelper, log.Wrap(zap.New(observedCore)), pool)
+	require.NoError(t, err)
+
+	ctx := context.Background()
+	engineID := uuid.New()
+	storeHelper.EXPECT().GetTS(gomock.Any()).Return(int64(0), int64(0), nil)
+	require.NoError(t, em.openEngine(ctx, &backend.EngineConfig{}, engineID))
+
+	engineVal, ok := em.engines.Load(engineID)
+	require.True(t, ok)
+	engineVal.(*Engine).ingestErr.Set(errors.New("injected finishWrite error"))
+
+	em.cleanupAllLocalEngines(ctx)
+	require.Empty(t, em.engineFileSizes())
+
+	logEntries := observedLogs.FilterMessage("cleanup all local engines failed").All()
+	require.Len(t, logEntries, 1)
+	require.Contains(t, logEntries[0].ContextMap()["error"], "injected finishWrite error")
+
+	em.close()
+>>>>>>> 714f6ac2deb (ingestor: clean up Pebble FS after failed open (#71108)):pkg/ingestor/ingestctrl/engine_mgr_test.go
 }
