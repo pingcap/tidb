@@ -535,6 +535,13 @@ fn split_bootstrap_tables(process: &NodeProcess<'_>, splits: &tidb_ddl::pre_spli
 /// `initGlobalVarFromSystemDB`.
 fn bootstrap_session(process: &NodeProcess<'_>) -> Result<(), RunConfiguredNodeError> {
     let opener = process.authority.transaction_opener();
+    // Load before any bootstrap, upgrade, normal, or diagnostic domain can
+    // start.
+    tidb_session::bootstrap::init_legacy_ecdsa_session_token(
+        &tidb_session::bootstrap::TxnUpgradeStore::new(&opener, COPROCESSOR_QUERY_TIMEOUT),
+        false,
+    )
+    .map_err(engine_error)?;
     let splits = tidb_session::bootstrap_publish::init_system_tables(&opener, COPROCESSOR_QUERY_TIMEOUT)
         .map_err(engine_error)?;
     split_bootstrap_tables(process, &splits);
@@ -545,6 +552,10 @@ fn bootstrap_session(process: &NodeProcess<'_>) -> Result<(), RunConfiguredNodeE
         .map_err(engine_error)?;
     if ver < tidb_session::upgrade_def::CURRENT_BOOTSTRAP_VERSION {
         run_in_bootstrap_session(process, ver)?;
+        // Another node may have completed fresh bootstrap while this node
+        // waited.
+        tidb_session::bootstrap::init_legacy_ecdsa_session_token(&upgrade_store, false)
+            .map_err(engine_error)?;
     } else {
         tidb_logutil::bg_logger().info(
             "cluster already bootstrapped",
@@ -705,6 +716,15 @@ fn bootstrap(
         // To reduce conflict when multiple TiDB-server start at the same time.
         // Actually only one server need to do the bootstrap. So we chose DDL owner to do this.
         if owner.as_ref().is_some_and(|owner| owner.is_owner()) {
+            if let Err(error) = tidb_session::bootstrap::init_legacy_ecdsa_session_token(
+                &tidb_session::bootstrap::TxnUpgradeStore::new(&opener, COPROCESSOR_QUERY_TIMEOUT),
+                true,
+            ) {
+                tidb_logutil::bg_logger().fatal(
+                    "disable legacy ECDSA session tokens during bootstrap failed",
+                    &[tidb_log::Field::new("error", tidb_log::Value::Str(error))],
+                );
+            }
             let published = tidb_session::bootstrap_publish::publish_bootstrap_on(
                 &domain.factory,
                 &opener,

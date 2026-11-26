@@ -113,7 +113,7 @@ impl UserPrivileges<'_> {
         if session_token {
             // Go skips the account's own plugin for a session token, and a
             // token that does not verify is no wrong password.
-            if let Err(error) = tidb_sessionstates::validate_session_token(response, username) {
+            if let Err(error) = tidb_sessionstates::validate_session_token(response, user, host) {
                 tidb_log::warn(
                     "verify session token failed",
                     &[

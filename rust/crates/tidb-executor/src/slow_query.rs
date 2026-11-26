@@ -25,6 +25,7 @@
 //! so this reader parses the files once, front to back, and the cluster scan
 //! that pushes a descending Limit orders its rows itself.
 
+use crate::slow_query_cache::{update_slow_query_key, SlowQueryKey};
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 use std::path::Path;
 use std::time::Duration;
@@ -705,6 +706,9 @@ impl tidb_execdetails::RuntimeStats for SlowQueryRuntimeStats {
 struct Parser<'a> {
     columns: &'a [(String, FieldType)],
     kinds: Vec<Option<ColumnKind>>,
+    /// Go `inMemoryOriginalQueryIndex`: the `In_memory_original_query`
+    /// column, which no log field sets.
+    in_memory_original_query_index: Option<usize>,
     checker: &'a SlowLogChecker,
     tz: &'a SessionTimeZone,
     warnings: Vec<String>,
@@ -864,13 +868,14 @@ impl Parser<'_> {
                 mem_consume(log_size);
                 let started = std::time::Instant::now();
                 let mut warnings = Vec::new();
-                let mut rows = self.parse_log(&log, &mem_consume, &mut warnings);
+                let (mut rows, mut keys) = self.parse_log(&log, &mem_consume, &mut warnings);
                 stats.parse_log += started.elapsed();
                 self.warnings.extend(warnings);
                 rows.truncate(remaining);
+                keys.truncate(remaining);
                 mem_consume(-log_size);
                 mem_consume(-last_fetch_size);
-                last_fetch_size = calculate_datums_size(&rows);
+                last_fetch_size = self.fill_in_memory_original_query(&mut rows, keys, &mem_consume);
                 data.extend(rows);
             }
             mem_consume(-last_fetch_size);
@@ -897,7 +902,8 @@ impl Parser<'_> {
             }
             let parser = &*self;
             let mem_consume = &mem_consume;
-            let parsed: Vec<(Vec<Vec<Datum>>, Vec<String>, Duration)> = std::thread::scope(|scope| {
+            #[allow(clippy::type_complexity)]
+            let parsed: Vec<(Vec<Vec<Datum>>, Vec<SlowQueryKey>, Vec<String>, Duration)> = std::thread::scope(|scope| {
                 let workers: Vec<_> = batches
                     .iter()
                     .map(|log| {
@@ -908,9 +914,9 @@ impl Parser<'_> {
                             let log_size = calculate_log_size(log);
                             mem_consume(log_size);
                             let mut warnings = Vec::new();
-                            let rows = parser.parse_log(log, mem_consume, &mut warnings);
+                            let (rows, keys) = parser.parse_log(log, mem_consume, &mut warnings);
                             mem_consume(-log_size);
-                            (rows, warnings, started.elapsed())
+                            (rows, keys, warnings, started.elapsed())
                         }))
                     })
                     .collect();
@@ -919,12 +925,12 @@ impl Parser<'_> {
                     .map(|worker| worker.join().expect("a slow-log parse worker panicked"))
                     .collect()
             });
-            for (rows, warnings, elapsed) in parsed {
+            for (mut rows, keys, warnings, elapsed) in parsed {
                 // Go adds each worker's `parseLog` time.
                 stats.parse_log += elapsed;
                 self.warnings.extend(warnings);
                 mem_consume(-last_fetch_size);
-                last_fetch_size = calculate_datums_size(&rows);
+                last_fetch_size = self.fill_in_memory_original_query(&mut rows, keys, mem_consume);
                 data.extend(rows);
             }
         }
@@ -932,15 +938,44 @@ impl Parser<'_> {
         Ok(data)
     }
 
+    /// Go `dataForSlowLog`'s fill of one fetch: `In_memory_original_query`
+    /// from the plaintext cache, one value per row (`keys` stay aligned with
+    /// `rows`); a cache without a worker leaves the parsed zero value. The
+    /// rows were charged before the fill, so the growth is charged here, and
+    /// the returned size is what the next fetch releases. Lookups do not
+    /// consult `tidb_redact_log`.
+    fn fill_in_memory_original_query(
+        &self,
+        rows: &mut [Vec<Datum>],
+        keys: Vec<SlowQueryKey>,
+        mem_consume: &dyn Fn(i64),
+    ) -> i64 {
+        let accounted = calculate_datums_size(rows);
+        if let Some(index) = self.in_memory_original_query_index {
+            if let Some(unredacted_queries) = crate::slow_query_cache::global_unredacted_queries(keys) {
+                for (row, query) in rows.iter_mut().zip(unredacted_queries) {
+                    row[index] = Datum::new_string_datum(query);
+                }
+            }
+        }
+        let updated = calculate_datums_size(rows);
+        if updated != accounted {
+            mem_consume(updated - accounted);
+        }
+        updated
+    }
+
     /// Go `parseLog`: one batch of lines, each with its line number in its
-    /// file, into rows.
+    /// file, into rows, and each row's plaintext-cache key.
     fn parse_log(
         &self,
         log: &[(String, usize)],
         mem_consume: &(dyn Fn(i64) + Sync),
         warnings: &mut Vec<String>,
-    ) -> Vec<Vec<Datum>> {
+    ) -> (Vec<Vec<Datum>>, Vec<SlowQueryKey>) {
         let mut data = Vec::new();
+        let mut keys = Vec::new();
+        let mut key = SlowQueryKey::default();
         let mut row: Vec<Option<Datum>> = Vec::new();
         let mut user = String::new();
         let mut start_flag = false;
@@ -949,6 +984,7 @@ impl Parser<'_> {
             if !start_flag {
                 if let Some(value) = line.strip_prefix(SLOW_LOG_START_PREFIX_STR) {
                     row = vec![None; self.columns.len()];
+                    key = SlowQueryKey::default();
                     user.clear();
                     if self.set_column_value(warnings, &mut row, "Time", value, line_num) {
                         start_flag = true;
@@ -1001,6 +1037,7 @@ impl Parser<'_> {
                     } else {
                         let (fields, values) = split_by_colon(rest);
                         for (field, value) in fields.iter().zip(values.iter()) {
+                            update_slow_query_key(&mut key, field, value);
                             if !self.set_column_value(warnings, &mut row, field, value, line_num) {
                                 start_flag = false;
                                 break;
@@ -1034,12 +1071,13 @@ impl Parser<'_> {
                         .collect::<Vec<_>>();
                     mem_consume(tidb_datatype::estimated_mem_usage(&finished, 1));
                     data.push(finished);
+                    keys.push(key.clone());
                     start_flag = false;
                 } else {
                     start_flag = false;
                 }
         }
-        data
+        (data, keys)
     }
 }
 
@@ -1328,6 +1366,9 @@ pub fn retrieve_slow_query_rows(
     let mut parser = Parser {
         columns,
         kinds: columns.iter().map(|(name, _)| column_kind(name)).collect(),
+        in_memory_original_query_index: columns.iter().position(|(name, _)| {
+            name.eq_ignore_ascii_case(tidb_variable::slow_log::SLOW_LOG_IN_MEMORY_ORIGINAL_QUERY_STR)
+        }),
         checker,
         tz,
         warnings,
@@ -1351,6 +1392,53 @@ pub fn retrieve_slow_query_rows(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Go `TestSlowQueryUnredactedMemoryAccounting`: the lookup does not
+    /// consult tidb_redact_log, the column is filled whenever the cache
+    /// retained SQL, the filled row's growth is charged, and the next fetch
+    /// releases exactly what is held.
+    #[test]
+    fn slow_query_unredacted_memory_accounting() {
+        use crate::slow_query_cache::{global_unredacted_queries, put_into_global_cache, slow_query_key_of};
+        let sql_text = "select secret_value;";
+        let key = slow_query_key_of(42, 1.5, "mem-digest");
+        // The production Server.Run path starts the process-wide worker
+        // before accepting connections. Unit tests start it explicitly.
+        crate::slow_query_cache::start_slow_query_cache();
+        put_into_global_cache(key.clone(), sql_text.to_owned());
+        let deadline = std::time::Instant::now() + Duration::from_secs(1);
+        while global_unredacted_queries(vec![key.clone()]) != Some(vec![sql_text.to_owned()]) {
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(5));
+        }
+
+        let columns = vec![(
+            tidb_variable::slow_log::SLOW_LOG_IN_MEMORY_ORIGINAL_QUERY_STR.to_owned(),
+            FieldType::new(tidb_datatype::FieldTypeCode::LongBlob),
+        )];
+        let checker = SlowLogChecker::default();
+        let tz = SessionTimeZone::utc();
+        let parser = Parser {
+            columns: &columns,
+            kinds: vec![None],
+            in_memory_original_query_index: Some(0),
+            checker: &checker,
+            tz: &tz,
+            warnings: Vec::new(),
+        };
+        let tracker = tidb_memory::Tracker::new(0, -1);
+        let mut rows = vec![vec![Datum::new_string_datum("")]];
+        tracker.consume(tidb_datatype::estimated_mem_usage(&rows[0], 1));
+        let last_fetch_size =
+            parser.fill_in_memory_original_query(&mut rows, vec![key], &|bytes| tracker.consume(bytes));
+        assert_eq!(rows[0][0], Datum::new_string_datum(sql_text));
+        assert_eq!(tracker.bytes_consumed(), tidb_datatype::estimated_mem_usage(&rows[0], 1));
+        assert_eq!(last_fetch_size, tracker.bytes_consumed());
+
+        // Go's next fetch, with no task left, releases the last one.
+        tracker.consume(-last_fetch_size);
+        assert_eq!(tracker.bytes_consumed(), 0);
+    }
 
     /// Go `slowQueryRetriever.memConsume`: a batch charges its log size while
     /// it is parsed and each row it yields; the rows are released when the

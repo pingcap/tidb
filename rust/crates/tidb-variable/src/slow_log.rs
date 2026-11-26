@@ -60,6 +60,9 @@ pub const SLOW_LOG_PRE_PROC_SUB_QUERY_TIME_STR: &str = "Preproc_subqueries_time"
 pub const SLOW_LOG_INDEX_NAMES_STR: &str = "Index_names";
 /// Go `SlowLogQuerySQLStr`: the SLOW_QUERY column the SQL line fills.
 pub const SLOW_LOG_QUERY_SQL_STR: &str = "Query";
+/// Go `SlowLogInMemoryOriginalQueryStr`: the in-memory-only plaintext query
+/// column in slow log tables.
+pub const SLOW_LOG_IN_MEMORY_ORIGINAL_QUERY_STR: &str = "In_memory_original_query";
 /// Go `SlowLogStatsInfoStr`.
 pub const SLOW_LOG_STATS_INFO_STR: &str = "Stats";
 /// Go `SlowLogCopProcAvg`.

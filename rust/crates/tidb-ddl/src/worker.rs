@@ -635,8 +635,13 @@ const JOB_V2_FIRST_VER: (u64, u64, u64) = (8, 4, 0);
 /// Go `globalIdxV1FirstVer`: every TiDB at or above it reads the global
 /// index V1 key format (the partition ID in a non-unique global key).
 const GLOBAL_IDX_V1_FIRST_VER: (u64, u64, u64) = (8, 5, 6);
-/// Go `detectJobVerInterval`.
-const DETECT_JOB_VER_INTERVAL: Duration = Duration::from_secs(10);
+/// Go `modernECDSASessionTokenVer`: every TiDB at or above it verifies only
+/// digest-signed ECDSA session tokens.
+const MODERN_ECDSA_SESSION_TOKEN_VER: (u64, u64, u64) = (8, 5, 9);
+/// Go `detectClassicCompatibilityInterval`, a `var` its test shortens:
+/// nanoseconds.
+static DETECT_CLASSIC_COMPATIBILITY_INTERVAL: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(10_000_000_000);
 
 /// Go `semver.NewVersion` with the pre-release cleared, as
 /// `detectAndUpdateJobVersionOnce` compares it: `MAJOR.MINOR.PATCH`, an
@@ -653,25 +658,43 @@ fn parse_release_version(text: &str) -> Option<(u64, u64, u64)> {
 }
 
 /// Whether Go's detection has nothing left to wait for.
-fn job_version_settled() -> bool {
+fn classic_compatibility_settled() -> bool {
     tidb_model::get_job_ver_in_use() == tidb_model::JobVersion::V2
         && tidb_model::index::get_global_index_v_1_supported()
+        && tidb_vardef::is_legacy_ecdsa_session_token_disabled()
 }
 
-/// Go `ddl.detectAndUpdateJobVersionOnce`: job version 2 once every TiDB in
-/// the cluster is at least 8.4.0, global index V1 once every one is at least
-/// 8.5.6, read from the servers' registered versions.
-fn detect_and_update_job_version_once(
+/// Go `ddl.detectAndUpdateClassicCompatibilityOnce`: job version 2 once every
+/// TiDB in the cluster is at least 8.4.0, global index V1 once every one is
+/// at least 8.5.6, read from the servers' registered versions. Legacy ECDSA
+/// session tokens are permanently disabled once all instances are >= 8.5.9.
+fn detect_and_update_classic_compatibility_once(
     server_info: &tidb_domain_serverinfo::serverinfo_syncer::Syncer,
+    store: &dyn tidb_meta::MetaStore,
 ) -> Result<(), String> {
+    if !tidb_vardef::is_legacy_ecdsa_session_token_disabled() {
+        // Adopt a transition persisted by another node, even if this scan
+        // cannot establish the cluster version. Once observed, it must never
+        // be undone.
+        let mut disabled = false;
+        store.run_in_new_txn(&tidb_gocontext::Context::background(), tidb_txnkv::INTERNAL_TXN_DDL, true, &mut |txn| {
+            disabled = tidb_meta::transaction::Mutator::new(txn).get_legacy_ecdsa_session_token_disabled()?;
+            Ok(())
+        })?;
+        if disabled {
+            tidb_vardef::set_legacy_ecdsa_session_token_disabled(true);
+        }
+    }
     let infos = server_info.get_all_server_info()?;
     let mut all_support_v2 = true;
     let mut all_support_global_idx_v1 = true;
+    let mut all_support_modern_ecdsa = !infos.is_empty();
     for info in infos.values() {
         let tidb_version = &info.static_info.version_info.version;
         let Some(index) = tidb_version.find(tidb_mysql::consts::VersionSeparator) else {
             all_support_v2 = false;
             all_support_global_idx_v1 = false;
+            all_support_modern_ecdsa = false;
             break;
         };
         let release = tidb_version[index + tidb_mysql::consts::VersionSeparator.len()..]
@@ -679,13 +702,18 @@ fn detect_and_update_job_version_once(
         let Some(version) = parse_release_version(release) else {
             all_support_v2 = false;
             all_support_global_idx_v1 = false;
+            all_support_modern_ecdsa = false;
             break;
         };
+        // All compatibility checks ignore pre-release labels.
         if version < JOB_V2_FIRST_VER {
             all_support_v2 = false;
         }
         if version < GLOBAL_IDX_V1_FIRST_VER {
             all_support_global_idx_v1 = false;
+        }
+        if version < MODERN_ECDSA_SESSION_TOKEN_VER {
+            all_support_modern_ecdsa = false;
         }
         if !all_support_v2 && !all_support_global_idx_v1 {
             break;
@@ -701,6 +729,16 @@ fn detect_and_update_job_version_once(
     }
     if tidb_model::index::get_global_index_v_1_supported() != all_support_global_idx_v1 {
         tidb_model::index::set_global_index_v_1_supported(all_support_global_idx_v1);
+    }
+    if all_support_modern_ecdsa && !tidb_vardef::is_legacy_ecdsa_session_token_disabled() {
+        store.run_in_new_txn(&tidb_gocontext::Context::background(), tidb_txnkv::INTERNAL_TXN_DDL, true, &mut |txn| {
+            tidb_meta::transaction::Mutator::new(txn).set_legacy_ecdsa_session_token_disabled()
+        })?;
+        // Legacy timestamps are not authenticated, so this is a durable
+        // one-way security transition rather than a token-lifetime grace
+        // period.
+        tidb_vardef::set_legacy_ecdsa_session_token_disabled(true);
+        tidb_ddl_logutil::ddl_logger().info("disabled legacy ECDSA session tokens after cluster upgrade", &[]);
     }
     Ok(())
 }
@@ -773,48 +811,59 @@ pub fn clean_up_temp_dir(se: &tidb_ddl_session::DdlSession, path: &std::path::Pa
     });
 }
 
-/// Go `ddl.detectAndUpdateJobVersion`: without etcd (a single node) job
-/// version 2 and global index V1 hold at once; otherwise detect now and, while
-/// a peer is older, re-detect every `detectJobVerInterval` until both hold.
-fn detect_and_update_job_version(
+/// Go `ddl.detectAndUpdateClassicCompatibility`: checks server versions in
+/// Classic clusters to select DDL job and global index formats and retire
+/// legacy ECDSA session tokens. Without etcd (tests and unistore) job version
+/// 2 and global index V1 hold at once, without polling; otherwise detect now
+/// and, while a peer is older, re-detect every
+/// `detectClassicCompatibilityInterval` until all three transitions are
+/// complete. Downgrades are unsupported: once newer formats are in use or
+/// legacy verification is permanently disabled, starting an older TiDB cannot
+/// restore compatibility.
+fn detect_and_update_classic_compatibility(
     has_etcd: bool,
     server_info: &Arc<tidb_domain_serverinfo::serverinfo_syncer::Syncer>,
+    store: Arc<dyn tidb_meta::MetaStore>,
 ) -> Option<(Sender<()>, JoinHandle<()>)> {
     if !has_etcd {
         tidb_model::set_job_ver_in_use(tidb_model::JobVersion::V2);
         tidb_model::index::set_global_index_v_1_supported(true);
         return None;
     }
-    if let Err(error) = detect_and_update_job_version_once(server_info) {
+    if let Err(error) = detect_and_update_classic_compatibility_once(server_info, store.as_ref()) {
         tidb_ddl_logutil::ddl_logger().warn(
-            "detect job version failed",
+            "detect Classic cluster compatibility failed",
             &[tidb_log::Field::new(
                 "err",
                 tidb_log::Value::Str(error.to_string()),
             )],
         );
     }
-    if job_version_settled() {
+    if classic_compatibility_settled() {
         return None;
     }
     let (stop, stopped) = channel::<()>();
     let server_info = Arc::clone(server_info);
     let worker = sql_worker_thread("ddl-detect-job-version")
         .spawn(move || loop {
-            match stopped.recv_timeout(DETECT_JOB_VER_INTERVAL) {
+            match stopped.recv_timeout(Duration::from_nanos(
+                DETECT_CLASSIC_COMPATIBILITY_INTERVAL.load(std::sync::atomic::Ordering::SeqCst),
+            )) {
                 Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
                 _ => return,
             }
-            if let Err(error) = detect_and_update_job_version_once(&server_info) {
+            if let Err(error) = detect_and_update_classic_compatibility_once(&server_info, store.as_ref()) {
                 tidb_ddl_logutil::sample_logger().warn(
-                    "detect job version failed",
+                    "detect Classic cluster compatibility failed",
                     &[tidb_log::Field::new(
                         "err",
                         tidb_log::Value::Str(error.to_string()),
                     )],
                 );
             }
-            if job_version_settled() {
+            tidb_failpoint::inject_call("github.com/pingcap/tidb/pkg/ddl/afterDetectAndUpdateClassicCompatibilityOnce", &mut ());
+            if classic_compatibility_settled() {
+                tidb_ddl_logutil::ddl_logger().info("cluster compatibility checks completed, stop detecting", &[]);
                 return;
             }
         })
@@ -1660,8 +1709,13 @@ where
         );
         // Go `ddl.Start`: on the classic kernel, settle the job version and
         // the global index V1 key format before any job is submitted.
+        let opener = Arc::new(opener);
         let job_version_detector = if tidb_config_kerneltype::is_classic() {
-            detect_and_update_job_version(notifier.is_some(), &server_info)
+            detect_and_update_classic_compatibility(
+                notifier.is_some(),
+                &server_info,
+                Arc::new(tidb_store_driver_txn::meta_txn::MetaStore::new(Arc::clone(&opener), timeout)),
+            )
         } else {
             None
         };
@@ -1676,7 +1730,6 @@ where
         server_state
             .init(&server_state_context)
             .map_err(|error| error.to_string())?;
-        let opener = Arc::new(opener);
         let (min_job_id_stop, min_job_id_stopped) = channel();
         let min_job_id_worker = sql_worker_thread("ddl-min-job-id-refresher")
             .spawn({
@@ -4986,3 +5039,216 @@ mod reorg_context_tests {
     }
 }
 
+#[cfg(test)]
+mod classic_compatibility_tests {
+    use super::*;
+    use std::sync::Mutex;
+    use tidb_meta::transaction::MemoryTransaction;
+
+    /// Go `mockstore.NewMockStore` as the detector uses it: one meta
+    /// keyspace, and Go `mockCommitErrorInNewTxn` as `commit_error`.
+    #[derive(Default)]
+    struct MockStore {
+        data: Mutex<MemoryTransaction>,
+        commit_error: std::sync::atomic::AtomicBool,
+    }
+
+    impl tidb_meta::MetaStore for MockStore {
+        fn run_in_new_txn(
+            &self,
+            _ctx: &tidb_gocontext::Context,
+            _source_type: &str,
+            _retryable: bool,
+            f: &mut dyn FnMut(&mut dyn tidb_meta::transaction::MetaTransaction) -> tidb_meta::Result<()>,
+        ) -> Result<(), String> {
+            let mut data = self.data.lock().unwrap();
+            let mut txn = data.clone();
+            f(&mut txn).map_err(|error| error.to_string())?;
+            if self.commit_error.load(std::sync::atomic::Ordering::SeqCst) {
+                return Err("mock commit error".to_owned());
+            }
+            *data = txn;
+            Ok(())
+        }
+    }
+
+    impl MockStore {
+        fn legacy_disabled(&self) -> bool {
+            let mut txn = self.data.lock().unwrap().clone();
+            tidb_meta::transaction::Mutator::new(&mut txn).get_legacy_ecdsa_session_token_disabled().unwrap()
+        }
+    }
+
+    fn reset() {
+        tidb_model::set_job_ver_in_use(tidb_model::JobVersion::V1);
+        tidb_model::index::set_global_index_v_1_supported(false);
+        tidb_vardef::set_legacy_ecdsa_session_token_disabled(tidb_config_kerneltype::is_next_gen());
+    }
+
+    const MOCK_GET_ALL_SERVER_INFO: &str = "github.com/pingcap/tidb/pkg/domain/serverinfo/mockGetAllServerInfo";
+
+    fn mock_get_all_server_info(versions: &[&str]) {
+        let infos: serde_json::Map<String, serde_json::Value> = versions
+            .iter()
+            .enumerate()
+            .map(|(i, version)| {
+                let mut info = tidb_domain_serverinfo::serverinfo::ServerInfo::default();
+                info.static_info.version_info.version = (*version).to_owned();
+                (format!("node{i}"), serde_json::from_slice(&info.marshal().unwrap()).unwrap())
+            })
+            .collect();
+        let json = serde_json::Value::Object(infos).to_string();
+        tidb_failpoint::enable(MOCK_GET_ALL_SERVER_INFO, &format!("return(`{json}`)")).unwrap();
+    }
+
+    fn syncer() -> Arc<tidb_domain_serverinfo::serverinfo_syncer::Syncer> {
+        Arc::new(tidb_domain_serverinfo::serverinfo_syncer::Syncer::new(Default::default(), None))
+    }
+
+    /// Go `TestDetectAndUpdateClassicCompatibility`.
+    #[test]
+    fn detect_and_update_classic_compatibility_test() {
+        let original_disabled = tidb_vardef::is_legacy_ecdsa_session_token_disabled();
+        let server_info = syncer();
+        let store = Arc::new(MockStore::default());
+        // other ut in the same address space might change it
+        reset();
+        assert_eq!(tidb_model::get_job_ver_in_use(), tidb_model::JobVersion::V1);
+        assert!(!tidb_model::index::get_global_index_v_1_supported());
+
+        // in ut
+        reset();
+        assert!(detect_and_update_classic_compatibility(false, &server_info, store.clone()).is_none());
+        assert_eq!(tidb_model::get_job_ver_in_use(), tidb_model::JobVersion::V2);
+        assert!(tidb_model::index::get_global_index_v_1_supported());
+
+        // all support v2 and global index v1
+        reset();
+        mock_get_all_server_info(&[
+            "8.0.11-TiDB-v8.5.6-alpha-228-g650888fea7-dirty",
+            "8.0.11-TiDB-v9.0.0",
+            "8.0.11-TiDB-8.5.6-beta",
+        ]);
+        let _ = detect_and_update_classic_compatibility_once(&server_info, store.as_ref());
+        assert_eq!(tidb_model::get_job_ver_in_use(), tidb_model::JobVersion::V2);
+        assert!(tidb_model::index::get_global_index_v_1_supported());
+
+        // all support v2 but not global index v1
+        reset();
+        mock_get_all_server_info(&["8.0.11-TiDB-v8.4.0", "8.0.11-TiDB-v8.5.5"]);
+        let _ = detect_and_update_classic_compatibility_once(&server_info, store.as_ref());
+        assert_eq!(tidb_model::get_job_ver_in_use(), tidb_model::JobVersion::V2);
+        assert!(!tidb_model::index::get_global_index_v_1_supported());
+
+        // v1 first, later all support v2 and global index v1
+        reset();
+        let interval = DETECT_CLASSIC_COMPATIBILITY_INTERVAL.swap(1_000_000, std::sync::atomic::Ordering::SeqCst);
+        // unknown version
+        mock_get_all_server_info(&["unknown"]);
+        let iterate_cnt = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let _after_once = tidb_failpoint::enable_call_for_test(
+            "github.com/pingcap/tidb/pkg/ddl/afterDetectAndUpdateClassicCompatibilityOnce",
+            {
+                let iterate_cnt = Arc::clone(&iterate_cnt);
+                move |_: &mut dyn std::any::Any| {
+                    let n = iterate_cnt.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+                    let v2 = tidb_model::get_job_ver_in_use() == tidb_model::JobVersion::V2;
+                    let global = tidb_model::index::get_global_index_v_1_supported();
+                    let legacy_disabled = tidb_vardef::is_legacy_ecdsa_session_token_disabled();
+                    match n {
+                        1 => {
+                            assert!(!v2 && !global);
+                            // user set version explicitly in config
+                            mock_get_all_server_info(&["9.0.0-xxx"]);
+                        }
+                        2 => {
+                            assert!(!v2 && !global);
+                            // invalid version
+                            mock_get_all_server_info(&["xxx"]);
+                        }
+                        3 => {
+                            assert!(!v2 && !global);
+                            // less than 8.4.0
+                            mock_get_all_server_info(&["8.0.11-TiDB-8.3.0"]);
+                        }
+                        4 => {
+                            assert!(!v2 && !global);
+                            // upgrade case
+                            mock_get_all_server_info(&["8.0.11-TiDB-v8.3.0", "8.0.11-TiDB-v8.3.0", "8.0.11-TiDB-v8.4.0"]);
+                        }
+                        5 => {
+                            assert!(!v2 && !global);
+                            // all support job v2 but not global index v1
+                            mock_get_all_server_info(&["8.0.11-TiDB-v8.4.0", "8.0.11-TiDB-v8.4.0", "8.0.11-TiDB-v8.4.0"]);
+                        }
+                        6 => {
+                            assert!(v2 && !global);
+                            // upgrade to version supporting global index v1
+                            mock_get_all_server_info(&["8.0.11-TiDB-v8.5.6", "8.0.11-TiDB-v8.5.6", "8.0.11-TiDB-v8.5.6"]);
+                        }
+                        7 if tidb_config_kerneltype::is_classic() => {
+                            assert!(v2 && global && !legacy_disabled);
+                            mock_get_all_server_info(&["8.0.11-TiDB-v8.5.9", "8.0.11-TiDB-v8.5.9"]);
+                        }
+                        _ => assert!(v2 && global && legacy_disabled),
+                    }
+                }
+            },
+        );
+        let (_stop, worker) = detect_and_update_classic_compatibility(true, &server_info, store.clone())
+            .expect("the detector keeps polling");
+        worker.join().unwrap();
+        DETECT_CLASSIC_COMPATIBILITY_INTERVAL.store(interval, std::sync::atomic::Ordering::SeqCst);
+        let expected = if tidb_config_kerneltype::is_classic() { 8 } else { 7 };
+        assert_eq!(iterate_cnt.load(std::sync::atomic::Ordering::SeqCst), expected);
+
+        if tidb_config_kerneltype::is_classic() {
+            // legacy ECDSA upgrade gate
+            for (name, versions, disabled) in [
+                ("empty registry", &[][..], false),
+                ("unknown version", &["unknown"][..], false),
+                ("invalid version", &["8.0.11-TiDB-invalid"][..], false),
+                ("mixed versions", &["8.0.11-TiDB-v8.5.8", "8.0.11-TiDB-v8.5.9"][..], false),
+                ("prerelease", &["8.0.11-TiDB-v8.5.9-alpha"][..], true),
+                ("minimum version", &["8.0.11-TiDB-v8.5.9", "8.0.11-TiDB-v8.5.9"][..], true),
+                ("newer versions", &["8.0.11-TiDB-v8.5.9", "8.0.11-TiDB-v9.0.0-alpha"][..], true),
+            ] {
+                reset();
+                let store = MockStore::default();
+                mock_get_all_server_info(versions);
+                detect_and_update_classic_compatibility_once(&server_info, &store).unwrap();
+                assert_eq!(tidb_vardef::is_legacy_ecdsa_session_token_disabled(), disabled, "{name}");
+                assert_eq!(store.legacy_disabled(), disabled, "{name}");
+            }
+
+            // persist before disabling and never re-enable
+            reset();
+            let store = MockStore::default();
+            mock_get_all_server_info(&["8.0.11-TiDB-v8.5.9"]);
+            store.commit_error.store(true, std::sync::atomic::Ordering::SeqCst);
+            let error = detect_and_update_classic_compatibility_once(&server_info, &store).unwrap_err();
+            assert!(error.contains("mock commit error"), "{error}");
+            assert!(!tidb_vardef::is_legacy_ecdsa_session_token_disabled());
+            store.commit_error.store(false, std::sync::atomic::Ordering::SeqCst);
+            detect_and_update_classic_compatibility_once(&server_info, &store).unwrap();
+            assert!(tidb_vardef::is_legacy_ecdsa_session_token_disabled());
+            // A restarted node must observe the persisted switch, even with
+            // old or unknown server versions. A completed transition cannot
+            // be reversed.
+            tidb_vardef::set_legacy_ecdsa_session_token_disabled(false);
+            mock_get_all_server_info(&["unknown"]);
+            detect_and_update_classic_compatibility_once(&server_info, &store).unwrap();
+            assert!(tidb_vardef::is_legacy_ecdsa_session_token_disabled());
+            mock_get_all_server_info(&["8.0.11-TiDB-v8.5.8"]);
+            detect_and_update_classic_compatibility_once(&server_info, &store).unwrap();
+            assert!(tidb_vardef::is_legacy_ecdsa_session_token_disabled());
+            tidb_vardef::set_legacy_ecdsa_session_token_disabled(false);
+            tidb_failpoint::enable(MOCK_GET_ALL_SERVER_INFO, "return(\"invalid JSON\")").unwrap();
+            assert!(detect_and_update_classic_compatibility_once(&server_info, &store).is_err());
+            assert!(tidb_vardef::is_legacy_ecdsa_session_token_disabled());
+        }
+        tidb_failpoint::disable(MOCK_GET_ALL_SERVER_INFO);
+        reset();
+        tidb_vardef::set_legacy_ecdsa_session_token_disabled(original_disabled);
+    }
+}

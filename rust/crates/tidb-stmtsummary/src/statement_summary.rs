@@ -136,6 +136,8 @@ pub struct TableEntry {
 /// mutable counters stay behind atomics and the value is held in an `Arc`.
 #[derive(Debug, Default)]
 pub struct StmtSummaryStmtCtx {
+    /// Go `StatementContext.OriginalSQL`.
+    pub original_sql: String,
     /// Go `StatementContext.StmtType`.
     pub stmt_type: String,
     /// Go `StatementContext.Tables`.
@@ -208,6 +210,12 @@ pub struct StmtExecInfo {
     pub collation: String,
     /// Go `StmtExecInfo.NormalizedSQL`.
     pub normalized_sql: String,
+    /// Go `StmtExecInfo.SensitiveStmt`: a sensitive statement's
+    /// `SecureText`, `None` for any other statement.
+    pub sensitive_stmt: Option<String>,
+    /// Go `StmtExecInfo.SampleParams` (`PlanCacheParamList`), rendered by
+    /// `Display` only when a record is created.
+    pub sample_params: Option<Arc<dyn std::fmt::Display + Send + Sync>>,
     /// Go `StmtExecInfo.Digest`.
     pub digest: String,
     /// Go `StmtExecInfo.PrevSQL`.

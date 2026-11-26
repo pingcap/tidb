@@ -177,6 +177,190 @@ fn observation_batch_persistent_sql_reads_memory_and_disk_and_flushes() {
         .contains("cumulative statement summary"));
 }
 
+/// Go `stmtsummary/v2/tests` `TestStmtSummarySampleRedaction`: with
+/// persistence on, the in-memory sample keeps the original SQL while the
+/// statement log writes it redacted (`marshalStmtRecordWithEvicted`).
+#[test]
+fn stmt_summary_sample_redaction() {
+    use tidb_stmtsummary::v2::stmtsummary as persistent;
+    let previous = tidb_config::config_tree::config::get_global_config();
+    let previous_summary = persistent::global_stmt_summary();
+    let dir = tempfile::tempdir().unwrap();
+    let filename = dir.path().join("statements.log").display().to_string();
+    persistent::set_global_stmt_summary(Some(
+        persistent::new_stmt_summary(&persistent::Config {
+            filename: filename.clone(),
+            ..persistent::Config::default()
+        })
+        .unwrap(),
+    ));
+    tidb_config::config_tree::config::update_global(|config| {
+        config.instance.stmt_summary_enable_persistent = true;
+        config.instance.stmt_summary_filename = filename.clone();
+    });
+
+    let mut tk = Session::new();
+    tk.set_user("root@%".into(), "root@localhost".into());
+    let (_, old_mode) = tests_support::query_text(&mut tk, "select @@global.tidb_redact_log");
+    tk.run("set global tidb_redact_log = ON").unwrap();
+    tk.run("set tidb_enable_non_prepared_plan_cache = 0").unwrap();
+    tk.run("create table sample_redaction (a varchar(64))").unwrap();
+    const SQL: &str = "select * from sample_redaction where a = 'unique_secret_42'";
+    const NORMALIZED_SQL: &str = "select * from `sample_redaction` where `a` = ?";
+    tk.run(SQL).unwrap();
+    let (_, rows) = tests_support::query_text(
+        &mut tk,
+        &format!(
+            "select digest, query_sample_text from information_schema.statements_summary \
+             where digest_text = '{NORMALIZED_SQL}'"
+        ),
+    );
+
+    persistent::global_stmt_summary().unwrap().close();
+    let data = std::fs::read_to_string(&filename).unwrap();
+    tk.run(&format!("set global tidb_redact_log = {}", old_mode[0][0])).unwrap();
+    tidb_config::config_tree::config::store_global_config((*previous).clone());
+    persistent::set_global_stmt_summary(previous_summary);
+
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0][1], SQL);
+    let digest = &rows[0][0];
+    let mut found = false;
+    for line in data.trim().split('\n') {
+        let record: serde_json::Value = serde_json::from_str(line).unwrap();
+        if record["digest"] == digest.as_str() {
+            found = true;
+            assert_eq!(record["sample_sql"], NORMALIZED_SQL);
+            assert!(!record["sample_sql"].as_str().unwrap().contains("unique_secret_42"));
+        }
+    }
+    assert!(found, "statement sample must be written to the log");
+}
+
+/// Go `NewStmtRecord`'s sample (a Go master testkit probe, 2026-11-26):
+/// persisted, a prepared execution keeps its arguments and a sensitive
+/// statement its secure text in memory, whatever `tidb_redact_log` was as
+/// they ran; the log writes each through the mode at write time.
+#[test]
+fn stmt_summary_v2_sample_keeps_arguments_and_secure_text() {
+    use tidb_stmtsummary::v2::stmtsummary as persistent;
+    let previous = tidb_config::config_tree::config::get_global_config();
+    let previous_summary = persistent::global_stmt_summary();
+    let dir = tempfile::tempdir().unwrap();
+    let filename = dir.path().join("statements.log").display().to_string();
+    persistent::set_global_stmt_summary(Some(
+        persistent::new_stmt_summary(&persistent::Config {
+            filename: filename.clone(),
+            ..persistent::Config::default()
+        })
+        .unwrap(),
+    ));
+    tidb_config::config_tree::config::update_global(|config| {
+        config.instance.stmt_summary_enable_persistent = true;
+        config.instance.stmt_summary_filename = filename.clone();
+    });
+
+    let mut tk = Session::new();
+    tk.set_user("root@%".into(), "root@localhost".into());
+    tk.run("set tidb_enable_non_prepared_plan_cache = 0").unwrap();
+    tk.run("create table sample_args (a varchar(64), b int)").unwrap();
+    tk.run("prepare s from 'select * from sample_args where a = ? and b = ?'").unwrap();
+    tk.run("set @x = 'secret3', @y = 7").unwrap();
+    tk.run("set global tidb_redact_log = MARKER").unwrap();
+    tk.run("execute s using @x, @y").unwrap();
+    tk.run("set global tidb_redact_log = OFF").unwrap();
+    tk.run("create user sample_args_u1 identified by 'pw123'").unwrap();
+    let (_, rows) = tests_support::query_text(
+        &mut tk,
+        "select query_sample_text from information_schema.statements_summary \
+         where digest_text like 'select * from `sample_args`%' \
+         or query_sample_text like 'create user%sample_args_u1%' order by query_sample_text",
+    );
+    tk.run("set global tidb_redact_log = MARKER").unwrap();
+    persistent::global_stmt_summary().unwrap().close();
+    tk.run("set global tidb_redact_log = OFF").unwrap();
+    let data = std::fs::read_to_string(&filename).unwrap();
+    tidb_config::config_tree::config::store_global_config((*previous).clone());
+    persistent::set_global_stmt_summary(previous_summary);
+
+    const PREPARED: &str =
+        "select * from sample_args where a = ? and b = ? [arguments: (\"secret3\", 7)]";
+    const CREATE_USER: &str = "create user {sample_args_u1@% password = ***}";
+    assert_eq!(rows, [[CREATE_USER], [PREPARED]]);
+    let samples: Vec<String> = data
+        .trim()
+        .split('\n')
+        .filter_map(|line| {
+            let record: serde_json::Value = serde_json::from_str(line).unwrap();
+            let sample = record["sample_sql"].as_str().unwrap().to_owned();
+            sample.contains("sample_args").then_some(sample)
+        })
+        .collect();
+    assert!(samples.contains(&format!("‹{PREPARED}›")), "{samples:?}");
+    assert!(samples.contains(&format!("‹{CREATE_USER}›")), "{samples:?}");
+}
+
+/// Go `ExecStmt.getLazyStmtText`, v1's `GetOriginalSQL` sample: the sample
+/// follows `tidb_redact_log` as the statement ran (a Go master testkit probe,
+/// 2026-11-26: `ON` keeps the digest text, `MARKER` wraps the statement).
+#[test]
+fn stmt_summary_sample_follows_tidb_redact_log() {
+    let mut tk = Session::new();
+    tk.set_user("root@%".into(), "root@localhost".into());
+    tk.run("set tidb_enable_non_prepared_plan_cache = 0").unwrap();
+    tk.run("create table sample_mode (a varchar(64))").unwrap();
+    tk.run("set global tidb_redact_log = ON").unwrap();
+    tk.run("select * from sample_mode where a = 'secret1'").unwrap();
+    tk.run("set global tidb_redact_log = MARKER").unwrap();
+    tk.run("select * from sample_mode where a = 'secret2' and 1 = 1").unwrap();
+    tk.run("set global tidb_redact_log = OFF").unwrap();
+    let (_, rows) = tests_support::query_text(
+        &mut tk,
+        "select digest_text, query_sample_text from information_schema.statements_summary \
+         where digest_text like 'select * from `sample_mode`%' order by digest_text",
+    );
+    assert_eq!(
+        rows,
+        [
+            [
+                "select * from `sample_mode` where `a` = ?",
+                "select * from `sample_mode` where `a` = ?",
+            ],
+            [
+                "select * from `sample_mode` where `a` = ? and ? = ?",
+                "‹select * from sample_mode where a = 'secret2' and 1 = 1›",
+            ],
+        ]
+    );
+}
+
+/// Go `SummaryStmt`'s `prevSQL = sessVars.PrevStmt.String()`: a COMMIT's
+/// previous statement is the text `updatePrevStmt` kept, which under
+/// `tidb_redact_log = ON` is the statement's digest text.
+#[test]
+fn stmt_summary_commit_prev_sample_follows_tidb_redact_log() {
+    let mut tk = Session::new();
+    tk.set_user("root@%".into(), "root@localhost".into());
+    tk.run("create table prev_redaction (a varchar(64))").unwrap();
+    tk.run("set global tidb_redact_log = ON").unwrap();
+    tk.run("begin").unwrap();
+    tk.run("insert into prev_redaction values ('prev_secret_7')").unwrap();
+    tk.run("commit").unwrap();
+    tk.run("set global tidb_redact_log = OFF").unwrap();
+    let (_, insert) = tests_support::query_text(
+        &mut tk,
+        "select digest_text from information_schema.statements_summary \
+         where digest_text like 'insert into `prev_redaction`%'",
+    );
+    let (_, commit) = tests_support::query_text(
+        &mut tk,
+        "select prev_sample_text from information_schema.statements_summary \
+         where digest_text = 'commit' and prev_sample_text like '%prev_redaction%'",
+    );
+    assert_eq!(insert.len(), 1);
+    assert_eq!(commit, [[insert[0][0].clone()]]);
+}
+
 #[test]
 fn observation_batch_disabled_summary_clears_commit_predecessor() {
     use tidb_stmtsummary::v2::stmtsummary::{enabled, set_enabled};

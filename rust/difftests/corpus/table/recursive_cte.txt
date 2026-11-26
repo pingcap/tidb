@@ -45,4 +45,9 @@ with recursive cte as (select 1 as n union all select n+1 from cte where n<10000
 with recursive cte as (select 1 as n union all select n+1 from cte where n<1000000 limit 0) select n from cte
 with recursive cte as (select 1 as n union all select n+1 from cte where n<3 limit 100) select n from cte order by n
 with recursive cte as (select 1 as n union select n+1 from cte where n<1000000 limit 5) select n from cte order by n
-with recursive cte as (select 1 as n union all select n+1 from cte union all select n+100 from cte where n<3 limit 4) select n from cte order by n
+## Two recursive terms run as a concurrent Union (Go UnionExec), whose rows
+## arrive in scheduling order; a LIMIT that cuts a round keeps whichever come
+## first (Go itself returned 1;2;3;101 and 1;2;101;102 for LIMIT 4 under load).
+## Each LIMIT below ends on a round boundary: rounds hold 1, then 2 101, then 3 102 102.
+with recursive cte as (select 1 as n union all select n+1 from cte union all select n+100 from cte where n<3 limit 3) select n from cte order by n
+with recursive cte as (select 1 as n union all select n+1 from cte union all select n+100 from cte where n<3 limit 6) select n from cte order by n

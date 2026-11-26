@@ -7256,10 +7256,10 @@ fn cluster_tables_plan_as_tidb_store_scans() {
             "SELECT user, count(*) FROM information_schema.cluster_slow_query GROUP BY user"
         ),
         [
-            "Projection|8000.00|root||information_schema.cluster_slow_query.user, Column#100",
-            "└─HashAgg|8000.00|root||group by:information_schema.cluster_slow_query.user, funcs:count(Column#101)->Column#100, funcs:firstrow(information_schema.cluster_slow_query.user)->information_schema.cluster_slow_query.user",
+            "Projection|8000.00|root||information_schema.cluster_slow_query.user, Column#101",
+            "└─HashAgg|8000.00|root||group by:information_schema.cluster_slow_query.user, funcs:count(Column#102)->Column#101, funcs:firstrow(information_schema.cluster_slow_query.user)->information_schema.cluster_slow_query.user",
             "  └─TableReader|8000.00|root||data:HashAgg",
-            "    └─HashAgg|8000.00|cop[tidb]||group by:information_schema.cluster_slow_query.user, funcs:count(1)->Column#101, funcs:firstrow(information_schema.cluster_slow_query.user)->information_schema.cluster_slow_query.user",
+            "    └─HashAgg|8000.00|cop[tidb]||group by:information_schema.cluster_slow_query.user, funcs:count(1)->Column#102, funcs:firstrow(information_schema.cluster_slow_query.user)->information_schema.cluster_slow_query.user",
             "      └─MemTableScan|10000.00|cop[tidb]|table:CLUSTER_SLOW_QUERY|"
         ]
     );

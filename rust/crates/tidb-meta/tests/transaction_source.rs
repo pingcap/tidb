@@ -1030,6 +1030,17 @@ fn bootstrap_schema_diff_and_raw_bdr_role_round_trip() {
     assert!(meta.bdr_role().unwrap().is_empty());
 }
 
+/// Go `TestMeta`'s legacy ECDSA session-token gate: absent reads false, and
+/// the one-way flag may be set repeatedly.
+#[test]
+fn legacy_ecdsa_session_token_disabled_round_trip() {
+    let meta = Mutator::new(MemoryTransaction::default());
+    assert!(!meta.get_legacy_ecdsa_session_token_disabled().unwrap());
+    meta.set_legacy_ecdsa_session_token_disabled().unwrap();
+    meta.set_legacy_ecdsa_session_token_disabled().unwrap();
+    assert!(meta.get_legacy_ecdsa_session_token_disabled().unwrap());
+}
+
 #[test]
 fn global_and_auto_id_key_bytes_remain_the_go_vectors() {
     let meta = Mutator::new(MemoryTransaction::default());

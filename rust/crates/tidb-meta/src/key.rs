@@ -61,6 +61,8 @@ pub const METADATA_LOCK: &[u8] = b"metadataLock";
 pub const SCHEMA_CACHE_SIZE: &[u8] = b"SchemaCacheSize";
 /// Go `mRequestUnitStats`.
 pub const REQUEST_UNIT_STATS: &[u8] = b"RequestUnitStats";
+/// Go `mLegacyECDSASessionTokenDisabled`.
+pub const LEGACY_ECDSA_SESSION_TOKEN_DISABLED: &[u8] = b"LegacyECDSASessionTokenDisabled";
 /// Go `mIngestMaxBatchSplitRangesKey`.
 pub const INGEST_MAX_BATCH_SPLIT_RANGES: &[u8] = b"IngestMaxBatchSplitRanges";
 /// Go `mIngestMaxSplitRangesPerSecKey`.

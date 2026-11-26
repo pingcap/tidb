@@ -1592,9 +1592,9 @@ fn show_session_states_signs_a_token_for_the_logged_in_user_like_go() {
         panic!("SHOW SESSION_STATES returns rows")
     };
     let token = crate::datum_text(&rows[0][1]).expect("a token for the logged-in user");
-    tidb_sessionstates::validate_session_token(token.as_bytes(), "migrated").unwrap();
+    tidb_sessionstates::validate_session_token(token.as_bytes(), "migrated", "%").unwrap();
     let error =
-        tidb_sessionstates::validate_session_token(token.as_bytes(), "another_user").unwrap_err();
+        tidb_sessionstates::validate_session_token(token.as_bytes(), "another_user", "%").unwrap_err();
     assert!(error.contains("username does not match"), "{error}");
 
     let mut anonymous = Session::new();

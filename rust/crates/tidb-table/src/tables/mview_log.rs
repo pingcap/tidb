@@ -263,7 +263,7 @@ impl MLogTable {
     ) -> Result<(), KvTableError> {
         if let Some(message) = tidb_failpoint::eval("github.com/pingcap/tidb/pkg/table/tables/mockMLogWriteError") {
             // Go: a string value is the error's message.
-            return Err(error(message.as_string().unwrap_or("mock materialized view log write error").to_owned()));
+            return Err(error(message.as_string().unwrap_or_else(|| "mock materialized view log write error".to_owned())));
         }
         let mut mlog_row = Vec::with_capacity(self.tracked_base_offsets.len() + 2);
         for offset in &self.tracked_base_offsets {

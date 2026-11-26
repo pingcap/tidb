@@ -759,3 +759,152 @@ fn an_execute_logs_the_cached_plan_it_ran() {
     assert!(field(entry, "Plan_digest").is_some_and(|digest| !digest.is_empty()), "{entry}");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Go `executor/slow_query_sql_test.go` `TestSlowQueryInMemoryOriginalQuery`:
+/// under `tidb_redact_log`, a directly executed SELECT keeps its plaintext in
+/// the process cache, read back as `In_memory_original_query`; prepared
+/// executions and lines never cached stay empty, and turning redaction off
+/// stops inserts without hiding what was cached.
+#[test]
+fn slow_query_in_memory_original_query() {
+    tidb_executor::slow_query_cache::start_slow_query_cache();
+    let dir = log_dir("in-memory-original-query");
+    let (slow, _) = install_loggers(&dir);
+    let mut tk = Session::new();
+    tk.run(&format!("set @@tidb_slow_query_file='{slow}'")).unwrap();
+    tk.run("set tidb_slow_log_threshold=0").unwrap();
+    tk.run("set @@global.tidb_redact_log=on").unwrap();
+
+    assert_eq!(
+        one(
+            &mut tk,
+            "select count(*) from information_schema.columns where table_name in ('slow_query', \
+             'cluster_slow_query') and binary column_name = 'In_memory_original_query'",
+        ),
+        "2"
+    );
+    assert_eq!(
+        one(
+            &mut tk,
+            "select count(*) from information_schema.columns where table_name in ('slow_query', \
+             'cluster_slow_query') and lower(column_name) = 'unredacted_query'",
+        ),
+        "0"
+    );
+
+    tk.run("prepare no_cache from 'select 246813579 + 1'").unwrap();
+    assert_eq!(one(&mut tk, "execute no_cache"), "246813580");
+    tk.run("deallocate prepare no_cache").unwrap();
+    let prepared = crate::tests_support::prepare_binary(&mut tk, "select 246813579 - 1");
+    crate::tests_support::execute_binary(&mut tk, &prepared, &[]);
+
+    tk.run("select 123456789").unwrap();
+    // Avoid ORDER BY time DESC LIMIT. That limit is pushed into the slow-log
+    // reader and would hide the target row once newer statements are logged.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+    let target = "select query, in_memory_original_query from information_schema.slow_query \
+                  where in_memory_original_query = 'select 123456789'";
+    loop {
+        let _ = tidb_logutil::sync();
+        let rows = row_text(tk.run(target));
+        if rows == [["select ?;", "select 123456789"]] {
+            break;
+        }
+        assert!(std::time::Instant::now() < deadline, "{rows:?}");
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    // The direct SELECT above also drains any earlier writes through the FIFO
+    // cache channel, so these misses cannot be caused by pending async writes.
+    assert_eq!(
+        row_text(tk.run(
+            "select prepared, query, in_memory_original_query from information_schema.slow_query \
+             where prepared = 1 order by query"
+        )),
+        [["1", "select ? + ?;", ""], ["1", "select ? - ?;", ""]]
+    );
+    // A slow-log line that was never cached stays empty in
+    // in_memory_original_query.
+    let _ = tidb_logutil::sync();
+    {
+        use std::io::Write;
+        let mut extra = std::fs::OpenOptions::new().append(true).open(&slow).unwrap();
+        extra
+            .write_all(b"\n# Time: 2020-01-01T00:00:00.000000+08:00\nselect disk_only_999;\n")
+            .unwrap();
+    }
+    assert_eq!(
+        row_text(tk.run(
+            "select query, in_memory_original_query from information_schema.slow_query \
+             where query = 'select disk_only_999;'"
+        )),
+        [["select disk_only_999;", ""]]
+    );
+
+    // Turning tidb_redact_log off stops new inserts. A query cached while it
+    // was on is still readable; the lookup does not consult the variable.
+    tk.run("set @@global.tidb_redact_log=off").unwrap();
+    assert_eq!(row_text(tk.run(target)), [["select ?;", "select 123456789"]]);
+    // Redact off keeps the plaintext in query and leaves
+    // in_memory_original_query empty.
+    tk.run("select 987654321").unwrap();
+    let _ = tidb_logutil::sync();
+    assert_eq!(
+        row_text(tk.run(
+            "select query, in_memory_original_query from information_schema.slow_query \
+             where query = 'select 987654321;'"
+        )),
+        [["select 987654321;", ""]]
+    );
+    tk.run("set tidb_slow_log_threshold=300").unwrap();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Go `executor/slow_query_test.go` `TestSlowQueryCacheQueuesOnlySelect`
+/// (`ExecStmt.isSlowQueryCacheable`), through the statements themselves:
+/// only a directly executed plain SELECT is cached; TABLE, DML, a sensitive
+/// SET, a set operation, EXPLAIN and EXECUTE are not. (A standalone VALUES
+/// statement fails to plan, in Go as here.)
+#[test]
+fn slow_query_cache_queues_only_select() {
+    tidb_executor::slow_query_cache::start_slow_query_cache();
+    let dir = log_dir("cache-queues-only-select");
+    let (slow, _) = install_loggers(&dir);
+    let mut tk = Session::new();
+    tk.set_user("root@%".into(), "root@localhost".into());
+    tk.run(&format!("set @@tidb_slow_query_file='{slow}'")).unwrap();
+    tk.run("create table only_select (a int)").unwrap();
+    tk.run("prepare only_select_ps from 'select 31 from only_select'").unwrap();
+    tk.run("set tidb_slow_log_threshold = 0").unwrap();
+    tk.run("set global tidb_redact_log = 'ON'").unwrap();
+    for sql in [
+        "table only_select",
+        "insert into only_select values (12)",
+        "set password = 'only_select_pw'",
+        "select 13 union select 14",
+        "explain select 15 from only_select",
+        "execute only_select_ps",
+        "select 16 from only_select",
+    ] {
+        tk.run(sql).unwrap();
+    }
+    tk.run("set global tidb_redact_log = 'OFF'").unwrap();
+    // The last SELECT went through the FIFO cache channel after every other
+    // statement's write would have.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+    loop {
+        let _ = tidb_logutil::sync();
+        let rows = row_text(tk.run(
+            "select in_memory_original_query from information_schema.slow_query \
+             where in_memory_original_query like '%only_select%' or in_memory_original_query like 'select 1_%'",
+        ));
+        if !rows.is_empty() {
+            assert_eq!(rows, [["select 16 from only_select"]]);
+            break;
+        }
+        assert!(std::time::Instant::now() < deadline, "the plain SELECT was never cached");
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+

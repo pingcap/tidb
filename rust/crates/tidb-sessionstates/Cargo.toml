@@ -8,6 +8,7 @@ repository.workspace = true
 description = "TiDB sessionctx/sessionstates: the session state a migration carries (Rust rewrite)."
 
 [dependencies]
+tidb-vardef = { path = "../tidb-vardef" }
 tidb-dbterror = { path = "../tidb-dbterror" }
 tidb-errno = { path = "../tidb-errno" }
 tidb-terror = { path = "../tidb-terror" }

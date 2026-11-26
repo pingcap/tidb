@@ -1618,6 +1618,22 @@ impl<T: MetaTransaction> Mutator<T> {
         meta_structure(&mut *transaction).set(key::REQUEST_UNIT_STATS, &encoded)
     }
 
+    /// Go `Mutator.GetLegacyECDSASessionTokenDisabled`: whether legacy ECDSA
+    /// session tokens have been permanently disabled. A missing key preserves
+    /// upgrade compatibility.
+    pub fn get_legacy_ecdsa_session_token_disabled(&self) -> Result<bool> {
+        let mut transaction = self.lock()?;
+        Ok(meta_structure(&mut *transaction).get_int64(key::LEGACY_ECDSA_SESSION_TOKEN_DISABLED)? == 1)
+    }
+
+    /// Go `Mutator.SetLegacyECDSASessionTokenDisabled`: permanently disables
+    /// legacy ECDSA session tokens. The transition is one-way and repeated
+    /// writes are safe.
+    pub fn set_legacy_ecdsa_session_token_disabled(&self) -> Result<()> {
+        let mut transaction = self.lock()?;
+        meta_structure(&mut *transaction).set(key::LEGACY_ECDSA_SESSION_TOKEN_DISABLED, b"1")
+    }
+
     /// Go `Mutator.GetBootstrapVersion`.
     pub fn get_bootstrap_version(&self) -> Result<i64> {
         let mut transaction = self.lock()?;

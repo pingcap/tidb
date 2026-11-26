@@ -175,7 +175,7 @@ impl<S: MvSession> CompareOutputWriter<S> {
         sys_sql(&mut self.session, &format!("{prefix}{}", rows.join(", ")), &[])?;
         if let Some(value) = tidb_failpoint::eval(&format!("{FP}mockCompareMaterializedViewOutputFlushError")) {
             return Err(plain(
-                value.as_string().map_or("mock compare materialized view output flush error", |message| message).to_owned(),
+                value.as_string().unwrap_or_else(|| "mock compare materialized view output flush error".to_owned()),
             ));
         }
         Ok(())

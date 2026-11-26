@@ -196,7 +196,7 @@ pub fn to_uppercase(value: &str) -> String {{
     if value.is_ascii() {{
         value.to_ascii_uppercase()
     }} else {{
-        map_non_ascii::<UPPER_CASE>(value).into_owned()
+        map_non_ascii::<UPPER_CASE, true>(value).into_owned()
     }}
 }}
 
@@ -205,24 +205,41 @@ pub fn to_lowercase(value: &str) -> String {{
     if value.is_ascii() {{
         value.to_ascii_lowercase()
     }} else {{
-        map_non_ascii::<LOWER_CASE>(value).into_owned()
+        map_non_ascii::<LOWER_CASE, true>(value).into_owned()
     }}
 }}
 
 /// Applies Go simple uppercase, borrowing the original text when unchanged.
 #[inline]
 pub fn to_uppercase_cow(value: &str) -> Cow<'_, str> {{
-    map_string::<UPPER_CASE>(value)
+    map_string::<UPPER_CASE, true>(value)
 }}
 
 /// Applies Go simple lowercase, borrowing the original text when unchanged.
 #[inline]
 pub fn to_lowercase_cow(value: &str) -> Cow<'_, str> {{
-    map_string::<LOWER_CASE>(value)
+    map_string::<LOWER_CASE, true>(value)
+}}
+
+/// Applies Go simple case mapping to decoded UTF-8, including literal
+/// private-use code points that coincide with the internal raw-byte escapes.
+#[inline]
+pub fn utf8_to_case_cow<const UPPER: bool>(value: &str) -> Cow<'_, str> {{
+    if UPPER {{
+        map_string::<UPPER_CASE, false>(value)
+    }} else {{
+        map_string::<LOWER_CASE, false>(value)
+    }}
+}}
+
+/// Applies Go's Unicode case mapping for one decoded scalar value.
+#[inline]
+pub fn simple_case_char<const UPPER: bool>(character: char) -> char {{
+    map_character(character, if UPPER {{ UPPER_CASE }} else {{ LOWER_CASE }})
 }}
 
 #[inline]
-fn map_string<const CASE: u8>(value: &str) -> Cow<'_, str> {{
+fn map_string<const CASE: u8, const RAW_ESCAPES: bool>(value: &str) -> Cow<'_, str> {{
     let needs_mapping = |byte: u8| {{
         if CASE == UPPER_CASE {{
             byte.is_ascii_lowercase()
@@ -247,12 +264,12 @@ fn map_string<const CASE: u8>(value: &str) -> Cow<'_, str> {{
             Cow::Owned(value.to_ascii_lowercase())
         }};
     }}
-    map_non_ascii::<CASE>(value)
+    map_non_ascii::<CASE, RAW_ESCAPES>(value)
 }}
 
-fn map_non_ascii<const CASE: u8>(value: &str) -> Cow<'_, str> {{
+fn map_non_ascii<const CASE: u8, const RAW_ESCAPES: bool>(value: &str) -> Cow<'_, str> {{
     let Some((start, _)) = value.char_indices().find(|&(_, character)| {{
-        character as u32 >= RAW_BYTE_ESCAPE_BASE + 0x80
+        (RAW_ESCAPES && character as u32 >= RAW_BYTE_ESCAPE_BASE + 0x80)
             || map_character(character, CASE) != character
     }}) else {{
         return Cow::Borrowed(value);
@@ -261,7 +278,7 @@ fn map_non_ascii<const CASE: u8>(value: &str) -> Cow<'_, str> {{
     output.push_str(&value[..start]);
     let mut raw = Vec::new();
     for character in value[start..].chars() {{
-        if character as u32 >= RAW_BYTE_ESCAPE_BASE + 0x80 {{
+        if RAW_ESCAPES && character as u32 >= RAW_BYTE_ESCAPE_BASE + 0x80 {{
             raw.push((character as u32 - RAW_BYTE_ESCAPE_BASE) as u8);
             continue;
         }}
