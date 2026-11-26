@@ -1245,6 +1245,9 @@ mod tests {
             "9" => (200, "{}"),
             "10" => (503, "busy"),
             "11" => (200, r#"{"ready":-1,"total":4}"#),
+            "20" => (200, r#"{"ready":3,"vector-index-ready":2,"fts-index-ready":1,"total":4}"#),
+            "21" => (200, r#"{"ready":3,"vector-index-ready":2,"fts-index-ready":0,"total":4}"#),
+            "22" => (200, r#"{"ready":3,"vector-index-ready":2,"total":4}"#),
             _ => (200, "not json"),
         };
         (status, body.to_owned())
@@ -1263,6 +1266,7 @@ mod tests {
             ready,
             vector_index_ready,
             total,
+            ..Default::default()
         };
         assert_eq!(collect(7, None), Ok(status(3, 1, 4)));
         assert_eq!(collect(8, None), Ok(status(4, 4, 4)));
@@ -1288,14 +1292,31 @@ mod tests {
         };
         let up = [store("Up"), store("Up")];
         assert_eq!(calculate_columnar_progress(7, &up), Ok(0.75));
-        assert_eq!(calculate_columnar_index_progress(7, 3, &up), Ok(0.25));
+        assert_eq!(calculate_columnar_index_progress(7, 3, tidb_model::ColumnarIndexType::VECTOR, &up), Ok(0.25));
         assert_eq!(calculate_columnar_progress(8, &up), Ok(1.0));
-        assert_eq!(calculate_columnar_index_progress(8, 3, &up), Ok(1.0));
+        assert_eq!(calculate_columnar_index_progress(8, 3, tidb_model::ColumnarIndexType::VECTOR, &up), Ok(1.0));
         assert_eq!(calculate_columnar_progress(9, &up), Ok(0.0));
-        assert_eq!(calculate_columnar_index_progress(9, 3, &up), Ok(0.0));
+        assert_eq!(calculate_columnar_index_progress(9, 3, tidb_model::ColumnarIndexType::VECTOR, &up), Ok(0.0));
         assert_eq!(calculate_columnar_progress(7, &[]), Ok(0.0));
         let paths: Vec<String> = http.requests.lock().unwrap().drain(..).map(|(path, _)| path).collect();
         assert_eq!(paths.len(), 12);
+        // Go `TestCollectColumnarStatusFTSIndexReady` (049e0e2ba79): a
+        // full-text index reads `fts-index-ready`, which an older TiKV does
+        // not report.
+        for (table_id, fts_index_ready, has_fts_index_ready) in [(20, 1, true), (21, 0, true), (22, 0, false)] {
+            let got = collect(table_id, Some(11)).unwrap();
+            assert_eq!(
+                (got.ready, got.vector_index_ready, got.fts_index_ready, got.has_fts_index_ready, got.total),
+                (3, 2, fts_index_ready, has_fts_index_ready, 4),
+                "{table_id}"
+            );
+        }
+        let fulltext = tidb_model::ColumnarIndexType::FULLTEXT;
+        assert_eq!(calculate_columnar_index_progress(20, 11, fulltext, &up), Ok(0.25));
+        assert_eq!(calculate_columnar_index_progress(20, 11, tidb_model::ColumnarIndexType::VECTOR, &up), Ok(0.5));
+        let missing = calculate_columnar_index_progress(22, 11, fulltext, &up).unwrap_err();
+        assert!(missing.starts_with("fts-index-ready not found in TiKV columnar_status response from"), "{missing}");
+        http.requests.lock().unwrap().clear();
         assert_eq!(paths[2], "/kvengine/columnar_status?keyspace_id=4294967295&table_id=7&index_id=3");
         // A failed store is an error unless it is a tombstone.
         assert_eq!(calculate_columnar_progress(10, &[store("Tombstone")]), Ok(0.0));
@@ -1305,7 +1326,7 @@ mod tests {
                 http.address
             ));
             assert_eq!(calculate_columnar_progress(10, &[store(state)]), failed);
-            assert_eq!(calculate_columnar_index_progress(10, 3, &[store(state)]), failed);
+            assert_eq!(calculate_columnar_index_progress(10, 3, tidb_model::ColumnarIndexType::VECTOR, &[store(state)]), failed);
         }
     }
 
@@ -1411,10 +1432,21 @@ mod tests {
             stores: vec![tiflash, http.store_of("tikv"), compute],
         }))));
         use crate::cluster_ddl::add_index::check_columnar_index_process_from_tikv;
-        assert!(check_columnar_index_process_from_tikv(8, 3).unwrap());
-        assert!(!check_columnar_index_process_from_tikv(7, 3).unwrap());
+        let table = |id: i64| {
+            let mut index = tidb_model::IndexInfo::default();
+            index.id = 3;
+            index.vector_info = Some(Default::default());
+            let mut table = tidb_model::TableInfo::default();
+            table.id = id;
+            table.indices = vec![index].into();
+            table
+        };
+        assert!(check_columnar_index_process_from_tikv(&table(8), 3).unwrap());
+        assert!(!check_columnar_index_process_from_tikv(&table(7), 3).unwrap());
+        // Go: a non-columnar index is refused before any request.
+        assert!(check_columnar_index_process_from_tikv(&tidb_model::TableInfo::default(), 3).is_err());
         assert_eq!(
-            check_columnar_index_process_from_tikv(10, 3).unwrap_err().to_string(),
+            check_columnar_index_process_from_tikv(&table(10), 3).unwrap_err().to_string(),
             format!("Failed to get columnar status from TiKV, store {} is Up", http.address)
         );
         assert_eq!(

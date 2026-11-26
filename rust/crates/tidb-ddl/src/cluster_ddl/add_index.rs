@@ -1505,7 +1505,7 @@ pub(super) fn on_create_columnar_index(
             }
             // Check the progress of the TiFlash backfill index.
             let index_id = indexes[0].read().id;
-            match check_columnar_index_process(txn, &mut active.job, info.id, index_id) {
+            match check_columnar_index_process(txn, &mut active.job, &info, index_id) {
                 Ok(true) => {}
                 // Go `ErrWaitReorgTimeout`: the job runs this state again.
                 Ok(false) => return Ok(action_step(super::job_only_write(active.job.id, Vec::new()))),
@@ -1579,13 +1579,13 @@ fn columnar_index_rollback_step(
 fn check_columnar_index_process(
     txn: &JobTxn<'_>,
     job: &mut Job,
-    table_id: i64,
+    table: &TableInfo,
     index_id: i64,
 ) -> Result<bool, DdlPlanError> {
     let wait_timeout = std::time::Duration::from_millis(500);
     let started = std::time::Instant::now();
     while started.elapsed() < wait_timeout {
-        let (is_done, _, added_index_cnt) = check_columnar_index_process_once(txn, table_id, index_id)?;
+        let (is_done, _, added_index_cnt) = check_columnar_index_process_once(txn, table, index_id)?;
         job.row_count = added_index_cnt;
         if is_done {
             return Ok(true);
@@ -1596,16 +1596,27 @@ fn check_columnar_index_process(
 
 /// Go `checkColumnarIndexProcessFromTiKV` checks the backfill process of a
 /// columnar index from TiKV.
-pub(crate) fn check_columnar_index_process_from_tikv(table_id: i64, index_id: i64) -> Result<bool, DdlPlanError> {
+pub(crate) fn check_columnar_index_process_from_tikv(table: &TableInfo, index_id: i64) -> Result<bool, DdlPlanError> {
     use tidb_domain_infosync::tiflash_manager;
+    let Some(index) = table.find_index_by_id(index_id) else {
+        return Err(DdlPlanError::Encode(format!("could not find indexInfo by {index_id}")));
+    };
+    let columnar_index_type = index.read().get_columnar_index_type();
+    if columnar_index_type == tidb_model::ColumnarIndexType::NA {
+        return Err(DdlPlanError::from(
+            tidb_dbterror::ERR_UNSUPPORTED_ADD_COLUMNAR_INDEX
+                .gen_with_stack_by_args(&["Columnar does not support index types.".into()]),
+        ));
+    }
     let tikv_stats = tiflash_manager::get_tiflash_stores_stat().map_err(DdlPlanError::Encode)?;
     let tikv_stores: Vec<_> = tikv_stats
         .stores
         .into_iter()
         .filter(|store| !tiflash_manager::is_tiflash_http_resp(&store.store))
         .collect();
-    let progress = tiflash_manager::calculate_columnar_index_progress(table_id, index_id, &tikv_stores)
-        .map_err(DdlPlanError::Encode)?;
+    let progress =
+        tiflash_manager::calculate_columnar_index_progress(table.id, index_id, columnar_index_type, &tikv_stores)
+            .map_err(DdlPlanError::Encode)?;
     Ok(progress >= 1.0)
 }
 
@@ -1613,9 +1624,10 @@ pub(crate) fn check_columnar_index_process_from_tikv(table_id: i64, index_id: i6
 /// rows not yet and already indexed.
 fn check_columnar_index_process_once(
     txn: &JobTxn<'_>,
-    table_id: i64,
+    table: &TableInfo,
     index_id: i64,
 ) -> Result<(bool, i64, i64), DdlPlanError> {
+    let table_id = table.id;
     #[cfg(feature = "failpoints")]
     if let Some(val) = tidb_failpoint::eval("github.com/pingcap/tidb/pkg/ddl/MockCheckColumnarIndexProcess").map(|val| val.int()) {
         return match val {
@@ -1630,7 +1642,7 @@ fn check_columnar_index_process_once(
     let cse = &tidb_config::config_tree::config::get_global_config().cse;
     // If columnar store is enabled, Go checks the columnar index process
     // from TiKV (`CalculateColumnarIndexProgress`).
-    let done = !cse.is_columnar_store_enabled() || check_columnar_index_process_from_tikv(table_id, index_id)?;
+    let done = !cse.is_columnar_store_enabled() || check_columnar_index_process_from_tikv(table, index_id)?;
     // If TiFlash is not enabled, we return the result directly.
     if !cse.is_tiflash_enabled() {
         return Ok((done, 0, 0));

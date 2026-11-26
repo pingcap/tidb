@@ -517,6 +517,10 @@ pub struct ColumnarStatusResp {
     pub ready: u64,
     /// `vector-index-ready`.
     pub vector_index_ready: u64,
+    /// `fts-index-ready`.
+    pub fts_index_ready: u64,
+    /// Whether the payload holds `fts-index-ready` (an older TiKV does not).
+    pub has_fts_index_ready: bool,
     /// `total`.
     pub total: u64,
 }
@@ -552,9 +556,12 @@ pub fn collect_columnar_status(
             .as_u64()
             .ok_or_else(|| format!("json: cannot unmarshal number {count} into Go struct field ColumnarStatusResp.{name} of type uint")),
     };
+    let has_fts_index_ready = !matches!(value.get("fts-index-ready"), None | Some(serde_json::Value::Null));
     let columnar_status = ColumnarStatusResp {
         ready: field("ready")?,
         vector_index_ready: field("vector-index-ready")?,
+        fts_index_ready: field("fts-index-ready")?,
+        has_fts_index_ready,
         total: field("total")?,
     };
     if columnar_status.ready != columnar_status.total {
@@ -577,7 +584,7 @@ fn columnar_progress(
     table_id: i64,
     index_id: Option<i64>,
     tikv_stores: &[pd_http::StoreInfo],
-    ready_of: fn(&ColumnarStatusResp) -> u64,
+    ready_of: &dyn Fn(&ColumnarStatusResp, &pd_http::StoreInfo) -> Result<u64, String>,
 ) -> Result<f64, String> {
     let security = tiflash_replica_manager().security();
     let mut ready = 0;
@@ -601,7 +608,7 @@ fn columnar_progress(
             }
             continue;
         };
-        ready += ready_of(&columnar_status);
+        ready += ready_of(&columnar_status, store_stat)?;
         total += columnar_status.total;
     }
     if total == 0 {
@@ -612,7 +619,7 @@ fn columnar_progress(
 
 /// Go `infosync.CalculateColumnarProgress` calculates columnar progress.
 pub fn calculate_columnar_progress(table_id: i64, tikv_stores: &[pd_http::StoreInfo]) -> Result<f64, String> {
-    columnar_progress(table_id, None, tikv_stores, |status| status.ready)
+    columnar_progress(table_id, None, tikv_stores, &|status, _| Ok(status.ready))
 }
 
 /// Go `infosync.CalculateColumnarIndexProgress` calculates columnar index
@@ -620,9 +627,21 @@ pub fn calculate_columnar_progress(table_id: i64, tikv_stores: &[pd_http::StoreI
 pub fn calculate_columnar_index_progress(
     table_id: i64,
     index_id: i64,
+    columnar_index_type: tidb_model::ColumnarIndexType,
     tikv_stores: &[pd_http::StoreInfo],
 ) -> Result<f64, String> {
-    columnar_progress(table_id, Some(index_id), tikv_stores, |status| status.vector_index_ready)
+    columnar_progress(table_id, Some(index_id), tikv_stores, &|status, store_stat| {
+        if columnar_index_type == tidb_model::ColumnarIndexType::FULLTEXT {
+            if !status.has_fts_index_ready {
+                return Err(format!(
+                    "fts-index-ready not found in TiKV columnar_status response from {} (store {}); please check TiKV version",
+                    store_stat.store.status_address, store_stat.store.id
+                ));
+            }
+            return Ok(status.fts_index_ready);
+        }
+        Ok(status.vector_index_ready)
+    })
 }
 
 /// Go `engine.IsTiFlashHTTPResp` tests whether the store is a TiFlash node
