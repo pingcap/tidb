@@ -871,9 +871,24 @@ pub(super) fn rollback_like_drop_partition(
 ) -> Result<PersistedDdlActionStep, DdlPlanError> {
     let args = table_partition_args(active)?;
     let info = checked_job_table(txn, active, true)?.read().clone_like_go();
+    let database_id = active.job.schema_id;
+    // Like DROP INDEX, index copies stop taking writes for one schema version
+    // before being removed: the rollback conversion moved every copy that is
+    // not delete only to write only.
+    let mut stop_writes = false;
+    for index in info.indices.iter_deref() {
+        let mut index = index.write();
+        if index.state == SchemaState::WRITE_ONLY {
+            index.state = SchemaState::DELETE_ONLY;
+            stop_writes = true;
+        }
+    }
+    if stop_writes {
+        let write = update_version_and_table_info(txn, active, database_id, &info, true, start_ts)?;
+        return Ok(action_step(write));
+    }
     let partition = job_partition(active, &info)?;
     let schema = active.job.schema_name.to_string();
-    let database_id = active.job.schema_id;
     // The table as the label rules know it: the adding partitions included.
     let before = {
         let mut before = info.clone_like_go();
@@ -930,15 +945,16 @@ pub(super) fn rollback_like_drop_partition(
             info.partition = None;
         }
     }
-    // The indexes the job created (write-only by now) go with it.
+    // The index copies the job created (delete only by now) go with it, each
+    // removal visible to the next one's column-flag and hidden-column cleanup.
     let mut old_global_indexes = Vec::new();
-    let write_only = info
+    let delete_only = info
         .indices
         .iter_deref()
-        .filter(|index| index.read().state == SchemaState::WRITE_ONLY)
+        .filter(|index| index.read().state == SchemaState::DELETE_ONLY)
         .map(|index| index.read().clone_like_go())
         .collect::<Vec<_>>();
-    for index in write_only {
+    for index in delete_only {
         super::add_index::remove_index_and_hidden_columns(&mut info, &index);
         if index.global {
             old_global_indexes.push(tidb_model::TableIDIndexID {

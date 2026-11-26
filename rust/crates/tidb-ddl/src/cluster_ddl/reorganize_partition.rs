@@ -1190,30 +1190,27 @@ fn rollback_reorganize_partition_with_err(
             current.ddl_state,
         )
     };
-    let mut dropped_indexes = Vec::new();
     for index in info.indices.iter_deref() {
         let mut index = index.write();
-        if !index.unique {
-            continue;
-        }
         match changed.get(&index.id) {
             None => {}
+            // `partitionIndexOld`: revert the non-public state.
             Some(false) => {
                 if ddl_state == SchemaState::DELETE_REORGANIZATION {
                     index.state = SchemaState::PUBLIC;
                 }
             }
+            // `partitionIndexNew`: a copy may be public in delete
+            // reorganization, so it keeps taking writes for one more schema
+            // version; `rollbackLikeDropPartition` then moves it to delete
+            // only and removes it. A copy still in delete only never took
+            // writes and stays as is.
             Some(true) => {
-                if ddl_state == SchemaState::DELETE_REORGANIZATION {
+                if index.state != SchemaState::DELETE_ONLY {
                     index.state = SchemaState::WRITE_ONLY;
-                } else {
-                    dropped_indexes.push(index.clone_like_go());
                 }
             }
         }
-    }
-    for index in &dropped_indexes {
-        super::add_index::remove_index_and_hidden_columns(&mut info, index);
     }
     if ddl_state == SchemaState::DELETE_REORGANIZATION {
         let mut current = partition.write();

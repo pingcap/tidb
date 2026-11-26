@@ -22,6 +22,7 @@ mod ddl_sequence_source;
 mod executor_suite_ddl_statements_source;
 mod executor_test_jointest_join_test;
 mod planner_core_casetest_join_join_test;
+mod ddl_tests_partition_reorg_partition_leftover_index_test;
 mod executor_test_jointest_hashjoin_hash_join_test;
 mod executor_test_issuetest_executor_issue_test;
 mod executor_insert_test;

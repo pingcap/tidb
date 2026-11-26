@@ -2133,17 +2133,19 @@ fn plan_rollback_add_index(
 }
 
 /// Go `DropIndexColumnFlag`, `RemoveDependentHiddenColumns` and
-/// `removeIndexInfo`.
+/// `removeIndexInfo`. A hidden column another index still uses (a copy of the
+/// index a partition reorganization made) stays.
 pub(super) fn remove_index_and_hidden_columns(info: &mut TableInfo, index: &IndexInfo) {
     drop_index_column_flag(info, index);
     let hidden: Vec<String> = index
         .columns
         .iter_deref()
         .filter_map(|part| {
-            let offset = part.read().offset as usize;
-            info.columns.get(offset).and_then(|column| {
+            let offset = part.read().offset;
+            info.columns.get(offset as usize).and_then(|column| {
                 let column = column.read();
-                column.hidden.then(|| column.name.lowercase().to_owned())
+                (column.hidden && !is_column_used_by_other_index(info, index.id, offset))
+                    .then(|| column.name.lowercase().to_owned())
             })
         })
         .collect();
@@ -2184,6 +2186,16 @@ pub(super) fn remove_index_and_hidden_columns(info: &mut TableInfo, index: &Inde
     }
 }
 
+/// Go `isColumnUsedByOtherIndex`: whether an index other than `index_id`
+/// uses the column at `offset`, e.g. a copy of the index a partition
+/// reorganization made.
+fn is_column_used_by_other_index(info: &TableInfo, index_id: i64, offset: i64) -> bool {
+    info.indices.iter_deref().any(|other| {
+        let other = other.read();
+        other.id != index_id && other.columns.iter_deref().any(|part| part.read().offset == offset)
+    })
+}
+
 /// Go `DropIndexColumnFlag`: the flag the index gave its columns goes, and
 /// another index led by the same first column puts its own flag back.
 fn drop_index_column_flag(info: &TableInfo, index: &IndexInfo) {
@@ -2211,7 +2223,9 @@ fn drop_index_column_flag(info: &TableInfo, index: &IndexInfo) {
     let first_name = first.read().name.lowercase().to_owned();
     for other in info.indices.iter_deref() {
         let other = other.read();
-        if other.name.lowercase() == index.name.lowercase() {
+        // By id: a partition reorganization keeps index copies with the same
+        // name.
+        if other.id == index.id {
             continue;
         }
         if other
