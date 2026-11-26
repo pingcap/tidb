@@ -26,7 +26,7 @@ Full picture (2026-11-26; per-commit table `tidb-wt/tools/drift/full_picture.tsv
 - 3f2de015d91 2026-10-23 4/7 expression: avoid unnecessary statement summary history scans (#71583)
 - 592082dee72 2026-10-26 4/8 server: fix connection quota and cursor resource ownership (#72240)
 - 07b758bf938 2026-10-30 1/1 server: prevent cmux goroutine leaks during status shutdown (#72452)
-- 12d84a92765 2026-11-12 7/12 statistics, domain: keep stats workers running after a panic (#72768)
+- 12d84a92765 2026-11-12 7/12 statistics, domain: keep stats workers running after a panic (#72768) -- gcStatsWorker per-tick recovery ported; open: the stats DDL / priority-queue event handlers, StatsCacheImpl.Update, init-stats range workers, CallWithSCtx/WrapTxn recover a panic as an error
 - 2a6eb11aeb9 2026-11-19 5/6 config, ddl, executor: reject new NextGen DDL and imports during maintenance (#73408)
 - 6775607e08c 2026-11-23 3/4 parser, ddl, planner: parse the geometry types, SRID, spatial index and cast syntax, and reject them (#72006)
 - 896fc427b36 2026-11-24 11/13 ddl: keep TRUNCATE atomic and affinity groups consistent on failure (#72133)
