@@ -349,12 +349,17 @@ func NewWithContext(ctx context.Context, selfAddr string, etcdAddr []string, sto
 }
 
 func newWithCli(ctx context.Context, selfAddr string, cli *clientv3.Client, store kv.Storage) (*Service, error) {
-	// Keep the established session alive until Close can revoke its lease.
 	// Startup cancellation is forwarded only until construction completes.
 	ownerCtx, cancel := context.WithCancel(context.Background())
 	stopCancel := context.AfterFunc(ctx, cancel)
 	defer stopCancel()
-	l := owner.NewOwnerManager(ownerCtx, cli, "autoid", selfAddr, autoIDLeaderPath)
+	// etcd resigns canceled campaigns using the session client's context. Tie
+	// that cleanup to the service lifetime while keeping the underlying client
+	// available for bounded lease revocation. Do not Close this client wrapper:
+	// its Lease and Watcher are borrowed from cli.
+	ownerCli := clientv3.NewCtxClient(ownerCtx)
+	ownerCli.KV, ownerCli.Lease, ownerCli.Watcher = cli.KV, cli.Lease, cli.Watcher
+	l := owner.NewOwnerManager(ownerCtx, ownerCli, "autoid", selfAddr, autoIDLeaderPath)
 	service := &Service{
 		autoIDMap:  make(map[autoIDKey]*autoIDValue),
 		leaderShip: l,
@@ -416,11 +421,12 @@ func MockForTest(store kv.Storage) autoid.AutoIDAllocClient {
 // Close closes the Service and clean up resource.
 func (s *Service) Close() {
 	s.closeOnce.Do(func() {
-		if s.leaderShip != nil {
-			s.leaderShip.Close()
-		}
+		// Cancel election cleanup before joining the campaign goroutine.
 		if s.cancel != nil {
 			s.cancel()
+		}
+		if s.leaderShip != nil {
+			s.leaderShip.Close()
 		}
 		if s.etcdCli != nil {
 			if err := s.etcdCli.Close(); err != nil {

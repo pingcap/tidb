@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/pingcap/log"
+	autoid "github.com/pingcap/tidb/pkg/autoid_service"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/deploymode"
 	"github.com/pingcap/tidb/pkg/config/diagnosticmode"
@@ -36,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
 	"go.etcd.io/etcd/api/v3/etcdserverpb"
+	"go.etcd.io/etcd/api/v3/mvccpb"
 	"go.uber.org/goleak"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -124,6 +126,61 @@ func (*blockingStatusLeaseServer) LeaseKeepAlive(stream etcdserverpb.Lease_Lease
 			return err
 		}
 	}
+}
+
+type blockingStatusCampaignServer struct {
+	blockingStatusLeaseServer
+	etcdserverpb.UnimplementedKVServer
+	etcdserverpb.UnimplementedWatchServer
+	waiting     chan struct{}
+	revoked     chan struct{}
+	resign      chan struct{}
+	waitingOnce sync.Once
+	revokedOnce sync.Once
+}
+
+func (s *blockingStatusCampaignServer) Txn(ctx context.Context, req *etcdserverpb.TxnRequest) (*etcdserverpb.TxnResponse, error) {
+	if len(req.Success) > 0 && req.Success[0].GetRequestDeleteRange() != nil {
+		// A canceled election resigns using the session client's context. Keep
+		// that transaction stalled unless it is canceled or cleanup releases it.
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-s.resign:
+		}
+	}
+	return &etcdserverpb.TxnResponse{Header: &etcdserverpb.ResponseHeader{Revision: 2}, Succeeded: true}, nil
+}
+
+func (*blockingStatusCampaignServer) Range(_ context.Context, req *etcdserverpb.RangeRequest) (*etcdserverpb.RangeResponse, error) {
+	// An older candidate forces Election.Campaign to wait for its deletion.
+	return &etcdserverpb.RangeResponse{
+		Header: &etcdserverpb.ResponseHeader{Revision: 2},
+		Kvs:    []*mvccpb.KeyValue{{Key: []byte(string(req.Key) + "existing-owner"), CreateRevision: 1}},
+	}, nil
+}
+
+func (s *blockingStatusCampaignServer) Watch(stream etcdserverpb.Watch_WatchServer) error {
+	for {
+		req, err := stream.Recv()
+		if err != nil {
+			return err
+		}
+		created := req.GetCreateRequest() != nil
+		if err := stream.Send(&etcdserverpb.WatchResponse{
+			Header: &etcdserverpb.ResponseHeader{Revision: 2}, WatchId: 1, Created: created, Canceled: !created,
+		}); err != nil {
+			return err
+		}
+		if created {
+			s.waitingOnce.Do(func() { close(s.waiting) })
+		}
+	}
+}
+
+func (s *blockingStatusCampaignServer) LeaseRevoke(context.Context, *etcdserverpb.LeaseRevokeRequest) (*etcdserverpb.LeaseRevokeResponse, error) {
+	s.revokedOnce.Do(func() { close(s.revoked) })
+	return &etcdserverpb.LeaseRevokeResponse{}, nil
 }
 
 func TestStatusServerClose(t *testing.T) {
@@ -239,6 +296,93 @@ func TestStatusServerClose(t *testing.T) {
 		require.Nil(t, s.statusServer.Load())
 		require.Nil(t, s.grpcServer)
 	})
+
+	for _, initializing := range []bool{true, false} {
+		name := "after initialization"
+		if initializing {
+			name = "during initialization"
+		}
+		t.Run("blocked AutoID campaign/"+name, func(t *testing.T) {
+			ignoreCurrent := goleak.IgnoreCurrent()
+			t.Cleanup(func() { goleak.VerifyNone(t, ignoreCurrent) })
+			store := testkit.CreateMockStore(t)
+			listener, err := net.Listen("tcp", "127.0.0.1:0")
+			require.NoError(t, err)
+			defer listener.Close()
+			campaignServer := &blockingStatusCampaignServer{
+				blockingStatusLeaseServer: blockingStatusLeaseServer{
+					entered: make(chan struct{}), canceled: make(chan struct{}), release: make(chan struct{}),
+				},
+				waiting: make(chan struct{}), revoked: make(chan struct{}), resign: make(chan struct{}),
+			}
+			close(campaignServer.release)
+			grpcServer := grpc.NewServer()
+			etcdserverpb.RegisterLeaseServer(grpcServer, campaignServer)
+			etcdserverpb.RegisterKVServer(grpcServer, campaignServer)
+			etcdserverpb.RegisterWatchServer(grpcServer, campaignServer)
+			go func() { _ = grpcServer.Serve(listener) }()
+			defer grpcServer.Stop()
+			cfg := util.NewTestConfig()
+			cfg.Status.StatusPort = 0
+			cfg.Store = config.StoreTypeTiKV
+			cfg.Path = "%"
+			s := NewTestServer(cfg)
+			s.driver = NewTiDBDriver(&statusAutoIDStore{Storage: store, etcdAddrs: []string{listener.Addr().String()}})
+			require.NoError(t, s.listenStatusHTTPServer())
+			closed := make(chan struct{})
+			servingDone := make(chan struct{})
+			closeServer := sync.OnceFunc(func() {
+				s.Close()
+				close(closed)
+			})
+			defer func() {
+				close(campaignServer.resign)
+				go closeServer()
+				select {
+				case <-closed:
+				case <-time.After(5 * time.Second):
+					t.Error("status shutdown did not finish during cleanup")
+				}
+				select {
+				case <-servingDone:
+				case <-time.After(5 * time.Second):
+					t.Error("status initializer did not finish during cleanup")
+				}
+			}()
+			if initializing {
+				testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/autoid_service/afterAutoIDCampaign", func(*autoid.Service) {
+					<-s.statusInitializationContext().Done()
+				})
+			}
+			go func() {
+				s.startStatusServerAndRPCServer(http.NewServeMux())
+				close(servingDone)
+			}()
+			select {
+			case <-campaignServer.waiting:
+			case <-time.After(5 * time.Second):
+				t.Fatal("AutoID campaign did not wait behind the existing owner")
+			}
+			if !initializing {
+				s.statusMu.Lock()
+				service := s.autoIDService
+				s.statusMu.Unlock()
+				require.NotNil(t, service)
+			}
+			go closeServer()
+			select {
+			case <-closed:
+			case <-time.After(5 * time.Second):
+				t.Fatal("shutdown must cancel the blocked AutoID campaign")
+			}
+			require.True(t, isClosed(campaignServer.revoked), "shutdown must still revoke the AutoID lease")
+			_, err = s.statusListener.Accept()
+			require.ErrorIs(t, err, net.ErrClosed)
+			require.Nil(t, s.autoIDService)
+			require.Nil(t, s.statusServer.Load())
+			require.Nil(t, s.grpcServer)
+		})
+	}
 
 	t.Run("before initialization", func(t *testing.T) {
 		defer goleak.VerifyNone(t, goleak.IgnoreCurrent())

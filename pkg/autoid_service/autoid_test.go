@@ -327,4 +327,43 @@ func TestGRPC(t *testing.T) {
 		require.NoError(t, err)
 		require.EqualValues(t, -1, lease.TTL, "aborted startup must revoke ownership without waiting for lease expiry")
 	})
+
+	t.Run("canceled candidate preserves existing owner", func(t *testing.T) {
+		existingOwner, err := newWithCli(context.Background(), "existing-owner", etcdCli, store)
+		require.NoError(t, err)
+		defer existingOwner.Close()
+		require.Eventually(t, existingOwner.IsOwner, 5*time.Second, 10*time.Millisecond)
+		ownerLeases, err := etcdCli.Leases(context.Background())
+		require.NoError(t, err)
+		require.Len(t, ownerLeases.Leases, 1)
+
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/autoid_service/afterAutoIDCampaign", func(service *Service) {
+			t.Cleanup(service.Close)
+			require.False(t, service.IsOwner())
+			leases, err := etcdCli.Leases(context.Background())
+			require.NoError(t, err)
+			require.Len(t, leases.Leases, 2)
+			cancel()
+		})
+		candidate, err := newWithCli(ctx, addr, etcdCli, store)
+		if candidate != nil {
+			defer candidate.Close()
+		}
+		require.ErrorIs(t, err, context.Canceled)
+		require.Nil(t, candidate)
+		require.NoError(t, etcdCli.Ctx().Err(), "the shared client must remain usable")
+		leases, err := etcdCli.Leases(context.Background())
+		require.NoError(t, err)
+		require.Equal(t, ownerLeases.Leases, leases.Leases, "only the canceled candidate's lease should be revoked")
+		require.True(t, existingOwner.IsOwner())
+
+		// In particular, canceling the candidate must not close the shared lease
+		// client and prevent subsequent services from keeping their leases alive.
+		testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/autoid_service/afterAutoIDCampaign")
+		nextCandidate, err := newWithCli(context.Background(), "next-candidate", etcdCli, store)
+		require.NoError(t, err)
+		nextCandidate.Close()
+	})
 }
