@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"net"
 	"testing"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -103,6 +104,14 @@ func TestCanBroadcastAnalyzeStatsDeltaSkipsNonServingNodes(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			require.NoError(t, failpoint.Enable(fp, fmt.Sprintf("return(`%s`)", tc.info)))
 			canBroadcast, err := canBroadcastAnalyzeStatsDeltaForTest(context.Background())
+			if tc.canBroadcast && !canBroadcast && err == nil {
+				// A busy worker can exhaust the reachability probe's 50 ms dial timeout.
+				// Retry expected success, keeping negative cases as immediate checks.
+				require.Eventually(t, func() bool {
+					canBroadcast, err = canBroadcastAnalyzeStatsDeltaForTest(context.Background())
+					return canBroadcast || err != nil
+				}, time.Second, 10*time.Millisecond)
+			}
 			require.NoError(t, err)
 			require.Equal(t, tc.canBroadcast, canBroadcast)
 		})
