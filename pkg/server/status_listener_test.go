@@ -54,6 +54,47 @@ func (c *statusReadConn) Read(b []byte) (int, error) {
 	return c.Conn.Read(b)
 }
 
+func TestStatusServerHTTPMethods(t *testing.T) {
+	cfg := util.NewTestConfig()
+	cfg.Status.StatusPort = 0
+	s := NewTestServer(cfg)
+	require.NoError(t, s.listenStatusHTTPServer())
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Request-Method", r.Method)
+		w.WriteHeader(http.StatusNoContent)
+	})
+	servingDone := make(chan struct{})
+	go func() {
+		s.startStatusServerAndRPCServer(mux)
+		close(servingDone)
+	}()
+	defer func() {
+		s.Close()
+		select {
+		case <-servingDone:
+		case <-time.After(5 * time.Second):
+			t.Error("status serving did not finish")
+		}
+	}()
+	// Each method must be classified on its own connection by cmux.
+	client := &http.Client{Transport: &http.Transport{DisableKeepAlives: true}, Timeout: 5 * time.Second}
+	for _, method := range []string{
+		http.MethodGet, http.MethodHead, http.MethodPost, http.MethodPut,
+		http.MethodDelete, http.MethodConnect, http.MethodOptions, http.MethodTrace, http.MethodPatch,
+	} {
+		t.Run(method, func(t *testing.T) {
+			req, err := http.NewRequest(method, "http://"+s.statusListener.Addr().String()+"/", nil)
+			require.NoError(t, err)
+			resp, err := client.Do(req)
+			require.NoError(t, err)
+			require.NoError(t, resp.Body.Close())
+			require.Equal(t, http.StatusNoContent, resp.StatusCode)
+			require.Equal(t, method, resp.Header.Get("X-Request-Method"))
+		})
+	}
+}
+
 func TestStatusServerClose(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
