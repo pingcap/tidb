@@ -1837,6 +1837,8 @@ func TestModifyColumnResumeLegacyReorgJob(t *testing.T) {
 					startedLegacy = true
 					args.ModifyColumnType = model.ModifyTypeReorg
 					job.FillArgs(args)
+					_, err = job.Encode(true)
+					require.NoError(t, err)
 					return
 				}
 				// Step 2: simulate resuming that persisted legacy job after upgrade,
@@ -1846,6 +1848,8 @@ func TestModifyColumnResumeLegacyReorgJob(t *testing.T) {
 					hadTempObjs = args.ChangingColumn != nil
 					args.ModifyColumnType = tc.storedType
 					job.FillArgs(args)
+					_, err = job.Encode(true)
+					require.NoError(t, err)
 					if tc.rollback {
 						job.State = model.JobStateRollingback
 					}
