@@ -1237,6 +1237,12 @@ func TestInsertFromSelectConflictRetryAutoID(t *testing.T) {
 }
 
 func TestAutoRandRecoverTable(t *testing.T) {
+	// Set the step before starting background readers and restore it after store cleanup.
+	const autoRandIDStep = 5000
+	stp := autoid.GetStep()
+	autoid.SetStep(autoRandIDStep)
+	t.Cleanup(func() { autoid.SetStep(stp) })
+
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
@@ -1269,10 +1275,6 @@ func TestAutoRandRecoverTable(t *testing.T) {
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/meta/autoid/mockAutoIDChange"))
 	}()
-	const autoRandIDStep = 5000
-	stp := autoid.GetStep()
-	autoid.SetStep(autoRandIDStep)
-	defer autoid.SetStep(stp)
 
 	// Check rebase auto_random id.
 	tk.MustExec("create table t_recover_auto_rand (a bigint auto_random(5) primary key clustered);")
