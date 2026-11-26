@@ -269,7 +269,7 @@ drop table t_mv_avg_round;
 
 set div_precision_increment = 4;
 
-# In non-strict mode, FAST refresh writes the same SUM with or without AVG.
+# With non-strict definitions, FAST writes the same SUM with or without AVG.
 set @saved_sql_mode = @@sql_mode;
 set sql_mode = '';
 create table t_mv_avg_overflow (id int primary key, a int not null, b decimal(65,30) not null);
@@ -279,15 +279,53 @@ create materialized view mv_avg_overflow (a, av, s, n) refresh fast as
 select a, avg(b), sum(b), count(*) from t_mv_avg_overflow group by a;
 create materialized view mv_sum_overflow (a, s, n) refresh fast as
 select a, sum(b), count(*) from t_mv_avg_overflow group by a;
+set sql_mode = 'STRICT_TRANS_TABLES';
+create materialized view mv_avg_strict (a, av, s, n) refresh fast as
+select a, avg(b), sum(b), count(*) from t_mv_avg_overflow group by a;
+create materialized view mv_sum_strict (a, s, n) refresh fast as
+select a, sum(b), count(*) from t_mv_avg_overflow group by a;
 insert into t_mv_avg_overflow values (2, 1, 80000000000000000000000000000000000);
 refresh materialized view mv_sum_overflow fast;
 refresh materialized view mv_avg_overflow fast;
 select av, s, n from mv_avg_overflow;
 select s, n from mv_sum_overflow;
+# Strict definition mode rejects the write even in a non-strict refresh session.
+set sql_mode = '';
+--error 1690
+refresh materialized view mv_avg_strict fast;
+select av, s, n from mv_avg_strict;
+--error 1690
+refresh materialized view mv_sum_strict fast;
+--error 1690
+refresh materialized view mv_sum_strict complete delta apply;
+--error 1690
+refresh materialized view mv_sum_strict complete in place;
+--error 1690
+refresh materialized view mv_sum_strict complete out of place;
+select s, n from mv_sum_strict;
+drop materialized view mv_avg_strict;
+drop materialized view mv_sum_strict;
 drop materialized view mv_avg_overflow;
 drop materialized view mv_sum_overflow;
 drop materialized view log on t_mv_avg_overflow;
 drop table t_mv_avg_overflow;
+
+# Strict definition mode also applies to conversion errors in the refresh source.
+set sql_mode = 'STRICT_TRANS_TABLES';
+create table t_mv_strict_filter (a varchar(12) not null, b int not null);
+create materialized view log on t_mv_strict_filter (a, b);
+create materialized view mv_strict_filter (a, s, n) refresh fast as
+select a, sum(b), count(*) from t_mv_strict_filter where a != 0 group by a;
+set sql_mode = '';
+insert into t_mv_strict_filter values ('sample', 1);
+--error 1292
+refresh materialized view mv_strict_filter fast;
+--error 1292
+refresh materialized view mv_strict_filter complete delta apply;
+select count(*) from mv_strict_filter;
+drop materialized view mv_strict_filter;
+drop materialized view log on t_mv_strict_filter;
+drop table t_mv_strict_filter;
 set sql_mode = @saved_sql_mode;
 
 set tidb_mview_enable = off;

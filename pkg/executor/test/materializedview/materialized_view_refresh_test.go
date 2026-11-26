@@ -1670,6 +1670,8 @@ func TestMaterializedViewRefreshFastMinMax(t *testing.T) {
 		store, _ := testkit.CreateMockStoreAndDomain(t)
 		tk := newMViewTestKit(t, store)
 		tk.MustExec("use test")
+		// The filter compares a nonnumeric string with a number.
+		tk.MustExec("set sql_mode = ''")
 
 		tk.MustExec(`CREATE TABLE t_mv_fast_minmax_hint (
 		id BIGINT NOT NULL,
