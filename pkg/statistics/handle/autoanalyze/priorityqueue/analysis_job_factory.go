@@ -285,8 +285,13 @@ func (f *AnalysisJobFactory) CalculateIndicatorsForPartitions(
 	totalSize := 0.0
 	count := 0.0
 	partitionIDs = make(map[int64]struct{}, len(partitionStats))
-	cols := float64(globalStats.ColAndIdxExistenceMap.ColNum())
-	intest.Assert(cols != 0, "Column count should not be 0")
+	intest.Assert(globalStats.ColAndIdxExistenceMap != nil, "ColAndIdxExistenceMap should not be nil")
+	// Column metadata can be missing if a DDL event was missed or not yet processed.
+	// Fall back to row count only in that case, the same as CalculateTableSize.
+	cols := 1.0
+	if m := globalStats.ColAndIdxExistenceMap; m != nil && m.ColNum() != 0 {
+		cols = float64(m.ColNum())
+	}
 	totalLastAnalyzeDuration := time.Duration(0)
 
 	for pIDAndName, tblStats := range partitionStats {
