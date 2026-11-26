@@ -202,18 +202,27 @@ func (w *worker) onModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, 
 	resolvedModifyType := false
 	if args.ModifyColumnType == model.ModifyTypeNone ||
 		args.ModifyColumnType == model.ModifyColumnType(mysql.TypeNull) {
-		// Check the modify types again, as the type may be changed by other no-reorg modify-column jobs.
-		// For example, there are two DDLs submitted in parallel:
-		//      CREATE TABLE t (c VARCHAR(255) charset utf8);
-		// 		ALTER TABLE t MODIFY COLUMN c VARCHAR(255) charset utf8mb4;
-		// 		ALTER TABLE t MODIFY COLUMN c VARCHAR(100) charset utf8;
-		// Previously, the second DDL will be submitted successfully (VARCHAR(255) utf8 -> VARCHAR(100) utf8 is OK)
-		// but fail during execution, since the columnID has changed. However, as we now may reuse the old column,
-		// we must check the type again here as utf8mb4->utf8 is an invalid change.
-		modifyType, resolveErr := resolveModifyColumnType(tblInfo, oldCol, args.Column, args.ModifyColumnType, job.SQLMode)
-		if resolveErr != nil {
-			job.State = model.JobStateCancelled
-			return ver, errors.Trace(resolveErr)
+		var modifyType model.ModifyColumnType
+		if args.ChangingColumn != nil {
+			// Legacy jobs that already created a changing column/indexes on an
+			// older binary must stay on the full-reorg state machine for both
+			// resume and rollback cleanup.
+			modifyType = model.ModifyTypeReorg
+		} else {
+			// Check the modify types again, as the type may be changed by other no-reorg modify-column jobs.
+			// For example, there are two DDLs submitted in parallel:
+			//      CREATE TABLE t (c VARCHAR(255) charset utf8);
+			// 		ALTER TABLE t MODIFY COLUMN c VARCHAR(255) charset utf8mb4;
+			// 		ALTER TABLE t MODIFY COLUMN c VARCHAR(100) charset utf8;
+			// Previously, the second DDL will be submitted successfully (VARCHAR(255) utf8 -> VARCHAR(100) utf8 is OK)
+			// but fail during execution, since the columnID has changed. However, as we now may reuse the old column,
+			// we must check the type again here as utf8mb4->utf8 is an invalid change.
+			var resolveErr error
+			modifyType, resolveErr = resolveModifyColumnType(tblInfo, oldCol, args.Column, args.ModifyColumnType, job.SQLMode)
+			if resolveErr != nil {
+				job.State = model.JobStateCancelled
+				return ver, errors.Trace(resolveErr)
+			}
 		}
 
 		args.ModifyColumnType = modifyType

@@ -1778,3 +1778,83 @@ func TestModifyColumnPreserveOriginDefault(t *testing.T) {
 		tk.MustQuery("show warnings").Check(testkit.Rows())
 	})
 }
+
+func TestModifyColumnResumeLegacyReorgJob(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	for _, tc := range []struct {
+		name       string
+		storedType model.ModifyColumnType
+		rollback   bool
+	}{
+		{"typeNullResume", model.ModifyColumnType(mysql.TypeNull), false},
+		{"typeNullRollback", model.ModifyColumnType(mysql.TypeNull), true},
+		{"typeNoneResume", model.ModifyTypeNone, false},
+		{"typeNoneRollback", model.ModifyTypeNone, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("use test")
+			tk.MustExec("drop table if exists t")
+			tk.MustExec("create table t (a char(10) collate utf8_general_ci, key idx(a))")
+			tk.MustExec("insert into t values ('abc')")
+
+			var (
+				startedLegacy bool
+				rewroteLegacy bool
+				hadTempObjs   bool
+				gotType       model.ModifyColumnType
+			)
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
+				if job.Type != model.ActionModifyColumn {
+					return
+				}
+				args, err := model.GetModifyColumnArgs(job)
+				require.NoError(t, err)
+				// Step 1: simulate a pre-upgrade binary that ran full reorg for
+				// indexed CHAR -> VARCHAR and persisted temporary objects.
+				if !startedLegacy && job.SchemaState == model.StateNone {
+					startedLegacy = true
+					args.ModifyColumnType = model.ModifyTypeReorg
+					job.FillArgs(args)
+					return
+				}
+				// Step 2: simulate resuming that persisted legacy job after upgrade,
+				// carrying ModifyTypeNone / mysql.TypeNull alongside ChangingColumn.
+				if !rewroteLegacy && job.SchemaState == model.StateDeleteOnly {
+					rewroteLegacy = true
+					hadTempObjs = args.ChangingColumn != nil
+					args.ModifyColumnType = tc.storedType
+					job.FillArgs(args)
+					if tc.rollback {
+						job.State = model.JobStateRollingback
+					}
+				}
+			})
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/getModifyColumnType", func(tp model.ModifyColumnType) {
+				if rewroteLegacy {
+					gotType = tp
+				}
+			})
+
+			_, err := tk.Exec("alter table t modify column a varchar(20) collate utf8_general_ci")
+			if !tc.rollback {
+				require.NoError(t, err)
+			}
+			require.True(t, rewroteLegacy)
+			require.True(t, hadTempObjs)
+			require.Equal(t, model.ModifyTypeReorg, gotType)
+
+			tblAfter := external.GetTableByName(t, tk, "test", "t")
+			require.Len(t, tblAfter.Meta().Columns, 1)
+			require.Len(t, tblAfter.Meta().Indices, 1)
+			if tc.rollback {
+				require.Equal(t, mysql.TypeString, tblAfter.Meta().Columns[0].GetType())
+			} else {
+				require.Equal(t, mysql.TypeVarchar, tblAfter.Meta().Columns[0].GetType())
+			}
+			tk.MustQuery("select a from t").Check(testkit.Rows("abc"))
+			tk.MustExec("admin check table t")
+		})
+	}
+}

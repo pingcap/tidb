@@ -83,6 +83,7 @@ general-pool scheduling.
 
 High-level rules (read `applyExecutionRestrictions` for the exact gates):
 
+- If a legacy job (`ModifyTypeNone` or `mysql.TypeNull`) already has `ChangingColumn != nil` → stay on `ModifyTypeReorg` in `onModifyColumn` so both resume and rollback clean up its temporary column and indexes
 - If `classifyColumnChange(...) == ModifyTypeNoReorg`:
   - Not NULL → NOT NULL → `ModifyTypeNoReorg`
   - NULL → NOT NULL → `ModifyTypeNoReorgWithCheck` (requires validating existing rows)
