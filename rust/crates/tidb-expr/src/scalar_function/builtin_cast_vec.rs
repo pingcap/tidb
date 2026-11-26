@@ -39,10 +39,8 @@ pub(super) fn eval(
     {
         return vec_eval::eval_into(arg, EvalType::Int, ctx, input, result);
     }
-    if source == EvalType::String
-        && matches!(target, EvalType::Int | EvalType::Real)
-        && matches!(arg, crate::expression::Expression::ScalarFunction(child) if child.pb_code() == tidb_proto::tipb::ScalarFuncSig::DayName)
-    {
+    if source == EvalType::String && matches!(target, EvalType::Int | EvalType::Real)
+        && matches!(arg, crate::expression::Expression::ScalarFunction(child) if child.pb_code() == tidb_proto::tipb::ScalarFuncSig::DayName) {
         return vec_eval::eval_into(arg, target, ctx, input, result);
     }
     let field = function.get_static_type().expect("cast type");

@@ -267,15 +267,12 @@ impl<PdC: tikv_client::PdClient> NativeCopStore for TikvStore<PdC> {
                     }
                     current = Some((region.region.start_key.clone(), region_end.clone()));
                     if regions.last().is_none_or(|last| last.region.id != region.region.id) {
-                        if let Some(codec) = &codec {
-                            (region.region.start_key, region.region.end_key) =
-                                codec.decode_range(&region.region.start_key, &region.region.end_key)?;
-                            if let Some(buckets) = &mut region.buckets {
-                                let wire = tikv_client::request::ApiV1Codec::new(tikv_client::request::KeyMode::Txn);
-                                let encoded = buckets.keys.iter()
-                                    .map(|key| wire.encode_region_key(key))
-                                    .collect::<Vec<_>>();
-                                buckets.keys = codec.decode_bucket_keys(&encoded)?;
+                        if let Some(codec)=&codec {
+                            (region.region.start_key,region.region.end_key)=codec.decode_range(&region.region.start_key,&region.region.end_key)?;
+                            if let Some(buckets)=&mut region.buckets {
+                                let wire=tikv_client::request::ApiV1Codec::new(tikv_client::request::KeyMode::Txn);
+                                let encoded=buckets.keys.iter().map(|key|wire.encode_region_key(key)).collect::<Vec<_>>();
+                                buckets.keys=codec.decode_bucket_keys(&encoded)?;
                             }
                         }
                         regions.push(region);

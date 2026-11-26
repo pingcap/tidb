@@ -16,8 +16,9 @@ pub(super) fn eval(
     input: &Chunk,
     result: &mut Column,
 ) -> Result<(), EvalError> {
-    let unit =
-        { super::super::eval_numeric_row(&function.args[2], ctx, Row::empty(), EvalType::String)? };
+    let unit = {
+        super::super::eval_numeric_row(&function.args[2], ctx, Row::empty(), EvalType::String)?
+    };
     let target = function
         .get_static_type()
         .expect("date arithmetic type")

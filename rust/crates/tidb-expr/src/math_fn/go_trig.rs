@@ -96,12 +96,20 @@ const M_PI4: [u64; 20] = [
 /// so the reduction uses saturating helpers.
 #[inline]
 fn shl(a: u64, s: u32) -> u64 {
-    if s >= 64 { 0 } else { a << s }
+    if s >= 64 {
+        0
+    } else {
+        a << s
+    }
 }
 
 #[inline]
 fn shr(a: u64, s: u32) -> u64 {
-    if s >= 64 { 0 } else { a >> s }
+    if s >= 64 {
+        0
+    } else {
+        a >> s
+    }
 }
 
 use super::mul_add;
