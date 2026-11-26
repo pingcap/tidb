@@ -1629,8 +1629,7 @@ func TestModifyColumnReorgScheduling(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	fastReorgEnabled := vardef.EnableFastReorg.Load()
-	tk.MustExec("set global tidb_ddl_enable_fast_reorg = on")
+	fastReorgEnabled := vardef.EnableFastReorg.Swap(true)
 	defer vardef.EnableFastReorg.Store(fastReorgEnabled)
 	for _, tc := range []struct {
 		name  string
@@ -1679,12 +1678,14 @@ func TestModifyColumnReorgScheduling(t *testing.T) {
 			rename := strings.HasPrefix(tc.name, "rename")
 			require.Equal(t, !rename, scheduledForReorg)
 			require.Equal(t, !rename, fastReorg)
-			if tc.drift && !rename {
+			// Only V2 persists RenameOnly, which preserves the current definition.
+			preservesDefinition := tc.drift && rename && model.GetJobVerInUse() == model.JobVersion2
+			if tc.drift && !preservesDefinition {
 				require.Equal(t, model.ModifyTypeReorg, gotType)
 			} else {
 				require.Equal(t, model.ModifyTypeNoReorg, gotType)
 			}
-			if tc.drift && rename {
+			if preservesDefinition {
 				tk.MustQuery("select b from t").Check(testkit.Rows("1.234"))
 				tk.MustQuery("select column_type from information_schema.columns where table_schema = 'test' and table_name = 't' and column_name = 'b'").Check(testkit.Rows("decimal(12,3)"))
 			} else {
