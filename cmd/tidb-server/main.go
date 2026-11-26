@@ -402,6 +402,9 @@ func registerStores() {
 
 func createStoreDDLOwnerMgrAndDomain(keyspaceName string) (kv.Storage, *domain.Domain) {
 	cfg := config.GetGlobalConfig()
+	if cfg.Store == "unistore" {
+		kv.StandAloneTiDB = true
+	}
 	var fullPath string
 	if keyspaceName == "" {
 		fullPath = fmt.Sprintf("%s://%s", cfg.Store, cfg.Path)
