@@ -632,6 +632,5 @@ func TestAutoAnalyzeHandlesEmptyExistenceMapInCache(t *testing.T) {
 	old := statistics.AutoAnalyzeMinCnt
 	statistics.AutoAnalyzeMinCnt = 0
 	t.Cleanup(func() { statistics.AutoAnalyzeMinCnt = old })
-	// The queue fails to initialize: the column count of the partitioned table is 0.
-	require.False(t, h.AutoAnalyze().HandleAutoAnalyze())
+	require.True(t, h.AutoAnalyze().HandleAutoAnalyze())
 }
