@@ -434,6 +434,14 @@ func isStringStorageType(tp byte) bool {
 	}
 }
 
+// ConvertBetweenCharAndVarchar reports whether a CHAR/VARCHAR type change
+// requires reorganization under the legacy rules. The TiFlow DM syncer uses
+// this predicate to classify DDL events.
+func ConvertBetweenCharAndVarchar(oldType, newType byte) bool {
+	return (types.IsTypeVarchar(oldType) && newType == mysql.TypeString) ||
+		(oldType == mysql.TypeString && types.IsTypeVarchar(newType) && collate.NewCollationEnabled())
+}
+
 // IsElemsChangedToModifyColumn reports whether modifying ENUM/SET elements
 // removes or changes any existing element ordinal.
 func IsElemsChangedToModifyColumn(oldElems, newElems []string) bool {

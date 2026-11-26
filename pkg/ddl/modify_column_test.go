@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit/external"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
@@ -781,6 +782,20 @@ func TestModifyColumnIndexReorgAllowsNull(t *testing.T) {
 	require.NoError(t, insertErr)
 	tk.MustQuery("select * from t order by id").Check(testkit.Rows("1 a", "2 <nil>"))
 	tk.MustExec("admin check table t")
+}
+
+func TestConvertBetweenCharAndVarchar(t *testing.T) {
+	original := collate.NewCollationEnabled()
+	t.Cleanup(func() { collate.SetNewCollationEnabledForTest(original) })
+
+	for _, newCollation := range []bool{false, true} {
+		collate.SetNewCollationEnabledForTest(newCollation)
+		for _, varcharType := range []byte{mysql.TypeVarchar, mysql.TypeVarString} {
+			require.True(t, ddl.ConvertBetweenCharAndVarchar(varcharType, mysql.TypeString))
+			require.Equal(t, newCollation, ddl.ConvertBetweenCharAndVarchar(mysql.TypeString, varcharType))
+		}
+		require.False(t, ddl.ConvertBetweenCharAndVarchar(mysql.TypeLong, mysql.TypeString))
+	}
 }
 
 func TestGetModifyColumnType(t *testing.T) {
