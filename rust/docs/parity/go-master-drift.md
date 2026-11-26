@@ -9,7 +9,7 @@ Full picture (2026-11-26; per-commit table `tidb-wt/tools/drift/full_picture.tsv
 - Recall: the 293 commits off this list are not ported either, often. Verified unported among them: 40a24ee562f, 049bb177fa0, 31134f349d7, baa826dceda, 47dc1214658, bfa69e13585, 93a01d31f6d, 0103aff49f9, 82af7f5d393 (Rust copies the pre-fix precedence on purpose), 379c5c45e37 (Rust's `detachCNFCondAndBuildRangeForIndex` predates master's `IntersectSortedRanges` block), 32a66e481bd; and c0c535c7f5d is only partly ported. Estimate: roughly half of the off-list commits are unported, so ~300-330 of 533 in all.
 - Rust lacks the base for some fixes: COM_CHANGE_USER is unimplemented (answers 1047), so 6c869bc1432, 1bcfcd48663, e5efa812b7c, f1be26c3f1c have nothing to land on.
 
-## Fix-like (45)
+## Fix-like (37)
 
 - ce53f1c50aa 2026-07-22 2/2 importinto: fix cancel race before DXF task commit (#69968)
 - 4c0e2c06244 2026-08-03 3/4 privilege, executor: fix visibility for information_schema.user_attributes (#70278)
@@ -23,16 +23,12 @@ Full picture (2026-11-26; per-commit table `tidb-wt/tools/drift/full_picture.tsv
 - 3bd6b6d4d63 2026-09-04 1/1 executor: fix race between MPP task dispatch and cancellation (#70690)
 - fc7788ff517 2026-09-04 2/3 planner: fix countAfterAccess for IndexJoin in Skyline Pruning Comparison (#70791)
 - d3928d5c659 2026-09-11 1/1 ingestor: fix race when disabling store write limiter (#70946)
-- 3eee6459185 2026-09-14 1/1 ddl: keep original NOT NULL when rolling back failed MODIFY COLUMN (#70923)
 - 0386d784bc8 2026-09-15 1/1 executor: fix statement RU accounting for wrapped and locking statements (#71067)
 - 56ee5bb2684 2026-09-21 2/2 ddl, dxf: fix transition completion and scheduler cleanup (#71176)
 - 633a9e37f1c 2026-09-24 4/5 metrics, server: fix multi-statement latency attribution (#71584)
-- 5b7e1eb8f5f 2026-10-06 1/2 statistics: keep FM sketches across stats dump and load (#71769)
-- e86b42ec9cf 2026-10-09 4/5 types: fix JSON double formatting in containers and non-ASCII path keys (#71830)
 - a40e9d6e76f 2026-10-12 4/4 server: fix data race between connection liveness probe and packet read (#71855)
 - 95af22e17d1 2026-10-15 1/1 session, memory: prevent cancellation from interrupting statement cleanup (#71967)
 - 3dd517f4197 2026-10-16 1/1 ddl: reject local sort for nextgen add index (#71975)
-- 328460a9af0 2026-10-17 1/1 executor: fix multi-table UPDATE row tracking on nonclustered partitioned tables (#71972)
 - e43c93efd44 2026-10-19 2/2 session, executor: fix advisory locks and MPP encoding (#72099)
 - 24d128dd180 2026-10-20 1/1 domain: avoid TTL race in dangling import test (#72118)
 - 13544e9b147 2026-10-21 1/1 ddl: fix global index copies left or broken by reorganize partition (#72158)
@@ -43,19 +39,17 @@ Full picture (2026-11-26; per-commit table `tidb-wt/tools/drift/full_picture.tsv
 - 3c21da08aa8 2026-11-02 4/6 br: prevent credentials from leaking into logs and errors (#72214)
 - adee1920e10 2026-11-05 1/1 ddl: fix global multi-valued index cleanup during TRUNCATE PARTITION (#71299)
 - 79b62122968 2026-11-09 2/2 planner: do not let a broad missing-stats index lookup prune the table path (#72565)
-- 87d45a1d703 2026-11-10 1/2 planner: fix plan cache after table rename (#72900)
 - 7981253e7c3 2026-11-10 1/1 expression: fix flaky TestGetLock internal session check (#72941)
 - b1322c5d663 2026-11-10 9/9 ddl: reject unsafe standalone recovery of foreign keys (#71074)
-- 6a0ead325aa 2026-11-11 1/2 ddl: reject orphan child rows when referenced key contains NULL (#71000)
-- b0f09ba1ea4 2026-11-11 5/5 session: respect client charset in prepare deduplication (#71217)
 - 12d84a92765 2026-11-12 7/12 statistics, domain: keep stats workers running after a panic (#72768)
 - a0b8146bb20 2026-11-12 1/1 executor: reject MPP status reports with missing task metadata (#73054)
 - cfd43662b0f 2026-11-18 1/1 br: fix cdc changefeed conflicts error message (#73271)
-- 1fdec7a1737 2026-11-18 1/1 session: reject non-transactional DML with tx_read_ts (#73274)
 - 2a6eb11aeb9 2026-11-19 5/6 config, ddl, executor: reject new NextGen DDL and imports during maintenance (#73408)
 - 6775607e08c 2026-11-23 3/4 parser, ddl, planner: parse the geometry types, SRID, spatial index and cast syntax, and reject them (#72006)
 - 896fc427b36 2026-11-24 11/13 ddl: keep TRUNCATE atomic and affinity groups consistent on failure (#72133)
 - c09f6278deb 2026-11-25 7/8 ddl: fix hypothetical expression index creation (#72887)
+
+Fix-like, settled 2026-11-26 (Go tests ported, mutation-checked where a fix landed): 1fdec7a1737 (non-transactional DML refuses a pending tx_read_ts; the staleness gate skips the BATCH statement as Go's driver does), 6a0ead325aa (ADD FOREIGN KEY's orphan check is a NOT EXISTS anti-join), e86b42ec9cf (JSON path whitespace, `last`/`to` and identifier rules; one `is_ecmascript_identifier`), 328460a9af0 (multi-table UPDATE tracks rows by partition and handle after EXCHANGE PARTITION -- a wrong result before), 3eee6459185 (a failed MODIFY COLUMN keeps NOT NULL), 5b7e1eb8f5f (LOAD STATS saves the dumped FM sketches); 87d45a1d703 already held (test pinned); b0f09ba1ea4 not applicable (Rust has no prepare-dedup cache, `tidb_enable_cache_prepare_stmt` is inert).
 
 ## Features and refactors
 
