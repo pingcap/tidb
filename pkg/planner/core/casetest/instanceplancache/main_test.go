@@ -27,7 +27,7 @@ import (
 
 var (
 	typeInt      = "int"
-	typeVarchar  = "varchar(255)"
+	typeVarchar  = "varchar(128)" // Six utf8mb4 columns fit within the 3072-byte index limit.
 	typeFloat    = "float"
 	typeDouble   = "double"
 	typeDecimal  = "decimal(10,2)"
@@ -176,6 +176,17 @@ func TestInstancePlanCache(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec(`set global tidb_enable_instance_plan_cache=1`)
+	// Even an index over all six columns of the widest generated type must fit.
+	colNames := []string{"c0", "c1", "c2", "c3", "c4", "c5"}
+	cols := make([]string, 0, len(colNames))
+	for _, col := range colNames {
+		cols = append(cols, fmt.Sprintf("%s %s", col, typeVarchar))
+	}
+	indexCols := strings.Join(colNames, ", ")
+	tk.MustExec(fmt.Sprintf("create table max_index_length (%s, primary key (%s), index idx (%s)) charset utf8mb4",
+		strings.Join(cols, ", "), indexCols, indexCols))
+	tk.MustExec("drop table max_index_length")
+
 	for _, s := range prepareTables(10) {
 		tk.MustExec(s)
 	}
