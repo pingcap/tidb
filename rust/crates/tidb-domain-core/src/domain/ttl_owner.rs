@@ -61,6 +61,11 @@ impl Domain {
     /// do.ddl.OwnerManager().IsOwner)`, started. A second call keeps the
     /// first manager and returns no guard.
     pub fn start_ttl_job_manager(self: &Arc<Self>) -> Option<TtlJobManagerGuard> {
+        let mut skip = false;
+        tidb_failpoint::inject("github.com/pingcap/tidb/pkg/domain/skipStartTTLJobManager", |_| skip = true);
+        if skip {
+            return None;
+        }
         if self.ttl_job_manager.get().is_some() {
             return None;
         }

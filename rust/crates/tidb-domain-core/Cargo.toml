@@ -12,6 +12,7 @@ description = "TiDB domain: Go pkg/domain's Domain and the cluster services it o
 test-util = []
 
 [dependencies]
+tidb-failpoint = { path = "../tidb-failpoint" }
 tidb-mvservice = { path = "../tidb-mvservice" }
 tidb-timeutil = { path = "../tidb-timeutil" }
 tidb-metrics = { path = "../tidb-metrics" }
