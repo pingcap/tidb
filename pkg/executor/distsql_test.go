@@ -975,6 +975,94 @@ func TestIndexLookUpPushDownCopTask(t *testing.T) {
 	require.Equal(t, "3", localIndexLookUpRow[2], r.String())
 }
 
+func TestSkipScanCoprocessorRequest(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set session sql_mode = 'ONLY_FULL_GROUP_BY'")
+	tk.MustExec("create table skip_idx (a int, b int, n int, key idx(a, b, n))")
+	tk.MustExec("create table skip_pk (g int, n int, primary key(g, n) clustered)")
+	indexValues := make([]string, 0, 120)
+	for i := range 40 {
+		n := strconv.Itoa(i)
+		if i%2 == 0 {
+			n = "null"
+		}
+		indexValues = append(indexValues, "(null, 1, "+n+")", "(1, 1, null)", fmt.Sprintf("(2, null, %d)", i))
+	}
+	tk.MustExec("insert into skip_idx values " + strings.Join(indexValues, ","))
+	tableValues := make([]string, 0, 120)
+	for i := range 120 {
+		tableValues = append(tableValues, fmt.Sprintf("(%d, %d)", i%3, i))
+	}
+	tk.MustExec("insert into skip_pk values " + strings.Join(tableValues, ","))
+	tk.MustExec("analyze table skip_idx, skip_pk")
+
+	const sessionAlias = "test_skip_scan_cop"
+	const requestHook = "github.com/pingcap/tidb/pkg/store/copr/onBeforeSendReqCtx"
+	tk.MustExec("set session tidb_session_alias = '" + sessionAlias + "'")
+	queryAndCapture := func(sql string, want []string) [][]byte {
+		t.Helper()
+		var mu sync.Mutex
+		var requests [][]byte
+		require.NoError(t, failpoint.EnableCall(requestHook, func(req *tikvrpc.Request) {
+			copReq, ok := req.Req.(*coprocessor.Request)
+			if !ok || copReq.ConnectionAlias != sessionAlias || copReq.Tp != kv.ReqTypeDAG {
+				return
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			requests = append(requests, bytes.Clone(copReq.Data))
+		}))
+		defer func() { require.NoError(t, failpoint.Disable(requestHook)) }()
+		tk.MustQuery(sql).Sort().Check(testkit.Rows(want...))
+		mu.Lock()
+		defer mu.Unlock()
+		return requests
+	}
+
+	cases := []struct {
+		sql        string
+		want       []string
+		scanType   tipb.ExecType
+		prefixCols uint32
+		desc       bool
+	}{
+		{"select /*+ stream_agg() */ a, b, min(n) from skip_idx group by a, b", []string{"1 1 <nil>", "2 <nil> 0", "<nil> 1 1"}, tipb.ExecType_TypeIndexScan, 2, false},
+		{"select /*+ stream_agg() */ a, b, max(n) from skip_idx group by a, b", []string{"1 1 <nil>", "2 <nil> 39", "<nil> 1 39"}, tipb.ExecType_TypeIndexScan, 2, true},
+		{"select /*+ stream_agg() */ g, min(n) from skip_pk group by g", []string{"0 0", "1 1", "2 2"}, tipb.ExecType_TypeTableScan, 1, false},
+		{"select /*+ stream_agg() */ g, max(n) from skip_pk group by g", []string{"0 117", "1 118", "2 119"}, tipb.ExecType_TypeTableScan, 1, true},
+	}
+	for _, enabled := range []int{1, 0} {
+		tk.MustExec(fmt.Sprintf("set session tidb_opt_enable_skip_scan = %d", enabled))
+		for _, tc := range cases {
+			requests := queryAndCapture(tc.sql, tc.want)
+			require.NotEmpty(t, requests, "expected a scan request for %s", tc.sql)
+			for _, data := range requests {
+				dag := &tipb.DAGRequest{}
+				require.NoError(t, dag.Unmarshal(data), "%s", tc.sql)
+				require.NotEmpty(t, dag.Executors, "%s", tc.sql)
+				scan := dag.Executors[0]
+				require.Equal(t, tc.scanType, scan.Tp, "%s", tc.sql)
+				var skipScan *tipb.SkipScan
+				var desc bool
+				if scan.Tp == tipb.ExecType_TypeIndexScan {
+					skipScan, desc = scan.IdxScan.SkipScan, scan.IdxScan.Desc
+				} else {
+					skipScan, desc = scan.TblScan.SkipScan, scan.TblScan.Desc
+				}
+				if enabled == 0 {
+					require.Nil(t, skipScan, "%s", tc.sql)
+					continue
+				}
+				require.NotNil(t, skipScan, "%s", tc.sql)
+				require.Equal(t, tc.prefixCols, skipScan.PrefixColumnCount, "%s", tc.sql)
+				require.Equal(t, tc.desc, desc, "%s", tc.sql)
+			}
+		}
+	}
+}
+
 func TestPartitionIndexLookUpMergeWithSkewedPartitions(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

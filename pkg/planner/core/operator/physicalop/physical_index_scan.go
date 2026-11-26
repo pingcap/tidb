@@ -80,9 +80,7 @@ type PhysicalIndexScan struct {
 	IsPartition bool
 	Desc        bool
 	KeepOrder   bool
-	// SkipScan enables storage-side skipping of duplicate index prefixes. The
-	// property is copied into the IndexScan request when the tipb protocol
-	// provides the corresponding fields.
+	// SkipScan asks TiKV to skip repeated leading index-key prefixes.
 	SkipScan bool
 	// SkipScanPrefixColumnCount is the number of leading index columns that
 	// form the prefix used by SkipScan.
@@ -586,6 +584,9 @@ func (p *PhysicalIndexScan) ToPB(_ *base.BuildPBContext, _ kv.StoreType) (*tipb.
 		Columns:          pkgutil.ColumnsToProto(columns, p.Table.PKIsHandle, true, false /* Doesn't support IndexScan on TiFlash for now */),
 		Desc:             p.Desc,
 		PrimaryColumnIds: pkColIDs,
+	}
+	if p.SkipScan {
+		idxExec.SkipScan = &tipb.SkipScan{PrefixColumnCount: uint32(p.SkipScanPrefixColumnCount)}
 	}
 	if p.IsPartition {
 		idxExec.TableId = p.PhysicalTableID

@@ -142,7 +142,7 @@ type PhysicalTableScan struct {
 	// KeepOrder is true, if sort data by scanning pkcol,
 	KeepOrder bool
 	Desc      bool
-	// SkipScan reads a representative row from each leading handle prefix.
+	// SkipScan asks TiKV to skip repeated leading common-handle prefixes.
 	SkipScan                  bool
 	SkipScanPrefixColumnCount int
 	// ByItems only for partition table with orderBy + pushedLimit
@@ -792,6 +792,9 @@ func (p *PhysicalTableScan) ToPB(ctx *base.BuildPBContext, storeType kv.StoreTyp
 	}
 	tsExec := tables.BuildTableScanFromInfos(p.Table, p.Columns, p.StoreType == kv.TiFlash)
 	tsExec.Desc = p.Desc
+	if storeType == kv.TiKV && p.SkipScan {
+		tsExec.SkipScan = &tipb.SkipScan{PrefixColumnCount: uint32(p.SkipScanPrefixColumnCount)}
+	}
 	keepOrder := p.KeepOrder
 	tsExec.KeepOrder = &keepOrder
 	tsExec.IsFastScan = &(ctx.TiFlashFastScan)
