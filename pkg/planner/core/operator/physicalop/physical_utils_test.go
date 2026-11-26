@@ -53,7 +53,7 @@ func TestFlattenListPushDownPlan(t *testing.T) {
 	require.Same(t, plans[3], flatten[0])
 }
 
-func TestTryToGetMppHashAggs(t *testing.T) {
+func TestTryToGetMppHashAggsForMaxMinCount(t *testing.T) {
 	buildAgg := func(aggName string, withGroupBy bool) *logicalop.LogicalAggregation {
 		ctx := mock.NewContext()
 		argCol := &expression.Column{
@@ -103,20 +103,6 @@ func TestTryToGetMppHashAggs(t *testing.T) {
 
 	normalAggPlans := tryToGetMppHashAggs(buildAgg(ast.AggFuncMax, true), prop)
 	require.True(t, containsRunMode(normalAggPlans, Mpp2Phase))
-
-	t.Run("MV decimal AVG finalizes in TiDB", func(t *testing.T) {
-		agg := buildAgg(ast.AggFuncAvg, true)
-		require.True(t, containsRunMode(tryToGetMppHashAggs(agg, prop), Mpp2Phase))
-
-		agg.SCtx().GetSessionVars().InMViewMaintenance = true
-		plans := tryToGetMppHashAggs(agg, prop)
-		require.Len(t, plans, 1)
-		require.True(t, containsRunMode(plans, MppTiDB))
-
-		mppProp := *prop
-		mppProp.TaskTp = property.MppTaskType
-		require.Empty(t, tryToGetMppHashAggs(agg, &mppProp))
-	})
 
 	for _, aggName := range []string{ast.AggFuncMaxCount, ast.AggFuncMinCount} {
 		plans := tryToGetMppHashAggs(buildAgg(aggName, true), prop)

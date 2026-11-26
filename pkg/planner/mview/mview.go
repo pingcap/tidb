@@ -30,8 +30,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/opcode"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	utilhint "github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/mviewutil"
@@ -390,7 +388,7 @@ type buildLocalResult struct {
 	aggCols      []aggColInfo
 	hasMinMax    bool
 
-	countStarMVOffset int
+	countStarAggIndex int
 }
 
 // Build constructs the merge-source plan and metadata for one MV incremental merge window.
@@ -426,10 +424,6 @@ func ResolveFastRefreshSource(is infoschema.InfoSchema, mv *model.TableInfo) (*F
 	}
 	if mv.MaterializedView == nil {
 		return nil, errors.Errorf("table %s is not a materialized view", mv.Name.O)
-	}
-	if mv.MaterializedView.DefinitionDivPrecisionIncrement < 0 ||
-		mv.MaterializedView.DefinitionDivPrecisionIncrement > int(variable.GetSysVar(vardef.DivPrecisionIncrement).MaxValue) {
-		return nil, errors.Errorf("materialized view %s has invalid maintenance numeric metadata", mv.Name.O)
 	}
 	if len(mv.MaterializedView.BaseTableIDs) != 1 {
 		return nil, errors.Errorf(
@@ -534,6 +528,7 @@ func buildLocal(
 	if err != nil {
 		return nil, err
 	}
+
 	if len(mv.Columns) != len(mvSel.Fields.Fields) {
 		// This should never happen for valid MV metadata. Keep it as a guard to avoid mismatched join schema.
 		return nil, errors.Errorf(
@@ -543,14 +538,14 @@ func buildLocal(
 		)
 	}
 
-	countStarMVOffset := -1
-	for _, ac := range aggCols {
+	countStarAggIndex := -1
+	for i, ac := range aggCols {
 		if ac.info.Kind == AggCountStar {
-			countStarMVOffset = ac.info.MVOffset
+			countStarAggIndex = i
 			break
 		}
 	}
-	if countStarMVOffset < 0 {
+	if countStarAggIndex < 0 {
 		return nil, errors.New("materialized view definition must include COUNT(*) for mview")
 	}
 
@@ -567,7 +562,7 @@ func buildLocal(
 		groupKeyOffs:      groupKeyOffsets,
 		aggCols:           aggCols,
 		hasMinMax:         hasMinMax,
-		countStarMVOffset: countStarMVOffset,
+		countStarAggIndex: countStarAggIndex,
 	}, nil
 }
 
@@ -672,7 +667,7 @@ func buildFromLocal(
 	if err != nil {
 		return nil, err
 	}
-	avgDependencies, err := mapAvgDependencies(local.aggCols, aggArgNotNullByOffset)
+	avgDependencies, err := mapAvgDependencies(local.aggCols, local.countStarAggIndex, aggArgNotNullByOffset)
 	if err != nil {
 		return nil, err
 	}
@@ -774,7 +769,7 @@ func buildFromLocal(
 		MVTablePKCols:                  mvTablePKCols,
 		GroupKeyMVOffsets:              append([]int(nil), local.groupKeyOffs...),
 		GroupKeyBaseCols:               groupKeyBaseCols,
-		CountStarMVOffset:              local.countStarMVOffset,
+		CountStarMVOffset:              local.aggCols[local.countStarAggIndex].info.MVOffset,
 		AggInfos:                       outAggInfos,
 	}
 	return res, nil
@@ -1039,7 +1034,7 @@ func extractAggInfosFromMVSelect(sel *ast.SelectStmt) (aggCols []aggColInfo, has
 					ArgColName: argCol.Name.Name.L,
 				},
 				// AVG is finalized from explicit SUM/COUNT state and never gets a delta column.
-				argExpr: stripColumnQualifier(agg.Args[0]),
+				argExpr: argCol,
 			})
 		case ast.AggFuncMax:
 			argCol, ok := agg.Args[0].(*ast.ColumnNameExpr)
@@ -1126,29 +1121,17 @@ func mapSumToCountExprDependencies(aggCols []aggColInfo, sumArgNotNullByOffset m
 // replace COUNT(expr) because both counts are equivalent.
 func mapAvgDependencies(
 	aggCols []aggColInfo,
+	countStarIdx int,
 	argNotNullByOffset map[int]bool,
 ) (map[int][3]int, error) {
 	avgDeps := make(map[int][3]int)
-	countStarIdx := -1
-	for i, ac := range aggCols {
-		if ac.info.Kind == AggCountStar {
-			countStarIdx = i
-			break
-		}
-	}
-	if countStarIdx < 0 {
-		return nil, errors.New("AVG requires COUNT(*) dependency")
-	}
 	for i, ac := range aggCols {
 		if ac.info.Kind != AggAvg {
 			continue
 		}
-		if ac.argExpr == nil {
-			return nil, errors.Errorf("AVG aggregate argument is nil at mv offset %d", ac.info.MVOffset)
-		}
 		sumIdx, countIdx := -1, -1
 		for j, candidate := range aggCols {
-			if candidate.argExpr == nil || !aggregateArgsEqual(ac, candidate) {
+			if candidate.info.ArgColName != ac.info.ArgColName {
 				continue
 			}
 			if sumIdx < 0 && candidate.info.Kind == AggSum {

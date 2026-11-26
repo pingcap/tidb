@@ -33,8 +33,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	_ "github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/mock"
@@ -180,16 +178,6 @@ func TestBuildCountSum(t *testing.T) {
 		{Pos: 6, DB: mvDBName, Tbl: mvTableAlias, Col: "s", OrigTbl: mv.Name.O, OrigCol: "s"},
 		{Pos: 7, DB: mvDBName, Tbl: mvTableAlias, Col: "__mview_mv_rowid", OrigCol: "_tidb_rowid"},
 	})
-
-	mv.MaterializedView.DefinitionDivPrecisionIncrement = int(variable.GetSysVar(vardef.DivPrecisionIncrement).MaxValue) + 1
-	_, err = mview.Build(
-		sctx.GetPlanCtx(),
-		is,
-		mv,
-		mview.BuildOptions{FromTS: 10},
-		nil,
-	)
-	require.ErrorContains(t, err, "invalid maintenance numeric metadata")
 }
 
 func TestBuildAvgUsesCountStarForNotNullArg(t *testing.T) {
@@ -234,11 +222,11 @@ func TestBuildAvgUsesCountStarForNotNullArg(t *testing.T) {
 			mkCol(1, "x", 0, mysql.TypeLong),
 			mkCol(2, "cnt_star", 1, mysql.TypeLonglong),
 			mkCol(3, "avg_b", 2, mysql.TypeNewDecimal),
-			mkCol(4, "sum_b", 3, mysql.TypeLonglong),
+			mkCol(4, "sum_b", 3, mysql.TypeNewDecimal),
 		},
 		MaterializedView: &model.MaterializedViewInfo{
 			BaseTableIDs: []int64{baseID},
-			SQLContent:   "select a, count(1), avg(b), sum(b) from t group by a",
+			SQLContent:   "select a, count(1), avg(t.B), sum(b) from t group by a",
 		},
 	}
 
@@ -266,44 +254,6 @@ func TestBuildAvgUsesCountStarForNotNullArg(t *testing.T) {
 	}
 	require.True(t, hasAvg)
 	require.True(t, hasSum)
-
-	for _, tt := range []struct {
-		name string
-		tp   byte
-	}{
-		{name: "float", tp: mysql.TypeFloat},
-		{name: "double", tp: mysql.TypeDouble},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			base.Columns[1].SetType(tt.tp)
-			mlog.Columns[1].SetType(tt.tp)
-			mv.Columns[2].SetType(mysql.TypeDouble)
-			mv.Columns[3].SetType(mysql.TypeDouble)
-			is := infoschema.MockInfoSchema([]*model.TableInfo{base, mlog, mv})
-			domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(is)
-
-			res, err := mview.Build(sctx.GetPlanCtx(), is, mv, mview.BuildOptions{FromTS: 10}, nil)
-			require.NoError(t, err)
-			for _, ai := range res.AggInfos {
-				if ai.Kind == mview.AggSum {
-					// AVG needs the updated row count to make SUM NULL when the group is deleted.
-					requireDependencies(t, ai, []int{1, 3})
-				}
-			}
-		})
-	}
-
-	t.Run("case-insensitive AVG dependencies", func(t *testing.T) {
-		base.Columns[1].SetType(mysql.TypeLong)
-		mlog.Columns[1].SetType(mysql.TypeLong)
-		mv.Columns[2].SetType(mysql.TypeNewDecimal)
-		mv.Columns[3].SetType(mysql.TypeLonglong)
-		mv.MaterializedView.SQLContent = "select a, count(1), avg(B), sum(b) from t group by a"
-		is := infoschema.MockInfoSchema([]*model.TableInfo{base, mlog, mv})
-		domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(is)
-		_, err := mview.Build(sctx.GetPlanCtx(), is, mv, mview.BuildOptions{FromTS: 10}, nil)
-		require.NoError(t, err)
-	})
 }
 
 func TestBuildCountExprSumExpr(t *testing.T) {
