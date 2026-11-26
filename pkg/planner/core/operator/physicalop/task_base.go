@@ -319,6 +319,7 @@ func (t *MppTask) ConvertToRootTaskImpl(ctx base.PlanContext) (rt *RootTask) {
 		StoreType: kv.TiFlash,
 	}.Init(ctx, t.p.QueryBlockOffset())
 	p.SetStats(t.p.StatsInfo())
+	clearMaterializedVirtualColumns(p, t.p)
 	collectPartitionInfosFromMPPPlan(p, t.p)
 	// Preserve partition pruning metadata for single-table readers.
 	// The metadata is produced on the DataSource side and already aligned with
@@ -357,6 +358,61 @@ func (t *MppTask) ConvertToRootTaskImpl(ctx base.PlanContext) (rt *RootTask) {
 		rt.SetPlan(sel)
 	}
 	return rt
+}
+
+// clearMaterializedVirtualColumns marks the virtual columns in the reader's
+// output that TiFlash already computed (see MaterializeVirtualColumnsInTiFlashScan)
+// as ordinary columns, so TiDB does not try to fill them again from base columns
+// the reader does not return. A virtual column is still filled by TiDB when a
+// table scan in the MPP plan outputs it unmaterialized (disaggregated TiFlash, or
+// TiFlash cop banned).
+func clearMaterializedVirtualColumns(reader *PhysicalTableReader, mppPlan base.PhysicalPlan) {
+	schema := reader.Schema()
+	needed := false
+	for _, col := range schema.Columns {
+		if col.VirtualExpr != nil {
+			needed = true
+			break
+		}
+	}
+	if !needed {
+		return
+	}
+	unmaterialized := make(map[int64]struct{})
+	var collect func(p base.PhysicalPlan)
+	collect = func(p base.PhysicalPlan) {
+		if ts, ok := p.(*PhysicalTableScan); ok {
+			for _, col := range ts.Schema().Columns {
+				if col.VirtualExpr != nil {
+					unmaterialized[col.UniqueID] = struct{}{}
+				}
+			}
+		}
+		for _, child := range p.Children() {
+			collect(child)
+		}
+	}
+	collect(mppPlan)
+	newCols := make([]*expression.Column, len(schema.Columns))
+	changed := false
+	for i, col := range schema.Columns {
+		newCols[i] = col
+		if col.VirtualExpr == nil {
+			continue
+		}
+		if _, ok := unmaterialized[col.UniqueID]; ok {
+			continue
+		}
+		c := col.Clone().(*expression.Column)
+		c.VirtualExpr = nil
+		newCols[i] = c
+		changed = true
+	}
+	if changed {
+		newSchema := schema.Clone()
+		newSchema.Columns = newCols
+		reader.SetSchema(newSchema)
+	}
 }
 
 // SetPlan sets the mpp task's plan.
@@ -586,6 +642,9 @@ func (t *CopTask) convertToRootTaskImpl(ctx base.PlanContext) (rt *RootTask) {
 		}.Init(ctx, t.TablePlan.QueryBlockOffset())
 		p.PlanPartInfo = t.PhysPlanPartInfo
 		p.SetStats(t.TablePlan.StatsInfo())
+		if ts.StoreType == kv.TiFlash {
+			clearMaterializedVirtualColumns(p, t.TablePlan)
+		}
 
 		// If agg was pushed down in Attach2Task(), the partial agg was placed on the top of tablePlan, the final agg was
 		// placed above the PhysicalTableReader, and the schema should have been set correctly for them, the schema of

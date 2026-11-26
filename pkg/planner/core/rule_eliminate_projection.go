@@ -105,6 +105,11 @@ func doPhysicalProjectionElimination(p base.PhysicalPlan) base.PhysicalPlan {
 	}
 
 	proj, isProj := p.(*physicalop.PhysicalProjection)
+	if isProj {
+		if merged := mergeColumnProjectionIntoChild(proj); merged != nil {
+			return merged
+		}
+	}
 	if !isProj || !canProjectionBeEliminatedStrict(proj) {
 		return p
 	}
@@ -122,6 +127,40 @@ func doPhysicalProjectionElimination(p base.PhysicalPlan) base.PhysicalPlan {
 		}
 	}
 	return child
+}
+
+// mergeColumnProjectionIntoChild folds a projection that only selects columns
+// of a child projection that computes virtual columns in TiFlash into that
+// child, e.g. Projection [c] above Projection [a, plus(a, 1)->c] becomes
+// Projection [plus(a, 1)->c]. Other projection pairs are left alone. It returns
+// nil when p can't be folded.
+func mergeColumnProjectionIntoChild(p *physicalop.PhysicalProjection) base.PhysicalPlan {
+	if p.CalculateNoDelay || p.Schema().Len() == 0 || len(p.Exprs) != p.Schema().Len() {
+		return nil
+	}
+	childProj, ok := p.Children()[0].(*physicalop.PhysicalProjection)
+	if !ok || !childProj.MaterializesVirtualColumns || childProj.CalculateNoDelay || len(childProj.Exprs) != childProj.Schema().Len() {
+		return nil
+	}
+	updateRefs := p.SCtx().GetSessionVars().StmtCtx.ColRefFromUpdatePlan
+	newExprs := make([]expression.Expression, 0, len(p.Exprs))
+	for i, e := range p.Exprs {
+		col, isCol := e.(*expression.Column)
+		if !isCol {
+			return nil
+		}
+		j := childProj.Schema().ColumnIndex(col)
+		if j < 0 {
+			return nil
+		}
+		if updateRefs.Has(int(p.Schema().Columns[i].UniqueID)) && !childProj.Schema().Columns[j].Equal(nil, p.Schema().Columns[i]) {
+			return nil
+		}
+		newExprs = append(newExprs, childProj.Exprs[j])
+	}
+	childProj.Exprs = newExprs
+	childProj.SetSchema(p.Schema())
+	return childProj
 }
 
 // eliminatePhysicalProjection should be called after physical optimization to
