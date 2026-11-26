@@ -9,11 +9,23 @@ go_test(
     ],
     flaky = True,
     race = "on",
+<<<<<<< HEAD
     shard_count = 6,
+=======
+    shard_count = 8,
+>>>>>>> 99702a91e27 (test: use live session manager in analyze memory control tests (#67415))
     deps = [
         "//pkg/config",
+        "//pkg/domain",
         "//pkg/executor",
+<<<<<<< HEAD
         "//pkg/sessionctx/variable",
+=======
+        "//pkg/parser/mysql",
+        "//pkg/session/sessionapi",
+        "//pkg/session/sessmgr",
+        "//pkg/sessionctx/vardef",
+>>>>>>> 99702a91e27 (test: use live session manager in analyze memory control tests (#67415))
         "//pkg/statistics",
         "//pkg/statistics/handle/ddl/testutil",
         "//pkg/testkit",
