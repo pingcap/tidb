@@ -216,7 +216,33 @@ pub fn cancel_and_wait_import_job(ctx: &Context, job_id: i64) -> Result<(), Erro
                 .map_err(|e| Arc::new(e) as Error)?;
             tidb_dxf_handle::wait_task_done_by_key(&ctx, &key).map_err(|e| Arc::new(e) as Error)
         }
-        Err(e) if e.is(&tidb_dxf_storage::StorageError::TaskNotFound) => cancel_dangling_import_job(&ctx, job_id),
+        Err(e) if e.is(&tidb_dxf_storage::StorageError::TaskNotFound) => {
+            let mut probe_miss_job_id = job_id;
+            tidb_failpoint::inject_call(
+                "github.com/pingcap/tidb/pkg/executor/afterCancelImportTaskProbeMiss",
+                &mut probe_miss_job_id,
+            );
+            // In next-gen, the import job and DXF task are created in
+            // separate transactions. The job row can exist before the DXF
+            // task row is committed, or the task submission can fail after
+            // the job is created. If the task row is committed after the
+            // lookup, do not wait for it: the dangling fallback either
+            // cancels the still-pending import job or reports that the
+            // scheduler changed the job state first.
+            tidb_logutil::bg_logger().info(
+                "cancel import job directly after initial dxf task lookup found no task",
+                &[
+                    tidb_log::Field::new("jobID", tidb_log::Value::I64(job_id)),
+                    tidb_log::Field::new("taskKey", tidb_log::Value::Str(key.clone())),
+                ],
+            );
+            let mut dangling_job_id = job_id;
+            tidb_failpoint::inject_call(
+                "github.com/pingcap/tidb/pkg/executor/beforeCancelDanglingImportJob",
+                &mut dangling_job_id,
+            );
+            cancel_dangling_import_job(&ctx, job_id)
+        }
         Err(e) => Err(Arc::new(e)),
     }
 }
