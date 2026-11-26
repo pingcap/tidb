@@ -167,6 +167,7 @@ func onMultiSchemaChange(w *worker, jobCtx *jobContext, job *model.Job) (ver int
 				jobCtx.deferStorageClassTransitionStaging = false
 				if err = w.flushPendingStorageClassTransitions(jobCtx); err != nil {
 					restoreProcessedSubJobs()
+					jobCtx.mustRollbackTxnOnError = true
 					return 0, err
 				}
 			}
@@ -197,7 +198,9 @@ func onMultiSchemaChange(w *worker, jobCtx *jobContext, job *model.Job) (ver int
 			diff.Version = ver
 			diff.SubActionTypes = actionTypes
 			if err = metaMut.SetSchemaDiff(diff); err != nil {
-				return ver, err
+				restoreProcessedSubJobs()
+				jobCtx.mustRollbackTxnOnError = true
+				return 0, err
 			}
 		}
 		if err = w.flushPendingStorageClassTransitions(jobCtx); err != nil {
@@ -205,6 +208,7 @@ func onMultiSchemaChange(w *worker, jobCtx *jobContext, job *model.Job) (ver int
 			// Restore the in-memory sub-jobs so the outer worker can roll the
 			// transaction back and retry the whole batch.
 			restoreProcessedSubJobs()
+			jobCtx.mustRollbackTxnOnError = true
 			return 0, err
 		}
 		// All the sub-jobs are non-revertible.

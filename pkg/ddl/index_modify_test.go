@@ -1306,7 +1306,7 @@ func TestAddIndexWithAnalyze(t *testing.T) {
 	idxBInfo := tbl.Meta().FindIndexByName("idx_b")
 	require.NotNil(t, idxBInfo)
 	// check the stats handle
-	statsTable, ok := dom.StatsHandle().StatsCache.Get(tbl.Meta().ID)
+	statsTable, ok := dom.StatsHandle().Cache().Get(tbl.Meta().ID)
 	require.True(t, ok)
 	// check the stats element is analyzed
 	require.True(t, statsTable.ColAndIdxExistenceMap.Has(aInfo.ID, false))
@@ -1338,7 +1338,7 @@ func TestAddIndexWithAnalyze(t *testing.T) {
 	idxInfo = tbl.Meta().FindIndexByName("idx")
 	require.NotNil(t, idxInfo)
 	// check the stats handle
-	statsTable, ok = dom.StatsHandle().StatsCache.Get(tbl.Meta().ID)
+	statsTable, ok = dom.StatsHandle().Cache().Get(tbl.Meta().ID)
 	require.True(t, ok)
 	// check the stats element is analyzed
 	require.True(t, statsTable.ColAndIdxExistenceMap.Has(aInfo.ID, false))
@@ -1375,7 +1375,7 @@ func TestAddIndexWithAnalyze(t *testing.T) {
 	idInfo := tbl.Meta().FindPublicColumnByName("id")
 	require.NotNil(t, idInfo)
 	// check the stats handle
-	statsTable, ok = dom.StatsHandle().StatsCache.Get(tbl.Meta().ID)
+	statsTable, ok = dom.StatsHandle().Cache().Get(tbl.Meta().ID)
 	require.True(t, ok)
 	// column is analyzed from last time.
 	require.True(t, statsTable.ColAndIdxExistenceMap.Has(idInfo.ID, false))
@@ -1393,7 +1393,7 @@ func TestAddIndexWithAnalyze(t *testing.T) {
 	require.NotNil(t, idxInfo)
 
 	// check the stats handle
-	statsTable, ok = dom.StatsHandle().StatsCache.Get(tbl.Meta().ID)
+	statsTable, ok = dom.StatsHandle().Cache().Get(tbl.Meta().ID)
 	require.True(t, ok)
 	// column is analyzed from last time.
 	require.True(t, statsTable.ColAndIdxExistenceMap.Has(idInfo.ID, false))

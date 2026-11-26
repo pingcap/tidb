@@ -1943,12 +1943,10 @@ func (s *session) executeInternalImpl(ctx context.Context, sql string, args ...a
 	rs, err = s.ExecuteStmt(ctx, stmtNode)
 	if err != nil {
 		s.sessionVars.StmtCtx.AppendError(err)
-	}
-	if rs == nil {
 		return nil, err
 	}
 
-	return rs, err
+	return rs, nil
 }
 
 // Execute is deprecated, we can remove it as soon as plugins are migrated.
@@ -2844,7 +2842,7 @@ func (s *session) executeStmtImpl(ctx context.Context, stmtNode ast.StmtNode) (r
 				zap.Error(err),
 				zap.String("session", s.String()))
 		}
-		return recordSet, err
+		return nil, err
 	}
 	if !s.isInternal() && config.GetGlobalConfig().EnableTelemetry {
 		telemetry.CurrentExecuteCount.Inc()
@@ -3159,6 +3157,7 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 			err = errors.New("statement RU result-set test error")
 		}
 	})
+	failpoint.InjectCall("afterRunStmtExec", &sessVars.SQLKiller, rs != nil, &err)
 
 	if se.txn.Valid() && se.txn.IsPipelined() {
 		// Pipelined-DMLs can return assertion errors and write conflicts here because they flush
@@ -3177,6 +3176,13 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 	if rs != nil {
 		if err != nil {
 			s.(*executor.ExecStmt).RecordStatementRUFinalOutcome(false)
+			if finisher, ok := rs.(interface{ Finish() error }); ok {
+				terror.Log(finisher.Finish())
+			}
+			// Pass the execution error to finalization before EXPLAIN ANALYZE DML can commit.
+			err = finishStmt(ctx, se, err, s)
+			terror.Log(executor.CloseRecordSetWithError(rs, err))
+			return nil, err
 		}
 		if se.GetSessionVars().StmtCtx.IsExplainAnalyzeDML {
 			if !sessVars.InTxn() {
@@ -3195,7 +3201,7 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 			RecordSet: rs,
 			sql:       s,
 			se:        se,
-		}, err
+		}, nil
 	}
 
 	err = finishStmt(ctx, se, err, s)
@@ -4287,9 +4293,9 @@ func CreateSessionWithOpt(store kv.Storage, opt *Opt) (sessionapi.Session, error
 	// Add stats collector, and it will be freed by background stats worker
 	// which periodically updates stats using the collected data.
 	if do.StatsHandle() != nil && do.StatsUpdating() {
-		s.statsCollector = do.StatsHandle().NewSessionStatsItem().(*usage.SessionStatsItem)
+		s.statsCollector = do.StatsHandle().Usage().NewSessionStatsItem()
 		if config.GetGlobalConfig().Instance.EnableCollectExecutionInfo.Load() {
-			s.idxUsageCollector = do.StatsHandle().NewSessionIndexUsageCollector()
+			s.idxUsageCollector = do.StatsHandle().Usage().NewSessionIndexUsageCollector()
 		}
 	}
 
@@ -5177,10 +5183,10 @@ func createSessionWithOpt(
 func attachStatsCollector(s *session, dom *domain.Domain) *session {
 	if dom.StatsHandle() != nil && dom.StatsUpdating() {
 		if s.statsCollector == nil {
-			s.statsCollector = dom.StatsHandle().NewSessionStatsItem().(*usage.SessionStatsItem)
+			s.statsCollector = dom.StatsHandle().Usage().NewSessionStatsItem()
 		}
 		if s.idxUsageCollector == nil && config.GetGlobalConfig().Instance.EnableCollectExecutionInfo.Load() {
-			s.idxUsageCollector = dom.StatsHandle().NewSessionIndexUsageCollector()
+			s.idxUsageCollector = dom.StatsHandle().Usage().NewSessionIndexUsageCollector()
 		}
 	}
 

@@ -15,11 +15,15 @@
 package executor
 
 import (
+	"sync"
+	"sync/atomic"
+
 	"github.com/pingcap/tidb/pkg/metrics"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/resourcegroup/ruv2"
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 type statementRUEngine uint8
@@ -92,17 +96,42 @@ var statementRUOperatorNames = [...]string{
 	"write", "analyze", "sql_frontend", "coprocessor", "kv_write",
 }
 
-// statementRUFullReport is allocated only in full mode. Its bounded arrays own
-// numeric values, never plans or runtime statistics. Finalization freezes a copy
-// for the publisher; result mode never allocates either report.
+type statementRUReportEntry struct {
+	engine   statementRUEngine
+	operator statementRUOperator
+	units    ruv2.StmtUnits
+}
+
+// Slots are one-based; zero denotes an engine/operator pair with no entry.
+const _ uint8 = uint8(statementRUEngineCount) * uint8(statementRUOperatorCount)
+
+// statementRUFullReport stores only observed pairs. Short plans fit inline.
 type statementRUFullReport struct {
-	units [statementRUEngineCount][statementRUOperatorCount]ruv2.StmtUnits
-	seen  [statementRUEngineCount][statementRUOperatorCount]bool
+	slots    [statementRUEngineCount][statementRUOperatorCount]uint8
+	count    uint8
+	inline   [4]statementRUReportEntry
+	overflow []statementRUReportEntry
+}
+
+func (report *statementRUFullReport) at(i uint8) *statementRUReportEntry {
+	if i < uint8(len(report.inline)) {
+		return &report.inline[i]
+	}
+	return &report.overflow[int(i)-len(report.inline)]
 }
 
 func (report *statementRUFullReport) add(engine statementRUEngine, operator statementRUOperator, units ruv2.StmtUnits) {
-	report.units[engine][operator] = report.units[engine][operator].Add(units)
-	report.seen[engine][operator] = true
+	if slot := report.slots[engine][operator]; slot != 0 {
+		entry := report.at(slot - 1)
+		entry.units = entry.units.Add(units)
+		return
+	}
+	if int(report.count) >= len(report.inline) {
+		report.overflow = append(report.overflow, statementRUReportEntry{})
+	}
+	*report.at(report.count) = statementRUReportEntry{engine: engine, operator: operator, units: units}
+	report.count++
+	report.slots[engine][operator] = report.count
 }
 
 // statementRUOperatorForPlan runs exclusively in full mode. Operator labels are bounded
@@ -188,44 +217,94 @@ func (calculator statementRUCalculator) tiFlashRU(weights ruv2.StmtWeights) floa
 		weights.ScanByte*tiflash.scanBytes + weights.NetByte*tiflash.netBytes + weights.CrossAZNetByte*tiflash.crossAZNetBytes
 }
 
-// addStatementUnits accounts for evidence outside individual operators once.
-func (report *statementRUFullReport) addStatementUnits(units ruv2.StmtUnits) {
+// freeze adds statement-level evidence to an independent copy of the operator report.
+func (report statementRUFullReport) freeze(units ruv2.StmtUnits) *statementRUFullReport {
+	hasWrite := units.WriteStatement != 0
+	hasKVWrite := units.WriteKeys != 0 || units.WriteBytes != 0
+
+	// Size the snapshot for missing pairs before copying, so adding the
+	// statement-level evidence cannot grow the cloned overflow slice.
+	count := int(report.count)
+	if report.slots[statementRUTiDB][statementRUFrontend] == 0 {
+		count++
+	}
+	if hasWrite && report.slots[statementRUTiDB][statementRUWrite] == 0 {
+		count++
+	}
+	if hasKVWrite && report.slots[statementRUTiKV][statementRUKVWrite] == 0 {
+		count++
+	}
+	if overflowCount := count - len(report.inline); overflowCount > 0 {
+		overflow := make([]statementRUReportEntry, len(report.overflow), overflowCount)
+		copy(overflow, report.overflow)
+		report.overflow = overflow
+	}
+
 	report.add(statementRUTiDB, statementRUFrontend, ruv2.StmtUnits{FrontendCompileBytes: units.FrontendCompileBytes})
-	if units.WriteStatement != 0 {
+	if hasWrite {
 		report.add(statementRUTiDB, statementRUWrite, ruv2.StmtUnits{WriteStatement: units.WriteStatement})
 	}
-	if units.WriteKeys != 0 || units.WriteBytes != 0 {
+	if hasKVWrite {
 		report.add(statementRUTiKV, statementRUKVWrite, ruv2.StmtUnits{WriteKeys: units.WriteKeys, WriteBytes: units.WriteBytes})
+	}
+	return &report
+}
+
+type statementRUUnitCounter struct {
+	once    sync.Once
+	counter prometheus.Counter
+}
+
+// Counter handles belong to the vector that created them. Metrics initialization
+// can replace the vector, in which case its old handles must be discarded together.
+type statementRUUnitCounters struct {
+	vector   *prometheus.CounterVec
+	counters [statementRUEngineCount][statementRUOperatorCount][statementRUUnitCount]statementRUUnitCounter
+}
+
+var currentStatementRUUnitCounters atomic.Pointer[statementRUUnitCounters]
+
+const statementRUUnitCount = 11
+
+type statementRUUnitValue struct {
+	name  string
+	value float64
+}
+
+func statementRUUnitValues(units *ruv2.StmtUnits) [statementRUUnitCount]statementRUUnitValue {
+	return [...]statementRUUnitValue{
+		{metrics.LblRUV2UnitCPUWork, units.CPUWork},
+		{metrics.LblRUV2UnitScanBytes, units.ScanBytes},
+		{metrics.LblRUV2UnitNetBytes, units.NetBytes},
+		{metrics.LblRUV2UnitCrossAZNetBytes, units.CrossAZNetBytes},
+		{metrics.LblRUV2UnitFrontendCompileBytes, units.FrontendCompileBytes},
+		{metrics.LblRUV2UnitHashStateRows, units.HashStateRows},
+		{metrics.LblRUV2UnitJoinOutputRows, units.JoinOutputRows},
+		{metrics.LblRUV2UnitWriteStatement, units.WriteStatement},
+		{metrics.LblRUV2UnitOperatorNum, units.OperatorNum},
+		{metrics.LblRUV2UnitWriteKeys, units.WriteKeys},
+		{metrics.LblRUV2UnitWriteBytes, units.WriteBytes},
 	}
 }
 
 func publishStatementRUFullMetrics(finalized statementRUFinalizedSnapshot) {
-	for engine, operators := range finalized.report.units {
-		for operator, units := range operators {
-			if !finalized.report.seen[engine][operator] {
+	vector := metrics.RUV2Unit
+	cache := currentStatementRUUnitCounters.Load()
+	if cache == nil || cache.vector != vector {
+		cache = &statementRUUnitCounters{vector: vector}
+		currentStatementRUUnitCounters.Store(cache)
+	}
+	for i := range finalized.report.count {
+		entry := finalized.report.at(i)
+		for unitID, unit := range statementRUUnitValues(&entry.units) {
+			if unit.value == 0 {
 				continue
 			}
-			for _, unit := range [...]struct {
-				name  string
-				value float64
-			}{
-				{metrics.LblRUV2UnitCPUWork, units.CPUWork},
-				{metrics.LblRUV2UnitScanBytes, units.ScanBytes},
-				{metrics.LblRUV2UnitNetBytes, units.NetBytes},
-				{metrics.LblRUV2UnitCrossAZNetBytes, units.CrossAZNetBytes},
-				{metrics.LblRUV2UnitFrontendCompileBytes, units.FrontendCompileBytes},
-				{metrics.LblRUV2UnitHashStateRows, units.HashStateRows},
-				{metrics.LblRUV2UnitJoinOutputRows, units.JoinOutputRows},
-				{metrics.LblRUV2UnitWriteStatement, units.WriteStatement},
-				{metrics.LblRUV2UnitOperatorNum, units.OperatorNum},
-				{metrics.LblRUV2UnitWriteKeys, units.WriteKeys},
-				{metrics.LblRUV2UnitWriteBytes, units.WriteBytes},
-			} {
-				if unit.value == 0 {
-					continue
-				}
-				metrics.RUV2Unit.WithLabelValues(statementRUEngineNames[engine], statementRUOperatorNames[operator], unit.name).Add(unit.value)
-			}
+			cached := &cache.counters[entry.engine][entry.operator][unitID]
+			cached.once.Do(func() {
+				cached.counter = vector.WithLabelValues(statementRUEngineNames[entry.engine], statementRUOperatorNames[entry.operator], unit.name)
+			})
+			cached.counter.Add(unit.value)
 		}
 	}
 	metrics.RUV2Statements.WithLabelValues("success", finalized.calibrationState.String()).Inc()

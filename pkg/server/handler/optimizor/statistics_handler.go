@@ -62,7 +62,7 @@ func (sh StatsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	if err != nil {
 		handler.WriteError(w, err)
 	} else {
-		js, err := h.DumpStatsToJSON(params[handler.DBName], tbl.Meta(), nil, dumpPartitionStats)
+		js, err := h.Storage().DumpStatsToJSON(params[handler.DBName], tbl.Meta(), nil, dumpPartitionStats)
 		if err != nil {
 			handler.WriteError(w, err)
 		} else {
@@ -86,7 +86,7 @@ func (sh StatsPriorityQueueHandler) ServeHTTP(w http.ResponseWriter, _ *http.Req
 	w.Header().Set("Content-Type", "application/json")
 
 	h := sh.do.StatsHandle()
-	tables, err := h.GetPriorityQueueSnapshot()
+	tables, err := h.AutoAnalyze().GetPriorityQueueSnapshot()
 	if err != nil {
 		handler.WriteError(w, err)
 	} else {

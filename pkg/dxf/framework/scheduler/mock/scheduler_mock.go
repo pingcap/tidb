@@ -119,7 +119,7 @@ func (mr *MockExtensionMockRecorder) OnDone(arg0, arg1, arg2 any) *gomock.Call {
 }
 
 // OnNextSubtasksBatch mocks base method.
-func (m *MockExtension) OnNextSubtasksBatch(arg0 context.Context, arg1 storage.TaskHandle, arg2 *proto.Task, arg3 []string, arg4 proto.Step) ([][]byte, error) {
+func (m *MockExtension) OnNextSubtasksBatch(arg0 context.Context, arg1 storage.TaskHandle, arg2 *proto.Task, arg3 int, arg4 proto.Step) ([][]byte, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "OnNextSubtasksBatch", arg0, arg1, arg2, arg3, arg4)
 	ret0, _ := ret[0].([][]byte)

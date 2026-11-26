@@ -283,6 +283,8 @@ func (r *testKitRows) Next(dest []driver.Value) error {
 				dest[i] = x.String()
 			case types.Duration:
 				dest[i] = x.String()
+			case types.BinaryJSON:
+				dest[i] = x.String()
 			case *types.MyDecimal:
 				dest[i] = x.String()
 			default:

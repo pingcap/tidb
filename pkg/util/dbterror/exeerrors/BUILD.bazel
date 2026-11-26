@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library")
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "exeerrors",
@@ -9,5 +9,17 @@ go_library(
         "//pkg/errno",
         "//pkg/parser/mysql",
         "//pkg/util/dbterror",
+    ],
+)
+
+go_test(
+    name = "exeerrors_test",
+    timeout = "short",
+    srcs = ["errors_test.go"],
+    embed = [":exeerrors"],
+    flaky = True,
+    deps = [
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_stretchr_testify//require",
     ],
 )

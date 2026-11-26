@@ -346,3 +346,33 @@ func TestFastUnmarshalMetaDataSkipConditionCanSkipEmptyMeta(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int32(1), readCount.Load())
 }
+
+func TestMetadataHelperReadFileInvalidRange(t *testing.T) {
+	ctx := context.Background()
+	storage, err := objstore.NewLocalStorage(t.TempDir())
+	require.NoError(t, err)
+	require.NoError(t, storage.WriteFile(ctx, "log", []byte("data")))
+	for _, tc := range []struct {
+		name           string
+		offset, length uint64
+	}{
+		{"truncated object", 0, 5},
+		{"offset past end", 5, 0},
+		{"offset overflow", ^uint64(0), 2},
+		{"length overflow", 2, ^uint64(0)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			helper := stream.NewMetadataHelper()
+			helper.InitCacheEntry("log", 1)
+			require.NotPanics(t, func() {
+				data, err := helper.ReadFile(ctx, "log", tc.offset, tc.length, 0, backuppb.CompressionType_UNKNOWN, storage, nil)
+				require.Error(t, err)
+				require.Nil(t, data)
+			})
+			// A failed read must release the cache lock so the next read can succeed.
+			data, err := helper.ReadFile(ctx, "log", 0, 4, 4, backuppb.CompressionType_UNKNOWN, storage, nil)
+			require.NoError(t, err)
+			require.Equal(t, []byte("data"), data)
+		})
+	}
+}

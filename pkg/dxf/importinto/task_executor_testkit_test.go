@@ -292,6 +292,14 @@ func newQuerySubtask(t *testing.T, sortStore storeapi.Storage, id int64) *proto.
 func TestImportQueryStep(t *testing.T) {
 	t.Cleanup(tidbconfig.RestoreFunc())
 	tidbconfig.UpdateGlobal(func(c *tidbconfig.Config) { c.TempDir = t.TempDir() })
+	importDir := importer.GetImportRootDir(tidbconfig.GetGlobalConfig())
+	// Query workers use global sort and must leave the local import path untouched.
+	require.NoError(t, os.WriteFile(importDir, []byte("preserve"), 0o600))
+	t.Cleanup(func() {
+		contents, err := os.ReadFile(importDir)
+		require.NoError(t, err)
+		require.Equal(t, "preserve", string(contents))
+	})
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")

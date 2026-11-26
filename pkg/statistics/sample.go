@@ -52,16 +52,18 @@ type SampleItem struct {
 const EmptySampleItemSize = int64(unsafe.Sizeof(SampleItem{}))
 
 func sortSampleItems(sc *stmtctx.StatementContext, items []*SampleItem) error {
-	var err error
+	var firstErr error
 	slices.SortStableFunc(items, func(i, j *SampleItem) int {
-		var cmp int
-		cmp, err = i.Value.Compare(sc.TypeCtx(), &j.Value, collate.GetBinaryCollator())
+		cmp, err := i.Value.Compare(sc.TypeCtx(), &j.Value, collate.GetBinaryCollator())
 		if err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
 			return -1
 		}
 		return cmp
 	})
-	return err
+	return firstErr
 }
 
 // SampleCollector will collect Samples and calculate the count and ndv of an attribute.

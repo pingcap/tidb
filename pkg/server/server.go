@@ -150,6 +150,15 @@ type Server struct {
 	capability uint32
 	dom        *domain.Domain
 
+	statusInitOnce   sync.Once
+	statusInitCtx    context.Context
+	statusInitCancel context.CancelFunc
+
+	// statusMu serializes status service initialization and shutdown, including AutoID.
+	// Once statusClosed is set, no initializer may publish resources or add to statusWG.
+	statusMu       sync.Mutex
+	statusClosed   bool
+	statusWG       util.WaitGroupWrapper
 	statusAddr     string
 	statusListener net.Listener
 	statusServer   atomic.Pointer[http.Server]
@@ -670,9 +679,29 @@ func (*Server) checkAuditPlugin(clientConn *clientConn) error {
 	})
 }
 
+// Initialize independently of statusMu so shutdown can cancel an initializer
+// that is holding the lifecycle lock while waiting for its AutoID lease.
+func (s *Server) statusInitializationContext() context.Context {
+	s.statusInitOnce.Do(func() {
+		s.statusInitCtx, s.statusInitCancel = context.WithCancel(context.Background())
+	})
+	return s.statusInitCtx
+}
+
+func (s *Server) cancelStatusInitialization() {
+	s.statusInitializationContext()
+	s.statusInitCancel()
+}
+
 func (s *Server) startShutdown() {
 	logutil.BgLogger().Info("setting tidb-server to report unhealthy (shutting-down)")
 	s.health.Store(false)
+	s.cancelStatusInitialization()
+	// Finish any in-progress service initialization before Starter relinquishes
+	// AutoID ownership, and prevent pending initializers from starting it again.
+	s.statusMu.Lock()
+	s.statusClosed = true
+	s.statusMu.Unlock()
 	// give the load balancer a chance to receive a few unhealthy health reports
 	// before acquiring the s.rwlock and blocking connections.
 	waitTime := time.Duration(s.cfg.GracefulWaitBeforeShutdown) * time.Second
@@ -694,6 +723,7 @@ func (s *Server) enterShutdownMode() {
 }
 
 func (s *Server) closeListener() {
+	s.cancelStatusInitialization()
 	if s.listener != nil {
 		err := s.listener.Close()
 		terror.Log(errors.Trace(err))
@@ -704,6 +734,8 @@ func (s *Server) closeListener() {
 		terror.Log(errors.Trace(err))
 		s.socket = nil
 	}
+	s.statusMu.Lock()
+	s.statusClosed = true
 	if s.statusListener != nil {
 		if err := s.statusListener.Close(); err != nil && !stderrors.Is(err, net.ErrClosed) {
 			terror.Log(errors.Trace(err))
@@ -718,6 +750,7 @@ func (s *Server) closeListener() {
 		s.grpcServer.Stop()
 		s.grpcServer = nil
 	}
+	s.statusMu.Unlock()
 	if !deploymode.IsStarter() || s.StandbyController == nil {
 		s.AutoIDServiceClose()
 	}
@@ -751,10 +784,13 @@ func (s *Server) GetNeedRequestMgrFree() bool {
 // Close closes the server.
 func (s *Server) Close() {
 	s.startShutdown()
-	s.rwlock.Lock() // // prevent new connections
-	defer s.rwlock.Unlock()
+	s.rwlock.Lock() // prevent new connections
 	s.enterShutdownMode()
 	s.closeListener()
+	s.rwlock.Unlock()
+	// Startup callbacks may need rwlock. Join initialization and serving only
+	// after closing their resources and releasing the client-connection lock.
+	s.statusWG.Wait()
 }
 
 func (s *Server) registerConn(conn *clientConn) bool {
@@ -1396,13 +1432,18 @@ func (s *Server) Health() bool {
 
 // AutoIDServiceClose closes the auto ID service.
 func (s *Server) AutoIDServiceClose() {
+	s.statusMu.Lock()
+	defer s.statusMu.Unlock()
 	if s.autoIDService != nil {
 		s.autoIDService.Close()
+		s.autoIDService = nil
 	}
 }
 
 // IsAutoIDOwner checks if the auto ID service is the owner.
 func (s *Server) IsAutoIDOwner() bool {
+	s.statusMu.Lock()
+	defer s.statusMu.Unlock()
 	return s.autoIDService != nil && s.autoIDService.IsOwner()
 }
 
