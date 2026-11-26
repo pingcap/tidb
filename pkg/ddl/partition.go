@@ -3520,6 +3520,16 @@ func applyReorganizePartitionExternalEffects(jobCtx *jobContext, job *model.Job,
 // validateReorganizePartition rechecks the current schema and normalizes the
 // requested definitions. The caller cancels validation failures.
 func (w *worker) validateReorganizePartition(job *model.Job, tblInfo *model.TableInfo, partNames []string, partInfo *model.PartitionInfo) error {
+	if job.Type == model.ActionAlterTablePartitioning {
+		for _, fk := range tblInfo.ForeignKeys {
+			if fk.Version >= model.FKVersion1 {
+				return infoschema.ErrForeignKeyOnPartitioned
+			}
+		}
+		if len(w.infoCache.GetLatest().GetTableReferredForeignKeys(job.SchemaName, tblInfo.Name.L)) > 0 {
+			return infoschema.ErrForeignKeyOnPartitioned
+		}
+	}
 	if tblInfo.Affinity != nil {
 		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("REORGANIZE PARTITION of a table with AFFINITY option")
 	}

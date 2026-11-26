@@ -1476,6 +1476,22 @@ func TestAlterTableAddForeignKeyError(t *testing.T) {
 			alter: "alter  table t2 add constraint fk foreign key (b) references t1(id)",
 			err:   "[ddl:8200]TiDB doesn't support ALTER TABLE for local temporary table",
 		},
+		{
+			prepares: []string{
+				"create table t1 (id int primary key)",
+				"create table t2 (id int primary key, foreign key (id) references t1(id))",
+			},
+			alter: "alter table t1 partition by hash(id) partitions 2",
+			err:   "[schema:1506]Foreign key clause is not yet supported in conjunction with partitioning",
+		},
+		{
+			prepares: []string{
+				"create table t1 (id int primary key)",
+				"create table t2 (id int primary key, foreign key (id) references t1(id))",
+			},
+			alter: "alter table t2 partition by hash(id) partitions 2",
+			err:   "[schema:1506]Foreign key clause is not yet supported in conjunction with partitioning",
+		},
 		// Test foreign key with partition table
 		{
 			prepares: []string{
