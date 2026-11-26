@@ -704,8 +704,7 @@ func TestAutoAnalyzeAfterAnalyzeVersionChange(t *testing.T) {
 	tableInfo := tbl.Meta()
 	statsTbl := h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.NotZero(t, statsTbl.LastAnalyzeVersion)
-	// FIXME: https://github.com/pingcap/tidb/issues/64400
-	require.Equal(t, statistics.Version0, statsTbl.StatsVer)
+	require.Equal(t, statistics.Version1, statsTbl.StatsVer)
 	tk.MustExec("set @@tidb_stats_load_sync_wait = 60000")
 	tk.MustQuery("select * from t force index(idx) where a = 1;").Check(testkit.Rows("1 2"))
 	statsTbl = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
@@ -725,6 +724,45 @@ func TestAutoAnalyzeAfterAnalyzeVersionChange(t *testing.T) {
 	require.True(t, h.HandleAutoAnalyze())
 	statsTbl = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.Equal(t, statistics.Version1, statsTbl.StatsVer)
+}
+
+func TestAutoAnalyzeAfterDropStatsAndAnalyzeVersionChange(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	h := dom.StatsHandle()
+
+	// Lease > 0, and no query on t, so no column or index stats get loaded.
+	h.SetLease(time.Millisecond)
+	tk.MustExec("set @@tidb_analyze_version = 1")
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int, b int, index idx(a));")
+	tk.MustExec("insert into t values (1, 2);")
+	tk.MustExec("analyze table t")
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	tableInfo := tbl.Meta()
+	statsTbl := h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
+	require.Equal(t, statistics.Version1, statsTbl.StatsVer)
+	require.Zero(t, statsTbl.ColNum())
+	require.Zero(t, statsTbl.IdxNum())
+
+	tk.MustExec("drop stats t")
+	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
+	statsTbl = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
+	require.Equal(t, statistics.Version0, statsTbl.StatsVer)
+
+	// Auto analyze must use the current version, not the dropped one.
+	tk.MustExec("set @@tidb_analyze_version = 2")
+	statistics.AutoAnalyzeMinCnt = 0
+	defer func() {
+		statistics.AutoAnalyzeMinCnt = 1000
+	}()
+	tk.MustExec("insert into t values (3, 4), (5,6), (7,8);")
+	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
+	require.True(t, h.HandleAutoAnalyze())
+	tk.MustQuery("select is_index, hist_id, stats_ver from mysql.stats_histograms where table_id = ?", tableInfo.ID).
+		Sort().Check(testkit.Rows("0 1 2", "0 2 2", "1 1 2"))
 }
 
 func TestCleanupCorruptedAnalyzeJobsIgnoresNonServingNodes(t *testing.T) {
