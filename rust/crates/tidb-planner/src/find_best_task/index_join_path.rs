@@ -743,6 +743,63 @@ fn index_join_path_update_tmp_range(
     (last_col_pos, accesses, remained)
 }
 
+/// Go `indexJoinPathCountAfterAccess4Compare`: the path's access count
+/// divided by the NDV of the single join-key column.
+///
+/// The DataSource estimate cannot see the outer value of `t1.a = t2.a`, so
+/// for an index `(a, b)` and `t1.b = 1` it is `Estimation(t1.b=1)`. In the
+/// IndexJoin, `t1.a` becomes a per-probe lookup key, so the comparison count
+/// is `Estimation(t1.b=1) / NDV(t1.a)`.
+///
+/// The second answer is false when the join-key NDV is not stable enough
+/// for the strong skyline rule: pseudo or missing statistics, a prefix index
+/// column, several join keys, or uninitialized column statistics. A single
+/// stable join key the access count already covers (a constant column)
+/// answers the original count.
+pub(crate) fn index_join_path_count_after_access_4_compare(
+    count_after_access: f64,
+    inner_table_stats: Option<&tidb_planner_property::stats_info::StatsInfo>,
+    full_idx_cols: &[Option<(Column, i64)>],
+    const_col_ids: &[i64],
+    idx_off2_key_off: &[i64],
+    used_cols_len: usize,
+) -> (f64, bool) {
+    let Some(hist_coll) = inner_table_stats
+        .filter(|stats| count_after_access > 0.0 && stats.stats_version() != tidb_stats::PSEUDO_VERSION)
+        .and_then(|stats| stats.hist_coll())
+    else {
+        return (count_after_access, false);
+    };
+    let mut join_key: Option<&Column> = None;
+    let mut join_key_cols_seen = 0;
+    let mut need_ndv_adjust = false;
+    for (idx_off, key_off) in idx_off2_key_off.iter().enumerate().take(used_cols_len) {
+        if *key_off < 0 {
+            continue;
+        }
+        let Some(Some((column, tidb_datatype::UNSPECIFIED_LENGTH))) = full_idx_cols.get(idx_off) else {
+            return (count_after_access, false);
+        };
+        join_key = Some(column);
+        join_key_cols_seen += 1;
+        if !const_col_ids.contains(&column.unique_id) {
+            need_ndv_adjust = true;
+        }
+    }
+    let Some(join_key) = join_key.filter(|_| join_key_cols_seen == 1) else {
+        return (count_after_access, false);
+    };
+    let ndv = hist_coll.get_column(join_key.unique_id).and_then(|column| {
+        let column = column.read().unwrap_or_else(std::sync::PoisonError::into_inner);
+        (column.is_stats_initialized() && column.histogram.ndv > 0).then_some(column.histogram.ndv)
+    });
+    match ndv {
+        None => (count_after_access, false),
+        Some(ndv) if !need_ndv_adjust || ndv == 1 => (count_after_access, true),
+        Some(ndv) => (count_after_access / ndv as f64, true),
+    }
+}
+
 /// Go `indexJoinPathConstructResult`, minus the candidate and NDV the caller
 /// derives from the DataSource.
 fn index_join_path_construct_result(

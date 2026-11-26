@@ -2814,17 +2814,9 @@ fn build_index_join_path_result(
             )
             .0
         });
-    let candidate = match source_index {
-        Some(source_index) => Some(index_join_candidate(
-            ds,
-            source_index,
-            &idx_cols,
-            &idx_col_lens,
-            &core,
-            ctx,
-        )),
-        None => None,
-    };
+    let candidate = source_index.map(|source_index| {
+        index_join_candidate(ds, source_index, &idx_cols, &idx_col_lens, &full_idx_cols, &core, ctx)
+    });
     let rebuild = tidb_expr::expr_util::predicates::maybe_over_optimized_4_plan_cache(
         true,
         &core.chosen_access,
@@ -2858,6 +2850,7 @@ fn index_join_candidate(
     source_index: &tidb_model::GoShared<tidb_model::IndexInfo>,
     idx_cols: &[tidb_expr::column::Column],
     idx_col_lens: &[i64],
+    full_idx_cols: &[Option<(tidb_expr::column::Column, i64)>],
     core: &super::index_join_path::IndexJoinPathCore,
     ctx: &DispatchContext<'_>,
 ) -> crate::find_best_task::candidate::CandidateMetrics {
@@ -2881,6 +2874,16 @@ fn index_join_candidate(
         candidate.index_columns.insert(column.unique_id, *length);
     }
     candidate.eq_or_in_count = core.index_join_cols;
+    candidate.index_join_cols = core.index_join_cols;
+    (candidate.count_after_access_4_index_join, candidate.count_after_access_4_index_join_ok) =
+        super::index_join_path::index_join_path_count_after_access_4_compare(
+            candidate.count_after_access,
+            ds.table_stats.as_ref(),
+            full_idx_cols,
+            &equality_fixed_ids(ds),
+            &core.idx_off2_key_off,
+            core.index_join_cols,
+        );
     candidate.range_count = core.ranges.len();
     candidate.matches_property = false;
     // Go `isFullIndexMatch` reads the static EqOrInCondCount with the widened

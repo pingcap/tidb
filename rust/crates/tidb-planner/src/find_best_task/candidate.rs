@@ -48,6 +48,27 @@ pub struct CandidateMetrics {
     pub min_count_after_access: f64,
     /// Worst-case access cardinality.
     pub max_count_after_access: f64,
+    /// Go `indexJoinCols`: how many index columns the IndexJoin's access
+    /// conditions use; zero for an ordinary DataSource candidate.
+    pub index_join_cols: usize,
+    /// Go `countAfterAccess4IndexJoin`: the access count per probe, used only
+    /// by index join candidate comparison.
+    pub count_after_access_4_index_join: f64,
+    /// Go `countAfterAccess4IndexJoinOK`: whether that count is stable
+    /// enough for skyline pruning.
+    pub count_after_access_4_index_join_ok: bool,
+}
+
+impl CandidateMetrics {
+    /// Go `candidatePath.getCountAfterAccess4SkylinePruning`.
+    fn get_count_after_access_4_skyline_pruning(&self) -> Option<f64> {
+        if self.index_join_cols > 0 {
+            return self
+                .count_after_access_4_index_join_ok
+                .then_some(self.count_after_access_4_index_join);
+        }
+        Some(self.count_after_access)
+    }
 }
 
 pub(super) fn equality_facts(
@@ -313,24 +334,29 @@ pub fn compare_candidates(
             return result(pseudo, false);
         }
     }
-    let uses_ratio = left.count_after_access > 100.0
-        && right.count_after_access > 100.0
-        && !left.partial_paths
-        && !right.partial_paths
-        && expected_count == f64::MAX;
+    // For IndexJoin inner candidates, the access count is safe for this
+    // strong rule only when the runtime join key has a stable NDV; otherwise
+    // the IndexJoin-specific NDV/cost comparison decides.
+    let ratio_counts = left
+        .get_count_after_access_4_skyline_pruning()
+        .zip(right.get_count_after_access_4_skyline_pruning())
+        .filter(|(left_count, right_count)| {
+            *left_count > 100.0
+                && *right_count > 100.0
+                && !left.partial_paths
+                && !right.partial_paths
+                && expected_count == f64::MAX
+        });
+    let uses_ratio = ratio_counts.is_some();
     if uses_ratio {
         // Go reads the fix control's threshold here.
         tidb_variable::relevant_opt::record_relevant_opt_fix(tidb_fixcontrol::FIX_45132);
     }
-    if uses_ratio && row_count_ratio_threshold > 0.0 {
-        if left.count_after_access / right.count_after_access > row_count_ratio_threshold
-            && risk <= 0
-        {
+    if let Some((left_count, right_count)) = ratio_counts.filter(|_| row_count_ratio_threshold > 0.0) {
+        if left_count / right_count > row_count_ratio_threshold && risk <= 0 {
             return result(-1, true);
         }
-        if right.count_after_access / left.count_after_access > row_count_ratio_threshold
-            && risk >= 0
-        {
+        if right_count / left_count > row_count_ratio_threshold && risk >= 0 {
             return result(1, true);
         }
     }
