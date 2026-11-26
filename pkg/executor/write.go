@@ -308,9 +308,9 @@ func updateRecord(
 		}
 	} else {
 		var opts []table.UpdateRecordOption
-		if sessVars.InTxn() || sc.InHandleForeignKeyTrigger || sc.ForeignKeyTriggerCtx.HasFKCascades {
+		if sessVars.InTxn() || sc.InHandleForeignKeyTrigger || sc.HasFKCascades {
 			// If txn is auto commit and index is untouched, no need to write index value.
-			// If InHandleForeignKeyTrigger or ForeignKeyTriggerCtx.HasFKCascades is true indicate we may have
+			// If InHandleForeignKeyTrigger or HasFKCascades is true indicate we may have
 			// foreign key cascade need to handle later, then we still need to write index value,
 			// otherwise, the later foreign cascade executor may see data-index inconsistency in txn-mem-buffer.
 			opts = []table.UpdateRecordOption{table.WithCtx(ctx), dupKeyMode, pessimisticLazyCheck}

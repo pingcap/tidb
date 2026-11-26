@@ -417,6 +417,9 @@ type ExecStmt struct {
 	retryCount        uint
 	retryStartTime    time.Time
 
+	// Restores the transaction to the start of the current cascade attempt.
+	rollbackFKCascade func()
+
 	// Phase durations are splited into two parts: 1. trying to lock keys (but
 	// failed); 2. the final iteration of the retry loop. Here we use
 	// [2]time.Duration to record such info for each phase. The first duration
@@ -674,6 +677,12 @@ func (a *ExecStmt) Exec(ctx context.Context) (rs sqlexec.RecordSet, err error) {
 				err = cteErr
 			}
 		}
+		if a.rollbackFKCascade != nil {
+			if err != nil {
+				a.rollbackFKCascade()
+			}
+			a.rollbackFKCascade = nil
+		}
 	}()
 	defer func() {
 		r := recover()
@@ -842,7 +851,6 @@ func (a *ExecStmt) Exec(ctx context.Context) (rs sqlexec.RecordSet, err error) {
 		}
 	}
 
-	a.prepareFKCascadeContext(e)
 	if handled, result, err := a.handleNoDelay(ctx, e, isPessimistic); handled || err != nil {
 		return result, err
 	}
@@ -916,25 +924,14 @@ func (a *ExecStmt) getSQLForProcessInfo() string {
 
 func (a *ExecStmt) handleStmtForeignKeyTrigger(ctx context.Context, e exec.Executor) error {
 	stmtCtx := a.Ctx.GetSessionVars().StmtCtx
-	if stmtCtx.ForeignKeyTriggerCtx.HasFKCascades {
+	if stmtCtx.HasFKCascades {
 		// If the ExecStmt has foreign key cascade to be executed, we need call `StmtCommit` to commit the ExecStmt itself
 		// change first.
 		// Since `UnionScanExec` use `SnapshotIter` and `SnapshotGetter` to read txn mem-buffer, if we don't do `StmtCommit`,
 		// then the fk cascade executor can't read the mem-buffer changed by the ExecStmt.
 		a.Ctx.StmtCommit(ctx)
 	}
-	err := a.handleForeignKeyTrigger(ctx, e, 1)
-	if err != nil {
-		err1 := a.handleFKTriggerError(stmtCtx)
-		if err1 != nil {
-			return errors.Errorf("handle foreign key trigger error failed, err: %v, original_err: %v", err1, err)
-		}
-		return err
-	}
-	if stmtCtx.ForeignKeyTriggerCtx.SavepointName != "" {
-		a.Ctx.GetSessionVars().TxnCtx.ReleaseSavepoint(stmtCtx.ForeignKeyTriggerCtx.SavepointName)
-	}
-	return nil
+	return a.handleForeignKeyTrigger(ctx, e, 1)
 }
 
 var maxForeignKeyCascadeDepth = 15
@@ -1026,9 +1023,8 @@ func (a *ExecStmt) handleForeignKeyCascade(ctx context.Context, fkc *FKCascadeEx
 	}
 }
 
-// prepareFKCascadeContext records a transaction savepoint for foreign key cascade when this ExecStmt has foreign key
-// cascade behaviour and this ExecStmt is in transaction.
-func (a *ExecStmt) prepareFKCascadeContext(e exec.Executor) {
+// prepareFKCascadeContext takes a savepoint before each attempt that can flush cascade writes.
+func (a *ExecStmt) prepareFKCascadeContext(e exec.Executor) error {
 	var execWithFKTrigger WithForeignKeyTrigger
 	if explain, ok := e.(*ExplainExec); ok {
 		execWithFKTrigger = explain.getAnalyzeExecWithForeignKeyTrigger()
@@ -1036,44 +1032,28 @@ func (a *ExecStmt) prepareFKCascadeContext(e exec.Executor) {
 		execWithFKTrigger, _ = e.(WithForeignKeyTrigger)
 	}
 	if execWithFKTrigger == nil || !execWithFKTrigger.HasFKCascades() {
-		return
-	}
-	sessVar := a.Ctx.GetSessionVars()
-	sessVar.StmtCtx.ForeignKeyTriggerCtx.HasFKCascades = true
-	if !sessVar.InTxn() {
-		return
-	}
-	txn, err := a.Ctx.Txn(false)
-	if err != nil || !txn.Valid() {
-		return
-	}
-	// Record a txn savepoint if ExecStmt in transaction, the savepoint is use to do rollback when handle foreign key
-	// cascade failed.
-	savepointName := "fk_sp_" + strconv.FormatUint(txn.StartTS(), 10)
-	memDBCheckpoint := txn.GetMemDBCheckpoint()
-	sessVar.TxnCtx.AddSavepoint(savepointName, memDBCheckpoint)
-	sessVar.StmtCtx.ForeignKeyTriggerCtx.SavepointName = savepointName
-}
-
-func (a *ExecStmt) handleFKTriggerError(sc *stmtctx.StatementContext) error {
-	if sc.ForeignKeyTriggerCtx.SavepointName == "" {
 		return nil
 	}
-	txn, err := a.Ctx.Txn(false)
-	if err != nil || !txn.Valid() {
+	sessVar := a.Ctx.GetSessionVars()
+	sessVar.StmtCtx.HasFKCascades = true
+	if sessVar.IsAutocommit() && !sessVar.InTxn() && !sessVar.TxnCtx.IsPessimistic {
+		return nil
+	}
+	txn, err := a.Ctx.Txn(true)
+	if err != nil {
 		return err
 	}
-	savepointRecord := a.Ctx.GetSessionVars().TxnCtx.RollbackToSavepoint(sc.ForeignKeyTriggerCtx.SavepointName)
-	if savepointRecord == nil {
-		// Normally should never run into here, but just in case, rollback the transaction.
-		err = txn.Rollback()
-		if err != nil {
-			return err
+	// Cascade executors flush individual stages so subsequent cascades can see
+	// their writes. Keep this checkpoint through the final pessimistic lock.
+	txnCtx := sessVar.TxnCtx
+	savedCtx := txnCtx.GetCurrentSavepoint()
+	checkpoint := txn.GetMemDBCheckpoint()
+	a.rollbackFKCascade = func() {
+		if txn.Valid() {
+			txnCtx.RestoreBySavepoint(savedCtx)
+			txn.RollbackMemDBToCheckpoint(checkpoint)
 		}
-		return errors.Errorf("foreign key cascade savepoint '%s' not found, transaction is rollback, should never happen", sc.ForeignKeyTriggerCtx.SavepointName)
 	}
-	txn.RollbackMemDBToCheckpoint(savepointRecord.MemDBCheckpoint)
-	a.Ctx.GetSessionVars().TxnCtx.ReleaseSavepoint(sc.ForeignKeyTriggerCtx.SavepointName)
 	return nil
 }
 
@@ -1264,6 +1244,9 @@ func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, e exec.Executor) (
 		}
 	}
 
+	if err := a.prepareFKCascadeContext(e); err != nil {
+		return nil, err
+	}
 	err = a.next(ctx, e, exec.TryNewCacheChunk(e))
 	if err != nil {
 		return nil, err
@@ -1335,6 +1318,7 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e exec.Executor) (e
 		ctx = context.WithValue(ctx, util.LockKeysDetailCtxKey, &lockKeyStats)
 		startLocking := time.Now()
 		err = txn.LockKeys(ctx, lockCtx, keys...)
+		failpoint.InjectCall("afterPessimisticDMLLock", sctx, &err)
 		a.phaseLockDurations[0] += time.Since(startLocking)
 		if e.RuntimeStats() != nil {
 			e.RuntimeStats().Record(time.Since(startLocking), 0)
@@ -1552,6 +1536,12 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, lockErr error
 	a.retryCount++
 	a.retryStartTime = time.Now()
 
+	// StmtRollback only discards the current staging buffer. Restore any flushed
+	// cascade writes before rebuilding and running the statement again.
+	if a.rollbackFKCascade != nil {
+		a.rollbackFKCascade()
+		a.rollbackFKCascade = nil
+	}
 	err = txnManager.OnStmtRetry(ctx)
 	if err != nil {
 		return nil, err

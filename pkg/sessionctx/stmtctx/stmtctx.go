@@ -548,12 +548,8 @@ type StatementContext struct {
 	// InHandleForeignKeyTrigger indicates currently are handling foreign key trigger.
 	InHandleForeignKeyTrigger bool
 
-	// ForeignKeyTriggerCtx is the contain information for foreign key cascade execution.
-	ForeignKeyTriggerCtx struct {
-		// The SavepointName is use to do rollback when handle foreign key cascade failed.
-		SavepointName string
-		HasFKCascades bool
-	}
+	// HasFKCascades indicates that the statement can execute foreign key cascades.
+	HasFKCascades bool
 
 	// MPPQueryInfo stores some id and timestamp of current MPP query statement.
 	MPPQueryInfo struct {

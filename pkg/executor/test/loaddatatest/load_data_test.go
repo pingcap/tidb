@@ -44,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
@@ -559,6 +560,50 @@ func TestLoadDataForeignKeys(t *testing.T) {
 		tk.MustQuery("table parent").Check(testkit.Rows("1 5"))
 		tk.MustQuery("table child").Check(testkit.Rows("1"))
 	}
+
+	// An FK check on the imported row needs a final pessimistic lock, after
+	// the replacement and its SET NULL cascade have flushed their writes.
+	tk.MustExec("create table referenced (u int primary key)")
+	tk.MustExec("insert into referenced values (5)")
+	tk.MustExec("alter table parent add foreign key (u) references referenced(u)")
+	tk.MustExec("set tidb_constraint_check_in_place_pessimistic = on")
+	tk.MustExec("begin pessimistic")
+	tk.MustExec("insert into referenced values (6)")
+	injectLockResult := func(t *testing.T, inject func(*error)) {
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/afterPessimisticDMLLock", func(sctx sessionctx.Context, err *error) {
+			if sctx.GetSessionVars() == tk.Session().GetSessionVars() {
+				inject(err)
+			}
+		})
+	}
+	t.Run("final lock failure", func(t *testing.T) {
+		injectLockResult(t, func(err *error) {
+			*err = errors.New("injected final lock failure")
+		})
+		setInput("2\t5\n")
+		require.ErrorContains(t, tk.ExecToErr(load+"replace into table parent"), "injected final lock failure")
+	})
+	tk.MustExec("commit")
+	tk.MustQuery("table parent").Check(testkit.Rows("1 5"))
+	tk.MustQuery("table child").Check(testkit.Rows("1"))
+	tk.MustQuery("select u from referenced order by u").Check(testkit.Rows("5", "6"))
+
+	// Replayable DML must also start its next attempt from the original rows.
+	tk.MustExec("begin pessimistic")
+	t.Run("retry final lock", func(t *testing.T) {
+		attempts := 0
+		injectLockResult(t, func(err *error) {
+			attempts++
+			if attempts == 1 {
+				*err = kv.ErrWriteConflict
+			}
+		})
+		tk.MustExec("replace into parent select id + 1, u from parent")
+		require.GreaterOrEqual(t, attempts, 2)
+	})
+	tk.MustExec("commit")
+	tk.MustQuery("table parent").Check(testkit.Rows("2 5"))
+	tk.MustQuery("table child").Check(testkit.Rows("<nil>"))
 }
 
 // TestLoadDataOverflowBigintUnsigned related to issue 6360
