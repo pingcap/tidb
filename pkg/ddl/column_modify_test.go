@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
+	"os"
 	"strconv"
 	"testing"
 	"time"
@@ -796,4 +797,116 @@ func TestModifyColumnCrossCharsetRequiresReorg(t *testing.T) {
 	tk.MustExec("update t6 set c = 'é'")
 	tk.MustExec("alter table t6 modify column c varchar(10) character set utf8 collate utf8_bin")
 	tk.MustQuery("select c from t6").Check(testkit.Rows("é"))
+}
+
+func TestModifyColumnConversionMatrix(t *testing.T) {
+	if os.Getenv("TIDB_RUN_MODIFY_COLUMN_MATRIX") != "1" {
+		t.Skip("set TIDB_RUN_MODIFY_COLUMN_MATRIX=1 to run the MODIFY COLUMN conversion matrix")
+	}
+
+	store := testkit.CreateMockStore(t)
+	for _, tc := range []struct {
+		name    string
+		oldType string
+		newType string
+		index   string
+		values  []string
+	}{
+		{
+			"varchar_to_text", "varchar(10) collate utf8mb4_bin", "text collate utf8mb4_bin", "c(1)",
+			[]string{"NULL", "'abc '", "'😀Å'"},
+		},
+		{
+			"varchar_fits_tinytext", "varchar(63) collate utf8mb4_bin", "tinytext collate utf8mb4_bin", "c(1)",
+			[]string{"repeat('😀', 63)"},
+		},
+		{
+			"tinytext_byte_limit", "varchar(64) collate utf8mb4_bin", "tinytext collate utf8mb4_bin", "c(1)",
+			[]string{"concat(repeat('😀', 63), '€')", "repeat('😀', 64)"},
+		},
+		{
+			"varchar_character_limit", "varchar(8) collate utf8mb4_bin", "varchar(4) collate utf8mb4_bin", "c(1)",
+			[]string{"'éééé'", "'😀😀😀😀'", "'abcde'"},
+		},
+		{
+			"varchar_to_char", "varchar(8) collate utf8mb4_bin", "char(8) collate utf8mb4_bin", "c(1)",
+			[]string{"'abc '", "'😀'"},
+		},
+		{
+			"utf8_narrowing", "char(4) collate utf8mb4_bin", "varchar(10) collate utf8_bin", "c(1)",
+			[]string{"'é'", "'😀'"},
+		},
+		{
+			"ascii_conversion", "char(4) collate utf8mb4_bin", "varchar(10) collate ascii_bin", "c(1)",
+			[]string{"'a'", "'é'"},
+		},
+		{
+			"binary_to_utf8", "binary(2)", "varchar(10) collate utf8mb4_bin", "c(1)",
+			[]string{"x'4142'", "x'FFFE'"},
+		},
+		{
+			"collation_change", "varchar(10) collate utf8mb4_bin", "varchar(10) collate utf8mb4_general_ci", "c(1)",
+			[]string{"'A '", "'é'"},
+		},
+		{
+			"integer_narrowing", "int", "tinyint", "c",
+			[]string{"-129", "-128", "127", "128"},
+		},
+		{
+			"integer_sign", "tinyint", "smallint unsigned", "c",
+			[]string{"-1", "0", "127"},
+		},
+		{
+			"decimal_widening", "decimal(4,2)", "decimal(6,2)", "c",
+			[]string{"99.99", "-1.23"},
+		},
+		{
+			"enum_append", "enum('a','b')", "enum('a','b','c')", "c",
+			[]string{"'a'", "'b'"},
+		},
+		{
+			"set_append", "set('a','b')", "set('a','b','c')", "c",
+			[]string{"'b'", "'a,b'"},
+		},
+	} {
+		for _, indexed := range []bool{false, true} {
+			for i, value := range tc.values {
+				t.Run(fmt.Sprintf("%s/indexed=%t/value=%d", tc.name, indexed, i), func(t *testing.T) {
+					tk := testkit.NewTestKit(t, store)
+					tk.MustExec("use test")
+					tk.MustExec("set sql_mode = 'STRICT_ALL_TABLES'")
+					tk.MustExec("drop table if exists t_conversion, t_expected")
+					index := ""
+					if indexed {
+						index = ", index idx (" + tc.index + ")"
+					}
+					tk.MustExec("create table t_conversion (c " + tc.oldType + index + ")")
+					tk.MustExec("create table t_expected (c " + tc.newType + index + ")")
+					tk.MustExec("insert into t_conversion values (" + value + ")")
+
+					// Assignment into a fresh target column exercises DML conversion.
+					// Compare against that path rather than the DDL classifier.
+					before := tk.MustQuery("select hex(c) from t_conversion").Rows()
+					beforeSchema := tk.MustQuery("show create table t_conversion").Rows()
+					insertErr := tk.ExecToErr("insert into t_expected select c from t_conversion")
+					alterErr := tk.ExecToErr("alter table t_conversion modify c " + tc.newType)
+					if insertErr != nil {
+						require.Error(t, alterErr, "the target rejects %s", value)
+						require.Equal(t, beforeSchema, tk.MustQuery("show create table t_conversion").Rows())
+						require.Equal(t, before, tk.MustQuery("select hex(c) from t_conversion").Rows())
+					} else {
+						require.NoError(t, alterErr, "the target accepts %s", value)
+						expected := tk.MustQuery("select hex(c) from t_expected").Rows()
+						require.Equal(t, expected, tk.MustQuery("select hex(c) from t_conversion").Rows())
+						if indexed {
+							require.Equal(t, expected, tk.MustQuery("select hex(c) from t_conversion force index (idx)").Rows())
+						}
+					}
+					if indexed {
+						tk.MustExec("admin check table t_conversion")
+					}
+				})
+			}
+		}
+	}
 }
