@@ -554,6 +554,17 @@ func (w *GCWorker) checkPrepare(ctx context.Context) (bool, uint64, error) {
 		if !hasPending {
 			return false, 0, nil
 		}
+		persistedSafePointTime := oracle.GetTimeFromTS(persistedSafePoint)
+		savedSafePoint, err := w.loadTime(gcSafePointKey)
+		if err != nil {
+			return false, 0, errors.Trace(err)
+		}
+		if savedSafePoint == nil || savedSafePoint.Before(persistedSafePointTime) {
+			err = w.saveTime(gcSafePointKey, persistedSafePointTime)
+			if err != nil {
+				return false, 0, errors.Trace(err)
+			}
+		}
 		err = w.saveTime(gcLastRunTimeKey, now)
 		if err != nil {
 			return false, 0, errors.Trace(err)

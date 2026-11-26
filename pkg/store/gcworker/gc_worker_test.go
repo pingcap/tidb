@@ -133,6 +133,7 @@ type mockGCWorkerClient struct {
 	unsafeDestroyRangeHandler handler
 	deleteRangeHandler        handler
 	scanLockRequestHandler    handler
+	prewriteHandler           atomic.Pointer[handler]
 }
 
 type handler = func(addr string, req *tikvrpc.Request) (*tikvrpc.Response, error)
@@ -153,6 +154,11 @@ func (c *mockGCWorkerClient) SendRequest(ctx context.Context, addr string, req *
 	}
 	if req.Type == tikvrpc.CmdScanLock && c.scanLockRequestHandler != nil {
 		resp, err = c.scanLockRequestHandler(addr, req)
+	}
+	if req.Type == tikvrpc.CmdPrewrite {
+		if h := c.prewriteHandler.Load(); h != nil && *h != nil {
+			resp, err = (*h)(addr, req)
+		}
 	}
 
 	if resp != nil || err != nil {

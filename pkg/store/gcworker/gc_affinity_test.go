@@ -15,11 +15,13 @@
 package gcworker
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"net/http"
 	"slices"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -31,7 +33,9 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"github.com/tikv/pd/client/clients/gc"
 	pdhttp "github.com/tikv/pd/client/http"
@@ -659,4 +663,238 @@ func TestDeleteRangesDedupsSameJobAffinityFailurePerRound(t *testing.T) {
 	for _, g := range groupIDs {
 		require.False(t, cli.has(g))
 	}
+}
+
+func TestCheckPrepareReplacementLeaderPersistsSQLSafePointBeforeRetry(t *testing.T) {
+	util.EmulatorGCDisable()
+	t.Cleanup(util.EmulatorGCEnable)
+
+	oldWait := txnSafePointSyncWaitTime
+	txnSafePointSyncWaitTime = 0
+	t.Cleanup(func() { txnSafePointSyncWaitTime = oldWait })
+
+	s := createGCWorkerSuite(t, withSchemaLease(220*time.Minute))
+	cli := newGCAffinityMockPDClient()
+	affinity.InitManager(cli)
+	t.Cleanup(func() { affinity.InitManager(nil) })
+
+	ctx := gcContext()
+	se := createSession(s.store)
+	defer se.Close()
+	mustExecSQL(t, se, "use test")
+	mustExecSQL(t, se, "create table t_failover_sync(a int) affinity='table'")
+	tbl, err := s.dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t_failover_sync"))
+	require.NoError(t, err)
+	groupID := ddl.GetTableAffinityGroupID(s.store.GetCodec(), tbl.Meta().ID)
+
+	// Record an older SQL safe point (SP0) before dropping the table.
+	oldSQLSafePointTime, err := s.gcWorker.getOracleTime()
+	require.NoError(t, err)
+	oldSQLSafePointTime = oldSQLSafePointTime.Truncate(time.Millisecond)
+	s.oracle.AddOffset(time.Minute)
+	oldSnapTS := s.mustAllocTs(t)
+	s.oracle.AddOffset(time.Minute)
+	mustExecSQL(t, se, "drop table t_failover_sync")
+
+	// Advance oracle so SP1 is strictly after the drop, then simulate the original
+	// GC leader advancing PD's TxnSafePoint to SP1 and exiting before persisting
+	// tikv_gc_safe_point in mysql.tidb.
+	s.oracle.AddOffset(20 * time.Minute)
+	now, err := s.gcWorker.getOracleTime()
+	require.NoError(t, err)
+	sp1Time := now.Add(-gcDefaultLifeTime).Truncate(time.Millisecond)
+	sp1 := oracle.GoTimeToTS(sp1Time)
+	require.Greater(t, sp1, oldSnapTS)
+
+	keyspaceID := uint32(s.store.GetCodec().GetKeyspaceID())
+	_, err = s.pdClient.GetGCInternalController(keyspaceID).AdvanceTxnSafePoint(ctx, sp1)
+	require.NoError(t, err)
+	_, err = s.pdClient.GetGCStatesClient(keyspaceID).SetGCBarrier(ctx, "barrier-failover-sync", sp1, gc.TTLNeverExpire)
+	require.NoError(t, err)
+
+	oldLastRun := now.Add(-30 * time.Minute).Truncate(time.Millisecond)
+	require.NoError(t, s.gcWorker.saveTime(gcSafePointKey, oldSQLSafePointTime))
+	require.NoError(t, s.gcWorker.saveTime(gcLastRunTimeKey, oldLastRun))
+
+	// Before takeover, SQL still allows a snapshot older than SP1 because
+	// tikv_gc_safe_point is still at SP0.
+	preCheckSe := createSession(s.store)
+	_, err = preCheckSe.Execute(ctx, fmt.Sprintf("set @@tidb_snapshot = '%d'", oldSnapTS))
+	preCheckSe.Close()
+	require.NoError(t, err)
+
+	// Replacement GC leader takes over with no in-memory state. Verify that by the
+	// time UnsafeDestroyRange executes, tikv_gc_safe_point is already persisted to SP1.
+	failoverWorker := newTestGCWorker(t, s.store, s.pdClient)
+	failoverWorker.lastFinish = time.Now().Add(-gcWaitTime)
+
+	var (
+		destroyMu          sync.Mutex
+		destroyCalls       int
+		sqlSafePointAtCall *time.Time
+		loadErrAtCall      error
+	)
+	s.client.unsafeDestroyRangeHandler = func(_ string, _ *tikvrpc.Request) (*tikvrpc.Response, error) {
+		sp, loadErr := failoverWorker.loadTime(gcSafePointKey)
+		destroyMu.Lock()
+		destroyCalls++
+		if sqlSafePointAtCall == nil {
+			sqlSafePointAtCall = sp
+			loadErrAtCall = loadErr
+		}
+		destroyMu.Unlock()
+		return &tikvrpc.Response{Resp: &kvrpcpb.UnsafeDestroyRangeResponse{}}, nil
+	}
+	t.Cleanup(func() { s.client.unsafeDestroyRangeHandler = nil })
+
+	require.NoError(t, failoverWorker.leaderTick(ctx))
+	require.True(t, failoverWorker.gcIsRunning)
+	select {
+	case err := <-failoverWorker.done:
+		require.NoError(t, err)
+	case <-time.After(15 * time.Second):
+		t.Fatal("timed out waiting for replacement GC job")
+	}
+
+	destroyMu.Lock()
+	require.Positive(t, destroyCalls)
+	require.NoError(t, loadErrAtCall)
+	require.NotNil(t, sqlSafePointAtCall)
+	require.Equal(t, sp1, oracle.GoTimeToTS(*sqlSafePointAtCall), "tikv_gc_safe_point must be persisted before range cleanup starts")
+	destroyMu.Unlock()
+
+	require.False(t, cli.has(groupID))
+	pending, err := util.LoadDeleteRanges(ctx, se, sp1)
+	require.NoError(t, err)
+	require.Empty(t, pending)
+
+	// A new SQL session attempting to set a snapshot older than SP1 must be rejected
+	// with ErrSnapshotTooOld (error 8055).
+	postCheckSe := createSession(s.store)
+	defer postCheckSe.Close()
+	_, err = postCheckSe.Execute(ctx, fmt.Sprintf("set @@tidb_snapshot = '%d'", oldSnapTS))
+	require.Error(t, err)
+	require.True(t, variable.ErrSnapshotTooOld.Equal(err), "expected ErrSnapshotTooOld (8055), got: %v", err)
+}
+
+func TestCheckPrepareReplacementLeaderAbortsRetryWhenSQLSafePointPersistFails(t *testing.T) {
+	util.EmulatorGCDisable()
+	t.Cleanup(util.EmulatorGCEnable)
+
+	oldWait := txnSafePointSyncWaitTime
+	txnSafePointSyncWaitTime = 0
+	t.Cleanup(func() { txnSafePointSyncWaitTime = oldWait })
+
+	s := createGCWorkerSuite(t, withSchemaLease(220*time.Minute))
+	cli := newGCAffinityMockPDClient()
+	affinity.InitManager(cli)
+	t.Cleanup(func() { affinity.InitManager(nil) })
+
+	ctx := gcContext()
+	se := createSession(s.store)
+	defer se.Close()
+	mustExecSQL(t, se, "use test")
+	mustExecSQL(t, se, "create table t_failover_err(a int) affinity='table'")
+	tbl, err := s.dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t_failover_err"))
+	require.NoError(t, err)
+	groupID := ddl.GetTableAffinityGroupID(s.store.GetCodec(), tbl.Meta().ID)
+
+	oldSQLSafePointTime, err := s.gcWorker.getOracleTime()
+	require.NoError(t, err)
+	oldSQLSafePointTime = oldSQLSafePointTime.Truncate(time.Millisecond)
+	s.oracle.AddOffset(time.Minute)
+	oldSnapTS := s.mustAllocTs(t)
+	s.oracle.AddOffset(time.Minute)
+	mustExecSQL(t, se, "drop table t_failover_err")
+
+	s.oracle.AddOffset(20 * time.Minute)
+	now, err := s.gcWorker.getOracleTime()
+	require.NoError(t, err)
+	sp1Time := now.Add(-gcDefaultLifeTime).Truncate(time.Millisecond)
+	sp1 := oracle.GoTimeToTS(sp1Time)
+
+	keyspaceID := uint32(s.store.GetCodec().GetKeyspaceID())
+	_, err = s.pdClient.GetGCInternalController(keyspaceID).AdvanceTxnSafePoint(ctx, sp1)
+	require.NoError(t, err)
+	_, err = s.pdClient.GetGCStatesClient(keyspaceID).SetGCBarrier(ctx, "barrier-failover-err", sp1, gc.TTLNeverExpire)
+	require.NoError(t, err)
+
+	oldLastRun := now.Add(-30 * time.Minute).Truncate(time.Millisecond)
+	require.NoError(t, s.gcWorker.saveTime(gcSafePointKey, oldSQLSafePointTime))
+	require.NoError(t, s.gcWorker.saveTime(gcLastRunTimeKey, oldLastRun))
+
+	var destroyCalled atomic.Bool
+	s.client.unsafeDestroyRangeHandler = func(_ string, _ *tikvrpc.Request) (*tikvrpc.Response, error) {
+		destroyCalled.Store(true)
+		return &tikvrpc.Response{Resp: &kvrpcpb.UnsafeDestroyRangeResponse{}}, nil
+	}
+	t.Cleanup(func() { s.client.unsafeDestroyRangeHandler = nil })
+
+	// Inject a write failure specifically when persisting tikv_gc_safe_point.
+	var injectedHits atomic.Int32
+	failSaveSafePoint := func(_ string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
+		for _, m := range req.Prewrite().GetMutations() {
+			if bytes.Contains(m.GetKey(), []byte(gcSafePointKey)) || bytes.Contains(m.GetValue(), []byte(gcSafePointKey)) {
+				injectedHits.Add(1)
+				return &tikvrpc.Response{
+					Resp: &kvrpcpb.PrewriteResponse{
+						Errors: []*kvrpcpb.KeyError{{Abort: "injected tikv_gc_safe_point persistence failure"}},
+					},
+				}, nil
+			}
+		}
+		return nil, nil
+	}
+	s.client.prewriteHandler.Store(&failSaveSafePoint)
+	t.Cleanup(func() { s.client.prewriteHandler.Store(nil) })
+
+	failoverWorker := newTestGCWorker(t, s.store, s.pdClient)
+	failoverWorker.lastFinish = time.Now().Add(-gcWaitTime)
+
+	// Persisting tikv_gc_safe_point fails: leaderTick must return an error and must
+	// not launch range cleanup or advance gcLastRunTimeKey.
+	err = failoverWorker.leaderTick(ctx)
+	require.Error(t, err)
+	require.Positive(t, injectedHits.Load(), "expected tikv_gc_safe_point write to be attempted")
+	require.False(t, failoverWorker.gcIsRunning)
+	require.False(t, destroyCalled.Load(), "range cleanup must not run when persisting tikv_gc_safe_point fails")
+	require.True(t, cli.has(groupID))
+
+	pending, err := util.LoadDeleteRanges(ctx, se, sp1)
+	require.NoError(t, err)
+	require.NotEmpty(t, pending)
+
+	savedSP, err := failoverWorker.loadTime(gcSafePointKey)
+	require.NoError(t, err)
+	require.NotNil(t, savedSP)
+	require.True(t, savedSP.Equal(oldSQLSafePointTime))
+
+	savedLastRun, err := failoverWorker.loadTime(gcLastRunTimeKey)
+	require.NoError(t, err)
+	require.NotNil(t, savedLastRun)
+	require.True(t, savedLastRun.Equal(oldLastRun), "gcLastRunTimeKey must not advance when persisting tikv_gc_safe_point fails")
+
+	// Once persistence recovers, the next tick immediately retries without waiting
+	// for another gcRunInterval, persists tikv_gc_safe_point, and cleans up ranges.
+	s.client.prewriteHandler.Store(nil)
+	require.NoError(t, failoverWorker.leaderTick(ctx))
+	require.True(t, failoverWorker.gcIsRunning)
+	select {
+	case err := <-failoverWorker.done:
+		require.NoError(t, err)
+	case <-time.After(15 * time.Second):
+		t.Fatal("timed out waiting for recovered GC job")
+	}
+
+	require.True(t, destroyCalled.Load())
+	require.False(t, cli.has(groupID))
+	pending, err = util.LoadDeleteRanges(ctx, se, sp1)
+	require.NoError(t, err)
+	require.Empty(t, pending)
+
+	checkSe := createSession(s.store)
+	defer checkSe.Close()
+	_, err = checkSe.Execute(ctx, fmt.Sprintf("set @@tidb_snapshot = '%d'", oldSnapTS))
+	require.Error(t, err)
+	require.True(t, variable.ErrSnapshotTooOld.Equal(err), "expected ErrSnapshotTooOld (8055), got: %v", err)
 }
