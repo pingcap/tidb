@@ -654,3 +654,35 @@ fn drop_index_needed_by_a_foreign_key_is_refused_regardless_of_checks() {
     tk.must_exec("admin check table t2");
     tk.must_exec("delete from t2");
 }
+
+// The NULL-referenced-key rows of Go's TestAddForeignKey (Go master
+// 6a0ead325aa): `checkForeignKeyConstrain` reads orphan child rows with a
+// correlated NOT EXISTS, since a NULL in the referenced key made the old
+// `(cols) NOT IN (select ...)` UNKNOWN for an orphan, which slipped through.
+#[test]
+fn add_foreign_key_rejects_orphans_when_the_referenced_key_holds_null() {
+    let mut tk = TestKit::new();
+    tk.must_exec("set @@foreign_key_checks=1");
+    tk.must_exec("drop table if exists t1,t2");
+    tk.must_exec("create table t1 (id int key, business_key int, unique key uk_business_key(business_key));");
+    tk.must_exec("create table t2 (id int key, parent_key int, index idx_parent_key(parent_key));");
+    tk.must_exec("insert into t1 values (1, 1), (2, null);");
+    tk.must_exec("insert into t2 values (1, 1), (2, 2);");
+    tk.must_get_err_code("alter table t2 add constraint fk_parent foreign key (parent_key) references t1(business_key)", 1452);
+    assert_eq!(declared(&tk, "test", "t2").len(), 0);
+
+    // Control: a NULL child key is exempt, and every non-NULL child key has a match.
+    tk.must_exec("delete from t2 where parent_key = 2;");
+    tk.must_exec("insert into t2 values (2, null);");
+    tk.must_exec("alter table t2 add constraint fk_parent foreign key (parent_key) references t1(business_key)");
+    assert_eq!(declared(&tk, "test", "t2").len(), 1);
+
+    // Test the composite-key case with a NULL component in the referenced key.
+    tk.must_exec("drop table if exists t1,t2");
+    tk.must_exec("create table t1 (id int key, a int, b int, unique key uk_ab(a, b));");
+    tk.must_exec("create table t2 (id int key, x int, y int, index idx_xy(x, y));");
+    tk.must_exec("insert into t1 values (1, 1, 1), (2, 2, null);");
+    tk.must_exec("insert into t2 values (1, 1, 1), (2, 2, 2);");
+    tk.must_get_err_code("alter table t2 add constraint fk_xy foreign key (x, y) references t1(a, b)", 1452);
+    assert_eq!(declared(&tk, "test", "t2").len(), 0);
+}

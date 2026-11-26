@@ -329,28 +329,31 @@ pub fn check_foreign_key_constrain(
     let fk = &check.foreign_key;
     let cols = fk.cols.snapshot();
     let ref_cols = fk.ref_cols.snapshot();
-    let mut sql = String::from("select 1 from %n.%n where ");
+    let mut sql = String::from("select 1 from %n.%n as c where ");
     let mut params = vec![
         SqlArg::String(check.schema.as_bytes()),
         SqlArg::String(check.table.as_bytes()),
     ];
     for (i, col) in cols.iter().enumerate() {
-        sql.push_str(if i == 0 { "%n is not null" } else { " and %n is not null" });
+        sql.push_str(if i == 0 { "c.%n is not null" } else { " and c.%n is not null" });
         params.push(SqlArg::String(col.lowercase().as_bytes()));
     }
-    sql.push_str(" and (");
-    for (i, col) in cols.iter().enumerate() {
-        sql.push_str(if i == 0 { "%n" } else { ",%n" });
-        params.push(SqlArg::String(col.lowercase().as_bytes()));
-    }
-    sql.push_str(") not in (select ");
-    for (i, col) in ref_cols.iter().enumerate() {
-        sql.push_str(if i == 0 { "%n" } else { ",%n" });
-        params.push(SqlArg::String(col.lowercase().as_bytes()));
-    }
-    sql.push_str(" from %n.%n ) limit 1");
+    // Use a correlated NOT EXISTS anti-join instead of NOT IN. If the
+    // referenced key contains NULL, NOT IN can evaluate to UNKNOWN for an
+    // orphan child row, so the child row would not be reported as a
+    // constraint violation.
+    sql.push_str(" and not exists (select 1 from %n.%n as r where ");
     params.push(SqlArg::String(fk.ref_schema.lowercase().as_bytes()));
     params.push(SqlArg::String(fk.ref_table.lowercase().as_bytes()));
+    for (i, ref_col) in ref_cols.iter().enumerate() {
+        if i > 0 {
+            sql.push_str(" and ");
+        }
+        sql.push_str("r.%n = c.%n");
+        params.push(SqlArg::String(ref_col.lowercase().as_bytes()));
+        params.push(SqlArg::String(cols[i].lowercase().as_bytes()));
+    }
+    sql.push_str(") limit 1");
     let rows = pool.exec_restricted_sql_with(&sql, &params)?;
     if !rows.is_empty() {
         return Err(tidb_terror::MysqlError::from_terror(
