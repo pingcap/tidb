@@ -1657,7 +1657,8 @@ fn binary_documents_and_modifiers_answer_like_go() {
             r#"select json_extract('{"*": 1, "a": 2}', '$."*"')"#,
             "[1, 2]",
         ),
-        ("select json_extract('[1,2]', '$[0 to]')", "1"),
+        // Go master e86b42ec9cf: `to` must be followed by whitespace.
+        ("select json_extract('[1,2]', '$[0 to]')", "ERR 3143"),
         ("select json_extract('[1,2,3]', '$[1')", "ERR 3143"),
     ] {
         assert_eq!(json_answer(&mut session, sql), want, "{sql}");

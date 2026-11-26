@@ -365,19 +365,20 @@ pub(crate) fn run_multi_update(
             })
             .collect::<Result<Vec<_>, DriverError>>()?;
         let mut prepared = Vec::with_capacity(tables.len());
-        // Go `UpdateExec.rowKeys`: each updatable target's row key.
-        let mut row_keys = Vec::with_capacity(tables.len());
         // Compose every target from the same input row before merging aliases.
         for (slot, table) in updated.iter().enumerate() {
             let Some(id) = ids[slot].as_ref().filter(|_| targets[slot].is_some()) else {
                 prepared.push(None);
-                row_keys.push(None);
                 continue;
             };
-            let row_key = partition_row_key(catalog, &tables[slot], table, id, &row.stored[slot], ctx)?;
-            if updated_row_keys[slot].get(&row_key) == Some(&true) {
+            // Go `UpdateExec.rowKeys`: each updatable target's row key. It is
+            // built afresh at each use, as Go reads it from the row: a clone
+            // would report a different buffer capacity to the memory tracker.
+            let row_key = |catalog: &SessionExtendedInfoSchema| {
+                partition_row_key(catalog, &tables[slot], table, id, &row.stored[slot], ctx)
+            };
+            if updated_row_keys[slot].get(&row_key(catalog)?) == Some(&true) {
                 prepared.push(None);
-                row_keys.push(None);
                 continue;
             }
             // Go `rowsColMultiplyForPreparedRow`: an updatable target this
@@ -395,7 +396,7 @@ pub(crate) fn run_multi_update(
             }
             if multiple[slot] {
                 // Go `mergeNonGenerated`.
-                let handle = row_key.clone();
+                let handle = row_key(catalog)?;
                 let rows = merged
                     .entry(targets[slot].clone().expect("an assigned base table"))
                     .or_default();
@@ -428,7 +429,6 @@ pub(crate) fn run_multi_update(
                     .map_err(DriverError::from)?;
             }
             prepared.push(Some((old, new)));
-            row_keys.push(Some(row_key));
         }
         for (slot, prepared) in prepared.iter_mut().enumerate() {
             let Some((old, new)) = prepared else { continue };
@@ -437,7 +437,7 @@ pub(crate) fn run_multi_update(
             let (database, name) = targets[slot]
                 .as_ref()
                 .expect("prepared target is a base table");
-            let handle = row_keys[slot].clone().expect("prepared target has a row key");
+            let handle = partition_row_key(catalog, &tables[slot], table, id, &row.stored[slot], ctx)?;
             let merge_key = (database.clone(), name.clone());
             // Go `mergeGenerated(..., beforeEval=true)`: it sets the merged
             // row back unchanged, charging its estimate and the handle's.
