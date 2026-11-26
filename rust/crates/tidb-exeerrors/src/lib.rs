@@ -297,6 +297,9 @@ pub static ERR_MV_REFRESH_LOG_BASELINE_CHANGED: LazyLock<TerrorError> =
 /// Source `exeerrors.ErrMaxKeysReadExceeded`.
 pub static ERR_MAX_KEYS_READ_EXCEEDED: LazyLock<TerrorError> =
     LazyLock::new(|| CLASS_EXECUTOR.new_std(errcode::ErrMaxKeysReadExceeded));
+/// Go master `exeerrors.ErrMaintenanceMode`.
+pub static ERR_MAINTENANCE_MODE: LazyLock<TerrorError> =
+    LazyLock::new(|| CLASS_EXECUTOR.new_std(errcode::ErrMaintenanceMode));
 
 /// Every executor error paired with its Go variable name, for the fixture test.
 #[cfg(test)]
@@ -456,6 +459,7 @@ pub(crate) fn fixture_entries() -> Vec<(&'static str, &'static TerrorError)> {
             &*ERR_LOAD_DATA_PRE_CHECK_FAILED,
         ),
         ("ErrMaxKeysReadExceeded", &*ERR_MAX_KEYS_READ_EXCEEDED),
+        ("ErrMaintenanceMode", &*ERR_MAINTENANCE_MODE),
     ]
 }
 

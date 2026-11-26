@@ -31400,3 +31400,132 @@ fn test_panic_on_stmt_rollback_killed_txn() {
         );
     }
 }
+
+/// Go `TestMaintenanceMode` (`pkg/executor/import_into_test.go`): in NextGen
+/// maintenance mode a user statement submits no DDL job and no import, while
+/// internal SQL, local temporary tables, DML and releasing table locks still
+/// work; the classic kernel ignores the setting.
+#[test]
+fn test_maintenance_mode() {
+    const DDL_UNAVAILABLE: &str = "During the maintenance window, DDL is currently unavailable. It will be available after maintenance finishes";
+    const IMPORT_UNAVAILABLE: &str = "During the maintenance window, IMPORT INTO is currently unavailable. It will be available after maintenance finishes";
+    let previous = tidb_config::config_tree::config::get_global_config();
+    struct Restore(Arc<tidb_config::config_tree::config::Config>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            tidb_config::config_tree::config::store_global_config((*self.0).clone());
+        }
+    }
+    let _restore = Restore(previous);
+    let set_maintenance = |enabled: bool| {
+        tidb_config::config_tree::config::update_global(|config| config.maintenance_mode = enabled);
+    };
+    set_maintenance(true);
+    // Startup's restricted DDL must work even when user job admission is disabled.
+    let (stack, _users) = cop_backed_stack();
+    let mut tk = stack.factory.open_session(session_context(86)).expect("session opens");
+    rows(&mut tk, "CREATE DATABASE IF NOT EXISTS test");
+    rows(&mut tk, "use test");
+    if !tidb_config_kerneltype::is_next_gen() {
+        // The runtime guards are NextGen-only.
+        rows(&mut tk, "create table maintenance_classic (a int)");
+        rows(&mut tk, "alter table maintenance_classic add column b int");
+        rows(&mut tk, "drop table maintenance_classic");
+        return;
+    }
+    let mut internal = stack.factory.open_system_session().expect("system session opens");
+    for sql in [
+        "create table test.starter_target (a int)",
+        "create table test.starter_source (a int)",
+        "alter table test.starter_source add column upgrade_column int",
+        "alter table test.starter_source drop column upgrade_column",
+    ] {
+        internal.node_conn().execute_internal(sql).unwrap();
+    }
+
+    // user DDL
+    for sql in [
+        "create table starter_rejected (a int)",
+        "alter table starter_target add column b int",
+        "alter table starter_target add column b int, add column c int",
+        "drop table starter_target",
+        "create database starter_rejected_db",
+        "create global temporary table starter_global_temp (a int) on commit delete rows",
+        // Go's `explain analyze alter table ...` case is left out: Rust
+        // refuses EXPLAIN ANALYZE of DDL ("not supported yet").
+    ] {
+        let (code, message) = query_error(&mut tk, sql);
+        assert_eq!((code, message.as_str()), (8277, DDL_UNAVAILABLE), "{sql}");
+    }
+    assert!(rows(&mut tk, "show tables like 'starter_rejected'").is_empty());
+    assert_eq!(
+        displayed(rows(&mut tk, "select count(*) from information_schema.columns where table_schema = 'test' and table_name = 'starter_target'")),
+        [["1"]]
+    );
+    rows(&mut tk, "prepare starter_ddl from 'create table starter_prepared (a int)'");
+    assert_eq!(query_error(&mut tk, "execute starter_ddl").1, DDL_UNAVAILABLE);
+    rows(&mut tk, "deallocate prepare starter_ddl");
+    assert!(rows(&mut tk, "show tables like 'starter_prepared'").is_empty());
+
+    // local temporary DDL and DML
+    rows(&mut tk, "create temporary table starter_temp (a int)");
+    rows(&mut tk, "insert into starter_temp values (1)");
+    assert_eq!(displayed(rows(&mut tk, "select * from starter_temp")), [["1"]]);
+    rows(&mut tk, "drop temporary table starter_temp");
+    rows(&mut tk, "insert into starter_source values (1)");
+    rows(&mut tk, "update starter_source set a = 2");
+    assert_eq!(displayed(rows(&mut tk, "select * from starter_source")), [["2"]]);
+    rows(&mut tk, "delete from starter_source");
+
+    // release existing table locks
+    tidb_config::config_tree::config::update_global(|config| {
+        config.enable_table_lock = true;
+        config.delay_clean_table_lock = 0;
+    });
+    for close_session in [false, true] {
+        set_maintenance(false);
+        let mut lock_tk = stack.factory.open_session(session_context(87)).expect("session opens");
+        rows(&mut lock_tk, "use test");
+        rows(&mut lock_tk, "lock tables starter_target write");
+        assert_eq!(lock_tk.get_all_table_locks().len(), 1);
+        assert!(query_error(&mut tk, "insert into starter_target values (1)").1.contains("Table 'starter_target' was locked"));
+        set_maintenance(true);
+        assert_eq!(query_error(&mut lock_tk, "lock tables starter_source write").1, DDL_UNAVAILABLE);
+        // The held lock survives the refused LOCK TABLES.
+        assert_eq!(lock_tk.get_all_table_locks().len(), 1);
+        assert!(query_error(&mut tk, "insert into starter_target values (1)").1.contains("Table 'starter_target' was locked"));
+        if close_session {
+            drop(lock_tk);
+        } else {
+            rows(&mut lock_tk, "unlock tables");
+            assert!(lock_tk.get_all_table_locks().is_empty());
+        }
+        rows(&mut tk, "insert into starter_target values (1)");
+        rows(&mut tk, "delete from starter_target");
+    }
+
+    // rejected table lock preserves session state
+    let mut lock_tk = stack.factory.open_session(session_context(88)).expect("session opens");
+    rows(&mut lock_tk, "use test");
+    assert_eq!(query_error(&mut lock_tk, "lock tables starter_target write").1, DDL_UNAVAILABLE);
+    assert!(lock_tk.get_all_table_locks().is_empty());
+    rows(&mut tk, "insert into starter_target values (1)");
+    rows(&mut tk, "delete from starter_target");
+    rows(&mut lock_tk, "create temporary table starter_lock_temp (a int)");
+    rows(&mut lock_tk, "insert into starter_lock_temp values (1)");
+    assert_eq!(displayed(rows(&mut lock_tk, "select * from starter_lock_temp")), [["1"]]);
+    rows(&mut lock_tk, "drop temporary table starter_lock_temp");
+    rows(&mut lock_tk, "unlock tables");
+
+    // IMPORT INTO
+    for sql in [
+        "import into starter_target from 's3://bucket/disabled.csv'",
+        "import into starter_target from 's3://bucket/disabled.csv' with detached",
+    ] {
+        let (code, message) = query_error(&mut tk, sql);
+        assert_eq!((code, message.as_str()), (8277, IMPORT_UNAVAILABLE), "{sql}");
+    }
+    // No task was submitted (this stack starts no DXF task manager, which
+    // Go's `show import jobs` check reads).
+    assert_eq!(displayed(rows(&mut tk, "select count(*) from mysql.tidb_global_task")), [["0"]]);
+}

@@ -909,6 +909,11 @@ pub(super) const CATALOG_4: &[CatalogEntry] = &[
         message: ErrMaxKeysReadExceeded,
     },
     CatalogEntry {
+        name: "ErrMaintenanceMode",
+        code: errcode::ErrMaintenanceMode,
+        message: ErrMaintenanceMode,
+    },
+    CatalogEntry {
         name: "ErrPDServerTimeout",
         code: errcode::ErrPDServerTimeout,
         message: ErrPDServerTimeout,

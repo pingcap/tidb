@@ -80,3 +80,4 @@ ErrLoadDataInvalidOperation8171executor:8171The current job status cannot per
 ErrLoadDataLocalUnsupportedOption8172executor:8172Unsupported option for LOAD DATA LOCAL INFILE: %s
 ErrLoadDataPreCheckFailed8173executor:8173PreCheck failed: %s
 ErrMaxKeysReadExceeded8274executor:8274tidb_max_keys_read limit exceeded
+ErrMaintenanceMode8277executor:8277During the maintenance window, %s is currently unavailable. It will be available after maintenance finishes

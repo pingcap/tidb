@@ -832,6 +832,10 @@ impl<S: StoreClient> ExecutorStore for RealClusterDdl<S> {
                 Ok(ClusterDdlReport::AlreadySatisfied { detail, warnings })
             }
             Some(AddIndexSubmission::Job(spec, executor_warnings)) => {
+                // Go `DoDDLJobWrapper`: maintenance admission before a
+                // persistent job is submitted. Local temporary-table DDL
+                // submits no job and remains available.
+                check_user_ddl_job_allowed(context, spec.job.type_)?;
                 let spec = match capture_job_for_test(spec) {
                     Ok(()) => {
                         return Ok(ClusterDdlReport::AlreadySatisfied {
@@ -1117,6 +1121,28 @@ pub fn rename_table<E: ExecutorStore>(
             upgrading,
         )
     })
+}
+
+/// Go `checkUserDDLJobAllowed`: in NextGen maintenance mode a user
+/// statement submits no new DDL job.
+pub(crate) fn check_user_ddl_job_allowed(
+    context: &dyn DdlSessionContext,
+    job_type: tidb_model::ActionType,
+) -> Result<(), SqlQueryError> {
+    // Releasing existing locks, including session-close cleanup, must remain
+    // available during maintenance so other sessions are not left blocked.
+    if job_type == tidb_model::ActionType::ACTION_UNLOCK_TABLE {
+        return Ok(());
+    }
+    if tidb_config_kerneltype::is_next_gen()
+        && tidb_config::config_tree::config::get_global_config().maintenance_mode
+        && !context.in_restricted_sql()
+    {
+        return Err(mysql_query_error(tidb_terror::MysqlError::from_terror(
+            &tidb_exeerrors::ERR_MAINTENANCE_MODE.gen_with_stack_by_args(&["DDL".into()]),
+        )));
+    }
+    Ok(())
 }
 
 /// Go `executor.DoDDLJobWrapper`: admit the built job, submit, and wait.
@@ -1707,6 +1733,8 @@ pub fn lock_tables<E: ExecutorStore>(
         context,
     )
     .map_err(plan_query_error)?;
+    // Go: check admission before recording provisional session locks.
+    check_user_ddl_job_allowed(context, tidb_model::ActionType::ACTION_LOCK_TABLE)?;
     // Go: added before the job, so a session killed once the job has run
     // still holds what it locked.
     if let Some(locks) = &session_locks {

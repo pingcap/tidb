@@ -394,6 +394,11 @@ impl Config {
                 "deploy-mode can only be configured for nextgen TiDB".into(),
             ));
         }
+        if !tidb_config_kerneltype::is_next_gen() && is_defined(&table, &["maintenance-mode"]) {
+            return Err(LoadError::Other(
+                "maintenance-mode can only be configured for nextgen TiDB".into(),
+            ));
+        }
         let dxf_defined = is_defined(&table, &["dxf-resource-limit"]);
         if !dxf_defined && self.dxf_resource_limit == 0 {
             self.dxf_resource_limit = 100; // DefDXFResourceLimit
@@ -668,6 +673,51 @@ mod tests {
             let text = format!("token-limit = {input}\n");
             c.load_str("c.toml", &text).unwrap();
             assert_eq!(c.token_limit, expected);
+        }
+    }
+
+    /// Go `TestMaintenanceModeConfig`.
+    #[test]
+    fn test_maintenance_mode_config() {
+        assert!(!new_config().maintenance_mode);
+        let encoded = serde_json::to_string(&new_config()).unwrap();
+        assert!(encoded.contains(r#""maintenance-mode":false"#), "{encoded}");
+
+        let mut modes = vec![""];
+        if tidb_config_kerneltype::is_next_gen() {
+            modes.extend(["premium", "premium_reserved", "starter"]);
+        }
+        for mode in modes {
+            for enabled in [false, true] {
+                let mut content = format!("maintenance-mode = {enabled}\n");
+                if !mode.is_empty() {
+                    content.push_str(&format!("deploy-mode = {mode:?}\n"));
+                }
+                let mut conf = new_config();
+                if !tidb_config_kerneltype::is_next_gen() {
+                    let err = conf.load_str("config.toml", &content).unwrap_err();
+                    assert!(
+                        err.to_string().contains("maintenance-mode can only be configured for nextgen TiDB"),
+                        "{err}"
+                    );
+                    let mut conf = new_config();
+                    conf.maintenance_mode = enabled;
+                    if enabled {
+                        assert!(conf
+                            .valid()
+                            .unwrap_err()
+                            .contains("maintenance-mode can only be configured for nextgen TiDB"));
+                    } else {
+                        conf.valid().unwrap();
+                    }
+                    continue;
+                }
+                conf.load_str("config.toml", &content).unwrap();
+                conf.valid().unwrap();
+                assert_eq!(conf.maintenance_mode, enabled);
+                let encoded = serde_json::to_string(&conf).unwrap();
+                assert!(encoded.contains(&format!(r#""maintenance-mode":{enabled}"#)), "{encoded}");
+            }
         }
     }
 

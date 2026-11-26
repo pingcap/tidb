@@ -23,6 +23,8 @@ use tidb_variable::session_vars::DdlReorgVars;
 pub trait DdlSessionContext: Send + Sync {
     /// Go `NewMetaBuildContextWithSctx(sctx)`.
     fn metabuild_context(&self) -> tidb_metabuild::Context;
+    /// Go `SessionVars.InRestrictedSQL`: the statement is internal SQL.
+    fn in_restricted_sql(&self) -> bool;
     /// Go `SessionVars.EnableRowLevelChecksum` (the default is false).
     fn enable_row_level_checksum(&self) -> bool {
         false
@@ -127,6 +129,10 @@ pub trait DdlSessionContext: Send + Sync {
 impl<T: DdlSessionContext + ?Sized> DdlSessionContext for std::sync::Arc<T> {
     fn metabuild_context(&self) -> tidb_metabuild::Context {
         (**self).metabuild_context()
+    }
+
+    fn in_restricted_sql(&self) -> bool {
+        (**self).in_restricted_sql()
     }
 
     fn table_lock_context(&self) -> Option<tidb_sessionctx::SessionTableLocks> {

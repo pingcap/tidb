@@ -1853,6 +1853,7 @@ pub(super) const ALL_CODES_1: &[(&str, u16)] = &[
         ErrCheckPartialIndexWithoutFastCheck,
     ),
     ("ErrMaxKeysReadExceeded", ErrMaxKeysReadExceeded),
+    ("ErrMaintenanceMode", ErrMaintenanceMode),
     ("ErrPDServerTimeout", ErrPDServerTimeout),
     ("ErrTiKVServerTimeout", ErrTiKVServerTimeout),
     ("ErrTiKVServerBusy", ErrTiKVServerBusy),

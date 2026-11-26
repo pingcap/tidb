@@ -925,6 +925,11 @@ pub const ErrMaxKeysReadExceeded: ErrMessage = ErrMessage {
     raw: "tidb_max_keys_read limit exceeded",
     redact_arg_pos: &[],
 };
+/// Message metadata for `ErrMaintenanceMode`.
+pub const ErrMaintenanceMode: ErrMessage = ErrMessage {
+    raw: "During the maintenance window, %s is currently unavailable. It will be available after maintenance finishes",
+    redact_arg_pos: &[],
+};
 /// Message metadata for `ErrPDServerTimeout`.
 pub const ErrPDServerTimeout: ErrMessage = ErrMessage {
     raw: "PD server timeout: %s",

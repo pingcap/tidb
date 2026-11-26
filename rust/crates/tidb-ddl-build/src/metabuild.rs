@@ -45,6 +45,10 @@ impl crate::session_context::DdlSessionContext for StmtContext {
         new_metabuild_context_with_sctx(self)
     }
 
+    fn in_restricted_sql(&self) -> bool {
+        tidb_exprctx::Columns::in_restricted_sql(self)
+    }
+
     fn set_ddl_job_in_queue(&self, in_queue: bool) {
         StmtContext::set_ddl_job_in_queue(self, in_queue);
     }

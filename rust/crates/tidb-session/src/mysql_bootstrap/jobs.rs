@@ -209,13 +209,18 @@ struct JobOutcome {
 /// Go's bootstrap session: no SQL mode (so a TEXT column's `''` default is a
 /// warning, not an error), `tidb_enable_clustered_index` pinned to INT_ONLY
 /// "to be compatible with old TiDB versions" (`BootstrapSession`), and the
-/// statement text the job carries is the statement as written.
+/// statement text the job carries is the statement as written. Go's
+/// `mustExecute` runs it through `ExecuteInternal`, so it is restricted SQL
+/// (`InRestrictedSQL`), which maintenance-mode admission lets through.
 fn bootstrap_context(sql: &str) -> tidb_sessionctx::StmtContext {
     tidb_ddl_build::table_info_build::default_ddl_statement_context()
         .with_strict(false)
         .with_ddl_sql_mode(0)
         .with_clustered_index_def_mode(tidb_vardef::modes::ClusteredIndexDefMode::INT_ONLY)
         .with_ddl_query(sql)
+        .configure(|ctx| {
+            let _ = ctx.with_mview_maintenance(false, true);
+        })
 }
 
 /// Runs one statement as the DDL job Go's executor submits and the owner

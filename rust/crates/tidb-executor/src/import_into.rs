@@ -281,6 +281,17 @@ pub trait ImportIntoExec: ImportIntoSession {
         plan: &tidb_planner::common_plans::ImportInto,
         stmt: &tidb_ast::ImportIntoStmt,
     ) -> Result<StmtOutput, DriverError> {
+        // Go `ImportIntoExec.Open`: reject new user imports before opening
+        // children so maintenance admission does not start query execution
+        // or submit tasks.
+        if tidb_config_kerneltype::is_next_gen()
+            && tidb_config::config_tree::config::get_global_config().maintenance_mode
+            && !self.import_session_vars().restricted_sql
+        {
+            return Err(DriverError::from(tidb_terror::MysqlError::from_terror(
+                &tidb_exeerrors::ERR_MAINTENANCE_MODE.gen_with_stack_by_args(&["IMPORT INTO".into()]),
+            )));
+        }
         let ctx = tidb_dxf_storage::with_internal_source_type(&Context::background(), tidb_txnkv::INTERNAL_IMPORT_INTO);
         self.build_import_into_checks(plan)?;
         let from_select = plan.select_plan.is_some();

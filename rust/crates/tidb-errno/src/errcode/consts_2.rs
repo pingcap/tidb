@@ -711,6 +711,8 @@ pub const ErrModifyColumnReferencedByPartialCondition: u16 = 8272;
 pub const ErrCheckPartialIndexWithoutFastCheck: u16 = 8273;
 /// `ErrMaxKeysReadExceeded` (8274).
 pub const ErrMaxKeysReadExceeded: u16 = 8274;
+/// `ErrMaintenanceMode` (8277).
+pub const ErrMaintenanceMode: u16 = 8277;
 /// `ErrPDServerTimeout` (9001).
 pub const ErrPDServerTimeout: u16 = 9001;
 /// `ErrTiKVServerTimeout` (9002).

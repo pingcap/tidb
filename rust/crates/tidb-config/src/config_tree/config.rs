@@ -265,6 +265,11 @@ pub struct Config {
     pub initialize_sql_file: String,
     #[serde(rename = "keyspace-activate")]
     pub keyspace_activate_mode: bool,
+    /// Go `MaintenanceMode`: rejects new user DDL jobs and IMPORT INTO
+    /// submissions in NextGen. Internal SQL and local temporary-table DDL
+    /// remain allowed.
+    #[serde(rename = "maintenance-mode")]
+    pub maintenance_mode: bool,
     #[serde(rename = "standby")]
     pub standby: Standby,
     #[serde(rename = "starter-params")]
@@ -400,6 +405,7 @@ impl Default for Config {
             enable_32bits_connection_id: true,
             initialize_sql_file: String::new(),
             keyspace_activate_mode: false,
+            maintenance_mode: false,
             standby: Standby::default(),
             starter_params: StarterParams::default(),
             hosted_embedding: HostedEmbedding::default(),
@@ -746,6 +752,9 @@ impl Config {
         }
         if !tidb_config_kerneltype::is_next_gen() && self.deploy_mode != Mode::Premium {
             return Err("deploy-mode can only be configured for nextgen TiDB".into());
+        }
+        if self.maintenance_mode && !tidb_config_kerneltype::is_next_gen() {
+            return Err("maintenance-mode can only be configured for nextgen TiDB".into());
         }
         if self.standby.standby_mode && self.keyspace_activate_mode {
             return Err("can't set standby and keyspace-activate mode at the same time".into());
