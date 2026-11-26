@@ -611,16 +611,20 @@ impl crate::streamhelper::MetaStore for EtcdOpsMetaStore {
     }
 }
 
-/// Go `checkIncompatibleChangefeed`.
+/// Go `checkIncompatibleChangefeed`. The threshold is BackupTS for snapshot
+/// restore and the target TS for PITR.
 fn check_incompatible_changefeed(
-    backup_ts: u64,
+    restore_ts: u64,
     etcd: &dyn tidb_domain_serverinfo::serverinfo_syncer::EtcdOps,
 ) -> Result<()> {
-    let names = tidb_cdcutil::get_incompatible_changefeeds_with_safe_ts(etcd, backup_ts)
+    let names = tidb_cdcutil::get_incompatible_changefeeds_with_safe_ts(etcd, restore_ts)
         .map_err(errors::errorf)?;
     if !names.is_empty() {
         return Err(errors::errorf(format!(
-            "{}please remove changefeed(s) before restore",
+            "cannot restore: {}restoreTS is BackupTS for snapshot restore or the target timestamp for PITR. \
+             The effective checkpointTS is the maximum of the changefeed checkpoint-ts and start-ts. \
+             Please advance the changefeed checkpoint to at least restoreTS, or remove the incompatible changefeed(s) before retrying restore; \
+             pausing a changefeed alone does not resolve the timestamp conflict",
             names.message_to_user()
         )));
     }

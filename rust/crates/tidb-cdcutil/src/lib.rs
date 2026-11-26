@@ -97,6 +97,9 @@ struct ChangefeedStatusView {
 #[derive(Debug, Default, Eq, PartialEq)]
 pub struct CDCNameSet {
     changefeeds: HashMap<String, Vec<String>>,
+    /// Go `incompatibilities`: the timestamp comparisons for restore checks;
+    /// `get_running_changefeeds` keeps the generic listing.
+    incompatibilities: Vec<String>,
 }
 
 impl CDCNameSet {
@@ -118,6 +121,12 @@ impl CDCNameSet {
 
     /// Converts the set to TiDB's user-facing message.
     pub fn message_to_user(&self) -> String {
+        if !self.incompatibilities.is_empty() {
+            return format!(
+                "found incompatible TiCDC changefeed(s) with effective checkpointTS < restoreTS: {}. ",
+                self.incompatibilities.join("; ")
+            );
+        }
         let mut output = "found CDC changefeed(s): ".to_owned();
         for (cluster_namespace, changefeeds) in &self.changefeeds {
             write!(
@@ -229,6 +238,26 @@ fn incompatible_changefeeds(etcd: &dyn EtcdOps, safe_ts: u64) -> Result<CDCNameS
         if checkpoint < safe_ts {
             tracing::info!(changefeed = %changefeed, checkpoint_ts = checkpoint, safe_ts, "Found incompatible changefeed.");
             names.save(&changefeed);
+            if safe_ts != INVALID_TS {
+                // Go `path.Join(namespace, cf.ID)`, with `path.Join(cf.Cluster,
+                // cf.Namespace)` or `<nil>` for a legacy key.
+                let namespace = match changefeed.key_version {
+                    KeyVersion::Legacy => "<nil>".to_owned(),
+                    KeyVersion::Namespaced => [changefeed.cluster.as_str(), changefeed.namespace.as_str()]
+                        .into_iter()
+                        .filter(|part| !part.is_empty())
+                        .collect::<Vec<_>>()
+                        .join("/"),
+                };
+                let name = [namespace.as_str(), changefeed.id.as_str()]
+                    .into_iter()
+                    .filter(|part| !part.is_empty())
+                    .collect::<Vec<_>>()
+                    .join("/");
+                names
+                    .incompatibilities
+                    .push(format!("{name}: effective checkpointTS={checkpoint} < restoreTS={safe_ts}"));
+            }
         }
     }
     Ok(names)
@@ -336,6 +365,12 @@ mod tests {
             get_running_changefeeds(&etcd).unwrap().changefeed_names(),
             ["<nil>/test"]
         );
+        let incompatible = get_incompatible_changefeeds_with_safe_ts(&etcd, 42).unwrap();
+        assert!(
+            incompatible.message_to_user().contains("<nil>/test: effective checkpointTS=0 < restoreTS=42"),
+            "{}",
+            incompatible.message_to_user()
+        );
 
         etcd.clear();
         etcd.put_value(
@@ -356,6 +391,9 @@ mod tests {
             ("not-skipped", "failed", 1, Some(41)),
             ("nost-ok", "normal", 43, None),
             ("nost-fail", "normal", 41, None),
+            ("equal", "normal", 1, Some(42)),
+            ("start-ahead", "normal", 43, Some(1)),
+            ("paused", "stopped", 1, Some(41)),
         ] {
             etcd.put_value(
                 &format!("/tidb/cdc/default/default/changefeed/info/{name}"),
@@ -377,9 +415,24 @@ mod tests {
             [
                 "default/default/nost-fail",
                 "default/default/not-skipped",
+                "default/default/paused",
                 "default/default/st-fail"
             ]
         );
+        let message = get_incompatible_changefeeds_with_safe_ts(&etcd, 42).unwrap().message_to_user();
+        assert!(message.contains("effective checkpointTS < restoreTS"), "{message}");
+        for name in ["not-skipped", "nost-fail", "st-fail", "paused"] {
+            assert!(
+                message.contains(&format!("default/default/{name}: effective checkpointTS=41 < restoreTS=42")),
+                "{message}"
+            );
+        }
+        for name in ["equal", "start-ahead", "skipped", "st-ok", "nost-ok"] {
+            assert!(!message.contains(&format!("default/default/{name}:")), "{message}");
+        }
+        let running = get_running_changefeeds(&etcd).unwrap().message_to_user();
+        assert!(running.contains("found CDC changefeed(s): "), "{running}");
+        assert!(!running.contains("restoreTS"), "{running}");
         assert!(get_incompatible_changefeeds_with_safe_ts(&etcd, 40)
             .unwrap()
             .is_empty());
@@ -390,12 +443,19 @@ mod tests {
                     .changefeed_names()
             ),
             [
+                "default/default/equal",
                 "default/default/nost-fail",
                 "default/default/nost-ok",
                 "default/default/not-skipped",
+                "default/default/paused",
                 "default/default/st-fail",
-                "default/default/st-ok"
+                "default/default/st-ok",
+                "default/default/start-ahead"
             ]
         );
+        assert!(get_incompatible_changefeeds_with_safe_ts(&etcd, 48)
+            .unwrap()
+            .message_to_user()
+            .contains("default/default/start-ahead: effective checkpointTS=43 < restoreTS=48"));
     }
 }
