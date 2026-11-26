@@ -210,12 +210,11 @@ func (*AnalysisJobFactory) CalculateTableSize(tblStats *statistics.Table) float6
 	tblCnt := float64(tblStats.RealtimeCount)
 	intest.Assert(tblCnt >= 0, "Table count should not be negative")
 	intest.Assert(tblStats.ColAndIdxExistenceMap != nil, "ColAndIdxExistenceMap should not be nil")
-	// Defensive check.
 	if tblStats.ColAndIdxExistenceMap == nil {
 		return tblCnt
 	}
-	// Column metadata can be missing if a DDL event was missed or not yet processed.
-	// Fall back to row count only in that case.
+	// The map is empty if the stats were loaded before the DDL event wrote the column records.
+	// Fall back to row count only, so that the size does not need table info.
 	colCnt := tblStats.ColAndIdxExistenceMap.ColNum()
 	if colCnt == 0 {
 		return tblCnt
@@ -286,8 +285,8 @@ func (f *AnalysisJobFactory) CalculateIndicatorsForPartitions(
 	count := 0.0
 	partitionIDs = make(map[int64]struct{}, len(partitionStats))
 	intest.Assert(globalStats.ColAndIdxExistenceMap != nil, "ColAndIdxExistenceMap should not be nil")
-	// Column metadata can be missing if a DDL event was missed or not yet processed.
-	// Fall back to row count only in that case, the same as CalculateTableSize.
+	// The map is empty if the stats were loaded before the DDL event wrote the column records.
+	// Fall back to row count only, so that the size does not need table info.
 	cols := 1.0
 	if m := globalStats.ColAndIdxExistenceMap; m != nil && m.ColNum() != 0 {
 		cols = float64(m.ColNum())
