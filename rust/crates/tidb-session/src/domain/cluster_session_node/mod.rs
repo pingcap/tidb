@@ -3320,9 +3320,11 @@ fn with_exec_option_of<H, T>(
     result
 }
 
-/// Go `ExecuteInternal(ctx, sql)` on an internal session: the session takes
-/// the request source `ctx` carries, and answers the drained rows with their
-/// result fields.
+/// Go `ExecuteInternal(ctx, sql)`: the session takes the request source
+/// `ctx` carries and runs the statement as restricted SQL (Go sets
+/// `InRestrictedSQL` for the call and restores it), answering the drained
+/// rows with their result fields. Every internal execution on a store
+/// session goes through here.
 pub(crate) fn execute_internal_under(
     session: &mut Session,
     context: &dyn tidb_sqlexec::ExecutionContext,
@@ -3340,10 +3342,10 @@ pub(crate) fn execute_internal_under(
     // Go `executeStmtImpl`: "honor a canceled caller before executing the
     // next statement".
     sessions::honor_canceled_caller(context)?;
-    let (rows, fields) = session
-        .node_conn()
-        .execute_internal_fields(sql)
-        .map_err(boxed_sql_query_error)?;
+    let restricted = std::mem::replace(&mut session.vars.restricted_sql, true);
+    let result = session.node_conn().execute_internal_fields(sql);
+    session.vars.restricted_sql = restricted;
+    let (rows, fields) = result.map_err(boxed_sql_query_error)?;
     Ok((rows, sessions::stats_result_fields(fields)))
 }
 

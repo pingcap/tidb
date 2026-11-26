@@ -31637,3 +31637,29 @@ fn statement_context_answers_executor_session_vars() {
         tk.statement_context_of(true, false, false).sysvar(None, "tidb_slow_query_file")
     );
 }
+
+/// Go `ExecuteInternal` sets `InRestrictedSQL` for its statement and restores
+/// it: an internal statement on a user session is restricted SQL (no user
+/// statement sample), and the session is a user session again afterwards.
+#[test]
+fn execute_internal_runs_restricted_on_a_user_session() {
+    let (stack, _users) = cop_backed_stack();
+    let mut tk = stack.factory.open_session(session_context(91)).expect("session opens");
+    let group = tk.active_resource_group().to_owned();
+    let select = || {
+        tidb_metrics::server::QUERY_DURATION_HISTOGRAM
+            .with_label_values(&["Select", "", &group])
+            .get_sample_count()
+    };
+    let context = tikv_client::util::with_internal_source_type(
+        &tikv_client::trace::TraceContext::new(),
+        tidb_txnkv::INTERNAL_TXN_OTHERS,
+    );
+    assert!(!tk.vars.restricted_sql);
+    let before = select();
+    crate::domain::cluster_session_node::execute_internal_under(&mut tk, &context, "select 1").unwrap();
+    assert_eq!(select(), before);
+    assert!(!tk.vars.restricted_sql);
+    rows(&mut tk, "select 1");
+    assert_eq!(select(), before + 1);
+}
