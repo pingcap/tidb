@@ -2109,11 +2109,16 @@ func (b *PlanBuilder) buildDistinct(child base.LogicalPlan, length int) (*logica
 // unionJoinFieldType finds the type which can carry the given types in Union.
 // Note that unionJoinFieldType doesn't handle charset and collation, caller need to handle it by itself.
 func unionJoinFieldType(a, b *types.FieldType) *types.FieldType {
-	// We ignore the pure NULL type.
-	if a.GetType() == mysql.TypeNull {
-		return b
-	} else if b.GetType() == mysql.TypeNull {
-		return a
+	// A pure NULL branch does not change the value type, but makes the union
+	// nullable. Do not rely on branch CASTs mutating the shared result type.
+	if a.GetType() == mysql.TypeNull || b.GetType() == mysql.TypeNull {
+		resultTp := a
+		if a.GetType() == mysql.TypeNull {
+			resultTp = b
+		}
+		resultTp = resultTp.Clone()
+		resultTp.DelFlag(mysql.NotNullFlag)
+		return resultTp
 	}
 	resultTp := types.AggFieldType([]*types.FieldType{a, b})
 	// This logic will be intelligible when it is associated with the buildProjection4Union logic.
@@ -2197,7 +2202,9 @@ func (b *PlanBuilder) buildProjection4Union(_ context.Context, u *logicalop.Logi
 			dstType := unionCols[i].RetType
 			srcType := srcCol.RetType
 			if !srcType.Equal(dstType) {
-				exprs[i] = expression.BuildCastFunction4Union(b.ctx.GetExprCtx(), srcCol, dstType)
+				// CAST can infer an unspecified string length from this branch.
+				// Do not narrow the shared UNION type or other branches' casts.
+				exprs[i] = expression.BuildCastFunction4Union(b.ctx.GetExprCtx(), srcCol, dstType.Clone())
 			} else {
 				exprs[i] = srcCol
 			}
@@ -5063,6 +5070,16 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		}
 	}
 	tableInfo := tbl.Meta()
+	if sessionVars.StmtCtx.InExplainStmt {
+		hypoTblInfo, _ := sessionVars.GetHypoIndexTableInfo(dbName.L, tableInfo)
+		if hypoTblInfo != tableInfo {
+			tbl, err = table.TableFromMeta(tbl.Allocators(nil), hypoTblInfo)
+			if err != nil {
+				return nil, err
+			}
+			tableInfo = hypoTblInfo
+		}
+	}
 
 	if b.isCreateView && tableInfo.TempTableType == model.TempTableLocal {
 		return nil, plannererrors.ErrViewSelectTemporaryTable.GenWithStackByArgs(tn.Name)
@@ -5227,8 +5244,9 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	}
 
 	// Try to substitute generate column only if there is an index on generate column.
-	for _, index := range tableInfo.Indices {
-		if index.State != model.StatePublic {
+	for _, path := range possiblePaths {
+		index := path.Index
+		if index == nil || index.State != model.StatePublic {
 			continue
 		}
 		for _, indexCol := range index.Columns {
@@ -5658,11 +5676,9 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName ast.CI
 	}
 	if b.buildingFoundRows {
 		// View definitions are expanded after preprocessing. Check them as inner queries,
-		// preserving legacy modifiers as noops and rejecting non-repeatable expressions.
-		checker := &foundRowsChecker{inView: true}
-		ast.Walk(selectNode, checker)
-		if checker.err != nil {
-			return nil, checker.err
+		// preserving legacy modifiers as noops and rejecting or falling back on non-repeatable expressions.
+		if err := b.checkViewForFoundRows(selectNode); err != nil {
+			return nil, err
 		}
 	}
 	originalVisitInfo := b.visitInfo

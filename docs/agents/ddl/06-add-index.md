@@ -165,4 +165,4 @@ Code:
 - Backfill progress or `BackfillState` not persisted → reorg restarts or double-writes after retry.
 - Missed schema sync boundary when transitioning index states → nodes observe incompatible DML rules.
 - Job args incompatibility across versions (v1/v2) → existing jobs can’t be decoded after upgrade/downgrade.
-- Fast reorg + partial index: code rejects partial indexes without fast reorg; keep the invariant (`pickBackfillType` + checks in `onCreateIndex` / `initForReorgIndexes`).
+- Adding a partial index requires fast reorg to be enabled. The supported backfill paths are ingest and `ReorgTypeTxnMerge` on standalone TiDB backed by unistore. The standalone transactional path rejects `TIMESTAMP` comparison predicates before publishing the index because backfill and DML can use different time zones; `IS NULL` and `IS NOT NULL` predicates remain supported. Transactional backfill evaluates each supported index predicate against the decoded row, including default column values.

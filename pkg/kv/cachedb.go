@@ -32,7 +32,7 @@ type (
 	// no matter the physical IDs are the same or not.
 	MemManager interface {
 		// UnionGet gets the value from cacheDB first, if it not exists,
-		// it gets the value from the snapshot, then caches the value in cacheDB.
+		// it gets the value from the snapshot and tries to cache it in cacheDB.
 		UnionGet(ctx context.Context, tid int64, snapshot Snapshot, key Key) ([]byte, error)
 		// Delete releases the cache by tableID.
 		Delete(tableID int64)
@@ -73,10 +73,8 @@ func (c *cacheDB) UnionGet(ctx context.Context, tid int64, snapshot Snapshot, ke
 			return nil, err
 		}
 
-		err = c.set(tid, key, val)
-		if err != nil {
-			return nil, err
-		}
+		// Cache admission is best-effort and must not fail a successful snapshot read.
+		_ = c.set(tid, key, val)
 	}
 	return val, nil
 }

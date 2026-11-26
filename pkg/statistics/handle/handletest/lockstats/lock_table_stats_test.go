@@ -55,7 +55,7 @@ func TestLockAndUnlockTableStats(t *testing.T) {
 	tblStats1 := handle.GetPhysicalTableStats(tbl.ID, tbl)
 	require.Equal(t, tblStats, tblStats1)
 
-	lockedTables, err := handle.GetTableLockedAndClearForTest()
+	lockedTables, err := handle.Locker().GetTableLockedAndClearForTest()
 	require.Nil(t, err)
 	require.Equal(t, 1, len(lockedTables))
 
@@ -128,14 +128,14 @@ func TestLockTableAndUnlockTableStatsRepeatedly(t *testing.T) {
 	require.Equal(t, tblStats, tblStats1)
 
 	// Lock the table again and check the warning.
-	lockedTables1, err := handle.GetTableLockedAndClearForTest()
+	lockedTables1, err := handle.Locker().GetTableLockedAndClearForTest()
 	require.Nil(t, err)
 	tk.MustExec("lock stats t")
 	tk.MustQuery("show warnings").Check(testkit.Rows(
 		"Warning 1105 skip locking locked table: test.t",
 	))
 
-	lockedTables2, err := handle.GetTableLockedAndClearForTest()
+	lockedTables2, err := handle.Locker().GetTableLockedAndClearForTest()
 	require.Nil(t, err)
 	require.Equal(t, lockedTables1, lockedTables2)
 
@@ -206,7 +206,7 @@ func TestLockAndUnlockTablesStats(t *testing.T) {
 	tbl2Stats1 := handle.GetPhysicalTableStats(tbl2.Meta().ID, tbl2.Meta())
 	require.Equal(t, tbl2Stats, tbl2Stats1)
 
-	lockedTables, err := handle.GetTableLockedAndClearForTest()
+	lockedTables, err := handle.Locker().GetTableLockedAndClearForTest()
 	require.Nil(t, err)
 	require.Equal(t, 2, len(lockedTables))
 
@@ -240,7 +240,7 @@ func TestDropTableShouldCleanUpLockInfo(t *testing.T) {
 	// GC stats.
 	tk.MustExec("drop table t")
 	ddlLease := time.Duration(0)
-	require.Nil(t, handle.GCStats(dom.InfoSchema(), ddlLease))
+	require.Nil(t, handle.GC().GCStats(dom.InfoSchema(), ddlLease))
 
 	// Check if the lock info is cleaned up.
 	rows = tk.MustQuery(selectTableLockSQL).Rows()
@@ -266,7 +266,7 @@ func TestTruncateTableShouldCleanUpLockInfo(t *testing.T) {
 	// GC stats.
 	tk.MustExec("truncate table t")
 	ddlLease := time.Duration(0)
-	require.Nil(t, handle.GCStats(dom.InfoSchema(), ddlLease))
+	require.Nil(t, handle.GC().GCStats(dom.InfoSchema(), ddlLease))
 
 	// Check if the lock info is cleaned up.
 	rows = tk.MustQuery(selectTableLockSQL).Rows()

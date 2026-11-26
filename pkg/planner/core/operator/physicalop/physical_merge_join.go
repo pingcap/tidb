@@ -128,8 +128,16 @@ func GetMergeJoin(p *logicalop.LogicalJoin, prop *property.PhysicalProperty, sch
 		if reqProps, ok := mergeJoin.tryToGetChildReqProp(prop, getConstantCols); ok {
 			// Adjust expected count for children nodes.
 			if prop.ExpectedCnt < statsInfo.RowCount {
-				reqProps[0].ExpectedCnt = CalcChildExpectedCnt(p.SCtx(), prop, leftStatsInfo.RowCount, statsInfo.RowCount)
-				reqProps[1].ExpectedCnt = CalcChildExpectedCnt(p.SCtx(), prop, rightStatsInfo.RowCount, statsInfo.RowCount)
+				// A semi/anti-semi join acts as a filter on its outer side: under a
+				// LIMIT, the rows each ordered child must read before enough rows
+				// survive the join depend on how the join keys interleave, which the
+				// uniform LIMIT scaling cannot see. Both children are already ordered
+				// on the join keys, so apply the ordering index selectivity ratio, as
+				// for an ordered scan with filters, even when the parent (e.g. a bare
+				// LIMIT) does not require any order.
+				applyOrderingPenalty := !prop.IsSortItemEmpty() || p.JoinType == base.SemiJoin || p.JoinType == base.AntiSemiJoin
+				reqProps[0].ExpectedCnt = CalcChildExpectedCnt(p.SCtx(), prop.ExpectedCnt, applyOrderingPenalty, leftStatsInfo.RowCount, statsInfo.RowCount)
+				reqProps[1].ExpectedCnt = CalcChildExpectedCnt(p.SCtx(), prop.ExpectedCnt, applyOrderingPenalty, rightStatsInfo.RowCount, statsInfo.RowCount)
 			}
 			mergeJoin.SetChildrenReqProps(reqProps)
 			_, desc := prop.AllSameOrder()

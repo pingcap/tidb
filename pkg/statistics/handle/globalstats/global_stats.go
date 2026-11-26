@@ -23,28 +23,32 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics"
 	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
+	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
 
-// statsGlobalImpl implements util.StatsGlobal
-type statsGlobalImpl struct {
-	statsHandler statstypes.StatsHandle
+// Merger merges the stats of partitions into the global stats of partitioned tables.
+type Merger struct {
+	pool   util.SessionPool
+	tables util.TableInfoGetter
+	saver  statstypes.ColOrIdxStatsSaver
 }
 
-// NewStatsGlobal creates a new StatsGlobal.
-func NewStatsGlobal(statsHandler statstypes.StatsHandle) statstypes.StatsGlobal {
-	return &statsGlobalImpl{statsHandler: statsHandler}
+// NewMerger creates a Merger that merges in the sessions of pool, and saves the global stats
+// through saver.
+func NewMerger(pool util.SessionPool, tables util.TableInfoGetter, saver statstypes.ColOrIdxStatsSaver) *Merger {
+	return &Merger{pool: pool, tables: tables, saver: saver}
 }
 
 // MergePartitionStats2GlobalStatsByTableID merge the partition-level stats to global-level stats based on the tableID.
-func (sg *statsGlobalImpl) MergePartitionStats2GlobalStatsByTableID(sc sessionctx.Context,
+func (sg *Merger) MergePartitionStats2GlobalStatsByTableID(sc sessionctx.Context,
 	opts map[ast.AnalyzeOptionType]uint64, is infoschema.InfoSchema,
 	info *statstypes.GlobalStatsInfo,
 	physicalID int64,
 ) (err error) {
-	globalStats, err := MergePartitionStats2GlobalStatsByTableID(sc, sg.statsHandler, opts, is, physicalID, info.IsIndex == 1, info.HistIDs)
+	globalStats, err := MergePartitionStats2GlobalStatsByTableID(sc, sg.pool, sg.tables, opts, is, physicalID, info.IsIndex == 1, info.HistIDs)
 	if err != nil {
 		if types.ErrPartitionStatsMissing.Equal(err) || types.ErrPartitionColumnStatsMissing.Equal(err) {
 			// When we find some partition-level stats are missing, we need to report warning.
@@ -52,7 +56,7 @@ func (sg *statsGlobalImpl) MergePartitionStats2GlobalStatsByTableID(sc sessionct
 		}
 		return err
 	}
-	return WriteGlobalStatsToStorage(sg.statsHandler, globalStats, info, physicalID)
+	return WriteGlobalStatsToStorage(sg.saver, globalStats, info, physicalID)
 }
 
 // GlobalStats is used to store the statistics contained in the global-level stats
@@ -84,14 +88,15 @@ func newGlobalStats(histCount int) *GlobalStats {
 // MergePartitionStats2GlobalStats merge the partition-level stats to global-level stats based on the tableInfo.
 func MergePartitionStats2GlobalStats(
 	sc sessionctx.Context,
-	statsHandle statstypes.StatsHandle,
+	pool util.SessionPool,
+	tables util.TableInfoGetter,
 	opts map[ast.AnalyzeOptionType]uint64,
 	is infoschema.InfoSchema,
 	globalTableInfo *model.TableInfo,
 	isIndex bool,
 	histIDs []int64,
 ) (*GlobalStats, error) {
-	worker := newGlobalStatsMerger(statsHandle, globalTableInfo, histIDs, is)
+	worker := newGlobalStatsMerger(pool, tables, globalTableInfo, histIDs, is)
 	err := worker.MergePartitionStats2GlobalStats(sc, opts, isIndex)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -102,7 +107,8 @@ func MergePartitionStats2GlobalStats(
 // MergePartitionStats2GlobalStatsByTableID merge the partition-level stats to global-level stats based on the tableID.
 func MergePartitionStats2GlobalStatsByTableID(
 	sc sessionctx.Context,
-	statsHandle statstypes.StatsHandle,
+	pool util.SessionPool,
+	tables util.TableInfoGetter,
 	opts map[ast.AnalyzeOptionType]uint64,
 	is infoschema.InfoSchema,
 	tableID int64,
@@ -110,14 +116,14 @@ func MergePartitionStats2GlobalStatsByTableID(
 	histIDs []int64,
 ) (globalStats *GlobalStats, err error) {
 	// Get the partition table IDs.
-	globalTable, ok := statsHandle.TableInfoByID(is, tableID)
+	globalTable, ok := tables.TableInfoByID(is, tableID)
 	if !ok {
 		err = errors.Errorf("unknown physical ID %d in stats meta table, maybe it has been dropped", tableID)
 		return
 	}
 
 	globalTableInfo := globalTable.Meta()
-	globalStats, err = MergePartitionStats2GlobalStats(sc, statsHandle, opts, is, globalTableInfo, isIndex, histIDs)
+	globalStats, err = MergePartitionStats2GlobalStats(sc, pool, tables, opts, is, globalTableInfo, isIndex, histIDs)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -156,7 +162,7 @@ func uniqueGlobalNDV(partitionHists []*statistics.Histogram, count int64) int64 
 }
 
 // WriteGlobalStatsToStorage is to write global stats to storage
-func WriteGlobalStatsToStorage(statsHandle statstypes.StatsHandle, globalStats *GlobalStats, info *statstypes.GlobalStatsInfo, gid int64) (err error) {
+func WriteGlobalStatsToStorage(saver statstypes.ColOrIdxStatsSaver, globalStats *GlobalStats, info *statstypes.GlobalStatsInfo, gid int64) (err error) {
 	// Dump global-level stats to kv.
 	for i := range globalStats.Num {
 		hg, cms, topN := globalStats.Hg[i], globalStats.Cms[i], globalStats.TopN[i]
@@ -165,7 +171,7 @@ func WriteGlobalStatsToStorage(statsHandle statstypes.StatsHandle, globalStats *
 			continue
 		}
 		// fms for global stats doesn't need to dump to kv.
-		err = statsHandle.SaveColOrIdxStatsToStorage(gid,
+		err = saver.SaveColOrIdxStatsToStorage(gid,
 			globalStats.Count,
 			globalStats.ModifyCount,
 			info.IsIndex,

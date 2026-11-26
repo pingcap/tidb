@@ -660,7 +660,7 @@ func (b *PlanBuilder) Build(ctx context.Context, node *resolve.NodeW) (base.Plan
 		}
 		// SQL_CALC_FOUND_ROWS in views created before native support was ignored.
 		// Keep ignoring it here; otherwise a view's count can replace the outer query's total.
-		if x.SelectStmtOpts != nil && x.SelectStmtOpts.CalcFoundRows && len(b.buildingViewStack) == 0 {
+		if shouldCalcFoundRows(b.ctx, x.SelectStmtOpts) && len(b.buildingViewStack) == 0 {
 			return b.buildSelectWithFoundRows(ctx, x)
 		}
 		return b.buildSelect(ctx, x)
@@ -1448,13 +1448,10 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 	}
 
 	// consider hypo-indexes
-	hypoIndexes := ctx.GetSessionVars().HypoIndexes // session level hypo-indexes
-	if ctx.GetSessionVars().StmtCtx.InExplainStmt && hypoIndexes != nil {
-		originalTableName := tblInfo.Name.L
-		if hypoIndexes[dbName.L] != nil && hypoIndexes[dbName.L][originalTableName] != nil {
-			for _, index := range hypoIndexes[dbName.L][originalTableName] {
-				publicPaths = append(publicPaths, &util.AccessPath{Index: index})
-			}
+	if ctx.GetSessionVars().StmtCtx.InExplainStmt {
+		_, hypoIndexes := ctx.GetSessionVars().GetHypoIndexTableInfo(dbName.L, tblInfo)
+		for _, index := range hypoIndexes {
+			publicPaths = append(publicPaths, &util.AccessPath{Index: index})
 		}
 	}
 	if len(ctx.GetSessionVars().StmtCtx.HintedHypoIndexes) > 0 { // statement-level hypo-indexes from hints
@@ -2341,8 +2338,7 @@ func (b *PlanBuilder) getPredicateColumns(tbl *resolve.TableNameW, cols *calcOnc
 	}
 	tblInfo := tbl.TableInfo
 	cols.data = make(map[int64]struct{}, len(tblInfo.Columns))
-	do := domain.GetDomain(b.ctx)
-	h := do.StatsHandle()
+	h := domain.GetAnalyzeStatsHandle(b.ctx)
 	colList, err := h.GetPredicateColumns(tblInfo.ID)
 	if err != nil {
 		return nil, err
@@ -2622,12 +2618,9 @@ func (b *PlanBuilder) filterSkipColumnTypes(origin []*model.ColumnInfo, tbl *res
 	}
 	// If one column's type is in the skipTypes list and it doesn't exist in mustAnalyzedCols, we will skip it.
 	for _, colInfo := range origin {
-		// Vector type is skip by hardcoded. Just because that collecting it is meanless for current TiDB.
-		if colInfo.FieldType.GetType() == mysql.TypeTiDBVectorFloat32 {
-			skipCol = append(skipCol, colInfo)
-			continue
-		}
 		_, skip := skipTypes[types.TypeToStr(colInfo.FieldType.GetType(), colInfo.FieldType.GetCharset())]
+		// Vector columns are skipped whatever skipTypes says, since their statistics are useless for current TiDB.
+		skip = skip || colInfo.FieldType.GetType() == mysql.TypeTiDBVectorFloat32
 		// Currently, if the column exists in some index(except MV Index), we need to bring the column's sample values
 		// into TiDB to build the index statistics.
 		_, keep := mustAnalyze[colInfo.ID]
@@ -2642,7 +2635,9 @@ func (b *PlanBuilder) filterSkipColumnTypes(origin []*model.ColumnInfo, tbl *res
 		skipColNameMap[colInfo.Name.L] = struct{}{}
 	}
 
-	// Filter out generated columns that depend on skipped columns
+	// Filter out generated columns that depend on skipped columns.
+	// A generated column can only depend on generated columns defined before it, so adding each
+	// skipped one to skipColNameMap also skips the generated columns that depend on it.
 	filteredResult := make([]*model.ColumnInfo, 0, len(result))
 	for _, colInfo := range result {
 		shouldSkip := false
@@ -2656,6 +2651,7 @@ func (b *PlanBuilder) filterSkipColumnTypes(origin []*model.ColumnInfo, tbl *res
 			for depName := range colInfo.Dependences {
 				if _, exists := skipColNameMap[depName]; exists && !decodableFromStorage {
 					skipCol = append(skipCol, colInfo)
+					skipColNameMap[colInfo.Name.L] = struct{}{}
 					shouldSkip = true
 					break
 				}
@@ -2746,7 +2742,7 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 		// Dynamic partition analyze later merges all partitions into table-level stats, so this
 		// rewrite decision must follow table-level/global stats compatibility rather than only the
 		// requested partition IDs.
-		tableVersionMatches := domain.GetDomain(b.ctx).StatsHandle().AnalyzeVersionMatchesForTable(tbl.TableInfo, version)
+		tableVersionMatches := b.analyzeVersionMatchesForTable(tbl.TableInfo, version)
 		if !tableVersionMatches {
 			// Reanalyze all partitions so the global merge rewrites table-level stats with the
 			// session-selected version.
@@ -3079,10 +3075,33 @@ func pickColumnList(astColChoice ast.ColumnChoice, astColList []*model.ColumnInf
 }
 
 func (b *PlanBuilder) analyzeVersionMatchesForPhysicalIDs(tblInfo *model.TableInfo, physicalIDs []int64, requestedVersion int) bool {
-	statsHandle := domain.GetDomain(b.ctx).StatsHandle()
+	statsHandle := domain.GetAnalyzeStatsHandle(b.ctx)
 	intest.Assert(statsHandle != nil, "statsHandle should not be nil")
 	for _, physicalID := range physicalIDs {
 		if !statistics.AnalyzeVersionMatchesForTableStats(statsHandle.GetPhysicalTableStats(physicalID, tblInfo), requestedVersion) {
+			return false
+		}
+	}
+	return true
+}
+
+// analyzeVersionMatchesForTable reports whether the table already matches the requested
+// session version. For partitioned tables it checks the global stats and every partition;
+// for non-partitioned tables it checks the table stats alone.
+func (b *PlanBuilder) analyzeVersionMatchesForTable(tblInfo *model.TableInfo, requestedVersion int) bool {
+	statsHandle := domain.GetAnalyzeStatsHandle(b.ctx)
+	globalStats := statsHandle.GetPhysicalTableStats(tblInfo.ID, tblInfo)
+	if !statistics.AnalyzeVersionMatchesForTableStats(globalStats, requestedVersion) {
+		return false
+	}
+
+	pi := tblInfo.GetPartitionInfo()
+	if pi == nil {
+		return true
+	}
+	for _, def := range pi.Definitions {
+		partitionStats := statsHandle.GetPhysicalTableStats(def.ID, tblInfo)
+		if !statistics.AnalyzeVersionMatchesForTableStats(partitionStats, requestedVersion) {
 			return false
 		}
 	}
@@ -3653,6 +3672,10 @@ func splitWhere(where ast.ExprNode) []ast.ExprNode {
 }
 
 func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (base.Plan, error) {
+	if show.Tp == ast.ShowImportJobs && show.RawImportJob && !kerneltype.IsNextGen() {
+		return nil, dbterror.ErrNotSupportedYet.GenWithStackByArgs("SHOW RAW IMPORT JOB(S) in classic kernel")
+	}
+
 	tnW := b.resolveCtx.GetTableName(show.Table)
 	p := logicalop.LogicalShow{
 		ShowContents: logicalop.ShowContents{
@@ -3673,6 +3696,7 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (base.P
 			Extended:              show.Extended,
 			Limit:                 show.Limit,
 			ImportJobID:           show.ImportJobID,
+			RawImportJob:          show.RawImportJob,
 			DistributionJobID:     show.DistributionJobID,
 			ImportGroupKey:        show.ShowGroupKey,
 		},
@@ -4788,6 +4812,8 @@ var (
 		"Result_Message", "Create_Time", "Start_Time", "End_Time", "Created_By", "Last_Update_Time",
 		"Cur_Step", "Cur_Step_Processed_Size", "Cur_Step_Total_Size", "Cur_Step_Progress_Pct", "Cur_Step_Speed", "Cur_Step_ETA",
 	}
+	rawJobSchemaNames = []string{"Job_ID", "Group_Key", "Raw_Stats"}
+	rawJobSchemaTypes = []byte{mysql.TypeLonglong, mysql.TypeString, mysql.TypeJSON}
 	// ImportIntoSchemaFTypes store the field types of the show import jobs schema.
 	ImportIntoSchemaFTypes = []byte{
 		mysql.TypeLonglong, mysql.TypeString, mysql.TypeString, mysql.TypeString, mysql.TypeLonglong,
@@ -6437,8 +6463,13 @@ func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *exp
 		names = []string{"Session_states", "Session_token"}
 		ftypes = []byte{mysql.TypeJSON, mysql.TypeJSON}
 	case ast.ShowImportJobs:
-		names = importIntoSchemaNames
-		ftypes = ImportIntoSchemaFTypes
+		if s.RawImportJob {
+			names = rawJobSchemaNames
+			ftypes = rawJobSchemaTypes
+		} else {
+			names = importIntoSchemaNames
+			ftypes = ImportIntoSchemaFTypes
+		}
 	case ast.ShowImportGroups:
 		names = showImportGroupsNames
 		ftypes = showImportGroupsFTypes

@@ -1002,7 +1002,7 @@ func TestMaterializedViewRefreshFastUpdatesStatsModifyCount(t *testing.T) {
 	require.NoError(t, err)
 	mvID := mvTable.Meta().ID
 
-	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(true))
+	require.NoError(t, dom.StatsHandle().Usage().DumpStatsDeltaToKV(true))
 	tk.MustExec("analyze table mv_fast_stats")
 	tk.MustQuery(fmt.Sprintf("select modify_count, count from mysql.stats_meta where table_id = %d", mvID)).
 		Check(testkit.Rows("0 2"))
@@ -1013,7 +1013,7 @@ func TestMaterializedViewRefreshFastUpdatesStatsModifyCount(t *testing.T) {
 	tk.MustExec("refresh materialized view mv_fast_stats fast")
 	tk.MustQuery("select a, s, cnt from mv_fast_stats order by a").Check(testkit.Rows("1 5 1", "3 4 1"))
 
-	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(true))
+	require.NoError(t, dom.StatsHandle().Usage().DumpStatsDeltaToKV(true))
 	tk.MustQuery(fmt.Sprintf("select modify_count, count from mysql.stats_meta where table_id = %d", mvID)).
 		Check(testkit.Rows("3 2"))
 }

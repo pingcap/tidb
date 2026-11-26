@@ -77,6 +77,7 @@ type GCWorker struct {
 	tikvStore            tikv.Storage
 	pdClient             pd.Client
 	pdGCControllerClient pdgc.InternalController
+	disableGC            bool // Snapshot of the disable-gc startup setting.
 	gcIsRunning          bool
 	lastFinish           time.Time
 	cancel               context.CancelFunc
@@ -115,6 +116,7 @@ func NewGCWorker(store kv.Storage, pdClient pd.Client) (*GCWorker, error) {
 		tikvStore:            tikvStore,
 		pdClient:             gcPDClient,
 		pdGCControllerClient: gcPDClient.GetGCInternalController(keyspaceID),
+		disableGC:            config.GetGlobalConfig().DisableGC,
 		gcIsRunning:          false,
 		lastFinish:           time.Now(),
 		regionLockResolver:   tikv.NewRegionLockResolver(resolverIdentifier, tikvStore),
@@ -521,7 +523,11 @@ func (w *GCWorker) checkPrepare(ctx context.Context) (bool, uint64, error) {
 	}
 
 	if !enable {
-		logutil.Logger(ctx).Warn("gc status is disabled.", zap.String("category", "gc worker"))
+		reason := vardef.TiDBGCEnable
+		if w.disableGC {
+			reason = "disable-gc"
+		}
+		logutil.Logger(ctx).Warn("gc status is disabled.", zap.String("category", "gc worker"), zap.String("reason", reason))
 		return false, 0, nil
 	}
 	now, err := w.getOracleTime()
@@ -556,6 +562,9 @@ func (w *GCWorker) getOracleTime() (time.Time, error) {
 }
 
 func (w *GCWorker) checkGCEnable() (bool, error) {
+	if w.disableGC {
+		return false, nil
+	}
 	return w.loadBooleanWithDefault(gcEnableKey, gcDefaultEnableValue)
 }
 

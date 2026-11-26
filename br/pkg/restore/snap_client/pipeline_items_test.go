@@ -118,8 +118,6 @@ func TestPipelineConcurrentHandler2(t *testing.T) {
 }
 
 type mockStatsReadWriter struct {
-	statstypes.StatsReadWriter
-
 	rows        map[int64]int64
 	loadedStats []*statsutil.JSONTable
 }
@@ -132,6 +130,12 @@ func (m *mockStatsReadWriter) LoadStatsFromJSONNoUpdate(
 ) error {
 	m.loadedStats = append(m.loadedStats, jsonTable)
 	return nil
+}
+
+func (*mockStatsReadWriter) LoadStatsFromJSONConcurrently(
+	context.Context, *model.TableInfo, chan *statstypes.PartitionStatisticLoadTask, int,
+) error {
+	panic("not used by the tests")
 }
 
 func (m *mockStatsReadWriter) SaveMetaToStorage(_ bool, metaUpdates ...statstypes.MetaUpdate) (err error) {
@@ -233,19 +237,12 @@ func generateStatsCreatedTables(hasGlobalIndex bool, tableID int64, partitionIDs
 func TestUpdateStatsMeta(t *testing.T) {
 	ctx := context.Background()
 	dom := domain.NewMockDomain()
-	err := dom.CreateStatsHandle(ctx)
-	require.NoError(t, err)
-	defer func() {
-		dom.StatsHandle().Close()
-	}()
 	rows := make(map[int64]int64)
-	handler := dom.StatsHandle()
-	handler.StatsReadWriter = &mockStatsReadWriter{rows: rows}
 	client := snapclient.MockClient(nil)
 	client.SetDomain(dom)
 	builder := &snapclient.PipelineConcurrentBuilder{}
-	client.RegisterUpdateMetaAndLoadStats(builder, nil, MockUpdateCh{}, 1)
-	err = builder.StartPipelineTask(ctx, []*restoreutils.CreatedTable{
+	client.RegisterUpdateMetaAndLoadStats(builder, nil, MockUpdateCh{}, 1, &mockStatsReadWriter{rows: rows})
+	err := builder.StartPipelineTask(ctx, []*restoreutils.CreatedTable{
 		generateStatsCreatedTables(false, 100, 101, 102, 103),
 		generateStatsCreatedTables(true, 104, 105, 106, 107),
 		generateStatsCreatedTables(false, 116),
@@ -269,15 +266,12 @@ func TestUpdateStatsMeta(t *testing.T) {
 func TestLoadInlineStatsUsesTargetNameWithoutMutatingSource(t *testing.T) {
 	ctx := context.Background()
 	dom := domain.NewMockDomain()
-	require.NoError(t, dom.CreateStatsHandle(ctx))
-	defer dom.StatsHandle().Close()
 
 	writer := &mockStatsReadWriter{rows: make(map[int64]int64)}
-	dom.StatsHandle().StatsReadWriter = writer
 	client := snapclient.MockClient(nil)
 	client.SetDomain(dom)
 	builder := &snapclient.PipelineConcurrentBuilder{}
-	client.RegisterUpdateMetaAndLoadStats(builder, nil, MockUpdateCh{}, 1)
+	client.RegisterUpdateMetaAndLoadStats(builder, nil, MockUpdateCh{}, 1, writer)
 
 	sourceStats := &statsutil.JSONTable{DatabaseName: "source_db", TableName: "source_table"}
 	created := &restoreutils.CreatedTable{

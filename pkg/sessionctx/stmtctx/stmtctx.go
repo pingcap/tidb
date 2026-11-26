@@ -80,6 +80,7 @@ type LogicalPlanBuildState struct {
 	tblInfo2UnionScan    map[*model.TableInfo]bool
 	useDynamicPruneMode  bool
 	viewDepth            int32
+	ignoreCalcFoundRows  bool
 	colRefFromUpdatePlan intset.FastIntSet
 	// plan cache related stuff
 	planCacheUseCache    bool
@@ -579,6 +580,11 @@ type StatementContext struct {
 	// acquired in this case.
 	ForShareLockEnabledByNoop bool
 
+	// IgnoreCalcFoundRows indicates that SQL_CALC_FOUND_ROWS is ignored for this
+	// statement because its shape has no native count plan and
+	// tidb_enable_noop_functions is ON or WARN.
+	IgnoreCalcFoundRows bool
+
 	// OperatorNum is used to record the number of operators in the current logical plan.
 	OperatorNum uint64
 }
@@ -682,6 +688,7 @@ func (sc *StatementContext) SaveLogicalPlanBuildState() LogicalPlanBuildState {
 		tblInfo2UnionScan:    maps.Clone(sc.TblInfo2UnionScan),
 		useDynamicPruneMode:  sc.UseDynamicPruneMode,
 		viewDepth:            sc.ViewDepth,
+		ignoreCalcFoundRows:  sc.IgnoreCalcFoundRows,
 		colRefFromUpdatePlan: sc.ColRefFromUpdatePlan.Copy(),
 		planCacheUseCache:    planCacheUseCache,
 		planCacheType:        planCacheType,
@@ -702,6 +709,7 @@ func (sc *StatementContext) RestoreLogicalPlanBuildState(state LogicalPlanBuildS
 	sc.TblInfo2UnionScan = maps.Clone(state.tblInfo2UnionScan)
 	sc.UseDynamicPruneMode = state.useDynamicPruneMode
 	sc.ViewDepth = state.viewDepth
+	sc.IgnoreCalcFoundRows = state.ignoreCalcFoundRows
 	sc.ColRefFromUpdatePlan.CopyFrom(state.colRefFromUpdatePlan)
 	sc.PlanCacheTracker.Restore(state.planCacheUseCache, state.planCacheType, state.planCacheUnqualified, state.planCacheForce, state.planCacheAlwaysWarn)
 	sc.RangeFallbackHandler = contextutil.NewRangeFallbackHandler(&sc.PlanCacheTracker, sc)
