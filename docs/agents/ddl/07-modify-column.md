@@ -78,12 +78,8 @@ so scheduling and reorg settings do not rely on the submission snapshot. This al
 applies to MODIFY COLUMN sub-jobs in multi-schema changes. Initial execution still
 selects the actual conversion from current metadata; the flag does not force data
 rewriting. Lightweight modifications can therefore wait behind reorg jobs. Already
-queued jobs retain their stored scheduling flags.
-Pure RENAME COLUMN jobs retain general-pool scheduling. New V2 jobs carry a `RenameOnly` argument that
-causes execution to clone the current column definition and change only its name,
-so preceding DDL changes are not overwritten by the submission snapshot. Older
-jobs without this marker retain their existing behavior; the legacy V1 positional
-encoding is unchanged.
+queued jobs retain their stored scheduling flags. Pure RENAME COLUMN jobs retain
+general-pool scheduling.
 
 High-level rules (read `applyExecutionRestrictions` for the exact gates):
 

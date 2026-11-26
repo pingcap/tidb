@@ -185,13 +185,6 @@ func (w *worker) onModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, 
 		return ver, errors.Trace(err)
 	}
 
-	if args.RenameOnly {
-		// A preceding DDL may have changed the column since this rename was submitted.
-		newName := args.Column.Name
-		args.Column = oldCol.Clone()
-		args.Column.Name = newName
-	}
-
 	// Check index prefix length for the first time
 	if job.SchemaState == model.StateNone {
 		columns := getReplacedColumns(tblInfo, oldCol, args.Column)

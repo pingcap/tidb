@@ -1456,17 +1456,6 @@ func TestModifyColumnsArgs(t *testing.T) {
 		require.Equal(t, inArgs.PartitionIDs, args.PartitionIDs)
 	}
 
-	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
-		rename := &ModifyColumnArgs{Column: inArgs.Column, OldColumnName: inArgs.OldColumnName, RenameOnly: true}
-		j := &Job{}
-		require.NoError(t, j.Decode(getJobBytes(t, rename, v, ActionModifyColumn)))
-		args, err := GetModifyColumnArgs(j)
-		require.NoError(t, err)
-		require.Equal(t, v == JobVersion2, args.RenameOnly)
-		require.Equal(t, rename.Column, args.Column)
-		require.Equal(t, rename.OldColumnName, args.OldColumnName)
-	}
-
 	j2 := &Job{}
 	require.NoError(t, j2.Decode(getJobBytes(t, &ModifyColumnArgs{}, JobVersion1, ActionModifyColumn)))
 	var rawArgs []json.RawMessage

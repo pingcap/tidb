@@ -1639,7 +1639,6 @@ func TestModifyColumnReorgScheduling(t *testing.T) {
 		{"metadata", false, "alter table t modify column a decimal(10,2)"},
 		{"schemaDrift", true, "alter table t modify column a decimal(10,2)"},
 		{"rename", false, "alter table t rename column a to b"},
-		{"renameSchemaDrift", true, "alter table t rename column a to b"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			tk.MustExec("drop table if exists t")
@@ -1675,22 +1674,15 @@ func TestModifyColumnReorgScheduling(t *testing.T) {
 				gotType = tp
 			})
 			tk.MustExec(tc.sql)
-			rename := strings.HasPrefix(tc.name, "rename")
+			rename := tc.name == "rename"
 			require.Equal(t, !rename, scheduledForReorg)
 			require.Equal(t, !rename, fastReorg)
-			// Only V2 persists RenameOnly, which preserves the current definition.
-			preservesDefinition := tc.drift && rename && model.GetJobVerInUse() == model.JobVersion2
-			if tc.drift && !preservesDefinition {
+			if tc.drift {
 				require.Equal(t, model.ModifyTypeReorg, gotType)
 			} else {
 				require.Equal(t, model.ModifyTypeNoReorg, gotType)
 			}
-			if preservesDefinition {
-				tk.MustQuery("select b from t").Check(testkit.Rows("1.234"))
-				tk.MustQuery("select column_type from information_schema.columns where table_schema = 'test' and table_name = 't' and column_name = 'b'").Check(testkit.Rows("decimal(12,3)"))
-			} else {
-				tk.MustQuery("select * from t").Check(testkit.Rows("1.23"))
-			}
+			tk.MustQuery("select * from t").Check(testkit.Rows("1.23"))
 			tk.MustExec("admin check table t")
 		})
 	}
