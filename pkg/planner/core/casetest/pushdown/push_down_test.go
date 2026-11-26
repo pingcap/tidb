@@ -264,21 +264,22 @@ func TestVirtualColumnFilterPushedDownAsExpression(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec(`create table t (
   k varchar(16) not null, id int not null, typ varchar(8) not null,
-  label varchar(64) not null, n int, txt text,
+  label varchar(64) not null, n int, txt varchar(255), body text,
   txt_lower text generated always as (lower(txt)) virtual,
   label_lower text generated always as (lower(label)) virtual,
   txt_lower_short varchar(3) generated always as (left(lower(txt), 3)) virtual,
   label_lower_char char(64) generated always as (lower(label)) virtual,
   n_half decimal(10,1) generated always as (n / 2) virtual,
   txt_lower_lower text generated always as (lower(txt_lower)) virtual,
+  body_lower text generated always as (lower(body)) virtual,
   primary key (k, id) clustered,
   key ix_label (k, label),
   key ix_lower (k, typ, txt_lower(10)))`)
-	tk.MustExec(`insert into t (k, id, typ, label, n, txt) values
-  ('t1', 1, 'a', 'Alpha', 1, 'AcmeCorp'), ('t1', 2, 'a', 'beta', 2, 'acmecorp'),
-  ('t1', 3, 'b', 'Gamma', 3, 'ACMECORP Mixer'), ('t1', 4, 'b', 'delta', 4, NULL),
-  ('t1', 5, 'a', 'EPSILON', 5, 'Orbital'), ('t2', 6, 'a', 'zeta', 6, 'AcmeCorp'),
-  ('t1', 7, 'a', 'Eta ', 7, 'ÄBC acmecorp'), ('t1', 8, 'b', 'theta', 8, '')`)
+	tk.MustExec(`insert into t (k, id, typ, label, n, txt, body) values
+  ('t1', 1, 'a', 'Alpha', 1, 'AcmeCorp', 'AcmeCorp'), ('t1', 2, 'a', 'beta', 2, 'acmecorp', 'acmecorp'),
+  ('t1', 3, 'b', 'Gamma', 3, 'ACMECORP Mixer', 'ACMECORP Mixer'), ('t1', 4, 'b', 'delta', 4, NULL, NULL),
+  ('t1', 5, 'a', 'EPSILON', 5, 'Orbital', 'Orbital'), ('t2', 6, 'a', 'zeta', 6, 'AcmeCorp', 'AcmeCorp'),
+  ('t1', 7, 'a', 'Eta ', 7, 'ÄBC acmecorp', 'ÄBC acmecorp'), ('t1', 8, 'b', 'theta', 8, '', '')`)
 	testkit.SetTiFlashReplica(t, dom, "test", "t")
 
 	// Filters on these virtual columns are value-preserving rewrites of their
@@ -290,16 +291,18 @@ func TestVirtualColumnFilterPushedDownAsExpression(t *testing.T) {
 		{"txt_lower = 'acmecorp'", "eq(lower(test.t.txt), \"acmecorp\")", []string{"1", "2"}},
 		{"txt_lower like '%acmecorp%'", "like(lower(test.t.txt), \"%acmecorp%\", 92)", []string{"1", "2", "3", "7"}},
 		{"label_lower in ('alpha', 'eta ')", "in(lower(test.t.label), \"alpha\", \"eta \")", []string{"1", "7"}},
-		{"txt_lower_lower = 'acmecorp'", "eq(lower(lower(test.t.txt)), \"acmecorp\")", []string{"1", "2"}},
 		{"txt_lower is null", "isnull(lower(test.t.txt))", []string{"4"}},
 	}
 	// The column type changes the value of the expression (truncation, CHAR
-	// padding, decimal rounding), so the filter must stay on the virtual column.
+	// padding, decimal rounding), or can for some values (lower() can grow a TEXT
+	// value past TEXT's byte limit), so the filter must stay on the virtual column.
 	notPushed := []struct {
 		pred string
 		ids  []string
 	}{
 		{"txt_lower_short = 'acm'", []string{"1", "2", "3"}},
+		{"body_lower = 'acmecorp'", []string{"1", "2"}},
+		{"txt_lower_lower = 'acmecorp'", []string{"1", "2"}},
 		{"label_lower_char = 'eta'", []string{"7"}},
 		{"n_half = 2.5", []string{"5"}},
 	}
@@ -361,6 +364,7 @@ func TestGeneratedColumnIndexForValuePreservingExpr(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec(`create table t (k varchar(16) not null, id int not null, typ varchar(8) not null, txt text, label varchar(64) not null,
+  v varchar(255), v_lower text generated always as (lower(v)) virtual,
   txt_lower text generated always as (lower(txt)) virtual,
   label_lower varchar(64) generated always as (lower(label)) virtual,
   txt_lower_short varchar(2) generated always as (lower(txt)) virtual,
@@ -369,14 +373,18 @@ func TestGeneratedColumnIndexForValuePreservingExpr(t *testing.T) {
   s10 varchar(10), s10_lower_tiny tinytext generated always as (lower(s10)) virtual,
   primary key (k, id) clustered,
   key ix_txt (k, typ, txt_lower(10)),
+  key ix_v (k, typ, v_lower(10)),
   key ix_label (k, label_lower),
   key ix_short (k, txt_lower_short),
   key ix_nn (k, txt_lower_nn(10)),
   key ix_tiny (k, s_lower_tiny(20)),
   key ix_tiny10 (k, s10_lower_tiny(20)))`)
 	tk.MustExec("set @@sql_mode = ''")
-	tk.MustExec(`insert into t (k, id, typ, txt, label) values ('t1', 1, 'a', 'AcmeCorp', 'Alpha'), ('t1', 2, 'a', 'Beijing', 'BETA'),
-  ('t1', 3, 'b', 'acmecorp', 'alpha'), ('t1', 4, 'a', NULL, 'Gamma')`)
+	tk.MustExec(`insert into t (k, id, typ, txt, label, v) values ('t1', 1, 'a', 'AcmeCorp', 'Alpha', 'AcmeCorp'), ('t1', 2, 'a', 'Beijing', 'BETA', 'Beijing'),
+  ('t1', 3, 'b', 'acmecorp', 'alpha', 'acmecorp'), ('t1', 4, 'a', NULL, 'Gamma', NULL)`)
+	// lower() grows the last character from 2 bytes to 3, past TEXT's limit:
+	// txt_lower drops it and reads 'x' plus trailing spaces (see #73782).
+	tk.MustExec(`insert into t (k, id, typ, txt, label) values ('t1', 6, 'a', concat('x', repeat(' ', 65532), _utf8mb4 0xC8BA), 'Zeta')`)
 	// 100 four-byte characters are 400 bytes: s_lower_tiny (TINYTEXT, 255 bytes)
 	// holds a truncated value.
 	tk.MustExec(`insert into t (k, id, typ, txt, label, s, s10) values ('t1', 5, 'c', 'x', 'Delta', repeat(_utf8mb4 0xF09F9880, 100), 'Ab')`)
@@ -391,13 +399,17 @@ func TestGeneratedColumnIndexForValuePreservingExpr(t *testing.T) {
 		}
 		return ""
 	}
-	// lower(text) is var_string(65535) and txt_lower is TEXT: not the same type,
-	// but the column equals the expression unless lower() grows a value past
-	// TEXT's byte limit (a row written in non-strict mode, or that existed when
-	// the column was added), so the index is usable.
-	sql := "select /*+ use_index(t, ix_txt) */ id from t where k = 't1' and typ = 'a' and lower(txt) = 'acmecorp'"
-	require.Contains(t, rangeOf(sql), `index:ix_txt(k, typ, txt_lower) range:["t1" "a" "acmecorp","t1" "a" "acmecorp"]`)
+	// lower(varchar(255)) is var_string(255) and v_lower is TEXT: not the same
+	// type, but TEXT holds any value of the expression, so the index is usable.
+	sql := "select /*+ use_index(t, ix_v) */ id from t where k = 't1' and typ = 'a' and lower(v) = 'acmecorp'"
+	require.Contains(t, rangeOf(sql), `index:ix_v(k, typ, v_lower) range:["t1" "a" "acmecorp","t1" "a" "acmecorp"]`)
 	tk.MustQuery(sql).Check(testkit.Rows("1"))
+	// lower(text) can be longer in bytes than TEXT holds, so txt_lower and
+	// lower(txt) differ for id 6, and ix_txt must not answer lower(txt).
+	sql = "select /*+ use_index(t, ix_txt) */ id from t where k = 't1' and typ = 'a' and lower(txt) = 'x'"
+	require.NotContains(t, rangeOf(sql), `"x"`)
+	tk.MustQuery(sql).Check(testkit.Rows())
+	tk.MustQuery("select id from t where k = 't1' and typ = 'a' and txt_lower = 'x'").Check(testkit.Rows("6"))
 	// varchar(64) column for lower(varchar(64)): already the same type.
 	sql = "select /*+ use_index(t, ix_label) */ id from t where k = 't1' and lower(label) = 'alpha'"
 	require.Contains(t, rangeOf(sql), `range:["t1" "alpha","t1" "alpha"]`)

@@ -2421,8 +2421,9 @@ func TestVirtualColumnFilterOnTiFlash(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec(`create table t (
-  k varchar(16) not null, id int not null, label varchar(64) not null, n int, txt text,
+  k varchar(16) not null, id int not null, label varchar(64) not null, n int, txt varchar(255), body text,
   txt_lower text generated always as (lower(txt)) virtual,
+  body_lower text generated always as (lower(body)) virtual,
   label_lower text generated always as (lower(label)) virtual,
   txt_lower_short varchar(3) generated always as (left(lower(txt), 3)) virtual,
   n_half decimal(10,1) generated always as (n / 2) virtual,
@@ -2435,6 +2436,7 @@ func TestVirtualColumnFilterOnTiFlash(t *testing.T) {
   ('t1', 3, 'Gamma', 3, 'ACMECORP Mixer'), ('t1', 4, 'delta', 4, NULL),
   ('t1', 5, 'EPSILON', 5, 'Orbital'), ('t2', 6, 'zeta', 6, 'AcmeCorp'),
   ('t1', 7, 'Eta', 7, 'ÄBC acmecorp'), ('t1', 8, 'theta', 8, '')`)
+	tk.MustExec("update t set body = txt")
 	tk.MustExec("set @@session.tidb_isolation_read_engines='tiflash,tidb'")
 	tk.MustExec("set @@session.tidb_opt_enable_late_materialization=0")
 	for _, mpp := range []string{"1", "0"} {
@@ -2452,6 +2454,8 @@ func TestVirtualColumnFilterOnTiFlash(t *testing.T) {
 			{"label_lower in ('alpha', 'eta')", `in(lower(test.t.label), "alpha", "eta")`, []string{"1", "7"}},
 			{"txt_lower is null", `isnull(lower(test.t.txt))`, []string{"4"}},
 			{"txt_lower_short = 'acm'", "", []string{"1", "2", "3"}},
+			// lower(text) can outgrow TEXT's byte limit, so body_lower may differ.
+			{"body_lower = 'acmecorp'", "", []string{"1", "2"}},
 			{"n_half = 2.5", "", []string{"5"}},
 		} {
 			sql := "select id from t where k = 't1' and " + c.pred + " order by label, id limit 100"
@@ -2480,7 +2484,7 @@ func TestVirtualColumnComputedInMPP(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec(`create table obj (k varchar(16) not null, id varchar(8) not null, part int, label varchar(32) not null,
-  t8 text, t24 text, n int,
+  t8 varchar(255), t24 varchar(255), n int,
   t8_lower text generated always as (lower(t8)) virtual,
   t24_lower text generated always as (lower(t24)) virtual,
   t24_short varchar(3) generated always as (left(lower(t24), 3)) virtual,

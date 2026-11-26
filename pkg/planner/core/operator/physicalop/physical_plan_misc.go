@@ -336,12 +336,11 @@ func substituteVirtualColumns(sctx base.PlanContext, expr expression.Expression)
 // (numeric precision, CHAR padding, truncation to a shorter length, a
 // different charset/collation, or NOT NULL coercing a NULL). Accept identical
 // types, and string expressions whose charset and collation match a
-// VARCHAR/TEXT/BLOB column that is at least as long; in both cases a NOT NULL
-// column needs a NOT NULL expression. A cast that would truncate fails the
-// write in strict SQL mode, so existing values fit the column. A row written in
-// non-strict mode can hold a truncated value when a case mapping grows the
-// value past the column's byte limit (e.g. lower(U+023A) is one byte longer);
-// the planner can't detect this, the same as with tidb_enable_unsafe_substitute.
+// VARCHAR/TEXT/BLOB column that is long enough for any value of the
+// expression, compared in bytes for TEXT/BLOB and allowing for case mapping
+// growing a value in bytes; in both cases a NOT NULL column needs a NOT NULL
+// expression. A value can't be relied on to fail the write instead: ADD COLUMN
+// doesn't check existing rows, and non-strict mode truncates.
 func VirtualExprPreservesValue(ctx expression.EvalContext, col *expression.Column) bool {
 	exprTp := col.VirtualExpr.GetType(ctx)
 	colTp := col.RetType
@@ -377,17 +376,54 @@ func VirtualExprPreservesValue(ctx expression.EvalContext, col *expression.Colum
 	if exprLen == types.UnspecifiedLength || colLen == types.UnspecifiedLength {
 		return false
 	}
-	// A TEXT/BLOB column's length is in bytes, while a VARCHAR expression's is in
-	// characters - unless it only reads TEXT/BLOB columns, whose byte lengths
-	// it inherits (lower(text) is var_string(65535)). Compare bytes then.
-	if types.IsTypeBlob(colTp.GetType()) && !types.IsTypeBlob(exprTp.GetType()) && !readsOnlyBlobStrings(col.VirtualExpr) {
+	if !types.IsTypeBlob(colTp.GetType()) {
+		// A VARCHAR column's length is in characters, and case mapping maps one
+		// character to one character.
+		return exprLen <= colLen
+	}
+	// A TEXT/BLOB column's length is in bytes. A VARCHAR expression's length is
+	// in characters, unless the expression only reads TEXT/BLOB columns, whose
+	// byte lengths it inherits (lower(text) is var_string(65535)).
+	exprBytes := exprLen
+	if !types.IsTypeBlob(exprTp.GetType()) && !readsOnlyBlobStrings(col.VirtualExpr) {
 		cs, err := charset.GetCharsetInfo(exprTp.GetCharset())
 		if err != nil {
 			return false
 		}
-		return exprLen*cs.Maxlen <= colLen
+		exprBytes *= cs.Maxlen
 	}
-	return exprLen <= colLen
+	// Case mapping keeps the declared length but can grow a value in bytes: in
+	// UTF-8 by up to half (lower(U+023A) and upper(U+023F) are 2 bytes to 3).
+	// Unless the column has room for that, a value can be truncated where the
+	// expression isn't - for rows that existed when the column was added (ADD
+	// COLUMN doesn't check them) or that were written in non-strict mode.
+	if containsCaseMapping(col.VirtualExpr) {
+		switch exprTp.GetCharset() {
+		case charset.CharsetUTF8, charset.CharsetUTF8MB4:
+			exprBytes += (exprBytes + 1) / 2
+		default:
+			return false
+		}
+	}
+	return exprBytes <= colLen
+}
+
+// containsCaseMapping reports whether expr calls LOWER or UPPER.
+func containsCaseMapping(expr expression.Expression) bool {
+	f, ok := expr.(*expression.ScalarFunction)
+	if !ok {
+		return false
+	}
+	switch f.FuncName.L {
+	case ast.Lower, ast.Lcase, ast.Upper, ast.Ucase:
+		return true
+	}
+	for _, arg := range f.GetArgs() {
+		if containsCaseMapping(arg) {
+			return true
+		}
+	}
+	return false
 }
 
 // readsOnlyBlobStrings reports whether every string column expr reads is a
