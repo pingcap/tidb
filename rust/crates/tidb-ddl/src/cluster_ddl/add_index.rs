@@ -922,6 +922,33 @@ pub(super) fn load_cloud_storage_uri(job: &Job) {
     tidb_failpoint::inject_call("github.com/pingcap/tidb/pkg/ddl/afterLoadCloudStorageURI", &mut job);
 }
 
+/// Go `initForReorgIndexes`' NextGen guard: global sort is the product
+/// design for ADD INDEX / MODIFY COLUMN there, and local sort is not
+/// supported. `LitInitialized` tells whether the ingest environment exists
+/// (without it `pickBackfillType` falls back to a txn-merge backfill, which
+/// does not sort locally), and a job that is not a fast reorganization (a
+/// system-schema job during upgrade) backfills by txn and does not sort.
+pub(super) fn check_next_gen_local_sort(job: &Job) -> Result<(), DdlPlanError> {
+    let Some(meta) = job.reorg_meta.as_ref() else {
+        return Ok(());
+    };
+    let (fast_reorg, cloud_storage) = {
+        let meta = meta.read();
+        (meta.is_fast_reorg, meta.use_cloud_storage)
+    };
+    if tidb_config_kerneltype::is_next_gen()
+        && tidb_ddl_ingest::env::LIT_INITIALIZED.load(std::sync::atomic::Ordering::Acquire)
+        && fast_reorg
+        && !cloud_storage
+    {
+        return Err(DdlPlanError::from(
+            tidb_dbterror::ERR_NOT_SUPPORTED_YET
+                .gen_with_stack_by_args(&["add index or modify column with local sort".into()]),
+        ));
+    }
+    Ok(())
+}
+
 /// Go `pickBackfillType`.
 pub(super) fn pick_backfill_type(job: &Job) -> Result<tidb_model::ReorgType, DdlPlanError> {
     let Some(meta) = job.reorg_meta.as_ref() else {
@@ -1325,6 +1352,9 @@ pub(super) fn plan_persisted_add_index_job_step(
         SchemaState::NONE => {
             // Go `initForReorgIndexes`.
             load_cloud_storage_uri(&active.job);
+            if let Err(error) = check_next_gen_local_sort(&active.job) {
+                return Err(cancel_ddl_job(active, error));
+            }
             let reorg_type = match pick_backfill_type(&active.job) {
                 Ok(reorg_type) => reorg_type,
                 Err(error) => return Err(cancel_ddl_job(active, error)),
@@ -2308,4 +2338,47 @@ pub(super) fn get_ddl_reorg_handle(
             // Go `meta.ErrDDLReorgElementNotExist`.
             DdlPlanError::Encode(format!("DDL job {} has no reorg handle", active.job.id))
         })
+}
+
+#[cfg(test)]
+mod next_gen_local_sort_tests {
+    use super::*;
+
+    /// Go `TestInitForReorgIndexesRequiresGlobalSort` (NextGen only): with
+    /// the ingest environment, a fast reorganization that would sort locally
+    /// is refused; without it, without fast reorg, or with cloud storage the
+    /// job proceeds.
+    #[test]
+    fn test_init_for_reorg_indexes_requires_global_sort() {
+        if !tidb_config_kerneltype::is_next_gen() {
+            return; // Go: "global sort is only enforced on the NextGen kernel".
+        }
+        use std::sync::atomic::Ordering;
+        let lit = &tidb_ddl_ingest::env::LIT_INITIALIZED;
+        let old = lit.load(Ordering::Acquire);
+        let new_job = |fast: bool, cloud: bool| {
+            let mut meta = tidb_model::reorg::DDLReorgMeta::default();
+            meta.is_fast_reorg = fast;
+            meta.is_dist_reorg = fast;
+            meta.use_cloud_storage = cloud;
+            let mut job = Job::default();
+            job.id = 1;
+            job.reorg_meta = Some(GoShared::new(meta));
+            job
+        };
+        // Without the ingest environment the backfill falls back to
+        // txn-merge, which does not sort locally.
+        lit.store(false, Ordering::Release);
+        assert!(check_next_gen_local_sort(&new_job(true, false)).is_ok());
+        // Local sort is refused when the ingest environment is available.
+        lit.store(true, Ordering::Release);
+        let error = check_next_gen_local_sort(&new_job(true, false)).unwrap_err();
+        assert!(error.equal(&tidb_dbterror::ERR_NOT_SUPPORTED_YET), "{error}");
+        assert!(error.to_string().contains("add index or modify column with local sort"), "{error}");
+        // Jobs without fast reorg don't sort locally.
+        assert!(check_next_gen_local_sort(&new_job(false, false)).is_ok());
+        // Global sort is allowed.
+        assert!(check_next_gen_local_sort(&new_job(true, true)).is_ok());
+        lit.store(old, Ordering::Release);
+    }
 }
