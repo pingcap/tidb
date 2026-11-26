@@ -155,7 +155,14 @@ impl StatsMaintenanceWorker {
                                 (remaining / 1_000_000_000) as u64,
                                 (remaining % 1_000_000_000) as u32,
                             );
-                        tick(kind);
+                        // Go `callWithRecover`: a panicking tick is logged
+                        // and the worker keeps running, since it does not
+                        // restart once it exits.
+                        if let Err(payload) =
+                            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| tick(kind)))
+                        {
+                            tidb_logutil::log_recovered_panic("gcStatsWorker", payload.as_ref());
+                        }
                     }
                 }));
                 // Go `defer util.Recover(metrics.LabelDomain, "gcStatsWorker", nil, false)`.
@@ -283,6 +290,22 @@ mod tests {
             Tick::Memory
         );
         worker.shutdown();
+        worker.shutdown();
+    }
+
+    /// Go `TestGCStatsWorkerRecoversPanics` (12d84a92765): each tick
+    /// recovers its own panic, so the worker keeps ticking after one.
+    #[test]
+    fn stats_maintenance_keeps_ticking_after_a_tick_panics() {
+        let (events, received) = mpsc::channel();
+        let mut worker = StatsMaintenanceWorker::spawn([Duration::from_millis(5); 3], move |tick| {
+            let _ = events.send(tick);
+            panic!("tick panics");
+        })
+        .unwrap();
+        for _ in 0..4 {
+            received.recv_timeout(Duration::from_secs(5)).expect("the worker keeps ticking after a panic");
+        }
         worker.shutdown();
     }
 
