@@ -140,10 +140,10 @@ doc-level rule simple and use the code as the source of truth:
   path in the partition expression and only accepts a few known-safe forms
   (`col`, `TO_DAYS(col)`, `EXTRACT(... FROM col)`) and a few safe changes.
 
-This gate decides whether the modify is allowed at all. If it is allowed,
-partitioned tables still follow the normal modify-column flow, and
-`applyExecutionRestrictions` still conservatively routes partitioned tables to
-`ModifyTypeReorg`.
+This gate decides whether the change is allowed. For allowed changes,
+`applyExecutionRestrictions` returns early for a `ModifyTypeNoReorg` base
+classification, with validation for a `NULL` to `NOT NULL` change. On partitioned
+tables, other base classifications require `ModifyTypeReorg`.
 
 ## No-reorg paths (metadata-only / metadata+check)
 
@@ -261,7 +261,8 @@ nullability, default/comment, and pruning regressions)
 
 ## Common pitfalls checklist
 
-- Partitioned table / TiFlash replica paths are conservatively forced into full reorg (`applyExecutionRestrictions`); don’t assume “fast path” applies.
+- When `baseType != ModifyTypeNoReorg`, `applyExecutionRestrictions` forces full
+  reorg for partitioned tables and tables with a positive TiFlash replica count.
 - Partition-column modify has an extra allowlist plus partition-definition revalidation; if you change allowed cases, update `checkPartitionColumnModifiable` and the partition regression matrix together.
 - Forgetting to persist mid-flight identifiers (changing column/index IDs) → job can’t resume after retry/owner transfer.
 - Missing schema-sync boundary between state transitions → other nodes may apply incompatible DML rules.
