@@ -186,7 +186,7 @@ type wkbGen struct {
 	// big is the chance that a geometry below the root is big-endian.
 	big float64
 
-	// What the generator knows about the last root geometry, for BareToStored:
+	// What the generator knows about the last root geometry, for ParseColumnValue:
 	// canon is its canonical form (little-endian, POINT EMPTY as quietNaN), env bounds
 	// its positions, and short says it has a linestring of 1 point or a ring of 1 to 3.
 	canon []byte

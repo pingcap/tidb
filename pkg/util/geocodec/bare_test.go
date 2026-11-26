@@ -72,7 +72,7 @@ func headerToBare(s []byte) []byte {
 	return append(b, s[10:]...)
 }
 
-func TestBareToStored(t *testing.T) {
+func TestParseColumnValue(t *testing.T) {
 	const xy = dimsXY
 	gc := func(members ...[]byte) []byte { return collectionOf(TypeGeometryCollection, xy, members...) }
 	square := []float64{0, 0, 1, 0, 1, 1, 0, 1}
@@ -99,7 +99,7 @@ func TestBareToStored(t *testing.T) {
 		for _, srid := range []uint32{0, 4326, 3857} {
 			want := stored(srid, c.g)
 			for _, in := range [][]byte{mysqlOf(srid, c.g), want} {
-				got, gotSRID, sum, err := BareToStored(in)
+				got, gotSRID, sum, err := ParseColumnValue(in)
 				require.NoError(t, err, "%X", in)
 				require.Equal(t, want, got, "%X", in)
 				require.Equal(t, srid, gotSRID, "%X", in)
@@ -152,7 +152,7 @@ func TestBareToStored(t *testing.T) {
 	} {
 		want := stored(0, c.g)
 		for _, in := range [][]byte{headerToBare(want), want} {
-			got, _, _, err := BareToStored(in)
+			got, _, _, err := ParseColumnValue(in)
 			if c.ok {
 				require.NoError(t, err, "%s: %X", c.name, in)
 				require.Equal(t, want, got, c.name)
@@ -163,7 +163,7 @@ func TestBareToStored(t *testing.T) {
 	}
 
 	// The envelope takes X and Y only, and an empty point has no position.
-	_, _, sum, err := BareToStored(stored(0, collectionOf(TypeMultiPoint, dimsXYZM,
+	_, _, sum, err := ParseColumnValue(stored(0, collectionOf(TypeMultiPoint, dimsXYZM,
 		le(TypePoint, dimsXYZM, coords(1, 2, 300, 400)), emptyPoint(dimsXYZM), le(TypePoint, dimsXYZM, coords(-5, 6, -700, 800)))))
 	require.NoError(t, err)
 	require.Equal(t, Summary{Type: TypeMultiPoint, Envelope: Envelope{-5, 2, 1, 6, true}}, sum)
@@ -189,19 +189,19 @@ func TestBareToStored(t *testing.T) {
 		"":         ErrInvalid,
 		"00000000": ErrInvalid,
 	} {
-		_, _, _, err := BareToStored(mustHex(t, b))
+		_, _, _, err := ParseColumnValue(mustHex(t, b))
 		require.ErrorIs(t, err, want, b)
 	}
-	_, _, _, err = BareToStored(storedChain(MaxDepth+1, 0, point12))
+	_, _, _, err = ParseColumnValue(storedChain(MaxDepth+1, 0, point12))
 	require.ErrorIs(t, err, ErrTooDeep)
-	_, _, _, err = BareToStored(mysqlChain(MaxDepth+1, point12))
+	_, _, _, err = ParseColumnValue(mysqlChain(MaxDepth+1, point12))
 	require.ErrorIs(t, err, ErrTooDeep)
 	// A one-point linestring is reported once the whole value is read, so a member nested
 	// too deep behind it is reported first.
 	deep := nestedCollections(MaxDepth)
-	_, _, _, err = BareToStored(stored(0, gc(line1, deep)))
+	_, _, _, err = ParseColumnValue(stored(0, gc(line1, deep)))
 	require.ErrorIs(t, err, ErrTooDeep)
-	_, _, _, err = BareToStored(mysqlOf(0, gc(line1, deep)))
+	_, _, _, err = ParseColumnValue(mysqlOf(0, gc(line1, deep)))
 	require.ErrorIs(t, err, ErrTooDeep)
 }
 
@@ -214,12 +214,12 @@ func TestBareRewrite(t *testing.T) {
 	// A bare value's POINT EMPTY of another NaN becomes the quiet NaN too.
 	for _, nan := range nanBits {
 		f := math.Float64frombits(nan)
-		got, _, _, err := BareToStored(mysqlOf(4326, collectionOf(TypeMultiPoint, dimsXYM, point12M, le(TypePoint, dimsXYM, coords(f, f, f)))))
+		got, _, _, err := ParseColumnValue(mysqlOf(4326, collectionOf(TypeMultiPoint, dimsXYM, point12M, le(TypePoint, dimsXYM, coords(f, f, f)))))
 		require.NoError(t, err)
 		require.Equal(t, stored(4326, collectionOf(TypeMultiPoint, dimsXYM, point12M, emptyPoint(dimsXYM))), got)
 	}
 
-	got, _, _, err := BareToStored(mustHex(t, "01 01 04000020 00000000 01000000 00 00000001 3FF0000000000000 4000000000000000"))
+	got, _, _, err := ParseColumnValue(mustHex(t, "01 01 04000020 00000000 01000000 00 00000001 3FF0000000000000 4000000000000000"))
 	require.NoError(t, err)
 	require.Equal(t, stored(0, collectionOf(TypeMultiPoint, dimsXY, point12)), got)
 
@@ -266,7 +266,7 @@ func TestBareRewrite(t *testing.T) {
 			b = floats(order.AppendUint32(b, 4), ring...)
 			in := bytes.Clone(b)
 
-			got, srid, sum, err := BareToStored(b)
+			got, srid, sum, err := ParseColumnValue(b)
 			require.NoError(t, err, "%X", b)
 			require.Equal(t, want, got, "%X", b)
 			require.Equal(t, uint32(4326), srid)
@@ -278,7 +278,7 @@ func TestBareRewrite(t *testing.T) {
 	}
 }
 
-// TestGeneratedBare checks BareToStored on generated values against what the generator
+// TestGeneratedBare checks ParseColumnValue on generated values against what the generator
 // knows of each: its canonical form, its envelope, and whether a line or ring is too short.
 func TestGeneratedBare(t *testing.T) {
 	rnd := rand.New(rand.NewPCG(20261119, 1))
@@ -294,7 +294,7 @@ func TestGeneratedBare(t *testing.T) {
 					in := stored(srid, wkb)
 					want := stored(srid, gen.canon)
 
-					got, gotSRID, sum, err := BareToStored(in)
+					got, gotSRID, sum, err := ParseColumnValue(in)
 					if gen.short {
 						require.ErrorIs(t, err, ErrInvalid, "%X", in)
 						short++
@@ -309,7 +309,7 @@ func TestGeneratedBare(t *testing.T) {
 						}
 					}
 					// The canonical form is little-endian, as a bare value must be.
-					got, gotSRID, sum, err = BareToStored(mysqlOf(srid, gen.canon))
+					got, gotSRID, sum, err = ParseColumnValue(mysqlOf(srid, gen.canon))
 					if gen.short {
 						require.ErrorIs(t, err, ErrInvalid, "%X", in)
 						continue
@@ -329,8 +329,8 @@ func TestGeneratedBare(t *testing.T) {
 	require.Greater(t, fromMySQL, 300)
 }
 
-// TestGeneratedBareMutations checks that BareToStored refuses or canonicalizes generated
-// values with one byte changed: what it accepts converts to itself.
+// TestGeneratedBareMutations checks that ParseColumnValue refuses or canonicalizes
+// generated values with one byte changed: what it accepts converts to itself.
 func TestGeneratedBareMutations(t *testing.T) {
 	rnd := rand.New(rand.NewPCG(20261119, 2))
 	changes := []byte{0, 1, 2, 3, 4, 7, 0x20, 0x80, 0xf0, 0xf8, 0x7f, 0xff}
@@ -354,11 +354,11 @@ func TestGeneratedBareMutations(t *testing.T) {
 	require.Greater(t, accepted, 1000)
 }
 
-// checkBareCanonical requires what BareToStored makes of b, if it accepts b, to be a
+// checkBareCanonical requires what ParseColumnValue makes of b, if it accepts b, to be a
 // stored value of b's length that converts to itself with the same summary, and reports
 // whether it accepted b.
 func checkBareCanonical(t testing.TB, b []byte) bool {
-	s, srid, sum, err := BareToStored(b)
+	s, srid, sum, err := ParseColumnValue(b)
 	if err != nil {
 		return false
 	}
@@ -368,7 +368,7 @@ func checkBareCanonical(t testing.TB, b []byte) bool {
 	}
 	require.Len(t, s, wantLen, "%X", b)
 	require.True(t, IsStored(s), "%X", b)
-	again, againSRID, againSum, err := BareToStored(s)
+	again, againSRID, againSum, err := ParseColumnValue(s)
 	require.NoError(t, err, "%X", b)
 	require.Equal(t, s, again, "%X", b)
 	require.Equal(t, srid, againSRID, "%X", b)
@@ -380,7 +380,7 @@ func checkBareCanonical(t testing.TB, b []byte) bool {
 	return true
 }
 
-// TestBareAllocs checks that BareToStored allocates only its result, and nothing for a
+// TestBareAllocs checks that ParseColumnValue allocates only its result, and nothing for a
 // value it refuses, whatever its counts claim.
 func TestBareAllocs(t *testing.T) {
 	deep := mysqlChain(MaxDepth-1, multiPointWKB(10000))
@@ -398,12 +398,12 @@ func TestBareAllocs(t *testing.T) {
 		{storedFromMySQL(hostileCounts()), 0},
 		{deep[:len(deep)-1], 0},
 	} {
-		allocs := testing.AllocsPerRun(3, func() { _, _, _, _ = BareToStored(c.b) })
+		allocs := testing.AllocsPerRun(3, func() { _, _, _, _ = ParseColumnValue(c.b) })
 		require.Equal(t, c.allocs, allocs, "%X", c.b[:min(len(c.b), 32)])
 	}
 }
 
-func FuzzBareToStored(f *testing.F) {
+func FuzzParseColumnValue(f *testing.F) {
 	f.Add(mustHex(f, "E6100000 01 01000000 0000000000000040 000000000000F03F"))
 	f.Add(mysqlOf(0, polygon(dimsXY, []float64{0, 0, 1, 0, 1, 1, 0, 1})))
 	f.Add(stored(4326, point12))
@@ -418,12 +418,12 @@ func FuzzBareToStored(f *testing.F) {
 		if !checkBareCanonical(t, b) {
 			return
 		}
-		s, _, _, err := BareToStored(b)
+		s, _, _, err := ParseColumnValue(b)
 		require.NoError(t, err, "%X", b)
 		// Round trip through the bare value.
 		out, err := StoredToBare(s)
 		require.NoError(t, err, "%X", b)
-		back, _, _, err := BareToStored(out)
+		back, _, _, err := ParseColumnValue(out)
 		require.NoError(t, err, "%X", b)
 		require.Equal(t, s, back, "%X", b)
 	})

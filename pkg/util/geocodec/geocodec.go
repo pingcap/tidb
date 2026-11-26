@@ -137,7 +137,7 @@ type Envelope struct {
 	NotEmpty bool
 }
 
-// Summary is what BareToStored learns about a value while checking it.
+// Summary is what ParseColumnValue learns about a value while checking it.
 type Summary struct {
 	// Type is the geometry type of the root.
 	Type Type
@@ -155,13 +155,13 @@ func MySQLToStored(b []byte) (stored []byte, srid uint32, err error) {
 	if err := validate(b[4:], dialectBare); err != nil {
 		return nil, 0, err
 	}
-	stored, srid = storedFromValidMySQL(b)
+	stored, srid = storedFromValidBare(b)
 	return stored, srid, nil
 }
 
-// storedFromValidMySQL rewrites the header of b, a bare value that validate has accepted,
+// storedFromValidBare rewrites the header of b, a bare value that validate has accepted,
 // so with a little-endian root and a type word without the SRID flag.
-func storedFromValidMySQL(b []byte) (stored []byte, srid uint32) {
+func storedFromValidBare(b []byte) (stored []byte, srid uint32) {
 	srid = binary.LittleEndian.Uint32(b)
 	stored = make([]byte, 0, len(b)+1)
 	stored = append(stored, Version1, byteOrderLittle)
@@ -177,10 +177,10 @@ func IsStored(b []byte) bool {
 	return len(b) > 5 && b[5]&byte(ewkbSRID>>24) != 0
 }
 
-// BareToStored converts a value given for a geometry column, a bare value (MySQL's binary
-// format, or that format extended with Z and M) or a stored value, into the canonical
-// stored format, with the structure checks of MySQL's bare path.
-func BareToStored(b []byte) (stored []byte, srid uint32, sum Summary, err error) {
+// ParseColumnValue converts a value given for a geometry column, a bare value (MySQL's
+// binary format, or that format extended with Z and M) or a stored value, into the
+// canonical stored format, with the structure checks of MySQL's bare path.
+func ParseColumnValue(b []byte) (stored []byte, srid uint32, sum Summary, err error) {
 	if !IsStored(b) {
 		if len(b) < 4 {
 			return nil, 0, Summary{}, ErrInvalid
@@ -189,7 +189,7 @@ func BareToStored(b []byte) (stored []byte, srid uint32, sum Summary, err error)
 		if err := v.run(); err != nil {
 			return nil, 0, Summary{}, err
 		}
-		stored, srid = storedFromValidMySQL(b)
+		stored, srid = storedFromValidBare(b)
 		if v.rewrite {
 			// A POINT EMPTY of another NaN, the only fault a valid bare value can have:
 			// make it canonical in place. The writes land only on bytes already read.
