@@ -50,6 +50,8 @@ const (
 	lockPrefix        = "v1/LOCK"
 	appendLockPrefix  = "v1/APPEND_LOCK"
 
+	migrationMetadataDownloadBatchSize = 128
+
 	SupportedMigVersion = pb.MigrationVersion_M2
 )
 
@@ -1267,7 +1269,7 @@ func (m MigrationExt) processTruncatedTo(ctx context.Context, mig *pb.Migration,
 	result.NewBase.TruncatedTo = mig.TruncatedTo
 	m.Hooks.StartLoadingMetaForTruncating()
 	mdSet := new(StreamMetadataSet)
-	mdSet.MetadataDownloadBatchSize = 128
+	mdSet.MetadataDownloadBatchSize = migrationMetadataDownloadBatchSize
 	shiftTS, err := mdSet.LoadUntilAndCalculateShiftTS(ctx, m.s, mig.TruncatedTo)
 	if err != nil {
 		result.Warnings = append(result.Warnings, errors.Annotatef(err, "failed to open meta storage"))
@@ -1362,8 +1364,8 @@ func LoadIngestedSSTs(
 	s storage.ExternalStorage,
 	paths []string,
 ) iter.TryNextor[IngestedSSTsGroup] {
-	fullBackupDirIter := iter.FromSlice(paths)
-	backups := iter.TryMap(fullBackupDirIter, func(name string) (PathedIngestedSSTs, error) {
+	// Transform preserves input order, so each finished marker follows its earlier segments.
+	backups := iter.Transform(iter.FromSlice(paths), func(ctx context.Context, name string) (PathedIngestedSSTs, error) {
 		// name is the absolute path in external storage.
 		bkup, err := readIngestedSSTs(ctx, name, s)
 		failpoint.InjectCall("load-ingested-ssts-err", &err)
@@ -1371,7 +1373,7 @@ func LoadIngestedSSTs(
 			return PathedIngestedSSTs{}, errors.Annotatef(err, "failed to read backup at %s", name)
 		}
 		return PathedIngestedSSTs{IngestedSSTs: bkup, path: name}, nil
-	})
+	}, iter.WithConcurrency(migrationMetadataDownloadBatchSize))
 	extBackups, err := groupExtraBackups(ctx, backups)
 	if err != nil {
 		return iter.Fail[IngestedSSTsGroup](err)
