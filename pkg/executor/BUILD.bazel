@@ -400,6 +400,7 @@ go_test(
     flaky = True,
     shard_count = 50,
     deps = [
+        "//br/pkg/glue",
         "//pkg/config",
         "//pkg/ddl",
         "//pkg/ddl/placement",
