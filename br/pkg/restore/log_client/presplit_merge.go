@@ -16,7 +16,6 @@ package logclient
 
 import (
 	"context"
-	"maps"
 	"runtime"
 	"sync"
 
@@ -27,23 +26,34 @@ import (
 
 const (
 	preSplitMergeMaxWorkers = 16
-	preSplitMergeBatchSize  = 4096
-	preSplitMergeQueueDepth = 4
+	preSplitMergeBatchSize  = 1024
+	// preSplitMergeMaxBatches bounds the batches handed to the workers and
+	// preSplitMergeMaxPartial the spans still collected per table, so a slow
+	// table holds the iteration back instead of buffering the metadata.
+	preSplitMergeMaxBatches = 64
+	preSplitMergeMaxPartial = 1 << 16
+	preSplitMergeCheckEvery = 1024
 )
-
-type preSplitFile struct {
-	tableID int64
-	valued  split.Valued
-}
 
 func preSplitMergeWorkers() int {
 	return max(1, min(preSplitMergeMaxWorkers, runtime.GOMAXPROCS(0)))
 }
 
+// preSplitTable is one table's split helper and the batches waiting for it.
+// While scheduled is set the table is in the ready queue or held by a worker,
+// so at most one worker merges into the helper at a time.
+type preSplitTable struct {
+	mu        sync.Mutex
+	batches   [][]split.Valued
+	scheduled bool
+	helper    *split.SplitHelper
+}
+
 // mergeDMLFilesByTable merges every DML file of a table with a rewrite rule
-// into that table's split helper. Each table is owned by one worker and its
-// files reach that worker in iteration order, so the helpers are the same as
-// merging every file on one goroutine.
+// into that table's split helper. Any idle worker takes any table with queued
+// batches, one worker per table at a time, and a table's batches are merged in
+// iteration order, so the helpers are the same as merging every file on one
+// goroutine.
 func mergeDMLFilesByTable(
 	ctx context.Context,
 	logIter LogIter,
@@ -55,54 +65,87 @@ func mergeDMLFilesByTable(
 	// the batches already queued.
 	workerCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	queues := make([]chan []preSplitFile, workers)
-	helpers := make([]map[int64]*split.SplitHelper, workers)
-	var wg sync.WaitGroup
-	for i := range workers {
-		queues[i] = make(chan []preSplitFile, preSplitMergeQueueDepth)
-		helpers[i] = make(map[int64]*split.SplitHelper)
+
+	tables := make(map[int64]*preSplitTable)
+	// A table is sent to ready only when it holds a batch, and every queued
+	// batch holds a token, so ready never has more entries than tokens.
+	tokens := make(chan struct{}, preSplitMergeMaxBatches)
+	ready := make(chan *preSplitTable, preSplitMergeMaxBatches)
+	var scheduled, wg sync.WaitGroup
+	for range workers {
 		wg.Add(1)
-		go func(queue <-chan []preSplitFile, owned map[int64]*split.SplitHelper) {
+		go func() {
 			defer wg.Done()
-			for batch := range queue {
-				if workerCtx.Err() != nil {
-					continue
-				}
-				for _, f := range batch {
-					helper, ok := owned[f.tableID]
-					if !ok {
-						helper = split.NewSplitHelper()
-						owned[f.tableID] = helper
+			var batches [][]split.Valued
+			for t := range ready {
+				for {
+					t.mu.Lock()
+					batches, t.batches = t.batches, batches[:0]
+					if len(batches) == 0 {
+						t.scheduled = false
+						t.mu.Unlock()
+						scheduled.Done()
+						break
 					}
-					helper.Merge(f.valued)
+					t.mu.Unlock()
+					for i, batch := range batches {
+						if workerCtx.Err() == nil {
+							for _, v := range batch {
+								t.helper.Merge(v)
+							}
+						}
+						batches[i] = nil
+						<-tokens
+					}
 				}
 			}
-		}(queues[i], helpers[i])
+		}()
 	}
 
-	pending := make([][]preSplitFile, workers)
-	flush := func(i int) error {
-		if len(pending[i]) == 0 {
-			return nil
-		}
-		if err := ctx.Err(); err != nil {
-			return err
-		}
+	submit := func(tableID int64, batch []split.Valued) error {
 		select {
-		case queues[i] <- pending[i]:
-		case <-ctx.Done():
-			return ctx.Err()
+		case tokens <- struct{}{}:
+		case <-workerCtx.Done():
+			return workerCtx.Err()
 		}
-		pending[i] = make([]preSplitFile, 0, preSplitMergeBatchSize)
+		t := tables[tableID]
+		t.mu.Lock()
+		t.batches = append(t.batches, batch)
+		wake := !t.scheduled
+		t.scheduled = true
+		t.mu.Unlock()
+		if wake {
+			scheduled.Add(1)
+			ready <- t
+		}
 		return nil
 	}
 
-	var fileCount int
+	partial := make(map[int64][]split.Valued)
+	partialSpans := 0
+	flushPartial := func() error {
+		for tableID, batch := range partial {
+			delete(partial, tableID)
+			partialSpans -= len(batch)
+			if err := submit(tableID, batch); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+
+	var fileCount, scanned int
 	var iterErr error
 	for r := logIter.TryNext(ctx); !r.Finished; r = logIter.TryNext(ctx) {
 		if r.Err != nil {
 			iterErr = r.Err
 			break
+		}
+		scanned++
+		if scanned%preSplitMergeCheckEvery == 0 {
+			if iterErr = ctx.Err(); iterErr != nil {
+				break
+			}
 		}
 		file := r.Item
 		if file.IsMeta {
@@ -111,37 +154,45 @@ func mergeDMLFilesByTable(
 		if _, exist := rules[file.TableId]; !exist {
 			continue
 		}
-		i := int(uint64(file.TableId) % uint64(workers))
-		pending[i] = append(pending[i], preSplitFile{
-			tableID: file.TableId,
-			valued: split.Valued{
-				Key: split.Span{
-					StartKey: file.StartKey,
-					EndKey:   file.EndKey,
-				},
-				Value: split.Value{
-					Size:   file.Length,
-					Number: file.NumberOfEntries,
-				},
+		if _, ok := tables[file.TableId]; !ok {
+			tables[file.TableId] = &preSplitTable{helper: split.NewSplitHelper()}
+		}
+		batch := append(partial[file.TableId], split.Valued{
+			Key: split.Span{
+				StartKey: file.StartKey,
+				EndKey:   file.EndKey,
+			},
+			Value: split.Value{
+				Size:   file.Length,
+				Number: file.NumberOfEntries,
 			},
 		})
 		fileCount++
-		if len(pending[i]) >= preSplitMergeBatchSize {
-			if iterErr = flush(i); iterErr != nil {
-				break
+		partialSpans++
+		if len(batch) < preSplitMergeBatchSize {
+			partial[file.TableId] = batch
+			if partialSpans >= preSplitMergeMaxPartial {
+				if iterErr = flushPartial(); iterErr != nil {
+					break
+				}
 			}
+			continue
+		}
+		delete(partial, file.TableId)
+		partialSpans -= len(batch)
+		if iterErr = submit(file.TableId, batch); iterErr != nil {
+			break
 		}
 	}
-	for i := 0; iterErr == nil && i < workers; i++ {
-		iterErr = flush(i)
+	if iterErr == nil {
+		iterErr = flushPartial()
 	}
 	if iterErr != nil {
 		cancel()
 	}
 	failpoint.InjectCall("pre-split-merge-before-wait")
-	for _, queue := range queues {
-		close(queue)
-	}
+	scheduled.Wait()
+	close(ready)
 	wg.Wait()
 	if iterErr == nil {
 		iterErr = ctx.Err()
@@ -150,9 +201,9 @@ func mergeDMLFilesByTable(
 		return nil, 0, iterErr
 	}
 
-	merged := make(map[int64]*split.SplitHelper)
-	for _, owned := range helpers {
-		maps.Copy(merged, owned)
+	merged := make(map[int64]*split.SplitHelper, len(tables))
+	for tableID, t := range tables {
+		merged[tableID] = t.helper
 	}
 	return merged, fileCount, nil
 }
