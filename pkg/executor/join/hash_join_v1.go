@@ -452,8 +452,10 @@ func (w *ProbeWorkerV1) joinMatchedProbeSideRow2ChunkForOuterHashJoin(probeKey u
 	return true, waitTime, joinResult
 }
 
-// joinNAALOSJMatchProbeSideRow2Chunk implement the matching logic for NA-AntiLeftOuterSemiJoin
-func (w *ProbeWorkerV1) joinNAALOSJMatchProbeSideRow2Chunk(probeKey uint64, probeKeyNullBits *bitmap.ConcurrentBitmap, probeSideRow chunk.Row, hCtx *HashContext, joinResult *hashjoinWorkerResult) (bool, int64, *hashjoinWorkerResult) {
+// joinNAOuterSemiMatchProbeSideRow2Chunk implements the matching logic for NA-LeftOuterSemiJoin
+// and NA-AntiLeftOuterSemiJoin. Both share identical bucket-matching priority and delegate
+// the exact scalar result (1/0/NULL) to their respective null-aware joiner.
+func (w *ProbeWorkerV1) joinNAOuterSemiMatchProbeSideRow2Chunk(probeKey uint64, probeKeyNullBits *bitmap.ConcurrentBitmap, probeSideRow chunk.Row, hCtx *HashContext, joinResult *hashjoinWorkerResult) (bool, int64, *hashjoinWorkerResult) {
 	var (
 		err error
 		ok  bool
@@ -462,9 +464,9 @@ func (w *ProbeWorkerV1) joinNAALOSJMatchProbeSideRow2Chunk(probeKey uint64, prob
 	oneWaitTime := int64(0)
 	if probeKeyNullBits == nil {
 		// step1: match the same key bucket first.
-		// because AntiLeftOuterSemiJoin cares about the scalar value. If we both have a match from null
-		// bucket and same key bucket, we should return the result as <rhs-row, 0> from same-key bucket
-		// rather than <rhs-row, null> from null bucket.
+		// Both LeftOuterSemiJoin and AntiLeftOuterSemiJoin care about the scalar value. If we have matches
+		// in both the same-key bucket and the null bucket, the same-key match takes precedence:
+		// <lhs, 1> for LeftOuterSemiJoin and <lhs, 0> for AntiLeftOuterSemiJoin, rather than <lhs, null>.
 		w.buildSideRows, err = w.rowContainerForProbe.GetMatchedRows(probeKey, probeSideRow, hCtx, w.buildSideRows)
 		buildSideRows := w.buildSideRows
 		if err != nil {
@@ -481,7 +483,7 @@ func (w *ProbeWorkerV1) joinNAALOSJMatchProbeSideRow2Chunk(probeKey uint64, prob
 					return false, waitTime, joinResult
 				}
 				// here matched means: there is a valid same-key bucket row from right side.
-				// as said in the comment, once we meet a same key (NOT IN semantic) in CNF, we can determine the result as <rhs, 0>.
+				// once we meet a same key, the scalar result is determined (<lhs, 1> for IN, <lhs, 0> for NOT IN).
 				if matched {
 					return true, waitTime, joinResult
 				}
@@ -502,8 +504,7 @@ func (w *ProbeWorkerV1) joinNAALOSJMatchProbeSideRow2Chunk(probeKey uint64, prob
 			return false, waitTime, joinResult
 		}
 		if len(buildSideRows) == 0 {
-			// when reach here, it means we couldn't find a valid same key match from same-key bucket yet
-			// and the null bucket is empty. so the result should be <rhs, 1>.
+			// no valid same-key match and no compatible null-bucket row: <lhs, 0> for IN, <lhs, 1> for NOT IN.
 			w.Joiner.OnMissMatch(false, probeSideRow, joinResult.chk)
 			return true, waitTime, joinResult
 		}
@@ -515,8 +516,7 @@ func (w *ProbeWorkerV1) joinNAALOSJMatchProbeSideRow2Chunk(probeKey uint64, prob
 				joinResult.err = err
 				return false, waitTime, joinResult
 			}
-			// here matched means: there is a valid null bucket row from right side.
-			// as said in the comment, once we meet a null in CNF, we can determine the result as <rhs, null>.
+			// here matched means: there is a valid compatible null-bucket row from right side -> <lhs, null>.
 			if matched {
 				return true, waitTime, joinResult
 			}
@@ -528,17 +528,17 @@ func (w *ProbeWorkerV1) joinNAALOSJMatchProbeSideRow2Chunk(probeKey uint64, prob
 				}
 			}
 		}
-		// step3: if we couldn't return it quickly in null bucket and same key bucket, here means two cases:
-		// case1: x NOT IN (empty set): if other key bucket don't have the valid rows yet.
-		// case2: x NOT IN (l,m,n...): if other key bucket do have the valid rows.
-		// both cases mean the result should be <rhs, 1>
+		// step3: no valid row matched in either same-key bucket or null bucket:
+		// case1: x IN/NOT IN (empty set)
+		// case2: x IN/NOT IN (l,m,n...) without x and compatible null
+		// <lhs, 0> for IN, <lhs, 1> for NOT IN.
 		w.Joiner.OnMissMatch(false, probeSideRow, joinResult.chk)
 		return true, waitTime, joinResult
 	}
-	// when left side has null values, all we want is to find a valid build side rows (past other condition)
+	// when left side has null values, all we want is to find a compatible valid build side row (past other condition)
 	// so we can return it as soon as possible. here means two cases:
-	// case1: <?, null> NOT IN (empty set):             ----------------------> result is <rhs, 1>.
-	// case2: <?, null> NOT IN (at least a valid inner row) ------------------> result is <rhs, null>.
+	// case1: <?, null> IN/NOT IN (no compatible valid inner row) --> <lhs, 0> for IN, <lhs, 1> for NOT IN.
+	// case2: <?, null> IN/NOT IN (at least a compatible valid inner row) --> <lhs, null>.
 	// Step1: match null bucket (assumption that null bucket is quite smaller than all hash table bucket rows)
 	w.buildSideRows, err = w.rowContainerForProbe.GetNullBucketRows(hCtx, probeSideRow, probeKeyNullBits, w.buildSideRows, w.needCheckBuildColPos, w.needCheckProbeColPos, w.needCheckBuildTypes, w.needCheckProbeTypes)
 	buildSideRows := w.buildSideRows
@@ -555,8 +555,7 @@ func (w *ProbeWorkerV1) joinNAALOSJMatchProbeSideRow2Chunk(probeKey uint64, prob
 				joinResult.err = err
 				return false, waitTime, joinResult
 			}
-			// here matched means: there is a valid null bucket row from right side. (not empty)
-			// as said in the comment, once we found at least a valid row, we can determine the result as <rhs, null>.
+			// here matched means: there is a compatible valid null-bucket row from right side -> <lhs, null>.
 			if matched {
 				return true, waitTime, joinResult
 			}
@@ -577,8 +576,7 @@ func (w *ProbeWorkerV1) joinNAALOSJMatchProbeSideRow2Chunk(probeKey uint64, prob
 		return false, waitTime, joinResult
 	}
 	if len(buildSideRows) == 0 {
-		// when reach here, it means we couldn't return it quickly in null bucket, and same-bucket is empty,
-		// which means x NOT IN (empty set) or x NOT IN (l,m,n), the result should be <rhs, 1>
+		// no compatible valid row in null bucket or hash table: <lhs, 0> for IN, <lhs, 1> for NOT IN.
 		w.Joiner.OnMissMatch(false, probeSideRow, joinResult.chk)
 		return true, waitTime, joinResult
 	}
@@ -590,8 +588,7 @@ func (w *ProbeWorkerV1) joinNAALOSJMatchProbeSideRow2Chunk(probeKey uint64, prob
 			joinResult.err = err
 			return false, waitTime, joinResult
 		}
-		// here matched means: there is a valid same key bucket row from right side. (not empty)
-		// as said in the comment, once we found at least a valid row, we can determine the result as <rhs, null>.
+		// here matched means: there is a compatible valid hash-table row from right side -> <lhs, null>.
 		if matched {
 			return true, waitTime, joinResult
 		}
@@ -603,9 +600,7 @@ func (w *ProbeWorkerV1) joinNAALOSJMatchProbeSideRow2Chunk(probeKey uint64, prob
 			}
 		}
 	}
-	// step3: if we couldn't return it quickly in null bucket and all hash bucket, here means only one cases:
-	// case1: <?, null> NOT IN (empty set):
-	// empty set comes from no rows from all bucket can pass other condition. the result should be <rhs, 1>
+	// step3: no compatible row from either bucket passed other condition -> <lhs, 0> for IN, <lhs, 1> for NOT IN.
 	w.Joiner.OnMissMatch(false, probeSideRow, joinResult.chk)
 	return true, waitTime, joinResult
 }
@@ -766,36 +761,40 @@ func (w *ProbeWorkerV1) joinNAASJMatchProbeSideRow2Chunk(probeKey uint64, probeK
 	return true, waitTime, joinResult
 }
 
-// joinNAAJMatchProbeSideRow2Chunk implement the matching priority logic for NA-AntiSemiJoin and NA-AntiLeftOuterSemiJoin
-// there are some bucket-matching priority difference between them.
+// joinNAAJMatchProbeSideRow2Chunk implements the matching priority logic for NA-AntiSemiJoin,
+// NA-LeftOuterSemiJoin, and NA-AntiLeftOuterSemiJoin.
+// There are bucket-matching priority differences between them:
 //
-//		Since NA-AntiSemiJoin don't need to append the scalar value with the left side row, there is a quick matching path.
+//		Since NA-AntiSemiJoin doesn't need to append a scalar value to the left side row, there is a quick matching path.
 //		1: lhs row has null:
 //	       lhs row has null can't determine its result in advance, we should judge whether the right valid set is empty
-//	       or not. For semantic like x NOT IN(y set), If y set is empty, the scalar result is 1; Otherwise, the result
-//	       is 0. Since NA-AntiSemiJoin don't care about the scalar value, we just try to find a valid row from right side,
-//	       once we found it then just return the left side row instantly. (same as NA-AntiLeftOuterSemiJoin)
+//	       or not. For semantic like x NOT IN(y set), if y set is empty, the scalar result is 1; otherwise, the result
+//	       is null (unknown). For x IN(y set), if y set is empty, the scalar result is 0; otherwise, null.
+//	       Since NA-AntiSemiJoin doesn't care about the scalar value, we just try to find a valid row from right side;
+//	       once found we reject the lhs row instantly (same bucket scan order as NA-LeftOuterSemiJoin / NA-AntiLeftOuterSemiJoin).
 //
 //		2: lhs row without null:
-//	       same-key bucket and null-bucket which should be the first to match? For semantic like x NOT IN(y set), once y
-//	       set has a same key x, the scalar value is 0; else if y set has a null key, then the scalar value is null. Both
-//	       of them lead the refuse of the lhs row without any difference. Since NA-AntiSemiJoin don't care about the scalar
-//	       value, we can just match the null bucket first and refuse the lhs row as quickly as possible, because a null of
-//	       yi in the CNF (x NA-EQ yi) can always determine a negative value (refuse lhs row) in advance here.
+//	       same-key bucket vs null-bucket: which should be matched first? For x NOT IN(y set), once y
+//	       set has a same key x, the scalar value is 0; else if y set has a null key, the scalar value is null. Both
+//	       lead to rejecting the lhs row in NA-AntiSemiJoin, so NA-AntiSemiJoin can match the null bucket first and
+//	       reject the lhs row as quickly as possible.
 //
-//	       For NA-AntiLeftOuterSemiJoin, we couldn't match null-bucket first, because once y set has a same key x and null
-//	       key, we should return the result as left side row appended with a scalar value 0 which is from same key matching failure.
+//	       For NA-LeftOuterSemiJoin and NA-AntiLeftOuterSemiJoin, we must NOT match null-bucket first, because when
+//	       y set has both a same key x and a null key, the scalar result must be determined by the same-key match
+//	       (1 for IN, 0 for NOT IN) rather than null.
 func (w *ProbeWorkerV1) joinNAAJMatchProbeSideRow2Chunk(probeKey uint64, probeKeyNullBits *bitmap.ConcurrentBitmap, probeSideRow chunk.Row, hCtx *HashContext, joinResult *hashjoinWorkerResult) (bool, int64, *hashjoinWorkerResult) {
-	naAntiSemiJoin := w.HashJoinCtx.JoinType == base.AntiSemiJoin && w.HashJoinCtx.IsNullAware
-	naAntiLeftOuterSemiJoin := w.HashJoinCtx.JoinType == base.AntiLeftOuterSemiJoin && w.HashJoinCtx.IsNullAware
-	if naAntiSemiJoin {
+	if !w.HashJoinCtx.IsNullAware {
+		return false, 0, joinResult
+	}
+	switch w.HashJoinCtx.JoinType {
+	case base.AntiSemiJoin:
 		return w.joinNAASJMatchProbeSideRow2Chunk(probeKey, probeKeyNullBits, probeSideRow, hCtx, joinResult)
+	case base.LeftOuterSemiJoin, base.AntiLeftOuterSemiJoin:
+		return w.joinNAOuterSemiMatchProbeSideRow2Chunk(probeKey, probeKeyNullBits, probeSideRow, hCtx, joinResult)
+	default:
+		// shouldn't be here, not a valid null-aware join.
+		return false, 0, joinResult
 	}
-	if naAntiLeftOuterSemiJoin {
-		return w.joinNAALOSJMatchProbeSideRow2Chunk(probeKey, probeKeyNullBits, probeSideRow, hCtx, joinResult)
-	}
-	// shouldn't be here, not a valid NAAJ.
-	return false, 0, joinResult
 }
 
 func (w *ProbeWorkerV1) joinMatchedProbeSideRow2Chunk(probeKey uint64, probeSideRow chunk.Row, hCtx *HashContext,

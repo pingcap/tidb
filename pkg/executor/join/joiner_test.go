@@ -19,8 +19,10 @@ import (
 	"strconv"
 	"testing"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -275,3 +277,176 @@ func genTestChunk(maxChunkSize int, numRows int, fields []*types.FieldType) *chu
 type joinedRowsPanicIterator struct{ chunk.Iterator }
 
 func (*joinedRowsPanicIterator) Next() chunk.Row { panic("iterator panic") }
+
+type errIterator struct {
+	chunk.Iterator
+	err error
+}
+
+func (e *errIterator) Error() error { return e.err }
+
+func TestNullAwareLeftOuterSemiJoiner(t *testing.T) {
+	ctx := defaultCtx()
+	intType := types.NewFieldType(mysql.TypeLonglong)
+	flagType := types.NewFieldType(mysql.TypeTiny)
+	lfields := []*types.FieldType{intType, intType}
+	rfields := []*types.FieldType{intType, intType}
+	outFields := []*types.FieldType{intType, intType, flagType}
+
+	makeRows := func(fields []*types.FieldType, rows [][]any) *chunk.Chunk {
+		chk := chunk.New(fields, max(len(rows), 1), max(len(rows), 1))
+		for _, r := range rows {
+			for colIdx, v := range r {
+				if v == nil {
+					chk.AppendNull(colIdx)
+				} else {
+					chk.AppendInt64(colIdx, v.(int64))
+				}
+			}
+		}
+		return chk
+	}
+
+	t.Run("no other conditions", func(t *testing.T) {
+		j := NewJoiner(ctx, base.LeftOuterSemiJoin, false, nil, nil, lfields, rfields, nil, true)
+		_, ok := j.(*nullAwareLeftOuterSemiJoiner)
+		require.True(t, ok)
+		require.Equal(t, base.LeftOuterSemiJoin, JoinerType(j))
+		require.True(t, j.isSemiJoinWithoutCondition())
+
+		cloned := j.Clone()
+		_, ok = cloned.(*nullAwareLeftOuterSemiJoiner)
+		require.True(t, ok)
+		require.Equal(t, base.LeftOuterSemiJoin, JoinerType(cloned))
+
+		outerChk := makeRows(lfields, [][]any{{int64(10), int64(20)}})
+		outerRow := outerChk.GetRow(0)
+		innerChk := makeRows(rfields, [][]any{{int64(10), int64(30)}, {int64(10), int64(40)}})
+		emptyChk := chunk.New(rfields, 1, 1)
+
+		// Empty inners yields unmatched and appends nothing.
+		res := chunk.New(outFields, 8, 8)
+		emptyIter := chunk.NewIterator4Chunk(emptyChk)
+		emptyIter.Begin()
+		matched, hasNull, err := j.TryToMatchInners(outerRow, emptyIter, res, LeftNotNullRightNotNull)
+		require.NoError(t, err)
+		require.False(t, matched)
+		require.False(t, hasNull)
+		require.Equal(t, 0, res.NumRows())
+
+		cases := []struct {
+			opt      NAAJType
+			wantNull bool
+			wantVal  int64
+		}{
+			{LeftNotNullRightNotNull, false, 1},
+			{LeftNotNullRightHasNull, true, 0},
+			{LeftHasNullRightHasNull, true, 0},
+			{LeftHasNullRightNotNull, true, 0},
+		}
+		for _, tc := range cases {
+			res.Reset()
+			iter := chunk.NewIterator4Chunk(innerChk)
+			iter.Begin()
+			matched, hasNull, err := j.TryToMatchInners(outerRow, iter, res, tc.opt)
+			require.NoError(t, err)
+			require.True(t, matched)
+			require.False(t, hasNull)
+			require.Equal(t, iter.End(), iter.Current())
+			require.Equal(t, 1, res.NumRows())
+			row := res.GetRow(0)
+			require.Equal(t, int64(10), row.GetInt64(0))
+			require.Equal(t, int64(20), row.GetInt64(1))
+			require.Equal(t, tc.wantNull, row.IsNull(2))
+			if !tc.wantNull {
+				require.Equal(t, tc.wantVal, row.GetInt64(2))
+			}
+		}
+
+		// OnMissMatch always appends (outer, 0) regardless of hasNull flag.
+		res.Reset()
+		j.OnMissMatch(false, outerRow, res)
+		j.OnMissMatch(true, outerRow, res)
+		require.Equal(t, 2, res.NumRows())
+		for i := range 2 {
+			row := res.GetRow(i)
+			require.Equal(t, int64(10), row.GetInt64(0))
+			require.Equal(t, int64(20), row.GetInt64(1))
+			require.False(t, row.IsNull(2))
+			require.Equal(t, int64(0), row.GetInt64(2))
+		}
+	})
+
+	t.Run("with other conditions and inline projection", func(t *testing.T) {
+		// Condition: lhs.col1 < rhs.col1 (indices 1 and 3 in shallow row [lhs0, lhs1, rhs0, rhs1]).
+		cond, err := expression.NewFunction(
+			ctx.GetExprCtx(), ast.LT, types.NewFieldType(mysql.TypeTiny),
+			&expression.Column{Index: 1, RetType: intType},
+			&expression.Column{Index: 3, RetType: intType},
+		)
+		require.NoError(t, err)
+
+		// Inline projection keeps only lhs.col0 (lhs.col1 is pruned from output but used in cond).
+		childrenUsed := [][]int{{0}, {}}
+		j := NewJoiner(ctx, base.LeftOuterSemiJoin, false, nil, []expression.Expression{cond}, lfields, rfields, childrenUsed, true)
+		require.False(t, j.isSemiJoinWithoutCondition())
+
+		projOutFields := []*types.FieldType{intType, flagType}
+		outerRow := makeRows(lfields, [][]any{{int64(7), int64(50)}}).GetRow(0)
+
+		// First inner evaluates to false (50 < 10), second to NULL (50 < NULL), third to true (50 < 60).
+		inners := makeRows(rfields, [][]any{
+			{int64(7), int64(10)},
+			{int64(7), nil},
+			{int64(7), int64(60)},
+			{int64(7), int64(70)},
+		})
+		res := chunk.New(projOutFields, 4, 4)
+		iter := chunk.NewIterator4Chunk(inners)
+		iter.Begin()
+		matched, hasNull, err := j.TryToMatchInners(outerRow, iter, res, LeftNotNullRightNotNull)
+		require.NoError(t, err)
+		require.True(t, matched)
+		require.False(t, hasNull)
+		require.Equal(t, iter.End(), iter.Current())
+		require.Equal(t, 1, res.NumRows())
+		require.Equal(t, int64(7), res.GetRow(0).GetInt64(0))
+		require.Equal(t, int64(1), res.GetRow(0).GetInt64(1))
+
+		// When all inners yield false or NULL in other conditions, returns matched=false, hasNull=false.
+		allNullOrFalseInners := makeRows(rfields, [][]any{
+			{int64(7), int64(10)},
+			{int64(7), nil},
+		})
+		res.Reset()
+		iter2 := chunk.NewIterator4Chunk(allNullOrFalseInners)
+		iter2.Begin()
+		matched, hasNull, err = j.TryToMatchInners(outerRow, iter2, res, LeftNotNullRightHasNull)
+		require.NoError(t, err)
+		require.False(t, matched)
+		require.False(t, hasNull)
+		require.Equal(t, 0, res.NumRows())
+
+		// Empty lUsed outputs only the match flag column.
+		jEmptyLUsed := NewJoiner(ctx, base.LeftOuterSemiJoin, false, nil, nil, lfields, rfields, [][]int{{}, {}}, true)
+		flagOnlyRes := chunk.New([]*types.FieldType{flagType}, 4, 4)
+		iter3 := chunk.NewIterator4Chunk(inners)
+		iter3.Begin()
+		matched, _, err = jEmptyLUsed.TryToMatchInners(outerRow, iter3, flagOnlyRes, LeftNotNullRightNotNull)
+		require.NoError(t, err)
+		require.True(t, matched)
+		jEmptyLUsed.OnMissMatch(false, outerRow, flagOnlyRes)
+		require.Equal(t, 2, flagOnlyRes.NumRows())
+		require.Equal(t, int64(1), flagOnlyRes.GetRow(0).GetInt64(0))
+		require.Equal(t, int64(0), flagOnlyRes.GetRow(1).GetInt64(0))
+
+		// Iterator error is propagated when no inner row matches.
+		wantErr := errors.New("mock iter error")
+		errIter := &errIterator{Iterator: chunk.NewIterator4Chunk(allNullOrFalseInners), err: wantErr}
+		errIter.Begin()
+		matched, hasNull, err = j.TryToMatchInners(outerRow, errIter, res, LeftNotNullRightNotNull)
+		require.ErrorIs(t, err, wantErr)
+		require.False(t, matched)
+		require.False(t, hasNull)
+	})
+}

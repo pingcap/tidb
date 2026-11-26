@@ -32,6 +32,7 @@ var (
 	_ Joiner = &antiSemiJoiner{}
 	_ Joiner = &nullAwareAntiSemiJoiner{}
 	_ Joiner = &leftOuterSemiJoiner{}
+	_ Joiner = &nullAwareLeftOuterSemiJoiner{}
 	_ Joiner = &antiLeftOuterSemiJoiner{}
 	_ Joiner = &nullAwareAntiLeftOuterSemiJoiner{}
 	_ Joiner = &leftOuterJoiner{}
@@ -126,7 +127,7 @@ func JoinerType(j Joiner) plannerbase.JoinType {
 		return plannerbase.SemiJoin
 	case *antiSemiJoiner:
 		return plannerbase.AntiSemiJoin
-	case *leftOuterSemiJoiner:
+	case *leftOuterSemiJoiner, *nullAwareLeftOuterSemiJoiner:
 		return plannerbase.LeftOuterSemiJoin
 	case *antiLeftOuterSemiJoiner:
 		return plannerbase.AntiLeftOuterSemiJoin
@@ -188,6 +189,9 @@ func NewJoiner(ctx sessionctx.Context, joinType plannerbase.JoinType,
 		return &antiSemiJoiner{base}
 	case plannerbase.LeftOuterSemiJoin:
 		base.shallowRow = chunk.MutRowFromTypes(shallowRowType)
+		if isNA {
+			return &nullAwareLeftOuterSemiJoiner{baseJoiner: base}
+		}
 		return &leftOuterSemiJoiner{base}
 	case plannerbase.AntiLeftOuterSemiJoin:
 		base.shallowRow = chunk.MutRowFromTypes(shallowRowType)
@@ -480,7 +484,7 @@ func (j *semiJoiner) Clone() Joiner {
 	return &semiJoiner{baseJoiner: j.baseJoiner.Clone()}
 }
 
-// NAAJType is join detail type only used by null-aware AntiLeftOuterSemiJoin.
+// NAAJType is join detail type used by null-aware LeftOuterSemiJoin and AntiLeftOuterSemiJoin.
 type NAAJType byte
 
 const (
@@ -718,6 +722,85 @@ func (j *leftOuterSemiJoiner) isSemiJoinWithoutCondition() bool {
 
 func (j *leftOuterSemiJoiner) Clone() Joiner {
 	return &leftOuterSemiJoiner{baseJoiner: j.baseJoiner.Clone()}
+}
+
+type nullAwareLeftOuterSemiJoiner struct {
+	baseJoiner
+}
+
+func (nal *nullAwareLeftOuterSemiJoiner) TryToMatchInners(outer chunk.Row, inners chunk.Iterator, chk *chunk.Chunk, opt ...NAAJType) (matched bool, _ bool, err error) {
+	if inners.Len() == 0 {
+		return false, false, nil
+	}
+	// Difference between nullAwareLeftOuterSemiJoiner and leftOuterSemiJoiner:
+	// leftOuterSemiJoiner conditions contain NA-EQ and inner filters; in EvalBool, once either side has a null value
+	//     in a NA-EQ operand, it yields matched=false and isNull=true.
+	// nullAwareLeftOuterSemiJoiner conditions only contain inner filters; in EvalBool, any false or null filter means
+	//     the inner row is excluded from the subquery set, so isNull is always false.
+	if len(nal.conditions) == 0 {
+		nal.addJoinedRow()
+		// no inner filter other condition means all matched (inners are valid source).
+		nal.onMatch(outer, chk, opt...)
+		inners.ReachEnd()
+		return true, false, nil
+	}
+
+	evalCtx := nal.ctx.GetExprCtx().GetEvalCtx()
+	for inner := inners.Current(); inner != inners.End(); inner = inners.Next() {
+		nal.makeShallowJoinRow(false, inner, outer)
+
+		valid, _, err := expression.EvalBool(evalCtx, nal.conditions, nal.shallowRow.ToRow())
+		if err != nil {
+			return false, false, err
+		}
+		if valid {
+			// once we find a valid inner row, we can determine the result already.
+			nal.onMatch(outer, chk, opt...)
+			inners.ReachEnd()
+			return true, false, nil
+		}
+	}
+	err = inners.Error()
+	return false, false, err
+}
+
+func (nal *nullAwareLeftOuterSemiJoiner) onMatch(outer chunk.Row, chk *chunk.Chunk, opt ...NAAJType) {
+	switch opt[0] {
+	case LeftNotNullRightNotNull:
+		// neither side has null in NA-EQ keys: x IN (x, ...) --> (lhs, 1).
+		lWide := chk.AppendRowByColIdxs(outer, nal.lUsed)
+		chk.AppendInt64(lWide, 1)
+	case LeftNotNullRightHasNull:
+		// right side has a matching null NA-EQ key: x IN (null, ...) --> (lhs, null).
+		lWide := chk.AppendRowByColIdxs(outer, nal.lUsed)
+		chk.AppendNull(lWide)
+	case LeftHasNullRightHasNull, LeftHasNullRightNotNull:
+		// left side has a null NA-EQ key and right side has at least one compatible valid inner row:
+		// (..., null) IN (valid inner) --> (lhs, null).
+		lWide := chk.AppendRowByColIdxs(outer, nal.lUsed)
+		chk.AppendNull(lWide)
+	}
+}
+
+func (nal *nullAwareLeftOuterSemiJoiner) OnMissMatch(_ bool, outer chunk.Row, chk *chunk.Chunk) {
+	// Reached when no compatible valid inner row exists:
+	// 1: null/x IN (empty set) --> (lhs, 0)
+	// 2: x IN (non-empty set without x and compatible null) --> (lhs, 0)
+	lWide := chk.AppendRowByColIdxs(outer, nal.lUsed)
+	chk.AppendInt64(lWide, 0)
+}
+
+func (*nullAwareLeftOuterSemiJoiner) TryToMatchOuters(chunk.Iterator, chunk.Row, *chunk.Chunk, []outerRowStatusFlag) (_ []outerRowStatusFlag, err error) {
+	// todo:
+	return nil, err
+}
+
+func (nal *nullAwareLeftOuterSemiJoiner) isSemiJoinWithoutCondition() bool {
+	return len(nal.conditions) == 0
+}
+
+func (nal *nullAwareLeftOuterSemiJoiner) Clone() Joiner {
+	return &nullAwareLeftOuterSemiJoiner{baseJoiner: nal.baseJoiner.Clone()}
 }
 
 type nullAwareAntiLeftOuterSemiJoiner struct {
