@@ -1084,6 +1084,16 @@ fn do_partition_reorg_work(
     };
     let outcome = outcome
         .filter(|outcome| outcome.job_id == active.job.id && outcome.partition_phase.is_some());
+    // Go `getReorgInfoFromPartitions`' failpoint: the reorg info is missing.
+    let mut missing_reorg_info = false;
+    tidb_failpoint::inject("github.com/pingcap/tidb/pkg/ddl/CheckReorgInfoEmptyErr", |value| {
+        missing_reorg_info = value.as_bool() == Some(true);
+    });
+    if missing_reorg_info {
+        return Err(DdlPlanError::from(
+            tidb_meta::meta_errors::ERR_DDL_REORG_ELEMENT_NOT_EXIST.gen_with_stack_by_args(&[]),
+        ));
+    }
     match outcome.map(|outcome| (&outcome.result, outcome.partition_phase)) {
         // Only an index reorganization answers an error.
         Some((ReorgResult::Error(error), _)) => Err(error.clone()),
