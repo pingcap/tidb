@@ -2542,6 +2542,12 @@ func buildMaskingExprsForPointGet(
 		return nil, nil
 	}
 	if !infoschema.MaskingPoliciesLoaded(is) {
+		// A checksum-only result has no table column to mask. Keep the fast
+		// path available for historical schemas with a cold policy cache.
+		// Preserve the normal lookup if a real column has the same name.
+		if isChecksumOnlyPointGet(schema, names, tbl) {
+			return nil, nil
+		}
 		return nil, errors.New("masking policy cache requires normal planning")
 	}
 	hasPolicies, err := is.HasMaskingPolicies(ctx)
@@ -2595,6 +2601,12 @@ func buildMaskingExprsForPointGet(
 		return nil, nil
 	}
 	return replaceExprs, nil
+}
+
+func isChecksumOnlyPointGet(schema *expression.Schema, names []*types.FieldName, tbl *model.TableInfo) bool {
+	return len(schema.Columns) == 1 && len(names) == 1 &&
+		schema.Columns[0].ID == model.ExtraRowChecksumID && names[0] != nil &&
+		tbl.FindPublicColumnByName(names[0].OrigColName.L) == nil
 }
 
 // maybeApplyPointGetMasking builds and assigns masking expressions to a PointGetPlan.
