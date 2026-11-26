@@ -16,25 +16,423 @@ package ddl_test
 
 import (
 	"context"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestMultiSchemaChangeRetryMissingReorgHandle(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	observer := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (id int primary key, v int)")
+	tk.MustExec("insert into t values (1, 10), (2, 20)")
+	originalFastReorg := vardef.EnableFastReorg.Swap(false)
+	t.Cleanup(func() { vardef.EnableFastReorg.Store(originalFastReorg) })
+	originalWait := ddl.GetWaitTimeWhenErrorOccurred()
+	ddl.SetWaitTimeWhenErrorOccurred(time.Millisecond)
+	t.Cleanup(func() { ddl.SetWaitTimeWhenErrorOccurred(originalWait) })
+	tk.MustExec("set global tidb_ddl_error_count_limit = 3")
+	t.Cleanup(func() { tk.MustExec("set global tidb_ddl_error_count_limit = default") })
+
+	const sql = "alter table t add index idx(v), add column c int default 42"
+	var removed, retried atomic.Bool
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
+		if job.Query != sql || job.Type != model.ActionMultiSchemaChange {
+			return
+		}
+		sub := job.MultiSchemaInfo.SubJobs[0]
+		if removed.Load() && meta.ErrDDLReorgElementNotExist.Equal(job.Error) && retried.CompareAndSwap(false, true) {
+			assert.Zero(t, sub.SnapshotVer, "the next step must reinitialize the missing handle")
+			assert.Equal(t, model.StateWriteReorganization, sub.SchemaState)
+		}
+		if sub.SchemaState == model.StateWriteReorganization && sub.SnapshotVer != 0 && removed.CompareAndSwap(false, true) {
+			_, err := sqlexec.ExecSQL(ctx, observer.Session().GetSQLExecutor(),
+				"delete from mysql.tidb_ddl_reorg where job_id = %?", job.ID)
+			if assert.NoError(t, err) {
+				assert.EqualValues(t, 1, observer.Session().GetSessionVars().StmtCtx.AffectedRows())
+			}
+		}
+	})
+
+	tk.MustExec(sql)
+	require.True(t, removed.Load())
+	require.True(t, retried.Load())
+	tk.MustQuery("select v, c from t force index(idx) order by v").Check(testkit.Rows("10 42", "20 42"))
+	tk.MustExec("admin check table t")
+}
+
+func TestMultiSchemaChangeRollbackDoesNotLeakBinlogInfo(t *testing.T) {
+	t.Cleanup(config.RestoreFunc())
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.EnableStorageClass = true
+	})
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table rollback_history (id int primary key) partition by hash(id) partitions 2")
+
+	// The comment sub-job finishes before the storage class sub-job rejects
+	// assigning a tier to a named HASH partition. Both writes must be rolled back.
+	const sql = `alter table rollback_history comment = 'should_rollback', engine_attribute = '{"storage_class":[{"tier":"IA","names_in":["p0"]}]}'`
+	tk.MustGetErrCode(sql, errno.ErrStorageClassInvalidSpec)
+	tk.MustQuery("select table_comment from information_schema.tables where table_schema = 'test' and table_name = 'rollback_history'").
+		Check(testkit.Rows(""))
+
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	rows, err := sqlexec.ExecSQL(ctx, tk.Session().GetSQLExecutor(),
+		"select job_meta from mysql.tidb_ddl_history where db_name = 'test' and table_name = 'rollback_history' order by job_id desc limit 1")
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	var job model.Job
+	require.NoError(t, job.Decode(rows[0].GetBytes(0)))
+	require.Equal(t, sql, job.Query)
+	require.Equal(t, model.JobStateRollbackDone, job.State)
+	require.NotNil(t, job.BinlogInfo)
+	require.Zero(t, job.LastSchemaVersion)
+	require.Zero(t, job.BinlogInfo.SchemaVersion, "history must not contain a rolled-back schema version")
+	require.Nil(t, job.BinlogInfo.TableInfo, "history must not contain a rolled-back TableInfo")
+}
+
+func TestMultiSchemaChangeSetSchemaDiffRetry(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (id int primary key, d1 int)")
+	tk.MustExec("insert into t values (1, 10)")
+	originalWait := ddl.GetWaitTimeWhenErrorOccurred()
+	ddl.SetWaitTimeWhenErrorOccurred(time.Millisecond)
+	t.Cleanup(func() { ddl.SetWaitTimeWhenErrorOccurred(originalWait) })
+	originalLimit := kv.TxnTotalSizeLimit.Load()
+	t.Cleanup(func() { kv.TxnTotalSizeLimit.Store(originalLimit) })
+
+	const sql = "alter table t add column c2 int default 42, drop column d1"
+	var limit atomic.Uint64
+	limit.Store(750)
+	var batchFinished, injected, rolledBack atomic.Bool
+	var notifications atomic.Int32
+	var mu sync.Mutex
+	var before, after []*model.SubJob
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeTransitOneJobStep", func(jobW *model.JobW) {
+		job := jobW.Job
+		if job.Query != sql || injected.Load() {
+			return
+		}
+		subs := job.MultiSchemaInfo.SubJobs
+		if subs[0].Revertible || subs[1].Revertible || job.ReorgMeta == nil ||
+			job.ReorgMeta.AnalyzeState == model.AnalyzeStateNone || job.ReorgMeta.AnalyzeState == model.AnalyzeStateRunning {
+			return
+		}
+		mu.Lock()
+		before = []*model.SubJob{subs[0].Clone(), subs[1].Clone()}
+		mu.Unlock()
+		batchFinished.Store(false)
+		kv.TxnTotalSizeLimit.Store(limit.Load())
+	})
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterAsyncNotifyEvent", func(job *model.Job, err *error) {
+		if job.Query == sql && job.Type == model.ActionAddColumn && *err == nil {
+			notifications.Add(1)
+		}
+	})
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterBatchedMultiSchemaParentJobUpdate", func(job, proxyJob *model.Job) {
+		if job.Query == sql && proxyJob.MultiSchemaInfo.Seq == 1 && proxyJob.Error == nil {
+			batchFinished.Store(true)
+		}
+	})
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterRunOneJobStep", func(job *model.Job) {
+		// Restore the default before job persistence or the rollback transaction.
+		kv.TxnTotalSizeLimit.Store(originalLimit)
+		if job.Query != sql || injected.Load() || job.Error == nil {
+			return
+		}
+		if batchFinished.Load() {
+			// Both sub-jobs succeeded, so the next write is the batch schema diff.
+			injected.Store(true)
+		} else if _, size, ok := strings.Cut(job.Error.Error(), "size: "); ok {
+			// Allow each earlier write, stopping at the first post-loop write.
+			if n, err := strconv.ParseUint(strings.TrimSpace(size), 10, 64); err == nil {
+				limit.Store(n + 1)
+			}
+		}
+	})
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterRollbackTxnForMustRollbackTxnOnError", func(job *model.Job) {
+		if job.Query == sql && injected.Load() {
+			mu.Lock()
+			after = []*model.SubJob{job.MultiSchemaInfo.SubJobs[0].Clone(), job.MultiSchemaInfo.SubJobs[1].Clone()}
+			mu.Unlock()
+			rolledBack.Store(true)
+		}
+	})
+
+	tk.MustExec(sql)
+	require.True(t, injected.Load(), "must fail at the post-loop SetSchemaDiff")
+	require.True(t, rolledBack.Load(), "async notification must force transaction rollback")
+	// The broken implementation returns success but leaves c2 non-public.
+	tk.MustQuery("select id, c2 from t").Check(testkit.Rows("1 42"))
+	mu.Lock()
+	defer mu.Unlock()
+	require.Equal(t, before, after, "rollback must restore every sub-job before persistence")
+	require.GreaterOrEqual(t, notifications.Load(), int32(2), "retry must republish the add-column notification")
+}
+
+func readPersistedDDLJobBytes(tk *testkit.TestKit, jobID int64) ([]byte, error) {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	rows, err := sqlexec.ExecSQL(
+		ctx, tk.Session().GetSQLExecutor(),
+		"select job_meta from mysql.tidb_ddl_job where job_id = %?", jobID,
+	)
+	if err != nil || len(rows) == 0 {
+		return nil, err
+	}
+	return slices.Clone(rows[0].GetBytes(0)), nil
+}
+
+func TestMultiSchemaChangeWithoutAsyncNotifySetSchemaDiffAndResetRetry(t *testing.T) {
+	t.Run("batched_set_schema_diff_without_async_notify", func(t *testing.T) {
+		// Neither MODIFY TABLE COMMENT nor DROP COLUMN calls asyncNotifyEvent.
+		// Seq 0 (COMMENT) is retryable on UpdateTable error and calls FinishTableJob
+		// with non-zero SchemaVersion and TableInfo; Seq 1 (DROP COLUMN, SkipVersion=true)
+		// keeps TableInfo byte length unchanged while post-loop SetSchemaDiff adds
+		// sub_action_types and deterministically exceeds limit.
+		const sql = "alter table t comment = 'v2', drop column d1"
+
+		store := testkit.CreateMockStore(t)
+		tk := testkit.NewTestKit(t, store)
+		checkTK := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("create table t (id int primary key, c1 int default 42, d1 int)")
+		tk.MustExec("insert into t values (1, 7, 10)")
+		originalWait := ddl.GetWaitTimeWhenErrorOccurred()
+		ddl.SetWaitTimeWhenErrorOccurred(time.Millisecond)
+		t.Cleanup(func() { ddl.SetWaitTimeWhenErrorOccurred(originalWait) })
+		originalLimit := kv.TxnTotalSizeLimit.Load()
+		t.Cleanup(func() { kv.TxnTotalSizeLimit.Store(originalLimit) })
+
+		var limit atomic.Uint64
+		limit.Store(750)
+		var batchFinished, injected, rolledBack, capturedPersisted atomic.Bool
+		var dirtyBinlogVer atomic.Int64
+		var dirtyHasTbl atomic.Bool
+		var mu sync.Mutex
+		var beforeErrorCount int64
+		var beforeSchemaState model.SchemaState
+		var beforeSubJobs []*model.SubJob
+		var persistedBytes, jobWBytes []byte
+		var queryErr error
+
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeTransitOneJobStep", func(jobW *model.JobW) {
+			job := jobW.Job
+			if job.Query != sql {
+				return
+			}
+			if injected.Load() {
+				if !capturedPersisted.Swap(true) {
+					raw, err := readPersistedDDLJobBytes(checkTK, job.ID)
+					mu.Lock()
+					persistedBytes = raw
+					jobWBytes = slices.Clone(jobW.Bytes)
+					queryErr = err
+					mu.Unlock()
+				}
+				return
+			}
+			subs := job.MultiSchemaInfo.SubJobs
+			if !job.IsRunning() || subs[0].Revertible || subs[1].Revertible || job.ReorgMeta == nil ||
+				job.ReorgMeta.AnalyzeState == model.AnalyzeStateNone ||
+				job.ReorgMeta.AnalyzeState == model.AnalyzeStateRunning {
+				return
+			}
+			mu.Lock()
+			beforeErrorCount = job.ErrorCount
+			beforeSchemaState = job.SchemaState
+			beforeSubJobs = []*model.SubJob{subs[0].Clone(), subs[1].Clone()}
+			mu.Unlock()
+			batchFinished.Store(false)
+			kv.TxnTotalSizeLimit.Store(limit.Load())
+		})
+		testfailpoint.EnableCall(
+			t, "github.com/pingcap/tidb/pkg/ddl/afterBatchedMultiSchemaParentJobUpdate",
+			func(job, proxyJob *model.Job) {
+				if job.Query == sql && proxyJob.MultiSchemaInfo.Seq == 1 && proxyJob.Error == nil {
+					if job.BinlogInfo != nil {
+						dirtyBinlogVer.Store(job.BinlogInfo.SchemaVersion)
+						dirtyHasTbl.Store(job.BinlogInfo.TableInfo != nil)
+					}
+					batchFinished.Store(true)
+				}
+			},
+		)
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterRunOneJobStep", func(job *model.Job) {
+			kv.TxnTotalSizeLimit.Store(originalLimit)
+			if job.Query != sql || injected.Load() || job.Error == nil {
+				return
+			}
+			if batchFinished.Load() {
+				// Both sub-jobs succeeded, so the failed write is the post-loop SetSchemaDiff.
+				injected.Store(true)
+			} else if _, size, ok := strings.Cut(job.Error.Error(), "size: "); ok {
+				if n, err := strconv.ParseUint(strings.TrimSpace(size), 10, 64); err == nil {
+					limit.Store(n + 1)
+				}
+			}
+		})
+		testfailpoint.EnableCall(
+			t, "github.com/pingcap/tidb/pkg/ddl/afterRollbackTxnForMustRollbackTxnOnError",
+			func(job *model.Job) {
+				if job.Query == sql && injected.Load() {
+					rolledBack.Store(true)
+				}
+			},
+		)
+
+		tk.MustExec(sql)
+		require.True(t, injected.Load(), "must fail at post-loop SetSchemaDiff")
+		require.Positive(t, dirtyBinlogVer.Load(), "Seq 0 must dirty BinlogInfo.SchemaVersion in memory before failure")
+		require.True(t, dirtyHasTbl.Load(), "Seq 0 must dirty BinlogInfo.TableInfo in memory before failure")
+		require.True(t, capturedPersisted.Load(), "must inspect persisted mysql.tidb_ddl_job before retry")
+
+		mu.Lock()
+		defer mu.Unlock()
+		require.NoError(t, queryErr)
+		require.NotEmpty(t, persistedBytes)
+		require.Equal(t, jobWBytes, persistedBytes)
+
+		persisted := &model.Job{}
+		require.NoError(t, persisted.Decode(persistedBytes))
+		require.Equal(t, beforeErrorCount+1, persisted.ErrorCount)
+		require.NotNil(t, persisted.BinlogInfo)
+		require.Zero(t, persisted.BinlogInfo.SchemaVersion)
+		require.Nil(t, persisted.BinlogInfo.TableInfo)
+		require.Equal(t, beforeSchemaState, persisted.SchemaState)
+		require.Zero(t, persisted.LastSchemaVersion)
+		require.Equal(t, beforeSubJobs, persisted.MultiSchemaInfo.SubJobs)
+		require.True(t, rolledBack.Load(), "post-loop SetSchemaDiff error must roll back full transaction")
+
+		tk.MustExec("insert into t (id) values (2)")
+		tk.MustQuery("select * from t order by id").Check(testkit.Rows("1 7", "2 42"))
+		tk.MustQuery("select table_comment from information_schema.tables where table_schema = 'test' and table_name = 't'").
+			Check(testkit.Rows("v2"))
+	})
+
+	t.Run("step_reset_without_must_rollback_txn", func(t *testing.T) {
+		// Neither SET DEFAULT nor DROP COLUMN calls asyncNotifyEvent.
+		const sql = "alter table t alter column c1 set default 42, drop column d1"
+
+		store := testkit.CreateMockStore(t)
+		tk := testkit.NewTestKit(t, store)
+		checkTK := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("create table t (id int primary key, c1 int default 10, d1 int)")
+		tk.MustExec("insert into t values (1, 7, 10)")
+		originalWait := ddl.GetWaitTimeWhenErrorOccurred()
+		ddl.SetWaitTimeWhenErrorOccurred(time.Millisecond)
+		t.Cleanup(func() { ddl.SetWaitTimeWhenErrorOccurred(originalWait) })
+		t.Cleanup(func() { _ = failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockUpdateVersionAndTableInfoErr") })
+
+		var injected, rolledBack, capturedDirty, capturedPersisted atomic.Bool
+		var mu sync.Mutex
+		var beforeSchemaState, dirtySubSchemaState model.SchemaState
+		var dirtySubRevertible bool
+		var beforeSubJobs []*model.SubJob
+		var persistedBytes, jobWBytes []byte
+		var fpErr, queryErr error
+
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeTransitOneJobStep", func(jobW *model.JobW) {
+			job := jobW.Job
+			if job.Query != sql {
+				return
+			}
+			if injected.Load() {
+				if !capturedPersisted.Swap(true) {
+					raw, err := readPersistedDDLJobBytes(checkTK, job.ID)
+					mu.Lock()
+					persistedBytes = raw
+					jobWBytes = slices.Clone(jobW.Bytes)
+					queryErr = err
+					mu.Unlock()
+				}
+				return
+			}
+			subs := job.MultiSchemaInfo.SubJobs
+			if !subs[0].Revertible && subs[1].Revertible && !injected.Swap(true) {
+				err := failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockUpdateVersionAndTableInfoErr", "1*return(1)")
+				mu.Lock()
+				beforeSchemaState = job.SchemaState
+				beforeSubJobs = []*model.SubJob{subs[0].Clone(), subs[1].Clone()}
+				fpErr = err
+				mu.Unlock()
+			}
+		})
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterRunOneJobStep", func(job *model.Job) {
+			if job.Query == sql && injected.Load() && !capturedDirty.Swap(true) {
+				_ = failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockUpdateVersionAndTableInfoErr")
+				mu.Lock()
+				dirtySubRevertible = job.MultiSchemaInfo.SubJobs[1].Revertible
+				dirtySubSchemaState = job.MultiSchemaInfo.SubJobs[1].SchemaState
+				mu.Unlock()
+			}
+		})
+		testfailpoint.EnableCall(
+			t, "github.com/pingcap/tidb/pkg/ddl/afterRollbackTxnForMustRollbackTxnOnError",
+			func(job *model.Job) {
+				if job.Query == sql && injected.Load() {
+					rolledBack.Store(true)
+				}
+			},
+		)
+
+		tk.MustExec(sql)
+		require.True(t, injected.Load(), "must fail on DROP COLUMN revertible step")
+		require.False(t, rolledBack.Load(), "non-mustRollbackTxnOnError step must use sess.Reset() path")
+		require.True(t, capturedDirty.Load())
+		require.True(t, capturedPersisted.Load(), "must inspect persisted mysql.tidb_ddl_job before retry")
+
+		mu.Lock()
+		defer mu.Unlock()
+		require.NoError(t, fpErr)
+		require.False(t, dirtySubRevertible, "step must dirty SubJob.Revertible before sess.Reset()")
+		require.Equal(t, model.StatePublic, dirtySubSchemaState, "step must dirty SubJob.SchemaState before sess.Reset()")
+		require.NoError(t, queryErr)
+		require.NotEmpty(t, persistedBytes)
+		require.Equal(t, jobWBytes, persistedBytes)
+
+		persisted := &model.Job{}
+		require.NoError(t, persisted.Decode(persistedBytes))
+		require.Equal(t, int64(1), persisted.ErrorCount)
+		require.NotNil(t, persisted.BinlogInfo)
+		require.Zero(t, persisted.BinlogInfo.SchemaVersion)
+		require.Nil(t, persisted.BinlogInfo.TableInfo)
+		require.Equal(t, beforeSchemaState, persisted.SchemaState)
+		require.Zero(t, persisted.LastSchemaVersion)
+		require.Equal(t, beforeSubJobs, persisted.MultiSchemaInfo.SubJobs)
+
+		tk.MustExec("insert into t (id) values (2)")
+		tk.MustQuery("select * from t order by id").Check(testkit.Rows("1 7", "2 42"))
+	})
+}
 
 func TestMultiSchemaChangeAddColumnsCancelled(t *testing.T) {
 	store := testkit.CreateMockStore(t)
@@ -370,16 +768,19 @@ func TestMultiSchemaChangeRenameTable(t *testing.T) {
 	tk.MustExec("create table t (a int default 1, b int default 2, index t(a, b));")
 	tk.MustExec("insert into t values (1, 2);")
 	var wg sync.WaitGroup
+	var once sync.Once
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
-		switch job.SchemaState {
-		case model.StateNone:
+		if job.Type != model.ActionRenameTable || job.SchemaState != model.StateNone {
+			return
+		}
+		once.Do(func() {
 			wg.Add(1)
 			go func() {
+				defer wg.Done()
 				_, err := tk.Exec("alter table t rename column b to c, change column a e bigint default 3;")
-				require.Error(t, err)
-				wg.Done()
+				assert.Error(t, err)
 			}()
-		}
+		})
 	})
 	tk2 := testkit.NewTestKit(t, store)
 	tk2.MustExec("use test")

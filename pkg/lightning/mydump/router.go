@@ -282,9 +282,10 @@ func newAuroraFileRouter(files []RawFile, fallback FileRouter, logger log.Logger
 		if !ok || table == "" {
 			return nil, errors.Errorf("inconsistent Aurora database/table directory: %s", path)
 		}
-		// AWS's underscore conversion is lossy; import wildcards also cannot
-		// safely represent glob metacharacters. Require explicit routes instead.
-		if strings.ContainsAny(schema+table, "_\\`\" *?[]") {
+		// Use exported identifiers verbatim, including underscores, rather than
+		// trying to reverse AWS's lossy name conversion. Other non-native
+		// characters and glob metacharacters still require explicit routes.
+		if strings.ContainsAny(schema+table, "\\`\" *?[]") {
 			return nil, errors.Errorf("ambiguous Aurora identifier in %s; provide an explicit file route with the original name", path)
 		}
 		if len(rules) > 0 && root != parts[1] {

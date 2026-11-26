@@ -33,9 +33,13 @@ import (
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/keyspace"
+	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/testkit/testsetup"
 	util2 "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/etcd"
+	"github.com/pingcap/tidb/pkg/util/versioninfo"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/require"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/tests/v3/integration"
@@ -731,6 +735,67 @@ func TestStatusEndpointClaim(t *testing.T) {
 		close(exitCh)
 		require.True(t, isExitRequested(exitCh))
 	})
+
+	t.Run("server info sync loop cancels an in-flight restart", func(t *testing.T) {
+		faultClient, err := cluster.NewClientV3(0)
+		require.NoError(t, err)
+		t.Cleanup(func() { require.NoError(t, faultClient.Close()) })
+		loopCtx, cancelLoop := context.WithCancel(ctx)
+		defer cancelLoop()
+		syncer := NewCrossKSSyncer("restart-cancel", func() uint64 { return 0 }, faultClient, nil, "tenant")
+		require.NoError(t, syncer.NewSessionAndStoreServerInfo(loopCtx))
+		defer syncer.RevokeSession()
+		syncer.session.Orphan()
+
+		started, unblock := make(chan struct{}), make(chan struct{})
+		faultClient.Lease = &blockingGrantLease{Lease: faultClient.Lease, started: started, unblock: unblock}
+		exitCh, done := make(chan struct{}), make(chan struct{})
+		stop := sync.OnceFunc(func() {
+			close(exitCh)
+			cancelLoop()
+		})
+		defer func() {
+			stop()
+			// Let a broken restart finish so a regression cannot leak the worker.
+			close(unblock)
+			select {
+			case <-done:
+			case <-time.After(5 * time.Second):
+				t.Error("server info sync loop did not finish cleanup")
+			}
+		}()
+		go func() {
+			defer close(done)
+			syncer.ServerInfoSyncLoop(loopCtx, nil, exitCh)
+		}()
+		select {
+		case <-started:
+		case <-time.After(5 * time.Second):
+			t.Fatal("server info restart did not reach lease grant")
+		}
+		stop()
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			t.Fatal("shutdown did not cancel the in-flight server info restart")
+		}
+	})
+}
+
+type blockingGrantLease struct {
+	clientv3.Lease
+	started chan struct{}
+	unblock <-chan struct{}
+}
+
+func (lease *blockingGrantLease) Grant(ctx context.Context, _ int64) (*clientv3.LeaseGrantResponse, error) {
+	close(lease.started)
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-lease.unblock:
+		return nil, context.Canceled
+	}
 }
 
 type claimRecorder struct {
@@ -1156,6 +1221,21 @@ func TestCleanupStaleServerAndOwnerInfo(t *testing.T) {
 			requireServerInfoKey(ctx, t, scopedClient, caller.serverInfoPath)
 		})
 	}
+}
+
+func TestCrossKeyspaceSyncerPreservesServerStartTime(t *testing.T) {
+	gauge := metrics.ServerInfo.WithLabelValues(mysql.TiDBReleaseVersion, versioninfo.TiDBGitHash)
+	original := testutil.ToFloat64(gauge)
+	t.Cleanup(func() { gauge.Set(original) })
+	gauge.Set(0)
+	primary := NewSyncer("primary", func() uint64 { return 1 }, nil, nil)
+	require.Equal(t, float64(primary.GetLocalServerInfo().StartTimestamp), testutil.ToFloat64(gauge))
+
+	// Model a process that has been running longer than the virtual runtime.
+	earlier := float64(primary.GetLocalServerInfo().StartTimestamp - 60)
+	gauge.Set(earlier)
+	NewCrossKSSyncer("virtual", func() uint64 { return 0 }, nil, nil, "tenant")
+	require.Equal(t, earlier, testutil.ToFloat64(gauge))
 }
 
 func TestAssumedServerInfoSyncer(t *testing.T) {

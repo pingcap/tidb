@@ -141,8 +141,9 @@ func (rc *SnapClient) RegisterUpdateMetaAndLoadStats(
 	s storeapi.Storage,
 	updateCh glue.Progress,
 	statsConcurrency uint,
+	writer statsWriter,
 ) {
-	rc.registerUpdateMetaAndLoadStats(builder, s, updateCh, statsConcurrency)
+	rc.registerUpdateMetaAndLoadStats(builder, s, updateCh, statsConcurrency, writer)
 }
 
 func (rc *SnapClient) ReplaceTables(

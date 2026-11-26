@@ -22,6 +22,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/executor"
@@ -342,6 +343,106 @@ func TestBRIECreateTable(t *testing.T) {
 	require.Equal(t, originQueryString, sctx.Value(sessionctx.QueryString))
 	tk.MustExec("desc table_1")
 	tk.MustExec("desc table_2")
+}
+
+func TestBRIEGlueSessionReadOnlySequence(t *testing.T) {
+	for _, cycle := range []bool{false, true} {
+		t.Run(fmt.Sprintf("cycle=%t", cycle), func(t *testing.T) {
+			store := testkit.CreateMockStore(t)
+			tk := testkit.NewTestKit(t, store)
+			testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockModifySchemaReadOnlyDDL", "return")
+			require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
+			require.False(t, privilege.HasExplicitReplicaWriterAdmin(tk.Session()))
+
+			ctx := context.Background()
+			gs, err := executor.NewBRIEGlueForTest(tk.Session()).CreateSession(store)
+			require.NoError(t, err)
+			defer gs.Close()
+			for _, name := range []string{"restore_ro", "other_ro"} {
+				require.NoError(t, gs.CreateDatabaseOnExistError(ctx, &model.DBInfo{
+					Name: ast.NewCIStr(name), ReadOnly: true,
+				}))
+				require.NoError(t, gs.CreateTable(ctx, ast.NewCIStr(name), &model.TableInfo{
+					Name: ast.NewCIStr("s"), State: model.StatePublic,
+					Sequence: &model.SequenceInfo{Start: 1, MinValue: 1, MaxValue: 1000, Increment: 1, Cycle: cycle},
+				}))
+			}
+
+			func() {
+				defer privilege.WithInternalSchemaReadOnlyBypass(gs.GetSessionCtx(), "restore_ro")()
+				if cycle {
+					// Match restoreSequence's cycle-round initialization before restoring the saved value.
+					require.NoError(t, gs.Execute(ctx, "do setval(restore_ro.s, 1000)"))
+					require.NoError(t, gs.Execute(ctx, "do nextval(restore_ro.s)"))
+				}
+				require.NoError(t, gs.Execute(ctx, "do setval(restore_ro.s, 41)"))
+				require.ErrorContains(t, gs.Execute(ctx, "do setval(other_ro.s, 99)"), "read only mode")
+				require.ErrorContains(t, gs.Execute(ctx, "do nextval(other_ro.s)"), "read only mode")
+				// An execution error must not discard the enclosing restore authorization.
+				require.NoError(t, gs.Execute(ctx, "do setval(restore_ro.s, 41)"))
+			}()
+
+			for _, name := range []string{"restore_ro", "other_ro"} {
+				require.False(t, privilege.CanWriteReadOnlySchema(gs.GetSessionCtx(), name))
+				require.ErrorContains(t, gs.Execute(ctx, "do setval("+name+".s, 99)"), "read only mode")
+				require.ErrorContains(t, tk.QueryToErr("select nextval("+name+".s)"), "read only mode")
+				require.ErrorContains(t, tk.QueryToErr("select setval("+name+".s, 99)"), "read only mode")
+			}
+			tk.MustQuery("select options from information_schema.schemata_extensions where schema_name = 'restore_ro'").Check(testkit.Rows("READ ONLY=1"))
+			require.Contains(t, tk.MustQuery("show create database restore_ro").Rows()[0][1], "READ ONLY = 1")
+			tk.MustExec("alter database restore_ro read only = 0")
+			next, err := strconv.ParseInt(tk.MustQuery("select nextval(restore_ro.s)").Rows()[0][0].(string), 10, 64)
+			require.NoError(t, err)
+			require.Greater(t, next, int64(41))
+		})
+	}
+}
+
+func TestBRIEGlueSessionAutocommit(t *testing.T) {
+	for _, batch := range []bool{false, true} {
+		for _, readOnly := range []bool{false, true} {
+			t.Run(fmt.Sprintf("batch=%t/readOnly=%t", batch, readOnly), func(t *testing.T) {
+				store := testkit.CreateMockStore(t)
+				tk := testkit.NewTestKit(t, store)
+				tk.MustExec("set global autocommit = 0")
+				defer tk.MustExec("set global autocommit = 1")
+				testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockModifySchemaReadOnlyDDL", "return")
+
+				ctx := context.Background()
+				gs, err := executor.NewBRIEGlueForTest(tk.Session()).CreateSession(store)
+				require.NoError(t, err)
+				defer gs.Close()
+				// Match restore initialization, which loads global session defaults.
+				require.NoError(t, gs.Execute(ctx, "set @@sql_mode = ''"))
+				dbName := ast.NewCIStr("restore_autocommit")
+				require.NoError(t, gs.CreateDatabaseOnExistError(ctx, &model.DBInfo{
+					Name: dbName, ReadOnly: readOnly,
+				}))
+
+				for _, name := range []string{"s1", "s2"} {
+					tbl := &model.TableInfo{
+						Name: ast.NewCIStr(name), State: model.StatePublic,
+						Sequence: &model.SequenceInfo{Start: 1, MinValue: 1, MaxValue: 1000, Increment: 1},
+					}
+					if batch {
+						batchSession, ok := gs.(glue.BatchCreateTableSession)
+						require.True(t, ok)
+						require.NoError(t, batchSession.CreateTables(ctx, map[string][]*model.TableInfo{dbName.L: {tbl}}))
+					} else {
+						require.NoError(t, gs.CreateTable(ctx, dbName, tbl))
+					}
+					// Interleave creation and SETVAL to detect a stale transaction schema
+					// when the same restore worker handles another sequence.
+					func() {
+						defer privilege.WithInternalSchemaReadOnlyBypass(gs.GetSessionCtx(), dbName.L)()
+						require.NoError(t, gs.Execute(ctx, fmt.Sprintf("do setval(%s.%s, 41)", dbName.O, name)))
+					}()
+				}
+				require.True(t, gs.GetSessionCtx().GetSessionVars().IsAutocommit())
+				require.False(t, gs.GetSessionCtx().GetSessionVars().InTxn())
+			})
+		}
+	}
 }
 
 func TestBRIECreateTables(t *testing.T) {

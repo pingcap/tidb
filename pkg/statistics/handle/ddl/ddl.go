@@ -26,35 +26,28 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics/handle/lockstats"
 	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	"github.com/pingcap/tidb/pkg/statistics/handle/storage"
-	"github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"go.uber.org/zap"
 )
 
-type ddlHandlerImpl struct {
-	ddlEventCh   chan *notifier.SchemaChangeEvent
-	statsWriter  types.StatsReadWriter
-	statsHandler types.StatsHandle
-	sub          *subscriber
+// Handler updates the stats for DDL events.
+type Handler struct {
+	ddlEventCh chan *notifier.SchemaChangeEvent
+	sub        *subscriber
 }
 
-// NewDDLHandler creates a new ddl handler.
-func NewDDLHandler(
-	statsWriter types.StatsReadWriter,
-	statsHandler types.StatsHandle,
-) types.DDL {
-	return &ddlHandlerImpl{
-		ddlEventCh:   make(chan *notifier.SchemaChangeEvent, 1000),
-		statsWriter:  statsWriter,
-		statsHandler: statsHandler,
-		sub:          newSubscriber(),
+// NewHandler creates a new Handler.
+func NewHandler() *Handler {
+	return &Handler{
+		ddlEventCh: make(chan *notifier.SchemaChangeEvent, 1000),
+		sub:        newSubscriber(),
 	}
 }
 
 // HandleDDLEvent begins to process a ddl task.
-func (h *ddlHandlerImpl) HandleDDLEvent(ctx context.Context, sctx sessionctx.Context, s *notifier.SchemaChangeEvent) error {
+func (h *Handler) HandleDDLEvent(ctx context.Context, sctx sessionctx.Context, s *notifier.SchemaChangeEvent) error {
 	// A panic would stop the DDL notifier, and a new stats owner would replay the same event.
 	// So log the panic and skip the event, the same as an error below.
 	defer tidbutil.Recover(metrics.LabelStats, "ddlHandlerImpl.HandleDDLEvent", nil, false)
@@ -78,7 +71,7 @@ func (h *ddlHandlerImpl) HandleDDLEvent(ctx context.Context, sctx sessionctx.Con
 }
 
 // DDLEventCh returns ddl events channel in handle.
-func (h *ddlHandlerImpl) DDLEventCh() chan *notifier.SchemaChangeEvent {
+func (h *Handler) DDLEventCh() chan *notifier.SchemaChangeEvent {
 	return h.ddlEventCh
 }
 

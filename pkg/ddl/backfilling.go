@@ -399,9 +399,14 @@ func (w *backfillWorker) handleBackfillTask(d *ddlCtx, task *reorgBackfillTask, 
 		// small range reorganization.
 		// In the next round of reorganization, the target handle range may overlap with last committed
 		// small ranges. This will cause the `redo` action in reorganization.
-		// So for added count and warnings collection, it is recommended to collect the statistics in every
-		// successfully committed small ranges rather than fetching it in the total result.
-		rc.increaseRowCount(int64(taskCtx.addedCount))
+		// Collect progress and warnings after each committed batch rather than from the
+		// total task result.
+		rowCount := taskCtx.addedCount
+		if indexWorker, ok := bf.(*addIndexTxnWorker); ok && len(indexWorker.indexes) > 0 {
+			// scanCount includes one record per index, even when its predicate excludes the row.
+			rowCount = taskCtx.scanCount / len(indexWorker.indexes)
+		}
+		rc.increaseRowCount(int64(rowCount))
 		rc.mergeWarnings(taskCtx.warnings, taskCtx.warningsCount)
 		accountBackfillTxnRU(rc, jobID, taskCtx.writtenBytes)
 

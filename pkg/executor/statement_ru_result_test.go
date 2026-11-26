@@ -664,6 +664,12 @@ func requireStatementRUValueOnlyType(t *testing.T, valueType reflect.Type) {
 	t.Helper()
 	for i := range valueType.NumField() {
 		fieldType := valueType.Field(i).Type
+		// The report owns its overflow storage. Inspect the entry type just
+		// like the inline array; every other slice remains disallowed.
+		if valueType == reflect.TypeFor[statementRUFullReport]() && valueType.Field(i).Name == "overflow" {
+			require.Equal(t, reflect.TypeFor[[]statementRUReportEntry](), fieldType)
+			fieldType = fieldType.Elem()
+		}
 		if fieldType == reflect.TypeOf((*statementRUFullReport)(nil)) {
 			fieldType = fieldType.Elem()
 		}

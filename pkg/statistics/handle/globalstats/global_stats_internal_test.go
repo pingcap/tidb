@@ -356,7 +356,7 @@ func testIssues24349(t *testing.T, testKit *testkit.TestKit, store kv.Storage) {
 	do, err := session.GetDomain(store)
 	require.NoError(t, err)
 	statsHandle := do.StatsHandle()
-	require.NoError(t, statsHandle.DumpColStatsUsageToKV())
+	require.NoError(t, statsHandle.Usage().DumpColStatsUsageToKV())
 	testKit.MustExec("analyze table t with 1 topn, 3 buckets")
 	testKit.MustQuery("show stats_topn where partition_name = 'global'").Sort().Check(testkit.Rows(
 		"test t global a 0 1 6",

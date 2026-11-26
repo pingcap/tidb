@@ -70,7 +70,7 @@ func getNumberExampleSchedulerExt(ctrl *gomock.Controller) scheduler.Extension {
 		},
 	).AnyTimes()
 	mockScheduler.EXPECT().OnNextSubtasksBatch(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
-		func(_ context.Context, _ storage.TaskHandle, task *proto.Task, _ []string, _ proto.Step) (metas [][]byte, err error) {
+		func(_ context.Context, _ storage.TaskHandle, task *proto.Task, _ int, _ proto.Step) (metas [][]byte, err error) {
 			switch task.Step {
 			case proto.StepInit:
 				for range subtaskCnt {

@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
-	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	storeerr "github.com/pingcap/tidb/pkg/store/driver/error"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -1822,7 +1821,7 @@ func TestServerHelperAnalyzeMVLogTemporarilyUpdatesStatsSessionVars(t *testing.T
 		},
 	}
 	helper := &serviceHelper{
-		statsHandleGetter: func() statstypes.StatsHandle {
+		statsHandleGetter: func() StatsHandle {
 			return statsHandle
 		},
 		sysProcTracker: &recordingSysProcTracker{},
@@ -1854,7 +1853,7 @@ func newMLogAnalyzeHelperForTest(t *testing.T) (*serviceHelper, *recordingSessio
 			201: {HistColl: *statistics.NewHistCollWithColsAndIdxs(0, statistics.AutoAnalyzeMinCnt+1, 0, nil, nil)},
 		},
 	}
-	return newServiceHelper(func() statstypes.StatsHandle { return statsHandle }, &recordingSysProcTracker{}), se
+	return newServiceHelper(func() StatsHandle { return statsHandle }, &recordingSysProcTracker{}), se
 }
 
 const testSQLAutoAnalyzeParameters = "select variable_name, variable_value from mysql.global_variables where variable_name in (%?, %?, %?)"

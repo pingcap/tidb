@@ -33,7 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/sysproctrack"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
-	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
+	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	basic "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/mock"
@@ -728,7 +728,6 @@ func setThreeNodeRefreshAlertOwnersForTest(svc *MVService, selfID string) {
 }
 
 type recordingStatsHandle struct {
-	statstypes.StatsHandle
 	stats map[int64]*statistics.Table
 }
 
@@ -740,6 +739,8 @@ func (h *recordingStatsHandle) GetNonPseudoPhysicalTableStats(physicalTableID in
 	statsTbl, ok := h.stats[physicalTableID]
 	return statsTbl, ok
 }
+
+func (h *recordingStatsHandle) ProcIDs() statsutil.AutoAnalyzeProcIDGenerator { return h }
 
 func (*recordingStatsHandle) AutoAnalyzeProcID() uint64 { return 1 }
 
