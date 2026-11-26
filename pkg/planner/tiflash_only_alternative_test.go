@@ -147,3 +147,30 @@ func TestMPPVirtualTextFilter(t *testing.T) {
 	require.Regexp(t, `Selection[^]]*root[^]]*txt_lower`, withoutPruning)
 	require.NotContains(t, withoutPruning, "cast(lower")
 }
+
+func TestMPPVirtualIntegerFilter(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t, mockstore.WithMockTiFlash(2))
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t(
+		id int primary key, a bigint, b bigint as (abs(a)) virtual,
+		alias_col bigint as (a) virtual, narrow tinyint as (abs(a)) virtual
+	)`)
+	tk.MustExec("insert into t (id, a) values (1, -2), (2, null), (3, 4)")
+	testkit.SetTiFlashReplica(t, dom, "test", "t")
+	tk.MustExec("set tidb_allow_mpp=on, tidb_allow_tiflash_cop=off, tidb_enforce_mpp=on")
+	tk.MustExec("set tidb_isolation_read_engines='tiflash,tidb', mpp_version=2")
+
+	const query = "select id from t where b = 2"
+	plan := fmt.Sprint(tk.MustQuery("explain format='brief' " + query).Rows())
+	require.Regexp(t, `Selection[^]]*mpp\[tiflash\][^]]*abs\(`, plan)
+	tk.MustQuery(query).Check(testkit.Rows("1"))
+	tk.MustQuery("select id from t where b is null").Check(testkit.Rows("2"))
+	alias := fmt.Sprint(tk.MustQuery("explain format='brief' select id from t where alias_col = -2").Rows())
+	require.Regexp(t, `mpp\[tiflash\][^]]*eq\(test\.t\.a, -2\)`, alias)
+
+	narrow := fmt.Sprint(tk.MustQuery("explain format='brief' select id from t where narrow = 2").Rows())
+	require.NotRegexp(t, `Selection[^]]*mpp\[tiflash\][^]]*abs\(`, narrow)
+	projected := fmt.Sprint(tk.MustQuery("explain format='brief' select b from t where b = 2").Rows())
+	require.NotRegexp(t, `Selection[^]]*mpp\[tiflash\][^]]*abs\(`, projected)
+}
