@@ -89,14 +89,14 @@ func stored(srid uint32, g []byte) []byte {
 	return append(b, g[5:]...)
 }
 
-// mysqlOf makes a little-endian root geometry g without an SRID the bare value at srid:
+// bareOf makes a little-endian root geometry g without an SRID the bare value at srid:
 // MySQL's binary format for a 2D value, extended with the Z and M flags otherwise.
-func mysqlOf(srid uint32, g []byte) []byte {
+func bareOf(srid uint32, g []byte) []byte {
 	return append(binary.LittleEndian.AppendUint32(nil, srid), g...)
 }
 
-// storedFromMySQL rewrites the root header of a bare value into the stored format.
-func storedFromMySQL(m []byte) []byte { return stored(binary.LittleEndian.Uint32(m), m[4:]) }
+// storedFromBare rewrites the root header of a bare value into the stored format.
+func storedFromBare(m []byte) []byte { return stored(binary.LittleEndian.Uint32(m), m[4:]) }
 
 // nestedCollections returns WKB (little-endian, no SRID) for depth GEOMETRYCOLLECTIONs,
 // each holding the next, the innermost empty.
@@ -130,8 +130,8 @@ func storedChain(depth int, flags uint32, leaf []byte) []byte {
 	return append(b, leaf...)
 }
 
-// mysqlChain is storedChain as a bare value, without flags.
-func mysqlChain(depth int, leaf []byte) []byte {
+// bareChain is storedChain as a bare value, without flags.
+func bareChain(depth int, leaf []byte) []byte {
 	b := make([]byte, 4)
 	for range depth - 1 {
 		b = append(b, byteOrderLittle)

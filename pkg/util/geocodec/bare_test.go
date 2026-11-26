@@ -57,7 +57,7 @@ func TestIsStored(t *testing.T) {
 				wkb, _ := gen.geometry(allTypes[i%len(allTypes)], 1)
 				srid := gen.srid()
 				require.True(t, IsStored(stored(srid, wkb)), "%X", wkb)
-				require.False(t, IsStored(mysqlOf(srid, wkb)), "%X", wkb)
+				require.False(t, IsStored(bareOf(srid, wkb)), "%X", wkb)
 			}
 		}
 	}
@@ -98,7 +98,7 @@ func TestParseColumnValue(t *testing.T) {
 	} {
 		for _, srid := range []uint32{0, 4326, 3857} {
 			want := stored(srid, c.g)
-			for _, in := range [][]byte{mysqlOf(srid, c.g), want} {
+			for _, in := range [][]byte{bareOf(srid, c.g), want} {
 				got, gotSRID, sum, err := ParseColumnValue(in)
 				require.NoError(t, err, "%X", in)
 				require.Equal(t, want, got, "%X", in)
@@ -194,14 +194,14 @@ func TestParseColumnValue(t *testing.T) {
 	}
 	_, _, _, err = ParseColumnValue(storedChain(MaxDepth+1, 0, point12))
 	require.ErrorIs(t, err, ErrTooDeep)
-	_, _, _, err = ParseColumnValue(mysqlChain(MaxDepth+1, point12))
+	_, _, _, err = ParseColumnValue(bareChain(MaxDepth+1, point12))
 	require.ErrorIs(t, err, ErrTooDeep)
 	// A one-point linestring is reported once the whole value is read, so a member nested
 	// too deep behind it is reported first.
 	deep := nestedCollections(MaxDepth)
 	_, _, _, err = ParseColumnValue(stored(0, gc(line1, deep)))
 	require.ErrorIs(t, err, ErrTooDeep)
-	_, _, _, err = ParseColumnValue(mysqlOf(0, gc(line1, deep)))
+	_, _, _, err = ParseColumnValue(bareOf(0, gc(line1, deep)))
 	require.ErrorIs(t, err, ErrTooDeep)
 }
 
@@ -214,7 +214,7 @@ func TestBareRewrite(t *testing.T) {
 	// A bare value's POINT EMPTY of another NaN becomes the quiet NaN too.
 	for _, nan := range nanBits {
 		f := math.Float64frombits(nan)
-		got, _, _, err := ParseColumnValue(mysqlOf(4326, collectionOf(TypeMultiPoint, dimsXYM, point12M, le(TypePoint, dimsXYM, coords(f, f, f)))))
+		got, _, _, err := ParseColumnValue(bareOf(4326, collectionOf(TypeMultiPoint, dimsXYM, point12M, le(TypePoint, dimsXYM, coords(f, f, f)))))
 		require.NoError(t, err)
 		require.Equal(t, stored(4326, collectionOf(TypeMultiPoint, dimsXYM, point12M, emptyPoint(dimsXYM))), got)
 	}
@@ -309,7 +309,7 @@ func TestGeneratedBare(t *testing.T) {
 						}
 					}
 					// The canonical form is little-endian, as a bare value must be.
-					got, gotSRID, sum, err = ParseColumnValue(mysqlOf(srid, gen.canon))
+					got, gotSRID, sum, err = ParseColumnValue(bareOf(srid, gen.canon))
 					if gen.short {
 						require.ErrorIs(t, err, ErrInvalid, "%X", in)
 						continue
@@ -339,7 +339,7 @@ func TestGeneratedBareMutations(t *testing.T) {
 		gen := wkbGen{rnd: rnd, d: d, empty: 0.15, big: 0.3}
 		for i := range 300 {
 			wkb, _ := gen.geometry(allTypes[i%len(allTypes)], 1)
-			forms := [][]byte{stored(4326, wkb), mysqlOf(4326, gen.canon)}
+			forms := [][]byte{stored(4326, wkb), bareOf(4326, gen.canon)}
 			for _, form := range forms {
 				for range 20 {
 					b := bytes.Clone(form)
@@ -383,19 +383,19 @@ func checkBareCanonical(t testing.TB, b []byte) bool {
 // TestBareAllocs checks that ParseColumnValue allocates only its result, and nothing for a
 // value it refuses, whatever its counts claim.
 func TestBareAllocs(t *testing.T) {
-	deep := mysqlChain(MaxDepth-1, multiPointWKB(10000))
+	deep := bareChain(MaxDepth-1, multiPointWKB(10000))
 	bigMember := mustHex(t, "01 01 04000020 00000000 01000000 00 00000001 3FF0000000000000 4000000000000000")
 	for _, c := range []struct {
 		b      []byte
 		allocs float64
 	}{
 		{deep, 1},
-		{storedFromMySQL(deep), 1},
+		{storedFromBare(deep), 1},
 		{bigMember, 1},
 		{stored(0, collectionOf(TypeMultiPoint, dimsXY, le(TypePoint, dimsXY, coords(math.NaN(), math.NaN())))), 1},
-		{mysqlOf(0, collectionOf(TypeMultiPoint, dimsXY, le(TypePoint, dimsXY, coords(math.NaN(), math.NaN())))), 1},
+		{bareOf(0, collectionOf(TypeMultiPoint, dimsXY, le(TypePoint, dimsXY, coords(math.NaN(), math.NaN())))), 1},
 		{hostileCounts(), 0},
-		{storedFromMySQL(hostileCounts()), 0},
+		{storedFromBare(hostileCounts()), 0},
 		{deep[:len(deep)-1], 0},
 	} {
 		allocs := testing.AllocsPerRun(3, func() { _, _, _, _ = ParseColumnValue(c.b) })
@@ -405,7 +405,7 @@ func TestBareAllocs(t *testing.T) {
 
 func FuzzParseColumnValue(f *testing.F) {
 	f.Add(mustHex(f, "E6100000 01 01000000 0000000000000040 000000000000F03F"))
-	f.Add(mysqlOf(0, polygon(dimsXY, []float64{0, 0, 1, 0, 1, 1, 0, 1})))
+	f.Add(bareOf(0, polygon(dimsXY, []float64{0, 0, 1, 0, 1, 1, 0, 1})))
 	f.Add(stored(4326, point12))
 	f.Add(stored(0, collectionOf(TypeGeometryCollection, dimsXY, collectionOf(TypeMultiPoint, dimsXY, point12), line(dimsXY))))
 	f.Add(stored(4326, polygon(dimsXYZ, []float64{0, 0, 1, 0, 1, 1, 1, 1, 1, 0, 0, 1})))
