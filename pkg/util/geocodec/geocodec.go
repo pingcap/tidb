@@ -16,14 +16,16 @@
 //
 //   - The stored format, which a geometry column holds: a version byte, then little-endian
 //     EWKB (WKB with Z, M and SRID flags) with the SRID flag always set.
-//   - MySQL's binary format, which a bare SELECT returns: a 4-byte little-endian SRID, then
-//     2D WKB.
+//   - The bare value, which a bare SELECT returns: a 4-byte little-endian SRID, then
+//     little-endian WKB with EWKB's Z and M flags and without its SRID flag. A 2D value
+//     without an empty geometry other than a GEOMETRYCOLLECTION is in MySQL's binary
+//     format, and every other value is in that format extended with the Z and M flags.
 //
 // Both hold the same coordinates in the same order below the root header, so a conversion
 // rewrites only the header. Bytes from a client are checked against every rule of the
-// format once, by validate; a stored value, checked when it was written, is only walked.
-// Every walk bounds nesting at MaxDepth, consumes the input exactly and checks counts
-// against the input before allocating.
+// format once, by validate; a stored value, checked when it was written, is converted from
+// its root header alone. validate bounds nesting at MaxDepth, consumes the input exactly
+// and checks counts against the input before allocating.
 package geocodec
 
 import (
@@ -49,9 +51,6 @@ var (
 	ErrTooDeep = fmt.Errorf("geometry nested deeper than %d levels", MaxDepth)
 	// ErrUnsupportedVersion means a stored value starts with an unknown version byte.
 	ErrUnsupportedVersion = errors.New("unsupported geometry storage format version")
-	// ErrNotMySQLExpressible means the geometry has Z or M coordinates, or an empty geometry
-	// other than a GEOMETRYCOLLECTION, which MySQL's binary format cannot hold.
-	ErrNotMySQLExpressible = errors.New("geometry cannot be expressed in MySQL's binary format")
 
 	// errBigEndianStored is the ErrInvalid of a big-endian geometry in a stored value, which
 	// every writer writes little-endian.
@@ -126,9 +125,9 @@ const (
 	// dialectEWKB is the stored-format payload: either byte order, EWKB flags for Z, M
 	// and a root SRID.
 	dialectEWKB dialect = iota
-	// dialectMySQL is the WKB inside MySQL's binary format: little-endian, 2D, and no
-	// empty geometry except a GEOMETRYCOLLECTION.
-	dialectMySQL
+	// dialectBare is the WKB inside the bare value: little-endian, with EWKB's Z and M
+	// flags but never its SRID flag, since the SRID is the 4-byte prefix.
+	dialectBare
 )
 
 // Envelope bounds the X and Y of every position of a geometry, interior rings included.
@@ -146,21 +145,22 @@ type Summary struct {
 	Envelope Envelope
 }
 
-// MySQLToStored converts MySQL's binary format into the stored format. It checks the WKB
-// framing, not MySQL's structure rules such as a linestring's minimum of two points.
+// MySQLToStored converts the bare value, MySQL's binary format or that format extended
+// with Z and M, into the stored format. It checks the WKB framing, not MySQL's structure
+// rules such as a linestring's minimum of two points.
 func MySQLToStored(b []byte) (stored []byte, srid uint32, err error) {
 	if len(b) < 4 {
 		return nil, 0, ErrInvalid
 	}
-	if _, err := validate(b[4:], dialectMySQL); err != nil {
+	if err := validate(b[4:], dialectBare); err != nil {
 		return nil, 0, err
 	}
 	stored, srid = storedFromValidMySQL(b)
 	return stored, srid, nil
 }
 
-// storedFromValidMySQL rewrites the header of b, MySQL's binary format that validate has
-// accepted, so with a little-endian root and a type code without flags.
+// storedFromValidMySQL rewrites the header of b, a bare value that validate has accepted,
+// so with a little-endian root and a type word without the SRID flag.
 func storedFromValidMySQL(b []byte) (stored []byte, srid uint32) {
 	srid = binary.LittleEndian.Uint32(b)
 	stored = make([]byte, 0, len(b)+1)
@@ -170,24 +170,34 @@ func storedFromValidMySQL(b []byte) (stored []byte, srid uint32) {
 	return append(stored, b[9:]...), srid
 }
 
-// IsStored reports whether b is in the stored format rather than MySQL's: its sixth byte
-// has the EWKB SRID flag 0x20, which a MySQL WKB type byte (0 to 7) never has.
+// IsStored reports whether b is in the stored format rather than a bare value: its sixth
+// byte has the EWKB SRID flag 0x20, the high byte of the root's type word, while in a bare
+// value it is the low byte of that word, a type code from 1 to 7.
 func IsStored(b []byte) bool {
 	return len(b) > 5 && b[5]&byte(ewkbSRID>>24) != 0
 }
 
-// BareToStored converts a value given for a geometry column, in MySQL's format or the
-// stored format, into the canonical stored format, with MySQL's structure checks.
+// BareToStored converts a value given for a geometry column, a bare value (MySQL's binary
+// format, or that format extended with Z and M) or a stored value, into the canonical
+// stored format, with the structure checks of MySQL's bare path.
 func BareToStored(b []byte) (stored []byte, srid uint32, sum Summary, err error) {
 	if !IsStored(b) {
 		if len(b) < 4 {
 			return nil, 0, Summary{}, ErrInvalid
 		}
-		v := validator{c: cursor{buf: b[4:]}, dialect: dialectMySQL, bare: true}
+		v := validator{c: cursor{buf: b[4:]}, dialect: dialectBare, bare: true}
 		if err := v.run(); err != nil {
 			return nil, 0, Summary{}, err
 		}
 		stored, srid = storedFromValidMySQL(b)
+		if v.rewrite {
+			// A POINT EMPTY of another NaN, the only fault a valid bare value can have:
+			// make it canonical in place. The writes land only on bytes already read.
+			fix := validator{c: cursor{buf: stored[1:]}, dialect: dialectEWKB, fix: stored[1:]}
+			if err := fix.run(); err != nil {
+				return nil, 0, Summary{}, err
+			}
+		}
 		return stored, srid, v.sum, nil
 	}
 	payload, err := payloadOf(b)
@@ -208,29 +218,22 @@ func BareToStored(b []byte) (stored []byte, srid uint32, sum Summary, err error)
 	return stored, v.srid, v.sum, nil
 }
 
-// StoredToMySQL converts a stored value into MySQL's binary format, rewriting only the
-// header; a value MySQL's format cannot hold gives ErrNotMySQLExpressible.
-func StoredToMySQL(stored []byte) ([]byte, error) {
-	payload, err := payloadOf(stored)
+// StoredToBare converts a stored value into the bare value, rewriting only the root
+// header: the SRID moves to the 4-byte prefix and the SRID flag is cleared, while the Z and
+// M flags stay. The body is copied as it is, since it was checked when it was written.
+func StoredToBare(stored []byte) ([]byte, error) {
+	srid, _, err := Header(stored)
 	if err != nil {
 		return nil, err
 	}
-	notMySQL, err := skim(payload)
-	if err != nil {
-		return nil, err
-	}
-	if notMySQL {
-		return nil, ErrNotMySQLExpressible
-	}
-	// payloadOf and skim have checked the root header: a little-endian byte order, a type
-	// word with the SRID flag, and the SRID.
-	word := binary.LittleEndian.Uint32(payload[1:])
-	srid := binary.LittleEndian.Uint32(payload[5:])
-	body := payload[9:]
+	// Header has checked the root header: a little-endian byte order, a known type with
+	// the SRID flag, and the SRID.
+	word := binary.LittleEndian.Uint32(stored[2:])
+	body := stored[10:]
 	out := make([]byte, 0, 9+len(body))
 	out = binary.LittleEndian.AppendUint32(out, srid)
 	out = append(out, byteOrderLittle)
-	out = binary.LittleEndian.AppendUint32(out, word&^ewkbFlags)
+	out = binary.LittleEndian.AppendUint32(out, word&^ewkbSRID)
 	return append(out, body...), nil
 }
 
@@ -368,14 +371,10 @@ func memberTypeOf(typ Type) Type {
 }
 
 // validate checks b, WKB in dialect d from an untrusted source, against every rule of the
-// format, building nothing and allocating nothing. It reports whether MySQL's format can
-// hold the value.
-func validate(b []byte, d dialect) (notMySQL bool, err error) {
+// format, building nothing and allocating nothing.
+func validate(b []byte, d dialect) error {
 	v := validator{c: cursor{buf: b}, dialect: d}
-	if err := v.run(); err != nil {
-		return false, err
-	}
-	return v.notMySQL, nil
+	return v.run()
 }
 
 type validator struct {
@@ -388,9 +387,6 @@ type validator struct {
 	// EMPTY as emptyPointNaN.
 	fix []byte
 
-	// notMySQL records Z or M coordinates or an empty non-collection, reported only once the
-	// value is known to be well-formed.
-	notMySQL bool
 	// broken marks a structure bare rejects, reported once the whole value is read.
 	broken bool
 	// rewrite marks a value not in canonical form.
@@ -430,7 +426,7 @@ func (v *validator) geometry(depth int, want Type, parentDims dims) error {
 		return err
 	}
 	if order == byteOrderBig {
-		if v.dialect == dialectMySQL {
+		if v.dialect == dialectBare {
 			return ErrInvalid
 		}
 		v.rewrite = true
@@ -444,14 +440,11 @@ func (v *validator) geometry(depth int, want Type, parentDims dims) error {
 	}
 	v.little(order, 4)
 	typ, d, hasSRID, ok := splitType(word)
-	if !ok || hasSRID && !root || v.dialect == dialectMySQL && word&ewkbFlags != 0 {
+	if !ok || hasSRID && (!root || v.dialect == dialectBare) {
 		return ErrInvalid
 	}
 	if !root && (d != parentDims || want != anyType && typ != want) {
 		return ErrInvalid
-	}
-	if d != dimsXY {
-		v.notMySQL = true
 	}
 	if root {
 		v.sum.Type = typ
@@ -471,9 +464,6 @@ func (v *validator) geometry(depth int, want Type, parentDims dims) error {
 		if err != nil {
 			return err
 		}
-		if n == 0 {
-			return v.empty()
-		}
 		if n == 1 && v.bare {
 			v.broken = true
 		}
@@ -486,11 +476,6 @@ func (v *validator) geometry(depth int, want Type, parentDims dims) error {
 		return err
 	}
 	v.little(order, 4)
-	if n == 0 && typ != TypeGeometryCollection {
-		if err := v.empty(); err != nil {
-			return err
-		}
-	}
 	for range n {
 		if err := v.geometry(depth+1, memberTypeOf(typ), d); err != nil {
 			return err
@@ -499,19 +484,10 @@ func (v *validator) geometry(depth int, want Type, parentDims dims) error {
 	return nil
 }
 
-// empty records an empty geometry other than a GEOMETRYCOLLECTION, which MySQL's format
-// cannot hold and so refuses.
-func (v *validator) empty() error {
-	if v.dialect == dialectMySQL {
-		return ErrInvalid
-	}
-	v.notMySQL = true
-	return nil
-}
-
 // point checks a point's coordinates: all finite, or all NaN. A point has no count to
 // write as 0, as the other empty geometries do, so EWKB writes POINT EMPTY as NaN
-// coordinates, as PostGIS and GEOS do. MySQL's format has no POINT EMPTY.
+// coordinates, as PostGIS and GEOS do, and so does the bare value. MySQL's format has no
+// POINT EMPTY.
 func (v *validator) point(order byte, size int) error {
 	coords, err := v.c.next(size)
 	if err != nil {
@@ -533,7 +509,7 @@ func (v *validator) point(order byte, size int) error {
 			binary.LittleEndian.PutUint64(v.fix[i:], emptyPointNaN)
 		}
 	}
-	return v.empty()
+	return nil
 }
 
 // positions takes in finite positions of size bytes just read: bare widens the envelope
@@ -586,9 +562,6 @@ func (v *validator) polygon(order byte, size int) error {
 		return err
 	}
 	v.little(order, 4)
-	if n == 0 {
-		return v.empty()
-	}
 	for range n {
 		points, err := v.sequence(order, size)
 		if err != nil {
@@ -620,109 +593,4 @@ func finite(coords []byte, order byte) bool {
 		}
 	}
 	return true
-}
-
-// skim walks a stored payload, validated when it was written, and reports whether MySQL's
-// format can hold it. It reads only headers and counts, and a point's first coordinate,
-// whose NaN marks POINT EMPTY; it checks only what walking and copying need.
-func skim(payload []byte) (notMySQL bool, err error) {
-	s := skimmer{c: cursor{buf: payload}}
-	if err := s.geometry(1); err != nil {
-		return false, err
-	}
-	if s.c.pos != len(payload) {
-		return false, ErrInvalid
-	}
-	return s.notMySQL, nil
-}
-
-type skimmer struct {
-	c        cursor
-	notMySQL bool
-}
-
-func (s *skimmer) geometry(depth int) error {
-	if depth > MaxDepth {
-		return ErrTooDeep
-	}
-	order, err := s.c.byteOrder()
-	if err != nil {
-		return err
-	}
-	if order != byteOrderLittle {
-		return errBigEndianStored
-	}
-	word, err := s.c.uint32(byteOrderLittle)
-	if err != nil {
-		return err
-	}
-	typ, d, hasSRID, ok := splitType(word)
-	if !ok {
-		return ErrInvalid
-	}
-	// MySQL's format holds no Z, M or SRID below the root, so the body is copied only
-	// without them.
-	if d != dimsXY || hasSRID && depth > 1 {
-		s.notMySQL = true
-	}
-	if hasSRID {
-		if _, err := s.c.next(4); err != nil {
-			return err
-		}
-	}
-	size := d.size()
-	switch typ {
-	case TypePoint:
-		coords, err := s.c.next(size)
-		if err != nil {
-			return err
-		}
-		if math.IsNaN(math.Float64frombits(binary.LittleEndian.Uint64(coords))) {
-			s.notMySQL = true
-		}
-		return nil
-	case TypeLineString:
-		n, err := s.sequence(size)
-		if n == 0 {
-			s.notMySQL = true
-		}
-		return err
-	case TypePolygon:
-		n, err := s.c.count(byteOrderLittle, 4)
-		if err != nil {
-			return err
-		}
-		if n == 0 {
-			s.notMySQL = true
-		}
-		for range n {
-			if _, err := s.sequence(size); err != nil {
-				return err
-			}
-		}
-		return nil
-	}
-	n, err := s.c.count(byteOrderLittle, minGeometrySize)
-	if err != nil {
-		return err
-	}
-	if n == 0 && typ != TypeGeometryCollection {
-		s.notMySQL = true
-	}
-	for range n {
-		if err := s.geometry(depth + 1); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// sequence skips a count of positions of size bytes each and returns the count.
-func (s *skimmer) sequence(size int) (int, error) {
-	n, err := s.c.count(byteOrderLittle, size)
-	if err != nil {
-		return 0, err
-	}
-	_, err = s.c.next(n * size)
-	return n, err
 }

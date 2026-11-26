@@ -48,32 +48,27 @@ func TestIsStored(t *testing.T) {
 		require.False(t, IsStored(bytes.Repeat([]byte{0xff}, n)))
 	}
 
-	// Generated geometries, stored and in MySQL's format.
+	// Generated geometries, stored and as bare values.
 	rnd := rand.New(rand.NewPCG(20261019, 1))
-	inMySQL := 0
 	for _, d := range []dims{dimsXY, dimsXYZ, dimsXYM, dimsXYZM} {
 		for _, empty := range []float64{0, 0.15} {
 			gen := wkbGen{rnd: rnd, d: d, empty: empty}
 			for i := range 300 {
-				wkb, notMySQL := gen.geometry(allTypes[i%len(allTypes)], 1)
+				wkb, _ := gen.geometry(allTypes[i%len(allTypes)], 1)
 				srid := gen.srid()
 				require.True(t, IsStored(stored(srid, wkb)), "%X", wkb)
-				if !notMySQL {
-					require.False(t, IsStored(mysqlOf(srid, wkb)), "%X", wkb)
-					inMySQL++
-				}
+				require.False(t, IsStored(mysqlOf(srid, wkb)), "%X", wkb)
 			}
 		}
 	}
-	require.Greater(t, inMySQL, 300)
 }
 
-// headerToMySQL rewrites only the root header of a stored value into MySQL's format.
-func headerToMySQL(s []byte) []byte {
+// headerToBare rewrites only the root header of a stored value into a bare value.
+func headerToBare(s []byte) []byte {
 	word := binary.LittleEndian.Uint32(s[2:])
 	b := binary.LittleEndian.AppendUint32(nil, binary.LittleEndian.Uint32(s[6:]))
 	b = append(b, byteOrderLittle)
-	b = binary.LittleEndian.AppendUint32(b, word&^ewkbFlags)
+	b = binary.LittleEndian.AppendUint32(b, word&^ewkbSRID)
 	return append(b, s[10:]...)
 }
 
@@ -113,58 +108,56 @@ func TestBareToStored(t *testing.T) {
 		}
 	}
 
-	// The structure rules of MySQL's format, as measured on MySQL 9.7.2, which the stored
-	// format follows except that it holds empty geometries and Z and M.
+	// The structure rules of MySQL's format, as measured on MySQL 9.7.2. A bare value and a
+	// stored value follow them alike, except that both hold empty geometries and Z and M,
+	// which MySQL's format cannot.
 	for _, c := range []struct {
-		name             string
-		g                []byte
-		inMySQL, inStore bool
+		name string
+		g    []byte
+		ok   bool
 	}{
-		{"LINESTRING(0 0,0 0)", line(xy, 0, 0, 0, 0), true, true},
-		{"unclosed ring of 4", polygon(xy, square), true, true},
-		{"self-crossing ring", polygon(xy, []float64{0, 0, 2, 2, 2, 0, 0, 2, 0, 0}), true, true},
-		{"ring of 4 equal points", polygon(xy, make([]float64, 8)), true, true},
-		{"unclosed interior ring of 4", polygon(xy, append(square, 0, 0), []float64{0.2, 0.2, 0.2, 0.4, 0.4, 0.4, 0.3, 0.3}), true, true},
-		{"interior ring outside", polygon(xy, closed, []float64{5, 5, 5, 6, 6, 6, 5, 5}), true, true},
-		{"overlapping polygons", collectionOf(TypeMultiPolygon, xy, polygon(xy, square), polygon(xy, square)), true, true},
-		{"collection of a polygon", gc(polygon(xy, square)), true, true},
-		{"collection of an empty collection", gc(gc()), true, true},
-		{"LINESTRING(0 0)", line1, false, false},
-		{"ring of 1", polygon(xy, []float64{0, 0}), false, false},
-		{"ring of 2", polygon(xy, []float64{0, 0, 0, 0}), false, false},
-		{"ring of 3", polygon(xy, []float64{0, 0, 1, 0, 0, 0}), false, false},
-		{"interior ring of 3", polygon(xy, closed, []float64{0.2, 0.2, 0.4, 0.4, 0.2, 0.2}), false, false},
-		{"MULTILINESTRING((0 0))", collectionOf(TypeMultiLineString, xy, line1), false, false},
-		{"multipolygon with a ring of 3", collectionOf(TypeMultiPolygon, xy, polygon(xy, []float64{0, 0, 1, 0, 0, 0})), false, false},
-		{"collection of LINESTRING(0 0)", gc(line1), false, false},
-		{"nested collection of LINESTRING(0 0)", gc(gc(line1)), false, false},
-		{"collection of MULTILINESTRING((0 0))", gc(collectionOf(TypeMultiLineString, xy, line1)), false, false},
-		{"POINT EMPTY", emptyPoint(xy), false, true},
-		{"LINESTRING EMPTY", line(xy), false, true},
-		{"POLYGON EMPTY", polygon(xy), false, true},
-		{"MULTIPOINT EMPTY", collectionOf(TypeMultiPoint, xy), false, true},
-		{"MULTIPOINT((1 2),EMPTY)", collectionOf(TypeMultiPoint, xy, point12, emptyPoint(xy)), false, true},
-		{"MULTILINESTRING EMPTY", collectionOf(TypeMultiLineString, xy), false, true},
-		{"MULTIPOLYGON EMPTY", collectionOf(TypeMultiPolygon, xy), false, true},
-		{"collection of MULTIPOINT EMPTY", gc(collectionOf(TypeMultiPoint, xy)), false, true},
-		{"collection of LINESTRING EMPTY", gc(line(xy)), false, true},
-		{"POINT Z(1 2 3)", le(TypePoint, dimsXYZ, coords(1, 2, 3)), false, true},
-		{"LINESTRING M(0 0 1,1 1 2)", line(dimsXYM, 0, 0, 1, 1, 1, 2), false, true},
-		{"collection ZM of a point", collectionOf(TypeGeometryCollection, dimsXYZM, le(TypePoint, dimsXYZM, coords(1, 2, 3, 4))), false, true},
-		{"LINESTRING Z(0 0 1)", line(dimsXYZ, 0, 0, 1), false, false},
-		{"multipolygon Z with a ring of 3", collectionOf(TypeMultiPolygon, dimsXYZ, polygon(dimsXYZ, []float64{0, 0, 1, 1, 0, 1, 0, 0, 1})), false, false},
+		{"LINESTRING(0 0,0 0)", line(xy, 0, 0, 0, 0), true},
+		{"unclosed ring of 4", polygon(xy, square), true},
+		{"self-crossing ring", polygon(xy, []float64{0, 0, 2, 2, 2, 0, 0, 2, 0, 0}), true},
+		{"ring of 4 equal points", polygon(xy, make([]float64, 8)), true},
+		{"unclosed interior ring of 4", polygon(xy, append(square, 0, 0), []float64{0.2, 0.2, 0.2, 0.4, 0.4, 0.4, 0.3, 0.3}), true},
+		{"interior ring outside", polygon(xy, closed, []float64{5, 5, 5, 6, 6, 6, 5, 5}), true},
+		{"overlapping polygons", collectionOf(TypeMultiPolygon, xy, polygon(xy, square), polygon(xy, square)), true},
+		{"collection of a polygon", gc(polygon(xy, square)), true},
+		{"collection of an empty collection", gc(gc()), true},
+		{"LINESTRING(0 0)", line1, false},
+		{"ring of 1", polygon(xy, []float64{0, 0}), false},
+		{"ring of 2", polygon(xy, []float64{0, 0, 0, 0}), false},
+		{"ring of 3", polygon(xy, []float64{0, 0, 1, 0, 0, 0}), false},
+		{"interior ring of 3", polygon(xy, closed, []float64{0.2, 0.2, 0.4, 0.4, 0.2, 0.2}), false},
+		{"MULTILINESTRING((0 0))", collectionOf(TypeMultiLineString, xy, line1), false},
+		{"multipolygon with a ring of 3", collectionOf(TypeMultiPolygon, xy, polygon(xy, []float64{0, 0, 1, 0, 0, 0})), false},
+		{"collection of LINESTRING(0 0)", gc(line1), false},
+		{"nested collection of LINESTRING(0 0)", gc(gc(line1)), false},
+		{"collection of MULTILINESTRING((0 0))", gc(collectionOf(TypeMultiLineString, xy, line1)), false},
+		{"POINT EMPTY", emptyPoint(xy), true},
+		{"LINESTRING EMPTY", line(xy), true},
+		{"POLYGON EMPTY", polygon(xy), true},
+		{"MULTIPOINT EMPTY", collectionOf(TypeMultiPoint, xy), true},
+		{"MULTIPOINT((1 2),EMPTY)", collectionOf(TypeMultiPoint, xy, point12, emptyPoint(xy)), true},
+		{"MULTILINESTRING EMPTY", collectionOf(TypeMultiLineString, xy), true},
+		{"MULTIPOLYGON EMPTY", collectionOf(TypeMultiPolygon, xy), true},
+		{"collection of MULTIPOINT EMPTY", gc(collectionOf(TypeMultiPoint, xy)), true},
+		{"collection of LINESTRING EMPTY", gc(line(xy)), true},
+		{"POINT Z(1 2 3)", le(TypePoint, dimsXYZ, coords(1, 2, 3)), true},
+		{"LINESTRING M(0 0 1,1 1 2)", line(dimsXYM, 0, 0, 1, 1, 1, 2), true},
+		{"collection ZM of a point", collectionOf(TypeGeometryCollection, dimsXYZM, le(TypePoint, dimsXYZM, coords(1, 2, 3, 4))), true},
+		{"LINESTRING Z(0 0 1)", line(dimsXYZ, 0, 0, 1), false},
+		{"multipolygon Z with a ring of 3", collectionOf(TypeMultiPolygon, dimsXYZ, polygon(dimsXYZ, []float64{0, 0, 1, 1, 0, 1, 0, 0, 1})), false},
 	} {
 		want := stored(0, c.g)
-		for _, in := range []struct {
-			b  []byte
-			ok bool
-		}{{headerToMySQL(want), c.inMySQL}, {want, c.inStore}} {
-			got, _, _, err := BareToStored(in.b)
-			if in.ok {
-				require.NoError(t, err, "%s: %X", c.name, in.b)
+		for _, in := range [][]byte{headerToBare(want), want} {
+			got, _, _, err := BareToStored(in)
+			if c.ok {
+				require.NoError(t, err, "%s: %X", c.name, in)
 				require.Equal(t, want, got, c.name)
 			} else {
-				require.ErrorIs(t, err, ErrInvalid, "%s: %X", c.name, in.b)
+				require.ErrorIs(t, err, ErrInvalid, "%s: %X", c.name, in)
 			}
 		}
 	}
@@ -185,8 +178,11 @@ func TestBareToStored(t *testing.T) {
 		"01 01 01000000 000000000000F03F 0000000000000040": ErrInvalid,
 		// A big-endian stored root: neither format.
 		"01 00 20000001 00000000 3FF0000000000000 4000000000000000": ErrInvalid,
-		// Big-endian WKB is not MySQL's format.
-		"00000000 00 00000001 3FF0000000000000 4000000000000000": ErrInvalid,
+		// Big-endian WKB is not a bare value, nor is the SRID flag, since the SRID is the
+		// prefix.
+		"00000000 00 00000001 3FF0000000000000 4000000000000000":                               ErrInvalid,
+		"00000000 01 01000020 E6100000 000000000000F03F 0000000000000040":                      ErrInvalid,
+		"00000000 01 04000000 01000000 01 01000020 E6100000 000000000000F03F 0000000000000040": ErrInvalid,
 		// NaN and infinite coordinates.
 		"00000000 01 01000000 000000000000F87F 0000000000000040":    ErrInvalid,
 		"01 01 01000020 00000000 000000000000F07F 0000000000000040": ErrInvalid,
@@ -211,7 +207,18 @@ func TestBareToStored(t *testing.T) {
 
 // TestBareRewrite checks the canonical form of stored values that are not in it: a
 // big-endian member becomes little-endian and POINT EMPTY the quiet NaN.
+// point12M is POINT M(1 2 3).
+var point12M = le(TypePoint, dimsXYM, coords(1, 2, 3))
+
 func TestBareRewrite(t *testing.T) {
+	// A bare value's POINT EMPTY of another NaN becomes the quiet NaN too.
+	for _, nan := range nanBits {
+		f := math.Float64frombits(nan)
+		got, _, _, err := BareToStored(mysqlOf(4326, collectionOf(TypeMultiPoint, dimsXYM, point12M, le(TypePoint, dimsXYM, coords(f, f, f)))))
+		require.NoError(t, err)
+		require.Equal(t, stored(4326, collectionOf(TypeMultiPoint, dimsXYM, point12M, emptyPoint(dimsXYM))), got)
+	}
+
 	got, _, _, err := BareToStored(mustHex(t, "01 01 04000020 00000000 01000000 00 00000001 3FF0000000000000 4000000000000000"))
 	require.NoError(t, err)
 	require.Equal(t, stored(0, collectionOf(TypeMultiPoint, dimsXY, point12)), got)
@@ -282,7 +289,7 @@ func TestGeneratedBare(t *testing.T) {
 				gen := wkbGen{rnd: rnd, d: d, empty: empty, big: big}
 				for i := range 500 {
 					typ := allTypes[i%len(allTypes)]
-					wkb, notMySQL := gen.geometry(typ, 1)
+					wkb, _ := gen.geometry(typ, 1)
 					srid := gen.srid()
 					in := stored(srid, wkb)
 					want := stored(srid, gen.canon)
@@ -301,10 +308,7 @@ func TestGeneratedBare(t *testing.T) {
 							rewritten++
 						}
 					}
-					if notMySQL {
-						continue
-					}
-					// The canonical form is little-endian, as MySQL's format must be.
+					// The canonical form is little-endian, as a bare value must be.
 					got, gotSRID, sum, err = BareToStored(mysqlOf(srid, gen.canon))
 					if gen.short {
 						require.ErrorIs(t, err, ErrInvalid, "%X", in)
@@ -334,11 +338,8 @@ func TestGeneratedBareMutations(t *testing.T) {
 	for _, d := range []dims{dimsXY, dimsXYZM} {
 		gen := wkbGen{rnd: rnd, d: d, empty: 0.15, big: 0.3}
 		for i := range 300 {
-			wkb, notMySQL := gen.geometry(allTypes[i%len(allTypes)], 1)
-			forms := [][]byte{stored(4326, wkb)}
-			if !notMySQL {
-				forms = append(forms, mysqlOf(4326, gen.canon))
-			}
+			wkb, _ := gen.geometry(allTypes[i%len(allTypes)], 1)
+			forms := [][]byte{stored(4326, wkb), mysqlOf(4326, gen.canon)}
 			for _, form := range forms {
 				for range 20 {
 					b := bytes.Clone(form)
@@ -392,6 +393,7 @@ func TestBareAllocs(t *testing.T) {
 		{storedFromMySQL(deep), 1},
 		{bigMember, 1},
 		{stored(0, collectionOf(TypeMultiPoint, dimsXY, le(TypePoint, dimsXY, coords(math.NaN(), math.NaN())))), 1},
+		{mysqlOf(0, collectionOf(TypeMultiPoint, dimsXY, le(TypePoint, dimsXY, coords(math.NaN(), math.NaN())))), 1},
 		{hostileCounts(), 0},
 		{storedFromMySQL(hostileCounts()), 0},
 		{deep[:len(deep)-1], 0},
@@ -418,17 +420,9 @@ func FuzzBareToStored(f *testing.F) {
 		}
 		s, _, _, err := BareToStored(b)
 		require.NoError(t, err, "%X", b)
-		// Round trip through MySQL's format.
-		out, err := StoredToMySQL(s)
-		if !IsStored(b) {
-			require.NoError(t, err, "%X", b)
-			require.Equal(t, b, out, "%X", b)
-			return
-		}
-		if err != nil {
-			require.ErrorIs(t, err, ErrNotMySQLExpressible, "%X", b)
-			return
-		}
+		// Round trip through the bare value.
+		out, err := StoredToBare(s)
+		require.NoError(t, err, "%X", b)
 		back, _, _, err := BareToStored(out)
 		require.NoError(t, err, "%X", b)
 		require.Equal(t, s, back, "%X", b)
