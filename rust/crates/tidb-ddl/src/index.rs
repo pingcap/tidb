@@ -1,6 +1,22 @@
 // Copyright 2026 PingCAP, Inc. Licensed under Apache-2.0.
 //! Go `pkg/ddl/index.go`'s distributed add-index task controls.
 use tidb_model::GoShared;
+
+/// Go `MockDMLExecution`: the hook the `mockDMLExecution` failpoint calls
+/// after a backfill or global-index cleanup batch, test-only.
+pub static MOCK_DML_EXECUTION: std::sync::Mutex<Option<Box<dyn Fn() + Send>>> = std::sync::Mutex::new(None);
+
+/// Go `failpoint.Inject("mockDMLExecution", ...)`: `MockDMLExecution` runs
+/// when the failpoint answers true.
+pub(crate) fn inject_mock_dml_execution() {
+    tidb_failpoint::inject("github.com/pingcap/tidb/pkg/ddl/mockDMLExecution", |value| {
+        if value.as_bool() == Some(true) {
+            if let Some(hook) = MOCK_DML_EXECUTION.lock().unwrap_or_else(std::sync::PoisonError::into_inner).as_ref() {
+                hook();
+            }
+        }
+    });
+}
 use tidb_model::job::{JOB_PAUSE_REASON_KV_DISK_FULL, JOB_RESUME_REASON_KV_DISK_FULL};
 use tidb_model::{AdminCommandOperator, Job, JobState};
 

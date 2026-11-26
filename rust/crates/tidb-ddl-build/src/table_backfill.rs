@@ -301,7 +301,12 @@ impl KvTableBackfill for TableCommon {
         for (_, handle, row) in &rows {
             for index in &indexes {
                 batch.scanned += 1;
-                for entry in self.index_entries_for_write(index, row, handle, physical_id, &zone)? {
+                let entries = self.index_entries_for_write(index, row, handle, physical_id, &zone)?;
+                // Go counts a record with an empty array as processed even
+                // though it has no index keys to delete; otherwise a record
+                // counts once one of its entries is deleted.
+                let mut cleaned = entries.is_empty();
+                for entry in entries {
                     let key = Key::from_bytes(entry.key);
                     if entry.distinct {
                         match store.get(&key) {
@@ -318,9 +323,14 @@ impl KvTableBackfill for TableCommon {
                             Err(error) => return Err(error.into()),
                         }
                     }
+                    // Only the checked element: another element of the same
+                    // row may now belong to a surviving partition.
                     store.delete(key)?;
+                    cleaned = true;
                 }
-                batch.added += 1;
+                if cleaned {
+                    batch.added += 1;
+                }
             }
         }
         Ok(batch)

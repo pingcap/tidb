@@ -816,12 +816,13 @@ pub(crate) fn build_check_table_lookups(
         let PhysicalPlan::IndexLookUpReader(reader) = plan else {
             return Err(DriverError::unsupported("an admin check reader is not an index lookup"));
         };
-        let Some(mut reader_exec) =
-            crate::index_lookup::IndexLookUpExecutor::build_no_range(meta(ctx, plan, plan_schema(plan)?), ctx, catalog, reader)
-                .map_err(DriverError::from)?
-        else {
-            continue;
-        };
+        let mut reader_exec = crate::index_lookup::IndexLookUpExecutor::build_no_range_index_look_up_reader(
+            meta(ctx, plan, plan_schema(plan)?),
+            ctx,
+            catalog,
+            reader,
+        )
+        .map_err(DriverError::from)?;
         reader_exec.build_index_look_up_checker(reader).map_err(DriverError::from)?;
         reader_execs.push(reader_exec);
     }

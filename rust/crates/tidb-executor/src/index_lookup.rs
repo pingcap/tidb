@@ -249,6 +249,32 @@ impl IndexLookUpExecutor {
         is: &tidb_infoschema::SessionExtendedInfoSchema,
         v: &PhysicalIndexLookUpReader,
     ) -> Result<Option<Self>, ExecError> {
+        Self::build_no_range_with_pruning(meta, ctx, is, v, true)
+    }
+
+    /// Go `buildNoRangeIndexLookUpReader` alone, as `buildCheckTable` builds
+    /// its lookups: no partition pruning, whose reader has no
+    /// `PhysPlanPartInfo`.
+    ///
+    /// # Errors
+    /// As [`Self::build`].
+    pub(crate) fn build_no_range_index_look_up_reader(
+        meta: ExecutorMeta,
+        ctx: &crate::StmtContext,
+        is: &tidb_infoschema::SessionExtendedInfoSchema,
+        v: &PhysicalIndexLookUpReader,
+    ) -> Result<Self, ExecError> {
+        Self::build_no_range_with_pruning(meta, ctx, is, v, false)?
+            .ok_or_else(|| ExecError::Internal("an unpruned lookup has a table".into()))
+    }
+
+    fn build_no_range_with_pruning(
+        meta: ExecutorMeta,
+        ctx: &crate::StmtContext,
+        is: &tidb_infoschema::SessionExtendedInfoSchema,
+        v: &PhysicalIndexLookUpReader,
+        prune: bool,
+    ) -> Result<Option<Self>, ExecError> {
         let internal = |message: &'static str| ExecError::Internal(message.into());
         // Go `v.IndexPlans`, `v.IndexPlansUnNatureOrders` and `v.TablePlans`.
         let (index_plans, index_plans_un_nature_orders) = v.index_plans();
@@ -297,7 +323,11 @@ impl IndexLookUpExecutor {
         // A global index keeps its entries of the pruned partitions (Go
         // `partitionIDMap`).
         let mut partition_id_map = std::collections::BTreeSet::new();
-        if !ctx.static_partition_prune() && scan.physical_table_id == table_info.id && table_info.get_partition_info().is_some() {
+        if prune
+            && !ctx.static_partition_prune()
+            && scan.physical_table_id == table_info.id
+            && table_info.get_partition_info().is_some()
+        {
             let pids = crate::index_reader::get_partition_ids_after_pruning(is, &table_info, v.plan_part_info.as_deref(), ctx)?;
             if index.global {
                 partition_id_map = pids.into_iter().collect();

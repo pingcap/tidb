@@ -1104,10 +1104,15 @@ where
         ))
     });
     // Go's workers' `BackfillData`, after the batch's transaction.
-    if merge_index.is_none() && reorg.partition_phase.is_none() && !reorg.clean_up_global_index {
-        if reorg.column.is_some() {
+    if merge_index.is_none() && reorg.partition_phase.is_none() {
+        if reorg.clean_up_global_index {
+            // Go `cleanUpIndexWorker.BackfillData`.
+            crate::index::inject_mock_dml_execution();
+        } else if reorg.column.is_some() {
             tidb_failpoint::inject_call("github.com/pingcap/tidb/pkg/ddl/mockUpdateColumnWorkerStuck", &mut ());
         } else {
+            // Go `addIndexTxnWorker.BackfillData`.
+            crate::index::inject_mock_dml_execution();
             tidb_failpoint::inject_call("github.com/pingcap/tidb/pkg/ddl/mockAddIndexTxnWorkerStuck", &mut ());
         }
     }
