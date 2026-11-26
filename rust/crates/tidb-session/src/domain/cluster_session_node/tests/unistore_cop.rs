@@ -30930,3 +30930,122 @@ fn a_prepared_update_reads_at_the_for_update_ts_like_go() {
         [["1", "1", "2"], ["2", "3", "3"], ["4", "5", "4"]]
     );
 }
+
+/// Go `nontransactionaltest` `TestNonTransactionalWithCheckConstraint`: what
+/// `checkConstraint` refuses -- a snapshot or pending `tx_read_ts` read, weak
+/// consistency, a transaction, batch-dml, LIMIT / ORDER BY, the prepared
+/// protocol, and a statement with no table to shard. A refused statement
+/// leaves `tx_read_ts` for the next statement (Go master 1fdec7a1737).
+#[test]
+fn test_non_transactional_with_check_constraint() {
+    let (stack, _users) = cop_backed_stack();
+    let mut tk = stack.factory.open_session(session_context(938)).unwrap();
+    let err = |tk: &mut Session, sql: &str| -> (u16, String) {
+        let error = tk.node_conn().execute(sql).err().unwrap_or_else(|| panic!("{sql} is refused"));
+        (error.code, error.message)
+    };
+    let check_fn = |tk: &mut Session| {
+        assert_eq!(displayed(rows(tk, "select count(*) from t")), [["100"]]);
+        assert_eq!(displayed(rows(tk, "select count(*) from t1")), [["0"]]);
+    };
+    rows(&mut tk, "use test");
+    rows(&mut tk, "drop table if exists t, t1");
+    rows(&mut tk, "create table t(a int, b int, key(a))");
+    rows(&mut tk, "create table t1(a int, b int, key(a))");
+    // For mocked tikv, safe point is not initialized, we manually insert it
+    // for snapshot to use.
+    rows(
+        &mut tk,
+        "INSERT INTO mysql.tidb VALUES ('tikv_gc_safe_point', '20060102-15:04:05.000 -0700', '')",
+    );
+    rows(&mut tk, "set @@tidb_max_chunk_size=35");
+    rows(&mut tk, "set @a=now(6)");
+    for i in 0..100 {
+        rows(&mut tk, &format!("insert into t values ({i}, {})", i * 2));
+    }
+    let refused_dml = [
+        "batch on a limit 10 insert into t1 select * from t",
+        "batch on a limit 10 insert into t1 select * from t on duplicate key update t1.b=t.b",
+        "batch on a limit 10 delete from t",
+    ];
+    rows(&mut tk, "set @@tidb_snapshot=@a");
+    for sql in refused_dml {
+        err(&mut tk, sql);
+    }
+    rows(&mut tk, "set @@tidb_snapshot=''");
+    check_fn(&mut tk);
+
+    rows(&mut tk, "set transaction read only as of timestamp @a");
+    let (_, message) = err(&mut tk, "batch on a limit 10 update t set b = b + 100");
+    assert!(message.contains("tx_read_ts"), "{message}");
+    assert_eq!(displayed(rows(&mut tk, "select count(*) from t")), [["0"]]);
+    assert_eq!(displayed(rows(&mut tk, "select sum(b) from t")), [["9900"]]);
+
+    rows(&mut tk, "set @@tidb_read_consistency=weak");
+    for sql in refused_dml {
+        err(&mut tk, sql);
+    }
+    rows(&mut tk, "set @@tidb_read_consistency=strict");
+    check_fn(&mut tk);
+
+    rows(&mut tk, "set autocommit=0");
+    for sql in refused_dml {
+        err(&mut tk, sql);
+    }
+    tk.node_conn().control_transaction("commit").unwrap();
+    rows(&mut tk, "set autocommit=1");
+    check_fn(&mut tk);
+
+    tk.node_conn().control_transaction("begin").unwrap();
+    for sql in refused_dml {
+        err(&mut tk, sql);
+    }
+    tk.node_conn().control_transaction("commit").unwrap();
+    check_fn(&mut tk);
+
+    rows(&mut tk, "SET GLOBAL tidb_enable_batch_dml = 1");
+    rows(&mut tk, "SET tidb_batch_insert = 1");
+    rows(&mut tk, "SET tidb_dml_batch_size = 1");
+    for sql in refused_dml {
+        err(&mut tk, sql);
+    }
+    rows(&mut tk, "SET GLOBAL tidb_enable_batch_dml = 0");
+    rows(&mut tk, "SET tidb_batch_insert = 0");
+    rows(&mut tk, "SET tidb_dml_batch_size = 0");
+    check_fn(&mut tk);
+
+    for sql in [
+        "batch on a limit 10 insert into t1 select * from t limit 10",
+        "batch on a limit 10 insert into t1 select * from t limit 10 on duplicate key update t1.b=t.b",
+        "batch on a limit 10 delete from t limit 10",
+    ] {
+        assert_eq!(err(&mut tk, sql).1, "Non-transactional statements don't support limit");
+    }
+    check_fn(&mut tk);
+
+    for sql in [
+        "batch on a limit 10 insert into t1 select * from t order by a",
+        "batch on a limit 10 insert into t1 select * from t order by a on duplicate key update t1.b=t.b",
+        "batch on a limit 10 delete from t order by a",
+    ] {
+        assert_eq!(err(&mut tk, sql).1, "Non-transactional statements don't support order by");
+    }
+    check_fn(&mut tk);
+
+    for sql in [
+        "prepare nt FROM 'batch limit 1 insert into t1 select * from t'",
+        "prepare nt FROM 'batch on a limit 10 insert into t1 select * from t on duplicate key update t1.b=t.b'",
+        "prepare nt FROM 'batch limit 1 delete from t'",
+    ] {
+        assert_eq!(
+            err(&mut tk, sql),
+            (1295, "This command is not supported in the prepared statement protocol yet".to_owned())
+        );
+    }
+
+    assert_eq!(err(&mut tk, "batch limit 1 insert into t select 1, 1").1, "table reference is nil");
+    assert_eq!(
+        err(&mut tk, "batch limit 1 insert into t select * from (select 1, 2) tmp").1,
+        "Non-transactional DML, table name not found in join"
+    );
+}

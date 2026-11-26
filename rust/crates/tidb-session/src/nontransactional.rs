@@ -464,6 +464,12 @@ impl Session {
                 "can't do non-transactional DML when tidb_snapshot is set",
             ));
         }
+        if self.vars.txn_read_ts() != 0 {
+            // Preserve the pending read timestamp for the next statement.
+            return Err(plain_error(
+                "can't do non-transactional DML when tx_read_ts is set",
+            ));
+        }
 
         match &stmt.dml {
             BatchDml::Delete(delete) => {

@@ -2670,6 +2670,14 @@ impl Session {
     /// statements it lists, and any DML; a lock inside a derived table or a
     /// view body, and every DDL, pass it.
     pub fn validate_statement_read_only_in_staleness(&self, stmt: &Stmt) -> Result<(), DriverError> {
+        // Go's server driver hands a `NonTransactionalDMLStmt` to
+        // `HandleNonTransactionalDML` instead of `ExecuteStmt`, so this check
+        // never sees it: `checkConstraint` refuses a pending snapshot or
+        // `tx_read_ts` read first, and each split statement it runs is checked
+        // here on its own.
+        if matches!(stmt, Stmt::Dml(dml) if matches!(dml.as_ref(), tidb_ast::DmlStmt::Batch(_))) {
+            return Ok(());
+        }
         if self.staleness_requires_read_only() {
             // Go master: COMPARE reads its snapshots on its own; only its
             // OUTPUT table is a write.
