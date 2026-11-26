@@ -2993,3 +2993,21 @@ func TestIssue72090(t *testing.T) {
 		requirePlanOrder(t, "select * from (select k, max(c0) as m from t group by k) d where inet_aton('')", "Agg", "Selection")
 	})
 }
+
+func TestUnionAllCorrelatedQuantifiedPredicate(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_union_fd (id bigint)")
+	tk.MustExec("create view v_union_fd as select * from t_union_fd union all select * from t_union_fd")
+	query := "select 1 from v_union_fd as t1 where (t1.id < all (select 1)) in (select t1.id)"
+	tk.MustQuery(query).Check(testkit.Rows())
+	tk.MustQuery("explain " + query)
+	corrAllQuery := "select t1.id from v_union_fd as t1 where t1.id <= all (select t1.id)"
+	tk.MustQuery(corrAllQuery).Check(testkit.Rows())
+	tk.MustQuery("explain " + corrAllQuery)
+	tk.MustExec("insert into t_union_fd values (null), (-1), (0), (1), (2)")
+	tk.MustQuery(query).Check(testkit.Rows())
+	tk.MustQuery("select t1.id from v_union_fd as t1 where (t1.id <= all (select 1)) in (select t1.id)").Check(testkit.Rows("1", "1"))
+	tk.MustQuery(corrAllQuery).Sort().Check(testkit.Rows("-1", "-1", "0", "0", "1", "1", "2", "2"))
+}
