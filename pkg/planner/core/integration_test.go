@@ -126,6 +126,35 @@ func TestUnionStringCastLength(t *testing.T) {
 		tk.MustQuery(sql).Sort().Check(testkit.Rows("<nil>", strings.Repeat("z", 1592), strings.Repeat("界", 600)))
 	}
 	tk.MustQuery("select char_length(v) from (select cast('q' as char(255)) v where false union all select repeat('z',1592) union all select cast(10 as double)*cast(10 as double) where false)u").Check(testkit.Rows("1592"))
+
+	tk.MustExec("create table widths_r1 (id int primary key, s varchar(255), w varchar(2048), d double) charset=utf8mb4 collate=utf8mb4_bin")
+	tk.MustExec("insert into widths_r1 values (1, 'q', repeat('z', 1592), 10), (2, 'r', repeat('界', 600), 20), (3, null, null, null)")
+	for _, sql := range []string{
+		"select s as v from widths_r1 union all select w as v from widths_r1 union all select d * d as v from widths_r1",
+		"select d * d as v from widths_r1 union all select s as v from widths_r1 union all select w as v from widths_r1",
+		"select w as v from widths_r1 union all select s as v from widths_r1 union all select d * d as v from widths_r1",
+	} {
+		rs, err := tk.Exec(sql)
+		require.NoError(t, err)
+		require.Equal(t, 2048, rs.Fields()[0].Column.FieldType.GetFlen())
+		require.NoError(t, rs.Close())
+		tk.MustQuery("select char_length(v), octet_length(v) from (" + sql + ") u").Sort().Check(testkit.Rows(
+			"1 1",
+			"1 1",
+			"1592 1592",
+			"3 3",
+			"3 3",
+			"600 1800",
+			"<nil> <nil>",
+			"<nil> <nil>",
+			"<nil> <nil>",
+		))
+	}
+	tk.MustExec("create view widths_v_r1 as select s as v from widths_r1 union all select w as v from widths_r1 union all select d * d as v from widths_r1")
+	tk.MustQuery("show fields from widths_v_r1").Check(testkit.Rows("v varchar(2048) YES  <nil> "))
+	tk.MustQuery("select column_name, column_type, character_maximum_length, character_octet_length from information_schema.columns where table_schema = 'test' and table_name = 'widths_v_r1'").Check(testkit.Rows("v varchar(2048) 2048 8192"))
+	tk.MustExec("create view widths_v_double as select s as v from widths_r1 union all select d * d as v from widths_r1")
+	tk.MustQuery("show fields from widths_v_double").Check(testkit.Rows("v varchar(370) YES  <nil> "))
 }
 
 func TestNoneAccessPathsFoundByIsolationRead(t *testing.T) {

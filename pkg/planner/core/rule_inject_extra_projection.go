@@ -94,7 +94,7 @@ func injectProjBelowUnion(un *physicalop.PhysicalUnionAll) *physicalop.PhysicalU
 			srcCol.Index = i
 			srcType := srcCol.RetType
 			if !srcType.Equal(dstType) || !(mysql.HasNotNullFlag(dstType.GetFlag()) == mysql.HasNotNullFlag(srcType.GetFlag())) {
-				exprs[i] = expression.BuildCastFunction4Union(un.SCtx().GetExprCtx(), srcCol, dstType)
+				exprs[i] = expression.BuildCastFunction4Union(un.SCtx().GetExprCtx(), srcCol, dstType.Clone())
 				needChange = true
 			} else {
 				exprs[i] = srcCol

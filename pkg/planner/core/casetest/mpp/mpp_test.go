@@ -472,6 +472,37 @@ func TestMppUnionAll(t *testing.T) {
 			res := tk.MustQuery(tt)
 			res.Check(testkit.Rows(output[i].Plan...))
 		}
+
+		tk.MustExec("drop table if exists widths_r1")
+		tk.MustExec("create table widths_r1 (id int primary key, s varchar(255), w varchar(2048), d double) charset=utf8mb4 collate=utf8mb4_bin")
+		testkit.SetTiFlashReplica(t, dom, "test", "widths_r1")
+		for _, unionSQL := range []string{
+			"select s as v from widths_r1 union all select w as v from widths_r1 union all select d * d as v from widths_r1",
+			"select d * d as v from widths_r1 union all select s as v from widths_r1 union all select w as v from widths_r1",
+			"select w as v from widths_r1 union all select s as v from widths_r1 union all select d * d as v from widths_r1",
+		} {
+			mppUnionRows := testdata.ConvertRowsToStrings(tk.MustQuery("explain format = 'plan_tree' select count(v) from (" + unionSQL + ") u").Rows())
+			mppUnionPlan := strings.Join(mppUnionRows, "\n")
+			require.Contains(t, mppUnionPlan, "Union mpp[tiflash]", unionSQL)
+			require.Contains(t, mppUnionPlan, "varchar(2048)", unionSQL)
+			require.NotContains(t, mppUnionPlan, "varchar(255)", unionSQL)
+			require.NotContains(t, mppUnionPlan, "varchar(370)", unionSQL)
+
+			lenRows := testdata.ConvertRowsToStrings(tk.MustQuery("explain format = 'plan_tree' select char_length(v), octet_length(v) from (" + unionSQL + ") u").Rows())
+			lenPlan := strings.Join(lenRows, "\n")
+			require.Contains(t, lenPlan, "mpp[tiflash]", unionSQL)
+			require.Contains(t, lenPlan, "varchar(2048)", unionSQL)
+			require.NotContains(t, lenPlan, "varchar(255)", unionSQL)
+			require.NotContains(t, lenPlan, "varchar(370)", unionSQL)
+		}
+
+		unboundedPlanRows := testdata.ConvertRowsToStrings(tk.MustQuery(
+			"explain format = 'plan_tree' select count(v) from (select s as v from widths_r1 union all select if(id > 0, w, d * d) as v from widths_r1 union all select w as v from widths_r1) u",
+		).Rows())
+		unboundedPlan := strings.Join(unboundedPlanRows, "\n")
+		require.Contains(t, unboundedPlan, "Union mpp[tiflash]", unboundedPlan)
+		require.Equal(t, 2, strings.Count(unboundedPlan, "varchar(2048)"), unboundedPlan)
+		require.Equal(t, 2, strings.Count(unboundedPlan, "varchar(255)"), unboundedPlan)
 	})
 }
 
