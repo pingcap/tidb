@@ -48,6 +48,12 @@ python3 -I rust/scripts/generate-errno.py ../gomaster
 
 `--check` fails when the generated files are stale against that tree.
 
+`go-func-drift.py <go-master-tree>` lists the Go master commits since the
+branch's merge-base that changed a Go function a Rust file ports (by its
+``Go `Name` `` citation) and that no Rust commit message cites, with the
+Rust files each one touches. Cite the Go SHA in a drift port's commit
+message; that is the port record the report reads.
+
 ## Shared SQL server checks
 
 Both storage engines use the ordinary session and shared catalog. Use:

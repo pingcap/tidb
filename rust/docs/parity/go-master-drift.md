@@ -4,6 +4,8 @@ Unresolved Go master changes since the branch's merge-base (b94006d3abf, 2026-07
 
 Candidates come from `tidb-wt/tools/drift/audit.py`: each non-merge Go master commit touching non-test `pkg/` code (parser excluded) whose added string literals and new func/type/const names are mostly (>= 50%) absent from `rust/`. A candidate is not proof; its count is missing/total tokens. Regenerated 2026-11-27 against gomaster e722f8f1541: 208 flagged, of which the Held list below and the verified gaps are taken out.
 
+A second, function-level list: `python3 -I rust/scripts/go-func-drift.py ../gomaster` names each Go master commit that changed a Go function some Rust file ports (by its ``Go `Name` `` citation) and that no Rust commit message cites, with the Rust files to revisit. A drift port's commit message cites the Go SHA; that citation is what takes the commit off both lists.
+
 ## Verified gaps
 
 - 47dc1214658: `tidb_redact_log` defaults ON (OFF in test builds). The default alone makes Rust's internal sessions redact plan text (restricted EXPLAIN, EXPLAIN EXPLORE, MV refresh EXPLAIN print `?`). Go keeps them literal through `rebuildSysVarCache` running every `SetGlobal` hook on a borrowed pooled session, `planGenerator.Generate` taking the caller's mode, and tests setting `EnableRedactLog = Off`. Blocked on Rust having no `sysSessionPool` reuse (`open_system_session` builds a fresh session per internal statement).
@@ -15,7 +17,6 @@ Candidates come from `tidb-wt/tools/drift/audit.py`: each non-merge Go master co
 - 896fc427b36: TRUNCATE atomicity and affinity-group consistency on failure.
 - c09f6278deb: needs hypothetical expression indexes, which Rust refuses.
 - c767f6fd8c0: the storage-class transition manager is unported, and with it 56ee5bb2684's transition-completion half and 64e8c4c05ec.
-- 17b78078392: TopSQL reporter backpressure (report channel of 2, closed RU windows dropped), and per-send panic recovery. In progress.
 - 03148cd4adf: the lightning config messages are unchecked (the objstore half is ported).
 - The MPP coordinator sends no coordinator-wide `CancelMPPTasks` on a dispatch or receive error (Go `sendError` -> `cancelMppTasks` to every store running a task); only the root stream's store is cancelled.
 - EXPLAIN ANALYZE of DDL is refused ("not supported yet"); Go runs the DDL.
