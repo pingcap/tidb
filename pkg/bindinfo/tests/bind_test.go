@@ -505,6 +505,13 @@ func TestStmtHints(t *testing.T) {
 }
 
 func TestHintsSetID(t *testing.T) {
+	// Keep the background loader from restoring bindings across UtilCleanBindingEnv.
+	originLease := bindinfo.Lease
+	bindinfo.Lease = 0
+	t.Cleanup(func() {
+		bindinfo.Lease = originLease
+	})
+
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
