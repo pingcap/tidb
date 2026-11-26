@@ -1028,8 +1028,7 @@ func TestParallelAlterModifyColumnWithData(t *testing.T) {
 	}
 	testControlParallelExecSQL(t, tk, store, dom, "", sql, sql, f)
 
-	// modify column: int -> double
-	// rename column: double -> int
+	// Rename follows an int -> double modification. V2 preserves the new definition.
 	sql1 := "ALTER TABLE t MODIFY b double;"
 	sql2 := "ALTER TABLE t RENAME COLUMN b to bb;"
 	f = func(err1, err2 error) {
@@ -1046,7 +1045,11 @@ func TestParallelAlterModifyColumnWithData(t *testing.T) {
 		require.NoError(t, err)
 		sRows, err = session.ResultSetToStringSlice(context.Background(), tk.Session(), rs)
 		require.NoError(t, err)
-		require.Equal(t, "22", sRows[1][1])
+		want := "22.2"
+		if model.GetJobVerInUse() == model.JobVersion1 {
+			want = "22"
+		}
+		require.Equal(t, want, sRows[1][1])
 		require.NoError(t, rs.Close())
 	}
 	testControlParallelExecSQL(t, tk, store, dom, "", sql1, sql2, f)
