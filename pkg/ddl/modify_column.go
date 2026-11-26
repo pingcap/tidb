@@ -51,6 +51,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/dbutil"
 	"github.com/pingcap/tidb/pkg/util/filter"
 	"github.com/pingcap/tidb/pkg/util/generatedexpr"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -1237,8 +1238,8 @@ func buildCheckSQLFromModifyColumn(
 
 	var conditions []string
 	template := "SELECT %s FROM %s WHERE %s LIMIT 1"
-	checkColName := fmt.Sprintf("`%s`", oldCol.Name.O)
-	tableName := fmt.Sprintf("`%s`.`%s`", dbName.O, tblName.O)
+	checkColName := dbutil.ColumnName(oldCol.Name.O)
+	tableName := dbutil.TableName(dbName.O, tblName.O)
 
 	if checkValueRange {
 		if mysql.IsIntegerType(oldTp) && mysql.IsIntegerType(changingTp) {
@@ -1258,7 +1259,7 @@ func buildCheckSQLFromModifyColumn(
 
 	if isNullToNotNullChange(oldCol, changingCol) {
 		if !(oldTp != mysql.TypeTimestamp && changingTp == mysql.TypeTimestamp) {
-			conditions = append(conditions, fmt.Sprintf("`%s` IS NULL", oldCol.Name.O))
+			conditions = append(conditions, fmt.Sprintf("%s IS NULL", checkColName))
 		}
 	}
 
@@ -1274,7 +1275,7 @@ func buildCheckRangeForIntegerTypes(oldCol, changingCol *model.ColumnInfo) strin
 	changingTp := changingCol.GetType()
 	changingUnsigned := mysql.HasUnsignedFlag(changingCol.GetFlag())
 
-	columnName := fmt.Sprintf("`%s`", oldCol.Name.O)
+	columnName := dbutil.ColumnName(oldCol.Name.O)
 
 	if changingUnsigned {
 		upperBound := types.IntegerUnsignedUpperBound(changingTp)
