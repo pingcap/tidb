@@ -211,6 +211,9 @@ func runHashJoinV1NAExec(t *testing.T, cfg *hashJoinV1NAConfig, leftChunks, righ
 	e := buildHashJoinV1NAExec(cfg, leftChunks, rightChunks)
 	tmpCtx := context.Background()
 	require.NoError(t, e.Open(tmpCtx))
+	defer func() {
+		require.NoError(t, e.Close())
+	}()
 
 	var chunks []*chunk.Chunk
 	for {
@@ -222,7 +225,6 @@ func runHashJoinV1NAExec(t *testing.T, cfg *hashJoinV1NAConfig, leftChunks, righ
 		chunks = append(chunks, chk)
 	}
 	spilled := e.RowContainer != nil && e.RowContainer.AlreadySpilledSafeForTest()
-	require.NoError(t, e.Close())
 	return sortRows(chunks, exec.RetTypes(e)), spilled
 }
 
@@ -332,14 +334,14 @@ func evalNullAwareOuterSemiRef(
 							break
 						}
 					}
-					if !rowFalse {
-						if rowNull {
-							foundNull = true
-						} else {
-							foundTrue = true
-							break
-						}
+					if rowFalse {
+						continue
 					}
+					if !rowNull {
+						foundTrue = true
+						break
+					}
+					foundNull = true
 				}
 				if foundTrue {
 					break
