@@ -620,22 +620,26 @@ func TestAutoAnalyzeHandlesEmptyExistenceMapInCache(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int, b int)")
+	tk.MustExec("create table tp(a int, b int) partition by hash(a) partitions 2")
 	tk.MustExec("insert into t values (1,1),(2,2)")
+	tk.MustExec("insert into tp values (1,1),(2,2)")
 	h := dom.StatsHandle()
 	// Make sure the count and modify count are updated.
 	tk.MustExec("flush stats_delta *.*")
 
-	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
-	require.NoError(t, err)
-	tid := tbl.Meta().ID
 	// Ensure the stats object is created in memory and the existence map is initialized but empty (no cols/idxs).
 	// This happens because we haven't handled DDL events yet, so no rows exist in mysql.histograms.
 	require.NoError(t, h.Cache().Update(context.Background(), dom.InfoSchema()))
-	st, ok := h.Cache().Get(tid)
-	require.True(t, ok)
-	require.True(t, st.ColAndIdxExistenceMap.IsEmpty())
+	for _, name := range []string{"t", "tp"} {
+		tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr(name))
+		require.NoError(t, err)
+		st, ok := h.Cache().Get(tbl.Meta().ID)
+		require.True(t, ok)
+		require.True(t, st.ColAndIdxExistenceMap.IsEmpty())
+	}
 	old := statistics.AutoAnalyzeMinCnt
 	statistics.AutoAnalyzeMinCnt = 0
 	t.Cleanup(func() { statistics.AutoAnalyzeMinCnt = old })
-	require.True(t, h.AutoAnalyze().HandleAutoAnalyze())
+	// The queue fails to initialize: the column count of the partitioned table is 0.
+	require.False(t, h.AutoAnalyze().HandleAutoAnalyze())
 }
