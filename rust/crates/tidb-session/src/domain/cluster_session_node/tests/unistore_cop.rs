@@ -27305,6 +27305,88 @@ fn flashback_and_recover_table_bring_a_dropped_table_back_as_go() {
     assert_eq!(query(&mut session, "select @@global.tidb_gc_enable"), [["1"]]);
 }
 
+/// Go `TestFlashbackTable`'s foreign-key cases (b1322c5d663): a standalone
+/// FLASHBACK / RECOVER cannot prove that an external foreign-key endpoint
+/// still names the same table, so it is refused (a historical parent name
+/// reused by a new table is a different object, and the old endpoint must
+/// not become an apparent self-reference under the parent's name); a
+/// self-referencing table renamed by FLASHBACK ... TO keeps referencing
+/// itself.
+#[test]
+fn test_flashback_table_foreign_keys() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack
+        .factory
+        .open_session(session_context(183))
+        .expect("session opens");
+    fn query(session: &mut Session, sql: &str) -> Vec<Vec<String>> {
+        displayed(rows(session, sql))
+    }
+    const ERR_UNSUPPORTED_DDL_OPERATION: u16 = 8200;
+    // Go `mockGC`: the delete-range emulator stopped, so a dropped table
+    // keeps its rows, and the GC safe point 48 hours back.
+    tidb_ddl_util::emulator_gc_disable();
+    let time_before_drop =
+        (chrono::Local::now() - chrono::Duration::hours(48)).format("%Y%m%d-%H:%M:%S %z").to_string();
+    query(&mut session, "delete from mysql.tidb where variable_name in ( 'tikv_gc_safe_point','tikv_gc_enable' )");
+    query(
+        &mut session,
+        &format!(
+            "INSERT HIGH_PRIORITY INTO mysql.tidb VALUES ('tikv_gc_safe_point', '{time_before_drop}', '') \
+             ON DUPLICATE KEY UPDATE variable_value = '{time_before_drop}'"
+        ),
+    );
+    for sql in [
+        "drop database if exists fk_flashback",
+        "create database fk_flashback",
+        "use fk_flashback",
+        "create table p (id int primary key)",
+        "create table c (id int primary key, pid int, foreign key (pid) references p(id))",
+        "insert into p values (1)",
+        "insert into c values (2, 1)",
+        "drop table c",
+        "drop table p",
+    ] {
+        query(&mut session, sql);
+    }
+    assert_eq!(query_error(&mut session, "flashback table c to p").0, ERR_UNSUPPORTED_DDL_OPERATION);
+    assert_eq!(query(&mut session, "show tables like 'p'"), Vec::<Vec<String>>::new());
+    query(&mut session, "create table p (id int primary key)");
+    assert_eq!(query_error(&mut session, "flashback table c").0, ERR_UNSUPPORTED_DDL_OPERATION);
+    assert_eq!(query(&mut session, "show tables like 'c'"), Vec::<Vec<String>>::new());
+
+    // The same guard applies when recovering a parent another table refers to.
+    query(&mut session, "drop table p");
+    query(&mut session, "set foreign_key_checks = 0");
+    query(&mut session, "create table c (id int primary key, pid int, foreign key (pid) references p(id))");
+    assert_eq!(query_error(&mut session, "recover table p").0, ERR_UNSUPPORTED_DDL_OPERATION);
+
+    // Renaming a self-referencing table also renames its foreign-key endpoint.
+    for sql in [
+        "drop database if exists fk_self_flashback",
+        "create database fk_self_flashback",
+        "use fk_self_flashback",
+        "set foreign_key_checks = 1",
+        "create table tree (id int primary key, parent_id int, foreign key (parent_id) references tree(id) on delete cascade)",
+        "insert into tree values (1, null), (2, 1)",
+        "drop table tree",
+        "flashback table tree to restored_tree",
+    ] {
+        query(&mut session, sql);
+    }
+    assert_eq!(
+        query(
+            &mut session,
+            "select referenced_table_name from information_schema.key_column_usage where table_schema = 'fk_self_flashback' \
+             and table_name = 'restored_tree' and referenced_table_name is not null",
+        ),
+        [["restored_tree"]]
+    );
+    query(&mut session, "insert into restored_tree values (3, 1)");
+    query(&mut session, "delete from restored_tree where id = 1");
+    assert_eq!(query(&mut session, "select * from restored_tree"), Vec::<Vec<String>>::new());
+}
+
 /// Go `executeFlashbackDatabase` / `onRecoverSchema`, pinned to gorun: the
 /// dropped schema comes back with every table it had at its drop's
 /// snapshot (listed by the job on execute), each with fresh allocators over

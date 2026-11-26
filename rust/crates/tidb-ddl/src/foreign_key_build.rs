@@ -167,6 +167,80 @@ pub fn check_table_foreign_key_valid_in_owner(
     Ok(())
 }
 
+/// Go `checkRecoverTableForeignKeys`: a standalone RECOVER / FLASHBACK TABLE
+/// cannot prove that an external foreign-key endpoint still identifies the
+/// same table, or that rows on both sides still match, so only
+/// self-references survive. `get_table` is Go `snapshotMeta.GetTable` at the
+/// recovery's snapshot: `Ok(None)` for a missing table, the `ErrDBNotExists`
+/// error for a missing schema.
+pub(crate) fn check_recover_table_foreign_keys(
+    catalog: &SessionExtendedInfoSchema,
+    schema: &str,
+    recover_info: &tidb_model::RecoverTableInfo,
+    get_table: &dyn Fn(i64, i64) -> Result<Option<tidb_model::TableInfo>, tidb_ddl_build::plan_error::DdlPlanError>,
+) -> Result<(), tidb_ddl_build::plan_error::DdlPlanError> {
+    use tidb_ddl_build::plan_error::DdlPlanError;
+    let unsupported = |reason: &str| {
+        DdlPlanError::from(tidb_dbterror::ERR_GENERAL_UNSUPPORTED_DDL.gen_with_stack_by_args(&[reason.into()]))
+    };
+    let Some(tb_info) = recover_info.table_info.as_ref().map(|table| table.read().clone_like_go()) else {
+        return Ok(());
+    };
+    let name = tb_info.name.lowercase().to_owned();
+    if tb_info.foreign_keys.iter_deref().any(|fk| fk.read().version >= FK_VERSION1) {
+        // A legacy submitter may already have renamed the table in the job.
+        // Only the original metadata can tell a rewritten self-reference
+        // from an external reference to the new name.
+        if recover_info.old_schema_name.is_empty()
+            || recover_info.old_table_name.is_empty()
+            || recover_info.snapshot_ts == 0
+        {
+            return Err(unsupported("recover/flashback table without original table metadata"));
+        }
+        if recover_info.old_table_name != name {
+            let original = get_table(recover_info.schema_id, tb_info.id)?.ok_or_else(|| {
+                DdlPlanError::from(tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS.gen_with_stack_by_args(&[
+                    recover_info.old_schema_name.clone().into(),
+                    recover_info.old_table_name.clone().into(),
+                ]))
+            })?;
+            if original.name.lowercase() != recover_info.old_table_name {
+                return Err(unsupported("recover/flashback table with mismatched original table metadata"));
+            }
+            for fk in original.foreign_keys.iter_deref() {
+                let fk = fk.read();
+                if fk.version >= FK_VERSION1
+                    && (fk.ref_schema.lowercase() != recover_info.old_schema_name
+                        || fk.ref_table.lowercase() != original.name.lowercase())
+                {
+                    return Err(unsupported("recover/flashback table with foreign keys"));
+                }
+            }
+        }
+    }
+    for fk in tb_info.foreign_keys.iter_deref() {
+        let fk = fk.read();
+        if fk.version >= FK_VERSION1 && (fk.ref_schema.lowercase() != schema || fk.ref_table.lowercase() != name) {
+            return Err(unsupported("recover/flashback table with foreign keys"));
+        }
+    }
+    if !get_table_referred_foreign_keys(catalog, schema, &name).is_empty() {
+        return Err(unsupported("recover/flashback table referenced by foreign keys"));
+    }
+    Ok(())
+}
+
+/// Go `isPermanentRecoverTableForeignKeyError`.
+pub(crate) fn is_permanent_recover_table_foreign_key_error(error: &tidb_ddl_build::plan_error::DdlPlanError) -> bool {
+    [
+        &*tidb_dbterror::ERR_GENERAL_UNSUPPORTED_DDL,
+        &*tidb_infoschema::infoschema_errors::ERR_TABLE_NOT_EXISTS,
+        &*tidb_meta::meta_errors::ERR_DB_NOT_EXISTS,
+    ]
+    .iter()
+    .any(|proto| error.equal(proto))
+}
+
 /// Go `InfoSchema.GetTableReferredForeignKeys`: the foreign keys of every
 /// table that cite `schema`.`table`, as `addReferredForeignKeys` builds the
 /// `referredForeignKeyMap` entry -- version-1 keys only, ordered by child

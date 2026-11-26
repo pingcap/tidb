@@ -234,6 +234,28 @@ pub(super) fn on_recover_table(
             ])),
         ));
     }
+    // Go `onRecoverTable`: the foreign keys checked again by the owner, a
+    // transient snapshot failure staying retryable.
+    if let Some(store) = sessions.store.as_ref() {
+        let info = recover_info.read().clone();
+        // A test may replace the snapshot reader.
+        let mut hook = (info.clone(), Arc::clone(store));
+        tidb_failpoint::inject_call("github.com/pingcap/tidb/pkg/ddl/recoverTableForeignKeySnapshot", &mut hook);
+        let store = hook.1;
+        let get_table = snapshot_get_table(&*store, snapshot_ts);
+        let checked = crate::foreign_key_build::check_recover_table_foreign_keys(
+            catalog,
+            &active.job.schema_name.to_string(),
+            &info,
+            &get_table,
+        );
+        if let Err(error) = checked {
+            if crate::foreign_key_build::is_permanent_recover_table_foreign_key_error(&error) {
+                return Err(cancel_ddl_job(active, error));
+            }
+            return Err(error);
+        }
+    }
 
     // Recovering is two steps: the first records whether GC was on (so the
     // job enables it again once done, however many times a step retries);
@@ -938,7 +960,19 @@ pub(crate) fn recover_table_by_job_or_name<S: MetaSnapshot>(
         _ => table_info.name.lowercase().to_owned(),
     };
     if !new_name.is_empty() {
+        let old_name = table_info.name.lowercase().to_owned();
         table_info.name = tidb_ast::CiString::new(new_name);
+        // A self-reference follows the rename.
+        let old_schema = job.schema_name.to_string().go_to_lower();
+        for fk in table_info.foreign_keys.iter_deref() {
+            let mut fk = fk.write();
+            if fk.version >= tidb_model::table::FK_VERSION1
+                && fk.ref_schema.lowercase() == old_schema
+                && fk.ref_table.lowercase() == old_name
+            {
+                fk.ref_table = table_info.name.clone();
+            }
+        }
     }
     // Check that the table ID does not exist (Go `is.TableByID`, over the
     // metadata this catalog image holds).
@@ -1010,6 +1044,18 @@ pub(crate) fn recover_table_by_job_or_name<S: MetaSnapshot>(
         old_schema_name: job.schema_name.to_string(),
         old_table_name,
     };
+    // Go `executor.RecoverTable`: `checkRecoverTableForeignKeys` against the
+    // table at the recovery's snapshot.
+    crate::foreign_key_build::check_recover_table_foreign_keys(
+        catalog,
+        schema_name.lowercase(),
+        &recover_info,
+        &snapshot_get_table(at, recover_info.snapshot_ts),
+    )?;
+    tidb_failpoint::inject_call(
+        "github.com/pingcap/tidb/pkg/ddl/afterCheckRecoverTableForeignKeys",
+        &mut recover_info.clone(),
+    );
     let args = tidb_model::RecoverArgs {
         recover_info: Some(GoShared::new(tidb_model::RecoverSchemaInfo {
             recover_table_infos: Some(vec![GoShared::new(recover_info)]),
@@ -1023,6 +1069,22 @@ pub(crate) fn recover_table_by_job_or_name<S: MetaSnapshot>(
         args: tidb_model::JobArgsValue::Recover(Some(GoShared::new(args))),
         id_allocated: false,
     })
+}
+
+/// Go `meta.NewReader(store.GetSnapshot(ts)).GetTable`: `ErrDBNotExists`
+/// for a missing schema, `None` for a missing table.
+fn snapshot_get_table(
+    at: &dyn SnapshotMetaAt,
+    ts: u64,
+) -> impl Fn(i64, i64) -> Result<Option<TableInfo>, DdlPlanError> + '_ {
+    move |schema_id, table_id| {
+        if at.database_at(ts, schema_id)?.is_none() {
+            return Err(DdlPlanError::from(
+                tidb_meta::meta_errors::ERR_DB_NOT_EXISTS.gen_with_stack("database doesn't exist"),
+            ));
+        }
+        at.table_at(ts, schema_id, table_id)
+    }
 }
 
 /// Go `GetRecoverSnapshotTS`.
