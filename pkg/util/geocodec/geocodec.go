@@ -14,14 +14,12 @@
 
 // Package geocodec defines the byte forms of a geometry value.
 //
-//   - The bare value, which TiDB holds in memory and a bare SELECT returns: a 4-byte
-//     little-endian SRID, then little-endian EWKB without the SRID flag. A 2D value whose
-//     only empty geometry is a GEOMETRYCOLLECTION is thus MySQL's binary format; other
-//     values extend it with EWKB's Z and M flags.
-//   - The stored format, which a geometry column holds: a version byte, then the bare value.
+//   - The bare value: a 4-byte little-endian SRID, then little-endian EWKB without the SRID
+//     flag. A 2D value whose only empty geometry is a GEOMETRYCOLLECTION is thus MySQL's
+//     binary format; other values extend it with EWKB's Z and M flags.
+//   - The stored format: a version byte, then the bare value.
 //
-// Both hold the seven OGC geometry types, type codes 1 to 7. Bytes from a client are
-// checked once, by CheckBare; a value in memory was checked when it was made.
+// Both hold the seven OGC geometry types, type codes 1 to 7.
 package geocodec
 
 import (
