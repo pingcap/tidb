@@ -298,10 +298,15 @@ select av, s, n from mv_avg_strict;
 refresh materialized view mv_sum_strict fast;
 --error 1690
 refresh materialized view mv_sum_strict complete delta apply;
+# COMPLETE IN PLACE can report different overflow details depending on the store.
+--replace_regex /^(Error 1690 \(22003\): ).*/${1}<details>/
 --error 1690
 refresh materialized view mv_sum_strict complete in place;
---error 1690
+# On TiKV, OUT OF PLACE uses IMPORT INTO, which wraps the overflow as error 1105.
+--error 1690,1105
 refresh materialized view mv_sum_strict complete out of place;
+--replace_regex /^(1690|1105)$/<code>/ /^(%s value is out of range in '%s'|Value conversion failed for column 's'\. .*Reason: \[types:1690\]DECIMAL value is out of range in '\(65, 30\)'\.)$/DECIMAL value is out of range/
+show errors;
 select s, n from mv_sum_strict;
 drop materialized view mv_avg_strict;
 drop materialized view mv_sum_strict;
@@ -318,8 +323,11 @@ create materialized view mv_strict_filter (a, s, n) refresh fast as
 select a, sum(b), count(*) from t_mv_strict_filter where a != 0 group by a;
 set sql_mode = '';
 insert into t_mv_strict_filter values ('sample', 1);
+# The pushed-down conversion can report INTEGER instead of DOUBLE.
+--replace_regex /Truncated incorrect (DOUBLE|INTEGER) value/Truncated incorrect numeric value/
 --error 1292
 refresh materialized view mv_strict_filter fast;
+--replace_regex /Truncated incorrect (DOUBLE|INTEGER) value/Truncated incorrect numeric value/
 --error 1292
 refresh materialized view mv_strict_filter complete delta apply;
 select count(*) from mv_strict_filter;

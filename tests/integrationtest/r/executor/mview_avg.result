@@ -389,9 +389,12 @@ Error 1690 (22003): %s value is out of range in '%s'
 refresh materialized view mv_sum_strict complete delta apply;
 Error 1690 (22003): %s value is out of range in '%s'
 refresh materialized view mv_sum_strict complete in place;
-Error 1690 (22003): %s value is out of range in '%s'
+Error 1690 (22003): <details>
 refresh materialized view mv_sum_strict complete out of place;
-Error 1690 (22003): %s value is out of range in '%s'
+Got one of the listed errors
+show errors;
+Level	Code	Message
+Error	<code>	DECIMAL value is out of range
 select s, n from mv_sum_strict;
 s	n
 60000000000000000000000000000000000.000000000000000000000000000000	1
@@ -409,9 +412,9 @@ select a, sum(b), count(*) from t_mv_strict_filter where a != 0 group by a;
 set sql_mode = '';
 insert into t_mv_strict_filter values ('sample', 1);
 refresh materialized view mv_strict_filter fast;
-Error 1292 (22007): Truncated incorrect DOUBLE value: 'sample'
+Error 1292 (22007): Truncated incorrect numeric value: 'sample'
 refresh materialized view mv_strict_filter complete delta apply;
-Error 1292 (22007): Truncated incorrect DOUBLE value: 'sample'
+Error 1292 (22007): Truncated incorrect numeric value: 'sample'
 select count(*) from mv_strict_filter;
 count(*)
 0
