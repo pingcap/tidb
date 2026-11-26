@@ -245,6 +245,29 @@ impl<S: tikv_client::PdClient> MPPClient<S> {
 }
 
 impl<S: tikv_client::PdClient + 'static> tidb_txnkv::MppClient for MPPClient<S> {
+    /// Go `MPPClient.CancelMPPTasks`: the cancel request names the gather by
+    /// the first request, and goes to every store running one of its tasks
+    /// at once; a failure is logged and, on a compute node, invalidates the
+    /// compute-store cache (`cancel_mpp_task`).
+    fn cancel_mpp_tasks(&self, param: tidb_txnkv::CancelMppTasksParam) {
+        let Some(first) = param.requests.first() else {
+            return;
+        };
+        if param.store_addresses.is_empty() {
+            return;
+        }
+        let meta = cancel_task_meta(first);
+        let interceptor = tidb_txnkv::RpcInterceptorOption::default();
+        let targets: Vec<MppTarget<S>> = param
+            .store_addresses
+            .keys()
+            .map(|address| self.target(address, &interceptor))
+            .collect();
+        self.store.block_on(futures::future::join_all(
+            targets.iter().map(|target| cancel_mpp_task(target, meta.clone())),
+        ));
+    }
+
     fn get_mpp_store_count(&self) -> Result<usize, String> {
         self.mpp_store_cnt.get_mpp_store_count(
             || {
@@ -2477,6 +2500,25 @@ mod mpp_read_batch_tests {
         fixture
             .store
             .block_on(cancel_mpp_task(&fixture.target(false), TaskMeta::default()));
+        assert_eq!(fixture.cancels.load(Ordering::SeqCst), 1);
+    }
+
+    /// Go `MPPClient.CancelMPPTasks`: one cancel per selected store, none
+    /// without a store or a request.
+    #[test]
+    fn cancel_mpp_tasks_sends_one_cancel_per_store() {
+        use tidb_txnkv::MppClient as _;
+        let fixture = Fixture::new();
+        let client = MPPClient::new(fixture.store.clone(), || 1);
+        let meta = TaskMeta { start_ts: 9, gather_id: 2, task_id: 5, ..TaskMeta::default() };
+        let param = |stores: &[&str], requests: Vec<TaskMeta>| tidb_txnkv::CancelMppTasksParam {
+            store_addresses: stores.iter().map(|store| ((*store).to_owned(), true)).collect(),
+            requests,
+        };
+        client.cancel_mpp_tasks(param(&[], vec![meta.clone()]));
+        client.cancel_mpp_tasks(param(&[&fixture.address], Vec::new()));
+        assert_eq!(fixture.cancels.load(Ordering::SeqCst), 0);
+        client.cancel_mpp_tasks(param(&[&fixture.address], vec![meta]));
         assert_eq!(fixture.cancels.load(Ordering::SeqCst), 1);
     }
 

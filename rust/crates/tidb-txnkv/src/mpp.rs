@@ -218,13 +218,15 @@ pub struct MppDispatchRequest {
     pub plan_digest: String,
 }
 
-/// Parameters for cancelling MPP tasks.
+/// Go `kv.CancelMPPTasksParam`: the stores running a gather's tasks and the
+/// gather's requests, as the task metas they were dispatched with (Go
+/// `CancelMPPTasks` names the gather by the first one).
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct CancelMppTasksParam {
-    /// TiFlash addresses selected for cancellation.
+    /// Go `StoreAddr`: TiFlash addresses selected for cancellation.
     pub store_addresses: HashMap<String, bool>,
-    /// Requests whose tasks must be cancelled.
-    pub requests: Vec<MppDispatchRequest>,
+    /// Go `Reqs`.
+    pub requests: Vec<tidb_proto::mpp::TaskMeta>,
 }
 
 /// What one MPP call runs under: Go's `ctx`, which the statement's killer
@@ -335,9 +337,14 @@ pub trait MppStreamResponse: crate::Response + Send {
 }
 
 /// Go `kv.MPPClient` (`pkg/store/copr/mpp.go`): where a fragment's tasks run,
-/// their dispatch, and the coordinator's stream from a root task. Cancelling
-/// a gather is the stream's own close.
+/// their dispatch, the coordinator's stream from a root task, and the
+/// cancel of a gather's running tasks.
 pub trait MppClient: std::fmt::Debug + Send + Sync {
+    /// Go `CancelMPPTasks`: one `CmdMPPCancel`, naming the gather by the first
+    /// request, to every store in `param.store_addresses`; failures are
+    /// logged, not returned.
+    fn cancel_mpp_tasks(&self, param: CancelMppTasksParam);
+
     /// Go `ConstructMPPTasks`: the stores one fragment's tasks run on, each
     /// with the regions of `request` it reads, located under `kv_context`.
     /// The builder takes ownership of the request's keys for its native ranges.

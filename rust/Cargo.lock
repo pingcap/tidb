@@ -5359,6 +5359,7 @@ name = "tidb-copr"
 version = "0.0.0"
 dependencies = [
  "chrono-tz",
+ "futures",
  "prost 0.14.4",
  "tidb-ast",
  "tidb-charset",

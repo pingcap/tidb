@@ -41,7 +41,7 @@ use tidb_proto::mpp::{ReportTaskStatusRequest, TaskMeta};
 use tidb_proto::tipb::{self, EncodeType, ExecType};
 use tidb_txnkv::{
     KeyRange, MppBuildTasksRequest, MppClient, MppContext, MppError, MppQueryId, MppRpcError,
-    MppStoreTask, MppTaskLocation, MppVersion, QueryResponseError, QueryResultSubset,
+    MppStoreTask, MppTaskLocation, MppTaskState, MppVersion, QueryResponseError, QueryResultSubset,
     RegionBackoffBudget,
 };
 
@@ -480,6 +480,9 @@ struct Reports {
 pub struct CoordinatorReports {
     /// Go `closed` and `finishCh`.
     closed: Arc<AtomicBool>,
+    /// Go `mppReqs`' states under Go `mu`, which orders a task's dispatch
+    /// against the gather's cancel.
+    tasks: Mutex<MppTaskStates>,
     dispatch_failed: AtomicBool,
     all_reports_handled: AtomicBool,
     mu: Mutex<Reports>,
@@ -487,9 +490,61 @@ pub struct CoordinatorReports {
     report_status_ch: Condvar,
 }
 
+/// Each dispatch request's store, its meta and its state (Go
+/// `MPPDispatchRequest.State`), in dispatch order.
+#[derive(Default)]
+struct MppTaskStates {
+    tasks: Vec<(TaskMeta, MppTaskState)>,
+}
+
 impl CoordinatorReports {
     fn lock(&self) -> std::sync::MutexGuard<'_, Reports> {
         self.mu.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn lock_tasks(&self) -> std::sync::MutexGuard<'_, MppTaskStates> {
+        self.tasks.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Go `tryStartDispatch`: uses the same lock as `cancelMppTasks` so
+    /// starting and cancelling a task are ordered. If cancellation wins,
+    /// `dispatchAll` skips the task. If dispatch wins, the task is running
+    /// and its store is included in the cancel request.
+    fn try_start_dispatch(&self, index: usize) -> bool {
+        let mut tasks = self.lock_tasks();
+        let Some((_, state)) = tasks.tasks.get_mut(index) else {
+            return false;
+        };
+        if *state != MppTaskState::Ready {
+            return false;
+        }
+        *state = MppTaskState::Running;
+        true
+    }
+
+    /// Go `cancelMppTasks`: one cancel request per store running a task,
+    /// once (every request is then cancelled, so a second call returns).
+    fn cancel_mpp_tasks(&self, client: &Arc<dyn MppClient>) {
+        let param = {
+            let mut tasks = self.lock_tasks();
+            match tasks.tasks.first() {
+                None => return,
+                Some((_, MppTaskState::Cancelled)) => return,
+                Some(_) => {}
+            }
+            let mut store_addresses = HashMap::new();
+            for (meta, state) in &mut tasks.tasks {
+                if *state == MppTaskState::Running {
+                    store_addresses.insert(meta.address.clone(), true);
+                }
+                *state = MppTaskState::Cancelled;
+            }
+            tidb_txnkv::CancelMppTasksParam {
+                store_addresses,
+                requests: tasks.tasks.iter().map(|(meta, _)| meta.clone()).collect(),
+            }
+        };
+        client.cancel_mpp_tasks(param);
     }
 }
 
@@ -929,10 +984,17 @@ fn dispatch_all(
     reports: &CoordinatorReports,
     resp_tx: &SyncSender<MppResponse>,
 ) {
+    reports.lock_tasks().tasks = mpp_reqs
+        .iter()
+        .map(|task| (task.meta.clone(), MppTaskState::Ready))
+        .collect();
     std::thread::scope(|scope| {
-        for task in mpp_reqs {
+        for (index, task) in mpp_reqs.into_iter().enumerate() {
             if reports.closed.load(Ordering::Acquire) {
                 break;
+            }
+            if !reports.try_start_dispatch(index) {
+                continue;
             }
             scope.spawn(move || {
                 handle_dispatch_req(
@@ -1035,7 +1097,7 @@ fn handle_dispatch_req(
             );
             reports.dispatch_failed.store(true, Ordering::Release);
             // if NeedTriggerFallback is true, we return timeout to trigger tikv's fallback
-            send_error(resp_tx, &trigger_fallback(need_trigger_fallback, err));
+            send_error(resp_tx, reports, client, &trigger_fallback(need_trigger_fallback, err));
             return;
         }
     };
@@ -1045,14 +1107,13 @@ fn handle_dispatch_req(
             &dispatch_log_fields(&req.meta, error.msg.clone()),
         );
         reports.dispatch_failed.store(true, Ordering::Release);
-        send_error(resp_tx, &MppError::Other(error.msg));
+        send_error(resp_tx, reports, client, &MppError::Other(error.msg));
         return;
     }
     if tidb_failpoint::eval("github.com/pingcap/tidb/pkg/executor/internal/mpp/mppNonRootTaskError").is_some_and(|val| val.bool()) && !req.is_root {
         std::thread::sleep(Duration::from_secs(1));
         reports.dispatch_failed.store(true, Ordering::Release);
-        send_error(
-            resp_tx,
+        send_error(resp_tx, reports, client,
             &MppError::Sql(tidb_terror::MysqlError::from_terror(
                 &tidb_txnkv::tikv_errors::ERR_TI_FLASH_SERVER_TIMEOUT,
             )),
@@ -1162,7 +1223,7 @@ fn receive_results(
         Ok(stream) => stream,
         Err(err) => {
             // if NeedTriggerFallback is true, we return timeout to trigger tikv's fallback
-            send_error(resp_tx, &trigger_fallback(need_trigger_fallback, err));
+            send_error(resp_tx, reports, client, &trigger_fallback(need_trigger_fallback, err));
             return;
         }
     };
@@ -1182,7 +1243,7 @@ fn receive_results(
                     }
                     // if NeedTriggerFallback is true, we return timeout to trigger tikv's fallback
                     (None, QueryResponseError::Source(err)) => {
-                        send_error(resp_tx, &trigger_fallback(need_trigger_fallback, MppError::Other(err)));
+                        send_error(resp_tx, reports, client, &trigger_fallback(need_trigger_fallback, MppError::Other(err)));
                     }
                     (None, err) => {
                         let _ = resp_tx.send(Err(err));
@@ -1223,8 +1284,14 @@ fn send_to_resp_ch(
     exit
 }
 
-/// Go `sendError`.
-fn send_error(resp_tx: &SyncSender<MppResponse>, err: &MppError) {
+/// Go `sendError`: the error goes to the response channel, and the gather's
+/// running tasks are cancelled on their stores.
+fn send_error(
+    resp_tx: &SyncSender<MppResponse>,
+    reports: &CoordinatorReports,
+    client: &Arc<dyn MppClient>,
+    err: &MppError,
+) {
     let err = match err {
         MppError::Sql(err) => QueryResponseError::Sql {
             code: err.code,
@@ -1233,6 +1300,7 @@ fn send_error(resp_tx: &SyncSender<MppResponse>, err: &MppError) {
         MppError::Other(message) => QueryResponseError::Source(message.clone()),
     };
     let _ = resp_tx.send(Err(err));
+    reports.cancel_mpp_tasks(client);
 }
 
 impl tidb_txnkv::Response for LocalMppCoordinator {
@@ -1361,6 +1429,133 @@ mod tests {
             current_task_zone: task_zone.to_owned(),
             is_root,
         }
+    }
+
+    fn task_meta(task_id: i64, address: &str) -> TaskMeta {
+        TaskMeta { task_id, address: address.to_owned(), start_ts: 7, gather_id: 3, ..TaskMeta::default() }
+    }
+
+    fn reports_with(tasks: &[(i64, &str, MppTaskState)]) -> CoordinatorReports {
+        let reports = CoordinatorReports::default();
+        reports.lock_tasks().tasks =
+            tasks.iter().map(|&(id, address, state)| (task_meta(id, address), state)).collect();
+        reports
+    }
+
+    /// Go `TestDispatchCancelRace`.
+    #[test]
+    fn test_dispatch_cancel_race() {
+        // cancel wins: holding the coordinator lock, the dispatch cannot
+        // inspect the task until cancellation has changed its state.
+        let reports = Arc::new(reports_with(&[(1, "a", MppTaskState::Ready)]));
+        let mut guard = reports.lock_tasks();
+        let (started, dispatch_started) = std::sync::mpsc::channel();
+        let dispatch = {
+            let reports = Arc::clone(&reports);
+            std::thread::spawn(move || {
+                started.send(()).unwrap();
+                reports.try_start_dispatch(0)
+            })
+        };
+        dispatch_started.recv().unwrap();
+        guard.tasks[0].1 = MppTaskState::Cancelled;
+        drop(guard);
+        assert!(!dispatch.join().unwrap());
+        assert_eq!(reports.lock_tasks().tasks[0].1, MppTaskState::Cancelled);
+
+        // dispatch wins: the task is running when cancellation, under the
+        // same lock, collects the stores to cancel.
+        let reports = reports_with(&[(1, "a", MppTaskState::Ready)]);
+        assert!(reports.try_start_dispatch(0));
+        assert_eq!(reports.lock_tasks().tasks[0].1, MppTaskState::Running);
+    }
+
+    /// Go `MPPClient` as `cancelMppTasks` calls it: the cancels it was sent.
+    #[derive(Debug, Default)]
+    struct CancelRecorder(Mutex<Vec<tidb_txnkv::CancelMppTasksParam>>);
+
+    impl MppClient for CancelRecorder {
+        fn cancel_mpp_tasks(&self, param: tidb_txnkv::CancelMppTasksParam) {
+            self.0.lock().unwrap().push(param);
+        }
+        fn construct_mpp_tasks(
+            &self,
+            _: &Arc<dyn MppContext>,
+            _: MppBuildTasksRequest,
+            _: &tidb_txnkv::StatementKvContext,
+            _: tidb_tiflashcompute::DispatchPolicy,
+            _: tidb_tiflash::ReplicaRead,
+            _: &mut dyn FnMut(String),
+        ) -> Result<Vec<MppStoreTask>, MppError> {
+            unreachable!()
+        }
+        fn dispatch_mpp_task(
+            &self,
+            _: &Arc<dyn MppContext>,
+            _: &MppStoreTask,
+            _: &TaskMeta,
+            _: &[u8],
+            _: &tidb_txnkv::StatementKvContext,
+            _: &tidb_txnkv::RpcInterceptorOption,
+            _: &mut RegionBackoffBudget,
+        ) -> Result<tidb_proto::mpp::DispatchTaskResponse, MppRpcError> {
+            unreachable!()
+        }
+        fn establish_mpp_conns(
+            &self,
+            _: Arc<dyn MppContext>,
+            _: &str,
+            _: &TaskMeta,
+            _: &TaskMeta,
+            _: &tidb_txnkv::StatementKvContext,
+            _: &tidb_txnkv::RpcInterceptorOption,
+            _: &mut RegionBackoffBudget,
+        ) -> Result<Box<dyn tidb_txnkv::MppStreamResponse>, MppRpcError> {
+            unreachable!()
+        }
+        fn get_mpp_store_count(&self) -> Result<usize, String> {
+            unreachable!()
+        }
+    }
+
+    /// Go `cancelMppTasks`: one cancel names the stores of the running tasks
+    /// only (a task not yet dispatched needs none), every task is then
+    /// cancelled and is never dispatched, and a second cancel sends nothing.
+    #[test]
+    fn test_cancel_mpp_tasks_cancels_running_stores_once() {
+        let recorder = Arc::new(CancelRecorder::default());
+        let client: Arc<dyn MppClient> = Arc::clone(&recorder) as Arc<dyn MppClient>;
+        let reports = reports_with(&[
+            (1, "a", MppTaskState::Running),
+            (2, "b", MppTaskState::Ready),
+            (3, "a", MppTaskState::Running),
+            (4, "c", MppTaskState::Running),
+        ]);
+        reports.cancel_mpp_tasks(&client);
+        reports.cancel_mpp_tasks(&client);
+        let sent = recorder.0.lock().unwrap().clone();
+        assert_eq!(sent.len(), 1);
+        let mut stores: Vec<_> = sent[0].store_addresses.keys().cloned().collect();
+        stores.sort();
+        assert_eq!(stores, ["a", "c"]);
+        assert_eq!(sent[0].requests[0].start_ts, 7);
+        assert!(reports.lock_tasks().tasks.iter().all(|(_, state)| *state == MppTaskState::Cancelled));
+        assert!(!reports.try_start_dispatch(1));
+    }
+
+    /// Go `sendError`: the error is the gather's response, and the tasks
+    /// running on their stores are cancelled.
+    #[test]
+    fn test_send_error_cancels_running_tasks() {
+        let recorder = Arc::new(CancelRecorder::default());
+        let client: Arc<dyn MppClient> = Arc::clone(&recorder) as Arc<dyn MppClient>;
+        let reports = reports_with(&[(1, "a", MppTaskState::Running), (2, "b", MppTaskState::Running)]);
+        let (resp_tx, resp_rx) = std::sync::mpsc::sync_channel(1);
+        send_error(&resp_tx, &reports, &client, &MppError::Other("dispatch failed".to_owned()));
+        assert!(matches!(resp_rx.try_recv(), Ok(Err(QueryResponseError::Source(message))) if message == "dispatch failed"));
+        let sent = recorder.0.lock().unwrap().clone();
+        assert_eq!(sent.len(), 1);
+        assert_eq!(sent[0].store_addresses.len(), 2);
     }
 
     /// Go `TestSetMPPEncodeTypeRespectsChunkRPCSetting`.
