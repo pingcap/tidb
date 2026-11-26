@@ -33,9 +33,13 @@ import (
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/keyspace"
+	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/testkit/testsetup"
 	util2 "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/etcd"
+	"github.com/pingcap/tidb/pkg/util/versioninfo"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/require"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/tests/v3/integration"
@@ -1217,6 +1221,21 @@ func TestCleanupStaleServerAndOwnerInfo(t *testing.T) {
 			requireServerInfoKey(ctx, t, scopedClient, caller.serverInfoPath)
 		})
 	}
+}
+
+func TestCrossKeyspaceSyncerPreservesServerStartTime(t *testing.T) {
+	gauge := metrics.ServerInfo.WithLabelValues(mysql.TiDBReleaseVersion, versioninfo.TiDBGitHash)
+	original := testutil.ToFloat64(gauge)
+	t.Cleanup(func() { gauge.Set(original) })
+	gauge.Set(0)
+	primary := NewSyncer("primary", func() uint64 { return 1 }, nil, nil)
+	require.Equal(t, float64(primary.GetLocalServerInfo().StartTimestamp), testutil.ToFloat64(gauge))
+
+	// Model a process that has been running longer than the virtual runtime.
+	earlier := float64(primary.GetLocalServerInfo().StartTimestamp - 60)
+	gauge.Set(earlier)
+	NewCrossKSSyncer("virtual", func() uint64 { return 0 }, nil, nil, "tenant")
+	require.Equal(t, earlier, testutil.ToFloat64(gauge))
 }
 
 func TestAssumedServerInfoSyncer(t *testing.T) {

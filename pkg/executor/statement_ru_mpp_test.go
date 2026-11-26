@@ -72,7 +72,7 @@ func TestStatementRUMPPUnits(t *testing.T) {
 	require.InDelta(t, finalized.result.TotalRU, finalized.engineRU.TiDB+finalized.engineRU.TiFlash, 1e-9)
 	require.InDelta(t, finalized.result.TotalRU, operators.TotalRU, 1e-9)
 	var reportUnits ruv2.StmtUnits
-	for _, ops := range finalized.report.units {
+	for _, ops := range finalized.report.matrix() {
 		for _, units := range ops {
 			reportUnits = reportUnits.Add(units)
 		}
@@ -110,7 +110,7 @@ func TestStatementRUMPPUnits(t *testing.T) {
 		require.True(t, ok)
 		require.Equal(t, expected.units, actual.units)
 		require.Equal(t, expected.engineRU, actual.engineRU)
-		require.Equal(t, expected.report.units, actual.report.units)
+		require.Equal(t, expected.report.matrix(), actual.report.matrix())
 		require.Equal(t, float64(readBytes), actual.units.ScanBytes)
 		require.Equal(t, statementRUCalibrationIncomplete, actual.calibrationState)
 	}

@@ -310,7 +310,7 @@ func constructIndexJoinStatic(
 	}
 	chReqProps := make([]*property.PhysicalProperty, 2)
 	chReqProps[outerIdx] = &property.PhysicalProperty{TaskTp: property.RootTaskType,
-		ExpectedCnt:       physicalop.CalcChildExpectedCnt(p.SCtx(), prop, outerStats.RowCount, p.StatsInfo().RowCount),
+		ExpectedCnt:       physicalop.CalcChildExpectedCnt(p.SCtx(), prop.ExpectedCnt, !prop.IsSortItemEmpty(), outerStats.RowCount, p.StatsInfo().RowCount),
 		SortItems:         prop.SortItems,
 		CTEProducerStatus: prop.CTEProducerStatus,
 		NoCopPushDown:     prop.NoCopPushDown,
@@ -2421,7 +2421,7 @@ func exhaustPhysicalPlans4LogicalApply(super base.LogicalPlan, prop *property.Ph
 	// inner side produces enough matching rows (same logic used by IndexJoin).
 	outerExpectedCnt := math.MaxFloat64
 	if !prop.IsSortItemEmpty() {
-		outerExpectedCnt = physicalop.CalcChildExpectedCnt(la.SCtx(), prop, stats0.RowCount, la.StatsInfo().RowCount)
+		outerExpectedCnt = physicalop.CalcChildExpectedCnt(la.SCtx(), prop.ExpectedCnt, true, stats0.RowCount, la.StatsInfo().RowCount)
 	}
 
 	apply := physicalop.PhysicalApply{

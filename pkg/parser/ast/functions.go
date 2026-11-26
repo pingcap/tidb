@@ -497,9 +497,52 @@ const (
 	StLongFromGeoHash  = "st_longfromgeohash"
 	StPointFromGeoHash = "st_pointfromgeohash"
 
-	// geospatial functions (TiDB extension): EWKB in and out
+	// geospatial functions (TiDB extension): EWKB and EWKT in and out
 	StAsEWKB       = "st_asewkb"
 	StGeomFromEWKB = "st_geomfromewkb"
+	StAsEWKT       = "st_asewkt"
+	StGeomFromEWKT = "st_geomfromewkt"
+
+	// geospatial functions (TiDB extension): Z and M coordinates, linear referencing and
+	// trajectories, as PostGIS names them
+	StZ                      = "st_z"
+	StM                      = "st_m"
+	StHasZ                   = "st_hasz"
+	StHasM                   = "st_hasm"
+	StForce2D                = "st_force2d"
+	StLocateBetween          = "st_locatebetween"
+	StLocateAlong            = "st_locatealong"
+	StInterpolatePoint       = "st_interpolatepoint"
+	StAddMeasure             = "st_addmeasure"
+	StIsValidTrajectory      = "st_isvalidtrajectory"
+	StClosestPointOfApproach = "st_closestpointofapproach"
+	StDistanceCPA            = "st_distancecpa"
+	StCPAWithin              = "st_cpawithin"
+
+	// geospatial functions (TiDB extension): relations a geospatial index can serve, as
+	// PostGIS names them
+	StCovers    = "st_covers"
+	StCoveredBy = "st_coveredby"
+	StDWithin   = "st_dwithin"
+
+	// geospatial functions (TiDB extension): PostGIS spellings TiDB Cloud Lake also has
+	StMakePoint = "st_makepoint"
+	StSetSRID   = "st_setsrid"
+	StXMin      = "st_xmin"
+	StXMax      = "st_xmax"
+	StYMin      = "st_ymin"
+	StYMax      = "st_ymax"
+
+	// geospatial functions (TiDB extension): relations, accessors and processing beyond
+	// MySQL's, as PostGIS names them
+	StRelate                   = "st_relate"
+	StPointOnSurface           = "st_pointonsurface"
+	StBoundary                 = "st_boundary"
+	StIsRing                   = "st_isring"
+	StPerimeter                = "st_perimeter"
+	StClosestPoint             = "st_closestpoint"
+	StAzimuth                  = "st_azimuth"
+	StSimplifyPreserveTopology = "st_simplifypreservetopology"
 
 	// geospatial index functions (TiDB internal), behind the hidden columns of a geospatial index
 	TiDBSpatialKey  = "tidb_spatial_key"
