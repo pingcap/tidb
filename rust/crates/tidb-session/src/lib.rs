@@ -2720,6 +2720,9 @@ impl Session {
         if statements.len() == 1 {
             return Ok(vec![sql.to_owned()]);
         }
+        // Go `sessVars.InMultiStmts = len(stmts) > 1`, before the
+        // capability check: a refused multi-statement text is one too.
+        self.vars.in_multi_stmts = true;
         if !client_multi_statements {
             match self.vars().multi_statement_mode() {
                 0 => {
@@ -2729,7 +2732,6 @@ impl Session {
                 _ => self.deferred_multi_statement_warning = true,
             }
         }
-        self.vars.in_multi_stmts = true;
         // Each statement's exact source bytes (Go `OriginalText`), carried as
         // the whole text was for the parse each one gets again.
         Ok(statements

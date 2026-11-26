@@ -2545,7 +2545,7 @@ pub static METRIC_TABLE_MAP: &[(&str, MetricTableDef)] = &[
     (
         "tidb_qps_ideal",
         MetricTableDef {
-            prom_ql: "sum(tidb_server_connections) * sum(rate(tidb_server_handle_query_duration_seconds_count[$RANGE_DURATION])) / sum(rate(tidb_server_handle_query_duration_seconds_sum[$RANGE_DURATION]))",
+            prom_ql: "sum(tidb_server_connections) * sum(rate(tidb_server_handle_command_duration_seconds_count[$RANGE_DURATION])) / sum(rate(tidb_server_handle_command_duration_seconds_sum[$RANGE_DURATION]))",
             labels: &[],
             quantile: 0.0,
             comment: "",

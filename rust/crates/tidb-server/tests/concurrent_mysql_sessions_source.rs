@@ -696,7 +696,7 @@ fn command_dispatch_exports_success_and_error_counters() {
         .encode_to_string(&prometheus::gather())
         .unwrap();
     assert!(
-        text.contains("tidb_server_handle_query_duration_seconds_count{"),
+        text.contains("tidb_server_handle_command_duration_seconds_count{"),
         "completed commands must observe duration: {text}"
     );
     for (command, result) in [("Ping", "OK"), ("127", "Error")] {
@@ -817,7 +817,7 @@ fn query_metrics_use_post_dispatch_group_and_exclude_text_ddl() {
     }
     assert!(
         text.lines().any(|line| line
-            .starts_with("tidb_server_handle_query_duration_seconds_count{")
+            .starts_with("tidb_server_handle_command_duration_seconds_count{")
             && line.contains("sql_type=\"Select\"")
             && line.contains("resource_group=\"metrics-statement-hint\"")
             && line.ends_with(" 3")),
@@ -869,7 +869,7 @@ fn prepared_execute_exports_cached_statement_label() {
     );
     assert!(
         text.lines().any(|line| line
-            .starts_with("tidb_server_handle_query_duration_seconds_count{")
+            .starts_with("tidb_server_handle_command_duration_seconds_count{")
             && line.contains("sql_type=\"Begin\"")
             && line.ends_with(" 2")),
         "{text}"

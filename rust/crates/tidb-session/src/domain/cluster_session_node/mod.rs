@@ -3275,8 +3275,29 @@ fn with_exec_option_of<H, T>(
         }
         Ok(())
     })();
+    let started = std::time::Instant::now();
     let result = applied.and_then(|()| run(holder));
     let session = session_of(holder);
+    // Go `ExecRestrictedSQL`: a restricted operation that answered its rows
+    // is one `internal` sample in both duration histograms, under the
+    // session's database labels (its statement's tables are not kept here:
+    // with Status.RecordDBLabel on, the current database labels it).
+    if result.is_ok() {
+        let cost = started.elapsed().as_secs_f64();
+        let record_db_label =
+            tidb_config::config_tree::config::get_global_config().status.record_db_label;
+        let resource_group = session.active_resource_group().to_owned();
+        for db in tidb_metrics::metricsutil::get_db_names(record_db_label, [], &session.vars.current_db) {
+            for histogram in [
+                &*tidb_metrics::server::QUERY_DURATION_HISTOGRAM,
+                &*tidb_metrics::server::COMMAND_DURATION_HISTOGRAM,
+            ] {
+                histogram
+                    .with_label_values(&["internal", &db, &resource_group])
+                    .observe(cost);
+            }
+        }
+    }
     for (name, value) in [
         (TIDB_ANALYZE_VERSION, prev_stats_ver),
         (TIDB_ENABLE_ANALYZE_SNAPSHOT, prev_analyze_snapshot),

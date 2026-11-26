@@ -201,6 +201,12 @@ pub trait QuerySession {
         Ok(vec![sql.to_owned()])
     }
 
+    /// Go `SessionVars.InMultiStmts` after [`Self::split_statements`]: the
+    /// COM_QUERY text holds more than one statement.
+    fn in_multi_stmts(&self) -> bool {
+        false
+    }
+
     /// Go `clientConn.prefetchPointPlanKeys` for a multi-statement query's
     /// statements, before the first runs.
     fn prefetch_point_plan_keys(&mut self, _statements: &[String], _sql: &str) -> Result<(), SqlQueryError> {

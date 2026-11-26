@@ -2605,8 +2605,13 @@ fn run_connection_commands<S: QuerySession>(
                     // response but the LAST carries SERVER_MORE_RESULTS_EXISTS
                     // (`conn.go:2269`); an execution error aborts the remainder,
                     // as Go's loop returns on error.
-                    let statements = match engine
-                        .split_statements(sql, capabilities & CLIENT_MULTI_STATEMENTS != 0)
+                    let statements = engine
+                        .split_statements(sql, capabilities & CLIENT_MULTI_STATEMENTS != 0);
+                    // Go `addQueryMetrics`: a multi-statement COM_QUERY (even
+                    // one the capability check refuses) is one `MultiStmt`
+                    // command.
+                    command_metrics.multi_statement = engine.in_multi_stmts();
+                    let statements = match statements
                     {
                         Ok(statements) => statements,
                         Err(error) => {

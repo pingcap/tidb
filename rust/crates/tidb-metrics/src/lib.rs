@@ -27,6 +27,7 @@ pub mod gc_worker;
 pub mod globalsort;
 pub mod materialized_view;
 pub mod memory;
+pub mod metricsutil;
 pub mod meta;
 pub mod owner;
 pub mod panic;

@@ -13,7 +13,7 @@
 // limitations under the License.
 
 //! Go clientConn.addQueryMetrics command counters.
-use prometheus::{HistogramOpts, HistogramVec, IntCounterVec, Opts};
+use prometheus::{IntCounterVec, Opts};
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -39,22 +39,6 @@ static QUERIES: LazyLock<IntCounterVec> = LazyLock::new(|| {
     prometheus::default_registry()
         .register(Box::new(metric.clone()))
         .expect("query counter registered once");
-    metric
-});
-
-static DURATIONS: LazyLock<HistogramVec> = LazyLock::new(|| {
-    let metric = HistogramVec::new(
-        HistogramOpts::new(
-            "tidb_server_handle_query_duration_seconds",
-            "Bucketed histogram of processing time (s) of handled queries.",
-        )
-        .buckets(prometheus::exponential_buckets(0.0005, 2.0, 29).expect("valid buckets")),
-        &["sql_type", "db", "resource_group"],
-    )
-    .expect("valid query histogram");
-    prometheus::default_registry()
-        .register(Box::new(metric.clone()))
-        .expect("query histogram registered once");
     metric
 });
 
@@ -139,6 +123,10 @@ pub(crate) struct CommandMetrics {
     error: prometheus::IntCounter,
     pub(crate) skip: bool,
     pub(crate) sql_type: &'static str,
+    /// Go `SessionVars.InMultiStmts` of a COM_QUERY: the duration covers the
+    /// whole command, so it is labeled `MultiStmt` rather than by its last
+    /// statement. Other commands never carry it.
+    pub(crate) multi_statement: bool,
     group: Rc<GroupMetrics>,
     duration_group: Rc<GroupMetrics>,
     code: u8,
@@ -183,6 +171,7 @@ impl CommandMetrics {
             error,
             skip: false,
             sql_type: "general",
+            multi_statement: false,
             duration_group: Rc::clone(&group),
             group,
             code,
@@ -213,14 +202,18 @@ impl CommandMetrics {
 impl Drop for CommandMetrics {
     fn drop(&mut self) {
         if !self.skip {
-            // Go GetDBNames returns the empty label by default:
-            // Status.RecordDBLabel is disabled in the server configuration.
+            // Go `addQueryMetrics`: `CommandDurationHistogram`, labeled
+            // `MultiStmt` for a multi-statement COM_QUERY. Go GetDBNames
+            // returns the empty label by default: Status.RecordDBLabel is
+            // disabled in the server configuration.
+            let sql_type = if self.code == 3 && self.multi_statement { "MultiStmt" } else { self.sql_type };
             self.duration_group
                 .durations
                 .borrow_mut()
-                .entry(self.sql_type)
+                .entry(sql_type)
                 .or_insert_with(|| {
-                    DURATIONS.with_label_values(&[self.sql_type, "", &self.duration_group.name])
+                    tidb_metrics::server::COMMAND_DURATION_HISTOGRAM
+                        .with_label_values(&[sql_type, "", &self.duration_group.name])
                 })
                 .observe(self.started.elapsed().as_secs_f64());
             if COMMAND_FAILED.get() {
@@ -254,6 +247,33 @@ mod tests {
         assert_eq!(ok.get(), 1);
         assert_eq!(error.get(), 1);
         assert_eq!(group.durations.borrow()["general"].get_sample_count(), 2);
+    }
+
+    /// Go `TestStatementDurationMetrics`, "command label boundaries": a
+    /// multi-statement COM_QUERY is one `MultiStmt` command, never labeled
+    /// by its last statement; other commands never carry the flag.
+    #[test]
+    fn test_statement_duration_metrics_command_label_boundaries() {
+        let count = |sql_type: &str| {
+            tidb_metrics::server::COMMAND_DURATION_HISTOGRAM
+                .with_label_values(&[sql_type, "", "label-boundaries"])
+                .get_sample_count()
+        };
+        for (code, multi_statement, label) in [
+            (3, true, "MultiStmt"),
+            (3, false, "Select"),
+            (14, true, "Select"),
+            (23, true, "Select"),
+        ] {
+            let (multi_before, select_before) = (count("MultiStmt"), count("Select"));
+            {
+                let mut metrics = CommandMetrics::start(code, "label-boundaries");
+                metrics.sql_type = "Select";
+                metrics.multi_statement = multi_statement;
+            }
+            let (multi, select) = (count("MultiStmt") - multi_before, count("Select") - select_before);
+            assert_eq!((multi, select), if label == "MultiStmt" { (1, 0) } else { (0, 1) }, "{code} {multi_statement}");
+        }
     }
 
     #[test]

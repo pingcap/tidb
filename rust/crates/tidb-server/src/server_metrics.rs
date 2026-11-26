@@ -24,8 +24,7 @@
 //! are registered exactly as Go registers them at init, so the exported
 //! family set matches even where the series stay at Go's init state.
 //!
-//! The two query families Go also declares here — `tidb_server_query_total`
-//! and `tidb_server_handle_query_duration_seconds` — stay in
+//! `tidb_server_query_total`, which Go also declares here, stays in
 //! [`crate::query_metrics`], which transcribes `clientConn.addQueryMetrics`
 //! together with the dispatch scope guard.
 

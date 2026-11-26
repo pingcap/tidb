@@ -24,9 +24,8 @@
 //! are registered exactly as Go registers them at init, so the exported
 //! family set matches even where the series stay at Go's init state.
 //!
-//! The two query families Go also declares here — `tidb_server_query_total`
-//! and `tidb_server_handle_query_duration_seconds` — stay in
-//! [`crate::query_metrics`], which transcribes `clientConn.addQueryMetrics`
+//! `tidb_server_query_total`, which Go also declares here, stays in the
+//! server's `query_metrics`, which transcribes `clientConn.addQueryMetrics`
 //! together with the dispatch scope guard.
 
 use prometheus::{
@@ -82,6 +81,32 @@ pub static PACKET_IO_BYTES: LazyLock<IntCounterVec> = LazyLock::new(|| {
             "Counters of packet IO bytes.",
         ),
         &[labels::TYPE],
+    ))
+});
+
+/// Go `metrics.QueryDurationHistogram`: one sample per user statement
+/// (`ExecStmt.FinishExecuteStmt`) and per restricted SQL operation.
+pub static QUERY_DURATION_HISTOGRAM: LazyLock<HistogramVec> = LazyLock::new(|| {
+    register(HistogramVec::new(
+        HistogramOpts::new(
+            "tidb_server_handle_query_duration_seconds",
+            "Bucketed histogram of processing time (s) of individual SQL statements.",
+        )
+        .buckets(prometheus::exponential_buckets(0.0005, 2.0, 29).expect("valid buckets")), // 0.5ms ~ 1.5days
+        &[labels::SQL_TYPE, labels::DB, labels::RESOURCE_GROUP],
+    ))
+});
+
+/// Go `metrics.CommandDurationHistogram`: one sample per handled command
+/// (`clientConn.addQueryMetrics`) and per restricted SQL operation.
+pub static COMMAND_DURATION_HISTOGRAM: LazyLock<HistogramVec> = LazyLock::new(|| {
+    register(HistogramVec::new(
+        HistogramOpts::new(
+            "tidb_server_handle_command_duration_seconds",
+            "Bucketed histogram of processing time (s) of handled commands and restricted SQL operations.",
+        )
+        .buckets(prometheus::exponential_buckets(0.0005, 2.0, 29).expect("valid buckets")),
+        &[labels::SQL_TYPE, labels::DB, labels::RESOURCE_GROUP],
     ))
 });
 

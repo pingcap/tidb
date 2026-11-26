@@ -31529,3 +31529,85 @@ fn test_maintenance_mode() {
     // Go's `show import jobs` check reads).
     assert_eq!(displayed(rows(&mut tk, "select count(*) from mysql.tidb_global_task")), [["0"]]);
 }
+
+/// Go `TestStatementDurationMetrics` (`pkg/server/conn_test.go`), its
+/// statement half: each user statement of a command is one sample of its own
+/// type in `tidb_server_handle_query_duration_seconds` (multi-statement
+/// timing, prepared executes, no sample for a parse or compile error), and a
+/// restricted SQL operation is one `internal` sample in both duration
+/// histograms.
+#[test]
+fn test_statement_duration_metrics() {
+    let (stack, _users) = cop_backed_stack();
+    let mut tk = stack.factory.open_session(session_context(89)).expect("session opens");
+    rows(&mut tk, "CREATE DATABASE IF NOT EXISTS test");
+    rows(&mut tk, "use test");
+    rows(&mut tk, "create table statement_duration (id int primary key, v int)");
+    let group = tk.active_resource_group().to_owned();
+    let statement = |sql_type: &str| {
+        tidb_metrics::server::QUERY_DURATION_HISTOGRAM
+            .with_label_values(&[sql_type, "", &group])
+            .get_sample_count()
+    };
+    let command = |sql_type: &str| {
+        tidb_metrics::server::COMMAND_DURATION_HISTOGRAM
+            .with_label_values(&[sql_type, "", &group])
+            .get_sample_count()
+    };
+
+    // multi statement timing: one sample per statement, by its own type.
+    let (insert_before, update_before) = (statement("Insert"), statement("Update"));
+    for sql in tk
+        .split_statements(
+            "insert into statement_duration values (1, 0); update statement_duration set v = v + 1 where id = 1",
+            true,
+        )
+        .unwrap()
+    {
+        rows(&mut tk, &sql);
+    }
+    assert!(tk.vars.in_multi_stmts);
+    // A multi-statement text the capability check refuses is still one
+    // (Go labels the refused command `MultiStmt`); a single one is not.
+    rows(&mut tk, "set tidb_multi_statement_mode = OFF");
+    assert!(tk.split_statements("select 1; select 2", false).is_err());
+    assert!(tk.vars.in_multi_stmts);
+    tk.split_statements("select 1", false).unwrap();
+    assert!(!tk.vars.in_multi_stmts);
+    assert_eq!(statement("Insert"), insert_before + 1);
+    assert_eq!(statement("Update"), update_before + 1);
+    assert_eq!(
+        tidb_metrics::server::QUERY_DURATION_HISTOGRAM
+            .with_label_values(&["Insert", "", &group])
+            .get_sample_count(),
+        insert_before + 1
+    );
+
+    // prepared execute: a sample per execution, none for the prepare.
+    let select_before = statement("Select");
+    rows(&mut tk, "prepare duration_stmt from 'select v from statement_duration where id = 1'");
+    rows(&mut tk, "execute duration_stmt");
+    rows(&mut tk, "execute duration_stmt");
+    rows(&mut tk, "deallocate prepare duration_stmt");
+    assert_eq!(statement("Select"), select_before + 2);
+
+    // parse and compile errors: no sample.
+    let select_before = statement("Select");
+    query_error(&mut tk, "select from");
+    query_error(&mut tk, "select * from statement_duration_missing");
+    assert_eq!(statement("Select"), select_before);
+
+    // restricted SQL: an internal sample in both histograms, no user one.
+    let context = tikv_client::util::with_internal_source_type(
+        &tikv_client::trace::TraceContext::new(),
+        tidb_txnkv::INTERNAL_TXN_OTHERS,
+    );
+    let (internal_statement, internal_command) = (statement("internal"), command("internal"));
+    let select_before = statement("Select");
+    let cur: tidb_sqlexec::OptionFuncAlias = Arc::new(tidb_sqlexec::exec_option_use_cur_session);
+    tk.execute_restricted_sql(&context, &[cur], "select v from test.statement_duration", &[])
+        .unwrap();
+    assert_eq!(statement("internal"), internal_statement + 1);
+    assert_eq!(command("internal"), internal_command + 1);
+    assert_eq!(statement("Select"), select_before);
+}

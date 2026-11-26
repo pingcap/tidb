@@ -1141,6 +1141,28 @@ pub trait FinishExecuteStmt: ExecStmtObservation + PlanReplayerCapture {
             self.update_prev_stmt(observation);
             self.record_last_query_info(observation, error);
             self.record_affected_rows_2_metrics(&observation.label, affected_rows);
+            // Go: restricted SQL helpers already record query durations.
+            // One sample per user statement, its total cost including
+            // parsing, under each of its database labels.
+            if !self.session_vars().restricted_sql {
+                let sql_type = if observation.label.is_empty() {
+                    "general"
+                } else {
+                    observation.label.as_str()
+                };
+                let record_db_label =
+                    tidb_config::config_tree::config::get_global_config().status.record_db_label;
+                let resource_group = self.observed_resource_group();
+                for db in tidb_metrics::metricsutil::get_db_names(
+                    record_db_label,
+                    phases.tables.iter().map(|table| table.db.as_str()),
+                    &self.session_vars().current_db,
+                ) {
+                    tidb_metrics::server::QUERY_DURATION_HISTOGRAM
+                        .with_label_values(&[sql_type, &db, &resource_group])
+                        .observe(elapsed.as_secs_f64());
+                }
+            }
         }
         self.summary_stmt(observation, phases, elapsed, succeeded, affected_rows, result_rows);
     }
