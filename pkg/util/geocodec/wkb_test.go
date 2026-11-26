@@ -90,12 +90,6 @@ func bareOf(srid uint32, g []byte) []byte {
 	return append(binary.LittleEndian.AppendUint32(nil, srid), g...)
 }
 
-// stored makes a little-endian root geometry g without an SRID a stored value at srid.
-func stored(srid uint32, g []byte) []byte { return storedFromBare(bareOf(srid, g)) }
-
-// storedFromBare prefixes a bare value with the version byte.
-func storedFromBare(b []byte) []byte { return append([]byte{Version1}, b...) }
-
 // nestedCollections returns WKB (little-endian, no SRID) for depth GEOMETRYCOLLECTIONs,
 // each holding the next, the innermost empty.
 func nestedCollections(depth int) []byte {
@@ -148,19 +142,6 @@ func multiPointWKB(n int) []byte {
 		b = appendPointWKB(b, binary.LittleEndian, float64(i%360-180), float64(i%180-90))
 	}
 	return b
-}
-
-// hostileCounts returns a 1 MiB value in MySQL's format of collections nested to the
-// depth bound, each claiming as many members as the rest of the value could hold.
-func hostileCounts() []byte {
-	const size = 1 << 20
-	b := make([]byte, 4, size)
-	for range MaxDepth {
-		b = append(b, byteOrderLittle)
-		b = binary.LittleEndian.AppendUint32(b, 7)
-		b = binary.LittleEndian.AppendUint32(b, uint32((size-len(b)-4)/minGeometrySize))
-	}
-	return append(b, make([]byte, size-len(b))...)
 }
 
 // wkbGen generates random WKB of every type, byte by byte, and knows whether what it

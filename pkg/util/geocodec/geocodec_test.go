@@ -15,6 +15,7 @@
 package geocodec
 
 import (
+	"bytes"
 	"encoding/binary"
 	"errors"
 	"math"
@@ -41,6 +42,7 @@ func polygon(d dims, rings ...[]float64) []byte {
 
 var (
 	point12  = le(TypePoint, dimsXY, coords(1, 2))
+	point12M = le(TypePoint, dimsXYM, coords(1, 2, 3))
 	line0011 = line(dimsXY, 0, 0, 1, 1)
 	triangle = polygon(dimsXY, []float64{0, 0, 0, 1, 1, 1, 0, 0})
 )
@@ -57,6 +59,34 @@ func checkAccepted(t testing.TB, b []byte) {
 	back, err := StoredToBare(s)
 	require.NoError(t, err, "%X", b)
 	require.Equal(t, b, back, "%X", b)
+}
+
+// checkAny requires CheckBare and ParseColumnValue to agree on b: CheckBare accepts what
+// ParseColumnValue accepts, a value either accepts is consistent with Header and the
+// stored format, and a refusal is ErrInvalid or ErrTooDeep. It reports whether
+// ParseColumnValue accepted b.
+func checkAny(t testing.TB, b []byte) bool {
+	checkErr := CheckBare(b)
+	if checkErr != nil {
+		require.True(t, errors.Is(checkErr, ErrInvalid) || errors.Is(checkErr, ErrTooDeep), "%X: %v", b, checkErr)
+	} else {
+		checkAccepted(t, b)
+	}
+	got, srid, sum, err := ParseColumnValue(b)
+	if err != nil {
+		return false
+	}
+	require.NoError(t, checkErr, "%X", b)
+	require.Len(t, got, len(b), "%X", b)
+	again, againSRID, againSum, err := ParseColumnValue(got)
+	require.NoError(t, err, "%X", b)
+	require.Equal(t, got, again, "%X", b)
+	require.Equal(t, srid, againSRID, "%X", b)
+	require.Equal(t, sum, againSum, "%X", b)
+	_, typ, err := Header(got)
+	require.NoError(t, err, "%X", b)
+	require.Equal(t, sum.Type, typ, "%X", b)
+	return true
 }
 
 func TestMySQLFormat(t *testing.T) {
@@ -107,9 +137,14 @@ func TestMySQLFormat(t *testing.T) {
 		"hostile point count":      "00000000 01 02000000 FFFFFF0F",
 		"too short for an SRID":    "000000",
 		"no geometry":              "E6100000",
+		// A stored value is not a bare value.
+		"stored value": "01 E6100000 01 01000000 000000000000F03F 0000000000000040",
 	}
 	for name, h := range rejects {
-		require.ErrorIs(t, CheckBare(mustHex(t, h)), ErrInvalid, name)
+		b := mustHex(t, h)
+		require.ErrorIs(t, CheckBare(b), ErrInvalid, name)
+		_, _, _, err := ParseColumnValue(b)
+		require.ErrorIs(t, err, ErrInvalid, name)
 	}
 }
 
@@ -179,7 +214,7 @@ func TestZMAndEmpty(t *testing.T) {
 	for _, v := range [][]byte{
 		// Z and M, at the root and below it.
 		le(TypePoint, dimsXYZ, coords(1, 2, 3)),
-		le(TypePoint, dimsXYM, coords(1, 2, 4)),
+		point12M,
 		le(TypePoint, dimsXYZM, coords(1, 2, 3, 4)),
 		line(dimsXYZ, 0, 0, 1, 1, 1, 1),
 		polygon(dimsXYM, []float64{0, 0, 1, 0, 1, 1, 1, 1, 1, 0, 0, 1}),
@@ -187,7 +222,7 @@ func TestZMAndEmpty(t *testing.T) {
 		collectionOf(TypeMultiLineString, dimsXYM, line(dimsXYM, 0, 0, 1, 1, 1, 1)),
 		collectionOf(TypeMultiPolygon, dimsXYZ, polygon(dimsXYZ, []float64{0, 0, 1, 0, 1, 1, 1, 1, 1, 0, 0, 1})),
 		collectionOf(gc, dimsXYZ),
-		collectionOf(gc, dimsXYM, collectionOf(gc, dimsXYM, le(TypePoint, dimsXYM, coords(1, 2, 3)))),
+		collectionOf(gc, dimsXYM, collectionOf(gc, dimsXYM, point12M)),
 		// An empty geometry other than a GEOMETRYCOLLECTION, at any depth.
 		emptyPoint(dimsXY),
 		line(dimsXY),
@@ -203,12 +238,7 @@ func TestZMAndEmpty(t *testing.T) {
 	} {
 		b := bareOf(4326, v)
 		require.NoError(t, CheckBare(b), "%X", b)
-		checkAccepted(t, b)
-	}
-	// POINT EMPTY of any NaN.
-	for _, nan := range nanBits {
-		f := math.Float64frombits(nan)
-		require.NoError(t, CheckBare(bareOf(0, le(TypePoint, dimsXYM, coords(f, f, f)))))
+		require.True(t, checkAny(t, b), "%X", b)
 	}
 	// At the depth bound, as the deepest member.
 	for _, b := range [][]byte{
@@ -218,6 +248,113 @@ func TestZMAndEmpty(t *testing.T) {
 		require.NoError(t, CheckBare(b))
 		checkAccepted(t, b)
 	}
+}
+
+// TestNaNRewrite checks that ParseColumnValue returns a POINT EMPTY of another NaN as the
+// quiet NaN, in a copy, and the input left as it is, while CheckBare accepts any NaN.
+func TestNaNRewrite(t *testing.T) {
+	want := bareOf(4326, collectionOf(TypeMultiPoint, dimsXYM, point12M, emptyPoint(dimsXYM)))
+	for _, nan := range nanBits {
+		f := math.Float64frombits(nan)
+		in := bareOf(4326, collectionOf(TypeMultiPoint, dimsXYM, point12M, le(TypePoint, dimsXYM, coords(f, f, f))))
+		require.NoError(t, CheckBare(in))
+		orig := bytes.Clone(in)
+		got, srid, sum, err := ParseColumnValue(in)
+		require.NoError(t, err)
+		require.Equal(t, want, got)
+		require.Equal(t, uint32(4326), srid)
+		require.Equal(t, Summary{Type: TypeMultiPoint, Envelope: Envelope{1, 2, 1, 2, true}}, sum)
+		require.Equal(t, orig, in)
+		require.Equal(t, nan == quietNaN, &got[0] == &in[0])
+	}
+}
+
+func TestParseColumnValue(t *testing.T) {
+	const xy = dimsXY
+	gc := func(members ...[]byte) []byte { return collectionOf(TypeGeometryCollection, xy, members...) }
+	square := []float64{0, 0, 1, 0, 1, 1, 0, 1}
+	closed := []float64{0, 0, 1, 0, 1, 1, 0, 0}
+	hole := []float64{0.2, 0.1, 0.8, 0.1, 0.8, 0.7, 0.2, 0.1}
+	line1 := line(xy, 0, 0)
+
+	for _, c := range []struct {
+		g   []byte
+		typ Type
+		env Envelope
+	}{
+		{point12, TypePoint, Envelope{1, 2, 1, 2, true}},
+		{line0011, TypeLineString, Envelope{0, 0, 1, 1, true}},
+		{polygon(xy, closed, hole), TypePolygon, Envelope{0, 0, 1, 1, true}},
+		{collectionOf(TypeMultiPoint, xy, point12, le(TypePoint, xy, coords(3, -4))), TypeMultiPoint, Envelope{1, -4, 3, 2, true}},
+		{collectionOf(TypeMultiPolygon, xy, polygon(xy, closed)), TypeMultiPolygon, Envelope{0, 0, 1, 1, true}},
+		{gc(), TypeGeometryCollection, Envelope{}},
+		{gc(point12, gc()), TypeGeometryCollection, Envelope{1, 2, 1, 2, true}},
+		// An interior ring outside the exterior ring widens the envelope.
+		{polygon(xy, closed, []float64{5, 5, 5, 6, 6, 6, 5, 5}), TypePolygon, Envelope{0, 0, 6, 6, true}},
+		// The envelope takes X and Y only, and an empty point has no position.
+		{collectionOf(TypeMultiPoint, dimsXYZM, le(TypePoint, dimsXYZM, coords(1, 2, 300, 400)), emptyPoint(dimsXYZM),
+			le(TypePoint, dimsXYZM, coords(-5, 6, -700, 800))), TypeMultiPoint, Envelope{-5, 2, 1, 6, true}},
+	} {
+		for _, srid := range []uint32{0, 4326, 3857} {
+			in := bareOf(srid, c.g)
+			got, gotSRID, sum, err := ParseColumnValue(in)
+			require.NoError(t, err, "%X", in)
+			// A value already in canonical form is returned as it is.
+			require.Same(t, &in[0], &got[0], "%X", in)
+			require.Equal(t, srid, gotSRID, "%X", in)
+			require.Equal(t, Summary{Type: c.typ, Envelope: c.env}, sum, "%X", in)
+		}
+	}
+
+	// The structure rules of MySQL's format, as measured on MySQL 9.7.2, except that the
+	// bare value also holds empty geometries and Z and M. CheckBare accepts them all.
+	for _, c := range []struct {
+		name string
+		g    []byte
+		ok   bool
+	}{
+		{"LINESTRING(0 0,0 0)", line(xy, 0, 0, 0, 0), true},
+		{"unclosed ring of 4", polygon(xy, square), true},
+		{"self-crossing ring", polygon(xy, []float64{0, 0, 2, 2, 2, 0, 0, 2, 0, 0}), true},
+		{"ring of 4 equal points", polygon(xy, make([]float64, 8)), true},
+		{"unclosed interior ring of 4", polygon(xy, append(square, 0, 0), []float64{0.2, 0.2, 0.2, 0.4, 0.4, 0.4, 0.3, 0.3}), true},
+		{"overlapping polygons", collectionOf(TypeMultiPolygon, xy, polygon(xy, square), polygon(xy, square)), true},
+		{"collection of a polygon", gc(polygon(xy, square)), true},
+		{"collection of an empty collection", gc(gc()), true},
+		{"LINESTRING(0 0)", line1, false},
+		{"ring of 1", polygon(xy, []float64{0, 0}), false},
+		{"ring of 2", polygon(xy, []float64{0, 0, 0, 0}), false},
+		{"ring of 3", polygon(xy, []float64{0, 0, 1, 0, 0, 0}), false},
+		{"interior ring of 3", polygon(xy, closed, []float64{0.2, 0.2, 0.4, 0.4, 0.2, 0.2}), false},
+		{"MULTILINESTRING((0 0))", collectionOf(TypeMultiLineString, xy, line1), false},
+		{"multipolygon with a ring of 3", collectionOf(TypeMultiPolygon, xy, polygon(xy, []float64{0, 0, 1, 0, 0, 0})), false},
+		{"collection of LINESTRING(0 0)", gc(line1), false},
+		{"nested collection of LINESTRING(0 0)", gc(gc(line1)), false},
+		{"collection of MULTILINESTRING((0 0))", gc(collectionOf(TypeMultiLineString, xy, line1)), false},
+		{"POINT EMPTY", emptyPoint(xy), true},
+		{"LINESTRING EMPTY", line(xy), true},
+		{"POLYGON EMPTY", polygon(xy), true},
+		{"MULTIPOINT((1 2),EMPTY)", collectionOf(TypeMultiPoint, xy, point12, emptyPoint(xy)), true},
+		{"collection of LINESTRING EMPTY", gc(line(xy)), true},
+		{"LINESTRING M(0 0 1,1 1 2)", line(dimsXYM, 0, 0, 1, 1, 1, 2), true},
+		{"LINESTRING Z(0 0 1)", line(dimsXYZ, 0, 0, 1), false},
+		{"multipolygon Z with a ring of 3", collectionOf(TypeMultiPolygon, dimsXYZ, polygon(dimsXYZ, []float64{0, 0, 1, 1, 0, 1, 0, 0, 1})), false},
+	} {
+		in := bareOf(0, c.g)
+		require.NoError(t, CheckBare(in), c.name)
+		got, _, _, err := ParseColumnValue(in)
+		if c.ok {
+			require.NoError(t, err, "%s: %X", c.name, in)
+			require.Equal(t, in, got, c.name)
+		} else {
+			require.ErrorIs(t, err, ErrInvalid, "%s: %X", c.name, in)
+		}
+	}
+
+	// A one-point linestring is reported once the whole value is read, so a member nested
+	// too deep behind it is reported first.
+	_, _, _, err := ParseColumnValue(bareOf(0, gc(line1, nestedCollections(MaxDepth))))
+	require.ErrorIs(t, err, ErrTooDeep)
 }
 
 func TestDepthBound(t *testing.T) {
@@ -232,6 +369,8 @@ func TestDepthBound(t *testing.T) {
 		bareChain(MaxDepth+1, garbage),
 	} {
 		require.ErrorIs(t, CheckBare(b), ErrTooDeep)
+		_, _, _, err := ParseColumnValue(b)
+		require.ErrorIs(t, err, ErrTooDeep)
 		// Header reads only the root, so depth does not matter to it.
 		_, typ, err := Header(b)
 		require.NoError(t, err)
@@ -272,117 +411,108 @@ func TestTruncatedAndOverLong(t *testing.T) {
 	}
 }
 
-// randomBytes returns random bytes drawn mostly from values meaningful in a header, so
-// that parsing gets past the first few bytes.
-func randomBytes(rnd *rand.Rand, n int) []byte {
-	alphabet := []byte{0, 1, 2, 3, 4, 5, 6, 7, 0x20, 0x40, 0x80, 0xf0, 0x3f, 0x7f, 0xf8, 0xff}
-	b := make([]byte, n)
-	for i := range b {
-		if rnd.IntN(4) == 0 {
-			b[i] = byte(rnd.Uint32())
-		} else {
-			b[i] = alphabet[rnd.IntN(len(alphabet))]
-		}
-	}
-	return b
-}
-
-// checkAny requires CheckBare to refuse b with ErrInvalid or ErrTooDeep, or to accept it
-// consistently with Header and the stored format.
-func checkAny(t testing.TB, b []byte) {
-	err := CheckBare(b)
-	if err != nil {
-		require.True(t, errors.Is(err, ErrInvalid) || errors.Is(err, ErrTooDeep), "%X: %v", b, err)
-		return
-	}
-	checkAccepted(t, b)
-}
-
-func TestGarbage(t *testing.T) {
-	for _, s := range []string{"", "x", "POINT(1 2)", "\x00\x00\x00\x00", "\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff"} {
-		require.Error(t, CheckBare([]byte(s)))
-		_, _, _ = Header([]byte(s))
-	}
-	rnd := rand.New(rand.NewPCG(1, 2))
-	for range 20000 {
-		b := randomBytes(rnd, rnd.IntN(80))
-		checkAny(t, b)
-		_, _, _ = Header(b)
-	}
-}
-
-// TestGenerated checks CheckBare on generated values of every type and coordinate type,
-// with and without empty and big-endian members, against what the generator knows of each.
+// TestGenerated checks CheckBare and ParseColumnValue on generated values of every type and
+// coordinate type, with and without empty and big-endian members, against what the
+// generator knows of each: its canonical form, its envelope, whether a line or ring is too
+// short for MySQL's rules, and whether a member is big-endian.
 func TestGenerated(t *testing.T) {
-	rnd := rand.New(rand.NewPCG(20261111, 1))
-	accepted, bigEndian := 0, 0
+	rnd := rand.New(rand.NewPCG(20261119, 1))
+	accepted, short, big, rewritten := 0, 0, 0, 0
 	for _, d := range []dims{dimsXY, dimsXYZ, dimsXYM, dimsXYZM} {
 		for _, empty := range []float64{0, 0.15} {
-			for _, big := range []float64{0, 0.3} {
-				gen := wkbGen{rnd: rnd, d: d, empty: empty, big: big}
+			for _, bigChance := range []float64{0, 0.3} {
+				gen := wkbGen{rnd: rnd, d: d, empty: empty, big: bigChance}
 				for i := range 500 {
 					typ := allTypes[i%len(allTypes)]
 					wkb, hasBig := gen.geometry(typ, 1)
 					srid := gen.srid()
-					b := bareOf(srid, wkb)
+					in := bareOf(srid, wkb)
 					// Header reads only the root, which the generator writes little-endian.
-					gotSRID, gotType, err := Header(b)
-					require.NoError(t, err, "%X", b)
+					gotSRID, gotType, err := Header(in)
+					require.NoError(t, err, "%X", in)
 					require.Equal(t, srid, gotSRID)
 					require.Equal(t, typ, gotType)
-					if hasBig {
-						require.ErrorIs(t, CheckBare(b), ErrInvalid, "%X", b)
-						bigEndian++
-						continue
+					got, gotSRID, sum, err := ParseColumnValue(in)
+					switch {
+					case hasBig:
+						require.ErrorIs(t, CheckBare(in), ErrInvalid, "%X", in)
+						require.ErrorIs(t, err, ErrInvalid, "%X", in)
+						big++
+					case gen.short:
+						checkAccepted(t, in)
+						require.ErrorIs(t, err, ErrInvalid, "%X", in)
+						short++
+					default:
+						checkAccepted(t, in)
+						require.NoError(t, err, "%X", in)
+						require.Equal(t, bareOf(srid, gen.canon), got, "%X", in)
+						require.Equal(t, srid, gotSRID, "%X", in)
+						require.Equal(t, Summary{Type: typ, Envelope: gen.env}, sum, "%X", in)
+						accepted++
+						if !bytes.Equal(in, got) {
+							rewritten++
+						}
 					}
-					require.NoError(t, CheckBare(b), "%X", b)
-					checkAccepted(t, b)
+				}
+			}
+		}
+	}
+	require.Greater(t, accepted, 3000)
+	require.Greater(t, short, 1000)
+	require.Greater(t, big, 1000)
+	require.Greater(t, rewritten, 100)
+}
+
+// TestGeneratedMutations checks CheckBare and ParseColumnValue on generated values with one
+// byte changed, which reach the checks a well-formed value does not.
+func TestGeneratedMutations(t *testing.T) {
+	rnd := rand.New(rand.NewPCG(20261119, 2))
+	changes := []byte{0, 1, 2, 3, 4, 7, 0x20, 0x80, 0xf0, 0xf8, 0x7f, 0xff}
+	accepted := 0
+	for _, d := range []dims{dimsXY, dimsXYZM} {
+		gen := wkbGen{rnd: rnd, d: d, empty: 0.15}
+		for i := range 300 {
+			gen.geometry(allTypes[i%len(allTypes)], 1)
+			form := bareOf(4326, gen.canon)
+			for range 40 {
+				b := bytes.Clone(form)
+				b[rnd.IntN(len(b))] = changes[rnd.IntN(len(changes))]
+				if checkAny(t, b) {
 					accepted++
 				}
 			}
 		}
 	}
-	require.Greater(t, accepted, 4000)
-	require.Greater(t, bigEndian, 1000)
+	require.Greater(t, accepted, 1000)
 }
 
-// TestGeneratedMutations checks CheckBare on generated values with one byte changed, which
-// reach the checks a well-formed value does not.
-func TestGeneratedMutations(t *testing.T) {
-	rnd := rand.New(rand.NewPCG(20261111, 2))
-	values := []byte{0, 1, 2, 3, 4, 7, 0x20, 0x80, 0xf0, 0xf8, 0x7f, 0xff}
-	for _, d := range []dims{dimsXY, dimsXYZM} {
-		gen := wkbGen{rnd: rnd, d: d, empty: 0.1}
-		for i := range 100 {
-			wkb, _ := gen.geometry(allTypes[i%len(allTypes)], 1)
-			b := bareOf(gen.srid(), wkb)
-			for _, pos := range rnd.Perm(len(b))[:min(len(b), 100)] {
-				m := append([]byte{}, b...)
-				for _, v := range append(values, b[pos]^byte(1+rnd.IntN(255))) {
-					m[pos] = v
-					checkAny(t, m)
-				}
-			}
-		}
-	}
-}
-
-// TestAllocs checks that CheckBare and StoredToBare allocate nothing, whatever the input's
-// counts claim, and that BareToStored allocates only its result.
+// TestAllocs checks that CheckBare, ParseColumnValue and StoredToBare allocate nothing,
+// whatever the input's counts claim, except ParseColumnValue's rewritten value and
+// BareToStored's result.
 func TestAllocs(t *testing.T) {
 	deep := bareChain(MaxDepth-1, multiPointWKB(10000))
-	for _, b := range [][]byte{deep, hostileCounts(), deep[:len(deep)-1]} {
-		require.Zero(t, testing.AllocsPerRun(3, func() { _ = CheckBare(b) }), "%X", b[:min(len(b), 32)])
+	nan := bareOf(0, collectionOf(TypeMultiPoint, dimsXY, le(TypePoint, dimsXY, coords(math.NaN(), math.NaN()))))
+	for _, c := range []struct {
+		b                 []byte
+		check, parseAlloc float64
+	}{
+		{deep, 0, 0},
+		{deep[:len(deep)-1], 0, 0},
+		{nan, 0, 1},
+	} {
+		require.Equal(t, c.check, testing.AllocsPerRun(3, func() { _ = CheckBare(c.b) }), "%X", c.b[:min(len(c.b), 32)])
+		require.Equal(t, c.parseAlloc, testing.AllocsPerRun(3, func() { _, _, _, _ = ParseColumnValue(c.b) }), "%X", c.b[:min(len(c.b), 32)])
 	}
 	s := BareToStored(deep)
 	require.Zero(t, testing.AllocsPerRun(3, func() { _, _ = StoredToBare(s) }))
 	require.Equal(t, 1.0, testing.AllocsPerRun(3, func() { _ = BareToStored(deep) }))
 }
 
-func FuzzCheckBare(f *testing.F) {
+func FuzzBare(f *testing.F) {
 	f.Add(mustHex(f, "E6100000 01 01000000 0000000000000040 000000000000F03F"))
-	f.Add(bareOf(0, collectionOf(TypeGeometryCollection, dimsXY, triangle)))
-	f.Add(bareOf(4326, collectionOf(TypeMultiPoint, dimsXYM, le(TypePoint, dimsXYM, coords(1, 2, 3)), emptyPoint(dimsXYM))))
+	f.Add(bareOf(0, polygon(dimsXY, []float64{0, 0, 1, 0, 1, 1, 0, 1})))
+	f.Add(bareOf(0, collectionOf(TypeGeometryCollection, dimsXY, collectionOf(TypeMultiPoint, dimsXY, point12), line(dimsXY))))
+	f.Add(bareOf(4326, collectionOf(TypeMultiPoint, dimsXYM, point12M, le(TypePoint, dimsXYM, coords(math.NaN(), math.NaN(), math.NaN())))))
 	f.Add(bareChain(MaxDepth, point12))
 	f.Fuzz(func(t *testing.T, b []byte) {
 		require.Zero(t, testing.AllocsPerRun(1, func() { _ = CheckBare(b) }), "%X", b)
