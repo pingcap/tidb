@@ -91,14 +91,20 @@ pub fn merge_and_rewrite_file_ranges(
         entry.push(file.clone());
 
         // Assert that it has the same end key.
-        assert!(
-            entry[0].end_key == file.end_key,
-            "there are two files having the same start key, but different end key: \
-             start key {:?}, file 1 end key {:?}, file 2 end key {:?}",
-            file.start_key,
-            file.end_key,
-            entry[0].end_key
-        );
+        if entry[0].end_key != file.end_key {
+            // Go `logutil.Key`: the keys go through `redact.Key`.
+            let key = |name, key: &[u8]| {
+                tidb_log::Field::new(name, tidb_log::Value::Str(tidb_redact::key(key)))
+            };
+            tidb_log::panic(
+                "there are two files having the same start key, but different end key",
+                &[
+                    key("start key", &file.start_key),
+                    key("file 1 end key", &file.end_key),
+                    key("file 2 end key", &entry[0].end_key),
+                ],
+            );
+        }
         // All default-CF files are skipped because their ranges do not overlap.
         if file.cf == WRITE_CF_NAME || file.name.contains(WRITE_CF_NAME) {
             write_cf_file += 1;
@@ -187,6 +193,35 @@ mod tests {
     use tidb_tablecodec::table_key::encode_row_key;
 
     use super::*;
+
+    /// Go master d880d7fabe5: `MergeAndRewriteFileRanges`' `log.Panic` for
+    /// two files with one start key carries the keys as `logutil.Key`
+    /// fields, through `redact.Key`, and its panic message names no key.
+    #[test]
+    fn conflicting_end_keys_panic_without_the_keys() {
+        use tidb_proto::backup::File as BackupFile;
+        let file = |end: u8| {
+            Arc::new(BackupFile {
+                name: "1_write.sst".into(),
+                start_key: vec![0x74, 0x11, 0x22],
+                end_key: vec![0x74, 0x11, 0x22, end],
+                cf: "write".into(),
+                ..Default::default()
+            })
+        };
+        let files = [file(0x33), file(0x44)];
+        let panic = std::panic::catch_unwind(|| merge_and_rewrite_file_ranges(&files, None, 0, 0)).unwrap_err();
+        let message = panic
+            .downcast_ref::<String>()
+            .cloned()
+            .or_else(|| panic.downcast_ref::<&str>().map(|text| (*text).to_owned()))
+            .unwrap();
+        assert!(
+            message.starts_with("there are two files having the same start key, but different end key"),
+            "{message}"
+        );
+        assert!(!message.contains("741122") && !message.contains("116, 17, 34"), "{message}");
+    }
 
     #[test]
     fn merged_ranges_preserve_complete_shared_backup_files() {
