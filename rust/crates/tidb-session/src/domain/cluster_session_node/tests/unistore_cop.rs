@@ -2135,8 +2135,10 @@ fn low_resolution_tso_refuses_writes_and_locking_reads() {
         .control_transaction("ROLLBACK")
         .expect("rollback");
     // Go `newOracleFuture`: the transaction starts at the oracle's cached
-    // low-resolution timestamp (refreshed every 2s), so two transactions
-    // begun back to back share it; an ordinary TSO never repeats.
+    // low-resolution timestamp, so two transactions begun back to back share
+    // it; an ordinary TSO never repeats. The cache is the oracle's last
+    // timestamp, which every TSO fetch also advances (client-go `setLastTS`),
+    // so a background fetch may land between one pair -- not between all.
     let start_ts = |session: &mut Session| {
         session.node_conn().control_transaction("BEGIN").expect("begin");
         rows(session, "SELECT * FROM test.lowres");
@@ -2144,12 +2146,17 @@ fn low_resolution_tso_refuses_writes_and_locking_reads() {
         session.node_conn().control_transaction("ROLLBACK").expect("rollback");
         ts
     };
-    assert_eq!(start_ts(&mut session), start_ts(&mut session));
+    let pairs = |session: &mut Session| -> Vec<bool> {
+        (0..5).map(|_| start_ts(session) == start_ts(session)).collect()
+    };
+    let low_resolution = pairs(&mut session);
+    assert!(low_resolution.contains(&true), "{low_resolution:?}");
     session
         .node_conn()
         .execute_write("SET tidb_low_resolution_tso = OFF")
         .expect("off");
-    assert_ne!(start_ts(&mut session), start_ts(&mut session));
+    let ordinary = pairs(&mut session);
+    assert!(!ordinary.contains(&true), "{ordinary:?}");
     session
         .node_conn()
         .execute_write("INSERT INTO test.lowres VALUES (1)")
