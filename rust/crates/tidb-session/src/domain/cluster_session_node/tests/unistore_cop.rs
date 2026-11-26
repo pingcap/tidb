@@ -31049,3 +31049,42 @@ fn test_non_transactional_with_check_constraint() {
         "Non-transactional DML, table name not found in join"
     );
 }
+
+/// Go `casetest/plancache` `TestPlanCacheSuite`'s `rename_table` case (Go
+/// master 87d45a1d703): a cached plan is checked against the table its name
+/// resolves to now; after `t` is renamed away and `t_new` renamed to `t`, an
+/// EXECUTE reads the new `t`, inside a transaction too.
+#[test]
+fn plan_cache_rename_table_rebuilds_for_the_renamed_table() {
+    let (stack, _users) = cop_backed_stack();
+    let mut tk = stack.factory.open_session(session_context(939)).unwrap();
+    let mut tk_ddl = stack.factory.open_session(session_context(940)).unwrap();
+    let last = |tk: &mut Session| displayed(rows(tk, "select @@last_plan_from_cache"));
+    rows(&mut tk, "use test");
+    rows(&mut tk, "set session transaction_isolation = 'REPEATABLE-READ'");
+    rows(&mut tk, "set session tidb_enable_prepared_plan_cache = 1");
+    rows(&mut tk, "create table t (a int)");
+    rows(&mut tk, "create table t_new (a int)");
+    rows(&mut tk, "insert into t values (1)");
+    rows(&mut tk, "insert into t_new values (2)");
+    rows(&mut tk, "prepare s from 'select a from t where a < ? order by a'");
+    rows(&mut tk, "set @a = 10");
+    assert_eq!(displayed(rows(&mut tk, "execute s using @a")), [["1"]]);
+    assert_eq!(displayed(rows(&mut tk, "execute s using @a")), [["1"]]);
+    assert_eq!(last(&mut tk), [["1"]]);
+
+    rows(&mut tk_ddl, "use test");
+    rows(&mut tk_ddl, "rename table t to t_old");
+    rows(&mut tk_ddl, "rename table t_new to t");
+
+    tk.node_conn().control_transaction("begin").unwrap();
+    assert_eq!(displayed(rows(&mut tk, "execute s using @a")), [["2"]]);
+    assert_eq!(displayed(rows(&mut tk, "execute s using @a")), [["2"]]);
+    assert_eq!(last(&mut tk), [["1"]]);
+    rows(&mut tk, "insert into t values (3)");
+    assert_eq!(displayed(rows(&mut tk, "execute s using @a")), [["2"], ["3"]]);
+    assert_eq!(last(&mut tk), [["0"]]);
+    assert_eq!(displayed(rows(&mut tk, "execute s using @a")), [["2"], ["3"]]);
+    assert_eq!(last(&mut tk), [["1"]]);
+    tk.node_conn().control_transaction("rollback").unwrap();
+}
