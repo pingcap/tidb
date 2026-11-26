@@ -29,7 +29,6 @@ use crate::column::{selection_order_for_bitmap, Column};
 use crate::column_slot::{ColumnHandle, ColumnRead, ColumnRef, ColumnSlot, ColumnWrite, SharedOwner};
 use crate::compare::search_column_datum;
 use crate::row::Row;
-use std::collections::HashSet;
 use tidb_datatype::{Datum, FieldType, MyDecimal, MySqlDuration, Time, VectorFloat32};
 use tidb_goruntime::GoString;
 use tidb_goruntime::GoStringSource;

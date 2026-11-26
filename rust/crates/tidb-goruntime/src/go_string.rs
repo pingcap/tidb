@@ -269,20 +269,6 @@ impl GoString {
         Self(GoStringBacking::Vec(bytes, range))
     }
 
-    /// Changes the view when it already retains the requested vector.
-    #[doc(hidden)]
-    #[inline]
-    pub fn reuse_shared_vec_range(&mut self, bytes: &Arc<Vec<u8>>, range: Range<usize>) -> bool {
-        if let GoStringBacking::Vec(previous, current_range) = &mut self.0 {
-            if Arc::ptr_eq(previous, bytes) {
-                assert!(range.start <= range.end && range.end <= bytes.len());
-                *current_range = range;
-                return true;
-            }
-        }
-        false
-    }
-
     /// Retains a string view over a subslice of an immutable vector.
     ///
     /// Panics if the slice is outside the backing vector.

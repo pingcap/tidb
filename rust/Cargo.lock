@@ -6768,7 +6768,6 @@ dependencies = [
  "serde_yaml",
  "sha2 0.10.9",
  "signal-hook",
- "simdutf8",
  "smallvec",
  "snap",
  "stacker",

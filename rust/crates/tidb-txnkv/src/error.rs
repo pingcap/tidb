@@ -181,12 +181,6 @@ impl KvError {
         )
     }
 
-    /// Takes the generated message, reusing its allocation.
-    #[must_use]
-    pub fn into_message(self) -> String {
-        self.message.into_owned()
-    }
-
     /// Returns the source MySQL message template before argument generation.
     #[must_use]
     pub const fn message_template(&self) -> &'static str {

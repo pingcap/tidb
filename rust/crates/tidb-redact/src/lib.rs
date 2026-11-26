@@ -402,7 +402,8 @@ mod tests {
         let input = "ordinary text".to_owned();
         let original = input.as_ptr();
         assert_eq!(string_cow("OFF", input.as_str()).as_ptr(), original);
-        assert_eq!(string_cow("OFF", input).into_owned().as_ptr(), original);
+        let owned = string_cow("OFF", input).into_owned();
+        assert_eq!(owned.as_ptr(), original);
     }
 
     #[test]

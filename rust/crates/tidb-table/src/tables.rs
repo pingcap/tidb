@@ -81,10 +81,7 @@ pub use table_meta::PreparedPointGetDecodeContext;
 use std::{borrow::Cow, collections::HashSet, sync::{Arc, LazyLock, OnceLock}};
 use smallvec::SmallVec;
 pub use table_meta::NOT_NULL_FLAG;
-use tidb_tablecodec::table_key::{
-    encode_common_row_key_into, encode_int_row_key, encode_row_key_with_common_handle, encode_row_key_with_handle,
-    get_table_handle_key_range,
-};
+use tidb_tablecodec::table_key::{encode_row_key_with_handle, get_table_handle_key_range};
 use tidb_datatype::{new_collation_enabled, Datum, FieldType, SessionTimeZone};
 use tidb_expr::expression::Expression;
 

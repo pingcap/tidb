@@ -370,21 +370,6 @@ impl PreparedPointGetRowDecoder {
         self.decode_row(handle.into(), Cow::Owned(value), context)
     }
 
-    pub(super) fn decode_storage_value(
-        &self,
-        handle: &TableHandle,
-        value: Cow<'_, [u8]>,
-        context: &PreparedPointGetDecodeContext,
-    ) -> Result<Vec<Datum>, KvTableError> {
-        self.decode_row(handle.into(), value, context)
-    }
-
-    pub(super) fn prefers_borrowed_storage(&self) -> bool {
-        // Multi-column decoding can share one owned buffer and runs outside
-        // the native storage read guard.
-        self.columns.len() == 1
-    }
-
     /// Whether the projection can write stored values into the output chunk.
     pub fn can_append_projected_row(&self) -> bool {
         self.direct_projection.is_some()
@@ -401,48 +386,6 @@ impl PreparedPointGetRowDecoder {
         self.append_v2_projection(projection, value, chunk).map_err(|error| {
             KvTableError::Decode(format!("{:?}", tidb_rowcodec::RowPackageError::from(error)))
         })
-    }
-
-    pub(super) fn append_storage_value(
-        &self,
-        handle: &TableHandle,
-        value: Cow<'_, [u8]>,
-        context: &PreparedPointGetDecodeContext,
-        chunk: &mut Chunk,
-    ) -> Result<(), KvTableError> {
-        self.append_row(handle.into(), value, context, chunk)
-    }
-
-    pub(super) fn append_indexed_common(
-        &self,
-        handle: &CommonHandle,
-        value: Cow<'_, [u8]>,
-        context: &PreparedPointGetDecodeContext,
-        chunk: &mut Chunk,
-    ) -> Result<(), KvTableError> {
-        self.append_row(PreparedHandleRef::Indexed(handle), value, context, chunk)
-    }
-
-    fn append_row(
-        &self,
-        handle: PreparedHandleRef<'_>,
-        value: Cow<'_, [u8]>,
-        context: &PreparedPointGetDecodeContext,
-        chunk: &mut Chunk,
-    ) -> Result<(), KvTableError> {
-        if let Some(projection) = self.direct_projection {
-            if tidb_rowcodec::is_new_format(&value)
-                && self.append_v2_projection(projection, &value, chunk).map_err(|error| {
-                    KvTableError::Decode(format!("{:?}", tidb_rowcodec::RowPackageError::from(error)))
-                })?
-            {
-                return Ok(());
-            }
-        }
-        for (column, value) in self.decode_row(handle, value, context)?.iter().enumerate() {
-            chunk.append_datum(column, value);
-        }
-        Ok(())
     }
 
     fn append_v2_projection(
@@ -1635,7 +1578,15 @@ mod tests {
             )
             .unwrap();
             chunk.reset();
-            decoder.append_storage_value(&handle, Cow::Borrowed(&encoded), &context, &mut chunk).unwrap();
+            let appended = decoder.try_append_v2_row(&encoded, &mut chunk).unwrap();
+            assert_eq!(appended, count == 3 && v2);
+            if !appended {
+                assert_eq!(chunk.num_rows(), 0);
+                let values = decoder.decode(&handle, &encoded, &context).unwrap();
+                for (column, value) in values.iter().enumerate() {
+                    chunk.append_datum(column, value);
+                }
+            }
             assert_eq!(chunk.num_rows(), 1);
             let mut expected = stored.clone();
             if count == 2 {
@@ -1650,7 +1601,7 @@ mod tests {
         ];
         let expected = decoder.decode(&handle, &malformed, &context).unwrap_err();
         let error = decoder
-            .append_storage_value(&handle, Cow::Borrowed(&malformed), &context, &mut chunk)
+            .try_append_v2_row(&malformed, &mut chunk)
             .unwrap_err();
         assert_eq!(format!("{error:?}"), format!("{expected:?}"));
         assert_eq!(chunk.num_rows(), 1);
@@ -1659,7 +1610,6 @@ mod tests {
     #[test]
     fn prepared_point_chunk_projects_signed_and_unsigned_integers() {
         let zone = SessionTimeZone::utc();
-        let context = PreparedPointGetDecodeContext::for_query(false, zone.clone());
         for value in [Datum::Int(-129), Datum::UInt(u64::MAX)] {
             let mut field = FieldType::new(FieldTypeCode::LongLong);
             if matches!(&value, Datum::UInt(_)) {
@@ -1676,9 +1626,7 @@ mod tests {
             )
             .unwrap();
             let mut chunk = Chunk::new_chunk_with_capacity(std::slice::from_ref(&field), 1);
-            decoder
-                .append_storage_value(&TableHandle::Int(1), Cow::Borrowed(&encoded), &context, &mut chunk)
-                .unwrap();
+            assert!(decoder.try_append_v2_row(&encoded, &mut chunk).unwrap());
             assert_eq!(chunk.get_row(0).get_datum(0, &field), value);
         }
     }

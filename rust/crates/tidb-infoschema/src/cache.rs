@@ -109,7 +109,6 @@ impl InfoCache {
         self.cache
             .binary_search_by_key(&version, |item| item.version)
     }
-
     /// Go `InfoCache.Insert`.
     pub fn insert(&mut self, schema: Arc<SessionExtendedInfoSchema>, ts: u64) -> bool {
         let version = schema.schema_meta_version();

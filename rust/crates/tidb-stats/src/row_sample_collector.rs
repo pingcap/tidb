@@ -366,12 +366,6 @@ impl RowSampleCollector {
         self.collect_row(row.slots, || row.columns.to_vec(), rng);
     }
 
-    /// Offers a prepared row that the caller can transfer to the collector.
-    pub fn collect_owned(&mut self, columns: Vec<Datum>, slots: &[SlotValue<'_>]) {
-        let mut rng = GlobalRowSampleRng;
-        self.collect_owned_with_rng(columns, slots, &mut rng);
-    }
-
     /// Offers an owned row with the caller's Go-compatible random stream.
     pub fn collect_owned_with_rng(
         &mut self,
