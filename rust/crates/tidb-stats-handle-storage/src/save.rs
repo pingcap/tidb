@@ -263,12 +263,14 @@ pub fn save_col_or_idx_stats_to_storage<C: StatsSessionContext + ?Sized>(
     } else {
         LastAnalyzedAt::Unchanged
     };
+    // Go master 5b7e1eb8f5f: the loaded FM sketch is saved too, so a later
+    // global merge has the partitions' sketches; none removes the old one.
     let statements = save_stats_item_sql(
         table_id,
         item,
         version,
         stats_version,
-        false,
+        true,
         last_analyzed_at,
     )
     .map_err(|error| Box::new(error) as SqlExecError)?;

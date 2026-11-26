@@ -472,11 +472,11 @@ fn load_stats_through_the_node_loads_the_client_file() {
     assert_eq!(rows, vec![vec![Datum::UInt(2000)]]);
 }
 
-/// Go `loadStatsFromJSON` saves each histogram with
-/// `SaveColOrIdxStatsToStorage`, which only deletes its FM sketch: LOAD
-/// STATS stores none, even from a dump that carries them.
+/// Go master 5b7e1eb8f5f: `loadStatsFromJSON` saves each histogram's FM
+/// sketch with it (`SaveColOrIdxStatsToStorage`'s `fms`), so a later global
+/// merge has it; a dump without sketches leaves none behind.
 #[test]
-fn load_stats_stores_no_fm_sketch_as_go() {
+fn load_stats_stores_the_dumped_fm_sketches_as_go() {
     let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../../tests/integrationtest/s/explain_complex_stats_rr.json");
     let mut json: serde_json::Value =
@@ -493,10 +493,12 @@ fn load_stats_stores_no_fm_sketch_as_go() {
         {"id": 1, "last_used_at": "2026-08-29 01:02:03", "last_analyzed_at": null}
     ]);
     json["database_name"] = serde_json::json!("load_stats_fm");
-    let dump = serde_json::to_vec(&json).expect("the dump serializes");
+    let sketched_columns = json["columns"].as_object().expect("the dump has columns").len();
+    let dump = Arc::new(std::sync::Mutex::new(serde_json::to_vec(&json).expect("the dump serializes")));
     let mut session = crate::Session::new_on_mock_store();
-    session.set_client_local_file_reader(Arc::new(move |_path: &str| {
-        Ok::<_, std::io::Error>(dump.clone())
+    session.set_client_local_file_reader(Arc::new({
+        let dump = Arc::clone(&dump);
+        move |_path: &str| Ok::<_, std::io::Error>(dump.lock().unwrap().clone())
     }));
     for sql in [
         "create database load_stats_fm",
@@ -518,6 +520,16 @@ fn load_stats_stores_no_fm_sketch_as_go() {
         rows
     };
     assert_ne!(count(&mut session, "stats_histograms"), vec![vec![Datum::Int(0)]]);
+    assert_eq!(
+        count(&mut session, "stats_fm_sketch"),
+        vec![vec![Datum::Int(i64::try_from(sketched_columns).unwrap())]]
+    );
+    // Dumps without sketches must not retain sketches from different statistics.
+    for column in json["columns"].as_object_mut().unwrap().values_mut() {
+        column.as_object_mut().unwrap().remove("fm_sketch");
+    }
+    *dump.lock().unwrap() = serde_json::to_vec(&json).unwrap();
+    session.run("load stats 'rr.json'").expect("the second load runs");
     assert_eq!(count(&mut session, "stats_fm_sketch"), vec![vec![Datum::Int(0)]]);
     // Go `SaveColumnStatsUsageToStorage`: the dump's UTC instants.
     session.run("set time_zone = '+00:00'").expect("the time zone sets");

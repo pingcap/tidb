@@ -109,6 +109,10 @@ pub fn save_col_or_idx_stats_to_storage(
         )
     })?;
     if stats_ver != 0 {
+        tidb_failpoint::inject_call(
+            "github.com/pingcap/tidb/pkg/statistics/handle/storage/afterSaveColOrIdxStatsToStorage",
+            &mut (table_id, i64::from(item.is_index)),
+        );
         handle_slow_stats_saving(pool, lease, table_id, start)?;
     }
     Ok(stats_ver)
