@@ -614,3 +614,31 @@ func insertFailedJobForPartitionWithStartTime(
 		startTime,
 	)
 }
+
+func TestAutoAnalyzeHandlesEmptyExistenceMapInCache(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int)")
+	tk.MustExec("create table tp(a int, b int) partition by hash(a) partitions 2")
+	tk.MustExec("insert into t values (1,1),(2,2)")
+	tk.MustExec("insert into tp values (1,1),(2,2)")
+	h := dom.StatsHandle()
+	// Make sure the count and modify count are updated.
+	tk.MustExec("flush stats_delta *.*")
+
+	// Ensure the stats object is created in memory and the existence map is initialized but empty (no cols/idxs).
+	// This happens because we haven't handled DDL events yet, so no rows exist in mysql.histograms.
+	require.NoError(t, h.Cache().Update(context.Background(), dom.InfoSchema()))
+	for _, name := range []string{"t", "tp"} {
+		tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr(name))
+		require.NoError(t, err)
+		st, ok := h.Cache().Get(tbl.Meta().ID)
+		require.True(t, ok)
+		require.True(t, st.ColAndIdxExistenceMap.IsEmpty())
+	}
+	old := statistics.AutoAnalyzeMinCnt
+	statistics.AutoAnalyzeMinCnt = 0
+	t.Cleanup(func() { statistics.AutoAnalyzeMinCnt = old })
+	require.True(t, h.AutoAnalyze().HandleAutoAnalyze())
+}
