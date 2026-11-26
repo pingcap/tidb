@@ -145,8 +145,40 @@ struct HeldLock {
 
 struct AdvisoryLockSessionState {
     service: Arc<dyn AdvisoryLockService>,
+    /// Go `ShowProcess().ID`: the connection this session serves, 0 for none.
     owner: u64,
+    /// Go `session.advisoryLockOwnerID`: the stable non-zero owner ID cached
+    /// by the first lock, 0 until then.
+    owner_id: u64,
     held: HashMap<String, HeldLock>,
+}
+
+/// Go `internalAdvisoryLockOwnerIDBase`.
+const INTERNAL_ADVISORY_LOCK_OWNER_ID_BASE: u64 = 1 << 32;
+
+/// Go `internalAdvisoryLockOwnerIDAlloc`.
+static INTERNAL_ADVISORY_LOCK_OWNER_ID_ALLOC: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+
+impl AdvisoryLockSessionState {
+    /// Go `session.getAdvisoryLockOwner`.
+    fn advisory_lock_owner(&mut self) -> u64 {
+        if self.owner_id != 0 {
+            return self.owner_id;
+        }
+        let mut owner_id = self.owner;
+        if owner_id == 0 {
+            // Keep fallback IDs even and above uint32, outside both GCID
+            // formats. The counter is process-local, so these IDs are not
+            // globally unique. Lock exclusion, reentrancy and release do not
+            // require globally unique owner IDs. Only the holding session
+            // reports this ID; other sessions report 1.
+            let next = INTERNAL_ADVISORY_LOCK_OWNER_ID_ALLOC.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+            owner_id = INTERNAL_ADVISORY_LOCK_OWNER_ID_BASE + (next << 1);
+        }
+        self.owner_id = owner_id;
+        owner_id
+    }
 }
 
 /// One SQL session's advisory-lock ownership and reference counts.
@@ -186,12 +218,13 @@ impl AdvisoryLockSession {
         Self(Arc::new(Mutex::new(AdvisoryLockSessionState {
             service,
             owner: 0,
+            owner_id: 0,
             held: HashMap::new(),
         })))
     }
 
-    /// Sets the connection identifier reported by `IS_USED_LOCK` for locks
-    /// owned by this session.
+    /// Sets the connection identifier (Go `ShowProcess().ID`) the first lock
+    /// takes as this session's owner ID, which `IS_USED_LOCK` reports.
     pub fn set_owner(&self, owner: u64) {
         self.0
             .lock()
@@ -210,7 +243,7 @@ impl AdvisoryLockSession {
             return Ok(());
         }
         let lease = state.service.acquire(name, timeout)?;
-        let owner = state.owner;
+        let owner = state.advisory_lock_owner();
         state.held.insert(
             name.to_owned(),
             HeldLock {
@@ -256,6 +289,14 @@ impl AdvisoryLockSession {
             lease.release();
         }
         true
+    }
+
+    /// Go `session.Close`'s `advisoryLockOwnerID.Store(0)`.
+    pub fn reset_owner_id(&self) {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .owner_id = 0;
     }
 
     /// Releases every unique lock and returns the total reference count.
@@ -321,15 +362,40 @@ mod tests {
         assert!(!service.is_used("a"));
     }
 
+    /// Go `TestAdvisoryLockWithoutProcessInfo`.
     #[test]
-    fn each_lock_keeps_the_connection_id_captured_at_acquisition() {
+    fn test_advisory_lock_without_process_info() {
         let session = AdvisoryLockSession::default();
-        session.set_owner(42);
-        session.acquire("first", Duration::ZERO).unwrap();
-        session.set_owner(7);
-        session.acquire("second", Duration::ZERO).unwrap();
+        let lock_name = "TestAdvisoryLockWithoutProcessInfo";
+        assert_eq!(session.owner(lock_name), None);
+        session.acquire(lock_name, Duration::from_secs(1)).unwrap();
+        let owner_id = session.owner(lock_name).unwrap();
+        assert_ne!(owner_id, 0);
+        assert!(owner_id > INTERNAL_ADVISORY_LOCK_OWNER_ID_BASE && owner_id % 2 == 0, "{owner_id}");
 
-        assert_eq!(session.owner("first"), Some(42));
-        assert_eq!(session.owner("second"), Some(7));
+        // Executing SQL must not change the owner of later locks on this session.
+        session.set_owner(12345);
+        let second = format!("{lock_name}-second");
+        session.acquire(&second, Duration::from_secs(1)).unwrap();
+        assert_eq!(session.owner(&second), Some(owner_id));
+        assert!(session.release(lock_name));
+        assert!(session.release(&second));
+        assert_eq!(session.owner(lock_name), None);
+
+        // A closed session takes a fresh owner ID.
+        session.reset_owner_id();
+        session.acquire(lock_name, Duration::from_secs(1)).unwrap();
+        assert_eq!(session.owner(lock_name), Some(12345));
+    }
+
+    /// Go `TestAdvisoryLockUsesProcessInfoOwner`.
+    #[test]
+    fn test_advisory_lock_uses_process_info_owner() {
+        const CONN_ID: u64 = 12345;
+        let session = AdvisoryLockSession::default();
+        session.set_owner(CONN_ID);
+        session.acquire("TestAdvisoryLockUsesProcessInfoOwner", Duration::from_secs(1)).unwrap();
+        assert_eq!(session.owner("TestAdvisoryLockUsesProcessInfoOwner"), Some(CONN_ID));
+        assert!(session.release("TestAdvisoryLockUsesProcessInfoOwner"));
     }
 }

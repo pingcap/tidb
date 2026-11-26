@@ -862,11 +862,7 @@ impl LocalMppCoordinator {
         for i in 0..sink.schema().map_or(0, |schema| schema.columns.len()) {
             dag_req.output_offsets.push(i as u32);
         }
-        dag_req.encode_type = Some(if pf.is_root {
-            EncodeType::TypeChunk
-        } else {
-            EncodeType::TypeChBlock
-        } as i32);
+        set_mpp_encode_type(ctx, &mut dag_req, pf.is_root);
         let mut zone_helper = TaskZoneInfoHelper::init(all_tiflash_store_info);
         let rg_name = if tidb_vardef::ENABLE_RESOURCE_CONTROL.load(Ordering::SeqCst) {
             statement.resource_group_name.clone()
@@ -1286,6 +1282,17 @@ impl Drop for LocalMppCoordinator {
     }
 }
 
+
+/// Go `setMPPEncodeType`: an intermediate fragment answers in CHBlock, the
+/// root as `distsql.SetEncodeType` says for the session.
+fn set_mpp_encode_type(ctx: &crate::StmtContext, dag_req: &mut tipb::DagRequest, is_root: bool) {
+    if !is_root {
+        dag_req.encode_type = Some(EncodeType::TypeChBlock as i32);
+        return;
+    }
+    crate::builder_utils::set_encode_type(ctx, dag_req);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1353,6 +1360,24 @@ mod tests {
             tidb_zone: tidb_zone.to_owned(),
             current_task_zone: task_zone.to_owned(),
             is_root,
+        }
+    }
+
+    /// Go `TestSetMPPEncodeTypeRespectsChunkRPCSetting`.
+    #[test]
+    fn test_set_mpp_encode_type_respects_chunk_rpc_setting() {
+        for enabled in [false, true] {
+            let ctx = crate::StmtContext::default().configure(|ctx| {
+                let _ = ctx.with_enable_chunk_rpc(enabled);
+            });
+            let mut root = tipb::DagRequest::default();
+            super::set_mpp_encode_type(&ctx, &mut root, true);
+            let expected = if enabled { EncodeType::TypeChunk } else { EncodeType::TypeDefault };
+            assert_eq!(root.encode_type, Some(expected as i32));
+
+            let mut intermediate = tipb::DagRequest::default();
+            super::set_mpp_encode_type(&ctx, &mut intermediate, false);
+            assert_eq!(intermediate.encode_type, Some(EncodeType::TypeChBlock as i32));
         }
     }
 

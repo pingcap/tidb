@@ -150,6 +150,9 @@ impl DomainSessions for Domain {
                 tidb_config::config_tree::config::get_max_allowed_packet().to_string(),
             ),
             ("tidb_constraint_check_in_place_pessimistic", "ON".to_owned()),
+            // Internal session uses default format to prevent memory leak
+            // problem (Go `EnableChunkRPC = false`).
+            ("tidb_enable_chunk_rpc", "OFF".to_owned()),
         ] {
             session
                 .vars

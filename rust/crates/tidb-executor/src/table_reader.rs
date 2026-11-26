@@ -455,7 +455,7 @@ impl TableReaderExecutor {
             store_type,
             net_data_size: table_plan.cop_net_data_size(
                 false,
-                tidb_config::tikvcfg::get_global_config().tikv_client.enable_chunk_rpc,
+                crate::builder_utils::enable_chunk_rpc(ctx),
             ),
             client,
             tidb_store: None,

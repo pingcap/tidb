@@ -1351,6 +1351,7 @@ impl Drop for Session {
             collector.delete();
         }
         self.advisory_locks.release_all();
+        self.advisory_locks.reset_owner_id();
         // Go `session.Close`'s `WithdrawAllPreparedStmt`.
         self.vars.withdraw_all_prepared_stmt();
         // Go `session.Close`: ANALYZE attached the session's MemTracker to

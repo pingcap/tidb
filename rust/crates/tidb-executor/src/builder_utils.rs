@@ -39,10 +39,17 @@ fn build_pb_ctx<'a>(
     }
 }
 
-/// Go `distsql.SetEncodeType`: chunk RPC when the store supports it, with
-/// the system's chunk memory layout.
-pub(crate) fn set_encode_type(dag_req: &mut tipb::DagRequest) {
-    if tidb_config::tikvcfg::get_global_config().tikv_client.enable_chunk_rpc {
+/// Go `SessionVars.EnableChunkRPC` (`tidb_enable_chunk_rpc`, ON by
+/// default), which Go reads as `DistSQLContext.EnableChunkRPC` and in
+/// `cardinality.GetAvgRowSize`.
+pub(crate) fn enable_chunk_rpc(ctx: &crate::StmtContext) -> bool {
+    ctx.enable_chunk_rpc()
+}
+
+/// Go `distsql.SetEncodeType`: chunk RPC when the session enables it
+/// (`canUseChunkRPC`), with the system's chunk memory layout.
+pub(crate) fn set_encode_type(ctx: &crate::StmtContext, dag_req: &mut tipb::DagRequest) {
+    if enable_chunk_rpc(ctx) {
         dag_req.encode_type = Some(tipb::EncodeType::TypeChunk as i32);
         // Go `setChunkMemoryLayout`.
         let endian = match tidb_distsql::system_endian() {
@@ -93,6 +100,6 @@ pub(crate) fn construct_dag_req(
             .map(|plan| plan.to_pb(&pb_ctx, tidb_kv::store_type::StoreType::TiKv))
             .collect::<Result<_, _>>()?;
     }
-    set_encode_type(&mut dag_req);
+    set_encode_type(ctx, &mut dag_req);
     Ok(dag_req)
 }

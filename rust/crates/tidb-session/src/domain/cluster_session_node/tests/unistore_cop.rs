@@ -7204,6 +7204,26 @@ fn domain_pool_sessions_keep_gos_zero_sql_mode() {
     );
 }
 
+/// Go `getSessionFactoryInternal`: an internal session uses the default
+/// coprocessor encoding (`EnableChunkRPC = false`), a client session the
+/// chunk one.
+#[test]
+fn internal_sessions_use_the_default_coprocessor_encoding() {
+    let (stack, _users) = cop_backed_stack();
+    let internal = stack.factory.open_system_session().expect("system session opens");
+    assert_eq!(internal.vars.get_system("tidb_enable_chunk_rpc").unwrap(), "OFF");
+    assert!(!internal.statement_context_of(false, false, true).enable_chunk_rpc());
+    let mut client = stack.factory.open_session(session_context(85)).expect("session opens");
+    assert_eq!(client.vars.get_system("tidb_enable_chunk_rpc").unwrap(), "ON");
+    assert!(client.statement_context_of(false, false, true).enable_chunk_rpc());
+    // Go `SessionVars.EnableChunkRPC` follows `SET tidb_enable_chunk_rpc`.
+    assert!(client.statement_context_of(true, false, false).enable_chunk_rpc());
+    rows(&mut client, "SET tidb_enable_chunk_rpc = 0");
+    // A query's context and a write's (whose reads ask the stores too).
+    assert!(!client.statement_context_of(false, false, true).enable_chunk_rpc());
+    assert!(!client.statement_context_of(true, false, false).enable_chunk_rpc());
+}
+
 /// Go's identify path over unistore: a KILL group's PROCESSED_KEYS rule
 /// interrupts the scan with its cause and quarantines the exact text, so the
 /// same statement is refused before it runs; the oracle's watch row follows.

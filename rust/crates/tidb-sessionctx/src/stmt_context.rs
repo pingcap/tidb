@@ -2040,6 +2040,8 @@ pub struct StmtContextData {
     apply_cache_capacity: i64,
     enable_parallel_apply: bool,
     allow_derive_topn: bool,
+    /// Go `SessionVars.EnableChunkRPC` (`tidb_enable_chunk_rpc`).
+    enable_chunk_rpc: bool,
     /// Which `ResetContextOfStmt` arm built this context; see
     /// [`StatementClass`]. It is an INPUT to [`StmtContext::push_down_flags`],
     /// which is why it rides the context rather than being re-derived at the
@@ -2548,6 +2550,12 @@ context_configuration! {
     /// Go ParallelApply's independently cancellable child request context.
     pub fn with_coprocessor_worker_scope(mut self) -> Self { self.memory = self.memory.clone().with_coprocessor_worker_scope(); self }
     pub fn with_parallel_apply(mut self, enabled: bool) -> Self { self.enable_parallel_apply = enabled; self }
+    /// Go `SessionVars.EnableChunkRPC`, captured at statement start.
+    #[must_use]
+    pub fn with_enable_chunk_rpc(mut self, enabled: bool) -> Self {
+        self.enable_chunk_rpc = enabled;
+        self
+    }
     /// Go `SessionVars.AllowDeriveTopN`, captured at statement start.
     #[must_use]
     pub fn with_allow_derive_topn(mut self, enabled: bool) -> Self { self.allow_derive_topn = enabled; self }
@@ -3941,6 +3949,7 @@ impl StmtContext {
             apply_cache_capacity: tidb_vardef::defaults::DEF_TIDB_MEM_QUOTA_APPLY_CACHE,
             enable_parallel_apply: false,
             allow_derive_topn: false,
+            enable_chunk_rpc: true,
             statement_class: StatementClass::Other,
             enable_stable_result_mode: false,
             ignore_inlist_plan_digest: tidb_vardef::defaults::DEF_TIDB_IGNORE_INLIST_PLAN_DIGEST,
@@ -6680,6 +6689,13 @@ impl StmtContext {
     /// Whether post-optimization may parallelize eligible Apply operators.
     pub fn enable_parallel_apply(&self) -> bool {
         self.enable_parallel_apply
+    }
+
+    /// Go `SessionVars.EnableChunkRPC`: coprocessor requests may ask for the
+    /// chunk encoding, and row sizes count chunk column widths.
+    #[must_use]
+    pub fn enable_chunk_rpc(&self) -> bool {
+        self.enable_chunk_rpc
     }
 
     /// Whether `tidb_opt_derive_topn` lets the optimizer derive a TopN or

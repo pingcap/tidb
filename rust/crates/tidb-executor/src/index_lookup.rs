@@ -390,7 +390,7 @@ impl IndexLookUpExecutor {
         }
         // Go `GetAvgTableRowSize`.
         let avg_table_row_size = v.table_plan.as_deref().map_or(0.0, |plan| {
-            plan.cop_avg_row_size(false, tidb_config::tikvcfg::get_global_config().tikv_client.enable_chunk_rpc)
+            plan.cop_avg_row_size(false, crate::builder_utils::enable_chunk_rpc(ctx))
         });
         let index_plan_ids: Vec<isize> = index_plans.iter().map(|plan| plan.id() as isize).collect();
         let est_rows = index_plans[0].stats_count().map_or(0, |count| count as usize);

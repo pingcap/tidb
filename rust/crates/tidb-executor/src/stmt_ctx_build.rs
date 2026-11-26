@@ -141,6 +141,8 @@ pub struct StatementVarSnapshot {
     metric_schema_range_duration: i64,
     apply_cache_capacity: i64,
     enable_parallel_apply: bool,
+    /// Go `SessionVars.EnableChunkRPC` (`tidb_enable_chunk_rpc`).
+    enable_chunk_rpc: bool,
     /// Go `SessionVars.AllowDeriveTopN` (`tidb_opt_derive_topn`).
     allow_derive_topn: bool,
     hashagg_partial_concurrency: usize,
@@ -1136,6 +1138,11 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
             metric_schema_step: self.session_vars().metric_schema_step(),
             metric_schema_range_duration: self.session_vars().metric_schema_range_duration(),
             enable_parallel_apply: self.session_vars().enable_parallel_apply(),
+            enable_chunk_rpc: self
+                .session_vars()
+                .get_system(tidb_vardef::tidb_vars::TIDB_ENABLE_CHUNK_RPC)
+                .ok()
+                .is_none_or(|value| value.eq_ignore_ascii_case("on") || value == "1"),
             allow_derive_topn: self.session_vars().allow_derive_topn(),
             apply_cache_capacity: self.session_vars().mem_quota_apply_cache(),
             hashagg_partial_concurrency: resolved_concurrency(self.session_vars().hash_agg_partial_concurrency()),
@@ -1415,6 +1422,7 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
         let metric_schema = (snapshot.metric_schema_step, snapshot.metric_schema_range_duration);
         let apply_cache_capacity = snapshot.apply_cache_capacity;
         let enable_parallel_apply = snapshot.enable_parallel_apply;
+        let enable_chunk_rpc = snapshot.enable_chunk_rpc;
         let allow_derive_topn = snapshot.allow_derive_topn;
         let hashagg_partial_concurrency = snapshot.hashagg_partial_concurrency;
         let hashagg_final_concurrency = snapshot.hashagg_final_concurrency;
@@ -1651,6 +1659,7 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
                 .with_metric_schema(metric_schema.0, metric_schema.1)
                     .with_apply_cache_capacity(apply_cache_capacity)
                     .with_parallel_apply(enable_parallel_apply)
+                .with_enable_chunk_rpc(enable_chunk_rpc)
                     .with_allow_derive_topn(allow_derive_topn)
                     .with_block_encryption_mode(block_encryption_mode)
                     .with_parser_config(self.session_vars().build_parser_switches())
@@ -1859,6 +1868,7 @@ pub trait ResetContextOfStmt: crate::stmt_ctx_build::StmtCtxSession {
                 .with_metric_schema(metric_schema.0, metric_schema.1)
                 .with_apply_cache_capacity(apply_cache_capacity)
                 .with_parallel_apply(enable_parallel_apply)
+                .with_enable_chunk_rpc(enable_chunk_rpc)
                 .with_block_encryption_mode(block_encryption_mode)
                 .with_sysdate_is_now(sysdate_is_now)
                 .with_replica_read(replica_read)

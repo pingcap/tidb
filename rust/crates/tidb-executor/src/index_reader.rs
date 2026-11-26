@@ -240,7 +240,7 @@ impl IndexReaderExecutor {
             output_offsets,
             net_data_size: index_plan.cop_net_data_size(
                 true,
-                tidb_config::tikvcfg::get_global_config().tikv_client.enable_chunk_rpc,
+                crate::builder_utils::enable_chunk_rpc(ctx),
             ),
             result: None,
             mem_tracker: None,

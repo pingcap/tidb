@@ -4922,7 +4922,7 @@ fn build_partial_index_worker(
         desc: scan.desc,
         keep_order: scan.keep_order,
         start_ts: crate::statement_store(ctx).start_ts(),
-        net_data_size: partial.cop_net_data_size(true, tidb_config::tikvcfg::get_global_config().tikv_client.enable_chunk_rpc),
+        net_data_size: partial.cop_net_data_size(true, crate::builder_utils::enable_chunk_rpc(ctx)),
         plan_id: i64::from(partial.id()),
         initial_batch_size: crate::access_path::calculate_lookup_batch_size_with_cap(
             scan.base.base.stats_info().map(|stats| stats.row_count()),
@@ -5214,7 +5214,7 @@ fn build_index_merge_reader(
             start_ts: crate::statement_store(ctx).start_ts(),
             avg_row_size: table_plan.cop_avg_row_size(
                 false,
-                tidb_config::tikvcfg::get_global_config().tikv_client.enable_chunk_rpc,
+                crate::builder_utils::enable_chunk_rpc(ctx),
             ),
             physical_table_id: ts.physical_table_id,
             is_common_handle: table_info.is_common_handle,
