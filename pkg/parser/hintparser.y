@@ -727,8 +727,6 @@ UnsupportedIndexLevelOptimizerHintName:
 |	"NO_MRR"
 |	"NO_ICP"
 |	"NO_RANGE_OPTIMIZATION"
-|	"SKIP_SCAN"
-|	"NO_SKIP_SCAN"
 
 SupportedIndexLevelOptimizerHintName:
 	"USE_INDEX"
@@ -740,6 +738,8 @@ SupportedIndexLevelOptimizerHintName:
 |	"INDEX_LOOKUP_PUSHDOWN"
 |	"NO_INDEX_LOOKUP_PUSHDOWN"
 |	"TIFLASH_LM_FILTER"
+|	"SKIP_SCAN"
+|	"NO_SKIP_SCAN"
 
 SubqueryOptimizerHintName:
 	"SEMIJOIN"

@@ -753,3 +753,47 @@ func TestModifyColumnCharsetClassification(t *testing.T) {
 	tk.MustQuery("select a from t where a = 'abc'").Check(testkit.Rows("abc"))
 	tk.MustExec("admin check table t")
 }
+
+func TestModifyColumnCrossCharsetRequiresReorg(t *testing.T) {
+	store := testkit.CreateMockStoreWithSchemaLease(t, columnModifyLease)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	// BINARY(2) -> VARCHAR(10) utf8mb4 with invalid UTF-8 bytes must reorg and fail.
+	tk.MustExec("create table t0 (id int primary key, c binary(2))")
+	tk.MustExec("insert into t0 values (1, x'FFFE')")
+	tk.MustGetErrCode("alter table t0 modify column c varchar(10) character set utf8mb4 collate utf8mb4_general_ci", errno.ErrTruncatedWrongValueForField)
+
+	// CHAR(4) utf8mb4 -> VARCHAR(10) ascii with non-ASCII character must reorg and fail.
+	tk.MustExec("create table t2 (id int primary key, c char(4) character set utf8mb4)")
+	tk.MustExec("insert into t2 values (1, 'é')")
+	tk.MustGetErrCode("alter table t2 modify column c varchar(10) character set ascii", errno.ErrTruncatedWrongValueForField)
+
+	// CHAR(4) utf8mb4 -> VARBINARY(4) with 8-byte UTF-8 value must reorg and fail with truncation.
+	tk.MustExec("create table t3 (id int primary key, c char(4) character set utf8mb4)")
+	tk.MustExec("insert into t3 values (1, 'éééé')")
+	tk.MustGetErrCode("alter table t3 modify column c varbinary(4)", errno.WarnDataTruncated)
+
+	// Same-charset collation change with multi-byte chars must check character length, not byte length.
+	tk.MustExec("create table t4 (id int primary key, c varchar(4) character set utf8mb4 collate utf8mb4_bin)")
+	tk.MustExec("insert into t4 values (1, 'éééé')")
+	tk.MustExec("alter table t4 modify column c varchar(4) character set utf8mb4 collate utf8mb4_general_ci")
+
+	// utf8 -> utf8mb4 with compatible collation does not require reorg even with an index or narrowing.
+	tk.MustExec("create table t5 (id int primary key, c varchar(10) character set utf8 collate utf8_bin, key idx_c(c))")
+	tk.MustExec("insert into t5 values (1, 'abc')")
+	tk.MustExec("alter table t5 modify column c varchar(10) character set utf8mb4 collate utf8mb4_bin")
+	tk.MustQuery("select row_count from information_schema.ddl_jobs where table_name = 't5' order by job_id desc limit 1").Check(testkit.Rows("0"))
+	tk.MustExec("alter table t5 modify column c varchar(5) character set utf8mb4 collate utf8mb4_bin")
+	tk.MustQuery("select row_count from information_schema.ddl_jobs where table_name = 't5' order by job_id desc limit 1").Check(testkit.Rows("0"))
+	tk.MustExec("admin check table t5")
+
+	// Both length-preserving and narrowing conversions reject four-byte UTF-8 data during reorg.
+	tk.MustExec("create table t6 (id int primary key, c varchar(10) character set utf8mb4 collate utf8mb4_bin)")
+	tk.MustExec("insert into t6 values (1, '🐱')")
+	tk.MustGetErrCode("alter table t6 modify column c varchar(10) character set utf8 collate utf8_bin", errno.ErrTruncatedWrongValueForField)
+	tk.MustGetErrCode("alter table t6 modify column c varchar(5) character set utf8 collate utf8_bin", errno.ErrTruncatedWrongValueForField)
+	tk.MustExec("update t6 set c = 'é'")
+	tk.MustExec("alter table t6 modify column c varchar(10) character set utf8 collate utf8_bin")
+	tk.MustQuery("select c from t6").Check(testkit.Rows("é"))
+}

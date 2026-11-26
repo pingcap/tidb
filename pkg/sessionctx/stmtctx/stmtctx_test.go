@@ -245,6 +245,7 @@ func TestLogicalPlanBuildStateRestore(t *testing.T) {
 	sc.ColRefFromUpdatePlan.Insert(7)
 	sc.SetCacheType(contextutil.SessionNonPrepared)
 	sc.EnablePlanCache()
+	sc.IgnoreCalcFoundRows = false
 
 	state := sc.SaveLogicalPlanBuildState()
 
@@ -258,6 +259,7 @@ func TestLogicalPlanBuildStateRestore(t *testing.T) {
 	sc.ViewDepth = 9
 	sc.ColRefFromUpdatePlan.Insert(9)
 	sc.SetSkipPlanCache("candidate reason")
+	sc.IgnoreCalcFoundRows = true
 
 	sc.RestoreLogicalPlanBuildState(state)
 
@@ -279,6 +281,7 @@ func TestLogicalPlanBuildStateRestore(t *testing.T) {
 	require.False(t, sc.ColRefFromUpdatePlan.Has(9))
 	require.True(t, sc.UseCache())
 	require.Empty(t, sc.PlanCacheUnqualified())
+	require.False(t, sc.IgnoreCalcFoundRows)
 }
 
 func TestQBHintHandlerBuildState(t *testing.T) {
@@ -477,6 +480,13 @@ func TestSetStmtCtxTypeFlags(t *testing.T) {
 
 func TestResetStmtCtx(t *testing.T) {
 	sc := stmtctx.NewStmtCtx()
+	sc.SetFoundRows(3)
+	require.Equal(t, uint64(3), sc.FoundRows())
+	sc.ResetForRetry()
+	require.Zero(t, sc.FoundRows())
+	sc.SetFoundRows(2)
+	require.Equal(t, uint64(2), sc.FoundRows())
+	sc.SetFoundRows(3)
 	require.Equal(t, types.DefaultStmtFlags, sc.TypeFlags())
 
 	tz := time.FixedZone("UTC+1", 2*60*60)
@@ -495,6 +505,9 @@ func TestResetStmtCtx(t *testing.T) {
 	require.Equal(t, errctx.NewContextWithLevels(levels, sc), sc.ErrCtx())
 
 	sc.Reset()
+	require.Zero(t, sc.FoundRows())
+	sc.SetFoundRows(1)
+	require.Equal(t, uint64(1), sc.FoundRows())
 	require.Same(t, time.UTC, sc.TimeZone())
 	require.Same(t, time.UTC, sc.TimeZone())
 	require.Equal(t, types.DefaultStmtFlags, sc.TypeFlags())

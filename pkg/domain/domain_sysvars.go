@@ -71,7 +71,7 @@ func (do *Domain) setStatsCacheCapacity(c int64) {
 	if statsHandle == nil { // from test
 		return
 	}
-	do.StatsHandle().SetStatsCacheCapacity(c)
+	do.StatsHandle().Cache().SetStatsCacheCapacity(c)
 }
 
 func (do *Domain) setPDClientDynamicOption(name, sVal string) error {
@@ -103,16 +103,8 @@ func (do *Domain) setPDClientDynamicOption(name, sVal string) error {
 		}
 		vardef.EnablePDFollowerHandleRegion.Store(val)
 	case vardef.TiDBTSOClientRPCMode:
-		var concurrency int
-
-		switch sVal {
-		case vardef.TSOClientRPCModeDefault:
-			concurrency = 1
-		case vardef.TSOClientRPCModeParallel:
-			concurrency = 2
-		case vardef.TSOClientRPCModeParallelFast:
-			concurrency = 4
-		default:
+		concurrency := vardef.TSOClientRPCModeToConcurrency(sVal)
+		if concurrency == 0 {
 			return variable.ErrWrongValueForVar.GenWithStackByArgs(name, sVal)
 		}
 

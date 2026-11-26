@@ -17,7 +17,6 @@ go_library(
         "//br/pkg/utils",
         "//pkg/meta/model",
         "//pkg/objstore/storeapi",
-        "//pkg/statistics/handle",
         "//pkg/statistics/handle/types",
         "//pkg/statistics/util",
         "//pkg/tablecodec",

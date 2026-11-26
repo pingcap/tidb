@@ -200,6 +200,8 @@ func (b *executorBuilder) build(p base.Plan) exec.Executor {
 	switch v := p.(type) {
 	case nil:
 		return nil
+	case *physicalop.PhysicalCalcFoundRows:
+		return b.buildCalcFoundRows(v)
 	case *plannercore.CheckTable:
 		return b.buildCheckTable(v)
 	case *plannercore.RecoverIndex:
@@ -861,6 +863,20 @@ func (b *executorBuilder) buildSelectLock(v *physicalop.PhysicalLock) exec.Execu
 	return e
 }
 
+func (b *executorBuilder) buildCalcFoundRows(v *physicalop.PhysicalCalcFoundRows) exec.Executor {
+	data := b.build(v.Children()[0])
+	if b.err != nil {
+		return nil
+	}
+	count := b.build(v.Children()[1])
+	if b.err != nil {
+		return nil
+	}
+	return &CalcFoundRowsExec{
+		BaseExecutor: exec.NewBaseExecutor(b.sctx, v.Schema(), v.ID(), data, count),
+	}
+}
+
 func (b *executorBuilder) buildLimit(v *physicalop.PhysicalLimit) exec.Executor {
 	childExec := b.build(v.Children()[0])
 	if b.err != nil {
@@ -1133,6 +1149,7 @@ func (b *executorBuilder) buildShow(v *physicalop.PhysicalShow) exec.Executor {
 		Extended:              v.Extended,
 		Extractor:             v.Extractor,
 		ImportJobID:           v.ImportJobID,
+		RawImportJob:          v.RawImportJob,
 		DistributionJobID:     v.DistributionJobID,
 		ImportGroupKey:        v.ImportGroupKey,
 	}
@@ -2894,7 +2911,8 @@ func (b *executorBuilder) buildMemTable(v *physicalop.PhysicalMemTable) exec.Exe
 			strings.ToLower(infoschema.TableTiDBPlanCache),
 			strings.ToLower(infoschema.ClusterTableTiDBPlanCache),
 			strings.ToLower(infoschema.ClusterTableTiDBIndexUsage),
-			strings.ToLower(infoschema.TableKeyspaceMeta):
+			strings.ToLower(infoschema.TableKeyspaceMeta),
+			strings.ToLower(infoschema.TableSchemataExtensions):
 			memTracker := memory.NewTracker(v.ID(), -1)
 			memTracker.AttachTo(b.sctx.GetSessionVars().StmtCtx.MemTracker)
 			return &MemTableReaderExec{
@@ -3540,7 +3558,7 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(
 	failpoint.Inject("injectAnalyzeSnapshot", func(val failpoint.Value) {
 		startTS = uint64(val.(int))
 	})
-	statsHandle := domain.GetDomain(b.sctx).StatsHandle()
+	statsHandle := domain.GetAnalyzeStatsHandle(b.sctx)
 	count, modifyCount, err := statsHandle.StatsMetaCountAndModifyCount(task.TableID.GetStatisticsID())
 	if err != nil {
 		b.err = err
@@ -3694,7 +3712,7 @@ func (b *executorBuilder) chooseNDVRate(task plannercore.AnalyzeColumnsTask, opt
 // So if we don't consider the top-n values, we can keep the sample size at 300*256.
 // But we may take some top-n before building the histogram, so we increase the sample a little.
 func (b *executorBuilder) getAdjustedSampleRate(ctx context.Context, task plannercore.AnalyzeColumnsTask) (sampleRate float64, reason string) {
-	statsHandle := domain.GetDomain(b.sctx).StatsHandle()
+	statsHandle := domain.GetAnalyzeStatsHandle(b.sctx)
 	defaultRate := 0.001
 	if statsHandle == nil {
 		return defaultRate, fmt.Sprintf("statsHandler is nil, use the default-rate=%v", defaultRate)
@@ -3747,7 +3765,7 @@ func (b *executorBuilder) getApproximateTableCountFromStorage(ctx context.Contex
 }
 
 func (b *executorBuilder) buildAnalyze(v *plannercore.Analyze) exec.Executor {
-	gp := domain.GetDomain(b.sctx).StatsHandle().GPool()
+	gp := domain.GetAnalyzeStatsHandle(b.sctx).GPool()
 	e := &AnalyzeExec{
 		BaseExecutor: exec.NewBaseExecutor(b.sctx, v.Schema(), v.ID()),
 		tasks:        make([]*analyzeTask, 0, len(v.ColTasks)+len(v.IdxTasks)),

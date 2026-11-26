@@ -54,7 +54,7 @@ func TestNewCollationStatsWithPrefixIndex(t *testing.T) {
 		tk.MustExec("delete from mysql.stats_meta")
 		tk.MustExec("delete from mysql.stats_histograms")
 		tk.MustExec("delete from mysql.stats_buckets")
-		dom.StatsHandle().Clear()
+		dom.StatsHandle().ClearForTest()
 	}()
 
 	tk := testkit.NewTestKit(t, store)
@@ -69,11 +69,11 @@ func TestNewCollationStatsWithPrefixIndex(t *testing.T) {
 
 	tk.MustExec("analyze table t")
 	// Wait for stats to be fully persisted and loaded
-	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
+	require.NoError(t, h.Cache().Update(context.Background(), dom.InfoSchema()))
 	// Priming select followed by explain to load needed histograms.
 	tk.MustExec("select count(*) from t where a = 'aaa'")
 	tk.MustExec("explain select * from t where a = 'aaa'")
-	require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
+	require.NoError(t, h.Storage().LoadNeededHistograms(dom.InfoSchema()))
 
 	tk.MustQuery("show stats_buckets where db_name = 'test' and table_name = 't'").Sort().Check(testkit.Rows(
 		"test t  a 0 0 3 1 \x00A \x00A\x00A\x00A 0",
@@ -176,7 +176,7 @@ func TestNoNeedIndexStatsLoading(t *testing.T) {
 	tk.MustExec("insert into t value(1,1), (2,2);")
 	h := dom.StatsHandle()
 	tk.MustExec("flush stats_delta *.*")
-	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
+	require.NoError(t, h.Cache().Update(context.Background(), dom.InfoSchema()))
 	// 4. Try to select some data from this table by ID, it would trigger an async load.
 	tk.MustExec("set tidb_opt_objective='determinate';")
 	tk.MustQuery("select * from t where a = 1 and b = 1;").Check(testkit.Rows("1 1"))
@@ -244,7 +244,7 @@ func TestLoadNonExistentIndexStats(t *testing.T) {
 	h := dom.StatsHandle()
 	tk.MustExec("flush stats_delta *.*")
 	ctx := context.Background()
-	require.NoError(t, h.Update(ctx, dom.InfoSchema()))
+	require.NoError(t, h.Cache().Update(ctx, dom.InfoSchema()))
 	// Trigger async load of index histogram by using the index in a query.
 	// Setting this variable to determinate marks the pseudo table stats as able to trigger loading (CanNotTriggerLoad=false), which enables statistics loading.
 	// See more at IndexStatsIsInvalid and GetStatsTable functions.
@@ -270,9 +270,9 @@ func TestLoadNonExistentIndexStats(t *testing.T) {
 
 	// Verify that LoadNeededHistograms doesn't panic when the pseudo index stats exists in the cache
 	// but doesn't have histogram data in mysql.stats_histograms yet.
-	err = util.CallWithSCtx(h.SPool(), func(sctx sessionctx.Context) error {
+	err = util.CallWithSCtx(h.Pool().SPool(), func(sctx sessionctx.Context) error {
 		require.NotPanics(t, func() {
-			err := storage.LoadNeededHistograms(sctx, dom.InfoSchema(), h)
+			err := storage.LoadNeededHistograms(sctx, dom.InfoSchema(), h.Cache(), h.Tables())
 			require.NoError(t, err)
 		})
 		return nil
@@ -296,7 +296,7 @@ func TestLoadAnalyzeV1StatsJSONFromV855(t *testing.T) {
 
 	h := dom.StatsHandle()
 	is := dom.InfoSchema()
-	require.NoError(t, h.LoadStatsFromJSON(context.Background(), is, readAnalyzeV1CompatStatsJSON(t), 0))
+	require.NoError(t, h.Storage().LoadStatsFromJSON(context.Background(), is, readAnalyzeV1CompatStatsJSON(t), 0))
 
 	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("analyze_v1_compat"))
 	require.NoError(t, err)
@@ -308,7 +308,7 @@ func TestLoadAnalyzeV1StatsJSONFromV855(t *testing.T) {
 	tk.MustQuery("select distinct stats_ver from mysql.stats_histograms where table_id = ? order by stats_ver", tableID).
 		Check(testkit.Rows("1"))
 
-	h.Clear()
+	h.ClearForTest()
 	// Test init stats.
 	require.NoError(t, h.InitStats(context.Background(), is, tableID))
 	statsTbl := h.GetPhysicalTableStats(tableID, tblInfo)
@@ -320,12 +320,12 @@ func TestLoadAnalyzeV1StatsJSONFromV855(t *testing.T) {
 
 	// Test ColumnStatsIsInvalid to trigger async load of column stats.
 	statistics.ColumnStatsIsInvalid(statsTbl.GetCol(colCID), tk.Session().GetPlanCtx(), &statsTbl.HistColl, colCID)
-	require.NoError(t, h.LoadNeededHistograms(is))
+	require.NoError(t, h.Storage().LoadNeededHistograms(is))
 	statsTbl = h.GetPhysicalTableStats(tableID, tblInfo)
 	require.True(t, statsTbl.GetCol(colCID).IsFullLoad())
 	require.Equal(t, int64(statistics.Version1), statsTbl.GetCol(colCID).StatsVer)
 
-	h.Clear()
+	h.ClearForTest()
 	require.NoError(t, h.InitStats(context.Background(), is, tableID))
 	statsTbl = h.GetPhysicalTableStats(tableID, tblInfo)
 	require.True(t, statsTbl.GetCol(colCID).IsAllEvicted())
@@ -343,7 +343,7 @@ func TestLoadAnalyzeV1StatsJSONFromV855(t *testing.T) {
 		return false
 	}, 5*time.Second, 100*time.Millisecond)
 
-	require.NoError(t, h.LoadNeededHistograms(is))
+	require.NoError(t, h.Storage().LoadNeededHistograms(is))
 	require.Eventually(t, func() bool {
 		items := asyncload.AsyncLoadHistogramNeededItems.AllItems()
 		for _, item := range items {
@@ -357,7 +357,7 @@ func TestLoadAnalyzeV1StatsJSONFromV855(t *testing.T) {
 	require.True(t, statsTbl.GetCol(colCID).IsFullLoad())
 	require.Equal(t, int64(statistics.Version1), statsTbl.GetCol(colCID).StatsVer)
 
-	h.Clear()
+	h.ClearForTest()
 	require.NoError(t, h.InitStats(context.Background(), is, tableID))
 	statsTbl = h.GetPhysicalTableStats(tableID, tblInfo)
 	require.True(t, statsTbl.GetCol(colCID).IsAllEvicted())
@@ -377,7 +377,7 @@ func TestLoadAnalyzeV1StatsJSONFromV855(t *testing.T) {
 	tk.MustQuery("select distinct stats_ver from mysql.stats_histograms where is_index = 1 and table_id = ? order by stats_ver", tableID).
 		Check(testkit.Rows("2"))
 
-	h.Clear()
+	h.ClearForTest()
 	require.NoError(t, h.InitStats(context.Background(), is, tableID))
 	statsTbl = h.GetPhysicalTableStats(tableID, tblInfo)
 	require.Equal(t, statistics.Version2, statsTbl.StatsVer)

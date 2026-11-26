@@ -398,7 +398,7 @@ func GetTestSchedulerExt(ctrl *gomock.Controller) Extension {
 		},
 	).AnyTimes()
 	mockScheduler.EXPECT().OnNextSubtasksBatch(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
-		func(_ context.Context, _ storage.TaskHandle, _ *proto.Task, _ []string, _ proto.Step) (metas [][]byte, err error) {
+		func(_ context.Context, _ storage.TaskHandle, _ *proto.Task, _ int, _ proto.Step) (metas [][]byte, err error) {
 			return nil, nil
 		},
 	).AnyTimes()
@@ -821,7 +821,7 @@ func newCrossKeyspaceStartCase(t *testing.T, taskID int64, taskKey string) *cros
 
 func (tc *crossKeyspaceStartCase) expectRuntimeAcquiredAndReleased() *sqlsvrapimock.MockKSRuntimeHandle {
 	runtimeHandle := newRuntimeHandle(tc.ctrl, tc.taskStore)
-	runtimeHandle.EXPECT().Release()
+	runtimeHandle.EXPECT().Release(false)
 	tc.server.EXPECT().AcquireKSRuntime(tc.task.Keyspace, tc.holderID()).Return(runtimeHandle, nil)
 	return runtimeHandle
 }

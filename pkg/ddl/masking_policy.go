@@ -453,6 +453,7 @@ func maskingPolicyTypeFromExpr(expr ast.ExprNode) model.MaskingPolicyType {
 }
 
 func (w *worker) insertMaskingPolicyIntoSysTable(jobCtx *jobContext, policy *model.MaskingPolicyInfo) error {
+	jobCtx.mustRollbackTxnOnError = true
 	const insertSQL = `INSERT INTO mysql.tidb_masking_policy
 		(policy_name, db_name, table_name, table_id, column_name, column_id, expression, status, masking_type, restrict_on, created_at, updated_at, created_by)
 		VALUES (%?, %?, %?, %?, %?, %?, %?, %?, %?, %?, %?, %?, %?)`
@@ -486,6 +487,7 @@ func (w *worker) insertMaskingPolicyIntoSysTable(jobCtx *jobContext, policy *mod
 }
 
 func (w *worker) updateMaskingPolicyInSysTable(jobCtx *jobContext, policy *model.MaskingPolicyInfo) error {
+	jobCtx.mustRollbackTxnOnError = true
 	const updateSQL = `UPDATE mysql.tidb_masking_policy
 		SET policy_name = %?, db_name = %?, table_name = %?, table_id = %?, column_name = %?, column_id = %?, expression = %?,
 			status = %?, masking_type = %?, restrict_on = %?, updated_at = %?
@@ -529,6 +531,7 @@ func maskingPolicyRestrictOpsToString(ops ast.MaskingPolicyRestrictOps) string {
 }
 
 func (w *worker) deleteMaskingPolicyFromSysTable(jobCtx *jobContext, policyID int64) error {
+	jobCtx.mustRollbackTxnOnError = true
 	const deleteSQL = "DELETE FROM mysql.tidb_masking_policy WHERE policy_id = %?"
 	_, err := w.sess.Execute(jobCtx.stepCtx, deleteSQL, "drop-masking-policy", policyID)
 	return errors.Trace(err)
@@ -550,6 +553,7 @@ func (w *worker) dropMaskingPoliciesOnTable(jobCtx *jobContext, tableID int64) e
 // dropMaskingPoliciesByDBName deletes all masking policies for a given database
 // in a single SQL statement using the db_name column.
 func (w *worker) dropMaskingPoliciesByDBName(jobCtx *jobContext, dbName string) error {
+	jobCtx.mustRollbackTxnOnError = true
 	const deleteSQL = "DELETE FROM mysql.tidb_masking_policy WHERE db_name = %?"
 	_, err := w.sess.Execute(jobCtx.stepCtx, deleteSQL, "drop-masking-policies-by-db", dbName)
 	if err != nil {
@@ -567,6 +571,9 @@ func (w *worker) dropMaskingPoliciesByDBName(jobCtx *jobContext, dbName string) 
 // mysql.tidb_masking_policy from the old table ID to the new one after TRUNCATE TABLE.
 // Column IDs remain the same across truncate, so column bindings are preserved.
 func (w *worker) updateMaskingPolicyTableIDAfterTruncate(jobCtx *jobContext, oldTableID, newTableID int64) error {
+	// Internal SQL can flush the old table's deletion into the DDL transaction.
+	// Any later error, including cancellation, must discard the whole step.
+	jobCtx.mustRollbackTxnOnError = true
 	policies, err := w.getMaskingPoliciesByTableIDFromSysTable(jobCtx.stepCtx, oldTableID)
 	if err != nil {
 		return errors.Trace(err)
@@ -576,6 +583,7 @@ func (w *worker) updateMaskingPolicyTableIDAfterTruncate(jobCtx *jobContext, old
 		WHERE policy_id = %?`
 	now := time.Now()
 	for _, policy := range policies {
+		jobCtx.mustRollbackTxnOnError = true
 		_, err := w.sess.Execute(jobCtx.stepCtx, updateSQL, "update-masking-policy-table-id",
 			newTableID, now, policy.ID,
 		)
@@ -602,12 +610,12 @@ func (w *worker) dropMaskingPoliciesOnColumn(jobCtx *jobContext, tableID, column
 // updateMaskingPolicyNamesAfterRename updates the db_name and table_name in
 // mysql.tidb_masking_policy after a table is renamed.
 func (w *worker) updateMaskingPolicyNamesAfterRename(
-	ctx context.Context,
+	jobCtx *jobContext,
 	tableID int64,
 	_ /* oldDBName */, newDBName ast.CIStr,
 	_ /* oldTableName */, newTableName ast.CIStr,
 ) error {
-	policies, err := w.getMaskingPoliciesByTableIDFromSysTable(ctx, tableID)
+	policies, err := w.getMaskingPoliciesByTableIDFromSysTable(jobCtx.stepCtx, tableID)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -621,7 +629,7 @@ func (w *worker) updateMaskingPolicyNamesAfterRename(
 		newPolicy.TableName = newTableName
 		newPolicy.UpdatedAt = time.Now()
 
-		if err = w.updateMaskingPolicyNamesInSysTable(ctx, newPolicy); err != nil {
+		if err = w.updateMaskingPolicyNamesInSysTable(jobCtx, newPolicy); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -629,11 +637,12 @@ func (w *worker) updateMaskingPolicyNamesAfterRename(
 }
 
 // updateMaskingPolicyNamesInSysTable updates only the db_name and table_name fields.
-func (w *worker) updateMaskingPolicyNamesInSysTable(ctx context.Context, policy *model.MaskingPolicyInfo) error {
+func (w *worker) updateMaskingPolicyNamesInSysTable(jobCtx *jobContext, policy *model.MaskingPolicyInfo) error {
+	jobCtx.mustRollbackTxnOnError = true
 	const updateSQL = `UPDATE mysql.tidb_masking_policy
 		SET db_name = %?, table_name = %?, updated_at = %?
 		WHERE policy_id = %?`
-	_, err := w.sess.Execute(ctx, updateSQL, "update-masking-policy-names",
+	_, err := w.sess.Execute(jobCtx.stepCtx, updateSQL, "update-masking-policy-names",
 		policy.DBName.O,
 		policy.TableName.O,
 		policy.UpdatedAt,

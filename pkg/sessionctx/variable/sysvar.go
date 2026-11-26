@@ -2403,6 +2403,10 @@ var defaultSysVars = []*SysVar{
 			s.SetAllowPreferRangeScan(TiDBOptOn(val))
 			return nil
 		}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptEnableSkipScan, Value: BoolToOnOff(vardef.DefOptEnableSkipScan), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.SetEnableSkipScan(TiDBOptOn(val))
+		return nil
+	}},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptLimitPushDownThreshold, Value: strconv.Itoa(vardef.DefOptLimitPushDownThreshold), Type: vardef.TypeUnsigned, MinValue: 0, MaxValue: math.MaxInt32, SetSession: func(s *SessionVars, val string) error {
 		s.LimitPushDownThreshold = TidbOptInt64(val, vardef.DefOptLimitPushDownThreshold)
 		return nil

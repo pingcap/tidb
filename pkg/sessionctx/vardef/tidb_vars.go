@@ -382,6 +382,9 @@ const (
 	// TiDBOptPreferRangeScan is used to enable/disable the optimizer to always prefer range scan over table scan, ignoring their costs.
 	TiDBOptPreferRangeScan = "tidb_opt_prefer_range_scan"
 
+	// TiDBOptEnableSkipScan controls whether the optimizer can use skip index scan.
+	TiDBOptEnableSkipScan = "tidb_opt_enable_skip_scan"
+
 	// TiDBOptEnableNoDecorrelateInSelect is used to control whether to enable the NO_DECORRELATE hint for subqueries in the select list.
 	TiDBOptEnableNoDecorrelateInSelect = "tidb_opt_enable_no_decorrelate_in_select"
 
@@ -1620,6 +1623,7 @@ const (
 	DefOptForceInlineCTE                = false
 	DefOptInSubqToJoinAndAgg            = true
 	DefOptPreferRangeScan               = true
+	DefOptEnableSkipScan                = false
 	DefOptEnableNoDecorrelateInSelect   = false
 	DefOptEnableAlternativeLogicalPlans = false
 	DefOptEnableSemiJoinRewrite         = false
@@ -2370,6 +2374,21 @@ const (
 	// IndexLookUpPushDownPolicyForce indicates to force push down the index lookup for all tables.
 	IndexLookUpPushDownPolicyForce = "force"
 )
+
+// TSOClientRPCModeToConcurrency returns the PD client concurrency for a TSO RPC mode.
+// It returns zero for an unsupported mode.
+func TSOClientRPCModeToConcurrency(mode string) int {
+	switch mode {
+	case TSOClientRPCModeDefault:
+		return 1
+	case TSOClientRPCModeParallel:
+		return 2
+	case TSOClientRPCModeParallelFast:
+		return 4
+	default:
+		return 0
+	}
+}
 
 // Global config name list.
 const (

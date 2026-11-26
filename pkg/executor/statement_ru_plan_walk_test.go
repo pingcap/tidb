@@ -1094,7 +1094,7 @@ func TestStatementRUCalculationTraversal(t *testing.T) {
 			statementRUWriteSnapshot{}, fixture.owner.calculationSetup, true)
 		require.True(t, ok)
 		require.Equal(t, ruv2.StmtUnits{CPUWork: 15, HashStateRows: 2, OperatorNum: 1},
-			finalized.report.units[statementRUTiKV][statementRUHashAgg])
+			finalized.report.matrix()[statementRUTiKV][statementRUHashAgg])
 		require.Equal(t, float64(49), finalized.engineRU.TiKV)
 		requirePublication(t, fixture, ruv2.StmtUnits{
 			CPUWork:              15,

@@ -2109,11 +2109,16 @@ func (b *PlanBuilder) buildDistinct(child base.LogicalPlan, length int) (*logica
 // unionJoinFieldType finds the type which can carry the given types in Union.
 // Note that unionJoinFieldType doesn't handle charset and collation, caller need to handle it by itself.
 func unionJoinFieldType(a, b *types.FieldType) *types.FieldType {
-	// We ignore the pure NULL type.
-	if a.GetType() == mysql.TypeNull {
-		return b
-	} else if b.GetType() == mysql.TypeNull {
-		return a
+	// A pure NULL branch does not change the value type, but makes the union
+	// nullable. Do not rely on branch CASTs mutating the shared result type.
+	if a.GetType() == mysql.TypeNull || b.GetType() == mysql.TypeNull {
+		resultTp := a
+		if a.GetType() == mysql.TypeNull {
+			resultTp = b
+		}
+		resultTp = resultTp.Clone()
+		resultTp.DelFlag(mysql.NotNullFlag)
+		return resultTp
 	}
 	resultTp := types.AggFieldType([]*types.FieldType{a, b})
 	// This logic will be intelligible when it is associated with the buildProjection4Union logic.
@@ -2197,7 +2202,9 @@ func (b *PlanBuilder) buildProjection4Union(_ context.Context, u *logicalop.Logi
 			dstType := unionCols[i].RetType
 			srcType := srcCol.RetType
 			if !srcType.Equal(dstType) {
-				exprs[i] = expression.BuildCastFunction4Union(b.ctx.GetExprCtx(), srcCol, dstType)
+				// CAST can infer an unspecified string length from this branch.
+				// Do not narrow the shared UNION type or other branches' casts.
+				exprs[i] = expression.BuildCastFunction4Union(b.ctx.GetExprCtx(), srcCol, dstType.Clone())
 			} else {
 				exprs[i] = srcCol
 			}
@@ -5063,6 +5070,16 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		}
 	}
 	tableInfo := tbl.Meta()
+	if sessionVars.StmtCtx.InExplainStmt {
+		hypoTblInfo, _ := sessionVars.GetHypoIndexTableInfo(dbName.L, tableInfo)
+		if hypoTblInfo != tableInfo {
+			tbl, err = table.TableFromMeta(tbl.Allocators(nil), hypoTblInfo)
+			if err != nil {
+				return nil, err
+			}
+			tableInfo = hypoTblInfo
+		}
+	}
 
 	if b.isCreateView && tableInfo.TempTableType == model.TempTableLocal {
 		return nil, plannererrors.ErrViewSelectTemporaryTable.GenWithStackByArgs(tn.Name)
@@ -5227,8 +5244,9 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	}
 
 	// Try to substitute generate column only if there is an index on generate column.
-	for _, index := range tableInfo.Indices {
-		if index.State != model.StatePublic {
+	for _, path := range possiblePaths {
+		index := path.Index
+		if index == nil || index.State != model.StatePublic {
 			continue
 		}
 		for _, indexCol := range index.Columns {
@@ -5582,7 +5600,7 @@ func (b *PlanBuilder) buildMemTable(_ context.Context, dbName ast.CIStr, tableIn
 			p.Extractor = NewInfoSchemaPartitionsExtractor()
 		case infoschema.TableStatistics:
 			p.Extractor = NewInfoSchemaStatisticsExtractor()
-		case infoschema.TableSchemata:
+		case infoschema.TableSchemata, infoschema.TableSchemataExtensions:
 			p.Extractor = NewInfoSchemaSchemataExtractor()
 		case infoschema.TableSequences:
 			p.Extractor = NewInfoSchemaSequenceExtractor()
@@ -5655,6 +5673,13 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName ast.CI
 	selectNode, err := viewParser.ParseOneStmt(tableInfo.View.SelectStmt, charset, collation)
 	if err != nil {
 		return nil, err
+	}
+	if b.buildingFoundRows {
+		// View definitions are expanded after preprocessing. Check them as inner queries,
+		// preserving legacy modifiers as noops and rejecting or falling back on non-repeatable expressions.
+		if err := b.checkViewForFoundRows(selectNode); err != nil {
+			return nil, err
+		}
 	}
 	originalVisitInfo := b.visitInfo
 	b.visitInfo = make([]visitInfo, 0)
@@ -6714,23 +6739,15 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (base
 	if ds.Tables != nil {
 		// Delete a, b from a, b, c, d... add a and b.
 		updatableList := make(map[string]bool)
-		tbInfoList := make(map[string]*ast.TableName)
-		collectTableName(ds.TableRefs.TableRefs, &updatableList, &tbInfoList)
+		tableNameByKey := make(map[string]*ast.TableName)
+		collectTableName(ds.TableRefs.TableRefs, &updatableList, &tableNameByKey)
 		for _, tn := range ds.Tables.Tables {
-			var canUpdate, foundMatch = false, false
-			name := tn.Name.L
-			if tn.Schema.L == "" {
-				canUpdate, foundMatch = updatableList[name]
-			}
-
-			if !foundMatch {
-				if tn.Schema.L == "" {
-					name = ast.NewCIStr(b.ctx.GetSessionVars().CurrentDB).L + "." + tn.Name.L
-				} else {
-					name = tn.Schema.L + "." + tn.Name.L
-				}
-				canUpdate, foundMatch = updatableList[name]
-			}
+			tb, canUpdate, foundMatch := resolveMultiDeleteTarget(
+				tn,
+				b.ctx.GetSessionVars().CurrentDB,
+				updatableList,
+				tableNameByKey,
+			)
 			// check sql like: `delete b from (select * from t) as a, t`
 			if !foundMatch {
 				return nil, plannererrors.ErrUnknownTable.GenWithStackByArgs(tn.Name.O, "MULTI DELETE")
@@ -6739,7 +6756,6 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (base
 			if !canUpdate {
 				return nil, plannererrors.ErrNonUpdatableTable.GenWithStackByArgs(tn.Name.O, "DELETE")
 			}
-			tb := tbInfoList[name]
 			tnW := b.resolveCtx.GetTableName(tb)
 			localResolveCtx.AddTableName(&resolve.TableNameW{
 				TableName: tn,
@@ -7789,11 +7805,37 @@ func (*tableListExtractor) Leave(ast.Node) bool {
 	return true
 }
 
-func collectTableName(node ast.ResultSetNode, updatableName *map[string]bool, info *map[string]*ast.TableName) {
+// resolveMultiDeleteTarget matches an unqualified alias before currentDB.table,
+// which is the resolution order used by TiDB/MySQL multi-table DELETE.
+func resolveMultiDeleteTarget(
+	target *ast.TableName,
+	currentDB string,
+	updatableList map[string]bool,
+	tableNameByKey map[string]*ast.TableName,
+) (table *ast.TableName, canUpdate, foundMatch bool) {
+	key := target.Name.L
+	if target.Schema.L == "" {
+		canUpdate, foundMatch = updatableList[key]
+	}
+	if !foundMatch {
+		if target.Schema.L == "" {
+			key = ast.NewCIStr(currentDB).L + "." + target.Name.L
+		} else {
+			key = target.Schema.L + "." + target.Name.L
+		}
+		canUpdate, foundMatch = updatableList[key]
+	}
+	if !foundMatch {
+		return nil, false, false
+	}
+	return tableNameByKey[key], canUpdate, true
+}
+
+func collectTableName(node ast.ResultSetNode, updatableName *map[string]bool, tableNameByKey *map[string]*ast.TableName) {
 	switch x := node.(type) {
 	case *ast.Join:
-		collectTableName(x.Left, updatableName, info)
-		collectTableName(x.Right, updatableName, info)
+		collectTableName(x.Left, updatableName, tableNameByKey)
+		collectTableName(x.Right, updatableName, tableNameByKey)
 	case *ast.TableSource:
 		name := x.AsName.L
 		var canUpdate bool
@@ -7806,7 +7848,7 @@ func collectTableName(node ast.ResultSetNode, updatableName *map[string]bool, in
 					name = s.Name.L
 				}
 			}
-			(*info)[name] = s
+			(*tableNameByKey)[name] = s
 		}
 		(*updatableName)[name] = canUpdate && s.Schema.L != ""
 	}

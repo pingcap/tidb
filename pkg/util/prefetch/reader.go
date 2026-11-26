@@ -82,20 +82,23 @@ func (r *Reader) run() {
 	}
 }
 
-// Read implements io.Reader. Read should not be called concurrently with Close.
+// Read implements io.Reader. Concurrent calls to Read are not supported.
 func (r *Reader) Read(data []byte) (int, error) {
 	total := 0
 	for {
 		if r.curBufReader == nil {
-			b, ok := <-r.bufCh
-			if !ok {
-				if total > 0 {
-					return total, nil
+			select {
+			case <-r.closedCh:
+				return total, io.ErrClosedPipe
+			case b, ok := <-r.bufCh:
+				if !ok {
+					if total > 0 {
+						return total, nil
+					}
+					return 0, r.err
 				}
-				return 0, r.err
+				r.curBufReader = bytes.NewReader(b)
 			}
-
-			r.curBufReader = bytes.NewReader(b)
 		}
 
 		expected := len(data)
@@ -113,7 +116,8 @@ func (r *Reader) Read(data []byte) (int, error) {
 	}
 }
 
-// Close implements io.Closer. Close should not be called concurrently with Read.
+// Close implements io.Closer and unblocks pending Read calls.
+// Concurrent calls to Close are not supported.
 func (r *Reader) Close() error {
 	if r.closed {
 		return nil

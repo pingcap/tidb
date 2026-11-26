@@ -69,12 +69,12 @@ func TestUpdateStatsMetaVersionForGC(t *testing.T) {
 		statsTbl := h.GetPhysicalTableStats(def.ID, tableInfo)
 		require.False(t, statsTbl.Pseudo)
 	}
-	err = h.Update(context.Background(), is)
+	err = h.Cache().Update(context.Background(), is)
 	require.NoError(t, err)
 
 	// Reset one partition stats.
 	p0 := pi.Definitions[0]
-	err = h.UpdateStatsMetaVersionForGC(p0.ID)
+	err = h.Storage().UpdateStatsMetaVersionForGC(p0.ID)
 	require.NoError(t, err)
 
 	// Get partition stats from stats_meta table.
@@ -269,7 +269,7 @@ func TestInsertColStats2KVDoesNotDeadlockWithAnalyzeSave(t *testing.T) {
 
 	colStatsErr := make(chan error, 1)
 	go func() {
-		colStatsErr <- util.CallWithSCtx(dom.StatsHandle().SPool(), func(sctx sessionctx.Context) error {
+		colStatsErr <- util.CallWithSCtx(dom.StatsHandle().Pool().SPool(), func(sctx sessionctx.Context) error {
 			return storage.InsertColStats2KV(util.StatsCtx, sctx, tableID, []*model.ColumnInfo{col})
 		}, util.FlagWrapTxn)
 	}()

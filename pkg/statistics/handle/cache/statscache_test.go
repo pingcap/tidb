@@ -91,8 +91,8 @@ func TestUpdateStatsHealthyMetrics(t *testing.T) {
 	require.NoError(t, err)
 	defer sc.Close()
 	sc.Update([]*statistics.Table{tableHasnotAnalyzed, tableLowHealthy, tableMidHealthy, tableHighHealthy, tablePerfect, tablePseudo, tableSmallTable, tableHasnotAnalyzedAndSmall}, nil, false)
-	cacheImpl := &StatsCacheImpl{}
-	cacheImpl.Store(sc)
+	cacheImpl := &Cache{}
+	cacheImpl.inner.Store(sc)
 
 	cacheImpl.UpdateStatsHealthyMetrics()
 
