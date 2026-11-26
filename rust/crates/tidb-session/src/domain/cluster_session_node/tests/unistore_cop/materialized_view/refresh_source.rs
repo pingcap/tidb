@@ -437,6 +437,11 @@ fn test_m_view_refresh_source_info_read_ts_after_retry() {
     for method in ["fast", "complete delta apply"] {
         let (_stack, mut tk, mview_id, _mlog_id) = new_fixture();
         must_exec_all(&mut tk, &["insert into t_source_init values (1, 5)"]);
+        // The one-shot write conflict below is process-wide: the DDL
+        // notifier, still delivering the fixture's DDL events, takes
+        // pessimistic locks too (Go `processEventForHandler`'s
+        // `BeginPessimistic`) and could consume it instead of the refresh.
+        super::log_purge::wait_ddl_notifier_drained(&mut tk);
         let validated_ts = Arc::new(Mutex::new(Vec::<u64>::new()));
         let computation_ts = Arc::new(Mutex::new(0u64));
         let metadata_ts = Arc::new(Mutex::new(0u64));
