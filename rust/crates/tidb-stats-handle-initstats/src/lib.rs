@@ -171,11 +171,24 @@ impl RangeWorker {
     }
 }
 
+/// Go `processTaskWithRecover`: a panic in a task is returned as an error;
+/// the worker threads have no other recovery.
+fn process_task_with_recover(inner: &WorkerInner, task: Task) -> TaskResult {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| (inner.process_task)(task))).unwrap_or_else(|payload| {
+        tidb_logutil::log_recovered_panic("RangeWorker.processTask", payload.as_ref());
+        Err(format!(
+            "panic in loading {} for table IDs [{}, {})",
+            inner.task_name, task.start_tid, task.end_tid
+        )
+        .into())
+    })
+}
+
 fn load_stats(inner: Arc<WorkerInner>) {
     loop {
         let task = inner.receiver.recv();
         let Ok(task) = task else { return };
-        if let Err(error) = (inner.process_task)(task) {
+        if let Err(error) = process_task_with_recover(&inner, task) {
             bg_logger().error(
                 "load stats failed",
                 &[Field::new(
@@ -198,5 +211,21 @@ fn load_stats(inner: Arc<WorkerInner>) {
             ),
             &[],
         );
+    }
+}
+
+#[cfg(test)]
+mod range_worker_panic_tests {
+    use super::*;
+
+    /// Go `TestRangeWorkerTaskPanic`: a panic in a task is logged as an
+    /// error, and the worker loop goes on.
+    #[test]
+    fn test_range_worker_task_panic() {
+        let worker = RangeWorker::new("test", |_| panic!("mock panic in processTask"), 1, 1, 0.0);
+        worker.load_stats();
+        worker.send_task(Task { start_tid: 1, end_tid: 2 });
+        worker.wait();
+        assert_eq!(worker.inner.complete_task_count.load(Ordering::SeqCst), 1);
     }
 }

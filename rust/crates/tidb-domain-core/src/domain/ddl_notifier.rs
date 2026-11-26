@@ -206,9 +206,17 @@ fn build_notifier_with(
     ));
     let stats_handler: Handler = Arc::new(|session, event| {
         cluster_session(session)?.with_context(|context| {
-            let result = context
-                .handle_stats_ddl_event(event)
-                .map_err(notifier_error);
+            // Go `defer tidbutil.Recover(..., "ddlHandlerImpl.HandleDDLEvent", ...)`:
+            // a panic would stop the DDL notifier and a new stats owner would
+            // replay the same event, so it is logged and the event skipped.
+            let Ok(result) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                context.handle_stats_ddl_event(event).map_err(notifier_error)
+            }))
+            .map_err(|payload| {
+                tidb_logutil::log_recovered_panic("ddlHandlerImpl.HandleDDLEvent", payload.as_ref());
+            }) else {
+                return Ok(());
+            };
             finish_stats_handler(event, result).map_err(|error| error.to_string())
         })
     });

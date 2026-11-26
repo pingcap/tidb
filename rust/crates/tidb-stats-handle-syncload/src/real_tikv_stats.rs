@@ -387,6 +387,7 @@ pub fn update_stats_cache(
             UpdateError::Cancelled => {
                 SystemTableError::Snapshot("statistics update was cancelled".to_owned())
             }
+            UpdateError::Panicked => SystemTableError::Snapshot("panic in StatsCacheImpl.Update".to_owned()),
         })
 }
 

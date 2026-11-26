@@ -100,6 +100,10 @@ pub enum UpdateError<E> {
     Source(E),
     /// The caller's context was cancelled while rows were being processed.
     Cancelled,
+    /// Go's recovered "panic in StatsCacheImpl.Update": the load worker does
+    /// not restart after a panic, so it is returned as an error and the
+    /// worker tries again at its next tick.
+    Panicked,
 }
 
 /// Go `StatsCache`: the full-table cache and its lifecycle maximum version.
@@ -233,6 +237,25 @@ impl StatsCacheImpl {
 
     /// Go `StatsCacheImpl.Update` over the source-owned SQL/schema boundary.
     pub fn update_from_source<S>(
+        &self,
+        source: &S,
+        physical_ids: Vec<i64>,
+        is_cancelled: impl Fn() -> bool,
+    ) -> Result<(), UpdateError<S::Error>>
+    where
+        S: StatsRefreshSource,
+    {
+        // Go `defer tidbutil.Recover(..., "StatsCacheImpl.Update", ...)`.
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            self.update_from_source_unrecovered(source, physical_ids, is_cancelled)
+        }))
+        .unwrap_or_else(|payload| {
+            tidb_logutil::log_recovered_panic("StatsCacheImpl.Update", payload.as_ref());
+            Err(UpdateError::Panicked)
+        })
+    }
+
+    fn update_from_source_unrecovered<S>(
         &self,
         source: &S,
         mut physical_ids: Vec<i64>,

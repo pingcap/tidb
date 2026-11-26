@@ -349,7 +349,10 @@ where
         {
             resume_unwind(payload)
         }
-        Err(_) => Ok(()),
+        // A panic is returned as an error: callers use the callback's
+        // results when the error is nil (TableStatsFromStorage would return
+        // the cached table as newly loaded statistics).
+        Err(_) => Err(error("panic in CallWithSCtx")),
     }
 }
 
@@ -386,11 +389,10 @@ where
             Err(original)
         }
         Err(payload) => {
-            // Go assigns the callback result to the named return only after
-            // the call finishes. If it panics, the deferred transaction
-            // finisher therefore observes nil and attempts COMMIT before the
-            // outer CallWithSCtx recovery runs.
-            let _ = exec_rows(context, "COMMIT", &[]);
+            // Go `fReturned`: the panic does not commit the callback's
+            // partial writes; the transaction rolls back before the outer
+            // CallWithSCtx recovery runs.
+            let _ = exec_rows(context, "rollback", &[]);
             resume_unwind(payload)
         }
     }
@@ -980,6 +982,8 @@ mod tests {
             ["BEGIN PESSIMISTIC", "COMMIT"]
         );
 
+        // Go master (12d84a92765): a panicking callback's partial writes are
+        // rolled back, not committed, and the panic goes on to CallWithSCtx.
         context.executor.calls.lock().unwrap().clear();
         assert!(catch_unwind(AssertUnwindSafe(|| {
             let _ = wrap_txn(&context, |_| -> Result<(), SqlExecError> {
@@ -989,7 +993,7 @@ mod tests {
         .is_err());
         assert_eq!(
             *context.executor.calls.lock().unwrap(),
-            ["BEGIN PESSIMISTIC", "COMMIT"]
+            ["BEGIN PESSIMISTIC", "rollback"]
         );
     }
 
@@ -1256,12 +1260,14 @@ mod tests {
         let context = Arc::new(MockContext::new());
         let factory_context = Arc::clone(&context);
         let pool = AdvancedSessionPool::new(1, move || Ok(Arc::clone(&factory_context)));
-        assert!(call_with_sctx(
+        // Go `TestCallSCtxFailed`: a panic is returned as an error.
+        let err = call_with_sctx(
             &pool,
             |_| -> Result<(), SqlExecError> { panic!("ordinary panic") },
             &[],
         )
-        .is_ok());
+        .unwrap_err();
+        assert!(err.to_string().contains("panic in CallWithSCtx"), "{err}");
         assert_eq!(pool.size(), 0);
         assert_eq!(context.closed.load(Ordering::SeqCst), 1);
     }

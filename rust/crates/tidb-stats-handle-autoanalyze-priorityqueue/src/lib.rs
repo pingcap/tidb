@@ -1183,8 +1183,24 @@ impl AnalysisPriorityQueue {
     }
 
     /// Go `HandleDDLEvent`, including its initialization gate and best-effort
-    /// mutation semantics.
+    /// mutation semantics. A panic would stop the DDL notifier, and a new
+    /// stats owner would replay the same event, so it is logged and the event
+    /// skipped, as an error is.
     pub fn handle_ddl_event(
+        &self,
+        run_auto_analyze: bool,
+        event: &PriorityQueueDdlEvent,
+    ) -> Result<(), DdlHandleError> {
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            self.handle_ddl_event_unrecovered(run_auto_analyze, event)
+        }))
+        .unwrap_or_else(|payload| {
+            tidb_logutil::log_recovered_panic("AnalysisPriorityQueue.HandleDDLEvent", payload.as_ref());
+            Ok(())
+        })
+    }
+
+    fn handle_ddl_event_unrecovered(
         &self,
         run_auto_analyze: bool,
         event: &PriorityQueueDdlEvent,
