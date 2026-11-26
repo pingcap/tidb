@@ -10108,6 +10108,7 @@ dependencies = [
  "tidb-sem-compat",
  "tidb-sem-v2",
  "tidb-server-err",
+ "tidb-session",
  "tidb-session-cursor",
  "tidb-sessionctx",
  "tidb-sessionstates",

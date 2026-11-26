@@ -1374,6 +1374,9 @@ mod execute_prepared;
 pub use binding_arm::GlobalBindingWriter;
 use tidb_bindinfo::binding_cache;
 use tidb_executor::blacklist;
+/// Go `pkg/testkit` for this crate's tests and its integration suites.
+#[cfg(any(test, feature = "testkit"))]
+pub mod testkit;
 pub mod bootstrap;
 mod classify;
 pub mod session_errors;

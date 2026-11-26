@@ -228,6 +228,7 @@ tidb-syssession = { path = "../tidb-syssession" }
 tidb-resolve = { path = "../tidb-resolve" }
 
 [dev-dependencies]
+tidb-session = { path = ".", features = ["testkit"] }
 tidb-planner-init = { path = "../tidb-planner-init" }
 tidb-go-rand = { path = "../tidb-go-rand" }
 tidb-ingestor-globalsort = { path = "../tidb-ingestor-globalsort" }
@@ -297,6 +298,8 @@ name = "serial"
 path = "tests/serial.rs"
 
 [features]
+# Go `pkg/testkit` (`tidb_session::testkit`) for the integration suites.
+testkit = []
 # Go's failpoints (tidb-failpoint) in the DDL worker and schema syncer, for
 # the crates whose tests drive it.
 failpoints = ["tidb-ddl/failpoints", "tidb-infoschema-issyncer/failpoints"]
