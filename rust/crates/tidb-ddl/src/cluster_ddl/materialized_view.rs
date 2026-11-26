@@ -1673,7 +1673,7 @@ fn ddl_session_sql<C: tidb_ddl_session::SessionContext + ?Sized>(
 /// failure to set `var_name`.
 pub fn maybe_mock_mview_execution_session_var_apply_error(var_name: &str) -> Option<String> {
     let value = tidb_failpoint::eval("github.com/pingcap/tidb/pkg/ddl/mockMViewExecutionSessionVarApplyError")?;
-    (value.as_string() == Some(var_name)).then(|| format!("mock mv execution session var apply error: {var_name}"))
+    (value.as_string().as_deref() == Some(var_name)).then(|| format!("mock mv execution session var apply error: {var_name}"))
 }
 
 /// Go master `ApplyMViewExecutionSessionVars`.
@@ -1997,7 +1997,7 @@ pub fn build_create_materialized_view_data(
     tidb_failpoint::inject("github.com/pingcap/tidb/pkg/ddl/pauseCreateMaterializedViewBuild", |_| {});
     if let Some(value) = tidb_failpoint::eval("github.com/pingcap/tidb/pkg/ddl/mockCreateMaterializedViewBuildErr") {
         // Go returns `context.Canceled` for "context-canceled".
-        if value.as_string() == Some("context-canceled") {
+        if value.as_string().as_deref() == Some("context-canceled") {
             return Err(tidb_terror::MysqlError::unknown("context canceled"));
         }
         return Err(tidb_terror::MysqlError::unknown("mock create materialized view build error"));

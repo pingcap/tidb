@@ -588,9 +588,23 @@ pub fn unistore_cluster_session_stack_from_for_keyspace(
     // The bootstrap: every boot, because the store is empty every boot --
     // unless it starts from a bootstrapped image, whose resource manager
     // write is replayed instead.
+    // Go `bootstrapSessionImpl`: load the legacy ECDSA session-token gate
+    // before any bootstrap, upgrade, normal, or diagnostic domain can start.
+    crate::bootstrap::init_legacy_ecdsa_session_token(
+        &crate::bootstrap::TxnUpgradeStore::new(&opener, IN_PROCESS_TIMEOUT),
+        false,
+    )
+    .map_err(|error| engine(SqlQueryError::unknown(error)))?;
     let (schema_version, bootstrap_splits) = match image {
         None => {
             let bootstrap_started = std::time::Instant::now();
+            // Go `bootstrap(s)`: the owner of a fresh bootstrap disables
+            // legacy ECDSA session tokens without checking cluster versions.
+            crate::bootstrap::init_legacy_ecdsa_session_token(
+                &crate::bootstrap::TxnUpgradeStore::new(&opener, IN_PROCESS_TIMEOUT),
+                true,
+            )
+            .map_err(|error| engine(SqlQueryError::unknown(error)))?;
             let (outcome, schema_version, bootstrap_splits) =
                 crate::bootstrap_publish::publish_bootstrap_with_splits(
                     &opener,

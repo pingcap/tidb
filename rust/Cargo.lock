@@ -6197,6 +6197,7 @@ dependencies = [
  "serde_json",
  "tidb-config",
  "tidb-ddl-util",
+ "tidb-failpoint",
  "tidb-go-net",
  "tidb-mysql",
  "tidb-owner",
@@ -7506,6 +7507,7 @@ version = "0.0.0"
 dependencies = [
  "fail",
  "tidb-failpoint",
+ "tidb-go-strconv",
 ]
 
 [[package]]
@@ -9792,6 +9794,7 @@ dependencies = [
  "tidb-ingestor-globalsort",
  "tidb-ingestor-ingestctrl",
  "tidb-ingestor-simplesst",
+ "tidb-intest",
  "tidb-keyspace",
  "tidb-kv",
  "tidb-kvcache",
@@ -10289,6 +10292,7 @@ dependencies = [
  "tidb-sessionstates",
  "tidb-stringutil",
  "tidb-terror",
+ "tidb-vardef",
  "x509-parser",
 ]
 
@@ -10945,9 +10949,11 @@ dependencies = [
  "tidb-log",
  "tidb-logutil",
  "tidb-model",
+ "tidb-mysql",
  "tidb-parser",
  "tidb-plancodec",
  "tidb-ppcpuusage",
+ "tidb-redact",
  "tikv-client",
 ]
 
@@ -11853,6 +11859,7 @@ dependencies = [
 name = "tidb-vardef"
 version = "0.0.0"
 dependencies = [
+ "tidb-config-kerneltype",
  "tidb-executor-join-joinversion",
  "tidb-go-time-layout",
  "tidb-hack",

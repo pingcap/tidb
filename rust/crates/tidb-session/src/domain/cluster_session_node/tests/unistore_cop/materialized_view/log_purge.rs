@@ -268,7 +268,7 @@ fn read_affected_rows_metric_value(label: &str) -> f64 {
 /// second after the DDL statement returned; a test that reads the counter
 /// around a statement of its own starts from a notifier with nothing left to
 /// delete.
-fn wait_ddl_notifier_drained(tk: &mut Session) {
+pub(super) fn wait_ddl_notifier_drained(tk: &mut Session) {
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
     while single_value(tk, "select count(*) from mysql.tidb_ddl_notifier") != "0" {
         assert!(std::time::Instant::now() < deadline, "the DDL notifier kept undelivered events");

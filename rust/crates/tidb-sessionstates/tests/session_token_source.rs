@@ -87,7 +87,7 @@ fn create_rsa_cert(cert_path: &Path, key_path: &Path) {
 }
 
 fn create_new_token(username: &str) -> (SessionToken, Vec<u8>) {
-    let token = create_session_token(username).unwrap();
+    let token = create_session_token(username, "%").unwrap();
     let bytes = tidb_stringutil::go_json_marshal(&token).into_bytes();
     (token, bytes)
 }
@@ -114,26 +114,26 @@ fn set_cert_and_key() {
     create_rsa_cert(&cert_path, &key_path);
 
     // no cert and no key
-    let error = create_session_token("test_user").unwrap_err();
+    let error = create_session_token("test_user", "%").unwrap_err();
     assert!(error.to_string().contains("no certificate or key file"), "{error}");
     // no cert
     set_key_path(key_path.to_str().unwrap());
-    let error = create_session_token("test_user").unwrap_err();
+    let error = create_session_token("test_user", "%").unwrap_err();
     assert!(error.to_string().contains("no certificate or key file"), "{error}");
     // no key
     set_key_path("");
     set_cert_path(cert_path.to_str().unwrap());
-    let error = create_session_token("test_user").unwrap_err();
+    let error = create_session_token("test_user", "%").unwrap_err();
     assert!(error.to_string().contains("no certificate or key file"), "{error}");
     // both configured
     set_key_path(key_path.to_str().unwrap());
-    create_session_token("test_user").unwrap();
+    create_session_token("test_user", "%").unwrap();
     // When the key and cert don't match, it will still use the old pair.
     let cert_path2 = dir.path().join("test2_cert.pem");
     let key_path2 = dir.path().join("test2_key.pem");
     create_rsa_cert(&cert_path2, &key_path2);
     set_key_path(key_path2.to_str().unwrap());
-    create_session_token("test_user").unwrap();
+    create_session_token("test_user", "%").unwrap();
 }
 
 #[test]
@@ -159,8 +159,21 @@ fn sign_algo() {
     for (key, digest) in &cases {
         create_certificates(&cert_path, &key_path, key, *digest);
         reload_signing_cert();
-        let (_, token_bytes) = create_new_token("test_user");
-        validate_session_token(&token_bytes, "test_user").unwrap();
+        let (mut token, token_bytes) = create_new_token("test_user");
+        validate_session_token(&token_bytes, "test_user", "%").unwrap();
+
+        // All signed fields must be protected, including those beyond the
+        // first curve-order bytes that ECDSA takes from its digest input.
+        token.hostname = "localhost".to_owned();
+        let token_bytes = tidb_stringutil::go_json_marshal(&token);
+        let error = validate_session_token(token_bytes.as_bytes(), "test_user", "localhost").unwrap_err();
+        assert!(error.contains("verification"), "{error}");
+
+        token.hostname = "%".to_owned();
+        token.expire_time += chrono::Duration::hours(1);
+        let token_bytes = tidb_stringutil::go_json_marshal(&token);
+        let error = validate_session_token(token_bytes.as_bytes(), "test_user", "%").unwrap_err();
+        assert!(error.contains("verification"), "{error}");
     }
 }
 
@@ -172,26 +185,137 @@ fn verify_token() {
 
     // check succeeds
     let (mut token, token_bytes) = create_new_token("test_user");
-    validate_session_token(&token_bytes, "test_user").unwrap();
+    validate_session_token(&token_bytes, "test_user", "%").unwrap();
     // the token expires
     mock_now_offset(TOKEN_LIFETIME + MINUTE);
-    let error = validate_session_token(&token_bytes, "test_user").unwrap_err();
+    let error = validate_session_token(&token_bytes, "test_user", "%").unwrap_err();
     tidb_failpoint::disable("github.com/pingcap/tidb/pkg/sessionctx/sessionstates/mockNowOffset");
     assert!(error.contains("token expired"), "{error}");
     // the current user is different with the token
-    let error = validate_session_token(&token_bytes, "another_user").unwrap_err();
+    let error = validate_session_token(&token_bytes, "another_user", "%").unwrap_err();
     assert!(error.contains("username does not match"), "{error}");
+    // Case-distinct usernames identify different privilege records.
+    let error = validate_session_token(&token_bytes, "TEST_USER", "%").unwrap_err();
+    assert!(error.contains("username does not match"), "{error}");
+    // The matched host is part of the signed account, not the peer address.
+    let error = validate_session_token(&token_bytes, "test_user", "localhost").unwrap_err();
+    assert!(error.contains("hostname does not match"), "{error}");
+    // Changing a signed host invalidates the signature.
+    token.hostname = "localhost".to_owned();
+    let forged = tidb_stringutil::go_json_marshal(&token);
+    let error = validate_session_token(forged.as_bytes(), "test_user", "localhost").unwrap_err();
+    assert!(error.contains("verification error"), "{error}");
+    // Removing a signed host must not turn a bound token into a legacy token.
+    token.hostname = String::new();
+    let forged = tidb_stringutil::go_json_marshal(&token);
+    let error = validate_session_token(forged.as_bytes(), "test_user", "%").unwrap_err();
+    assert!(error.contains("verification error"), "{error}");
+    token.hostname = "%".to_owned();
     // forge the user name
     token.username = "another_user".to_owned();
     let forged = tidb_stringutil::go_json_marshal(&token);
-    let error = validate_session_token(forged.as_bytes(), "another_user").unwrap_err();
+    let error = validate_session_token(forged.as_bytes(), "another_user", "%").unwrap_err();
     assert!(error.contains("verification error"), "{error}");
     // forge the expire time
     token.username = "test_user".to_owned();
     token.expire_time = chrono::Local::now().fixed_offset() - chrono::Duration::minutes(1);
     let forged = tidb_stringutil::go_json_marshal(&token);
-    let error = validate_session_token(forged.as_bytes(), "test_user").unwrap_err();
+    let error = validate_session_token(forged.as_bytes(), "test_user", "%").unwrap_err();
     assert!(error.contains("verification error"), "{error}");
+
+    // Older servers sign this format without a hostname field, which is what
+    // a token for an empty hostname marshals to (the field is omitted).
+    let legacy = create_session_token("test_user", "").unwrap();
+    let legacy_bytes = tidb_stringutil::go_json_marshal(&legacy);
+    // legacy token
+    for hostname in ["", "%", "localhost"] {
+        validate_session_token(legacy_bytes.as_bytes(), "test_user", hostname).unwrap();
+    }
+    let error = validate_session_token(legacy_bytes.as_bytes(), "another_user", "%").unwrap_err();
+    assert!(error.contains("username does not match"), "{error}");
+    let error = validate_session_token(legacy_bytes.as_bytes(), "TEST_USER", "%").unwrap_err();
+    assert!(error.contains("username does not match"), "{error}");
+    // empty hostname
+    assert!(!legacy_bytes.contains("\"hostname\""), "{legacy_bytes}");
+    validate_session_token(legacy_bytes.as_bytes(), "test_user", "%").unwrap();
+}
+
+/// Restores the process-wide legacy ECDSA gate when a test ends.
+struct LegacyEcdsaGate(bool);
+
+impl Drop for LegacyEcdsaGate {
+    fn drop(&mut self) {
+        tidb_vardef::set_legacy_ecdsa_session_token_disabled(self.0);
+    }
+}
+
+#[test]
+fn legacy_ecdsa_session_token() {
+    use openssl::ecdsa::EcdsaSig;
+    let _guard = signing_cert();
+    let _gate = LegacyEcdsaGate(tidb_vardef::is_legacy_ecdsa_session_token_disabled());
+    tidb_vardef::set_legacy_ecdsa_session_token_disabled(false);
+    let dir = tempfile::tempdir().unwrap();
+    let cert_path = dir.path().join("cert.pem");
+    let key_path = dir.path().join("key.pem");
+    create_certificates(&cert_path, &key_path, &KeyAlgorithm::Ecdsa, MessageDigest::sha256());
+    set_key_path(key_path.to_str().unwrap());
+    set_cert_path(cert_path.to_str().unwrap());
+
+    let now = chrono::Local::now().fixed_offset();
+    let mut token = SessionToken {
+        username: "legacy_user".to_owned(),
+        hostname: String::new(),
+        sign_time: now,
+        expire_time: now + chrono::Duration::from_std(TOKEN_LIFETIME).unwrap(),
+        signature: Vec::new(),
+    };
+    let payload = tidb_stringutil::go_json_marshal(&token);
+    // Older TiDB versions pass the JSON directly to ECDSA instead of hashing it.
+    let key = PKey::private_key_from_pem(&std::fs::read(&key_path).unwrap()).unwrap().ec_key().unwrap();
+    token.signature = EcdsaSig::sign(payload.as_bytes(), &key).unwrap().to_der().unwrap();
+    let token_bytes = tidb_stringutil::go_json_marshal(&token);
+    validate_session_token(token_bytes.as_bytes(), &token.username, "%").unwrap();
+
+    // Legacy signatures do not authenticate timestamps beyond the curve-order
+    // prefix. This compatibility path must be disabled after the upgrade.
+    token.expire_time += chrono::Duration::hours(1);
+    let tampered_bytes = tidb_stringutil::go_json_marshal(&token);
+    validate_session_token(tampered_bytes.as_bytes(), &token.username, "%").unwrap();
+    tidb_vardef::set_legacy_ecdsa_session_token_disabled(true);
+    for bytes in [&token_bytes, &tampered_bytes] {
+        let error = validate_session_token(bytes.as_bytes(), &token.username, "%").unwrap_err();
+        assert!(error.contains("verification"), "{error}");
+    }
+
+    // New tokens always hash the complete payload, even during an upgrade.
+    for disabled in [false, true] {
+        tidb_vardef::set_legacy_ecdsa_session_token_disabled(disabled);
+        let (mut modern, modern_bytes) = create_new_token(&token.username);
+        validate_session_token(&modern_bytes, &token.username, "%").unwrap();
+        let signature = std::mem::take(&mut modern.signature);
+        let payload = tidb_stringutil::go_json_marshal(&modern);
+        assert!(!EcdsaSig::from_der(&signature).unwrap().verify(payload.as_bytes(), &key).unwrap());
+    }
+
+    // Verification must try older certificates after the newest one fails,
+    // for both signature formats while legacy verification is enabled.
+    let (_, modern_bytes) = create_new_token(&token.username);
+    let new_cert_path = dir.path().join("new_cert.pem");
+    let new_key_path = dir.path().join("new_key.pem");
+    create_certificates(&new_cert_path, &new_key_path, &KeyAlgorithm::Ecdsa, MessageDigest::sha256());
+    set_key_path(new_key_path.to_str().unwrap());
+    set_cert_path(new_cert_path.to_str().unwrap());
+    for disabled in [false, true] {
+        tidb_vardef::set_legacy_ecdsa_session_token_disabled(disabled);
+        validate_session_token(&modern_bytes, &token.username, "%").unwrap();
+        let legacy = validate_session_token(token_bytes.as_bytes(), &token.username, "%");
+        if disabled {
+            assert!(legacy.unwrap_err().contains("verification"));
+        } else {
+            legacy.unwrap();
+        }
+    }
 }
 
 #[test]
@@ -205,37 +329,37 @@ fn cert_expire() {
     set_cert_path(cert_path.to_str().unwrap());
 
     let (_, token_bytes) = create_new_token("test_user");
-    validate_session_token(&token_bytes, "test_user").unwrap();
+    validate_session_token(&token_bytes, "test_user", "%").unwrap();
     // replace the cert, but the old cert is still valid for a while
     let cert_path2 = dir.path().join("test2_cert.pem");
     let key_path2 = dir.path().join("test2_key.pem");
     create_rsa_cert(&cert_path2, &key_path2);
     set_key_path(key_path2.to_str().unwrap());
     set_cert_path(cert_path2.to_str().unwrap());
-    validate_session_token(&token_bytes, "test_user").unwrap();
+    validate_session_token(&token_bytes, "test_user", "%").unwrap();
     // the old cert expires and the original token is invalid
     let mut offset = LOAD_CERT_INTERVAL;
     mock_now_offset(offset);
     reload_signing_cert();
     offset += OLD_CERT_VALID_TIME + MINUTE;
     mock_now_offset(offset);
-    let error = validate_session_token(&token_bytes, "test_user").unwrap_err();
+    let error = validate_session_token(&token_bytes, "test_user", "%").unwrap_err();
     assert!(error.contains("verification error"), "{error}");
     // the new cert is not rotated but is reloaded
     let (_, token_bytes) = create_new_token("test_user");
     reload_signing_cert();
-    validate_session_token(&token_bytes, "test_user").unwrap();
+    validate_session_token(&token_bytes, "test_user", "%").unwrap();
     // the cert is rotated but is still valid
     create_rsa_cert(&cert_path2, &key_path2);
     offset += LOAD_CERT_INTERVAL;
     mock_now_offset(offset);
     reload_signing_cert();
-    let error = validate_session_token(&token_bytes, "test_user").unwrap_err();
+    let error = validate_session_token(&token_bytes, "test_user", "%").unwrap_err();
     assert!(error.contains("token expired"), "{error}");
     // after some time, it's not valid
     offset += OLD_CERT_VALID_TIME + MINUTE;
     mock_now_offset(offset);
-    let error = validate_session_token(&token_bytes, "test_user").unwrap_err();
+    let error = validate_session_token(&token_bytes, "test_user", "%").unwrap_err();
     tidb_failpoint::disable("github.com/pingcap/tidb/pkg/sessionctx/sessionstates/mockNowOffset");
     assert!(error.contains("verification error"), "{error}");
 }
@@ -275,7 +399,7 @@ fn load_and_read_concurrently() {
                 while std::time::Instant::now() < deadline {
                     let (_, token_bytes) = create_new_token(&username);
                     std::thread::sleep(Duration::from_millis(10));
-                    validate_session_token(&token_bytes, &username).unwrap();
+                    validate_session_token(&token_bytes, &username, "%").unwrap();
                     std::thread::sleep(Duration::from_millis(10));
                 }
             });

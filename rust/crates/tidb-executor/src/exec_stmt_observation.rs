@@ -72,6 +72,9 @@ pub struct StatementObservation {
     /// Go `logStmt`'s crucial statements (account, privilege and schema
     /// changes), which go to the background log instead of the general log.
     pub crucial: bool,
+    /// Go `a.StmtNode.(*ast.SelectStmt)` with `Kind ==
+    /// SelectStmtKindSelect`: a plain SELECT, not `TABLE` or `VALUES`.
+    pub select_kind_select: bool,
 }
 
 #[derive(Default)]
@@ -108,6 +111,28 @@ impl StatementPhases {
                 .saturating_sub(started.elapsed()),
             _ => Duration::ZERO,
         }
+    }
+}
+
+/// Go `ExecStmt.isSlowQueryCacheable`: whether this statement may keep its
+/// original SQL in the plaintext slow-query cache. Only a directly executed
+/// SELECT qualifies. Prepared executions, TABLE, VALUES, and sensitive
+/// statements do not.
+fn is_slow_query_cacheable(observation: &StatementObservation) -> bool {
+    !observation.prepared && observation.secure_text.is_none() && observation.select_kind_select
+}
+
+/// Go `variable.PlanCacheParamList` as `StmtExecInfo.SampleParams` holds it:
+/// a prepared execution's arguments, `String` rendering them as a log suffix.
+struct PlanCacheParams(Vec<tidb_datatype::Datum>);
+
+impl std::fmt::Display for PlanCacheParams {
+    /// Go `PlanCacheParamList.String`.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.0.is_empty() {
+            return Ok(());
+        }
+        write!(f, " [arguments: {}]", tidb_datatype::datums_to_str_no_err_smart(&self.0))
     }
 }
 
@@ -539,6 +564,21 @@ pub trait ExecStmtObservation: crate::sessionctx::SessionContext {
             current_db_changed: self.session_vars().current_db_changed,
             ..tidb_variable::slow_log::SlowLogSessionVars::default()
         };
+        // Go `LogSlowQuery`: tidb_redact_log OFF already writes the original
+        // SQL to the slow log, so the plaintext cache is skipped. ON and
+        // MARKER redact that line; only a non-sensitive SELECT is queued,
+        // before the redacted line is written. A full queue drops the cache
+        // entry and the disk write still happens.
+        if self.redact_log_mode() != "OFF" && is_slow_query_cacheable(observation) {
+            crate::slow_query_cache::put_into_global_cache(
+                crate::slow_query_cache::slow_query_key_of(
+                    items.txn_ts,
+                    crate::slow_query_cache::slow_query_time_key(items.time_total),
+                    &items.digest,
+                ),
+                observation.text.clone(),
+            );
+        }
         let entry = tidb_variable::slow_log::slow_log_format(&vars, &items);
         // Go `SlowLogFormat` clears `CurrentDBChanged` once it printed `use`.
         self.session_vars_mut().current_db_changed = false;
@@ -724,20 +764,29 @@ pub trait ExecStmtObservation: crate::sessionctx::SessionContext {
             String::new()
         };
         let prev_sql_digest = attributed_prev_digest.unwrap_or_default();
-        // Go `getLazyStmtText` / `updatePrevStmt`: a sensitive statement is
-        // summarized by its secure text.
-        let summary_sql = observation
-            .secure_text
-            .clone()
-            .unwrap_or_else(|| observation.text.clone());
-        *self.previous_summary_statement() =
-            Some((summary_sql.clone(), observation.digest.to_string()));
+        // Go `ExecStmt.getLazyStmtText` (`GetOriginalSQL`, v1's sample) and
+        // `updatePrevStmt` (`PrevStmt`, formatted by `formatSQL`): the text a
+        // log may carry under `tidb_redact_log`.
+        let summary_sql = self.text_to_log(observation, false);
+        *self.previous_summary_statement() = Some((
+            tidb_variable::slow_log::format_sql(&summary_sql, self.query_log_max_len()),
+            observation.digest.to_string(),
+        ));
+        // Go `SummaryStmt`: `SampleParams = sessVars.PlanCacheParams`, the
+        // v2 record's unredacted sample suffix.
+        let sample_params = self
+            .prepared_params()
+            .filter(|params| !params.is_empty())
+            .map(|params| {
+                Arc::new(PlanCacheParams(params.to_vec())) as Arc<dyn std::fmt::Display + Send + Sync>
+            });
         let plan = self
             .process_plan_info_cell()
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone();
         let mut ctx = StmtSummaryStmtCtx::default();
+        ctx.original_sql = observation.text.clone();
         ctx.stmt_type = observation.label.clone();
         ctx.tables = phases.tables.clone();
         ctx.index_names = if observation.routed {
@@ -758,6 +807,8 @@ pub trait ExecStmtObservation: crate::sessionctx::SessionContext {
                 .get_system("collation_connection")
                 .unwrap_or_default(),
             normalized_sql: observation.normalized.clone(),
+            sensitive_stmt: observation.secure_text.clone(),
+            sample_params,
             digest: observation.digest.to_string(),
             prev_sql,
             prev_sql_digest,

@@ -285,6 +285,12 @@ fn served_information_schema_columns_are_go_tables_go() {
     }
     vars.extend(go_column_vars(master));
     tables.extend(go_table_columns(master, &constants));
+    // Go master 13377f0999b's `In_memory_original_query` slow-query column.
+    constants.insert(
+        "SlowLogInMemoryOriginalQueryStr".to_owned(),
+        "In_memory_original_query".to_owned(),
+    );
+    vars.extend(go_column_vars(include_str!("../testdata/go_master_slow_query_cols.go.txt")));
     let mut mismatches = Vec::new();
     for (table, columns) in SERVED_TABLES {
         let var = tables

@@ -828,6 +828,12 @@ impl<F: QuerySessionFactory> ConcurrentSqlNode<F> {
     where
         P: FnMut(&ClientSocket) -> Result<(), SqlNodeError>,
     {
+        // Go `Server.Run`: the plaintext slow-query worker is independent of
+        // tidb_redact_log. Tests start it explicitly when they exercise
+        // slow-query cache behavior.
+        if !tidb_intest::IN_TEST {
+            tidb_executor::slow_query_cache::start_slow_query_cache();
+        }
         // Go `Server.Run`: `s.health.Store(true)`.
         if !self.shutdown.is_shutdown_requested() {
             crate::standby_node::SERVER_HEALTH.store(true, Ordering::Release);

@@ -1778,7 +1778,7 @@ pub trait MviewRefreshExec: MvSession {
             {
                 let message = value
                     .as_string()
-                    .map_or_else(|| "mock refresh materialized view error after data changes".to_owned(), str::to_owned);
+                    .unwrap_or_else(|| "mock refresh materialized view error after data changes".to_owned());
                 return Err(finalize_failure(&mut hist, refresh, &mut txn_finished, plain(message)));
             }
             // Go master `resolveMVCompleteRefreshSources` for COMPLETE IN
@@ -2120,9 +2120,8 @@ pub trait MviewRefreshExec: MvSession {
             if let Some(value) = tidb_failpoint::eval(
                 "github.com/pingcap/tidb/pkg/executor/mockRefreshMaterializedViewOutOfPlaceBuildErrorAfterLoadShadow",
             ) {
-                return Err(plain(value.as_string().map_or_else(
+                return Err(plain(value.as_string().unwrap_or_else(
                     || "mock refresh materialized view out-of-place build error after load shadow".to_owned(),
-                    str::to_owned,
                 )));
             }
             let sources = self.resolve_mv_complete_refresh_sources(info.id, build_read_tso)?;

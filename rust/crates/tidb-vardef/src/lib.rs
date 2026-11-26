@@ -63,6 +63,26 @@ pub fn get_ddl_reorg_worker_counter() -> i32 {
     DDL_REORG_WORKER_COUNTER.load(Ordering::SeqCst)
 }
 
+/// Go `disableLegacyECDSASessionToken`: rejects legacy raw-input ECDSA
+/// session-token signatures, which leave token timestamps unauthenticated
+/// because ECDSA truncates the JSON input. Classic keeps this false until the
+/// cluster upgrade gate is durably completed; NextGen disables legacy ECDSA
+/// tokens immediately (Go's `init`) because it uses RSA tokens.
+static DISABLE_LEGACY_ECDSA_SESSION_TOKEN: std::sync::LazyLock<std::sync::atomic::AtomicBool> =
+    std::sync::LazyLock::new(|| std::sync::atomic::AtomicBool::new(tidb_config_kerneltype::is_next_gen()));
+
+/// Go `IsLegacyECDSASessionTokenDisabled`: whether legacy raw-input ECDSA
+/// session-token signatures are rejected.
+pub fn is_legacy_ecdsa_session_token_disabled() -> bool {
+    DISABLE_LEGACY_ECDSA_SESSION_TOKEN.load(std::sync::atomic::Ordering::SeqCst)
+}
+
+/// Go `SetLegacyECDSASessionTokenDisabled`: controls whether legacy raw-input
+/// ECDSA session-token signatures are rejected.
+pub fn set_legacy_ecdsa_session_token_disabled(disabled: bool) {
+    DISABLE_LEGACY_ECDSA_SESSION_TOKEN.store(disabled, std::sync::atomic::Ordering::SeqCst);
+}
+
 /// Go `SetDDLReorgWorkerCounter`; validation belongs to the sysvar registry.
 pub fn set_ddl_reorg_worker_counter(cnt: i32) {
     DDL_REORG_WORKER_COUNTER.store(cnt, Ordering::SeqCst);

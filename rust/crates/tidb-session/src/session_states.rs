@@ -244,8 +244,8 @@ impl Session {
         // A session with no user has no token. A failure to sign is only
         // logged: a deployment may want session states (traffic replay)
         // without the signing certificate a migration needs.
-        let token = self.vars.login_user.as_ref().and_then(|_| {
-            tidb_sessionstates::create_session_token(&self.process_list_user())
+        let token = self.authenticated_identity().and_then(|(auth_username, auth_hostname)| {
+            tidb_sessionstates::create_session_token(auth_username, auth_hostname)
                 .map_err(|error| {
                     tidb_log::warn(
                         "create session token failed",

@@ -58,18 +58,24 @@ impl Value {
     }
 
     /// Go `v, ok := val.(string)`.
-    pub fn as_string(&self) -> Option<&str> {
-        self.0.as_deref()?.strip_prefix('"')?.strip_suffix('"')
+    pub fn as_string(&self) -> Option<String> {
+        go_quoted_string(self.0.as_deref()?)
     }
 
     /// Go `val.(string)`.
     pub fn string(&self) -> String {
-        self.0
-            .as_deref()
-            .and_then(|value| value.strip_prefix('"')?.strip_suffix('"'))
+        self.as_string()
             .unwrap_or_else(|| panic!("failpoint value {:?} is not a string", self.0))
-            .to_owned()
     }
+}
+
+/// Go failpoint `parseVal`'s `fmt.Sscanf(desc, "%q", &s)`: a double-quoted
+/// literal with Go escapes, or a back-quoted raw one.
+fn go_quoted_string(value: &str) -> Option<String> {
+    if !(value.starts_with('"') || value.starts_with('`')) {
+        return None;
+    }
+    String::from_utf8(tidb_go_strconv::unquote(value.as_bytes()).ok()?).ok()
 }
 
 /// Go `failpoint.Eval(name)`: the value when the failpoint fires.
@@ -224,6 +230,17 @@ impl Drop for Guard {
 #[cfg(all(test, feature = "failpoints"))]
 mod tests {
     use super::*;
+
+    /// Go failpoint `parseVal`: `return("...")` unescapes Go escapes and
+    /// `return(`...`)` keeps a raw string, both as `val.(string)`.
+    #[test]
+    fn string_values_scan_like_go_percent_q() {
+        let value = |text: &str| Value(Some(text.to_owned()));
+        assert_eq!(value(r#""a\"b\n""#).string(), "a\"b\n");
+        assert_eq!(value(r#"`{"k":"v\n"}`"#).string(), r#"{"k":"v\n"}"#);
+        assert_eq!(value("1").as_string(), None);
+        assert_eq!(value("true").as_string(), None);
+    }
 
     #[test]
     fn terms_and_values_are_gos() {

@@ -5045,6 +5045,15 @@ const SLOW_QUERY_COLUMNS: &[InfoColumn] = &[
         deflt: None,
         comment: None,
     },
+    InfoColumn {
+        name: "In_memory_original_query",
+        tp: FieldTypeCode::LongBlob,
+        size: UNSPECIFIED_LENGTH,
+        decimal: 0,
+        flag: 0,
+        deflt: None,
+        comment: None,
+    },
 ];
 
 /// Go `tableTableSpacesCols`.
