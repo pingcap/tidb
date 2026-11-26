@@ -79,7 +79,11 @@ type InstancePlanCache interface {
 // Context is an interface for transaction and executive args environment.
 type Context interface {
 	planctx.Common
-	// EncodeStates encodes session states into a JSON.
+	// CheckCanMigrateStates checks if the session can be moved to another session.
+	CheckCanMigrateStates() error
+	// EncodeStates encodes session states into a JSON. It does not check whether
+	// the session can be migrated: a caller that migrates the session must call
+	// CheckCanMigrateStates first.
 	EncodeStates(context.Context, *sessionstates.SessionStates) error
 	// DecodeStates decodes a map into session states.
 	DecodeStates(context.Context, *sessionstates.SessionStates) error

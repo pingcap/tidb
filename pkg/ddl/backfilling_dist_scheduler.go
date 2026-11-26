@@ -46,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
+	"github.com/pingcap/tidb/pkg/resourcegroup"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/table"
@@ -120,10 +121,9 @@ func (sch *LitBackfillScheduler) OnNextSubtasksBatch(
 	ctx context.Context,
 	taskHandle diststorage.TaskHandle,
 	task *proto.Task,
-	execIDs []string,
+	nodeCnt int,
 	nextStep proto.Step,
 ) (subtaskMeta [][]byte, err error) {
-	nodeCnt := len(execIDs)
 	if kerneltype.IsNextGen() {
 		// in nextgen, node resource are scaled out automatically, we only consider
 		// the max allowed node for the task, and ignore how many node currently
@@ -174,6 +174,7 @@ func (sch *LitBackfillScheduler) OnNextSubtasksBatch(
 				store.(kv.StorageWithPD),
 				taskHandle,
 				task,
+				nodeCnt,
 				backfillMeta.CloudStorageURI,
 				logger)
 			if err != nil {
@@ -246,7 +247,38 @@ func skipMergeSort(stats []simplesst.MultipleFilesStat, concurrency int) bool {
 }
 
 // OnDone implements scheduler.Extension interface.
-func (*LitBackfillScheduler) OnDone(_ context.Context, _ diststorage.TaskHandle, _ *proto.Task) error {
+// For the temp-index merge step it records the committed transaction bytes of
+// the subtasks into task.Meta. The framework persists the mutated meta with the
+// success state transition, so recordDistTaskRU can convert it to RU later, even
+// after the subtasks are moved to the history tables. The recorded size is
+// best-effort, see mergeTempIndexExecutor.RunSubtask.
+func (sch *LitBackfillScheduler) OnDone(_ context.Context, h diststorage.TaskHandle, task *proto.Task) error {
+	// Only the NextGen temp-index merge is accounted, and reverted tasks are not
+	// accounted at all.
+	if !kerneltype.IsNextGen() || task.State == proto.TaskStateReverting || !sch.MergeTempIndex {
+		return nil
+	}
+	summaries, err := h.GetPreviousSubtaskSummary(task.ID, proto.BackfillStepMergeTempIndex)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	taskMeta := &BackfillTaskMeta{}
+	if err := json.Unmarshal(task.Meta, taskMeta); err != nil {
+		return errors.Trace(err)
+	}
+	var txnKVSize uint64
+	for _, summary := range summaries {
+		txnKVSize += uint64(summary.Processed.Load())
+	}
+	if taskMeta.Summary == nil {
+		taskMeta.Summary = &BackfillTaskSummary{}
+	}
+	taskMeta.Summary.MergeTempIndexTxnKVSize = txnKVSize
+	newMeta, err := json.Marshal(taskMeta)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	task.Meta = newMeta
 	return nil
 }
 
@@ -307,7 +339,17 @@ func generateReadIndexPlan(
 	nodeCnt int,
 	logger *zap.Logger,
 ) (metas [][]byte, err error) {
-	jobReorgCtx := d.jobContext(job.ID, job.ReorgMeta)
+	var jobReorgCtx *ReorgContext
+	if kerneltype.IsNextGen() {
+		// Planning also reads tenant data on the shared DXF service. Use an
+		// execution context independent of the foreground DDL owner's context.
+		jobReorgCtx = NewReorgContext()
+		jobReorgCtx.ddlJobCtx = ctx
+		jobReorgCtx.resourceGroupName = resourcegroup.DefaultResourceGroupName
+		jobReorgCtx.setDDLLabelForDiagnosis(job.Type)
+	} else {
+		jobReorgCtx = d.jobContext(job.ID, job.ReorgMeta)
+	}
 	if tbl.Meta().Partition == nil {
 		return generatePlanForPhysicalTable(ctx, jobReorgCtx, store, tbl.(table.PhysicalTable), job, useCloud, nodeCnt, logger)
 	}
@@ -339,12 +381,12 @@ func generatePlanForPhysicalTable(
 	}
 
 	startKey, endKey, err := getTableRange(reorgCtx, store, tbl, ver.Ver, job.Priority)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	if startKey == nil && endKey == nil {
 		// Empty table.
 		return nil, nil
-	}
-	if err != nil {
-		return nil, errors.Trace(err)
 	}
 
 	var subTaskMetas [][]byte
@@ -454,6 +496,7 @@ func generateGlobalSortIngestPlan(
 	store kv.StorageWithPD,
 	taskHandle diststorage.TaskHandle,
 	task *proto.Task,
+	nodeCnt int,
 	cloudStorageURI string,
 	logger *zap.Logger,
 ) ([][]byte, uint64, error) {
@@ -514,11 +557,6 @@ func generateGlobalSortIngestPlan(
 		failpoint.Return(metaArr, totalKVSize, nil)
 	})
 
-	instanceIDs, err := scheduler.GetLiveExecIDs(ctx)
-	if err != nil {
-		return nil, totalKVSize, err
-	}
-	iCnt := int64(len(instanceIDs))
 	metaArr := make([]*BackfillSubTaskMeta, 0, 16)
 	for i, g := range kvMetaGroups {
 		eleID := int64(0)
@@ -526,7 +564,7 @@ func generateGlobalSortIngestPlan(
 		if i < len(eleIDs) {
 			eleID = eleIDs[i]
 		}
-		newMeta, err := splitSubtaskMetaForOneKVMetaGroup(ctx, store, g, eleID, cloudStorageURI, iCnt, logger)
+		newMeta, err := splitSubtaskMetaForOneKVMetaGroup(ctx, store, g, eleID, cloudStorageURI, int64(nodeCnt), logger)
 		if err != nil {
 			return nil, totalKVSize, errors.Trace(err)
 		}
@@ -635,9 +673,10 @@ func splitSubtaskMetaForOneKVMetaGroup(
 		regionSplitKeys = append(regionSplitKeys, endKey)
 		m := &BackfillSubTaskMeta{
 			MetaGroups: []*globalsort.SortedKVMeta{{
-				StartKey:    startKey,
-				EndKey:      endKey,
-				TotalKVSize: kvMeta.TotalKVSize / uint64(instanceCnt),
+				StartKey: startKey,
+				EndKey:   endKey,
+				// A non-empty range must not be mistaken for an empty engine.
+				TotalKVSize: max(1, kvMeta.TotalKVSize/uint64(instanceCnt)),
 			}},
 			DataFiles:      dataFiles,
 			StatFiles:      statFiles,

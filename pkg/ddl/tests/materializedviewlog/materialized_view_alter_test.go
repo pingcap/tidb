@@ -99,7 +99,7 @@ func TestAlterMaterializedViewLogAddColumnBasic(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t_mlog_add_column (id int not null, n int not null, s varchar(10) not null, d date not null, note text not null, untouched int)")
 	tk.MustExec("create materialized view log on t_mlog_add_column (id)")
-	mustExecMViewMaintenance(t, tk, "insert into `$mlog$t_mlog_add_column` (id, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW`) values (1, 'I', 1)")
+	tk.MustExec("insert into t_mlog_add_column values (1, 7, 'old', '2026-01-02', 'memo', 100)")
 
 	tk.MustExec("alter materialized view log on t_mlog_add_column add column (n, s, d, note)")
 	mlogTable, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("$mlog$t_mlog_add_column"))
@@ -122,6 +122,19 @@ func TestAlterMaterializedViewLogAddColumnBasic(t *testing.T) {
 	require.Equal(t, " ", fmt.Sprint(columns["note"].GetOriginDefaultValue()))
 	require.Equal(t, mysql.TypeBlob, columns["note"].GetType())
 	tk.MustQuery("select n, hex(s), cast(d as char), hex(note), `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t_mlog_add_column`").Check(testkit.Rows("0 20 0000-00-00 20 I 1"))
+
+	showCreate := tk.MustQuery("show create materialized view log on t_mlog_add_column").Rows()[0][1].(string)
+	require.Contains(t, showCreate, "CREATE MATERIALIZED VIEW LOG ON `t_mlog_add_column` (`id`, `n`, `s`, `d`, `note`)")
+
+	mustExecMViewMaintenance(t, tk, "delete from `$mlog$t_mlog_add_column`")
+	tk.MustExec("update t_mlog_add_column set untouched = 101 where id = 1")
+	tk.MustQuery("select * from `$mlog$t_mlog_add_column`").Check(testkit.Rows())
+
+	tk.MustExec("update t_mlog_add_column set s = 'new' where id = 1")
+	tk.MustQuery("select id, n, s, cast(d as char), note, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t_mlog_add_column`").Sort().Check(testkit.Rows(
+		"1 7 new 2026-01-02 memo U 1",
+		"1 7 old 2026-01-02 memo U -1",
+	))
 
 	tk.MustExec("create table t_mlog_add_column_atomic (id int, b int, c int)")
 	tk.MustExec("create materialized view log on t_mlog_add_column_atomic (id)")
@@ -159,6 +172,10 @@ func TestAlterMaterializedViewLogAddColumnBasic(t *testing.T) {
 	require.Equal(t, []ast.CIStr{ast.NewCIStr("id")}, atomicMLog.Meta().MaterializedViewLog.Columns)
 	require.Nil(t, model.FindColumnInfo(atomicMLog.Meta().Columns, "b"))
 	require.Nil(t, model.FindColumnInfo(atomicMLog.Meta().Columns, "c"))
+	showCreate = tk.MustQuery("show create materialized view log on t_mlog_add_column_atomic").Rows()[0][1].(string)
+	require.Contains(t, showCreate, "CREATE MATERIALIZED VIEW LOG ON `t_mlog_add_column_atomic` (`id`)")
+	require.NotContains(t, showCreate, "`b`")
+	require.NotContains(t, showCreate, "`c`")
 }
 
 func TestAlterMaterializedViewLogAddColumnDefaultSemantics(t *testing.T) {
@@ -236,4 +253,9 @@ func TestAlterMaterializedViewLogAddColumnSupportsNewMaterializedView(t *testing
 	tk.MustExec("alter materialized view log on t_add_mlog_mv add column (c)")
 	tk.MustExec("create materialized view mv_add_mlog_col_after (a, s, cnt) refresh fast as select a, sum(c), count(1) from t_add_mlog_mv group by a")
 	tk.MustQuery("select a, s, cnt from mv_add_mlog_col_after order by a").Check(testkit.Rows("1 300 2", "2 300 1"))
+
+	tk.MustExec("update t_add_mlog_mv set c = 150 where a = 1 and b = 10")
+	tk.MustExec("insert into t_add_mlog_mv values (2, 40, 400)")
+	tk.MustExec("refresh materialized view mv_add_mlog_col_after fast")
+	tk.MustQuery("select a, s, cnt from mv_add_mlog_col_after order by a").Check(testkit.Rows("1 350 2", "2 700 2"))
 }

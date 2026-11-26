@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
+	"github.com/pingcap/tidb/pkg/dxf/importinto/conflictpath"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/stretchr/testify/require"
@@ -266,7 +267,7 @@ func TestCleanFiles(t *testing.T) {
 		require.Equal(t, int64(1), stats.NonImportIntoTaskFiles.Count)
 		require.Equal(t, int64(1), stats.UnparsedTaskIDFiles.Count)
 		require.Zero(t, stats.Failures)
-		require.Equal(t, storagePrefix, store.walkOptions[0].SubDir)
+		require.Equal(t, conflictpath.StoragePrefix, store.walkOptions[0].SubDir)
 		requireTestFileExists(t, store, files[0], false)
 		requireTestFileExists(t, store, files[1], true)
 		requireTestFileExists(t, store, files[2], false)

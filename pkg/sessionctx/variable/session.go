@@ -245,6 +245,10 @@ type TxnCtxNoNeedToRestore struct {
 	EnableMDL bool
 	// relatedTableForMDL records the `lock` table for metadata lock. It maps from int64 to int64(version).
 	relatedTableForMDL *sync.Map
+	// relatedTableForReadOnly maps table IDs to database names for read-only
+	// draining and lazy activation checks, including when MDL is enabled:
+	// database read-only jobs do not acquire table metadata locks.
+	relatedTableForReadOnly *sync.Map
 
 	// FairLockingUsed marking whether at least one of the statements in the transaction was executed in
 	// fair locking mode.
@@ -421,6 +425,7 @@ func (tc *TransactionContext) Cleanup() {
 	tc.tdmLock.Lock()
 	tc.TableDeltaMap = nil
 	tc.relatedTableForMDL = nil
+	tc.relatedTableForReadOnly = nil
 	tc.tdmLock.Unlock()
 	tc.pessimisticLockCache = nil
 	tc.CurrentStmtPessimisticLockCache = nil
@@ -1228,6 +1233,9 @@ type SessionVars struct {
 	// EnableVectorizedExpression  enables the vectorized expression evaluation.
 	EnableVectorizedExpression bool
 
+	// EnableTiKVShortCircuitExpression enables short-circuit expression evaluation in TiKV.
+	EnableTiKVShortCircuitExpression bool
+
 	// DDLReorgPriority is the operation priority of adding indices.
 	DDLReorgPriority int
 
@@ -1377,6 +1385,9 @@ type SessionVars struct {
 	// preferRangeScan allows optimizer to always prefer range scan over table scan.
 	preferRangeScan bool
 
+	// enableSkipScan controls whether the optimizer can use skip index scan.
+	enableSkipScan bool
+
 	// EnableIndexMerge enables the generation of IndexMergePath.
 	enableIndexMerge bool
 	// EnableNoBackslashEscapesInLike controls whether NO_BACKSLASH_ESCAPES affects LIKE default escape.
@@ -1472,6 +1483,9 @@ type SessionVars struct {
 	// EnabledRateLimitAction indicates whether enabled ratelimit action during coprocessor
 	EnabledRateLimitAction bool
 
+	// EnableAdaptiveLimitScan enables statement-local adaptive admission for early-stop LIMIT scans.
+	EnableAdaptiveLimitScan bool
+
 	// EnableAsyncCommit indicates whether to enable the async commit feature.
 	EnableAsyncCommit bool
 
@@ -1495,9 +1509,6 @@ type SessionVars struct {
 
 	// EnableMView indicates whether to enable materialized view DDL.
 	EnableMView bool
-
-	// EnableHistoricalStats indicates whether to enable historical statistics.
-	EnableHistoricalStats bool
 
 	// EnableIndexMergeJoin indicates whether to enable index merge join.
 	EnableIndexMergeJoin bool
@@ -1696,6 +1707,9 @@ type SessionVars struct {
 	// ranges would exceed the limit, it chooses less accurate ranges such as full range. 0 indicates that there is no
 	// memory limit for ranges.
 	RangeMaxSize int64
+	// RangeMaxCount is the range-count threshold for preferring more equality/IN predicates in skyline pruning.
+	// It does not limit range construction. 0 disables the threshold.
+	RangeMaxCount int64
 
 	// LastPlanReplayerToken indicates the last plan replayer token
 	LastPlanReplayerToken string
@@ -1706,9 +1720,6 @@ type SessionVars struct {
 
 	// AnalyzePartitionConcurrency indicates concurrency for partitions in Analyze
 	AnalyzePartitionConcurrency int
-
-	// EnableAsyncMergeGlobalStats indicates whether to enable async merge global stats
-	EnableAsyncMergeGlobalStats bool
 
 	// EnableExternalTSRead indicates whether to enable read through external ts
 	EnableExternalTSRead bool
@@ -1763,10 +1774,6 @@ type SessionVars struct {
 	// NOTE: all statement relate operation should use StmtCtx.ResourceGroupName instead.
 	// NOTE: please don't change it directly. Use `SetResourceGroupName`, because it'll need to inc/dec the metrics
 	ResourceGroupName string
-
-	// PagingSizeBytes is the byte budget per page.
-	// 0 means disabled.
-	PagingSizeBytes int
 
 	// PessimisticTransactionFairLocking controls whether fair locking for pessimistic transaction
 	// is enabled.
@@ -1825,7 +1832,7 @@ type SessionVars struct {
 	FastCheckTable bool
 
 	// HypoIndexes are for the Index Advisor.
-	HypoIndexes map[string]map[string]map[string]*model.IndexInfo // dbName -> tblName -> idxName -> idxInfo
+	HypoIndexes map[string]map[string]map[string]*model.HypoIndexInfo // dbName -> tblName -> idxName -> idxInfo
 
 	// TiFlashReplicaRead indicates the policy of TiFlash node selection when the query needs the TiFlash engine.
 	TiFlashReplicaRead tiflash.ReplicaRead
@@ -1903,6 +1910,9 @@ type SessionVars struct {
 
 	// InternalSQLScanUserTable indicates whether to use user table for internal SQL. it will be used by TTL scan
 	InternalSQLScanUserTable bool
+	// TTLJobID attributes a user-table scan/delete transaction to a TTL job. Empty means
+	// no scan/delete attribution; TTL sessions restore it after draining the result.
+	TTLJobID string
 
 	// MemArbitrator represents the properties to be controlled by the memory arbitrator.
 	MemArbitrator struct {
@@ -2392,6 +2402,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		DDLReorgPriority:                 kv.PriorityLow,
 		allowInSubqToJoinAndAgg:          vardef.DefOptInSubqToJoinAndAgg,
 		preferRangeScan:                  vardef.DefOptPreferRangeScan,
+		enableSkipScan:                   vardef.DefOptEnableSkipScan,
 		EnableCorrelationAdjustment:      vardef.DefOptEnableCorrelationAdjustment,
 		LimitPushDownThreshold:           vardef.DefOptLimitPushDownThreshold,
 		CorrelationThreshold:             vardef.DefOptCorrelationThreshold,
@@ -2429,6 +2440,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		SelectivityFactor:                vardef.DefOptSelectivityFactor,
 		enableForceInlineCTE:             vardef.DefOptForceInlineCTE,
 		EnableVectorizedExpression:       vardef.DefEnableVectorizedExpression,
+		EnableTiKVShortCircuitExpression: vardef.DefTiDBEnableTiKVShortCircuitExpression,
 		CommandValue:                     uint32(mysql.ComSleep),
 		TiDBOptJoinReorderThreshold:      vardef.DefTiDBOptJoinReorderThreshold,
 		TiDBOptEnableAdvancedJoinReorder: vardef.DefTiDBOptEnableAdvancedJoinReorder,
@@ -2465,6 +2477,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		PartitionPruneMode:               *atomic2.NewString(vardef.DefTiDBPartitionPruneMode),
 		TxnScope:                         kv.NewDefaultTxnScopeVar(),
 		EnabledRateLimitAction:           vardef.DefTiDBEnableRateLimitAction,
+		EnableAdaptiveLimitScan:          vardef.DefTiDBEnableAdaptiveLimitScan,
 		EnableAsyncCommit:                vardef.DefTiDBEnableAsyncCommit,
 		Enable1PC:                        vardef.DefTiDBEnable1PC,
 		GuaranteeLinearizability:         vardef.DefTiDBGuaranteeLinearizability,
@@ -2495,7 +2508,6 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		EnableLateMaterialization:        vardef.DefTiDBOptEnableLateMaterialization,
 		TiFlashComputeDispatchPolicy:     tiflashcompute.DispatchPolicyConsistentHash,
 		ResourceGroupName:                resourcegroup.DefaultResourceGroupName,
-		PagingSizeBytes:                  vardef.DefPagingSizeBytes,
 		DefaultCollationForUTF8MB4:       mysql.DefaultCollationName,
 		GroupConcatMaxLen:                vardef.DefGroupConcatMaxLen,
 		EnableRedactLog:                  vardef.DefTiDBRedactLog,
@@ -2514,6 +2526,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 	vars.TiFlashFineGrainedShuffleBatchSize = vardef.DefTiFlashFineGrainedShuffleBatchSize
 	vars.status.Store(uint32(mysql.ServerStatusAutocommit))
 	vars.StmtCtx.ResourceGroupName = resourcegroup.DefaultResourceGroupName
+	vars.StmtCtx.EnableTiKVShortCircuitExpression = vars.EnableTiKVShortCircuitExpression
 	vars.KVVars = tikvstore.NewVariables(&vars.SQLKiller.Signal)
 	vars.KVVars.KillSignalHandler = &vars.SQLKiller
 	vars.Concurrency = Concurrency{
@@ -2614,6 +2627,17 @@ func (s *SessionVars) GetAllowPreferRangeScan() bool {
 // SetAllowPreferRangeScan set SessionVars.preferRangeScan.
 func (s *SessionVars) SetAllowPreferRangeScan(val bool) {
 	s.preferRangeScan = val
+}
+
+// GetEnableSkipScan returns whether skip index scan is enabled.
+func (s *SessionVars) GetEnableSkipScan() bool {
+	s.RecordRelevantOptVar(vardef.TiDBOptEnableSkipScan)
+	return s.enableSkipScan
+}
+
+// SetEnableSkipScan sets whether skip index scan is enabled.
+func (s *SessionVars) SetEnableSkipScan(val bool) {
+	s.enableSkipScan = val
 }
 
 // GetEnableCascadesPlanner get EnableCascadesPlanner from sql hints and SessionVars.EnableCascadesPlanner.
@@ -2949,15 +2973,15 @@ func (s *SessionVars) GetNonPreparedPlanCacheStmt(sql string) any {
 }
 
 // PrepareDedupCacheKey builds the lookup key for the prepare dedup cache.
-// Including charset, collation, currentDB and sqlMode ensures that the cached
+// Including connection/client charsets, collation, currentDB and sqlMode ensures that the cached
 // PlanCacheStmt is only reused when the session context that affects parsing,
 // name-resolution and cacheability decisions is identical. sqlMode is included
 // because flags like PIPES_AS_CONCAT and ANSI_QUOTES change AST shape, and
 // IsASTCacheable (which computes StmtCacheable) runs on that AST.
-func PrepareDedupCacheKey(sql, charset, collation, currentDB string, sqlMode mysql.SQLMode) string {
+func PrepareDedupCacheKey(sql, charset, collation, currentDB, clientCharset string, sqlMode mysql.SQLMode) string {
 	var modeBuf [8]byte
 	binary.LittleEndian.PutUint64(modeBuf[:], uint64(sqlMode))
-	return sql + "\x00" + charset + "\x00" + collation + "\x00" + currentDB + "\x00" + string(modeBuf[:])
+	return sql + "\x00" + charset + "\x00" + collation + "\x00" + currentDB + "\x00" + clientCharset + "\x00" + string(modeBuf[:])
 }
 
 // GetPrepareStmtDedupCache returns the cached PrepareStmtCacheEntry for the given key,
@@ -3068,6 +3092,41 @@ func (s *SessionVars) GetSessionStatesSystemVar(name string) (string, bool, erro
 		return val, true, nil
 	}
 	return "", false, nil
+}
+
+// getSnapshotTSState preserves the effective timestamp, which can differ from
+// the cached string after changing time_zone or setting tx_read_ts.
+func getSnapshotTSState(s *SessionVars) (string, bool, error) {
+	if s.SnapshotTS == 0 {
+		return "", false, nil
+	}
+	// Preserve the client's spelling when it still denotes the effective timestamp.
+	if value, ok := s.systems[vardef.TiDBSnapshot]; ok {
+		if ts, err := parseTSFromNumberOrTime(s, value); err == nil && ts == s.SnapshotTS {
+			return value, true, nil
+		}
+	}
+	return strconv.FormatUint(s.SnapshotTS, 10), true, nil
+}
+
+// getTxnReadTSState must not replay a timestamp that has been consumed or cleared
+// by tidb_snapshot. Keep the existing datetime syntax for session-state compatibility.
+func getTxnReadTSState(s *SessionVars) (string, bool, error) {
+	ts := s.TxnReadTS.PeakTxnReadTS()
+	if ts == 0 {
+		return "", false, nil
+	}
+	value := oracle.GetTimeFromTS(ts).In(s.Location()).Format("2006-01-02 15:04:05.000")
+	// A timezone change can make the local time ambiguous during a DST rollback.
+	// Refuse migration if the datetime cannot represent the exact timestamp.
+	restoredTS, err := parseTSFromNumberOrTime(s, value)
+	if err != nil {
+		return "", false, err
+	}
+	if restoredTS != ts {
+		return "", false, sessionstates.ErrCannotMigrateSession.GenWithStackByArgs("tx_read_ts cannot be represented in the session time zone")
+	}
+	return value, true, nil
 }
 
 // GetGlobalSystemVar gets a global system variable.
@@ -3192,6 +3251,57 @@ func (s *SessionVars) GetTemporaryTable(tblInfo *model.TableInfo) tableutil.Temp
 	}
 
 	return nil
+}
+
+// GetHypoIndexTableInfo returns private table metadata and name-sorted hypothetical
+// indexes. Expression columns are rebased against the current table and remaining
+// hypothetical indexes so dropping an index cannot leave stale column offsets.
+func (s *SessionVars) GetHypoIndexTableInfo(dbName string, tblInfo *model.TableInfo) (*model.TableInfo, []*model.IndexInfo) {
+	hypoIndexes := s.HypoIndexes[dbName][tblInfo.Name.L]
+	if len(hypoIndexes) == 0 {
+		return tblInfo, nil
+	}
+	ordered := make([]*model.HypoIndexInfo, 0, len(hypoIndexes))
+	for _, index := range hypoIndexes {
+		ordered = append(ordered, index)
+	}
+	slices.SortFunc(ordered, func(a, b *model.HypoIndexInfo) int {
+		return strings.Compare(a.Name.O, b.Name.O)
+	})
+	columnsByName := make(map[string]*model.ColumnInfo, len(tblInfo.Columns))
+	for _, col := range tblInfo.Columns {
+		columnsByName[col.Name.L] = col
+	}
+	hypoTblInfo := tblInfo
+	indexes := make([]*model.IndexInfo, 0, len(ordered))
+	for _, hypoIndex := range ordered {
+		index := hypoIndex.IndexInfo
+		if len(hypoIndex.HiddenColumns) > 0 {
+			for _, hiddenCol := range hypoIndex.HiddenColumns {
+				if columnsByName[hiddenCol.Name.L] != nil {
+					continue
+				}
+				if hypoTblInfo == tblInfo {
+					hypoTblInfo = tblInfo.Clone()
+				}
+				col := hiddenCol.Clone()
+				hypoTblInfo.MaxColumnID++
+				col.ID = hypoTblInfo.MaxColumnID
+				col.Offset = len(hypoTblInfo.Columns)
+				col.State = model.StatePublic
+				hypoTblInfo.Columns = append(hypoTblInfo.Columns, col)
+				columnsByName[col.Name.L] = col
+			}
+			index = index.Clone()
+			for _, indexCol := range index.Columns {
+				if col := columnsByName[indexCol.Name.L]; col != nil {
+					indexCol.Offset = col.Offset
+				}
+			}
+		}
+		indexes = append(indexes, index)
+	}
+	return hypoTblInfo, indexes
 }
 
 // EncodeSessionStates saves session states into SessionStates.
@@ -3722,6 +3832,20 @@ func (s *SessionVars) GetRelatedTableForMDL() *sync.Map {
 		s.TxnCtx.relatedTableForMDL = new(sync.Map)
 	}
 	return s.TxnCtx.relatedTableForMDL
+}
+
+// GetRelatedTableForReadOnly gets the MDL-independent table-access set used to
+// drain transactions before a database read-only transition finishes.
+func (s *SessionVars) GetRelatedTableForReadOnly() *sync.Map {
+	s.TxnCtxMu.Lock()
+	txnCtx := s.TxnCtx
+	s.TxnCtxMu.Unlock()
+	txnCtx.tdmLock.Lock()
+	defer txnCtx.tdmLock.Unlock()
+	if txnCtx.relatedTableForReadOnly == nil {
+		txnCtx.relatedTableForReadOnly = new(sync.Map)
+	}
+	return txnCtx.relatedTableForReadOnly
 }
 
 // ClearRelatedTableForMDL clears the related table for MDL.

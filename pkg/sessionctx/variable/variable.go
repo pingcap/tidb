@@ -43,6 +43,8 @@ type MViewExecutionSessionVars struct {
 	FineGrainedBatchSize         uint64
 	ImportThreads                int
 	ImportDiskQuota              string
+	TrackAggregateMemoryUsage    bool
+	EnableParallelHashaggSpill   bool
 }
 
 // MViewExecutionSessionVarsApplyConfig describes how MV execution vars should be applied onto a
@@ -83,6 +85,8 @@ func CaptureMViewExecutionSessionVars(sessVars *SessionVars) MViewExecutionSessi
 		FineGrainedBatchSize:         sessVars.TiFlashFineGrainedShuffleBatchSize,
 		ImportThreads:                sessVars.MViewMaintainImportThreads,
 		ImportDiskQuota:              sessVars.MViewMaintainImportDiskQuota,
+		TrackAggregateMemoryUsage:    sessVars.TrackAggregateMemoryUsage,
+		EnableParallelHashaggSpill:   sessVars.EnableParallelHashaggSpill,
 	}
 }
 
@@ -106,6 +110,8 @@ func CaptureAppliedMViewExecutionSessionVars(sessVars *SessionVars) MViewExecuti
 		FineGrainedBatchSize:         sessVars.TiFlashFineGrainedShuffleBatchSize,
 		ImportThreads:                sessVars.MViewMaintainImportThreads,
 		ImportDiskQuota:              sessVars.MViewMaintainImportDiskQuota,
+		TrackAggregateMemoryUsage:    sessVars.TrackAggregateMemoryUsage,
+		EnableParallelHashaggSpill:   sessVars.EnableParallelHashaggSpill,
 	}
 }
 
@@ -148,11 +154,9 @@ func ApplyMViewExecutionSessionVarsWithConfig(
 		maintainIsolationReadEnginesVarName = vardef.TiDBMViewMaintainIsolationReadEngines
 	}
 
+	// Always call SetSystemVar to synchronize the session-variable cache used by
+	// EncodeStates, even when the fields already match.
 	origin := captureApplied(sessVars)
-	if origin == target {
-		return func() {}, nil
-	}
-
 	for _, assignment := range buildMViewExecutionSessionVarAssignments(target, maintainMemQuotaVarName, maintainIsolationReadEnginesVarName) {
 		err := error(nil)
 		if cfg.InjectApplyError != nil {
@@ -259,6 +263,16 @@ func buildMViewExecutionSessionVarAssignments(
 			value:          target.ImportDiskQuota,
 			failureMessage: "mv execution: failed to apply tidb_mview_maintain_import_disk_quota",
 		},
+		{
+			name:           vardef.TiDBTrackAggregateMemoryUsage,
+			value:          BoolToOnOff(target.TrackAggregateMemoryUsage),
+			failureMessage: "mv execution: failed to apply tidb_track_aggregate_memory_usage",
+		},
+		{
+			name:           vardef.TiDBEnableParallelHashaggSpill,
+			value:          BoolToOnOff(target.EnableParallelHashaggSpill),
+			failureMessage: "mv execution: failed to apply tidb_enable_parallel_hashagg_spill",
+		},
 	}
 }
 
@@ -343,6 +357,10 @@ type SysVar struct {
 	skipInit bool
 	// IsNoop defines if the sysvar is a noop included for MySQL compatibility
 	IsNoop bool
+	// IsSensitive marks non-empty values that diagnostics must mask.
+	// Any variable containing secrets, whether built-in or extension-registered, must opt in.
+	// SQL getter semantics are unchanged.
+	IsSensitive bool
 	// IsInitedFromConfig defines if the sysvar is inited from the config file.
 	IsInitedFromConfig bool
 	// GlobalConfigName is the global config name of this global variable.

@@ -113,3 +113,20 @@ func TestEncryptDecryptLargeData(t *testing.T) {
 
 	require.True(t, bytes.Equal(plaintext, decrypted), "Decrypted large data doesn't match original")
 }
+
+func TestDecryptWithInvalidIV(t *testing.T) {
+	backend, err := NewMemAesGcmBackend(make([]byte, 32))
+	require.NoError(t, err)
+	iv, err := NewIVGcm()
+	require.NoError(t, err)
+	encrypted, err := backend.EncryptContent(context.Background(), []byte("data"), iv)
+	require.NoError(t, err)
+	for _, size := range []int{0, 11, 13, CtrIv16, 17} {
+		encrypted.Metadata[MetadataKeyIv] = make([]byte, size)
+		require.NotPanics(t, func() {
+			data, err := backend.DecryptContent(context.Background(), encrypted)
+			require.ErrorContains(t, err, "IV")
+			require.Nil(t, data)
+		})
+	}
+}

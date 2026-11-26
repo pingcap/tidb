@@ -100,6 +100,76 @@ func TestSystemVars(t *testing.T) {
 	testSystemVars(t, sem.V2)
 }
 
+// TestSessionStatesReadTimestamps checks both the restored timestamp and whether
+// it applies to one read or remains active across subsequent reads.
+func TestSessionStatesReadTimestamps(t *testing.T) {
+	t.Run("destination DST gap", func(t *testing.T) {
+		store := testkit.CreateMockStore(t)
+		src := testkit.NewTestKit(t, store)
+		src.MustExec("set time_zone='+08:00'")
+		src.MustExec("set tx_read_ts='2024-03-10 02:30:00'")
+		state := src.MustQuery("show session_states").Rows()[0][0].(string)
+		wantTS := src.Session().GetSessionVars().TxnReadTS.PeakTxnReadTS()
+		require.NotZero(t, wantTS)
+		dst := testkit.NewTestKit(t, store)
+		// 02:30 is valid in the source timezone, but falls inside this zone's
+		// DST gap. SET SESSION_STATES starts with this statement timezone.
+		dst.MustExec("set time_zone='America/New_York'")
+		dst.MustExec("set session_states " + strconv.Quote(state))
+		require.Equal(t, wantTS, dst.Session().GetSessionVars().TxnReadTS.PeakTxnReadTS())
+	})
+	store := testkit.CreateMockStore(t)
+	writer := testkit.NewTestKit(t, store)
+	writer.MustExec("insert into mysql.tidb values ('tikv_gc_safe_point', '20160102-15:04:05 -0700', '') on duplicate key update variable_value='20160102-15:04:05 -0700'")
+	writer.MustExec("create table test.migration_snapshot (a int)")
+	writer.MustExec("insert into test.migration_snapshot values (1)")
+
+	for _, tt := range []struct {
+		name       string
+		stmts      []string
+		firstRead  string
+		secondRead string
+	}{
+		{"snapshot", []string{"set tidb_snapshot=@snap"}, "1", "1"},
+		{"snapshot after timezone change", []string{"set tidb_snapshot=@snap", "set time_zone='+00:00'"}, "1", "1"},
+		{"pending read timestamp", []string{"set tx_read_ts=@snap", "set time_zone='+00:00'"}, "1", "2"},
+		{"snapshot replaces read timestamp", []string{"set tx_read_ts=@snap", "set tidb_snapshot=@snap"}, "1", "1"},
+		{"read timestamp replaces snapshot", []string{"set tidb_snapshot=@snap", "set tx_read_ts=@snap"}, "1", "2"},
+		{"consumed read timestamp", []string{"set tx_read_ts=@snap", "select a from test.migration_snapshot"}, "2", "2"},
+		{"cleared snapshot", []string{"set tidb_snapshot=@snap", "set tidb_snapshot=''"}, "2", "2"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			writer.MustExec("update test.migration_snapshot set a=1")
+			// A datetime snapshot has millisecond precision. Let the write's
+			// physical millisecond pass before capturing it without logical bits.
+			writer.MustQuery("select sleep(0.01)").Check(testkit.Rows("0"))
+			src := testkit.NewTestKit(t, store)
+			src.MustExec("set time_zone='+08:00'")
+			src.MustExec("set @snap=now(6)")
+			for _, stmt := range tt.stmts {
+				if strings.HasPrefix(stmt, "select") {
+					src.MustQuery(stmt).Check(testkit.Rows("1"))
+				} else {
+					src.MustExec(stmt)
+				}
+			}
+			writer.MustExec("update test.migration_snapshot set a=2")
+			state := src.MustQuery("show session_states").Rows()[0][0].(string)
+			vars := src.Session().GetSessionVars()
+			for range 20 {
+				dst := testkit.NewTestKit(t, store)
+				dst.MustExec("set time_zone='-07:00'")
+				dst.MustExec("set session_states " + strconv.Quote(state))
+				restored := dst.Session().GetSessionVars()
+				require.Equal(t, vars.SnapshotTS, restored.SnapshotTS)
+				require.Equal(t, vars.TxnReadTS.PeakTxnReadTS(), restored.TxnReadTS.PeakTxnReadTS())
+				dst.MustQuery("select a from test.migration_snapshot").Check(testkit.Rows(tt.firstRead))
+				dst.MustQuery("select a from test.migration_snapshot").Check(testkit.Rows(tt.secondRead))
+			}
+		})
+	}
+}
+
 func testSystemVars(t *testing.T, semVer string) {
 	store := testkit.CreateMockStore(t)
 
@@ -117,8 +187,8 @@ func testSystemVars(t *testing.T, semVer string) {
 			expectedValue:   strconv.Itoa(vardef.DefTiFlashMaxThreads),
 		},
 		{
-			// hidden variable
-			inSessionStates: true,
+			// An inactive one-shot read timestamp must not be replayed.
+			inSessionStates: false,
 			varName:         vardef.TiDBTxnReadTS,
 			expectedValue:   "",
 		},
@@ -192,6 +262,33 @@ func testSystemVars(t *testing.T, semVer string) {
 			inSessionStates: true,
 			varName:         vardef.TiDBEnforceMPPExecution,
 			expectedValue:   "1",
+		},
+		{
+			// Restore the charset before the non-default collation it would reset.
+			stmts:           []string{"set character_set_connection=utf8mb4", "set collation_connection=utf8mb4_general_ci"},
+			inSessionStates: true,
+			varName:         vardef.CollationConnection,
+			expectedValue:   "utf8mb4_general_ci",
+		},
+		{
+			// Restore the charset before the non-default collation it would reset.
+			stmts:           []string{"set character_set_database=utf8mb4", "set collation_database=utf8mb4_general_ci"},
+			inSessionStates: true,
+			varName:         vardef.CollationDatabase,
+			expectedValue:   "utf8mb4_general_ci",
+		},
+		{
+			// Restore the charset before the non-default collation it would reset.
+			stmts:           []string{"set character_set_server=utf8mb4", "set collation_server=utf8mb4_general_ci"},
+			inSessionStates: true,
+			varName:         vardef.CollationServer,
+			expectedValue:   "utf8mb4_general_ci",
+		},
+		{
+			stmts:           []string{"set tidb_skip_isolation_level_check=1", "set transaction_isolation='SERIALIZABLE'"},
+			inSessionStates: true,
+			varName:         vardef.TransactionIsolation,
+			expectedValue:   "SERIALIZABLE",
 		},
 		{
 			// tx_read_only depends on tidb_enable_noop_functions.
@@ -517,7 +614,7 @@ func TestSessionCtx(t *testing.T) {
 			// check LastFoundRows
 			setFunc: func(tk *testkit.TestKit) any {
 				tk.MustExec("insert test.t1 value(1), (2), (3), (4), (5)")
-				// SQL_CALC_FOUND_ROWS is not supported now, so we just test normal select.
+				// Normal SELECT reports its returned-row count.
 				rows := tk.MustQuery("select * from test.t1 limit 3").Rows()
 				require.Equal(t, 3, len(rows))
 				return "3"
@@ -644,6 +741,21 @@ func TestSessionCtx(t *testing.T) {
 			},
 		},
 		{
+			// Expression hypothetical indexes must retain their hidden columns after migration.
+			setFunc: func(tk *testkit.TestKit) any {
+				tk.MustExec("create index hypo_expr type hypo on test.t1 ((id + 1))")
+				return nil
+			},
+			checkFunc: func(tk *testkit.TestKit, param any) {
+				require.Contains(t, tk.MustQuery("show create table test.t1").Rows()[0][1], "KEY `hypo_expr` ((`id` + 1)) /* HYPO INDEX */")
+				plan := fmt.Sprint(tk.MustQuery("explain format = 'brief' select id + 1 from test.t1 where id + 1 = 42").Rows())
+				require.Contains(t, plan, "IndexRangeScan")
+				require.Contains(t, plan, "range:[42,42]")
+				tk.MustExec("drop hypo index hypo_expr on test.t1")
+				require.NotContains(t, tk.MustQuery("show create table test.t1").Rows()[0][1], "HYPO INDEX")
+			},
+		},
+		{
 			// check empty HypoIndexes
 			setFunc: func(tk *testkit.TestKit) any {
 				tk.MustExec(`create index hypo_id type hypo on test.t1(id)`)
@@ -683,6 +795,40 @@ func TestSessionCtx(t *testing.T) {
 		showSessionStatesAndSet(t, tk1, tk2)
 		tt.checkFunc(tk2, param)
 	}
+
+	t.Run("native-found-rows", func(t *testing.T) {
+		src := testkit.NewTestKit(t, store)
+		dst := testkit.NewTestKit(t, store)
+		src.MustExec("create table test.found_rows_state(id int primary key)")
+		src.MustExec("insert into test.found_rows_state values (1), (2), (3), (4), (5)")
+		src.MustExec("prepare stmt from 'select sql_calc_found_rows id from test.found_rows_state order by id limit ?'")
+		src.MustExec("set @page_size = 2")
+		for _, tt := range []struct {
+			name  string
+			query string
+			rows  []string
+			total uint64
+		}{
+			{"page", "select sql_calc_found_rows id from test.found_rows_state order by id limit 2", []string{"1", "2"}, 5},
+			{"empty-page", "select sql_calc_found_rows id from test.found_rows_state limit 2 offset 10", nil, 5},
+			{"limit-zero", "select sql_calc_found_rows id from test.found_rows_state limit 0", nil, 5},
+			{"zero-total", "select sql_calc_found_rows id from test.found_rows_state where id > 5 limit 2", nil, 0},
+			{"prepared", "execute stmt using @page_size", []string{"1", "2"}, 5},
+		} {
+			t.Run(tt.name, func(t *testing.T) {
+				src := testkit.NewTestKitWithSession(t, store, src.Session())
+				dst := testkit.NewTestKitWithSession(t, store, dst.Session())
+				// A zero total must replace the destination's preceding nonzero count.
+				dst.MustQuery("select 1 union all select 2 union all select 3").Sort().Check(testkit.Rows("1", "2", "3"))
+				src.MustQuery(tt.query).Check(testkit.Rows(tt.rows...))
+				for range 2 {
+					showSessionStatesAndSet(t, src, dst)
+					require.Equal(t, tt.total, src.Session().GetSessionVars().LastFoundRows)
+					dst.MustQuery("select found_rows()").Check(testkit.Rows(strconv.FormatUint(tt.total, 10)))
+				}
+			})
+		}
+	})
 }
 
 func TestStatementCtx(t *testing.T) {

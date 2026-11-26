@@ -152,6 +152,8 @@ func createTable(w *worker, jobCtx *jobContext, job *model.Job, r autoid.Require
 			return tbInfo, errors.Wrapf(err, "failed to notify PD the placement rules")
 		}
 
+		// If the job is cancelled, deleteAffinityGroupsOfCancelledJob deletes the
+		// groups of the table, including groups PD created before it failed.
 		if tbInfo.Affinity != nil {
 			if err = createTableAffinityGroupsInPD(jobCtx, tbInfo); err != nil {
 				job.State = model.JobStateCancelled
@@ -262,6 +264,54 @@ func (w *worker) onCreateTable(jobCtx *jobContext, job *model.Job) (ver int64, _
 	// Finish this job.
 	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tbInfo)
 	return ver, errors.Trace(err)
+}
+
+func (w *worker) onCreateMaterializedViewShadow(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
+	args, err := model.GetCreateTableArgs(job)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+	jobCtx.jobArgs = args
+	shadowTblInfo := args.TableInfo
+	if shadowTblInfo == nil || shadowTblInfo.MaterializedViewShadow == nil {
+		job.State = model.JobStateCancelled
+		return ver, dbterror.ErrInvalidDDLJob.GenWithStackByArgs("create materialized view shadow table: invalid shadow metadata")
+	}
+	if shadowTblInfo.MaterializedView != nil || shadowTblInfo.MaterializedViewLog != nil || shadowTblInfo.View != nil || shadowTblInfo.Sequence != nil {
+		job.State = model.JobStateCancelled
+		return ver, dbterror.ErrInvalidDDLJob.GenWithStackByArgs("create materialized view shadow table: shadow table must be a protected physical table")
+	}
+	sourceMViewID := shadowTblInfo.MaterializedViewShadow.SourceMViewID
+	if sourceMViewID == 0 {
+		job.State = model.JobStateCancelled
+		return ver, dbterror.ErrInvalidDDLJob.GenWithStackByArgs("create materialized view shadow table: invalid source materialized view id")
+	}
+	sourceMViewInfo, err := getTableInfo(jobCtx.metaMut, sourceMViewID, job.SchemaID)
+	if err != nil {
+		if infoschema.ErrDatabaseNotExists.Equal(err) || infoschema.ErrTableNotExists.Equal(err) {
+			job.State = model.JobStateCancelled
+		}
+		return ver, errors.Trace(err)
+	}
+	if sourceMViewInfo.MaterializedView == nil {
+		job.State = model.JobStateCancelled
+		return ver, dbterror.ErrWrongObject.GenWithStackByArgs(job.SchemaName, sourceMViewInfo.Name, "MATERIALIZED VIEW")
+	}
+	if sourceMViewInfo.State != model.StatePublic {
+		job.State = model.JobStateCancelled
+		return ver, dbterror.ErrInvalidDDLState.GenWithStackByArgs("table", sourceMViewInfo.State)
+	}
+	shadowTblInfo, err = createTable(w, jobCtx, job, &asAutoIDRequirement{store: w.store, autoidCli: w.autoidCli}, args)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	ver, err = updateSchemaVersion(jobCtx, job)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, shadowTblInfo)
+	return ver, nil
 }
 
 func (w *worker) createTableWithForeignKeys(jobCtx *jobContext, job *model.Job, args *model.CreateTableArgs) (ver int64, err error) {
@@ -813,6 +863,8 @@ func checkColumnAttributes(colName string, tp *types.FieldType) error {
 		if tp.GetDecimal() != types.UnspecifiedFsp && (tp.GetDecimal() < types.MinFsp || tp.GetDecimal() > types.MaxFsp) {
 			return types.ErrTooBigPrecision.GenWithStackByArgs(tp.GetDecimal(), colName, types.MaxFsp)
 		}
+	case mysql.TypeGeometry:
+		return dbterror.ErrNotSupportedYet.GenWithStackByArgs("geometry columns")
 	}
 	return nil
 }
@@ -1340,6 +1392,7 @@ func BuildTableInfoWithLike(ident ast.Ident, referTblInfo *model.TableInfo, s *a
 	tblInfo.ForeignKeys = nil
 	tblInfo.MaterializedViewBase = nil
 	tblInfo.MaterializedView = nil
+	tblInfo.MaterializedViewShadow = nil
 	tblInfo.MaterializedViewLog = nil
 	tblInfo.TableCacheStatusType = model.TableCacheStatusDisable
 	// Ignore TiFlash replicas for temporary tables.

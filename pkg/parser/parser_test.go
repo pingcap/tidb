@@ -435,6 +435,28 @@ func RunTest(t *testing.T, table []testCase, enableWindowFunc bool, MariaDB bool
 
 func TestMaterializedViewDDLStatements(t *testing.T) {
 	table := []testCase{
+		{
+			"CREATE MATERIALIZED VIEW IF NOT EXISTS test.mv (a) AS SELECT 1",
+			true,
+			"CREATE MATERIALIZED VIEW IF NOT EXISTS `test`.`mv` (`a`) AS SELECT 1",
+		},
+		{
+			"CREATE MATERIALIZED VIEW IF NOT EXISTS mv (a) COMMENT = 'c1' SHARD_ROW_ID_BITS = 4 REFRESH FAST ATTRIBUTES = 'x' AS SELECT 1",
+			true,
+			"CREATE MATERIALIZED VIEW IF NOT EXISTS `mv` (`a`) COMMENT = 'c1' SHARD_ROW_ID_BITS = 4 REFRESH FAST ATTRIBUTES = 'x' AS SELECT 1",
+		},
+		{
+			"CREATE MATERIALIZED VIEW LOG IF NOT EXISTS ON test.t (a,b)",
+			true,
+			"CREATE MATERIALIZED VIEW LOG IF NOT EXISTS ON `test`.`t` (`a`, `b`)",
+		},
+		{
+			"CREATE MATERIALIZED VIEW LOG IF NOT EXISTS ON t (a) SHARD_ROW_ID_BITS = 4 PURGE START WITH now() NEXT 300 ALERT ROWS 100",
+			true,
+			"CREATE MATERIALIZED VIEW LOG IF NOT EXISTS ON `t` (`a`) SHARD_ROW_ID_BITS = 4 PURGE START WITH NOW() NEXT 300 ALERT ROWS 100",
+		},
+		{"CREATE MATERIALIZED VIEW log (a) AS SELECT 1", true, "CREATE MATERIALIZED VIEW `log` (`a`) AS SELECT 1"},
+		{"CREATE MATERIALIZED VIEW IF NOT EXISTS log (a) AS SELECT 1", true, "CREATE MATERIALIZED VIEW IF NOT EXISTS `log` (`a`) AS SELECT 1"},
 		{"CREATE MATERIALIZED VIEW mv (a) AS SELECT 1", true, "CREATE MATERIALIZED VIEW \x60mv\x60 (\x60a\x60) AS SELECT 1"},
 		{"CREATE MATERIALIZED VIEW mv (a) COMMENT = 'c1' SHARD_ROW_ID_BITS = 2 PRE_SPLIT_REGIONS = 3 REFRESH FAST NEXT 300 ATTRIBUTES = 'x' AS SELECT 1", true, "CREATE MATERIALIZED VIEW \x60mv\x60 (\x60a\x60) COMMENT = 'c1' SHARD_ROW_ID_BITS = 2 PRE_SPLIT_REGIONS = 3 REFRESH FAST NEXT 300 ATTRIBUTES = 'x' AS SELECT 1"},
 		{"CREATE MATERIALIZED VIEW mv (a) COMMENT 'c1' AS SELECT 1", true, "CREATE MATERIALIZED VIEW \x60mv\x60 (\x60a\x60) COMMENT = 'c1' AS SELECT 1"},
@@ -452,6 +474,9 @@ func TestMaterializedViewDDLStatements(t *testing.T) {
 	}
 	RunTest(t, table, false, false)
 	wantTypes := []ast.StmtNode{
+		&ast.CreateMaterializedViewStmt{}, &ast.CreateMaterializedViewStmt{},
+		&ast.CreateMaterializedViewLogStmt{}, &ast.CreateMaterializedViewLogStmt{},
+		&ast.CreateMaterializedViewStmt{}, &ast.CreateMaterializedViewStmt{},
 		&ast.CreateMaterializedViewStmt{}, &ast.CreateMaterializedViewStmt{}, &ast.CreateMaterializedViewStmt{},
 		&ast.CreateMaterializedViewLogStmt{}, &ast.CreateMaterializedViewLogStmt{},
 		&ast.AlterMaterializedViewStmt{}, &ast.AlterMaterializedViewStmt{}, &ast.AlterMaterializedViewStmt{},
@@ -459,11 +484,114 @@ func TestMaterializedViewDDLStatements(t *testing.T) {
 		&ast.PurgeMaterializedViewLogStmt{}, &ast.PurgeMaterializedViewLogStmt{},
 		&ast.DropMaterializedViewStmt{}, &ast.DropMaterializedViewLogStmt{},
 	}
+	for _, mode := range []mysql.SQLMode{0, mysql.ModeHighNotPrecedence} {
+		p := parser.New()
+		p.SetSQLMode(mode)
+		for i, tc := range table {
+			stmt, err := p.ParseOneStmt(tc.src, "", "")
+			require.NoError(t, err, "sql_mode=%v, sql=%s", mode, tc.src)
+			require.IsType(t, wantTypes[i], stmt, tc.src)
+			var restored strings.Builder
+			require.NoError(t, stmt.Restore(NewRestoreCtx(DefaultRestoreFlags, &restored)), tc.src)
+			require.Equal(t, tc.restore, restored.String(), tc.src)
+		}
+	}
+	RunTest(t, []testCase{
+		{"CREATE MATERIALIZED VIEW mv IF NOT EXISTS (a) AS SELECT 1", false, ""},
+		{"CREATE MATERIALIZED VIEW LOG ON IF NOT EXISTS t (a)", false, ""},
+	}, false, false)
+}
+
+func TestRefreshMaterializedViewStatements(t *testing.T) {
+	table := []testCase{
+		{"REFRESH MATERIALIZED VIEW mv FAST", true, "REFRESH MATERIALIZED VIEW `mv` FAST"},
+		{"REFRESH MATERIALIZED VIEW mv WITH ASYNC MODE FAST", true, "REFRESH MATERIALIZED VIEW `mv` WITH ASYNC MODE FAST"},
+		{"REFRESH MATERIALIZED VIEW mv FAST AS OF TIMESTAMP '2021-04-15 00:00:00' WITH PROFILE", true, "REFRESH MATERIALIZED VIEW `mv` FAST AS OF TIMESTAMP _UTF8MB4'2021-04-15 00:00:00' WITH PROFILE"},
+		{"REFRESH MATERIALIZED VIEW mv COMPLETE", false, ""},
+		{"REFRESH MATERIALIZED VIEW mv COMPLETE IN PLACE", true, "REFRESH MATERIALIZED VIEW `mv` COMPLETE IN PLACE"},
+		{"REFRESH MATERIALIZED VIEW mv WITH ASYNC MODE COMPLETE OUT OF PLACE DRY RUN", true, "REFRESH MATERIALIZED VIEW `mv` WITH ASYNC MODE COMPLETE OUT OF PLACE DRY RUN"},
+		{"REFRESH MATERIALIZED VIEW mv COMPLETE DELTA APPLY WITH PROFILE", true, "REFRESH MATERIALIZED VIEW `mv` COMPLETE DELTA APPLY WITH PROFILE"},
+		{"REFRESH MATERIALIZED VIEW mv FAST OUT OF PLACE", false, ""},
+		{"REFRESH MATERIALIZED VIEW mv COMPLETE OUT OF PLACE DELTA APPLY", false, ""},
+		{"CANCEL MATERIALIZED VIEW REFRESH JOB", false, ""},
+		{"CANCEL MATERIALIZED VIEW REFRESH JOB 42", true, "CANCEL MATERIALIZED VIEW REFRESH JOB 42"},
+	}
+	RunTest(t, table, false, false)
+
 	p := parser.New()
-	for i, tc := range table {
-		stmt, err := p.ParseOneStmt(tc.src, "", "")
-		require.NoError(t, err, tc.src)
-		require.IsType(t, wantTypes[i], stmt, tc.src)
+	stmt, err := p.ParseOneStmt("REFRESH MATERIALIZED VIEW mv COMPLETE DELTA APPLY", "", "")
+	require.NoError(t, err)
+	refreshStmt, ok := stmt.(*ast.RefreshMaterializedViewStmt)
+	require.True(t, ok)
+	require.Equal(t, ast.RefreshMaterializedViewTypeComplete, refreshStmt.Type)
+	require.Equal(t, ast.RefreshMaterializedViewCompleteTypeDeltaApply, refreshStmt.CompleteType)
+
+	stmt, err = p.ParseOneStmt("CANCEL MATERIALIZED VIEW REFRESH JOB 42", "", "")
+	require.NoError(t, err)
+	cancelStmt, ok := stmt.(*ast.CancelMaterializedViewJobStmt)
+	require.True(t, ok)
+	require.Equal(t, ast.CancelMaterializedViewJobTypeRefresh, cancelStmt.Tp)
+	require.Equal(t, int64(42), cancelStmt.JobID)
+
+	viewName := &ast.TableName{Schema: ast.NewCIStr("test"), Name: ast.NewCIStr("mv")}
+	restoreCases := []struct {
+		name        string
+		stmt        ast.StmtNode
+		expectedSQL string
+		expectErr   string
+	}{
+		{
+			name: "implement timestamp bounds",
+			stmt: &ast.RefreshMaterializedViewImplementStmt{
+				RefreshStmt: &ast.RefreshMaterializedViewStmt{
+					ViewName: viewName,
+					Type:     ast.RefreshMaterializedViewTypeFast,
+				},
+				LastSuccessfulRefreshReadTSO: 4242,
+				TargetRefreshReadTSO:         5252,
+				MLogRetainedLowerTSO:         3131,
+				RegisteredMLogIDs:            []int64{1234},
+			},
+			expectedSQL: "IMPLEMENT FOR REFRESH MATERIALIZED VIEW `test`.`mv` FAST USING TIMESTAMP 4242 UP TO TIMESTAMP 5252 MLOG RETAINED LOWER TIMESTAMP 3131",
+		},
+		{
+			name: "fast ignores out of place complete type",
+			stmt: &ast.RefreshMaterializedViewStmt{
+				ViewName:     viewName,
+				Type:         ast.RefreshMaterializedViewTypeFast,
+				CompleteType: ast.RefreshMaterializedViewCompleteTypeOutOfPlace,
+			},
+			expectedSQL: "REFRESH MATERIALIZED VIEW `test`.`mv` FAST",
+		},
+		{
+			name: "fast ignores delta apply complete type",
+			stmt: &ast.RefreshMaterializedViewStmt{
+				ViewName:     viewName,
+				Type:         ast.RefreshMaterializedViewTypeFast,
+				CompleteType: ast.RefreshMaterializedViewCompleteTypeDeltaApply,
+			},
+			expectedSQL: "REFRESH MATERIALIZED VIEW `test`.`mv` FAST",
+		},
+		{
+			name: "complete type unspecified",
+			stmt: &ast.RefreshMaterializedViewStmt{
+				ViewName: viewName,
+				Type:     ast.RefreshMaterializedViewTypeComplete,
+			},
+			expectErr: "COMPLETE refresh mode must be specified explicitly",
+		},
+	}
+	for _, tc := range restoreCases {
+		t.Run(tc.name, func(t *testing.T) {
+			var sb strings.Builder
+			err := tc.stmt.Restore(NewRestoreCtx(DefaultRestoreFlags, &sb))
+			if tc.expectErr != "" {
+				require.ErrorContains(t, err, tc.expectErr)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, tc.expectedSQL, sb.String())
+		})
 	}
 }
 
@@ -504,6 +632,7 @@ func TestMaterializedViewDuplicateOptionsErrMsg(t *testing.T) {
 func TestMaterializedViewCreateOptionOrder(t *testing.T) {
 	p := parser.New()
 	invalidCases := []string{
+		"CREATE MATERIALIZED VIEW mv (a) REFRESH FAST START WITH now() AS SELECT 1",
 		"CREATE MATERIALIZED VIEW mv (a) REFRESH FAST SHARD_ROW_ID_BITS = 4 AS SELECT 1",
 		"CREATE MATERIALIZED VIEW mv (a) ATTRIBUTES = 'x' REFRESH FAST AS SELECT 1",
 		"CREATE MATERIALIZED VIEW mv (a) REFRESH FAST REFRESH FAST AS SELECT 1",
@@ -622,6 +751,18 @@ func TestRecommendIndex(t *testing.T) {
 			"RECOMMEND INDEX RUN FOR 'select * from t where a=1' WITH A = 1"},
 		{"recommend index run for 'select * from t where a=1' with A = 1, B = 2", true,
 			"RECOMMEND INDEX RUN FOR 'select * from t where a=1' WITH A = 1, B = 2"},
+		{"recommend index return result for 'select * from t where a=1'", true,
+			"RECOMMEND INDEX RETURN RESULT FOR 'select * from t where a=1'"},
+		{"recommend index return result for 'select * from t where a=1' with A = 1, B = 2", true,
+			"RECOMMEND INDEX RETURN RESULT FOR 'select * from t where a=1' WITH A = 1, B = 2"},
+		{"recommend index return result for ''", true, "RECOMMEND INDEX RETURN RESULT FOR ''"},
+		{"recommend index return result", false, ""},
+		{"recommend index return result with A = 1", false, ""},
+		{"recommend index return for 'select * from t'", false, ""},
+		{"recommend index return results for 'select * from t'", false, ""},
+		{"recommend index `return` `result` for 'select * from t'", false, ""},
+		{"recommend index return result for select * from t", false, ""},
+		{"select return, result from result", true, "SELECT `return`,`result` FROM `result`"},
 		{"recommend index show option", true, "RECOMMEND INDEX SHOW OPTION"},
 		{"recommend index apply 1", true, "RECOMMEND INDEX APPLY 1"},
 		{"recommend index ignore 1", true, "RECOMMEND INDEX IGNORE 1"},
@@ -630,6 +771,16 @@ func TestRecommendIndex(t *testing.T) {
 		{"recommend index set A = 1, B = 2, C = 3", true, "RECOMMEND INDEX SET A = 1, B = 2, C = 3"},
 	}
 	RunTest(t, table, false, false)
+
+	p := parser.New()
+	for _, sql := range []string{
+		`recommend index run for 'select * from t where a=1'`,
+		`recommend index return result for 'select * from t where a=1'`,
+	} {
+		stmt, err := p.ParseOneStmt(sql, "", "")
+		require.NoError(t, err)
+		require.True(t, ast.IsReadOnly(stmt, true), sql)
+	}
 }
 
 func TestAdminStmt(t *testing.T) {
@@ -1478,6 +1629,36 @@ func TestDBAStmt(t *testing.T) {
 		// for show create view
 		{"show create view test.t", true, "SHOW CREATE VIEW `test`.`t`"},
 		{"show create view t", true, "SHOW CREATE VIEW `t`"},
+		// for show create materialized view
+		{"show create materialized view test.t", true, "SHOW CREATE MATERIALIZED VIEW `test`.`t`"},
+		{"show create materialized view t", true, "SHOW CREATE MATERIALIZED VIEW `t`"},
+		// for show create materialized view log
+		{"show create materialized view log on test.t", true, "SHOW CREATE MATERIALIZED VIEW LOG ON `test`.`t`"},
+		{"show create materialized view log on t", true, "SHOW CREATE MATERIALIZED VIEW LOG ON `t`"},
+		// for show materialized views
+		{"show materialized views", true, "SHOW MATERIALIZED VIEWS"},
+		{"show materialized views from test", true, "SHOW MATERIALIZED VIEWS IN `test`"},
+		{"show materialized views from 'test'", false, ""},
+		{"show materialized views in test like 'mv%'", true, "SHOW MATERIALIZED VIEWS IN `test` LIKE _UTF8MB4'mv%'"},
+		{"show materialized views where mview_id = 1", true, "SHOW MATERIALIZED VIEWS WHERE `mview_id`=1"},
+		// for show materialized view
+		{"show materialized view mv remain_logs", true, "SHOW MATERIALIZED VIEW `mv` REMAIN_LOGS"},
+		{"show materialized view test.mv remain_logs", true, "SHOW MATERIALIZED VIEW `test`.`mv` REMAIN_LOGS"},
+		{"show materialized view mv", false, ""},
+		{"show materialized view mv like 'mv%'", false, ""},
+		{"show materialized view mv where mview_id = 1", false, ""},
+		// for show materialized view logs
+		{"show materialized view logs", true, "SHOW MATERIALIZED VIEW LOGS"},
+		{"show materialized view logs from test", true, "SHOW MATERIALIZED VIEW LOGS IN `test`"},
+		{"show materialized view logs from 'test'", false, ""},
+		{"show materialized view logs in test like '$mlog$%'", true, "SHOW MATERIALIZED VIEW LOGS IN `test` LIKE _UTF8MB4'$mlog$%'"},
+		{"show materialized view logs where mlog_id = 1", true, "SHOW MATERIALIZED VIEW LOGS WHERE `mlog_id`=1"},
+		// for show materialized view log
+		{"show materialized view log on t wait_purge", true, "SHOW MATERIALIZED VIEW LOG ON `t` WAIT_PURGE"},
+		{"show materialized view log on test.t wait_purge", true, "SHOW MATERIALIZED VIEW LOG ON `test`.`t` WAIT_PURGE"},
+		{"show materialized view log on t", false, ""},
+		{"show materialized view log on t like '$mlog$%'", false, ""},
+		{"show materialized view log on t where mlog_id = 1", false, ""},
 		// for show create database
 		{"show create database d1", true, "SHOW CREATE DATABASE `d1`"},
 		{"show create database if not exists d1", true, "SHOW CREATE DATABASE IF NOT EXISTS `d1`"},
@@ -2971,6 +3152,30 @@ func TestDDL(t *testing.T) {
 		{`alter database t PLACEMENT POLICY SET DEFAULT`, true, "ALTER DATABASE `t` PLACEMENT POLICY = `DEFAULT`"},
 		{"alter database t PLACEMENT POLICY=`DEFAULT`;", true, "ALTER DATABASE `t` PLACEMENT POLICY = `DEFAULT`"},
 		{`alter database t /*T![placement] PLACEMENT POLICY='DEFAULT' */;`, true, "ALTER DATABASE `t` PLACEMENT POLICY = `DEFAULT`"},
+		{"ALTER DATABASE test READ ONLY = 1", true, "ALTER DATABASE `test` READ ONLY = 1"},
+		{"ALTER DATABASE test READ ONLY = 0", true, "ALTER DATABASE `test` READ ONLY = 0"},
+		{"ALTER DATABASE test READ ONLY = default", true, "ALTER DATABASE `test` READ ONLY = DEFAULT"},
+		{"ALTER SCHEMA test READ ONLY = 1", true, "ALTER DATABASE `test` READ ONLY = 1"},
+		{"ALTER DATABASE test READ ONLY 1", true, "ALTER DATABASE `test` READ ONLY = 1"},
+		{"ALTER DATABASE READ ONLY 1", true, "ALTER DATABASE READ ONLY = 1"},
+		{"ALTER DATABASE test READ ONLY = 2", false, ""},
+		{"ALTER DATABASE test READ ONLY = '1'", false, ""},
+		{"ALTER DATABASE test READ ONLY = `1`", false, ""},
+		{"ALTER DATABASE test READ ONLY = true", false, ""},
+		{"CREATE DATABASE test READ ONLY = 1", false, ""},
+		{"ALTER DATABASE test CHARSET = gbk READ ONLY = 1", false, ""},
+		{"ALTER SCHEMA S READ ONLY only=on", false, ""},
+		{"ALTER SCHEMA S READ ONLY=off", false, ""},
+		{"ALTER SCHEMA S READ ONLY=-1", false, ""},
+		{"ALTER SCHEMA S READ-ONLY=0", false, ""},
+		{"ALTER SCHEMA S READ ONLY=0 READ ONLY=0", false, ""},
+		{"ALTER SCHEMA S READ ONLY=1 READ ONLY=0", false, ""},
+		{"ALTER SCHEMA S READ ONLY=default READ ONLY=1", false, ""},
+		{"ALTER SCHEMA S READ ONLY=default CHARSET=gbk", false, ""},
+		{"ALTER SCHEMA S READ ONLY=default COLLATION = utf8_general_ci", false, ""},
+		{"CREATE SCHEMA S(a INT, READ ONLY=0)", false, ""},
+		{"CREATE TABLE t(a INT READ ONLY=0)", false, ""},
+
 		// 5. create partition
 		{`create table m (c int) partition by range (c) (partition p1 values less than (200) primary_region="us");`, false, ""},
 		{`create table m (c int) partition by range (c) (partition p1 values less than (200) regions="us,3");`, false, ""},
@@ -5497,6 +5702,91 @@ func TestType(t *testing.T) {
 	RunTest(t, table, false, false)
 }
 
+func TestGeometryType(t *testing.T) {
+	table := []testCase{
+		// The nine spellings, case-insensitive. Both collection spellings are one type.
+		{"create table t (a Geometry, b point, c LineString, d POLYGON, e MultiPoint, f multilinestring, g MULTIPOLYGON, h GeometryCollection, i GeomCollection)", true, "CREATE TABLE `t` (`a` GEOMETRY,`b` POINT,`c` LINESTRING,`d` POLYGON,`e` MULTIPOINT,`f` MULTILINESTRING,`g` MULTIPOLYGON,`h` GEOMCOLLECTION,`i` GEOMCOLLECTION)"},
+		{"alter table t add column p point, modify column l linestring, change column a b geomcollection", true, "ALTER TABLE `t` ADD COLUMN `p` POINT, MODIFY COLUMN `l` LINESTRING, CHANGE COLUMN `a` `b` GEOMCOLLECTION"},
+		// No length, charset, sign or BINARY attribute.
+		{"create table t (p point(10))", false, ""},
+		{"create table t (p point unsigned)", false, ""},
+		{"create table t (p point binary)", false, ""},
+		{"create table t (p point character set utf8mb4)", false, ""},
+		{"create table t (p point charset binary)", false, ""},
+
+		// SRID in any position among the column attributes.
+		{"create table t (p point srid 4326)", true, "CREATE TABLE `t` (`p` POINT SRID 4326)"},
+		{"create table t (p point SRID 4326 not null, q point not null srid 0)", true, "CREATE TABLE `t` (`p` POINT SRID 4326 NOT NULL,`q` POINT NOT NULL SRID 0)"},
+		{"create table t (p point default null srid 0 comment 'c' srid 4326)", true, "CREATE TABLE `t` (`p` POINT DEFAULT NULL SRID 0 COMMENT 'c' SRID 4326)"},
+		{"create table t (p point as (point(1, 2)) stored srid 0)", true, "CREATE TABLE `t` (`p` POINT GENERATED ALWAYS AS(POINT(1, 2)) STORED SRID 0)"},
+		{"alter table t add column p point srid 4326, modify column q geometry srid 0, change column r s polygon srid 4326", true, "ALTER TABLE `t` ADD COLUMN `p` POINT SRID 4326, MODIFY COLUMN `q` GEOMETRY SRID 0, CHANGE COLUMN `r` `s` POLYGON SRID 4326"},
+		// Accepted on any column type here; DDL rejects it on a non-geometry column.
+		{"create table t (a int srid 4326)", true, "CREATE TABLE `t` (`a` INT SRID 4326)"},
+		// mysqldump writes the attribute in a version comment.
+		{"create table t (p point not null /*!80003 SRID 4326 */)", true, "CREATE TABLE `t` (`p` POINT NOT NULL SRID 4326)"},
+
+		// SRID takes an unsigned decimal or a hex literal, up to 4294967295.
+		{"create table t (p point srid 04326)", true, "CREATE TABLE `t` (`p` POINT SRID 4326)"},
+		{"create table t (p point srid 4294967295)", true, "CREATE TABLE `t` (`p` POINT SRID 4294967295)"},
+		{"create table t (p point srid 0x10E6, q point srid 0x10e6)", true, "CREATE TABLE `t` (`p` POINT SRID 4326,`q` POINT SRID 4326)"},
+		{"create table t (p point srid X'10E6', q point srid x'10e6')", true, "CREATE TABLE `t` (`p` POINT SRID 4326,`q` POINT SRID 4326)"},
+		{"create table t (p point srid 0x0000000000000000000010E6, q point srid 0xFFFFFFFF)", true, "CREATE TABLE `t` (`p` POINT SRID 4326,`q` POINT SRID 4294967295)"},
+		{"create table t (p point srid X'', q point srid 0x00)", true, "CREATE TABLE `t` (`p` POINT SRID 0,`q` POINT SRID 0)"},
+		{"create table t (p point srid)", false, ""},
+		{"create table t (p point srid 4326.0)", false, ""},
+		{"create table t (p point srid 4.326e3)", false, ""},
+		{"create table t (p point srid 18446744073709551616)", false, ""},
+		{"create table t (p point srid 0X10E6)", false, ""},
+		{"create table t (p point srid b'1000011100110')", false, ""},
+		{"create table t (p point srid 0b1000011100110)", false, ""},
+		{"create table t (p point srid -1)", false, ""},
+		{"create table t (p point srid +4326)", false, ""},
+		{"create table t (p point srid '4326')", false, ""},
+		{"create table t (p point srid (4326))", false, ""},
+		{"create table t (p point srid 0 + 4326)", false, ""},
+		{"create table t (p point srid (0 + 4326))", false, ""},
+		{"create table t (p point srid cast(4326 as unsigned))", false, ""},
+		{"create table t (p point srid @v)", false, ""},
+
+		// Every new keyword is non-reserved.
+		{"create table geometry (geometry geometry, point point, linestring linestring, polygon polygon, multipoint multipoint, multilinestring multilinestring, multipolygon multipolygon, geometrycollection geometrycollection, geomcollection geomcollection, srid int srid 0)", true, "CREATE TABLE `geometry` (`geometry` GEOMETRY,`point` POINT,`linestring` LINESTRING,`polygon` POLYGON,`multipoint` MULTIPOINT,`multilinestring` MULTILINESTRING,`multipolygon` MULTIPOLYGON,`geometrycollection` GEOMCOLLECTION,`geomcollection` GEOMCOLLECTION,`srid` INT SRID 0)"},
+		{"select geometry, srid, geomcollection as geometrycollection from srid as linestring", true, "SELECT `geometry`,`srid`,`geomcollection` AS `geometrycollection` FROM `srid` AS `linestring`"},
+
+		// The constructor names stay callable; GEOMETRY and SRID are not functions.
+		{"select Point(1, 2), LineString(Point(0, 0), Point(1, 1)), Polygon(LineString(Point(0, 0), Point(1, 0), Point(0, 1), Point(0, 0)))", true, "SELECT POINT(1, 2),LINESTRING(POINT(0, 0), POINT(1, 1)),POLYGON(LINESTRING(POINT(0, 0), POINT(1, 0), POINT(0, 1), POINT(0, 0)))"},
+		{"select MultiPoint(p), MultiLineString(l), MultiPolygon(y), GeometryCollection(p, l), GeomCollection(p, l)", true, "SELECT MULTIPOINT(`p`),MULTILINESTRING(`l`),MULTIPOLYGON(`y`),GEOMETRYCOLLECTION(`p`, `l`),GEOMCOLLECTION(`p`, `l`)"},
+		{"select Geometry(p)", false, ""},
+		{"select SRID(p)", false, ""},
+
+		// Spatial indexes as table constraints, as mysqldump writes them.
+		{"create table t (g point not null srid 4326, spatial key sk (g))", true, "CREATE TABLE `t` (`g` POINT NOT NULL SRID 4326,SPATIAL `sk`(`g`))"},
+		{"create table t (g geometry not null, spatial index (g), spatial (g) comment 'c' invisible)", true, "CREATE TABLE `t` (`g` GEOMETRY NOT NULL,SPATIAL(`g`),SPATIAL(`g`) COMMENT 'c' INVISIBLE)"},
+		{"alter table t add spatial index ai (g), add spatial key (g)", true, "ALTER TABLE `t` ADD SPATIAL `ai`(`g`), ADD SPATIAL(`g`)"},
+		{"create spatial index si on t (g)", true, "CREATE SPATIAL INDEX `si` ON `t` (`g`)"},
+		{"create table t (g point not null spatial)", false, ""},
+
+		// Spatial casts take the eight subtype spellings, not GEOMETRY, and no SRID.
+		{"select cast(g as point), cast(g as LineString), convert(g, polygon), cast(g as multipoint), cast(g as multilinestring), cast(g as multipolygon), cast(g as geometrycollection), cast(g as geomcollection) from t", true, "SELECT CAST(`g` AS POINT),CAST(`g` AS LINESTRING),CONVERT(`g`, POLYGON),CAST(`g` AS MULTIPOINT),CAST(`g` AS MULTILINESTRING),CAST(`g` AS MULTIPOLYGON),CAST(`g` AS GEOMCOLLECTION),CAST(`g` AS GEOMCOLLECTION) FROM `t`"},
+		{"select cast(0x00000000010100000000000000000000000000000000000000 as point)", true, "SELECT CAST(x'00000000010100000000000000000000000000000000000000' AS POINT)"},
+		{"select cast(g as point array) from t", true, "SELECT CAST(`g` AS POINT ARRAY) FROM `t`"},
+		{"select cast(g as geometry) from t", false, ""},
+		{"select cast(g as point srid 4326) from t", false, ""},
+	}
+	RunTest(t, table, false, false)
+
+	p := parser.New()
+	for _, src := range []string{
+		"create table t (p point srid 4294967296)",
+		"create table t (p point srid 18446744073709551615)",
+		"create table t (p point srid 0x100000000)",
+		"create table t (p point srid X'010000000000000000')",
+		"alter table t add column p point srid 4294967296",
+	} {
+		_, _, err := p.Parse(src, "", "")
+		require.EqualError(t, err, "[parser:1690]SRID value is out of range in 'SRID'", src)
+	}
+}
+
 func TestPrivilege(t *testing.T) {
 	table := []testCase{
 		// for create user
@@ -6376,6 +6666,7 @@ func TestView(t *testing.T) {
 		{"create or replace algorithm = merge definer = 'root' sql security invoker view v(a,b) as select * from t", true, "CREATE OR REPLACE ALGORITHM = MERGE DEFINER = `root`@`%` SQL SECURITY INVOKER VIEW `v` (`a`,`b`) AS SELECT * FROM `t`"},
 		{"create or replace algorithm = merge definer = 'root' sql security invoker view v(a,b) as select * from t with local check option", true, "CREATE OR REPLACE ALGORITHM = MERGE DEFINER = `root`@`%` SQL SECURITY INVOKER VIEW `v` (`a`,`b`) AS SELECT * FROM `t` WITH LOCAL CHECK OPTION"},
 		{"create or replace algorithm = merge definer = 'root' sql security invoker view v(a,b) as select * from t with cascaded check option", true, "CREATE OR REPLACE ALGORITHM = MERGE DEFINER = `root`@`%` SQL SECURITY INVOKER VIEW `v` (`a`,`b`) AS SELECT * FROM `t`"},
+		{"create or replace algorithm = merge definer = 'root' sql security invoker view v(a,b) as select * from t with check option", true, "CREATE OR REPLACE ALGORITHM = MERGE DEFINER = `root`@`%` SQL SECURITY INVOKER VIEW `v` (`a`,`b`) AS SELECT * FROM `t`"},
 		{"create or replace algorithm = merge definer = current_user view v as select * from t", true, "CREATE OR REPLACE ALGORITHM = MERGE DEFINER = CURRENT_USER SQL SECURITY DEFINER VIEW `v` AS SELECT * FROM `t`"},
 
 		// create view with `(` select statement `)`
@@ -6390,6 +6681,7 @@ func TestView(t *testing.T) {
 		{"create or replace algorithm = merge definer = 'root' sql security invoker view v(a,b) as (select * from t)", true, "CREATE OR REPLACE ALGORITHM = MERGE DEFINER = `root`@`%` SQL SECURITY INVOKER VIEW `v` (`a`,`b`) AS (SELECT * FROM `t`)"},
 		{"create or replace algorithm = merge definer = 'root' sql security invoker view v(a,b) as (select * from t) with local check option", true, "CREATE OR REPLACE ALGORITHM = MERGE DEFINER = `root`@`%` SQL SECURITY INVOKER VIEW `v` (`a`,`b`) AS (SELECT * FROM `t`) WITH LOCAL CHECK OPTION"},
 		{"create or replace algorithm = merge definer = 'root' sql security invoker view v(a,b) as (select * from t) with cascaded check option", true, "CREATE OR REPLACE ALGORITHM = MERGE DEFINER = `root`@`%` SQL SECURITY INVOKER VIEW `v` (`a`,`b`) AS (SELECT * FROM `t`)"},
+		{"create or replace algorithm = merge definer = 'root' sql security invoker view v(a,b) as (select * from t) with check option", true, "CREATE OR REPLACE ALGORITHM = MERGE DEFINER = `root`@`%` SQL SECURITY INVOKER VIEW `v` (`a`,`b`) AS (SELECT * FROM `t`)"},
 		{"create or replace algorithm = merge definer = current_user view v as (select * from t)", true, "CREATE OR REPLACE ALGORITHM = MERGE DEFINER = CURRENT_USER SQL SECURITY DEFINER VIEW `v` AS (SELECT * FROM `t`)"},
 
 		// create view with union statement
@@ -6404,6 +6696,7 @@ func TestView(t *testing.T) {
 		{"create or replace algorithm = merge definer = 'root' sql security invoker view v(a,b) as select * from t union select * from t", true, "CREATE OR REPLACE ALGORITHM = MERGE DEFINER = `root`@`%` SQL SECURITY INVOKER VIEW `v` (`a`,`b`) AS SELECT * FROM `t` UNION SELECT * FROM `t`"},
 		{"create or replace algorithm = merge definer = 'root' sql security invoker view v(a,b) as select * from t union select * from t with local check option", true, "CREATE OR REPLACE ALGORITHM = MERGE DEFINER = `root`@`%` SQL SECURITY INVOKER VIEW `v` (`a`,`b`) AS SELECT * FROM `t` UNION SELECT * FROM `t` WITH LOCAL CHECK OPTION"},
 		{"create or replace algorithm = merge definer = 'root' sql security invoker view v(a,b) as select * from t union select * from t with cascaded check option", true, "CREATE OR REPLACE ALGORITHM = MERGE DEFINER = `root`@`%` SQL SECURITY INVOKER VIEW `v` (`a`,`b`) AS SELECT * FROM `t` UNION SELECT * FROM `t`"},
+		{"create or replace algorithm = merge definer = 'root' sql security invoker view v(a,b) as select * from t union select * from t with check option", true, "CREATE OR REPLACE ALGORITHM = MERGE DEFINER = `root`@`%` SQL SECURITY INVOKER VIEW `v` (`a`,`b`) AS SELECT * FROM `t` UNION SELECT * FROM `t`"},
 		{"create or replace algorithm = merge definer = current_user view v as select * from t union select * from t", true, "CREATE OR REPLACE ALGORITHM = MERGE DEFINER = CURRENT_USER SQL SECURITY DEFINER VIEW `v` AS SELECT * FROM `t` UNION SELECT * FROM `t`"},
 
 		// create view with union all statement
@@ -6418,6 +6711,7 @@ func TestView(t *testing.T) {
 		{"create or replace algorithm = merge definer = 'root' sql security invoker view v(a,b) as select * from t union all select * from t", true, "CREATE OR REPLACE ALGORITHM = MERGE DEFINER = `root`@`%` SQL SECURITY INVOKER VIEW `v` (`a`,`b`) AS SELECT * FROM `t` UNION ALL SELECT * FROM `t`"},
 		{"create or replace algorithm = merge definer = 'root' sql security invoker view v(a,b) as select * from t union all select * from t with local check option", true, "CREATE OR REPLACE ALGORITHM = MERGE DEFINER = `root`@`%` SQL SECURITY INVOKER VIEW `v` (`a`,`b`) AS SELECT * FROM `t` UNION ALL SELECT * FROM `t` WITH LOCAL CHECK OPTION"},
 		{"create or replace algorithm = merge definer = 'root' sql security invoker view v(a,b) as select * from t union all select * from t with cascaded check option", true, "CREATE OR REPLACE ALGORITHM = MERGE DEFINER = `root`@`%` SQL SECURITY INVOKER VIEW `v` (`a`,`b`) AS SELECT * FROM `t` UNION ALL SELECT * FROM `t`"},
+		{"create or replace algorithm = merge definer = 'root' sql security invoker view v(a,b) as select * from t union all select * from t with check option", true, "CREATE OR REPLACE ALGORITHM = MERGE DEFINER = `root`@`%` SQL SECURITY INVOKER VIEW `v` (`a`,`b`) AS SELECT * FROM `t` UNION ALL SELECT * FROM `t`"},
 		{"create or replace algorithm = merge definer = current_user view v as select * from t union all select * from t", true, "CREATE OR REPLACE ALGORITHM = MERGE DEFINER = CURRENT_USER SQL SECURITY DEFINER VIEW `v` AS SELECT * FROM `t` UNION ALL SELECT * FROM `t`"},
 
 		// create view with `(` union statement `)`
@@ -6432,7 +6726,11 @@ func TestView(t *testing.T) {
 		{"create or replace algorithm = merge definer = 'root' sql security invoker view v(a,b) as (select * from t union all select * from t)", true, "CREATE OR REPLACE ALGORITHM = MERGE DEFINER = `root`@`%` SQL SECURITY INVOKER VIEW `v` (`a`,`b`) AS (SELECT * FROM `t` UNION ALL SELECT * FROM `t`)"},
 		{"create or replace algorithm = merge definer = 'root' sql security invoker view v(a,b) as (select * from t union all select * from t) with local check option", true, "CREATE OR REPLACE ALGORITHM = MERGE DEFINER = `root`@`%` SQL SECURITY INVOKER VIEW `v` (`a`,`b`) AS (SELECT * FROM `t` UNION ALL SELECT * FROM `t`) WITH LOCAL CHECK OPTION"},
 		{"create or replace algorithm = merge definer = 'root' sql security invoker view v(a,b) as (select * from t union all select * from t) with cascaded check option", true, "CREATE OR REPLACE ALGORITHM = MERGE DEFINER = `root`@`%` SQL SECURITY INVOKER VIEW `v` (`a`,`b`) AS (SELECT * FROM `t` UNION ALL SELECT * FROM `t`)"},
+		{"create or replace algorithm = merge definer = 'root' sql security invoker view v(a,b) as (select * from t union all select * from t) with check option", true, "CREATE OR REPLACE ALGORITHM = MERGE DEFINER = `root`@`%` SQL SECURITY INVOKER VIEW `v` (`a`,`b`) AS (SELECT * FROM `t` UNION ALL SELECT * FROM `t`)"},
 		{"create or replace algorithm = merge definer = current_user view v as select * from t union all select * from t", true, "CREATE OR REPLACE ALGORITHM = MERGE DEFINER = CURRENT_USER SQL SECURITY DEFINER VIEW `v` AS SELECT * FROM `t` UNION ALL SELECT * FROM `t`"},
+		{"create view v as select * from t with check option", true, "CREATE ALGORITHM = UNDEFINED DEFINER = CURRENT_USER SQL SECURITY DEFINER VIEW `v` AS SELECT * FROM `t`"},
+		{"create view v as select * from t with check", false, ""},
+		{"create view v as select * from t with cascaded local check option", false, ""},
 	}
 	RunTest(t, table, false, false)
 
@@ -6467,6 +6765,15 @@ func TestView(t *testing.T) {
 	require.Equal(t, "select c,d,e from t", v.Select.Text())
 	require.Equal(t, ast.SecurityDefiner, v.Security)
 	require.Equal(t, ast.CheckOptionCascaded, v.CheckOption)
+
+	// A bare `WITH CHECK OPTION` is the unqualified form of the clause. MySQL treats
+	// it as CASCADED, and the clause is not part of the select statement text.
+	st, err = p.ParseOneStmt("create view v as select * from t with check option", "", "")
+	require.NoError(t, err)
+	v, ok = st.(*ast.CreateViewStmt)
+	require.True(t, ok)
+	require.Equal(t, ast.CheckOptionCascaded, v.CheckOption)
+	require.Equal(t, "select * from t", v.Select.Text())
 
 	src = `
 CREATE VIEW v1 AS SELECT * FROM t;
@@ -6727,7 +7034,7 @@ func TestAnalyze(t *testing.T) {
 		{"analyze table t partition a with default buckets", true, "ANALYZE TABLE `t` PARTITION `a` WITH DEFAULT BUCKETS"},
 		{"analyze table t with default cmsketch width", false, ""},
 		{"analyze table t with default cmsketch depth", false, ""},
-		{"analyze table t with default ndvrate", false, ""},
+		{"analyze table t with default ndvrate", true, "ANALYZE TABLE `t` WITH DEFAULT NDVRATE"},
 		{"analyze no_write_to_binlog table t1", true, "ANALYZE NO_WRITE_TO_BINLOG TABLE `t1`"},
 		{"analyze local table t,t1", true, "ANALYZE NO_WRITE_TO_BINLOG TABLE `t`,`t1`"},
 	}
@@ -7808,6 +8115,11 @@ func TestCTEMerge(t *testing.T) {
 
 func TestAsOfClause(t *testing.T) {
 	table := []testCase{
+		{"COMPARE MATERIALIZED VIEW mv AS OF TIMESTAMP '2026-01-01 00:00:00'", true, "COMPARE MATERIALIZED VIEW `mv` AS OF TIMESTAMP _UTF8MB4'2026-01-01 00:00:00'"},
+		{"COMPARE MATERIALIZED VIEW test.mv AS OF TIMESTAMP '2026-01-01 00:00:00' OUTPUT INTO TABLE test.diff", true, "COMPARE MATERIALIZED VIEW `test`.`mv` AS OF TIMESTAMP _UTF8MB4'2026-01-01 00:00:00' OUTPUT INTO TABLE `test`.`diff`"},
+		{"COMPARE MATERIALIZED VIEW mv", false, ""},
+		{"COMPARE MATERIALIZED VIEW mv OUTPUT INTO TABLE diff", false, ""},
+
 		{"SELECT * FROM `t` AS /* comment */ a;", true, "SELECT * FROM `t` AS `a`"},
 		{"SELECT * FROM `t` AS OF TIMESTAMP TIDB_BOUNDED_STALENESS(DATE_SUB(NOW(), INTERVAL 3 SECOND), NOW());", true, "SELECT * FROM `t` AS OF TIMESTAMP TIDB_BOUNDED_STALENESS(DATE_SUB(NOW(), INTERVAL 3 SECOND), NOW())"},
 		{"select * from `t` as of timestamp '2021-04-15 00:00:00'", true, "SELECT * FROM `t` AS OF TIMESTAMP _UTF8MB4'2021-04-15 00:00:00'"},

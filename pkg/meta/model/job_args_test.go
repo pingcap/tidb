@@ -132,6 +132,18 @@ func TestModifySchemaArgs(t *testing.T) {
 			require.EqualValues(t, inArgs.PolicyRef, args.PolicyRef)
 		}
 	}
+	inArgs = &ModifySchemaArgs{
+		ReadOnly:   true,
+		DDLStartTS: 123,
+	}
+	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+		j2 := &Job{}
+		require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionModifySchemaReadOnly)))
+		args, err := GetModifySchemaArgs(j2)
+		require.NoError(t, err)
+		require.True(t, args.ReadOnly)
+		require.Equal(t, uint64(123), args.DDLStartTS)
+	}
 }
 
 func TestCreateTableArgs(t *testing.T) {
@@ -143,6 +155,23 @@ func TestCreateTableArgs(t *testing.T) {
 		for _, v := range []JobVersion{JobVersion1, JobVersion2} {
 			j2 := &Job{}
 			require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionCreateTable)))
+			args, err := GetCreateTableArgs(j2)
+			require.NoError(t, err)
+			require.EqualValues(t, inArgs.TableInfo, args.TableInfo)
+			require.EqualValues(t, inArgs.FKCheck, args.FKCheck)
+		}
+	})
+	t.Run("create materialized view shadow", func(t *testing.T) {
+		inArgs := &CreateTableArgs{
+			TableInfo: &TableInfo{
+				ID:                     101,
+				MaterializedViewShadow: &MaterializedViewShadowInfo{SourceMViewID: 88},
+			},
+			FKCheck: true,
+		}
+		for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+			j2 := &Job{}
+			require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionCreateMaterializedViewShadow)))
 			args, err := GetCreateTableArgs(j2)
 			require.NoError(t, err)
 			require.EqualValues(t, inArgs.TableInfo, args.TableInfo)
@@ -225,7 +254,7 @@ func TestDropTableArgs(t *testing.T) {
 		},
 		FKCheck: true,
 	}
-	for _, tp := range []ActionType{ActionDropTable, ActionDropMaterializedView, ActionDropMaterializedViewLog} {
+	for _, tp := range []ActionType{ActionDropTable, ActionDropMaterializedView, ActionDropMaterializedViewLog, ActionDropMaterializedViewShadow} {
 		for _, v := range []JobVersion{JobVersion1, JobVersion2} {
 			j2 := &Job{}
 			require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, tp)))
@@ -255,7 +284,7 @@ func TestFinishedDropTableArgs(t *testing.T) {
 		OldPartitionIDs: []int64{1, 2},
 		OldRuleIDs:      []string{"schema/test/a/par1", "schema/test/a/par2"},
 	}
-	for _, tp := range []ActionType{ActionDropTable, ActionDropMaterializedView, ActionDropMaterializedViewLog} {
+	for _, tp := range []ActionType{ActionDropTable, ActionDropMaterializedView, ActionDropMaterializedViewLog, ActionDropMaterializedViewShadow} {
 		for _, v := range []JobVersion{JobVersion1, JobVersion2} {
 			j2 := &Job{}
 			require.NoError(t, j2.Decode(getFinishedJobBytes(t, inArgs, v, tp)))
@@ -590,10 +619,11 @@ func TestGetModifyTableCommentArgs(t *testing.T) {
 
 func TestGetAlterMaterializedViewRefreshArgs(t *testing.T) {
 	inArgs := &AlterMaterializedViewRefreshArgs{
-		RefreshMethod:           "FAST",
-		RefreshStartWith:        "DATE_ADD(NOW(), INTERVAL 1 HOUR)",
-		RefreshNext:             "DATE_ADD(NOW(), INTERVAL 30 MINUTE)",
-		RefreshScheduleTimeZone: TimeZoneLocation{Name: "UTC", Offset: 0},
+		RefreshMethod:          "FAST",
+		RefreshStartWith:       "DATE_ADD(NOW(), INTERVAL 1 HOUR)",
+		RefreshNext:            "DATE_ADD(NOW(), INTERVAL 30 MINUTE)",
+		RefreshScheduleSQLMode: mysql.ModePipesAsConcat,
+		UpdateRefreshSchedule:  true,
 	}
 
 	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
@@ -603,17 +633,6 @@ func TestGetAlterMaterializedViewRefreshArgs(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, inArgs, args)
 	}
-
-	j := &Job{Version: JobVersion1, Type: ActionAlterMaterializedViewRefresh}
-	j.FillArgs(inArgs)
-	inArgs.RefreshScheduleTimeZone.Name = "Asia/Shanghai"
-	encoded, err := j.Encode(true)
-	require.NoError(t, err)
-	decoded := &Job{}
-	require.NoError(t, decoded.Decode(encoded))
-	args, err := GetAlterMaterializedViewRefreshArgs(decoded)
-	require.NoError(t, err)
-	require.Equal(t, "UTC", args.RefreshScheduleTimeZone.Name)
 }
 
 func TestGetAlterMaterializedViewAttributesArgs(t *testing.T) {
@@ -650,10 +669,11 @@ func TestGetAlterMaterializedViewAttributesArgs(t *testing.T) {
 
 func TestGetAlterMaterializedViewLogPurgeArgs(t *testing.T) {
 	inArgs := &AlterMaterializedViewLogPurgeArgs{
-		PurgeMethod:           "DEFERRED",
-		PurgeStartWith:        "DATE_ADD(NOW(), INTERVAL 1 HOUR)",
-		PurgeNext:             "DATE_ADD(NOW(), INTERVAL 30 MINUTE)",
-		PurgeScheduleTimeZone: TimeZoneLocation{Name: "UTC", Offset: 0},
+		PurgeMethod:          "DEFERRED",
+		PurgeStartWith:       "DATE_ADD(NOW(), INTERVAL 1 HOUR)",
+		PurgeNext:            "DATE_ADD(NOW(), INTERVAL 30 MINUTE)",
+		PurgeScheduleSQLMode: mysql.ModeNoBackslashEscapes,
+		UpdatePurgeSchedule:  true,
 	}
 
 	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
@@ -663,17 +683,52 @@ func TestGetAlterMaterializedViewLogPurgeArgs(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, inArgs, args)
 	}
+}
 
-	j := &Job{Version: JobVersion1, Type: ActionAlterMaterializedViewLogPurge}
-	j.FillArgs(inArgs)
-	inArgs.PurgeScheduleTimeZone.Name = "Asia/Shanghai"
-	encoded, err := j.Encode(true)
-	require.NoError(t, err)
-	decoded := &Job{}
-	require.NoError(t, decoded.Decode(encoded))
-	args, err := GetAlterMaterializedViewLogPurgeArgs(decoded)
-	require.NoError(t, err)
-	require.Equal(t, "UTC", args.PurgeScheduleTimeZone.Name)
+func TestGetRefreshMaterializedViewCompleteOutOfPlaceCutoverArgs(t *testing.T) {
+	nextRefreshUnixSeconds := int64(123456)
+	revision := uint64(789)
+	testCases := []*RefreshMaterializedViewCompleteOutOfPlaceCutoverArgs{
+		{
+			OldMLogID:                          501,
+			NewMLogID:                          502,
+			OldMViewID:                         101,
+			ShadowTableID:                      202,
+			BuildReadTSO:                       (uint64(1) << 63) + 303,
+			BuildSources:                       []MViewRefreshSource{{TableID: 20, MLogID: 30}, {TableID: 21}},
+			ExpectedOldMViewRevision:           &revision,
+			ExpectedLastSuccessReadTSO:         404,
+			ExpectedLastSuccessReadTSONull:     false,
+			NextRefreshUnixSeconds:             &nextRefreshUnixSeconds,
+			ShouldUpdateNextRefreshUnixSeconds: true,
+		},
+		{
+			OldMViewID:                         101,
+			ShadowTableID:                      202,
+			BuildReadTSO:                       (uint64(1) << 63) + 303,
+			ExpectedLastSuccessReadTSONull:     true,
+			NextRefreshUnixSeconds:             nil,
+			ShouldUpdateNextRefreshUnixSeconds: true,
+		},
+		{
+			OldMViewID:                         101,
+			ShadowTableID:                      202,
+			BuildReadTSO:                       (uint64(1) << 63) + 303,
+			ExpectedLastSuccessReadTSONull:     true,
+			NextRefreshUnixSeconds:             nil,
+			ShouldUpdateNextRefreshUnixSeconds: false,
+		},
+	}
+
+	for _, inArgs := range testCases {
+		for _, v := range []JobVersion{JobVersion1, JobVersion2} {
+			j2 := &Job{}
+			require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionMViewRefreshOutOfPlaceCutover)))
+			args, err := GetRefreshMaterializedViewCompleteOutOfPlaceCutoverArgs(j2)
+			require.NoError(t, err)
+			require.Equal(t, inArgs, args)
+		}
+	}
 }
 
 func TestGetAlterIndexVisibilityArgs(t *testing.T) {
@@ -1406,4 +1461,19 @@ func TestModifyColumnsArgs(t *testing.T) {
 	var rawArgs []json.RawMessage
 	require.NoError(t, json.Unmarshal(j2.RawArgs, &rawArgs))
 	require.Len(t, rawArgs, 5)
+}
+
+func TestAlterTableAffinityArgs(t *testing.T) {
+	for _, version := range []JobVersion{JobVersion1, JobVersion2} {
+		for _, newAffinity := range []*TableAffinityInfo{nil, {Level: ast.TableAffinityLevelPartition}} {
+			for _, oldAffinity := range []*TableAffinityInfo{nil, {Level: ast.TableAffinityLevelTable}, {Level: ast.TableAffinityLevelPartition}} {
+				args := &AlterTableAffinityArgs{Affinity: newAffinity, OldAffinity: oldAffinity}
+				job := &Job{}
+				require.NoError(t, job.Decode(getJobBytes(t, args, version, ActionAlterTableAffinity)))
+				decoded, err := GetAlterTableAffinityArgs(job)
+				require.NoError(t, err)
+				require.Equal(t, args, decoded)
+			}
+		}
+	}
 }

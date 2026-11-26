@@ -18,7 +18,9 @@ import (
 	"context"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
+	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
@@ -121,7 +123,7 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 		e.memTracker.Consume(memUsageOfChk)
 		for chunkRow := iter.Begin(); chunkRow != iter.End(); chunkRow = iter.Next() {
 			if batchDelete && rowCount >= batchDMLSize {
-				if err := e.doBatchDelete(ctx); err != nil {
+				if err := e.doBatchDelete(ctx, tbl); err != nil {
 					return err
 				}
 				rowCount = 0
@@ -165,10 +167,17 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 	return nil
 }
 
-func (e *DeleteExec) doBatchDelete(ctx context.Context) error {
+func (e *DeleteExec) doBatchDelete(ctx context.Context, tbl table.Table) error {
 	e.Ctx().StmtCommit(ctx)
 	if err := sessiontxn.NewTxnInStmt(ctx, e.Ctx()); err != nil {
 		// We should return a special error for batch insert.
+		return exeerrors.ErrBatchInsertFail.GenWithStack("BatchDelete failed with error: %v", err)
+	}
+	failpoint.InjectCall("afterBatchDeleteNewTxn", e.Ctx())
+	if err := activateSchemaReadOnlyWrite(e.Ctx(), tbl.Meta()); err != nil {
+		if infoschema.ErrSchemaInReadOnlyMode.Equal(err) {
+			return err
+		}
 		return exeerrors.ErrBatchInsertFail.GenWithStack("BatchDelete failed with error: %v", err)
 	}
 	return nil
@@ -188,6 +197,14 @@ func (e *DeleteExec) composeTblRowMap(tblRowMap tableRowMapType, colPosInfos []p
 		handle, err := info.HandleCols.BuildHandleByDatums(e.Ctx().GetSessionVars().StmtCtx, joinedRow)
 		if err != nil {
 			return err
+		}
+		// After EXCHANGE PARTITION, _tidb_rowid is only unique within a partition.
+		if pt, ok := e.tblID2Table[info.TblID].(table.PartitionedTable); ok && !pt.Meta().HasClusteredIndex() {
+			p, err := pt.GetPartitionByRow(e.Ctx().GetExprCtx().GetEvalCtx(), joinedRow[info.Start:info.End])
+			if err != nil {
+				return err
+			}
+			handle = kv.NewPartitionHandle(p.GetPhysicalID(), handle)
 		}
 		// tblRowMap[info.TblID][handle] hold the row datas binding to this table and this handle.
 		row, exist := tblRowMap[info.TblID].Get(handle)
@@ -264,6 +281,10 @@ func (e *DeleteExec) removeRowsInTblRowMap(ctx context.Context, tblRowMap tableR
 				}
 			}
 
+			// The partition ID is only for the map key, RemoveRecord finds the partition from the row.
+			if ph, ok := h.(kv.PartitionHandle); ok {
+				h = ph.Handle
+			}
 			err = e.removeRow(e.Ctx(), e.tblID2Table[id], h, val.handleVal, val.posInfo)
 			return err == nil
 		})

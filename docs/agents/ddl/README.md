@@ -29,6 +29,7 @@ Before touching `pkg/ddl/`, answer these explicitly (write them down in the PR/i
 7. What is the **expected online behavior** (MDL / blocking, write conflicts, phase boundaries)?
 8. What is the **minimal regression test** (unit/integration), and which failpoints can make it deterministic?
 
+
 ## Index (by task)
 
 - Understand end-to-end call chain: `docs/agents/ddl/01-execution-flow.md`
@@ -88,6 +89,49 @@ sequenceDiagram
   W-->>E: close jobDone channel / notify
   E-->>S: return result
 ```
+
+## Database read-only restore exception
+
+Ordinary SQL and unauthenticated internal sessions do not gain a read-only write
+bypass from SUPER or from internal-SQL execution. An explicit
+`RESTRICTED_REPLICA_WRITER_ADMIN` grant permits ordinary writes.
+
+Trusted BR restore is a separate exception: SQL RESTORE first uses its existing
+SUPER/RESTORE_ADMIN authorization, while standalone BR uses its trusted restore
+entrypoint. Restore can recreate tables, replay incremental DDL, and restore
+sequence state after the source database's ReadOnly flag has been restored.
+Incremental DDL authorization covers its recorded write dependencies; other
+restore operations authorize their current target database. The previous session
+state is restored before return or reuse, without granting later SQL writes.
+Releasing existing table locks is exempt from the read-only job check; acquiring
+new locks retains that check.
+
+The contract is implemented by `pkg/privilege/privilege.go`,
+`pkg/executor/brie_utils.go`, and
+`br/pkg/restore/internal/prealloc_db/db.go`. Boundary coverage lives in
+`TestBRIECreateTable/TrustedRestoreReadOnlyBoundary` and
+`TestCreateTablesWithPlanPreservesSourceMetadata`. Incremental DDL replay and
+cross-database authorization boundaries are covered by `TestDB_ExecDDL2`.
+
+## Diagnostic schema loading
+
+Diagnostic mode continues to use the ordinary Etcd schema syncer. The Domain
+schema-sync loop and InfoSchema reloads remain active so a diagnostic instance
+can load the existing schema, while MDL checking is skipped. Diagnostic startup
+requires an already bootstrapped keyspace and reads persisted startup settings
+without writing them back.
+
+`serverinfo.Syncer` does not register or refresh server and topology records in
+diagnostic mode; the independent Domain server-ID lease remains active. Its
+server-info sync loop returns immediately, also skipping that loop's
+min-start-ts reporting.
+
+Diagnostic session bootstrap calls `Domain.StartDiagnostic` instead of
+`Domain.Start`, bypassing `DDL.Start` and its execution resources. `DDL.Start`,
+`EnableDDL`, and `DisableDDL` themselves have no diagnostic-mode guard;
+`SwitchMDL` returns `diagnosticmode.ErrDDLNotAllowed`. Cross-keyspace runtimes
+skip server-info, MDL, and min-job-ID refresher background loops in diagnostic
+mode.
 
 ## Code map (where to look first)
 

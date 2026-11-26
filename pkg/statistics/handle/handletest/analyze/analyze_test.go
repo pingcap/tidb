@@ -47,7 +47,7 @@ func checkForGlobalStatsWithOpts(t *testing.T, dom *domain.Domain, db, tt, pp st
 			}
 		}
 	}
-	tblStats, err := dom.StatsHandle().TableStatsFromStorage(tblInfo, physicalID, true, 0)
+	tblStats, err := dom.StatsHandle().Cache().TableStatsFromStorage(tblInfo, physicalID, true, 0)
 	require.NoError(t, err)
 
 	delta := buckets/2 + 10
@@ -291,7 +291,7 @@ func TestAnalyzeMetricsCounters(t *testing.T) {
 	require.NoError(t, statstestutil.HandleNextDDLEventWithTxn(h))
 	tk.MustExec("insert into t_metrics_auto values (1)")
 	tk.MustExec("flush stats_delta *.*")
-	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
+	require.NoError(t, h.Cache().Update(context.Background(), dom.InfoSchema()))
 
 	origMinCnt := statistics.AutoAnalyzeMinCnt
 	statistics.AutoAnalyzeMinCnt = 0
@@ -306,7 +306,7 @@ func TestAnalyzeMetricsCounters(t *testing.T) {
 	beforeAutoSucc := readCounter(autoSucc)
 	beforeAutoFail := readCounter(autoFail)
 
-	require.True(t, h.HandleAutoAnalyze())
+	require.True(t, h.AutoAnalyze().HandleAutoAnalyze())
 
 	require.Equal(t, beforeAutoSucc+1, readCounter(autoSucc))
 	require.Equal(t, beforeAutoFail, readCounter(autoFail))

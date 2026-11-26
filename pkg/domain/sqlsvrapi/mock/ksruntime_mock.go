@@ -62,15 +62,15 @@ func (mr *MockKSRuntimeHandleMockRecorder) AlterTableMode(arg0, arg1 any) *gomoc
 }
 
 // Release mocks base method.
-func (m *MockKSRuntimeHandle) Release() {
+func (m *MockKSRuntimeHandle) Release(arg0 bool) {
 	m.ctrl.T.Helper()
-	m.ctrl.Call(m, "Release")
+	m.ctrl.Call(m, "Release", arg0)
 }
 
 // Release indicates an expected call of Release.
-func (mr *MockKSRuntimeHandleMockRecorder) Release() *gomock.Call {
+func (mr *MockKSRuntimeHandleMockRecorder) Release(arg0 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Release", reflect.TypeOf((*MockKSRuntimeHandle)(nil).Release))
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Release", reflect.TypeOf((*MockKSRuntimeHandle)(nil).Release), arg0)
 }
 
 // Store mocks base method.

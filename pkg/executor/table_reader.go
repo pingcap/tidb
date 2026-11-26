@@ -342,10 +342,20 @@ func (e *TableReaderExecutor) Open(ctx context.Context) error {
 		e.resultHandler.open(nil, firstResult)
 		return nil
 	}
+	// Each call to buildRespForGroupedRanges replaces e.kvRanges. Preserve the first part so
+	// UnionScan can read transaction-local rows from both sides of the unsigned handle boundary.
+	firstKVRanges := e.kvRanges
 	var secondResult distsql.SelectResult
 	secondResult, err = e.buildRespForGroupedRanges(ctx, secondPartGroupedRanges)
 	if err != nil {
 		return err
+	}
+	// The split follows scan order, but UnionScan reverses the ranges for descending scans.
+	// Keep the two parts in ascending handle order before passing them to UnionScan.
+	if e.desc {
+		e.kvRanges = append(e.kvRanges, firstKVRanges...)
+	} else {
+		e.kvRanges = append(firstKVRanges, e.kvRanges...)
 	}
 	e.resultHandler.open(firstResult, secondResult)
 	return nil

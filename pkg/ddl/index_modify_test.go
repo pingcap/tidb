@@ -445,6 +445,35 @@ func TestAnalyzeStuck(t *testing.T) {
 	}, time.Minute, 200*time.Millisecond)
 }
 
+func TestAnalyzeTableWithQuotedIdentifiers(t *testing.T) {
+	store := testkit.CreateMockStoreWithSchemaLease(t, indexModifyLease, mockstore.WithDDLChecker())
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@tidb_stats_update_during_ddl = 1")
+
+	quoteIdent := func(name string) string {
+		return "`" + strings.ReplaceAll(name, "`", "``") + "`"
+	}
+	dbName := "db`name"
+	tableName := "table`name"
+	quotedDB := quoteIdent(dbName)
+	quotedTable := quoteIdent(tableName)
+
+	tk.MustExec("create database " + quotedDB)
+	t.Cleanup(func() {
+		tk.MustExec("drop database " + quotedDB)
+	})
+	tk.MustExec("create table " + quotedDB + "." + quotedTable + " (id int)")
+	tk.MustExec("insert into " + quotedDB + "." + quotedTable + " values (1)")
+	tk.MustExec("delete from mysql.analyze_jobs")
+
+	tk.MustExec("alter table " + quotedDB + "." + quotedTable + " add index idx_id (id)")
+	tk.MustQuery(
+		"select count(*) from mysql.analyze_jobs where table_schema = ? and table_name = ?",
+		dbName,
+		tableName,
+	).Check(testkit.Rows("1"))
+}
+
 func TestAnalyzeOwnerResignNoReRun(t *testing.T) {
 	store, _ := testkit.CreateMockStoreAndDomainWithSchemaLease(t, indexModifyLease, mockstore.WithDDLChecker())
 
@@ -1277,7 +1306,7 @@ func TestAddIndexWithAnalyze(t *testing.T) {
 	idxBInfo := tbl.Meta().FindIndexByName("idx_b")
 	require.NotNil(t, idxBInfo)
 	// check the stats handle
-	statsTable, ok := dom.StatsHandle().StatsCache.Get(tbl.Meta().ID)
+	statsTable, ok := dom.StatsHandle().Cache().Get(tbl.Meta().ID)
 	require.True(t, ok)
 	// check the stats element is analyzed
 	require.True(t, statsTable.ColAndIdxExistenceMap.Has(aInfo.ID, false))
@@ -1309,7 +1338,7 @@ func TestAddIndexWithAnalyze(t *testing.T) {
 	idxInfo = tbl.Meta().FindIndexByName("idx")
 	require.NotNil(t, idxInfo)
 	// check the stats handle
-	statsTable, ok = dom.StatsHandle().StatsCache.Get(tbl.Meta().ID)
+	statsTable, ok = dom.StatsHandle().Cache().Get(tbl.Meta().ID)
 	require.True(t, ok)
 	// check the stats element is analyzed
 	require.True(t, statsTable.ColAndIdxExistenceMap.Has(aInfo.ID, false))
@@ -1346,7 +1375,7 @@ func TestAddIndexWithAnalyze(t *testing.T) {
 	idInfo := tbl.Meta().FindPublicColumnByName("id")
 	require.NotNil(t, idInfo)
 	// check the stats handle
-	statsTable, ok = dom.StatsHandle().StatsCache.Get(tbl.Meta().ID)
+	statsTable, ok = dom.StatsHandle().Cache().Get(tbl.Meta().ID)
 	require.True(t, ok)
 	// column is analyzed from last time.
 	require.True(t, statsTable.ColAndIdxExistenceMap.Has(idInfo.ID, false))
@@ -1364,7 +1393,7 @@ func TestAddIndexWithAnalyze(t *testing.T) {
 	require.NotNil(t, idxInfo)
 
 	// check the stats handle
-	statsTable, ok = dom.StatsHandle().StatsCache.Get(tbl.Meta().ID)
+	statsTable, ok = dom.StatsHandle().Cache().Get(tbl.Meta().ID)
 	require.True(t, ok)
 	// column is analyzed from last time.
 	require.True(t, statsTable.ColAndIdxExistenceMap.Has(idInfo.ID, false))

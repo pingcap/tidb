@@ -32,7 +32,7 @@ var (
 	EvictCounter prometheus.Counter
 	// RejectCounter is the counter of reject cache.
 	RejectCounter prometheus.Counter
-	// CostGauge is the gauge of cost time.
+	// CostGauge is the gauge of the memory usage of the cache.
 	CostGauge prometheus.Gauge
 	// CapacityGauge is the gauge of capacity.
 	CapacityGauge prometheus.Gauge
@@ -42,7 +42,7 @@ func init() {
 	InitMetricsVars()
 }
 
-// InitMetricsVars init copr metrics vars.
+// InitMetricsVars initializes the stats cache metrics.
 func InitMetricsVars() {
 	MissCounter = metrics.StatsCacheCounter.WithLabelValues("miss")
 	HitCounter = metrics.StatsCacheCounter.WithLabelValues("hit")

@@ -463,6 +463,10 @@ type LimitExec struct {
 	columnIdxsUsedByChild []int
 	columnSwapHelper      *chunk.ColumnSwapHelper
 
+	// The Limit owns the statement-local controller lifecycle. Reaching LIMIT or
+	// EOF stops admission; Open resets it after all prior workers have exited.
+	adaptiveLimitController *exec.AdaptiveLimitController
+
 	// Log the close time when opentracing is enabled.
 	span opentracing.Span
 }
@@ -470,6 +474,11 @@ type LimitExec struct {
 // Next implements the Executor Next interface.
 func (e *LimitExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.Reset()
+	defer func() {
+		if e.adaptiveLimitController != nil && e.cursor >= e.end {
+			e.adaptiveLimitController.Stop()
+		}
+	}()
 	if e.cursor >= e.end {
 		return nil
 	}
@@ -483,6 +492,9 @@ func (e *LimitExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		batchSize := uint64(e.childResult.NumRows())
 		// no more data.
 		if batchSize == 0 {
+			if e.adaptiveLimitController != nil {
+				e.adaptiveLimitController.Stop()
+			}
 			return nil
 		}
 		if newCursor := e.cursor + batchSize; newCursor >= e.begin {
@@ -514,6 +526,9 @@ func (e *LimitExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	batchSize := uint64(e.childResult.NumRows())
 	// no more data.
 	if batchSize == 0 {
+		if e.adaptiveLimitController != nil {
+			e.adaptiveLimitController.Stop()
+		}
 		return nil
 	}
 	if e.cursor+batchSize > e.end {
@@ -535,6 +550,9 @@ func (e *LimitExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 // Open implements the Executor Open interface.
 func (e *LimitExec) Open(ctx context.Context) error {
+	if e.adaptiveLimitController != nil {
+		e.adaptiveLimitController.Reset()
+	}
 	if err := e.BaseExecutor.Open(ctx); err != nil {
 		return err
 	}
@@ -554,6 +572,9 @@ func (e *LimitExec) open(ctx context.Context) error {
 // Close implements the Executor Close interface.
 func (e *LimitExec) Close() error {
 	start := time.Now()
+	if e.adaptiveLimitController != nil {
+		e.adaptiveLimitController.Stop()
+	}
 
 	e.childResult = nil
 	err := e.BaseExecutor.Close()
@@ -983,6 +1004,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	sc.MatchSQLBindingCache = nil
 
 	sc.SysdateIsNow = ctx.GetSessionVars().SysdateIsNow
+	sc.EnableTiKVShortCircuitExpression = vars.EnableTiKVShortCircuitExpression
 
 	vars.MemTracker.Detach()
 	vars.MemTracker.UnbindActions()
@@ -1072,6 +1094,10 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	// execute missed stmtID uses empty sql
 	sc.OriginalSQL = s.Text()
 	if explainStmt, ok := s.(*ast.ExplainStmt); ok {
+		// Plain EXPLAIN preserves the count; DESCRIBE table follows SHOW COLUMNS.
+		if _, isShow := explainStmt.Stmt.(*ast.ShowStmt); !isShow {
+			sc.PreserveFoundRows = !explainStmt.Analyze
+		}
 		sc.InExplainStmt = true
 		// Normalize to lowercase to avoid repeated conversions in shouldRemoveColumnNumbers and other places
 		sc.ExplainFormat = strings.ToLower(explainStmt.Format)
@@ -1083,6 +1109,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.ExplainFormat = ""
 	}
 	if explainForStmt, ok := s.(*ast.ExplainForStmt); ok {
+		sc.PreserveFoundRows = true
 		sc.InExplainStmt = true
 		sc.InExplainAnalyzeStmt = true
 		// Normalize to lowercase to avoid repeated conversions in shouldRemoveColumnNumbers and other places
@@ -1182,6 +1209,19 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 			WithIgnoreTruncateErr(true).
 			WithIgnoreZeroInDate(true).
 			WithIgnoreInvalidDateErr(vars.SQLMode.HasAllowInvalidDatesMode()))
+		// Some SHOW statements leave FOUND_ROWS() unchanged in MySQL.
+		// TiDB's additional SHOW CREATE forms follow the same introspection rule.
+		// SHOW SESSION_STATES must also preserve it when exporting session state.
+		switch stmt.Tp {
+		case ast.ShowWarnings, ast.ShowErrors:
+			// SHOW COUNT(*) WARNINGS/ERRORS sets FOUND_ROWS() to 1.
+			sc.PreserveFoundRows = !stmt.CountWarningsOrErrors
+		case ast.ShowCreateTable, ast.ShowCreateView, ast.ShowCreateDatabase, ast.ShowCreateUser,
+			ast.ShowCreateSequence, ast.ShowCreatePlacementPolicy, ast.ShowCreateResourceGroup,
+			ast.ShowGrants, ast.ShowPrivileges, ast.ShowProfiles, ast.ShowMasterStatus, ast.ShowBinlogStatus,
+			ast.ShowProcessList, ast.ShowSessionStates:
+			sc.PreserveFoundRows = true
+		}
 		if stmt.Tp == ast.ShowWarnings || stmt.Tp == ast.ShowErrors || stmt.Tp == ast.ShowSessionStates {
 			sc.InShowWarning = true
 			sc.SetWarnings(vars.StmtCtx.GetWarnings())

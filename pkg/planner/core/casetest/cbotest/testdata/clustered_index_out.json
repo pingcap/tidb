@@ -1,0 +1,164 @@
+[
+  {
+    "Name": "TestClusteredIndexPlansWithStats",
+    "Cases": [
+      {
+        "SQL": "explain format='plan_tree' select count(*) from with_cluster_index.tbl_0 where col_0 < 5429  ;",
+        "Plan": [
+          "HashAgg root  funcs:count(Column)->Column",
+          "└─IndexReader root  index:HashAgg",
+          "  └─HashAgg cop[tikv]  funcs:count(1)->Column",
+          "    └─IndexRangeScan cop[tikv] table:tbl_0, index:idx_3(col_0) range:[-inf,5429), keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format='plan_tree' select count(*) from wout_cluster_index.tbl_0 where col_0 < 5429  ;",
+        "Plan": [
+          "HashAgg root  funcs:count(Column)->Column",
+          "└─IndexReader root  index:HashAgg",
+          "  └─HashAgg cop[tikv]  funcs:count(1)->Column",
+          "    └─IndexRangeScan cop[tikv] table:tbl_0, index:idx_3(col_0) range:[-inf,5429), keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format='plan_tree' select count(*) from with_cluster_index.tbl_0 where col_0 < 41  ;",
+        "Plan": [
+          "StreamAgg root  funcs:count(Column)->Column",
+          "└─IndexReader root  index:StreamAgg",
+          "  └─StreamAgg cop[tikv]  funcs:count(1)->Column",
+          "    └─IndexRangeScan cop[tikv] table:tbl_0, index:idx_3(col_0) range:[-inf,41), keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format='plan_tree' select count(*) from wout_cluster_index.tbl_0 where col_0 < 41  ;",
+        "Plan": [
+          "StreamAgg root  funcs:count(Column)->Column",
+          "└─IndexReader root  index:StreamAgg",
+          "  └─StreamAgg cop[tikv]  funcs:count(1)->Column",
+          "    └─IndexRangeScan cop[tikv] table:tbl_0, index:idx_3(col_0) range:[-inf,41), keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format='plan_tree' select col_14 from with_cluster_index.tbl_2 where col_11 <> '2013-11-01' ;",
+        "Plan": [
+          "IndexReader root  index:Projection",
+          "└─Projection cop[tikv]  with_cluster_index.tbl_2.col_14",
+          "  └─IndexRangeScan cop[tikv] table:tbl_2, index:idx_9(col_11) range:[-inf,2013-11-01 00:00:00), (2013-11-01 00:00:00,+inf], keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format='plan_tree' select col_14 from wout_cluster_index.tbl_2 where col_11 <> '2013-11-01' ;",
+        "Plan": [
+          "TableReader root  data:Projection",
+          "└─Projection cop[tikv]  wout_cluster_index.tbl_2.col_14",
+          "  └─Selection cop[tikv]  ne(wout_cluster_index.tbl_2.col_11, 2013-11-01 00:00:00.000000)",
+          "    └─TableFullScan cop[tikv] table:tbl_2 keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format='plan_tree' select sum( col_4 ) from with_cluster_index.tbl_0 where col_3 != '1993-12-02' ;",
+        "Plan": [
+          "HashAgg root  funcs:sum(Column)->Column",
+          "└─TableReader root  data:HashAgg",
+          "  └─HashAgg cop[tikv]  funcs:sum(with_cluster_index.tbl_0.col_4)->Column",
+          "    └─TableRangeScan cop[tikv] table:tbl_0 range:[-inf,1993-12-02 00:00:00), (1993-12-02 00:00:00,+inf], keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format='plan_tree' select sum( col_4 ) from wout_cluster_index.tbl_0 where col_3 != '1993-12-02' ;",
+        "Plan": [
+          "HashAgg root  funcs:sum(Column)->Column",
+          "└─TableReader root  data:HashAgg",
+          "  └─HashAgg cop[tikv]  funcs:sum(wout_cluster_index.tbl_0.col_4)->Column",
+          "    └─Selection cop[tikv]  ne(wout_cluster_index.tbl_0.col_3, 1993-12-02 00:00:00.000000)",
+          "      └─TableFullScan cop[tikv] table:tbl_0 keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format='plan_tree' select col_0 from with_cluster_index.tbl_0 where col_0 <= 0  ;",
+        "Plan": [
+          "IndexReader root  index:IndexRangeScan",
+          "└─IndexRangeScan cop[tikv] table:tbl_0, index:idx_3(col_0) range:[-inf,0], keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format='plan_tree' select col_0 from wout_cluster_index.tbl_0 where col_0 <= 0  ;",
+        "Plan": [
+          "IndexReader root  index:IndexRangeScan",
+          "└─IndexRangeScan cop[tikv] table:tbl_0, index:idx_3(col_0) range:[-inf,0], keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format='plan_tree' select col_3 from with_cluster_index.tbl_0 where col_3 >= '1981-09-15'  ;",
+        "Plan": [
+          "IndexReader root  index:IndexRangeScan",
+          "└─IndexRangeScan cop[tikv] table:tbl_0, index:idx_1(col_3) range:[1981-09-15 00:00:00,+inf], keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format='plan_tree' select col_3 from wout_cluster_index.tbl_0 where col_3 >= '1981-09-15'  ;",
+        "Plan": [
+          "IndexReader root  index:IndexRangeScan",
+          "└─IndexRangeScan cop[tikv] table:tbl_0, index:idx_1(col_3) range:[1981-09-15 00:00:00,+inf], keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format='plan_tree' select tbl_2.col_14 , tbl_0.col_1 from with_cluster_index.tbl_2 right join with_cluster_index.tbl_0 on col_3 = col_11 ;",
+        "Plan": [
+          "MergeJoin root  right outer join, left side:IndexReader, left key:with_cluster_index.tbl_2.col_11, right key:with_cluster_index.tbl_0.col_3",
+          "├─IndexReader(Build) root  index:IndexFullScan",
+          "│ └─IndexFullScan cop[tikv] table:tbl_2, index:idx_9(col_11) keep order:true",
+          "└─TableReader(Probe) root  data:TableFullScan",
+          "  └─TableFullScan cop[tikv] table:tbl_0 keep order:true"
+        ]
+      },
+      {
+        "SQL": "explain format='plan_tree' select tbl_2.col_14 , tbl_0.col_1 from wout_cluster_index.tbl_2 right join wout_cluster_index.tbl_0 on col_3 = col_11 ;",
+        "Plan": [
+          "HashJoin root  right outer join, left side:TableReader, equal:[eq(wout_cluster_index.tbl_2.col_11, wout_cluster_index.tbl_0.col_3)]",
+          "├─TableReader(Build) root  data:TableFullScan",
+          "│ └─TableFullScan cop[tikv] table:tbl_0 keep order:false",
+          "└─TableReader(Probe) root  data:Selection",
+          "  └─Selection cop[tikv]  not(isnull(wout_cluster_index.tbl_2.col_11))",
+          "    └─TableFullScan cop[tikv] table:tbl_2 keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format='plan_tree' select count(*) from with_cluster_index.tbl_0 where col_0 <= 0 ;",
+        "Plan": [
+          "StreamAgg root  funcs:count(Column)->Column",
+          "└─IndexReader root  index:StreamAgg",
+          "  └─StreamAgg cop[tikv]  funcs:count(1)->Column",
+          "    └─IndexRangeScan cop[tikv] table:tbl_0, index:idx_3(col_0) range:[-inf,0], keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format='plan_tree' select count(*) from wout_cluster_index.tbl_0 where col_0 <= 0 ;",
+        "Plan": [
+          "StreamAgg root  funcs:count(Column)->Column",
+          "└─IndexReader root  index:StreamAgg",
+          "  └─StreamAgg cop[tikv]  funcs:count(1)->Column",
+          "    └─IndexRangeScan cop[tikv] table:tbl_0, index:idx_3(col_0) range:[-inf,0], keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format='plan_tree' select count(*) from with_cluster_index.tbl_0 where col_0 >= 803163  ;",
+        "Plan": [
+          "StreamAgg root  funcs:count(Column)->Column",
+          "└─IndexReader root  index:StreamAgg",
+          "  └─StreamAgg cop[tikv]  funcs:count(1)->Column",
+          "    └─IndexRangeScan cop[tikv] table:tbl_0, index:idx_3(col_0) range:[803163,+inf], keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format='plan_tree' select count(*) from wout_cluster_index.tbl_0 where col_0 >= 803163  ;",
+        "Plan": [
+          "StreamAgg root  funcs:count(Column)->Column",
+          "└─IndexReader root  index:StreamAgg",
+          "  └─StreamAgg cop[tikv]  funcs:count(1)->Column",
+          "    └─IndexRangeScan cop[tikv] table:tbl_0, index:idx_3(col_0) range:[803163,+inf], keep order:false"
+        ]
+      }
+    ]
+  }
+]

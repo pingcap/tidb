@@ -113,6 +113,19 @@ func TestV2Basic(t *testing.T) {
 	require.Equal(t, 1, len(tblInfos))
 	require.Equal(t, tables[0], tblInfos[0])
 
+	var iteratedTableIDs []int64
+	err = is.iterSchemaTableInfos(context.Background(), schemaName, func(tblInfo *model.TableInfo) error {
+		iteratedTableIDs = append(iteratedTableIDs, tblInfo.ID)
+		return nil
+	})
+	require.NoError(t, err)
+	require.Equal(t, []int64{tblInfo.ID}, iteratedTableIDs)
+
+	err = is.iterSchemaTableInfos(context.Background(), schemaName, func(*model.TableInfo) error {
+		return context.Canceled
+	})
+	require.ErrorIs(t, err, context.Canceled)
+
 	tables, err = is.SchemaTableInfos(context.Background(), ast.NewCIStr("notexist"))
 	require.NoError(t, err)
 	require.Equal(t, 0, len(tables))
@@ -284,7 +297,83 @@ func TestMisc(t *testing.T) {
 	require.NoError(t, txn.Rollback())
 }
 
+func testRefreshSchemaReadOnly(t *testing.T) {
+	for _, useV2 := range []bool{false, true} {
+		for _, action := range []model.ActionType{model.ActionRefreshMeta, model.ActionModifySchemaReadOnly} {
+			r := internal.CreateAutoIDRequirement(t)
+			t.Cleanup(func() { require.NoError(t, r.Store().Close()) })
+			db := internal.MockDBInfo(t, r.Store(), "refresh_read_only")
+			db.Charset, db.Collate = "latin1", "latin1_bin"
+			internal.AddDB(t, r.Store(), db)
+			tbl := internal.MockTableInfo(t, r.Store(), "kept_table")
+			internal.AddTable(t, r.Store(), db.ID, tbl)
+			db.Deprecated.Tables = []*model.TableInfo{tbl}
+			data := NewData()
+			builder := NewBuilder(r, vardef.SchemaCacheSize.Load(), nil, data, useV2)
+			require.NoError(t, builder.InitWithDBInfos([]*model.DBInfo{db}, nil, nil, nil, 1))
+			is := builder.Build(math.MaxUint64)
+			for i, readOnly := range []bool{true, false, true} {
+				oldIS := is
+				previous, ok := oldIS.SchemaByID(db.ID)
+				require.True(t, ok)
+				previousCharset, previousCollate := previous.Charset, previous.Collate
+				db = previous.Clone()
+				db.ReadOnly = readOnly
+				if i == 2 && action == model.ActionRefreshMeta {
+					db.Charset, db.Collate = "utf8mb4", "utf8mb4_bin"
+				}
+				txn, err := r.Store().Begin()
+				require.NoError(t, err)
+				m := meta.NewMutator(txn)
+				require.NoError(t, m.UpdateDatabase(db))
+				builder = NewBuilder(r, vardef.SchemaCacheSize.Load(), nil, data, useV2)
+				require.NoError(t, builder.InitWithOldInfoSchema(is))
+				_, err = builder.ApplyDiff(m, &model.SchemaDiff{Type: action, SchemaID: db.ID, Version: int64(i + 2), IsRefreshMeta: action == model.ActionRefreshMeta})
+				require.NoError(t, err)
+				is = builder.Build(math.MaxUint64)
+				updated, ok := is.SchemaByID(db.ID)
+				require.True(t, ok)
+				require.Equal(t, readOnly, updated.ReadOnly)
+				oldDB, ok := oldIS.SchemaByID(db.ID)
+				require.True(t, ok)
+				require.Equal(t, previous.ReadOnly, oldDB.ReadOnly)
+				require.NotEqual(t, updated.ReadOnly, oldDB.ReadOnly, "older schema snapshots must stay immutable")
+				require.Equal(t, db.Charset, updated.Charset)
+				require.Equal(t, db.Collate, updated.Collate)
+				require.Equal(t, previousCharset, oldDB.Charset)
+				require.Equal(t, previousCollate, oldDB.Collate)
+				for _, snapshot := range []InfoSchema{oldIS, is} {
+					got, err := snapshot.TableByName(context.Background(), db.Name, tbl.Name)
+					require.NoError(t, err)
+					require.Equal(t, tbl.ID, got.Meta().ID)
+				}
+				require.NoError(t, txn.Rollback())
+			}
+		}
+		t.Run("missing cached schema", func(t *testing.T) {
+			r := internal.CreateAutoIDRequirement(t)
+			t.Cleanup(func() { require.NoError(t, r.Store().Close()) })
+			db := internal.MockDBInfo(t, r.Store(), "missing_cached")
+			internal.AddDB(t, r.Store(), db)
+			builder := NewBuilder(r, vardef.SchemaCacheSize.Load(), nil, NewData(), useV2)
+			require.NoError(t, builder.InitWithDBInfos(nil, nil, nil, nil, 1))
+			txn, err := r.Store().Begin()
+			require.NoError(t, err)
+			defer func() { require.NoError(t, txn.Rollback()) }()
+			require.NotPanics(t, func() {
+				_, err = builder.ApplyDiff(meta.NewMutator(txn), &model.SchemaDiff{Type: model.ActionModifySchemaReadOnly, SchemaID: db.ID, Version: 2})
+			})
+			require.ErrorIs(t, err, ErrDatabaseNotExists)
+		})
+	}
+}
+
 func TestBundles(t *testing.T) {
+	t.Run("refresh schema read-only flag", testRefreshSchemaReadOnly)
+	t.Run("drop schema streams table IDs", testDropSchemaStreamsTableIDs)
+	t.Run("collect physical table IDs propagates iteration errors", testCollectPhysicalTableIDsPropagatesIterationErrors)
+	t.Run("retry flashback in progress", testRetryOnFlashbackInProgress)
+
 	r := internal.CreateAutoIDRequirement(t)
 	defer func() {
 		r.Store().Close()
@@ -404,6 +493,148 @@ func TestBundles(t *testing.T) {
 	bundle, ok = is.PlacementBundleByPhysicalTableID(tblInfo.Partition.Definitions[0].ID)
 	require.True(t, ok)
 	require.Equal(t, bundle.Rules[0].LabelConstraints[0].Values[0], policyInfo.PrimaryRegion)
+}
+
+func testDropSchemaStreamsTableIDs(t *testing.T) {
+	r := internal.CreateAutoIDRequirement(t)
+	defer func() {
+		r.Store().Close()
+	}()
+
+	schemaCacheSize := vardef.SchemaCacheSize.Load()
+	builder := NewBuilder(r, schemaCacheSize, nil, NewData(), schemaCacheSize > 0)
+	err := builder.InitWithDBInfos(nil, nil, nil, nil, 1)
+	require.NoError(t, err)
+
+	dbInfo := internal.MockDBInfo(t, r.Store(), "testDB")
+	internal.AddDB(t, r.Store(), dbInfo)
+	txn, err := r.Store().Begin()
+	require.NoError(t, err)
+	_, err = builder.ApplyDiff(meta.NewMutator(txn), &model.SchemaDiff{
+		Type:     model.ActionCreateSchema,
+		Version:  1,
+		SchemaID: dbInfo.ID,
+	})
+	require.NoError(t, err)
+	require.NoError(t, txn.Rollback())
+
+	tblInfo1 := internal.MockTableInfo(t, r.Store(), "t1")
+	tblInfo1.Partition = &model.PartitionInfo{
+		Enable: true,
+		Definitions: []model.PartitionDefinition{
+			{ID: tblInfo1.ID + 1000},
+			{ID: tblInfo1.ID + 1001},
+		},
+	}
+	internal.AddTable(t, r.Store(), dbInfo.ID, tblInfo1)
+	txn, err = r.Store().Begin()
+	require.NoError(t, err)
+	_, err = builder.ApplyDiff(meta.NewMutator(txn), &model.SchemaDiff{
+		Type:     model.ActionCreateTable,
+		Version:  2,
+		SchemaID: dbInfo.ID,
+		TableID:  tblInfo1.ID,
+	})
+	require.NoError(t, err)
+	require.NoError(t, txn.Rollback())
+
+	tblInfo2 := internal.MockTableInfo(t, r.Store(), "t2")
+	internal.AddTable(t, r.Store(), dbInfo.ID, tblInfo2)
+	txn, err = r.Store().Begin()
+	require.NoError(t, err)
+	_, err = builder.ApplyDiff(meta.NewMutator(txn), &model.SchemaDiff{
+		Type:     model.ActionCreateTable,
+		Version:  3,
+		SchemaID: dbInfo.ID,
+		TableID:  tblInfo2.ID,
+	})
+	require.NoError(t, err)
+	require.NoError(t, txn.Rollback())
+
+	ver, err := r.Store().CurrentVersion(kv.GlobalTxnScope)
+	require.NoError(t, err)
+	builder.Build(ver.Ver)
+	internal.DropDB(t, r.Store(), dbInfo)
+
+	txn, err = r.Store().Begin()
+	require.NoError(t, err)
+	tableIDs, err := builder.ApplyDiff(meta.NewMutator(txn), &model.SchemaDiff{
+		Type:     model.ActionDropSchema,
+		Version:  4,
+		SchemaID: dbInfo.ID,
+	})
+	require.NoError(t, err)
+	require.ElementsMatch(t, []int64{
+		tblInfo1.ID,
+		tblInfo1.ID + 1000,
+		tblInfo1.ID + 1001,
+		tblInfo2.ID,
+	}, tableIDs)
+	require.NoError(t, txn.Rollback())
+}
+
+func testCollectPhysicalTableIDsPropagatesIterationErrors(t *testing.T) {
+	tableIDs, err := collectPhysicalTableIDs(func(visit func(*model.TableInfo) error) error {
+		if err := visit(&model.TableInfo{ID: 1}); err != nil {
+			return err
+		}
+		if err := visit(&model.TableInfo{
+			ID: 2,
+			Partition: &model.PartitionInfo{
+				Enable:      true,
+				Definitions: []model.PartitionDefinition{{ID: 3}},
+			},
+		}); err != nil {
+			return err
+		}
+		return context.Canceled
+	})
+	require.ErrorIs(t, err, context.Canceled)
+	require.Nil(t, tableIDs)
+}
+
+type flashbackInProgressTestError struct{}
+
+func (flashbackInProgressTestError) Error() string {
+	return "is in flashback progress"
+}
+
+func testRetryOnFlashbackInProgress(t *testing.T) {
+	t.Run("retries", func(t *testing.T) {
+		attempts := 0
+		result, err := retryOnFlashbackInProgress(context.Background(), func() (int, error) {
+			attempts++
+			if attempts == 1 {
+				return 0, flashbackInProgressTestError{}
+			}
+			return attempts, nil
+		})
+		require.NoError(t, err)
+		require.Equal(t, 2, result)
+		require.Equal(t, 2, attempts)
+	})
+
+	t.Run("does not retry other errors", func(t *testing.T) {
+		attempts := 0
+		_, err := retryOnFlashbackInProgress(context.Background(), func() (int, error) {
+			attempts++
+			return 0, context.Canceled
+		})
+		require.ErrorIs(t, err, context.Canceled)
+		require.Equal(t, 1, attempts)
+	})
+
+	t.Run("stops on cancellation", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		attempts := 0
+		_, err := retryOnFlashbackInProgress(ctx, func() (int, error) {
+			attempts++
+			return 0, flashbackInProgressTestError{}
+		})
+		require.ErrorIs(t, err, context.Canceled)
+		require.Equal(t, 1, attempts)
+	})
 }
 
 func TestReferredFKInfo(t *testing.T) {

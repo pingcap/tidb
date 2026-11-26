@@ -304,7 +304,7 @@ const (
 	MaxRocksdbBlockReadCountStr                = "MAX_ROCKSDB_BLOCK_READ_COUNT"
 	AvgRocksdbBlockReadByteStr                 = "AVG_ROCKSDB_BLOCK_READ_BYTE"
 	MaxRocksdbBlockReadByteStr                 = "MAX_ROCKSDB_BLOCK_READ_BYTE"
-	IAExecCountStr                             = "IA_REMOTE_EXEC_COUNT"
+	IAExecCountStr                             = "IA_EXEC_COUNT"
 	AvgIARemoteReadSegmentCountStr             = "AVG_IA_REMOTE_READ_SEGMENT_COUNT"
 	MaxIARemoteReadSegmentCountStr             = "MAX_IA_REMOTE_READ_SEGMENT_COUNT"
 	AvgIARemoteReadSegmentSizeStr              = "AVG_IA_REMOTE_READ_SEGMENT_SIZE"
@@ -375,8 +375,6 @@ const (
 	MaxRequestUnitWriteStr                     = "MAX_REQUEST_UNIT_WRITE"
 	AvgQueuedRcTimeStr                         = "AVG_QUEUED_RC_TIME"
 	MaxQueuedRcTimeStr                         = "MAX_QUEUED_RC_TIME"
-	AvgRequestUnitV2Str                        = "AVG_REQUEST_UNIT_V2"
-	MaxRequestUnitV2Str                        = "MAX_REQUEST_UNIT_V2"
 	ResourceGroupName                          = "RESOURCE_GROUP"
 	SumUnpackedBytesSentTiKVTotalStr           = "SUM_UNPACKED_BYTES_SENT_TIKV_TOTAL"
 	SumUnpackedBytesReceivedTiKVTotalStr       = "SUM_UNPACKED_BYTES_RECEIVED_TIKV_TOTAL"
@@ -902,10 +900,10 @@ var columnValueFactoryMap = map[string]columnValueFactory{
 	PlanDigestStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, ssbd *stmtSummaryByDigest, _ *stmtSummaryStats) any {
 		return ssbd.planDigest
 	},
-	PlanStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
+	PlanStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, ssbd *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
 		plan, err := plancodec.DecodePlan(ssStats.samplePlan)
 		if err != nil {
-			logutil.BgLogger().Error("decode plan in statement summary failed", zap.String("plan", ssStats.samplePlan), zap.String("query", ssStats.sampleSQL), zap.Error(err))
+			logutil.BgLogger().Error("decode plan in statement summary failed", zap.String("plan", ssStats.samplePlan), zap.String("query", ssbd.normalizedSQL), zap.Error(err))
 			plan = ""
 		}
 		return plan
@@ -948,12 +946,6 @@ var columnValueFactoryMap = map[string]columnValueFactory{
 	},
 	MaxQueuedRcTimeStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
 		return int64(ssStats.MaxRUWaitDuration)
-	},
-	AvgRequestUnitV2Str: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
-		return avgSumFloat(ssStats.SumRUV2, ssStats.execCount)
-	},
-	MaxRequestUnitV2Str: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
-		return ssStats.MaxRUV2
 	},
 	ResourceGroupName: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
 		return ssStats.resourceGroupName

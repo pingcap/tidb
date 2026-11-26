@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"sync"
 	"sync/atomic"
 
 	"github.com/ngaut/pools"
@@ -50,7 +51,7 @@ var (
 	ConstructResultOfShowCreateDatabase func(sessionctx.Context, *model.DBInfo, bool, *bytes.Buffer) error
 	// ConstructResultOfShowCreateTable should be assigned to executor.ConstructResultOfShowCreateTable.
 	// It is used to break cycle import.
-	ConstructResultOfShowCreateTable func(sessionctx.Context, *model.TableInfo, autoid.Allocators, *bytes.Buffer) error
+	ConstructResultOfShowCreateTable func(sessionctx.Context, ast.CIStr, *model.TableInfo, autoid.Allocators, *bytes.Buffer) error
 )
 
 func init() {
@@ -61,6 +62,7 @@ func init() {
 type Checker struct {
 	realDDL      ddl.DDL
 	tracker      SchemaTracker
+	mviewLogMu   sync.Mutex
 	closed       atomic.Bool
 	realExecutor ddl.Executor
 	infoCache    *infoschema.InfoCache
@@ -147,12 +149,12 @@ func (d *Checker) checkTableInfo(ctx sessionctx.Context, dbName, tableName ast.C
 	}
 
 	result := bytes.NewBuffer(make([]byte, 0, 512))
-	err := ConstructResultOfShowCreateTable(ctx, tableInfo.Meta(), autoid.Allocators{}, result)
+	err := ConstructResultOfShowCreateTable(ctx, dbName, tableInfo.Meta(), autoid.Allocators{}, result)
 	if err != nil {
 		panic(err)
 	}
 	result2 := bytes.NewBuffer(make([]byte, 0, 512))
-	err = ConstructResultOfShowCreateTable(ctx, tableInfo2, autoid.Allocators{}, result2)
+	err = ConstructResultOfShowCreateTable(ctx, dbName, tableInfo2, autoid.Allocators{}, result2)
 	if err != nil {
 		panic(err)
 	}
@@ -280,6 +282,11 @@ func (d *Checker) CreateView(ctx sessionctx.Context, stmt *ast.CreateViewStmt) e
 
 // CreateMaterializedViewLog implements the DDL interface.
 func (d *Checker) CreateMaterializedViewLog(ctx sessionctx.Context, stmt *ast.CreateMaterializedViewLogStmt) error {
+	// Keep real DDL and tracker updates in the same order when concurrent
+	// IF NOT EXISTS statements specify different log definitions.
+	d.mviewLogMu.Lock()
+	defer d.mviewLogMu.Unlock()
+
 	err := d.realExecutor.CreateMaterializedViewLog(ctx, stmt)
 	if err != nil || d.closed.Load() {
 		return err
@@ -334,6 +341,54 @@ func (d *Checker) AlterMaterializedView(ctx sessionctx.Context, stmt *ast.AlterM
 // AlterMaterializedViewLog applies ALTER MATERIALIZED VIEW LOG to the real executor.
 func (d *Checker) AlterMaterializedViewLog(ctx sessionctx.Context, stmt *ast.AlterMaterializedViewLogStmt) error {
 	return d.realExecutor.AlterMaterializedViewLog(ctx, stmt)
+}
+
+// CreateMaterializedViewShadowTable implements the DDL interface.
+func (d *Checker) CreateMaterializedViewShadowTable(
+	ctx sessionctx.Context,
+	schemaID int64,
+	schemaName ast.CIStr,
+	shadowTableInfo *model.TableInfo,
+) error {
+	return d.realExecutor.CreateMaterializedViewShadowTable(ctx, schemaID, schemaName, shadowTableInfo)
+}
+
+// DropMaterializedViewShadowTable implements the DDL interface.
+func (d *Checker) DropMaterializedViewShadowTable(ctx sessionctx.Context, schemaName, shadowName ast.CIStr) error {
+	return d.realExecutor.DropMaterializedViewShadowTable(ctx, schemaName, shadowName)
+}
+
+// RefreshMaterializedViewCompleteOutOfPlaceCutover implements the DDL interface.
+func (d *Checker) RefreshMaterializedViewCompleteOutOfPlaceCutover(
+	ctx sessionctx.Context,
+	schemaID int64,
+	schemaName ast.CIStr,
+	viewName ast.CIStr,
+	oldMViewID int64,
+	shadowTableID int64,
+	buildReadTSO uint64,
+	buildSources []model.MViewRefreshSource,
+	expectedOldMViewRevision *uint64,
+	expectedLastSuccessReadTSO uint64,
+	expectedLastSuccessReadTSONull bool,
+	nextRefreshUnixSeconds *int64,
+	shouldUpdateNextRefreshUnixSeconds bool,
+) error {
+	return d.realExecutor.RefreshMaterializedViewCompleteOutOfPlaceCutover(
+		ctx,
+		schemaID,
+		schemaName,
+		viewName,
+		oldMViewID,
+		shadowTableID,
+		buildReadTSO,
+		buildSources,
+		expectedOldMViewRevision,
+		expectedLastSuccessReadTSO,
+		expectedLastSuccessReadTSONull,
+		nextRefreshUnixSeconds,
+		shouldUpdateNextRefreshUnixSeconds,
+	)
 }
 
 // DropTable implements the DDL interface.

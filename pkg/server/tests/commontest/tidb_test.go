@@ -347,6 +347,18 @@ func TestMultiStatements(t *testing.T) {
 	ts.RunTestMultiStatements(t)
 }
 
+func TestNonPreparedPlanCacheMultiStatements(t *testing.T) {
+	ts := servertestkit.CreateTidbTestSuite(t)
+
+	ts.RunTestNonPreparedPlanCacheMultiStatements(t)
+}
+
+func TestNonPreparedPlanCacheMultiStatementsPointGet(t *testing.T) {
+	ts := servertestkit.CreateTidbTestSuite(t)
+
+	ts.RunTestNonPreparedPlanCacheMultiStatementsPointGet(t)
+}
+
 func TestSocketForwarding(t *testing.T) {
 	tempDir := t.TempDir()
 	socketFile := tempDir + "/tidbtest.sock" // Unix Socket does not work on Windows, so '/' should be OK
@@ -3146,22 +3158,25 @@ func TestProxyProtocolWithIpFallbackable(t *testing.T) {
 			config.User = "root"
 		},
 		func(dbt *testkit.DBTestKit) {
-			rows := dbt.MustQuery("SHOW PROCESSLIST;")
+			rows := dbt.MustQuery("SELECT HOST FROM information_schema.processlist WHERE ID = CONNECTION_ID()")
 			records := cli.Rows(t, rows)
+			require.Len(t, records, 1)
 			require.Contains(t, records[0], "192.168.1.2:60055")
-		},
-	)
 
-	cli2 := testserverclient.NewTestServerClient()
-	cli2.Port = serverPort
-	cli2.RunTests(t,
-		func(config *mysql.Config) {
-			config.User = "root"
-		},
-		func(dbt *testkit.DBTestKit) {
-			rows := dbt.MustQuery("SHOW PROCESSLIST;")
-			records := cli.Rows(t, rows)
-			require.Contains(t, records[0], "127.0.0.1:")
+			// Keep the proxied session visible while checking the direct connection.
+			cli2 := testserverclient.NewTestServerClient()
+			cli2.Port = serverPort
+			cli2.RunTests(t,
+				func(config *mysql.Config) {
+					config.User = "root"
+				},
+				func(dbt *testkit.DBTestKit) {
+					rows := dbt.MustQuery("SELECT HOST FROM information_schema.processlist WHERE ID = CONNECTION_ID()")
+					records := cli.Rows(t, rows)
+					require.Len(t, records, 1)
+					require.Contains(t, records[0], "127.0.0.1:")
+				},
+			)
 		},
 	)
 }

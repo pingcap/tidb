@@ -52,16 +52,18 @@ type SampleItem struct {
 const EmptySampleItemSize = int64(unsafe.Sizeof(SampleItem{}))
 
 func sortSampleItems(sc *stmtctx.StatementContext, items []*SampleItem) error {
-	var err error
+	var firstErr error
 	slices.SortStableFunc(items, func(i, j *SampleItem) int {
-		var cmp int
-		cmp, err = i.Value.Compare(sc.TypeCtx(), &j.Value, collate.GetBinaryCollator())
+		cmp, err := i.Value.Compare(sc.TypeCtx(), &j.Value, collate.GetBinaryCollator())
 		if err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
 			return -1
 		}
 		return cmp
 	})
-	return err
+	return firstErr
 }
 
 // SampleCollector will collect Samples and calculate the count and ndv of an attribute.
@@ -77,6 +79,7 @@ type SampleCollector struct {
 	TotalSize     int64 // TotalSize is the total size of column.
 	MemSize       int64 // major memory size of this sample collector.
 	IsMerger      bool
+	Unique        bool // Unique means the schema makes every non-NULL value distinct.
 }
 
 // Destroy releases references held by the sample collector so the sampled data can be reclaimed eagerly.
@@ -92,6 +95,7 @@ func (c *SampleCollector) Destroy() {
 	c.TotalSize = 0
 	c.MemSize = 0
 	c.IsMerger = false
+	c.Unique = false
 }
 
 // MergeSampleCollector merges two sample collectors.

@@ -161,7 +161,7 @@ func (mr *MockSchedulerMockRecorder) OnDone(arg0, arg1, arg2 any) *gomock.Call {
 }
 
 // OnNextSubtasksBatch mocks base method.
-func (m *MockScheduler) OnNextSubtasksBatch(arg0 context.Context, arg1 storage.TaskHandle, arg2 *proto.Task, arg3 []string, arg4 proto.Step) ([][]byte, error) {
+func (m *MockScheduler) OnNextSubtasksBatch(arg0 context.Context, arg1 storage.TaskHandle, arg2 *proto.Task, arg3 int, arg4 proto.Step) ([][]byte, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "OnNextSubtasksBatch", arg0, arg1, arg2, arg3, arg4)
 	ret0, _ := ret[0].([][]byte)
@@ -422,6 +422,21 @@ func (m *MockTaskManager) GetActiveSubtasks(arg0 context.Context, arg1 int64) ([
 func (mr *MockTaskManagerMockRecorder) GetActiveSubtasks(arg0, arg1 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetActiveSubtasks", reflect.TypeOf((*MockTaskManager)(nil).GetActiveSubtasks), arg0, arg1)
+}
+
+// GetActiveTaskCountsByKeyspace mocks base method.
+func (m *MockTaskManager) GetActiveTaskCountsByKeyspace(arg0 context.Context) (*storage.ActiveTaskSummary, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetActiveTaskCountsByKeyspace", arg0)
+	ret0, _ := ret[0].(*storage.ActiveTaskSummary)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetActiveTaskCountsByKeyspace indicates an expected call of GetActiveTaskCountsByKeyspace.
+func (mr *MockTaskManagerMockRecorder) GetActiveTaskCountsByKeyspace(arg0 any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetActiveTaskCountsByKeyspace", reflect.TypeOf((*MockTaskManager)(nil).GetActiveTaskCountsByKeyspace), arg0)
 }
 
 // GetAllNodes mocks base method.
@@ -764,7 +779,7 @@ func (mr *MockTaskManagerMockRecorder) RevertedTask(arg0, arg1 any) *gomock.Call
 }
 
 // SucceedTask mocks base method.
-func (m *MockTaskManager) SucceedTask(arg0 context.Context, arg1 int64) error {
+func (m *MockTaskManager) SucceedTask(arg0 context.Context, arg1 *proto.Task) error {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "SucceedTask", arg0, arg1)
 	ret0, _ := ret[0].(error)

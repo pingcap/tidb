@@ -269,7 +269,7 @@ func TestRefreshStatsWithFullMode(t *testing.T) {
 	require.Greater(t, indexVersionAfterAnalyze, indexVersionAfterFullRefresh, "index stats should be updated")
 
 	// Manually load it again to check it works well.
-	statsAfterLoad, err := handle.TableStatsFromStorage(tbl1Meta, tbl1Meta.ID, false, 0)
+	statsAfterLoad, err := handle.Cache().TableStatsFromStorage(tbl1Meta, tbl1Meta.ID, false, 0)
 	require.NoError(t, err)
 	require.NotNil(t, statsAfterLoad)
 	require.NotSame(t, statsAfterAnalyze, statsAfterLoad)
@@ -328,7 +328,7 @@ func TestRefreshStatsWithLiteMode(t *testing.T) {
 	require.Greater(t, indexVersionAfterAnalyze, uint64(0), "index stats should be updated")
 
 	// Manually load it again to check it works well.
-	statsAfterLoad, err := handle.TableStatsFromStorage(tbl1Meta, tbl1Meta.ID, false, 0)
+	statsAfterLoad, err := handle.Cache().TableStatsFromStorage(tbl1Meta, tbl1Meta.ID, false, 0)
 	require.NoError(t, err)
 	require.NotNil(t, statsAfterLoad)
 	require.NotSame(t, statsAfterAnalyze, statsAfterLoad)

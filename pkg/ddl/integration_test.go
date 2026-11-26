@@ -106,6 +106,113 @@ func TestPartialIndex(t *testing.T) {
 		dbterror.ErrUnsupportedAddPartialIndex)
 	tk.MustExec("drop table t;")
 
+	// Test ALTER TABLE cannot silently discard a partial primary key condition.
+	tk.MustExec("create table t3 (a int not null);")
+	tk.MustGetDBError("alter table t3 add primary key(a) where a > 0;",
+		dbterror.ErrUnsupportedAddPartialIndex)
+
+	// A partial unique index is not an implicit primary key, even when every index column is NOT NULL.
+	tk.MustExec("create table t4 (a int not null, unique index uk(a) where a > 0);")
+	tk.MustExec("alter table t4 alter index uk invisible;")
+
+	t.Run("standalone transactional merge", func(t *testing.T) {
+		if *testkit.WithTiKV != "" {
+			t.Skip("requires standalone unistore without ingest")
+		}
+		if model.GetJobVerInUse() == model.JobVersion1 {
+			t.Skip("standalone TiDB uses DDL job v2")
+		}
+		standalone := kv.StandAloneTiDB
+		fastReorg := vardef.EnableFastReorg.Swap(true)
+		kv.StandAloneTiDB = true
+		t.Cleanup(func() {
+			kv.StandAloneTiDB = standalone
+			vardef.EnableFastReorg.Store(fastReorg)
+		})
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("set tidb_enable_fast_table_check = on")
+		tk.MustExec("create table standalone_idx (id int primary key, b int)")
+		tk.MustExec("insert into standalone_idx values (1, 10), (2, 10), (3, 10), (4, 20)")
+		tk.MustExec("alter table standalone_idx add column enabled int default 1")
+		tk.MustExec("update standalone_idx set enabled = 0 where id = 2")
+		tk.MustExec("update standalone_idx set enabled = null where id = 3")
+
+		var reorgType model.ReorgType
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
+			if job.Type == model.ActionAddIndex && job.SchemaState == model.StateWriteReorganization {
+				reorgType = job.ReorgMeta.ReorgTp
+			}
+		})
+		dml := testkit.NewTestKit(t, store)
+		dml.MustExec("use test")
+		const beforeMerge = "github.com/pingcap/tidb/pkg/ddl/beforeBackfillMerge"
+		var ranMergeDML bool
+		var mergeDMLErr error
+		testfailpoint.EnableCall(t, beforeMerge, func() {
+			ranMergeDML = true
+			_, mergeDMLErr = dml.Exec("update standalone_idx set b = b + 20, enabled = 1 - enabled where id in (2, 4)")
+		})
+		tk.MustExec("create unique index idx_partial on standalone_idx(b) where enabled = 1")
+		testfailpoint.Disable(t, beforeMerge)
+		require.Equal(t, model.ReorgTypeTxnMerge, reorgType)
+		require.True(t, ranMergeDML)
+		require.NoError(t, mergeDMLErr)
+		reorgType = model.ReorgTypeNone
+		tk.MustExec("create index idx_normal on standalone_idx(b)")
+		require.Equal(t, model.ReorgTypeTxnMerge, reorgType)
+		tk.MustExec("create index idx_sparse on standalone_idx(b) where enabled = 2")
+		// Index entries written are zero, but all four table rows were scanned.
+		require.Equal(t, "4", tk.MustQuery("admin show ddl jobs 1").Rows()[0][7])
+		var multiIndexRows int64 = -1
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterBackfillStateRunningDone", func(job *model.Job) {
+			multiIndexRows = job.GetRowCount()
+		})
+		tk.MustExec("alter table standalone_idx add index idx_empty(b) where enabled = 2, add index idx_mixed(id)")
+		testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/afterBackfillStateRunningDone")
+		require.Equal(t, int64(4), multiIndexRows)
+		tk.MustExec("admin check table standalone_idx")
+		tk.MustGetDBError("insert into standalone_idx values (5, 10, 1)", kv.ErrKeyExists)
+		tk.MustGetDBError("insert into standalone_idx values (5, 30, 1)", kv.ErrKeyExists)
+		tk.MustExec("insert into standalone_idx values (5, 20, 1), (6, 10, 0)")
+
+		t.Run("timestamp predicate", func(t *testing.T) {
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("use test")
+			tk.MustExec("set time_zone = '+00:00'")
+			tk.MustExec("create table standalone_ts (id int primary key, k int, ts timestamp null)")
+			tk.MustExec("insert into standalone_ts values (1, 10, '2025-07-28 00:00:00')")
+			tk.MustExec("set time_zone = '+08:00'")
+			// Backfill and DML in different time zones must not disagree on index membership.
+			for _, condition := range []string{
+				"ts = '2025-07-28 00:00:00'",
+				"ts != '2025-07-28 00:00:00'",
+				"ts > '2025-07-28 00:00:00'",
+				"ts < '2025-07-28 00:00:00'",
+				"ts >= '2025-07-28 00:00:00'",
+				"ts <= '2025-07-28 00:00:00'",
+				"'2025-07-28 00:00:00' = ts",
+			} {
+				tk.MustGetDBError("create unique index idx_ts on standalone_ts(k) where "+condition,
+					dbterror.ErrUnsupportedAddPartialIndex)
+			}
+			tk.MustExec("create table standalone_ts_empty like standalone_ts")
+			tk.MustGetDBError("alter table standalone_ts_empty add index idx_ts(k) where ts = '2025-07-28 00:00:00'",
+				dbterror.ErrUnsupportedAddPartialIndex)
+
+			// NULL predicates do not depend on the session time zone and remain supported.
+			tk.MustExec("insert into standalone_ts values (2, 10, null)")
+			tk.MustExec("create unique index idx_not_null on standalone_ts(k) where ts is not null")
+			tk.MustExec("create unique index idx_null on standalone_ts(k) where ts is null")
+			tk.MustExec("create index idx_ts_key on standalone_ts(ts) where k > 0")
+			tk.MustExec("set time_zone = '+00:00'")
+			tk.MustGetDBError("insert into standalone_ts values (3, 10, '2025-07-28 00:00:00')", kv.ErrKeyExists)
+			tk.MustGetDBError("insert into standalone_ts values (3, 10, null)", kv.ErrKeyExists)
+			tk.MustExec("set tidb_enable_fast_table_check = on")
+			tk.MustExec("admin check table standalone_ts")
+		})
+	})
+
 	checkColumnTypes := func(columnTypes []string, literals []string, shouldAllowed bool) {
 		for _, columnType := range columnTypes {
 			for _, literal := range literals {

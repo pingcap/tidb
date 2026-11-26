@@ -86,6 +86,7 @@ type statementRUOwner struct {
 	// Install-time snapshots reject transient restricted/cursor classifications
 	// that may be restored before a delayed result-set terminal.
 	restrictedSQLAtInstall bool
+	ttlJobAtInstall        bool
 	cursorAtInstall        bool
 	calculationSetup       statementRUCalculationSetup
 }
@@ -100,6 +101,7 @@ func newStatementRUOwner(stmt *ExecStmt) *statementRUOwner {
 		return owner
 	}
 	owner.restrictedSQLAtInstall = sessVars.InRestrictedSQL
+	owner.ttlJobAtInstall = isStatementRUTTLJob(sessVars)
 	owner.cursorAtInstall = sessVars.HasStatusFlag(mysql.ServerStatusCursorExists)
 	return owner
 }
@@ -200,8 +202,9 @@ func (a *ExecStmt) finishStatementRU(terminalErr error) float64 {
 		sessVars := a.Ctx.GetSessionVars()
 		// The snapshots catch eligibility that disappeared before terminal; the
 		// live checks catch a classification entered after owner installation.
-		if sessVars == nil || sessVars.StmtCtx == nil || owner.restrictedSQLAtInstall || owner.cursorAtInstall ||
-			sessVars.InRestrictedSQL || sessVars.HasStatusFlag(mysql.ServerStatusCursorExists) {
+		if sessVars == nil || sessVars.StmtCtx == nil || owner.cursorAtInstall ||
+			((owner.restrictedSQLAtInstall || sessVars.InRestrictedSQL) && !owner.ttlJobAtInstall) ||
+			sessVars.HasStatusFlag(mysql.ServerStatusCursorExists) {
 			finalized.failure = statementRUIneligible
 			return
 		}
@@ -252,6 +255,7 @@ func (a *ExecStmt) finishStatementRU(terminalErr error) float64 {
 		)
 	})
 	if publishFinalized {
+		finalized.ttlJob = owner.ttlJobAtInstall
 		publishStatementRUFinalizedSnapshot(a, finalized)
 		return finalized.result.TotalRU
 	}
@@ -548,8 +552,10 @@ func calculateStatementRUPlanChildFirst(
 		return statementRUOperatorResult{state: statementRUOperatorInvalid}
 	}
 	var beforeSubtree ruv2.StmtUnits
+	var beforeSubtreeTiFlashRU float64
 	if operatorRUs != nil {
 		beforeSubtree = calculator.units
+		beforeSubtreeTiFlashRU = calculator.tiFlashRU(currentStatementRUWeights())
 	}
 	children := make([]statementRUOperatorResult, len(operator.ChildrenIdx))
 	childState := statementRUOperatorComplete
@@ -601,8 +607,12 @@ func calculateStatementRUPlanChildFirst(
 	beforeCPU, beforeHashState := calculator.units.CPUWork, calculator.units.HashStateRows
 	beforeJoinOutput, beforeNet, beforeCrossAZ := calculator.units.JoinOutputRows, calculator.units.NetBytes, calculator.units.CrossAZNetBytes
 	var beforeOperator ruv2.StmtUnits
+	var beforeOperatorTiFlashRU float64
 	if calculator.report != nil || operatorRUs != nil {
 		beforeOperator = calculator.units
+	}
+	if operatorRUs != nil {
+		beforeOperatorTiFlashRU = calculator.tiFlashRU(currentStatementRUWeights())
 	}
 
 	switch origin := operator.Origin.(type) {
@@ -694,9 +704,9 @@ func calculateStatementRUPlanChildFirst(
 		// Before statement-level charges, IndexMerge subtree RU is:
 		// sum(child subtree RU) plus the weighted sum of partial and table
 		// scan bytes.
-		// Each request estimates scanBytes = ProcessedKeysSize / ProcessedKeys *
-		// TotalKeys when those counters are usable; missing/unavailable evidence
-		// contributes zero. Child RU covers pushed operators such as Selection.
+		// Each request uses TotalKeysSize, falling back to ProcessedKeysSize /
+		// ProcessedKeys * TotalKeys when total bytes are unavailable. Missing
+		// evidence contributes zero. Child RU covers pushed operators such as Selection.
 		// TiDB handle union/intersection has no separate charge in this model.
 		// Network and frontend RU are added once at the statement root.
 		if !operator.IsRoot || origin.TablePlan == nil {
@@ -937,7 +947,7 @@ func calculateStatementRUPlanChildFirst(
 		*physicalop.PhysicalIndexJoin, *physicalop.PhysicalIndexHashJoin,
 		*physicalop.PhysicalIndexMergeJoin:
 		state := collectStatementRUJoinUnits(
-			operator, children, outputRows, runtimeStatsColl, calculator,
+			operator, children, runtimeStatsColl, calculator,
 		)
 		if state != statementRUOperatorComplete {
 			return statementRUOperatorResult{state: state}
@@ -1028,6 +1038,9 @@ func calculateStatementRUPlanChildFirst(
 		weights := currentStatementRUWeights()
 		selfResult, _ := ruv2.Calculate(selfUnits, weights)
 		cumResult, _ := ruv2.Calculate(cumUnits, weights)
+		tiFlashRU := calculator.tiFlashRU(weights)
+		selfResult.TotalRU += (tiFlashRU - beforeOperatorTiFlashRU) * (statementRUTiFlashMultiplier - 1)
+		cumResult.TotalRU += (tiFlashRU - beforeSubtreeTiFlashRU) * (statementRUTiFlashMultiplier - 1)
 		operatorRUs[operatorIndex].SelfRU = selfResult.TotalRU
 		operatorRUs[operatorIndex].CumRU = cumResult.TotalRU
 	}
@@ -1041,19 +1054,20 @@ func calculateStatementRUPlanChildFirst(
 // collectStatementRUJoinUnits charges one supported root Join or MPP HashJoin using
 // these formulas:
 //
-//	CPUWork = (left child rows + right child rows) * expression count
-//	JoinOutputRows = output rows
+//	CPUWork = (left child rows + right child rows) * input expression count + joined rows * other condition count
+//	JoinOutputRows = candidate pairs processed before other conditions
 //	HashStateRows = constructed HashJoin lookup-state rows
 //
 // statementRUJoinContractForPlan defines the expression count for each Join
-// subtype. MPP uses both children's merged rows, including ExchangeReceiver rows,
-// and the Join's own reported output for JoinOutputRows. Its hash state comes from
-// TiFlash hash-table stats, not the build child's output or the join result size.
+// subtype. Root joins use worker counters; MPP joins use TiFlash's joined_rows,
+// summed across received summaries. Both exclude null-extension rows and pairs
+// skipped by semi-join short circuit. Missing evidence contributes zero without
+// discarding other reported work. MPP input rows include ExchangeReceiver rows;
+// hash state comes from TiFlash hash-table stats, independently of joined_rows.
 // TiKV Cop and FullOuter joins remain unsupported.
 func collectStatementRUJoinUnits(
 	operator *plannercore.FlatOperator,
 	children []statementRUOperatorResult,
-	outputRows int64,
 	runtimeStatsColl *execdetails.RuntimeStatsColl,
 	calculator *statementRUCalculator,
 ) statementRUOperatorState {
@@ -1070,9 +1084,23 @@ func collectStatementRUJoinUnits(
 	if !ok {
 		return statementRUOperatorUnsupported
 	}
+	var joinedRows float64
+	if runtimeStatsColl != nil {
+		if operator.IsRoot {
+			rows, _ := runtimeStatsColl.GetRootJoinedRows(operator.Origin.ID())
+			joinedRows = float64(rows)
+		} else {
+			units, _ := runtimeStatsColl.GetTiFlashExecutionUnits(operator.Origin.ID())
+			if units.Invalid {
+				return statementRUOperatorInvalid
+			}
+			joinedRows = float64(units.JoinedRows)
+		}
+	}
 	inputRows := float64(children[0].outputRows) + float64(children[1].outputRows)
-	if !addStatementRUCPUWork(&delta, inputRows*float64(contract.expressionCount)) ||
-		!addStatementRUJoinOutputRows(&delta, float64(outputRows)) {
+	cpuWork := inputRows*float64(contract.inputExpressionCount) + joinedRows*float64(contract.otherConditionCount)
+	if !addStatementRUCPUWork(&delta, cpuWork) ||
+		!addStatementRUJoinOutputRows(&delta, joinedRows) {
 		return statementRUOperatorInvalid
 	}
 	if contract.hashState {
@@ -1087,18 +1115,19 @@ func collectStatementRUJoinUnits(
 }
 
 type statementRUJoinContract struct {
-	expressionCount int
-	hashState       bool
+	inputExpressionCount int
+	otherConditionCount  int
+	hashState            bool
 }
 
 // statementRUJoinContractForPlan is the single support matrix for root Join and MPP HashJoin
-// accounting. Its expression count formulas are:
+// accounting. Its input expression count formulas exclude OtherConditions:
 //
-//	HashJoin       = EqualConditions + NAEqualConditions + LeftConditions + RightConditions + OtherConditions
-//	MergeJoin      = CompareFuncs + LeftConditions + RightConditions + OtherConditions
-//	IndexJoin      = OuterJoinKeys + LeftConditions + RightConditions + OtherConditions + CompareFilters.OpType
-//	IndexHashJoin  = OuterHashKeys + LeftConditions + RightConditions + OtherConditions + CompareFilters.OpType
-//	IndexMergeJoin = CompareFuncs + OuterCompareFuncs + LeftConditions + RightConditions + OtherConditions + CompareFilters.OpType
+//	HashJoin       = EqualConditions + NAEqualConditions + LeftConditions + RightConditions
+//	MergeJoin      = CompareFuncs + LeftConditions + RightConditions
+//	IndexJoin      = OuterJoinKeys + LeftConditions + RightConditions + CompareFilters.OpType
+//	IndexHashJoin  = OuterHashKeys + LeftConditions + RightConditions + CompareFilters.OpType
+//	IndexMergeJoin = CompareFuncs + OuterCompareFuncs + LeftConditions + RightConditions + CompareFilters.OpType
 func statementRUJoinContractForPlan(plan base.Plan) (statementRUJoinContract, bool) {
 	contract := statementRUJoinContract{}
 	compareFilterCount := func(filters *physicalop.ColWithCmpFuncManager) int {
@@ -1110,26 +1139,31 @@ func statementRUJoinContractForPlan(plan base.Plan) (statementRUJoinContract, bo
 	var joinType base.JoinType
 	switch join := plan.(type) {
 	case *physicalop.PhysicalHashJoin:
+		contract.otherConditionCount = len(join.OtherConditions)
 		joinType = join.JoinType
 		contract.hashState = true
-		contract.expressionCount = len(join.EqualConditions) + len(join.NAEqualConditions) +
-			len(join.LeftConditions) + len(join.RightConditions) + len(join.OtherConditions)
+		contract.inputExpressionCount = len(join.EqualConditions) + len(join.NAEqualConditions) +
+			len(join.LeftConditions) + len(join.RightConditions)
 	case *physicalop.PhysicalMergeJoin:
+		contract.otherConditionCount = len(join.OtherConditions)
 		joinType = join.JoinType
-		contract.expressionCount = len(join.CompareFuncs) + len(join.LeftConditions) +
-			len(join.RightConditions) + len(join.OtherConditions)
+		contract.inputExpressionCount = len(join.CompareFuncs) + len(join.LeftConditions) +
+			len(join.RightConditions)
 	case *physicalop.PhysicalIndexJoin:
+		contract.otherConditionCount = len(join.OtherConditions)
 		joinType = join.JoinType
-		contract.expressionCount = len(join.OuterJoinKeys) + len(join.LeftConditions) +
-			len(join.RightConditions) + len(join.OtherConditions) + compareFilterCount(join.CompareFilters)
+		contract.inputExpressionCount = len(join.OuterJoinKeys) + len(join.LeftConditions) +
+			len(join.RightConditions) + compareFilterCount(join.CompareFilters)
 	case *physicalop.PhysicalIndexHashJoin:
+		contract.otherConditionCount = len(join.OtherConditions)
 		joinType = join.JoinType
-		contract.expressionCount = len(join.OuterHashKeys) + len(join.LeftConditions) +
-			len(join.RightConditions) + len(join.OtherConditions) + compareFilterCount(join.CompareFilters)
+		contract.inputExpressionCount = len(join.OuterHashKeys) + len(join.LeftConditions) +
+			len(join.RightConditions) + compareFilterCount(join.CompareFilters)
 	case *physicalop.PhysicalIndexMergeJoin:
+		contract.otherConditionCount = len(join.OtherConditions)
 		joinType = join.JoinType
-		contract.expressionCount = len(join.CompareFuncs) + len(join.OuterCompareFuncs) +
-			len(join.LeftConditions) + len(join.RightConditions) + len(join.OtherConditions) +
+		contract.inputExpressionCount = len(join.CompareFuncs) + len(join.OuterCompareFuncs) +
+			len(join.LeftConditions) + len(join.RightConditions) +
 			compareFilterCount(join.CompareFilters)
 	default:
 		return statementRUJoinContract{}, false
@@ -1282,11 +1316,9 @@ func collectStatementRUReaderScanBytes(
 	calculator *statementRUCalculator,
 	requestRoots []base.Plan,
 ) statementRUOperatorState {
-	// GetCopScanDetail currently exposes totals merged across responses. Applying
-	// the processed-byte ratio after that merge can estimate above or below the
-	// sum of response-local physical sizes even when every field is present. A
-	// later producer change will consume response-level total-key-size evidence;
-	// until then the whole forest remains calibration-Incomplete.
+	// Backend total bytes are additive across responses. When unavailable, the
+	// legacy ratio is still applied to merged counters and remains an estimate.
+	// Response coverage is not proven, so calibration remains Incomplete.
 	if len(operator.ChildrenIdx) != len(requestRoots) {
 		return statementRUOperatorUnsupported
 	}
@@ -1311,6 +1343,7 @@ func collectStatementRUReaderScanBytes(
 			detail.TotalKeys,
 			detail.ProcessedKeys,
 			detail.ProcessedKeysSize,
+			detail.TotalKeysSize,
 		)
 		switch scanEvidence.state {
 		case statementRUScanEvidenceUnavailable:
@@ -1355,7 +1388,7 @@ func collectStatementRUPointLookupEvidence(
 	if !aggregate.PayloadComplete() {
 		if aggregate.PayloadBytes != 0 ||
 			aggregate.ScanDetail.TotalKeys != 0 || aggregate.ScanDetail.ProcessedKeys != 0 ||
-			aggregate.ScanDetail.ProcessedKeysSize != 0 {
+			aggregate.ScanDetail.ProcessedKeysSize != 0 || aggregate.ScanDetail.TotalKeysSize != 0 {
 			return statementRUOperatorInvalid
 		}
 		return statementRUOperatorComplete
@@ -1368,6 +1401,7 @@ func collectStatementRUPointLookupEvidence(
 		aggregate.ScanDetail.TotalKeys,
 		aggregate.ScanDetail.ProcessedKeys,
 		aggregate.ScanDetail.ProcessedKeysSize,
+		aggregate.ScanDetail.TotalKeysSize,
 	)
 	switch scanEvidence.state {
 	case statementRUScanEvidenceValid:
@@ -1406,7 +1440,7 @@ func mergeStatementRUPointResponseStats(
 	stats clientutil.PointResponseStats,
 ) bool {
 	if !stats.IsValid() || stats.ScanDetail.TotalKeys < 0 ||
-		stats.ScanDetail.ProcessedKeys < 0 || stats.ScanDetail.ProcessedKeysSize < 0 {
+		stats.ScanDetail.ProcessedKeys < 0 || stats.ScanDetail.ProcessedKeysSize < 0 || stats.ScanDetail.TotalKeysSize < 0 {
 		return false
 	}
 	aggregate.Merge(stats)

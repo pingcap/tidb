@@ -18,7 +18,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -45,12 +44,14 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/printer"
 	semv1 "github.com/pingcap/tidb/pkg/util/sem"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/syncutil"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"github.com/tikv/client-go/v2/oracle"
@@ -280,17 +281,10 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 	}
 
 	tidbCfg := config.GetGlobalConfig()
-	tlsCfg := task.TLSConfig{
-		CA:   tidbCfg.Security.ClusterSSLCA,
-		Cert: tidbCfg.Security.ClusterSSLCert,
-		Key:  tidbCfg.Security.ClusterSSLKey,
-	}
-	pds := strings.Split(tidbCfg.Path, ",")
 
 	// build common config
 	cfg := task.DefaultConfig()
-	cfg.PD = pds
-	cfg.TLS = tlsCfg
+	task.ApplyTiDBRuntimeConfig(&cfg)
 
 	storageURL, err := objstore.ParseRawURL(s.Storage)
 	if err != nil {
@@ -300,9 +294,15 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 
 	switch storageURL.Scheme {
 	case "s3":
-		objstore.ExtractQueryParameters(storageURL, &cfg.S3)
+		if err := objstore.ExtractQueryParameters(storageURL, &cfg.S3); err != nil {
+			b.err = errors.Annotate(err, "invalid destination URL")
+			return nil
+		}
 	case "gs", "gcs":
-		objstore.ExtractQueryParameters(storageURL, &cfg.GCS)
+		if err := objstore.ExtractQueryParameters(storageURL, &cfg.GCS); err != nil {
+			b.err = errors.Annotate(err, "invalid destination URL")
+			return nil
+		}
 
 	// Only check `semv1.IsEnabled()` because in SEM v2, the statement will be limited by `RESTRICTED_SQL` configuration in
 	// `(b *PlanBuilder).Build`. `sql_rule.go` is used to define the highly customized SQL rules to filter these statements.
@@ -740,6 +740,12 @@ func (gs *tidbGlue) CreateSession(_ kv.Storage) (glue.Session, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Restore workers interleave direct DDL calls and SQL, so each SQL statement
+	// must finish its transaction before the worker creates another table.
+	if err := newSCtx.GetSessionVars().SetSystemVar(vardef.AutoCommit, "1"); err != nil {
+		CloseSession(newSCtx)
+		return nil, err
+	}
 	return &tidbGlueSession{se: newSCtx}, nil
 }
 
@@ -807,10 +813,10 @@ type tidbGlueSession struct {
 // Execute implements glue.Session
 // These queries execute without privilege checking, since the calling statements
 // such as BACKUP and RESTORE have already been privilege checked.
-// NOTE: Maybe drain the restult too? See `gluetidb.tidbSession.ExecuteInternal` for more details.
+// Use the restore subtask's session to preserve its scoped read-only authorization.
 func (gs *tidbGlueSession) Execute(ctx context.Context, sql string) error {
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnBR)
-	_, _, err := gs.se.GetRestrictedSQLExecutor().ExecRestrictedSQL(ctx, nil, sql)
+	_, _, err := gs.se.GetRestrictedSQLExecutor().ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}, sql)
 	return err
 }
 

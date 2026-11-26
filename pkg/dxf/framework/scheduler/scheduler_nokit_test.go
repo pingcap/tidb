@@ -177,6 +177,7 @@ func TestSchedulerOnNextStage(t *testing.T) {
 	schExt.EXPECT().OnNextSubtasksBatch(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(subtaskMetas, nil)
 	taskMgr.EXPECT().GetUsedSlotsOnNodes(gomock.Any()).Return(nil, nil)
+	taskMgr.EXPECT().GetActiveSubtasks(gomock.Any(), task.ID).Return(nil, nil)
 	taskMgr.EXPECT().SwitchTaskStepInBatch(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
 	kv.TxnTotalSizeLimit.Store(1)
 	require.NoError(t, sch.Switch2NextStep())
@@ -187,6 +188,7 @@ func TestSchedulerOnNextStage(t *testing.T) {
 	schExt.EXPECT().OnNextSubtasksBatch(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(subtaskMetas, nil)
 	taskMgr.EXPECT().GetUsedSlotsOnNodes(gomock.Any()).Return(nil, nil)
+	taskMgr.EXPECT().GetActiveSubtasks(gomock.Any(), task.ID).Return(nil, nil)
 	taskMgr.EXPECT().SwitchTaskStepInBatch(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(errors.Annotatef(storage.ErrUnstableSubtasks, "expected %d, got %d",
 			2, 100))
@@ -208,6 +210,230 @@ func TestSchedulerOnNextStage(t *testing.T) {
 	kv.TxnTotalSizeLimit.Store(config.DefTxnTotalSizeLimit)
 	require.NoError(t, sch.Switch2NextStep())
 	require.True(t, ctrl.Satisfied())
+}
+
+func TestSchedulerScheduleSubtasksToNodesWithEnoughSlots(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		nodes        []string
+		maxNodeCount int
+		usedSlots    map[string]int
+		execIDs      []string
+	}{
+		{
+			name:         "only one node has enough slots",
+			nodes:        []string{"n1", "n2", "n3"},
+			maxNodeCount: 1,
+			usedSlots:    map[string]int{"n1": 3, "n2": 1},
+			execIDs:      []string{"n3", "n3"},
+		},
+		{
+			name:         "cap nodes after filtering",
+			nodes:        []string{"n1", "n2", "n3"},
+			maxNodeCount: 1,
+			usedSlots:    map[string]int{"n1": 3},
+			execIDs:      []string{"n2", "n2"},
+		},
+		{
+			name:         "cap nodes after filtering with max node count 2",
+			nodes:        []string{"n1", "n2", "n3", "n4"},
+			maxNodeCount: 2,
+			usedSlots:    map[string]int{"n1": 3, "n3": 3},
+			execIDs:      []string{"n2", "n4"},
+		},
+		{
+			name:         "cap fallback when all nodes are full",
+			nodes:        []string{"n1", "n2", "n3"},
+			maxNodeCount: 1,
+			usedSlots:    map[string]int{"n1": 3, "n2": 3, "n3": 3},
+			execIDs:      []string{"n1", "n1"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			defer ctrl.Finish()
+			taskMgr := mock.NewMockTaskManager(ctrl)
+			schExt := schmock.NewMockExtension(ctrl)
+			task := proto.Task{
+				TaskBase: proto.TaskBase{
+					ID:            1,
+					State:         proto.TaskStatePending,
+					Step:          proto.StepInit,
+					RequiredSlots: 3,
+					MaxNodeCount:  tc.maxNodeCount,
+				},
+			}
+			sch := createScheduler(&task, true, taskMgr, ctrl)
+			sch.Extension = schExt
+			sch.slotMgr.updateCapacity(3)
+			managedNodes := make([]proto.ManagedNode, 0, len(tc.nodes))
+			for _, id := range tc.nodes {
+				managedNodes = append(managedNodes, proto.ManagedNode{ID: id})
+			}
+			sch.nodeMgr.nodes.Store(&managedNodes)
+
+			schExt.EXPECT().GetNextStep(gomock.Any()).Return(proto.StepOne)
+			schExt.EXPECT().GetEligibleInstances(gomock.Any(), gomock.Any()).Return(nil, nil)
+			schExt.EXPECT().OnNextSubtasksBatch(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+				DoAndReturn(func(_ context.Context, _ storage.TaskHandle, _ *proto.Task, nodeCnt int, _ proto.Step) ([][]byte, error) {
+					require.Equal(t, tc.maxNodeCount, nodeCnt)
+					return [][]byte{[]byte(`{}`), []byte(`{}`)}, nil
+				})
+			taskMgr.EXPECT().GetUsedSlotsOnNodes(gomock.Any()).Return(tc.usedSlots, nil)
+			var execIDs []string
+			taskMgr.EXPECT().SwitchTaskStep(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+				DoAndReturn(func(_ context.Context, _ *proto.Task, _ proto.TaskState, _ proto.Step, subtasks []*proto.Subtask) error {
+					for _, st := range subtasks {
+						execIDs = append(execIDs, st.ExecID)
+					}
+					return nil
+				})
+			require.NoError(t, sch.Switch2NextStep())
+			require.Equal(t, tc.execIDs, execIDs)
+			require.True(t, ctrl.Satisfied())
+		})
+	}
+}
+
+func TestSchedulerBatchRecoveryKeepsMaxNodeCount(t *testing.T) {
+	bak := kv.TxnTotalSizeLimit.Load()
+	t.Cleanup(func() {
+		kv.TxnTotalSizeLimit.Store(bak)
+	})
+	kv.TxnTotalSizeLimit.Store(1)
+
+	for _, tc := range []struct {
+		name               string
+		nodes              []string
+		maxNodeCount       int
+		usedSlots          map[string]int
+		existing           []*proto.SubtaskBase
+		subtaskCnt         int
+		wantNewExecIDs     []string
+		wantDistinctExecID []string
+	}{
+		{
+			name:         "keep existing host for max node count 1",
+			nodes:        []string{"n1", "n2"},
+			maxNodeCount: 1,
+			usedSlots:    map[string]int{"n1": 3},
+			existing: []*proto.SubtaskBase{
+				{ID: 1, Step: proto.StepOne, ExecID: "n1", State: proto.SubtaskStatePending, Ordinal: 1},
+				{ID: 2, Step: proto.StepOne, ExecID: "n1", State: proto.SubtaskStatePending, Ordinal: 2},
+			},
+			subtaskCnt:         4,
+			wantNewExecIDs:     []string{"n1", "n1"},
+			wantDistinctExecID: []string{"n1"},
+		},
+		{
+			name:         "keep existing host and fill remaining cap from free nodes",
+			nodes:        []string{"n1", "n2", "n3"},
+			maxNodeCount: 2,
+			usedSlots:    map[string]int{"n1": 3, "n2": 3},
+			existing: []*proto.SubtaskBase{
+				{ID: 1, Step: proto.StepOne, ExecID: "n1", State: proto.SubtaskStatePending, Ordinal: 1},
+			},
+			subtaskCnt:         4,
+			wantNewExecIDs:     []string{"n3", "n1", "n3"},
+			wantDistinctExecID: []string{"n1", "n3"},
+		},
+		{
+			name:         "keep existing hosts at max node count without adding idle node",
+			nodes:        []string{"n1", "n2", "n3"},
+			maxNodeCount: 2,
+			usedSlots:    map[string]int{"n1": 3, "n2": 3},
+			existing: []*proto.SubtaskBase{
+				{ID: 1, Step: proto.StepOne, ExecID: "n1", State: proto.SubtaskStatePending, Ordinal: 1},
+				{ID: 2, Step: proto.StepOne, ExecID: "n2", State: proto.SubtaskStatePending, Ordinal: 2},
+			},
+			subtaskCnt:         4,
+			wantNewExecIDs:     []string{"n1", "n2"},
+			wantDistinctExecID: []string{"n1", "n2"},
+		},
+		{
+			name:         "ignore dead existing host on recovery",
+			nodes:        []string{"n2", "n3"},
+			maxNodeCount: 1,
+			usedSlots:    map[string]int{"n1": 3},
+			existing: []*proto.SubtaskBase{
+				{ID: 1, Step: proto.StepOne, ExecID: "n1", State: proto.SubtaskStatePending, Ordinal: 1},
+			},
+			subtaskCnt:         3,
+			wantNewExecIDs:     []string{"n2", "n2"},
+			wantDistinctExecID: []string{"n1", "n2"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			defer ctrl.Finish()
+			taskMgr := mock.NewMockTaskManager(ctrl)
+			schExt := schmock.NewMockExtension(ctrl)
+			task := proto.Task{
+				TaskBase: proto.TaskBase{
+					ID:            1,
+					State:         proto.TaskStatePending,
+					Step:          proto.StepInit,
+					RequiredSlots: 3,
+					MaxNodeCount:  tc.maxNodeCount,
+				},
+			}
+			sch := createScheduler(&task, true, taskMgr, ctrl)
+			sch.Extension = schExt
+			sch.slotMgr.updateCapacity(3)
+			managedNodes := make([]proto.ManagedNode, 0, len(tc.nodes))
+			for _, id := range tc.nodes {
+				managedNodes = append(managedNodes, proto.ManagedNode{ID: id})
+			}
+			sch.nodeMgr.nodes.Store(&managedNodes)
+
+			metas := make([][]byte, tc.subtaskCnt)
+			for i := range metas {
+				metas[i] = fmt.Appendf(nil, `{"i":%d}`, i+1)
+			}
+			schExt.EXPECT().GetNextStep(gomock.Any()).Return(proto.StepOne)
+			schExt.EXPECT().GetEligibleInstances(gomock.Any(), gomock.Any()).Return(nil, nil)
+			schExt.EXPECT().OnNextSubtasksBatch(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+				Return(metas, nil)
+			taskMgr.EXPECT().GetUsedSlotsOnNodes(gomock.Any()).Return(tc.usedSlots, nil)
+			taskMgr.EXPECT().GetActiveSubtasks(gomock.Any(), task.ID).Return(tc.existing, nil)
+
+			var inserted []*proto.Subtask
+			taskMgr.EXPECT().SwitchTaskStepInBatch(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+				DoAndReturn(func(_ context.Context, _ *proto.Task, _ proto.TaskState, _ proto.Step, subtasks []*proto.Subtask) error {
+					inserted = append(inserted, subtasks[len(tc.existing):]...)
+					return nil
+				})
+			require.NoError(t, sch.Switch2NextStep())
+
+			var ordinals []int
+			distinctSet := make(map[string]struct{})
+			var distinct []string
+			for _, st := range tc.existing {
+				ordinals = append(ordinals, st.Ordinal)
+				if _, ok := distinctSet[st.ExecID]; !ok {
+					distinctSet[st.ExecID] = struct{}{}
+					distinct = append(distinct, st.ExecID)
+				}
+			}
+			newExecIDs := make([]string, 0, len(inserted))
+			for _, st := range inserted {
+				ordinals = append(ordinals, st.Ordinal)
+				newExecIDs = append(newExecIDs, st.ExecID)
+				if _, ok := distinctSet[st.ExecID]; !ok {
+					distinctSet[st.ExecID] = struct{}{}
+					distinct = append(distinct, st.ExecID)
+				}
+			}
+			wantOrdinals := make([]int, tc.subtaskCnt)
+			for i := range wantOrdinals {
+				wantOrdinals[i] = i + 1
+			}
+			require.Equal(t, wantOrdinals, ordinals)
+			require.Equal(t, tc.wantNewExecIDs, newExecIDs)
+			require.Equal(t, tc.wantDistinctExecID, distinct)
+			require.True(t, ctrl.Satisfied())
+		})
+	}
 }
 
 func TestGetEligibleNodes(t *testing.T) {
@@ -650,17 +876,37 @@ func TestSchedulerMaintainTaskFields(t *testing.T) {
 		require.Equal(t, *scheduler.getTaskClone(), tmpTask)
 		require.True(t, ctrl.Satisfied())
 
-		// task done, but update failed, task state unchanged
-		schExt.EXPECT().OnDone(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
-		taskMgr.EXPECT().SucceedTask(gomock.Any(), task.ID).Return(fmt.Errorf("update err"))
+		// task done, but update failed, task state unchanged. OnDone mutates the
+		// task meta it is called with, and SucceedTask must receive that same
+		// mutated meta so the framework persists it with the state transition.
+		doneMeta := []byte(`{"summary":{"merge_temp_index_txn_kv_size":42}}`)
+		schExt.EXPECT().OnDone(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
+			func(_ context.Context, _ storage.TaskHandle, task *proto.Task) error {
+				task.Meta = doneMeta
+				return nil
+			})
+		taskMgr.EXPECT().SucceedTask(gomock.Any(), gomock.Any()).DoAndReturn(
+			func(_ context.Context, task *proto.Task) error {
+				require.Equal(t, doneMeta, task.Meta)
+				return fmt.Errorf("update err")
+			})
 		require.ErrorContains(t, scheduler.switch2NextStep(), "update err")
 		require.Equal(t, *scheduler.getTaskClone(), tmpTask)
 		// task done successfully, task state changed
-		schExt.EXPECT().OnDone(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
-		taskMgr.EXPECT().SucceedTask(gomock.Any(), task.ID).Return(nil)
+		schExt.EXPECT().OnDone(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
+			func(_ context.Context, _ storage.TaskHandle, task *proto.Task) error {
+				task.Meta = doneMeta
+				return nil
+			})
+		taskMgr.EXPECT().SucceedTask(gomock.Any(), gomock.Any()).DoAndReturn(
+			func(_ context.Context, task *proto.Task) error {
+				require.Equal(t, doneMeta, task.Meta)
+				return nil
+			})
 		require.NoError(t, scheduler.switch2NextStep())
 		tmpTask.State = proto.TaskStateSucceed
 		tmpTask.Step = proto.StepDone
+		tmpTask.Meta = doneMeta
 		require.Equal(t, *scheduler.getTaskClone(), tmpTask)
 	})
 

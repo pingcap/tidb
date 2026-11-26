@@ -332,8 +332,12 @@ func (b *tempIdxBuffers) len() int {
 type tempIdxResult struct {
 	scanCount int
 	addCount  int
-	nextKey   kv.Key
-	done      bool
+	// writtenBytes is the size of the transaction that merged this range. It is
+	// reported up so the merge DXF task can account RU the same way the
+	// transactional backfill workers do.
+	writtenBytes int
+	nextKey      kv.Key
+	done         bool
 }
 
 func fetchTempIndexVals(

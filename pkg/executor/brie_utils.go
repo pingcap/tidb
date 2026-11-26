@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"go.uber.org/zap"
 )
@@ -73,19 +74,22 @@ func BRIECreateDatabase(sctx sessionctx.Context, schema *model.DBInfo, brComment
 }
 
 // showRestoredCreateTable shows the result of SHOW CREATE TABLE from a tableInfo.
-func showRestoredCreateTable(sctx sessionctx.Context, tbl *model.TableInfo, brComment string) (string, error) {
+func showRestoredCreateTable(sctx sessionctx.Context, dbName ast.CIStr, tbl *model.TableInfo, brComment string) (string, error) {
 	result := bytes.NewBuffer(make([]byte, 0, defaultCapOfCreateTable))
 	if len(brComment) > 0 {
 		// this can never fail.
 		_, _ = result.WriteString(brComment)
 	}
-	if err := ConstructResultOfShowCreateTable(sctx, tbl, autoid.Allocators{}, result); err != nil {
+	if err := ConstructResultOfShowCreateTable(sctx, dbName, tbl, autoid.Allocators{}, result); err != nil {
 		return "", err
 	}
 	return result.String(), nil
 }
 
 // BRIECreateTable creates the table with OnExistIgnore option
+// Trusted restore may recreate objects in a database whose source ReadOnly flag
+// has already been restored. The caller authorizes RESTORE; this exception ends
+// when this function returns and does not grant ordinary SQL write privileges.
 func BRIECreateTable(
 	sctx sessionctx.Context,
 	dbName ast.CIStr,
@@ -93,8 +97,9 @@ func BRIECreateTable(
 	brComment string,
 	cs ...ddl.CreateTableOption,
 ) error {
+	defer privilege.WithInternalSchemaReadOnlyBypass(sctx, dbName.L)()
 	d := domain.GetDomain(sctx).DDLExecutor()
-	query, err := showRestoredCreateTable(sctx, clonedTable, brComment)
+	query, err := showRestoredCreateTable(sctx, dbName, clonedTable, brComment)
 	if err != nil {
 		return err
 	}
@@ -127,24 +132,36 @@ func BRIECreateTables(
 		sctx.GetSessionVars().ForeignKeyChecks = originForeignKeyChecks
 	}()
 	for db, tablesInDB := range clonedTables {
-		dbName := ast.NewCIStr(db)
-		querys := make([]string, 0, len(tablesInDB))
-		for _, table := range tablesInDB {
-			query, err := showRestoredCreateTable(sctx, table, brComment)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			querys = append(querys, query)
-		}
-		if err := splitBatchCreateTable(sctx, dbName, tablesInDB, querys, cs...); err != nil {
-			//It is possible to failure when TiDB does not support model.ActionCreateTables.
-			//In this circumstance, BatchCreateTableWithInfo returns errno.ErrInvalidDDLJob,
-			//we fall back to old way that creating table one by one
-			log.Warn("batch create table from tidb failure", zap.Error(err))
+		if err := brieCreateTablesInDatabase(sctx, ast.NewCIStr(db), tablesInDB, brComment, cs...); err != nil {
 			return err
 		}
 	}
 
+	return nil
+}
+
+func brieCreateTablesInDatabase(
+	sctx sessionctx.Context,
+	dbName ast.CIStr,
+	tables []*model.TableInfo,
+	brComment string,
+	cs ...ddl.CreateTableOption,
+) error {
+	defer privilege.WithInternalSchemaReadOnlyBypass(sctx, dbName.L)()
+	querys := make([]string, 0, len(tables))
+	for _, table := range tables {
+		query, err := showRestoredCreateTable(sctx, dbName, table, brComment)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		querys = append(querys, query)
+	}
+	if err := splitBatchCreateTable(sctx, dbName, tables, querys, cs...); err != nil {
+		// If batch creation is unsupported, the caller falls back to creating
+		// tables individually.
+		log.Warn("batch create table from tidb failure", zap.Error(err))
+		return err
+	}
 	return nil
 }
 
