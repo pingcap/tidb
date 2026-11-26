@@ -787,7 +787,7 @@ func (local *Ingestor) doIngest(ctx context.Context, j *regionJob) (*sst.IngestR
 			RequestSource: util.BuildRequestSource(true, kv.InternalTxnLightning, local.TaskType),
 		}
 
-		err = limiter.Acquire(leader.StoreId, weight)
+			err = limiter.Acquire(ctx, leader.StoreId, weight)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
