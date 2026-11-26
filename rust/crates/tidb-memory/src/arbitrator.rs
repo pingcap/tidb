@@ -240,6 +240,13 @@ pub trait ArbitrateHelper: Send + Sync {
     fn heap_inuse(&self) -> i64;
     /// Called when the pool is removed.
     fn finish(&self);
+    /// Go `Done`: the channel that cancels a pending allocation, read each
+    /// time the root pool restarts (Go `RestartEntryByContext`), so a
+    /// statement killer reset in between hands out a fresh one. `None`
+    /// leaves the context's own `cancel_ch`.
+    fn done(&self) -> Option<CancelChannel> {
+        None
+    }
 }
 
 /// A cancel signal source mirroring a Go `<-chan struct{}` that is closed

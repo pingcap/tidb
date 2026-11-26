@@ -193,7 +193,10 @@ impl StatementLifecycle<'_> {
         // Go `session.Txn(true)` -> `SetMemoryFootprintChangeHook`, once per
         // transaction buffer (`MemHookSet`).
         if !self.txn.buffer().memory_hook_is_set() {
-            if let Some(hook) = self.session.mem_db_footprint_hook() {
+            if let Some(hook) = self
+                .session
+                .mem_db_footprint_hook(self.txn.buffer().in_stmt_buf_cleanup())
+            {
                 self.txn.buffer().set_memory_footprint_change_hook(hook);
             }
         }

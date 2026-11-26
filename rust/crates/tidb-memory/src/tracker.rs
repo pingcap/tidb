@@ -181,6 +181,11 @@ impl ArbitrateHelper for TrackerArbitrationHelper {
     }
 
     fn finish(&self) {}
+
+    /// Go `memArbitrator.Done`: the killer's current kill-event channel.
+    fn done(&self) -> Option<CancelChannel> {
+        Some(CancelChannel::from_kill_event(self.killer.get_kill_event_chan()))
+    }
 }
 
 enum TrackerArbitrationBudget {
@@ -374,20 +379,35 @@ impl TrackerArbitration {
         true
     }
 
-    fn consume(&self, delta: i64) {
+    /// Go `Tracker.consume`'s arbitrator step. Without `enforce` (Go
+    /// `ReplaceBytesUsedForCleanup`) the usage is only accounted: the small
+    /// budget pulls nothing from upstream and never turns big, and the big
+    /// budget never grows.
+    fn consume(&self, delta: i64, enforce: bool) {
         let mut state = lock_unpoison(&self.budget);
         match &mut *state {
             TrackerArbitrationBudget::Small { used } => {
                 *used += delta;
                 let mut exhausted = self.arbitrator.get_await_free_budgets(self.uid, |small| {
                     small.report_heap_inuse(delta);
-                    small
-                        .budget
-                        .consume_quota(Self::now_unix_sec(), delta)
-                        .is_err()
+                    if enforce {
+                        return small
+                            .budget
+                            .consume_quota(Self::now_unix_sec(), delta)
+                            .is_err();
+                    }
+                    if delta > 0 {
+                        let now = Self::now_unix_sec();
+                        if small.budget.get_last_used_time_sec() != now {
+                            small.budget.set_last_used_time_sec(now);
+                        }
+                    }
+                    small.budget.used.fetch_add(delta, SeqCst);
+                    false
                 });
-                if *used > self.arbitrator.pool_alloc_profile().small_pool_limit
-                    || exhausted.take().unwrap_or(true)
+                if enforce
+                    && (*used > self.arbitrator.pool_alloc_profile().small_pool_limit
+                        || exhausted.take().unwrap_or(true))
                 {
                     let _ = self.transition_to_big(&mut state);
                 }
@@ -396,7 +416,7 @@ impl TrackerArbitration {
                 // Go `Tracker.Consume`: `addBigBudgetUsed(bs)`, and a grow
                 // only when a positive delta crosses the threshold.
                 big.used += delta;
-                if delta > 0 && big.used > big.grow_threshold && !self.grow_big_budget(big) {
+                if enforce && delta > 0 && big.used > big.grow_threshold && !self.grow_big_budget(big) {
                     self.helper.stop(ArbitratorStopReason::StandardCancel);
                 }
                 self.helper.heap_inuse.store(big.used, SeqCst);
@@ -560,7 +580,7 @@ impl Tracker {
             heap_inuse: AtomicI64::new(0),
         });
         let context = ArbitrationContext::new(
-            Some(CancelChannel::from_kill_event(killer.get_kill_event_chan())),
+            None,
             Some(helper.clone()),
             priority,
             wait_averse,
@@ -834,6 +854,12 @@ impl Tracker {
     /// and configured tracker actions remain identical to [`Self::consume`].
     #[must_use]
     pub fn consume_and_check_exceed(self: &Arc<Self>, bs: i64) -> bool {
+        self.consume_inner(bs, true)
+    }
+
+    /// Go `Tracker.consume`: `enforce` false accounts the bytes without
+    /// checking kill signals, running quota actions or reserving memory.
+    fn consume_inner(self: &Arc<Self>, bs: i64, enforce: bool) -> bool {
         if bs == 0 {
             return false;
         }
@@ -847,7 +873,7 @@ impl Tracker {
         loop {
             if tracker.has_arbitration.load(SeqCst) {
                 if let Some(arbitration) = lock_unpoison(&tracker.arbitration).as_ref() {
-                    arbitration.consume(bs);
+                    arbitration.consume(bs, enforce);
                 }
             }
             if tracker.is_root_tracker_of_sess.load(SeqCst) {
@@ -904,6 +930,9 @@ impl Tracker {
                         }
                     }
                 }
+            }
+            if !enforce {
+                return hard_limit_reached;
             }
             if let Some(root) = &session_root {
                 if root.kill_signal_transport() == KillSignalTransport::Panic {
@@ -1083,6 +1112,16 @@ impl Tracker {
     /// Go `ReplaceBytesUsed`.
     pub fn replace_bytes_used(self: &Arc<Self>, bytes: i64) {
         self.consume(bytes - self.bytes_consumed());
+    }
+
+    /// Go `ReplaceBytesUsedForCleanup`: reconciles previously allocated
+    /// memory during teardown. It updates accounting without checking kill
+    /// signals, running quota actions, or reserving additional memory from
+    /// the arbitrator. It must not be used to admit new allocations;
+    /// subsequent `consume` calls enforce limits as usual. Like
+    /// `replace_bytes_used`, concurrent replacements are not supported.
+    pub fn replace_bytes_used_for_cleanup(self: &Arc<Self>, bytes: i64) {
+        let _ = self.consume_inner(bytes - self.bytes_consumed(), false);
     }
 
     /// Go `Reset`: detach, zero consumption, drop children (label and limit
@@ -1454,6 +1493,190 @@ mod tests {
         assert_eq!(parent.bytes_consumed(), TRACK_MEM_WHEN_EXCEEDS);
         tracker.buffered_release(&mut buffered_release, TRACK_MEM_WHEN_EXCEEDS / 2);
         assert_eq!(parent.bytes_consumed(), 0);
+    }
+
+    // Go `TestReplaceBytesUsedForCleanup`.
+    #[test]
+    fn replace_bytes_used_for_cleanup() {
+        let previous_top = MEM_USAGE_TOP1_TRACKER.load();
+        MEM_USAGE_TOP1_TRACKER.compare_and_swap(previous_top.as_ref(), None);
+        let previous_min_size = super::super::SERVER_MEMORY_LIMIT_SESS_MIN_SIZE.swap(1, SeqCst);
+
+        let ancestor = Tracker::new(1, -1);
+        let root = Tracker::new(LABEL_FOR_SESSION, 100);
+        root.is_root_tracker_of_sess.store(true, SeqCst);
+        root.attach_to(&ancestor);
+        let leaf = Tracker::new(LABEL_FOR_MEM_DB, -1);
+        leaf.attach_to(&root);
+        let hard_action = MockAction::with_priority(0);
+        let soft_action = MockAction::with_priority(0);
+        root.set_action_on_exceed(Some(hard_action.clone()));
+        root.fallback_old_and_set_new_action_for_soft_limit(soft_action.clone());
+        root.killer.send_kill_signal(KillSignal::QueryInterrupted);
+
+        let no_panic = |f: &dyn Fn()| {
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)).expect("must not panic");
+        };
+        no_panic(&|| leaf.replace_bytes_used_for_cleanup(200));
+        for tracker in [&leaf, &root, &ancestor] {
+            assert_eq!(tracker.bytes_consumed(), 200);
+            assert_eq!(tracker.max_consumed(), 200);
+        }
+        assert_eq!(root.killer.get_kill_signal(), KillSignal::QueryInterrupted);
+        assert!(!hard_action.called());
+        assert!(!soft_action.called());
+        if !super::super::using_global_mem_arbitration() {
+            assert!(Arc::ptr_eq(&MEM_USAGE_TOP1_TRACKER.load().unwrap(), &root));
+        }
+
+        // Repeated and decreasing snapshots must not lose accounting or clear the kill.
+        no_panic(&|| {
+            leaf.replace_bytes_used_for_cleanup(80);
+            leaf.replace_bytes_used_for_cleanup(80);
+        });
+        for tracker in [&leaf, &root, &ancestor] {
+            assert_eq!(tracker.bytes_consumed(), 80);
+            assert_eq!(tracker.max_consumed(), 200);
+        }
+        let expected = root.killer.handle_signal().unwrap().to_string();
+        let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| leaf.consume(1)))
+            .expect_err("an ordinary consume panics with the pending kill");
+        assert_eq!(panicked.downcast_ref::<String>(), Some(&expected));
+        assert_eq!(root.killer.get_kill_signal(), KillSignal::QueryInterrupted);
+
+        // Cleanup must not disable checks for subsequent ordinary accounting calls.
+        root.killer.reset();
+        leaf.replace_bytes_used(201);
+        assert!(hard_action.called());
+        assert!(soft_action.called());
+        root.killer.send_kill_signal(KillSignal::QueryInterrupted);
+        no_panic(&|| leaf.replace_bytes_used_for_cleanup(40));
+        leaf.detach();
+        assert_eq!(leaf.bytes_consumed(), 40);
+        assert_eq!(root.bytes_consumed(), 0);
+        assert_eq!(ancestor.bytes_consumed(), 0);
+        assert_eq!(root.max_consumed(), 201);
+        assert_eq!(root.killer.get_kill_signal(), KillSignal::QueryInterrupted);
+
+        let top = MEM_USAGE_TOP1_TRACKER.load();
+        MEM_USAGE_TOP1_TRACKER.compare_and_swap(top.as_ref(), previous_top);
+        super::super::SERVER_MEMORY_LIMIT_SESS_MIN_SIZE.store(previous_min_size, SeqCst);
+    }
+
+    // Go `TestReplaceBytesUsedForCleanupWithMemArbitrator`.
+    #[test]
+    fn replace_bytes_used_for_cleanup_with_mem_arbitrator() {
+        struct Recorder;
+        impl crate::RecordMemState for Recorder {
+            fn load(&self) -> Result<Option<crate::RuntimeMemStateV1>, String> {
+                Ok(None)
+            }
+            fn store(&self, _: &crate::RuntimeMemStateV1) -> Result<(), String> {
+                Ok(())
+            }
+        }
+        let g = MemArbitrator::new(10 << 30, 4, 3, 0, Box::new(Recorder));
+        assert!(g.auto_run(
+            crate::MemArbitratorActions::default(),
+            crate::DEF_AWAIT_FREE_POOL_ALLOC_ALIGN_SIZE,
+            4,
+            crate::DEF_TASK_TICK_DUR,
+        ));
+        g.set_work_mode(crate::ArbitratorWorkMode::Standard);
+
+        let root = Tracker::new(LABEL_FOR_SESSION, -1);
+        root.is_root_tracker_of_sess.store(true, SeqCst);
+        root.session_id.store(12278, SeqCst);
+        let leaf = Tracker::new(LABEL_FOR_MEM_DB, -1);
+        leaf.attach_to(&root);
+        assert!(root.init_mem_arbitrator(
+            Arc::clone(&g),
+            Arc::clone(&root.killer),
+            crate::ArbitrationPriority::Medium,
+            false,
+            0,
+            "",
+        ));
+        let m = lock_unpoison(&root.arbitration).clone().unwrap();
+        let small_capacity = || {
+            g.get_await_free_budgets(m.uid, |small| small.budget.approx_capacity())
+                .unwrap()
+        };
+        let small_used = || match &*lock_unpoison(&m.budget) {
+            TrackerArbitrationBudget::Small { used } => Some(*used),
+            TrackerArbitrationBudget::Big(_) => None,
+        };
+        let big = || match &*lock_unpoison(&m.budget) {
+            TrackerArbitrationBudget::Big(big) => Some((big.used, big.capacity)),
+            TrackerArbitrationBudget::Small { .. } => None,
+        };
+        let no_panic = |f: &dyn Fn()| {
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)).expect("must not panic");
+        };
+        let capacity = small_capacity();
+        root.killer.send_kill_signal(KillSignal::QueryInterrupted);
+        no_panic(&|| leaf.replace_bytes_used_for_cleanup(1));
+        assert_eq!(small_capacity(), capacity);
+
+        // Accounting can cross a budget boundary during cleanup without attempting
+        // reservation or small-to-big conversion, both of which can interrupt cleanup.
+        let used = g.pool_alloc_profile().small_pool_limit + 1;
+        let last_used_time = TrackerArbitration::now_unix_sec();
+        no_panic(&|| leaf.replace_bytes_used_for_cleanup(used));
+        assert_eq!(small_used(), Some(used));
+        assert_eq!(leaf.bytes_consumed(), used);
+        assert_eq!(root.bytes_consumed(), used);
+        assert_eq!(small_capacity(), capacity);
+        assert!(
+            g.get_await_free_budgets(m.uid, |small| small.budget.get_last_used_time_sec())
+                .unwrap()
+                >= last_used_time
+        );
+        assert_eq!(root.killer.get_kill_signal(), KillSignal::QueryInterrupted);
+
+        root.killer.reset();
+        leaf.consume(1);
+        assert_eq!(small_used(), None);
+        let (big_used, big_capacity) = big().unwrap();
+        assert_eq!(big_used, used + 1);
+        // Go `RestartEntryByContext` takes `Done()` as the pool turns big: the
+        // killer's channel after the reset, which the next kill closes.
+        let cancel = g
+            .get_root_pool_entry(m.uid)
+            .unwrap()
+            .ctx
+            .cancel_ch
+            .lock()
+            .unwrap()
+            .clone()
+            .expect("the killer's kill-event channel");
+        assert!(!cancel.is_closed());
+
+        let used = big_capacity + 1;
+        leaf.replace_bytes_used_for_cleanup(used);
+        assert_eq!(big(), Some((used, big_capacity)));
+        assert_eq!(root.bytes_consumed(), used);
+        leaf.consume(1);
+        let (big_used, grown) = big().unwrap();
+        assert!(grown > big_capacity);
+        assert_eq!(big_used, used + 1);
+
+        root.killer.send_kill_signal(KillSignal::QueryInterrupted);
+        assert!(cancel.is_closed());
+        root.killer.reset();
+
+        leaf.replace_bytes_used_for_cleanup(0);
+        assert_eq!(big().unwrap().0, 0);
+        assert_eq!(root.bytes_consumed(), 0);
+        assert!(root.detach_mem_arbitrator(true));
+        leaf.replace_bytes_used_for_cleanup(1);
+        assert_eq!(big().unwrap().0, 0);
+        assert_eq!(root.bytes_consumed(), 1);
+
+        leaf.replace_bytes_used_for_cleanup(0);
+        leaf.detach();
+        g.set_work_mode(crate::ArbitratorWorkMode::Disable);
+        assert!(g.stop());
     }
 
     // Go `TestOOMAction`.

@@ -222,6 +222,11 @@ impl NativeMemBuffer {
 #[derive(Clone, Default)]
 pub struct MutationBuffer {
     state: Arc<Mutex<BufferState>>,
+    /// Go `LazyTxn.inStmtBufCleanup`: the statement-buffer owner sets this
+    /// only while the cleanup synchronously reports its memory footprint.
+    /// The cleanup must reconcile accounting without another cancellation
+    /// or quota action interrupting the rollback.
+    in_stmt_buf_cleanup: Arc<std::sync::atomic::AtomicBool>,
 }
 
 #[derive(Default)]
@@ -804,6 +809,10 @@ impl MutationBuffer {
             .memdb
             .write(|buffer| buffer.set_memory_footprint_change_hook(hook));
     }
+    /// Go `LazyTxn.inStmtBufCleanup`, shared with the footprint hook.
+    pub fn in_stmt_buf_cleanup(&self) -> Arc<std::sync::atomic::AtomicBool> {
+        Arc::clone(&self.in_stmt_buf_cleanup)
+    }
     /// Go `txn.MemHookSet`.
     pub fn memory_hook_is_set(&self) -> bool {
         self.state().memdb.read(|buffer| buffer.memory_hook_is_set())
@@ -837,6 +846,17 @@ impl MutationBuffer {
             state.hints.clear();
             return;
         }
+        // Go `cleanupStmtBuf`: the flag holds while the cleanup (here also
+        // the presumption marks it takes back) reports its footprint, and
+        // goes back to what it was, as Go's defer.
+        struct Restore<'a>(&'a std::sync::atomic::AtomicBool, bool);
+        impl Drop for Restore<'_> {
+            fn drop(&mut self) {
+                self.0.store(self.1, std::sync::atomic::Ordering::SeqCst);
+            }
+        }
+        let flag = &*self.in_stmt_buf_cleanup;
+        let _restore = Restore(flag, flag.swap(true, std::sync::atomic::Ordering::SeqCst));
         if checkpoint.native == 0 {
             state.memdb.reset();
         } else {

@@ -3319,8 +3319,15 @@ impl Session {
     /// Go `session.SetMemoryFootprintChangeHook`'s hook: the footprint
     /// tracker (made on first use, attached to the session tracker) holds the
     /// buffer's size; `None` when `TxnTotalSizeLimit` is not the default, as
-    /// Go leaves the old size-limit mechanism alone then.
-    pub(crate) fn mem_db_footprint_hook(&self) -> Option<Arc<dyn Fn(u64) + Send + Sync>> {
+    /// Go leaves the old size-limit mechanism alone then. While the buffer's
+    /// `in_stmt_buf_cleanup` holds, the size is reconciled without
+    /// enforcement: ART can report previously unaccounted node allocations
+    /// during cleanup; later statements use the live hook and normal memory
+    /// enforcement.
+    pub(crate) fn mem_db_footprint_hook(
+        &self,
+        in_stmt_buf_cleanup: Arc<std::sync::atomic::AtomicBool>,
+    ) -> Option<Arc<dyn Fn(u64) + Send + Sync>> {
         if tidb_txnkv::txn_total_size_limit() != tidb_txnkv::DEFAULT_TXN_TOTAL_SIZE_LIMIT {
             return None;
         }
@@ -3333,7 +3340,12 @@ impl Session {
                 tracker.attach_to(&session);
                 tracker
             });
-            tracker.replace_bytes_used(i64::try_from(memory).unwrap_or(i64::MAX));
+            let memory = i64::try_from(memory).unwrap_or(i64::MAX);
+            if in_stmt_buf_cleanup.load(std::sync::atomic::Ordering::SeqCst) {
+                tracker.replace_bytes_used_for_cleanup(memory);
+            } else {
+                tracker.replace_bytes_used(memory);
+            }
         }))
     }
 

@@ -31290,3 +31290,93 @@ fn test_correlated_column_path_not_pruned_by_risk() {
         ]
     );
 }
+
+/// Go `TestPanicOnStmtRollbackKilledTxn` (`pkg/session/test/txn/txn_test.go`):
+/// a statement rollback reconciles the buffer's footprint with a kill
+/// pending, keeps the kill reason, and leaves later writes under the quota.
+#[test]
+fn test_panic_on_stmt_rollback_killed_txn() {
+    use tidb_sqlkiller::KillSignal;
+    use tidb_txnkv::Key;
+    let (stack, _users) = cop_backed_stack();
+    for signal in [
+        KillSignal::UnspecifiedKillSignal,
+        KillSignal::QueryInterrupted,
+        KillSignal::QueryMemoryExceeded,
+    ] {
+        let mut session = stack.factory.open_session(session_context(84)).expect("session opens");
+        rows(&mut session, "use test");
+        rows(&mut session, "drop table if exists t_stmt_rollback");
+        rows(&mut session, "create table t_stmt_rollback(id int primary key, v mediumblob)");
+        rows(&mut session, "begin pessimistic");
+        rows(&mut session, "insert into t_stmt_rollback values(1, 'first statement')");
+        let buf = session.node.as_ref().unwrap().txn.buffer().clone();
+        let killer = session.sql_killer();
+        let footprint = session.mem_db_footprint().expect("the footprint tracker");
+        let mem = || i64::try_from(buf.memory_footprint()).unwrap();
+
+        // This value belongs to the current statement, while the SQL insert above
+        // has already been released into the transaction's previous statements.
+        let savepoint = buf.checkpoint();
+        let staged_key = Key::from(b"stmt-rollback-value".to_vec());
+        buf.set(staged_key.clone(), b"discard me".to_vec()).unwrap();
+        assert_eq!(mem(), footprint.bytes_consumed());
+
+        // Flags-only writes grow the ART node arena without notifying the memory
+        // tracker through the value arena. Cleanup must account for that positive
+        // delta even when a kill signal is pending.
+        for i in 0..1024 {
+            let key = format!("stmt-rollback-flags-{i:04}-{}", "x".repeat(128));
+            buf.mark_presume_key_not_exists(&Key::from(key.into_bytes()));
+        }
+        assert!(mem() > footprint.bytes_consumed(), "{} {}", mem(), footprint.bytes_consumed());
+        if signal != KillSignal::UnspecifiedKillSignal {
+            killer.send_kill_signal(signal);
+        }
+        // The session tracker's quota action must not fire on the cleanup.
+        let session_tracker = Arc::clone(session.session_memory.session_tracker());
+        let limit = session_tracker.get_bytes_limit();
+        session_tracker.set_bytes_limit(1);
+        session_tracker.set_action_on_exceed(Some(Arc::new(tidb_memory::PanicOnExceed::new(
+            Arc::clone(&killer),
+        ))));
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| buf.restore(savepoint)))
+            .expect("the statement rollback does not panic");
+        session_tracker.set_bytes_limit(limit);
+        assert_eq!(killer.get_kill_signal(), signal);
+        assert_eq!(mem(), footprint.bytes_consumed());
+        assert_eq!(buf.get(&staged_key), None);
+
+        // Reset only when starting the next command. Statement rollback must
+        // preserve the kill reason and keep tracking the surviving transaction.
+        killer.reset();
+        let before = footprint.bytes_consumed();
+        rows(&mut session, "insert into t_stmt_rollback values(2, repeat('x', 131072))");
+        assert!(footprint.bytes_consumed() > before);
+        assert_eq!(mem(), footprint.bytes_consumed());
+
+        // A later write must still enforce the quota; cleanup must not leave the
+        // memory hook disabled for the remainder of this explicit transaction.
+        let savepoint = buf.checkpoint();
+        session_tracker.set_bytes_limit(session_tracker.bytes_consumed() + 4096);
+        session_tracker.set_action_on_exceed(Some(Arc::new(tidb_memory::PanicOnExceed::new(
+            Arc::clone(&killer),
+        ))));
+        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _ = buf.set(staged_key.clone(), vec![b'x'; 1 << 20]);
+        }));
+        r.expect_err("the write past the quota panics");
+        assert_eq!(killer.get_kill_signal(), KillSignal::QueryMemoryExceeded);
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| buf.restore(savepoint)))
+            .expect("the statement rollback does not panic");
+        assert_eq!(mem(), footprint.bytes_consumed());
+        session_tracker.set_bytes_limit(limit);
+        session_tracker.set_action_on_exceed(None);
+        killer.reset();
+        rows(&mut session, "commit");
+        assert_eq!(
+            displayed(rows(&mut session, "select id, length(v) from t_stmt_rollback order by id")),
+            [["1", "15"], ["2", "131072"]]
+        );
+    }
+}

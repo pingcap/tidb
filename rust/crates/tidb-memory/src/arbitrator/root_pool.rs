@@ -121,7 +121,10 @@ impl MemArbitrator {
                     entry.ctx.prefer_privilege.store(c.prefer_privilege, SeqCst);
                     entry.ctx.mem_priority.store(c.mem_priority as i32, SeqCst);
                 }
-                *entry.ctx.cancel_ch.lock().unwrap() = c.cancel_ch.clone();
+                *entry.ctx.cancel_ch.lock().unwrap() = c
+                    .helper()
+                    .and_then(|helper| helper.done())
+                    .or_else(|| c.cancel_ch.clone());
                 entry.ctx.wait_averse.store(c.wait_averse, SeqCst);
             }
             None => {
