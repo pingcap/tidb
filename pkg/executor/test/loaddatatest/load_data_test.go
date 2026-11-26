@@ -569,9 +569,13 @@ func TestLoadDataForeignKeys(t *testing.T) {
 	tk.MustExec("set tidb_constraint_check_in_place_pessimistic = on")
 	tk.MustExec("begin pessimistic")
 	tk.MustExec("insert into referenced values (6)")
+	// A SQL savepoint with the default internal name must survive the failed attempt.
+	userSavepoint := fmt.Sprintf("fk_sp_%d", tk.Session().GetSessionVars().TxnCtx.StartTS)
+	tk.MustExec("savepoint " + userSavepoint)
 	injectLockResult := func(t *testing.T, inject func(*error)) {
 		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/afterPessimisticDMLLock", func(sctx sessionctx.Context, err *error) {
 			if sctx.GetSessionVars() == tk.Session().GetSessionVars() {
+				require.NotEmpty(t, sctx.GetSessionVars().StmtCtx.ForeignKeyTriggerCtx.SavepointName)
 				inject(err)
 			}
 		})
@@ -583,6 +587,8 @@ func TestLoadDataForeignKeys(t *testing.T) {
 		setInput("2\t5\n")
 		require.ErrorContains(t, tk.ExecToErr(load+"replace into table parent"), "injected final lock failure")
 	})
+	require.Empty(t, tk.Session().GetSessionVars().StmtCtx.ForeignKeyTriggerCtx.SavepointName)
+	tk.MustExec("release savepoint " + userSavepoint)
 	tk.MustExec("commit")
 	tk.MustQuery("table parent").Check(testkit.Rows("1 5"))
 	tk.MustQuery("table child").Check(testkit.Rows("1"))
@@ -600,6 +606,7 @@ func TestLoadDataForeignKeys(t *testing.T) {
 		})
 		tk.MustExec("replace into parent select id + 1, u from parent")
 		require.GreaterOrEqual(t, attempts, 2)
+		require.Empty(t, tk.Session().GetSessionVars().StmtCtx.ForeignKeyTriggerCtx.SavepointName)
 	})
 	tk.MustExec("commit")
 	tk.MustQuery("table parent").Check(testkit.Rows("2 5"))
