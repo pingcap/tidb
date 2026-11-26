@@ -161,3 +161,82 @@ fn parquet_matches_go_capture() {
     }
     assert_eq!(checked, 18);
 }
+
+/// Go `TestParquetParser`'s `dictionary_encoded_decimal` (#70365): enough
+/// repeated rows that the writer keeps the dictionary page, so every row
+/// decodes from one shared buffer, which the decimal conversion must not
+/// consume in place.
+#[test]
+fn dictionary_encoded_decimal() {
+    use parquet::data_type::{ByteArray, ByteArrayType, FixedLenByteArray, FixedLenByteArrayType};
+    use parquet::file::properties::WriterProperties;
+    use parquet::file::writer::SerializedFileWriter;
+    const ROWS: usize = 256;
+    let schema = Arc::new(
+        parquet::schema::parser::parse_message_type(
+            "message schema {
+                optional binary positive (DECIMAL(9,2));
+                optional binary negative (DECIMAL(9,2));
+                optional fixed_len_byte_array(4) fixed_len (DECIMAL(9,2));
+                optional binary oversized (DECIMAL(75,2));
+            }",
+        )
+        .unwrap(),
+    );
+    let mut oversized = vec![0x00, 0x01];
+    oversized.extend([0u8; 31]); // 2^248
+    let byte_arrays: [Vec<u8>; 2] = [vec![0x30, 0x39], vec![0xcf, 0xc7]]; // 12345, -12345
+    let mut data = Vec::new();
+    {
+        // parquet-rs dictionary-encodes FIXED_LEN_BYTE_ARRAY only under the
+        // 2.0 writer version.
+        let props = Arc::new(
+            WriterProperties::builder()
+                .set_writer_version(parquet::file::properties::WriterVersion::PARQUET_2_0)
+                .set_dictionary_enabled(true)
+                .build(),
+        );
+        let mut writer = SerializedFileWriter::new(&mut data, schema, props).unwrap();
+        let mut group = writer.next_row_group().unwrap();
+        let levels = vec![1i16; ROWS];
+        for (index, value) in byte_arrays.iter().chain(std::iter::once(&oversized)).enumerate() {
+            if index == 2 {
+                let mut column = group.next_column().unwrap().unwrap();
+                let values = vec![FixedLenByteArray::from(vec![0x00, 0x00, 0x30, 0x39]); ROWS];
+                column.typed::<FixedLenByteArrayType>().write_batch(&values, Some(&levels), None).unwrap();
+                column.close().unwrap();
+            }
+            let mut column = group.next_column().unwrap().unwrap();
+            let values = vec![ByteArray::from(value.clone()); ROWS];
+            column.typed::<ByteArrayType>().write_batch(&values, Some(&levels), None).unwrap();
+            column.close().unwrap();
+        }
+        group.close().unwrap();
+        writer.close().unwrap();
+    }
+    let reader = parquet::file::reader::SerializedFileReader::new(bytes::Bytes::from(data.clone())).unwrap();
+    use parquet::file::reader::FileReader as _;
+    for column in reader.metadata().row_group(0).columns() {
+        assert!(column.dictionary_page_offset().is_some(), "{} is not dictionary encoded", column.column_path());
+    }
+
+    let ctx = Context::background();
+    let store = Arc::new(tidb_objstore::MemStorage::new());
+    store.write_file(&ctx, "f.parquet", &data).unwrap();
+    let store: Arc<dyn Storage> = store;
+    let mut parser = Parser::new(&ctx, store, "f.parquet", data.len() as i64, FileMeta::default()).unwrap();
+    let expected = [
+        "123.45",
+        "-123.45",
+        "123.45",
+        "4523128485832663883733241601901871400518358776001584532791311875309106626.56",
+    ];
+    for _ in 0..ROWS {
+        assert!(parser.read_row().unwrap());
+        let row = &parser.last_row().row;
+        assert_eq!(row.len(), expected.len());
+        for (datum, want) in row.iter().zip(expected) {
+            assert_eq!(String::from_utf8_lossy(&datum.sql_bytes().unwrap()), want);
+        }
+    }
+}
