@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
@@ -131,19 +132,19 @@ func MaterializeVirtualColumnsInTiFlashScan(ts *PhysicalTableScan) (exprs []expr
 	if len(ts.Columns) != len(schema.Columns) {
 		return nil, nil, false
 	}
-	exprs = make([]expression.Expression, len(schema.Columns))
+	exprs = make([]expression.Expression, 0, len(schema.Columns))
 	computed := make([]bool, len(schema.Columns))
 	anyComputed := false
 	for i, col := range schema.Columns {
-		exprs[i] = col
-		if col.VirtualExpr == nil {
-			continue
+		var expr expression.Expression = col
+		if col.VirtualExpr != nil {
+			if newExpr, ok := virtualColumnTiFlashExpr(sctx, col); ok {
+				expr = newExpr
+				computed[i] = true
+				anyComputed = true
+			}
 		}
-		if newExpr, ok := virtualColumnTiFlashExpr(sctx, col); ok {
-			exprs[i] = newExpr
-			computed[i] = true
-			anyComputed = true
-		}
+		exprs = append(exprs, expr)
 	}
 	if !anyComputed {
 		return nil, nil, false
@@ -373,7 +374,31 @@ func VirtualExprPreservesValue(ctx expression.EvalContext, col *expression.Colum
 		return false
 	}
 	exprLen, colLen := exprTp.GetFlen(), colTp.GetFlen()
-	return exprLen != types.UnspecifiedLength && colLen != types.UnspecifiedLength && exprLen <= colLen
+	if exprLen == types.UnspecifiedLength || colLen == types.UnspecifiedLength {
+		return false
+	}
+	// A TEXT/BLOB column's length is in bytes, while a VARCHAR expression's is in
+	// characters - unless it only reads TEXT/BLOB columns, whose byte lengths
+	// it inherits (lower(text) is var_string(65535)). Compare bytes then.
+	if types.IsTypeBlob(colTp.GetType()) && !types.IsTypeBlob(exprTp.GetType()) && !readsOnlyBlobStrings(col.VirtualExpr) {
+		cs, err := charset.GetCharsetInfo(exprTp.GetCharset())
+		if err != nil {
+			return false
+		}
+		return exprLen*cs.Maxlen <= colLen
+	}
+	return exprLen <= colLen
+}
+
+// readsOnlyBlobStrings reports whether every string column expr reads is a
+// TEXT/BLOB column.
+func readsOnlyBlobStrings(expr expression.Expression) bool {
+	for _, c := range expression.ExtractColumns(expr) {
+		if c.RetType.EvalType() == types.ETString && !types.IsTypeBlob(c.RetType.GetType()) {
+			return false
+		}
+	}
+	return true
 }
 
 // PhysPlanPartInfo indicates partition helper info in physical plan.

@@ -335,10 +335,16 @@ func (t *MppTask) ConvertToRootTaskImpl(ctx base.PlanContext) (rt *RootTask) {
 	if len(t.RootTaskConds) > 0 {
 		// Some Filter cannot be pushed down to TiFlash, need to add Selection in rootTask,
 		// so this Selection will be executed in TiDB.
-		_, isTableScan := t.p.(*PhysicalTableScan)
-		_, isSelection := t.p.(*PhysicalSelection)
+		scanPlan := t.p
+		// The Projection that computes virtual columns above the scan (see
+		// MaterializeVirtualColumnsInTiFlashScan) is part of the scan too.
+		if proj, ok := scanPlan.(*PhysicalProjection); ok && proj.MaterializesVirtualColumns {
+			scanPlan = proj.Children()[0]
+		}
+		_, isTableScan := scanPlan.(*PhysicalTableScan)
+		_, isSelection := scanPlan.(*PhysicalSelection)
 		if isSelection {
-			_, isTableScan = t.p.Children()[0].(*PhysicalTableScan)
+			_, isTableScan = scanPlan.Children()[0].(*PhysicalTableScan)
 		}
 		if !isTableScan {
 			// Need to make sure oriTaskPlan is TableScan, because rootTaskConds is part of TableScan.FilterCondition.

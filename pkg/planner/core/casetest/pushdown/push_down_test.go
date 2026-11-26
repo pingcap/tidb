@@ -365,14 +365,21 @@ func TestGeneratedColumnIndexForValuePreservingExpr(t *testing.T) {
   label_lower varchar(64) generated always as (lower(label)) virtual,
   txt_lower_short varchar(2) generated always as (lower(txt)) virtual,
   txt_lower_nn text generated always as (lower(txt)) virtual not null,
+  s varchar(100), s_lower_tiny tinytext generated always as (lower(s)) virtual,
+  s10 varchar(10), s10_lower_tiny tinytext generated always as (lower(s10)) virtual,
   primary key (k, id) clustered,
   key ix_txt (k, typ, txt_lower(10)),
   key ix_label (k, label_lower),
   key ix_short (k, txt_lower_short),
-  key ix_nn (k, txt_lower_nn(10)))`)
+  key ix_nn (k, txt_lower_nn(10)),
+  key ix_tiny (k, s_lower_tiny(20)),
+  key ix_tiny10 (k, s10_lower_tiny(20)))`)
 	tk.MustExec("set @@sql_mode = ''")
 	tk.MustExec(`insert into t (k, id, typ, txt, label) values ('t1', 1, 'a', 'AcmeCorp', 'Alpha'), ('t1', 2, 'a', 'Beijing', 'BETA'),
   ('t1', 3, 'b', 'acmecorp', 'alpha'), ('t1', 4, 'a', NULL, 'Gamma')`)
+	// 100 four-byte characters are 400 bytes: s_lower_tiny (TINYTEXT, 255 bytes)
+	// holds a truncated value.
+	tk.MustExec(`insert into t (k, id, typ, txt, label, s, s10) values ('t1', 5, 'c', 'x', 'Delta', repeat(_utf8mb4 0xF09F9880, 100), 'Ab')`)
 	tk.MustExec("set @@sql_mode = default")
 	require.Equal(t, "0", tk.MustQuery("select @@tidb_enable_unsafe_substitute").Rows()[0][0])
 
@@ -385,7 +392,9 @@ func TestGeneratedColumnIndexForValuePreservingExpr(t *testing.T) {
 		return ""
 	}
 	// lower(text) is var_string(65535) and txt_lower is TEXT: not the same type,
-	// but the column always equals the expression, so the index is usable.
+	// but the column equals the expression unless lower() grows a value past
+	// TEXT's byte limit (a row written in non-strict mode, or that existed when
+	// the column was added), so the index is usable.
 	sql := "select /*+ use_index(t, ix_txt) */ id from t where k = 't1' and typ = 'a' and lower(txt) = 'acmecorp'"
 	require.Contains(t, rangeOf(sql), `index:ix_txt(k, typ, txt_lower) range:["t1" "a" "acmecorp","t1" "a" "acmecorp"]`)
 	tk.MustQuery(sql).Check(testkit.Rows("1"))
@@ -407,4 +416,12 @@ func TestGeneratedColumnIndexForValuePreservingExpr(t *testing.T) {
 	tk.MustQuery(sql).Check(testkit.Rows("4"))
 	tk.MustQuery("select /*+ use_index(t, primary) */ id from t where k = 't1' and txt_lower_nn = ''").Check(testkit.Rows("4"))
 	tk.MustQuery("select /*+ use_index(t, primary) */ id from t where k = 't1' and txt_lower_nn is null").Check(testkit.Rows())
+	// lower(varchar(100)) is up to 400 bytes in utf8mb4, more than TINYTEXT holds,
+	// so ix_tiny must not answer it; lower(varchar(10)) fits in 40 bytes.
+	sql = "select /*+ use_index(t, ix_tiny) */ id from t where k = 't1' and lower(s) = repeat(_utf8mb4 0xF09F9880, 100)"
+	require.NotContains(t, rangeOf(sql), "ix_tiny(k, s_lower_tiny) range:[\"t1\" ")
+	tk.MustQuery(sql).Check(testkit.Rows("5"))
+	sql = "select /*+ use_index(t, ix_tiny10) */ id from t where k = 't1' and lower(s10) = 'ab'"
+	require.Contains(t, rangeOf(sql), `index:ix_tiny10(k, s10_lower_tiny) range:["t1" "ab","t1" "ab"]`)
+	tk.MustQuery(sql).Check(testkit.Rows("5"))
 }
