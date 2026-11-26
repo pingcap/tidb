@@ -1124,23 +1124,36 @@ func mapAvgDependencies(
 	countStarIdx int,
 	argNotNullByOffset map[int]bool,
 ) (map[int][3]int, error) {
+	type avgArgDependencies struct {
+		sumIdx   int
+		countIdx int
+	}
+	dependenciesByArg := make(map[string]avgArgDependencies)
+	for i, ac := range aggCols {
+		deps, exists := dependenciesByArg[ac.info.ArgColName]
+		if !exists {
+			deps = avgArgDependencies{sumIdx: -1, countIdx: -1}
+		}
+		switch ac.info.Kind {
+		case AggSum:
+			if deps.sumIdx < 0 {
+				deps.sumIdx = i
+			}
+		case AggCount:
+			if deps.countIdx < 0 {
+				deps.countIdx = i
+			}
+		}
+		dependenciesByArg[ac.info.ArgColName] = deps
+	}
+
 	avgDeps := make(map[int][3]int)
 	for i, ac := range aggCols {
 		if ac.info.Kind != AggAvg {
 			continue
 		}
-		sumIdx, countIdx := -1, -1
-		for j, candidate := range aggCols {
-			if candidate.info.ArgColName != ac.info.ArgColName {
-				continue
-			}
-			if sumIdx < 0 && candidate.info.Kind == AggSum {
-				sumIdx = j
-			}
-			if countIdx < 0 && candidate.info.Kind == AggCount {
-				countIdx = j
-			}
-		}
+		deps := dependenciesByArg[ac.info.ArgColName]
+		sumIdx, countIdx := deps.sumIdx, deps.countIdx
 		if countIdx < 0 && argNotNullByOffset[ac.info.MVOffset] {
 			countIdx = countStarIdx
 		}

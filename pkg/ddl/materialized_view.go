@@ -1812,9 +1812,6 @@ func validateCreateMaterializedViewQuery(
 				return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStack("CREATE MATERIALIZED VIEW does not support DISTINCT aggregate function")
 			}
 			aggFunc := strings.ToLower(expr.F)
-			if aggFunc != ast.AggFuncCount && aggFunc != ast.AggFuncSum && aggFunc != ast.AggFuncMin && aggFunc != ast.AggFuncMax && aggFunc != ast.AggFuncAvg {
-				return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStack("unsupported aggregate function in CREATE MATERIALIZED VIEW: agg %s", expr.F)
-			}
 			switch aggFunc {
 			case ast.AggFuncCount:
 				if len(expr.Args) != 1 {
@@ -1879,6 +1876,8 @@ func validateCreateMaterializedViewQuery(
 					hasMinOrMax = true
 				}
 				usedCols[colName] = struct{}{}
+			default:
+				return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStack("unsupported aggregate function in CREATE MATERIALIZED VIEW: agg %s", expr.F)
 			}
 		default:
 			return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStack("unsupported SELECT expression in CREATE MATERIALIZED VIEW")

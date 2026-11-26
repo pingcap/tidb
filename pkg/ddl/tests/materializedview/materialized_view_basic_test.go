@@ -77,6 +77,8 @@ func TestCreateMaterializedViewValidationCoverage(t *testing.T) {
 	require.ErrorContains(t, err, "must contain count(*)/count(1)")
 	err = tk.ExecToErr("create materialized view mv_avg (a, avgv, cnt) as select a, avg(b), count(1) from t_mv_validation group by a")
 	require.ErrorContains(t, err, "unsupported aggregate function")
+	err = tk.ExecToErr("create materialized view mv_bit_or (a, bit_or_b, cnt) as select a, bit_or(b), count(1) from t_mv_validation group by a")
+	require.ErrorContains(t, err, "unsupported aggregate function in CREATE MATERIALIZED VIEW: agg bit_or")
 	err = tk.ExecToErr("create materialized view mv_rand (a, cnt) as select a, count(1) from t_mv_validation where rand() > 0 group by a")
 	require.ErrorContains(t, err, "WHERE clause must be deterministic")
 

@@ -254,6 +254,30 @@ func TestBuildAvgUsesCountStarForNotNullArg(t *testing.T) {
 	}
 	require.True(t, hasAvg)
 	require.True(t, hasSum)
+
+	t.Run("first matching SUM and COUNT", func(t *testing.T) {
+		mv.Columns = append(mv.Columns,
+			mkCol(5, "cnt_b", 4, mysql.TypeLonglong),
+			mkCol(6, "sum_b_again", 5, mysql.TypeNewDecimal),
+			mkCol(7, "cnt_b_again", 6, mysql.TypeLonglong),
+			mkCol(8, "avg_b_again", 7, mysql.TypeNewDecimal),
+		)
+		mv.MaterializedView.SQLContent = "select a, count(1), avg(t.B), sum(b), count(b), sum(t.b), count(t.b), avg(b) from t group by a"
+		res, err := mview.Build(sctx.GetPlanCtx(), is, mv, mview.BuildOptions{FromTS: 10}, nil)
+		require.NoError(t, err)
+		avgCount := 0
+		for _, ai := range res.AggInfos {
+			if ai.Kind == mview.AggAvg {
+				avgCount++
+				requireDependencies(t, ai, []int{res.DeltaColumnCount + 3, res.DeltaColumnCount + 4, res.DeltaColumnCount + 1})
+			}
+			if ai.Kind == mview.AggSum && ai.MVOffset == 3 {
+				require.Len(t, ai.Dependencies, 2)
+				require.Equal(t, res.DeltaColumnCount+4, ai.Dependencies[1])
+			}
+		}
+		require.Equal(t, 2, avgCount)
+	})
 }
 
 func TestBuildCountExprSumExpr(t *testing.T) {
