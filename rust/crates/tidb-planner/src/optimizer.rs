@@ -563,6 +563,11 @@ pub fn physical_optimize<C: OptimizeContext>(
     .with_opt_prefix_index_single_scan(ctx.opt_prefix_index_single_scan())
     .with_allow_prefer_range_scan(ctx.allow_prefer_range_scan())
     .with_range_max_count(ctx.range_max_count())
+    // Go `compareCandidates`: `fixcontrol.GetIntWithDefault(..., Fix45132, 1000)`.
+    .with_index_join_skyline_threshold(
+        ctx.optimizer_fix_control()
+            .get_int_with_default(tidb_fixcontrol::FIX_45132, 1000) as f64,
+    )
     .with_prefer_index_merge_by_fix_control(
         ctx.optimizer_fix_control()
             .get_bool_with_default(tidb_fixcontrol::FIX_52869, false),

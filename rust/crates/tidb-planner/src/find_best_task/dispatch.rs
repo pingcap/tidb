@@ -173,8 +173,9 @@ pub struct DispatchContext<'a> {
     /// Go fix 52592 disables both conversions when enabled by the session.
     pub enable_point_get_conversion: bool,
     /// Go `fixcontrol.Fix45132`: the row-count ratio at which skyline pruning
-    /// prefers one IndexJoin inner access path over another. A non-positive
-    /// value disables the empirical rule, matching Go's fix-control getter.
+    /// prefers one access path over another, for DataSource and IndexJoin
+    /// inner paths alike. A non-positive value disables the empirical rule,
+    /// matching Go's fix-control getter.
     pub index_join_skyline_threshold: f64,
     /// Go `SessionVars.RangeMaxCount`, read by `compareEqOrIn`.
     pub range_max_count: i64,

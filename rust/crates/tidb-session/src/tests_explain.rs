@@ -1290,6 +1290,36 @@ fn test_issue72561() {
     }
 }
 
+/// Go `TestFixControl45132` (`casetest/integration_test.go`): skyline
+/// pruning's row-count-ratio rule reads its threshold from
+/// `tidb_opt_fix_control` 45132 (default 1000; 0 disables it).
+#[test]
+fn test_fix_control_45132() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE t (a INT, b INT, KEY(a))").unwrap();
+    // count(1) : count(2) == 100 : 1
+    let values = std::iter::repeat_n("(1, 1)", 100).chain(["(2, 2)"]).collect::<Vec<_>>().join(",");
+    session.run(&format!("INSERT INTO t VALUES {values}")).unwrap();
+    for _ in 0..7 {
+        session.run("INSERT INTO t SELECT * FROM t").unwrap();
+    }
+    session.run("ANALYZE TABLE t").unwrap();
+    let query = "SELECT * FROM t WHERE a=2";
+    // The cost model prefers TableScan to IndexLookup's double requests.
+    let plan = brief_plan_text(&mut session, query);
+    assert!(plan.contains("TableFullScan"), "{plan}");
+    session.run(r#"SET @@tidb_opt_fix_control = "45132:99""#).unwrap();
+    session.run("ANALYZE TABLE t").unwrap();
+    let plan = brief_plan_text(&mut session, query);
+    assert!(plan.contains("IndexLookUp"), "{plan}");
+    session.run(r#"SET @@tidb_opt_fix_control = "45132:500""#).unwrap();
+    let plan = brief_plan_text(&mut session, query);
+    assert!(plan.contains("TableFullScan"), "{plan}");
+    session.run(r#"SET @@tidb_opt_fix_control = "45132:0""#).unwrap();
+    let plan = brief_plan_text(&mut session, query);
+    assert!(plan.contains("TableFullScan"), "{plan}");
+}
+
 /// Go `TestSkylinePruningWithMissingIndexStats` (`casetest/index`): only
 /// idx_id has statistics, and it is much more selective than idx_abc.
 #[test]
