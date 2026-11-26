@@ -1225,6 +1225,71 @@ fn test_issue71999() {
     }
 }
 
+/// Go `TestIssue72561`: a non-covering index without statistics, whose
+/// access column has no statistics either, must not prune the full table
+/// scan when its own estimate reads most of the table.
+#[test]
+fn test_issue72561() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE t (id BIGINT PRIMARY KEY, a INT, payload VARCHAR(200))").unwrap();
+    session.run("SET @@tidb_analyze_version = 2").unwrap();
+    let rows = |b: Option<&str>| {
+        (1..=900)
+            .map(|a| match b {
+                Some(b) => format!("({a}, {}, {b}, REPEAT('x', 200))", a % 900),
+                None => format!("({a}, {}, REPEAT('x', 200))", a % 900),
+            })
+            .collect::<Vec<_>>()
+            .join(",")
+    };
+    session.run(&format!("INSERT INTO t VALUES {}", rows(None))).unwrap();
+    session.run("INSERT INTO t SELECT id + 900, a, payload FROM t").unwrap();
+    session.run("ANALYZE TABLE t COLUMNS id").unwrap();
+    session.run("CREATE INDEX idx_a ON t(a)").unwrap();
+    let in_list = (0..900).map(|i| i.to_string()).collect::<Vec<_>>();
+    let broad = format!("SELECT SUM(LENGTH(payload)) FROM t WHERE a IN ({})", in_list.join(","));
+    for prefer_range in ["0", "1"] {
+        session.run(&format!("SET @@tidb_opt_prefer_range_scan = {prefer_range}")).unwrap();
+        // Every row matches, and the estimate of idx_a is ~90% of the table.
+        let plan = brief_plan_text(&mut session, &broad);
+        assert!(plan.contains("TableFullScan"), "prefer_range={prefer_range}:\n{plan}");
+        // A selective missing-statistics index is still chosen.
+        let plan = brief_plan_text(&mut session, "SELECT SUM(LENGTH(payload)) FROM t WHERE a = 5");
+        assert!(plan.contains("idx_a(a)"), "prefer_range={prefer_range}:\n{plan}");
+    }
+    // idx_a is estimated to read 30% of the table for this IN list, below the
+    // default selectivity, so it is chosen. With more ranges than
+    // tidb_opt_range_max_count it is a broad lookup.
+    let narrower = format!("SELECT SUM(LENGTH(payload)) FROM t WHERE a IN ({})", in_list[..300].join(","));
+    session.run("SET @@tidb_opt_prefer_range_scan = 1").unwrap();
+    let plan = brief_plan_text(&mut session, &narrower);
+    assert!(plan.contains("idx_a(a)"), "{plan}");
+    session.run("SET @@tidb_opt_range_max_count = 100").unwrap();
+    let plan = brief_plan_text(&mut session, &narrower);
+    assert!(plan.contains("TableFullScan"), "{plan}");
+    session.run("SET @@tidb_opt_range_max_count = DEFAULT").unwrap();
+
+    // Same, but the missing-statistics index idx_ab wins against the analyzed
+    // idx_b instead of the table path. That win must not remove the full
+    // table scan after pruning.
+    session.run("DROP TABLE t").unwrap();
+    session
+        .run("CREATE TABLE t (id BIGINT PRIMARY KEY, a INT, b INT, payload VARCHAR(200), INDEX idx_b(b))")
+        .unwrap();
+    session.run(&format!("INSERT INTO t VALUES {}", rows(Some("1")))).unwrap();
+    session.run("INSERT INTO t SELECT id + 900, a, b, payload FROM t").unwrap();
+    session.run("ANALYZE TABLE t COLUMNS id, b").unwrap();
+    session.run("CREATE INDEX idx_ab ON t(a, b)").unwrap();
+    let broad = format!("SELECT SUM(LENGTH(payload)) FROM t WHERE b = 1 AND a IN ({})", in_list.join(","));
+    for prefer_range in ["0", "1"] {
+        session.run(&format!("SET @@tidb_opt_prefer_range_scan = {prefer_range}")).unwrap();
+        let plan = brief_plan_text(&mut session, &broad);
+        assert!(plan.contains("TableFullScan"), "prefer_range={prefer_range}:\n{plan}");
+        let plan = brief_plan_text(&mut session, "SELECT SUM(LENGTH(payload)) FROM t WHERE b = 1 AND a = 5");
+        assert!(plan.contains("idx_ab(a, b)"), "prefer_range={prefer_range}:\n{plan}");
+    }
+}
+
 /// Go `TestSkylinePruningWithMissingIndexStats` (`casetest/index`): only
 /// idx_id has statistics, and it is much more selective than idx_abc.
 #[test]

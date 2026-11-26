@@ -275,6 +275,32 @@ fn compare_risk(left: &CandidateMetrics, right: &CandidateMetrics) -> i8 {
     }
 }
 
+/// Go `isBroadIndexLookup`: a non-covering index that may read so much of
+/// the table that a lookup per row can cost more than scanning the table --
+/// either its own estimate reads at least `cost.SelectionFactor` (the
+/// default selectivity) of `table_rows`, or it has more ranges than
+/// `range_max_count` (`tidb_opt_range_max_count`; zero disables that check).
+/// The estimate of an index without statistics is unreliable, but it still
+/// scales with the number of ranges: a single-column IN list of 900 values
+/// is estimated to read 90% of the table. See pingcap/tidb#72561.
+pub(crate) fn is_broad_index_lookup(c: &CandidateMetrics, table_rows: f64, range_max_count: i64) -> bool {
+    if c.table_path || c.single_scan {
+        return false;
+    }
+    if range_max_count > 0 && c.range_count as i64 > range_max_count {
+        return true;
+    }
+    c.count_after_access > 0.0
+        && c.count_after_access >= table_rows * tidb_planner_core_cost::SELECTION_FACTOR
+}
+
+/// Go `canPseudoWinnerPrune`: false when the winner is a broad index lookup
+/// relative to the table path loser, so both paths are left for cost
+/// comparison.
+fn can_pseudo_winner_prune(winner: &CandidateMetrics, loser: &CandidateMetrics, range_max_count: i64) -> bool {
+    !loser.table_path || !is_broad_index_lookup(winner, loser.count_after_access, range_max_count)
+}
+
 fn compare_pseudo(left: &CandidateMetrics, right: &CandidateMetrics, eq: i8) -> i8 {
     if !left.pseudo && left.eq_or_in_count > 0 && eq >= 0 {
         return 1;
@@ -359,7 +385,14 @@ pub fn compare_candidates(
         && !table_pseudo
         && (left.eq_or_in_count > 0 || right.eq_or_in_count > 0)
     {
-        let pseudo = compare_pseudo(left, right, eq);
+        let mut pseudo = compare_pseudo(left, right, eq);
+        // A broad index lookup must not prune a table path on predicate
+        // counts alone.
+        if (pseudo > 0 && !can_pseudo_winner_prune(left, right, range_max_count))
+            || (pseudo < 0 && !can_pseudo_winner_prune(right, left, range_max_count))
+        {
+            pseudo = 0;
+        }
         // Predicate counts alone cannot justify pruning an index on different
         // columns: the winner must also strictly dominate the other path's
         // access conditions.
@@ -427,6 +460,7 @@ pub fn insert_skyline_candidate<T>(
     expected_count: f64,
     row_count_ratio_threshold: f64,
     range_max_count: i64,
+    table_row_count: f64,
 ) -> (bool, bool, bool) {
     let mut missing_stats = false;
     let mut used_ratio = false;
@@ -442,7 +476,10 @@ pub fn insert_skyline_candidate<T>(
             row_count_ratio_threshold,
             range_max_count,
         );
-        missing_stats |= result.winner_is_pseudo;
+        // `idx_missing_stats` removes full scan paths later, so a broad
+        // index lookup must not set it, even if it won against another index.
+        let winner = if result.ordering == 1 { left } else { right };
+        missing_stats |= result.winner_is_pseudo && !is_broad_index_lookup(winner, table_row_count, range_max_count);
         used_ratio |= result.used_row_count_ratio;
         if result.ordering > 0 {
             return (false, missing_stats, used_ratio);
@@ -541,6 +578,44 @@ mod skyline_tests {
         assert_eq!(result.ordering, 1);
         assert!(result.winner_is_pseudo);
         assert_eq!(compare_candidates(&tbl, &idx, false, 0.0, 1000.0, 0).ordering, -1);
+
+        // A non-covering missing-statistics index estimated to read most of
+        // the table must not prune the full table scan (pingcap/tidb#72561).
+        let mut broad = CandidateMetrics { range_count: 900, count_after_access: 900.0, ..idx.clone() };
+        let result = compare_candidates(&broad, &tbl, false, 0.0, 1000.0, 0);
+        assert_eq!(result.ordering, 0);
+        assert!(!result.winner_is_pseudo);
+        assert_eq!(compare_candidates(&tbl, &broad, false, 0.0, 1000.0, 0).ordering, 0);
+        // The threshold is the default selectivity (0.8) of the table.
+        broad.count_after_access = 800.0;
+        assert_eq!(compare_candidates(&broad, &tbl, false, 0.0, 1000.0, 0).ordering, 0);
+        broad.count_after_access = 799.0;
+        let result = compare_candidates(&broad, &tbl, false, 0.0, 1000.0, 0);
+        assert_eq!(result.ordering, 1);
+        assert!(result.winner_is_pseudo);
+        // A covering index has no table lookups, so it may still prune the
+        // full table scan.
+        broad.count_after_access = 900.0;
+        broad.single_scan = true;
+        let result = compare_candidates(&broad, &tbl, false, 0.0, 1000.0, 0);
+        assert_eq!(result.ordering, 1);
+        assert!(result.winner_is_pseudo);
+
+        // A non-covering index with more ranges than
+        // tidb_opt_range_max_count is a broad lookup, even if its estimate is
+        // small. Zero disables the range count check.
+        broad.single_scan = false;
+        broad.count_after_access = 10.0;
+        assert!(!is_broad_index_lookup(&broad, 1000.0, 1000));
+        assert!(is_broad_index_lookup(&broad, 1000.0, 899));
+        assert!(!is_broad_index_lookup(&broad, 1000.0, 0));
+        assert!(can_pseudo_winner_prune(&broad, &tbl, 1000));
+        assert!(!can_pseudo_winner_prune(&broad, &tbl, 899));
+        // Against another index, the winner may always prune.
+        assert!(can_pseudo_winner_prune(&broad, &idx, 899));
+        let result = compare_candidates(&broad, &tbl, false, 0.0, 1000.0, 899);
+        assert_eq!(result.ordering, 0);
+        assert!(!result.winner_is_pseudo);
     }
 
     #[test]
@@ -668,6 +743,7 @@ mod skyline_tests {
                     f64::MAX,
                     1000.0,
                     tidb_vardef::defaults::DEF_TIDB_OPT_RANGE_MAX_COUNT,
+                    0.0,
                 );
             }
             assert_eq!(candidates.len(), 1);
@@ -686,6 +762,7 @@ mod skyline_tests {
             f64::MAX,
             1000.0,
             tidb_vardef::defaults::DEF_TIDB_OPT_RANGE_MAX_COUNT,
+            0.0,
         );
         assert_eq!(candidates.len(), 2);
         for candidate in &mut candidates {
@@ -699,6 +776,7 @@ mod skyline_tests {
             f64::MAX,
             1000.0,
             tidb_vardef::defaults::DEF_TIDB_OPT_RANGE_MAX_COUNT,
+            0.0,
         );
         assert_eq!(candidates.len(), 3);
     }
@@ -714,6 +792,7 @@ mod skyline_tests {
             f64::MAX,
             1000.0,
             tidb_vardef::defaults::DEF_TIDB_OPT_RANGE_MAX_COUNT,
+            0.0,
         );
         assert_eq!(candidates.len(), 2);
         assert!(candidates[0].is_none());

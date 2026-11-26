@@ -158,6 +158,7 @@ pub(super) fn prepare_ordinary_paths<'a>(
             prop.expected_cnt,
             ctx.index_join_skyline_threshold,
             ctx.range_max_count,
+            ds.table_stats.as_ref().map_or(0.0, |stats| stats.row_count()),
         );
         idx_missing_stats |= missing;
     }
