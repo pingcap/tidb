@@ -344,10 +344,10 @@ func TestBRIEGlueSessionReadOnlySequence(t *testing.T) {
 			defer gs.Close()
 			for _, name := range []string{"restore_ro", "other_ro"} {
 				require.NoError(t, gs.CreateDatabaseOnExistError(ctx, &model.DBInfo{
-					Name: ast.NewCIStr(name), ReadOnly: true,
+					Name: pmodel.NewCIStr(name), ReadOnly: true,
 				}))
-				require.NoError(t, gs.CreateTable(ctx, ast.NewCIStr(name), &model.TableInfo{
-					Name: ast.NewCIStr("s"), State: model.StatePublic,
+				require.NoError(t, gs.CreateTable(ctx, pmodel.NewCIStr(name), &model.TableInfo{
+					Name: pmodel.NewCIStr("s"), State: model.StatePublic,
 					Sequence: &model.SequenceInfo{Start: 1, MinValue: 1, MaxValue: 1000, Increment: 1, Cycle: cycle},
 				}))
 			}
@@ -398,14 +398,14 @@ func TestBRIEGlueSessionAutocommit(t *testing.T) {
 				defer gs.Close()
 				// Match restore initialization, which loads global session defaults.
 				require.NoError(t, gs.Execute(ctx, "set @@sql_mode = ''"))
-				dbName := ast.NewCIStr("restore_autocommit")
+				dbName := pmodel.NewCIStr("restore_autocommit")
 				require.NoError(t, gs.CreateDatabaseOnExistError(ctx, &model.DBInfo{
 					Name: dbName, ReadOnly: readOnly,
 				}))
 
 				for _, name := range []string{"s1", "s2"} {
 					tbl := &model.TableInfo{
-						Name: ast.NewCIStr(name), State: model.StatePublic,
+						Name: pmodel.NewCIStr(name), State: model.StatePublic,
 						Sequence: &model.SequenceInfo{Start: 1, MinValue: 1, MaxValue: 1000, Increment: 1},
 					}
 					if batch {
