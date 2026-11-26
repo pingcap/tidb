@@ -701,11 +701,13 @@ pub fn get_index_row_count_with_partial_stats(
     realtime: i64,
     modify_count: i64,
     options: &EstimatorOptions,
+    record_column: &dyn Fn(usize),
 ) -> Result<Option<RowEstimate>, EstimationError> {
     if realtime <= 0 {
         return Ok(Some(tidb_stats::default_row_est(0.0)));
     }
     if columns.len() == 1 {
+        record_column(0);
         let (column, collation) = columns[0];
         let column_ranges = ranges
             .iter()
@@ -729,13 +731,43 @@ pub fn get_index_row_count_with_partial_stats(
         )
         .map(|estimate| Some(tidb_stats::default_row_est(estimate.est)));
     }
+    let column_stats = columns.iter().map(|(column, _)| *column).collect::<Vec<_>>();
     let mut partial_ranges = Vec::with_capacity(ranges.len());
     for range in ranges {
+        // Prefer exponential backoff when every column of the range has
+        // statistics: multiplying single-column selectivities badly
+        // underestimates an index whose columns each have a low NDV. A column
+        // without statistics (e.g. a virtual column) would be skipped by
+        // exponential backoff, so it falls back to the pseudo estimation.
+        let width = range.low_val.len();
+        if width > 1 && column_stats.get(..width).is_some_and(|prefix| prefix.iter().all(Option::is_some)) {
+            // Exponential backoff reads every column of the range.
+            (0..width).for_each(record_column);
+            if let Some((selectivity, _, max_selectivity)) = exp_backoff_estimation_by_col_ids(
+                &column_stats,
+                0,
+                column_stats.len(),
+                false,
+                &[],
+                &[],
+                range,
+                realtime,
+                modify_count,
+                options,
+            )? {
+                partial_ranges.push(super::row_count_column::PartialStatsRange {
+                    column_row_counts: Vec::new(),
+                    exp_backoff: Some((selectivity, max_selectivity)),
+                });
+                continue;
+            }
+        }
         let mut counts = Vec::with_capacity(range.low_val.len());
         for (position, low) in range.low_val.iter().enumerate() {
             let Some((column, collation)) = columns.get(position) else {
                 return Ok(None);
             };
+            record_column(position);
             let last = position + 1 == range.low_val.len();
             let column_range = ColumnRange::new(
                 low.clone(),
@@ -756,9 +788,7 @@ pub fn get_index_row_count_with_partial_stats(
                 .est,
             );
         }
-        partial_ranges.push(super::row_count_column::PartialStatsRange {
-            column_row_counts: counts,
-        });
+        partial_ranges.push(super::row_count_column::PartialStatsRange::new(counts));
     }
     let estimate = super::row_count_column::pseudo_row_count_with_partial_stats(
         &partial_ranges,
@@ -1220,12 +1250,16 @@ impl<'a> IndexEstimationStats<'a> {
 
 /// Go GetRowCountByIndexRanges's common full-range, validity and version
 /// dispatch. Empty virtual_columns corresponds to nil idxCols on recursion.
+/// `record_column` is Go `GetRowCountByColumnRanges`'s
+/// `recordUsedItemStatsStatus`: called with the position (in index order) of
+/// each column whose statistics the partial-statistics estimate reads.
 pub fn get_index_row_count(
     stats: &IndexEstimationStats<'_>,
     virtual_columns: &[bool],
     recursive_indexes: &[Vec<RecursiveIndexStats<'_>>],
     ranges: &[Range],
     options: &EstimatorOptions,
+    record_column: &dyn Fn(usize),
 ) -> Result<RowEstimate, EstimationError> {
     if stats.index.is_some()
         && super::index_range_policy::can_skip_datum_index_estimation(
@@ -1270,6 +1304,7 @@ pub fn get_index_row_count(
                 stats.row_counts.table_realtime,
                 stats.row_counts.table_modify,
                 options,
+                record_column,
             )? {
                 return Ok(estimate);
             }
@@ -1409,7 +1444,7 @@ pub fn get_index_row_count(
                 .filter(|_| position < stats.column_ndvs.len())
                 .and_then(|candidates| candidates.first())
             {
-                get_index_row_count(candidate, &[], &[], std::slice::from_ref(&suffix), options)?
+                get_index_row_count(candidate, &[], &[], std::slice::from_ref(&suffix), options, &|_| {})?
                     .est
             } else {
                 get_row_count_by_column_ranges(
@@ -1451,6 +1486,39 @@ pub fn get_index_row_count(
 pub fn exp_backoff_estimation(
     index: &tidb_stats::index::Index,
     columns: &[Option<&tidb_stats::column::Column>],
+    virtual_columns: &[bool],
+    recursive_indexes: &[Vec<RecursiveIndexStats<'_>>],
+    range: &Range,
+    realtime_row_count: i64,
+    modify_count: i64,
+    options: &EstimatorOptions,
+) -> Result<Option<(f64, f64, f64)>, EstimationError> {
+    let idx_has_stats = !index.histogram.is_empty() || topn_num(index.top_n.as_ref()) > 0;
+    exp_backoff_estimation_by_col_ids(
+        columns,
+        index.histogram.ndv,
+        index.info.as_ref().map_or(0, |info| info.read().columns.len()),
+        idx_has_stats,
+        virtual_columns,
+        recursive_indexes,
+        range,
+        realtime_row_count,
+        modify_count,
+        options,
+    )
+}
+
+/// Go `expBackoffEstimationByColIDs`, the core of `expBackoffEstimation`
+/// without index statistics: `columns` are the index columns' statistics,
+/// `idx_ndv` the index NDV (0 if unknown), `num_idx_cols` the number of index
+/// columns, and `idx_has_stats` whether the index itself has a histogram or
+/// TopN.
+#[allow(clippy::too_many_arguments)]
+pub fn exp_backoff_estimation_by_col_ids(
+    columns: &[Option<&tidb_stats::column::Column>],
+    idx_ndv: i64,
+    num_idx_cols: usize,
+    idx_has_stats: bool,
     virtual_columns: &[bool],
     recursive_indexes: &[Vec<RecursiveIndexStats<'_>>],
     range: &Range,
@@ -1500,7 +1568,7 @@ pub fn exp_backoff_estimation(
                             &[],
                             &[],
                             std::slice::from_ref(&one_column_range),
-                            options,
+                            options, &|_| {},
                         ) else {
                             // Go marks the dimension estimated only after a
                             // recursive candidate succeeds. Failed candidates
@@ -1520,10 +1588,7 @@ pub fn exp_backoff_estimation(
             // Virtual columns have no own histogram. Omitting their range
             // can discard the index's most selective dimension; Go uses the
             // full index histogram/TopN instead unless recursion supplied it.
-            if !found_stats
-                && virtual_columns.get(position).copied().unwrap_or(false)
-                && (!index.histogram.is_empty() || topn_num(index.top_n.as_ref()) > 0)
-            {
+            if !found_stats && virtual_columns.get(position).copied().unwrap_or(false) && idx_has_stats {
                 return Ok(None);
             }
             if found_stats {
@@ -1557,14 +1622,10 @@ pub fn exp_backoff_estimation(
         return Ok(None);
     }
 
-    let hist_ndv = if index.histogram.ndv > 0 {
-        index.histogram.ndv
-    } else {
-        realtime_row_count
-    };
+    let hist_ndv = if idx_ndv > 0 { idx_ndv } else { realtime_row_count };
     let mut idx_low_bound = 1.0 / hist_ndv.min(realtime_row_count) as f64;
     let mut min_bound = idx_low_bound;
-    if len < index.info.as_ref().map_or(0, |info| info.read().columns.len()) {
+    if len < num_idx_cols {
         idx_low_bound /= 0.9;
     }
     max_sel = go_max(idx_low_bound, max_sel);
@@ -2521,7 +2582,7 @@ mod version_one_value_tests {
                             IndexRowCounts::unscaled(100, 0),
                         );
                         let estimate =
-                            get_index_row_count(&stats, &[], &[], &[range], &options).unwrap();
+                            get_index_row_count(&stats, &[], &[], &[range], &options, &|_| {}).unwrap();
                         assert!(
                             (estimate.est - expected).abs() < 1e-10,
                             "index {zone:?} month {month} stats version {version}: {}",
@@ -2780,7 +2841,7 @@ mod version_one_index_dispatch_tests {
         let context =
             IndexEstimationStats::new(Some(&index), vec![None], IndexRowCounts::unscaled(200, 100));
         let estimate =
-            get_index_row_count(&context, &[], &[], &[range], &EstimatorOptions::default()).unwrap();
+            get_index_row_count(&context, &[], &[], &[range], &EstimatorOptions::default(), &|_| {}).unwrap();
         assert!((estimate.est - 22.0).abs() < 1e-10, "{estimate:?}");
     }
 
@@ -2854,13 +2915,13 @@ mod version_one_index_dispatch_tests {
                 &[],
                 &[Vec::new(), vec![first]],
                 std::slice::from_ref(&range),
-                &EstimatorOptions::default(),
+                &EstimatorOptions::default(), &|_| {},
             )
             .unwrap();
             assert!((actual.est - 0.05).abs() < 1e-10, "{actual:?}");
         }
         let column_fallback =
-            get_index_row_count(&context, &[], &[], &[range], &EstimatorOptions::default()).unwrap();
+            get_index_row_count(&context, &[], &[], &[range], &EstimatorOptions::default(), &|_| {}).unwrap();
         assert!(
             (column_fallback.est - 2.0).abs() < 1e-10,
             "{column_fallback:?}"
@@ -2883,13 +2944,13 @@ mod version_one_index_dispatch_tests {
             &[],
             &[],
             std::slice::from_ref(&point),
-            &EstimatorOptions::default(),
+            &EstimatorOptions::default(), &|_| {},
         )
         .unwrap();
         assert_eq!(estimate.est, 2.0);
         context.column_is_handle[0] = true;
         assert_eq!(
-            get_index_row_count(&context, &[], &[], &[point], &EstimatorOptions::default())
+            get_index_row_count(&context, &[], &[], &[point], &EstimatorOptions::default(), &|_| {})
                 .unwrap()
                 .est,
             1.0
@@ -2899,7 +2960,7 @@ mod version_one_index_dispatch_tests {
         context.row_counts = IndexRowCounts::unscaled(200, 100);
         let outside = range(vec![Datum::Int(9)], vec![Datum::Int(9)]);
         let estimate =
-            get_index_row_count(&context, &[], &[], &[outside], &EstimatorOptions::default())
+            get_index_row_count(&context, &[], &[], &[outside], &EstimatorOptions::default(), &|_| {})
                 .unwrap();
         assert!((estimate.est - 0.1).abs() < 1e-10, "{estimate:?}");
     }
@@ -2913,7 +2974,7 @@ mod version_one_index_dispatch_tests {
         empty.low_exclude = true;
         empty.high_exclude = true;
         assert_eq!(
-            get_index_row_count(&context, &[], &[], &[empty], &EstimatorOptions::default())
+            get_index_row_count(&context, &[], &[], &[empty], &EstimatorOptions::default(), &|_| {})
                 .unwrap()
                 .est,
             0.0
@@ -2931,7 +2992,7 @@ mod version_one_index_dispatch_tests {
             vec![Datum::Int(1), Datum::Int(2)],
         );
         let estimate =
-            get_index_row_count(&context, &[], &[], &[point], &EstimatorOptions::default()).unwrap();
+            get_index_row_count(&context, &[], &[], &[point], &EstimatorOptions::default(), &|_| {}).unwrap();
         assert!((estimate.est - 7.0).abs() < 1e-10, "{estimate:?}");
     }
 
@@ -2992,7 +3053,7 @@ mod version_one_index_dispatch_tests {
             &[],
             &recursive,
             &[range],
-            &EstimatorOptions::default(),
+            &EstimatorOptions::default(), &|_| {},
         )
         .unwrap();
         assert!((estimate.est - 21.0).abs() < 1e-10, "{estimate:?}");

@@ -178,6 +178,12 @@ pub(crate) fn get_index_candidate(
     } else {
         path.eq_or_in_cond_count > 0 && index_columns.len() >= index.read().columns.len()
     };
+    let pseudo = !has_stats_for_estimation(
+        source,
+        index.read().id,
+        path.idx_cols.iter().map(|(column, _)| column),
+        &access_columns,
+    );
     Some(CandidateMetrics {
         access_columns,
         index_columns,
@@ -185,7 +191,7 @@ pub(crate) fn get_index_candidate(
         multi_valued: index.read().mv_index,
         global: index.read().global,
         matches_property,
-        pseudo: !source.index_has_analyzed(index.read().id),
+        pseudo,
         full_index_match,
         eq_or_in_count,
         range_count: path.ranges.len(),
@@ -195,6 +201,36 @@ pub(crate) fn get_index_candidate(
         max_count_after_access: estimate.max_est,
         ..Default::default()
     })
+}
+
+/// Go `hasStatsForEstimation`: the index has statistics, or every column its
+/// access conditions reference does. In the latter case its row count is
+/// estimated from the column statistics (exponential backoff for several
+/// columns), so it is compared on its estimates rather than on the
+/// missing-statistics heuristics.
+pub(crate) fn has_stats_for_estimation<'a>(
+    source: &tidb_planner_core_operator_logicalop::DataSource,
+    index_id: i64,
+    idx_cols: impl IntoIterator<Item = &'a tidb_expr::column::Column>,
+    access_columns: &Col2Len,
+) -> bool {
+    if source.index_has_analyzed(index_id) {
+        return true;
+    }
+    if access_columns.is_empty() {
+        return false;
+    }
+    let mut found = 0;
+    for column in idx_cols {
+        if !access_columns.contains_key(column.unique_id) {
+            continue;
+        }
+        if !source.column_has_analyzed(column.id) {
+            return false;
+        }
+        found += 1;
+    }
+    found == access_columns.len()
 }
 
 /// Go compareCandidates's result and its statement-context fix-control read.
@@ -239,25 +275,20 @@ fn compare_risk(left: &CandidateMetrics, right: &CandidateMetrics) -> i8 {
     }
 }
 
-fn compare_pseudo(
-    left: &CandidateMetrics,
-    right: &CandidateMetrics,
-    eq: i8,
-    prefer_range: bool,
-) -> i8 {
+fn compare_pseudo(left: &CandidateMetrics, right: &CandidateMetrics, eq: i8) -> i8 {
     if !left.pseudo && left.eq_or_in_count > 0 && eq >= 0 {
         return 1;
     }
     if !right.pseudo && right.eq_or_in_count > 0 && eq <= 0 {
         return -1;
     }
-    if prefer_range {
-        if left.pseudo && eq > 0 && (left.eq_or_in_count > 1 || left.full_index_match) {
-            return 1;
-        }
-        if right.pseudo && eq < 0 && (right.eq_or_in_count > 1 || right.full_index_match) {
-            return -1;
-        }
+    // Keep an index without statistics if it has more equal/IN predicates,
+    // and either at least 2 of them or a full index match.
+    if left.pseudo && eq > 0 && (left.eq_or_in_count > 1 || left.full_index_match) {
+        return 1;
+    }
+    if right.pseudo && eq < 0 && (right.eq_or_in_count > 1 || right.full_index_match) {
+        return -1;
     }
     0
 }
@@ -289,7 +320,6 @@ pub fn compare_candidates(
     right: &CandidateMetrics,
     table_pseudo: bool,
     expected_count: f64,
-    prefer_range: bool,
     row_count_ratio_threshold: f64,
     range_max_count: i64,
 ) -> CandidateComparison {
@@ -329,8 +359,13 @@ pub fn compare_candidates(
         && !table_pseudo
         && (left.eq_or_in_count > 0 || right.eq_or_in_count > 0)
     {
-        let pseudo = compare_pseudo(left, right, eq, prefer_range);
-        if (pseudo > 0 && total >= 0) || (pseudo < 0 && total <= 0) {
+        let pseudo = compare_pseudo(left, right, eq);
+        // Predicate counts alone cannot justify pruning an index on different
+        // columns: the winner must also strictly dominate the other path's
+        // access conditions.
+        if (pseudo > 0 && comparable_access && access > 0 && total >= 0)
+            || (pseudo < 0 && comparable_access && access < 0 && total <= 0)
+        {
             return result(pseudo, false);
         }
     }
@@ -390,7 +425,6 @@ pub fn insert_skyline_candidate<T>(
     metrics: impl Fn(&T) -> Option<&CandidateMetrics>,
     table_pseudo: bool,
     expected_count: f64,
-    prefer_range: bool,
     row_count_ratio_threshold: f64,
     range_max_count: i64,
 ) -> (bool, bool, bool) {
@@ -405,7 +439,6 @@ pub fn insert_skyline_candidate<T>(
             right,
             table_pseudo,
             expected_count,
-            prefer_range,
             row_count_ratio_threshold,
             range_max_count,
         );
@@ -467,19 +500,47 @@ mod skyline_tests {
         for pseudo in [false, true] {
             let (lhs, rhs) = (candidate(1, 3, 1001, 10.0, pseudo), candidate(2, 2, 1, 20.0, pseudo));
             for (threshold, want) in [(0, 1), (1001, 1), (1000, 0)] {
-                let result = compare_candidates(&lhs, &rhs, pseudo, 0.0, true, 1000.0, threshold).ordering;
+                let result = compare_candidates(&lhs, &rhs, pseudo, 0.0, 1000.0, threshold).ordering;
                 assert_eq!(result, want, "pseudo={pseudo} threshold={threshold}");
-                let result = compare_candidates(&rhs, &lhs, pseudo, 0.0, true, 1000.0, threshold).ordering;
+                let result = compare_candidates(&rhs, &lhs, pseudo, 0.0, 1000.0, threshold).ordering;
                 assert_eq!(result, -want, "reversed: pseudo={pseudo} threshold={threshold}");
             }
         }
-        // "A missing-statistics index must not retain its extra equality/IN
-        // preference above the threshold."
+        // "Missing statistics and equality/IN counts cannot break the tie
+        // between incomparable access conditions, regardless of the
+        // range-count threshold."
         let (lhs, rhs) = (candidate(1, 3, 1001, 10.0, true), candidate(2, 2, 1, 10.0, false));
-        for (threshold, want) in [(0, 1), (1001, 1), (1000, -1)] {
-            assert_eq!(compare_candidates(&lhs, &rhs, false, 0.0, true, 1000.0, threshold).ordering, want, "{threshold}");
-            assert_eq!(compare_candidates(&rhs, &lhs, false, 0.0, true, 1000.0, threshold).ordering, -want, "{threshold}");
+        for threshold in [0, 1001, 1000] {
+            assert_eq!(compare_candidates(&lhs, &rhs, false, 0.0, 1000.0, threshold).ordering, 0, "{threshold}");
+            assert_eq!(compare_candidates(&rhs, &lhs, false, 0.0, 1000.0, threshold).ordering, 0, "{threshold}");
         }
+    }
+
+    /// Go master `TestRangeCount`'s `testMissingStatsIndexVsFullScan`: the
+    /// missing-statistics index with 2 equal predicates wins over a full
+    /// table scan, independent of `tidb_opt_prefer_range_scan` (which
+    /// `compareCandidates` no longer reads).
+    #[test]
+    fn missing_stats_index_vs_full_scan() {
+        let idx = CandidateMetrics {
+            access_columns: tidb_planner_util::column_length::Col2Len::from_pairs([(1, -1), (2, -1)]),
+            eq_or_in_count: 2,
+            range_count: 1,
+            count_after_access: 10.0,
+            pseudo: true,
+            ..Default::default()
+        };
+        let tbl = CandidateMetrics {
+            table_path: true,
+            single_scan: true,
+            range_count: 1,
+            count_after_access: 1000.0,
+            ..Default::default()
+        };
+        let result = compare_candidates(&idx, &tbl, false, 0.0, 1000.0, 0);
+        assert_eq!(result.ordering, 1);
+        assert!(result.winner_is_pseudo);
+        assert_eq!(compare_candidates(&tbl, &idx, false, 0.0, 1000.0, 0).ordering, -1);
     }
 
     #[test]
@@ -605,7 +666,6 @@ mod skyline_tests {
                     |path| Some(path),
                     false,
                     f64::MAX,
-                    false,
                     1000.0,
                     tidb_vardef::defaults::DEF_TIDB_OPT_RANGE_MAX_COUNT,
                 );
@@ -624,7 +684,6 @@ mod skyline_tests {
             |path| Some(path),
             false,
             f64::MAX,
-            false,
             1000.0,
             tidb_vardef::defaults::DEF_TIDB_OPT_RANGE_MAX_COUNT,
         );
@@ -638,7 +697,6 @@ mod skyline_tests {
             |path| Some(path),
             false,
             f64::MAX,
-            false,
             1000.0,
             tidb_vardef::defaults::DEF_TIDB_OPT_RANGE_MAX_COUNT,
         );
@@ -654,7 +712,6 @@ mod skyline_tests {
             Option::as_ref,
             false,
             f64::MAX,
-            false,
             1000.0,
             tidb_vardef::defaults::DEF_TIDB_OPT_RANGE_MAX_COUNT,
         );

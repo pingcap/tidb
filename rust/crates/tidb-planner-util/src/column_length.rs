@@ -50,6 +50,12 @@ impl Col2Len {
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
+
+    /// Go's `_, ok := col2Len[id]`.
+    #[must_use]
+    pub fn contains_key(&self, column: i64) -> bool {
+        self.0.contains_key(&column)
+    }
 }
 
 fn compare_length(left: i64, right: i64) -> i8 {

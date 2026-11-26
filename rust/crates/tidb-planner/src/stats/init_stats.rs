@@ -370,7 +370,7 @@ use tidb_charset::Collation;
                 7,
                 &[range],
                 &[j_column.clone()],
-                &EstimatorOptions::default(),
+                &EstimatorOptions::default(), &|_| {},
             )
             .unwrap()
             .est

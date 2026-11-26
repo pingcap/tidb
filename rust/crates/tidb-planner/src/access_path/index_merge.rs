@@ -241,6 +241,7 @@ pub(super) fn estimate_index_ranges(
         ranges,
         &columns,
         &ctx.estimator_options,
+        &|column_id| ds.record_used_item(ctx.used_stats_recorder, column_id, false),
     )
     .map_err(|error| {
         PlanError::from(

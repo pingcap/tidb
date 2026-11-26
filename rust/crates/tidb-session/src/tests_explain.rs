@@ -1050,6 +1050,14 @@ fn new_index_without_stats_skyline_choice_matches_go() {
         "a = 5 AND b > 5 AND c = 5",
         "index:idxca(c, a)",
     );
+    // The missing-statistics rules do not depend on tidb_opt_prefer_range_scan.
+    session.run("SET @@tidb_opt_prefer_range_scan = 0").unwrap();
+    assert_index(&mut session, "a = 5 AND b = 5", "index:idxab(a, b)");
+    assert_index(
+        &mut session,
+        "a = 5 AND b > 5 AND c = 5",
+        "index:idxca(c, a)",
+    );
 }
 
 /// Go `TestIssue57948`: a lone index created after ANALYZE is still a valid
@@ -1068,7 +1076,9 @@ fn single_new_index_with_column_stats_is_chosen() {
     session
         .run(&format!("INSERT INTO issue_57948 VALUES {values}"))
         .unwrap();
-    session.run("ANALYZE TABLE issue_57948").unwrap();
+    // Leave column b without statistics, so the new index has no statistics
+    // to estimate from.
+    session.run("ANALYZE TABLE issue_57948 COLUMNS a, c").unwrap();
     session.run("CREATE INDEX idxb ON issue_57948(b)").unwrap();
 
     let plan =
@@ -1091,6 +1101,151 @@ fn single_new_index_with_column_stats_is_chosen() {
         plan_text.contains("index:idxb(b)"),
         "the sole newly created index must remain a candidate using column stats:\n{plan_text}\nforced index plan:\n{forced_plan_text}"
     );
+}
+
+fn brief_plan_text(session: &mut Session, sql: &str) -> String {
+    row_text(session.run(&format!("EXPLAIN FORMAT='brief' {sql}")))
+        .iter()
+        .map(|row| row.join(" "))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// `insert into t select ... from (with recursive x ... a < 1000)`: the
+/// values `row(a)` gives for a = 1..=1000.
+fn values_1_to_1000(row: impl Fn(i64) -> String) -> String {
+    (1..=1000).map(|a| format!("({})", row(a))).collect::<Vec<_>>().join(",")
+}
+
+/// Go `TestMissingStatsIndexUsesColumnStats`: an index without statistics,
+/// whose access columns all have column statistics, is compared on its
+/// estimates instead of by the missing-statistics heuristics.
+#[test]
+fn test_missing_stats_index_uses_column_stats() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE t (a INT, b INT, c INT, d INT)").unwrap();
+    session.run("SET @@tidb_analyze_version = 2").unwrap();
+    // a, b and c are fully correlated with 2 distinct values each. d is unique.
+    let values = values_1_to_1000(|a| format!("{}, {}, {}, {a}", a % 2, a % 2, a % 2));
+    session.run(&format!("INSERT INTO t VALUES {values}")).unwrap();
+    session.run("ANALYZE TABLE t").unwrap();
+    session.run("CREATE INDEX idx_abc ON t(a, b, c)").unwrap();
+    session.run("CREATE INDEX idx_d ON t(d)").unwrap();
+    for prefer_range in ["0", "1"] {
+        session.run(&format!("SET @@tidb_opt_prefer_range_scan = {prefer_range}")).unwrap();
+        // Half of the table matches. The extra equal predicates of idx_abc
+        // must not prune the full table scan.
+        let plan = brief_plan_text(&mut session, "SELECT * FROM t WHERE a = 1 AND b = 1 AND c = 1");
+        assert!(plan.contains("TableFullScan"), "prefer_range={prefer_range}:\n{plan}");
+        // A selective index is still chosen.
+        let plan = brief_plan_text(&mut session, "SELECT * FROM t WHERE d = 5");
+        assert!(plan.contains("idx_d(d)"), "prefer_range={prefer_range}:\n{plan}");
+    }
+}
+
+/// Go `TestNewIndexWithLowNDVColumnStats`: an index without statistics whose
+/// fully correlated columns each have a low NDV is estimated by exponential
+/// backoff, not by assuming independence.
+#[test]
+fn test_new_index_with_low_ndv_column_stats() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE t (a INT, b INT, c INT)").unwrap();
+    session.run("SET @@tidb_analyze_version = 2").unwrap();
+    let values = values_1_to_1000(|a| format!("{}, {}, {}", a % 10, a % 10, a % 10));
+    session.run(&format!("INSERT INTO t VALUES {values}")).unwrap();
+    session.run("ANALYZE TABLE t").unwrap();
+    session.run("CREATE INDEX idx_abc ON t(a, b, c)").unwrap();
+    let rows = row_text(session.run(
+        "EXPLAIN FORMAT='brief' SELECT * FROM t USE INDEX(idx_abc) WHERE a = 1 AND b = 1 AND c = 1",
+    ));
+    let est_rows: f64 = rows
+        .iter()
+        .find(|row| row[0].contains("IndexRangeScan"))
+        .unwrap_or_else(|| panic!("no IndexRangeScan: {rows:?}"))[1]
+        .parse()
+        .unwrap();
+    // Actual row count is 100. Independence would estimate 1000 * 0.1^3 = 1,
+    // while exponential backoff estimates 1000 * 0.1 * 0.1^(1/2) * 0.1^(1/4)
+    // ~= 17.8.
+    assert!(est_rows > 10.0, "{rows:?}");
+}
+
+/// Go `TestMissingStatsIndexWithVirtualColumn`: an index without statistics
+/// on a virtual column (which has no column statistics) still accounts for
+/// that column, and reports its statistics as missing.
+#[test]
+fn test_missing_stats_index_with_virtual_column() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE t (int_col INT, string_col VARCHAR(255))").unwrap();
+    session.run(r#"INSERT INTO t VALUES (-1, "foo"), (1, "bar")"#).unwrap();
+    session.run("ANALYZE TABLE t").unwrap();
+    session.run("CREATE INDEX combined_index ON t((int_col + int_col), string_col)").unwrap();
+    let plan = brief_plan_text(
+        &mut session,
+        r#"SELECT * FROM t WHERE int_col + int_col = 2 AND string_col = "bar""#,
+    );
+    assert!(plan.contains("stats:partial[combined_index:missing, _v$_combined_index_0:missing]"), "{plan}");
+}
+
+/// Go `TestIssue71999`: an index without statistics must not prune an index
+/// with statistics via the missing-statistics skyline rule unless its access
+/// columns cover the other index's access columns.
+#[test]
+fn test_issue71999() {
+    let mut session = Session::new();
+    let create = "CREATE TABLE t (id INT NOT NULL, a INT NOT NULL, b INT NOT NULL, c INT NOT NULL, KEY idx_id(id))";
+    let values = values_1_to_1000(|a| format!("{a}, 1, 1, 1"));
+    let query = "SELECT * FROM t WHERE id = 1 AND a = 1 AND b = 1 AND c = 1";
+    session.run(create).unwrap();
+    session.run("SET @@tidb_analyze_version = 2").unwrap();
+    session.run("SET @@tidb_opt_prefer_range_scan = 1").unwrap();
+    session.run(&format!("INSERT INTO t VALUES {values}")).unwrap();
+    session.run("ANALYZE TABLE t").unwrap();
+    session.run("CREATE INDEX idx_abc ON t(a, b, c)").unwrap();
+    // idx_abc has no statistics and its access columns (a, b, c) do not cover
+    // idx_id's (id), so it must not prune idx_id, which has statistics and is
+    // far more selective.
+    let plan = brief_plan_text(&mut session, query);
+    assert!(plan.contains("idx_id(id)"), "{plan}");
+    session.run("SET @@tidb_opt_prefer_range_scan = 0").unwrap();
+    let plan = brief_plan_text(&mut session, query);
+    assert!(plan.contains("idx_id(id)"), "{plan}");
+
+    // Same, but without column statistics on a, b and c, so idx_abc has
+    // nothing to estimate from.
+    session.run("DROP TABLE t").unwrap();
+    session.run(create).unwrap();
+    session.run(&format!("INSERT INTO t VALUES {values}")).unwrap();
+    session.run("ANALYZE TABLE t COLUMNS id").unwrap();
+    session.run("CREATE INDEX idx_abc ON t(a, b, c)").unwrap();
+    for prefer_range in ["0", "1"] {
+        session.run(&format!("SET @@tidb_opt_prefer_range_scan = {prefer_range}")).unwrap();
+        let plan = brief_plan_text(&mut session, query);
+        assert!(plan.contains("idx_id(id)"), "prefer_range={prefer_range}:\n{plan}");
+    }
+}
+
+/// Go `TestSkylinePruningWithMissingIndexStats` (`casetest/index`): only
+/// idx_id has statistics, and it is much more selective than idx_abc.
+#[test]
+fn test_skyline_pruning_with_missing_index_stats() {
+    let mut session = Session::new();
+    session.run("SET tidb_opt_prefer_range_scan = ON").unwrap();
+    session
+        .run("CREATE TABLE t (id INT NOT NULL, a INT NOT NULL, b INT NOT NULL, c INT NOT NULL, payload VARCHAR(100), KEY idx_id(id))")
+        .unwrap();
+    let values = (1..=1000).map(|i| format!("({i}, 1, 1, 1, 'payload')")).collect::<Vec<_>>().join(",");
+    session.run(&format!("INSERT INTO t VALUES {values}")).unwrap();
+    session.run("ANALYZE TABLE t").unwrap();
+    session.run("ALTER TABLE t ADD INDEX idx_abc(a, b, c)").unwrap();
+    let histograms = row_text(session.run(
+        "SHOW STATS_HISTOGRAMS WHERE db_name = 'test' AND table_name = 't' AND is_index = 1",
+    ));
+    assert_eq!(histograms.iter().map(|row| row[3].as_str()).collect::<Vec<_>>(), ["idx_id"], "{histograms:?}");
+    let query = "SELECT * FROM t WHERE id = 1 AND a = 1 AND b = 1 AND c = 1";
+    let plan = brief_plan_text(&mut session, query);
+    assert!(plan.contains("index:idx_id(id)"), "{plan}");
+    assert_eq!(row_text(session.run(query)), [["1", "1", "1", "1", "payload"]]);
 }
 
 /// SQL-plan assertions from Go `TestIndexEstimationCrossValidate`: a composite

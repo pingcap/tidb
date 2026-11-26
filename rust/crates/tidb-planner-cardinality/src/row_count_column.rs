@@ -120,13 +120,17 @@ pub struct PartialStatsRange {
     /// Column estimates in index order, already produced by the column
     /// statistics owner.
     pub column_row_counts: Vec<f64>,
+    /// The `(selectivity, max selectivity)` exponential backoff answered
+    /// when every column of the range has statistics; it replaces the
+    /// per-column product.
+    pub exp_backoff: Option<(f64, f64)>,
 }
 
 impl PartialStatsRange {
     /// Creates a source-shaped partial-statistics range.
     #[must_use]
     pub fn new(column_row_counts: Vec<f64>) -> Self {
-        Self { column_row_counts }
+        Self { column_row_counts, exp_backoff: None }
     }
 }
 
@@ -268,6 +272,11 @@ pub fn pseudo_row_count_with_partial_stats(
     let mut total_count = 0.0;
     let mut max_count = 0.0;
     for range in ranges {
+        if let Some((selectivity, max_selectivity)) = range.exp_backoff {
+            total_count += selectivity * table_row_count;
+            max_count += max_selectivity * table_row_count;
+            continue;
+        }
         let mut selectivity = 1.0;
         let mut correlated_selectivity = 1.0;
         for count in &range.column_row_counts {

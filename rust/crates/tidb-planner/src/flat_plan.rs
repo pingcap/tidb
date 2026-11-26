@@ -108,6 +108,7 @@ fn used_stats_suffix_for_scan(
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone()
     }) {
+        // Go `FindColumnNameByID` / `FindIndexNameByID`: the lower-cased names.
         let (column_names, index_names) = catalog
             .physical_kv_table_by_id(physical_table_id)
             .map(|table| {
@@ -115,12 +116,12 @@ fn used_stats_suffix_for_scan(
                     table
                         .columns()
                         .iter()
-                        .map(|column| (column.read().id, column.read().name.original().to_owned()))
+                        .map(|column| (column.read().id, column.read().name.lowercase().to_owned()))
                         .collect(),
                     table
                         .indexes()
                         .iter()
-                        .map(|index| (index.read().id, index.read().name.original().to_owned()))
+                        .map(|index| (index.read().id, index.read().name.lowercase().to_owned()))
                         .collect(),
                 )
             })

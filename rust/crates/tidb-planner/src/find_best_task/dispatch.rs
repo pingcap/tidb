@@ -2873,6 +2873,14 @@ fn index_join_candidate(
         candidate.access_columns.insert(column.unique_id, *length);
         candidate.index_columns.insert(column.unique_id, *length);
     }
+    // Go evaluates `hasStatsForEstimation` in `compareCandidates`, over the
+    // widened access map.
+    candidate.pseudo = !crate::find_best_task::candidate::has_stats_for_estimation(
+        ds,
+        source_index.read().id,
+        idx_cols,
+        &candidate.access_columns,
+    );
     candidate.eq_or_in_count = core.index_join_cols;
     candidate.index_join_cols = core.index_join_cols;
     (candidate.count_after_access_4_index_join, candidate.count_after_access_4_index_join_ok) =
@@ -2957,13 +2965,11 @@ fn index_join_path_compare(
         return true;
     };
     if let (Some(current_candidate), Some(best_candidate)) = (&current.candidate, &best.candidate) {
-        crate::plan_cost_ver2::record_relevant_opt_var(tidb_vardef::tidb_vars::TIDB_OPT_PREFER_RANGE_SCAN);
         let comparison = crate::find_best_task::candidate::compare_candidates(
             current_candidate,
             best_candidate,
             table_pseudo,
             f64::MAX,
-            ctx.prefer_range_scan,
             ctx.index_join_skyline_threshold,
             ctx.range_max_count,
         );

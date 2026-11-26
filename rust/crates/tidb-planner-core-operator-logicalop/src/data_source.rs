@@ -577,13 +577,23 @@ impl DataSource {
     /// independent of payload eviction.
     #[must_use]
     pub fn index_has_analyzed(&self, id: i64) -> bool {
+        self.has_analyzed(id, true)
+    }
+
+    /// Go `ds.StatisticTable.ColAndIdxExistenceMap.HasAnalyzed(id, false)`.
+    #[must_use]
+    pub fn column_has_analyzed(&self, id: i64) -> bool {
+        self.has_analyzed(id, false)
+    }
+
+    fn has_analyzed(&self, id: i64, is_index: bool) -> bool {
         self.statistic_table
             .as_ref()
             .and_then(|table| table.existence_map.as_ref())
             .is_some_and(|map| {
                 map.read()
                     .unwrap_or_else(std::sync::PoisonError::into_inner)
-                    .has_analyzed(id, true)
+                    .has_analyzed(id, is_index)
             })
     }
 

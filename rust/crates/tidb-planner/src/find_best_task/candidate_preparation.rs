@@ -156,7 +156,6 @@ pub(super) fn prepare_ordinary_paths<'a>(
             |candidate| candidate.1.as_ref(),
             table_pseudo,
             prop.expected_cnt,
-            ctx.prefer_range_scan,
             ctx.index_join_skyline_threshold,
             ctx.range_max_count,
         );

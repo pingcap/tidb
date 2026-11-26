@@ -316,6 +316,7 @@ pub fn selectivity(
             &detached.ranges,
             &index_columns,
             ctx.options,
+            &|column_id| ctx.record_used_item(column_id, false),
         )?
         .est;
         nodes.push(StatsNode {
@@ -659,7 +660,9 @@ fn mask_and_selectivity_for_mv_index(
         }
         ctx.record_used_item(index_id, true);
         let count =
-            get_row_count_by_index_ranges(coll, index_id, &detached.ranges, cols, ctx.options)
+            get_row_count_by_index_ranges(coll, index_id, &detached.ranges, cols, ctx.options, &|column_id| {
+                ctx.record_used_item(column_id, false)
+            })
                 .ok()?
                 .est;
         let selectivity = (count / realtime).clamp(0.0, 1.0);
@@ -712,12 +715,15 @@ fn find_prefix_of_index(columns: &[Column], index_column_ids: &[i64]) -> Vec<Col
 }
 
 /// Go `GetRowCountByIndexRanges(sctx, coll, idxID, ranges, idxCols)`.
+/// `record_column` is Go's `recordUsedItemStatsStatus` for a column (by its
+/// column id) the estimate reads through `GetRowCountByColumnRanges`.
 pub fn get_row_count_by_index_ranges(
     coll: &HistColl,
     index_id: i64,
     ranges: &[Range],
     index_columns: &[Column],
     options: &EstimatorOptions,
+    record_column: &dyn Fn(i64),
 ) -> Result<tidb_stats::RowEstimate, EstimationError> {
     let mut pins = IndexEstimationPins::default();
     // `hasColumnStats`, the partial-statistics estimate and the virtual-column
@@ -751,7 +757,12 @@ pub fn get_row_count_by_index_ranges(
         .iter()
         .map(|column| column.virtual_expr.is_some())
         .collect::<Vec<_>>();
-    get_index_row_count(&stats, &virtual_columns, &recursive, ranges, options)
+    let record_position = |position: usize| {
+        if let Some(column) = index_columns.get(position) {
+            record_column(column.id);
+        }
+    };
+    get_index_row_count(&stats, &virtual_columns, &recursive, ranges, options, &record_position)
 }
 
 /// Go `GetSelectivityByFilter`: a single-column filter evaluated over the
@@ -1051,7 +1062,7 @@ use tidb_charset::Collation;
             7,
             &ranges,
             &columns,
-            &options,
+            &options, &|_| {},
         )
         .unwrap();
         let with_nonleading = get_row_count_by_index_ranges(
@@ -1059,7 +1070,7 @@ use tidb_charset::Collation;
             7,
             &ranges,
             &columns,
-            &options,
+            &options, &|_| {},
         )
         .unwrap();
         assert_eq!(with_nonleading.est, baseline.est);
@@ -1070,7 +1081,7 @@ use tidb_charset::Collation;
             7,
             &ranges,
             &columns,
-            &options,
+            &options, &|_| {},
         )
         .unwrap();
         // Two contributing columns activate Go's index-NDV bound: 1000 / 100.
@@ -1119,7 +1130,7 @@ use tidb_charset::Collation;
                 7,
                 &[range(vec![Datum::Int(low)], vec![Datum::Int(high)])],
                 &columns,
-                &EstimatorOptions::default(),
+                &EstimatorOptions::default(), &|_| {},
             )
             .unwrap()
             .est
@@ -1173,7 +1184,7 @@ use tidb_charset::Collation;
                 7,
                 &[range(vec![low], vec![high])],
                 &columns,
-                &EstimatorOptions::default(),
+                &EstimatorOptions::default(), &|_| {},
             )
             .unwrap()
             .est

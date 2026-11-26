@@ -280,7 +280,7 @@ fn estimate_correlation_range(
         let guards = pins.read();
         let context = guards.stats(handle);
         let estimate =
-            get_index_row_count(&context, &[], &[], std::slice::from_ref(range), &options).ok()?;
+            get_index_row_count(&context, &[], &[], std::slice::from_ref(range), &options, &|_| {}).ok()?;
         return Some(estimate.est);
     }
     let low = range.low_val.first()?.clone();
