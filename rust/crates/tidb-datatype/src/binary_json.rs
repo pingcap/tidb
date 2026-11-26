@@ -5095,6 +5095,11 @@ fn format_node(value: &JSONNode) -> String {
 mod tests {
     use super::*;
 
+    fn encoded_test_object(entries: impl Iterator<Item = String>) -> Vec<u8> {
+        let members = entries.collect::<Vec<_>>().join(",");
+        BinaryJSON::parse(&format!("{{{members}}}")).unwrap().encoded()
+    }
+
     #[test]
     fn short_json_unicode_validation_preserves_utf8_boundaries() {
         let prefixes: &[&[u8]] = &[
@@ -5152,14 +5157,10 @@ mod tests {
     #[test]
     fn checked_packed_keys_recheck_only_when_order_is_proven() {
         let object = |changed: &[usize]| {
-            let members = (0..32)
-                .map(|index| {
-                    let suffix = if changed.contains(&index) { 'b' } else { 'a' };
-                    format!(r#""long-key-{index:02}-{suffix}":{index}"#)
-                })
-                .collect::<Vec<_>>()
-                .join(",");
-            BinaryJSON::parse(&format!("{{{members}}}")).unwrap().encoded()
+            encoded_test_object((0..32).map(|index| {
+                let suffix = if changed.contains(&index) { 'b' } else { 'a' };
+                format!(r#""long-key-{index:02}-{suffix}":{index}"#)
+            }))
         };
         let original = object(&[]);
         let mut keys = CheckedJSONKeys::new(&original).unwrap();
@@ -5183,11 +5184,9 @@ mod tests {
     #[test]
     fn checked_child_prefix_covers_only_unchanged_layout() {
         let record = |value| {
-            let members = (0..40)
-                .map(|index| format!(r#""k{index:02}":{{"a":{value},"b":true}}"#))
-                .collect::<Vec<_>>()
-                .join(",");
-            BinaryJSON::parse(&format!("{{{members}}}")).unwrap().encoded()
+            encoded_test_object(
+                (0..40).map(|index| format!(r#""k{index:02}":{{"a":{value},"b":true}}"#)),
+            )
         };
         let mut keys = CheckedJSONKeys::new(&record(1)).unwrap();
         let checks = keys.value_checks.as_deref().unwrap();
@@ -5323,17 +5322,13 @@ mod tests {
     #[test]
     fn checked_child_run_revalidates_changed_layouts_and_payloads() {
         let record = |number, change_key, distinct_text| {
-            let members = (0..20)
-                .map(|index| {
-                    let key = if change_key && index == 4 { "zvalue" } else { "status" };
-                    let status = if distinct_text { index } else { 0 };
-                    format!(
-                        r#""key{index:03}":{{"index":{index},"reading":{number},"{key}":"値{status:03}"}}"#
-                    )
-                })
-                .collect::<Vec<_>>()
-                .join(",");
-            BinaryJSON::parse(&format!("{{{members}}}")).unwrap().encoded()
+            encoded_test_object((0..20).map(|index| {
+                let key = if change_key && index == 4 { "zvalue" } else { "status" };
+                let status = if distinct_text { index } else { 0 };
+                format!(
+                    r#""key{index:03}":{{"index":{index},"reading":{number},"{key}":"値{status:03}"}}"#
+                )
+            }))
         };
         let initial = record(1.5, false, false);
         let changed = record(2.5, true, true);
@@ -5408,16 +5403,10 @@ mod tests {
     fn checked_packed_string_run_revalidates_lengths_and_utf8() {
         const FIRST: &str = "雪abc";
         for varying in [false, true] {
-            let members = (0..40)
-                .map(|index| {
-                    let text = if varying && index % 2 != 0 { "x" } else { FIRST };
-                    format!(r#""k{index:02}":"{text}""#)
-                })
-                .collect::<Vec<_>>()
-                .join(",");
-            let cell = BinaryJSON::parse(&format!("{{{members}}}"))
-                .unwrap()
-                .encoded();
+            let cell = encoded_test_object((0..40).map(|index| {
+                let text = if varying && index % 2 != 0 { "x" } else { FIRST };
+                format!(r#""k{index:02}":"{text}""#)
+            }));
             let mut keys = CheckedJSONKeys::new(&cell).unwrap();
             let Some([PayloadCheck::Strings(run)]) = keys.value_checks.as_deref() else {
                 panic!("expected one packed string run");
@@ -5442,11 +5431,7 @@ mod tests {
     #[test]
     fn checked_packed_long_strings_keep_utf8_within_each_value() {
         let text = format!("{}0123", "雪語".repeat(25));
-        let members = (0..40)
-            .map(|index| format!(r#""k{index:02}":"{text}""#))
-            .collect::<Vec<_>>()
-            .join(",");
-        let cell = BinaryJSON::parse(&format!("{{{members}}}")).unwrap().encoded();
+        let cell = encoded_test_object((0..40).map(|index| format!(r#""k{index:02}":"{text}""#)));
         let mut keys = CheckedJSONKeys::new(&cell).unwrap();
         let Some([PayloadCheck::Strings(run)]) = keys.value_checks.as_deref() else {
             panic!("expected a packed long-string run");
@@ -5477,11 +5462,8 @@ mod tests {
     #[test]
     fn checked_packed_long_strings_keep_a_run_when_widths_differ() {
         let text = |index: usize| format!("{}0123", "雪語".repeat(25 + index % 3));
-        let members = (0..48)
-            .map(|index| format!(r#""k{index:02}":"{}""#, text(index)))
-            .collect::<Vec<_>>()
-            .join(",");
-        let cell = BinaryJSON::parse(&format!("{{{members}}}")).unwrap().encoded();
+        let cell =
+            encoded_test_object((0..48).map(|index| format!(r#""k{index:02}":"{}""#, text(index))));
         let mut keys = CheckedJSONKeys::new(&cell).unwrap();
         let Some([PayloadCheck::Strings(run)]) = keys.value_checks.as_deref() else {
             panic!("expected one run of varying-width long strings");
@@ -5635,15 +5617,11 @@ mod tests {
     #[test]
     #[cfg(target_arch = "aarch64")]
     fn checked_wide_strings_validate_mixed_utf8_after_the_three_byte_prefix() {
-        let members = (0..40)
-            .map(|index| {
-                let ch = char::from_u32(0x4e00 + index).unwrap();
-                let text = ch.to_string().repeat(50);
-                format!(r#""k{index:02}":"{text}0123""#)
-            })
-            .collect::<Vec<_>>()
-            .join(",");
-        let cell = BinaryJSON::parse(&format!("{{{members}}}")).unwrap().encoded();
+        let cell = encoded_test_object((0..40).map(|index| {
+            let ch = char::from_u32(0x4e00 + index).unwrap();
+            let text = ch.to_string().repeat(50);
+            format!(r#""k{index:02}":"{text}0123""#)
+        }));
         let mut keys = CheckedJSONKeys::new(&cell).unwrap();
         let Some([PayloadCheck::Strings(run)]) = keys.value_checks.as_deref() else {
             panic!("expected a packed long-string run");
@@ -5679,18 +5657,14 @@ mod tests {
     fn packed_long_strings_learn_a_later_prefix_and_keep_field_bounds() {
         let common = "é🙂".repeat(25);
         let record = |shared| {
-            let members = (0..40)
-                .map(|index| {
-                    let text = if shared {
-                        common.clone()
-                    } else {
-                        char::from_u32(0x4e00 + index).unwrap().to_string().repeat(50)
-                    };
-                    format!(r#""k{index:02}":"{text}0123""#)
-                })
-                .collect::<Vec<_>>()
-                .join(",");
-            BinaryJSON::parse(&format!("{{{members}}}")).unwrap().encoded()
+            encoded_test_object((0..40).map(|index| {
+                let text = if shared {
+                    common.clone()
+                } else {
+                    char::from_u32(0x4e00 + index).unwrap().to_string().repeat(50)
+                };
+                format!(r#""k{index:02}":"{text}0123""#)
+            }))
         };
         let original = record(false);
         let later = record(true);
@@ -5735,11 +5709,9 @@ mod tests {
         for count in [16, 17, 18] {
             for width in 1..=8 {
                 let padding = "x".repeat(width - 1);
-                let keys = (0..count)
-                    .map(|index| format!(r#""{padding}\u{:04x}":{index}"#, b'A' as usize + index))
-                    .collect::<Vec<_>>()
-                    .join(",");
-                let cell = BinaryJSON::parse(&format!("{{{keys}}}")).unwrap().encoded();
+                let cell = encoded_test_object(
+                    (0..count).map(|index| format!(r#""{padding}\u{:04x}":{index}"#, b'A' as usize + index)),
+                );
                 let value_entries = 1 + HEADER_SIZE + count * KEY_ENTRY_SIZE;
                 let key_start = value_entries + count * VALUE_ENTRY_SIZE;
                 let (layout, prefix) = BinaryJSON::check_flat_object_layout(&cell).unwrap();
