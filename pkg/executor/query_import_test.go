@@ -16,8 +16,12 @@ package executor_test
 
 import (
 	"context"
+	"fmt"
+	"net/http/httptest"
 	"testing"
 
+	"github.com/johannesboyne/gofakes3"
+	"github.com/johannesboyne/gofakes3/backend/s3mem"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -41,10 +45,13 @@ func TestBuildQueryImportPlan(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table src(a int, b int)")
 	tk.MustExec("create table dst(a int, c bigint)")
+	backend := s3mem.New()
+	require.NoError(t, backend.CreateBucket("query-import-sort"))
+	server := httptest.NewServer(gofakes3.New(backend).Server())
+	t.Cleanup(server.Close)
 	originalURI := vardef.CloudStorageURI.Load()
-	vardef.CloudStorageURI.Store("s3://query-import-sort")
+	vardef.CloudStorageURI.Store(fmt.Sprintf("s3://query-import-sort?region=us-east-1&endpoint=%s&access-key=test&secret-access-key=test", server.URL))
 	t.Cleanup(func() { vardef.CloudStorageURI.Store(originalURI) })
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/importer/skipGlobalSortStorePrivilegeCheck", "return")
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/util/IsRaftKv2", "return(false)")
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalDistTask)
 

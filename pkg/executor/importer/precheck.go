@@ -20,7 +20,6 @@ import (
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
 	tidb "github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/deploymode"
@@ -189,9 +188,6 @@ func (*LoadDataController) checkCDCPiTRTasks(ctx context.Context, se sessionctx.
 }
 
 func (e *LoadDataController) checkGlobalSortStorePrivilege(ctx context.Context) error {
-	failpoint.Inject("skipGlobalSortStorePrivilegeCheck", func() {
-		failpoint.Return(nil)
-	})
 	// we need read/put/delete/list privileges on global sort store.
 	target := "cloud storage"
 	cloudStorageURL, err3 := objstore.ParseRawURL(e.Plan.CloudStorageURI)
