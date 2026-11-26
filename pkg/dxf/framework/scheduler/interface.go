@@ -101,6 +101,7 @@ type TaskManager interface {
 	// GetSubtaskStateCntAndErrorsByStep returns the subtask count by state and failed/canceled errors of some step.
 	GetSubtaskStateCntAndErrorsByStep(ctx context.Context, taskID int64, step proto.Step) (map[proto.SubtaskState]int64, []error, error)
 	ResumeSubtasks(ctx context.Context, taskID int64) error
+	CancelPausedSubtasks(ctx context.Context, taskID int64) error
 	GetSubtaskErrors(ctx context.Context, taskID int64) ([]error, error)
 	UpdateSubtasksExecIDs(ctx context.Context, subtasks []*proto.SubtaskBase) error
 
