@@ -291,6 +291,10 @@ fn check_permissions(ctx: &Context, client: &OssClient, storage: &CloudStorage, 
 
 /// Go `NewOSSStorage`.
 pub(crate) fn new_oss_storage(ctx: &Context, s3: &S3, opts: &Options) -> Result<CloudStorage> {
+    // The parse error quotes the full URL, which may hold credentials.
+    if tidb_go_url::parse(&s3.endpoint).is_err() {
+        return Err(berrors::annotate(berrors::ERR_STORAGE_INVALID_CONFIG, "invalid OSS endpoint URL"));
+    }
     check_ctx(ctx)?;
     let bucket = s3.bucket.as_str();
     if bucket.is_empty() {

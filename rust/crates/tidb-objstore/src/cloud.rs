@@ -502,11 +502,17 @@ impl Writer for CloudWriter {
 /// provider; `storage::new` sends the OSS provider to
 /// `ossstore::new_oss_storage`.
 pub fn new_s3_storage(ctx: &Context, s3: &S3, opts: &Options) -> Result<CloudStorage> {
+    // `url.Parse` only checks syntax; SDK endpoint errors and retry logs can
+    // expose the full URL, so a malformed one is refused before any request.
+    let ks3 = s3.provider == tidb_objstore_s3like::KS3_SDK_PROVIDER;
+    if tidb_go_url::parse(&s3.endpoint).is_err() {
+        let message = if ks3 { "invalid KS3 endpoint URL" } else { "invalid S3 endpoint URL" };
+        return Err(berrors::annotate(berrors::ERR_STORAGE_INVALID_CONFIG, message));
+    }
     check_ctx(ctx)?;
     if s3.bucket.is_empty() {
         return Err(berrors::annotate(berrors::ERR_STORAGE_INVALID_CONFIG, "bucket name is empty"));
     }
-    let ks3 = s3.provider == tidb_objstore_s3like::KS3_SDK_PROVIDER;
     if ks3 && s3.region.is_empty() {
         return Err(Error::other("ks3 region is empty"));
     }
@@ -656,6 +662,11 @@ fn detect_bucket_region(
 
 /// Go `NewGCSStorage`.
 pub fn new_gcs_storage(ctx: &Context, gcs: &Gcs, opts: &Options) -> Result<CloudStorage> {
+    // `url.Parse` only checks syntax; the error is not kept, since it quotes
+    // the credential-bearing URL.
+    if tidb_go_url::parse(&gcs.endpoint).is_err() {
+        return Err(berrors::annotate(berrors::ERR_STORAGE_INVALID_CONFIG, "invalid GCS endpoint URL"));
+    }
     check_ctx(ctx)?;
     let mut builder = opendal::services::Gcs::default().bucket(&gcs.bucket);
     if !gcs.endpoint.is_empty() {
@@ -761,6 +772,11 @@ pub fn new_azure_blob_storage(ctx: &Context, az: &AzureBlobStorage, opts: &Optio
         }
     }
     .map(Arc::new);
+    // Go `newAzureBlobStorageWithClientBuilder`: the service URL must parse;
+    // neither the parser's nor the SDK's error is kept, both quote the URL.
+    if tidb_go_url::parse(&endpoint).is_err() {
+        return Err(berrors::annotate(berrors::ERR_STORAGE_INVALID_CONFIG, "invalid Azure endpoint URL"));
+    }
     let http = crate::s3client::http_client()?;
     // Go `containerClient.GetProperties`.
     if let Some(credentials) = &credentials {

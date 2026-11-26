@@ -1026,3 +1026,78 @@ fn cloud_storage_features_and_copier_follow_go() {
     }
 }
 
+
+/// Go `TestMalformedEndpointDoesNotLeakCredentials`: a malformed endpoint
+/// that `ParseBackend` accepts (Azure, GCS) is refused by the storage
+/// constructor before any request, and no error text holds the endpoint's
+/// credentials; S3-like schemes refuse it while parsing.
+#[test]
+fn test_malformed_endpoint_does_not_leak_credentials() {
+    for (scheme, reject_during_parse) in [("azure", false), ("gcs", false), ("s3", true), ("ks3", true), ("oss", true)] {
+        for endpoint in [
+            "https://FAKE_USER:FAKE_PASS@host/path%zz?sig=FAKE_SIGNATURE",
+            "https://FAKE_USER:FAKE_PASS@host:badport/path?sig=FAKE_SIGNATURE",
+            "https://FAKE_USER:FAKE_PASS@host/path\n?sig=FAKE_SIGNATURE",
+        ] {
+            let raw = format!(
+                "{scheme}://bucket/prefix?account-name=fake&sas-token=FAKE_SAS&endpoint={}",
+                tidb_go_url::query_escape_string(endpoint)
+            );
+            let parsed = parse_backend(&raw, None);
+            let err = if reject_during_parse {
+                parsed.expect_err(&format!("{scheme}: the parser refuses the endpoint"))
+            } else {
+                let backend = parsed.unwrap_or_else(|err| panic!("{scheme}: {err}"));
+                let ctx = tidb_gocontext::Context::background();
+                let opts = crate::storeapi::Options { no_credentials: true, ..Default::default() };
+                match crate::new(&ctx, &backend, Some(&opts)) {
+                    Ok(_) => panic!("{scheme}: a malformed endpoint built a storage"),
+                    Err(err) => err.to_string(),
+                }
+            };
+            for secret in ["FAKE_USER", "FAKE_PASS", "FAKE_SIGNATURE", "FAKE_SAS"] {
+                assert!(!err.contains(secret), "{scheme} {endpoint:?}: {err}");
+            }
+            assert!(err.contains("ErrStorageInvalidConfig"), "{scheme} {endpoint:?}: {err}");
+        }
+    }
+}
+
+/// Go `TestMalformedS3BackendDoesNotLeakCredentials`, its dispatcher entry
+/// (the constructors are reached through it): a backend that bypasses
+/// `ParseBackend`'s endpoint validation is refused before any request or
+/// SDK error, without leaking or mutating its credentials.
+#[test]
+fn test_malformed_s3_backend_does_not_leak_credentials() {
+    use tidb_proto::backup::{storage_backend::Backend, StorageBackend, S3};
+    for provider in ["", "aws", "minio", tidb_objstore_s3like::KS3_SDK_PROVIDER, tidb_objstore_s3like::OSS_PROVIDER] {
+        for endpoint in [
+            "https://FAKE_USER:FAKE_PASS@host/path%zz?sig=FAKE_SIGNATURE",
+            "https://FAKE_USER:FAKE_PASS@host:badport/path?sig=FAKE_SIGNATURE",
+            "https://FAKE_USER:FAKE_PASS@host/path\n?sig=FAKE_SIGNATURE",
+        ] {
+            let s3 = S3 {
+                provider: provider.to_owned(),
+                endpoint: endpoint.to_owned(),
+                bucket: "bucket".to_owned(),
+                region: "us-east-1".to_owned(),
+                access_key: "FAKE_ACCESS_KEY".to_owned(),
+                secret_access_key: "FAKE_SECRET_KEY".to_owned(),
+                force_path_style: true,
+                ..Default::default()
+            };
+            let backend = StorageBackend { backend: Some(Backend::S3(s3)) };
+            let original = backend.clone();
+            let ctx = tidb_gocontext::Context::background();
+            let err = match crate::new(&ctx, &backend, Some(&crate::storeapi::Options::default())) {
+                Ok(_) => panic!("{provider:?}: a malformed endpoint built a storage"),
+                Err(err) => err.to_string(),
+            };
+            for secret in ["FAKE_USER", "FAKE_PASS", "FAKE_SIGNATURE", "FAKE_ACCESS_KEY", "FAKE_SECRET_KEY"] {
+                assert!(!err.contains(secret), "{provider:?} {endpoint:?}: {err}");
+            }
+            assert!(err.contains("ErrStorageInvalidConfig"), "{provider:?} {endpoint:?}: {err}");
+            assert_eq!(original, backend, "invalid configuration must not mutate the backend");
+        }
+    }
+}
