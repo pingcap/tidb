@@ -81,13 +81,8 @@ func collectionOf(typ Type, d dims, members ...[]byte) []byte {
 	return le(typ, d, append([][]byte{count(len(members))}, members...)...)
 }
 
-// stored makes a little-endian root geometry g a stored value at srid.
-func stored(srid uint32, g []byte) []byte {
-	b := []byte{Version1, byteOrderLittle}
-	b = binary.LittleEndian.AppendUint32(b, binary.LittleEndian.Uint32(g[1:])|ewkbSRID)
-	b = binary.LittleEndian.AppendUint32(b, srid)
-	return append(b, g[5:]...)
-}
+// byteOrderBig is the byte-order byte of big-endian WKB, which no bare value holds.
+const byteOrderBig byte = 0
 
 // bareOf makes a little-endian root geometry g without an SRID the bare value at srid:
 // MySQL's binary format for a 2D value, extended with the Z and M flags otherwise.
@@ -95,8 +90,11 @@ func bareOf(srid uint32, g []byte) []byte {
 	return append(binary.LittleEndian.AppendUint32(nil, srid), g...)
 }
 
-// storedFromBare rewrites the root header of a bare value into the stored format.
-func storedFromBare(m []byte) []byte { return stored(binary.LittleEndian.Uint32(m), m[4:]) }
+// stored makes a little-endian root geometry g without an SRID a stored value at srid.
+func stored(srid uint32, g []byte) []byte { return storedFromBare(bareOf(srid, g)) }
+
+// storedFromBare prefixes a bare value with the version byte.
+func storedFromBare(b []byte) []byte { return append([]byte{Version1}, b...) }
 
 // nestedCollections returns WKB (little-endian, no SRID) for depth GEOMETRYCOLLECTIONs,
 // each holding the next, the innermost empty.
@@ -114,15 +112,12 @@ func nestedCollections(depth int) []byte {
 	return b
 }
 
-// storedChain returns a stored value at SRID 0 of depth-1 GEOMETRYCOLLECTIONs, each
-// holding the next and the innermost holding leaf, a little-endian geometry without an
-// SRID, which so sits at depth. flags are set on every collection's type word.
-func storedChain(depth int, flags uint32, leaf []byte) []byte {
-	b := []byte{Version1, byteOrderLittle}
-	b = binary.LittleEndian.AppendUint32(b, 7|flags|ewkbSRID)
-	b = binary.LittleEndian.AppendUint32(b, 0)
-	b = binary.LittleEndian.AppendUint32(b, 1)
-	for range depth - 2 {
+// chainOf returns a bare value at SRID 0 of depth-1 GEOMETRYCOLLECTIONs, each holding the
+// next and the innermost holding leaf, a little-endian geometry, which so sits at depth.
+// flags are set on every collection's type word.
+func chainOf(depth int, flags uint32, leaf []byte) []byte {
+	b := make([]byte, 4)
+	for range depth - 1 {
 		b = append(b, byteOrderLittle)
 		b = binary.LittleEndian.AppendUint32(b, 7|flags)
 		b = binary.LittleEndian.AppendUint32(b, 1)
@@ -130,16 +125,8 @@ func storedChain(depth int, flags uint32, leaf []byte) []byte {
 	return append(b, leaf...)
 }
 
-// bareChain is storedChain as a bare value, without flags.
-func bareChain(depth int, leaf []byte) []byte {
-	b := make([]byte, 4)
-	for range depth - 1 {
-		b = append(b, byteOrderLittle)
-		b = binary.LittleEndian.AppendUint32(b, 7)
-		b = binary.LittleEndian.AppendUint32(b, 1)
-	}
-	return append(b, leaf...)
-}
+// bareChain is chainOf without flags.
+func bareChain(depth int, leaf []byte) []byte { return chainOf(depth, 0, leaf) }
 
 func appendPointWKB(b []byte, order binary.AppendByteOrder, x, y float64) []byte {
 	if order == binary.BigEndian {
