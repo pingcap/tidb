@@ -100,13 +100,23 @@ impl ReplaySession for UnistoreSession {
         // reads are the server's result-set packets, so the comparison reads
         // exactly those: the connection's own writer frames the result and it
         // is decoded as mysql-tester decodes it.
+        // Go `clientConn.dispatch`'s `initResultEncoder`, once per command:
+        // the session's `@@character_set_results`, as `mysql_connection`
+        // builds it (an unregistered name is Go's unset state).
+        let result_encoder = tidb_format_textrow::result_encoder::ResultEncoder::new(
+            QuerySession::result_charset(&self.session).as_ref(),
+        )
+        .unwrap_or_else(|_| tidb_format_textrow::result_encoder::ResultEncoder::null());
         let response = match QuerySession::execute_stmt(&mut self.session, sql, &stmt)
             .map_err(driver_error)?
         {
             Some(mut result) => Some(
                 crate::connection_resultset::write_connection_result_set(
                     result.source(),
-                    crate::resultset::ResultSetOptions::default(),
+                    crate::resultset::ResultSetOptions {
+                        result_encoder,
+                        ..crate::resultset::ResultSetOptions::default()
+                    },
                     1024,
                 )
                 .map_err(|error| source_error(error.cause))?,
