@@ -2428,25 +2428,45 @@ fn vectorized_translate_maps_literal_and_row_runes_in_selection_order() {
     }
 }
 
-#[test]
-fn vectorized_insert_preserves_noops_and_checks_only_edited_bytes() {
-    #[derive(Default)]
-    struct Warnings(std::cell::RefCell<Vec<u16>>);
-    impl Columns for Warnings {
-        fn get(&self, _: &[String]) -> Option<Datum> {
-            None
-        }
+struct PacketLimitContext {
+    limit: u64,
+    warnings: std::cell::RefCell<Vec<(u16, String)>>,
+}
 
-        fn max_allowed_packet(&self) -> u64 {
-            8
-        }
-
-        fn append_warning(&self, code: u16, _: &str) {
-            self.0.borrow_mut().push(code);
+impl PacketLimitContext {
+    fn new(limit: u64) -> Self {
+        Self {
+            limit,
+            warnings: Default::default(),
         }
     }
 
-    let ctx = Warnings::default();
+    fn warning_codes(self) -> Vec<u16> {
+        self.warnings
+            .into_inner()
+            .into_iter()
+            .map(|(code, _)| code)
+            .collect()
+    }
+}
+
+impl Columns for PacketLimitContext {
+    fn get(&self, _: &[String]) -> Option<Datum> {
+        None
+    }
+
+    fn max_allowed_packet(&self) -> u64 {
+        self.limit
+    }
+
+    fn append_warning(&self, code: u16, message: &str) {
+        self.warnings.borrow_mut().push((code, message.to_owned()));
+    }
+}
+
+#[test]
+fn vectorized_insert_preserves_noops_and_checks_only_edited_bytes() {
+    let ctx = PacketLimitContext::new(8);
     let text = types().remove(3);
     let integer = FieldType::new(FieldTypeCode::LongLong);
     let fields = [text.clone(), integer.clone(), integer, text.clone()];
@@ -2480,7 +2500,7 @@ fn vectorized_insert_preserves_noops_and_checks_only_edited_bytes() {
     .unwrap();
     let mut result = Column::default();
     eval_into(&expression, EvalType::String, &ctx, &input, &mut result).unwrap();
-    assert_eq!(ctx.0.into_inner(), [1301]);
+    assert_eq!(ctx.warning_codes(), [1301]);
     assert!(result.is_null(0));
     assert_eq!(result.get_raw(1), b"\xc3\xa9\xe2\x82");
     assert_eq!(result.get_raw(2), b"a\xef\xbf\xbd\xef\xbf\xbd\xff");
@@ -2491,22 +2511,6 @@ fn vectorized_insert_preserves_noops_and_checks_only_edited_bytes() {
 
 #[test]
 fn vectorized_pad_matches_go_packet_order_and_malformed_utf8() {
-    #[derive(Default)]
-    struct Warnings(std::cell::RefCell<Vec<u16>>);
-    impl Columns for Warnings {
-        fn get(&self, _: &[String]) -> Option<Datum> {
-            None
-        }
-
-        fn max_allowed_packet(&self) -> u64 {
-            1 << 26
-        }
-
-        fn append_warning(&self, code: u16, _: &str) {
-            self.0.borrow_mut().push(code);
-        }
-    }
-
     let string = types().remove(3);
     let mut binary = string.clone();
     binary.set_charset_name("binary");
@@ -2538,7 +2542,7 @@ fn vectorized_pad_matches_go_packet_order_and_malformed_utf8() {
         }
         input.set_sel(Some(vec![4, 2, 1, 0, 5, 3, 0, 6]));
         for op in ["lpad", "rpad"] {
-            let ctx = Warnings::default();
+            let ctx = PacketLimitContext::new(1 << 26);
             let expression = crate::new_function::new_function_base(
                 &ctx,
                 op,
@@ -2554,7 +2558,7 @@ fn vectorized_pad_matches_go_packet_order_and_malformed_utf8() {
             eval_into(&expression, EvalType::String, &ctx, &input, &mut result).unwrap();
             let binary = pad.is_binary_string();
             assert_eq!(
-                ctx.0.into_inner(),
+                ctx.warning_codes(),
                 if binary { vec![1301, 1301] } else { vec![1301] }
             );
             assert_eq!(result.is_null(0), !binary);
@@ -2585,27 +2589,7 @@ fn vectorized_pad_matches_go_packet_order_and_malformed_utf8() {
 
 #[test]
 fn vectorized_space_checks_packet_limit_for_each_selected_row() {
-    #[derive(Default)]
-    struct PacketLimit(std::cell::RefCell<Vec<u16>>);
-    impl Columns for PacketLimit {
-        fn get(&self, _: &[String]) -> Option<Datum> {
-            None
-        }
-
-        fn max_allowed_packet(&self) -> u64 {
-            6
-        }
-
-        fn truncate_level(&self) -> crate::ErrorLevel {
-            crate::ErrorLevel::Warn
-        }
-
-        fn append_warning(&self, code: u16, _: &str) {
-            self.0.borrow_mut().push(code);
-        }
-    }
-
-    let ctx = PacketLimit::default();
+    let ctx = PacketLimitContext::new(6);
     let integer = FieldType::new(FieldTypeCode::LongLong);
     let mut input = Chunk::new_chunk_with_capacity(std::slice::from_ref(&integer), 4);
     input.append_int64(0, -1);
@@ -2629,32 +2613,12 @@ fn vectorized_space_checks_packet_limit_for_each_selected_row() {
         assert!(!result.is_null(row));
         assert_eq!(result.get_bytes(row).as_ref(), expected.as_bytes());
     }
-    assert_eq!(ctx.0.into_inner(), [1301, 1301]);
+    assert_eq!(ctx.warning_codes(), [1301, 1301]);
 }
 
 #[test]
 fn vectorized_concat_checks_packets_in_argument_order() {
-    #[derive(Default)]
-    struct PacketLimit(std::cell::RefCell<Vec<(u16, String)>>);
-    impl Columns for PacketLimit {
-        fn get(&self, _: &[String]) -> Option<Datum> {
-            None
-        }
-
-        fn max_allowed_packet(&self) -> u64 {
-            3
-        }
-
-        fn truncate_level(&self) -> crate::ErrorLevel {
-            crate::ErrorLevel::Warn
-        }
-
-        fn append_warning(&self, code: u16, message: &str) {
-            self.0.borrow_mut().push((code, message.to_owned()));
-        }
-    }
-
-    let ctx = PacketLimit::default();
+    let ctx = PacketLimitContext::new(3);
     let mut string = types().remove(3);
     string.set_flen(32);
     let repeat = crate::new_function::new_function_base(
@@ -2700,7 +2664,7 @@ fn vectorized_concat_checks_packets_in_argument_order() {
     }
     assert_eq!(result.get_bytes(3).as_ref(), b"abb");
     assert_eq!(result.get_bytes(5).as_ref(), b"bbc");
-    let warnings = ctx.0.into_inner();
+    let warnings = ctx.warnings.into_inner();
     assert_eq!(warnings.len(), 4);
     for ((code, message), op) in warnings.iter().zip(["concat", "repeat", "repeat", "concat"]) {
         assert_eq!(*code, 1301);

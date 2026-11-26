@@ -94,7 +94,7 @@ pub fn merge_and_rewrite_file_ranges(
         if entry[0].end_key != file.end_key {
             // Go `logutil.Key`: the keys go through `redact.Key`.
             let key = |name, key: &[u8]| {
-                tidb_log::Field::new(name, tidb_log::Value::Str(tidb_redact::key(key).into_owned()))
+                tidb_log::Field::new(name, tidb_log::Value::Str(tidb_redact::key_owned(key)))
             };
             tidb_log::panic(
                 "there are two files having the same start key, but different end key",
