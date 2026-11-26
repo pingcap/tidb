@@ -162,37 +162,27 @@ func (f *FKCascade) MemoryUsage() (sum int64) {
 	return
 }
 
-// BuildOnInsertFKTriggers builds the foreign key triggers for insert statement.
-func (p *Insert) BuildOnInsertFKTriggers(ctx base.PlanContext, is infoschema.InfoSchema, dbName string) error {
+// BuildOnInsertFKTriggers builds the foreign key triggers for an INSERT statement.
+func (p *Insert) BuildOnInsertFKTriggers(ctx base.PlanContext, is infoschema.InfoSchema, dbName string) (err error) {
+	p.FKChecks, p.FKCascades, err = BuildInsertFKTriggers(ctx, is, dbName, p.Table.Meta(), p.IsReplace, p.buildOnDuplicateUpdateColumns())
+	return err
+}
+
+// BuildInsertFKTriggers plans child checks and any parent-side actions for inserted or replaced rows.
+func BuildInsertFKTriggers(ctx base.PlanContext, is infoschema.InfoSchema, dbName string, tblInfo *model.TableInfo, replace bool, updateCols map[string]struct{}) ([]*FKCheck, []*FKCascade, error) {
 	if !ctx.GetSessionVars().ForeignKeyChecks {
-		return nil
+		return nil, nil, nil
 	}
-	tblInfo := p.Table.Meta()
-	fkChecks := make([]*FKCheck, 0, len(tblInfo.ForeignKeys))
-	fkCascades := make([]*FKCascade, 0, len(tblInfo.ForeignKeys))
-	updateCols := p.buildOnDuplicateUpdateColumns()
+	var fkChecks []*FKCheck
+	var fkCascades []*FKCascade
+	var err error
 	if len(updateCols) > 0 {
-		referredFKChecks, referredFKCascades, err := buildOnUpdateReferredFKTriggers(ctx, is, dbName, tblInfo, updateCols)
-		if err != nil {
-			return err
-		}
-		if len(referredFKChecks) > 0 {
-			fkChecks = append(fkChecks, referredFKChecks...)
-		}
-		if len(referredFKCascades) > 0 {
-			fkCascades = append(fkCascades, referredFKCascades...)
-		}
-	} else if p.IsReplace {
-		referredFKChecks, referredFKCascades, err := p.buildOnReplaceReferredFKTriggers(ctx, is, dbName, tblInfo)
-		if err != nil {
-			return err
-		}
-		if len(referredFKChecks) > 0 {
-			fkChecks = append(fkChecks, referredFKChecks...)
-		}
-		if len(referredFKCascades) > 0 {
-			fkCascades = append(fkCascades, referredFKCascades...)
-		}
+		fkChecks, fkCascades, err = buildOnUpdateReferredFKTriggers(ctx, is, dbName, tblInfo, updateCols)
+	} else if replace {
+		fkChecks, fkCascades, err = buildOnReplaceReferredFKTriggers(ctx, is, dbName, tblInfo)
+	}
+	if err != nil {
+		return nil, nil, err
 	}
 	for _, fk := range tblInfo.ForeignKeys {
 		if fk.Version < 1 {
@@ -201,17 +191,16 @@ func (p *Insert) BuildOnInsertFKTriggers(ctx base.PlanContext, is infoschema.Inf
 		failedErr := plannererrors.ErrNoReferencedRow2.FastGenByArgs(fk.String(dbName, tblInfo.Name.L))
 		fkCheck, err := buildFKCheckOnModifyChildTable(ctx, is, fk, failedErr)
 		if err != nil {
-			return err
+			return nil, nil, err
 		}
 		if fkCheck != nil {
 			fkChecks = append(fkChecks, fkCheck)
 		}
 	}
-	if len(fkChecks) > 0 || len(fkCascades) > 0 {
-		p.FKChecks = fkChecks
-		p.FKCascades = fkCascades
+	if len(fkChecks) == 0 && len(fkCascades) == 0 {
+		return nil, nil, nil
 	}
-	return nil
+	return fkChecks, fkCascades, nil
 }
 
 func (p *Insert) buildOnDuplicateUpdateColumns() map[string]struct{} {
@@ -222,7 +211,7 @@ func (p *Insert) buildOnDuplicateUpdateColumns() map[string]struct{} {
 	return m
 }
 
-func (*Insert) buildOnReplaceReferredFKTriggers(ctx base.PlanContext, is infoschema.InfoSchema, dbName string, tblInfo *model.TableInfo) ([]*FKCheck, []*FKCascade, error) {
+func buildOnReplaceReferredFKTriggers(ctx base.PlanContext, is infoschema.InfoSchema, dbName string, tblInfo *model.TableInfo) ([]*FKCheck, []*FKCascade, error) {
 	referredFKs := is.GetTableReferredForeignKeys(dbName, tblInfo.Name.L)
 	fkChecks := make([]*FKCheck, 0, len(referredFKs))
 	fkCascades := make([]*FKCascade, 0, len(referredFKs))

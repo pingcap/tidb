@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -514,6 +515,50 @@ func TestLoadDataReplace(t *testing.T) {
 	deleteSQL := "DO 1"
 	selectSQL := "TABLE load_data_replace;"
 	checkCases(tests, loadSQL, t, tk, ctx, selectSQL, deleteSQL)
+}
+
+func TestLoadDataForeignKeys(t *testing.T) {
+	tk := testkit.NewTestKit(t, testkit.CreateMockStore(t))
+	tk.MustExec("use test")
+	tk.MustExec("create table parent (id int primary key, u int unique)")
+	tk.MustExec("create table child (id int primary key, pid int, foreign key (pid) references parent(id))")
+	tk.MustExec("insert into parent values (1, 5)")
+	setInput := func(data string) {
+		tk.Session().SetValue(executor.LoadDataReaderBuilderKey, executor.LoadDataReaderBuilder{
+			Build: func(string) (io.ReadCloser, error) { return mydump.NewStringReader(data), nil },
+		})
+	}
+	const load = "load data local infile 'rows' "
+	setInput("10\t1\n11\t2\n")
+	tk.MustExec(load + "into table child")
+	warnings := tk.MustQuery("show warnings").Rows()
+	require.Len(t, warnings, 1)
+	require.Equal(t, "1452", warnings[0][1])
+	tk.MustQuery("table child").Check(testkit.Rows("10 1"))
+	// A violation in a later batch must roll back the earlier batch as well.
+	setInput(strings.Repeat("20\t1\n", 1000) + "21\t2\n")
+	tk.MustGetErrCode(load+"replace into table child", mysql.ErrNoReferencedRow2)
+	tk.MustQuery("table child").Check(testkit.Rows("10 1"))
+	setInput("2\t5\n")
+	tk.MustGetErrCode(load+"replace into table parent", mysql.ErrRowIsReferenced2)
+	tk.MustQuery("table parent").Check(testkit.Rows("1 5"))
+
+	for _, action := range []string{"cascade", "set null"} {
+		tk.MustExec("drop table child")
+		tk.MustExec("create table child (pid int, foreign key (pid) references parent(id) on delete " + action + ")")
+		tk.MustExec("insert into child values (1)")
+		tk.MustExec("begin")
+		setInput("2\t5\n")
+		tk.MustExec(load + "replace into table parent")
+		if action == "cascade" {
+			tk.MustQuery("table child").Check(testkit.Rows())
+		} else {
+			tk.MustQuery("table child").Check(testkit.Rows("<nil>"))
+		}
+		tk.MustExec("rollback")
+		tk.MustQuery("table parent").Check(testkit.Rows("1 5"))
+		tk.MustQuery("table child").Check(testkit.Rows("1"))
+	}
 }
 
 // TestLoadDataOverflowBigintUnsigned related to issue 6360

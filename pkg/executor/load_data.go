@@ -93,6 +93,15 @@ type LoadDataExec struct {
 	infileReader io.ReadCloser
 }
 
+// GetFKChecks implements WithForeignKeyTrigger.
+func (e *LoadDataExec) GetFKChecks() []*FKCheckExec { return e.loadDataWorker.fkChecks }
+
+// GetFKCascades implements WithForeignKeyTrigger.
+func (e *LoadDataExec) GetFKCascades() []*FKCascadeExec { return e.loadDataWorker.fkCascades }
+
+// HasFKCascades implements WithForeignKeyTrigger.
+func (e *LoadDataExec) HasFKCascades() bool { return len(e.GetFKCascades()) > 0 }
+
 // Open implements the Executor interface.
 func (e *LoadDataExec) Open(_ context.Context) error {
 	if rb, ok := e.Ctx().Value(LoadDataReaderBuilderKey).(LoadDataReaderBuilder); ok {
@@ -164,7 +173,9 @@ type LoadDataWorker struct {
 	controller *importer.LoadDataController
 	planInfo   planInfo
 
-	table table.Table
+	table      table.Table
+	fkChecks   []*FKCheckExec
+	fkCascades []*FKCascadeExec
 }
 
 func setNonRestrictiveFlags(stmtCtx *stmtctx.StatementContext) {
@@ -354,6 +365,8 @@ func createInsertValues(e *LoadDataWorker) (insertVal *InsertValues, err error) 
 	ret := &InsertValues{
 		BaseExecutor:   exec.NewBaseExecutor(e.UserSctx, nil, e.planInfo.ID),
 		Table:          e.table,
+		fkChecks:       e.fkChecks,
+		fkCascades:     e.fkCascades,
 		Columns:        e.planInfo.Columns,
 		GenExprs:       e.planInfo.GenColExprs,
 		maxRowsInBatch: 1000,
@@ -734,7 +747,12 @@ func (w *commitWorker) addRecordLD(ctx context.Context, row []types.Datum, dupKe
 	if row == nil {
 		return nil
 	}
-	return w.addRecord(ctx, row, dupKeyCheck)
+	if err := w.addRecord(ctx, row, dupKeyCheck); err != nil {
+		return err
+	}
+	// The batch checked duplicate keys before writing. Include the inserted row in
+	// the statement's final foreign key checks and parent-key locking.
+	return w.collectInsertFKChecks(row)
 }
 
 // GetInfilePath get infile path.

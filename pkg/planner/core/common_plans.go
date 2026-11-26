@@ -661,7 +661,9 @@ type LoadData struct {
 	ColumnsAndUserVars []*ast.ColumnNameOrUserVar
 	Options            []*LoadDataOpt
 
-	GenCols physicalop.InsertGeneratedColumns
+	GenCols    physicalop.InsertGeneratedColumns
+	FKChecks   []*physicalop.FKCheck
+	FKCascades []*physicalop.FKCascade
 }
 
 // LoadDataOpt represents load data option.
