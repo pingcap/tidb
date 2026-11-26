@@ -215,7 +215,12 @@ impl MppCoordinatorManager {
     /// the coordinator.
     #[must_use]
     pub fn report_status(&self, request: &ReportTaskStatusRequest) -> ReportTaskStatusResponse {
-        let meta = request.meta.clone().unwrap_or_default();
+        let Some(meta) = request.meta.clone() else {
+            return ReportTaskStatusResponse {
+                error: Some(MppError { msg: "missing task metadata".to_owned(), ..Default::default() }),
+                ..Default::default()
+            };
+        };
         let mpp_query_id = MppQueryId {
             query_ts: meta.query_ts,
             local_query_id: meta.local_query_id,
@@ -282,6 +287,40 @@ mod tests {
             .registry()
             .coordinator_map
             .insert(unique_id, Arc::new(IdleCoordinator));
+    }
+
+    /// Go `TestReportStatus`: a request without task metadata is refused,
+    /// even when a coordinator with zero ids exists.
+    #[test]
+    fn test_report_status() {
+        let manager = MppCoordinatorManager::new();
+        insert(&manager, 0, 0);
+        let resp = manager.report_status(&ReportTaskStatusRequest::default());
+        assert_eq!(resp.error.map(|error| error.msg).as_deref(), Some("missing task metadata"));
+
+        // Present metadata with zero ids still follows the normal lookup.
+        let resp = manager.report_status(&ReportTaskStatusRequest { meta: Some(Default::default()), ..Default::default() });
+        assert!(resp.error.is_none(), "{resp:?}");
+
+        let meta = tidb_proto::mpp::TaskMeta {
+            query_ts: 1,
+            local_query_id: 2,
+            server_id: 3,
+            gather_id: 4,
+            mpp_version: 3,
+            ..Default::default()
+        };
+        let request = ReportTaskStatusRequest { meta: Some(meta.clone()), ..Default::default() };
+        let error = manager.report_status(&request).error.expect("no coordinator");
+        assert_eq!(error.msg, "MppCoordinator not exists");
+        assert_eq!(error.mpp_version, meta.mpp_version);
+
+        let unique_id = CoordinatorUniqueId {
+            mpp_query_id: MppQueryId { query_ts: 1, local_query_id: 2, server_id: 3 },
+            gather_id: 4,
+        };
+        manager.registry().coordinator_map.insert(unique_id, Arc::new(IdleCoordinator));
+        assert!(manager.report_status(&request).error.is_none());
     }
 
     /// Go `TestDetectAndDelete`.
