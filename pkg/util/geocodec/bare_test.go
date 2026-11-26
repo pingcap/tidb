@@ -412,7 +412,7 @@ func FuzzParseColumnValue(f *testing.F) {
 	f.Add(mustHex(f, "01 01 04000020 00000000 01000000 00 00000001 3FF0000000000000 4000000000000000"))
 	f.Fuzz(func(t *testing.T, b []byte) {
 		// The formats never overlap.
-		if _, _, err := MySQLToStored(b); err == nil {
+		if _, _, err := BareToStored(b); err == nil {
 			require.False(t, IsStored(b), "%X", b)
 		}
 		if !checkBareCanonical(t, b) {
