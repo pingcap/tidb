@@ -128,6 +128,53 @@ impl ClientSocket {
         ))
     }
 
+    /// Go `probeConnAlive`: whether the peer is still connected, by a
+    /// non-blocking, non-consuming `recv(MSG_PEEK|MSG_DONTWAIT)` on the
+    /// socket. 1 alive, 0 known gone, -1 unknown. The peek dequeues nothing
+    /// and leaves the socket's blocking mode alone, so it is safe to run
+    /// concurrently with the connection read loop.
+    #[cfg(unix)]
+    pub fn probe_conn_alive(&self) -> i32 {
+        use std::os::fd::AsFd;
+        let fd = match self {
+            Self::Tcp(stream) => stream.as_fd(),
+            Self::Unix(stream) => stream.as_fd(),
+        };
+        let mut buf = [0_u8; 1];
+        match rustix::net::recv(
+            fd,
+            &mut buf,
+            rustix::net::RecvFlags::PEEK | rustix::net::RecvFlags::DONTWAIT,
+        ) {
+            // The socket is open but no data is currently available.
+            Err(rustix::io::Errno::AGAIN) => 1,
+            // The receive was interrupted by a signal before any data was
+            // available, which says nothing about the peer.
+            Err(rustix::io::Errno::INTR) => -1,
+            // These errors prove the connection is gone: the peer reset it,
+            // the socket was disconnected, or the connection timed out.
+            Err(
+                rustix::io::Errno::CONNRESET
+                | rustix::io::Errno::PIPE
+                | rustix::io::Errno::NOTCONN
+                | rustix::io::Errno::TIMEDOUT,
+            ) => 0,
+            // Any other error, such as a transient ENOMEM/ENOBUFS while the
+            // host is under memory pressure, does not prove the peer is gone.
+            Err(_) => -1,
+            // recv reports EOF: the peer performed an orderly shutdown (FIN).
+            Ok((0, _)) => 0,
+            // Data is pending; MSG_PEEK leaves it in the receive buffer.
+            Ok(_) => 1,
+        }
+    }
+
+    /// Go `conn_alive_other.go`: liveness cannot be determined.
+    #[cfg(not(unix))]
+    pub fn probe_conn_alive(&self) -> i32 {
+        -1
+    }
+
     /// Reads without consuming (`MSG_PEEK`), as `TcpStream::peek`.
     pub fn peek(&self, buffer: &mut [u8]) -> io::Result<usize> {
         match self {

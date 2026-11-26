@@ -19,7 +19,7 @@ use std::fmt;
 use std::io::{BufReader, Write};
 use crate::client_socket::ClientSocket;
 use tidb_session::domain::peer_address::PeerAddress;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Instant;
 
 use tidb_format_textrow::result_encoder::ResultEncoder;
@@ -1990,28 +1990,18 @@ fn serve_connection_inner<F: QuerySessionFactory>(
     })
 }
 
-/// Go `BufferedReadConn.IsAlive` over the connection's raw socket: a
-/// non-blocking one-byte peek. Only an end of stream means the client is
-/// gone; a timeout, data or any other error answers alive, as Go treats its
-/// unknown states. Probes never overlap (Go's `mu.TryLock`): a probe that
-/// finds another running answers alive.
+/// Go `BufferedReadConn.IsAlive` over the connection's raw socket (TLS
+/// unwrapped, Go `unwrapSyscallConn`): `probeConnAlive`'s non-consuming
+/// peek, which runs from SQLKiller checkpoints on any thread concurrently
+/// with the read loop. Go's `isAlive` kills only on a known-gone peer
+/// (`IsAlive() != 0` is alive).
 struct ConnectionAliveProbe {
     socket: ClientSocket,
-    checking: Mutex<()>,
 }
 
 impl ConnectionAliveProbe {
     fn is_alive(&self) -> bool {
-        let Ok(_checking) = self.checking.try_lock() else {
-            return true;
-        };
-        if self.socket.set_nonblocking(true).is_err() {
-            return true;
-        }
-        let mut byte = [0_u8; 1];
-        let peeked = self.socket.peek(&mut byte);
-        let _ = self.socket.set_nonblocking(false);
-        !matches!(peeked, Ok(0))
+        self.socket.probe_conn_alive() != 0
     }
 }
 
@@ -2366,7 +2356,6 @@ fn run_connection_commands<S: QuerySession>(
     let protocol_41 = framing.protocol_41;
     let connection_alive = Arc::new(ConnectionAliveProbe {
         socket: stream_for_watch,
-        checking: Mutex::new(()),
     });
     let mut queries = 0_u64;
     let mut last_metrics_sql_type = "general";
@@ -4124,7 +4113,7 @@ mod dispatch_failure_log_tests {
 
 #[cfg(test)]
 mod connection_alive_tests {
-    use super::{ConnectionAliveProbe, Mutex};
+    use super::ConnectionAliveProbe;
     use std::net::{TcpListener, TcpStream};
 
     /// Go `BufferedReadConn.IsAlive`: a quiet client is alive, and only the
@@ -4136,7 +4125,6 @@ mod connection_alive_tests {
         let (server, _) = listener.accept().unwrap();
         let probe = ConnectionAliveProbe {
             socket: server.into(),
-            checking: Mutex::new(()),
         };
         assert!(probe.is_alive(), "a quiet client is alive");
         drop(client);
@@ -4145,8 +4133,8 @@ mod connection_alive_tests {
             assert!(std::time::Instant::now() < deadline, "EOF never observed");
             std::thread::sleep(std::time::Duration::from_millis(5));
         }
-        // The probe restores blocking mode, so the command loop's next read
-        // blocks again.
+        // The probe leaves the socket blocking, so the command loop's next
+        // read blocks again.
         let mut byte = [0_u8; 1];
         assert_eq!(std::io::Read::read(&mut &probe.socket, &mut byte).unwrap(), 0);
     }
@@ -4159,13 +4147,64 @@ mod connection_alive_tests {
         std::io::Write::write_all(&mut &client, b"x").unwrap();
         let probe = ConnectionAliveProbe {
             socket: server.into(),
-            checking: Mutex::new(()),
         };
         assert!(probe.is_alive(), "a client byte is no end of stream");
         let mut byte = [0_u8; 1];
         assert_eq!(std::io::Read::read(&mut &probe.socket, &mut byte).unwrap(), 1);
         drop(client);
         assert!(!probe.is_alive(), "the closed peer is an end of stream");
+    }
+
+    /// Go `TestBufferedReadConnConcurrentReadAndIsAlive`: the SQLKiller
+    /// probe runs concurrently with the connection read loop, which must
+    /// never see the probe (a socket switched to non-blocking would fail its
+    /// blocking read with `WouldBlock`).
+    #[test]
+    fn test_buffered_read_conn_concurrent_read_and_is_alive() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let client = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        let (server, _) = listener.accept().unwrap();
+        let reader_socket = server.try_clone().unwrap();
+        let probe = ConnectionAliveProbe { socket: server.into() };
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        // Keep the server socket busy so the connection read loop is active,
+        // with pauses that leave its blocking read waiting.
+        let writer = {
+            let stop = std::sync::Arc::clone(&stop);
+            let mut client = client.try_clone().unwrap();
+            std::thread::spawn(move || {
+                let payload = [b'x'; 4096];
+                while !stop.load(std::sync::atomic::Ordering::SeqCst) {
+                    if std::io::Write::write_all(&mut client, &payload).is_err() {
+                        return;
+                    }
+                    std::thread::sleep(std::time::Duration::from_micros(200));
+                }
+            })
+        };
+        // The connection read loop.
+        let reader = std::thread::spawn(move || {
+            let mut buf = [0_u8; 1024];
+            let mut reader_socket = reader_socket;
+            loop {
+                match std::io::Read::read(&mut reader_socket, &mut buf) {
+                    Ok(0) => return Ok(()),
+                    Ok(_) => {}
+                    Err(error) => return Err(error),
+                }
+            }
+        });
+        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(500);
+        let mut probes = 0;
+        while std::time::Instant::now() < deadline {
+            probe.is_alive();
+            probes += 1;
+        }
+        stop.store(true, std::sync::atomic::Ordering::SeqCst);
+        writer.join().unwrap();
+        drop(client);
+        reader.join().unwrap().expect("the read loop never sees the probe");
+        assert!(probes > 0);
     }
 
     /// The probe peeks rather than reads: a client byte stays for the
@@ -4179,7 +4218,6 @@ mod connection_alive_tests {
         std::thread::sleep(std::time::Duration::from_millis(20));
         let probe = ConnectionAliveProbe {
             socket: server.into(),
-            checking: Mutex::new(()),
         };
         assert!(probe.is_alive());
         let mut byte = [0_u8; 1];
