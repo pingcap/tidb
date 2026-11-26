@@ -87,6 +87,23 @@ type SampleCollector struct {
 	TotalSize     int64 // TotalSize is the total size of column.
 	MemSize       int64 // major memory size of this sample collector.
 	IsMerger      bool
+	Unique        bool // Unique means the schema makes every non-NULL value distinct.
+}
+
+// Destroy releases references held by the sample collector so the sampled data can be reclaimed eagerly.
+func (c *SampleCollector) Destroy() {
+	c.FMSketch = nil
+	c.CMSketch = nil
+	c.TopN = nil
+	c.Samples = nil
+	c.seenValues = 0
+	c.NullCount = 0
+	c.Count = 0
+	c.MaxSampleSize = 0
+	c.TotalSize = 0
+	c.MemSize = 0
+	c.IsMerger = false
+	c.Unique = false
 }
 
 // MergeSampleCollector merges two sample collectors.

@@ -885,6 +885,7 @@ func getMaskingPolicyRestrictOp(name string) (ast.MaskingPolicyRestrictOps, bool
 	histogramsInFlight         "HISTOGRAMS_IN_FLIGHT"
 	job                        "JOB"
 	jobs                       "JOBS"
+	ndvRate                    "NDVRATE"
 	nodeID                     "NODE_ID"
 	nodeState                  "NODE_STATE"
 	optimistic                 "OPTIMISTIC"
@@ -3564,6 +3565,10 @@ AnalyzeOptionList:
 	{
 		$$ = append($1.([]ast.AnalyzeOpt), $3.(ast.AnalyzeOpt))
 	}
+|	AnalyzeOptionList AnalyzeOption
+	{
+		$$ = append($1.([]ast.AnalyzeOpt), $2.(ast.AnalyzeOpt))
+	}
 
 AnalyzeOption:
 	NUM "BUCKETS"
@@ -3605,6 +3610,14 @@ AnalyzeOption:
 |	"DEFAULT" "SAMPLERATE"
 	{
 		$$ = ast.AnalyzeOpt{Type: ast.AnalyzeOptSampleRate}
+	}
+|	NumLiteral "NDVRATE"
+	{
+		$$ = ast.AnalyzeOpt{Type: ast.AnalyzeOptNDVRate, Value: ast.NewValueExpr($1, "", "")}
+	}
+|	"DEFAULT" "NDVRATE"
+	{
+		$$ = ast.AnalyzeOpt{Type: ast.AnalyzeOptNDVRate}
 	}
 
 /*******************************************************************************************/
@@ -7450,6 +7463,7 @@ TiDBKeyword:
 |	"DISTRIBUTIONS"
 |	"JOBS"
 |	"JOB"
+|	"NDVRATE"
 |	"NODE_ID"
 |	"NODE_STATE"
 |	"SAMPLES"

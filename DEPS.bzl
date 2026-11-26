@@ -1175,20 +1175,6 @@ def go_deps():
         version = "v0.0.0-20180111231733-ee0de3bc6815",
     )
     go_repository(
-        name = "com_github_dolthub_maphash",
-        build_file_proto_mode = "disable_global",
-        importpath = "github.com/dolthub/maphash",
-        sum = "h1:bsQ7JsF4FkkWyrP3oCnFJgrCUAFbFf3kOl4L/QxPDyQ=",
-        version = "v0.1.0",
-    )
-    go_repository(
-        name = "com_github_dolthub_swiss",
-        build_file_proto_mode = "disable_global",
-        importpath = "github.com/dolthub/swiss",
-        sum = "h1:gs2osYs5SJkAaH5/ggVJqXQxRXtWshF6uE0lgR/Y3Gw=",
-        version = "v0.2.1",
-    )
-    go_repository(
         name = "com_github_dustin_go_humanize",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/dustin/go-humanize",
@@ -3577,8 +3563,8 @@ def go_deps():
         name = "com_github_pingcap_kvproto",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/pingcap/kvproto",
-        sum = "h1:mPlzjZr7ETZUerN3fjYwSUD5zH0qmX6EPMBevNw7ntE=",
-        version = "v0.0.0-20261104094450-1bf153fd02d4",
+        sum = "h1:jJmloc1VXuMWoHx0BxYaqSEqWnC2iLlyqL6Dx3rXH+o=",
+        version = "v0.0.0-20261116115136-e8e4e3c72c93",
     )
     go_repository(
         name = "com_github_pingcap_log",
@@ -3598,8 +3584,8 @@ def go_deps():
         name = "com_github_pingcap_tipb",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/pingcap/tipb",
-        sum = "h1:wxolKysltFSu8gxWJBdUdWuTBoSuY3MjNIIZI5S9JLY=",
-        version = "v0.0.0-20260605083900-f9f651ef5fbc",
+        sum = "h1:X2Zy4sdPTHYy+zl3A/QJDVq1bIwMPQdlyU7REVsKhmY=",
+        version = "v0.0.0-20261116085559-a173c6f64a15",
     )
     go_repository(
         name = "com_github_pkg_browser",

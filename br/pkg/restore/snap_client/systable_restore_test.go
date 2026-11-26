@@ -620,7 +620,7 @@ func TestRestoreSystemSchemasSkipsMaskingPolicyTable(t *testing.T) {
 //
 // The above variables are in the file br/pkg/restore/systable_restore.go
 func TestMonitorTheSystemTableIncremental(t *testing.T) {
-	require.Equal(t, int64(234), session.CurrentBootstrapVersion)
+	require.Equal(t, int64(235), session.CurrentBootstrapVersion)
 }
 
 func TestIsStatsTemporaryTable(t *testing.T) {

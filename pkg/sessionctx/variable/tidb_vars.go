@@ -93,6 +93,11 @@ const (
 	// TiDBAutoAnalyzeRatio will run if (table modify count)/(table row count) is greater than this value.
 	TiDBAutoAnalyzeRatio = "tidb_auto_analyze_ratio"
 
+	// TiDBAnalyzeSampledNDVThreshold is the row count above which ANALYZE
+	// estimates the NDV of a table or partition from sampled rows. Zero turns
+	// sampled NDV off.
+	TiDBAnalyzeSampledNDVThreshold = "tidb_analyze_sampled_ndv_threshold"
+
 	// TiDBAutoAnalyzeStartTime will run if current time is within start time and end time.
 	TiDBAutoAnalyzeStartTime = "tidb_auto_analyze_start_time"
 	TiDBAutoAnalyzeEndTime   = "tidb_auto_analyze_end_time"
@@ -320,6 +325,10 @@ const (
 	// TiDBAnalyzeDistSQLScanConcurrency is the number of concurrent workers to scan regions to collect statistics (FMSketch, Samples).
 	// For auto analyze, the value is controlled by tidb_sysproc_scan_concurrency variable.
 	TiDBAnalyzeDistSQLScanConcurrency = "tidb_analyze_distsql_scan_concurrency"
+
+	// TiDBAnalyzeStoreBatchSize is the maximum number of child Region tasks grouped with one main Region task
+	// in a store-batched Analyze request. 0 disables store batching for Analyze.
+	TiDBAnalyzeStoreBatchSize = "tidb_analyze_store_batch_size"
 
 	// TiDBOptInSubqToJoinAndAgg is used to enable/disable the optimizer rule of rewriting IN subquery.
 	TiDBOptInSubqToJoinAndAgg = "tidb_opt_insubq_to_join_and_agg"
@@ -1341,11 +1350,13 @@ const (
 	DefHostname                             = "localhost"
 	DefIndexLookupConcurrency               = ConcurrencyUnset
 	DefIndexLookupJoinConcurrency           = ConcurrencyUnset
+	DefTiDBAnalyzeSampledNDVThreshold       = 0
 	DefIndexSerialScanConcurrency           = 1
 	DefIndexJoinBatchSize                   = 25000
 	DefIndexLookupSize                      = 20000
 	DefDistSQLScanConcurrency               = 15
 	DefAnalyzeDistSQLScanConcurrency        = 4
+	DefTiDBAnalyzeStoreBatchSize            = 4
 	DefBuildStatsConcurrency                = 2
 	DefBuildSamplingStatsConcurrency        = 2
 	DefAutoAnalyzeRatio                     = 0.5
@@ -1717,6 +1728,13 @@ const (
 	DefTiDBEnableConnectionEventLog       = false
 )
 
+const (
+	// MaxTiDBAnalyzeStoreBatchSize is the upper bound for child Region tasks in one Analyze store batch.
+	// The limit is conservative because tasks run serially and results stay buffered until finalization, so larger batches
+	// can increase RPC tail latency, timeout risk, and TiKV memory usage. It may be adjusted based on production observations.
+	MaxTiDBAnalyzeStoreBatchSize uint64 = 8
+)
+
 // Process global variables.
 var (
 	ProcessGeneralLog              = atomic.NewBool(false)
@@ -1762,6 +1780,7 @@ var (
 	RestrictedReadOnly                   = atomic.NewBool(DefTiDBRestrictedReadOnly)
 	VarTiDBSuperReadOnly                 = atomic.NewBool(DefTiDBSuperReadOnly)
 	PersistAnalyzeOptions                = atomic.NewBool(DefTiDBPersistAnalyzeOptions)
+	AnalyzeSampledNDVThreshold           = atomic.NewInt64(DefTiDBAnalyzeSampledNDVThreshold)
 	TableCacheLease                      = atomic.NewInt64(DefTiDBTableCacheLease)
 	StatsLoadSyncWait                    = atomic.NewInt64(DefTiDBStatsLoadSyncWait)
 	StatsLoadPseudoTimeout               = atomic.NewBool(DefTiDBStatsLoadPseudoTimeout)
