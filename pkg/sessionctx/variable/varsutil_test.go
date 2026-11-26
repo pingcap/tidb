@@ -933,12 +933,6 @@ func TestSchemaDeltaCheckTableIDs(t *testing.T) {
 	require.False(t, sv.HasReadOnlySkippedMDL())
 	require.True(t, sv.TxnCtx.CouldRetry)
 
-	sv.GetRelatedTableForMDL().Store(int64(20), int64(5))
-	sv.GetRelatedTableForReadOnly().Store(int64(30), "test")
-	collected := make(map[int64]struct{})
-	sv.CollectRelatedTableIDs(collected)
-	require.Equal(t, map[int64]struct{}{20: {}, 30: {}}, collected)
-
 	sv.TxnCtx.SetRequestSource(true, kv.InternalTxnTTL)
 	sv.RecordSkippedMDL(&model.TableInfo{ID: 10}, true)
 	// A subsequent non-readonly record must keep the read-only marker sticky.

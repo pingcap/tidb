@@ -2723,50 +2723,24 @@ func tryLockMDLAndUpdateSchemaIfNecessary(ctx context.Context, sctx base.PlanCon
 			sctx.GetSessionVars().RecordSkippedMDL(tbl.Meta(), false)
 		}
 	}
-	// Before a SessionManager is installed (for example in the temporary upgrade
-	// domain) or on unpooled internal sessions, CheckOldRunningTxn cannot observe
-	// this session's MDL set, so keep commit-time schema delta validation for writes.
+	// Non-pessimistic read-only statements in internal explicit transactions skip MDL so
+	// long scans (such as TTL scans) do not stall DDL. Active internal sessions keep GC
+	// blocked at their startTS, keeping snapshot reads safe; if the transaction later
+	// writes, the recorded table IDs are validated against schema deltas at commit and
+	// transparent write-only retry is disabled.
 	if sctx.GetSessionVars().InRestrictedSQL &&
-		!sctx.GetSessionVars().InternalMDLTracked.Load() &&
-		!sctx.GetSessionVars().StmtCtx.IsReadOnly &&
-		tbl.Meta().TempTableType == model.TempTableNone {
-		sctx.GetSessionVars().RecordSkippedMDL(tbl.Meta(), false)
-	}
-	// Non-pessimistic read-only statements in tracked non-crossKS internal explicit
-	// transactions skip MDL so long scans (such as TTL scans and InitStats) do not
-	// stall DDL. Registered internal sessions keep GC blocked at their startTS,
-	// keeping snapshot reads safe; if latestIS disagrees with tbl, resolve the table
-	// at txn.StartTS() so schema-capture vs StartTS skew cannot use a wrong table ID.
-	// If the transaction later writes, recorded tables are validated via commit-time
-	// schema deltas and transparent write-only retry is disabled.
-	if txn, ok := canSkipInternalReadOnlyMDL(sctx, tbl.Meta(), skipLock); ok {
-		if _, locked := sctx.GetSessionVars().GetRelatedTableForMDL().Load(tbl.Meta().ID); locked {
-			return tbl, nil
-		}
-		latestIS := sctx.GetLatestISWithoutSessExt().(infoschema.InfoSchema)
-		latestTbl, latestErr := latestIS.TableByName(ctx, dbName, tbl.Meta().Name)
-		if latestErr != nil || latestTbl.Meta().ID != tbl.Meta().ID || latestTbl.Meta().Revision != tbl.Meta().Revision {
-			if dom := domain.GetDomain(sctx); dom != nil {
-				snapIS, snapErr := dom.GetSnapshotInfoSchema(txn.StartTS())
-				if snapErr != nil {
-					return nil, snapErr
-				}
-				snapTbl, tblErr := snapIS.TableByName(ctx, dbName, tbl.Meta().Name)
-				if tblErr != nil {
-					return nil, tblErr
-				}
-				if snapTbl.Meta().ID != tbl.Meta().ID {
-					sctx.GetSessionVars().RecordSkippedMDL(tbl.Meta(), true)
-				}
-				tbl = snapTbl
-			}
-		}
+		sctx.GetSessionVars().StmtCtx.IsReadOnly &&
+		!sctx.GetSessionVars().TxnCtx.IsPessimistic &&
+		!sctx.GetSessionVars().BulkDMLEnabled &&
+		!isTxnPipelined(sctx) &&
+		!skipLock {
 		if _, locked := sctx.GetSessionVars().GetRelatedTableForMDL().Load(tbl.Meta().ID); locked {
 			return tbl, nil
 		}
 		roTables := sctx.GetSessionVars().GetRelatedTableForReadOnly()
 		if _, loaded := roTables.LoadOrStore(tbl.Meta().ID, dbName); !loaded {
 			dbInfo, exists := is.SchemaByName(dbName)
+			latestIS := sctx.GetLatestISWithoutSessExt()
 			latestDB, latestExists := latestIS.SchemaByName(dbName)
 			if exists && latestExists && dbInfo.ReadOnly != latestDB.ReadOnly {
 				roTables.Delete(tbl.Meta().ID)
@@ -2905,65 +2879,9 @@ func tryLockMDLAndUpdateSchemaIfNecessary(ctx context.Context, sctx base.PlanCon
 	return tbl, nil
 }
 
-func canSkipInternalReadOnlyMDL(sctx base.PlanContext, tblInfo *model.TableInfo, skipLock bool) (kv.Transaction, bool) {
-	if skipLock {
-		return nil, false
-	}
-	sessVars := sctx.GetSessionVars()
-	if !sessVars.InRestrictedSQL ||
-		!sessVars.StmtCtx.IsReadOnly ||
-		sessVars.TxnCtx.IsPessimistic ||
-		sessVars.BulkDMLEnabled ||
-		!sessVars.InternalMDLTracked.Load() ||
-		tblInfo.IsSequence() {
-		return nil, false
-	}
-	if sc, ok := sctx.(interface{ IsCrossKS() bool }); ok && sc.IsCrossKS() {
-		return nil, false
-	}
+func isTxnPipelined(sctx base.PlanContext) bool {
 	txn, err := sctx.Txn(false)
-	if err != nil || txn == nil || !txn.Valid() || txn.IsPipelined() {
-		return nil, false
-	}
-	if fullCtx, ok := sctx.(sessionctx.Context); ok {
-		if stmt := sessiontxn.GetTxnManager(fullCtx).GetCurrentStmt(); stmt != nil && stmtHasLockingOrSeqSideEffect(stmt) {
-			return nil, false
-		}
-	}
-	return txn, true
-}
-
-type readOnlySideEffectVisitor struct {
-	found bool
-}
-
-func (v *readOnlySideEffectVisitor) Enter(in ast.Node) (ast.Node, bool) {
-	if v.found {
-		return in, true
-	}
-	switch n := in.(type) {
-	case *ast.SelectStmt:
-		if n.LockInfo != nil && n.LockInfo.LockType != ast.SelectLockNone {
-			v.found = true
-			return in, true
-		}
-	case *ast.FuncCallExpr:
-		if n.FnName.L == ast.NextVal || n.FnName.L == ast.SetVal {
-			v.found = true
-			return in, true
-		}
-	}
-	return in, false
-}
-
-func (v *readOnlySideEffectVisitor) Leave(in ast.Node) (ast.Node, bool) {
-	return in, !v.found
-}
-
-func stmtHasLockingOrSeqSideEffect(stmt ast.StmtNode) bool {
-	var v readOnlySideEffectVisitor
-	stmt.Accept(&v)
-	return v.found
+	return err == nil && txn != nil && txn.Valid() && txn.IsPipelined()
 }
 
 func isDDLSystemTable(dbLowerName, tblLowerName string) bool {

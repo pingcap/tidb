@@ -82,32 +82,16 @@ func (s *SchemaChecker) Check(txnTS uint64) (*transaction.RelatedSchemaChange, e
 	return s.CheckBySchemaVer(txnTS, intSchemaVer(s.schemaVer))
 }
 
-type skippedMDLValidator interface {
-	CheckWithSkippedMDLTableIDs(txnTS uint64, schemaVer int64, relatedPhysicalTableIDs, skippedMDLTableIDs []int64, needCheckSchemaByDelta bool) (*transaction.RelatedSchemaChange, validatorapi.Result)
-}
-
 // CheckBySchemaVer checks if the schema version valid or not at txnTS.
 func (s *SchemaChecker) CheckBySchemaVer(txnTS uint64, startSchemaVer tikv.SchemaVer) (*transaction.RelatedSchemaChange, error) {
 	schemaOutOfDateRetryInterval := SchemaOutOfDateRetryInterval.Load()
 	schemaOutOfDateRetryTimes := int(SchemaOutOfDateRetryTimes.Load())
 	for range schemaOutOfDateRetryTimes {
-		var (
-			relatedChange *transaction.RelatedSchemaChange
-			checkResult   validatorapi.Result
-		)
-		if s.hasSkippedMDLTableIDs {
-			if dv, ok := s.Validator.(skippedMDLValidator); ok {
-				relatedChange, checkResult = dv.CheckWithSkippedMDLTableIDs(txnTS, startSchemaVer.SchemaMetaVersion(), s.relatedTableIDs, s.skippedMDLTableIDs, s.needCheckSchemaByDelta)
-			} else {
-				checkIDs := s.relatedTableIDs
-				if vardef.IsMDLEnabled() {
-					checkIDs = s.skippedMDLTableIDs
-				}
-				relatedChange, checkResult = s.Validator.Check(txnTS, startSchemaVer.SchemaMetaVersion(), checkIDs, s.needCheckSchemaByDelta)
-			}
-		} else {
-			relatedChange, checkResult = s.Validator.Check(txnTS, startSchemaVer.SchemaMetaVersion(), s.relatedTableIDs, s.needCheckSchemaByDelta)
+		checkIDs := s.relatedTableIDs
+		if s.hasSkippedMDLTableIDs && vardef.IsMDLEnabled() {
+			checkIDs = s.skippedMDLTableIDs
 		}
+		relatedChange, checkResult := s.Validator.Check(txnTS, startSchemaVer.SchemaMetaVersion(), checkIDs, s.needCheckSchemaByDelta)
 		switch checkResult {
 		case validatorapi.ResultSucc:
 			return nil, nil

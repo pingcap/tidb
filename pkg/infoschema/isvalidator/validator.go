@@ -194,17 +194,6 @@ func (v *validator) findNewerDeltas(currVer int64) []deltaSchemaInfo {
 // Check checks schema validity, returns true if it's safe to commit using the
 // schemaVer and related tables at txnTS.
 func (v *validator) Check(txnTS uint64, schemaVer int64, relatedPhysicalTableIDs []int64, needCheckSchemaByDelta bool) (*transaction.RelatedSchemaChange, validatorapi.Result) {
-	return v.checkWithSkippedMDLTableIDs(txnTS, schemaVer, relatedPhysicalTableIDs, nil, false, needCheckSchemaByDelta)
-}
-
-// CheckWithSkippedMDLTableIDs validates only skippedMDLTableIDs when MDL is active
-// under the validator's read lock, and falls back to relatedPhysicalTableIDs using
-// the same MDL observation if MDL was disabled before validation ran.
-func (v *validator) CheckWithSkippedMDLTableIDs(txnTS uint64, schemaVer int64, relatedPhysicalTableIDs, skippedMDLTableIDs []int64, needCheckSchemaByDelta bool) (*transaction.RelatedSchemaChange, validatorapi.Result) {
-	return v.checkWithSkippedMDLTableIDs(txnTS, schemaVer, relatedPhysicalTableIDs, skippedMDLTableIDs, true, needCheckSchemaByDelta)
-}
-
-func (v *validator) checkWithSkippedMDLTableIDs(txnTS uint64, schemaVer int64, relatedPhysicalTableIDs, skippedMDLTableIDs []int64, hasSkippedMDLIDs, needCheckSchemaByDelta bool) (*transaction.RelatedSchemaChange, validatorapi.Result) {
 	v.mux.RLock()
 	defer v.mux.RUnlock()
 	if !v.isStarted {
@@ -232,15 +221,20 @@ func (v *validator) checkWithSkippedMDLTableIDs(txnTS uint64, schemaVer int64, r
 			return nil, validatorapi.ResultFail
 		}
 
-		// Read IsMDLEnabled once under v.mux.RLock() so table-ID selection and the
-		// delta-check decision observe the exact same MDL state.
-		mdlEnabled := vardef.IsMDLEnabled()
-		if needCheckSchemaByDelta || !mdlEnabled {
-			checkIDs := relatedPhysicalTableIDs
-			if hasSkippedMDLIDs && mdlEnabled {
-				checkIDs = skippedMDLTableIDs
-			}
-			changed := v.isRelatedTablesChanged(schemaVer, checkIDs)
+		// needCheckSchemaByDelta is always false when MDL enabled, and vice
+		// versa.
+		// when MDL is enabled, if there are DDL running for the related tables,
+		// DDL will wait the txn to finishes before move to next step, so there
+		// is no need to check through schema delta.
+		//
+		// below EnableMDL check is for the case that MDL is switching to on/off
+		// during the txn.
+		// When switch MDL from off to on, needCheckSchemaByDelta of the old txn
+		// is true, we need to check by schema delta.
+		// When switch MDL from on to off, the needCheckSchemaByDelta is false,
+		// and EnableMDL is also false, so we still need to check by schema delta.
+		if needCheckSchemaByDelta || !vardef.IsMDLEnabled() {
+			changed := v.isRelatedTablesChanged(schemaVer, relatedPhysicalTableIDs)
 			if changed {
 				return nil, validatorapi.ResultFail
 			}

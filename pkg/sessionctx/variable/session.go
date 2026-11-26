@@ -929,10 +929,6 @@ type SessionVars struct {
 	// InRestrictedSQL indicates if the session is handling restricted SQL execution.
 	InRestrictedSQL bool
 
-	// InternalMDLTracked reports whether this internal session is currently registered
-	// in a SessionManager or cross-keyspace MDL coordinator.
-	InternalMDLTracked atomic.Bool
-
 	// InExplainExplore indicates if this statement is under EXPLAIN EXPLORE.
 	InExplainExplore bool
 
@@ -3797,28 +3793,22 @@ func (s *SessionVars) GetNegateStrMatchDefaultSelectivity() float64 {
 }
 
 // GetRelatedTableForMDL gets the related table for metadata lock.
-// Only called on the session's own goroutine; cross-goroutine readers must use
-// RemoveLockDDLJobs or CollectRelatedTableIDs (which synchronize via TxnCtxMu).
 func (s *SessionVars) GetRelatedTableForMDL() *sync.Map {
-	txnCtx := s.TxnCtx
-	if txnCtx == nil {
-		return new(sync.Map)
+	mu := &s.TxnCtx.tdmLock
+	mu.Lock()
+	defer mu.Unlock()
+	if s.TxnCtx.relatedTableForMDL == nil {
+		s.TxnCtx.relatedTableForMDL = new(sync.Map)
 	}
-	txnCtx.tdmLock.Lock()
-	defer txnCtx.tdmLock.Unlock()
-	if txnCtx.relatedTableForMDL == nil {
-		txnCtx.relatedTableForMDL = new(sync.Map)
-	}
-	return txnCtx.relatedTableForMDL
+	return s.TxnCtx.relatedTableForMDL
 }
 
 // GetRelatedTableForReadOnly gets the MDL-independent table-access set used to
 // drain transactions before a database read-only transition finishes.
 func (s *SessionVars) GetRelatedTableForReadOnly() *sync.Map {
+	s.TxnCtxMu.Lock()
 	txnCtx := s.TxnCtx
-	if txnCtx == nil {
-		return new(sync.Map)
-	}
+	s.TxnCtxMu.Unlock()
 	txnCtx.tdmLock.Lock()
 	defer txnCtx.tdmLock.Unlock()
 	if txnCtx.relatedTableForReadOnly == nil {
@@ -3827,46 +3817,14 @@ func (s *SessionVars) GetRelatedTableForReadOnly() *sync.Map {
 	return txnCtx.relatedTableForReadOnly
 }
 
-// CollectRelatedTableIDs copies table IDs from relatedTableForMDL and
-// relatedTableForReadOnly of the current transaction into dst without allocating maps.
-// Safe for concurrent background callers (such as TxnInfo) while TxnCtx is swapped.
-func (s *SessionVars) CollectRelatedTableIDs(dst map[int64]struct{}) {
-	s.TxnCtxMu.Lock()
-	txnCtx := s.TxnCtx
-	s.TxnCtxMu.Unlock()
-	if txnCtx == nil {
-		return
-	}
-	txnCtx.tdmLock.Lock()
-	mdlMap := txnCtx.relatedTableForMDL
-	roMap := txnCtx.relatedTableForReadOnly
-	txnCtx.tdmLock.Unlock()
-	if mdlMap != nil {
-		mdlMap.Range(func(key, _ any) bool {
-			dst[key.(int64)] = struct{}{}
-			return true
-		})
-	}
-	if roMap != nil {
-		roMap.Range(func(key, _ any) bool {
-			dst[key.(int64)] = struct{}{}
-			return true
-		})
-	}
-}
-
 // ClearRelatedTableForMDL clears the related table for MDL.
 // related tables for MDL is filled during build logical plan or Preprocess for all DataSources,
 // even for queries inside DDLs like `create view as select xxx` and `create table as select xxx`.
 // it should be cleared before we execute the DDL statement.
 func (s *SessionVars) ClearRelatedTableForMDL() {
-	txnCtx := s.TxnCtx
-	if txnCtx == nil {
-		return
-	}
-	txnCtx.tdmLock.Lock()
-	defer txnCtx.tdmLock.Unlock()
-	txnCtx.relatedTableForMDL = nil
+	s.TxnCtx.tdmLock.Lock()
+	defer s.TxnCtx.tdmLock.Unlock()
+	s.TxnCtx.relatedTableForMDL = nil
 }
 
 // RecordSkippedMDL records tblInfo and any physical partition IDs whose MDL lock was

@@ -536,7 +536,6 @@ func TestPanicOnRollbackKilledTxn(t *testing.T) {
 
 		sv := tk.Session().GetSessionVars()
 		sv.InRestrictedSQL = true
-		sv.InternalMDLTracked.Store(true)
 		internalCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnTTL)
 		tk.MustExecWithContext(internalCtx, "begin optimistic")
 		tk.MustQueryWithContext(internalCtx, "select * from t_mu").Check(testkit.Rows())
@@ -548,7 +547,6 @@ func TestPanicOnRollbackKilledTxn(t *testing.T) {
 		require.NoError(t, err)
 		require.False(t, sv.HasReadOnlySkippedMDL())
 		sv.InRestrictedSQL = false
-		sv.InternalMDLTracked.Store(false)
 
 		tk.MustExec("begin optimistic")
 		tk.MustExec("insert into t_mu values (2)")

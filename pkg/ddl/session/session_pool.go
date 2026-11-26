@@ -84,8 +84,8 @@ func (sg *Pool) Put(ctx sessionctx.Context) {
 	})
 	ctx.RollbackTxn(context.Background())
 	ctx.GetSessionVars().ClearDiskFullOpt()
-	infosync.DeleteInternalSession(ctx)
 	sg.resPool.Put(ctx.(pools.Resource))
+	infosync.DeleteInternalSession(ctx)
 }
 
 // Destroy discards the sessionCtx and returns the pool slot.

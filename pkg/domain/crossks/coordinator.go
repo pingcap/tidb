@@ -41,17 +41,13 @@ func newSchemaCoordinator() *schemaCoordinator {
 func (c *schemaCoordinator) StoreInternalSession(se any) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	sctx := se.(sessionctx.Context)
-	c.sessions[sctx] = struct{}{}
-	sctx.GetSessionVars().InternalMDLTracked.Store(true)
+	c.sessions[se.(sessionctx.Context)] = struct{}{}
 }
 
 func (c *schemaCoordinator) DeleteInternalSession(se any) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	sctx := se.(sessionctx.Context)
-	delete(c.sessions, sctx)
-	sctx.GetSessionVars().InternalMDLTracked.Store(false)
+	delete(c.sessions, se.(sessionctx.Context))
 }
 
 func (c *schemaCoordinator) ContainsInternalSession(se any) bool {

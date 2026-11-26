@@ -1880,36 +1880,6 @@ func TestMDLInternalSessionDDLSystemTableWriteValidatedAtCommit(t *testing.T) {
 	err = execInternal("commit")
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "Information schema is changed")
-
-	// Also verify that an untracked internal session (for example in the temporary upgrade
-	// domain before SetSessionManager is installed) falls back to commit-time delta validation
-	// even on non-DDL system tables.
-	tkDDL.MustExec("create table mysql.mdl_untracked_sys(a int)")
-	dom.InfoSyncer().SetSessionManager(nil)
-	defer dom.InfoSyncer().SetSessionManager(sv)
-	seUntracked, err := pool.Get()
-	require.NoError(t, err)
-	defer func() {
-		rs, _ := seUntracked.ExecuteInternal(internalCtx, "rollback")
-		if rs != nil {
-			_ = rs.Close()
-		}
-		pool.Put(seUntracked)
-	}()
-	execUntracked := func(sql string) error {
-		rs, err := seUntracked.ExecuteInternal(internalCtx, sql)
-		if rs != nil {
-			require.NoError(t, rs.Close())
-		}
-		return err
-	}
-	require.NoError(t, execUntracked("set @@tidb_retry_limit=0"))
-	require.NoError(t, execUntracked("begin optimistic"))
-	require.NoError(t, execUntracked("insert into mysql.mdl_untracked_sys(a) values (1)"))
-	tkDDL.MustExec("alter table mysql.mdl_untracked_sys add column b int")
-	err = execUntracked("commit")
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "Information schema is changed")
 }
 
 // TestMDLInternalSessionReadOnlyDoesNotBlockDDLAndValidatesWrite verifies that
@@ -1996,50 +1966,6 @@ func TestMDLInternalSessionReadOnlyDoesNotBlockDDLAndValidatesWrite(t *testing.T
 	require.NoError(t, execInternal("select * from test.t_rw"))
 	require.NoError(t, execInternal("commit"))
 	tkDDL.MustQuery("select a, b from test.t_rw").Check(testkit.Rows("1 <nil>"))
-
-	// Partitioned table read-only skip: TRUNCATE PARTITION is not blocked by an internal
-	// optimistic read-only scan, and a subsequent write in that transaction fails at commit.
-	tkDDL.MustExec("create table test.t_part(a int) partition by range (a) (partition p0 values less than (10), partition p1 values less than (20))")
-	tkDDL.MustExec("insert into test.t_part values (1), (15)")
-	require.NoError(t, execInternal("begin optimistic"))
-	require.NoError(t, execInternal("select * from test.t_part where a < 5"))
-	tkDDL.MustExec("alter table test.t_part truncate partition p0")
-	require.NoError(t, execInternal("insert into test.t_w values (2)"))
-	err = execInternal("commit")
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "Information schema is changed")
-	_ = execInternal("rollback")
-
-	// Subquery FOR UPDATE must NOT skip MDL even though the outer SELECT has no LockInfo.
-	tkDDL.MustExec("create table test.t_sublock(a int primary key)")
-	tkDDL.MustExec("insert into test.t_sublock values (1)")
-	require.NoError(t, execInternal("begin optimistic"))
-	require.NoError(t, execInternal("select * from test.t_w where a in (select a from test.t_sublock for update)"))
-	mdlWaitCh := make(chan struct{})
-	var mdlWaitOnce sync.Once
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeWaitSchemaSynced", func(job *model.Job, schemaVer int64) {
-		if job.Type == model.ActionAddColumn && schemaVer != 0 {
-			mdlWaitOnce.Do(func() { close(mdlWaitCh) })
-		}
-	})
-	subDDLDone := make(chan error, 1)
-	go func() {
-		subDDLDone <- tkDDL.ExecToErr("alter table test.t_sublock add column b int")
-	}()
-	select {
-	case <-mdlWaitCh:
-	case err := <-subDDLDone:
-		require.FailNowf(t, "subquery FOR UPDATE must hold MDL", "err=%v", err)
-	case <-time.After(10 * time.Second):
-		t.Fatal("timeout waiting for ALTER TABLE t_sublock to enter schema sync")
-	}
-	select {
-	case <-subDDLDone:
-		t.Fatal("ALTER TABLE t_sublock should stay blocked while subquery FOR UPDATE txn is active")
-	case <-time.After(300 * time.Millisecond):
-	}
-	require.NoError(t, execInternal("rollback"))
-	require.NoError(t, <-subDDLDone)
 }
 
 // TestMDLInternalSessionPessimisticSystemWriteDoesNotFailOnUserTableSchemaUpgrade

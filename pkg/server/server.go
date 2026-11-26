@@ -1258,9 +1258,6 @@ func (s *Server) ServerID() uint64 {
 func (s *Server) StoreInternalSession(se any) {
 	s.sessionMapMutex.Lock()
 	s.internalSessions[se] = struct{}{}
-	if sv, ok := se.(interface{ GetSessionVars() *variable.SessionVars }); ok {
-		sv.GetSessionVars().InternalMDLTracked.Store(true)
-	}
 	metrics.InternalSessions.Set(float64(len(s.internalSessions)))
 	s.sessionMapMutex.Unlock()
 }
@@ -1285,9 +1282,6 @@ func (s *Server) InternalSessionCount() int {
 func (s *Server) DeleteInternalSession(se any) {
 	s.sessionMapMutex.Lock()
 	delete(s.internalSessions, se)
-	if sv, ok := se.(interface{ GetSessionVars() *variable.SessionVars }); ok {
-		sv.GetSessionVars().InternalMDLTracked.Store(false)
-	}
 	metrics.InternalSessions.Set(float64(len(s.internalSessions)))
 	s.sessionMapMutex.Unlock()
 }

@@ -77,7 +77,6 @@ go_test(
         "//pkg/executor",
         "//pkg/executor/importer",
         "//pkg/infoschema",
-        "//pkg/infoschema/issyncer/mdldef",
         "//pkg/infoschema/validatorapi",
         "//pkg/keyspace",
         "//pkg/kv",

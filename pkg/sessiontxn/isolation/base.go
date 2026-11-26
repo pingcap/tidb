@@ -144,18 +144,7 @@ func (p *baseTxnContextProvider) OnInitialize(ctx context.Context, tp sessiontxn
 	}
 	p.isTxnPrepared = txn.Valid() || p.sctx.GetPreparedTxnFuture() != nil
 	if activeNow {
-		txn, err = p.ActivateTxn()
-		if err != nil {
-			return err
-		}
-		if p.sctx.GetLatestInfoSchema().SchemaMetaVersion() != p.infoSchema.SchemaMetaVersion() {
-			if dom := domain.GetDomain(p.sctx); dom != nil {
-				if snapIS, snapErr := dom.GetSnapshotInfoSchema(txn.StartTS()); snapErr == nil {
-					p.infoSchema = snapIS
-					txnCtx.InfoSchema = snapIS
-				}
-			}
-		}
+		_, err = p.ActivateTxn()
 	}
 
 	return err
@@ -647,10 +636,9 @@ func (p *baseTxnContextProvider) SetOptionsBeforeCommit(
 	}
 	// Set this option for 2 phase commit to validate schema lease. When MDL is active,
 	// only tables that intentionally skipped MDL (DDL system tables for internal sessions,
-	// untracked internal sessions, or non-pessimistic internal read-only accesses in a
-	// transaction that later writes) are checked via schema delta so MDL-locked tables are
-	// not falsely invalidated, while retaining all written/skipped IDs in case MDL is
-	// disabled before commit validation runs.
+	// or non-pessimistic internal read-only accesses in a transaction that later writes) are
+	// checked via schema delta so MDL-locked tables are not falsely invalidated, while
+	// retaining all written/skipped IDs in case MDL is disabled before commit validation runs.
 	var checker *domain.SchemaChecker
 	if sessVars.TxnCtx != nil && sessVars.TxnCtx.EnableMDL && vardef.IsMDLEnabled() {
 		checker = domain.NewSchemaCheckerWithSkippedMDL(

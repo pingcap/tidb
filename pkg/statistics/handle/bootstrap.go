@@ -854,9 +854,7 @@ func (h *Handle) initStatsLiteWithSession(ctx context.Context, sctx sessionctx.C
 			err = err1
 		}
 	}()
-	// Explicitly use optimistic mode so initial stats scans skip MDL on mysql.stats_*
-	// even if a pooled session's TxnMode was changed.
-	_, err = util.Exec(sctx, "begin optimistic")
+	_, err = util.Exec(sctx, "begin")
 	if err != nil {
 		return err
 	}
@@ -870,7 +868,6 @@ func (h *Handle) initStatsLiteWithSession(ctx context.Context, sctx sessionctx.C
 	// Required: initStatsMeta adds new tables without an internal wait; histogram loading
 	// reads them immediately.
 	cache.WaitForAsyncUpdates()
-	failpoint.Inject("afterInitStatsMetaLite", func() {})
 	statslogutil.StatsLogger().Info("Complete loading the stats meta in the lite mode", zap.Duration("duration", time.Since(start)))
 	start = time.Now()
 	err = h.initStatsHistogramsLite(ctx, sctx, cache, tableIDs...)
@@ -926,9 +923,7 @@ func (h *Handle) initStatsWithSession(ctx context.Context, sctx sessionctx.Conte
 		}
 	}()
 
-	// Explicitly use optimistic mode so initial stats scans skip MDL on mysql.stats_*
-	// even if a pooled session's TxnMode was changed.
-	_, err = util.Exec(sctx, "begin optimistic")
+	_, err = util.Exec(sctx, "begin")
 	if err != nil {
 		return err
 	}
