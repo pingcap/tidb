@@ -5,6 +5,7 @@ go_library(
     srcs = [
         "exec.go",
         "merge.go",
+        "merge_avg.go",
         "merge_count.go",
         "merge_minmax.go",
         "merge_sum.go",
@@ -43,7 +44,7 @@ go_test(
     srcs = ["exec_test.go"],
     embed = [":mviewdeltamergeagg"],
     flaky = True,
-    shard_count = 38,
+    shard_count = 40,
     deps = [
         "//pkg/executor/internal/exec",
         "//pkg/executor/internal/util",

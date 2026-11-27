@@ -865,6 +865,8 @@ func (e *Exec) prepareMergers() error {
 			merger, err = e.buildCountMerger(mapping, colID2ComputedIdx, childTypes)
 		case ast.AggFuncSum:
 			merger, err = e.buildSumMerger(mapping, colID2ComputedIdx, childTypes)
+		case ast.AggFuncAvg:
+			merger, err = e.buildAvgMerger(mapping, colID2ComputedIdx, childTypes)
 		case ast.AggFuncMin, ast.AggFuncMax:
 			if e.MinMaxRecompute == nil {
 				err = errors.Errorf("%s merge requires MinMaxRecompute metadata", aggName)

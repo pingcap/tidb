@@ -316,6 +316,8 @@ const (
 	AggCount
 	// AggSum represents SUM(expr).
 	AggSum
+	// AggAvg represents AVG(expr), finalized from matching SUM/COUNT state.
+	AggAvg
 	// AggMin represents MIN(expr).
 	AggMin
 	// AggMax represents MAX(expr).
@@ -338,13 +340,14 @@ type AggInfo struct {
 	// The meaning depends on Kind:
 	//   - AggCountStar / AggCount: [self_delta]
 	//   - AggSum:
-	//     - [self_delta] when the SUM argument is NOT NULL (inferred from base table schema or passed by caller),
-	//       no COUNT(expr) dependency needed.
-	//     - [self_delta, matched_count_expr_mv] otherwise.
+	//     - [self_delta] when the SUM argument is NOT NULL and the SUM is not used by AVG.
+	//     - [self_delta, matched_count_expr_mv] otherwise; COUNT(*) can replace COUNT(expr)
+	//       for a NOT NULL argument used by AVG.
 	//     - self_delta: offset of SUM(expr) delta column.
 	//     - matched_count_expr_mv: absolute output offset of matched COUNT(expr) MV column.
 	//       COUNT(expr) must be updated before SUM(expr), and SUM should read this updated MV value.
 	//       The same matched COUNT(expr) can be a dependency for multiple aggregate functions.
+	//   - AggAvg: [matching_sum_mv, matching_count_expr_mv or count_all_rows_mv, count_all_rows_mv].
 	//   - AggMax / AggMin:
 	//     - [added_val, added_cnt, removed_val, removed_cnt] always.
 	//     - [added_val, added_cnt, removed_val, removed_cnt, matched_count_expr_mv] optionally when a
@@ -664,6 +667,13 @@ func buildFromLocal(
 	if err != nil {
 		return nil, err
 	}
+	avgDependencies, err := mapAvgDependencies(local.aggCols, aggArgNotNullByOffset)
+	if err != nil {
+		return nil, err
+	}
+	for _, matches := range avgDependencies {
+		sumToCountExprIdx[matches[0]] = matches[1]
+	}
 	minMaxToCountExprIdx, err := mapMinMaxToCountExprDependencies(local.aggCols, aggArgNotNullByOffset)
 	if err != nil {
 		return nil, err
@@ -688,13 +698,21 @@ func buildFromLocal(
 		}
 		switch di.Kind {
 		case AggSum:
-			if !aggArgNotNullByOffset[di.MVOffset] {
-				countIdx, ok := sumToCountExprIdx[i]
-				if !ok {
-					return nil, errors.Errorf("internal error: SUM at mv offset %d has no COUNT(expr) dependency", di.MVOffset)
-				}
+			// AVG also needs a count dependency for NOT NULL SUM,
+			// so SUM becomes NULL when the last row in a group is deleted.
+			if countIdx, ok := sumToCountExprIdx[i]; ok {
 				countAgg := local.aggCols[countIdx]
 				deps = append(deps, mvColumnOffsetBase+countAgg.info.MVOffset)
+			} else if !aggArgNotNullByOffset[di.MVOffset] {
+				return nil, errors.Errorf("internal error: SUM at mv offset %d has no COUNT(expr) dependency", di.MVOffset)
+			}
+		case AggAvg:
+			matches, ok := avgDependencies[i]
+			if !ok {
+				return nil, errors.Errorf("internal error: AVG at mv offset %d has no resolved dependencies", di.MVOffset)
+			}
+			for _, matchIdx := range matches {
+				deps = append(deps, mvColumnOffsetBase+local.aggCols[matchIdx].info.MVOffset)
 			}
 		case AggMax, AggMin:
 			addedCntOff, ok := deltaOffsetByName[ac.addedCountDeltaName]
@@ -998,6 +1016,26 @@ func extractAggInfosFromMVSelect(sel *ast.SelectStmt) (aggCols []aggColInfo, has
 				deltaName: fmt.Sprintf("__mview_delta_sum_%d", i),
 				argExpr:   stripColumnQualifier(agg.Args[0]),
 			})
+		case ast.AggFuncAvg:
+			if len(agg.Args) != 1 {
+				return nil, false, errors.New("AVG must have exactly one argument for mview")
+			}
+			if agg.Distinct {
+				return nil, false, errors.New("AVG(DISTINCT ...) is not supported in mview")
+			}
+			argCol, ok := agg.Args[0].(*ast.ColumnNameExpr)
+			if !ok {
+				return nil, false, errors.New("AVG argument must be a column name for mview")
+			}
+			aggCols = append(aggCols, aggColInfo{
+				info: AggInfo{
+					Kind:       AggAvg,
+					MVOffset:   i,
+					ArgColName: argCol.Name.Name.L,
+				},
+				// AVG is finalized from explicit SUM/COUNT state and never gets a delta column.
+				argExpr: argCol,
+			})
 		case ast.AggFuncMax:
 			argCol, ok := agg.Args[0].(*ast.ColumnNameExpr)
 			if !ok {
@@ -1061,7 +1099,7 @@ func mapSumToCountExprDependencies(aggCols []aggColInfo, sumArgNotNullByOffset m
 			if cand.info.Kind != AggCount || cand.argExpr == nil {
 				continue
 			}
-			if !exprStructuralEqual(ac.argExpr, cand.argExpr) {
+			if !aggregateArgsEqual(ac, cand) {
 				continue
 			}
 			matchIdx = j
@@ -1076,6 +1114,72 @@ func mapSumToCountExprDependencies(aggCols []aggColInfo, sumArgNotNullByOffset m
 		sumToCountIdx[i] = matchIdx
 	}
 	return sumToCountIdx, nil
+}
+
+// mapAvgDependencies resolves each AVG to the first matching SUM, COUNT(expr),
+// and COUNT(*) in SELECT-list order. For a NOT NULL AVG argument, COUNT(*) can
+// replace COUNT(expr) because both counts are equivalent.
+func mapAvgDependencies(
+	aggCols []aggColInfo,
+	argNotNullByOffset map[int]bool,
+) (map[int][3]int, error) {
+	type avgArgDependencies struct {
+		sumIdx   int
+		countIdx int
+	}
+	dependenciesByArg := make(map[string]avgArgDependencies)
+	countStarIdx := -1
+	for i, ac := range aggCols {
+		if ac.info.Kind == AggCountStar {
+			if countStarIdx < 0 {
+				countStarIdx = i
+			}
+			continue
+		}
+		deps, exists := dependenciesByArg[ac.info.ArgColName]
+		if !exists {
+			deps = avgArgDependencies{sumIdx: -1, countIdx: -1}
+		}
+		switch ac.info.Kind {
+		case AggSum:
+			if deps.sumIdx < 0 {
+				deps.sumIdx = i
+			}
+		case AggCount:
+			if deps.countIdx < 0 {
+				deps.countIdx = i
+			}
+		}
+		dependenciesByArg[ac.info.ArgColName] = deps
+	}
+
+	avgDeps := make(map[int][3]int)
+	for i, ac := range aggCols {
+		if ac.info.Kind != AggAvg {
+			continue
+		}
+		deps := dependenciesByArg[ac.info.ArgColName]
+		sumIdx, countIdx := deps.sumIdx, deps.countIdx
+		if countIdx < 0 && argNotNullByOffset[ac.info.MVOffset] {
+			countIdx = countStarIdx
+		}
+		if sumIdx < 0 {
+			return nil, errors.Errorf(
+				"AVG expression %s at mv offset %d requires matching SUM(expr)",
+				restoreExpr(ac.argExpr),
+				ac.info.MVOffset,
+			)
+		}
+		if countIdx < 0 {
+			return nil, errors.Errorf(
+				"AVG expression %s at mv offset %d requires matching COUNT(expr)",
+				restoreExpr(ac.argExpr),
+				ac.info.MVOffset,
+			)
+		}
+		avgDeps[i] = [3]int{sumIdx, countIdx, countStarIdx}
+	}
+	return avgDeps, nil
 }
 
 // mapMinMaxToCountExprDependencies finds an optional first matching COUNT(expr) for nullable
@@ -1149,7 +1253,7 @@ func validateAggDependencies(
 				)
 			}
 		case AggSum:
-			// [self_delta] when SUM argument is NOT NULL; otherwise [self_delta, matched_count_expr_mv].
+			// [self_delta, matched_count_expr_mv] for nullable SUM or AVG state; otherwise [self_delta].
 			if len(ai.Dependencies) != 1 && len(ai.Dependencies) != 2 {
 				return errors.Errorf(
 					"SUM at mv offset %d expects dependencies [self_delta] or [self_delta, matched_count_expr_mv], got %v",
@@ -1167,6 +1271,19 @@ func validateAggDependencies(
 						ai.MVOffset,
 						ai.Dependencies[1],
 					)
+				}
+			}
+		case AggAvg:
+			if len(ai.Dependencies) != 3 {
+				return errors.Errorf(
+					"AVG at mv offset %d expects dependencies [matching_sum_mv, matching_count_expr_mv, count_all_rows_mv], got %v",
+					ai.MVOffset,
+					ai.Dependencies,
+				)
+			}
+			for depPos, dep := range ai.Dependencies {
+				if dep < mvColumnOffsetBase || dep >= mvColumnEnd {
+					return errors.Errorf("AVG at mv offset %d has invalid dependency[%d] offset %d", ai.MVOffset, depPos, dep)
 				}
 			}
 		case AggMax, AggMin:
@@ -1237,6 +1354,15 @@ func stripColumnQualifier(expr ast.ExprNode) ast.ExprNode {
 	}
 	expr.Accept(&columnQualifierStripper{})
 	return stripAllParentheses(expr)
+}
+
+func aggregateArgsEqual(lhs, rhs aggColInfo) bool {
+	// Column arguments have already been resolved against the single base table.
+	// Compare their lowercase names rather than the original spelling in the AST.
+	if lhs.info.ArgColName != "" && rhs.info.ArgColName != "" {
+		return lhs.info.ArgColName == rhs.info.ArgColName
+	}
+	return exprStructuralEqual(lhs.argExpr, rhs.argExpr)
 }
 
 func exprStructuralEqual(lhs, rhs ast.ExprNode) bool {
@@ -1406,7 +1532,8 @@ func buildMLogDeltaSelect(
 
 	for _, ac := range aggCols {
 		switch ac.info.Kind {
-		case AggCountStar:
+		case AggCountStar, AggAvg:
+			// The row count was added above. AVG is derived from SUM/COUNT state.
 			continue
 		case AggCount:
 			if ac.argExpr == nil {
@@ -1608,7 +1735,8 @@ func buildMergeSourceSelect(
 	})
 	for _, ac := range aggCols {
 		switch ac.info.Kind {
-		case AggCountStar:
+		case AggCountStar, AggAvg:
+			// The row-count delta was added above. AVG has no delta payload.
 			continue
 		case AggMax, AggMin:
 			names := []string{ac.deltaName, ac.addedCountDeltaName, ac.removedValueDelta, ac.removedCountDelta}

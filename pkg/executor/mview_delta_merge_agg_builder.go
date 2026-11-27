@@ -310,6 +310,8 @@ func mviewDeltaMergeAggFuncName(kind mview.AggKind) (string, error) {
 		return ast.AggFuncCount, nil
 	case mview.AggSum:
 		return ast.AggFuncSum, nil
+	case mview.AggAvg:
+		return ast.AggFuncAvg, nil
 	case mview.AggMin:
 		return ast.AggFuncMin, nil
 	case mview.AggMax:

@@ -1237,6 +1237,13 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 			WithIgnoreTruncateErr(true).
 			WithIgnoreZeroInDate(true).
 			WithIgnoreInvalidDateErr(vars.SQLMode.HasAllowInvalidDatesMode()))
+	case *ast.RefreshMaterializedViewImplementStmt:
+		// Use the definition's SQL mode for truncation and preserve the refresh
+		// statement's existing handling of zero-in-date values.
+		sc.SetTypeFlags(sc.TypeFlags().
+			WithTruncateAsWarning(!strictSQLMode).
+			WithIgnoreZeroInDate(true).
+			WithIgnoreInvalidDateErr(vars.SQLMode.HasAllowInvalidDatesMode()))
 	default:
 		sc.SetTypeFlags(sc.TypeFlags().
 			WithIgnoreTruncateErr(true).

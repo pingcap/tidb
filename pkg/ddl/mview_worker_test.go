@@ -552,6 +552,23 @@ func TestInitMViewSession(t *testing.T) {
 		require.True(t, keep)
 		require.Equal(t, expected, value, name)
 	}
+
+	definition := &model.MaterializedViewInfo{DefinitionTimeZone: model.TimeZoneLocation{Name: "UTC"}}
+	restore, err = InitMViewSession(sessVars, definition, "mv_db", "mv_group")
+	require.NoError(t, err)
+	require.Zero(t, sessVars.DivPrecisionIncrement)
+	value, keep, err := sessVars.GetSessionStatesSystemVar(vardef.DivPrecisionIncrement)
+	require.NoError(t, err)
+	require.True(t, keep)
+	require.Equal(t, "0", value)
+	restore()
+	require.Equal(t, 2, sessVars.DivPrecisionIncrement)
+
+	definition.DefinitionDivPrecisionIncrement = int(variable.GetSysVar(vardef.DivPrecisionIncrement).MaxValue) + 1
+	restore, err = InitMViewSession(sessVars, definition, "mv_db", "mv_group")
+	require.ErrorContains(t, err, "invalid maintenance numeric metadata")
+	require.Nil(t, restore)
+	require.Equal(t, 2, sessVars.DivPrecisionIncrement)
 }
 
 func TestFormatSQLMode(t *testing.T) {

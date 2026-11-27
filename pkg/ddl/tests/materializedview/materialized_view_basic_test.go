@@ -77,6 +77,8 @@ func TestCreateMaterializedViewValidationCoverage(t *testing.T) {
 	require.ErrorContains(t, err, "must contain count(*)/count(1)")
 	err = tk.ExecToErr("create materialized view mv_avg (a, avgv, cnt) as select a, avg(b), count(1) from t_mv_validation group by a")
 	require.ErrorContains(t, err, "unsupported aggregate function")
+	err = tk.ExecToErr("create materialized view mv_bit_or (a, bit_or_b, cnt) as select a, bit_or(b), count(1) from t_mv_validation group by a")
+	require.ErrorContains(t, err, "unsupported aggregate function in CREATE MATERIALIZED VIEW: agg bit_or")
 	err = tk.ExecToErr("create materialized view mv_rand (a, cnt) as select a, count(1) from t_mv_validation where rand() > 0 group by a")
 	require.ErrorContains(t, err, "WHERE clause must be deterministic")
 
@@ -101,6 +103,15 @@ func TestCreateMaterializedViewValidationCoverage(t *testing.T) {
 	require.Equal(t, tk.Session().GetSessionVars().SQLMode, mvInfo.RefreshScheduleSQLMode)
 	require.Empty(t, mvInfo.DefinitionTimeZone.Name)
 	require.Equal(t, 8*60*60, mvInfo.DefinitionTimeZone.Offset)
+
+	// AVG maintains its value from the explicit SUM and COUNT state.
+	tk.MustExec("create materialized view mv_avg_column (a, avg_b, sum_b, cnt_b, cnt) as select a, avg(b), sum(b), count(b), count(1) from t_mv_validation group by a")
+	tk.MustQuery("select a, avg_b, sum_b, cnt_b, cnt from mv_avg_column order by a").Check(testkit.Rows("1 7.5000 15 2 2", "2 7.0000 7 1 1"))
+	tk.MustExec("create materialized view mv_avg_not_null (a, avg_b, sum_b, cnt) as select a, avg(b), sum(b), count(1) from t_mv_validation group by a")
+	tk.MustQuery("select a, avg_b, sum_b, cnt from mv_avg_not_null order by a").Check(testkit.Rows("1 7.5000 15 2", "2 7.0000 7 1"))
+	mvAvgTable, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("mv_avg_column"))
+	require.NoError(t, err)
+	require.Equal(t, tk.Session().GetSessionVars().GetDivPrecisionIncrement(), mvAvgTable.Meta().MaterializedView.DefinitionDivPrecisionIncrement)
 
 	// Aggregate function names are case-insensitive.
 	tk.MustExec("create materialized view mv_upper_aggregate (a, s, cnt) as select a, SUM(b), COUNT(1) from t_mv_validation group by a")
@@ -129,6 +140,16 @@ func TestCreateMaterializedViewValidationCoverage(t *testing.T) {
 	tk.MustExec("create materialized view log on t_mv_missing_column (a)")
 	err = tk.ExecToErr("create materialized view mv_missing_count_column (a, cnt_b, cnt) as select a, count(b), count(1) from t_mv_missing_column group by a")
 	require.ErrorContains(t, err, "does not contain column b")
+
+	t.Run("decimal AVG physical precision", func(t *testing.T) {
+		tk.MustExec("set div_precision_increment=4")
+		tk.MustExec("create table t_mv_decimal_avg (a int not null, b decimal(65,30))")
+		tk.MustExec("insert into t_mv_decimal_avg values (1,10),(1,20)")
+		tk.MustExec("create materialized view log on t_mv_decimal_avg(a,b)")
+		tk.MustExec("create materialized view mv_decimal_avg(a,av,s,c,n) as select a,avg(b),sum(b),count(b),count(*) from t_mv_decimal_avg group by a")
+		tk.MustQuery("select column_type from information_schema.columns where table_schema='test' and table_name='mv_decimal_avg' and column_name='av'").Check(testkit.Rows("decimal(65,30)"))
+		tk.MustQuery("select av from mv_decimal_avg").Check(testkit.Rows("15.000000000000000000000000000000"))
+	})
 }
 
 func TestCreateMaterializedViewNullableAggregateValidation(t *testing.T) {

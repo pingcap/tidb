@@ -180,6 +180,106 @@ func TestBuildCountSum(t *testing.T) {
 	})
 }
 
+func TestBuildAvgUsesCountStarForNotNullArg(t *testing.T) {
+	sctx := mviewTestContext()
+
+	baseID := int64(41)
+	mlogID := int64(42)
+	mvID := int64(43)
+
+	base := &model.TableInfo{
+		ID:    baseID,
+		Name:  ast.NewCIStr("t"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkCol(1, "a", 0, mysql.TypeLong),
+			mkCol(2, "b", 1, mysql.TypeLong),
+		},
+		MaterializedViewBase: &model.MaterializedViewBaseInfo{MLogID: mlogID},
+	}
+	base.Columns[0].AddFlag(mysql.NotNullFlag)
+	base.Columns[1].AddFlag(mysql.NotNullFlag)
+	mlog := &model.TableInfo{
+		ID:    mlogID,
+		Name:  ast.NewCIStr("$mlog$t"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkCol(1, "a", 0, mysql.TypeLong),
+			mkCol(2, "b", 1, mysql.TypeLong),
+			mkCol(3, model.MaterializedViewLogDMLTypeColumnName, 2, mysql.TypeVarchar),
+			mkCol(4, model.MaterializedViewLogOldNewColumnName, 3, mysql.TypeTiny),
+		},
+		MaterializedViewLog: &model.MaterializedViewLogInfo{
+			BaseTableID: baseID,
+			Columns:     []ast.CIStr{ast.NewCIStr("a"), ast.NewCIStr("b")},
+		},
+	}
+	mv := &model.TableInfo{
+		ID:    mvID,
+		Name:  ast.NewCIStr("mv_avg_not_null_tbl"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			mkCol(1, "x", 0, mysql.TypeLong),
+			mkCol(2, "cnt_star", 1, mysql.TypeLonglong),
+			mkCol(3, "avg_b", 2, mysql.TypeNewDecimal),
+			mkCol(4, "sum_b", 3, mysql.TypeNewDecimal),
+		},
+		MaterializedView: &model.MaterializedViewInfo{
+			BaseTableIDs: []int64{baseID},
+			SQLContent:   "select a, count(1), avg(t.B), sum(b) from t group by a",
+		},
+	}
+
+	is := infoschema.MockInfoSchema([]*model.TableInfo{base, mlog, mv})
+	domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(is)
+
+	res, err := mview.Build(sctx.GetPlanCtx(), is, mv, mview.BuildOptions{FromTS: 10}, nil)
+	require.NoError(t, err)
+	require.Equal(t, 1, res.CountStarMVOffset)
+
+	var hasAvg, hasSum bool
+	for _, ai := range res.AggInfos {
+		switch ai.Kind {
+		case mview.AggCountStar:
+			requireDependencies(t, ai, []int{0})
+		case mview.AggAvg:
+			hasAvg = true
+			require.Equal(t, "b", ai.ArgColName)
+			requireDependencies(t, ai, []int{5, 3, 3})
+		case mview.AggSum:
+			hasSum = true
+			require.Equal(t, "b", ai.ArgColName)
+			requireDependencies(t, ai, []int{1, 3})
+		}
+	}
+	require.True(t, hasAvg)
+	require.True(t, hasSum)
+
+	t.Run("first matching SUM and COUNT", func(t *testing.T) {
+		mv.Columns = append(mv.Columns,
+			mkCol(5, "cnt_b", 4, mysql.TypeLonglong),
+			mkCol(6, "sum_b_again", 5, mysql.TypeNewDecimal),
+			mkCol(7, "cnt_b_again", 6, mysql.TypeLonglong),
+			mkCol(8, "avg_b_again", 7, mysql.TypeNewDecimal),
+		)
+		mv.MaterializedView.SQLContent = "select a, count(1), avg(t.B), sum(b), count(b), sum(t.b), count(t.b), avg(b) from t group by a"
+		res, err := mview.Build(sctx.GetPlanCtx(), is, mv, mview.BuildOptions{FromTS: 10}, nil)
+		require.NoError(t, err)
+		avgCount := 0
+		for _, ai := range res.AggInfos {
+			if ai.Kind == mview.AggAvg {
+				avgCount++
+				requireDependencies(t, ai, []int{res.DeltaColumnCount + 3, res.DeltaColumnCount + 4, res.DeltaColumnCount + 1})
+			}
+			if ai.Kind == mview.AggSum && ai.MVOffset == 3 {
+				require.Len(t, ai.Dependencies, 2)
+				require.Equal(t, res.DeltaColumnCount+4, ai.Dependencies[1])
+			}
+		}
+		require.Equal(t, 2, avgCount)
+	})
+}
+
 func TestBuildCountExprSumExpr(t *testing.T) {
 	sctx := mviewTestContext()
 
