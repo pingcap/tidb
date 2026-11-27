@@ -161,9 +161,7 @@ func (m *avgMerger) mergeChunk(input *chunk.Chunk, computedByOrder []*chunk.Colu
 
 		sum := sumDecimalVals[rowIdx]
 		var avg, count types.MyDecimal
-		// Keep an extra digit for final rounding within the definition's increment.
-		increment := min(m.divPrecisionIncrement, max(0, frac+1-int(sum.GetDigitsFrac())))
-		if err := types.DecimalDiv(&sum, count.FromInt(countExpr), &avg, increment); err != nil {
+		if err := types.DecimalDiv(&sum, count.FromInt(countExpr), &avg, m.divPrecisionIncrement); err != nil {
 			return err
 		}
 		if err := avg.Round(&avg, frac, types.ModeHalfUp); err != nil {

@@ -188,14 +188,19 @@ select /*+ HASH_AGG() */ a, avg(b), sum(b), count(b), count(*) from t_mv_avg_hig
 select column_type from information_schema.columns where table_schema='test' and table_name='mv_avg_high' and column_name='av';
 column_type
 decimal(65,30)
+set @avg_high_mv_id = (select tidb_table_id from information_schema.tables where table_schema='test' and table_name='mv_avg_high');
+set @avg_high_read_tso = (select LAST_SUCCESS_READ_TSO from mysql.tidb_mview_refresh_info where MVIEW_ID=@avg_high_mv_id);
 set div_precision_increment = 8;
 insert into t_mv_avg_high values (5, 3, 99999999999999999999999999999999999.123456789012345678901234567890);
 refresh materialized view mv_avg_high fast;
+Error 1265 (01000): Data truncated for column '%s' at row %d
 select * from mv_avg_high order by a;
 a	av	s	c	n
 1	1.666666666666666666666666666667	5.000000000000000000000000000000	3	3
 2	NULL	NULL	0	1
-3	99999999999999999999999999999999999.123456789012345678901234567890	99999999999999999999999999999999999.123456789012345678901234567890	1	1
+select LAST_SUCCESS_READ_TSO=@avg_high_read_tso as watermark_preserved from mysql.tidb_mview_refresh_info where MVIEW_ID=@avg_high_mv_id;
+watermark_preserved
+1
 update t_mv_avg_high set b = 99999999999999999999999999999999999.123456789012345678901234567889 where id = 5;
 refresh materialized view mv_avg_high complete in place;
 Error 1265 (01000): Data truncated for column '%s' at row %d
@@ -203,21 +208,18 @@ select * from mv_avg_high order by a;
 a	av	s	c	n
 1	1.666666666666666666666666666667	5.000000000000000000000000000000	3	3
 2	NULL	NULL	0	1
-3	99999999999999999999999999999999999.123456789012345678901234567890	99999999999999999999999999999999999.123456789012345678901234567890	1	1
 refresh materialized view mv_avg_high complete out of place;
 Error 1265 (01000): Data truncated for column '%s' at row %d
 select * from mv_avg_high order by a;
 a	av	s	c	n
 1	1.666666666666666666666666666667	5.000000000000000000000000000000	3	3
 2	NULL	NULL	0	1
-3	99999999999999999999999999999999999.123456789012345678901234567890	99999999999999999999999999999999999.123456789012345678901234567890	1	1
 refresh materialized view mv_avg_high complete delta apply;
 Error 1265 (01000): Data truncated for column '%s' at row %d
 select * from mv_avg_high order by a;
 a	av	s	c	n
 1	1.666666666666666666666666666667	5.000000000000000000000000000000	3	3
 2	NULL	NULL	0	1
-3	99999999999999999999999999999999999.123456789012345678901234567890	99999999999999999999999999999999999.123456789012345678901234567890	1	1
 set div_precision_increment = 30;
 create materialized view mv_avg_high_failed (a, av, s, c, n) refresh fast as
 select /*+ HASH_AGG() */ a, avg(b), sum(b), count(b), count(*) from t_mv_avg_high group by a;

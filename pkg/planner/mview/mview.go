@@ -388,7 +388,7 @@ type buildLocalResult struct {
 	aggCols      []aggColInfo
 	hasMinMax    bool
 
-	countStarAggIndex int
+	countStarMVOffset int
 }
 
 // Build constructs the merge-source plan and metadata for one MV incremental merge window.
@@ -538,14 +538,14 @@ func buildLocal(
 		)
 	}
 
-	countStarAggIndex := -1
-	for i, ac := range aggCols {
+	countStarMVOffset := -1
+	for _, ac := range aggCols {
 		if ac.info.Kind == AggCountStar {
-			countStarAggIndex = i
+			countStarMVOffset = ac.info.MVOffset
 			break
 		}
 	}
-	if countStarAggIndex < 0 {
+	if countStarMVOffset < 0 {
 		return nil, errors.New("materialized view definition must include COUNT(*) for mview")
 	}
 
@@ -562,7 +562,7 @@ func buildLocal(
 		groupKeyOffs:      groupKeyOffsets,
 		aggCols:           aggCols,
 		hasMinMax:         hasMinMax,
-		countStarAggIndex: countStarAggIndex,
+		countStarMVOffset: countStarMVOffset,
 	}, nil
 }
 
@@ -667,7 +667,7 @@ func buildFromLocal(
 	if err != nil {
 		return nil, err
 	}
-	avgDependencies, err := mapAvgDependencies(local.aggCols, local.countStarAggIndex, aggArgNotNullByOffset)
+	avgDependencies, err := mapAvgDependencies(local.aggCols, aggArgNotNullByOffset)
 	if err != nil {
 		return nil, err
 	}
@@ -769,7 +769,7 @@ func buildFromLocal(
 		MVTablePKCols:                  mvTablePKCols,
 		GroupKeyMVOffsets:              append([]int(nil), local.groupKeyOffs...),
 		GroupKeyBaseCols:               groupKeyBaseCols,
-		CountStarMVOffset:              local.aggCols[local.countStarAggIndex].info.MVOffset,
+		CountStarMVOffset:              local.countStarMVOffset,
 		AggInfos:                       outAggInfos,
 	}
 	return res, nil
@@ -1121,7 +1121,6 @@ func mapSumToCountExprDependencies(aggCols []aggColInfo, sumArgNotNullByOffset m
 // replace COUNT(expr) because both counts are equivalent.
 func mapAvgDependencies(
 	aggCols []aggColInfo,
-	countStarIdx int,
 	argNotNullByOffset map[int]bool,
 ) (map[int][3]int, error) {
 	type avgArgDependencies struct {
@@ -1129,7 +1128,14 @@ func mapAvgDependencies(
 		countIdx int
 	}
 	dependenciesByArg := make(map[string]avgArgDependencies)
+	countStarIdx := -1
 	for i, ac := range aggCols {
+		if ac.info.Kind == AggCountStar {
+			if countStarIdx < 0 {
+				countStarIdx = i
+			}
+			continue
+		}
 		deps, exists := dependenciesByArg[ac.info.ArgColName]
 		if !exists {
 			deps = avgArgDependencies{sumIdx: -1, countIdx: -1}
