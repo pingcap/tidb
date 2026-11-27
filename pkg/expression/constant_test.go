@@ -271,6 +271,34 @@ func TestConstantFolding(t *testing.T) {
 	}
 }
 
+func TestControlFunctionFoldingUnderPlanCache(t *testing.T) {
+	param := func() Expression {
+		return &Constant{Value: types.NewIntDatum(7), ParamMarker: &ParamMarker{order: 0}, RetType: newIntFieldType()}
+	}
+	tests := []struct {
+		funcName string
+		args     []Expression
+		result   string
+	}{
+		{ast.Case, []Expression{newLonglong(0), param(), newColumn(0)}, "Column#0"},
+		{ast.Case, []Expression{newLonglong(0), newColumn(0), param()}, "7"},
+		{ast.Case, []Expression{newLonglong(0), newColumn(0), param(), newLonglong(2), newLonglong(3)}, "case(0, Column#0, 7, 2, 3)"},
+		{ast.If, []Expression{newLonglong(0), param(), newColumn(0)}, "Column#0"},
+		{ast.If, []Expression{newLonglong(0), newColumn(0), param()}, "7"},
+		{ast.If, []Expression{param(), newColumn(0), newLonglong(2)}, "if(7, Column#0, 2)"},
+		{ast.Ifnull, []Expression{NewNull(), param()}, "7"},
+		{ast.Ifnull, []Expression{param(), newColumn(0)}, "ifnull(7, Column#0)"},
+	}
+	for _, tt := range tests {
+		sctx := mock.NewContext()
+		sctx.GetSessionVars().StmtCtx.EnablePlanCache()
+		sctx.GetSessionVars().PlanCacheParams.Append(types.NewIntDatum(7))
+		ctx := sctx.GetExprCtx()
+		folded := newFunction(ctx, tt.funcName, tt.args...)
+		require.Equalf(t, tt.result, folded.StringWithCtx(ctx.GetEvalCtx(), errors.RedactLogDisable), "%s", tt.funcName)
+	}
+}
+
 func TestConstantFoldingCharsetConvert(t *testing.T) {
 	ctx := mock.NewContext()
 	tests := []struct {
