@@ -314,3 +314,34 @@ partition middle_named values less than (20), partition last_named values less t
 		})
 	}
 }
+
+// A partition listed in names_in keeps that rule even when a range selector
+// listed earlier also matches it (https://github.com/pingcap/tidb/issues/73219).
+func TestStorageClassNamesInOverridesRangeSelectors(t *testing.T) {
+	ctx := metabuild.NewContext()
+	tiers := func(tbInfo *model.TableInfo, defs ...*model.StorageClassDef) map[string]string {
+		require.NoError(t, BuildStorageClassForPartitions(tbInfo.Partition.Definitions, tbInfo, &model.StorageClassSettings{Defs: defs}))
+		result := make(map[string]string)
+		for _, part := range tbInfo.Partition.Definitions {
+			result[part.Name.L] = part.StorageClassTier
+		}
+		return result
+	}
+	ia, std := model.StorageClassTierIA, model.StorageClassTierStandard
+	lessThan := "200"
+
+	rangeTable := buildStorageClassTableInfo(t, ctx, `create table t (id int) partition by range (id) (
+partition part1 values less than (100), partition part2 values less than (200), partition part3 values less than (1000))`)
+	require.Equal(t, map[string]string{"part1": std, "part2": ia, "part3": std}, tiers(rangeTable,
+		&model.StorageClassDef{Tier: ia, LessThan: &lessThan},
+		&model.StorageClassDef{Tier: std, NamesIn: []string{"part1"}}))
+	require.Equal(t, map[string]string{"part1": std, "part2": ia, "part3": std}, tiers(rangeTable,
+		&model.StorageClassDef{Tier: std, NamesIn: []string{"part1"}},
+		&model.StorageClassDef{Tier: ia, LessThan: &lessThan}))
+
+	listTable := buildStorageClassTableInfo(t, ctx, `create table t (id int) partition by list (id) (
+partition p0 values in (1, 2), partition p1 values in (3, 4))`)
+	require.Equal(t, map[string]string{"p0": std, "p1": ia}, tiers(listTable,
+		&model.StorageClassDef{Tier: ia, ValuesIn: []string{"2", "4"}},
+		&model.StorageClassDef{Tier: std, NamesIn: []string{"p0"}}))
+}

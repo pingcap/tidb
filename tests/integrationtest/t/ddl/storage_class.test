@@ -99,6 +99,11 @@ drop table if exists t;
 create table t (id int) ENGINE_ATTRIBUTE = '{"storage_class": {"tier":"IA", "less_than":"200"}}' partition by range (id) (partition p0 values less than (100), partition p1 values less than (200), partition pmax values less than maxvalue);
 select table_name,partition_name,TIDB_STORAGE_CLASS FROM information_schema.partitions WHERE table_name = 't' and table_schema = 'ddl__storage_class';
 
+# names_in wins over an earlier less_than rule that also matches the partition.
+drop table if exists t;
+create table t (id int) ENGINE_ATTRIBUTE = '{"storage_class": [{"tier":"IA", "less_than":"200"}, {"tier":"STANDARD", "names_in":["p0"]}]}' partition by range (id) (partition p0 values less than (100), partition p1 values less than (200), partition pmax values less than maxvalue);
+select table_name,partition_name,TIDB_STORAGE_CLASS FROM information_schema.partitions WHERE table_name = 't' and table_schema = 'ddl__storage_class';
+
 drop table if exists t;
 create table t (id int) ENGINE_ATTRIBUTE = '{"storage_class": {"tier":"IA", "values_in":["2","4"]}}' partition by list (id) (partition p0 values in (1,2), partition p1 values in (3,4), partition p2 values in (5));
 select table_name,partition_name,TIDB_STORAGE_CLASS FROM information_schema.partitions WHERE table_name = 't' and table_schema = 'ddl__storage_class';
