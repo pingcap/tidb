@@ -78,6 +78,8 @@ const (
 	DropColumnIndexFlag   uint = 1 << 22 /* Internal: Used for indicate the column is being dropped with index */
 	GeneratedColumnFlag   uint = 1 << 23 /* Internal: TiFlash will check this flag and add a placeholder for this column */
 	UnderScoreCharsetFlag uint = 1 << 24 /* Internal: Indicate whether charset is specified by underscore like _latin1'abc' */
+	// ExplicitCollateFlag is used to indicate whether the collation is explicitly specified.
+	ExplicitCollateFlag uint = 1 << 25
 )
 
 // TypeInt24 bounds.
