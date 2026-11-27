@@ -66,6 +66,24 @@ func testShowMaterializedViews(t *testing.T) {
 		Check(testkit.Rows(fmt.Sprintf("%d mv_other", otherMVID)))
 	tk.MustQuery("show materialized views in test_show_mv_other like 'mv_%'").
 		Check(testkit.Rows(fmt.Sprintf("%d mv_other", otherMVID)))
+	// A pattern that is not a literal is matched against mview_name too.
+	tk.MustExec("set @p = 'mv_%'")
+	tk.MustQuery("show materialized views in test_show_mv_other like @p").
+		Check(testkit.Rows(fmt.Sprintf("%d mv_other", otherMVID)))
+	tk.MustQuery("show materialized views in test_show_mv_other like concat('mv', '_%')").
+		Check(testkit.Rows(fmt.Sprintf("%d mv_other", otherMVID)))
+	// Like a literal pattern, it ignores case, also when the statement is planned again.
+	tk.MustQuery("show materialized views in test_show_mv_other like 'MV_%'").
+		Check(testkit.Rows(fmt.Sprintf("%d mv_other", otherMVID)))
+	tk.MustExec("set @p = 'MV_%'")
+	tk.MustQuery("show materialized views in test_show_mv_other like @p").
+		Check(testkit.Rows(fmt.Sprintf("%d mv_other", otherMVID)))
+	tk.MustExec("prepare stmt from 'show materialized views in test_show_mv_other like ?'")
+	for range 2 {
+		tk.MustQuery("execute stmt using @p").Check(testkit.Rows(fmt.Sprintf("%d mv_other", otherMVID)))
+	}
+	tk.MustExec("set @p = 'mv_not_exist%'")
+	tk.MustQuery("show materialized views in test_show_mv_other like @p").Check(testkit.Rows())
 }
 
 func testShowMaterializedViewLogs(t *testing.T) {
@@ -114,6 +132,13 @@ func testShowMaterializedViewLogs(t *testing.T) {
 		Check(testkit.Rows(otherExpected))
 	tk.MustQuery("show materialized view logs in test_show_mlog_other like 'test_show_mlog_other.$mlog$%'").
 		Check(testkit.Rows())
+	// A pattern that is not a literal is matched against mlog_name too.
+	tk.MustExec("set @p = '$mlog$%'")
+	tk.MustQuery("show materialized view logs in test_show_mlog_other like @p").
+		Check(testkit.Rows(otherExpected))
+	tk.MustExec("set @p = '$MLOG$%'")
+	tk.MustQuery("show materialized view logs in test_show_mlog_other like @p").
+		Check(testkit.Rows(otherExpected))
 
 	tk.MustExec("create user 'show_mlog_u'@'%' identified by ''")
 	defer tk.MustExec("drop user 'show_mlog_u'@'%'")
