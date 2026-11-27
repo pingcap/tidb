@@ -2674,6 +2674,16 @@ func convertToIndexMergeScan(ds *logicalop.DataSource, prop *property.PhysicalPr
 	}
 	cop.PhysPlanPartInfo = buildPhysPlanPartInfo(ds)
 
+	partialScanProp := prop
+	if !prop.IsSortItemEmpty() && prop.ExpectedCnt < math.MaxFloat64 &&
+		(prop.TaskTp == property.RootTaskType || len(path.TableFilters) > 0) {
+		// Ordered union consumes all partial scans before its first lookup. Only
+		// a cop task without residual table filters can embed the parent's limit.
+		// Keep prop.ExpectedCnt for the table lookups, which can stop early.
+		partialScanProp = prop.CloneEssentialFields()
+		partialScanProp.ExpectedCnt = math.MaxFloat64
+	}
+
 	advisoryProp := prop
 	if candidate.matchWithAdvisorySortItems {
 		advisoryProp = prop.CloneEssentialFields()
@@ -2687,7 +2697,7 @@ func convertToIndexMergeScan(ds *logicalop.DataSource, prop *property.PhysicalPr
 		if len(candidate.partialPathMatchResults) > 0 {
 			partMatchPropResult = candidate.partialPathMatchResults[i].result
 		}
-		effectiveProp := prop
+		effectiveProp := partialScanProp
 		// If matchWithAdvisorySortItems is true and this partial path can match the property,
 		// it means it actually matches the advisory property.
 		if candidate.matchWithAdvisorySortItems && partMatchPropResult.Matched() {

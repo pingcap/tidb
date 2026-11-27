@@ -959,8 +959,8 @@ id	estRows	task	access object	operator info
 Limit_15	5.00	root		offset:0, count:5
 └─UnionScan_21	5.00	root		or(eq(index_merge.t_im_in.a, 1), in(index_merge.t_im_in.b, 1, 2))
   └─IndexMerge_25	5.00	root		type: union
-    ├─IndexRangeScan_22(Build)	2.44	cop[tikv]	table:t_im_in, index:idx_a_c(a, c)	range:[1,1], keep order:true
-    ├─IndexRangeScan_23(Build)	4.27	cop[tikv]	table:t_im_in, index:idx_b_c(b, c)	range:[1,1], [2,2], keep order:true
+    ├─IndexRangeScan_22(Build)	4.00	cop[tikv]	table:t_im_in, index:idx_a_c(a, c)	range:[1,1], keep order:true
+    ├─IndexRangeScan_23(Build)	7.00	cop[tikv]	table:t_im_in, index:idx_b_c(b, c)	range:[1,1], [2,2], keep order:true
     └─TableRowIDScan_24(Probe)	5.00	cop[tikv]	table:t_im_in	keep order:false
 select /*+ use_index_merge(t_im_in) */ * from t_im_in where a = 1 or b in (1, 2) order by c limit 5;
 id	a	b	c	padding
