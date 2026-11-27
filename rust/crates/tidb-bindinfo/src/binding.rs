@@ -444,11 +444,45 @@ pub const BIND_INFO_COLUMNS: &str = "original_sql, bind_sql, default_db, status,
 #[must_use]
 pub fn may_have_sql_binding(stmt: &Stmt) -> bool {
     match stmt {
+        // REPLACE is an InsertStmt too; bindings support only its SELECT form.
         Stmt::Dml(dml) => match &**dml {
             tidb_ast::DmlStmt::Insert(insert) => insert.source.is_some(),
             _ => true,
         },
+        // An EXPLAIN without a statement (EXPLAIN <plan_digest>) keeps the old
+        // behavior and is no early-negative filter.
+        Stmt::Admin(admin) => match &**admin {
+            tidb_ast::AdminStmt::Explain(explain) => explain.statement().is_none_or(may_have_sql_binding),
+            _ => true,
+        },
         _ => true,
+    }
+}
+
+#[cfg(test)]
+mod may_have_sql_binding_tests {
+    use super::*;
+
+    /// Go `TestMayHaveSQLBinding`.
+    #[test]
+    fn test_may_have_sql_binding() {
+        assert!(may_have_sql_binding(&tidb_parser::parse("explain '0123456789abcdef'").unwrap()));
+        for (sql, want) in [
+            ("insert into t values (1)", false),
+            ("insert into t values (1) on duplicate key update a = values(a)", false),
+            ("insert into t set a = 1", false),
+            ("replace into t values (1)", false),
+            ("explain insert into t values (1)", false),
+            ("insert into t select * from s", true),
+            ("replace into t select * from s", true),
+            ("explain insert into t select * from s", true),
+            ("select * from t", true),
+            ("update t set a = 1", true),
+            ("delete from t where a = 1", true),
+        ] {
+            let stmt = tidb_parser::parse(sql).unwrap();
+            assert_eq!(may_have_sql_binding(&stmt), want, "{sql}");
+        }
     }
 }
 

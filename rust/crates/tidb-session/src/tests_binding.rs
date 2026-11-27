@@ -870,3 +870,23 @@ fn binding_over_an_insert_into_a_temporary_table_is_refused() {
         );
     }
 }
+
+/// Go `TestPrepareCacheWithBinding`'s issue 57992 case (5ccce269d2b): a
+/// global binding matches the prepared statement after the SELECT alias
+/// used in GROUP BY is resolved, as it matches the query itself.
+#[test]
+fn test_prepare_cache_with_binding_issue_57992() {
+    let mut session = binding_session();
+    session.run("create table t_issue57992(d datetime)").expect("create");
+    let query = "select hour(`d`) as `hour` from t_issue57992 group by `hour`";
+    session
+        .run(&format!("create global binding for {query} using {query}"))
+        .expect("create binding");
+    assert!(query_text(&mut session, query).1.is_empty());
+    assert_eq!(matched(&mut session), "1");
+    session
+        .run(&format!("prepare stmt_issue57992 from '{query}'"))
+        .expect("prepare");
+    session.run("execute stmt_issue57992").expect("execute");
+    assert_eq!(matched(&mut session), "1");
+}

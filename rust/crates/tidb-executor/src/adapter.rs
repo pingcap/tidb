@@ -636,6 +636,9 @@ pub trait HandlePessimisticDml: PessimisticDmlSession {
         &mut self,
         lock_error: tidb_store_driver_error::pessimistic_lock_error::LockSqlError,
     ) -> Result<(), tidb_store_driver_error::sql_query_error::SqlQueryError>;
+    /// Go `a.Plan.(*plannercore.LoadData)` with `FileLocRef ==
+    /// ast.FileLocClient`: the statement is a LOAD DATA LOCAL INFILE.
+    fn is_load_data_local(&self) -> bool;
     /// Go `a.retryCount++` / `retryStartTime`.
     fn record_statement_retry(&mut self);
     /// Go's `lockErrorAndThenOnStmtRetryCalled` breakpoint.
@@ -679,7 +682,13 @@ pub trait HandlePessimisticDml: PessimisticDmlSession {
         savepoint: tidb_store_driver_txn::cluster_storage::BufferCheckpoint,
         is_dml: bool,
     ) -> Result<(), tidb_store_driver_error::sql_query_error::SqlQueryError> {
-        self.provider_retry_lock_error(lock_error)?;
+        self.provider_retry_lock_error(lock_error.clone())?;
+        // LOAD DATA LOCAL INFILE reads a one-shot file stream from the
+        // client connection; re-running it would send another
+        // LOCAL_INFILE_REQUEST in the same command. The lock error stands.
+        if self.is_load_data_local() {
+            return Err(tidb_store_driver_error::sql_query_error::lock_sql_error(&lock_error));
+        }
         retries
             .retry()
             .map_err(|error| tidb_store_driver_error::sql_query_error::lock_sql_error(&error))?;

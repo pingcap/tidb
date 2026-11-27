@@ -6780,3 +6780,17 @@ fn test_correlated_column_path_not_pruned_by_risk() {
         ]
     );
 }
+
+/// Go `TestProcessModifyColumnOptionsGenerated` (f0599c2f6cc) at the
+/// statement: MODIFY COLUMN's generated expression drops a table qualifier
+/// as CREATE and ADD COLUMN do (gomaster probe: `` `a` + 2 ``).
+#[test]
+fn test_process_modify_column_options_generated() {
+    let (stack, _users) = cop_backed_stack();
+    let mut tk = testkit(&stack, 9321);
+    tk.must_exec("use test");
+    tk.must_exec("create table t (a int, b int as (a + 1) virtual)");
+    tk.must_exec("alter table t modify column b int as (t.a + 2) virtual");
+    tk.must_query("select generation_expression from information_schema.columns where table_schema = 'test' and table_name = 't' and column_name = 'b'")
+        .check(["`a` + 2"]);
+}

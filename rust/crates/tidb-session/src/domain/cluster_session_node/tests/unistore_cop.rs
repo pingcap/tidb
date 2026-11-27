@@ -4562,6 +4562,40 @@ fn load_data_casts_and_refusals_answer_like_go() {
     run_load_data_cases(LOAD_DATA_CAST_CASES, 1933);
 }
 
+/// Go `TestLoadDataLocalPessimisticRetryDesync` (2964713e267): a retryable
+/// single-statement deadlock does not re-run LOAD DATA LOCAL INFILE, whose
+/// client file stream is one-shot; the deadlock (1213) stands, no row
+/// lands, and the session stays usable.
+#[test]
+fn test_load_data_local_pessimistic_retry_desync() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack.factory.open_session(session_context(1935)).unwrap();
+    for sql in [
+        "CREATE DATABASE IF NOT EXISTS test",
+        "USE test",
+        "CREATE TABLE t_pessimistic_retry (id INT PRIMARY KEY, v VARCHAR(16))",
+        "SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED",
+        "BEGIN PESSIMISTIC",
+    ] {
+        rows(&mut session, sql);
+    }
+    // A retryable deadlock for the first lock request after the file was read.
+    let _deadlock = tidb_failpoint::enable_for_test(
+        "github.com/pingcap/tidb/pkg/store/mockstore/unistore/tikv/pessimisticLockReturnDeadlock",
+        "1*return(true)->return(false)",
+    );
+    let sql = "LOAD DATA LOCAL INFILE '/tmp/pessimistic_retry_desync.csv' REPLACE INTO TABLE t_pessimistic_retry FIELDS TERMINATED BY ','";
+    let stmt = session.parse_at_statement_boundary(sql).unwrap();
+    let outcome = (|| {
+        assert!(session.node_conn().execute_stmt(sql, &stmt)?.is_none(), "{sql} answers no rows");
+        assert!(session.local_infile_request().is_some(), "the load asks for the client's file");
+        session.node_conn().finish_local_infile(b"1,one\n")
+    })();
+    let error = outcome.expect_err("the deadlock stands");
+    assert_eq!(error.code, 1213, "{}", error.message);
+    assert_eq!(displayed(rows(&mut session, "SELECT COUNT(*) FROM t_pessimistic_retry")), [["0"]]);
+}
+
 /// Replays `(kind, sql, data, expected, expected warnings)` steps: `ex` runs
 /// a statement, `q` compares a query's rows, `ld` drives a load through the
 /// connection's client-file doors.

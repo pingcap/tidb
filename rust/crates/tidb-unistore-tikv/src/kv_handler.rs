@@ -666,6 +666,22 @@ impl KvHandler {
                 None,
             );
         }
+        if tidb_failpoint::eval("github.com/pingcap/tidb/pkg/store/mockstore/unistore/tikv/pessimisticLockReturnDeadlock")
+            .is_some_and(|value| value.bool())
+            && !req.mutations.is_empty()
+        {
+            let key = req.mutations[0].key.clone();
+            let error = KvError::Deadlock {
+                deadlock_key_hash: crate::tikv_util::keys_to_hash_vals(&[key.as_slice()])[0],
+                lock_key: key,
+                lock_ts: req.start_version + 1,
+                wait_chain: Vec::new(),
+            };
+            return (
+                kvrpcpb::PessimisticLockResponse { errors: vec![convert_to_key_error(&error)], ..Default::default() },
+                None,
+            );
+        }
         let (_, region_error) = self.new_request_ctx(req.context.as_ref());
         if let Some(region_error) = region_error {
             return (

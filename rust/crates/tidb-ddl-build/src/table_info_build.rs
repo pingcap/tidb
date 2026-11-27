@@ -2575,13 +2575,15 @@ pub fn process_modify_column_options(
 }
 
 /// Go `ProcessModifyColumnOptions`' restore flags for a generated
-/// expression: CREATE / ADD COLUMN's, keeping a table qualifier.
+/// expression: CREATE / ADD COLUMN's, schema and table qualifiers stripped
+/// (Go master f0599c2f6cc fixed a repeated `RestoreWithoutSchemaName`).
 fn modify_generated_restore_flags() -> tidb_parser_format::RestoreFlags {
     tidb_parser_format::RestoreFlags::STRING_SINGLE_QUOTES
         | tidb_parser_format::RestoreFlags::KEYWORD_LOWERCASE
         | tidb_parser_format::RestoreFlags::NAME_BACK_QUOTES
         | tidb_parser_format::RestoreFlags::SPACES_AROUND_BINARY_OPERATION
         | tidb_parser_format::RestoreFlags::WITHOUT_SCHEMA_NAME
+        | tidb_parser_format::RestoreFlags::WITHOUT_TABLE_NAME
 }
 
 /// Go `GetModifiableColumnJob`: once a MODIFY / CHANGE may change the

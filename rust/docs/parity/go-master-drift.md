@@ -17,6 +17,7 @@ A second, function-level list: `python3 -I rust/scripts/go-func-drift.py ../goma
 - ab7355f7981 (rest; its affinity cleanup, job-step state restore, flashback order and multi-schema diff are ported): Rust has no `handleUpdateJobError`, so a job row too large to write (`kv.ErrEntryTooLarge`) neither cancels the job nor cleans up its affinity groups; the `afterAsyncNotifyEvent` failpoint and the storage-class half of `checkpointStorageClassTransitionStep` have no Rust site.
 - Placement bundles and label rules are sent to PD at commit time (`real_tikv_ddl` delivery), so a PD refusal retries the step where Go's `onCreateTable` / `onTruncateTable` cancel the job.
 - 7193401b674 (keyspace half; SHOW AFFINITY's lookup of only its groups is ported): NextGen affinity group ids (`_tidb_ks{id}_...`) and keyspace-encoded group key ranges. The DDL job steps have no keyspace codec: label rules use `CodecV1` too, so both are keyspace-unaware under NextGen.
+- fe1f4b41b44: the warning-only check that the advertised status endpoint (`advertise-address` + status port `/info`) answers this TiDB's `ddl_id` (`pkg/server/internal/advertisedstatus`) is unported.
 - TRUNCATE TABLE does no `preSplitAndScatterTable` (Rust pre-splits only at CREATE TABLE, in the executor).
 - c09f6278deb: needs hypothetical expression indexes, which Rust refuses.
 - c767f6fd8c0: the storage-class transition manager is unported, and with it 56ee5bb2684's transition-completion half and 64e8c4c05ec.
@@ -211,4 +212,4 @@ A second, function-level list: `python3 -I rust/scripts/go-func-drift.py ../goma
 
 ## Held
 
-Ported or not applicable, though the audit still flags them (keep them out of the candidates on a rerun): 0386d784bc8 07b758bf938 143374f759f 1d19049f6e3 22fd1ac756e 3bd6b6d4d63 4c0e2c06244 56ee5bb2684 592082dee72 655769534b4 70970592ab0 7981253e7c3 87d45a1d703 8cde78af3c5 8d5a3a1908f a40e9d6e76f adee1920e10 ed2376acc6e b0f09ba1ea4 d3928d5c659 d880d7fabe5.
+Ported or not applicable, though the audit still flags them (keep them out of the candidates on a rerun): 0386d784bc8 07b758bf938 143374f759f 1d19049f6e3 22fd1ac756e 3bd6b6d4d63 4c0e2c06244 56ee5bb2684 592082dee72 655769534b4 70970592ab0 7981253e7c3 87d45a1d703 8cde78af3c5 8d5a3a1908f a40e9d6e76f adee1920e10 ed2376acc6e 92fc143fe36 8bab3c26d76 ab4e1dcf964 59f6e85cd01 5ccce269d2b b0f09ba1ea4 d3928d5c659 d880d7fabe5.

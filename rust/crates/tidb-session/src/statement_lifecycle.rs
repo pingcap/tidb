@@ -1095,6 +1095,12 @@ impl<'a> tidb_executor::adapter::HandlePessimisticDml for StatementLifecycle<'a>
         StatementLifecycle::provider_retries_lock_error(self, lock_error)
     }
 
+    fn is_load_data_local(&self) -> bool {
+        // The connection accepted a LOCAL load for this statement
+        // (`preprocess_load_data_local`) and clears it once it finished.
+        self.session.local_infile_accepted
+    }
+
     fn record_statement_retry(&mut self) {
         self.session.record_statement_retry();
     }

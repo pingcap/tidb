@@ -552,6 +552,7 @@ pub fn do_import(
     write_limiter: &crate::localhelper::StoreWriteLimiter,
     collector: Option<&Collector>,
 ) -> Result<()> {
+    let parent = ctx;
     let (ctx, cancel) = Context::with_cancel(ctx);
     let limiter = IngestLimiter::new(
         ctx.clone(),
@@ -743,6 +744,12 @@ pub fn do_import(
     drop(to_jobs);
     if let Some(error) = errors.into_inner().unwrap() {
         return Err(error);
+    }
+    // Go master: the workers report only business errors and the worker
+    // context also ends on a normal exit, so the parent's cancellation is the
+    // retryer goroutine's return -- a cancelled import never reads as done.
+    if let Some(error) = parent.err() {
+        return Err(Error::Source(std::sync::Arc::new(error)));
     }
     Ok(())
 }
@@ -1807,6 +1814,25 @@ mod tests {
         let error =
             do_import(&Context::background(), &engine, &client, &cfg, 1, 960_000).unwrap_err();
         assert_eq!(error.to_string(), "fatal error");
+        // Go `TestDoImport`'s "context canceled before import completes"
+        // (955fd6550b6): a cancelled caller's import is never reported done.
+        for mid_flight in [false, true] {
+            let (parent, cancel) = Context::with_cancel(&Context::background());
+            let cancel = std::sync::Arc::new(cancel);
+            let _hook = mid_flight.then(|| {
+                let cancel = std::sync::Arc::clone(&cancel);
+                tidb_failpoint::enable_call_for_test(
+                    "github.com/pingcap/tidb/pkg/ingestor/ingestctrl/beforeExecuteRegionJob",
+                    move |_| cancel.cancel(),
+                )
+            });
+            if !mid_flight {
+                cancel.cancel();
+            }
+            let result = do_import(&parent, &engine, &MockImportClient::default(), &cfg, 1, 960_000);
+            let error = result.expect_err("a cancelled import is not done");
+            assert!(error.to_string().contains("context canceled"), "mid_flight={mid_flight}: {error}");
+        }
     }
     /// Go `ingestcli/ingest_err_test.go:TestGetIngestFailedMsg`.
     #[test]
