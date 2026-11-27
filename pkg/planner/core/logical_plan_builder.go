@@ -5533,7 +5533,7 @@ func (b *PlanBuilder) buildMemTable(_ context.Context, dbName ast.CIStr, tableIn
 		newCol := &expression.Column{
 			UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
 			ID:       col.ID,
-			RetType:  &col.FieldType,
+			RetType:  col.FieldType.Clone(),
 		}
 		if tableInfo.PKIsHandle && mysql.HasPriKeyFlag(col.GetFlag()) {
 			handleCols = util.NewIntHandleCols(newCol)
