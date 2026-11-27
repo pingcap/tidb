@@ -3634,13 +3634,21 @@ func (e *SimpleExec) executeSetSessionStates(ctx context.Context, s *ast.SetSess
 	if err := decoder.Decode(&sessionStates); err != nil {
 		return errors.Trace(err)
 	}
+	vars := e.Ctx().GetSessionVars()
+	oldSnapshotTS := vars.SnapshotTS
 	if err := e.Ctx().DecodeStates(ctx, &sessionStates); err != nil {
 		return err
 	}
 	// SET tidb_snapshot loads the schema of the snapshot in SetExecutor, so
 	// do the same for a restored tidb_snapshot. Otherwise the session reads
 	// the snapshot's data with the current schema.
-	return loadSnapshotInfoSchemaIfNeeded(e.Ctx(), e.Ctx().GetSessionVars().SnapshotTS)
+	if err := loadSnapshotInfoSchemaIfNeeded(e.Ctx(), vars.SnapshotTS); err != nil {
+		// Like SET tidb_snapshot, keep the old timestamp, which still matches
+		// the old snapshot schema.
+		vars.SnapshotTS = oldSnapshotTS
+		return err
+	}
+	return nil
 }
 
 func (e *SimpleExec) executeAdmin(s *ast.AdminStmt) error {
