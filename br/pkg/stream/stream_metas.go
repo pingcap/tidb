@@ -1364,17 +1364,33 @@ func LoadIngestedSSTs(
 	s storage.ExternalStorage,
 	paths []string,
 ) iter.TryNextor[IngestedSSTsGroup] {
-	// Transform preserves input order, so each finished marker follows its earlier segments.
-	backups := iter.Transform(iter.FromSlice(paths), func(ctx context.Context, name string) (PathedIngestedSSTs, error) {
-		// name is the absolute path in external storage.
-		bkup, err := readIngestedSSTs(ctx, name, s)
-		failpoint.InjectCall("load-ingested-ssts-err", &err)
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	reads := iter.Transform(iter.Enumerate(iter.FromSlice(paths)),
+		func(ctx context.Context, indexedPath iter.Indexed[string]) (iter.Indexed[PathedIngestedSSTs], error) {
+			name := indexedPath.Item
+			backup, err := readIngestedSSTs(ctx, name, s)
+			failpoint.InjectCall("load-ingested-ssts-err", &err)
+			if err != nil {
+				return iter.Indexed[PathedIngestedSSTs]{}, errors.Annotatef(err, "failed to read backup at %s", name)
+			}
+			return iter.Indexed[PathedIngestedSSTs]{
+				Index: indexedPath.Index,
+				Item:  PathedIngestedSSTs{IngestedSSTs: backup, path: name},
+			}, nil
+		},
+		iter.WithConcurrency(migrationMetadataDownloadBatchSize),
+	)
+	// Transform emits in completion order. Restore path order before validating each group's finished marker.
+	backups := make([]PathedIngestedSSTs, len(paths))
+	for err, backup := range iter.AsSeq(ctx, reads) {
 		if err != nil {
-			return PathedIngestedSSTs{}, errors.Annotatef(err, "failed to read backup at %s", name)
+			return iter.Fail[IngestedSSTsGroup](err)
 		}
-		return PathedIngestedSSTs{IngestedSSTs: bkup, path: name}, nil
-	}, iter.WithConcurrency(migrationMetadataDownloadBatchSize))
-	extBackups, err := groupExtraBackups(ctx, backups)
+		backups[backup.Index] = backup.Item
+	}
+	extBackups, err := groupExtraBackups(ctx, iter.FromSlice(backups))
 	if err != nil {
 		return iter.Fail[IngestedSSTsGroup](err)
 	}
