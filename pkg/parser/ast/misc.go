@@ -1349,6 +1349,7 @@ var embeddingAPIKeySysVars = map[string]struct{}{
 	"tidb_exp_embed_huggingface_api_key": {},
 	"tidb_exp_embed_nvidia_nim_api_key":  {},
 	"tidb_exp_embed_gemini_api_key":      {},
+	"tidb_exp_embed_voyage_ai_api_key":   {},
 }
 
 // Accept implements Node interface.

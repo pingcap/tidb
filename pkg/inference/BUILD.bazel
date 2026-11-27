@@ -19,6 +19,7 @@ go_library(
         "//pkg/inference/embedding/nvidia",
         "//pkg/inference/embedding/openai",
         "//pkg/inference/embedding/tidbcloud",
+        "//pkg/inference/embedding/voyage",
         "//pkg/sessionctx/vardef",
         "//pkg/sessionctx/variable",
         "//pkg/types",
