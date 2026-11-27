@@ -31,6 +31,8 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/testargsv1"
 	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
 	"github.com/pingcap/tidb/pkg/domain/serverinfo"
+	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
+	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
@@ -48,6 +50,7 @@ import (
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/generic"
@@ -290,6 +293,31 @@ func TestAccountJobRU(t *testing.T) {
 			w.reportJobRUConsumption(&model.Job{RU: 42})
 		})
 	})
+}
+
+// NewMViewBuildWorkerForTest creates only the resources needed by the MV task lifecycle.
+func NewMViewBuildWorkerForTest(ctx context.Context, store kv.Storage, pool util.SessionPool) *worker {
+	w := &worker{workCtx: ctx, sessPool: sess.NewSessionPool(pool), ddlCtx: &ddlCtx{ctx: ctx, store: store}}
+	w.reorgCtx.reorgCtxMap = make(map[int64]*reorgCtx)
+	return w
+}
+
+// StopMViewBuildForTest runs the production rollback task cleanup.
+func (w *worker) StopMViewBuildForTest(ctx context.Context, job *model.Job) error {
+	return w.stopMViewDistTask(ctx, job)
+}
+
+// ExecuteMViewBuildForTest reconnects to a task and returns its build snapshot.
+func (w *worker) ExecuteMViewBuildForTest(ctx context.Context, job *model.Job, tbl *model.TableInfo) (uint64, error) {
+	rc := w.newReorgCtx(job.ID, 0)
+	defer w.removeReorgCtx(job.ID)
+	err := w.executeDistCreateMV(ctx, job, tbl)
+	return rc.getSnapshotVer(), err
+}
+
+// SubmitMViewBuildForTest exercises submission with an already prepared task.
+func (w *worker) SubmitMViewBuildForTest(ctx context.Context, mgr *storage.TaskManager, key string, spec *proto.Task) (*proto.Task, error) {
+	return w.submitMViewDistTask(ctx, mgr, key, spec)
 }
 
 func NewJobSubmitterForTest() *JobSubmitter {

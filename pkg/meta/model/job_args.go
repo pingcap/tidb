@@ -272,12 +272,15 @@ func GetCreateMaterializedViewLogArgs(job *Job) (*CreateMaterializedViewLogArgs,
 type CreateMaterializedViewArgs struct {
 	TableInfo    *TableInfo `json:"table_info,omitempty"`
 	MLogTableIDs []int64    `json:"mlog_table_ids,omitempty"`
+	ImportJobID  int64      `json:"import_job_id,omitempty"`
 }
 
-func (a *CreateMaterializedViewArgs) getArgsV1(*Job) []any { return []any{a.TableInfo, a.MLogTableIDs} }
+func (a *CreateMaterializedViewArgs) getArgsV1(*Job) []any {
+	return []any{a.TableInfo, a.MLogTableIDs, a.ImportJobID}
+}
 func (a *CreateMaterializedViewArgs) decodeV1(job *Job) error {
 	a.TableInfo = &TableInfo{}
-	return errors.Trace(job.decodeArgs(a.TableInfo, &a.MLogTableIDs))
+	return errors.Trace(job.decodeArgs(a.TableInfo, &a.MLogTableIDs, &a.ImportJobID))
 }
 
 // GetCreateMaterializedViewArgs decodes CREATE MATERIALIZED VIEW job arguments.

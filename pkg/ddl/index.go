@@ -3184,7 +3184,7 @@ func (w *worker) addTableIndex(
 ) error {
 	ctx := jobCtx.stepCtx
 	if reorgInfo.ReorgMeta.IsDistReorg && reorgInfo.ReorgMeta.ReorgTp == model.ReorgTypeIngest {
-		err := w.executeDistTask(jobCtx, t, reorgInfo)
+		err := w.executeDistAddIndex(jobCtx, t, reorgInfo)
 		if err != nil {
 			return err
 		}
@@ -3395,7 +3395,7 @@ func (w *worker) resolveCloudStorageURI(job *model.Job, mergeTempIndex bool) (st
 	return jc.cloudStorageURI, nil
 }
 
-func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *reorgInfo) error {
+func (w *worker) executeDistAddIndex(jobCtx *jobContext, t table.Table, reorgInfo *reorgInfo) error {
 	stepCtx := jobCtx.stepCtx
 	taskType := proto.Backfill
 	tkBuilder := NewTaskKeyBuilder().
@@ -3421,7 +3421,7 @@ func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *r
 	}
 
 	var finishedTask *proto.Task
-	waitTaskDoneOrAutoPause := func(taskID int64) error {
+	waitTaskDoneOrAutoPause := func(ctx context.Context, taskID int64) error {
 		found, err := handle.WaitTaskDoneOrPausedWithResult(ctx, taskID)
 		if err != nil {
 			return err
@@ -3441,6 +3441,7 @@ func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *r
 		taskID                                              int64
 		lastRequiredSlots, lastBatchSize, lastMaxWriteSpeed int
 	)
+	resumeTask := task != nil
 	if task != nil {
 		if shouldAutoPauseExistingKVDiskFullTask(reorgInfo.Job, task) {
 			logutil.DDLLogger().Warn("auto pause add-index DDL job because existing DXF task hit storage node disk full",
@@ -3467,29 +3468,6 @@ func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *r
 		lastRequiredSlots = task.RequiredSlots
 		lastBatchSize = taskMeta.Job.ReorgMeta.GetBatchSize()
 		lastMaxWriteSpeed = taskMeta.Job.ReorgMeta.GetMaxWriteSpeed()
-		g.Go(func() error {
-			defer close(done)
-			backoffer := backoff.NewExponential(scheduler.RetrySQLInterval, 2, scheduler.RetrySQLMaxInterval)
-			err := handle.RunWithRetry(ctx, scheduler.RetrySQLTimes, backoffer, logutil.DDLLogger(),
-				func(context.Context) (bool, error) {
-					return true, handle.ResumeTask(w.workCtx, taskKey)
-				},
-			)
-			if err != nil {
-				return err
-			}
-			err = waitTaskDoneOrAutoPause(task.ID)
-			if err == nil {
-				reorgInfo.Job.ClearResumeReason()
-			}
-			if err := w.isReorgRunnable(stepCtx, true); err != nil {
-				if dbterror.ErrPausedDDLJob.Equal(err) {
-					logutil.DDLLogger().Warn("job paused by user", zap.Error(err))
-					return dbterror.ErrPausedDDLJob.GenWithStackByArgs(reorgInfo.Job.ID)
-				}
-			}
-			return err
-		})
 	} else {
 		job := reorgInfo.Job
 		workerCntLimit := job.ReorgMeta.GetConcurrency()
@@ -3532,14 +3510,28 @@ func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *r
 		lastRequiredSlots = requiredSlots
 		lastBatchSize = taskMeta.Job.ReorgMeta.GetBatchSize()
 		lastMaxWriteSpeed = taskMeta.Job.ReorgMeta.GetMaxWriteSpeed()
-
-		g.Go(func() error {
-			defer close(done)
-			err := waitTaskDoneOrAutoPause(task.ID)
+	}
+	g.Go(func() error {
+		defer close(done)
+		return w.waitDistTask(ctx, stepCtx, taskKey, func(ctx context.Context) error {
+			if resumeTask {
+				backoffer := backoff.NewExponential(scheduler.RetrySQLInterval, 2, scheduler.RetrySQLMaxInterval)
+				err := handle.RunWithRetry(ctx, scheduler.RetrySQLTimes, backoffer, logutil.DDLLogger(),
+					func(context.Context) (bool, error) {
+						return true, handle.ResumeTask(w.workCtx, taskKey)
+					},
+				)
+				if err != nil {
+					return err
+				}
+			}
+			err := waitTaskDoneOrAutoPause(ctx, taskID)
 			if err == nil {
 				reorgInfo.Job.ClearResumeReason()
 			}
-			failpoint.InjectCall("pauseAfterDistTaskFinished")
+			if !resumeTask {
+				failpoint.InjectCall("pauseAfterDistTaskFinished")
+			}
 			if err := w.isReorgRunnable(stepCtx, true); err != nil {
 				if dbterror.ErrPausedDDLJob.Equal(err) {
 					logutil.DDLLogger().Warn("job paused by user", zap.Error(err))
@@ -3548,24 +3540,16 @@ func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *r
 			}
 			return err
 		})
-	}
+	})
 
 	g.Go(func() error {
-		checkFinishTk := time.NewTicker(CheckBackfillJobFinishInterval)
-		defer checkFinishTk.Stop()
 		updateRowCntTk := time.NewTicker(UpdateBackfillJobRowCountInterval)
 		defer updateRowCntTk.Stop()
 		for {
 			select {
 			case <-done:
 				w.updateDistTaskRowCount(taskKey, reorgInfo.Job.ID)
-				err := w.checkRunnableOrHandlePauseOrCanceled(stepCtx, taskKey)
-				return errors.Trace(err)
-			case <-checkFinishTk.C:
-				err := w.checkRunnableOrHandlePauseOrCanceled(stepCtx, taskKey)
-				if err != nil {
-					return errors.Trace(err)
-				}
+				return nil
 			case <-updateRowCntTk.C:
 				w.updateDistTaskRowCount(taskKey, reorgInfo.Job.ID)
 			}
@@ -3618,6 +3602,61 @@ func distTaskRU(taskMeta *BackfillTaskMeta) float64 {
 	return float64(taskMeta.Summary.IndexKVSize) * weights.IngestKVBytes
 }
 
+func cancelDistTask(ctx context.Context, taskKey string) (done bool, err error) {
+	mgr, err := storage.GetDXFSvcTaskMgr()
+	if err != nil {
+		return false, err
+	}
+	task, err := mgr.GetTaskByKeyWithHistory(ctx, taskKey)
+	if err != nil {
+		return false, err
+	}
+	if task.IsDone() {
+		return true, nil
+	}
+	err = mgr.CancelTask(ctx, task.ID)
+	if goerrors.Is(err, storage.ErrTaskStateNotAllow) {
+		// Retry after the in-flight state transition finishes.
+		return false, nil
+	}
+	return false, err
+}
+
+func (w *worker) waitDistTask(
+	ctx, stepCtx context.Context, taskKey string, wait func(context.Context) error,
+) error {
+	g, ctx := errgroup.WithContext(ctx)
+	done := make(chan struct{})
+	g.Go(func() error {
+		defer close(done)
+		return wait(ctx)
+	})
+	g.Go(func() error {
+		return w.checkDistTaskLoop(stepCtx, taskKey, done, CheckBackfillJobFinishInterval)
+	})
+	return g.Wait()
+}
+
+func (w *worker) checkDistTaskLoop(
+	stepCtx context.Context, taskKey string, done <-chan struct{}, interval time.Duration,
+) error {
+	if err := w.checkRunnableOrHandlePauseOrCanceled(stepCtx, taskKey); err != nil {
+		return err
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-done:
+			return w.checkRunnableOrHandlePauseOrCanceled(stepCtx, taskKey)
+		case <-ticker.C:
+			if err := w.checkRunnableOrHandlePauseOrCanceled(stepCtx, taskKey); err != nil {
+				return err
+			}
+		}
+	}
+}
+
 func (w *worker) checkRunnableOrHandlePauseOrCanceled(stepCtx context.Context, taskKey string) (err error) {
 	if err = w.isReorgRunnable(stepCtx, true); err != nil {
 		if dbterror.ErrPausedDDLJob.Equal(err) {
@@ -3630,7 +3669,7 @@ func (w *worker) checkRunnableOrHandlePauseOrCanceled(stepCtx context.Context, t
 		if !dbterror.ErrCancelledDDLJob.Equal(err) {
 			return errors.Trace(err)
 		}
-		if err = handle.CancelTask(w.workCtx, taskKey); err != nil {
+		if _, err = cancelDistTask(w.workCtx, taskKey); err != nil && !goerrors.Is(err, storage.ErrTaskNotFound) {
 			logutil.DDLLogger().Warn("cancel task error", zap.String("task_key", taskKey), zap.Error(err))
 			return nil
 		}

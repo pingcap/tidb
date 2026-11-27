@@ -182,14 +182,26 @@ func TestCreateTableArgs(t *testing.T) {
 		inArgs := &CreateMaterializedViewArgs{
 			TableInfo:    &TableInfo{ID: 102, MaterializedView: &MaterializedViewInfo{BaseTableIDs: []int64{88}}},
 			MLogTableIDs: []int64{99},
+			ImportJobID:  123,
 		}
 		for _, v := range []JobVersion{JobVersion1, JobVersion2} {
 			j2 := &Job{}
 			require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionCreateMaterializedView)))
 			args, err := GetCreateMaterializedViewArgs(j2)
 			require.NoError(t, err)
-			require.EqualValues(t, inArgs.TableInfo, args.TableInfo)
-			require.EqualValues(t, inArgs.MLogTableIDs, args.MLogTableIDs)
+			require.Equal(t, inArgs, args)
+
+			legacy := *inArgs
+			legacy.ImportJobID = 0
+			var legacyArgs any = &legacy
+			if v == JobVersion1 {
+				legacyArgs = []any{legacy.TableInfo, legacy.MLogTableIDs}
+			}
+			raw, err := json.Marshal(legacyArgs)
+			require.NoError(t, err)
+			args, err = GetCreateMaterializedViewArgs(&Job{Version: v, RawArgs: raw})
+			require.NoError(t, err)
+			require.Equal(t, &legacy, args)
 		}
 	})
 	t.Run("create view", func(t *testing.T) {

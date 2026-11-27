@@ -32,13 +32,13 @@ Hard requirements remain in the repository root `AGENTS.md`.
   - SQL integration tests for user-visible behavior
 
 ### Import preparation and execution
-- `pkg/executor/importer/`: import plans and execution; it must not depend on `pkg/planner/core`.
+- `pkg/executor/importer/`: import plans and execution; it must not depend on `pkg/planner/core`, because `pkg/ddl` imports it.
 - `pkg/executor/import_into.go`, `pkg/executor/load_data.go`: also convert SQL plans to import plans.
-- `pkg/dxf/importinto/`: distributed import scheduling and step execution.
+- `pkg/dxf/importinto/`: distributed import scheduling and step execution, also used by MV builds.
 - `pkg/executor/importer/job.go`: import job rows and persisted summaries.
 - `pkg/dxf/importinto/taskinfo/`: shared task metadata and runtime progress read from the DXF task.
 - `pkg/executor/import_into.go`: IMPORT INTO task submission; `pkg/executor` must not import `pkg/dxf/importinto`.
-- First tests: importer metadata/option tests, `pkg/dxf/importinto/taskinfo/runtime_info_test.go` and `pkg/executor/import_into_test.go`.
+- First tests: importer metadata/option tests, `pkg/dxf/importinto/taskinfo/runtime_info_test.go`, `pkg/executor/query_import_test.go` and `pkg/executor/import_into_test.go`.
 
 ### Session, variables, protocol
 - `pkg/session/`

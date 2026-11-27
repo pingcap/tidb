@@ -17,7 +17,6 @@ package importer
 import (
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -27,14 +26,15 @@ import (
 	"time"
 
 	"github.com/docker/go-units"
-	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/objstore/objectio"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
-	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
-	utilmock "github.com/pingcap/tidb/pkg/util/mock"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 )
@@ -116,24 +116,48 @@ func createDataFiles(t *testing.T, dir string, fileCount, rowsPerFile, rowLen in
 	}
 }
 
+// sampleTable builds the fixed four-column schema used by the sampler cases.
+func sampleTable(indexColumns []int) table.Table {
+	info := &model.TableInfo{ID: 1, Name: ast.NewCIStr("t"), State: model.StatePublic, Version: model.TableInfoVersion5}
+	for i, name := range []string{"a", "b", "c", "d"} {
+		ft := types.NewFieldType(mysql.TypeBlob)
+		ft.SetFlen(65535)
+		ft.SetDecimal(0)
+		ft.SetCharset("utf8mb4")
+		ft.SetCollate("utf8mb4_bin")
+		if i == 0 {
+			ft = types.NewFieldType(mysql.TypeLong)
+			ft.SetFlen(11)
+			ft.SetDecimal(0)
+		}
+		info.Columns = append(info.Columns, &model.ColumnInfo{ID: int64(i + 1), Name: ast.NewCIStr(name), Offset: i,
+			State: model.StatePublic, Version: model.CurrLatestColumnInfoVersion, FieldType: *ft})
+	}
+	for i, offset := range indexColumns {
+		col := info.Columns[offset]
+		col.AddFlag(mysql.MultipleKeyFlag)
+		length := types.UnspecifiedLength
+		if offset == 1 {
+			length = 1024
+		}
+		info.Indices = append(info.Indices, &model.IndexInfo{ID: int64(i + 1), Name: ast.NewCIStr(fmt.Sprintf("idx%d", i)),
+			State: model.StatePublic, Tp: ast.IndexTypeBtree,
+			Columns: []*model.IndexColumn{{Name: col.Name, Offset: offset, Length: length}}})
+	}
+	return tables.MockTableFromMeta(info)
+}
+
 type caseTp struct {
 	fileCount, rowsPerFile, rowLen int
 	ksCodec                        []byte
-	sql                            string
+	indexColumns                   []int
 	ratio                          float64
 }
 
 func runCaseFn(t *testing.T, i int, c caseTp) {
 	dir := filepath.Join(t.TempDir(), fmt.Sprintf("case-%d", i))
 	createDataFiles(t, dir, c.fileCount, c.rowsPerFile, c.rowLen)
-	p := parser.New()
-	node, err := p.ParseOneStmt(c.sql, "", "")
-	require.NoError(t, err)
-	sctx := utilmock.NewContext()
-	tblInfo, err := ddl.MockTableInfo(sctx, node.(*ast.CreateTableStmt), 1)
-	require.NoError(t, err)
-	tblInfo.State = model.StatePublic
-	table := tables.MockTableFromMeta(tblInfo)
+	table := sampleTable(c.indexColumns)
 	ctrl, err := NewLoadDataController(&Plan{
 		Path:           filepath.Join(dir, "*.csv"),
 		Format:         DataFormatCSV,
@@ -155,7 +179,7 @@ func runCaseFn(t *testing.T, i int, c caseTp) {
 		ctrl.dataStore,
 		ctrl.dataFiles,
 		c.ksCodec,
-		ctrl.logger,
+		zap.Must(zap.NewDevelopment()),
 	)
 	require.NoError(t, err)
 	var sampledRatio float64
@@ -167,7 +191,7 @@ func runCaseFn(t *testing.T, i int, c caseTp) {
 
 func TestSampleIndexSizeRatio(t *testing.T) {
 	ksCodec := []byte{'x', 0x00, 0x00, 0x01}
-	simpleTbl := `create table t (a int, b text, c text, d text, index idx(a));`
+	simpleTbl := []int{0}
 	cases := []caseTp{
 		// without ks codec
 		// no file
@@ -180,16 +204,16 @@ func TestSampleIndexSizeRatio(t *testing.T) {
 		// enough files
 		{10, 20, 100, nil, simpleTbl, 0.287},
 		{10, 20, 100, nil,
-			`create table t (a int, b text, c text, d text, index idx(b(1024)));`, 0.568},
+			[]int{1}, 0.568},
 		{10, 20, 100, nil,
-			`create table t (a int, b text, c text, d text, index idx1(a), index idx2(a), index idx3(a), index idx4(a));`, 1.151},
+			[]int{0, 0, 0, 0}, 1.151},
 		// enough files, not enough rows
 		{10, 5, 100, nil, simpleTbl, 0.287},
 		// longer rows
 		{10, 20, 400, nil, simpleTbl, 0.087},
 		{10, 12, 2000, nil, simpleTbl, 0.018},
 		{10, 12, 2000, nil,
-			`create table t (a int, b text, c text, d text, index idx1(a), index idx2(a), index idx3(a), index idx4(a));`, 0.074},
+			[]int{0, 0, 0, 0}, 0.074},
 
 		// with ks codec
 		{10, 20, 100, ksCodec, simpleTbl, 0.308},
@@ -199,39 +223,6 @@ func TestSampleIndexSizeRatio(t *testing.T) {
 			runCaseFn(t, i, c)
 		})
 	}
-
-	t.Run("parser_close_on_error", func(t *testing.T) {
-		newChunk := func() *Chunk {
-			return &Chunk{
-				Path:         "test.sql",
-				FileSize:     16,
-				Offset:       1,
-				PrevRowIDMax: 1,
-			}
-		}
-
-		reader := newTrackingReader("INSERT INTO t VALUES (1);\n")
-		sampler := &kvSizeSampler{
-			cfg: &KVSizeSampleConfig{
-				Format: DataFormatSQL,
-			},
-			dataStore: &trackingStorage{reader: reader},
-			logger:    zap.NewNop(),
-		}
-		_, err := sampler.getParser(context.Background(), newChunk())
-		require.Error(t, err)
-		require.True(t, reader.closed)
-
-		reader = newTrackingReader("INSERT INTO t VALUES (1);\n")
-		ctrl := &LoadDataController{
-			Plan:      &Plan{Format: DataFormatSQL},
-			dataStore: &trackingStorage{reader: reader},
-			logger:    zap.NewNop(),
-		}
-		_, err = ctrl.getParser(context.Background(), newChunk())
-		require.Error(t, err)
-		require.True(t, reader.closed)
-	})
 
 	t.Run("sql_source_size_uses_consumed_bytes_not_buffered_progress", func(t *testing.T) {
 		dir := t.TempDir()
@@ -249,14 +240,7 @@ func TestSampleIndexSizeRatio(t *testing.T) {
 		content := fileSB.String()
 		require.NoError(t, os.WriteFile(filepath.Join(dir, "001.sql"), []byte(content), 0o644))
 
-		p := parser.New()
-		node, err := p.ParseOneStmt(`create table t (a int, b text, c text, d text, index idx(a));`, "", "")
-		require.NoError(t, err)
-		sctx := utilmock.NewContext()
-		tblInfo, err := ddl.MockTableInfo(sctx, node.(*ast.CreateTableStmt), 1)
-		require.NoError(t, err)
-		tblInfo.State = model.StatePublic
-		table := tables.MockTableFromMeta(tblInfo)
+		table := sampleTable([]int{0})
 
 		ctrl, err := NewLoadDataController(&Plan{
 			Path:         filepath.Join(dir, "*.sql"),
@@ -275,7 +259,7 @@ func TestSampleIndexSizeRatio(t *testing.T) {
 			ctrl.dataStore,
 			ctrl.dataFiles,
 			nil,
-			ctrl.logger,
+			zap.Must(zap.NewDevelopment()),
 		)
 		require.NoError(t, err)
 		require.Positive(t, sampled.SourceSize)
@@ -285,13 +269,44 @@ func TestSampleIndexSizeRatio(t *testing.T) {
 	})
 }
 func TestSampleIndexSizeRatioVeryLongRows(t *testing.T) {
-	simpleTbl := `create table t (a int, b text, c text, d text, index idx(a));`
-	bak := maxSampleFileSize
+	simpleTbl := []int{0}
+	previous := maxSampleFileSize
 	maxSampleFileSize = 2 * units.MiB
-	t.Cleanup(func() {
-		maxSampleFileSize = bak
-	})
+	t.Cleanup(func() { maxSampleFileSize = previous })
 	// early return when reach maxSampleFileSize
 	longRowCase := caseTp{10, 10, units.MiB + 100*units.KiB, nil, simpleTbl, 0}
 	runCaseFn(t, -1, longRowCase)
+}
+
+func TestSamplerParserCloseOnError(t *testing.T) {
+	newChunk := func() *Chunk {
+		return &Chunk{
+			Path:         "test.sql",
+			FileSize:     16,
+			Offset:       1,
+			PrevRowIDMax: 1,
+		}
+	}
+
+	reader := newTrackingReader("INSERT INTO t VALUES (1);\n")
+	sampler := &kvSizeSampler{
+		cfg: &KVSizeSampleConfig{
+			Format: DataFormatSQL,
+		},
+		dataStore: &trackingStorage{reader: reader},
+		logger:    zap.NewNop(),
+	}
+	_, err := sampler.getParser(context.Background(), newChunk())
+	require.Error(t, err)
+	require.True(t, reader.closed)
+
+	reader = newTrackingReader("INSERT INTO t VALUES (1);\n")
+	ctrl := &LoadDataController{
+		Plan:      &Plan{Format: DataFormatSQL},
+		dataStore: &trackingStorage{reader: reader},
+		logger:    zap.NewNop(),
+	}
+	_, err = ctrl.getParser(context.Background(), newChunk())
+	require.Error(t, err)
+	require.True(t, reader.closed)
 }
