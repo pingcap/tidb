@@ -48,6 +48,25 @@ func TestFDSet_ExtractFD(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@session.tidb_enable_new_only_full_group_by_check = 'on';")
+	tk.MustExec("create table heap(a int, b int)")
+	tk.MustExec("insert into heap values (1, 10), (1, 20)")
+	tk.MustQuery("select b, count(*) from heap group by _tidb_rowid order by b").Check(testkit.Rows("10 1", "20 1"))
+
+	tk.MustExec("create table pt(a int, b int) partition by hash(a) partitions 2")
+	tk.MustExec("insert into pt values (0, 10), (1, 20)")
+	tk.MustQuery("select b from pt partition(p0) group by _tidb_rowid").Check(testkit.Rows("10"))
+	tk.MustContainErrMsg("select b from pt group by _tidb_rowid", "contains nonaggregated column 'test.pt.b'")
+
+	// A dynamic UnionScan includes the physical partition ID to read uncommitted rows.
+	tk.MustExec("set tidb_partition_prune_mode = 'dynamic'")
+	tk.MustExec("set tidb_skip_missing_partition_stats = on")
+	tk.MustExec("begin")
+	tk.MustExec("insert into pt values (2, 30)")
+	tk.MustContainErrMsg("select b from pt group by _tidb_rowid", "contains nonaggregated column 'test.pt.b'")
+	tk.MustContainErrMsg("select b from pt group by _tidb_tid", "contains nonaggregated column 'test.pt.b'")
+	tk.MustQuery("select b from pt group by _tidb_tid, _tidb_rowid order by b").Check(testkit.Rows("10", "20", "30"))
+	tk.MustExec("rollback")
+
 	tk.MustExec("create table t1(a int key, b int, c int, unique(b,c))")
 	tk.MustExec("create table t2(m int key, n int, p int, unique(m,n))")
 	tk.MustExec("create table x1(a int not null primary key, b int not null, c int default null, d int not null, unique key I_b_c (b,c), unique key I_b_d (b,d))")
@@ -376,6 +395,15 @@ func TestFDSet_MakeOuterJoin(t *testing.T) {
 	tk.MustExec("CREATE TABLE X (a INT PRIMARY KEY, b INT, c INT, d INT, e INT)")
 	tk.MustExec("CREATE UNIQUE INDEX uni ON X (b, c)")
 	tk.MustExec("CREATE TABLE Y (m INT, n INT, p INT, q INT, PRIMARY KEY (m, n) NONCLUSTERED)")
+
+	tk.MustExec("create table l(a int)")
+	tk.MustExec("create table r(b int, c int)")
+	tk.MustExec("insert into l values (1)")
+	tk.MustExec("insert into r values (10, 1), (20, 1)")
+	// The derived table's FD graph contains the constant or computed column,
+	// but neither determines b, which has no FD edge.
+	tk.MustContainErrMsg("select d.b, count(*) from l left join (select b, 1 as c from r) d on true group by l._tidb_rowid", "contains nonaggregated column 'd.b'")
+	tk.MustContainErrMsg("select d.b, count(*) from l left join (select b, c, c+1 as cp from r) d on true group by l._tidb_rowid, d.c", "contains nonaggregated column 'd.b'")
 
 	tests := []struct {
 		sql  string

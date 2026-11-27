@@ -742,8 +742,8 @@ func (s *FDSet) MakeCartesianProduct(rhs *FDSet) {
 //
 func (s *FDSet) MakeOuterJoin(innerFDs, filterFDs *FDSet, outerCols, innerCols intset.FastIntSet, opt *ArgOpts) {
 	//  copy down the left PK and right PK before the s has changed for later usage.
-	leftPK, ok1 := s.FindPrimaryKey()
-	rightPK, ok2 := innerFDs.FindPrimaryKey()
+	leftPK, ok1 := s.FindPrimaryKey(outerCols)
+	rightPK, ok2 := innerFDs.FindPrimaryKey(innerCols)
 	copyLeftFDSet := &FDSet{}
 	copyLeftFDSet.AddFrom(s)
 	copyRightFDSet := &FDSet{}
@@ -878,15 +878,14 @@ type ArgOpts struct {
 	InnerIsFalse    bool
 }
 
-// FindPrimaryKey checks whether there's a key in the current set which implies key -> all cols.
-func (s FDSet) FindPrimaryKey() (*intset.FastIntSet, bool) {
-	allCols := s.AllCols()
+// FindPrimaryKey looks for a strict determinant of every output column.
+// An independent output column may be absent from the FD graph.
+func (s FDSet) FindPrimaryKey(outputCols intset.FastIntSet) (*intset.FastIntSet, bool) {
 	for i := range s.fdEdges {
 		fd := s.fdEdges[i]
 		// Since we haven't maintained the key column, let's traverse every strict FD to judge with.
 		if fd.strict && !fd.equiv {
-			closure := s.closureOfStrict(fd.from)
-			if allCols.SubsetOf(closure) {
+			if s.InClosure(fd.from, outputCols) {
 				pk := intset.NewFastIntSet()
 				pk.CopyFrom(fd.from)
 				return &pk, true

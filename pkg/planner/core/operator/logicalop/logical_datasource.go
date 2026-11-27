@@ -408,6 +408,16 @@ func (ds *DataSource) ExtractFD() *fd.FDSet {
 			// todo: change it to int64
 			allCols.Insert(int(col.UniqueID))
 		}
+		if rowID := ds.TblColsByID[model.ExtraHandleID]; rowID != nil {
+			rowKey := intset.NewFastIntSet(int(rowID.UniqueID))
+			if ds.TableInfo.GetPartitionInfo() == nil || ds.PartitionDefIdx != nil || len(ds.PartitionNames) == 1 {
+				fds.AddStrictFunctionalDependency(rowKey, allCols)
+			} else if partitionID := ds.TblColsByID[model.ExtraPhysTblID]; partitionID != nil {
+				// EXCHANGE PARTITION can leave the same _tidb_rowid in different partitions.
+				rowKey.Insert(int(partitionID.UniqueID))
+				fds.AddStrictFunctionalDependency(rowKey, allCols)
+			}
+		}
 		// int pk doesn't store its index column in indexInfo.
 		if ds.TableInfo.PKIsHandle {
 			keyCols := intset.NewFastIntSet()
@@ -862,6 +872,7 @@ func isIndexColsCoveringCol(sctx expression.EvalContext, col *expression.Column,
 func (ds *DataSource) AppendTableCol(col *expression.Column) {
 	ds.TblCols = append(ds.TblCols, col)
 	ds.TblColsByID[col.ID] = col
+	ds.SetFDs(nil)
 }
 
 // CheckPartialIndexes checks and removes the partial indexes that cannot be used according to the pushed down conditions.
