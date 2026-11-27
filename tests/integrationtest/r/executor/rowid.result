@@ -35,6 +35,13 @@ update s set a = 2 where _tidb_rowid = 1;
 Error 1054 (42S22): Unknown column '_tidb_rowid' in 'where clause'
 delete from s where _tidb_rowid = 1;
 Error 1054 (42S22): Unknown column '_tidb_rowid' in 'where clause'
+create table cs (id varchar(10) primary key clustered);
+insert cs (id, _tidb_rowid) values ('x', 1);
+Error 1054 (42S22): Unknown column '_tidb_rowid' in 'field list'
+insert cs (id, _tidb_rowid) values ('x', null);
+Error 1054 (42S22): Unknown column '_tidb_rowid' in 'field list'
+replace cs (id, _tidb_rowid) values ('x', 1);
+Error 1054 (42S22): Unknown column '_tidb_rowid' in 'field list'
 insert into t (a, _tidb_rowid) values(10, 1);
 Error 1105 (HY000): insert, update and replace statements for _tidb_rowid are not supported
 set session tidb_opt_write_row_id = default;

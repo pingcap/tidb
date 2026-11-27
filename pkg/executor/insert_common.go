@@ -157,7 +157,7 @@ func (e *InsertValues) initInsertColumns() error {
 		for _, v := range e.Columns {
 			columns = append(columns, v.Name.L)
 		}
-		cols, missingColIdx = table.FindColumns(tableCols, columns, e.Table.Meta().PKIsHandle)
+		cols, missingColIdx = table.FindColumns(tableCols, columns, e.Table.Meta().HasClusteredIndex())
 		if missingColIdx >= 0 {
 			return errors.Errorf(
 				"INSERT INTO %s: unknown column %s",
