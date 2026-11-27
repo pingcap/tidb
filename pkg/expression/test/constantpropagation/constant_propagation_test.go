@@ -86,6 +86,44 @@ func TestLikeColumnPropagation(t *testing.T) {
 	})
 }
 
+func TestSignedZeroPropagation(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	// y is -0 for the stored 0 in x. DOUBLE equality treats the two zeros as equal,
+	// but atan2 and a cast to string tell them apart, so the columns are not interchangeable there.
+	tk.MustExec("create table t (x double, y double as (-x))")
+	tk.MustExec("insert into t (x) values (0)")
+	tk.MustQuery("select x = y, atan2(x, -1) > 0, atan2(y, -1) > 0 from t").Check(testkit.Rows("1 1 0"))
+
+	// Column to column, in a filter and in the conditions of an inner and an outer join.
+	for _, sql := range []string{
+		"select count(*) from t where x = y and atan2(x, -1) > 0",
+		"select count(*) from t where x = y and atan(x, -1) > 0",
+		"select count(*) from t where x = y and atan2(x * 1, -1) > 0",
+		"select count(*) from t where x = y and atan2(-1, x) < 0",
+		"select count(*) from t where x = y and cast(x * 1 as char) = '0'",
+		"select count(*) from t where x = y and concat(round(x), '') = '0'",
+		"select count(*) from t a join t b on a.x = b.y where atan2(a.x, -1) > 0",
+		"select count(b.x) from t a left join t b on a.x = b.y and atan2(a.x, -1) > 0",
+		"select count(b.x) from t b right join t a on a.x = b.y and atan2(a.x, -1) > 0",
+	} {
+		tk.MustQuery(sql).Check(testkit.Rows("1"))
+	}
+	tk.MustQuery("select count(*) from t a join t b on a.x = b.y where atan2(b.y, -1) > 0").Check(testkit.Rows("0"))
+	tk.MustQuery("explain format='brief' select count(*) from t where x = y and atan2(x, -1) > 0").CheckNotContain("atan2(test.t.y")
+
+	// Column to constant: -'o' is -0, equal to the stored 0.
+	tk.MustQuery("select count(*) from t where x = -'o' and atan2(x, -1) > 0").Check(testkit.Rows("1"))
+	tk.MustQuery("select count(*) from t where x = 0 and atan2(x, -1) > 0").Check(testkit.Rows("1"))
+	tk.MustQuery("select count(b.x) from t a left join t b on a.x = -'o' and atan2(a.x, -1) > 0").Check(testkit.Rows("1"))
+
+	// Predicates that do not observe the sign of a zero are still propagated.
+	tk.MustQuery("select count(*) from t where x = y and x + 1 > 0").Check(testkit.Rows("1"))
+	tk.MustQuery("explain format='brief' select count(*) from t where x = y and x + 1 > 0").CheckContain("plus(test.t.y")
+}
+
 func TestConstantPropagation(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

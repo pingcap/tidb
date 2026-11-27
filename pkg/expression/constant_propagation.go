@@ -226,6 +226,41 @@ func replaceEqCondtionWithTrue(ctx BuildContext, src *Column, tgt *Column, cond 
 	return cond, false
 }
 
+// observesZeroSign reports whether sf can tell +0 from -0 in a floating point argument. Equality treats the two
+// zeros as equal, so a column or constant is not interchangeable with another one that is equal to it inside such
+// a function: ATAN2(0, -1) is pi but ATAN2(-0, -1) is -pi, and a cast to string keeps the sign of a zero.
+func observesZeroSign(ctx EvalContext, sf *ScalarFunction) bool {
+	args := sf.GetArgs()
+	switch sf.FuncName.L {
+	case ast.Atan2:
+		return true
+	case ast.Atan:
+		return len(args) == 2
+	case ast.Cast:
+		return len(args) == 1 && args[0].GetType(ctx).EvalType() == types.ETReal && sf.GetType(ctx).EvalType() == types.ETString
+	}
+	return false
+}
+
+// containsZeroSignObserver reports whether expr contains a function for which observesZeroSign is true.
+func containsZeroSignObserver(ctx EvalContext, expr Expression) bool {
+	sf, ok := expr.(*ScalarFunction)
+	if !ok {
+		return false
+	}
+	return observesZeroSign(ctx, sf) || slices.ContainsFunc(sf.GetArgs(), func(arg Expression) bool {
+		return containsZeroSignObserver(ctx, arg)
+	})
+}
+
+// hasRealZero reports whether one of the constants is a floating point zero, of either sign.
+func hasRealZero(ctx EvalContext, cons []Expression) bool {
+	return slices.ContainsFunc(cons, func(e Expression) bool {
+		con, ok := e.(*Constant)
+		return ok && !con.Value.IsNull() && con.GetType(ctx).EvalType() == types.ETReal && con.Value.GetFloat64() == 0
+	})
+}
+
 // tryToReplaceCond aims to replace all occurrences of column 'src' and try to replace it with 'tgt' in 'cond'
 // It returns
 //
@@ -266,6 +301,10 @@ func tryToReplaceCond(ctx BuildContext, src *Column, tgt *Column, cond Expressio
 			(collation != charset.CollationBin && collation != charset.CollationUTF8MB40900Bin) {
 			return false, true, cond
 		}
+	}
+	// -0 and +0 are equal but not interchangeable for a function that can tell them apart.
+	if src.RetType.EvalType() == types.ETReal && observesZeroSign(ctx.GetEvalCtx(), sf) {
+		return false, true, cond
 	}
 	// See
 	//	https://github.com/pingcap/tidb/issues/15782
@@ -384,8 +423,9 @@ func (s *propConstSolver) propagateConstantEQ() {
 			cols = append(cols, s.columns[id])
 			cons = append(cons, con)
 		}
+		hasZero := hasRealZero(s.ctx.GetEvalCtx(), cons)
 		for i, cond := range s.conditions {
-			if !visited[i] {
+			if !visited[i] && !(hasZero && containsZeroSignObserver(s.ctx.GetEvalCtx(), cond)) {
 				s.conditions[i] = ColumnSubstitute(s.ctx, cond, NewSchema(cols...), cons)
 			}
 		}
@@ -823,8 +863,9 @@ func (s *propOuterJoinConstSolver) propagateConstantEQ() {
 			cols = append(cols, s.columns[id])
 			cons = append(cons, con)
 		}
+		hasZero := hasRealZero(s.ctx.GetEvalCtx(), cons)
 		for i, cond := range s.joinConds {
-			if !visited[i+lenFilters] {
+			if !visited[i+lenFilters] && !(hasZero && containsZeroSignObserver(s.ctx.GetEvalCtx(), cond)) {
 				s.joinConds[i] = ColumnSubstitute(s.ctx, cond, NewSchema(cols...), cons)
 			}
 		}
