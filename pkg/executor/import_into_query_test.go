@@ -62,11 +62,11 @@ func newWorkerSession(t *testing.T, store kv.Storage) sessionctx.Context {
 }
 
 // runImportQuery runs the captured query q in se, and returns its rows.
-func runImportQuery(t *testing.T, se sessionctx.Context, q *importer.QuerySource, sql string) []string {
+func runImportQuery(t *testing.T, se sessionctx.Context, q *importer.QuerySource, sql string, columnCnt int) []string {
 	output := make(chan importer.QueryChunk)
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- executor.RunImportQuery(context.Background(), se, q, sql, importQueryMemQuota, output)
+		errCh <- executor.RunImportQuery(context.Background(), se, q, sql, columnCnt, importQueryMemQuota, output)
 		close(output)
 	}()
 	var rows []string
@@ -147,15 +147,41 @@ func TestImportQueryPlanExecution(t *testing.T) {
 				}
 			})
 			var expected []string
-			for _, row := range tk.MustQuery(c.sql).Rows() {
+			rows := tk.MustQuery(c.sql).Rows()
+			for _, row := range rows {
 				expected = append(expected, fmt.Sprint(row))
 			}
-			got := runImportQuery(t, newWorkerSession(t, store), q, sql)
+			got := runImportQuery(t, newWorkerSession(t, store), q, sql, len(rows[0]))
 			sort.Strings(expected)
 			sort.Strings(got)
 			require.Equal(t, expected, got)
 		})
 	}
+	t.Run("checks column count before execution", func(t *testing.T) {
+		require.NoError(t, tk.Session().PrepareTxnCtx(context.Background(), nil))
+		q := captureImportQuery(t, tk, "import into unused_target from select i from query_src")
+		for _, empty := range []bool{false, true} {
+			for _, projection := range []string{"i", "i, g, v"} {
+				sql := "import into unused_target from (select " + projection + " from query_src"
+				if empty {
+					sql += " where 1=0"
+				}
+				sql += ")"
+				output := make(chan importer.QueryChunk, 1)
+				err := executor.RunImportQuery(context.Background(), newWorkerSession(t, store), q, sql, 2, importQueryMemQuota, output)
+				require.ErrorContains(t, err, "but the target expects 2", sql)
+				require.Empty(t, output, "mismatched queries must not emit chunks")
+			}
+		}
+	})
+	t.Run("empty results emit no chunks", func(t *testing.T) {
+		require.NoError(t, tk.Session().PrepareTxnCtx(context.Background(), nil))
+		sql := "import into unused_target from (select i from query_src where 1=0)"
+		q := captureImportQuery(t, tk, sql)
+		output := make(chan importer.QueryChunk, 1)
+		require.NoError(t, executor.RunImportQuery(context.Background(), newWorkerSession(t, store), q, sql, 1, importQueryMemQuota, output))
+		require.Empty(t, output)
+	})
 	t.Run("mv maintenance follows the submitter", func(t *testing.T) {
 		sql := "import into unused_target from select i from query_src"
 		for _, inMaintenance := range []bool{false, true} {
@@ -168,7 +194,7 @@ func TestImportQueryPlanExecution(t *testing.T) {
 			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/afterImportQueryOptimize", func(p base.PhysicalPlan) {
 				assert.Equal(t, inMaintenance, p.SCtx().GetSessionVars().InMViewMaintenance)
 			})
-			runImportQuery(t, newWorkerSession(t, store), q, sql)
+			runImportQuery(t, newWorkerSession(t, store), q, sql, 1)
 		}
 	})
 	t.Run("statement time", func(t *testing.T) {
@@ -179,7 +205,7 @@ func TestImportQueryPlanExecution(t *testing.T) {
 		tk.MustExec("rollback")
 		tk.MustExec("set @@timestamp = default")
 		se := newWorkerSession(t, store)
-		require.Equal(t, []string{"[1000000000]"}, runImportQuery(t, se, q, sql))
+		require.Equal(t, []string{"[1000000000]"}, runImportQuery(t, se, q, sql, 1))
 		// The submitter's transaction does not carry over to the worker.
 		require.False(t, se.GetSessionVars().InTxn())
 		require.True(t, se.GetSessionVars().IsAutocommit())
@@ -190,7 +216,7 @@ func TestImportQueryPlanExecution(t *testing.T) {
 		q = captureImportQuery(t, tk, sql)
 		require.NotEmpty(t, q.SessionStates.SystemVars[vardef.Timestamp])
 		q.SessionStates.SystemVars[vardef.Timestamp] = "1000000000"
-		require.Equal(t, []string{"[1000000000]"}, runImportQuery(t, newWorkerSession(t, store), q, sql))
+		require.Equal(t, []string{"[1000000000]"}, runImportQuery(t, newWorkerSession(t, store), q, sql, 1))
 	})
 	t.Run("source tables at read ts", func(t *testing.T) {
 		tk.MustExec("create resource group rg1 ru_per_sec=1000")
@@ -213,16 +239,16 @@ func TestImportQueryPlanExecution(t *testing.T) {
 		tk.Session().RollbackTxn(context.Background())
 		tk.MustExec("insert into query_src values (9,90,9)")
 		tk.MustExec("rename table query_src to query_renamed")
-		require.Equal(t, []string{"[7]"}, runImportQuery(t, se, q, sql))
+		require.Equal(t, []string{"[7]"}, runImportQuery(t, se, q, sql, 1))
 		// Retrying the persisted query must keep the same snapshot.
-		require.Equal(t, []string{"[7]"}, runImportQuery(t, se, q, sql))
+		require.Equal(t, []string{"[7]"}, runImportQuery(t, se, q, sql, 1))
 		// Uncorrelated subqueries execute during optimization and cache DistSQL attribution.
 		require.NoError(t, tk.Session().PrepareTxnCtx(context.Background(), nil))
 		tk.Session().GetSessionVars().StmtCtx.ResourceGroupName = "rg1"
 		sql = "import into unused_target from select /*+ RESOURCE_GROUP(rg1) */ (select count(*) from query_renamed)"
 		q = captureImportQuery(t, tk, sql)
 		se = newWorkerSession(t, store)
-		require.Equal(t, []string{"[8]"}, runImportQuery(t, se, q, sql))
+		require.Equal(t, []string{"[8]"}, runImportQuery(t, se, q, sql, 1))
 		require.Positive(t, se.GetSessionVars().RewritePhaseInfo.PreprocessSubQueries)
 	})
 	t.Run("source table changed before capture", func(t *testing.T) {
@@ -241,6 +267,6 @@ func TestImportQueryPlanExecution(t *testing.T) {
 		q := captureImportQuery(t, queryTK, sql)
 		// The planner of the statement takes the definition after the DDL, which
 		// the worker reads the snapshot with.
-		require.Equal(t, []string{"[1 42]"}, runImportQuery(t, newWorkerSession(t, store), q, sql))
+		require.Equal(t, []string{"[1 42]"}, runImportQuery(t, newWorkerSession(t, store), q, sql, 2))
 	})
 }

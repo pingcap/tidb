@@ -104,6 +104,19 @@ func TestCaptureQuerySource(t *testing.T) {
 		_, err = capture(staleTK.Session(), "select i from query_src as of timestamp now(6)")
 		require.ErrorContains(t, err, "stale reads in IMPORT INTO FROM SELECT")
 	})
+	t.Run("memory system tables", func(t *testing.T) {
+		se := testkit.NewTestKit(t, store)
+		se.MustExec("use test")
+		se.MustExec("begin")
+		defer se.MustExec("rollback")
+		for _, query := range []string{
+			"select table_name from information_schema.tables",
+			"select id from information_schema.cluster_processlist",
+		} {
+			_, err := capture(se.Session(), query)
+			require.ErrorContains(t, err, "virtual source tables in IMPORT INTO FROM SELECT", query)
+		}
+	})
 	t.Run("views and cached tables", func(t *testing.T) {
 		tk.MustExec("create database query_view_db")
 		tk.MustExec("create table query_view_db.base(i int)")
