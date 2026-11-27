@@ -343,12 +343,29 @@ func hasPriv(ctx sessionctx.Context, priv mysql.PrivilegeType) bool {
 
 func (e *memtableRetriever) setDataForVariablesInfo(ctx sessionctx.Context) error {
 	sysVars := variable.GetSysVars()
+	sessVars := ctx.GetSessionVars()
 	rows := make([][]types.Datum, 0, len(sysVars))
 	for _, sv := range sysVars {
 		if infoschema.SysVarHiddenForSem(ctx, sv.Name) {
 			continue
 		}
-		currentVal, err := ctx.GetSessionVars().GetSessionOrGlobalSystemVar(context.Background(), sv.Name)
+		var currentVal string
+		var err error
+		if sv.HasSessionScope() && sv.GetSession == nil {
+			// Do not populate the session's sysvar map like GetSessionOrGlobalSystemVar
+			// does: the branches of a UNION may read this table concurrently on the
+			// same session, and the map is not safe for concurrent writes.
+			var ok bool
+			if currentVal, ok = sessVars.GetSystemVar(sv.Name); !ok {
+				if sv.HasGlobalScope() {
+					currentVal, err = sessVars.GlobalVarsAccessor.GetGlobalSysVar(sv.Name)
+				} else {
+					currentVal = sv.Value
+				}
+			}
+		} else {
+			currentVal, err = sessVars.GetSessionOrGlobalSystemVar(context.Background(), sv.Name)
+		}
 		if err != nil {
 			currentVal = ""
 		}
