@@ -70,3 +70,49 @@ fn distinct_constant_arguments_reach_the_skew_rewrite() {
         ["10|2", "20|2"]
     );
 }
+
+/// Go `TestStreamAggJSONInputBufferReuse` (1de639d2b41): JSON_OBJECTAGG and
+/// JSON_ARRAYAGG keep each opaque binary value of a group that spans
+/// several Sort output chunks reused by StreamAgg.
+#[test]
+fn test_stream_agg_json_input_buffer_reuse() {
+    use base64::Engine as _;
+    let mut tk = crate::testkit::TestKit::new();
+    tk.must_exec("use test");
+    tk.must_exec("set tidb_init_chunk_size=32");
+    tk.must_exec("set tidb_max_chunk_size=32");
+    tk.must_exec("set tidb_streamagg_concurrency=1");
+    // (column type, Go mysql type code, stored size)
+    for (name, code, size) in [("blob", 252, 2), ("varbinary(8)", 15, 2), ("bit(16)", 16, 2), ("binary(8)", 254, 8)] {
+        tk.must_exec("drop table if exists t_json_agg");
+        tk.must_exec(&format!("create table t_json_agg(g int, k varchar(8), v {name})"));
+        let mut values = Vec::new();
+        let mut expected_objects = [std::collections::BTreeMap::new(), std::collections::BTreeMap::new()];
+        let mut expected_arrays: [Vec<String>; 2] = [Vec::new(), Vec::new()];
+        for i in 0..96usize {
+            values.push(format!("({}, '{i:03}', x'{:04x}')", i % 2, i + 1));
+            let mut buf = vec![0u8; size];
+            buf[1] = (i + 1) as u8;
+            let value = format!("base64:type{code}:{}", base64::engine::general_purpose::STANDARD.encode(&buf));
+            expected_objects[i % 2].insert(format!("{i:03}"), value.clone());
+            expected_arrays[i % 2].push(value);
+        }
+        tk.must_exec(&format!("insert into t_json_agg values {}", values.join(",")));
+        // Each group spans multiple Sort output chunks reused by StreamAgg.
+        let sql = "select /*+ stream_agg() */ g, json_objectagg(k, v), json_arrayagg(v) from t_json_agg group by g order by g";
+        tk.must_have_plan(sql, "StreamAgg");
+        tk.must_have_plan(sql, "Sort");
+        let result = tk.must_query(sql);
+        let rows = result.rows();
+        assert_eq!(rows.len(), 2, "{name}");
+        for (group, row) in rows.iter().enumerate() {
+            let object: std::collections::BTreeMap<String, String> = serde_json::from_str(&row[1]).unwrap();
+            let mut array: Vec<String> = serde_json::from_str(&row[2]).unwrap();
+            assert_eq!(object, expected_objects[group], "{name} group {group}");
+            array.sort();
+            let mut expected = expected_arrays[group].clone();
+            expected.sort();
+            assert_eq!(array, expected, "{name} group {group}");
+        }
+    }
+}

@@ -190,7 +190,6 @@ A second, function-level list: `python3 -I rust/scripts/go-func-drift.py ../goma
 - b1daa76b65a 2026-08-28 4/7 *: batching analyze requests (#69686)
 - 2e2d28848a0 2026-09-11 4/7 executor: extract RU v3 model (#71022)
 - 94eb995357f 2026-09-02 5/9 *: support shared lock upgrade (#69559)
-- 7844a33138d 2026-11-11 5/9 expression: support builtin function SOUNDEX (#72222)
 - d1f1bd2b2a1 2026-10-27 17/31 ddl: refactor partition metadata helpers with explicit ownership (#72422)
 - e35ad93664b 2026-07-22 6/11 *: enable global memory arbitration in priority mode by default (#69638)
 - 11a74344310 2026-11-10 68/133 ddl: protect NextGen built-in tables by canonical names (#72781)
@@ -205,10 +204,9 @@ A second, function-level list: `python3 -I rust/scripts/go-func-drift.py ../goma
 - 239252b4e97 2026-11-02 1/2 expression: preserve NULL-safe TIME comparison semantics with plan cache (#71167)
 - 23184f3f3f6 2026-11-02 1/2 server: share statement retry and TiFlash fallback execution (#72589)
 - 8626dd78607 2026-11-11 3/6 planner, expression: index field names when building wide projections (#72825)
-- f01fb0ab6d4 2026-11-12 1/2 stats: lock stats_meta before add-column histogram writes (#72862)
 - 8c05d01e496 2026-11-17 1/2 bindinfo: preserve binding snapshots and optimize cache updates (#73245)
 - dbbbaf900ca 2026-11-17 2/4 planner: bind duplicate expression indexes to one hidden generated column (#70715)
 
 ## Held
 
-Ported or not applicable, though the audit still flags them (keep them out of the candidates on a rerun): 0386d784bc8 07b758bf938 143374f759f 1d19049f6e3 22fd1ac756e 3bd6b6d4d63 4c0e2c06244 56ee5bb2684 592082dee72 655769534b4 70970592ab0 7981253e7c3 87d45a1d703 8cde78af3c5 8d5a3a1908f a40e9d6e76f adee1920e10 ed2376acc6e 92fc143fe36 8bab3c26d76 ab4e1dcf964 59f6e85cd01 5ccce269d2b 57b5f226809 130cbb64478 66be7a615be 8c9b48508c8 b0f09ba1ea4 d3928d5c659 d880d7fabe5 032f17c27bc.
+Ported or not applicable, though the audit still flags them (keep them out of the candidates on a rerun): 0386d784bc8 07b758bf938 143374f759f 1d19049f6e3 22fd1ac756e 3bd6b6d4d63 4c0e2c06244 56ee5bb2684 592082dee72 655769534b4 70970592ab0 7981253e7c3 87d45a1d703 8cde78af3c5 8d5a3a1908f a40e9d6e76f adee1920e10 ed2376acc6e 92fc143fe36 8bab3c26d76 ab4e1dcf964 59f6e85cd01 5ccce269d2b 57b5f226809 130cbb64478 66be7a615be 8c9b48508c8 b0f09ba1ea4 d3928d5c659 d880d7fabe5 032f17c27bc 1de639d2b41.
